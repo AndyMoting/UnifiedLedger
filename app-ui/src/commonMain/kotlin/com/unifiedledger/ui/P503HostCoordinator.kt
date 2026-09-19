@@ -292,9 +292,15 @@ internal class P503HostCoordinator(
      * request stamped on the landed month, so the month card, SelectMonth domain, trend, and
      * entry rows reflect the confirmed batch this session; [dropMonthlyReRequestAfterFailedRefresh]
      * on a failed landing). Mirrors the (e) arm for the same A-PERF reason: no synchronous
-     * request beside the refresh, whose transient result state would absorb the payload. Not
-     * fired by per-item result landings (only the run's completion triggers once) nor by a
-     * pause/abandon of the run.
+     * request beside the refresh, whose transient result state would absorb the payload.
+     *
+     * Two host call sites arm it exactly once per run (D-153 恰一次): the dispatch loop's
+     * `completed` branch in [P503App] `runImportBatchDispatch`, and the Unknown 核对 resolution
+     * hop when the verdict makes the run all-terminal
+     * ([shouldArmImportBatchConfirmedAfterUnknownCheckResolution]). A mid-batch resolution or a
+     * StillUnknown verdict arms nothing — the run continues (or stays incomplete) and its
+     * completed branch fires (f) for the whole run. Never fired by per-item result landings nor
+     * by a pause/abandon of the run.
      */
     internal fun onImportBatchConfirmed() {
         onRefresh()
@@ -632,4 +638,27 @@ internal sealed interface HostAction {
         val draft: TypedEntryDraft,
         val requestId: RequestId,
     ) : HostAction
+}
+
+/**
+ * P7-03 FIX-STALE-1 (D-153): the (f) completion decision of the Unknown 核对 resolution's
+ * main-dispatcher hop — called with the post-dispatch [landedState], i.e. AFTER the verdict event
+ * has reduced. The run reached all-terminal exactly when the state has LEFT
+ * `ImportBatchSubmitting` and the retained summary holds no Unknown anymore:
+ * - the reducer auto-left on THIS verdict (it was the last non-terminal item — table 6.2a: 仅全部
+ *   项终态后可离开), or
+ * - the batch had already left (Resume with nothing undispatched / Abandon retained the summary)
+ *   and the verdict completed the summary's last Unknown in place.
+ *
+ * Never arms (`false`) when: the state is still `ImportBatchSubmitting` (a mid-batch resolution —
+ * the run continues and its completed branch fires (f) exactly once for the whole run, so the two
+ * call sites cannot double-fire); the verdict was StillUnknown or absorbed (the item keeps its
+ * check entry — the run stays incomplete and the user may retry); or another Unknown still remains
+ * in the summary (the run is not all-terminal yet — a later resolution completes it). Together
+ * with the dispatch loop's completed branch this keeps trigger (f) at exactly one arm per run.
+ */
+internal fun shouldArmImportBatchConfirmedAfterUnknownCheckResolution(landedState: P503AppState): Boolean {
+    if (landedState is P503AppState.ImportBatchSubmitting) return false
+    val summary = (landedState as? P503AppState.OverviewEmpty)?.importReview?.batchResult ?: return false
+    return summary.items.none { it.outcome is ImportBatchItemOutcome.Unknown }
 }

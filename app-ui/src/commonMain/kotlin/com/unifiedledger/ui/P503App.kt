@@ -1430,7 +1430,9 @@ fun P503App(
      * 突)； an unreadable replay stays Unknown (仍未知 — the entry stays, 不自动重试). A Confirmed
      * verdict also re-reads the list so the item reads `confirmed`. P704D-QUAL-01/SPEC-02: the
      * guarded body and the finally hop keep the check's single-flight slot always releasable; a
-     * pre-phase failure is the StillUnknown verdict (retryable), never a stranded run.
+     * pre-phase failure is the StillUnknown verdict (retryable), never a stranded run. A verdict
+     * that completes the run's terminal set also arms monthly trigger (f) (P7-03 FIX-STALE-1,
+     * D-153) — see the second call site in the finally hop below.
      */
     fun checkImportUnknownItem(candidateId: ImportCandidateId) {
         dispatch(P503UiEvent.ImportUnknownItemCheck(candidateId))
@@ -1479,6 +1481,15 @@ fun P503App(
                         dispatch(P503UiEvent.ImportUnknownItemCheckResult(item, outcome))
                         if (outcome is ImportUnknownCheckOutcome.Confirmed) {
                             requestImportReviewRowsRead()
+                        }
+                        // Trigger (f) second call site (P7-03 FIX-STALE-1, D-153): a 核对 verdict
+                        // that completes the run's terminal set arms here (the pure decision reads
+                        // the post-dispatch state). A mid-batch resolution (state still
+                        // ImportBatchSubmitting) or a StillUnknown verdict arms nothing — the run
+                        // continues (its completed branch fires (f) exactly once) or stays
+                        // incomplete for a later resolution.
+                        if (shouldArmImportBatchConfirmedAfterUnknownCheckResolution(latestState.value)) {
+                            coordinator.onImportBatchConfirmed()
                         }
                     }
                 }

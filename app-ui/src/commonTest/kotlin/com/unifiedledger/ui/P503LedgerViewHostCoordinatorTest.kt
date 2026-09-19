@@ -1,5 +1,8 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.ImportCandidateId
+import com.unifiedledger.application.ImportReceipt
+import com.unifiedledger.application.ImportRequestId
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.domain.LedgerId
 import kotlinx.datetime.YearMonth
@@ -238,6 +241,66 @@ class P503LedgerViewHostCoordinatorTest {
         assertEquals(0, probe.monthlyRequests.size)
         host.consumeMonthlyReRequestAfterRefresh(overview())
         assertEquals(1, probe.monthlyRequests.size)
+    }
+
+    // (f) second call site: the Unknown 核对 resolution's all-terminal decision. The pure
+    // decision is covered here; the hop wiring itself is Composable host code and is covered by
+    // the device window (registered in D-153 like the completed-branch wiring note).
+
+    private fun overviewWithBatchResult(vararg outcomes: ImportBatchItemOutcome): P503AppState.OverviewEmpty {
+        val summaryItems =
+            outcomes.mapIndexed { index, outcome ->
+                ImportBatchResultItem(
+                    ImportBatchItem(ImportCandidateId("cand-$index"), ImportRequestId("req-$index")),
+                    outcome,
+                )
+            }
+        val summary = ImportBatchResultSummary(confirmedAt = "2026-09-19T08:00:00", items = summaryItems)
+        return overview().copy(importReview = ImportReviewView(batchResult = summary))
+    }
+
+    @Test
+    fun unknownCheckResolutionArmsOnlyWhenTheRunBecameAllTerminal() {
+        // The verdict completed the summary's last Unknown (the reducer auto-left, or the summary
+        // was already retained): the run is all-terminal → arm.
+        assertTrue(
+            shouldArmImportBatchConfirmedAfterUnknownCheckResolution(
+                overviewWithBatchResult(ImportBatchItemOutcome.CheckConflict("E_TEST"), ImportBatchItemOutcome.Skipped("SKIP_TEST")),
+            ),
+        )
+        assertTrue(shouldArmImportBatchConfirmedAfterUnknownCheckResolution(overviewWithBatchResult(ImportBatchItemOutcome.Rejected("E_TEST"))))
+
+        // A mid-batch resolution: the state is still dispatching — the run's completed branch arms.
+        assertFalse(
+            shouldArmImportBatchConfirmedAfterUnknownCheckResolution(
+                P503AppState.ImportBatchSubmitting(overview = overview(), confirmedAt = "2026-09-19T08:00:00", items = emptyList()),
+            ),
+        )
+
+        // StillUnknown (or an absorbed verdict): the checked item keeps its check entry — the run
+        // stays incomplete, the user may retry or resolve it later.
+        assertFalse(
+            shouldArmImportBatchConfirmedAfterUnknownCheckResolution(
+                overviewWithBatchResult(ImportBatchItemOutcome.Unknown),
+            ),
+        )
+
+        // Another Unknown still remains after this resolution: not all-terminal yet — the LATER
+        // resolution completes the run and arms exactly once.
+        assertFalse(
+            shouldArmImportBatchConfirmedAfterUnknownCheckResolution(
+                overviewWithBatchResult(
+                    ImportBatchItemOutcome.Confirmed(
+                        ImportReceipt(ImportRequestId("req-0"), null, null, ImportCandidateId("cand-0"), null, null),
+                    ),
+                    ImportBatchItemOutcome.Unknown,
+                ),
+            ),
+        )
+
+        // An absorbed landing without the batch summary never arms.
+        assertFalse(shouldArmImportBatchConfirmedAfterUnknownCheckResolution(overview()))
+        assertFalse(shouldArmImportBatchConfirmedAfterUnknownCheckResolution(P503AppState.Ready))
     }
 
     // Nothing outside the frozen set re-requests.
