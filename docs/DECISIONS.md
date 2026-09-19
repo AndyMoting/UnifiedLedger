@@ -2929,3 +2929,15 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 入：`app-ui` 的 `P503ImportReview.kt`（face×方向匹配分类源纯选择器 + 决策表单「分类」区渲染 + 详情屏收入选项参数）、`P503App.kt`（决策面调用点传入收入分类选项；kind 与方向取自屏内既持有的候选 detail 行，不跨宿主调用点）、commonTest face×方向矩阵向量，以及本条与规格登记。选择器置于 `P503ImportReview.kt`（纯呈现函数的常规归属 `P503ImportReviewPresentation.kt` 在本批 5 文件可写范围之外，评审 STRUCT-1 维持并登记理由）。出：零账务语义、零 `ledger-domain`/`ledger-application`/`ledger-data`、零 schema/迁移/依赖/清单、零 Golden/fixture。自动验证：`:app-ui:jvmTest` 402/0/0/0（较基线 397 新增 5 向量：ordinary in 方向渲染收入选项且不含支出选项 1、ordinary out 方向渲染支出选项回归 1、null 方向 token 保持支出源回归 1、credit_expense 退款面 + "in" 恒支出选项（评审 F1 回归向量）1、credit_expense 直付与 mixed_payment 两方向恒支出选项矩阵 1）、`:app-ui:ktlintCheck`、`:android-app:compileDebugKotlin` + `:desktop-app:compileKotlinJvm` 全绿。「分类」区 ●/○ 选项渲染位于 `@Composable` 私有表单节内、无既有 JVM 断言基建；face×方向匹配选择器以纯函数矩阵向量覆盖，表单节接线以设备回归覆盖并如实登记。设备回归（合并后）：导入 CCB 样本 → in 方向 ordinary 候选（银联入账）决策区出现收入分类 → 以 A02FIX-SAL-C1 补全 → 批量确认入账 → DB 增 income posting → 首页当次会话反映（触发 (f)，D-153）。技术注记：无。
 
 **关联决定：** D-146（P7-04.B/C 导入评审读模型与决策面——本条修复其分类选项源）、D-143（入口决策同源 catalog 选项——收入选项与其同源，叶分类满足二级分类校验）、D-153（触发 (f)——设备回归的首页反映路径）。
+
+## D-155 A-DOC 批登记（2026-09-19）：阶段 7 正式状态同步（D-148～D-154 与 A-05 事实）
+
+**状态：** 已批准并交付（2026-09-19，A-DOC 批次：正式状态同步与 A-05 事实登记；本条为登记，不引入新裁决，不改变产品行为、schema、迁移与依赖——D-148～D-154 均为零 DDL，schema 维持 v30）。
+
+**决定：**
+
+1. **正式状态同步 D-148～D-154**：`CURRENT_STATE.md` 登记此前缺失的七条决定及其批次内容——D-148（A-PERF 导入候选读治理批：层0 统计刷新/层1 定向读/层2 主线程 catalog 读治理；B5 定向详情 ≤1s 门槛未获证实的诚实登记；OBS-APERF-INPUT-FREEZE 与 50k 冷读两条范围外观察项）、D-149（建行 XLS Android instrumented 验证、能力矩阵翻转与产品路径设备验收——四格式双平台可用性由此以设备证据确立）、D-150（A-DOC 批与 CCB fixture 内嵌 WriteAccess 隐私清理）、D-151（P7-02 置顶状态接线与确认页类型化呈现）、D-152（P7-02 提交后刷新链缺陷修复）、D-153（P7-03 触发集 (f) 增补）、D-154（P7-04 决策面按 face×方向渲染分类源）。本条闭合评审发现 D154CLO-007（`CURRENT_STATE.md` 尚无 D-148～D-154 记录，A-05 收口时必须同步）。
+2. **A-05 事实登记（部分完成，不整体 PASS）**：A-05 导入全链验收补链按 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §10.1 逐项登记——PASS 项：D01-1～D01-8/D01-10、D02-1～D02-3、D03-1、D03-4、D04-1、D04-2、D05（JVM 维度）、D06-1～D06-3；裁决登记项：D01-9 权限撤回缺证（PARTIAL 终态保留）、D03-2 不适用、D03-3 接受延期（JVM）、D04-3 接受延期（JVM）、D05 设备维度不适用；开放项：D04-4 批量中段进程中断注入待补证、§10.3 的 10k 级流水规模项待明确裁决、`A05BATCHITEM-STALE-SELECTION-001`（低，OPEN）。
+3. **状态口径修正**：`CURRENT_STATE.md` 的阶段 7 head 声明由 `c93e18a` 更新为 `23d3bd2`（D-150～D-154 各批及其文档批均已合入本地 `main` 并推送 `origin/main`）；D01 权限撤回向量由「归 D01 族后续设备窗口」更正为 A-05 裁决登记的 PARTIAL 终态（无承接任务）；四格式可用性与 D01 披露式闭合继续表述为两个不同命题（披露式闭合只证成诚实披露义务，可用性由 D-149 的设备证据另行确立）。
+
+**关联决定：** D-148～D-154（本条同步其正式状态，不改动其任何裁决）、D-150（A-DOC 批登记的结构先例与同一承接链）、D-146（D01 披露式闭合与四格式可用性区分口径的来源）、D-145（P7-03 触发集——D-153 增补的登记对象）。
