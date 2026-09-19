@@ -40,6 +40,7 @@ import com.unifiedledger.application.ImportRequestId
 import com.unifiedledger.application.ImportReviewRow
 import com.unifiedledger.application.ImportReviewRowsResult
 import com.unifiedledger.application.ImportStatusHistoryId
+import com.unifiedledger.application.IncomeCategoryOption
 import com.unifiedledger.application.ManageableAccountView
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
@@ -623,6 +624,13 @@ internal fun P503ImportCandidateDetailScreen(
     validation: P503ImportDecisionValidation,
     catalogAccounts: List<ManageableAccountView>,
     expenseCategories: List<ExpenseCategoryOption>,
+    // FIX-INCOME-FACE-1 (D-154): the income-side catalog options, the same authoritative leaf
+    // INCOME categories the entry income flow consumes (D-143 同源). Rendered by the decision
+    // form's 分类 block when the candidate's direction token is "in" — the commit factory
+    // dispatches on the same direction, so an in-direction candidate without these options was
+    // never confirmable on the product path (the direction lives on the candidate detail row,
+    // already in scope below, so no direction argument crosses the host call site).
+    incomeCategories: List<IncomeCategoryOption>,
     // A-PERF (P7-04 read-governance batch, spec section 2.3): true while the cached authoritative
     // catalog snapshot has not loaded yet (the honest 载入中 window). The decision form presents
     // the explicit placeholder instead of an empty-but-authoritative-looking catalog (S2-2);
@@ -693,6 +701,11 @@ internal fun P503ImportCandidateDetailScreen(
                         face = face,
                         catalogAccounts = catalogAccounts,
                         expenseCategories = expenseCategories,
+                        incomeCategories = incomeCategories,
+                        // FIX-INCOME-FACE-1 (D-154): the structured direction token from the
+                        // candidate detail row (the same token the commit factory dispatches on),
+                        // not a display string.
+                        directionToken = row.directionToken,
                         onUpdate = onUpdateDecisionField,
                     )
                     // P503DraftValidation pattern: the errors are evaluated once per render and the
@@ -763,12 +776,43 @@ private fun ImportDetailSelectionRow(
     }
 }
 
+/**
+ * FIX-INCOME-FACE-1 (D-154): one rendered 分类 option of the import decision form, the common
+ * shape of the expense and the income catalog option (both expose categoryId + label; the
+ * posting account stays a commit-path concern, never rendered here).
+ */
+internal data class ImportDecisionCategoryOption(
+    val categoryId: CategoryId,
+    val label: String,
+)
+
+/**
+ * FIX-INCOME-FACE-1 (D-154): the decision face's category source is direction-matched — the
+ * candidate's structured direction token "in" renders the income categories, every other token
+ * (including a null one) keeps the expense categories, the pre-fix behavior. The commit
+ * factories already dispatch on this same token (in → income commit, out → expense commit), so
+ * the form only mirrors what the confirmation will actually require. Pure so the direction
+ * vectors are JVM-asserted (spec section 3).
+ */
+internal fun importDecisionCategoryOptions(
+    directionToken: String?,
+    incomeCategories: List<IncomeCategoryOption>,
+    expenseCategories: List<ExpenseCategoryOption>,
+): List<ImportDecisionCategoryOption> =
+    if (directionToken == "in") {
+        incomeCategories.map { ImportDecisionCategoryOption(it.categoryId, it.label) }
+    } else {
+        expenseCategories.map { ImportDecisionCategoryOption(it.categoryId, it.label) }
+    }
+
 @Composable
 private fun ImportDecisionFormSection(
     form: ImportDecisionDraft,
     face: ImportDecisionFormFace,
     catalogAccounts: List<ManageableAccountView>,
     expenseCategories: List<ExpenseCategoryOption>,
+    incomeCategories: List<IncomeCategoryOption>,
+    directionToken: String?,
     onUpdate: (ImportDecisionFieldUpdate) -> Unit,
 ) {
     Text("补齐决策", style = MaterialTheme.typography.titleMedium)
@@ -777,7 +821,11 @@ private fun ImportDecisionFormSection(
     val creditAccounts = catalogAccounts.filter { it.kind == com.unifiedledger.domain.AccountKind.LIABILITY && it.active }
     if (face.requiresCategory) {
         Text("分类", style = MaterialTheme.typography.titleSmall)
-        expenseCategories.forEach { option ->
+        // FIX-INCOME-FACE-1 (D-154): the 分类 block renders the direction-matched category
+        // source — an "in" candidate gets the income options (leaf categories, satisfying
+        // SecondaryCategoryRequired), everything else keeps the expense options. The transfer
+        // faces (转出/转入) have no 分类 section and are untouched.
+        importDecisionCategoryOptions(directionToken, incomeCategories, expenseCategories).forEach { option ->
             TextButton(onClick = { onUpdate(ImportDecisionFieldUpdate.Category(option.categoryId)) }) {
                 Text(if (option.categoryId == form.categoryId) "● ${option.label}" else "○ ${option.label}")
             }

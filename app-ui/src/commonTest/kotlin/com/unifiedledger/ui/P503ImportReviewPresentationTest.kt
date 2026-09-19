@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.ExpenseCategoryOption
 import com.unifiedledger.application.ImportCandidateId
 import com.unifiedledger.application.ImportCompleteness
 import com.unifiedledger.application.ImportDuplicateCandidateId
@@ -17,6 +18,7 @@ import com.unifiedledger.application.ImportIntakeRecordDisposition
 import com.unifiedledger.application.ImportIntakeRecordSummary
 import com.unifiedledger.application.ImportPlatformKind
 import com.unifiedledger.application.ImportReviewRow
+import com.unifiedledger.application.IncomeCategoryOption
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
@@ -685,6 +687,52 @@ class P503ImportReviewPresentationTest {
         assertTrue(mixed.legAmountsEditable && mixed.requiresConfirmedAt)
 
         assertNull(importDecisionFormFace(row("incomplete", candidateKind = "transfer_flow_missing_leg")))
+    }
+
+    // ---- FIX-INCOME-FACE-1 (D-154): the decision face's direction-matched category source ----
+
+    private val incomeCategoryOptions =
+        listOf(
+            IncomeCategoryOption(
+                categoryId = CategoryId("category-income-salary"),
+                parentCategoryId = CategoryId("category-income"),
+                label = "Salary",
+                postingAccountId = AccountId("account-receiving"),
+            ),
+        )
+    private val expenseCategoryOptions =
+        listOf(
+            ExpenseCategoryOption(
+                categoryId = CategoryId("category-expense-food"),
+                parentCategoryId = CategoryId("category-expense"),
+                label = "Food",
+                postingAccountId = AccountId("account-expense"),
+            ),
+        )
+
+    @Test
+    fun inDirectionDecisionFaceRendersIncomeCategoryOptionsAndNotExpenseOptions() {
+        val options = importDecisionCategoryOptions("in", incomeCategoryOptions, expenseCategoryOptions)
+        assertEquals(listOf("category-income-salary"), options.map { it.categoryId.value })
+        assertEquals(listOf("Salary"), options.map { it.label })
+        // The expense source must never leak into an in-direction face: the pre-fix surface made
+        // every in-direction candidate unconfirmable (IncomeCategoryRequired at the spine).
+        assertFalse(options.any { it.categoryId == expenseCategoryOptions[0].categoryId })
+    }
+
+    @Test
+    fun outDirectionDecisionFaceRendersExpenseCategoryOptions() {
+        val options = importDecisionCategoryOptions("out", incomeCategoryOptions, expenseCategoryOptions)
+        assertEquals(listOf("category-expense-food"), options.map { it.categoryId.value })
+        assertFalse(options.any { it.categoryId == incomeCategoryOptions[0].categoryId })
+    }
+
+    @Test
+    fun nullDirectionTokenKeepsTheExpenseCategorySource() {
+        // directionToken is nullable on the read row; a missing token must never flip the face
+        // to the income source (the pre-fix behavior for an undirected row).
+        val options = importDecisionCategoryOptions(null, incomeCategoryOptions, expenseCategoryOptions)
+        assertEquals(listOf("category-expense-food"), options.map { it.categoryId.value })
     }
 
     // ---- decision form validation (P503DraftValidation pattern; E13 mixed gate) ----

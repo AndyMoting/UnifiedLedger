@@ -2917,3 +2917,13 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 入：`app-ui` 的宿主协调器/宿主与 commonTest，以及本条登记。出：零账务语义、零 `ledger-domain`/`ledger-application`/`ledger-data`、零 schema/迁移/依赖、零 Golden/fixture。自动验证：`:app-ui:jvmTest` 397/0/0/0（较基线 393 新增 4 向量：(f) 臂标记→落地恰一次消费 1、失败落地丢弃 1、与 (e) 同标记恰一次 1、共享置位门真值表含证伪顺序回归 1）、`:app-ui:ktlintCheck`、`:android-app:compileDebugKotlin` + `:desktop-app:compileKotlinJvm` 全绿。接线（`runImportBatchDispatch` completed 分支与 `checkImportUnknownItem` 核对落地跳两个触发点，均经共享置位门）位于 `@Composable` 宿主内、无既有 JVM 断言基建；纯判定以协调器向量覆盖，接线本身以设备回归覆盖并如实登记。设备回归（导入 CCB 样本 → 批量确认入账 → 首页月卡与流水当次会话立即反映确认结果、无需重启 → 月份切换正常（SelectMonth 域含新交易月）→ 重启持久）由合并后新 APK 的设备窗口（隔离 adb 5038）承担。技术注记：无。
 
 **关联决定：** D-145（P7-03.C 月度触发冻结集——本条为其唯一增补 (f)）、D-152（FIX-MONTH-1 arm/consume 机制——本条复用同一机制，不改机制）、D-146（P7-04.D 批量派发宿主决策——(f) 的触发点位于其完成跳）。
+
+## D-154 P7-04 A05IMPORT-INCOME-FACE-001 决策面裁决：导入候选决策面按方向渲染分类源
+
+**状态：** 已批准（2026-09-19，P7-04 A05IMPORT-INCOME-FACE-001 修复批随批登记的决策面呈现裁决，经缺陷报告独立取证与常设授权）。规格：`docs/specs/2026-09-19-p7-04-import-income-face-design.md`（approved）。
+
+**决定（FIX-INCOME-FACE-1，决策面分类源按方向匹配）：** 导入候选决策面（P503 候选详情「补齐决策」表单）的「分类」区按候选的结构化方向 token（候选 detail 行 `directionToken`，与 commit 工厂分派同一字段）渲染匹配的分类源：token "in" → 渲染收入分类选项（入口收入流同源的叶 INCOME 分类，满足 `SecondaryCategoryRequired` 校验）；其余 token（"out" 与 null）→ 渲染支出分类选项（现状不变）。理由：commit 工厂已按方向分派（ordinary_flow：in → 收入入账 commit，要求 INCOME 分类；out → 支出 commit，要求 EXPENSE 分类），而决策表单此前只渲染支出选项，in 方向 ordinary 候选无法获得合法决策，批量提交被 spine 域校验类型化拒绝（`IncomeCategoryRequired`，零写入）——收入方向导入候选在产品路径上永远不可确认。校验行为本身正确，缺陷在决策面不提供合法选项，故本条为纯呈现面修复：决策草稿/校验/commit 路径零改动（`ImportDecisionFieldUpdate.Category` 事件同型）；transfer_flow 面（转出/转入）无「分类」区，不变。
+
+**边界：** 入：`app-ui` 的 `P503ImportReview.kt`（方向匹配分类源纯选择器 + 决策表单「分类」区渲染 + 详情屏收入选项参数）、`P503App.kt`（决策面调用点传入收入分类选项；方向取自屏内既持有的候选 detail 行，不跨宿主调用点）、commonTest 方向向量，以及本条与规格登记。出：零账务语义、零 `ledger-domain`/`ledger-application`/`ledger-data`、零 schema/迁移/依赖/清单、零 Golden/fixture。自动验证：`:app-ui:jvmTest` 400/0/0/0（较基线 397 新增 3 向量：in 方向渲染收入选项且不含支出选项 1、out 方向渲染支出选项回归 1、null 方向 token 保持支出源回归 1）、`:app-ui:ktlintCheck`、`:android-app:compileDebugKotlin` + `:desktop-app:compileKotlinJvm` 全绿。「分类」区 ●/○ 选项渲染位于 `@Composable` 私有表单节内、无既有 JVM 断言基建；方向匹配选择器以纯函数向量覆盖，表单节接线以设备回归覆盖并如实登记。设备回归（合并后）：导入 CCB 样本 → in 方向候选（银联入账）决策区出现收入分类 → 以 A02FIX-SAL-C1 补全 → 批量确认入账 → DB 增 income posting → 首页当次会话反映（触发 (f)，D-153）。技术注记：无。
+
+**关联决定：** D-146（P7-04.B/C 导入评审读模型与决策面——本条修复其分类选项源）、D-143（入口决策同源 catalog 选项——收入选项与其同源，叶分类满足二级分类校验）、D-153（触发 (f)——设备回归的首页反映路径）。

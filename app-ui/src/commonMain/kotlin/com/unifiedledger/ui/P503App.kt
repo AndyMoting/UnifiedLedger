@@ -1861,6 +1861,12 @@ fun P503App(
                     catalogAccounts = cachedCatalogSnapshot?.manageableAccounts ?: emptyList(),
                     catalogLoading = cachedCatalogSnapshot == null,
                     expenseCategories = options.expenseCategories,
+                    // FIX-INCOME-FACE-1 (D-154): the income-side options for the decision face's
+                    // direction-matched 分类 block (in-direction candidates); same authoritative
+                    // projection the entry income flow consumes, pin-sorted like the expense list.
+                    // The direction itself lives on the candidate detail row the screen already
+                    // holds, so only the options cross this call site.
+                    incomeCategories = incomeOptions.incomeCategories,
                     onUpdateDecisionField = { update -> dispatch(P503UiEvent.UpdateImportDecisionField(update)) },
                     onToggleSelection = { candidateId ->
                         dispatch(P503UiEvent.ToggleImportCandidateSelection(candidateId))
