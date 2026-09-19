@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.ExpenseCategoryOption
 import com.unifiedledger.application.ImportCandidateId
 import com.unifiedledger.application.ImportCompleteness
 import com.unifiedledger.application.ImportDuplicateCandidateId
@@ -17,6 +18,7 @@ import com.unifiedledger.application.ImportIntakeRecordDisposition
 import com.unifiedledger.application.ImportIntakeRecordSummary
 import com.unifiedledger.application.ImportPlatformKind
 import com.unifiedledger.application.ImportReviewRow
+import com.unifiedledger.application.IncomeCategoryOption
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
@@ -685,6 +687,82 @@ class P503ImportReviewPresentationTest {
         assertTrue(mixed.legAmountsEditable && mixed.requiresConfirmedAt)
 
         assertNull(importDecisionFormFace(row("incomplete", candidateKind = "transfer_flow_missing_leg")))
+    }
+
+    // ---- FIX-INCOME-FACE-1 (D-154): the decision face's face-matched category source ----
+
+    private val incomeCategoryOptions =
+        listOf(
+            IncomeCategoryOption(
+                categoryId = CategoryId("category-income-salary"),
+                parentCategoryId = CategoryId("category-income"),
+                label = "Salary",
+                postingAccountId = AccountId("account-receiving"),
+            ),
+        )
+    private val expenseCategoryOptions =
+        listOf(
+            ExpenseCategoryOption(
+                categoryId = CategoryId("category-expense-food"),
+                parentCategoryId = CategoryId("category-expense"),
+                label = "Food",
+                postingAccountId = AccountId("account-expense"),
+            ),
+        )
+
+    @Test
+    fun inDirectionOrdinaryFaceRendersIncomeCategoryOptionsAndNotExpenseOptions() {
+        val options =
+            importDecisionCategoryOptions("ordinary_flow", "in", incomeCategoryOptions, expenseCategoryOptions)
+        assertEquals(listOf("category-income-salary"), options.map { it.categoryId.value })
+        assertEquals(listOf("Salary"), options.map { it.label })
+        // The expense source must never leak into an in-direction ordinary face: the pre-fix
+        // surface made every in-direction candidate unconfirmable (IncomeCategoryRequired).
+        assertFalse(options.any { it.categoryId == expenseCategoryOptions[0].categoryId })
+    }
+
+    @Test
+    fun outDirectionOrdinaryFaceRendersExpenseCategoryOptions() {
+        val options =
+            importDecisionCategoryOptions("ordinary_flow", "out", incomeCategoryOptions, expenseCategoryOptions)
+        assertEquals(listOf("category-expense-food"), options.map { it.categoryId.value })
+        assertFalse(options.any { it.categoryId == incomeCategoryOptions[0].categoryId })
+    }
+
+    @Test
+    fun nullDirectionTokenKeepsTheExpenseCategorySource() {
+        // directionToken is nullable on the read row; a missing token must never flip the face
+        // to the income source (the pre-fix behavior for an undirected row).
+        val options =
+            importDecisionCategoryOptions("ordinary_flow", null, incomeCategoryOptions, expenseCategoryOptions)
+        assertEquals(listOf("category-expense-food"), options.map { it.categoryId.value })
+    }
+
+    @Test
+    fun creditRefundFaceRendersExpenseOptionsEvenWithAnInDirectionToken() {
+        // Review F1 regression vector: refund rows carry the hardcoded "in" direction token,
+        // but the refund commit (createCreditRefundReceipt) requires the ORIGINAL expense's
+        // exact secondary EXPENSE category (RefundReceipt rejects kind != EXPENSE with
+        // InvalidRefundReceipt) — the face must keep the expense source or every refund
+        // confirmation fails at the spine.
+        val options =
+            importDecisionCategoryOptions("credit_expense", "in", incomeCategoryOptions, expenseCategoryOptions)
+        assertEquals(listOf("category-expense-food"), options.map { it.categoryId.value })
+        assertFalse(options.any { it.categoryId == incomeCategoryOptions[0].categoryId })
+    }
+
+    @Test
+    fun nonOrdinaryCategoryFacesAlwaysRenderExpenseOptionsRegardlessOfDirection() {
+        // The remaining requiresCategory faces (credit_expense direct profile, mixed_payment)
+        // commit an EXPENSE category in both directions — only ordinary_flow is
+        // direction-dependent (D-154 face×direction matrix).
+        listOf("credit_expense", "mixed_payment").forEach { kind ->
+            listOf("in", "out").forEach { direction ->
+                val options =
+                    importDecisionCategoryOptions(kind, direction, incomeCategoryOptions, expenseCategoryOptions)
+                assertEquals(listOf("category-expense-food"), options.map { it.categoryId.value }, "$kind/$direction")
+            }
+        }
     }
 
     // ---- decision form validation (P503DraftValidation pattern; E13 mixed gate) ----

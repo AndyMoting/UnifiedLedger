@@ -40,6 +40,7 @@ import com.unifiedledger.application.ImportRequestId
 import com.unifiedledger.application.ImportReviewRow
 import com.unifiedledger.application.ImportReviewRowsResult
 import com.unifiedledger.application.ImportStatusHistoryId
+import com.unifiedledger.application.IncomeCategoryOption
 import com.unifiedledger.application.ManageableAccountView
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
@@ -623,6 +624,14 @@ internal fun P503ImportCandidateDetailScreen(
     validation: P503ImportDecisionValidation,
     catalogAccounts: List<ManageableAccountView>,
     expenseCategories: List<ExpenseCategoryOption>,
+    // FIX-INCOME-FACE-1 (D-154, review F1): the income-side catalog options, the same
+    // authoritative leaf INCOME categories the entry income flow consumes (D-143 同源). Rendered
+    // by the decision form's 分类 block ONLY for the direction-dependent ordinary_flow face
+    // ("in" → OrdinaryFlowFormalFactory's income commit); every other requiresCategory face
+    // (credit_expense direct and refund profiles, mixed_payment) commits an EXPENSE category
+    // and keeps the expense options. The kind and direction tokens live on the candidate
+    // detail row, already in scope below, so neither argument crosses the host call site.
+    incomeCategories: List<IncomeCategoryOption>,
     // A-PERF (P7-04 read-governance batch, spec section 2.3): true while the cached authoritative
     // catalog snapshot has not loaded yet (the honest 载入中 window). The decision form presents
     // the explicit placeholder instead of an empty-but-authoritative-looking catalog (S2-2);
@@ -693,6 +702,12 @@ internal fun P503ImportCandidateDetailScreen(
                         face = face,
                         catalogAccounts = catalogAccounts,
                         expenseCategories = expenseCategories,
+                        incomeCategories = incomeCategories,
+                        // FIX-INCOME-FACE-1 (D-154, review F1): the structured kind + direction
+                        // tokens from the candidate detail row (the same fields the commit
+                        // path reads), not display strings.
+                        candidateKind = row.candidateKind,
+                        directionToken = row.directionToken,
                         onUpdate = onUpdateDecisionField,
                     )
                     // P503DraftValidation pattern: the errors are evaluated once per render and the
@@ -763,12 +778,52 @@ private fun ImportDetailSelectionRow(
     }
 }
 
+/**
+ * FIX-INCOME-FACE-1 (D-154): one rendered 分类 option of the import decision form, the common
+ * shape of the expense and the income catalog option (both expose categoryId + label; the
+ * posting account stays a commit-path concern, never rendered here).
+ */
+internal data class ImportDecisionCategoryOption(
+    val categoryId: CategoryId,
+    val label: String,
+)
+
+/**
+ * FIX-INCOME-FACE-1 (D-154, review F1): the decision face's category source is face-matched to
+ * what the commit path will actually require. ONLY the ordinary_flow face is direction
+ * dependent — OrdinaryFlowFormalFactory dispatches on the candidate's structured direction
+ * token ("in" → income commit requiring an INCOME category, "out" → expense commit). Every
+ * other requiresCategory face commits an EXPENSE category regardless of the direction token:
+ * credit_expense (direct profile) via the credit-expense commit; credit_expense with the
+ * refund profile via createCreditRefundReceipt, which requires the ORIGINAL expense's exact
+ * secondary EXPENSE category (RefundReceipt rejects kind != EXPENSE with InvalidRefundReceipt)
+ * and whose rows carry a hardcoded "in" direction token that must NOT flip the source; and
+ * mixed_payment via the mixed commit. So the arm decision is
+ * `candidateKind == "ordinary_flow" && directionToken == "in"` → income options; every other
+ * kind/token (including a null token) keeps the expense options, the pre-fix behavior. Pure so
+ * the face×direction matrix vectors are JVM-asserted (spec section 3).
+ */
+internal fun importDecisionCategoryOptions(
+    candidateKind: String,
+    directionToken: String?,
+    incomeCategories: List<IncomeCategoryOption>,
+    expenseCategories: List<ExpenseCategoryOption>,
+): List<ImportDecisionCategoryOption> =
+    if (candidateKind == "ordinary_flow" && directionToken == "in") {
+        incomeCategories.map { ImportDecisionCategoryOption(it.categoryId, it.label) }
+    } else {
+        expenseCategories.map { ImportDecisionCategoryOption(it.categoryId, it.label) }
+    }
+
 @Composable
 private fun ImportDecisionFormSection(
     form: ImportDecisionDraft,
     face: ImportDecisionFormFace,
     catalogAccounts: List<ManageableAccountView>,
     expenseCategories: List<ExpenseCategoryOption>,
+    incomeCategories: List<IncomeCategoryOption>,
+    candidateKind: String,
+    directionToken: String?,
     onUpdate: (ImportDecisionFieldUpdate) -> Unit,
 ) {
     Text("补齐决策", style = MaterialTheme.typography.titleMedium)
@@ -777,7 +832,12 @@ private fun ImportDecisionFormSection(
     val creditAccounts = catalogAccounts.filter { it.kind == com.unifiedledger.domain.AccountKind.LIABILITY && it.active }
     if (face.requiresCategory) {
         Text("分类", style = MaterialTheme.typography.titleSmall)
-        expenseCategories.forEach { option ->
+        // FIX-INCOME-FACE-1 (D-154, review F1): the 分类 block renders the face-matched
+        // category source — only the ordinary_flow face is direction-dependent ("in" → income
+        // leaf options, satisfying SecondaryCategoryRequired); the credit_expense (direct and
+        // refund profiles) and mixed_payment faces always render expense options. The transfer
+        // faces (转出/转入) have no 分类 section and are untouched.
+        importDecisionCategoryOptions(candidateKind, directionToken, incomeCategories, expenseCategories).forEach { option ->
             TextButton(onClick = { onUpdate(ImportDecisionFieldUpdate.Category(option.categoryId)) }) {
                 Text(if (option.categoryId == form.categoryId) "● ${option.label}" else "○ ${option.label}")
             }
