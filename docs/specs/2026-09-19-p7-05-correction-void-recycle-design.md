@@ -1,8 +1,8 @@
 # P7-05 修错、作废/删除、回收站恢复设计（设计门候选）
 
-状态：proposal（承接 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §5 P7-05；**本文为 proposal**：Q11/Q12 与 §6 决定点已由主代理于 2026-09-19 按常设授权裁决并登记 `docs/DECISIONS.md` D-156（§6/§7 为裁决记录），但本文在独立规格评审闭环前仍不构成产品行为、迁移、技术选型或发布授权；本文不写实现、不写迁移、不分配 schema 版本号）
+状态：approved（2026-09-19 设计门闭环：主代理按常设授权裁决 Q11/Q12 与 DP-1..DP-13 并登记 `docs/DECISIONS.md` D-156；独立规格评审与独立质量评审终局 **APPROVE WITH CONDITIONS**，P3 残余已随 draft-4 修复；§6/§7 为裁决记录）。实施仍按高风险路由由主代理另行建立实施批；本文不写实现、不写迁移、不分配 schema 版本号。
 
-**Revision:** draft-3（2026-09-19；规格评审修复轮：P705QUAL-001/002 有效谓词扩展到全部交易派生读面并登记 P7-03 读模型重冻结（§3.6）、P705QUAL-003 收窄 DP-10 至后续转账切片（首切片零对账暴露）、P705SPEC-001 更正 `CREDIT_REPAYMENT` 可达性，P705SPEC-002..015 与 P705QUAL-004..009 逐项落地；状态仍为 proposal，待评审闭环）。draft-2（2026-09-19）按主代理 D-156 裁决记录 Q11/Q12 批准与 DP-1..DP-13 结果、DP-10 授权范围与 DP-13 否决。draft-1（2026-09-19）工作基线 `main` = `23d3bd2`（P7-04 A05IMPORT-INCOME-FACE-001 收口批），schema v30；tracked 行号为该基线实读行号；`.local.md` 与 `local/artifacts/` 以主 checkout 为准、只读；示例全部匿名合成；引用不粘贴大段产品代码。
+**Revision:** draft-4（2026-09-19；终局评审修复并转 approved：DP-9 澄清（改名但 active 可准入）同步 D-156、stale 结果面单元格改 `StaleCurrentVersion` 变体、DP-10 收窄后两处过期表述更正（§1.2/§1.4）、`Rg08FixtureReplay.kt:1034` 补入枚举、V-15 降级为索引存在性/行为断言（不冻结 `EXPLAIN QUERY PLAN`）、§3.6 增列目录删除引用面（#15，有意不过滤）、事实/回执形状三处不一致修正（`fact_id` 声明 + `UNIQUE(ledger_id, transaction_id, fact_id)`、void/restore 合并为单一父表、回执 FK 父键声明）、A-DOC 清单补 `LedgerEntryReadModels.kt:18`、新增 V-23 谓词双表示等价、V-21 收窄为可观测项、V-08 增 transfer-free fixture 前置）。draft-3（2026-09-19；规格评审修复轮：P705QUAL-001/002 有效谓词扩展到全部交易派生读面并登记 P7-03 读模型重冻结（§3.6）、P705QUAL-003 收窄 DP-10 至后续转账切片（首切片零对账暴露）、P705SPEC-001 更正 `CREDIT_REPAYMENT` 可达性，P705SPEC-002..015 与 P705QUAL-004..009 逐项落地）。draft-2（2026-09-19）按主代理 D-156 裁决记录 Q11/Q12 批准与 DP-1..DP-13 结果、DP-10 授权范围与 DP-13 否决。draft-1（2026-09-19）工作基线 `main` = `23d3bd2`（P7-04 A05IMPORT-INCOME-FACE-001 收口批），schema v30；tracked 行号为该基线实读行号；`.local.md` 与 `local/artifacts/` 以主 checkout 为准、只读；示例全部匿名合成；引用不粘贴大段产品代码。
 
 **Scope:** 冻结 P7-05「修错、作废/删除、回收站恢复」的设计候选面：05.A 支持矩阵与契约、05.B 版本修正、05.C 逻辑作废与恢复、05.D 产品接线。**首个可实施切片 = 手工创建的 `EXPENSE`/`INCOME`（同一五字段形态）的备注/统计时间/金额/分类/资金账户修正 + 逻辑作废 + 回收站恢复**；转账、借贷、导入关联交易各自为后续切片，各有独立支持矩阵行与独立决定点（§3.1、§6）。逻辑作废首版不做永久清除。
 
@@ -34,7 +34,7 @@
 
 > **边界：** 余额、正式交易与 report financial 维度零变化；不删行、不回溯（12 竖井零改动、D-092 不退役）……
 
-（`docs/DECISIONS.md:1833`。）其授权范围为 correction port 的 evidence link 失效/后继链接/投影受控 supersede 与 MISSING/DIFFERENCE 结果态（`:1822-1831`）。**D-113 明确不改变交易版本与余额，不是通用编辑 API**；本批不得以它为依据写入 `ledger_transaction`/`transaction_version`/`posting_set`/`posting` 或任何余额/报表维度。另：D-113 UQ-1 已把「版本替代自动触发与补充资料重匹配的跨层集成」登记为**后续独立批**（`:1822`）——P7-05 的金额/账户修正正是该延期项的落地批，其组合方式属决定点 DP-10。
+（`docs/DECISIONS.md:1833`。）其授权范围为 correction port 的 evidence link 失效/后继链接/投影受控 supersede 与 MISSING/DIFFERENCE 结果态（`:1822-1831`）。**D-113 明确不改变交易版本与余额，不是通用编辑 API**；本批不得以它为依据写入 `ledger_transaction`/`transaction_version`/`posting_set`/`posting` 或任何余额/报表维度。另：D-113 UQ-1 已把「版本替代自动触发与补充资料重匹配的跨层集成」登记为**后续独立批**（`:1822`）；DP-10 复审收窄后，该延期集成**不在首切片落地**——首切片手工 `EXPENSE`/`INCOME` 无对账/证据行，不组合该 port，组合授权延后至转账切片单独裁决（§6 DP-10、D-156 修订）。
 
 ### 1.3 版本变更词汇与产品 SQL 现状
 
@@ -50,7 +50,7 @@
 | 分类 | owner | 本设计写入许可 |
 | --- | --- | --- |
 | 只读引用（不改写冻结行） | `ledger_transaction`、`transaction_version`、`posting_set`、`posting`、`ledger_transaction_current_version`（`Ledger.sq:1-63`）；`manual_*_request`/`confirmed_*_receipt`（`:65-262`） | 不写 |
-| **对账 owner（绝不写）** | `posting_reconciliation`(`:8063`)、`posting_reconciliation_history`(`:8074`)、`evidence_link`(`:8029`)、`evidence_link_history`(`:8050`)、`evidence_projection`(`:8096`)、`reconciliation_correction_snapshot`(`:8143`)；guard 触发器 `:8197-8201` | 作废/恢复**零写入**；仅 05.B 受影响资金腿修正按 DP-10 裁决后经 D-113 授权面写入 |
+| **对账 owner（绝不写）** | `posting_reconciliation`(`:8063`)、`posting_reconciliation_history`(`:8074`)、`evidence_link`(`:8029`)、`evidence_link_history`(`:8050`)、`evidence_projection`(`:8096`)、`reconciliation_correction_snapshot`(`:8143`)；guard 触发器 `:8197-8201` | 作废/恢复**零写入**；首切片修正亦零写入（无对账/证据行可失效；DP-10 已收窄，D-113 组合授权延后至转账切片） |
 | **借贷本金历史（绝不写）** | `lending_position`(`:196`)、`lending_position_history`(`:209`)，append-only guard `:225-228` | 不写（DP-4） |
 | **导入 owner（绝不写）** | `import_confirmation`(`:7767`；`UNIQUE(ledger_id, candidate_id)` `:7778`)、`import_receipt`(`:7784`)、`import_candidate_status_history`(`:7698`) 与终态守卫 `:8264-8273` | 不写（DP-5） |
 
@@ -79,7 +79,7 @@
 
 ### 2.2 首切片范围（冻结）
 
-**范围内：** 仅**手工创建**的 `EXPENSE`/`INCOME`（创建入口 = `MANUAL_CREATED` 或 `UNMARKED`，`LedgerEntryReadModels.kt:63-69`）的（a）备注修正、（b）`statisticsAt` 修正、（c）金额/分类/资金账户修正、（d）逻辑作废、（e）回收站列出与恢复；application 端口与用例、ledger-data 新增非 `rgXX_` 产品表与加性迁移、两端组合根接线、`app-ui` 详情/回收站最小面、V-01..V-22。
+**范围内：** 仅**手工创建**的 `EXPENSE`/`INCOME`（创建入口 = `MANUAL_CREATED` 或 `UNMARKED`，`LedgerEntryReadModels.kt:63-69`）的（a）备注修正、（b）`statisticsAt` 修正、（c）金额/分类/资金账户修正、（d）逻辑作废、（e）回收站列出与恢复；application 端口与用例、ledger-data 新增非 `rgXX_` 产品表与加性迁移、两端组合根接线、`app-ui` 详情/回收站最小面、V-01..V-23。
 
 **范围外（本批明确不做，逐项冻结）：** 转账、借贷（LEND/COLLECT）、退款与导入关联交易（含导入创建的交易）的修正/作废/恢复；`occurredAt` 修改；kind 修改；永久删除/清除；批量作废；作废撤销（void 后的再作废或二次循环，首切片每笔最多一次作废 + 一次恢复）；多币种；自动重试；`rgXX_` 竖井与 golden 的任何改动。
 
@@ -102,7 +102,7 @@
 | `ACCOUNT_TRANSFER` | 待定 | 待定 | 待定（含手续费腿） | 待定 | 后续切片 | DP-2 |
 | `LEND`/`COLLECT` | 待定 | 待定 | 待定 | 待定（本金历史硬墙） | 后续切片 | DP-4 |
 | `REFUND_RECEIPT` | 待定 | 待定 | 待定 | 待定（关联退款场景） | 后续切片 | DP-13 |
-| `OPENING_BALANCE`/`STORED_VALUE_*`/`PREPAID_*`/`BALANCE_ADJUSTMENT` | 不支持 | 不支持 | 不支持 | 不支持 | 不交付 | 产品组合根无可达创建路径（`ledger_transaction.kind` CHECK `Ledger.sq:4` 仅五值，其余经 `canonical_kind` 表达；产品类型权威见 `ARCHITECTURE.md:81`（D-144）；复核：`TransactionKind.OPENING_BALANCE`/`STORED_VALUE*`/`PREPAID*`/`BALANCE_ADJUSTMENT` 在 `ledger-application`/`ledger-data` commonMain 与两端组合根的非 RG 路径零命中，创建仅存在于 `Rg09`/`Rg10`/`Rg11` 回放）；**显式说明不支持**，不得静默 no-op |
+| `OPENING_BALANCE`/`STORED_VALUE_*`/`PREPAID_*`/`BALANCE_ADJUSTMENT` | 不支持 | 不支持 | 不支持 | 不支持 | 不交付 | 产品组合根无可达创建路径（`ledger_transaction.kind` CHECK `Ledger.sq:4` 仅五值，其余经 `canonical_kind` 表达；产品类型权威见 `ARCHITECTURE.md:81`（D-144）；复核：`TransactionKind.OPENING_BALANCE`/`STORED_VALUE*`/`PREPAID*`/`BALANCE_ADJUSTMENT` 在 `ledger-application`/`ledger-data` commonMain 与两端组合根的非 RG 路径零命中，创建仅存在于 `Rg08FixtureReplay.kt:1034`（OPENING_BALANCE）与 `Rg09`/`Rg10`/`Rg11` 回放）；**显式说明不支持**，不得静默 no-op |
 
 - 冻结：**永不修改 kind**（含 `canonical_kind`）；修正后的交易保持原 kind、原 `occurredAt`、原创建身份与来源关系。
 - 不支持类型/切片一律**类型化拒绝零写入**（`P705_KIND_NOT_SUPPORTED`/`P705_CREATION_LINEAGE_NOT_SUPPORTED`），不得以「看起来无效果」静默通过；支持矩阵行是实施与验收的分母，未交付切片继续 OPEN，不能用普通支出通过宣布全批完成（计划 `:74`）。
@@ -120,12 +120,12 @@
 ### 3.3 作废与恢复契约（05.C）
 
 - **语义（冻结）**：作废 = 追加一条不可变事实，使该交易从**全部有效派生面**移除；不删除、不改写、不创建补偿交易、不改变任何历史行。恢复 = 追加第二条事实使原交易重新有效；每笔交易首切片最多一次作废 + 一次恢复（`sequence ≤ 2`）。
-- **有效谓词（冻结）**：交易有效 ⟺ 其作废/恢复事实序列的最后一条不是「作废」；无事实 = 有效。谓词只有一处定义（SQL 命名查询/视图片段），所有有效面共用；不得各面各写一份。
+- **有效谓词（冻结）**：交易有效 ⟺ 其作废/恢复事实序列的最后一条不是「作废」；无事实 = 有效。谓词只有一处定义（SQL 命名查询/视图片段），所有有效面共用；不得各面各写一份。SQL 谓词与领域 `TransactionVoidState.isEffective`（§4.1）必须逐例等价，由 V-23 断言（SQL 派生有效集 == 领域派生有效集）。
 - **有效时间口径（DP-3，D-156 批准）**：作废**追溯移除**原交易在其 `statistics_at` 所属月份的效果；作废日不产生任何新的月份/现金流/分类效果。恢复同样不产生新效果，只让原交易按原 `statistics_at` 重新参与。
 - **恢复重校验（冻结）**：恢复必须按**当前**目录重校验该交易当前版本的账户/分类引用；不可准入时类型化拒绝（`P705_CATALOG_REFERENCE_NOT_ADMISSIBLE`）且交易保持作废，**不得盲目恢复旧状态、不得静默替换引用、不得改写历史版本**。**仅「停用/不可准入」构成拒绝理由**：改名但 active 的账户/分类仍可准入（目录改名只改变显示名，稳定 ID 不变，`ACCOUNTING_RULES.md:261`），不构成拒绝。恢复零写入对账 owner、证据链接、借贷历史与导入 owner（§1.4）。
 - **作废前置条件（冻结）**：交易存在且在当前账本；交易有效（未作废）；交易为支持矩阵内的手工创建 `EXPENSE`/`INCOME`；**该交易不存在有效关联退款**（DP-13 首切片否决，登记后续切片）；**该交易尚未作废过**（DP-8 深度 ≤ 2：恢复后再次作废 → `P705_VOID_CYCLE_EXHAUSTED` 类型化拒绝零写入）；必须明确确认；必须携带原因（回收站要列明原因/时间/依赖）。任一不满足 → 类型化拒绝零写入。
-- **原因（冻结）**：必填，取冻结的类型化码集 + 可选有界说明；长度上限在实施时冻结并在规格修订中登记。原因与说明**不得进入日志、诊断或崩溃上报**（仅存于事实行、经回收站读路径展示）；领域类型（§4.1）是该信息的唯一替代表达，存储形式与领域形式必须有等价性测试（V-22）。
-- **恢复前置条件（冻结）**：交易存在、当前为作废态、尚未恢复过（DP-8 深度 ≤ 2）、目录重校验通过、明确确认。
+- **原因（冻结）**：必填，取冻结的类型化码集 + 可选有界说明；长度上限在实施时冻结并在规格修订中登记。原因与说明**不得进入日志或测试失败消息**（仅存于事实行、经回收站读路径展示；当前产品无崩溃上报面，该维度不可观测、不作为断言）；领域类型（§4.1）是该信息的唯一替代表达，存储形式与领域形式必须有等价性测试（V-22）。
+- **恢复前置条件（冻结）**：交易存在、当前为作废态、尚未恢复过（DP-8 深度 ≤ 2）、目录重校验通过、必须携带原因（DP-11：作废/恢复同规则）、明确确认。
 - **幂等（冻结）**：同 requestId 同快照 replay 返回原 receipt（`NoChange`）；同 requestId 不同快照 → `RequestIdentityConflict` 零写入；失败/拒绝整事务回滚（claim 一并回滚，身份可重试，沿 D-098 领域 4 语义）。
 - **不写对账/证据/导入/借贷**：作废与恢复对 §1.4 表零写入，由行级/触发器断言证明（V-12、V-15）。
 - **永久删除**：首版不提供（计划 Q12 推荐）；若未来需要，须另立隐私/证据保留与不可逆操作门（DP-6）。
@@ -166,8 +166,9 @@
 | 12 | 置顶偏好 | `SqlDelightEntryPreferenceStore.kt` | 排序 | 不适用（非经济面） |
 | 13 | 对账/证据投影 | `SqlDelightP408ReconciliationStore.kt`/`SqlDelightEvidenceProjectionStore.kt` | 对账面 | 首切片无行；作废/恢复零写入 |
 | 14 | RG 回放竖井 | `rgXX_` stores | RG oracle | 不适用（冻结竖井零改动） |
+| 15 | 目录删除引用面 | `catalogReferencedPostingAccounts`（`Ledger.sq:9518-9519`）→ `SqlDelightCatalogStore.kt:566` | P7-01 目录管理（「无任何经济引用」才可删除） | **不过滤（有意决定，非遗漏）**：作废交易的 posting 仍计为经济引用、继续阻止账户删除——历史行保留，引用面必须与历史一致；作废不解除引用，用户须先恢复再按 P7-01 处置（若未来要允许删除，须另立决定点并明确历史归属） |
 
-**P7-03 读模型重冻结（P705QUAL-004）**：本批**重开并重冻结** D-145 的读模型语义——D-145 冻结的「current-version 即有效」重冻结为「current-version **且未被作废**」。受影响锚点：#4 `loadCurrentRows`/`currentVersionRowsForLedger`、#4 `QueryLedgerCurrentState.transactions`/`balances`、#5 `SummarizeLedgerActivity` 输入语义、#1-#3 `loadLedgerEntryRows`/`ledgerEntryRowsForLedger`。D-145 登记的 22 个既有测试锚（`SummarizeLedgerActivityTest` 7 / `QueryLedgerCurrentStateTest` 9 / `SqlDelightLedgerCurrentStateReadAdapterTest` 6）在**无作废事实的账本上逐值不变**（谓词为 no-op），故不重写既有期望、只新增向量；`LedgerEntryReadModels.kt:18`（R-7 锚点）指的是既有断言不改写，与本重冻结不冲突。D-145 规格文档中的「current-version 即有效」表述与 `ACCOUNTING_RULES.md:299` 的读模型口径随本批同步重述（A-DOC 类同步，属实施批范围）。
+**P7-03 读模型重冻结（P705QUAL-004）**：本批**重开并重冻结** D-145 的读模型语义——D-145 冻结的「current-version 即有效」重冻结为「current-version **且未被作废**」。受影响锚点：#4 `loadCurrentRows`/`currentVersionRowsForLedger`、#4 `QueryLedgerCurrentState.transactions`/`balances`、#5 `SummarizeLedgerActivity` 输入语义、#1-#3 `loadLedgerEntryRows`/`ledgerEntryRowsForLedger`。D-145 登记的 22 个既有测试锚（`SummarizeLedgerActivityTest` 7 / `QueryLedgerCurrentStateTest` 9 / `SqlDelightLedgerCurrentStateReadAdapterTest` 6）在**无作废事实的账本上逐值不变**（谓词为 no-op），故不重写既有期望、只新增向量。**A-DOC 同步清单（实施批范围）**：D-145 规格文档中的「current-version 即有效」表述、`ACCOUNTING_RULES.md:299` 的读模型口径、以及 `LedgerEntryReadModels.kt:18` 的 "Existing [CurrentVersionRow] loads are untouched" 注释（本批后不再成立）必须随实施批同步重述。
 
 ## 4. 领域 / 应用 / 持久化 / UI 契约
 
@@ -189,7 +190,7 @@
 | `P705_CREATION_LINEAGE_NOT_SUPPORTED` | 导入创建的交易（首切片不含，DP-5） | Rejected，零写入 |
 | `P705_REFUND_LINKED_VOID_NOT_SUPPORTED` | 作废目标存在有效关联退款（DP-13 首切片否决；原交易作废后退款的报表归属语义未冻结） | Rejected，零写入，登记后续切片 |
 | `P705_FIELD_NOT_SUPPORTED` | 请求含 `occurredAt`/kind/未冻结字段 | Rejected，零写入 |
-| `P705_STALE_CURRENT_VERSION` | `expectedCurrentVersionId` ≠ 当前版本 | Rejected，零写入，不自动重试 |
+| `P705_STALE_CURRENT_VERSION` | `expectedCurrentVersionId` ≠ 当前版本（**以结果族独立变体 `StaleCurrentVersion` 表达，见 §3.2「结果面冻结」**） | `StaleCurrentVersion`，零写入，不自动重试 |
 | `P705_TRANSACTION_VOIDED` | 对作废交易发起修正/作废（DP-8 裁决前一律拒绝） | Rejected，零写入 |
 | `P705_TRANSACTION_NOT_VOIDED` | 对有效交易发起恢复，或恢复已恢复过的交易 | Rejected，零写入 |
 | `P705_VOID_CYCLE_EXHAUSTED` | 交易已作废并已恢复，再次作废（DP-8 深度 ≤ 2） | Rejected，零写入 |
@@ -204,14 +205,14 @@
 
 ### 4.3 持久化形状（`ledger-data`；只冻结形状，不分配版本号、不写迁移）
 
-- **作废/恢复事实 owner（新增，append-only）**：`transaction_void_fact`——`(ledger_id, transaction_id, sequence)` 主键；`fact_kind ∈ {void, restore}`；`reason_code`（必填，冻结码集）+ 可选有界 `reason_note`；`request_id`、`confirmation_id`、`created_at`；`UNIQUE(ledger_id, request_id)`（一请求一事实）；FK `(ledger_id, request_id)` → 对应 request 表，FK `(transaction_id, ledger_id)` → `ledger_transaction`。守卫：`sequence` 必须为当前最大 + 1（禁止跳号/回填）；`void` 只能作为 sequence 1、`restore` 只能紧随 `void`（交替，首切片深度 ≤ 2）；`BEFORE UPDATE`/`BEFORE DELETE` 双 ABORT 触发器（沿 `lending_position_history_guard_*` `Ledger.sq:225-228` 与 `evidence_link_guard_*` `:8197-8198` 款）。
-  - **谓词服务（冻结）**：有效谓词 = 最新事实不是 `void`（无事实 = 有效）；事实表主键前缀 `(ledger_id, transaction_id)` 直接服务「按交易取最新事实」，无需为该谓词新增索引（V-15 断言查询计划命中 PK 前缀）。
+- **作废/恢复事实 owner（新增，append-only）**：`transaction_void_fact`——`(ledger_id, transaction_id, sequence)` 主键；`fact_id TEXT NOT NULL` + `UNIQUE(ledger_id, transaction_id, fact_id)`（回执 FK 的父键）；`fact_kind ∈ {void, restore}`；`reason_code`（必填，冻结码集）+ 可选有界 `reason_note`；`request_id`、`confirmation_id`、`created_at`；`UNIQUE(ledger_id, request_id)`（一请求一事实）；FK `(ledger_id, request_id, fact_kind)` → `transaction_void_request(ledger_id, request_id, fact_kind)`（**单一父表**，void/restore 合并见下），FK `(transaction_id, ledger_id)` → `ledger_transaction`。守卫：`sequence` 必须为当前最大 + 1（禁止跳号/回填）；`void` 只能作为 sequence 1、`restore` 只能紧随 `void`（交替，首切片深度 ≤ 2）；`BEFORE UPDATE`/`BEFORE DELETE` 双 ABORT 触发器（沿 `lending_position_history_guard_*` `Ledger.sq:225-228` 与 `evidence_link_guard_*` `:8197-8198` 款）。
+  - **谓词服务（冻结）**：有效谓词 = 最新事实不是 `void`（无事实 = 有效）；事实表主键前缀 `(ledger_id, transaction_id)` 直接服务「按交易取最新事实」，无需为该谓词新增索引（V-15 断言索引存在性与 PK 前缀的服务性；**不断言 `EXPLAIN QUERY PLAN`**——仓库无该先例且计划文本跨 SQLite 版本脆弱，见 V-15）。
   - **回收站排序索引（冻结）**：新增索引 `(ledger_id, created_at DESC, transaction_id)`，服务回收站按作废时间倒序稳定排序（`Ledger.sq` 现无此索引）；排序键 = `(created_at DESC, transaction_id ASC)` 确定性全序（同刻多笔可稳定复现）。
   - **统计刷新（冻结）**：作废/恢复提交后沿用既有权威刷新链，月度/余额/Analysis 面必须在同一次刷新中重读（不允许只刷局部面），沿 D-153 触发 (f) 语义。
 - **请求/回执（新增，claim-first；快照列与唯一性冻结）**：
-  - 每族一对 request/receipt：`transaction_correction_request`/`receipt`、`transaction_void_request`/`receipt`、`transaction_restore_request`/`receipt`。
-  - **request 快照列（逐族冻结，规范化后逐列比较）**：correction = `(ledger_id, request_id, transaction_id, expected_current_version_id, note, statistics_at, amount_minor, currency_code, currency_precision, category_id, funding_account_id, confirmation_marker = 'explicit_manual_save')`——存**修正后的完整目标状态**（非差分）；规范化 = `statistics_at` 取 `Instant.toString()` UTC 串、金额取 minor units + 币种码 + 精度、ID 取稳定 ID 原文、`note` 原文（可空按 `NULL`）。void = `(ledger_id, request_id, transaction_id, reason_code, reason_note, confirmation_marker)`；restore = `(ledger_id, request_id, transaction_id, confirmation_marker)`。比较排除生成列（`confirmation_id`/`version_id`/`fact_id`/`created_at`）。
-  - **receipt 唯一性（冻结；不照抄创建回执）**：创建回执含 `transaction_id UNIQUE`（`confirmed_expense_receipt` `Ledger.sq:79-91`），照抄会阻断同一交易的第二次修正。故 `transaction_correction_receipt` = `PRIMARY KEY (ledger_id, request_id)`、`confirmation_id UNIQUE`、`version_id UNIQUE`、`transaction_id` **不唯一**（同交易可多次修正、各得独立版本）；FK = `(ledger_id, request_id)` → correction request（`ON DELETE CASCADE`）、`(transaction_id, version_id, ledger_id)` → `transaction_version`、`(transaction_id, expected_current_version_id, ledger_id)` → `transaction_version`（沿 `confirmed_transaction_note_update_receipt` `Ledger.sq:105-124` 形状）。`transaction_void_receipt`/`transaction_restore_receipt` = `PRIMARY KEY (ledger_id, request_id)`、`confirmation_id UNIQUE`、`fact_id UNIQUE`、`transaction_id` **不唯一**；FK = `(ledger_id, request_id)` → 对应 request（`ON DELETE CASCADE`）、`(ledger_id, transaction_id, fact_id)` → `transaction_void_fact`。
+  - 每族一对 request/receipt：`transaction_correction_request`/`receipt`、`transaction_void_request`/`receipt`（**void 与 restore 合并为一族**，以 `fact_kind ∈ {void, restore}` 判别并纳入唯一键——SQLite 无法用单个 FK 指向两张父表，合并后事实表/回执的 FK 只有一个父表）。
+  - **request 快照列（逐族冻结，规范化后逐列比较）**：correction = `(ledger_id, request_id, transaction_id, expected_current_version_id, note, statistics_at, amount_minor, currency_code, currency_precision, category_id, funding_account_id, confirmation_marker = 'explicit_manual_save')`——存**修正后的完整目标状态**（非差分）；规范化 = `statistics_at` 取 `Instant.toString()` UTC 串、金额取 minor units + 币种码 + 精度、ID 取稳定 ID 原文、`note` 原文（可空按 `NULL`）。void/restore 共用一族 = `(ledger_id, request_id, transaction_id, fact_kind, reason_code, reason_note, confirmation_marker)`（restore 亦必填原因，DP-11）。比较排除生成列（`confirmation_id`/`version_id`/`fact_id`/`created_at`）。
+  - **receipt 唯一性（冻结；不照抄创建回执）**：创建回执含 `transaction_id UNIQUE`（`confirmed_expense_receipt` `Ledger.sq:79-91`），照抄会阻断同一交易的第二次修正。故 `transaction_correction_receipt` = `PRIMARY KEY (ledger_id, request_id)`、`confirmation_id UNIQUE`、`version_id UNIQUE`、`transaction_id` **不唯一**（同交易可多次修正、各得独立版本）；FK = `(ledger_id, request_id)` → correction request（`ON DELETE CASCADE`）、`(transaction_id, version_id, ledger_id)` → `transaction_version`、`(transaction_id, expected_current_version_id, ledger_id)` → `transaction_version`（沿 `confirmed_transaction_note_update_receipt` `Ledger.sq:105-124` 形状）。`transaction_void_receipt` = `PRIMARY KEY (ledger_id, request_id)`、`confirmation_id UNIQUE`、`fact_id UNIQUE`、`transaction_id` **不唯一**、`fact_kind ∈ {void, restore}`；FK = `(ledger_id, request_id, fact_kind)` → `transaction_void_request`（单一父表，`ON DELETE CASCADE`）、`(ledger_id, transaction_id, fact_id)` → `transaction_void_fact`（**父键 = 事实表 `UNIQUE(ledger_id, transaction_id, fact_id)`**，已在上方声明，满足 SQLite 对 FK 父键必须是 PK/UNIQUE 的要求）。
   - **孤儿防护（冻结）**：事实行的 request FK、回执行的 fact/version FK 与 claim 同事务写入；失败/拒绝整事务回滚（claim 一并回滚，D-098 领域 4），故不存在「无 request 的事实」或「无事实/版本的回执」；`UNIQUE(ledger_id, request_id)` 保证一请求至多一事实/一版本。
   - **claim 语义（冻结）**：`INSERT ... ON CONFLICT DO NOTHING` + `lastStatementChangedRowCount()`；**未赢得 claim 时先按 request 身份比对快照**（相等 → `NoChange` 原 receipt；不等 → `RequestIdentityConflict`），**只有赢得 claim 的请求才求值 CAS**（消除「成功后重放携带新读到的 CAS token」的歧义，§3.2）。
 - **版本复制（新增 SQL）**：以 `expected_current_version_id` 为条件、`INSERT INTO transaction_version ... SELECT ... version_number + 1, <new_posting_set_id>, occurred_at（逐字复制）, statistics_at（请求值，未提交则逐字复制）, effective_at（逐字复制）, note ...` 复制当前版本并绑定新 posting set；`lastStatementChangedRowCount() == 1` 失败即 `P705_STALE_CURRENT_VERSION` 零写入；随后 `compareAndSetCurrentVersion`（`Ledger.sq:2127`）推进 current-version，`lastStatementChangedRowCount() == 1` 为硬断言（沿 `SqlDelightConfirmedTransactionNoteUpdateCommitPort.kt:47-64` 先例）。新 posting set 与 posting 行必须同事务插入且逐币种平衡。
@@ -224,9 +225,9 @@
 - 差异预览必须逐字段显示旧值/新值（金额带符号与币种、分类/账户显示当前名、时间显示两个时区语义），确认页显示「历史版本保留、旧版本失效」的说明；作废确认页显示原因与影响面（该交易将从月度与流水中移除、可在回收站恢复）；恢复确认页显示目录重校验结果。
 - 作废交易在有效面（月度/流水/详情/HOME 余额/Analysis）不可见；回收站列表按 `(作废时间 DESC, transaction_id ASC)` 稳定排序，逐行展示**原因、作废时间、依赖说明**（依赖 = 该交易当前版本引用的账户/分类当前名与可准入状态、是否关联退款、创建入口），恢复前展示目录重校验结果与「不可准入」原因；恢复成功后回到有效面并由权威回读刷新。
 - **「历史差异」的冻结解释（P705SPEC-010）**：05.D 的「历史差异」= **提交前的差异预览**（旧值/新值逐字段），首切片**不提供事后版本历史视图**；旧版本数据始终保留且可经持久化层审计（V-02），但产品面不新增历史列表/对比页。若后续批次要提供事后历史视图，须另立决定点与向量（不在首切片）。
-- **原因隐私（冻结）**：作废/恢复原因与说明只存于事实行、只经回收站读路径展示；**不得进入日志、诊断、崩溃上报或测试失败消息**（V-21 断言）。
+- **原因隐私（冻结）**：作废/恢复原因与说明只存于事实行、只经回收站读路径展示；**不得进入日志或测试失败消息**（V-21 断言；当前产品无崩溃上报面，该维度不可观测）。
 
-## 5. 验收矩阵（V-01..V-22；首切片）
+## 5. 验收矩阵（V-01..V-23；首切片）
 
 | # | 场景 | 期望 | 关联 | 证据 |
 | --- | --- | --- | --- | --- |
@@ -237,27 +238,28 @@
 | V-05 | 金额修正 100 → 80 | 只有 80 有效（余额/月度/分类/Analysis）；修改日无虚假 20 现金流；旧版本 100 仍保留可查；`occurred_at`/`effective_at` 逐字未变（§3.2 写形） | §3.2、`ACCOUNTING_RULES.md:249` | 自动 |
 | V-06 | 修正保留版本历史 | 新版本 `version_number + 1`；旧版本、旧 posting set 不被覆盖；CAS 以 `expectedCurrentVersionId` 为条件 | §3.2、§4.3 | 自动 |
 | V-07 | 跨月修正 | 改 `statisticsAt` 后效果只计正确月份；`occurredAt` 与来源凭证时间不变 | §3.2、`ACCOUNTING_RULES.md:206` | 自动 |
-| V-08 | 对账暴露为零（首切片） | 手工 `EXPENSE`/`INCOME` 修正前后 `posting_reconciliation*`/`evidence_link*` 行数恒为 0 且零写入；未变化资金腿零改动；`P705_MATCHED_FUNDING_LEG_CHANGED` 不可达（防御性死码） | §3.2（DP-10 收窄）、`ACCOUNTING_RULES.md:253`、D-048 | 自动 |
+| V-08 | 对账暴露为零（首切片；**前置：transfer-free fixture**） | 在**不含 ACCOUNT_TRANSFER 的 fixture** 上，手工 `EXPENSE`/`INCOME` 修正前后 `posting_reconciliation*`/`evidence_link*` 行数恒为 0 且零写入；未变化资金腿零改动；`P705_MATCHED_FUNDING_LEG_CHANGED` 不可达（防御性死码）。含转账的账本以 V-12 的「逐值不变」为准（该形式不依赖 fixture 无转账） | §3.2（DP-10 收窄）、`ACCOUNTING_RULES.md:253`、D-048 | 自动 |
 | V-09 | stale CAS 冲突（新 requestId） | 新 requestId 携带旧 `expectedCurrentVersionId` → `StaleCurrentVersion`（`P705_STALE_CURRENT_VERSION`）零写入；不自动改用最新版本；重读后可重试 | §3.2 | 自动 |
 | V-10 | 幂等、身份冲突与求值顺序 | 三类操作同 requestId 同快照 replay → 原 receipt 零新增；同 requestId 不同快照（含成功后重放携带新读到的 CAS token）→ 冲突零写入；**replay 判定先于 CAS 求值**（不误判 stale） | §3.2、§4.3 | 自动 |
 | V-11 | 恢复按当前目录重校验 | 资金账户/分类**停用**后恢复 → 类型化拒绝且交易保持作废；**改名但 active** 的引用仍可准入（不构成拒绝）；不盲目恢复旧状态、不静默替换引用 | §3.3 | 自动 |
 | V-12 | 对账/借贷/导入 owner 零写入 | 作废/恢复/修正后 `posting_reconciliation*`、`evidence_link*`、`evidence_projection`、`lending_position*`、`import_confirmation`/`import_receipt`/`import_candidate_status_history` 行数与内容逐值不变（首切片这些 owner **本就无行**，断言同时证明「无行可写」与「未写」） | §1.4、§3.2、§3.3 | 自动 |
 | V-13 | 支持矩阵强制 | 转账/借贷/退款/导入创建交易（含 `CREDIT_REPAYMENT`）与不支持 kind 的修正/作废/恢复 → 类型化拒绝零写入；矩阵行与实现一一对应（含 `CREDIT_REPAYMENT` 的导入 lineage 行） | §3.1 | 自动 |
 | V-14 | 关联退款场景（DP-13 否决路径） | 对存在有效关联退款的交易作废 → **类型化拒绝零写入**（`P705_REFUND_LINKED_VOID_NOT_SUPPORTED`），交易保持有效；退款交易、证据与对账逐值不变；该场景登记为后续切片 | §3.1、§3.3、D-156 DP-13、`ACCOUNTING_RULES.md:146-148` | 自动 |
-| V-15 | DB 守卫与索引 | 事实表跳号/重复、update/delete、一请求多事实、非交替序列（含**恢复后再次作废** → `P705_VOID_CYCLE_EXHAUSTED`）、claim 唯一键并发单赢家 → ABORT/类型化拒绝；回收站排序命中 `(ledger_id, created_at DESC, transaction_id)` 索引、有效谓词命中事实表 PK 前缀 | §4.3 | 自动 |
+| V-15 | DB 守卫与索引（**已降级为套件可执行的断言**） | 事实表跳号/重复、update/delete、一请求多事实、非交替序列（含**恢复后再次作废** → `P705_VOID_CYCLE_EXHAUSTED`）、claim 唯一键并发单赢家 → ABORT/类型化拒绝；索引存在性：`sqlite_master` 断言回收站排序索引 `(ledger_id, created_at DESC, transaction_id)` 与事实表 `UNIQUE(ledger_id, transaction_id, fact_id)`/`UNIQUE(ledger_id, request_id)` 存在（形态先例 `EnumerationPerfV29ToV30MigrationTest.kt:57` 的 `queryLong(driver, ...)`）；PK 前缀的服务性以**行为断言**覆盖（同交易多事实下取最新事实的结果正确且排序确定）。**不冻结 `EXPLAIN QUERY PLAN` 断言**：原始 SQL 经 `driver.executeQuery` 在 jvmTest 可运行（先例 `LedgerDatabaseMigrationTest.kt:30`），但仓库无查询计划断言先例、计划文本跨 SQLite 版本脆弱 | §4.3 | 自动 |
 | V-16 | 重开与权威回读 | 修正/作废/恢复后重开应用，详情、月度、回收站与数据库逐值一致 | §3.5 | 自动+设备 |
 | V-17 | Android 人工验收 | 详情编辑/作废入口可达；差异预览逐字段正确；作废后月度/流水/HOME 余额/Analysis 移除、回收站出现（含原因/时间/依赖）；恢复后回归；**证据按计划 `:176-182`**：记录期望与实际结果、设备/API、APK SHA 与步骤对应的截图或观察记录；TalkBack 记录实际朗读内容、精确金额与符号、焦点顺序与操作可达性；相关 UI/宿主/查询/schema/依赖变化后重跑受影响向量 | §3.5、`PRODUCT_REQUIREMENTS.md:71`、计划 `:176-182` | 设备 |
 | V-18 | 并发同版本修正 | 两请求携带同一 `expectedCurrentVersionId` 并发提交 → 恰好一个版本胜出、败方 `P705_STALE_CURRENT_VERSION` 零写入；无部分写入、无第二版本 | §3.2、§4.3 | 自动 |
 | V-19 | 结果未知（UnknownCommit） | 提交后回执丢失 → 按完整快照/receipt 判定：命中 → 原 receipt；未命中 → 保持未知，**不自动重试、不换 requestId**；重开后可再次核对（沿 P7-02 S-3） | §4.2、§3.5 | 自动 |
 | V-20 | HOME 余额与 Analysis 计数/金额（P1 修正面） | 作废后 HOME 账户余额（`QueryLedgerCurrentState.balances`）逐账户移除该笔效果、「当前交易」不再列出；Analysis Tab 的 `countsByKind` 与费用/收入总额同步移除；恢复后逐值还原 | §3.6 #4-#5、D-156 DP-3 | 自动 |
-| V-21 | 回收站元数据与原因隐私 | 回收站逐行展示原因/作废时间/依赖说明；原因与说明不出现在日志/诊断/崩溃上报/测试失败消息 | §3.3、§4.4 | 自动 |
+| V-21 | 回收站元数据与原因隐私 | 回收站逐行展示原因/作废时间/依赖说明；原因与说明不出现在**日志与测试失败消息**（当前产品无崩溃上报面，该维度不可观测、不纳入断言） | §3.3、§4.4 | 自动 |
 | V-22 | 原因表示等价性 | `VoidReason` 领域类型与持久化形式往返等价（类型化码 + 可空有界说明逐值一致）；无第二套表示 | §4.1、§3.3 | 自动 |
+| V-23 | 有效谓词双表示等价 | 对同一事实集，SQL 谓词（命名查询/视图片段）派生的有效交易集 == 领域 `TransactionVoidState.isEffective`（§4.1）派生的有效集（无事实 / 仅 void / void+restore 三类逐例）；任一实现变化必须保持等价 | §3.3、§4.1 | 自动 |
 
 - 自动项以 JVM 测试（domain/application/data）与 reducer/host 测试为主；V-16/V-17 的**设备部分不可由自动测试替代**（计划 `:176-182`）。V-12（owner 零写入）、V-15（守卫/索引）、V-18（并发单赢家）、V-20（HOME/Analysis 面）必须在同一事务/同一读路径断言，不以「未观察到写入」代替。
 
 ## 6. 决定点与 D-156 裁决（已记录）
 
-以下决定点已由主代理于 2026-09-19 按常设授权、经独立设计取证评审后逐项裁决，并登记 `docs/DECISIONS.md` **D-156**（DP-10 经规格评审复审后收窄，见 D-156 修订段）。本表保留决定点原文并记录裁决结果：「按建议批准」= 采纳本规格原建议；DP-10 = **复审后收窄**；DP-13 = 主代理另行裁定（首切片否决）。实施按裁决结果落地，不得偏离。
+以下决定点已由主代理于 2026-09-19 按常设授权、经独立设计取证评审后逐项裁决，并登记 `docs/DECISIONS.md` **D-156**（DP-9 措辞澄清、DP-10 经规格评审复审后收窄，均见 D-156 修订段）。本表保留决定点原文并记录裁决结果：「按建议批准」= 采纳本规格原建议；DP-10 = **复审后收窄**；DP-13 = 主代理另行裁定（首切片否决）。实施按裁决结果落地，不得偏离。
 
 | ID | 决定点 | 建议 | 备选/风险 | 裁决（D-156） |
 | --- | --- | --- | --- | --- |
@@ -304,14 +306,14 @@
 ## 10. 实施与验证流程
 
 1. **高风险路由**（沿根 `AGENTS.md` 与 `unifiedledger-harness`）：主代理建立隔离 worktree、指定单一 bounded writer 与精确可写范围；子代理先读主检出根 `AGENTS.md`、不复制嵌套索引、不变更 Git、不写 `.external/`。本批涉及账务/架构/迁移/隐私，需**独立规格评审 + 独立质量评审 + distinct verifier + 主代理复核**；规格评审闭环并由主代理登记实施授权后才开工。
-2. **聚焦测试优先，再受影响模块**：先跑新增修正/作废/恢复/回收站聚焦 test（V-01..V-22 自动项），再跑受影响模块 `:ledger-domain:jvmTest`、`:ledger-application:jvmTest`、`:ledger-data:jvmTest`、`:app-ui:jvmTest`、`:desktop-app:jvmTest`；随后 `:ledger-data:verifyCommonMainLedgerDatabaseMigration`（本批新增 schema 边）、`ktlintCheck`、`project_docs`。
+2. **聚焦测试优先，再受影响模块**：先跑新增修正/作废/恢复/回收站聚焦 test（V-01..V-23 自动项），再跑受影响模块 `:ledger-domain:jvmTest`、`:ledger-application:jvmTest`、`:ledger-data:jvmTest`、`:app-ui:jvmTest`、`:desktop-app:jvmTest`；随后 `:ledger-data:verifyCommonMainLedgerDatabaseMigration`（本批新增 schema 边）、`ktlintCheck`、`project_docs`。
 3. **聚合门以 CI 为准**：完整 `check`、Android/KMP 编译、Debug APK、Desktop build、完整 Python suite 与 migration verification 由 `.github/workflows/ci.yml` 在精确提交上提供证据，本机不重复资源密集型聚合（根 `AGENTS.md` 验证分工）。
 4. **Android 人工门隔离 adb 协议**：agent adb 一律 `ANDROID_ADB_SERVER_PORT=5038`、永不 `kill-server`、只操作本会话自行启动并已用 `emu avd name` 核实的设备；不触碰用户 MuMu/ALas 与 5554/5555 槽位（V-17）。
-5. **逐项证据索引（计划 §10.1）**：实施批开始前为 V-01..V-22 分配稳定验收项 ID，并按计划 §10.1 逐项补齐「原要求/权威章节、匿名输入与预期用户结果、源码完整仓库相对路径及符号、**具体测试路径及测试名**、设备步骤、候选提交 SHA（设备项另记 APK 哈希）、证据位置、实测结果、剩余问题」——**测试路径及测试名一列在实施批填写**（本规格只冻结向量与断言，不预写测试名）。
+5. **逐项证据索引（计划 §10.1）**：实施批开始前为 V-01..V-23 分配稳定验收项 ID，并按计划 §10.1 逐项补齐「原要求/权威章节、匿名输入与预期用户结果、源码完整仓库相对路径及符号、**具体测试路径及测试名**、设备步骤、候选提交 SHA（设备项另记 APK 哈希）、证据位置、实测结果、剩余问题」——**测试路径及测试名一列在实施批填写**（本规格只冻结向量与断言，不预写测试名）。
 
 ## 边界断言
 
-- 本文档状态为 **proposal**：Q11/Q12 与 §6 决定点已由主代理于 2026-09-19 按常设授权、经独立设计取证评审后裁决并登记 `docs/DECISIONS.md` D-156（§6/§7 为裁决记录），但本文在**独立规格评审闭环**（含主代理最终登记）之前不构成实施授权；实施须在隔离 worktree 的单一 bounded writer、独立规格/质量评审、distinct verifier 与主代理最终验收之下（根 `AGENTS.md` 变更路由）。
+- 本文档状态为 **approved**（2026-09-19 设计门闭环）：Q11/Q12 与 §6 决定点已由主代理按常设授权、经独立设计取证评审后裁决并登记 `docs/DECISIONS.md` D-156（§6/§7 为裁决记录；DP-9 澄清与 DP-10 收窄见 D-156），独立规格评审与独立质量评审终局 APPROVE WITH CONDITIONS、P3 残余已随 draft-4 修复。**实施**按高风险路由另行建立：隔离 worktree 的单一 bounded writer、独立规格/质量评审、distinct verifier 与主代理最终验收（根 `AGENTS.md` 变更路由）；本文不构成实施授权本身。
 - D-156 修订后的 DP-10 为**收窄**形态：首切片金额修正零对账暴露、不组合也不授权组合 D-113 `P408CorrectionCommitPort`；该组合授权延后至转账切片单独裁决。DP-13 否决：首切片不得对存在有效关联退款的交易作废（类型化拒绝零写入）。本批**重开并重冻结 P7-03 读模型语义**（§3.6：「current-version 即有效」→「current-version 且未被作废」；受影响锚点 §3.6 #1-#5；D-145 登记的 22 个既有测试锚在无作废事实账本上逐值不变）。
-- 实施批必须保持本规格冻结的：首切片范围（§2.2）、支持矩阵与「不支持显式说明」（§3.1）、修正流程与字段集/写形/校验/对账影响（§3.2）、作废/恢复语义与前置条件与幂等（§3.3）、回收站可及性与无第二事实来源约束（§3.4）、产品接线（§3.5）、有效派生面枚举与 P7-03 重冻结（§3.6）、失败码族（§4.2）、持久化形状/快照列/回执唯一性/守卫与索引（§4.3）、V-01..V-22 覆盖面、D-047/D-048/D-113 边界与 P7-01/P7-02/P7-03（按 §3.6 重冻结）/P7-04 既有冻结面；任何变更即重开评审门。
+- 实施批必须保持本规格冻结的：首切片范围（§2.2）、支持矩阵与「不支持显式说明」（§3.1）、修正流程与字段集/写形/校验/对账影响（§3.2）、作废/恢复语义与前置条件与幂等（§3.3）、回收站可及性与无第二事实来源约束（§3.4）、产品接线（§3.5）、有效派生面枚举与 P7-03 重冻结（§3.6）、失败码族（§4.2）、持久化形状/快照列/回执唯一性/守卫与索引（§4.3）、V-01..V-23 覆盖面、D-047/D-048/D-113 边界与 P7-01/P7-02/P7-03（按 §3.6 重冻结）/P7-04 既有冻结面；任何变更即重开评审门。
 - 真实金额/时间/锚点注册值与个人数据不复制入文；示例全部匿名合成；`.external/` 只读未触碰；`rgXX_` 竖井与 golden 零改动；本文不含本机路径、临时研究或工具轨迹。
