@@ -4,7 +4,7 @@
 
 更新：2026-09-19（同日评审修正：选项源按 face×方向匹配，方向依赖仅限 ordinary_flow 面，见 §2）。基线：main `ba029cf`（schema v30）。零账务语义变更、零 schema/迁移、零新依赖——本批是**决策面呈现修复**：in 方向 ordinary 候选的分类选项从「只渲染支出分类（导致必然域校验拒绝）」改为「按 face×方向渲染匹配的分类源」。**D-154** 登记（随批提交）。
 
-## 1. 缺陷与根因（取证：`local/artifacts/d01-p704/defect-A05IMPORT-INCOME-FACE-001.md` + Explore 代码级调查）
+## 1. 缺陷与根因（取证：缺陷报告与代码级链路调查）
 
 - **现象**：导入候选（ordinary_flow，方向 in，如 CCB「银联入账」行）的决策表单分类区只渲染**支出分类**选项（`P503ImportReview.kt:778-784`，宿主接线 `P503App.kt:1863` 只传 `options.expenseCategories`）→ in 方向候选无法获得有效决策 → 批量提交被 spine 域校验拒绝（`OrdinaryIncome.kt:34-36 IncomeCategoryRequired`）→ **收入方向导入候选在产品路径上永远不可确认**。
 - **根因**：决策面分类选项未按方向过滤——commit 工厂（`OrdinaryFlowFormalFactory.kt`）按方向分派 `createAssetPaidOrdinaryExpense`（out，要求 EXPENSE 分类）/`createAssetReceivedOrdinaryIncome`（in，要求 INCOME 分类），而表单只提供支出选项。
