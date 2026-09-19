@@ -2929,3 +2929,23 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 入：`app-ui` 的 `P503ImportReview.kt`（face×方向匹配分类源纯选择器 + 决策表单「分类」区渲染 + 详情屏收入选项参数）、`P503App.kt`（决策面调用点传入收入分类选项；kind 与方向取自屏内既持有的候选 detail 行，不跨宿主调用点）、commonTest face×方向矩阵向量，以及本条与规格登记。选择器置于 `P503ImportReview.kt`（纯呈现函数的常规归属 `P503ImportReviewPresentation.kt` 在本批 5 文件可写范围之外，评审 STRUCT-1 维持并登记理由）。出：零账务语义、零 `ledger-domain`/`ledger-application`/`ledger-data`、零 schema/迁移/依赖/清单、零 Golden/fixture。自动验证：`:app-ui:jvmTest` 402/0/0/0（较基线 397 新增 5 向量：ordinary in 方向渲染收入选项且不含支出选项 1、ordinary out 方向渲染支出选项回归 1、null 方向 token 保持支出源回归 1、credit_expense 退款面 + "in" 恒支出选项（评审 F1 回归向量）1、credit_expense 直付与 mixed_payment 两方向恒支出选项矩阵 1）、`:app-ui:ktlintCheck`、`:android-app:compileDebugKotlin` + `:desktop-app:compileKotlinJvm` 全绿。「分类」区 ●/○ 选项渲染位于 `@Composable` 私有表单节内、无既有 JVM 断言基建；face×方向匹配选择器以纯函数矩阵向量覆盖，表单节接线以设备回归覆盖并如实登记。设备回归（合并后）：导入 CCB 样本 → in 方向 ordinary 候选（银联入账）决策区出现收入分类 → 以 A02FIX-SAL-C1 补全 → 批量确认入账 → DB 增 income posting → 首页当次会话反映（触发 (f)，D-153）。技术注记：无。
 
 **关联决定：** D-146（P7-04.B/C 导入评审读模型与决策面——本条修复其分类选项源）、D-143（入口决策同源 catalog 选项——收入选项与其同源，叶分类满足二级分类校验）、D-153（触发 (f)——设备回归的首页反映路径）。
+
+## D-156 P7-05 修错与回收站设计门与 Q11/Q12 裁决
+
+**状态：** 已批准（2026-09-19，主代理按常设授权「除不 push 外默认采用推荐方案」、经独立设计取证评审后裁决 Q11/Q12 与规格 §6 决定点 DP-1..DP-13）。设计门规格 = `docs/specs/2026-09-19-p7-05-correction-void-recycle-design.md`（状态仍为 **proposal**，待独立规格评审闭环后另行转 approved）；本条只登记设计裁决，不构成实施授权。
+
+**授权依据：** 阶段计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md:68-81`（§5 P7-05 四子项 05.A–05.D 与 Q11/Q12 推荐方案）；P7-05 设计取证（本地证据目录，不入仓）；账务规则 `docs/ACCOUNTING_RULES.md:34`/`:207`/`:243`/`:249`/`:251`/`:253`/`:146-148`、产品需求 `docs/PRODUCT_REQUIREMENTS.md:71`、架构 `docs/ARCHITECTURE.md:19`/`:58`；工作基线 `main` = `23d3bd2`，schema v30。
+
+**决定（Q11 支持范围，批准）：** 采纳规格 §7 Q11 实例化：首切片仅**手工创建**的 `EXPENSE`/`INCOME`，字段集 = 备注 / `statisticsAt` / 金额 / 分类 / 资金账户；转账（DP-2）、借贷（DP-4）、导入关联（DP-5）、关联退款（DP-13）各自为后续独立切片并各有独立决定点；禁止隐式级联（修正/作废不触碰关联交易、退款、借贷位置与导入候选）；禁止破坏本金历史（`lending_position_history` 零写入）。
+
+**决定（Q12 删除/恢复语义，批准）：** 采纳规格 §7 Q12 实例化：首版「删除」= 逻辑作废 + 回收站可恢复，不提供永久清除；有效时间口径按 DP-3（追溯移除原交易 `statistics_at` 所属月份的效果，作废日无新效果）；恢复按当前目录重校验且**不重核、不写入**证据链接与对账状态（不盲目复用旧 CHECKED 状态）；目录停用 → 类型化拒绝零写入（DP-9）；原导入候选保持终态、不得再次确认（DP-5）；退款与真实冲回保持独立经济事件，回收站不得替代。
+
+**决定（DP-1..DP-13 逐项裁决）：** 除 DP-10/DP-13 外全部按规格 §6 原建议批准：
+
+- DP-1 新只读回收站端口（单一共用有效谓词、无第二事实来源）；DP-2 转账为后续切片、首切片仅只读支持矩阵行；DP-3 作废交易不计入任何有效计数与金额（含 `MonthlyBuckets.kt:136` 的 `transactionCount`），作废日不产生新效果、原月份效果被追溯移除；DP-4 借贷为后续切片、`lending_position_history` 零写入；DP-5 导入创建交易的作废不改变候选终态、原候选不得再次确认；DP-6 仅逻辑作废，永久清除须另立隐私/证据保留与不可逆操作门；DP-7 `occurredAt` 首切片不可改（保持 OPEN）；DP-8 作废态不可修正（先恢复），每笔最多一次作废 + 一次恢复；DP-9 恢复遇停用/改名目录引用为类型化拒绝零写入、交易保持作废；DP-11 作废/恢复原因必填（类型化码 + 可选有界说明），时间取审计 `created_at`；DP-12 首切片仅详情入口，列表行保持只导航。
+- **DP-10（明确授权）：** 受影响资金腿的失效/重匹配在同一事务内组合调用 D-113 `P408CorrectionCommitPort`（`reason = posting_replaced`），未变化腿对账保留。**授权范围（原文）：** "Compose with the D-113 `P408CorrectionCommitPort` in the same transaction for affected funding legs (`reason = posting_replaced`), preserving reconciliation for unchanged legs. This authorizes wiring that port into a product transaction for this batch only"。即仅限本批把该 port 接入产品修正事务，不得外推为通用编辑 API 授权；D-113 UQ-1 登记的「版本替代自动触发与补充资料重匹配的跨层集成」（`docs/DECISIONS.md:1822`）**由本批解除**，D-113 其余边界（余额/正式交易/report financial 维度零变化、不删行不回溯）不变。
+- **DP-13（否决，首切片拒绝）：** 对存在有效关联退款的交易作废 → 类型化拒绝零写入（`P705_REFUND_LINKED_VOID_NOT_SUPPORTED`），登记为后续切片。理由：原交易作废而退款仍有效时的报表归属语义尚未冻结，且 `ACCOUNTING_RULES.md:146-148` 要求同币种有效退款累计不得超过原交易已确认可退费用——无归属规则即允许会带来错误报表风险；此为「禁止隐式级联」的保守读法。规格 V-14 已按拒绝路径改写。
+
+**边界（本批）：** 本条为**规格批**：只写设计门规格与决定登记两个文件，零产品代码、零测试、零 schema/迁移、零版本号预占、零依赖；计划列为「可复用」的四个机制（`TransactionNoteReplacement.kt`、`ConfirmedTransactionNoteUpdate.kt`、版本/CAS 对、`P408CorrectionCommitPort.kt`）**当前均不可由产品路径到达**，本批不改变该事实（DP-10 授权的落地属后续实施批）；首切片必须新增 schema 边（作废/恢复事实 owner），版本号在实施时分配。不改 `rgXX_` 竖井/golden，不改对账 owner、借贷历史与导入 owner 的写入语义，不改 P7-01/P7-02/P7-03/P7-04 冻结面。实施前须先闭环独立规格评审，并按高风险路由实施（隔离 worktree、单一 bounded writer、独立规格/质量评审、distinct verifier、主代理最终验收）。
+
+**关联决定：** D-047、D-048、D-098、D-113（UQ-1 跨层集成由本批解除）、D-144、D-145、D-146、D-154；阶段计划 §5（P7-05）与 Q11/Q12。
