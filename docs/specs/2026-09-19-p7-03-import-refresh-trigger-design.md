@@ -20,14 +20,15 @@
 ### 2.2 实现
 
 - **P503HostCoordinator.kt**：新增 `internal fun onImportBatchConfirmed()`：`onRefresh()` + 置位既有 `pendingMonthlyReRequestAfterRefresh`（复用 FIX-MONTH-1 的 arm/consume：刷新落地消费 → 恰一次无条件月度重请求，落月盖章抑制随后的 (a)/(d) 守卫）。`decide()` 的 (e) 分支、consume/drop 方法、(a)/(d) 守卫逻辑零改动。
-- **P503App.kt 触发点一：`runImportBatchDispatch()`**：在 finally 主线程跳内、`completed == true` 分支（现有 `coordinator.importBatchDispatchCompleted()` 与 `requestImportReviewRowsRead()` 旁）调用 `coordinator.onImportBatchConfirmed()`。`completed == false`（暂停）不触发。
-- **P503App.kt 触发点二（F-1 审查增补）：`checkImportUnknownItem()`**：Unknown 核对结果落地跳内、结果事件分发后，当且仅当该裁决使运行到达全部项终态时调用 `coordinator.onImportBatchConfirmed()`——纯判定 `shouldArmImportBatchConfirmedAfterUnknownCheckResolution(landedState)`（协调器文件内、JVM 可测）：状态已离开 `ImportBatchSubmitting`（reducer 因最后一项终态自动离开，表 6.2a 仅全部项终态后可离开）**且**保留摘要中不再有 Unknown（覆盖摘要已保留路径：Resume 无未派发项离开/放弃把 Unknown 带入摘要后，用户在结果摘要内核对完成最后一项）。批中裁决（状态仍 `ImportBatchSubmitting`）与 StillUnknown/被吸收裁决不置位：运行继续（其 completed 分支对整次运行恰置位一次）或保持未终态（后续裁决完成）。两个触发点互斥，一次运行恰置位一次（D-153 恰一次）。
+- **P503App.kt 触发点一：`runImportBatchDispatch()`**：finally 主线程跳内、`completed == true` 分支调用 `coordinator.onImportBatchConfirmed()`，以共享纯判定 `shouldArmImportBatchConfirmed(latestState.value)` 门控（清单重读 `requestImportReviewRowsRead()` 不受门控，保持 D04 既有语义）。
+- **P503App.kt 触发点二（F-1 审查增补）：`checkImportUnknownItem()`**：Unknown 核对结果落地跳内、结果事件分发后，同一共享判定通过时调用 `coordinator.onImportBatchConfirmed()`。
+- **共享判定 `shouldArmImportBatchConfirmed`（协调器文件内、JVM 可测，两触发点唯一置位门）**：落地态为携带保留摘要（`batchResult`）的 `OverviewEmpty` 且摘要中无 Unknown → 置位。语义按顺序穷举：派发完成且全部项终态（reducer 已因最后一项终态自动离开）→ 置位；完成但仍有 Unknown（状态仍 `ImportBatchSubmitting`，Unknown 阻断自动离开——验证者证伪顺序：暂停 → 用户继续派发完其余项 → 运行 Completed 但 B 仍 Unknown → completed 分支不得置位，随后核对补完时置位）→ 不置位；批中核对（状态仍 `ImportBatchSubmitting`）→ 不置位（后续 completed 分支置位）；核对使全部项终态（自动离开或摘要已保留且最后一项 Unknown 补完）→ 置位；StillUnknown/被吸收/摘要仍有其他 Unknown/无保留摘要 → 不置位。两触发点共用同一判定，一次批量运行跨全部顺序恰置位一次（D-153 恰一次）。
 - **语义不变式**：触发集 (a)–(e) 原有语义逐字保留，仅增补 (f)；消费/丢弃/盖章机制与既有 (e) 完全共用；与 `P503CurrentStateLoadCoordinator` 合并重跑兼容（标记存活到首个成功落地——FIX-MONTH-1 已验证的同一机制）。
 - **效果**：批量确认完成 → 权威刷新（余额/账本状态）+ 月度周期重请求（月卡三值 + SelectMonth 可选域 + 趋势 + 流水行）→ 用户切回首页即见确认结果，无需重启；SelectMonth 域含新交易月（陈旧可选域陷阱消除）。
 
 ## 3. 测试要求
 
-- 协调器测试（扩写 `P503LedgerViewHostCoordinatorTest.kt`）：`onImportBatchConfirmed()` 臂标记 → 宿主成功落地消费 → 恰一次无条件 `onMonthlyRequest`；未消费前失败落地 → 丢弃；无臂落地 no-op；与 (e) 的 arm/consume 互不串扰（(e) arm 后 (f) 落地消费属同一标记，断言恰一次）；触发点二的纯判定 `shouldArmImportBatchConfirmedAfterUnknownCheckResolution`（全终态置位、批中/StillUnknown/摘要仍有 Unknown/被吸收均不置位）。
+- 协调器测试（扩写 `P503LedgerViewHostCoordinatorTest.kt`）：`onImportBatchConfirmed()` 臂标记 → 宿主成功落地消费 → 恰一次无条件 `onMonthlyRequest`；未消费前失败落地 → 丢弃；无臂落地 no-op；与 (e) 的 arm/consume 互不串扰（(e) arm 后 (f) 落地消费属同一标记，断言恰一次）；共享置位门 `shouldArmImportBatchConfirmed` 真值表（Unknown 自由摘要置位；完成仍悬 Unknown 的 Submitting 态——证伪顺序回归——/批中核对/StillUnknown/摘要仍有其他 Unknown/被吸收均不置位）。
 - 接线测试：`runImportBatchDispatch` completed 分支与 `checkImportUnknownItem` 核对落地跳的调用均位于 `@Composable` 宿主内（现有测试基建不可断言 host 回调）——纯判定以协调器向量覆盖，接线以设备验证覆盖，如实登记。
 - 既有向量不回归：FIX-MONTH-1/2 的全部既有测试保持绿。
 

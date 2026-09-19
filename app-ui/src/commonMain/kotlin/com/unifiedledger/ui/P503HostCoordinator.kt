@@ -294,13 +294,14 @@ internal class P503HostCoordinator(
      * on a failed landing). Mirrors the (e) arm for the same A-PERF reason: no synchronous
      * request beside the refresh, whose transient result state would absorb the payload.
      *
-     * Two host call sites arm it exactly once per run (D-153 恰一次): the dispatch loop's
-     * `completed` branch in [P503App] `runImportBatchDispatch`, and the Unknown 核对 resolution
-     * hop when the verdict makes the run all-terminal
-     * ([shouldArmImportBatchConfirmedAfterUnknownCheckResolution]). A mid-batch resolution or a
-     * StillUnknown verdict arms nothing — the run continues (or stays incomplete) and its
-     * completed branch fires (f) for the whole run. Never fired by per-item result landings nor
-     * by a pause/abandon of the run.
+     * Two host call sites arm it, both gated by ONE shared decision
+     * ([shouldArmImportBatchConfirmed]) so a batch run arms exactly once across every ordering
+     * (D-153 恰一次): the dispatch loop's `completed` branch in [P503App]
+     * `runImportBatchDispatch`, and the Unknown 核对 resolution hop in `checkImportUnknownItem`.
+     * A completed run that still has an Unknown item (state still `ImportBatchSubmitting` — the
+     * falsified double-arm ordering: pause → resume → complete → later 核对) and a mid-batch
+     * resolution arm nothing; the site whose landing leaves the retained summary Unknown-free
+     * arms. Never fired by per-item result landings nor by a pause/abandon of the run.
      */
     internal fun onImportBatchConfirmed() {
         onRefresh()
@@ -641,24 +642,33 @@ internal sealed interface HostAction {
 }
 
 /**
- * P7-03 FIX-STALE-1 (D-153): the (f) completion decision of the Unknown 核对 resolution's
- * main-dispatcher hop — called with the post-dispatch [landedState], i.e. AFTER the verdict event
- * has reduced. The run reached all-terminal exactly when the state has LEFT
- * `ImportBatchSubmitting` and the retained summary holds no Unknown anymore:
- * - the reducer auto-left on THIS verdict (it was the last non-terminal item — table 6.2a: 仅全部
- *   项终态后可离开), or
- * - the batch had already left (Resume with nothing undispatched / Abandon retained the summary)
- *   and the verdict completed the summary's last Unknown in place.
+ * P7-03 FIX-STALE-1 (D-153): THE single arm-gate for trigger (f)'s two host call sites, called
+ * with the post-dispatch [landedState] (AFTER the event that just reduced). The run reached
+ * all-terminal exactly when the landed state is the `OverviewEmpty` carrying the retained result
+ * summary (`batchResult`) with no Unknown outcome left:
+ * - a dispatch run completing with every item terminal — the reducer auto-left on the last
+ *   per-item result (table 6.2a: 仅全部项终态后可离开), so the `completed` branch's hop observes
+ *   the left-to overview state; or
+ * - an Unknown 核对 verdict completing the run's terminal set — either the reducer auto-left on
+ *   THIS verdict (it was the last non-terminal item) or the batch had already left (Resume with
+ *   nothing undispatched / Abandon retained the summary) and the verdict completed the summary's
+ *   last Unknown in place.
  *
- * Never arms (`false`) when: the state is still `ImportBatchSubmitting` (a mid-batch resolution —
- * the run continues and its completed branch fires (f) exactly once for the whole run, so the two
- * call sites cannot double-fire); the verdict was StillUnknown or absorbed (the item keeps its
- * check entry — the run stays incomplete and the user may retry); or another Unknown still remains
- * in the summary (the run is not all-terminal yet — a later resolution completes it). Together
- * with the dispatch loop's completed branch this keeps trigger (f) at exactly one arm per run.
+ * Never arms (`false`) — and this is what keeps exactly ONE arm per batch run across every
+ * ordering:
+ * - a completed run that still has an Unknown item: the state is still `ImportBatchSubmitting`
+ *   (the Unknown blocks the auto-leave — falsified-ordered trace: pause at Unknown → Resume
+ *   dispatches the rest → run completes → `completed` branch must NOT arm → the later 核对
+ *   resolution completes the run and arms);
+ * - a mid-batch 核对 resolution (state still `ImportBatchSubmitting` — the continuation run's
+ *   completed branch arms when it finishes without Unknowns);
+ * - a StillUnknown or absorbed verdict (the item keeps its check entry — the run stays
+ *   incomplete, the user may retry);
+ * - another Unknown still remaining in the summary (not all-terminal yet — a later resolution
+ *   completes the run and arms);
+ * - any landing without the retained summary (the verdict was absorbed — no run effect).
  */
-internal fun shouldArmImportBatchConfirmedAfterUnknownCheckResolution(landedState: P503AppState): Boolean {
-    if (landedState is P503AppState.ImportBatchSubmitting) return false
+internal fun shouldArmImportBatchConfirmed(landedState: P503AppState): Boolean {
     val summary = (landedState as? P503AppState.OverviewEmpty)?.importReview?.batchResult ?: return false
     return summary.items.none { it.outcome is ImportBatchItemOutcome.Unknown }
 }

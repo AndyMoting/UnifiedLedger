@@ -1355,14 +1355,17 @@ fun P503App(
                 } finally {
                     // Back on the main dispatcher: release the slot (queued after every per-item
                     // result hop) and, on a completed run, re-read the list so the rows reflect
-                    // the confirmed items. A completed run is monthly trigger (f) (P7-03
-                    // FIX-STALE-1, D-153): the authoritative refresh + the armed post-landing
-                    // monthly re-request make the home reflect the confirmed batch this session
-                    // (a paused run arms nothing; its resumed completion reaches here completed).
+                    // the confirmed items. Trigger (f) (P7-03 FIX-STALE-1, D-153) arms here ONLY
+                    // through the shared all-terminal gate: a run completing while an Unknown
+                    // item still blocks the auto-leave (state still ImportBatchSubmitting) does
+                    // NOT arm — the later 核对 resolution that completes the run arms instead
+                    // (exactly one arm per batch run).
                     scope.launch {
                         coordinator.importBatchDispatchCompleted()
                         if (completed) {
-                            coordinator.onImportBatchConfirmed()
+                            if (shouldArmImportBatchConfirmed(latestState.value)) {
+                                coordinator.onImportBatchConfirmed()
+                            }
                             requestImportReviewRowsRead()
                         }
                     }
@@ -1482,13 +1485,14 @@ fun P503App(
                         if (outcome is ImportUnknownCheckOutcome.Confirmed) {
                             requestImportReviewRowsRead()
                         }
-                        // Trigger (f) second call site (P7-03 FIX-STALE-1, D-153): a 核对 verdict
-                        // that completes the run's terminal set arms here (the pure decision reads
-                        // the post-dispatch state). A mid-batch resolution (state still
-                        // ImportBatchSubmitting) or a StillUnknown verdict arms nothing — the run
-                        // continues (its completed branch fires (f) exactly once) or stays
-                        // incomplete for a later resolution.
-                        if (shouldArmImportBatchConfirmedAfterUnknownCheckResolution(latestState.value)) {
+                        // Trigger (f) second call site (P7-03 FIX-STALE-1, D-153): the SAME
+                        // shared all-terminal gate as the dispatch loop's completed branch — a
+                        // 核对 verdict that completes the run's terminal set arms here; a
+                        // mid-batch resolution (state still ImportBatchSubmitting), a
+                        // StillUnknown verdict, or a summary still holding another Unknown arms
+                        // nothing (the run continues or stays incomplete — its completing site
+                        // arms exactly once).
+                        if (shouldArmImportBatchConfirmed(latestState.value)) {
                             coordinator.onImportBatchConfirmed()
                         }
                     }

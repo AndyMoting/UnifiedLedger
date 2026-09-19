@@ -243,9 +243,10 @@ class P503LedgerViewHostCoordinatorTest {
         assertEquals(1, probe.monthlyRequests.size)
     }
 
-    // (f) second call site: the Unknown 核对 resolution's all-terminal decision. The pure
-    // decision is covered here; the hop wiring itself is Composable host code and is covered by
-    // the device window (registered in D-153 like the completed-branch wiring note).
+    // (f) the ONE shared arm-gate for both host call sites (dispatch-loop completed branch and
+    // Unknown 核对 resolution hop): arm exactly when the landed state is the overview carrying a
+    // retained summary with no Unknown left. The pure truth table is covered here; the hop wiring
+    // itself is Composable host code and is covered by the device window (registered in D-153).
 
     private fun overviewWithBatchResult(vararg outcomes: ImportBatchItemOutcome): P503AppState.OverviewEmpty {
         val summaryItems =
@@ -259,48 +260,69 @@ class P503LedgerViewHostCoordinatorTest {
         return overview().copy(importReview = ImportReviewView(batchResult = summary))
     }
 
+    private fun batchSubmitting(vararg outcomes: ImportBatchItemOutcome?): P503AppState.ImportBatchSubmitting =
+        P503AppState.ImportBatchSubmitting(
+            overview = overview(),
+            confirmedAt = "2026-09-19T08:00:00",
+            items =
+                outcomes.mapIndexed { index, outcome ->
+                    ImportBatchSubmittingItem(ImportBatchItem(ImportCandidateId("cand-$index"), ImportRequestId("req-$index")), outcome)
+                },
+        )
+
     @Test
-    fun unknownCheckResolutionArmsOnlyWhenTheRunBecameAllTerminal() {
-        // The verdict completed the summary's last Unknown (the reducer auto-left, or the summary
-        // was already retained): the run is all-terminal → arm.
+    fun importBatchConfirmedArmsOnlyWhenTheLandedSummaryIsUnknownFree() {
+        // Completed run, every item terminal (the reducer auto-left): the completed branch's hop
+        // observes the overview with the Unknown-free summary → arm.
         assertTrue(
-            shouldArmImportBatchConfirmedAfterUnknownCheckResolution(
+            shouldArmImportBatchConfirmed(
                 overviewWithBatchResult(ImportBatchItemOutcome.CheckConflict("E_TEST"), ImportBatchItemOutcome.Skipped("SKIP_TEST")),
             ),
         )
-        assertTrue(shouldArmImportBatchConfirmedAfterUnknownCheckResolution(overviewWithBatchResult(ImportBatchItemOutcome.Rejected("E_TEST"))))
+        assertTrue(shouldArmImportBatchConfirmed(overviewWithBatchResult(ImportBatchItemOutcome.Rejected("E_TEST"))))
 
-        // A mid-batch resolution: the state is still dispatching — the run's completed branch arms.
+        // FALSIFIED-ORDERING REGRESSION (verifier): A confirmed, B Unknown → paused → Resume
+        // dispatches C → run completes while B still blocks the auto-leave (state stays
+        // ImportBatchSubmitting) → the completed branch must NOT arm; the later 核对 resolution
+        // of B (all-terminal auto-leave) arms exactly once.
         assertFalse(
-            shouldArmImportBatchConfirmedAfterUnknownCheckResolution(
-                P503AppState.ImportBatchSubmitting(overview = overview(), confirmedAt = "2026-09-19T08:00:00", items = emptyList()),
+            shouldArmImportBatchConfirmed(
+                batchSubmitting(ImportBatchItemOutcome.Confirmed(ImportReceipt(ImportRequestId("req-0"), null, null, ImportCandidateId("cand-0"), null, null)), ImportBatchItemOutcome.Unknown, null),
             ),
         )
+        // ...and the same resolution's landing (auto-left, summary Unknown-free) arms.
+        assertTrue(
+            shouldArmImportBatchConfirmed(
+                overviewWithBatchResult(
+                    ImportBatchItemOutcome.Confirmed(ImportReceipt(ImportRequestId("req-0"), null, null, ImportCandidateId("cand-0"), null, null)),
+                    ImportBatchItemOutcome.Confirmed(ImportReceipt(ImportRequestId("req-1"), null, null, ImportCandidateId("cand-1"), null, null)),
+                    ImportBatchItemOutcome.Skipped("SKIP_TEST"),
+                ),
+            ),
+        )
+
+        // A mid-batch 核对 resolution: the state is still dispatching — the later completed
+        // branch arms.
+        assertFalse(shouldArmImportBatchConfirmed(batchSubmitting(ImportBatchItemOutcome.Confirmed(ImportReceipt(ImportRequestId("req-0"), null, null, ImportCandidateId("cand-0"), null, null)), null)))
 
         // StillUnknown (or an absorbed verdict): the checked item keeps its check entry — the run
         // stays incomplete, the user may retry or resolve it later.
-        assertFalse(
-            shouldArmImportBatchConfirmedAfterUnknownCheckResolution(
-                overviewWithBatchResult(ImportBatchItemOutcome.Unknown),
-            ),
-        )
+        assertFalse(shouldArmImportBatchConfirmed(overviewWithBatchResult(ImportBatchItemOutcome.Unknown)))
 
         // Another Unknown still remains after this resolution: not all-terminal yet — the LATER
         // resolution completes the run and arms exactly once.
         assertFalse(
-            shouldArmImportBatchConfirmedAfterUnknownCheckResolution(
+            shouldArmImportBatchConfirmed(
                 overviewWithBatchResult(
-                    ImportBatchItemOutcome.Confirmed(
-                        ImportReceipt(ImportRequestId("req-0"), null, null, ImportCandidateId("cand-0"), null, null),
-                    ),
+                    ImportBatchItemOutcome.Confirmed(ImportReceipt(ImportRequestId("req-0"), null, null, ImportCandidateId("cand-0"), null, null)),
                     ImportBatchItemOutcome.Unknown,
                 ),
             ),
         )
 
-        // An absorbed landing without the batch summary never arms.
-        assertFalse(shouldArmImportBatchConfirmedAfterUnknownCheckResolution(overview()))
-        assertFalse(shouldArmImportBatchConfirmedAfterUnknownCheckResolution(P503AppState.Ready))
+        // An absorbed landing without the retained summary never arms.
+        assertFalse(shouldArmImportBatchConfirmed(overview()))
+        assertFalse(shouldArmImportBatchConfirmed(P503AppState.Ready))
     }
 
     // Nothing outside the frozen set re-requests.
