@@ -2,7 +2,7 @@
 
 状态：approved
 
-更新：2026-09-19。基线：main `ba029cf`（schema v30）。零账务语义变更、零 schema/迁移、零新依赖——本批是**决策面呈现修复**：in 方向 ordinary 候选的分类选项从「只渲染支出分类（导致必然域校验拒绝）」改为「按方向渲染匹配的分类源」。**D-154** 登记（随批提交）。
+更新：2026-09-19（同日评审修正：选项源按 face×方向匹配，方向依赖仅限 ordinary_flow 面，见 §2）。基线：main `ba029cf`（schema v30）。零账务语义变更、零 schema/迁移、零新依赖——本批是**决策面呈现修复**：in 方向 ordinary 候选的分类选项从「只渲染支出分类（导致必然域校验拒绝）」改为「按 face×方向渲染匹配的分类源」。**D-154** 登记（随批提交）。
 
 ## 1. 缺陷与根因（取证：`local/artifacts/d01-p704/defect-A05IMPORT-INCOME-FACE-001.md` + Explore 代码级调查）
 
@@ -12,7 +12,13 @@
 
 ## 2. 修复设计（FIX-INCOME-FACE-1）
 
-- **`P503ImportReview.kt` 决策表单**：新增 `incomeCategories: List<IncomeCategoryOption>` 参数；`分类` 块按**方向**渲染——方向 "out" → `expenseCategories`（现状不变）；方向 "in" → `incomeCategories`。方向的来源：候选 detail 数据的方向 token（`ImportCandidateDetailResult` 的行数据携带 'in'/'out'，设备 dump 证实「方向 in/out」文本存在）；由调用点传入（如 `directionIn: Boolean` 或直接传已选列表——writer 按代码实际结构选择最小改法）。
+- **`P503ImportReview.kt` 决策表单**：新增 `incomeCategories: List<IncomeCategoryOption>` 参数；`分类` 块按 **face×方向** 渲染（2026-09-19 评审 F1 修正：方向匹配仅适用于方向依赖的 ordinary_flow 面，不适用于全部 requiresCategory 面）。四个 requiresCategory 面的选项源矩阵：
+  - `ordinary_flow`：按结构化方向 token（`ImportCandidateDetailRow.row.directionToken`，与 commit 工厂读取同字段）——"in" → `incomeCategories`（`OrdinaryFlowFormalFactory` in → 收入入账 commit，要求 INCOME 分类）；"out"/null → `expenseCategories`（现状不变）。
+  - `credit_expense`（直付 profile）：恒 `expenseCategories`（两方向皆然）。
+  - `credit_expense`（`credit_expense_refund` profile；退款行方向 token 硬编码 "in"）：恒 `expenseCategories`——退款 commit（`CreditFlowFormalFactory` → `createCreditRefundReceipt`）要求原支出的精确二级 EXPENSE 分类（`RefundReceipt` 校验 kind != EXPENSE → `InvalidRefundReceipt`），方向 token 不得翻转其选项源。
+  - `mixed_payment`：恒 `expenseCategories`（两方向皆然）。
+  - `transfer_flow` 面（转出/转入）无分类 section，不在矩阵内。
+  - kind 与方向 token 均取自屏内既持有的候选 detail 行（`row.candidateKind` / `row.directionToken`），不跨宿主调用点。
 - **`P503App.kt` 宿主接线**：传入 `incomeOptions.incomeCategories`（既有提供器 `facade.incomeOptionsProvider.queryOptions()`，入口收入流已在用；`IncomeCategoryOption(categoryId, parentCategoryId, label, postingAccountId)`）。注意收入选项为**叶分类**（入口收入表单同源），满足 `SecondaryCategoryRequired` 校验。
 - **transfer_flow 面**：不变（无分类 section）。
 - **决策草稿/校验/commit 路径**：零改动（`ImportDecisionFieldUpdate.Category` 事件同型；commit 工厂已按方向分派）。
@@ -20,7 +26,7 @@
 
 ## 3. 测试要求
 
-- `P503ImportReviewPresentationTest`（既有测试类扩写）：in 方向候选的分类区渲染收入选项（`●/○ A02FIX-SAL-C1` 型）、不渲染支出选项；out 方向渲染支出选项（现状回归）。
+- `P503ImportReviewPresentationTest`（既有测试类扩写）：ordinary in 方向候选的分类区渲染收入选项（`●/○ A02FIX-SAL-C1` 型）、不渲染支出选项；ordinary out 方向渲染支出选项（现状回归）；credit_expense 退款面 + "in" 方向 token 恒渲染支出选项（评审 F1 回归向量：退款 commit 要求原支出 EXPENSE 分类，方向 "in" 不得翻转选项源）；credit_expense 直付与 mixed_payment 两方向恒支出选项（face×方向矩阵）。
 - 既有向量不回归；`:app-ui:jvmTest` 全绿 + `ktlintCheck` + 两编译。
 
 ## 4. 可写文件范围

@@ -689,7 +689,7 @@ class P503ImportReviewPresentationTest {
         assertNull(importDecisionFormFace(row("incomplete", candidateKind = "transfer_flow_missing_leg")))
     }
 
-    // ---- FIX-INCOME-FACE-1 (D-154): the decision face's direction-matched category source ----
+    // ---- FIX-INCOME-FACE-1 (D-154): the decision face's face-matched category source ----
 
     private val incomeCategoryOptions =
         listOf(
@@ -711,18 +711,20 @@ class P503ImportReviewPresentationTest {
         )
 
     @Test
-    fun inDirectionDecisionFaceRendersIncomeCategoryOptionsAndNotExpenseOptions() {
-        val options = importDecisionCategoryOptions("in", incomeCategoryOptions, expenseCategoryOptions)
+    fun inDirectionOrdinaryFaceRendersIncomeCategoryOptionsAndNotExpenseOptions() {
+        val options =
+            importDecisionCategoryOptions("ordinary_flow", "in", incomeCategoryOptions, expenseCategoryOptions)
         assertEquals(listOf("category-income-salary"), options.map { it.categoryId.value })
         assertEquals(listOf("Salary"), options.map { it.label })
-        // The expense source must never leak into an in-direction face: the pre-fix surface made
-        // every in-direction candidate unconfirmable (IncomeCategoryRequired at the spine).
+        // The expense source must never leak into an in-direction ordinary face: the pre-fix
+        // surface made every in-direction candidate unconfirmable (IncomeCategoryRequired).
         assertFalse(options.any { it.categoryId == expenseCategoryOptions[0].categoryId })
     }
 
     @Test
-    fun outDirectionDecisionFaceRendersExpenseCategoryOptions() {
-        val options = importDecisionCategoryOptions("out", incomeCategoryOptions, expenseCategoryOptions)
+    fun outDirectionOrdinaryFaceRendersExpenseCategoryOptions() {
+        val options =
+            importDecisionCategoryOptions("ordinary_flow", "out", incomeCategoryOptions, expenseCategoryOptions)
         assertEquals(listOf("category-expense-food"), options.map { it.categoryId.value })
         assertFalse(options.any { it.categoryId == incomeCategoryOptions[0].categoryId })
     }
@@ -731,8 +733,36 @@ class P503ImportReviewPresentationTest {
     fun nullDirectionTokenKeepsTheExpenseCategorySource() {
         // directionToken is nullable on the read row; a missing token must never flip the face
         // to the income source (the pre-fix behavior for an undirected row).
-        val options = importDecisionCategoryOptions(null, incomeCategoryOptions, expenseCategoryOptions)
+        val options =
+            importDecisionCategoryOptions("ordinary_flow", null, incomeCategoryOptions, expenseCategoryOptions)
         assertEquals(listOf("category-expense-food"), options.map { it.categoryId.value })
+    }
+
+    @Test
+    fun creditRefundFaceRendersExpenseOptionsEvenWithAnInDirectionToken() {
+        // Review F1 regression vector: refund rows carry the hardcoded "in" direction token,
+        // but the refund commit (createCreditRefundReceipt) requires the ORIGINAL expense's
+        // exact secondary EXPENSE category (RefundReceipt rejects kind != EXPENSE with
+        // InvalidRefundReceipt) — the face must keep the expense source or every refund
+        // confirmation fails at the spine.
+        val options =
+            importDecisionCategoryOptions("credit_expense", "in", incomeCategoryOptions, expenseCategoryOptions)
+        assertEquals(listOf("category-expense-food"), options.map { it.categoryId.value })
+        assertFalse(options.any { it.categoryId == incomeCategoryOptions[0].categoryId })
+    }
+
+    @Test
+    fun nonOrdinaryCategoryFacesAlwaysRenderExpenseOptionsRegardlessOfDirection() {
+        // The remaining requiresCategory faces (credit_expense direct profile, mixed_payment)
+        // commit an EXPENSE category in both directions — only ordinary_flow is
+        // direction-dependent (D-154 face×direction matrix).
+        listOf("credit_expense", "mixed_payment").forEach { kind ->
+            listOf("in", "out").forEach { direction ->
+                val options =
+                    importDecisionCategoryOptions(kind, direction, incomeCategoryOptions, expenseCategoryOptions)
+                assertEquals(listOf("category-expense-food"), options.map { it.categoryId.value }, "$kind/$direction")
+            }
+        }
     }
 
     // ---- decision form validation (P503DraftValidation pattern; E13 mixed gate) ----
