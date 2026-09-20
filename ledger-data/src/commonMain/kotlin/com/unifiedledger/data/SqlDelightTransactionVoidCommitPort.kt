@@ -150,12 +150,18 @@ class SqlDelightTransactionVoidCommitPort private constructor(
             .importCreationConfirmationCountForTransaction(ledgerId, transactionId)
             .executeAsOne()
 
+    /**
+     * DP-13's effective linked-refund probe of the product path: the import credit flow's
+     * decision snapshot (`original_transaction_id`) joined to the confirmation that created the
+     * refund transaction, filtered by the single effective-predicate view. The rgXX_ refund
+     * silo has no product writer and is not read (see the query comment in `Ledger.sq`).
+     */
     private fun hasEffectiveRefundLink(
         ledgerId: String,
         transactionId: String,
     ): Boolean =
         database.ledgerQueries
-            .effectiveRefundRelationshipCountForTransaction(ledgerId, transactionId)
+            .productLinkedRefundCountForTransaction(ledgerId, transactionId)
             .executeAsOne() > 0L
 
     private fun voidState(
@@ -269,7 +275,15 @@ private data class StoredVoidFact(
             confirmationMarker == EXPLICIT_MANUAL_SAVE_MARKER
 }
 
-/** The frozen `transaction_void_fact` guard messages (sequence/alternation/append-only). */
+/**
+ * The frozen `transaction_void_fact` guard messages (sequence/alternation/append-only).
+ *
+ * Deliberately brittle and acknowledged as such: the JDBC SQLite driver surfaces a trigger
+ * `RAISE(ABORT, ...)` as a plain message with no typed code, so classification has to match the
+ * frozen message text. The alternative — treating every SQLite failure as a guard failure —
+ * would silently swallow unrelated errors, which is worse. If the driver ever exposes a code,
+ * this is the place to switch.
+ */
 private fun isVoidGuardFailure(failure: Throwable): Boolean {
     var current: Throwable? = failure
     while (current != null) {

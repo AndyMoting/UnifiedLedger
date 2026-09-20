@@ -19,6 +19,9 @@ import com.unifiedledger.domain.TransactionVoidFactKind
 import com.unifiedledger.domain.VoidReason
 import com.unifiedledger.domain.VoidReasonCode
 import java.sql.SQLException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -77,6 +80,16 @@ class P705VoidRestoreCommitPortTest {
 
     private fun recycleBin(harness: P705Database): List<com.unifiedledger.application.RecycleBinRow> = assertIs<RecycleBinResult.Success>(QueryRecycleBin(harness.readAdapter, ledgerId, catalog).query()).rows
 
+    /** The import rows of the linked refund plus the refund transaction's version count (V-14). */
+    private fun refundSideRows(harness: P705Database): List<Long> =
+        listOf(
+            "SELECT count(*) FROM import_candidate_decision_snapshot",
+            "SELECT count(*) FROM import_confirmation",
+            "SELECT count(*) FROM import_receipt",
+            "SELECT count(*) FROM import_candidate_status_history",
+            "SELECT count(*) FROM transaction_version WHERE transaction_id = 'tx-refund-30'",
+        ).map(harness::ledgerQueryCount)
+
     @Test
     fun voidKeepsEveryHistoricalRowAndTheCreationLineageReadable() {
         P705Database.create("p705-void-history-").use { harness ->
@@ -123,7 +136,8 @@ class P705VoidRestoreCommitPortTest {
             harness.insertOrdinaryExpense("tx-expense-100", amountMinor = 10_000L)
             val ids = P705Ids("p705-restore-once")
             assertIs<VoidTransactionResult.Created>(void(harness, ids, ids.requestId()))
-            val restored = assertIs<VoidTransactionResult.Created>(restore(harness, ids, ids.requestId()))
+            val restoreRequestId = ids.requestId()
+            val restored = assertIs<VoidTransactionResult.Created>(restore(harness, ids, restoreRequestId))
 
             assertEquals(2L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_fact"))
             assertEquals(
@@ -133,6 +147,14 @@ class P705VoidRestoreCommitPortTest {
                         factKind
                     }.executeAsList(),
             )
+            // V-10: replaying the restore with the same request id returns the original
+            // receipt and adds nothing (the claim is lost, the stored snapshot matches).
+            assertEquals(
+                VoidTransactionResult.NoChange(restored.receipt),
+                restore(harness, ids, restoreRequestId),
+            )
+            assertEquals(2L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_fact"))
+            assertEquals(2L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_receipt"))
             // A second restore with a fresh request id is a typed rejection with zero writes.
             assertEquals(
                 VoidTransactionResult.Rejected(P705FailureCode.P705_TRANSACTION_NOT_VOIDED),
@@ -219,13 +241,27 @@ class P705VoidRestoreCommitPortTest {
     }
 
     @Test
-    fun aLinkedRefundMakesTheVoidATypedRejectionAndChangesNothingElse() {
+    fun aProductLinkedRefundMakesTheVoidATypedRejectionAndChangesNothingElse() {
         P705Database.create("p705-refund-linked-").use { harness ->
             harness.insertOrdinaryExpense("tx-expense-100", amountMinor = 10_000L)
             harness.insertOrdinaryExpense("tx-refund-30", amountMinor = 3_000L)
-            harness.insertLinkedRefund(
+            // The product linkage (DP-13): the import credit flow's decision snapshot carries
+            // `original_transaction_id`, and the confirmation created by the same request
+            // carries the refund transaction. No rgXX_ silo row is involved.
+            harness.insertProductLinkedRefund(
                 originalTransactionId = "tx-expense-100",
                 refundTransactionId = "tx-refund-30",
+            )
+            val refundSideBefore = refundSideRows(harness)
+            assertEquals(
+                1L,
+                harness.ledgerQueryCount(
+                    "SELECT count(*) FROM import_candidate_decision_snapshot WHERE original_transaction_id = 'tx-expense-100'",
+                ),
+            )
+            assertEquals(
+                1L,
+                harness.ledgerQueryCount("SELECT count(*) FROM import_confirmation WHERE transaction_id = 'tx-refund-30'"),
             )
             val ids = P705Ids("p705-refund-linked")
             assertEquals(
@@ -235,14 +271,41 @@ class P705VoidRestoreCommitPortTest {
             // The target stays effective and the refund side is value-identical.
             assertEquals(2, harness.readAdapter.loadLedgerEntryRows(ledgerId).size)
             assertEquals(0L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_fact"))
+            assertEquals(0L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_request"))
+            assertEquals(refundSideBefore, refundSideRows(harness))
             assertEquals(
-                1L,
-                harness.ledgerQueryCount(
-                    "SELECT count(*) FROM rg07_refund_relationship WHERE original_transaction_id = 'tx-expense-100' AND refund_transaction_id = 'tx-refund-30'",
-                ),
+                "tx-expense-100",
+                harness.ledgerQueryText("SELECT original_transaction_id FROM import_candidate_decision_snapshot LIMIT 1"),
             )
-            // The recycle bin reports the dependency instead of hiding it.
+            // The recycle bin reports the dependency instead of hiding it: nothing is voided yet.
             assertEquals(0, recycleBin(harness).size)
+        }
+    }
+
+    /**
+     * DP-13 asks about an *effective* linked refund. This slice cannot void an import-created
+     * refund through the product port, so the raw fact below stands in for the later slice that
+     * would append it; the probe's effective-predicate filter is what the vector proves.
+     */
+    @Test
+    fun onlyAnEffectiveLinkedRefundBlocksTheVoid() {
+        P705Database.create("p705-refund-effective-").use { harness ->
+            harness.insertOrdinaryExpense("tx-expense-100", amountMinor = 10_000L)
+            harness.insertOrdinaryExpense("tx-refund-30", amountMinor = 3_000L)
+            harness.insertProductLinkedRefund(
+                originalTransactionId = "tx-expense-100",
+                refundTransactionId = "tx-refund-30",
+            )
+            val ids = P705Ids("p705-refund-effective")
+            assertEquals(
+                VoidTransactionResult.Rejected(P705FailureCode.P705_REFUND_LINKED_VOID_NOT_SUPPORTED),
+                void(harness, ids, ids.requestId()),
+            )
+            harness.insertRawVoidFact(transactionId = "tx-refund-30", sequence = 1L, factKind = "void")
+            assertEquals(false, harness.readAdapter.hasEffectiveRefundLink(ledgerId, TransactionId("tx-expense-100")))
+            // With the refund voided the precondition no longer holds, so the original voids.
+            assertIs<VoidTransactionResult.Created>(void(harness, ids, ids.requestId()))
+            assertEquals(2L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_fact"))
         }
     }
 
@@ -502,6 +565,67 @@ class P705VoidRestoreCommitPortTest {
                 reason.note,
                 harness.ledgerQueryText("SELECT reason_note FROM transaction_void_request LIMIT 1"),
             )
+        }
+    }
+
+    /**
+     * V-15's claim-uniqueness single winner, applied to the merged void/restore family: two
+     * connections race to void the same transaction under different request ids. Exactly one
+     * wins; the loser's claim is discarded by its typed rejection, so it leaves zero writes and
+     * its identity stays retryable.
+     */
+    @Test
+    fun concurrentVoidsOfTheSameTransactionHaveExactlyOneWinner() {
+        P705Database.create("p705-void-concurrent-").use { harness ->
+            harness.insertOrdinaryExpense("tx-expense-100", amountMinor = 10_000L)
+            val first = P705Ids("p705-void-concurrent-a")
+            val second = P705Ids("p705-void-concurrent-b")
+            val ready = CountDownLatch(2)
+            val start = CountDownLatch(1)
+            val executor = Executors.newFixedThreadPool(2)
+            try {
+                val requestIds = listOf(first.requestId(), second.requestId())
+                val idSources = listOf(first.voidSource, second.voidSource)
+                val futures =
+                    listOf(0, 1).map { index ->
+                        executor.submit<VoidTransactionResult> {
+                            ready.countDown()
+                            check(start.await(5, TimeUnit.SECONDS))
+                            P705Database.open(harness.filePath).use { connection ->
+                                ExecuteVoidTransaction(
+                                    connection.voidPort,
+                                    idSources[index],
+                                    fixedClock(P705Fixture.voidedAt),
+                                ).execute(
+                                    VoidTransactionRequest(
+                                        ledgerId = ledgerId,
+                                        requestId = requestIds[index],
+                                        transactionId = TransactionId("tx-expense-100"),
+                                        reason = VoidReason(VoidReasonCode.MIS_ENTERED, "concurrent $index"),
+                                        confirmation = ExplicitManualSave,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                assertTrue(ready.await(5, TimeUnit.SECONDS))
+                start.countDown()
+                val results = futures.map { it.get(20, TimeUnit.SECONDS) }
+                assertEquals(1, results.count { it is VoidTransactionResult.Created })
+                // The loser reads the winner's committed fact, so the append precondition
+                // rejects it and the claim is discarded: one fact, one receipt, one request.
+                assertEquals(
+                    listOf(VoidTransactionResult.Rejected(P705FailureCode.P705_TRANSACTION_VOIDED)),
+                    results.filterIsInstance<VoidTransactionResult.Rejected>(),
+                )
+                assertEquals(1L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_fact"))
+                assertEquals(1L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_receipt"))
+                assertEquals(1L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_request"))
+                assertEquals(0, harness.readAdapter.loadLedgerEntryRows(ledgerId).size)
+                assertEquals(1, recycleBin(harness).size)
+            } finally {
+                executor.shutdownNow()
+            }
         }
     }
 

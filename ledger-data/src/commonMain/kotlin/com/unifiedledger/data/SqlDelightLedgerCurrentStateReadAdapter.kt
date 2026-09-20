@@ -350,13 +350,18 @@ class SqlDelightLedgerCurrentStateReadAdapter(
             }
     }
 
-    /** P7-05.C (D-156, DP-13): read-only effective-refund-linkage probe of a frozen silo. */
+    /**
+     * P7-05.C (D-156, DP-13): read-only effective-refund-linkage probe of the *product* path —
+     * the import credit flow's decision snapshot joined to the confirmation that created the
+     * refund transaction, filtered by the single effective-predicate view. The rgXX_ refund
+     * silo has no product writer and is not read (see the query comment in `Ledger.sq`).
+     */
     override fun hasEffectiveRefundLink(
         ledgerId: LedgerId,
         transactionId: TransactionId,
     ): Boolean =
         database.ledgerQueries
-            .effectiveRefundRelationshipCountForTransaction(ledgerId.value, transactionId.value)
+            .productLinkedRefundCountForTransaction(ledgerId.value, transactionId.value)
             .executeAsOne() > 0L
 
     /** P7-05.B: persisted correction request/receipt pair for the unknown-commit resolver. */

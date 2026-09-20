@@ -2,6 +2,7 @@ package com.unifiedledger.application
 
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.OrdinaryCorrectionCommand
@@ -81,24 +82,57 @@ data class TransactionCorrectionTarget(
     val transactionId: TransactionId,
     val kind: TransactionKind,
     val currentVersionId: TransactionVersionId,
+    /** The current version's postings, so the plan can pick the frozen write form by field diff. */
+    val postings: List<Posting>,
 )
 
 /**
  * The plan callback's outcome. [Commit] carries the freshly derived posting set, so the
  * catalog revalidation that produced it runs inside the commit transaction (spec section 3.2
  * "校验"); [Rejected] carries the frozen failure code and writes nothing.
+ *
+ * [reuseCurrentPostingSet] is the frozen write form (spec section 3.2 "写形"): when the
+ * `(accountId, amount, currency)` leg set is unchanged — a note-only or statistics-only
+ * correction — the appended version keeps the current posting set, so posting identity is not
+ * rebound and the basis of "unchanged funding legs keep their reconciliation rows and evidence
+ * links" holds. Only a real leg change allocates [postingSetId].
  */
 sealed interface TransactionCorrectionPlan {
     data class Commit(
         val receipt: TransactionCorrectionReceipt,
         val postingSetId: PostingSetId,
         val postings: List<Posting>,
+        val reuseCurrentPostingSet: Boolean,
     ) : TransactionCorrectionPlan
 
     data class Rejected(
         val code: P705FailureCode,
     ) : TransactionCorrectionPlan
 }
+
+/**
+ * Whether the correction keeps the current posting set: true exactly when the new leg set has
+ * the same `(accountId, amount, currency)` multiset as the current one. Posting ids and leg
+ * order are deliberately not part of the comparison — they are identity, not economic content,
+ * and a reordered or re-identified set of the same legs is still the unchanged set the spec
+ * section 3.2 write form keeps.
+ */
+fun reuseCurrentPostingSet(
+    currentPostings: List<Posting>,
+    newPostings: List<Posting>,
+): Boolean = currentPostings.legMultiset() == newPostings.legMultiset()
+
+private fun List<Posting>.legMultiset(): Map<Triple<AccountId, Long, CurrencyUnit>, Int> =
+    groupingBy { Triple(it.accountId, it.amount.minorUnits, it.amount.currency) }.eachCount()
+
+/**
+ * Spec section 3.2 freezes "备注长度沿既有上限": the correction path reuses the P7-02 entry note
+ * bound ([ENTRY_NOTE_MAX_CODE_POINTS]) instead of storing the note verbatim. An over-long note
+ * is an inadmissible field value and is reported through the frozen field code — the frozen
+ * table has no note-specific token, the same batch-ruled reading the amount cases use.
+ */
+internal fun correctionNoteRejection(note: String?): P705FailureCode? =
+    if (note != null && validateEntryNote(note) != null) P705FailureCode.P705_FIELD_NOT_SUPPORTED else null
 
 /**
  * Result family of the correction use case: the four states of the existing confirmation
@@ -171,6 +205,9 @@ class ExecuteCorrectTransactionVersion(
         target: TransactionCorrectionTarget,
         snapshot: TransactionCorrectionRequestSnapshot,
     ): TransactionCorrectionPlan {
+        // The note bound is part of the frozen field validation (spec section 3.2), so an
+        // over-long note is rejected before any id is minted or any row is written.
+        correctionNoteRejection(snapshot.note)?.let { return TransactionCorrectionPlan.Rejected(it) }
         val ids = idSource.next()
         val receipt =
             TransactionCorrectionReceipt(
@@ -208,6 +245,7 @@ class ExecuteCorrectTransactionVersion(
                     receipt = receipt,
                     postingSetId = ids.postingSetId,
                     postings = planned.postings,
+                    reuseCurrentPostingSet = reuseCurrentPostingSet(target.postings, planned.postings),
                 )
         }
     }

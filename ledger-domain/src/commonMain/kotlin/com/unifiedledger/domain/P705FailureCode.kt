@@ -22,7 +22,13 @@ enum class P705FailureCode {
     /** The void target has an effective linked refund (DP-13: rejected in this slice). */
     P705_REFUND_LINKED_VOID_NOT_SUPPORTED,
 
-    /** The request carries a field outside the frozen first-slice field set (for example `occurredAt`). */
+    /**
+     * The request carries a field outside the frozen first-slice field set (for example
+     * `occurredAt`), or a field value the frozen vocabulary has no dedicated token for. Batch
+     * ruling: a non-positive/unrepresentable correction amount and an over-long correction note
+     * are reported through this code rather than through a new token, pending the spec revision
+     * that would register one.
+     */
     P705_FIELD_NOT_SUPPORTED,
 
     /** `expectedCurrentVersionId` is not the current version. Reported as `StaleCurrentVersion`. */

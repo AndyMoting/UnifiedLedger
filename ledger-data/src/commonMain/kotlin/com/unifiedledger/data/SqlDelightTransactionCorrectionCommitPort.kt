@@ -10,7 +10,15 @@ import com.unifiedledger.application.TransactionCorrectionRequestIdentity
 import com.unifiedledger.application.TransactionCorrectionRequestSnapshot
 import com.unifiedledger.application.TransactionCorrectionTarget
 import com.unifiedledger.data.db.LedgerDatabase
+import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.DomainResult
+import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.P705FailureCode
+import com.unifiedledger.domain.Posting
+import com.unifiedledger.domain.PostingId
+import com.unifiedledger.domain.PostingSet
+import com.unifiedledger.domain.PostingSetId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionVersionId
@@ -102,23 +110,55 @@ class SqlDelightTransactionCorrectionCommitPort private constructor(
                             transactionId = requestSnapshot.transactionId,
                             kind = kind,
                             currentVersionId = TransactionVersionId(target.current_version_id),
+                            postings = currentVersionPostings(requestSnapshot),
                         ),
                     )
                 when (planned) {
                     is TransactionCorrectionPlan.Rejected -> reject(identity, planned.code)
                     is TransactionCorrectionPlan.Commit -> {
-                        // CAS: the copy binds the expected current version in its join, so a
-                        // concurrent winner makes it change zero rows. Nothing but the claim has
-                        // been written at this point, so the stale path is a zero-write path.
-                        database.ledgerQueries.copyCurrentVersionWithNewPostingSet(
-                            version_id = planned.receipt.versionId.value,
-                            new_posting_set_id = planned.postingSetId.value,
-                            statistics_at = requestSnapshot.statisticsAt.toString(),
-                            note = requestSnapshot.note,
-                            transaction_id = requestSnapshot.transactionId.value,
-                            ledger_id = identity.ledgerId.value,
-                            expected_current_version_id = requestSnapshot.expectedCurrentVersionId.value,
-                        )
+                        // The ledger's zero-sum invariant is enforced at this write boundary, not
+                        // only by the caller: the plan callback is a public port, so the postings
+                        // it returns must form a real posting set (at least two legs, unique ids,
+                        // per-currency zero sum) before any version row binds them. Validation
+                        // runs before the CAS copy so a violation cannot leave a version row
+                        // behind; the failure is an invariant backstop, reported through the same
+                        // code as the other constraint backstops (spec section 4.2).
+                        if (
+                            PostingSet.create(
+                                PostingSetId(planned.postingSetId.value),
+                                planned.postings,
+                            ) is DomainResult.Failure
+                        ) {
+                            return@transactionWithResult reject(identity, P705FailureCode.P705_CONSTRAINT_VIOLATION)
+                        }
+                        // Frozen write form (spec section 3.2): a correction whose
+                        // (accountId, amount, currency) leg set is unchanged keeps the current
+                        // posting set, so posting identity — and with it the basis of "unchanged
+                        // funding legs keep their reconciliation rows and evidence links" — is not
+                        // rebound. Only a real leg change allocates the fresh set.
+                        if (planned.reuseCurrentPostingSet) {
+                            database.ledgerQueries.copyCurrentVersionReusingPostingSet(
+                                version_id = planned.receipt.versionId.value,
+                                statistics_at = requestSnapshot.statisticsAt.toString(),
+                                note = requestSnapshot.note,
+                                transaction_id = requestSnapshot.transactionId.value,
+                                ledger_id = identity.ledgerId.value,
+                                expected_current_version_id = requestSnapshot.expectedCurrentVersionId.value,
+                            )
+                        } else {
+                            // CAS: the copy binds the expected current version in its join, so a
+                            // concurrent winner makes it change zero rows. Nothing but the claim has
+                            // been written at this point, so the stale path is a zero-write path.
+                            database.ledgerQueries.copyCurrentVersionWithNewPostingSet(
+                                version_id = planned.receipt.versionId.value,
+                                new_posting_set_id = planned.postingSetId.value,
+                                statistics_at = requestSnapshot.statisticsAt.toString(),
+                                note = requestSnapshot.note,
+                                transaction_id = requestSnapshot.transactionId.value,
+                                ledger_id = identity.ledgerId.value,
+                                expected_current_version_id = requestSnapshot.expectedCurrentVersionId.value,
+                            )
+                        }
                         if (database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() != 1L) {
                             database.ledgerQueries.deleteTransactionCorrectionRequest(
                                 identity.ledgerId.value,
@@ -126,23 +166,25 @@ class SqlDelightTransactionCorrectionCommitPort private constructor(
                             )
                             return@transactionWithResult CorrectTransactionVersionResult.StaleCurrentVersion
                         }
-                        database.ledgerQueries.insertPostingSet(
-                            posting_set_id = planned.postingSetId.value,
-                            ledger_id = identity.ledgerId.value,
-                        )
-                        planned.postings.forEachIndexed { index, posting ->
-                            database.ledgerQueries.insertPosting(
-                                posting_id = posting.id.value,
+                        if (!planned.reuseCurrentPostingSet) {
+                            database.ledgerQueries.insertPostingSet(
                                 posting_set_id = planned.postingSetId.value,
                                 ledger_id = identity.ledgerId.value,
-                                posting_index = index.toLong(),
-                                account_id = posting.accountId.value,
-                                amount_minor = posting.amount.minorUnits,
-                                currency_code = posting.amount.currency.code,
-                                currency_precision =
-                                    posting.amount.currency.precision
-                                        .toLong(),
                             )
+                            planned.postings.forEachIndexed { index, posting ->
+                                database.ledgerQueries.insertPosting(
+                                    posting_id = posting.id.value,
+                                    posting_set_id = planned.postingSetId.value,
+                                    ledger_id = identity.ledgerId.value,
+                                    posting_index = index.toLong(),
+                                    account_id = posting.accountId.value,
+                                    amount_minor = posting.amount.minorUnits,
+                                    currency_code = posting.amount.currency.code,
+                                    currency_precision =
+                                        posting.amount.currency.precision
+                                            .toLong(),
+                                )
+                            }
                         }
                         database.ledgerQueries.compareAndSetCurrentVersion(
                             planned.receipt.versionId.value,
@@ -189,6 +231,24 @@ class SqlDelightTransactionCorrectionCommitPort private constructor(
                 requestSnapshot.ledgerId.value,
                 requestSnapshot.transactionId.value,
             ).executeAsOne()
+
+    /** The current version's postings, the "old" side of the frozen write-form field diff. */
+    private fun currentVersionPostings(requestSnapshot: TransactionCorrectionRequestSnapshot): List<Posting> =
+        database.ledgerQueries
+            .currentVersionPostingsForTransaction(
+                requestSnapshot.ledgerId.value,
+                requestSnapshot.transactionId.value,
+            ) { postingId, _, accountId, amountMinor, currencyCode, currencyPrecision ->
+                Posting(
+                    id = PostingId(postingId),
+                    accountId = AccountId(accountId),
+                    amount =
+                        Money.ofMinor(
+                            amountMinor,
+                            CurrencyUnit(currencyCode, currencyPrecision.toInt()),
+                        ),
+                )
+            }.executeAsList()
 
     private fun voidState(requestSnapshot: TransactionCorrectionRequestSnapshot): TransactionVoidState =
         TransactionVoidState.of(

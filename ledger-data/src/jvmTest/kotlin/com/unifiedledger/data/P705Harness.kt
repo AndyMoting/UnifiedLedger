@@ -203,6 +203,19 @@ internal class P705Database private constructor(
                 0,
             ).value
 
+    /** First column of the first row, or `null` when the query returns no row. */
+    fun ledgerQueryTextOrNull(sql: String): String? =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(if (cursor.next().value) cursor.getString(0) else null)
+                },
+                0,
+            ).value
+
     /** A transaction of an arbitrary kind with a minimal chain, for the support-matrix vectors. */
     fun insertTransactionOfKind(
         transactionId: String,
@@ -263,7 +276,7 @@ internal class P705Database private constructor(
         factId: String = "raw-fact-$sequence",
     ) {
         val existingRequestId =
-            ledgerQueryText("SELECT request_id FROM transaction_void_fact WHERE transaction_id = '$transactionId' LIMIT 1")
+            ledgerQueryTextOrNull("SELECT request_id FROM transaction_void_fact WHERE transaction_id = '$transactionId' LIMIT 1")
         val requestId = if (reuseExistingRequest) existingRequestId else "raw-request-$sequence"
         val reasonCode = "other"
         driver.execute(
@@ -281,25 +294,36 @@ internal class P705Database private constructor(
     }
 
     /**
-     * A frozen-silo refund relationship row pointing at the transaction (V-14). The relation
-     * parent row is inserted first so the foreign key holds; nothing else in the silo changes.
+     * The product refund linkage of V-14 (DP-13): the import credit flow's decision snapshot
+     * stores `original_transaction_id` (the refunded transaction) and the confirmation created
+     * by the same request carries the refund transaction. Both are written through the same
+     * named queries the product writer uses, so the vector exercises the product path rather
+     * than the writerless `rgXX_` refund silo.
      */
-    fun insertLinkedRefund(
+    fun insertProductLinkedRefund(
         originalTransactionId: String,
         refundTransactionId: String,
     ) {
-        val suffix = originalTransactionId.removePrefix("tx-")
-        driver.execute(
-            null,
-            "INSERT INTO rg07_relation(ledger_id, relation_id, relation_type, payload_marker) " +
-                "VALUES ('${P705Fixture.ledgerId.value}', 'relation-p705-$suffix', 'refund', '{}')",
-            0,
-        )
-        driver.execute(
-            null,
-            "INSERT INTO rg07_refund_relationship(ledger_id, entity_id, relation_id, original_transaction_id, refund_transaction_id, category_id, requested_amount_minor, received_amount_minor, currency_code, currency_precision) " +
-                "VALUES ('${P705Fixture.ledgerId.value}', 'entity-p705-$suffix', 'relation-p705-$suffix', '$originalTransactionId', '$refundTransactionId', '${P705Fixture.food.value}', 3000, 3000, 'CNY', 2)",
-            0,
+        insertImportCreationConfirmation(refundTransactionId)
+        val suffix = refundTransactionId.removePrefix("tx-")
+        // The refund decision shape the import spine's CHECK admits: category + credit
+        // liability + original transaction, no funding/transfer/mixed fields.
+        database.ledgerQueries.insertImportDecisionSnapshot(
+            ledger_id = P705Fixture.ledgerId.value,
+            request_id = "request-p705-$suffix",
+            decision = "confirm",
+            candidate_id = "candidate-p705-$suffix",
+            expected_content_hash = "content-hash-p705",
+            category_id = P705Fixture.food.value,
+            funding_account_id = null,
+            from_account_id = null,
+            to_account_id = null,
+            credit_liability_account_id = "liability-p705-$suffix",
+            asset_account_id = null,
+            original_transaction_id = originalTransactionId,
+            asset_leg_minor = null,
+            credit_leg_minor = null,
+            explicit_confirmed_at = P705Fixture.marchStatistics.toString(),
         )
     }
 

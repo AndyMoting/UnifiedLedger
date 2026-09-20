@@ -78,6 +78,12 @@ sealed interface RecycleBinResult {
  * `(void time DESC, transaction_id ASC)` total order; the use case never re-sorts, so the
  * ordering has exactly one definition. Voided history (versions, creation entry, source
  * relations) stays readable: only the effective surfaces drop the transaction.
+ *
+ * Slice-1a known cost, registered rather than hidden: [toRecycleBinRow] issues its dependency
+ * reads (refund linkage, import creation, manual creation) once per row, so a large recycle bin
+ * costs O(rows) round-trips. Deliberate for the first slice (rows are few and each read is a
+ * primary-key lookup); if the bin ever grows, slice 1b should batch those three probes per
+ * ledger into the voided-row query instead of restructuring this projection.
  */
 class QueryRecycleBin(
     private val readPort: LedgerCurrentStateReadPort,

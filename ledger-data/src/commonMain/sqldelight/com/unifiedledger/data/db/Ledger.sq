@@ -9870,6 +9870,27 @@ WHERE version.transaction_id = :transaction_id
   AND version.ledger_id = :ledger_id
   AND version.version_id = :expected_current_version_id;
 
+-- The reuse form of the same copy (spec section 3.2 "写形"): when the correction leaves the
+-- (accountId, amount, currency) leg set unchanged, the appended version keeps the current
+-- posting_set_id, so posting identity is not rebound and the reconciliation/evidence basis of
+-- unchanged funding legs stays untouched. occurred_at/effective_at are copied verbatim here too
+-- and the join keeps the same statement-level CAS.
+copyCurrentVersionReusingPostingSet:
+INSERT INTO transaction_version(
+  version_id, transaction_id, ledger_id, version_number, posting_set_id,
+  occurred_at, statistics_at, effective_at, note
+)
+SELECT :version_id, version.transaction_id, version.ledger_id, version.version_number + 1,
+  version.posting_set_id, version.occurred_at, :statistics_at, version.effective_at, :note
+FROM transaction_version AS version
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.transaction_id = version.transaction_id
+ AND current_version.ledger_id = version.ledger_id
+ AND current_version.current_version_id = version.version_id
+WHERE version.transaction_id = :transaction_id
+  AND version.ledger_id = :ledger_id
+  AND version.version_id = :expected_current_version_id;
+
 -- Target probes of the correction/void/restore preconditions (spec sections 3.1/3.3).
 transactionCorrectionTarget:
 SELECT COALESCE(tx.canonical_kind, tx.kind) AS kind, current_version.current_version_id
@@ -9883,9 +9904,25 @@ importCreationConfirmationCountForTransaction:
 SELECT count(*) FROM import_confirmation
 WHERE ledger_id = ? AND transaction_id = ? AND operation_class = 'creation';
 
-effectiveRefundRelationshipCountForTransaction:
-SELECT count(*) FROM rg07_refund_relationship
-WHERE ledger_id = ? AND original_transaction_id = ? AND refund_transaction_id IS NOT NULL;
+-- P7-05 (D-156, DP-13): the effective linked-refund probe of the product path. The only
+-- product writer of a refund relationship is the import credit flow: its decision snapshot
+-- stores `original_transaction_id` (the refunded transaction), and the confirmation created by
+-- the same request carries the refund transaction. Joining the two on the shared request
+-- identity and filtering through the single effective-predicate view means a refund that is
+-- itself voided no longer blocks the original (DP-13 asks for an *effective* linked refund).
+-- The rgXX_ refund silo is deliberately not read: it has no product writer, and DP-13's
+-- precondition is about product facts.
+productLinkedRefundCountForTransaction:
+SELECT count(*)
+FROM import_candidate_decision_snapshot AS decision
+JOIN import_confirmation AS confirmation
+  ON confirmation.ledger_id = decision.ledger_id
+ AND confirmation.request_id = decision.request_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = confirmation.ledger_id
+ AND effective.transaction_id = confirmation.transaction_id
+ AND effective.is_effective = 1
+WHERE decision.ledger_id = ? AND decision.original_transaction_id = ?;
 
 currentVersionPostingsForTransaction:
 SELECT posting.posting_id, posting.posting_index, posting.account_id, posting.amount_minor,

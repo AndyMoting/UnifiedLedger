@@ -2,17 +2,17 @@ package com.unifiedledger.domain
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
-import kotlin.time.Instant
 
 /**
  * P7-05.B domain evidence (spec sections 3.2/4.1): the correction validation derives the
- * replacement posting set from the current catalog, the append form copies
- * `occurred_at`/`effective_at` verbatim and changes only `statistics_at`/`note`/postings, and
- * the affected-funding-leg derivation is the frozen DP-10 definition. Values are the spec's
- * exact expectations (V-05/V-06 amount 100 -> 80; V-08 unchanged leg).
+ * replacement posting set from the current catalog, and the affected-funding-leg derivation is
+ * the frozen DP-10 definition. Values are the spec's exact expectations (V-05/V-06 amount
+ * 100 -> 80; V-08 unchanged leg). The version append itself belongs to the product correction
+ * port (its CAS-guarded SQL copy statements pick the frozen write form), so the shared
+ * [FormalTransaction.appendVersion] primitive stays at the three forms the design froze and is
+ * exercised by its RG-01/11/12 callers.
  */
 class TransactionCorrectionTest {
     private val ledgerId = LedgerId("ledger-p705-domain")
@@ -207,82 +207,5 @@ class TransactionCorrectionTest {
                 realAccountIds = realAccounts,
             ).map { it.accountId },
         )
-    }
-
-    @Test
-    fun correctionAppendCopiesOccurredAndEffectiveAtVerbatimAndChangesOnlyTheTargetState() {
-        val catalog = catalog()
-        val occurredAt = Instant.parse("2026-03-05T02:00:00Z")
-        val statisticsAt = Instant.parse("2026-03-05T02:00:00Z")
-        val created =
-            assertIs<DomainResult.Success<FormalTransaction>>(
-                createAssetPaidOrdinaryExpense(
-                    catalog = catalog,
-                    command =
-                        AssetPaidOrdinaryExpenseCommand(
-                            ledgerId = ledgerId,
-                            amount = money(10_000),
-                            categoryId = categoryId,
-                            paymentAccountId = bankId,
-                            times = TransactionTimes.collapsed(occurredAt),
-                            note = "original note",
-                        ),
-                    ids =
-                        AssetPaidOrdinaryExpenseIds(
-                            transactionId = TransactionId("tx-correction-domain"),
-                            versionId = TransactionVersionId("version-correction-1"),
-                            postingSetId = PostingSetId("posting-set-correction-1"),
-                            expensePostingId = PostingId("posting-correction-expense-1"),
-                            paymentPostingId = PostingId("posting-correction-payment-1"),
-                        ),
-                ),
-            ).value
-
-        val newStatisticsAt = Instant.parse("2026-04-05T02:00:00Z")
-        val corrected =
-            assertIs<DomainResult.Success<FormalTransaction>>(
-                created.appendVersion(
-                    change =
-                        TransactionVersionChange.Correction(
-                            note = "corrected note",
-                            statisticsAt = newStatisticsAt,
-                            postings =
-                                listOf(
-                                    Posting(PostingId("posting-correction-expense-2"), expenseAccountId, money(8_000)),
-                                    Posting(PostingId("posting-correction-payment-2"), bankId, money(-8_000)),
-                                ),
-                        ),
-                    ids = TransactionVersionAppendIds(TransactionVersionId("version-correction-2")),
-                    newPostingSetId = PostingSetId("posting-set-correction-2"),
-                ),
-            ).value
-
-        val appended = corrected.versions.single { it.id == TransactionVersionId("version-correction-2") }
-        assertEquals(2, appended.versionNumber)
-        // The reused primitive copies occurred_at/effective_at verbatim (DP-7 keeps occurredAt OPEN).
-        assertEquals(occurredAt, appended.times.occurredAt)
-        assertEquals(occurredAt, appended.times.effectiveAt)
-        assertEquals(newStatisticsAt, appended.times.statisticsAt)
-        assertEquals("corrected note", appended.note)
-        assertEquals(PostingSetId("posting-set-correction-2"), appended.postingSetId)
-        // The old version, its posting set and its postings are untouched.
-        val original = corrected.versions.single { it.id == TransactionVersionId("version-correction-1") }
-        assertEquals(1, original.versionNumber)
-        assertEquals(statisticsAt, original.times.statisticsAt)
-        assertEquals("original note", original.note)
-        assertEquals(PostingSetId("posting-set-correction-1"), original.postingSetId)
-        assertEquals(
-            listOf(10_000L, -10_000L),
-            corrected.postingSets
-                .single { it.id == PostingSetId("posting-set-correction-1") }
-                .postings
-                .map { it.amount.minorUnits },
-        )
-        assertEquals(
-            listOf(8_000L, -8_000L),
-            corrected.currentPostings().map { it.amount.minorUnits },
-        )
-        assertEquals(TransactionVersionId("version-correction-2"), corrected.transaction.currentVersionId)
-        assertFalse(corrected.versions.size == 1)
     }
 }

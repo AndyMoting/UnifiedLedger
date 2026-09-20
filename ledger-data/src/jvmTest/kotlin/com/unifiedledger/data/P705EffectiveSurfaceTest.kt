@@ -7,6 +7,7 @@ import com.unifiedledger.application.ExecuteVoidTransaction
 import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.LedgerCurrentStateResult
+import com.unifiedledger.application.MonthlyBuckets
 import com.unifiedledger.application.QueryLedgerCurrentState
 import com.unifiedledger.application.QueryRecycleBin
 import com.unifiedledger.application.RecycleBinResult
@@ -33,6 +34,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Instant
+import kotlinx.datetime.YearMonth
 
 /**
  * P7-05 effective-surface evidence (spec section 3.6; acceptance vectors V-01, V-20 and V-23).
@@ -248,6 +250,44 @@ class P705EffectiveSurfaceTest {
         }
     }
 
+    /**
+     * V-01's monthly half (DP-3), asserted on the real bucketing code rather than on the row
+     * set alone: the voided row leaves its own statistics month's `transactionCount` and is not
+     * re-bucketed into another month. kotlinx-datetime is a test-only dependency of this module
+     * (the application layer owns the frozen `Asia/Shanghai` bucketing).
+     */
+    @Test
+    fun voidedRowLeavesTheMonthlyTransactionCountAndItsStatisticsBucket() {
+        P705Database.create("p705-monthly-").use { harness ->
+            harness.insertOrdinaryExpense("tx-expense-100", amountMinor = 10_000L)
+            harness.insertOrdinaryIncome("tx-income-500", amountMinor = 50_000L)
+            val ids = P705Ids("p705-monthly")
+            val march = MonthlyBuckets.bucketKey(P705Fixture.marchStatistics)
+            val april = MonthlyBuckets.bucketKey(P705Fixture.aprilStatistics)
+            assertEquals(YearMonth(2026, 3), march)
+            assertEquals(YearMonth(2026, 4), april)
+
+            fun monthlyCount(month: YearMonth): Int =
+                MonthlyBuckets
+                    .aggregate(
+                        harness.readAdapter.loadLedgerEntryRows(ledgerId),
+                        ledgerId,
+                        catalog,
+                        listOf(month),
+                    ).getValue(month)
+                    .currencies
+                    .single()
+                    .transactionCount
+
+            assertEquals(2, monthlyCount(march))
+            assertIs<VoidTransactionResult.Created>(voidExpense(harness, "tx-expense-100", ids))
+            // DP-3: the voided transaction no longer counts in the month its statistics_at
+            // belongs to, and the void day does not move it into any other month.
+            assertEquals(1, monthlyCount(march))
+            assertEquals(0, monthlyCount(april))
+        }
+    }
+
     @Test
     fun unknownCommitResolutionHitsTheOriginalCorrectionReceiptAndNeverReCommits() {
         P705Database.create("p705-resolve-").use { harness ->
@@ -285,6 +325,7 @@ class P705EffectiveSurfaceTest {
                                 Posting(correctionIds.categoryPostingId, P705Fixture.expenseAccount, Money.ofMinor(8_000L, P705Fixture.cny)),
                                 Posting(correctionIds.fundingPostingId, P705Fixture.bankA, Money.ofMinor(-8_000L, P705Fixture.cny)),
                             ),
+                        reuseCurrentPostingSet = false,
                     )
                 }
             val created = assertIs<CorrectTransactionVersionResult.Created>(committed)
@@ -366,6 +407,59 @@ class P705EffectiveSurfaceTest {
                         snapshot.copy(reason = VoidReason(VoidReasonCode.OTHER, "different")),
                     ),
             )
+        }
+    }
+
+    /** V-19 for the restore half of the merged family: a lost restore receipt stays resolvable. */
+    @Test
+    fun restoreUnknownCommitResolutionReturnsTheCommittedReceipt() {
+        P705Database.create("p705-resolve-restore-").use { harness ->
+            harness.insertOrdinaryExpense("tx-expense-100", amountMinor = 10_000L)
+            val ids = P705Ids("p705-resolve-restore")
+            assertIs<VoidTransactionResult.Created>(voidExpense(harness, "tx-expense-100", ids))
+            val requestId = ids.requestId()
+            val snapshot =
+                TransactionVoidRequestSnapshot(
+                    ledgerId = ledgerId,
+                    transactionId = TransactionId("tx-expense-100"),
+                    factKind = TransactionVoidFactKind.RESTORE,
+                    reason = VoidReason(VoidReasonCode.VOIDED_IN_ERROR, "voided by mistake"),
+                )
+            val created =
+                assertIs<VoidTransactionResult.Created>(
+                    harness.voidPort.commitOnce(
+                        com.unifiedledger.application.TransactionVoidRequestIdentity(ledgerId, requestId),
+                        snapshot,
+                    ) {
+                        val factIds = ids.voidIds()
+                        com.unifiedledger.application.TransactionVoidPlan.Commit(
+                            receipt =
+                                com.unifiedledger.application.TransactionVoidReceipt(
+                                    confirmationId = factIds.confirmationId,
+                                    transactionId = TransactionId("tx-expense-100"),
+                                    factId = factIds.factId,
+                                    factKind = TransactionVoidFactKind.RESTORE,
+                                ),
+                            createdAt = restoredAt,
+                        )
+                    },
+                )
+            val resolved =
+                com.unifiedledger.application
+                    .ResolveTransactionVoidCommitStatus(harness.readAdapter)
+                    .resolve(ledgerId, requestId, snapshot)
+            assertEquals(
+                created.receipt,
+                assertIs<com.unifiedledger.application.TransactionVoidCommitResolution.MatchingReceipt>(resolved).receipt,
+            )
+            // An identity that was never committed stays unknown, so the caller may retry it.
+            assertEquals(
+                com.unifiedledger.application.TransactionVoidCommitResolution.Absent,
+                com.unifiedledger.application
+                    .ResolveTransactionVoidCommitStatus(harness.readAdapter)
+                    .resolve(ledgerId, ids.requestId(), snapshot),
+            )
+            assertEquals(2L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_fact"))
         }
     }
 }

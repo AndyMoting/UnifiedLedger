@@ -1,6 +1,7 @@
 package com.unifiedledger.data
 
 import com.unifiedledger.application.CorrectTransactionVersionResult
+import com.unifiedledger.application.ENTRY_NOTE_MAX_CODE_POINTS
 import com.unifiedledger.application.ExecuteCorrectTransactionVersion
 import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.ExplicitlyConfirmedTransactionCorrection
@@ -8,8 +9,13 @@ import com.unifiedledger.application.LedgerCurrentStateResult
 import com.unifiedledger.application.QueryLedgerCurrentState
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.SummarizeLedgerActivity
+import com.unifiedledger.application.TransactionCorrectionPlan
+import com.unifiedledger.application.TransactionCorrectionReceipt
+import com.unifiedledger.application.TransactionCorrectionRequestIdentity
+import com.unifiedledger.application.TransactionCorrectionRequestSnapshot
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.P705FailureCode
+import com.unifiedledger.domain.Posting
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVersionId
 import java.util.concurrent.CountDownLatch
@@ -174,6 +180,147 @@ class P705CorrectionCommitPortTest {
                 "2026-04-05T02:00:00Z",
                 harness.ledgerQueryText("SELECT statistics_at FROM transaction_version WHERE version_id = '${ids.lastVersionId}'"),
             )
+        }
+    }
+
+    @Test
+    fun aNoteOnlyCorrectionReusesTheCurrentPostingSetAndKeepsPostingIdentity() {
+        P705Database.create("p705-correct-note-").use { harness ->
+            harness.insertOrdinaryExpense("tx-expense-100", amountMinor = 10_000L)
+            val ids = P705Ids("p705-correct-note")
+            val created =
+                assertIs<CorrectTransactionVersionResult.Created>(
+                    correct(harness, ids, ids.requestId(), amountMinor = 10_000L, note = "renamed"),
+                )
+            // Spec section 3.2's frozen write form: an unchanged (accountId, amount, currency)
+            // leg set keeps the current posting set, so posting identity is not rebound and the
+            // basis of "unchanged funding legs keep their reconciliation rows and evidence
+            // links" holds. Version 2 binds the same set and the same posting rows.
+            assertEquals(
+                "tx-expense-100-posting-set-1",
+                harness.ledgerQueryText("SELECT posting_set_id FROM transaction_version WHERE version_id = '${created.receipt.versionId.value}'"),
+            )
+            assertEquals(
+                listOf("tx-expense-100-posting-0", "tx-expense-100-posting-1"),
+                harness.ledgerQueryTexts("SELECT posting_id FROM posting ORDER BY posting_index"),
+            )
+            assertEquals(1L, harness.ledgerQueryCount("SELECT count(*) FROM posting_set"))
+            assertEquals(2L, harness.versionCount("tx-expense-100"))
+            assertEquals(
+                "renamed",
+                harness.ledgerQueryText("SELECT note FROM transaction_version WHERE version_id = '${created.receipt.versionId.value}'"),
+            )
+            // A real leg change still allocates a fresh posting set with fresh posting ids.
+            assertIs<CorrectTransactionVersionResult.Created>(
+                correct(
+                    harness,
+                    ids,
+                    ids.requestId(),
+                    amountMinor = 8_000L,
+                    note = "renamed",
+                    expectedVersionId = TransactionVersionId(created.receipt.versionId.value),
+                ),
+            )
+            val secondVersionId = harness.currentVersionId("tx-expense-100")
+            assertEquals(2L, harness.ledgerQueryCount("SELECT count(*) FROM posting_set"))
+            assertEquals(4L, harness.ledgerQueryCount("SELECT count(*) FROM posting"))
+            assertTrue(
+                harness.ledgerQueryText("SELECT posting_set_id FROM transaction_version WHERE version_id = '$secondVersionId'") !=
+                    "tx-expense-100-posting-set-1",
+            )
+            // The reused set is untouched by either correction.
+            assertEquals(
+                listOf(10_000L, -10_000L),
+                harness.ledgerQueryLongs(
+                    "SELECT amount_minor FROM posting WHERE posting_set_id = 'tx-expense-100-posting-set-1' ORDER BY posting_index",
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun overLongNoteIsAFieldRejectionAtTheExistingEntryBound() {
+        P705Database.create("p705-note-bound-").use { harness ->
+            harness.insertOrdinaryExpense("tx-expense-100", amountMinor = 10_000L)
+            val ids = P705Ids("p705-note-bound")
+            // The frozen bound itself is admissible (spec section 3.2 "备注长度沿既有上限").
+            val atBound = "x".repeat(ENTRY_NOTE_MAX_CODE_POINTS)
+            assertIs<CorrectTransactionVersionResult.Created>(
+                correct(harness, ids, ids.requestId(), amountMinor = 10_000L, note = atBound),
+            )
+            // One code point over is an inadmissible field value with zero writes; the claim is
+            // discarded, so the identity is not left behind either.
+            assertEquals(
+                CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_FIELD_NOT_SUPPORTED),
+                correct(
+                    harness,
+                    ids,
+                    ids.requestId(),
+                    amountMinor = 10_000L,
+                    note = atBound + "x",
+                    expectedVersionId = TransactionVersionId(harness.currentVersionId("tx-expense-100")),
+                ),
+            )
+            assertEquals(2L, harness.versionCount("tx-expense-100"))
+            assertEquals(1L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"))
+            assertEquals(1L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_receipt"))
+        }
+    }
+
+    /**
+     * The plan callback is a public port, so the write boundary must enforce the ledger's
+     * posting-set invariant itself instead of trusting the caller: an unbalanced plan is a
+     * typed rejection with zero writes (no version, no posting set, no leftover claim).
+     */
+    @Test
+    fun theWriteBoundaryRejectsAPlanWhosePostingsDoNotFormAPostingSet() {
+        P705Database.create("p705-posting-boundary-").use { harness ->
+            harness.insertOrdinaryExpense("tx-expense-100", amountMinor = 10_000L)
+            val ids = P705Ids("p705-posting-boundary")
+            val correctionIds = ids.correctIds()
+            val requestId = ids.requestId()
+            val snapshot =
+                TransactionCorrectionRequestSnapshot(
+                    ledgerId = ledgerId,
+                    transactionId = TransactionId("tx-expense-100"),
+                    expectedCurrentVersionId = TransactionVersionId("tx-expense-100-version-1"),
+                    note = "unbalanced",
+                    statisticsAt = P705Fixture.marchStatistics,
+                    amount = Money.ofMinor(8_000L, P705Fixture.cny),
+                    categoryId = P705Fixture.food,
+                    fundingAccountId = P705Fixture.bankA,
+                )
+            val result =
+                harness.correctionPort.commitOnce(
+                    TransactionCorrectionRequestIdentity(ledgerId, requestId),
+                    snapshot,
+                ) {
+                    TransactionCorrectionPlan.Commit(
+                        receipt =
+                            TransactionCorrectionReceipt(
+                                confirmationId = correctionIds.confirmationId,
+                                transactionId = TransactionId("tx-expense-100"),
+                                versionId = correctionIds.versionId,
+                                expectedCurrentVersionId = snapshot.expectedCurrentVersionId,
+                            ),
+                        postingSetId = correctionIds.postingSetId,
+                        postings =
+                            listOf(
+                                Posting(correctionIds.categoryPostingId, P705Fixture.expenseAccount, Money.ofMinor(8_000L, P705Fixture.cny)),
+                                Posting(correctionIds.fundingPostingId, P705Fixture.bankA, Money.ofMinor(-7_000L, P705Fixture.cny)),
+                            ),
+                        reuseCurrentPostingSet = false,
+                    )
+                }
+            assertEquals(
+                CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_CONSTRAINT_VIOLATION),
+                result,
+            )
+            assertEquals(1L, harness.versionCount("tx-expense-100"))
+            assertEquals(1L, harness.ledgerQueryCount("SELECT count(*) FROM posting_set"))
+            assertEquals(2L, harness.ledgerQueryCount("SELECT count(*) FROM posting"))
+            assertEquals(0L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"))
+            assertEquals(0L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_receipt"))
         }
     }
 
