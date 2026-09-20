@@ -3112,7 +3112,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **决定：**
 
-1. **问题（计划 §2 第 44 行）**：`local/artifacts/a01-a05/b5_round3.py` 取点击后的首个 `IntendedVsync`，该帧可能是列表按下/涟漪帧，**不能绑定到「详情屏关键内容可见」**；uiautomator dump 地板（~2.29 s）又粗于 1 s 门槛，故须更换终点。冻结规格 §6 对关键内容的唯一括注为「（金额/状态行）」。**引用精度说明**：计划第 44 行与 D-148 的表述为「首个 `IntendedVsync`」，而 `b5_round3.py:21` 实际记录的是 framestats 的 `parts[2]`——按标准列序该列为 `Vsync`（`parts[1]` 才是 `IntendedVsync`），脚本内既无 `IntendedVsync` 也无 InputEventId 判别逻辑。本条按计划原表述引用；该差异登记为**文档精度项**，**不影响结论**（任何「点击后首个帧时间戳」型终点都无法绑定关键内容呈现）。
+1. **问题（计划 §2 第 44 行）**：`local/artifacts/a01-a05/b5_round3.py` 取点击后的首个 `IntendedVsync`，该帧可能是列表按下/涟漪帧，**不能绑定到「详情屏关键内容可见」**；uiautomator dump 地板（~2.29 s）又粗于 1 s 门槛，故须更换终点。冻结规格 §6 对关键内容的唯一括注为「（金额/状态行）」。**引用精度说明**：计划第 44 行的表述为「首个 `IntendedVsync`」（D-148 的对应表述为「logcat 首帧时间戳」与「`dumpsys gfxinfo framestats` 首帧计时（InputEventId 判别 tap 消费帧）」），而 `b5_round3.py:21` 实际记录的是 framestats 的 `parts[2]`——按标准列序该列为 `Vsync`（`parts[1]` 才是 `IntendedVsync`），脚本内既无 `IntendedVsync` 也无 InputEventId 判别逻辑。本条按计划原表述引用；该差异登记为**文档精度项**，**不影响结论**（任何「点击后首个帧时间戳」型终点都无法绑定关键内容呈现）。
 
 2. **新终点（本次复核冻结）**：判定 = **同一无障碍快照内**同时存在精确文本 `候选详情`（详情屏唯一标题；**不取子串**——列表行的 `onClickLabel` 为「查看候选详情」）**且**存在与所点行金额**精确相等**的文本节点（金额/状态行，并记录状态行是否在位）。点击 = 对所点金额节点的可点击祖先派发 `ACTION_CLICK`（**不使用合成指针输入**）。计时 = `SystemClock.uptimeMillis()`，以 25–50 ms 轮询（实测 `pollMillis=30`），报告区间 `[上次缺席, 首次出现]`；**上界**含点击派发、轮询粒度与树读取代价（实测单次树读取中位 7–11 ms、最大 77–110 ms）。无效轮判定：详情屏错误分支文本（`无法读取候选详情（本地数据库不可用）。` / `该候选不存在或不在当前账本。`）、所点行金额为 `金额未解`、或点击前详情已打开——均排除出统计。
 
