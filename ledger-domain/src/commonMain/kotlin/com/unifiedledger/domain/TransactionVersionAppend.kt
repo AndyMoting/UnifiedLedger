@@ -21,6 +21,10 @@ import kotlin.time.Instant
  * `newPostingSetId` is null the current posting set is reused (note_update and
  * statistics_time); when non-null a fresh, validated posting set is created and bound
  * (RG-12 posting_facts).
+ *
+ * P7-05 note: the product correction port (spec section 3.2) appends versions through its own
+ * CAS-guarded SQL copy statements and picks the frozen write form from the field diff, so it
+ * needs no fourth change form here. The sealed type stays at the three forms the design froze.
  */
 sealed interface TransactionVersionChange {
     data class Note(

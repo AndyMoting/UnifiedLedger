@@ -2983,3 +2983,35 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 入：本条登记与 `docs/CURRENT_STATE.md` 的对应同步。出：零产品代码、零测试、零 schema/迁移/依赖/清单、零 Golden/fixture；不改 D-148～D-156 的任何裁决（D-155 的 A-05 开放项表述由本条部分承接：D04-4 转 PASS、§10.3 规模项取得裁决）；D04-4 的状态变更仅由本条所述设备证据（候选 `2381b6e` 同一 APK 绑定）支持，不扩展至其他向量；§10.3 规模项维持非 PASS。
 
 **关联决定：** D-146（P7-04 导入批次范围与验收项定义）、D-153/D-154（同一候选绑定的设备回归上下文）、D-155（A-DOC 批 A-05 事实登记——本条部分取代其开放项表述）、D-148（A-PERF 读治理与 B5 门槛状态更新；§10.3 部分证据来源）、阶段计划 §10.1/§10.2/§10.3/§10.4.5。
+
+## D-158 P7-05 首切片（片 1a 基底层）实施登记与评审条件承接
+
+**状态：** 已批准并交付（2026-09-19，P7-05 实施批首切片「片 1a 基底层」的实施登记与评审条件承接；候选 `71ea398`（父 `1238832`，基线 `70a8c71`）经独立规格评审与独立质量评审终局 APPROVE WITH CONDITIONS（全部 P1/P2 已闭合，残余仅为登记条件）与 distinct verifier ACCEPT；合并与推送由主代理按流程执行）。规格：`docs/specs/2026-09-19-p7-05-correction-void-recycle-design.md`（approved，D-156）。本条为实施登记：不改变 D-156 的 Q11/Q12、DP-1..DP-13 与支持矩阵裁决，只登记交付事实、切片边界、评审结果、具名残余与一条合并阻断条件；schema 由 v30 升至 v31。
+
+**决定：**
+
+1. **片 1a 交付（schema v31 基底层）**：新迁移边 `ledger-data/src/commonMain/sqldelight/com/unifiedledger/data/db/30.sqm`（v30→v31）——纯加性、零回填，`PRAGMA defer_foreign_keys = 1` 且由调用方外层事务包裹（沿 `26.sqm` 纪律），11 个新 DDL 对象（`transaction_void_request`/`transaction_void_fact`/`transaction_void_receipt` 三表、回收站排序索引、四个守卫触发器、`transaction_correction_request`/`transaction_correction_receipt` 两表、视图 `transaction_effective_state`）与 fresh `Ledger.sq` 终态定义逐字节一致；既有 schema 版本断言（`ledger-data` 与 `desktop-app` 测试）随边同步升至 v31。领域契约：`P705FailureCode.kt`（15 个稳定码，code 可比较、message 不比较）、`TransactionCorrection.kt`（修正纯校验、替换 posting set 派生、受影响资金腿派生）、`TransactionVoidState.kt`（有效谓词的领域单点 `isEffective`、原因码集与说明上限、追加前置条件）。应用用例与端口：`CorrectTransactionVersion.kt`（claim-first + `expectedCurrentVersionId` CAS）、`VoidTransaction.kt`（作废/恢复合并族）、`QueryRecycleBin.kt`（只读回收站）、`OrdinaryVersionRevalidation.kt`（恢复按当前目录重校验）、`ResolveTransactionCommitStatus.kt`（快照感知未知提交解析）。持久化端口：`SqlDelightTransactionCorrectionCommitPort.kt`、`SqlDelightTransactionVoidCommitPort.kt`。有效谓词单一 SQL 定义点 = 视图 `transaction_effective_state`，施加于规格 §3.6 的 #1–#5 面（月度/流水/详情、`currentVersionRowsForLedger` → HOME 余额与「当前交易」回退、Analysis Tab 输入）；#6–#15 按规格维持（含 #15 目录删除引用面有意不过滤）。文档重述：`docs/ACCOUNTING_RULES.md` 看账读模型段与 P7-03 规格（`docs/specs/2026-09-13-p7-03-ledger-view-design.md`）按重冻结后的「current-version 且未被作废」同步重述。测试面：新增 7 个测试文件（`ledger-data` 5、`ledger-domain` 2），自动项 V-01..V-15、V-18..V-23 有对应测试；`ledger-data` jvmTest 新增 test-only `kotlinx-datetime` 依赖（月度向量需要 `YearMonth`，产品依赖零变化）。
+
+2. **切片边界（片 1a = 基底层，片 1b = 产品接线）**：本批不交付任何 `app-ui` 或两端组合根接线——详情屏修正/作废入口、提交前差异预览、回收站屏均属片 1b；V-16 的设备部分与 V-17（Android 人工验收）同属片 1b。片 1a 的新用例与端口在候选变更集内无产品调用点（变更集不触及 `app-ui` 与两端组合根主源码，仅触及 `desktop-app` 测试的 schema 版本断言）。
+
+3. **评审结果与唯一 P1 修复**：独立规格评审与独立质量评审均闭合全部 P1/P2 并终局 APPROVE WITH CONDITIONS（残余仅为登记条件）；distinct verifier ACCEPT，逐项核实候选身份、迁移边纯加性、fresh 与 migrated 逐字节一致、DP-13 退款探针的产品路径、谓词覆盖面、禁止 owner 零写入、隐私扫描与文档重述。评审期间发现并修复的唯一 P1：DP-13 的退款前置条件原按 `rg07_` 竖井取证，而该竖井无产品写入方；已改为产品路径探针（`import_candidate_decision_snapshot.original_transaction_id` → 同一请求身份的 `import_confirmation` → 有效谓词视图），使「带真实关联退款的手工支出不可被作废」由产品路径证据成立，`rgXX_` 竖井零读取。
+
+4. **登记残余（具名承接，不得静默丢弃）**：
+
+   - `P705_MATCHED_FUNDING_LEG_CHANGED` 为保守占位：当前版本上存在任何对账行即阻断修正，而非仅实际受影响的资金腿；转账切片必须收窄，否则仅改备注的修正也会被无理由拒绝。
+   - `P705_FIELD_NOT_SUPPORTED` 被改用于承载非正/不可精确表示的金额与超限备注；规格冻结的触发（请求携带 `occurredAt`/kind）因请求类型结构上不可承载而不可达，须随规格修订登记该扩展读法。
+   - 作废原因码集（五值）与 200 字符说明上限为实施冻结并硬编码于 DB CHECK；规格修订必须登记；后续变更码集须以迁移边「drop 并重建 `transaction_effective_state` 视图」落地（视图依赖事实表）。
+   - `voidReasonRejection` 按 UTF-16 长度计界，而仓库既有备注上限按码点计（`ENTRY_NOTE_MAX_CODE_POINTS`）。
+   - 修正的 `reuseCurrentPostingSet` 写形标志由调用方提供（`TransactionCorrectionPlan.Commit` 字段），端口本身已持有新旧 posting 列表、可自行派生；片 1b 不得把该标志接入用户可见判定。
+   - `QueryRecycleBin` 把仅作废适用的 `P705_REFUND_LINKED_VOID_NOT_SUPPORTED` 并入 `restoreRejectionCode`，而恢复用例从不检查该码——当前不可达，片 1b 不得据此呈现错误的恢复判定。
+   - 回收站读每行三次 SQL 往返（退款链、导入创建、手工创建三个探针）；代码内已登记为 O(rows) 成本，片 1b 应改为按账本批量。
+   - `QueryRecycleBin` 声明 `InvalidState` 结果但从不返回；`P705FailureCode` 三个成员（`P705_STALE_CURRENT_VERSION`/`P705_NO_CHANGE`/`P705_REQUEST_IDENTITY_CONFLICT`）从不产出（分别以结果族独立变体表达）；`factId` 为无类型 `String`；三处以裸 `IllegalStateException` 抛出（修正端口 CAS 推进兜底 `check`、修正与作废两端口的「已提交回执缺失」`checkNotNull`），与结果族的类型化承诺不符。
+   - 片 1b 承接的覆盖缺口：V-13 仅覆盖 ACCOUNT_TRANSFER/LEND（未覆盖 REFUND_RECEIPT、CREDIT_REPAYMENT 与 canonical-only kind）；V-16 的自动部分（重开数据库后逐值一致）无测试；V-07 的跨月修正在行集层断言（未经 `QueryMonthlyActivity`）。
+
+5. **性能条件（片 1b 合并阻断项，非静默跟进）**：有效谓词为两个最热读查询（`currentVersionRowsForLedger`（`Ledger.sq` ≈8743）与 `ledgerEntryRowsForLedger`（≈8788），经视图（≈9719））各增一次相关 join，且 `ledger_transaction` 无 `(ledger_id)` 索引；该成本未测量。按项目 A-PERF 证据纪律（D-147/D-148），片 1b 验收前须在 20k 库上取得该项读数；读数显示回归的，须以索引边或另立决定处置，不得静默通过。
+
+6. **已知文档漂移（显式延期）**：`docs/ARCHITECTURE.md` 与 `docs/CURRENT_STATE.md` 仍记 schema v30 与 29 个迁移文件（v1→v30）；该版本漂移随既有 A-DOC 步骤处理，不在本批。
+
+**边界：** 入：片 1a 的上述源码、测试与两处文档重述（`docs/ACCOUNTING_RULES.md`、P7-03 规格），以及本条登记。出：零 `app-ui` 与组合根接线（详情入口、差异预览、回收站屏归片 1b）；零对账/证据/借贷/导入 owner 写入；零 `rgXX_` 竖井与 golden 改动；不改 D-156 的 Q11/Q12、DP-1..DP-13 与支持矩阵；P7-03 读模型按 D-156 已重冻结，本批只落实现、不重开。自动验证：聚焦向量（修正/作废/恢复/回收站）与迁移边测试承载本批自动项，V-16 自动重开与 V-17 设备面按第 4 条由片 1b 承接；聚合门（完整 `check`、Android/KMP 编译、Debug APK、Desktop build、完整 Python 与 migration verifier）按根 `AGENTS.md` 验证分工由同一提交 CI 承担。设备回归（V-16 设备部分、V-17）由片 1b 承担。
+
+**关联决定：** D-156（P7-05 设计门与实施授权来源——Q11/Q12、DP-1..DP-13、P7-03 读模型重冻结；本条不改其裁决）、D-145（P7-03 只读读模型——按 D-156 重冻结并由本批落实现）、D-113（DP-10 收窄：跨层组合授权延后至转账切片，本批不组合、不授权）、D-098（claim-first 幂等与零写入先例——本批修正/作废/恢复沿用）、D-144（P7-02 录入边界与请求身份纪律——字段校验与备注上限来源）、D-146（导入候选终态——作废不改变候选终态）、D-147/D-148（A-PERF 证据纪律——第 5 条性能条件依据）、D-155（A-DOC 批登记先例）。

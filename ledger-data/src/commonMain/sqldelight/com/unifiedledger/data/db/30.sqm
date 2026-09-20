@@ -1,0 +1,121 @@
+-- P7-05 (D-156) correction / void / restore substrate: v30 -> v31. Purely additive: three
+-- append-only void/restore tables plus the void/restore and correction claim-first pairs, the
+-- single effective-predicate view, its two guard-index/trigger families and the recycle-bin
+-- ordering index. Zero data backfill; the caller wraps Schema.migrate in one outer transaction
+-- (26.sqm discipline), so any guard failure rolls the whole migration back and the v30 file is
+-- left untouched. Every CREATE statement below matches the fresh Ledger.sq terminal definition
+-- byte for byte.
+PRAGMA defer_foreign_keys = 1;
+
+-- Void/restore family (single request table for both fact kinds).
+CREATE TABLE transaction_void_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  fact_kind TEXT NOT NULL CHECK (fact_kind IN ('void', 'restore')),
+  reason_code TEXT NOT NULL CHECK (reason_code IN ('mis_entered', 'duplicate_entry', 'no_longer_applicable', 'voided_in_error', 'other')),
+  reason_note TEXT,
+  confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  PRIMARY KEY (ledger_id, request_id),
+  UNIQUE (ledger_id, request_id, fact_kind),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE transaction_void_fact (
+  ledger_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL CHECK (sequence > 0),
+  fact_id TEXT NOT NULL,
+  fact_kind TEXT NOT NULL CHECK (fact_kind IN ('void', 'restore')),
+  reason_code TEXT NOT NULL CHECK (reason_code IN ('mis_entered', 'duplicate_entry', 'no_longer_applicable', 'voided_in_error', 'other')),
+  reason_note TEXT,
+  request_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, transaction_id, sequence),
+  UNIQUE (ledger_id, transaction_id, fact_id),
+  UNIQUE (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id, fact_kind)
+    REFERENCES transaction_void_request(ledger_id, request_id, fact_kind) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE transaction_void_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL UNIQUE,
+  transaction_id TEXT NOT NULL,
+  fact_id TEXT NOT NULL UNIQUE,
+  fact_kind TEXT NOT NULL CHECK (fact_kind IN ('void', 'restore')),
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id, fact_kind)
+    REFERENCES transaction_void_request(ledger_id, request_id, fact_kind) ON DELETE CASCADE,
+  FOREIGN KEY (ledger_id, transaction_id, fact_id)
+    REFERENCES transaction_void_fact(ledger_id, transaction_id, fact_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE INDEX transaction_void_fact_recycle_bin_idx ON transaction_void_fact(ledger_id, created_at DESC, transaction_id);
+CREATE TRIGGER transaction_void_fact_sequence_guard BEFORE INSERT ON transaction_void_fact BEGIN
+  SELECT CASE
+    WHEN new.sequence != COALESCE((SELECT max(sequence) FROM transaction_void_fact WHERE ledger_id = new.ledger_id AND transaction_id = new.transaction_id), 0) + 1
+      THEN RAISE(ABORT, 'void fact sequence must be the next one') END;
+END;
+CREATE TRIGGER transaction_void_fact_alternation_guard BEFORE INSERT ON transaction_void_fact BEGIN
+  SELECT CASE
+    WHEN new.sequence = 1 AND new.fact_kind != 'void'
+      THEN RAISE(ABORT, 'void fact must start with a void')
+    WHEN new.sequence = 2 AND new.fact_kind != 'restore'
+      THEN RAISE(ABORT, 'void fact must alternate')
+    WHEN new.sequence = 2 AND (SELECT fact_kind FROM transaction_void_fact WHERE ledger_id = new.ledger_id AND transaction_id = new.transaction_id AND sequence = 1) != 'void'
+      THEN RAISE(ABORT, 'void fact must alternate')
+    WHEN new.sequence > 2
+      THEN RAISE(ABORT, 'void cycle exhausted')
+  END;
+END;
+CREATE TRIGGER transaction_void_fact_guard_update BEFORE UPDATE ON transaction_void_fact BEGIN
+  SELECT RAISE(ABORT, 'cannot update void fact'); END;
+CREATE TRIGGER transaction_void_fact_guard_delete BEFORE DELETE ON transaction_void_fact BEGIN
+  SELECT RAISE(ABORT, 'cannot delete void fact'); END;
+
+-- Correction family.
+CREATE TABLE transaction_correction_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  expected_current_version_id TEXT NOT NULL,
+  note TEXT,
+  statistics_at TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL,
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  category_id TEXT NOT NULL,
+  funding_account_id TEXT NOT NULL,
+  confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE transaction_correction_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL UNIQUE,
+  transaction_id TEXT NOT NULL,
+  version_id TEXT NOT NULL UNIQUE,
+  expected_current_version_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id)
+    REFERENCES transaction_correction_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (transaction_id, version_id, ledger_id)
+    REFERENCES transaction_version(transaction_id, version_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, expected_current_version_id, ledger_id)
+    REFERENCES transaction_version(transaction_id, version_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+
+-- The single effective-predicate definition point (spec sections 3.3/4.3).
+CREATE VIEW transaction_effective_state AS
+SELECT tx.ledger_id AS ledger_id, tx.transaction_id AS transaction_id,
+  CASE WHEN (
+    SELECT fact.fact_kind FROM transaction_void_fact AS fact
+    WHERE fact.ledger_id = tx.ledger_id AND fact.transaction_id = tx.transaction_id
+    ORDER BY fact.sequence DESC LIMIT 1
+  ) = 'void' THEN 0 ELSE 1 END AS is_effective
+FROM ledger_transaction AS tx;

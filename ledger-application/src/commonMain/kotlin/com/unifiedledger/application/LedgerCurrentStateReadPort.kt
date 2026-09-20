@@ -42,6 +42,24 @@ data class ManualIncomeCommitRecord(
     val currentVersionId: TransactionVersionId,
 )
 
+/**
+ * P7-05.B/C commit record behind the snapshot-aware unknown-commit resolvers: the persisted
+ * request snapshot plus its receipt, keyed by request identity.
+ */
+data class TransactionCorrectionCommitRecord(
+    val ledgerId: LedgerId,
+    val requestId: RequestId,
+    val snapshot: TransactionCorrectionRequestSnapshot,
+    val receipt: TransactionCorrectionReceipt,
+)
+
+data class TransactionVoidCommitRecord(
+    val ledgerId: LedgerId,
+    val requestId: RequestId,
+    val snapshot: TransactionVoidRequestSnapshot,
+    val receipt: TransactionVoidReceipt,
+)
+
 interface LedgerCurrentStateReadPort {
     fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow>
 
@@ -161,5 +179,68 @@ interface LedgerCurrentStateReadPort {
         throw UnsupportedOperationException(
             "loadTransactionReconciliationLegs is not implemented by this read port; a missing reconciliation " +
                 "projection must surface as a typed read failure, never as an all-ineligible verdict (R-Q06-4)",
+        )
+
+    /**
+     * P7-05.C (D-156, DP-1): the voided complement of [loadLedgerEntryRows] — the same table
+     * group and row shape plus the void metadata the recycle bin shows, ordered by the frozen
+     * `(void time DESC, transaction_id ASC)` total order. The recycle bin must not invent a
+     * second source of truth, so this is the same predicate view with the opposite polarity.
+     *
+     * G6: no neutral default, for the same reason as [loadLedgerEntryRows]. An empty list from
+     * an unimplemented port would render an empty recycle bin for a ledger that may well have
+     * voided transactions; [QueryRecycleBin] maps the thrown exception to
+     * [RecycleBinResult.Unavailable].
+     */
+    fun loadVoidedTransactionRows(ledgerId: LedgerId): List<VoidedTransactionRow> =
+        throw UnsupportedOperationException(
+            "loadVoidedTransactionRows is not implemented by this read port; a missing recycle-bin read " +
+                "must surface as a typed read failure, never as an empty recycle bin (R-Q06-4)",
+        )
+
+    /**
+     * P7-05.C (D-156, DP-13): whether the transaction has an effective linked refund. The void
+     * precondition and the recycle bin's dependency explanation both read it.
+     *
+     * G6: no neutral default. `false` from an unimplemented port would claim "no linked refund"
+     * and let a void through on an unread fact; the void commit port and [QueryRecycleBin] map
+     * the thrown exception to their typed failure surfaces.
+     */
+    fun hasEffectiveRefundLink(
+        ledgerId: LedgerId,
+        transactionId: TransactionId,
+    ): Boolean =
+        throw UnsupportedOperationException(
+            "hasEffectiveRefundLink is not implemented by this read port; a missing refund-linkage read " +
+                "must surface as a typed read failure, never as 'no linked refund' (R-Q06-4)",
+        )
+
+    /**
+     * P7-05.B (D-156, spec section 4.2): the persisted correction request/receipt pair behind
+     * the snapshot-aware unknown-commit resolver, or `null` when this request identity was
+     * never committed. G6: no neutral default — `null` from an unimplemented port would claim
+     * "this request was never committed" and let the caller re-commit it.
+     */
+    fun findTransactionCorrectionByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): TransactionCorrectionCommitRecord? =
+        throw UnsupportedOperationException(
+            "findTransactionCorrectionByRequest is not implemented by this read port; a missing request " +
+                "read must surface as a typed read failure, never as 'never committed' (R-Q06-4)",
+        )
+
+    /**
+     * P7-05.C (D-156, spec section 4.2): the persisted void/restore request/receipt pair behind
+     * the snapshot-aware unknown-commit resolver, or `null` when the identity was never
+     * committed. G6: no neutral default (see [findTransactionCorrectionByRequest]).
+     */
+    fun findTransactionVoidByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): TransactionVoidCommitRecord? =
+        throw UnsupportedOperationException(
+            "findTransactionVoidByRequest is not implemented by this read port; a missing request " +
+                "read must surface as a typed read failure, never as 'never committed' (R-Q06-4)",
         )
 }
