@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.graphics.Rect
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -110,6 +111,30 @@ private const val GROUP_FALLBACK_TIMEOUT_DIVISOR = 2
 private const val CLICK_PARENT_DEPTH = 4
 private const val DB_FILE_NAME = "ledger.db"
 
+// ---- b5Detail (A-PERF B5 endpoint: single-candidate detail key-content latency) ----
+
+private const val ARG_RUNS = "runs"
+private const val ARG_POLL_MILLIS = "pollMillis"
+private const val ARG_GATE_MILLIS = "gateMillis"
+private const val ARG_ROW_INDEX = "rowIndex"
+private const val DEFAULT_B5_RUNS = 3
+private const val DEFAULT_B5_POLL_MILLIS = 30
+private const val DEFAULT_B5_GATE_MILLIS = 1_000
+private const val DEFAULT_B5_ROW_INDEX = 0
+private const val B5_POLL_MILLIS_MIN = 25
+private const val B5_POLL_MILLIS_MAX = 50
+private const val B5_PREFIX = "b5Detail:"
+private const val B5_DETAIL_TITLE = "候选详情"
+private const val B5_STATUS_LINE_PREFIX = "类型 "
+private const val B5_UNRESOLVED_AMOUNT = "金额未解"
+private const val B5_DETAIL_UNAVAILABLE = "无法读取候选详情（本地数据库不可用）。"
+private const val B5_DETAIL_ABSENT = "该候选不存在或不在当前账本。"
+private const val B5_BACK_LABEL = "返回"
+private const val B5_POLL_TIMEOUT_MILLIS = 30_000
+private const val B5_BACK_WAIT_MILLIS = 5_000
+private const val B5_LEAVE_DETAIL_WAIT_MILLIS = 15_000
+private const val B5_BACK_MAX_ATTEMPTS = 3
+
 /**
  * The duplicate-status histogram SQL. `import_duplicate_status_history` is append-only with
  * `PRIMARY KEY (ledger_id, candidate_id, sequence)`, so the row with the greatest `sequence` per
@@ -188,6 +213,35 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  *   forced by the lifecycle: `am instrument` force-stops the app process when the run ends, so any
  *   UI state a run reaches is gone by the time the next run starts - the remaining flow cannot be
  *   split across the smaller modes, and the group entry is itself session-scoped (below).
+ * - `b5Detail`: the A-PERF B5 endpoint (frozen spec section 6: 单候选详情 = 点击首行候选 → 详情屏关键
+ *   内容（金额/状态行）可见, gate ≤1s, three runs, the maximum is the reading) measured IN-PROCESS,
+ *   because the host `uiautomator dump` floor (~2.29 s per dump) is far coarser than the 1 s gate and
+ *   the older gfxinfo endpoint (the first `IntendedVsync` after the tap) cannot be bound to "the key
+ *   content rendered". Args `runs` (default 3), `pollMillis` (default 30, clamped into the 25..50 ms
+ *   window the endpoint requires), `gateMillis` (default 1000), `rowIndex` (default 0 = the first
+ *   candidate row of the visible window). It taps the `rowIndex`-th candidate row with the
+ *   accessibility `ACTION_CLICK` (never a synthetic gesture), polls ONE tree snapshot at a time until
+ *   a snapshot holds BOTH a node whose text is exactly 候选详情 AND a node whose text is exactly the
+ *   tapped row's amount line, and logs the bracket `[last absent, first present]` in ms relative to
+ *   the tap plus the per-poll tree-read cost (the bound's resolution), a `summary` line and a `gate`
+ *   verdict line. It never asserts the gate - the acceptance decision belongs to the host - and it
+ *   excludes from the gate statistics any run whose detail screen rendered an error branch or whose
+ *   endpoint never appeared, because such a run measured no latency at all. The mode must also LEAVE
+ *   the detail screen between runs, and the first device run of this mode showed that the old return
+ *   step could not prove it had: success was declared as soon as a candidate-row node was present, but
+ *   the detail screen renders the tapped row's amount line, which is such a node - so run 1 passed the
+ *   check on a stale frame while the detail was still displayed (`candidate list rendered=true
+ *   elapsedMs=15`, far too fast to be a real screen transition), runs 2 and 3 then started on the detail
+ *   screen, were invalidated (`detailAlreadyOpenBeforeTap`), and only 1 of the 3 required runs was
+ *   valid. The return contract is now BOTH halves of ONE snapshot: no node whose text is exactly 候选详情
+ *   AND at least one candidate row, awaited at the endpoint's fast poll interval and bounded by
+ *   [B5_LEAVE_DETAIL_WAIT_MILLIS]; a failed wait re-locates the 返回 affordance and retries the click up
+ *   to [B5_BACK_MAX_ATTEMPTS] times (`return: retry <n>/3`), re-reading the tree between attempts, and
+ *   the loop proceeds only after that check passes (`return: left detail=true candidateListRendered=true
+ *   elapsedMs=<n> attempts=<k>`). A detail screen that still cannot be left is a logged
+ *   `FINDING: could not leave the detail screen after 3 attempts` that STOPS the mode - every further run
+ *   would start on the detail screen and be invalid - and the summary/gate lines are then still emitted
+ *   for the runs actually obtained.
  *
  * The group entry 整组标记为重复 is SESSION-SCOPED rather than merely list-position-scoped: the
  * affordance is gated on `view.lastIntakeSession?.inputRef`
@@ -324,6 +378,16 @@ class ImportScaleTraversalInstrumentedTest {
         val evidence = mutableListOf<String>()
         try {
             runGroupDisposition(evidence)
+        } finally {
+            appendEvidence(evidence)
+        }
+    }
+
+    @Test
+    fun b5Detail() {
+        val evidence = mutableListOf<String>()
+        try {
+            runB5Detail(evidence)
         } finally {
             appendEvidence(evidence)
         }
@@ -523,6 +587,165 @@ class ImportScaleTraversalInstrumentedTest {
         val after = readLedgerSnapshot("after", log)
         log("delta baseline=${if (preIntake == null) "before-traversal" else "post-intake"}")
         logSnapshotDelta(baseline, after, log)
+        log("end")
+    }
+
+    /**
+     * The A-PERF B5 endpoint, measured in-process: `单候选详情 = 点击首行候选 → 详情屏关键内容（金额/状态行）
+     * 可见`, gate ≤1s, three runs, the maximum is the reading (frozen spec section 6). It is measured here
+     * rather than on the host because the host `uiautomator dump` floor (~2.29 s per dump) is far coarser
+     * than the gate, and because the older gfxinfo endpoint (the first `IntendedVsync` after the tap)
+     * cannot be bound to "the key content rendered". Every line carries the [B5_PREFIX].
+     *
+     * ENDPOINT PREDICATE (the same-snapshot rule): ONE tree snapshot must contain a node whose text is
+     * EXACTLY [B5_DETAIL_TITLE] AND a node whose text is exactly the tapped row's amount line. The exact
+     * match is what makes the title detail-only - the list row's `onClickLabel` is 查看候选详情, so a
+     * substring match would accept a list frame - and the amount half binds that title to the key content
+     * of the row that was tapped (amount and meta strings also appear on the list rows, so the title alone
+     * and the amount alone are both ambiguous; only the pair identifies the detail screen showing THIS
+     * row). The amount/status line is phase-1 content: the decision form's catalog-dependent part loads
+     * asynchronously (D-148 layer 2), the amount and meta lines do not, so this predicate does not measure
+     * the catalog load. The status line observed in the endpoint snapshot is logged alongside
+     * (`statusLinePresent`) so the host can read the 状态行 half of the frozen endpoint too.
+     *
+     * WHY THE READING IS AN UPPER BOUND: a poll cannot see the frame boundary. The true render instant
+     * lies between the last poll that did not show the content (`lastAbsentMs`) and the first poll that
+     * did (`firstPresentMs`), so `firstPresentMs` is at or after the true latency and `lastAbsentMs` is at
+     * or before it; the reported bracket is [lastAbsentMs, firstPresentMs] and the gate reads the upper
+     * end. The resolution is the poll interval plus the per-poll tree-read cost, both logged
+     * (`pollCostMsMedian` / `pollCostMsMax`), so a reading within a few tens of ms of the gate is readable
+     * as a resolution artifact rather than as a defect. `t0` is taken immediately before the accessibility
+     * click, so the interval covers input handling and the whole navigation.
+     *
+     * INVALID-RUN GUARD: the detail screen's error branches ([B5_DETAIL_UNAVAILABLE], [B5_DETAIL_ABSENT])
+     * render no amount and no key content, and they render FAST - counted as a latency they would look like
+     * a passing detail open. A run that observes one is logged as `run=<i> INVALID reason=<text>` and
+     * excluded from the gate statistics (the loop continues with the next run). A run whose row carries no
+     * resolved amount ([B5_UNRESOLVED_AMOUNT]), a run that starts while the detail screen is already open
+     * (it would satisfy the predicate at its first poll and report a bogus ~0 ms open) and a run whose
+     * endpoint never appears within [B5_POLL_TIMEOUT_MILLIS] are invalid for the same reason: no latency
+     * was measured. The "the detail is already open" guard reads its OWN freshly re-read snapshot at the
+     * top of each run - never the frame the previous run's return step ended on - so a detail screen that
+     * the return step failed to leave is caught BEFORE the tap rather than after it.
+     *
+     * RETURN CONTRACT: the run loop may proceed to the next run only once the detail screen has actually
+     * been left, and "left" means BOTH halves of ONE snapshot - no node whose text is exactly
+     * [B5_DETAIL_TITLE] AND at least one candidate row ([readB5Return] reads them in a single tree walk so
+     * the halves can never come from different frames), awaited through [waitFor] at the fast `pollMillis`
+     * interval with the [B5_LEAVE_DETAIL_WAIT_MILLIS] bound. The old contract - "a candidate row is
+     * present" - was satisfied by the detail screen's own amount line and passed on a stale frame, which
+     * invalidated two of the first device run's three runs. A wait that does not satisfy the contract
+     * re-locates and re-clicks the 返回 affordance up to [B5_BACK_MAX_ATTEMPTS] times (`return: retry
+     * <n>/3`), and a detail screen that still cannot be left logs
+     * `FINDING: could not leave the detail screen after 3 attempts` and STOPS the mode: every further run
+     * would start on the detail screen and be invalidated, so the loop breaks and the summary/gate lines
+     * are still emitted for the runs actually obtained.
+     *
+     * Args: `runs` (default [DEFAULT_B5_RUNS]), `pollMillis` (default [DEFAULT_B5_POLL_MILLIS], clamped
+     * into the [B5_POLL_MILLIS_MIN]..[B5_POLL_MILLIS_MAX] ms window the endpoint requires), `gateMillis`
+     * (default [DEFAULT_B5_GATE_MILLIS]) and `rowIndex` (default [DEFAULT_B5_ROW_INDEX]): which candidate
+     * row of the visible window to tap, 0 = the first.
+     *
+     * The mode NEVER asserts the gate - it logs `gate gateMillis=<g> pass=<true|false>` and the acceptance
+     * decision belongs to the host. It asserts only the genuine preconditions: the activity is reachable
+     * and the candidate list rendered ([reachImportReview] does both) and at least one candidate row is
+     * present, so a measurement that cannot be taken still leaves its evidence behind.
+     */
+    private fun runB5Detail(evidence: MutableList<String>) {
+        val log: (String) -> Unit = { line -> evidence += "$B5_PREFIX $line" }
+        val requestedPollMillis = intArg(ARG_POLL_MILLIS, DEFAULT_B5_POLL_MILLIS)
+        val pollMillis = requestedPollMillis.coerceIn(B5_POLL_MILLIS_MIN, B5_POLL_MILLIS_MAX)
+        val runs = intArg(ARG_RUNS, DEFAULT_B5_RUNS).coerceAtLeast(1)
+        val gateMillis = intArg(ARG_GATE_MILLIS, DEFAULT_B5_GATE_MILLIS).coerceAtLeast(1)
+        val rowIndex = intArg(ARG_ROW_INDEX, DEFAULT_B5_ROW_INDEX).coerceAtLeast(0)
+        log("start epochMillis=${System.currentTimeMillis()}")
+        log("args runs=$runs pollMillis=$pollMillis gateMillis=$gateMillis rowIndex=$rowIndex")
+        if (pollMillis != requestedPollMillis) {
+            log("FINDING: pollMillis=$requestedPollMillis was clamped to $pollMillis (the endpoint requires $B5_POLL_MILLIS_MIN..$B5_POLL_MILLIS_MAX ms)")
+        }
+        prepareAutomation()
+        reachImportReview(log)
+        // The library scale the reading is taken on, so the host can bind it to the collection it came
+        // from. The endpoint itself needs no scrollable container, so a missing one is a logged finding
+        // rather than a stop.
+        val container = selectScrollableContainer(log)
+        if (container == null) {
+            log("FINDING: no scrollable node in the import review tree; collectionInfo.rowCount is unavailable")
+        } else {
+            log("list collectionInfo=${describeCollection(container)}")
+        }
+        val initialRows = candidateAmountRows(appRoot())
+        assertTrue(
+            "no candidate row (a node whose text ends with $CURRENCY_SUFFIX or reads $B5_UNRESOLVED_AMOUNT) on the import review screen; observed: ${observedState()}",
+            initialRows.isNotEmpty(),
+        )
+        log("list window ${visibleRowWindow(appRoot())} rowCandidates=${initialRows.size}")
+        var validRuns = 0
+        var invalidRuns = 0
+        var maxUpperMs = -1L
+        for (run in 1..runs) {
+            // One pre-tap snapshot per run, RE-READ here and never carried over from the previous run:
+            // the row index and the "the detail is not already open" guard read the SAME frame, so `t0`
+            // really is a moment at which the endpoint is absent (the bracket's lower bound depends on it).
+            // The re-read is what makes the guard trustworthy after a return step: a detail screen that a
+            // previous run's return step failed to leave is caught BEFORE the tap, and a run that starts on
+            // the detail screen would otherwise satisfy the predicate at its first poll and report a bogus
+            // ~0 ms detail open.
+            val preTap = appRoot()
+            val rows = candidateAmountRows(preTap)
+            log("run=$run listWindow=${visibleRowWindow(preTap)} rowCandidates=${rows.size}")
+            if (detailTitlePresent(preTap)) {
+                invalidRuns += 1
+                log("run=$run INVALID reason=detailAlreadyOpenBeforeTap")
+                if (!returnToListFromDetail(run, pollMillis, log)) {
+                    break
+                }
+                continue
+            }
+            val row = rows.getOrNull(rowIndex)
+            if (row == null) {
+                invalidRuns += 1
+                log("run=$run INVALID reason=noCandidateRowAtRowIndex$rowIndex")
+                continue
+            }
+            val rowAmount = nodeText(row)
+            if (rowAmount == B5_UNRESOLVED_AMOUNT || !rowAmount.endsWith(CURRENCY_SUFFIX)) {
+                invalidRuns += 1
+                log("run=$run INVALID reason=noResolvedAmountAtRowIndex$rowIndex amountText=$rowAmount")
+                continue
+            }
+            log("run=$run rowAmount=$rowAmount rowBounds=${boundsOf(row)}")
+            val t0 = SystemClock.uptimeMillis()
+            val t0EpochMillis = System.currentTimeMillis()
+            val clicked = clickNode(row)
+            log("run=$run row click accepted=$clicked t0UptimeMs=$t0 t0EpochMillis=$t0EpochMillis")
+            val poll = pollB5Endpoint(t0, rowAmount, pollMillis)
+            if (poll.firstPresentMs >= 0) {
+                validRuns += 1
+                maxUpperMs = maxOf(maxUpperMs, poll.firstPresentMs)
+                log(
+                    "run=$run bracketMs=[${poll.lastAbsentMs}, ${poll.firstPresentMs}] upperMs=${poll.firstPresentMs} " +
+                        "polls=${poll.polls} pollCostMsMedian=${poll.costMedianMs} pollCostMsMax=${poll.costMaxMs}",
+                )
+                log("run=$run endpointSnapshot statusLinePresent=${poll.statusLinePresent}")
+            } else {
+                invalidRuns += 1
+                log("run=$run INVALID reason=${poll.invalidReason}")
+                log("run=$run polls=${poll.polls} pollCostMsMedian=${poll.costMedianMs} pollCostMsMax=${poll.costMaxMs}")
+            }
+            // The loop may proceed to the next run only once the detail screen has actually been left: a
+            // run that starts on the detail screen is invalidated by the guard above, so a return step that
+            // cannot prove the transition would silently cost every remaining run.
+            if (!returnToListFromDetail(run, pollMillis, log)) {
+                break
+            }
+        }
+        val maxUpperText = if (maxUpperMs < 0) "unavailable" else maxUpperMs.toString()
+        log("summary runs=$runs valid=$validRuns maxUpperMs=$maxUpperText invalidRuns=$invalidRuns")
+        val pass = validRuns >= runs && maxUpperMs >= 0 && maxUpperMs <= gateMillis.toLong()
+        log("gate gateMillis=$gateMillis pass=$pass")
+        log("gate basis validRuns=$validRuns/$runs maxUpperMs=$maxUpperText pollMillis=$pollMillis rowIndex=$rowIndex")
+        log("gate verdict is logged, not asserted: the acceptance decision belongs to the host")
         log("end")
     }
 
@@ -814,6 +1037,263 @@ class ImportScaleTraversalInstrumentedTest {
         )
         sleepQuietly(fallbackMillis.toLong())
         log("fixed wait complete elapsedMs=${elapsedMillis(startNanos)} ${collectOutcomeCounts(appRoot()).describe()}")
+    }
+
+    // ---- b5Detail readings (A-PERF B5 endpoint: detail key-content latency) ----
+
+    /**
+     * The candidate amount lines of the visible window, in tree order ([collectNodes] order, which is
+     * breadth-first from the root, so a list's rows come out in render order). A row qualifies through
+     * [isCandidateAmountNode] - the same "ends with [CURRENCY_SUFFIX]" test the traversal's row readings
+     * use - or by reading exactly [B5_UNRESOLVED_AMOUNT]. An unresolved row is still a candidate row and
+     * keeps its index, so `rowIndex` counts rows rather than resolved amounts, which is also what keeps
+     * the invalid-run guard for such a row reachable.
+     */
+    private fun candidateAmountRows(root: AccessibilityNodeInfo?): List<AccessibilityNodeInfo> = collectNodes(root) { node -> isCandidateAmountNode(node) || nodeText(node) == B5_UNRESOLVED_AMOUNT }
+
+    /** One poll's reading of ONE snapshot: the two endpoint halves, the error branches and the status line. */
+    private data class B5SnapshotReading(
+        val endpointVisible: Boolean,
+        val errorText: String?,
+        val statusLinePresent: Boolean,
+    )
+
+    /**
+     * Evaluates one snapshot in a SINGLE tree walk, so the two halves of the endpoint can never come from
+     * different frames: the detail-only title [B5_DETAIL_TITLE] and the tapped row's amount must both be
+     * present as EXACT node texts. The detail error branches are reported separately so the caller can
+     * invalidate the run instead of counting a fast error screen as a detail open, and the presence of the
+     * status line ([B5_STATUS_LINE_PREFIX]) is reported so the host can read the 状态行 half of the frozen
+     * endpoint from the same snapshot.
+     */
+    private fun readB5Snapshot(
+        root: AccessibilityNodeInfo?,
+        rowAmount: String,
+    ): B5SnapshotReading {
+        val texts = collectNodes(root) { node -> isB5WatchedText(nodeText(node), rowAmount) }.map { node -> nodeText(node) }
+        return B5SnapshotReading(
+            endpointVisible = texts.contains(B5_DETAIL_TITLE) && texts.contains(rowAmount),
+            errorText = texts.firstOrNull { text -> text == B5_DETAIL_UNAVAILABLE || text == B5_DETAIL_ABSENT },
+            statusLinePresent = texts.any { text -> text.startsWith(B5_STATUS_LINE_PREFIX) },
+        )
+    }
+
+    /** The node texts one B5 poll watches: the two endpoint halves, the two error branches, the status line. */
+    private fun isB5WatchedText(
+        text: String,
+        rowAmount: String,
+    ): Boolean =
+        text == B5_DETAIL_TITLE ||
+            text == rowAmount ||
+            text == B5_DETAIL_UNAVAILABLE ||
+            text == B5_DETAIL_ABSENT ||
+            text.startsWith(B5_STATUS_LINE_PREFIX)
+
+    /** One run's poll reading: the bracket, the poll count and the per-poll tree-read cost in ms. */
+    private data class B5PollResult(
+        val lastAbsentMs: Long,
+        val firstPresentMs: Long,
+        val polls: Int,
+        val costMedianMs: Long,
+        val costMaxMs: Long,
+        val statusLinePresent: Boolean,
+        val invalidReason: String,
+    )
+
+    /**
+     * The bounded B5 poll. From `t0` it reads ONE accessibility snapshot per [pollMillis] - the read is
+     * `appRoot()` plus one tree walk, and its cost is measured per poll so the resolution of the bound is
+     * known - and stops at the first snapshot that satisfies the endpoint predicate or that carries a
+     * detail error branch.
+     *
+     * `lastAbsentMs` starts at 0 and is moved forward on every poll that does not satisfy the predicate:
+     * the endpoint is known absent at `t0` (the list-only window was read immediately before the tap), so
+     * 0 is a true lower bound even when the very first poll already shows the detail. `firstPresentMs`
+     * stays -1 until the predicate holds. A poll loop that reaches [B5_POLL_TIMEOUT_MILLIS] with neither
+     * outcome returns an invalid reading whose reason is a space-free token, so the run is excluded from
+     * the gate statistics instead of being counted as a (fast) PASS.
+     */
+    private fun pollB5Endpoint(
+        t0: Long,
+        rowAmount: String,
+        pollMillis: Int,
+    ): B5PollResult {
+        val costs = mutableListOf<Long>()
+        var lastAbsentMs = 0L
+        var firstPresentMs = -1L
+        var errorText: String? = null
+        var statusLinePresent = false
+        val deadline = t0 + B5_POLL_TIMEOUT_MILLIS
+        while (SystemClock.uptimeMillis() <= deadline) {
+            val readStart = SystemClock.uptimeMillis()
+            val reading = readB5Snapshot(appRoot(), rowAmount)
+            costs += SystemClock.uptimeMillis() - readStart
+            val atMs = SystemClock.uptimeMillis() - t0
+            if (reading.endpointVisible) {
+                firstPresentMs = atMs
+                statusLinePresent = reading.statusLinePresent
+                break
+            }
+            errorText = reading.errorText
+            if (errorText != null) {
+                break
+            }
+            lastAbsentMs = atMs
+            sleepQuietly(pollMillis.toLong())
+        }
+        val invalidReason =
+            when {
+                errorText != null -> errorText
+                firstPresentMs < 0 -> "endpointNotVisibleWithin${B5_POLL_TIMEOUT_MILLIS}ms"
+                else -> ""
+            }
+        return B5PollResult(
+            lastAbsentMs = lastAbsentMs,
+            firstPresentMs = firstPresentMs,
+            polls = costs.size,
+            costMedianMs = medianOf(costs),
+            costMaxMs = costs.maxOrNull() ?: 0L,
+            statusLinePresent = statusLinePresent,
+            invalidReason = invalidReason,
+        )
+    }
+
+    /** The median of [values] in ms (0 for an empty list); an even count takes the lower of the two middles. */
+    private fun medianOf(values: List<Long>): Long {
+        if (values.isEmpty()) {
+            return 0L
+        }
+        val sorted = values.sorted()
+        return sorted[sorted.size / 2]
+    }
+
+    /**
+     * Whether ONE snapshot shows the detail screen's title ([B5_DETAIL_TITLE] as an EXACT node text). The
+     * exact match is what makes the title detail-only - the list row's `onClickLabel` is 查看候选详情, so a
+     * substring match would accept a list frame - and both the pre-tap invalid-run guard and the return
+     * contract read this half.
+     */
+    private fun detailTitlePresent(root: AccessibilityNodeInfo?): Boolean = root != null && findByText(root, B5_DETAIL_TITLE) != null
+
+    /**
+     * One snapshot's reading of the return contract: the detail title gone AND a candidate row present,
+     * both taken from the SAME frame.
+     */
+    private data class B5ReturnReading(
+        val detailTitlePresent: Boolean,
+        val candidateRowPresent: Boolean,
+    ) {
+        /** Whether this snapshot shows the candidate list rather than the detail screen. */
+        val leftDetail: Boolean get() = !detailTitlePresent && candidateRowPresent
+    }
+
+    /**
+     * Reads the return contract from ONE tree walk, so its two halves can never come from different
+     * frames - the same-snapshot rule the endpoint predicate follows. The candidate-row half uses
+     * [isCandidateRowNode], the test [findCandidateRow] uses, so "the list is back" means the same thing
+     * in both places.
+     */
+    private fun readB5Return(root: AccessibilityNodeInfo?): B5ReturnReading {
+        val nodes = collectNodes(root) { node -> nodeText(node) == B5_DETAIL_TITLE || isCandidateRowNode(node) }
+        return B5ReturnReading(
+            detailTitlePresent = nodes.any { node -> nodeText(node) == B5_DETAIL_TITLE },
+            candidateRowPresent = nodes.any { node -> isCandidateRowNode(node) },
+        )
+    }
+
+    /**
+     * Returns to the candidate list after one run and reports whether the run loop may proceed.
+     *
+     * THE DEFECT THIS CONTRACT FIXES (first device run of this mode): the old return step declared success
+     * as soon as a candidate-row node was present, but the detail screen renders the tapped row's amount
+     * line, which IS such a node - so the check passed on a stale frame while the detail was still
+     * displayed (run 1 logged `candidate list rendered=true elapsedMs=15`, far too fast to be a real screen
+     * transition), runs 2 and 3 then started on the detail screen, were invalidated by
+     * `detailAlreadyOpenBeforeTap`, and only 1 of the 3 required runs was valid. Success is now BOTH halves
+     * of ONE snapshot: NO node whose text is exactly [B5_DETAIL_TITLE] AND at least one candidate row, read
+     * by [readB5Return] in a single tree walk.
+     *
+     * Each attempt re-reads the tree and RE-LOCATES the 返回 affordance ([clickBackAffordance]); between
+     * attempts nothing is kept from the previous attempt, so a retry can never click a node the tree no
+     * longer holds. The leave-detail wait is [waitFor] over [readB5Return] at the endpoint's fast poll
+     * interval (`pollMillis`), bounded by [B5_LEAVE_DETAIL_WAIT_MILLIS]; a wait that does not satisfy the
+     * contract consumes one of [B5_BACK_MAX_ATTEMPTS] click attempts, each retry logged as
+     * `return: retry <n>/3`. Every outcome logs `return: left detail=<b> candidateListRendered=<b>
+     * elapsedMs=<n> attempts=<k>`.
+     *
+     * A detail screen that still cannot be left is a logged
+     * `FINDING: could not leave the detail screen after 3 attempts` and returns false: the caller STOPS the
+     * mode, because every further run would start on the detail screen and be invalidated, and the
+     * summary/gate lines are then still emitted for the runs actually obtained.
+     */
+    private fun returnToListFromDetail(
+        run: Int,
+        pollMillis: Int,
+        log: (String) -> Unit,
+    ): Boolean {
+        val startNanos = System.nanoTime()
+        var attempts = 0
+        var left = false
+        var reading = readB5Return(appRoot())
+        while (!left && attempts < B5_BACK_MAX_ATTEMPTS) {
+            attempts += 1
+            clickBackAffordance(run, attempts, pollMillis, log)
+            left =
+                waitFor(
+                    {
+                        reading = readB5Return(appRoot())
+                        reading.leftDetail
+                    },
+                    B5_LEAVE_DETAIL_WAIT_MILLIS,
+                    pollMillis,
+                )
+        }
+        log(
+            "run=$run return: left detail=$left candidateListRendered=${reading.candidateRowPresent} " +
+                "elapsedMs=${elapsedMillis(startNanos)} attempts=$attempts",
+        )
+        if (!left) {
+            log("FINDING: could not leave the detail screen after $B5_BACK_MAX_ATTEMPTS attempts")
+            log("FINDING: stopping b5Detail: the detail screen is still open, so every remaining run would start on it and be invalid")
+        }
+        return left
+    }
+
+    /**
+     * One attempt at leaving the detail screen through its 返回 affordance, which is re-located on every
+     * attempt: the tree is read HERE, the affordance is resolved from that read, and the click goes through
+     * [clickNode] - the affordance's own text node is not clickable, so it is the ancestor walk that gets
+     * the click accepted. The affordance is clicked only while the detail title is present in the same
+     * snapshot: on the candidate list there is nothing to leave, and a 返回 that belongs to another screen
+     * would navigate away from the measurement. A 返回 affordance that is absent while the detail IS open
+     * is a logged finding; the attempt is still consumed, so the caller's bounded leave-detail wait runs
+     * anyway.
+     */
+    private fun clickBackAffordance(
+        run: Int,
+        attempt: Int,
+        pollMillis: Int,
+        log: (String) -> Unit,
+    ) {
+        // Every attempt but the first is a retry and says so, so the evidence shows how often it took.
+        val prefix = if (attempt == 1) "" else "retry $attempt/$B5_BACK_MAX_ATTEMPTS "
+        val root = appRoot()
+        if (root != null && !detailTitlePresent(root)) {
+            log("run=$run return: ${prefix}the detail screen is not open; no $B5_BACK_LABEL click")
+            return
+        }
+        var back = findByText(root, B5_BACK_LABEL)
+        if (back == null) {
+            // Fall back to a bounded wait and re-check: the detail screen may still be composing when the
+            // endpoint poll ends.
+            val backReady = waitFor({ findByText(appRoot(), B5_BACK_LABEL) != null }, B5_BACK_WAIT_MILLIS, pollMillis)
+            back = if (backReady) findByText(appRoot(), B5_BACK_LABEL) else null
+        }
+        if (back == null) {
+            log("run=$run return: ${prefix}no $B5_BACK_LABEL affordance within $B5_BACK_WAIT_MILLIS ms; the detail screen may not be open")
+        } else {
+            log("run=$run return: ${prefix}$B5_BACK_LABEL click accepted=${clickNode(back)} node=${describeNode(back)}")
+        }
     }
 
     // ---- group card readings ----
