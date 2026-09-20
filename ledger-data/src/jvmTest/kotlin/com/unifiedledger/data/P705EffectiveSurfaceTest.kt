@@ -29,12 +29,12 @@ import com.unifiedledger.domain.TransactionVersionId
 import com.unifiedledger.domain.TransactionVoidFactKind
 import com.unifiedledger.domain.VoidReason
 import com.unifiedledger.domain.VoidReasonCode
+import kotlinx.datetime.YearMonth
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Instant
-import kotlinx.datetime.YearMonth
 
 /**
  * P7-05 effective-surface evidence (spec section 3.6; acceptance vectors V-01, V-20 and V-23).
