@@ -3053,3 +3053,23 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 入：上述四个 tracked 文档的状态同步与本条登记。出：零产品代码、零测试、零 schema/迁移/依赖/清单、零 Golden/fixture、零 `docs/DECISIONS.md` 既有条目改写（本条为追加）、零 `docs/specs/**` 改动（冻结规格的工作基线声明属冻结工件、不在本批）；不改 D-156～D-159 的任何裁决；正式状态文档不含本机路径、临时研究或工具轨迹。
 
 **关联决定：** D-155（A-DOC 批登记的结构先例）、D-150（同一承接链的上一 A-DOC 批）、D-158（第 1 条 v31 边描述与第 6 条漂移登记——本条闭合并扩其范围）、D-159（50k 证据与承接——本条同步其正式状态、不改其裁决）、D-157（A-05 与 §10.3 非 PASS 裁决的来源）、D-147/D-148（A-PERF 证据纪律与 B5 门槛状态更新的登记来源）、阶段计划 §2 A-DOC 行与 §10.1。
+
+## D-161 §10.3 大规模库遍历的程序化滚动测试基础设施登记
+
+**状态：** 已批准并交付（2026-09-20，A-05 §10.3 规模项承接 (a) 的登记与实施：为大规模候选库遍历新增测试/自动化基础设施——基于 Compose semantics 滚动动作的 instrumented 滚动致动器。本条按 D-159 第 4 条「新增测试基础设施本身是一项变更，须先行登记再实施」先登记后实施；零产品行为变更、零 schema/迁移/依赖、零 Golden/fixture）。
+
+**决定：**
+
+1. **承接对象与范围**：D-159 第 3 条以实测定位——在 50k 候选库上以机械 fling 遍历约 50 次后触发 INPUT-FREEZE，阻断的正是计划 §10.3 的遍历本身；替代输入通道（键盘逐页、`MOVE_END`/`DPAD`、轨迹球）在该规模不可用。D-159 第 4 条承接 (a) 要求为大规模库遍历实现程序化滚动。本条登记该基础设施的范围与边界。
+
+2. **实现载体**：新增 `android-app/src/androidTest` 下的 instrumented 测试（沿用既有 instrumentation source set 与 `androidx.test:runner`，**零新依赖**），经平台 `UiAutomation` 取得无障碍节点树并调用 Compose 惰性列表的滚动 semantics 动作（`ACTION_SCROLL_TO_POSITION` 优先、`ACTION_SCROLL_FORWARD` 为回退）。**遍历与滚动全程不使用合成指针事件**（`input swipe`/`input tap`）——后者正是 INPUT-FREEZE 的触发模式；该限定作用于**致动器的滚动**，不排除（a）致动器自身在需要时以无障碍 `ACTION_CLICK` 导航（含 tab 解析），也不排除（b）验收流程中**主机侧的单个导航点击**（如选中导入 tab）：单次点击不是手势风暴，且实测与冻结无关。设备实测（2026-09-20）：`ACTION_SCROLL_TO_POSITION` **不被该列表提供**，回退路径即真实路径；`ACTION_SCROLL_FORWARD` 连续 6,000 次不触发 INPUT-FREEZE，但为**动画驱动**——`settleMillis=0` 时动作被接受而列表零推进，须给出动画时间。**速率读数须与其 `settleMillis` 成对读**：`settleMillis=30` 为 ~38 行/s（6,000 次动作 / 719,242 ms）；`settleMillis=120` 覆盖 50,411 项用 4,575 次动作 / 1,052,039 ms ≈ 17.5 min ≈ 48 行/s（D-162 第 3(i) 条）。
+
+3. **边界**：属测试/自动化基础设施，非产品代码；不修改 `app-ui` 产品源、组合根、schema、迁移、依赖清单与 Golden/fixture；CI 维持零 `connectedAndroidTest`（不新增 instrumentation 门），该测试仅在本地受管 AVD（隔离 adb）上作为验收证据工具运行。
+
+4. **用途限定**：该致动器是**测量与验收工具**，其读数不构成产品能力声明，也不改变计划 §10.3 的判定口径；它只提供到达产品入口所需的遍历手段，不得替代计划 §10.2 要求的真实产品入口执行。
+
+5. **验收流程事实（实测登记，非缺陷裁决）**：组处置入口 `整组标记为重复` 的可见性由 `view.lastIntakeSession?.inputRef` 决定（`P503ImportReviewPresentation.kt:891`），而 `lastIntakeSession` 只由**本次应用会话内完成的导入**事件写入（`P503Reducer.kt:632`）。因此**应用重开后不出现组入口**；逐项审核路径仍可用（详情屏的人工处置）。这与 D-146 的组键定义（kind + **本次文件选择句柄** + 待处置状态）一致，属会话内语义，本条只登记其对验收流程的后果：大规模库的组阶段验收必须**在同一次会话内先完成一次产品 SAF 导入**，再由致动器遍历到列表末尾。该导入由主机侧执行（致动器在等待期不得建立 `UiAutomation` 连接，否则主机侧 `uiautomator dump` 不可用），故验收流程包含主机侧单次导航点击与既有 SAF 导入脚本。
+
+**边界：** 入：`android-app/src/androidTest` 新增测试源与本条登记。出：零产品代码、零 schema/迁移/依赖/清单/Golden/fixture、零 CI 工作流改动、零 `app-ui` 改动；不改 D-157/D-159 的任何裁决与 §10.3 的非 PASS 状态。
+
+**关联决定：** D-159（承接 (a) 的来源与本条登记对象）、D-157（§10.3「缺证（部分证据在位）+ 承接」裁决）、D-147/D-148（A-PERF 证据纪律与 `OBS-APERF-INPUT-FREEZE` 的登记来源）、阶段计划 §10.2/§10.3。
