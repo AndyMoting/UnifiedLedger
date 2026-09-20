@@ -14,8 +14,12 @@ import kotlin.time.Instant
  * transaction of the requested ledger. `kind` carries the effective business kind
  * `COALESCE(canonical_kind, kind)` so LEND/COLLECT/REFUND_RECEIPT and the other newer
  * kinds are no longer misread as the legacy-compatible `EXPENSE` column value. The row
- * carries both persisted times (R-Q06-1) and the current version's note. Existing
- * [CurrentVersionRow] loads are untouched (R-7 keeps the 22 anchors unmodified).
+ * carries both persisted times (R-Q06-1) and the current version's note.
+ *
+ * P7-05 (D-156) re-freeze: this row set is "current-version AND not voided", and so is the
+ * [CurrentVersionRow] set behind the HOME balances and the Analysis tab. The 22 D-145 test
+ * anchors stay value-identical on a fact-free ledger because the effective predicate is a
+ * no-op there; a voided transaction is reachable only through [VoidedTransactionRow].
  */
 data class LedgerEntryRow(
     val transactionId: TransactionId,

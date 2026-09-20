@@ -1,0 +1,214 @@
+package com.unifiedledger.application
+
+import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.OrdinaryCorrectionCommand
+import com.unifiedledger.domain.OrdinaryCorrectionPlan
+import com.unifiedledger.domain.OrdinaryCorrectionPostingIds
+import com.unifiedledger.domain.P705FailureCode
+import com.unifiedledger.domain.Posting
+import com.unifiedledger.domain.PostingId
+import com.unifiedledger.domain.PostingSetId
+import com.unifiedledger.domain.TransactionId
+import com.unifiedledger.domain.TransactionKind
+import com.unifiedledger.domain.TransactionVersionId
+import com.unifiedledger.domain.planOrdinaryCorrectionPostings
+import kotlin.time.Instant
+
+/**
+ * P7-05.B product version correction (spec section 3.2; D-156).
+ *
+ * The request carries the complete target state of the new version, never a delta, so an
+ * equivalent replay can be compared column by column. The flow is read current version →
+ * preview (pure read, zero writes) → explicit confirmation → a fresh request id → claim-first
+ * atomic commit guarded by the `expectedCurrentVersionId` CAS → authoritative re-read.
+ * `occurredAt` is deliberately not part of the field set (DP-7 keeps it OPEN).
+ */
+data class ExplicitlyConfirmedTransactionCorrection(
+    val ledgerId: LedgerId,
+    val requestId: RequestId,
+    val transactionId: TransactionId,
+    val expectedCurrentVersionId: TransactionVersionId,
+    val note: String?,
+    val statisticsAt: Instant,
+    val amount: Money,
+    val categoryId: CategoryId,
+    val fundingAccountId: AccountId,
+    val confirmation: ExplicitManualSave,
+)
+
+data class TransactionCorrectionRequestIdentity(
+    val ledgerId: LedgerId,
+    val requestId: RequestId,
+)
+
+/** The frozen snapshot column set (spec section 4.3); `confirmation_marker` is the constant. */
+data class TransactionCorrectionRequestSnapshot(
+    val ledgerId: LedgerId,
+    val transactionId: TransactionId,
+    val expectedCurrentVersionId: TransactionVersionId,
+    val note: String?,
+    val statisticsAt: Instant,
+    val amount: Money,
+    val categoryId: CategoryId,
+    val fundingAccountId: AccountId,
+)
+
+data class TransactionCorrectionReceipt(
+    val confirmationId: ConfirmationId,
+    val transactionId: TransactionId,
+    val versionId: TransactionVersionId,
+    val expectedCurrentVersionId: TransactionVersionId,
+)
+
+/** Fresh ids of one correction: the receipt identity plus the replacement posting set. */
+data class CorrectTransactionVersionIds(
+    val confirmationId: ConfirmationId,
+    val versionId: TransactionVersionId,
+    val postingSetId: PostingSetId,
+    val categoryPostingId: PostingId,
+    val fundingPostingId: PostingId,
+)
+
+fun interface CorrectTransactionVersionIdSource {
+    fun next(): CorrectTransactionVersionIds
+}
+
+/** The persisted facts of the correction target, read inside the write transaction. */
+data class TransactionCorrectionTarget(
+    val transactionId: TransactionId,
+    val kind: TransactionKind,
+    val currentVersionId: TransactionVersionId,
+)
+
+/**
+ * The plan callback's outcome. [Commit] carries the freshly derived posting set, so the
+ * catalog revalidation that produced it runs inside the commit transaction (spec section 3.2
+ * "校验"); [Rejected] carries the frozen failure code and writes nothing.
+ */
+sealed interface TransactionCorrectionPlan {
+    data class Commit(
+        val receipt: TransactionCorrectionReceipt,
+        val postingSetId: PostingSetId,
+        val postings: List<Posting>,
+    ) : TransactionCorrectionPlan
+
+    data class Rejected(
+        val code: P705FailureCode,
+    ) : TransactionCorrectionPlan
+}
+
+/**
+ * Result family of the correction use case: the four states of the existing confirmation
+ * surfaces plus [StaleCurrentVersion] as its own variant (never folded into [Rejected],
+ * spec section 3.2 "结果面冻结").
+ */
+sealed interface CorrectTransactionVersionResult {
+    data class Created(
+        val receipt: TransactionCorrectionReceipt,
+    ) : CorrectTransactionVersionResult
+
+    data class NoChange(
+        val receipt: TransactionCorrectionReceipt,
+    ) : CorrectTransactionVersionResult
+
+    data class RequestIdentityConflict(
+        val identity: TransactionCorrectionRequestIdentity,
+    ) : CorrectTransactionVersionResult
+
+    data object StaleCurrentVersion : CorrectTransactionVersionResult
+
+    data class Rejected(
+        val code: P705FailureCode,
+    ) : CorrectTransactionVersionResult
+}
+
+/**
+ * Claim-first, request-idempotent commit boundary. Replay resolution happens before any CAS
+ * evaluation: when the claim is not won the port compares the stored snapshot and returns
+ * [CorrectTransactionVersionResult.NoChange] or
+ * [CorrectTransactionVersionResult.RequestIdentityConflict] without ever reading the current
+ * version, so a post-success replay that carries a newly read CAS token is an identity
+ * conflict and never a false stale (spec sections 3.2/4.3).
+ */
+fun interface CorrectTransactionVersionCommitPort {
+    fun commitOnce(
+        identity: TransactionCorrectionRequestIdentity,
+        requestSnapshot: TransactionCorrectionRequestSnapshot,
+        plan: (TransactionCorrectionTarget) -> TransactionCorrectionPlan,
+    ): CorrectTransactionVersionResult
+}
+
+/**
+ * The product correction use case. The plan lambda runs inside the commit transaction, so the
+ * injected [admissionReader] observes the same authoritative catalog the write commits against
+ * (spec section 3.2 "校验"); a preview or an option snapshot is never commit permission.
+ */
+class ExecuteCorrectTransactionVersion(
+    private val commitPort: CorrectTransactionVersionCommitPort,
+    private val idSource: CorrectTransactionVersionIdSource,
+    private val admissionReader: CatalogAdmissionReader,
+) {
+    fun execute(request: ExplicitlyConfirmedTransactionCorrection): CorrectTransactionVersionResult {
+        val identity = TransactionCorrectionRequestIdentity(request.ledgerId, request.requestId)
+        val snapshot =
+            TransactionCorrectionRequestSnapshot(
+                ledgerId = request.ledgerId,
+                transactionId = request.transactionId,
+                expectedCurrentVersionId = request.expectedCurrentVersionId,
+                note = request.note,
+                statisticsAt = request.statisticsAt,
+                amount = request.amount,
+                categoryId = request.categoryId,
+                fundingAccountId = request.fundingAccountId,
+            )
+        return commitPort.commitOnce(identity, snapshot) { target -> planCorrection(target, snapshot) }
+    }
+
+    private fun planCorrection(
+        target: TransactionCorrectionTarget,
+        snapshot: TransactionCorrectionRequestSnapshot,
+    ): TransactionCorrectionPlan {
+        val ids = idSource.next()
+        val receipt =
+            TransactionCorrectionReceipt(
+                confirmationId = ids.confirmationId,
+                transactionId = target.transactionId,
+                versionId = ids.versionId,
+                expectedCurrentVersionId = snapshot.expectedCurrentVersionId,
+            )
+        val catalog =
+            admissionReader.loadCurrent(snapshot.ledgerId)
+                ?: return TransactionCorrectionPlan.Rejected(P705FailureCode.P705_CATALOG_REFERENCE_NOT_ADMISSIBLE)
+        val command =
+            OrdinaryCorrectionCommand(
+                ledgerId = snapshot.ledgerId,
+                kind = target.kind,
+                amount = snapshot.amount,
+                categoryId = snapshot.categoryId,
+                fundingAccountId = snapshot.fundingAccountId,
+            )
+        return when (
+            val planned =
+                planOrdinaryCorrectionPostings(
+                    catalog = catalog,
+                    command = command,
+                    ids =
+                        OrdinaryCorrectionPostingIds(
+                            categoryPostingId = ids.categoryPostingId,
+                            fundingPostingId = ids.fundingPostingId,
+                        ),
+                )
+        ) {
+            is OrdinaryCorrectionPlan.Rejected -> TransactionCorrectionPlan.Rejected(planned.code)
+            is OrdinaryCorrectionPlan.Postings ->
+                TransactionCorrectionPlan.Commit(
+                    receipt = receipt,
+                    postingSetId = ids.postingSetId,
+                    postings = planned.postings,
+                )
+        }
+    }
+}

@@ -8709,6 +8709,10 @@ FROM posting_reconciliation;
 -- P5-03 read boundary (D-119 section 4; P5-03 implementation spec section 5).
 -- Ledger-filtered, current-version-only projections returning ledger-signed minor units.
 -- No DDL: schema v27 stays unchanged.
+-- P7-05 (D-156) re-freeze: "current-version" now means "current-version AND not voided"
+-- (spec section 3.6 #4/#5). The effective predicate is joined from its single definition
+-- point, the `transaction_effective_state` view, so HOME balances, the HOME "current
+-- transactions" fallback and the Analysis tab input all drop a voided transaction's effect.
 
 currentVersionRowsForLedger:
 SELECT
@@ -8736,6 +8740,10 @@ JOIN posting_set AS posting_set
 JOIN posting AS posting
   ON posting.ledger_id = posting_set.ledger_id
  AND posting.posting_set_id = posting_set.posting_set_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
 WHERE tx.ledger_id = ?
 ORDER BY tx.transaction_id, posting.posting_index;
 
@@ -8744,6 +8752,10 @@ ORDER BY tx.transaction_id, posting.posting_index;
 -- ledger-scoped and projects the current version exclusively. The entry-row kind uses
 -- the COALESCE compatibility rule (precedent :2438/:8672) so newer canonical kinds are
 -- not misread as the legacy-compatible kind column.
+-- P7-05 (D-156) re-freeze: the monthly card/category/trend projection, the flow list and
+-- the transaction detail read "current-version AND not voided" (spec section 3.6 #1-#3),
+-- so a voided transaction leaves every effective surface and is reachable only through the
+-- recycle-bin query below.
 
 ledgerEntryRowsForLedger:
 SELECT
@@ -8773,6 +8785,10 @@ JOIN posting_set AS posting_set
 JOIN posting AS posting
   ON posting.ledger_id = posting_set.ledger_id
  AND posting.posting_set_id = posting_set.posting_set_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
 WHERE tx.ledger_id = ?
 ORDER BY tx.transaction_id, posting.posting_index;
 
@@ -9577,3 +9593,358 @@ UNION SELECT DISTINCT suggested_category_id FROM rg05_source_record WHERE ledger
 UNION SELECT DISTINCT suggested_category_id FROM rg05_candidate_item WHERE ledger_id = ? AND suggested_category_id IS NOT NULL
 UNION SELECT DISTINCT proposed_category_id FROM rg07_candidate WHERE ledger_id = ? AND proposed_category_id IS NOT NULL
 UNION SELECT DISTINCT interest_category_id FROM rg08_settlement WHERE ledger_id = ? AND interest_category_id IS NOT NULL;
+
+-- P7-05 (D-156) correction / void / restore substrate (spec sections 3.3/4.3). Append-only
+-- void/restore facts plus the two claim-first request/receipt pairs, the single
+-- effective-predicate view and the recycle-bin read path. All product DDL below is created
+-- verbatim by 30.sqm so the fresh and the migrated schema match byte for byte. No rgXX_ silo,
+-- reconciliation owner, evidence owner, lending history or import owner is written here.
+
+-- Void/restore family: one request table for both fact kinds (SQLite cannot point a single
+-- foreign key at two parent tables), the append-only fact owner and its receipt.
+CREATE TABLE transaction_void_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  fact_kind TEXT NOT NULL CHECK (fact_kind IN ('void', 'restore')),
+  reason_code TEXT NOT NULL CHECK (reason_code IN ('mis_entered', 'duplicate_entry', 'no_longer_applicable', 'voided_in_error', 'other')),
+  reason_note TEXT,
+  confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  PRIMARY KEY (ledger_id, request_id),
+  UNIQUE (ledger_id, request_id, fact_kind),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE transaction_void_fact (
+  ledger_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL CHECK (sequence > 0),
+  fact_id TEXT NOT NULL,
+  fact_kind TEXT NOT NULL CHECK (fact_kind IN ('void', 'restore')),
+  reason_code TEXT NOT NULL CHECK (reason_code IN ('mis_entered', 'duplicate_entry', 'no_longer_applicable', 'voided_in_error', 'other')),
+  reason_note TEXT,
+  request_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, transaction_id, sequence),
+  UNIQUE (ledger_id, transaction_id, fact_id),
+  UNIQUE (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id, fact_kind)
+    REFERENCES transaction_void_request(ledger_id, request_id, fact_kind) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE transaction_void_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL UNIQUE,
+  transaction_id TEXT NOT NULL,
+  fact_id TEXT NOT NULL UNIQUE,
+  fact_kind TEXT NOT NULL CHECK (fact_kind IN ('void', 'restore')),
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id, fact_kind)
+    REFERENCES transaction_void_request(ledger_id, request_id, fact_kind) ON DELETE CASCADE,
+  FOREIGN KEY (ledger_id, transaction_id, fact_id)
+    REFERENCES transaction_void_fact(ledger_id, transaction_id, fact_id) DEFERRABLE INITIALLY DEFERRED
+);
+-- Recycle-bin ordering (spec section 4.3): the frozen stable total order is
+-- (created_at DESC, transaction_id ASC); the fact table primary key prefix
+-- (ledger_id, transaction_id) already serves "latest fact of one transaction".
+CREATE INDEX transaction_void_fact_recycle_bin_idx ON transaction_void_fact(ledger_id, created_at DESC, transaction_id);
+-- Sequence guard: the next fact must be max + 1 (no gap, no backfill), the first fact must be
+-- a void, the second must be a restore of a voided transaction, and depth is capped at 2.
+CREATE TRIGGER transaction_void_fact_sequence_guard BEFORE INSERT ON transaction_void_fact BEGIN
+  SELECT CASE
+    WHEN new.sequence != COALESCE((SELECT max(sequence) FROM transaction_void_fact WHERE ledger_id = new.ledger_id AND transaction_id = new.transaction_id), 0) + 1
+      THEN RAISE(ABORT, 'void fact sequence must be the next one') END;
+END;
+CREATE TRIGGER transaction_void_fact_alternation_guard BEFORE INSERT ON transaction_void_fact BEGIN
+  SELECT CASE
+    WHEN new.sequence = 1 AND new.fact_kind != 'void'
+      THEN RAISE(ABORT, 'void fact must start with a void')
+    WHEN new.sequence = 2 AND new.fact_kind != 'restore'
+      THEN RAISE(ABORT, 'void fact must alternate')
+    WHEN new.sequence = 2 AND (SELECT fact_kind FROM transaction_void_fact WHERE ledger_id = new.ledger_id AND transaction_id = new.transaction_id AND sequence = 1) != 'void'
+      THEN RAISE(ABORT, 'void fact must alternate')
+    WHEN new.sequence > 2
+      THEN RAISE(ABORT, 'void cycle exhausted')
+  END;
+END;
+CREATE TRIGGER transaction_void_fact_guard_update BEFORE UPDATE ON transaction_void_fact BEGIN
+  SELECT RAISE(ABORT, 'cannot update void fact'); END;
+CREATE TRIGGER transaction_void_fact_guard_delete BEFORE DELETE ON transaction_void_fact BEGIN
+  SELECT RAISE(ABORT, 'cannot delete void fact'); END;
+
+-- Correction family: the request stores the complete target state (not a delta), so an
+-- equivalent replay compares column by column. transaction_id is deliberately NOT unique on
+-- the receipt (one transaction may be corrected several times, each time getting its own
+-- version); version_id and confirmation_id are unique.
+CREATE TABLE transaction_correction_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  expected_current_version_id TEXT NOT NULL,
+  note TEXT,
+  statistics_at TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL,
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  category_id TEXT NOT NULL,
+  funding_account_id TEXT NOT NULL,
+  confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE transaction_correction_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL UNIQUE,
+  transaction_id TEXT NOT NULL,
+  version_id TEXT NOT NULL UNIQUE,
+  expected_current_version_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id)
+    REFERENCES transaction_correction_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (transaction_id, version_id, ledger_id)
+    REFERENCES transaction_version(transaction_id, version_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, expected_current_version_id, ledger_id)
+    REFERENCES transaction_version(transaction_id, version_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+
+-- Effective predicate: THE single SQL definition point (spec sections 3.3/4.3). A transaction
+-- is effective iff its latest void/restore fact is not a void; no fact at all means effective.
+-- Every effective surface joins this view instead of restating the predicate, and the domain
+-- twin TransactionVoidState.isEffective must stay equivalent (acceptance vector V-23).
+CREATE VIEW transaction_effective_state AS
+SELECT tx.ledger_id AS ledger_id, tx.transaction_id AS transaction_id,
+  CASE WHEN (
+    SELECT fact.fact_kind FROM transaction_void_fact AS fact
+    WHERE fact.ledger_id = tx.ledger_id AND fact.transaction_id = tx.transaction_id
+    ORDER BY fact.sequence DESC LIMIT 1
+  ) = 'void' THEN 0 ELSE 1 END AS is_effective
+FROM ledger_transaction AS tx;
+
+-- V-23 SQL representation of the effective set, derived from the same single view.
+effectiveTransactionIdsForLedger:
+SELECT transaction_id FROM transaction_effective_state
+WHERE ledger_id = ? AND is_effective = 1
+ORDER BY transaction_id;
+
+-- Recycle-bin read path (spec section 3.4/DP-1): the voided complement of the effective
+-- surfaces — same table group, same row shape, same predicate view — plus the void metadata
+-- the recycle bin must show (reason, void time, dependency material).
+voidedTransactionRowsForLedger:
+SELECT
+  tx.transaction_id,
+  current_version.current_version_id,
+  COALESCE(tx.canonical_kind, tx.kind) AS kind,
+  version.occurred_at,
+  version.statistics_at,
+  version.note,
+  posting.posting_id,
+  posting.posting_index,
+  posting.account_id,
+  posting.amount_minor,
+  posting.currency_code,
+  posting.currency_precision,
+  latest_fact.fact_kind AS void_fact_kind,
+  latest_fact.reason_code AS void_reason_code,
+  latest_fact.reason_note AS void_reason_note,
+  latest_fact.created_at AS void_created_at
+FROM ledger_transaction AS tx
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 0
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = tx.ledger_id
+ AND version.transaction_id = tx.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN posting_set AS posting_set
+  ON posting_set.ledger_id = version.ledger_id
+ AND posting_set.posting_set_id = version.posting_set_id
+JOIN posting AS posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+JOIN transaction_void_fact AS latest_fact
+  ON latest_fact.ledger_id = tx.ledger_id
+ AND latest_fact.transaction_id = tx.transaction_id
+ AND latest_fact.sequence = (
+   SELECT max(sequence) FROM transaction_void_fact
+   WHERE ledger_id = tx.ledger_id AND transaction_id = tx.transaction_id
+ )
+WHERE tx.ledger_id = ?
+ORDER BY latest_fact.created_at DESC, tx.transaction_id ASC, posting.posting_index;
+
+-- Void/restore fact reads (recycle-bin metadata, V-22 storage/domain equivalence, V-23).
+transactionVoidFactsForTransaction:
+SELECT sequence, fact_kind, reason_code, reason_note, request_id, confirmation_id, created_at
+FROM transaction_void_fact
+WHERE ledger_id = ? AND transaction_id = ?
+ORDER BY sequence;
+
+transactionVoidFactsForLedger:
+SELECT transaction_id, sequence, fact_kind, reason_code, reason_note, request_id, confirmation_id, created_at
+FROM transaction_void_fact
+WHERE ledger_id = ?
+ORDER BY transaction_id, sequence;
+
+-- Void/restore claim-first pair.
+claimTransactionVoidRequest:
+INSERT INTO transaction_void_request(
+  ledger_id, request_id, transaction_id, fact_kind, reason_code, reason_note, confirmation_marker
+) VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (ledger_id, request_id) DO NOTHING;
+
+deleteTransactionVoidRequest:
+DELETE FROM transaction_void_request
+WHERE ledger_id = :ledger_id AND request_id = :request_id;
+
+selectCommittedTransactionVoidRequest:
+SELECT request.transaction_id, request.fact_kind, request.reason_code, request.reason_note,
+  request.confirmation_marker, receipt.confirmation_id, receipt.fact_id
+FROM transaction_void_request AS request
+JOIN transaction_void_receipt AS receipt
+  ON receipt.ledger_id = request.ledger_id AND receipt.request_id = request.request_id
+WHERE request.ledger_id = :ledger_id AND request.request_id = :request_id;
+
+insertTransactionVoidFact:
+INSERT INTO transaction_void_fact(
+  ledger_id, transaction_id, sequence, fact_id, fact_kind, reason_code, reason_note,
+  request_id, confirmation_id, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+insertTransactionVoidReceipt:
+INSERT INTO transaction_void_receipt(
+  ledger_id, request_id, confirmation_id, transaction_id, fact_id, fact_kind
+) VALUES (?, ?, ?, ?, ?, ?);
+
+-- Correction claim-first pair.
+claimTransactionCorrectionRequest:
+INSERT INTO transaction_correction_request(
+  ledger_id, request_id, transaction_id, expected_current_version_id, note, statistics_at,
+  amount_minor, currency_code, currency_precision, category_id, funding_account_id, confirmation_marker
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (ledger_id, request_id) DO NOTHING;
+
+deleteTransactionCorrectionRequest:
+DELETE FROM transaction_correction_request
+WHERE ledger_id = :ledger_id AND request_id = :request_id;
+
+selectCommittedTransactionCorrectionRequest:
+SELECT request.transaction_id, request.expected_current_version_id, request.note,
+  request.statistics_at, request.amount_minor, request.currency_code, request.currency_precision,
+  request.category_id, request.funding_account_id, request.confirmation_marker,
+  receipt.confirmation_id, receipt.version_id
+FROM transaction_correction_request AS request
+JOIN transaction_correction_receipt AS receipt
+  ON receipt.ledger_id = request.ledger_id AND receipt.request_id = request.request_id
+WHERE request.ledger_id = :ledger_id AND request.request_id = :request_id;
+
+insertTransactionCorrectionReceipt:
+INSERT INTO transaction_correction_receipt(
+  ledger_id, request_id, confirmation_id, transaction_id, version_id, expected_current_version_id
+) VALUES (?, ?, ?, ?, ?, ?);
+
+-- The new version copy statement (spec section 4.3): binds the fresh posting set and copies
+-- occurred_at and effective_at verbatim from the expected current version, takes statistics_at
+-- from the request (DP-7 keeps occurred_at unmodifiable in this slice) and note from the
+-- request. The join makes the CAS a property of the statement: zero rows changed means stale.
+copyCurrentVersionWithNewPostingSet:
+INSERT INTO transaction_version(
+  version_id, transaction_id, ledger_id, version_number, posting_set_id,
+  occurred_at, statistics_at, effective_at, note
+)
+SELECT :version_id, version.transaction_id, version.ledger_id, version.version_number + 1,
+  :new_posting_set_id, version.occurred_at, :statistics_at, version.effective_at, :note
+FROM transaction_version AS version
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.transaction_id = version.transaction_id
+ AND current_version.ledger_id = version.ledger_id
+ AND current_version.current_version_id = version.version_id
+WHERE version.transaction_id = :transaction_id
+  AND version.ledger_id = :ledger_id
+  AND version.version_id = :expected_current_version_id;
+
+-- Target probes of the correction/void/restore preconditions (spec sections 3.1/3.3).
+transactionCorrectionTarget:
+SELECT COALESCE(tx.canonical_kind, tx.kind) AS kind, current_version.current_version_id
+FROM ledger_transaction AS tx
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+WHERE tx.ledger_id = :ledger_id AND tx.transaction_id = :transaction_id;
+
+importCreationConfirmationCountForTransaction:
+SELECT count(*) FROM import_confirmation
+WHERE ledger_id = ? AND transaction_id = ? AND operation_class = 'creation';
+
+effectiveRefundRelationshipCountForTransaction:
+SELECT count(*) FROM rg07_refund_relationship
+WHERE ledger_id = ? AND original_transaction_id = ? AND refund_transaction_id IS NOT NULL;
+
+currentVersionPostingsForTransaction:
+SELECT posting.posting_id, posting.posting_index, posting.account_id, posting.amount_minor,
+  posting.currency_code, posting.currency_precision
+FROM ledger_transaction_current_version AS current_version
+JOIN transaction_version AS version
+  ON version.ledger_id = current_version.ledger_id
+ AND version.transaction_id = current_version.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN posting AS posting
+  ON posting.ledger_id = version.ledger_id
+ AND posting.posting_set_id = version.posting_set_id
+WHERE current_version.ledger_id = ? AND current_version.transaction_id = ?
+ORDER BY posting.posting_index;
+
+-- DP-10 defensive probe: the number of reconciliation rows on the current version's postings.
+-- The first slice has none (manual EXPENSE/INCOME never carry reconciliation rows), so an
+-- affected funding leg can never need the unauthorized D-113 invalidation combination.
+matchedCurrentVersionReconciliationCount:
+SELECT count(*)
+FROM posting_reconciliation AS reconciliation
+JOIN posting AS posting
+  ON posting.ledger_id = reconciliation.ledger_id AND posting.posting_id = reconciliation.posting_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = posting.ledger_id
+JOIN transaction_version AS version
+  ON version.ledger_id = current_version.ledger_id
+ AND version.transaction_id = current_version.transaction_id
+ AND version.version_id = current_version.current_version_id
+ AND version.posting_set_id = posting.posting_set_id
+WHERE reconciliation.ledger_id = :ledger_id AND current_version.transaction_id = :transaction_id;
+
+countTransactionVoidRequests:
+SELECT count(*) FROM transaction_void_request;
+
+countTransactionVoidFacts:
+SELECT count(*) FROM transaction_void_fact;
+
+countTransactionVoidReceipts:
+SELECT count(*) FROM transaction_void_receipt;
+
+countTransactionCorrectionRequests:
+SELECT count(*) FROM transaction_correction_request;
+
+countTransactionCorrectionReceipts:
+SELECT count(*) FROM transaction_correction_receipt;
+transactionCorrectionCommitByRequest:
+SELECT request.transaction_id, request.expected_current_version_id, request.note,
+  request.statistics_at, request.amount_minor, request.currency_code, request.currency_precision,
+  request.category_id, request.funding_account_id, receipt.confirmation_id, receipt.version_id
+FROM transaction_correction_request AS request
+JOIN transaction_correction_receipt AS receipt
+  ON receipt.ledger_id = request.ledger_id AND receipt.request_id = request.request_id
+WHERE request.ledger_id = :ledger_id AND request.request_id = :request_id;
+
+transactionVoidCommitByRequest:
+SELECT request.transaction_id, request.fact_kind, request.reason_code, request.reason_note,
+  receipt.confirmation_id, receipt.fact_id
+FROM transaction_void_request AS request
+JOIN transaction_void_receipt AS receipt
+  ON receipt.ledger_id = request.ledger_id AND receipt.request_id = request.request_id
+WHERE request.ledger_id = :ledger_id AND request.request_id = :request_id;

@@ -19,7 +19,14 @@ import com.unifiedledger.application.ManualLendingCommitRecord
 import com.unifiedledger.application.ManualTransferCommitRecord
 import com.unifiedledger.application.ManualTransferRequestSnapshot
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.TransactionCorrectionCommitRecord
+import com.unifiedledger.application.TransactionCorrectionReceipt
+import com.unifiedledger.application.TransactionCorrectionRequestSnapshot
 import com.unifiedledger.application.TransactionReconciliationLegRow
+import com.unifiedledger.application.TransactionVoidCommitRecord
+import com.unifiedledger.application.TransactionVoidReceipt
+import com.unifiedledger.application.TransactionVoidRequestSnapshot
+import com.unifiedledger.application.VoidedTransactionRow
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
@@ -31,6 +38,9 @@ import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionVersionId
+import com.unifiedledger.domain.TransactionVoidFactKind
+import com.unifiedledger.domain.VoidReason
+import com.unifiedledger.domain.VoidReasonCode
 import kotlin.time.Instant
 
 /**
@@ -291,7 +301,159 @@ class SqlDelightLedgerCurrentStateReadAdapter(
                 )
             }.sortedBy { it.postingIndex }
     }
+
+    /**
+     * P7-05.C (D-156, DP-1): the voided complement of [loadLedgerEntryRows]. Same table group,
+     * same predicate view, same row shape plus the void metadata; the query's
+     * `(void time DESC, transaction_id ASC)` order is preserved by `groupBy`, which keeps the
+     * first-encounter order, so the recycle bin's display order has one definition (the SQL).
+     */
+    override fun loadVoidedTransactionRows(ledgerId: LedgerId): List<VoidedTransactionRow> {
+        val rows = database.ledgerQueries.voidedTransactionRowsForLedger(ledgerId.value).executeAsList()
+        return rows
+            .groupBy { it.transaction_id }
+            .map { (_, groupedRows) ->
+                val first = groupedRows.first()
+                VoidedTransactionRow(
+                    transactionId = TransactionId(first.transaction_id),
+                    currentVersionId = TransactionVersionId(first.current_version_id),
+                    kind = TransactionKind.valueOf(first.kind),
+                    occurredAt = Instant.parse(first.occurred_at),
+                    statisticsAt = Instant.parse(first.statistics_at),
+                    note = first.note,
+                    postings =
+                        groupedRows
+                            .sortedBy { it.posting_index }
+                            .map { row ->
+                                Posting(
+                                    id = PostingId(row.posting_id),
+                                    accountId = AccountId(row.account_id),
+                                    amount =
+                                        Money.ofMinor(
+                                            row.amount_minor,
+                                            CurrencyUnit(row.currency_code, row.currency_precision.toInt()),
+                                        ),
+                                )
+                            },
+                    voidFactKind =
+                        TransactionVoidFactKind.fromStorage(first.void_fact_kind)
+                            ?: TransactionVoidFactKind.VOID,
+                    voidReason =
+                        VoidReason(
+                            code =
+                                VoidReasonCode.fromStorage(first.void_reason_code)
+                                    ?: VoidReasonCode.OTHER,
+                            note = first.void_reason_note,
+                        ),
+                    voidedAt = Instant.parse(first.void_created_at),
+                )
+            }
+    }
+
+    /** P7-05.C (D-156, DP-13): read-only effective-refund-linkage probe of a frozen silo. */
+    override fun hasEffectiveRefundLink(
+        ledgerId: LedgerId,
+        transactionId: TransactionId,
+    ): Boolean =
+        database.ledgerQueries
+            .effectiveRefundRelationshipCountForTransaction(ledgerId.value, transactionId.value)
+            .executeAsOne() > 0L
+
+    /** P7-05.B: persisted correction request/receipt pair for the unknown-commit resolver. */
+    override fun findTransactionCorrectionByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): TransactionCorrectionCommitRecord? =
+        database.ledgerQueries
+            .transactionCorrectionCommitByRequest(ledgerId.value, requestId.value) {
+                transactionId,
+                expectedCurrentVersionId,
+                note,
+                statisticsAt,
+                amountMinor,
+                currencyCode,
+                currencyPrecision,
+                categoryId,
+                fundingAccountId,
+                confirmationId,
+                versionId,
+                ->
+                TransactionCorrectionCommitRecord(
+                    ledgerId = ledgerId,
+                    requestId = requestId,
+                    snapshot =
+                        TransactionCorrectionRequestSnapshot(
+                            ledgerId = ledgerId,
+                            transactionId = TransactionId(transactionId),
+                            expectedCurrentVersionId = TransactionVersionId(expectedCurrentVersionId),
+                            note = note,
+                            statisticsAt = Instant.parse(statisticsAt),
+                            amount = Money.ofMinor(amountMinor, CurrencyUnit(currencyCode, currencyPrecision.toInt())),
+                            categoryId = CategoryId(categoryId),
+                            fundingAccountId = AccountId(fundingAccountId),
+                        ),
+                    receipt =
+                        TransactionCorrectionReceipt(
+                            confirmationId = ConfirmationId(confirmationId),
+                            transactionId = TransactionId(transactionId),
+                            versionId = TransactionVersionId(versionId),
+                            expectedCurrentVersionId = TransactionVersionId(expectedCurrentVersionId),
+                        ),
+                )
+            }.executeAsOneOrNull()
+
+    /** P7-05.C: persisted void/restore request/receipt pair for the unknown-commit resolver. */
+    override fun findTransactionVoidByRequest(
+        ledgerId: LedgerId,
+        requestId: RequestId,
+    ): TransactionVoidCommitRecord? {
+        val row =
+            database.ledgerQueries
+                .transactionVoidCommitByRequest(ledgerId.value, requestId.value) {
+                    transactionId,
+                    factKind,
+                    reasonCode,
+                    reasonNote,
+                    confirmationId,
+                    factId,
+                    ->
+                    StoredVoidCommit(transactionId, factKind, reasonCode, reasonNote, confirmationId, factId)
+                }.executeAsOneOrNull()
+                ?: return null
+        val kind = TransactionVoidFactKind.fromStorage(row.factKind) ?: return null
+        return TransactionVoidCommitRecord(
+            ledgerId = ledgerId,
+            requestId = requestId,
+            snapshot =
+                TransactionVoidRequestSnapshot(
+                    ledgerId = ledgerId,
+                    transactionId = TransactionId(row.transactionId),
+                    factKind = kind,
+                    reason =
+                        VoidReason(
+                            code = VoidReasonCode.fromStorage(row.reasonCode) ?: VoidReasonCode.OTHER,
+                            note = row.reasonNote,
+                        ),
+                ),
+            receipt =
+                TransactionVoidReceipt(
+                    confirmationId = ConfirmationId(row.confirmationId),
+                    transactionId = TransactionId(row.transactionId),
+                    factId = row.factId,
+                    factKind = kind,
+                ),
+        )
+    }
 }
+
+private class StoredVoidCommit(
+    val transactionId: String,
+    val factKind: String,
+    val reasonCode: String,
+    val reasonNote: String?,
+    val confirmationId: String,
+    val factId: String,
+)
 
 private fun com.unifiedledger.data.db.ManualExpenseCommitByRequest.toRecord(ledgerId: LedgerId): ManualExpenseCommitRecord =
     ManualExpenseCommitRecord(
