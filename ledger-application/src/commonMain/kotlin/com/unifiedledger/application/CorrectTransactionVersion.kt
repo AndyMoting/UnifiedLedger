@@ -122,8 +122,7 @@ fun reuseCurrentPostingSet(
     newPostings: List<Posting>,
 ): Boolean = currentPostings.legMultiset() == newPostings.legMultiset()
 
-private fun List<Posting>.legMultiset(): Map<Triple<AccountId, Long, CurrencyUnit>, Int> =
-    groupingBy { Triple(it.accountId, it.amount.minorUnits, it.amount.currency) }.eachCount()
+private fun List<Posting>.legMultiset(): Map<Triple<AccountId, Long, CurrencyUnit>, Int> = groupingBy { Triple(it.accountId, it.amount.minorUnits, it.amount.currency) }.eachCount()
 
 /**
  * Spec section 3.2 freezes "备注长度沿既有上限": the correction path reuses the P7-02 entry note
@@ -131,8 +130,7 @@ private fun List<Posting>.legMultiset(): Map<Triple<AccountId, Long, CurrencyUni
  * is an inadmissible field value and is reported through the frozen field code — the frozen
  * table has no note-specific token, the same batch-ruled reading the amount cases use.
  */
-internal fun correctionNoteRejection(note: String?): P705FailureCode? =
-    if (note != null && validateEntryNote(note) != null) P705FailureCode.P705_FIELD_NOT_SUPPORTED else null
+internal fun correctionNoteRejection(note: String?): P705FailureCode? = if (note != null && validateEntryNote(note) != null) P705FailureCode.P705_FIELD_NOT_SUPPORTED else null
 
 /**
  * Result family of the correction use case: the four states of the existing confirmation
