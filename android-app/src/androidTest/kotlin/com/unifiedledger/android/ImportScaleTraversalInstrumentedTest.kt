@@ -274,9 +274,11 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  *   `FINDING: could not leave the detail screen after 3 attempts` that STOPS the mode - every further run
  *   would start on the detail screen and be invalid - and the summary/gate lines are then still emitted
  *   for the runs actually obtained.
- * - `fullChain`: the whole plan section 10.3 chain in ONE instrumented session, in the order the plan
- *   fixes (冷启动→首页可操作→进入导入→解析/接治→收尾重读→列表可操作→滚动→候选详情→重复组打开→审核/确认→
- *   详情与月度刷新→杀进程后重开). D-162 item 4 registered the gap this mode exists to close: its four
+ * - `fullChain`: the whole plan section 10.3 chain in ONE instrumented session
+ *   (冷启动→首页可操作→进入导入→解析/接治→收尾重读→列表可操作→候选详情→滚动→重复组打开→审核/确认→
+ *   详情与月度刷新→杀进程后重开). The 候选详情 / 滚动 pair runs in the LOW-COST order (detail first),
+ *   a registered deviation from the plan's literal arrow order (D-164 item 2); every other adjacent
+ *   pair keeps the plan's order. D-162 item 4 registered the gap this mode exists to close: its four
  *   stages were measured across TWO app process cycles, so the chain ORDER was not satisfied in one
  *   continuous session. Args `target` (default 整组标记为重复), `maxForwardActions` (default 30000),
  *   `settleMillis` (default 120), `stallChecks` (default 20), `cardScrollActions` (default 4000),
@@ -939,9 +941,9 @@ class ImportScaleTraversalInstrumentedTest {
     }
 
     /**
-     * fullChain phase 3 (候选详情), run BEFORE the deep traversal because the plan's chain order puts the
-     * detail ahead of the scroll AND because the detail screen carries its own checkbox and its own batch
-     * entry: a candidate can be selected and its decision completed here, which is what makes the batch
+     * fullChain phase 3 (候选详情), run BEFORE the deep traversal (a registered deviation from the plan's
+     * literal arrow order, D-164 item 2) because the detail screen carries its own checkbox and its own
+     * batch entry: a candidate can be selected and its decision completed here, which is what makes the batch
      * entry at the END of the list reachable right after the group card instead of requiring a scroll back
      * to the top.
      *
