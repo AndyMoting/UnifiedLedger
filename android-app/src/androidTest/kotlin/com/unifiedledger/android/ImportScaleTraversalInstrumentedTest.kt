@@ -10,6 +10,7 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertTrue
@@ -35,18 +36,44 @@ private const val IMPORT_TAB_FALLBACK_Y = 2242
 // contentDescription, only the 65 px wide label TextView child carries 导入 - and the old
 // nearest-clickable coordinate fallback picked the 3rd tab (x=532), which switched the app away from
 // the import tab. The same band and width window also hold each tab's inner decorations (126-127 px
-// boxes) and the 147 px wide new-expense FAB, so the raw candidates are collapsed to one node per tab
-// position before the index is read.
+// boxes) and the 147 px wide new-expense FAB, so the raw candidates are first narrowed to
+// [TAB_WIDTH_TAB_MIN] and then collapsed to one node per tab position before the index is read. The
+// floor sits between the widest non-tab node in the band (the FAB, 147 px) and the narrowest tab
+// (183 px), so a non-tab node can be neither a candidate nor a retry attempt.
 private const val TAB_BAND_TOP = 2_000
 private const val TAB_BAND_BOTTOM = 2_400
 private const val TAB_WIDTH_MIN = 120
 private const val TAB_WIDTH_MAX = 260
+private const val TAB_WIDTH_TAB_MIN = 170
 private const val IMPORT_TAB_INDEX = 3
 private const val TAB_MAX_ATTEMPTS = 4
-private const val TAB_LIST_WAIT_MILLIS = 30_000
+private const val ARG_TAB_LIST_WAIT_MILLIS = "tabListWaitMillis"
+private const val TAB_LIST_WAIT_MILLIS = 180_000
+private const val TAB_BAR_WAIT_MILLIS = 60_000
 private const val CANDIDATE_CHECKBOX_DESC = "勾选候选"
 private const val CURRENCY_SUFFIX = "CNY"
 private const val LAST_ITEM_ROW_INDEX = 1_000_000
+
+// ---- the import-review-screen predicate (the HOME-screen false positive fix) ----
+//
+// [reachImportReview] used to call a snapshot "the import review screen" as soon as it held a node
+// whose text ends with [CURRENCY_SUFFIX] - the candidate amount line. The HOME screen's transaction
+// lines end the same way, so the check passed 8 ms after the tab tap, on the still-rendered HOME
+// screen (the device run's reading of that frame: amount rows present, checkboxes=0), the tab
+// transition was never confirmed, and the scrollable-container lookup that followed found nothing.
+// The predicate below matches only markers HOME does not carry: the import review header's
+// [IMPORT_SCREEN_REFRESH_TEXT] / [IMPORT_SCREEN_PICK_TEXT] affordances, or the candidate row's
+// [CANDIDATE_CHECKBOX_DESC] checkbox. The header items live inside the same lazy container as the
+// rows, so a scrolled list has neither of them - the checkbox branch is the tolerant fallback, and it
+// requires a candidate amount row in the SAME snapshot, which is what keeps a HOME-only snapshot
+// (transaction lines, zero checkboxes) from satisfying it.
+private const val IMPORT_SCREEN_REFRESH_TEXT = "刷新清单"
+private const val IMPORT_SCREEN_PICK_TEXT = "选择账单文件"
+private const val IMPORT_SCREEN_BRANCH_NONE = "none"
+private const val IMPORT_SCREEN_BRANCH_REFRESH = "headerRefreshText"
+private const val IMPORT_SCREEN_BRANCH_PICK = "headerPickText"
+private const val IMPORT_SCREEN_BRANCH_CHECKBOX = "checkboxMarkerWithCandidateRow"
+private const val IMPORT_SCREEN_WAIT_MILLIS = 30_000
 private const val ARG_TARGET = "target"
 private const val ARG_MAX_FORWARD_ACTIONS = "maxForwardActions"
 private const val ARG_SETTLE_MILLIS = "settleMillis"
@@ -109,6 +136,13 @@ private const val GROUP_PROGRESS_LOG_MILLIS = 30_000
 private const val GROUP_STABLE_CHECKS = 5
 private const val GROUP_FALLBACK_TIMEOUT_DIVISOR = 2
 private const val CLICK_PARENT_DEPTH = 4
+
+// The picker's row walk climbs further: DocumentsUI's item title is a non-clickable TextView and the
+// row does not reliably accept ACTION_CLICK within CLICK_PARENT_DEPTH levels.
+private const val PICKER_CLICK_PARENT_DEPTH = 10
+
+// Bounded scroll used by countProbe to force a LazyColumn layout pass before re-reading CollectionInfo.
+private const val COUNT_PROBE_SCROLL_ACTIONS = 60
 private const val DB_FILE_NAME = "ledger.db"
 
 // ---- b5Detail (A-PERF B5 endpoint: single-candidate detail key-content latency) ----
@@ -166,6 +200,24 @@ private const val BATCH_COMMIT_TIMEOUT_MILLIS = 300_000
 private const val IMPORT_CONFIRMATION_TABLE = "import_confirmation"
 private const val POSTING_TABLE = "posting"
 private const val LEDGER_TRANSACTION_TABLE = "ledger_transaction"
+
+// ---- countProbe (the 完整计数 vector: collectionInfo.rowCount vs the authoritative DB count) ----
+
+private const val ARG_FIXTURE_NAME = "fixtureName"
+private const val ARG_FORMAT_LABEL = "formatLabel"
+private const val ARG_PICK_LABEL = "pickLabel"
+private const val ARG_REFRESH_LABEL = "refreshLabel"
+private const val ARG_INTAKE_TIMEOUT_MILLIS = "intakeTimeoutMillis"
+private const val DEFAULT_FIXTURE_NAME = "alipay-d01-dup200.csv"
+private const val DEFAULT_FORMAT_LABEL = "支付宝账单（CSV）"
+private const val DEFAULT_PICK_LABEL = "选择文件"
+private const val DEFAULT_REFRESH_LABEL = "刷新清单"
+private const val DEFAULT_COUNT_PROBE_INTAKE_TIMEOUT_MILLIS = 300_000
+private const val COUNT_PROBE_PREFIX = "countProbe:"
+private const val IMPORT_CANDIDATE_TABLE = "import_candidate"
+private const val COUNT_PROBE_PICKER_WAIT_MILLIS = 30_000
+private const val COUNT_PROBE_REFRESH_WAIT_MILLIS = 30_000
+private const val COUNT_PROBE_REFRESH_SETTLE_MILLIS = 2_000
 
 /**
  * The duplicate-status histogram SQL. `import_duplicate_status_history` is append-only with
@@ -288,6 +340,20 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  *   the candidate detail phase ([runFullChainDetailPhase]), the traversal plus the group card open and
  *   confirmation, the batch phase ([runFullChainBatchPhase]) with the authoritative `ledger_transaction`
  *   completion wait, and the closing per-phase delta summary. Every line carries the `fullChain:` prefix.
+ * - `countProbe`: the 完整计数 vector of plan section 10.3 (D-162 item 3(i), D-164 item 4(c), D-165 item
+ *   4). The traversal reads the candidate list's `collectionInfo.rowCount` and it has come out SMALLER
+ *   than the library's `import_candidate` count right after an in-session import, and the two readings -
+ *   (A) the rendered list genuinely does not include the candidates imported in this session until
+ *   something refreshes it, (B) `collectionInfo` is a stale snapshot a re-read would fix - are
+ *   undistinguished. Args `fixtureName` (default `alipay-d01-dup200.csv`), `formatLabel` (default
+ *   支付宝账单（CSV）), `pickLabel` (default 选择文件), `refreshLabel` (default 刷新清单), `settleMillis`
+ *   (default 120) and `intakeTimeoutMillis` (default 300000). It reads `rowCount` and the authoritative
+ *   `import_candidate` count at three points - baseline, right after an in-session SAF import the mode
+ *   drives ITSELF (see the paragraph below), and after clicking 刷新清单 - and closes with a mechanical
+ *   `interpretation` line. It asserts only the genuine preconditions (the review screen reachable, the
+ *   list rendered, a scrollable container, the format label and the `选择文件` nodes); every other
+ *   outcome, including an intake that never stabilizes and a picker that never appears, is a logged
+ *   FINDING. Every line carries the `countProbe:` prefix.
  *
  * CHAIN-ORDER RATIONALE (why the candidate detail comes BEFORE the deep traversal): the detail screen
  * carries its OWN checkbox and its OWN 进入批量确认 entry (device dump: one `勾选候选` CheckBox, and one
@@ -387,6 +453,98 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  *    logging every retry (`container refetch retry <n>/[CONTAINER_REFETCH_RETRIES]`) and the
  *    recovery, and only then report the lost node.
  *
+ * The `countProbe` device run then failed at its FIRST precondition and exposed the fourth defect, the
+ * HOME-screen false positive: [reachImportReview] read "a node whose text ends with [CURRENCY_SUFFIX]"
+ * as "the import review screen is rendered", but the HOME screen's transaction lines end that way too.
+ * The evidence shows the check passing 8 ms after the tab tap (`import tab attempt 1/4 rendered=true
+ * elapsedMs=8`) on the still-rendered HOME frame (amount rows present, `checkboxes=0`), so the tab
+ * switch was never confirmed, the scrollable-container lookup found nothing (`scrollable nodes: 0`)
+ * and the mode asserted before any reading was taken. The screen half of the predicate is now
+ * [readImportScreen] - exact text [IMPORT_SCREEN_REFRESH_TEXT], exact text [IMPORT_SCREEN_PICK_TEXT] or
+ * contentDescription [CANDIDATE_CHECKBOX_DESC] in ONE snapshot - and the success condition of
+ * [reachImportReview] is that predicate AND a candidate row, awaited as two bounded halves
+ * (`import screen present=<bool> branch=<branch> elapsedMs=<n>` for [IMPORT_SCREEN_WAIT_MILLIS], then
+ * `candidate list rendered: <window>` for [LIST_WAIT_MILLIS]), both of them named in the failure
+ * message and in [observedState]. The checkbox branch is the tolerant half: the header items are
+ * virtualized away once the list is scrolled, so a scrolled list is recognized by its rows'
+ * [CANDIDATE_CHECKBOX_DESC] checkbox together with a candidate amount row in the same snapshot, while a
+ * HOME-only snapshot (amount rows, zero checkboxes) satisfies neither branch. [resolveImportTab]'s
+ * per-attempt wait uses the same strict predicate, so an attempt whose tap did not switch the tab no
+ * longer reports `rendered=true` after a few ms and the retry loop that exists for exactly that case
+ * actually runs, and `countProbe` logs the predicate's verdict again at its baseline step, before
+ * `collectionInfo` is read, so a future failure at that step is unambiguous.
+ *
+ * The `countProbe` re-run then failed at the tab resolution itself and exposed the fifth defect: the app
+ * root being present is not the tab bar being COMPOSED. That run took the launch branch, reached the root
+ * 2,017 ms after `am start` (`app root wait (post-launch): timeoutMillis=30000 found=true elapsedMs=2017`)
+ * and [resolveImportTab] then found `rawCandidates=0` in the bottom band, because the Compose tab bar had
+ * not composed yet in that first frame - a later, longer-lived run of the same build found 23 raw
+ * candidates in the same band. The empty band made the resolution take its last-resort branch (`FINDING:
+ * the bottom band yielded no tab candidate`), which found no clickable node either, and the reach then
+ * failed on the HOME screen's transaction lines (they end with [CURRENCY_SUFFIX], hence
+ * `candidateRowSeen=true` while `importScreenPresent=false`). [reachImportReview] now awaits the tab bar
+ * itself, after the app root and before the tab is resolved ([awaitTabBar], bounded by
+ * [TAB_BAR_WAIT_MILLIS], every poll logged as `import tab bar wait: elapsedMs=<n> candidates=<k>`), so the
+ * resolution sees a composed band; a wait that times out only logs a FINDING and the resolution still
+ * runs, so the band's raw candidate count in its own resolution line remains the reading that names the
+ * failure.
+ *
+ * The next `countProbe` run then had the composed tab bar and still failed - on two defects of the tap
+ * path, both fixed here:
+ * 1. The per-attempt list-render wait was a fixed [TAB_LIST_WAIT_MILLIS] (30 s), which was enough while
+ *    the list had already been loaded by an in-session import (the "already on import review" early
+ *    return) and is NOT enough for the FIRST full list read at this library's size: against 60,800
+ *    candidates every attempt logged `rendered=false elapsedMs≈30000`. The bound is now the
+ *    instrumentation argument `tabListWaitMillis` (default [TAB_LIST_WAIT_MILLIS], 180 s), read by
+ *    [resolveImportTab], reported in its resolution line and in the timeout FINDING, and a SUCCESSFUL
+ *    attempt logs its elapsed time too (`import tab attempt <n>/[TAB_MAX_ATTEMPTS] rendered=true
+ *    elapsedMs=<n>`) - the same line shape the failing attempts already produced.
+ * 2. The retry order (increasing distance from x=[IMPORT_TAB_FALLBACK_X]) reached the 新增支出 FAB -
+ *    `bounds=Rect(870, 2127 - 1017, 2274) width=147`, the fifth collapsed candidate - and tapping it
+ *    navigated to the new-expense screen, which is why that run ended on an empty window
+ *    (`amountRows=0 checkboxes=0`). The band scan now narrows its candidates to [TAB_WIDTH_TAB_MIN]
+ *    (170 px) BEFORE the collapse, so the FAB (147 px) and the tabs' 126-127 px decorations can never be
+ *    a candidate - not as index [IMPORT_TAB_INDEX] and not as a retry - and every excluded node is
+ *    logged with its width. A floor that leaves fewer than four candidates keeps going with what
+ *    remains, so the FAB is never resurrected.
+ *
+ * `countProbe` is the ONE mode whose in-session import this class drives ITSELF, and the same design
+ * constraint is what forces it: the host's `uiautomator dump` does not work while this instrumentation
+ * holds a `UiAutomation` connection, so a host-driven import could only ever complete BEFORE the mode's
+ * first automation call - which is exactly the state the 完整计数 vector already has (a pre-existing
+ * library) and cannot separate reading (A) from reading (B). The mode therefore navigates the product
+ * picker through the accessibility tree: it clicks the 支付宝 CSV row's 选择文件 (the `选择文件` node whose
+ * vertical centre is closest to the `支付宝账单（CSV）` label's, which is what identifies that row among the
+ * four format rows), waits for the system picker window (the first interactive window whose root package
+ * is not [TARGET_PACKAGE] and whose subtree holds the fixture file name), clicks that row through
+ * `ACTION_CLICK` - and issues ONE bounded coordinate tap at the row's centre as an explicit LAST RESORT
+ * when every clickable level refuses that accessibility click (a registered deviation from the
+ * accessibility-only rule, disclosed by [clickPickerRow] and reported in the evidence as
+ * `accepted=false coordinateTapIssued=true`; it is one navigation tap, not the gesture storm D-161
+ * registers as the INPUT-FREEZE trigger) - and then polls the authoritative `import_candidate`
+ * count until the intake stabilizes. It is the only mode that depends on the host having placed the
+ * fixture file where the picker shows it.
+ *
+ * THE `countProbe` INTERPRETATION LINE IS A LABEL FOR THE HOST'S RULING, NOT A RULING: the derivation is
+ * mechanical - with `a`/`b`/`c` the baseline/post-import/post-refresh `rowCount`, `b <= a` and `c > b`
+ * reads `listNotRefreshed`, `b <= a` and `c <= b` reads `collectionInfoStale`, anything else (including
+ * an unreadable `rowCount`) reads `indeterminate` - and the line states `verdictBelongsToHost=true`. The
+ * label is GATED on the intake (`readingGate=intakeObserved|noIntake`): when the authoritative count never
+ * rose above the baseline (`intakeObserved=false`) the line reads `reading=indeterminate`, because the
+ * retained evidence holds exactly such a run (`dbDelta=0 intakeObserved=false`) that still carried a
+ * stale-`collectionInfo` label, so a host grepping `reading=` could read a ruling out of a run where
+ * nothing was imported. The same line carries `intakeDetected` and `intakeStabilized` (the intake
+ * wait's own verdict) and the per-step `...ReadingSource` facts (whether a reading came from a
+ * re-selected container or is `unavailable` rather than a repeat of an older handle's number). No
+ * reading of `countProbe` asserts anything.
+ *
+ * THE POSTSCROLL STEP EMITS AN OBSERVATION, NEVER A LABEL: `postScrollCountMoved=true|false|unavailable`
+ * and `postScrollRowDelta=<n|unavailable>` are derived from the `postImportRowCount` and
+ * `postScrollRowCount` printed on the same line (moved = `postScrollRowCount > postImportRowCount`), so
+ * they cannot be inverted by a later refactor the way the hypothesis label they replace could be, and
+ * `postScrollMoveGate=ok|settleMillisNotPositive|noIntake|noScrollPerformed|rowCountUnavailable` states
+ * why an `unavailable` observation is unavailable.
+ *
  * These readings are measurement and acceptance evidence, not a product capability claim, and they
  * do not change the plan section 10.3 verdict (D-161 decision 4). A target node that is absent
  * after a completed traversal is reported as a logged finding so the host still gets the evidence.
@@ -466,6 +624,16 @@ class ImportScaleTraversalInstrumentedTest {
         val evidence = mutableListOf<String>()
         try {
             runFullChain(evidence)
+        } finally {
+            appendEvidence(evidence)
+        }
+    }
+
+    @Test
+    fun countProbe() {
+        val evidence = mutableListOf<String>()
+        try {
+            runCountProbe(evidence)
         } finally {
             appendEvidence(evidence)
         }
@@ -938,6 +1106,550 @@ class ImportScaleTraversalInstrumentedTest {
                 "so the process stop at session end is the kill step and the host performs the reopen",
         )
         log("end")
+    }
+
+    /**
+     * The 完整计数 vector of plan section 10.3 (D-162 item 3(i), D-164 item 4(c), D-165 item 4), run as
+     * one bounded session: read the candidate list's `collectionInfo.rowCount` and the authoritative
+     * `import_candidate` count (step 1, baseline), import the fixture file through the PRODUCT picker that
+     * this mode drives itself (step 2, below), re-read both with NO refresh (step 3), click 刷新清单 and
+     * re-read both (step 4), and close with the mechanical interpretation line (step 5). The activity is
+     * deliberately NOT finished, like every other mode.
+     *
+     * The class doc carries why the mode must drive the picker itself (the host's `uiautomator dump` does
+     * not work while this instrumentation holds a `UiAutomation` connection) and why the interpretation
+     * line is a label for the host's ruling rather than a ruling.
+     *
+     * The assertions are the genuine preconditions only: the review screen is reachable and the candidate
+     * list rendered ([reachImportReview]), a scrollable container exists (the vector is a reading of that
+     * container's `collectionInfo`), and the format label and `选择文件` nodes exist (without them no
+     * in-session import can be started). Everything after the baseline read - a picker that never appears,
+     * a fixture row that cannot be clicked, an intake that never stabilizes, a refresh that cannot be
+     * found, an unreadable `rowCount` - is a logged FINDING and the mode continues with whatever it can
+     * still read, so the readings of the steps that did run are always written.
+     *
+     * ARGS ARE LOGGED BUT NOT PROVENANCE-CHECKED: [intArg] substitutes the default when a value is absent
+     * or malformed, so the `args ...` line alone cannot distinguish a value the host supplied from one
+     * that was defaulted (the two are the same Int by the time any step reads it). A host that needs that
+     * distinction must pass every argument explicitly and bind the line to its own command. The arg layer
+     * is deliberately not redesigned here.
+     *
+     * TWO HONESTY LIMITS ARE LOGGED AS FACTS RATHER THAN HIDDEN: the step-4 refresh detector compares the
+     * VISIBLE WINDOW and new candidates are appended at the END of a 61k-item list, so on a large library
+     * it can only ever produce a false negative - `refreshLandingEvidenced=false` therefore proves nothing
+     * about whether the refresh landed (indeed, at this scale a ~92.5 s full-list re-read can still be in
+     * flight when the postRefresh reading is taken), and `refreshSettleMillis` records the wait the step
+     * actually applied. The step-4b scroll is animation-driven (D-161 item 2), so a non-positive
+     * `settleMillis` is a configuration FINDING and the step-4b observation stays `unavailable`.
+     */
+    private fun runCountProbe(evidence: MutableList<String>) {
+        val log: (String) -> Unit = { line -> evidence += "$COUNT_PROBE_PREFIX $line" }
+        val fixtureName = stringArg(ARG_FIXTURE_NAME, DEFAULT_FIXTURE_NAME)
+        val formatLabel = stringArg(ARG_FORMAT_LABEL, DEFAULT_FORMAT_LABEL)
+        val pickLabel = stringArg(ARG_PICK_LABEL, DEFAULT_PICK_LABEL)
+        val refreshLabel = stringArg(ARG_REFRESH_LABEL, DEFAULT_REFRESH_LABEL)
+        val settleMillis = intArg(ARG_SETTLE_MILLIS, DEFAULT_SETTLE_MILLIS)
+        val intakeTimeoutMillis = intArg(ARG_INTAKE_TIMEOUT_MILLIS, DEFAULT_COUNT_PROBE_INTAKE_TIMEOUT_MILLIS)
+        log("start epochMillis=${System.currentTimeMillis()}")
+        log(
+            "args fixtureName=$fixtureName formatLabel=$formatLabel pickLabel=$pickLabel refreshLabel=$refreshLabel " +
+                "settleMillis=$settleMillis intakeTimeoutMillis=$intakeTimeoutMillis argProvenance=unavailable",
+        )
+        prepareAutomation()
+        reachImportReview(log)
+        // The baseline's own screen check, logged BEFORE collectionInfo is read: the run that motivated
+        // the import-screen predicate took this baseline on a still-rendered HOME screen, and the line
+        // below makes which screen the reading came from unambiguous.
+        val baselineScreen = readImportScreen(appRoot())
+        log(
+            "baseline import screen present=${baselineScreen.present} branch=${baselineScreen.branch} " +
+                "candidateRowSeen=${baselineScreen.candidateRow} window=${visibleRowWindow(appRoot())}",
+        )
+        val container = selectScrollableContainer(log)
+        assertTrue(
+            "no scrollable candidate-list container on the import review screen, so collectionInfo.rowCount cannot be read; " +
+                "observed: ${observedState()}",
+            container != null,
+        )
+        if (container == null) {
+            log("end")
+            return
+        }
+        // Step 1: the baseline, taken before anything is imported in this session.
+        val baselineRowCount = collectionRowCount(container)
+        val dbBaseline = countTableRows(IMPORT_CANDIDATE_TABLE, "countProbeBaseline", log)
+        log(
+            "baseline rowCount=${countText(baselineRowCount)} dbCandidates=${countText(dbBaseline)} " +
+                "listCandidates=${countText(baselineRowCount)} listCandidatesNote=rowCountMinusNonCandidateItemCountUnknown",
+        )
+        // Step 2a: the 支付宝 CSV row among the four format rows, identified as the 选择文件 node whose
+        // vertical centre is closest to the format label's.
+        val formatNode = findByText(appRoot(), formatLabel)
+        assertTrue(
+            "no node whose text is exactly $formatLabel on the import review screen, so the 支付宝 CSV row cannot be identified; " +
+                "observed: ${observedState()}",
+            formatNode != null,
+        )
+        val pickNodes = collectNodes(appRoot()) { node -> nodeText(node) == pickLabel }
+        assertTrue(
+            "no node whose text is exactly $pickLabel on the import review screen, so no file pick can be started; " +
+                "observed: ${observedState()}",
+            pickNodes.isNotEmpty(),
+        )
+        if (formatNode == null || pickNodes.isEmpty()) {
+            log("end")
+            return
+        }
+        val formatCenterY = boundsOf(formatNode).centerY()
+        val pickNode = pickNodes.minByOrNull { node -> abs(boundsOf(node).centerY() - formatCenterY) }
+        if (pickNode == null) {
+            log("FINDING: none of the ${pickNodes.size} $pickLabel node(s) could be resolved to a row; the in-session import is skipped")
+            log("end")
+            return
+        }
+        val pickBounds = boundsOf(pickNode)
+        log(
+            "picker row: formatNode bounds=${boundsOf(formatNode)} centerY=$formatCenterY pickLabelCandidates=${pickNodes.size} " +
+                "chosen bounds=$pickBounds centerY=${pickBounds.centerY()} verticalDistance=${abs(pickBounds.centerY() - formatCenterY)}",
+        )
+        val pickClickAccepted = clickNode(pickNode)
+        log("picker row: $pickLabel click accepted=$pickClickAccepted")
+        if (!pickClickAccepted) {
+            log(
+                "FINDING: the $pickLabel click was refused (no ACTION_CLICK accepted on the node or its ancestors within " +
+                    "$CLICK_PARENT_DEPTH levels); the system picker may never open, and the picker wait below is its only evidence",
+            )
+        }
+        sleepQuietly(settleMillis.toLong())
+        // Step 2b/2c: the system picker window and the fixture row inside it. `intakeWait` stays null when
+        // the picker never appeared, so the interpretation line can report the intake verdict as
+        // `unavailable` rather than as a wait that ran and did not stabilize.
+        val picker = awaitPickerTarget(fixtureName, log)
+        var intakeWait: IntakeWaitReading? = null
+        if (picker == null) {
+            log(
+                "FINDING: no window outside $TARGET_PACKAGE showed a node matching $fixtureName within " +
+                    "$COUNT_PROBE_PICKER_WAIT_MILLIS ms; no in-session import happened and the intake wait is skipped",
+            )
+        } else {
+            log("picker: package=${picker.packageName} matchedBy=${picker.matchedBy} node=${describeNode(picker.node)} label=${nodeLabel(picker.node)}")
+            // The click's outcome is logged FAITHFULLY: `accepted` is the accessibility click's result and
+            // `coordinateTapIssued` the bounded fallback's, so a row that accepted nothing cannot be read
+            // as `accepted=true` (the fallback proves nothing by itself - whether the picker advanced is
+            // readable only from the intake that follows).
+            val pickerClick = clickPickerRow(picker.node, log)
+            log("picker: fixture $fixtureName click accepted=${pickerClick.accepted} coordinateTapIssued=${pickerClick.coordinateTapIssued}")
+            if (pickerClick.coordinateTapIssued) {
+                log(
+                    "FINDING: the fixture row accepted no ACTION_CLICK within $PICKER_CLICK_PARENT_DEPTH levels and the bounded " +
+                        "coordinate tap fallback was issued instead (a registered deviation from the accessibility-only rule, see " +
+                        "[clickPickerRow]); the tap is unverified and only the intake that follows can show whether it landed",
+                )
+            }
+            sleepQuietly(settleMillis.toLong())
+            // Step 2d: the authoritative intake wait, under the same stabilization rule the host-driven
+            // intake phase applies (the intake commits in batches, so the first rise is not the end).
+            intakeWait = awaitCountProbeIntake(dbBaseline, intakeTimeoutMillis, log)
+        }
+        // Step 3: right after the import, with NO refresh. The container is re-located from a fresh tree
+        // read, because the list may have re-rendered while the intake was committing; a container that
+        // cannot be re-selected leaves the reading `unavailable` instead of repeating a number held by a
+        // handle captured before the multi-minute picker/intake interaction (see [readCollectionRowCount]).
+        val postImportSelection = selectScrollableContainer(log)
+        val postImportReading = readCollectionRowCount(postImportSelection, "postImport", log)
+        val postImportRowCount = postImportReading.rowCount
+        val dbPostImport = countTableRows(IMPORT_CANDIDATE_TABLE, "countProbePostImport", log)
+        log(
+            "postImport rowCount=${countText(postImportRowCount)} dbCandidates=${countText(dbPostImport)} " +
+                "rowCountMinusBaseline=${diffText(postImportRowCount, baselineRowCount)} dbDelta=${diffText(dbPostImport, dbBaseline)} " +
+                "readingSource=${postImportReading.source}",
+        )
+        // Step 4: the explicit refresh, then the same two readings. THE SUCCESS DETECTOR IS A FALSE-NEGATIVE
+        // INSTRUMENT at this library's scale and is kept only as the cheap positive: it compares the VISIBLE
+        // WINDOW against its pre-refresh value, while new candidates are appended at the END of a ~61k-item
+        // list - the top window cannot move when the refresh lands, so a `changed=false` verdict proves
+        // nothing about the landing (the same session measured a ~92.5 s full-list read, so the postRefresh
+        // reading below may even be taken while the refresh's own re-read is still in flight). Both branches
+        // are therefore recorded as FACTS on the interpretation line: `refreshLandingEvidenced` (the
+        // detector's verdict) and `refreshSettleMillis` (the wait this step actually applied).
+        var refreshSettleMillis = 0
+        var refreshLandingEvidenced = false
+        val refreshNode = findByText(appRoot(), refreshLabel)
+        if (refreshNode == null) {
+            log("FINDING: no node whose text is exactly $refreshLabel in the tree; the refresh was not triggered")
+        } else {
+            val windowBeforeRefresh = visibleRowWindow(appRoot())
+            val refreshClickAccepted = clickNode(refreshNode)
+            log("refresh: $refreshLabel node ${describeNode(refreshNode)} click accepted=$refreshClickAccepted")
+            if (!refreshClickAccepted) {
+                log(
+                    "FINDING: the $refreshLabel click was refused, so this step triggered no refresh; the postRefresh " +
+                        "reading is whatever the intake alone left in the list",
+                )
+            }
+            sleepQuietly(settleMillis.toLong())
+            refreshSettleMillis = settleMillis
+            val changed = waitFor({ visibleRowWindow(appRoot()) != windowBeforeRefresh }, COUNT_PROBE_REFRESH_WAIT_MILLIS, POLL_MILLIS)
+            refreshLandingEvidenced = changed
+            if (changed) {
+                log("refresh: the visible window changed within $COUNT_PROBE_REFRESH_WAIT_MILLIS ms")
+            } else {
+                log(
+                    "FINDING: the visible window did not change within $COUNT_PROBE_REFRESH_WAIT_MILLIS ms; this neither proves nor " +
+                        "disproves that the refresh landed (new candidates are appended at the END of the list, so the top window " +
+                        "cannot move) and the step falls back to a bounded fixed wait of $COUNT_PROBE_REFRESH_SETTLE_MILLIS ms",
+                )
+                sleepQuietly(COUNT_PROBE_REFRESH_SETTLE_MILLIS.toLong())
+                refreshSettleMillis += COUNT_PROBE_REFRESH_SETTLE_MILLIS
+            }
+            log("refresh: windowBefore=$windowBeforeRefresh windowAfter=${visibleRowWindow(appRoot())}")
+        }
+        val postRefreshSelection = selectScrollableContainer(log)
+        val postRefreshReading = readCollectionRowCount(postRefreshSelection, "postRefresh", log)
+        val postRefreshRowCount = postRefreshReading.rowCount
+        val dbPostRefresh = countTableRows(IMPORT_CANDIDATE_TABLE, "countProbePostRefresh", log)
+        log(
+            "postRefresh rowCount=${countText(postRefreshRowCount)} dbCandidates=${countText(dbPostRefresh)} " +
+                "rowCountMinusBaseline=${diffText(postRefreshRowCount, baselineRowCount)} readingSource=${postRefreshReading.source}",
+        )
+        // Step 4b: force a layout pass with a bounded scroll and re-read. A LazyColumn re-publishes its
+        // CollectionInfo when it is laid out again, so a count that moves here means the earlier reading
+        // was a stale CollectionInfo while the rendered list already held the new candidates; a count
+        // that does not move means the rendered list genuinely lacks them. That discrimination only holds
+        // when a layout pass ACTUALLY happened, so the premises are recorded rather than assumed: the
+        // first refused ACTION_SCROLL_FORWARD is logged as a refusal ([logRefusal]) and leaves
+        // `scrollActions=0`, the visible window is logged before and after the scroll exactly as the
+        // refresh step logs it, and a `settleMillis <= 0` run cannot advance the list at all (D-161
+        // item 2: the action is accepted while the list moves zero rows).
+        if (settleMillis <= 0) {
+            log(
+                "FINDING: settleMillis=$settleMillis is not positive, so the bounded scroll cannot advance the list " +
+                    "(D-161: the actuator is animation-driven and an accepted action moves zero rows without a settle); " +
+                    "the moved/not-moved observation is unavailable for this run",
+            )
+        }
+        var scrollActions = 0
+        val windowBeforeScroll = visibleRowWindow(appRoot())
+        val containerForScroll = refetchScrollableContainer(scrollActions, log)
+        if (containerForScroll == null) {
+            log(
+                "FINDING: no scrollable container could be re-fetched for the bounded layout-pass scroll; no layout pass was " +
+                    "forced and the step is not performed",
+            )
+        } else {
+            while (scrollActions < COUNT_PROBE_SCROLL_ACTIONS) {
+                if (!containerForScroll.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+                    logRefusal(log, containerForScroll)
+                    break
+                }
+                scrollActions += 1
+                sleepQuietly(settleMillis.toLong())
+            }
+            if (scrollActions == 0) {
+                log(
+                    "FINDING: the first ACTION_SCROLL_FORWARD was refused, so no layout pass was forced and the postScroll " +
+                        "reading cannot distinguish a stale CollectionInfo from a list that genuinely lacks the candidates",
+                )
+            }
+        }
+        log("scroll: windowBefore=$windowBeforeScroll windowAfter=${visibleRowWindow(appRoot())}")
+        val postScrollSelection = refetchScrollableContainer(scrollActions, log)
+        val postScrollReading = readCollectionRowCount(postScrollSelection, "postScroll", log)
+        val postScrollRowCount = postScrollReading.rowCount
+        val dbPostScroll = countTableRows(IMPORT_CANDIDATE_TABLE, "countProbePostScroll", log)
+        log(
+            "postScroll scrollActions=$scrollActions performed=${scrollActions > 0} rowCount=${countText(postScrollRowCount)} " +
+                "dbCandidates=${countText(dbPostScroll)} rowCountMinusBaseline=${diffText(postScrollRowCount, baselineRowCount)} " +
+                "readingSource=${postScrollReading.source}",
+        )
+        // Step 5: the mechanical label, GATED on the intake. The retained evidence contains a run whose
+        // import never landed (`dbDelta=0 intakeObserved=false`) that still emitted
+        // `reading=collectionInfoStale`, so a host grepping `reading=` could read a ruling out of a run
+        // where nothing was imported; `readingGate=` now names the gate the label passed, and
+        // `intakeDetected`/`intakeStabilized` carry the intake wait's own verdict (class doc).
+        val intakeObserved = dbBaseline != null && dbPostImport != null && dbPostImport > dbBaseline
+        val readingGate = if (intakeObserved) "intakeObserved" else "noIntake"
+        val reading = if (intakeObserved) countProbeReading(baselineRowCount, postImportRowCount, postRefreshRowCount) else "indeterminate"
+        val intakeDetectedText = if (intakeWait == null) "unavailable" else "${intakeWait.detected}"
+        val intakeStabilizedText = if (intakeWait == null) "unavailable" else "${intakeWait.stabilized}"
+        // The postScroll step emits an OBSERVATION, never a hypothesis name: `postScrollCountMoved` and
+        // `postScrollRowDelta` are derived from the `postImportRowCount` and `postScrollRowCount` printed
+        // on this same line, so no later refactor can invert them the way the replaced
+        // `readingAfterScroll` label was. `postScrollMoveGate` states why an `unavailable` observation is
+        // unavailable, so that token is never unexplained either.
+        val postScrollObservable =
+            settleMillis > 0 && intakeObserved && scrollActions > 0 && postImportRowCount != null && postScrollRowCount != null
+        val postScrollMoveGate =
+            when {
+                postScrollObservable -> "ok"
+                settleMillis <= 0 -> "settleMillisNotPositive"
+                !intakeObserved -> "noIntake"
+                scrollActions <= 0 -> "noScrollPerformed"
+                else -> "rowCountUnavailable"
+            }
+        val postScrollRowDelta = if (postScrollObservable) diffText(postScrollRowCount, postImportRowCount) else "unavailable"
+        val postScrollCountMoved = if (postScrollObservable) movedText(postScrollRowCount, postImportRowCount) else "unavailable"
+        log(
+            "interpretation baselineRowCount=${countText(baselineRowCount)} postImportRowCount=${countText(postImportRowCount)} " +
+                "postRefreshRowCount=${countText(postRefreshRowCount)} postScrollRowCount=${countText(postScrollRowCount)} " +
+                "dbBaseline=${countText(dbBaseline)} dbPostImport=${countText(dbPostImport)} dbPostRefresh=${countText(dbPostRefresh)} " +
+                "dbPostScroll=${countText(dbPostScroll)} intakeObserved=$intakeObserved intakeDetected=$intakeDetectedText intakeStabilized=$intakeStabilizedText " +
+                "readingGate=$readingGate reading=$reading " +
+                "postImportReadingSource=${postImportReading.source} postRefreshReadingSource=${postRefreshReading.source} " +
+                "postScrollReadingSource=${postScrollReading.source} refreshSettleMillis=$refreshSettleMillis " +
+                "refreshLandingEvidenced=$refreshLandingEvidenced postScrollPerformed=${scrollActions > 0} " +
+                "postScrollCountMoved=$postScrollCountMoved postScrollRowDelta=$postScrollRowDelta " +
+                "postScrollMoveGate=$postScrollMoveGate verdictBelongsToHost=true",
+        )
+        log("end")
+    }
+
+    // ---- countProbe readings (the 完整计数 vector: collectionInfo.rowCount vs the authoritative count) ----
+
+    /** One collectionInfo rowCount as a number, or null when the node carries no collection info at all. */
+    private fun collectionRowCount(node: AccessibilityNodeInfo?): Long? = node?.collectionInfo?.rowCount?.toLong()
+
+    /** One step's rowCount reading plus WHERE it came from, so a reading can never masquerade as fresh. */
+    private data class CollectionReading(
+        val rowCount: Long?,
+        val source: String,
+    )
+
+    /**
+     * One step's `collectionInfo.rowCount` reading. The node must have been RE-SELECTED from a tree read
+     * taken for this step: a null node is reported as `unavailable` rather than read from an older handle,
+     * because those handles are captured before the multi-minute picker/intake interaction and would just
+     * repeat whatever count the list carried then. A node whose collection info cannot be read - it was
+     * recycled, detached from the window, or answered no query - is a logged FINDING with the same
+     * `unavailable` reading, never an exception: this class's contract is that a mode logs a FINDING
+     * rather than failing on a reading.
+     */
+    private fun readCollectionRowCount(
+        node: AccessibilityNodeInfo?,
+        step: String,
+        log: (String) -> Unit,
+    ): CollectionReading {
+        if (node == null) {
+            log("FINDING: no scrollable container in the tree at step $step; the rowCount reading is unavailable (no handle is reused)")
+            return CollectionReading(null, "unavailable")
+        }
+        val rowCount =
+            runCatching { collectionRowCount(node) }.getOrElse { error ->
+                log("FINDING: the $step rowCount read failed ${describeError(error)}; the reading is unavailable")
+                return CollectionReading(null, "unavailable")
+            }
+        if (rowCount == null) {
+            log("FINDING: the $step container carries no collectionInfo; the rowCount reading is unavailable")
+        }
+        return CollectionReading(rowCount, "live")
+    }
+
+    /** A difference as one token: the value, or `unavailable` when either side of it could not be read. */
+    private fun diffText(
+        value: Long?,
+        reference: Long?,
+    ): String = if (value == null || reference == null) "unavailable" else "${value - reference}"
+
+    /** Whether [value] moved above [reference] as one token, or `unavailable` when either side is unreadable. */
+    private fun movedText(
+        value: Long?,
+        reference: Long?,
+    ): String = if (value == null || reference == null) "unavailable" else "${value > reference}"
+
+    /**
+     * The mechanical reading label of the countProbe interpretation line, exactly as the vector defines
+     * it: with `a`/`b`/`c` the baseline/post-import/post-refresh `rowCount`, `b <= a` and `c > b` reads
+     * `listNotRefreshed`, `b <= a` and `c <= b` reads `collectionInfoStale`, anything else reads
+     * `indeterminate`. An unreadable reading (`null`) cannot be compared and is therefore also
+     * `indeterminate`. This is a LABEL FOR THE HOST'S RULING, never a ruling: the mode logs it and asserts
+     * nothing about it, and its caller emits it only when the run's intake actually landed (class doc).
+     *
+     * The third argument is the POST-REFRESH reading of the vector's step 4 and is passed nowhere else.
+     * The postScroll step of step 4b deliberately does NOT come through here - it emits the raw
+     * `postScrollCountMoved` / `postScrollRowDelta` observation instead, because a hypothesis name for
+     * that step was invertible by a later refactor while two numbers on one line are not.
+     */
+    private fun countProbeReading(
+        baselineRowCount: Long?,
+        postImportRowCount: Long?,
+        postRefreshRowCount: Long?,
+    ): String =
+        when {
+            baselineRowCount == null || postImportRowCount == null || postRefreshRowCount == null -> "indeterminate"
+            postImportRowCount <= baselineRowCount && postRefreshRowCount > postImportRowCount -> "listNotRefreshed"
+            postImportRowCount <= baselineRowCount -> "collectionInfoStale"
+            else -> "indeterminate"
+        }
+
+    /** One picker window's matching node: the window's root package, the node and which attribute matched. */
+    private data class PickerTarget(
+        val packageName: String,
+        val node: AccessibilityNodeInfo,
+        val matchedBy: String,
+    )
+
+    /**
+     * One [awaitCountProbeIntake] wait's outcome: `detected` (the count rose above the baseline at some
+     * point during the wait) and `stabilized` (it then held still for [INTAKE_STABLE_POLLS] consecutive
+     * polls). The interpretation line carries both as facts, because `intakeObserved` alone - a comparison
+     * of the reads taken AFTER the wait - cannot say whether the wait itself ever saw the rise or whether
+     * it timed out against a library that was still committing.
+     */
+    private data class IntakeWaitReading(
+        val detected: Boolean,
+        val stabilized: Boolean,
+    )
+
+    /**
+     * Waits, bounded by [COUNT_PROBE_PICKER_WAIT_MILLIS], for the system file picker to show [fixtureName]
+     * and returns the matching node. The picker is the first interactive window whose root package is NOT
+     * [TARGET_PACKAGE] and whose subtree holds a node whose text contains [fixtureName] - or, when no
+     * window matches by text, the first window whose subtree holds a node whose contentDescription
+     * contains it. The window picture (one line per window with its root package) is logged whenever it
+     * changes, so the picker's arrival is readable without one line per poll; the poll count and the
+     * elapsed time are logged either way.
+     */
+    private fun awaitPickerTarget(
+        fixtureName: String,
+        log: (String) -> Unit,
+    ): PickerTarget? {
+        val startNanos = System.nanoTime()
+        var target: PickerTarget? = null
+        var poll = 0
+        var lastPicture = ""
+        while (target == null && elapsedMillis(startNanos) < COUNT_PROBE_PICKER_WAIT_MILLIS) {
+            val windows = runCatching { uiAutomation().windows }.getOrNull().orEmpty()
+            val picture = describePickerWindows(windows)
+            if (picture != lastPicture) {
+                lastPicture = picture
+                log("picker windows poll=$poll elapsedMs=${elapsedMillis(startNanos)} $picture")
+            }
+            target = findPickerTarget(windows, fixtureName)
+            poll += 1
+            if (target == null) {
+                sleepQuietly(POLL_MILLIS.toLong())
+            }
+        }
+        log("picker wait: found=${target != null} polls=$poll elapsedMs=${elapsedMillis(startNanos)}")
+        return target
+    }
+
+    /** Every interactive window's type, active/focused flags and root package, for the picker evidence. */
+    private fun describePickerWindows(windows: List<AccessibilityWindowInfo>): String {
+        val parts = mutableListOf("windows=${windows.size}")
+        for ((index, window) in windows.withIndex()) {
+            val root = runCatching { window.root }.getOrNull()
+            parts += "window[$index] type=${window.type} active=${window.isActive} focused=${window.isFocused} rootPackage=${root?.packageName ?: "none"}"
+        }
+        return parts.joinToString(separator = " | ")
+    }
+
+    /**
+     * The first window outside [TARGET_PACKAGE] whose subtree holds [fixtureName], matched on the node's
+     * text first and on its contentDescription only when no window matched by text. A window whose root
+     * cannot be read is skipped (the read is guarded per window, because a window can disappear between
+     * the enumeration and the root read), and the app's own windows are never candidates.
+     */
+    private fun findPickerTarget(
+        windows: List<AccessibilityWindowInfo>,
+        fixtureName: String,
+    ): PickerTarget? {
+        var byDescription: PickerTarget? = null
+        for (window in windows) {
+            val root = runCatching { window.root }.getOrNull() ?: continue
+            val packageName = root.packageName?.toString().orEmpty()
+            if (packageName == TARGET_PACKAGE) {
+                continue
+            }
+            val byText = collectNodes(root) { node -> nodeText(node).contains(fixtureName) }.firstOrNull()
+            if (byText != null) {
+                return PickerTarget(packageName, byText, "text")
+            }
+            if (byDescription == null) {
+                val byContentDescription = collectNodes(root) { node -> contentDescriptionContains(node, fixtureName) }.firstOrNull()
+                if (byContentDescription != null) {
+                    byDescription = PickerTarget(packageName, byContentDescription, "contentDescription")
+                }
+            }
+        }
+        return byDescription
+    }
+
+    /** Whether a node's content description contains [text]; the picker match's fallback attribute. */
+    private fun contentDescriptionContains(
+        node: AccessibilityNodeInfo,
+        text: String,
+    ): Boolean {
+        val description = node.contentDescription?.toString().orEmpty()
+        return description.contains(text)
+    }
+
+    /**
+     * The countProbe intake wait: polls the authoritative `import_candidate` count every
+     * [INTAKE_POLL_MILLIS] until it has risen above [baseline] AND stayed unchanged for
+     * [INTAKE_STABLE_POLLS] consecutive polls - the same stabilization rule [awaitHostIntake] applies,
+     * because the intake commits in batches and the first rise is not the end of the import. Every poll is
+     * logged. A timeout is a logged FINDING, never an assertion failure: the mode continues and reads what
+     * it can. Returns the wait's own outcome ([IntakeWaitReading]) - whether the intake was ever detected,
+     * whether it stabilized, and the last readable count - so the caller can carry those facts onto the
+     * interpretation line instead of inferring them from the counts it reads afterwards.
+     */
+    private fun awaitCountProbeIntake(
+        baseline: Long?,
+        timeoutMillis: Int,
+        log: (String) -> Unit,
+    ): IntakeWaitReading {
+        val startNanos = System.nanoTime()
+        var reference = baseline
+        var latest: Long? = baseline
+        var lastObserved: Long? = null
+        var stablePolls = 0
+        var poll = 0
+        var detected = false
+        var stabilized = false
+        while (!stabilized && elapsedMillis(startNanos) < timeoutMillis) {
+            val count = countTableRows(IMPORT_CANDIDATE_TABLE, "countProbeIntake", log)
+            poll += 1
+            val elapsedMs = elapsedMillis(startNanos)
+            if (count == null) {
+                lastObserved = null
+                stablePolls = 0
+            } else {
+                latest = count
+                if (reference == null) {
+                    reference = count
+                    log("intake wait: the baseline count is unavailable; using the first readable count as the reference import_candidate=$count")
+                }
+                if (reference != null && count > reference) {
+                    if (!detected) {
+                        detected = true
+                        log("intake detected dbCandidates=$count delta=${count - reference}")
+                    }
+                    // The streak counts consecutive above-baseline observations of the SAME count, so a
+                    // later rise, a drop back to the baseline or an unreadable poll all restart it.
+                    stablePolls = if (count == lastObserved) stablePolls + 1 else 0
+                    lastObserved = count
+                    if (stablePolls >= INTAKE_STABLE_POLLS) {
+                        stabilized = true
+                        log("intake stabilized dbCandidates=$count delta=${diffText(count, baseline)} elapsedMs=$elapsedMs stablePolls=$stablePolls")
+                    }
+                } else {
+                    lastObserved = null
+                    stablePolls = 0
+                }
+            }
+            if (!stabilized) {
+                log("waiting for intake: poll=$poll elapsedMs=$elapsedMs dbCandidates=${countText(count)} stablePolls=$stablePolls")
+                sleepQuietly(INTAKE_POLL_MILLIS.toLong())
+            }
+        }
+        if (!stabilized) {
+            log(
+                "FINDING: the intake did not stabilize (import_candidate=${countText(latest)}, detected=$detected) within " +
+                    "$timeoutMillis ms; the readings after this point are taken against a library that may still be committing",
+            )
+        }
+        return IntakeWaitReading(detected, stabilized)
     }
 
     /**
@@ -1417,7 +2129,7 @@ class ImportScaleTraversalInstrumentedTest {
      * keeps its index, so `rowIndex` counts rows rather than resolved amounts, which is also what keeps
      * the invalid-run guard for such a row reachable.
      */
-    private fun candidateAmountRows(root: AccessibilityNodeInfo?): List<AccessibilityNodeInfo> = collectNodes(root) { node -> isCandidateAmountNode(node) || nodeText(node) == B5_UNRESOLVED_AMOUNT }
+    private fun candidateAmountRows(root: AccessibilityNodeInfo?): List<AccessibilityNodeInfo> = collectNodes(root) { node -> isCandidateAmountRowNode(node) }
 
     /** One poll's reading of ONE snapshot: the two endpoint halves, the error branches and the status line. */
     private data class B5SnapshotReading(
@@ -1558,8 +2270,8 @@ class ImportScaleTraversalInstrumentedTest {
     /**
      * Reads the return contract from ONE tree walk, so its two halves can never come from different
      * frames - the same-snapshot rule the endpoint predicate follows. The candidate-row half uses
-     * [isCandidateRowNode], the test [findCandidateRow] uses, so "the list is back" means the same thing
-     * in both places.
+     * [isCandidateRowNode], the class's candidate-row test, so "the list is back" means the same thing
+     * here as it does in the other modes' row readings.
      */
     private fun readB5Return(root: AccessibilityNodeInfo?): B5ReturnReading {
         val nodes = collectNodes(root) { node -> nodeText(node) == B5_DETAIL_TITLE || isCandidateRowNode(node) }
@@ -2241,14 +2953,25 @@ class ImportScaleTraversalInstrumentedTest {
      *    session-scoped). After the launch the root is awaited again (up to
      *    [POST_LAUNCH_ROOT_WAIT_MILLIS]) and the candidate list is re-checked before the tab is
      *    resolved.
-     * 4. Only then is the import tab resolved ([resolveImportTab], by tab-bar geometry) and the
-     *    candidate list awaited.
+     * 4. Only then is the bottom band itself awaited ([awaitTabBar], bounded by [TAB_BAR_WAIT_MILLIS]) -
+     *    the app root appearing is not the tab bar being composed, and the `countProbe` re-run resolved
+     *    the tab against a frame that had not drawn the bar yet (`rawCandidates=0` about 2 s after the
+     *    launch) - and only after that is the import tab resolved ([resolveImportTab], by tab-bar
+     *    geometry) and the candidate list awaited.
      * Every wait logs its outcome, so the host can read which branch the run took.
+     *
+     * SUCCESS CONDITION = BOTH HALVES: the snapshot must be the import review screen by its OWN markers
+     * ([readImportScreen]) AND hold a candidate row. The screen half used to be "a node whose text ends
+     * with [CURRENCY_SUFFIX]", which the HOME screen's transaction lines satisfy - so a check taken
+     * before the tab transition landed passed on HOME (the device run: `rendered=true elapsedMs=8`,
+     * `checkboxes=0`) and the scrollable-container lookup that followed found nothing. The screen half is
+     * awaited first ([awaitImportScreen], bounded by [IMPORT_SCREEN_WAIT_MILLIS]) and the row half after
+     * it ([LIST_WAIT_MILLIS]); each logs its own line, and both halves are carried in the failure message
+     * and in [observedState].
      */
     private fun reachImportReview(log: (String) -> Unit) {
         val rootPresent = awaitAppRoot(APP_ROOT_WAIT_MILLIS, "pre-decision", log)
-        if (rootPresent && findCandidateRow(appRoot()) != null) {
-            log("already on import review: ${visibleRowWindow(appRoot())}")
+        if (rootPresent && alreadyOnImportReview("already on import review", log)) {
             return
         }
         if (rootPresent) {
@@ -2263,17 +2986,84 @@ class ImportScaleTraversalInstrumentedTest {
                 reachable,
             )
         }
-        if (findCandidateRow(appRoot()) != null) {
-            log("already on import review after the app root wait: ${visibleRowWindow(appRoot())}")
+        if (alreadyOnImportReview("already on import review after the app root wait", log)) {
             return
         }
+        // The settle the launch branch needs before the tab is resolved: the app root can appear seconds
+        // before the Compose tab bar is composed, and the resolution against such a frame read an empty
+        // band (class doc, the fifth defect). The wait is bounded and its timeout only logs a FINDING, so
+        // the resolution below still runs and still reports the band it saw.
+        awaitTabBar(log)
         val resolved = resolveImportTab(log)
-        val rendered = resolved || waitFor({ findCandidateRow(appRoot()) != null }, LIST_WAIT_MILLIS, POLL_MILLIS)
+        val screenPresent = awaitImportScreen(log)
+        val rowWaitStartNanos = System.nanoTime()
+        val rendered = screenPresent && waitFor({ importReviewRendered(appRoot()) }, LIST_WAIT_MILLIS, POLL_MILLIS)
+        if (rendered) {
+            log("candidate list rendered: ${visibleRowWindow(appRoot())}")
+            return
+        }
+        // The failure names BOTH halves: the screen predicate's verdict and its branch, and whether a
+        // candidate row was seen at all - so the half that was missing is unambiguous in the evidence.
+        val reading = readImportScreen(appRoot())
+        log(
+            "candidate list rendered=false elapsedMs=${elapsedMillis(rowWaitStartNanos)} " +
+                "importScreenPresent=$screenPresent branch=${reading.branch} candidateRowSeen=${reading.candidateRow} " +
+                "window=${visibleRowWindow(appRoot())}",
+        )
         assertTrue(
-            "import candidate list did not render within $LIST_WAIT_MILLIS ms; observed: ${observedState()}",
+            "import candidate list did not render within $LIST_WAIT_MILLIS ms (import screen present=$screenPresent, " +
+                "branch=${reading.branch}, candidate row seen=${reading.candidateRow}, tabResolved=$resolved; the import " +
+                "review screen is identified by exact text $IMPORT_SCREEN_REFRESH_TEXT, exact text $IMPORT_SCREEN_PICK_TEXT " +
+                "or contentDescription $CANDIDATE_CHECKBOX_DESC); observed: ${observedState()}",
             rendered,
         )
-        log("candidate list rendered: ${visibleRowWindow(appRoot())}")
+    }
+
+    /**
+     * The strict "the import review screen is on screen AND it holds a candidate row" test of ONE snapshot:
+     * the success condition of [reachImportReview] and of every tab-resolution attempt. Both halves come
+     * from the same snapshot, so a frame taken before the tab transition landed cannot pass ([readImportScreen]
+     * carries the markers).
+     */
+    private fun importReviewRendered(root: AccessibilityNodeInfo?): Boolean {
+        val reading = readImportScreen(root)
+        return reading.present && reading.candidateRow
+    }
+
+    /**
+     * The early-return branch of [reachImportReview]: returns true, and logs the branch that matched plus
+     * the visible window, when ONE snapshot is already the import review screen with a candidate row; a
+     * snapshot that is not (the HOME screen included) returns false and the caller continues down the
+     * tab-resolution path.
+     */
+    private fun alreadyOnImportReview(
+        label: String,
+        log: (String) -> Unit,
+    ): Boolean {
+        val reading = readImportScreen(appRoot())
+        if (!reading.present || !reading.candidateRow) {
+            return false
+        }
+        log("$label: ${visibleRowWindow(appRoot())} importScreenBranch=${reading.branch}")
+        return true
+    }
+
+    /**
+     * Waits, bounded by [IMPORT_SCREEN_WAIT_MILLIS], for ONE snapshot to be the import review screen, and
+     * logs the verdict on its own line: `import screen present=<bool> branch=<branch> elapsedMs=<n>`. The
+     * wait polls, so a snapshot taken before the tab transition landed - the HOME-screen false positive
+     * this predicate exists for - does not satisfy it, and the row half is awaited only after this half
+     * held (a failure therefore names the half that was missing).
+     */
+    private fun awaitImportScreen(log: (String) -> Unit): Boolean {
+        val startNanos = System.nanoTime()
+        var reading = readImportScreen(appRoot())
+        while (!reading.present && elapsedMillis(startNanos) < IMPORT_SCREEN_WAIT_MILLIS) {
+            sleepQuietly(POLL_MILLIS.toLong())
+            reading = readImportScreen(appRoot())
+        }
+        log("import screen present=${reading.present} branch=${reading.branch} elapsedMs=${elapsedMillis(startNanos)}")
+        return reading.present
     }
 
     /** Waits for the app window and logs the outcome, so every launch decision is readable in the evidence. */
@@ -2291,35 +3081,90 @@ class ImportScaleTraversalInstrumentedTest {
     private fun appTreeReachable(): Boolean = appRoot() != null
 
     /**
+     * Waits, bounded by [TAB_BAR_WAIT_MILLIS], for the bottom band to hold at least one node wide enough
+     * to be a tab ([bottomBandTabNodes], so the count excludes the new-expense FAB and the tabs'
+     * decorations), and returns the count it ended on. The app root appearing is not the tab bar being COMPOSED: the
+     * `countProbe` re-run reached the root 2,017 ms after `am start` (`app root wait (post-launch):
+     * found=true elapsedMs=2017`) and [resolveImportTab] then read `rawCandidates=0` from that first frame,
+     * because the Compose tab bar had not composed yet - a later, longer-lived run of the same build found
+     * 23 raw candidates in the same band. Without this wait the resolution falls straight through to its
+     * last-resort branch on a frame that simply had not drawn the bar. Every poll logs its elapsed time and
+     * the count it saw (`import tab bar wait: elapsedMs=<n> candidates=<k>`); a band that is still empty at
+     * the bound is a logged FINDING, and the caller then continues into [resolveImportTab] unchanged - the
+     * raw candidate count in that function's own resolution line stays the reading a failure is read from.
+     */
+    private fun awaitTabBar(log: (String) -> Unit): Int {
+        val startNanos = System.nanoTime()
+        var candidates: Int
+        do {
+            candidates = bottomBandTabNodes(appRoot()).size
+            log("import tab bar wait: elapsedMs=${elapsedMillis(startNanos)} candidates=$candidates")
+            if (candidates > 0) {
+                break
+            }
+            sleepQuietly(POLL_MILLIS.toLong())
+        } while (elapsedMillis(startNanos) < TAB_BAR_WAIT_MILLIS)
+        if (candidates == 0) {
+            log(
+                "FINDING: the bottom band held no tab candidate within $TAB_BAR_WAIT_MILLIS ms; " +
+                    "the tab resolution continues with an empty band",
+            )
+        }
+        return candidates
+    }
+
+    /**
      * The import tab, resolved by tab-bar geometry (Fix B) instead of the dead label lookup - the
      * tab-bar nodes expose no text and no contentDescription on this build, so a lookup can never
      * succeed - and instead of the nearest-clickable coordinate fallback, which picked the 3rd tab
      * (centre x=532) rather than the import tab and switched the app away from the import screen.
      *
-     * The bottom band ([TAB_BAND_TOP]..[TAB_BAND_BOTTOM]) is scanned for nodes between
-     * [TAB_WIDTH_MIN] and [TAB_WIDTH_MAX] wide, regardless of clickability (the selected tab is not
-     * clickable), sorted by their left edge, and every raw candidate is logged with its index, bounds,
-     * centre and clickable flag. The raw list is then collapsed to one node per tab position
-     * ([collapseTabCandidates] - the real tree carries inner decorations and the FAB inside the same
-     * band and width window), and every collapsed candidate is logged the same way. The import tab is
-     * bottom-band index [IMPORT_TAB_INDEX] (the 4th tab, centre x=[IMPORT_TAB_FALLBACK_X] on the
-     * managed AVD's 1080x2400 profile):
+     * The bottom band ([TAB_BAND_TOP]..[TAB_BAND_BOTTOM]) is scanned ONCE ([scanBottomBand]) for nodes
+     * between [TAB_WIDTH_MIN] and [TAB_WIDTH_MAX] wide, regardless of clickability (the selected tab is
+     * not clickable), sorted by their left edge; every raw candidate and every node the [TAB_WIDTH_TAB_MIN]
+     * tab width floor EXCLUDED is logged with its index, bounds, centre, width and clickable flag, and the
+     * resolution line reports the raw and the tab candidate counts plus the wait bound it will use. Only
+     * the nodes the floor keeps are then collapsed to one node per tab position ([collapseTabCandidates]),
+     * so the new-expense FAB (147 px, tapped as a retry by the run behind class doc defect 2) cannot enter
+     * the candidate list at all. The import tab is bottom-band index [IMPORT_TAB_INDEX] (the 4th tab,
+     * centre x=[IMPORT_TAB_FALLBACK_X] on the managed AVD's 1080x2400 profile):
      * - a non-clickable import tab IS the already-selected tab: nothing is tapped at all;
-     * - a clickable one is clicked and the candidate list is awaited for [TAB_LIST_WAIT_MILLIS];
-     * - when the list does not render, the remaining bottom-band candidates are retried in increasing
-     *   distance from x=[IMPORT_TAB_FALLBACK_X], bounded to [TAB_MAX_ATTEMPTS] taps in total, every
-     *   attempt and its outcome logged, and the resolution stops as soon as the list renders.
-     * An empty bottom band is the only case that still falls back to the nearest clickable node to
-     * ([IMPORT_TAB_FALLBACK_X], [IMPORT_TAB_FALLBACK_Y]), and it says so in the evidence.
+     * - a clickable one is clicked and the import review screen WITH a candidate row is awaited for
+     *   `tabListWaitMillis` ms (default [TAB_LIST_WAIT_MILLIS], 180 s, because the first full list read at
+     *   this library's size does not finish inside the 30 s this used to allow)
+     *   ([importReviewRendered], the strict both-halves test - the loose "a node's text ends with CNY"
+     *   test is satisfied by the HOME screen's transaction lines and made every attempt report
+     *   `rendered=true` after a few ms), and the attempt's elapsed time is logged whether it rendered or
+     *   not;
+     * - when the screen does not render, the remaining tab candidates are retried in increasing distance
+     *   from x=[IMPORT_TAB_FALLBACK_X], bounded to [TAB_MAX_ATTEMPTS] taps in total, every attempt and its
+     *   outcome logged, and the resolution stops as soon as the screen renders. Fewer than four
+     *   candidates (the floor dropped some, or the band is thin) is not an error: the resolution keeps
+     *   going with what remains and never resurrects an excluded node.
+     * A bottom band with no node at or above the floor is the only case that still falls back to the
+     * nearest clickable node to ([IMPORT_TAB_FALLBACK_X], [IMPORT_TAB_FALLBACK_Y]), and it says so in the
+     * evidence. The caller awaits the band itself before calling this ([awaitTabBar]), so an empty band
+     * here means the tab bar did not compose within that bound - not that the frame was read too early.
      * Returns whether the candidate list rendered during the resolution.
      */
     private fun resolveImportTab(log: (String) -> Unit): Boolean {
-        val raw = bottomBandTabNodes(appRoot())
-        log("import tab resolution: bottom band top>=$TAB_BAND_TOP bottom<=$TAB_BAND_BOTTOM width=$TAB_WIDTH_MIN..$TAB_WIDTH_MAX rawCandidates=${raw.size}")
-        for ((index, node) in raw.withIndex()) {
+        val listWaitMillis = intArg(ARG_TAB_LIST_WAIT_MILLIS, TAB_LIST_WAIT_MILLIS)
+        val scan = scanBottomBand(appRoot())
+        log(
+            "import tab resolution: bottom band top>=$TAB_BAND_TOP bottom<=$TAB_BAND_BOTTOM width=$TAB_WIDTH_MIN..$TAB_WIDTH_MAX " +
+                "tabWidthMin=$TAB_WIDTH_TAB_MIN rawCandidates=${scan.raw.size} tabCandidates=${scan.tabs.size} " +
+                "listWaitMillis=$listWaitMillis",
+        )
+        for ((index, node) in scan.raw.withIndex()) {
             log("import tab raw candidate[$index] ${describeTabCandidate(node)}")
         }
-        val candidates = collapseTabCandidates(raw, log)
+        for ((index, node) in scan.excluded.withIndex()) {
+            log(
+                "import tab candidate excluded[$index] (not a tab: width ${boundsOf(node).width()} < $TAB_WIDTH_TAB_MIN): " +
+                    describeTabCandidate(node),
+            )
+        }
+        val candidates = collapseTabCandidates(scan.tabs, log)
         for ((index, node) in candidates.withIndex()) {
             log("import tab candidate[$index] ${describeTabCandidate(node)}")
         }
@@ -2356,23 +3201,63 @@ class ImportScaleTraversalInstrumentedTest {
             val accepted = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             log("import tab attempt $taps/$TAB_MAX_ATTEMPTS click accepted=$accepted")
             val attemptStartNanos = System.nanoTime()
-            val rendered = waitFor({ findCandidateRow(appRoot()) != null }, TAB_LIST_WAIT_MILLIS, POLL_MILLIS)
+            // The per-attempt success test is the strict both-halves one ([importReviewRendered]), not
+            // "some node's text ends with CNY": the latter is satisfied by the HOME screen's transaction
+            // lines, so an attempt whose tap did not switch the tab would report `rendered=true` after a
+            // few ms and the retry loop below would never run. The bound is the `tabListWaitMillis`
+            // argument (default [TAB_LIST_WAIT_MILLIS]): the FIRST full list read at this library's size
+            // takes far longer than the 30 s this used to allow, and the elapsed time is logged for a
+            // rendered attempt as well as for a failed one.
+            val rendered = waitFor({ importReviewRendered(appRoot()) }, listWaitMillis, POLL_MILLIS)
             log("import tab attempt $taps/$TAB_MAX_ATTEMPTS rendered=$rendered elapsedMs=${elapsedMillis(attemptStartNanos)}")
             if (rendered) {
                 return true
             }
         }
-        log("FINDING: no bottom-band tab attempt rendered the candidate list within $TAB_LIST_WAIT_MILLIS ms each (taps=$taps)")
+        log("FINDING: no bottom-band tab attempt rendered the candidate list within $listWaitMillis ms each (taps=$taps)")
         return false
     }
 
     /**
-     * The tab-bar nodes of the bottom band, in left-to-right order. The band and the width window are
-     * the geometry fact measured on the managed AVD's 1080x2400 profile (four 183 px wide tab nodes
-     * whose tops sit at y=2095 and bottoms at y=2305); clickability is deliberately not part of the
-     * filter, because the SELECTED tab is not clickable and still has to be identifiable.
+     * One bottom-band scan, left-to-right in all three lists: [raw] is every node inside the band's
+     * width window, [tabs] the ones wide enough to be a tab ([TAB_WIDTH_TAB_MIN]) and [excluded] the ones
+     * the tab width floor drops - the new-expense FAB and the tabs' inner decorations. The split is kept
+     * rather than only the filtered list so [resolveImportTab] can log what it refused to consider: the
+     * FAB tap that navigated away from the import screen (class doc defect 2) has to be visible in the
+     * evidence as an exclusion, not as a missing candidate.
+     */
+    private data class BottomBandScan(
+        val raw: List<AccessibilityNodeInfo>,
+        val tabs: List<AccessibilityNodeInfo>,
+        val excluded: List<AccessibilityNodeInfo>,
+    )
+
+    /**
+     * The bottom band's TAB candidates, in left-to-right order: the nodes of [scanBottomBand] that are at
+     * least [TAB_WIDTH_TAB_MIN] wide. The band and the width window are the geometry fact measured on the
+     * managed AVD's 1080x2400 profile (four 183-184 px wide tab nodes whose tops sit at y=2095 and
+     * bottoms at y=2305); clickability is deliberately not part of the filter, because the SELECTED tab is
+     * not clickable and still has to be identifiable.
+     *
+     * [TAB_WIDTH_TAB_MIN] is the tab width floor. The band's non-tab nodes are the tabs' 126-127 px inner
+     * decorations and the 147 px new-expense FAB, so 170 px separates them from the narrowest tab (183 px)
+     * with margin on both sides - and a node the floor drops can never be a candidate (not at index
+     * [IMPORT_TAB_INDEX], not as a retry attempt), which is what the FAB needs, because tapping it
+     * navigates to the new-expense screen (class doc defect 2).
      */
     private fun bottomBandTabNodes(root: AccessibilityNodeInfo?): List<AccessibilityNodeInfo> {
+        val scan = scanBottomBand(root)
+        return scan.tabs
+    }
+
+    /**
+     * Scans the bottom band ONCE and splits it, so the resolution's raw logging, its exclusion logging and
+     * its candidate list always describe the same tree read. [BottomBandScan.raw] is the band and
+     * width-window filter ([TAB_BAND_TOP]..[TAB_BAND_BOTTOM], [TAB_WIDTH_MIN]..[TAB_WIDTH_MAX]) sorted by
+     * left edge; the floor is applied to [BottomBandScan.tabs] only, and the nodes it drops are returned
+     * as [BottomBandScan.excluded] for the evidence.
+     */
+    private fun scanBottomBand(root: AccessibilityNodeInfo?): BottomBandScan {
         val inBand =
             collectNodes(root) { node ->
                 val bounds = boundsOf(node)
@@ -2380,25 +3265,31 @@ class ImportScaleTraversalInstrumentedTest {
                     bounds.bottom <= TAB_BAND_BOTTOM &&
                     bounds.width() >= TAB_WIDTH_MIN &&
                     bounds.width() <= TAB_WIDTH_MAX
-            }
-        return inBand.sortedBy { node -> boundsOf(node).left }
+            }.sortedBy { node -> boundsOf(node).left }
+        return BottomBandScan(
+            raw = inBand,
+            tabs = inBand.filter { node -> boundsOf(node).width() >= TAB_WIDTH_TAB_MIN },
+            excluded = inBand.filter { node -> boundsOf(node).width() < TAB_WIDTH_TAB_MIN },
+        )
     }
 
     /**
-     * Collapses the raw band candidates to ONE node per tab position, in left-to-right order, which is
-     * what makes the index-[IMPORT_TAB_INDEX] fact hold. A device dump of the review screen (the same
-     * tree the second run traversed) shows why the band+width filter alone is not enough: each tab item
-     * carries an inner decoration of the same or a contained box (the item is 183x210 at
-     * y=2095..2305, its indicator decorations are 126x127 boxes inside it), and the new-expense FAB
-     * (147x147 at x=870..1017) also falls inside the band and the width window - twenty raw candidates
-     * for four tabs, so raw index 3 would be a decoration of the first tab and the mode would conclude
-     * "already selected" without tapping anything.
+     * Collapses the band's TAB candidates ([BottomBandScan.tabs], already narrowed by
+     * [TAB_WIDTH_TAB_MIN]) to ONE node per tab position, in left-to-right order, which is what makes the
+     * index-[IMPORT_TAB_INDEX] fact hold. A device dump of the review screen (the same tree the second run
+     * traversed) shows why a tab position can still be exposed more than once after the width floor: each
+     * tab box (183-184 x 210 at y=2095..2305) appears twice in the tree - the three unselected ones once
+     * clickable and once not, the selected import tab twice non-clickable - so the list this function
+     * receives still holds two nodes per position.
      *
      * A candidate whose bounds are contained in (or identical to) a candidate already kept is therefore
      * dropped, and a clickable node at a position replaces a non-clickable node kept there - so each tab
-     * position keeps the node that can actually be tapped. The FAB survives as the last candidate, to the
-     * right of every tab, so it never shifts the index of the import tab; it is only reachable as a
-     * retry attempt, and every drop and replacement is logged.
+     * position keeps the node that can actually be tapped, and every drop and replacement is logged.
+     *
+     * The nodes that are NOT tabs never reach this function at all: the tabs' 126-127 px inner decorations
+     * and the 147 px new-expense FAB are below [TAB_WIDTH_TAB_MIN] and [scanBottomBand] drops them first,
+     * so the FAB - which the run behind class doc defect 2 tapped as a retry - can never be collapsed into
+     * a candidate or a retry attempt again.
      */
     private fun collapseTabCandidates(
         raw: List<AccessibilityNodeInfo>,
@@ -2432,6 +3323,10 @@ class ImportScaleTraversalInstrumentedTest {
      * The tap order of [resolveImportTab]: the import tab (bottom-band index [IMPORT_TAB_INDEX]) first
      * when it exists, then every remaining candidate by increasing distance of its centre from
      * x=[IMPORT_TAB_FALLBACK_X]. Candidates that are not clickable are skipped by the caller.
+     *
+     * Every node this ordering can reach is a TAB: [bottomBandTabNodes] has already applied the
+     * [TAB_WIDTH_TAB_MIN] floor, so the 147 px new-expense FAB - the node this distance order tapped in
+     * the run behind class doc defect 2 - is not in the list it sorts.
      */
     private fun orderedTabAttempts(candidates: List<AccessibilityNodeInfo>): List<AccessibilityNodeInfo> {
         val importTab = candidates.getOrNull(IMPORT_TAB_INDEX)
@@ -2534,8 +3429,10 @@ class ImportScaleTraversalInstrumentedTest {
 
     /**
      * The one-line state a failed precondition carries: how many interactive windows the automation
-     * sees, which packages they belong to, what the active-window root is, and whether the import
-     * tab is currently reachable. Never throws; a broken read is reported as text.
+     * sees, which packages they belong to, what the active-window root is, whether the import tab is
+     * currently reachable, and the import-review-screen predicate's own verdict ([readImportScreen]:
+     * present, the branch that matched, and whether a candidate row was seen) so a screen-precondition
+     * failure names the half that was missing. Never throws; a broken read is reported as text.
      */
     private fun observedState(): String =
         runCatching {
@@ -2544,9 +3441,12 @@ class ImportScaleTraversalInstrumentedTest {
             val windowsResult = runCatching { automation.windows }
             val windows = windowsResult.getOrNull().orEmpty()
             val packages = windows.mapNotNull { window -> window.root?.packageName?.toString() }.distinct()
-            val importTabFound = appRoot()?.let { root -> findImportTabNode(root) } != null
+            val root = appRoot()
+            val importTabFound = root?.let { node -> findImportTabNode(node) } != null
+            val screen = readImportScreen(root)
             val windowError = windowsResult.exceptionOrNull()?.let { error -> " windowsError=${describeError(error)}" }.orEmpty()
-            "windows=${windows.size} packages=$packages rootInActiveWindow=${activeRoot?.packageName} importTabFound=$importTabFound$windowError"
+            "windows=${windows.size} packages=$packages rootInActiveWindow=${activeRoot?.packageName} importTabFound=$importTabFound " +
+                "importScreenPresent=${screen.present} importScreenBranch=${screen.branch} candidateRowSeen=${screen.candidateRow}$windowError"
         }.getOrElse { error -> "observedState failed ${describeError(error)}" }
 
     /** The full window picture the `diagnose` mode logs: active root plus every interactive window. */
@@ -2609,9 +3509,16 @@ class ImportScaleTraversalInstrumentedTest {
         return predicate()
     }
 
+    /**
+     * Sleeps at most [millis], swallowing an interrupt and re-raising it on the thread. A negative
+     * [millis] is clamped to zero so the `settleMillis` arg can never crash the instrument with an
+     * `IllegalArgumentException` from `Thread.sleep`: the mode's contract is that a non-positive
+     * `settleMillis` is a logged configuration FINDING, never a failure, and a clamped zero sleep
+     * is a no-op for every caller that reaches this helper.
+     */
     private fun sleepQuietly(millis: Long) {
         try {
-            Thread.sleep(millis)
+            Thread.sleep(millis.coerceAtLeast(0))
         } catch (interrupted: InterruptedException) {
             Thread.currentThread().interrupt()
         }
@@ -2667,7 +3574,54 @@ class ImportScaleTraversalInstrumentedTest {
 
     private fun isCandidateRowNode(node: AccessibilityNodeInfo): Boolean = node.contentDescription?.toString() == CANDIDATE_CHECKBOX_DESC || isCandidateAmountNode(node)
 
-    private fun findCandidateRow(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? = collectNodes(root) { node -> isCandidateRowNode(node) }.firstOrNull()
+    /**
+     * ONE snapshot's import-review-screen reading, taken in a SINGLE tree walk so its halves can never come
+     * from different frames. [branch] is the marker that matched ([IMPORT_SCREEN_BRANCH_NONE] when none did)
+     * and is logged as evidence; [candidateRow] is whether the same snapshot also held a candidate amount row.
+     */
+    private data class ImportScreenReading(
+        val branch: String,
+        val candidateRow: Boolean,
+    ) {
+        val present: Boolean get() = branch != IMPORT_SCREEN_BRANCH_NONE
+    }
+
+    /**
+     * Whether ONE snapshot is the import review screen, and which marker says so. The screen half used to be
+     * "a node whose text ends with [CURRENCY_SUFFIX]", which the HOME screen's transaction lines satisfy; the
+     * markers below are the import screen's OWN and HOME carries none of them (class doc):
+     * - the header branch matches a node whose text is exactly [IMPORT_SCREEN_REFRESH_TEXT] or exactly
+     *   [IMPORT_SCREEN_PICK_TEXT];
+     * - the tolerant fallback matches the candidate row's [CANDIDATE_CHECKBOX_DESC] checkbox AND requires a
+     *   candidate amount row in the SAME snapshot, which is what a list that has scrolled its header items
+     *   away still carries.
+     */
+    private fun readImportScreen(root: AccessibilityNodeInfo?): ImportScreenReading {
+        val nodes = collectNodes(root) { node -> isImportScreenMarkerNode(node) || isCandidateAmountRowNode(node) }
+        val refreshText = nodes.any { node -> nodeText(node) == IMPORT_SCREEN_REFRESH_TEXT }
+        val pickText = nodes.any { node -> nodeText(node) == IMPORT_SCREEN_PICK_TEXT }
+        val checkboxMarker = nodes.any { node -> node.contentDescription?.toString() == CANDIDATE_CHECKBOX_DESC }
+        val candidateRow = nodes.any { node -> isCandidateAmountRowNode(node) }
+        val branch =
+            when {
+                refreshText -> IMPORT_SCREEN_BRANCH_REFRESH
+                pickText -> IMPORT_SCREEN_BRANCH_PICK
+                checkboxMarker && candidateRow -> IMPORT_SCREEN_BRANCH_CHECKBOX
+                else -> IMPORT_SCREEN_BRANCH_NONE
+            }
+        return ImportScreenReading(branch = branch, candidateRow = candidateRow)
+    }
+
+    /** A node carrying an import-screen marker: one of the two header affordances, or the row checkbox. */
+    private fun isImportScreenMarkerNode(node: AccessibilityNodeInfo): Boolean {
+        val text = nodeText(node)
+        return text == IMPORT_SCREEN_REFRESH_TEXT ||
+            text == IMPORT_SCREEN_PICK_TEXT ||
+            node.contentDescription?.toString() == CANDIDATE_CHECKBOX_DESC
+    }
+
+    /** One candidate row's amount line: the test [candidateAmountRows] selects its rows with. */
+    private fun isCandidateAmountRowNode(node: AccessibilityNodeInfo): Boolean = isCandidateAmountNode(node) || nodeText(node) == B5_UNRESOLVED_AMOUNT
 
     private fun findByContentDescription(
         root: AccessibilityNodeInfo?,
@@ -2706,6 +3660,56 @@ class ImportScaleTraversalInstrumentedTest {
             depth += 1
         }
         return false
+    }
+
+    /**
+     * One [clickPickerRow] outcome, kept faithful so the caller's evidence line cannot claim an
+     * acceptance that never happened: [accepted] is the accessibility click's own result,
+     * [coordinateTapIssued] says whether the bounded one-tap fallback was used, and [coordinateTapIssued]
+     * without [accepted] is the honest shape of "every level refused, the tap was issued anyway".
+     */
+    private data class PickerClickOutcome(
+        val accepted: Boolean,
+        val coordinateTapIssued: Boolean,
+    )
+
+    /**
+     * Clicks the system file picker's row for [node]. The picker's title node is a non-clickable
+     * `TextView` and DocumentsUI does not reliably accept ACTION_CLICK on the row within
+     * [CLICK_PARENT_DEPTH] levels, so this walks up to [PICKER_CLICK_PARENT_DEPTH] levels, logging each
+     * level's class, enabled/clickable flags and bounds so a refusal is diagnosable. ONE bounded
+     * coordinate tap at the row's centre through the shell is the LAST RESORT when every level refuses,
+     * and it is a REGISTERED DEVIATION from the accessibility-only rule of this class's traversal: D-161
+     * item 2 permits a single navigation tap because the INPUT-FREEZE trigger is a pointer-gesture
+     * STORM, and this is one tap, not a storm. The tap is UNVERIFIED - nothing here can confirm that it
+     * landed - so the returned outcome reports `accepted=false coordinateTapIssued=true` for it rather
+     * than a success, and whether the picker actually advanced is readable only from the intake that
+     * follows ([awaitCountProbeIntake]).
+     */
+    private fun clickPickerRow(
+        node: AccessibilityNodeInfo,
+        log: (String) -> Unit,
+    ): PickerClickOutcome {
+        var current: AccessibilityNodeInfo? = node
+        var depth = 0
+        while (current != null && depth <= PICKER_CLICK_PARENT_DEPTH) {
+            val levelDescription =
+                "picker click level=$depth class=${current.className} enabled=${current.isEnabled} clickable=${current.isClickable} visible=${current.isVisibleToUser} bounds=${boundsOf(current)}"
+            log(levelDescription)
+            if (current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                log("picker click accepted at level=$depth")
+                return PickerClickOutcome(accepted = true, coordinateTapIssued = false)
+            }
+            current = current.parent
+            depth += 1
+        }
+        val bounds = boundsOf(node)
+        log(
+            "picker click refused at every level; falling back to ONE coordinate tap at (${bounds.centerX()}, ${bounds.centerY()}) - " +
+                "a registered deviation from the accessibility-only rule, and the tap is unverified",
+        )
+        shell("input tap ${bounds.centerX()} ${bounds.centerY()}")
+        return PickerClickOutcome(accepted = false, coordinateTapIssued = true)
     }
 
     /**
