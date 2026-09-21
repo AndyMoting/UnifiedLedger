@@ -517,7 +517,11 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  * vertical centre is closest to the `支付宝账单（CSV）` label's, which is what identifies that row among the
  * four format rows), waits for the system picker window (the first interactive window whose root package
  * is not [TARGET_PACKAGE] and whose subtree holds the fixture file name), clicks that row through
- * `ACTION_CLICK` - never a synthetic pointer input - and then polls the authoritative `import_candidate`
+ * `ACTION_CLICK` - and issues ONE bounded coordinate tap at the row's centre as an explicit LAST RESORT
+ * when every clickable level refuses that accessibility click (a registered deviation from the
+ * accessibility-only rule, disclosed by [clickPickerRow] and reported in the evidence as
+ * `accepted=false coordinateTapIssued=true`; it is one navigation tap, not the gesture storm D-161
+ * registers as the INPUT-FREEZE trigger) - and then polls the authoritative `import_candidate`
  * count until the intake stabilizes. It is the only mode that depends on the host having placed the
  * fixture file where the picker shows it.
  *
@@ -525,9 +529,21 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  * mechanical - with `a`/`b`/`c` the baseline/post-import/post-refresh `rowCount`, `b <= a` and `c > b`
  * reads `listNotRefreshed`, `b <= a` and `c <= b` reads `collectionInfoStale`, anything else (including
  * an unreadable `rowCount`) reads `indeterminate` - and the line states `verdictBelongsToHost=true`. The
- * same line also carries `intakeObserved` (whether the authoritative count actually rose above the
- * baseline), so a run whose import never landed is not read as a stale-`collectionInfo` verdict. No
- * reading of `countProbe` asserts anything.
+ * label is GATED on the intake (`readingGate=intakeObserved|noIntake`): when the authoritative count never
+ * rose above the baseline (`intakeObserved=false`) the line reads `reading=indeterminate`, because the
+ * retained evidence holds exactly such a run (`dbDelta=0 intakeObserved=false`) that still carried a
+ * stale-`collectionInfo` label, so a host grepping `reading=` could read a ruling out of a run where
+ * nothing was imported. The same line carries `intakeStabilized` (the intake wait's own verdict) and the
+ * per-step `...ReadingSource` facts (whether a reading came from a re-selected container or is
+ * `unavailable` rather than a repeat of an older handle's number). No reading of `countProbe` asserts
+ * anything.
+ *
+ * THE POSTSCROLL STEP EMITS AN OBSERVATION, NEVER A LABEL: `postScrollCountMoved=true|false|unavailable`
+ * and `postScrollRowDelta=<n|unavailable>` are derived from the `postImportRowCount` and
+ * `postScrollRowCount` printed on the same line (moved = `postScrollRowCount > postImportRowCount`), so
+ * they cannot be inverted by a later refactor the way the hypothesis label they replace could be, and
+ * `postScrollMoveGate=ok|settleMillisNotPositive|noIntake|noScrollPerformed|rowCountUnavailable` states
+ * why an `unavailable` observation is unavailable.
  *
  * These readings are measurement and acceptance evidence, not a product capability claim, and they
  * do not change the plan section 10.3 verdict (D-161 decision 4). A target node that is absent
@@ -1111,6 +1127,20 @@ class ImportScaleTraversalInstrumentedTest {
      * a fixture row that cannot be clicked, an intake that never stabilizes, a refresh that cannot be
      * found, an unreadable `rowCount` - is a logged FINDING and the mode continues with whatever it can
      * still read, so the readings of the steps that did run are always written.
+     *
+     * ARGS ARE LOGGED BUT NOT PROVENANCE-CHECKED: [intArg] substitutes the default when a value is absent
+     * or malformed, so the `args ...` line alone cannot distinguish a value the host supplied from one
+     * that was defaulted (the two are the same Int by the time any step reads it). A host that needs that
+     * distinction must pass every argument explicitly and bind the line to its own command. The arg layer
+     * is deliberately not redesigned here.
+     *
+     * TWO HONESTY LIMITS ARE LOGGED AS FACTS RATHER THAN HIDDEN: the step-4 refresh detector compares the
+     * VISIBLE WINDOW and new candidates are appended at the END of a 61k-item list, so on a large library
+     * it can only ever produce a false negative - `refreshLandingEvidenced=false` therefore proves nothing
+     * about whether the refresh landed (indeed, at this scale a ~92.5 s full-list re-read can still be in
+     * flight when the postRefresh reading is taken), and `refreshSettleMillis` records the wait the step
+     * actually applied. The step-4b scroll is animation-driven (D-161 item 2), so a non-positive
+     * `settleMillis` is a configuration FINDING and the step-4b observation stays `unavailable`.
      */
     private fun runCountProbe(evidence: MutableList<String>) {
         val log: (String) -> Unit = { line -> evidence += "$COUNT_PROBE_PREFIX $line" }
@@ -1123,7 +1153,7 @@ class ImportScaleTraversalInstrumentedTest {
         log("start epochMillis=${System.currentTimeMillis()}")
         log(
             "args fixtureName=$fixtureName formatLabel=$formatLabel pickLabel=$pickLabel refreshLabel=$refreshLabel " +
-                "settleMillis=$settleMillis intakeTimeoutMillis=$intakeTimeoutMillis",
+                "settleMillis=$settleMillis intakeTimeoutMillis=$intakeTimeoutMillis argProvenance=unavailable",
         )
         prepareAutomation()
         reachImportReview(log)
@@ -1182,10 +1212,20 @@ class ImportScaleTraversalInstrumentedTest {
             "picker row: formatNode bounds=${boundsOf(formatNode)} centerY=$formatCenterY pickLabelCandidates=${pickNodes.size} " +
                 "chosen bounds=$pickBounds centerY=${pickBounds.centerY()} verticalDistance=${abs(pickBounds.centerY() - formatCenterY)}",
         )
-        log("picker row: $pickLabel click accepted=${clickNode(pickNode)}")
+        val pickClickAccepted = clickNode(pickNode)
+        log("picker row: $pickLabel click accepted=$pickClickAccepted")
+        if (!pickClickAccepted) {
+            log(
+                "FINDING: the $pickLabel click was refused (no ACTION_CLICK accepted on the node or its ancestors within " +
+                    "$CLICK_PARENT_DEPTH levels); the system picker may never open, and the picker wait below is its only evidence",
+            )
+        }
         sleepQuietly(settleMillis.toLong())
-        // Step 2b/2c: the system picker window and the fixture row inside it.
+        // Step 2b/2c: the system picker window and the fixture row inside it. `intakeWait` stays null when
+        // the picker never appeared, so the interpretation line can report the intake verdict as
+        // `unavailable` rather than as a wait that ran and did not stabilize.
         val picker = awaitPickerTarget(fixtureName, log)
+        var intakeWait: IntakeWaitReading? = null
         if (picker == null) {
             log(
                 "FINDING: no window outside $TARGET_PACKAGE showed a node matching $fixtureName within " +
@@ -1193,86 +1233,172 @@ class ImportScaleTraversalInstrumentedTest {
             )
         } else {
             log("picker: package=${picker.packageName} matchedBy=${picker.matchedBy} node=${describeNode(picker.node)} label=${nodeLabel(picker.node)}")
-            log("picker: fixture $fixtureName click accepted=${clickPickerRow(picker.node, log)}")
+            // The click's outcome is logged FAITHFULLY: `accepted` is the accessibility click's result and
+            // `coordinateTapIssued` the bounded fallback's, so a row that accepted nothing cannot be read
+            // as `accepted=true` (the fallback proves nothing by itself - whether the picker advanced is
+            // readable only from the intake that follows).
+            val pickerClick = clickPickerRow(picker.node, log)
+            log("picker: fixture $fixtureName click accepted=${pickerClick.accepted} coordinateTapIssued=${pickerClick.coordinateTapIssued}")
+            if (pickerClick.coordinateTapIssued) {
+                log(
+                    "FINDING: the fixture row accepted no ACTION_CLICK within $PICKER_CLICK_PARENT_DEPTH levels and the bounded " +
+                        "coordinate tap fallback was issued instead (a registered deviation from the accessibility-only rule, see " +
+                        "[clickPickerRow]); the tap is unverified and only the intake that follows can show whether it landed",
+                )
+            }
             sleepQuietly(settleMillis.toLong())
             // Step 2d: the authoritative intake wait, under the same stabilization rule the host-driven
             // intake phase applies (the intake commits in batches, so the first rise is not the end).
-            awaitCountProbeIntake(dbBaseline, intakeTimeoutMillis, log)
+            intakeWait = awaitCountProbeIntake(dbBaseline, intakeTimeoutMillis, log)
         }
         // Step 3: right after the import, with NO refresh. The container is re-located from a fresh tree
-        // read, because the list may have re-rendered while the intake was committing.
+        // read, because the list may have re-rendered while the intake was committing; a container that
+        // cannot be re-selected leaves the reading `unavailable` instead of repeating a number held by a
+        // handle captured before the multi-minute picker/intake interaction (see [readCollectionRowCount]).
         val postImportSelection = selectScrollableContainer(log)
-        if (postImportSelection == null) {
-            log("FINDING: no scrollable container in the tree after the import; the rowCount is re-read from the baseline handle")
-        }
-        val postImportRowCount = collectionRowCount(postImportSelection ?: container)
+        val postImportReading = readCollectionRowCount(postImportSelection, "postImport", log)
+        val postImportRowCount = postImportReading.rowCount
         val dbPostImport = countTableRows(IMPORT_CANDIDATE_TABLE, "countProbePostImport", log)
         log(
             "postImport rowCount=${countText(postImportRowCount)} dbCandidates=${countText(dbPostImport)} " +
-                "rowCountMinusBaseline=${diffText(postImportRowCount, baselineRowCount)} dbDelta=${diffText(dbPostImport, dbBaseline)}",
+                "rowCountMinusBaseline=${diffText(postImportRowCount, baselineRowCount)} dbDelta=${diffText(dbPostImport, dbBaseline)} " +
+                "readingSource=${postImportReading.source}",
         )
-        // Step 4: the explicit refresh, then the same two readings.
+        // Step 4: the explicit refresh, then the same two readings. THE SUCCESS DETECTOR IS A FALSE-NEGATIVE
+        // INSTRUMENT at this library's scale and is kept only as the cheap positive: it compares the VISIBLE
+        // WINDOW against its pre-refresh value, while new candidates are appended at the END of a ~61k-item
+        // list - the top window cannot move when the refresh lands, so a `changed=false` verdict proves
+        // nothing about the landing (the same session measured a ~92.5 s full-list read, so the postRefresh
+        // reading below may even be taken while the refresh's own re-read is still in flight). Both branches
+        // are therefore recorded as FACTS on the interpretation line: `refreshLandingEvidenced` (the
+        // detector's verdict) and `refreshSettleMillis` (the wait this step actually applied).
+        var refreshSettleMillis = 0
+        var refreshLandingEvidenced = false
         val refreshNode = findByText(appRoot(), refreshLabel)
         if (refreshNode == null) {
             log("FINDING: no node whose text is exactly $refreshLabel in the tree; the refresh was not triggered")
         } else {
             val windowBeforeRefresh = visibleRowWindow(appRoot())
-            log("refresh: $refreshLabel node ${describeNode(refreshNode)} click accepted=${clickNode(refreshNode)}")
+            val refreshClickAccepted = clickNode(refreshNode)
+            log("refresh: $refreshLabel node ${describeNode(refreshNode)} click accepted=$refreshClickAccepted")
+            if (!refreshClickAccepted) {
+                log(
+                    "FINDING: the $refreshLabel click was refused, so this step triggered no refresh; the postRefresh " +
+                        "reading is whatever the intake alone left in the list",
+                )
+            }
             sleepQuietly(settleMillis.toLong())
+            refreshSettleMillis = settleMillis
             val changed = waitFor({ visibleRowWindow(appRoot()) != windowBeforeRefresh }, COUNT_PROBE_REFRESH_WAIT_MILLIS, POLL_MILLIS)
+            refreshLandingEvidenced = changed
             if (changed) {
                 log("refresh: the visible window changed within $COUNT_PROBE_REFRESH_WAIT_MILLIS ms")
             } else {
                 log(
-                    "FINDING: the visible window did not change within $COUNT_PROBE_REFRESH_WAIT_MILLIS ms; " +
-                        "falling back to a bounded fixed wait of $COUNT_PROBE_REFRESH_SETTLE_MILLIS ms",
+                    "FINDING: the visible window did not change within $COUNT_PROBE_REFRESH_WAIT_MILLIS ms; this neither proves nor " +
+                        "disproves that the refresh landed (new candidates are appended at the END of the list, so the top window " +
+                        "cannot move) and the step falls back to a bounded fixed wait of $COUNT_PROBE_REFRESH_SETTLE_MILLIS ms",
                 )
                 sleepQuietly(COUNT_PROBE_REFRESH_SETTLE_MILLIS.toLong())
+                refreshSettleMillis += COUNT_PROBE_REFRESH_SETTLE_MILLIS
             }
             log("refresh: windowBefore=$windowBeforeRefresh windowAfter=${visibleRowWindow(appRoot())}")
         }
         val postRefreshSelection = selectScrollableContainer(log)
-        if (postRefreshSelection == null) {
-            log("FINDING: no scrollable container in the tree after the refresh; the rowCount is re-read from the previous handle")
-        }
-        val postRefreshRowCount = collectionRowCount(postRefreshSelection ?: postImportSelection ?: container)
+        val postRefreshReading = readCollectionRowCount(postRefreshSelection, "postRefresh", log)
+        val postRefreshRowCount = postRefreshReading.rowCount
         val dbPostRefresh = countTableRows(IMPORT_CANDIDATE_TABLE, "countProbePostRefresh", log)
         log(
             "postRefresh rowCount=${countText(postRefreshRowCount)} dbCandidates=${countText(dbPostRefresh)} " +
-                "rowCountMinusBaseline=${diffText(postRefreshRowCount, baselineRowCount)}",
+                "rowCountMinusBaseline=${diffText(postRefreshRowCount, baselineRowCount)} readingSource=${postRefreshReading.source}",
         )
         // Step 4b: force a layout pass with a bounded scroll and re-read. A LazyColumn re-publishes its
         // CollectionInfo when it is laid out again, so a count that moves here means the earlier reading
         // was a stale CollectionInfo while the rendered list already held the new candidates; a count
-        // that does not move means the rendered list genuinely lacks them.
+        // that does not move means the rendered list genuinely lacks them. That discrimination only holds
+        // when a layout pass ACTUALLY happened, so the premises are recorded rather than assumed: the
+        // first refused ACTION_SCROLL_FORWARD is logged as a refusal ([logRefusal]) and leaves
+        // `scrollActions=0`, the visible window is logged before and after the scroll exactly as the
+        // refresh step logs it, and a `settleMillis <= 0` run cannot advance the list at all (D-161
+        // item 2: the action is accepted while the list moves zero rows).
+        if (settleMillis <= 0) {
+            log(
+                "FINDING: settleMillis=$settleMillis is not positive, so the bounded scroll cannot advance the list " +
+                    "(D-161: the actuator is animation-driven and an accepted action moves zero rows without a settle); " +
+                    "the moved/not-moved observation is unavailable for this run",
+            )
+        }
         var scrollActions = 0
+        val windowBeforeScroll = visibleRowWindow(appRoot())
         val containerForScroll = refetchScrollableContainer(scrollActions, log)
-        if (containerForScroll != null) {
+        if (containerForScroll == null) {
+            log(
+                "FINDING: no scrollable container could be re-fetched for the bounded layout-pass scroll; no layout pass was " +
+                    "forced and the step is not performed",
+            )
+        } else {
             while (scrollActions < COUNT_PROBE_SCROLL_ACTIONS) {
                 if (!containerForScroll.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+                    logRefusal(log, containerForScroll)
                     break
                 }
                 scrollActions += 1
                 sleepQuietly(settleMillis.toLong())
             }
+            if (scrollActions == 0) {
+                log(
+                    "FINDING: the first ACTION_SCROLL_FORWARD was refused, so no layout pass was forced and the postScroll " +
+                        "reading cannot distinguish a stale CollectionInfo from a list that genuinely lacks the candidates",
+                )
+            }
         }
-        val postScrollRowCount = collectionRowCount(refetchScrollableContainer(scrollActions, log))
+        log("scroll: windowBefore=$windowBeforeScroll windowAfter=${visibleRowWindow(appRoot())}")
+        val postScrollSelection = refetchScrollableContainer(scrollActions, log)
+        val postScrollReading = readCollectionRowCount(postScrollSelection, "postScroll", log)
+        val postScrollRowCount = postScrollReading.rowCount
         val dbPostScroll = countTableRows(IMPORT_CANDIDATE_TABLE, "countProbePostScroll", log)
         log(
-            "postScroll scrollActions=$scrollActions rowCount=${countText(postScrollRowCount)} " +
-                "dbCandidates=${countText(dbPostScroll)} rowCountMinusBaseline=${diffText(postScrollRowCount, baselineRowCount)}",
+            "postScroll scrollActions=$scrollActions performed=${scrollActions > 0} rowCount=${countText(postScrollRowCount)} " +
+                "dbCandidates=${countText(dbPostScroll)} rowCountMinusBaseline=${diffText(postScrollRowCount, baselineRowCount)} " +
+                "readingSource=${postScrollReading.source}",
         )
-        // Step 5: the mechanical label. `intakeObserved` is logged so a run whose import never landed
-        // cannot be read as a stale-collectionInfo verdict (class doc).
+        // Step 5: the mechanical label, GATED on the intake. The retained evidence contains a run whose
+        // import never landed (`dbDelta=0 intakeObserved=false`) that still emitted
+        // `reading=collectionInfoStale`, so a host grepping `reading=` could read a ruling out of a run
+        // where nothing was imported; `readingGate=` now names the gate the label passed, and
+        // `intakeStabilized` carries the intake wait's own verdict (class doc).
         val intakeObserved = dbBaseline != null && dbPostImport != null && dbPostImport > dbBaseline
+        val readingGate = if (intakeObserved) "intakeObserved" else "noIntake"
+        val reading = if (intakeObserved) countProbeReading(baselineRowCount, postImportRowCount, postRefreshRowCount) else "indeterminate"
+        val intakeStabilizedText = if (intakeWait == null) "unavailable" else "${intakeWait.stabilized}"
+        // The postScroll step emits an OBSERVATION, never a hypothesis name: `postScrollCountMoved` and
+        // `postScrollRowDelta` are derived from the `postImportRowCount` and `postScrollRowCount` printed
+        // on this same line, so no later refactor can invert them the way the replaced
+        // `readingAfterScroll` label was. `postScrollMoveGate` states why an `unavailable` observation is
+        // unavailable, so that token is never unexplained either.
+        val postScrollObservable =
+            settleMillis > 0 && intakeObserved && scrollActions > 0 && postImportRowCount != null && postScrollRowCount != null
+        val postScrollMoveGate =
+            when {
+                postScrollObservable -> "ok"
+                settleMillis <= 0 -> "settleMillisNotPositive"
+                !intakeObserved -> "noIntake"
+                scrollActions <= 0 -> "noScrollPerformed"
+                else -> "rowCountUnavailable"
+            }
+        val postScrollRowDelta = if (postScrollObservable) diffText(postScrollRowCount, postImportRowCount) else "unavailable"
+        val postScrollCountMoved = if (postScrollObservable) movedText(postScrollRowCount, postImportRowCount) else "unavailable"
         log(
             "interpretation baselineRowCount=${countText(baselineRowCount)} postImportRowCount=${countText(postImportRowCount)} " +
-                "postRefreshRowCount=${countText(postRefreshRowCount)} dbBaseline=${countText(dbBaseline)} " +
-                "dbPostImport=${countText(dbPostImport)} dbPostRefresh=${countText(dbPostRefresh)} intakeObserved=$intakeObserved " +
-                "postScrollRowCount=${countText(postScrollRowCount)} " +
-                "reading=${countProbeReading(baselineRowCount, postImportRowCount, postRefreshRowCount)} " +
-                "readingAfterScroll=${countProbeReading(baselineRowCount, postImportRowCount, postScrollRowCount)} " +
-                "verdictBelongsToHost=true",
+                "postRefreshRowCount=${countText(postRefreshRowCount)} postScrollRowCount=${countText(postScrollRowCount)} " +
+                "dbBaseline=${countText(dbBaseline)} dbPostImport=${countText(dbPostImport)} dbPostRefresh=${countText(dbPostRefresh)} " +
+                "dbPostScroll=${countText(dbPostScroll)} intakeObserved=$intakeObserved intakeStabilized=$intakeStabilizedText " +
+                "readingGate=$readingGate reading=$reading " +
+                "postImportReadingSource=${postImportReading.source} postRefreshReadingSource=${postRefreshReading.source} " +
+                "postScrollReadingSource=${postScrollReading.source} refreshSettleMillis=$refreshSettleMillis " +
+                "refreshLandingEvidenced=$refreshLandingEvidenced postScrollPerformed=${scrollActions > 0} " +
+                "postScrollCountMoved=$postScrollCountMoved postScrollRowDelta=$postScrollRowDelta " +
+                "postScrollMoveGate=$postScrollMoveGate verdictBelongsToHost=true",
         )
         log("end")
     }
@@ -1282,11 +1408,49 @@ class ImportScaleTraversalInstrumentedTest {
     /** One collectionInfo rowCount as a number, or null when the node carries no collection info at all. */
     private fun collectionRowCount(node: AccessibilityNodeInfo?): Long? = node?.collectionInfo?.rowCount?.toLong()
 
+    /** One step's rowCount reading plus WHERE it came from, so a reading can never masquerade as fresh. */
+    private data class CollectionReading(
+        val rowCount: Long?,
+        val source: String,
+    )
+
+    /**
+     * One step's `collectionInfo.rowCount` reading. The node must have been RE-SELECTED from a tree read
+     * taken for this step: a null node is reported as `unavailable` rather than read from an older handle,
+     * because those handles are captured before the multi-minute picker/intake interaction and would just
+     * repeat whatever count the list carried then. A node whose collection info cannot be read - it was
+     * recycled, detached from the window, or answered no query - is a logged FINDING with the same
+     * `unavailable` reading, never an exception: this class's contract is that a mode logs a FINDING
+     * rather than failing on a reading.
+     */
+    private fun readCollectionRowCount(
+        node: AccessibilityNodeInfo?,
+        step: String,
+        log: (String) -> Unit,
+    ): CollectionReading {
+        if (node == null) {
+            log("FINDING: no scrollable container in the tree at step $step; the rowCount reading is unavailable (no handle is reused)")
+            return CollectionReading(null, "unavailable")
+        }
+        val rowCount =
+            runCatching { collectionRowCount(node) }.getOrElse { error ->
+                log("FINDING: the $step rowCount read failed ${describeError(error)}; the reading is unavailable")
+                return CollectionReading(null, "unavailable")
+            }
+        return CollectionReading(rowCount, "live")
+    }
+
     /** A difference as one token: the value, or `unavailable` when either side of it could not be read. */
     private fun diffText(
         value: Long?,
         reference: Long?,
     ): String = if (value == null || reference == null) "unavailable" else "${value - reference}"
+
+    /** Whether [value] moved above [reference] as one token, or `unavailable` when either side is unreadable. */
+    private fun movedText(
+        value: Long?,
+        reference: Long?,
+    ): String = if (value == null || reference == null) "unavailable" else "${value > reference}"
 
     /**
      * The mechanical reading label of the countProbe interpretation line, exactly as the vector defines
@@ -1294,7 +1458,12 @@ class ImportScaleTraversalInstrumentedTest {
      * `listNotRefreshed`, `b <= a` and `c <= b` reads `collectionInfoStale`, anything else reads
      * `indeterminate`. An unreadable reading (`null`) cannot be compared and is therefore also
      * `indeterminate`. This is a LABEL FOR THE HOST'S RULING, never a ruling: the mode logs it and asserts
-     * nothing about it.
+     * nothing about it, and its caller emits it only when the run's intake actually landed (class doc).
+     *
+     * The third argument is the POST-REFRESH reading of the vector's step 4 and is passed nowhere else.
+     * The postScroll step of step 4b deliberately does NOT come through here - it emits the raw
+     * `postScrollCountMoved` / `postScrollRowDelta` observation instead, because a hypothesis name for
+     * that step was invertible by a later refactor while two numbers on one line are not.
      */
     private fun countProbeReading(
         baselineRowCount: Long?,
@@ -1313,6 +1482,18 @@ class ImportScaleTraversalInstrumentedTest {
         val packageName: String,
         val node: AccessibilityNodeInfo,
         val matchedBy: String,
+    )
+
+    /**
+     * One [awaitCountProbeIntake] wait's outcome: `detected` (the count rose above the baseline at some
+     * point during the wait) and `stabilized` (it then held still for [INTAKE_STABLE_POLLS] consecutive
+     * polls). The interpretation line carries both as facts, because `intakeObserved` alone - a comparison
+     * of the reads taken AFTER the wait - cannot say whether the wait itself ever saw the rise or whether
+     * it timed out against a library that was still committing.
+     */
+    private data class IntakeWaitReading(
+        val detected: Boolean,
+        val stabilized: Boolean,
     )
 
     /**
@@ -1405,13 +1586,15 @@ class ImportScaleTraversalInstrumentedTest {
      * [INTAKE_STABLE_POLLS] consecutive polls - the same stabilization rule [awaitHostIntake] applies,
      * because the intake commits in batches and the first rise is not the end of the import. Every poll is
      * logged. A timeout is a logged FINDING, never an assertion failure: the mode continues and reads what
-     * it can. Returns the last readable count.
+     * it can. Returns the wait's own outcome ([IntakeWaitReading]) - whether the intake was ever detected,
+     * whether it stabilized, and the last readable count - so the caller can carry those facts onto the
+     * interpretation line instead of inferring them from the counts it reads afterwards.
      */
     private fun awaitCountProbeIntake(
         baseline: Long?,
         timeoutMillis: Int,
         log: (String) -> Unit,
-    ): Long? {
+    ): IntakeWaitReading {
         val startNanos = System.nanoTime()
         var reference = baseline
         var latest: Long? = baseline
@@ -1462,7 +1645,7 @@ class ImportScaleTraversalInstrumentedTest {
                     "$timeoutMillis ms; the readings after this point are taken against a library that may still be committing",
             )
         }
-        return latest
+        return IntakeWaitReading(detected, stabilized)
     }
 
     /**
@@ -3469,19 +3652,33 @@ class ImportScaleTraversalInstrumentedTest {
     }
 
     /**
+     * One [clickPickerRow] outcome, kept faithful so the caller's evidence line cannot claim an
+     * acceptance that never happened: [accepted] is the accessibility click's own result,
+     * [coordinateTapIssued] says whether the bounded one-tap fallback was used, and [coordinateTapIssued]
+     * without [accepted] is the honest shape of "every level refused, the tap was issued anyway".
+     */
+    private data class PickerClickOutcome(
+        val accepted: Boolean,
+        val coordinateTapIssued: Boolean,
+    )
+
+    /**
      * Clicks the system file picker's row for [node]. The picker's title node is a non-clickable
      * `TextView` and DocumentsUI does not reliably accept ACTION_CLICK on the row within
      * [CLICK_PARENT_DEPTH] levels, so this walks up to [PICKER_CLICK_PARENT_DEPTH] levels, logging each
-     * level's class, enabled/clickable flags and bounds so a refusal is diagnosable, and - if no level
-     * accepts - issues ONE coordinate tap at the row's centre through the shell. That single tap is a
-     * picker-navigation step, not part of the candidate-list traversal: the traversal's
-     * no-synthetic-pointer rule exists because fling storms trigger INPUT-FREEZE (D-161), which is the
-     * same reason D-161 permits a single navigation tap for reaching a screen.
+     * level's class, enabled/clickable flags and bounds so a refusal is diagnosable. ONE bounded
+     * coordinate tap at the row's centre through the shell is the LAST RESORT when every level refuses,
+     * and it is a REGISTERED DEVIATION from the accessibility-only rule of this class's traversal: D-161
+     * item 2 permits a single navigation tap because the INPUT-FREEZE trigger is a pointer-gesture
+     * STORM, and this is one tap, not a storm. The tap is UNVERIFIED - nothing here can confirm that it
+     * landed - so the returned outcome reports `accepted=false coordinateTapIssued=true` for it rather
+     * than a success, and whether the picker actually advanced is readable only from the intake that
+     * follows ([awaitCountProbeIntake]).
      */
     private fun clickPickerRow(
         node: AccessibilityNodeInfo,
         log: (String) -> Unit,
-    ): Boolean {
+    ): PickerClickOutcome {
         var current: AccessibilityNodeInfo? = node
         var depth = 0
         while (current != null && depth <= PICKER_CLICK_PARENT_DEPTH) {
@@ -3490,15 +3687,18 @@ class ImportScaleTraversalInstrumentedTest {
             log(levelDescription)
             if (current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                 log("picker click accepted at level=$depth")
-                return true
+                return PickerClickOutcome(accepted = true, coordinateTapIssued = false)
             }
             current = current.parent
             depth += 1
         }
         val bounds = boundsOf(node)
-        log("picker click refused at every level; falling back to one coordinate tap at (${bounds.centerX()}, ${bounds.centerY()})")
+        log(
+            "picker click refused at every level; falling back to ONE coordinate tap at (${bounds.centerX()}, ${bounds.centerY()}) - " +
+                "a registered deviation from the accessibility-only rule, and the tap is unverified",
+        )
         shell("input tap ${bounds.centerX()} ${bounds.centerY()}")
-        return true
+        return PickerClickOutcome(accepted = false, coordinateTapIssued = true)
     }
 
     /**
