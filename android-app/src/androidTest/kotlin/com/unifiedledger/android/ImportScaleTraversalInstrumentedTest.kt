@@ -135,6 +135,38 @@ private const val B5_BACK_WAIT_MILLIS = 5_000
 private const val B5_LEAVE_DETAIL_WAIT_MILLIS = 15_000
 private const val B5_BACK_MAX_ATTEMPTS = 3
 
+// ---- fullChain (the whole plan section 10.3 chain in ONE instrumented session, D-162 item 4(a)) ----
+
+private const val ARG_BATCH_ENTRY = "batchEntry"
+private const val ARG_AUTHORIZE = "authorize"
+private const val ARG_DETAIL_BACK = "detailBack"
+private const val DEFAULT_BATCH_ENTRY = "进入批量确认"
+private const val DEFAULT_AUTHORIZE = "授权逐项入账"
+private const val DEFAULT_DETAIL_BACK = "返回"
+private const val DEFAULT_FULL_CHAIN_WAIT_FOR_INTAKE_MILLIS = 900_000
+private const val DEFAULT_FULL_CHAIN_CARD_SCROLL_ACTIONS = 4_000
+private const val FULL_CHAIN_PREFIX = "fullChain:"
+private const val UNSELECTED_RADIO_PREFIX = "○ "
+private const val DECISION_COMPLETE_TEXT = "决策已补全。"
+private const val FULL_CHAIN_DETAIL_OPEN_WAIT_MILLIS = 60_000
+private const val FULL_CHAIN_DECISION_WAIT_MILLIS = 30_000
+private const val FULL_CHAIN_ENTRY_WAIT_MILLIS = 30_000
+private const val FULL_CHAIN_RETURN_WAIT_MILLIS = 30_000
+private const val FULL_CHAIN_BATCH_SCREEN_WAIT_MILLIS = 60_000
+private const val FULL_CHAIN_RADIO_MAX_ROUNDS = 12
+private const val FULL_CHAIN_RADIO_SETTLE_MILLIS = 300
+private const val FULL_CHAIN_KEY_TEXT_LIMIT = 40
+private const val BATCH_SCREEN_TITLE = "批量确认"
+private const val BATCH_ITEM_PREFIX = "候选 "
+private const val BATCH_ITEM_LINE_LIMIT = 20
+private const val BATCH_COMMIT_LABEL_PREFIX = "确认入账（"
+private const val BATCH_COMMIT_LABEL_SUFFIX = "项）"
+private const val BATCH_COMMIT_POLL_MILLIS = 2_000
+private const val BATCH_COMMIT_TIMEOUT_MILLIS = 300_000
+private const val IMPORT_CONFIRMATION_TABLE = "import_confirmation"
+private const val POSTING_TABLE = "posting"
+private const val LEDGER_TRANSACTION_TABLE = "ledger_transaction"
+
 /**
  * The duplicate-status histogram SQL. `import_duplicate_status_history` is append-only with
  * `PRIMARY KEY (ledger_id, candidate_id, sequence)`, so the row with the greatest `sequence` per
@@ -242,6 +274,42 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  *   `FINDING: could not leave the detail screen after 3 attempts` that STOPS the mode - every further run
  *   would start on the detail screen and be invalid - and the summary/gate lines are then still emitted
  *   for the runs actually obtained.
+ * - `fullChain`: the whole plan section 10.3 chain in ONE instrumented session
+ *   (冷启动→首页可操作→进入导入→解析/接治→收尾重读→列表可操作→候选详情→滚动→重复组打开→审核/确认→
+ *   详情与月度刷新→杀进程后重开). The 候选详情 / 滚动 pair runs in the LOW-COST order (detail first),
+ *   a registered deviation from the plan's literal arrow order (D-164 item 2); every other adjacent
+ *   pair keeps the plan's order. D-162 item 4 registered the gap this mode exists to close: its four
+ *   stages were measured across TWO app process cycles, so the chain ORDER was not satisfied in one
+ *   continuous session. Args `target` (default 整组标记为重复), `maxForwardActions` (default 30000),
+ *   `settleMillis` (default 120), `stallChecks` (default 20), `cardScrollActions` (default 4000),
+ *   `confirmTimeoutMillis` (default 3600000), `waitForIntakeMillis` (default 900000), `batchEntry`
+ *   (default 进入批量确认), `authorize` (default 授权逐项入账) and `detailBack` (default 返回). In order:
+ *   the host-driven intake phase ([awaitHostIntake], before the first automation call), [reachImportReview],
+ *   the candidate detail phase ([runFullChainDetailPhase]), the traversal plus the group card open and
+ *   confirmation, the batch phase ([runFullChainBatchPhase]) with the authoritative `ledger_transaction`
+ *   completion wait, and the closing per-phase delta summary. Every line carries the `fullChain:` prefix.
+ *
+ * CHAIN-ORDER RATIONALE (why the candidate detail comes BEFORE the deep traversal): the detail screen
+ * carries its OWN checkbox and its OWN 进入批量确认 entry (device dump: one `勾选候选` CheckBox, and one
+ * `进入批量确认` node once the decision is complete), so the first candidate can be selected and its
+ * decision completed while the list is still at the top - and the batch entry at the END of the list is
+ * then reachable right after the group card, without a scroll back. The order the plan fixes is therefore
+ * also the cheap one: 候选详情 first, then 滚动, then 重复组打开/审核确认, then the batch entry the same
+ * session has already armed. The traversal starts from the row the detail was opened from (the list is
+ * back at the top when the detail returns), so the chain's scroll phase stays a full traversal rather
+ * than a scroll to the end.
+ *
+ * SESSION END = THE CHAIN'S KILL STEP: the mode deliberately does NOT finish the activity, and `am
+ * instrument` force-stops the app process when the run ends - the plan chain's 杀进程. The host then
+ * performs the reopen (`am start -W` plus the count reads) as the chain's last stage.
+ *
+ * Failure discipline: the only assertions are the genuine preconditions (the activity is reachable and
+ * the candidate list rendered - both inside [reachImportReview] - the first candidate row exists, and the
+ * traversal starts). A detail screen that cannot be LEFT stops the mode, because every later phase would
+ * run against the wrong screen; every other failure - a detail that never opened, a missing decision
+ * marker, an absent batch entry, a batch screen that never appeared, a batch commit that does not move
+ * the `ledger_transaction` count - is a logged FINDING and the mode continues with whatever it can still
+ * read, so the evidence of the phases that did run is always written.
  *
  * The group entry 整组标记为重复 is SESSION-SCOPED rather than merely list-position-scoped: the
  * affordance is gated on `view.lastIntakeSession?.inputRef`
@@ -388,6 +456,16 @@ class ImportScaleTraversalInstrumentedTest {
         val evidence = mutableListOf<String>()
         try {
             runB5Detail(evidence)
+        } finally {
+            appendEvidence(evidence)
+        }
+    }
+
+    @Test
+    fun fullChain() {
+        val evidence = mutableListOf<String>()
+        try {
+            runFullChain(evidence)
         } finally {
             appendEvidence(evidence)
         }
@@ -750,6 +828,243 @@ class ImportScaleTraversalInstrumentedTest {
     }
 
     /**
+     * The whole plan section 10.3 chain in ONE instrumented session. The class doc carries the chain-order
+     * rationale (why the candidate detail precedes the deep traversal), the session-end/kill
+     * correspondence and the failure discipline; every line carries the [FULL_CHAIN_PREFIX]. The phases
+     * run in the plan's order: the host-driven intake, the list, 候选详情, 滚动 + 重复组打开 + 审核/确认,
+     * 详情与月度刷新 (the batch confirmation with its authoritative completion wait), and the closing
+     * per-phase delta summary. The activity is deliberately NOT finished.
+     */
+    private fun runFullChain(evidence: MutableList<String>) {
+        val log: (String) -> Unit = { line -> evidence += "$FULL_CHAIN_PREFIX $line" }
+        val target = stringArg(ARG_TARGET, DEFAULT_TARGET)
+        val maxForwardActions = intArg(ARG_MAX_FORWARD_ACTIONS, DEFAULT_GROUP_MAX_FORWARD_ACTIONS)
+        val settleMillis = intArg(ARG_SETTLE_MILLIS, DEFAULT_GROUP_SETTLE_MILLIS)
+        val stallChecks = intArg(ARG_STALL_CHECKS, DEFAULT_STALL_CHECKS)
+        val cardScrollActions = intArg(ARG_CARD_SCROLL_ACTIONS, DEFAULT_FULL_CHAIN_CARD_SCROLL_ACTIONS)
+        val confirmTimeoutMillis = intArg(ARG_CONFIRM_TIMEOUT_MILLIS, DEFAULT_CONFIRM_TIMEOUT_MILLIS)
+        val waitForIntakeMillis = intArg(ARG_WAIT_FOR_INTAKE_MILLIS, DEFAULT_FULL_CHAIN_WAIT_FOR_INTAKE_MILLIS)
+        val batchEntry = stringArg(ARG_BATCH_ENTRY, DEFAULT_BATCH_ENTRY)
+        val authorize = stringArg(ARG_AUTHORIZE, DEFAULT_AUTHORIZE)
+        val detailBack = stringArg(ARG_DETAIL_BACK, DEFAULT_DETAIL_BACK)
+        log("start epochMillis=${System.currentTimeMillis()}")
+        log(
+            "args target=$target maxForwardActions=$maxForwardActions settleMillis=$settleMillis stallChecks=$stallChecks " +
+                "cardScrollActions=$cardScrollActions confirmTimeoutMillis=$confirmTimeoutMillis " +
+                "waitForIntakeMillis=$waitForIntakeMillis batchEntry=$batchEntry authorize=$authorize detailBack=$detailBack",
+        )
+        // Phase 1: the intake, before the first automation call - the host drives the product SAF import
+        // with `uiautomator dump`, which a live automation connection blocks.
+        val preIntake = if (waitForIntakeMillis > 0) awaitHostIntake(waitForIntakeMillis, log) else null
+        // Phase 2: the list.
+        prepareAutomation()
+        reachImportReview(log)
+        val baseline = readLedgerSnapshot(if (preIntake == null) "before" else "postIntake", log)
+        if (preIntake != null) {
+            logIntakeDelta(preIntake, baseline, log)
+        }
+        // Phase 3: 候选详情, BEFORE the traversal - the chain order D-162 item 4 registered as missing.
+        if (!runFullChainDetailPhase(batchEntry, detailBack, log)) {
+            log("FINDING: stopping fullChain here: the detail screen could not be left, so every later phase would run against the wrong screen")
+            log("end")
+            return
+        }
+        val afterDetail = readLedgerSnapshot("afterDetail", log)
+        log("delta detail baseline=${if (preIntake == null) "before" else "post-intake"}")
+        logSnapshotDelta(baseline, afterDetail, log)
+        // Phase 4: 滚动 + 重复组打开 + 审核/确认.
+        val container = selectScrollableContainer(log)
+        assertTrue(
+            "no scrollable candidate-list container on the import review screen, so the traversal cannot start; observed: ${observedState()}",
+            container != null,
+        )
+        if (container == null) {
+            log("end")
+            return
+        }
+        log("traversal start collectionInfo=${describeCollection(container)}")
+        val traversalStartNanos = System.nanoTime()
+        val traversal = traverseToTarget(container, target, maxForwardActions, settleMillis, stallChecks, GROUP_REFETCH_EVERY, GROUP_PROGRESS_EVERY, log)
+        val traversalElapsedMs = elapsedMillis(traversalStartNanos)
+        val traversalEndRoot = appRoot()
+        val targetNode = findByContentDescription(traversalEndRoot, target)
+        log(
+            "traversal total forwardActions=${traversal.forwardActions} elapsedMs=$traversalElapsedMs " +
+                "actionsPerSecond=${ratePerSecond(traversal.forwardActions, traversalElapsedMs)} rowsPerSecond=unavailable",
+        )
+        log("traversal end visible window: ${visibleRowWindow(traversalEndRoot)}")
+        if (targetNode == null) {
+            log("FINDING: target=$target not present after ${traversal.forwardActions} forward actions; no click performed")
+        } else {
+            log("target node ${describeNode(targetNode)} label=${nodeLabel(targetNode)}")
+            openGroupCard(targetNode, log)
+            confirmGroupDisposition(confirmTimeoutMillis, cardScrollActions, settleMillis, log)
+        }
+        val afterGroup = readLedgerSnapshot("afterGroup", log)
+        logSnapshotDelta(afterDetail, afterGroup, log)
+        val auxiliaryAfterGroup = readAuxiliaryCounts("afterGroup", log)
+        // Phase 5: 详情与月度刷新 - the batch entry at the end of the list, the batch screen, the
+        // authorization, and the authoritative ledger_transaction completion wait.
+        val batchCommit = runFullChainBatchPhase(cardScrollActions, settleMillis, batchEntry, authorize, log)
+        val afterBatch = readLedgerSnapshot("afterBatch", log)
+        logSnapshotDelta(afterGroup, afterBatch, log)
+        val auxiliaryAfterBatch = readAuxiliaryCounts("afterBatch", log)
+        // Phase 6: the close. The activity is deliberately NOT finished: the process stop that ends this
+        // instrumentation session IS the plan chain's kill step, and the host performs the reopen.
+        val intakeSummary = if (preIntake == null) "skipped" else "import_candidate=${countDelta(preIntake.importCandidates, baseline.importCandidates)}"
+        val intakeHistorySummary = if (preIntake == null) "skipped" else countDelta(preIntake.duplicateHistoryRows, baseline.duplicateHistoryRows)
+        log("summary phase=intake $intakeSummary import_duplicate_status_history=$intakeHistorySummary")
+        log(
+            "summary phase=detail ledger_transaction=${countDelta(baseline.ledgerTransactions, afterDetail.ledgerTransactions)} " +
+                "import_candidate=${countDelta(baseline.importCandidates, afterDetail.importCandidates)} " +
+                "import_duplicate_status_history=${countDelta(baseline.duplicateHistoryRows, afterDetail.duplicateHistoryRows)}",
+        )
+        log(
+            "summary phase=group duplicate_status_history=${countDelta(afterDetail.duplicateHistoryRows, afterGroup.duplicateHistoryRows)} " +
+                "CONFIRMED_DUPLICATE=${confirmedDuplicateDelta(afterDetail, afterGroup)} " +
+                "ledger_transaction=${countDelta(afterDetail.ledgerTransactions, afterGroup.ledgerTransactions)}",
+        )
+        log(
+            "summary phase=batch ledger_transaction=${countDelta(afterGroup.ledgerTransactions, afterBatch.ledgerTransactions)} " +
+                "import_confirmation=${countDelta(auxiliaryAfterGroup.importConfirmations, auxiliaryAfterBatch.importConfirmations)} " +
+                "posting=${countDelta(auxiliaryAfterGroup.postings, auxiliaryAfterBatch.postings)}",
+        )
+        log(
+            "summary batchCommit committed=${batchCommit.committed} ledger_transaction=${countText(batchCommit.before)} -> " +
+                "${countText(batchCommit.after)} elapsedMs=${batchCommit.elapsedMs}",
+        )
+        log(
+            "summary chainOrder=the whole plan chain ran in this one session; the run ends without finishing the activity, " +
+                "so the process stop at session end is the kill step and the host performs the reopen",
+        )
+        log("end")
+    }
+
+    /**
+     * fullChain phase 3 (候选详情), run BEFORE the deep traversal (a registered deviation from the plan's
+     * literal arrow order, D-164 item 2) because the detail screen carries its own checkbox and its own
+     * batch entry: a candidate can be selected and its decision completed here, which is what makes the batch
+     * entry at the END of the list reachable right after the group card instead of requiring a scroll back
+     * to the top.
+     *
+     * Steps: click the FIRST candidate AMOUNT node - never the row's checkbox, whose click toggles the
+     * selection instead of opening the detail - await the detail title, complete the decision by clicking
+     * every unselected radio option (`○ ` prefixed; in tree order the 分类 options come first, then the
+     * 资金账户 ones) and re-reading the tree after each click, await the 决策已补全。 marker, tick the
+     * 勾选候选 checkbox, await the 进入批量确认 entry, then leave the detail through its 返回 affordance.
+     *
+     * Returns whether the flow may continue. The one stop is the mandated one - a detail screen that
+     * cannot be LEFT, because every later phase would run against the wrong screen; the caller logs the
+     * finding and ends the mode. A detail that never opened, a decision marker that never appeared, a
+     * checkbox or entry that is absent: all logged FINDINGS, and the phase still returns true so the
+     * traversal and the group evidence are still produced.
+     */
+    private fun runFullChainDetailPhase(
+        batchEntry: String,
+        detailBack: String,
+        log: (String) -> Unit,
+    ): Boolean {
+        val startNanos = System.nanoTime()
+        val rows = candidateAmountRows(appRoot())
+        assertTrue(
+            "no candidate amount node (a text ending with $CURRENCY_SUFFIX or reading $B5_UNRESOLVED_AMOUNT) on the import review " +
+                "screen, so the detail cannot be opened; observed: ${observedState()}",
+            rows.isNotEmpty(),
+        )
+        val row = rows.firstOrNull()
+        if (row == null) {
+            log("FINDING: no candidate amount node on the import review screen; the detail phase is skipped")
+            return true
+        }
+        log("detail: first candidate amount=${nodeText(row)} bounds=${boundsOf(row)}")
+        log("detail: row click accepted=${clickNode(row)}")
+        val opened = waitFor({ detailTitlePresent(appRoot()) }, FULL_CHAIN_DETAIL_OPEN_WAIT_MILLIS, POLL_MILLIS)
+        log("detail open=$opened elapsedMs=${elapsedMillis(startNanos)}")
+        if (!opened) {
+            log(
+                "FINDING: $B5_DETAIL_TITLE did not appear within $FULL_CHAIN_DETAIL_OPEN_WAIT_MILLIS ms; the decision, the selection " +
+                    "and the batch entry are skipped",
+            )
+            return true
+        }
+        log("detail key texts: ${detailKeyTexts(appRoot())}")
+        val radioClicks = completeDetailDecision(log)
+        val decisionComplete = waitFor({ findByText(appRoot(), DECISION_COMPLETE_TEXT) != null }, FULL_CHAIN_DECISION_WAIT_MILLIS, POLL_MILLIS)
+        log(
+            "decision: radioClicks=$radioClicks marker=$DECISION_COMPLETE_TEXT present=$decisionComplete " +
+                "elapsedMs=${elapsedMillis(startNanos)}",
+        )
+        if (!decisionComplete) {
+            log(
+                "FINDING: $DECISION_COMPLETE_TEXT did not appear within $FULL_CHAIN_DECISION_WAIT_MILLIS ms after $radioClicks radio " +
+                    "click(s); the batch entry may not become available",
+            )
+        }
+        val checkbox = findByContentDescription(appRoot(), CANDIDATE_CHECKBOX_DESC)
+        if (checkbox == null) {
+            log("FINDING: no node with contentDescription $CANDIDATE_CHECKBOX_DESC on the detail screen; the candidate was not selected")
+        } else {
+            log("detail: $CANDIDATE_CHECKBOX_DESC node ${describeNode(checkbox)} click accepted=${clickNode(checkbox)}")
+        }
+        val entryPresent = waitFor({ findByContentDescription(appRoot(), batchEntry) != null }, FULL_CHAIN_ENTRY_WAIT_MILLIS, POLL_MILLIS)
+        log("detail: $batchEntry entry present=$entryPresent elapsedMs=${elapsedMillis(startNanos)}")
+        if (!entryPresent) {
+            log("FINDING: the $batchEntry entry did not appear within $FULL_CHAIN_ENTRY_WAIT_MILLIS ms; the selection may not have registered")
+        }
+        return leaveDetailScreen(detailBack, log)
+    }
+
+    /**
+     * fullChain phase 5 (详情与月度刷新): the batch confirmation at the end of the candidate list, which
+     * the detail phase armed. Scrolls forward (bounded by `cardScrollActions`, through
+     * [scrollToBatchEntry]) until the 进入批量确认 entry appears when it is not already in the tree, opens
+     * it, logs the 批量确认 screen's item lines and its 确认入账（N 项） count text, clicks the
+     * 授权逐项入账 node and waits for the authoritative commit ([awaitBatchCommit]).
+     *
+     * Every failure is a logged FINDING and the phase returns a reading with what it has: an absent entry,
+     * a screen that never appeared and an authorization that cannot be located all leave the ledger counts
+     * to the caller's snapshot reads.
+     */
+    private fun runFullChainBatchPhase(
+        cardScrollActions: Int,
+        settleMillis: Int,
+        batchEntry: String,
+        authorize: String,
+        log: (String) -> Unit,
+    ): BatchCommitReading {
+        val startNanos = System.nanoTime()
+        val entry = findByContentDescription(appRoot(), batchEntry) ?: scrollToBatchEntry(cardScrollActions, settleMillis, batchEntry, log)
+        if (entry == null) {
+            log(
+                "FINDING: $batchEntry not found in the tree after up to $cardScrollActions forward actions; the batch confirmation was " +
+                    "not performed",
+            )
+            return BatchCommitReading(committed = false, before = null, after = null, elapsedMs = elapsedMillis(startNanos))
+        }
+        log("batch entry node ${describeNode(entry)} label=${nodeLabel(entry)}")
+        log("batch entry click accepted=${clickNode(entry)}")
+        val screenOpen = waitFor({ findByText(appRoot(), BATCH_SCREEN_TITLE) != null }, FULL_CHAIN_BATCH_SCREEN_WAIT_MILLIS, POLL_MILLIS)
+        log("batch screen open=$screenOpen elapsedMs=${elapsedMillis(startNanos)}")
+        if (!screenOpen) {
+            log("FINDING: $BATCH_SCREEN_TITLE did not appear within $FULL_CHAIN_BATCH_SCREEN_WAIT_MILLIS ms; the authorization was not performed")
+            return BatchCommitReading(committed = false, before = null, after = null, elapsedMs = elapsedMillis(startNanos))
+        }
+        val screen = appRoot()
+        log("batch screen itemLines=${batchItemLines(screen)}")
+        log("batch screen commitLabel=${batchCommitLabel(screen) ?: "none"}")
+        val authorizeNode = findByContentDescription(appRoot(), authorize)
+        if (authorizeNode == null) {
+            log("FINDING: no node with contentDescription $authorize on the $BATCH_SCREEN_TITLE screen; the authorization was not clicked")
+            return BatchCommitReading(committed = false, before = null, after = null, elapsedMs = elapsedMillis(startNanos))
+        }
+        log("authorize node ${describeNode(authorizeNode)} label=${nodeLabel(authorizeNode)}")
+        val preBatch = countTableRows(LEDGER_TRANSACTION_TABLE, "preBatch", log)
+        log("batch commit baseline $LEDGER_TRANSACTION_TABLE=${countText(preBatch)}")
+        log("authorize click accepted=${clickNode(authorizeNode)}")
+        return awaitBatchCommit(preBatch, log)
+    }
+
+    /**
      * The host-driven intake phase, run before the mode's first automation call. Reads the pre-intake
      * database baseline, brings the app up without touching any automation surface, logs the host's
      * tab-selection instruction, then polls the `import_candidate` count every [INTAKE_POLL_MILLIS].
@@ -984,6 +1299,59 @@ class ImportScaleTraversalInstrumentedTest {
             }
             if (consecutiveFailures >= CONSECUTIVE_FAILURE_LIMIT) {
                 log("FINDING: ACTION_SCROLL_FORWARD refused $consecutiveFailures times in a row while looking for $GROUP_CARD_CONFIRM_LABEL after $performed forward actions")
+                return null
+            }
+        }
+        return null
+    }
+
+    /**
+     * The bounded forward scroll of fullChain phase 5, the content-description sibling of
+     * [scrollToConfirmAffordance]: the batch entry 进入批量确认 sits at the END of the candidate list,
+     * below the group card the previous phase left behind, so it can lie many rows beyond the viewport.
+     * It uses the same scrollable-container selection and the same `ACTION_SCROLL_FORWARD` action,
+     * refetches the container every [GROUP_REFETCH_EVERY] actions, logs progress every
+     * [CARD_SCROLL_PROGRESS_EVERY] actions and returns as soon as the node appears. Returns null when the
+     * bound is reached, the scrollable node is lost or the action is refused [CONSECUTIVE_FAILURE_LIMIT]
+     * times in a row; a container that cannot be re-found is retried like the traversal's
+     * ([refetchScrollableContainer]) before it is reported lost.
+     */
+    private fun scrollToBatchEntry(
+        maxActions: Int,
+        settleMillis: Int,
+        description: String,
+        log: (String) -> Unit,
+    ): AccessibilityNodeInfo? {
+        val startNanos = System.nanoTime()
+        var container: AccessibilityNodeInfo? = null
+        var performed = 0
+        var consecutiveFailures = 0
+        while (performed < maxActions) {
+            if (performed % GROUP_REFETCH_EVERY == 0) {
+                container = chooseScrollableContainer(scrollableNodes(appRoot())) ?: container
+            }
+            if (container == null) {
+                container = refetchScrollableContainer(performed, log)
+            }
+            val node = container
+            if (node == null) {
+                log("FINDING: no scrollable node while looking for $description after $performed forward actions")
+                return null
+            }
+            val accepted = node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+            performed += 1
+            consecutiveFailures = if (accepted) 0 else consecutiveFailures + 1
+            sleepQuietly(settleMillis.toLong())
+            val found = findByContentDescription(appRoot(), description)
+            if (found != null) {
+                log("batch entry scroll reached $description after $performed forward actions elapsedMs=${elapsedMillis(startNanos)}")
+                return found
+            }
+            if (performed % CARD_SCROLL_PROGRESS_EVERY == 0) {
+                log("batch entry scroll progress forwardActions=$performed elapsedMs=${elapsedMillis(startNanos)} ${visibleRowWindow(appRoot())}")
+            }
+            if (consecutiveFailures >= CONSECUTIVE_FAILURE_LIMIT) {
+                log("FINDING: ACTION_SCROLL_FORWARD refused $consecutiveFailures times in a row while looking for $description after $performed forward actions")
                 return null
             }
         }
@@ -1296,6 +1664,110 @@ class ImportScaleTraversalInstrumentedTest {
         }
     }
 
+    // ---- fullChain readings (detail screen, batch entry, batch commit) ----
+
+    /**
+     * Clicks the detail screen's UNSELECTED radio options until none is left, re-reading the tree after
+     * every click: a click replaces one `○ ` option with its selected `● ` form, and the next option (the
+     * 资金账户 group after the 分类 group, in tree order) then becomes the first remaining `○ ` node. The
+     * loop is bounded by [FULL_CHAIN_RADIO_MAX_ROUNDS]; a bound reached with options still unselected is a
+     * logged finding. Returns the number of clicks performed.
+     */
+    private fun completeDetailDecision(log: (String) -> Unit): Int {
+        var clicks = 0
+        var round = 0
+        while (round < FULL_CHAIN_RADIO_MAX_ROUNDS) {
+            round += 1
+            val radio = collectNodes(appRoot()) { node -> nodeText(node).startsWith(UNSELECTED_RADIO_PREFIX) }.firstOrNull() ?: break
+            log("decision: round=$round option=${nodeText(radio)} click accepted=${clickNode(radio)}")
+            clicks += 1
+            sleepQuietly(FULL_CHAIN_RADIO_SETTLE_MILLIS.toLong())
+        }
+        val remaining = collectNodes(appRoot()) { node -> nodeText(node).startsWith(UNSELECTED_RADIO_PREFIX) }.size
+        if (remaining > 0) {
+            log("FINDING: $remaining unselected radio option(s) still present after $clicks click(s) in $round round(s)")
+        }
+        return clicks
+    }
+
+    /** The detail screen's visible texts, in tree order and deduplicated, capped for the evidence file. */
+    private fun detailKeyTexts(root: AccessibilityNodeInfo?): String {
+        val texts = collectNodes(root) { node -> nodeText(node).isNotEmpty() }.map { node -> nodeText(node) }.distinct()
+        val shown = texts.take(FULL_CHAIN_KEY_TEXT_LIMIT)
+        val suffix = if (texts.size > FULL_CHAIN_KEY_TEXT_LIMIT) " (+${texts.size - FULL_CHAIN_KEY_TEXT_LIMIT} more)" else ""
+        return "count=${texts.size} texts=$shown$suffix"
+    }
+
+    /**
+     * Leaves the detail screen through its 返回 affordance and PROVES it, with the same both-halves
+     * contract `b5Detail` uses: ONE snapshot with NO node whose text is exactly [B5_DETAIL_TITLE] AND at
+     * least one candidate row ([readB5Return]). The affordance is re-located from a fresh tree read on
+     * every attempt, the click goes through [clickNode] (the 返回 text node is not clickable, so the
+     * ancestor walk is what gets the click accepted), the leave-detail wait is
+     * [FULL_CHAIN_RETURN_WAIT_MILLIS] per attempt and the attempts are bounded by [B5_BACK_MAX_ATTEMPTS].
+     * Returns false only when the detail screen could not be left - the one failure that stops fullChain.
+     */
+    private fun leaveDetailScreen(
+        detailBack: String,
+        log: (String) -> Unit,
+    ): Boolean {
+        val startNanos = System.nanoTime()
+        var attempts = 0
+        var left = false
+        var reading = readB5Return(appRoot())
+        while (!left && attempts < B5_BACK_MAX_ATTEMPTS) {
+            attempts += 1
+            val root = appRoot()
+            val back = if (root != null && detailTitlePresent(root)) findByText(root, detailBack) else null
+            if (back == null) {
+                log("detail return: attempt=$attempts no $detailBack affordance in a snapshot showing $B5_DETAIL_TITLE")
+            } else {
+                log("detail return: attempt=$attempts $detailBack click accepted=${clickNode(back)} node=${describeNode(back)}")
+            }
+            left =
+                waitFor(
+                    {
+                        reading = readB5Return(appRoot())
+                        reading.leftDetail
+                    },
+                    FULL_CHAIN_RETURN_WAIT_MILLIS,
+                    POLL_MILLIS,
+                )
+        }
+        log(
+            "detail return: left=$left candidateListRendered=${reading.candidateRowPresent} attempts=$attempts " +
+                "elapsedMs=${elapsedMillis(startNanos)}",
+        )
+        if (!left) {
+            log("FINDING: could not leave the detail screen after $B5_BACK_MAX_ATTEMPTS attempts")
+        }
+        return left
+    }
+
+    /**
+     * The batch screen's item lines: the rows it lists for the selected candidates, taken by shape
+     * ([BATCH_ITEM_PREFIX] `候选 `, or an amount line ending with [CURRENCY_SUFFIX], or
+     * [B5_UNRESOLVED_AMOUNT]), deduplicated and capped at [BATCH_ITEM_LINE_LIMIT] for the evidence file.
+     * The device dump of this build renders one line per selected candidate as `候选 <id>：<amount> CNY`.
+     */
+    private fun batchItemLines(root: AccessibilityNodeInfo?): String {
+        val texts = collectNodes(root) { node -> isBatchItemLine(node) }.map { node -> nodeText(node) }.distinct()
+        val shown = texts.take(BATCH_ITEM_LINE_LIMIT)
+        val suffix = if (texts.size > BATCH_ITEM_LINE_LIMIT) " (+${texts.size - BATCH_ITEM_LINE_LIMIT} more)" else ""
+        return "count=${texts.size} texts=$shown$suffix"
+    }
+
+    private fun isBatchItemLine(node: AccessibilityNodeInfo): Boolean {
+        val text = nodeText(node)
+        return text.startsWith(BATCH_ITEM_PREFIX) || isCandidateAmountNode(node) || text == B5_UNRESOLVED_AMOUNT
+    }
+
+    /** The batch screen's commit label (`确认入账（N 项）`): the number of items the authorization will commit. */
+    private fun batchCommitLabel(root: AccessibilityNodeInfo?): String? =
+        collectNodes(root) { node ->
+            nodeText(node).startsWith(BATCH_COMMIT_LABEL_PREFIX) && nodeText(node).endsWith(BATCH_COMMIT_LABEL_SUFFIX)
+        }.firstOrNull()?.let { node -> nodeText(node) }
+
     // ---- group card readings ----
 
     /** The per-item outcome counts of the visible card window, with its stability signature. */
@@ -1402,6 +1874,62 @@ class ImportScaleTraversalInstrumentedTest {
         }
 
     /**
+     * One table's authoritative count through a fresh read-only open, for the readings that must not wait
+     * for a full [LedgerSnapshot]: the batch-commit poll reads [LEDGER_TRANSACTION_TABLE] every
+     * [BATCH_COMMIT_POLL_MILLIS]. Same failure contract as every other read - a failed open or query is a
+     * logged finding and a null reading, never a test failure.
+     */
+    private fun countTableRows(
+        table: String,
+        label: String,
+        log: (String) -> Unit,
+    ): Long? {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val path = context.getDatabasePath(DB_FILE_NAME)
+        return runCatching {
+            SQLiteDatabase.openDatabase(path.absolutePath, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+                countRows(db, table, label, log)
+            }
+        }.getOrElse { error ->
+            log("FINDING: db $label open failed for count($table) ${describeError(error)}")
+            null
+        }
+    }
+
+    /**
+     * The formal-effect counts a phase summary needs beyond [LedgerSnapshot]: [IMPORT_CONFIRMATION_TABLE]
+     * (one row per authorized batch item) and [POSTING_TABLE] (the ledger legs). One read-only open, the
+     * same failure contract as every other reading.
+     */
+    private data class AuxiliaryCounts(
+        val importConfirmations: Long?,
+        val postings: Long?,
+    )
+
+    private fun readAuxiliaryCounts(
+        label: String,
+        log: (String) -> Unit,
+    ): AuxiliaryCounts {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val path = context.getDatabasePath(DB_FILE_NAME)
+        val database =
+            runCatching { SQLiteDatabase.openDatabase(path.absolutePath, null, SQLiteDatabase.OPEN_READONLY) }
+                .getOrElse { error ->
+                    log("FINDING: db $label open failed ${describeError(error)}; auxiliary counts unavailable, continuing")
+                    return AuxiliaryCounts(null, null)
+                }
+        return database.use { db ->
+            val counts =
+                AuxiliaryCounts(
+                    importConfirmations = countRows(db, IMPORT_CONFIRMATION_TABLE, label, log),
+                    postings = countRows(db, POSTING_TABLE, label, log),
+                )
+            log("db $label $IMPORT_CONFIRMATION_TABLE=${countText(counts.importConfirmations)} $POSTING_TABLE=${countText(counts.postings)}")
+            counts
+        }
+    }
+
+    /**
      * The duplicate-status histogram: the latest row per `(ledger_id, candidate_id)` pair, grouped by
      * status. The resolved SQL is logged so the host sees the exact query the reading came from.
      */
@@ -1476,6 +2004,62 @@ class ImportScaleTraversalInstrumentedTest {
     ): Long {
         val entry = entries.firstOrNull { candidate -> candidate.substringBefore('=') == status } ?: return 0L
         return entry.substringAfter('=').toLongOrNull() ?: 0L
+    }
+
+    /** A count reading as one token: the value, or `unavailable` when the read failed. */
+    private fun countText(value: Long?): String = value?.toString() ?: "unavailable"
+
+    /** The CONFIRMED_DUPLICATE histogram movement between two snapshots (the 正式效果次数 reading). */
+    private fun confirmedDuplicateDelta(
+        before: LedgerSnapshot,
+        after: LedgerSnapshot,
+    ): Long =
+        histogramCount(after.duplicateStatusHistogram, CONFIRMED_DUPLICATE_STATUS) -
+            histogramCount(before.duplicateStatusHistogram, CONFIRMED_DUPLICATE_STATUS)
+
+    /** One batch-commit reading: whether the authoritative count rose, and the before/after it rose between. */
+    private data class BatchCommitReading(
+        val committed: Boolean,
+        val before: Long?,
+        val after: Long?,
+        val elapsedMs: Long,
+    )
+
+    /**
+     * fullChain phase 5d, the AUTHORITATIVE completion wait for the batch confirmation: the UI's own
+     * progress copy is not the completion criterion, the formal effect is. It polls
+     * [LEDGER_TRANSACTION_TABLE] every [BATCH_COMMIT_POLL_MILLIS] through the same read-only count the
+     * snapshot reads use, logs every poll (so the host reads the commit curve), and succeeds as soon as
+     * the count rises above the pre-authorization value, logging
+     * `batch commit ledger_transaction <before> -> <after> elapsedMs=<n>`. When the bound is reached
+     * without a rise, the same reading is logged as a FINDING with its elapsed time, so a commit that
+     * never happened is never silently reported as one that did.
+     */
+    private fun awaitBatchCommit(
+        before: Long?,
+        log: (String) -> Unit,
+    ): BatchCommitReading {
+        val startNanos = System.nanoTime()
+        var latest: Long? = before
+        var elapsedMs = 0L
+        while (elapsedMs < BATCH_COMMIT_TIMEOUT_MILLIS) {
+            val count = countTableRows(LEDGER_TRANSACTION_TABLE, "batchCommit", log)
+            if (count != null) {
+                latest = count
+            }
+            elapsedMs = elapsedMillis(startNanos)
+            log("batch commit progress elapsedMs=$elapsedMs $LEDGER_TRANSACTION_TABLE=${countText(count)}")
+            if (before != null && count != null && count > before) {
+                log("batch commit $LEDGER_TRANSACTION_TABLE $before -> $count elapsedMs=$elapsedMs")
+                return BatchCommitReading(committed = true, before = before, after = count, elapsedMs = elapsedMs)
+            }
+            sleepQuietly(BATCH_COMMIT_POLL_MILLIS.toLong())
+        }
+        log(
+            "FINDING: batch commit $LEDGER_TRANSACTION_TABLE ${countText(before)} -> ${countText(latest)} elapsedMs=$elapsedMs " +
+                "(no increase within $BATCH_COMMIT_TIMEOUT_MILLIS ms)",
+        )
+        return BatchCommitReading(committed = false, before = before, after = latest, elapsedMs = elapsedMs)
     }
 
     /**
