@@ -533,10 +533,10 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  * rose above the baseline (`intakeObserved=false`) the line reads `reading=indeterminate`, because the
  * retained evidence holds exactly such a run (`dbDelta=0 intakeObserved=false`) that still carried a
  * stale-`collectionInfo` label, so a host grepping `reading=` could read a ruling out of a run where
- * nothing was imported. The same line carries `intakeStabilized` (the intake wait's own verdict) and the
- * per-step `...ReadingSource` facts (whether a reading came from a re-selected container or is
- * `unavailable` rather than a repeat of an older handle's number). No reading of `countProbe` asserts
- * anything.
+ * nothing was imported. The same line carries `intakeDetected` and `intakeStabilized` (the intake
+ * wait's own verdict) and the per-step `...ReadingSource` facts (whether a reading came from a
+ * re-selected container or is `unavailable` rather than a repeat of an older handle's number). No
+ * reading of `countProbe` asserts anything.
  *
  * THE POSTSCROLL STEP EMITS AN OBSERVATION, NEVER A LABEL: `postScrollCountMoved=true|false|unavailable`
  * and `postScrollRowDelta=<n|unavailable>` are derived from the `postImportRowCount` and
@@ -1366,10 +1366,11 @@ class ImportScaleTraversalInstrumentedTest {
         // import never landed (`dbDelta=0 intakeObserved=false`) that still emitted
         // `reading=collectionInfoStale`, so a host grepping `reading=` could read a ruling out of a run
         // where nothing was imported; `readingGate=` now names the gate the label passed, and
-        // `intakeStabilized` carries the intake wait's own verdict (class doc).
+        // `intakeDetected`/`intakeStabilized` carry the intake wait's own verdict (class doc).
         val intakeObserved = dbBaseline != null && dbPostImport != null && dbPostImport > dbBaseline
         val readingGate = if (intakeObserved) "intakeObserved" else "noIntake"
         val reading = if (intakeObserved) countProbeReading(baselineRowCount, postImportRowCount, postRefreshRowCount) else "indeterminate"
+        val intakeDetectedText = if (intakeWait == null) "unavailable" else "${intakeWait.detected}"
         val intakeStabilizedText = if (intakeWait == null) "unavailable" else "${intakeWait.stabilized}"
         // The postScroll step emits an OBSERVATION, never a hypothesis name: `postScrollCountMoved` and
         // `postScrollRowDelta` are derived from the `postImportRowCount` and `postScrollRowCount` printed
@@ -1392,7 +1393,7 @@ class ImportScaleTraversalInstrumentedTest {
             "interpretation baselineRowCount=${countText(baselineRowCount)} postImportRowCount=${countText(postImportRowCount)} " +
                 "postRefreshRowCount=${countText(postRefreshRowCount)} postScrollRowCount=${countText(postScrollRowCount)} " +
                 "dbBaseline=${countText(dbBaseline)} dbPostImport=${countText(dbPostImport)} dbPostRefresh=${countText(dbPostRefresh)} " +
-                "dbPostScroll=${countText(dbPostScroll)} intakeObserved=$intakeObserved intakeStabilized=$intakeStabilizedText " +
+                "dbPostScroll=${countText(dbPostScroll)} intakeObserved=$intakeObserved intakeDetected=$intakeDetectedText intakeStabilized=$intakeStabilizedText " +
                 "readingGate=$readingGate reading=$reading " +
                 "postImportReadingSource=${postImportReading.source} postRefreshReadingSource=${postRefreshReading.source} " +
                 "postScrollReadingSource=${postScrollReading.source} refreshSettleMillis=$refreshSettleMillis " +
@@ -1437,6 +1438,9 @@ class ImportScaleTraversalInstrumentedTest {
                 log("FINDING: the $step rowCount read failed ${describeError(error)}; the reading is unavailable")
                 return CollectionReading(null, "unavailable")
             }
+        if (rowCount == null) {
+            log("FINDING: the $step container carries no collectionInfo; the rowCount reading is unavailable")
+        }
         return CollectionReading(rowCount, "live")
     }
 
@@ -3505,9 +3509,16 @@ class ImportScaleTraversalInstrumentedTest {
         return predicate()
     }
 
+    /**
+     * Sleeps at most [millis], swallowing an interrupt and re-raising it on the thread. A negative
+     * [millis] is clamped to zero so the `settleMillis` arg can never crash the instrument with an
+     * `IllegalArgumentException` from `Thread.sleep`: the mode's contract is that a non-positive
+     * `settleMillis` is a logged configuration FINDING, never a failure, and a clamped zero sleep
+     * is a no-op for every caller that reaches this helper.
+     */
     private fun sleepQuietly(millis: Long) {
         try {
-            Thread.sleep(millis)
+            Thread.sleep(millis.coerceAtLeast(0))
         } catch (interrupted: InterruptedException) {
             Thread.currentThread().interrupt()
         }
