@@ -3182,3 +3182,23 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 入：本条登记与 `docs/CURRENT_STATE.md` 的同步。出：零产品代码、零测试、零 schema/迁移/依赖/清单；不改 D-157/D-159/D-162/D-163/D-164 的任何裁决；本轮为**主机侧产品路径操作 + 只读核对**，不新增测试基础设施。
 
 **关联决定：** D-164（第 4(a)(b)(d) 条为本条对象——(a) 为「单次 10k 导入」、(b) 为「20k 重复组」、(d) 为无拒绝/零写入；第 4(c) 条「完整计数」由本条维持开放；其结构性成本观察为本条第 4 条依据）、D-162（第 3(i) 条观察维持开放）、D-159/D-157（§10.3 非 PASS 裁决与本条维持结论）、D-146（单文件 10,000 候选接治上限——本条第 2 条的边界依据）、阶段计划 §10.1/§10.2/§10.3/§10.4.5。
+
+## D-166 postScroll 决定性取证登记：「完整计数」A/B 判定闭合 + 61k 规模 OOM 缺陷登记（countProbe 标签反转修复）
+
+**状态：** 已批准并交付（2026-09-21，§10.3「完整计数」观察的专门取证与缺陷登记：countProbe 仪器（androidTest `ImportScaleTraversalInstrumentedTest.kt`，随 `3795825` 合入 main）在 61,000 候选库（schema v31）上取得 postScroll 决定性读数并闭合「完整计数」A/B 判定（A 成立——渲染列表不含会话内导入的新候选），以产品自渲染组头计数复核交叉印证；同时登记冷启动/刷新在 61k+ 库上加载即 OutOfMemoryError 的新缺陷（**§10.3「完整计数」在 61k 规模当前不可达**）；并登记 countProbe `readingAfterScroll` 标签反转（评审阻断项 SPEC-01）的修复与评审闭合。本条只登记事实与裁决，**不实施任何产品修复**；§10.3 规模项仍维持「缺证（部分证据在位）+ 承接」、**不记 PASS**——剩余缺口见第 5 条）。
+
+**决定：**
+
+1. **postScroll 决定性读数与 A/B 判定（「完整计数」观察闭合）**：同一 AVD（`ul_p7_d01`，API 36，隔离 adb）；61,000 候选库（schema v31）；countProbe 模式由仪器自行驱动产品 SAF 导入（instr 运行 `OK (1 test)`，`local/artifacts/p7-05-scale/instr-countprobe-postscroll.log`）。读数序列（设备证据 `local/artifacts/p7-05-scale/ul-scale-traversal-device-20260921-after-postscroll.log`，894 行；**第 892–893 行为 postScroll 读数行与 interpretation 行**）：baseline `rowCount=61013`（DB 61,000，与库计数差 13 项，该非候选项组成未单独定论）→ 会话内产品 SAF 导入 **+200**（DB 61,200，intake 稳定 3 次）→ `postImport rowCount=61013`（未动）→ 点「刷新清单」→ `postRefresh rowCount=61013`（未动）→ **60 次 `ACTION_SCROLL_FORWARD` 强制布局**后 `postScroll rowCount=61013`（`rowCountMinusBaseline=0`，仍未动；DB 侧 61,200 保持）。**判定**：LazyColumn 重新布局会重新发布 CollectionInfo——若渲染列表已含会话内新候选，强制布局后计数应上移；强制布局后读数仍不动 ⇒ **B（陈旧 CollectionInfo）被排除，A（渲染列表不含会话内导入的新候选）成立**。该判定只依赖读数序列的观察字段（rowCount 值、`scrollActions=60`、DB 权威计数），不依赖 interpretation 行的机械标签（该行标签语义反转问题见第 4 条，已修复，不影响本条结论）。
+
+2. **产品自渲染组头计数复核（交叉印证）**：导入 `alipay-d01-unique20.csv`（+20 候选）后，DB 第一组「待确认——缺用户决策」应计 **10,018**；显式「刷新清单」后渲染组头仍为「待确认——缺用户决策（**9998**）」→ 渲染（`view.rows` 投影）不含会话内导入，与第 1 条互相印证（产品路径界面读数，登记于 `docs/PROJECT_STATE.local.md` 检查点）。
+
+3. **OOM 缺陷登记（新，本条登记）**：冷启动/刷新触发 `loadImportReviewRows`（`importReviewRowsForLedger` executeAsList 整表物化）在 61k+ 候选库上 **OutOfMemoryError 两次**（设备时 10:30:27、10:57:40；栈：`SqlDelightImportReviewReadAdapter.kt:46`（executeAsList 物化点）→ `LedgerQueries.kt:6604`（CursorWindow.getString）；堆 192 MB 上限，进程死亡）。**产品影响**：61k 库加载即崩 ⇒ **§10.3「完整计数」在 61k 规模当前不可达**（无法读取列表渲染状态），成为新的登记缺陷与承接项。**与 D-148 读治理的关系**：D-148（层0 统计刷新/层1 定向读/层2 主线程 catalog 读治理）未覆盖列表整表物化的内存面——列表读按既有裁决刻意保持整表读（无分页、无投影裁剪，源码注释明示），且 A-PERF 门槛在 ≤30k 尺度测得、61k 尺度超出其证据面。**源码锚点**：`ledger-data/src/commonMain/kotlin/com/unifiedledger/data/SqlDelightImportReviewReadAdapter.kt` 的 `loadImportReviewRows`（约 43–49 行；第 46 行 `.executeAsList()` 为整表物化点）。**承接**：缺陷修复（列表读分页/投影裁剪/流式物化等）或规模口径裁决，见第 5 条。
+
+4. **countProbe 标签反转的修复与评审闭合**：原候选 `10b1c1e` 的 `readingAfterScroll` 标签语义与 step 4b 注释**相反**（评审阻断项 **SPEC-01**——step 4b 判别语义为「强制布局后计数移动 ⇒ 先前读数为陈旧 CollectionInfo（渲染列表已含新候选）；不动 ⇒ 渲染列表确实缺新候选」，而旧标签在「不动」情形下仍输出 `collectionInfoStale`，主机按字面读取会得出与观察相反的裁决）；已随 `a022c59`+`6830971` 修复为**纯观察字段**——`postScrollCountMoved=true|false|unavailable`、`postScrollRowDelta`、`postScrollMoveGate`（派生自同一行打印的 `postImportRowCount` 与 `postScrollRowCount`，不再输出反转标签；同批含 sleep clamp、`intakeDetected`/`intakeStabilized` 与 collectionInfo FINDING 等评审条件），修复经独立评审闭合（**ACCEPT**）+ distinct verifier（trace `valid:true`）ACCEPT，合并 `3795825`（1 文件 +1062/−58：`ImportScaleTraversalInstrumentedTest.kt`）。第 1 条判定由观察字段承载、不依赖被替换的标签，标签反转**不影响**其结论。
+
+5. **§10.3 规模项状态**：维持「缺证（部分证据在位）+ 承接」、**不记 PASS**（延续 D-157/D-159/D-162/D-163/D-164/D-165）。本条增量：**「完整计数」的 A/B 判定已闭合（A 成立）**，但 61k 规模加载即 OOM 使完整计数在 61k 规模**不可达**——成为新的登记缺陷与承接项；剩余缺口收窄为：**61k 规模完整计数受 OOM 阻断**（承接=缺陷修复或规模口径裁决）与 **≥20k 组卡页脚/批量入口可达性**（承接=D-165 第 4 条，含其结构性成本观察与读法裁决）。**无残余被并入 PASS。**
+
+**边界：** 入：本条登记与 `docs/CURRENT_STATE.md` 的同步。出：零产品代码改动（本决定只登记，不实施修复）；countProbe 仪器为 androidTest 测试基础设施（随 `3795825` 交付，CI 维持零 `connectedAndroidTest`）；不改 D-157/D-159/D-162/D-163/D-164/D-165 的任何裁决与其 PASS 项。
+
+**关联决定：** D-162（第 3(i) 条「完整计数」开放观察为本条第 1 条的闭合对象）、D-163（第 4(g) 条倾向性表述的收窄链）、D-164（第 4(c) 条观察更新链与本条第 1 条的取证手段来源）、D-165（第 4 条「完整计数仍未闭合」由本条第 1 条闭合；其卡页脚可达性承接为本条第 5 条剩余缺口）、D-161（`ACTION_SCROLL_FORWARD` 致动器为 step 4b 强制布局手段）、D-148（读治理边界——整表物化内存未被覆盖，本条第 3 条缺陷的背景依据）、D-157/D-159（规模项「缺证（部分证据在位）+ 承接」裁决与本条维持结论）、阶段计划 §10.1/§10.2/§10.3。
