@@ -27,14 +27,14 @@
 
 ## 验证证据
 
-三个 Kotlin 模块的 JVM 测试与 Python 套件在最近一次完整验证中全部通过，零 failure、零 error。逐模块计数随测试增删而变，不在此复制；验证命令见 [README](../README.md)，实际结果以 `build/test-results` 下的报告为准。
+四个 Kotlin 模块的 JVM 测试与 Python 套件在最近一次完整验证中全部通过，零 failure、零 error。逐模块计数随测试增删而变，不在此复制；验证命令见 [README](../README.md)，实际结果以 `build/test-results` 下的报告为准。
 
 - `RG-01`/`RG-02` 完整比较 oracle 验证证据（R3 登记，D-088）：`Rg01FullStateOracleTest`（8 roots / 11 ops / 19 states）与 `Rg02FullStateOracleTest`（11 roots / 13 ops / 24 states）经独立 spec/quality review 双 PASS，distinct verifier 11/11 PASS（D-087，merge `f9da4b6`，2026-08-10 验证记录）；数字以测试文件头注释与 D-087 登记为准。验证记录见 `docs/PROJECT_STATE.local.md`（2026-08-10）。
 
 ## 当前环境
 
 - Kotlin Multiplatform 插件版本为 `2.4.20`、Gradle Wrapper 版本为 `9.5.0`、JVM 工具链为 JDK 21；Compose Multiplatform `1.12.0`、Android Gradle Plugin `9.3.1`（D-141 技术栈升级批）。
-- 三个 KMP library 的 JVM 测试和根项目 Gradle 检查可在 Windows 上运行；`ledger-data` 的 SQLDelight 迁移验证与 Android target 编译也可独立运行。
+- 四个 KMP library 的 JVM 测试和根项目 Gradle 检查可在 Windows 上运行；`ledger-data` 的 SQLDelight 迁移验证与 Android target 编译也可独立运行。
 - 当前 16 GB Windows 主机上 Gradle/Kotlin 验证必须串行，使用单 worker 和 1 GB heap，并在每次运行后停止 Gradle daemon；具体命令见 `docs/CONTRIBUTING.md`。
 - Python 核心测试和文档验证可在 Windows 上运行。
 - `ledger-data` 已有 Android 编译目标；共享模块现含新增 `app-ui`（P5-03，androidTarget + jvm，compose）；`desktop-app` 与 `android-app` 两个组合根模块按 P5-02 建立、按 P5-03 只保留平台入口与组合根装配（共享 UI 由 `app-ui` 承载）。桌面应用经 `.\gradlew.bat :desktop-app:run` 启动；Android 调试 APK 经 `.\gradlew.bat :android-app:assembleDebug` 构建（本机 R-9 OOM 时经 CI artifact 获取）；模拟器安装/启动人工门已于 2026-08-30 关闭。
@@ -80,4 +80,4 @@
 
 ## 唯一下一步
 
-**唯一下一步 = A-05 收口项与 P7-05～09 按批裁决推进**：阶段 7 第一组 P7-01～P7-04 及其后续性能/验证/缺陷修复批（D-147～D-154）已全部交付、合入本地 `main` 并推送 `origin/main`（head `d9fb57e`——最近两批 `840bf67`（D-160 A-DOC 批：schema v31 正式状态同步）与 `d9fb57e`（D-161/D-162：程序化滚动致动器与 §10.3 四阶段规模证据）均已合入并推送，head 同提交 CI run `35542771738` 三 job（Kotlin tests / Android compile / Python tests）全 success；D-148～D-154 各批同提交 CI 三 job success 见「当前阶段」）；四格式（微信 XLSX/支付宝 CSV/招行 CSV/建行 XLS）已双平台全可用（A-04.2 矩阵翻转，设备 instrumented 与产品路径证据背书；D01 披露式闭合与四格式可用性为两个不同命题）；A-05 导入全链验收为**部分完成**（D01～D06 逐项登记见「当前阶段」，开放项见「未完成门槛」）；A-01/A-02 设备验收已整体 PASS，A-03 部分完成（TB1～TB7 TalkBack 朗读巡检接受延期、A03-8b 缺证，见「未完成门槛」）；P7-05 修错与回收站设计门已按 D-156 批准、首切片（片 1a 基底层）已按 D-158 交付至 schema v31，片 1b（产品接线）与 P7-06～09 待按批裁决推进；阶段 6 已按 D-142 收口（全部批次 D-133…D-141 交付并关闭）。
+**唯一下一步 = A-05 收口项与 P7-05～09 按批裁决推进**：阶段 7 第一组 P7-01～P7-04 及其后续性能/验证/缺陷修复批（D-147～D-154）已全部交付、合入本地 `main` 并推送 `origin/main`（head `83f92bf`——`840bf67`（D-160 A-DOC 批：schema v31 正式状态同步）、`d9fb57e`（D-161/D-162：程序化滚动致动器与 §10.3 四阶段规模证据）、`3cdf555`（D-163：B5 测量方法复核）、`b9a2a2c`（D-164：§10.3 单次会话全链实测）、`6ed4797`（D-165：§10.3 数据条件实测）与 `3795825`/`83f92bf`（D-166：postScroll 决定性取证与 61k 规模 OOM 缺陷登记）均已合入并推送，head 同提交 CI run `35602356619` 三 job（Kotlin tests / Android compile / Python tests）全 success；注：`b9a2a2c`（D-164）的推送 run `35549590604` 被 CI concurrency 取消，其树由后继 `6ed4797` 的 success run `35551340309` 涵盖；D-148～D-154 各批同提交 CI 三 job success 见「当前阶段」）；四格式（微信 XLSX/支付宝 CSV/招行 CSV/建行 XLS）已双平台全可用（A-04.2 矩阵翻转，设备 instrumented 与产品路径证据背书；D01 披露式闭合与四格式可用性为两个不同命题）；A-05 导入全链验收为**部分完成**（D01～D06 逐项登记见「当前阶段」，开放项见「未完成门槛」）；A-01/A-02 设备验收已整体 PASS，A-03 部分完成（TB1～TB7 TalkBack 朗读巡检接受延期、A03-8b 缺证，见「未完成门槛」）；P7-05 修错与回收站设计门已按 D-156 批准、首切片（片 1a 基底层）已按 D-158 交付至 schema v31，片 1b（产品接线）与 P7-06～09 待按批裁决推进；阶段 6 已按 D-142 收口（全部批次 D-133…D-141 交付并关闭）。
