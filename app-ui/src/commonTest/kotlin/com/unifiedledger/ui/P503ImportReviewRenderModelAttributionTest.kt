@@ -78,9 +78,10 @@ class P503ImportReviewRenderModelAttributionTest {
 
     /**
      * The D-166 synthetic profile: 61,000 pending ordinary_flow rows, the first 10,000 without a
-     * duplicate relation and the remaining 51,000 folded to DEFERRED. The single group
-     * (待确认——缺用户决策) holds all 61,000 rows, so `importCandidateClassGroups` runs its six
-     * full-list filters and `classifyImportCandidate` over the whole list, matching the app's work.
+     * duplicate relation and the remaining 51,000 folded to DEFERRED. These form TWO classification
+     * groups — 10,000 in 待确认——缺用户决策 (no duplicate relation) and 51,000 in 疑似重复——待审核
+     * (DEFERRED) — so `importCandidateClassGroups` still runs its six full-list filters and
+     * `classifyImportCandidate` over all 61,000 rows, matching the app's work.
      * The registered artifact's folded mix differs (400 CONFIRMED_DUPLICATE), so its real list
      * carries a third classification group header; this synthetic profile keeps the two described
      * in the companion comment below.
