@@ -8917,6 +8917,66 @@ LEFT JOIN import_duplicate_status_history AS duplicate_status
 WHERE candidate.ledger_id = ?
 ORDER BY candidate.candidate_id, duplicate.candidate_id;
 
+-- P7-04 OOM fix (design spec 2026-09-21 v0.2): byte-identical SELECT/JOIN/ORDER BY shape of
+-- importReviewRowsForLedger (:8869-8918), narrowed to at most :page_size candidates strictly
+-- after :after_candidate_id by the import_candidate PRIMARY KEY (ledger_id, candidate_id)
+-- range. The candidate-boundary IN subquery guarantees all rows of one candidate land in one
+-- batch (the adapter's per-candidate fold never splits). Zero DDL: the subquery is a pure
+-- PK range scan. Named parameters (not bare '?') so the four bindings stay distinct without
+-- SQLDelight's underscore-suffix disambiguation; the subquery's ledger scope is a separate
+-- table instance from the outer one, so it binds the ledger id a second time
+-- (:page_ledger_id) — the caller passes the same value twice.
+importReviewRowsForLedgerPage:
+SELECT
+  candidate.candidate_id,
+  candidate.candidate_kind,
+  candidate.confidence,
+  source.input_ref,
+  source.amount_minor,
+  source.currency_code,
+  source.currency_precision,
+  source.occurred_at,
+  source.direction_token,
+  source.status_token,
+  source.funding_state,
+  source.completeness,
+  source.content_hash,
+  latest_candidate_status.status AS candidate_status,
+  EXISTS(SELECT 1 FROM import_candidate_requires_confirmation AS requirement
+     WHERE requirement.ledger_id = candidate.ledger_id
+       AND requirement.candidate_id = candidate.candidate_id
+       AND requirement.requirement = 'formal_transaction_creation') AS requires_confirmation,
+  duplicate.candidate_id AS duplicate_candidate_id,
+  duplicate_status.status AS duplicate_latest_status,
+  profile.variant AS payment_profile_variant,
+  profile.asset_leg_kind_token AS payment_profile_asset_leg_kind_token,
+  profile.credit_leg_kind_token AS payment_profile_credit_leg_kind_token
+FROM import_candidate AS candidate
+JOIN import_source_record AS source
+  ON source.ledger_id = candidate.ledger_id AND source.source_id = candidate.source_id
+LEFT JOIN import_candidate_status_history AS latest_candidate_status
+  ON latest_candidate_status.ledger_id = candidate.ledger_id
+ AND latest_candidate_status.candidate_id = candidate.candidate_id
+ AND latest_candidate_status.sequence = (SELECT max(s3.sequence) FROM import_candidate_status_history AS s3
+       WHERE s3.ledger_id = candidate.ledger_id AND s3.candidate_id = candidate.candidate_id)
+LEFT JOIN import_candidate_payment_profile AS profile
+  ON profile.ledger_id = candidate.ledger_id AND profile.candidate_id = candidate.candidate_id
+LEFT JOIN import_duplicate_candidate AS duplicate
+  ON duplicate.ledger_id = candidate.ledger_id
+ AND duplicate.subject_source_id = candidate.source_id
+LEFT JOIN import_duplicate_status_history AS duplicate_status
+  ON duplicate_status.ledger_id = duplicate.ledger_id
+ AND duplicate_status.candidate_id = duplicate.candidate_id
+ AND duplicate_status.sequence = (SELECT max(s2.sequence) FROM import_duplicate_status_history AS s2
+       WHERE s2.ledger_id = duplicate.ledger_id AND s2.candidate_id = duplicate.candidate_id)
+WHERE candidate.ledger_id = :ledger_id
+  AND candidate.candidate_id IN (
+    SELECT candidate_id FROM import_candidate
+    WHERE ledger_id = :page_ledger_id AND candidate_id > :after_candidate_id
+    ORDER BY candidate_id LIMIT :page_size
+  )
+ORDER BY candidate.candidate_id, duplicate.candidate_id;
+
 -- A-PERF (P7-04 read-governance batch, spec section 2.2): the single-candidate projection of
 -- importReviewRowsForLedger above. Byte-identical JOIN/LEFT JOIN shape and column list, the
 -- same retained ORDER BY (the adapter's fold consumes the (candidate, duplicate) row set in
