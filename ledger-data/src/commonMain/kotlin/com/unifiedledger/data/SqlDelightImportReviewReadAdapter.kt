@@ -16,6 +16,13 @@ import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.LedgerId
 
 /**
+ * P7-04 OOM fix (design spec 2026-09-21 v0.2, D-168): candidates read per batch. 10,000 keeps
+ * the 61k-candidate ledger at 7 batches; injectable through the adapter constructor so tests
+ * can force the multi-batch path with a tiny value.
+ */
+private const val IMPORT_REVIEW_ROWS_PAGE_SIZE = 10_000L
+
+/**
  * P7-04.B import review read adapter (D-146; implementation spec section 4.5, Appendix A).
  *
  * Implements [ImportReviewReadPort] against the single [LedgerDatabase] using the P7-04
@@ -33,20 +40,77 @@ import com.unifiedledger.domain.LedgerId
  * `importReviewRowForCandidate` (byte-identical JOIN shape and retained ORDER BY, so the folded
  * row is equivalent to the previous whole-ledger read + filter); the two existence probes use
  * the lightweight `importCandidateExistsByCandidateId` / `importCandidateExistsByInputRef`
- * queries. The list read itself deliberately stays a whole-ledger read (the §0 D-D ruling:
- * after the layer-0 statistics refresh the 20k-lib list query measured 0.24s, so no paging
- * and no projection trimming).
+ * queries.
+ *
+ * P7-04 OOM fix (design spec 2026-09-21 v0.2, D-168): the list read is now a candidate-boundary
+ * keyset-paged read inside one transaction (`importReviewRowsForLedgerPage`). The previous
+ * whole-ledger materialization held four large structures at once (generated rows, column
+ * projections, the per-candidate groupBy map and the folded result) and OOM'd at 61k candidates
+ * (D-166). Batching by candidate id releases the per-batch structures before the next batch; the
+ * output (complete, never truncated) is byte-identical to the whole-ledger fold.
  */
 class SqlDelightImportReviewReadAdapter(
     private val database: LedgerDatabase,
+    // P7-04 OOM fix: candidate-per-batch bound, injectable so tests exercise the multi-batch
+    // path with a tiny page size. Long because SQLDelight types a LIMIT bind as INTEGER=Long.
+    private val pageSize: Long = IMPORT_REVIEW_ROWS_PAGE_SIZE,
 ) : ImportReviewReadPort {
-    override fun loadImportReviewRows(ledgerId: LedgerId): List<ImportReviewRow> =
-        database.ledgerQueries
-            .importReviewRowsForLedger(ledgerId.value)
-            .executeAsList()
-            .map { it.toColumns() }
-            .groupBy { it.candidate_id }
-            .map { (_, groupedRows) -> groupedRows.first().toImportReviewRow(groupedRows) }
+    override fun loadImportReviewRows(ledgerId: LedgerId): List<ImportReviewRow> {
+        // pageSize <= 0 is rejected up front. 0 would make `batch.size < pageSize` false on an
+        // empty batch and send `batch.maxOf {}` into NoSuchElementException; a negative value
+        // makes SQLite read LIMIT as unlimited (LIMIT -1 == no limit), silently losing paging.
+        // Both are programming errors, not user input, so they fail loudly before any query.
+        require(pageSize >= 1) { "import review page size must be >= 1, was $pageSize" }
+        // One read-only transaction covers every batch (snapshot consistency, freeze item
+        // ACC-SNAP-01). Each batch is folded INSIDE the transaction body so the raw per-batch
+        // lists are released before the next batch is read — that release IS the bounded-memory
+        // property this fix exists for. The cost is stated honestly in the design: the single
+        // Android connection stays held across the folds too. noEnclosing = true does not change
+        // the BEGIN mode on this driver version; it makes the nesting contract fail loud instead
+        // of silently nesting. (SQLDelight 2.3.2's Transacter.transactionWithResult names this
+        // parameter noEnclosing — there is no `readOnly` parameter.)
+        return database.transactionWithResult(noEnclosing = true) {
+            // Empty-string candidate id contract (design spec 2.2 point 4 / 6 item 4a,
+            // ACC-T-EMPTYID-01). The keyset cursor starts at "" and advances with
+            // `candidate_id > afterCandidateId`; a candidate whose id is exactly "" would be
+            // permanently skipped (candidate_id > '' is never true) — silently absent, which
+            // ACC-COUNT-01 forbids ("never silently drop a candidate"). The schema only requires
+            // NOT NULL, so "" is representable; the current generator (UUIDv7, 36-char ASCII)
+            // never emits it, but the contract is enforced here rather than assumed. This is a
+            // single primary-key probe reusing the existing existence query — the chosen
+            // behaviour is fail-loud, not silent loss.
+            if (
+                database.ledgerQueries
+                    .importCandidateExistsByCandidateId(ledgerId.value, "")
+                    .executeAsList()
+                    .isNotEmpty()
+            ) {
+                throw IllegalStateException(
+                    "import review list cannot page a candidate whose id is the empty string (ledger ${ledgerId.value})",
+                )
+            }
+            val result = mutableListOf<ImportReviewRow>()
+            var afterCandidateId = ""
+            while (true) {
+                val batch =
+                    database.ledgerQueries
+                        .importReviewRowsForLedgerPage(
+                            ledgerId.value,
+                            ledgerId.value, // :page_ledger_id — same scope, bound a second time
+                            afterCandidateId,
+                            pageSize,
+                        ).executeAsList()
+                        .map { it.toColumns() }
+                result +=
+                    batch
+                        .groupBy { it.candidate_id }
+                        .map { (_, groupedRows) -> groupedRows.first().toImportReviewRow(groupedRows) }
+                if (batch.size.toLong() < pageSize) break
+                afterCandidateId = batch.maxOf { it.candidate_id }
+            }
+            result
+        }
+    }
 
     /**
      * Detail projection (spec section 4.5.4): the list row plus the candidate's status-history
@@ -274,6 +338,36 @@ private fun com.unifiedledger.data.db.ImportReviewRowsForLedger.toColumns(): Imp
     )
 
 private fun com.unifiedledger.data.db.ImportReviewRowForCandidate.toColumns(): ImportReviewRowColumns =
+    ImportReviewRowColumns(
+        candidate_id,
+        candidate_kind,
+        confidence,
+        input_ref,
+        amount_minor,
+        currency_code,
+        currency_precision,
+        occurred_at,
+        direction_token,
+        status_token,
+        funding_state,
+        completeness,
+        content_hash,
+        candidate_status,
+        requires_confirmation,
+        duplicate_candidate_id,
+        duplicate_latest_status,
+        payment_profile_variant,
+        payment_profile_asset_leg_kind_token,
+        payment_profile_credit_leg_kind_token,
+    )
+
+/**
+ * P7-04 OOM fix (design spec 2.3 point 1, D-168): the additive third overload for the generated
+ * row type of the paged list query. The paged query keeps the list query's exact 20-column
+ * SELECT shape, so this widening is the same mechanical expansion as the two overloads above;
+ * the fold (`toImportReviewRow` / `foldDuplicateStatus`) is untouched and shared.
+ */
+private fun com.unifiedledger.data.db.ImportReviewRowsForLedgerPage.toColumns(): ImportReviewRowColumns =
     ImportReviewRowColumns(
         candidate_id,
         candidate_kind,
