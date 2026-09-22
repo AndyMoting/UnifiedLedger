@@ -3259,3 +3259,37 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 入：规格 `docs/specs/2026-09-21-p7-04-import-review-list-oom-fix-design.md` 的批准状态与本条登记。出：零产品代码、零测试、零 schema/迁移/依赖/清单、零 Golden/fixture；不改 A-PERF approved 规格本体（其解除记录延至该规格下次实质修改）；不改 D-166 的任何裁决与其缺口状态；不改 D-147/D-148 的读治理裁决。
 
 **关联决定：** D-166（第 3 条 OOM 缺陷登记与第 5 条承接——本条批准其修复设计，不改其缺口状态）、D-148（导入读治理批——其「列表读本体保留整账本读」的 20k 耗时口径不被推翻，本规格只修订「无需分页」在 61k 内存面的推论）、D-147（会话批量读与 v30 覆盖索引——不在本批范围）、D-158（第 5 条热读增本读数纪律——本设计的 ACC-PERF-01 承接该纪律）、阶段计划 §2 A-PERF 行与 §10.3/§10.4.1。
+
+## D-169 P7-04 导入审核列表 OOM 修复设备复验登记与 61k 规模可操作性缺陷登记
+
+**状态：** 已批准并交付（2026-09-22，D-168 批准的导入审核列表 OOM 修复（`docs/specs/2026-09-21-p7-04-import-review-list-oom-fix-design.md`，approved）在设备上的**复验登记**，并**新登记**一项 61k 规模可操作性开放缺陷。D-168 的修复已实施并合并 `1398e72`（同提交 CI run `35746825277` 三 job 全 success），机制为候选边界 keyset 分批读 `importReviewRowsForLedgerPage`（7 批 × 10,000 候选）。本条登记设备证据与缺陷，**不实施任何产品修复**；**不**把 D-168 修复的剩余设备向量（见第 6 条）记为已完成；§10.3 规模项仍维持「缺证（部分证据在位）+ 承接」、**不记 PASS**。设备读数与日志证据落于主 checkout 的只读设备目录（`local/artifacts/p7-05-scale/`），不入 tracked 文件）。
+
+**决定：**
+
+1. **对象与性质**：本条对象为 D-168 所批准并已实施的 OOM 修复的设备复验，以及复验中新发现的一项 61k 规模可操作性开放缺陷。本条**只登记证据与缺陷**：它**不**把 D-168 修复的其余设备向量记为完成，也**不**改变 D-168 的任何批准内容。
+
+2. **ACC-D-OOM-01 PASS——61k 零 OOM**：在 **61,220 候选 / 160,200 重复关系 / 2 交易 / schema v31** 的库上，冷启动、「刷新清单」与重复冷启动（≥8 轮）全程 **零** `OutOfMemoryError`/`FATAL`/`ANR`，进程存活且列表渲染完成。修复前基线（D-166 第 3 条）为同一 192 MB 堆下 **OutOfMemoryError 两次、进程死亡**。**库计数来源（如实标注）**：61,220 / 160,200 为复验起始的入库前基线，其出处是设计规格 `docs/specs/2026-09-21-p7-04-import-review-list-oom-fix-design.md:314`（明确写作 61,220 / 160,200）与 `docs/PROGRESS_LOG.local.md:2413,2421`（设备库态 61,220 / 160,200）；D-166 条目与 `docs/PROJECT_STATE.local.md` 检查点使用的是 61,000 / 61,200、不含 160,200，故**不**作为该计数的出处。countProbe 日志本身只记录候选计数 61220→61420（不含重复关系数）；会话内导入后的 61,420 / 162,600 则由设备原始计数 `local/artifacts/p7-05-scale/oomfix-evidence/device-counts-raw.txt`（`61420|162600|2|31`）与检查点佐证。**设备与 APK 绑定**：AVD `ul_p7_d01`、隔离 adb 端口 5038、API 36、系统 SQLite 3.44.3；APK sha256 `63b2897f629bce769b0082f82be4045e9c051b7b0dbcf6ead374e4ebd27d1b8d`。
+
+3. **ACC-THRESH-01 PASS——峰值堆低于冻结阈值**：读取全程以 `dumpsys meminfo` 采样，峰值堆合计低于规格 §3.1 冻结的 **≤160 MB** 阈值（基线为 D-166 的 192 MB 堆上限下两次 OOM）。峰值主张的原始工件为 `local/artifacts/p7-05-scale/oomfix-evidence/peak-heap-poll-raw.txt`（跨 61k 列表读取全程的 Java/Native Heap 采样，30 个采样点、0 故障），该次运行的最大值为 **Java Heap 81,668 KB（≈82 MB）/ Native Heap 19,636 KB（≈20 MB）**，合计远低于 ≤160 MB。**口径披露**：该峰值为**写者的单次运行值**，本运行的最大值与先前单次报告的 98,372 KB / 19,912 KB 属**不同运行**，说明峰值存在**跨运行波动**，故不作跨运行点估计；`local/artifacts/p7-05-scale/oomfix-evidence/meminfo-after-61k-read-raw.txt` 是 61k 读后的**单次快照**（Java 69,592/91,540、Native 19,632/20,892、TOTAL PSS 161,946），**不是**跨读峰值，也不含先前报告的 98,372/19,912 KB 数值，此处仅作读后快照引用。综上，ACC-THRESH-01 的 PASS 依据（峰值远低于冻结 ≤160 MB）仍然成立。
+
+4. **ACC-D-COUNT-01——countProbe 在 61k 首次可达**：`countProbe` 仪器化向量（自行驱动会话内产品 SAF 导入）**首次**在 61k 库上跑通（修复前列表加载即崩，故不可达）：本次 oomfix 运行证据 `local/artifacts/p7-05-scale/oomfix-evidence/instr-countprobe-postscroll-oomfix.log`（1,000 行、以 `countProbe: end` 收尾）**证明该向量完整跑完且零故障**（`local/artifacts/p7-05-scale/oomfix-evidence/fault-count-61k-raw.txt` = `0`）；该 oomfix 日志**不含**运行器摘要（无 `OK`/`Tests run` 行）——`OK (1 test)` 字符串只出现在 D-166 的 `local/artifacts/p7-05-scale/instr-countprobe-postscroll.log`。读数：`postScroll rowCount=61637`、`dbCandidates=61420`、`reading=indeterminate`（库在会话内导入后由 61,220 / 160,200 增至 61,420 / 162,600，**设备原始计数 `local/artifacts/p7-05-scale/oomfix-evidence/device-counts-raw.txt` = `61420|162600|2|31`**）。**判定**：修复**打通了遍历**，但**本身不改变** §10.3「完整计数」的 A/B 读数——该读数仍为 `indeterminate`、**维持开放**；本条**不**声称完整计数观察已闭合。
+
+5. **ACC-D-PERF-01 在 61k 规模 NOT MET——新登记的开放缺陷**：61k 库上冷启动首次进入列表的 tap→列表内容可见耗时 **6 轮 10869 / 11000 / 11459 / 11397 / 11695 / 11705 ms（≈11.0–11.7 s）**，「刷新清单」重读约 **9–11 s**，**超出**规格 §3.1 冻结的 **≤3 s** 阈值。**口径披露（重要）**：该 6 轮读数由**截图尺寸轮询启发式**取得（`measure_list_latency.py`：首张 >250 KB 截图即判「已加载」，截图约 400 ms/张，另有 uiautomator dump 的 ~2.4 s 地板），**不是**冻结的 B2 口径；冻结 B2 方法（`measure_b2_frozen.py`：`/proc/uptime` 夹逼 + `dumpsys gfxinfo framestats` 首帧）的**首帧读数仅取自 20k 对照库**；`/proc/uptime` 夹逼步骤**亦在 61k 上运行并留存**（`b2-61k-bracket-raw.txt`），但**用于 NOT MET 裁决的 61k 可操作性读数是上述截图轮询序列，而非冻结 B2 首帧读数**。因 11 s 远大于 3 s 阈值加上 ~2.4 s 轮询地板，NOT MET 结论稳健、不受该口径差异影响。为定位该耗时，取得以下证据：
+
+   - **20k 对照库**（20,000 候选 / 10,000 重复关系、`sqlite_stat1` 在位）冷渲染 **2621 / 3159 / 2613 ms（3 轮，同为上述截图轮询口径）**——该口径含 ~2.4 s 轮询地板，其中 **3159 ms 已超 3000 ms**，故**不**以该轮询数作为达标依据；**≤3 s 的达标依据是同一 APK 上的冻结 B2 首帧读数 0.035 / 0.035 / 0.041 s**（远低于 3 s）。
+   - **设备原始分页 SQL**：首批 **35 ms**、完整 20 列投影读 **290 ms**；查询计划走既有 `importCandidate` 主键覆盖索引——原始查询计划工件 `local/artifacts/p7-05-scale/oomfix-evidence/explain-paged-raw.txt`：`SEARCH candidate USING COVERING INDEX sqlite_autoindex_import_candidate_1`，子查询为 `candidate_id>?` 的同一覆盖索引主键范围扫。该 EXPLAIN 工件本身只证明查询计划（覆盖索引范围扫），**不单独证明零 DDL**；零 DDL 的依据是 D-168 已合并的 `.sq` 实现（`ledger-data/src/commonMain/sqldelight/com/unifiedledger/data/db/Ledger.sq` 的 `importReviewRowsForLedgerPage` 仅新增只读 SELECT，无任何 schema/DDL 变更）。
+   - **有界只读调查**将成本定位在 UI 层：导入屏在组合线程上**急切构建整个渲染模型且无 `remember`**（`app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503ImportReviewPresentation.kt` 的 `importReviewRenderItems` / `importCandidateClassGroups`，61,220 个 `CandidateItem` 对象与 `stableKey` 字符串；调用点为 `P503ImportReview.kt`）。
+
+   **结论**：残余等待**不能由分页读解释**，须先以仪器化（adapter wall time / 渲染模型构建 wall time / 主线程帧）归因，方可进入修复批或规模口径裁决。该项为**登记的开放缺陷**，**不是**对 OOM 修复的 PASS 或 FAIL——D-166 登记的 OOM 缺陷本身**已修复**。
+
+   **读数披露（沿 D-167 第 3/5 条口径）**：以上 meminfo / 延迟 / SQL 计时读数为**写者的单次运行值**，由宿主侧脚本打印到 stdout（`measure_list_latency.py`、`measure_oom_fix_b2.py` 等），**不具跨运行可复现性**。其中**已留存原始工件**的部分为：61k 会话内导入后的库计数（`device-counts-raw.txt`）、分页查询计划（`explain-paged-raw.txt`）、61k 读取全程的峰值堆采样（`peak-heap-poll-raw.txt`，本运行最大 Java 81,668 KB / Native 19,636 KB）、61k 读后单次快照（`meminfo-after-61k-read-raw.txt`，非峰值）、61k 故障扫描（`fault-count-61k-raw.txt`）与 61k tap 的 `/proc/uptime` 夹逼（`b2-61k-bracket-raw.txt`），均在 `local/artifacts/p7-05-scale/oomfix-evidence/` 下；**仍未留存原始工件**的是：61k 的 6 轮 ~11 s 序列与 20k 的 3 轮轮询序列、设备分页 SQL 的 35/290 ms 计时、复验起始基线的 61,220 / 160,200 计数、以及 20k ≤3 s 的达标依据——冻结 B2 首帧读数 **0.035 / 0.035 / 0.041 s**（写者单次运行、宿主 stdout 值，无原始工件）——这些仅作单次读数引用，不作跨运行点估计。
+
+6. **仍开放的设备向量（不得豁免）**：`ACC-D-CONN-01`（连接持有读数——持有窗口严格长于修复前单语句：7 批 + 批内折叠同处单个 `BEGIN IMMEDIATE`、位于非 WAL 的 Android 单连接上；**未观察到 ANR**，但该项**未被仪器化**）；`ACC-D-20K-01`（完整 20k B2/B3/B6 回归——20k 冷进入对照已通过，但完整回归集**未重跑**）。
+
+7. **状态与边界**：D-166 登记的 OOM 缺陷**已修复并经设备复验**（零 OOM、峰值堆低于阈值、countProbe 可达）。该修复自身的冻结阈值**只获部分裁决**：**≤160 MB** 与**零 ANR/OOM** 部分**通过**；**≤3 s** 可操作性部分在 **61k 规模 NOT MET**，已按第 5 条登记为新的开放缺陷。**凡未获证据者不记 PASS**。本条**零产品代码改动**。
+
+8. **缺陷编号纪律**：本条**不新造**独立缺陷 ID；第 5 条的可操作性议题一律称「本条登记的 61k 可操作性缺陷」（项目对新的独立缺陷另行编号）。
+
+**边界：** 入：本条登记与 `docs/CURRENT_STATE.md` 的同步。出：零产品代码、零测试、零 schema/迁移/依赖/清单、零 Golden/fixture；不改 D-168 的批准内容、不改 D-166 条目本身的缺陷与缺口状态、不改 D-147/D-148 的读治理裁决、不改 D-157/D-159/D-162～D-167 的任何裁决与其 PASS 项；不把任何残余并入 PASS。
+
+**关联决定：** D-168（第 1 条为其修复设计批准；本条为其设备复验登记）、D-166（第 3 条 OOM 缺陷为本条复验对象、第 5 条承接链；本条登记其经设备复验为已修复，不改 D-166 条目本身）、D-148（读治理与 ANR 链——本条第 5 条 UI 层定位与第 6 条连接持有的背景依据）、D-163（测量方法先例——本条第 5 条 20k 对照与 B2 首帧口径的依据）、D-159（差异说明纪律——本条设备库规模与夹具规模差异的披露依据）、D-157（§10.3 规模项「缺证（部分证据在位）+ 承接」裁决与本条维持结论）、阶段计划 §10.1/§10.3/§10.4.5。
