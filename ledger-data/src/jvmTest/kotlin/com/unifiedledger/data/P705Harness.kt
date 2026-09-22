@@ -277,7 +277,10 @@ internal class P705Database private constructor(
     fun environmentIdentity(): List<String> {
         val sqlDelightDriver = JdbcSqliteDriver::class.java
         val xerialDriver =
-            java.sql.DriverManager.getDrivers().toList().firstOrNull { it.javaClass.name.startsWith("org.sqlite") }
+            java.sql.DriverManager
+                .getDrivers()
+                .toList()
+                .firstOrNull { it.javaClass.name.startsWith("org.sqlite") }
         return listOf(
             "sqlite-version=${ledgerQueryText("SELECT sqlite_version()")}",
             "jdbc-driver=${driverIdentity(sqlDelightDriver)}",
