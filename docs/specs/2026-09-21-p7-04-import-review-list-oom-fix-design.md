@@ -1,6 +1,6 @@
 # P7-04 Import Review List OOM Fix Design — Keyset Paged Read（导入审核列表 61k 规模 OOM 修复设计规格）
 
-状态：proposal（修订版 v0.2。本文件为设计规格修订草案：修复机制经独立规格评审确认**sound**（评审结论 REVISE，机制不需重新设计），本轮按评审缺陷清单逐条修订 P1-1..P1-7、P2-1..P2-6 与 P3 项后重新提交评审。CONTRIBUTING.md:162 的允许分类为 `approved`/`proposal`/`superseded`/`historical`——本规格**尚未获批**，故按 `proposal` 分类（v0.1 的 `draft` 不在允许分类内，该标记为本轮修订的一处更正）。评审通过并由主代理批准后再升为 `approved`；实施、Git 写操作与最终验收属后续实施批）。
+状态：approved（修订版 v0.2。修复机制经独立规格评审确认**sound**（首轮评审结论 REVISE，机制不需重新设计）；v0.2 按评审缺陷清单逐条修订 P1-1..P1-7、P2-1..P2-6 与 P3 项后重新提交评审，独立闭包复评对本修订（`9c43787`）给出结论 **APPROVE**——既有阻断条件 C1–C4 全部闭合、未引入新 P1/P2，且独立复核了 `runtime-jvm-2.3.2.jar` 中 `transactionWithResult` 的参数名为 `noEnclosing`（默认 `false`、嵌套抛 `IllegalStateException("Already in a transaction")`）这一关键依赖事实。CONTRIBUTING.md:162 的允许分类为 `approved`/`proposal`/`superseded`/`historical`（v0.1 的 `draft` 不在允许分类内，该标记已在 v0.2 更正）；**主代理已于本次批准本规格**，批准依据即上述独立规格评审的首轮与闭包复评（闭包复评结论 APPROVE），故本规格按 `approved` 分类。实施、Git 写操作与最终验收属后续实施批）。
 
 **Revision:** v0.2（2026-09-21 修订，回应独立规格评审 REVISE）。v0.1 的机制骨架（候选边界 keyset 分批 + 批内折叠 + 事务包裹）经评审确认成立并逐字保留；本轮修订集中于**可编译性**（P1-1 参数绑定、P1-2 `LIMIT ?` 类型）、**证据更正**（P1-3 行数推演与峰值口径、P1-4 夹具归属）、**治理补齐**（P1-5 非目标冻结的显式取代、P1-7 稳定验收项 ID）、**平台事实更正**（P1-6 Android BEGIN 模式与连接持有风险）、以及 P2/P3 的边界与阈值补齐。依据：`docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §2 A-PERF 与 §10.3/§10.4；`docs/specs/2026-09-17-p7-04-a-perf-import-read-governance-design.md`（approved，本规格显式取代其一条非目标）；D-147/D-148（读治理与 A-PERF 证据纪律）；D-158 第 5 条与 D-159（热读增本的实测纪律）；D-166（DECISIONS.md:3186，第 3 条 OOM 缺陷登记、第 5 条承接）；本 worktree 基线 `83f92bf` 上的只读复核（行数/查询计划/分批等价性，见 §2.4 与 §8）。本规格不改动任何既有裁决，只对 D-166 登记的缺陷给出修复设计。
 
@@ -19,7 +19,7 @@
 
 **缺陷事实（D-166 第 3 条登记）**：冷启动/刷新触发 `loadImportReviewRows` 在 61k+ 候选库上 **OutOfMemoryError 两次**（设备时 10:30:27、10:57:40；堆 192 MB 上限，进程死亡）。**产品影响**：61k 库加载即崩 ⇒ §10.3「完整计数」在 61k 规模当前不可达。D-148 读治理未覆盖列表整表物化的内存面：A-PERF 门槛在 ≤30k 尺度测得，61k 尺度超出其证据面（D-166 第 3 条明示）。
 
-### 1.1 范围变更登记（计划 §10.4.1 五要素，P1-5）
+### 1.1 范围变更登记（计划 §10.4.1 五要素，P1-5；治理项 P704OOM-ACC-SUPERSEDE-01）
 
 | 要素 | 内容 |
 | --- | --- |
@@ -71,7 +71,7 @@ executeAsList()          // ① 物化 16.8 万生成行（CursorWindow.getStrin
 - **不做流式物化**：SQLDelight 生成面返回 List，流式需动驱动/生成层，超出本批范围且不必要——keyset 分批已把**单批**峰值降到有界（注意：单批有界 ≠ 全局峰值有界，见 §2.4）。
 - **不改 UI/端口**：`ImportReviewReadPort.loadImportReviewRows` 签名与 `view.rows` 完整结果语义不变。
 
-### 2.2 Ledger.sq：新增命名查询 `importReviewRowsForLedgerPage`
+### 2.2 Ledger.sq：新增命名查询 `importReviewRowsForLedgerPage`（契约项 P704OOM-ACC-SQL-01）
 
 紧邻 `importReviewRowsForLedger`（Ledger.sq:8869）新增只读命名查询：**同一 SELECT 形状**（20 列、JOIN/LEFT JOIN 不变、`ORDER BY candidate.candidate_id, duplicate.candidate_id` 不变），仅 WHERE 增加候选边界限定。
 
@@ -165,7 +165,7 @@ public fun importReviewRowsForLedgerPage(
 
 设计要点：
 
-1. **候选边界 = 正确性核心**：`IN (SELECT candidate_id FROM import_candidate WHERE ledger_id = :page_ledger_id AND candidate_id > :after_candidate_id ORDER BY candidate_id LIMIT :page_size)` 把本批限定为「严格大于 `after_candidate_id`、按 id 升序至多 page_size 个候选」。同一候选的全部行共享同一 `candidate_id`，IN 成员判定对它们一致——**同一候选的行必然全部落入同一批**，批内折叠与整表折叠输入逐字节一致。**该性质已在夹具上实证**：pageSize ∈ {2, 3, 7, 9999, 10000, 10001, 20000, 30500, 61000, 61001} 的分批结果与整表读**逐字节相同**（20 列全量哈希一致，168,000 行，零切分、零丢行），见 §8。
+1. **候选边界 = 正确性核心**：`IN (SELECT candidate_id FROM import_candidate WHERE ledger_id = :page_ledger_id AND candidate_id > :after_candidate_id ORDER BY candidate_id LIMIT :page_size)` 把本批限定为「严格大于 `after_candidate_id`、按 id 升序至多 page_size 个候选」。同一候选的全部行共享同一 `candidate_id`，IN 成员判定对它们一致——**同一候选的行必然全部落入同一批**，批内折叠与整表折叠输入逐字节一致。**该性质已在夹具上实证**：pageSize ∈ {2, 3, 7, 9999, 10000, 10001, 20000, 30500, 61000, 61001} 的分批结果与整表读**哈希一致**（20 列全量，168,000 行，零切分、零丢行），见 §8。
 2. **零 DDL 成立**：`import_candidate` 主键为 `(ledger_id, candidate_id)`（Ledger.sq:7677-7688）——子查询是纯主键范围扫描，外查询候选侧同样走主键前缀。夹具 `EXPLAIN QUERY PLAN` 实测：外查询 `SEARCH candidate USING COVERING INDEX sqlite_autoindex_import_candidate_1 (ledger_id=? AND candidate_id=?)` + 子查询 `SEARCH import_candidate USING COVERING INDEX sqlite_autoindex_import_candidate_1 (ledger_id=? AND candidate_id>?)` + `CREATE BLOOM FILTER`——**无新索引需求**（61k 规模有层0 统计在位，D-148 交付后接治收尾点已 ANALYZE；若设备验证显示计划器退化，按 §10.3 另行取证，不静默改 DDL）。
 3. **参数序**：生成的 Kotlin 调用为 `importReviewRowsForLedgerPage(ledgerId, ledgerId, afterCandidateId, pageSize)`——四个参数按 WHERE 出现序：`ledger_id`、`page_ledger_id`、`after_candidate_id`、`page_size`。**前两个由调用点传同一 `ledgerId.value`**（§4 断言钉死）。
 4. **初始游标与空串失败模式（P3，登记）**：初始 `after_candidate_id = ""`（空串，TEXT BINARY 排序先于一切非空 id）。**失败模式如实登记**：`import_candidate.candidate_id` 在 schema 上只受 `NOT NULL` 约束（Ledger.sq:7679），**允许 `''`**；若某候选 id 恰为空串，它会因 `candidate_id > ''` 永假而**被永久跳过、静默缺席**（既不报错也不出现在任何批）。当前该风险为零：id 由 `UuidV7Generator` 产出（`UuidV7ImportIntakeIdSource.kt:21`），恒为 36 字符小写 8-4-4-4-12 文本，夹具实测 61,000 个 id 全为 36 字符、非 `[0-9a-f-]` 字符 0 个、空串 0 个。**缓解**：实施批在 adapter 入口加一条 `require(afterCandidateId.isNotEmpty() || 首轮)` 形态的显式前置断言不可行（首轮本就是空串），故改为在 §4 新增一条**结构性断言**——对空串 id 候选的库（测试可构造）断言其**不会**被静默丢弃，或明确声明该输入为契约外并 fail-loud。**本条冻结为实施批必须处置的登记项，不得以「id 生成器保证非空」静默带过**（契约依赖属实施假设，见 §6 第 4 项）。
@@ -190,10 +190,11 @@ class SqlDelightImportReviewReadAdapter(
         // ACC-SNAP-01). Each batch is folded INSIDE the transaction body so the raw per-batch
         // lists are released before the next batch is read — that release IS the bounded-memory
         // property this fix exists for (section 2.4). The cost is stated honestly in section
-        // 2.5: the single Android connection stays held across the folds too. readOnly = true
+        // 2.5: the single Android connection stays held across the folds too. noEnclosing = true
         // does not change the BEGIN mode on this driver version; it makes the nesting contract
-        // fail loud instead of silently nesting.
-        return database.transactionWithResult(readOnly = true) {
+        // fail loud instead of silently nesting. (SQLDelight 2.3.2's Transacter.transactionWithResult
+        // names this parameter noEnclosing — there is no `readOnly` parameter.)
+        return database.transactionWithResult(noEnclosing = true) {
             val result = mutableListOf<ImportReviewRow>()
             var afterCandidateId = ""
             while (true) {
@@ -246,7 +247,7 @@ class SqlDelightImportReviewReadAdapter(
 - **未获证明的部分**：该 3.2× 的降幅**是否足以**把峰值压回 192 MB 之下，**本规格不作断言**——v0.1 的「下降一个数量级以上」是无依据的推断，本轮撤回。这必须由 §5 第 1 项的 `dumpsys meminfo` 峰值读数与 ACC-THRESH-01 的数值门槛裁决（P2-6）；若读数显示仍超堆，按 §6 第 1 项下调 pageSize（下调会按上界线性缩小单批 ①②③，但会增加批数与总耗时），或按 §10.3 另行登记裁决。
 - **④ 的大小与修复前完全一致**——这正是「输出不裁剪」的边界：若设备验证显示 ④ 本身在 61k 规模仍超堆，属另一问题（UI 层渲染面），按 §10.3 另行登记裁决，不在本批静默扩大。
 
-### 2.5 事务与连接持有（P1-6 更正）
+### 2.5 事务与连接持有（P1-6 更正，契约项 P704OOM-ACC-TX-01）
 
 **v0.1 的平台断言是错的。** v0.1 称 `database.transactionWithResult { }` 是「SQLDelight DEFERRED 事务」，并据此称「无写锁竞争…与现状单语句读一致」。实测（反编译 2.3.2 驱动 + AOSP 源码）如下：
 
@@ -255,15 +256,15 @@ class SqlDelightImportReviewReadAdapter(
 | **Android** | `AndroidSqliteDriver.newTransaction()` → `SupportSQLiteDatabase.beginTransactionNonExclusive()` | `FrameworkSQLiteDatabase.beginTransactionNonExclusive()` → `SQLiteDatabase.beginTransaction(listener, exclusive = false)` → `SQLiteSession.TRANSACTION_MODE_IMMEDIATE` → **`BEGIN IMMEDIATE;`**（BEGIN 即取 RESERVED 锁） |
 | **Desktop (JDBC)** | `JdbcDriver.newTransaction()` → `ConnectionManager.beginTransaction(connection)` → `Connection.setAutoCommit(false)` | **DEFERRED**（JDBC 不发出 BEGIN IMMEDIATE） |
 
-- **`readOnly` 不选 BEGIN 模式**：`TransacterImpl.transactionWithResult(readOnly)` 的 `readOnly` 只影响**嵌套检查**（`enclosingTransaction != null && readOnly` → 抛 `IllegalStateException("Already in a transaction")`）；它**不**选择 `BEGIN` 模式，也不改变驱动行为。SQLDelight 的 Android 驱动**没有**把 `readOnly` 接到 `beginTransactionReadOnly()`（该方法存在于 androidx 但驱动不调用）。
+- **`noEnclosing` 不选 BEGIN 模式**：`TransacterImpl.transactionWithResult(noEnclosing)` 的 `noEnclosing` 只影响**嵌套检查**（`enclosingTransaction != null && noEnclosing` → 抛 `IllegalStateException("Already in a transaction")`）；它**不**选择 `BEGIN` 模式，也不改变驱动行为。**参数名与字节码证据（可复核）**：SQLDelight 2.3.2 的 `runtime-jvm-2.3.2.jar` 中 `app.cash.sqldelight.TransacterImpl` 与 `app.cash.sqldelight.Transacter` 暴露 `transactionWithResult(boolean, Function1)`，其 Kotlin 类文件元数据里的参数名为 **`noEnclosing`**（该 class 内不存在字符串 `readOnly`）；默认值来自 `Transacter$DefaultImpls.transactionWithResult$default`，为 **`false`**；`TransacterImpl.transactionWithWrapper(boolean, Function1)` 的字节码为 `if (enclosingTransaction != null && flag) throw IllegalStateException("Already in a transaction")`，即该 flag 只做嵌套检查、不选 BEGIN 模式。SQLDelight 的 Android 驱动**没有**调用 androidx 的 `beginTransactionReadOnly()`（该方法存在于 androidx 但驱动不调用）——即该 flag 与 Android 的只读事务入口无关。
 - **本仓库未启用 WAL**：全仓零 `enableWriteAheadLogging` / `journal_mode` 命中；夹具 `PRAGMA journal_mode` 实测为 `delete`。AOSP `SQLiteConnectionPool.setMaxConnectionPoolSizeLocked()`：非 WAL 模式下 `mMaxConnectionPoolSize = 1`——**Android 侧整个应用只有一条连接**。
 - **因此真实风险是连接/锁持有窗口**：把全部 ~7 次查询执行**加上客户端折叠**（v0.1 把 `groupBy/map` 放在事务块**内部**）压在一个 `BEGIN IMMEDIATE` 事务里，是对单条连接与 RESERVED 锁的**严格更长持有**，不是「与现状单语句读一致」。仓库自己的 A-PERF 规格 :48 记录的 D-148 ANR 链正是这一机制：后台读独占单条 Android 连接 → 主线程 `catalogSnapshot()` 等连接 → Input dispatch 超时。
 
 **本规格的处置（三项，均须实施）**：
 
-1. **改 `readOnly = true`**：`database.transactionWithResult(readOnly = true) { … }`。理由——(a) 语义正确：本读纯只读，声明 readOnly 使契约显式，并让**嵌套调用立即 fail-loud**（见下）而不是静默进入；(b) 它与 androidx 的 `beginTransactionReadOnly()` 语义对齐，若未来驱动改用该入口，Android 侧将得到真正的 DEFERRED 只读事务。**必须如实登记**：在 2.3.2 驱动上 `readOnly = true` **不会**把 Android 的 `BEGIN IMMEDIATE` 变成 `BEGIN DEFERRED`——它当前只兑现嵌套检查。该收益是**面向未来的语义对齐**，不是当下的锁模式改善。
+1. **改 `noEnclosing = true`**：`database.transactionWithResult(noEnclosing = true) { … }`。理由——(a) 语义正确：本读纯只读，声明 noEnclosing 使契约显式，并让**嵌套调用立即 fail-loud**（见下）而不是静默进入；(b) 它与 androidx 的 `beginTransactionReadOnly()` 语义对齐，若未来驱动改用该入口，Android 侧将得到真正的 DEFERRED 只读事务。**必须如实登记**：在 2.3.2 驱动上 `noEnclosing = true` **不会**把 Android 的 `BEGIN IMMEDIATE` 变成 `BEGIN DEFERRED`——它当前只兑现嵌套检查。该收益是**面向未来的语义对齐**，不是当下的锁模式改善。
 2. **逐批折叠留在事务内，并如实登记其代价（与 v0.1 的差异说明）**：本规格**保留** v0.1 的「事务内逐批折叠」结构。理由与权衡（**显式说明，不静默选择**）：把折叠移出事务确实能缩短连接持有窗口，但**代价是峰值内存**——移出后必须把所有批的原始列投影列表一并留存到事务提交之后才能折叠（无法在事务内逐批释放），这正是本修复要消除的那类共存结构，且与 §2.4 的收益口径直接冲突。**取舍结论：内存是本批要修的缺陷（D-166 的 OOM），连接持有是次要风险（可观测、可回退）——故优先保内存，保留事务内逐批折叠**。连接持有的代价如实计入 §6 第 2 项的残留风险与 §5 第 4 项的必测项；若设备读数显示连接等待成为实际瓶颈，备选处置是**把折叠移出事务**（接受内存回升）或按 §10.3 另行取证，该选择由 §5 读数裁决，**不得在本规格中预先宣称两者兼得**。
-3. **非嵌套契约**：`loadImportReviewRows` 声明为**不得在既有事务内调用**。`readOnly = true` 使嵌套调用抛出 `IllegalStateException("Already in a transaction")` 而非静默进入。**同时如实登记当前失败模式**：`QueryImportReviewRows.query`（`ledger-application/.../ImportReviewReadPort.kt:232-237`）以 `catch (failure: Exception)` 吞掉一切异常并返回 `ImportReviewRowsResult.Unavailable`——**嵌套抛错会静默降级为 Unavailable**（UI 呈现为读取失败，不是崩溃，也不产生截断列表，故不违反 G6；但它**会掩盖编程错误**）。处置：§4 新增一条断言，覆盖「已在事务内调用 → 不静默返回错误结果」的可观察面；实施批须确认该行为符合预期（fail-loud 与静默 Unavailable 之间选一，不得两种都存在）。
+3. **非嵌套契约**：`loadImportReviewRows` 声明为**不得在既有事务内调用**。`noEnclosing = true` 使嵌套调用抛出 `IllegalStateException("Already in a transaction")` 而非静默进入。**同时如实登记当前失败模式**：`QueryImportReviewRows.query`（`ledger-application/.../ImportReviewReadPort.kt:232-237`）以 `catch (failure: Exception)` 吞掉一切异常并返回 `ImportReviewRowsResult.Unavailable`——**嵌套抛错会静默降级为 Unavailable**（UI 呈现为读取失败，不是崩溃，也不产生截断列表，故不违反 G6；但它**会掩盖编程错误**）。处置：§4 新增一条断言，覆盖「已在事务内调用 → 不静默返回错误结果」的可观察面；实施批须确认该行为符合预期（fail-loud 与静默 Unavailable 之间选一，不得两种都存在）。
 
 ## 3. 语义冻结（逐项说明为何不变）
 
@@ -306,11 +307,11 @@ class SqlDelightImportReviewReadAdapter(
 6. **ACC-T-PAGESIZE-01 退化 pageSize 拒绝（P2-2 新增）**：`pageSize = 0` 与 `pageSize < 0` **两个端点各一条断言**，均须在进入查询前抛出（`IllegalArgumentException`，来自 `require(pageSize >= 1)`）——不得走到 `batch.maxOf {}` 的 `NoSuchElementException`，也不得让负值被 SQLite 读作 `LIMIT` 无限。
 7. **ACC-T-COLLATION-01 排序前提（P2-3 新增）**：构造一个含**补充平面字符**的 candidate_id 的库，断言「Kotlin UTF-16 推进 vs SQLite BINARY 序」的分歧**被观察到**（即该候选在结果中**重复出现**，而不是静默丢失）——把 ACC-SORT-01 声明的失败模式钉成可观察事实，避免未来误以为等价性无条件成立。
 8. **ACC-T-EMPTYID-01 空串候选 id（P3 新增）**：构造一个 `candidate_id = ''` 的候选，断言其**不会静默缺席**（或按 §2.2 第 4 点的决定 fail-loud）。本项的具体判定口径在实施批冻结（见 §6 第 4 项）。
-9. **ACC-T-NESTING-01 非嵌套契约（P1-6 新增）**：在既有事务内调用 `loadImportReviewRows`，断言可观察行为（`readOnly = true` 下为 `IllegalStateException`），并断言 `QueryImportReviewRows.query` 的映射结果与预期一致——使「静默降级为 Unavailable」这一当前失败模式成为**被测试钉死的事实**，而不是未被察觉的行为。
+9. **ACC-T-NESTING-01 非嵌套契约（P1-6 新增）**：在既有事务内调用 `loadImportReviewRows`，断言可观察行为（`noEnclosing = true` 下为 `IllegalStateException`），并断言 `QueryImportReviewRows.query` 的映射结果与预期一致——使「静默降级为 Unavailable」这一当前失败模式成为**被测试钉死的事实**，而不是未被察觉的行为。
 
 ## 5. 设备验证计划（实施后，主代理设备窗口）
 
-前置：**设备当前库**（61,220 候选 / 160,200 重复关系 / 2 交易，schema v31）——P1-4 更正：§5 的对照基线是**设备库现状**，不是夹具文件。夹具 `local/artifacts/p7-05-scale/ledger-61000-v31-backup.db`（61,000 / 158,000 / 2）是**另一份工件**，可作为恢复起点，但恢复后须重新导入至 61,220 才能与 D-166 的 OOM 基线同规模对照（或在报告中显式声明以 61,000 规模复测并给出规模差异说明，沿 D-159 §10.2 差异说明先例）。恢复/铺库至 AVD `ul_p7_d01`（API 36，隔离 adb 端口纪律按 AGENTS.md）。
+前置：**设备当前库**（61,220 候选 / 160,200 重复关系 / 2 交易，schema v31）——P1-4 更正：§5 的对照基线是**设备库现状**，不是夹具文件。**设备库在仓库内没有任何工件**——它只存在于设备上（仅可经设备读取），仓库内唯一落盘的相关工件是夹具文件 `local/artifacts/p7-05-scale/ledger-61000-v31-backup.db`（61,000 / 158,000 / 2）。该夹具是**另一份工件**，可作为恢复起点，但恢复后须重新导入至 61,220 才能与 D-166 的 OOM 基线同规模对照（或在报告中显式声明以 61,000 规模复测并给出规模差异说明，沿 D-159 §10.2 差异说明先例）。恢复/铺库至 AVD `ul_p7_d01`（API 36，隔离 adb 端口纪律按 AGENTS.md）。
 
 1. **ACC-D-OOM-01 OOM 消除复证**：冷启动与「刷新清单」各触发 `loadImportReviewRows`，logcat 全程零 `OutOfMemoryError`/`FATAL`/`ANR`；`dumpsys meminfo` 记录峰值，对照 ACC-THRESH-01 的 **≤160 MB** 阈值与 D-166 的 192 MB 堆死亡基线。
 2. **ACC-D-COUNT-01 完整计数语义复证**：重跑 countProbe 仪器（`ImportScaleTraversalInstrumentedTest`，D-166 交付）——postScroll 读数流程在 61k 库上完整跑通，DB 权威计数与渲染可达；修复前该流程因加载即崩不可达。**本项裁决 ACC-COUNT-01 的语义是否达成，不预先宣布结果**。
@@ -322,11 +323,11 @@ class SqlDelightImportReviewReadAdapter(
 ## 6. 风险与回退
 
 1. **批大小调参**：10,000 为默认（61,000 候选 → 7 批）。若设备峰值内存仍紧，下调（如 5,000 → 14 批；夹具最坏批从 52,000 行降到 27,000 行）摊薄单批物化；若批间固定开销（每批一次查询执行 + 事务内步进）可见，上调。批大小为构造参数 + 常量，**调参属实施内调整**，不改变本规格契约；调参后须重跑 §5 第 1/3 项。
-2. **事务开销与连接持有（P1-6 更正后的诚实陈述）**：Android 侧事务是 `BEGIN IMMEDIATE`（取 RESERVED 锁），且**非 WAL 库的连接池被 AOSP 强制为 1 条连接**。因此本设计的真实代价是：在单条连接的持有窗口内执行 ~7 次查询，而不是 1 次。**处置**：`readOnly = true`（语义对齐 + 嵌套 fail-loud，不改变 BEGIN 模式，§2.5 第 1 点）、非嵌套契约（§2.5 第 3 点）。**未采用的备选与理由**：把折叠移出事务可缩短连接持有，但会把所有批的原始列表留到事务之后才能折叠，直接牺牲 §2.4 的内存收益——本批要修的是内存，故**不采用**（§2.5 第 2 点）。**残留风险如实登记**：连接持有窗口**就是**「~7 次查询 + 逐批折叠」，比现状单语句读长；A-PERF 规格 :48 记录的 D-148 ANR 链（后台读独占连接 → 主线程等连接 → Input dispatch 超时）在本设计下**理论上仍可能被触发**。故 §5 第 4 项为**必测项**；若读数显示等待可观察，按 §2.5 第 2 点登记的备选（把折叠移出事务、接受内存回升）处置，或按 §10.3 另行取证，**不静默改**。
+2. **事务开销与连接持有（P1-6 更正后的诚实陈述）**：Android 侧事务是 `BEGIN IMMEDIATE`（取 RESERVED 锁），且**非 WAL 库的连接池被 AOSP 强制为 1 条连接**。因此本设计的真实代价是：在单条连接的持有窗口内执行 ~7 次查询，而不是 1 次。**处置**：`noEnclosing = true`（语义对齐 + 嵌套 fail-loud，不改变 BEGIN 模式，§2.5 第 1 点）、非嵌套契约（§2.5 第 3 点）。**未采用的备选与理由**：把折叠移出事务可缩短连接持有，但会把所有批的原始列表留到事务之后才能折叠，直接牺牲 §2.4 的内存收益——本批要修的是内存，故**不采用**（§2.5 第 2 点）。**残留风险如实登记**：连接持有窗口**就是**「~7 次查询 + 逐批折叠」，比现状单语句读长；A-PERF 规格 :48 记录的 D-148 ANR 链（后台读独占连接 → 主线程等连接 → Input dispatch 超时）在本设计下**理论上仍可能被触发**。故 §5 第 4 项为**必测项**；若读数显示等待可观察，按 §2.5 第 2 点登记的备选（把折叠移出事务、接受内存回升）处置，或按 §10.3 另行取证，**不静默改**。
 3. **与 D-148 裁决的关系（诚实边界）**：本设计**不推翻** D-148「列表读本体保留整账本读」及其 20k 库 0.24s 测量（耗时口径）；修订的是「无需分页」在 **61k 内存面**的推论——D-166 第 3 条已登记 D-148 未覆盖整表物化内存面、A-PERF 门槛在 ≤30k 尺度测得。取代该非目标的显式登记见 §1.1。20k 库上分批与整表读语义等价（单/双批即完成），不构成对既有裁决的偏离；本设计是 D-166 第 5 条承接的**修复路线**（相对「规模口径裁决」路线）。
 4. **实施假设登记（契约依赖，须在实施批复核）**：(a) 初始 `after_candidate_id = ""` 依赖 `candidate_id` 非空契约——schema 只保证 `NOT NULL`（允许 `''`），当前由 UUIDv7 生成器保证 36 字符 ASCII；空串 id 的失败模式与处置见 §2.2 第 4 点与 ACC-T-EMPTYID-01。(b) keyset 推进依赖「candidate_id 字符集限于 BMP」以使 Kotlin UTF-16 序与 SQLite BINARY 序一致——当前 UUIDv7 ASCII 满足；失败模式与断言见 ACC-SORT-01 与 ACC-T-COLLATION-01。(c) `LIMIT :page_size` 的参数类型为 `Long`，本仓首次使用（§2.2 P1-2）。若未来 id 生成器变更任一契约，须复核本设计——登记为实施假设，不构成当前风险。
 5. **回退**：改动面 = Ledger.sq 新增一个只读命名查询 + adapter 单函数改造 + 一个 `toColumns` 加性重载 + 新增 jvmTest。回退 = 还原 `loadImportReviewRows` 至整表读并移除命名查询（或保留查询不接线）；零 schema/迁移/依赖影响，回退面与风险面一致。
-6. **状态分类（P3）**：本规格状态标记由 v0.1 的 `draft` 更正为 `proposal`（CONTRIBUTING.md:162 的允许分类为 `approved`/`proposal`/`superseded`/`historical`，`draft` 不在其中）。本规格**尚未获批**，故不能标 `approved`；标 `proposal` 即如实表达「待评审批准」。评审通过并由主代理批准后，本规格升为 `approved`，届时 §1.1 的取代记录随之对 A-PERF approved 规格生效。
+6. **状态分类（P3）**：本规格状态标记由 v0.1 的 `draft` 更正为 v0.2 的 `proposal`，现已升为 `approved`（CONTRIBUTING.md:162 的允许分类为 `approved`/`proposal`/`superseded`/`historical`，`draft` 不在其中）。**批准依据**：独立规格评审的首轮评审（结论 REVISE，机制 sound）通过后提交修订版 v0.2，针对修订版 `9c43787` 的独立闭包复评给出结论 **APPROVE**（C1–C4 全部闭合、无新 P1/P2）；主代理据此于本次批准本规格，故本规格标 `approved`。本规格既已获批，§1.1 的取代记录（P704OOM-ACC-SUPERSEDE-01）随之对 A-PERF approved 规格生效；实施、Git 写操作与最终验收属后续实施批。
 
 ## 7. 验收项索引（稳定 ID，P1-7 新增）
 
@@ -346,7 +347,7 @@ class SqlDelightImportReviewReadAdapter(
 | P704OOM-ACC-THRESH-01 | 冻结 | 数值阈值：峰值堆 ≤160 MB、列表可操作 ≤3 s、零 ANR/OOM/FATAL | §3.1 |
 | P704OOM-ACC-SQL-01 | 契约 | SQL 四参数命名绑定与生成签名（`ledger_id`/`page_ledger_id`/`after_candidate_id`/`page_size: Long`） | §2.2 |
 | P704OOM-ACC-SUPERSEDE-01 | 治理 | A-PERF approved 规格 :66/:84「不改分页」的显式取代（五要素） | §1.1 |
-| P704OOM-ACC-TX-01 | 契约 | `readOnly = true`（不改 BEGIN 模式）、逐批折叠留事务内及其代价登记、非嵌套契约 | §2.5 |
+| P704OOM-ACC-TX-01 | 契约 | `noEnclosing = true`（不改 BEGIN 模式）、逐批折叠留事务内及其代价登记、非嵌套契约 | §2.5 |
 | P704OOM-T-BATCH-01 | JVM | 分批与整表逐行全量等价（小 pageSize） | §4 第 1 项 |
 | P704OOM-T-BOUNDARY-01 | JVM | 页边界候选完整性 | §4 第 2 项 |
 | P704OOM-T-PARAM-01 | JVM | 批大小端点（1 / 整库） | §4 第 3 项 |
