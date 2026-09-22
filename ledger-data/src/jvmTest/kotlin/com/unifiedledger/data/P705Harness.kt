@@ -1,5 +1,6 @@
 package com.unifiedledger.data
 
+import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.CatalogAdmissionReader
 import com.unifiedledger.application.ConfirmationId
@@ -266,6 +267,189 @@ internal class P705Database private constructor(
     fun driverExecute(sql: String) {
         driver.execute(null, sql, 0)
     }
+
+    /**
+     * Environment identity for a timed reading artifact (D-158 section 5), so a printed reading is
+     * self-identifying. The SQLite engine version is read from the live connection rather than
+     * hardcoded, so it cannot drift from the bundled driver. Only non-personal environment facts are
+     * reported (engine, driver, JVM, OS); no host name, user name, or local path is included.
+     */
+    fun environmentIdentity(): List<String> {
+        val sqlDelightDriver = JdbcSqliteDriver::class.java
+        val xerialDriver =
+            java.sql.DriverManager.getDrivers().toList().firstOrNull { it.javaClass.name.startsWith("org.sqlite") }
+        return listOf(
+            "sqlite-version=${ledgerQueryText("SELECT sqlite_version()")}",
+            "jdbc-driver=${driverIdentity(sqlDelightDriver)}",
+            "sqlite-jdbc=${xerialDriver?.let { driverIdentity(it.javaClass) } ?: "org.sqlite.JDBC not registered"}",
+            "jvm=${System.getProperty("java.vm.name")} ${System.getProperty("java.version")}",
+            "os=${System.getProperty("os.name")} ${System.getProperty("os.version")} ${System.getProperty("os.arch")}",
+        )
+    }
+
+    private fun driverIdentity(clazz: Class<*>): String {
+        val version = clazz.getPackage()?.implementationVersion
+        if (version != null) return "${clazz.name} $version"
+        // Fall back to the artifact file name only (never the path), so a jar whose manifest carries
+        // no Implementation-Version still identifies itself without leaking a local absolute path.
+        val artifact =
+            clazz.protectionDomain
+                ?.codeSource
+                ?.location
+                ?.path
+                ?.substringAfterLast('/')
+                ?.substringAfterLast('\\')
+                ?.takeIf { it.isNotEmpty() }
+        return "${clazz.name} ${artifact ?: "version-unknown"}"
+    }
+
+    /**
+     * A scale fixture of [count] ordinary two-leg chains, written as multi-row INSERTs inside one
+     * transaction (D-158 section 5).
+     *
+     * Why this exists instead of a loop of [insertOrdinaryExpense]/[insertOrdinaryIncome]: those ride
+     * the generated queries, and SQLDelight's JDBC driver prepares a fresh statement on every
+     * `execute` call. Against this schema (502 triggers, 449 indexes) a fresh prepare of one simple
+     * INSERT costs about 5 ms on a file-backed database, while re-executing an already-prepared
+     * statement costs about 0.01 ms. Measured standalone with the bundled driver (SQLite 3.51.3):
+     * 20,000 single-row INSERTs, each a fresh prepare and auto-commit, take 111 s, so the per-query
+     * path's 6 statements per chain (120,000 statements) would take roughly ten minutes. The fixture
+     * build is not what D-158 section 5 measures, so it must not dominate the reading. Through this
+     * method the same 120,000 rows build in about 2.0 s in-suite (the `build-ms` figure the test
+     * prints); that in-suite figure is the honest one to quote, because the trigger and index count
+     * above, not the row count, is what makes the writes expensive.
+     *
+     * The rows are column-for-column what [insertOrdinary] writes for the same chain, including the
+     * id suffixes, the leg order (category leg first for an expense, funding leg first for an income)
+     * and the ledger-sign convention; only the statement batching differs. The equivalence is pinned
+     * by a test rather than asserted here, so the two writers cannot drift silently.
+     *
+     * [note] receives the 0-based ordinal and returns the note to store, so a caller can vary the
+     * note without this method knowing the fixture's naming scheme.
+     */
+    fun insertOrdinaryBulk(
+        count: Int,
+        note: (Int) -> String? = { null },
+        amountMinor: (Int) -> Long = { 1_000L + it % 97 * 137L },
+        statisticsAt: (Int) -> Instant = { P705Fixture.marchStatistics },
+    ) {
+        require(count >= 0) { "bulk fixture count must not be negative" }
+        if (count == 0) return
+        database.transaction {
+            bulkInsert(
+                count = count,
+                table = "ledger_transaction",
+                columns = "(transaction_id, ledger_id, kind, canonical_kind)",
+                row = { index ->
+                    val kind = if (index % 2 == 0) TransactionKind.EXPENSE else TransactionKind.INCOME
+                    "('${transactionId(index)}', '${P705Fixture.ledgerId.value}', '${kind.name}', NULL)"
+                },
+            )
+            bulkInsert(
+                count = count,
+                table = "posting_set",
+                columns = "(posting_set_id, ledger_id)",
+                row = { index -> "('${postingSetId(index)}', '${P705Fixture.ledgerId.value}')" },
+            )
+            bulkInsert(
+                count = count,
+                table = "transaction_version",
+                columns = "(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note)",
+                row = { index ->
+                    val instant = statisticsAt(index).toString()
+                    "('${versionId(index)}', '${transactionId(index)}', '${P705Fixture.ledgerId.value}', 1, " +
+                        "'${postingSetId(index)}', '$instant', '$instant', '$instant', ${literal(note(index))})"
+                },
+            )
+            bulkInsert(
+                count = count * POSTINGS_PER_CHAIN,
+                table = "posting",
+                columns = "(posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision)",
+                row = { postingOrdinal ->
+                    val index = postingOrdinal / POSTINGS_PER_CHAIN
+                    val leg = postingOrdinal % POSTINGS_PER_CHAIN
+                    val amount = amountMinor(index)
+                    val expense = index % 2 == 0
+                    // Leg 0 is the category leg for an expense and the funding leg for an income;
+                    // the second leg carries the opposite sign, so every chain nets to zero.
+                    val (account, signedAmount) =
+                        when {
+                            expense && leg == 0 -> P705Fixture.expenseAccount to amount
+                            expense -> P705Fixture.bankA to -amount
+                            leg == 0 -> P705Fixture.bankA to amount
+                            else -> P705Fixture.incomeAccount to -amount
+                        }
+                    "('${postingId(index, leg)}', '${postingSetId(index)}', '${P705Fixture.ledgerId.value}', $leg, " +
+                        "'${account.value}', $signedAmount, '${P705Fixture.cny.code}', ${P705Fixture.cny.precision})"
+                },
+            )
+            bulkInsert(
+                count = count,
+                table = "ledger_transaction_current_version",
+                columns = "(transaction_id, ledger_id, current_version_id)",
+                row = { index ->
+                    "('${transactionId(index)}', '${P705Fixture.ledgerId.value}', '${versionId(index)}')"
+                },
+            )
+        }
+    }
+
+    /** The transaction id [insertOrdinaryBulk] mints for one ordinal. */
+    fun bulkTransactionId(index: Int): String = transactionId(index)
+
+    private fun bulkInsert(
+        count: Int,
+        table: String,
+        columns: String,
+        row: (Int) -> String,
+    ) {
+        var start = 0
+        while (start < count) {
+            val end = minOf(start + BULK_CHUNK, count)
+            driverExecute(
+                "INSERT INTO $table $columns VALUES " + (start until end).joinToString(", ") { row(it) },
+            )
+            start = end
+        }
+    }
+
+    private fun transactionId(index: Int): String = "tx-${(index + 1).toString().padStart(5, '0')}"
+
+    private fun postingSetId(index: Int): String = "${transactionId(index)}-posting-set-1"
+
+    private fun versionId(index: Int): String = "${transactionId(index)}-version-1"
+
+    private fun postingId(
+        index: Int,
+        leg: Int,
+    ): String = "${transactionId(index)}-posting-$leg"
+
+    /** A SQL string literal, or `NULL` for an absent optional value. */
+    private fun literal(value: String?): String = if (value == null) "NULL" else "'${value.replace("'", "''")}'"
+
+    /**
+     * Direct driver query with a caller-driven cursor mapper and one bound parameter (the ledger
+     * id at index 0). The D-158 section 5 ablation side needs this surface: the ablation must read
+     * the same projection the generated query reads, so it cannot ride the single-column
+     * [ledgerQueryTexts]/[ledgerQueryLongs] helpers.
+     */
+    fun <T> driverQuery(
+        sql: String,
+        ledgerId: String,
+        mapper: (SqlCursor) -> T,
+    ): T =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(mapper(cursor))
+                },
+                1,
+            ) {
+                bindString(0, ledgerId)
+            }.value
 
     /** A raw fact insert bypassing the commit port, so the database guards are exercised. */
     fun insertRawVoidFact(
@@ -546,6 +730,17 @@ internal class P705Database private constructor(
 
         /** A second connection to a database created by [create] (concurrency vectors). */
         fun open(path: Path): P705Database = P705Database(path, ownsFile = false)
+
+        /** Legs per ordinary chain: the category leg and the funding leg. */
+        const val POSTINGS_PER_CHAIN = 2
+
+        /**
+         * Rows per multi-row INSERT in [insertOrdinaryBulk]. Well under SQLite's default
+         * `SQLITE_MAX_VARIABLE_NUMBER` for the widest row shape here (9 bound-free literals), and
+         * large enough that the per-statement prepare cost stops dominating: 500-row chunks build
+         * the 20k fixture in well under a second.
+         */
+        const val BULK_CHUNK = 500
     }
 
     /** The owned file path, so a test can open a second connection for a concurrency vector. */
