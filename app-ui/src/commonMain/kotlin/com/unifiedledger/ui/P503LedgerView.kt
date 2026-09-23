@@ -33,6 +33,7 @@ import com.unifiedledger.application.MonthlyCategoryCurrencyTotal
 import com.unifiedledger.application.MonthlyCategoryTotal
 import com.unifiedledger.application.MonthlyTrend
 import com.unifiedledger.application.P408ReconciliationStatus
+import com.unifiedledger.application.TransactionDetail
 import com.unifiedledger.application.TransactionDetailResult
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
@@ -335,13 +336,22 @@ internal fun P503MonthlyTrendRegion(
  * (R-Q06-1), amount legs with account names, exact signed amounts, currencies and category
  * current names (absent mapping = 无分类， never a failure, P703SPEC-09), the creation entry
  * (导入创建/手工创建/来源未标注， never guessed) and the read-only multi-leg reconciliation
- * projection with the frozen rollup (R-Q07-4; ineligible legs show 无对账资格). Zero edit
- * entries; the back affordance rides the shared back channel.
+ * projection with the frozen rollup (R-Q07-4; ineligible legs show 无对账资格). The back
+ * affordance rides the shared back channel.
+ *
+ * P7-05.B/C (D-156; spec section 3.5): the page gains 编辑 and 作废 entries, rendered ONLY for a
+ * supported, effective transaction ([detailCorrectionAffordancesVisible]). The entries are new
+ * nullable parameters: the host passes [onEditTransaction] with the host-resolved old-value
+ * snapshot and [onVoidTransaction] with the target's current version, and an absent callback (or
+ * a supported kind the host did not resolve) renders no affordance at all. The rest of the page
+ * stays read-only.
  */
 @Composable
 internal fun P503TransactionDetailScreen(
     detail: TransactionDetailResult,
     onClose: (() -> Unit)?,
+    onEditTransaction: ((TransactionDetail) -> Unit)? = null,
+    onVoidTransaction: ((TransactionDetail) -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -361,6 +371,34 @@ internal fun P503TransactionDetailScreen(
                 Text("统计时间：${data.statisticsAt}", style = MaterialTheme.typography.bodyMedium)
                 Text("备注：${data.note ?: "无"}", style = MaterialTheme.typography.bodyMedium)
                 Text("创建入口：${data.creationEntry.label}", style = MaterialTheme.typography.bodyMedium)
+                // P7-05: the correction/void entries. The detail read path only returns effective
+                // transactions (spec section 3.6 #3), so `isEffective = true` is the read
+                // invariant echoed here; the support matrix — kind AND the payload's authoritative
+                // creation lineage (import-created is a later slice, DP-5) — and the host callbacks
+                // gate the rest. The lineage line is rendered just above, so the gate consumes the
+                // same value the user sees rather than re-deriving it.
+                val affordances =
+                    detailCorrectionAffordancesVisible(
+                        kind = data.kind,
+                        creationEntry = data.creationEntry,
+                        isEffective = true,
+                        hasCorrectionOrigin = onEditTransaction != null,
+                        hasVoidTarget = onVoidTransaction != null,
+                    )
+                if (affordances.any) {
+                    Spacer(Modifier.height(8.dp))
+                    Row {
+                        if (affordances.edit) {
+                            OutlinedButton(onClick = { onEditTransaction?.invoke(data) }) { Text("编辑") }
+                        }
+                        if (affordances.edit && affordances.void) {
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        if (affordances.void) {
+                            OutlinedButton(onClick = { onVoidTransaction?.invoke(data) }) { Text("作废") }
+                        }
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
                 Text("金额明细", style = MaterialTheme.typography.titleMedium)
                 data.legs.forEach { leg ->

@@ -12,6 +12,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
@@ -47,6 +48,14 @@ import kotlinx.datetime.YearMonth
  * live clicks the reducer would absorb. G1: with [monthlyReloadRequired] the flow list falls back
  * to the fresh [LedgerCurrentState.transactions] projection instead of presenting the previous
  * cycle's [entryRows] as the current list (R-Q06-4).
+ *
+ * P7-05.C (D-156; spec sections 3.4/4.4): the recycle bin is a ledger-scoped surface, so its entry
+ * affordance lives on the HOME overview — the natural existing home for ledger-wide navigation.
+ * This is the deliberate entry-point choice: the bin is ledger-wide (it lists every voided
+ * transaction, not one row's context), and DP-12 restricts only the correction/void/restore entries
+ * to the detail page (列表行保持只导航), never the bin. [onOpenRecycleBin] is optional: when the
+ * composition root passes it the overview offers the 回收站 entry, and when it is absent (this piece
+ * does not wire the host) no affordance is rendered.
  */
 @Composable
 fun P503OverviewScreen(
@@ -61,6 +70,7 @@ fun P503OverviewScreen(
     onSelectTransaction: (TransactionId) -> Unit = {},
     onSelectMonth: (YearMonth) -> Unit = {},
     interactionsEnabled: Boolean = true,
+    onOpenRecycleBin: (() -> Unit)? = null,
 ) {
     // G1 (R-Q06-4): a not-loaded monthly cycle must not present the previous cycle's flow rows as
     // the current list, so the fresh authoritative current-state projection is rendered instead.
@@ -70,6 +80,11 @@ fun P503OverviewScreen(
     ) {
         Text("账本：${state.ledgerId.value}", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(8.dp))
+        // P7-05.C: the ledger-wide recycle-bin entry, offered only when the host wires it.
+        if (onOpenRecycleBin != null) {
+            TextButton(onClick = onOpenRecycleBin) { Text("回收站") }
+            Spacer(Modifier.height(4.dp))
+        }
         if (showMonthlyRegion) {
             P503MonthCard(
                 activity = monthlyActivity,

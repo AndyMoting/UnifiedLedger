@@ -86,6 +86,7 @@ import com.unifiedledger.application.ManualTransferSubmissionResult
 import com.unifiedledger.application.MonthlyBuckets
 import com.unifiedledger.application.MonthlyTrend
 import com.unifiedledger.application.ParseManualExpenseAmount
+import com.unifiedledger.application.RecycleBinResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.application.TransferDraft
@@ -1786,6 +1787,11 @@ fun P503App(
                                 entryRows = ledgerEntryRows,
                                 onSelectTransaction = ::selectTransaction,
                                 onSelectMonth = ::selectMonth,
+                                // P7-05.C (D-156; slice 1b Piece 3): the recycle-bin entry is
+                                // rendered only when the host wires this callback; the bin read
+                                // and the open event are Piece 4 host call sites, so no entry is
+                                // offered yet (the screen renders none rather than a dead button).
+                                onOpenRecycleBin = null,
                             )
                         P503Tab.ACCOUNTS ->
                             P503CatalogManagementScreen(
@@ -1845,6 +1851,14 @@ fun P503App(
                     detail = current.detail,
                     // Back = CloseTransactionDetail semantics (tab/month preserved, C03).
                     onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                    // P7-05 (D-156; spec section 3.5): the correction/void entries. This piece
+                    // (slice 1b Piece 3) renders the affordances and the screens; the host call
+                    // sites that resolve the old-value snapshot and open the surfaces are Piece 4,
+                    // so no entry callback is wired here yet and the detail page renders no dead
+                    // button. The gate itself (support matrix + effective + a resolved origin) is
+                    // already exercised by the presentation tests.
+                    onEditTransaction = null,
+                    onVoidTransaction = null,
                 )
             // P7-04.C: the import candidate detail (spec sections 6.1/6.2). The catalog options
             // are the same authoritative projections the entry flow consumes (D-143 同源).
@@ -1921,15 +1935,54 @@ fun P503App(
                     onAbandon = ::abandonImportBatch,
                     onCheckUnknownItem = ::checkImportUnknownItem,
                 )
-            // P7-05 (D-156; slice 1b Piece 2): the correction/void/recycle-bin states carry the
-            // complete state/event/reducer machine, but their screens and host wiring are the
-            // later pieces (Piece 3 screens / Piece 4 host call sites). Until then these states
-            // are unreachable (no affordance opens them), so the render arms stay neutral and
-            // reuse the existing in-flight placeholder — no new screen is introduced here.
-            is P503AppState.TransactionEdit,
-            is P503AppState.VoidConfirm,
-            is P503AppState.RecycleBin,
-            -> P503SubmittingScreen()
+            // P7-05 (D-156; slice 1b Piece 3): the correction/void/recycle-bin screens. The screens take
+            // callbacks; this piece wires only the pure navigation/draft events the state machine
+            // already owns (form writes, the preview request, opening the nested restore page, the
+            // back channel). The host call sites that run the use cases (the correction/void/restore
+            // commits and the recycle-bin read) are Piece 4, so the commit callbacks stay `null` and
+            // the confirm affordances render disabled rather than dead.
+            is P503AppState.TransactionEdit ->
+                P503TransactionEditScreen(
+                    state = current,
+                    currency = facade.currency,
+                    categoryNames = cachedCatalogSnapshot?.correctionCategoryNames() ?: emptyMap(),
+                    accountNames = cachedCatalogSnapshot?.correctionAccountNames() ?: emptyMap(),
+                    categoryOptions =
+                        cachedCatalogSnapshot?.let { correctionCategoryOptions(it, current.origin.categoryId) } ?: emptyList(),
+                    accountOptions = cachedCatalogSnapshot?.let { correctionAccountOptions(it) } ?: emptyList(),
+                    onUpdateField = { update -> dispatch(P503UiEvent.UpdateTransactionCorrectionField(update)) },
+                    onPreview = { dispatch(P503UiEvent.PreviewTransactionEdit) },
+                    onConfirm = null,
+                    onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                )
+            is P503AppState.VoidConfirm ->
+                P503VoidConfirmScreen(
+                    state = current,
+                    onUpdateReason = { update -> dispatch(P503UiEvent.UpdateVoidReasonField(update)) },
+                    onConfirm = null,
+                    onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                )
+            is P503AppState.RecycleBin -> {
+                val restore = current.restore
+                if (restore == null) {
+                    P503RecycleBinScreen(
+                        state = current,
+                        onOpenRestore = { transactionId -> dispatch(P503UiEvent.OpenRestoreConfirm(transactionId)) },
+                        onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                    )
+                } else {
+                    // The nested restore page shows the catalog revalidation result the bin row
+                    // already carries (spec section 4.4); the rows are the query's frozen order.
+                    val row = (current.rows as? RecycleBinResult.Success)?.rows?.firstOrNull { it.voided.transactionId == restore.transactionId }
+                    P503RestoreConfirmScreen(
+                        restore = restore,
+                        row = row,
+                        onUpdateReason = { update -> dispatch(P503UiEvent.UpdateRestoreReasonField(update)) },
+                        onConfirm = null,
+                        onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.CloseRestoreConfirm) },
+                    )
+                }
+            }
             is P503AppState.Editing ->
                 P503EditScreen(
                     draft = current.draft,
