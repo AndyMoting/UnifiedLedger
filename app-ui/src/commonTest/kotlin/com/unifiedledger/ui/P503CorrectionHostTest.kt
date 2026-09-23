@@ -6,6 +6,7 @@ import com.unifiedledger.application.ConfirmationId
 import com.unifiedledger.application.CorrectTransactionVersionResult
 import com.unifiedledger.application.CreationEntry
 import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.ManageableAccountView
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
@@ -34,6 +35,7 @@ import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionVersionId
 import com.unifiedledger.domain.TransactionVoidFactKind
+import com.unifiedledger.domain.VoidReason
 import com.unifiedledger.domain.VoidReasonCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -50,7 +52,9 @@ import kotlin.time.Instant
  * the detail-plus-catalog old-value origin resolution (including the transaction's own currency,
  * the Piece 3 residual), the correction/void request builders, the snapshot-aware unknown-commit
  * resolution mapping, and the single success gate of the P7-05 refresh chain. All data is anonymous
- * synthetic; V-21: no reason note is ever printed in a failure message.
+ * synthetic; this suite asserts on synthetic note literals in value equality checks only, and it
+ * does not pass a note as an assertion message argument. V-21's frozen product constraint is that
+ * the reason note must not enter product logs or test failure messages.
  */
 class P503CorrectionHostTest {
     private val ledgerId = LedgerId("ledger-local-test")
@@ -231,8 +235,8 @@ class P503CorrectionHostTest {
     fun voidReasonFromDraftIsAbsentWithoutACodeAndKeepsTheNoteVerbatim() {
         assertNull(voidReasonFromDraft(VoidReasonDraft(note = "ignored")))
         val reason = assertNotNull(voidReasonFromDraft(VoidReasonDraft(code = VoidReasonCode.MIS_ENTERED, note = "笔误")))
-        assertEquals(VoidReasonCode.MIS_ENTERED, reason.code)
-        assertEquals("笔误", reason.note)
+        // The draft note survives the mapping verbatim (value equality, the repo precedent).
+        assertEquals(VoidReason(VoidReasonCode.MIS_ENTERED, "笔误"), reason)
         // An empty draft note is the absent representation.
         assertNull(assertNotNull(voidReasonFromDraft(VoidReasonDraft(code = VoidReasonCode.OTHER))).note)
     }
@@ -314,6 +318,95 @@ class P503CorrectionHostTest {
             ),
         )
         assertTrue(!shouldRefreshAfterP705Commit(VoidTransactionResult.Rejected(P705FailureCode.P705_VOID_CYCLE_EXHAUSTED)))
+    }
+
+    // ---- the CALL-SITE gate: the decision is exercised, not only its predicate (Piece 4 review
+    // finding 1). A determinate success calls the coordinator trigger exactly once (one refresh +
+    // the shared post-landing monthly arm); every non-success calls nothing.
+
+    private class RefreshProbe {
+        var refreshes = 0
+        var monthlyRequests = 0
+    }
+
+    private fun coordinatorWithProbe(probe: RefreshProbe): P503HostCoordinator =
+        P503HostCoordinator(
+            onRefresh = { probe.refreshes += 1 },
+            onSubmit = { _, _ -> },
+            onCheck = { _, _ -> },
+            onMonthlyRequest = { probe.monthlyRequests += 1 },
+        )
+
+    private fun overview(): P503AppState.OverviewEmpty = P503AppState.OverviewEmpty(LedgerCurrentState(ledgerId, transactions = emptyList(), balances = emptyList()))
+
+    @Test
+    fun aDeterminateCorrectionSuccessFiresTheRefreshAndArmsTheMonthlyReRequestThroughTheCallSite() {
+        val probe = RefreshProbe()
+        val coordinator = coordinatorWithProbe(probe)
+        refreshAfterP705Commit(CorrectTransactionVersionResult.Created(correctionReceipt()), coordinator)
+        assertEquals(1, probe.refreshes)
+        // The arm is the shared post-landing monthly re-request: one unconditional request once the
+        // refreshed overview lands, and none synchronously beside the refresh.
+        assertEquals(0, probe.monthlyRequests)
+        coordinator.consumeMonthlyReRequestAfterRefresh(overview())
+        assertEquals(1, probe.monthlyRequests)
+    }
+
+    @Test
+    fun aDeterminateVoidOrRestoreSuccessFiresTheRefreshThroughTheCallSite() {
+        val probe = RefreshProbe()
+        val coordinator = coordinatorWithProbe(probe)
+        refreshAfterP705Commit(VoidTransactionResult.Created(voidReceipt()), coordinator)
+        refreshAfterP705Commit(VoidTransactionResult.NoChange(voidReceipt()), coordinator)
+        assertEquals(2, probe.refreshes)
+        coordinator.consumeMonthlyReRequestAfterRefresh(overview())
+        assertEquals(1, probe.monthlyRequests)
+    }
+
+    @Test
+    fun aRejectedStaleOrConflictCorrectionCallsNothingThroughTheCallSite() {
+        val probe = RefreshProbe()
+        val coordinator = coordinatorWithProbe(probe)
+        refreshAfterP705Commit(CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED), coordinator)
+        refreshAfterP705Commit(CorrectTransactionVersionResult.StaleCurrentVersion, coordinator)
+        refreshAfterP705Commit(
+            CorrectTransactionVersionResult.RequestIdentityConflict(TransactionCorrectionRequestIdentity(ledgerId, RequestId("request-1"))),
+            coordinator,
+        )
+        assertEquals(0, probe.refreshes)
+        // No refresh was fired, so no monthly arm was left behind either.
+        coordinator.consumeMonthlyReRequestAfterRefresh(overview())
+        assertEquals(0, probe.monthlyRequests)
+    }
+
+    @Test
+    fun aRejectedVoidOrRestoreCallsNothingThroughTheCallSite() {
+        val probe = RefreshProbe()
+        val coordinator = coordinatorWithProbe(probe)
+        refreshAfterP705Commit(VoidTransactionResult.Rejected(P705FailureCode.P705_REFUND_LINKED_VOID_NOT_SUPPORTED), coordinator)
+        refreshAfterP705Commit(VoidTransactionResult.Rejected(P705FailureCode.P705_VOID_CYCLE_EXHAUSTED), coordinator)
+        assertEquals(0, probe.refreshes)
+        // An unresolved commit produces no result at all (the host's resolver returns null), so the
+        // call site is never reached: assert the resolver mapping stays the unknown sentinel.
+        assertNull(voidResultFromResolution(TransactionVoidRequestIdentity(ledgerId, RequestId("request-1")), TransactionVoidCommitResolution.Absent))
+        assertNull(correctResultFromResolution(TransactionCorrectionRequestIdentity(ledgerId, RequestId("request-1")), TransactionCorrectionCommitResolution.Unavailable))
+    }
+
+    // ---- the recycle-bin open/re-read landing path (spec section 3.4/4.4) ----
+
+    @Test
+    fun theBinReadOpensOnTheEffectiveSurfaceAndRefreshesInPlaceWhenAlreadyOpen() {
+        val success = RecycleBinResult.Success(emptyList())
+        // First open: the fresh projection opens the bin (its entry affordance is on the effective
+        // surfaces, so the current state is not yet RecycleBin).
+        assertIs<P503UiEvent.OpenRecycleBin>(recycleBinReadEvent(alreadyOpen = false, result = success))
+        // A re-read while the bin is already the open surface refreshes the list in place instead of
+        // re-opening it (no second source of truth; the restore effect is visible on the next read).
+        assertIs<P503UiEvent.RecycleBinResult>(recycleBinReadEvent(alreadyOpen = true, result = success))
+        // A failed read still follows the same landing branch: the failure copy reaches whichever
+        // surface is current.
+        assertIs<P503UiEvent.OpenRecycleBin>(recycleBinReadEvent(alreadyOpen = false, result = RecycleBinResult.Unavailable))
+        assertIs<P503UiEvent.RecycleBinResult>(recycleBinReadEvent(alreadyOpen = true, result = RecycleBinResult.Unavailable))
     }
 
     // ---- a bin read projection fixture sanity check (the open/re-read path) ----

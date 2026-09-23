@@ -133,6 +133,7 @@ internal class P705Database private constructor(
     private val ownsFile: Boolean,
 ) : AutoCloseable {
     private val driver = JdbcSqliteDriver("jdbc:sqlite:${path.absolutePathString()}")
+    private var driverClosed = false
     val database: LedgerDatabase
     val readAdapter: SqlDelightLedgerCurrentStateReadAdapter
     val correctionPort: SqlDelightTransactionCorrectionCommitPort
@@ -148,8 +149,35 @@ internal class P705Database private constructor(
     }
 
     override fun close() {
-        driver.close()
+        closeDriver()
         if (ownsFile) Files.deleteIfExists(path)
+    }
+
+    /**
+     * Test-only: close the connection while KEEPING the file, so a test can reopen the same path on a
+     * fresh connection ([P705Database.open]) and assert a real close/reopen rather than a second
+     * concurrent connection. The owner's [close] still deletes the file afterwards.
+     *
+     * The close must be genuine. For a file-backed url, SQLDelight 2.3.2's `JdbcSqliteDriver`
+     * delegates `close()` to `ThreadedConnectionManager.close()`, which is an empty method, and its
+     * `closeConnection` drops the thread-local handle so the next query silently reopens a fresh
+     * connection. This method therefore closes the underlying JDBC connection directly, leaving the
+     * driver's thread-local pointing at the now-closed connection: the FIRST read after this close
+     * fails (the probe the V-16 reopen test performs), and that failing read's cleanup clears the
+     * driver's thread-local, so a subsequent read would reconnect transparently on a fresh
+     * connection. The single failing probe is what lets the V-16 reopen test prove it is not reading
+     * through the original connection.
+     */
+    fun closePreservingFile() {
+        if (driverClosed) return
+        driverClosed = true
+        driver.getConnection().close()
+    }
+
+    private fun closeDriver() {
+        if (driverClosed) return
+        driverClosed = true
+        driver.close()
     }
 
     fun ledgerQueryCount(sql: String): Long =

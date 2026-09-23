@@ -2,6 +2,7 @@ package com.unifiedledger.data
 
 import com.unifiedledger.application.CorrectTransactionVersionResult
 import com.unifiedledger.application.CreationEntry
+import com.unifiedledger.application.ExecuteCorrectTransactionVersion
 import com.unifiedledger.application.ExecuteRestoreTransaction
 import com.unifiedledger.application.ExecuteVoidTransaction
 import com.unifiedledger.application.ExplicitManualSave
@@ -166,10 +167,18 @@ class P705EffectiveSurfaceTest {
     fun restorePutsTheTransactionBackOnEveryEffectiveSurfaceExactlyOnce() {
         P705Database.create("p705-surface-restore-").use { harness ->
             harness.insertOrdinaryExpense("tx-expense-100", amountMinor = 10_000L)
+            harness.insertOrdinaryIncome("tx-income-500", amountMinor = 50_000L)
             val ids = P705Ids("p705-surface-restore")
+            // V-20: capture the full effective state (HOME balances, the "current transactions" row
+            // set and the Analysis counts/amounts) before the void, so the restore can be compared
+            // value-identically rather than only piecewise.
+            val beforeRows = harness.readAdapter.loadCurrentRows(ledgerId)
+            val beforeBalances = state(harness).balances
+            val beforeSummary = SummarizeLedgerActivity(catalog).summarize(state(harness))
+
             assertIs<VoidTransactionResult.Created>(voidExpense(harness, "tx-expense-100", ids))
-            assertEquals(0, harness.readAdapter.loadLedgerEntryRows(ledgerId).size)
-            assertEquals(0, harness.readAdapter.loadCurrentRows(ledgerId).size)
+            assertEquals(1, harness.readAdapter.loadLedgerEntryRows(ledgerId).size)
+            assertEquals(1, harness.readAdapter.loadCurrentRows(ledgerId).size)
 
             assertIs<VoidTransactionResult.Created>(
                 restoreTransaction(harness, "tx-expense-100", ids, restoredAt),
@@ -177,20 +186,20 @@ class P705EffectiveSurfaceTest {
 
             // Exactly one row comes back, with the pre-void values, on every surface.
             val rows = harness.readAdapter.loadLedgerEntryRows(ledgerId)
-            assertEquals(1, rows.size)
-            assertEquals(listOf(10_000L, -10_000L), rows.single().postings.map { it.amount.minorUnits })
-            assertEquals(1, harness.readAdapter.loadCurrentRows(ledgerId).size)
-            assertEquals(-10_000L, state(harness).balances.single { it.accountId == P705Fixture.bankA }.ledgerSignedMinorUnits)
+            assertEquals(2, rows.size)
+            val expenseRow = rows.single { it.transactionId.value == "tx-expense-100" }
+            assertEquals(listOf(10_000L, -10_000L), expenseRow.postings.map { it.amount.minorUnits })
+            assertEquals(2, harness.readAdapter.loadCurrentRows(ledgerId).size)
+            // V-20 value identity: the restored surfaces equal the captured pre-void surfaces exactly.
+            assertEquals(beforeRows, harness.readAdapter.loadCurrentRows(ledgerId))
+            assertEquals(beforeBalances, state(harness).balances)
+            assertEquals(beforeSummary, SummarizeLedgerActivity(catalog).summarize(state(harness)))
             assertEquals(
                 P705Fixture.marchStatistics,
                 harness.readAdapter
                     .loadLedgerEntryRows(ledgerId)
-                    .single()
+                    .single { it.transactionId.value == "tx-expense-100" }
                     .statisticsAt,
-            )
-            assertEquals(
-                listOf(10_000L),
-                SummarizeLedgerActivity(catalog).summarize(state(harness)).totalsByCurrency.map { it.expenseMinorUnits },
             )
             // The recycle bin is empty again: the latest fact is a restore.
             assertEquals(
@@ -285,6 +294,106 @@ class P705EffectiveSurfaceTest {
             // belongs to, and the void day does not move it into any other month.
             assertEquals(1, monthlyCount(march))
             assertEquals(0, monthlyCount(april))
+        }
+    }
+
+    /**
+     * V-16 automatic half (D-158 section 4): a ledger that was corrected, voided and restored
+     * reopens with the same authoritative values on every surface. The write happens on one
+     * connection, which is then truly CLOSED (the file is preserved, the harness's test-only
+     * `closePreservingFile`) and proven unable to serve the probe read after the close, so the
+     * read-back below cannot be reading through the original connection: it runs on a fresh
+     * `P705Database.open` of the same path (mirroring `DesktopCurrentSchemaReopenTest`). The
+     * effective row sets, balances, monthly counts, recycle bin and version/postings history must
+     * read back value-identically.
+     */
+    @Test
+    fun correctedVoidedAndRestoredLedgerReopensWithIdenticalAuthoritativeValues() {
+        P705Database.create("p705-reopen-").use { writer ->
+            val ids = P705Ids("p705-reopen")
+            writer.insertOrdinaryExpense("tx-corrected", amountMinor = 10_000L)
+            writer.insertOrdinaryIncome("tx-restored", amountMinor = 50_000L)
+            writer.insertOrdinaryExpense("tx-voided", amountMinor = 3_000L)
+            val correctedReceipt =
+                assertIs<CorrectTransactionVersionResult.Created>(
+                    ExecuteCorrectTransactionVersion(writer.correctionPort, ids.correctSource, P705Fixture.admissionReader)
+                        .execute(
+                            com.unifiedledger.application.ExplicitlyConfirmedTransactionCorrection(
+                                ledgerId = ledgerId,
+                                requestId = ids.requestId(),
+                                transactionId = TransactionId("tx-corrected"),
+                                expectedCurrentVersionId = TransactionVersionId("tx-corrected-version-1"),
+                                note = "corrected",
+                                statisticsAt = P705Fixture.aprilStatistics,
+                                amount = Money.ofMinor(8_000L, P705Fixture.cny),
+                                categoryId = P705Fixture.food,
+                                fundingAccountId = P705Fixture.bankA,
+                                confirmation = ExplicitManualSave,
+                            ),
+                        ),
+                ).receipt
+            assertIs<VoidTransactionResult.Created>(voidExpense(writer, "tx-voided", ids))
+            assertIs<VoidTransactionResult.Created>(voidExpense(writer, "tx-restored", ids))
+            assertIs<VoidTransactionResult.Created>(restoreTransaction(writer, "tx-restored", ids, restoredAt))
+
+            // The writer connection is truly closed here; only the file survives.
+            writer.closePreservingFile()
+            // The close must be load-bearing: a closed writer can no longer serve reads, so the
+            // reopen below cannot be reading through the original connection.
+            val closedRead = runCatching { writer.readAdapter.loadLedgerEntryRows(ledgerId) }
+            assertTrue(closedRead.isFailure, "the closed writer connection must not serve reads")
+            // A fresh open of the same file-backed database is the reopen under test.
+            P705Database.open(writer.filePath).use { reopened ->
+                // Effective entry rows: the corrected transaction (new amount) and the restored one.
+                val rows = reopened.readAdapter.loadLedgerEntryRows(ledgerId)
+                assertEquals(
+                    listOf("tx-corrected", "tx-restored"),
+                    rows.map { it.transactionId.value }.sorted(),
+                )
+                val correctedRow = rows.single { it.transactionId.value == "tx-corrected" }
+                assertEquals(correctedReceipt.versionId, correctedRow.currentVersionId)
+                assertEquals(listOf(8_000L, -8_000L), correctedRow.postings.map { it.amount.minorUnits })
+                assertEquals(P705Fixture.aprilStatistics, correctedRow.statisticsAt)
+                assertEquals("corrected", correctedRow.note)
+                // The voided transaction stays off the effective surfaces and in the recycle bin.
+                assertEquals(
+                    listOf("tx-voided"),
+                    reopened.readAdapter.loadVoidedTransactionRows(ledgerId).map { it.transactionId.value },
+                )
+                // Version history is intact: the corrected transaction kept both versions.
+                assertEquals(2L, reopened.versionCount("tx-corrected"))
+                assertEquals(
+                    1L,
+                    reopened.ledgerQueryCount(
+                        "SELECT count(*) FROM transaction_version WHERE transaction_id = 'tx-corrected' AND version_number = 1 AND posting_set_id = 'tx-corrected-posting-set-1'",
+                    ),
+                )
+                // HOME balances and the monthly count read the same reopened values.
+                val state =
+                    assertIs<LedgerCurrentStateResult.Success>(
+                        QueryLedgerCurrentState(reopened.readAdapter, ledgerId, catalog).query(),
+                    ).state
+                // +50,000 restored income − 8,000 corrected expense (voided 3,000 contributes nothing).
+                assertEquals(42_000L, state.balances.single { it.accountId == P705Fixture.bankA }.ledgerSignedMinorUnits)
+                val april = MonthlyBuckets.bucketKey(P705Fixture.aprilStatistics)
+                assertEquals(
+                    1,
+                    MonthlyBuckets
+                        .aggregate(reopened.readAdapter.loadLedgerEntryRows(ledgerId), ledgerId, catalog, listOf(april))
+                        .getValue(april)
+                        .currencies
+                        .single()
+                        .transactionCount,
+                )
+                // The recycle bin metadata is value-identical after reopen.
+                val bin = assertIs<RecycleBinResult.Success>(QueryRecycleBin(reopened.readAdapter, ledgerId, catalog).query())
+                assertEquals(listOf("tx-voided"), bin.rows.map { it.voided.transactionId.value })
+                // V-21: assert the reason identity without printing the note literal in a message.
+                val voided = bin.rows.single().voided
+                assertEquals(VoidReasonCode.MIS_ENTERED, voided.voidReason.code)
+                assertTrue(!voided.voidReason.note.isNullOrEmpty(), "the reopen must keep the reason note")
+                assertEquals(TransactionVoidFactKind.VOID, voided.voidFactKind)
+            }
         }
     }
 

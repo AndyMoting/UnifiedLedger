@@ -699,13 +699,13 @@ sealed interface P503UiEvent {
     ) : P503UiEvent
 
     /**
-     * Opens the void confirmation page from the read-only detail (DP-12). [transactionId] and
-     * [currentVersionId] name the target; the detail's overview is preserved. Effect only on
-     * TransactionDetail; absorbed everywhere else.
+     * Opens the void confirmation page from the read-only detail (DP-12). [transactionId] names
+     * the target; the detail's overview is preserved. The merged void/restore family carries no
+     * version CAS (the fact sequence guards it, DP-8), so no `currentVersionId` payload is carried.
+     * Effect only on TransactionDetail; absorbed everywhere else.
      */
     data class OpenVoidConfirm(
         val transactionId: TransactionId,
-        val currentVersionId: com.unifiedledger.domain.TransactionVersionId,
     ) : P503UiEvent
 
     /**

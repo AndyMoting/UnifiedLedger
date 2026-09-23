@@ -288,30 +288,51 @@ class P503LedgerViewHostCoordinatorTest {
     // The success gate: only a determinate Created/NoChange refresh; a stale CAS, an identity
     // conflict and a typed rejection write nothing and must NOT refresh. The gate is the same
     // merged decision for the correction and the void/restore families, so the host call sites
-    // cannot diverge. (The gate itself is asserted in P503CorrectionHostTest; this vector pins
-    // that the coordinator trigger is only ever reached through it — a rejection calls nothing.)
+    // cannot diverge. (The gate itself is asserted in P503CorrectionHostTest; this vector exercises
+    // the CALL-SITE seam `refreshAfterP705Commit` — a rejection calls the coordinator zero times,
+    // while a success calls it exactly once — so the assertion is not merely the predicate again.)
     @Test
-    fun aRejectedOrStaleOutcomeNeverFiresTheRefresh() {
+    fun aRejectedOrStaleOutcomeNeverFiresTheRefreshWhileASuccessDoes() {
         val (host, probe) = coordinator()
-        // The gate returns false for every non-success outcome, so the host never calls the
-        // trigger: the coordinator's refresh count stays zero.
-        assertFalse(shouldRefreshAfterP705Commit(com.unifiedledger.application.CorrectTransactionVersionResult.StaleCurrentVersion))
-        assertFalse(
-            shouldRefreshAfterP705Commit(
-                com.unifiedledger.application.CorrectTransactionVersionResult.Rejected(
-                    com.unifiedledger.domain.P705FailureCode.P705_STALE_CURRENT_VERSION,
-                ),
+        // Every non-success outcome reaches the call site and calls the coordinator NOT at all.
+        refreshAfterP705Commit(com.unifiedledger.application.CorrectTransactionVersionResult.StaleCurrentVersion, host)
+        refreshAfterP705Commit(
+            com.unifiedledger.application.CorrectTransactionVersionResult.Rejected(
+                com.unifiedledger.domain.P705FailureCode.P705_STALE_CURRENT_VERSION,
             ),
+            host,
         )
-        assertFalse(
-            shouldRefreshAfterP705Commit(
-                com.unifiedledger.application.VoidTransactionResult.Rejected(
-                    com.unifiedledger.domain.P705FailureCode.P705_TRANSACTION_VOIDED,
-                ),
+        refreshAfterP705Commit(
+            com.unifiedledger.application.CorrectTransactionVersionResult.RequestIdentityConflict(
+                com.unifiedledger.application.TransactionCorrectionRequestIdentity(ledgerId, com.unifiedledger.application.RequestId("request-1")),
             ),
+            host,
+        )
+        refreshAfterP705Commit(
+            com.unifiedledger.application.VoidTransactionResult.Rejected(
+                com.unifiedledger.domain.P705FailureCode.P705_TRANSACTION_VOIDED,
+            ),
+            host,
         )
         assertEquals(0, probe.refreshes.size)
         assertEquals(0, probe.monthlyRequests.size)
+        // A determinate success through the same call site fires exactly one refresh and arms the
+        // shared post-landing monthly re-request (proving the seam is live, not a dead branch).
+        refreshAfterP705Commit(
+            com.unifiedledger.application.VoidTransactionResult.Created(
+                com.unifiedledger.application.TransactionVoidReceipt(
+                    com.unifiedledger.application.ConfirmationId("confirmation-1"),
+                    com.unifiedledger.domain.TransactionId("tx-1"),
+                    "fact-1",
+                    com.unifiedledger.domain.TransactionVoidFactKind.VOID,
+                ),
+            ),
+            host,
+        )
+        assertEquals(1, probe.refreshes.size)
+        assertEquals(0, probe.monthlyRequests.size)
+        host.consumeMonthlyReRequestAfterRefresh(overview())
+        assertEquals(1, probe.monthlyRequests.size)
     }
 
     // (f) the ONE shared arm-gate for both host call sites (dispatch-loop completed branch and

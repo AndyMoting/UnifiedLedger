@@ -4,6 +4,7 @@ import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.CorrectTransactionVersionResult
 import com.unifiedledger.application.CounterpartyCommandResult
+import com.unifiedledger.application.RecycleBinResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.application.VoidTransactionResult
@@ -708,3 +709,41 @@ internal fun shouldRefreshAfterP705Commit(result: CorrectTransactionVersionResul
 
 /** The void/restore analogue of [shouldRefreshAfterP705Commit] over the merged result family. */
 internal fun shouldRefreshAfterP705Commit(result: VoidTransactionResult): Boolean = result is VoidTransactionResult.Created || result is VoidTransactionResult.NoChange
+
+/**
+ * P7-05 (D-156; spec section 4.3): the JVM-assertable seam of the host call site that dispatches a
+ * correction commit result and then fires the effective-surface refresh. The `@Composable`
+ * `P503App` cannot be exercised by a plain JVM test (the P7-03/P7-04 precedent), so the call-site
+ * decision is extracted here: a determinate success ([CorrectTransactionVersionResult.Created]/
+ * [NoChange]) calls [P503HostCoordinator.onP705EffectiveSurfaceChanged] exactly once — the
+ * authoritative refresh plus the shared post-landing monthly re-request arm — while a rejection,
+ * a stale CAS or an identity conflict calls nothing. Tests inject a counting coordinator and assert
+ * this seam's branch directly. The `P503App` → seam hop itself remains uncovered: no Compose harness
+ * exists for `P503App`, and `app-ui` has an Android target, so `commonTest` cannot source-scan it.
+ */
+internal fun refreshAfterP705Commit(
+    result: CorrectTransactionVersionResult,
+    coordinator: P503HostCoordinator,
+) {
+    if (shouldRefreshAfterP705Commit(result)) coordinator.onP705EffectiveSurfaceChanged()
+}
+
+/** The void/restore analogue of [refreshAfterP705Commit] over the merged result family. */
+internal fun refreshAfterP705Commit(
+    result: VoidTransactionResult,
+    coordinator: P503HostCoordinator,
+) {
+    if (shouldRefreshAfterP705Commit(result)) coordinator.onP705EffectiveSurfaceChanged()
+}
+
+/**
+ * P7-05 (D-156; spec section 3.4/4.4): the recycle-bin read landing decision. The host always reads
+ * the bin fresh off the UI thread; the already-open state captured at request time decides whether
+ * the fresh projection opens the bin ([P503UiEvent.OpenRecycleBin]) or refreshes the open list in
+ * place ([P503UiEvent.RecycleBinResult]). Extracted so the open/re-read branch is JVM-assertable
+ * without the `@Composable` host.
+ */
+internal fun recycleBinReadEvent(
+    alreadyOpen: Boolean,
+    result: RecycleBinResult,
+): P503UiEvent = if (alreadyOpen) P503UiEvent.RecycleBinResult(result) else P503UiEvent.OpenRecycleBin(result)
