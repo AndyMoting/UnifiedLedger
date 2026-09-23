@@ -35,6 +35,7 @@ import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionVersionId
 import com.unifiedledger.domain.TransactionVoidFactKind
+import com.unifiedledger.domain.VoidReason
 import com.unifiedledger.domain.VoidReasonCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -232,9 +233,8 @@ class P503CorrectionHostTest {
     fun voidReasonFromDraftIsAbsentWithoutACodeAndKeepsTheNoteVerbatim() {
         assertNull(voidReasonFromDraft(VoidReasonDraft(note = "ignored")))
         val reason = assertNotNull(voidReasonFromDraft(VoidReasonDraft(code = VoidReasonCode.MIS_ENTERED, note = "笔误")))
-        assertEquals(VoidReasonCode.MIS_ENTERED, reason.code)
-        // V-21: never print the reason note in a failure message — assert presence neutrally.
-        assertTrue(!reason.note.isNullOrEmpty(), "the reason note must be carried")
+        // The draft note survives the mapping verbatim (value equality, the repo precedent).
+        assertEquals(VoidReason(VoidReasonCode.MIS_ENTERED, "笔误"), reason)
         // An empty draft note is the absent representation.
         assertNull(assertNotNull(voidReasonFromDraft(VoidReasonDraft(code = VoidReasonCode.OTHER))).note)
     }

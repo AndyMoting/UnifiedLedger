@@ -300,10 +300,10 @@ class P705EffectiveSurfaceTest {
     /**
      * V-16 automatic half (D-158 section 4): a ledger that was corrected, voided and restored
      * reopens with the same authoritative values on every surface. The write happens on one
-     * connection and the read-back on a FRESH connection to the same file-backed database
-     * (the `P705Database.open` path, mirroring `DesktopCurrentSchemaReopenTest`): the effective row
-     * sets, balances, monthly counts, recycle bin and version/postings history must read back
-     * value-identically.
+     * connection, which is then truly CLOSED (the file is preserved, the harness's test-only
+     * `closePreservingFile`), and the read-back runs on a fresh `P705Database.open` of the same path
+     * (mirroring `DesktopCurrentSchemaReopenTest`): the effective row sets, balances, monthly counts,
+     * recycle bin and version/postings history must read back value-identically.
      */
     @Test
     fun correctedVoidedAndRestoredLedgerReopensWithIdenticalAuthoritativeValues() {
@@ -334,7 +334,9 @@ class P705EffectiveSurfaceTest {
             assertIs<VoidTransactionResult.Created>(voidExpense(writer, "tx-restored", ids))
             assertIs<VoidTransactionResult.Created>(restoreTransaction(writer, "tx-restored", ids, restoredAt))
 
-            // A fresh connection to the same file-backed database is the reopen under test.
+            // The writer connection is truly closed here; only the file survives.
+            writer.closePreservingFile()
+            // A fresh open of the same file-backed database is the reopen under test.
             P705Database.open(writer.filePath).use { reopened ->
                 // Effective entry rows: the corrected transaction (new amount) and the restored one.
                 val rows = reopened.readAdapter.loadLedgerEntryRows(ledgerId)

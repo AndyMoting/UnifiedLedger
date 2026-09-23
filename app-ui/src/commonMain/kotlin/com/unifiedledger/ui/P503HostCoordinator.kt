@@ -713,12 +713,13 @@ internal fun shouldRefreshAfterP705Commit(result: VoidTransactionResult): Boolea
 /**
  * P7-05 (D-156; spec section 4.3): the JVM-assertable seam of the host call site that dispatches a
  * correction commit result and then fires the effective-surface refresh. The `@Composable`
- * `P503App` cannot be exercised by a plain JVM test (the P7-03/P7-04 precedent), so this function
- * owns the call-site decision: a determinate success ([CorrectTransactionVersionResult.Created]/
+ * `P503App` cannot be exercised by a plain JVM test (the P7-03/P7-04 precedent), so the call-site
+ * decision is extracted here: a determinate success ([CorrectTransactionVersionResult.Created]/
  * [NoChange]) calls [P503HostCoordinator.onP705EffectiveSurfaceChanged] exactly once — the
  * authoritative refresh plus the shared post-landing monthly re-request arm — while a rejection,
- * a stale CAS or an identity conflict calls nothing. A test injects a counting coordinator and
- * asserts the branch directly, instead of only asserting the predicate in isolation.
+ * a stale CAS or an identity conflict calls nothing. Tests inject a counting coordinator and assert
+ * this seam's branch directly. The `P503App` → seam hop itself remains uncovered: no Compose harness
+ * exists for `P503App`, and `app-ui` has an Android target, so `commonTest` cannot source-scan it.
  */
 internal fun refreshAfterP705Commit(
     result: CorrectTransactionVersionResult,

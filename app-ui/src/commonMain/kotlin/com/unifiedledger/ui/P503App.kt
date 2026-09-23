@@ -2091,8 +2091,7 @@ fun P503App(
                     // now — the detail is a Success AND the correction origin resolves against the
                     // current catalog (an unwired facade, a still-loading catalog or an
                     // unresolvable amount leg passes `null`, so the page renders no dead button,
-                    // the F1 precedent). The void entry needs only the wired use case and the
-                    // payload's CAS target.
+                    // the F1 precedent). The void entry needs only the wired use case.
                     onEditTransaction =
                         if (detail is TransactionDetailResult.Success && correctionOriginResolvable(detail.detail)) {
                             { target -> openTransactionEdit(target) }

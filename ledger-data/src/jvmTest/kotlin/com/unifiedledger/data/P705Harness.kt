@@ -133,6 +133,7 @@ internal class P705Database private constructor(
     private val ownsFile: Boolean,
 ) : AutoCloseable {
     private val driver = JdbcSqliteDriver("jdbc:sqlite:${path.absolutePathString()}")
+    private var driverClosed = false
     val database: LedgerDatabase
     val readAdapter: SqlDelightLedgerCurrentStateReadAdapter
     val correctionPort: SqlDelightTransactionCorrectionCommitPort
@@ -148,8 +149,23 @@ internal class P705Database private constructor(
     }
 
     override fun close() {
-        driver.close()
+        closeDriver()
         if (ownsFile) Files.deleteIfExists(path)
+    }
+
+    /**
+     * Test-only: close the connection while KEEPING the file, so a test can reopen the same path on a
+     * fresh connection ([P705Database.open]) and assert a real close/reopen rather than a second
+     * concurrent connection. The owner's [close] still deletes the file afterwards.
+     */
+    fun closePreservingFile() {
+        closeDriver()
+    }
+
+    private fun closeDriver() {
+        if (driverClosed) return
+        driverClosed = true
+        driver.close()
     }
 
     fun ledgerQueryCount(sql: String): Long =

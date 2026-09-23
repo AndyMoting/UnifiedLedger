@@ -3370,3 +3370,26 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 入：本条登记与 `docs/CURRENT_STATE.md` 的同步。出：零产品代码、零测试、零 schema/迁移/依赖/清单、零 Golden/fixture；不改 D-158 的任何裁决与其第 4/5 条残余登记、不改 D-167 的宿主侧读数与其限定、不改 D-156/D-157/D-159～D-171 的任何裁决；不实施 P7-05 片 1b；不把任何项并入 PASS。
 
 **关联决定：** D-167（第 4(a) 条为本条登记对象——本条解除其设备前置条件，不改其宿主侧读数与限定）、D-158（第 5 条热读增本读数纪律与处置条件的来源——本条不改其裁决）、D-156（v31 有效谓词与视图 `transaction_effective_state` 的来源）、D-163（宿主侧/设备侧口径区分先例——本条以 DELTA 为信号的依据）、D-171（同一登记链上的最新条目）。
+
+## D-173 P7-05 片 1b 覆盖债务收尾批的评审承接与 V-19 交互缺口登记
+
+**状态：** 已批准（2026-09-23，P7-05 片 1b 覆盖债务收尾批（Piece 5）候选 `33988b9` 的独立评审与验证结果承接；独立评审 APPROVE WITH FINDINGS，distinct verifier 对聚焦测试与 ktlint 全 VERIFIED）。
+
+**决定：**
+
+1. **批的性质（片 1b 覆盖债务收尾）**：本批为片 1b 的覆盖债务收尾：提取纯 `refreshAfterP705Commit` 决策缝并覆盖「成功刷新 vs 拒绝不刷新」分支；提取 `recycleBinReadEvent` 并覆盖回收站打开/重读分支；移除死负载 `OpenVoidConfirm.currentVersionId`；扩展 V-13/V-16/V-07 覆盖。零产品行为变更、零 schema/DDL/依赖变更。
+
+2. **评审承接（已在本批修复）**：
+
+   - (a) 恢复 `voidReasonFromDraft` 说明逐字往返的精确断言（此前被弱化为存在性断言）。
+   - (b) 更正 `refreshAfterP705Commit` 的 KDoc 主张——测试断言的是该缝的分支（计数协调器），`P503App` → 缝的调用点跳转仍未被覆盖（无 Compose harness，`app-ui` 含 Android 目标故 `commonTest` 不能做源码扫描）。
+   - (c) 移除因删除 `currentVersionId` 而失效的注释残句。
+   - (d) V-16 自动重开测试改为真实关闭/重开（经仅测试用的 harness 能力，保留文件），而非第二并发连接。
+
+3. **V-19 交互缺口登记（显式承接，不得静默丢弃）**：V-19 的「重开后可再次核对（沿 P7-02 S-3）」在片 1b 只满足能力层——快照感知 resolver（`ResolveTransactionCorrectionCommitStatus`/`ResolveTransactionVoidCommitStatus`）为 DB 支撑、跨重开可解析且已有测试（`P705EffectiveSurfaceTest.kt` 的 restore 半族向量）。但 P7-05 的修正/作废/恢复**没有任何在会话内的人工再核对入口**（P7-02 有 D-126 R4 的「重新核对」按钮）；丢失提交后仅保留 `submitting` 标记且宿主状态为 `remember`（非 `rememberSaveable`），重组/进程死亡后该面消失。因此 V-19 **不得判 PASS**，登记为「已实现待验收/缺证」，缺口为「P7-05 未知提交的人工再核对面」。
+
+4. **承接条件**：该缺口由片 1b 的后续片（Piece 6）实施或另行裁决；在实施前 V-19 维持非 PASS。范围不因本批收尾而缩减。
+
+5. **边界**：入本批源码与测试、本决定登记；零产品行为变更、零 schema、零 DDL、零新依赖、零对账/证据/借贷/导入 owner 写入；不改 D-156 的 Q11/Q12、DP-1..DP-13 与支持矩阵；不改 D-158 已登记残余。
+
+**关联决定：** D-156、D-158、D-126（P7-02 UnknownCommit 核对闭环先例）、D-172（前序最高 id）。
