@@ -2,9 +2,11 @@ package com.unifiedledger.ui
 
 import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.CatalogSnapshotView
+import com.unifiedledger.application.CorrectTransactionVersionResult
 import com.unifiedledger.application.CounterpartyCommandResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TypedEntryDraft
+import com.unifiedledger.application.VoidTransactionResult
 import kotlin.concurrent.Volatile
 
 /**
@@ -304,6 +306,23 @@ internal class P503HostCoordinator(
      * arms. Never fired by per-item result landings nor by a pause/abandon of the run.
      */
     internal fun onImportBatchConfirmed() {
+        onRefresh()
+        pendingMonthlyReRequestAfterRefresh = true
+    }
+
+    /**
+     * P7-05 (D-156; spec sections 3.5/4.3): a successful correction/void/restore commit landed a
+     * formal ledger effect, so the host fires the authoritative refresh and arms the SAME
+     * post-landing monthly re-request as trigger (e)/(f) — detail/flow/monthly all update on one
+     * chain, the voided transaction disappears from the effective surfaces, and a restored one
+     * returns. The arm is consumed by the same landing hop ([consumeMonthlyReRequestAfterRefresh]
+     * on a successful landing, [dropMonthlyReRequestAfterFailedRefresh] on a failed one), so the
+     * refresh stays asynchronous and exactly one unconditional monthly request follows it. The
+     * caller gates on a determinate success ([shouldRefreshAfterP705Commit]): a typed rejection, a
+     * stale CAS, an identity conflict or an unresolved (still-unknown) commit never calls this, so
+     * a non-success leaves the surfaces untouched.
+     */
+    internal fun onP705EffectiveSurfaceChanged() {
         onRefresh()
         pendingMonthlyReRequestAfterRefresh = true
     }
@@ -672,3 +691,20 @@ internal fun shouldArmImportBatchConfirmed(landedState: P503AppState): Boolean {
     val summary = (landedState as? P503AppState.OverviewEmpty)?.importReview?.batchResult ?: return false
     return summary.items.none { it.outcome is ImportBatchItemOutcome.Unknown }
 }
+
+/**
+ * P7-05 (D-156; spec sections 3.2/3.3/4.3): THE single success gate of the correction/void/restore
+ * refresh chain. A determinate success — `Created` or `NoChange` (a replay returned its original
+ * receipt, so the effect is already in place) — landed a formal ledger effect and fires the
+ * authoritative refresh; every other outcome writes nothing and must NOT refresh:
+ * - `StaleCurrentVersion` (the CAS lost; zero writes, no auto-retry),
+ * - `RequestIdentityConflict` (a different snapshot under the same request id; zero writes),
+ * - `Rejected(code)` (a typed rejection; zero writes).
+ * An unresolved (still-unknown) commit is not a result at all — the surface keeps its submitting
+ * marker and this gate is never consulted. Correction and void/restore share the merged decision
+ * so the two host call sites cannot diverge.
+ */
+internal fun shouldRefreshAfterP705Commit(result: CorrectTransactionVersionResult): Boolean = result is CorrectTransactionVersionResult.Created || result is CorrectTransactionVersionResult.NoChange
+
+/** The void/restore analogue of [shouldRefreshAfterP705Commit] over the merged result family. */
+internal fun shouldRefreshAfterP705Commit(result: VoidTransactionResult): Boolean = result is VoidTransactionResult.Created || result is VoidTransactionResult.NoChange

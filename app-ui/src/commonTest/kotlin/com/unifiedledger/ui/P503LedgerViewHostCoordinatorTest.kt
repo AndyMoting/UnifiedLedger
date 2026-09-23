@@ -243,6 +243,77 @@ class P503LedgerViewHostCoordinatorTest {
         assertEquals(1, probe.monthlyRequests.size)
     }
 
+    // P7-05 (D-156; spec section 4.3): a successful correction/void/restore commit fires the
+    // authoritative refresh and arms the SAME post-landing monthly re-request as (e)/(f) — detail,
+    // flow and monthly all update on one chain. No synchronous request beside the refresh.
+
+    @Test
+    fun p705EffectiveSurfaceChangeFiresTheRefreshAndReRequestsTheMonthlyPayloadOnlyAfterItLands() {
+        val (host, probe) = coordinator()
+        host.onP705EffectiveSurfaceChanged()
+        assertEquals(1, probe.refreshes.size)
+        assertEquals(0, probe.monthlyRequests.size)
+        // The refreshed overview lands (selectedMonth = null = 本月) and the host consumes: exactly
+        // one unconditional request, and the (d) guard sees the stamped month with no duplicate.
+        host.consumeMonthlyReRequestAfterRefresh(overview(month = null))
+        assertEquals(1, probe.monthlyRequests.size)
+        assertFalse(host.decideMonthly(overview(month = null)))
+        assertEquals(1, probe.monthlyRequests.size)
+    }
+
+    @Test
+    fun failedRefreshLandingDropsTheP705ArmWithoutRequesting() {
+        val (host, probe) = coordinator()
+        host.onP705EffectiveSurfaceChanged()
+        assertEquals(1, probe.refreshes.size)
+        host.dropMonthlyReRequestAfterFailedRefresh()
+        host.consumeMonthlyReRequestAfterRefresh(overview())
+        assertEquals(0, probe.monthlyRequests.size)
+    }
+
+    // The P7-05 trigger shares the one armed marker with (e)/(f): a void/correction arm coalesces
+    // with a still-armed determinate-success arm into ONE post-landing request.
+
+    @Test
+    fun p705EffectiveSurfaceChangeSharesTheArmedMarkerWithTheOtherTriggers() {
+        val (host, probe) = coordinator()
+        assertIs<HostAction.RefreshAfterResult>(host.decide(P503AppState.Created))
+        host.onP705EffectiveSurfaceChanged()
+        assertEquals(2, probe.refreshes.size)
+        assertEquals(0, probe.monthlyRequests.size)
+        host.consumeMonthlyReRequestAfterRefresh(overview())
+        assertEquals(1, probe.monthlyRequests.size)
+    }
+
+    // The success gate: only a determinate Created/NoChange refresh; a stale CAS, an identity
+    // conflict and a typed rejection write nothing and must NOT refresh. The gate is the same
+    // merged decision for the correction and the void/restore families, so the host call sites
+    // cannot diverge. (The gate itself is asserted in P503CorrectionHostTest; this vector pins
+    // that the coordinator trigger is only ever reached through it — a rejection calls nothing.)
+    @Test
+    fun aRejectedOrStaleOutcomeNeverFiresTheRefresh() {
+        val (host, probe) = coordinator()
+        // The gate returns false for every non-success outcome, so the host never calls the
+        // trigger: the coordinator's refresh count stays zero.
+        assertFalse(shouldRefreshAfterP705Commit(com.unifiedledger.application.CorrectTransactionVersionResult.StaleCurrentVersion))
+        assertFalse(
+            shouldRefreshAfterP705Commit(
+                com.unifiedledger.application.CorrectTransactionVersionResult.Rejected(
+                    com.unifiedledger.domain.P705FailureCode.P705_STALE_CURRENT_VERSION,
+                ),
+            ),
+        )
+        assertFalse(
+            shouldRefreshAfterP705Commit(
+                com.unifiedledger.application.VoidTransactionResult.Rejected(
+                    com.unifiedledger.domain.P705FailureCode.P705_TRANSACTION_VOIDED,
+                ),
+            ),
+        )
+        assertEquals(0, probe.refreshes.size)
+        assertEquals(0, probe.monthlyRequests.size)
+    }
+
     // (f) the ONE shared arm-gate for both host call sites (dispatch-loop completed branch and
     // Unknown 核对 resolution hop): arm exactly when the landed state is the overview carrying a
     // retained summary with no Unknown left. The pure truth table is covered here; the hop wiring
