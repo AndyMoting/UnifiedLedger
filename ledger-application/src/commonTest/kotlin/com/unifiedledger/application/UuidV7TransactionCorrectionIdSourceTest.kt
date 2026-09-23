@@ -10,8 +10,8 @@ import kotlin.test.assertTrue
  * the replacement version/posting-set/posting identities.
  */
 class UuidV7TransactionCorrectionIdSourceTest {
-    // Duplicates the file-private UUID_V7 regex and generator(seed) of
-    // UuidV7ConfirmedManualExpenseIdSourceTest.kt: both are `private` to that file, so reuse
+    // Duplicates the file-private uuidV7 regex and generator(seed) of
+    // UuidV7ConfirmedManualIncomeIdSourceTest.kt: both are `private` to that file, so reuse
     // would require widening its visibility. Kept local to avoid touching a frozen test file.
     private val uuidV7 = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 
