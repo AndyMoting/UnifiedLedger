@@ -647,6 +647,154 @@ sealed interface P503UiEvent {
         val outcome: ImportUnknownCheckOutcome,
     ) : P503UiEvent
 
+    // ---- P7-05 correction/void/recycle-bin events (D-156; spec sections 3.5/4.4) ----
+    // Discipline: every new event has its designed effect only in its designed state, is absorbed
+    // in every other state and never throws anywhere (table 6.2a); every pre-existing unlisted
+    // combination stays ISE (G-B). These events only define P7-05 transitions.
+
+    /**
+     * Opens the correction surface from the read-only detail (DP-12: 仅详情入口). [origin] is the
+     * host-resolved old-value snapshot carrying the CAS token; the detail's overview is preserved
+     * as the back-target. Effect only on TransactionDetail; absorbed everywhere else.
+     */
+    data class OpenTransactionEdit(
+        val origin: TransactionEditOrigin,
+    ) : P503UiEvent
+
+    /**
+     * One typed correction-form field write (pure draft). Effect only on TransactionEdit;
+     * absorbed everywhere else.
+     */
+    data class UpdateTransactionCorrectionField(
+        val update: TransactionCorrectionFieldUpdate,
+    ) : P503UiEvent
+
+    /**
+     * Requests the pure field-by-field difference preview (spec section 4.4). The reducer writes
+     * [TransactionEdit.preview] from the carried origin and draft; the preview is a display-only
+     * read and never a commit permission. Effect only on TransactionEdit; absorbed everywhere else.
+     */
+    data object PreviewTransactionEdit : P503UiEvent
+
+    /**
+     * The explicit confirm of a correction. [requestId] is host-minted for this intent (the
+     * reducer is IO-free and randomness-free — the `AuthorizeImportBatch` precedent). Effect only
+     * on TransactionEdit: sets the per-operation submitting marker; an already-submitting surface
+     * absorbs a duplicate confirm (提交中不重入). Absorbed everywhere else.
+     */
+    data class ConfirmTransactionEdit(
+        val requestId: RequestId,
+    ) : P503UiEvent
+
+    /**
+     * The correction commit result (the real [com.unifiedledger.application.CorrectTransactionVersionResult]
+     * family, including the distinct `StaleCurrentVersion` surface — never folded into `Rejected`).
+     * Effect only on TransactionEdit: a determinate success leaves to the preserved overview with
+     * the authoritative refresh to follow; a typed rejection surfaces its code; a stale CAS
+     * surfaces the stale notice; an identity conflict surfaces the conflict notice; an unknown
+     * commit enters the `UnknownCommit` discipline's check surface. Absorbed everywhere else.
+     */
+    data class TransactionEditResult(
+        val result: com.unifiedledger.application.CorrectTransactionVersionResult,
+    ) : P503UiEvent
+
+    /**
+     * Opens the void confirmation page from the read-only detail (DP-12). [transactionId] and
+     * [currentVersionId] name the target; the detail's overview is preserved. Effect only on
+     * TransactionDetail; absorbed everywhere else.
+     */
+    data class OpenVoidConfirm(
+        val transactionId: TransactionId,
+        val currentVersionId: com.unifiedledger.domain.TransactionVersionId,
+    ) : P503UiEvent
+
+    /**
+     * One typed void-reason field write (DP-11: mandatory typed code + optional bounded note).
+     * Effect only on VoidConfirm; absorbed everywhere else.
+     */
+    data class UpdateVoidReasonField(
+        val update: VoidReasonFieldUpdate,
+    ) : P503UiEvent
+
+    /**
+     * The explicit confirm of a void. [requestId] is host-minted for this intent. Effect only on
+     * VoidConfirm: sets the per-operation submitting marker (a duplicate confirm is absorbed,
+     * 提交中不重入). Absorbed everywhere else.
+     */
+    data class ConfirmVoid(
+        val requestId: RequestId,
+    ) : P503UiEvent
+
+    /**
+     * The void commit result (the real [com.unifiedledger.application.VoidTransactionResult]
+     * family). Effect only on VoidConfirm: a determinate success leaves to the preserved overview
+     * (the authoritative refresh follows); a typed rejection surfaces its code; an identity
+     * conflict surfaces the conflict notice; an unknown commit enters the check surface.
+     * Absorbed everywhere else.
+     */
+    data class TransactionVoidResult(
+        val result: com.unifiedledger.application.VoidTransactionResult,
+    ) : P503UiEvent
+
+    /**
+     * Opens the recycle bin (the entry affordance lives on the effective surfaces). [result] is
+     * the host-resolved read projection. Effect only on OverviewEmpty and TransactionDetail (the
+     * bin returns to the preserved overview); absorbed everywhere else.
+     */
+    data class OpenRecycleBin(
+        val result: com.unifiedledger.application.RecycleBinResult,
+    ) : P503UiEvent
+
+    /**
+     * Refreshes the recycle-bin list (the host re-reads and dispatches the fresh projection).
+     * Effect only on RecycleBin; absorbed everywhere else.
+     */
+    data class RecycleBinResult(
+        val result: com.unifiedledger.application.RecycleBinResult,
+    ) : P503UiEvent
+
+    /** Closes the recycle bin back to the exact preserved overview. Effect only on RecycleBin. */
+    data object CloseRecycleBin : P503UiEvent
+
+    /**
+     * Opens the nested restore confirmation for one bin row. [transactionId] names the target; the
+     * bin's rows stay. Effect only on RecycleBin; absorbed everywhere else.
+     */
+    data class OpenRestoreConfirm(
+        val transactionId: TransactionId,
+    ) : P503UiEvent
+
+    /**
+     * One typed restore-reason field write (DP-11: the reason is mandatory for a restore too).
+     * Effect only on RecycleBin's nested restore sub-state; absorbed everywhere else.
+     */
+    data class UpdateRestoreReasonField(
+        val update: VoidReasonFieldUpdate,
+    ) : P503UiEvent
+
+    /**
+     * The explicit confirm of a restore. [requestId] is host-minted for this intent. Effect only
+     * on RecycleBin's nested restore sub-state: sets the per-operation submitting marker (a
+     * duplicate confirm is absorbed). Absorbed everywhere else.
+     */
+    data class ConfirmRestore(
+        val requestId: RequestId,
+    ) : P503UiEvent
+
+    /**
+     * The restore commit result (the merged void/restore [com.unifiedledger.application.VoidTransactionResult]
+     * family). Effect only on RecycleBin's nested restore sub-state: a determinate success closes
+     * the sub-state and returns to the preserved overview (the authoritative refresh follows); a
+     * typed rejection surfaces its code and keeps the bin; an identity conflict surfaces the
+     * conflict notice; an unknown commit enters the check surface. Absorbed everywhere else.
+     */
+    data class TransactionRestoreResult(
+        val result: com.unifiedledger.application.VoidTransactionResult,
+    ) : P503UiEvent
+
+    /** Closes the nested restore confirmation back to the bin list (zero writes). Effect only on RecycleBin. */
+    data object CloseRestoreConfirm : P503UiEvent
+
     // ---- async result events ----
     data class InitialLoadResult(
         val currentState: LedgerCurrentState,

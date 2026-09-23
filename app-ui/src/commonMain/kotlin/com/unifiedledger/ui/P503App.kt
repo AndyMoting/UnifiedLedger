@@ -1921,6 +1921,15 @@ fun P503App(
                     onAbandon = ::abandonImportBatch,
                     onCheckUnknownItem = ::checkImportUnknownItem,
                 )
+            // P7-05 (D-156; slice 1b Piece 2): the correction/void/recycle-bin states carry the
+            // complete state/event/reducer machine, but their screens and host wiring are the
+            // later pieces (Piece 3 screens / Piece 4 host call sites). Until then these states
+            // are unreachable (no affordance opens them), so the render arms stay neutral and
+            // reuse the existing in-flight placeholder — no new screen is introduced here.
+            is P503AppState.TransactionEdit,
+            is P503AppState.VoidConfirm,
+            is P503AppState.RecycleBin,
+            -> P503SubmittingScreen()
             is P503AppState.Editing ->
                 P503EditScreen(
                     draft = current.draft,
@@ -2185,6 +2194,14 @@ private fun isBackEnabled(state: P503AppState): Boolean =
         // exits mid-batch — the enabled handler swallows it (沿既有 Submitting 语义) while
         // [isBackDispatchSafe] keeps `Back` from ever reaching the reducer here.
         is P503AppState.ImportBatchSubmitting -> true
+        // P7-05 (D-156): the correction/void/recycle-bin surfaces return to their preserved
+        // overview; while a commit is in flight the surface keeps its marker and must not leave
+        // (提交中不得离开), so the back channel is intercepted and swallowed exactly like
+        // [P503AppState.Submitting] (the enabled handler swallows it while [isBackDispatchSafe]
+        // keeps `Back` from ever reaching the reducer).
+        is P503AppState.TransactionEdit -> true
+        is P503AppState.VoidConfirm -> true
+        is P503AppState.RecycleBin -> true
         is P503AppState.Editing -> state.overview != null
         is P503AppState.AwaitingConfirmation -> state.overview != null
         is P503AppState.Submitting -> state.overview != null
@@ -2201,7 +2218,15 @@ private fun isBackEnabled(state: P503AppState): Boolean =
  * P7-04.D: the import batch dispatch state joins Submitting in swallowing the back — the only
  * exits are the explicit Resume/Abandon affordances (显式退出只经 AbandonImportBatch).
  */
-private fun isBackDispatchSafe(state: P503AppState): Boolean = isBackEnabled(state) && state !is P503AppState.Submitting && state !is P503AppState.ImportBatchSubmitting
+private fun isBackDispatchSafe(state: P503AppState): Boolean =
+    isBackEnabled(state) &&
+        state !is P503AppState.Submitting &&
+        state !is P503AppState.ImportBatchSubmitting &&
+        // P7-05: a commit in flight keeps the surface (提交中不得离开); a non-submitting P7-05
+        // surface dispatches `Back` (its reducer maps it to the preserved overview).
+        !(state is P503AppState.TransactionEdit && state.submitting) &&
+        !(state is P503AppState.VoidConfirm && state.submitting) &&
+        !(state is P503AppState.RecycleBin && state.restore?.submitting == true)
 
 /** P7-02.A E-2: origin tab of the in-flight entry flow, for the retained intent. */
 private fun currentOriginTab(state: P503AppState): P503Tab =

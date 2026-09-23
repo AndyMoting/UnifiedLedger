@@ -79,6 +79,9 @@ class P503ReducerImpl(
             is P503AppState.ImportCandidateDetail -> reduceImportCandidateDetail(state, event)
             is P503AppState.ImportBatchConfirm -> reduceImportBatchConfirm(state, event)
             is P503AppState.ImportBatchSubmitting -> reduceImportBatchSubmitting(state, event)
+            is P503AppState.TransactionEdit -> reduceTransactionEdit(state, event)
+            is P503AppState.VoidConfirm -> reduceVoidConfirm(state, event)
+            is P503AppState.RecycleBin -> reduceRecycleBin(state, event)
             is P503AppState.Editing -> reduceEditing(state, event)
             is P503AppState.AwaitingConfirmation -> reduceAwaitingConfirmation(state, event)
             is P503AppState.Submitting -> reduceSubmitting(state, event)
@@ -162,6 +165,25 @@ class P503ReducerImpl(
             P503UiEvent.AbandonImportBatch,
             is P503UiEvent.ImportUnknownItemCheck,
             is P503UiEvent.ImportUnknownItemCheckResult,
+            // ---- P7-05 correction/void/recycle-bin events are absorbed in every other state ----
+            // (table 6.2a; the P7-05 surfaces own their effects and never reach this state).
+            is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.UpdateTransactionCorrectionField,
+            P503UiEvent.PreviewTransactionEdit,
+            is P503UiEvent.ConfirmTransactionEdit,
+            is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.OpenVoidConfirm,
+            is P503UiEvent.UpdateVoidReasonField,
+            is P503UiEvent.ConfirmVoid,
+            is P503UiEvent.TransactionVoidResult,
+            is P503UiEvent.OpenRecycleBin,
+            is P503UiEvent.RecycleBinResult,
+            P503UiEvent.CloseRecycleBin,
+            is P503UiEvent.OpenRestoreConfirm,
+            is P503UiEvent.UpdateRestoreReasonField,
+            is P503UiEvent.ConfirmRestore,
+            is P503UiEvent.TransactionRestoreResult,
+            P503UiEvent.CloseRestoreConfirm,
             -> P503AppState.Ready
             else -> unhandled(P503AppState.Ready, event)
         }
@@ -448,6 +470,29 @@ class P503ReducerImpl(
             is P503UiEvent.ImportUnknownItemCheck,
             -> state
             is P503UiEvent.ImportUnknownItemCheckResult -> reduceImportUnknownCheckResultOnOverview(state, event)
+            // ---- P7-05 correction/void/recycle-bin transitions (D-156; table 6.2a) ----
+            // The bin opens from the effective overview (its entry affordance lives on the
+            // effective surfaces); every other P7-05 event is absorbed here (the editor/void
+            // surfaces are reachable only through the detail).
+            is P503UiEvent.OpenRecycleBin ->
+                P503AppState.RecycleBin(overview = state, rows = event.result)
+            is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.UpdateTransactionCorrectionField,
+            P503UiEvent.PreviewTransactionEdit,
+            is P503UiEvent.ConfirmTransactionEdit,
+            is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.OpenVoidConfirm,
+            is P503UiEvent.UpdateVoidReasonField,
+            is P503UiEvent.ConfirmVoid,
+            is P503UiEvent.TransactionVoidResult,
+            is P503UiEvent.RecycleBinResult,
+            P503UiEvent.CloseRecycleBin,
+            is P503UiEvent.OpenRestoreConfirm,
+            is P503UiEvent.UpdateRestoreReasonField,
+            is P503UiEvent.ConfirmRestore,
+            is P503UiEvent.TransactionRestoreResult,
+            P503UiEvent.CloseRestoreConfirm,
+            -> state
             // P7-02: the entry-field intents are only meaningful inside the editor; on the
             // overview they are absorbed (§6.2a).
             is P503UiEvent.SelectEntryType,
@@ -557,6 +602,41 @@ class P503ReducerImpl(
             P503UiEvent.AbandonImportBatch,
             is P503UiEvent.ImportUnknownItemCheck,
             is P503UiEvent.ImportUnknownItemCheckResult,
+            -> state
+            // ---- P7-05 correction/void/recycle-bin transitions (D-156; DP-12) ----
+            // The detail is the only entry to the correction and void surfaces (首切片仅详情入口).
+            // Both carry the exact preserved overview as the back-target; the origin payload (with
+            // its CAS token) and the target ids ride the events.
+            is P503UiEvent.OpenTransactionEdit ->
+                P503AppState.TransactionEdit(
+                    overview = state.overview,
+                    origin = event.origin,
+                    draft = transactionCorrectionDraftFromOrigin(event.origin),
+                )
+            is P503UiEvent.OpenVoidConfirm ->
+                P503AppState.VoidConfirm(
+                    overview = state.overview,
+                    transactionId = event.transactionId,
+                )
+            // The bin also opens from the detail (the detail offers the effective surfaces'
+            // bin affordance); the detail's own overview is the preserved back-target.
+            is P503UiEvent.OpenRecycleBin ->
+                P503AppState.RecycleBin(overview = state.overview, rows = event.result)
+            // Every other P7-05 event is absorbed inside the read-only detail (table 6.2a).
+            is P503UiEvent.UpdateTransactionCorrectionField,
+            P503UiEvent.PreviewTransactionEdit,
+            is P503UiEvent.ConfirmTransactionEdit,
+            is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.UpdateVoidReasonField,
+            is P503UiEvent.ConfirmVoid,
+            is P503UiEvent.TransactionVoidResult,
+            is P503UiEvent.RecycleBinResult,
+            P503UiEvent.CloseRecycleBin,
+            is P503UiEvent.OpenRestoreConfirm,
+            is P503UiEvent.UpdateRestoreReasonField,
+            is P503UiEvent.ConfirmRestore,
+            is P503UiEvent.TransactionRestoreResult,
+            P503UiEvent.CloseRestoreConfirm,
             -> state
             else -> unhandled(state, event)
         }
@@ -949,6 +1029,25 @@ class P503ReducerImpl(
             P503UiEvent.InitialLoadFailed,
             is P503UiEvent.RefreshResult,
             P503UiEvent.RefreshFailed,
+            // ---- P7-05 correction/void/recycle-bin events are absorbed in every other state ----
+            // (table 6.2a; the P7-05 surfaces own their effects and never reach this state).
+            is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.UpdateTransactionCorrectionField,
+            P503UiEvent.PreviewTransactionEdit,
+            is P503UiEvent.ConfirmTransactionEdit,
+            is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.OpenVoidConfirm,
+            is P503UiEvent.UpdateVoidReasonField,
+            is P503UiEvent.ConfirmVoid,
+            is P503UiEvent.TransactionVoidResult,
+            is P503UiEvent.OpenRecycleBin,
+            is P503UiEvent.RecycleBinResult,
+            P503UiEvent.CloseRecycleBin,
+            is P503UiEvent.OpenRestoreConfirm,
+            is P503UiEvent.UpdateRestoreReasonField,
+            is P503UiEvent.ConfirmRestore,
+            is P503UiEvent.TransactionRestoreResult,
+            P503UiEvent.CloseRestoreConfirm,
             -> state
             else -> unhandled(state, event)
         }
@@ -1103,6 +1202,25 @@ class P503ReducerImpl(
             P503UiEvent.InitialLoadFailed,
             is P503UiEvent.RefreshResult,
             P503UiEvent.RefreshFailed,
+            // ---- P7-05 correction/void/recycle-bin events are absorbed in every other state ----
+            // (table 6.2a; the P7-05 surfaces own their effects and never reach this state).
+            is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.UpdateTransactionCorrectionField,
+            P503UiEvent.PreviewTransactionEdit,
+            is P503UiEvent.ConfirmTransactionEdit,
+            is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.OpenVoidConfirm,
+            is P503UiEvent.UpdateVoidReasonField,
+            is P503UiEvent.ConfirmVoid,
+            is P503UiEvent.TransactionVoidResult,
+            is P503UiEvent.OpenRecycleBin,
+            is P503UiEvent.RecycleBinResult,
+            P503UiEvent.CloseRecycleBin,
+            is P503UiEvent.OpenRestoreConfirm,
+            is P503UiEvent.UpdateRestoreReasonField,
+            is P503UiEvent.ConfirmRestore,
+            is P503UiEvent.TransactionRestoreResult,
+            P503UiEvent.CloseRestoreConfirm,
             -> state
             else -> unhandled(state, event)
         }
@@ -1230,6 +1348,25 @@ class P503ReducerImpl(
             P503UiEvent.InitialLoadFailed,
             is P503UiEvent.RefreshResult,
             P503UiEvent.RefreshFailed,
+            // ---- P7-05 correction/void/recycle-bin events are absorbed in every other state ----
+            // (table 6.2a; the P7-05 surfaces own their effects and never reach this state).
+            is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.UpdateTransactionCorrectionField,
+            P503UiEvent.PreviewTransactionEdit,
+            is P503UiEvent.ConfirmTransactionEdit,
+            is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.OpenVoidConfirm,
+            is P503UiEvent.UpdateVoidReasonField,
+            is P503UiEvent.ConfirmVoid,
+            is P503UiEvent.TransactionVoidResult,
+            is P503UiEvent.OpenRecycleBin,
+            is P503UiEvent.RecycleBinResult,
+            P503UiEvent.CloseRecycleBin,
+            is P503UiEvent.OpenRestoreConfirm,
+            is P503UiEvent.UpdateRestoreReasonField,
+            is P503UiEvent.ConfirmRestore,
+            is P503UiEvent.TransactionRestoreResult,
+            P503UiEvent.CloseRestoreConfirm,
             -> state
             else -> unhandled(state, event)
         }
@@ -1346,6 +1483,322 @@ class P503ReducerImpl(
         if (items == summary.items) return state
         return state.copy(importReview = view.copy(batchResult = summary.copy(items = items)))
     }
+
+    // ---- P7-05 correction/void/recycle-bin transitions (D-156; spec sections 3.2-3.5/4.4) ----
+
+    /**
+     * P7-05.B: the independent correction surface (spec section 4.4). Only its designed events
+     * react: the form update and the preview are pure draft/preview writes, the explicit confirm
+     * sets the per-operation submitting marker (提交中不重入 — a duplicate confirm while one is in
+     * flight is absorbed), and the typed result leaves on a determinate success while a rejection
+     * / stale / identity conflict surfaces its own notice. A lost commit keeps the submitting
+     * marker (the `UnknownCommit` discipline: no automatic retry, no requestId swap, no leave).
+     * Cancel/Back return to the exact preserved overview (zero writes — a preview is never commit
+     * permission). Every pre-existing event is absorbed (新态不发起录入/管理/导入流); `Exit` stays
+     * unlisted (ISE, spec section 6.3 / P7-02 §6.2b).
+     */
+    private fun reduceTransactionEdit(
+        state: P503AppState.TransactionEdit,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            is P503UiEvent.UpdateTransactionCorrectionField -> state.copy(draft = state.draft.withUpdate(event.update))
+            P503UiEvent.PreviewTransactionEdit -> state.copy(preview = transactionEditPreview(state.origin, state.draft))
+            is P503UiEvent.ConfirmTransactionEdit ->
+                // 提交中不重入: a second confirm while the first is in flight changes nothing.
+                if (state.submitting) state else state.copy(requestId = event.requestId, submitting = true, notice = null)
+            is P503UiEvent.TransactionEditResult -> reduceTransactionEditResult(state, event.result)
+            // Cancel/Back return to the preserved overview; a preview never blocks the zero-write
+            // return. While a commit is in flight the surface must not leave (提交中不得离开, 沿
+            // Submitting 语义), so the exit is absorbed and the host guards intercept the back.
+            P503UiEvent.Cancel,
+            P503UiEvent.Back,
+            -> if (state.submitting) state else state.overview
+            // A second OpenTransactionEdit while a surface is open stays on the open surface (the
+            // UI affords no nested navigation).
+            is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.OpenVoidConfirm,
+            is P503UiEvent.UpdateVoidReasonField,
+            is P503UiEvent.ConfirmVoid,
+            is P503UiEvent.TransactionVoidResult,
+            is P503UiEvent.OpenRecycleBin,
+            is P503UiEvent.RecycleBinResult,
+            P503UiEvent.CloseRecycleBin,
+            is P503UiEvent.OpenRestoreConfirm,
+            is P503UiEvent.UpdateRestoreReasonField,
+            is P503UiEvent.ConfirmRestore,
+            is P503UiEvent.TransactionRestoreResult,
+            P503UiEvent.CloseRestoreConfirm,
+            -> state
+            else -> absorbPreExisting(state, event)
+        }
+
+    /** P7-05.B: maps the real correction result family onto the surface (spec section 3.2). */
+    private fun reduceTransactionEditResult(
+        state: P503AppState.TransactionEdit,
+        result: com.unifiedledger.application.CorrectTransactionVersionResult,
+    ): P503AppState =
+        when (result) {
+            // Determinate success: leave to the preserved overview; the authoritative refresh
+            // follows (the P5-04.4/P7-02 precedent, spec section 3.5).
+            is com.unifiedledger.application.CorrectTransactionVersionResult.Created,
+            is com.unifiedledger.application.CorrectTransactionVersionResult.NoChange,
+            -> state.overview
+            // The frozen stale surface is its own variant, never folded into Rejected.
+            com.unifiedledger.application.CorrectTransactionVersionResult.StaleCurrentVersion ->
+                state.copy(submitting = false, notice = P705Notice.StaleCurrentVersion)
+            is com.unifiedledger.application.CorrectTransactionVersionResult.RequestIdentityConflict ->
+                state.copy(submitting = false, notice = P705Notice.RequestIdentityConflict(result.identity.requestId))
+            is com.unifiedledger.application.CorrectTransactionVersionResult.Rejected ->
+                state.copy(submitting = false, notice = P705Notice.Rejected(result.code))
+        }
+
+    /**
+     * P7-05.C: the void confirmation page (spec section 4.4). Only its designed events react:
+     * the reason-field write is a pure draft write, the explicit confirm sets the per-operation
+     * submitting marker (提交中不重入), and the typed result leaves on a determinate success while a
+     * rejection / identity conflict surfaces its notice. A lost commit keeps the marker (the
+     * `UnknownCommit` discipline). Cancel/Back return to the exact preserved overview (zero
+     * writes). Every pre-existing event is absorbed; `Exit` stays unlisted (ISE).
+     */
+    private fun reduceVoidConfirm(
+        state: P503AppState.VoidConfirm,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            is P503UiEvent.UpdateVoidReasonField -> state.copy(reason = state.reason.withUpdate(event.update))
+            is P503UiEvent.ConfirmVoid ->
+                if (state.submitting) state else state.copy(requestId = event.requestId, submitting = true, notice = null)
+            is P503UiEvent.TransactionVoidResult -> reduceTransactionVoidResult(state, event.result)
+            P503UiEvent.Cancel,
+            P503UiEvent.Back,
+            -> if (state.submitting) state else state.overview
+            is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.UpdateTransactionCorrectionField,
+            P503UiEvent.PreviewTransactionEdit,
+            is P503UiEvent.ConfirmTransactionEdit,
+            is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.OpenVoidConfirm,
+            is P503UiEvent.OpenRecycleBin,
+            is P503UiEvent.RecycleBinResult,
+            P503UiEvent.CloseRecycleBin,
+            is P503UiEvent.OpenRestoreConfirm,
+            is P503UiEvent.UpdateRestoreReasonField,
+            is P503UiEvent.ConfirmRestore,
+            is P503UiEvent.TransactionRestoreResult,
+            P503UiEvent.CloseRestoreConfirm,
+            -> state
+            else -> absorbPreExisting(state, event)
+        }
+
+    /** P7-05.C: maps the real void result family onto the void page. */
+    private fun reduceTransactionVoidResult(
+        state: P503AppState.VoidConfirm,
+        result: com.unifiedledger.application.VoidTransactionResult,
+    ): P503AppState =
+        when (result) {
+            is com.unifiedledger.application.VoidTransactionResult.Created,
+            is com.unifiedledger.application.VoidTransactionResult.NoChange,
+            -> state.overview
+            is com.unifiedledger.application.VoidTransactionResult.RequestIdentityConflict ->
+                state.copy(submitting = false, notice = P705Notice.RequestIdentityConflict(result.identity.requestId))
+            is com.unifiedledger.application.VoidTransactionResult.Rejected ->
+                state.copy(submitting = false, notice = P705Notice.Rejected(result.code))
+        }
+
+    /**
+     * P7-05.C: the recycle-bin list plus its nested restore confirmation (spec section 4.4). The
+     * list read result replaces the projection (a typed failure keeps the previous rows and
+     * surfaces nothing new — the read projection carries its own InvalidState/Unavailable); one
+     * row opens the nested [RestoreConfirm]; its reason write/confirm/result follow the void
+     * page's discipline; a determinate restore success returns to the preserved overview (the
+     * authoritative refresh follows); Close/Back return to the preserved overview with zero
+     * writes. A restore commit in flight keeps the bin on screen: every leave path — including the
+     * close of the nested sub-state and the Back that closes it first — is absorbed while
+     * `restore.submitting` is set (提交中不得离开, 沿 Submitting 语义), mirroring the correction and
+     * void surfaces. Every pre-existing event is absorbed; `Exit` stays unlisted (ISE).
+     */
+    private fun reduceRecycleBin(
+        state: P503AppState.RecycleBin,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            is P503UiEvent.RecycleBinResult -> state.copy(rows = event.result)
+            // CloseRecycleBin leaves for the preserved overview only when no restore commit is in
+            // flight; a submitting restore absorbs the exit so a lost commit keeps its marker.
+            P503UiEvent.CloseRecycleBin ->
+                if (state.restore?.submitting == true) state else state.overview
+            // Back closes an open nested restore confirmation first (the catalog-dialog Back
+            // precedent) and only leaves the bin when no sub-state is open — both while a restore
+            // commit is not in flight.
+            P503UiEvent.Back ->
+                if (state.restore?.submitting == true) {
+                    state
+                } else if (state.restore != null) {
+                    state.copy(restore = null)
+                } else {
+                    state.overview
+                }
+            is P503UiEvent.OpenRestoreConfirm ->
+                // One row opens the nested restore confirmation (a second open while one is
+                // already shown stays on the open sub-state — the UI affords no nested nesting).
+                if (state.restore != null) {
+                    state
+                } else {
+                    state.copy(restore = RestoreConfirm(transactionId = event.transactionId))
+                }
+            is P503UiEvent.UpdateRestoreReasonField ->
+                state.restore?.let { state.copy(restore = it.copy(reason = it.reason.withUpdate(event.update))) } ?: state
+            is P503UiEvent.ConfirmRestore ->
+                state.restore?.let {
+                    if (it.submitting) state else state.copy(restore = it.copy(requestId = event.requestId, submitting = true, notice = null))
+                } ?: state
+            is P503UiEvent.TransactionRestoreResult ->
+                state.restore?.let { reduceRestoreResult(state, it, event.result) } ?: state
+            // Closing the nested sub-state keeps the bin list exactly as it was (zero writes); a
+            // submitting restore absorbs the close (提交中不得离开).
+            P503UiEvent.CloseRestoreConfirm ->
+                if (state.restore?.submitting == true) state else state.copy(restore = null)
+            // A second OpenRecycleBin while the bin is open refreshes the projection in place
+            // (the bin is already the open surface; the UI affords no nested navigation).
+            is P503UiEvent.OpenRecycleBin -> state.copy(rows = event.result)
+            is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.UpdateTransactionCorrectionField,
+            P503UiEvent.PreviewTransactionEdit,
+            is P503UiEvent.ConfirmTransactionEdit,
+            is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.OpenVoidConfirm,
+            is P503UiEvent.UpdateVoidReasonField,
+            is P503UiEvent.ConfirmVoid,
+            is P503UiEvent.TransactionVoidResult,
+            -> state
+            else -> absorbPreExisting(state, event)
+        }
+
+    /** P7-05.C: maps the merged void/restore result family onto the nested restore sub-state. */
+    private fun reduceRestoreResult(
+        state: P503AppState.RecycleBin,
+        restore: RestoreConfirm,
+        result: com.unifiedledger.application.VoidTransactionResult,
+    ): P503AppState =
+        when (result) {
+            // Determinate success: close the sub-state and leave the bin for the preserved
+            // overview; the authoritative refresh follows.
+            is com.unifiedledger.application.VoidTransactionResult.Created,
+            is com.unifiedledger.application.VoidTransactionResult.NoChange,
+            -> state.overview
+            is com.unifiedledger.application.VoidTransactionResult.RequestIdentityConflict ->
+                state.copy(restore = restore.copy(submitting = false, notice = P705Notice.RequestIdentityConflict(result.identity.requestId)))
+            is com.unifiedledger.application.VoidTransactionResult.Rejected ->
+                state.copy(restore = restore.copy(submitting = false, notice = P705Notice.Rejected(result.code)))
+        }
+
+    /**
+     * P7-05: the shared absorb tail of the three new surfaces. Every pre-existing event is
+     * absorbed (the new states never start an entry/catalog/import/monthly flow); every
+     * pre-existing unlisted combination keeps its frozen `unhandled` behavior (G-B), so this
+     * helper only lists combinations that were already absorbed in the P7-03/P7-04 states.
+     */
+    private fun absorbPreExisting(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            is P503UiEvent.SelectTab,
+            P503UiEvent.StartNewExpense,
+            is P503UiEvent.UpdateAmount,
+            is P503UiEvent.UpdatePaymentAccount,
+            is P503UiEvent.UpdateCategory,
+            is P503UiEvent.UpdateOccurredAt,
+            is P503UiEvent.SelectEntryType,
+            is P503UiEvent.UpdateNote,
+            is P503UiEvent.UpdateReceivingAccount,
+            is P503UiEvent.UpdateIncomeCategory,
+            is P503UiEvent.UpdateTransferSourceAccount,
+            is P503UiEvent.UpdateTransferDestinationAccount,
+            is P503UiEvent.UpdateTransferDestinationCredit,
+            is P503UiEvent.UpdateTransferFee,
+            is P503UiEvent.UpdateTransferFeeCategory,
+            is P503UiEvent.UpdateLendCounterparty,
+            is P503UiEvent.UpdateLendFundingAccount,
+            is P503UiEvent.UpdateLendAmount,
+            is P503UiEvent.UpdateCollectCounterparty,
+            is P503UiEvent.UpdateCollectDestinationAccount,
+            is P503UiEvent.UpdateCollectTotal,
+            is P503UiEvent.UpdateCollectPrincipal,
+            is P503UiEvent.UpdateCollectInterest,
+            is P503UiEvent.UpdateCollectInterestCategory,
+            P503UiEvent.OpenCounterpartyCreateDialog,
+            is P503UiEvent.OpenCounterpartyRenameDialog,
+            is P503UiEvent.UpdateCounterpartyFormText,
+            P503UiEvent.DismissCounterpartyDialog,
+            P503UiEvent.ApplyExpressionResult,
+            is P503UiEvent.EvaluateEntryExpression,
+            is P503UiEvent.SaveAndRecordAgain,
+            is P503UiEvent.TogglePin,
+            is P503UiEvent.OpenAccountCreateDialog,
+            is P503UiEvent.OpenAccountRenameDialog,
+            is P503UiEvent.OpenCategoryGroupDialog,
+            is P503UiEvent.OpenCategoryAppendChildDialog,
+            is P503UiEvent.OpenCategoryRenameDialog,
+            is P503UiEvent.OpenCategoryDeleteDialog,
+            is P503UiEvent.ManageAccountActive,
+            is P503UiEvent.ManageCategoryActive,
+            is P503UiEvent.EnableCategoryGroup,
+            is P503UiEvent.UpdateCatalogFormText,
+            is P503UiEvent.UpdateCatalogFormSecondaryText,
+            is P503UiEvent.UpdateCatalogFormKind,
+            P503UiEvent.DismissCatalogDialog,
+            P503UiEvent.DismissCatalogNotice,
+            is P503UiEvent.CatalogCommandCompleted,
+            is P503UiEvent.CatalogSnapshotRefreshed,
+            is P503UiEvent.SelectTransaction,
+            P503UiEvent.CloseTransactionDetail,
+            is P503UiEvent.SelectMonth,
+            is P503UiEvent.AnalysisMonthShift,
+            is P503UiEvent.MonthlyActivityResult,
+            is P503UiEvent.StartImportFilePick,
+            is P503UiEvent.ImportFilePicked,
+            P503UiEvent.ImportFilePickCancelled,
+            is P503UiEvent.ImportFilePickFailed,
+            is P503UiEvent.ImportFileIntakeResult,
+            P503UiEvent.RefreshImportReview,
+            is P503UiEvent.ImportReviewResult,
+            is P503UiEvent.SelectImportCandidate,
+            P503UiEvent.CloseImportCandidateDetail,
+            is P503UiEvent.UpdateImportDecisionField,
+            is P503UiEvent.ToggleImportCandidateSelection,
+            is P503UiEvent.SubmitImportDuplicateReview,
+            is P503UiEvent.ImportDuplicateReviewResult,
+            is P503UiEvent.StartImportDuplicateGroupDisposition,
+            is P503UiEvent.ImportDuplicateGroupDispositionResult,
+            P503UiEvent.CloseImportDuplicateGroupDisposition,
+            P503UiEvent.ImportGroupEnumerationStarted,
+            P503UiEvent.ImportGroupEnumerationCompleted,
+            P503UiEvent.RequestImportBatchConfirm,
+            P503UiEvent.CancelImportBatchConfirm,
+            is P503UiEvent.AuthorizeImportBatch,
+            is P503UiEvent.ImportItemResult,
+            P503UiEvent.ResumeImportBatchDispatch,
+            P503UiEvent.AbandonImportBatch,
+            is P503UiEvent.ImportUnknownItemCheck,
+            is P503UiEvent.ImportUnknownItemCheckResult,
+            is P503UiEvent.Continue,
+            P503UiEvent.Cancel,
+            P503UiEvent.Confirm,
+            P503UiEvent.RetrySubmission,
+            P503UiEvent.RetryRefresh,
+            P503UiEvent.RetryCommitStatusCheck,
+            P503UiEvent.AbandonConflict,
+            is P503UiEvent.SubmissionResult,
+            is P503UiEvent.CommitStatusResolved,
+            is P503UiEvent.InitialLoadResult,
+            P503UiEvent.InitialLoadFailed,
+            is P503UiEvent.RefreshResult,
+            P503UiEvent.RefreshFailed,
+            -> state
+            else -> unhandled(state, event)
+        }
 
     private fun reduceEditing(
         state: P503AppState.Editing,
@@ -1485,6 +1938,25 @@ class P503ReducerImpl(
             P503UiEvent.AbandonImportBatch,
             is P503UiEvent.ImportUnknownItemCheck,
             is P503UiEvent.ImportUnknownItemCheckResult,
+            // ---- P7-05 correction/void/recycle-bin events are absorbed in every other state ----
+            // (table 6.2a; the P7-05 surfaces own their effects and never reach this state).
+            is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.UpdateTransactionCorrectionField,
+            P503UiEvent.PreviewTransactionEdit,
+            is P503UiEvent.ConfirmTransactionEdit,
+            is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.OpenVoidConfirm,
+            is P503UiEvent.UpdateVoidReasonField,
+            is P503UiEvent.ConfirmVoid,
+            is P503UiEvent.TransactionVoidResult,
+            is P503UiEvent.OpenRecycleBin,
+            is P503UiEvent.RecycleBinResult,
+            P503UiEvent.CloseRecycleBin,
+            is P503UiEvent.OpenRestoreConfirm,
+            is P503UiEvent.UpdateRestoreReasonField,
+            is P503UiEvent.ConfirmRestore,
+            is P503UiEvent.TransactionRestoreResult,
+            P503UiEvent.CloseRestoreConfirm,
             -> state
             is P503UiEvent.Continue ->
                 if (validation.isValid(state.draft, currency)) {
@@ -1609,6 +2081,25 @@ class P503ReducerImpl(
             P503UiEvent.AbandonImportBatch,
             is P503UiEvent.ImportUnknownItemCheck,
             is P503UiEvent.ImportUnknownItemCheckResult,
+            // ---- P7-05 correction/void/recycle-bin events are absorbed in every other state ----
+            // (table 6.2a; the P7-05 surfaces own their effects and never reach this state).
+            is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.UpdateTransactionCorrectionField,
+            P503UiEvent.PreviewTransactionEdit,
+            is P503UiEvent.ConfirmTransactionEdit,
+            is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.OpenVoidConfirm,
+            is P503UiEvent.UpdateVoidReasonField,
+            is P503UiEvent.ConfirmVoid,
+            is P503UiEvent.TransactionVoidResult,
+            is P503UiEvent.OpenRecycleBin,
+            is P503UiEvent.RecycleBinResult,
+            P503UiEvent.CloseRecycleBin,
+            is P503UiEvent.OpenRestoreConfirm,
+            is P503UiEvent.UpdateRestoreReasonField,
+            is P503UiEvent.ConfirmRestore,
+            is P503UiEvent.TransactionRestoreResult,
+            P503UiEvent.CloseRestoreConfirm,
             -> state
             // System back drops the draft and closes the editor flow (distinct from Cancel,
             // which keeps it) (P5-04.2).
@@ -1705,6 +2196,25 @@ class P503ReducerImpl(
             P503UiEvent.AbandonImportBatch,
             is P503UiEvent.ImportUnknownItemCheck,
             is P503UiEvent.ImportUnknownItemCheckResult,
+            // ---- P7-05 correction/void/recycle-bin events are absorbed in every other state ----
+            // (table 6.2a; the P7-05 surfaces own their effects and never reach this state).
+            is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.UpdateTransactionCorrectionField,
+            P503UiEvent.PreviewTransactionEdit,
+            is P503UiEvent.ConfirmTransactionEdit,
+            is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.OpenVoidConfirm,
+            is P503UiEvent.UpdateVoidReasonField,
+            is P503UiEvent.ConfirmVoid,
+            is P503UiEvent.TransactionVoidResult,
+            is P503UiEvent.OpenRecycleBin,
+            is P503UiEvent.RecycleBinResult,
+            P503UiEvent.CloseRecycleBin,
+            is P503UiEvent.OpenRestoreConfirm,
+            is P503UiEvent.UpdateRestoreReasonField,
+            is P503UiEvent.ConfirmRestore,
+            is P503UiEvent.TransactionRestoreResult,
+            P503UiEvent.CloseRestoreConfirm,
             -> state
             else -> unhandled(state, event)
         }
@@ -2002,6 +2512,25 @@ class P503ReducerImpl(
             P503UiEvent.AbandonImportBatch,
             is P503UiEvent.ImportUnknownItemCheck,
             is P503UiEvent.ImportUnknownItemCheckResult,
+            // ---- P7-05 correction/void/recycle-bin events are absorbed in every other state ----
+            // (table 6.2a; the P7-05 surfaces own their effects and never reach this state).
+            is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.UpdateTransactionCorrectionField,
+            P503UiEvent.PreviewTransactionEdit,
+            is P503UiEvent.ConfirmTransactionEdit,
+            is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.OpenVoidConfirm,
+            is P503UiEvent.UpdateVoidReasonField,
+            is P503UiEvent.ConfirmVoid,
+            is P503UiEvent.TransactionVoidResult,
+            is P503UiEvent.OpenRecycleBin,
+            is P503UiEvent.RecycleBinResult,
+            P503UiEvent.CloseRecycleBin,
+            is P503UiEvent.OpenRestoreConfirm,
+            is P503UiEvent.UpdateRestoreReasonField,
+            is P503UiEvent.ConfirmRestore,
+            is P503UiEvent.TransactionRestoreResult,
+            P503UiEvent.CloseRestoreConfirm,
             -> current
             else -> unhandled(current, event)
         }
@@ -2108,6 +2637,25 @@ class P503ReducerImpl(
             P503UiEvent.AbandonImportBatch,
             is P503UiEvent.ImportUnknownItemCheck,
             is P503UiEvent.ImportUnknownItemCheckResult,
+            // ---- P7-05 correction/void/recycle-bin events are absorbed in every other state ----
+            // (table 6.2a; the P7-05 surfaces own their effects and never reach this state).
+            is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.UpdateTransactionCorrectionField,
+            P503UiEvent.PreviewTransactionEdit,
+            is P503UiEvent.ConfirmTransactionEdit,
+            is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.OpenVoidConfirm,
+            is P503UiEvent.UpdateVoidReasonField,
+            is P503UiEvent.ConfirmVoid,
+            is P503UiEvent.TransactionVoidResult,
+            is P503UiEvent.OpenRecycleBin,
+            is P503UiEvent.RecycleBinResult,
+            P503UiEvent.CloseRecycleBin,
+            is P503UiEvent.OpenRestoreConfirm,
+            is P503UiEvent.UpdateRestoreReasonField,
+            is P503UiEvent.ConfirmRestore,
+            is P503UiEvent.TransactionRestoreResult,
+            P503UiEvent.CloseRestoreConfirm,
             -> state
             // Explicitly abandoning the conflicting draft starts a new save intent.
             P503UiEvent.AbandonConflict ->
@@ -2221,6 +2769,25 @@ class P503ReducerImpl(
             P503UiEvent.AbandonImportBatch,
             is P503UiEvent.ImportUnknownItemCheck,
             is P503UiEvent.ImportUnknownItemCheckResult,
+            // ---- P7-05 correction/void/recycle-bin events are absorbed in every other state ----
+            // (table 6.2a; the P7-05 surfaces own their effects and never reach this state).
+            is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.UpdateTransactionCorrectionField,
+            P503UiEvent.PreviewTransactionEdit,
+            is P503UiEvent.ConfirmTransactionEdit,
+            is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.OpenVoidConfirm,
+            is P503UiEvent.UpdateVoidReasonField,
+            is P503UiEvent.ConfirmVoid,
+            is P503UiEvent.TransactionVoidResult,
+            is P503UiEvent.OpenRecycleBin,
+            is P503UiEvent.RecycleBinResult,
+            P503UiEvent.CloseRecycleBin,
+            is P503UiEvent.OpenRestoreConfirm,
+            is P503UiEvent.UpdateRestoreReasonField,
+            is P503UiEvent.ConfirmRestore,
+            is P503UiEvent.TransactionRestoreResult,
+            P503UiEvent.CloseRestoreConfirm,
             -> state
             P503UiEvent.Back ->
                 // A-02 FIX-MONTH-2 (D-152): the Back rebuild restores the pre-editor monthly
@@ -2312,6 +2879,25 @@ class P503ReducerImpl(
                     P503UiEvent.AbandonImportBatch,
                     is P503UiEvent.ImportUnknownItemCheck,
                     is P503UiEvent.ImportUnknownItemCheckResult,
+                    // ---- P7-05 correction/void/recycle-bin events are absorbed here too ----
+                    // (table 6.2a; the P7-05 surfaces own their effects and never reach this state).
+                    is P503UiEvent.OpenTransactionEdit,
+                    is P503UiEvent.UpdateTransactionCorrectionField,
+                    P503UiEvent.PreviewTransactionEdit,
+                    is P503UiEvent.ConfirmTransactionEdit,
+                    is P503UiEvent.TransactionEditResult,
+                    is P503UiEvent.OpenVoidConfirm,
+                    is P503UiEvent.UpdateVoidReasonField,
+                    is P503UiEvent.ConfirmVoid,
+                    is P503UiEvent.TransactionVoidResult,
+                    is P503UiEvent.OpenRecycleBin,
+                    is P503UiEvent.RecycleBinResult,
+                    P503UiEvent.CloseRecycleBin,
+                    is P503UiEvent.OpenRestoreConfirm,
+                    is P503UiEvent.UpdateRestoreReasonField,
+                    is P503UiEvent.ConfirmRestore,
+                    is P503UiEvent.TransactionRestoreResult,
+                    P503UiEvent.CloseRestoreConfirm,
                     -> state
                     else -> unhandled(state, event)
                 }
@@ -2405,6 +2991,25 @@ class P503ReducerImpl(
                     P503UiEvent.AbandonImportBatch,
                     is P503UiEvent.ImportUnknownItemCheck,
                     is P503UiEvent.ImportUnknownItemCheckResult,
+                    // ---- P7-05 correction/void/recycle-bin events are absorbed here too ----
+                    // (table 6.2a; the P7-05 surfaces own their effects and never reach this state).
+                    is P503UiEvent.OpenTransactionEdit,
+                    is P503UiEvent.UpdateTransactionCorrectionField,
+                    P503UiEvent.PreviewTransactionEdit,
+                    is P503UiEvent.ConfirmTransactionEdit,
+                    is P503UiEvent.TransactionEditResult,
+                    is P503UiEvent.OpenVoidConfirm,
+                    is P503UiEvent.UpdateVoidReasonField,
+                    is P503UiEvent.ConfirmVoid,
+                    is P503UiEvent.TransactionVoidResult,
+                    is P503UiEvent.OpenRecycleBin,
+                    is P503UiEvent.RecycleBinResult,
+                    P503UiEvent.CloseRecycleBin,
+                    is P503UiEvent.OpenRestoreConfirm,
+                    is P503UiEvent.UpdateRestoreReasonField,
+                    is P503UiEvent.ConfirmRestore,
+                    is P503UiEvent.TransactionRestoreResult,
+                    P503UiEvent.CloseRestoreConfirm,
                     -> state
                     else -> unhandled(state, event)
                 }
@@ -2414,6 +3019,50 @@ class P503ReducerImpl(
         state: P503AppState,
         event: P503UiEvent,
     ): Nothing = throw IllegalStateException("Unhandled P5-03 event $event in state $state")
+}
+
+/**
+ * P7-05.B (spec section 4.4): the pure field-by-field difference preview. Display-only: it never
+ * writes, never calls the facade and never constitutes commit permission (spec section 3.2). Each
+ * frozen first-slice field is shown as its old display text against the draft's new one; an amount
+ * that does not parse at the currency precision is shown verbatim (the commit rejects it
+ * typed — the preview must not silently normalize it).
+ */
+private fun transactionEditPreview(
+    origin: TransactionEditOrigin,
+    draft: TransactionCorrectionDraft,
+): TransactionEditPreview {
+    val amountText = draft.amountText.ifBlank { origin.amountText }
+    return TransactionEditPreview(
+        fields =
+            listOf(
+                TransactionEditFieldDiff(
+                    field = TransactionEditField.NOTE,
+                    oldText = origin.note.orEmpty(),
+                    newText = draft.note,
+                ),
+                TransactionEditFieldDiff(
+                    field = TransactionEditField.STATISTICS_AT,
+                    oldText = origin.statisticsAt.toString(),
+                    newText = draft.statisticsAtText,
+                ),
+                TransactionEditFieldDiff(
+                    field = TransactionEditField.AMOUNT,
+                    oldText = origin.amountText,
+                    newText = amountText,
+                ),
+                TransactionEditFieldDiff(
+                    field = TransactionEditField.CATEGORY,
+                    oldText = origin.categoryId?.value.orEmpty(),
+                    newText = draft.categoryId?.value.orEmpty(),
+                ),
+                TransactionEditFieldDiff(
+                    field = TransactionEditField.FUNDING_ACCOUNT,
+                    oldText = origin.fundingAccountId?.value.orEmpty(),
+                    newText = draft.fundingAccountId?.value.orEmpty(),
+                ),
+            ),
+    )
 }
 
 /** P7-02: sets the draft's primary account while preserving the concrete subtype. */

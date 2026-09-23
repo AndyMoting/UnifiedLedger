@@ -39,6 +39,17 @@ import kotlin.time.Instant
  * snapshot confirm page) and [ImportBatchSubmitting] (the per-item dispatch state, back
  * intercepted 沿 Submitting 语义). Their events follow the same table 6.2a discipline: effect in
  * the designed state, absorbed elsewhere, never an ISE; `Exit` stays unlisted on them too.
+ *
+ * P7-05 (D-156; spec sections 3.5/4.4) adds the correction/void/recycle-bin surfaces:
+ * [TransactionEdit] (the independent correction form + difference preview + explicit confirm),
+ * [VoidConfirm] (the reason + explicit confirm page) and [RecycleBin] (the voided-transaction
+ * list plus the nested [RestoreConfirm] sub-state). The correction surface carries the CAS token
+ * (`currentVersionId`) the design requires; the void/restore family carries none — it is guarded
+ * by the void-fact sequence (DP-8). All three carry a per-operation submitting marker and never
+ * invent a new transient result family — the `Submitting`/`UnknownCommit` discipline is reused
+ * (a submitting surface never leaves, a submitting operation is never re-entered). The new
+ * events only define P7-05 transitions; every pre-existing event x state combination is
+ * unchanged and every unlisted combination stays `unhandled` (the G-B discipline).
  */
 sealed interface P503AppState {
     data object Ready : P503AppState
@@ -328,6 +339,59 @@ sealed interface P503AppState {
         val items: List<ImportBatchSubmittingItem>,
         /** True once an Unknown outcome paused the loop (派发暂停； Resume clears it, Abandon leaves). */
         val dispatchPaused: Boolean = false,
+    ) : P503AppState
+
+    /**
+     * P7-05.B (D-156; spec sections 3.5/4.4): the independent correction surface. Reached only
+     * from the read-only transaction detail (DP-12: 首切片仅详情入口, list rows keep navigating
+     * only). [origin] is the host-resolved old-value snapshot and carries the CAS token
+     * (`currentVersionId`) the commit must send; [draft] is the pure correction form (the frozen
+     * first-slice field set); [preview] is the pure difference preview (a preview is never commit
+     * permission, spec section 3.2); [requestId] is minted by the host on the explicit confirm
+     * (never by the reducer); [submitting] is the per-operation marker (提交中不重入) and is also
+     * the `UnknownCommit` discipline's surface — a lost commit leaves the marker set with no
+     * automatic retry, no requestId swap and no accepted leave. The overview is carried so every
+     * exit restores the exact tab, month cursor and monthly payload.
+     */
+    data class TransactionEdit(
+        val overview: OverviewEmpty,
+        val origin: TransactionEditOrigin,
+        val draft: TransactionCorrectionDraft = TransactionCorrectionDraft(),
+        val preview: TransactionEditPreview? = null,
+        val requestId: RequestId? = null,
+        val submitting: Boolean = false,
+        val notice: P705Notice? = null,
+    ) : P503AppState
+
+    /**
+     * P7-05.C (D-156; spec sections 3.3/4.4): the void confirmation page. Reached only from the
+     * read-only transaction detail (DP-12). [reason] is the mandatory typed reason form (DP-11);
+     * [requestId] is host-minted on the explicit confirm; [submitting] is the per-operation
+     * marker and the `UnknownCommit` discipline's surface. The page presents the impact statement
+     * (该交易将从月度与流水中移除、可在回收站恢复).
+     */
+    data class VoidConfirm(
+        val overview: OverviewEmpty,
+        val transactionId: TransactionId,
+        val reason: VoidReasonDraft = VoidReasonDraft(),
+        val requestId: RequestId? = null,
+        val submitting: Boolean = false,
+        val notice: P705Notice? = null,
+    ) : P503AppState
+
+    /**
+     * P7-05.C (D-156; spec sections 3.4/4.4): the recycle-bin list plus its nested restore
+     * confirmation. [rows] is the host-resolved authoritative read projection
+     * ([com.unifiedledger.application.RecycleBinResult]); [restore] is the nested
+     * [RestoreConfirm] sub-state (`null` when the bin is showing its list). The bin is reached
+     * from the effective surfaces (its entry affordance) and returns to the preserved overview;
+     * the list order is the query's frozen `(void time DESC, transaction_id ASC)` total order,
+     * so the reducer never re-sorts.
+     */
+    data class RecycleBin(
+        val overview: OverviewEmpty,
+        val rows: com.unifiedledger.application.RecycleBinResult,
+        val restore: RestoreConfirm? = null,
     ) : P503AppState
 
     /**
