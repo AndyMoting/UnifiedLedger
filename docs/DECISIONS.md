@@ -3386,7 +3386,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
    - (c) 移除因删除 `currentVersionId` 而失效的注释残句。
    - (d) V-16 自动重开测试改为真实关闭/重开（经仅测试用的 harness 能力，保留文件），而非第二并发连接。
 
-3. **V-19 交互缺口登记（显式承接，不得静默丢弃）**：V-19 的「重开后可再次核对（沿 P7-02 S-3）」在片 1b 只满足能力层——快照感知 resolver（`ResolveTransactionCorrectionCommitStatus`/`ResolveTransactionVoidCommitStatus`）为 DB 支撑、跨重开可解析且已有测试（`P705EffectiveSurfaceTest.kt` 的 restore 半族向量）。但 P7-05 的修正/作废/恢复**没有任何在会话内的人工再核对入口**（P7-02 有 D-126 R4 的「重新核对」按钮）；丢失提交后仅保留 `submitting` 标记且宿主状态为 `remember`（非 `rememberSaveable`），重组/进程死亡后该面消失。因此 V-19 **不得判 PASS**，登记为「已实现待验收/缺证」，缺口为「P7-05 未知提交的人工再核对面」。
+3. **V-19 交互缺口登记（显式承接，不得静默丢弃）**：V-19 的「重开后可再次核对（沿 P7-02 S-3）」在片 1b 只满足能力层——快照感知 resolver（`ResolveTransactionCorrectionCommitStatus`/`ResolveTransactionVoidCommitStatus`）为 DB 支撑，其命中/冲突/缺失三种解析均已有测试（`P705EffectiveSurfaceTest.kt` 的 restore 半族向量，且这些测试在同一连接上进行、不关闭重开）；跨重开可解析性**并非**来自「重开后再跑 resolver」的测试，而是源自请求/回执行本身的持久化（V-16 重开测试已示这些行在真实关闭/重开后仍在）。但 P7-05 的修正/作废/恢复**没有任何在会话内的人工再核对入口**（P7-02 有 D-126 R4 的「重新核对」按钮）；丢失提交后仅保留 `submitting` 标记且宿主状态为 `remember`（非 `rememberSaveable`），重组/进程死亡后该面消失。因此 V-19 **不得判 PASS**，登记为「已实现待验收/缺证」，缺口为「P7-05 未知提交的人工再核对面」。
 
 4. **承接条件**：该缺口由片 1b 的后续片（Piece 6）实施或另行裁决；在实施前 V-19 维持非 PASS。范围不因本批收尾而缩减。
 

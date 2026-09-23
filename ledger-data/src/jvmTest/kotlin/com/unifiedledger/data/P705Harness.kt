@@ -157,9 +157,19 @@ internal class P705Database private constructor(
      * Test-only: close the connection while KEEPING the file, so a test can reopen the same path on a
      * fresh connection ([P705Database.open]) and assert a real close/reopen rather than a second
      * concurrent connection. The owner's [close] still deletes the file afterwards.
+     *
+     * The close must be genuine. For a file-backed url, SQLDelight 2.3.2's `JdbcSqliteDriver`
+     * delegates `close()` to `ThreadedConnectionManager.close()`, which is an empty method, and its
+     * `closeConnection` drops the thread-local handle so the next query silently reopens a fresh
+     * connection. This method therefore closes the underlying JDBC connection directly, leaving the
+     * driver's thread-local pointing at the now-closed connection: any further read through this
+     * harness fails rather than transparently reconnecting, which is what lets the V-16 reopen test
+     * prove it is not reading through the original connection.
      */
     fun closePreservingFile() {
-        closeDriver()
+        if (driverClosed) return
+        driverClosed = true
+        driver.getConnection().close()
     }
 
     private fun closeDriver() {
