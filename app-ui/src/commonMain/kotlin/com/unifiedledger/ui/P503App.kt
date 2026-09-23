@@ -274,6 +274,12 @@ fun P503App(
     // P7-02.A E-2 (G-C): the host-held memory of one determinate-success intent for "record
     // again". Captured before submission, consumed by the authoritative refresh; never persisted.
     var retainedIntent by remember { mutableStateOf<RetainedEntryIntent?>(null) }
+    // P7-05 (V-19; D-173): the request snapshot the current P7-05 surface committed, captured at its
+    // explicit confirm (the `retainedIntent` precedent). The three surfaces keep their fields
+    // editable while submitting, so a manual re-check MUST resolve against this retained snapshot
+    // rather than a re-derivation from the live draft — otherwise a mutated draft would produce a
+    // FALSE SnapshotConflict. Cleared when the surface leaves or a result lands.
+    var retainedP705Request by remember { mutableStateOf<RetainedP705Request?>(null) }
     // P7-03.C/D (D-145): host mirrors of the ledger-view read surface. The trend and the sorted
     // flow rows are presentation data refreshed with the unified monthly cycle (frozen trigger
     // set, spec 6.2); the month payload and the SelectMonth domain live in the reducer state.
@@ -306,7 +312,15 @@ fun P503App(
         ) {
             retainedIntent = null
         }
-        state = reducer.reduce(state, event).also { latestState.value = it }
+        // V-19 (D-173) lifecycle: the retained P7-05 request snapshot lives exactly while its
+        // surface holds a lost commit (submitting with no result). Keyed on the LANDED state, not
+        // the dispatched event: the reducer absorbs events its surface refuses (e.g. another bin
+        // row tapped while a lost restore is in flight), and an event-based clear would drop the
+        // snapshot of a still-lost commit. A determinate hit or a conflict clears `submitting` and
+        // releases it; a LOST commit (Absent/Unavailable) keeps it for the manual re-check.
+        val landed = reducer.reduce(state, event)
+        retainedP705Request = retainedP705RequestAfterLanding(retainedP705Request, landed)
+        state = landed.also { latestState.value = it }
     }
 
     // P5-04.2: system back only intercepts while the editor flow is on screen and carries the
@@ -1764,13 +1778,16 @@ fun P503App(
     // rejection/stale/conflict refreshes nothing. The void/restore reason and note are only ever
     // carried into the domain type and never logged (V-21).
     //
-    // KNOWN RESIDUAL (frozen discipline, no behavior change): a lost P7-05 commit whose
-    // snapshot-aware resolution is Absent/Unavailable has no result to dispatch, so the surface
-    // keeps `submitting = true` with NO automatic retry and NO manual re-check surface. The marker
-    // clears only on an app restart (the P7-02 UnknownCommit discipline has a manual re-check for
-    // the entry flow; the P7-05 surfaces deliberately do not, and this slice adds none). This is
-    // the same no-auto-retry/no-requestId-swap rule the reducer pins (V-19); it is recorded here
-    // as a known residual rather than silently left implicit.
+    // V-19 (D-173): a lost P7-05 commit whose snapshot-aware resolution is Absent/Unavailable has no
+    // result to dispatch, so the surface keeps `submitting = true` with NO automatic retry and NO
+    // requestId swap. The P7-05 surfaces DO now offer an in-session MANUAL re-check
+    // (recheckCorrectionCommitStatus / recheckVoidCommitStatus / recheckRestoreCommitStatus), which
+    // mirrors the P7-02 UnknownCommit 「重新核对」 affordance (D-126 R4): it re-invokes the same
+    // read-only resolver against the RETAINED snapshot captured at confirm time, so a mutated draft
+    // can never produce a false SnapshotConflict. It remains session-scoped (the host slot is
+    // `remember`, not `rememberSaveable`): after an app restart the surface and its marker are gone,
+    // which is why D-173 keeps V-19 at 已实现待验收 rather than PASS. This is the same
+    // no-auto-retry/no-requestId-swap rule the reducer pins (V-19).
 
     /** P7-05.B (DP-12: 仅详情入口): resolves the old-value snapshot and opens the correction surface. */
     fun openTransactionEdit(detail: TransactionDetail) {
@@ -1855,7 +1872,12 @@ fun P503App(
             },
             ::dispatch,
         ) {
-            request?.let { commitTransactionCorrection(it) }
+            request?.let { built ->
+                // V-19 (D-173): retain the committed snapshot for a later in-session manual
+                // re-check (the draft stays editable, so it must never be re-derived).
+                retainedP705Request = built.toRetainedRequest()
+                commitTransactionCorrection(built)
+            }
         }
     }
 
@@ -1906,7 +1928,11 @@ fun P503App(
             },
             ::dispatch,
         ) {
-            request?.let { commitTransactionVoid(it) }
+            request?.let { built ->
+                // V-19 (D-173): retain the committed void snapshot (factKind = VOID) for re-check.
+                retainedP705Request = built.toRetainedRequest(TransactionVoidFactKind.VOID)
+                commitTransactionVoid(built)
+            }
         }
     }
 
@@ -1957,7 +1983,11 @@ fun P503App(
             },
             ::dispatch,
         ) {
-            request?.let { commitRestore(it) }
+            request?.let { built ->
+                // V-19 (D-173): retain the committed restore snapshot (factKind = RESTORE).
+                retainedP705Request = built.toRetainedRequest(TransactionVoidFactKind.RESTORE)
+                commitRestore(built)
+            }
         }
     }
 
@@ -1973,6 +2003,75 @@ fun P503App(
             val result = query.query()
             scope.launch {
                 dispatch(recycleBinReadEvent(alreadyOpen, result))
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- P7-05 lost-commit manual re-check
+    // V-19 (D-173; the P7-02 D-126 R4 precedent): the in-session manual re-check of a lost
+    // correction/void/restore commit. Each entry re-invokes the SAME snapshot-aware resolver the
+    // lost commit used, but against the RETAINED snapshot captured at confirm time — the surfaces
+    // keep their fields editable while submitting, so re-deriving from the live draft could produce
+    // a different snapshot and a FALSE SnapshotConflict. The resolve runs OFF the UI thread, hops
+    // back ON the main dispatcher and dispatches the existing result event on a determinate hit
+    // (then the shared refresh chain) or the still-unknown marker event otherwise. It never
+    // auto-retries and never mints a new requestId; the coordinator's single-flight guard drops a
+    // concurrent double-fire.
+
+    /** V-19 (D-173): the manual re-check of a lost correction commit (the retained snapshot). */
+    fun recheckCorrectionCommitStatus() {
+        val retained = retainedP705Request as? RetainedP705Request.Correction ?: return
+        val resolver = facade.resolveCorrectionCommitStatus ?: return
+        coordinator.recheckP705CommitOnce {
+            scope.launch(Dispatchers.Default) {
+                val event =
+                    correctionRecheckEvent(retained) { ledgerId, requestId, snapshot ->
+                        resolver.resolve(ledgerId, requestId, snapshot)
+                    }
+                scope.launch {
+                    coordinator.p705RecheckCompleted()
+                    dispatch(event)
+                    refreshAfterP705Recheck(event, coordinator)
+                }
+            }
+        }
+    }
+
+    /** V-19 (D-173): the manual re-check of a lost void commit (the retained snapshot). */
+    fun recheckVoidCommitStatus() {
+        val retained = retainedP705Request as? RetainedP705Request.VoidOrRestore ?: return
+        val resolver = facade.resolveVoidCommitStatus ?: return
+        coordinator.recheckP705CommitOnce {
+            scope.launch(Dispatchers.Default) {
+                val event =
+                    voidRestoreRecheckEvent(retained) { ledgerId, requestId, snapshot ->
+                        resolver.resolve(ledgerId, requestId, snapshot)
+                    }
+                scope.launch {
+                    coordinator.p705RecheckCompleted()
+                    dispatch(event)
+                    refreshAfterP705Recheck(event, coordinator)
+                }
+            }
+        }
+    }
+
+    /** V-19 (D-173): the manual re-check of a lost restore commit (the retained snapshot). */
+    fun recheckRestoreCommitStatus() {
+        val retained = retainedP705Request as? RetainedP705Request.VoidOrRestore ?: return
+        if (retained.snapshot.factKind != TransactionVoidFactKind.RESTORE) return
+        val resolver = facade.resolveVoidCommitStatus ?: return
+        coordinator.recheckP705CommitOnce {
+            scope.launch(Dispatchers.Default) {
+                val event =
+                    voidRestoreRecheckEvent(retained) { ledgerId, requestId, snapshot ->
+                        resolver.resolve(ledgerId, requestId, snapshot)
+                    }
+                scope.launch {
+                    coordinator.p705RecheckCompleted()
+                    dispatch(event)
+                    refreshAfterP705Recheck(event, coordinator)
+                }
             }
         }
     }
@@ -2198,6 +2297,15 @@ fun P503App(
                     onPreview = { dispatch(P503UiEvent.PreviewTransactionEdit) },
                     onConfirm = { confirmTransactionCorrection(current) },
                     onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                    // V-19 (D-173): the manual re-check is offered only while a commit is in flight
+                    // AND the host still holds the retained snapshot for this surface; a `null`
+                    // callback renders no button (the file's "no dead affordance" pattern).
+                    onRecheck =
+                        if (current.submitting && retainedP705Request is RetainedP705Request.Correction) {
+                            { recheckCorrectionCommitStatus() }
+                        } else {
+                            null
+                        },
                 )
             is P503AppState.VoidConfirm ->
                 P503VoidConfirmScreen(
@@ -2205,6 +2313,13 @@ fun P503App(
                     onUpdateReason = { update -> dispatch(P503UiEvent.UpdateVoidReasonField(update)) },
                     onConfirm = { confirmVoid(current) },
                     onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                    // V-19 (D-173): see the correction surface's re-check wiring.
+                    onRecheck =
+                        if (current.submitting && (retainedP705Request as? RetainedP705Request.VoidOrRestore)?.snapshot?.factKind == TransactionVoidFactKind.VOID) {
+                            { recheckVoidCommitStatus() }
+                        } else {
+                            null
+                        },
                 )
             is P503AppState.RecycleBin -> {
                 val restore = current.restore
@@ -2224,6 +2339,13 @@ fun P503App(
                         onUpdateReason = { update -> dispatch(P503UiEvent.UpdateRestoreReasonField(update)) },
                         onConfirm = { confirmRestore(current) },
                         onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.CloseRestoreConfirm) },
+                        // V-19 (D-173): see the correction surface's re-check wiring.
+                        onRecheck =
+                            if (restore.submitting && (retainedP705Request as? RetainedP705Request.VoidOrRestore)?.snapshot?.factKind == TransactionVoidFactKind.RESTORE) {
+                                { recheckRestoreCommitStatus() }
+                            } else {
+                                null
+                            },
                     )
                 }
             }

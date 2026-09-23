@@ -5,6 +5,8 @@ import com.unifiedledger.application.CategoryTreeView
 import com.unifiedledger.application.ConfirmationId
 import com.unifiedledger.application.CorrectTransactionVersionResult
 import com.unifiedledger.application.CreationEntry
+import com.unifiedledger.application.ExplicitManualSave
+import com.unifiedledger.application.ExplicitlyConfirmedTransactionCorrection
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.ManageableAccountView
@@ -15,12 +17,14 @@ import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TransactionCorrectionCommitResolution
 import com.unifiedledger.application.TransactionCorrectionReceipt
 import com.unifiedledger.application.TransactionCorrectionRequestIdentity
+import com.unifiedledger.application.TransactionCorrectionRequestSnapshot
 import com.unifiedledger.application.TransactionDetail
 import com.unifiedledger.application.TransactionDetailLeg
 import com.unifiedledger.application.TransactionReconciliationProjection
 import com.unifiedledger.application.TransactionVoidCommitResolution
 import com.unifiedledger.application.TransactionVoidReceipt
 import com.unifiedledger.application.TransactionVoidRequestIdentity
+import com.unifiedledger.application.VoidTransactionRequest
 import com.unifiedledger.application.VoidTransactionResult
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
@@ -42,6 +46,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 
@@ -318,6 +323,167 @@ class P503CorrectionHostTest {
             ),
         )
         assertTrue(!shouldRefreshAfterP705Commit(VoidTransactionResult.Rejected(P705FailureCode.P705_VOID_CYCLE_EXHAUSTED)))
+    }
+
+    // ---- V-19 (D-173): the manual re-check uses the RETAINED snapshot, never the live draft ----
+
+    /** One re-check resolve call, recorded so the crux (which snapshot was compared) is assertable. */
+    private class ResolveProbe<T> {
+        val attempted = mutableListOf<T>()
+        val requestIds = mutableListOf<RequestId>()
+    }
+
+    private fun correctionRequest(draftNote: String): ExplicitlyConfirmedTransactionCorrection {
+        val origin = assertNotNull(transactionEditOriginFromDetail(detail(), snapshot()))
+        return assertNotNull(
+            transactionCorrectionRequest(
+                ledgerId = ledgerId,
+                requestId = RequestId("request-1"),
+                origin = origin,
+                draft =
+                    TransactionCorrectionDraft(
+                        note = draftNote,
+                        statisticsAtText = origin.statisticsAt.toString(),
+                        amountText = "80.00",
+                        categoryId = origin.categoryId,
+                        fundingAccountId = origin.fundingAccountId,
+                    ),
+                parseAmount = ParseManualExpenseAmount(),
+                parseOccurredAt = ParseManualExpenseOccurredAt(),
+                ledgerClock = clock,
+                fallbackCurrency = cny,
+            ),
+        )
+    }
+
+    @Test
+    fun theRetainedCorrectionSnapshotIsTheOneComparedAndNeverTheMutatedDraft() {
+        // The committed request captured at confirm time.
+        val committed = correctionRequest("committed note")
+        val retained = committed.toRetainedRequest()
+        assertEquals(RequestId("request-1"), retained.requestId)
+        assertEquals("committed note", retained.snapshot.note)
+
+        // The draft is then MUTATED (the surfaces keep their fields editable while submitting) and
+        // would build a DIFFERENT request; the re-check must ignore it entirely and compare the
+        // retained snapshot — otherwise the resolver would answer SnapshotConflict (a false one).
+        val mutated = correctionRequest("mutated after confirm")
+        assertTrue(committed.toRequestSnapshot() != mutated.toRequestSnapshot())
+
+        val probe = ResolveProbe<TransactionCorrectionRequestSnapshot>()
+        val event =
+            correctionRecheckEvent(retained) { _, requestId, snapshot ->
+                probe.attempted += snapshot
+                probe.requestIds += requestId
+                // The store compares against the committed snapshot: a hit.
+                if (snapshot == committed.toRequestSnapshot()) {
+                    TransactionCorrectionCommitResolution.MatchingReceipt(correctionReceipt())
+                } else {
+                    TransactionCorrectionCommitResolution.SnapshotConflict
+                }
+            }
+        assertEquals(listOf(committed.toRequestSnapshot()), probe.attempted)
+        assertEquals(listOf(RequestId("request-1")), probe.requestIds)
+        // The hit lands as the EXISTING result event carrying NoChange (a determinate success).
+        val landed = assertIs<P503UiEvent.TransactionEditResult>(event)
+        assertIs<CorrectTransactionVersionResult.NoChange>(landed.result)
+    }
+
+    @Test
+    fun theRetainedVoidSnapshotCarriesItsFactKindAndTheRestoreRecheckUsesTheRestoreFamily() {
+        val request =
+            VoidTransactionRequest(
+                ledgerId = ledgerId,
+                requestId = RequestId("request-1"),
+                transactionId = transactionId,
+                reason = VoidReason(VoidReasonCode.MIS_ENTERED),
+                confirmation = ExplicitManualSave,
+            )
+        val voidRetained = assertNotNull(request.toRetainedRequest(TransactionVoidFactKind.VOID))
+        assertEquals(TransactionVoidFactKind.VOID, voidRetained.snapshot.factKind)
+        val restoreRetained = assertNotNull(request.toRetainedRequest(TransactionVoidFactKind.RESTORE))
+        assertEquals(TransactionVoidFactKind.RESTORE, restoreRetained.snapshot.factKind)
+        // The landing event family follows the RETAINED factKind, not a caller flag.
+        assertIs<P503UiEvent.TransactionVoidResult>(
+            voidRestoreRecheckEvent(voidRetained) { _, _, _ -> TransactionVoidCommitResolution.MatchingReceipt(voidReceipt()) },
+        )
+        assertIs<P503UiEvent.TransactionRestoreResult>(
+            voidRestoreRecheckEvent(restoreRetained) { _, _, _ -> TransactionVoidCommitResolution.MatchingReceipt(voidReceipt()) },
+        )
+    }
+
+    @Test
+    fun anAbsentOrUnavailableRecheckProducesTheStillUnknownMarkerEvent() {
+        val retained = correctionRequest("committed note").toRetainedRequest()
+        val absent =
+            assertIs<P503UiEvent.RetryP705CommitStatusCheck>(
+                correctionRecheckEvent(retained) { _, _, _ -> TransactionCorrectionCommitResolution.Absent },
+            )
+        assertEquals(P705CommitCheckOutcome.ABSENT, absent.outcome)
+        val unavailable =
+            assertIs<P503UiEvent.RetryP705CommitStatusCheck>(
+                correctionRecheckEvent(retained) { _, _, _ -> TransactionCorrectionCommitResolution.Unavailable },
+            )
+        assertEquals(P705CommitCheckOutcome.UNAVAILABLE, unavailable.outcome)
+        // A snapshot conflict lands as the existing conflict result (never a fabricated notice).
+        val conflict =
+            assertIs<P503UiEvent.TransactionEditResult>(
+                correctionRecheckEvent(retained) { _, _, _ -> TransactionCorrectionCommitResolution.SnapshotConflict },
+            )
+        assertIs<CorrectTransactionVersionResult.RequestIdentityConflict>(conflict.result)
+
+        val voidRetained =
+            assertNotNull(
+                VoidTransactionRequest(ledgerId, RequestId("request-1"), transactionId, VoidReason(VoidReasonCode.OTHER), ExplicitManualSave)
+                    .toRetainedRequest(TransactionVoidFactKind.VOID),
+            )
+        assertEquals(
+            P705CommitCheckOutcome.ABSENT,
+            assertIs<P503UiEvent.RetryP705CommitStatusCheck>(
+                voidRestoreRecheckEvent(voidRetained) { _, _, _ -> TransactionVoidCommitResolution.Absent },
+            ).outcome,
+        )
+    }
+
+    @Test
+    fun onlyADeterminateRecheckHitFiresTheRefreshChain() {
+        val probe = RefreshProbe()
+        val coordinator = coordinatorWithProbe(probe)
+        // A hit (NoChange) refreshes exactly like a first-time success.
+        refreshAfterP705Recheck(P503UiEvent.TransactionEditResult(CorrectTransactionVersionResult.NoChange(correctionReceipt())), coordinator)
+        refreshAfterP705Recheck(P503UiEvent.TransactionVoidResult(VoidTransactionResult.NoChange(voidReceipt())), coordinator)
+        refreshAfterP705Recheck(P503UiEvent.TransactionRestoreResult(VoidTransactionResult.NoChange(voidReceipt())), coordinator)
+        assertEquals(3, probe.refreshes)
+        // The conflict and the still-unknown marker landings refresh nothing.
+        refreshAfterP705Recheck(
+            P503UiEvent.TransactionEditResult(CorrectTransactionVersionResult.RequestIdentityConflict(TransactionCorrectionRequestIdentity(ledgerId, RequestId("request-1")))),
+            coordinator,
+        )
+        refreshAfterP705Recheck(P503UiEvent.RetryP705CommitStatusCheck(P705CommitCheckOutcome.ABSENT), coordinator)
+        assertEquals(3, probe.refreshes)
+    }
+
+    // ---- the retained-snapshot lifecycle (the landed-state gate, V-19/D-173) ----
+
+    @Test
+    fun theRetainedSnapshotIsKeptExactlyWhileTheSurfaceHoldsALostCommit() {
+        val retained = correctionRequest("committed note").toRetainedRequest()
+        val overview = overview()
+        val origin = assertNotNull(transactionEditOriginFromDetail(detail(), snapshot()))
+        // A surface submitting with no result keeps the snapshot (the lost-commit window).
+        assertTrue(p705SurfaceHoldsLostCommit(P503AppState.TransactionEdit(overview, origin, submitting = true)))
+        assertTrue(p705SurfaceHoldsLostCommit(P503AppState.VoidConfirm(overview, transactionId, submitting = true)))
+        assertTrue(p705SurfaceHoldsLostCommit(P503AppState.RecycleBin(overview, RecycleBinResult.Success(emptyList()), RestoreConfirm(transactionId, submitting = true))))
+        assertSame(retained, retainedP705RequestAfterLanding(retained, P503AppState.TransactionEdit(overview, origin, submitting = true)))
+        // Leaving, landing a result or any non-P7-05 state releases it.
+        assertNull(retainedP705RequestAfterLanding(retained, overview))
+        assertNull(retainedP705RequestAfterLanding(retained, P503AppState.TransactionEdit(overview, origin)))
+        assertNull(retainedP705RequestAfterLanding(retained, P503AppState.VoidConfirm(overview, transactionId)))
+        assertNull(retainedP705RequestAfterLanding(retained, P503AppState.RecycleBin(overview, RecycleBinResult.Success(emptyList()))))
+        // A landing that a surface REFUSES (the reducer absorbs it, e.g. a second bin row tapped
+        // while a lost restore is in flight) must NOT release the still-needed snapshot.
+        val stillLost = P503AppState.RecycleBin(overview, RecycleBinResult.Success(emptyList()), RestoreConfirm(transactionId, submitting = true))
+        assertSame(retained, retainedP705RequestAfterLanding(retained, stillLost))
     }
 
     // ---- the CALL-SITE gate: the decision is exercised, not only its predicate (Piece 4 review

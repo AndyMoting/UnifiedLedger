@@ -182,3 +182,91 @@ internal fun voidResultFromResolution(
 /** P7-05.B (spec section 3.5): the typed field rejection of an inadmissible correction draft. */
 internal val CORRECTION_FIELD_REJECTION: CorrectTransactionVersionResult =
     CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_FIELD_NOT_SUPPORTED)
+
+// P7-05 slice 1b Piece 6 (V-19; D-173): the manual re-check of a lost commit. The crux is the
+// RETAINED snapshot: the three surfaces do not freeze their draft while submitting, so the snapshot
+// is captured at confirm time and re-resolved verbatim here — never re-derived from the live draft
+// (which could differ and cause a FALSE SnapshotConflict). These are the pure, JVM-assertable
+// decisions the composition-root call sites in P503App.kt delegate to; the resolver IO is injected.
+
+/** The retained request of one explicit correction confirm (the snapshot captured at confirm time). */
+internal fun ExplicitlyConfirmedTransactionCorrection.toRetainedRequest(): RetainedP705Request.Correction = RetainedP705Request.Correction(requestId = requestId, snapshot = toRequestSnapshot())
+
+/**
+ * The retained request of one explicit void/restore confirm. `null` when the reason is absent (the
+ * confirm is then rejected before any commit, so there is nothing to re-check).
+ */
+internal fun VoidTransactionRequest.toRetainedRequest(factKind: TransactionVoidFactKind): RetainedP705Request.VoidOrRestore? = toRequestSnapshot(factKind)?.let { RetainedP705Request.VoidOrRestore(requestId = requestId, snapshot = it) }
+
+/**
+ * P7-05.B (V-19; D-173): the landing event of one manual correction re-check, resolved against the
+ * RETAINED snapshot. A matching receipt is the original success ([P503UiEvent.TransactionEditResult]
+ * carrying `NoChange`, which the reducer treats as a determinate success exactly like `Created`); a
+ * snapshot conflict is the existing identity-conflict result; the resolver's `Absent`/`Unavailable`
+ * produce no result, so the surface is told the still-unknown marker via the state-preserving
+ * [P503UiEvent.RetryP705CommitStatusCheck] carrying that outcome. Never mints a new requestId.
+ */
+internal fun correctionRecheckEvent(
+    retained: RetainedP705Request.Correction,
+    resolve: (LedgerId, RequestId, TransactionCorrectionRequestSnapshot) -> TransactionCorrectionCommitResolution,
+): P503UiEvent {
+    val identity = TransactionCorrectionRequestIdentity(retained.ledgerId, retained.requestId)
+    val resolution = resolve(retained.ledgerId, retained.requestId, retained.snapshot)
+    return when (resolution) {
+        is TransactionCorrectionCommitResolution.MatchingReceipt ->
+            P503UiEvent.TransactionEditResult(CorrectTransactionVersionResult.NoChange(resolution.receipt))
+        TransactionCorrectionCommitResolution.SnapshotConflict ->
+            P503UiEvent.TransactionEditResult(CorrectTransactionVersionResult.RequestIdentityConflict(identity))
+        TransactionCorrectionCommitResolution.Absent ->
+            P503UiEvent.RetryP705CommitStatusCheck(P705CommitCheckOutcome.ABSENT)
+        TransactionCorrectionCommitResolution.Unavailable ->
+            P503UiEvent.RetryP705CommitStatusCheck(P705CommitCheckOutcome.UNAVAILABLE)
+    }
+}
+
+/**
+ * The void/restore analogue of [correctionRecheckEvent]. The landing event family (void vs restore)
+ * is chosen from the RETAINED snapshot's own `factKind`, not from the live state — the retained
+ * snapshot is the committed one, so the re-check always answers for the surface that committed it.
+ */
+internal fun voidRestoreRecheckEvent(
+    retained: RetainedP705Request.VoidOrRestore,
+    resolve: (LedgerId, RequestId, TransactionVoidRequestSnapshot) -> TransactionVoidCommitResolution,
+): P503UiEvent {
+    val identity = TransactionVoidRequestIdentity(retained.ledgerId, retained.requestId)
+    val resolution = resolve(retained.ledgerId, retained.requestId, retained.snapshot)
+    val restore = retained.snapshot.factKind == TransactionVoidFactKind.RESTORE
+    return when (resolution) {
+        is TransactionVoidCommitResolution.MatchingReceipt -> {
+            val result = VoidTransactionResult.NoChange(resolution.receipt)
+            if (restore) P503UiEvent.TransactionRestoreResult(result) else P503UiEvent.TransactionVoidResult(result)
+        }
+        TransactionVoidCommitResolution.SnapshotConflict -> {
+            val result = VoidTransactionResult.RequestIdentityConflict(identity)
+            if (restore) P503UiEvent.TransactionRestoreResult(result) else P503UiEvent.TransactionVoidResult(result)
+        }
+        TransactionVoidCommitResolution.Absent ->
+            P503UiEvent.RetryP705CommitStatusCheck(P705CommitCheckOutcome.ABSENT)
+        TransactionVoidCommitResolution.Unavailable ->
+            P503UiEvent.RetryP705CommitStatusCheck(P705CommitCheckOutcome.UNAVAILABLE)
+    }
+}
+
+/**
+ * P7-05 (V-19; D-173): the JVM-assertable seam of the host's re-check landing hop. A determinate
+ * hit lands as one of the existing result events carrying `NoChange`, so it fires the same
+ * authoritative refresh + post-landing monthly re-request as a first-time success (the effect is
+ * already in place, so the surfaces must update); an identity conflict and the still-unknown
+ * marker landings refresh nothing.
+ */
+internal fun refreshAfterP705Recheck(
+    event: P503UiEvent,
+    coordinator: P503HostCoordinator,
+) {
+    when (event) {
+        is P503UiEvent.TransactionEditResult -> refreshAfterP705Commit(event.result, coordinator)
+        is P503UiEvent.TransactionVoidResult -> refreshAfterP705Commit(event.result, coordinator)
+        is P503UiEvent.TransactionRestoreResult -> refreshAfterP705Commit(event.result, coordinator)
+        else -> Unit
+    }
+}

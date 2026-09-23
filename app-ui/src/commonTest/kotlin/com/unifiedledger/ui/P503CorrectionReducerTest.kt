@@ -84,6 +84,7 @@ class P503CorrectionReducerTest {
         requestId: RequestId? = null,
         submitting: Boolean = false,
         notice: P705Notice? = null,
+        checkOutcome: P705CommitCheckOutcome = P705CommitCheckOutcome.NONE,
     ): P503AppState.TransactionEdit =
         P503AppState.TransactionEdit(
             overview = overview(),
@@ -93,6 +94,7 @@ class P503CorrectionReducerTest {
             requestId = requestId,
             submitting = submitting,
             notice = notice,
+            checkOutcome = checkOutcome,
         )
 
     private fun voidConfirm(
@@ -100,6 +102,7 @@ class P503CorrectionReducerTest {
         requestId: RequestId? = null,
         submitting: Boolean = false,
         notice: P705Notice? = null,
+        checkOutcome: P705CommitCheckOutcome = P705CommitCheckOutcome.NONE,
     ): P503AppState.VoidConfirm =
         P503AppState.VoidConfirm(
             overview = overview(),
@@ -108,6 +111,7 @@ class P503CorrectionReducerTest {
             requestId = requestId,
             submitting = submitting,
             notice = notice,
+            checkOutcome = checkOutcome,
         )
 
     private fun recycleBin(
@@ -272,7 +276,74 @@ class P503CorrectionReducerTest {
         assertEquals(false, conflict.submitting)
     }
 
-    // ---- V-19: a lost commit keeps the marker (no auto-retry, no requestId swap, no leave) ----
+    // ---- V-19 (D-173): the manual re-check of a lost commit ----
+
+    @Test
+    fun aRecheckRequestIsStatePreservingOnEverySurface() {
+        // The re-check REQUEST carries no outcome: it leaves the surface instance untouched (不切态,
+        // the P7-02 RetryCommitStatusCheck precedent), so the host's per-instance guard is not
+        // disturbed and no new requestId can be minted by the reducer.
+        val edit = editing(requestId = RequestId("request-1"), submitting = true)
+        assertSame(edit, reducer.reduce(edit, P503UiEvent.RetryP705CommitStatusCheck()))
+        val void = voidConfirm(requestId = RequestId("request-1"), submitting = true)
+        assertSame(void, reducer.reduce(void, P503UiEvent.RetryP705CommitStatusCheck()))
+        val restore = recycleBin(restore = RestoreConfirm(transactionId = transactionId, requestId = RequestId("request-1"), submitting = true))
+        assertSame(restore, reducer.reduce(restore, P503UiEvent.RetryP705CommitStatusCheck()))
+        // A surface with no lost commit in flight absorbs the landing too (defensive).
+        val idle = editing(requestId = RequestId("request-1"))
+        assertSame(idle, reducer.reduce(idle, P503UiEvent.RetryP705CommitStatusCheck(P705CommitCheckOutcome.ABSENT)))
+    }
+
+    @Test
+    fun anAbsentOrUnavailableRecheckKeepsTheSurfaceSubmittingAndRecheckable() {
+        for (outcome in listOf(P705CommitCheckOutcome.ABSENT, P705CommitCheckOutcome.UNAVAILABLE)) {
+            val edit = editing(requestId = RequestId("request-1"), submitting = true)
+            val checked = assertIs<P503AppState.TransactionEdit>(reducer.reduce(edit, P503UiEvent.RetryP705CommitStatusCheck(outcome)))
+            assertEquals(outcome, checked.checkOutcome)
+            // The marker stands: still unknown, still no automatic retry and no requestId swap.
+            assertTrue(checked.submitting)
+            assertEquals(RequestId("request-1"), checked.requestId)
+            assertSame(checked, reducer.reduce(checked, P503UiEvent.Back))
+            // The surface remains re-checkable: a later hit still leaves it (the marker never blocks).
+            assertSame(checked.overview, reducer.reduce(checked, P503UiEvent.TransactionEditResult(CorrectTransactionVersionResult.NoChange(correctionReceipt()))))
+
+            val void = voidConfirm(requestId = RequestId("request-1"), submitting = true)
+            assertEquals(outcome, assertIs<P503AppState.VoidConfirm>(reducer.reduce(void, P503UiEvent.RetryP705CommitStatusCheck(outcome))).checkOutcome)
+
+            val restore = recycleBin(restore = RestoreConfirm(transactionId = transactionId, requestId = RequestId("request-1"), submitting = true))
+            val checkedRestore = assertIs<P503AppState.RecycleBin>(reducer.reduce(restore, P503UiEvent.RetryP705CommitStatusCheck(outcome)))
+            assertEquals(outcome, checkedRestore.restore?.checkOutcome)
+            assertTrue(checkNotNull(checkedRestore.restore).submitting)
+        }
+    }
+
+    @Test
+    fun aRecheckHitLandsAsADeterminateSuccessAndAConflictAsTheExistingNotice() {
+        // A re-check hit returns the original receipt as NoChange (the host's resolver mapping),
+        // which the reducer treats exactly like Created: leave to the preserved overview.
+        val edit = editing(requestId = RequestId("request-1"), submitting = true, checkOutcome = P705CommitCheckOutcome.ABSENT)
+        assertSame(edit.overview, reducer.reduce(edit, P503UiEvent.TransactionEditResult(CorrectTransactionVersionResult.NoChange(correctionReceipt()))))
+        // A snapshot conflict keeps the existing notice mapping and clears the marker.
+        val conflict =
+            assertIs<P503AppState.TransactionEdit>(
+                reducer.reduce(
+                    edit,
+                    P503UiEvent.TransactionEditResult(
+                        CorrectTransactionVersionResult.RequestIdentityConflict(TransactionCorrectionRequestIdentity(ledgerId, RequestId("request-1"))),
+                    ),
+                ),
+            )
+        assertEquals(P705Notice.RequestIdentityConflict(RequestId("request-1")), conflict.notice)
+        assertEquals(false, conflict.submitting)
+        // The void/restore family follows the same mapping.
+        val restore =
+            recycleBin(
+                restore = RestoreConfirm(transactionId = transactionId, requestId = RequestId("request-1"), submitting = true, checkOutcome = P705CommitCheckOutcome.UNAVAILABLE),
+            )
+        assertSame(restore.overview, reducer.reduce(restore, P503UiEvent.TransactionRestoreResult(VoidTransactionResult.NoChange(voidReceipt()))))
+        val void = voidConfirm(requestId = RequestId("request-1"), submitting = true, checkOutcome = P705CommitCheckOutcome.ABSENT)
+        assertSame(void.overview, reducer.reduce(void, P503UiEvent.TransactionVoidResult(VoidTransactionResult.NoChange(voidReceipt()))))
+    }
 
     @Test
     fun aLostCorrectionCommitKeepsTheMarkerWithNoAutoRetryAndNoRequestIdSwap() {
@@ -473,6 +544,14 @@ class P503CorrectionReducerTest {
             assertSame(state, reducer.reduce(state, P503UiEvent.ConfirmRestore(RequestId("request-1"))))
             assertSame(state, reducer.reduce(state, P503UiEvent.TransactionRestoreResult(VoidTransactionResult.Rejected(P705FailureCode.P705_TRANSACTION_NOT_VOIDED))))
             assertSame(state, reducer.reduce(state, P503UiEvent.CloseRestoreConfirm))
+        }
+        // V-19 (D-173): the re-check intent is state-preserving in EVERY state (its designed effect
+        // is the host's read-only resolve, not a state transition); the absent/unavailable landing is
+        // absorbed in every state whose surface holds no lost commit (all of these fixtures).
+        allStates().forEach { state ->
+            assertSame(state, reducer.reduce(state, P503UiEvent.RetryP705CommitStatusCheck()))
+            assertSame(state, reducer.reduce(state, P503UiEvent.RetryP705CommitStatusCheck(P705CommitCheckOutcome.ABSENT)))
+            assertSame(state, reducer.reduce(state, P503UiEvent.RetryP705CommitStatusCheck(P705CommitCheckOutcome.UNAVAILABLE)))
         }
     }
 

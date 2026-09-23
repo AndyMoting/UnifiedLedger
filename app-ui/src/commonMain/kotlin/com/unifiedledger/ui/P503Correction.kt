@@ -1,9 +1,12 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.TransactionCorrectionRequestSnapshot
+import com.unifiedledger.application.TransactionVoidRequestSnapshot
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.P705FailureCode
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVersionId
@@ -189,4 +192,46 @@ data class RestoreConfirm(
     val requestId: RequestId? = null,
     val submitting: Boolean = false,
     val notice: P705Notice? = null,
+    /**
+     * P7-05 (V-19; D-173): the last manual re-check outcome of a lost restore commit, mirroring
+     * [P503AppState.TransactionEdit.checkOutcome]. Default [P705CommitCheckOutcome.NONE] keeps every
+     * pre-existing construction site source-compatible.
+     */
+    val checkOutcome: P705CommitCheckOutcome = P705CommitCheckOutcome.NONE,
 )
+
+/**
+ * P7-05 (V-19; D-173): the request snapshot a P7-05 surface retains at its explicit confirm, so a
+ * later in-session manual re-check resolves against the snapshot that was ACTUALLY committed
+ * instead of a re-derivation from the live draft.
+ *
+ * The crux: the three P7-05 surfaces do NOT freeze their draft while `submitting` — the field
+ * update events write unconditionally and the screens keep the fields editable — so re-deriving
+ * the snapshot on re-check could produce a snapshot that differs from the committed one and cause a
+ * FALSE `SnapshotConflict`. The host therefore captures the built request here at confirm time (the
+ * `RetainedEntryIntent` precedent) and the re-check uses only this value.
+ *
+ * The snapshot column sets themselves carry no `requestId` (it is the resolver's separate
+ * argument), so the identity is retained beside the snapshot.
+ */
+sealed interface RetainedP705Request {
+    val requestId: RequestId
+
+    val ledgerId: LedgerId
+
+    /** A correction commit's frozen snapshot (spec section 4.3). */
+    data class Correction(
+        override val requestId: RequestId,
+        val snapshot: TransactionCorrectionRequestSnapshot,
+    ) : RetainedP705Request {
+        override val ledgerId: LedgerId get() = snapshot.ledgerId
+    }
+
+    /** A void or restore commit's frozen snapshot; [snapshot].factKind names which of the two it is. */
+    data class VoidOrRestore(
+        override val requestId: RequestId,
+        val snapshot: TransactionVoidRequestSnapshot,
+    ) : RetainedP705Request {
+        override val ledgerId: LedgerId get() = snapshot.ledgerId
+    }
+}

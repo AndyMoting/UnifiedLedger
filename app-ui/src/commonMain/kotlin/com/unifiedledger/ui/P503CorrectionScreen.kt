@@ -65,6 +65,7 @@ internal fun P503TransactionEditScreen(
     onPreview: () -> Unit,
     onConfirm: (() -> Unit)?,
     onCancel: (() -> Unit)?,
+    onRecheck: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -161,7 +162,7 @@ internal fun P503TransactionEditScreen(
         }
         if (state.submitting) {
             Spacer(Modifier.height(8.dp))
-            Text("正在提交…", style = MaterialTheme.typography.bodyMedium)
+            P705SubmittingRow(onRecheck = onRecheck)
         }
     }
 }
@@ -185,6 +186,7 @@ internal fun P503VoidConfirmScreen(
     onUpdateReason: (VoidReasonFieldUpdate) -> Unit,
     onConfirm: (() -> Unit)?,
     onCancel: (() -> Unit)?,
+    onRecheck: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -249,7 +251,7 @@ internal fun P503VoidConfirmScreen(
         }
         if (state.submitting) {
             Spacer(Modifier.height(8.dp))
-            Text("正在提交…", style = MaterialTheme.typography.bodyMedium)
+            P705SubmittingRow(onRecheck = onRecheck)
         }
     }
 }
@@ -327,6 +329,7 @@ internal fun P503RestoreConfirmScreen(
     onUpdateReason: (VoidReasonFieldUpdate) -> Unit,
     onConfirm: (() -> Unit)?,
     onClose: (() -> Unit)?,
+    onRecheck: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -397,7 +400,29 @@ internal fun P503RestoreConfirmScreen(
         }
         if (restore.submitting) {
             Spacer(Modifier.height(8.dp))
-            Text("正在提交…", style = MaterialTheme.typography.bodyMedium)
+            P705SubmittingRow(onRecheck = onRecheck)
+        }
+    }
+}
+
+/**
+ * P7-05 (V-19; D-173): the shared "commit in flight" line of the three surfaces. When the host
+ * still holds the retained request snapshot it also renders the manual 「重新核对」 affordance — the
+ * P7-02 D-126 R4 precedent ([P503UnknownCommitStayScreen]'s button). A `null` callback renders the
+ * bare line rather than a dead button. No `minimumInteractiveComponentSize()`: material3 already
+ * enforces the 48dp touch target and a manual modifier creates a dead-zone hit layer (D-127). The
+ * button carries no extra `contentDescription`: this file adds none to its buttons (the
+ * [P503UnknownCommitStayScreen] precedent), and the visible 重新核对 text is what TalkBack reads.
+ */
+@Composable
+private fun P705SubmittingRow(onRecheck: (() -> Unit)?) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("正在提交…", style = MaterialTheme.typography.bodyMedium)
+        if (onRecheck != null) {
+            Spacer(Modifier.width(8.dp))
+            Button(onClick = onRecheck) {
+                Text("重新核对")
+            }
         }
     }
 }
