@@ -287,6 +287,20 @@ class P503CorrectionPresentationTest {
         assertTrue(RECYCLE_BIN_EMPTY_TEXT.isNotEmpty())
     }
 
+    // ---- manual re-check status line (V-19; D-173) -----------------------------------------
+
+    @Test
+    fun recheckStatusTextIsAbsentForNoneAndDistinctForTheStillUnknownOutcomes() {
+        // NONE keeps the plain 「正在提交…」 line: no extra status text (Fix 3).
+        assertNull(p705RecheckStatusText(P705CommitCheckOutcome.NONE))
+        // ABSENT / UNAVAILABLE each tell the user the re-check ran and found nothing, so the
+        // resolved-but-empty outcome is never a silent no-op.
+        assertEquals("未找到该次提交记录，可再次核对", p705RecheckStatusText(P705CommitCheckOutcome.ABSENT))
+        assertEquals("暂时无法核对，请稍后重试", p705RecheckStatusText(P705CommitCheckOutcome.UNAVAILABLE))
+        // The two still-unknown copies stay distinct (a reader can tell "no record" from "unreadable").
+        assertTrue(p705RecheckStatusText(P705CommitCheckOutcome.ABSENT) != p705RecheckStatusText(P705CommitCheckOutcome.UNAVAILABLE))
+    }
+
     // ---- fixtures -------------------------------------------------------------------------
 
     private fun binRow(restoreRejectionCode: P705FailureCode?): RecycleBinRow =

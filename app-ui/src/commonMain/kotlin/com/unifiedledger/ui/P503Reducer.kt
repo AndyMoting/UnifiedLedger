@@ -1516,10 +1516,12 @@ class P503ReducerImpl(
             is P503UiEvent.TransactionEditResult -> reduceTransactionEditResult(state, event.result)
             // P7-05 (V-19; D-173): the manual re-check of a lost commit. A re-check REQUEST
             // (`outcome == NONE`) leaves the instance untouched — the P7-02 `RetryCommitStatusCheck`
-            // precedent (不切态): the host owns the read-only resolve and its per-instance guard, so
-            // the reducer must not mint a new instance under it. The host's `Absent`/`Unavailable`
-            // landing carries the still-unknown outcome and records the re-checkable marker; a
-            // landing on a surface that no longer holds a lost commit (not submitting) is absorbed.
+            // affordance/intent it mirrors (不切态): the host owns the read-only resolve and its
+            // single-flight guard, so the reducer must not mint a new instance under it. The host's
+            // `Absent`/`Unavailable` landing carries the still-unknown outcome and records the
+            // re-checkable marker; a landing on a surface that no longer holds a lost commit (not
+            // submitting) is absorbed. Unlike P7-02's event this one is deliberately absorbed in
+            // every other state too (see the absorbPreExisting list), not left to `unhandled`.
             is P503UiEvent.RetryP705CommitStatusCheck ->
                 if (event.outcome == P705CommitCheckOutcome.NONE || !state.submitting) state else state.copy(checkOutcome = event.outcome)
             // Cancel/Back return to the preserved overview; a preview never blocks the zero-write
@@ -1813,8 +1815,11 @@ class P503ReducerImpl(
             is P503UiEvent.ImportUnknownItemCheck,
             is P503UiEvent.ImportUnknownItemCheckResult,
             // P7-05 (V-19; D-173): the manual re-check intent belongs to the three P7-05 surfaces
-            // (it is their own designed event there); everywhere else it is absorbed like the
-            // P7-02 `RetryCommitStatusCheck` intent it mirrors.
+            // (it is their own designed event there); everywhere else it is absorbed, mirroring the
+            // P7-02 `RetryCommitStatusCheck` AFFORDANCE/INTENT but deliberately NOT its absorption
+            // shape: P7-02's event is not listed in Ready/OverviewEmpty (it reaches `unhandled` →
+            // ISE there), while this one is absorbed in every state — a safer, state-preserving
+            // choice that can never crash the app on a late/stale dispatch.
             is P503UiEvent.RetryP705CommitStatusCheck,
             is P503UiEvent.Continue,
             P503UiEvent.Cancel,

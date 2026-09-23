@@ -797,17 +797,21 @@ sealed interface P503UiEvent {
 
     /**
      * P7-05 (V-19; D-173): the manual re-check of a lost correction/void/restore commit — the
-     * P7-02 `RetryCommitStatusCheck` affordance adapted to the three P7-05 surfaces. The host runs
-     * the read-only snapshot-aware resolve against the RETAINED request snapshot it captured at
+     * P7-02 `RetryCommitStatusCheck` AFFORDANCE/INTENT adapted to the three P7-05 surfaces. The host
+     * runs the read-only snapshot-aware resolve against the RETAINED request snapshot it captured at
      * confirm time (never the live draft, which stays editable while submitting) and dispatches the
      * EXISTING result event on a determinate hit or a conflict. The resolver's `Absent`/`Unavailable`
      * outcomes map to no result event, so the host re-dispatches THIS event carrying that
      * [outcome] and the surface records the still-unknown marker while staying re-checkable.
      *
      * A re-check REQUEST is the default [P705CommitCheckOutcome.NONE] dispatch: it never mutates the
-     * surface (the P7-02 precedent — the instance is left untouched so the host's per-instance guard
-     * is not disturbed, 不切态). It never auto-retries and never mints a new requestId. Absorbed
-     * everywhere else.
+     * surface (the P7-02 precedent — the instance is left untouched so the host's single-flight guard
+     * is not disturbed, 不切态). It never auto-retries and never mints a new requestId.
+     *
+     * The absorption shape deliberately DIFFERS from P7-02's: that event is not listed in
+     * `Ready`/`OverviewEmpty` (it reaches `unhandled` → ISE there), whereas this one is absorbed in
+     * every state (including `Ready`/`OverviewEmpty`) — a safer, state-preserving choice that a
+     * late/stale dispatch can never turn into an ISE.
      */
     data class RetryP705CommitStatusCheck(
         val outcome: P705CommitCheckOutcome = P705CommitCheckOutcome.NONE,

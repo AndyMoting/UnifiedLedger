@@ -2018,20 +2018,38 @@ fun P503App(
     // auto-retries and never mints a new requestId; the coordinator's single-flight guard drops a
     // concurrent double-fire.
 
+    // Each of the three re-checks below releases the coordinator's single-flight marker on EVERY
+    // path, exactly once: the marker is cleared in the LANDING hop's `finally` (after the landing
+    // event is dispatched, so a rapid second tap cannot overlap two read-only resolves of the same
+    // surface), and in the outer coroutine's `catch` when the resolve itself throws or the hop is
+    // cancelled before the landing hop could start. Clearing in the outer `finally` alone would be
+    // WRONG: the landing `scope.launch` is a fire-and-forget child of the composition scope, so the
+    // outer body completes (and its `finally` would run) before the landing hop dispatches. Without
+    // the outer `catch`, a throwing/cancelled resolve would leave `p705RecheckInFlight` stuck `true`
+    // for the rest of the session, silently dropping every later 重新核对 on all three surfaces.
+
     /** V-19 (D-173): the manual re-check of a lost correction commit (the retained snapshot). */
     fun recheckCorrectionCommitStatus() {
         val retained = retainedP705Request as? RetainedP705Request.Correction ?: return
         val resolver = facade.resolveCorrectionCommitStatus ?: return
         coordinator.recheckP705CommitOnce {
             scope.launch(Dispatchers.Default) {
-                val event =
-                    correctionRecheckEvent(retained) { ledgerId, requestId, snapshot ->
-                        resolver.resolve(ledgerId, requestId, snapshot)
+                try {
+                    val event =
+                        correctionRecheckEvent(retained) { ledgerId, requestId, snapshot ->
+                            resolver.resolve(ledgerId, requestId, snapshot)
+                        }
+                    scope.launch {
+                        try {
+                            dispatch(event)
+                            refreshAfterP705Recheck(event, coordinator)
+                        } finally {
+                            coordinator.p705RecheckCompleted()
+                        }
                     }
-                scope.launch {
+                } catch (failure: Exception) {
                     coordinator.p705RecheckCompleted()
-                    dispatch(event)
-                    refreshAfterP705Recheck(event, coordinator)
+                    throw failure
                 }
             }
         }
@@ -2040,17 +2058,28 @@ fun P503App(
     /** V-19 (D-173): the manual re-check of a lost void commit (the retained snapshot). */
     fun recheckVoidCommitStatus() {
         val retained = retainedP705Request as? RetainedP705Request.VoidOrRestore ?: return
+        // V-19 (D-173): the symmetric twin of recheckRestoreCommitStatus's guard — this entry is the
+        // VOID one, so it is safe independent of its call site (which already checks the factKind).
+        if (retained.snapshot.factKind != TransactionVoidFactKind.VOID) return
         val resolver = facade.resolveVoidCommitStatus ?: return
         coordinator.recheckP705CommitOnce {
             scope.launch(Dispatchers.Default) {
-                val event =
-                    voidRestoreRecheckEvent(retained) { ledgerId, requestId, snapshot ->
-                        resolver.resolve(ledgerId, requestId, snapshot)
+                try {
+                    val event =
+                        voidRestoreRecheckEvent(retained) { ledgerId, requestId, snapshot ->
+                            resolver.resolve(ledgerId, requestId, snapshot)
+                        }
+                    scope.launch {
+                        try {
+                            dispatch(event)
+                            refreshAfterP705Recheck(event, coordinator)
+                        } finally {
+                            coordinator.p705RecheckCompleted()
+                        }
                     }
-                scope.launch {
+                } catch (failure: Exception) {
                     coordinator.p705RecheckCompleted()
-                    dispatch(event)
-                    refreshAfterP705Recheck(event, coordinator)
+                    throw failure
                 }
             }
         }
@@ -2063,14 +2092,22 @@ fun P503App(
         val resolver = facade.resolveVoidCommitStatus ?: return
         coordinator.recheckP705CommitOnce {
             scope.launch(Dispatchers.Default) {
-                val event =
-                    voidRestoreRecheckEvent(retained) { ledgerId, requestId, snapshot ->
-                        resolver.resolve(ledgerId, requestId, snapshot)
+                try {
+                    val event =
+                        voidRestoreRecheckEvent(retained) { ledgerId, requestId, snapshot ->
+                            resolver.resolve(ledgerId, requestId, snapshot)
+                        }
+                    scope.launch {
+                        try {
+                            dispatch(event)
+                            refreshAfterP705Recheck(event, coordinator)
+                        } finally {
+                            coordinator.p705RecheckCompleted()
+                        }
                     }
-                scope.launch {
+                } catch (failure: Exception) {
                     coordinator.p705RecheckCompleted()
-                    dispatch(event)
-                    refreshAfterP705Recheck(event, coordinator)
+                    throw failure
                 }
             }
         }
