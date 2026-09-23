@@ -183,6 +183,43 @@ class P705CorrectionCommitPortTest {
         }
     }
 
+    /**
+     * V-07 through the real monthly projection (D-158 section 4): the row-set-layer assertion
+     * above does not exercise `QueryMonthlyActivity`. Re-asserted here on the unified monthly use
+     * case: after a cross-month `statistics_at` correction the effect is counted in April only,
+     * March is zero, and `occurredAt` (the source-document time) is unchanged.
+     */
+    @Test
+    fun crossMonthCorrectionMovesOnlyTheStatisticsMonthThroughTheMonthlyProjection() {
+        P705Database.create("p705-correct-month-projection-").use { harness ->
+            harness.insertOrdinaryExpense("tx-expense-100", amountMinor = 10_000L)
+            val ids = P705Ids("p705-correct-month-projection")
+            val clock = fixedClock(Instant.parse("2026-04-20T00:00:00Z"))
+            val query = com.unifiedledger.application.QueryMonthlyActivity(harness.readAdapter, ledgerId, catalog, clock)
+            val march = kotlinx.datetime.YearMonth(2026, 3)
+            val april = kotlinx.datetime.YearMonth(2026, 4)
+
+            fun activity(month: kotlinx.datetime.YearMonth) = assertIs<com.unifiedledger.application.MonthlyActivityResult.Success>(query.query(month)).activity
+
+            // Before the correction the expense sits in March.
+            assertEquals(1, activity(march).currencies.single().transactionCount)
+            assertEquals(0, activity(april).currencies.single().transactionCount)
+
+            assertIs<CorrectTransactionVersionResult.Created>(
+                correct(harness, ids, ids.requestId(), amountMinor = 10_000L, statisticsAt = P705Fixture.aprilStatistics),
+            )
+
+            // After the cross-month correction the effect is counted in April only; March is zero.
+            assertEquals(0, activity(march).currencies.single().transactionCount)
+            assertEquals(1, activity(april).currencies.single().transactionCount)
+            assertEquals(10_000L, activity(april).currencies.single().netExpenseMinorUnits)
+            // The source-document time is unchanged: only statistics_at follows the request.
+            val row = harness.readAdapter.loadLedgerEntryRows(ledgerId).single()
+            assertEquals(P705Fixture.marchStatistics, row.occurredAt)
+            assertEquals(P705Fixture.aprilStatistics, row.statisticsAt)
+        }
+    }
+
     @Test
     fun aNoteOnlyCorrectionReusesTheCurrentPostingSetAndKeepsPostingIdentity() {
         P705Database.create("p705-correct-note-").use { harness ->
@@ -460,6 +497,12 @@ class P705CorrectionCommitPortTest {
         P705Database.create("p705-unsupported-").use { harness ->
             // ACCOUNT_TRANSFER: a supported-by-nobody kind in this slice.
             harness.insertTransactionOfKind("tx-transfer", com.unifiedledger.domain.TransactionKind.ACCOUNT_TRANSFER)
+            // The remaining later-slice matrix rows (D-158 section 4): REFUND_RECEIPT (DP-13),
+            // CREDIT_REPAYMENT (product-reachable import lineage, DP-5) and a canonical-only kind
+            // (LEND, persisted as kind=EXPENSE + canonical_kind) must all be typed rejections.
+            harness.insertTransactionOfKind("tx-refund", com.unifiedledger.domain.TransactionKind.REFUND_RECEIPT)
+            harness.insertTransactionOfKind("tx-credit", com.unifiedledger.domain.TransactionKind.CREDIT_REPAYMENT)
+            harness.insertTransactionOfKind("tx-lend", com.unifiedledger.domain.TransactionKind.LEND)
             // An import-created EXPENSE: the lineage is a later slice (DP-5).
             harness.insertOrdinaryExpense("tx-imported", amountMinor = 10_000L)
             harness.insertImportCreationConfirmation("tx-imported")
@@ -470,6 +513,18 @@ class P705CorrectionCommitPortTest {
             assertEquals(
                 CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED),
                 correct(harness, ids, ids.requestId(), transactionId = "tx-transfer"),
+            )
+            assertEquals(
+                CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED),
+                correct(harness, ids, ids.requestId(), transactionId = "tx-refund"),
+            )
+            assertEquals(
+                CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED),
+                correct(harness, ids, ids.requestId(), transactionId = "tx-credit"),
+            )
+            assertEquals(
+                CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED),
+                correct(harness, ids, ids.requestId(), transactionId = "tx-lend"),
             )
             assertEquals(
                 CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_CREATION_LINEAGE_NOT_SUPPORTED),

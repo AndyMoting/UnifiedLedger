@@ -1760,9 +1760,17 @@ fun P503App(
     // its result back ON the composition's main dispatcher (the P704C-SPEC-01/QUAL-02 hop — every
     // async dispatch stays serial with user events). A determinate success fires the authoritative
     // refresh + post-landing monthly re-request through the shared P7-05 trigger
-    // (coordinator.onP705EffectiveSurfaceChanged); a rejection/stale/conflict refreshes nothing.
-    // The void/restore reason and note are only ever carried into the domain type and never logged
-    // (V-21).
+    // (coordinator.onP705EffectiveSurfaceChanged via the pure `refreshAfterP705Commit` seam); a
+    // rejection/stale/conflict refreshes nothing. The void/restore reason and note are only ever
+    // carried into the domain type and never logged (V-21).
+    //
+    // KNOWN RESIDUAL (frozen discipline, no behavior change): a lost P7-05 commit whose
+    // snapshot-aware resolution is Absent/Unavailable has no result to dispatch, so the surface
+    // keeps `submitting = true` with NO automatic retry and NO manual re-check surface. The marker
+    // clears only on an app restart (the P7-02 UnknownCommit discipline has a manual re-check for
+    // the entry flow; the P7-05 surfaces deliberately do not, and this slice adds none). This is
+    // the same no-auto-retry/no-requestId-swap rule the reducer pins (V-19); it is recorded here
+    // as a known residual rather than silently left implicit.
 
     /** P7-05.B (DP-12: 仅详情入口): resolves the old-value snapshot and opens the correction surface. */
     fun openTransactionEdit(detail: TransactionDetail) {
@@ -1781,7 +1789,7 @@ fun P503App(
     /** P7-05.C (DP-12): opens the void confirmation page from the detail. */
     fun openVoidConfirm(detail: TransactionDetail) {
         if (facade.voidTransaction == null) return
-        dispatch(P503UiEvent.OpenVoidConfirm(detail.transactionId, detail.currentVersionId))
+        dispatch(P503UiEvent.OpenVoidConfirm(detail.transactionId))
     }
 
     /**
@@ -1805,7 +1813,7 @@ fun P503App(
                 }
             scope.launch {
                 dispatch(P503UiEvent.TransactionEditResult(result))
-                if (shouldRefreshAfterP705Commit(result)) coordinator.onP705EffectiveSurfaceChanged()
+                refreshAfterP705Commit(result, coordinator)
             }
         }
     }
@@ -1866,7 +1874,7 @@ fun P503App(
                 }
             scope.launch {
                 dispatch(P503UiEvent.TransactionVoidResult(result))
-                if (shouldRefreshAfterP705Commit(result)) coordinator.onP705EffectiveSurfaceChanged()
+                refreshAfterP705Commit(result, coordinator)
             }
         }
     }
@@ -1917,7 +1925,7 @@ fun P503App(
                 }
             scope.launch {
                 dispatch(P503UiEvent.TransactionRestoreResult(result))
-                if (shouldRefreshAfterP705Commit(result)) coordinator.onP705EffectiveSurfaceChanged()
+                refreshAfterP705Commit(result, coordinator)
             }
         }
     }
@@ -1964,11 +1972,7 @@ fun P503App(
         scope.launch(Dispatchers.Default) {
             val result = query.query()
             scope.launch {
-                if (alreadyOpen) {
-                    dispatch(P503UiEvent.RecycleBinResult(result))
-                } else {
-                    dispatch(P503UiEvent.OpenRecycleBin(result))
-                }
+                dispatch(recycleBinReadEvent(alreadyOpen, result))
             }
         }
     }

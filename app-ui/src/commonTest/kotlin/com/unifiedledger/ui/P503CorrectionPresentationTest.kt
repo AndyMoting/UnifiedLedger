@@ -69,6 +69,20 @@ class P503CorrectionPresentationTest {
         assertFalse(
             detailCorrectionAffordancesVisible(TransactionKind.LEND, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true).any,
         )
+        // D-158 section 4: the remaining later-slice matrix rows hide the entries too.
+        listOf(
+            TransactionKind.REFUND_RECEIPT,
+            TransactionKind.CREDIT_REPAYMENT,
+            TransactionKind.COLLECT,
+            TransactionKind.OPENING_BALANCE,
+            TransactionKind.STORED_VALUE_RECHARGE,
+            TransactionKind.PREPAID_PURCHASE,
+        ).forEach { kind ->
+            assertFalse(
+                detailCorrectionAffordancesVisible(kind, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true).any,
+                "kind $kind must offer no correction entry",
+            )
+        }
         // A voided transaction (defensive echo of the read invariant) offers nothing.
         assertFalse(
             detailCorrectionAffordancesVisible(TransactionKind.EXPENSE, CreationEntry.MANUAL_CREATED, isEffective = false, hasCorrectionOrigin = true, hasVoidTarget = true).any,

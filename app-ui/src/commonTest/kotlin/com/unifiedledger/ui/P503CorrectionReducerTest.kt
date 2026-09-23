@@ -149,7 +149,7 @@ class P503CorrectionReducerTest {
     @Test
     fun openVoidConfirmEntersOnlyFromTheDetailWithNoCasTarget() {
         val source = detail()
-        val opened = assertIs<P503AppState.VoidConfirm>(reducer.reduce(source, P503UiEvent.OpenVoidConfirm(transactionId, versionId)))
+        val opened = assertIs<P503AppState.VoidConfirm>(reducer.reduce(source, P503UiEvent.OpenVoidConfirm(transactionId)))
         assertSame(source.overview, opened.overview)
         assertEquals(transactionId, opened.transactionId)
         // The merged void/restore family carries no version CAS (the fact sequence guards it,
@@ -158,7 +158,7 @@ class P503CorrectionReducerTest {
         assertNull(opened.requestId)
         assertEquals(false, opened.submitting)
         val overviewState = overview()
-        assertSame(overviewState, reducer.reduce(overviewState, P503UiEvent.OpenVoidConfirm(transactionId, versionId)))
+        assertSame(overviewState, reducer.reduce(overviewState, P503UiEvent.OpenVoidConfirm(transactionId)))
     }
 
     @Test
@@ -448,7 +448,7 @@ class P503CorrectionReducerTest {
 
         everyStateExcept(detailState).forEach { state ->
             assertSame(state, reducer.reduce(state, P503UiEvent.OpenTransactionEdit(origin())))
-            assertSame(state, reducer.reduce(state, P503UiEvent.OpenVoidConfirm(transactionId, versionId)))
+            assertSame(state, reducer.reduce(state, P503UiEvent.OpenVoidConfirm(transactionId)))
         }
         everyStateExcept(overviewState, detailState, bin).forEach { state ->
             assertSame(state, reducer.reduce(state, P503UiEvent.OpenRecycleBin(RecycleBinResult.Success(emptyList()))))

@@ -116,6 +116,23 @@ class TransactionCorrectionTest {
             P705FailureCode.P705_KIND_NOT_SUPPORTED,
             assertIs<OrdinaryCorrectionPlan.Rejected>(plan(TransactionKind.LEND)).code,
         )
+        // D-158 section 4: the full later-slice matrix rows — REFUND_RECEIPT (DP-13),
+        // CREDIT_REPAYMENT (import credit lineage, DP-5), COLLECT (the LEND pair) and the
+        // canonical-only kinds — are all outside the first-slice matrix.
+        listOf(
+            TransactionKind.REFUND_RECEIPT,
+            TransactionKind.CREDIT_REPAYMENT,
+            TransactionKind.COLLECT,
+            TransactionKind.OPENING_BALANCE,
+            TransactionKind.STORED_VALUE_RECHARGE,
+            TransactionKind.PREPAID_PURCHASE,
+        ).forEach { kind ->
+            assertEquals(
+                P705FailureCode.P705_KIND_NOT_SUPPORTED,
+                assertIs<OrdinaryCorrectionPlan.Rejected>(plan(kind)).code,
+                "kind $kind must stay outside the first-slice support matrix",
+            )
+        }
         // Category/kind mismatch: an EXPENSE transaction may not be pointed at an INCOME category.
         assertEquals(
             P705FailureCode.P705_CATALOG_REFERENCE_NOT_ADMISSIBLE,

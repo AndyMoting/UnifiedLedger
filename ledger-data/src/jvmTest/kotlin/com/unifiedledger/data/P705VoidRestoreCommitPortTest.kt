@@ -213,12 +213,40 @@ class P705VoidRestoreCommitPortTest {
     fun unsupportedKindsAndLineagesAreTypedRejectionsWithZeroWrites() {
         P705Database.create("p705-void-unsupported-").use { harness ->
             harness.insertTransactionOfKind("tx-transfer", com.unifiedledger.domain.TransactionKind.ACCOUNT_TRANSFER)
+            // D-158 section 4: extend the V-13 matrix beyond ACCOUNT_TRANSFER to REFUND_RECEIPT,
+            // CREDIT_REPAYMENT and a canonical-only kind (LEND persisted as kind=EXPENSE +
+            // canonical_kind). All three are later-slice rows and must be typed rejections.
+            harness.insertTransactionOfKind("tx-refund", com.unifiedledger.domain.TransactionKind.REFUND_RECEIPT)
+            harness.insertTransactionOfKind("tx-credit", com.unifiedledger.domain.TransactionKind.CREDIT_REPAYMENT)
+            harness.insertTransactionOfKind("tx-lend", com.unifiedledger.domain.TransactionKind.LEND)
             harness.insertOrdinaryExpense("tx-imported", amountMinor = 10_000L)
             harness.insertImportCreationConfirmation("tx-imported")
             val ids = P705Ids("p705-void-unsupported")
             assertEquals(
                 VoidTransactionResult.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED),
                 void(harness, ids, ids.requestId(), transactionId = "tx-transfer"),
+            )
+            assertEquals(
+                VoidTransactionResult.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED),
+                void(harness, ids, ids.requestId(), transactionId = "tx-refund"),
+            )
+            assertEquals(
+                VoidTransactionResult.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED),
+                void(harness, ids, ids.requestId(), transactionId = "tx-credit"),
+            )
+            assertEquals(
+                VoidTransactionResult.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED),
+                void(harness, ids, ids.requestId(), transactionId = "tx-lend"),
+            )
+            // The restore of the same unsupported rows is rejected identically (the matrix gate
+            // precedes the void-state precondition).
+            assertEquals(
+                VoidTransactionResult.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED),
+                restore(harness, ids, ids.requestId(), transactionId = "tx-refund"),
+            )
+            assertEquals(
+                VoidTransactionResult.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED),
+                restore(harness, ids, ids.requestId(), transactionId = "tx-lend"),
             )
             assertEquals(
                 VoidTransactionResult.Rejected(P705FailureCode.P705_CREATION_LINEAGE_NOT_SUPPORTED),
