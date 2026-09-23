@@ -162,9 +162,11 @@ internal class P705Database private constructor(
      * delegates `close()` to `ThreadedConnectionManager.close()`, which is an empty method, and its
      * `closeConnection` drops the thread-local handle so the next query silently reopens a fresh
      * connection. This method therefore closes the underlying JDBC connection directly, leaving the
-     * driver's thread-local pointing at the now-closed connection: any further read through this
-     * harness fails rather than transparently reconnecting, which is what lets the V-16 reopen test
-     * prove it is not reading through the original connection.
+     * driver's thread-local pointing at the now-closed connection: the FIRST read after this close
+     * fails (the probe the V-16 reopen test performs), and that failing read's cleanup clears the
+     * driver's thread-local, so a subsequent read would reconnect transparently on a fresh
+     * connection. The single failing probe is what lets the V-16 reopen test prove it is not reading
+     * through the original connection.
      */
     fun closePreservingFile() {
         if (driverClosed) return

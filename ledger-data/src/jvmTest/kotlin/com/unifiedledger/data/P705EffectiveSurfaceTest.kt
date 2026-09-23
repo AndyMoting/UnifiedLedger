@@ -301,11 +301,11 @@ class P705EffectiveSurfaceTest {
      * V-16 automatic half (D-158 section 4): a ledger that was corrected, voided and restored
      * reopens with the same authoritative values on every surface. The write happens on one
      * connection, which is then truly CLOSED (the file is preserved, the harness's test-only
-     * `closePreservingFile`) and proven unable to serve further reads, so the read-back below
-     * cannot be reading through the original connection: it runs on a fresh `P705Database.open`
-     * of the same path (mirroring `DesktopCurrentSchemaReopenTest`). The effective row sets,
-     * balances, monthly counts, recycle bin and version/postings history must read back
-     * value-identically.
+     * `closePreservingFile`) and proven unable to serve the probe read after the close, so the
+     * read-back below cannot be reading through the original connection: it runs on a fresh
+     * `P705Database.open` of the same path (mirroring `DesktopCurrentSchemaReopenTest`). The
+     * effective row sets, balances, monthly counts, recycle bin and version/postings history must
+     * read back value-identically.
      */
     @Test
     fun correctedVoidedAndRestoredLedgerReopensWithIdenticalAuthoritativeValues() {

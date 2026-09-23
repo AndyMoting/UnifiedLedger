@@ -52,9 +52,9 @@ import kotlin.time.Instant
  * the detail-plus-catalog old-value origin resolution (including the transaction's own currency,
  * the Piece 3 residual), the correction/void request builders, the snapshot-aware unknown-commit
  * resolution mapping, and the single success gate of the P7-05 refresh chain. All data is anonymous
- * synthetic; this suite asserts on synthetic note literals in equality checks, while V-21's product
- * constraint is that the reason note never enters product logs or the deliberately constructed
- * user-facing failure messages (the suite does not construct such messages).
+ * synthetic; this suite asserts on synthetic note literals in value equality checks only, and it
+ * does not pass a note as an assertion message argument. V-21's frozen product constraint is that
+ * the reason note must not enter product logs or test failure messages.
  */
 class P503CorrectionHostTest {
     private val ledgerId = LedgerId("ledger-local-test")
