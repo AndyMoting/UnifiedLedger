@@ -3,6 +3,7 @@ package com.unifiedledger.ui
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.P705FailureCode
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVersionId
@@ -88,6 +89,15 @@ data class TransactionEditOrigin(
     val amountText: String,
     val categoryId: CategoryId?,
     val fundingAccountId: AccountId?,
+    /**
+     * P7-05.B (slice 1b Piece 4; the Piece 3 residual): the transaction's OWN currency, resolved by
+     * the host from the detail legs. It retires the previous "format with the ledger default"
+     * assumption of the difference preview and the commit amount parse (multi-currency correction
+     * stays out of first-slice scope, but a transaction whose funding account is a non-default
+     * currency must still be previewed and parsed at its own precision). `null` for legacy
+     * constructions; the composition call site then falls back to the ledger default.
+     */
+    val currency: CurrencyUnit? = null,
 )
 
 /** The corrected fields of the frozen first-slice set, in the preview's display order. */

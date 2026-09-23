@@ -37,6 +37,7 @@ import com.unifiedledger.application.EntryPinResult
 import com.unifiedledger.application.EntryPinTarget
 import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.ExplicitManualSave
+import com.unifiedledger.application.ExplicitlyConfirmedTransactionCorrection
 import com.unifiedledger.application.ImportCandidateId
 import com.unifiedledger.application.ImportDuplicateReviewRequest
 import com.unifiedledger.application.ImportDuplicateReviewsForSessionResult
@@ -89,11 +90,19 @@ import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.RecycleBinResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.SummarizeLedgerActivity
+import com.unifiedledger.application.TransactionCorrectionRequestIdentity
+import com.unifiedledger.application.TransactionDetail
+import com.unifiedledger.application.TransactionDetailResult
+import com.unifiedledger.application.TransactionVoidRequestIdentity
 import com.unifiedledger.application.TransferDraft
 import com.unifiedledger.application.TypedEntryDraft
+import com.unifiedledger.application.VoidTransactionRequest
+import com.unifiedledger.application.VoidTransactionResult
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.P705FailureCode
 import com.unifiedledger.domain.TransactionId
+import com.unifiedledger.domain.TransactionVoidFactKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.datetime.YearMonth
@@ -1745,6 +1754,225 @@ fun P503App(
             else -> null
         }
 
+    // ---------------------------------------------------------------- P7-05 correction/void/recycle-bin host surface
+    // Slice 1b Piece 4 (D-156; spec sections 3.5/4.3/4.4): the host call sites that make the P7-05
+    // surfaces reachable. Every commit runs OFF the UI thread (Dispatchers.Default) and dispatches
+    // its result back ON the composition's main dispatcher (the P704C-SPEC-01/QUAL-02 hop — every
+    // async dispatch stays serial with user events). A determinate success fires the authoritative
+    // refresh + post-landing monthly re-request through the shared P7-05 trigger
+    // (coordinator.onP705EffectiveSurfaceChanged); a rejection/stale/conflict refreshes nothing.
+    // The void/restore reason and note are only ever carried into the domain type and never logged
+    // (V-21).
+
+    /** P7-05.B (DP-12: 仅详情入口): resolves the old-value snapshot and opens the correction surface. */
+    fun openTransactionEdit(detail: TransactionDetail) {
+        if (facade.correctTransactionVersion == null) return
+        val snapshot = cachedCatalogSnapshot ?: return
+        val origin = transactionEditOriginFromDetail(detail, snapshot) ?: return
+        dispatch(P503UiEvent.OpenTransactionEdit(origin))
+    }
+
+    /** P7-05.B: whether the detail page's edit entry can be resolved right now (facade + catalog + payload). */
+    fun correctionOriginResolvable(detail: TransactionDetail): Boolean {
+        val snapshot = cachedCatalogSnapshot ?: return false
+        return facade.correctTransactionVersion != null && transactionEditOriginFromDetail(detail, snapshot) != null
+    }
+
+    /** P7-05.C (DP-12): opens the void confirmation page from the detail. */
+    fun openVoidConfirm(detail: TransactionDetail) {
+        if (facade.voidTransaction == null) return
+        dispatch(P503UiEvent.OpenVoidConfirm(detail.transactionId, detail.currentVersionId))
+    }
+
+    /**
+     * P7-05.B: runs the correction commit off the UI thread. A lost commit is resolved
+     * snapshot-aware (spec section 4.2): a matching receipt is the original success, a mismatched
+     * snapshot is the stable identity conflict, and an absent/unreadable row stays unknown — the
+     * surface keeps its submitting marker with no automatic retry and no request-id swap (the
+     * `UnknownCommit` discipline; the reducer owns that marker).
+     */
+    fun commitTransactionCorrection(request: ExplicitlyConfirmedTransactionCorrection) {
+        val useCase = facade.correctTransactionVersion ?: return
+        scope.launch(Dispatchers.Default) {
+            val result =
+                try {
+                    useCase.execute(request)
+                } catch (failure: Exception) {
+                    val resolver = facade.resolveCorrectionCommitStatus ?: return@launch
+                    val identity = TransactionCorrectionRequestIdentity(request.ledgerId, request.requestId)
+                    val resolution = resolver.resolve(request.ledgerId, request.requestId, request.toRequestSnapshot())
+                    correctResultFromResolution(identity, resolution) ?: return@launch
+                }
+            scope.launch {
+                dispatch(P503UiEvent.TransactionEditResult(result))
+                if (shouldRefreshAfterP705Commit(result)) coordinator.onP705EffectiveSurfaceChanged()
+            }
+        }
+    }
+
+    /**
+     * P7-05.B: the explicit correction confirm. The wiring/field guard runs BEFORE the reducer marks
+     * the surface submitting (the P704C-QUAL-04 call-site precedent): an unwired facade or an
+     * inadmissible draft never strands the page. The whole decision runs inside
+     * [dispatchCurrentP503Action]'s instance guard, so a stale render (the surface already
+     * submitting, or already left) can neither mint an intent nor disturb an in-flight commit. The
+     * request id is host-minted for this one intent (the reducer is IO-free and randomness-free);
+     * the same id feeds the commit and its resolver.
+     */
+    fun confirmTransactionCorrection(current: P503AppState.TransactionEdit) {
+        if (facade.correctTransactionVersion == null) return
+        var request: ExplicitlyConfirmedTransactionCorrection? = null
+        dispatchCurrentP503Action(
+            current,
+            latestState.value,
+            {
+                val requestId = facade.requestIdSource.next()
+                val built =
+                    transactionCorrectionRequest(
+                        ledgerId = facade.ledgerId,
+                        requestId = requestId,
+                        origin = current.origin,
+                        draft = current.draft,
+                        parseAmount = facade.parseAmount,
+                        parseOccurredAt = facade.parseOccurredAt,
+                        ledgerClock = facade.ledgerClock,
+                        fallbackCurrency = facade.currency,
+                    )
+                if (built == null) {
+                    P503UiEvent.TransactionEditResult(CORRECTION_FIELD_REJECTION)
+                } else {
+                    request = built
+                    P503UiEvent.ConfirmTransactionEdit(requestId)
+                }
+            },
+            ::dispatch,
+        ) {
+            request?.let { commitTransactionCorrection(it) }
+        }
+    }
+
+    /** P7-05.C: runs the void commit off the UI thread (the correction path's resolver discipline). */
+    fun commitTransactionVoid(request: VoidTransactionRequest) {
+        val useCase = facade.voidTransaction ?: return
+        scope.launch(Dispatchers.Default) {
+            val result =
+                try {
+                    useCase.execute(request)
+                } catch (failure: Exception) {
+                    val resolver = facade.resolveVoidCommitStatus ?: return@launch
+                    val snapshot = request.toRequestSnapshot(TransactionVoidFactKind.VOID) ?: return@launch
+                    val identity = TransactionVoidRequestIdentity(request.ledgerId, request.requestId)
+                    voidResultFromResolution(identity, resolver.resolve(request.ledgerId, request.requestId, snapshot)) ?: return@launch
+                }
+            scope.launch {
+                dispatch(P503UiEvent.TransactionVoidResult(result))
+                if (shouldRefreshAfterP705Commit(result)) coordinator.onP705EffectiveSurfaceChanged()
+            }
+        }
+    }
+
+    /**
+     * P7-05.C: the explicit void confirm; the mandatory reason is re-checked against the domain rule
+     * before submitting. The whole decision runs inside [dispatchCurrentP503Action]'s instance
+     * guard, so a stale render can neither mint an intent nor disturb an in-flight commit.
+     */
+    fun confirmVoid(current: P503AppState.VoidConfirm) {
+        if (facade.voidTransaction == null) return
+        var request: VoidTransactionRequest? = null
+        dispatchCurrentP503Action(
+            current,
+            latestState.value,
+            {
+                val rejection = voidReasonDraftRejection(current.reason)
+                val reason = voidReasonFromDraft(current.reason)
+                if (rejection != null || reason == null) {
+                    // The mandatory-reason rejection is the domain's own code (never restated here).
+                    P503UiEvent.TransactionVoidResult(
+                        VoidTransactionResult.Rejected(rejection ?: P705FailureCode.P705_VOID_REASON_REQUIRED),
+                    )
+                } else {
+                    val requestId = facade.requestIdSource.next()
+                    request = VoidTransactionRequest(facade.ledgerId, requestId, current.transactionId, reason, ExplicitManualSave)
+                    P503UiEvent.ConfirmVoid(requestId)
+                }
+            },
+            ::dispatch,
+        ) {
+            request?.let { commitTransactionVoid(it) }
+        }
+    }
+
+    /** P7-05.C: runs the restore commit off the UI thread (the void path's resolver discipline, `factKind = restore`). */
+    fun commitRestore(request: VoidTransactionRequest) {
+        val useCase = facade.restoreTransaction ?: return
+        scope.launch(Dispatchers.Default) {
+            val result =
+                try {
+                    useCase.execute(request)
+                } catch (failure: Exception) {
+                    val resolver = facade.resolveVoidCommitStatus ?: return@launch
+                    val snapshot = request.toRequestSnapshot(TransactionVoidFactKind.RESTORE) ?: return@launch
+                    val identity = TransactionVoidRequestIdentity(request.ledgerId, request.requestId)
+                    voidResultFromResolution(identity, resolver.resolve(request.ledgerId, request.requestId, snapshot)) ?: return@launch
+                }
+            scope.launch {
+                dispatch(P503UiEvent.TransactionRestoreResult(result))
+                if (shouldRefreshAfterP705Commit(result)) coordinator.onP705EffectiveSurfaceChanged()
+            }
+        }
+    }
+
+    /**
+     * P7-05.C: the explicit restore confirm from the nested bin sub-state (the reason is mandatory
+     * for a restore too). The whole decision runs inside [dispatchCurrentP503Action]'s instance
+     * guard, so a stale render can neither mint an intent nor disturb an in-flight commit.
+     */
+    fun confirmRestore(current: P503AppState.RecycleBin) {
+        val restore = current.restore ?: return
+        if (facade.restoreTransaction == null) return
+        var request: VoidTransactionRequest? = null
+        dispatchCurrentP503Action(
+            current,
+            latestState.value,
+            {
+                val rejection = voidReasonDraftRejection(restore.reason)
+                val reason = voidReasonFromDraft(restore.reason)
+                if (rejection != null || reason == null) {
+                    P503UiEvent.TransactionRestoreResult(
+                        VoidTransactionResult.Rejected(rejection ?: P705FailureCode.P705_VOID_REASON_REQUIRED),
+                    )
+                } else {
+                    val requestId = facade.requestIdSource.next()
+                    request = VoidTransactionRequest(facade.ledgerId, requestId, restore.transactionId, reason, ExplicitManualSave)
+                    P503UiEvent.ConfirmRestore(requestId)
+                }
+            },
+            ::dispatch,
+        ) {
+            request?.let { commitRestore(it) }
+        }
+    }
+
+    /**
+     * P7-05.C: reads the recycle bin off the UI thread and dispatches the fresh projection. The bin
+     * is always read fresh on open (and re-read in place when it is already the open surface), so a
+     * restore's effect is visible on the next open without any cached second source of truth.
+     */
+    fun requestRecycleBin() {
+        val query = facade.queryRecycleBin ?: return
+        val alreadyOpen = latestState.value is P503AppState.RecycleBin
+        scope.launch(Dispatchers.Default) {
+            val result = query.query()
+            scope.launch {
+                if (alreadyOpen) {
+                    dispatch(P503UiEvent.RecycleBinResult(result))
+                } else {
+                    dispatch(P503UiEvent.OpenRecycleBin(result))
+                }
+            }
+        }
+    }
+
     P503Theme {
         when (val current = state) {
             P503AppState.Ready -> P503StartupScreen(P503StartupState.Starting, onRetry = {}, onExit = onExit)
@@ -1787,11 +2015,12 @@ fun P503App(
                                 entryRows = ledgerEntryRows,
                                 onSelectTransaction = ::selectTransaction,
                                 onSelectMonth = ::selectMonth,
-                                // P7-05.C (D-156; slice 1b Piece 3): the recycle-bin entry is
-                                // rendered only when the host wires this callback; the bin read
-                                // and the open event are Piece 4 host call sites, so no entry is
-                                // offered yet (the screen renders none rather than a dead button).
-                                onOpenRecycleBin = null,
+                                // P7-05.C (D-156; slice 1b Piece 4): the ledger-wide recycle-bin
+                                // entry, offered only when the read surface is wired (an unwired
+                                // facade renders no dead button). Opening always reads the bin
+                                // fresh off the UI thread; the read dispatches OpenRecycleBin (a
+                                // re-open in place refreshes the projection instead).
+                                onOpenRecycleBin = if (facade.queryRecycleBin != null) ::requestRecycleBin else null,
                             )
                         P503Tab.ACCOUNTS ->
                             P503CatalogManagementScreen(
@@ -1846,20 +2075,29 @@ fun P503App(
                             )
                     }
                 }
-            is P503AppState.TransactionDetail ->
+            is P503AppState.TransactionDetail -> {
+                val detail = current.detail
                 P503TransactionDetailScreen(
-                    detail = current.detail,
+                    detail = detail,
                     // Back = CloseTransactionDetail semantics (tab/month preserved, C03).
                     onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
-                    // P7-05 (D-156; spec section 3.5): the correction/void entries. This piece
-                    // (slice 1b Piece 3) renders the affordances and the screens; the host call
-                    // sites that resolve the old-value snapshot and open the surfaces are Piece 4,
-                    // so no entry callback is wired here yet and the detail page renders no dead
-                    // button. The gate itself (support matrix + effective + a resolved origin) is
-                    // already exercised by the presentation tests.
-                    onEditTransaction = null,
-                    onVoidTransaction = null,
+                    // P7-05 (D-156; spec section 3.5): the correction/void entries. The screen's
+                    // affordance gate treats a non-null callback as "the host resolved this entry",
+                    // so the host passes the callback ONLY when it can actually resolve the target
+                    // now — the detail is a Success AND the correction origin resolves against the
+                    // current catalog (an unwired facade, a still-loading catalog or an
+                    // unresolvable amount leg passes `null`, so the page renders no dead button,
+                    // the F1 precedent). The void entry needs only the wired use case and the
+                    // payload's CAS target.
+                    onEditTransaction =
+                        if (detail is TransactionDetailResult.Success && correctionOriginResolvable(detail.detail)) {
+                            { target -> openTransactionEdit(target) }
+                        } else {
+                            null
+                        },
+                    onVoidTransaction = if (facade.voidTransaction != null) ({ target -> openVoidConfirm(target) }) else null,
                 )
+            }
             // P7-04.C: the import candidate detail (spec sections 6.1/6.2). The catalog options
             // are the same authoritative projections the entry flow consumes (D-143 同源).
             is P503AppState.ImportCandidateDetail ->
@@ -1944,7 +2182,10 @@ fun P503App(
             is P503AppState.TransactionEdit ->
                 P503TransactionEditScreen(
                     state = current,
-                    currency = facade.currency,
+                    // P7-05.B (slice 1b Piece 4): the preview and the commit amount parse at the
+                    // transaction's OWN currency (the Piece 3 residual is retired); the ledger
+                    // default remains only the fallback for a legacy origin without one.
+                    currency = current.origin.currency ?: facade.currency,
                     categoryNames = cachedCatalogSnapshot?.correctionCategoryNames() ?: emptyMap(),
                     accountNames = cachedCatalogSnapshot?.correctionAccountNames() ?: emptyMap(),
                     categoryOptions =
@@ -1952,14 +2193,14 @@ fun P503App(
                     accountOptions = cachedCatalogSnapshot?.let { correctionAccountOptions(it) } ?: emptyList(),
                     onUpdateField = { update -> dispatch(P503UiEvent.UpdateTransactionCorrectionField(update)) },
                     onPreview = { dispatch(P503UiEvent.PreviewTransactionEdit) },
-                    onConfirm = null,
+                    onConfirm = { confirmTransactionCorrection(current) },
                     onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
                 )
             is P503AppState.VoidConfirm ->
                 P503VoidConfirmScreen(
                     state = current,
                     onUpdateReason = { update -> dispatch(P503UiEvent.UpdateVoidReasonField(update)) },
-                    onConfirm = null,
+                    onConfirm = { confirmVoid(current) },
                     onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
                 )
             is P503AppState.RecycleBin -> {
@@ -1978,7 +2219,7 @@ fun P503App(
                         restore = restore,
                         row = row,
                         onUpdateReason = { update -> dispatch(P503UiEvent.UpdateRestoreReasonField(update)) },
-                        onConfirm = null,
+                        onConfirm = { confirmRestore(current) },
                         onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.CloseRestoreConfirm) },
                     )
                 }
