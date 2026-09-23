@@ -88,6 +88,14 @@ class CatalogConsumerSession(
         private set
 
     /**
+     * P7-05.C (D-156/D-158 slice 1b): the read-only recycle-bin projection, rebuilt from the
+     * reloaded catalog by [refresh] exactly like [queryTransactionDetail], so the restore
+     * revalidation and the dependency names always reflect the current authoritative version.
+     */
+    var queryRecycleBin: QueryRecycleBin = QueryRecycleBin(readPort, ledgerId, authority.catalog)
+        private set
+
+    /**
      * Reloads the authoritative catalog from persistence and rebuilds every read model so they
      * share the reloaded version. Returns the reloaded authority (non-null after bootstrap; a
      * null reload is a programming error and throws instead of exposing a stale or empty view).
@@ -106,6 +114,7 @@ class CatalogConsumerSession(
         summarizeActivity = SummarizeLedgerActivity(reloaded.catalog)
         queryTransactionDetail = QueryTransactionDetail(readPort, ledgerId, reloaded.catalog)
         queryMonthlyActivity = clock?.let { QueryMonthlyActivity(readPort, ledgerId, reloaded.catalog, it) }
+        queryRecycleBin = QueryRecycleBin(readPort, ledgerId, reloaded.catalog)
         return reloaded
     }
 }

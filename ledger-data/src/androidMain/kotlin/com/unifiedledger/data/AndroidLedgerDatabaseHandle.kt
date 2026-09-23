@@ -56,6 +56,14 @@ fun createAndroidLedgerDatabase(
         // connection; the driver stays private to this handle, so the store comes from the
         // platform-configured factory exactly like the four manual commit ports above.
         importSpineStore = SqlDelightImportSpineStore.forPlatformConfiguredDatabase(database),
+        // P7-05.B/C (D-156/D-158 slice 1b): the correction and void/restore commit ports on the
+        // same platform-configured connection, for the same reason as the four manual ports —
+        // the driver stays private to this handle, so the composition root reaches them through
+        // the platform-configured factories.
+        correctionCommitPort =
+            SqlDelightTransactionCorrectionCommitPort
+                .forPlatformConfiguredDatabase(database),
+        voidCommitPort = SqlDelightTransactionVoidCommitPort.forPlatformConfiguredDatabase(database),
         driver = driver,
     )
 }
@@ -70,6 +78,9 @@ class AndroidLedgerDatabaseHandle internal constructor(
     val entryPreferenceStore: SqlDelightEntryPreferenceStore,
     val catalogStore: SqlDelightCatalogStore,
     val importSpineStore: SqlDelightImportSpineStore,
+    // P7-05.B/C (D-156/D-158 slice 1b): the correction and void/restore commit ports.
+    val correctionCommitPort: SqlDelightTransactionCorrectionCommitPort,
+    val voidCommitPort: SqlDelightTransactionVoidCommitPort,
     private val driver: AndroidSqliteDriver,
 ) : AutoCloseable {
     override fun close() {

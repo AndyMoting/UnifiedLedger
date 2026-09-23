@@ -45,6 +45,21 @@ class SqlDelightTransactionCorrectionCommitPort private constructor(
         configureSqliteConnection(driver)
     }
 
+    companion object {
+        /**
+         * Platform-configured factory (the `forPlatformConfiguredDatabase` precedent of the four
+         * manual commit ports): for a database whose connection the platform already configured —
+         * the Android `ForeignKeysCallback` path, which intentionally sets no JDBC busy timeout —
+         * this factory skips the JDBC-only `configureSqliteConnection` PRAGMA setup and only
+         * constructs the port. Internal like its precedents: the platform data-assembly handle
+         * (ledger-data androidMain) calls it; app composition roots never see the driver
+         * (P7-05 slice 1b wiring, D-156/D-158).
+         */
+        internal fun forPlatformConfiguredDatabase(
+            database: LedgerDatabase,
+        ): SqlDelightTransactionCorrectionCommitPort = SqlDelightTransactionCorrectionCommitPort(database)
+    }
+
     override fun commitOnce(
         identity: TransactionCorrectionRequestIdentity,
         requestSnapshot: TransactionCorrectionRequestSnapshot,
