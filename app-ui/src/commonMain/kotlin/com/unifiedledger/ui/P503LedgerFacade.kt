@@ -5,9 +5,12 @@ import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.CounterpartyCommands
 import com.unifiedledger.application.EntryPreferenceStore
 import com.unifiedledger.application.ExecuteCatalogCommand
+import com.unifiedledger.application.ExecuteCorrectTransactionVersion
 import com.unifiedledger.application.ExecuteManualEntrySubmission
 import com.unifiedledger.application.ExecuteManualExpenseSubmission
 import com.unifiedledger.application.ExecuteManualIncomeSubmission
+import com.unifiedledger.application.ExecuteRestoreTransaction
+import com.unifiedledger.application.ExecuteVoidTransaction
 import com.unifiedledger.application.ImportFileIntakePort
 import com.unifiedledger.application.ImportIntakeSessionIdentity
 import com.unifiedledger.application.ImportPlatformKind
@@ -33,11 +36,14 @@ import com.unifiedledger.application.QueryImportReviewRows
 import com.unifiedledger.application.QueryLedgerCurrentState
 import com.unifiedledger.application.QueryLedgerEntryRows
 import com.unifiedledger.application.QueryMonthlyActivity
+import com.unifiedledger.application.QueryRecycleBin
 import com.unifiedledger.application.QueryTransactionDetail
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.ResolveManualIncomeCommitStatus
 import com.unifiedledger.application.ResolveManualLendingCommitStatus
 import com.unifiedledger.application.ResolveManualTransferCommitStatus
+import com.unifiedledger.application.ResolveTransactionCorrectionCommitStatus
+import com.unifiedledger.application.ResolveTransactionVoidCommitStatus
 import com.unifiedledger.application.ReviewImportDuplicateCandidate
 import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.domain.CurrencyUnit
@@ -163,6 +169,18 @@ class P503LedgerFacade(
     // compiling.
     val importConfirmUseCases: () -> ImportConfirmUseCaseSet? = { null },
     val importConfirmRequestIdSource: (() -> String)? = null,
+    // P7-05.B/C (D-156/D-158 slice 1b): the correction and void/restore product surface. The
+    // composition roots wire the three execute use cases (correction, void, restore) over the
+    // platform's commit ports and the two snapshot-aware unknown-commit resolvers; all nullable
+    // with plain defaults so legacy constructions (startup tests) keep compiling. The recycle-bin
+    // read follows the catalog session exactly like [queryTransactionDetail], so [refreshCatalog]
+    // rebuilds it from the reloaded catalog.
+    val correctTransactionVersion: ExecuteCorrectTransactionVersion? = null,
+    val voidTransaction: ExecuteVoidTransaction? = null,
+    val restoreTransaction: ExecuteRestoreTransaction? = null,
+    val resolveCorrectionCommitStatus: ResolveTransactionCorrectionCommitStatus? = null,
+    val resolveVoidCommitStatus: ResolveTransactionVoidCommitStatus? = null,
+    baseQueryRecycleBin: QueryRecycleBin? = null,
 ) {
     private val session = catalogSession
     private val fallbackOptionsProvider = baseOptionsProvider
@@ -171,6 +189,7 @@ class P503LedgerFacade(
     private val fallbackQueryLedgerEntryRows = baseQueryLedgerEntryRows
     private val fallbackQueryMonthlyActivity = baseQueryMonthlyActivity
     private val fallbackQueryTransactionDetail = baseQueryTransactionDetail
+    private val fallbackQueryRecycleBin = baseQueryRecycleBin
     private val fallbackQueryImportReviewRows = baseQueryImportReviewRows
     private val fallbackQueryImportCandidateDetail = baseQueryImportCandidateDetail
     private val fallbackQueryImportDuplicateReviews = baseQueryImportDuplicateReviews
@@ -221,6 +240,15 @@ class P503LedgerFacade(
     /** P7-03.C/D: the read-only transaction detail projection; follows [refreshCatalog] when a session is injected. */
     val queryTransactionDetail: QueryTransactionDetail?
         get() = session?.queryTransactionDetail ?: fallbackQueryTransactionDetail
+
+    /**
+     * P7-05.C (D-156/D-158 slice 1b): the read-only recycle-bin projection; follows
+     * [refreshCatalog] when a session is injected, so restore revalidation and dependency names
+     * use the current authoritative catalog. `null` when neither the session nor the construction
+     * site provides it (legacy facades).
+     */
+    val queryRecycleBin: QueryRecycleBin?
+        get() = session?.queryRecycleBin ?: fallbackQueryRecycleBin
 
     /** P7-04.C: the ledger-scoped import review list projection (plain nullable, no session following). */
     val queryImportReviewRows: QueryImportReviewRows?

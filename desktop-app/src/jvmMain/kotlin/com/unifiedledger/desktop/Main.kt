@@ -37,6 +37,7 @@ import com.unifiedledger.application.ExecuteConfirmedManualExpense
 import com.unifiedledger.application.ExecuteConfirmedManualIncome
 import com.unifiedledger.application.ExecuteConfirmedManualLending
 import com.unifiedledger.application.ExecuteConfirmedManualTransfer
+import com.unifiedledger.application.ExecuteCorrectTransactionVersion
 import com.unifiedledger.application.ExecuteCreateCounterparty
 import com.unifiedledger.application.ExecuteImportIntake
 import com.unifiedledger.application.ExecuteLendingSubmission
@@ -50,7 +51,9 @@ import com.unifiedledger.application.ExecuteManualLendingSubmission
 import com.unifiedledger.application.ExecuteManualTransferSave
 import com.unifiedledger.application.ExecuteManualTransferSubmission
 import com.unifiedledger.application.ExecuteRenameCounterparty
+import com.unifiedledger.application.ExecuteRestoreTransaction
 import com.unifiedledger.application.ExecuteSetCounterpartyActive
+import com.unifiedledger.application.ExecuteVoidTransaction
 import com.unifiedledger.application.ImportContentFingerprint
 import com.unifiedledger.application.ImportDuplicateReviewId
 import com.unifiedledger.application.ImportIntakeSessionIdentity
@@ -73,6 +76,8 @@ import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.ResolveManualIncomeCommitStatus
 import com.unifiedledger.application.ResolveManualLendingCommitStatus
 import com.unifiedledger.application.ResolveManualTransferCommitStatus
+import com.unifiedledger.application.ResolveTransactionCorrectionCommitStatus
+import com.unifiedledger.application.ResolveTransactionVoidCommitStatus
 import com.unifiedledger.application.ReviewImportDuplicateCandidate
 import com.unifiedledger.application.TransferFlowFormalFactory
 import com.unifiedledger.application.UuidV7CatalogEntityIdSource
@@ -88,6 +93,8 @@ import com.unifiedledger.application.UuidV7ManualExpenseRequestIdSource
 import com.unifiedledger.application.UuidV7ManualIncomeRequestIdSource
 import com.unifiedledger.application.UuidV7ManualLendingRequestIdSource
 import com.unifiedledger.application.UuidV7ManualTransferRequestIdSource
+import com.unifiedledger.application.UuidV7TransactionCorrectionIdSource
+import com.unifiedledger.application.UuidV7TransactionVoidFactIdSource
 import com.unifiedledger.application.import.JvmImportFileIntake
 import com.unifiedledger.data.CatalogBootstrapResult
 import com.unifiedledger.data.SqlDelightCatalogStore
@@ -100,6 +107,8 @@ import com.unifiedledger.data.SqlDelightEntryPreferenceStore
 import com.unifiedledger.data.SqlDelightImportReviewReadAdapter
 import com.unifiedledger.data.SqlDelightImportSpineStore
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
+import com.unifiedledger.data.SqlDelightTransactionCorrectionCommitPort
+import com.unifiedledger.data.SqlDelightTransactionVoidCommitPort
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.data.defaultCatalogSeed
 import com.unifiedledger.data.runFullAnalyzeOn
@@ -587,6 +596,35 @@ internal fun buildLedgerGraph(
             mixedPayment = ConfirmImportCandidate(importSpineStore, threePostingIds, MixedPaymentFlowFormalFactory(currentCatalog), currentCatalog),
         )
     }
+    // P7-05.B/C (D-156/D-158 slice 1b): the correction and void/restore product surface over the
+    // graph's driver (the public port constructors configure the JDBC connection, exactly like
+    // the manual commit ports above). The id sources are the production UUIDv7 mints
+    // (claim-gated: replays and identity conflicts consume no ids, though the correction/restore
+    // path may discard ids minted before a lost CAS or an in-plan rejection) and the catalog
+    // admission reader is the same store the manual flows revalidate against. The two
+    // snapshot-aware resolvers read the same read adapter as the P7-03/P7-04 read surface.
+    val correctionCommitPort = SqlDelightTransactionCorrectionCommitPort(database, driver)
+    val voidCommitPort = SqlDelightTransactionVoidCommitPort(database, driver)
+    val executeCorrectTransactionVersion =
+        ExecuteCorrectTransactionVersion(
+            commitPort = correctionCommitPort,
+            idSource = UuidV7TransactionCorrectionIdSource(UuidV7Generator(::secureRandomBytes)),
+            admissionReader = store,
+        )
+    val voidFactIdSource = UuidV7TransactionVoidFactIdSource(UuidV7Generator(::secureRandomBytes))
+    val executeVoidTransaction =
+        ExecuteVoidTransaction(
+            commitPort = voidCommitPort,
+            idSource = voidFactIdSource,
+            clock = ledgerClock,
+        )
+    val executeRestoreTransaction =
+        ExecuteRestoreTransaction(
+            commitPort = voidCommitPort,
+            idSource = voidFactIdSource,
+            clock = ledgerClock,
+            admissionReader = store,
+        )
     val facade =
         P503LedgerFacade(
             ledgerId = ledgerId,
@@ -659,6 +697,16 @@ internal fun buildLedgerGraph(
             // composition root hands the graph's controlled driver entry to the shared host
             // pipeline, which runs it off the UI thread right after the intake transaction.
             importIntakeStatisticsRefresh = { runFullAnalyzeOn(driver) },
+            // P7-05.B/C (D-156/D-158 slice 1b): the correction/void/restore surface. The
+            // recycle-bin read follows the catalog session (it is rebuilt by refreshCatalog like
+            // queryTransactionDetail), so restore revalidation and dependency names stay on the
+            // current authoritative version.
+            correctTransactionVersion = executeCorrectTransactionVersion,
+            voidTransaction = executeVoidTransaction,
+            restoreTransaction = executeRestoreTransaction,
+            resolveCorrectionCommitStatus = ResolveTransactionCorrectionCommitStatus(readAdapter),
+            resolveVoidCommitStatus = ResolveTransactionVoidCommitStatus(readAdapter),
+            baseQueryRecycleBin = session.queryRecycleBin,
         )
 
     return DesktopLedgerGraph(
