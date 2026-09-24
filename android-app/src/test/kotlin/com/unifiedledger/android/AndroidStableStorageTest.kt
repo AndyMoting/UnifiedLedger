@@ -1,5 +1,6 @@
 package com.unifiedledger.android
 
+import com.unifiedledger.ui.LedgerOpenTarget
 import com.unifiedledger.ui.LedgerStorageFailure
 import com.unifiedledger.ui.LedgerStorageRejectedException
 import com.unifiedledger.ui.ledgerStorageLayout
@@ -69,7 +70,7 @@ class AndroidStableStorageTest {
             val fileSystem = DesktopStyleTestFileSystem()
             val layout = ledgerStorageLayout(fileSystem, host)
 
-            val target = openStableStorageLedger(fileSystem, layout, legacy.absolutePath) { it }
+            val target = openStableStorageLedger(fileSystem, layout, legacy.absolutePath, closeGraph = {}) { it }
 
             val generationMain = File(layout.mainFile(layout.generationDirectory(1)))
             assertTrue(generationMain.exists())
@@ -93,9 +94,9 @@ class AndroidStableStorageTest {
             legacy.writeBytes(sqliteHeaderBytes())
             val fileSystem = DesktopStyleTestFileSystem()
             val layout = ledgerStorageLayout(fileSystem, host)
-            openStableStorageLedger(fileSystem, layout, legacy.absolutePath) { it }
+            openStableStorageLedger(fileSystem, layout, legacy.absolutePath, closeGraph = {}) { it }
 
-            val second = openStableStorageLedger(fileSystem, layout, legacy.absolutePath) { it }
+            val second = openStableStorageLedger(fileSystem, layout, legacy.absolutePath, closeGraph = {}) { it }
 
             assertEquals(layout.mainFile(layout.generationDirectory(1)), second.mainFile)
             assertEquals(false, second.allowCreateOnOpen)
@@ -115,7 +116,7 @@ class AndroidStableStorageTest {
 
             val rejected =
                 assertFailsWith<LedgerStorageRejectedException> {
-                    openStableStorageLedger(fileSystem, layout, null) { it }
+                    openStableStorageLedger(fileSystem, layout, null, closeGraph = {}) { it }
                 }
 
             assertEquals(LedgerStorageFailure.JOURNAL_PRESENT, rejected.failure)
@@ -143,7 +144,7 @@ class AndroidStableStorageTest {
 
             val rejected =
                 assertFailsWith<LedgerStorageRejectedException> {
-                    openStableStorageLedger(fileSystem, layout, null) { it }
+                    openStableStorageLedger(fileSystem, layout, null, closeGraph = {}) { it }
                 }
 
             assertEquals(LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE, rejected.failure)
@@ -154,4 +155,71 @@ class AndroidStableStorageTest {
     }
 
     private fun sqliteHeaderBytes(): ByteArray = "SQLite format 3\u0000".encodeToByteArray() + ByteArray(1024)
+
+    // ---------------------------------------------------------------- non-fresh create-on-open guard (fix 7)
+
+    @Test
+    fun aNonFreshTargetWithAMissingMainFileIsRejectedBeforeAnyDriverOpen() {
+        // Review Fix 7: the AndroidSqliteDriver creates on open, so the composition root must
+        // reject a non-fresh target whose main file is missing/invalid BEFORE the driver runs.
+        val databases = tempDatabasesDirectory()
+        try {
+            val host = databases.toFile().absolutePath
+            val fileSystem = DesktopStyleTestFileSystem()
+            val layout = ledgerStorageLayout(fileSystem, host)
+            val missingMain = layout.mainFile(layout.generationDirectory(1))
+
+            val rejected =
+                assertFailsWith<LedgerStorageRejectedException> {
+                    requireUsableNonFreshTarget(fileSystem, LedgerOpenTarget(missingMain, allowCreateOnOpen = false))
+                }
+
+            assertEquals(LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE, rejected.failure)
+        } finally {
+            deleteRecursively(databases)
+        }
+    }
+
+    @Test
+    fun aNonFreshTargetWithAZeroLengthMainFileIsRejected() {
+        val databases = tempDatabasesDirectory()
+        try {
+            val host = databases.toFile().absolutePath
+            val fileSystem = DesktopStyleTestFileSystem()
+            val layout = ledgerStorageLayout(fileSystem, host)
+            val generationDirectory = File(layout.generationDirectory(1))
+            generationDirectory.mkdirs()
+            File(layout.mainFile(layout.generationDirectory(1))).writeBytes(ByteArray(0))
+
+            assertFailsWith<LedgerStorageRejectedException> {
+                requireUsableNonFreshTarget(
+                    fileSystem,
+                    LedgerOpenTarget(layout.mainFile(layout.generationDirectory(1)), allowCreateOnOpen = false),
+                )
+            }
+        } finally {
+            deleteRecursively(databases)
+        }
+    }
+
+    @Test
+    fun aFreshTargetIsAllowedAndAUsableNonFreshTargetPasses() {
+        val databases = tempDatabasesDirectory()
+        try {
+            val host = databases.toFile().absolutePath
+            val fileSystem = DesktopStyleTestFileSystem()
+            val layout = ledgerStorageLayout(fileSystem, host)
+            val generationDirectory = File(layout.generationDirectory(1))
+            generationDirectory.mkdirs()
+            val main = File(layout.mainFile(layout.generationDirectory(1)))
+            main.writeBytes(sqliteHeaderBytes())
+
+            // A fresh-install target is always allowed (create-on-open is the point).
+            requireUsableNonFreshTarget(fileSystem, LedgerOpenTarget(main.absolutePath, allowCreateOnOpen = true))
+            // A usable non-fresh target passes the guard.
+            requireUsableNonFreshTarget(fileSystem, LedgerOpenTarget(main.absolutePath, allowCreateOnOpen = false))
+        } finally {
+            deleteRecursively(databases)
+        }
+    }
 }

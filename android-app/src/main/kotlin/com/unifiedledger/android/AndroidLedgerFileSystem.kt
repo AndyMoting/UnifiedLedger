@@ -29,20 +29,19 @@ internal class AndroidLedgerFileSystem : LedgerFileSystem {
 
     override fun isDirectory(path: String): Boolean = File(path).isDirectory
 
-    override fun childNames(directory: String): List<String> = File(directory).list()?.toList() ?: emptyList()
-
     override fun length(path: String): Long = File(path).length()
 
     override fun readBytes(path: String): ByteArray = File(path).readBytes()
 
-    override fun writeBytes(
+    override fun readPrefix(
         path: String,
-        bytes: ByteArray,
-    ) {
-        File(path).parentFile?.mkdirs()
-        FileOutputStream(path).use { stream ->
-            stream.write(bytes)
-            stream.flush()
+        length: Int,
+    ): ByteArray {
+        require(length >= 0) { "prefix length must not be negative" }
+        java.io.RandomAccessFile(path, "r").use { file ->
+            val buffer = ByteArray(length)
+            val read = file.read(buffer, 0, length)
+            return if (read < 0) ByteArray(0) else buffer.copyOf(read)
         }
     }
 

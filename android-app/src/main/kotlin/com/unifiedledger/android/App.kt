@@ -121,14 +121,20 @@ import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
 import com.unifiedledger.ui.ImportConfirmUseCaseSet
 import com.unifiedledger.ui.ImportDuplicateReviewIds
 import com.unifiedledger.ui.ImportFilePickResultChannel
+import com.unifiedledger.ui.LedgerFileSystem
+import com.unifiedledger.ui.LedgerLeaseScope
+import com.unifiedledger.ui.LedgerOpenTarget
 import com.unifiedledger.ui.LedgerRuntimeOwner
 import com.unifiedledger.ui.LedgerStartupResult
+import com.unifiedledger.ui.LedgerStorageFailure
+import com.unifiedledger.ui.LedgerStorageRejectedException
 import com.unifiedledger.ui.P503App
 import com.unifiedledger.ui.P503LedgerFacade
 import com.unifiedledger.ui.P503StartupScreen
 import com.unifiedledger.ui.P503StartupState
 import com.unifiedledger.ui.UuidV7ImportCommitIdSource
 import com.unifiedledger.ui.importCreditRefundOriginalExpenseProvider
+import com.unifiedledger.ui.isUsableSqliteMainFile
 import com.unifiedledger.ui.ledgerStorageLayout
 import com.unifiedledger.ui.openStableStorageLedger
 import java.security.SecureRandom
@@ -184,7 +190,7 @@ fun app() {
         controller.start()
     }
 
-    val facade = controller.facade
+    val facade = controller.ledger
     // Enforced edge-to-edge draws content behind the status bar; a root-level statusBarsPadding
     // keeps every screen's top controls reachable without touching the shared UI (D-128).
     Box(Modifier.fillMaxSize().statusBarsPadding()) {
@@ -221,9 +227,6 @@ internal class AndroidStartupController(
     var state by mutableStateOf<P503StartupState>(P503StartupState.Starting)
         private set
 
-    var facade: P503LedgerFacade? by mutableStateOf(null)
-        private set
-
     /**
      * P7-06 06.1 (D-176; spec section 4): the single runtime owner of the active graph. The
      * controller no longer holds a graph itself — every open, close and generation increment goes
@@ -238,6 +241,18 @@ internal class AndroidStartupController(
         )
 
     /**
+     * P7-06 06.1 fix (review REJECT): the product surface handed to [P503App] is the LEASE-SCOPED
+     * accessor, never the raw facade. [LedgerRuntimeOwner.facade] is `internal` (module-private),
+     * so this composition root cannot obtain the raw projection at all; every `facade.*` business
+     * call P503App makes therefore goes through [LedgerLeaseScope.withFacade]/`probe`, which
+     * acquire and release an operation lease. The lease is non-vacuous by construction.
+     */
+    val ledger: LedgerLeaseScope?
+        get() = if (state == P503StartupState.Ready) leaseScope else null
+
+    private val leaseScope = LedgerLeaseScope(owner)
+
+    /**
      * True once [start] has been invoked. The state already starts as [P503StartupState.Starting]
      * so the guard needs this flag to distinguish the initial call (which must proceed) from a
      * reentrant call while an open is in flight (which is dropped).
@@ -250,17 +265,25 @@ internal class AndroidStartupController(
         if (startedOnce && state == P503StartupState.Starting) return
         startedOnce = true
         state = P503StartupState.Starting
-        facade = null
         // The owner closes any connection left over from a previous Ready or an interrupted
         // mid-open before it opens the next one (the "close before open" resource-safety rule).
+        // P7-06 06.1 fix: the owner applies the spec section 4.2 in-flight precondition, so a
+        // retry racing in-flight business work is refused (typed Blocked) rather than closing the
+        // graph under a running call.
         when (val result = owner.startup()) {
             is LedgerStartupResult.Started -> {
-                facade = owner.facade
                 state = P503StartupState.Ready
             }
             is LedgerStartupResult.Failed -> {
                 val cause = result.cause
                 logFailure(if (cause is Exception) cause else RuntimeException(cause))
+                state = P503StartupState.StartupError
+            }
+            is LedgerStartupResult.Blocked -> {
+                // A retry arrived while leases are in flight: the graph was NOT touched. Surface
+                // the typed rejection as the fail-closed state so Retry stays reachable (the
+                // reentrancy guard above drops a second tap while Starting).
+                logFailure(IllegalStateException("startup blocked by ${result.inFlightLeases} in-flight lease(s)"))
                 state = P503StartupState.StartupError
             }
         }
@@ -318,7 +341,13 @@ private fun openAndroidStableStorageLedger(
         fileSystem = fileSystem,
         layout = layout,
         legacyMainFile = legacyMainFile,
+        closeGraph = { graph -> graph.close() },
     ) { target ->
+        // P7-06 06.1 fix (review Fix 7; spec section 4.5): the AndroidSqliteDriver creates on
+        // open, so a NON-fresh target must be re-guarded here exactly like the desktop root's JDBC
+        // guard — otherwise a missing/zero-length/invalid main file would be silently created as an
+        // empty ledger instead of failing closed (the silent-empty-DB prohibition).
+        requireUsableNonFreshTarget(fileSystem, target)
         // P5-04.4 S3: a failure mid-open (after the handle exists) must not leak the driver, so
         // the handle is closed before rethrowing; the controller additionally closes any graph it
         // already holds in its catch block.
@@ -330,6 +359,22 @@ private fun openAndroidStableStorageLedger(
             handle.close()
             throw failure
         }
+    }
+}
+
+/**
+ * P7-06 06.1 (D-176; spec section 4.5): the shared non-fresh create-on-open guard both composition
+ * roots apply immediately before their platform driver construction (the AndroidSqliteDriver and
+ * the desktop JDBC driver both create on open). A non-fresh target whose main file is missing,
+ * zero-length or not a valid SQLite database must fail closed instead of being silently created as
+ * an empty ledger. Extracted so the Android guard is unit-testable without a Context.
+ */
+internal fun requireUsableNonFreshTarget(
+    fileSystem: LedgerFileSystem,
+    target: LedgerOpenTarget,
+) {
+    if (!target.allowCreateOnOpen && !isUsableSqliteMainFile(fileSystem, target.mainFile)) {
+        throw LedgerStorageRejectedException(LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE)
     }
 }
 

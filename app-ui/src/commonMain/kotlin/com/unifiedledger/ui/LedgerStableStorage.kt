@@ -58,18 +58,20 @@ interface LedgerFileSystem {
 
     fun isDirectory(path: String): Boolean
 
-    /** The direct child names of [directory]; empty when it does not exist or is not a directory. */
-    fun childNames(directory: String): List<String>
-
     fun length(path: String): Long
 
     fun readBytes(path: String): ByteArray
 
-    /** Non-atomic write (used only for the legacy-copy target, which is fsynced afterwards). */
-    fun writeBytes(
+    /**
+     * Reads at most [length] bytes from the start of [path]. This exists so the startup
+     * SQLite-header guard ([isUsableSqliteMainFile]) inspects only the 16-byte header instead of
+     * allocating the whole ledger file (which can be hundreds of megabytes) on the startup path
+     * (review Fix 6). Implementations must read no more than [length] bytes.
+     */
+    fun readPrefix(
         path: String,
-        bytes: ByteArray,
-    )
+        length: Int,
+    ): ByteArray
 
     /**
      * Atomic replace: the bytes become visible at [path] in one platform atomic step
@@ -201,7 +203,9 @@ fun isUsableSqliteMainFile(
     if (!fileSystem.exists(mainFile)) return false
     val length = fileSystem.length(mainFile)
     if (length < LEDGER_SQLITE_HEADER.size.toLong()) return false
-    val header = fileSystem.readBytes(mainFile)
+    // Read ONLY the header prefix, never the whole ledger (review Fix 6): the startup path must
+    // not allocate a multi-hundred-megabyte file just to inspect 16 bytes.
+    val header = fileSystem.readPrefix(mainFile, LEDGER_SQLITE_HEADER.size)
     if (header.size < LEDGER_SQLITE_HEADER.size) return false
     return LEDGER_SQLITE_HEADER.indices.all { index -> header[index] == LEDGER_SQLITE_HEADER[index] }
 }

@@ -18,6 +18,9 @@ internal class LedgerFileSystemFake : LedgerFileSystem {
     /** When set, the matching operation label throws [InjectedFileSystemFailure]. */
     var failOn: String? = null
 
+    /** The prefix lengths requested through [readPrefix], in order (review Fix 6 evidence). */
+    val readPrefixLengths = mutableListOf<Int>()
+
     /** Operations applied so far (excluding the failing one). */
     fun operationsSnapshot(): List<String> = operations.toList()
 
@@ -63,25 +66,19 @@ internal class LedgerFileSystemFake : LedgerFileSystem {
 
     override fun isDirectory(path: String): Boolean = directories.contains(path)
 
-    override fun childNames(directory: String): List<String> {
-        val prefix = if (directory.endsWith("/")) directory else "$directory/"
-        return (files.keys + directories)
-            .filter { it.startsWith(prefix) && it != directory }
-            .map { it.removePrefix(prefix).substringBefore('/') }
-            .distinct()
-    }
-
     override fun length(path: String): Long = files[path]?.size?.toLong() ?: 0L
 
     override fun readBytes(path: String): ByteArray = files[path]?.copyOf() ?: throw InjectedFileSystemFailure("readBytes:$path")
 
-    override fun writeBytes(
+    override fun readPrefix(
         path: String,
-        bytes: ByteArray,
-    ) {
-        record("writeBytes:$path")
-        files[path] = bytes.copyOf()
-        parentOf(path)?.let { directories += it }
+        length: Int,
+    ): ByteArray {
+        record("readPrefix:$path")
+        // Record the requested length so a test can prove only the header prefix was read.
+        readPrefixLengths += length
+        val bytes = files[path] ?: throw InjectedFileSystemFailure("readPrefix:$path")
+        return bytes.copyOf(minOf(length, bytes.size))
     }
 
     override fun writeAtomic(

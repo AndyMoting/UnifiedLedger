@@ -188,19 +188,31 @@ class LedgerStableStorageTest {
         assertFalse(isUsableSqliteMainFile(fileSystem, "/m/absent.db"))
     }
 
+    @Test
+    fun thePreOpenGuardReadsOnlyTheHeaderPrefixNotTheWholeLedger() {
+        // Review Fix 6: the guard must inspect only the 16-byte SQLite header, never allocate the
+        // whole (possibly hundreds-of-MB) ledger on the startup path.
+        fileSystem.putFile("/m/valid.db", sqliteLikeBytes())
+
+        assertTrue(isUsableSqliteMainFile(fileSystem, "/m/valid.db"))
+
+        assertEquals(listOf(LEDGER_SQLITE_HEADER.size), fileSystem.readPrefixLengths)
+        assertTrue(fileSystem.operationsSnapshot().none { it.startsWith("readBytes:") })
+    }
+
     // ---------------------------------------------------------------- fresh install / upgrade sequence
 
     @Test
     fun freshInstallIsTheOnlyPathThatAllowsCreateOnOpenAndItPublishesThePointer() {
         val targets = mutableListOf<LedgerOpenTarget>()
 
-        openStableStorageLedger(fileSystem, layout, legacyMainFile = null) { target ->
+        openStableStorageLedger(fileSystem, layout, legacyMainFile = null, closeGraph = {}) { target ->
             targets += target
             fileSystem.putFile(target.mainFile, sqliteLikeBytes())
             "graph"
         }
 
-        assertEquals(listOf(LedgerOpenTarget(1, generationOneMain, allowCreateOnOpen = true)), targets)
+        assertEquals(listOf(LedgerOpenTarget(generationOneMain, allowCreateOnOpen = true)), targets)
         assertEquals("gen-1", fileSystem.fileBytes(pointer)?.decodeToString())
     }
 
@@ -213,7 +225,7 @@ class LedgerStableStorageTest {
 
         var legacyPresentAtOpen = false
         var pointerPublishedAtOpen = false
-        openStableStorageLedger(fileSystem, layout, legacy) { target ->
+        openStableStorageLedger(fileSystem, layout, legacy, closeGraph = {}) { target ->
             assertFalse(target.allowCreateOnOpen)
             legacyPresentAtOpen = fileSystem.hasFile(legacy)
             pointerPublishedAtOpen = fileSystem.hasFile(pointer)
@@ -251,7 +263,7 @@ class LedgerStableStorageTest {
         val legacy = "/data/databases/ledger.db"
         fileSystem.putFile(legacy, sqliteLikeBytes())
 
-        openStableStorageLedger(fileSystem, layout, legacy) { "graph" }
+        openStableStorageLedger(fileSystem, layout, legacy, closeGraph = {}) { "graph" }
 
         assertTrue(fileSystem.hasFile(generationOneMain))
         assertEquals("gen-1", fileSystem.fileBytes(pointer)?.decodeToString())
@@ -284,7 +296,7 @@ class LedgerStableStorageTest {
             var opened = false
 
             assertFailsWith<InjectedFileSystemFailure> {
-                openStableStorageLedger(fs, ledgerStorageLayout(fs, "/data"), legacy) {
+                openStableStorageLedger(fs, ledgerStorageLayout(fs, "/data"), legacy, closeGraph = {}) {
                     opened = true
                     "graph"
                 }
@@ -308,7 +320,7 @@ class LedgerStableStorageTest {
 
         val rejected =
             assertFailsWith<LedgerStorageRejectedException> {
-                openStableStorageLedger(fileSystem, layout, legacy) { "graph" }
+                openStableStorageLedger(fileSystem, layout, legacy, closeGraph = {}) { "graph" }
             }
 
         assertEquals(LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE, rejected.failure)
@@ -322,7 +334,7 @@ class LedgerStableStorageTest {
         fileSystem.putFile(legacy, sqliteLikeBytes())
 
         assertFailsWith<IllegalStateException> {
-            openStableStorageLedger(fileSystem, layout, legacy) { throw IllegalStateException("injected open failure") }
+            openStableStorageLedger(fileSystem, layout, legacy, closeGraph = {}) { throw IllegalStateException("injected open failure") }
         }
 
         assertTrue(fileSystem.hasFile(legacy))
@@ -339,7 +351,7 @@ class LedgerStableStorageTest {
 
         val rejected =
             assertFailsWith<LedgerStorageRejectedException> {
-                openStableStorageLedger(fileSystem, layout, null) {
+                openStableStorageLedger(fileSystem, layout, null, closeGraph = {}) {
                     opened = true
                     "graph"
                 }
@@ -356,7 +368,7 @@ class LedgerStableStorageTest {
 
         val rejected =
             assertFailsWith<LedgerStorageRejectedException> {
-                openStableStorageLedger(fileSystem, layout, null) {
+                openStableStorageLedger(fileSystem, layout, null, closeGraph = {}) {
                     opened = true
                     "graph"
                 }
@@ -365,5 +377,44 @@ class LedgerStableStorageTest {
         assertEquals(LedgerStorageFailure.JOURNAL_PRESENT, rejected.failure)
         assertFalse(opened)
         assertEquals("switched", fileSystem.fileBytes(journal)?.decodeToString())
+    }
+
+    // ---------------------------------------------------------------- post-open cleanup (fix 3)
+
+    @Test
+    fun aFailureAfterASuccessfulOpenClosesTheGraphInsteadOfLeakingIt() {
+        // Review Fix 3: the graph is opened before the pointer publish, so a failure in the
+        // remaining fallible post-open steps must close it (the driver would otherwise leak).
+        // Fault-inject the pointer publish on the fresh-install path.
+        val closed = mutableListOf<String>()
+        fileSystem.failOn = "writeAtomic:$pointer"
+
+        assertFailsWith<InjectedFileSystemFailure> {
+            openStableStorageLedger(fileSystem, layout, null, closeGraph = { graph -> closed += graph }) {
+                fileSystem.putFile(it.mainFile, sqliteLikeBytes())
+                "graph"
+            }
+        }
+
+        assertEquals(listOf("graph"), closed, "the opened graph must be closed when the pointer publish fails")
+        assertFalse(fileSystem.hasFile(pointer))
+    }
+
+    @Test
+    fun aFailureAfterASuccessfulLegacyUpgradeOpenClosesTheGraph() {
+        // Same guarantee on the upgrade path, with the failure injected at the legacy removal step.
+        val legacy = "/data/databases/ledger.db"
+        fileSystem.putFile(legacy, sqliteLikeBytes())
+        val closed = mutableListOf<String>()
+        fileSystem.failOn = "delete:$legacy"
+
+        assertFailsWith<InjectedFileSystemFailure> {
+            openStableStorageLedger(fileSystem, layout, legacy, closeGraph = { graph -> closed += graph }) {
+                "graph"
+            }
+        }
+
+        assertEquals(listOf("graph"), closed, "the opened graph must be closed when the legacy removal fails")
+        assertTrue(fileSystem.hasFile(legacy), "the legacy set is still intact")
     }
 }

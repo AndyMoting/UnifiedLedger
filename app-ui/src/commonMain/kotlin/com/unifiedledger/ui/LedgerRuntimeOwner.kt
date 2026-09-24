@@ -2,6 +2,15 @@
 
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.ImportIntakeSessionIdentity
+import com.unifiedledger.application.ImportPlatformKind
+import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.ManualExpenseRequestIdSource
+import com.unifiedledger.application.ParseManualExpenseAmount
+import com.unifiedledger.application.ParseManualExpenseOccurredAt
+import com.unifiedledger.application.SummarizeLedgerActivity
+import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.LedgerId
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -81,6 +90,16 @@ sealed interface LedgerStartupResult {
     data class Failed(
         val cause: Throwable,
     ) : LedgerStartupResult
+
+    /**
+     * Section 4.2 hard precondition: no close/switch may run while leases are in flight (or while
+     * another transition holds the owner). [startup] performs the same "close before open" it
+     * always did, so it must apply the same precondition rather than closing a graph out from
+     * under running business work. The graph is NOT closed and the state is unchanged.
+     */
+    data class Blocked(
+        val inFlightLeases: Int,
+    ) : LedgerStartupResult
 }
 
 /** Section 4.2: `acquireLease` outcome. */
@@ -112,6 +131,13 @@ sealed interface CloseResult {
     data class QuiesceBlocked(
         val inFlightLeases: Int,
     ) : CloseResult
+
+    /**
+     * Typed rejection for mere transition contention (the owner's mutex was held by another
+     * transition). Distinct from [QuiesceBlocked] so a zero in-flight count is never misreported
+     * as a lease-blocked close: the graph was not touched and the caller may retry.
+     */
+    data object TransitionInProgress : CloseResult
 }
 
 /** Section 4.2: `reopen` outcome. */
@@ -124,6 +150,12 @@ sealed interface ReopenResult {
     data class QuiesceBlocked(
         val inFlightLeases: Int,
     ) : ReopenResult
+
+    /**
+     * Typed rejection for mere transition contention (another transition holds the owner). The
+     * graph was not touched and the caller may retry; never reported as a lease block.
+     */
+    data object TransitionInProgress : ReopenResult
 
     /** Fail-closed: the open/authoritative read-back failed; no half-open graph is exposed. */
     data class Failed(
@@ -192,7 +224,13 @@ class LedgerRuntimeOwner<G : Any>(
 
     private val inFlightLeases = AtomicInt(0)
 
-    /** The graph currently held; only touched under [mutex]. */
+    /**
+     * The graph currently held; only *mutated* under [mutex]. Marked `@Volatile` because the
+     * public facade projection and [LedgerLeaseScope] read it from arbitrary threads (the
+     * `state`/`activeGeneration` snapshots are read lock-free the same way); the mutex still
+     * serializes every mutation.
+     */
+    @Volatile
     private var activeGraph: G? = null
 
     /**
@@ -210,8 +248,17 @@ class LedgerRuntimeOwner<G : Any>(
     @Volatile
     private var zeroLeaseSignal: CompletableDeferred<Unit>? = null
 
-    /** The current graph's facade, or null when no graph is open. */
-    val facade: P503LedgerFacade?
+    /**
+     * The current graph's facade, or null when no graph is open.
+     *
+     * P7-06 06.1 fix (review REJECT): this raw accessor is deliberately NOT public. Handing it to
+     * the product would let a `facade.*` call bypass the operation lease and make the in-flight
+     * count vacuous (spec section 4.3's conversion obligation is "every `facade.*` entry point").
+     * The product consumes the facade only through [LedgerLeaseScope], which acquires a lease
+     * around every call; the composition roots therefore never reach the raw projection. `internal`
+     * because [LedgerLeaseScope] lives in this module and the composition roots must not see it.
+     */
+    internal val facade: P503LedgerFacade?
         get() = activeGraph?.let(facadeOf)
 
     /** The number of in-flight leases (diagnostics/tests). */
@@ -221,10 +268,18 @@ class LedgerRuntimeOwner<G : Any>(
     /**
      * Section 5.1 startup order steps 1-5: open the active generation and enter Ready. Non-suspend
      * because both composition roots call it from a synchronous startup path.
+     *
+     * Section 4.2 precondition (review fix): [startup] performs the "close before open" resource
+     * safety of both controllers, so it must NOT run while leases are in flight — otherwise a
+     * retry could close a graph under a running business call. A non-zero in-flight count (or a
+     * concurrent transition holding the owner) returns the typed [LedgerStartupResult.Blocked]
+     * without touching the graph.
      */
     fun startup(): LedgerStartupResult {
-        if (!mutex.tryLock()) return LedgerStartupResult.Failed(IllegalStateException("startup raced with another transition"))
+        if (!mutex.tryLock()) return LedgerStartupResult.Blocked(inFlightLeases.load())
         try {
+            val inFlight = inFlightLeases.load()
+            if (inFlight > 0) return LedgerStartupResult.Blocked(inFlight)
             // A restart must never leak a previously held connection (the existing "close before
             // open" resource-safety discipline of both controllers, now under the owner).
             closeHeldGraphLocked()
@@ -287,7 +342,6 @@ class LedgerRuntimeOwner<G : Any>(
      */
     suspend fun quiesce(): QuiesceResult {
         val signal = CompletableDeferred<Unit>()
-        val blocked: QuiesceResult
         mutex.withLock {
             when (state) {
                 LedgerRuntimeState.Ready -> {
@@ -302,8 +356,7 @@ class LedgerRuntimeOwner<G : Any>(
                 else -> {
                     // Already quiesced/closed/errored: nothing is in flight, so report success
                     // without changing the state.
-                    blocked = QuiesceResult.Quiesced
-                    return@withLock
+                    return QuiesceResult.Quiesced
                 }
             }
             // Close the publish/decrement race: if the last release ran before the signal above
@@ -320,14 +373,16 @@ class LedgerRuntimeOwner<G : Any>(
     /**
      * Section 4.2: close the active graph and release its driver. Idempotent. Precondition: zero
      * in-flight leases — a non-zero count yields the typed [CloseResult.QuiesceBlocked] and the
-     * graph is NOT closed (the plan's "never release a still-running SQLite call early").
+     * graph is NOT closed (the plan's "never release a still-running SQLite call early"). Mere
+     * transition contention yields the distinct [CloseResult.TransitionInProgress] so a zero
+     * in-flight count is never misreported as a lease block.
      *
      * Kotlin `internal` cannot span Gradle modules, so this is documented rather than enforced:
      * it is the owner-internal action behind [quiesce] and [reopen], not a freely callable public
      * close (spec section 4.2).
      */
     fun closeActiveGraph(): CloseResult {
-        if (!mutex.tryLock()) return CloseResult.QuiesceBlocked(inFlightLeases.load())
+        if (!mutex.tryLock()) return CloseResult.TransitionInProgress
         try {
             val inFlight = inFlightLeases.load()
             if (inFlight > 0) return CloseResult.QuiesceBlocked(inFlight)
@@ -343,11 +398,12 @@ class LedgerRuntimeOwner<G : Any>(
     /**
      * Section 4.2: open the target generation and rebuild the graph, incrementing
      * [activeGeneration] on success. Precondition: zero in-flight leases — otherwise the typed
-     * [ReopenResult.QuiesceBlocked] is returned and nothing is closed or reopened. A failure
-     * fails closed ([ReopenResult.Failed]) and never exposes a half-open graph.
+     * [ReopenResult.QuiesceBlocked] is returned and nothing is closed or reopened; mere transition
+     * contention returns the distinct [ReopenResult.TransitionInProgress]. A failure fails closed
+     * ([ReopenResult.Failed]) and never exposes a half-open graph.
      */
     fun reopen(target: GenerationSelection = GenerationSelection.ActivePointer): ReopenResult {
-        if (!mutex.tryLock()) return ReopenResult.QuiesceBlocked(inFlightLeases.load())
+        if (!mutex.tryLock()) return ReopenResult.TransitionInProgress
         try {
             val inFlight = inFlightLeases.load()
             if (inFlight > 0) return ReopenResult.QuiesceBlocked(inFlight)
@@ -393,28 +449,124 @@ class LedgerStorageRejectedException(
 ) : RuntimeException("stable storage rejected: $failure")
 
 /**
- * P7-06 06.1 (D-176; spec section 4.3): the lease-scoped facade accessor — the choke point every
- * `facade.*` call is meant to pass through. It acquires an operation lease for the duration of
- * [withFacade], exposes the generation captured at acquisition to the block (so a landing hop can
- * discard a result whose generation is no longer active), and always releases the lease.
- *
- * The accessor is deliberately the smallest possible surface: a caller cannot reach the facade
- * except inside [withFacade], so "no `facade.*` call escapes the lease" is a structural property
- * of this type rather than a per-call-site convention.
- *
- * INTEGRATION NOTE (deliberate, reported): `P503App` currently reads the facade directly at ~30
- * host entry points. Retrofitting all of them in this slice is a large mechanical edit with
- * regression risk on a frozen UI surface, so this slice ships the accessor and its tests and
- * leaves the call-site conversion as the follow-up (the spec section 7 A07 row already assigns
- * the end-to-end "reject new leases and wait for in-flight work" to 06.4). Until that conversion
- * lands, `P503App` is NOT lease-gated; the owner's single-active-graph and fail-closed guarantees
- * still hold because every graph is built and closed by the owner.
+ * Section 4.3/4.4 landing rule (review Fix 2): a result captured under [capturedGeneration] may
+ * land only while that generation is still the active one; otherwise it must be discarded. A late
+ * callback from a superseded graph must never pollute the new graph (P706-A07). Pure so the
+ * discard decision is directly testable.
  */
-class LedgerLeaseScope<G : Any>(
-    private val owner: LedgerRuntimeOwner<G>,
+internal fun shouldDiscardLandingResult(
+    capturedGeneration: Generation?,
+    activeGeneration: Generation?,
+): Boolean = capturedGeneration == null || capturedGeneration != activeGeneration
+
+/**
+ * P7-06 06.1 (D-176; spec section 4.3): the lease-scoped facade accessor — the choke point every
+ * `facade.*` call must pass through. It acquires an operation lease for the duration of
+ * [withFacade]/[probe], exposes the generation captured at acquisition to the block (so a landing
+ * hop can discard a result whose generation is no longer active via [isCurrentGeneration]), and
+ * always releases the lease.
+ *
+ * STRUCTURAL GUARANTEE (why this shape, per the review's Fix 1): [LedgerRuntimeOwner.facade] is
+ * `internal`, so the composition roots — which live in other Gradle modules — cannot obtain the
+ * raw facade at all. [P503App] takes THIS type instead of a facade, and the only facade-typed
+ * members it exposes directly are the lease-free pure construction constants and stateless
+ * projections ([ledgerId], [currency], [ledgerClock], [parseAmount], [parseOccurredAt],
+ * [summarizeActivity], [importPlatformKind]) — none of which touch the ledger. Every actual
+ * business read/write is reachable only inside [withFacade]/[probe], which by construction hold a
+ * lease. Therefore no `facade.*` business call can escape a lease.
+ *
+ * The alternative the review suggested — a delegating wrapper implementing "the same facade
+ * interface" — is not expressible here: [P503LedgerFacade] is a concrete final class exposing
+ * dozens of concrete final collaborator types (`QueryLedgerCurrentState`, `ExecuteCatalogCommand`,
+ * the resolvers, ...) with no interface seam, so a wrapper would have to re-declare and re-wrap
+ * every collaborator type. The scoped accessor is the shape that covers all entry points with a
+ * single structural guarantee, so it is the one implemented.
+ */
+class LedgerLeaseScope(
+    private val owner: LedgerRuntimeOwner<*>,
 ) {
-    /** Whether a lease can be acquired right now (Ready). */
-    fun isReady(): Boolean = owner.state == LedgerRuntimeState.Ready
+    /**
+     * The lease-free pure construction constants of the current facade. These never touch the
+     * ledger, so they need no operation lease. Non-null whenever the composition renders
+     * [P503App] (the product is composed only in the Ready state).
+     */
+    val ledgerId: LedgerId
+        get() = requiredFacade().ledgerId
+
+    val currency: CurrencyUnit
+        get() = requiredFacade().currency
+
+    val ledgerClock: LedgerClock
+        get() = requiredFacade().ledgerClock
+
+    val parseAmount: ParseManualExpenseAmount
+        get() = requiredFacade().parseAmount
+
+    val parseOccurredAt: ParseManualExpenseOccurredAt
+        get() = requiredFacade().parseOccurredAt
+
+    /**
+     * The stateless activity-summary projection (pure over the state it is handed; never touches
+     * the ledger). Lease-free for the same reason as the constants above.
+     */
+    val summarizeActivity: SummarizeLedgerActivity
+        get() = requiredFacade().summarizeActivity
+
+    /** The platform kind of the import surface (a construction constant), or null when unwired. */
+    val importPlatformKind: ImportPlatformKind?
+        get() = owner.facade?.importPlatformKind
+
+    /**
+     * Lease-free pure surfaces: the id mints, the parsers and the platform pick port/channel. None
+     * of these touch the ledger (they mint UUIDs, parse text, or launch a platform picker), so
+     * they need no operation lease; the ledger-touching work of the import pipeline still runs
+     * inside [withFacade].
+     */
+    val requestIdSource: ManualExpenseRequestIdSource
+        get() = requiredFacade().requestIdSource
+
+    val importConfirmRequestIdSource: (() -> String)?
+        get() = owner.facade?.importConfirmRequestIdSource
+
+    val importPickResultChannel: ImportFilePickResultChannel?
+        get() = owner.facade?.importPickResultChannel
+
+    val importFilePickPort: ImportFilePickPort?
+        get() = owner.facade?.importFilePickPort
+
+    fun importDuplicateReviewIds(): ImportDuplicateReviewIds? = owner.facade?.importDuplicateReviewIds?.invoke()
+
+    fun importIntakeSessionFactory(): ImportIntakeSessionIdentity? = owner.facade?.importIntakeSessionFactory?.invoke()
+
+    /**
+     * Which optional surfaces the current facade has wired (pure null checks on the composition
+     * wiring; never touches the ledger). The host uses these to render no dead affordances.
+     */
+    val surfaces: LedgerSurfaces
+        get() {
+            val facade = owner.facade ?: return LedgerSurfaces()
+            return LedgerSurfaces(
+                ledgerView = facade.queryMonthlyActivity != null || facade.queryLedgerEntryRows != null,
+                recycleBin = facade.queryRecycleBin != null,
+                catalogCommands = facade.executeCatalogCommand != null,
+                counterpartyCommands = facade.counterpartyCommands != null,
+                correction = facade.correctTransactionVersion != null,
+                voidTransaction = facade.voidTransaction != null,
+                restore = facade.restoreTransaction != null,
+                importDuplicateReview = facade.importDuplicateReview != null,
+                // Pure wiring probe only: the use-case FACTORY reads the catalog, so it must never
+                // be invoked here (outside a lease). The call site re-checks it under a lease.
+                importBatchConfirm = facade.importConfirmRequestIdSource != null,
+            )
+        }
+
+    private fun requiredFacade(): P503LedgerFacade = owner.facade ?: error("the ledger facade is unavailable while the runtime is not Ready")
+
+    /**
+     * Section 4.3/4.4: whether a result captured under [generation] still belongs to the active
+     * graph. A landing hop must call this and DISCARD the result when it returns false.
+     */
+    fun isCurrentGeneration(generation: Generation?): Boolean = !shouldDiscardLandingResult(generation, owner.activeGeneration)
 
     /**
      * Runs [block] while holding an operation lease over the facade. Returns null (and runs
@@ -434,7 +586,58 @@ class LedgerLeaseScope<G : Any>(
             LeaseAcquireResult.RuntimeNotReady -> null
         }
     }
+
+    /** [withFacade] without the generation capture, for call sites that need no landing discard. */
+    fun <T> probe(block: (P503LedgerFacade) -> T): T? = withFacade { facade, _ -> block(facade) }
+
+    /**
+     * Section 4.3/4.4: like [withFacade], but reports whether a lease was acquired so a landing
+     * hop can still distinguish "the runtime refused the work" from "the work produced a null
+     * result", and carries the captured generation for the discard check.
+     */
+    fun <T> leased(block: (P503LedgerFacade, Generation) -> T): LeaseOutcome<T> {
+        val facade = owner.facade ?: return LeaseOutcome.NotReady
+        return when (val acquired = owner.acquireLease()) {
+            is LeaseAcquireResult.Acquired -> {
+                try {
+                    LeaseOutcome.Completed(acquired.lease.generation, block(facade, acquired.lease.generation))
+                } finally {
+                    acquired.lease.close()
+                }
+            }
+            LeaseAcquireResult.RuntimeNotReady -> LeaseOutcome.NotReady
+        }
+    }
 }
+
+/** The outcome of [LedgerLeaseScope.leased] (spec section 4.3/4.4). */
+sealed interface LeaseOutcome<out T> {
+    /** The block ran under a lease; [generation] is the captured acquire-time generation. */
+    data class Completed<T>(
+        val generation: Generation,
+        val value: T,
+    ) : LeaseOutcome<T>
+
+    /** The runtime is not Ready; the block did not run (typed `RuntimeNotReady`). */
+    data object NotReady : LeaseOutcome<Nothing>
+}
+
+/**
+ * Which optional business surfaces the current facade has wired. Every field is a pure
+ * composition-wiring probe (never a ledger read), so the host can decide whether to render an
+ * affordance without holding a lease.
+ */
+data class LedgerSurfaces(
+    val ledgerView: Boolean = false,
+    val recycleBin: Boolean = false,
+    val catalogCommands: Boolean = false,
+    val counterpartyCommands: Boolean = false,
+    val correction: Boolean = false,
+    val voidTransaction: Boolean = false,
+    val restore: Boolean = false,
+    val importDuplicateReview: Boolean = false,
+    val importBatchConfirm: Boolean = false,
+)
 
 /**
  * The target of one graph open (section 3.2 / 4.5): [allowCreateOnOpen] is true ONLY for a
@@ -442,7 +645,6 @@ class LedgerLeaseScope<G : Any>(
  * ledger.
  */
 data class LedgerOpenTarget(
-    val generation: Int,
     val mainFile: String,
     val allowCreateOnOpen: Boolean,
 )
@@ -452,11 +654,24 @@ data class LedgerOpenTarget(
  * the stable storage, perform the non-destructive upgrade when a legacy database exists, open the
  * selected generation through [openGraph] and publish the atomic pointer. Throws
  * [LedgerStorageRejectedException] (fail-closed) or propagates an open failure.
+ *
+ * Post-open failure cleanup (review Fix 3): the graph is opened BEFORE the pointer publish (the
+ * frozen rule 1 (c) -> (d) order), so a failure in the remaining fallible steps
+ * ([publishActivePointer] / [removeLegacyFiles]) must close the graph before rethrowing —
+ * otherwise the platform driver leaks. [closeGraph] is the composition root's own close action.
+ *
+ * KNOWN RESIDUAL (registered, not implemented in 06.1; assigned to 06.D): a crash AFTER the fresh
+ * install creates the generation directory and the database but BEFORE the pointer publish leaves
+ * a generation directory with no pointer. Section 3.2 rule 4 makes that a permanent
+ * `POINTER_MISSING` fail-closed (never a silent empty database), and 06.1 has no recovery for it.
+ * The spec section 3.2 rule-2 cleanup (and its 06.D counterpart) is deliberately out of 06.1
+ * scope; this is the registered residual the review asked to record.
  */
 fun <G> openStableStorageLedger(
     fileSystem: LedgerFileSystem,
     layout: LedgerStorageLayout,
     legacyMainFile: String?,
+    closeGraph: (G) -> Unit,
     openGraph: (LedgerOpenTarget) -> G,
 ): G {
     val plan =
@@ -467,15 +682,20 @@ fun <G> openStableStorageLedger(
     return when (plan) {
         is LedgerStoragePlan.OpenGeneration ->
             openGraph(
-                LedgerOpenTarget(plan.generation, plan.mainFile, allowCreateOnOpen = false),
+                LedgerOpenTarget(plan.mainFile, allowCreateOnOpen = false),
             )
         is LedgerStoragePlan.FreshInstall -> {
             // Rule 3: the ONLY path allowed to let the factory create the database. The pointer is
             // published only after a successful open + authoritative read-back, so a later start
             // selects this generation through the pointer.
             fileSystem.createDirectories(plan.generationDirectory)
-            val graph = openGraph(LedgerOpenTarget(1, plan.mainFile, allowCreateOnOpen = true))
-            publishActivePointer(fileSystem, layout, 1)
+            val graph = openGraph(LedgerOpenTarget(plan.mainFile, allowCreateOnOpen = true))
+            try {
+                publishActivePointer(fileSystem, layout, 1)
+            } catch (failure: Throwable) {
+                runCatching { closeGraph(graph) }
+                throw failure
+            }
             graph
         }
         is LedgerStoragePlan.UpgradeLegacy -> {
@@ -488,9 +708,16 @@ fun <G> openStableStorageLedger(
                 // create-on-open factory (section 4.5).
                 throw LedgerStorageRejectedException(LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE)
             }
-            val graph = openGraph(LedgerOpenTarget(1, plan.mainFile, allowCreateOnOpen = false))
-            publishActivePointer(fileSystem, layout, 1)
-            removeLegacyFiles(fileSystem, plan.legacyMainFile)
+            val graph = openGraph(LedgerOpenTarget(plan.mainFile, allowCreateOnOpen = false))
+            try {
+                publishActivePointer(fileSystem, layout, 1)
+                removeLegacyFiles(fileSystem, plan.legacyMainFile)
+            } catch (failure: Throwable) {
+                // The open already succeeded, so the driver exists: close it before rethrowing so
+                // a post-open failure never leaks the graph/driver.
+                runCatching { closeGraph(graph) }
+                throw failure
+            }
             graph
         }
     }

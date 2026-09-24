@@ -127,6 +127,7 @@ import com.unifiedledger.ui.ImportConfirmUseCaseSet
 import com.unifiedledger.ui.ImportDuplicateReviewIds
 import com.unifiedledger.ui.ImportFilePickResultChannel
 import com.unifiedledger.ui.LedgerFileSystem
+import com.unifiedledger.ui.LedgerLeaseScope
 import com.unifiedledger.ui.LedgerRuntimeOwner
 import com.unifiedledger.ui.LedgerStartupResult
 import com.unifiedledger.ui.LedgerStorageFailure
@@ -195,11 +196,11 @@ internal fun DesktopRoot(
 ) {
     val controller = remember { DesktopStartupController(openDatabase).also { it.start() } }
     Window(onCloseRequest = onExit, title = "UnifiedLedger Desktop") {
-        val facade = controller.facade
+        val ledger = controller.ledger
         when {
-            controller.state == P503StartupState.Ready && facade != null ->
+            controller.state == P503StartupState.Ready && ledger != null ->
                 P503App(
-                    facade,
+                    ledger,
                     onExit = onExit,
                     backHandler = { enabled, onBack ->
                         DesktopEscBackHandler(enabled, onBack)
@@ -266,9 +267,6 @@ internal class DesktopStartupController(
     var state by mutableStateOf<P503StartupState>(P503StartupState.Starting)
         private set
 
-    var facade: P503LedgerFacade? by mutableStateOf(null)
-        private set
-
     /**
      * P7-06 06.1 (D-176; spec section 4): the single runtime owner of the active graph, exactly
      * like the Android controller. [openDatabase] is the injected graph builder the tests use.
@@ -279,6 +277,17 @@ internal class DesktopStartupController(
             closeGraph = { graph -> graph.close() },
             facadeOf = { graph -> graph.facade },
         )
+
+    /**
+     * P7-06 06.1 fix (review REJECT): the product surface handed to [P503App] is the LEASE-SCOPED
+     * accessor, never the raw facade (which is module-private to app-ui). Every `facade.*`
+     * business call in P503App therefore passes through [LedgerLeaseScope], so the operation
+     * lease is non-vacuous by construction.
+     */
+    val ledger: LedgerLeaseScope?
+        get() = if (state == P503StartupState.Ready) leaseScope else null
+
+    private val leaseScope = LedgerLeaseScope(owner)
 
     /**
      * True once [start] has been invoked. The state already starts as [P503StartupState.Starting]
@@ -293,15 +302,20 @@ internal class DesktopStartupController(
         if (startedOnce && state == P503StartupState.Starting) return
         startedOnce = true
         state = P503StartupState.Starting
-        facade = null
+        // P7-06 06.1 fix: the owner applies the spec section 4.2 in-flight precondition, so a
+        // retry racing in-flight business work is refused (typed Blocked) rather than closing the
+        // graph under a running call.
         when (val result = owner.startup()) {
             is LedgerStartupResult.Started -> {
-                facade = owner.facade
                 state = P503StartupState.Ready
             }
             is LedgerStartupResult.Failed -> {
                 System.err.println("UnifiedLedger startup failed: " + result.cause)
                 result.cause.printStackTrace()
+                state = P503StartupState.StartupError
+            }
+            is LedgerStartupResult.Blocked -> {
+                System.err.println("UnifiedLedger startup blocked by ${result.inFlightLeases} in-flight lease(s)")
                 state = P503StartupState.StartupError
             }
         }
@@ -815,6 +829,7 @@ internal fun openStableStorageDesktopLedger(
         fileSystem = fileSystem,
         layout = layout,
         legacyMainFile = null,
+        closeGraph = { graph -> graph.close() },
     ) { target ->
         if (!target.allowCreateOnOpen && !isUsableSqliteMainFile(fileSystem, target.mainFile)) {
             throw LedgerStorageRejectedException(LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE)

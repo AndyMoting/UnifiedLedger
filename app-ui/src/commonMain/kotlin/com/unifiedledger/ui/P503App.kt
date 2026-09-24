@@ -59,6 +59,7 @@ import com.unifiedledger.application.ManualCollectSubmissionResult
 import com.unifiedledger.application.ManualEntryCommitResolution
 import com.unifiedledger.application.ManualEntrySaveInput
 import com.unifiedledger.application.ManualEntrySubmissionResult
+import com.unifiedledger.application.ManualExpenseCommitResolution
 import com.unifiedledger.application.ManualExpenseInputFailure
 import com.unifiedledger.application.ManualExpenseInputField
 import com.unifiedledger.application.ManualExpenseOptions
@@ -66,6 +67,7 @@ import com.unifiedledger.application.ManualExpenseRequestSnapshot
 import com.unifiedledger.application.ManualExpenseSaveInput
 import com.unifiedledger.application.ManualExpenseSaveResult
 import com.unifiedledger.application.ManualExpenseSubmissionResult
+import com.unifiedledger.application.ManualIncomeCommitResolution
 import com.unifiedledger.application.ManualIncomeOptions
 import com.unifiedledger.application.ManualIncomeRequestSnapshot
 import com.unifiedledger.application.ManualIncomeSaveInput
@@ -76,8 +78,10 @@ import com.unifiedledger.application.ManualLendSaveInput
 import com.unifiedledger.application.ManualLendSaveResult
 import com.unifiedledger.application.ManualLendSubmissionResult
 import com.unifiedledger.application.ManualLendingBehavior
+import com.unifiedledger.application.ManualLendingCommitResolution
 import com.unifiedledger.application.ManualLendingOptions
 import com.unifiedledger.application.ManualLendingRequestSnapshot
+import com.unifiedledger.application.ManualTransferCommitResolution
 import com.unifiedledger.application.ManualTransferInputField
 import com.unifiedledger.application.ManualTransferOptions
 import com.unifiedledger.application.ManualTransferRequestSnapshot
@@ -143,12 +147,12 @@ fun P503Theme(content: @Composable () -> Unit) {
  */
 @Composable
 fun P503App(
-    facade: P503LedgerFacade,
+    ledger: LedgerLeaseScope,
     onExit: () -> Unit,
     backHandler: (@Composable (enabled: Boolean, onBack: () -> Unit) -> Unit)? = null,
 ) {
-    val reducer = remember(facade) { P503ReducerImpl(facade.parseAmount, facade.currency, facade.ledgerClock) }
-    val validation = remember(facade) { P503DraftValidation(facade.parseAmount, facade.parseOccurredAt, facade.ledgerClock) }
+    val reducer = remember(ledger) { P503ReducerImpl(ledger.parseAmount, ledger.currency, ledger.ledgerClock) }
+    val validation = remember(ledger) { P503DraftValidation(ledger.parseAmount, ledger.parseOccurredAt, ledger.ledgerClock) }
     val scope = rememberCoroutineScope()
     // A-PERF (P7-04 read-governance batch, spec section 2.3): the cached authoritative catalog
     // snapshot. The composition previously read `facade.catalogSnapshot()` directly on the main
@@ -161,13 +165,13 @@ fun P503App(
     // 载入中 placeholder instead of presenting an empty set as the authoritative catalog (S2-2)
     // and the null-keyed option derivations stay empty until the first snapshot lands (提交入口
     // 以必填 null 不提交保持账务安全).
-    var cachedCatalogSnapshot by remember(facade) { mutableStateOf<CatalogSnapshotView?>(null) }
+    var cachedCatalogSnapshot by remember(ledger) { mutableStateOf<CatalogSnapshotView?>(null) }
     // The single-flight admission and the stale-merge decision live in the pure, JVM-tested
     // [P503CatalogSnapshotLoadCoordinator] (the P503HostCoordinator extraction precedent).
-    val catalogSnapshotLoadCoordinator = remember(facade) { P503CatalogSnapshotLoadCoordinator() }
+    val catalogSnapshotLoadCoordinator = remember(ledger) { P503CatalogSnapshotLoadCoordinator() }
     // A-PERF (rework path 1a): the single-flight coalescing admission of the authoritative
     // current-state read behind refresh() and the initial load (pure, JVM-tested the same way).
-    val currentStateLoadCoordinator = remember(facade) { P503CurrentStateLoadCoordinator() }
+    val currentStateLoadCoordinator = remember(ledger) { P503CurrentStateLoadCoordinator() }
 
     /**
      * A-PERF (spec section 2.3): requests the authoritative snapshot on the background
@@ -181,16 +185,29 @@ fun P503App(
     fun requestCatalogSnapshotLoad() {
         catalogSnapshotLoadCoordinator.startLoadOnce {
             scope.launch(Dispatchers.Default) {
-                val fresh = runCatching { facade.catalogSnapshot() }.getOrNull()
+                // P7-06 06.1 (D-176; spec 4.3): the read runs under an operation lease, and the
+                // acquire-time generation travels to the landing hop (4.4) so a result captured
+                // under a superseded graph is discarded instead of polluting the new one.
+                val outcome = ledger.leased { facade, _ -> runCatching { facade.catalogSnapshot() }.getOrNull() }
                 scope.launch {
-                    cachedCatalogSnapshot = catalogSnapshotLoadCoordinator.loadCompleted(cachedCatalogSnapshot, fresh)
+                    when (outcome) {
+                        is LeaseOutcome.Completed ->
+                            if (ledger.isCurrentGeneration(outcome.generation)) {
+                                cachedCatalogSnapshot = catalogSnapshotLoadCoordinator.loadCompleted(cachedCatalogSnapshot, outcome.value)
+                            } else {
+                                // Stale generation (P706-A07): discard the payload, release the
+                                // single-flight slot only.
+                                catalogSnapshotLoadCoordinator.loadCompleted(cachedCatalogSnapshot, null)
+                            }
+                        LeaseOutcome.NotReady -> catalogSnapshotLoadCoordinator.loadCompleted(cachedCatalogSnapshot, null)
+                    }
                 }
             }
         }
     }
 
     // Initial load: the first composition starts the single background load once.
-    LaunchedEffect(facade) {
+    LaunchedEffect(ledger) {
         requestCatalogSnapshotLoad()
     }
 
@@ -217,22 +234,22 @@ fun P503App(
     // keyed on a null version: the loading window must not trade its placeholder back for the
     // very main-thread catalog read the batch removes.
     val baseExpenseOptions =
-        remember(facade, catalogVersion) {
-            if (catalogVersion == null) ManualExpenseOptions(emptyList(), emptyList()) else facade.optionsProvider.queryOptions()
+        remember(ledger, catalogVersion) {
+            if (catalogVersion == null) ManualExpenseOptions(emptyList(), emptyList()) else ledger.probe { it.optionsProvider.queryOptions() } ?: ManualExpenseOptions(emptyList(), emptyList())
         }
     val baseIncomeOptions =
-        remember(facade, catalogVersion) {
-            if (catalogVersion == null) ManualIncomeOptions(emptyList(), emptyList()) else facade.incomeOptionsProvider.queryOptions()
+        remember(ledger, catalogVersion) {
+            if (catalogVersion == null) ManualIncomeOptions(emptyList(), emptyList()) else ledger.probe { it.incomeOptionsProvider.queryOptions() } ?: ManualIncomeOptions(emptyList(), emptyList())
         }
     val baseTransferOptions =
-        remember(facade, catalogVersion) {
-            if (catalogVersion == null) ManualTransferOptions(emptyList(), emptyList()) else facade.transferOptionsProvider.queryOptions()
+        remember(ledger, catalogVersion) {
+            if (catalogVersion == null) ManualTransferOptions(emptyList(), emptyList()) else ledger.probe { it.transferOptionsProvider.queryOptions() } ?: ManualTransferOptions(emptyList(), emptyList())
         }
     // P702SPEC-13: the lending projection is the only one that reads the counterparty
     // directory, so it must re-query when a create/rename command succeeds.
     val baseLendingOptions =
-        remember(facade, catalogVersion, counterpartyVersion) {
-            if (catalogVersion == null) ManualLendingOptions(emptyList(), emptyList(), emptyList()) else facade.lendingOptionsProvider.queryOptions()
+        remember(ledger, catalogVersion, counterpartyVersion) {
+            if (catalogVersion == null) ManualLendingOptions(emptyList(), emptyList(), emptyList()) else ledger.probe { it.lendingOptionsProvider.queryOptions() } ?: ManualLendingOptions(emptyList(), emptyList(), emptyList())
         }
     // E-4: pinned entries first, remaining entries keep the deterministic option order.
     val options =
@@ -286,7 +303,7 @@ fun P503App(
     var monthlyTrend by remember { mutableStateOf<MonthlyTrend?>(null) }
     var ledgerEntryRows by remember { mutableStateOf<List<LedgerEntryRow>?>(null) }
     var resolvedCurrentMonth by remember { mutableStateOf<YearMonth?>(null) }
-    val ledgerViewWired = facade.queryMonthlyActivity != null || facade.queryLedgerEntryRows != null
+    val ledgerViewWired = ledger.surfaces.ledgerView
     // P7-04.C: the matrix format of the pick currently in flight. PickedImportFile deliberately
     // carries no format (frozen shape, spec 4.1.1), so the host remembers the launched format and
     // consumes the slot when the picked result arrives (one pick at a time: SAF is single-shot and
@@ -294,7 +311,7 @@ fun P503App(
     var pendingImportFormat by remember { mutableStateOf<ImportFormatId?>(null) }
     // P7-04.C: the decision-form validation over the shared parse facade (P503DraftValidation
     // pattern; the detail screen renders its one-shot errors).
-    val importDecisionValidation = remember(facade) { P503ImportDecisionValidation(facade.parseAmount) }
+    val importDecisionValidation = remember(ledger) { P503ImportDecisionValidation(ledger.parseAmount) }
 
     fun dispatch(event: P503UiEvent) {
         // D-140 (spec 2.2): 全新草稿流事件重置 hoisted 文本（枚举表：#1 唯一）。P7-02.D E-2:
@@ -341,15 +358,15 @@ fun P503App(
     fun resolvedCurrency(draft: TypedEntryDraft): CurrencyUnit =
         when (draft) {
             is IncomeDraft ->
-                incomeOptions.receivingAccounts.firstOrNull { it.accountId == draft.receivingAccountId }?.currency ?: facade.currency
+                incomeOptions.receivingAccounts.firstOrNull { it.accountId == draft.receivingAccountId }?.currency ?: ledger.currency
             is ExpenseDraft ->
-                options.paymentAccounts.firstOrNull { it.accountId == draft.paymentAccountId }?.currency ?: facade.currency
+                options.paymentAccounts.firstOrNull { it.accountId == draft.paymentAccountId }?.currency ?: ledger.currency
             is TransferDraft ->
-                transferOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.sourceAccountId }?.currency ?: facade.currency
+                transferOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.sourceAccountId }?.currency ?: ledger.currency
             is LendDraft ->
-                lendingOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.fundingAccountId }?.currency ?: facade.currency
+                lendingOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.fundingAccountId }?.currency ?: ledger.currency
             is CollectDraft ->
-                lendingOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.destinationAccountId }?.currency ?: facade.currency
+                lendingOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.destinationAccountId }?.currency ?: ledger.currency
         }
 
     // A-02 FIX-MONTH-1 (D-152): forward wiring slot for the host coordinator below. The
@@ -386,12 +403,21 @@ fun P503App(
                 // throw maps to the typed RefreshFailed instead of crashing the coroutine scope,
                 // and the slot release below is guaranteed by running it in the main-dispatcher
                 // hop regardless of the outcome.
-                val result = runCatching { facade.queryCurrentState.query() }.getOrNull()
+                // P7-06 06.1 (D-176; spec 4.3/4.4): the read runs under an operation lease; the
+                // acquire-time generation travels to the landing hop, which discards a result
+                // captured under a superseded graph (P706-A07).
+                val outcome = ledger.leased { facade, _ -> runCatching { facade.queryCurrentState.query() }.getOrNull() }
                 // Back on the main dispatcher: consume the retained intent and dispatch serially
                 // with every other main-thread event (the same consume-on-success semantics as
                 // the previous synchronous body — a failed read keeps the intent for the retry).
                 scope.launch {
-                    when (result) {
+                    if (outcome is LeaseOutcome.Completed && !ledger.isCurrentGeneration(outcome.generation)) {
+                        // Stale generation: discard the payload entirely (no dispatch, no intent
+                        // consumption), release the slot, and let a coalesced re-run proceed.
+                        if (currentStateLoadCoordinator.loadCompleted()) refresh()
+                        return@launch
+                    }
+                    when (val result = (outcome as? LeaseOutcome.Completed)?.value) {
                         is LedgerCurrentStateResult.Success -> {
                             // P7-02.A E-2: the intent is consumed only by a successful
                             // authoritative refresh; a failed read keeps it so the READ retry can
@@ -439,27 +465,34 @@ fun P503App(
      * coordinator.
      */
     fun requestMonthlyPayload() {
-        val monthlyQuery = facade.queryMonthlyActivity ?: return
         val overview = latestState.value as? P503AppState.OverviewEmpty
         try {
-            val clockMonth = MonthlyBuckets.currentMonth(facade.ledgerClock)
+            val clockMonth = MonthlyBuckets.currentMonth(ledger.ledgerClock)
             resolvedCurrentMonth = clockMonth
             val effectiveMonth = overview?.selectedMonth ?: clockMonth
+            // P7-06 06.1 (D-176; spec 4.3(b)): this synchronous main-thread cycle is one
+            // operation-lease scope; a non-Ready runtime yields null and the typed Unavailable
+            // landing below (never a blocked UI thread).
             val outcome =
-                foldMonthlyCycle(
-                    monthResult = monthlyQuery.query(effectiveMonth),
-                    selectableMonthsResult = monthlyQuery.selectableMonths(),
-                    trendResult = monthlyQuery.trend(),
-                )
-            when (outcome) {
+                ledger.probe { facade ->
+                    val monthlyQuery = facade.queryMonthlyActivity ?: return@probe null
+                    val cycle =
+                        foldMonthlyCycle(
+                            monthResult = monthlyQuery.query(effectiveMonth),
+                            selectableMonthsResult = monthlyQuery.selectableMonths(),
+                            trendResult = monthlyQuery.trend(),
+                        )
+                    val rows = if (cycle is MonthlyCycleOutcome.Ready) facade.queryLedgerEntryRows?.query() else null
+                    cycle to rows
+                } ?: return
+            when (val cycle = outcome.first) {
                 is MonthlyCycleOutcome.Ready -> {
-                    val rows = facade.queryLedgerEntryRows?.query()
-                    monthlyTrend = outcome.trend
-                    ledgerEntryRows = rows
-                    dispatch(P503UiEvent.MonthlyActivityResult(ApplicationMonthlyActivityResult.Success(outcome.activity), outcome.selectableMonths))
+                    monthlyTrend = cycle.trend
+                    ledgerEntryRows = outcome.second
+                    dispatch(P503UiEvent.MonthlyActivityResult(ApplicationMonthlyActivityResult.Success(cycle.activity), cycle.selectableMonths))
                 }
                 is MonthlyCycleOutcome.Failed ->
-                    dispatch(P503UiEvent.MonthlyActivityResult(outcome.result, emptyList()))
+                    dispatch(P503UiEvent.MonthlyActivityResult(cycle.result, emptyList()))
             }
         } catch (failure: Exception) {
             dispatch(P503UiEvent.MonthlyActivityResult(ApplicationMonthlyActivityResult.Unavailable, emptyList()))
@@ -468,8 +501,9 @@ fun P503App(
 
     /** P7-03.C: opens the read-only detail with the host-resolved typed payload (C03). */
     fun selectTransaction(transactionId: TransactionId) {
-        val detailQuery = facade.queryTransactionDetail ?: return
-        dispatch(P503UiEvent.SelectTransaction(transactionId, detailQuery.query(transactionId)))
+        // P7-06 06.1 (spec 4.3(b)): the synchronous detail read runs under an operation lease.
+        val detail = ledger.probe { facade -> facade.queryTransactionDetail?.query(transactionId) } ?: return
+        dispatch(P503UiEvent.SelectTransaction(transactionId, detail))
     }
 
     // P5-04.3: shared input construction for the submission and the unknown-commit status
@@ -480,7 +514,7 @@ fun P503App(
         requestId: RequestId,
     ): ManualExpenseSaveInput? {
         val currency = resolvedCurrency(draft)
-        val parsed = facade.parseAmount.parse(draft.amountText, currency)
+        val parsed = ledger.parseAmount.parse(draft.amountText, currency)
         val amount = (parsed as? ParseManualExpenseAmount.Result.Valid)?.let { Money.ofMinor(it.minorUnits, currency) }
         val categoryId = draft.categoryId
         val paymentAccountId = draft.paymentAccountId
@@ -489,7 +523,7 @@ fun P503App(
             return null
         }
         return ManualExpenseSaveInput(
-            ledgerId = facade.ledgerId,
+            ledgerId = ledger.ledgerId,
             requestId = requestId,
             amount = amount,
             categoryId = categoryId,
@@ -505,7 +539,7 @@ fun P503App(
         requestId: RequestId,
     ): ManualIncomeSaveInput? {
         val currency = resolvedCurrency(draft)
-        val parsed = facade.parseAmount.parse(draft.amountText, currency)
+        val parsed = ledger.parseAmount.parse(draft.amountText, currency)
         val amount = (parsed as? ParseManualExpenseAmount.Result.Valid)?.let { Money.ofMinor(it.minorUnits, currency) }
         val categoryId = draft.categoryId
         val receivingAccountId = draft.receivingAccountId
@@ -514,7 +548,7 @@ fun P503App(
             return null
         }
         return ManualIncomeSaveInput(
-            ledgerId = facade.ledgerId,
+            ledgerId = ledger.ledgerId,
             requestId = requestId,
             amount = amount,
             categoryId = categoryId,
@@ -530,12 +564,12 @@ fun P503App(
         requestId: RequestId,
     ): ManualTransferSaveInput? {
         val currency = resolvedCurrency(draft)
-        val creditParsed = facade.parseAmount.parse(draft.destinationCredit, currency)
+        val creditParsed = ledger.parseAmount.parse(draft.destinationCredit, currency)
         val destinationCredit = (creditParsed as? ParseManualExpenseAmount.Result.Valid)?.let { Money.ofMinor(it.minorUnits, currency) }
         val fee =
             when {
                 draft.fee.isBlank() -> Money.ofMinor(0L, currency)
-                else -> (facade.parseAmount.parse(draft.fee, currency) as? ParseManualExpenseAmount.Result.Valid)?.let { Money.ofMinor(it.minorUnits, currency) }
+                else -> (ledger.parseAmount.parse(draft.fee, currency) as? ParseManualExpenseAmount.Result.Valid)?.let { Money.ofMinor(it.minorUnits, currency) }
             }
         val sourceAccountId = draft.sourceAccountId
         val destinationAccountId = draft.destinationAccountId
@@ -544,7 +578,7 @@ fun P503App(
             return null
         }
         return ManualTransferSaveInput(
-            ledgerId = facade.ledgerId,
+            ledgerId = ledger.ledgerId,
             requestId = requestId,
             sourceAccountId = sourceAccountId,
             destinationAccountId = destinationAccountId,
@@ -562,13 +596,13 @@ fun P503App(
         requestId: RequestId,
     ): ManualLendSaveInput? {
         val currency = resolvedCurrency(draft)
-        val amount = (facade.parseAmount.parse(draft.amount, currency) as? ParseManualExpenseAmount.Result.Valid)?.let { Money.ofMinor(it.minorUnits, currency) }
+        val amount = (ledger.parseAmount.parse(draft.amount, currency) as? ParseManualExpenseAmount.Result.Valid)?.let { Money.ofMinor(it.minorUnits, currency) }
         val counterpartyId = draft.counterpartyId
         val fundingAccountId = draft.fundingAccountId
         val occurredAt = draft.occurredAt
         if (amount == null || counterpartyId == null || fundingAccountId == null || occurredAt == null) return null
         return ManualLendSaveInput(
-            ledgerId = facade.ledgerId,
+            ledgerId = ledger.ledgerId,
             requestId = requestId,
             counterpartyId = counterpartyId,
             fundingAccountId = fundingAccountId,
@@ -585,7 +619,7 @@ fun P503App(
     ): ManualCollectSaveInput? {
         val currency = resolvedCurrency(draft)
 
-        fun parsed(text: String): Money? = (facade.parseAmount.parse(text, currency) as? ParseManualExpenseAmount.Result.Valid)?.let { Money.ofMinor(it.minorUnits, currency) }
+        fun parsed(text: String): Money? = (ledger.parseAmount.parse(text, currency) as? ParseManualExpenseAmount.Result.Valid)?.let { Money.ofMinor(it.minorUnits, currency) }
         val totalReceived = parsed(draft.totalReceived)
         val principal = parsed(draft.principal)
         val interest = parsed(draft.interest)
@@ -595,7 +629,7 @@ fun P503App(
         val occurredAt = draft.occurredAt
         if (totalReceived == null || principal == null || interest == null || counterpartyId == null || destinationAccountId == null || interestCategoryId == null || occurredAt == null) return null
         return ManualCollectSaveInput(
-            ledgerId = facade.ledgerId,
+            ledgerId = ledger.ledgerId,
             requestId = requestId,
             counterpartyId = counterpartyId,
             destinationAccountId = destinationAccountId,
@@ -615,112 +649,119 @@ fun P503App(
     ) {
         // P7-02 E-2: capture the retained intent from the pre-submit draft before it leaves.
         retainedIntent = draft.toRetainedIntent(currentOriginTab(latestState.value))
+        // P7-06 06.1 (D-176; spec 4.3(b)): the synchronous main-thread write runs under an
+        // operation lease. A non-Ready runtime (typed RuntimeNotReady) never blocks the UI thread;
+        // it surfaces the type's existing InfrastructureFailure result so the reducer keeps its
+        // frozen SUBMISSION-failure semantics.
         val result =
-            when (draft) {
-                is ExpenseDraft -> {
-                    val input = expenseSaveInput(draft, requestId)
-                    if (input == null) {
-                        ManualEntrySubmissionResult.Expense(
-                            ManualExpenseSubmissionResult.Application(
-                                ManualExpenseSaveResult.InvalidInput(
-                                    buildSet {
-                                        add(ManualExpenseInputFailure.Missing(ManualExpenseInputField.AMOUNT))
-                                        add(ManualExpenseInputFailure.Missing(ManualExpenseInputField.CATEGORY))
-                                        add(ManualExpenseInputFailure.Missing(ManualExpenseInputField.PAYMENT_ACCOUNT))
-                                    },
+            ledger.probe { facade ->
+                when (draft) {
+                    is ExpenseDraft -> {
+                        val input = expenseSaveInput(draft, requestId)
+                        if (input == null) {
+                            ManualEntrySubmissionResult.Expense(
+                                ManualExpenseSubmissionResult.Application(
+                                    ManualExpenseSaveResult.InvalidInput(
+                                        buildSet {
+                                            add(ManualExpenseInputFailure.Missing(ManualExpenseInputField.AMOUNT))
+                                            add(ManualExpenseInputFailure.Missing(ManualExpenseInputField.CATEGORY))
+                                            add(ManualExpenseInputFailure.Missing(ManualExpenseInputField.PAYMENT_ACCOUNT))
+                                        },
+                                    ),
                                 ),
-                            ),
-                        )
-                    } else {
-                        facade.submitEntryOrExpense().submit(ManualEntrySaveInput.Expense(input))
+                            )
+                        } else {
+                            facade.submitEntryOrExpense().submit(ManualEntrySaveInput.Expense(input))
+                        }
+                    }
+                    is IncomeDraft -> {
+                        val input = incomeSaveInput(draft, requestId)
+                        val submission = facade.submitIncome
+                        if (input == null || submission == null) {
+                            ManualEntrySubmissionResult.Income(
+                                ManualIncomeSubmissionResult.Application(
+                                    ManualIncomeSaveResult.InvalidInput(
+                                        buildSet {
+                                            add(com.unifiedledger.application.ManualIncomeInputField.AMOUNT)
+                                            add(com.unifiedledger.application.ManualIncomeInputField.CATEGORY)
+                                            add(com.unifiedledger.application.ManualIncomeInputField.RECEIVING_ACCOUNT)
+                                        },
+                                    ),
+                                ),
+                            )
+                        } else {
+                            ManualEntrySubmissionResult.Income(submission.submit(input))
+                        }
+                    }
+                    is TransferDraft -> {
+                        val input = transferSaveInput(draft, requestId)
+                        val submission = facade.submitEntry
+                        if (input == null || submission == null) {
+                            ManualEntrySubmissionResult.Transfer(
+                                ManualTransferSubmissionResult.Application(
+                                    ManualTransferSaveResult.InvalidInput(
+                                        buildSet {
+                                            add(ManualTransferInputField.SOURCE_ACCOUNT)
+                                            add(ManualTransferInputField.DESTINATION_ACCOUNT)
+                                            add(ManualTransferInputField.DESTINATION_CREDIT)
+                                            // P702IMPL-07: the fee is part of the fallback field set.
+                                            add(ManualTransferInputField.FEE)
+                                        },
+                                    ),
+                                ),
+                            )
+                        } else {
+                            submission.submit(ManualEntrySaveInput.Transfer(input))
+                        }
+                    }
+                    is LendDraft -> {
+                        val input = lendSaveInput(draft, requestId)
+                        val submission = facade.submitEntry
+                        if (input == null || submission == null) {
+                            ManualEntrySubmissionResult.Lend(
+                                ManualLendSubmissionResult.Application(
+                                    ManualLendSaveResult.InvalidInput(
+                                        buildSet {
+                                            add(ManualLendInputField.COUNTERPARTY)
+                                            add(ManualLendInputField.FUNDING_ACCOUNT)
+                                            add(ManualLendInputField.AMOUNT)
+                                        },
+                                    ),
+                                ),
+                            )
+                        } else {
+                            submission.submit(ManualEntrySaveInput.Lend(input))
+                        }
+                    }
+                    is CollectDraft -> {
+                        val input = collectSaveInput(draft, requestId)
+                        val submission = facade.submitEntry
+                        if (input == null || submission == null) {
+                            ManualEntrySubmissionResult.Collect(
+                                ManualCollectSubmissionResult.Application(
+                                    ManualCollectSaveResult.InvalidInput(
+                                        buildSet {
+                                            add(ManualCollectInputField.COUNTERPARTY)
+                                            add(ManualCollectInputField.DESTINATION_ACCOUNT)
+                                            add(ManualCollectInputField.TOTAL_RECEIVED)
+                                            add(ManualCollectInputField.PRINCIPAL)
+                                            add(ManualCollectInputField.INTEREST)
+                                            add(ManualCollectInputField.INTEREST_CATEGORY)
+                                        },
+                                    ),
+                                ),
+                            )
+                        } else {
+                            submission.submit(ManualEntrySaveInput.Collect(input))
+                        }
                     }
                 }
-                is IncomeDraft -> {
-                    val input = incomeSaveInput(draft, requestId)
-                    val submission = facade.submitIncome
-                    if (input == null || submission == null) {
-                        ManualEntrySubmissionResult.Income(
-                            ManualIncomeSubmissionResult.Application(
-                                ManualIncomeSaveResult.InvalidInput(
-                                    buildSet {
-                                        add(com.unifiedledger.application.ManualIncomeInputField.AMOUNT)
-                                        add(com.unifiedledger.application.ManualIncomeInputField.CATEGORY)
-                                        add(com.unifiedledger.application.ManualIncomeInputField.RECEIVING_ACCOUNT)
-                                    },
-                                ),
-                            ),
-                        )
-                    } else {
-                        ManualEntrySubmissionResult.Income(submission.submit(input))
-                    }
-                }
-                is TransferDraft -> {
-                    val input = transferSaveInput(draft, requestId)
-                    val submission = facade.submitEntry
-                    if (input == null || submission == null) {
-                        ManualEntrySubmissionResult.Transfer(
-                            ManualTransferSubmissionResult.Application(
-                                ManualTransferSaveResult.InvalidInput(
-                                    buildSet {
-                                        add(ManualTransferInputField.SOURCE_ACCOUNT)
-                                        add(ManualTransferInputField.DESTINATION_ACCOUNT)
-                                        add(ManualTransferInputField.DESTINATION_CREDIT)
-                                        // P702IMPL-07: the fee is part of the fallback field set.
-                                        add(ManualTransferInputField.FEE)
-                                    },
-                                ),
-                            ),
-                        )
-                    } else {
-                        submission.submit(ManualEntrySaveInput.Transfer(input))
-                    }
-                }
-                is LendDraft -> {
-                    val input = lendSaveInput(draft, requestId)
-                    val submission = facade.submitEntry
-                    if (input == null || submission == null) {
-                        ManualEntrySubmissionResult.Lend(
-                            ManualLendSubmissionResult.Application(
-                                ManualLendSaveResult.InvalidInput(
-                                    buildSet {
-                                        add(ManualLendInputField.COUNTERPARTY)
-                                        add(ManualLendInputField.FUNDING_ACCOUNT)
-                                        add(ManualLendInputField.AMOUNT)
-                                    },
-                                ),
-                            ),
-                        )
-                    } else {
-                        submission.submit(ManualEntrySaveInput.Lend(input))
-                    }
-                }
-                is CollectDraft -> {
-                    val input = collectSaveInput(draft, requestId)
-                    val submission = facade.submitEntry
-                    if (input == null || submission == null) {
-                        ManualEntrySubmissionResult.Collect(
-                            ManualCollectSubmissionResult.Application(
-                                ManualCollectSaveResult.InvalidInput(
-                                    buildSet {
-                                        add(ManualCollectInputField.COUNTERPARTY)
-                                        add(ManualCollectInputField.DESTINATION_ACCOUNT)
-                                        add(ManualCollectInputField.TOTAL_RECEIVED)
-                                        add(ManualCollectInputField.PRINCIPAL)
-                                        add(ManualCollectInputField.INTEREST)
-                                        add(ManualCollectInputField.INTEREST_CATEGORY)
-                                    },
-                                ),
-                            ),
-                        )
-                    } else {
-                        submission.submit(ManualEntrySaveInput.Collect(input))
-                    }
-                }
-            }
+            } ?: runtimeNotReadySubmission(draft)
         dispatch(P503UiEvent.SubmissionResult(result))
     }
 
     // P5-04.3: one read-only commit-status check for the unknown-commit flow, per entry type.
+    // P7-06 06.1 (D-176; spec 4.3): the resolver call runs under an operation lease.
     fun checkCommitStatus(
         draft: TypedEntryDraft,
         requestId: RequestId,
@@ -740,14 +781,16 @@ fun P503App(
                     )
                 statusCheckInFlight = true
                 scope.launch {
-                    val resolution = facade.resolveCommitStatus.resolve(facade.ledgerId, requestId, attempted)
+                    val resolution =
+                        ledger.probe { facade ->
+                            facade.resolveCommitStatus.resolve(ledger.ledgerId, requestId, attempted)
+                        } ?: ManualExpenseCommitResolution.Unavailable
                     statusCheckInFlight = false
                     dispatch(P503UiEvent.CommitStatusResolved(ManualEntryCommitResolution.Expense(resolution)))
                 }
             }
             is IncomeDraft -> {
                 val input = incomeSaveInput(draft, requestId) ?: return
-                val resolver = facade.resolveIncomeCommitStatus ?: return
                 val attempted =
                     ManualIncomeRequestSnapshot(
                         ledgerId = input.ledgerId,
@@ -759,14 +802,16 @@ fun P503App(
                     )
                 statusCheckInFlight = true
                 scope.launch {
-                    val resolution = resolver.resolve(facade.ledgerId, requestId, attempted)
+                    val resolution =
+                        ledger.probe { facade ->
+                            facade.resolveIncomeCommitStatus?.resolve(ledger.ledgerId, requestId, attempted)
+                        } ?: ManualIncomeCommitResolution.Unavailable
                     statusCheckInFlight = false
                     dispatch(P503UiEvent.CommitStatusResolved(ManualEntryCommitResolution.Income(resolution)))
                 }
             }
             is TransferDraft -> {
                 val input = transferSaveInput(draft, requestId) ?: return
-                val resolver = facade.resolveTransferCommitStatus ?: return
                 val attempted =
                     ManualTransferRequestSnapshot(
                         ledgerId = input.ledgerId,
@@ -780,14 +825,16 @@ fun P503App(
                     )
                 statusCheckInFlight = true
                 scope.launch {
-                    val resolution = resolver.resolve(facade.ledgerId, requestId, attempted)
+                    val resolution =
+                        ledger.probe { facade ->
+                            facade.resolveTransferCommitStatus?.resolve(ledger.ledgerId, requestId, attempted)
+                        } ?: ManualTransferCommitResolution.Unavailable
                     statusCheckInFlight = false
                     dispatch(P503UiEvent.CommitStatusResolved(ManualEntryCommitResolution.Transfer(resolution)))
                 }
             }
             is LendDraft -> {
                 val input = lendSaveInput(draft, requestId) ?: return
-                val resolver = facade.resolveLendingCommitStatus ?: return
                 val attempted =
                     ManualLendingRequestSnapshot(
                         ledgerId = input.ledgerId,
@@ -804,14 +851,16 @@ fun P503App(
                     )
                 statusCheckInFlight = true
                 scope.launch {
-                    val resolution = resolver.resolve(facade.ledgerId, requestId, attempted)
+                    val resolution =
+                        ledger.probe { facade ->
+                            facade.resolveLendingCommitStatus?.resolve(ledger.ledgerId, requestId, attempted)
+                        } ?: ManualLendingCommitResolution.Unavailable
                     statusCheckInFlight = false
                     dispatch(P503UiEvent.CommitStatusResolved(ManualEntryCommitResolution.Lend(resolution)))
                 }
             }
             is CollectDraft -> {
                 val input = collectSaveInput(draft, requestId) ?: return
-                val resolver = facade.resolveLendingCommitStatus ?: return
                 val attempted =
                     ManualLendingRequestSnapshot(
                         ledgerId = input.ledgerId,
@@ -828,7 +877,10 @@ fun P503App(
                     )
                 statusCheckInFlight = true
                 scope.launch {
-                    val resolution = resolver.resolve(facade.ledgerId, requestId, attempted)
+                    val resolution =
+                        ledger.probe { facade ->
+                            facade.resolveLendingCommitStatus?.resolve(ledger.ledgerId, requestId, attempted)
+                        } ?: ManualLendingCommitResolution.Unavailable
                     statusCheckInFlight = false
                     dispatch(P503UiEvent.CommitStatusResolved(ManualEntryCommitResolution.Collect(resolution)))
                 }
@@ -848,13 +900,25 @@ fun P503App(
             scope.launch(Dispatchers.Default) {
                 // APQUAL-05: the same guarded read as refresh() — an unexpected throw maps to
                 // the typed InitialLoadFailed and the slot release in the hop below is guaranteed.
-                val result = runCatching { facade.queryCurrentState.query() }.getOrNull()
+                // P7-06 06.1 (D-176; spec 4.3/4.4): the read and the pin seeding run under one
+                // operation lease; the captured generation gates the landing (stale => discard).
+                val outcome =
+                    ledger.leased { facade, _ ->
+                        val state = runCatching { facade.queryCurrentState.query() }.getOrNull()
+                        val pins = runCatching { facade.entryPreferences?.pinnedTargets(ledger.ledgerId) }.getOrNull()
+                        state to pins
+                    }
                 // Back on the main dispatcher: seed the pin mirror, then dispatch serially.
                 scope.launch {
-                    when (result) {
+                    if (outcome is LeaseOutcome.Completed && !ledger.isCurrentGeneration(outcome.generation)) {
+                        // Stale generation: discard entirely (P706-A07), release the slot only.
+                        if (currentStateLoadCoordinator.loadCompleted()) refresh()
+                        return@launch
+                    }
+                    when (val result = (outcome as? LeaseOutcome.Completed)?.value?.first) {
                         is LedgerCurrentStateResult.Success -> {
                             // P7-02.D E-4: seed the persisted pins so they survive an app restart.
-                            facade.entryPreferences?.let { store -> pinnedTargets = store.pinnedTargets(facade.ledgerId) }
+                            (outcome as LeaseOutcome.Completed).value.second?.let { pins -> pinnedTargets = pins }
                             dispatch(P503UiEvent.InitialLoadResult(result.state, pinnedTargets))
                         }
                         else -> dispatch(P503UiEvent.InitialLoadFailed)
@@ -881,7 +945,7 @@ fun P503App(
                 onMonthlyRequest = ::requestMonthlyPayload,
                 currentMonth = {
                     try {
-                        MonthlyBuckets.currentMonth(facade.ledgerClock)
+                        MonthlyBuckets.currentMonth(ledger.ledgerClock)
                     } catch (failure: Exception) {
                         null
                     }
@@ -922,7 +986,7 @@ fun P503App(
     /** P7-04.C: dispatches the request intent, then launches the platform picker (不切态). */
     fun startImportFilePick(format: ImportFormatId) {
         dispatch(P503UiEvent.StartImportFilePick(format))
-        val port = facade.importFilePickPort ?: return
+        val port = ledger.importFilePickPort ?: return
         val descriptor = ImportFormatCapabilities.byIdentifier(format)
         pendingImportFormat = format
         port.launch(ImportFilePickRequest(descriptor.identifier, descriptor.mimeFilters))
@@ -942,10 +1006,10 @@ fun P503App(
      */
     fun runImportIntakePipeline(file: PickedImportFile) {
         val format = pendingImportFormat
-        val intake = facade.importFileIntake
-        val platform = facade.importPlatformKind
-        val session = facade.importIntakeSessionFactory()
-        if (format == null || intake == null || platform == null || session == null) {
+        val platform = ledger.importPlatformKind
+        val session = ledger.importIntakeSessionFactory()
+        val intakeWired = ledger.probe { it.importFileIntake } != null
+        if (format == null || !intakeWired || platform == null || session == null) {
             // No pipeline can run (unwired surface or a lost format slot): release the coordinator's
             // single-flight slot so a later pick is not permanently blocked.
             coordinator.importIntakeCompleted()
@@ -953,35 +1017,60 @@ fun P503App(
         }
         pendingImportFormat = null
         scope.launch(Dispatchers.Default) {
+            // The L0 bounded read is platform I/O, not ledger work, so it runs outside the lease.
+            val read = file.readBoundedBytes()
+            // P7-06 06.1 (D-176; spec 4.3/4.4): the intake transaction, the statistics refresh and
+            // the list re-read run under ONE operation lease; the captured generation gates the
+            // landing hop below.
             val outcome =
-                when (val read = file.readBoundedBytes()) {
-                    is BoundedFileRead.Bytes ->
-                        ImportIntakePipelineOutcome.Intaken(
-                            intake.intake(ImportFileIntakeInput(format, platform, session, read.bytes)),
-                        )
-                    is BoundedFileRead.ExceedsLimit -> ImportIntakePipelineOutcome.ReadExceedsLimit(read.actualBytes)
-                    is BoundedFileRead.ReadFailed -> ImportIntakePipelineOutcome.ReadFailed(read.reason)
+                ledger.leased { facade, _ ->
+                    val outcome =
+                        when (read) {
+                            is BoundedFileRead.Bytes ->
+                                ImportIntakePipelineOutcome.Intaken(
+                                    facade.importFileIntake!!.intake(ImportFileIntakeInput(format, platform, session, read.bytes)),
+                                )
+                            is BoundedFileRead.ExceedsLimit -> ImportIntakePipelineOutcome.ReadExceedsLimit(read.actualBytes)
+                            is BoundedFileRead.ReadFailed -> ImportIntakePipelineOutcome.ReadFailed(read.reason)
+                        }
+                    // A-PERF (P7-04 read-governance batch, spec section 2.1): the intake-completion
+                    // statistics refresh — SQLite's official semantics re-analyze after a ~10x row
+                    // change, and one intake can multiply the duplicate-candidate table (the 20k-lib
+                    // baseline ANR root cause). The hook is the root-injected controlled driver entry,
+                    // still off the UI thread here; a refresh failure never degrades the intake result
+                    // (statistics are a planner concern, the intake transaction is already committed).
+                    runCatching { facade.importIntakeStatisticsRefresh() }
+                    val rows = facade.queryImportReviewRows?.query(ledger.ledgerId) ?: ImportReviewRowsResult.Unavailable
+                    outcome to rows
                 }
-            // A-PERF (P7-04 read-governance batch, spec section 2.1): the intake-completion
-            // statistics refresh — SQLite's official semantics re-analyze after a ~10x row
-            // change, and one intake can multiply the duplicate-candidate table (the 20k-lib
-            // baseline ANR root cause). The hook is the root-injected controlled driver entry,
-            // still off the UI thread here; a refresh failure never degrades the intake result
-            // (statistics are a planner concern, the intake transaction is already committed).
-            runCatching { facade.importIntakeStatisticsRefresh() }
-            val rows = facade.queryImportReviewRows?.query(facade.ledgerId) ?: ImportReviewRowsResult.Unavailable
             // Back on the composition's (main) dispatcher: the single-flight slot is released and
             // the event is dispatched serially with every other main-thread dispatch.
             scope.launch {
                 coordinator.importIntakeCompleted()
+                if (outcome is LeaseOutcome.Completed && !ledger.isCurrentGeneration(outcome.generation)) {
+                    // Stale generation: discard the intake payload (P706-A07). The intake itself
+                    // already committed on the old graph; nothing lands on the new one.
+                    return@launch
+                }
+                if (outcome !is LeaseOutcome.Completed) {
+                    // The lease could not be acquired: surface the typed read-failure outcome
+                    // rather than a silently dropped pick.
+                    dispatch(
+                        P503UiEvent.ImportFileIntakeResult(
+                            ImportIntakeSessionSummary(file.displayName, session.inputRef, ImportIntakePipelineOutcome.ReadFailed(ImportPickReadFailure.STREAM_READ_FAILED)),
+                            ImportReviewRowsResult.Unavailable,
+                        ),
+                    )
+                    return@launch
+                }
                 dispatch(
                     P503UiEvent.ImportFileIntakeResult(
                         ImportIntakeSessionSummary(
                             displayName = file.displayName,
                             inputRef = session.inputRef,
-                            outcome = outcome,
+                            outcome = outcome.value.first,
                         ),
-                        rows,
+                        outcome.value.second,
                     ),
                 )
             }
@@ -1014,21 +1103,34 @@ fun P503App(
      */
     fun requestImportReview() {
         dispatch(P503UiEvent.RefreshImportReview)
-        val query = facade.queryImportReviewRows ?: return
         scope.launch(Dispatchers.Default) {
-            val result = query.query(facade.ledgerId)
-            scope.launch { dispatch(P503UiEvent.ImportReviewResult(result)) }
+            // P7-06 06.1 (D-176; spec 4.3/4.4): the read runs under a lease; the landing hop
+            // discards a result captured under a superseded generation.
+            val outcome = ledger.leased { facade, _ -> facade.queryImportReviewRows?.query(ledger.ledgerId) }
+            scope.launch {
+                if (outcome is LeaseOutcome.Completed && !ledger.isCurrentGeneration(outcome.generation)) return@launch
+                val result = (outcome as? LeaseOutcome.Completed)?.value ?: ImportReviewRowsResult.Unavailable
+                dispatch(P503UiEvent.ImportReviewResult(result))
+            }
         }
     }
 
     /** P7-04.C: reads the candidate detail + duplicate comparison (off the UI thread), then opens the detail state (main dispatcher). */
     fun selectImportCandidate(candidateId: ImportCandidateId) {
-        val detailQuery = facade.queryImportCandidateDetail ?: return
-        val duplicatesQuery = facade.queryImportDuplicateReviews ?: return
         scope.launch(Dispatchers.Default) {
-            val detail = detailQuery.query(facade.ledgerId, candidateId)
-            val duplicates = duplicatesQuery.query(facade.ledgerId, candidateId)
-            scope.launch { dispatch(P503UiEvent.SelectImportCandidate(candidateId, detail, duplicates)) }
+            // P7-06 06.1 (spec 4.3/4.4): one lease over the detail + duplicate reads.
+            val outcome =
+                ledger.leased { facade, _ ->
+                    val detailQuery = facade.queryImportCandidateDetail ?: return@leased null
+                    val duplicatesQuery = facade.queryImportDuplicateReviews ?: return@leased null
+                    detailQuery.query(ledger.ledgerId, candidateId) to duplicatesQuery.query(ledger.ledgerId, candidateId)
+                }
+            scope.launch {
+                if (outcome !is LeaseOutcome.Completed) return@launch
+                if (!ledger.isCurrentGeneration(outcome.generation)) return@launch
+                val payload = outcome.value ?: return@launch
+                dispatch(P503UiEvent.SelectImportCandidate(candidateId, payload.first, payload.second))
+            }
         }
     }
 
@@ -1048,12 +1150,12 @@ fun P503App(
     fun submitImportDuplicateReview(decision: ImportDuplicateReviewUiDecision) {
         val detailState = latestState.value as? P503AppState.ImportCandidateDetail ?: return
         val target = importDuplicateReviewTarget(detailState.duplicates) ?: return
-        val reviewUseCase = facade.importDuplicateReview ?: return
-        val ids = facade.importDuplicateReviewIds() ?: return
-        val now = facade.ledgerClock.now().toString()
+        if (!ledger.surfaces.importDuplicateReview) return
+        val ids = ledger.importDuplicateReviewIds() ?: return
+        val now = ledger.ledgerClock.now().toString()
         val request =
             ImportDuplicateReviewRequest(
-                identity = ImportRequestIdentity(facade.ledgerId, ids.requestId),
+                identity = ImportRequestIdentity(ledger.ledgerId, ids.requestId),
                 candidateId = target.duplicateCandidateId,
                 expectedComparisonFingerprint = target.comparisonFingerprint,
                 decision = decision.coreStatus,
@@ -1076,26 +1178,35 @@ fun P503App(
                 // marker or a leaked slot. The failure path passes no refresh payload (保留旧载荷, F1): the failed submission changed nothing, so a re-read adds nothing —
                 // the banner explains and a retried success re-reads on its own (registered
                 // choice: 保守不重读).
-                try {
-                    val review = reviewUseCase.execute(request)
-                    val rows = facade.queryImportReviewRows?.query(facade.ledgerId) ?: ImportReviewRowsResult.Unavailable
-                    val detail = facade.queryImportCandidateDetail?.query(facade.ledgerId, detailState.candidateId)
-                    val duplicates = facade.queryImportDuplicateReviews?.query(facade.ledgerId, detailState.candidateId)
-                    // Back on the main dispatcher: release the slot and dispatch serially (P704C-SPEC-01/QUAL-02).
-                    scope.launch {
-                        coordinator.importDuplicateReviewCompleted()
-                        dispatch(P503UiEvent.ImportDuplicateReviewResult(review, ImportDuplicateReviewRefresh(rows, detail, duplicates)))
-                    }
-                } catch (failure: Exception) {
-                    scope.launch {
-                        coordinator.importDuplicateReviewCompleted()
-                        dispatch(
-                            P503UiEvent.ImportDuplicateReviewResult(
-                                review = null,
-                                refresh = null,
-                                uiFailureCode = IMPORT_REVIEW_SUBMIT_UNAVAILABLE,
-                            ),
-                        )
+                // P7-06 06.1 (spec 4.3/4.4): the review write and its re-reads share one lease;
+                // the captured generation gates the landing. An execution throw keeps the frozen
+                // typed UI-owned failure (review/refresh null + IMPORT_REVIEW_SUBMIT_UNAVAILABLE).
+                val outcome =
+                    runCatching {
+                        ledger.leased { facade, _ ->
+                            val review = facade.importDuplicateReview!!.execute(request)
+                            val rows = facade.queryImportReviewRows?.query(ledger.ledgerId) ?: ImportReviewRowsResult.Unavailable
+                            val detail = facade.queryImportCandidateDetail?.query(ledger.ledgerId, detailState.candidateId)
+                            val duplicates = facade.queryImportDuplicateReviews?.query(ledger.ledgerId, detailState.candidateId)
+                            ImportDuplicateReviewRefresh(rows, detail, duplicates) to review
+                        }
+                    }.getOrElse { LeaseOutcome.NotReady }
+                // Back on the main dispatcher: release the slot and dispatch serially (P704C-SPEC-01/QUAL-02).
+                scope.launch {
+                    coordinator.importDuplicateReviewCompleted()
+                    when (outcome) {
+                        is LeaseOutcome.Completed ->
+                            if (ledger.isCurrentGeneration(outcome.generation)) {
+                                dispatch(P503UiEvent.ImportDuplicateReviewResult(outcome.value.second, outcome.value.first))
+                            }
+                        LeaseOutcome.NotReady ->
+                            dispatch(
+                                P503UiEvent.ImportDuplicateReviewResult(
+                                    review = null,
+                                    refresh = null,
+                                    uiFailureCode = IMPORT_REVIEW_SUBMIT_UNAVAILABLE,
+                                ),
+                            )
                     }
                 }
             }
@@ -1138,12 +1249,16 @@ fun P503App(
                 // typed list-failure path as a duplicate-review read failure (never a silently
                 // partial group, never a stranded slot).
                 var enumeration: ImportDuplicateGroupEnumeration = ImportDuplicateGroupEnumeration.ReadFailed
+                // P7-06 06.1 (D-176; spec 4.3/4.4): the enumeration reads run under one lease; the
+                // captured generation gates the landing below.
+                var enumerationGeneration: Generation? = null
                 try {
                     // P704C-SPEC-05: the pure, JVM-tested enumeration owns the abort decision —
                     // any typed duplicate-review read failure aborts wholesale (never a silent
                     // partial group) and the typed list-failure banner is surfaced instead.
-                    enumeration =
-                        try {
+                    val leased =
+                        ledger.leased { facade, generation ->
+                            enumerationGeneration = generation
                             val sessionQuery = facade.queryImportDuplicateReviewsForSession
                             if (sessionQuery != null) {
                                 // P7-05 batch path: one session-level query replaces the
@@ -1153,7 +1268,7 @@ fun P503App(
                                 // a folded member, an empty Reviews for a session candidate the
                                 // batch did not return — the batch join only yields rows whose
                                 // subject has a duplicate candidate).
-                                val sessionResult = sessionQuery.query(facade.ledgerId, sessionInputRef)
+                                val sessionResult = sessionQuery.query(ledger.ledgerId, sessionInputRef)
                                 val sessionRows =
                                     (sessionResult as? ImportDuplicateReviewsForSessionResult.Reviews)?.reviews
                                 val reviewsByCandidate =
@@ -1172,21 +1287,30 @@ fun P503App(
                                     }
                                 }
                             } else {
-                                val reviewQuery =
-                                    facade.queryImportDuplicateReviews
-                                        ?: return@launch
-                                enumerateImportDuplicateGroupItems(sessionInputRef, view.rows) { candidateId ->
-                                    reviewQuery.query(facade.ledgerId, candidateId)
+                                val reviewQuery = facade.queryImportDuplicateReviews
+                                if (reviewQuery == null) {
+                                    ImportDuplicateGroupEnumeration.ReadFailed
+                                } else {
+                                    enumerateImportDuplicateGroupItems(sessionInputRef, view.rows) { candidateId ->
+                                        reviewQuery.query(ledger.ledgerId, candidateId)
+                                    }
                                 }
                             }
-                        } catch (failure: Exception) {
-                            ImportDuplicateGroupEnumeration.ReadFailed
+                        }
+                    enumeration =
+                        when (leased) {
+                            is LeaseOutcome.Completed -> leased.value
+                            LeaseOutcome.NotReady -> ImportDuplicateGroupEnumeration.ReadFailed
                         }
                 } finally {
                     // Back on the main dispatcher: release the slot and dispatch serially.
                     scope.launch {
                         coordinator.importGroupEnumerationCompleted()
                         dispatch(P503UiEvent.ImportGroupEnumerationCompleted)
+                        if (enumerationGeneration != null && !ledger.isCurrentGeneration(enumerationGeneration)) {
+                            // Stale generation: discard the enumeration payload entirely.
+                            return@launch
+                        }
                         when (enumeration) {
                             ImportDuplicateGroupEnumeration.ReadFailed ->
                                 dispatch(P503UiEvent.ImportReviewResult(ImportReviewRowsResult.Unavailable))
@@ -1220,7 +1344,7 @@ fun P503App(
             (latestState.value as? P503AppState.OverviewEmpty)
                 ?.importReview
                 ?.groupDisposition ?: return
-        val reviewUseCase = facade.importDuplicateReview ?: return
+        if (!ledger.surfaces.importDuplicateReview) return
         coordinator.confirmImportDuplicateGroupDispositionOnce {
             scope.launch(Dispatchers.Default) {
                 // P704D-SPEC-03 (C-batch leak-pattern prevention): the guarded body keeps the
@@ -1230,63 +1354,80 @@ fun P503App(
                 // already-disposed items' visible partial success (可见部分成功， the loop's own
                 // semantics) instead of leaking the slot and dropping every outcome.
                 val outcomes = mutableListOf<ImportDuplicateGroupItemOutcome>()
+                // P7-06 06.1 (D-176; spec 4.3/4.4): the whole disposition loop runs under ONE
+                // operation lease; the captured generation gates the landing below.
+                var loopGeneration: Generation? = null
                 try {
-                    page.items
-                        // 已成功项幂等不重复处置：never re-submit a Reviewed item on a re-run.
-                        .filter { it.outcome !is ImportDuplicateGroupItemResult.Reviewed }
-                        // P704D-SPEC-03: forEach + immediate append — a mid-loop throw keeps the
-                        // already-disposed items' outcomes in `outcomes` (the finally then lands
-                        // the visible partial success); a map-then-addAll would drop them.
-                        .forEach { itemState ->
-                            val item = itemState.item
-                            val ids = facade.importDuplicateReviewIds()
-                            outcomes +=
-                                if (ids == null) {
-                                    ImportDuplicateGroupItemOutcome(
-                                        item.duplicateCandidateId,
-                                        // P704C-SPEC-07: a UI-owned guard code never borrows the core
-                                        // SPINE_ diagnostic namespace (the spine family must stay 原样).
-                                        ImportDuplicateGroupItemResult.Rejected("IMPORT_REVIEW_IDS_UNAVAILABLE"),
-                                    )
-                                } else {
-                                    val now = facade.ledgerClock.now().toString()
-                                    val request =
-                                        ImportDuplicateReviewRequest(
-                                            identity = ImportRequestIdentity(facade.ledgerId, ids.requestId),
-                                            candidateId = item.duplicateCandidateId,
-                                            expectedComparisonFingerprint = item.expectedComparisonFingerprint,
-                                            decision = ImportDuplicateStatus.CONFIRMED_DUPLICATE,
-                                            reasonToken = IMPORT_DUPLICATE_REVIEW_REASON_TOKEN,
-                                            reviewedAt = now,
-                                            reviewerReference = IMPORT_DUPLICATE_REVIEWER_REFERENCE,
-                                            generatedAt = now,
-                                            reviewId = ids.reviewId,
-                                            historyId = ids.historyId,
-                                        )
-                                    when (val result = reviewUseCase.execute(request)) {
-                                        is com.unifiedledger.application.ImportDuplicateReviewResult.Accepted ->
+                    val run =
+                        ledger.leased { facade, generation ->
+                            loopGeneration = generation
+                            page.items
+                                // 已成功项幂等不重复处置：never re-submit a Reviewed item on a re-run.
+                                .filter { it.outcome !is ImportDuplicateGroupItemResult.Reviewed }
+                                // P704D-SPEC-03: forEach + immediate append — a mid-loop throw keeps the
+                                // already-disposed items' outcomes in `outcomes` (the finally then lands
+                                // the visible partial success); a map-then-addAll would drop them.
+                                .forEach { itemState ->
+                                    val item = itemState.item
+                                    val ids = ledger.importDuplicateReviewIds()
+                                    outcomes +=
+                                        if (ids == null) {
                                             ImportDuplicateGroupItemOutcome(
                                                 item.duplicateCandidateId,
-                                                ImportDuplicateGroupItemResult.Reviewed(result.receipt.outcome),
+                                                // P704C-SPEC-07: a UI-owned guard code never borrows the core
+                                                // SPINE_ diagnostic namespace (the spine family must stay 原样).
+                                                ImportDuplicateGroupItemResult.Rejected("IMPORT_REVIEW_IDS_UNAVAILABLE"),
                                             )
-                                        is com.unifiedledger.application.ImportDuplicateReviewResult.NoChange ->
-                                            ImportDuplicateGroupItemOutcome(
-                                                item.duplicateCandidateId,
-                                                ImportDuplicateGroupItemResult.Reviewed(result.receipt.outcome),
-                                            )
-                                        is com.unifiedledger.application.ImportDuplicateReviewResult.Rejected ->
-                                            ImportDuplicateGroupItemOutcome(
-                                                item.duplicateCandidateId,
-                                                ImportDuplicateGroupItemResult.Rejected(result.diagnostic.code),
-                                            )
-                                    }
+                                        } else {
+                                            val now = ledger.ledgerClock.now().toString()
+                                            val request =
+                                                ImportDuplicateReviewRequest(
+                                                    identity = ImportRequestIdentity(ledger.ledgerId, ids.requestId),
+                                                    candidateId = item.duplicateCandidateId,
+                                                    expectedComparisonFingerprint = item.expectedComparisonFingerprint,
+                                                    decision = ImportDuplicateStatus.CONFIRMED_DUPLICATE,
+                                                    reasonToken = IMPORT_DUPLICATE_REVIEW_REASON_TOKEN,
+                                                    reviewedAt = now,
+                                                    reviewerReference = IMPORT_DUPLICATE_REVIEWER_REFERENCE,
+                                                    generatedAt = now,
+                                                    reviewId = ids.reviewId,
+                                                    historyId = ids.historyId,
+                                                )
+                                            when (val result = facade.importDuplicateReview!!.execute(request)) {
+                                                is com.unifiedledger.application.ImportDuplicateReviewResult.Accepted ->
+                                                    ImportDuplicateGroupItemOutcome(
+                                                        item.duplicateCandidateId,
+                                                        ImportDuplicateGroupItemResult.Reviewed(result.receipt.outcome),
+                                                    )
+                                                is com.unifiedledger.application.ImportDuplicateReviewResult.NoChange ->
+                                                    ImportDuplicateGroupItemOutcome(
+                                                        item.duplicateCandidateId,
+                                                        ImportDuplicateGroupItemResult.Reviewed(result.receipt.outcome),
+                                                    )
+                                                is com.unifiedledger.application.ImportDuplicateReviewResult.Rejected ->
+                                                    ImportDuplicateGroupItemOutcome(
+                                                        item.duplicateCandidateId,
+                                                        ImportDuplicateGroupItemResult.Rejected(result.diagnostic.code),
+                                                    )
+                                            }
+                                        }
                                 }
                         }
+                    if (run is LeaseOutcome.NotReady) {
+                        // The lease could not be acquired: leave the page's items untouched.
+                        outcomes.clear()
+                    }
                 } finally {
-                    val rows = facade.queryImportReviewRows?.query(facade.ledgerId) ?: ImportReviewRowsResult.Unavailable
                     // Back on the main dispatcher: release the slot and dispatch serially.
                     scope.launch {
                         coordinator.importGroupDispositionCompleted()
+                        if (loopGeneration != null && !ledger.isCurrentGeneration(loopGeneration)) {
+                            // Stale generation: discard the disposition payload entirely.
+                            return@launch
+                        }
+                        val rows =
+                            ledger.probe { facade -> facade.queryImportReviewRows?.query(ledger.ledgerId) }
+                                ?: ImportReviewRowsResult.Unavailable
                         dispatch(P503UiEvent.ImportDuplicateGroupDispositionResult(outcomes.toList(), rows))
                     }
                 }
@@ -1298,10 +1439,13 @@ fun P503App(
 
     /** P7-04.D: re-reads the review list off the UI thread and dispatches the typed result. */
     fun requestImportReviewRowsRead() {
-        val query = facade.queryImportReviewRows ?: return
         scope.launch(Dispatchers.Default) {
-            val rows = query.query(facade.ledgerId)
-            scope.launch { dispatch(P503UiEvent.ImportReviewResult(rows)) }
+            // P7-06 06.1 (spec 4.3/4.4): read under a lease; the landing hop discards a stale result.
+            val outcome = ledger.leased { facade, _ -> facade.queryImportReviewRows?.query(ledger.ledgerId) }
+            scope.launch {
+                if (outcome is LeaseOutcome.Completed && !ledger.isCurrentGeneration(outcome.generation)) return@launch
+                dispatch(P503UiEvent.ImportReviewResult((outcome as? LeaseOutcome.Completed)?.value ?: ImportReviewRowsResult.Unavailable))
+            }
         }
     }
 
@@ -1338,42 +1482,57 @@ fun P503App(
                 // pre-phase. A pre-phase failure becomes typed visible per-item results instead
                 // of a stranded run (基础设施失败成为类型化/可见结果而非搁浅流程).
                 var completed = false
+                // P7-06 06.1 (D-176; spec 4.3/4.4): the whole run (pre-phase read + use-case
+                // factory + the sequential per-item loop) runs under ONE operation lease; the
+                // captured generation gates every per-item landing and the final hop below.
+                var runGeneration: Generation? = null
                 try {
-                    val prePhase =
-                        importBatchDispatchPrePhase(
-                            loadRows = { facade.queryImportReviewRows?.query(facade.ledgerId) ?: ImportReviewRowsResult.Unavailable },
-                            loadUseCases = { facade.importConfirmUseCases() },
-                        )
-                    when (prePhase) {
-                        is ImportBatchDispatchPrePhase.Failed -> {
-                            // The run-level typed skips land per still-undispatched item; every
-                            // item is then terminal, so the reducer auto-leaves to the overview
-                            // with the typed summary — no dead end, the candidates stay pending.
-                            importBatchRunLevelFailureResults(undispatched, prePhase.code).forEach { result ->
-                                scope.launch { dispatch(P503UiEvent.ImportItemResult(result.item, result.outcome)) }
+                    ledger.leased { facade, generation ->
+                        runGeneration = generation
+                        val prePhase =
+                            importBatchDispatchPrePhase(
+                                loadRows = { facade.queryImportReviewRows?.query(ledger.ledgerId) ?: ImportReviewRowsResult.Unavailable },
+                                loadUseCases = { facade.importConfirmUseCases() },
+                            )
+                        when (prePhase) {
+                            is ImportBatchDispatchPrePhase.Failed -> {
+                                // The run-level typed skips land per still-undispatched item; every
+                                // item is then terminal, so the reducer auto-leaves to the overview
+                                // with the typed summary — no dead end, the candidates stay pending.
+                                importBatchRunLevelFailureResults(undispatched, prePhase.code).forEach { result ->
+                                    scope.launch {
+                                        if (ledger.isCurrentGeneration(generation)) {
+                                            dispatch(P503UiEvent.ImportItemResult(result.item, result.outcome))
+                                        }
+                                    }
+                                }
+                                completed = true
                             }
-                            completed = true
-                        }
-                        is ImportBatchDispatchPrePhase.Ready -> {
-                            val loop =
-                                ImportBatchDispatchLoop(
-                                    items = undispatched,
-                                    rows = prePhase.rows,
-                                    drafts = drafts,
-                                    confirmedAt = confirmedAt,
-                                    useCases = prePhase.useCases,
-                                    ledgerId = facade.ledgerId,
-                                    parseAmount = facade.parseAmount,
-                                    defaultCurrency = facade.currency,
-                                )
-                            val run =
-                                loop.run(
-                                    dispatch = { result ->
-                                        scope.launch { dispatch(P503UiEvent.ImportItemResult(result.item, result.outcome)) }
-                                    },
-                                    execute = { useCase, request -> useCase.execute(request) },
-                                )
-                            completed = run is ImportBatchDispatchRun.Completed
+                            is ImportBatchDispatchPrePhase.Ready -> {
+                                val loop =
+                                    ImportBatchDispatchLoop(
+                                        items = undispatched,
+                                        rows = prePhase.rows,
+                                        drafts = drafts,
+                                        confirmedAt = confirmedAt,
+                                        useCases = prePhase.useCases,
+                                        ledgerId = ledger.ledgerId,
+                                        parseAmount = ledger.parseAmount,
+                                        defaultCurrency = ledger.currency,
+                                    )
+                                val run =
+                                    loop.run(
+                                        dispatch = { result ->
+                                            scope.launch {
+                                                if (ledger.isCurrentGeneration(generation)) {
+                                                    dispatch(P503UiEvent.ImportItemResult(result.item, result.outcome))
+                                                }
+                                            }
+                                        },
+                                        execute = { useCase, request -> useCase.execute(request) },
+                                    )
+                                completed = run is ImportBatchDispatchRun.Completed
+                            }
                         }
                     }
                 } finally {
@@ -1386,6 +1545,11 @@ fun P503App(
                     // (exactly one arm per batch run).
                     scope.launch {
                         coordinator.importBatchDispatchCompleted()
+                        if (runGeneration != null && !ledger.isCurrentGeneration(runGeneration)) {
+                            // Stale generation: discard the whole run's landing (the per-item
+                            // results were already gated above; nothing lands on the new graph).
+                            return@launch
+                        }
                         if (completed) {
                             if (shouldArmImportBatchConfirmed(latestState.value)) {
                                 coordinator.onImportBatchConfirmed()
@@ -1410,10 +1574,10 @@ fun P503App(
         val confirmState = latestState.value as? P503AppState.ImportBatchConfirm ?: return
         val selected = confirmState.overview.importReview?.selectedCandidateIds ?: emptySet()
         if (selected.isEmpty()) return
-        val requestIdSource = facade.importConfirmRequestIdSource ?: return
-        if (facade.importConfirmUseCases() == null) return
+        val requestIdSource = ledger.importConfirmRequestIdSource ?: return
+        if (!ledger.surfaces.importBatchConfirm) return
         // Q09.4: 授权时刻 LedgerClock 取样一次，经 explicitConfirmedAt 全项复用（mixed 必填）。
-        val confirmedAt = facade.ledgerClock.now().toString()
+        val confirmedAt = ledger.ledgerClock.now().toString()
         val requestIds =
             selected.associateWith { candidateId ->
                 com.unifiedledger.application.ImportRequestId(requestIdSource())
@@ -1482,29 +1646,39 @@ fun P503App(
                 // unreadable replay: the verdict is StillUnknown (仍未知 — the item keeps its
                 // check entry, the user can retry; never a stranded run).
                 var outcome: ImportUnknownCheckOutcome = ImportUnknownCheckOutcome.StillUnknown
+                // P7-06 06.1 (D-176; spec 4.3/4.4): the check runs under one lease; the captured
+                // generation gates the landing below.
+                var checkGeneration: Generation? = null
                 try {
-                    val prePhase =
-                        importBatchDispatchPrePhase(
-                            loadRows = { facade.queryImportReviewRows?.query(facade.ledgerId) ?: ImportReviewRowsResult.Unavailable },
-                            loadUseCases = { facade.importConfirmUseCases() },
-                        )
-                    if (prePhase is ImportBatchDispatchPrePhase.Ready) {
-                        val context =
-                            importUnknownCheckContext(
-                                item,
-                                prePhase.rows,
-                                drafts,
-                                confirmedAt,
-                                prePhase.useCases,
-                                facade.ledgerId,
-                                facade.parseAmount,
-                                facade.currency,
+                    ledger.leased { facade, generation ->
+                        checkGeneration = generation
+                        val prePhase =
+                            importBatchDispatchPrePhase(
+                                loadRows = { facade.queryImportReviewRows?.query(ledger.ledgerId) ?: ImportReviewRowsResult.Unavailable },
+                                loadUseCases = { facade.importConfirmUseCases() },
                             )
-                        outcome = runImportUnknownItemCheck(context) { useCase, request -> useCase.execute(request) }
+                        if (prePhase is ImportBatchDispatchPrePhase.Ready) {
+                            val context =
+                                importUnknownCheckContext(
+                                    item,
+                                    prePhase.rows,
+                                    drafts,
+                                    confirmedAt,
+                                    prePhase.useCases,
+                                    ledger.ledgerId,
+                                    ledger.parseAmount,
+                                    ledger.currency,
+                                )
+                            outcome = runImportUnknownItemCheck(context) { useCase, request -> useCase.execute(request) }
+                        }
                     }
                 } finally {
                     scope.launch {
                         coordinator.importUnknownCheckCompleted()
+                        if (checkGeneration != null && !ledger.isCurrentGeneration(checkGeneration)) {
+                            // Stale generation: discard the verdict entirely.
+                            return@launch
+                        }
                         dispatch(P503UiEvent.ImportUnknownItemCheckResult(item, outcome))
                         if (outcome is ImportUnknownCheckOutcome.Confirmed) {
                             requestImportReviewRowsRead()
@@ -1529,9 +1703,9 @@ fun P503App(
     // result never rides the port's signature). The delivery thread is the UI thread on both ends
     // (the SAF callback runs on main; the desktop modal chooser blocks inside the UI event
     // handler, AB-CLI-QUAL-05), so the dispatch and the coordinator decision are safe there.
-    DisposableEffect(facade) {
-        facade.importPickResultChannel?.subscribe(::handleImportPickResult)
-        onDispose { facade.importPickResultChannel?.subscribe(null) }
+    DisposableEffect(ledger) {
+        ledger.importPickResultChannel?.subscribe(::handleImportPickResult)
+        onDispose { ledger.importPickResultChannel?.subscribe(null) }
     }
 
     // P7-02.D E-4: the authoritative snapshot with the pinned-first sort derivation applied to
@@ -1572,17 +1746,22 @@ fun P503App(
      * pin-sorted copy into the cache.
      */
     fun dispatchCatalogCommandResult(result: CatalogCommandResult) {
+        // P7-06 06.1 (D-176; spec 4.3(b)): the refresh + snapshot pair runs under one operation
+        // lease (the synchronous main-thread pair).
+        val fresh =
+            ledger.probe { facade ->
+                if (shouldRefreshReadModelAfterCatalogCommand(result)) {
+                    facade.refreshCatalog()
+                }
+                runCatching { facade.catalogSnapshot() }.getOrNull()
+            } ?: (latestState.value as? P503AppState.OverviewEmpty)?.catalogSnapshot
+                ?: return
         if (shouldRefreshReadModelAfterCatalogCommand(result)) {
-            facade.refreshCatalog()
             // R1 (spec 6.2/7.3, D-027): HOME's balances/transaction lines come from the read
             // model, which now reads through the refreshed session; re-query it via the existing
             // refresh channel so a rename/deactivate shows new names on HOME without a restart.
             refresh()
         }
-        val fresh =
-            runCatching { facade.catalogSnapshot() }.getOrNull()
-                ?: (latestState.value as? P503AppState.OverviewEmpty)?.catalogSnapshot
-                ?: return
         cachedCatalogSnapshot = fresh
         val payload =
             CatalogSnapshotView(
@@ -1596,19 +1775,23 @@ fun P503App(
     }
 
     fun runCatalogToggle(event: P503UiEvent) {
-        val command = facade.executeCatalogCommand ?: return
+        if (!ledger.surfaces.catalogCommands) return
         val version = (latestState.value as? P503AppState.OverviewEmpty)?.catalogSnapshot?.catalogVersion ?: return
         scope.launch {
+            // P7-06 06.1 (spec 4.3(c)): the bare scope.launch catalog command runs under a lease.
             val result =
-                when (event) {
-                    is P503UiEvent.ManageAccountActive ->
-                        command.setAccountActive(facade.ledgerId, event.accountId, event.active, version)
-                    is P503UiEvent.ManageCategoryActive ->
-                        command.setCategoryActive(facade.ledgerId, event.categoryId, event.active, version)
-                    is P503UiEvent.EnableCategoryGroup ->
-                        command.enableCategoryGroup(facade.ledgerId, event.parentId, version)
-                    else -> return@launch
-                }
+                ledger.probe { facade ->
+                    val command = facade.executeCatalogCommand ?: return@probe null
+                    when (event) {
+                        is P503UiEvent.ManageAccountActive ->
+                            command.setAccountActive(ledger.ledgerId, event.accountId, event.active, version)
+                        is P503UiEvent.ManageCategoryActive ->
+                            command.setCategoryActive(ledger.ledgerId, event.categoryId, event.active, version)
+                        is P503UiEvent.EnableCategoryGroup ->
+                            command.enableCategoryGroup(ledger.ledgerId, event.parentId, version)
+                        else -> null
+                    }
+                } ?: return@launch
             dispatchCatalogCommandResult(result)
         }
     }
@@ -1621,38 +1804,42 @@ fun P503App(
     // the spot — the event carries it instead of a CatalogSnapshotRefreshed dispatch, which would
     // clear the open notice/dialog.
     fun runPinToggle(target: EntryPinTarget) {
-        val store = facade.entryPreferences ?: return
         scope.launch {
-            when (val result = store.togglePin(target, facade.ledgerClock.now())) {
+            // P7-06 06.1 (spec 4.3(c)): the pin store write runs under an operation lease.
+            when (val result = ledger.probe { facade -> facade.entryPreferences?.togglePin(target, ledger.ledgerClock.now()) }) {
                 is EntryPinResult.Toggled -> {
                     pinnedTargets = if (result.pinned) pinnedTargets + target else pinnedTargets - target
                     dispatch(P503UiEvent.TogglePin(target, result.pinned, pinnedCatalogSnapshot()))
                 }
-                is EntryPinResult.Rejected -> Unit
+                is EntryPinResult.Rejected, null -> Unit
             }
         }
     }
 
     fun runCatalogForm(dialog: CatalogDialog) {
-        val command = facade.executeCatalogCommand ?: return
+        if (!ledger.surfaces.catalogCommands) return
         val version = (latestState.value as? P503AppState.OverviewEmpty)?.catalogSnapshot?.catalogVersion ?: return
         scope.launch {
+            // P7-06 06.1 (spec 4.3(c)): the bare scope.launch catalog command runs under a lease.
             val result =
-                when (dialog) {
-                    is CatalogDialog.CreateAccount ->
-                        command.createAccount(facade.ledgerId, dialog.nameText, dialog.kind, version)
-                    is CatalogDialog.RenameAccount ->
-                        command.renameAccount(facade.ledgerId, dialog.accountId, dialog.nameText, version)
-                    is CatalogDialog.CreateCategoryGroup ->
-                        command.createCategoryGroup(facade.ledgerId, dialog.kind, dialog.groupNameText, dialog.firstChildNameText, version)
-                    is CatalogDialog.AppendCategoryChild ->
-                        command.appendCategoryChild(facade.ledgerId, dialog.parentId, dialog.nameText, version)
-                    is CatalogDialog.RenameCategory ->
-                        command.renameCategory(facade.ledgerId, dialog.categoryId, dialog.nameText, version)
-                    is CatalogDialog.ConfirmCategoryDelete ->
-                        command.deleteCategory(facade.ledgerId, dialog.categoryId, version)
-                    CatalogDialog.None -> return@launch
-                }
+                ledger.probe { facade ->
+                    val command = facade.executeCatalogCommand ?: return@probe null
+                    when (dialog) {
+                        is CatalogDialog.CreateAccount ->
+                            command.createAccount(ledger.ledgerId, dialog.nameText, dialog.kind, version)
+                        is CatalogDialog.RenameAccount ->
+                            command.renameAccount(ledger.ledgerId, dialog.accountId, dialog.nameText, version)
+                        is CatalogDialog.CreateCategoryGroup ->
+                            command.createCategoryGroup(ledger.ledgerId, dialog.kind, dialog.groupNameText, dialog.firstChildNameText, version)
+                        is CatalogDialog.AppendCategoryChild ->
+                            command.appendCategoryChild(ledger.ledgerId, dialog.parentId, dialog.nameText, version)
+                        is CatalogDialog.RenameCategory ->
+                            command.renameCategory(ledger.ledgerId, dialog.categoryId, dialog.nameText, version)
+                        is CatalogDialog.ConfirmCategoryDelete ->
+                            command.deleteCategory(ledger.ledgerId, dialog.categoryId, version)
+                        CatalogDialog.None -> null
+                    }
+                } ?: return@launch
             dispatchCatalogCommandResult(result)
         }
     }
@@ -1668,9 +1855,13 @@ fun P503App(
     // catalog-snapshot entry point (EntryPinOrdering; the cache keeps the raw authoritative
     // order, see [dispatchCatalogCommandResult]).
     fun refreshCatalogSnapshot() {
-        facade.refreshCatalog()
+        // P7-06 06.1 (spec 4.3(b)): the synchronous refresh + snapshot pair runs under one lease.
+        val fresh =
+            ledger.probe { facade ->
+                facade.refreshCatalog()
+                runCatching { facade.catalogSnapshot() }.getOrNull()
+            } ?: return
         refresh()
-        val fresh = runCatching { facade.catalogSnapshot() }.getOrNull() ?: return
         cachedCatalogSnapshot = fresh
         val payload =
             CatalogSnapshotView(
@@ -1694,15 +1885,25 @@ fun P503App(
     // refresh is harmless and keeps the convention uniform. The failure handling stays exactly
     // the catalog-command path's shape (no added failure surface).
     fun runCounterpartyForm(dialog: CounterpartyDialog) {
-        val commands = facade.counterpartyCommands ?: return
+        if (!ledger.surfaces.counterpartyCommands) return
         scope.launch {
-            val result =
-                when (dialog) {
-                    is CounterpartyDialog.Create -> commands.create.execute(facade.ledgerId, dialog.nameText)
-                    is CounterpartyDialog.Rename -> commands.rename.execute(facade.ledgerId, dialog.counterpartyId, dialog.nameText)
-                }
-            if (shouldRefreshOptionsAfterCounterpartyCommand(result)) {
-                facade.refreshCatalog()
+            // P7-06 06.1 (spec 4.3(c)): the counterparty command + refresh run under one lease.
+            val refreshed =
+                ledger.probe { facade ->
+                    val commands = facade.counterpartyCommands ?: return@probe false
+                    val result =
+                        when (dialog) {
+                            is CounterpartyDialog.Create -> commands.create.execute(ledger.ledgerId, dialog.nameText)
+                            is CounterpartyDialog.Rename -> commands.rename.execute(ledger.ledgerId, dialog.counterpartyId, dialog.nameText)
+                        }
+                    if (shouldRefreshOptionsAfterCounterpartyCommand(result)) {
+                        facade.refreshCatalog()
+                        true
+                    } else {
+                        false
+                    }
+                } ?: false
+            if (refreshed) {
                 counterpartyVersion++
                 dispatch(P503UiEvent.DismissCounterpartyDialog)
             }
@@ -1791,7 +1992,7 @@ fun P503App(
 
     /** P7-05.B (DP-12: 仅详情入口): resolves the old-value snapshot and opens the correction surface. */
     fun openTransactionEdit(detail: TransactionDetail) {
-        if (facade.correctTransactionVersion == null) return
+        if (!ledger.surfaces.correction) return
         val snapshot = cachedCatalogSnapshot ?: return
         val origin = transactionEditOriginFromDetail(detail, snapshot) ?: return
         dispatch(P503UiEvent.OpenTransactionEdit(origin))
@@ -1800,12 +2001,12 @@ fun P503App(
     /** P7-05.B: whether the detail page's edit entry can be resolved right now (facade + catalog + payload). */
     fun correctionOriginResolvable(detail: TransactionDetail): Boolean {
         val snapshot = cachedCatalogSnapshot ?: return false
-        return facade.correctTransactionVersion != null && transactionEditOriginFromDetail(detail, snapshot) != null
+        return ledger.surfaces.correction && transactionEditOriginFromDetail(detail, snapshot) != null
     }
 
     /** P7-05.C (DP-12): opens the void confirmation page from the detail. */
     fun openVoidConfirm(detail: TransactionDetail) {
-        if (facade.voidTransaction == null) return
+        if (!ledger.surfaces.voidTransaction) return
         dispatch(P503UiEvent.OpenVoidConfirm(detail.transactionId))
     }
 
@@ -1815,20 +2016,26 @@ fun P503App(
      * snapshot is the stable identity conflict, and an absent/unreadable row stays unknown — the
      * surface keeps its submitting marker with no automatic retry and no request-id swap (the
      * `UnknownCommit` discipline; the reducer owns that marker).
+     * P7-06 06.1 (D-176; spec 4.3/4.4): the commit (and its lost-commit resolution) runs under one
+     * lease; the captured generation gates the landing.
      */
     fun commitTransactionCorrection(request: ExplicitlyConfirmedTransactionCorrection) {
-        val useCase = facade.correctTransactionVersion ?: return
+        if (!ledger.surfaces.correction) return
         scope.launch(Dispatchers.Default) {
-            val result =
-                try {
-                    useCase.execute(request)
-                } catch (failure: Exception) {
-                    val resolver = facade.resolveCorrectionCommitStatus ?: return@launch
-                    val identity = TransactionCorrectionRequestIdentity(request.ledgerId, request.requestId)
-                    val resolution = resolver.resolve(request.ledgerId, request.requestId, request.toRequestSnapshot())
-                    correctResultFromResolution(identity, resolution) ?: return@launch
+            val outcome =
+                ledger.leased { facade, _ ->
+                    try {
+                        facade.correctTransactionVersion!!.execute(request)
+                    } catch (failure: Exception) {
+                        val resolver = facade.resolveCorrectionCommitStatus ?: return@leased null
+                        val identity = TransactionCorrectionRequestIdentity(request.ledgerId, request.requestId)
+                        val resolution = resolver.resolve(request.ledgerId, request.requestId, request.toRequestSnapshot())
+                        correctResultFromResolution(identity, resolution)
+                    }
                 }
             scope.launch {
+                if (outcome !is LeaseOutcome.Completed || !ledger.isCurrentGeneration(outcome.generation)) return@launch
+                val result = outcome.value ?: return@launch
                 dispatch(P503UiEvent.TransactionEditResult(result))
                 refreshAfterP705Commit(result, coordinator)
             }
@@ -1845,23 +2052,23 @@ fun P503App(
      * the same id feeds the commit and its resolver.
      */
     fun confirmTransactionCorrection(current: P503AppState.TransactionEdit) {
-        if (facade.correctTransactionVersion == null) return
+        if (!ledger.surfaces.correction) return
         var request: ExplicitlyConfirmedTransactionCorrection? = null
         dispatchCurrentP503Action(
             current,
             latestState.value,
             {
-                val requestId = facade.requestIdSource.next()
+                val requestId = ledger.requestIdSource.next()
                 val built =
                     transactionCorrectionRequest(
-                        ledgerId = facade.ledgerId,
+                        ledgerId = ledger.ledgerId,
                         requestId = requestId,
                         origin = current.origin,
                         draft = current.draft,
-                        parseAmount = facade.parseAmount,
-                        parseOccurredAt = facade.parseOccurredAt,
-                        ledgerClock = facade.ledgerClock,
-                        fallbackCurrency = facade.currency,
+                        parseAmount = ledger.parseAmount,
+                        parseOccurredAt = ledger.parseOccurredAt,
+                        ledgerClock = ledger.ledgerClock,
+                        fallbackCurrency = ledger.currency,
                     )
                 if (built == null) {
                     P503UiEvent.TransactionEditResult(CORRECTION_FIELD_REJECTION)
@@ -1883,18 +2090,22 @@ fun P503App(
 
     /** P7-05.C: runs the void commit off the UI thread (the correction path's resolver discipline). */
     fun commitTransactionVoid(request: VoidTransactionRequest) {
-        val useCase = facade.voidTransaction ?: return
+        if (!ledger.surfaces.voidTransaction) return
         scope.launch(Dispatchers.Default) {
-            val result =
-                try {
-                    useCase.execute(request)
-                } catch (failure: Exception) {
-                    val resolver = facade.resolveVoidCommitStatus ?: return@launch
-                    val snapshot = request.toRequestSnapshot(TransactionVoidFactKind.VOID) ?: return@launch
-                    val identity = TransactionVoidRequestIdentity(request.ledgerId, request.requestId)
-                    voidResultFromResolution(identity, resolver.resolve(request.ledgerId, request.requestId, snapshot)) ?: return@launch
+            val outcome =
+                ledger.leased { facade, _ ->
+                    try {
+                        facade.voidTransaction!!.execute(request)
+                    } catch (failure: Exception) {
+                        val resolver = facade.resolveVoidCommitStatus ?: return@leased null
+                        val snapshot = request.toRequestSnapshot(TransactionVoidFactKind.VOID) ?: return@leased null
+                        val identity = TransactionVoidRequestIdentity(request.ledgerId, request.requestId)
+                        voidResultFromResolution(identity, resolver.resolve(request.ledgerId, request.requestId, snapshot))
+                    }
                 }
             scope.launch {
+                if (outcome !is LeaseOutcome.Completed || !ledger.isCurrentGeneration(outcome.generation)) return@launch
+                val result = outcome.value ?: return@launch
                 dispatch(P503UiEvent.TransactionVoidResult(result))
                 refreshAfterP705Commit(result, coordinator)
             }
@@ -1907,7 +2118,7 @@ fun P503App(
      * guard, so a stale render can neither mint an intent nor disturb an in-flight commit.
      */
     fun confirmVoid(current: P503AppState.VoidConfirm) {
-        if (facade.voidTransaction == null) return
+        if (!ledger.surfaces.voidTransaction) return
         var request: VoidTransactionRequest? = null
         dispatchCurrentP503Action(
             current,
@@ -1921,8 +2132,8 @@ fun P503App(
                         VoidTransactionResult.Rejected(rejection ?: P705FailureCode.P705_VOID_REASON_REQUIRED),
                     )
                 } else {
-                    val requestId = facade.requestIdSource.next()
-                    request = VoidTransactionRequest(facade.ledgerId, requestId, current.transactionId, reason, ExplicitManualSave)
+                    val requestId = ledger.requestIdSource.next()
+                    request = VoidTransactionRequest(ledger.ledgerId, requestId, current.transactionId, reason, ExplicitManualSave)
                     P503UiEvent.ConfirmVoid(requestId)
                 }
             },
@@ -1938,18 +2149,22 @@ fun P503App(
 
     /** P7-05.C: runs the restore commit off the UI thread (the void path's resolver discipline, `factKind = restore`). */
     fun commitRestore(request: VoidTransactionRequest) {
-        val useCase = facade.restoreTransaction ?: return
+        if (!ledger.surfaces.restore) return
         scope.launch(Dispatchers.Default) {
-            val result =
-                try {
-                    useCase.execute(request)
-                } catch (failure: Exception) {
-                    val resolver = facade.resolveVoidCommitStatus ?: return@launch
-                    val snapshot = request.toRequestSnapshot(TransactionVoidFactKind.RESTORE) ?: return@launch
-                    val identity = TransactionVoidRequestIdentity(request.ledgerId, request.requestId)
-                    voidResultFromResolution(identity, resolver.resolve(request.ledgerId, request.requestId, snapshot)) ?: return@launch
+            val outcome =
+                ledger.leased { facade, _ ->
+                    try {
+                        facade.restoreTransaction!!.execute(request)
+                    } catch (failure: Exception) {
+                        val resolver = facade.resolveVoidCommitStatus ?: return@leased null
+                        val snapshot = request.toRequestSnapshot(TransactionVoidFactKind.RESTORE) ?: return@leased null
+                        val identity = TransactionVoidRequestIdentity(request.ledgerId, request.requestId)
+                        voidResultFromResolution(identity, resolver.resolve(request.ledgerId, request.requestId, snapshot))
+                    }
                 }
             scope.launch {
+                if (outcome !is LeaseOutcome.Completed || !ledger.isCurrentGeneration(outcome.generation)) return@launch
+                val result = outcome.value ?: return@launch
                 dispatch(P503UiEvent.TransactionRestoreResult(result))
                 refreshAfterP705Commit(result, coordinator)
             }
@@ -1963,7 +2178,7 @@ fun P503App(
      */
     fun confirmRestore(current: P503AppState.RecycleBin) {
         val restore = current.restore ?: return
-        if (facade.restoreTransaction == null) return
+        if (!ledger.surfaces.restore) return
         var request: VoidTransactionRequest? = null
         dispatchCurrentP503Action(
             current,
@@ -1976,8 +2191,8 @@ fun P503App(
                         VoidTransactionResult.Rejected(rejection ?: P705FailureCode.P705_VOID_REASON_REQUIRED),
                     )
                 } else {
-                    val requestId = facade.requestIdSource.next()
-                    request = VoidTransactionRequest(facade.ledgerId, requestId, restore.transactionId, reason, ExplicitManualSave)
+                    val requestId = ledger.requestIdSource.next()
+                    request = VoidTransactionRequest(ledger.ledgerId, requestId, restore.transactionId, reason, ExplicitManualSave)
                     P503UiEvent.ConfirmRestore(requestId)
                 }
             },
@@ -1997,11 +2212,15 @@ fun P503App(
      * restore's effect is visible on the next open without any cached second source of truth.
      */
     fun requestRecycleBin() {
-        val query = facade.queryRecycleBin ?: return
+        if (!ledger.surfaces.recycleBin) return
         val alreadyOpen = latestState.value is P503AppState.RecycleBin
         scope.launch(Dispatchers.Default) {
-            val result = query.query()
+            // P7-06 06.1 (D-176; spec 4.3/4.4): read under a lease; the landing hop discards a
+            // result captured under a superseded generation.
+            val outcome = ledger.leased { facade, _ -> facade.queryRecycleBin?.query() }
             scope.launch {
+                if (outcome !is LeaseOutcome.Completed || !ledger.isCurrentGeneration(outcome.generation)) return@launch
+                val result = outcome.value ?: return@launch
                 dispatch(recycleBinReadEvent(alreadyOpen, result))
             }
         }
@@ -2031,25 +2250,33 @@ fun P503App(
     /** V-19 (D-173): the manual re-check of a lost correction commit (the retained snapshot). */
     fun recheckCorrectionCommitStatus() {
         val retained = retainedP705Request as? RetainedP705Request.Correction ?: return
-        val resolver = facade.resolveCorrectionCommitStatus ?: return
+        if (!ledger.surfaces.correction) return
         coordinator.recheckP705CommitOnce {
             scope.launch(Dispatchers.Default) {
-                try {
-                    val event =
-                        correctionRecheckEvent(retained) { ledgerId, requestId, snapshot ->
-                            resolver.resolve(ledgerId, requestId, snapshot)
+                // P7-06 06.1 (D-176; spec 4.3/4.4): the read-only resolve runs under a lease; the
+                // captured generation gates the landing. The outer catch keeps the V-19
+                // single-flight marker releasable if the resolve itself throws.
+                val outcome =
+                    try {
+                        ledger.leased { facade, _ ->
+                            val resolver = facade.resolveCorrectionCommitStatus ?: return@leased null
+                            correctionRecheckEvent(retained) { ledgerId, requestId, snapshot ->
+                                resolver.resolve(ledgerId, requestId, snapshot)
+                            }
                         }
-                    scope.launch {
-                        try {
-                            dispatch(event)
-                            refreshAfterP705Recheck(event, coordinator)
-                        } finally {
-                            coordinator.p705RecheckCompleted()
-                        }
+                    } catch (failure: Exception) {
+                        coordinator.p705RecheckCompleted()
+                        throw failure
                     }
-                } catch (failure: Exception) {
-                    coordinator.p705RecheckCompleted()
-                    throw failure
+                scope.launch {
+                    try {
+                        if (outcome !is LeaseOutcome.Completed || !ledger.isCurrentGeneration(outcome.generation)) return@launch
+                        val event = outcome.value ?: return@launch
+                        dispatch(event)
+                        refreshAfterP705Recheck(event, coordinator)
+                    } finally {
+                        coordinator.p705RecheckCompleted()
+                    }
                 }
             }
         }
@@ -2061,25 +2288,30 @@ fun P503App(
         // V-19 (D-173): the symmetric twin of recheckRestoreCommitStatus's guard — this entry is the
         // VOID one, so it is safe independent of its call site (which already checks the factKind).
         if (retained.snapshot.factKind != TransactionVoidFactKind.VOID) return
-        val resolver = facade.resolveVoidCommitStatus ?: return
+        if (!ledger.surfaces.voidTransaction) return
         coordinator.recheckP705CommitOnce {
             scope.launch(Dispatchers.Default) {
-                try {
-                    val event =
-                        voidRestoreRecheckEvent(retained) { ledgerId, requestId, snapshot ->
-                            resolver.resolve(ledgerId, requestId, snapshot)
+                val outcome =
+                    try {
+                        ledger.leased { facade, _ ->
+                            val resolver = facade.resolveVoidCommitStatus ?: return@leased null
+                            voidRestoreRecheckEvent(retained) { ledgerId, requestId, snapshot ->
+                                resolver.resolve(ledgerId, requestId, snapshot)
+                            }
                         }
-                    scope.launch {
-                        try {
-                            dispatch(event)
-                            refreshAfterP705Recheck(event, coordinator)
-                        } finally {
-                            coordinator.p705RecheckCompleted()
-                        }
+                    } catch (failure: Exception) {
+                        coordinator.p705RecheckCompleted()
+                        throw failure
                     }
-                } catch (failure: Exception) {
-                    coordinator.p705RecheckCompleted()
-                    throw failure
+                scope.launch {
+                    try {
+                        if (outcome !is LeaseOutcome.Completed || !ledger.isCurrentGeneration(outcome.generation)) return@launch
+                        val event = outcome.value ?: return@launch
+                        dispatch(event)
+                        refreshAfterP705Recheck(event, coordinator)
+                    } finally {
+                        coordinator.p705RecheckCompleted()
+                    }
                 }
             }
         }
@@ -2089,25 +2321,30 @@ fun P503App(
     fun recheckRestoreCommitStatus() {
         val retained = retainedP705Request as? RetainedP705Request.VoidOrRestore ?: return
         if (retained.snapshot.factKind != TransactionVoidFactKind.RESTORE) return
-        val resolver = facade.resolveVoidCommitStatus ?: return
+        if (!ledger.surfaces.restore) return
         coordinator.recheckP705CommitOnce {
             scope.launch(Dispatchers.Default) {
-                try {
-                    val event =
-                        voidRestoreRecheckEvent(retained) { ledgerId, requestId, snapshot ->
-                            resolver.resolve(ledgerId, requestId, snapshot)
+                val outcome =
+                    try {
+                        ledger.leased { facade, _ ->
+                            val resolver = facade.resolveVoidCommitStatus ?: return@leased null
+                            voidRestoreRecheckEvent(retained) { ledgerId, requestId, snapshot ->
+                                resolver.resolve(ledgerId, requestId, snapshot)
+                            }
                         }
-                    scope.launch {
-                        try {
-                            dispatch(event)
-                            refreshAfterP705Recheck(event, coordinator)
-                        } finally {
-                            coordinator.p705RecheckCompleted()
-                        }
+                    } catch (failure: Exception) {
+                        coordinator.p705RecheckCompleted()
+                        throw failure
                     }
-                } catch (failure: Exception) {
-                    coordinator.p705RecheckCompleted()
-                    throw failure
+                scope.launch {
+                    try {
+                        if (outcome !is LeaseOutcome.Completed || !ledger.isCurrentGeneration(outcome.generation)) return@launch
+                        val event = outcome.value ?: return@launch
+                        dispatch(event)
+                        refreshAfterP705Recheck(event, coordinator)
+                    } finally {
+                        coordinator.p705RecheckCompleted()
+                    }
                 }
             }
         }
@@ -2160,7 +2397,7 @@ fun P503App(
                                 // facade renders no dead button). Opening always reads the bin
                                 // fresh off the UI thread; the read dispatches OpenRecycleBin (a
                                 // re-open in place refreshes the projection instead).
-                                onOpenRecycleBin = if (facade.queryRecycleBin != null) ::requestRecycleBin else null,
+                                onOpenRecycleBin = if (ledger.surfaces.recycleBin) ::requestRecycleBin else null,
                             )
                         P503Tab.ACCOUNTS ->
                             P503CatalogManagementScreen(
@@ -2182,7 +2419,7 @@ fun P503App(
                         P503Tab.ANALYSIS ->
                             P503AnalysisScreen(
                                 state = current.state,
-                                summarizeActivity = facade.summarizeActivity,
+                                summarizeActivity = ledger.summarizeActivity,
                                 showMonthlyRegion = ledgerViewWired,
                                 selectedMonth = current.selectedMonth,
                                 resolvedCurrentMonth = resolvedCurrentMonth,
@@ -2200,7 +2437,7 @@ fun P503App(
                         P503Tab.IMPORT ->
                             P503ImportScreen(
                                 view = current.importReview,
-                                platform = facade.importPlatformKind,
+                                platform = ledger.importPlatformKind,
                                 onRefresh = ::requestImportReview,
                                 onStartFilePick = { format -> startImportFilePick(format) },
                                 onSelectCandidate = ::selectImportCandidate,
@@ -2234,7 +2471,7 @@ fun P503App(
                         } else {
                             null
                         },
-                    onVoidTransaction = if (facade.voidTransaction != null) ({ target -> openVoidConfirm(target) }) else null,
+                    onVoidTransaction = if (ledger.surfaces.voidTransaction) ({ target -> openVoidConfirm(target) }) else null,
                 )
             }
             // P7-04.C: the import candidate detail (spec sections 6.1/6.2). The catalog options
@@ -2242,7 +2479,7 @@ fun P503App(
             is P503AppState.ImportCandidateDetail ->
                 P503ImportCandidateDetailScreen(
                     state = current,
-                    defaultCurrency = facade.currency,
+                    defaultCurrency = ledger.currency,
                     validation = importDecisionValidation,
                     // A-PERF (spec section 2.3): the detail screen's catalog accounts read the
                     // CACHED snapshot (the previous direct facade read ran on the main thread
@@ -2271,7 +2508,7 @@ fun P503App(
                         // mints its own.
                         val current = latestState.value as? P503AppState.ImportCandidateDetail
                         val reviewable = current != null && importDuplicateReviewTarget(current.duplicates) != null
-                        val wired = current != null && facade.importDuplicateReview != null && facade.importDuplicateReviewIds() != null
+                        val wired = current != null && ledger.surfaces.importDuplicateReview && ledger.importDuplicateReviewIds() != null
                         if (reviewable && wired) {
                             dispatchCurrentP503Action(
                                 current,
@@ -2294,8 +2531,8 @@ fun P503App(
             is P503AppState.ImportBatchConfirm ->
                 P503ImportBatchConfirmScreen(
                     state = current,
-                    parseAmount = facade.parseAmount,
-                    defaultCurrency = facade.currency,
+                    parseAmount = ledger.parseAmount,
+                    defaultCurrency = ledger.currency,
                     onAuthorize = ::authorizeImportBatch,
                     // Back = cancel semantics (→ 原 OverviewEmpty， 保留勾选集与清单).
                     onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
@@ -2324,7 +2561,7 @@ fun P503App(
                     // P7-05.B (slice 1b Piece 4): the preview and the commit amount parse at the
                     // transaction's OWN currency (the Piece 3 residual is retired); the ledger
                     // default remains only the fallback for a legacy origin without one.
-                    currency = current.origin.currency ?: facade.currency,
+                    currency = current.origin.currency ?: ledger.currency,
                     categoryNames = cachedCatalogSnapshot?.correctionCategoryNames() ?: emptyMap(),
                     accountNames = cachedCatalogSnapshot?.correctionAccountNames() ?: emptyMap(),
                     categoryOptions =
@@ -2409,8 +2646,8 @@ fun P503App(
                     onUpdateCollectInterestCategory = { dispatch(P503UiEvent.UpdateCollectInterestCategory(it)) },
                     validation = validation,
                     currency = resolvedCurrency(current.draft),
-                    ledgerClock = facade.ledgerClock,
-                    parseOccurredAt = facade.parseOccurredAt,
+                    ledgerClock = ledger.ledgerClock,
+                    parseOccurredAt = ledger.parseOccurredAt,
                     onUpdateAmount = { dispatch(P503UiEvent.UpdateAmount(it)) },
                     onUpdatePaymentAccount = { dispatch(P503UiEvent.UpdatePaymentAccount(it)) },
                     onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
@@ -2433,7 +2670,7 @@ fun P503App(
                         dispatchCurrentP503Action(current, latestState.value, {
                             // requestId single rule (spec 7.4): allocate unconditionally when the
                             // draft has none, reuse it otherwise; never reallocate mid-intent.
-                            val requestId = current.requestId ?: facade.requestIdSource.next()
+                            val requestId = current.requestId ?: ledger.requestIdSource.next()
                             P503UiEvent.Continue(
                                 requestId,
                                 // P5-04.3: display labels resolved from the options; absent
@@ -2511,8 +2748,8 @@ fun P503App(
                     onUpdateCollectInterestCategory = { dispatch(P503UiEvent.UpdateCollectInterestCategory(it)) },
                     validation = validation,
                     currency = resolvedCurrency(current.draft),
-                    ledgerClock = facade.ledgerClock,
-                    parseOccurredAt = facade.parseOccurredAt,
+                    ledgerClock = ledger.ledgerClock,
+                    parseOccurredAt = ledger.parseOccurredAt,
                     onUpdateAmount = { dispatch(P503UiEvent.UpdateAmount(it)) },
                     onUpdatePaymentAccount = { dispatch(P503UiEvent.UpdatePaymentAccount(it)) },
                     onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
@@ -2560,8 +2797,8 @@ fun P503App(
                     onUpdateCollectInterestCategory = { dispatch(P503UiEvent.UpdateCollectInterestCategory(it)) },
                     validation = validation,
                     currency = resolvedCurrency(current.draft),
-                    ledgerClock = facade.ledgerClock,
-                    parseOccurredAt = facade.parseOccurredAt,
+                    ledgerClock = ledger.ledgerClock,
+                    parseOccurredAt = ledger.parseOccurredAt,
                     onUpdateAmount = { dispatch(P503UiEvent.UpdateAmount(it)) },
                     onUpdatePaymentAccount = { dispatch(P503UiEvent.UpdatePaymentAccount(it)) },
                     onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
@@ -2605,7 +2842,7 @@ fun P503App(
                                 resolvedCurrentMonth = resolvedCurrentMonth,
                                 monthlyTrend = monthlyTrend,
                                 entryRows = ledgerEntryRows,
-                                summarizeActivity = facade.summarizeActivity,
+                                summarizeActivity = ledger.summarizeActivity,
                                 onRetryRefresh = retryRefresh,
                             )
                         } else {
@@ -2711,6 +2948,21 @@ private fun TypedEntryDraft.toRetainedIntent(originTab: P503Tab): RetainedEntryI
 
 /** P7-02.A: the typed submit entry point, falling back to the expense-only path for legacy roots. */
 private fun P503LedgerFacade.submitEntryOrExpense(): com.unifiedledger.application.ExecuteManualEntrySubmission = submitEntry ?: throw IllegalStateException("facade is missing the typed entry submission")
+
+/**
+ * P7-06 06.1 (D-176; spec 4.3(b)): the typed `RuntimeNotReady` landing for a submit that could not
+ * acquire a lease. The type's existing [ManualExpenseSubmissionResult.InfrastructureFailure] is
+ * reused so the reducer keeps its frozen SUBMISSION-failure semantics (never a silently dropped
+ * submission and never a blocked UI thread).
+ */
+private fun runtimeNotReadySubmission(draft: TypedEntryDraft): ManualEntrySubmissionResult =
+    when (draft) {
+        is ExpenseDraft -> ManualEntrySubmissionResult.Expense(ManualExpenseSubmissionResult.InfrastructureFailure)
+        is IncomeDraft -> ManualEntrySubmissionResult.Income(ManualIncomeSubmissionResult.InfrastructureFailure)
+        is TransferDraft -> ManualEntrySubmissionResult.Transfer(ManualTransferSubmissionResult.InfrastructureFailure)
+        is LendDraft -> ManualEntrySubmissionResult.Lend(ManualLendSubmissionResult.InfrastructureFailure)
+        is CollectDraft -> ManualEntrySubmissionResult.Collect(ManualCollectSubmissionResult.InfrastructureFailure)
+    }
 
 /**
  * P7-03.D (F1; spec section 4.3, table 6.2a, C04): the retained monthly overview behind the
