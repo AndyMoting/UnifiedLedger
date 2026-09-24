@@ -150,7 +150,7 @@ owner 清单（§3）；Q13 容器字节格式定义、AAD 构造、KDF/AEAD 参
   PBEKeySpec spec = new PBEKeySpec(widened, salt, iterations, 256);
   ```
 
-  依据 Android `SecretKeyFactory` 文档对 PBE 族的原文警示——「use only the low order 8 bits of each password character」（https://developer.android.com/reference/javax/crypto/SecretKeyFactory）——故加宽取低 8 位与 PBE 语义一致。**不得**使用 `password.toCharArray()` 直接构造：评审已复现二者对非 ASCII 密码（如 `密码🔐`）产生**不同 derivedKey**，会导致两份实现互不可解密（证据 `local/artifacts/p7-06-gate/q13-crypto-official-evidence.md` 追加的非 ASCII 段；既有跨端字节兼容实证用 ASCII 密码，未覆盖该歧义）。**v1 不做任何 Unicode 规范化**（不做 NFC/NFKC），以保证「同一字节序列」在两端的可复现性；密码中的 U+0000 与未配对代理项由实现类型化拒绝（编码为合法 UTF-8 的前提）。**该编码的跨端一致性尚未用非 ASCII 向量实证**，已登记为 §6 的 OPEN 门项（06.A 实施前必须补测）。
+  依据 Android `SecretKeyFactory` 文档对 PBE 族的原文警示——「use only the low order 8 bits of each password character」（https://developer.android.com/reference/javax/crypto/SecretKeyFactory）——故加宽取低 8 位与 PBE 语义一致。**不得**使用 `password.toCharArray()` 直接构造：评审已复现二者对非 ASCII 密码（如 `密码🔐`）产生**不同 derivedKey**，会导致两份实现互不可解密（证据 `local/artifacts/p7-06-gate/q13-crypto-official-evidence.md` 追加的非 ASCII 段；既有跨端字节兼容实证用 ASCII 密码，未覆盖该歧义）。**v1 不做任何 Unicode 规范化**（不做 NFC/NFKC），以保证「同一字节序列」在两端的可复现性；密码中的 U+0000 与未配对代理项由实现类型化拒绝（编码为合法 UTF-8 的前提）。**该编码的跨端一致性已用非 ASCII（CJK）向量实证**：采用上述冻结加宽构造，密码 `密码🔐`、salt `000102030405060708090a0b0c0d0e0f`、600000 次 / 256-bit、IV `0f0e0d0c0b0a090807060504`、AAD `ULBK1-v1-aad-test`、明文 `snapshot-bytes`，在桌面 JVM 21（`SunJCE`）与 Android 16/API 36（`AndroidOpenSSL`）上 derivedKey 均为 `4937c6e3…f1410044`、ciphertext+tag 均为 `6dd125c9…566249`，两端**逐字节相同**（证据 `local/artifacts/p7-06-gate/q13-crypto-official-evidence.md` 追加的「非 ASCII 密码跨端向量（已实证）」段）。故 §6 中该门项已由 OPEN 改为 **CLOSED**。
 - **密钥材料编码**：`SecretKeyFactory.generateSecret(...).getEncoded()` 与 `SecretKeySpec` 均为原始字节；跨端一致性以 §6 的字节兼容实证为准，**不依赖 provider 身份**（JDK 21 为 SunJCE、Android 为 AndroidOpenSSL，证据同上）。
 
 ### 4.5 AEAD：AES-256-GCM
@@ -269,10 +269,10 @@ AAD = 固定头部(偏移 0..58，59 字节) || salt(salt_len 字节)
 | --- | --- | --- |
 | driver 快照：Android 系统 SQLite 3.44.3 `VACUUM INTO` 可达、参数绑定、产物完整性、拒绝覆盖、WAL 一致性 | **CLOSED** | `local/artifacts/p7-06-gate/q13-driver-snapshot-gate.md`（`bound-ok`、`integrity_check=ok`、`output file already exists` 拒绝、WAL 下自洽） |
 | driver 快照：桌面 xerial sqlite-jdbc 3.51.3.0 `VACUUM INTO` 可达、参数绑定、产物完整性、拒绝覆盖 | **CLOSED** | 同上（桌面段：`sqlite_version=3.51.3`、PreparedStatement 绑定 PASS、`output file already exists` 拒绝） |
-| 跨端 crypto 字节兼容：同参数下 derivedKey 与 ciphertext+tag 在 SunJCE 与 AndroidOpenSSL 上逐字节相同 | **CLOSED** | `local/artifacts/p7-06-gate/q13-crypto-official-evidence.md`（两端字节相同）。**注意**：该向量使用 **ASCII 密码**，未覆盖非 ASCII 编码歧义（见下 OPEN 行） |
+| 跨端 crypto 字节兼容：同参数下 derivedKey 与 ciphertext+tag 在 SunJCE 与 AndroidOpenSSL 上逐字节相同 | **CLOSED** | `local/artifacts/p7-06-gate/q13-crypto-official-evidence.md`（两端字节相同）。**注意**：该行向量使用 **ASCII 密码**；非 ASCII 编码歧义由下一条**独立**向量覆盖（亦已 CLOSED） |
 | 错密码 → 统一 FAIL（`AEADBadTagException`） | **OPEN（仅桌面侧已实证）** | 证据文件只记录**桌面侧**错密码得 `AEADBadTagException`；Android 侧同属 GCM 语义但**未单列实证**，故本子项**不**声称跨端闭合 |
 | 官方参数依据：AES-GCM 96-bit IV / 128-bit tag；PBKDF2-HMAC-SHA256 ≥ 600,000 次；salt ≥ 128 bit；AAD 先供给；统一 FAIL | **CLOSED** | 同上（NIST SP 800-38D、NIST SP 800-132、OWASP、RFC 5116/8018） |
-| **非 ASCII（CJK）密码的跨端向量**（冻结编码 `bytes→char` 加宽，§4.4） | **OPEN（未运行）** | 评审已复现朴素 `toCharArray()` 与「UTF-8 字节加宽」对密码 `密码🔐` 产生**不同 derivedKey**（证据文件追加的非 ASCII 段）；v1 已冻结加宽规则，但**该规则本身的跨端一致性尚未用非 ASCII 向量实证**。**06.A 实施前必须补测**，本规格不声称已达成 |
+| **非 ASCII（CJK）密码的跨端向量**（冻结编码 `bytes→char` 加宽，§4.4） | **CLOSED** | `local/artifacts/p7-06-gate/q13-crypto-official-evidence.md`（追加的「非 ASCII 密码跨端向量（已实证）」段）：采用 §4.4 **冻结的加宽构造**（`bytes = pw.getBytes(UTF_8)`；`widened[i] = (char)(bytes[i] & 0xFF)`），密码 `密码🔐`、salt `000102030405060708090a0b0c0d0e0f`、600000 次 / 256-bit、IV `0f0e0d0c0b0a090807060504`、AAD `ULBK1-v1-aad-test`、明文 `snapshot-bytes`；桌面 JVM 21（`SunJCE`）与 Android 16/API 36（`AndroidOpenSSL`）derivedKey 均为 `4937c6e3…f1410044`、ciphertext+tag 均为 `6dd125c9…566249`，两端**逐字节相同**。**仅此向量闭合**；P706-A09 作为验收向量仍属后续切片，本规格不把它标为 PASS（§7） |
 | **非 96-bit IV / 非 128-bit tag 的两端拒绝行为** | **OPEN（未运行）** | 证据文件列为须实证项（§5 第 (2) 条），**尚未运行**；本规格只冻结「`iv_len != 12`/`tag_len != 16` 即类型化拒绝」（§4.3.1、§4.5），不声称两端已实测 |
 | 大库 `VACUUM INTO` 时长与磁盘：61k 库（**源库** 371,658,752 B ≈ 354 MB）耗时 ~65.8 s、需与源库同量级额外磁盘 | **CLOSED（仅此两项）** | `q13-driver-snapshot-gate.md` 大库段：`~65.8 s`、**快照产物 355,721,216 B**、`integrity_check=ok`；设备数据分区 used +~0.7G（源+产物并存）。**354 MB 是源库大小，355,721,216 B 是快照输出大小**，二者不同 |
 | **大库峰值内存（61k）** | **OPEN** | **61k 峰值内存读数尚未取得**（设备无 `time -v`；`VACUUM INTO` 为流式实现但须在实现批补峰值内存读数）。证据文件明确记载未测峰值内存 |
@@ -283,7 +283,7 @@ AAD = 固定头部(偏移 0..58，59 字节) || salt(salt_len 字节)
 | **06.D 完整恢复机制（准入、切换、回滚、故障重启）** | **OPEN** | 属 06.4；本规格只给设计级方案（§5） |
 | **稳定存储（两端固定产品路径 + 旧路径升级）** | **OPEN** | 属 06.1/06.D 前置（§5.1） |
 
-**结论（如实）**：Q13 的**格式字节定义**（§4）与**两端 driver 快照可达性**、**跨端 crypto 字节兼容（ASCII 向量）**、**官方参数依据**已具备冻结条件；但下列项**仍未闭合**，故本规格给出格式定义的同时，把它们列为 06.A 最终冻结前的待补证据（计划 `:460`）：**大库峰值内存**、**桌面侧 61k 资源读数**、**非 ASCII 密码跨端向量**、**非 96-bit IV/非 128-bit tag 两端拒绝行为**、**OS 自动备份/设备迁移门**、**旧 schema 迁移门**。计划 `:460` 要求 Q13 实施规格冻结前必须补齐「现用 driver 快照实证；官方加密/KDF 依据、精确格式/参数/资源上限及双端验证」——其中「精确格式/参数」由本文给出，「资源上限」的**实测读数**与上列跨端向量仍待补。
+**结论（如实）**：Q13 的**格式字节定义**（§4）与**两端 driver 快照可达性**、**跨端 crypto 字节兼容（ASCII 向量与非 ASCII 密码向量均实证）**、**官方参数依据**已具备冻结条件；但下列项**仍未闭合**，故本规格给出格式定义的同时，把它们列为 06.A 最终冻结前的待补证据（计划 `:460`）：**大库峰值内存**、**桌面侧 61k 资源读数**、**非 96-bit IV/非 128-bit tag 两端拒绝行为**、**OS 自动备份/设备迁移门**、**旧 schema 迁移门**。计划 `:460` 要求 Q13 实施规格冻结前必须补齐「现用 driver 快照实证；官方加密/KDF 依据、精确格式/参数/资源上限及双端验证」——其中「精确格式/参数」由本文给出，「资源上限」的**实测读数**与上列跨端拒绝行为仍待补。
 
 ## 7. 验收映射（P706-A01..A12）
 
@@ -299,7 +299,7 @@ AAD = 固定头部(偏移 0..58，59 字节) || salt(salt_len 字节)
 | P706-A06 | 每个持久状态边界掉电/杀进程及重启 → 完整旧代或新代可用 | 06.4 | Q14 journal 崩溃顺序要求（§5.3、§5.5） |
 | P706-A07 | 恢复与导入/记账/读作业并发，旧回调晚到不污染新图 | 06.4 | Q14 的准入/等待要求（§5.5 第 2 点） |
 | P706-A08 | 恢复库已有提交回执，重放同请求返回原结果、零新增经济效果 | 06.4 | 物理快照保留幂等回执（§3、§4.2） |
-| P706-A09 | Android→Desktop→Android、两端退出进程再开，身份与事实一致 | 06.4/06.5 | 跨端字节兼容已用 **ASCII 向量**实证（§6）；非 ASCII 密码向量仍 OPEN，须在 06.A 前补测 |
+| P706-A09 | Android→Desktop→Android、两端退出进程再开，身份与事实一致 | 06.4/06.5 | 跨端字节兼容已用 **ASCII 向量**与**非 ASCII（CJK）密码向量**实证（§6，后者原 OPEN 门已闭合）；**本向量本身仍属后续切片，本规格不标 PASS** |
 | P706-A10 | 满盘、SAF 写失败、取消、损坏活动库 → 不报成功，FOUND-001 保留旧库 | 06.2/06.4 | 磁盘前置与「失败文件不标成功」（§4.8、§5.1 fail-closed） |
 | P706-A11 | 最终 schema 含预算配置历史及标签/商家注释历史，所有新增 owner 往返 | 06.5 | **前瞻性**：这些 owner 当前不存在（§3），纳入最终 schema 冻结时 |
 | P706-A12 | 累积候选库叠加 20k/50k 正式交易及历史，记录大小/峰值内存/时长，零 OOM/ANR | 06.5 | **阈值在 06.0 基线后冻结**；本规格登记峰值内存 OPEN（§6），不预先冻结阈值 |
@@ -320,5 +320,5 @@ AAD = 固定头部(偏移 0..58，59 字节) || salt(salt_len 字节)
 
 - 本文状态为 **proposal**（`docs/CONTRIBUTING.md:162` 允许分类之一）；尚未经独立规格评审，**不构成实施授权**，不冻结 Q13/Q14 的最终裁决。评审闭环并由主代理裁决后，本文方可转 `approved`（沿 D-156 规格先例 `docs/DECISIONS.md:2947`）。
 - 每项事实主张均带 file:line 或公开 URL 证据；本地证据以主 checkout 的 `local/artifacts/p7-06-gate/` 两文件为准（只读，不粘贴大段原文）。
-- **明确标记为未验证/未取读数**的项：61k 峰值内存（设备侧与桌面侧均未取）、桌面侧 61k `VACUUM INTO` 资源读数、**非 ASCII（CJK）密码的跨端向量**、**非 96-bit IV / 非 128-bit tag 的两端拒绝行为**、**Android 侧错密码统一 FAIL 的单独实证**、OS 自动备份/设备迁移门、旧 schema 迁移门、指针切换/重启恢复、06.D 完整机制、两端稳定存储（§6）。
+- **明确标记为未验证/未取读数**的项：61k 峰值内存（设备侧与桌面侧均未取）、桌面侧 61k `VACUUM INTO` 资源读数、**非 96-bit IV / 非 128-bit tag 的两端拒绝行为**、**Android 侧错密码统一 FAIL 的单独实证**、OS 自动备份/设备迁移门、旧 schema 迁移门、指针切换/重启恢复、06.D 完整机制、两端稳定存储（§6）。**非 ASCII（CJK）密码的跨端向量**原列于此，现已实证闭合（§4.4、§6），故不再属未验证项。
 - 本文不复制任何真实金额、时间、锚点注册值或个人数据；示例全部匿名合成；`.external/` 只读未触碰；`rgXX_` 竖井与 golden 零改动。
