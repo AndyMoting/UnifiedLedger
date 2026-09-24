@@ -2,7 +2,7 @@
 
 状态：proposal（2026-09-24 起草；本文是 06.2 / 06.B 导出切片的**设计规格**，按 `docs/CONTRIBUTING.md:162` 的允许分类标 `proposal`。本文**不**构成产品行为、迁移、技术选型或发布授权；它**不改动**任何已冻结字节、参数、拒绝码或既有决定，实施属后续实施批，并须经独立评审与 distinct verifier 后方可转 `approved`。）
 
-**Revision:** draft-1（2026-09-24）。基线 = 本 worktree 分支 `UL-p7-06sb`，基点 `d6cffb6`（P7-06 06.1 稳定存储与 `LedgerRuntimeOwner` 实施合并点，D-176）；schema **v31**，迁移链 `1.sqm`～`30.sqm`（30 个文件，v1→v31）。tracked 行号为该基点在本 worktree 的实读行号；`docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` 与 `local/artifacts/p7-06-gate/` 以主 checkout 为准、只读。示例与向量全部匿名合成；不粘贴大段产品代码，不写本机绝对路径。本文**不**新增决定条目、**不**修改任何既有决定。
+**Revision:** draft-2（2026-09-24；应用独立规格评审的 APPROVE WITH FINDINGS 全部条目：P2-1 `payload_sha256` 写序、P2-2 写侧 1 GiB 明文上限门、P2-3 有界流式写端口、P3-1 `integrity_check` 执行面登记、P3-2 A02 的 WAL 证据口径、P3-3～P3-5 引用精度）。基线 = 本 worktree 分支 `UL-p7-06sb`，基点 `d6cffb6`（P7-06 06.1 稳定存储与 `LedgerRuntimeOwner` 实施合并点，D-176）；schema **v31**，迁移链 `1.sqm`～`30.sqm`（30 个文件，v1→v31）。tracked 行号为该基点在本 worktree 的实读行号；`docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` 与 `local/artifacts/p7-06-gate/` 以主 checkout 为准、只读。示例与向量全部匿名合成；不粘贴大段产品代码，不写本机绝对路径。本文**不**新增决定条目、**不**修改任何既有决定。
 
 ## Authority And Boundary
 
@@ -55,7 +55,7 @@
 | 事实 | 位置 | 06.B 必须补什么 |
 | --- | --- | --- |
 | 平台无关文件端口 | `app-ui/src/commonMain/kotlin/com/unifiedledger/ui/LedgerStableStorage.kt:50-104`（`interface LedgerFileSystem`） | 现有 `join`/`exists`/`isDirectory`/`length`/`readBytes`/`readPrefix`(`:71-74`)/`writeAtomic`(`:81-84`)/`copy`(`:86-89`)/`delete`(`:91`)/`createDirectories`(`:93`)/`fsyncFile`(`:96`)/`fsyncDirectory`(`:103`)。**无**「向用户目标的有界写流」「可用空间查询」「容器级临时文件 + 原子 rename」 |
-| 稳定存储布局 | `LedgerStableStorage.kt:106-128`（`LedgerStorageLayout`；`hostDirectory` `:107`） | 私有暂存的父位置可解析自该宿主目录；字面命名归实施批（容器规格 §5.2 只冻结语义） |
+| 稳定存储布局 | `LedgerStableStorage.kt:106-128`（`LedgerStorageLayout`；`hostDirectory` `:110`） | 私有暂存的父位置可解析自该宿主目录；字面命名归实施批（容器规格 §5.2 只冻结语义） |
 | Android 适配器 | `android-app/src/main/kotlin/com/unifiedledger/android/AndroidLedgerFileSystem.kt:22`（类）；`readPrefix` `:36-46`；`writeAtomic`（`AtomicFile`）`:48-64`；`copy` `:66-74`；`delete` `:76-80`；`createDirectories` `:82-84`；`fsyncFile` `:86-88`；`fsyncDirectory` 空实现 `:90-94` | 同上：**无**有界写流、**无**可用空间查询（Android 需 `StatFs`/`File.usableSpace` 类原语，属实施批） |
 | 桌面适配器 | `desktop-app/src/jvmMain/kotlin/com/unifiedledger/desktop/DesktopLedgerFileSystem.kt:19`（类）；`readPrefix` `:33-43`；`writeAtomic`（临时文件 + 原子 rename）`:45-70`；`fsyncFile` `:90-92`；`fsyncDirectory` 尽力 `:94-100`；宿主解析 `:118-134` | 桌面 `Files.move(ATOMIC_MOVE)` 已在 `writeAtomic` 内；**无**有界写流、**无**可用空间查询（桌面需 `FileStore.getUsableSpace()` 类原语，属实施批） |
 | 全仓零可用空间 API | 对产品源码检索 `getUsableSpace`/`StatFs`/`usableSpace` **零命中**（本基点实读） | 导出侧磁盘前置（容器规格 §4.8）当前**无法**执行，06.B 必须先补该原语 |
@@ -67,7 +67,7 @@
 | Android 句柄工厂 | `ledger-data/src/androidMain/kotlin/com/unifiedledger/data/AndroidLedgerDatabaseHandle.kt:9-19`（`createAndroidLedgerDatabase(context, name)`） | 导出快照须在该受控连接上执行 |
 | driver 私有 | `AndroidLedgerDatabaseHandle.kt:71-85`（`class AndroidLedgerDatabaseHandle`，`private val driver` `:84`）；`close()` `:86-88` | 组合根**拿不到** driver；不能从外部对 driver 发 `VACUUM INTO` |
 | 受控入口先例 | `AndroidLedgerDatabaseHandle.kt:101-103`（`runQueryStatisticsOptimize()`）、`:119-121`（`runFullAnalyze()`） | 06.B 须按**同一形状**在句柄上新增一个受控快照入口（如 `runSnapshotInto(target)`），委托到 commonMain 的 driver 级 helper |
-| commonMain driver 级 helper 先例 | `ledger-data/src/commonMain/kotlin/com/unifiedledger/data/QueryStatisticsOptimize.kt:55-71`（`runQueryStatisticsOptimizeOn(driver)` 走 `executeQuery`）、`:81-87`（`runFullAnalyzeOn(driver)` 走 `driver.execute`，行少语句） | `VACUUM INTO` 为**行少语句**，按该文件 `:39-50` 的两侧披露，Android 走 `driver.execute`、JDBC 亦走 `driver.execute`；具体 binder 路径见 §1.4 未验证项 |
+| commonMain driver 级 helper 先例 | `ledger-data/src/commonMain/kotlin/com/unifiedledger/data/QueryStatisticsOptimize.kt:55-71`（`runQueryStatisticsOptimizeOn(driver)` 走 `executeQuery`）、`:81-87`（`runFullAnalyzeOn(driver)` 走 `driver.execute`，行少语句） | `VACUUM INTO` 为**行少语句**，按该文件 `:39-50` 的两侧披露，Android 走 `driver.execute`、JDBC 亦走 `driver.execute`；具体 binder 路径尚未实证（见 §3.3 未验证项、§9 第 4 项） |
 | Android 未配置 WAL / busy_timeout | `AndroidLedgerDatabaseHandle.kt:139-148`（`ForeignKeysCallback.onConfigure` 只设 `setForeignKeyConstraintsEnabled(true)`；注释明述不设 `busy_timeout`） | 与门证据一致：Android 源库 `journal_mode=delete`（`q13-driver-snapshot-gate.md`），快照机制不依赖 WAL |
 | 桌面 JDBC 打开 | `desktop-app/src/jvmMain/kotlin/com/unifiedledger/desktop/Main.kt:805-806`（`openDesktopLedger` → `JdbcSqliteDriver(databaseUrl)`）；`:855`（`migrateToCurrentSchema`）；`:944-987`（`hasTable`/`writeUserVersion`/`readUserVersion` 的 raw-exec 先例） | 桌面同样 driver 私有于组合根；raw `execute`/`executeQuery` 已有先例（`driver.execute(null, "PRAGMA ...", 0)`） |
 
@@ -82,7 +82,9 @@
 
 ### 1.5 零 crypto、零 `VACUUM`（已复核）
 
-- 对产品源码（`android-app/src/main`、`desktop-app/src/jvmMain`、`app-ui/src/commonMain`、`ledger-data/src/commonMain`、`ledger-data/src/androidMain`、`ledger-application/src`、`ledger-domain/src`）检索 `javax.crypto`/`Cipher`/`PBKDF2`/`SecretKey`/`AEAD`/`GCMParameterSpec`/`PBEKeySpec` **零命中**（本基点实读）；检索 `VACUUM` 在**全仓** `.kt` **零命中**。故加密实现与快照 SQL 均为 06.B 新增，`MessageDigest("SHA-256")` 仅在 Android instrumented 测试中作为哈希工具使用（`android-app/src/androidTest/kotlin/com/unifiedledger/android/AndroidStartupFailClosedInstrumentedTest.kt:199-201`）。
+- 对产品源码（`android-app/src/main`、`desktop-app/src/jvmMain`、`app-ui/src/commonMain`、`ledger-data/src/commonMain`、`ledger-data/src/androidMain`、`ledger-application/src`、`ledger-domain/src`）检索 `javax.crypto`/`Cipher`/`PBKDF2`/`SecretKey`/`AEAD`/`GCMParameterSpec`/`PBEKeySpec` **零命中**（本基点实读）；检索 `VACUUM` 在**全仓** `.kt` **零命中**。故加密实现与快照 SQL 均为 06.B 新增。
+- **`MessageDigest("SHA-256")` 的现有用途（仅测试，非产品路径）**：`android-app/src/androidTest/kotlin/com/unifiedledger/android/AndroidStartupFailClosedInstrumentedTest.kt:199-201`（Android instrumented），以及 JVM 测试 `ledger-application/src/jvmTest/kotlin/com/unifiedledger/application/ImportContentFingerprintJvmTest.kt:280`、`Rg09FingerprintJvmTest.kt:29`、`import/ccb/CcbBillParserJvmTest.kt:567`。**产品**代码的 SHA-256 走手写实现 `Sha256`（`ledger-application/src/commonMain/kotlin/com/unifiedledger/application/JcsSha256.kt:46`、`digestHex` `:126`），由 `ImportContentFingerprint.kt:57`/`:81`/`:85` 等调用，**不**使用 `java.security.MessageDigest`。
+- **对 06.B 的含义**：写入端的 `payload_sha256` 需要**流式**哈希（§5 的 64 KiB 分块，不得整文件读入）；现有 `Sha256.digestHex(ByteArray)` 只接受**已完整读入内存**的字节数组，且手写实现未做流式增量接口，故**不能**直接复用为快照哈希；`MessageDigest` 支持 `update(ByteArray, Int, Int)` 增量喂入，可满足流式要求。具体原语选择（`MessageDigest` 增量 vs 为 `Sha256` 增加增量接口）归实施批，本文只冻结「必须流式、不得整读」。
 - **CSPRNG 先例**：两端组合根已用 `java.security.SecureRandom` 生成 UUIDv7 随机位（Android `App.kt:140`/`:761-763`；桌面 `Main.kt:150`/`:991-993`）。salt/IV 的 CSPRNG 源可沿用同一平台原语（容器规格 §4.4/§4.5 要求 CSPRNG）。
 - **平台 crypto API 可用性**：两端均为 JVM/JCE 环境，`javax.crypto` 可用（桌面 JDK 21 `SunJCE`、Android `AndroidOpenSSL`；跨端字节兼容已由门证据实证），故 **06.B 不引入新依赖**（容器规格 §8）。
 
@@ -129,6 +131,7 @@
 
 - 在生成快照**之前**检查可用空间 ≥ **`container_size + plaintext_size + 64 MiB`**（容器规格 §4.8 `:204`、`:200`；公式 `:204`）。其中 `plaintext_size` 取当前活动主文件大小（或其上界），`container_size` 取 `plaintext_size + 59 + salt_len + iv_len + tag_len` 的上界（§4.3 布局）。
 - **空间不足** → 类型化拒绝（如 `P706_EXPORT_INSUFFICIENT_SPACE`，命名归实施批），**不开始**生成快照，**不**创建任何用户目标文件。
+- **同一前置步须先查明文上限（写侧门）**：本步同时执行 §5 的**前置门**——活动主文件大小 > **1 GiB** 即类型化拒绝（`P706_EXPORT_PLAINTEXT_TOO_LARGE`），理由见 §5（否则会产出读取端自拒的容器）。两次检查都在 `VACUUM INTO` 之前、都在用户目标被创建之前。
 - **依赖缺口（明确登记）**：可用空间查询原语当前**不存在**（§1.2 零命中），06.B 必须先补（Android `StatFs`/`File.usableSpace`、桌面 `FileStore.getUsableSpace`）。**未验证项**：具体平台 API 选择归实施批。
 - **注意**：64 MiB 余量相对 354 MB 级快照不足 20%，不得当作主要余量来源；真正的 fail-closed 来自「不得在写满磁盘后留下成功标记」（容器规格 §4.8 `:208`）。
 
@@ -136,15 +139,17 @@
 
 - 快照 SQL 为 `VACUUM INTO ?`（或等价的绑定参数形式），**在受控连接上**执行：Android 经句柄新增的受控入口（§1.3），桌面经组合根的 graph 入口；两者委托到 commonMain 的 driver 级 helper（形状同 `QueryStatisticsOptimize.kt:55-87`）。
 - **目标路径**：私有暂存快照文件（§5），**必须不存在**——门证据显示两端 `VACUUM INTO` 对已存在目标报 `output file already exists` 并拒绝覆盖（`q13-driver-snapshot-gate.md`）；06.B 须在调用前确保目标不存在（存在则先删除或换名），且**绝不**以活动代主文件或用户目标为快照落点。
+- **后置明文上限门**：`VACUUM INTO` 返回后**立即**对实际快照文件大小执行 §5 的**后置门**（> **1 GiB** 即删除快照、释放租约、类型化拒绝 `P706_EXPORT_PLAINTEXT_TOO_LARGE`，**不**创建用户目标文件）。依据：快照产物可能略大于源（门证据 354 MB 源 → 355,721,216 B 产物），故不能只靠前置门。
 - **一致性依据**：owner 单活动图 = 单一受控连接；SQLite 在该连接上串行执行语句，`VACUUM INTO` 在**同一连接**上产生自洽文件（门证据：WAL 下 `integrity_check=ok`、快照 `journal_mode=delete`、独立自洽文件）。Android 源库为 `journal_mode=delete`（§1.3），机制不依赖 WAL。
 - **不做裸复制**：快照**不得**用 `LedgerFileSystem.copy` 复制活动主文件代替（容器规格 §4.2 `:91`；计划 06.A 行 `:135` 明令不把裸复制等同完整备份）。
 - **线程要求**：快照与后续加解密**必须在后台线程**执行，**禁止** UI 线程（容器规格 §4.8 `:210`；计划 `:160`）。61k 大库实测 `VACUUM INTO` 约 **65.8 s**（源库约 **354 MB**；`q13-driver-snapshot-gate.md` 大库段），故 UI 不得阻塞并须显示进度。
 - **失败/取消**：`VACUUM INTO` 失败或取消（取消在语句粒度不可中断，故取消在语句完成后于后续步骤生效）→ 删除已产生的部分快照文件 → 释放租约 → 返回失败/已取消，**不报告成功**。
-- **未验证项**：**大库峰值内存**（61k）未测（容器规格 §6 `:289`；`q13-driver-snapshot-gate.md` 明述未取），故本文不预先冻结内存阈值。**未验证项**：`VACUUM INTO` 经 **SQLDelight 的 Android `driver.execute` binder 路径**执行尚未实证（门证据的 Android 参数绑定用的是设备 `sqlite3` CLI 的 `.parameter set`，桌面用的是 JDBC `PreparedStatement`；`q13-driver-snapshot-gate.md`），故该具体路径属实施批须实证项。
+- **未验证项**：**大库峰值内存**（61k）未测（容器规格 §6 `:289`；`q13-driver-snapshot-gate.md` 明述未取），故本文不预先冻结内存阈值。**未验证项**：`VACUUM INTO` 经 **SQLDelight 的 Android `driver.execute` binder 路径**执行尚未实证（门证据的 Android 参数绑定用的是设备 `sqlite3` CLI 的 `.parameter set`，桌面用的是 JDBC `PreparedStatement`；`q13-driver-snapshot-gate.md`），故该具体路径属实施批须实证项。**未验证项**：步骤 4 的 `integrity_check` 需对**快照文件**第二次打开数据库，该表面当前不存在（§3.4、§9 第 9 项）。
 
 ### 3.4 步骤 4：关闭快照并验证（`integrity_check`）
 
 - 快照文件句柄在 `VACUUM INTO` 返回后即关闭（SQLite 已完成写入）。随后对**快照文件**（而非活动库）执行 `PRAGMA integrity_check`，要求结果为 `ok`；并可读回 `PRAGMA user_version` 以填充容器头部 `db_schema_version`（非权威提示，容器规格 §4.3.2 `:136`）。
+- **执行面（明确登记为未验证项）**：该 `PRAGMA` 必须作用在**快照文件**上，即需要**第二次打开数据库**——活动连接正持有活动代主文件，不能替代。而 driver 对组合根私有（§1.3），现有受控入口（`runQueryStatisticsOptimize`/`runFullAnalyze`）都作用于活动句柄，**没有**「对任意路径开一个只读校验连接」的现有表面。故 06.B 须新增该第二打开表面（Android 经新增受控入口委托到 commonMain driver 级 helper、桌面经 graph 入口），其**具体 driver 选择与打开/关闭语义尚未实证**，登记为 §9 第 9 项；本文不预先冻结其实现。
 - **失败** → 删除快照 → 释放租约 → 返回类型化失败（如 `P706_SNAPSHOT_INTEGRITY_FAILED`，命名归实施批），**不报告成功**，**不**创建用户目标文件。
 - **边界**：本步骤只验证**快照自洽**；容器的格式/结构/领域预检属 **06.C**（§2.2）。
 
@@ -152,8 +157,8 @@
 
 本步骤分为**两相**，以满足「用户目标可能不支持原子 rename；中断时明确『未完成备份』」（计划 `:160`）与「失败文件不标成功」（计划 `:136`）：
 
-1. **相 1（私有暂存内生成认证容器）**：按容器规格 §4.3 逐字节写容器到**私有暂存容器文件**，流式加密（64 KiB 分块，§5）。此相结束时容器**已完整认证**（尾部 tag 已写、流正常关闭）。
-2. **相 2（交付到用户目标）**：经平台保存端口把私有暂存容器**有界复制**到用户选择的目标。若目标为本地文件且平台支持原子 rename，则用 `writeAtomic` 语义（Android `AtomicFile` / 桌面临时文件 + `ATOMIC_MOVE`，`DesktopLedgerFileSystem.kt:45-70`、`AndroidLedgerFileSystem.kt:48-64`）；若目标不支持原子 rename（如 SAF 外部 provider），则流式写出并在**流正常关闭**后报告成功。
+1. **相 1（私有暂存内生成认证容器）**：按容器规格 §4.3 逐字节写容器到**私有暂存容器文件**。按 §4.6 的两遍顺序：**第一遍** 64 KiB 分块流式读快照**完整算完** `payload_sha256`（必须先于写头部，因为该值在固定头部偏移 27 且固定头部是 AAD），组装并写头部 + salt + iv，**第二遍** 64 KiB 分块流式读做流式加密（§5）。此相结束时容器**已完整认证**（尾部 tag 已写、流正常关闭）。
+2. **相 2（交付到用户目标）**：经平台保存端口把私有暂存容器**有界复制**到用户选择的目标。**必须使用 06.B 新增的有界流式写端口**（commonMain 只声明闭包/值类型，平台侧实现 SAF `CreateDocument` / `JFileChooser`；形状沿用 §1.4 的 `ImportFilePickPort` 先例），按 64 KiB 分块从暂存容器读到用户目标。**禁止**调用现有 `LedgerFileSystem.writeAtomic(path, bytes: ByteArray)`（`LedgerStableStorage.kt:81-84`）——它是**整文件读入内存**的写原语，对最大 ~2 GiB 的容器既违反 §5 的 64 KiB 流式规则，也违反 §5 的「禁止无界读入」；`DesktopLedgerFileSystem.kt:45-70` 与 `AndroidLedgerFileSystem.kt:48-64` 的适配器实现同样以 `ByteArray` 为入参。仅**保留**这些适配器体现的**原子 rename 语义**（临时文件 + 平台原子替换；桌面 `Files.move(ATOMIC_MOVE)`、Android `AtomicFile`）：若目标为本地文件且平台支持原子 rename，则流式写到同目录临时文件、fsync 后原子替换；若目标不支持原子 rename（如 SAF 外部 provider），则流式写出并在**流正常关闭**后报告成功。
 
 - **报告成功的唯一条件**：相 1 完成（认证尾部已写）+ 相 2 的交付流**正常关闭**（且原子替换成功，如适用）。**仅此**才报告成功（计划 `:160`）。
 - **失败/取消**：相 1 失败/取消 → 删除私有暂存容器 → 不报告成功（用户目标未被触碰）。相 2 失败/取消 → **尽力**删除用户目标上的部分文件，并报告「未完成备份」；**不承诺**外部 provider 自动删除失败文件（计划 `:160`），也不把该部分文件标记为成功。
@@ -229,24 +234,31 @@ AAD = 固定头部(偏移 0..58，59 字节) || salt(salt_len 字节)
 
 1. 生成 salt(16) 与 iv(12)（CSPRNG）。
 2. 由密码（加宽编码）+ salt + 600000 + 256 派生密钥。
-3. 计算 `plaintext_len` = 快照大小；流式计算 `payload_sha256`（分块，§5）。
+3. 计算 `plaintext_len` = 快照大小；**第一遍** 64 KiB 分块流式读**完整算完** `payload_sha256`（**必须**先于步骤 5/6，因为该值在固定头部偏移 27，而固定头部是加密的 AAD；§5）。
 4. 组装固定头部（含 `db_schema_version` = 快照 `user_version`）。
 5. 写头部 + salt + iv 到私有暂存容器。
-6. `Cipher` 初始化 GCM（iv，128-bit tag）→ `updateAAD(header || salt)` → 分块 `update` 写密文。
+6. `Cipher` 初始化 GCM（iv，128-bit tag）→ `updateAAD(header || salt)` → **第二遍** 64 KiB 分块读快照并 `update` 写密文（**第二遍有界流式读**；§5）。
 7. `doFinal` 写尾部 tag；流正常关闭；fsync（如平台支持）。
 8. 使用后清除 `PBEKeySpec` 字符数组（`clearPassword()`）与派生密钥字节（容器规格 §4.10 `:225`）。
+
+**两遍读的说明**：步骤 3 与步骤 6 各是一次有界的 64 KiB 分块流式读，**都不得**把快照整体读入内存；不存在「哈希与加密同一遍」的可行顺序（§5）。
 
 ## 5. 资源上限与有界 IO
 
 | 限制 | 值 | 出处 |
 | --- | --- | --- |
 | 容器上限 | **2 GiB**（读取端类型化拒绝 `P706_CONTAINER_TOO_LARGE`） | 容器规格 §4.8 `:197` |
-| 明文（快照）上限 | **1 GiB**（`plaintext_len` 超限即拒绝） | 容器规格 §4.8 `:198` |
+| 明文（快照）上限 | **1 GiB**（读取端在 `plaintext_len` 超限时拒绝；**同时**为写入端绑定上限，见下） | 容器规格 §4.8 `:198` |
 | 流式缓冲 | 固定 **64 KiB**，逐块 `update`/写入 | 容器规格 §4.8 `:202` |
 | 导出侧磁盘前置 | 可用空间 ≥ `container_size + plaintext_size + 64 MiB` | 容器规格 §4.8 `:204` |
 
+- **写入端必须自己执行 1 GiB 明文上限（不得只依赖读取端）**：容器规格 §4.8 `:198` 的 `P706_CONTAINER_TOO_LARGE`/`plaintext_len` 上限是**读取端**检查；写入端若不设门，源库快照 > 1 GiB 时会**通过**磁盘前置、产出一个**连 06.B 自己的读取端都会拒绝**的容器——即「导出报成功但产物不可用」。故 06.B 必须加**写侧门**，且在**创建任何用户目标文件之前**拒绝：
+  - **前置门（`VACUUM INTO` 之前）**：先取当前活动主文件大小（或其上界，§3.2 已用于磁盘公式）；若已 > 1 GiB 即类型化拒绝（如 `P706_EXPORT_PLAINTEXT_TOO_LARGE`，命名归实施批），**不**生成快照、**不**触碰用户目标。
+  - **后置门（快照生成之后、加密之前）**：`VACUUM INTO` 产物可能略大于源（门证据：354 MB 源 → 355,721,216 B 产物），故须对**实际快照文件大小**再查一次；> 1 GiB 即删除快照、释放租约、类型化拒绝，**不**创建用户目标文件。
+  - **绑定上限**：**1 GiB 明文上限（严于 2 GiB 容器上限）是写入端的绑定上限**——因为 `container_size = plaintext_len + 59 + salt_len + iv_len + tag_len`，明文一旦 ≤ 1 GiB，容器必 ≤ 1 GiB + 75 字节，远低于 2 GiB 容器上限；故写侧只需门 1 GiB 明文，无需单独门容器大小。
+
 - **禁止无界读入**：**不得**对无界输入调用 `readBytes()` 或任何整文件读入内存的 API（容器规格 §4.8 `:202`；计划 `:144`）。注意现有 `LedgerFileSystem.readBytes`（`LedgerStableStorage.kt:63`）是整文件读入，**不得**用于快照或容器；导出路径只用 64 KiB 分块（可新增流式端口，§1.2）。
-- **`payload_sha256` 分块计算**：与加密同一遍流式计算，不二次整读。
+- **`payload_sha256` 必须先完成、再做加密（两遍有界流式读）**：`payload_sha256` 位于固定头部偏移 27，而固定头部是加密开始前供给的 AAD（§4.4、§4.6），故**不可能**与加密在同一遍流中算出。正确顺序（与 §4.6 一致）：**第一遍**对快照做一次 64 KiB 分块流式读，**完整算完** `payload_sha256`；据此组装固定头部并写头部 + salt + iv；**第二遍**再对快照做一次 64 KiB 分块流式读做 GCM 加密。**两遍都不得**把快照整体读入内存。
 - **必须在后台线程**：快照、KDF、流式加解密、交付**全部**在后台线程；**禁止** UI 线程（容器规格 §4.8 `:210`）。依据：61k 大库 `VACUUM INTO` 实测约 **65.8 s**、源库约 **354 MB**（`q13-driver-snapshot-gate.md` 大库段），故须显示进度、处理空间不足/取消。
 - **KDF 后台 + 可取消**：读取端对 `kdf_iterations` 上界（10,000,000）的 CPU 成本须在后台执行并以进度/可取消方式呈现（容器规格 §4.4 `:142`）；写入端固定 600000 亦在后台执行。
 - **取消粒度**：取消令牌在 64 KiB 分块之间检查；快照阶段（`VACUUM INTO`）为单条不可中断语句，取消在语句完成后生效（§3.3）。
@@ -267,20 +279,20 @@ AAD = 固定头部(偏移 0..58，59 字节) || salt(salt_len 字节)
 | 验收 ID | 计划要求（摘要，计划 `:181-190`） | 06.B 交付 | 留给后续切片 |
 | --- | --- | --- | --- |
 | P706-A01 | 当前库含全部 owner，往返逐 owner/稳定 ID 等价 | 快照为**整库物理快照**（`VACUUM INTO`），保留全部 owner（容器规格 §3 清单）；**往返等价**由 06.C/06.4 验证 | 往返与权威投影（06.C/06.4） |
-| P706-A02 | WAL 下持续写入时导出，还原只出现自洽时点 | 受控连接上的 `VACUUM INTO` 一致性快照机制；**driver 门两端已实证**（`q13-driver-snapshot-gate.md`）；**两端快照集成试验**属 06.2 实施 | WAL 并发集成试验与还原自洽（06.2/06.4） |
+| P706-A02 | WAL 下持续写入时导出，还原只出现自洽时点 | 受控连接上的 `VACUUM INTO` 一致性快照机制。**driver 门两端已实证的仅限：可达、参数绑定、产物完整性、拒绝覆盖**（`q13-driver-snapshot-gate.md`）。**WAL 一致性子claim 只在 Android 侧实证**（经设备 `sqlite3` CLI 的 `journal_mode=WAL` + 写事务 + `VACUUM INTO`）；**桌面门用的是非 WAL 的 4 交易库**（`user_version=30`），故**桌面 WAL 并发一致性未测**。**两端快照集成试验**属 06.2 实施 | WAL 并发集成试验与还原自洽（06.2/06.4） |
 | P706-A03（导出侧相关） | 错密码、认证失败、截断、伪格式、超限、未知未来/无版本库、异账本 → 类型化拒绝 | **无**（拒绝码与容器格式判定属 06.C）；06.B 只保证写出的头部合法（§4.5） | 容器级类型化拒绝（06.C） |
 | P706-A08 | 恢复库已有提交回执，重放同请求返回原结果、零新增经济效果 | 物理快照保留幂等回执（容器规格 §3、§4.2）；**重放行为**属 06.4 | 重放语义（06.4） |
 | P706-A09（导出侧相关） | Android→Desktop→Android 身份与事实一致 | 跨端字节兼容已用 **ASCII 向量**与**非 ASCII（CJK）密码向量**实证（容器规格 §6 `:282`、`:285`）；**A09 验收本身**属 06.4/06.5 | 端到端跨端与跨进程重开（06.4/06.5） |
 | P706-A10 | 满盘、SAF 写失败、取消、损坏活动库 → 不报成功；FOUND-001 保留旧库 | **06.B 核心**：导出侧磁盘前置（§3.2/§5）、取消（§3.3/§3.5）、SAF/写失败不报成功（§3.5/§3.6）、失败工件按策略处置（§3.5/§6）；**损坏活动库 fail-closed 保留旧库**已由 06.1 交付（06.1 规格 §6 `:281-282`） | FOUND-001 回归属 06.1/06.D（本文不改） |
 
-**格式层面 06.B 即可支撑的**：A01 的分母（整库快照）、A02 的快照机制（driver 门已实证）、A08 的幂等回执随快照保留、A10 的导出侧磁盘/取消/写失败不报成功、A09 的跨端可解密。**属后续切片的**：A01/A02 的实际往返与集成试验、A03 的容器拒绝、A08 的重放、A09 的端到端、A10 的恢复侧路径。
+**格式层面 06.B 即可支撑的**：A01 的分母（整库快照）、A02 的快照机制（driver 门的可达/绑定/完整性/拒绝覆盖两端已实证；WAL 一致性仅 Android 侧）、A08 的幂等回执随快照保留、A10 的导出侧磁盘/取消/写失败不报成功、A09 的跨端可解密。**属后续切片的**：A01/A02 的实际往返与集成试验、A03 的容器拒绝、A08 的重放、A09 的端到端、A10 的恢复侧路径。
 
 **06.2 / 06.B 的放行条件（计划 `:174`）**：「一致快照、认证加密导出、取消与空间不足；**先证明产物可被独立预检**」——本文的 §3.5 相 1（私有暂存内的完整认证容器）即为「可被独立预检的产物」；预检本身属 06.C。
 
 ## 8. 非目标与边界
 
 - **不改 schema**：零 DDL、零迁移边、schema 停留 v31；不预占未来版本号。
-- **不引入新依赖**：仅用平台自带 `AES/GCM/NoPadding`、`PBKDF2WithHmacSHA256`、`SecureRandom`、`MessageDigest("SHA-256")`；不引入 BouncyCastle/Tink/Argon2id/scrypt（容器规格 §8 `:322`）。
+- **不引入新依赖**：仅用平台自带 `AES/GCM/NoPadding`、`PBKDF2WithHmacSHA256`、`SecureRandom`、`MessageDigest("SHA-256")`；不引入 BouncyCastle/Tink/Argon2id/scrypt（容器规格 §8 `:322`）。**已存在产品 SHA-256 原语**：手写 `Sha256`（`JcsSha256.kt:46`，经 `ImportContentFingerprint.kt` 使用），但它只接受整块 `ByteArray`、无增量接口，**不满足** §5 的流式要求（§1.5）。
 - **不触碰 `.external/`**；不写个人数据；tracked 文件不含本机绝对路径、临时研究或工具轨迹（`docs/CONTRIBUTING.md:165`）。
 - **不重开容器格式**：不改容器格式规格的字节布局、KDF/AEAD 参数、AAD 构造、拒绝码、资源上限（容器规格 §4 为唯一权威）。
 - **不改既有决定**：不新增决定条目；不改 D-156/D-158/D-174/D-176 及 P7-01～P7-05 冻结面。
@@ -301,4 +313,7 @@ AAD = 固定头部(偏移 0..58，59 字节) || salt(salt_len 字节)
   6. **私有暂存目录字面命名与布局**、**导出用例/端口的具体类型、包、超时值**归实施批（容器规格 §5.2 `:243`；06.1 规格 §9 `:320`）。
   7. **OS 自动备份/设备迁移排除规则**归隐私规格（D-174 第 4 条）；本文只登记，不裁决。
   8. **取消在 `VACUUM INTO` 单语句内的可中断性**：设计上取消在语句完成后生效（§3.3）；平台是否能中断单条快照语句未验证。
+  9. **快照 `PRAGMA integrity_check` / `user_version` 的第二次打开表面**（§3.4）：driver 对组合根私有（§1.3），现有受控入口只作用于活动句柄，无「按路径打开只读校验连接」的现有表面；具体 driver 选择与打开/关闭语义归实施批。
+  10. **面向用户目标的有界流式写端口**（§3.5 相 2）当前**不存在**：唯一现有写原语 `writeAtomic(path, bytes: ByteArray)`（`LedgerStableStorage.kt:81-84`）是整文件读入内存，**不得**用于 ~2 GiB 容器；06.B 须新增流式写端口（仅沿用原子 rename 语义）。其具体类型/包与平台落点归实施批。
+  11. **写侧 1 GiB 明文上限门**（§5）的两个检查点（`VACUUM INTO` 前的前置门、快照后的后置门）为本文新增设计义务；具体阈值取整与拒绝码命名归实施批，但**不得**放宽 1 GiB（容器规格 §4.8 `:198` 为权威）。
 - 本文不复制任何真实金额、时间、锚点注册值或个人数据；示例全部匿名合成；`.external/` 只读未触碰；`rgXX_` 竖井与 golden 零改动。
