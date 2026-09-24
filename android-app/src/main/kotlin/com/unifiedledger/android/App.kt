@@ -121,12 +121,16 @@ import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
 import com.unifiedledger.ui.ImportConfirmUseCaseSet
 import com.unifiedledger.ui.ImportDuplicateReviewIds
 import com.unifiedledger.ui.ImportFilePickResultChannel
+import com.unifiedledger.ui.LedgerRuntimeOwner
+import com.unifiedledger.ui.LedgerStartupResult
 import com.unifiedledger.ui.P503App
 import com.unifiedledger.ui.P503LedgerFacade
 import com.unifiedledger.ui.P503StartupScreen
 import com.unifiedledger.ui.P503StartupState
 import com.unifiedledger.ui.UuidV7ImportCommitIdSource
 import com.unifiedledger.ui.importCreditRefundOriginalExpenseProvider
+import com.unifiedledger.ui.ledgerStorageLayout
+import com.unifiedledger.ui.openStableStorageLedger
 import java.security.SecureRandom
 import kotlin.time.Clock
 
@@ -169,16 +173,10 @@ fun app() {
             importPickPortRef[0] = importFilePickPort
             AndroidStartupController(
                 openDatabase = {
-                    // P5-04.4 S3: a failure mid-open (after the handle exists) must not leak
-                    // the driver, so the handle is closed before rethrowing; the controller
-                    // additionally closes any graph it already holds in its catch block.
-                    val handle = createAndroidLedgerDatabase(context, "ledger.db")
-                    try {
-                        buildLedgerGraph(handle, importFilePickPort, importPickChannel)
-                    } catch (failure: Exception) {
-                        handle.close()
-                        throw failure
-                    }
+                    // P7-06 06.1 (D-176): the stable-storage sequence resolves the active
+                    // generation, performs the non-destructive legacy upgrade on first start and
+                    // guards the target before any create-on-open factory runs.
+                    openAndroidStableStorageLedger(context, importFilePickPort, importPickChannel)
                 },
             )
         }
@@ -226,8 +224,18 @@ internal class AndroidStartupController(
     var facade: P503LedgerFacade? by mutableStateOf(null)
         private set
 
-    /** The currently held (Ready or mid-open) ledger connection; closed before rebuild. */
-    private var activeGraph: CloseableLedgerGraph? = null
+    /**
+     * P7-06 06.1 (D-176; spec section 4): the single runtime owner of the active graph. The
+     * controller no longer holds a graph itself — every open, close and generation increment goes
+     * through the owner, so "at most one active graph" is the owner's invariant rather than the
+     * controller's bookkeeping. [openDatabase] is the injected graph builder the tests already use.
+     */
+    private val owner =
+        LedgerRuntimeOwner(
+            openGeneration = { openDatabase() },
+            closeGraph = { graph -> graph.close() },
+            facadeOf = { graph -> graph.facade },
+        )
 
     /**
      * True once [start] has been invoked. The state already starts as [P503StartupState.Starting]
@@ -242,21 +250,19 @@ internal class AndroidStartupController(
         if (startedOnce && state == P503StartupState.Starting) return
         startedOnce = true
         state = P503StartupState.Starting
-        // Close any connection left over from a previous Ready or an interrupted mid-open.
-        activeGraph?.close()
-        activeGraph = null
         facade = null
-        try {
-            val graph = openDatabase()
-            activeGraph = graph
-            facade = graph.facade
-            state = P503StartupState.Ready
-        } catch (failure: Exception) {
-            // A failure part-way through the open must not leak the half-opened driver.
-            activeGraph?.close()
-            activeGraph = null
-            logFailure(failure)
-            state = P503StartupState.StartupError
+        // The owner closes any connection left over from a previous Ready or an interrupted
+        // mid-open before it opens the next one (the "close before open" resource-safety rule).
+        when (val result = owner.startup()) {
+            is LedgerStartupResult.Started -> {
+                facade = owner.facade
+                state = P503StartupState.Ready
+            }
+            is LedgerStartupResult.Failed -> {
+                val cause = result.cause
+                logFailure(if (cause is Exception) cause else RuntimeException(cause))
+                state = P503StartupState.StartupError
+            }
         }
     }
 }
@@ -288,6 +294,47 @@ internal data class CloseableLedgerGraph(
 )
 
 private const val LOG_TAG = "UnifiedLedger"
+
+/**
+ * P7-06 06.1 (D-176; spec sections 3.2/4.5/5.1): the Android stable-storage open. The host
+ * directory and the legacy `databases/ledger.db` path are resolved from the platform API here (the
+ * handle deliberately does not expose a path, so this resolution cannot come from the handle).
+ *
+ * The shared [openStableStorageLedger] sequence resolves the plan, runs the non-destructive legacy
+ * upgrade when needed, and only then builds the graph. The generation directory is created by the
+ * sequence before the open, and the pre-open guard rejects a zero-length/invalid main file, so the
+ * create-on-open driver only ever runs on the genuine fresh-install path (section 4.5).
+ */
+private fun openAndroidStableStorageLedger(
+    context: android.content.Context,
+    importFilePickPort: AndroidImportFilePickPort<Uri>,
+    importPickChannel: ImportFilePickResultChannel,
+): CloseableLedgerGraph {
+    val databasePath = context.getDatabasePath(LEGACY_ANDROID_DATABASE_NAME)
+    val (hostDirectory, legacyMainFile) = androidStableStoragePaths(databasePath)
+    val fileSystem = AndroidLedgerFileSystem()
+    val layout = ledgerStorageLayout(fileSystem, hostDirectory)
+    return openStableStorageLedger(
+        fileSystem = fileSystem,
+        layout = layout,
+        legacyMainFile = legacyMainFile,
+    ) { target ->
+        // P5-04.4 S3: a failure mid-open (after the handle exists) must not leak the driver, so
+        // the handle is closed before rethrowing; the controller additionally closes any graph it
+        // already holds in its catch block.
+        val name = androidDatabaseName(hostDirectory, target.mainFile)
+        val handle = createAndroidLedgerDatabase(context, name)
+        try {
+            buildLedgerGraph(handle, importFilePickPort, importPickChannel)
+        } catch (failure: Exception) {
+            handle.close()
+            throw failure
+        }
+    }
+}
+
+/** The legacy product database name (spec section 3.2; the pre-06.1 fixed location). */
+private const val LEGACY_ANDROID_DATABASE_NAME = "ledger.db"
 
 private fun buildLedgerGraph(
     handle: AndroidLedgerDatabaseHandle,

@@ -126,12 +126,21 @@ import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
 import com.unifiedledger.ui.ImportConfirmUseCaseSet
 import com.unifiedledger.ui.ImportDuplicateReviewIds
 import com.unifiedledger.ui.ImportFilePickResultChannel
+import com.unifiedledger.ui.LedgerFileSystem
+import com.unifiedledger.ui.LedgerRuntimeOwner
+import com.unifiedledger.ui.LedgerStartupResult
+import com.unifiedledger.ui.LedgerStorageFailure
+import com.unifiedledger.ui.LedgerStorageLayout
+import com.unifiedledger.ui.LedgerStorageRejectedException
 import com.unifiedledger.ui.P503App
 import com.unifiedledger.ui.P503LedgerFacade
 import com.unifiedledger.ui.P503StartupScreen
 import com.unifiedledger.ui.P503StartupState
 import com.unifiedledger.ui.UuidV7ImportCommitIdSource
 import com.unifiedledger.ui.importCreditRefundOriginalExpenseProvider
+import com.unifiedledger.ui.isUsableSqliteMainFile
+import com.unifiedledger.ui.ledgerStorageLayout
+import com.unifiedledger.ui.openStableStorageLedger
 import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
 import java.awt.event.KeyEvent
@@ -145,21 +154,36 @@ private const val LOCAL_TEST_LEDGER_FILE_NAME = "ledger-local-test.db"
 
 /**
  * Desktop composition root (P5-03 spec sections 8/10.1). Assembles the full object graph
- * (driver, current-schema temp-file database, commit tracker, fixed catalog, product ID/clock
- * sources, read adapter and the shared facade) and runs the shared [P503App]. Startup is
- * fail-closed: driver/schema/create/open failures expose only Retry and Exit.
+ * (driver, current-schema database, commit tracker, fixed catalog, product ID/clock sources, read
+ * adapter and the shared facade) and runs the shared [P503App]. Startup is fail-closed:
+ * driver/schema/create/open failures expose only Retry and Exit.
+ *
+ * P7-06 06.1 (D-176; spec section 3.3): the product entry no longer creates a fresh temp directory
+ * per start. It resolves the per-OS user data directory at runtime and opens the fixed product
+ * location through the shared stable-storage sequence, so the same ledger survives restarts. The
+ * temp-directory entry is retained only as the injectable demo/test path below.
  */
 fun main() {
-    val databaseUrl = createDemoDatabaseUrl()
+    val fileSystem = DesktopLedgerFileSystem()
+    val layout = ledgerStorageLayout(fileSystem, resolveDesktopHostDirectory())
     application {
         DesktopRoot(
-            openDatabase = { openDesktopLedger(databaseUrl) },
+            openDatabase = {
+                openStableStorageDesktopLedger(fileSystem, layout)
+            },
             onExit = ::exitApplication,
         )
     }
 }
 
-private fun createDemoDatabaseUrl(): String {
+/**
+ * The demo/test temp-directory database URL (retained for tests and the demo path; no longer the
+ * product entry, spec section 3.3). The desktop side has no migratable legacy product location —
+ * its old product path was itself a per-start temp directory — so the upgrade here is simply
+ * "stop treating the temp directory as the product path". `internal` so the composition-root tests
+ * keep driving the isolated, injectable demo path.
+ */
+internal fun createDemoDatabaseUrl(): String {
     val directory = Files.createTempDirectory("unifiedledger-demo-")
     return "jdbc:sqlite:${directory.resolve(LOCAL_TEST_LEDGER_FILE_NAME).absolutePathString()}"
 }
@@ -245,8 +269,16 @@ internal class DesktopStartupController(
     var facade: P503LedgerFacade? by mutableStateOf(null)
         private set
 
-    /** The currently held (Ready or mid-open) ledger connection; closed before rebuild. */
-    private var activeGraph: CloseableLedgerGraph? = null
+    /**
+     * P7-06 06.1 (D-176; spec section 4): the single runtime owner of the active graph, exactly
+     * like the Android controller. [openDatabase] is the injected graph builder the tests use.
+     */
+    private val owner =
+        LedgerRuntimeOwner(
+            openGeneration = { openDatabase() },
+            closeGraph = { graph -> graph.close() },
+            facadeOf = { graph -> graph.facade },
+        )
 
     /**
      * True once [start] has been invoked. The state already starts as [P503StartupState.Starting]
@@ -261,22 +293,17 @@ internal class DesktopStartupController(
         if (startedOnce && state == P503StartupState.Starting) return
         startedOnce = true
         state = P503StartupState.Starting
-        // Close any connection left over from a previous Ready or an interrupted mid-open.
-        activeGraph?.close()
-        activeGraph = null
         facade = null
-        try {
-            val graph = openDatabase()
-            activeGraph = graph
-            facade = graph.facade
-            state = P503StartupState.Ready
-        } catch (failure: Exception) {
-            // A failure part-way through the open must not leak the half-opened driver.
-            activeGraph?.close()
-            activeGraph = null
-            System.err.println("UnifiedLedger startup failed: " + failure)
-            failure.printStackTrace()
-            state = P503StartupState.StartupError
+        when (val result = owner.startup()) {
+            is LedgerStartupResult.Started -> {
+                facade = owner.facade
+                state = P503StartupState.Ready
+            }
+            is LedgerStartupResult.Failed -> {
+                System.err.println("UnifiedLedger startup failed: " + result.cause)
+                result.cause.printStackTrace()
+                state = P503StartupState.StartupError
+            }
         }
     }
 }
@@ -769,6 +796,31 @@ internal fun openDesktopLedger(databaseUrl: String): CloseableLedgerGraph {
         throw failure
     }
 }
+
+/**
+ * P7-06 06.1 (D-176; spec sections 3.3/4.5): the desktop product open through the shared stable
+ * storage. The desktop side has no migratable legacy product location, so [openStableStorageLedger]
+ * is called with a null legacy path; the sequence resolves the plan, performs the pre-open guard
+ * on non-fresh paths and publishes the atomic pointer.
+ *
+ * Section 4.5 create-on-open boundary: the JDBC driver creates the database file on open, so a
+ * non-fresh target is re-guarded here (non-empty, valid SQLite header) before the driver is
+ * constructed. Only the fresh-install plan may create.
+ */
+internal fun openStableStorageDesktopLedger(
+    fileSystem: LedgerFileSystem,
+    layout: LedgerStorageLayout,
+): CloseableLedgerGraph =
+    openStableStorageLedger(
+        fileSystem = fileSystem,
+        layout = layout,
+        legacyMainFile = null,
+    ) { target ->
+        if (!target.allowCreateOnOpen && !isUsableSqliteMainFile(fileSystem, target.mainFile)) {
+            throw LedgerStorageRejectedException(LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE)
+        }
+        openDesktopLedger("jdbc:sqlite:${target.mainFile}")
+    }
 
 /**
  * Reads the SQLite user_version and conditionally creates, opens or migrates the schema.

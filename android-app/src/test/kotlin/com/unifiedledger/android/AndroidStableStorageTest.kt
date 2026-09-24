@@ -1,0 +1,157 @@
+package com.unifiedledger.android
+
+import com.unifiedledger.ui.LedgerStorageFailure
+import com.unifiedledger.ui.LedgerStorageRejectedException
+import com.unifiedledger.ui.ledgerStorageLayout
+import com.unifiedledger.ui.openStableStorageLedger
+import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+
+/**
+ * P7-06 06.1 (D-176; spec sections 3.2/3.4/4.5/6): the Android stable storage at the platform seam
+ * without an emulator — the host/legacy path resolution, the driver-name conversion and the
+ * shared sequence's legacy upgrade against the Android layout (the legacy `databases/ledger.db`
+ * plus its `-wal`/`-shm` sidecars). The emulator-only driver behaviour stays with the instrumented
+ * fail-closed suite (P706-A10).
+ */
+class AndroidStableStorageTest {
+    private fun tempDatabasesDirectory(): Path = Files.createTempDirectory("p7-06-android-storage-")
+
+    private fun deleteRecursively(path: Path) {
+        if (!Files.exists(path)) return
+        Files.walk(path).sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
+    }
+
+    @Test
+    fun theHostDirectoryIsThePrivateDatabasesDirectoryAndTheLegacyPathIsLedgerDb() {
+        val databases = tempDatabasesDirectory()
+        try {
+            val databasePath = databases.resolve("ledger.db").toFile()
+            val (hostDirectory, legacyMainFile) = androidStableStoragePaths(databasePath)
+
+            assertEquals(databases.toFile().absolutePath, hostDirectory)
+            assertEquals(databasePath.absolutePath, legacyMainFile)
+        } finally {
+            deleteRecursively(databases)
+        }
+    }
+
+    @Test
+    fun theGenerationMainFileConvertsToADriverRelativeName() {
+        val databases = tempDatabasesDirectory()
+        try {
+            val host = databases.toFile().absolutePath
+            val main = File(File(File(host, "ledger-generations"), "gen-1"), "ledger.db").absolutePath
+
+            assertEquals("ledger-generations/gen-1/ledger.db", androidDatabaseName(host, main))
+        } finally {
+            deleteRecursively(databases)
+        }
+    }
+
+    @Test
+    fun theLegacyDatabaseIsUpgradedNonDestructivelyWithItsSidecars() {
+        // Spec section 3.2 rule 1 / section 6: the first generation-aware start must migrate the
+        // existing product database, never treat it as an empty install.
+        val databases = tempDatabasesDirectory()
+        try {
+            val host = databases.toFile().absolutePath
+            val legacy = File(host, "ledger.db")
+            legacy.writeBytes(sqliteHeaderBytes())
+            File(host, "ledger.db-wal").writeText("wal-bytes")
+            File(host, "ledger.db-shm").writeText("shm-bytes")
+            val fileSystem = DesktopStyleTestFileSystem()
+            val layout = ledgerStorageLayout(fileSystem, host)
+
+            val target = openStableStorageLedger(fileSystem, layout, legacy.absolutePath) { it }
+
+            val generationMain = File(layout.mainFile(layout.generationDirectory(1)))
+            assertTrue(generationMain.exists())
+            assertEquals("wal-bytes", File(layout.generationDirectory(1), "ledger.db-wal").readText())
+            assertEquals("shm-bytes", File(layout.generationDirectory(1), "ledger.db-shm").readText())
+            assertEquals(layout.mainFile(layout.generationDirectory(1)), target.mainFile)
+            assertFalse(target.allowCreateOnOpen, "a non-fresh path never uses create-on-open")
+            assertFalse(legacy.exists(), "the legacy files are removed only after the pointer publish")
+            assertEquals("gen-1", File(layout.activePointerFile).readText())
+        } finally {
+            deleteRecursively(databases)
+        }
+    }
+
+    @Test
+    fun anAlreadyUpgradedInstallIsSelectedThroughThePointerOnTheNextStart() {
+        val databases = tempDatabasesDirectory()
+        try {
+            val host = databases.toFile().absolutePath
+            val legacy = File(host, "ledger.db")
+            legacy.writeBytes(sqliteHeaderBytes())
+            val fileSystem = DesktopStyleTestFileSystem()
+            val layout = ledgerStorageLayout(fileSystem, host)
+            openStableStorageLedger(fileSystem, layout, legacy.absolutePath) { it }
+
+            val second = openStableStorageLedger(fileSystem, layout, legacy.absolutePath) { it }
+
+            assertEquals(layout.mainFile(layout.generationDirectory(1)), second.mainFile)
+            assertEquals(false, second.allowCreateOnOpen)
+        } finally {
+            deleteRecursively(databases)
+        }
+    }
+
+    @Test
+    fun aJournalLeftByASwitchFailsClosed() {
+        val databases = tempDatabasesDirectory()
+        try {
+            val host = databases.toFile().absolutePath
+            val fileSystem = DesktopStyleTestFileSystem()
+            val layout = ledgerStorageLayout(fileSystem, host)
+            File(layout.switchJournalFile).writeText("prepared")
+
+            val rejected =
+                assertFailsWith<LedgerStorageRejectedException> {
+                    openStableStorageLedger(fileSystem, layout, null) { it }
+                }
+
+            assertEquals(LedgerStorageFailure.JOURNAL_PRESENT, rejected.failure)
+            assertEquals("prepared", File(layout.switchJournalFile).readText())
+        } finally {
+            deleteRecursively(databases)
+        }
+    }
+
+    @Test
+    fun aCorruptGenerationMainFileFailsClosedAndIsPreservedByteForByte() {
+        // The FOUND-001 shape in the generation context: the original bytes are never replaced by
+        // an empty ledger.
+        val databases = tempDatabasesDirectory()
+        try {
+            val host = databases.toFile().absolutePath
+            val fileSystem = DesktopStyleTestFileSystem()
+            val layout = ledgerStorageLayout(fileSystem, host)
+            val generationDirectory = File(layout.generationDirectory(1))
+            generationDirectory.mkdirs()
+            val mainFile = File(layout.mainFile(layout.generationDirectory(1)))
+            val corrupt = "not a SQLite database".encodeToByteArray()
+            mainFile.writeBytes(corrupt)
+            File(layout.activePointerFile).writeText("gen-1")
+
+            val rejected =
+                assertFailsWith<LedgerStorageRejectedException> {
+                    openStableStorageLedger(fileSystem, layout, null) { it }
+                }
+
+            assertEquals(LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE, rejected.failure)
+            assertTrue(mainFile.readBytes().contentEquals(corrupt))
+        } finally {
+            deleteRecursively(databases)
+        }
+    }
+
+    private fun sqliteHeaderBytes(): ByteArray = "SQLite format 3\u0000".encodeToByteArray() + ByteArray(1024)
+}
