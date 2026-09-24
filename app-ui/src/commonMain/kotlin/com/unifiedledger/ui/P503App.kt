@@ -1445,8 +1445,13 @@ fun P503App(
                     // 10,000-candidate batch) on the main dispatcher is exactly the ANR-class
                     // pattern the P7-04 read-governance batch removed. Only the single-flight
                     // release and the serial dispatch hop to the main dispatcher.
+                    // P704D-SPEC-03 (leak prevention): the read is failure-safe — a throw degrades
+                    // to the same typed [ImportReviewRowsResult.Unavailable] the null path already
+                    // produces, so the `finally` can never abort BEFORE the slot release below
+                    // (a throwing read would otherwise strand the single-flight slot permanently).
                     val rows =
-                        ledger.probe { facade -> facade.queryImportReviewRows?.query(ledger.ledgerId) }
+                        runCatching { ledger.probe { facade -> facade.queryImportReviewRows?.query(ledger.ledgerId) } }
+                            .getOrNull()
                             ?: ImportReviewRowsResult.Unavailable
                     // Back on the main dispatcher: release the slot and dispatch serially.
                     scope.launch {
