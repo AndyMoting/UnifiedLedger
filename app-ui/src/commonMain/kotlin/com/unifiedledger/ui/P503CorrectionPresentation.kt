@@ -239,11 +239,14 @@ internal const val RESTORE_IMPACT_STATEMENT: String =
 
 /**
  * P7-05 (V-19; D-173): the visible status line of one manual lost-commit re-check, so the
- * re-check is never a silent no-op. [P705CommitCheckOutcome.NONE] is the plain 「正在提交…」 line
- * (a re-check request is in flight, or none has resolved yet), so it yields `null` — no extra text.
+ * re-check is never a silent no-op. [P705CommitCheckOutcome.NONE] means no manual re-check has
+ * resolved yet — the reducer never resets `checkOutcome` to `NONE` (the re-check REQUEST event is
+ * state-preserving by design, the P7-02 precedent), so it yields `null`: no extra text.
  * [P705CommitCheckOutcome.ABSENT] and [P705CommitCheckOutcome.UNAVAILABLE] mean the read-only
  * resolve found no row / could not read, and the surface stays unknown and re-checkable, so the
- * user is told the re-check ran and found nothing. The status line is rendered beside the
+ * user is told the re-check ran and found nothing. Because `NONE` is only the never-resolved
+ * state, the still-unknown line of a previous `ABSENT`/`UNAVAILABLE` outcome may remain visible
+ * while a further re-check is in flight. The status line is rendered beside the
  * 「重新核对」 button by the three P7-05 submitting rows; a determinate hit never reaches here (it
  * leaves the surface as the existing result event).
  */

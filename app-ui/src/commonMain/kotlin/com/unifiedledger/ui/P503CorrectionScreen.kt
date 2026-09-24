@@ -417,8 +417,8 @@ internal fun P503RestoreConfirmScreen(
  * manual modifier creates a dead-zone hit layer (D-127). The button carries no extra
  * `contentDescription`: this file adds none to its buttons (the [P503UnknownCommitStayScreen]
  * precedent), and the visible 重新核对 text is what TalkBack reads. The status line follows the
- * file's notice pattern (a `contentDescription` on the node) so a resolved-but-empty re-check is
- * announced, not only painted.
+ * file's notice pattern (the void notice's `contentDescription` plus `liveRegion = Assertive`),
+ * so a resolved-but-empty re-check is announced on change, not only painted.
  */
 @Composable
 private fun P705SubmittingRow(
@@ -437,7 +437,13 @@ private fun P705SubmittingRow(
                 Text(
                     status,
                     style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.semantics { contentDescription = status },
+                    // V-17: the re-check outcome is an async outcome, so it is announced on change
+                    // with the same assertive live region as the void/restore notices.
+                    modifier =
+                        Modifier.semantics {
+                            contentDescription = status
+                            liveRegion = LiveRegionMode.Assertive
+                        },
                 )
             }
         }
