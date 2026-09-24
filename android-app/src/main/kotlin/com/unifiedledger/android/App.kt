@@ -120,6 +120,7 @@ import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
 import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
+import com.unifiedledger.ui.CloseResult
 import com.unifiedledger.ui.ImportConfirmUseCaseSet
 import com.unifiedledger.ui.ImportDuplicateReviewIds
 import com.unifiedledger.ui.ImportFilePickResultChannel
@@ -251,16 +252,21 @@ fun app() {
  * `scope.launch(Dispatchers.Default) { ... }` precedent in `P503App.requestCatalogSnapshotLoad`.
  * The reentrancy guard is still a synchronous caller-thread decision taken before the launch.
  *
- * Lifecycle (MUST FIX 2): because the open now outlives a single composition pass, the controller
- * has an explicit [dispose] that the composition root calls from `DisposableEffect`. [dispose] and
- * the post-open decision are serialized on one monitor, so a completed open always reaches a
- * decision — either the state is published (dispose not yet called) or the owner's graph is
- * closed ([dispose] already ran). The opened driver can therefore never be orphaned by a
- * mid-start teardown (e.g. rotation during the now-multi-second copy), which pre-fix could not
- * happen because the main thread was blocked. This removes the ANR trigger only: a process kill
- * or power loss mid-copy still leaves a pointerless generation that fail-closes with
- * `POINTER_MISSING` on the next start, and 06.1 has no recovery for that (registered as the 06.D
- * residual in [openStableStorageLedger]); this hotfix does not change that.
+ * Lifecycle (MUST FIX 2 / MUST FIX C): because the open now outlives a single composition pass,
+ * the controller has an explicit [dispose] that the composition root calls from `DisposableEffect`.
+ * [dispose] and the post-open decision are serialized on one monitor, so a completed open reaches a
+ * decision — the state is published (dispose not yet called) or [dispose]/the disposed branch
+ * attempts to close the owner's graph. That close is BEST EFFORT, not an unconditional guarantee:
+ * [LedgerRuntimeOwner.closeActiveGraph] returns the typed `TransitionInProgress` without closing
+ * when another transition holds the owner's mutex, and `QuiesceBlocked(inFlight)` without closing
+ * when a business lease is in flight. Both are logged here (never silently dropped), but the graph
+ * is left open in those two cases — a residual leak class that is partly pre-existing (the pre-fix
+ * controller had no dispose at all) and is disclosed rather than overclaimed. Concurrent opens
+ * across owner instances are separately prevented by the process-wide open lock (see
+ * [withAndroidStableStorageOpenLock]). This removes the ANR trigger only: a process kill or power
+ * loss mid-copy still leaves a pointerless generation that fail-closes with `POINTER_MISSING` on
+ * the next start, and 06.1 has no recovery for that (registered as the 06.D residual in
+ * [openStableStorageLedger]); this hotfix does not change that.
  */
 internal class AndroidStartupController(
     private val openDatabase: () -> CloseableLedgerGraph,
@@ -358,15 +364,32 @@ internal class AndroidStartupController(
     }
 
     /**
-     * MUST FIX 2: releases the owner's active graph when the composition is torn down. Serialized
-     * with [applyStartupResult] on [lifecycleLock], so whichever runs second closes any graph the
-     * open produced; a start whose scope was cancelled mid-open still reaches
-     * [applyStartupResult] (NonCancellable) and closes there. Idempotent.
+     * MUST FIX 2 / MUST FIX C: releases the owner's active graph when the composition is torn
+     * down. Serialized with [applyStartupResult] on [lifecycleLock]; a start whose scope was
+     * cancelled mid-open still reaches [applyStartupResult] (NonCancellable) and attempts the close
+     * there. BEST EFFORT, not an unconditional guarantee: [LedgerRuntimeOwner.closeActiveGraph]
+     * can decline (mutex contention or an in-flight business lease); both outcomes are logged, and
+     * the residual is disclosed on the class note. Idempotent.
      */
     fun dispose() {
         synchronized(lifecycleLock) {
             disposed = true
-            owner.closeActiveGraph()
+            closeActiveGraphBestEffort("dispose")
+        }
+    }
+
+    /**
+     * MUST FIX C: attempts to close the owner's active graph and logs every outcome. A `Closed`
+     * result is silent; `TransitionInProgress` / `QuiesceBlocked` mean the graph was NOT closed
+     * (best-effort close, residual disclosed on the class note). Never throws.
+     */
+    private fun closeActiveGraphBestEffort(origin: String) {
+        when (val result = owner.closeActiveGraph()) {
+            CloseResult.Closed -> Unit
+            CloseResult.TransitionInProgress ->
+                logFailure(IllegalStateException("$origin could not close the active graph: a runtime transition is in progress; graph left open"))
+            is CloseResult.QuiesceBlocked ->
+                logFailure(IllegalStateException("$origin could not close the active graph: ${result.inFlightLeases} in-flight lease(s); graph left open"))
         }
     }
 
@@ -374,36 +397,48 @@ internal class AndroidStartupController(
     private fun applyStartupResult(result: LedgerStartupResult) {
         synchronized(lifecycleLock) {
             if (disposed) {
-                // The composition was torn down while the open was in flight. Do not publish
-                // state (nobody observes it); close the graph the owner just opened so the driver
-                // is never orphaned and the recreated owner cannot open a second concurrent
-                // connection to the same ledger file.
-                owner.closeActiveGraph()
+                // The composition was torn down while the open was in flight. Do not publish state
+                // (nobody observes it). MUST FIX D1: the outcome is still logged so a teardown race
+                // never swallows the cause. The close is best effort (see [dispose]).
+                logStartupResult(result)
+                closeActiveGraphBestEffort("teardown-after-open")
                 return
             }
+            logStartupResult(result)
             when (result) {
                 is LedgerStartupResult.Started -> {
                     state = P503StartupState.Ready
                 }
-                is LedgerStartupResult.Failed -> {
-                    val cause = result.cause
-                    logFailure(if (cause is Exception) cause else RuntimeException(cause))
-                    state = P503StartupState.StartupError
-                }
-                is LedgerStartupResult.Blocked -> {
-                    // A retry arrived while leases are in flight: the graph was NOT touched. Surface
-                    // the typed rejection as the fail-closed state so Retry stays reachable (the
-                    // reentrancy guard above drops a second tap while Starting).
-                    logFailure(IllegalStateException("startup blocked by ${result.inFlightLeases} in-flight lease(s)"))
-                    state = P503StartupState.StartupError
-                }
-                LedgerStartupResult.TransitionInProgress -> {
-                    // P7-06 06.1 fix (review P3-6): another transition held the owner (zero leases).
-                    // The graph was NOT touched; the fail-closed state keeps Retry reachable.
-                    logFailure(IllegalStateException("startup rejected: a runtime transition is in progress"))
+                is LedgerStartupResult.Failed,
+                is LedgerStartupResult.Blocked,
+                LedgerStartupResult.TransitionInProgress,
+                -> {
+                    // A failed/blocked/contended start: the graph was NOT touched (Failed leaves no
+                    // graph; Blocked/TransitionInProgress return before opening). Surface the
+                    // fail-closed state so Retry stays reachable (the reentrancy guard drops a
+                    // second tap while Starting).
                     state = P503StartupState.StartupError
                 }
             }
+        }
+    }
+
+    /**
+     * MUST FIX D1: logs the failure-shaped outcomes of one startup attempt (Started is silent).
+     * Extracted so both the published path and the disposed (teardown-race) path log identically
+     * and never drop the cause.
+     */
+    private fun logStartupResult(result: LedgerStartupResult) {
+        when (result) {
+            is LedgerStartupResult.Started -> Unit
+            is LedgerStartupResult.Failed -> {
+                val cause = result.cause
+                logFailure(if (cause is Exception) cause else RuntimeException(cause))
+            }
+            is LedgerStartupResult.Blocked ->
+                logFailure(IllegalStateException("startup blocked by ${result.inFlightLeases} in-flight lease(s)"))
+            LedgerStartupResult.TransitionInProgress ->
+                logFailure(IllegalStateException("startup rejected: a runtime transition is in progress"))
         }
     }
 }
@@ -437,6 +472,32 @@ internal data class CloseableLedgerGraph(
 private const val LOG_TAG = "UnifiedLedger"
 
 /**
+ * MUST FIX B: the process-wide lock that serializes the whole stable-storage open (plan
+ * resolution + legacy copy + driver open + pointer publish). Without it, a rotation during the
+ * multi-second legacy copy runs the OLD composition's NonCancellable open concurrently with the
+ * recreated composition's open: both resolve `UpgradeLegacy`/`FreshInstall` (the pointer is not
+ * yet published, the legacy file is still present), both copy into the SAME
+ * `databases/ledger-generations/gen-1/ledger.db` and both open a driver — two concurrent writers
+ * to one ledger file (the spec section 6 / P706-A06 "at most one active graph" vector). Holding
+ * this lock across the open makes the second open WAIT; once the first publishes the pointer, the
+ * second resolves `OpenGeneration` on the now-complete file and opens a single connection.
+ *
+ * The lock is held only on the IO dispatcher (the open always runs under
+ * [AndroidStartupController]'s background dispatcher), so it never blocks the main thread. It is
+ * process-wide (one instance per process) because the two opens belong to different controller and
+ * owner instances, whose own mutexes cannot see each other.
+ */
+private val ANDROID_STABLE_STORAGE_OPEN_LOCK = Any()
+
+/**
+ * MUST FIX B: runs [open] while holding [ANDROID_STABLE_STORAGE_OPEN_LOCK]. Extracted so the
+ * mutual-exclusion mechanism is JVM-testable without an Android Context (the production
+ * [openAndroidStableStorageLedger] calls this around its whole sequence, so the wiring is one
+ * call and the mechanism is what the test pins).
+ */
+internal fun <T> withAndroidStableStorageOpenLock(open: () -> T): T = synchronized(ANDROID_STABLE_STORAGE_OPEN_LOCK) { open() }
+
+/**
  * P7-06 06.1 (D-176; spec sections 3.2/4.5/5.1): the Android stable-storage open. The host
  * directory and the legacy `databases/ledger.db` path are resolved from the platform API here (the
  * handle deliberately does not expose a path, so this resolution cannot come from the handle).
@@ -445,6 +506,10 @@ private const val LOG_TAG = "UnifiedLedger"
  * upgrade when needed, and only then builds the graph. The generation directory is created by the
  * sequence before the open, and the pre-open guard rejects a zero-length/invalid main file, so the
  * create-on-open driver only ever runs on the genuine fresh-install path (section 4.5).
+ *
+ * MUST FIX B: the whole sequence runs under [withAndroidStableStorageOpenLock], so two opens
+ * (e.g. a rotation racing the NonCancellable open) cannot concurrently copy into and open the same
+ * generation. See that lock's note.
  *
  * [openDriver] is the injectable driver-open seam: production passes the default
  * ([createAndroidLedgerDatabase] with the resolved name), and the instrumented regression suite
@@ -457,6 +522,17 @@ internal fun openAndroidStableStorageLedger(
     importFilePickPort: AndroidImportFilePickPort<Uri>,
     importPickChannel: ImportFilePickResultChannel,
     openDriver: (String) -> AndroidLedgerDatabaseHandle = { name -> createAndroidLedgerDatabase(context, name) },
+): CloseableLedgerGraph =
+    withAndroidStableStorageOpenLock {
+        openAndroidStableStorageLedgerLocked(context, importFilePickPort, importPickChannel, openDriver)
+    }
+
+/** The body of [openAndroidStableStorageLedger]; the caller holds the process-wide open lock. */
+private fun openAndroidStableStorageLedgerLocked(
+    context: android.content.Context,
+    importFilePickPort: AndroidImportFilePickPort<Uri>,
+    importPickChannel: ImportFilePickResultChannel,
+    openDriver: (String) -> AndroidLedgerDatabaseHandle,
 ): CloseableLedgerGraph {
     val databasePath = context.getDatabasePath(LEGACY_ANDROID_DATABASE_NAME)
     val (hostDirectory, legacyMainFile) = androidStableStoragePaths(databasePath)

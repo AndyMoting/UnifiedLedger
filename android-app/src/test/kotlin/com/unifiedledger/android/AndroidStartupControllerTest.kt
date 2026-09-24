@@ -67,7 +67,9 @@ class AndroidStartupControllerTest {
     @get:Rule
     val timeout: Timeout = Timeout.seconds(60)
 
-    private var logged: MutableList<String> = mutableListOf()
+    // Thread-safe and safe to iterate while a background/state thread appends (the async tests below
+// record failures off the test thread while it polls).
+    private var logged: MutableList<String> = java.util.concurrent.CopyOnWriteArrayList()
 
     private fun controller(open: () -> CloseableLedgerGraph): AndroidStartupController = AndroidStartupController(openDatabase = open, logFailure = { failure -> logged += failure.toString() }, startScope = unconfinedScope(), backgroundDispatcher = Dispatchers.Unconfined)
 
@@ -382,6 +384,50 @@ class AndroidStartupControllerTest {
     // ---------------------------------------------------------------- MUST FIX 2 lifecycle
 
     @Test
+    fun aFailedOpenAfterDisposeStillLogsTheCause() {
+        // MUST FIX D1: the disposed (teardown-race) branch must not swallow the failure cause. The
+        // open blocks on a latch, dispose runs while it is in flight, and the open then fails; the
+        // cause must still be logged even though no state is published.
+        val backgroundExecutor = newNamedExecutor("test-background-open")
+        val stateExecutor = newNamedExecutor("test-state-writer")
+        val startScope = CoroutineScope(stateExecutor.asCoroutineDispatcher())
+        val openEntered = CountDownLatch(1)
+        val releaseOpen = CountDownLatch(1)
+        try {
+            val controller =
+                AndroidStartupController(
+                    openDatabase = {
+                        openEntered.countDown()
+                        releaseOpen.await(30, TimeUnit.SECONDS)
+                        throw IllegalStateException("failure after teardown")
+                    },
+                    startScope = startScope,
+                    logFailure = { failure -> logged += failure.toString() },
+                    backgroundDispatcher = backgroundExecutor.asCoroutineDispatcher(),
+                )
+
+            controller.start()
+            assertTrue(openEntered.await(30, TimeUnit.SECONDS), "the background open did not start")
+            controller.dispose()
+            releaseOpen.countDown()
+
+            val deadline = System.nanoTime() + 30_000_000_000L
+            while (logged.none { it.contains("failure after teardown") } && System.nanoTime() < deadline) {
+                Thread.yield()
+            }
+            assertTrue(
+                logged.any { it.contains("failure after teardown") },
+                "a failure during a teardown race must still be logged, got: $logged",
+            )
+        } finally {
+            releaseOpen.countDown()
+            startScope.cancel()
+            backgroundExecutor.shutdownNow()
+            stateExecutor.shutdownNow()
+        }
+    }
+
+    @Test
     fun cancelScopeAndDisposeWhileOpenInFlightClosesTheGraphInsteadOfOrphaningIt() {
         // MUST FIX 2: the composition can be torn down mid-open (rotation during the multi-second
         // legacy copy). Compose does both things on teardown: it cancels rememberCoroutineScope()
@@ -454,7 +500,12 @@ class AndroidStartupControllerTest {
         assertEquals(1, closeCount, "dispose must be idempotent")
     }
 
-    private fun newNamedExecutor(threadName: String): ExecutorService = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, threadName) }
+    private fun newNamedExecutor(threadName: String): ExecutorService =
+        Executors.newSingleThreadExecutor { runnable ->
+            // MUST FIX D2: daemon threads, so a stuck test cannot pin the JVM after the JUnit
+            // Timeout rule abandons it.
+            Thread(runnable, threadName).apply { isDaemon = true }
+        }
 
     /**
      * Awaits [expected] on the controller deterministically: the state is written on the injected
