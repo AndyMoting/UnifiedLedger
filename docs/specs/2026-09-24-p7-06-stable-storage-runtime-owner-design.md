@@ -1,8 +1,8 @@
 # P7-06 备份与恢复 06.1 / 06.D 前置设计规格：两端稳定存储与 `LedgerRuntimeOwner`（单活动图、generation、operation lease、quiesce/close/reopen）
 
-状态：proposal（2026-09-24 起草；本文是 06.1 / 06.D 前置的设计规格，**已经独立评审第一轮（REJECT，1 项 P1 + 若干 P2/P3）与独立 verifier 复核（修正两处过度归因），本轮已按意见修订；尚未经复审通过、未经批准**，故按 `docs/CONTRIBUTING.md:162` 的允许分类标 `proposal`。本文与已批准的容器格式规格 `docs/specs/2026-09-24-p7-06-backup-container-format-design.md`（approved，依据 `docs/DECISIONS.md` D-174）逐条一致：本文承接其 §5（Q14 世代/指针设计）与 §6（技术门）中登记为 OPEN 的「稳定存储」与「文件指针切换/重启恢复」两项，**不重开**其任何冻结的容器格式决定，也**不修改**任何既有决定。本文只写设计，零产品代码、零测试、零 schema/迁移、零依赖。）
+状态：proposal（2026-09-24 起草；本文是 06.1 / 06.D 前置的设计规格，**已经独立评审第一轮（REJECT，1 项 P1 + 若干 P2/P3）、独立 verifier 复核（修正两处过度归因）与收口评审（APPROVE，遗留 NEW-1～NEW-5 与两处 verifier 校正），draft-3 已应用其全部意见；尚未经最终批准**，故按 `docs/CONTRIBUTING.md:162` 的允许分类标 `proposal`。本文与已批准的容器格式规格 `docs/specs/2026-09-24-p7-06-backup-container-format-design.md`（approved，依据 `docs/DECISIONS.md` D-174）逐条一致：本文承接其 §5（Q14 世代/指针设计）与 §6（技术门）中登记为 OPEN 的「稳定存储」与「文件指针切换/重启恢复」两项，**不重开**其任何冻结的容器格式决定，也**不修改**任何既有决定。本文只写设计，零产品代码、零测试、零 schema/迁移、零依赖。）
 
-**Revision:** draft-2（2026-09-24）。相对 draft-1 应用了首轮独立评审与 verifier 的全部意见：P1（§3.2 旧路径升级改为「复制 → 打开并读回 → 发布指针 → 再删旧」的非破坏顺序；rule 3 收紧为「仅当完全无代际目录才允许全新安装」，代际目录存在但指针无效一律 fail-closed）、P2-1（`closeActiveGraph`/`reopen` 增加「零在飞 lease」前置与 typed 拒绝）、P2-2（转换义务改为「每一个 `facade.*` 入口点」并补全类别）、P2-3（06.1 对存在的 journal fail-closed）、P2-4（补写静默空库的机制性防护）、P2-5（点名同步原语）、D-2/D-3（修正两处过度归因）、P3-1～P3-4。原始基线说明见下。工作基线 = 本 worktree 基线 `dc274d5`（P7-06 06.0/06.A 收口后的登记点），schema **v31**，迁移链 `1.sqm`～`30.sqm`（30 个文件，v1→v31）。tracked 行号为该基线在本 worktree 的实读行号；`.local.md` 与 `local/artifacts/` 以主 checkout 为准、只读；示例与命名全部匿名合成；引用不粘贴大段产品代码，不写本机绝对路径。本文**不**新增决定条目、**不**修改任何既有决定。本文已完成第一轮独立评审与独立 verifier 复核，本轮为据此修订的 draft-2。
+**Revision:** draft-3（2026-09-24）。相对 draft-2 应用了**收口评审（closure review，结论 APPROVE）遗留的收口项**：NEW-1（P2，把新代三文件的 flush/fsync 前移为**发布指针的前置**（§3.2 (b)），并在发布指针时 fsync 指针目录（§3.2 (d)）；§4.5 打开前守卫由「存在性检查」升级为**非空 / 有效 SQLite 头检查**，零长度或结构无效的主文件一律 fail-closed，杜绝「指针已持久、新代文件仅部分落盘」经 create-on-open 变成静默空库）、NEW-2（P3，§5.2 状态图把 06.1 的 journal 检查画成 **fail-closed 门**（`JournalPresent → StartupError`），并把 06.D 的完整状态机（含 `JournalRecovery`/`RecoveryRequired`）与 06.1 链**分开**）、NEW-3（P3，§4.3(b) 补全同步主线程 `facade.*` 实读枚举：选项投影 `:221/225/229/235`、`dispatchCatalogCommandResult` `:1574-1596`、`refreshCatalogSnapshot` `:1670-1683`；义务仍为「每一个 `facade.*` 入口点」，枚举非穷尽）、NEW-4（P3，引用校正：§3.2 容器规格 §4.9 归属改为其真实标题「明文隔离与生命周期」；`runCatalogToggle` 范围收紧为 `:1601-1613` 以覆盖 `:1612` 的 `dispatchCatalogCommandResult`）、NEW-5（nit，§1.3 的 `Mutex`/`Semaphore`/`withLock` 检索更正为**零命中**，无「仅注释散文」的命中项），以及 verifier 校正（`submit()` 范围由 `:612-720` 更正为 `:612-721`；§4.2/§8 的 `kotlinx.coroutines` 由「已是本仓依赖」改为「**已在编译类路径上（经 compose.runtime / sqldelight 传递引入）**，无版本目录、无直接坐标声明」）。**逐条锚点均在本 worktree 基线 `dc274d5` 实读复核**；其中收口评审给出的 `Main.kt:162-165`「应为 `:161-164`」与 `P503App.kt:470-473`「应止于 `:472`」两条经复核**与实读不符**（`createDemoDatabaseUrl` 实为 `:162-165`、`Files.createTempDirectory` 在 `:163`；`selectTransaction` 闭括号在 `:473`），故**保留**原文引用未作改动。draft-2 相对 draft-1 曾应用首轮独立评审与 verifier 的全部意见：P1（§3.2 旧路径升级改为「复制 → fsync 新代 → 打开并读回 → 发布指针 → 再删旧」的非破坏顺序；rule 3 收紧为「仅当完全无代际目录才允许全新安装」，代际目录存在但指针无效一律 fail-closed）、P2-1（`closeActiveGraph`/`reopen` 增加「零在飞 lease」前置与 typed 拒绝）、P2-2（转换义务改为「每一个 `facade.*` 入口点」并补全类别）、P2-3（06.1 对存在的 journal fail-closed）、P2-4（补写静默空库的机制性防护）、P2-5（点名同步原语）、D-2/D-3（修正两处过度归因）、P3-1～P3-4。原始基线说明见下。工作基线 = 本 worktree 基线 `dc274d5`（P7-06 06.0/06.A 收口后的登记点），schema **v31**，迁移链 `1.sqm`～`30.sqm`（30 个文件，v1→v31）。tracked 行号为该基线在本 worktree 的实读行号；`.local.md` 与 `local/artifacts/` 以主 checkout 为准、只读；示例与命名全部匿名合成；引用不粘贴大段产品代码，不写本机绝对路径。本文**不**新增决定条目、**不**修改任何既有决定。本文已完成首轮独立评审（REJECT）、独立 verifier 复核与收口评审（APPROVE，遗留项已由本 draft-3 应用）；**尚未经最终批准**，故状态仍为 `proposal`。
 
 ## Authority And Boundary
 
@@ -51,7 +51,7 @@
 - **计数（本基线实读）**：`P503App.kt` 中 `Dispatchers.Default` 出现 **23** 次（其中 `scope.launch(Dispatchers.Default)` **19** 次）；`scope.launch` 字面出现 **55** 次（含注释散文中的提及；其中裸 `scope.launch {` **31** 次）。仓库产品源码内 `Dispatchers.Default` **仅**出现在该文件（全仓 23 次）。
 - 代表性 DB 调用点锚：`P503App.kt:183-187`（目录快照读）、`:955-972`（导入接治 + 统计刷新 + 复核列表读）、`:1821-1834`（修正提交）、`:2036-2042`（提交后的重读链）。这些点都直接在 `scope.launch(Dispatchers.Default)` 内调用 `facade.*`。
 - **已有单飞守卫是协调器级的、非互斥**：`P503HostCoordinator.kt:604-637`（`P503CurrentStateLoadCoordinator`，`@Volatile` 布尔 + 合并语义）；同类还有 `P503CatalogSnapshotLoadCoordinator`（类定义 `P503HostCoordinator.kt:552`；实例化于 `P503App.kt:167`）。它们只保证「同一读不并发重入」，**不**提供「业务写入互斥」或「等待全部在飞工作退出」。
-- **无 `Mutex`/`Semaphore`**：对产品源码（`android-app/src`、`desktop-app/src`、`app-ui/src`、`ledger-data/src`、`ledger-application/src`、`ledger-domain/src`）检索 `Mutex`/`Semaphore`/`withLock` **零命中**（命中项仅为注释散文与测试内 `AtomicInteger`，非协程互斥原语）。故当前不存在可复用的租约原语。
+- **无 `Mutex`/`Semaphore`**：对产品源码（`android-app/src`、`desktop-app/src`、`app-ui/src`、`ledger-data/src`、`ledger-application/src`、`ledger-domain/src`，含其测试目录）检索 `Mutex`/`Semaphore`/`withLock` **零命中**（本基线实读；三个标识符在上述源码树内**无任何字面出现**，注释散文与测试代码亦无）。故当前不存在可复用的协程互斥/租约原语。
 
 ### 1.4 必须继续通过的生命周期测试（各自钉住的不变量）
 
@@ -92,20 +92,21 @@
 
 ### 3.2 Android
 
-- **宿主位置**：应用私有数据目录，经平台 API 解析（`Context.getDatabasePath(...)` 的父目录或 `Context.filesDir`；两者均为应用私有、卸载即清除、无需存储权限）。**具体选哪个 API 由实施批按容器规格 §4.9「应用私有暂存目录」与 §5.2 代目录的父子关系确定**；本规格只冻结「必须是应用私有、必须跨进程稳定、必须可由平台 API 在运行期解析」三条。
+- **宿主位置**：应用私有数据目录，经平台 API 解析（`Context.getDatabasePath(...)` 的父目录或 `Context.filesDir`；两者均为应用私有、卸载即清除、无需存储权限）。**具体选哪个 API 由实施批按容器规格 §4.9（标题为「明文隔离与生命周期」，其正文点名「应用私有暂存目录」）与 §5.2 代目录的父子关系确定**；本规格只冻结「必须是应用私有、必须跨进程稳定、必须可由平台 API 在运行期解析」三条。
 - **活动库所在**：由代际目录承载（容器规格 §5.2）；`AndroidLedgerDatabaseHandle` 的私有 driver（§1.2）不暴露路径，故代目录解析发生在**平台适配器/组合根**层，不由既有句柄推导。
 - **旧路径升级（硬要求，非破坏式有序序列）**：既有产品库位于 `databases/ledger.db`（`App.kt:175`）。首次接入代际目录时**必须迁移旧位置及其 sidecar**（`ledger.db-wal`、`ledger.db-shm`），**不得**把它当作空安装初始化（计划 `:156`、容器规格 §5.1）。判定与顺序规则：
   1. **无代际目录且旧位置 `ledger.db` 存在** → 进入「旧路径升级」，**严格按以下顺序**（任何一步失败即 fail-closed，旧文件保持原样）：
      a. **复制（不是移动）**旧主文件与存在的 `-wal`/`-shm` 作为**一个一致集合**到新的活动代目录；旧文件此刻**原样保留**。
-     b. **打开新代并权威读回**（成功读回即容器规格 §5.2 的「新图打开并读回成功」）。
-     c. **发布原子活动指针**（临时文件 + 原子 rename；容器规格 §5.3）。
-     d. **仅在此后**才移除旧位置的三个文件。
-     - **持久性要求**：在 (d) 移除旧副本之前，必须把新代目录下的三个文件与新指针目录**刷盘并 fsync**（flush + fsync 目录项），否则掉电可能留下「旧文件已删、新文件未落盘」的空洞。
-     - **三文件的顺序/原子性规则**：主文件与 `-wal`/`-shm` 必须以**同一时刻的一致快照**复制（复制前先确认无其他连接在写；Android 单连接模型下即启动早期），且**不得**只复制其中一部分后打开——否则会出现主文件与 sidecar 不匹配的库。崩溃只允许落在「旧集合完整」或「新集合完整」两侧，中间态一律由 (a) 的复制顺序保证旧集合仍可回退。
+     b. **把新代目录下的三个文件（主文件 + `-wal` + `-shm`）刷盘并 fsync**（flush + fsync 文件内容），**再 fsync 该代目录项**，确保新集合在新指针发布前已持久落盘。
+     c. **打开新代并权威读回**（成功读回即容器规格 §5.2 的「新图打开并读回成功」）。
+     d. **发布原子活动指针**（临时文件 + 原子 rename；容器规格 §5.3），**并对指针所在目录 fsync**（flush + fsync 目录项），使指针替换本身持久。
+     e. **仅在此后**才移除旧位置的三个文件。
+     - **持久性要求（fsync 是发布指针的前置，不是删除旧副本的前置）**：新代三个文件的 flush/fsync（(b)）与指针目录的 fsync（(d)）都必须在**指针发布之前/作为其一部分**完成。**不得**把 fsync 推迟到 (e) 之前才做——因为 (d) 已让指针持久，若此刻新代文件尚未落盘，掉电会留下「指针指向一个只部分持久化的新代」的状态；配合仅「存在性」的打开前守卫（§4.5），一个零长度/半写的主文件会通过存在性检查，随后 create-on-open 把它当作空库打开并建立空 schema，正是本规格与容器规格 §5.1 明令禁止的**静默空库**。
+     - **三文件的顺序/原子性规则**：主文件与 `-wal`/`-shm` 必须以**同一时刻的一致快照**复制（复制前先确认无其他连接在写；Android 单连接模型下即启动早期），且**不得**只复制其中一部分后打开——否则会出现主文件与 sidecar 不匹配的库。崩溃只允许落在「旧集合完整」或「新集合完整且已 fsync」两侧，中间态一律由 (a) 的复制顺序与 (b) 的先 fsync 后发布保证旧集合仍可回退。
      - **不得**新建空库覆盖；**不得**在指针发布前删除旧文件。
   2. **代际目录存在**（无论指针是否有效） → **不再**看旧位置；指针有效则正常启动（§5），指针缺失/无效则按 §4.5 fail-closed（见 rule 4）。旧位置若仍在，按 06.1 清理策略处理（本规格只要求「不得因此重复导入或静默改库」）。
   3. **完全无代际目录、且旧位置也不存在** → 全新安装，按正常路径初始化（**仅此路径**允许 bootstrap 种子，见 §4.5）。
-  4. **代际目录存在但活动指针缺失/无效** → **fail-closed**（`StartupError`），**绝不**回退为全新安装。理由：rule 1 的 (a)→(c) 之间存在崩溃窗口（旧文件已复制、指针未发布），若该窗口被误判为「全新安装」就会静默创建空库并 bootstrap 种子——这正是本规格与容器规格 §5.1 明令禁止的静默空库。收紧后，§5.1 步骤 3 的「缺失/损坏 → fail-closed」才可达。
+  4. **代际目录存在但活动指针缺失/无效** → **fail-closed**（`StartupError`），**绝不**回退为全新安装。理由：rule 1 的 (a)→(d) 之间存在崩溃窗口（旧文件已复制、指针未发布），若该窗口被误判为「全新安装」就会静默创建空库并 bootstrap 种子——这正是本规格与容器规格 §5.1 明令禁止的静默空库。收紧后，§5.1 步骤 3 的「缺失/损坏 → fail-closed」才可达。
 - **与上游容器规格一致**：本顺序即容器规格 §5.2（旧代在**新图打开并读回成功之前**保留）与 §5.3（指针为原子替换；`AtomicFile`/rename **不**使整组文件天然原子，故靠「先复制后发布再删除」的顺序而非单次 rename）在 06.1 启动路径上的落地。
 - **不声称**：本规格**不**声称 OS 云备份/设备迁移已关闭（AndroidManifest 未声明 `allowBackup`/`dataExtractionRules`，容器规格 §1.2/§6）；该排除决策归隐私规格（D-174 第 4 条）。
 
@@ -173,7 +174,7 @@ interface Lease : AutoCloseable {
 
 - **单活动图**：任一时刻至多一个已打开 graph。`reopen` 内部必须先 `closeActiveGraph()`（或由 `quiesce`→`closeActiveGraph`→`reopen` 的顺序保证），沿用既有 `AndroidStartupController.start()`「先关后开」的资源安全语义（`App.kt:246`/`:256`）但**升级为受控顺序**。
 - **close/switch 的在飞前置（硬要求）**：`closeActiveGraph()` 与 `reopen()`（以及任何切换）在**在飞 lease > 0** 时必须返回 typed 拒绝（`QuiesceBlocked` 或 `RuntimeNotReady`），**不得**继续执行；即任何 close/switch 都**不**会在仍有租约时运行。这直接落实计划 `:153` 的「不提前释放仍运行的 SQLite 调用」。`quiesce()` 是唯一合法前置：只有它成功返回（零在飞 lease）之后，close/reopen 才可执行；`closeActiveGraph()` 因此是 owner 内部动作或由持有同一谓词检查的调用方触发，不是可自由调用的公开非挂起方法。
-- **同步原语（P2-5）**：上述「原子地拒绝后续 acquireLease」「至多一个活动 graph」「在飞计数与状态迁移的一致性」由一个 owner 内部的 `kotlinx.coroutines.sync.Mutex`（守护状态迁移与在飞计数的读改写）加一个原子状态字段（`@Volatile`/atomic 状态，供无锁快照读取）承载。这是「既有协程能力」而非新依赖：`kotlinx.coroutines` 已是本仓依赖，且 `kotlinx.coroutines.sync` 属其标准模块（§8）。当前仓库产品源码**无**任何 `Mutex`/`Semaphore`（§1.3），故这是**新引入的用法**，但仍**不新增依赖**。该原语是 06.1 的实施义务，不属任何冻结决定。
+- **同步原语（P2-5）**：上述「原子地拒绝后续 acquireLease」「至多一个活动 graph」「在飞计数与状态迁移的一致性」由一个 owner 内部的 `kotlinx.coroutines.sync.Mutex`（守护状态迁移与在飞计数的读改写）加一个原子状态字段（`@Volatile`/atomic 状态，供无锁快照读取）承载。这是「既有协程能力」而非新依赖：本仓**无版本目录**，任何 build 文件也**无**直接声明的 `kotlinx-coroutines` 坐标；`kotlinx.coroutines` **已在编译类路径上（经 compose.runtime / sqldelight 传递引入）**，`kotlinx.coroutines.sync` 随同一 core 制品提供，故**不新增依赖**（§8）。当前仓库产品源码**无**任何 `Mutex`/`Semaphore`（§1.3），故这是**新引入的用法**，但仍**不新增依赖**。该原语是 06.1 的实施义务，不属任何冻结决定。
 - **generation 捕获**：lease 携带申请时刻的 generation（§4.4）。
 - **fail-closed**：`acquireLease` 在非 Ready 时返回 typed failure；`reopen` 失败时**不得**产出空库（§4.5）。
 - **`quiesce()` 自死锁（P3-3）**：若在**持有 lease 的协程内**调用 `quiesce()`，该协程自己即是一个在飞 lease，quiesce 会等待它释放——而它正阻塞在 quiesce 上，形成自死锁。该情形只由超时/`QuiesceBlocked` 路径兜底（quiesce 必须在超时后返回 typed 结果而非无限等待）；故调用方契约是「发起 quiesce 的上下文本身不得持有 lease」。
@@ -182,8 +183,13 @@ interface Lease : AutoCloseable {
 
 - **转换义务 = 每一个 `facade.*` 入口点**（不是某个「调用点计数」）：凡在共享 UI 内调用 `facade.*` 完成业务读写的地方，改造形状一律是「**在调用 `facade.*` 之前取得 lease，调用完成后释放 lease，并在释放前捕获该 lease 的 generation**」。按调用上下文分类（本基线实读，逐条复核）：
   - **(a) 异步 `Dispatchers.Default` 启动**：`P503App.kt` 中 `Dispatchers.Default` 出现 **23** 次，其中 `scope.launch(Dispatchers.Default)` **19** 次（其余 4 次为注释散文），即 §1.3 所述集合。代表锚：`:183-187`（目录快照读）、`:955-972`（导入接治 + 统计刷新 + 复核列表读）、`:1821-1834`（修正提交）、`:2036-2042`（提交后的重读链）。
-  - **(b) 同步主线程读/写**：不经 `scope.launch`，直接在 UI 线程调用 `facade.*`。写入：`submit()`（`P503App.kt:612-720`），由 `P503App.kt:2472-2475`（确认按钮 `onConfirm` → `dispatchCurrentP503Action`）与 `P503HostCoordinator.kt:348-353`（`retrySubmission` → `onSubmit`）触达。读取：`requestMonthlyPayload()`（`P503App.kt:441-467`）、`selectTransaction()`（`P503App.kt:470-473`）。这些点同样必须经过 lease；因其在主线程同步执行，`acquireLease` 在非 Ready 时必须返回 typed failure 而**不得**阻塞（§4.2）。
-  - **(c) 裸 `scope.launch` 目录命令**：`runCatalogToggle()`（`P503App.kt:1601-1610`）、`runCounterpartyForm()`（`P503App.kt:1698-1705`）——`scope.launch` 内直接调用 `facade.executeCatalogCommand`/`facade.counterpartyCommands`，不经 `Dispatchers.Default`，仍属转换范围。
+  - **(b) 同步主线程读/写**：不经 `scope.launch`，直接在 UI 线程调用 `facade.*`。**以下为实读枚举（非穷尽；义务仍是「每一个 `facade.*` 入口点」）**：
+    - **写入**：`submit()`（`P503App.kt:612-721`），由 `P503App.kt:2472-2475`（确认按钮 `onConfirm` → `dispatchCurrentP503Action`）与 `P503HostCoordinator.kt:348-353`（`retrySubmission` → `onSubmit`）触达。
+    - **读取**：`requestMonthlyPayload()`（`P503App.kt:441-467`）、`selectTransaction()`（`P503App.kt:470-473`）。
+    - **组合期选项投影读**（`remember { ... }` 内、主线程同步执行）：`facade.optionsProvider.queryOptions()`（`P503App.kt:221`）、`facade.incomeOptionsProvider.queryOptions()`（`:225`）、`facade.transferOptionsProvider.queryOptions()`（`:229`）、`facade.lendingOptionsProvider.queryOptions()`（`:235`）。
+    - **目录刷新/快照读写对**（主线程同步）：`dispatchCatalogCommandResult()`（`P503App.kt:1574-1596`；内含 `facade.refreshCatalog()` 于 `:1576`、`facade.catalogSnapshot()` 于 `:1583`）、`refreshCatalogSnapshot()`（`P503App.kt:1670-1683`；内含 `facade.refreshCatalog()` 于 `:1671`、`facade.catalogSnapshot()` 于 `:1673`）。
+    - 这些点同样必须经过 lease；因其在主线程同步执行，`acquireLease` 在非 Ready 时必须返回 typed failure 而**不得**阻塞（§4.2）。
+  - **(c) 裸 `scope.launch` 目录命令**：`runCatalogToggle()`（`P503App.kt:1601-1613`，含 `:1612` 的 `dispatchCatalogCommandResult(result)`）、`runCounterpartyForm()`（`P503App.kt:1698-1709`）——`scope.launch` 内直接调用 `facade.executeCatalogCommand`/`facade.counterpartyCommands`，不经 `Dispatchers.Default`，仍属转换范围。
 - **`P503App.kt` 中的 `Dispatchers.Default` 出现 23 次、`scope.launch` 出现 55 次**只是规模说明，**不**构成转换清单——清单以「每一个 `facade.*` 入口点」为准，上列三类为其实读枚举。伪代码形状：
 
 ```text
@@ -211,7 +217,10 @@ scope.launch(Dispatchers.Default) {
 ### 4.5 缺失/损坏活动代的 fail-closed
 
 - 已登记活动代**缺失**（指针指向的目录/DB 不存在）或**损坏**（SQLite 打开/`integrity` 失败）时：owner 进入 fail-closed，暴露 `StartupError`（或 06.D 的 `RecoveryRequired` 前身），**绝不**静默创建空库。
-- **静默空库的机制性防护（P2-4）**：仅声明「绝不静默创建空库」不足以成立，因为当前工厂 `createAndroidLedgerDatabase` 的 `AndroidSqliteDriver` **在打开时即创建**（create-on-open），且 A-1 的 `SELECT 1` 探针（`ledger-data/src/androidMain/kotlin/com/unifiedledger/data/AndroidLedgerDatabaseHandle.kt:25-30`）会把这次创建**同步**逼出。故要求：**代际目录打开路径必须在调用该工厂之前先检查目标文件是否存在**；目标代的主文件不存在时**不得**调用 `createAndroidLedgerDatabase`（其 `AndroidSqliteDriver` 会在 `:9-19` 的工厂内静默建库），而应直接 fail-closed。只有「完全无代际目录的全新安装」路径（§3.2 rule 3）才允许调用该工厂去创建。桌面侧同款要求（JDBC 打开同样会创建）。
+- **静默空库的机制性防护（P2-4）**：仅声明「绝不静默创建空库」不足以成立，因为当前工厂 `createAndroidLedgerDatabase` 的 `AndroidSqliteDriver` **在打开时即创建**（create-on-open），且 A-1 的 `SELECT 1` 探针（`ledger-data/src/androidMain/kotlin/com/unifiedledger/data/AndroidLedgerDatabaseHandle.kt:25-30`）会把这次创建**同步**逼出。故要求：**代际目录打开路径必须在调用该工厂之前先检查目标文件是否存在，且必须校验其为非空、结构有效的 SQLite 主文件**（fail-closed 守卫）：
+  - **存在性**：目标代的主文件不存在时**不得**调用 `createAndroidLedgerDatabase`（其 `AndroidSqliteDriver` 会在 `:9-19` 的工厂内静默建库），而应直接 fail-closed。
+  - **非空/有效头**（P2-4 补强，对应 NEW-1 的持久性窗口）：目标主文件**长度为零**或**不具备有效 SQLite 文件头**（例如不以前 16 字节的 `"SQLite format 3\0"` 魔数开头）时，同样**不得**调用工厂打开；守卫必须在此 fail-closed。仅「存在性」检查不足以覆盖「指针已持久但新代文件只部分落盘/零长度」的掉电窗口——那种主文件会通过存在性检查，随后被 create-on-open 当作空库打开并建立空 schema，形成静默空库。守卫的职责是**拒绝**这类文件，而**不是**让工厂去「修复」或初始化它。
+  - **create-on-open 边界**：只有「完全无代际目录的全新安装」路径（§3.2 rule 3）才允许调用该工厂去创建；任何**非全新路径**（既有代目录、旧路径升级的目标代）一律**不得**经由 create-on-open 建立主文件。桌面侧同款要求（JDBC 打开同样会创建，故打开前须做同一非空/有效头守卫）。
 - 这与既有 FOUND-001 语义一致（`App.kt:254-260` catch → `StartupError`；`ForeignKeysCallback.onCorruption` 保留原文件，`AndroidLedgerDatabaseHandle.kt:150-161`）。
 - **bootstrap 边界**：`buildLedgerGraph` 在装配期写 catalog 种子事实（`App.kt:305-310`）。**全新安装**路径允许该 bootstrap；**已登记活动代存在**的路径**不得**让 bootstrap 掩盖缺表/缺事实（计划 `:151`）——实施时须把「bootstrap 仅用于全新安装」显式化。本文登记该约束为 06.1 的实施义务。
 
@@ -234,18 +243,34 @@ scope.launch(Dispatchers.Default) {
 
 ### 5.2 06.1 状态机（在既有三态上扩展，最小实现）
 
-既有 `P503StartupState` 只有 `Starting`/`Ready`/`StartupError`（`app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503StartupScreen.kt:27-34`）。06.1 引入 owner 内部状态（可与 UI 三态映射），并**预留** 06.D 的切换状态：
+既有 `P503StartupState` 只有 `Starting`/`Ready`/`StartupError`（`app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503StartupScreen.kt:27-34`）。06.1 引入 owner 内部状态（可与 UI 三态映射），并**预留** 06.D 的切换状态。**06.1 与 06.D 的链必须分开画**——06.1 不含 `JournalRecovery` 状态，它把「journal 存在」当作一个**fail-closed 门**处理（§5.1 步骤 2）：
 
 ```text
-ResolvingStorage → JournalRecovery → SelectingGeneration → Opening → Ready
-                                                                   ↑
-                                          Quiescing → Closing → Reopening ─┘
-                                                                   ↓
-                                        StartupError (fail-closed) / RecoveryRequired (06.D)
+06.1 链（本规格实现）：
+
+  ResolvingStorage
+        │
+        ▼
+  [门] journal 文件存在？ ──是──→ StartupError (fail-closed；不解析、不删除、不回滚)
+        │否
+        ▼
+  SelectingGeneration → Opening → Ready
+                                    ↑
+                    Quiescing → Closing → Reopening（06.1 仅可调用骨架）
+                                    │
+                                    └── 任一步失败 ──→ StartupError (fail-closed)
+
+  （06.1 链上**没有** JournalRecovery 状态：journal 存在是门，直接转入 StartupError。）
+
+06.D 链（后续切片，独立状态机，本规格不实现）：
+
+  ... → JournalRecovery(prepared → switched → committed；崩溃 → ROLLBACK) → ...
+            ├─ 恢复成功 ──→ SelectingGeneration → ...（进入与 06.1 相同的选择/打开链）
+            └─ 需人工介入 ──→ RecoveryRequired
 ```
 
-- **06.1 实现最小集**：`ResolvingStorage`、`SelectingGeneration`、`Opening`、`Ready`、`StartupError`，以及 `Quiescing`/`Closing`/`Reopening` 的**可调用骨架**（供正常重开与后续 06.D 使用）。
-- **06.D 才实现**：`JournalRecovery` 的完整 prepared/switched/committed 语义、`RecoveryRequired`、以及切换期 UI。
+- **06.1 实现最小集**：`ResolvingStorage`、`SelectingGeneration`、`Opening`、`Ready`、`StartupError`，以及 `Quiescing`/`Closing`/`Reopening` 的**可调用骨架**（供正常重开与后续 06.D 使用）。06.1 路径上的 journal 检查是**门（gate）**而非状态：存在 journal 即转入 `StartupError`，**不**进入任何恢复状态。
+- **06.D 才实现**：`JournalRecovery` 的完整 prepared/switched/committed 语义（含崩溃 ROLLBACK）、`RecoveryRequired`、以及切换期 UI。该链与 06.1 链分开，不并入 06.1 的 `ResolvingStorage → … → Ready` 路径。
 - **UI 映射**：06.1 内 `ResolvingStorage`/`SelectingGeneration`/`Opening`/`Reopening` 均可映射到既有 `Starting`；`Ready`/`StartupError` 不变。故 06.1 **不需要**新增 UI 状态（零 UI 面变更），新增状态是 owner 内部状态。
 
 ## 6. 06.1 失败向量与验证
@@ -255,8 +280,8 @@ ResolvingStorage → JournalRecovery → SelectingGeneration → Opening → Rea
 | **缺失活动代**（指针指向的目录/DB 不存在） | 不创建空库；`StartupError`（06.D 为 `RecoveryRequired`）；原指针不变 | owner 测试：预置一个指向不存在目录的活动指针 → 启动 → 断言 fail-closed 且**未**产生任何新库文件 |
 | **损坏活动库**（非 SQLite 字节 / 打开失败） | 保留原文件与 sidecar；`StartupError`；不重建 | 复用 FOUND-001 注入形状（`AndroidStartupFailClosedInstrumentedTest.kt:82-100` 的注入 + 哈希断言），在代目录语境下重跑 |
 | **不可读文件**（权限拒绝） | 保留原文件；`StartupError` | 复用 `AndroidStartupFailClosedInstrumentedTest.kt:120-151` 的权限机制形状 |
-| **旧路径存在但尚未升级**（Android `databases/ledger.db` 存在、代际目录不存在） | **不**当空安装：按 §3.2 rule 1 的**复制 → 打开并读回 → 发布指针 → 再删旧**顺序升级；任一步失败则 fail-closed 且旧文件保留 | Android instrumented 测试：预置旧路径库 + `-wal`/`-shm` → 首次接入 → 断言新代目录含等价库、旧文件在指针发布前仍存在、账本事实读回一致；另注入 (a)→(c) 之间的崩溃 → 断言下次启动 fail-closed 而**非**空库 |
-| **代际目录存在但指针缺失/无效**（rule 1 (a)→(c) 之间崩溃后的状态） | **fail-closed**（`StartupError`）；**绝不**回退为全新安装、绝不 bootstrap 种子（§3.2 rule 4） | owner 测试：预置一个存在的代际目录但无有效指针 → 启动 → 断言 fail-closed 且**未**创建任何空库、未写种子事实 |
+| **旧路径存在但尚未升级**（Android `databases/ledger.db` 存在、代际目录不存在） | **不**当空安装：按 §3.2 rule 1 的**复制 → fsync 新代 → 打开并读回 → 发布指针（含目录 fsync）→ 再删旧**顺序升级；任一步失败则 fail-closed 且旧文件保留 | Android instrumented 测试：预置旧路径库 + `-wal`/`-shm` → 首次接入 → 断言新代目录含等价库、旧文件在指针发布前仍存在、账本事实读回一致；另注入 (a)→(d) 之间（含指针已持久但新代文件未 fsync 的窗口）的崩溃 → 断言下次启动 fail-closed 而**非**空库 |
+| **代际目录存在但指针缺失/无效**（rule 1 (a)→(d) 之间崩溃后的状态） | **fail-closed**（`StartupError`）；**绝不**回退为全新安装、绝不 bootstrap 种子（§3.2 rule 4） | owner 测试：预置一个存在的代际目录但无有效指针 → 启动 → 断言 fail-closed 且**未**创建任何空库、未写种子事实 |
 | **journal 文件存在**（06.1 不产生 journal；存在即 06.D 时代状态或外部干预） | **fail-closed**（`StartupError`）；不忽略、不静默删除、不尝试解析/回滚（§5.1 步骤 2） | owner 测试：预置一个 journal 文件 → 启动 → 断言 fail-closed、journal 未被删除或改写 |
 | **并发打开**（两个 owner/两次 `reopen` 同时尝试打开同一代） | 至多一个有效 graph；第二个 fail-closed（`RuntimeNotReady`/typed 拒绝），不产生第二个连接写入 | owner 测试：并发调用 `reopen`/`acquireLease` → 断言最多一个活动 graph、无第二个写入方；**注意** `AtomicFile` 不提供锁（容器规格 §5.3），故该断言须由 owner 自身的单活动约束承载（内部 `Mutex` + 原子状态字段，§4.2），而非文件锁 |
 | **在飞业务未退出即 close/reopen** | `quiesce` 挂起至全部 lease 释放（或返回 `QuiesceBlocked`）；在飞 lease > 0 时 `closeActiveGraph`/`reopen` 返回 typed 拒绝，不提前 close | owner 测试：持有一个 lease → `quiesce()` → 断言不返回直到 lease.close()；持有 lease 时直接调用 `reopen()` → 断言返回 `QuiesceBlocked` 且旧 graph 未关；`QuiesceBlocked` 路径可确定复现 |
@@ -279,7 +304,7 @@ ResolvingStorage → JournalRecovery → SelectingGeneration → Opening → Rea
 
 ## 8. 非目标与边界
 
-- **不引入新依赖**：稳定存储解析与 owner/lease 均用平台与既有协程能力；不新增库（计划 `:153` 的端口「均待新增」指新增源码，不是新增依赖）。
+- **不引入新依赖**：稳定存储解析与 owner/lease 均用平台与既有协程能力；不新增库（计划 `:153` 的端口「均待新增」指新增源码，不是新增依赖）。特别地，§4.2 的 `kotlinx.coroutines.sync.Mutex` 不新增依赖：本仓**无版本目录**、任何 build 文件也**无**直接声明的 `kotlinx-coroutines` 坐标，该库**已在编译类路径上（经 compose.runtime / sqldelight 传递引入）**，`kotlinx.coroutines.sync` 随同一 core 制品提供。**不声称**它是被显式声明的直接依赖。
 - **schema 变更：06.1 不需要**。理由：generation、lease、活动指针、代目录都是**运行期/文件系统**状态，不是 DB 表；容器规格 §5.2 已冻结「每代是自己的 DB 与 sidecar」，代目录布局由实施批细化，均不要求 schema 边。故 06.1 **零 DDL、零迁移边，schema 停留 v31**（若实施批发现确需 schema 支持，必须另立决定与迁移门，不得在本规格范围内隐式加入）。
 - **不触碰 `.external/`**；不写个人数据；tracked 文件不含本机绝对路径、临时研究或工具轨迹（`docs/CONTRIBUTING.md:165`）。
 - **不重开容器格式**：不改容器格式规格的字节布局、KDF/AEAD 参数、拒绝码、资源上限。
@@ -289,7 +314,7 @@ ResolvingStorage → JournalRecovery → SelectingGeneration → Opening → Rea
 
 ## 9. 边界断言与证据纪律
 
-- 本文状态为 **proposal**（`docs/CONTRIBUTING.md:162` 允许分类之一），**已经独立评审第一轮（REJECT）与独立 verifier 复核，draft-2 已应用其全部意见，尚未经复审通过、未经批准**；本文不构成产品行为、迁移、技术选型或发布授权。
+- 本文状态为 **proposal**（`docs/CONTRIBUTING.md:162` 允许分类之一），**已经独立评审第一轮（REJECT）、独立 verifier 复核与收口评审（APPROVE，遗留项由 draft-3 应用），尚未经最终批准**；本文不构成产品行为、迁移、技术选型或发布授权。
 - 本文与已批准的容器格式规格（D-174）逐条一致：承接其 §5.1/§5.2/§5.3/§5.4/§5.5 与 §6 的 OPEN 项，**不重开**其任何冻结决定。
 - 每项事实主张均带 file:line 证据；`local/artifacts/` 以主 checkout 为准（只读，不粘贴大段原文）。
 - **明确标记为未验证/未取读数**的项：稳定存储的**具体平台 API 选择与目录字面布局**（归实施批）；代目录与 journal 的字面命名与布局（容器规格 §5.2 归实施批）；`LedgerRuntimeOwner` 的具体类型/包/超时值（本文只冻结语义）；06.D 的完整 journal prepared/switched/committed 语义与 `RecoveryRequired`（归 06.D）；并发打开断言**不依赖文件锁**（`AtomicFile` 无锁，容器规格 §5.3）。
