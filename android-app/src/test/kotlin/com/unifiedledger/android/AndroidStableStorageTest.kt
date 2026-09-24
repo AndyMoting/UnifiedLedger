@@ -44,12 +44,16 @@ class AndroidStableStorageTest {
     }
 
     @Test
-    fun theGenerationMainFileHandedToTheDriverIsAbsoluteOnBothGenerationPlans() {
+    fun bothGenerationPlansResolveAnAbsoluteMainFileTarget() {
         // P0 hotfix (defect 1): the driver name must be the ABSOLUTE generation main file. A
         // relative name containing a path separator is rejected by the framework
         // (Context.makeFilename throws "contains a path separator"), so both generation plans —
-        // the legacy upgrade and the fresh install — must target an absolute path. This pins the
-        // value App.kt hands to createAndroidLedgerDatabase (target.mainFile, unchanged).
+        // the legacy upgrade and the fresh install — must produce an absolute target main file.
+        //
+        // Scope: this pins that the shared sequence's `target.mainFile` is absolute. It does NOT
+        // by itself prove the composition root passes it to the driver; that wiring is covered by
+        // the instrumented AndroidAbsoluteDatabasePathInstrumentedTest, which records the name at
+        // the production openDriver seam.
         val databases = tempDatabasesDirectory()
         try {
             val host = databases.toFile().absolutePath
@@ -62,8 +66,6 @@ class AndroidStableStorageTest {
             val upgraded = openStableStorageLedger(fileSystem, layout, legacy.absolutePath, closeGraph = {}) { it }
             assertTrue(File(upgraded.mainFile).isAbsolute, "legacy-upgrade target must be absolute")
             assertFalse(upgraded.allowCreateOnOpen)
-            // The exact seam App.kt calls returns the same absolute path unchanged.
-            assertEquals(upgraded.mainFile, androidGenerationDriverName(upgraded.mainFile))
 
             // Fresh-install plan (no legacy file): a second host directory keeps the plans apart.
             val freshHost = Files.createTempDirectory("p7-06-android-fresh-").toFile().absolutePath
@@ -71,7 +73,6 @@ class AndroidStableStorageTest {
             val fresh = openStableStorageLedger(fileSystem, freshLayout, null, closeGraph = {}) { it }
             assertTrue(File(fresh.mainFile).isAbsolute, "fresh-install target must be absolute")
             assertTrue(fresh.allowCreateOnOpen)
-            assertEquals(fresh.mainFile, androidGenerationDriverName(fresh.mainFile))
             deleteRecursively(File(freshHost).toPath())
         } finally {
             deleteRecursively(databases)

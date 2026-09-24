@@ -29,9 +29,12 @@ import com.unifiedledger.ui.P503StartupState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.Rule
+import org.junit.rules.Timeout
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -52,11 +55,18 @@ import kotlin.time.Clock
  *
  * P0 hotfix (defect 2): [AndroidStartupController.start] now launches the blocking open off the
  * caller thread. Most tests inject an unconfined scope/dispatcher so the launch runs eagerly on
- * the test thread and the state assertions stay deterministic without sleeps; the two dedicated
- * tests below use real single-thread dispatchers to prove the thread hop and the synchronous
- * reentrancy guard under a genuinely asynchronous start.
+ * the test thread and the state assertions stay deterministic without sleeps; the three dedicated
+ * tests below use real single-thread dispatchers to prove the thread hop, the synchronous
+ * reentrancy guard, and the dispose/teardown orphan guard under a genuinely asynchronous start.
+ *
+ * The class-level JUnit [Timeout] rule turns a would-be hang into a failure: if a regression
+ * makes an injected open block forever (e.g. the latched reentrancy test below), the test FAILS
+ * at the rule deadline instead of hanging the suite.
  */
 class AndroidStartupControllerTest {
+    @get:Rule
+    val timeout: Timeout = Timeout.seconds(60)
+
     private var logged: MutableList<String> = mutableListOf()
 
     private fun controller(open: () -> CloseableLedgerGraph): AndroidStartupController = AndroidStartupController(openDatabase = open, logFailure = { failure -> logged += failure.toString() }, startScope = unconfinedScope(), backgroundDispatcher = Dispatchers.Unconfined)
@@ -304,7 +314,10 @@ class AndroidStartupControllerTest {
                     openDatabase = {
                         openCount += 1
                         openEntered.countDown()
-                        releaseOpen.await()
+                        // Bounded so a regression that never releases (or a reverted guard that
+                        // blocks the releasing thread) FAILS at the class Timeout rule instead of
+                        // hanging the suite.
+                        releaseOpen.await(30, TimeUnit.SECONDS)
                         CloseableLedgerGraph(facade = fakeFacade(), close = { closeCount += 1 })
                     },
                     logFailure = { failure -> logged += failure.toString() },
@@ -364,6 +377,81 @@ class AndroidStartupControllerTest {
             backgroundExecutor.shutdownNow()
             stateExecutor.shutdownNow()
         }
+    }
+
+    // ---------------------------------------------------------------- MUST FIX 2 lifecycle
+
+    @Test
+    fun cancelScopeAndDisposeWhileOpenInFlightClosesTheGraphInsteadOfOrphaningIt() {
+        // MUST FIX 2: the composition can be torn down mid-open (rotation during the multi-second
+        // legacy copy). Compose does both things on teardown: it cancels rememberCoroutineScope()
+        // AND runs the DisposableEffect's onDispose. This test mirrors both. The open blocks on a
+        // latch, so teardown provably happens while the open is in flight; the open then completes
+        // and the controller must close it (NonCancellable decision + dispose) rather than orphan
+        // the driver.
+        val backgroundExecutor = newNamedExecutor("test-background-open")
+        val stateExecutor = newNamedExecutor("test-state-writer")
+        val startScope = CoroutineScope(stateExecutor.asCoroutineDispatcher())
+        val openEntered = CountDownLatch(1)
+        val releaseOpen = CountDownLatch(1)
+        var openCount = 0
+        var closeCount = 0
+        try {
+            val controller =
+                AndroidStartupController(
+                    openDatabase = {
+                        openCount += 1
+                        openEntered.countDown()
+                        releaseOpen.await(30, TimeUnit.SECONDS)
+                        CloseableLedgerGraph(facade = fakeFacade(), close = { closeCount += 1 })
+                    },
+                    startScope = startScope,
+                    logFailure = { failure -> logged += failure.toString() },
+                    backgroundDispatcher = backgroundExecutor.asCoroutineDispatcher(),
+                )
+
+            controller.start()
+            assertTrue(openEntered.await(30, TimeUnit.SECONDS), "the background open did not start")
+            // Compose teardown order: cancel the scope, then run onDispose.
+            startScope.cancel()
+            controller.dispose()
+            releaseOpen.countDown()
+
+            // The completed open must be closed, not orphaned: wait until the close is observed.
+            val deadline = System.nanoTime() + 30_000_000_000L
+            while (closeCount == 0 && System.nanoTime() < deadline) {
+                Thread.yield()
+            }
+            assertEquals(1, openCount)
+            assertEquals(1, closeCount, "a graph opened after teardown must be closed, not orphaned")
+            assertNull(controller.ledger)
+        } finally {
+            releaseOpen.countDown()
+            startScope.cancel()
+            backgroundExecutor.shutdownNow()
+            stateExecutor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun disposeAfterReadyClosesTheActiveGraphAndIsIdempotent() {
+        // MUST FIX 2: the ordinary teardown path (composition leaves after Ready) must close the
+        // active graph; a second dispose is a no-op.
+        var closeCount = 0
+        val controller =
+            controller {
+                CloseableLedgerGraph(facade = fakeFacade(), close = { closeCount += 1 })
+            }
+
+        controller.start()
+        assertEquals(P503StartupState.Ready, controller.state)
+        assertEquals(0, closeCount)
+
+        controller.dispose()
+        assertEquals(1, closeCount)
+
+        controller.dispose()
+        assertEquals(1, closeCount, "dispose must be idempotent")
     }
 
     private fun newNamedExecutor(threadName: String): ExecutorService = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, threadName) }

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -141,6 +142,7 @@ import com.unifiedledger.ui.openStableStorageLedger
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -172,7 +174,7 @@ fun app() {
         }
     // P0 hotfix (defect 2): the composition-scoped main-dispatcher scope the startup controller
     // launches its non-blocking start on. Only the state writes resume here; the blocking open
-    // itself runs on the injected background dispatcher.
+    // itself runs on the controller's background dispatcher (Dispatchers.IO).
     val startupScope = rememberCoroutineScope()
     val controller =
         remember(context) {
@@ -195,14 +197,20 @@ fun app() {
                     // guards the target before any create-on-open factory runs.
                     openAndroidStableStorageLedger(context, importFilePickPort, importPickChannel)
                 },
-                // P0 hotfix (defect 2): the blocking open (the legacy full-DB copy on the upgrade
-                // path) must not run on the Compose main thread. [startScope] is the
-                // composition-scoped main dispatcher used only for the state writes; the open
-                // itself runs on [backgroundDispatcher].
+                // P0 hotfix (defect 2): [startScope] is the composition-scoped main dispatcher
+                // used only for the state writes; the blocking open runs on [backgroundDispatcher]
+                // (the controller's Dispatchers.IO default).
                 startScope = startupScope,
-                backgroundDispatcher = Dispatchers.Default,
+                backgroundDispatcher = Dispatchers.IO,
             )
         }
+    // MUST FIX 2: the controller's open now outlives a single composition pass, so dispose it
+    // when this composition leaves. dispose() closes the owner's active graph, and the
+    // controller's NonCancellable decision guarantees an open that completed after teardown is
+    // closed too — the driver is never orphaned by a mid-start rotation.
+    DisposableEffect(controller) {
+        onDispose { controller.dispose() }
+    }
     LaunchedEffect(Unit) {
         controller.start()
     }
@@ -238,22 +246,36 @@ fun app() {
  * P0 hotfix (defect 2): [start] stays non-suspend, but the blocking [LedgerRuntimeOwner.startup]
  * open now runs on [backgroundDispatcher] instead of the caller/main thread. On the
  * legacy-upgrade plan that open performs a full copy of the legacy database, which on a large
- * ledger exceeded the input-dispatch timeout and ANR'd the app (and left a partial generation
- * with no pointer, permanently bricking the next start). The state writes resume on [startScope]
- * (the composition main dispatcher), matching the established
+ * ledger exceeded the input-dispatch timeout and ANR'd the app. The state writes resume on
+ * [startScope] (the composition main dispatcher), matching the established
  * `scope.launch(Dispatchers.Default) { ... }` precedent in `P503App.requestCatalogSnapshotLoad`.
  * The reentrancy guard is still a synchronous caller-thread decision taken before the launch.
+ *
+ * Lifecycle (MUST FIX 2): because the open now outlives a single composition pass, the controller
+ * has an explicit [dispose] that the composition root calls from `DisposableEffect`. [dispose] and
+ * the post-open decision are serialized on one monitor, so a completed open always reaches a
+ * decision — either the state is published (dispose not yet called) or the owner's graph is
+ * closed ([dispose] already ran). The opened driver can therefore never be orphaned by a
+ * mid-start teardown (e.g. rotation during the now-multi-second copy), which pre-fix could not
+ * happen because the main thread was blocked. This removes the ANR trigger only: a process kill
+ * or power loss mid-copy still leaves a pointerless generation that fail-closes with
+ * `POINTER_MISSING` on the next start, and 06.1 has no recovery for that (registered as the 06.D
+ * residual in [openStableStorageLedger]); this hotfix does not change that.
  */
 internal class AndroidStartupController(
     private val openDatabase: () -> CloseableLedgerGraph,
+    // P0 hotfix (defect 2): the scope the non-blocking start launches on. Deliberately has NO
+    // default: this scope must be a main-dispatcher scope (the state writes resume on it), so the
+    // caller is required to inject one explicitly rather than silently writing mutableStateOf
+    // off the main thread.
+    private val startScope: CoroutineScope,
     // P5-04.4 I-002: the default channel logs the full stack via the three-argument
     // Log.w overload; tests inject a counting/recording lambda (never android.util.Log).
     private val logFailure: (Exception) -> Unit = { failure -> Log.w(LOG_TAG, "startup failed", failure) },
-    // P0 hotfix (defect 2): the scope the non-blocking start launches on (state writes stay on
-    // this context — the composition main dispatcher in production) and the dispatcher the
-    // blocking open hops to. Both are injectable so tests can run deterministically.
-    private val startScope: CoroutineScope = CoroutineScope(Dispatchers.Default),
-    private val backgroundDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    // P0 hotfix (defect 2): the dispatcher the blocking open hops to. Dispatchers.IO is the
+    // correct class for the blocking ~370 MB legacy file copy plus its fsyncs (it is bounded to
+    // the I/O pool rather than the CPU pool); injectable so tests run deterministically.
+    private val backgroundDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     var state by mutableStateOf<P503StartupState>(P503StartupState.Starting)
         private set
@@ -291,12 +313,25 @@ internal class AndroidStartupController(
     private var startedOnce = false
 
     /**
+     * MUST FIX 2 lifecycle state: serializes [dispose] against the post-open decision so a
+     * completed open always reaches exactly one outcome (state published, or graph closed). See
+     * the class note.
+     */
+    private val lifecycleLock = Any()
+
+    private var disposed = false
+
+    /**
      * P0 hotfix (defect 2): starts the ledger open without blocking the caller. The reentrancy
      * guard and the [P503StartupState.Starting] publish are SYNCHRONOUS caller-thread decisions
      * taken before the launch, so a second "Retry" tap while a start is in flight is still
      * dropped here and neither rebuilds nor double-closes. The blocking
      * [LedgerRuntimeOwner.startup] then runs on [backgroundDispatcher]; its result is applied on
      * [startScope].
+     *
+     * MUST FIX 2: the open and the result application run under [NonCancellable], so if
+     * [startScope] is cancelled mid-open (composition teardown) the decision is still reached and
+     * [applyStartupResult] closes the just-opened graph instead of orphaning it.
      */
     fun start() {
         // P5-04.4 reentrancy guard: a double "Retry" tap while already starting is ignored so
@@ -305,40 +340,69 @@ internal class AndroidStartupController(
         startedOnce = true
         state = P503StartupState.Starting
         startScope.launch {
-            // The owner closes any connection left over from a previous Ready or an interrupted
-            // mid-open before it opens the next one (the "close before open" resource-safety
-            // rule). P7-06 06.1 fix: the owner applies the spec section 4.2 in-flight
-            // precondition, so a retry racing in-flight business work is refused (typed Blocked)
-            // rather than closing the graph under a running call. This is the blocking call that
-            // must not run on the main thread (defect 2).
-            val result = withContext(backgroundDispatcher) { owner.startup() }
-            applyStartupResult(result)
+            // MUST FIX 2: NonCancellable is established BEFORE the blocking open, so cancelling
+            // startScope mid-open cannot discard the result. The open runs on the background
+            // dispatcher; control returns to this (state) dispatcher for the decision, which is
+            // therefore still applied on the main thread.
+            withContext(NonCancellable) {
+                // The owner closes any connection left over from a previous Ready or an
+                // interrupted mid-open before it opens the next one (the "close before open"
+                // resource-safety rule). P7-06 06.1 fix: the owner applies the spec section 4.2
+                // in-flight precondition, so a retry racing in-flight business work is refused
+                // (typed Blocked) rather than closing the graph under a running call. This is the
+                // blocking call that must not run on the main thread (defect 2).
+                val result = withContext(backgroundDispatcher) { owner.startup() }
+                applyStartupResult(result)
+            }
+        }
+    }
+
+    /**
+     * MUST FIX 2: releases the owner's active graph when the composition is torn down. Serialized
+     * with [applyStartupResult] on [lifecycleLock], so whichever runs second closes any graph the
+     * open produced; a start whose scope was cancelled mid-open still reaches
+     * [applyStartupResult] (NonCancellable) and closes there. Idempotent.
+     */
+    fun dispose() {
+        synchronized(lifecycleLock) {
+            disposed = true
+            owner.closeActiveGraph()
         }
     }
 
     /** Applies the owner outcome to the observable startup state (runs on [startScope]). */
     private fun applyStartupResult(result: LedgerStartupResult) {
-        when (result) {
-            is LedgerStartupResult.Started -> {
-                state = P503StartupState.Ready
+        synchronized(lifecycleLock) {
+            if (disposed) {
+                // The composition was torn down while the open was in flight. Do not publish
+                // state (nobody observes it); close the graph the owner just opened so the driver
+                // is never orphaned and the recreated owner cannot open a second concurrent
+                // connection to the same ledger file.
+                owner.closeActiveGraph()
+                return
             }
-            is LedgerStartupResult.Failed -> {
-                val cause = result.cause
-                logFailure(if (cause is Exception) cause else RuntimeException(cause))
-                state = P503StartupState.StartupError
-            }
-            is LedgerStartupResult.Blocked -> {
-                // A retry arrived while leases are in flight: the graph was NOT touched. Surface
-                // the typed rejection as the fail-closed state so Retry stays reachable (the
-                // reentrancy guard above drops a second tap while Starting).
-                logFailure(IllegalStateException("startup blocked by ${result.inFlightLeases} in-flight lease(s)"))
-                state = P503StartupState.StartupError
-            }
-            LedgerStartupResult.TransitionInProgress -> {
-                // P7-06 06.1 fix (review P3-6): another transition held the owner (zero leases).
-                // The graph was NOT touched; the fail-closed state keeps Retry reachable.
-                logFailure(IllegalStateException("startup rejected: a runtime transition is in progress"))
-                state = P503StartupState.StartupError
+            when (result) {
+                is LedgerStartupResult.Started -> {
+                    state = P503StartupState.Ready
+                }
+                is LedgerStartupResult.Failed -> {
+                    val cause = result.cause
+                    logFailure(if (cause is Exception) cause else RuntimeException(cause))
+                    state = P503StartupState.StartupError
+                }
+                is LedgerStartupResult.Blocked -> {
+                    // A retry arrived while leases are in flight: the graph was NOT touched. Surface
+                    // the typed rejection as the fail-closed state so Retry stays reachable (the
+                    // reentrancy guard above drops a second tap while Starting).
+                    logFailure(IllegalStateException("startup blocked by ${result.inFlightLeases} in-flight lease(s)"))
+                    state = P503StartupState.StartupError
+                }
+                LedgerStartupResult.TransitionInProgress -> {
+                    // P7-06 06.1 fix (review P3-6): another transition held the owner (zero leases).
+                    // The graph was NOT touched; the fail-closed state keeps Retry reachable.
+                    logFailure(IllegalStateException("startup rejected: a runtime transition is in progress"))
+                    state = P503StartupState.StartupError
+                }
             }
         }
     }
@@ -381,11 +445,18 @@ private const val LOG_TAG = "UnifiedLedger"
  * upgrade when needed, and only then builds the graph. The generation directory is created by the
  * sequence before the open, and the pre-open guard rejects a zero-length/invalid main file, so the
  * create-on-open driver only ever runs on the genuine fresh-install path (section 4.5).
+ *
+ * [openDriver] is the injectable driver-open seam: production passes the default
+ * ([createAndroidLedgerDatabase] with the resolved name), and the instrumented regression suite
+ * injects a recording lambda to observe the EXACT name the production sequence hands to the
+ * driver for both generation plans (the defect-1 guard). The default preserves production
+ * behaviour unchanged.
  */
-private fun openAndroidStableStorageLedger(
+internal fun openAndroidStableStorageLedger(
     context: android.content.Context,
     importFilePickPort: AndroidImportFilePickPort<Uri>,
     importPickChannel: ImportFilePickResultChannel,
+    openDriver: (String) -> AndroidLedgerDatabaseHandle = { name -> createAndroidLedgerDatabase(context, name) },
 ): CloseableLedgerGraph {
     val databasePath = context.getDatabasePath(LEGACY_ANDROID_DATABASE_NAME)
     val (hostDirectory, legacyMainFile) = androidStableStoragePaths(databasePath)
@@ -412,9 +483,9 @@ private fun openAndroidStableStorageLedger(
         // Context.getDatabasePath, whose non-separator-prefixed branch calls makeFilename, which
         // throws IllegalArgumentException("File " + name + " contains a path separator"). The
         // absolute branch resolves the parent directory itself and works. target.mainFile is
-        // already absolute (built by fileSystem.join over the absolute host directory), so it is
-        // handed through unchanged.
-        val handle = createAndroidLedgerDatabase(context, androidGenerationDriverName(target.mainFile))
+        // already absolute (built by fileSystem.join over the absolute host directory), so
+        // androidGenerationDriverName returns it unchanged and openDriver receives an absolute path.
+        val handle = openDriver(androidGenerationDriverName(target.mainFile))
         try {
             buildLedgerGraph(handle, importFilePickPort, importPickChannel)
         } catch (failure: Exception) {
