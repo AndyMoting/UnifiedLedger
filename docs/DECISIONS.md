@@ -3393,3 +3393,21 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 5. **边界**：入本批源码与测试、本决定登记；零产品行为变更、零 schema、零 DDL、零新依赖、零对账/证据/借贷/导入 owner 写入；不改 D-156 的 Q11/Q12、DP-1..DP-13 与支持矩阵；不改 D-158 已登记残余。
 
 **关联决定：** D-156、D-158、D-126（P7-02 UnknownCommit 核对闭环先例）、D-172（前序最高 id）。
+
+## D-174 P7-06 备份与恢复 06.0/06.A 设计门批准与 Q13/Q14 技术门登记
+
+**状态：** 已批准（2026-09-24，P7-06 切片 06.0/06.A 设计规格与 Q13/Q14 技术门的批准登记；规格 `docs/specs/2026-09-24-p7-06-backup-container-format-design.md` 经独立规格评审与独立质量评审（均 APPROVE WITH FINDINGS，全部 findings 已闭合）与 distinct verifier（所有承重事实 VERIFIED）后，由主代理按用户既有授权批准；本条登记交付事实、技术门结果、具名残余与承接条件）。
+
+**决定：**
+
+1. **交付与批准**：新增规格 `docs/specs/2026-09-24-p7-06-backup-container-format-design.md`，冻结 Q13 备份容器格式（简单头部 + 单数据库 payload 的版本化认证加密容器，零新 crypto 依赖）与 Q14 世代/指针设计级方案，并登记 06.0 匿名技术门结果。规格状态由 `proposal` 转为 `approved`（本决定即批准依据）。
+
+2. **owner 清单**：单一 `Ledger.sq` 的 234 表 / 9 视图 / 502 触发器；**零非 DB 持久状态**；物理快照即完备备份。`rg02_`～`rg12_` 竖井随快照整体往返。预算/标签/商家/注释 owner 当前不存在（P706-A11 为前瞻性向量）。
+
+3. **Q13 技术门（已闭合部分）**：(a) **driver 快照**两端实证——Android 系统 SQLite 3.44.3 与桌面 xerial sqlite-jdbc 3.51.3.0 上 `VACUUM INTO` 均可达、参数绑定可用、产物 `integrity_check=ok`、拒绝覆盖已存在目标、WAL 下一致；(b) **加密/KDF 官方依据**——AES/GCM/NoPadding + PBKDF2WithHmacSHA256 均为两端平台自带（零新 crypto 依赖），参数依据 NIST SP 800-38D（96-bit IV、128-bit tag）、SP 800-132（salt ≥128 bit）、OWASP（≥600,000 次）、RFC 5116（统一 FAIL）；(c) **跨端字节兼容实证**——ASCII 与非 ASCII（CJK，冻结加宽编码）两类向量在 SunJCE 与 AndroidOpenSSL 上 derivedKey 与 ciphertext+tag 逐字节相同。
+
+4. **仍开放的门（承接，不得静默丢弃）**：61k 大库 `VACUUM INTO` 的**峰值内存**未测；**桌面侧 61k** 读数未取；**非 96-bit IV / 非 128-bit tag 的两端拒绝行为**未实证；**错密码跨端实证仅桌面侧**；**§4.6 AAD 构造**（`header(0..58) || salt`）尚无跨端向量；**旧 schema 支持集与严格结构识别/迁移门**归 06.C；**文件指针切换/重启恢复**与 Q14 的 quiesce/lease/generation 机制归 06.1/06.4（两端当前均无，桌面路径每次启动新建临时目录）；**OS 自动备份/设备迁移排除决策**（Manifest 未声明 `allowBackup`/`dataExtractionRules`）归 06.1/隐私规格。
+
+5. **边界**：入本规格与 `docs/DECISIONS.md` 本条；零产品代码、零测试、零 schema/迁移、零依赖；不改 D-156/D-158 及 P7-01～P7-05 既有冻结面；不把任何验收向量并入 PASS（P706-A01..A12 仍为待实现/待验收）。
+
+**关联决定：** D-156（设计门规格与证据纪律的先例）、D-158（实施登记与残余承接的形状；schema v31）、D-147/D-148（A-PERF 证据纪律）、D-173（前序最高 id）。
