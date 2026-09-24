@@ -1,8 +1,8 @@
 # P7-06 备份与恢复 06.0 / 06.A 设计规格：备份容器格式、owner 清单与 Q13 技术门
 
-状态：proposal（2026-09-24 起草；本文尚未经独立规格评审，按 `docs/CONTRIBUTING.md:162` 的允许分类标 `proposal`。本文冻结 Q13 容器格式字节定义与 Q14 世代/指针设计级方案，并登记 06.0 匿名技术门结果；实施、Git 写操作与最终验收属后续实施批）。
+状态：proposal（2026-09-24 起草；本文已经**两份独立规格评审**（结论均为 APPROVE WITH FINDINGS），其 findings 已在本修订逐条应用（见下 Revision），但本文**仍为 proposal**，最终裁决属主代理。按 `docs/CONTRIBUTING.md:162` 的允许分类标 `proposal`。本文冻结 Q13 容器格式字节定义与 Q14 世代/指针设计级方案，并登记 06.0 匿名技术门结果；实施、Git 写操作与最终验收属后续实施批）。
 
-**Revision:** draft-1（2026-09-24）。工作基线 `main` = `5ea7f67`（P7-05 lost-commit 人工复核面，D-173），schema **v31**，迁移链 `1.sqm`～`30.sqm`（30 个文件，v1→v31）。tracked 行号为该基线实读行号；`.local.md` 与 `local/artifacts/` 以主 checkout 为准、只读。示例与向量全部匿名合成；引用不粘贴大段产品代码，不写本机绝对路径。本文**不**新增决定条目、**不**修改任何既有决定。
+**Revision:** draft-2（2026-09-24）。相对 draft-1 应用评审 findings：冻结密码→`PBEKeySpec` 的字节加宽构造（§4.4）、补齐固定头部类型化拒绝（§4.3）、区分解密前结构检查与统一密码学失败（§4.7/§4.8）、限定错密码实证范围（§4.1/§6）、补恢复侧磁盘预算（§4.8）、登记 OS 自动备份门与新增 OPEN 项（§6）、明确 `db_schema_version` 为非权威提示（§4.3/§5.4）、冻结重启规则为回滚（§5.3）等。draft-1 事实：工作基线 `main` = `5ea7f67`（P7-05 lost-commit 人工复核面，D-173），schema **v31**，迁移链 `1.sqm`～`30.sqm`（30 个文件，v1→v31）。tracked 行号为该基线实读行号；`.local.md` 与 `local/artifacts/` 以主 checkout 为准、只读。示例与向量全部匿名合成；引用不粘贴大段产品代码，不写本机绝对路径。本文**不**新增决定条目、**不**修改任何既有决定。
 
 ## Authority And Boundary
 
@@ -84,7 +84,7 @@ owner 清单（§3）；Q13 容器字节格式定义、AAD 构造、KDF/AEAD 参
 
 **选择：简单头部 + 单数据库 payload 的版本化认证加密容器。** 依据计划 Q13（`:142`、`:144`）：优先简单头部 + 单数据库 payload，**避免引入通用归档解包**；容器版本与数据库 schema 版本分开；默认加密；密码不持久化、不承诺找回；SHA-256 只能检测损坏、不能替代认证。**本规格不采用 ZIP 或任何通用归档格式**（见 §8 的路径穿越/重复条目/白名单/解压上限契约条件）。
 
-**算法（零新 crypto 依赖）**：`AES/GCM/NoPadding` 与 `PBKDF2WithHmacSHA256` 均为两端平台自带——JDK 21 `Cipher` 必需支持集含 `AES/GCM/NoPadding (128)`（https://docs.oracle.com/en/java/javase/21/docs/api/java.base/javax/crypto/Cipher.html），Android `SecretKeyFactory` 支持 `PBKDF2withHmacSHA256 26+`（https://developer.android.com/reference/javax/crypto/SecretKeyFactory），Android 官方密码学指南推荐 AES-GCM 256 位（https://developer.android.com/privacy-and-security/cryptography）。**跨端字节兼容已实证**（证据 `local/artifacts/p7-06-gate/q13-crypto-official-evidence.md`：同 (密码字节, salt, iterations, keyLen, IV, AAD, 明文) 在 SunJCE 与 AndroidOpenSSL 上 derivedKey 与 ciphertext+tag 逐字节相同；错密码得 `AEADBadTagException`）。
+**算法（零新 crypto 依赖）**：`AES/GCM/NoPadding` 与 `PBKDF2WithHmacSHA256` 均为两端平台自带——JDK 21 `Cipher` 必需支持集含 `AES/GCM/NoPadding`（https://docs.oracle.com/en/java/javase/21/docs/api/java.base/javax/crypto/Cipher.html；**注意该必需集条目写作 `(128)`，只证明 GCM 模式自带，不构成 256 位密钥的证据**），Android `SecretKeyFactory` 支持 `PBKDF2withHmacSHA256 26+`（https://developer.android.com/reference/javax/crypto/SecretKeyFactory）。**AES-256（32 字节派生密钥）的证据是跨端字节兼容向量本身**——同一 256-bit `derivedKey` 与同一 128-bit-tag GCM 密文在 SunJCE 与 AndroidOpenSSL 上逐字节相同（证据 `local/artifacts/p7-06-gate/q13-crypto-official-evidence.md`），Android 官方密码学指南亦推荐 AES-GCM 256 位（https://developer.android.com/privacy-and-security/cryptography）。**跨端字节兼容已实证**（证据同上：同 (密码字节, salt, iterations, keyLen, IV, AAD, 明文) 在两端 derivedKey 与 ciphertext+tag 逐字节相同）。**错密码失败语义的实证范围有限**：证据文件只记录**桌面侧**错密码得 `AEADBadTagException`（统一 FAIL）；**Android 侧同属 GCM 语义但未单列实证**，故本条**不**声称该子项已跨端闭合（§6 登记为 OPEN）。
 
 ### 4.2 明文与密文内容
 
@@ -105,7 +105,7 @@ owner 清单（§3）；Q13 容器字节格式定义、AAD 构造、KDF/AEAD 参
 | 12 | 1 | `salt_len` | `u8`；写入值 = `16` |
 | 13 | 1 | `iv_len` | `u8`；写入值 = `12` |
 | 14 | 1 | `tag_len` | `u8`；写入值 = `16` |
-| 15 | 4 | `db_schema_version` | `u32`；payload 快照的 `PRAGMA user_version`（当前 v31） |
+| 15 | 4 | `db_schema_version` | `u32`；payload 快照的 `PRAGMA user_version`（当前 v31）。**非权威提示**（见下 §4.3.1） |
 | 19 | 8 | `plaintext_len` | `u64`；明文字节数（= 快照文件大小） |
 | 27 | 32 | `payload_sha256` | SHA-256(明文)。**仅用于损坏检测，不构成认证**（计划 `:142`） |
 | 59 | `salt_len` | `salt` | CSPRNG 随机字节（§4.4） |
@@ -114,20 +114,50 @@ owner 清单（§3）；Q13 容器字节格式定义、AAD 构造、KDF/AEAD 参
 
 **固定头部**（偏移 0..58，共 59 字节）不含任何可变长字段。
 
+#### 4.3.1 固定头部的类型化拒绝（解密前，只读固定头部）
+
+下列检查**只读取 59 字节固定头部**，在任何解密、任何 payload 读取、任何数据库打开之前执行，且各自映射到**独立**的类型化拒绝码（不同于 §4.7 的统一密码学失败码）。它们是**公开格式/大小检查**，不泄露任何与密码相关的信息，故可以安全区分、也不构成密码 oracle（详见 §4.7）。
+
+| 条件（读固定头部即判定） | 拒绝码 | 备注 |
+| --- | --- | --- |
+| `magic != "ULBK"` | `P706_CONTAINER_FORMAT_UNSUPPORTED` | 非本产品容器 |
+| `container_format_version != 1` | `P706_CONTAINER_VERSION_UNSUPPORTED` | 未知/未来容器格式版本 |
+| `kdf_id != 1` | `P706_KDF_UNSUPPORTED` | 未支持的 KDF 标识 |
+| `aead_id != 1` | `P706_AEAD_UNSUPPORTED` | 未支持的 AEAD 标识 |
+| `salt_len ∉ 16..32`、`iv_len != 12`、`tag_len != 16` | `P706_KDF_PARAMETERS_UNSUPPORTED` / `P706_AEAD_PARAMETERS_UNSUPPORTED` | 参数越界（§4.4、§4.5） |
+| `kdf_iterations ∉ [600000, 10000000]` | `P706_KDF_PARAMETERS_UNSUPPORTED` | §4.4 |
+
+**约定**：以上为 v1 冻结值；任何新增取值必须先升 `container_format_version` 并在规格中显式登记，不得就地扩展 v1 语义。
+
+#### 4.3.2 `db_schema_version` 是非权威提示
+
+`db_schema_version`（偏移 15）虽在 AAD 中受认证，但其角色**仅为提示**：写入端据快照的 `PRAGMA user_version` 填充，读取端**不得**据此决定是否接受或迁移。**权威检查**是认证通过后对 payload 快照实际执行 `PRAGMA user_version`（§5.4）：未知、`user_version=0` 或高于当前支持的 schema 一律类型化拒绝（`P706_SCHEMA_VERSION_UNSUPPORTED`，结构拒绝）。头部提示与 payload 实际 `user_version` 不一致时，以 payload 为准并触发该结构拒绝码。**此判定发生在认证成功之后，不是密码 oracle**（§4.7）。
+
 ### 4.4 KDF：PBKDF2WithHmacSHA256
 
 - **PRF**：HMAC-SHA256（Java 标准算法名 `PBKDF2WithHmacSHA256`，https://docs.oracle.com/en/java/javase/21/docs/specs/security/standard-names.html）。
 - **Salt**：由平台 CSPRNG 生成，**v1 恰为 16 字节（128 bit）**。依据 NIST SP 800-132 §5.1（随机 salt ≥ 128 bit，approved RBG）https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-132.pdf；RFC 5116 §3.1 要求 nonce 每次调用不同。读取端接受的 `salt_len` 范围为 **16..32**，超出即类型化拒绝。
-- **迭代次数**：写入端固定 `600000`。依据 OWASP Password Storage Cheat Sheet（PBKDF2-HMAC-SHA256 ≥ 600,000 iterations）https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html。**硬下界 = 600000，硬上界 = 10000000**：`kdf_iterations` 落在 `[600000, 10000000]` 之外即类型化拒绝（`P706_KDF_PARAMETERS_UNSUPPORTED`）。下界依据 OWASP 推荐值；上界依据 NIST SP 800-132 §5.2（关键密钥可至 10,000,000）；NIST 同节最低值 1,000 仅为标准底线，**本产品不采用该底线**。RFC 8018 §4.1/§4.2 同引 NIST 值（https://www.rfc-editor.org/rfc/rfc8018.txt）。
+- **迭代次数**：写入端固定 `600000`。依据 OWASP Password Storage Cheat Sheet（PBKDF2-HMAC-SHA256 ≥ 600,000 iterations）https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html。**硬下界 = 600000，硬上界 = 10000000**：`kdf_iterations` 落在 `[600000, 10000000]` 之外即类型化拒绝（`P706_KDF_PARAMETERS_UNSUPPORTED`）。下界依据 OWASP 推荐值；上界依据 NIST SP 800-132 §5.2（关键密钥可至 10,000,000）；NIST 同节最低值 1,000 仅为标准底线，**本产品不采用该底线**。RFC 8018 §4.1/§4.2 同引 NIST 值（https://www.rfc-editor.org/rfc/rfc8018.txt）。**上界的成本含义与呈现**：接受至 10,000,000 意味着导入一个合法但恶意的容器可在**有界**（非无限）CPU 上消耗约 10,000,000 次 PBKDF2-HMAC-SHA256 迭代；此成本上界由字段类型本身限定（`u32`，且产品上限 10,000,000），实现必须在**后台线程**执行 KDF 并以**进度/可取消**的方式呈现（不得在 UI 线程阻塞），且对超出上界的值在解密前即按上述码拒绝，从而不会触发无界计算。
 - **派生密钥长度**：**256 bit（32 字节）**，`SecretKeySpec(bytes, "AES")`。`kLen ≥ 112 bit`（NIST SP 800-132 §5.2）已满足。
-- **密码编码（必须显式）**：密码字符串先按**固定字符集 UTF-8** 编码为字节，再构造 `PBEKeySpec`。依据 Android `SecretKeyFactory` 文档对 PBE 族的原文警示——「use only the low order 8 bits of each password character」（https://developer.android.com/reference/javax/crypto/SecretKeyFactory）——若不显式编码，两端字符集/字宽分歧会破坏跨端可解密性。**v1 不做任何 Unicode 规范化**（不做 NFC/NFKC），以保证「同一字节序列」在两端的可复现性；密码中的 U+0000 与未配对代理项由实现类型化拒绝（编码为合法 UTF-8 的前提）。
+- **密码编码（必须显式，v1 冻结规则）**：`PBEKeySpec` 的构造器签名是 `PBEKeySpec(char[] password, byte[] salt, int iterations, int keyLength)`——接收 **`char[]` 而非字节**。因此「UTF-8 编码为字节」本身**不足以**确定 PBKDF2 输入：非 ASCII 密码下，字节→char 的加宽方式不同会得到不同密钥。**v1 冻结如下精确构造**（写入端与读取端必须逐字节一致）：
+
+  ```java
+  byte[] bytes = password.getBytes(StandardCharsets.UTF_8);
+  char[] widened = new char[bytes.length];
+  for (int i = 0; i < bytes.length; i++) {
+      widened[i] = (char) (bytes[i] & 0xFF);   // 每个 UTF-8 字节 → 一个 char，取低 8 位
+  }
+  PBEKeySpec spec = new PBEKeySpec(widened, salt, iterations, 256);
+  ```
+
+  依据 Android `SecretKeyFactory` 文档对 PBE 族的原文警示——「use only the low order 8 bits of each password character」（https://developer.android.com/reference/javax/crypto/SecretKeyFactory）——故加宽取低 8 位与 PBE 语义一致。**不得**使用 `password.toCharArray()` 直接构造：评审已复现二者对非 ASCII 密码（如 `密码🔐`）产生**不同 derivedKey**，会导致两份实现互不可解密（证据 `local/artifacts/p7-06-gate/q13-crypto-official-evidence.md` 追加的非 ASCII 段；既有跨端字节兼容实证用 ASCII 密码，未覆盖该歧义）。**v1 不做任何 Unicode 规范化**（不做 NFC/NFKC），以保证「同一字节序列」在两端的可复现性；密码中的 U+0000 与未配对代理项由实现类型化拒绝（编码为合法 UTF-8 的前提）。**该编码的跨端一致性尚未用非 ASCII 向量实证**，已登记为 §6 的 OPEN 门项（06.A 实施前必须补测）。
 - **密钥材料编码**：`SecretKeyFactory.generateSecret(...).getEncoded()` 与 `SecretKeySpec` 均为原始字节；跨端一致性以 §6 的字节兼容实证为准，**不依赖 provider 身份**（JDK 21 为 SunJCE、Android 为 AndroidOpenSSL，证据同上）。
 
 ### 4.5 AEAD：AES-256-GCM
 
 - **IV/Nonce**：**96 bit（12 字节）**，由平台 CSPRNG 生成。依据 NIST SP 800-38D §5.2.1.1（建议限制为 96 bit 以利互操作与效率）https://csrc.nist.gov/pubs/sp/800/38/d/final。读取端 `iv_len` 必须等于 12，否则类型化拒绝。
 - **认证标签**：**128 bit（16 字节）**。依据 SP 800-38D §5.2.1.2（t ∈ {128,120,112,104,96}，每密钥固定一个 t）。读取端 `tag_len` 必须等于 16。
-- **单密钥单次调用（no nonce reuse）**：每次导出使用**全新 CSPRNG salt** 派生**全新密钥**，且该密钥仅执行**一次** GCM 调用；因此同一密钥下重复 IV 的概率受 SP 800-38D §8 约束（≤ 2^-32），总调用数远低于 §8.3 的 2^32 上限。**禁止**在同一密钥上重复加密不同 payload，也禁止复用 salt+IV 组合。
+- **单密钥单次调用（no nonce reuse）**：每次导出使用**全新 CSPRNG salt** 派生**全新密钥**，且该密钥仅执行**一次** GCM 调用；因此**不存在同一密钥下的 IV 复用事件**——「同一密钥重复 IV 的概率」约束（SP 800-38D §8，≤ 2^-32）与 §8.3 的 2^32 总调用数上限**均不会被逼近**（每个密钥的调用数恒为 1，跨密钥不累积）。**禁止**在同一密钥上重复加密不同 payload，也禁止复用 salt+IV 组合。
 - **AAD 必须在密文处理前全部供给**：`updateAAD` 必须先于 `update`/`doFinal`（Android `Cipher` 文档明述）。
 
 ### 4.6 被认证元数据（AAD）的无歧义构造
@@ -146,9 +176,10 @@ AAD = 固定头部(偏移 0..58，59 字节) || salt(salt_len 字节)
 
 依据 RFC 5116 §2.2 与 SP 800-38D §5.2.2：解密输出只能是明文或**单一 FAIL 符号**；**错误密码与损坏必须不可区分**。
 
-- **单一失败码**：`P706_CONTAINER_AUTHENTICATION_FAILED`。
-- 下列全部情形映射到**同一**失败码、同一外部可观察行为、**同一时序量级**（不提前短路、不区分消息）：错误密码；标签校验失败；密文被篡改；`payload_sha256` 与解密后明文不符；头部字段与密文不一致。**禁止**先比较 `payload_sha256` 再解密，也禁止对上述情形给出不同错误文案或不同耗时。
-- `payload_sha256` 的角色仅是**损坏检测**（计划 `:142`：「SHA-256 只能检测损坏，不能替代认证」）；它**不是**安全边界，其失败不得单独构成一条与认证失败不同的可观察路径。
+- **单一失败码（仅限密码学失败）**：`P706_CONTAINER_AUTHENTICATION_FAILED`。
+- 下列**密码学**情形映射到**同一**失败码、同一外部可观察行为、**同一时序量级**（不提前短路、不区分消息）：错误密码；标签校验失败；密文被篡改。**禁止**先比较 `payload_sha256` 再解密，也禁止对上述情形给出不同错误文案或不同耗时。**同一时序量级的要求仅约束「错误密码」与「密文/标签损坏」这一对**；认证标签通过、但解密后 `payload_sha256` 与明文不符（存储哈希坏）属**认证后的完整性异常**，其失败路径与时序**不必**与错误密码匹配（该情形已被 GCM 认证排除为「密码错误」，故不构成 oracle），可映射到 `P706_PAYLOAD_INTEGRITY_FAILED`。
+- **解密前结构检查不属于密码学失败**：§4.3.1 的固定头部格式/参数拒绝、§4.3.2 的 payload schema 结构拒绝、§4.8 的容器大小与 `plaintext_len` 自洽检查、§5.4 的身份/账本结构拒绝，均在**认证之外**且只依赖**公开的格式与大小**，故**允许提前短路并各自给出类型化拒绝码**。这些检查**不**泄露密码相关信息，**不是**密码 oracle；本节的统一失败条款**不**适用于它们。此前把「头部字段与密文不一致」笼统列入统一失败属表述过宽：头部与密文的大小自洽矛盾由 §4.8 的结构检查提前拒绝，而受认证的头部内容篡改仍由 GCM 标签失败覆盖（归 `P706_CONTAINER_AUTHENTICATION_FAILED`）。
+- `payload_sha256` 的角色仅是**损坏检测**（计划 `:142`：「SHA-256 只能检测损坏，不能替代认证」）；它**不是**安全边界。它**不**用于对未认证输入提前短路（那会泄露「密码是否正确」），只在 GCM 标签通过后用于检测存储层损坏（§4.9）。
 
 ### 4.8 资源上限与有界读取
 
@@ -156,11 +187,20 @@ AAD = 固定头部(偏移 0..58，59 字节) || salt(salt_len 字节)
 | --- | --- | --- |
 | 容器输入上限 | **2 GiB** | 打开备份时若文件大小 > 该值，类型化拒绝（`P706_CONTAINER_TOO_LARGE`），不读取 |
 | 明文（快照）上限 | **1 GiB** | `plaintext_len` 超限即拒绝；同时防止 `plaintext_len` 被篡改为巨值触发分配 |
-| `plaintext_len` 与容器大小的自洽 | `plaintext_len + 59 + salt_len + iv_len + tag_len == 容器大小` | 不成立即拒绝（无需解密即可判定） |
-| 磁盘前置 | 可用空间 ≥ 容器大小 + 明文大小 + 64 MiB 余量 | 不足即拒绝；不得在写满磁盘后留下「成功」标记 |
+| `plaintext_len` 与容器大小的自洽 | `plaintext_len + 59 + salt_len + iv_len + tag_len == 容器大小` | 不成立即拒绝（无需解密即可判定，属 §4.7 的公开结构检查） |
+| **导出侧**磁盘前置 | 可用空间 ≥ 容器大小 + 明文快照大小 + 64 MiB 余量 | 不足即拒绝；不得在写满磁盘后留下「成功」标记 |
+| **恢复侧**磁盘前置（峰值） | 可用空间 ≥ 容器 + 明文暂存 + 隔离迁移副本 + 新代 DB + 保留旧代 DB + 64 MiB 余量 | 恢复峰值远大于导出（见下）；不足即拒绝，不得中途半切换 |
 | 读取方式 | 固定 **64 KiB** 流式缓冲，逐块 `update`/写入 | **禁止**对无界输入调用 `readBytes()` 或任何整文件读入内存的 API |
 
-依据：计划 `:144`「不得无界 `readBytes()`」、`:142`「最大输入/明文/磁盘占用」；大库实测 354 MB 快照需与源库同量级的额外磁盘（证据 `q13-driver-snapshot-gate.md`），故磁盘前置为硬门。
+**导出侧**磁盘公式（同 draft-1）：`container_size + plaintext_size + 64 MiB`。
+
+**恢复侧**磁盘公式（新增，峰值口径）：恢复在峰值时同时存在下列占用，故须按其**总和**做前置检查——
+`container_size`（输入容器）+ `plaintext_size`（解密暂存）+ `migrated_copy_size`（隔离迁移副本，≥ 明文快照）+ `new_generation_db_size`（新代 DB）+ `retained_old_generation_db_size`（新代验证通过前保留的旧代 DB，§5.2）+ `64 MiB` 余量。
+即恢复峰值 ≈ `container + 3 × snapshot + old_generation + 64 MiB`（隔离副本与新代 DB 各自接近快照大小）。**64 MiB 余量在账本规模下可忽略**（相对 354 MB 级快照不足 20%），故不得把它当作主要余量来源；真正的余量来自「不得在写满磁盘后留下成功标记」的 fail-closed 检查与可回退的旧代保留（§5.5）。
+
+**线程要求**：导出与导入（含 KDF、流式加解密、快照与迁移）**必须**在后台线程执行，**禁止**在 UI 线程运行。依据：大库实测明确指出产品须显示进度、处理空间不足，**不得在 UI 线程执行**（证据 `q13-driver-snapshot-gate.md` 大库段；计划 §6.2 亦要求导出「有界加密写到用户目标」并显示进度、处理空间不足/取消）。61k 库的 `VACUUM INTO` 在设备侧耗时约 65.8 s（源库约 354 MB），故 UI 不得阻塞。
+
+依据：计划 `:144`「不得无界 `readBytes()`」、`:142`「最大输入/明文/磁盘占用」；大库实测需与源库同量级的额外磁盘（证据 `q13-driver-snapshot-gate.md`），故磁盘前置为硬门。
 
 ### 4.9 明文隔离与生命周期
 
@@ -168,12 +208,13 @@ AAD = 固定头部(偏移 0..58，59 字节) || salt(salt_len 字节)
 - **流式解密的陷阱**：`CipherInputStream` 会在标签校验前返回明文。故 v1 **禁止**用 `CipherInputStream` 直接把明文喂给数据库；实现必须显式 `Cipher.update`/`doFinal`，在 `doFinal` 成功（标签通过）**且** `payload_sha256` 校验通过之前，不得把暂存文件当作可信输入。
 - **明文落点**：认证期间解密输出只写入**应用私有暂存目录**下的临时文件（Android 应用私有目录 / 桌面平台用户数据目录下的私有子目录）。认证失败 → 立即删除暂存文件；认证成功 → 才允许在**隔离副本**上执行结构/领域校验与迁移（06.C）。共享 UI 不接触文件路径、driver 或密码日志（计划 `:152`）。
 - **清理**：未确认的暂存在取消、会话结束、下次启动时清理（计划 `:166`）；OS 自动备份/设备迁移需有明确排除规则覆盖明文暂存、回退与 journal（计划 `:166`）。**禁止**声称安全擦除已删除文件的物理扇区。
+- **运行期恢复状态不是备份载荷**：§5 的世代目录、持久 journal 与活动指针是**运行期恢复状态（runtime recovery state）**，用于本机崩溃/重启后的切换与回退，**不属于备份 payload**。容器只承载 §3 的持久 owner（单一物理快照）；实现者**不得**期望从备份中恢复崩溃时的 journal/代际指针状态，也不得把运行期状态写入容器。
 
 ### 4.10 默认加密与密码策略
 
 - **默认加密**：导出默认产生加密容器（计划 Q13）。明文容器不在首版提供。
 - **密码永不持久化**：密码不写入任何文件、偏好、日志或容器；`PBEKeySpec` 使用后应清除其字符数组（`clearPassword()`），派生密钥字节在使用后清零。**不承诺找回**（计划 `:142`）。
-- 密码强度：写入端要求非空且长度下限（如 ≥ 8 个码点）并在 UI 明确提示；**不**以强度估计替代 KDF 参数（§4.4）。
+- 密码强度（**v1 冻结**）：写入端要求非空且**长度下限 = 8 个 Unicode 码点**（依据 NIST SP 800-63B §5.1.1.2：「Memorized secrets SHALL be at least 8 characters in length」，且「each Unicode code point SHALL be counted as a single character」，https://pages.nist.gov/800-63-3/sp800-63b.html），并在 UI 明确提示；**不**以强度估计替代 KDF 参数（§4.4）。读取端**不**对已存在的容器施加该长度门（只按 §4.4 的参数与 §4.7 的统一密码学失败处理），以免旧容器因策略变化而不可解。
 
 ## 5. Q14 世代 / 指针设计（06.0，设计级）
 
@@ -199,12 +240,13 @@ AAD = 固定头部(偏移 0..58，59 字节) || salt(salt_len 字节)
   - `prepared`：新代已完整落盘并通过校验，但指针未切换。
   - `switched`：活动指针已指向新代，但新图尚未成功打开并读回。
   - `committed`：新图打开并权威读回成功，可发布新 generation。
-- 崩溃顺序（计划 `:146`）：以平台实测证明原子性与崩溃顺序；在 `switched` 之后、`committed` 之前崩溃时，重启按 journal **回滚**（指针回退到旧代）或前滚，二者必须有确定规则且只能二选一，不得混搭两种半实现。
+- 崩溃顺序（计划 `:146`）：以平台实测证明原子性与崩溃顺序；在 `switched` 之后、`committed` 之前崩溃时，重启按 journal **回滚**（指针回退到旧代）。**v1 冻结重启规则为回滚（ROLLBACK）**：该选择与 §5.5 第 4 点（「切换后失败 → 按 journal 回滚」）及计划 §6.2 的状态机一致。**前滚（roll-forward）为显式否决的替代方案**，本版不采用；规则只能二选一，不得混搭两种半实现（计划 `:146`）。
 - `AtomicFile` **不提供锁**，也不使数据库与 sidecar 整组天然原子（计划 `:106`）；故整组一致性靠 journal + 代目录，而非单次 rename。
 
 ### 5.4 拒绝规则（严格结构识别门）
 
 - **默认拒绝**：数据库版本未知、`user_version=0`、或 `user_version` 高于当前支持的 schema，一律**默认拒绝**（计划 `:164`、E06-03 `:84`）。
+- **权威版本检查在 payload，不在头部**：头部 `db_schema_version`（§4.3.2）仅为**非权威提示**；**权威检查**是认证成功后对 payload 快照实际执行 `PRAGMA user_version`（§4.3.2）。头部提示与 payload 实际值不一致时，以 payload 为准并按 `P706_SCHEMA_VERSION_UNSUPPORTED` 做结构拒绝。该检查发生在认证之后，**不是**密码 oracle（§4.7）。
 - **禁止复用桌面宽松补戳路径**：`Main.kt:791-793` 与 `:812-819` 的「补当前版本戳」逻辑**不得**用于接受外来备份（计划 §6.2 明令）。若未来要支持历史无戳库，必须另立严格结构识别与迁移门（计划 `:164`）。
 - **仅接受本产品身份**：ledgerId 必须是固定身份且库中无额外账本；跨账本容器类型化拒绝。
 - 结构白名单与隔离迁移属 06.C（计划 `:137`），本规格只冻结「默认拒绝 + 不复用宽松路径」的规则。
@@ -227,17 +269,21 @@ AAD = 固定头部(偏移 0..58，59 字节) || salt(salt_len 字节)
 | --- | --- | --- |
 | driver 快照：Android 系统 SQLite 3.44.3 `VACUUM INTO` 可达、参数绑定、产物完整性、拒绝覆盖、WAL 一致性 | **CLOSED** | `local/artifacts/p7-06-gate/q13-driver-snapshot-gate.md`（`bound-ok`、`integrity_check=ok`、`output file already exists` 拒绝、WAL 下自洽） |
 | driver 快照：桌面 xerial sqlite-jdbc 3.51.3.0 `VACUUM INTO` 可达、参数绑定、产物完整性、拒绝覆盖 | **CLOSED** | 同上（桌面段：`sqlite_version=3.51.3`、PreparedStatement 绑定 PASS、`output file already exists` 拒绝） |
-| 跨端 crypto 字节兼容：同参数下 derivedKey 与 ciphertext+tag 在 SunJCE 与 AndroidOpenSSL 上逐字节相同；错密码 → `AEADBadTagException` | **CLOSED** | `local/artifacts/p7-06-gate/q13-crypto-official-evidence.md`（两端字节相同；统一 FAIL） |
+| 跨端 crypto 字节兼容：同参数下 derivedKey 与 ciphertext+tag 在 SunJCE 与 AndroidOpenSSL 上逐字节相同 | **CLOSED** | `local/artifacts/p7-06-gate/q13-crypto-official-evidence.md`（两端字节相同）。**注意**：该向量使用 **ASCII 密码**，未覆盖非 ASCII 编码歧义（见下 OPEN 行） |
+| 错密码 → 统一 FAIL（`AEADBadTagException`） | **OPEN（仅桌面侧已实证）** | 证据文件只记录**桌面侧**错密码得 `AEADBadTagException`；Android 侧同属 GCM 语义但**未单列实证**，故本子项**不**声称跨端闭合 |
 | 官方参数依据：AES-GCM 96-bit IV / 128-bit tag；PBKDF2-HMAC-SHA256 ≥ 600,000 次；salt ≥ 128 bit；AAD 先供给；统一 FAIL | **CLOSED** | 同上（NIST SP 800-38D、NIST SP 800-132、OWASP、RFC 5116/8018） |
-| 大库 `VACUUM INTO` 时长与磁盘：61k 库（354 MB）耗时 ~65.8 s、需与源库同量级额外磁盘 | **CLOSED（仅此两项）** | `q13-driver-snapshot-gate.md` 大库段：`~65.8 s`、产物 355,721,216 B、`integrity_check=ok`；`/data/user/0` +~0.7G |
+| **非 ASCII（CJK）密码的跨端向量**（冻结编码 `bytes→char` 加宽，§4.4） | **OPEN（未运行）** | 评审已复现朴素 `toCharArray()` 与「UTF-8 字节加宽」对密码 `密码🔐` 产生**不同 derivedKey**（证据文件追加的非 ASCII 段）；v1 已冻结加宽规则，但**该规则本身的跨端一致性尚未用非 ASCII 向量实证**。**06.A 实施前必须补测**，本规格不声称已达成 |
+| **非 96-bit IV / 非 128-bit tag 的两端拒绝行为** | **OPEN（未运行）** | 证据文件列为须实证项（§5 第 (2) 条），**尚未运行**；本规格只冻结「`iv_len != 12`/`tag_len != 16` 即类型化拒绝」（§4.3.1、§4.5），不声称两端已实测 |
+| 大库 `VACUUM INTO` 时长与磁盘：61k 库（**源库** 371,658,752 B ≈ 354 MB）耗时 ~65.8 s、需与源库同量级额外磁盘 | **CLOSED（仅此两项）** | `q13-driver-snapshot-gate.md` 大库段：`~65.8 s`、**快照产物 355,721,216 B**、`integrity_check=ok`；设备数据分区 used +~0.7G（源+产物并存）。**354 MB 是源库大小，355,721,216 B 是快照输出大小**，二者不同 |
 | **大库峰值内存（61k）** | **OPEN** | **61k 峰值内存读数尚未取得**（设备无 `time -v`；`VACUUM INTO` 为流式实现但须在实现批补峰值内存读数）。证据文件明确记载未测峰值内存 |
 | **桌面侧 61k `VACUUM INTO` 资源读数** | **OPEN** | 桌面段只测了 4 交易的小库（`user_version=30`）；61k 桌面读数未取 |
+| **OS 自动备份 / 设备迁移门**（manifest `allowBackup` / `dataExtractionRules` 决策；「明文账本进入云备份」问题） | **OPEN** | 属隐私/平台切片（**06.1 平台适配器 / 隐私规格**，计划 `:166`）；Android 当前 `AndroidManifest.xml` 的 `<application>` **无** `android:allowBackup`/`android:dataExtractionRules` 声明，故**系统默认实际为备份启用**。本规格**不**声称云备份/设备迁移已关闭（§1.2、§4.9） |
 | **旧 schema 支持集与迁移门** | **OPEN** | 支持集合、严格结构识别与隔离迁移属 06.C；本规格只冻结「默认拒绝 + 不复用宽松补戳」（§5.4） |
 | **文件指针切换 / 重启恢复** | **OPEN** | 属 06.1/06.D；当前两端**无** quiesce/lease/generation/活动指针（§1.1），桌面路径每次启动新建临时目录 |
 | **06.D 完整恢复机制（准入、切换、回滚、故障重启）** | **OPEN** | 属 06.4；本规格只给设计级方案（§5） |
 | **稳定存储（两端固定产品路径 + 旧路径升级）** | **OPEN** | 属 06.1/06.D 前置（§5.1） |
 
-**结论（如实）**：Q13 的**格式字节定义**（§4）与**两端 driver 快照可达性**、**跨端 crypto 字节兼容**、**官方参数依据**已具备冻结条件；但**大库峰值内存**与**旧 schema 迁移门**仍未闭合，故本规格给出格式定义的同时，把这两项列为 06.A 最终冻结前的待补证据（计划 `:460`：Q13 实施规格冻结前必须补齐「现用 driver 快照实证；官方加密/KDF 依据、精确格式/参数/资源上限及双端验证」——其中「精确格式/参数」由本文给出，「资源上限」的**实测读数**仍待补）。
+**结论（如实）**：Q13 的**格式字节定义**（§4）与**两端 driver 快照可达性**、**跨端 crypto 字节兼容（ASCII 向量）**、**官方参数依据**已具备冻结条件；但下列项**仍未闭合**，故本规格给出格式定义的同时，把它们列为 06.A 最终冻结前的待补证据（计划 `:460`）：**大库峰值内存**、**桌面侧 61k 资源读数**、**非 ASCII 密码跨端向量**、**非 96-bit IV/非 128-bit tag 两端拒绝行为**、**OS 自动备份/设备迁移门**、**旧 schema 迁移门**。计划 `:460` 要求 Q13 实施规格冻结前必须补齐「现用 driver 快照实证；官方加密/KDF 依据、精确格式/参数/资源上限及双端验证」——其中「精确格式/参数」由本文给出，「资源上限」的**实测读数**与上列跨端向量仍待补。
 
 ## 7. 验收映射（P706-A01..A12）
 
@@ -248,12 +294,12 @@ AAD = 固定头部(偏移 0..58，59 字节) || salt(salt_len 字节)
 | P706-A01 | 当前库含全部 owner，往返逐 owner/稳定 ID 等价 | 06.2/06.4 | 提供完整 owner 清单（§3）作为往返分母 |
 | P706-A02 | WAL 下持续写入时导出，还原只出现自洽时点 | 06.2 | 快照机制与 WAL 一致性已由 driver 门实证（§6） |
 | P706-A03 | 错密码、认证失败、截断、伪格式、超限、未知未来/无版本库、异账本 → 类型化拒绝 | 06.C | 冻结统一失败码（§4.7）、资源上限（§4.8）、拒绝规则（§5.4） |
-| P706-A04 | 支持集合内有账旧 schema 与迁移失败只改隔离副本 | 06.C | **格式层面已就绪**（`db_schema_version` 字段）；迁移门 OPEN（§6） |
+| P706-A04 | 支持集合内有账旧 schema 与迁移失败只改隔离副本 | 06.C | **格式层面已就绪**（头部 `db_schema_version` 非权威提示 + payload `user_version` 权威检查，§4.3.2/§5.4）；迁移门 OPEN（§6） |
 | P706-A05 | 预览取消、确认旧 token、确认前更换来源/目标代际 → 零切换或 stale 拒绝 | 06.3/06.4 | Q14 的 prepared/switched/committed journal 为 token/代际绑定提供基础（§5.3） |
 | P706-A06 | 每个持久状态边界掉电/杀进程及重启 → 完整旧代或新代可用 | 06.4 | Q14 journal 崩溃顺序要求（§5.3、§5.5） |
 | P706-A07 | 恢复与导入/记账/读作业并发，旧回调晚到不污染新图 | 06.4 | Q14 的准入/等待要求（§5.5 第 2 点） |
 | P706-A08 | 恢复库已有提交回执，重放同请求返回原结果、零新增经济效果 | 06.4 | 物理快照保留幂等回执（§3、§4.2） |
-| P706-A09 | Android→Desktop→Android、两端退出进程再开，身份与事实一致 | 06.4/06.5 | 跨端字节兼容已实证（§6），保证容器可跨端解密 |
+| P706-A09 | Android→Desktop→Android、两端退出进程再开，身份与事实一致 | 06.4/06.5 | 跨端字节兼容已用 **ASCII 向量**实证（§6）；非 ASCII 密码向量仍 OPEN，须在 06.A 前补测 |
 | P706-A10 | 满盘、SAF 写失败、取消、损坏活动库 → 不报成功，FOUND-001 保留旧库 | 06.2/06.4 | 磁盘前置与「失败文件不标成功」（§4.8、§5.1 fail-closed） |
 | P706-A11 | 最终 schema 含预算配置历史及标签/商家注释历史，所有新增 owner 往返 | 06.5 | **前瞻性**：这些 owner 当前不存在（§3），纳入最终 schema 冻结时 |
 | P706-A12 | 累积候选库叠加 20k/50k 正式交易及历史，记录大小/峰值内存/时长，零 OOM/ANR | 06.5 | **阈值在 06.0 基线后冻结**；本规格登记峰值内存 OPEN（§6），不预先冻结阈值 |
@@ -274,5 +320,5 @@ AAD = 固定头部(偏移 0..58，59 字节) || salt(salt_len 字节)
 
 - 本文状态为 **proposal**（`docs/CONTRIBUTING.md:162` 允许分类之一）；尚未经独立规格评审，**不构成实施授权**，不冻结 Q13/Q14 的最终裁决。评审闭环并由主代理裁决后，本文方可转 `approved`（沿 D-156 规格先例 `docs/DECISIONS.md:2947`）。
 - 每项事实主张均带 file:line 或公开 URL 证据；本地证据以主 checkout 的 `local/artifacts/p7-06-gate/` 两文件为准（只读，不粘贴大段原文）。
-- **明确标记为未验证/未取读数**的项：61k 峰值内存（设备侧与桌面侧均未取）、桌面侧 61k `VACUUM INTO` 资源读数、旧 schema 迁移门、指针切换/重启恢复、06.D 完整机制、两端稳定存储（§6）。
+- **明确标记为未验证/未取读数**的项：61k 峰值内存（设备侧与桌面侧均未取）、桌面侧 61k `VACUUM INTO` 资源读数、**非 ASCII（CJK）密码的跨端向量**、**非 96-bit IV / 非 128-bit tag 的两端拒绝行为**、**Android 侧错密码统一 FAIL 的单独实证**、OS 自动备份/设备迁移门、旧 schema 迁移门、指针切换/重启恢复、06.D 完整机制、两端稳定存储（§6）。
 - 本文不复制任何真实金额、时间、锚点注册值或个人数据；示例全部匿名合成；`.external/` 只读未触碰；`rgXX_` 竖井与 golden 零改动。
