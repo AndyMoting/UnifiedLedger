@@ -1,8 +1,8 @@
 # P7-06 备份与恢复 06.2 / 06.B 设计规格：一致快照、认证加密导出与取消/空间不足处理
 
-状态：proposal（2026-09-24 起草；本文是 06.2 / 06.B 导出切片的**设计规格**，按 `docs/CONTRIBUTING.md:162` 的允许分类标 `proposal`。本文**不**构成产品行为、迁移、技术选型或发布授权；它**不改动**任何已冻结字节、参数、拒绝码或既有决定，实施属后续实施批，并须经独立评审与 distinct verifier 后方可转 `approved`。）
+状态：approved（2026-09-24 起草、2026-09-24 批准；本文是 06.2 / 06.B 导出切片的**设计规格**，已经**两轮独立规格评审（首轮 APPROVE WITH FINDINGS，含 1 项 P2 写序矛盾 + P2/P3；修订后的闭包复评 APPROVE WITH FINDINGS，全部条目已闭合）**，并**由 `docs/DECISIONS.md` D-177 批准（本决定即批准依据）**，故按 `docs/CONTRIBUTING.md:162` 的允许分类标 `approved`。本文**不**构成产品行为、迁移、技术选型或发布授权；它**不改动**任何已冻结字节、参数、拒绝码或既有决定，实施属后续实施批。）
 
-**Revision:** draft-3（2026-09-24；在 draft-2 基础上修正两处事实/单位陈述与两处交叉引用：① 绑定上限字节数按同句算式 `plaintext_len + 59 + salt_len + iv_len + tag_len` 更正为 **103** 字节（59 + 16 + 12 + 16；原误作 75，即 59 + salt_len 的 AAD 长度），结论 103 ≪ 2 GiB 不变；② 后置门依据不再声称快照产物「略大于源」，改为「快照大小**不保证**等于源大小」，并按门证据实数引述（源 371,658,752 B ≈ 354 MiB → 快照产物 355,721,216 B，产物按字节数更小）；③ 指向私有暂存章节的交叉引用由 §5/§4 更正为 §6。draft-2 的内容不变（应用独立规格评审的 APPROVE WITH FINDINGS 全部条目：P2-1 `payload_sha256` 写序、P2-2 写侧 1 GiB 明文上限门、P2-3 有界流式写端口、P3-1 `integrity_check` 执行面登记、P3-2 A02 的 WAL 证据口径、P3-3～P3-5 引用精度）。基线 = 本 worktree 分支 `UL-p7-06sb`，基点 `d6cffb6`（P7-06 06.1 稳定存储与 `LedgerRuntimeOwner` 实施合并点，D-176）；schema **v31**，迁移链 `1.sqm`～`30.sqm`（30 个文件，v1→v31）。tracked 行号为该基点在本 worktree 的实读行号；`docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` 与 `local/artifacts/p7-06-gate/` 以主 checkout 为准、只读。示例与向量全部匿名合成；不粘贴大段产品代码，不写本机绝对路径。本文**不**新增决定条目、**不**修改任何既有决定。
+**Revision:** draft-3（2026-09-24；在 draft-2 基础上修正两处事实/单位陈述与两处交叉引用：① 绑定上限字节数按同句算式 `plaintext_len + 59 + salt_len + iv_len + tag_len` 更正为 **103** 字节（59 + 16 + 12 + 16；原误作 75，即 59 + salt_len 的 AAD 长度），结论 103 ≪ 2 GiB 不变；② 后置门依据不再声称快照产物「略大于源」，改为「快照大小**不保证**等于源大小」，并按门证据实数引述（源 371,658,752 B ≈ 354 MiB → 快照产物 355,721,216 B，产物按字节数更小）；③ 指向私有暂存章节的交叉引用由 §5/§4 更正为 §6。draft-2 的内容不变（应用独立规格评审的 APPROVE WITH FINDINGS 全部条目：P2-1 `payload_sha256` 写序、P2-2 写侧 1 GiB 明文上限门、P2-3 有界流式写端口、P3-1 `integrity_check` 执行面登记、P3-2 A02 的 WAL 证据口径、P3-3～P3-5 引用精度）。本文已完成两轮独立规格评审（首轮 APPROVE WITH FINDINGS，含 1 项 P2 写序矛盾 + P2/P3；修订后的闭包复评 APPROVE WITH FINDINGS，全部条目已闭合），并由 `docs/DECISIONS.md` D-177 批准，故状态为 `approved`。基线 = 本 worktree 分支 `UL-p7-06sb`，基点 `d6cffb6`（P7-06 06.1 稳定存储与 `LedgerRuntimeOwner` 实施合并点，D-176）；schema **v31**，迁移链 `1.sqm`～`30.sqm`（30 个文件，v1→v31）。tracked 行号为该基点在本 worktree 的实读行号；`docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` 与 `local/artifacts/p7-06-gate/` 以主 checkout 为准、只读。示例与向量全部匿名合成；不粘贴大段产品代码，不写本机绝对路径。本文**不**新增决定条目、**不**修改任何既有决定。
 
 ## Authority And Boundary
 
@@ -301,7 +301,7 @@ AAD = 固定头部(偏移 0..58，59 字节) || salt(salt_len 字节)
 
 ## 9. 边界断言与证据纪律
 
-- 本文状态为 **proposal**（`docs/CONTRIBUTING.md:162` 允许分类之一）。本文只冻结 06.B 的**设计级**方案，不构成产品行为、迁移、技术选型或发布授权；实施属后续实施批，转 `approved` 前须经独立评审与 distinct verifier。
+- 本文状态为 **approved**（`docs/CONTRIBUTING.md:162` 允许分类之一），依据 `docs/DECISIONS.md` D-177；本文**已经两轮独立规格评审（首轮 APPROVE WITH FINDINGS，含 1 项 P2 写序矛盾 + P2/P3；修订后的闭包复评 APPROVE WITH FINDINGS，全部条目已闭合）**。本文只冻结 06.B 的**设计级**方案，仍**不**构成产品行为、迁移、技术选型或发布授权；06.B 的实施属后续实施批。
 - 本文与两份已批准上游规格逐条一致：**不改**容器格式规格（D-174）的任何冻结字节/参数/拒绝码，**不改** 06.1 规格（D-176）的 owner/lease 契约；只承接其写入端义务。
 - 每项事实主张均带 file:line 证据；`local/artifacts/` 以主 checkout 为准（只读，不粘贴大段原文）。
 - **明确标记为未验证/未取读数**的项：
