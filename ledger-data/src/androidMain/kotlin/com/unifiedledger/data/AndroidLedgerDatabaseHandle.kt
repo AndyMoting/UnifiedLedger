@@ -3,6 +3,7 @@ package com.unifiedledger.data
 import android.content.Context
 import androidx.sqlite.db.SupportSQLiteDatabase
 import app.cash.sqldelight.db.QueryResult
+import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import com.unifiedledger.data.db.LedgerDatabase
 
@@ -119,6 +120,63 @@ class AndroidLedgerDatabaseHandle internal constructor(
     fun runFullAnalyze() {
         runFullAnalyzeOn(driver)
     }
+
+    /**
+     * P7-06 06.B (D-177; spec section 3.3): the controlled snapshot entry over the handle's
+     * private driver. The driver stays private (the handle is the only controlled surface), so the
+     * composition root calls THIS method to run `VACUUM INTO` on the active connection; the
+     * statement rides `driver.execute` (the row-less surface, [runSnapshotIntoOn]).
+     */
+    fun runSnapshotInto(target: String) {
+        runSnapshotIntoOn(driver, target)
+    }
+}
+
+/**
+ * P7-06 06.B (D-177; spec section 3.4): validates a snapshot FILE through a second, dedicated
+ * Android connection. The active handle cannot stand in (it holds the active generation's main
+ * file), and the driver is private to the handle, so this opens a fresh [AndroidSqliteDriver] over
+ * [name] with a NULL schema — no `create`/`migrate` callback runs against the snapshot, so the
+ * verification is read-only in effect and never mutates or migrates the snapshot.
+ *
+ * UNVERIFIED (registered, spec section 9 item 9): the concrete driver choice and open/close
+ * semantics for the second open are an implementation-batch decision not yet device-verified.
+ */
+fun verifyAndroidSnapshotFile(
+    context: Context,
+    name: String,
+): SnapshotVerification {
+    val driver =
+        AndroidSqliteDriver(
+            schema = NoOpSnapshotSchema,
+            context = context,
+            name = name,
+        )
+    return try {
+        verifySnapshotOn(driver)
+    } finally {
+        driver.close()
+    }
+}
+
+/**
+ * The no-op schema for the snapshot verification open (spec section 3.4): its `create`/`migrate`
+ * do NOTHING, so opening the snapshot file for `PRAGMA integrity_check` never creates or migrates
+ * anything. A valid snapshot already carries the product schema (its `user_version` is non-zero),
+ * so `onCreate` never runs; this schema exists only to satisfy the driver constructor and to make
+ * the read-only intent explicit.
+ */
+private object NoOpSnapshotSchema : app.cash.sqldelight.db.SqlSchema<QueryResult.Value<Unit>> {
+    override val version: Long = 0L
+
+    override fun create(driver: SqlDriver): QueryResult.Value<Unit> = QueryResult.Unit
+
+    override fun migrate(
+        driver: SqlDriver,
+        oldVersion: Long,
+        newVersion: Long,
+        vararg callbacks: app.cash.sqldelight.db.AfterVersion,
+    ): QueryResult.Value<Unit> = QueryResult.Unit
 }
 
 /**

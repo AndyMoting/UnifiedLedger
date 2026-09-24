@@ -101,6 +101,8 @@ import com.unifiedledger.application.UuidV7ManualLendingRequestIdSource
 import com.unifiedledger.application.UuidV7ManualTransferRequestIdSource
 import com.unifiedledger.application.UuidV7TransactionCorrectionIdSource
 import com.unifiedledger.application.UuidV7TransactionVoidFactIdSource
+import com.unifiedledger.application.backup.BackupCryptoPrimitives
+import com.unifiedledger.application.backup.JvmBackupCryptoPrimitives
 import com.unifiedledger.application.import.JvmImportFileIntake
 import com.unifiedledger.data.AndroidLedgerDatabaseHandle
 import com.unifiedledger.data.CatalogBootstrapResult
@@ -118,11 +120,15 @@ import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
 import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
+import com.unifiedledger.ui.BackupExportUseCase
+import com.unifiedledger.ui.BackupSnapshotPort
+import com.unifiedledger.ui.BackupTargetPort
 import com.unifiedledger.ui.ImportConfirmUseCaseSet
 import com.unifiedledger.ui.ImportDuplicateReviewIds
 import com.unifiedledger.ui.ImportFilePickResultChannel
 import com.unifiedledger.ui.LedgerFileSystem
 import com.unifiedledger.ui.LedgerLeaseScope
+import com.unifiedledger.ui.LedgerStorageLayout
 import com.unifiedledger.ui.LedgerOpenTarget
 import com.unifiedledger.ui.LedgerRuntimeOwner
 import com.unifiedledger.ui.LedgerStartupResult
@@ -163,6 +169,14 @@ fun app() {
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             importPickPortRef[0]?.onOpenDocumentResult(uri)
         }
+    // P7-06 06.B (D-177; spec section 3.5 phase 2): the SAF CreateDocument launcher for the
+    // backup export target. Registered in composition like the import picker; the result callback
+    // hands the chosen document to the pending save closure.
+    val backupSaveTargetRef = remember { arrayOfNulls<AndroidBackupTargetPort<Uri>?>(1) }
+    val backupSaveLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            backupSaveTargetRef[0]?.onCreateDocumentResult(uri)
+        }
     val controller =
         remember(context) {
             // The Android pick port with SAF launch/metadata/stream closures; one-shot
@@ -177,13 +191,25 @@ fun app() {
                     onResult = importPickChannel::deliver,
                 )
             importPickPortRef[0] = importFilePickPort
+            // P7-06 06.B: the private staging host and the SAF save target.
+            val databasePath = context.getDatabasePath(LEGACY_ANDROID_DATABASE_NAME)
+            val (hostDirectory, _) = androidStableStoragePaths(databasePath)
+            val fileSystem = AndroidLedgerFileSystem()
+            val layout = ledgerStorageLayout(fileSystem, hostDirectory)
+            val backupTargetPort =
+                AndroidBackupTargetPort<Uri>(
+                    launchCreateDocument = backupSaveLauncher::launch,
+                    openOutputStream = { uri -> context.contentResolver.openOutputStream(uri) },
+                )
+            backupSaveTargetRef[0] = backupTargetPort
             AndroidStartupController(
                 openDatabase = {
                     // P7-06 06.1 (D-176): the stable-storage sequence resolves the active
                     // generation, performs the non-destructive legacy upgrade on first start and
                     // guards the target before any create-on-open factory runs.
-                    openAndroidStableStorageLedger(context, importFilePickPort, importPickChannel)
+                    openAndroidStableStorageLedger(context, importFilePickPort, importPickChannel, fileSystem, layout)
                 },
+                backupWiring = AndroidBackupWiring(fileSystem, layout, backupTargetPort),
             )
         }
     LaunchedEffect(Unit) {
@@ -223,6 +249,9 @@ internal class AndroidStartupController(
     // P5-04.4 I-002: the default channel logs the full stack via the three-argument
     // Log.w overload; tests inject a counting/recording lambda (never android.util.Log).
     private val logFailure: (Exception) -> Unit = { failure -> Log.w(LOG_TAG, "startup failed", failure) },
+    // P7-06 06.B (D-177): the optional backup-export wiring. Null keeps the surface absent (the
+    // existing startup tests construct the controller with the two base parameters only).
+    private val backupWiring: AndroidBackupWiring? = null,
 ) {
     var state by mutableStateOf<P503StartupState>(P503StartupState.Starting)
         private set
@@ -235,10 +264,36 @@ internal class AndroidStartupController(
      */
     private val owner =
         LedgerRuntimeOwner(
-            openGeneration = { openDatabase() },
+            openGeneration = {
+                openDatabase().also { graph -> lastOpenedGraph = graph }
+            },
             closeGraph = { graph -> graph.close() },
             facadeOf = { graph -> graph.facade },
         )
+
+    /**
+     * P7-06 06.B (D-177): the most recently opened graph, captured so the export use case can
+     * resolve the CURRENT graph's controlled snapshot surface. A pure field read, never a lease.
+     */
+    private var lastOpenedGraph: CloseableLedgerGraph? = null
+
+    /**
+     * P7-06 06.B (D-177; spec section 3): the shared backup-export use case, built over this
+     * controller's owner and the injected wiring. The snapshot surface is resolved from the live
+     * graph at export time (the driver is replaced on a reopen); the layout comes from the wiring.
+     */
+    private val backupExportUseCase: BackupExportUseCase? =
+        backupWiring?.let { wiring ->
+            BackupExportUseCase(
+                owner = owner,
+                fileSystem = wiring.fileSystem,
+                layout = wiring.layout,
+                snapshotProvider = { lastOpenedGraph?.snapshotPort },
+                target = wiring.targetPort,
+                crypto = wiring.crypto,
+                newToken = wiring.newToken,
+            )
+        }
 
     /**
      * P7-06 06.1 fix (review REJECT): the product surface handed to [P503App] is the LEASE-SCOPED
@@ -250,7 +305,10 @@ internal class AndroidStartupController(
     val ledger: LedgerLeaseScope?
         get() = if (state == P503StartupState.Ready) leaseScope else null
 
-    private val leaseScope = LedgerLeaseScope(owner)
+    private val leaseScope =
+        LedgerLeaseScope(owner).also { scope ->
+            scope.backupExport = backupExportUseCase
+        }
 
     /**
      * True once [start] has been invoked. The state already starts as [P503StartupState.Starting]
@@ -320,9 +378,25 @@ internal data class CloseableLedgerGraph(
     val catalogCommands: ExecuteCatalogCommand? = null,
     val runQueryStatisticsOptimize: () -> Unit = {},
     val runFullAnalyze: () -> Unit = {},
+    // P7-06 06.B (D-177; spec sections 3.3/3.4): the controlled snapshot surface over the graph's
+    // private driver. Null when the composition root wired none (tests, legacy graphs).
+    val snapshotPort: BackupSnapshotPort? = null,
 )
 
 private const val LOG_TAG = "UnifiedLedger"
+
+/**
+ * P7-06 06.B (D-177; spec section 3): the composition-root backup-export wiring handed to
+ * [AndroidStartupController]. Kept as one value so the controller's constructor stays backward
+ * compatible (the existing startup tests pass only [openDatabase] and the log channel).
+ */
+internal class AndroidBackupWiring(
+    val fileSystem: LedgerFileSystem,
+    val layout: LedgerStorageLayout,
+    val targetPort: BackupTargetPort,
+    val crypto: BackupCryptoPrimitives = JvmBackupCryptoPrimitives(),
+    val newToken: () -> String = { java.util.UUID.randomUUID().toString() },
+)
 
 /**
  * P7-06 06.1 (D-176; spec sections 3.2/4.5/5.1): the Android stable-storage open. The host
@@ -338,11 +412,11 @@ private fun openAndroidStableStorageLedger(
     context: android.content.Context,
     importFilePickPort: AndroidImportFilePickPort<Uri>,
     importPickChannel: ImportFilePickResultChannel,
+    fileSystem: LedgerFileSystem,
+    layout: LedgerStorageLayout,
 ): CloseableLedgerGraph {
     val databasePath = context.getDatabasePath(LEGACY_ANDROID_DATABASE_NAME)
     val (hostDirectory, legacyMainFile) = androidStableStoragePaths(databasePath)
-    val fileSystem = AndroidLedgerFileSystem()
-    val layout = ledgerStorageLayout(fileSystem, hostDirectory)
     return openStableStorageLedger(
         fileSystem = fileSystem,
         layout = layout,
@@ -360,7 +434,7 @@ private fun openAndroidStableStorageLedger(
         val name = androidDatabaseName(hostDirectory, target.mainFile)
         val handle = createAndroidLedgerDatabase(context, name)
         try {
-            buildLedgerGraph(handle, importFilePickPort, importPickChannel)
+            buildLedgerGraph(handle, importFilePickPort, importPickChannel, AndroidBackupSnapshotPort(context, hostDirectory, handle))
         } catch (failure: Exception) {
             handle.close()
             throw failure
@@ -391,6 +465,7 @@ private fun buildLedgerGraph(
     handle: AndroidLedgerDatabaseHandle,
     importFilePickPort: AndroidImportFilePickPort<Uri>,
     importPickChannel: ImportFilePickResultChannel,
+    snapshotPort: BackupSnapshotPort? = null,
 ): CloseableLedgerGraph {
     val database = handle.database
     val store = handle.catalogStore
@@ -755,6 +830,7 @@ private fun buildLedgerGraph(
         catalogCommands,
         handle::runQueryStatisticsOptimize,
         handle::runFullAnalyze,
+        snapshotPort = snapshotPort,
     )
 }
 
