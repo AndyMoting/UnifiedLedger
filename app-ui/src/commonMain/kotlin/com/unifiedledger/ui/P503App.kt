@@ -791,6 +791,9 @@ fun P503App(
             }
             is IncomeDraft -> {
                 val input = incomeSaveInput(draft, requestId) ?: return
+                // Base behavior (P3-4): an unwired resolver returns early (no dispatch); the typed
+                // Unavailable path below is for a runtime refusal, not a missing surface.
+                if (!ledger.surfaces.incomeCommitStatus) return
                 val attempted =
                     ManualIncomeRequestSnapshot(
                         ledgerId = input.ledgerId,
@@ -812,6 +815,8 @@ fun P503App(
             }
             is TransferDraft -> {
                 val input = transferSaveInput(draft, requestId) ?: return
+                // Base behavior (P3-4): an unwired resolver returns early (no dispatch).
+                if (!ledger.surfaces.transferCommitStatus) return
                 val attempted =
                     ManualTransferRequestSnapshot(
                         ledgerId = input.ledgerId,
@@ -835,6 +840,8 @@ fun P503App(
             }
             is LendDraft -> {
                 val input = lendSaveInput(draft, requestId) ?: return
+                // Base behavior (P3-4): an unwired resolver returns early (no dispatch).
+                if (!ledger.surfaces.lendingCommitStatus) return
                 val attempted =
                     ManualLendingRequestSnapshot(
                         ledgerId = input.ledgerId,
@@ -861,6 +868,8 @@ fun P503App(
             }
             is CollectDraft -> {
                 val input = collectSaveInput(draft, requestId) ?: return
+                // Base behavior (P3-4): an unwired resolver returns early (no dispatch).
+                if (!ledger.surfaces.lendingCommitStatus) return
                 val attempted =
                     ManualLendingRequestSnapshot(
                         ledgerId = input.ledgerId,
@@ -1102,6 +1111,10 @@ fun P503App(
      * dispatcher — P704C-SPEC-01/QUAL-02).
      */
     fun requestImportReview() {
+        // Base behavior (P3-4): an unwired surface returns early and dispatches nothing; the
+        // typed Unavailable path is for a runtime refusal, not for a surface the composition
+        // never wired (a pure lease-free null check).
+        if (!ledger.surfaces.importReviewRows) return
         dispatch(P503UiEvent.RefreshImportReview)
         scope.launch(Dispatchers.Default) {
             // P7-06 06.1 (D-176; spec 4.3/4.4): the read runs under a lease; the landing hop
@@ -1256,51 +1269,59 @@ fun P503App(
                     // P704C-SPEC-05: the pure, JVM-tested enumeration owns the abort decision —
                     // any typed duplicate-review read failure aborts wholesale (never a silent
                     // partial group) and the typed list-failure banner is surfaced instead.
-                    val leased =
-                        ledger.leased { facade, generation ->
-                            enumerationGeneration = generation
-                            val sessionQuery = facade.queryImportDuplicateReviewsForSession
-                            if (sessionQuery != null) {
-                                // P7-05 batch path: one session-level query replaces the
-                                // per-candidate loop. Each row carries its subject candidate, so
-                                // the batch folds per subject client-side and feeds the
-                                // unchanged pure function through its load callback (Reviews for
-                                // a folded member, an empty Reviews for a session candidate the
-                                // batch did not return — the batch join only yields rows whose
-                                // subject has a duplicate candidate).
-                                val sessionResult = sessionQuery.query(ledger.ledgerId, sessionInputRef)
-                                val sessionRows =
-                                    (sessionResult as? ImportDuplicateReviewsForSessionResult.Reviews)?.reviews
-                                val reviewsByCandidate =
-                                    sessionRows.orEmpty().groupBy({ it.subjectCandidateId }) { it.review }
-                                enumerateImportDuplicateGroupItems(sessionInputRef, view.rows) { candidateId ->
-                                    when {
-                                        // A session-level read failure is the same wholesale
-                                        // abort as a per-candidate one (the pure function turns
-                                        // it into ReadFailed; never a partial group).
-                                        sessionResult is ImportDuplicateReviewsForSessionResult.Unavailable ->
-                                            ImportDuplicateReviewsResult.Unavailable
-                                        else ->
-                                            ImportDuplicateReviewsResult.Reviews(
-                                                reviewsByCandidate[candidateId] ?: emptyList(),
-                                            )
-                                    }
-                                }
-                            } else {
-                                val reviewQuery = facade.queryImportDuplicateReviews
-                                if (reviewQuery == null) {
-                                    ImportDuplicateGroupEnumeration.ReadFailed
-                                } else {
-                                    enumerateImportDuplicateGroupItems(sessionInputRef, view.rows) { candidateId ->
-                                        reviewQuery.query(ledger.ledgerId, candidateId)
-                                    }
-                                }
-                            }
-                        }
+                    // P704D-SPEC-03: the inner guard keeps an unexpected throw out of the outer
+                    // coroutine — it maps to the same typed list-failure path as a read failure
+                    // (never a silently partial group, never a stranded single-flight slot).
                     enumeration =
-                        when (leased) {
-                            is LeaseOutcome.Completed -> leased.value
-                            LeaseOutcome.NotReady -> ImportDuplicateGroupEnumeration.ReadFailed
+                        try {
+                            when (
+                                val leased =
+                                    ledger.leased { facade, generation ->
+                                        enumerationGeneration = generation
+                                        val sessionQuery = facade.queryImportDuplicateReviewsForSession
+                                        if (sessionQuery != null) {
+                                            // P7-05 batch path: one session-level query replaces the
+                                            // per-candidate loop. Each row carries its subject candidate, so
+                                            // the batch folds per subject client-side and feeds the
+                                            // unchanged pure function through its load callback (Reviews for
+                                            // a folded member, an empty Reviews for a session candidate the
+                                            // batch did not return — the batch join only yields rows whose
+                                            // subject has a duplicate candidate).
+                                            val sessionResult = sessionQuery.query(ledger.ledgerId, sessionInputRef)
+                                            val sessionRows =
+                                                (sessionResult as? ImportDuplicateReviewsForSessionResult.Reviews)?.reviews
+                                            val reviewsByCandidate =
+                                                sessionRows.orEmpty().groupBy({ it.subjectCandidateId }) { it.review }
+                                            enumerateImportDuplicateGroupItems(sessionInputRef, view.rows) { candidateId ->
+                                                when {
+                                                    // A session-level read failure is the same wholesale
+                                                    // abort as a per-candidate one (the pure function turns
+                                                    // it into ReadFailed; never a partial group).
+                                                    sessionResult is ImportDuplicateReviewsForSessionResult.Unavailable ->
+                                                        ImportDuplicateReviewsResult.Unavailable
+                                                    else ->
+                                                        ImportDuplicateReviewsResult.Reviews(
+                                                            reviewsByCandidate[candidateId] ?: emptyList(),
+                                                        )
+                                                }
+                                            }
+                                        } else {
+                                            val reviewQuery = facade.queryImportDuplicateReviews
+                                            if (reviewQuery == null) {
+                                                ImportDuplicateGroupEnumeration.ReadFailed
+                                            } else {
+                                                enumerateImportDuplicateGroupItems(sessionInputRef, view.rows) { candidateId ->
+                                                    reviewQuery.query(ledger.ledgerId, candidateId)
+                                                }
+                                            }
+                                        }
+                                    }
+                            ) {
+                                is LeaseOutcome.Completed -> leased.value
+                                LeaseOutcome.NotReady -> ImportDuplicateGroupEnumeration.ReadFailed
+                            }
+                        } catch (failure: Exception) {
+                            ImportDuplicateGroupEnumeration.ReadFailed
                         }
                 } finally {
                     // Back on the main dispatcher: release the slot and dispatch serially.
@@ -1418,6 +1439,15 @@ fun P503App(
                         outcomes.clear()
                     }
                 } finally {
+                    // A-PERF: the landing rows re-read runs OFF the UI thread in this outer
+                    // `Dispatchers.Default` block (the same off-thread discipline as the
+                    // enumeration/intake landings) — a paged import-review read (up to the
+                    // 10,000-candidate batch) on the main dispatcher is exactly the ANR-class
+                    // pattern the P7-04 read-governance batch removed. Only the single-flight
+                    // release and the serial dispatch hop to the main dispatcher.
+                    val rows =
+                        ledger.probe { facade -> facade.queryImportReviewRows?.query(ledger.ledgerId) }
+                            ?: ImportReviewRowsResult.Unavailable
                     // Back on the main dispatcher: release the slot and dispatch serially.
                     scope.launch {
                         coordinator.importGroupDispositionCompleted()
@@ -1425,9 +1455,6 @@ fun P503App(
                             // Stale generation: discard the disposition payload entirely.
                             return@launch
                         }
-                        val rows =
-                            ledger.probe { facade -> facade.queryImportReviewRows?.query(ledger.ledgerId) }
-                                ?: ImportReviewRowsResult.Unavailable
                         dispatch(P503UiEvent.ImportDuplicateGroupDispositionResult(outcomes.toList(), rows))
                     }
                 }
@@ -1439,6 +1466,9 @@ fun P503App(
 
     /** P7-04.D: re-reads the review list off the UI thread and dispatches the typed result. */
     fun requestImportReviewRowsRead() {
+        // Base behavior (P3-4): an unwired surface returns early; the typed Unavailable path is
+        // for a runtime refusal, not for a surface the composition never wired.
+        if (!ledger.surfaces.importReviewRows) return
         scope.launch(Dispatchers.Default) {
             // P7-06 06.1 (spec 4.3/4.4): read under a lease; the landing hop discards a stale result.
             val outcome = ledger.leased { facade, _ -> facade.queryImportReviewRows?.query(ledger.ledgerId) }
@@ -1492,7 +1522,7 @@ fun P503App(
                         val prePhase =
                             importBatchDispatchPrePhase(
                                 loadRows = { facade.queryImportReviewRows?.query(ledger.ledgerId) ?: ImportReviewRowsResult.Unavailable },
-                                loadUseCases = { facade.importConfirmUseCases() },
+                                loadUseCases = { facade.importConfirmUseCases?.invoke() },
                             )
                         when (prePhase) {
                             is ImportBatchDispatchPrePhase.Failed -> {
@@ -1575,6 +1605,11 @@ fun P503App(
         val selected = confirmState.overview.importReview?.selectedCandidateIds ?: emptySet()
         if (selected.isEmpty()) return
         val requestIdSource = ledger.importConfirmRequestIdSource ?: return
+        // P7-06 06.1 fix: this wiring guard is NOT a re-check of the requestId source above — it
+        // is a distinct check of the use-case FACTORY's wiring ([LedgerSurfaces.importBatchConfirm]
+        // is a lease-free null check of `facade.importConfirmUseCases`, never its invocation,
+        // which would read the catalog outside a lease). An unwired factory must never strand the
+        // page in a dispatch state it cannot leave.
         if (!ledger.surfaces.importBatchConfirm) return
         // Q09.4: 授权时刻 LedgerClock 取样一次，经 explicitConfirmedAt 全项复用（mixed 必填）。
         val confirmedAt = ledger.ledgerClock.now().toString()
@@ -1655,7 +1690,7 @@ fun P503App(
                         val prePhase =
                             importBatchDispatchPrePhase(
                                 loadRows = { facade.queryImportReviewRows?.query(ledger.ledgerId) ?: ImportReviewRowsResult.Unavailable },
-                                loadUseCases = { facade.importConfirmUseCases() },
+                                loadUseCases = { facade.importConfirmUseCases?.invoke() },
                             )
                         if (prePhase is ImportBatchDispatchPrePhase.Ready) {
                             val context =
@@ -1748,26 +1783,29 @@ fun P503App(
     fun dispatchCatalogCommandResult(result: CatalogCommandResult) {
         // P7-06 06.1 (D-176; spec 4.3(b)): the refresh + snapshot pair runs under one operation
         // lease (the synchronous main-thread pair).
+        val refreshReadModel = shouldRefreshReadModelAfterCatalogCommand(result)
         val fresh =
             ledger.probe { facade ->
-                if (shouldRefreshReadModelAfterCatalogCommand(result)) {
+                if (refreshReadModel) {
                     facade.refreshCatalog()
                 }
                 runCatching { facade.catalogSnapshot() }.getOrNull()
             } ?: (latestState.value as? P503AppState.OverviewEmpty)?.catalogSnapshot
-                ?: return
-        if (shouldRefreshReadModelAfterCatalogCommand(result)) {
+        if (refreshReadModel) {
             // R1 (spec 6.2/7.3, D-027): HOME's balances/transaction lines come from the read
             // model, which now reads through the refreshed session; re-query it via the existing
             // refresh channel so a rename/deactivate shows new names on HOME without a restart.
+            // Fired BEFORE the degenerate-snapshot return below (the base order): an unavailable
+            // snapshot must not drop the read-model refresh chain.
             refresh()
         }
-        cachedCatalogSnapshot = fresh
+        val snapshot = fresh ?: return
+        cachedCatalogSnapshot = snapshot
         val payload =
             CatalogSnapshotView(
-                fresh.catalogVersion,
-                EntryPinOrdering.sortAccounts(fresh.manageableAccounts, pinnedTargets),
-                EntryPinOrdering.sortCategories(fresh.categories, pinnedTargets),
+                snapshot.catalogVersion,
+                EntryPinOrdering.sortAccounts(snapshot.manageableAccounts, pinnedTargets),
+                EntryPinOrdering.sortCategories(snapshot.categories, pinnedTargets),
             )
         // F1 (N-5): refresh() may have failed into InfrastructureFailure(READ), which has no
         // transition for management events; publish the outcome only while still on the overview.
@@ -1860,14 +1898,17 @@ fun P503App(
             ledger.probe { facade ->
                 facade.refreshCatalog()
                 runCatching { facade.catalogSnapshot() }.getOrNull()
-            } ?: return
+            }
+        // Fired BEFORE the degenerate-snapshot return (the base order): an unavailable snapshot
+        // must not drop the read-model refresh chain.
         refresh()
-        cachedCatalogSnapshot = fresh
+        val snapshot = fresh ?: return
+        cachedCatalogSnapshot = snapshot
         val payload =
             CatalogSnapshotView(
-                fresh.catalogVersion,
-                EntryPinOrdering.sortAccounts(fresh.manageableAccounts, pinnedTargets),
-                EntryPinOrdering.sortCategories(fresh.categories, pinnedTargets),
+                snapshot.catalogVersion,
+                EntryPinOrdering.sortAccounts(snapshot.manageableAccounts, pinnedTargets),
+                EntryPinOrdering.sortCategories(snapshot.categories, pinnedTargets),
             )
         // F1 (N-5): same overview-only guard as the command success path.
         dispatchCatalogOutcomeIfOverview(latestState.value, P503UiEvent.CatalogSnapshotRefreshed(payload), ::dispatch)
@@ -2953,9 +2994,10 @@ private fun P503LedgerFacade.submitEntryOrExpense(): com.unifiedledger.applicati
  * P7-06 06.1 (D-176; spec 4.3(b)): the typed `RuntimeNotReady` landing for a submit that could not
  * acquire a lease. The type's existing [ManualExpenseSubmissionResult.InfrastructureFailure] is
  * reused so the reducer keeps its frozen SUBMISSION-failure semantics (never a silently dropped
- * submission and never a blocked UI thread).
+ * submission and never a blocked UI thread). `internal` so the host-decision test can assert the
+ * per-type mapping (the `P503App` composable itself has no JVM harness).
  */
-private fun runtimeNotReadySubmission(draft: TypedEntryDraft): ManualEntrySubmissionResult =
+internal fun runtimeNotReadySubmission(draft: TypedEntryDraft): ManualEntrySubmissionResult =
     when (draft) {
         is ExpenseDraft -> ManualEntrySubmissionResult.Expense(ManualExpenseSubmissionResult.InfrastructureFailure)
         is IncomeDraft -> ManualEntrySubmissionResult.Income(ManualIncomeSubmissionResult.InfrastructureFailure)

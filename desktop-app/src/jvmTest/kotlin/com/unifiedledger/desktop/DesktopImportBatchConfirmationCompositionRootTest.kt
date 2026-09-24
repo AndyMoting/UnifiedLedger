@@ -128,7 +128,7 @@ class DesktopImportBatchConfirmationCompositionRootTest {
     @Test
     fun theFacadeExposesTheWiredBatchConfirmationSurface() {
         withGraph { graph, _ ->
-            val useCases = assertIs<ImportConfirmUseCaseSet>(graph.facade.importConfirmUseCases())
+            val useCases = assertIs<ImportConfirmUseCaseSet>(graph.facade.importConfirmUseCases?.invoke())
             assertTrue(
                 useCases.ordinaryFlow != null &&
                     useCases.transferFlow != null &&
@@ -155,8 +155,8 @@ class DesktopImportBatchConfirmationCompositionRootTest {
             // Item 1 confirms atomically (claim-first) with the authorization sample.
             val first =
                 assertIs<ImportCandidateDecisionResult.Accepted>(
-                    graph.facade
-                        .importConfirmUseCases()!!
+                    graph.facade.importConfirmUseCases
+                        ?.invoke()!!
                         .ordinaryFlow!!
                         .execute(ordinaryConfirmRequest(graph, mintRequestId(graph), rows[0], confirmedAt)),
                 )
@@ -182,8 +182,8 @@ class DesktopImportBatchConfirmationCompositionRootTest {
             val stale = ordinaryConfirmRequest(graph, mintRequestId(graph), rows[1], confirmedAt).copy(expectedContentHash = "sha256:stale-synthetic")
             val rejected =
                 assertIs<ImportCandidateDecisionResult.Rejected>(
-                    graph.facade
-                        .importConfirmUseCases()!!
+                    graph.facade.importConfirmUseCases
+                        ?.invoke()!!
                         .ordinaryFlow!!
                         .execute(stale),
                 )
@@ -197,8 +197,8 @@ class DesktopImportBatchConfirmationCompositionRootTest {
             // receipt (NoChange), never a second transaction.
             val replay =
                 assertIs<ImportCandidateDecisionResult.NoChange>(
-                    graph.facade
-                        .importConfirmUseCases()!!
+                    graph.facade.importConfirmUseCases
+                        ?.invoke()!!
                         .ordinaryFlow!!
                         .execute(ordinaryConfirmRequest(graph, first.receipt.requestId.value, rows[0], confirmedAt)),
                 )
@@ -209,8 +209,8 @@ class DesktopImportBatchConfirmationCompositionRootTest {
             val divergent = ordinaryConfirmRequest(graph, first.receipt.requestId.value, rows[0], "2026-09-14T09:99:99Z")
             val conflict =
                 assertIs<ImportCandidateDecisionResult.Rejected>(
-                    graph.facade
-                        .importConfirmUseCases()!!
+                    graph.facade.importConfirmUseCases
+                        ?.invoke()!!
                         .ordinaryFlow!!
                         .execute(divergent),
                 )
@@ -313,8 +313,8 @@ class DesktopImportBatchConfirmationCompositionRootTest {
             // its undispatched items pending — 义务③ / D04: 未派发项持久状态保持 pending).
             val first =
                 assertIs<ImportCandidateDecisionResult.Accepted>(
-                    firstGraph.facade
-                        .importConfirmUseCases()!!
+                    firstGraph.facade.importConfirmUseCases
+                        ?.invoke()!!
                         .ordinaryFlow!!
                         .execute(ordinaryConfirmRequest(firstGraph, "request-reopen-1", rows[0], confirmedAt)),
                 )
@@ -343,9 +343,12 @@ class DesktopImportBatchConfirmationCompositionRootTest {
                     .toString()
             val second =
                 assertIs<ImportCandidateDecisionResult.Accepted>(
-                    reopenedGraph.facade.importConfirmUseCases()!!.ordinaryFlow!!.execute(
-                        ordinaryConfirmRequest(reopenedGraph, "request-reopen-2", reopenedRows.first { it.candidateId == rows[1].candidateId }, reAuthorizedAt),
-                    ),
+                    reopenedGraph.facade.importConfirmUseCases
+                        ?.invoke()!!
+                        .ordinaryFlow!!
+                        .execute(
+                            ordinaryConfirmRequest(reopenedGraph, "request-reopen-2", reopenedRows.first { it.candidateId == rows[1].candidateId }, reAuthorizedAt),
+                        ),
                 )
             val finalRows = assertIs<ImportReviewRowsResult.Rows>(reopenedGraph.facade.queryImportReviewRows!!.query(reopenedGraph.ledgerId)).rows
             assertTrue(finalRows.all { it.candidateStatus == "confirmed" })

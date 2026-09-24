@@ -35,8 +35,13 @@ import kotlin.time.Clock
  * P7-06 06.1 (D-176): a minimal but valid [P503LedgerFacade] for the owner tests. The owner only
  * stores and projects the facade and never calls its methods, so the collaborator stubs below
  * never run (the `AndroidStartupControllerTest` fixture precedent, shared here for common tests).
+ *
+ * [importConfirmUseCases] defaults to the unwired legacy value; a test that needs the wired
+ * batch-confirm surface passes a factory (the surfaces probe is a pure null check of it).
  */
-internal fun minimalP503LedgerFacade(): P503LedgerFacade {
+internal fun minimalP503LedgerFacade(
+    importConfirmUseCases: (() -> ImportConfirmUseCaseSet?)? = null,
+): P503LedgerFacade {
     val ledgerId = LedgerId("ledger-local-test")
     val currency = CurrencyUnit("CNY", 2)
     val catalog =
@@ -102,5 +107,6 @@ internal fun minimalP503LedgerFacade(): P503LedgerFacade {
         requestIdSource = ManualExpenseRequestIdSource { RequestId("request-owner-test") },
         ledgerClock = LedgerClock { Clock.System.now() },
         baseSummarizeActivity = SummarizeLedgerActivity(catalog),
+        importConfirmUseCases = importConfirmUseCases,
     )
 }

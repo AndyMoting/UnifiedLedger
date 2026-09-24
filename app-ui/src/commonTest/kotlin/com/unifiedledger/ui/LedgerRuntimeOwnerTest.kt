@@ -1,5 +1,16 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.CollectDraft
+import com.unifiedledger.application.ExpenseDraft
+import com.unifiedledger.application.IncomeDraft
+import com.unifiedledger.application.LendDraft
+import com.unifiedledger.application.ManualCollectSubmissionResult
+import com.unifiedledger.application.ManualEntrySubmissionResult
+import com.unifiedledger.application.ManualExpenseSubmissionResult
+import com.unifiedledger.application.ManualIncomeSubmissionResult
+import com.unifiedledger.application.ManualLendSubmissionResult
+import com.unifiedledger.application.ManualTransferSubmissionResult
+import com.unifiedledger.application.TransferDraft
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -225,6 +236,40 @@ class LedgerRuntimeOwnerTest {
         assertNotNull(h.owner.facade)
         lease.close()
     }
+
+    @Test
+    fun startupUnderMereTransitionContentionReportsTransitionInProgress() =
+        runBlocking {
+            // P3-6 (review fix): a mutex-contention rejection must NOT be reported as Blocked(0),
+            // which would misreport the documented meaning (leases in flight). Deterministically
+            // hold the owner mutex: `startup` runs `openGeneration` under the mutex, so a second
+            // startup that arrives while the open is parked fails `tryLock` with ZERO leases.
+            val openEntered = CompletableDeferred<Unit>()
+            val releaseOpen = CompletableDeferred<Unit>()
+            val owner =
+                LedgerRuntimeOwner(
+                    openGeneration = {
+                        openEntered.complete(Unit)
+                        runBlocking { releaseOpen.await() }
+                        Graph(1)
+                    },
+                    closeGraph = {},
+                    facadeOf = { it.facade },
+                )
+
+            val startup = async(Dispatchers.Default) { owner.startup() }
+            openEntered.await()
+
+            try {
+                // The owner mutex is held by the in-flight startup; there are no leases, so the
+                // rejection must be the distinct contention result, never Blocked(0).
+                assertEquals(LedgerStartupResult.TransitionInProgress, owner.startup())
+                assertEquals(0, owner.inFlightLeaseCount)
+            } finally {
+                releaseOpen.complete(Unit)
+            }
+            assertEquals(LedgerStartupResult.Started(1), startup.await())
+        }
 
     // ---------------------------------------------------------------- quiesce (section 4.2/6)
 
@@ -502,6 +547,130 @@ class LedgerRuntimeOwnerTest {
         assertEquals(0, h.owner.inFlightLeaseCount)
         assertNotNull(scope.parseAmount)
         assertNotNull(scope.ledgerClock)
+    }
+
+    @Test
+    fun theLeaseFreeConstantsDegradeInsteadOfThrowingDuringATransitionWindow() =
+        runBlocking {
+            // P3-5 (review fix): 06.D's reopen runs Ready -> Closing -> Reopening, and a
+            // recomposition can still read `ledger.ledgerId` while `owner.facade` is null. The
+            // lease-free pure constants must keep resolving from the last Ready graph instead of
+            // crashing the composition.
+            val openEntered = CompletableDeferred<Unit>()
+            val releaseOpen = CompletableDeferred<Unit>()
+            var openCount = 0
+            val owner =
+                LedgerRuntimeOwner(
+                    openGeneration = {
+                        openCount += 1
+                        // Only the REOPEN's open parks; the initial startup must return.
+                        if (openCount > 1) {
+                            openEntered.complete(Unit)
+                            runBlocking { releaseOpen.await() }
+                        }
+                        Graph(openCount)
+                    },
+                    closeGraph = {},
+                    facadeOf = { it.facade },
+                )
+            owner.startup()
+            val scope = LedgerLeaseScope(owner)
+            assertEquals("ledger-local-test", scope.ledgerId.value)
+
+            // Park inside the reopen's open (state Reopening, facade null) and read the constant.
+            val reopen = async(Dispatchers.Default) { owner.reopen() }
+            openEntered.await()
+            try {
+                assertNull(owner.facade)
+                assertEquals("ledger-local-test", scope.ledgerId.value)
+                assertNotNull(scope.ledgerClock)
+            } finally {
+                releaseOpen.complete(Unit)
+            }
+            assertEquals(ReopenResult.Reopened(2), reopen.await())
+        }
+
+    @Test
+    fun theSurfacesProbeReportsTheFactoryWiringAndTheRestoredUnwiredGuards() {
+        // P3-2/P3-4 (review fixes): `importBatchConfirm` must reflect the use-case FACTORY's
+        // wiring (a lease-free null check, never its catalog-reading invocation), and the restored
+        // unwired early-returns depend on the pure null probes for the review list and the three
+        // optional snapshot-aware resolvers.
+        val wiredScope =
+            LedgerLeaseScope(
+                ownerFor(minimalP503LedgerFacade(importConfirmUseCases = { ImportConfirmUseCaseSet(null, null, null, null, null) })),
+            )
+        assertTrue(wiredScope.surfaces.importBatchConfirm, "a wired factory must report the surface")
+
+        // An unwired factory (the legacy default) reports every restored probe false.
+        val unwired = LedgerLeaseScope(ownerFor(minimalP503LedgerFacade())).surfaces
+        assertFalse(unwired.importBatchConfirm)
+        assertFalse(unwired.importReviewRows)
+        assertFalse(unwired.incomeCommitStatus)
+        assertFalse(unwired.transferCommitStatus)
+        assertFalse(unwired.lendingCommitStatus)
+    }
+
+    private fun ownerFor(facade: P503LedgerFacade): LedgerRuntimeOwner<Graph> {
+        val owner =
+            LedgerRuntimeOwner(
+                openGeneration = { Graph(1) },
+                closeGraph = {},
+                facadeOf = { facade },
+            )
+        owner.startup()
+        return owner
+    }
+
+    @Test
+    fun aStaleGenerationLandingHopDiscardsItsPayloadThroughTheLeaseScope() {
+        // P3-7 (review fix): the landing-hop WIRING (not just the pure predicate): a `leased`
+        // read whose captured generation was superseded by a reopen must be discarded by the
+        // landing guard, and a fresh-generation read must land.
+        val h = harness()
+        h.owner.startup()
+        val scope = LedgerLeaseScope(h.owner)
+
+        val stale = assertIs<LeaseOutcome.Completed<String>>(scope.leased { _, _ -> "payload" })
+        // Supersede the captured generation before the landing hop runs.
+        h.owner.reopen()
+
+        var landed: String? = null
+        // The landing hop's exact guard shape: `isCurrentGeneration(outcome.generation)`.
+        if (scope.isCurrentGeneration(stale.generation)) landed = stale.value
+        assertNull(landed, "a stale-generation payload must be discarded")
+
+        val fresh = assertIs<LeaseOutcome.Completed<String>>(scope.leased { _, _ -> "payload-2" })
+        if (scope.isCurrentGeneration(fresh.generation)) landed = fresh.value
+        assertEquals("payload-2", landed, "a current-generation payload must land")
+    }
+
+    @Test
+    fun theNotReadySubmitLandingMapsEveryDraftTypeToItsTypedFailure() {
+        // P3-7 (review fix): `submit` when the runtime is not Ready (the `ledger.probe` null
+        // path) must land the typed InfrastructureFailure for every draft type — never a silently
+        // dropped submission.
+        val occurredAt = kotlin.time.Instant.parse("2026-01-15T00:30:00Z")
+        val drafts =
+            listOf(
+                ExpenseDraft(null, null, "1.00", occurredAt),
+                IncomeDraft(null, null, "1.00", occurredAt),
+                TransferDraft(null, null, "1.00", occurredAt = occurredAt),
+                LendDraft(null, "1.00", null, occurredAt),
+                CollectDraft(null, "1.00", "1.00", "0.00", destinationAccountId = null, occurredAt = occurredAt),
+            )
+        for (draft in drafts) {
+            val result = runtimeNotReadySubmission(draft)
+            val isFailure =
+                when (result) {
+                    is ManualEntrySubmissionResult.Expense -> result.result is ManualExpenseSubmissionResult.InfrastructureFailure
+                    is ManualEntrySubmissionResult.Income -> result.result is ManualIncomeSubmissionResult.InfrastructureFailure
+                    is ManualEntrySubmissionResult.Transfer -> result.result is ManualTransferSubmissionResult.InfrastructureFailure
+                    is ManualEntrySubmissionResult.Lend -> result.result is ManualLendSubmissionResult.InfrastructureFailure
+                    is ManualEntrySubmissionResult.Collect -> result.result is ManualCollectSubmissionResult.InfrastructureFailure
+                }
+            assertTrue(isFailure, "draft ${draft.entryType} must map to its typed InfrastructureFailure")
+        }
     }
 
     // ---------------------------------------------------------------- generation discard (section 4.4)

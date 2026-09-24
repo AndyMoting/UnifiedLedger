@@ -286,6 +286,12 @@ internal class AndroidStartupController(
                 logFailure(IllegalStateException("startup blocked by ${result.inFlightLeases} in-flight lease(s)"))
                 state = P503StartupState.StartupError
             }
+            LedgerStartupResult.TransitionInProgress -> {
+                // P7-06 06.1 fix (review P3-6): another transition held the owner (zero leases).
+                // The graph was NOT touched; the fail-closed state keeps Retry reachable.
+                logFailure(IllegalStateException("startup rejected: a runtime transition is in progress"))
+                state = P503StartupState.StartupError
+            }
         }
     }
 }

@@ -318,6 +318,11 @@ internal class DesktopStartupController(
                 System.err.println("UnifiedLedger startup blocked by ${result.inFlightLeases} in-flight lease(s)")
                 state = P503StartupState.StartupError
             }
+            LedgerStartupResult.TransitionInProgress -> {
+                // P7-06 06.1 fix (review P3-6): another transition held the owner (zero leases).
+                System.err.println("UnifiedLedger startup rejected: a runtime transition is in progress")
+                state = P503StartupState.StartupError
+            }
         }
     }
 }

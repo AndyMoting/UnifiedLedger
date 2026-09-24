@@ -100,6 +100,14 @@ sealed interface LedgerStartupResult {
     data class Blocked(
         val inFlightLeases: Int,
     ) : LedgerStartupResult
+
+    /**
+     * P7-06 06.1 fix (review P3-6): typed rejection for mere transition contention (the owner's
+     * mutex was held by another transition). Distinct from [Blocked] so a zero in-flight count is
+     * never misreported as a lease-blocked startup (the [CloseResult.TransitionInProgress]
+     * precedent): the graph was not touched and the caller may retry.
+     */
+    data object TransitionInProgress : LedgerStartupResult
 }
 
 /** Section 4.2: `acquireLease` outcome. */
@@ -271,12 +279,12 @@ class LedgerRuntimeOwner<G : Any>(
      *
      * Section 4.2 precondition (review fix): [startup] performs the "close before open" resource
      * safety of both controllers, so it must NOT run while leases are in flight — otherwise a
-     * retry could close a graph under a running business call. A non-zero in-flight count (or a
-     * concurrent transition holding the owner) returns the typed [LedgerStartupResult.Blocked]
-     * without touching the graph.
+     * retry could close a graph under a running business call. A non-zero in-flight count returns
+     * the typed [LedgerStartupResult.Blocked] and a concurrent transition holding the owner
+     * returns the distinct [LedgerStartupResult.TransitionInProgress]; neither touches the graph.
      */
     fun startup(): LedgerStartupResult {
-        if (!mutex.tryLock()) return LedgerStartupResult.Blocked(inFlightLeases.load())
+        if (!mutex.tryLock()) return LedgerStartupResult.TransitionInProgress
         try {
             val inFlight = inFlightLeases.load()
             if (inFlight > 0) return LedgerStartupResult.Blocked(inFlight)
@@ -554,13 +562,48 @@ class LedgerLeaseScope(
                 voidTransaction = facade.voidTransaction != null,
                 restore = facade.restoreTransaction != null,
                 importDuplicateReview = facade.importDuplicateReview != null,
-                // Pure wiring probe only: the use-case FACTORY reads the catalog, so it must never
-                // be invoked here (outside a lease). The call site re-checks it under a lease.
-                importBatchConfirm = facade.importConfirmRequestIdSource != null,
+                // P7-06 06.1 fix: the REAL batch-confirm wiring probe — a lease-free null check
+                // of the use-case FACTORY itself (a pure field read, never an invocation). The
+                // factory's invocation reads the catalog, so it must never run here (outside a
+                // lease); [P503App.authorizeImportBatch] checks this wiring and the dispatch run
+                // invokes the factory under a lease.
+                importBatchConfirm = facade.importConfirmUseCases != null,
+                // P7-06 06.1 fix (review P3-4): the import-review list and the optional
+                // snapshot-aware commit-status resolvers are pure facade null checks, so the host
+                // restores base's unwired early-return instead of falling through to a typed
+                // Unavailable failure banner on a surface the composition never wired.
+                importReviewRows = facade.queryImportReviewRows != null,
+                incomeCommitStatus = facade.resolveIncomeCommitStatus != null,
+                transferCommitStatus = facade.resolveTransferCommitStatus != null,
+                lendingCommitStatus = facade.resolveLendingCommitStatus != null,
             )
         }
 
-    private fun requiredFacade(): P503LedgerFacade = owner.facade ?: error("the ledger facade is unavailable while the runtime is not Ready")
+    private fun requiredFacade(): P503LedgerFacade {
+        // P7-06 06.1 fix (review P3-5): the lease-free pure constants must DEGRADE, never throw.
+        // 06.D's reopen runs Ready -> Closing -> Reopening, and a recomposition can still read
+        // `ledger.ledgerId` (and the other construction constants) during that window, when
+        // `owner.facade` is already null. These members are construction constants of the ledger,
+        // so the last graph observed while Ready is still the correct source; caching it keeps a
+        // transient transition from crashing the composition. The error below is now reachable
+        // only if P503App is composed before the owner has ever reached Ready, which the product
+        // composition roots never do.
+        val current = owner.facade
+        if (current != null) {
+            lastFacade = current
+            return current
+        }
+        return lastFacade
+            ?: error("the ledger facade is unavailable before the runtime has ever reached Ready")
+    }
+
+    /**
+     * The last facade observed while the owner was Ready. Only the lease-free pure constants read
+     * it (see [requiredFacade]); every ledger-touching call still goes through [withFacade]/
+     * [leased], which refuse to run when the owner is not Ready.
+     */
+    @Volatile
+    private var lastFacade: P503LedgerFacade? = null
 
     /**
      * Section 4.3/4.4: whether a result captured under [generation] still belongs to the active
@@ -637,6 +680,10 @@ data class LedgerSurfaces(
     val restore: Boolean = false,
     val importDuplicateReview: Boolean = false,
     val importBatchConfirm: Boolean = false,
+    val importReviewRows: Boolean = false,
+    val incomeCommitStatus: Boolean = false,
+    val transferCommitStatus: Boolean = false,
+    val lendingCommitStatus: Boolean = false,
 )
 
 /**
