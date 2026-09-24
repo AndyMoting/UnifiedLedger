@@ -167,7 +167,13 @@ class P503LedgerFacade(
     // UUIDv7 per item, minted once per authorization intent by the host; claim-gated, replay
     // paths never consume). Plain nullable defaults keep legacy constructions (startup tests)
     // compiling.
-    val importConfirmUseCases: () -> ImportConfirmUseCaseSet? = { null },
+    //
+    // P7-06 06.1 fix: the FACTORY itself is nullable (a null factory = the surface is unwired).
+    // The factory INVOCATION reads the catalog, so it must never run outside a lease; making the
+    // wiring itself a null check lets the host's lease-free [LedgerSurfaces.importBatchConfirm]
+    // probe report the real wiring (a pure null check) instead of a tautology over a sibling
+    // field.
+    val importConfirmUseCases: (() -> ImportConfirmUseCaseSet?)? = null,
     val importConfirmRequestIdSource: (() -> String)? = null,
     // P7-05.B/C (D-156/D-158 slice 1b): the correction and void/restore product surface. The
     // composition roots wire the three execute use cases (correction, void, restore) over the

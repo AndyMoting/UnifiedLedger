@@ -94,7 +94,7 @@ class DesktopCatalogCompositionRootTest {
             val controller = DesktopStartupController(openDatabase = { openDesktopLedger(url) })
             controller.start()
             assertEquals(P503StartupState.StartupError, controller.state)
-            assertEquals(null, controller.facade)
+            assertEquals(null, controller.ledger)
         } finally {
             Files.deleteIfExists(path)
         }

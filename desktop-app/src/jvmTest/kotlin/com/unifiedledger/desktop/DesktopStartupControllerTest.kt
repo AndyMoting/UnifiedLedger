@@ -33,12 +33,12 @@ class DesktopStartupControllerTest {
 
         controller.start()
         assertEquals(P503StartupState.StartupError, controller.state)
-        assertNull(controller.facade)
+        assertNull(controller.ledger)
 
         shouldFail = false
         controller.start()
         assertEquals(P503StartupState.Ready, controller.state)
-        assertNotNull(controller.facade)
+        assertNotNull(controller.ledger)
     }
 
     @Test
@@ -54,7 +54,7 @@ class DesktopStartupControllerTest {
         controller.start()
 
         assertEquals(P503StartupState.StartupError, controller.state)
-        assertNull(controller.facade)
+        assertNull(controller.ledger)
     }
 
     @Test
@@ -85,14 +85,14 @@ class DesktopStartupControllerTest {
         // First success holds graph #1 as the single active connection.
         controller.start()
         assertEquals(P503StartupState.Ready, controller.state)
-        assertNotNull(controller.facade)
+        assertNotNull(controller.ledger)
         assertEquals(1, openCount)
         assertEquals(0, closeCount)
 
         // Retry closes the previous connection before rebuilding; still exactly one active.
         controller.start()
         assertEquals(P503StartupState.Ready, controller.state)
-        assertNotNull(controller.facade)
+        assertNotNull(controller.ledger)
         assertEquals(2, openCount)
         assertEquals(1, closeCount)
     }

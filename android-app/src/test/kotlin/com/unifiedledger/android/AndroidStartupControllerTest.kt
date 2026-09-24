@@ -58,12 +58,12 @@ class AndroidStartupControllerTest {
 
         controller.start()
         assertEquals(P503StartupState.StartupError, controller.state)
-        assertNull(controller.facade)
+        assertNull(controller.ledger)
 
         shouldFail = false
         controller.start()
         assertEquals(P503StartupState.Ready, controller.state)
-        assertTrue(controller.facade != null)
+        assertTrue(controller.ledger != null)
         assertTrue(logged.any { it.contains("injected open failure") })
     }
 
@@ -79,7 +79,7 @@ class AndroidStartupControllerTest {
         controller.start()
 
         assertEquals(P503StartupState.StartupError, controller.state)
-        assertNull(controller.facade)
+        assertNull(controller.ledger)
         assertEquals(0, closeCount)
     }
 
@@ -106,7 +106,7 @@ class AndroidStartupControllerTest {
 
         controller.start()
         assertEquals(P503StartupState.StartupError, controller.state)
-        assertNull(controller.facade)
+        assertNull(controller.ledger)
         assertSame(failure, loggedFailures.single())
         assertEquals(0, closeCount)
 
@@ -115,7 +115,7 @@ class AndroidStartupControllerTest {
         shouldFail = false
         controller.start()
         assertEquals(P503StartupState.Ready, controller.state)
-        assertTrue(controller.facade != null)
+        assertTrue(controller.ledger != null)
     }
 
     @Test
@@ -138,7 +138,7 @@ class AndroidStartupControllerTest {
         // T-D retry path: while the file is still corrupted, every retry surfaces StartupError
         // again, keeps the facade unexposed and re-invokes openDatabase (manual retry only).
         assertEquals(P503StartupState.StartupError, controller.state)
-        assertNull(controller.facade)
+        assertNull(controller.ledger)
         assertEquals(2, openCount)
         assertEquals(listOf<Exception>(failure, failure), loggedFailures)
     }
@@ -164,7 +164,7 @@ class AndroidStartupControllerTest {
             controller.start()
 
             assertEquals(P503StartupState.StartupError, controller.state)
-            assertNull(controller.facade)
+            assertNull(controller.ledger)
             assertSame(failure, loggedFailures.single())
         }
     }
@@ -182,14 +182,14 @@ class AndroidStartupControllerTest {
         // First success holds graph #1 as the single active connection.
         controller.start()
         assertEquals(P503StartupState.Ready, controller.state)
-        assertTrue(controller.facade != null)
+        assertTrue(controller.ledger != null)
         assertEquals(1, openCount)
         assertEquals(0, closeCount)
 
         // Retry closes the previous connection before rebuilding; still exactly one active.
         controller.start()
         assertEquals(P503StartupState.Ready, controller.state)
-        assertTrue(controller.facade != null)
+        assertTrue(controller.ledger != null)
         assertEquals(2, openCount)
         assertEquals(1, closeCount)
     }
