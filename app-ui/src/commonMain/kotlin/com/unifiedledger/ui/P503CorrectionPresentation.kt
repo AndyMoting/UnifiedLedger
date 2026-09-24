@@ -235,6 +235,28 @@ internal const val VOID_IMPACT_STATEMENT: String =
 internal const val RESTORE_IMPACT_STATEMENT: String =
     "恢复后：该交易按原统计时间重新参与月度、流水、余额与报表。"
 
+// ------------------------------------------------------------------ manual re-check status
+
+/**
+ * P7-05 (V-19; D-173): the visible status line of one manual lost-commit re-check, so the
+ * re-check is never a silent no-op. [P705CommitCheckOutcome.NONE] means no manual re-check has
+ * resolved yet — the reducer never resets `checkOutcome` to `NONE` (the re-check REQUEST event is
+ * state-preserving by design, the P7-02 precedent), so it yields `null`: no extra text.
+ * [P705CommitCheckOutcome.ABSENT] and [P705CommitCheckOutcome.UNAVAILABLE] mean the read-only
+ * resolve found no row / could not read, and the surface stays unknown and re-checkable, so the
+ * user is told the re-check ran and found nothing. Because `NONE` is only the never-resolved
+ * state, the still-unknown line of a previous `ABSENT`/`UNAVAILABLE` outcome may remain visible
+ * while a further re-check is in flight. The status line is rendered beside the
+ * 「重新核对」 button by the three P7-05 submitting rows; a determinate hit never reaches here (it
+ * leaves the surface as the existing result event).
+ */
+internal fun p705RecheckStatusText(outcome: P705CommitCheckOutcome): String? =
+    when (outcome) {
+        P705CommitCheckOutcome.NONE -> null
+        P705CommitCheckOutcome.ABSENT -> "未找到该次提交记录，可再次核对"
+        P705CommitCheckOutcome.UNAVAILABLE -> "暂时无法核对，请稍后重试"
+    }
+
 // ------------------------------------------------------------------ recycle bin rows
 
 /** The recycle-bin list's row text set: the visible lines and the TalkBack label share one source. */

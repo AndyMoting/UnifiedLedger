@@ -184,6 +184,7 @@ class P503ReducerImpl(
             is P503UiEvent.ConfirmRestore,
             is P503UiEvent.TransactionRestoreResult,
             P503UiEvent.CloseRestoreConfirm,
+            is P503UiEvent.RetryP705CommitStatusCheck,
             -> P503AppState.Ready
             else -> unhandled(P503AppState.Ready, event)
         }
@@ -492,6 +493,7 @@ class P503ReducerImpl(
             is P503UiEvent.ConfirmRestore,
             is P503UiEvent.TransactionRestoreResult,
             P503UiEvent.CloseRestoreConfirm,
+            is P503UiEvent.RetryP705CommitStatusCheck,
             -> state
             // P7-02: the entry-field intents are only meaningful inside the editor; on the
             // overview they are absorbed (§6.2a).
@@ -637,6 +639,7 @@ class P503ReducerImpl(
             is P503UiEvent.ConfirmRestore,
             is P503UiEvent.TransactionRestoreResult,
             P503UiEvent.CloseRestoreConfirm,
+            is P503UiEvent.RetryP705CommitStatusCheck,
             -> state
             else -> unhandled(state, event)
         }
@@ -1048,6 +1051,7 @@ class P503ReducerImpl(
             is P503UiEvent.ConfirmRestore,
             is P503UiEvent.TransactionRestoreResult,
             P503UiEvent.CloseRestoreConfirm,
+            is P503UiEvent.RetryP705CommitStatusCheck,
             -> state
             else -> unhandled(state, event)
         }
@@ -1221,6 +1225,7 @@ class P503ReducerImpl(
             is P503UiEvent.ConfirmRestore,
             is P503UiEvent.TransactionRestoreResult,
             P503UiEvent.CloseRestoreConfirm,
+            is P503UiEvent.RetryP705CommitStatusCheck,
             -> state
             else -> unhandled(state, event)
         }
@@ -1367,6 +1372,7 @@ class P503ReducerImpl(
             is P503UiEvent.ConfirmRestore,
             is P503UiEvent.TransactionRestoreResult,
             P503UiEvent.CloseRestoreConfirm,
+            is P503UiEvent.RetryP705CommitStatusCheck,
             -> state
             else -> unhandled(state, event)
         }
@@ -1508,6 +1514,16 @@ class P503ReducerImpl(
                 // 提交中不重入: a second confirm while the first is in flight changes nothing.
                 if (state.submitting) state else state.copy(requestId = event.requestId, submitting = true, notice = null)
             is P503UiEvent.TransactionEditResult -> reduceTransactionEditResult(state, event.result)
+            // P7-05 (V-19; D-173): the manual re-check of a lost commit. A re-check REQUEST
+            // (`outcome == NONE`) leaves the instance untouched — the P7-02 `RetryCommitStatusCheck`
+            // affordance/intent it mirrors (不切态): the host owns the read-only resolve and its
+            // single-flight guard, so the reducer must not mint a new instance under it. The host's
+            // `Absent`/`Unavailable` landing carries the still-unknown outcome and records the
+            // re-checkable marker; a landing on a surface that no longer holds a lost commit (not
+            // submitting) is absorbed. Unlike P7-02's event this one is deliberately absorbed in
+            // every other state too (see the absorbPreExisting list), not left to `unhandled`.
+            is P503UiEvent.RetryP705CommitStatusCheck ->
+                if (event.outcome == P705CommitCheckOutcome.NONE || !state.submitting) state else state.copy(checkOutcome = event.outcome)
             // Cancel/Back return to the preserved overview; a preview never blocks the zero-write
             // return. While a commit is in flight the surface must not leave (提交中不得离开, 沿
             // Submitting 语义), so the exit is absorbed and the host guards intercept the back.
@@ -1570,6 +1586,9 @@ class P503ReducerImpl(
             is P503UiEvent.ConfirmVoid ->
                 if (state.submitting) state else state.copy(requestId = event.requestId, submitting = true, notice = null)
             is P503UiEvent.TransactionVoidResult -> reduceTransactionVoidResult(state, event.result)
+            // P7-05 (V-19; D-173): see [reduceTransactionEdit]'s re-check branch.
+            is P503UiEvent.RetryP705CommitStatusCheck ->
+                if (event.outcome == P705CommitCheckOutcome.NONE || !state.submitting) state else state.copy(checkOutcome = event.outcome)
             P503UiEvent.Cancel,
             P503UiEvent.Back,
             -> if (state.submitting) state else state.overview
@@ -1655,6 +1674,18 @@ class P503ReducerImpl(
                 } ?: state
             is P503UiEvent.TransactionRestoreResult ->
                 state.restore?.let { reduceRestoreResult(state, it, event.result) } ?: state
+            // P7-05 (V-19; D-173): the nested restore commit's manual re-check. A re-check REQUEST
+            // (`outcome == NONE`) leaves the instance untouched (the P7-02 precedent, 不切态); the
+            // host's `Absent`/`Unavailable` landing records the still-unknown marker on the nested
+            // sub-state. A landing with no sub-state or without a lost commit in flight is absorbed.
+            is P503UiEvent.RetryP705CommitStatusCheck ->
+                state.restore?.let { restore ->
+                    if (event.outcome == P705CommitCheckOutcome.NONE || !restore.submitting) {
+                        state
+                    } else {
+                        state.copy(restore = restore.copy(checkOutcome = event.outcome))
+                    }
+                } ?: state
             // Closing the nested sub-state keeps the bin list exactly as it was (zero writes); a
             // submitting restore absorbs the close (提交中不得离开).
             P503UiEvent.CloseRestoreConfirm ->
@@ -1783,6 +1814,13 @@ class P503ReducerImpl(
             P503UiEvent.AbandonImportBatch,
             is P503UiEvent.ImportUnknownItemCheck,
             is P503UiEvent.ImportUnknownItemCheckResult,
+            // P7-05 (V-19; D-173): the manual re-check intent belongs to the three P7-05 surfaces
+            // (it is their own designed event there); everywhere else it is absorbed, mirroring the
+            // P7-02 `RetryCommitStatusCheck` AFFORDANCE/INTENT but deliberately NOT its absorption
+            // shape: P7-02's event is not listed in Ready/OverviewEmpty (it reaches `unhandled` →
+            // ISE there), while this one is absorbed in every state — a safer, state-preserving
+            // choice that can never crash the app on a late/stale dispatch.
+            is P503UiEvent.RetryP705CommitStatusCheck,
             is P503UiEvent.Continue,
             P503UiEvent.Cancel,
             P503UiEvent.Confirm,
@@ -1957,6 +1995,7 @@ class P503ReducerImpl(
             is P503UiEvent.ConfirmRestore,
             is P503UiEvent.TransactionRestoreResult,
             P503UiEvent.CloseRestoreConfirm,
+            is P503UiEvent.RetryP705CommitStatusCheck,
             -> state
             is P503UiEvent.Continue ->
                 if (validation.isValid(state.draft, currency)) {
@@ -2100,6 +2139,7 @@ class P503ReducerImpl(
             is P503UiEvent.ConfirmRestore,
             is P503UiEvent.TransactionRestoreResult,
             P503UiEvent.CloseRestoreConfirm,
+            is P503UiEvent.RetryP705CommitStatusCheck,
             -> state
             // System back drops the draft and closes the editor flow (distinct from Cancel,
             // which keeps it) (P5-04.2).
@@ -2215,6 +2255,7 @@ class P503ReducerImpl(
             is P503UiEvent.ConfirmRestore,
             is P503UiEvent.TransactionRestoreResult,
             P503UiEvent.CloseRestoreConfirm,
+            is P503UiEvent.RetryP705CommitStatusCheck,
             -> state
             else -> unhandled(state, event)
         }
@@ -2531,6 +2572,7 @@ class P503ReducerImpl(
             is P503UiEvent.ConfirmRestore,
             is P503UiEvent.TransactionRestoreResult,
             P503UiEvent.CloseRestoreConfirm,
+            is P503UiEvent.RetryP705CommitStatusCheck,
             -> current
             else -> unhandled(current, event)
         }
@@ -2656,6 +2698,7 @@ class P503ReducerImpl(
             is P503UiEvent.ConfirmRestore,
             is P503UiEvent.TransactionRestoreResult,
             P503UiEvent.CloseRestoreConfirm,
+            is P503UiEvent.RetryP705CommitStatusCheck,
             -> state
             // Explicitly abandoning the conflicting draft starts a new save intent.
             P503UiEvent.AbandonConflict ->
@@ -2788,6 +2831,7 @@ class P503ReducerImpl(
             is P503UiEvent.ConfirmRestore,
             is P503UiEvent.TransactionRestoreResult,
             P503UiEvent.CloseRestoreConfirm,
+            is P503UiEvent.RetryP705CommitStatusCheck,
             -> state
             P503UiEvent.Back ->
                 // A-02 FIX-MONTH-2 (D-152): the Back rebuild restores the pre-editor monthly
@@ -2898,6 +2942,7 @@ class P503ReducerImpl(
                     is P503UiEvent.ConfirmRestore,
                     is P503UiEvent.TransactionRestoreResult,
                     P503UiEvent.CloseRestoreConfirm,
+                    is P503UiEvent.RetryP705CommitStatusCheck,
                     -> state
                     else -> unhandled(state, event)
                 }
@@ -3010,6 +3055,7 @@ class P503ReducerImpl(
                     is P503UiEvent.ConfirmRestore,
                     is P503UiEvent.TransactionRestoreResult,
                     P503UiEvent.CloseRestoreConfirm,
+                    is P503UiEvent.RetryP705CommitStatusCheck,
                     -> state
                     else -> unhandled(state, event)
                 }

@@ -65,6 +65,7 @@ internal fun P503TransactionEditScreen(
     onPreview: () -> Unit,
     onConfirm: (() -> Unit)?,
     onCancel: (() -> Unit)?,
+    onRecheck: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -161,7 +162,7 @@ internal fun P503TransactionEditScreen(
         }
         if (state.submitting) {
             Spacer(Modifier.height(8.dp))
-            Text("正在提交…", style = MaterialTheme.typography.bodyMedium)
+            P705SubmittingRow(onRecheck = onRecheck, outcome = state.checkOutcome)
         }
     }
 }
@@ -185,6 +186,7 @@ internal fun P503VoidConfirmScreen(
     onUpdateReason: (VoidReasonFieldUpdate) -> Unit,
     onConfirm: (() -> Unit)?,
     onCancel: (() -> Unit)?,
+    onRecheck: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -249,7 +251,7 @@ internal fun P503VoidConfirmScreen(
         }
         if (state.submitting) {
             Spacer(Modifier.height(8.dp))
-            Text("正在提交…", style = MaterialTheme.typography.bodyMedium)
+            P705SubmittingRow(onRecheck = onRecheck, outcome = state.checkOutcome)
         }
     }
 }
@@ -327,6 +329,7 @@ internal fun P503RestoreConfirmScreen(
     onUpdateReason: (VoidReasonFieldUpdate) -> Unit,
     onConfirm: (() -> Unit)?,
     onClose: (() -> Unit)?,
+    onRecheck: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -397,7 +400,52 @@ internal fun P503RestoreConfirmScreen(
         }
         if (restore.submitting) {
             Spacer(Modifier.height(8.dp))
-            Text("正在提交…", style = MaterialTheme.typography.bodyMedium)
+            P705SubmittingRow(onRecheck = onRecheck, outcome = restore.checkOutcome)
+        }
+    }
+}
+
+/**
+ * P7-05 (V-19; D-173): the shared "commit in flight" line of the three surfaces. When the host
+ * still holds the retained request snapshot it also renders the manual 「重新核对」 affordance — the
+ * P7-02 D-126 R4 precedent ([P503UnknownCommitStayScreen]'s button). A `null` callback renders the
+ * bare line rather than a dead button. [outcome] is the surface's last manual re-check outcome: an
+ * [P705CommitCheckOutcome.ABSENT]/[P705CommitCheckOutcome.UNAVAILABLE] result renders the
+ * [p705RecheckStatusText] line beside the button, so the re-check is never a silent no-op; the
+ * plain [P705CommitCheckOutcome.NONE] keeps only the 「正在提交…」 line. No
+ * `minimumInteractiveComponentSize()`: material3 already enforces the 48dp touch target and a
+ * manual modifier creates a dead-zone hit layer (D-127). The button carries no extra
+ * `contentDescription`: this file adds none to its buttons (the [P503UnknownCommitStayScreen]
+ * precedent), and the visible 重新核对 text is what TalkBack reads. The status line follows the
+ * file's notice pattern (the void notice's `contentDescription` plus `liveRegion = Assertive`),
+ * so a resolved-but-empty re-check is announced on change, not only painted.
+ */
+@Composable
+private fun P705SubmittingRow(
+    onRecheck: (() -> Unit)?,
+    outcome: P705CommitCheckOutcome = P705CommitCheckOutcome.NONE,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("正在提交…", style = MaterialTheme.typography.bodyMedium)
+        if (onRecheck != null) {
+            Spacer(Modifier.width(8.dp))
+            Button(onClick = onRecheck) {
+                Text("重新核对")
+            }
+            p705RecheckStatusText(outcome)?.let { status ->
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    status,
+                    style = MaterialTheme.typography.bodySmall,
+                    // V-17: the re-check outcome is an async outcome, so it is announced on change
+                    // with the same assertive live region as the void/restore notices.
+                    modifier =
+                        Modifier.semantics {
+                            contentDescription = status
+                            liveRegion = LiveRegionMode.Assertive
+                        },
+                )
+            }
         }
     }
 }

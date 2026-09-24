@@ -306,4 +306,31 @@ class P503HostCoordinatorTest {
         assertEquals(true, published)
         assertEquals(event, received)
     }
+
+    @Test
+    fun theP705ManualRecheckRunsAtMostOnceAtATimeAndIsReusableAfterCompletion() {
+        // V-19 (D-173): the manual re-check single flight. A double tap must not overlap two
+        // read-only resolves of the same surface; unlike the P7-02 per-instance guard the SAME
+        // surface may be re-checked repeatedly (it stays unknown), so only a concurrent double-fire
+        // is dropped and the marker releases on each landing.
+        val coordinator =
+            P503HostCoordinator(
+                onRefresh = { error("unused") },
+                onSubmit = { _, _ -> error("unused") },
+                onCheck = { _, _ -> error("unused") },
+            )
+        var started = 0
+        assertEquals(true, coordinator.recheckP705CommitOnce { started += 1 })
+        assertEquals(1, started)
+        // A concurrent duplicate while the first is in flight is dropped.
+        assertEquals(false, coordinator.recheckP705CommitOnce { started += 1 })
+        assertEquals(1, started)
+        coordinator.p705RecheckCompleted()
+        // The marker released, so the same surface is re-checkable again.
+        assertEquals(true, coordinator.recheckP705CommitOnce { started += 1 })
+        assertEquals(2, started)
+        coordinator.p705RecheckCompleted()
+        assertEquals(true, coordinator.recheckP705CommitOnce { started += 1 })
+        assertEquals(3, started)
+    }
 }

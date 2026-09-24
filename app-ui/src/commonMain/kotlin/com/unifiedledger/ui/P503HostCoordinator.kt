@@ -473,6 +473,33 @@ internal class P503HostCoordinator(
     private var importUnknownCheckInFlight = false
 
     /**
+     * P7-05 (V-19; D-173): a manual lost-commit re-check is currently running (single flight). The
+     * host clears the marker in the re-check's landing hop, so a double tap cannot overlap two
+     * read-only resolves of the same surface. `@Volatile` for the same reason as the other markers.
+     */
+    @Volatile
+    private var p705RecheckInFlight = false
+
+    /**
+     * P7-05 (V-19; D-173): the manual re-check single flight — at most one read-only resolve per
+     * surface may be in flight; a duplicate evaluation is dropped until [p705RecheckCompleted]
+     * clears the marker. Returns whether this evaluation started the re-check. This is an explicit
+     * user action, so there is no per-instance marker (unlike [retryCommitStatusCheck]): the same
+     * surface may be re-checked repeatedly, and only a concurrent double-fire is dropped.
+     */
+    internal fun recheckP705CommitOnce(action: () -> Unit): Boolean {
+        if (p705RecheckInFlight) return false
+        p705RecheckInFlight = true
+        action()
+        return true
+    }
+
+    /** Clears the manual re-check single-flight marker once its landing event has been dispatched. */
+    internal fun p705RecheckCompleted() {
+        p705RecheckInFlight = false
+    }
+
+    /**
      * P7-04.D: the per-item dispatch loop single flight — at most one sequential confirm loop may
      * run at a time; a duplicate start is dropped until [importBatchDispatchCompleted] clears the
      * marker (the marker releases in the loop's final main-dispatcher hop, after the last
@@ -660,6 +687,35 @@ internal sealed interface HostAction {
         val requestId: RequestId,
     ) : HostAction
 }
+
+/**
+ * P7-05 (V-19; D-173): whether the landed state still holds a lost P7-05 commit, i.e. one of the
+ * three surfaces is `submitting` (its result never arrived). The host keeps its retained request
+ * snapshot exactly while this is true, so the manual re-check always has the committed snapshot to
+ * resolve against; a surface that left, a landed result (hit or conflict — both clear `submitting`)
+ * and every non-P7-05 state release it.
+ *
+ * Keying the lifecycle on the LANDED state (not on the dispatched event) matters: the reducer
+ * absorbs events its surface refuses (e.g. another bin row tapped while a lost restore is in
+ * flight), and an event-based clear would then drop the snapshot of a still-lost commit.
+ */
+internal fun p705SurfaceHoldsLostCommit(landed: P503AppState): Boolean =
+    when (landed) {
+        is P503AppState.TransactionEdit -> landed.submitting
+        is P503AppState.VoidConfirm -> landed.submitting
+        is P503AppState.RecycleBin -> landed.restore?.submitting == true
+        else -> false
+    }
+
+/**
+ * P7-05 (V-19; D-173): the retained-snapshot value after one landed transition — kept while the
+ * surface still holds a lost commit, released otherwise (the instance-identity discipline of the
+ * `retainedIntent` lifecycle).
+ */
+internal fun retainedP705RequestAfterLanding(
+    current: RetainedP705Request?,
+    landed: P503AppState,
+): RetainedP705Request? = if (p705SurfaceHoldsLostCommit(landed)) current else null
 
 /**
  * P7-03 FIX-STALE-1 (D-153): THE single arm-gate for trigger (f)'s two host call sites, called

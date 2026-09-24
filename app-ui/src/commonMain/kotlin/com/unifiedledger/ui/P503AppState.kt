@@ -361,6 +361,13 @@ sealed interface P503AppState {
         val requestId: RequestId? = null,
         val submitting: Boolean = false,
         val notice: P705Notice? = null,
+        /**
+         * P7-05 (V-19; D-173): the last manual re-check outcome of a lost commit. Default [NONE]
+         * keeps every pre-existing construction site source-compatible; [P705CommitCheckOutcome]
+         * documents the frozen meaning (NONE = in flight / not yet checked, ABSENT and UNAVAILABLE
+         * stay re-checkable).
+         */
+        val checkOutcome: P705CommitCheckOutcome = P705CommitCheckOutcome.NONE,
     ) : P503AppState
 
     /**
@@ -377,6 +384,8 @@ sealed interface P503AppState {
         val requestId: RequestId? = null,
         val submitting: Boolean = false,
         val notice: P705Notice? = null,
+        /** P7-05 (V-19; D-173): see [TransactionEdit.checkOutcome]. */
+        val checkOutcome: P705CommitCheckOutcome = P705CommitCheckOutcome.NONE,
     ) : P503AppState
 
     /**
@@ -442,6 +451,21 @@ enum class InfrastructureFailureContext {
  * UNAVAILABLE stay actionable with a manual re-check and never claim success or failure.
  */
 enum class UnknownCommitCheckOutcome {
+    NONE,
+    ABSENT,
+    UNAVAILABLE,
+}
+
+/**
+ * P7-05 (V-19; D-173): the outcome of a manual re-check of a lost correction/void/restore commit.
+ * Mirrors [UnknownCommitCheckOutcome]: [NONE] means no check has resolved yet (a check may be in
+ * flight, and the surface is re-checkable); [ABSENT] and [UNAVAILABLE] mean the read-only resolve
+ * found no row / could not read, so the surface keeps its submitting marker, stays unknown and
+ * remains re-checkable. A determinate hit never stores a marker: it lands as the existing result
+ * event and leaves the surface (D-173's gap is the missing in-session re-check affordance, not a
+ * second result family).
+ */
+enum class P705CommitCheckOutcome {
     NONE,
     ABSENT,
     UNAVAILABLE,
