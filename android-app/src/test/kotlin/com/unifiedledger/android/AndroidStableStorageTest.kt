@@ -121,6 +121,49 @@ class AndroidStableStorageTest {
     }
 
     @Test
+    fun aPreSeededActiveGenerationReachesTheOpenCallbackWithoutCreateOnOpen() {
+        // Supports the instrumented concurrency test's non-vacuity (MUST FIX 2): a redirected host
+        // pre-seeded with ledger-generations/gen-1/ledger.db + an active-generation pointer
+        // resolves OpenGeneration and reaches the open callback, so two concurrent opens both get
+        // as far as the driver. Without the pointer the same host fails closed POINTER_MISSING
+        // BEFORE the callback — the shortcut that made the concurrency test vacuous.
+        val databases = tempDatabasesDirectory()
+        try {
+            val host = databases.toFile().absolutePath
+            val fileSystem = DesktopStyleTestFileSystem()
+            val layout = ledgerStorageLayout(fileSystem, host)
+            val generationDirectory = File(layout.generationDirectory(1))
+            generationDirectory.mkdirs()
+            File(layout.mainFile(layout.generationDirectory(1))).writeBytes(sqliteHeaderBytes())
+
+            // No pointer yet: the callback must NOT run.
+            var reachedWithoutPointer = false
+            val rejected =
+                assertFailsWith<LedgerStorageRejectedException> {
+                    openStableStorageLedger(fileSystem, layout, null, closeGraph = {}) {
+                        reachedWithoutPointer = true
+                        it
+                    }
+                }
+            assertEquals(LedgerStorageFailure.POINTER_MISSING, rejected.failure)
+            assertFalse(reachedWithoutPointer)
+
+            // With the pointer: the callback runs and the target is non-fresh.
+            File(layout.activePointerFile).writeText("gen-1")
+            var reachedWithPointer = false
+            val target =
+                openStableStorageLedger(fileSystem, layout, null, closeGraph = {}) {
+                    reachedWithPointer = true
+                    it
+                }
+            assertTrue(reachedWithPointer)
+            assertFalse(target.allowCreateOnOpen)
+        } finally {
+            deleteRecursively(databases)
+        }
+    }
+
+    @Test
     fun anAlreadyUpgradedInstallIsSelectedThroughThePointerOnTheNextStart() {
         val databases = tempDatabasesDirectory()
         try {

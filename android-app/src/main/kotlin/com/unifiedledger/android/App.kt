@@ -206,9 +206,11 @@ fun app() {
             )
         }
     // MUST FIX 2: the controller's open now outlives a single composition pass, so dispose it
-    // when this composition leaves. dispose() closes the owner's active graph, and the
-    // controller's NonCancellable decision guarantees an open that completed after teardown is
-    // closed too — the driver is never orphaned by a mid-start rotation.
+    // when this composition leaves. dispose() ATTEMPTS to close the owner's active graph (best
+    // effort — see the AndroidStartupController class note for the TransitionInProgress /
+    // QuiesceBlocked paths where the close is declined and the graph is left open), and the
+    // NonCancellable decision makes the teardown-after-open case reach that attempt instead of
+    // silently dropping it.
     DisposableEffect(controller) {
         onDispose { controller.dispose() }
     }
@@ -261,9 +263,11 @@ fun app() {
  * when another transition holds the owner's mutex, and `QuiesceBlocked(inFlight)` without closing
  * when a business lease is in flight. Both are logged here (never silently dropped), but the graph
  * is left open in those two cases — a residual leak class that is partly pre-existing (the pre-fix
- * controller had no dispose at all) and is disclosed rather than overclaimed. Concurrent opens
- * across owner instances are separately prevented by the process-wide open lock (see
- * [withAndroidStableStorageOpenLock]). This removes the ANR trigger only: a process kill or power
+ * controller had no dispose at all) and is disclosed rather than overclaimed. Separately, the
+ * process-wide open lock (see [withAndroidStableStorageOpenLock]) serializes the OPEN SEQUENCES of
+ * different owner instances; it does not itself cap live graphs, and the first owner's best-effort
+ * close runs after that lock is released, so two owner instances can hold connections to the same
+ * ledger concurrently for a short window. This removes the ANR trigger only: a process kill or power
  * loss mid-copy still leaves a pointerless generation that fail-closes with `POINTER_MISSING` on
  * the next start, and 06.1 has no recovery for that (registered as the 06.D residual in
  * [openStableStorageLedger]); this hotfix does not change that.
@@ -337,7 +341,8 @@ internal class AndroidStartupController(
      *
      * MUST FIX 2: the open and the result application run under [NonCancellable], so if
      * [startScope] is cancelled mid-open (composition teardown) the decision is still reached and
-     * [applyStartupResult] closes the just-opened graph instead of orphaning it.
+     * [applyStartupResult] ATTEMPTS to close the just-opened graph (best effort — the class note
+     * discloses the paths where the close is declined and the graph is left open).
      */
     fun start() {
         // P5-04.4 reentrancy guard: a double "Retry" tap while already starting is ignored so
@@ -479,13 +484,19 @@ private const val LOG_TAG = "UnifiedLedger"
  * yet published, the legacy file is still present), both copy into the SAME
  * `databases/ledger-generations/gen-1/ledger.db` and both open a driver — two concurrent writers
  * to one ledger file (the spec section 6 / P706-A06 "at most one active graph" vector). Holding
- * this lock across the open makes the second open WAIT; once the first publishes the pointer, the
- * second resolves `OpenGeneration` on the now-complete file and opens a single connection.
+ * this lock across the open makes the second open WAIT for the first to finish. What the second
+ * then resolves depends on how the first ended: if the first published the pointer, the second
+ * resolves `OpenGeneration` on the now-complete file; if the first aborted (its copy/open threw),
+ * the second re-resolves the original plan and fail-closes the same way rather than racing it.
+ * The lock serializes the open SEQUENCES; it does not by itself cap the number of live graphs
+ * (the first owner's best-effort close runs after this lock is released).
  *
  * The lock is held only on the IO dispatcher (the open always runs under
- * [AndroidStartupController]'s background dispatcher), so it never blocks the main thread. It is
- * process-wide (one instance per process) because the two opens belong to different controller and
- * owner instances, whose own mutexes cannot see each other.
+ * [AndroidStartupController]'s background dispatcher), so the current wiring never blocks the main
+ * thread. It is process-wide (one instance per process) because the two opens belong to different
+ * controller and owner instances, whose own mutexes cannot see each other. It is a plain monitor
+ * with no timeout, so a hung copy (e.g. a stuck filesystem) would stall a recreated composition's
+ * startup at `Starting` until the first open returns.
  */
 private val ANDROID_STABLE_STORAGE_OPEN_LOCK = Any()
 

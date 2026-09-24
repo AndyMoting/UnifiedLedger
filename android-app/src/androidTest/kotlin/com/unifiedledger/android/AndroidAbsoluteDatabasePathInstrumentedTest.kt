@@ -91,15 +91,27 @@ class AndroidAbsoluteDatabasePathInstrumentedTest {
     /**
      * MUST FIX B (rotate-during-open): two concurrent calls to the REAL production
      * [openAndroidStableStorageLedger] must be serialized by the process-wide open lock, so only
-     * one copy/open of the same generation can run at a time. The first call blocks inside the
-     * injected `openDriver` (the stand-in for the multi-second legacy copy) while the second is
-     * launched; without the lock the second would enter and `maxObservedConcurrency` would reach 2.
+     * one open of the same generation can run at a time. The redirected host is PRE-SEEDED with a
+     * valid generation (a `ledger-generations/gen-1/ledger.db` carrying a real SQLite header, plus
+     * an `active-generation` pointer naming `gen-1`), so BOTH opens resolve the `OpenGeneration`
+     * plan and BOTH reach the injected `openDriver`. The first blocks inside `openDriver` (the
+     * stand-in for the multi-second open) while the second is launched; WITHOUT the lock the second
+     * enters concurrently and `maxObservedConcurrency` reaches 2, so this test goes red if the lock
+     * is removed.
+     *
+     * Why the pre-seed is required for non-vacuity: on the FreshInstall/UpgradeLegacy paths the
+     * sequence creates the generations directory before `openDriver`, so a second concurrent open
+     * would resolve a pointerless generations dir and fail closed with `POINTER_MISSING` before it
+     * ever reached `openDriver` — the lock's absence would then be invisible. Seeding a valid
+     * active generation removes that shortcut.
+     *
      * Device-only evidence: the JVM suite cannot construct an Android Context, but
      * AndroidStableStorageOpenLockTest pins the lock mechanism itself.
      */
     @Test
     fun concurrentProductionOpensAreSerializedByTheProcessWideLock() {
         val context = redirectedContext()
+        seedValidActiveGeneration(context)
         val insideOpen = CountDownLatch(1)
         val releaseOpen = CountDownLatch(1)
         val active = AtomicInteger(0)
@@ -146,6 +158,19 @@ class AndroidAbsoluteDatabasePathInstrumentedTest {
         releaseOpen.countDown()
         assertTrue("both opens did not complete", completed.await(30, TimeUnit.SECONDS))
         assertEquals("concurrency must never exceed one", 1, maxObservedConcurrency.get())
+    }
+
+    /**
+     * Pre-seeds the redirected host so [openAndroidStableStorageLedger] resolves the
+     * `OpenGeneration` plan (generations dir + pointer + usable gen-1 main file), making both
+     * concurrent opens reach the driver.
+     */
+    private fun seedValidActiveGeneration(context: Context) {
+        val host = hostDirectory(context)
+        val generationDirectory = File(File(host, "ledger-generations"), "gen-1")
+        generationDirectory.mkdirs()
+        File(generationDirectory, "ledger.db").writeBytes(SQLITE_HEADER + ByteArray(1024))
+        File(host, "active-generation").writeText("gen-1")
     }
 
     /**
