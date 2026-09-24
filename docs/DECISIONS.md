@@ -3411,3 +3411,24 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 5. **边界**：入本规格与 `docs/DECISIONS.md` 本条；零产品代码、零测试、零 schema/迁移、零依赖；不改 D-156/D-158 及 P7-01～P7-05 既有冻结面；不把任何验收向量并入 PASS（P706-A01..A12 仍为待实现/待验收）。
 
 **关联决定：** D-156（设计门规格与证据纪律的先例）、D-158（实施登记与残余承接的形状；schema v31）、D-147/D-148（A-PERF 证据纪律）、D-173（前序最高 id）。
+## D-175 P7-04 导入审核 61k 冷进入残余耗时的 atrace 设备侧归因与 D-171 假设更正
+
+**状态：** 已批准（2026-09-24，D-169 登记的 61k 可操作性缺陷（残余耗时未归因）的 atrace 设备侧归因登记；本条更正 D-171 的假设，不改 D-169 的缺陷登记与开放状态）。
+
+**决定：**
+
+1. **方法**：在 AVD `ul_p7_d01`（Android 16 / API 36，隔离 adb 5038）上，对候选 `5ea7f67` 树构建的 debug APK，注入 61,000 候选匿名库，冷启动后 tap 导入 Tab，`atrace -t 22 -b 65536 -a com.unifiedledger.android gfx view wm am dalvik sched freq` 采集；**TalkBack 已禁用**以避免语义树干扰（另有一次启用 TalkBack 的对照 trace，结论一致）。原始 trace 为 `trace61k-clean.ctrace` 与 `trace61k-app.ctrace`，与归因报告 `local/artifacts/p7-05-scale/attribution/61k-atrace-attribution.md` 同目录（均在主 checkout 的只读设备目录，gitignored，不入 tracked 文件）。
+
+2. **观察**：tap 后主线程出现 **~13.5 s 的 `Choreographer#doFrame` 间隔**（与设备读数 ~11–11.7 s 同量级）；**该间隔内主线程处于睡眠**（仅有周期性 `MSG_CHECK_INVALIDATION_IDLE`），**仅消耗 ~0.5 s CPU**；`ImportReviewResult` 在间隔末尾才派发。
+
+3. **按 `sched_switch` 的 CPU 归因（间隔窗口内）**：应用 `Dispatchers.Default`（`DefaultDispatch`）线程 **~13.2 s CPU**；GC（`HeapTaskDaemon`）~1.2 s CPU；主线程 ~0.5 s；`RenderThread` ~0.33 s。应用堆从 ~10 MB 增至 **~96 MB**，间隔内 8 次 `Background concurrent mark compact GC` 周期；`DefaultDispatch` 的切片含 `ImportReviewRowsForLedger` 读与大量 GC 检查点/挂起相关标记。
+
+4. **结论（更正 D-171）**：残余耗时**不是主线程 UI 组合/重组**——主线程在该窗口睡眠且仅 ~0.5 s CPU。残余**主要由 off-UI-thread 的行物化工作与其引发的 GC 压力构成**（`Dispatchers.Default` ~13.2 s CPU，堆 10→96 MB）。D-171 的「最可能为设备侧 UI 组合/重组」假设**被证伪**；修复方向应指向**减少行物化/分配压力**（流式/分页物化、避免 61k 行同时驻留、降低 GC 压力），而非主线程重组优化。
+
+5. **边界与未证**：未把 `DefaultDispatch` 的 ~13.2 s 在「读/映射 CPU」与「GC 检查点 CPU」之间精确拆分（trace 未对读/映射加自定义切片），两者合计构成残余已证、比例未定；模拟器（无 GPU 加速、x86 翻译）绝对值不代表真机，结论限定为「主线程不是瓶颈、off-thread 工作与 GC 是」这一归因；未取峰值内存读数（只记堆增长轨迹 10→96 MB）。
+
+6. **不改动**：不改 D-169 的缺陷登记与开放状态（`ACC-D-PERF-01` 在 61k 仍未达 ≤3 s 门槛）；不改 D-170/D-171 的既有登记文本（本条为**新增更正条目**，不改写旧条目）；不实施修复（修复批或规模口径裁决属后续）；零产品代码、零测试、零 schema。
+
+**边界：** 入：本条登记与 `docs/CURRENT_STATE.md` 的同步。出：零产品代码、零测试、零 schema/迁移/依赖/清单、零 Golden/fixture；不改 D-169 的缺陷登记与开放状态、不改 D-170/D-171 的既有登记文本、不改 D-168 的批准内容、不改 D-166 条目本身的缺陷与缺口状态、不改 D-147/D-148 的读治理裁决、不改 D-156～D-167 与 D-172/D-173/D-174 的任何裁决与其 PASS 项；不实施任何修复；不把任何残余并入 PASS。
+
+**关联决定：** D-169（61k 缺陷登记与开放状态——本条不改）、D-171（宿主侧归因与「最可能为设备侧 UI 组合/重组」假设——本条证伪该假设）、D-170（残余设备向量）、D-174（前序最高 id）。
