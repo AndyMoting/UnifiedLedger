@@ -105,22 +105,3 @@ internal fun androidStableStoragePaths(
     val hostDirectory = databasePath.parentFile?.absolutePath ?: databasePath.absolutePath
     return hostDirectory to databasePath.absolutePath
 }
-
-/**
- * The AndroidSqliteDriver takes a name relative to the app-private `databases/` directory, so the
- * composition root converts the resolved absolute generation path back into that relative name.
- * The generation directory itself is created by the shared stable-storage sequence before the
- * open, so the driver only ever opens an existing, guarded file (section 4.5).
- */
-internal fun androidDatabaseName(
-    hostDirectory: String,
-    mainFile: String,
-): String {
-    val prefix = File(hostDirectory).absolutePath + File.separator
-    val absoluteMain = File(mainFile).absolutePath
-    return if (absoluteMain.startsWith(prefix)) {
-        absoluteMain.removePrefix(prefix).replace(File.separatorChar, '/')
-    } else {
-        absoluteMain
-    }
-}

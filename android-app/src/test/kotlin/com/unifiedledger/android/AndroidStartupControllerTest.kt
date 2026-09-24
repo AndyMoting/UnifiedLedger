@@ -26,8 +26,19 @@ import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.ui.P503LedgerFacade
 import com.unifiedledger.ui.P503StartupState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -38,11 +49,24 @@ import kotlin.time.Clock
  * controller's `openDatabase` (returns a [CloseableLedgerGraph]) and `logFailure` are both
  * injected, so the state machine and resource-safety can be exercised without an Android
  * framework. Symmetric to the desktop controller tests plus the retry-close assertions (S3).
+ *
+ * P0 hotfix (defect 2): [AndroidStartupController.start] now launches the blocking open off the
+ * caller thread. Most tests inject an unconfined scope/dispatcher so the launch runs eagerly on
+ * the test thread and the state assertions stay deterministic without sleeps; the two dedicated
+ * tests below use real single-thread dispatchers to prove the thread hop and the synchronous
+ * reentrancy guard under a genuinely asynchronous start.
  */
 class AndroidStartupControllerTest {
     private var logged: MutableList<String> = mutableListOf()
 
-    private fun controller(open: () -> CloseableLedgerGraph): AndroidStartupController = AndroidStartupController(openDatabase = open, logFailure = { failure -> logged += failure.toString() })
+    private fun controller(open: () -> CloseableLedgerGraph): AndroidStartupController = AndroidStartupController(openDatabase = open, logFailure = { failure -> logged += failure.toString() }, startScope = unconfinedScope(), backgroundDispatcher = Dispatchers.Unconfined)
+
+    /**
+     * An eagerly-executing scope/dispatcher pair (the unconfined dispatcher runs the launch body
+     * on the calling thread until a real suspension), so a test's assertions after `start()`
+     * observe the completed transition deterministically.
+     */
+    private fun unconfinedScope(): CoroutineScope = CoroutineScope(Dispatchers.Unconfined)
 
     @Test
     fun injectedOpenFailureGoesToErrorThenRetryReachesReady() {
@@ -102,6 +126,8 @@ class AndroidStartupControllerTest {
                     CloseableLedgerGraph(facade = fakeFacade(), close = { closeCount += 1 })
                 },
                 logFailure = { loggedFailures += it },
+                startScope = unconfinedScope(),
+                backgroundDispatcher = Dispatchers.Unconfined,
             )
 
         controller.start()
@@ -130,6 +156,8 @@ class AndroidStartupControllerTest {
                     throw failure
                 },
                 logFailure = { loggedFailures += it },
+                startScope = unconfinedScope(),
+                backgroundDispatcher = Dispatchers.Unconfined,
             )
 
         controller.start()
@@ -159,6 +187,8 @@ class AndroidStartupControllerTest {
                 AndroidStartupController(
                     openDatabase = { throw failure },
                     logFailure = { loggedFailures += it },
+                    startScope = unconfinedScope(),
+                    backgroundDispatcher = Dispatchers.Unconfined,
                 )
 
             controller.start()
@@ -210,12 +240,150 @@ class AndroidStartupControllerTest {
                     CloseableLedgerGraph(facade = fakeFacade(), close = { closeCount += 1 })
                 },
                 logFailure = { failure -> logged += failure.toString() },
+                startScope = unconfinedScope(),
+                backgroundDispatcher = Dispatchers.Unconfined,
             )
 
         controller.start()
         assertEquals(P503StartupState.Ready, controller.state)
         assertEquals(1, openCount)
         assertEquals(0, closeCount)
+    }
+
+    // ---------------------------------------------------------------- P0 hotfix defect 2
+
+    @Test
+    fun theBlockingOpenRunsOnTheInjectedBackgroundDispatcherNotTheCallerThread() {
+        // P0 hotfix (defect 2): the legacy-upgrade copy must not run on the main thread. Record
+        // the thread that actually executes openDatabase and assert it is the injected background
+        // thread, never the caller/main thread. Deterministic: a real single-thread background
+        // dispatcher and a bounded await on the observed state (no sleeps).
+        val backgroundExecutor = newNamedExecutor("test-background-open")
+        val stateExecutor = newNamedExecutor("test-state-writer")
+        val callerThread = Thread.currentThread()
+        val openThreads = mutableListOf<Thread>()
+        try {
+            val controller =
+                AndroidStartupController(
+                    openDatabase = {
+                        openThreads += Thread.currentThread()
+                        CloseableLedgerGraph(facade = fakeFacade(), close = {})
+                    },
+                    logFailure = { failure -> logged += failure.toString() },
+                    startScope = CoroutineScope(stateExecutor.asCoroutineDispatcher()),
+                    backgroundDispatcher = backgroundExecutor.asCoroutineDispatcher(),
+                )
+
+            controller.start()
+            awaitState(controller, P503StartupState.Ready)
+
+            assertEquals(1, openThreads.size)
+            assertNotEquals(callerThread, openThreads.single(), "the blocking open must not run on the caller/main thread")
+            assertEquals("test-background-open", openThreads.single().name)
+        } finally {
+            backgroundExecutor.shutdownNow()
+            stateExecutor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun startWhileStartingIsDroppedSynchronouslyWhenTheOpenIsStillInFlight() {
+        // P0 hotfix (defect 2): the reentrancy guard must remain a SYNCHRONOUS caller-thread
+        // decision even though start() is now asynchronous. The open blocks on a latch, so the
+        // second start() provably runs while the first open is in flight; it must neither
+        // rebuild nor double-close.
+        val backgroundExecutor = newNamedExecutor("test-background-open")
+        val stateExecutor = newNamedExecutor("test-state-writer")
+        val openEntered = CountDownLatch(1)
+        val releaseOpen = CountDownLatch(1)
+        var openCount = 0
+        var closeCount = 0
+        try {
+            val controller =
+                AndroidStartupController(
+                    openDatabase = {
+                        openCount += 1
+                        openEntered.countDown()
+                        releaseOpen.await()
+                        CloseableLedgerGraph(facade = fakeFacade(), close = { closeCount += 1 })
+                    },
+                    logFailure = { failure -> logged += failure.toString() },
+                    startScope = CoroutineScope(stateExecutor.asCoroutineDispatcher()),
+                    backgroundDispatcher = backgroundExecutor.asCoroutineDispatcher(),
+                )
+
+            controller.start()
+            assertTrue(openEntered.await(30, TimeUnit.SECONDS), "the background open did not start")
+            // The first open is provably in flight and the state is Starting: this second tap is
+            // the synchronous-guard case and must be dropped without touching the owner.
+            assertEquals(P503StartupState.Starting, controller.state)
+            controller.start()
+
+            releaseOpen.countDown()
+            awaitState(controller, P503StartupState.Ready)
+
+            assertEquals(1, openCount, "the dropped retry must not rebuild the graph")
+            assertEquals(0, closeCount, "the dropped retry must not double-close")
+        } finally {
+            releaseOpen.countDown()
+            backgroundExecutor.shutdownNow()
+            stateExecutor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun retryAfterBackgroundFailureReachesReady() {
+        // P0 hotfix (defect 2): a failed background start must reach StartupError, and a later
+        // Retry (the only retry path) must reach Ready — the real "retry after failure" coverage
+        // under the asynchronous start.
+        var shouldFail = true
+        val backgroundExecutor = newNamedExecutor("test-background-open")
+        val stateExecutor = newNamedExecutor("test-state-writer")
+        try {
+            val controller =
+                AndroidStartupController(
+                    openDatabase = {
+                        if (shouldFail) throw IllegalStateException("injected background open failure")
+                        CloseableLedgerGraph(facade = fakeFacade(), close = {})
+                    },
+                    logFailure = { failure -> logged += failure.toString() },
+                    startScope = CoroutineScope(stateExecutor.asCoroutineDispatcher()),
+                    backgroundDispatcher = backgroundExecutor.asCoroutineDispatcher(),
+                )
+
+            controller.start()
+            awaitState(controller, P503StartupState.StartupError)
+            assertNull(controller.ledger)
+            assertTrue(logged.any { it.contains("injected background open failure") })
+
+            shouldFail = false
+            controller.start()
+            awaitState(controller, P503StartupState.Ready)
+            assertTrue(controller.ledger != null)
+        } finally {
+            backgroundExecutor.shutdownNow()
+            stateExecutor.shutdownNow()
+        }
+    }
+
+    private fun newNamedExecutor(threadName: String): ExecutorService = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, threadName) }
+
+    /**
+     * Awaits [expected] on the controller deterministically: the state is written on the injected
+     * state executor, so this blocks the test thread with a bounded [withTimeout] poll (no
+     * sleeps) and fails with a clear message if the state never lands.
+     */
+    private fun awaitState(
+        controller: AndroidStartupController,
+        expected: P503StartupState,
+    ) {
+        runBlocking {
+            withTimeout(30_000) {
+                while (controller.state != expected) {
+                    delay(1)
+                }
+            }
+        }
     }
 
     /**

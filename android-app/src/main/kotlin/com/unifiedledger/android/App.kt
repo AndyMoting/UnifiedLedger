@@ -14,6 +14,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -137,6 +138,12 @@ import com.unifiedledger.ui.importCreditRefundOriginalExpenseProvider
 import com.unifiedledger.ui.isUsableSqliteMainFile
 import com.unifiedledger.ui.ledgerStorageLayout
 import com.unifiedledger.ui.openStableStorageLedger
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.security.SecureRandom
 import kotlin.time.Clock
 
@@ -163,6 +170,10 @@ fun app() {
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             importPickPortRef[0]?.onOpenDocumentResult(uri)
         }
+    // P0 hotfix (defect 2): the composition-scoped main-dispatcher scope the startup controller
+    // launches its non-blocking start on. Only the state writes resume here; the blocking open
+    // itself runs on the injected background dispatcher.
+    val startupScope = rememberCoroutineScope()
     val controller =
         remember(context) {
             // The Android pick port with SAF launch/metadata/stream closures; one-shot
@@ -184,6 +195,12 @@ fun app() {
                     // guards the target before any create-on-open factory runs.
                     openAndroidStableStorageLedger(context, importFilePickPort, importPickChannel)
                 },
+                // P0 hotfix (defect 2): the blocking open (the legacy full-DB copy on the upgrade
+                // path) must not run on the Compose main thread. [startScope] is the
+                // composition-scoped main dispatcher used only for the state writes; the open
+                // itself runs on [backgroundDispatcher].
+                startScope = startupScope,
+                backgroundDispatcher = Dispatchers.Default,
             )
         }
     LaunchedEffect(Unit) {
@@ -217,12 +234,26 @@ fun app() {
  * never exposes a business graph after a failed start. The ledger connection is carried as a
  * [CloseableLedgerGraph] so a retry can close the previous connection and a mid-failure open
  * is closed too.
+ *
+ * P0 hotfix (defect 2): [start] stays non-suspend, but the blocking [LedgerRuntimeOwner.startup]
+ * open now runs on [backgroundDispatcher] instead of the caller/main thread. On the
+ * legacy-upgrade plan that open performs a full copy of the legacy database, which on a large
+ * ledger exceeded the input-dispatch timeout and ANR'd the app (and left a partial generation
+ * with no pointer, permanently bricking the next start). The state writes resume on [startScope]
+ * (the composition main dispatcher), matching the established
+ * `scope.launch(Dispatchers.Default) { ... }` precedent in `P503App.requestCatalogSnapshotLoad`.
+ * The reentrancy guard is still a synchronous caller-thread decision taken before the launch.
  */
 internal class AndroidStartupController(
     private val openDatabase: () -> CloseableLedgerGraph,
     // P5-04.4 I-002: the default channel logs the full stack via the three-argument
     // Log.w overload; tests inject a counting/recording lambda (never android.util.Log).
     private val logFailure: (Exception) -> Unit = { failure -> Log.w(LOG_TAG, "startup failed", failure) },
+    // P0 hotfix (defect 2): the scope the non-blocking start launches on (state writes stay on
+    // this context — the composition main dispatcher in production) and the dispatcher the
+    // blocking open hops to. Both are injectable so tests can run deterministically.
+    private val startScope: CoroutineScope = CoroutineScope(Dispatchers.Default),
+    private val backgroundDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
     var state by mutableStateOf<P503StartupState>(P503StartupState.Starting)
         private set
@@ -259,18 +290,35 @@ internal class AndroidStartupController(
      */
     private var startedOnce = false
 
+    /**
+     * P0 hotfix (defect 2): starts the ledger open without blocking the caller. The reentrancy
+     * guard and the [P503StartupState.Starting] publish are SYNCHRONOUS caller-thread decisions
+     * taken before the launch, so a second "Retry" tap while a start is in flight is still
+     * dropped here and neither rebuilds nor double-closes. The blocking
+     * [LedgerRuntimeOwner.startup] then runs on [backgroundDispatcher]; its result is applied on
+     * [startScope].
+     */
     fun start() {
         // P5-04.4 reentrancy guard: a double "Retry" tap while already starting is ignored so
         // it neither rebuilds the graph nor double-closes a connection.
         if (startedOnce && state == P503StartupState.Starting) return
         startedOnce = true
         state = P503StartupState.Starting
-        // The owner closes any connection left over from a previous Ready or an interrupted
-        // mid-open before it opens the next one (the "close before open" resource-safety rule).
-        // P7-06 06.1 fix: the owner applies the spec section 4.2 in-flight precondition, so a
-        // retry racing in-flight business work is refused (typed Blocked) rather than closing the
-        // graph under a running call.
-        when (val result = owner.startup()) {
+        startScope.launch {
+            // The owner closes any connection left over from a previous Ready or an interrupted
+            // mid-open before it opens the next one (the "close before open" resource-safety
+            // rule). P7-06 06.1 fix: the owner applies the spec section 4.2 in-flight
+            // precondition, so a retry racing in-flight business work is refused (typed Blocked)
+            // rather than closing the graph under a running call. This is the blocking call that
+            // must not run on the main thread (defect 2).
+            val result = withContext(backgroundDispatcher) { owner.startup() }
+            applyStartupResult(result)
+        }
+    }
+
+    /** Applies the owner outcome to the observable startup state (runs on [startScope]). */
+    private fun applyStartupResult(result: LedgerStartupResult) {
+        when (result) {
             is LedgerStartupResult.Started -> {
                 state = P503StartupState.Ready
             }
@@ -357,8 +405,16 @@ private fun openAndroidStableStorageLedger(
         // P5-04.4 S3: a failure mid-open (after the handle exists) must not leak the driver, so
         // the handle is closed before rethrowing; the controller additionally closes any graph it
         // already holds in its catch block.
-        val name = androidDatabaseName(hostDirectory, target.mainFile)
-        val handle = createAndroidLedgerDatabase(context, name)
+        //
+        // P0 hotfix (defect 1): the driver name is the ABSOLUTE generation main file. A relative
+        // name containing a path separator (e.g. "ledger-generations/gen-1/ledger.db") is rejected
+        // by the framework: androidx FrameworkSQLiteOpenHelper passes the raw name to
+        // Context.getDatabasePath, whose non-separator-prefixed branch calls makeFilename, which
+        // throws IllegalArgumentException("File " + name + " contains a path separator"). The
+        // absolute branch resolves the parent directory itself and works. target.mainFile is
+        // already absolute (built by fileSystem.join over the absolute host directory), so it is
+        // handed through unchanged.
+        val handle = createAndroidLedgerDatabase(context, androidGenerationDriverName(target.mainFile))
         try {
             buildLedgerGraph(handle, importFilePickPort, importPickChannel)
         } catch (failure: Exception) {
@@ -366,6 +422,22 @@ private fun openAndroidStableStorageLedger(
             throw failure
         }
     }
+}
+
+/**
+ * P0 hotfix (defect 1): the driver name handed to [createAndroidLedgerDatabase] is the ABSOLUTE
+ * generation main file. It is passed through unchanged (the shared sequence already builds it via
+ * `fileSystem.join` over the absolute host directory), and the absolute precondition is asserted
+ * here so a future regression that reintroduces a relative name fails loudly at this seam instead
+ * of being silently accepted. A relative name containing a path separator is rejected deeper by
+ * the framework: androidx FrameworkSQLiteOpenHelper passes the raw name to
+ * `Context.getDatabasePath`, whose non-separator-prefixed branch calls `ContextImpl.makeFilename`,
+ * which throws `IllegalArgumentException("File " + name + " contains a path separator")`; the
+ * absolute branch resolves the parent directory itself and works.
+ */
+internal fun androidGenerationDriverName(mainFile: String): String {
+    require(File(mainFile).isAbsolute) { "the Android generation driver name must be absolute: $mainFile" }
+    return mainFile
 }
 
 /**

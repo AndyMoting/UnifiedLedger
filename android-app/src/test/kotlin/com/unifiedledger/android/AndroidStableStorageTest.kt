@@ -16,10 +16,10 @@ import kotlin.test.assertTrue
 
 /**
  * P7-06 06.1 (D-176; spec sections 3.2/3.4/4.5/6): the Android stable storage at the platform seam
- * without an emulator — the host/legacy path resolution, the driver-name conversion and the
- * shared sequence's legacy upgrade against the Android layout (the legacy `databases/ledger.db`
- * plus its `-wal`/`-shm` sidecars). The emulator-only driver behaviour stays with the instrumented
- * fail-closed suite (P706-A10).
+ * without an emulator — the host/legacy path resolution, the absolute driver target (P0 hotfix
+ * defect 1) and the shared sequence's legacy upgrade against the Android layout (the legacy
+ * `databases/ledger.db` plus its `-wal`/`-shm` sidecars). The emulator-only driver behaviour stays
+ * with the instrumented fail-closed suite (P706-A10).
  */
 class AndroidStableStorageTest {
     private fun tempDatabasesDirectory(): Path = Files.createTempDirectory("p7-06-android-storage-")
@@ -44,16 +44,50 @@ class AndroidStableStorageTest {
     }
 
     @Test
-    fun theGenerationMainFileConvertsToADriverRelativeName() {
+    fun theGenerationMainFileHandedToTheDriverIsAbsoluteOnBothGenerationPlans() {
+        // P0 hotfix (defect 1): the driver name must be the ABSOLUTE generation main file. A
+        // relative name containing a path separator is rejected by the framework
+        // (Context.makeFilename throws "contains a path separator"), so both generation plans —
+        // the legacy upgrade and the fresh install — must target an absolute path. This pins the
+        // value App.kt hands to createAndroidLedgerDatabase (target.mainFile, unchanged).
         val databases = tempDatabasesDirectory()
         try {
             val host = databases.toFile().absolutePath
-            val main = File(File(File(host, "ledger-generations"), "gen-1"), "ledger.db").absolutePath
+            val legacy = File(host, "ledger.db")
+            legacy.writeBytes(sqliteHeaderBytes())
+            val fileSystem = DesktopStyleTestFileSystem()
+            val layout = ledgerStorageLayout(fileSystem, host)
 
-            assertEquals("ledger-generations/gen-1/ledger.db", androidDatabaseName(host, main))
+            // Legacy-upgrade plan.
+            val upgraded = openStableStorageLedger(fileSystem, layout, legacy.absolutePath, closeGraph = {}) { it }
+            assertTrue(File(upgraded.mainFile).isAbsolute, "legacy-upgrade target must be absolute")
+            assertFalse(upgraded.allowCreateOnOpen)
+            // The exact seam App.kt calls returns the same absolute path unchanged.
+            assertEquals(upgraded.mainFile, androidGenerationDriverName(upgraded.mainFile))
+
+            // Fresh-install plan (no legacy file): a second host directory keeps the plans apart.
+            val freshHost = Files.createTempDirectory("p7-06-android-fresh-").toFile().absolutePath
+            val freshLayout = ledgerStorageLayout(fileSystem, freshHost)
+            val fresh = openStableStorageLedger(fileSystem, freshLayout, null, closeGraph = {}) { it }
+            assertTrue(File(fresh.mainFile).isAbsolute, "fresh-install target must be absolute")
+            assertTrue(fresh.allowCreateOnOpen)
+            assertEquals(fresh.mainFile, androidGenerationDriverName(fresh.mainFile))
+            deleteRecursively(File(freshHost).toPath())
         } finally {
             deleteRecursively(databases)
         }
+    }
+
+    @Test
+    fun aRelativeDriverNameIsRejectedAtTheAppSeam() {
+        // P0 hotfix (defect 1): the exact seam App.kt uses must fail loudly if a relative name
+        // (the defect shape: a path separator in a name the framework would treat as a bare
+        // filename) ever reaches it again, instead of deferring to the framework's late throw.
+        val rejected =
+            assertFailsWith<IllegalArgumentException> {
+                androidGenerationDriverName("ledger-generations/gen-1/ledger.db")
+            }
+        assertTrue(rejected.message.orEmpty().contains("must be absolute"))
     }
 
     @Test
