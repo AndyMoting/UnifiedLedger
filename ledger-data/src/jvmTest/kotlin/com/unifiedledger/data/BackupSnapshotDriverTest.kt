@@ -63,14 +63,47 @@ class BackupSnapshotDriverTest {
         dir.deleteOnExit()
         val mainFile = File(dir, "ledger.db")
         val driver = JdbcSqliteDriver("jdbc:sqlite:${mainFile.path}")
+        val snapshotFile = File(dir, "snapshot")
         try {
             driver.execute(null, "CREATE TABLE sample (id INTEGER PRIMARY KEY)", 0)
-            val snapshotFile = File(dir, "snapshot")
-            snapshotFile.writeBytes(ByteArray(1))
+
+            // The documented refusal case (spec section 3.3; gate evidence): the existing target is
+            // itself a VALID SQLite database, which both engines refuse with `output file already
+            // exists`. An existing valid database is the case the spec and the gate evidence
+            // actually record. A garbage or zero-length target is not used here because its outcome
+            // is engine/filesystem dependent rather than a portable assertion of the contract.
+            val existingDriver = JdbcSqliteDriver("jdbc:sqlite:${snapshotFile.path}")
+            try {
+                existingDriver.execute(null, "CREATE TABLE sentinel (id INTEGER PRIMARY KEY)", 0)
+            } finally {
+                existingDriver.close()
+            }
+            assertTrue(snapshotFile.length() > 0, "the target must be a real, non-empty database")
 
             val failure = runCatching { runSnapshotIntoOn(driver, snapshotFile.path) }.exceptionOrNull()
 
             assertTrue(failure != null, "VACUUM INTO must refuse an existing target")
+
+            // The refusal is fail-safe: the pre-existing target is neither overwritten nor damaged
+            // (gate evidence: "拒绝覆盖，不破坏既有文件").
+            val preservedDriver = JdbcSqliteDriver("jdbc:sqlite:${snapshotFile.path}")
+            try {
+                var sentinelRows = 0
+                preservedDriver
+                    .executeQuery(
+                        null,
+                        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sentinel'",
+                        { cursor ->
+                            if (cursor.next().value) sentinelRows += 1
+                            app.cash.sqldelight.db.QueryResult.Unit
+                        },
+                        0,
+                        null,
+                    ).value
+                assertEquals(1, sentinelRows, "the refused call must not damage the existing target")
+            } finally {
+                preservedDriver.close()
+            }
         } finally {
             driver.close()
             mainFile.delete()
