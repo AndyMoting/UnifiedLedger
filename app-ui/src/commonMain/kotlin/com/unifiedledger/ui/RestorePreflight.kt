@@ -6,7 +6,6 @@ import com.unifiedledger.application.backup.BACKUP_KEY_LENGTH_BITS
 import com.unifiedledger.application.backup.BACKUP_STREAM_CHUNK_BYTES
 import com.unifiedledger.application.backup.BackupContainerHeader
 import com.unifiedledger.application.backup.BackupCryptoPrimitives
-import com.unifiedledger.application.backup.BackupGcmDecryptor
 import com.unifiedledger.application.backup.BackupHeaderParseResult
 import com.unifiedledger.application.backup.BackupPreflightRejection
 import com.unifiedledger.application.backup.backupContainerAad

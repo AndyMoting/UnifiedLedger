@@ -38,6 +38,7 @@ package com.unifiedledger.application.backup
  */
 enum class BackupPreflightRejection {
     // ---------------------------------------------------------------- FROZEN (container spec 4.3.1)
+
     /** `magic != "ULBK"` (container-format spec section 4.3.1). */
     P706_CONTAINER_FORMAT_UNSUPPORTED,
 
@@ -69,6 +70,7 @@ enum class BackupPreflightRejection {
     P706_SCHEMA_VERSION_UNSUPPORTED,
 
     // ------------------------------------------------- PROPOSED (06.C spec section 10 item 3)
+
     /** PROPOSED: fewer than the 59 fixed-header bytes are available (06.C spec section 3.2). */
     P706_CONTAINER_TRUNCATED,
 

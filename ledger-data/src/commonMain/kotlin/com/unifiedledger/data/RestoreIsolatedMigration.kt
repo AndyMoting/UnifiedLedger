@@ -82,7 +82,8 @@ fun migrateIsolatedSnapshotStrictlyOn(
     supportedVersions: Set<Long>,
 ): StrictMigrationResult {
     val current = LedgerDatabase.Schema.version
-    if (fromVersion !in supportedVersions) {        return StrictMigrationResult.Failed(StrictMigrationFailure.UNSUPPORTED_SOURCE_VERSION)
+    if (fromVersion !in supportedVersions) {
+        return StrictMigrationResult.Failed(StrictMigrationFailure.UNSUPPORTED_SOURCE_VERSION)
     }
     if (fromVersion >= current) {
         return StrictMigrationResult.Failed(StrictMigrationFailure.NOT_AN_OLDER_VERSION)

@@ -105,11 +105,9 @@ internal const val ANDROID_BACKUP_CONTAINER_MIME: String = "application/octet-st
  * needs separate approval) and delegates every fact to the commonMain strict helpers.
  */
 internal class AndroidRestoreIsolatedDatabasePort : RestoreIsolatedDatabasePort {
-    override fun readAuthoritativeUserVersion(snapshotPath: String): Long =
-        withDriver(snapshotPath) { driver -> readAuthoritativeUserVersionOn(driver) }
+    override fun readAuthoritativeUserVersion(snapshotPath: String): Long = withDriver(snapshotPath) { driver -> readAuthoritativeUserVersionOn(driver) }
 
-    override fun readLedgerIdentities(snapshotPath: String): List<String> =
-        withDriver(snapshotPath) { driver -> readLedgerIdsOn(driver) }
+    override fun readLedgerIdentities(snapshotPath: String): List<String> = withDriver(snapshotPath) { driver -> readLedgerIdsOn(driver) }
 
     override fun migrateStrictly(
         snapshotPath: String,

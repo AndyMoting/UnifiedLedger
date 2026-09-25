@@ -47,7 +47,10 @@ class RestorePreflightUseCaseTest {
     private val payloadSha256 = fakeDigestOf(payload)
 
     /** The container the fake source serves: real header + XOR "ciphertext" + 16-byte tag. */
-    private fun container(schemaVersion: Long = 31, plaintextLength: Long = payload.size.toLong()): ByteArray {
+    private fun container(
+        schemaVersion: Long = 31,
+        plaintextLength: Long = payload.size.toLong(),
+    ): ByteArray {
         val header = backupContainerHeader(schemaVersion, plaintextLength, payloadSha256)
         val ciphertext = ByteArray(payload.size) { payload[it].toInt().xor(0x5A).toByte() }
         return header + ByteArray(BACKUP_SALT_LENGTH) + ByteArray(BACKUP_IV_LENGTH) + ciphertext + ByteArray(BACKUP_TAG_LENGTH)

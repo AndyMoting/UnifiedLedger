@@ -95,11 +95,9 @@ internal fun showSwingOpenBackupChooser(
  * helper performs no create and no stamp beyond the single migration transaction.
  */
 internal class DesktopRestoreIsolatedDatabasePort : RestoreIsolatedDatabasePort {
-    override fun readAuthoritativeUserVersion(snapshotPath: String): Long =
-        withDriver(snapshotPath) { driver -> readAuthoritativeUserVersionOn(driver) }
+    override fun readAuthoritativeUserVersion(snapshotPath: String): Long = withDriver(snapshotPath) { driver -> readAuthoritativeUserVersionOn(driver) }
 
-    override fun readLedgerIdentities(snapshotPath: String): List<String> =
-        withDriver(snapshotPath) { driver -> readLedgerIdsOn(driver) }
+    override fun readLedgerIdentities(snapshotPath: String): List<String> = withDriver(snapshotPath) { driver -> readLedgerIdsOn(driver) }
 
     override fun migrateStrictly(
         snapshotPath: String,
