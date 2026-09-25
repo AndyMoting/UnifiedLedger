@@ -20,9 +20,10 @@ import java.io.File
  * a `NoOpSnapshotSchema` whose `version = 0L`. That path constructs
  * `androidx.sqlite.db.SupportSQLiteOpenHelper$Callback(version)`, and the AOSP `SQLiteOpenHelper`
  * private constructor throws `IllegalArgumentException("Version must be >= 1, was 0")` for any
- * `version < 1` (android-36.1 `android/database/sqlite/SQLiteOpenHelper.java:172`) — at CONSTRUCTION,
- * before the first `PRAGMA integrity_check`, so every Android export failed. The name form was also
- * a relative path under `databases/`, which `Context.getDatabasePath` rejects.
+ * `version < 1` (AOSP `android/database/sqlite/SQLiteOpenHelper.java`, the private constructor's
+ * version guard) — at CONSTRUCTION, before the first `PRAGMA integrity_check`, so every Android
+ * export failed. The name form was also a relative path under `databases/`, which
+ * `Context.getDatabasePath` rejects.
  *
  * [verifyAndroidSnapshotFile] now opens the ABSOLUTE path read-only through the framework
  * `SQLiteDatabase` (no helper, no schema/version logic, no create/migrate). This test produces a

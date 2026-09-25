@@ -57,7 +57,17 @@ enum class BackupExportFailure {
 
 /** The export outcome (spec section 3.6). Success is reported ONLY for [Succeeded]. */
 sealed interface BackupExportResult {
-    /** The authenticated tail was written and the delivery stream closed cleanly. */
+    /**
+     * The authenticated tail was written and the delivery stream closed cleanly.
+     *
+     * P3-O note (06.B review): [containerBytes] is the COMPUTED container size
+     * (`backupContainerOverheadBytes() + plaintextLength`), not a post-write `stat` of the delivered
+     * file. It is display/diagnostic copy only (the outcome banner), carries no accounting or
+     * integrity meaning, and the export never reports success on a short write (the writer commits
+     * only after the authenticated tail is written and the stream closes cleanly). Low impact;
+     * registered rather than measured to avoid an extra platform `length()` call on the delivery
+     * path.
+     */
     data class Succeeded(
         val containerBytes: Long,
     ) : BackupExportResult
@@ -214,6 +224,13 @@ class BackupExportUseCase(
         containerFile: String,
     ): BackupExportResult {
         // Step 2: disk precheck before the snapshot and before ANY user-target file (spec 3.2).
+        // REGISTERED SPEC DEVIATION (P3-K, 06.B review): the spec mandates the precheck but names no
+        // "unknown space" failure code. When `usableSpace` returns null (the platform cannot report
+        // it) this proceeds FAIL-OPEN: the write is then attempted, and a genuine out-of-space
+        // condition surfaces as the typed CONTAINER_WRITE_FAILED / TARGET_WRITE_FAILED rather than
+        // being pre-rejected. The alternative (a new typed UNKNOWN_SPACE rejection) would change the
+        // frozen BackupExportFailure enum and its copy, so it is registered for the main agent to
+        // rule on. The known-space branch below is the mandated hard precheck.
         val plaintextSize = fileSystem.length(request.activeMainFile)
         val containerSize = plaintextSize + backupContainerOverheadBytes()
         val required = containerSize + plaintextSize + BACKUP_DISK_HEADROOM_BYTES

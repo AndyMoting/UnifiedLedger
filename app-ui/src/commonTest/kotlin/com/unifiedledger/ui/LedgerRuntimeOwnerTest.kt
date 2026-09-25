@@ -609,6 +609,23 @@ class LedgerRuntimeOwnerTest {
         assertFalse(unwired.incomeCommitStatus)
         assertFalse(unwired.transferCommitStatus)
         assertFalse(unwired.lendingCommitStatus)
+
+        // P2-F fix (06.B review): the backup-export probe (it gates BOTH the HOME entry and the
+        // confirm callback). Unwired by default, true once the composition root binds the use case.
+        assertFalse(unwired.backupExport, "an unwired scope must not report the export surface")
+        val exportOwner = ownerFor(minimalP503LedgerFacade())
+        val exportScope = LedgerLeaseScope(exportOwner)
+        exportScope.backupExport =
+            BackupExportUseCase(
+                owner = exportOwner,
+                fileSystem = LedgerFileSystemFake(),
+                layout = ledgerStorageLayout(LedgerFileSystemFake(), "/host"),
+                snapshotProvider = { null },
+                target = { null },
+                crypto = noopBackupCrypto(),
+                newToken = { "token" },
+            )
+        assertTrue(exportScope.surfaces.backupExport, "a wired use case must report the export surface")
     }
 
     private fun ownerFor(facade: P503LedgerFacade): LedgerRuntimeOwner<Graph> {

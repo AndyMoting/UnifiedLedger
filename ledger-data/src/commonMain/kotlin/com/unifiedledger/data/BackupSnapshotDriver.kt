@@ -45,6 +45,19 @@ class SnapshotVerification(
 )
 
 /**
+ * P2-D fix (06.B review): the pure `PRAGMA integrity_check` row -> [SnapshotVerification.integrityOk]
+ * mapping, extracted so it is JVM-testable. Both platform adapters ([verifySnapshotOn] and the
+ * Android `verifyAndroidSnapshotFile`) previously inlined their own cursor loop, so a regression
+ * that made either always report `integrityOk = true` had no test to go red.
+ *
+ * Rule (P3-P): the check is OK only when it returned at least one row AND every row is exactly
+ * `ok`. SQLite's `integrity_check` returns the single row `ok` when clean and one or more
+ * descriptive rows otherwise, so AND-all-rows matches the engine's contract while rejecting the
+ * "no rows" and "a later error row" shapes that a last-row-wins fold would misreport as OK.
+ */
+fun snapshotIntegrityOk(rows: List<String?>): Boolean = rows.isNotEmpty() && rows.all { it == "ok" }
+
+/**
  * Validates a snapshot FILE through a second, dedicated connection (spec section 3.4): runs
  * `PRAGMA integrity_check` and reads `PRAGMA user_version` (the non-authoritative header hint).
  * The caller opens [driver] against the snapshot path read-only and closes it afterwards; the
@@ -54,22 +67,21 @@ class SnapshotVerification(
  * rawQuery-equivalent safe path; `PRAGMA optimize` uses the same surface for the same reason).
  */
 fun verifySnapshotOn(driver: SqlDriver): SnapshotVerification {
-    var integrityOk = false
+    val rows = mutableListOf<String?>()
     driver
         .executeQuery(
             null,
             "PRAGMA integrity_check",
             { cursor ->
                 while (cursor.next().value) {
-                    val text = cursor.getString(0)
-                    if (text != null) integrityOk = text == "ok"
+                    rows += cursor.getString(0)
                 }
                 QueryResult.Unit
             },
             0,
             null,
         ).value
-    return SnapshotVerification(integrityOk = integrityOk, schemaVersion = readSnapshotUserVersion(driver))
+    return SnapshotVerification(integrityOk = snapshotIntegrityOk(rows), schemaVersion = readSnapshotUserVersion(driver))
 }
 
 /** Reads `PRAGMA user_version` through [driver] (the header's non-authoritative schema hint). */

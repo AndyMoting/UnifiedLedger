@@ -26,11 +26,15 @@ internal class AndroidBackupSnapshotPort(
     private val handle: AndroidLedgerDatabaseHandle,
 ) : BackupSnapshotPort {
     override fun snapshot(target: String) {
-        handle.runSnapshotInto(File(target).absolutePath)
+        require(File(target).isAbsolute) { "the Android snapshot target path must be absolute: $target" }
+        handle.runSnapshotInto(target)
     }
 
     override fun verify(snapshotPath: String): BackupSnapshotVerification {
-        val verification = verifyAndroidSnapshotFile(File(snapshotPath).absolutePath)
+        // P3-N fix (06.B review): the sibling androidGenerationDriverName asserts the absolute
+        // precondition; this path resolves the same class of file, so it applies the same guard.
+        require(File(snapshotPath).isAbsolute) { "the Android snapshot verification path must be absolute: $snapshotPath" }
+        val verification = verifyAndroidSnapshotFile(snapshotPath)
         return BackupSnapshotVerification(verification.integrityOk, verification.schemaVersion)
     }
 }

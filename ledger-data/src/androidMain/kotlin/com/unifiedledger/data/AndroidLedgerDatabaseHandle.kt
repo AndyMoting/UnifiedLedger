@@ -143,7 +143,7 @@ class AndroidLedgerDatabaseHandle internal constructor(
  * `SQLiteOpenHelper(context, name, factory, version)` (androidx `FrameworkSQLiteOpenHelper` extends
  * the framework helper), and the AOSP `SQLiteOpenHelper` private constructor throws
  * `IllegalArgumentException("Version must be >= 1, was " + version)` for `version < 1`
- * (`/d/Tools/Android/sources/android-36.1/android/database/sqlite/SQLiteOpenHelper.java:172`).
+ * (AOSP `android/database/sqlite/SQLiteOpenHelper.java`, the private constructor's version guard).
  * A `NoOpSnapshotSchema` with `version = 0L` therefore threw at CONSTRUCTION, before the first
  * `PRAGMA integrity_check`, so every Android export failed. Separately, that path resolves the name
  * through `Context.getDatabasePath`, whose non-separator-prefixed branch rejects a relative name
@@ -161,18 +161,20 @@ class AndroidLedgerDatabaseHandle internal constructor(
 fun verifyAndroidSnapshotFile(snapshotPath: String): SnapshotVerification {
     val database = SQLiteDatabase.openDatabase(snapshotPath, null, SQLiteDatabase.OPEN_READONLY)
     return try {
-        var integrityOk = false
+        // P2-D fix (06.B review): the rows -> integrityOk mapping is the shared, JVM-tested
+        // snapshotIntegrityOk, so this device-only adapter cannot silently drift from the
+        // SqlDelight path (previously an inlined last-row-wins fold with no test).
+        val rows = mutableListOf<String?>()
         database.rawQuery("PRAGMA integrity_check", null).use { cursor ->
             while (cursor.moveToNext()) {
-                val text = cursor.getString(0)
-                if (text != null) integrityOk = text == "ok"
+                rows += cursor.getString(0)
             }
         }
         var schemaVersion = 0L
         database.rawQuery("PRAGMA user_version", null).use { cursor ->
             if (cursor.moveToFirst()) schemaVersion = cursor.getLong(0)
         }
-        SnapshotVerification(integrityOk = integrityOk, schemaVersion = schemaVersion)
+        SnapshotVerification(integrityOk = snapshotIntegrityOk(rows), schemaVersion = schemaVersion)
     } finally {
         database.close()
     }

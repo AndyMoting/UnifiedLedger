@@ -1788,12 +1788,37 @@ class P503ReducerImpl(
      * absorbed (the new states never start an entry/catalog/import/monthly flow); every
      * pre-existing unlisted combination keeps its frozen `unhandled` behavior (G-B), so this
      * helper only lists combinations that were already absorbed in the P7-03/P7-04 states.
+     *
+     * P1-A fix (06.B review): the P7-05 correction/void/recycle-bin family is ALSO listed here.
+     * The three P7-05 reducers handle those events explicitly BEFORE reaching this tail, so adding
+     * them is a no-op for them; it is what keeps the new BackupExport surface from reaching
+     * `unhandled` → ISE when a P7-05 event lands on it (e.g. the HOME overview renders 回收站 and
+     * 导出备份 together, so a recycle-bin read dispatched before the export entry opened lands on
+     * the export state). Enumerated explicitly rather than folded into a catch-all so the frozen
+     * `unhandled` discipline for genuinely unlisted combinations is preserved.
      */
     private fun absorbPreExisting(
         state: P503AppState,
         event: P503UiEvent,
     ): P503AppState =
         when (event) {
+            is P503UiEvent.OpenRecycleBin,
+            is P503UiEvent.RecycleBinResult,
+            P503UiEvent.CloseRecycleBin,
+            is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.UpdateTransactionCorrectionField,
+            P503UiEvent.PreviewTransactionEdit,
+            is P503UiEvent.ConfirmTransactionEdit,
+            is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.OpenVoidConfirm,
+            is P503UiEvent.UpdateVoidReasonField,
+            is P503UiEvent.ConfirmVoid,
+            is P503UiEvent.TransactionVoidResult,
+            is P503UiEvent.OpenRestoreConfirm,
+            is P503UiEvent.UpdateRestoreReasonField,
+            is P503UiEvent.ConfirmRestore,
+            is P503UiEvent.TransactionRestoreResult,
+            P503UiEvent.CloseRestoreConfirm,
             is P503UiEvent.SelectTab,
             P503UiEvent.StartNewExpense,
             is P503UiEvent.UpdateAmount,

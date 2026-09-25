@@ -8,6 +8,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -34,6 +35,10 @@ class AndroidBackupTargetPortTest {
         }
     }
 
+    /** P3-M fix: daemon, so a regression that leaves the export blocked on the 10-minute latch
+     *  cannot pin the test JVM after the join times out. */
+    private fun daemonThread(body: () -> Unit): Thread = Thread(body).apply { isDaemon = true }
+
     private fun awaitLaunch(launcher: RecordingLauncher) {
         val deadline = System.currentTimeMillis() + 5_000
         while (launcher.launchedName == null && System.currentTimeMillis() < deadline) Thread.sleep(5)
@@ -49,7 +54,7 @@ class AndroidBackupTargetPortTest {
         val port = AndroidBackupTargetPort<String>(poster.post, launcher.launch) { ByteArrayOutputStream() }
         val holder = arrayOfNulls<com.unifiedledger.ui.BackupTargetWriter>(1)
 
-        val exportThread = Thread { holder[0] = port.openTarget() }
+        val exportThread = daemonThread { holder[0] = port.openTarget() }
         exportThread.start()
         // The poster ran the launch; the port is now waiting on the latch.
         val deadline = System.currentTimeMillis() + 5_000
@@ -58,6 +63,7 @@ class AndroidBackupTargetPortTest {
         assertEquals("unifiedledger-backup.ulbk", launcher.launchedName)
         port.onCreateDocumentResult("uri")
         exportThread.join(5_000)
+        assertFalse(exportThread.isAlive, "the export thread must finish (a stuck latch would hang here)")
         assertTrue(holder[0] != null)
     }
 
@@ -71,7 +77,7 @@ class AndroidBackupTargetPortTest {
         // The export thread opens the target; the SAF callback is delivered from another thread.
         val writerHolder = arrayOfNulls<com.unifiedledger.ui.BackupTargetWriter>(1)
         val exportThread =
-            Thread {
+            daemonThread {
                 writerHolder[0] = port.openTarget()
             }
         exportThread.start()
@@ -79,6 +85,7 @@ class AndroidBackupTargetPortTest {
         awaitLaunch(launcher)
         port.onCreateDocumentResult("uri")
         exportThread.join(5_000)
+        assertFalse(exportThread.isAlive, "the export thread must finish (a stuck latch would hang here)")
 
         val writer = writerHolder[0]!!
         writer.write(payload, 0, payload.size)
@@ -95,13 +102,14 @@ class AndroidBackupTargetPortTest {
         val port = AndroidBackupTargetPort<String>({ it() }, launcher.launch) { ByteArrayOutputStream() }
         val holder = arrayOfNulls<com.unifiedledger.ui.BackupTargetWriter>(1)
         val exportThread =
-            Thread {
+            daemonThread {
                 holder[0] = port.openTarget()
             }
         exportThread.start()
         awaitLaunch(launcher)
         port.onCreateDocumentResult(null)
         exportThread.join(5_000)
+        assertFalse(exportThread.isAlive, "the export thread must finish (a stuck latch would hang here)")
 
         assertNull(holder[0])
     }
@@ -135,16 +143,39 @@ class AndroidBackupTargetPortTest {
         val port = AndroidBackupTargetPort<String>({ it() }, launcher.launch) { stream }
         val holder = arrayOfNulls<com.unifiedledger.ui.BackupTargetWriter>(1)
         val exportThread =
-            Thread {
+            daemonThread {
                 holder[0] = port.openTarget()
             }
         exportThread.start()
         awaitLaunch(launcher)
         port.onCreateDocumentResult("uri")
         exportThread.join(5_000)
+        assertFalse(exportThread.isAlive, "the export thread must finish (a stuck latch would hang here)")
 
         holder[0]!!.close()
 
         assertTrue(closed.await(2, TimeUnit.SECONDS), "close must release the stream")
+    }
+
+    @Test
+    fun dispatchToMainThreadRunsInlineOnTheMainLooperAndPostsOtherwise() {
+        // P3-L fix (06.B review): mainThreadPoster() itself needs android.os (a stub off-device), so
+        // its pure decision is pinned here. On the main looper the block runs inline; otherwise it
+        // is handed to the poster and NOT run inline.
+        var inlineRan = false
+        dispatchToMainThread(onMainLooper = true, post = { error("must not post when already on main") }) { inlineRan = true }
+        assertTrue(inlineRan)
+
+        var posted: (() -> Unit)? = null
+        var postedRan = false
+        dispatchToMainThread(
+            onMainLooper = false,
+            post = { block ->
+                posted = block
+                postedRan = true
+            },
+        ) { error("must not run inline when off the main looper") }
+        assertTrue(postedRan, "the block must be posted")
+        assertTrue(posted != null)
     }
 }

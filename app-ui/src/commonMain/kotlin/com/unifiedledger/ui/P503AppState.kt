@@ -411,13 +411,22 @@ sealed interface P503AppState {
      * diagnostic, and the reducer clears it when the surface leaves. [running] is the per-operation
      * marker (提交中不重入/不得离开, the P7-05 Submitting discipline); [outcome] is the last landed
      * typed result ([BackupExportResult]).
+     *
+     * P1-B fix (06.B review): [toString] is OVERRIDDEN to redact the password. The generated
+     * data-class `toString()` would print the plaintext, and `unhandled` builds its ISE message
+     * from `"$state"`; `Exit` on this state is a deliberate ISE, so without this override the
+     * password could reach a platform log through the exception message — contradicting the
+     * "never logged" discipline above and spec section 3.5. Only the password's presence is
+     * reported (never its value or length).
      */
     data class BackupExport(
         val overview: OverviewEmpty,
         val password: String = "",
         val running: Boolean = false,
         val outcome: BackupExportResult? = null,
-    ) : P503AppState
+    ) : P503AppState {
+        override fun toString(): String = "BackupExport(overview=$overview, password=${if (password.isEmpty()) "\"\"" else "<redacted>"}, running=$running, outcome=$outcome)"
+    }
 
     /**
      * P5-04.3: carries the flow context so the host can run a read-only commit-status

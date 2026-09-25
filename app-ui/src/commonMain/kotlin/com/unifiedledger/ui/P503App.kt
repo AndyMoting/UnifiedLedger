@@ -107,6 +107,7 @@ import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.P705FailureCode
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVoidFactKind
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.datetime.YearMonth
@@ -2296,6 +2297,22 @@ fun P503App(
      * missing active generation or a too-short password never strands the surface. The request is
      * resolved for the CURRENT active generation and its generation captured for the landing
      * discard.
+     *
+     * REGISTERED SPEC DEVIATION (P1-C, 06.B review; for the main agent to rule on): the spec
+     * requires a cancel path (section 3.5), and [BackupExportUseCase.export] accepts a
+     * `BackupCancellationSignal` whose per-chunk checks can abort the container write. This batch
+     * does NOT wire a product cancellation source: the only product call site passes no signal, so
+     * the default `{ false }` always applies and the per-chunk checks cannot fire from the product.
+     * The surface additionally absorbs Close/Back while running (提交中不得离开), and the Android
+     * SAF port blocks the export thread on a latch of up to 10 minutes
+     * (AndroidBackupTargetPort.ANDROID_BACKUP_TARGET_WAIT_MILLIS) if the user never answers the
+     * picker. Consequence: an unanswered picker holds the operation lease and leaves the surface
+     * `running` with no cancel and no exit for up to 10 minutes; the export does complete when the
+     * picker is answered or the latch times out (a timeout is a cancelled choice, not a crash).
+     * Wiring a cancel affordance that is legal while running would change this surface's frozen
+     * "不得离开" discipline and needs product authority, so it is registered rather than implemented
+     * here. The use-case-level signal (and its tests) already exist and are correct; only the host
+     * wiring is absent.
      */
     fun confirmBackupExport(current: P503AppState.BackupExport) {
         if (!ledger.surfaces.backupExport) return
@@ -2306,14 +2323,17 @@ fun P503App(
         // starts, so a second confirm is absorbed by the reducer even before the coroutine lands.
         if (latestState.value !== current) return
         dispatch(P503UiEvent.ConfirmBackupExport)
-        val generation = launch.generation
-        scope.launch(Dispatchers.Default) {
-            val result = useCase.export(launch.request)
-            scope.launch {
-                if (!ledger.isCurrentGeneration(generation)) return@launch
-                dispatch(P503UiEvent.BackupExportResultLanded(result))
-            }
-        }
+        // P2-E/P2-G fix (06.B review): the whole run/land pipeline is the testable
+        // [runBackupExport] (off-thread export, main-thread landing hop, generation discard and the
+        // throw -> typed-Failed mapping). This call site only supplies the production collaborators.
+        runBackupExport(
+            scope = scope,
+            generation = launch.generation,
+            request = launch.request,
+            export = useCase::export,
+            isCurrentGeneration = ledger::isCurrentGeneration,
+            land = { result -> dispatch(P503UiEvent.BackupExportResultLanded(result)) },
+        )
     }
 
     // ---------------------------------------------------------------- P7-05 lost-commit manual re-check
@@ -3075,6 +3095,43 @@ internal fun runtimeNotReadySubmission(draft: TypedEntryDraft): ManualEntrySubmi
         is LendDraft -> ManualEntrySubmissionResult.Lend(ManualLendSubmissionResult.InfrastructureFailure)
         is CollectDraft -> ManualEntrySubmissionResult.Collect(ManualCollectSubmissionResult.InfrastructureFailure)
     }
+
+/**
+ * P2-E/P2-G fix (06.B review): the backup-export run/land pipeline, extracted from the
+ * `P503App` composable so it is JVM-testable (the `runtimeNotReadySubmission` host-decision
+ * precedent; the composable itself has no JVM harness). It is the only product path that runs the
+ * export, so its four load-bearing decisions are all pinned by
+ * `P503BackupExportHostPipelineTest`:
+ *
+ * 1. the export runs on [Dispatchers.Default] (off the UI thread; spec section 5);
+ * 2. the typed result hops back onto the composition's main dispatcher ([scope]'s context) before
+ *    the landing (the P704C-SPEC-01/QUAL-02 serial-write rule);
+ * 3. a result captured under a superseded generation is DISCARDED ([isCurrentGeneration]);
+ * 4. a throwing `export` still lands a typed [BackupExportResult.Failed] instead of stranding the
+ *    surface `running` (P2-G): a fail-loud `LedgerFileSystem` adapter or any unexpected throw is
+ *    mapped to [BackupExportFailure.CONTAINER_WRITE_FAILED].
+ */
+internal fun runBackupExport(
+    scope: CoroutineScope,
+    generation: Generation,
+    request: BackupExportRequest,
+    export: (BackupExportRequest) -> BackupExportResult,
+    isCurrentGeneration: (Generation) -> Boolean,
+    land: (BackupExportResult) -> Unit,
+) {
+    scope.launch(Dispatchers.Default) {
+        val result =
+            try {
+                export(request)
+            } catch (failure: Throwable) {
+                BackupExportResult.Failed(BackupExportFailure.CONTAINER_WRITE_FAILED)
+            }
+        scope.launch {
+            if (!isCurrentGeneration(generation)) return@launch
+            land(result)
+        }
+    }
+}
 
 /**
  * P7-03.D (F1; spec section 4.3, table 6.2a, C04): the retained monthly overview behind the

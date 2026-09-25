@@ -86,19 +86,21 @@ class P503BackupExportPresentationTest {
     }
 
     @Test
-    fun noOutcomeTextEverContainsThePassword() {
-        // The outcome copy is a pure function of the outcome alone; the password is not an input,
-        // so it cannot leak through it. This pins the structural property (the presentation file
-        // never receives the password).
+    fun theStaticSurfaceCopyNeverContainsAPassword() {
+        // P3-J fix (06.B review): the previous version asserted that backupExportOutcomeText never
+        // contains a password — vacuous, because that function does not take a password. The real
+        // structural property is that the STATIC surface copy (label + warning) carries no secret,
+        // and that the outcome copy is a pure function of the outcome alone. The state-level
+        // redaction is pinned in P503BackupExportReducerTest.
         val password = "s3cr3t-password"
-        val texts =
+        assertFalse(BACKUP_EXPORT_PASSWORD_WARNING.contains(password))
+        assertFalse(BACKUP_EXPORT_PASSWORD_LABEL.contains(password))
+        val outcomeTexts =
             buildList {
                 add(backupExportOutcomeText(BackupExportResult.Succeeded(10)))
                 add(backupExportOutcomeText(BackupExportResult.Cancelled))
                 BackupExportFailure.entries.forEach { add(backupExportOutcomeText(BackupExportResult.Failed(it))) }
             }
-        texts.forEach { text -> assertFalse(text!!.contains(password), text) }
-        assertFalse(BACKUP_EXPORT_PASSWORD_WARNING.contains(password))
-        assertFalse(BACKUP_EXPORT_PASSWORD_LABEL.contains(password))
+        outcomeTexts.forEach { text -> assertFalse(text!!.contains(password), text) }
     }
 }

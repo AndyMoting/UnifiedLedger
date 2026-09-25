@@ -1098,10 +1098,28 @@ private fun secureRandomBytes(count: Int): ByteArray = ByteArray(count).also(sec
 internal fun mainThreadPoster(): (() -> Unit) -> Unit {
     val handler = android.os.Handler(android.os.Looper.getMainLooper())
     return { block ->
-        if (android.os.Looper.myLooper() === android.os.Looper.getMainLooper()) {
-            block()
-        } else {
-            handler.post(block)
-        }
+        dispatchToMainThread(
+            onMainLooper = android.os.Looper.myLooper() === android.os.Looper.getMainLooper(),
+            post = { block -> handler.post(block) },
+            block = block,
+        )
+    }
+}
+
+/**
+ * P3-L fix (06.B review): the pure dispatch decision of [mainThreadPoster], extracted so it is
+ * JVM-testable without android.os (the poster's actual Handler is an android.jar stub off-device).
+ * On the main looper the block runs inline; otherwise it is handed to [post]. The production poster
+ * passes `Handler(getMainLooper())::post`; the tests pass a recording poster.
+ */
+internal fun dispatchToMainThread(
+    onMainLooper: Boolean,
+    post: (() -> Unit) -> Unit,
+    block: () -> Unit,
+) {
+    if (onMainLooper) {
+        block()
+    } else {
+        post(block)
     }
 }
