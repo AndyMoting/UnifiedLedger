@@ -95,6 +95,8 @@ import com.unifiedledger.application.UuidV7ManualLendingRequestIdSource
 import com.unifiedledger.application.UuidV7ManualTransferRequestIdSource
 import com.unifiedledger.application.UuidV7TransactionCorrectionIdSource
 import com.unifiedledger.application.UuidV7TransactionVoidFactIdSource
+import com.unifiedledger.application.backup.BackupCryptoPrimitives
+import com.unifiedledger.application.backup.JvmBackupCryptoPrimitives
 import com.unifiedledger.application.import.JvmImportFileIntake
 import com.unifiedledger.data.CatalogBootstrapResult
 import com.unifiedledger.data.SqlDelightCatalogStore
@@ -123,8 +125,6 @@ import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
 import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
-import com.unifiedledger.application.backup.BackupCryptoPrimitives
-import com.unifiedledger.application.backup.JvmBackupCryptoPrimitives
 import com.unifiedledger.ui.BackupExportUseCase
 import com.unifiedledger.ui.BackupSnapshotPort
 import com.unifiedledger.ui.BackupTargetPort
@@ -168,8 +168,14 @@ internal class DesktopBackupWiring(
     val layout: LedgerStorageLayout,
     val targetPort: BackupTargetPort = DesktopBackupTargetPort(::showSwingSaveFileChooser),
     val crypto: BackupCryptoPrimitives = JvmBackupCryptoPrimitives(),
-    val newToken: () -> String = { java.util.UUID.randomUUID().toString() },
+    val newToken: () -> String = { randomUuidText() },
 )
+
+/** P7-06 06.B: one random token text (kept out of the data-class default so ktlint's chain rule is satisfied). */
+private fun randomUuidText(): String {
+    val uuid = java.util.UUID.randomUUID()
+    return uuid.toString()
+}
 
 /**
  * Desktop composition root (P5-03 spec sections 8/10.1). Assembles the full object graph

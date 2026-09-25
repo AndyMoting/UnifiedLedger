@@ -15,10 +15,12 @@ import kotlin.test.assertTrue
  * registered as unverified in the spec section 9 item 4.
  */
 class BackupSnapshotDriverTest {
-    private fun tempDir(): File = File.createTempFile("p706-snapshot", "").let { file ->
-        file.delete()
-        file.mkdirs()
-        file
+    private fun tempDir(): File {
+        val directory = File.createTempFile("p706-snapshot", "")
+        directory.delete()
+        directory.mkdirs()
+        directory.deleteOnExit()
+        return directory
     }
 
     @Test

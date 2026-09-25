@@ -30,8 +30,7 @@ class JvmBackupCryptoPrimitives(
 ) : BackupCryptoPrimitives {
     private val secureRandom = SecureRandom()
 
-    override fun randomBytes(count: Int): ByteArray =
-        deterministicRandomBytes?.invoke(count) ?: ByteArray(count).also(secureRandom::nextBytes)
+    override fun randomBytes(count: Int): ByteArray = deterministicRandomBytes?.invoke(count) ?: ByteArray(count).also(secureRandom::nextBytes)
 
     override fun deriveKey(
         password: CharArray,

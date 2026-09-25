@@ -207,12 +207,10 @@ class LedgerStorageLayout internal constructor(
     val backupStagingDirectory: String = fileSystem.join(hostDirectory, LEDGER_BACKUP_STAGING_DIRECTORY)
 
     /** The snapshot file for one export [token] (a per-export unique suffix). */
-    fun backupSnapshotFile(token: String): String =
-        fileSystem.join(backupStagingDirectory, LEDGER_BACKUP_SNAPSHOT_PREFIX + token)
+    fun backupSnapshotFile(token: String): String = fileSystem.join(backupStagingDirectory, LEDGER_BACKUP_SNAPSHOT_PREFIX + token)
 
     /** The private staging container file for one export [token]. */
-    fun backupContainerFile(token: String): String =
-        fileSystem.join(backupStagingDirectory, LEDGER_BACKUP_CONTAINER_PREFIX + token)
+    fun backupContainerFile(token: String): String = fileSystem.join(backupStagingDirectory, LEDGER_BACKUP_CONTAINER_PREFIX + token)
 
     fun generationDirectoryName(generation: Int): String = "$LEDGER_GENERATION_PREFIX$generation"
 

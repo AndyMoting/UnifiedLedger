@@ -112,13 +112,13 @@ internal class AndroidLedgerFileSystem : LedgerFileSystem {
 
     override fun openWrite(path: String): LedgerWriteStream = AndroidWriteStream(File(path))
 
-    override fun listDirectory(path: String): List<String> =
-        File(path).list()?.toList() ?: emptyList()
+    override fun listDirectory(path: String): List<String> = File(path).list()?.toList() ?: emptyList()
 
     private fun nearestExisting(path: String): File {
         var candidate = File(path)
-        while (!candidate.exists() && candidate.parentFile != null) {
-            candidate = candidate.parentFile
+        while (!candidate.exists()) {
+            val parent = candidate.parentFile ?: break
+            candidate = parent
         }
         return candidate
     }

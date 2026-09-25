@@ -867,6 +867,45 @@ sealed interface P503UiEvent {
     ) : P503UiEvent
 
     data object RefreshFailed : P503UiEvent
+
+    // ---- P7-06 06.B backup export events (D-177; spec sections 3/6) ----
+
+    /**
+     * Opens the backup-export surface from the HOME overview entry affordance. Effect only on
+     * OverviewEmpty; absorbed everywhere else. The host offers the affordance only when the export
+     * use case is wired, so this event never renders a dead button.
+     */
+    data object OpenBackupExport : P503UiEvent
+
+    /**
+     * One password-field write. [password] stays in memory only (never persisted, logged or put in
+     * any diagnostic). Effect only on BackupExport; absorbed everywhere else.
+     */
+    data class UpdateBackupPassword(
+        val password: String,
+    ) : P503UiEvent
+
+    /**
+     * The explicit export request. The host runs the export off the UI thread (spec section 5) and
+     * the reducer sets the per-operation `running` marker (a duplicate confirm is absorbed,
+     * 提交中不重入). Effect only on BackupExport; absorbed everywhere else.
+     */
+    data object ConfirmBackupExport : P503UiEvent
+
+    /**
+     * The landed export result ([BackupExportResult]): Succeeded/Failed keep the surface with a
+     * typed outcome banner; Cancelled clears the marker and leaves the surface re-runnable.
+     * Effect only on BackupExport; absorbed everywhere else.
+     */
+    data class BackupExportResultLanded(
+        val result: BackupExportResult,
+    ) : P503UiEvent
+
+    /**
+     * Closes the export surface back to the exact preserved overview. Effect only on BackupExport;
+     * a running export absorbs the close (提交中不得离开, the P7-05 Submitting discipline).
+     */
+    data object CloseBackupExport : P503UiEvent
 }
 
 /**

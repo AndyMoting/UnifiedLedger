@@ -86,13 +86,13 @@ internal class DesktopStyleTestFileSystem : LedgerFileSystem {
 
     override fun openWrite(path: String): LedgerWriteStream = JvmTestWriteStream(File(path))
 
-    override fun listDirectory(path: String): List<String> =
-        File(path).list()?.toList() ?: emptyList()
+    override fun listDirectory(path: String): List<String> = File(path).list()?.toList() ?: emptyList()
 
     private fun nearestExisting(file: File): File {
         var candidate = file
-        while (!candidate.exists() && candidate.parentFile != null) {
-            candidate = candidate.parentFile
+        while (!candidate.exists()) {
+            val parent = candidate.parentFile ?: break
+            candidate = parent
         }
         return candidate
     }

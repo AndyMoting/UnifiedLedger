@@ -32,7 +32,7 @@ class BackupContainerWriterTest {
             iterations: Int,
             keyLengthBits: Int,
         ): ByteArray {
-            events += "deriveKey:${password.concatToString()}:${iterations}:$keyLengthBits"
+            events += "deriveKey:${password.concatToString()}:$iterations:$keyLengthBits"
             return derivedKey.copyOf()
         }
 

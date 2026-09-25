@@ -1,6 +1,5 @@
 package com.unifiedledger.android
 
-import android.net.Uri
 import com.unifiedledger.ui.BackupTargetPort
 import com.unifiedledger.ui.BackupTargetWriter
 import java.io.OutputStream
@@ -12,12 +11,15 @@ import java.util.concurrent.TimeUnit
  * Android save-target port. SAF `ActivityResultContracts.CreateDocument` picks the destination and
  * `ContentResolver.openOutputStream` streams the container in bounded chunks.
  *
- * THREADING (why the latch): the shared export use case is synchronous and runs on a background
- * thread (spec section 5 forbids the UI thread), while SAF delivery is asynchronous on the main
- * thread. The port therefore launches the picker on the main thread and BLOCKS the calling
- * background thread on a latch until the SAF callback delivers the chosen document; the main thread
- * is never blocked, so there is no deadlock. This keeps the commonMain contract synchronous (the
- * user target is created only after the precheck and both plaintext gates have passed — spec
+ * THREADING (why the latch AND the poster): the shared export use case is synchronous and runs on a
+ * background thread (spec section 5 forbids the UI thread), while SAF delivery is asynchronous on
+ * the main thread. `ActivityResultLauncher.launch` MUST be called on the main thread (androidx
+ * `ActivityResultRegistry` requires the launch on the activity's main thread; a launch from the
+ * export's background thread would be a threading violation), so the port does NOT call the
+ * launcher directly: it hands the launch to the injected [postToMainThread] poster. The export
+ * thread then BLOCKS on a latch until the SAF callback delivers the chosen document; the main
+ * thread is never blocked, so there is no deadlock. This keeps the commonMain contract synchronous
+ * (the user target is created only after the precheck and both plaintext gates have passed — spec
  * sections 3.2/5), which a pick-first flow could not guarantee.
  *
  * The launcher, the stream opener and the main-thread poster are injected closures, so the port is
@@ -28,7 +30,8 @@ import java.util.concurrent.TimeUnit
 internal const val ANDROID_BACKUP_TARGET_WAIT_MILLIS: Long = 10L * 60L * 1000L
 
 internal class AndroidBackupTargetPort<Picked>(
-    /** Posts the SAF launch onto the main thread (SAF launchers are main-thread only). */
+    /** Posts [launchCreateDocument] onto the main thread (SAF launchers are main-thread only). */
+    private val postToMainThread: ((() -> Unit) -> Unit),
     private val launchCreateDocument: (suggestedName: String) -> Unit,
     private val openOutputStream: (Picked) -> OutputStream?,
 ) : BackupTargetPort {
@@ -41,7 +44,9 @@ internal class AndroidBackupTargetPort<Picked>(
         val choice = PendingChoice<Picked>(latch)
         pending = choice
         try {
-            launchCreateDocument(BACKUP_TARGET_NAME)
+            // The launch is posted to the main thread; the export thread then waits below. A
+            // throwing poster (e.g. a dead main looper) is a cancelled choice, never a crash.
+            postToMainThread { launchCreateDocument(BACKUP_TARGET_NAME) }
         } catch (failure: Exception) {
             pending = null
             return null

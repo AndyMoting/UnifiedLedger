@@ -2272,6 +2272,50 @@ fun P503App(
         }
     }
 
+    // ---------------------------------------------------------------- P7-06 06.B backup export host surface
+    // P7-06 06.B (D-177; spec sections 3/5): the host export call site. The export runs OFF the UI
+    // thread (Dispatchers.Default — spec section 5 forbids the UI thread for the snapshot, KDF,
+    // streaming crypto and delivery) and its typed result hops back ON the composition's main
+    // dispatcher (the P704C-SPEC-01/QUAL-02 hop, so every async dispatch stays serial with user
+    // events). The use case acquires and releases its OWN operation lease internally, so this call
+    // is deliberately NOT wrapped in `ledger.leased` — a second lease would be redundant and the
+    // 06.1 scope exposes the use case lease-free for exactly this reason.
+    //
+    // Generation guard (spec section 1.1): [BackupExportResult] carries no generation, so the host
+    // captures the active generation at launch through [LedgerLeaseScope.backupExportLaunch] and
+    // discards a result that lands after the graph was replaced (a reopen increments the
+    // generation). The captured value is compared with the SAME [LedgerLeaseScope.isCurrentGeneration]
+    // every other generation-bound landing uses.
+    //
+    // Secret discipline (spec section 3.5): the password lives only in the reducer's in-memory
+    // draft and the request; it is never logged and never placed in a UI text.
+
+    /**
+     * P7-06 06.B (D-177): runs the export off the UI thread. The wiring/field guard runs BEFORE the
+     * reducer marks the surface running (the P704C-QUAL-04 precedent): an unwired use case, a
+     * missing active generation or a too-short password never strands the surface. The request is
+     * resolved for the CURRENT active generation and its generation captured for the landing
+     * discard.
+     */
+    fun confirmBackupExport(current: P503AppState.BackupExport) {
+        if (!ledger.surfaces.backupExport) return
+        if (!backupExportConfirmEnabled(current.password, current.running)) return
+        val launch = ledger.backupExportLaunch(current.password) ?: return
+        val useCase = ledger.backupExport ?: return
+        // Mark the surface running through the reducer (the single-flight marker) before the work
+        // starts, so a second confirm is absorbed by the reducer even before the coroutine lands.
+        if (latestState.value !== current) return
+        dispatch(P503UiEvent.ConfirmBackupExport)
+        val generation = launch.generation
+        scope.launch(Dispatchers.Default) {
+            val result = useCase.export(launch.request)
+            scope.launch {
+                if (!ledger.isCurrentGeneration(generation)) return@launch
+                dispatch(P503UiEvent.BackupExportResultLanded(result))
+            }
+        }
+    }
+
     // ---------------------------------------------------------------- P7-05 lost-commit manual re-check
     // V-19 (D-173; the P7-02 D-126 R4 precedent): the in-session manual re-check of a lost
     // correction/void/restore commit. Each entry re-invokes the SAME snapshot-aware resolver the
@@ -2444,6 +2488,12 @@ fun P503App(
                                 // fresh off the UI thread; the read dispatches OpenRecycleBin (a
                                 // re-open in place refreshes the projection instead).
                                 onOpenRecycleBin = if (ledger.surfaces.recycleBin) ::requestRecycleBin else null,
+                                // P7-06 06.B (D-177; spec section 3): the ledger-wide backup-export
+                                // entry, offered only when the composition root wired the export
+                                // use case (an unwired composition renders no dead button). The
+                                // open performs no IO and no secret handling; the password is
+                                // entered on the surface and stays in memory.
+                                onOpenBackupExport = if (backupExportEntryVisible(ledger.surfaces.backupExport)) ({ dispatch(P503UiEvent.OpenBackupExport) }) else null,
                             )
                         P503Tab.ACCOUNTS ->
                             P503CatalogManagementScreen(
@@ -2669,6 +2719,15 @@ fun P503App(
                     )
                 }
             }
+            is P503AppState.BackupExport ->
+                P503BackupExportScreen(
+                    state = current,
+                    onUpdatePassword = { dispatch(P503UiEvent.UpdateBackupPassword(it)) },
+                    // The host export call site is passed only when the use case is wired; an
+                    // unwired composition renders the disabled confirm, never a dead button.
+                    onConfirm = if (ledger.surfaces.backupExport) ({ confirmBackupExport(current) }) else null,
+                    onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.CloseBackupExport) },
+                )
             is P503AppState.Editing ->
                 P503EditScreen(
                     draft = current.draft,
@@ -2941,6 +3000,10 @@ private fun isBackEnabled(state: P503AppState): Boolean =
         is P503AppState.TransactionEdit -> true
         is P503AppState.VoidConfirm -> true
         is P503AppState.RecycleBin -> true
+        // P7-06 06.B (D-177): the export surface returns to its preserved overview; while an export
+        // is running it keeps its marker and must not leave (提交中不得离开), so the back channel is
+        // intercepted and swallowed like the P7-05 submitting surfaces.
+        is P503AppState.BackupExport -> true
         is P503AppState.Editing -> state.overview != null
         is P503AppState.AwaitingConfirmation -> state.overview != null
         is P503AppState.Submitting -> state.overview != null
@@ -2965,7 +3028,9 @@ private fun isBackDispatchSafe(state: P503AppState): Boolean =
         // surface dispatches `Back` (its reducer maps it to the preserved overview).
         !(state is P503AppState.TransactionEdit && state.submitting) &&
         !(state is P503AppState.VoidConfirm && state.submitting) &&
-        !(state is P503AppState.RecycleBin && state.restore?.submitting == true)
+        !(state is P503AppState.RecycleBin && state.restore?.submitting == true) &&
+        // P7-06 06.B: a running export keeps the surface (提交中不得离开).
+        !(state is P503AppState.BackupExport && state.running)
 
 /** P7-02.A E-2: origin tab of the in-flight entry flow, for the retained intent. */
 private fun currentOriginTab(state: P503AppState): P503Tab =

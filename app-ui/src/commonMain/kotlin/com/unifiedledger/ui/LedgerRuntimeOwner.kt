@@ -555,14 +555,21 @@ class LedgerLeaseScope(
     var backupExport: BackupExportUseCase? = null
 
     /**
-     * P7-06 06.B (D-177; spec section 3.2): the export request for the CURRENT active generation,
-     * resolving the active main file from the platform-resolved storage layout the use case was
-     * built with. Null when the export surface or the active generation is unavailable.
+     * P7-06 06.B (D-177; spec sections 3.1/3.2): the launch for the CURRENT active generation —
+     * the export request plus the generation it was resolved under. Null when the export surface
+     * is absent or the owner has no active generation (not Ready).
+     *
+     * The generation is returned so the host's landing hop can apply the SAME discard rule every
+     * other generation-bound call uses ([isCurrentGeneration]): [BackupExportResult] itself carries
+     * no generation (it is a plain success/failure/cancelled union), so the export cannot rely on
+     * its own payload for the check. The export's own lease (acquired inside the use case) protects
+     * the snapshot from a mid-export close/reopen; this capture is what makes a result that LANDS
+     * after a reopen (a new generation) discarded rather than presented as the new graph's result.
      */
-    fun backupExportRequest(password: String): BackupExportRequest? {
+    fun backupExportLaunch(password: String): BackupExportLaunch? {
         val useCase = backupExport ?: return null
         val generation = owner.activeGeneration ?: return null
-        return useCase.requestFor(password, generation)
+        return BackupExportLaunch(useCase.requestFor(password, generation), generation)
     }
 
     /**
@@ -595,6 +602,9 @@ class LedgerLeaseScope(
                 incomeCommitStatus = facade.resolveIncomeCommitStatus != null,
                 transferCommitStatus = facade.resolveTransferCommitStatus != null,
                 lendingCommitStatus = facade.resolveLendingCommitStatus != null,
+                // P7-06 06.B (D-177): the export use case is bound to this scope by the
+                // composition root; a pure field read, never an invocation.
+                backupExport = backupExport != null,
             )
         }
 
@@ -703,6 +713,21 @@ data class LedgerSurfaces(
     val incomeCommitStatus: Boolean = false,
     val transferCommitStatus: Boolean = false,
     val lendingCommitStatus: Boolean = false,
+    // P7-06 06.B (D-177; spec section 3): the composition root bound the backup-export use case.
+    // A pure field probe, never an invocation, so the host renders the export entry only when the
+    // surface exists (the "no dead affordance" convention).
+    val backupExport: Boolean = false,
+)
+
+/**
+ * P7-06 06.B (D-177; spec sections 3.1/3.2): one export launch — the request resolved for the
+ * active generation plus the generation it was resolved under. The generation lets the host's
+ * landing hop discard a result captured under a superseded graph ([LedgerLeaseScope.isCurrentGeneration]),
+ * because [BackupExportResult] itself carries none.
+ */
+class BackupExportLaunch(
+    val request: BackupExportRequest,
+    val generation: Generation,
 )
 
 /**

@@ -1,6 +1,5 @@
 package com.unifiedledger.android
 
-import android.content.Context
 import com.unifiedledger.data.AndroidLedgerDatabaseHandle
 import com.unifiedledger.data.verifyAndroidSnapshotFile
 import com.unifiedledger.ui.BackupSnapshotPort
@@ -18,14 +17,12 @@ import java.io.File
  * The Android [BackupSnapshotPort] over one graph's handle.
  *
  * `VACUUM INTO` runs on the handle's active connection ([AndroidLedgerDatabaseHandle.runSnapshotInto]);
- * the verification opens a SECOND, dedicated connection over the snapshot file
+ * the verification opens a SECOND, dedicated READ-ONLY connection over the snapshot file
  * ([verifyAndroidSnapshotFile]), because the active connection holds the active generation's main
- * file. The snapshot path is converted to the driver's name form relative to the app-private
- * `databases/` directory via [androidDatabaseName].
+ * file. The verification takes the snapshot's ABSOLUTE path (never a `Context.getDatabasePath`
+ * name), so the subdirectory layout under `databases/` is not a problem.
  */
 internal class AndroidBackupSnapshotPort(
-    private val context: Context,
-    private val hostDirectory: String,
     private val handle: AndroidLedgerDatabaseHandle,
 ) : BackupSnapshotPort {
     override fun snapshot(target: String) {
@@ -33,8 +30,7 @@ internal class AndroidBackupSnapshotPort(
     }
 
     override fun verify(snapshotPath: String): BackupSnapshotVerification {
-        val name = androidDatabaseName(hostDirectory, snapshotPath)
-        val verification = verifyAndroidSnapshotFile(context, name)
+        val verification = verifyAndroidSnapshotFile(File(snapshotPath).absolutePath)
         return BackupSnapshotVerification(verification.integrityOk, verification.schemaVersion)
     }
 }

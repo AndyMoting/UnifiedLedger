@@ -40,7 +40,7 @@ class DesktopBackupTargetPortTest {
 
     @Test
     fun aCommittedTargetIsPublishedAtomicallyWithTheExactBytes() {
-        val directory = File.createTempFile("p706-desktop-target", "").let { it.delete(); it.mkdirs(); it }
+        val directory = freshDirectory("p706-desktop-target")
         directory.deleteOnExit()
         val target = File(directory, "backup.ulbk")
         val port = DesktopBackupTargetPort(showSaveFileChooser = { target })
@@ -60,7 +60,7 @@ class DesktopBackupTargetPortTest {
 
     @Test
     fun anUncommittedTargetIsAbandonedWithoutPublishing() {
-        val directory = File.createTempFile("p706-desktop-target-abandon", "").let { it.delete(); it.mkdirs(); it }
+        val directory = freshDirectory("p706-desktop-target-abandon")
         directory.deleteOnExit()
         val target = File(directory, "backup.ulbk")
         val port = DesktopBackupTargetPort(showSaveFileChooser = { target })
@@ -75,7 +75,7 @@ class DesktopBackupTargetPortTest {
 
     @Test
     fun theFileSystemStreamsChunkedReadsAndWritesAndReportsUsableSpace() {
-        val directory = File.createTempFile("p706-desktop-fs", "").let { it.delete(); it.mkdirs(); it }
+        val directory = freshDirectory("p706-desktop-fs")
         directory.deleteOnExit()
         val fileSystem = DesktopLedgerFileSystem()
         val source = File(directory, "source.bin")
@@ -106,5 +106,14 @@ class DesktopBackupTargetPortTest {
         // Available space is reported for an existing directory.
         val usable = fileSystem.usableSpace(directory.path)
         assertTrue(usable != null && usable > 0)
+    }
+
+    /** A fresh empty temp directory (created by deleting the temp file the factory made). */
+    private fun freshDirectory(prefix: String): File {
+        val directory = File.createTempFile(prefix, "")
+        directory.delete()
+        directory.mkdirs()
+        directory.deleteOnExit()
+        return directory
     }
 }

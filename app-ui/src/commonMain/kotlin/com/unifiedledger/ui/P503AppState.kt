@@ -404,6 +404,22 @@ sealed interface P503AppState {
     ) : P503AppState
 
     /**
+     * P7-06 06.B (D-177; spec sections 3/6): the backup-export surface. Reached from the HOME
+     * overview entry affordance when the composition root wired the export use case. [overview] is
+     * carried so every exit restores the exact tab, month cursor and monthly payload. [password] is
+     * the in-memory-only password draft — it is NEVER persisted, logged or carried into any
+     * diagnostic, and the reducer clears it when the surface leaves. [running] is the per-operation
+     * marker (提交中不重入/不得离开, the P7-05 Submitting discipline); [outcome] is the last landed
+     * typed result ([BackupExportResult]).
+     */
+    data class BackupExport(
+        val overview: OverviewEmpty,
+        val password: String = "",
+        val running: Boolean = false,
+        val outcome: BackupExportResult? = null,
+    ) : P503AppState
+
+    /**
      * P5-04.3: carries the flow context so the host can run a read-only commit-status
      * check and the flow can leave via Recovered/RequestIdentityConflict; nullable fields
      * follow the InfrastructureFailure SUBMISSION precedent.

@@ -12,7 +12,7 @@ package com.unifiedledger.application.backup
  *
  * The crypto primitives are a port because `javax.crypto` is not available in commonMain: the
  * shared writer owns the byte layout and the two-pass hash-then-encrypt ordering, while each
- * platform supplies the JVM/JCE implementation (`JvmBackupCrypto` in ledger-application jvmMain).
+ * platform supplies the JVM/JCE implementation (`JvmBackupCryptoPrimitives` in ledger-application jvmMain).
  */
 
 /** ASCII `ULBK` (container-format spec section 4.3, offset 0). */
@@ -66,8 +66,7 @@ const val BACKUP_MIN_PASSWORD_CODE_POINTS: Int = 8
  * since 1 GiB + 103 is far below the 2 GiB container bound, the 1 GiB plaintext gate is the
  * binding write-side limit and no separate container-size gate is needed.
  */
-fun backupContainerOverheadBytes(): Long =
-    (BACKUP_FIXED_HEADER_LENGTH + BACKUP_SALT_LENGTH + BACKUP_IV_LENGTH + BACKUP_TAG_LENGTH).toLong()
+fun backupContainerOverheadBytes(): Long = (BACKUP_FIXED_HEADER_LENGTH + BACKUP_SALT_LENGTH + BACKUP_IV_LENGTH + BACKUP_TAG_LENGTH).toLong()
 
 /**
  * The FROZEN v1 password widening (container-format spec section 4.4, verbatim): UTF-8 encode,
@@ -112,7 +111,10 @@ fun backupContainerHeader(
 }
 
 /** The AAD is `fixed header || salt` (container-format spec section 4.6); the IV is excluded. */
-fun backupContainerAad(header: ByteArray, salt: ByteArray): ByteArray {
+fun backupContainerAad(
+    header: ByteArray,
+    salt: ByteArray,
+): ByteArray {
     val aad = ByteArray(header.size + salt.size)
     header.copyInto(aad, 0)
     salt.copyInto(aad, header.size)

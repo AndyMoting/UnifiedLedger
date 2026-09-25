@@ -71,6 +71,7 @@ fun P503OverviewScreen(
     onSelectMonth: (YearMonth) -> Unit = {},
     interactionsEnabled: Boolean = true,
     onOpenRecycleBin: (() -> Unit)? = null,
+    onOpenBackupExport: (() -> Unit)? = null,
 ) {
     // G1 (R-Q06-4): a not-loaded monthly cycle must not present the previous cycle's flow rows as
     // the current list, so the fresh authoritative current-state projection is rendered instead.
@@ -83,6 +84,12 @@ fun P503OverviewScreen(
         // P7-05.C: the ledger-wide recycle-bin entry, offered only when the host wires it.
         if (onOpenRecycleBin != null) {
             TextButton(onClick = onOpenRecycleBin) { Text("回收站") }
+            Spacer(Modifier.height(4.dp))
+        }
+        // P7-06 06.B (D-177): the ledger-wide backup-export entry, offered only when the host
+        // wires it (an unwired composition renders no affordance).
+        if (onOpenBackupExport != null) {
+            TextButton(onClick = onOpenBackupExport) { Text("导出备份") }
             Spacer(Modifier.height(4.dp))
         }
         if (showMonthlyRegion) {

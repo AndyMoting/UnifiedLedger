@@ -230,3 +230,46 @@ internal class InjectedFileSystemFailure(
 
 /** A minimal valid SQLite main-file payload (magic header plus one page of filler). */
 internal fun sqliteLikeBytes(filler: Byte = 0): ByteArray = LEDGER_SQLITE_HEADER + ByteArray(4096) { filler }
+
+/**
+ * P7-06 06.B (D-177): a no-op [com.unifiedledger.application.backup.BackupCryptoPrimitives] for the
+ * owner/lease tests, which only need a constructed [BackupExportUseCase] and never run its crypto.
+ * Every method returns deterministic zero bytes; nothing here is a real cipher.
+ */
+internal fun noopBackupCrypto(): com.unifiedledger.application.backup.BackupCryptoPrimitives =
+    object : com.unifiedledger.application.backup.BackupCryptoPrimitives {
+        override fun randomBytes(count: Int): ByteArray = ByteArray(count)
+
+        override fun deriveKey(
+            password: CharArray,
+            salt: ByteArray,
+            iterations: Int,
+            keyLengthBits: Int,
+        ): ByteArray = ByteArray(keyLengthBits / 8)
+
+        override fun sha256Digest(): com.unifiedledger.application.backup.BackupSha256Digest =
+            object : com.unifiedledger.application.backup.BackupSha256Digest {
+                override fun update(
+                    bytes: ByteArray,
+                    offset: Int,
+                    length: Int,
+                ) {}
+
+                override fun digest(): ByteArray = ByteArray(32)
+            }
+
+        override fun gcmEncryptor(
+            key: ByteArray,
+            iv: ByteArray,
+            aad: ByteArray,
+        ): com.unifiedledger.application.backup.BackupGcmEncryptor =
+            object : com.unifiedledger.application.backup.BackupGcmEncryptor {
+                override fun update(
+                    bytes: ByteArray,
+                    offset: Int,
+                    length: Int,
+                ): ByteArray = ByteArray(0)
+
+                override fun doFinal(): ByteArray = ByteArray(16)
+            }
+    }

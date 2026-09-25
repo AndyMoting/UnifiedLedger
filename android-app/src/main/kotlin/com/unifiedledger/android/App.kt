@@ -131,11 +131,11 @@ import com.unifiedledger.ui.ImportDuplicateReviewIds
 import com.unifiedledger.ui.ImportFilePickResultChannel
 import com.unifiedledger.ui.LedgerFileSystem
 import com.unifiedledger.ui.LedgerLeaseScope
-import com.unifiedledger.ui.LedgerStorageLayout
 import com.unifiedledger.ui.LedgerOpenTarget
 import com.unifiedledger.ui.LedgerRuntimeOwner
 import com.unifiedledger.ui.LedgerStartupResult
 import com.unifiedledger.ui.LedgerStorageFailure
+import com.unifiedledger.ui.LedgerStorageLayout
 import com.unifiedledger.ui.LedgerStorageRejectedException
 import com.unifiedledger.ui.P503App
 import com.unifiedledger.ui.P503LedgerFacade
@@ -191,6 +191,10 @@ fun app() {
         rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
             backupSaveTargetRef[0]?.onCreateDocumentResult(uri)
         }
+    // P7-06 06.B (D-177; spec section 3.5 phase 2): the SAF CreateDocument launch must run on the
+    // main thread, while the export use case runs on a background dispatcher. This poster is the
+    // main-looper hop the target port uses; the handler is created once for the composition.
+    val mainThreadPoster = remember { mainThreadPoster() }
     val controller =
         remember(context) {
             // The Android pick port with SAF launch/metadata/stream closures; one-shot
@@ -212,6 +216,9 @@ fun app() {
             val layout = ledgerStorageLayout(fileSystem, hostDirectory)
             val backupTargetPort =
                 AndroidBackupTargetPort<Uri>(
+                    // SAF launchers are main-thread only; the export runs on a background
+                    // dispatcher, so the launch is posted onto the main looper here.
+                    postToMainThread = mainThreadPoster,
                     launchCreateDocument = backupSaveLauncher::launch,
                     openOutputStream = { uri -> context.contentResolver.openOutputStream(uri) },
                 )
@@ -582,8 +589,14 @@ internal class AndroidBackupWiring(
     val layout: LedgerStorageLayout,
     val targetPort: BackupTargetPort,
     val crypto: BackupCryptoPrimitives = JvmBackupCryptoPrimitives(),
-    val newToken: () -> String = { java.util.UUID.randomUUID().toString() },
+    val newToken: () -> String = { randomUuidText() },
 )
+
+/** P7-06 06.B: one random token text (kept out of the data-class default so ktlint's chain rule is satisfied). */
+private fun randomUuidText(): String {
+    val uuid = java.util.UUID.randomUUID()
+    return uuid.toString()
+}
 
 /**
  * P7-06 06.1 (D-176; spec sections 3.2/4.5/5.1): the Android stable-storage open. The host
@@ -654,7 +667,7 @@ private fun openAndroidStableStorageLedgerLocked(
         // androidGenerationDriverName returns it unchanged and openDriver receives an absolute path.
         val handle = openDriver(androidGenerationDriverName(target.mainFile))
         try {
-            buildLedgerGraph(handle, importFilePickPort, importPickChannel, AndroidBackupSnapshotPort(context, hostDirectory, handle))
+            buildLedgerGraph(handle, importFilePickPort, importPickChannel, AndroidBackupSnapshotPort(handle))
         } catch (failure: Exception) {
             handle.close()
             throw failure
@@ -1073,3 +1086,22 @@ private fun buildLedgerGraph(
 private val secureRandom = SecureRandom()
 
 private fun secureRandomBytes(count: Int): ByteArray = ByteArray(count).also(secureRandom::nextBytes)
+
+/**
+ * P7-06 06.B (D-177; spec section 3.5 phase 2): posts [block] onto the process main looper. SAF
+ * `ActivityResultLauncher.launch` is main-thread only, while the export use case runs on a
+ * background dispatcher; this is the hop that makes the launch legal. When already on the main
+ * thread the block runs inline (the desktop chooser's own `EventQueue.isDispatchThread` precedent).
+ * A dead looper surfaces as a thrown `RuntimeException`, which the target port treats as a
+ * cancelled choice rather than a crash.
+ */
+internal fun mainThreadPoster(): (() -> Unit) -> Unit {
+    val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    return { block ->
+        if (android.os.Looper.myLooper() === android.os.Looper.getMainLooper()) {
+            block()
+        } else {
+            handler.post(block)
+        }
+    }
+}

@@ -111,7 +111,7 @@ class BackupContainerCryptoJvmTest {
             position += count
         }
 
-        val expected = java.security.MessageDigest.getInstance("SHA-256").digest(payload)
+        val expected = sha256(payload)
         assertContentEquals(expected, digest.digest())
     }
 
@@ -172,10 +172,7 @@ class BackupContainerCryptoJvmTest {
         assertContentEquals(plaintext, recovered)
         // The header's payload_sha256 (offset 27) is the real SHA-256 of the recovered plaintext.
         val headerHash = container.copyOfRange(27, 59)
-        assertContentEquals(
-            java.security.MessageDigest.getInstance("SHA-256").digest(recovered),
-            headerHash,
-        )
+        assertContentEquals(sha256(recovered), headerHash)
     }
 
     @Test
@@ -208,4 +205,9 @@ class BackupContainerCryptoJvmTest {
 private fun String.hexToBytes(): ByteArray {
     require(length % 2 == 0) { "hex string must have an even length" }
     return ByteArray(length / 2) { index -> substring(index * 2, index * 2 + 2).toInt(16).toByte() }
+}
+
+private fun sha256(bytes: ByteArray): ByteArray {
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    return digest.digest(bytes)
 }

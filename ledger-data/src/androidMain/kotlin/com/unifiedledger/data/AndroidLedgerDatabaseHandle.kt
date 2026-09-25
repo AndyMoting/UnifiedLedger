@@ -1,9 +1,9 @@
 package com.unifiedledger.data
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import app.cash.sqldelight.db.QueryResult
-import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import com.unifiedledger.data.db.LedgerDatabase
 
@@ -134,49 +134,48 @@ class AndroidLedgerDatabaseHandle internal constructor(
 
 /**
  * P7-06 06.B (D-177; spec section 3.4): validates a snapshot FILE through a second, dedicated
- * Android connection. The active handle cannot stand in (it holds the active generation's main
- * file), and the driver is private to the handle, so this opens a fresh [AndroidSqliteDriver] over
- * [name] with a NULL schema — no `create`/`migrate` callback runs against the snapshot, so the
- * verification is read-only in effect and never mutates or migrates the snapshot.
+ * Android connection opened READ-ONLY by ABSOLUTE PATH. The active handle cannot stand in (it holds
+ * the active generation's main file), and the driver is private to the handle.
  *
- * UNVERIFIED (registered, spec section 9 item 9): the concrete driver choice and open/close
- * semantics for the second open are an implementation-batch decision not yet device-verified.
+ * Why this does NOT reuse `AndroidSqliteDriver`/`SupportSQLiteOpenHelper` (P0-class defect in the
+ * first 06.B draft): `AndroidSqliteDriver(schema, context, name)` builds an
+ * `androidx.sqlite.db.SupportSQLiteOpenHelper$Callback` whose constructor is
+ * `SQLiteOpenHelper(context, name, factory, version)` (androidx `FrameworkSQLiteOpenHelper` extends
+ * the framework helper), and the AOSP `SQLiteOpenHelper` private constructor throws
+ * `IllegalArgumentException("Version must be >= 1, was " + version)` for `version < 1`
+ * (`/d/Tools/Android/sources/android-36.1/android/database/sqlite/SQLiteOpenHelper.java:172`).
+ * A `NoOpSnapshotSchema` with `version = 0L` therefore threw at CONSTRUCTION, before the first
+ * `PRAGMA integrity_check`, so every Android export failed. Separately, that path resolves the name
+ * through `Context.getDatabasePath`, whose non-separator-prefixed branch rejects a relative name
+ * containing a path separator (the defect the P0 hotfix fixed for the main database); the snapshot
+ * lives in a SUBDIRECTORY of `databases/`.
+ *
+ * The read-only framework open below avoids both: it takes the ABSOLUTE path (no
+ * `Context.getDatabasePath`) and runs no schema/version logic at all (no helper, no
+ * create/migrate callback), so the snapshot is never created or migrated. `OPEN_READONLY` plus the
+ * absent `CREATE_IF_NECESSARY` flag means a missing file throws rather than being created.
+ *
+ * `PRAGMA integrity_check` and `PRAGMA user_version` are plain read-only queries on that connection;
+ * `user_version` is the non-authoritative header hint (container-format spec section 4.3.2).
  */
-fun verifyAndroidSnapshotFile(
-    context: Context,
-    name: String,
-): SnapshotVerification {
-    val driver =
-        AndroidSqliteDriver(
-            schema = NoOpSnapshotSchema,
-            context = context,
-            name = name,
-        )
+fun verifyAndroidSnapshotFile(snapshotPath: String): SnapshotVerification {
+    val database = SQLiteDatabase.openDatabase(snapshotPath, null, SQLiteDatabase.OPEN_READONLY)
     return try {
-        verifySnapshotOn(driver)
+        var integrityOk = false
+        database.rawQuery("PRAGMA integrity_check", null).use { cursor ->
+            while (cursor.moveToNext()) {
+                val text = cursor.getString(0)
+                if (text != null) integrityOk = text == "ok"
+            }
+        }
+        var schemaVersion = 0L
+        database.rawQuery("PRAGMA user_version", null).use { cursor ->
+            if (cursor.moveToFirst()) schemaVersion = cursor.getLong(0)
+        }
+        SnapshotVerification(integrityOk = integrityOk, schemaVersion = schemaVersion)
     } finally {
-        driver.close()
+        database.close()
     }
-}
-
-/**
- * The no-op schema for the snapshot verification open (spec section 3.4): its `create`/`migrate`
- * do NOTHING, so opening the snapshot file for `PRAGMA integrity_check` never creates or migrates
- * anything. A valid snapshot already carries the product schema (its `user_version` is non-zero),
- * so `onCreate` never runs; this schema exists only to satisfy the driver constructor and to make
- * the read-only intent explicit.
- */
-private object NoOpSnapshotSchema : app.cash.sqldelight.db.SqlSchema<QueryResult.Value<Unit>> {
-    override val version: Long = 0L
-
-    override fun create(driver: SqlDriver): QueryResult.Value<Unit> = QueryResult.Unit
-
-    override fun migrate(
-        driver: SqlDriver,
-        oldVersion: Long,
-        newVersion: Long,
-        vararg callbacks: app.cash.sqldelight.db.AfterVersion,
-    ): QueryResult.Value<Unit> = QueryResult.Unit
 }
 
 /**

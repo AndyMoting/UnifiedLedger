@@ -117,8 +117,7 @@ internal class DesktopLedgerFileSystem : LedgerFileSystem {
 
     override fun openWrite(path: String): LedgerWriteStream = DesktopWriteStream(File(path))
 
-    override fun listDirectory(path: String): List<String> =
-        File(path).list()?.toList() ?: emptyList()
+    override fun listDirectory(path: String): List<String> = File(path).list()?.toList() ?: emptyList()
 
     private fun nearestExisting(path: String): File {
         var candidate = File(path)
