@@ -84,6 +84,12 @@ $env:GRADLE_OPTS='-Xmx1024m'
 .\gradlew.bat :android-app:testDebugUnitTest --stacktrace --rerun-tasks --warning-mode all
 ```
 
+编译 `android-app` 的 androidTest 源（P0 hotfix 缺陷 1 回归守卫：编译 `AndroidAbsoluteDatabasePathInstrumentedTest`，使驱动绝对路径守卫不会在 CI 中腐化；执行仍是人工 emulator 门禁，CI 不运行 connectedAndroidTest；与 CI 的 Android app instrumented test sources compile 步骤一致）：
+
+```powershell
+.\gradlew.bat :android-app:assembleDebugAndroidTest --stacktrace --rerun-tasks --warning-mode all
+```
+
 ### Android APK 下载与人工安装
 
 CI 在 `:android-app:assembleDebug` 后上传调试 APK 工件，名称为 `android-debug-apk-<sha>`（保留 7 天）。人工验收必须使用固定 SHA 对应的工件；CI 成功不构成 emulator 人工证据已完成。
