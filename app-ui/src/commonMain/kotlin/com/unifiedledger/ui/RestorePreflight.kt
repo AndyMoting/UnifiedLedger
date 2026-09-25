@@ -662,7 +662,17 @@ class RestorePreflightUseCase(
 /** The container ended before its header described (mapped to the uniform code by the caller). */
 private class RestoreContainerShortException : RuntimeException("backup container ended early")
 
-/** The schema version this build supports (v31); kept in one place for the class-2 checks. */
+/**
+ * The schema version this build supports (v31).
+ *
+ * REGISTERED DUPLICATION (06.C spec section 10 item 1): the authoritative value is
+ * `LedgerDatabase.Schema.version` in `ledger-data`, but `app-ui` depends only on `ledger-application`
+ * (not `ledger-data`), so the shared preflight cannot read it directly. The composition root passes
+ * the whitelist through [RestorePreflightRequest.supportedSourceVersions] and this constant is the
+ * class-2 upper bound; a schema bump must update both. Keeping the class-2 decision in the shared
+ * layer (rather than the platform port) is what makes the mismatch rejection testable without a
+ * device.
+ */
 private const val CURRENT_SCHEMA_VERSION: Long = 31L
 
 /** Lowercase hex for the display form of a digest (no path, no secret). */
