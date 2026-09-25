@@ -3514,3 +3514,29 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 7. **验收状态**：两项缺陷已修复并经设备验证；**06.1 仍不是完整的 P706-A06 通过**（进程被杀/掉电的崩溃窗口残余仍在）。`0c0b319` 同提交 CI 尚在运行（未决），本条不主张其成功。
 
 **关联决定：** D-176（06.1 稳定存储与 runtime owner——本条修复其已合入实现中的启动缺陷，不改其设计）、D-174（容器格式与代际/指针设计——不改其决定）、D-158（实施登记与残余承接的形状；schema v31）、D-177（前序最高 id）。
+
+## D-179 P7-06 06.3/06.C 恢复预检设计门批准
+
+**状态：** 已批准（2026-09-25，P7-06 切片 06.3/06.C（有界读取、认证解密、隔离迁移与预检 token）设计规格的批准登记；规格 `docs/specs/2026-09-25-p7-06-restore-preflight-design.md` 经独立规格评审（首轮「需返工后批准」，无 P1，4 项 P2 + 6 项 P3；修订后的收口复评 + distinct verifier 结论 APPROVE WITH FINDINGS，全部条目已闭合）后，由主代理按用户既有授权批准；本条登记批准内容、冻结的设计裁决、评审/验证拓扑、承接的未关闭项与边界）。
+
+**决定：**
+
+1. **交付与批准**：批准规格 `docs/specs/2026-09-25-p7-06-restore-preflight-design.md`，冻结 06.C 的**设计级**方案：有界来源 → 认证前公开格式/大小检查 → 有界磁盘前置检查 → 密码 → KDF + 流式认证解密到私有暂存 → 认证后 `payload_sha256` → 权威 `PRAGMA user_version`（类 2）→ 身份/账本检查（类 3）→ 受支持旧 schema 的严格隔离迁移 → 不运行 seed bootstrap 的完整性/FK/领域校验 → 预览 + 不透明 token。规格状态由 `proposal` 转为 `approved`（本决定即批准依据）。本规格**逐条**实现已批准容器格式规格（D-174）的**读侧**冻结规则，**消费**已批准 06.B 导出规格（D-177）的产物，并**复用**已批准 06.1（D-176）的 owner/lease/generation 契约；**不重开**其任何冻结决定。
+
+2. **关键设计裁决（本条冻结的设计点）**：
+
+   - **头部/payload `user_version` 不一致必须拒绝**：当固定头部 `db_schema_version` 提示与 payload 实际 `PRAGMA user_version` **不相等**时，**必须**以 `P706_SCHEMA_VERSION_UNSUPPORTED` 做**类 2**（认证后）结构拒绝，**不得**「以 payload 为准后继续接受或迁移」（容器规格 §4.3.2 `:136`、§5.4 `:259`）。头部与 salt 同受 AAD 保护，不一致**不可能**来自传输篡改，只能是写入端或本地存储不一致的信号。
+   - **预检全程持 operation lease**：预检开始时取得 operation lease 并**全程持有**，在结束（成功/失败/取消）后于 `finally` 释放。决定性理由是阻止 `reopen` 经 `openStableStorageLedger` 触发的**破坏性** `sweepBackupStaging`（它删除匹配前缀的全部文件）删掉预检自己的已认证暂存工件、从而留下悬空 token——而非 06.B 的「经活动连接快照」理由（预检不读活动连接）。代价（持 lease 期间 `closeActiveGraph`/`reopen` 返回 `QuiesceBlocked`，切换推迟到预检结束）**被接受**。
+   - **磁盘前置检查为强制编号步骤**：恢复侧磁盘前置检查在**任何解密之前**执行，为数据流中一个**独立编号步骤**（步骤 3），空间不足即类型化拒绝、**不**开始解密、**不**创建迁移副本；否则「解密到一半发现磁盘不足」会留下半写明文。
+   - **token 绑定与确认重校验**：token 绑定**已认证工件摘要 + 目标账本 + 当前运行 generation**；确认（06.D）**必须**在切换前重新校验暂存工件的**存在性与摘要一致**、generation 仍为当前活动代、目标账本身份一致，任一不符即 stale 拒绝、零切换。该重校验是「持 lease」之外的**第二道**防线（持 lease 只覆盖预检期间，不覆盖预览到确认之间的窗口）。
+   - **Android 非创建式、可迁移 driver 路径**：既有支持路径为 `SQLiteDatabase.openDatabase(path, null, OPEN_READWRITE)`（**不带** `CREATE_IF_NECESSARY`，无 schema/version 回调）→ `FrameworkSQLiteDatabase(SQLiteDatabase)` → `AndroidSqliteDriver(SupportSQLiteDatabase)`（`android-driver:2.3.2` 的公开单参构造器，`openHelper = null`）；故 06.C 的 Android 交付物**不一定**需要新驱动代码，实施批应优先使用该路径，不足时才回退自定义 `SqlDriver` 适配器。**实施批首项待确认点**：`FrameworkSQLiteDatabase`（`androidx.sqlite:sqlite-framework-android:2.6.2`）是否在 `ledger-data` androidMain 的**编译**类路径上（缓存模块元数据读到它出现在 `android-driver:2.3.2` 的 **runtime** 发布而非 api 发布，故编译期可能需要显式新增依赖——**依赖变更须另行批准**）。本条**更正**了 draft-2 的「Android 无可跑 `Schema.migrate` 的非创建式 `SqlDriver`」错误前提。
+
+3. **评审与验证拓扑**：单一写者在隔离 worktree 内起草；**独立规格评审**第 1 轮（结论「需返工后批准」，无 P1，4 项 P2 + 6 项 P3）→ 写者应用（draft-2）→ **收口评审 + distinct verifier**（结论 APPROVE WITH FINDINGS：draft-1 的全部 findings 确认 CLOSED、无新 P1/P2，含若干 nit 与一项 REFUTED 事实前提）→ 写者应用（draft-3，`14e2424`：更正 Android driver 前提、更正两处行号引用、补两项澄清）→ 主代理按用户既有授权批准。
+
+4. **承接的未关闭/未验证项（不得静默丢弃）**：**受支持旧 schema 白名单集合与严格结构识别**（容器规格 §6 `:292` OPEN、D-174 第 4 条归 06.C；本条只冻结规则、不冻结集合）；**§4.6 AAD 构造的跨端向量**（继承 D-174 的 OPEN）；**身份拒绝码名与其余新提议拒绝码**（`P706_PLAINTEXT_TOO_LARGE`/`P706_CONTAINER_SIZE_MISMATCH`/`P706_CONTAINER_TRUNCATED`/`P706_LEDGER_IDENTITY_UNSUPPORTED`/`P706_SOURCE_READ_FAILED`/`P706_MIGRATION_FAILED`/`P706_DOMAIN_VALIDATION_FAILED`/`P706_INSUFFICIENT_SPACE` 均为「**建议名，需批准**」，非冻结）；**`P706_PAYLOAD_INTEGRITY_FAILED` 是否强制**（容器规格只说「可」）；**2 GiB 上限 vs provider 不报大小**（计数流回退未经实现/实测）；**领域完整性/FK 校验面**（产品源码无独立表面）；**`FrameworkSQLiteDatabase` 编译类路径确认**；**06.C/06.D 的磁盘公式拆分**；以及 §10 其余登记项（有界流式来源端口的具体类型/包/超时、sweep 前缀扩展、token 会话边界与 stale 策略、预览摘要字段集、持 lease 替代方案、持 lease 期间切换推迟时长）。
+
+5. **边界**：本条只批准一份**设计规格**；**零产品代码、零测试、零 schema/迁移、零依赖**（schema 维持 v31）；**不修改** D-174 的冻结字节/参数/拒绝码、**不修改** D-176 的 owner 契约、**不修改** D-177；**不**把任何验收向量并入 PASS（P706-A03/A04 仍为**未通过**，其切换/回退半部归 06.D）；不改 P7-01～P7-05 既有冻结面；`rgXX_` 竖井与 golden fixtures/expected 零改动；`.external/` 只读未触碰。
+
+6. **验收状态**：本批**设计门已批准**；**06.C 的实施为后续实施批**，尚未开始；**06.D（切换/回退）尚未开始**。
+
+**关联决定：** D-174（容器格式读侧冻结规则——本条逐条实现其读侧，不改其决定）、D-176（06.1 owner/lease/generation 契约——本条复用，不改其契约）、D-177（06.B 导出规格——本条消费其产物，不改其决定）、D-178（前序最高 id）。
