@@ -71,8 +71,16 @@ class P503ReducerImpl(
     override fun reduce(
         state: P503AppState,
         event: P503UiEvent,
-    ): P503AppState =
-        when (state) {
+    ): P503AppState {
+        // P7-06 06.B (D-177; spec sections 3/6): the backup-export event family is state-preserving
+        // outside its own surface. OpenBackupExport has its one effect on OverviewEmpty (below);
+        // the other four act only on BackupExport. Everywhere else they are absorbed here, so a
+        // late/stale dispatch can never reach `unhandled` and turn into an ISE (the P7-04/P7-05
+        // "new events never ISE" discipline). The guard is central rather than repeated in every
+        // state's absorb list because the family's only designed effect is the one OverviewEmpty
+        // transition and the one surface.
+        if (backupExportEventAbsorbed(state, event)) return state
+        return when (state) {
             is P503AppState.Ready -> reduceReady(event)
             is P503AppState.OverviewEmpty -> reduceOverviewEmpty(state, event)
             is P503AppState.TransactionDetail -> reduceTransactionDetail(state, event)
@@ -82,6 +90,7 @@ class P503ReducerImpl(
             is P503AppState.TransactionEdit -> reduceTransactionEdit(state, event)
             is P503AppState.VoidConfirm -> reduceVoidConfirm(state, event)
             is P503AppState.RecycleBin -> reduceRecycleBin(state, event)
+            is P503AppState.BackupExport -> reduceBackupExport(state, event)
             is P503AppState.Editing -> reduceEditing(state, event)
             is P503AppState.AwaitingConfirmation -> reduceAwaitingConfirmation(state, event)
             is P503AppState.Submitting -> reduceSubmitting(state, event)
@@ -92,6 +101,26 @@ class P503ReducerImpl(
             is P503AppState.DomainRejected -> reduceDomainRejected(state, event)
             is P503AppState.InfrastructureFailure -> reduceInfrastructureFailure(state, event)
             is P503AppState.UnknownCommit -> reduceUnknownCommit(state, event)
+        }
+    }
+
+    /**
+     * P7-06 06.B (D-177): whether the backup-export event must be absorbed in [state] because it
+     * belongs to another state's surface. `OpenBackupExport` is designed for OverviewEmpty; the
+     * other four for BackupExport. See [reduce]'s note.
+     */
+    private fun backupExportEventAbsorbed(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): Boolean =
+        when (event) {
+            P503UiEvent.OpenBackupExport -> state !is P503AppState.OverviewEmpty
+            is P503UiEvent.UpdateBackupPassword,
+            P503UiEvent.ConfirmBackupExport,
+            is P503UiEvent.BackupExportResultLanded,
+            P503UiEvent.CloseBackupExport,
+            -> state !is P503AppState.BackupExport
+            else -> false
         }
 
     private fun reduceReady(event: P503UiEvent): P503AppState =
@@ -477,6 +506,12 @@ class P503ReducerImpl(
             // surfaces are reachable only through the detail).
             is P503UiEvent.OpenRecycleBin ->
                 P503AppState.RecycleBin(overview = state, rows = event.result)
+            // P7-06 06.B (D-177; spec section 3): the HOME overview's backup-export entry opens the
+            // export surface, carrying the exact overview so every exit restores it. The host wires
+            // this affordance only when the export use case exists, so it never renders a dead
+            // button; the open itself performs no IO.
+            P503UiEvent.OpenBackupExport ->
+                P503AppState.BackupExport(overview = state)
             is P503UiEvent.OpenTransactionEdit,
             is P503UiEvent.UpdateTransactionCorrectionField,
             P503UiEvent.PreviewTransactionEdit,
@@ -1706,6 +1741,30 @@ class P503ReducerImpl(
             else -> absorbPreExisting(state, event)
         }
 
+    /**
+     * P7-06 06.B (D-177; spec sections 3/6): the backup-export surface. [OpenBackupExport] and
+     * every non-surface event are absorbed by [backupExportEventAbsorbed] before reaching here, so
+     * this reducer only sees its own four events. A password write stays in memory; Confirm sets
+     * the `running` marker (a duplicate confirm is absorbed, 提交中不重入) and clears any previous
+     * outcome; a landed result clears the marker and records the typed outcome; Close returns to
+     * the preserved overview only when no export is running (提交中不得离开, the P7-05 Submitting
+     * discipline). Every pre-existing event is absorbed; `Exit` stays unlisted (ISE).
+     */
+    private fun reduceBackupExport(
+        state: P503AppState.BackupExport,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            is P503UiEvent.UpdateBackupPassword -> state.copy(password = event.password)
+            P503UiEvent.ConfirmBackupExport ->
+                if (state.running) state else state.copy(running = true, outcome = null)
+            is P503UiEvent.BackupExportResultLanded -> state.copy(running = false, outcome = event.result)
+            // Close (and Back) leave for the preserved overview only when no export is in flight; a
+            // running export absorbs the exit so a lost/cancelled commit keeps its marker.
+            P503UiEvent.CloseBackupExport, P503UiEvent.Back -> if (state.running) state else state.overview
+            else -> absorbPreExisting(state, event)
+        }
+
     /** P7-05.C: maps the merged void/restore result family onto the nested restore sub-state. */
     private fun reduceRestoreResult(
         state: P503AppState.RecycleBin,
@@ -1729,12 +1788,37 @@ class P503ReducerImpl(
      * absorbed (the new states never start an entry/catalog/import/monthly flow); every
      * pre-existing unlisted combination keeps its frozen `unhandled` behavior (G-B), so this
      * helper only lists combinations that were already absorbed in the P7-03/P7-04 states.
+     *
+     * P1-A fix (06.B review): the P7-05 correction/void/recycle-bin family is ALSO listed here.
+     * The three P7-05 reducers handle those events explicitly BEFORE reaching this tail, so adding
+     * them is a no-op for them; it is what keeps the new BackupExport surface from reaching
+     * `unhandled` → ISE when a P7-05 event lands on it (e.g. the HOME overview renders 回收站 and
+     * 导出备份 together, so a recycle-bin read dispatched before the export entry opened lands on
+     * the export state). Enumerated explicitly rather than folded into a catch-all so the frozen
+     * `unhandled` discipline for genuinely unlisted combinations is preserved.
      */
     private fun absorbPreExisting(
         state: P503AppState,
         event: P503UiEvent,
     ): P503AppState =
         when (event) {
+            is P503UiEvent.OpenRecycleBin,
+            is P503UiEvent.RecycleBinResult,
+            P503UiEvent.CloseRecycleBin,
+            is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.UpdateTransactionCorrectionField,
+            P503UiEvent.PreviewTransactionEdit,
+            is P503UiEvent.ConfirmTransactionEdit,
+            is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.OpenVoidConfirm,
+            is P503UiEvent.UpdateVoidReasonField,
+            is P503UiEvent.ConfirmVoid,
+            is P503UiEvent.TransactionVoidResult,
+            is P503UiEvent.OpenRestoreConfirm,
+            is P503UiEvent.UpdateRestoreReasonField,
+            is P503UiEvent.ConfirmRestore,
+            is P503UiEvent.TransactionRestoreResult,
+            P503UiEvent.CloseRestoreConfirm,
             is P503UiEvent.SelectTab,
             P503UiEvent.StartNewExpense,
             is P503UiEvent.UpdateAmount,

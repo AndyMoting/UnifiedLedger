@@ -95,6 +95,8 @@ import com.unifiedledger.application.UuidV7ManualLendingRequestIdSource
 import com.unifiedledger.application.UuidV7ManualTransferRequestIdSource
 import com.unifiedledger.application.UuidV7TransactionCorrectionIdSource
 import com.unifiedledger.application.UuidV7TransactionVoidFactIdSource
+import com.unifiedledger.application.backup.BackupCryptoPrimitives
+import com.unifiedledger.application.backup.JvmBackupCryptoPrimitives
 import com.unifiedledger.application.import.JvmImportFileIntake
 import com.unifiedledger.data.CatalogBootstrapResult
 import com.unifiedledger.data.SqlDelightCatalogStore
@@ -123,6 +125,9 @@ import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
 import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
+import com.unifiedledger.ui.BackupExportUseCase
+import com.unifiedledger.ui.BackupSnapshotPort
+import com.unifiedledger.ui.BackupTargetPort
 import com.unifiedledger.ui.ImportConfirmUseCaseSet
 import com.unifiedledger.ui.ImportDuplicateReviewIds
 import com.unifiedledger.ui.ImportFilePickResultChannel
@@ -154,6 +159,25 @@ import kotlin.time.Clock
 private const val LOCAL_TEST_LEDGER_FILE_NAME = "ledger-local-test.db"
 
 /**
+ * P7-06 06.B (D-177; spec section 3): the composition-root backup-export wiring handed to
+ * [DesktopStartupController]. Kept as one value so the controller's constructor stays backward
+ * compatible (the existing startup tests pass only the graph builder).
+ */
+internal class DesktopBackupWiring(
+    val fileSystem: LedgerFileSystem,
+    val layout: LedgerStorageLayout,
+    val targetPort: BackupTargetPort = DesktopBackupTargetPort(::showSwingSaveFileChooser),
+    val crypto: BackupCryptoPrimitives = JvmBackupCryptoPrimitives(),
+    val newToken: () -> String = { randomUuidText() },
+)
+
+/** P7-06 06.B: one random token text (kept out of the data-class default so ktlint's chain rule is satisfied). */
+private fun randomUuidText(): String {
+    val uuid = java.util.UUID.randomUUID()
+    return uuid.toString()
+}
+
+/**
  * Desktop composition root (P5-03 spec sections 8/10.1). Assembles the full object graph
  * (driver, current-schema database, commit tracker, fixed catalog, product ID/clock sources, read
  * adapter and the shared facade) and runs the shared [P503App]. Startup is fail-closed:
@@ -173,6 +197,7 @@ fun main() {
                 openStableStorageDesktopLedger(fileSystem, layout)
             },
             onExit = ::exitApplication,
+            backupWiring = DesktopBackupWiring(fileSystem, layout),
         )
     }
 }
@@ -193,8 +218,9 @@ internal fun createDemoDatabaseUrl(): String {
 internal fun DesktopRoot(
     openDatabase: () -> CloseableLedgerGraph,
     onExit: () -> Unit,
+    backupWiring: DesktopBackupWiring? = null,
 ) {
-    val controller = remember { DesktopStartupController(openDatabase).also { it.start() } }
+    val controller = remember { DesktopStartupController(openDatabase, backupWiring).also { it.start() } }
     Window(onCloseRequest = onExit, title = "UnifiedLedger Desktop") {
         val ledger = controller.ledger
         when {
@@ -263,6 +289,9 @@ internal fun DesktopEscBackHandler(
  */
 internal class DesktopStartupController(
     private val openDatabase: () -> CloseableLedgerGraph,
+    // P7-06 06.B (D-177): the optional backup-export wiring; null keeps the surface absent so the
+    // existing startup tests construct the controller with the graph builder only.
+    backupWiring: DesktopBackupWiring? = null,
 ) {
     var state by mutableStateOf<P503StartupState>(P503StartupState.Starting)
         private set
@@ -273,10 +302,35 @@ internal class DesktopStartupController(
      */
     private val owner =
         LedgerRuntimeOwner(
-            openGeneration = { openDatabase() },
+            openGeneration = {
+                openDatabase().also { graph -> lastOpenedGraph = graph }
+            },
             closeGraph = { graph -> graph.close() },
             facadeOf = { graph -> graph.facade },
         )
+
+    /**
+     * P7-06 06.B (D-177): the most recently opened graph, captured so the export use case resolves
+     * the CURRENT graph's controlled snapshot surface (a pure field read).
+     */
+    private var lastOpenedGraph: CloseableLedgerGraph? = null
+
+    /**
+     * P7-06 06.B (D-177; spec section 3): the shared backup-export use case, built over this
+     * controller's owner and the injected wiring.
+     */
+    private val backupExportUseCase: BackupExportUseCase? =
+        backupWiring?.let { wiring ->
+            BackupExportUseCase(
+                owner = owner,
+                fileSystem = wiring.fileSystem,
+                layout = wiring.layout,
+                snapshotProvider = { lastOpenedGraph?.snapshotPort },
+                target = wiring.targetPort,
+                crypto = wiring.crypto,
+                newToken = wiring.newToken,
+            )
+        }
 
     /**
      * P7-06 06.1 fix (review REJECT): the product surface handed to [P503App] is the LEASE-SCOPED
@@ -287,7 +341,10 @@ internal class DesktopStartupController(
     val ledger: LedgerLeaseScope?
         get() = if (state == P503StartupState.Ready) leaseScope else null
 
-    private val leaseScope = LedgerLeaseScope(owner)
+    private val leaseScope =
+        LedgerLeaseScope(owner).also { scope ->
+            scope.backupExport = backupExportUseCase
+        }
 
     /**
      * True once [start] has been invoked. The state already starts as [P503StartupState.Starting]
@@ -350,6 +407,9 @@ internal data class CloseableLedgerGraph(
     // device-evidenced strong guarantee). Filled from the freshly built graph like the
     // bootstrap entry above.
     val runFullAnalyze: () -> Unit = {},
+    // P7-06 06.B (D-177; spec sections 3.3/3.4): the controlled snapshot surface over this
+    // graph's private JDBC driver. Null when the composition root wired none.
+    val snapshotPort: BackupSnapshotPort? = null,
 )
 
 internal data class DesktopLedgerGraph(
@@ -372,6 +432,9 @@ internal data class DesktopLedgerGraph(
     // full-schema ANALYZE (the device-evidenced strong guarantee; PRAGMA optimize does not
     // grant first-time analysis to tables without a stat1 planning history).
     val runFullAnalyze: () -> Unit,
+    // P7-06 06.B (D-177; spec sections 3.3/3.4): the controlled snapshot surface over this
+    // graph's private JDBC driver. Null when the composition root wired none.
+    val snapshotPort: BackupSnapshotPort? = null,
 )
 
 /**
@@ -771,6 +834,8 @@ internal fun buildLedgerGraph(
         runQueryStatisticsOptimize = { runQueryStatisticsOptimizeOn(driver) },
         // A-PERF rework 3: the intake trigger's entry (full-schema ANALYZE).
         runFullAnalyze = { runFullAnalyzeOn(driver) },
+        // P7-06 06.B (D-177): the controlled snapshot surface over this graph's driver.
+        snapshotPort = DesktopBackupSnapshotPort(driver),
     )
 }
 
@@ -807,7 +872,15 @@ internal fun openDesktopLedger(databaseUrl: String): CloseableLedgerGraph {
     return try {
         migrateToCurrentSchema(driver)
         val graph = buildLedgerGraph(driver, createSchema = false)
-        CloseableLedgerGraph(graph.facade, { driver.close() }, graph.catalogSession, graph.catalogCommands, graph.runQueryStatisticsOptimize, graph.runFullAnalyze)
+        CloseableLedgerGraph(
+            graph.facade,
+            { driver.close() },
+            graph.catalogSession,
+            graph.catalogCommands,
+            graph.runQueryStatisticsOptimize,
+            graph.runFullAnalyze,
+            snapshotPort = graph.snapshotPort,
+        )
     } catch (failure: Exception) {
         // A failure mid-open (schema create/open/migrate/bootstrap) must not leak the
         // half-opened driver; the startup controller maps it to StartupError.

@@ -547,6 +547,32 @@ class LedgerLeaseScope(
     fun importIntakeSessionFactory(): ImportIntakeSessionIdentity? = owner.facade?.importIntakeSessionFactory?.invoke()
 
     /**
+     * P7-06 06.B (D-177; spec section 3): the shared backup-export use case the composition root
+     * bound to this scope, or null when the surface is absent. Lease-free: the use case acquires and
+     * releases its OWN operation lease for the whole export (spec section 3.1), so exposing it here
+     * adds no second lease.
+     */
+    var backupExport: BackupExportUseCase? = null
+
+    /**
+     * P7-06 06.B (D-177; spec sections 3.1/3.2): the launch for the CURRENT active generation —
+     * the export request plus the generation it was resolved under. Null when the export surface
+     * is absent or the owner has no active generation (not Ready).
+     *
+     * The generation is returned so the host's landing hop can apply the SAME discard rule every
+     * other generation-bound call uses ([isCurrentGeneration]): [BackupExportResult] itself carries
+     * no generation (it is a plain success/failure/cancelled union), so the export cannot rely on
+     * its own payload for the check. The export's own lease (acquired inside the use case) protects
+     * the snapshot from a mid-export close/reopen; this capture is what makes a result that LANDS
+     * after a reopen (a new generation) discarded rather than presented as the new graph's result.
+     */
+    fun backupExportLaunch(password: String): BackupExportLaunch? {
+        val useCase = backupExport ?: return null
+        val generation = owner.activeGeneration ?: return null
+        return BackupExportLaunch(useCase.requestFor(password, generation), generation)
+    }
+
+    /**
      * Which optional surfaces the current facade has wired (pure null checks on the composition
      * wiring; never touches the ledger). The host uses these to render no dead affordances.
      */
@@ -576,6 +602,9 @@ class LedgerLeaseScope(
                 incomeCommitStatus = facade.resolveIncomeCommitStatus != null,
                 transferCommitStatus = facade.resolveTransferCommitStatus != null,
                 lendingCommitStatus = facade.resolveLendingCommitStatus != null,
+                // P7-06 06.B (D-177): the export use case is bound to this scope by the
+                // composition root; a pure field read, never an invocation.
+                backupExport = backupExport != null,
             )
         }
 
@@ -684,6 +713,21 @@ data class LedgerSurfaces(
     val incomeCommitStatus: Boolean = false,
     val transferCommitStatus: Boolean = false,
     val lendingCommitStatus: Boolean = false,
+    // P7-06 06.B (D-177; spec section 3): the composition root bound the backup-export use case.
+    // A pure field probe, never an invocation, so the host renders the export entry only when the
+    // surface exists (the "no dead affordance" convention).
+    val backupExport: Boolean = false,
+)
+
+/**
+ * P7-06 06.B (D-177; spec sections 3.1/3.2): one export launch — the request resolved for the
+ * active generation plus the generation it was resolved under. The generation lets the host's
+ * landing hop discard a result captured under a superseded graph ([LedgerLeaseScope.isCurrentGeneration]),
+ * because [BackupExportResult] itself carries none.
+ */
+class BackupExportLaunch(
+    val request: BackupExportRequest,
+    val generation: Generation,
 )
 
 /**
@@ -726,6 +770,11 @@ fun <G> openStableStorageLedger(
             is LedgerStorageResolution.Planned -> resolution.plan
             is LedgerStorageResolution.Rejected -> throw LedgerStorageRejectedException(resolution.failure)
         }
+    // P7-06 06.B (D-177; spec section 6): sweep the private backup staging on every start. A
+    // process killed mid-export leaves its snapshot/container behind; this is the spec's
+    // "next start" cleanup fallback. It runs before any export can begin and is best effort
+    // (never fails startup), and it only removes the frozen staging prefixes.
+    sweepBackupStaging(fileSystem, layout)
     return when (plan) {
         is LedgerStoragePlan.OpenGeneration ->
             openGraph(

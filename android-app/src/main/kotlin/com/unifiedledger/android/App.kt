@@ -103,6 +103,8 @@ import com.unifiedledger.application.UuidV7ManualLendingRequestIdSource
 import com.unifiedledger.application.UuidV7ManualTransferRequestIdSource
 import com.unifiedledger.application.UuidV7TransactionCorrectionIdSource
 import com.unifiedledger.application.UuidV7TransactionVoidFactIdSource
+import com.unifiedledger.application.backup.BackupCryptoPrimitives
+import com.unifiedledger.application.backup.JvmBackupCryptoPrimitives
 import com.unifiedledger.application.import.JvmImportFileIntake
 import com.unifiedledger.data.AndroidLedgerDatabaseHandle
 import com.unifiedledger.data.CatalogBootstrapResult
@@ -120,6 +122,9 @@ import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
 import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
+import com.unifiedledger.ui.BackupExportUseCase
+import com.unifiedledger.ui.BackupSnapshotPort
+import com.unifiedledger.ui.BackupTargetPort
 import com.unifiedledger.ui.CloseResult
 import com.unifiedledger.ui.ImportConfirmUseCaseSet
 import com.unifiedledger.ui.ImportDuplicateReviewIds
@@ -130,6 +135,7 @@ import com.unifiedledger.ui.LedgerOpenTarget
 import com.unifiedledger.ui.LedgerRuntimeOwner
 import com.unifiedledger.ui.LedgerStartupResult
 import com.unifiedledger.ui.LedgerStorageFailure
+import com.unifiedledger.ui.LedgerStorageLayout
 import com.unifiedledger.ui.LedgerStorageRejectedException
 import com.unifiedledger.ui.P503App
 import com.unifiedledger.ui.P503LedgerFacade
@@ -177,6 +183,18 @@ fun app() {
     // launches its non-blocking start on. Only the state writes resume here; the blocking open
     // itself runs on the controller's background dispatcher (Dispatchers.IO).
     val startupScope = rememberCoroutineScope()
+    // P7-06 06.B (D-177; spec section 3.5 phase 2): the SAF CreateDocument launcher for the
+    // backup export target. Registered in composition like the import picker; the result callback
+    // hands the chosen document to the pending save closure.
+    val backupSaveTargetRef = remember { arrayOfNulls<AndroidBackupTargetPort<Uri>?>(1) }
+    val backupSaveLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            backupSaveTargetRef[0]?.onCreateDocumentResult(uri)
+        }
+    // P7-06 06.B (D-177; spec section 3.5 phase 2): the SAF CreateDocument launch must run on the
+    // main thread, while the export use case runs on a background dispatcher. This poster is the
+    // main-looper hop the target port uses; the handler is created once for the composition.
+    val mainThreadPoster = remember { mainThreadPoster() }
     val controller =
         remember(context) {
             // The Android pick port with SAF launch/metadata/stream closures; one-shot
@@ -191,6 +209,20 @@ fun app() {
                     onResult = importPickChannel::deliver,
                 )
             importPickPortRef[0] = importFilePickPort
+            // P7-06 06.B: the private staging host and the SAF save target.
+            val databasePath = context.getDatabasePath(LEGACY_ANDROID_DATABASE_NAME)
+            val (hostDirectory, _) = androidStableStoragePaths(databasePath)
+            val fileSystem = AndroidLedgerFileSystem()
+            val layout = ledgerStorageLayout(fileSystem, hostDirectory)
+            val backupTargetPort =
+                AndroidBackupTargetPort<Uri>(
+                    // SAF launchers are main-thread only; the export runs on a background
+                    // dispatcher, so the launch is posted onto the main looper here.
+                    postToMainThread = mainThreadPoster,
+                    launchCreateDocument = backupSaveLauncher::launch,
+                    openOutputStream = { uri -> context.contentResolver.openOutputStream(uri) },
+                )
+            backupSaveTargetRef[0] = backupTargetPort
             AndroidStartupController(
                 openDatabase = {
                     // P7-06 06.1 (D-176): the stable-storage sequence resolves the active
@@ -203,6 +235,10 @@ fun app() {
                 // (the controller's Dispatchers.IO default).
                 startScope = startupScope,
                 backgroundDispatcher = Dispatchers.IO,
+                // P7-06 06.B (D-177): the backup-export wiring. The target port posts its SAF
+                // launch to the main thread (see AndroidBackupTargetPort), so the export use case
+                // can run on a background dispatcher.
+                backupWiring = AndroidBackupWiring(fileSystem, layout, backupTargetPort),
             )
         }
     // MUST FIX 2: the controller's open now outlives a single composition pass, so dispose it
@@ -282,10 +318,13 @@ internal class AndroidStartupController(
     // P5-04.4 I-002: the default channel logs the full stack via the three-argument
     // Log.w overload; tests inject a counting/recording lambda (never android.util.Log).
     private val logFailure: (Exception) -> Unit = { failure -> Log.w(LOG_TAG, "startup failed", failure) },
-    // P0 hotfix (defect 2): the dispatcher the blocking open hops to. Dispatchers.IO is the
+// P0 hotfix (defect 2): the dispatcher the blocking open hops to. Dispatchers.IO is the
     // correct class for the blocking ~370 MB legacy file copy plus its fsyncs (it is bounded to
     // the I/O pool rather than the CPU pool); injectable so tests run deterministically.
     private val backgroundDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    // P7-06 06.B (D-177): the optional backup-export wiring. Null keeps the surface absent (the
+    // existing startup tests construct the controller with the two base parameters only).
+    private val backupWiring: AndroidBackupWiring? = null,
 ) {
     var state by mutableStateOf<P503StartupState>(P503StartupState.Starting)
         private set
@@ -298,10 +337,36 @@ internal class AndroidStartupController(
      */
     private val owner =
         LedgerRuntimeOwner(
-            openGeneration = { openDatabase() },
+            openGeneration = {
+                openDatabase().also { graph -> lastOpenedGraph = graph }
+            },
             closeGraph = { graph -> graph.close() },
             facadeOf = { graph -> graph.facade },
         )
+
+    /**
+     * P7-06 06.B (D-177): the most recently opened graph, captured so the export use case can
+     * resolve the CURRENT graph's controlled snapshot surface. A pure field read, never a lease.
+     */
+    private var lastOpenedGraph: CloseableLedgerGraph? = null
+
+    /**
+     * P7-06 06.B (D-177; spec section 3): the shared backup-export use case, built over this
+     * controller's owner and the injected wiring. The snapshot surface is resolved from the live
+     * graph at export time (the driver is replaced on a reopen); the layout comes from the wiring.
+     */
+    private val backupExportUseCase: BackupExportUseCase? =
+        backupWiring?.let { wiring ->
+            BackupExportUseCase(
+                owner = owner,
+                fileSystem = wiring.fileSystem,
+                layout = wiring.layout,
+                snapshotProvider = { lastOpenedGraph?.snapshotPort },
+                target = wiring.targetPort,
+                crypto = wiring.crypto,
+                newToken = wiring.newToken,
+            )
+        }
 
     /**
      * P7-06 06.1 fix (review REJECT): the product surface handed to [P503App] is the LEASE-SCOPED
@@ -313,7 +378,10 @@ internal class AndroidStartupController(
     val ledger: LedgerLeaseScope?
         get() = if (state == P503StartupState.Ready) leaseScope else null
 
-    private val leaseScope = LedgerLeaseScope(owner)
+    private val leaseScope =
+        LedgerLeaseScope(owner).also { scope ->
+            scope.backupExport = backupExportUseCase
+        }
 
     /**
      * True once [start] has been invoked. The state already starts as [P503StartupState.Starting]
@@ -472,6 +540,9 @@ internal data class CloseableLedgerGraph(
     val catalogCommands: ExecuteCatalogCommand? = null,
     val runQueryStatisticsOptimize: () -> Unit = {},
     val runFullAnalyze: () -> Unit = {},
+    // P7-06 06.B (D-177; spec sections 3.3/3.4): the controlled snapshot surface over the graph's
+    // private driver. Null when the composition root wired none (tests, legacy graphs).
+    val snapshotPort: BackupSnapshotPort? = null,
 )
 
 private const val LOG_TAG = "UnifiedLedger"
@@ -507,6 +578,25 @@ private val ANDROID_STABLE_STORAGE_OPEN_LOCK = Any()
  * call and the mechanism is what the test pins).
  */
 internal fun <T> withAndroidStableStorageOpenLock(open: () -> T): T = synchronized(ANDROID_STABLE_STORAGE_OPEN_LOCK) { open() }
+
+/**
+ * P7-06 06.B (D-177; spec section 3): the composition-root backup-export wiring handed to
+ * [AndroidStartupController]. Kept as one value so the controller's constructor stays backward
+ * compatible (the existing startup tests pass only [openDatabase] and the log channel).
+ */
+internal class AndroidBackupWiring(
+    val fileSystem: LedgerFileSystem,
+    val layout: LedgerStorageLayout,
+    val targetPort: BackupTargetPort,
+    val crypto: BackupCryptoPrimitives = JvmBackupCryptoPrimitives(),
+    val newToken: () -> String = { randomUuidText() },
+)
+
+/** P7-06 06.B: one random token text (kept out of the data-class default so ktlint's chain rule is satisfied). */
+private fun randomUuidText(): String {
+    val uuid = java.util.UUID.randomUUID()
+    return uuid.toString()
+}
 
 /**
  * P7-06 06.1 (D-176; spec sections 3.2/4.5/5.1): the Android stable-storage open. The host
@@ -547,6 +637,9 @@ private fun openAndroidStableStorageLedgerLocked(
 ): CloseableLedgerGraph {
     val databasePath = context.getDatabasePath(LEGACY_ANDROID_DATABASE_NAME)
     val (hostDirectory, legacyMainFile) = androidStableStoragePaths(databasePath)
+    // P7-06 06.B: the file-system adapter and layout are resolved HERE (the single place that
+    // derives the host directory) so the graph build can wire the private staging host and the
+    // snapshot port to the same host the startup sequence used.
     val fileSystem = AndroidLedgerFileSystem()
     val layout = ledgerStorageLayout(fileSystem, hostDirectory)
     return openStableStorageLedger(
@@ -574,7 +667,7 @@ private fun openAndroidStableStorageLedgerLocked(
         // androidGenerationDriverName returns it unchanged and openDriver receives an absolute path.
         val handle = openDriver(androidGenerationDriverName(target.mainFile))
         try {
-            buildLedgerGraph(handle, importFilePickPort, importPickChannel)
+            buildLedgerGraph(handle, importFilePickPort, importPickChannel, AndroidBackupSnapshotPort(handle))
         } catch (failure: Exception) {
             handle.close()
             throw failure
@@ -621,6 +714,7 @@ private fun buildLedgerGraph(
     handle: AndroidLedgerDatabaseHandle,
     importFilePickPort: AndroidImportFilePickPort<Uri>,
     importPickChannel: ImportFilePickResultChannel,
+    snapshotPort: BackupSnapshotPort? = null,
 ): CloseableLedgerGraph {
     val database = handle.database
     val store = handle.catalogStore
@@ -985,9 +1079,47 @@ private fun buildLedgerGraph(
         catalogCommands,
         handle::runQueryStatisticsOptimize,
         handle::runFullAnalyze,
+        snapshotPort = snapshotPort,
     )
 }
 
 private val secureRandom = SecureRandom()
 
 private fun secureRandomBytes(count: Int): ByteArray = ByteArray(count).also(secureRandom::nextBytes)
+
+/**
+ * P7-06 06.B (D-177; spec section 3.5 phase 2): posts [block] onto the process main looper. SAF
+ * `ActivityResultLauncher.launch` is main-thread only, while the export use case runs on a
+ * background dispatcher; this is the hop that makes the launch legal. When already on the main
+ * thread the block runs inline (the desktop chooser's own `EventQueue.isDispatchThread` precedent).
+ * A dead looper surfaces as a thrown `RuntimeException`, which the target port treats as a
+ * cancelled choice rather than a crash.
+ */
+internal fun mainThreadPoster(): (() -> Unit) -> Unit {
+    val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    return { block ->
+        dispatchToMainThread(
+            onMainLooper = android.os.Looper.myLooper() === android.os.Looper.getMainLooper(),
+            post = { block -> handler.post(block) },
+            block = block,
+        )
+    }
+}
+
+/**
+ * P3-L fix (06.B review): the pure dispatch decision of [mainThreadPoster], extracted so it is
+ * JVM-testable without android.os (the poster's actual Handler is an android.jar stub off-device).
+ * On the main looper the block runs inline; otherwise it is handed to [post]. The production poster
+ * passes `Handler(getMainLooper())::post`; the tests pass a recording poster.
+ */
+internal fun dispatchToMainThread(
+    onMainLooper: Boolean,
+    post: (() -> Unit) -> Unit,
+    block: () -> Unit,
+) {
+    if (onMainLooper) {
+        block()
+    } else {
+        post(block)
+    }
+}

@@ -609,6 +609,23 @@ class LedgerRuntimeOwnerTest {
         assertFalse(unwired.incomeCommitStatus)
         assertFalse(unwired.transferCommitStatus)
         assertFalse(unwired.lendingCommitStatus)
+
+        // P2-F fix (06.B review): the backup-export probe (it gates BOTH the HOME entry and the
+        // confirm callback). Unwired by default, true once the composition root binds the use case.
+        assertFalse(unwired.backupExport, "an unwired scope must not report the export surface")
+        val exportOwner = ownerFor(minimalP503LedgerFacade())
+        val exportScope = LedgerLeaseScope(exportOwner)
+        exportScope.backupExport =
+            BackupExportUseCase(
+                owner = exportOwner,
+                fileSystem = LedgerFileSystemFake(),
+                layout = ledgerStorageLayout(LedgerFileSystemFake(), "/host"),
+                snapshotProvider = { null },
+                target = { null },
+                crypto = noopBackupCrypto(),
+                newToken = { "token" },
+            )
+        assertTrue(exportScope.surfaces.backupExport, "a wired use case must report the export surface")
     }
 
     private fun ownerFor(facade: P503LedgerFacade): LedgerRuntimeOwner<Graph> {
@@ -620,6 +637,58 @@ class LedgerRuntimeOwnerTest {
             )
         owner.startup()
         return owner
+    }
+
+    @Test
+    fun theBackupExportLaunchCapturesTheActiveGenerationAndResolvesTheActiveMainFile() {
+        // P7-06 06.B (D-177; spec sections 3.1/3.2): the export launch resolves the request for the
+        // CURRENT active generation and carries that generation so the landing hop can discard a
+        // result that lands after a reopen. `BackupExportResult` carries no generation itself, so
+        // this capture is the ONLY generation source the host's discard check can use.
+        val h = harness()
+        h.owner.startup()
+        val scope = LedgerLeaseScope(h.owner)
+        val layout = ledgerStorageLayout(LedgerFileSystemFake(), "/host")
+        scope.backupExport =
+            BackupExportUseCase(
+                owner = h.owner,
+                fileSystem = LedgerFileSystemFake(),
+                layout = layout,
+                snapshotProvider = { null },
+                target = { null },
+                crypto = noopBackupCrypto(),
+                newToken = { "token" },
+            )
+
+        val launch = scope.backupExportLaunch("password123")
+        assertNotNull(launch)
+        assertEquals(1, launch.generation)
+        assertEquals(layout.mainFile(layout.generationDirectory(1)), launch.request.activeMainFile)
+        assertEquals("password123", launch.request.password)
+
+        // A reopen supersedes the captured generation, so the landing guard discards the result.
+        h.owner.reopen()
+        assertFalse(scope.isCurrentGeneration(launch.generation), "a launch captured before a reopen must be stale")
+    }
+
+    @Test
+    fun theBackupExportLaunchIsNullWhenTheSurfaceIsUnwiredOrTheRuntimeIsNotReady() {
+        val h = harness()
+        val scope = LedgerLeaseScope(h.owner)
+        // Unwired surface: null.
+        assertNull(scope.backupExportLaunch("password123"))
+        // Not Ready (no startup): null even with the surface bound.
+        scope.backupExport =
+            BackupExportUseCase(
+                owner = h.owner,
+                fileSystem = LedgerFileSystemFake(),
+                layout = ledgerStorageLayout(LedgerFileSystemFake(), "/host"),
+                snapshotProvider = { null },
+                target = { null },
+                crypto = noopBackupCrypto(),
+                newToken = { "token" },
+            )
+        assertNull(scope.backupExportLaunch("password123"))
     }
 
     @Test

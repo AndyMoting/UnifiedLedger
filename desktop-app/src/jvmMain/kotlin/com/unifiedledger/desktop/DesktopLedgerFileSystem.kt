@@ -1,6 +1,8 @@
 package com.unifiedledger.desktop
 
 import com.unifiedledger.ui.LedgerFileSystem
+import com.unifiedledger.ui.LedgerReadStream
+import com.unifiedledger.ui.LedgerWriteStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -96,6 +98,96 @@ internal class DesktopLedgerFileSystem : LedgerFileSystem {
         runCatching {
             val channel = FileChannelHolder.open(path)
             channel?.use { it.force(true) }
+        }
+    }
+
+    /**
+     * P7-06 06.B (D-177; spec section 3.2): the available-space primitive did not exist before
+     * 06.B. `FileStore.getUsableSpace` reports the volume holding [path]'s nearest existing
+     * ancestor; a resolution failure returns null so the export use case proceeds and relies on
+     * the write-side failure handling rather than blocking on an unknown value.
+     */
+    override fun usableSpace(path: String): Long? =
+        runCatching {
+            val target = nearestExisting(path)
+            Files.getFileStore(target.toPath()).usableSpace
+        }.getOrNull()
+
+    override fun openRead(path: String): LedgerReadStream = DesktopReadStream(FileInputStream(path))
+
+    override fun openWrite(path: String): LedgerWriteStream = DesktopWriteStream(File(path))
+
+    override fun listDirectory(path: String): List<String> = File(path).list()?.toList() ?: emptyList()
+
+    private fun nearestExisting(path: String): File {
+        var candidate = File(path)
+        while (!candidate.exists() && candidate.parentFile != null) {
+            candidate = candidate.parentFile
+        }
+        return candidate
+    }
+}
+
+/** A bounded chunked read stream over a desktop file (P7-06 06.B). */
+private class DesktopReadStream(
+    private val stream: FileInputStream,
+) : LedgerReadStream {
+    override fun read(buffer: ByteArray): Int = stream.read(buffer)
+
+    override fun close() {
+        stream.close()
+    }
+}
+
+/**
+ * The desktop bounded write stream (P7-06 06.B; spec section 3.5 phase 2): content is staged in a
+ * sibling temp file, fsynced, then atomically moved onto the target (`ATOMIC_MOVE`). If the
+ * platform cannot move atomically the stream throws rather than silently publishing a partial
+ * file, matching the frozen [DesktopLedgerFileSystem.writeAtomic] rule. A failed [commit] or a
+ * [close] before commit removes the staged temp file.
+ */
+private class DesktopWriteStream(
+    private val target: File,
+) : LedgerWriteStream {
+    private val temporary = File(target.parentFile, target.name + ".tmp")
+    private val stream = FileOutputStream(temporary).also { target.parentFile?.mkdirs() }
+    private var committed = false
+
+    override fun write(
+        bytes: ByteArray,
+        offset: Int,
+        length: Int,
+    ) {
+        stream.write(bytes, offset, length)
+    }
+
+    override fun flushAndSync() {
+        stream.flush()
+        stream.fd.sync()
+    }
+
+    override fun commit() {
+        stream.flush()
+        stream.fd.sync()
+        stream.close()
+        try {
+            Files.move(
+                temporary.toPath(),
+                target.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } catch (unsupported: AtomicMoveNotSupportedException) {
+            temporary.delete()
+            throw unsupported
+        }
+        committed = true
+    }
+
+    override fun close() {
+        if (!committed) {
+            runCatching { stream.close() }
+            temporary.delete()
         }
     }
 }

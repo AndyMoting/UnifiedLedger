@@ -1,6 +1,8 @@
 package com.unifiedledger.android
 
 import com.unifiedledger.ui.LedgerFileSystem
+import com.unifiedledger.ui.LedgerReadStream
+import com.unifiedledger.ui.LedgerWriteStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -74,5 +76,71 @@ internal class DesktopStyleTestFileSystem : LedgerFileSystem {
 
     override fun fsyncDirectory(path: String) {
         // Best effort on the JVM; see the production adapters' notes.
+    }
+
+    // P7-06 06.B (D-177): the test doubles for the three 06.B port additions.
+
+    override fun usableSpace(path: String): Long? = File(path).let { nearestExisting(it).usableSpace }
+
+    override fun openRead(path: String): LedgerReadStream = JvmTestReadStream(FileInputStream(path))
+
+    override fun openWrite(path: String): LedgerWriteStream = JvmTestWriteStream(File(path))
+
+    override fun listDirectory(path: String): List<String> = File(path).list()?.toList() ?: emptyList()
+
+    private fun nearestExisting(file: File): File {
+        var candidate = file
+        while (!candidate.exists()) {
+            val parent = candidate.parentFile ?: break
+            candidate = parent
+        }
+        return candidate
+    }
+}
+
+private class JvmTestReadStream(
+    private val stream: FileInputStream,
+) : LedgerReadStream {
+    override fun read(buffer: ByteArray): Int = stream.read(buffer)
+
+    override fun close() {
+        stream.close()
+    }
+}
+
+private class JvmTestWriteStream(
+    private val target: File,
+) : LedgerWriteStream {
+    private val temporary = File(target.parentFile, target.name + ".tmp")
+    private val stream = FileOutputStream(temporary).also { target.parentFile?.mkdirs() }
+    private var committed = false
+
+    override fun write(
+        bytes: ByteArray,
+        offset: Int,
+        length: Int,
+    ) {
+        stream.write(bytes, offset, length)
+    }
+
+    override fun flushAndSync() {
+        stream.flush()
+    }
+
+    override fun commit() {
+        stream.flush()
+        stream.close()
+        if (!temporary.renameTo(target)) {
+            temporary.delete()
+            throw IllegalStateException("atomic rename failed for $target")
+        }
+        committed = true
+    }
+
+    override fun close() {
+        if (!committed) {
+            runCatching { stream.close() }
+            temporary.delete()
+        }
     }
 }
