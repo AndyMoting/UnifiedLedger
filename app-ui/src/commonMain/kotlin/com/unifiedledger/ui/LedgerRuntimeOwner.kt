@@ -547,6 +547,25 @@ class LedgerLeaseScope(
     fun importIntakeSessionFactory(): ImportIntakeSessionIdentity? = owner.facade?.importIntakeSessionFactory?.invoke()
 
     /**
+     * P7-06 06.B (D-177; spec section 3): the shared backup-export use case the composition root
+     * bound to this scope, or null when the surface is absent. Lease-free: the use case acquires and
+     * releases its OWN operation lease for the whole export (spec section 3.1), so exposing it here
+     * adds no second lease.
+     */
+    var backupExport: BackupExportUseCase? = null
+
+    /**
+     * P7-06 06.B (D-177; spec section 3.2): the export request for the CURRENT active generation,
+     * resolving the active main file from the platform-resolved storage layout the use case was
+     * built with. Null when the export surface or the active generation is unavailable.
+     */
+    fun backupExportRequest(password: String): BackupExportRequest? {
+        val useCase = backupExport ?: return null
+        val generation = owner.activeGeneration ?: return null
+        return useCase.requestFor(password, generation)
+    }
+
+    /**
      * Which optional surfaces the current facade has wired (pure null checks on the composition
      * wiring; never touches the ledger). The host uses these to render no dead affordances.
      */
@@ -726,6 +745,11 @@ fun <G> openStableStorageLedger(
             is LedgerStorageResolution.Planned -> resolution.plan
             is LedgerStorageResolution.Rejected -> throw LedgerStorageRejectedException(resolution.failure)
         }
+    // P7-06 06.B (D-177; spec section 6): sweep the private backup staging on every start. A
+    // process killed mid-export leaves its snapshot/container behind; this is the spec's
+    // "next start" cleanup fallback. It runs before any export can begin and is best effort
+    // (never fails startup), and it only removes the frozen staging prefixes.
+    sweepBackupStaging(fileSystem, layout)
     return when (plan) {
         is LedgerStoragePlan.OpenGeneration ->
             openGraph(

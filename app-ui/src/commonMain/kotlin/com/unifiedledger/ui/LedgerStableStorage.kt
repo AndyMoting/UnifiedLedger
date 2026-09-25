@@ -38,6 +38,21 @@ internal const val LEDGER_GENERATION_PREFIX = "gen-"
 /** The SQLite sidecar suffixes that must travel with the main file as one consistent set. */
 internal val LEDGER_SIDECAR_SUFFIXES: List<String> = listOf("-wal", "-shm")
 
+/**
+ * P7-06 06.B (D-177; spec `2026-09-24-p7-06-backup-export-design.md` section 6): the private
+ * backup staging directory under the platform-resolved host directory. The snapshot file, the
+ * private staging container and any plaintext live ONLY here (never in the user target, never in
+ * a public location); the literal name is an implementation-batch decision (the container-format
+ * spec section 5.2 freezes only the semantics: private, single-ledger, enumerable, rollbackable).
+ */
+internal const val LEDGER_BACKUP_STAGING_DIRECTORY = "backup-staging"
+
+/** The snapshot file name prefix inside the backup staging directory. */
+internal const val LEDGER_BACKUP_SNAPSHOT_PREFIX = "snapshot-"
+
+/** The private staging container file name prefix inside the backup staging directory. */
+internal const val LEDGER_BACKUP_CONTAINER_PREFIX = "container-"
+
 /** The 16-byte SQLite file magic; a main file must start with it to be openable (section 4.5). */
 internal val LEDGER_SQLITE_HEADER: ByteArray = "SQLite format 3\u0000".encodeToByteArray()
 
@@ -101,6 +116,75 @@ interface LedgerFileSystem {
      * fsync the adapter may treat it as best effort (documented at the adapter).
      */
     fun fsyncDirectory(path: String)
+
+    /**
+     * P7-06 06.B (D-177; spec section 3.2 / container-format spec section 4.8): the available
+     * bytes on the volume holding [path], or null when the platform cannot report it. The export
+     * disk precheck requires `available >= container_size + plaintext_size + 64 MiB`; this
+     * primitive did not exist before 06.B (the 06.B spec section 1.2 records zero hits). A null
+     * result is treated as "cannot verify" by the export use case, which proceeds and relies on
+     * the write-side failure handling instead of blocking on an unknown value.
+     */
+    fun usableSpace(path: String): Long?
+
+    /**
+     * P7-06 06.B (D-177; spec section 5): opens a bounded, chunked read stream over [path]. The
+     * export must never call [readBytes] on the snapshot or the container — both can be ~2 GiB —
+     * so the shared writer streams through this port in fixed 64 KiB chunks. Callers must close
+     * the returned stream.
+     */
+    fun openRead(path: String): LedgerReadStream
+
+    /**
+     * P7-06 06.B (D-177; spec section 3.5 phase 2): opens a bounded, chunked write stream to
+     * [path] with the atomic-rename semantics of [writeAtomic] — the bytes become visible at
+     * [path] only after a clean [LedgerWriteStream.close], never a partially written file.
+     *
+     * This is deliberately NOT [writeAtomic]: that primitive takes the whole content as a
+     * `ByteArray` (whole-file in memory), which the ~2 GiB container forbids. Adapters implement
+     * the temp-file + platform atomic replace; where the target cannot be atomically replaced the
+     * adapter may write in place and rely on the stream's clean close (spec section 3.5).
+     */
+    fun openWrite(path: String): LedgerWriteStream
+
+    /**
+     * P7-06 06.B (D-177; spec section 6): the child entry names directly under [path], used only
+     * by the private-staging sweep. Returns an empty list when the directory does not exist or
+     * cannot be listed — the sweep is a best-effort cleanup (the spec forbids claiming a secure
+     * erase, and a cleanup failure must never fail startup).
+     */
+    fun listDirectory(path: String): List<String>
+}
+
+/** A bounded read stream over a file (P7-06 06.B; spec section 5). */
+interface LedgerReadStream : AutoCloseable {
+    /**
+     * Reads at most `buffer.size` bytes into [buffer], returning the count read or a non-positive
+     * value at end of stream (the `InputStream` convention). Never reads the whole file at once.
+     */
+    fun read(buffer: ByteArray): Int
+}
+
+/**
+ * A bounded write stream to a file with atomic-rename semantics (P7-06 06.B; spec section 3.5
+ * phase 2). The file at the target path is replaced atomically on [close]; a failure before
+ * [close] leaves the previous content untouched.
+ */
+interface LedgerWriteStream : AutoCloseable {
+    fun write(
+        bytes: ByteArray,
+        offset: Int,
+        length: Int,
+    )
+
+    /** Flushes and fsyncs the staged content where the platform supports it. */
+    fun flushAndSync()
+
+    /** Atomically publishes the staged content; must be called exactly once. */
+    fun commit()
+
+    /** Abandons the staged content without publishing it. Idempotent and safe after [commit]. */
+    override fun close()
 }
 
 /** The stable-storage layout under one platform-resolved host directory (section 3). */
@@ -114,6 +198,21 @@ class LedgerStorageLayout internal constructor(
     val activePointerFile: String = fileSystem.join(hostDirectory, LEDGER_ACTIVE_POINTER_FILE)
 
     val switchJournalFile: String = fileSystem.join(hostDirectory, LEDGER_SWITCH_JOURNAL_FILE)
+
+    /**
+     * P7-06 06.B (D-177; spec section 6): the private backup staging directory. Snapshot,
+     * staging container and any plaintext live only here, under the app-private host directory
+     * (container-format spec section 4.9).
+     */
+    val backupStagingDirectory: String = fileSystem.join(hostDirectory, LEDGER_BACKUP_STAGING_DIRECTORY)
+
+    /** The snapshot file for one export [token] (a per-export unique suffix). */
+    fun backupSnapshotFile(token: String): String =
+        fileSystem.join(backupStagingDirectory, LEDGER_BACKUP_SNAPSHOT_PREFIX + token)
+
+    /** The private staging container file for one export [token]. */
+    fun backupContainerFile(token: String): String =
+        fileSystem.join(backupStagingDirectory, LEDGER_BACKUP_CONTAINER_PREFIX + token)
 
     fun generationDirectoryName(generation: Int): String = "$LEDGER_GENERATION_PREFIX$generation"
 
@@ -351,6 +450,31 @@ internal fun removeLegacyFiles(
         val legacySidecar = legacyMainFile + suffix
         if (fileSystem.exists(legacySidecar)) {
             fileSystem.delete(legacySidecar)
+        }
+    }
+}
+
+/**
+ * P7-06 06.B (D-177; spec sections 3.7 and 6): the private-staging sweep run at startup. Every
+ * export cleans its own snapshot/container in a `finally`, but a process killed mid-export leaves
+ * them behind; the spec designates "next start" as the cleanup fallback. This deletes only files
+ * carrying the frozen staging prefixes, so it can never touch a generation, the pointer, a journal
+ * or any other ledger state.
+ *
+ * Best effort by contract: a listing/deletion failure is swallowed (the spec forbids claiming a
+ * secure erase, and cleanup must never turn a good startup into a failure). The sweep runs BEFORE
+ * any export can begin (only one export runs at a time under the single runtime owner), so it
+ * cannot race a live export's staging files.
+ */
+internal fun sweepBackupStaging(
+    fileSystem: LedgerFileSystem,
+    layout: LedgerStorageLayout,
+) {
+    runCatching {
+        for (name in fileSystem.listDirectory(layout.backupStagingDirectory)) {
+            if (name.startsWith(LEDGER_BACKUP_SNAPSHOT_PREFIX) || name.startsWith(LEDGER_BACKUP_CONTAINER_PREFIX)) {
+                runCatching { fileSystem.delete(fileSystem.join(layout.backupStagingDirectory, name)) }
+            }
         }
     }
 }

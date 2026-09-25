@@ -1,7 +1,10 @@
 package com.unifiedledger.android
 
+import android.os.StatFs
 import android.util.AtomicFile
 import com.unifiedledger.ui.LedgerFileSystem
+import com.unifiedledger.ui.LedgerReadStream
+import com.unifiedledger.ui.LedgerWriteStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -91,6 +94,84 @@ internal class AndroidLedgerFileSystem : LedgerFileSystem {
         // No directory fsync primitive on Android; see the class note. The file-level fsyncs
         // before and after the pointer publish carry the durability ordering this adapter can
         // guarantee.
+    }
+
+    /**
+     * P7-06 06.B (D-177; spec section 3.2): the available-space primitive did not exist before
+     * 06.B. `StatFs` over the nearest existing ancestor of [path] reports the app-private data
+     * volume's free bytes; a resolution failure returns null so the export use case proceeds and
+     * relies on the write-side failure handling rather than blocking on an unknown value.
+     */
+    override fun usableSpace(path: String): Long? =
+        runCatching {
+            val target = nearestExisting(path)
+            StatFs(target.absolutePath).availableBytes
+        }.getOrNull()
+
+    override fun openRead(path: String): LedgerReadStream = AndroidReadStream(FileInputStream(path))
+
+    override fun openWrite(path: String): LedgerWriteStream = AndroidWriteStream(File(path))
+
+    override fun listDirectory(path: String): List<String> =
+        File(path).list()?.toList() ?: emptyList()
+
+    private fun nearestExisting(path: String): File {
+        var candidate = File(path)
+        while (!candidate.exists() && candidate.parentFile != null) {
+            candidate = candidate.parentFile
+        }
+        return candidate
+    }
+}
+
+/** A bounded chunked read stream over an Android file (P7-06 06.B). */
+private class AndroidReadStream(
+    private val stream: FileInputStream,
+) : LedgerReadStream {
+    override fun read(buffer: ByteArray): Int = stream.read(buffer)
+
+    override fun close() {
+        stream.close()
+    }
+}
+
+/**
+ * The Android bounded write stream (P7-06 06.B; spec section 3.5 phase 2): content is staged
+ * through [AtomicFile], whose `finishWrite` performs the platform atomic replace, so a partially
+ * written target is never observable. A failed [commit] or a [close] before commit abandons the
+ * staged file (`failWrite`) without publishing it.
+ */
+private class AndroidWriteStream(
+    target: File,
+) : LedgerWriteStream {
+    private val atomic = AtomicFile(target)
+    private val stream = atomic.startWrite()
+    private var committed = false
+
+    override fun write(
+        bytes: ByteArray,
+        offset: Int,
+        length: Int,
+    ) {
+        stream.write(bytes, offset, length)
+    }
+
+    override fun flushAndSync() {
+        stream.flush()
+        runCatching { stream.fd.sync() }
+    }
+
+    override fun commit() {
+        stream.flush()
+        runCatching { stream.fd.sync() }
+        atomic.finishWrite(stream)
+        committed = true
+    }
+
+    override fun close() {
+        if (!committed) {
+            runCatching { atomic.failWrite(stream) }
+        }
     }
 }
 

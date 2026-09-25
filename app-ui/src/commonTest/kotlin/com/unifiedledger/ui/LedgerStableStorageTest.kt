@@ -417,4 +417,59 @@ class LedgerStableStorageTest {
         assertEquals(listOf("graph"), closed, "the opened graph must be closed when the legacy removal fails")
         assertTrue(fileSystem.hasFile(legacy), "the legacy set is still intact")
     }
+
+    // ---------------------------------------------------------------- 06.B staging sweep (section 6)
+
+    @Test
+    fun theStartupSweepRemovesLeftoverStagingSnapshotAndContainerFiles() {
+        // P7-06 06.B (D-177; spec section 6): a process killed mid-export leaves its staging files;
+        // the next start must sweep them. Only the frozen staging prefixes are removed.
+        fileSystem.putDirectory(layout.backupStagingDirectory)
+        fileSystem.putFile(layout.backupSnapshotFile("stale-1"), ByteArray(10))
+        fileSystem.putFile(layout.backupContainerFile("stale-1"), ByteArray(20))
+        fileSystem.putFile(layout.backupSnapshotFile("stale-2"), ByteArray(30))
+
+        openStableStorageLedger(fileSystem, layout, legacyMainFile = null, closeGraph = {}) {
+            fileSystem.putFile(it.mainFile, sqliteLikeBytes())
+            "graph"
+        }
+
+        assertFalse(fileSystem.hasFile(layout.backupSnapshotFile("stale-1")))
+        assertFalse(fileSystem.hasFile(layout.backupContainerFile("stale-1")))
+        assertFalse(fileSystem.hasFile(layout.backupSnapshotFile("stale-2")))
+    }
+
+    @Test
+    fun theStartupSweepNeverTouchesNonStagingFilesOrTheGenerationSet() {
+        // The sweep must be scoped: a generation, the pointer and an unrelated file must survive.
+        fileSystem.putDirectory(generationsDirectory)
+        fileSystem.putDirectory(generationOneDirectory)
+        fileSystem.putFile(generationOneMain, sqliteLikeBytes())
+        fileSystem.putFile(pointer, "gen-1")
+        fileSystem.putDirectory(layout.backupStagingDirectory)
+        fileSystem.putFile(fileSystem.join(layout.backupStagingDirectory, "keep-me"), ByteArray(5))
+        fileSystem.putFile(layout.backupContainerFile("stale"), ByteArray(5))
+
+        openStableStorageLedger(fileSystem, layout, legacyMainFile = null, closeGraph = {}) { "graph" }
+
+        assertTrue(fileSystem.hasFile(generationOneMain))
+        assertTrue(fileSystem.hasFile(pointer))
+        assertTrue(fileSystem.hasFile(fileSystem.join(layout.backupStagingDirectory, "keep-me")))
+        assertFalse(fileSystem.hasFile(layout.backupContainerFile("stale")))
+    }
+
+    @Test
+    fun aSweepListingFailureNeverFailsStartup() {
+        // Best effort by contract: cleanup must never turn a good startup into a failure.
+        fileSystem.failOn = "listDirectory:${layout.backupStagingDirectory}"
+
+        val graph =
+            openStableStorageLedger(fileSystem, layout, legacyMainFile = null, closeGraph = {}) {
+                fileSystem.putFile(it.mainFile, sqliteLikeBytes())
+                "graph"
+            }
+
+        assertEquals("graph", graph)
+        assertEquals("gen-1", fileSystem.fileBytes(pointer)?.decodeToString())
+    }
 }
