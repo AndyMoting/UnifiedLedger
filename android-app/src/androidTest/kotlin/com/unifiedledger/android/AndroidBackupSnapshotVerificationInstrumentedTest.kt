@@ -35,19 +35,19 @@ import java.io.File
  */
 @RunWith(AndroidJUnit4::class)
 class AndroidBackupSnapshotVerificationInstrumentedTest {
-    private val createdFiles = mutableListOf<File>()
+    private val createdDirs = mutableListOf<File>()
 
     @After
     fun cleanUp() {
-        for (file in createdFiles) {
-            file.delete()
+        for (dir in createdDirs) {
+            dir.deleteRecursively()
         }
-        createdFiles.clear()
+        createdDirs.clear()
     }
 
     @Test
     fun aValidSnapshotWithProductUserVersionVerifiesWithoutThrowing() {
-        val snapshot = createSnapshot(userVersion = 31)
+        val snapshot = createSnapshot(newTestDir(), userVersion = 31)
 
         // The regression: the old driver-with-version-0 path threw at construction. This call must
         // return normally and report the snapshot self-consistent.
@@ -59,21 +59,52 @@ class AndroidBackupSnapshotVerificationInstrumentedTest {
 
     @Test
     fun verificationNeverMigratesOrWritesTheSnapshot() {
-        val snapshot = createSnapshot(userVersion = 31)
-        val before = snapshot.readBytes()
+        // Each test owns a dedicated directory (see [newTestDir]) instead of sharing one
+        // timestamped parent, so the "did verification add anything?" check below cannot be
+        // polluted by a sibling test or by the shared cache parent.
+        val dir = newTestDir()
+        val snapshot = createSnapshot(dir, userVersion = 31)
+
+        // Precondition, made explicit: the SETUP's own read-WRITE framework open
+        // (`SQLiteDatabase.openOrCreateDatabase` in [createSnapshot]) is what leaves a 0-byte
+        // rollback-journal sidecar (`<name>-journal`) beside the snapshot on Android, even after
+        // `close()` — the same behaviour the app's real `AndroidSqliteDriver` database shows on
+        // device. That sidecar is a SETUP artifact, not a verification artifact, so remove it here
+        // before taking the "before" listing. Without this, verification could recreate a
+        // same-named sidecar and the name-set comparison below would not notice, because the name
+        // was already present. `delete()` returning false when no sidecar exists is fine: the
+        // precondition is "the setup is finished and its sidecars are gone", not "a sidecar
+        // existed".
+        File(dir, snapshot.name + "-journal").delete()
+
+        // The "before" listing is taken only after the setup fully completes and its sidecar is
+        // removed, so every name that appears afterwards is attributable to the verification.
+        val beforeNames =
+            dir
+                .listFiles()
+                .orEmpty()
+                .map { it.name }
+                .toSortedSet()
+        val beforeBytes = snapshot.readBytes()
 
         verifyAndroidSnapshotFile(snapshot.absolutePath)
 
-        // The verification is read-only in effect: the file is byte-identical afterwards (no
-        // create, no migrate, no journal sidecar left claiming a write).
-        assertTrue("the snapshot must be byte-identical after verification", before.contentEquals(snapshot.readBytes()))
-        assertFalse("verification must not leave a -journal sidecar", File(snapshot.parentFile, snapshot.name + "-journal").exists())
+        // The verification is read-only in effect: it added nothing to the directory (no
+        // `-journal`, `-wal` or `-shm` sidecar, no new file at all) and the snapshot bytes are
+        // unchanged (no create, no migrate, no in-place write).
+        val afterNames =
+            dir
+                .listFiles()
+                .orEmpty()
+                .map { it.name }
+                .toSortedSet()
+        assertEquals("verification must add no file to the snapshot directory", beforeNames, afterNames)
+        assertTrue("the snapshot must be byte-identical after verification", beforeBytes.contentEquals(snapshot.readBytes()))
     }
 
     @Test
     fun aCorruptSnapshotIsReportedRatherThanSilentlyAccepted() {
-        val bogus = File(tempDir(), "bogus-snapshot").apply { writeBytes(ByteArray(4096) { 0x5A }) }
-        createdFiles += bogus
+        val bogus = File(newTestDir(), "bogus-snapshot").apply { writeBytes(ByteArray(4096) { 0x5A }) }
 
         // A non-database file either throws or reports not-ok; what it must NEVER do is crash with
         // the old "Version must be >= 1, was 0" construction error.
@@ -90,15 +121,16 @@ class AndroidBackupSnapshotVerificationInstrumentedTest {
     }
 
     /**
-     * Produces a real SQLite file carrying [userVersion] at a path with NO path separator in a
-     * relative name concern (it is an absolute path, exactly what the verification opens). The
-     * verification under test only needs a valid SQLite file with the product `user_version`; the
-     * production snapshot mechanism (`VACUUM INTO`) is covered by the JVM driver test and the
-     * spec's registered on-device item, not here.
+     * Produces a real SQLite file carrying [userVersion] in [dir]. The verification under test only
+     * needs a valid SQLite file with the product `user_version`; the production snapshot mechanism
+     * (`VACUUM INTO`) is covered by the JVM driver test and the spec's registered on-device item,
+     * not here.
      */
-    private fun createSnapshot(userVersion: Int): File {
-        val snapshot = File(tempDir(), "snapshot-${System.nanoTime()}.db")
-        createdFiles += snapshot
+    private fun createSnapshot(
+        dir: File,
+        userVersion: Int,
+    ): File {
+        val snapshot = File(dir, "snapshot-${System.nanoTime()}.db")
         val database = SQLiteDatabase.openOrCreateDatabase(snapshot, null)
         try {
             database.execSQL("CREATE TABLE sample (id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
@@ -110,8 +142,19 @@ class AndroidBackupSnapshotVerificationInstrumentedTest {
         return snapshot
     }
 
-    private fun tempDir(): File =
-        File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "p706b-snapshot").apply {
-            mkdirs()
-        }
+    /**
+     * A dedicated per-test directory under the instrumentation target's cache dir. Each test gets
+     * its own directory so a directory-listing assertion observes only that test's own artifacts;
+     * the shared `p706b-snapshot` parent is not used as the listing root.
+     */
+    private fun newTestDir(): File {
+        val dir =
+            File(
+                InstrumentationRegistry.getInstrumentation().targetContext.cacheDir,
+                "p706b-snapshot/test-${System.nanoTime()}",
+            )
+        dir.mkdirs()
+        createdDirs += dir
+        return dir
+    }
 }
