@@ -86,6 +86,8 @@ commit handoff 后的异常采用 snapshot-aware resolution：resolver 输入 le
 
 `D-176`（P7-06 06.1）补齐两端组合根的稳定存储与运行时归属边界（已实施，`d6cffb6`）：组合根不再直接持有裸 facade，而是经 `LedgerRuntimeOwner`（`app-ui` commonMain）取得活动账本图——owner 以单活动图、generation 与 operation lease 承载 `quiesce()`/`closeActiveGraph()`/`reopen()`，全部业务工作（异步 Default 启动、主线程同步读写、目录命令三类 `facade.*` 入口）必须在 lease 内执行，落地点按 generation 丢弃陈旧结果；`LedgerLeaseScope` 使裸 facade 在结构上不可达（`facade` 为 `internal`）。存储侧由两端组合根提供稳定存储：Android 使用应用私有代际目录、桌面运行期解析用户数据目录，旧路径以非破坏式有序序列升级（复制→fsync→打开读回→发布原子指针→后删旧），并设静默空库禁令（仅「无代际目录且无旧位置」允许全新安装；目录存在但指针无效则 fail-closed）。该边界不改变模块职责划分：`app-ui` 仍只消费 application 层类型，`ledger-data` 仍是持久化实现，owner 属组合根装配层。该 06.1 的 Android 启动路径实现另经设备实证存在两项 P0 缺陷并已修复（`0c0b319`，D-178）：组合根不再向 SQLite driver 传含路径分隔符的相对库名，而是把绝对代际主文件交给驱动；阻塞打开移出 Compose 主线程（注入 scope + `Dispatchers.IO`）；并以进程级打开锁串行化打开序列、控制器显式 `dispose()` 配合组合根 `DisposableEffect`（关闭为尽力而为）。该修复不改本段的设计边界，仅修正其 Android 实现。具体契约见 `docs/specs/2026-09-24-p7-06-stable-storage-runtime-owner-design.md`（D-176）。
 
+`D-177`（P7-06 06.B）补齐备份导出路径的模块边界（已实施并合入 `main`，`6c3c415`）：导出在 `LedgerRuntimeOwner` 的 06.1 operation lease 内执行，取受控连接上的一致快照（`VACUUM INTO`），经第二次只读打开对**快照文件**执行 `PRAGMA integrity_check`，再以两遍有界（64 KiB）hash-then-encrypt 写认证加密容器（字节布局按 `D-174` 冻结），并以有界流式投递到用户所选目标（**不使用**整文件 `writeAtomic(ByteArray)`）；明文 1 GiB 前置/后置门与磁盘前置检查在用户目标创建前执行。快照、KDF、加解密与投递**全部在 UI 线程外**执行并回主线程投递结果，落地点按 generation 丢弃陈旧结果。Android 侧快照校验按**绝对路径只读**打开快照（`SQLiteDatabase.openDatabase(path, null, OPEN_READONLY)`），不经 helper/schema/version 逻辑、不建不迁移。该边界不改变模块职责划分：`app-ui` 承载导出用例与共享导出面、`ledger-application` 定义容器格式与写端口、`ledger-data` 提供快照打开表面，组合根负责目标选择与投递装配。具体契约见 `docs/specs/2026-09-24-p7-06-backup-export-design.md`（D-177）。
+
 ## 正式数据流
 
 ### 手工入口
