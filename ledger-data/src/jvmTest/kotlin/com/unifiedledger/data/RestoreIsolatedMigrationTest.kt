@@ -71,6 +71,39 @@ class RestoreIsolatedMigrationTest {
     }
 
     @Test
+    fun theIdentitySweepObservesLedgerIdsAcrossEveryOwnerTable() {
+        // P1-1: the sweep must span the WHOLE owner set, not just ledger_transaction. The v1 fixture
+        // seeds `ledger-a` in the formal tables; a catalog table carrying a foreign id must be
+        // observed too. Ablating the multi-table sweep (reading only ledger_transaction) would return
+        // just `["ledger-a"]` and this test would go red.
+        withTempDatabase { path ->
+            val url = "jdbc:sqlite:${path.absolutePathString()}"
+            seedAtVersion(url, LedgerDatabase.Schema.version)
+            driver(url).use { isolated ->
+                assertEquals(listOf("ledger-a"), readObservedLedgerIdsOn(isolated))
+                // The migrated schema already carries catalog_version; a row with a foreign id is
+                // exactly the "foreign id in a secondary owner" shape the sweep must observe.
+                isolated.execute(null, "INSERT INTO catalog_version(ledger_id, version) VALUES ('other-ledger', 0)", 0)
+                assertEquals(setOf("ledger-a", "other-ledger"), readObservedLedgerIdsOn(isolated).toSet())
+            }
+        }
+    }
+
+    @Test
+    fun theIdentitySweepReturnsEmptyWhenNoOwnerCarriesAnIdentity() {
+        // P1-1: an empty observed set is what the preflight must reject; the helper reports it as an
+        // empty list rather than inventing a value.
+        withTempDatabase { path ->
+            val url = "jdbc:sqlite:${path.absolutePathString()}"
+            driver(url).use { isolated ->
+                isolated.execute(null, "CREATE TABLE unrelated (id INTEGER)", 0)
+                isolated.execute(null, "INSERT INTO unrelated VALUES (1)", 0)
+                assertTrue(readObservedLedgerIdsOn(isolated).isEmpty())
+            }
+        }
+    }
+
+    @Test
     fun readsTheAuthoritativeUserVersionFromThePayload() {
         withTempDatabase { path ->
             val url = "jdbc:sqlite:${path.absolutePathString()}"
