@@ -2298,21 +2298,20 @@ fun P503App(
      * resolved for the CURRENT active generation and its generation captured for the landing
      * discard.
      *
-     * REGISTERED SPEC DEVIATION (P1-C, 06.B review; for the main agent to rule on): the spec
-     * requires a cancel path (section 3.5), and [BackupExportUseCase.export] accepts a
-     * `BackupCancellationSignal` whose per-chunk checks can abort the container write. This batch
-     * does NOT wire a product cancellation source: the only product call site passes no signal, so
-     * the default `{ false }` always applies and the per-chunk checks cannot fire from the product.
-     * The surface additionally absorbs Close/Back while running (提交中不得离开), and the Android
-     * SAF port blocks the export thread on a latch of up to 10 minutes
+     * CANCEL SCOPE (P1-C, 06.B review; ruled by the main agent): the 06.B cancel deliverable is
+     * satisfied at the USE-CASE level. [BackupExportUseCase.export] accepts a
+     * `BackupCancellationSignal` and checks it per 64 KiB chunk (spec section 5), and its bounded
+     * cancel behavior is tested; that is the spec's cancel requirement. A USER-FACING cancel control
+     * is NOT a 06.B deliverable and is DEFERRED: the only product call site passes no signal (the
+     * default `{ false }` applies), and wiring a cancel affordance that is legal while running would
+     * interact with this surface's frozen "提交中不得离开" discipline and the SAF latch, so it needs
+     * product authority. Consequence of the deferral, registered here: the surface absorbs Close/Back
+     * while running, and the Android SAF port blocks the export thread on a latch of up to 10 minutes
      * (AndroidBackupTargetPort.ANDROID_BACKUP_TARGET_WAIT_MILLIS) if the user never answers the
-     * picker. Consequence: an unanswered picker holds the operation lease and leaves the surface
-     * `running` with no cancel and no exit for up to 10 minutes; the export does complete when the
-     * picker is answered or the latch times out (a timeout is a cancelled choice, not a crash).
-     * Wiring a cancel affordance that is legal while running would change this surface's frozen
-     * "不得离开" discipline and needs product authority, so it is registered rather than implemented
-     * here. The use-case-level signal (and its tests) already exist and are correct; only the host
-     * wiring is absent.
+     * picker, so an unanswered picker holds the operation lease and leaves the surface `running` with
+     * no user cancel and no exit for up to that long; the export does complete when the picker is
+     * answered or the latch times out (a timeout is a cancelled choice, not a crash). This is a
+     * deferred UI affordance, not a missing spec obligation.
      */
     fun confirmBackupExport(current: P503AppState.BackupExport) {
         if (!ledger.surfaces.backupExport) return

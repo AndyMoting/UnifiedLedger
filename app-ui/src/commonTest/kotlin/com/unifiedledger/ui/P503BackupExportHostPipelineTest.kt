@@ -9,6 +9,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.Executors
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -91,10 +92,18 @@ class P503BackupExportHostPipelineTest {
 
     @Test
     fun theExportRunsOffTheCallerThreadAndTheResultLandsOnTheScopeDispatcher() {
-        // P2-E: pins both the off-thread export and the main-thread landing hop. The export records
-        // the thread it ran on; the landing records the thread it landed on. The scope is a single
-        // dedicated dispatcher, so the landing must be on that dispatcher's thread, never the
-        // caller's and never the export's Default-pool thread.
+        // P2-E: pins BOTH the off-thread export and the main-thread landing hop. The scope is a
+        // single dedicated dispatcher ("test-main-scope"), which stands in for the production
+        // `rememberCoroutineScope()` (the composition main dispatcher). The export must NOT run on
+        // that dispatcher (spec section 5 forbids the UI thread) and the landing MUST.
+        //
+        // The decisive assertion is `exportThreads.single() != landingThreads.single()` together
+        // with `!exportThreads.single().startsWith("test-main-scope")`. A weaker
+        // `exportThread != callerName` check is NOT enough: if `Dispatchers.Default` is removed from
+        // runBackupExport, the outer launch inherits the scope's own dispatcher, so the export runs
+        // on "test-main-scope" — which is still != the runBlocking caller thread and would leave the
+        // weaker test green. Comparing the export thread against the LANDING thread (which always
+        // lands on the scope dispatcher) is what makes the regression go red.
         val exportThreads = mutableListOf<String>()
         val landingThreads = mutableListOf<String>()
         val scopeDispatcher = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "test-main-scope").apply { isDaemon = true } }
@@ -125,11 +134,26 @@ class P503BackupExportHostPipelineTest {
         }
 
         assertEquals(1, exportThreads.size)
-        assertTrue(exportThreads.single() != callerName, "the export must not run on the caller thread")
         assertEquals(1, landingThreads.size)
+        val exportThread = exportThreads.single()
+        val landingThread = landingThreads.single()
+
+        // The landing must be on the scope (composition main) dispatcher.
         assertTrue(
-            landingThreads.single().startsWith("test-main-scope"),
-            "the landing must hop onto the scope dispatcher, was ${landingThreads.single()}",
+            landingThread.startsWith("test-main-scope"),
+            "the landing must hop onto the scope dispatcher, was $landingThread",
+        )
+        // The export must NOT be on the caller thread ...
+        assertTrue(exportThread != callerName, "the export must not run on the caller thread")
+        // ... and decisively NOT on the scope (composition main) dispatcher. This is the assertion
+        // that fails if Dispatchers.Default is removed from runBackupExport.
+        assertFalse(
+            exportThread.startsWith("test-main-scope"),
+            "the export must not run on the scope/composition dispatcher (spec section 5 forbids the UI thread), was $exportThread",
+        )
+        assertTrue(
+            exportThread != landingThread,
+            "the export thread and the landing thread must differ (the export is off the scope dispatcher)",
         )
     }
 }

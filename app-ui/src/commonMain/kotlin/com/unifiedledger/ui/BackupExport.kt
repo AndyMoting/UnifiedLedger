@@ -224,13 +224,17 @@ class BackupExportUseCase(
         containerFile: String,
     ): BackupExportResult {
         // Step 2: disk precheck before the snapshot and before ANY user-target file (spec 3.2).
-        // REGISTERED SPEC DEVIATION (P3-K, 06.B review): the spec mandates the precheck but names no
-        // "unknown space" failure code. When `usableSpace` returns null (the platform cannot report
-        // it) this proceeds FAIL-OPEN: the write is then attempted, and a genuine out-of-space
-        // condition surfaces as the typed CONTAINER_WRITE_FAILED / TARGET_WRITE_FAILED rather than
-        // being pre-rejected. The alternative (a new typed UNKNOWN_SPACE rejection) would change the
-        // frozen BackupExportFailure enum and its copy, so it is registered for the main agent to
-        // rule on. The known-space branch below is the mandated hard precheck.
+        // FAIL-OPEN ON UNKNOWN SPACE (P3-K, 06.B review; ruled ACCEPTED by the main agent): when
+        // `usableSpace` returns null (the platform cannot report it) this proceeds without the
+        // precheck and the write is attempted. This is safe because the spec's binding requirement
+        // is "must not leave a success marker after the disk fills", which the write-side failure
+        // handling satisfies: a genuine out-of-space condition surfaces as the typed
+        // CONTAINER_WRITE_FAILED / TARGET_WRITE_FAILED, and success is reported only after the
+        // authenticated tail was written and the delivery stream closed cleanly. An unknown-space
+        // value therefore only skips the early precheck; it can never produce a false success. The
+        // alternative (a new typed UNKNOWN_SPACE rejection) would change the frozen
+        // BackupExportFailure enum and its copy, so the precheck is skipped instead. The known-space
+        // branch below is the mandated hard precheck.
         val plaintextSize = fileSystem.length(request.activeMainFile)
         val containerSize = plaintextSize + backupContainerOverheadBytes()
         val required = containerSize + plaintextSize + BACKUP_DISK_HEADROOM_BYTES
