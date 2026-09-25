@@ -63,6 +63,14 @@ class RestoreIsolatedMigrationTest {
     }
 
     @Test
+    fun theExposedCurrentSchemaVersionMatchesTheGeneratedSchema() {
+        // P2-6: pin the value the composition roots inject into the preflight against the generated
+        // schema, so a schema bump cannot leave a stale preflight upper bound.
+        assertEquals(LedgerDatabase.Schema.version, currentSupportedSchemaVersion())
+        assertEquals(31L, currentSupportedSchemaVersion())
+    }
+
+    @Test
     fun readsTheAuthoritativeUserVersionFromThePayload() {
         withTempDatabase { path ->
             val url = "jdbc:sqlite:${path.absolutePathString()}"
@@ -82,8 +90,8 @@ class RestoreIsolatedMigrationTest {
                 val result = migrateIsolatedSnapshotStrictlyOn(isolated, 1, setOf(1L))
                 val migrated = assertIs<StrictMigrationResult.Migrated>(result)
                 assertEquals(1L, migrated.fromVersion)
-                assertEquals(LedgerDatabase.Schema.version.toLong(), migrated.targetVersion)
-                assertEquals(LedgerDatabase.Schema.version.toLong(), readAuthoritativeUserVersionOn(isolated))
+                assertEquals(LedgerDatabase.Schema.version, migrated.targetVersion)
+                assertEquals(LedgerDatabase.Schema.version, readAuthoritativeUserVersionOn(isolated))
             }
         }
     }
@@ -120,7 +128,7 @@ class RestoreIsolatedMigrationTest {
         withTempDatabase { path ->
             val url = "jdbc:sqlite:${path.absolutePathString()}"
             driver(url).use { isolated ->
-                val current = LedgerDatabase.Schema.version.toLong()
+                val current = LedgerDatabase.Schema.version
                 val result = migrateIsolatedSnapshotStrictlyOn(isolated, current, setOf(current))
                 assertEquals(StrictMigrationFailure.NOT_AN_OLDER_VERSION, assertIs<StrictMigrationResult.Failed>(result).reason)
             }
@@ -145,7 +153,7 @@ class RestoreIsolatedMigrationTest {
     fun theForeignKeyCheckReportsZeroViolationsForABalancedLedger() {
         withTempDatabase { path ->
             val url = "jdbc:sqlite:${path.absolutePathString()}"
-            seedAtVersion(url, LedgerDatabase.Schema.version.toLong())
+            seedAtVersion(url, LedgerDatabase.Schema.version)
             driver(url).use { isolated ->
                 assertTrue(foreignKeyCheckOn(isolated).ok)
             }
@@ -156,7 +164,7 @@ class RestoreIsolatedMigrationTest {
     fun theForeignKeyCheckReportsAViolationForAnOrphanPosting() {
         withTempDatabase { path ->
             val url = "jdbc:sqlite:${path.absolutePathString()}"
-            seedAtVersion(url, LedgerDatabase.Schema.version.toLong())
+            seedAtVersion(url, LedgerDatabase.Schema.version)
             // FK enforcement is off on this connection, so the orphan is accepted here and the
             // explicit `PRAGMA foreign_key_check` is what detects it.
             driverWithoutForeignKeys(url).use { isolated ->
@@ -175,7 +183,7 @@ class RestoreIsolatedMigrationTest {
     fun theDomainCheckPassesForAFullBalancedLedger() {
         withTempDatabase { path ->
             val url = "jdbc:sqlite:${path.absolutePathString()}"
-            seedAtVersion(url, LedgerDatabase.Schema.version.toLong())
+            seedAtVersion(url, LedgerDatabase.Schema.version)
             driver(url).use { isolated ->
                 val result = validateDomainOn(isolated)
                 assertEquals(8, result.formalTableCount)
@@ -190,7 +198,7 @@ class RestoreIsolatedMigrationTest {
     fun theDomainCheckFlagsAnUnbalancedPostingSet() {
         withTempDatabase { path ->
             val url = "jdbc:sqlite:${path.absolutePathString()}"
-            seedAtVersion(url, LedgerDatabase.Schema.version.toLong())
+            seedAtVersion(url, LedgerDatabase.Schema.version)
             driver(url).use { isolated ->
                 isolated.execute(null, "UPDATE posting SET amount_minor = amount_minor + 1 WHERE posting_id = 'posting-bank-existing'", 0)
                 val result = validateDomainOn(isolated)
@@ -204,7 +212,7 @@ class RestoreIsolatedMigrationTest {
     fun theDomainCheckFlagsASecondLedgerIdentity() {
         withTempDatabase { path ->
             val url = "jdbc:sqlite:${path.absolutePathString()}"
-            seedAtVersion(url, LedgerDatabase.Schema.version.toLong())
+            seedAtVersion(url, LedgerDatabase.Schema.version)
             driver(url).use { isolated ->
                 isolated.execute(
                     null,

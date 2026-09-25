@@ -4,6 +4,7 @@ import com.unifiedledger.application.backup.BACKUP_FIXED_HEADER_LENGTH
 import com.unifiedledger.application.backup.BACKUP_IV_LENGTH
 import com.unifiedledger.application.backup.BACKUP_MAX_CONTAINER_BYTES
 import com.unifiedledger.application.backup.BACKUP_SALT_LENGTH
+import com.unifiedledger.application.backup.BACKUP_STREAM_CHUNK_BYTES
 import com.unifiedledger.application.backup.BACKUP_TAG_LENGTH
 import com.unifiedledger.application.backup.BackupCryptoPrimitives
 import com.unifiedledger.application.backup.BackupGcmDecryptor
@@ -13,6 +14,7 @@ import com.unifiedledger.application.backup.BackupSha256Digest
 import com.unifiedledger.application.backup.backupContainerHeader
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -22,19 +24,27 @@ import kotlin.test.assertTrue
  * through the injected source/isolation/file-system/crypto ports and assert the load-bearing
  * branches end to end:
  *
- * - the operation lease is held for the whole preflight and released in `finally`;
- * - the 2 GiB bound is enforced before reading (reported size) and while counting (fallback);
+ * - the operation lease is held for the whole preflight and released in `finally` — including when
+ *   `newToken()` throws before the work begins (P2-2);
+ * - the container bound is enforced before reading (reported size) and while counting (fallback);
  * - the header/payload `user_version` MISMATCH is a class-2 rejection (D-179's frozen ruling);
  * - an unsupported older version is rejected before any migration copy is made;
  * - a supported older version migrates the ISOLATED copy and leaves the snapshot untouched;
  * - a failed migration / validation is a typed rejection;
+ * - a tag failure is the uniform `P706_CONTAINER_AUTHENTICATION_FAILED` and its unauthenticated
+ *   staging plaintext is deleted (P2-4);
+ * - the class-3 identity check rejects an empty payload and any foreign id in a secondary owner,
+ *   and never fabricates a target match (P1-1);
  * - success binds the captured generation, the target ledger and the authenticated digest into the
  *   token, and KEEPS the staging artifacts;
- * - every rejection path deletes the staging artifacts and touches no current-library path.
+ * - every rejection path deletes its staging artifacts and touches no generation/pointer path
+ *   ([aRejectionNeverTouchesTheGenerationSetOrTheActivePointer]).
  *
  * The fake crypto is a reversible XOR so a container assembled by the real write-side header helper
- * round-trips through the read path; the digest fake returns a digest derived from the header bytes
- * so the `payload_sha256` check can be made to pass or fail deterministically.
+ * round-trips through the read path; the digest fake returns a digest derived from the plaintext
+ * bytes so the `payload_sha256` check can be made to pass or fail deterministically. The XOR stand-in
+ * is NOT a real cipher: the real JCE tag verification is pinned separately in
+ * `BackupContainerCryptoJvmTest`.
  */
 class RestorePreflightUseCaseTest {
     private val hostDirectory = "/host"
@@ -133,30 +143,36 @@ class RestorePreflightUseCaseTest {
     private class FakeSource(
         private val bytes: ByteArray,
         private val reportedSize: Long?,
+        private val launchFailed: Boolean = false,
+        private val cancelled: Boolean = false,
     ) : BackupSourcePort {
         var openCalls = 0
         var readCalls = 0
         var maxReadBuffer = 0
 
-        override fun openSource(): BackupSourceReader? {
+        override fun openSource(): BackupSourceOpenResult {
             openCalls += 1
+            if (launchFailed) return BackupSourceOpenResult.LaunchFailed
+            if (cancelled) return BackupSourceOpenResult.Cancelled
             var position = 0
             val size = reportedSize
-            return object : BackupSourceReader {
-                override fun read(buffer: ByteArray): Int {
-                    readCalls += 1
-                    maxReadBuffer = maxOf(maxReadBuffer, buffer.size)
-                    if (position >= bytes.size) return -1
-                    val count = minOf(buffer.size, bytes.size - position)
-                    bytes.copyInto(buffer, 0, position, position + count)
-                    position += count
-                    return count
-                }
+            return BackupSourceOpenResult.Opened(
+                object : BackupSourceReader {
+                    override fun read(buffer: ByteArray): Int {
+                        readCalls += 1
+                        maxReadBuffer = maxOf(maxReadBuffer, buffer.size)
+                        if (position >= bytes.size) return -1
+                        val count = minOf(buffer.size, bytes.size - position)
+                        bytes.copyInto(buffer, 0, position, position + count)
+                        position += count
+                        return count
+                    }
 
-                override val reportedSize: Long? get() = size
+                    override val reportedSize: Long? get() = size
 
-                override fun close() {}
-            }
+                    override fun close() {}
+                },
+            )
         }
     }
 
@@ -166,17 +182,23 @@ class RestorePreflightUseCaseTest {
         var identities: List<String> = listOf("ledger-local-test"),
         var migration: RestoreMigrationOutcome = RestoreMigrationOutcome.Migrated(1, 31),
         var validation: RestoreValidationFacts = okFacts(),
+        var userVersionThrows: Boolean = false,
     ) : RestoreIsolatedDatabasePort {
         val migrateCalls = mutableListOf<Long>()
         var validateCalls = 0
-        var userVersionPath: String? = null
+        var userVersionReads = 0
+        var identityReads = 0
 
         override fun readAuthoritativeUserVersion(snapshotPath: String): Long {
-            userVersionPath = snapshotPath
+            userVersionReads += 1
+            if (userVersionThrows) throw IllegalStateException("injected version read failure")
             return userVersion
         }
 
-        override fun readLedgerIdentities(snapshotPath: String): List<String> = identities
+        override fun readObservedLedgerIdentities(snapshotPath: String): List<String> {
+            identityReads += 1
+            return identities
+        }
 
         override fun migrateStrictly(
             snapshotPath: String,
@@ -246,9 +268,11 @@ class RestorePreflightUseCaseTest {
         assertEquals(owner.activeGeneration, ready.token.generation)
         assertEquals("ledger-local-test", ready.token.targetLedgerId)
         assertEquals("tok", ready.token.handle)
-        // Success KEEPS the authenticated artifacts for a later confirmation.
-        assertTrue(fileSystem.hasFile(containerFile))
+        // Success KEEPS the authenticated plaintext snapshot for a later confirmation, and drops the
+        // up-to-2 GiB staging container copy (P3-12): confirmation binds the plaintext digest and
+        // must never re-read the external container.
         assertTrue(fileSystem.hasFile(snapshotFile))
+        assertTrue(!fileSystem.hasFile(containerFile))
         // The lease is released.
         assertEquals(0, owner.inFlightLeaseCount)
     }
@@ -379,19 +403,43 @@ class RestorePreflightUseCaseTest {
     }
 
     @Test
-    fun theCountedFallbackRejectsAnUnderReportingProviderWithoutReadingPastTheBound() {
+    fun theCountedFallbackRejectsAnUnderReportingProviderAndStopsReading() {
+        // P2-5 fix: drive the COUNTED fallback with a small bound and a provider that reports a size
+        // within the bound but streams past it. Ablating the counting check at the `total` comparison
+        // in `copySourceBounded` would let this reach PreviewReady and this test would go red.
         val fileSystem = LedgerFileSystemFake()
         val owner = readyOwner()
         val isolated = FakeIsolatedDatabase()
-        // A provider that claims a tiny size but streams more than the bound: the counting loop must
-        // stop it. Use a small synthetic stream rather than 2 GiB by asserting the reported-null path
-        // still counts (the bound itself is unit-tested in the parser suite).
+        val bytes = container()
+        val bound = (bytes.size / 2).toLong()
+        // reportedSize (within the bound) is a LIE: the stream carries the whole container.
+        val source = FakeSource(bytes, reportedSize = 1L)
+        val result = useCase(fileSystem, owner, source, isolated).preflight(request(containerSizeBound = bound))
+
+        assertEquals(BackupPreflightRejection.P706_CONTAINER_TOO_LARGE, assertIs<RestorePreflightResult.Rejected>(result).code)
+        // The bound check fires immediately when the count crosses it, so the loop stops well before
+        // it would have consumed the whole stream. Each read is at most the 64 KiB chunk, so at most
+        // two reads are needed to exceed `bound` on this small payload.
+        assertTrue(source.readCalls <= 2, "the counted bound must stop reading promptly, readCalls=${source.readCalls}")
+        // The plaintext staging was never created (rejection happened during step 1).
+        assertTrue(!fileSystem.hasFile(snapshotFile))
+        assertEquals(0, isolated.validateCalls)
+    }
+
+    @Test
+    fun aProviderThatReportsNoSizeIsCountedAgainstTheDefaultBoundAndProceedsWhenHonest() {
+        // The reported-null path must still count (it never short-circuits on a size it lacks), and
+        // an honest small stream under the frozen 2 GiB bound proceeds.
+        val fileSystem = LedgerFileSystemFake()
+        val owner = readyOwner()
+        val isolated = FakeIsolatedDatabase()
         val source = FakeSource(container(), reportedSize = null)
         val result = useCase(fileSystem, owner, source, isolated).preflight(request())
-        // With a small, honest stream the preflight proceeds; the point asserted here is that the
-        // reported-null path never short-circuits on a size it does not have.
+
         assertIs<RestorePreflightResult.PreviewReady>(result)
         assertTrue(source.readCalls > 0)
+        // The chunk size is the frozen 64 KiB regardless of the payload size.
+        assertEquals(BACKUP_STREAM_CHUNK_BYTES, source.maxReadBuffer)
     }
 
     @Test
@@ -415,8 +463,11 @@ class RestorePreflightUseCaseTest {
         val result = useCase(fileSystem, owner, source, isolated).preflight(request())
 
         assertEquals(BackupPreflightRejection.P706_CONTAINER_SIZE_MISMATCH, assertIs<RestorePreflightResult.Rejected>(result).code)
-        // The disk precheck / decryption never ran.
-        assertEquals(0, isolated.validateCalls)
+        // P3-5 fix: assert the property directly (no plaintext staging exists) instead of the
+        // step-10 `validateCalls` counter, which is not what step 2/3 controls.
+        assertTrue(!fileSystem.hasFile(snapshotFile))
+        assertTrue(!fileSystem.hasFile(migratedFile))
+        assertEquals(0, isolated.userVersionReads)
     }
 
     @Test
@@ -429,7 +480,10 @@ class RestorePreflightUseCaseTest {
         val result = useCase(fileSystem, owner, source, isolated).preflight(request())
 
         assertEquals(BackupPreflightRejection.P706_INSUFFICIENT_SPACE, assertIs<RestorePreflightResult.Rejected>(result).code)
-        assertEquals(0, isolated.validateCalls)
+        // P3-5 fix: the property is "no decryption happened", asserted by the absence of the
+        // plaintext staging file, not by the step-10 validation counter.
+        assertTrue(!fileSystem.hasFile(snapshotFile))
+        assertEquals(0, isolated.userVersionReads)
     }
 
     @Test
@@ -450,6 +504,31 @@ class RestorePreflightUseCaseTest {
 
     @Test
     fun aCancelledSourceIsReportedAsCancelledAndCleansUp() {
+        val fileSystem = LedgerFileSystemFake()
+        val owner = readyOwner()
+        val isolated = FakeIsolatedDatabase()
+        val source = FakeSource(container(), reportedSize = null, cancelled = true)
+        val result = useCase(fileSystem, owner, source, isolated).preflight(request())
+
+        assertEquals(RestorePreflightResult.Cancelled, result)
+        assertTrue(!fileSystem.hasFile(containerFile))
+        assertEquals(0, owner.inFlightLeaseCount)
+    }
+
+    @Test
+    fun aSourceLaunchFailureIsATypedReadRejectionNotACancel() {
+        // P2-8: a picker that fails to launch must not masquerade as a user cancel.
+        val fileSystem = LedgerFileSystemFake()
+        val owner = readyOwner()
+        val isolated = FakeIsolatedDatabase()
+        val source = FakeSource(container(), reportedSize = null, launchFailed = true)
+        val result = useCase(fileSystem, owner, source, isolated).preflight(request())
+
+        assertEquals(BackupPreflightRejection.P706_SOURCE_READ_FAILED, assertIs<RestorePreflightResult.Rejected>(result).code)
+    }
+
+    @Test
+    fun aCancellationSignalFiringDuringCopyIsCancelled() {
         val fileSystem = LedgerFileSystemFake()
         val owner = readyOwner()
         val isolated = FakeIsolatedDatabase()
@@ -486,7 +565,7 @@ class RestorePreflightUseCaseTest {
             object : RestoreIsolatedDatabasePort {
                 override fun readAuthoritativeUserVersion(snapshotPath: String): Long = 31
 
-                override fun readLedgerIdentities(snapshotPath: String): List<String> = listOf("ledger-local-test")
+                override fun readObservedLedgerIdentities(snapshotPath: String): List<String> = listOf("ledger-local-test")
 
                 override fun migrateStrictly(
                     snapshotPath: String,
@@ -506,11 +585,177 @@ class RestorePreflightUseCaseTest {
         assertEquals(0, owner.inFlightLeaseCount)
     }
 
-    private fun request(supported: Set<Long> = setOf(1L)): RestorePreflightRequest =
+    // --------------------------------------------------- P1-1 identity (class 3), never fabricated
+
+    @Test
+    fun anEmptyPayloadWithNoObservedIdentityIsAClass3Rejection() {
+        // P1-1: a payload that carries NO observable ledger identity must be rejected, never treated
+        // as an implicit target match. Ablating the `identities.isEmpty()` guard would let this reach
+        // PreviewReady and this test would go red.
+        val fileSystem = LedgerFileSystemFake()
+        val owner = readyOwner()
+        val isolated = FakeIsolatedDatabase(userVersion = 31, identities = emptyList())
+        val source = FakeSource(container(), reportedSize = null)
+        val result = useCase(fileSystem, owner, source, isolated).preflight(request())
+
+        assertEquals(BackupPreflightRejection.P706_LEDGER_IDENTITY_UNSUPPORTED, assertIs<RestorePreflightResult.Rejected>(result).code)
+        // Nothing beyond the authoritative version read and the identity read ran.
+        assertEquals(0, isolated.migrateCalls.size)
+        assertEquals(0, isolated.validateCalls)
+    }
+
+    @Test
+    fun aForeignIdObservedInASecondaryOwnerIsAClass3Rejection() {
+        // P1-1: the identity set spans the whole owner set, so a payload whose formal rows carry the
+        // target id but whose catalog/import/rg owners carry another id is rejected. Ablating the
+        // multi-owner observation (reading only `ledger_transaction`) would make this pass.
+        val fileSystem = LedgerFileSystemFake()
+        val owner = readyOwner()
+        val isolated =
+            FakeIsolatedDatabase(
+                userVersion = 31,
+                identities = listOf("ledger-local-test", "other-ledger"),
+            )
+        val source = FakeSource(container(), reportedSize = null)
+        val result = useCase(fileSystem, owner, source, isolated).preflight(request())
+
+        assertEquals(BackupPreflightRejection.P706_LEDGER_IDENTITY_UNSUPPORTED, assertIs<RestorePreflightResult.Rejected>(result).code)
+    }
+
+    @Test
+    fun aSingleForeignIdentityIsAClass3RejectionAndIsNotRelabelledAsTheTarget() {
+        // P1-1: exactly one observed id, but it is not the target — reject, and never report it as
+        // the target in a summary.
+        val fileSystem = LedgerFileSystemFake()
+        val owner = readyOwner()
+        val isolated = FakeIsolatedDatabase(userVersion = 31, identities = listOf("foreign-ledger"))
+        val source = FakeSource(container(), reportedSize = null)
+        val result = useCase(fileSystem, owner, source, isolated).preflight(request())
+
+        assertEquals(BackupPreflightRejection.P706_LEDGER_IDENTITY_UNSUPPORTED, assertIs<RestorePreflightResult.Rejected>(result).code)
+    }
+
+    // --------------------------------------------------- P2-4 uniform authentication failure
+
+    @Test
+    fun aTagFailureIsTheUniformAuthenticationRejectionAndDeletesTheStagingPlaintext() {
+        // P2-4: the frozen A03-code branch and its cleanup. The fake decryptor's `doFinal` throws,
+        // standing in for the platform AEAD failure. Ablating the cleanup would leave the staging
+        // snapshot behind; ablating the catch mapping would surface an untyped exception.
+        val fileSystem = LedgerFileSystemFake()
+        val owner = readyOwner()
+        val isolated = FakeIsolatedDatabase()
+        val bytes = container()
+        val source = FakeSource(bytes, reportedSize = null)
+        val result =
+            useCase(fileSystem, owner, source, isolated, crypto = TagFailingCrypto())
+                .preflight(request())
+
+        assertEquals(BackupPreflightRejection.P706_CONTAINER_AUTHENTICATION_FAILED, assertIs<RestorePreflightResult.Rejected>(result).code)
+        // The plaintext streamed to staging before tag verification is deleted on failure.
+        assertTrue(!fileSystem.hasFile(snapshotFile), "the unauthenticated staging plaintext must be deleted")
+        assertTrue(!fileSystem.hasFile(containerFile))
+        assertEquals(0, owner.inFlightLeaseCount)
+    }
+
+    @Test
+    fun cancellationMidDecryptionIsCancelledAndCleansUp() {
+        // P2-4: the cancel path inside `decryptToStaging` (checked between 64 KiB chunks) is reachable
+        // and cleans up. The signal's first evaluation (the copy loop) returns false; its second (the
+        // decryption loop) returns true.
+        val fileSystem = LedgerFileSystemFake()
+        val owner = readyOwner()
+        val isolated = FakeIsolatedDatabase()
+        val source = FakeSource(container(), reportedSize = null)
+        var evaluations = 0
+        val result =
+            useCase(fileSystem, owner, source, isolated)
+                .preflight(
+                    request(),
+                    BackupCancellationSignal {
+                        evaluations += 1
+                        evaluations > 1
+                    },
+                )
+
+        assertEquals(RestorePreflightResult.Cancelled, result)
+        assertTrue(!fileSystem.hasFile(snapshotFile))
+        assertTrue(!fileSystem.hasFile(containerFile))
+        assertEquals(0, owner.inFlightLeaseCount)
+    }
+
+    // --------------------------------------------------- P2-2 lease release on early throw
+
+    @Test
+    fun aTokenSourceThatThrowsStillReleasesTheLease() {
+        // P2-2: `newToken()` runs inside the try, so a throw there must not leak the lease. Ablating
+        // the move (leaving `newToken()`/`layout.restore*File` outside the try) would leave the lease
+        // count at 1 and block reopen/quiesce forever.
+        val fileSystem = LedgerFileSystemFake()
+        val owner = readyOwner()
+        val isolated = FakeIsolatedDatabase()
+        val source = FakeSource(container(), reportedSize = null)
+        val useCase =
+            RestorePreflightUseCase(
+                owner = owner,
+                fileSystem = fileSystem,
+                layout = ledgerStorageLayout(fileSystem, hostDirectory),
+                source = source,
+                isolatedDatabase = isolated,
+                crypto = FakeCrypto(),
+                newToken = { throw IllegalStateException("token source failed") },
+            )
+
+        assertFailsWith<IllegalStateException> { useCase.preflight(request()) }
+        assertEquals(0, owner.inFlightLeaseCount, "the lease must be released even when newToken throws")
+    }
+
+    // --------------------------------------------------- P2-3 typed port failures
+
+    @Test
+    fun aThrowingVersionReadIsATypedReadRejectionNotAVersionClaim() {
+        val fileSystem = LedgerFileSystemFake()
+        val owner = readyOwner()
+        val isolated = FakeIsolatedDatabase(userVersionThrows = true)
+        val source = FakeSource(container(), reportedSize = null)
+        val result = useCase(fileSystem, owner, source, isolated).preflight(request())
+
+        assertEquals(BackupPreflightRejection.P706_SOURCE_READ_FAILED, assertIs<RestorePreflightResult.Rejected>(result).code)
+    }
+
+    @Test
+    fun aRejectionNeverTouchesTheGenerationSetOrTheActivePointer() {
+        // P3-6 fix: the KDoc claims no rejection path touches the current library or the active
+        // pointer; this asserts it concretely by recording every file operation the preflight makes
+        // and requiring that none targets a generation file or the pointer.
+        val fileSystem = LedgerFileSystemFake()
+        val owner = readyOwner()
+        val isolated = FakeIsolatedDatabase(identities = emptyList())
+        val source = FakeSource(container(), reportedSize = null)
+        val result = useCase(fileSystem, owner, source, isolated).preflight(request())
+
+        assertIs<RestorePreflightResult.Rejected>(result)
+        val pointer = ledgerStorageLayout(fileSystem, hostDirectory).activePointerFile
+        val touchedLedgerState =
+            fileSystem.operationsSnapshot().any { operation ->
+                operation.contains("active-generation") ||
+                    operation.contains("ledger-generations") ||
+                    operation.contains(pointer)
+            }
+        assertTrue(!touchedLedgerState, "a rejection must not touch the pointer or a generation: ${fileSystem.operationsSnapshot()}")
+    }
+
+    private fun request(
+        supported: Set<Long> = setOf(1L),
+        currentSchemaVersion: Long = 31L,
+        containerSizeBound: Long = BACKUP_MAX_CONTAINER_BYTES,
+    ): RestorePreflightRequest =
         RestorePreflightRequest(
             password = "password123",
             targetLedgerId = "ledger-local-test",
             supportedSourceVersions = supported,
+            currentSchemaVersion = currentSchemaVersion,
+            containerSizeBound = containerSizeBound,
         )
 }
 
@@ -527,4 +772,70 @@ private fun fakeDigestOf(bytes: ByteArray): ByteArray {
     // Mix in the length so two different-length inputs cannot collide trivially.
     out[31] = (out[31].toInt() xor bytes.size).toByte()
     return out
+}
+
+/**
+ * P2-4: a crypto fake whose decryptor's `doFinal` throws, standing in for the platform AEAD tag
+ * failure. It is otherwise the same reversible XOR stand-in as the class-level fake crypto.
+ */
+private class TagFailingCrypto : BackupCryptoPrimitives {
+    override fun randomBytes(count: Int): ByteArray = ByteArray(count)
+
+    override fun deriveKey(
+        password: CharArray,
+        salt: ByteArray,
+        iterations: Int,
+        keyLengthBits: Int,
+    ): ByteArray = ByteArray(keyLengthBits / 8)
+
+    override fun sha256Digest(): BackupSha256Digest =
+        object : BackupSha256Digest {
+            private var buffer = ByteArray(0)
+
+            override fun update(
+                bytes: ByteArray,
+                offset: Int,
+                length: Int,
+            ) {
+                buffer += bytes.copyOfRange(offset, offset + length)
+            }
+
+            override fun digest(): ByteArray = fakeDigestOf(buffer)
+        }
+
+    override fun gcmEncryptor(
+        key: ByteArray,
+        iv: ByteArray,
+        aad: ByteArray,
+    ): BackupGcmEncryptor =
+        object : BackupGcmEncryptor {
+            override fun update(
+                bytes: ByteArray,
+                offset: Int,
+                length: Int,
+            ): ByteArray = ByteArray(0)
+
+            override fun doFinal(): ByteArray = ByteArray(0)
+        }
+
+    override fun gcmDecryptor(
+        key: ByteArray,
+        iv: ByteArray,
+        aad: ByteArray,
+    ): BackupGcmDecryptor =
+        object : BackupGcmDecryptor {
+            override fun update(
+                bytes: ByteArray,
+                offset: Int,
+                length: Int,
+            ): ByteArray {
+                val out = ByteArray(length)
+                for (index in 0 until length) {
+                    out[index] = bytes[offset + index].toInt().xor(0x5A).toByte()
+                }
+                return out
+            }
+
+            override fun doFinal(): ByteArray = throw IllegalStateException("injected AEAD tag failure")
+        }
 }

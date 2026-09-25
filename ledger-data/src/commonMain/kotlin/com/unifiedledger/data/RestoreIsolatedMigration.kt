@@ -20,6 +20,14 @@ import com.unifiedledger.data.db.LedgerDatabase
  * so a snapshot with a missing table or a missing fact is rejected, never masked by seed data.
  */
 
+/**
+ * The schema version this build supports, read from the generated schema. Composition roots pass
+ * this into `RestorePreflightRequest.currentSchemaVersion` (P2-6): the shared preflight cannot read
+ * `LedgerDatabase.Schema.version` itself (app-ui depends only on ledger-application), so exposing it
+ * here prevents a hard-coded duplicate that would drift after a schema bump.
+ */
+fun currentSupportedSchemaVersion(): Long = LedgerDatabase.Schema.version
+
 /** Reads the AUTHORITATIVE `PRAGMA user_version` of a payload (container-format spec section 4.3.2). */
 fun readAuthoritativeUserVersionOn(driver: SqlDriver): Long {
     var version = 0L
@@ -37,7 +45,14 @@ fun readAuthoritativeUserVersionOn(driver: SqlDriver): Long {
     return version
 }
 
-/** The typed reason a strict isolated migration failed. */
+/**
+ * The typed reason a strict isolated migration failed.
+ *
+ * There is deliberately no separate STAMP_FAILED: the version stamp runs INSIDE the same
+ * transaction as `Schema.migrate`, so a stamp failure is indistinguishable in effect (one rolled-back
+ * transaction) and is reported as [MIGRATE_FAILED] rather than as a branch this helper cannot
+ * actually distinguish.
+ */
 enum class StrictMigrationFailure {
     /** The payload version is not in the caller's supported set (should be refused earlier). */
     UNSUPPORTED_SOURCE_VERSION,
@@ -45,11 +60,8 @@ enum class StrictMigrationFailure {
     /** The payload version is at or above the current schema (nothing to migrate). */
     NOT_AN_OLDER_VERSION,
 
-    /** `LedgerDatabase.Schema.migrate` threw; the transaction rolled back. */
+    /** `Schema.migrate` (or the in-transaction version stamp) threw; the transaction rolled back. */
     MIGRATE_FAILED,
-
-    /** Stamping the migrated version threw; the transaction rolled back. */
-    STAMP_FAILED,
 }
 
 /** The strict migration outcome. */
@@ -159,9 +171,8 @@ fun readIntegrityCheckRowsOn(driver: SqlDriver): List<String?> {
 }
 
 /**
- * The DISTINCT `ledger_id` values carried by the payload's `ledger_transaction` (the class-3
- * identity check, 06.C spec section 3.8). A missing table throws, which the caller maps to the
- * identity rejection (a payload without the formal surface cannot be this product's ledger).
+ * The DISTINCT `ledger_id` values carried by the payload's `ledger_transaction` (the formal core
+ * owner; 06.C spec section 3.8).
  */
 fun readLedgerIdsOn(driver: SqlDriver): List<String> {
     val ids = mutableListOf<String>()
@@ -180,6 +191,90 @@ fun readLedgerIdsOn(driver: SqlDriver): List<String> {
         ).value
     return ids
 }
+
+/**
+ * Every DISTINCT `ledger_id` observed across the payload's ENTIRE authoritative owner set: every
+ * user table in `sqlite_master` that carries a `ledger_id` column (the formal core, catalog, import
+ * and `rg02_`-`rg12_` families alike), not just `ledger_transaction`.
+ *
+ * WHY THE WHOLE SET (P1-1 fix): checking only `ledger_transaction` lets a payload whose formal rows
+ * carry the target id but whose catalog/import/rg owners carry a different id pass the class-3
+ * check (container-format spec section 5.4 requires "no extra ledger"). The restore preflight uses
+ * this function, so an identity observed anywhere in the payload is an identity observed.
+ *
+ * A payload with NO user table carrying `ledger_id` (or no rows) returns an empty list; the caller
+ * must treat "nothing observed" as a class-3 rejection, never as an implicit target match.
+ *
+ * Table names come from our own generated schema (not user input), but they are still quoted and
+ * escaped defensively. A table whose `ledger_id` query throws (e.g. a view-shaped oddity) is skipped
+ * rather than failing the whole sweep; the class-3 decision only needs the ids it CAN observe.
+ */
+fun readObservedLedgerIdsOn(driver: SqlDriver): List<String> {
+    val tables = mutableListOf<String>()
+    driver
+        .executeQuery(
+            null,
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+            { cursor ->
+                while (cursor.next().value) {
+                    cursor.getString(0)?.let { tables += it }
+                }
+                QueryResult.Unit
+            },
+            0,
+            null,
+        ).value
+    val observed = linkedSetOf<String>()
+    for (table in tables) {
+        if (!tableHasColumn(driver, table, "ledger_id")) continue
+        runCatching {
+            driver
+                .executeQuery(
+                    null,
+                    "SELECT DISTINCT ledger_id FROM ${quoteIdentifier(table)}",
+                    { cursor ->
+                        while (cursor.next().value) {
+                            cursor.getString(0)?.let { observed += it }
+                        }
+                        QueryResult.Unit
+                    },
+                    0,
+                    null,
+                ).value
+        }
+    }
+    return observed.toList()
+}
+
+/** Whether [table] exposes a [column] (a table without it is not part of the identity sweep). */
+private fun tableHasColumn(
+    driver: SqlDriver,
+    table: String,
+    column: String,
+): Boolean {
+    var found = false
+    runCatching {
+        driver
+            .executeQuery(
+                null,
+                "PRAGMA table_info(${quoteIdentifier(table)})",
+                { cursor ->
+                    while (cursor.next().value) {
+                        // PRAGMA table_info columns: cid(0), name(1), type(2), notnull(3), dflt(4), pk(5).
+                        if (cursor.getString(1) == column) found = true
+                    }
+                    QueryResult.Unit
+                },
+                0,
+                null,
+            ).value
+        return found
+    }
+    return false
+}
+
+/** Quotes a schema identifier for interpolation (names come from our own schema). */
+private fun quoteIdentifier(name: String): String = "\"" + name.replace("\"", "\"\"") + "\""
 
 /**
  * The domain validation result (06.C spec section 6.4). The exact validation set is registered as
@@ -226,9 +321,12 @@ private val FORMAL_TABLE_NAMES: List<String> =
  * bootstrap: it reads the authoritative facts directly. A missing formal table, a second ledger
  * identity or an unbalanced posting set is reported through [DomainValidationResult.ok].
  *
- * The posting-balance query is grouped by `(posting_set_id, ledger_id, currency_code)` and flags a
- * group whose `SUM(amount_minor)` is not zero (the `posting` table's minor-unit amount column and
- * its `currency_code` column, both read from `Ledger.sq`).
+ * The posting-balance query is grouped by `(posting_set_id, ledger_id, currency_code,
+ * currency_precision)`, matching the product's own balance invariant, which groups by
+ * `(currency_code, currency_precision)` (`Ledger.sq`: `GROUP BY posting.currency_code,
+ * posting.currency_precision`) and flags a group whose `SUM(amount_minor)` is not zero. Grouping by
+ * currency alone would merge distinct precisions of the same currency and could report a false
+ * imbalance (or mask a real one).
  */
 fun validateDomainOn(driver: SqlDriver): DomainValidationResult {
     val formalTableCount =
@@ -250,7 +348,7 @@ fun validateDomainOn(driver: SqlDriver): DomainValidationResult {
     val postingImbalanceCount =
         countRows(
             driver,
-            "SELECT count(*) FROM (SELECT posting_set_id FROM posting GROUP BY posting_set_id, ledger_id, currency_code HAVING SUM(amount_minor) <> 0)",
+            "SELECT count(*) FROM (SELECT posting_set_id FROM posting GROUP BY posting_set_id, ledger_id, currency_code, currency_precision HAVING SUM(amount_minor) <> 0)",
         ).toInt()
     return DomainValidationResult(formalTableCount, ledgerIdentityCount, postingImbalanceCount)
 }

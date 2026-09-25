@@ -33,9 +33,19 @@ import app.cash.sqldelight.db.SqlPreparedStatement
  * (`execute`, `executeQuery`, transactions, and the no-op listener methods). It is NOT a general
  * purpose product driver.
  *
- * UNVERIFIED (registered): this adapter has not been device-verified; the main agent owns device
- * verification. It compiles in `ledger-data` androidMain and is exercised by the JVM tests only
- * through the commonMain helper contracts, not on a device.
+ * UNVERIFIED (registered): this adapter has NOT been device-verified; the main agent owns device
+ * verification. It compiles in `ledger-data` androidMain; NO JVM OR HOST TEST EXERCISES THIS CLASS
+ * (the commonMain helper contracts are tested on the JVM path, not through this adapter) — the
+ * earlier claim of JVM coverage was wrong and is corrected here.
+ *
+ * KNOWN LIMITATION (P3-9): [executeQuery] binds parameters through `SQLiteDatabase.rawQuery(String,
+ * Array<String>)`, which accepts ONLY string arguments and applies them as TEXT. The helpers reached
+ * through this adapter (`PRAGMA user_version`, `PRAGMA integrity_check`, `PRAGMA foreign_key_check`,
+ * the `sqlite_master` scans and the `SELECT DISTINCT ledger_id` probes) use either no bound
+ * parameters or string parameters, so this adapter is sufficient for the restore preflight. It is NOT
+ * a general driver: a caller that binds a Long/Double/ByteArray through `executeQuery` would get
+ * string-typed binding. `execute` (non-query) binds typed values correctly through a compiled
+ * framework statement.
  */
 
 /** Opens [path] read-write WITHOUT create-on-open and returns a driver over it. */

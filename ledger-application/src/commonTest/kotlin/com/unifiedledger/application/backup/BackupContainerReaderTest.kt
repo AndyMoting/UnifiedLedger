@@ -166,6 +166,21 @@ class BackupContainerReaderTest {
     }
 
     @Test
+    fun theFrozenResourceCapsArePinnedToTheirLiteralValues() {
+        // P3-4: pin the frozen container-format section 4.8 caps to their literal values, so changing
+        // either constant (a frozen-value change that would require reopening container-format spec
+        // section 4.8) goes red here.
+        assertEquals(1L shl 30, BACKUP_MAX_PLAINTEXT_BYTES)
+        assertEquals(2L shl 30, BACKUP_MAX_CONTAINER_BYTES)
+        assertEquals(64L * 1024L * 1024L, BACKUP_DISK_HEADROOM_BYTES)
+        assertEquals(64 * 1024, BACKUP_STREAM_CHUNK_BYTES)
+        assertEquals(59, BACKUP_FIXED_HEADER_LENGTH)
+        assertEquals(12, BACKUP_IV_LENGTH)
+        assertEquals(16, BACKUP_TAG_LENGTH)
+        assertEquals(16, BACKUP_SALT_LENGTH)
+    }
+
+    @Test
     fun theSizeBoundIsInclusiveAtTwoGib() {
         assertTrue(backupContainerWithinSizeBound(BACKUP_MAX_CONTAINER_BYTES))
         assertTrue(!backupContainerWithinSizeBound(BACKUP_MAX_CONTAINER_BYTES + 1L))

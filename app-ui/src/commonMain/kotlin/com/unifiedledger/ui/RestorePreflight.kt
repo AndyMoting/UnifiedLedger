@@ -3,13 +3,14 @@ package com.unifiedledger.ui
 import com.unifiedledger.application.backup.BACKUP_DISK_HEADROOM_BYTES
 import com.unifiedledger.application.backup.BACKUP_FIXED_HEADER_LENGTH
 import com.unifiedledger.application.backup.BACKUP_KEY_LENGTH_BITS
+import com.unifiedledger.application.backup.BACKUP_MAX_CONTAINER_BYTES
 import com.unifiedledger.application.backup.BACKUP_STREAM_CHUNK_BYTES
 import com.unifiedledger.application.backup.BackupContainerHeader
 import com.unifiedledger.application.backup.BackupCryptoPrimitives
 import com.unifiedledger.application.backup.BackupHeaderParseResult
 import com.unifiedledger.application.backup.BackupPreflightRejection
 import com.unifiedledger.application.backup.backupContainerAad
-import com.unifiedledger.application.backup.backupContainerExpectedSize
+import com.unifiedledger.application.backup.backupContainerSelfConsistent
 import com.unifiedledger.application.backup.backupContainerWithinSizeBound
 import com.unifiedledger.application.backup.parseBackupContainerHeader
 import com.unifiedledger.application.backup.widenBackupPassword
@@ -39,10 +40,28 @@ import com.unifiedledger.application.backup.widenBackupPassword
 /**
  * P7-06 06.C (spec section 8.1): the bounded streaming SOURCE port, shaped like the
  * `ImportFilePickPort` precedent (commonMain declares value types and closures only; each platform
- * implements SAF `OpenDocument` / `JFileChooser`). [openSource] returns null when the user cancels.
+ * implements SAF `OpenDocument` / `JFileChooser`).
+ *
+ * P2-8 fix: the outcome is TYPED, so a picker that fails to launch is distinguishable from a user
+ * cancel. Spec section 3.1 treats `null` as cancel only; a launch failure must not masquerade as a
+ * cancel.
  */
 fun interface BackupSourcePort {
-    fun openSource(): BackupSourceReader?
+    fun openSource(): BackupSourceOpenResult
+}
+
+/** The typed outcome of opening the user-chosen source (P2-8). */
+sealed interface BackupSourceOpenResult {
+    /** The user picked a source; the reader streams it in bounded chunks. */
+    data class Opened(
+        val reader: BackupSourceReader,
+    ) : BackupSourceOpenResult
+
+    /** The user dismissed the picker; no file, no diagnostics (spec section 3.1). */
+    data object Cancelled : BackupSourceOpenResult
+
+    /** The platform picker could not be launched (permission/unavailability); a typed failure. */
+    data object LaunchFailed : BackupSourceOpenResult
 }
 
 /**
@@ -95,8 +114,12 @@ interface RestoreIsolatedDatabasePort {
     /** The AUTHORITATIVE `PRAGMA user_version` of the payload (container-format spec section 4.3.2). */
     fun readAuthoritativeUserVersion(snapshotPath: String): Long
 
-    /** The DISTINCT `ledger_id` values in the payload (the class-3 identity check, spec section 3.8). */
-    fun readLedgerIdentities(snapshotPath: String): List<String>
+    /**
+     * Every DISTINCT `ledger_id` observed across the payload's authoritative owner set (the class-3
+     * identity check, spec section 3.8). An empty list means NO identity could be observed, which the
+     * caller MUST treat as a class-3 rejection — never as an implicit target match (P1-1).
+     */
+    fun readObservedLedgerIdentities(snapshotPath: String): List<String>
 
     /** Strict single-transaction migration of [snapshotPath] in place (spec section 6.3). */
     fun migrateStrictly(
@@ -117,12 +140,25 @@ interface RestoreIsolatedDatabasePort {
  * structure-identification gate), so it is INJECTED rather than hard-coded: the composition root
  * supplies it and the preflight only enforces the frozen RULE (whitelist migrates, everything else
  * is a typed rejection, the lenient stamp path is never reused).
+ *
+ * [currentSchemaVersion] is the schema version this build supports. It is INJECTED for the same
+ * reason as the whitelist (P2-6): `app-ui` does not depend on `ledger-data`, so the shared preflight
+ * cannot read `LedgerDatabase.Schema.version`; hard-coding it would silently treat a stale-schema
+ * snapshot as current after a schema bump. The composition root supplies the real value.
  */
 class RestorePreflightRequest(
     val password: String,
     /** The fixed target ledger identity (container-format spec section 5.4; single ledger only). */
     val targetLedgerId: String,
     val supportedSourceVersions: Set<Long>,
+    /** The schema version this build supports (supplied by the composition root; P2-6). */
+    val currentSchemaVersion: Long,
+    /**
+     * The container-size bound used by the counted-source fallback. Defaults to the frozen
+     * [BACKUP_MAX_CONTAINER_BYTES]; a production caller never overrides it. It is injectable only so
+     * a small synthetic stream can drive the counted-fallback rejection in tests (P2-5).
+     */
+    val containerSizeBound: Long = BACKUP_MAX_CONTAINER_BYTES,
 )
 
 /** The preview summary (spec section 7.4). Carries no password, key, path or plaintext detail. */
@@ -196,6 +232,22 @@ private class RestorePreflightCancelledException : RuntimeException("restore pre
  * The shared restore-preflight use case. Construct once per composition root and call [preflight] on
  * a background thread (container-format spec section 4.8: KDF, streaming decryption, migration and
  * validation must never run on the UI thread).
+ *
+ * DEFERRED WIRING (P2-7, registered not silently dropped): this use case and its ports are NOT yet
+ * constructed by either composition root. The 06.C design spec leaves two inputs OPEN that a root
+ * needs before it can construct them — the supported old-schema whitelist SET (spec section 6.3 /
+ * section 10 item 1, "must be fixed by a separate strict structure-identification gate") and the
+ * preview/confirmation UI field set (spec section 10 item 13) — and the confirmation path itself
+ * belongs to 06.D. On wiring, the root supplies `supportedSourceVersions` (the whitelist) and
+ * `currentSchemaVersion` (`currentSupportedSchemaVersion()` from ledger-data), and dispatches
+ * [preflight] off the UI thread. Until then A03/A04 are exercised through this use case's tests, not
+ * end to end in the product.
+ *
+ * REGISTERED (P3-14): the operation lease is held while the platform source port waits for the user's
+ * picker choice (the Android adapter's latch wait is bounded at 10 minutes), so a user who leaves the
+ * picker open blocks `reopen`/`closeActiveGraph` and makes `quiesce()` time out for that duration.
+ * That is the accepted cost of the whole-duration lease (spec section 7.3); the wait is bounded and a
+ * picker dismissal returns promptly.
  */
 class RestorePreflightUseCase(
     private val owner: LedgerRuntimeOwner<*>,
@@ -222,12 +274,19 @@ class RestorePreflightUseCase(
                 is LeaseAcquireResult.Acquired -> acquired.lease
                 LeaseAcquireResult.RuntimeNotReady -> return RestorePreflightResult.RuntimeNotReady
             }
-        val tokenId = newToken()
-        val containerFile = layout.restoreContainerFile(tokenId)
-        val snapshotFile = layout.restoreSnapshotFile(tokenId)
-        val migratedFile = layout.restoreMigratedFile(tokenId)
+        // P2-2 fix: EVERYTHING after the lease is acquired runs inside the outer `try`, so the
+        // `finally` below always releases it — including `newToken()` or a `layout.restore*File`
+        // throw. A leaked lease would block reopen/closeActiveGraph and make quiesce() time out for
+        // the process lifetime (spec section 7.3 requires release in a `finally`).
+        var containerFile: String? = null
+        var snapshotFile: String? = null
+        var migratedFile: String? = null
         var keepArtifacts = false
         try {
+            val tokenId = newToken()
+            containerFile = layout.restoreContainerFile(tokenId)
+            snapshotFile = layout.restoreSnapshotFile(tokenId)
+            migratedFile = layout.restoreMigratedFile(tokenId)
             val result =
                 runPreflight(
                     request,
@@ -242,11 +301,18 @@ class RestorePreflightUseCase(
             return result
         } finally {
             // Failure/cancel leaves no staging artifact behind (spec section 3.5/6.5); a success
-            // keeps the authenticated artifacts for a later confirmation (06.D re-verifies them).
+            // keeps the authenticated plaintext snapshot (and migration copy) for a later
+            // confirmation, which 06.D re-verifies (spec section 7.5).
             if (!keepArtifacts) {
-                runCatching { fileSystem.delete(containerFile) }
-                runCatching { fileSystem.delete(snapshotFile) }
-                runCatching { fileSystem.delete(migratedFile) }
+                containerFile?.let { runCatching { fileSystem.delete(it) } }
+                snapshotFile?.let { runCatching { fileSystem.delete(it) } }
+                migratedFile?.let { runCatching { fileSystem.delete(it) } }
+            } else {
+                // P3-12: on success the staging CONTAINER copy (up to 2 GiB) is no longer needed —
+                // the token binds the plaintext artifact digests, and confirmation must never re-read
+                // the external container (spec section 7.2). Deleting it here bounds the retained
+                // staging to the plaintext artifacts.
+                containerFile?.let { runCatching { fileSystem.delete(it) } }
             }
             lease.close()
         }
@@ -264,8 +330,10 @@ class RestorePreflightUseCase(
         // Step 1: bounded copy of the user-chosen source into the private staging container, with
         // the 2 GiB bound enforced on EVERY path (spec section 3.1).
         val stagedContainerSize =
-            when (val staged = copySourceBounded(cancellation, containerFile)) {
+            when (val staged = copySourceBounded(cancellation, containerFile, request.containerSizeBound)) {
                 SourceCopy.Cancelled -> return RestorePreflightResult.Cancelled
+                // P2-8: a launch failure is a typed read failure, NOT a cancel.
+                SourceCopy.LaunchFailed -> return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_SOURCE_READ_FAILED)
                 SourceCopy.TooLarge -> return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_CONTAINER_TOO_LARGE)
                 is SourceCopy.Failed -> return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_SOURCE_READ_FAILED)
                 is SourceCopy.Staged -> staged.size
@@ -277,8 +345,9 @@ class RestorePreflightUseCase(
                 is HeaderRead.Rejected -> return RestorePreflightResult.Rejected(parsed.code)
                 is HeaderRead.Parsed -> parsed.header
             }
-        // The self-consistency equation needs the exact container size (spec section 4.1/4.8).
-        if (backupContainerExpectedSize(header) != stagedContainerSize) {
+        // The self-consistency equation needs the exact container size (spec section 4.1/4.8); the
+        // shared pure helper owns the comparison so it cannot drift (P3-13).
+        if (!backupContainerSelfConsistent(header, stagedContainerSize)) {
             return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_CONTAINER_SIZE_MISMATCH)
         }
 
@@ -287,7 +356,13 @@ class RestorePreflightUseCase(
         // only skips the early precheck; the private-staging writes then fail typed and can never
         // produce a false success. A KNOWN shortfall is the mandated hard rejection.
         val required = stagedContainerSize + header.plaintextLength + header.plaintextLength + BACKUP_DISK_HEADROOM_BYTES
-        val available = fileSystem.usableSpace(layout.hostDirectory)
+        // P2-3 fix: a throwing `usableSpace` is a typed precheck failure, not an untyped escape.
+        val available =
+            try {
+                fileSystem.usableSpace(layout.hostDirectory)
+            } catch (failure: Throwable) {
+                return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_INSUFFICIENT_SPACE)
+            }
         if (available != null && available < required) {
             return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_INSUFFICIENT_SPACE)
         }
@@ -300,26 +375,43 @@ class RestorePreflightUseCase(
                 decryptToStaging(request.password, cancellation, containerFile, header, snapshotFile)
             } catch (failure: RestorePreflightCancelledException) {
                 return RestorePreflightResult.Cancelled
-            } catch (failure: Throwable) {
-                // Wrong password, tag failure and tampered ciphertext are ONE code (spec section 5.3).
+            } catch (failure: StagingWriteException) {
+                // P2-1 fix: a staging I/O failure is NOT a password failure. It is its own typed code
+                // so the user is never told "wrong password" for a disk/permission problem.
+                return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_SOURCE_READ_FAILED)
+            } catch (failure: ContainerReadException) {
+                return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_SOURCE_READ_FAILED)
+            } catch (failure: AuthenticationFailureException) {
+                // P2-1 fix: ONLY the platform AEAD failure (and the internal short-container case,
+                // handled as a read failure above) maps to the uniform code. Container spec section
+                // 4.7 scopes it to CRYPTOGRAPHIC failure: wrong password, tag failure, tampered
+                // ciphertext. The `Error` type is deliberately NOT caught (see below).
                 return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_CONTAINER_AUTHENTICATION_FAILED)
             }
 
         // Step 6: post-authentication payload_sha256 check (spec section 3.6). Only reachable after
         // the tag passed; it detects local storage corruption of the staging plaintext.
-        if (decryptedSize != header.plaintextLength || !payloadSha256Matches(snapshotFile, header)) {
+        // P2-3 fix: a throwing `openRead` is a typed read failure, not an untyped escape.
+        val payloadMatches =
+            try {
+                decryptedSize == header.plaintextLength && payloadSha256Matches(snapshotFile, header)
+            } catch (failure: Throwable) {
+                return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_SOURCE_READ_FAILED)
+            }
+        if (!payloadMatches) {
             return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_PAYLOAD_INTEGRITY_FAILED)
         }
 
         // Step 7: post-authentication payload structure check: the AUTHORITATIVE user_version, with
         // the header/payload MISMATCH rejection (class 2; spec section 3.7, D-179).
+        // P2-1 fix: an I/O failure reading the version is a typed read failure, not a version claim.
         val sourceVersion =
             try {
                 isolatedDatabase.readAuthoritativeUserVersion(snapshotFile)
             } catch (failure: Throwable) {
-                return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_SCHEMA_VERSION_UNSUPPORTED)
+                return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_SOURCE_READ_FAILED)
             }
-        val currentVersion = CURRENT_SCHEMA_VERSION
+        val currentVersion = request.currentSchemaVersion
         if (sourceVersion == 0L || sourceVersion > currentVersion || header.dbSchemaVersion != sourceVersion) {
             return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_SCHEMA_VERSION_UNSUPPORTED)
         }
@@ -330,16 +422,25 @@ class RestorePreflightUseCase(
         }
 
         // Step 8: post-authentication identity/ledger check (class 3; spec section 3.8).
+        // P1-1 fix: the observed set spans the WHOLE authoritative owner set, and an EMPTY set is a
+        // rejection — the preflight never fabricates a target match for a payload that shows none.
         val identities =
             try {
-                isolatedDatabase.readLedgerIdentities(snapshotFile)
+                isolatedDatabase.readObservedLedgerIdentities(snapshotFile)
             } catch (failure: Throwable) {
-                return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_LEDGER_IDENTITY_UNSUPPORTED)
+                // P2-1 fix: an I/O failure reading identities is a read failure, not an identity claim.
+                return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_SOURCE_READ_FAILED)
             }
+        if (identities.isEmpty()) {
+            // No verifiable identity anywhere: the payload cannot be shown to belong to the target.
+            return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_LEDGER_IDENTITY_UNSUPPORTED)
+        }
         if (identities.size > 1 || identities.any { it != request.targetLedgerId }) {
             return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_LEDGER_IDENTITY_UNSUPPORTED)
         }
-        val sourceLedgerId = identities.firstOrNull() ?: request.targetLedgerId
+        // The single observed id equals the target (both checks above passed), so this is the
+        // OBSERVED identity, not a fabricated default.
+        val sourceLedgerId = identities.first()
 
         // Step 9: strict isolated migration on a COPY; the decrypted snapshot is left untouched.
         val migratedVersion: Long
@@ -354,7 +455,14 @@ class RestorePreflightUseCase(
             } catch (failure: Throwable) {
                 return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_SOURCE_READ_FAILED)
             }
-            when (val migrated = isolatedDatabase.migrateStrictly(migratedFile, sourceVersion, request.supportedSourceVersions)) {
+            // P2-3 fix: a throwing `migrateStrictly` is a typed migration failure.
+            val migrated =
+                try {
+                    isolatedDatabase.migrateStrictly(migratedFile, sourceVersion, request.supportedSourceVersions)
+                } catch (failure: Throwable) {
+                    return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_MIGRATION_FAILED)
+                }
+            when (migrated) {
                 is RestoreMigrationOutcome.Migrated -> migratedVersion = migrated.toVersion
                 RestoreMigrationOutcome.Failed -> return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_MIGRATION_FAILED)
             }
@@ -417,6 +525,8 @@ class RestorePreflightUseCase(
 
         data object Cancelled : SourceCopy
 
+        data object LaunchFailed : SourceCopy
+
         data object TooLarge : SourceCopy
 
         data object Failed : SourceCopy
@@ -432,23 +542,31 @@ class RestorePreflightUseCase(
     private fun copySourceBounded(
         cancellation: BackupCancellationSignal,
         containerFile: String,
+        sizeBound: Long,
     ): SourceCopy {
-        val reader =
+        val opened =
             try {
                 source.openSource()
             } catch (failure: Throwable) {
-                return SourceCopy.Failed
-            } ?: return SourceCopy.Cancelled
+                // A throwing port is a launch failure, not a silent cancel.
+                return SourceCopy.LaunchFailed
+            }
+        val sourceReader =
+            when (opened) {
+                is BackupSourceOpenResult.Opened -> opened.reader
+                BackupSourceOpenResult.Cancelled -> return SourceCopy.Cancelled
+                BackupSourceOpenResult.LaunchFailed -> return SourceCopy.LaunchFailed
+            }
         try {
             fileSystem.createDirectories(layout.backupStagingDirectory)
         } catch (failure: Throwable) {
-            runCatching { reader.close() }
+            runCatching { sourceReader.close() }
             return SourceCopy.Failed
         }
-        reader.use { sourceReader ->
+        sourceReader.use {
             val reported = sourceReader.reportedSize
-            if (reported != null && !backupContainerWithinSizeBound(reported)) {
-                // Provider reports > 2 GiB: reject before reading (spec section 3.1).
+            if (reported != null && !backupContainerWithinSizeBound(reported, sizeBound)) {
+                // Provider reports > the bound: reject before reading (spec section 3.1).
                 return SourceCopy.TooLarge
             }
             val writeStream =
@@ -471,7 +589,7 @@ class RestorePreflightUseCase(
                         }
                     if (read <= 0) break
                     total += read.toLong()
-                    if (!backupContainerWithinSizeBound(total)) {
+                    if (!backupContainerWithinSizeBound(total, sizeBound)) {
                         // The counted fallback: stop reading immediately, do not fill the disk.
                         return SourceCopy.TooLarge
                     }
@@ -535,7 +653,12 @@ class RestorePreflightUseCase(
      * writes the plaintext to [snapshotFile]. The trailing tag rides `update` and the no-argument
      * `doFinal` verifies it (the declared port shape). `CipherInputStream` is never used.
      *
-     * Throws on a tag failure (mapped to the uniform code by the caller); returns the plaintext size.
+     * Throws [AuthenticationFailureException] on a tag failure (mapped to the uniform code by the
+     * caller); [StagingWriteException] on a staging write failure; [ContainerReadException] on a
+     * container read failure or a short container. Returns the plaintext size.
+     *
+     * P3-2 fix: the staging write stream is opened BEFORE the password is widened, so a throwing
+     * `openWrite` cannot leave the widened char array uncleared.
      */
     private fun decryptToStaging(
         password: String,
@@ -544,12 +667,13 @@ class RestorePreflightUseCase(
         header: BackupContainerHeader,
         snapshotFile: String,
     ): Long {
+        // Opens first: if this throws, no secret material exists yet to clear.
+        val writeStream = openStagingWrite(snapshotFile)
         val headerBytes = ByteArray(BACKUP_FIXED_HEADER_LENGTH)
         val salt = ByteArray(header.saltLength)
         val iv = ByteArray(header.ivLength)
         val widened = widenBackupPassword(password)
         var key: ByteArray? = null
-        val writeStream = fileSystem.openWrite(snapshotFile)
         var committed = false
         try {
             fileSystem.openRead(containerFile).use { stream ->
@@ -569,25 +693,49 @@ class RestorePreflightUseCase(
                     val read = stream.read(chunk)
                     if (read <= 0) {
                         // A short read means the container is smaller than its header claims.
-                        throw RestoreContainerShortException()
+                        throw ContainerReadException()
                     }
                     remaining -= read.toLong()
                     val plaintext = if (read == 0) ByteArray(0) else decryptor.update(chunk, 0, read)
                     if (plaintext.isNotEmpty()) {
-                        writeStream.write(plaintext, 0, plaintext.size)
+                        writeStaging(writeStream, plaintext)
                         produced += plaintext.size.toLong()
                     }
                 }
-                val tail = decryptor.doFinal()
+                // P2-1: the tag verification is the ONLY place the platform AEAD failure surfaces;
+                // it is wrapped in the uniform-failure type so no other throwable is misreported as
+                // a wrong password.
+                val tail =
+                    try {
+                        decryptor.doFinal()
+                    } catch (failure: Throwable) {
+                        throw AuthenticationFailureException()
+                    }
                 if (tail.isNotEmpty()) {
-                    writeStream.write(tail, 0, tail.size)
+                    writeStaging(writeStream, tail)
                     produced += tail.size.toLong()
                 }
-                writeStream.flushAndSync()
-                writeStream.commit()
+                try {
+                    writeStream.flushAndSync()
+                    writeStream.commit()
+                } catch (failure: Throwable) {
+                    throw StagingWriteException()
+                }
                 committed = true
                 return produced
             }
+        } catch (failure: ContainerReadException) {
+            throw failure
+        } catch (failure: AuthenticationFailureException) {
+            throw failure
+        } catch (failure: StagingWriteException) {
+            throw failure
+        } catch (failure: RestorePreflightCancelledException) {
+            throw failure
+        } catch (failure: Throwable) {
+            // Any other failure while reading the container or unwrapping the key is a read failure,
+            // NOT a password failure (P2-1).
+            throw ContainerReadException()
         } finally {
             // Container-format spec section 4.10 / 06.C spec section 5.5: clear the widened chars
             // and the derived key after use.
@@ -597,6 +745,25 @@ class RestorePreflightUseCase(
                 runCatching { fileSystem.delete(snapshotFile) }
             }
             runCatching { writeStream.close() }
+        }
+    }
+
+    /** Opens the staging snapshot stream, mapping a failure to a typed read code (P2-1/P3-2). */
+    private fun openStagingWrite(snapshotFile: String): LedgerWriteStream =
+        try {
+            fileSystem.openWrite(snapshotFile)
+        } catch (failure: Throwable) {
+            throw StagingWriteException()
+        }
+
+    private fun writeStaging(
+        writeStream: LedgerWriteStream,
+        bytes: ByteArray,
+    ) {
+        try {
+            writeStream.write(bytes, 0, bytes.size)
+        } catch (failure: Throwable) {
+            throw StagingWriteException()
         }
     }
 
@@ -637,7 +804,7 @@ class RestorePreflightUseCase(
         var filled = 0
         while (filled < target.size) {
             val read = readInto(stream, target, filled)
-            if (read <= 0) throw RestoreContainerShortException()
+            if (read <= 0) throw ContainerReadException()
             filled += read
         }
     }
@@ -659,21 +826,18 @@ class RestorePreflightUseCase(
     }
 }
 
-/** The container ended before its header described (mapped to the uniform code by the caller). */
-private class RestoreContainerShortException : RuntimeException("backup container ended early")
+/** The container ended before its header described, or the container could not be read. */
+private class ContainerReadException : RuntimeException("backup container could not be read")
 
 /**
- * The schema version this build supports (v31).
- *
- * REGISTERED DUPLICATION (06.C spec section 10 item 1): the authoritative value is
- * `LedgerDatabase.Schema.version` in `ledger-data`, but `app-ui` depends only on `ledger-application`
- * (not `ledger-data`), so the shared preflight cannot read it directly. The composition root passes
- * the whitelist through [RestorePreflightRequest.supportedSourceVersions] and this constant is the
- * class-2 upper bound; a schema bump must update both. Keeping the class-2 decision in the shared
- * layer (rather than the platform port) is what makes the mismatch rejection testable without a
- * device.
+ * The platform AEAD tag verification failed (wrong password, tag failure or tampered ciphertext).
+ * This is the ONLY failure the uniform `P706_CONTAINER_AUTHENTICATION_FAILED` code covers
+ * (container-format spec section 4.7 scopes it to cryptographic failure).
  */
-private const val CURRENT_SCHEMA_VERSION: Long = 31L
+private class AuthenticationFailureException : RuntimeException("backup container authentication failed")
+
+/** Writing the decrypted plaintext to the private staging failed (a disk/permission problem). */
+private class StagingWriteException : RuntimeException("backup staging write failed")
 
 /** Lowercase hex for the display form of a digest (no path, no secret). */
 private fun ByteArray.toHex(): String {

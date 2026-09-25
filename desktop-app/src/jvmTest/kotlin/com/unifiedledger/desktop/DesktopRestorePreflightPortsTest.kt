@@ -78,7 +78,7 @@ class DesktopRestorePreflightPortsTest {
                     VERSION_ONE_STATEMENTS_DESKTOP.forEach(statement::execute)
                 }
             }
-            assertEquals(listOf("ledger-a"), port.readLedgerIdentities(path.absolutePathString()))
+            assertEquals(listOf("ledger-a"), port.readObservedLedgerIdentities(path.absolutePathString()))
         }
     }
 
@@ -105,9 +105,11 @@ class DesktopRestorePreflightPortsTest {
 }
 
 /**
- * The v1 base surface (the frozen `VERSION_ONE_STATEMENTS`, a subset sufficient for the port tests:
- * the formal core plus one balanced transaction). Kept local so this test does not depend on a
- * ledger-data test source set (it is not on the desktop test classpath).
+ * The v1 base surface for these port tests: the formal core tables plus one balanced transaction,
+ * with the same FOREIGN KEY constraints as the frozen `VERSION_ONE_STATEMENTS`
+ * (`ledger-data` jvmTest `LedgerDatabaseMigrationTest`) that the migration chain expects. It is kept
+ * local because that fixture is not on the desktop test classpath; the constraints are reproduced so
+ * the FK-enforced migration path exercises the same schema shape (P3-7).
  */
 private val VERSION_ONE_STATEMENTS_DESKTOP: List<String> =
     listOf(
@@ -138,7 +140,13 @@ private val VERSION_ONE_STATEMENTS_DESKTOP: List<String> =
           effective_at TEXT NOT NULL,
           note TEXT,
           UNIQUE (transaction_id, version_number),
-          UNIQUE (transaction_id, version_id, ledger_id)
+          UNIQUE (transaction_id, version_id, ledger_id),
+          FOREIGN KEY (transaction_id, ledger_id)
+            REFERENCES ledger_transaction(transaction_id, ledger_id)
+            DEFERRABLE INITIALLY DEFERRED,
+          FOREIGN KEY (posting_set_id, ledger_id)
+            REFERENCES posting_set(posting_set_id, ledger_id)
+            DEFERRABLE INITIALLY DEFERRED
         )
         """.trimIndent(),
         """
@@ -152,7 +160,10 @@ private val VERSION_ONE_STATEMENTS_DESKTOP: List<String> =
           currency_code TEXT NOT NULL,
           currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
           UNIQUE (posting_set_id, posting_index),
-          UNIQUE (posting_id, ledger_id)
+          UNIQUE (posting_id, ledger_id),
+          FOREIGN KEY (posting_set_id, ledger_id)
+            REFERENCES posting_set(posting_set_id, ledger_id)
+            DEFERRABLE INITIALLY DEFERRED
         )
         """.trimIndent(),
         """
@@ -160,7 +171,13 @@ private val VERSION_ONE_STATEMENTS_DESKTOP: List<String> =
           transaction_id TEXT NOT NULL,
           ledger_id TEXT NOT NULL,
           current_version_id TEXT NOT NULL,
-          PRIMARY KEY (transaction_id, ledger_id)
+          PRIMARY KEY (transaction_id, ledger_id),
+          FOREIGN KEY (transaction_id, ledger_id)
+            REFERENCES ledger_transaction(transaction_id, ledger_id)
+            DEFERRABLE INITIALLY DEFERRED,
+          FOREIGN KEY (transaction_id, current_version_id, ledger_id)
+            REFERENCES transaction_version(transaction_id, version_id, ledger_id)
+            DEFERRABLE INITIALLY DEFERRED
         )
         """.trimIndent(),
         "INSERT INTO posting_set VALUES ('set-1', 'ledger-a')",

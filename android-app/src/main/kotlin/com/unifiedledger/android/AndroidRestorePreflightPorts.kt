@@ -6,9 +6,10 @@ import com.unifiedledger.data.migrateIsolatedSnapshotStrictlyOn
 import com.unifiedledger.data.openAndroidReadWriteDriver
 import com.unifiedledger.data.readAuthoritativeUserVersionOn
 import com.unifiedledger.data.readIntegrityCheckRowsOn
-import com.unifiedledger.data.readLedgerIdsOn
+import com.unifiedledger.data.readObservedLedgerIdsOn
 import com.unifiedledger.data.snapshotIntegrityOk
 import com.unifiedledger.data.validateDomainOn
+import com.unifiedledger.ui.BackupSourceOpenResult
 import com.unifiedledger.ui.BackupSourcePort
 import com.unifiedledger.ui.BackupSourceReader
 import com.unifiedledger.ui.RestoreIsolatedDatabasePort
@@ -36,8 +37,11 @@ internal const val ANDROID_BACKUP_SOURCE_WAIT_MILLIS: Long = 10L * 60L * 1000L
  * THREADING (the `AndroidBackupTargetPort` precedent): SAF launchers MUST be launched on the main
  * thread, while the preflight runs on a background thread. The port posts the launch to the main
  * thread and the preflight thread BLOCKS on a latch until the SAF callback delivers the document;
- * the main thread is never blocked, so there is no deadlock. Returns null on cancel or a launch
- * failure.
+ * the main thread is never blocked, so there is no deadlock.
+ *
+ * P2-8: a null SAF handle is [BackupSourceOpenResult.Cancelled]; a throwing poster, a latch timeout
+ * or a failed stream open is [BackupSourceOpenResult.LaunchFailed]. The two were previously
+ * indistinguishable (both `null`).
  */
 internal class AndroidBackupSourcePort<Picked>(
     private val postToMainThread: ((() -> Unit) -> Unit),
@@ -48,7 +52,7 @@ internal class AndroidBackupSourcePort<Picked>(
     @Volatile
     private var pending: PendingChoice<Picked>? = null
 
-    override fun openSource(): BackupSourceReader? {
+    override fun openSource(): BackupSourceOpenResult {
         val latch = CountDownLatch(1)
         val choice = PendingChoice<Picked>(latch)
         pending = choice
@@ -56,28 +60,30 @@ internal class AndroidBackupSourcePort<Picked>(
             postToMainThread { launchOpenDocument(arrayOf(ANDROID_BACKUP_CONTAINER_MIME)) }
         } catch (failure: Exception) {
             pending = null
-            return null
+            return BackupSourceOpenResult.LaunchFailed
         }
         val delivered = latch.await(ANDROID_BACKUP_SOURCE_WAIT_MILLIS, TimeUnit.MILLISECONDS)
         pending = null
-        if (!delivered) return null
-        val picked = choice.picked ?: return null
+        if (!delivered) return BackupSourceOpenResult.LaunchFailed
+        val picked = choice.picked ?: return BackupSourceOpenResult.Cancelled
         val stream =
             try {
                 openInputStream(picked)
             } catch (failure: Exception) {
                 null
-            } ?: return null
+            } ?: return BackupSourceOpenResult.LaunchFailed
         val size = sizeOf(picked)
-        return object : BackupSourceReader {
-            override fun read(buffer: ByteArray): Int = stream.read(buffer)
+        return BackupSourceOpenResult.Opened(
+            object : BackupSourceReader {
+                override fun read(buffer: ByteArray): Int = stream.read(buffer)
 
-            override val reportedSize: Long? get() = size
+                override val reportedSize: Long? get() = size
 
-            override fun close() {
-                stream.close()
-            }
-        }
+                override fun close() {
+                    stream.close()
+                }
+            },
+        )
     }
 
     /** The SAF OpenDocument result callback: a null handle is the user's cancellation. */
@@ -107,7 +113,7 @@ internal const val ANDROID_BACKUP_CONTAINER_MIME: String = "application/octet-st
 internal class AndroidRestoreIsolatedDatabasePort : RestoreIsolatedDatabasePort {
     override fun readAuthoritativeUserVersion(snapshotPath: String): Long = withDriver(snapshotPath) { driver -> readAuthoritativeUserVersionOn(driver) }
 
-    override fun readLedgerIdentities(snapshotPath: String): List<String> = withDriver(snapshotPath) { driver -> readLedgerIdsOn(driver) }
+    override fun readObservedLedgerIdentities(snapshotPath: String): List<String> = withDriver(snapshotPath) { driver -> readObservedLedgerIdsOn(driver) }
 
     override fun migrateStrictly(
         snapshotPath: String,

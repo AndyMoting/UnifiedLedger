@@ -215,14 +215,31 @@ fun backupContainerExpectedSize(header: BackupContainerHeader): Long =
  * tag_len == container_size`. Decidable from the fixed header plus the actual container size, so it
  * is a pre-authentication check (section 4.7 class 1). A mismatch is
  * [BackupPreflightRejection.P706_CONTAINER_SIZE_MISMATCH] (PROPOSED name).
+ *
+ * This is the single implementation of the equation: the restore preflight calls it rather than
+ * re-deriving the comparison inline, so the rule cannot drift between the two.
  */
 fun backupContainerSelfConsistent(
     header: BackupContainerHeader,
     containerSize: Long,
 ): Boolean = backupContainerExpectedSize(header) == containerSize
 
-/** The container size bound check (container-format spec section 4.8, frozen code). */
-fun backupContainerWithinSizeBound(containerSize: Long): Boolean = containerSize <= BACKUP_MAX_CONTAINER_BYTES
+/**
+ * The container size bound check (container-format spec section 4.8, frozen code) against the frozen
+ * [BACKUP_MAX_CONTAINER_BYTES].
+ */
+fun backupContainerWithinSizeBound(containerSize: Long): Boolean = backupContainerWithinSizeBound(containerSize, BACKUP_MAX_CONTAINER_BYTES)
+
+/**
+ * The container size bound check against an explicit [bound]. The preflight supplies the frozen
+ * [BACKUP_MAX_CONTAINER_BYTES] in production; this overload exists so the counted-source-fallback
+ * rejection can be driven by a small synthetic stream in tests (the frozen 2 GiB value is far too
+ * large to materialize), which is the only way the counting branch is observable end to end.
+ */
+fun backupContainerWithinSizeBound(
+    containerSize: Long,
+    bound: Long,
+): Boolean = containerSize <= bound
 
 /** Big-endian unsigned `u16`. */
 private fun readU16(

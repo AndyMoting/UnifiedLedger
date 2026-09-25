@@ -459,6 +459,33 @@ class LedgerStableStorageTest {
     }
 
     @Test
+    fun theStartupSweepAlsoRemovesLeftoverRestorePreflightStagingFiles() {
+        // P2-5b (P7-06 06.C, D-179 spec section 6.5): the 06.C preflight shares the staging
+        // directory and its `restore-*` prefixes must be swept too, so a killed preflight's PLAINTEXT
+        // snapshot does not linger. Ablating the restore-prefix clause in `sweepBackupStaging` would
+        // leave these files behind and this test would go red.
+        fileSystem.putDirectory(generationsDirectory)
+        fileSystem.putDirectory(generationOneDirectory)
+        fileSystem.putFile(generationOneMain, sqliteLikeBytes())
+        fileSystem.putFile(pointer, "gen-1")
+        fileSystem.putDirectory(layout.backupStagingDirectory)
+        fileSystem.putFile(layout.restoreContainerFile("stale"), ByteArray(20))
+        fileSystem.putFile(layout.restoreSnapshotFile("stale"), ByteArray(30))
+        fileSystem.putFile(layout.restoreMigratedFile("stale"), ByteArray(40))
+        fileSystem.putFile(fileSystem.join(layout.backupStagingDirectory, "keep-me"), ByteArray(5))
+
+        openStableStorageLedger(fileSystem, layout, legacyMainFile = null, closeGraph = {}) { "graph" }
+
+        assertFalse(fileSystem.hasFile(layout.restoreContainerFile("stale")))
+        assertFalse(fileSystem.hasFile(layout.restoreSnapshotFile("stale")))
+        assertFalse(fileSystem.hasFile(layout.restoreMigratedFile("stale")))
+        // The sweep stays scoped: the generation set, the pointer and an unrelated file survive.
+        assertTrue(fileSystem.hasFile(generationOneMain))
+        assertTrue(fileSystem.hasFile(pointer))
+        assertTrue(fileSystem.hasFile(fileSystem.join(layout.backupStagingDirectory, "keep-me")))
+    }
+
+    @Test
     fun aSweepListingFailureNeverFailsStartup() {
         // Best effort by contract: cleanup must never turn a good startup into a failure.
         fileSystem.failOn = "listDirectory:${layout.backupStagingDirectory}"
