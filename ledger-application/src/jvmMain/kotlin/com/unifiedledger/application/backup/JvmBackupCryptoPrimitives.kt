@@ -61,6 +61,18 @@ class JvmBackupCryptoPrimitives(
         cipher.updateAAD(aad)
         return JvmGcmEncryptor(cipher)
     }
+
+    override fun gcmDecryptor(
+        key: ByteArray,
+        iv: ByteArray,
+        aad: ByteArray,
+    ): BackupGcmDecryptor {
+        val cipher = Cipher.getInstance(BACKUP_AEAD_TRANSFORMATION)
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(BACKUP_TAG_LENGTH * 8, iv))
+        // AAD must be fully supplied before any ciphertext is decrypted (spec section 4.5).
+        cipher.updateAAD(aad)
+        return JvmGcmDecryptor(cipher)
+    }
 }
 
 /** `PBKDF2WithHmacSHA256` (container-format spec section 4.4). */
@@ -86,6 +98,23 @@ private class JvmSha256Digest(
 private class JvmGcmEncryptor(
     private val cipher: Cipher,
 ) : BackupGcmEncryptor {
+    override fun update(
+        bytes: ByteArray,
+        offset: Int,
+        length: Int,
+    ): ByteArray = if (length == 0) ByteArray(0) else cipher.update(bytes, offset, length) ?: ByteArray(0)
+
+    override fun doFinal(): ByteArray = cipher.doFinal() ?: ByteArray(0)
+}
+
+/**
+ * The JVM/JCE decryptor (P7-06 06.C, D-179; spec section 5.1). It uses explicit `update`/`doFinal`
+ * and never `CipherInputStream` (container-format spec section 4.9). `doFinal` performs the GCM tag
+ * verification and throws `AEADBadTagException` (a `javax.crypto.AEADBadTagException`) on failure.
+ */
+private class JvmGcmDecryptor(
+    private val cipher: Cipher,
+) : BackupGcmDecryptor {
     override fun update(
         bytes: ByteArray,
         offset: Int,

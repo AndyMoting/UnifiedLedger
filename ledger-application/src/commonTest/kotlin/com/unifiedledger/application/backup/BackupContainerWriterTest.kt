@@ -77,6 +77,21 @@ class BackupContainerWriterTest {
                 }
             }
         }
+
+        override fun gcmDecryptor(
+            key: ByteArray,
+            iv: ByteArray,
+            aad: ByteArray,
+        ): BackupGcmDecryptor =
+            object : BackupGcmDecryptor {
+                override fun update(
+                    bytes: ByteArray,
+                    offset: Int,
+                    length: Int,
+                ): ByteArray = bytes.copyOfRange(offset, offset + length)
+
+                override fun doFinal(): ByteArray = ByteArray(0)
+            }
     }
 
     private class RecordingSink : BackupContainerSink {

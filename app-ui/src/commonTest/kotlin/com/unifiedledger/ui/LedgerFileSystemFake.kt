@@ -272,4 +272,19 @@ internal fun noopBackupCrypto(): com.unifiedledger.application.backup.BackupCryp
 
                 override fun doFinal(): ByteArray = ByteArray(16)
             }
+
+        override fun gcmDecryptor(
+            key: ByteArray,
+            iv: ByteArray,
+            aad: ByteArray,
+        ): com.unifiedledger.application.backup.BackupGcmDecryptor =
+            object : com.unifiedledger.application.backup.BackupGcmDecryptor {
+                override fun update(
+                    bytes: ByteArray,
+                    offset: Int,
+                    length: Int,
+                ): ByteArray = ByteArray(0)
+
+                override fun doFinal(): ByteArray = ByteArray(0)
+            }
     }

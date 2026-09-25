@@ -200,6 +200,78 @@ class BackupContainerCryptoJvmTest {
         // two cases.
         assertEquals(wrongPassword::class, tamperedFailure::class)
     }
+
+    // ------------------------------------------- 06.C read-side decryptor (spec section 5.1)
+
+    /**
+     * P7-06 06.C (D-179): the new [BackupGcmDecryptor] port must recover exactly what the writer
+     * produced, with the trailing tag fed through `update` and the no-argument `doFinal` verifying
+     * it (the declared shape has no `doFinal(byte[])`). A decryptor that returned plaintext without
+     * verifying the tag, or that required a parameterized `doFinal`, fails here.
+     */
+    @Test
+    fun theStreamingDecryptorRecoversThePlaintextAndVerifiesTheTagViaUpdate() {
+        val container = writeGoldenContainer(plaintext)
+        val recovered = decryptContainerWithPort(container, cjkPassword)
+        assertContentEquals(plaintext, recovered)
+    }
+
+    @Test
+    fun theStreamingDecryptorThrowsOnAWrongPassword() {
+        val container = writeGoldenContainer(plaintext)
+        val failure = runCatching { decryptContainerWithPort(container, "password123") }.exceptionOrNull()
+        assertTrue(
+            failure is javax.crypto.AEADBadTagException,
+            "a wrong password must fail the tag check, got $failure",
+        )
+    }
+
+    @Test
+    fun theStreamingDecryptorThrowsOnATamperedTag() {
+        val container = writeGoldenContainer(plaintext)
+        val tampered = container.copyOf()
+        tampered[tampered.size - 1] = (tampered[tampered.size - 1].toInt() xor 0x01).toByte()
+        val failure = runCatching { decryptContainerWithPort(tampered, cjkPassword) }.exceptionOrNull()
+        assertTrue(
+            failure is javax.crypto.AEADBadTagException,
+            "a tampered tag must fail the tag check, got $failure",
+        )
+    }
+
+    /**
+     * Feeds the ciphertext + trailing tag to the port in fixed chunks (the 06.C streaming shape) and
+     * returns the concatenated plaintext. The tag rides the final `update`, exactly as the declared
+     * port shape requires.
+     */
+    private fun decryptContainerWithPort(
+        container: ByteArray,
+        password: String,
+    ): ByteArray {
+        val header = container.copyOfRange(0, BACKUP_FIXED_HEADER_LENGTH)
+        val salt = container.copyOfRange(BACKUP_FIXED_HEADER_LENGTH, BACKUP_FIXED_HEADER_LENGTH + BACKUP_SALT_LENGTH)
+        val ivStart = BACKUP_FIXED_HEADER_LENGTH + BACKUP_SALT_LENGTH
+        val iv = container.copyOfRange(ivStart, ivStart + BACKUP_IV_LENGTH)
+        val ciphertextAndTag = container.copyOfRange(ivStart + BACKUP_IV_LENGTH, container.size)
+        val key =
+            JvmBackupCryptoPrimitives().deriveKey(
+                widenBackupPassword(password),
+                salt,
+                BACKUP_KDF_ITERATIONS,
+                BACKUP_KEY_LENGTH_BITS,
+            )
+        val decryptor = JvmBackupCryptoPrimitives().gcmDecryptor(key, iv, backupContainerAad(header, salt))
+        val output = ArrayList<Byte>()
+        var position = 0
+        while (position < ciphertextAndTag.size) {
+            val count = minOf(BACKUP_STREAM_CHUNK_BYTES, ciphertextAndTag.size - position)
+            val produced = decryptor.update(ciphertextAndTag, position, count)
+            for (index in produced.indices) output += produced[index]
+            position += count
+        }
+        val tail = decryptor.doFinal()
+        for (index in tail.indices) output += tail[index]
+        return output.toByteArray()
+    }
 }
 
 private fun String.hexToBytes(): ByteArray {
