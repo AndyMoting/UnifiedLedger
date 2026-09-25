@@ -3479,3 +3479,38 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 5. **承接**：06.B 的实施（快照、有界流式加密写端口、取消/空间处理、私有暂存生命周期）为后续实施批；06.C（预检）与 06.D（切换/回滚）属更后切片。规格 §9 登记的未验证项（`VACUUM INTO` 经 SQLDelight Android binder 路径未证、可用空间原语未定、§4.6 AAD 跨端向量、61k 峰值内存、桌面 61k 读数、`integrity_check` 执行面等）为实施批义务，不得静默丢弃。
 
 **关联决定：** D-174（容器格式与 Q13 门表——本条逐字节实现其 §4，不改其决定）、D-176（06.1 runtime owner/lease——本条复用）、D-156/D-158（规格与登记先例）、D-175（前序最高 id）。
+
+## D-178 P7-06 06.1 Android 启动路径 P0 缺陷修复登记
+
+**状态：** 已批准（2026-09-25，P7-06 切片 06.1 已合入 Android 启动路径的两项设备实证 P0 缺陷的修复登记；修复由单一写者在隔离 worktree 内实施，经三轮独立规格/质量评审与 distinct verifier 复核，并由主代理在受管 AVD 上完成设备验收；本条登记缺陷、修复、评审/验收拓扑、具名残余与边界）。
+
+**决定：**
+
+1. **缺陷（设备实证，2026-09-25）**：已合入 `main` 的 06.1 Android 启动路径（`d6cffb6`，D-176）在真实模拟器（AVD `ul_p7_d01`、API 36、隔离 adb 5038）上完全无法启动，含两项 P0：
+
+   - **缺陷 1（相对库名含路径分隔符）**：`androidDatabaseName` 把绝对代际主文件折算为相对名 `ledger-generations/gen-1/ledger.db`，组合根把它交给 `createAndroidLedgerDatabase` → `AndroidSqliteDriver(name=...)`；AOSP `ContextImpl.makeFilename` 对不以分隔符开头却含分隔符的名字抛 `IllegalArgumentException("File ... contains a path separator")`（设备栈：`ContextImpl.makeFilename` → `getDatabasePath` → `FrameworkSQLiteOpenHelper$OpenHelper.innerGetDatabase` → `App.kt:361`）。全新安装与旧路径升级两路都到达同一调用，应用一律进入 `StartupError`。
+   - **缺陷 2（主线程阻塞打开致 ANR 并永久锁死）**：旧路径升级在主线程复制旧库；对设备上 371,658,752 字节旧库产生 `Input dispatching timed out` ANR，留下 94,773,248 B 与 125,247,488 B 的部分复制，并留下无活动指针的代际目录，下一次启动以 `POINTER_MISSING` 永久 fail-closed（规格的静默空库禁令使其不回退为全新安装）——真实用户大库首升即砖。
+
+2. **修复（分支 `UL-p7-p0fix`，4 提交 `d3c3c5b` → `5e44c27` → `e4d1679` → `1831b04`，合并 `0c0b319`）**：
+
+   - **绝对路径交驱动**：把绝对代际主文件直接交给驱动，删除 `androidDatabaseName`（缺陷 1）。
+   - **打开移出主线程**：经注入的启动 scope + `Dispatchers.IO` 承载阻塞打开，移除缺陷 2 的 ANR 触发。
+   - **进程级打开锁**：`withAndroidStableStorageOpenLock` 串行化不同 owner 实例的打开序列。
+   - **显式生命周期**：控制器增 `dispose()`，组合根经 `DisposableEffect` 调用；关闭为**尽力而为**并如实披露（见残余）。
+   - 本批另入 `android-app` 两个 JVM 测试文件、新增 instrumented 测试 `AndroidAbsoluteDatabasePathInstrumentedTest`、`.github/workflows/ci.yml` 增 `:android-app:assembleDebugAndroidTest`（仅编译守卫，CI 维持零 `connectedAndroidTest`）与 `docs/CONTRIBUTING.md` 命令同步。
+
+3. **评审与验收拓扑**：单一写者在隔离 worktree（基于 `5dad362`）实施；独立规格/质量评审共三轮（含首轮 findings 与后续闭包复评，全部闭合）；distinct verifier 独立复核；主代理在受管 AVD 上完成设备验收。
+
+4. **设备验收（候选 `1831b04`，APK 48,957,268 B，AVD `ul_p7_d01`）**：全新安装路径无异常、无 ANR，已发布活动指针并进入完整主界面；371,658,752 字节旧库升级路径 **ANR 计数 0**，完整复制、指针发布、旧文件移除、UI 显示真实账本数据；3 项 instrumented 测试在设备上 exit 0 通过（含非空洞的并发测试）。缺陷 1 与缺陷 2 **已修复并经设备验证**。
+
+5. **残余承接（不得静默丢弃）**：
+
+   - (a) **`POINTER_MISSING` 砖化窗口未被消除**：本修复只移除其 ANR 触发；进程被杀/掉电发生在 `stageLegacyUpgrade` 与 `publishActivePointer` 之间时，仍留下无指针的代际目录并 fail-closed，06.1 无恢复——**承接至 06.D**。
+   - (b) **`closeActiveGraph` 为尽力而为**：`TransitionInProgress`（owner 互斥被占）与 `QuiesceBlocked`（在飞业务租约）两路下关闭被拒、图保持打开，现已记日志并披露；**部分为既有行为**（修复前控制器根本没有 dispose）。
+   - (c) **进程级打开锁无超时**：若打开序列挂起，重建组合的启动将停在 `Starting`（该锁不设超时）。
+
+6. **边界**：本条登记一项缺陷修复，**不修改** D-176 的设计、D-174 的容器格式或任何冻结契约；零 schema/迁移/依赖变更（schema 维持 v31）；不把任何验收向量并入 PASS。
+
+7. **验收状态**：两项缺陷已修复并经设备验证；**06.1 仍不是完整的 P706-A06 通过**（进程被杀/掉电的崩溃窗口残余仍在）。`0c0b319` 同提交 CI 尚在运行（未决），本条不主张其成功。
+
+**关联决定：** D-176（06.1 稳定存储与 runtime owner——本条修复其已合入实现中的启动缺陷，不改其设计）、D-174（容器格式与代际/指针设计——不改其决定）、D-158（实施登记与残余承接的形状；schema v31）、D-177（前序最高 id）。
