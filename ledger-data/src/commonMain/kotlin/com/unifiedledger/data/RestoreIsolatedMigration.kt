@@ -81,9 +81,8 @@ fun migrateIsolatedSnapshotStrictlyOn(
     fromVersion: Long,
     supportedVersions: Set<Long>,
 ): StrictMigrationResult {
-    val current = LedgerDatabase.Schema.version.toLong()
-    if (fromVersion !in supportedVersions) {
-        return StrictMigrationResult.Failed(StrictMigrationFailure.UNSUPPORTED_SOURCE_VERSION)
+    val current = LedgerDatabase.Schema.version
+    if (fromVersion !in supportedVersions) {        return StrictMigrationResult.Failed(StrictMigrationFailure.UNSUPPORTED_SOURCE_VERSION)
     }
     if (fromVersion >= current) {
         return StrictMigrationResult.Failed(StrictMigrationFailure.NOT_AN_OLDER_VERSION)
@@ -135,6 +134,50 @@ fun foreignKeyCheckOn(driver: SqlDriver): ForeignKeyCheckResult {
             null,
         ).value
     return ForeignKeyCheckResult(violations)
+}
+
+/**
+ * Reads `PRAGMA integrity_check` rows for the shared [snapshotIntegrityOk] mapping (06.C spec
+ * section 6.4). The rows -> OK rule is the 06.B `snapshotIntegrityOk` (at least one row, every row
+ * exactly `ok`), reused so the preflight cannot drift from the export's verdict.
+ */
+fun readIntegrityCheckRowsOn(driver: SqlDriver): List<String?> {
+    val rows = mutableListOf<String?>()
+    driver
+        .executeQuery(
+            null,
+            "PRAGMA integrity_check",
+            { cursor ->
+                while (cursor.next().value) rows += cursor.getString(0)
+                QueryResult.Unit
+            },
+            0,
+            null,
+        ).value
+    return rows
+}
+
+/**
+ * The DISTINCT `ledger_id` values carried by the payload's `ledger_transaction` (the class-3
+ * identity check, 06.C spec section 3.8). A missing table throws, which the caller maps to the
+ * identity rejection (a payload without the formal surface cannot be this product's ledger).
+ */
+fun readLedgerIdsOn(driver: SqlDriver): List<String> {
+    val ids = mutableListOf<String>()
+    driver
+        .executeQuery(
+            null,
+            "SELECT DISTINCT ledger_id FROM ledger_transaction",
+            { cursor ->
+                while (cursor.next().value) {
+                    cursor.getString(0)?.let { ids += it }
+                }
+                QueryResult.Unit
+            },
+            0,
+            null,
+        ).value
+    return ids
 }
 
 /**
