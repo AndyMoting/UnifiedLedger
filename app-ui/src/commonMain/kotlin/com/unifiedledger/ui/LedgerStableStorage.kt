@@ -23,9 +23,19 @@ internal const val LEDGER_GENERATIONS_DIRECTORY = "ledger-generations"
 internal const val LEDGER_ACTIVE_POINTER_FILE = "active-generation"
 
 /**
- * The persistent switch journal file. 06.1 never writes one (the `prepared -> switched ->
- * committed` machine belongs to 06.D); a present journal is a 06.1 startup gate (section 5.1
- * step 2) and always fails closed.
+ * The persistent switch journal file. 06.1 never wrote one (the `prepared -> switched ->
+ * committed` machine belongs to 06.D); a present journal was a 06.1 startup gate (section 5.1
+ * step 2) and always failed closed.
+ *
+ * P7-06 06.D (D-182; spec `docs/specs/2026-09-26-p7-06-restore-confirm-switch-design.md`
+ * section 4.3): the 06.D confirm/switch use case now writes this journal, and the startup gate
+ * below is EXTENDED exactly as the 06.1 spec registered as the 06.D obligation: a RECOGNIZABLE
+ * journal (a versioned [LedgerSwitchJournal]) is rolled back per the container-format spec
+ * section 5.3 frozen ROLLBACK restart rule and startup then proceeds normally; an
+ * unrecognizable/unparseable journal keeps the frozen fail-closed [LedgerStorageFailure.JOURNAL_PRESENT]
+ * semantics. D-176's fail-closed rules for everything else (POINTER_MISSING, POINTER_INVALID,
+ * ACTIVE_GENERATION_*) are unchanged, and the silent-empty-database prohibition is untouched:
+ * every journal recovery path re-anchors on the recorded OLD generation pointer.
  */
 internal const val LEDGER_SWITCH_JOURNAL_FILE = "switch-journal"
 
@@ -341,7 +351,22 @@ internal fun resolveLedgerStorage(
     legacyMainFile: String?,
 ): LedgerStorageResolution {
     if (fileSystem.exists(layout.switchJournalFile)) {
-        return LedgerStorageResolution.Rejected(LedgerStorageFailure.JOURNAL_PRESENT)
+        // 06.D journal gate (spec section 4.3): a recognizable journal recovers deterministically
+        // (restart half of the frozen ROLLBACK rule, container-format spec section 5.3) and
+        // startup then re-resolves through the restored old-generation pointer; anything
+        // unrecognizable — including a read failure and any foreign format — keeps the frozen
+        // fail-closed JOURNAL_PRESENT semantics of 06.1 (spec section 5.1 step 2).
+        val journal =
+            try {
+                parseLedgerSwitchJournal(fileSystem.readBytes(layout.switchJournalFile))
+            } catch (failure: Error) {
+                throw failure
+            } catch (failure: Throwable) {
+                null
+            }
+        if (journal == null || !recoverSwitchJournalAtStartup(fileSystem, layout, journal)) {
+            return LedgerStorageResolution.Rejected(LedgerStorageFailure.JOURNAL_PRESENT)
+        }
     }
 
     val generationsDirectoryExists =
@@ -386,16 +411,26 @@ internal fun resolveLedgerStorage(
  * (`gen-<n>`); anything else is invalid. The generation number is not otherwise trusted — the
  * caller re-derives the directory from it, so a pointer naming a generation outside the
  * enumerable set resolves to a missing directory and fails closed.
+ *
+ * 06.D visibility note (spec section 1.1 P3-2, the recommended option): relaxed from `private`
+ * to `internal` so the confirm/switch use case can read the current disk generation for the
+ * `gen-(current + 1)` numbering and the peak-disk precheck, without adding any public API.
  */
-private fun parsePointer(
+internal fun parsePointer(
     bytes: ByteArray,
     layout: LedgerStorageLayout,
 ): Int? {
     val name = bytes.decodeToString().trim()
+    val number = parseGenerationName(name) ?: return null
+    if (layout.generationDirectoryName(number) != name) return null
+    return number
+}
+
+/** Strictly parses one `gen-<n>` name with `n >= 1`; anything else is null. */
+internal fun parseGenerationName(name: String): Int? {
     if (!name.startsWith(LEDGER_GENERATION_PREFIX)) return null
     val number = name.removePrefix(LEDGER_GENERATION_PREFIX).toIntOrNull() ?: return null
     if (number < 1) return null
-    if (layout.generationDirectoryName(number) != name) return null
     return number
 }
 
@@ -502,4 +537,153 @@ internal fun sweepBackupStaging(
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// P7-06 06.D (D-182; spec `docs/specs/2026-09-26-p7-06-restore-confirm-switch-design.md`
+// section 4): the persistent switch journal — the in-process instantiation of the frozen
+// `prepared -> switched -> committed` machine of the container-format spec section 5.3.
+//
+// The journal content is deliberately minimal and versioned (the spec section 4.2 leaves the
+// encoding to the implementation batch): a fixed version header line, the stage, and the OLD and
+// NEW disk generation numbers. Recording BOTH generations is what makes the restart rollback
+// deterministic: the OLD generation is the rollback anchor to republish, the NEW one is the
+// staged directory to discard. Anything unparseable keeps the fail-closed JOURNAL_PRESENT gate.
+// ---------------------------------------------------------------------------
+
+/** The persisted stages of the switch journal (container-format spec section 5.3). */
+internal enum class LedgerSwitchJournalStage {
+    /** The new generation is fully staged and fsynced; the pointer has NOT been switched. */
+    Prepared,
+
+    /** The pointer has been switched to the new generation; the new graph is not confirmed open. */
+    Switched,
+}
+
+/** One persisted switch journal record (06.D spec section 4.2: stage + old/new disk generation). */
+internal class LedgerSwitchJournal(
+    val stage: LedgerSwitchJournalStage,
+    /** The disk generation the pointer named before the switch — the rollback anchor. */
+    val oldGeneration: Int,
+    /** The disk generation the switch staged and (for [LedgerSwitchJournalStage.Switched]) published. */
+    val newGeneration: Int,
+)
+
+/** The fixed, versioned first line of the journal; any other header is unrecognizable. */
+private const val LEDGER_SWITCH_JOURNAL_HEADER = "unified-ledger switch journal v1"
+
+/** The journal bytes for one record. Written only through the atomic [LedgerFileSystem.writeAtomic]. */
+internal fun ledgerSwitchJournalBytes(journal: LedgerSwitchJournal): ByteArray =
+    listOf(
+        LEDGER_SWITCH_JOURNAL_HEADER,
+        "stage=" +
+            when (journal.stage) {
+                LedgerSwitchJournalStage.Prepared -> "prepared"
+                LedgerSwitchJournalStage.Switched -> "switched"
+            },
+        "old=$LEDGER_GENERATION_PREFIX${journal.oldGeneration}",
+        "new=$LEDGER_GENERATION_PREFIX${journal.newGeneration}",
+    ).joinToString("\n").encodeToByteArray()
+
+/**
+ * Strictly parses journal bytes; null for ANY foreign or damaged content, which keeps the
+ * frozen fail-closed JOURNAL_PRESENT gate (06.D spec section 4.2). The new generation must be
+ * exactly the old one + 1 (the only shape the confirm flow ever writes).
+ */
+internal fun parseLedgerSwitchJournal(bytes: ByteArray): LedgerSwitchJournal? {
+    val lines = bytes.decodeToString().lines().map { it.trim() }
+    if (lines.size != 4 || lines[0] != LEDGER_SWITCH_JOURNAL_HEADER) return null
+    val stage =
+        when (lines[1]) {
+            "stage=prepared" -> LedgerSwitchJournalStage.Prepared
+            "stage=switched" -> LedgerSwitchJournalStage.Switched
+            else -> return null
+        }
+    val oldGeneration = parseGenerationName(lines[2].removePrefix("old=")) ?: return null
+    val newGeneration = parseGenerationName(lines[3].removePrefix("new=")) ?: return null
+    if (newGeneration != oldGeneration + 1) return null
+    return LedgerSwitchJournal(stage, oldGeneration, newGeneration)
+}
+
+/**
+ * Deletes one generation directory as one consistent set: the main file, any `-wal`/`-shm`
+ * sidecars, then the directory entry — the same sidecar discipline as [removeLegacyFiles] (a
+ * stale `-wal` must never survive its main file). Strict: a deletion failure throws, so the
+ * delete-then-stage precondition of the confirm flow can observe it. Callers that only need a
+ * best-effort cleanup wrap this in `runCatching`.
+ */
+internal fun deleteGenerationDirectory(
+    fileSystem: LedgerFileSystem,
+    layout: LedgerStorageLayout,
+    generation: Int,
+) {
+    val directory = layout.generationDirectory(generation)
+    if (!fileSystem.exists(directory)) return
+    val mainFile = layout.mainFile(directory)
+    if (fileSystem.exists(mainFile)) {
+        fileSystem.delete(mainFile)
+    }
+    for (suffix in LEDGER_SIDECAR_SUFFIXES) {
+        val sidecar = layout.sidecarFile(directory, suffix)
+        if (fileSystem.exists(sidecar)) {
+            fileSystem.delete(sidecar)
+        }
+    }
+    if (fileSystem.exists(directory)) {
+        fileSystem.delete(directory)
+    }
+}
+
+/**
+ * 06.D spec section 4.2/4.3: the restart half of the frozen ROLLBACK rule (container-format spec
+ * section 5.3). Both in-process rollback and restart recovery are executors of the SAME rule, in
+ * the same order: republish the OLD pointer through the frozen [publishActivePointer] primitive
+ * (unconditionally for `switched`; for `prepared` only when the pointer already moved — the crash
+ * window between the pointer publish and the `switched` journal write), remove the journal, then
+ * discard the staged NEW generation directory including its sidecars.
+ *
+ * The old generation is never touched (it is the rollback anchor), so the silent-empty-database
+ * prohibition (D-176) is untouched: every recovery path re-anchors on an existing old generation.
+ * A republish or journal-removal failure returns false so startup keeps failing closed with the
+ * journal still in place — the next start retries deterministically from the same journal. The
+ * new-generation deletion is best effort by contract (spec section 4.2): a deletion failure never
+ * blocks the pointer/journal recovery and is left to the retention policy.
+ *
+ * Returns true when the recovery completed and startup may re-resolve through the pointer.
+ */
+private fun recoverSwitchJournalAtStartup(
+    fileSystem: LedgerFileSystem,
+    layout: LedgerStorageLayout,
+    journal: LedgerSwitchJournal,
+): Boolean {
+    val pointerGeneration =
+        if (fileSystem.exists(layout.activePointerFile)) {
+            try {
+                parsePointer(fileSystem.readBytes(layout.activePointerFile), layout)
+            } catch (failure: Error) {
+                throw failure
+            } catch (failure: Throwable) {
+                null
+            }
+        } else {
+            null
+        }
+    if (journal.stage == LedgerSwitchJournalStage.Switched || pointerGeneration != journal.oldGeneration) {
+        try {
+            publishActivePointer(fileSystem, layout, journal.oldGeneration)
+        } catch (failure: Error) {
+            throw failure
+        } catch (failure: Throwable) {
+            return false
+        }
+    }
+    try {
+        fileSystem.delete(layout.switchJournalFile)
+    } catch (failure: Error) {
+        throw failure
+    } catch (failure: Throwable) {
+        return false
+    }
+    runCatching { deleteGenerationDirectory(fileSystem, layout, journal.newGeneration) }
+    return true
 }
