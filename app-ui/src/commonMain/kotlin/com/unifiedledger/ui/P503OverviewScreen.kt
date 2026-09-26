@@ -72,6 +72,8 @@ fun P503OverviewScreen(
     interactionsEnabled: Boolean = true,
     onOpenRecycleBin: (() -> Unit)? = null,
     onOpenBackupExport: (() -> Unit)? = null,
+    // P7-06 06.D (D-182; spec section 6): the restore entry, same convention as the export entry.
+    onOpenBackupRestore: (() -> Unit)? = null,
 ) {
     // G1 (R-Q06-4): a not-loaded monthly cycle must not present the previous cycle's flow rows as
     // the current list, so the fresh authoritative current-state projection is rendered instead.
@@ -90,6 +92,12 @@ fun P503OverviewScreen(
         // wires it (an unwired composition renders no affordance).
         if (onOpenBackupExport != null) {
             TextButton(onClick = onOpenBackupExport) { Text("导出备份") }
+            Spacer(Modifier.height(4.dp))
+        }
+        // P7-06 06.D (D-182): the ledger-wide restore entry, offered only when the host wires the
+        // restore use cases (an unwired composition renders no affordance).
+        if (onOpenBackupRestore != null) {
+            TextButton(onClick = onOpenBackupRestore) { Text("恢复备份") }
             Spacer(Modifier.height(4.dp))
         }
         if (showMonthlyRegion) {

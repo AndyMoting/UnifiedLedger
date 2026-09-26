@@ -555,6 +555,42 @@ class LedgerLeaseScope(
     var backupExport: BackupExportUseCase? = null
 
     /**
+     * P7-06 06.D (D-182; spec section 6, P2-7): the composition-root restore wiring — the preflight
+     * use case, the confirm & switch use case, and the two injected constants the spec rules fix
+     * (the section 5.4 whitelist `{1, 31}` and `currentSupportedSchemaVersion()`). Null when the
+     * surface is absent. Lease-free for the same reason as [backupExport]: the preflight acquires
+     * and releases its OWN whole-duration lease and the confirm deliberately holds none (the quiesce
+     * caller contract), so exposing them here adds no lease and no second lease.
+     */
+    var restoreWiring: RestoreHostWiring? = null
+
+    /**
+     * P7-06 06.D (spec sections 3.1/6): the preflight request resolved for the CURRENT active
+     * generation — the target identity is the facade's ledger id, the whitelist and current schema
+     * version come from the injected wiring. Null when the surface is absent or the owner has no
+     * active generation. The generation travels alongside the request so the host's landing hop can
+     * apply the standard discard rule (the export launch precedent).
+     */
+    fun restorePreflightLaunch(password: String): RestorePreflightLaunch? {
+        val wiring = restoreWiring ?: return null
+        val generation = owner.activeGeneration ?: return null
+        val request =
+            RestorePreflightRequest(
+                password = password,
+                targetLedgerId = requiredFacade().ledgerId.value,
+                supportedSourceVersions = wiring.supportedSourceVersions,
+                currentSchemaVersion = wiring.currentSchemaVersion,
+            )
+        return RestorePreflightLaunch(request, generation)
+    }
+
+    /**
+     * P7-06 06.D: the active generation captured at confirm-launch time for the landing guard of
+     * the generation-free switch results (the generation-bearing results carry their own).
+     */
+    fun activeGenerationForLanding(): Generation? = owner.activeGeneration
+
+    /**
      * P7-06 06.B (D-177; spec sections 3.1/3.2): the launch for the CURRENT active generation —
      * the export request plus the generation it was resolved under. Null when the export surface
      * is absent or the owner has no active generation (not Ready).
@@ -605,6 +641,9 @@ class LedgerLeaseScope(
                 // P7-06 06.B (D-177): the export use case is bound to this scope by the
                 // composition root; a pure field read, never an invocation.
                 backupExport = backupExport != null,
+                // P7-06 06.D (D-182): the restore use cases are bound by the composition root; a
+                // pure field read, never an invocation.
+                backupRestore = restoreWiring != null,
             )
         }
 
@@ -717,6 +756,9 @@ data class LedgerSurfaces(
     // A pure field probe, never an invocation, so the host renders the export entry only when the
     // surface exists (the "no dead affordance" convention).
     val backupExport: Boolean = false,
+    // P7-06 06.D (D-182; spec section 6): the composition root bound the restore use cases. Same
+    // pure-probe convention as [backupExport].
+    val backupRestore: Boolean = false,
 )
 
 /**
@@ -728,6 +770,34 @@ data class LedgerSurfaces(
 class BackupExportLaunch(
     val request: BackupExportRequest,
     val generation: Generation,
+)
+
+/**
+ * P7-06 06.D (D-182; spec section 6, P2-7): one restore-preflight launch — the request resolved for
+ * the active generation plus the generation it was resolved under, for the same landing-discard
+ * rule as [BackupExportLaunch]. The request carries the composition-root-injected section 5.4
+ * whitelist (`{1, 31}`) and `currentSupportedSchemaVersion()`; the shared host never hard-codes
+ * either.
+ */
+class RestorePreflightLaunch(
+    val request: RestorePreflightRequest,
+    val generation: Generation,
+)
+
+/**
+ * P7-06 06.D (D-182; spec section 6, P2-7): the composition-root restore wiring bound to
+ * [LedgerLeaseScope]. The whitelist `{1, 31}` is the section 5.4 RULING (v1 conditionally admitted
+ * on the device-evidenced strict-migration leg, A04 outstanding) and `currentSchemaVersion` comes
+ * from `currentSupportedSchemaVersion()` in ledger-data — both are injected here, never duplicated
+ * in the shared host.
+ */
+class RestoreHostWiring(
+    val preflight: RestorePreflightUseCase,
+    val confirm: ConfirmBackupRestoreUseCase,
+    /** The section 5.4 wiring whitelist: the versions the preflight's strict migration may accept. */
+    val supportedSourceVersions: Set<Long>,
+    /** The schema version this build supports (`currentSupportedSchemaVersion()`, P2-6). */
+    val currentSchemaVersion: Long,
 )
 
 /**
