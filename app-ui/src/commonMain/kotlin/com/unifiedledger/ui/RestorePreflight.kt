@@ -111,9 +111,9 @@ class RestoreValidationFacts(
  * validation counts are integrity facts and deliberately do not substitute for them.
  */
 class RestoreOwnerCounts(
-    val accountsCount: Int,
-    val categoriesCount: Int,
-    val transactionsCount: Int,
+    val accountsCount: Long,
+    val categoriesCount: Long,
+    val transactionsCount: Long,
 )
 
 /**
@@ -208,10 +208,12 @@ class RestorePreflightSummary(
     val formalTableCount: Int,
     val postingImbalanceCount: Int,
     // 06.D (D-182; spec section 5.5): the owner counts and the preflight timestamp the user
-    // checks ("我何时预检的").
-    val accountsCount: Int,
-    val categoriesCount: Int,
-    val transactionsCount: Int,
+    // checks ("我何时预检的"). The counts are Long: they are row counts read from SQLite, and a
+    // silent Long->Int narrowing could wrap a huge transaction count into a wrong (even negative)
+    // number shown to the user (F-4).
+    val accountsCount: Long,
+    val categoriesCount: Long,
+    val transactionsCount: Long,
     /** The epoch-milliseconds moment the preflight produced this preview (the host formats it). */
     val preflightEpochMillis: Long,
 )
@@ -267,15 +269,13 @@ private class RestorePreflightCancelledException : RuntimeException("restore pre
  * a background thread (container-format spec section 4.8: KDF, streaming decryption, migration and
  * validation must never run on the UI thread).
  *
- * DEFERRED WIRING (P2-7, registered not silently dropped): this use case and its ports are NOT yet
- * constructed by either composition root. The 06.C design spec leaves two inputs OPEN that a root
- * needs before it can construct them — the supported old-schema whitelist SET (spec section 6.3 /
- * section 10 item 1, "must be fixed by a separate strict structure-identification gate") and the
- * preview/confirmation UI field set (spec section 10 item 13) — and the confirmation path itself
- * belongs to 06.D. On wiring, the root supplies `supportedSourceVersions` (the whitelist) and
- * `currentSchemaVersion` (`currentSupportedSchemaVersion()` from ledger-data), and dispatches
- * [preflight] off the UI thread. Until then A03/A04 are exercised through this use case's tests, not
- * end to end in the product.
+ * WIRED (F-11): this use case IS constructed by BOTH composition roots as of 06.D — the Android
+ * `AndroidStartupController` and the desktop `DesktopStartupController` build one instance over
+ * their owner and bind it into [LedgerLeaseScope.restoreWiring]. Each root supplies
+ * `supportedSourceVersions` (the section 5.4 wiring whitelist `{1, 31}`) and `currentSchemaVersion`
+ * (`currentSupportedSchemaVersion()` from ledger-data), and dispatches [preflight] off the UI
+ * thread. The earlier P2-7 "deferred wiring" note (the whitelist set and the preview field set were
+ * OPEN in the 06.C design) is resolved by the 06.D design (D-182) and this wiring.
  *
  * REGISTERED (P3-14): the operation lease is held while the platform source port waits for the user's
  * picker choice (the Android adapter's latch wait is bounded at 10 minutes), so a user who leaves the

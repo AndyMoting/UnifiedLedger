@@ -45,9 +45,9 @@ class P503RestoreReducerTest {
             ledgerIdentityCount = 1,
             formalTableCount = 8,
             postingImbalanceCount = 0,
-            accountsCount = 3,
-            categoriesCount = 12,
-            transactionsCount = 45,
+            accountsCount = 3L,
+            categoriesCount = 12L,
+            transactionsCount = 45L,
             preflightEpochMillis = 1_700_000_000_000L,
         )
 

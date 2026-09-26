@@ -14,9 +14,9 @@ import kotlin.test.assertTrue
  */
 class P503RestorePresentationTest {
     private fun summary(
-        accounts: Int = 3,
-        categories: Int = 12,
-        transactions: Int = 45,
+        accounts: Long = 3L,
+        categories: Long = 12L,
+        transactions: Long = 45L,
         epochMillis: Long = 1_700_000_000_000L,
     ): RestorePreflightSummary =
         RestorePreflightSummary(

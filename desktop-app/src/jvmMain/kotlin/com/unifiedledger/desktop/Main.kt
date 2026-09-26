@@ -213,8 +213,16 @@ internal class DesktopRestoreUseCases(
  */
 internal val RESTORE_SUPPORTED_SOURCE_VERSIONS: Set<Long> = setOf(1L, 31L)
 
-/** The product's fixed single-ledger identity (the same value [buildLedgerGraph] bootstraps). */
-internal const val RESTORE_TARGET_LEDGER_ID: String = "ledger-local-test"
+/**
+ * The product's fixed single-ledger identity. F-8: ONE constant, used both by [buildLedgerGraph]
+ * to bootstrap the catalog and by the restore wiring as the confirm target identity, so the
+ * confirm's target-identity check (spec section 3.1 item 4) cannot drift from the graph's actual
+ * ledger id.
+ */
+internal const val PRODUCT_LEDGER_ID: String = "ledger-local-test"
+
+/** The restore target ledger identity — the same fixed product identity the graph bootstraps. */
+internal const val RESTORE_TARGET_LEDGER_ID: String = PRODUCT_LEDGER_ID
 
 /** P7-06 06.B: one random token text (kept out of the data-class default so ktlint's chain rule is satisfied). */
 private fun randomUuidText(): String {
@@ -630,7 +638,7 @@ internal fun buildLedgerGraph(
     }
     val database = LedgerDatabase(driver)
 
-    val ledgerId = LedgerId("ledger-local-test")
+    val ledgerId = LedgerId(PRODUCT_LEDGER_ID)
     val currency = CATALOG_MANAGED_CURRENCY
     val paymentAccountId = AccountId(DEFAULT_MANAGEABLE_ACCOUNT_ID)
     val categoryId = CategoryId(DEFAULT_EXPENSE_LEAF_ID)

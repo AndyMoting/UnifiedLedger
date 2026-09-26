@@ -184,7 +184,7 @@ class RestorePreflightUseCaseTest {
         var migration: RestoreMigrationOutcome = RestoreMigrationOutcome.Migrated(1, 31),
         var validation: RestoreValidationFacts = okFacts(),
         var userVersionThrows: Boolean = false,
-        var ownerCounts: RestoreOwnerCounts = RestoreOwnerCounts(3, 12, 45),
+        var ownerCounts: RestoreOwnerCounts = RestoreOwnerCounts(3L, 12L, 45L),
         var ownerCountsThrow: Boolean = false,
     ) : RestoreIsolatedDatabasePort {
         val migrateCalls = mutableListOf<Long>()
@@ -302,7 +302,7 @@ class RestorePreflightUseCaseTest {
             FakeIsolatedDatabase(
                 userVersion = 31,
                 identities = listOf("ledger-local-test"),
-                ownerCounts = RestoreOwnerCounts(accountsCount = 3, categoriesCount = 12, transactionsCount = 45),
+                ownerCounts = RestoreOwnerCounts(accountsCount = 3L, categoriesCount = 12L, transactionsCount = 45L),
             )
         val source = FakeSource(container(), reportedSize = null)
         val ready =
@@ -310,9 +310,9 @@ class RestorePreflightUseCaseTest {
                 useCase(fileSystem, owner, source, isolated).preflight(request()),
             )
 
-        assertEquals(3, ready.summary.accountsCount)
-        assertEquals(12, ready.summary.categoriesCount)
-        assertEquals(45, ready.summary.transactionsCount)
+        assertEquals(3L, ready.summary.accountsCount)
+        assertEquals(12L, ready.summary.categoriesCount)
+        assertEquals(45L, ready.summary.transactionsCount)
         assertEquals(1_700_000_000_000L, ready.summary.preflightEpochMillis)
         assertEquals(1, isolated.ownerCountReads)
 
@@ -647,7 +647,7 @@ class RestorePreflightUseCaseTest {
 
                 override fun integrityCheckOk(snapshotPath: String): Boolean = true
 
-                override fun readOwnerCounts(snapshotPath: String): RestoreOwnerCounts = RestoreOwnerCounts(0, 0, 0)
+                override fun readOwnerCounts(snapshotPath: String): RestoreOwnerCounts = RestoreOwnerCounts(0L, 0L, 0L)
             }
         val source = FakeSource(container(), reportedSize = null)
         useCase(fileSystem, owner, source, isolated).preflight(request())

@@ -149,7 +149,9 @@ internal class DesktopRestoreIsolatedDatabasePort : RestoreIsolatedDatabasePort 
     override fun readOwnerCounts(snapshotPath: String): RestoreOwnerCounts =
         withDriver(snapshotPath) { driver ->
             val counts: OwnerCountResult = readOwnerCountsOn(driver)
-            RestoreOwnerCounts(counts.accountsCount.toInt(), counts.categoriesCount.toInt(), counts.transactionsCount.toInt())
+            // 06.D (D-182; spec section 5.5 field 6): the counts stay Long end to end (F-4) —
+            // narrowing to Int could wrap a huge row count into a wrong number.
+            RestoreOwnerCounts(counts.accountsCount, counts.categoriesCount, counts.transactionsCount)
         }
 
     private fun <T> withDriver(

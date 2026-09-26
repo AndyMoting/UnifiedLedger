@@ -209,9 +209,11 @@ const val LEDGER_QUIESCE_TIMEOUT_MILLIS: Long = 5_000L
 class LedgerRuntimeOwner<G : Any>(
     /**
      * Opens the requested generation and performs the authoritative read-back, returning the built
-     * graph. Throwing fails the startup/reopen closed. 06.1 always passes
-     * [GenerationSelection.ActivePointer] (the on-disk pointer is the only selection); the 06.D
-     * switch supplies a real [GenerationSelection.Explicit] implementation.
+     * graph. Throwing fails the startup/reopen closed. Both composition roots always pass
+     * [GenerationSelection.ActivePointer] (the on-disk pointer is the only selection the product
+     * uses; the 06.D confirm & switch publishes the pointer and then reopens through it, it does
+     * NOT select a generation explicitly). [GenerationSelection.Explicit] is exercised only by the
+     * owner's own tests — no production caller supplies it.
      */
     private val openGeneration: (GenerationSelection) -> G,
     private val closeGraph: (G) -> Unit,

@@ -20,8 +20,10 @@ import kotlin.test.assertTrue
  *   `UpgradeLegacy` path;
  * - the discard branch is typed-unavailable without a legacy original (desktop), refuses when an
  *   adoptable candidate appears or foreign content exists, and mutates NOTHING on any refusal;
- * - the probe performs zero disk mutation; a decline (never calling the confirmed actions) is
- *   therefore a zero-mutation outcome by construction;
+ * - the probe performs no recovery action of its own: with no journal present it mutates nothing,
+ *   and a decline (never calling the confirmed actions) is therefore a zero-mutation outcome by
+ *   construction; a RECOGNIZABLE journal present is completed by the probe's startup resolution
+ *   (the sanctioned 06.D ROLLBACK restart, F-9) and moves the shape;
  * - a failure shape that is not `POINTER_MISSING` offers no recovery face at all.
  */
 class BackupRestoreRecoveryTest {
@@ -236,7 +238,29 @@ class BackupRestoreRecoveryTest {
     }
 
     @Test
-    fun theProbePerformsZeroDiskMutation() {
+    fun aRecognizableJournalIsCompletedByTheProbesStartupResolutionAndMovesTheShape() {
+        // F-9: the KDoc says probe() is not strictly read-only — it re-runs resolveLedgerStorage,
+        // whose recognizable-journal branch is the sanctioned startup ROLLBACK recovery. Seed a
+        // switched journal (pointer already on gen-2) and prove the probe republishes the old
+        // pointer and removes the journal, then reports NotPointerMissing (the shape moved).
+        seedPointerless(1)
+        seedVerdict(1, version = 31L)
+        fileSystem.putFile(pointerFile, "gen-2")
+        fileSystem.putFile(
+            layout.switchJournalFile,
+            ledgerSwitchJournalBytes(LedgerSwitchJournal(LedgerSwitchJournalStage.Switched, oldGeneration = 1, newGeneration = 2)),
+        )
+
+        val probe = useCase(isolatedDatabase, null).probe()
+
+        assertIs<PointerMissingRecoveryProbe.NotPointerMissing>(probe)
+        // The recovery side effect ran: the old pointer is republished and the journal is gone.
+        assertEquals("gen-1", fileSystem.fileBytes(pointerFile)?.decodeToString())
+        assertFalse(fileSystem.hasFile(layout.switchJournalFile))
+    }
+
+    @Test
+    fun theProbePerformsNoRecoveryActionWhenNoJournalIsPresent() {
         seedPointerless(1, withLegacy = true)
         seedVerdict(1, version = 31L)
         val opsBefore = fileSystem.operationsSnapshot().size
@@ -244,7 +268,7 @@ class BackupRestoreRecoveryTest {
         useCase(isolatedDatabase, legacyMainFile).probe()
 
         val newOps = fileSystem.operationsSnapshot().drop(opsBefore)
-        assertTrue(newOps.none { it.startsWith("writeAtomic:") || it.startsWith("delete:") }, "the probe must be read-only: $newOps")
+        assertTrue(newOps.none { it.startsWith("writeAtomic:") || it.startsWith("delete:") }, "no journal means the probe mutates nothing: $newOps")
         assertFalse(fileSystem.hasFile(pointerFile))
         assertTrue(fileSystem.hasDirectory(layout.generationDirectory(1)))
     }

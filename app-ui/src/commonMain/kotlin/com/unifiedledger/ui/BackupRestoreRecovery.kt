@@ -152,8 +152,18 @@ class PointerMissingRecoveryUseCase(
     private val legacyMainFile: String?,
 ) {
     /**
-     * The read-only probe behind the recovery face: whether the current failure shape is the
-     * pointerless one, and if so what the candidates look like. Performs NO recovery action.
+     * The probe behind the recovery face: whether the current failure shape is the pointerless
+     * one, and if so what the candidates look like. It performs NO RECOVERY ACTION of its own —
+     * it never adopts, never discards, and never touches the legacy original.
+     *
+     * It is NOT, however, strictly disk-read-only (F-9): it re-runs the shared
+     * [resolveLedgerStorage], and that resolution's recognizable-journal branch is the sanctioned
+     * 06.D startup recovery (container-format spec section 5.3's ROLLBACK restart half) — it
+     * republishes the recorded old pointer and removes the journal. So a probe issued while a
+     * recognizable journal is present will complete that startup recovery as a side effect; the
+     * probe then reports [PointerMissingRecoveryProbe.NotPointerMissing], because the resolution
+     * is no longer the pointerless shape. An unrecognizable journal keeps the frozen fail-closed
+     * gate and mutates nothing.
      */
     fun probe(): PointerMissingRecoveryProbe =
         when (currentShape()) {

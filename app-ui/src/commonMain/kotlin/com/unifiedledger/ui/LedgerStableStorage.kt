@@ -339,8 +339,12 @@ fun isUsableSqliteMainFile(
 
 /**
  * Section 5.1 startup order, steps 1-3: resolve the active generation. The journal check runs
- * FIRST (step 2) and is a hard fail-closed gate in 06.1 — the full `prepared/switched/committed`
- * machine belongs to 06.D, so a present journal can only be refused, never parsed or removed.
+ * FIRST (step 2). As of 06.D (D-182; spec section 4.3) the branch is EXTENDED from 06.1's
+ * unconditional fail-closed gate: a RECOGNIZABLE journal (a versioned [LedgerSwitchJournal]) is
+ * rolled back per the frozen ROLLBACK restart rule and startup then proceeds through the restored
+ * old-generation pointer; an unrecognizable/unparseable journal (including a read failure) keeps
+ * the frozen [LedgerStorageFailure.JOURNAL_PRESENT] semantics. So a present journal CAN now be
+ * parsed and removed — it is no longer only refused.
  *
  * [legacyMainFile] is the platform's legacy product database path (Android `databases/ledger.db`),
  * or null when the platform has no migratable legacy location (desktop, section 3.3).

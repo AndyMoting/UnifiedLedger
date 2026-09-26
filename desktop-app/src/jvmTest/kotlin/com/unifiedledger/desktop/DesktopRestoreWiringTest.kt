@@ -104,9 +104,16 @@ class DesktopRestoreWiringTest {
             // The section 5.4 RULING: the wiring whitelist is {1, 31}, injected from the root.
             assertEquals(setOf(1L, 31L), wiring.supportedSourceVersions)
             assertEquals(currentSupportedSchemaVersion(), wiring.currentSchemaVersion)
-            // Exactly one instance set: the confirm flow's single-flight guard assumes it.
-            assertSame(wiring.preflight, wiring.preflight)
-            assertSame(wiring.confirm, wiring.confirm)
+            // Exactly one instance set: the confirm flow's single-flight guard assumes it. Reading
+            // the wiring twice must yield the SAME RestoreHostWiring and the same use-case
+            // instances (a second construction would defeat the single-flight guard), and the two
+            // use cases must be distinct objects.
+            val first = assertNotNull(ledger.restoreWiring)
+            val second = assertNotNull(ledger.restoreWiring)
+            assertSame(first, second, "the composition must expose one stable restore wiring")
+            assertSame(first.preflight, second.preflight, "one preflight instance")
+            assertSame(first.confirm, second.confirm, "one confirm instance")
+            assertTrue((first.preflight as Any) !== (first.confirm as Any), "preflight and confirm are distinct use cases")
             // The preflight request is resolved for the CURRENT generation with the fixed target id.
             val launch = assertNotNull(ledger.restorePreflightLaunch("password123"))
             assertEquals("ledger-local-test", launch.request.targetLedgerId)

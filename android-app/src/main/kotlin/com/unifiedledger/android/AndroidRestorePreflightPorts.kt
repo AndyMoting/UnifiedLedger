@@ -148,11 +148,12 @@ internal class AndroidRestoreIsolatedDatabasePort : RestoreIsolatedDatabasePort 
     // 06.D (D-182; spec section 5.3): the recovery candidate gate — integrity_check ALONE.
     override fun integrityCheckOk(snapshotPath: String): Boolean = withDriver(snapshotPath) { driver -> snapshotIntegrityOk(readIntegrityCheckRowsOn(driver)) }
 
-    // 06.D (D-182; spec section 5.5 field 6): the user-checkable owner counts.
+    // 06.D (D-182; spec section 5.5 field 6): the user-checkable owner counts. The counts stay
+    // Long end to end (F-4): narrowing to Int could wrap a huge row count into a wrong number.
     override fun readOwnerCounts(snapshotPath: String): RestoreOwnerCounts =
         withDriver(snapshotPath) { driver ->
             val counts: OwnerCountResult = readOwnerCountsOn(driver)
-            RestoreOwnerCounts(counts.accountsCount.toInt(), counts.categoriesCount.toInt(), counts.transactionsCount.toInt())
+            RestoreOwnerCounts(counts.accountsCount, counts.categoriesCount, counts.transactionsCount)
         }
 
     private fun <T> withDriver(
