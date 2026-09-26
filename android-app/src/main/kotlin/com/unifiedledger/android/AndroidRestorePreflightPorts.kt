@@ -167,3 +167,25 @@ internal class AndroidRestoreIsolatedDatabasePort : RestoreIsolatedDatabasePort 
         }
     }
 }
+
+/**
+ * P7-06 06.D ruling F (D-182; spec section 5.6, the D-180 5(d) `sizeOf` wiring): the SINGLE
+ * `ContentResolver` size query over the picked SAF document (`OpenableColumns.SIZE`), so a provider
+ * that reports a size above the frozen bound is rejected BEFORE any byte is read (container-format
+ * spec section 4.8's "do not read" fast path). Any failure — no SIZE column, a null value, a
+ * throwing/unresponsive provider — reports null and the preflight falls back to the counted stream,
+ * so a provider that under-reports (or cannot report) its size still cannot bypass the bound.
+ */
+internal fun queryDocumentSize(
+    contentResolver: android.content.ContentResolver,
+    uri: android.net.Uri,
+): Long? =
+    runCatching {
+        contentResolver
+            .query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)
+            ?.use { cursor ->
+                val sizeColumn = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                if (sizeColumn < 0 || !cursor.moveToFirst() || cursor.isNull(sizeColumn)) return@use null
+                cursor.getLong(sizeColumn)
+            }
+    }.getOrNull()
