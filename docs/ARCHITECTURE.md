@@ -88,6 +88,8 @@ commit handoff 后的异常采用 snapshot-aware resolution：resolver 输入 le
 
 `D-177`（P7-06 06.B）补齐备份导出路径的模块边界（已实施并合入 `main`，`6c3c415`）：导出在 `LedgerRuntimeOwner` 的 06.1 operation lease 内执行，取受控连接上的一致快照（`VACUUM INTO`），经第二次只读打开对**快照文件**执行 `PRAGMA integrity_check`，再以两遍有界（64 KiB）hash-then-encrypt 写认证加密容器（字节布局按 `D-174` 冻结），并以有界流式投递到用户所选目标（**不使用**整文件 `writeAtomic(ByteArray)`）；明文 1 GiB 前置/后置门与磁盘前置检查在用户目标创建前执行。快照、KDF、加解密与投递**全部在 UI 线程外**执行并回主线程投递结果，落地点按 generation 丢弃陈旧结果。Android 侧快照校验按**绝对路径只读**打开快照（`SQLiteDatabase.openDatabase(path, null, OPEN_READONLY)`），不经 helper/schema/version 逻辑、不建不迁移。该边界不改变模块职责划分：`app-ui` 承载导出用例与共享导出面、`ledger-application` 定义容器格式与写端口、`ledger-data` 提供快照打开表面，组合根负责目标选择与投递装配。具体契约见 `docs/specs/2026-09-24-p7-06-backup-export-design.md`（D-177）。
 
+`D-179`（P7-06 06.C）补齐恢复预检路径的模块边界（已实施并合入 `main`，`3d99b48`）：认证前容器解析与流式认证解密在 `ledger-application`（`BackupContainerReader`，流式且**不使用** `CipherInputStream`，GCM tag 由 `doFinal` 校验），隔离严格迁移在 `ledger-data`（`RestoreIsolatedMigration`：单事务 `Schema.migrate` + 权威 `PRAGMA user_version` 改写，不运行 seed bootstrap、绝不走桌面 lenient 分支；`AndroidFrameworkSqlDriver` 提供非创建式、可迁移的 Android driver 路径），预检用例在共享 `app-ui`（`RestorePreflight`：有界来源 → 认证前公开格式/大小检查 → 磁盘前置检查（任何解密之前的独立编号步骤）→ 解密到私有暂存 → 认证后 `payload_sha256` + 权威 `user_version` + 多 owner 身份清扫 → 不透明确认 token），两端组合根提供平台读取端口（`AndroidRestorePreflightPorts`/`DesktopRestorePreflightPorts`）。预检全程持有 06.1 operation lease（阻止 `sweepBackupStaging` 删除已认证暂存工件）。该边界不改变模块职责划分；组合根接线（产品 UI 调用点、supportedSourceVersions 白名单集合等）为规格 OPEN 项、归 06.D。具体契约见 `docs/specs/2026-09-25-p7-06-restore-preflight-design.md`（D-179）。
+
 ## 正式数据流
 
 ### 手工入口
