@@ -105,6 +105,18 @@ class RestoreValidationFacts(
 }
 
 /**
+ * The user-checkable owner counts of the preview (06.D spec section 5.5 field 6, D-182): accounts,
+ * categories and transactions, read straight from the migrated copy. These are the numbers a user
+ * actually verifies against their own knowledge before confirming the replace — the 06.C
+ * validation counts are integrity facts and deliberately do not substitute for them.
+ */
+class RestoreOwnerCounts(
+    val accountsCount: Int,
+    val categoriesCount: Int,
+    val transactionsCount: Int,
+)
+
+/**
  * P7-06 06.C (spec section 8.2): the controlled isolated-database surface. The platform adapter
  * opens the decrypted snapshot / migrated copy by ABSOLUTE PATH read-write without create-on-open
  * and without automatic migration, runs the STRICT migration helper and the validation helpers, and
@@ -130,6 +142,17 @@ interface RestoreIsolatedDatabasePort {
 
     /** Integrity / foreign-key / domain validation on the migrated copy (spec section 6.4). */
     fun validate(snapshotPath: String): RestoreValidationFacts
+
+    /**
+     * 06.D (spec section 5.3): the `PRAGMA integrity_check` verdict ALONE — the recovery
+     * candidate-validation gate. Deliberately narrower than [validate]: the spec's recovery
+     * transaction pins exactly `isUsableSqliteMainFile` + integrity + the authoritative
+     * user_version, and adding the FK/domain gates here would reject candidates the spec adopts.
+     */
+    fun integrityCheckOk(snapshotPath: String): Boolean
+
+    /** The authoritative owner counts read straight from the (migrated) payload (spec section 5.5). */
+    fun readOwnerCounts(snapshotPath: String): RestoreOwnerCounts
 }
 
 /**
@@ -161,7 +184,11 @@ class RestorePreflightRequest(
     val containerSizeBound: Long = BACKUP_MAX_CONTAINER_BYTES,
 )
 
-/** The preview summary (spec section 7.4). Carries no password, key, path or plaintext detail. */
+/**
+ * The preview summary (spec section 7.4 with the 06.D field set, D-182 section 5.5). Carries no
+ * password, key, path or plaintext detail: the digest is the display hex form and the counts are
+ * the user-checkable owner counts.
+ */
 class RestorePreflightSummary(
     val containerFormatVersion: Int,
     val containerSize: Long,
@@ -180,6 +207,13 @@ class RestorePreflightSummary(
     val ledgerIdentityCount: Int,
     val formalTableCount: Int,
     val postingImbalanceCount: Int,
+    // 06.D (D-182; spec section 5.5): the owner counts and the preflight timestamp the user
+    // checks ("我何时预检的").
+    val accountsCount: Int,
+    val categoriesCount: Int,
+    val transactionsCount: Int,
+    /** The epoch-milliseconds moment the preflight produced this preview (the host formats it). */
+    val preflightEpochMillis: Long,
 )
 
 /**
@@ -257,6 +291,14 @@ class RestorePreflightUseCase(
     private val isolatedDatabase: RestoreIsolatedDatabasePort,
     private val crypto: BackupCryptoPrimitives,
     private val newToken: () -> String,
+    /**
+     * 06.D (D-182; spec section 5.5 field 7): the audit-time source of the preview's timestamp
+     * ("我何时预检的"). Injected like every other clock in the product so tests stay deterministic;
+     * the composition root supplies the platform clock. Deliberately NOT defaulted: a silent
+     * epoch-0 default would render a wrong "when did I preflight" to the user after a forgotten
+     * wiring instead of failing loudly at construction.
+     */
+    private val nowMillis: () -> Long,
 ) {
     /**
      * Runs the frozen 11-step preflight (spec section 3). Never blocks on the runtime (lease
@@ -498,6 +540,18 @@ class RestorePreflightUseCase(
             return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_DOMAIN_VALIDATION_FAILED)
         }
 
+        // 06.D step (D-182; spec section 5.5 field 6): the user-checkable owner counts, read
+        // straight from the same validated copy. A throwing probe is a typed read failure, never
+        // a zeroed count presented as fact.
+        val ownerCounts =
+            try {
+                isolatedDatabase.readOwnerCounts(validationPath)
+            } catch (failure: Error) {
+                throw failure
+            } catch (failure: Throwable) {
+                return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_SOURCE_READ_FAILED)
+            }
+
         // Step 11: preview summary + opaque token (spec section 7). Still zero current-library writes.
         val migratedDigest =
             if (needsMigration) {
@@ -528,6 +582,10 @@ class RestorePreflightUseCase(
                 ledgerIdentityCount = validation.ledgerIdentityCount,
                 formalTableCount = validation.formalTableCount,
                 postingImbalanceCount = validation.postingImbalanceCount,
+                accountsCount = ownerCounts.accountsCount,
+                categoriesCount = ownerCounts.categoriesCount,
+                transactionsCount = ownerCounts.transactionsCount,
+                preflightEpochMillis = nowMillis(),
             )
         val token =
             RestorePreflightToken(

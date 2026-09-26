@@ -184,11 +184,14 @@ class RestorePreflightUseCaseTest {
         var migration: RestoreMigrationOutcome = RestoreMigrationOutcome.Migrated(1, 31),
         var validation: RestoreValidationFacts = okFacts(),
         var userVersionThrows: Boolean = false,
+        var ownerCounts: RestoreOwnerCounts = RestoreOwnerCounts(3, 12, 45),
+        var ownerCountsThrow: Boolean = false,
     ) : RestoreIsolatedDatabasePort {
         val migrateCalls = mutableListOf<Long>()
         var validateCalls = 0
         var userVersionReads = 0
         var identityReads = 0
+        var ownerCountReads = 0
 
         override fun readAuthoritativeUserVersion(snapshotPath: String): Long {
             userVersionReads += 1
@@ -213,6 +216,15 @@ class RestorePreflightUseCaseTest {
         override fun validate(snapshotPath: String): RestoreValidationFacts {
             validateCalls += 1
             return validation
+        }
+
+        // 06.D (spec section 5.3/5.5): the recovery gate and the owner-count preview field.
+        override fun integrityCheckOk(snapshotPath: String): Boolean = validation.integrityOk
+
+        override fun readOwnerCounts(snapshotPath: String): RestoreOwnerCounts {
+            ownerCountReads += 1
+            if (ownerCountsThrow) throw IllegalStateException("injected owner-count read failure")
+            return ownerCounts
         }
 
         companion object {
@@ -243,6 +255,7 @@ class RestorePreflightUseCaseTest {
             isolatedDatabase = isolated,
             crypto = crypto,
             newToken = { "tok" },
+            nowMillis = { 1_700_000_000_000L },
         )
 
     private fun readyOwner(): LedgerRuntimeOwner<Any> {
@@ -276,6 +289,40 @@ class RestorePreflightUseCaseTest {
         assertTrue(!fileSystem.hasFile(containerFile))
         // The lease is released.
         assertEquals(0, owner.inFlightLeaseCount)
+    }
+
+    @Test
+    fun thePreviewCarriesTheOwnerCountsAndThePreflightTimestamp() {
+        // 06.D (spec section 5.5 fields 6/7): the replace confirmation is only checkable with the
+        // user-verifiable owner counts and the "when did I preflight" timestamp. A throwing
+        // owner-count read is a typed read failure, never a zeroed count presented as fact.
+        val fileSystem = LedgerFileSystemFake()
+        val owner = readyOwner()
+        val isolated =
+            FakeIsolatedDatabase(
+                userVersion = 31,
+                identities = listOf("ledger-local-test"),
+                ownerCounts = RestoreOwnerCounts(accountsCount = 3, categoriesCount = 12, transactionsCount = 45),
+            )
+        val source = FakeSource(container(), reportedSize = null)
+        val ready =
+            assertIs<RestorePreflightResult.PreviewReady>(
+                useCase(fileSystem, owner, source, isolated).preflight(request()),
+            )
+
+        assertEquals(3, ready.summary.accountsCount)
+        assertEquals(12, ready.summary.categoriesCount)
+        assertEquals(45, ready.summary.transactionsCount)
+        assertEquals(1_700_000_000_000L, ready.summary.preflightEpochMillis)
+        assertEquals(1, isolated.ownerCountReads)
+
+        val failing =
+            FakeIsolatedDatabase(userVersion = 31, identities = listOf("ledger-local-test"), ownerCountsThrow = true)
+        val rejected =
+            assertIs<RestorePreflightResult.Rejected>(
+                useCase(fileSystem, readyOwner(), FakeSource(container(), reportedSize = null), failing).preflight(request()),
+            )
+        assertEquals(BackupPreflightRejection.P706_SOURCE_READ_FAILED, rejected.code)
     }
 
     @Test
@@ -597,6 +644,10 @@ class RestorePreflightUseCaseTest {
                     inFlightDuringValidate = owner.inFlightLeaseCount
                     return FakeIsolatedDatabase.okFacts()
                 }
+
+                override fun integrityCheckOk(snapshotPath: String): Boolean = true
+
+                override fun readOwnerCounts(snapshotPath: String): RestoreOwnerCounts = RestoreOwnerCounts(0, 0, 0)
             }
         val source = FakeSource(container(), reportedSize = null)
         useCase(fileSystem, owner, source, isolated).preflight(request())
@@ -724,6 +775,7 @@ class RestorePreflightUseCaseTest {
                 isolatedDatabase = isolated,
                 crypto = FakeCrypto(),
                 newToken = { throw IllegalStateException("token source failed") },
+                nowMillis = { 1_700_000_000_000L },
             )
 
         assertFailsWith<IllegalStateException> { useCase.preflight(request()) }

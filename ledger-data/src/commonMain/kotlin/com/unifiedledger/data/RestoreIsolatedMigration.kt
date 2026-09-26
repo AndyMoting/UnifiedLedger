@@ -351,3 +351,28 @@ private fun countRows(
         ).value
     return count
 }
+
+/**
+ * The user-checkable owner counts (06.D spec section 5.5 field 6, P7-06 D-182): the row counts of
+ * the three authoritative owner surfaces a user can verify from their own knowledge — accounts
+ * (`catalog_account`), categories (`catalog_category`) and transactions (`ledger_transaction`).
+ * The 06.C validation counts above are machine-facing integrity facts and deliberately do NOT
+ * substitute for them ("将替换 1,234 笔交易" is what makes the replace confirmation checkable).
+ *
+ * Read directly from the isolated copy through plain SELECTs; no seed bootstrap runs, so a copy
+ * missing one of the surfaces surfaces as a thrown probe (the caller maps it to a typed read
+ * failure), never as a silently zeroed count.
+ */
+class OwnerCountResult(
+    val accountsCount: Long,
+    val categoriesCount: Long,
+    val transactionsCount: Long,
+)
+
+/** Reads the owner counts of [driver]'s database (06.D spec section 5.5 field 6). */
+fun readOwnerCountsOn(driver: SqlDriver): OwnerCountResult =
+    OwnerCountResult(
+        accountsCount = countRows(driver, "SELECT count(*) FROM catalog_account"),
+        categoriesCount = countRows(driver, "SELECT count(*) FROM catalog_category"),
+        transactionsCount = countRows(driver, "SELECT count(*) FROM ledger_transaction"),
+    )

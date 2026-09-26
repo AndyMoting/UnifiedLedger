@@ -287,6 +287,27 @@ class RestoreIsolatedMigrationTest {
             }
         }
     }
+
+    @Test
+    fun theOwnerCountsReadTheThreeUserCheckableSurfaces() {
+        // 06.D (D-182; spec section 5.5 field 6): the preview's replace confirmation is checkable
+        // only with the row counts of catalog_account / catalog_category / ledger_transaction. The
+        // v1 fixture already carries one balanced transaction under ledger-a; explicit catalog rows
+        // pin the other two counts, and a probe over a surface that is missing throws (fail-closed,
+        // never a silently zeroed count).
+        withTempDatabase { path ->
+            val url = "jdbc:sqlite:${path.absolutePathString()}"
+            seedAtVersion(url, LedgerDatabase.Schema.version)
+            driver(url).use { isolated ->
+                isolated.execute(null, "INSERT INTO catalog_account(ledger_id, account_id, name, kind, currency_code, currency_precision, owned_by_user, real_account, hidden, active) VALUES ('ledger-a', 'acc-1', 'cash', 'ASSET', 'CNY', 2, 1, 1, 0, 1)", 0)
+                isolated.execute(null, "INSERT INTO catalog_category(ledger_id, category_id, kind, parent_id, posting_account_id, active) VALUES ('ledger-a', 'cat-1', 'EXPENSE', NULL, NULL, 1)", 0)
+                val counts = readOwnerCountsOn(isolated)
+                assertEquals(1L, counts.accountsCount)
+                assertEquals(1L, counts.categoriesCount)
+                assertEquals(1L, counts.transactionsCount)
+            }
+        }
+    }
 }
 
 /**

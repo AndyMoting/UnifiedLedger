@@ -85,7 +85,10 @@ enum class BackupRestorePostponeReason {
     /**
      * A confirm was already in flight on this use-case instance (the single-flight guard, P2-2).
      * The rejected call touched NOTHING — no file, no quiesce, no staging — and may be retried
-     * once the running confirm settles.
+     * once the running confirm settles. INFO-1: the loser is disturbed nowhere — it acquires no
+     * lease, drains nothing, and its `RestoredReady` runtime outcome is trivially true because
+     * the runtime owner was never entered; the running confirm's own result carries the real
+     * runtime outcome of that flow.
      */
     ConfirmAlreadyRunning,
 }
@@ -328,6 +331,10 @@ class ConfirmBackupRestoreUseCase(
         // Closed with a possibly-mutated pointer (Error), and every business call would fail
         // for the rest of the process. The repair runs under NonCancellable so it completes
         // even while the caller is cancelling, then the original exception propagates.
+        // INFO-C: a Job that was ALREADY cancelled before entry still performs exactly ONE
+        // bounded repair cycle here (re-drain attempts + reopen, each with its own budget) —
+        // that is the deliberate cost of never wedging the runtime, not a leak: the cycle
+        // cannot loop, and after it the escape rethrows.
         var repairDiskGeneration: Int? = null
         try {
             // ---- Step 3: quiesce WITHOUT holding a lease (the caller contract). Either exit
@@ -437,10 +444,10 @@ class ConfirmBackupRestoreUseCase(
             }
             return BackupRestoreSwitchResult.Committed(runtimeGeneration = reopened.generation)
         } catch (failure: CancellationException) {
-            withContext(NonCancellable) { repairRuntimeAfterEscape(repairDiskGeneration) }
+            withContext(NonCancellable) { repairRuntimeAfterEscape(repairDiskGeneration, failure) }
             throw failure
         } catch (failure: Error) {
-            withContext(NonCancellable) { repairRuntimeAfterEscape(repairDiskGeneration) }
+            withContext(NonCancellable) { repairRuntimeAfterEscape(repairDiskGeneration, failure) }
             throw failure
         }
     }
@@ -635,8 +642,15 @@ class ConfirmBackupRestoreUseCase(
      * pointer publish), the pointer was never touched, so only the restoration program runs —
      * a half-built staged directory stays inert and is deleted by the next confirm's
      * delete-then-stage or the retention policy.
+     *
+     * P3-A (spec-closure review): the trailing restoration program runs inside a guard that
+     * attaches a repair-leg failure to [escape] via `addSuppressed` — the repair must never mask
+     * the original escape it is repairing.
      */
-    private suspend fun repairRuntimeAfterEscape(diskGeneration: Int?) {
+    private suspend fun repairRuntimeAfterEscape(
+        diskGeneration: Int?,
+        escape: Throwable,
+    ) {
         if (diskGeneration != null) {
             val journal =
                 runCatching {
@@ -652,7 +666,11 @@ class ConfirmBackupRestoreUseCase(
                 runCatching { deleteGenerationDirectory(fileSystem, layout, journal.newGeneration) }
             }
         }
-        restoreRuntime()
+        try {
+            restoreRuntime()
+        } catch (repairFailure: Throwable) {
+            escape.addSuppressed(repairFailure)
+        }
     }
 
     /**

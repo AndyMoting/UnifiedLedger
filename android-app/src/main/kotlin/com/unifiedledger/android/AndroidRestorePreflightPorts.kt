@@ -1,5 +1,6 @@
 package com.unifiedledger.android
 
+import com.unifiedledger.data.OwnerCountResult
 import com.unifiedledger.data.StrictMigrationResult
 import com.unifiedledger.data.foreignKeyCheckOn
 import com.unifiedledger.data.migrateIsolatedSnapshotStrictlyOn
@@ -7,6 +8,7 @@ import com.unifiedledger.data.openAndroidReadWriteDriver
 import com.unifiedledger.data.readAuthoritativeUserVersionOn
 import com.unifiedledger.data.readIntegrityCheckRowsOn
 import com.unifiedledger.data.readObservedLedgerIdsOn
+import com.unifiedledger.data.readOwnerCountsOn
 import com.unifiedledger.data.snapshotIntegrityOk
 import com.unifiedledger.data.validateDomainOn
 import com.unifiedledger.ui.BackupSourceOpenResult
@@ -14,6 +16,7 @@ import com.unifiedledger.ui.BackupSourcePort
 import com.unifiedledger.ui.BackupSourceReader
 import com.unifiedledger.ui.RestoreIsolatedDatabasePort
 import com.unifiedledger.ui.RestoreMigrationOutcome
+import com.unifiedledger.ui.RestoreOwnerCounts
 import com.unifiedledger.ui.RestoreValidationFacts
 import java.io.InputStream
 import java.util.concurrent.CountDownLatch
@@ -140,6 +143,16 @@ internal class AndroidRestoreIsolatedDatabasePort : RestoreIsolatedDatabasePort 
                 formalTableCount = domain.formalTableCount,
                 postingImbalanceCount = domain.postingImbalanceCount,
             )
+        }
+
+    // 06.D (D-182; spec section 5.3): the recovery candidate gate — integrity_check ALONE.
+    override fun integrityCheckOk(snapshotPath: String): Boolean = withDriver(snapshotPath) { driver -> snapshotIntegrityOk(readIntegrityCheckRowsOn(driver)) }
+
+    // 06.D (D-182; spec section 5.5 field 6): the user-checkable owner counts.
+    override fun readOwnerCounts(snapshotPath: String): RestoreOwnerCounts =
+        withDriver(snapshotPath) { driver ->
+            val counts: OwnerCountResult = readOwnerCountsOn(driver)
+            RestoreOwnerCounts(counts.accountsCount.toInt(), counts.categoriesCount.toInt(), counts.transactionsCount.toInt())
         }
 
     private fun <T> withDriver(
