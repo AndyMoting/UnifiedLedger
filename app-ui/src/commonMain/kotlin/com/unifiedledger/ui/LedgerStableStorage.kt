@@ -53,6 +53,14 @@ internal const val LEDGER_BACKUP_SNAPSHOT_PREFIX = "snapshot-"
 /** The private staging container file name prefix inside the backup staging directory. */
 internal const val LEDGER_BACKUP_CONTAINER_PREFIX = "container-"
 
+/**
+ * P7-06 06.C (D-179; spec `2026-09-25-p7-06-restore-preflight-design.md` section 6.1): the restore
+ * preflight's private staging prefixes. The spec PROPOSES exactly these three (`restore-container-`,
+ * `restore-snapshot-`, `restore-migrated-`) and forbids mixing them with the 06.B export prefixes;
+ * because they share the `restore-` stem, one sweep prefix covers all three.
+ */
+internal const val LEDGER_RESTORE_STAGING_PREFIX = "restore-"
+
 /** The 16-byte SQLite file magic; a main file must start with it to be openable (section 4.5). */
 internal val LEDGER_SQLITE_HEADER: ByteArray = "SQLite format 3\u0000".encodeToByteArray()
 
@@ -211,6 +219,18 @@ class LedgerStorageLayout internal constructor(
 
     /** The private staging container file for one export [token]. */
     fun backupContainerFile(token: String): String = fileSystem.join(backupStagingDirectory, LEDGER_BACKUP_CONTAINER_PREFIX + token)
+
+    /**
+     * P7-06 06.C (D-179; spec section 6.1): the restore preflight's private staging container copy
+     * (the user-chosen source copied once, so later reads never touch a replaceable external file).
+     */
+    fun restoreContainerFile(token: String): String = fileSystem.join(backupStagingDirectory, "restore-container-$token")
+
+    /** The restore preflight's decrypted plaintext snapshot (spec section 3.5). */
+    fun restoreSnapshotFile(token: String): String = fileSystem.join(backupStagingDirectory, "restore-snapshot-$token")
+
+    /** The restore preflight's isolated migration copy (spec section 3.9/6.1). */
+    fun restoreMigratedFile(token: String): String = fileSystem.join(backupStagingDirectory, "restore-migrated-$token")
 
     fun generationDirectoryName(generation: Int): String = "$LEDGER_GENERATION_PREFIX$generation"
 
@@ -453,16 +473,20 @@ internal fun removeLegacyFiles(
 }
 
 /**
- * P7-06 06.B (D-177; spec sections 3.7 and 6): the private-staging sweep run at startup. Every
- * export cleans its own snapshot/container in a `finally`, but a process killed mid-export leaves
- * them behind; the spec designates "next start" as the cleanup fallback. This deletes only files
- * carrying the frozen staging prefixes, so it can never touch a generation, the pointer, a journal
- * or any other ledger state.
+ * P7-06 06.B/06.C (D-177/D-179; spec sections 3.7/6 and 6.5): the private-staging sweep run at
+ * startup. Every export/preflight cleans its own artifacts in a `finally`, but a process killed
+ * mid-operation leaves them behind; the spec designates "next start" as the cleanup fallback. This
+ * deletes only files carrying the frozen staging prefixes, so it can never touch a generation, the
+ * pointer, a journal or any other ledger state.
+ *
+ * 06.C (D-179 spec section 6.5) extends the prefix set with [LEDGER_RESTORE_STAGING_PREFIX] so a
+ * killed preflight's plaintext snapshot is also cleaned. That extension is safe ONLY together with
+ * the preflight's whole-duration operation lease (spec section 7.3): `reopen` returns
+ * `QuiesceBlocked` while a preflight holds a lease, so this destructive sweep cannot run mid-preflight
+ * and cannot delete the live preflight's own authenticated artifacts (a dangling token).
  *
  * Best effort by contract: a listing/deletion failure is swallowed (the spec forbids claiming a
- * secure erase, and cleanup must never turn a good startup into a failure). The sweep runs BEFORE
- * any export can begin (only one export runs at a time under the single runtime owner), so it
- * cannot race a live export's staging files.
+ * secure erase, and cleanup must never turn a good startup into a failure).
  */
 internal fun sweepBackupStaging(
     fileSystem: LedgerFileSystem,
@@ -470,7 +494,10 @@ internal fun sweepBackupStaging(
 ) {
     runCatching {
         for (name in fileSystem.listDirectory(layout.backupStagingDirectory)) {
-            if (name.startsWith(LEDGER_BACKUP_SNAPSHOT_PREFIX) || name.startsWith(LEDGER_BACKUP_CONTAINER_PREFIX)) {
+            if (name.startsWith(LEDGER_BACKUP_SNAPSHOT_PREFIX) ||
+                name.startsWith(LEDGER_BACKUP_CONTAINER_PREFIX) ||
+                name.startsWith(LEDGER_RESTORE_STAGING_PREFIX)
+            ) {
                 runCatching { fileSystem.delete(fileSystem.join(layout.backupStagingDirectory, name)) }
             }
         }

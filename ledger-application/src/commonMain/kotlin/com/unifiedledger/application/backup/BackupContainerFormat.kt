@@ -183,6 +183,19 @@ interface BackupCryptoPrimitives {
         iv: ByteArray,
         aad: ByteArray,
     ): BackupGcmEncryptor
+
+    /**
+     * P7-06 06.C (D-179; spec `2026-09-25-p7-06-restore-preflight-design.md` section 5.1): the
+     * symmetric read-side AES-GCM decryptor, bound to one key, IV and AAD. Implementations MUST
+     * supply the AAD before any `update`/`doFinal` (container-format spec section 4.5) and MUST NOT
+     * use `CipherInputStream` (container-format spec section 4.9: it returns plaintext before the
+     * tag is verified).
+     */
+    fun gcmDecryptor(
+        key: ByteArray,
+        iv: ByteArray,
+        aad: ByteArray,
+    ): BackupGcmDecryptor
 }
 
 /** A streaming SHA-256 accumulator (incremental `update`, never a whole-input digest). */
@@ -209,5 +222,28 @@ interface BackupGcmEncryptor {
         length: Int,
     ): ByteArray
 
+    fun doFinal(): ByteArray
+}
+
+/**
+ * P7-06 06.C (D-179; spec section 5.1): a single-use AES-GCM decryptor, symmetric to
+ * [BackupGcmEncryptor]. The declared shape has ONLY the no-argument [doFinal], so the trailing
+ * `tag_len` bytes MUST be fed through [update] and the tag is verified by the no-argument
+ * [doFinal] (the 06.C spec section 5.1 fixes this so the declared port shape and the prose agree).
+ *
+ * [update] returns the plaintext decrypted from one ciphertext chunk (GCM may buffer, so it can be
+ * empty); [doFinal] verifies the tag and returns any remaining plaintext. Until [doFinal] returns
+ * successfully the produced plaintext MUST NOT be treated as trusted input (container-format spec
+ * section 4.9). A tag failure throws the platform AEAD exception, which the caller maps to the
+ * uniform `P706_CONTAINER_AUTHENTICATION_FAILED` code.
+ */
+interface BackupGcmDecryptor {
+    fun update(
+        bytes: ByteArray,
+        offset: Int,
+        length: Int,
+    ): ByteArray
+
+    /** Verifies the tag and returns the remaining plaintext; throws on a tag failure. */
     fun doFinal(): ByteArray
 }

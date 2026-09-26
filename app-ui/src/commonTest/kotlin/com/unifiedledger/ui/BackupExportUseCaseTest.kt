@@ -93,6 +93,21 @@ class BackupExportUseCaseTest {
                 }
             }
         }
+
+        override fun gcmDecryptor(
+            key: ByteArray,
+            iv: ByteArray,
+            aad: ByteArray,
+        ): com.unifiedledger.application.backup.BackupGcmDecryptor =
+            object : com.unifiedledger.application.backup.BackupGcmDecryptor {
+                override fun update(
+                    bytes: ByteArray,
+                    offset: Int,
+                    length: Int,
+                ): ByteArray = bytes.copyOfRange(offset, offset + length)
+
+                override fun doFinal(): ByteArray = ByteArray(0)
+            }
     }
 
     private class FakeSnapshot(
