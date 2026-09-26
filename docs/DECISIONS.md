@@ -3540,3 +3540,30 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 6. **验收状态**：本批**设计门已批准**；**06.C 的实施为后续实施批**，尚未开始；**06.D（切换/回退）尚未开始**。
 
 **关联决定：** D-174（容器格式读侧冻结规则——本条逐条实现其读侧，不改其决定）、D-176（06.1 owner/lease/generation 契约——本条复用，不改其契约）、D-177（06.B 导出规格——本条消费其产物，不改其决定）、D-178（前序最高 id）。
+
+## D-180 P7-06 06.C 恢复预检实施批登记
+
+**状态：** 已批准（2026-09-26，P7-06 切片 06.3/06.C 恢复预检的实施批登记；实施承接已批准的 D-179 规格 `docs/specs/2026-09-25-p7-06-restore-preflight-design.md`，由单一写者在隔离 worktree 内实施，经独立规格评审与独立质量评审（findings 全部闭合）、distinct verifier 两轮独立复核与评审后增量的两轮独立复审，并由主代理在受管 AVD 上完成设备门与同提交 CI 验证；本条登记交付范围、评审/验证拓扑、设备门结果、具名残余与边界）。
+
+**决定：**
+
+1. **交付与合并**：分支 `UL-p7-06cimpl`（基于 `2888411`，即 D-179 设计门合并），14 提交 `df336c4` → `ae65864` → `e29fb40` → `c278864` → `a4838d0` → `d53539b` → `6b29138` → `823491f` → `4a3ff4c` → `68a0a0b` → `756afa2` → `f2b4663` → `91069d0` → `eda15ef`，合并为 merge commit `3d99b48`（"merge: land the P7-06 06.C restore-preflight implementation (D-179)"），24 文件 +4809/−9；零 schema/迁移/依赖变更（schema 维持 v31）。按 D-179 冻结规格交付：认证前容器解析（`ledger-application` `BackupContainerReader`）、流式认证解密（**不使用** `CipherInputStream`，GCM tag 由 `doFinal` 校验）、有界磁盘前置检查（数据流中任何解密之前的独立编号步骤）、解密到私有暂存、隔离严格迁移（`ledger-data` `RestoreIsolatedMigration`：不运行 seed bootstrap、绝不走桌面 lenient 分支；`AndroidFrameworkSqlDriver` 提供非创建式可迁移的 Android driver 路径）、认证后 `payload_sha256` + 权威 `PRAGMA user_version` + 多 owner 身份清扫、不透明确认 token。**组合根接线为规格 OPEN 项、归 06.D**（两端平台读取端口已随本批交付：`android-app` `AndroidRestorePreflightPorts` 与 `desktop-app` `DesktopRestorePreflightPorts`；产品 UI 调用点未接线）。
+
+2. **评审与验证拓扑**：独立规格评审与独立质量评审在 `4a3ff4c`（findings P1-1 与 P2-2～P2-8 全部闭合）；distinct verifier 在 `4a3ff4c` 独立复核 **8/8 VERIFIED**。评审后增量（Error 传播清扫 `68a0a0b` + 闭包与覆盖修正 `756afa2`/`f2b4663`/`91069d0`/`eda15ef`）另经**两轮独立评审**（均 APPROVE；质量轮的非创建式负向测试与验证覆盖 stated-gap 补 discharge 位于 `91069d0`）与最终 distinct verifier 在冻结候选 `eda15ef` 的独立复核，全部主张 VERIFIED，包括：`RestorePreflight.kt` 恰 **20** 处 `catch (failure: Error) { throw failure }` 臂且每处紧邻先于一个 `catch (failure: Throwable)` 臂、代码注释如实声称该计数；`--rerun-tasks` 下 **7/7** 项 JVM 检查 EXIT(0)；`eda15ef` 聚焦重跑 `RestorePreflightUseCaseTest` **31** tests / `RestoreIsolatedMigrationTest` **16** tests 零失败；final head ktlint exit 0。
+
+3. **设备门（AVD `ul_p7_d01`，隔离 adb 5038，本会话自起模拟器端口 5682）**：完整 `:android-app:connectedDebugAndroidTest` 共 **33** tests，六个非导入套件全绿：`AndroidFrameworkSqlDriverInstrumentedTest` **5/5**（重开可见已提交、回滚丢弃、经适配器的 `PRAGMA table_info` + 真实身份清扫、v1 fixture 单事务严格迁移 1→current、缺失路径非创建式 fail-closed）、`AndroidRestoreSourcePortInstrumentedTest` **3/3**（真实 `ContentResolver` happy path、取消映射、打开失败映射）、`AndroidAbsoluteDatabasePathInstrumentedTest` **3/3**、`AndroidBackupSnapshotVerificationInstrumentedTest` **3/3**、`AndroidStartupFailClosedInstrumentedTest` **4/4**、`CcbBillParserAndroidInstrumentedTest` **7/7**。设备门期间发现并修复一项**测试 APK 缺陷**：Kotlin 测试 `ContentProvider` 在测试包自身进程内以 `NoClassDefFoundError kotlin/jvm/internal/Intrinsics` 崩溃（provider 加载路径上测试 APK 的 classpath 不含 app APK 捆绑的 stdlib），于 `eda15ef` 将 `FixedPayloadRestoreSourceProvider` 重写为纯 Java 修复（仅测试 fixture，无生产影响）。
+
+4. **CI 与推送前本地门**：`3d99b48` 同提交 CI run `36242803671` success（35m13s；Python tests 7m3s、Kotlin tests、Android compile 5m35s）。推送前本地门：`project_docs` exit 0；Harness trace（`verify-project -Scope trace`）exit 0，731 提交历史扫描干净。
+
+5. **残余承接（不得静默丢弃）**：
+
+   - (a) **`ImportScaleTraversalInstrumentedTest` 在通用冷启动 headless `connectedDebugAndroidTest` 运行中 8 项测试 7 项失败——不是 06.C 回归**（本分支零提交触及该套件；该套件最后修改于 D-166 时期）。证据：完整门运行的失败共享前置条件为「MainActivity 窗口未在 30000 ms 内可达」且当时 launcher/systemui ANR 系统对话框在屏；模拟器重启 + `settings put global hide_error_dialogs 1` 后的套件单跑失败签名**不同**（「import candidate list did not render within 60000 ms（import screen present=false, tabResolved=false）」）；运行期间应用自身以 +299–441 ms 显示并持有 `mCurrentFocus`，但 uiautomator dump 看不到应用节点（冷 headless 启动上 Compose a11y 树未暴露）。该套件历史上在 warm-snapshot/forensic-session 协议下通过（D-166/D-169 时期）。**下一步动作**：在该套件被用作通用门之前，先做 a11y 暴露/warm-start 协议的专项调查。
+   - (b) **06.C 实施 Error 清扫一致性**：`RestoreIsolatedMigration.kt`（约 `:110`，migrate 路径把含 `Error` 在内的全部 `Throwable` 转为类型化迁移失败）与 `BackupExport.kt` 的 `catch (Throwable)` 位点**早于本分支**、被有意排除在本批范围外；已登记未来一致性清扫。
+   - (c) **经 `AndroidFrameworkSqlDriver` 的设备上 `PRAGMA integrity_check` / `PRAGMA foreign_key_check`**：stated gap（KDoc 已登记；JVM 覆盖在位；生产端口组合全部三项检查）。
+   - (d) **06.C §9/规格 OPEN 项仍由后续切片持有**：P2-7 组合根接线 + supportedSourceVersions 白名单集合 + preview 字段集 + A03 端到端切换不变量 → **06.D**；A04 白名单集合与往返等价 → **06.4**；`AndroidBackupSourcePort` sizeOf 接线复检 → **06.D**（端口当前未接线，默认 sizeOf = `{ null }`）。
+
+6. **边界**：本条登记一项实施批，**不修改** D-179 的设计裁决、D-174 的冻结字节/参数/拒绝码、D-176 的 owner 契约或 D-177 的导出决定；零 schema/迁移/依赖变更（schema 维持 v31）；**不**把任何验收向量并入 PASS（P706-A03 的端到端切换不变量归 06.D、A04 归 06.4）；不改 P7-01～P7-05 既有冻结面；`.external/` 只读未触碰。
+
+7. **验收状态**：06.C 实施批已实施、验证并合并（`3d99b48`）；**组合根接线（06.D）尚未开始**；P706 验收向量不因本批记 PASS。
+
+**关联决定：** D-179（本条逐条实现其批准规格，不改其裁决；前序最高 id）、D-174（容器格式——本条实现其读侧，不改其决定）、D-176（owner/lease/generation 契约——本条复用，不改其契约）、D-177（导出产物——预检消费其产物，不改其决定；`BackupExport.kt` `catch (Throwable)` 位点承接见第 5(b) 条）、D-178（06.1 缺陷修复登记——设备门套件 `AndroidStartupFailClosedInstrumentedTest`/`AndroidAbsoluteDatabasePathInstrumentedTest` 沿其登记）。
