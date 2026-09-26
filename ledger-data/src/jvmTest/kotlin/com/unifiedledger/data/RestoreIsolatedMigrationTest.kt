@@ -8,6 +8,7 @@ import java.util.Properties
 import kotlin.io.path.absolutePathString
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -99,6 +100,23 @@ class RestoreIsolatedMigrationTest {
                 isolated.execute(null, "CREATE TABLE unrelated (id INTEGER)", 0)
                 isolated.execute(null, "INSERT INTO unrelated VALUES (1)", 0)
                 assertTrue(readObservedLedgerIdsOn(isolated).isEmpty())
+            }
+        }
+    }
+
+    @Test
+    fun theIdentitySweepPropagatesAProbeFailureInsteadOfSkippingTheTable() {
+        // N2 (fail-closed): a table that HAS ledger_id but whose probe throws must not be silently
+        // dropped from the sweep. A delegating driver throws only for the per-table DISTINCT query,
+        // so the failure is deterministic. Ablating the fail-closed change (re-wrapping the SELECT
+        // DISTINCT in runCatching) would make `readObservedLedgerIdsOn` return normally and the
+        // assertFailsWith would go red.
+        withTempDatabase { path ->
+            val url = "jdbc:sqlite:${path.absolutePathString()}"
+            seedAtVersion(url, LedgerDatabase.Schema.version)
+            driverWithoutForeignKeys(url).use { real ->
+                val failing = FailOnLedgerIdSelectDriver(real)
+                assertFailsWith<IllegalStateException> { readObservedLedgerIdsOn(failing) }
             }
         }
     }
@@ -268,5 +286,27 @@ class RestoreIsolatedMigrationTest {
                 assertTrue(!result.ok)
             }
         }
+    }
+}
+
+/**
+ * N2 test driver: forwards every call to [delegate] (by class delegation) EXCEPT a
+ * `SELECT DISTINCT ledger_id FROM ...` query, which throws. Used to prove the identity sweep does not
+ * swallow a per-table probe failure.
+ */
+private class FailOnLedgerIdSelectDriver(
+    private val delegate: app.cash.sqldelight.db.SqlDriver,
+) : app.cash.sqldelight.db.SqlDriver by delegate {
+    override fun <R> executeQuery(
+        identifier: Int?,
+        sql: String,
+        mapper: (app.cash.sqldelight.db.SqlCursor) -> app.cash.sqldelight.db.QueryResult<R>,
+        parameters: Int,
+        binders: (app.cash.sqldelight.db.SqlPreparedStatement.() -> Unit)?,
+    ): app.cash.sqldelight.db.QueryResult<R> {
+        if (sql.contains("SELECT DISTINCT ledger_id FROM")) {
+            throw IllegalStateException("injected per-table identity probe failure")
+        }
+        return delegate.executeQuery(identifier, sql, mapper, parameters, binders)
     }
 }

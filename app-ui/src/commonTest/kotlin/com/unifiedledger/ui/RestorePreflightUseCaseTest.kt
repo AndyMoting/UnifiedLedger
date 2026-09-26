@@ -487,6 +487,25 @@ class RestorePreflightUseCaseTest {
     }
 
     @Test
+    fun aFatalErrorFromTheDecryptorPropagatesInsteadOfBecomingATypedRejection() {
+        // P2-1 option (a): a fatal `Error` from `doFinal` (e.g. OutOfMemoryError) must NOT be
+        // converted into P706_CONTAINER_AUTHENTICATION_FAILED. The blanket catches rethrow `Error`
+        // first, so it escapes the use case. Ablating that `catch (failure: Error) { throw failure }`
+        // at the doFinal wrapper would turn this into Rejected(...) and this test would go red.
+        val fileSystem = LedgerFileSystemFake()
+        val owner = readyOwner()
+        val isolated = FakeIsolatedDatabase()
+        val source = FakeSource(container(), reportedSize = null)
+        // `assertFailsWith<OutOfMemoryError>` is itself the assertion: a converted typed rejection
+        // would fail here.
+        assertFailsWith<OutOfMemoryError> {
+            useCase(fileSystem, owner, source, isolated, crypto = ErrorThrowingCrypto()).preflight(request())
+        }
+        // The lease is still released by the outer finally even on the fatal path.
+        assertEquals(0, owner.inFlightLeaseCount)
+    }
+
+    @Test
     fun aPayloadSha256MismatchAfterAuthenticationIsAnIntegrityRejection() {
         val fileSystem = LedgerFileSystemFake()
         val owner = readyOwner()
@@ -837,5 +856,71 @@ private class TagFailingCrypto : BackupCryptoPrimitives {
             }
 
             override fun doFinal(): ByteArray = throw IllegalStateException("injected AEAD tag failure")
+        }
+}
+
+/**
+ * P2-1 option (a): a crypto fake whose decryptor's `doFinal` throws a fatal `Error` (an OOM stand-in),
+ * proving the use case does not convert `Error` into a typed rejection.
+ */
+private class ErrorThrowingCrypto : BackupCryptoPrimitives {
+    override fun randomBytes(count: Int): ByteArray = ByteArray(count)
+
+    override fun deriveKey(
+        password: CharArray,
+        salt: ByteArray,
+        iterations: Int,
+        keyLengthBits: Int,
+    ): ByteArray = ByteArray(keyLengthBits / 8)
+
+    override fun sha256Digest(): BackupSha256Digest =
+        object : BackupSha256Digest {
+            private var buffer = ByteArray(0)
+
+            override fun update(
+                bytes: ByteArray,
+                offset: Int,
+                length: Int,
+            ) {
+                buffer += bytes.copyOfRange(offset, offset + length)
+            }
+
+            override fun digest(): ByteArray = fakeDigestOf(buffer)
+        }
+
+    override fun gcmEncryptor(
+        key: ByteArray,
+        iv: ByteArray,
+        aad: ByteArray,
+    ): BackupGcmEncryptor =
+        object : BackupGcmEncryptor {
+            override fun update(
+                bytes: ByteArray,
+                offset: Int,
+                length: Int,
+            ): ByteArray = ByteArray(0)
+
+            override fun doFinal(): ByteArray = ByteArray(0)
+        }
+
+    override fun gcmDecryptor(
+        key: ByteArray,
+        iv: ByteArray,
+        aad: ByteArray,
+    ): BackupGcmDecryptor =
+        object : BackupGcmDecryptor {
+            override fun update(
+                bytes: ByteArray,
+                offset: Int,
+                length: Int,
+            ): ByteArray {
+                val out = ByteArray(length)
+                for (index in 0 until length) {
+                    out[index] = bytes[offset + index].toInt().xor(0x5A).toByte()
+                }
+                return out
+            }
+
+            override fun doFinal(): ByteArray = throw OutOfMemoryError("injected fatal error")
         }
 }

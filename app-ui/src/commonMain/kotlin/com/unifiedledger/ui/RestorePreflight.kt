@@ -360,6 +360,8 @@ class RestorePreflightUseCase(
         val available =
             try {
                 fileSystem.usableSpace(layout.hostDirectory)
+            } catch (failure: Error) {
+                throw failure
             } catch (failure: Throwable) {
                 return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_INSUFFICIENT_SPACE)
             }
@@ -385,7 +387,10 @@ class RestorePreflightUseCase(
                 // P2-1 fix: ONLY the platform AEAD failure (and the internal short-container case,
                 // handled as a read failure above) maps to the uniform code. Container spec section
                 // 4.7 scopes it to CRYPTOGRAPHIC failure: wrong password, tag failure, tampered
-                // ciphertext. The `Error` type is deliberately NOT caught (see below).
+                // ciphertext. A fatal `Error` never reaches this branch: each of the 20
+                // `catch (failure: Throwable)` sites in this file is immediately preceded by a
+                // `catch (failure: Error) { throw failure }`, so a fatal failure propagates instead of
+                // being reported as a rejection (see `decryptToStaging`'s doFinal wrapper below).
                 return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_CONTAINER_AUTHENTICATION_FAILED)
             }
 
@@ -395,6 +400,8 @@ class RestorePreflightUseCase(
         val payloadMatches =
             try {
                 decryptedSize == header.plaintextLength && payloadSha256Matches(snapshotFile, header)
+            } catch (failure: Error) {
+                throw failure
             } catch (failure: Throwable) {
                 return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_SOURCE_READ_FAILED)
             }
@@ -408,6 +415,8 @@ class RestorePreflightUseCase(
         val sourceVersion =
             try {
                 isolatedDatabase.readAuthoritativeUserVersion(snapshotFile)
+            } catch (failure: Error) {
+                throw failure
             } catch (failure: Throwable) {
                 return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_SOURCE_READ_FAILED)
             }
@@ -427,6 +436,8 @@ class RestorePreflightUseCase(
         val identities =
             try {
                 isolatedDatabase.readObservedLedgerIdentities(snapshotFile)
+            } catch (failure: Error) {
+                throw failure
             } catch (failure: Throwable) {
                 // P2-1 fix: an I/O failure reading identities is a read failure, not an identity claim.
                 return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_SOURCE_READ_FAILED)
@@ -452,6 +463,8 @@ class RestorePreflightUseCase(
         } else {
             try {
                 fileSystem.copy(snapshotFile, migratedFile)
+            } catch (failure: Error) {
+                throw failure
             } catch (failure: Throwable) {
                 return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_SOURCE_READ_FAILED)
             }
@@ -459,6 +472,8 @@ class RestorePreflightUseCase(
             val migrated =
                 try {
                     isolatedDatabase.migrateStrictly(migratedFile, sourceVersion, request.supportedSourceVersions)
+                } catch (failure: Error) {
+                    throw failure
                 } catch (failure: Throwable) {
                     return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_MIGRATION_FAILED)
                 }
@@ -473,6 +488,8 @@ class RestorePreflightUseCase(
         val validation =
             try {
                 isolatedDatabase.validate(validationPath)
+            } catch (failure: Error) {
+                throw failure
             } catch (failure: Throwable) {
                 return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_DOMAIN_VALIDATION_FAILED)
             }
@@ -485,8 +502,12 @@ class RestorePreflightUseCase(
             if (needsMigration) {
                 try {
                     sha256OfFile(migratedFile)
+                } catch (failure: Error) {
+                    throw failure
                 } catch (failure: Throwable) {
-                    return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_DOMAIN_VALIDATION_FAILED)
+                    // N5 fix: reading the migrated copy to hash it is a read failure, reported with the
+                    // same P706_SOURCE_READ_FAILED code as the other read paths (not a domain verdict).
+                    return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_SOURCE_READ_FAILED)
                 }
             } else {
                 null
@@ -547,6 +568,8 @@ class RestorePreflightUseCase(
         val opened =
             try {
                 source.openSource()
+            } catch (failure: Error) {
+                throw failure
             } catch (failure: Throwable) {
                 // A throwing port is a launch failure, not a silent cancel.
                 return SourceCopy.LaunchFailed
@@ -559,6 +582,8 @@ class RestorePreflightUseCase(
             }
         try {
             fileSystem.createDirectories(layout.backupStagingDirectory)
+        } catch (failure: Error) {
+            throw failure
         } catch (failure: Throwable) {
             runCatching { sourceReader.close() }
             return SourceCopy.Failed
@@ -572,6 +597,8 @@ class RestorePreflightUseCase(
             val writeStream =
                 try {
                     fileSystem.openWrite(containerFile)
+                } catch (failure: Error) {
+                    throw failure
                 } catch (failure: Throwable) {
                     return SourceCopy.Failed
                 }
@@ -584,6 +611,8 @@ class RestorePreflightUseCase(
                     val read =
                         try {
                             sourceReader.read(buffer)
+                        } catch (failure: Error) {
+                            throw failure
                         } catch (failure: Throwable) {
                             return SourceCopy.Failed
                         }
@@ -595,6 +624,8 @@ class RestorePreflightUseCase(
                     }
                     try {
                         writeStream.write(buffer, 0, read)
+                    } catch (failure: Error) {
+                        throw failure
                     } catch (failure: Throwable) {
                         return SourceCopy.Failed
                     }
@@ -603,6 +634,8 @@ class RestorePreflightUseCase(
                 writeStream.commit()
                 committed = true
                 return SourceCopy.Staged(total)
+            } catch (failure: Error) {
+                throw failure
             } catch (failure: Throwable) {
                 return SourceCopy.Failed
             } finally {
@@ -638,6 +671,8 @@ class RestorePreflightUseCase(
                     }
                 }
                 count
+            } catch (failure: Error) {
+                throw failure
             } catch (failure: Throwable) {
                 return HeaderRead.Rejected(BackupPreflightRejection.P706_SOURCE_READ_FAILED)
             }
@@ -659,6 +694,10 @@ class RestorePreflightUseCase(
      *
      * P3-2 fix: the staging write stream is opened BEFORE the password is widened, so a throwing
      * `openWrite` cannot leave the widened char array uncleared.
+     *
+     * N4 fix: the `try` opens immediately after [openStagingWrite], so a throw from the salt/IV
+     * allocation or [widenBackupPassword] still runs the `finally` (closing the stream and deleting
+     * the staging file). The widened array is nullable so the `finally` clears it only when produced.
      */
     private fun decryptToStaging(
         password: String,
@@ -669,13 +708,14 @@ class RestorePreflightUseCase(
     ): Long {
         // Opens first: if this throws, no secret material exists yet to clear.
         val writeStream = openStagingWrite(snapshotFile)
-        val headerBytes = ByteArray(BACKUP_FIXED_HEADER_LENGTH)
-        val salt = ByteArray(header.saltLength)
-        val iv = ByteArray(header.ivLength)
-        val widened = widenBackupPassword(password)
+        var widened: CharArray? = null
         var key: ByteArray? = null
         var committed = false
         try {
+            val headerBytes = ByteArray(BACKUP_FIXED_HEADER_LENGTH)
+            val salt = ByteArray(header.saltLength)
+            val iv = ByteArray(header.ivLength)
+            widened = widenBackupPassword(password)
             fileSystem.openRead(containerFile).use { stream ->
                 readFully(stream, headerBytes)
                 readFully(stream, salt)
@@ -708,6 +748,8 @@ class RestorePreflightUseCase(
                 val tail =
                     try {
                         decryptor.doFinal()
+                    } catch (failure: Error) {
+                        throw failure
                     } catch (failure: Throwable) {
                         throw AuthenticationFailureException()
                     }
@@ -718,6 +760,8 @@ class RestorePreflightUseCase(
                 try {
                     writeStream.flushAndSync()
                     writeStream.commit()
+                } catch (failure: Error) {
+                    throw failure
                 } catch (failure: Throwable) {
                     throw StagingWriteException()
                 }
@@ -732,14 +776,17 @@ class RestorePreflightUseCase(
             throw failure
         } catch (failure: RestorePreflightCancelledException) {
             throw failure
+        } catch (failure: Error) {
+            throw failure
         } catch (failure: Throwable) {
             // Any other failure while reading the container or unwrapping the key is a read failure,
             // NOT a password failure (P2-1).
             throw ContainerReadException()
         } finally {
             // Container-format spec section 4.10 / 06.C spec section 5.5: clear the widened chars
-            // and the derived key after use.
-            widened.fill('\u0000')
+            // and the derived key after use. `widened` is nullable because a throw before it was
+            // produced (salt/IV allocation) must still reach this cleanup (N4).
+            widened?.fill('\u0000')
             key?.fill(0)
             if (!committed) {
                 runCatching { fileSystem.delete(snapshotFile) }
@@ -752,6 +799,8 @@ class RestorePreflightUseCase(
     private fun openStagingWrite(snapshotFile: String): LedgerWriteStream =
         try {
             fileSystem.openWrite(snapshotFile)
+        } catch (failure: Error) {
+            throw failure
         } catch (failure: Throwable) {
             throw StagingWriteException()
         }
@@ -762,6 +811,8 @@ class RestorePreflightUseCase(
     ) {
         try {
             writeStream.write(bytes, 0, bytes.size)
+        } catch (failure: Error) {
+            throw failure
         } catch (failure: Throwable) {
             throw StagingWriteException()
         }

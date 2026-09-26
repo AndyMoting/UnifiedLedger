@@ -171,28 +171,6 @@ fun readIntegrityCheckRowsOn(driver: SqlDriver): List<String?> {
 }
 
 /**
- * The DISTINCT `ledger_id` values carried by the payload's `ledger_transaction` (the formal core
- * owner; 06.C spec section 3.8).
- */
-fun readLedgerIdsOn(driver: SqlDriver): List<String> {
-    val ids = mutableListOf<String>()
-    driver
-        .executeQuery(
-            null,
-            "SELECT DISTINCT ledger_id FROM ledger_transaction",
-            { cursor ->
-                while (cursor.next().value) {
-                    cursor.getString(0)?.let { ids += it }
-                }
-                QueryResult.Unit
-            },
-            0,
-            null,
-        ).value
-    return ids
-}
-
-/**
  * Every DISTINCT `ledger_id` observed across the payload's ENTIRE authoritative owner set: every
  * user table in `sqlite_master` that carries a `ledger_id` column (the formal core, catalog, import
  * and `rg02_`-`rg12_` families alike), not just `ledger_transaction`.
@@ -205,9 +183,11 @@ fun readLedgerIdsOn(driver: SqlDriver): List<String> {
  * A payload with NO user table carrying `ledger_id` (or no rows) returns an empty list; the caller
  * must treat "nothing observed" as a class-3 rejection, never as an implicit target match.
  *
- * Table names come from our own generated schema (not user input), but they are still quoted and
- * escaped defensively. A table whose `ledger_id` query throws (e.g. a view-shaped oddity) is skipped
- * rather than failing the whole sweep; the class-3 decision only needs the ids it CAN observe.
+ * N2 fix (fail-closed): a table that HAS `ledger_id` but whose probe throws is NOT silently skipped —
+ * that could hide a foreign id. "Column absent" and "probe failed" are distinguished: the count
+ * query is rejected and the `SELECT DISTINCT` is not wrapped, so a probe failure propagates and the
+ * caller (the preflight) maps it to the class-3 identity rejection rather than observing a partial
+ * set. Table names come from our own generated schema (not user input) but are still quoted.
  */
 fun readObservedLedgerIdsOn(driver: SqlDriver): List<String> {
     val tables = mutableListOf<String>()
@@ -227,50 +207,49 @@ fun readObservedLedgerIdsOn(driver: SqlDriver): List<String> {
     val observed = linkedSetOf<String>()
     for (table in tables) {
         if (!tableHasColumn(driver, table, "ledger_id")) continue
-        runCatching {
-            driver
-                .executeQuery(
-                    null,
-                    "SELECT DISTINCT ledger_id FROM ${quoteIdentifier(table)}",
-                    { cursor ->
-                        while (cursor.next().value) {
-                            cursor.getString(0)?.let { observed += it }
-                        }
-                        QueryResult.Unit
-                    },
-                    0,
-                    null,
-                ).value
-        }
-    }
-    return observed.toList()
-}
-
-/** Whether [table] exposes a [column] (a table without it is not part of the identity sweep). */
-private fun tableHasColumn(
-    driver: SqlDriver,
-    table: String,
-    column: String,
-): Boolean {
-    var found = false
-    runCatching {
         driver
             .executeQuery(
                 null,
-                "PRAGMA table_info(${quoteIdentifier(table)})",
+                "SELECT DISTINCT ledger_id FROM ${quoteIdentifier(table)}",
                 { cursor ->
                     while (cursor.next().value) {
-                        // PRAGMA table_info columns: cid(0), name(1), type(2), notnull(3), dflt(4), pk(5).
-                        if (cursor.getString(1) == column) found = true
+                        cursor.getString(0)?.let { observed += it }
                     }
                     QueryResult.Unit
                 },
                 0,
                 null,
             ).value
-        return found
     }
-    return false
+    return observed.toList()
+}
+
+/**
+ * Whether [table] exposes a [column]. N2 fix: a probe that throws propagates (fail-closed) instead of
+ * being reported as "column absent", so a carrying table that errors cannot be silently dropped from
+ * the identity sweep.
+ */
+private fun tableHasColumn(
+    driver: SqlDriver,
+    table: String,
+    column: String,
+): Boolean {
+    var found = false
+    driver
+        .executeQuery(
+            null,
+            "PRAGMA table_info(${quoteIdentifier(table)})",
+            { cursor ->
+                while (cursor.next().value) {
+                    // PRAGMA table_info columns: cid(0), name(1), type(2), notnull(3), dflt(4), pk(5).
+                    if (cursor.getString(1) == column) found = true
+                }
+                QueryResult.Unit
+            },
+            0,
+            null,
+        ).value
+    return found
 }
 
 /** Quotes a schema identifier for interpolation (names come from our own schema). */
