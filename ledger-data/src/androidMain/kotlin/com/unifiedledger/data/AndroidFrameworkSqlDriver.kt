@@ -36,7 +36,10 @@ import app.cash.sqldelight.db.SqlPreparedStatement
  * UNVERIFIED (registered): this adapter has NOT been device-verified; the main agent owns device
  * verification. It compiles in `ledger-data` androidMain; NO JVM OR HOST TEST EXERCISES THIS CLASS
  * (the commonMain helper contracts are tested on the JVM path, not through this adapter) — the
- * earlier claim of JVM coverage was wrong and is corrected here.
+ * earlier claim of JVM coverage was wrong and is corrected here. The device-verification instrument
+ * is the instrumented suite `AndroidFrameworkSqlDriverInstrumentedTest` (android-app androidTest:
+ * commit/rollback through a transaction, the identity-sweep probe shapes, and a strict v1->current
+ * migrate through the adapter); this class stays device-UNVERIFIED until that suite runs green.
  *
  * KNOWN LIMITATION (P3-9): [executeQuery] binds parameters through `SQLiteDatabase.rawQuery(String,
  * Array<String>)`, which accepts ONLY string arguments and applies them as TEXT. The helpers reached

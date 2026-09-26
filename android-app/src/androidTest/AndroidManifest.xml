@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      P7-06 06.C (D-179) androidTest-only provider for
+      AndroidRestoreSourcePortInstrumentedTest: serves a fixed synthetic payload from openFile so
+      the restore source port can be driven through the real ContentResolver on device. It holds no
+      product data, is exported only so the instrumentation target (a different package from this
+      test APK) can resolve it, and never ships in the product build.
+    -->
+    <application>
+        <provider
+            android:name="com.unifiedledger.android.FixedPayloadRestoreSourceProvider"
+            android:authorities="com.unifiedledger.android.p706c.restoresource"
+            android:exported="true" />
+    </application>
+</manifest>

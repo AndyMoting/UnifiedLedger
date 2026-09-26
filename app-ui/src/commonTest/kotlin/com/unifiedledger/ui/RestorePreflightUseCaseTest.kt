@@ -31,6 +31,7 @@ import kotlin.test.assertTrue
  * - an unsupported older version is rejected before any migration copy is made;
  * - a supported older version migrates the ISOLATED copy and leaves the snapshot untouched;
  * - a failed migration / validation is a typed rejection;
+ * - a hash-read failure on the migrated copy is a typed read failure, not a domain verdict (N5);
  * - a tag failure is the uniform `P706_CONTAINER_AUTHENTICATION_FAILED` and its unauthenticated
  *   staging plaintext is deleted (P2-4);
  * - the class-3 identity check rejects an empty payload and any foreign id in a secondary owner,
@@ -740,6 +741,27 @@ class RestorePreflightUseCaseTest {
         val result = useCase(fileSystem, owner, source, isolated).preflight(request())
 
         assertEquals(BackupPreflightRejection.P706_SOURCE_READ_FAILED, assertIs<RestorePreflightResult.Rejected>(result).code)
+    }
+
+    @Test
+    fun aHashReadFailureOnTheMigratedCopyIsATypedReadRejectionNotADomainVerdict() {
+        // N5: reading the migrated copy in step 11 to bind its digest is a READ, so a failure there
+        // is P706_SOURCE_READ_FAILED, not a domain verdict. The fake's single `failOn` seam throws on
+        // exactly one operation; `openRead` of the migrated file is reachable ONLY in step 11 (steps
+        // 6 and 9 read the snapshot, and step 9's copy reads it through `readBytes`), so the induced
+        // failure is deterministic. Ablation proof: reverting the step-11 mapping to
+        // P706_DOMAIN_VALIDATION_FAILED turns this test red.
+        val fileSystem = LedgerFileSystemFake()
+        val owner = readyOwner()
+        val isolated = FakeIsolatedDatabase(userVersion = 5, migration = RestoreMigrationOutcome.Migrated(5, 31))
+        fileSystem.failOn = "openRead:$migratedFile"
+        val source = FakeSource(container(schemaVersion = 5), reportedSize = null)
+        val result = useCase(fileSystem, owner, source, isolated).preflight(request(supported = setOf(5L)))
+
+        assertEquals(BackupPreflightRejection.P706_SOURCE_READ_FAILED, assertIs<RestorePreflightResult.Rejected>(result).code)
+        // The rejection still cleans up: the migration copy is deleted and the lease is released.
+        assertTrue(!fileSystem.hasFile(migratedFile))
+        assertEquals(0, owner.inFlightLeaseCount)
     }
 
     @Test
