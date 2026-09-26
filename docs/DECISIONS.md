@@ -3585,3 +3585,33 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 5. **边界**：本条为验收裁决登记，**不改任何已交付行为**；不改 A-03 既有登记（其 TalkBack 延期披露独立保留）；零产品代码、零测试、零 schema/DDL/依赖变更；不改 D-156 的冻结设计与支持矩阵；不排期跨重启持久化需求。
 
 **关联决定：** D-156（V-17 `:250` 与 V-19 `:252` 验收定义——本条不改其规格）、D-173（V-19 交互缺口登记——本条关闭其承接）、D-180（前序最高 id）。
+
+## D-182 P7-06 06.D 恢复确认与切换设计门批准
+
+**状态：** 已批准（2026-09-26，P7-06 切片 06.4/06.D（恢复确认、原子切换、回退与失败恢复）设计规格的批准登记；规格 `docs/specs/2026-09-26-p7-06-restore-confirm-switch-design.md` 经独立规格评审与独立质量评审（draft-1 双评审均「需返工后批准」、无 P1；draft-2 闭合全部 findings，两份收口复评均 APPROVE 并余两项非阻塞 P3，final polish 一并折叠）与 distinct verifier（结论 VERIFIED）后，由主代理按用户既有授权批准；本条登记批准内容、冻结的七项设计裁决、评审/验证拓扑、承接的未关闭项与边界）。
+
+**决定：**
+
+1. **交付与批准**：批准规格 `docs/specs/2026-09-26-p7-06-restore-confirm-switch-design.md`，冻结 06.4/06.D 的**设计级**方案：确认时四项硬重校验 → 完整恢复侧峰值磁盘前置 → `owner.quiesce()` → quiesce 后 generation 复核 → `closeActiveGraph()` → 装配新代目录 + journal=`prepared` → 经冻结原语 `publishActivePointer` 的原子指针发布 + journal=`switched` → 失败回滚（进程内与重启两执行者，容器规格 §5.3 冻结 ROLLBACK 机器的实例化）→ committed 与结果投递；每个 post-quiesce 中止路径都经 §3.10 复原程序（再排空 → `reopen(ActivePointer)` 重建旧图）复位 Ready。规格状态由 `proposal` 转为 `approved`（本决定即批准依据）。本规格**逐条**对齐已批准容器格式规格（D-174）的 §4.8/§5.3/§5.5/§7 冻结规则，**消费**已批准 06.1（D-176）的 owner/lease/generation/quiesce 契约与稳定存储原语，**消费**已批准 06.C 预检规格（D-179）的预检产物与不透明 token 契约，并**承接** D-180 登记的归 06.D 义务；**不重开**其任何冻结决定。主代理另对 §3 九步序列做了直接通读核验：每步带失败路径，冻结权威得到尊重（`publishActivePointer` 为唯一指针发布原语；容器规格 §5.3 ROLLBACK 机器只实例化不改动；D-176 契约只消费不改动）。
+
+   起草与合并事实：规格以 proposal 经 merge `5375bb5`（"merge: add the P7-06 06.D restore confirm & switch design spec (proposal)"）合入 `main`；起草历史 draft-1 `7c6bd04` → draft-2 `e4ce713` → final `a0f1bdb`，其中 draft-2 `e4ce713` 在折入两处 P3 打磨后 **amend 为 final `a0f1bdb`**，故记录的分支历史为 `7c6bd04` → `a0f1bdb` 两提交 + merge `5375bb5`；起草过程实际产生三个提交对象、内容全部保留（`e4ce713` 对象在库中可复核；`e4ce713`→`a0f1bdb` 的 4 行 delta 经 distinct verifier 核验**只含**两处打磨、无其他改动）。
+
+2. **关键设计裁决（§5 七项，本条冻结）**：
+
+   - **裁决 A（§5.1）**：确认用例为**新建** `ConfirmRestore`（app-ui，与 `RestorePreflight` 同侧），不复用预检用例、确认时不重读可被替换的外部文件、不做就地 rename；流程即 §3 九步冻结顺序 + §3.10 复原（每个 post-quiesce 中止都复原），结果为类型化切换结果 sealed interface（命名归实施批）。
+   - **裁决 B（§5.2）**：新代编号 = 磁盘代 `gen-(current+1)`（经 `generationDirectoryName`，与进程内 generation 两层区分）；旧代切换后**保留**为回滚锚；成功后的旧代清理策略**本批不定义**、登记 OPEN（§8 第 1 项）。
+   - **裁决 C（§5.3）**：`POINTER_MISSING` 恢复为**显式用户确认**动作（D-178 残余 (a) 的设计级闭合）：启动 fail-closed 行为不变；完整候选 → 验证采纳（`isUsableSqliteMainFile` + `PRAGMA integrity_check` + 权威 `user_version` 恰为当前版本 → 经冻结原语发布指针）；复制中途部分候选 → 在**旧库原件仍在**守卫下的第二个人审动作：废弃不可验证候选并重跑 06.1 旧路径升级。两个分支都**绝不**弱化 D-176 的静默空库禁令；自动/静默采纳被否决。
+   - **裁决 D（§5.4）**：`supportedSourceVersions` 接线集合 = `{1, 31}`——v31 为当前 schema 直通；v1 为**有条件准入**（依据仅为设备实证的严格迁移 + 校验，其 A04 往返等价腿未证、若证伪必须移除）；其余每个版本按冻结规则类型化拒绝，逐版本加入须自带该版本的往返证据。
+   - **裁决 E（§5.5）**：预览字段集具体化为七项（D-179 §7.4 最低集 + **owner 计数摘要**（accounts/categories/transactions，经隔离库端口直读、不运行 seed bootstrap）+ 预检时间戳）；排除项 verbatim 承接 D-179 §7.4（密码、派生密钥、明文账务内容明细、路径）。
+   - **裁决 F（§5.6）**：`AndroidBackupSourcePort.sizeOf` 接线为对 SAF `OpenDocument` 结果的**单次** `ContentResolver` 大小查询；provider 不报大小时沿用 06.C 已实现的计数流回退（谎报大小的 provider 无法绕过上限）；桌面端不动。
+   - **裁决 G（§5.7）**：跨会话 stale 策略 = **D-179 §7.5 存在性检查即执行机制、不新增任何机制**——上一会话 token 绑定的暂存工件在下次启动必被 `restore-` 前缀启动清扫，确认时重校验第 1 项必失败 → stale 拒绝。
+
+3. **评审与验证拓扑**：单一写者在隔离 worktree 内起草；**独立规格评审 + 独立质量评审**并行于 draft-1 `7c6bd04`（两轮均为「需返工后批准」的 APPROVE-conditional：规格评审 P2-1 owner 状态声明失实 / P2-2 复制中途砖化窗口 / P2-3 回滚遗留 + P3-1 v1 准入措辞 / P3-2 `parsePointer` 可见性；质量评审 P2-1 同一 owner 状态问题 / P2-2 废弃 gen-(n+1) 清理 + P3×8）→ 写者应用全部 findings（draft-2 `e4ce713`）→ **两份收口复评**（均由原评审者执行）对 `e4ce713` 结论 **APPROVE**，并新报两项**非阻塞** P3 措辞 findings（挂起租约不变量的适用范围；§8 对已废弃新代删除失败的登记路由）→ final polish `a0f1bdb` 折叠两项（N-1：§3.10 不变量限定为 Ready / StartupError / 仅当再排空在预算内不能收敛时的 `Quiescing`-类型化失败，并把该情形归因于 06.1 owner 既有的挂起租约受阻语义；N-2：§8 第 1 项明文承接已废弃新代目录的删除失败遗留）→ **distinct verifier** 独立复核，结论 **VERIFIED**：15 项承重引用抽查全部属实（quiesce `:351`/`:356` 不复位、Ready 仅 `:309`/`:434`、re-entrant drain `:359-363`、`acquireLease` `:321-324`、reopen `:413-434`、`QuiesceBlocked` `:417`、超时 `:195`；`publishActivePointer` `:445-453`；`generationDirectoryName` `:235`；`parsePointer` `:390-400` 文件私有；sidecar 危害 `:455-459`；sweep 前缀 `:491-505`；token 绑定 `:191-198`；暂存清理 `:306-317`；`currentSupportedSchemaVersion` `:29`；`isUsableSqliteMainFile` `:316-328`）；§8 处置审计（D-179 §10 第 1-16 项全部逐项 traced、D-180 5(a)-(d) 逐项 mapped、D-178 残余 (a) 两子情形设计级闭合而 (b)/(c) 承接，无静默丢弃）；final-polish 两处修正与 6 项闭合抽查核验属实；一致性核验通过（§3 九步序列完整含失败路径；§7 矩阵覆盖 §3 全部失败路径；§5 七项裁决均含替代 + 决定性理由）；并附两项非阻塞注记（amend 历史但内容保留；起草基点 `b69ba7b` 后 main 经 docs-only 合并推进、规格行号引用不受影响）→ 主代理按用户既有授权批准（含对 §3 九步序列的直接通读，见第 1 条）。
+
+4. **承接的未关闭/未验证项（不得静默丢弃）**：**成功后旧代清理策略**（判定条件、清理器与「未解决 journal 的相关代不得清理」，连同**已废弃新代目录的删除失败遗留**，归后续策略批）；**journal 内容编码与启动恢复状态机细节**（归实施批）；**§3.10 复原程序编排细节**（再排空上限/总时限、并发 reopen 重试、`Quiescing` 下 `closeActiveGraph` 衔接核实；设计级约束已冻结——post-quiesce 中止的终态只能 Ready（旧图）、StartupError，或仅当再排空在预算内不能收敛时的 `Quiescing` + 类型化失败如实报告）；**确认/切换/回滚实测时长**（61k 级读数未取）；**`RecoveryRequired` 持久形状与 UI 呈现**；**Android provider 大小元数据设备侧读数**（§5.6 接线后）；**切换期结果类型与复原状态命名**（不占用 `P706_*` 容器拒绝码空间）；**严格结构识别与 A04 往返等价**（归 06.4；v1 的有条件准入不预支其结论）；**§4.6 AAD 跨端向量、新拒绝码建议名批准等 D-179 §10 承接项**；**D-180 残余 5(a)（ImportScaleTraversal 冷启动 a11y 环境限制，专项调查待办）、5(b)（Error 清扫一致性）、5(c)（设备 PRAGMA stated gap）**；规格 §8 逐项登记在案。
+
+5. **边界**：本条只批准一份**设计规格**；**零产品代码、零测试、零 schema/迁移、零依赖**（schema 维持 v31）；**不修改** D-174 的冻结字节/参数/拒绝码/journal 机器/ROLLBACK 重启规则（规格 §4 只是实例化）、**不修改** D-176 的 owner 契约与静默空库禁令（裁决 C 的恢复路径从不绕过它）、**不修改** D-177/D-179/D-180 的既有决定；**不**把任何验收向量并入 PASS（P706-A03 的端到端切换半部与 A05 仍为**未通过**的未来验收要求，A06/A07 的实际切换与故障注入归实施批与设备验收，A04 归 06.4 且不因裁决 D 预支）；不改 P7-01～P7-05 既有冻结面；`rgXX_` 竖井与 golden fixtures/expected 零改动；`.external/` 只读未触碰。
+
+6. **验收状态**：本批**设计门已批准**；**06.4/06.D 的实施为后续实施批**，尚未开始；**不**把任何验收向量并入 PASS。
+
+**关联决定：** D-179（本条批准其 §2.2/§7/§10 登记的 06.D 义务——磁盘公式拆分、组合根接线、supportedSourceVersions、preview 字段集、token stale 策略、A03 端到端；不改其冻结裁决）、D-174（容器格式 §5.3 journal/ROLLBACK 机器——本规格实例化之，不改其冻结面）、D-176（owner/lease/generation/quiesce 契约与静默空库禁令——本规格只消费，不改其冻结面）、D-178（残余 (a) `POINTER_MISSING` 砖化窗口由本规格设计级闭合，(b)/(c) 仍承接）、D-180（06.C 实施登记——本规格承接其第 5(d) 条归 06.D 的五项义务）、D-181（前序最高 id；同日登记的 P7-05 片 1b 验收裁决，与本批无依赖）。
