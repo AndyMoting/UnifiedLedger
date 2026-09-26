@@ -1,10 +1,6 @@
 package com.unifiedledger.android
 
-import android.content.ContentProvider
-import android.content.ContentValues
-import android.database.Cursor
 import android.net.Uri
-import android.os.ParcelFileDescriptor
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.unifiedledger.ui.BackupSourceOpenResult
@@ -15,7 +11,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.ByteArrayOutputStream
 
-/** The synthetic bytes the test provider serves (fixed, anonymous, no product data). */
+/** The synthetic bytes the fixture must serve; the test asserts the delivered bytes against this copy. */
 internal val RESTORE_SOURCE_FIXTURE_PAYLOAD: ByteArray =
     "ulbk-restore-source-fixture-0123456789abcdef".encodeToByteArray()
 
@@ -25,12 +21,17 @@ internal val RESTORE_SOURCE_FIXTURE_PAYLOAD: ByteArray =
  * ([AndroidBackupSourcePort]) — until now its branches existed only as app-ui common-test fakes.
  * Driven here through the REAL `ContentResolver`.
  *
- * The test provider ([FixedPayloadRestoreSourceProvider], registered for this androidTest APK in
- * `src/androidTest/AndroidManifest.xml`) serves a FIXED synthetic payload from `openFile` as a real
- * `ParcelFileDescriptor`, so the port's reader is proven to deliver exactly those bytes through the
+ * The test provider ([FixedPayloadRestoreSourceProvider], a PURE-JAVA fixture in
+ * `src/androidTest/java` registered for this androidTest APK in `src/androidTest/AndroidManifest.xml`)
+ * serves a FIXED synthetic payload from `openFile` as a real `ParcelFileDescriptor`, so the port's
+ * reader is proven to deliver exactly those bytes through the
  * production-shaped closure (`context.contentResolver.openInputStream(uri)`), with the SAF launch
  * posted to the main thread via `Instrumentation.runOnMainSync` — the same threading shape the
- * production poster uses (the `AndroidBackupTargetPort` precedent).
+ * production poster uses (the `AndroidBackupTargetPort` precedent). The fixture is deliberately
+ * pure Java: the system starts it in the test package's own process, where the classloading path
+ * is the test APK alone and the Kotlin runtime is not visible (a Kotlin fixture crashed there with
+ * `NoClassDefFoundError`); these test classes are unaffected because the instrumentation process
+ * classpath includes the app APK.
  *
  * Failure branches, covered here with real components (P2-8's distinction, previously only faked in
  * the app-ui common tests): a dismissed SAF choice (a null handle) is `Cancelled`, and a stream open
@@ -114,52 +115,4 @@ class AndroidRestoreSourcePortInstrumentedTest {
 
         val MISSING_PROVIDER_URI: Uri = Uri.parse("content://$MISSING_PROVIDER_AUTHORITY/none")
     }
-}
-
-/**
- * A test-only ContentProvider: serves a FIXED synthetic payload
- * ([RESTORE_SOURCE_FIXTURE_PAYLOAD]) from `openFile` as a real `ParcelFileDescriptor` (a pipe
- * prefilled with those bytes, write end closed), so the restore source port exercises the real
- * ContentResolver/SAF-shaped file-access path on device. It holds no product data and exists only
- * inside the androidTest APK.
- */
-internal class FixedPayloadRestoreSourceProvider : ContentProvider() {
-    override fun onCreate(): Boolean = true
-
-    override fun openFile(
-        uri: Uri,
-        mode: String,
-    ): ParcelFileDescriptor {
-        val pipe = ParcelFileDescriptor.createPipe()
-        ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).use { stream -> stream.write(RESTORE_SOURCE_FIXTURE_PAYLOAD) }
-        return pipe[0]
-    }
-
-    override fun query(
-        uri: Uri,
-        projection: Array<String>?,
-        selection: String?,
-        selectionArgs: Array<String>?,
-        sortOrder: String?,
-    ): Cursor? = null
-
-    override fun getType(uri: Uri): String? = ANDROID_BACKUP_CONTAINER_MIME
-
-    override fun insert(
-        uri: Uri,
-        values: ContentValues?,
-    ): Uri? = null
-
-    override fun delete(
-        uri: Uri,
-        selection: String?,
-        selectionArgs: Array<String>?,
-    ): Int = 0
-
-    override fun update(
-        uri: Uri,
-        values: ContentValues?,
-        selection: String?,
-        selectionArgs: Array<String>?,
-    ): Int = 0
 }
