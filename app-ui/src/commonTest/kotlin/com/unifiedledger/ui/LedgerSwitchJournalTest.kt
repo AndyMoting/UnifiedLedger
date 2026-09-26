@@ -85,6 +85,25 @@ class LedgerSwitchJournalTest {
     // ---------------------------------------------------------------- crash windows (spec 4.1 table)
 
     @Test
+    fun aHalfBuiltGenerationWithoutAJournalIsInertAtStartup() {
+        // Section 4.1 table row 1: a crash mid-assembly leaves NO journal, a half-built
+        // gen-(n+1) and the old pointer. The resolution only looks at the pointer, so it plans
+        // the old generation and leaves the stray directory inert — the next confirm's
+        // delete-then-stage (spec section 3.6) or the retention policy handles it.
+        seedActiveGenerationOne()
+        seedStagedGenerationTwo()
+
+        val plan = assertIs<LedgerStorageResolution.Planned>(resolution()).plan
+
+        val open = assertIs<LedgerStoragePlan.OpenGeneration>(plan)
+        assertEquals(1, open.generation)
+        assertFalse(fileSystem.hasFile(journal))
+        assertEquals("gen-1", fileSystem.fileBytes(pointer)?.decodeToString())
+        assertTrue(fileSystem.hasDirectory(generationTwoDirectory))
+        assertTrue(fileSystem.hasFile(generationTwoMain))
+    }
+
+    @Test
     fun aPreparedJournalWithTheOldPointerDiscardsTheStagedDirectoryAndOpensTheOldGeneration() {
         seedActiveGenerationOne()
         seedStagedGenerationTwo()
@@ -138,6 +157,13 @@ class LedgerSwitchJournalTest {
         assertFalse(fileSystem.hasDirectory(generationTwoDirectory))
         assertFalse(fileSystem.hasFile(generationTwoSidecar))
         assertTrue(fileSystem.hasDirectory(generationOneDirectory))
+        // P3-5: the recovery's journal removal is durable too — the deletion is followed by a
+        // host-directory fsync, so a finished recovery cannot be resurrected as a rollback by a
+        // crash the directory has not yet forgotten.
+        val ops = fileSystem.operationsSnapshot()
+        val journalRemove = ops.indexOf("delete:$journal")
+        assertTrue(journalRemove >= 0)
+        assertTrue(ops.drop(journalRemove + 1).contains("fsyncDirectory:/data"))
     }
 
     @Test

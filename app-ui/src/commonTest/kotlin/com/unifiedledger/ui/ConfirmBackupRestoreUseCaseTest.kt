@@ -4,6 +4,7 @@ import com.unifiedledger.application.backup.BackupCryptoPrimitives
 import com.unifiedledger.application.backup.BackupGcmDecryptor
 import com.unifiedledger.application.backup.BackupGcmEncryptor
 import com.unifiedledger.application.backup.BackupSha256Digest
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -13,8 +14,10 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -169,20 +172,40 @@ class ConfirmBackupRestoreUseCaseTest {
     /**
      * Delegates to the shared fake and adds the two deterministic interleave hooks: a
      * usable-space gate (the confirm precheck park) and a read-bytes hook (the post-quiesce
-     * pointer-read park), plus a usable-space value queue for the post-staging recheck.
+     * pointer-read park), a usable-space value queue for the post-staging recheck, and the
+     * failure injections the typed fakes cannot express: a THROWING usable-space read (P3-1),
+     * a fail-once atomic write (P3-3's second journal write), a fail-once delete (P3-4's
+     * transient step-9 journal removal) and ERROR-tier (non-Runtime-Exception) failures at an
+     * atomic write or a file fsync (P2-1's escape paths).
      */
     private class GatedFake(
         private val inner: LedgerFileSystemFake,
     ) : LedgerFileSystem by inner {
         private val usableSpaceValues = ArrayDeque<Long?>()
+        private val writeAtomicCalls = mutableMapOf<String, Int>()
         var onUsableSpace: (() -> Unit)? = null
         var onReadBytes: ((String) -> Unit)? = null
+        var throwOnUsableSpaceRead = false
+
+        /** path -> the 1-based call index that must fail. */
+        var failWriteAtomicAtCall: Pair<String, Int>? = null
+
+        /** When true, the failing atomic write throws an [InternalError] instead of a RuntimeException. */
+        var failWriteAtomicWithError = false
+
+        /** path -> the 1-based call index that must fail. */
+        var failDeleteAtCall: Pair<String, Int>? = null
+        private val deleteCalls = mutableMapOf<String, Int>()
+
+        /** The fsync path whose call throws an [InternalError] (unconditional). */
+        var throwOnFsyncFile: String? = null
 
         fun enqueueUsableSpace(value: Long?) {
             usableSpaceValues.addLast(value)
         }
 
         override fun usableSpace(path: String): Long? {
+            if (throwOnUsableSpaceRead) throw IllegalStateException("injected usable-space read failure")
             onUsableSpace?.invoke()
             return if (usableSpaceValues.isEmpty()) inner.usableSpace(path) else usableSpaceValues.removeFirst()
         }
@@ -190,6 +213,38 @@ class ConfirmBackupRestoreUseCaseTest {
         override fun readBytes(path: String): ByteArray {
             onReadBytes?.invoke(path)
             return inner.readBytes(path)
+        }
+
+        override fun writeAtomic(
+            path: String,
+            bytes: ByteArray,
+        ) {
+            val spec = failWriteAtomicAtCall
+            if (spec != null && spec.first == path) {
+                val call = (writeAtomicCalls[path] ?: 0) + 1
+                writeAtomicCalls[path] = call
+                if (call == spec.second) {
+                    if (failWriteAtomicWithError) throw InternalError("injected error at writeAtomic:$path")
+                    throw InjectedFileSystemFailure("writeAtomic:$path#$call")
+                }
+            }
+            inner.writeAtomic(path, bytes)
+        }
+
+        override fun fsyncFile(path: String) {
+            val target = throwOnFsyncFile
+            if (target == path) throw InternalError("injected error at fsyncFile:$path")
+            inner.fsyncFile(path)
+        }
+
+        override fun delete(path: String) {
+            val spec = failDeleteAtCall
+            if (spec != null && spec.first == path) {
+                val call = (deleteCalls[path] ?: 0) + 1
+                deleteCalls[path] = call
+                if (call == spec.second) throw InjectedFileSystemFailure("delete:$path#$call")
+            }
+            inner.delete(path)
         }
     }
 
@@ -309,6 +364,10 @@ class ConfirmBackupRestoreUseCaseTest {
             assertTrue(copyMain >= 0 && copySidecar > copyMain)
             assertTrue(fsyncMain > copySidecar && fsyncSidecar > fsyncMain && fsyncDirectory > fsyncSidecar)
             assertTrue(preparedWrite > fsyncDirectory && pointerWrite > preparedWrite && switchedWrite > pointerWrite)
+            // P3-5: the committed journal removal itself is fsynced (a durable deletion).
+            val journalRemove = ops.indexOf("delete:$journalFile")
+            assertTrue(journalRemove > switchedWrite)
+            assertTrue(ops.drop(journalRemove + 1).contains("fsyncDirectory:$hostDirectory"))
         }
 
     // ---------------------------------------------------------------- step 1: the four revalidations (spec 3.1)
@@ -383,6 +442,24 @@ class ConfirmBackupRestoreUseCaseTest {
         }
 
     @Test
+    fun anUnreadableMigratedCopyIsStaleWithZeroSwitch() =
+        runBlocking {
+            // P3-4: the migrated variant of the unreadable-artifact rejection — the revalidation
+            // that fails is the migrated copy's digest read, still stale with zero switch.
+            val f = fixture()
+            f.fileSystem.failOn = "openRead:$migratedFile"
+
+            val stale =
+                assertIs<BackupRestoreSwitchResult.Stale>(useCase(f.fileSystem, f.owner).confirm(token(f.owner)))
+
+            assertEquals(BackupRestoreStaleReason.ArtifactUnreadable, stale.reason)
+            assertEquals(BackupRestoreRuntimeOutcome.RestoredReady, stale.runtime)
+            assertPointerUnchanged(f)
+            assertFalse(f.fileSystem.hasFile(journalFile))
+            assertEquals(LedgerRuntimeState.Ready, f.owner.state)
+        }
+
+    @Test
     fun aSupersededTokenGenerationIsStaleWithZeroSwitchBeforeAnyQuiesce() =
         runBlocking {
             val f = fixture()
@@ -439,6 +516,24 @@ class ConfirmBackupRestoreUseCaseTest {
             // The section 3.2 ruling: the confirm-time peak fails CLOSED on unknown space.
             assertEquals(BackupRestoreAbortReason.UnknownDiskSpace, aborted.reason)
             assertPointerUnchanged(f)
+            assertEquals(LedgerRuntimeState.Ready, f.owner.state)
+        }
+
+    @Test
+    fun aThrowingUsableSpaceReadFailsClosedAsUnknownAtThePrecheck() =
+        runBlocking {
+            val f = fixture()
+            val gated = GatedFake(f.fileSystem)
+            gated.throwOnUsableSpaceRead = true
+
+            val aborted = assertIs<BackupRestoreSwitchResult.AbortedBeforePublish>(useCase(gated, f.owner).confirm(token(f.owner)))
+
+            // P3-1: "cannot verify" is one outcome whether the value is absent or the read
+            // throws — both fail closed as UnknownDiskSpace with zero switch.
+            assertEquals(BackupRestoreAbortReason.UnknownDiskSpace, aborted.reason)
+            assertEquals(BackupRestoreRuntimeOutcome.RestoredReady, aborted.runtime)
+            assertPointerUnchanged(f)
+            assertFalse(f.fileSystem.hasFile(journalFile))
             assertEquals(LedgerRuntimeState.Ready, f.owner.state)
         }
 
@@ -814,6 +909,162 @@ class ConfirmBackupRestoreUseCaseTest {
             assertTrue(f.fileSystem.hasFile(journalFile))
             assertTrue(f.fileSystem.hasDirectory(gen2Directory))
             assertTrue(f.fileSystem.hasDirectory(gen1Directory))
+        }
+
+    @Test
+    fun aSwitchedJournalWriteFailureEntersTheRollback() =
+        runBlocking {
+            val f = fixture()
+            val gated = GatedFake(f.fileSystem)
+            // The FIRST atomic journal write (prepared) succeeds; the SECOND (switched, after
+            // the pointer publish) fails — the sticky failOn cannot express this, so the
+            // counting injection fails exactly call 2.
+            gated.failWriteAtomicAtCall = journalFile to 2
+
+            val rolledBack = assertIs<BackupRestoreSwitchResult.RolledBack>(useCase(gated, f.owner).confirm(token(f.owner)))
+
+            assertEquals(f.owner.activeGeneration, rolledBack.runtimeGeneration)
+            // The pointer had already moved to gen-2; the rollback restored the old one,
+            // removed the journal and discarded the staged directory.
+            assertEquals("gen-1", f.fileSystem.fileBytes(pointerFile)?.decodeToString())
+            assertFalse(f.fileSystem.hasFile(journalFile))
+            assertFalse(f.fileSystem.hasDirectory(gen2Directory))
+            assertEquals(LedgerRuntimeState.Ready, f.owner.state)
+        }
+
+    @Test
+    fun aTransientJournalRemovalFailureAtCommitStillRollsBackSuccessfully() =
+        runBlocking {
+            val f = fixture()
+            val gated = GatedFake(f.fileSystem)
+            // P3-4: the step-9 committed journal removal fails ONCE (transient); the rollback's
+            // own removal succeeds — a surviving journal means the switch did not commit, so the
+            // rollback must run and SUCCEED, not escalate to RecoveryRequired.
+            gated.failDeleteAtCall = journalFile to 1
+
+            val rolledBack = assertIs<BackupRestoreSwitchResult.RolledBack>(useCase(gated, f.owner).confirm(token(f.owner)))
+
+            assertEquals(f.owner.activeGeneration, rolledBack.runtimeGeneration)
+            // The rollback completed: the old pointer is back, the journal is gone, the staged
+            // directory is discarded and the old graph is open.
+            assertEquals("gen-1", f.fileSystem.fileBytes(pointerFile)?.decodeToString())
+            assertFalse(f.fileSystem.hasFile(journalFile))
+            assertFalse(f.fileSystem.hasDirectory(gen2Directory))
+            assertEquals(LedgerRuntimeState.Ready, f.owner.state)
+        }
+
+    // ---------------------------------------------------------------- escape safety (P2-1)
+
+    @Test
+    fun aCancelledCallerDuringTheInitialQuiesceWaitRestoresTheRuntimeBeforeRethrowing() =
+        runBlocking {
+            val f = fixture(quiesceTimeoutMillis = 50L)
+            val lease = assertIs<LeaseAcquireResult.Acquired>(f.owner.acquireLease()).lease
+            val outcome = CompletableDeferred<Throwable?>()
+            val job =
+                launch(Dispatchers.Default) {
+                    try {
+                        useCase(f.fileSystem, f.owner).confirm(token(f.owner))
+                        outcome.complete(null)
+                    } catch (failure: Throwable) {
+                        outcome.complete(failure)
+                    }
+                }
+            // Cancel while the confirm is suspended inside the initial quiesce wait (the holder
+            // lease keeps the drain open, so the quiesce cannot have completed yet).
+            delay(20)
+            assertEquals(1, f.owner.inFlightLeaseCount)
+            job.cancel()
+            lease.close()
+
+            val failure = assertNotNull(outcome.await())
+            assertIs<CancellationException>(failure)
+            // The escape repair ran the section 3.10 restoration under NonCancellable: the
+            // owner is Ready again on the old graph — never wedged in Quiescing.
+            assertEquals(LedgerRuntimeState.Ready, f.owner.state)
+            assertPointerUnchanged(f)
+            assertFalse(f.fileSystem.hasFile(journalFile))
+            assertFalse(f.fileSystem.hasDirectory(gen2Directory))
+            assertEquals(0, f.owner.inFlightLeaseCount)
+        }
+
+    @Test
+    fun anErrorAfterCloseRestoresTheRuntimeBeforePropagating() {
+        val f = fixture()
+        val gated = GatedFake(f.fileSystem)
+        // An Error from the fail-loud port inside the step-6 staging fsync: after the graph
+        // was closed, before the pointer publish.
+        gated.throwOnFsyncFile = gen2Main
+
+        assertFailsWith<InternalError> { runBlocking { useCase(gated, f.owner).confirm(token(f.owner)) } }
+
+        // The escape repair restored the owner to Ready on the old graph; the pointer and the
+        // journal are untouched. The half-built staged directory stays inert by contract.
+        assertEquals(LedgerRuntimeState.Ready, f.owner.state)
+        assertPointerUnchanged(f)
+        assertFalse(f.fileSystem.hasFile(journalFile))
+    }
+
+    @Test
+    fun anErrorInTheSwitchedWindowRunsTheRollbackBeforePropagating() {
+        val f = fixture()
+        val gated = GatedFake(f.fileSystem)
+        // An Error from the step-7 pointer publish: the switched window was being entered.
+        gated.failWriteAtomicAtCall = pointerFile to 1
+        gated.failWriteAtomicWithError = true
+
+        assertFailsWith<InternalError> { runBlocking { useCase(gated, f.owner).confirm(token(f.owner)) } }
+
+        // The escape repair ran the frozen ROLLBACK disk actions (republish, journal removal,
+        // staged-directory discard) and reopened the old graph before rethrowing.
+        assertEquals("gen-1", f.fileSystem.fileBytes(pointerFile)?.decodeToString())
+        assertFalse(f.fileSystem.hasFile(journalFile))
+        assertFalse(f.fileSystem.hasDirectory(gen2Directory))
+        assertEquals(LedgerRuntimeState.Ready, f.owner.state)
+    }
+
+    // ---------------------------------------------------------------- single flight (P2-2)
+
+    @Test
+    fun aSecondConcurrentConfirmIsTypedRejectedWithZeroSideEffects() =
+        runBlocking {
+            val f = fixture()
+            val gateEntered = CompletableDeferred<Unit>()
+            val releaseGate = CompletableDeferred<Unit>()
+            val gated = GatedFake(f.fileSystem)
+            gated.onUsableSpace = {
+                // Park the FIRST confirm inside its precheck so the second one arrives while
+                // the single-flight guard is held.
+                gateEntered.complete(Unit)
+                runBlocking { withTimeoutOrNull(5_000) { releaseGate.await() } }
+            }
+            val running = useCase(gated, f.owner)
+            val first = CompletableDeferred<BackupRestoreSwitchResult>()
+            launch(Dispatchers.Default) { first.complete(running.confirm(token(f.owner))) }
+            gateEntered.await()
+
+            // A second confirm — even bound to a DIFFERENT token — is rejected before any
+            // effect: no staging, no quiesce, no close.
+            val secondToken =
+                RestorePreflightToken(
+                    handle = "other",
+                    generation = f.owner.activeGeneration ?: 1,
+                    targetLedgerId = targetLedgerId,
+                    authenticatedArtifactSha256 = payloadDigest,
+                    migratedArtifactSha256 = null,
+                )
+            val second = running.confirm(secondToken)
+
+            releaseGate.complete(Unit)
+            val postponed = assertIs<BackupRestoreSwitchResult.Postponed>(second)
+            assertEquals(BackupRestorePostponeReason.ConfirmAlreadyRunning, postponed.reason)
+            assertEquals(BackupRestoreRuntimeOutcome.RestoredReady, postponed.runtime)
+            val committed = assertIs<BackupRestoreSwitchResult.Committed>(first.await())
+            assertEquals(f.owner.activeGeneration, committed.runtimeGeneration)
+            // Exactly one switch happened and the staging state is sane.
+            assertEquals("gen-2", f.fileSystem.fileBytes(pointerFile)?.decodeToString())
+            assertFalse(f.fileSystem.hasFile(journalFile))
+            assertEquals(LedgerRuntimeState.Ready, f.owner.state)
         }
 }
 

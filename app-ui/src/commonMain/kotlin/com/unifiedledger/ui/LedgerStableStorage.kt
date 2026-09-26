@@ -679,6 +679,10 @@ private fun recoverSwitchJournalAtStartup(
     }
     try {
         fileSystem.delete(layout.switchJournalFile)
+        // The deletion is fsynced like every journal write is (the confirm-side durability
+        // discipline): a recovery that finished must not be resurrected by a crash the host
+        // directory has not yet forgotten.
+        fileSystem.fsyncDirectory(layout.hostDirectory)
     } catch (failure: Error) {
         throw failure
     } catch (failure: Throwable) {

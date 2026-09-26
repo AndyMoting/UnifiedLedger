@@ -3,7 +3,11 @@ package com.unifiedledger.ui
 import com.unifiedledger.application.backup.BACKUP_DISK_HEADROOM_BYTES
 import com.unifiedledger.application.backup.BACKUP_STREAM_CHUNK_BYTES
 import com.unifiedledger.application.backup.BackupCryptoPrimitives
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withContext
 
 /*
  * P7-06 06.D (D-182; spec `docs/specs/2026-09-26-p7-06-restore-confirm-switch-design.md`
@@ -29,7 +33,15 @@ import kotlinx.coroutines.delay
  *   exception is a drain that cannot converge within the budget (a stuck lease), reported as
  *   [BackupRestoreRuntimeOutcome.NotRestored];
  * - the disk switch results never carry a path, a password or a `P706_*` container code
- *   (spec section 3.7): they are a separate typed result space.
+ *   (spec section 3.7): they are a separate typed result space;
+ * - the use case is SINGLE-FLIGHT: a second concurrent confirm — including one bound to a
+ *   different token — is typed-postponed before touching anything, so two flows can never
+ *   interleave their staging into the same `gen-(current+1)` directory;
+ * - an ESCAPE from the guarded post-quiesce region (caller cancellation, or an Error from the
+ *   fail-loud ports) rethrows honestly but never wedges the runtime: the applicable best-effort
+ *   restoration (spec section 3.10) or rollback (spec section 3.8) runs under `NonCancellable`
+ *   first, so the owner always ends Ready, StartupError, or — only for a drain that cannot
+ *   converge — Quiescing with the escape reported.
  *
  * The old generation is NEVER deleted by this flow (it is the rollback anchor; spec section 5.2
  * keeps the post-success retention policy OPEN). The journal machine itself (encoding, the
@@ -69,6 +81,13 @@ enum class BackupRestorePostponeReason {
 
     /** `closeActiveGraph()` was blocked (transition contention or in-flight leases). */
     CloseBlocked,
+
+    /**
+     * A confirm was already in flight on this use-case instance (the single-flight guard, P2-2).
+     * The rejected call touched NOTHING — no file, no quiesce, no staging — and may be retried
+     * once the running confirm settles.
+     */
+    ConfirmAlreadyRunning,
 }
 
 /**
@@ -223,11 +242,37 @@ class ConfirmBackupRestoreUseCase(
     private val reopenRetryPauseMillis: Long = RESTORATION_REOPEN_RETRY_PAUSE_MILLIS,
 ) {
     /**
+     * The single-flight guard (P2-2): at most one confirm runs per use-case instance. Neither
+     * `quiesce` nor `closeActiveGraph` can serialize a second confirm (the second's quiesce
+     * joins the drain, its generation recheck passes, and its close succeeds idempotently on an
+     * already-closed owner), so without this gate two concurrent confirms — possibly bound to
+     * different tokens — would interleave their delete-then-stage work into the SAME
+     * `gen-(current+1)` directory. The composition root constructs one instance, so the mutex
+     * scopes the guard to exactly the product surface.
+     */
+    private val singleFlight = Mutex()
+
+    /**
      * Runs the frozen nine-step confirm sequence (06.D spec section 3) for an authenticated
      * preflight token. Never writes the current library before the pointer publish, never
      * deletes the old generation, and never leaves the owner stuck in `Quiescing` silently.
      */
     suspend fun confirm(token: RestorePreflightToken): BackupRestoreSwitchResult {
+        // Single-flight before ANY effect: the loser is typed-postponed with zero side effects.
+        if (!singleFlight.tryLock()) {
+            return BackupRestoreSwitchResult.Postponed(
+                BackupRestorePostponeReason.ConfirmAlreadyRunning,
+                BackupRestoreRuntimeOutcome.RestoredReady,
+            )
+        }
+        try {
+            return confirmGuarded(token)
+        } finally {
+            singleFlight.unlock()
+        }
+    }
+
+    private suspend fun confirmGuarded(token: RestorePreflightToken): BackupRestoreSwitchResult {
         val snapshotFile = layout.restoreSnapshotFile(token.handle)
         val migratedFile = layout.restoreMigratedFile(token.handle)
         // Spec section 3.1 item 1: a null migrated digest means the preflight validated the
@@ -276,107 +321,128 @@ class ConfirmBackupRestoreUseCase(
             return BackupRestoreSwitchResult.AbortedBeforePublish(precheck, BackupRestoreRuntimeOutcome.RestoredReady)
         }
 
-        // ---- Step 3: quiesce WITHOUT holding a lease (the caller contract). Either exit leaves
-        // the owner in Quiescing, so a blocked outcome must go through the restoration program.
-        when (owner.quiesce()) {
-            QuiesceResult.Quiesced -> Unit
-            is QuiesceResult.QuiesceBlocked -> {
-                return BackupRestoreSwitchResult.Postponed(BackupRestorePostponeReason.QuiesceBlocked, restoreRuntime())
+        // From the quiesce entry on, an ESCAPE — the caller's Job being cancelled while this
+        // coroutine is suspended (the initial quiesce wait can be the full bounded timeout), or
+        // an Error propagating out of the fail-loud ports — must rethrow honestly, but must
+        // NEVER wedge the runtime: the owner would otherwise stay Quiescing (cancellation) or
+        // Closed with a possibly-mutated pointer (Error), and every business call would fail
+        // for the rest of the process. The repair runs under NonCancellable so it completes
+        // even while the caller is cancelling, then the original exception propagates.
+        var repairDiskGeneration: Int? = null
+        try {
+            // ---- Step 3: quiesce WITHOUT holding a lease (the caller contract). Either exit
+            // leaves the owner in Quiescing, so a blocked outcome goes through the restoration
+            // program.
+            when (owner.quiesce()) {
+                QuiesceResult.Quiesced -> Unit
+                is QuiesceResult.QuiesceBlocked -> {
+                    return BackupRestoreSwitchResult.Postponed(BackupRestorePostponeReason.QuiesceBlocked, restoreRuntime())
+                }
             }
-        }
 
-        // ---- Step 4: post-quiesce generation recheck, then the authoritative disk-generation
-        // read. The recheck runs FIRST so a concurrent transition that starts between the two
-        // is observed at the close below instead of masking itself as a stale token.
-        if (!isTokenGenerationCurrent(token)) {
-            return BackupRestoreSwitchResult.Stale(BackupRestoreStaleReason.GenerationSuperseded, restoreRuntime())
-        }
-        val currentDiskGeneration =
-            readPointerGeneration()
-                ?: return BackupRestoreSwitchResult.AbortedBeforePublish(
-                    BackupRestoreAbortReason.ActivePointerUnreadable,
-                    restoreRuntime(),
+            // ---- Step 4: post-quiesce generation recheck, then the authoritative
+            // disk-generation read. The recheck runs FIRST so a concurrent transition that
+            // starts between the two is observed at the close below instead of masking itself
+            // as a stale token.
+            if (!isTokenGenerationCurrent(token)) {
+                return BackupRestoreSwitchResult.Stale(BackupRestoreStaleReason.GenerationSuperseded, restoreRuntime())
+            }
+            val currentDiskGeneration =
+                readPointerGeneration()
+                    ?: return BackupRestoreSwitchResult.AbortedBeforePublish(
+                        BackupRestoreAbortReason.ActivePointerUnreadable,
+                        restoreRuntime(),
+                    )
+            repairDiskGeneration = currentDiskGeneration
+
+            // ---- Step 5: close the active graph. A block is a typed postpone plus restoration;
+            // the pointer is untouched and (after the restoration reopen) the old graph is back.
+            when (owner.closeActiveGraph()) {
+                CloseResult.Closed -> Unit
+                is CloseResult.QuiesceBlocked ->
+                    return BackupRestoreSwitchResult.Postponed(BackupRestorePostponeReason.CloseBlocked, restoreRuntime())
+                CloseResult.TransitionInProgress ->
+                    return BackupRestoreSwitchResult.Postponed(BackupRestorePostponeReason.CloseBlocked, restoreRuntime())
+            }
+
+            val newGeneration = currentDiskGeneration + 1
+
+            // ---- Step 6: assemble gen-(current+1) from the migrated copy (or the snapshot),
+            // with the delete-then-stage precondition, the stageLegacyUpgrade fsync order and
+            // the local consistency gate; then journal=prepared. Any failure discards the
+            // half-built directory and restores the runtime; the pointer is never touched.
+            val stagingAbort =
+                stageNewGeneration(
+                    sourceFile = if (hasMigration) migratedFile else snapshotFile,
+                    newGeneration = newGeneration,
+                    requiredWithoutNewGen = precheckRequirementWithoutNewGen(currentDiskGeneration, snapshotFile, migratedFile, hasMigration),
                 )
-
-        // ---- Step 5: close the active graph. A block is a typed postpone plus restoration; the
-        // pointer is untouched and (after the restoration reopen) the old graph is back.
-        when (owner.closeActiveGraph()) {
-            CloseResult.Closed -> Unit
-            is CloseResult.QuiesceBlocked ->
-                return BackupRestoreSwitchResult.Postponed(BackupRestorePostponeReason.CloseBlocked, restoreRuntime())
-            CloseResult.TransitionInProgress ->
-                return BackupRestoreSwitchResult.Postponed(BackupRestorePostponeReason.CloseBlocked, restoreRuntime())
-        }
-
-        val newGeneration = currentDiskGeneration + 1
-
-        // ---- Step 6: assemble gen-(current+1) from the migrated copy (or the snapshot), with
-        // the delete-then-stage precondition, the stageLegacyUpgrade fsync order and the local
-        // consistency gate; then journal=prepared. Any failure discards the half-built
-        // directory and restores the runtime; the pointer is never touched.
-        val stagingAbort =
-            stageNewGeneration(
-                sourceFile = if (hasMigration) migratedFile else snapshotFile,
-                newGeneration = newGeneration,
-                requiredWithoutNewGen = precheckRequirementWithoutNewGen(currentDiskGeneration, snapshotFile, migratedFile, hasMigration),
-            )
-        if (stagingAbort != null) {
-            runCatching { deleteGenerationDirectory(fileSystem, layout, newGeneration) }
-            return BackupRestoreSwitchResult.AbortedBeforePublish(stagingAbort, restoreRuntime())
-        }
-        val preparedWritten =
-            try {
-                writeJournal(LedgerSwitchJournalStage.Prepared, currentDiskGeneration, newGeneration)
-                true
-            } catch (failure: Error) {
-                throw failure
-            } catch (failure: Throwable) {
-                false
+            if (stagingAbort != null) {
+                runCatching { deleteGenerationDirectory(fileSystem, layout, newGeneration) }
+                return BackupRestoreSwitchResult.AbortedBeforePublish(stagingAbort, restoreRuntime())
             }
-        if (!preparedWritten) {
-            runCatching { deleteGenerationDirectory(fileSystem, layout, newGeneration) }
-            return BackupRestoreSwitchResult.AbortedBeforePublish(BackupRestoreAbortReason.JournalWriteFailed, restoreRuntime())
-        }
-
-        // ---- Step 7: publish the atomic pointer (the frozen primitive) then journal=switched.
-        // From here on the flow is inside the switched window: every failure rolls back.
-        val switched =
-            try {
-                publishActivePointer(fileSystem, layout, newGeneration)
-                writeJournal(LedgerSwitchJournalStage.Switched, currentDiskGeneration, newGeneration)
-                true
-            } catch (failure: Error) {
-                throw failure
-            } catch (failure: Throwable) {
-                false
+            val preparedWritten =
+                try {
+                    writeJournal(LedgerSwitchJournalStage.Prepared, currentDiskGeneration, newGeneration)
+                    true
+                } catch (failure: Error) {
+                    throw failure
+                } catch (failure: Throwable) {
+                    false
+                }
+            if (!preparedWritten) {
+                runCatching { deleteGenerationDirectory(fileSystem, layout, newGeneration) }
+                return BackupRestoreSwitchResult.AbortedBeforePublish(BackupRestoreAbortReason.JournalWriteFailed, restoreRuntime())
             }
-        if (!switched) {
-            return rollBack(currentDiskGeneration, newGeneration)
-        }
 
-        // ---- Step 8: reopen through the on-disk pointer; the open closure performs the
-        // authoritative read-back. Anything but a clean reopen rolls back.
-        val reopened = reopenOldGraphWithRetry()
-        if (reopened !is ReopenResult.Reopened) {
-            return rollBack(currentDiskGeneration, newGeneration)
-        }
-
-        // ---- Step 9: remove the journal (committed) and deliver the result bound to the
-        // post-reopen generation for the landing guard. A journal-removal failure rolls back
-        // too: per the frozen restart rule a surviving journal means the switch did not commit.
-        val journalRemoved =
-            try {
-                fileSystem.delete(layout.switchJournalFile)
-                true
-            } catch (failure: Error) {
-                throw failure
-            } catch (failure: Throwable) {
-                false
+            // ---- Step 7: publish the atomic pointer (the frozen primitive) then
+            // journal=switched. From here on the flow is inside the switched window: every
+            // failure rolls back.
+            val switched =
+                try {
+                    publishActivePointer(fileSystem, layout, newGeneration)
+                    writeJournal(LedgerSwitchJournalStage.Switched, currentDiskGeneration, newGeneration)
+                    true
+                } catch (failure: Error) {
+                    throw failure
+                } catch (failure: Throwable) {
+                    false
+                }
+            if (!switched) {
+                return rollBack(currentDiskGeneration, newGeneration)
             }
-        if (!journalRemoved) {
-            return rollBack(currentDiskGeneration, newGeneration)
+
+            // ---- Step 8: reopen through the on-disk pointer; the open closure performs the
+            // authoritative read-back. Anything but a clean reopen rolls back.
+            val reopened = reopenOldGraphWithRetry()
+            if (reopened !is ReopenResult.Reopened) {
+                return rollBack(currentDiskGeneration, newGeneration)
+            }
+
+            // ---- Step 9: remove the journal (committed) and deliver the result bound to the
+            // post-reopen generation for the landing guard. A journal-removal failure rolls
+            // back too: per the frozen restart rule a surviving journal means the switch did
+            // not commit.
+            val journalRemoved =
+                try {
+                    removeSwitchJournalDurably()
+                    true
+                } catch (failure: Error) {
+                    throw failure
+                } catch (failure: Throwable) {
+                    false
+                }
+            if (!journalRemoved) {
+                return rollBack(currentDiskGeneration, newGeneration)
+            }
+            return BackupRestoreSwitchResult.Committed(runtimeGeneration = reopened.generation)
+        } catch (failure: CancellationException) {
+            withContext(NonCancellable) { repairRuntimeAfterEscape(repairDiskGeneration) }
+            throw failure
+        } catch (failure: Error) {
+            withContext(NonCancellable) { repairRuntimeAfterEscape(repairDiskGeneration) }
+            throw failure
         }
-        return BackupRestoreSwitchResult.Committed(runtimeGeneration = reopened.generation)
     }
 
     /** Spec section 3.1 item 3: whether the token's captured generation is still the active one. */
@@ -389,6 +455,10 @@ class ConfirmBackupRestoreUseCase(
      * migrated-copy length as its lower bound (the migration rewrites pages, so the sizes are
      * not guaranteed equal), and the actual sizes are re-checked after staging (spec section
      * 3.2's post-staging recheck, which routes to the step-6 failure path).
+     *
+     * "Cannot verify" is ONE outcome regardless of how it arises (P3-1): a null usable-space
+     * value AND a throwing readable both map to [BackupRestoreAbortReason.UnknownDiskSpace] —
+     * the section 3.2 fail-closed ruling covers the unmeasurable case, not only the absent one.
      */
     private fun confirmTimeDiskPrecheck(
         diskGeneration: Int,
@@ -407,9 +477,7 @@ class ConfirmBackupRestoreUseCase(
         } catch (failure: Error) {
             throw failure
         } catch (failure: Throwable) {
-            // The 06.C preflight precedent: a throwing usable-space read cannot confirm the
-            // requirement, so the precheck fails closed as insufficient (zero switch).
-            BackupRestoreAbortReason.InsufficientDiskSpace
+            BackupRestoreAbortReason.UnknownDiskSpace
         }
 
     /**
@@ -544,6 +612,50 @@ class ConfirmBackupRestoreUseCase(
     }
 
     /**
+     * Removes the journal durably (P3-5): the deletion itself is fsynced like every journal
+     * write is, so a committed switch cannot be resurrected as a rollback by a crash that the
+     * host directory has not yet forgotten.
+     */
+    private fun removeSwitchJournalDurably() {
+        fileSystem.delete(layout.switchJournalFile)
+        fileSystem.fsyncDirectory(layout.hostDirectory)
+    }
+
+    /**
+     * The best-effort ESCAPE repair (P2-1): an escape from the guarded region — the caller's
+     * cancellation, or an Error from a fail-loud port — must rethrow honestly, but the runtime
+     * must never be silently wedged in `Quiescing` or `Closed`. Runs under `NonCancellable`.
+     *
+     * When the journal survives the escape, the switched window may have been entered, so the
+     * frozen restart ROLLBACK rule (spec section 4.2, the same actions the startup gate runs)
+     * executes first: republish the old pointer, remove the journal, discard the staged new
+     * generation — each step best effort, never masking the original escape. Afterwards the
+     * section 3.10 restoration program (re-drain + `reopen(ActivePointer)`) returns the owner
+     * to Ready on the old graph in every case. With no journal (the escape landed before the
+     * pointer publish), the pointer was never touched, so only the restoration program runs —
+     * a half-built staged directory stays inert and is deleted by the next confirm's
+     * delete-then-stage or the retention policy.
+     */
+    private suspend fun repairRuntimeAfterEscape(diskGeneration: Int?) {
+        if (diskGeneration != null) {
+            val journal =
+                runCatching {
+                    if (fileSystem.exists(layout.switchJournalFile)) {
+                        parseLedgerSwitchJournal(fileSystem.readBytes(layout.switchJournalFile))
+                    } else {
+                        null
+                    }
+                }.getOrNull()
+            if (journal != null) {
+                runCatching { publishActivePointer(fileSystem, layout, journal.oldGeneration) }
+                runCatching { removeSwitchJournalDurably() }
+                runCatching { deleteGenerationDirectory(fileSystem, layout, journal.newGeneration) }
+            }
+        }
+        restoreRuntime()
+    }
+
+    /**
      * The in-process rollback (spec section 3.8), the first executor of the frozen ROLLBACK
      * rule: republish the old pointer through the frozen primitive, remove the journal, delete
      * the staged new generation directory including its sidecars (best effort — the deletion is
@@ -569,7 +681,7 @@ class ConfirmBackupRestoreUseCase(
         }
         val journalRemoved =
             try {
-                fileSystem.delete(layout.switchJournalFile)
+                removeSwitchJournalDurably()
                 true
             } catch (failure: Error) {
                 throw failure
