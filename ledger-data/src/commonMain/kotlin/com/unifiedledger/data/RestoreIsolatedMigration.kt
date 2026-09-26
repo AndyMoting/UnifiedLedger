@@ -184,10 +184,11 @@ fun readIntegrityCheckRowsOn(driver: SqlDriver): List<String?> {
  * must treat "nothing observed" as a class-3 rejection, never as an implicit target match.
  *
  * N2 fix (fail-closed): a table that HAS `ledger_id` but whose probe throws is NOT silently skipped —
- * that could hide a foreign id. "Column absent" and "probe failed" are distinguished: the count
- * query is rejected and the `SELECT DISTINCT` is not wrapped, so a probe failure propagates and the
- * caller (the preflight) maps it to the class-3 identity rejection rather than observing a partial
- * set. Table names come from our own generated schema (not user input) but are still quoted.
+ * that could hide a foreign id. "Column absent" and "probe failed" are distinguished: the
+ * `PRAGMA table_info` probe ([tableHasColumn]) and the `SELECT DISTINCT` sweep are neither wrapped,
+ * so a probe failure propagates and the caller (the preflight) reports it as the typed
+ * `P706_SOURCE_READ_FAILED` read failure — the payload is never accepted with a partially observed
+ * identity set. Table names come from our own generated schema (not user input) but are still quoted.
  */
 fun readObservedLedgerIdsOn(driver: SqlDriver): List<String> {
     val tables = mutableListOf<String>()

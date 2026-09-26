@@ -356,7 +356,8 @@ class RestorePreflightUseCase(
         // only skips the early precheck; the private-staging writes then fail typed and can never
         // produce a false success. A KNOWN shortfall is the mandated hard rejection.
         val required = stagedContainerSize + header.plaintextLength + header.plaintextLength + BACKUP_DISK_HEADROOM_BYTES
-        // P2-3 fix: a throwing `usableSpace` is a typed precheck failure, not an untyped escape.
+        // P2-3 fix: a throwing `usableSpace` (an Exception) is a typed precheck failure, not an
+        // untyped escape; Errors deliberately propagate (the arm below).
         val available =
             try {
                 fileSystem.usableSpace(layout.hostDirectory)
