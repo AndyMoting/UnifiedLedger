@@ -3,7 +3,6 @@ package com.unifiedledger.ui
 import com.unifiedledger.application.backup.BACKUP_DISK_HEADROOM_BYTES
 import com.unifiedledger.application.backup.BACKUP_STREAM_CHUNK_BYTES
 import com.unifiedledger.application.backup.BackupCryptoPrimitives
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
@@ -157,6 +156,17 @@ enum class BackupRestoreRecoveryCause {
  */
 sealed interface BackupRestoreSwitchResult {
     /**
+     * The owner generation the host's landing hop must bind this result to (spec section 3.9): the
+     * POST-reopen generation for [Committed]/[RolledBack], and the POST-restoration generation for
+     * the abort results (spec section 3.10: the restoration program's `reopen` ADVANCES the process
+     * generation, so the pre-confirm capture is stale by construction). Null when the owner has no
+     * active generation — the fail-closed [RecoveryRequired], or a restoration that ended in
+     * StartupError: the host lands such a result UNGUARDED, because there is no current generation
+     * to compare against and discarding it would strand the surface forever (the F-1 landing bug).
+     */
+    val landingGeneration: Generation?
+
+    /**
      * The switch committed: the pointer names the new generation, the new graph is open and
      * authoritatively read back, and the journal is removed. [runtimeGeneration] is the owner's
      * active generation AFTER the reopen — the host's landing hop must deliver this result only
@@ -164,28 +174,48 @@ sealed interface BackupRestoreSwitchResult {
      */
     data class Committed(
         val runtimeGeneration: Generation,
-    ) : BackupRestoreSwitchResult
+    ) : BackupRestoreSwitchResult {
+        override val landingGeneration: Generation get() = runtimeGeneration
+    }
 
-    /** A stale rejection (spec section 3.1/3.4): zero switch; [runtime] reports the owner state. */
+    /**
+     * A stale rejection (spec section 3.1/3.4): zero switch; [runtime] reports the owner state.
+     * [runtimeGeneration] is the owner's active generation when the rejection was produced — the
+     * POST-restoration generation for a post-quiesce abort (spec section 3.10), the untouched
+     * pre-quiesce generation otherwise. Null when the owner has no active generation.
+     */
     data class Stale(
         val reason: BackupRestoreStaleReason,
         val runtime: BackupRestoreRuntimeOutcome,
-    ) : BackupRestoreSwitchResult
+        val runtimeGeneration: Generation? = null,
+    ) : BackupRestoreSwitchResult {
+        override val landingGeneration: Generation? get() = runtimeGeneration
+    }
 
-    /** A postponed rejection (spec section 3.3/3.5): zero switch; the flow may be retried whole. */
+    /**
+     * A postponed rejection (spec section 3.3/3.5): zero switch; the flow may be retried whole.
+     * [runtimeGeneration] carries the post-restoration owner generation exactly as [Stale] does.
+     */
     data class Postponed(
         val reason: BackupRestorePostponeReason,
         val runtime: BackupRestoreRuntimeOutcome,
-    ) : BackupRestoreSwitchResult
+        val runtimeGeneration: Generation? = null,
+    ) : BackupRestoreSwitchResult {
+        override val landingGeneration: Generation? get() = runtimeGeneration
+    }
 
     /**
      * An abort before the pointer publish (spec section 3.2/3.6): zero switch, the half-built
      * new-generation directory is discarded, and [runtime] reports the restored owner state.
+     * [runtimeGeneration] carries the post-restoration owner generation exactly as [Stale] does.
      */
     data class AbortedBeforePublish(
         val reason: BackupRestoreAbortReason,
         val runtime: BackupRestoreRuntimeOutcome,
-    ) : BackupRestoreSwitchResult
+        val runtimeGeneration: Generation? = null,
+    ) : BackupRestoreSwitchResult {
+        override val landingGeneration: Generation? get() = runtimeGeneration
+    }
 
     /**
      * A post-publish failure was rolled back (spec section 3.8): the old pointer is restored
@@ -196,17 +226,23 @@ sealed interface BackupRestoreSwitchResult {
      */
     data class RolledBack(
         val runtimeGeneration: Generation,
-    ) : BackupRestoreSwitchResult
+    ) : BackupRestoreSwitchResult {
+        override val landingGeneration: Generation get() = runtimeGeneration
+    }
 
     /**
      * The rollback itself failed: the fail-closed recovery state (spec section 3.8). The old and
      * new generations are preserved as found, no loop re-initializes anything (the D-176
      * silent-empty-database prohibition), and the persistent shape is resolved by the startup
      * journal recovery on the next start (spec section 4.3) or the explicit recovery surfaces.
+     * The owner is Closed or StartupError, so there is no active generation to guard against; the
+     * host lands this session-terminal result unguarded.
      */
     data class RecoveryRequired(
         val cause: BackupRestoreRecoveryCause,
-    ) : BackupRestoreSwitchResult
+    ) : BackupRestoreSwitchResult {
+        override val landingGeneration: Generation? get() = null
+    }
 }
 
 /** The number of bounded re-drain attempts the restoration program makes (spec section 8 item 3). */
@@ -283,31 +319,32 @@ class ConfirmBackupRestoreUseCase(
         val hasMigration = token.migratedArtifactSha256 != null
 
         // ---- Step 1: the four D-179 section 7.5 hard revalidations (no lease, no quiesce:
-        // the owner is untouched, so the runtime outcome is trivially RestoredReady).
+        // the owner is untouched, so the runtime outcome is trivially RestoredReady and the
+        // landing generation is the owner's CURRENT generation — unchanged by this step).
         if (!fileSystem.exists(snapshotFile) || (hasMigration && !fileSystem.exists(migratedFile))) {
-            return BackupRestoreSwitchResult.Stale(BackupRestoreStaleReason.StagingArtifactMissing, BackupRestoreRuntimeOutcome.RestoredReady)
+            return BackupRestoreSwitchResult.Stale(BackupRestoreStaleReason.StagingArtifactMissing, BackupRestoreRuntimeOutcome.RestoredReady, owner.activeGeneration)
         }
         val snapshotDigest = digestOfFile(snapshotFile)
         if (snapshotDigest == null) {
-            return BackupRestoreSwitchResult.Stale(BackupRestoreStaleReason.ArtifactUnreadable, BackupRestoreRuntimeOutcome.RestoredReady)
+            return BackupRestoreSwitchResult.Stale(BackupRestoreStaleReason.ArtifactUnreadable, BackupRestoreRuntimeOutcome.RestoredReady, owner.activeGeneration)
         }
         if (!snapshotDigest.contentEquals(token.authenticatedArtifactSha256)) {
-            return BackupRestoreSwitchResult.Stale(BackupRestoreStaleReason.DigestMismatch, BackupRestoreRuntimeOutcome.RestoredReady)
+            return BackupRestoreSwitchResult.Stale(BackupRestoreStaleReason.DigestMismatch, BackupRestoreRuntimeOutcome.RestoredReady, owner.activeGeneration)
         }
         if (hasMigration) {
             val migratedDigest = digestOfFile(migratedFile)
             if (migratedDigest == null) {
-                return BackupRestoreSwitchResult.Stale(BackupRestoreStaleReason.ArtifactUnreadable, BackupRestoreRuntimeOutcome.RestoredReady)
+                return BackupRestoreSwitchResult.Stale(BackupRestoreStaleReason.ArtifactUnreadable, BackupRestoreRuntimeOutcome.RestoredReady, owner.activeGeneration)
             }
             if (!migratedDigest.contentEquals(token.migratedArtifactSha256)) {
-                return BackupRestoreSwitchResult.Stale(BackupRestoreStaleReason.DigestMismatch, BackupRestoreRuntimeOutcome.RestoredReady)
+                return BackupRestoreSwitchResult.Stale(BackupRestoreStaleReason.DigestMismatch, BackupRestoreRuntimeOutcome.RestoredReady, owner.activeGeneration)
             }
         }
         if (!isTokenGenerationCurrent(token)) {
-            return BackupRestoreSwitchResult.Stale(BackupRestoreStaleReason.GenerationSuperseded, BackupRestoreRuntimeOutcome.RestoredReady)
+            return BackupRestoreSwitchResult.Stale(BackupRestoreStaleReason.GenerationSuperseded, BackupRestoreRuntimeOutcome.RestoredReady, owner.activeGeneration)
         }
         if (token.targetLedgerId != targetLedgerId) {
-            return BackupRestoreSwitchResult.Stale(BackupRestoreStaleReason.TargetLedgerMismatch, BackupRestoreRuntimeOutcome.RestoredReady)
+            return BackupRestoreSwitchResult.Stale(BackupRestoreStaleReason.TargetLedgerMismatch, BackupRestoreRuntimeOutcome.RestoredReady, owner.activeGeneration)
         }
 
         // ---- Step 2: the confirm-time peak disk precheck (spec section 3.2). The staging
@@ -318,10 +355,11 @@ class ConfirmBackupRestoreUseCase(
                 ?: return BackupRestoreSwitchResult.AbortedBeforePublish(
                     BackupRestoreAbortReason.ActivePointerUnreadable,
                     BackupRestoreRuntimeOutcome.RestoredReady,
+                    owner.activeGeneration,
                 )
         val precheck = confirmTimeDiskPrecheck(diskGeneration, snapshotFile, migratedFile, hasMigration)
         if (precheck != null) {
-            return BackupRestoreSwitchResult.AbortedBeforePublish(precheck, BackupRestoreRuntimeOutcome.RestoredReady)
+            return BackupRestoreSwitchResult.AbortedBeforePublish(precheck, BackupRestoreRuntimeOutcome.RestoredReady, owner.activeGeneration)
         }
 
         // From the quiesce entry on, an ESCAPE — the caller's Job being cancelled while this
@@ -343,7 +381,7 @@ class ConfirmBackupRestoreUseCase(
             when (owner.quiesce()) {
                 QuiesceResult.Quiesced -> Unit
                 is QuiesceResult.QuiesceBlocked -> {
-                    return BackupRestoreSwitchResult.Postponed(BackupRestorePostponeReason.QuiesceBlocked, restoreRuntime())
+                    return postponedResult(BackupRestorePostponeReason.QuiesceBlocked)
                 }
             }
 
@@ -352,14 +390,11 @@ class ConfirmBackupRestoreUseCase(
             // starts between the two is observed at the close below instead of masking itself
             // as a stale token.
             if (!isTokenGenerationCurrent(token)) {
-                return BackupRestoreSwitchResult.Stale(BackupRestoreStaleReason.GenerationSuperseded, restoreRuntime())
+                return staleResult(BackupRestoreStaleReason.GenerationSuperseded)
             }
             val currentDiskGeneration =
                 readPointerGeneration()
-                    ?: return BackupRestoreSwitchResult.AbortedBeforePublish(
-                        BackupRestoreAbortReason.ActivePointerUnreadable,
-                        restoreRuntime(),
-                    )
+                    ?: return abortedResult(BackupRestoreAbortReason.ActivePointerUnreadable)
             repairDiskGeneration = currentDiskGeneration
 
             // ---- Step 5: close the active graph. A block is a typed postpone plus restoration;
@@ -367,9 +402,9 @@ class ConfirmBackupRestoreUseCase(
             when (owner.closeActiveGraph()) {
                 CloseResult.Closed -> Unit
                 is CloseResult.QuiesceBlocked ->
-                    return BackupRestoreSwitchResult.Postponed(BackupRestorePostponeReason.CloseBlocked, restoreRuntime())
+                    return postponedResult(BackupRestorePostponeReason.CloseBlocked)
                 CloseResult.TransitionInProgress ->
-                    return BackupRestoreSwitchResult.Postponed(BackupRestorePostponeReason.CloseBlocked, restoreRuntime())
+                    return postponedResult(BackupRestorePostponeReason.CloseBlocked)
             }
 
             val newGeneration = currentDiskGeneration + 1
@@ -386,7 +421,7 @@ class ConfirmBackupRestoreUseCase(
                 )
             if (stagingAbort != null) {
                 runCatching { deleteGenerationDirectory(fileSystem, layout, newGeneration) }
-                return BackupRestoreSwitchResult.AbortedBeforePublish(stagingAbort, restoreRuntime())
+                return abortedResult(stagingAbort)
             }
             val preparedWritten =
                 try {
@@ -399,7 +434,7 @@ class ConfirmBackupRestoreUseCase(
                 }
             if (!preparedWritten) {
                 runCatching { deleteGenerationDirectory(fileSystem, layout, newGeneration) }
-                return BackupRestoreSwitchResult.AbortedBeforePublish(BackupRestoreAbortReason.JournalWriteFailed, restoreRuntime())
+                return abortedResult(BackupRestoreAbortReason.JournalWriteFailed)
             }
 
             // ---- Step 7: publish the atomic pointer (the frozen primitive) then
@@ -443,10 +478,15 @@ class ConfirmBackupRestoreUseCase(
                 return rollBack(currentDiskGeneration, newGeneration)
             }
             return BackupRestoreSwitchResult.Committed(runtimeGeneration = reopened.generation)
-        } catch (failure: CancellationException) {
-            withContext(NonCancellable) { repairRuntimeAfterEscape(repairDiskGeneration, failure) }
-            throw failure
-        } catch (failure: Error) {
+        } catch (failure: Throwable) {
+            // P2-1/F-7: ANY escape from the guarded region is repaired, then rethrown fail-loud.
+            // The fail-loud [LedgerFileSystem] contract permits an escaped RuntimeException (it is
+            // documented to throw rather than silently succeed), and the owner must never be left
+            // wedged in Quiescing or Closed with a possibly-mutated pointer. The repair runs under
+            // NonCancellable so it completes even when the escape is the caller's cancellation;
+            // the original throwable — CancellationException, Error or RuntimeException — then
+            // propagates unchanged. (Most Throwables are converted to typed results inside the
+            // guarded region; this is the last-resort net for one that is not.)
             withContext(NonCancellable) { repairRuntimeAfterEscape(repairDiskGeneration, failure) }
             throw failure
         }
@@ -457,11 +497,14 @@ class ConfirmBackupRestoreUseCase(
 
     /**
      * The confirm-time peak disk precheck (spec section 3.2). Returns null when enough space is
-     * verified, otherwise the typed abort reason. The retained old generation is measured from
-     * the CURRENT pointer (main file plus whichever sidecars exist); the new generation uses the
-     * migrated-copy length as its lower bound (the migration rewrites pages, so the sizes are
-     * not guaranteed equal), and the actual sizes are re-checked after staging (spec section
-     * 3.2's post-staging recheck, which routes to the step-6 failure path).
+     * verified, otherwise the typed abort reason. The frozen formula is
+     * `available >= snapshot_size + migrated_copy_size + new_generation_db_size +
+     * retained_old_generation_db_size + 64 MiB`. The retained old generation is measured from the
+     * CURRENT pointer (main file plus whichever sidecars exist); the new generation uses the
+     * migrated-copy length (or, without a migration, the snapshot length) as its lower bound —
+     * the migration rewrites pages, so the sizes are not guaranteed equal. The actual sizes are
+     * re-checked after staging (spec section 3.2's post-staging recheck, which routes to the
+     * step-6 failure path).
      *
      * "Cannot verify" is ONE outcome regardless of how it arises (P3-1): a null usable-space
      * value AND a throwing readable both map to [BackupRestoreAbortReason.UnknownDiskSpace] —
@@ -475,10 +518,14 @@ class ConfirmBackupRestoreUseCase(
     ): BackupRestoreAbortReason? =
         try {
             val available = fileSystem.usableSpace(layout.hostDirectory)
+            val base = precheckRequirementWithoutNewGen(diskGeneration, snapshotFile, migratedFile, hasMigration)
+            val required = saturatedAdd(base, newGenerationLowerBound(snapshotFile, migratedFile, hasMigration))
             when {
                 available == null -> BackupRestoreAbortReason.UnknownDiskSpace
-                available < requirementWithoutNewGen(diskGeneration, snapshotFile, migratedFile, hasMigration) ->
-                    BackupRestoreAbortReason.InsufficientDiskSpace
+                // A saturated requirement (an unmeasurable retained generation) must stay
+                // saturated through the comparison, so the precheck fails closed, not by overflow.
+                required == Long.MAX_VALUE && available < Long.MAX_VALUE -> BackupRestoreAbortReason.InsufficientDiskSpace
+                available < required -> BackupRestoreAbortReason.InsufficientDiskSpace
                 else -> null
             }
         } catch (failure: Error) {
@@ -486,6 +533,12 @@ class ConfirmBackupRestoreUseCase(
         } catch (failure: Throwable) {
             BackupRestoreAbortReason.UnknownDiskSpace
         }
+
+    /** Addition that saturates at [Long.MAX_VALUE] instead of overflowing (the disk formula). */
+    private fun saturatedAdd(
+        left: Long,
+        right: Long,
+    ): Long = if (left >= Long.MAX_VALUE - right) Long.MAX_VALUE else left + right
 
     /**
      * The frozen confirm-time requirement MINUS the new-generation term (which is only known as
@@ -506,6 +559,18 @@ class ConfirmBackupRestoreUseCase(
             // Unmeasurable retained generation: the precheck cannot confirm the requirement.
             Long.MAX_VALUE
         }
+
+    /**
+     * The new_generation_db_size lower bound used by the confirm-time precheck (spec section 3.2):
+     * the migrated copy's length, or — without a migration — the snapshot's length, because that
+     * is the file step 6 copies into the new generation. The actual size is re-checked after
+     * staging.
+     */
+    private fun newGenerationLowerBound(
+        snapshotFile: String,
+        migratedFile: String,
+        hasMigration: Boolean,
+    ): Long = if (hasMigration) fileSystem.length(migratedFile) else fileSystem.length(snapshotFile)
 
     private fun requirementWithoutNewGen(
         diskGeneration: Int,
@@ -667,7 +732,7 @@ class ConfirmBackupRestoreUseCase(
             }
         }
         try {
-            restoreRuntime()
+            restoreRuntimeWithGeneration()
         } catch (repairFailure: Throwable) {
             escape.addSuppressed(repairFailure)
         }
@@ -718,6 +783,32 @@ class ConfirmBackupRestoreUseCase(
     }
 
     /**
+     * The typed abort results below all carry the POST-restoration owner generation (spec section
+     * 3.10): the restoration `reopen` advances it, so the host must guard the result against the
+     * value the owner holds when the rejection is produced, never the pre-confirm capture.
+     */
+    private suspend fun staleResult(reason: BackupRestoreStaleReason): BackupRestoreSwitchResult.Stale {
+        val restoration = restoreRuntimeWithGeneration()
+        return BackupRestoreSwitchResult.Stale(reason, restoration.outcome, restoration.generation)
+    }
+
+    private suspend fun postponedResult(reason: BackupRestorePostponeReason): BackupRestoreSwitchResult.Postponed {
+        val restoration = restoreRuntimeWithGeneration()
+        return BackupRestoreSwitchResult.Postponed(reason, restoration.outcome, restoration.generation)
+    }
+
+    private suspend fun abortedResult(reason: BackupRestoreAbortReason): BackupRestoreSwitchResult.AbortedBeforePublish {
+        val restoration = restoreRuntimeWithGeneration()
+        return BackupRestoreSwitchResult.AbortedBeforePublish(reason, restoration.outcome, restoration.generation)
+    }
+
+    /** The restoration program's typed outcome plus the owner generation it left behind. */
+    private class RuntimeRestoration(
+        val outcome: BackupRestoreRuntimeOutcome,
+        val generation: Generation?,
+    )
+
+    /**
      * The restoration program of spec section 3.10, run by EVERY abort after the quiesce exit
      * and before the pointer publish. Step 1 re-enters `quiesce`: in the Quiescing state it
      * joins the existing drain and waits, so the in-flight leases can only decrease; a drain
@@ -727,18 +818,26 @@ class ConfirmBackupRestoreUseCase(
      * on-disk pointer (the pointer was never published on these paths), which returns the owner
      * to Ready; a reopen that fails closed is the StartupError exit. A concurrent transition
      * contention is retried once, then reported honestly.
+     *
+     * The owner's generation is captured AFTER the program runs: the restoration `reopen`
+     * ADVANCES the process generation ([LedgerRuntimeOwner.reopen]), so binding an abort result
+     * to the pre-confirm capture would make the host's landing guard discard it and wedge the
+     * surface (the F-1 landing bug). The captured value is null exactly when the owner has no
+     * active generation (a fail-closed restoration), which the host lands unguarded.
      */
-    private suspend fun restoreRuntime(): BackupRestoreRuntimeOutcome {
+    private suspend fun restoreRuntimeWithGeneration(): RuntimeRestoration {
         repeat(reDrainAttempts) {
             if (owner.quiesce() is QuiesceResult.Quiesced) {
-                return when (reopenOldGraphWithRetry()) {
-                    is ReopenResult.Reopened -> BackupRestoreRuntimeOutcome.RestoredReady
-                    is ReopenResult.Failed -> BackupRestoreRuntimeOutcome.FailClosed
-                    else -> BackupRestoreRuntimeOutcome.NotRestored
-                }
+                val outcome =
+                    when (reopenOldGraphWithRetry()) {
+                        is ReopenResult.Reopened -> BackupRestoreRuntimeOutcome.RestoredReady
+                        is ReopenResult.Failed -> BackupRestoreRuntimeOutcome.FailClosed
+                        else -> BackupRestoreRuntimeOutcome.NotRestored
+                    }
+                return RuntimeRestoration(outcome, owner.activeGeneration)
             }
         }
-        return BackupRestoreRuntimeOutcome.NotRestored
+        return RuntimeRestoration(BackupRestoreRuntimeOutcome.NotRestored, owner.activeGeneration)
     }
 
     /**

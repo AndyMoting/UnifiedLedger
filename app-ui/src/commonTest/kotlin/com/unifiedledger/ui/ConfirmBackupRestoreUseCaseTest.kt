@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.backup.BACKUP_DISK_HEADROOM_BYTES
 import com.unifiedledger.application.backup.BackupCryptoPrimitives
 import com.unifiedledger.application.backup.BackupGcmDecryptor
 import com.unifiedledger.application.backup.BackupGcmEncryptor
@@ -200,8 +201,28 @@ class ConfirmBackupRestoreUseCaseTest {
         /** The fsync path whose call throws an [InternalError] (unconditional). */
         var throwOnFsyncFile: String? = null
 
+        /**
+         * F-7: the path whose `exists` probe throws a RuntimeException, on the given 1-based call
+         * for that path. `readPointerGeneration` calls `exists` OUTSIDE its own try, so an escape
+         * at the step-4 (post-quiesce) read genuinely escapes the guarded region; the confirm's
+         * last-resort catch must repair the runtime before rethrowing. The fail-loud
+         * [LedgerFileSystem] contract permits such a throw.
+         */
+        var throwOnExistsAtCall: Pair<String, Int>? = null
+        private val existsCalls = mutableMapOf<String, Int>()
+
         fun enqueueUsableSpace(value: Long?) {
             usableSpaceValues.addLast(value)
+        }
+
+        override fun exists(path: String): Boolean {
+            val spec = throwOnExistsAtCall
+            if (spec != null && spec.first == path) {
+                val call = (existsCalls[path] ?: 0) + 1
+                existsCalls[path] = call
+                if (call == spec.second) throw InjectedFileSystemFailure("exists:$path#$call")
+            }
+            return inner.exists(path)
         }
 
         override fun usableSpace(path: String): Long? {
@@ -260,7 +281,10 @@ class ConfirmBackupRestoreUseCaseTest {
         fileSystem.putFile(snapshotFile, payload)
         if (withMigration) {
             fileSystem.putFile(migratedFile, payload)
-            if (migratedSidecar) fileSystem.putFile("$migratedFile-wal", ByteArray(64) { 2 })
+            if (migratedSidecar) {
+                fileSystem.putFile("$migratedFile-wal", ByteArray(64) { 2 })
+                fileSystem.putFile("$migratedFile-shm", ByteArray(32) { 5 })
+            }
         }
         if (seededGen2Leftover) {
             fileSystem.putFile(gen2Main, "stale-leftover-bytes".encodeToByteArray())
@@ -505,6 +529,36 @@ class ConfirmBackupRestoreUseCaseTest {
         }
 
     @Test
+    fun aDiskSatisfyingOnlyTheSmallerFormulaIsRejectedByTheConfirmPrecheck() =
+        runBlocking {
+            // F-2 (spec section 3.2): the frozen formula includes new_generation_db_size, lower
+            // bounded by the migrated copy's length. A disk that satisfies ONLY the smaller
+            // formula (snapshot + migrated + retained old + 64 MiB, WITHOUT the new generation)
+            // must still be rejected — otherwise the staging write would run out mid-switch.
+            val f = fixture()
+            val snapshotSize = f.fileSystem.length(snapshotFile)
+            val migratedSize = f.fileSystem.length(migratedFile)
+            val oldGenerationSize = f.fileSystem.length(gen1Main)
+            // The exact smaller formula, so the new-generation term is the sole difference.
+            val smallerFormula = snapshotSize + migratedSize + oldGenerationSize + BACKUP_DISK_HEADROOM_BYTES
+            f.fileSystem.usableSpaceBytes = smallerFormula
+
+            val aborted =
+                assertIs<BackupRestoreSwitchResult.AbortedBeforePublish>(useCase(f.fileSystem, f.owner).confirm(token(f.owner)))
+
+            assertEquals(BackupRestoreAbortReason.InsufficientDiskSpace, aborted.reason)
+            assertPointerUnchanged(f)
+            assertFalse(f.fileSystem.hasDirectory(gen2Directory))
+            assertEquals(LedgerRuntimeState.Ready, f.owner.state)
+
+            // One byte more than the full formula (smaller + the new-generation lower bound) is
+            // accepted, proving the new term is exactly the migrated copy's length.
+            f.fileSystem.usableSpaceBytes = smallerFormula + migratedSize + 1
+            assertIs<BackupRestoreSwitchResult.Committed>(useCase(f.fileSystem, f.owner).confirm(token(f.owner)))
+            Unit
+        }
+
+    @Test
     fun anUnknownUsableSpaceFailsClosedAtTheConfirmPrecheck() =
         runBlocking {
             val f = fixture()
@@ -677,6 +731,52 @@ class ConfirmBackupRestoreUseCaseTest {
             // The restoration program reopened the old graph: Ready again, one generation on.
             assertEquals(LedgerRuntimeState.Ready, f.owner.state)
             assertEquals(3, f.owner.activeGeneration)
+            // F-1: the abort carries the POST-restoration generation (3), not the pre-confirm
+            // capture (1). The host's landing guard must accept it; the old capture would discard
+            // it and wedge the surface forever.
+            assertEquals(3, stale.runtimeGeneration)
+            assertEquals(
+                f.owner.activeGeneration,
+                stale.runtimeGeneration,
+                "the abort result must bind the owner's post-restoration generation",
+            )
+        }
+
+    @Test
+    fun everyPostQuiesceAbortBindsThePostRestorationGenerationSoTheLandingGuardAcceptsIt() =
+        runBlocking {
+            // F-1 (both abort families): a blocked close postpones and a staging failure aborts,
+            // and each runs the section 3.10 restoration whose reopen advances the generation.
+            // Every returned abort must therefore carry the owner's CURRENT generation; the
+            // pre-confirm capture would be stale and the host's guard would discard the result.
+            val blocked = fixture()
+            val gateEntered = CompletableDeferred<Unit>()
+            val releaseGate = CompletableDeferred<Unit>()
+            val gated = GatedFake(blocked.fileSystem)
+            var pointerReads = 0
+            gated.onReadBytes = { path ->
+                if (path == pointerFile) {
+                    pointerReads += 1
+                    if (pointerReads == 2) {
+                        gateEntered.complete(Unit)
+                        runBlocking { withTimeoutOrNull(5_000) { releaseGate.await() } }
+                    }
+                }
+            }
+            blocked.handle.parkTimeoutMillis = 100L
+            blocked.handle.parkNextOpen()
+            val blockedResult = confirmInBackground(blocked, gated, reopenRetryPauseMillis = 300L)
+            gateEntered.await()
+            launch(Dispatchers.Default) { blocked.owner.reopen(GenerationSelection.ActivePointer) }
+            blocked.handle.parked.await()
+            releaseGate.complete(Unit)
+            val postponed = assertIs<BackupRestoreSwitchResult.Postponed>(blockedResult.await())
+            assertEquals(blocked.owner.activeGeneration, postponed.runtimeGeneration)
+
+            val staging = fixture()
+            staging.fileSystem.failOn = "copy:$migratedFile->$gen2Main"
+            val aborted = assertIs<BackupRestoreSwitchResult.AbortedBeforePublish>(useCase(staging.fileSystem, staging.owner).confirm(token(staging.owner)))
+            assertEquals(staging.owner.activeGeneration, aborted.runtimeGeneration)
         }
 
     @Test
@@ -851,6 +951,13 @@ class ConfirmBackupRestoreUseCaseTest {
             assertEquals("gen-1", f.fileSystem.fileBytes(pointerFile)?.decodeToString())
             assertFalse(f.fileSystem.hasFile(journalFile))
             assertFalse(f.fileSystem.hasDirectory(gen2Directory))
+            // F-6: the in-process rollback must delete the staged SIDECARS too, not just the
+            // directory entry. The fake keeps files and directories in separate maps, so removing
+            // the directory alone would leave `gen2Main-wal` behind — a stale `-wal` the next
+            // confirm's delete-then-stage could otherwise pick up. Assert the files themselves.
+            assertFalse(f.fileSystem.hasFile(gen2Main), "the staged main file must be gone")
+            assertFalse(f.fileSystem.hasFile("$gen2Main-wal"), "the staged -wal sidecar must be gone")
+            assertFalse(f.fileSystem.hasFile("$gen2Main-shm"), "the staged -shm sidecar must be gone")
             assertTrue(f.fileSystem.hasDirectory(gen1Directory))
             assertEquals(LedgerRuntimeState.Ready, f.owner.state)
         }
@@ -989,6 +1096,29 @@ class ConfirmBackupRestoreUseCaseTest {
         }
 
     @Test
+    fun anEscapedRuntimeExceptionAfterTheQuiesceRestoresTheRuntimeBeforePropagating() {
+        // F-7: the fail-loud LedgerFileSystem contract permits a RuntimeException. The step-4
+        // post-quiesce pointer read calls `exists` OUTSIDE its own try, so a throw there escapes
+        // the guarded region with the owner already in Quiescing and the graph closed. The
+        // confirm's last-resort catch must run the section 3.10 restoration before rethrowing, or
+        // the owner is wedged in Quiescing forever.
+        val f = fixture()
+        val gated = GatedFake(f.fileSystem)
+        // The FIRST activePointerFile exists probe is the step-2 precheck (before the quiesce);
+        // the SECOND is the step-4 post-quiesce read. Fail exactly there.
+        gated.throwOnExistsAtCall = pointerFile to 2
+
+        assertFailsWith<InjectedFileSystemFailure> { runBlocking { useCase(gated, f.owner).confirm(token(f.owner)) } }
+
+        // The escape repair restored the owner to Ready on the old graph; the pointer and journal
+        // are untouched.
+        assertEquals(LedgerRuntimeState.Ready, f.owner.state)
+        assertPointerUnchanged(f)
+        assertFalse(f.fileSystem.hasFile(journalFile))
+        assertFalse(f.fileSystem.hasDirectory(gen2Directory))
+    }
+
+    @Test
     fun anErrorAfterCloseRestoresTheRuntimeBeforePropagating() {
         val f = fixture()
         val gated = GatedFake(f.fileSystem)
@@ -1024,6 +1154,55 @@ class ConfirmBackupRestoreUseCaseTest {
     }
 
     // ---------------------------------------------------------------- single flight (P2-2)
+
+    @Test
+    fun aRealPostQuiesceAbortLandsThroughTheHostGuardAfterTheRestorationAdvancedTheGeneration() =
+        runBlocking {
+            // F-1 END-TO-END: the real use case, the real owner (whose restoration reopen ADVANCES
+            // the process generation) and the real host landing pipeline. A blocked close postpones
+            // after the section 3.10 restoration reopened the old graph at generation 3; the
+            // pre-confirm capture is 1. Reverting the landing guard to the capture makes the
+            // postponed result get discarded here and the `landed` deferred never completes.
+            val f = fixture()
+            val gateEntered = CompletableDeferred<Unit>()
+            val releaseGate = CompletableDeferred<Unit>()
+            val gated = GatedFake(f.fileSystem)
+            var pointerReads = 0
+            gated.onReadBytes = { path ->
+                if (path == pointerFile) {
+                    pointerReads += 1
+                    if (pointerReads == 2) {
+                        gateEntered.complete(Unit)
+                        runBlocking { withTimeoutOrNull(5_000) { releaseGate.await() } }
+                    }
+                }
+            }
+            f.handle.parkTimeoutMillis = 100L
+            f.handle.parkNextOpen()
+            val useCase = useCase(gated, f.owner, reopenRetryPauseMillis = 300L)
+            val landed = CompletableDeferred<BackupRestoreSwitchResult>()
+            val capture = f.owner.activeGeneration ?: 1
+
+            runRestoreConfirm(
+                scope = this,
+                token = token(f.owner),
+                confirm = { useCase.confirm(it) },
+                isCurrentGeneration = { f.owner.activeGeneration == it },
+                land = { landed.complete(it) },
+            )
+            gateEntered.await()
+            launch(Dispatchers.Default) { f.owner.reopen(GenerationSelection.ActivePointer) }
+            f.handle.parked.await()
+            releaseGate.complete(Unit)
+
+            val postponed = assertIs<BackupRestoreSwitchResult.Postponed>(withTimeoutOrNull(30_000) { landed.await() })
+            assertEquals(BackupRestorePostponeReason.CloseBlocked, postponed.reason)
+            // The restoration reopened the old graph, advancing the owner past the capture.
+            assertEquals(3, f.owner.activeGeneration)
+            assertEquals(3, postponed.runtimeGeneration)
+            assertTrue(f.owner.activeGeneration != capture, "the restoration must have advanced the generation")
+            assertEquals(LedgerRuntimeState.Ready, f.owner.state)
+        }
 
     @Test
     fun aSecondConcurrentConfirmIsTypedRejectedWithZeroSideEffects() =

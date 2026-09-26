@@ -2382,12 +2382,14 @@ fun P503App(
         if (!restoreSwitchConfirmEnabled(current)) return
         val confirm = ledger.restoreWiring?.confirm ?: return
         val token = current.token ?: return
-        val launchGeneration = ledger.activeGenerationForLanding() ?: return
+        // Readiness precondition only: the switch needs a Ready owner (no active generation means
+        // there is nothing to switch from). The landing guard no longer uses this capture — every
+        // result now carries its own post-operation generation (F-1).
+        ledger.activeGenerationForLanding() ?: return
         if (latestState.value !== current) return
         dispatch(P503UiEvent.ConfirmBackupRestoreSwitch)
         runRestoreConfirm(
             scope = scope,
-            generation = launchGeneration,
             token = token,
             confirm = confirm::confirm,
             isCurrentGeneration = ledger::isCurrentGeneration,
@@ -3266,26 +3268,28 @@ internal fun runRestorePreflight(
 }
 
 /**
- * P7-06 06.D (D-182; spec sections 3.9/6): the confirm & switch run/land pipeline (the same
+ * P7-06 06.D (D-182; spec sections 3.9/3.10/6): the confirm & switch run/land pipeline (the same
  * extraction discipline). Its decisions are the load-bearing ones for the frozen landing rule:
  *
  * 1. the confirm runs on [Dispatchers.Default] (the quiesce, staging and reopen must never touch
  *    the UI thread);
  * 2. the typed result hops back onto the composition's main dispatcher before the landing;
- * 3. the landing guard binds the result's OWN generation where it carries one
- *    ([BackupRestoreSwitchResult.Committed.runtimeGeneration] / [BackupRestoreSwitchResult.RolledBack.runtimeGeneration]
- *    — the POST-reopen generation, spec section 3.9) and the pre-confirm capture for the
- *    generation-free results: a switch ADVANCES the generation, so guarding the committed result
- *    against the pre-confirm capture would discard the success instead of a stale latecomer;
+ * 3. the landing guard binds the result's OWN [BackupRestoreSwitchResult.landingGeneration] — the
+ *    POST-reopen generation for Committed/RolledBack, and the POST-restoration generation for the
+ *    abort results (Stale/Postponed/AbortedBeforePublish). A switch ADVANCES the generation, and
+ *    so does the section 3.10 restoration reopen on every post-quiesce abort, so guarding against
+ *    the pre-confirm capture would discard the success AND every abort, wedging the surface (F-1).
+ *    A result whose owner generation is null (the fail-closed RecoveryRequired, or a restoration
+ *    that ended in StartupError) is delivered UNGUARDED — there is no current generation to
+ *    compare against and discarding it would strand the surface forever;
  * 4. [confirm]'s contract is to return typed results or rethrow ONLY a CancellationException or an
- *    Error (every Exception is converted internally; escapes already ran the NonCancellable
- *    repair): a cancellation rethrows (the caller is going away), any other escape rethrows
- *    fail-loud after the surface marker is cleared by the type system — it can never silently
- *    strand the surface, and masking it would hide the repair semantics (P2-1).
+ *    Error (every other Throwable — including an escaped RuntimeException — is converted
+ *    internally after the NonCancellable repair, P2-1): a cancellation rethrows (the caller is
+ *    going away), any other escape rethrows fail-loud after the repair already restored the
+ *    runtime.
  */
 internal fun runRestoreConfirm(
     scope: CoroutineScope,
-    generation: Generation,
     token: RestorePreflightToken,
     confirm: suspend (RestorePreflightToken) -> BackupRestoreSwitchResult,
     isCurrentGeneration: (Generation) -> Boolean,
@@ -3294,13 +3298,10 @@ internal fun runRestoreConfirm(
     scope.launch(Dispatchers.Default) {
         val result = confirm(token)
         scope.launch {
-            val resultGeneration =
-                when (result) {
-                    is BackupRestoreSwitchResult.Committed -> result.runtimeGeneration
-                    is BackupRestoreSwitchResult.RolledBack -> result.runtimeGeneration
-                    else -> generation
-                }
-            if (!isCurrentGeneration(resultGeneration)) return@launch
+            val resultGeneration = result.landingGeneration
+            // Null: the owner is fail-closed (no active generation to guard against) — land it,
+            // or the session-terminal/recovery face could never be reached (F-1).
+            if (resultGeneration != null && !isCurrentGeneration(resultGeneration)) return@launch
             land(result)
         }
     }

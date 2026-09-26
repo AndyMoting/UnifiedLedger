@@ -19,9 +19,11 @@ import kotlin.test.assertTrue
  * [P503BackupExportHostPipelineTest] precedent). Each test pins one load-bearing decision:
  * the work runs off the caller thread, the result lands on the scope's own dispatcher, a result
  * captured under a superseded generation is discarded, a throwing preflight lands a typed
- * rejection, and the CONFIRM landing guard binds the result's OWN generation for the
- * generation-bearing results (a switch advances the generation — guarding a Committed result
- * against the pre-confirm capture would discard the success).
+ * rejection, and the CONFIRM landing guard binds the result's OWN generation (a switch advances
+ * the generation — guarding a Committed result against the pre-confirm capture would discard the
+ * success). F-1: every post-quiesce abort also ADVANCES the generation through the section 3.10
+ * restoration reopen, so the abort results bind their post-restoration generation too, and a
+ * fail-closed result with no active generation lands unguarded.
  */
 class P503RestoreHostPipelineTest {
     private fun request(): RestorePreflightRequest = RestorePreflightRequest("password123", "ledger-local-test", setOf(1L, 31L), 31L)
@@ -137,7 +139,6 @@ class P503RestoreHostPipelineTest {
         runBlocking {
             runRestoreConfirm(
                 scope = this,
-                generation = 1,
                 token = token(),
                 confirm = { BackupRestoreSwitchResult.Committed(runtimeGeneration = 2) },
                 isCurrentGeneration = { it == 2 },
@@ -149,19 +150,79 @@ class P503RestoreHostPipelineTest {
     }
 
     @Test
-    fun aGenerationFreeResultIsGuardedByThePreConfirmCapture() {
-        // Stale/postponed/aborted results carry no generation: the pre-confirm capture decides.
+    fun aPostRestorationAbortLandsUnderItsPostRestorationGenerationNotThePreConfirmCapture() {
+        // F-1: every post-quiesce abort runs the section 3.10 restoration, whose reopen ADVANCES
+        // the process generation. The abort result therefore binds the POST-restoration generation
+        // (2), and the landing guard must accept it — the pre-confirm capture (1) is stale by
+        // construction. Reverting the guard to the capture turns this RED (the abort is discarded
+        // and the surface wedges on "正在切换账本" forever).
         val landed = CompletableDeferred<BackupRestoreSwitchResult>()
         runBlocking {
             runRestoreConfirm(
                 scope = this,
-                generation = 1,
                 token = token(),
-                confirm = { BackupRestoreSwitchResult.Postponed(BackupRestorePostponeReason.QuiesceBlocked, BackupRestoreRuntimeOutcome.RestoredReady) },
-                isCurrentGeneration = { it == 1 },
+                confirm = {
+                    BackupRestoreSwitchResult.AbortedBeforePublish(
+                        BackupRestoreAbortReason.StagingFailed,
+                        BackupRestoreRuntimeOutcome.RestoredReady,
+                        runtimeGeneration = 2,
+                    )
+                },
+                isCurrentGeneration = { it == 2 },
+                land = { landed.complete(it) },
+            )
+            val result = withTimeoutOrNull(30_000) { landed.await() }
+            assertIs<BackupRestoreSwitchResult.AbortedBeforePublish>(
+                result,
+                "a post-quiesce abort must land under its post-restoration generation",
+            )
+        }
+    }
+
+    @Test
+    fun aPostponedResultWithItsPostRestorationGenerationLands() {
+        // Same F-1 shape for the other abort family: a blocked close postpones, the restoration
+        // reopen advances the generation, and the postponed result must land bound to it.
+        val landed = CompletableDeferred<BackupRestoreSwitchResult>()
+        runBlocking {
+            runRestoreConfirm(
+                scope = this,
+                token = token(),
+                confirm = {
+                    BackupRestoreSwitchResult.Postponed(
+                        BackupRestorePostponeReason.CloseBlocked,
+                        BackupRestoreRuntimeOutcome.RestoredReady,
+                        runtimeGeneration = 3,
+                    )
+                },
+                isCurrentGeneration = { it == 3 },
                 land = { landed.complete(it) },
             )
             assertIs<BackupRestoreSwitchResult.Postponed>(withTimeoutOrNull(30_000) { landed.await() })
+        }
+    }
+
+    @Test
+    fun aRecoveryRequiredResultWithNoActiveGenerationLandsUnguarded() {
+        // F-1: a rollback that also failed leaves the owner Closed/StartupError, so there is NO
+        // active generation to guard against. The result must land anyway (it drives the
+        // session-terminal face); discarding it on a null/absent generation strands the user on a
+        // dead surface forever.
+        val landed = CompletableDeferred<BackupRestoreSwitchResult>()
+        runBlocking {
+            runRestoreConfirm(
+                scope = this,
+                token = token(),
+                confirm = { BackupRestoreSwitchResult.RecoveryRequired(BackupRestoreRecoveryCause.RollbackReopenFailed) },
+                // The owner is fail-closed: nothing is "current".
+                isCurrentGeneration = { false },
+                land = { landed.complete(it) },
+            )
+            val result = withTimeoutOrNull(30_000) { landed.await() }
+            assertIs<BackupRestoreSwitchResult.RecoveryRequired>(
+                result,
+                "the session-terminal result must land even with no active generation",
+            )
         }
     }
 
@@ -171,7 +232,6 @@ class P503RestoreHostPipelineTest {
         runBlocking {
             runRestoreConfirm(
                 scope = this,
-                generation = 1,
                 token = token(),
                 confirm = { BackupRestoreSwitchResult.Committed(runtimeGeneration = 2) },
                 // Another reopen raced past the switch: the landing guard discards.
@@ -186,6 +246,32 @@ class P503RestoreHostPipelineTest {
     }
 
     @Test
+    fun aPostRestorationAbortWhoseGenerationIsAlreadySupersededIsDiscarded() {
+        // The F-1 fix must not over-land: an abort result whose own post-restoration generation is
+        // ALREADY superseded by a later transition is still a stale latecomer and is discarded.
+        var landedCount = 0
+        runBlocking {
+            runRestoreConfirm(
+                scope = this,
+                token = token(),
+                confirm = {
+                    BackupRestoreSwitchResult.AbortedBeforePublish(
+                        BackupRestoreAbortReason.StagingFailed,
+                        BackupRestoreRuntimeOutcome.RestoredReady,
+                        runtimeGeneration = 2,
+                    )
+                },
+                isCurrentGeneration = { it == 3 },
+                land = { landedCount += 1 },
+            )
+            withTimeoutOrNull(500) {
+                while (true) delay(10)
+            }
+        }
+        assertEquals(0, landedCount, "an abort whose own generation was superseded is discarded")
+    }
+
+    @Test
     fun theConfirmRunsOnTheCallerLaunchedDefaultContextAndLandsOnTheScopeDispatcher() {
         val confirmThreads = mutableListOf<String>()
         val landingThreads = mutableListOf<String>()
@@ -196,7 +282,6 @@ class P503RestoreHostPipelineTest {
                 val landed = CompletableDeferred<Unit>()
                 runRestoreConfirm(
                     scope = scope,
-                    generation = 1,
                     token = token(),
                     confirm = {
                         confirmThreads += Thread.currentThread().name
