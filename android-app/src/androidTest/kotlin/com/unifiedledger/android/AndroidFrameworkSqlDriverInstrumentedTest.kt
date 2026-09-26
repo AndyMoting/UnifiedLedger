@@ -14,6 +14,7 @@ import com.unifiedledger.data.readObservedLedgerIdsOn
 import com.unifiedledger.data.validateDomainOn
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -40,14 +41,26 @@ import java.io.File
  *   per carrying table) observes the expected identities;
  * - the strict migrate on device: a v1-shaped fixture migrated 1 -> current
  *   (`LedgerDatabase.Schema.version`) in ONE transaction through `Schema.migrate`, then stamped and
- *   validated (integrity/FK/domain) through the adapter.
+ *   domain-validated ([validateDomainOn]) through the adapter;
+ * - the fail-closed non-create guarantee: opening a nonexistent path fails and creates no file.
  *
  * Stated gap (fixture fidelity, not faked): the v1 fixture below is a LOCAL reproduction of the
  * frozen `VERSION_ONE_STATEMENTS` seed (ledger-data jvmTest `LedgerDatabaseMigrationTest`), kept
  * local for the same reason as the desktop port test's copy — that fixture is not on this module's
- * androidTest classpath. The migration CHAIN itself is the real generated one; what this does not
- * prove is golden-level data equivalence of a full production snapshot, which stays with the JVM
- * suite and the spec's registered acceptance runs.
+ * androidTest classpath. The local reproduction is statement-for-statement identical to the desktop
+ * port test's copy (desktop-app jvmTest `DesktopRestorePreflightPortsTest`), and it diverges from
+ * the frozen seed by one extra `UNIQUE (posting_id, ledger_id)` constraint on `posting` (the desktop
+ * copy carries the same divergence) — disclosed here rather than silently tightened. The migration
+ * CHAIN itself is the real generated one; what this does not prove is golden-level data equivalence
+ * of a full production snapshot, which stays with the JVM suite and the spec's registered
+ * acceptance runs.
+ *
+ * Stated gap (validation coverage): this suite exercises DOMAIN validation only
+ * ([validateDomainOn]); on-device `PRAGMA integrity_check` / `PRAGMA foreign_key_check` through the
+ * adapter are NOT covered here (the production port's `AndroidRestoreIsolatedDatabasePort.validate`
+ * composes all three, but this suite does not invoke it). Their JVM coverage exists in the
+ * ledger-data jvmTest suite, and the multi-row PRAGMA cursor machinery they rely on is the same
+ * path the `PRAGMA table_info` probe above exercises.
  *
  * Data safety: every database file is created under the instrumentation target's cache dir in a
  * per-test directory (the `p706b-snapshot` precedent); [assertIsolatedFromProduction] refuses to run
@@ -174,6 +187,29 @@ class AndroidFrameworkSqlDriverInstrumentedTest {
         } finally {
             driver.close()
         }
+    }
+
+    /**
+     * Pins the adapter's fail-closed NON-create-on-open property (spec D-179, section 8.2):
+     * [openAndroidReadWriteDriver] opens with `OPEN_READWRITE` and deliberately NOT
+     * `CREATE_IF_NECESSARY`, so opening a path that does not exist must fail (the framework open
+     * throws; the function returns no driver) and must NOT leave a fresh database file behind.
+     * Load-bearing by construction: a future edit that adds `CREATE_IF_NECESSARY` turns this red.
+     */
+    @Test
+    fun openingAMissingPathFailsClosedAndDoesNotCreateTheFile() {
+        val dir = newTestDir()
+        val missing = File(dir, "missing-${System.nanoTime()}.db")
+        assertIsolatedFromProduction(missing)
+        assertFalse("precondition: the target path must not exist yet", missing.exists())
+
+        val attempted = runCatching { openAndroidReadWriteDriver(missing.absolutePath) }
+
+        assertTrue(
+            "opening a missing path must fail (no create-on-open): ${attempted.exceptionOrNull()}",
+            attempted.isFailure,
+        )
+        assertFalse("the failed open must NOT have created the file", missing.exists())
     }
 
     /**

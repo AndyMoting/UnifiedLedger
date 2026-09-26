@@ -50,9 +50,11 @@ class AndroidRestoreSourcePortInstrumentedTest {
         // A buffer smaller than the payload on purpose: several reads must be stitched together.
         val buffer = ByteArray(16)
         reader.use {
-            // The test provider serves a pipe, which reports no size metadata; the port passes the
-            // platform's (absent) size through untouched.
-            assertNull("the reader must expose the provider's absent size metadata", it.reportedSize)
+            // The null asserted here comes from the port's DEFAULT `sizeOf = { null }` (this test
+            // injects no sizeOf), which flows through to the reader unchanged. A SAF pipe reports
+            // no size metadata either, but the mechanism actually exercised is the port's default
+            // absent-size injection, not the provider's metadata.
+            assertNull("the reader must expose the port's default absent size", it.reportedSize)
             while (true) {
                 val read = it.read(buffer)
                 if (read <= 0) break
