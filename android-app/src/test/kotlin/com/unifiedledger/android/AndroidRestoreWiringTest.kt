@@ -22,12 +22,22 @@ import com.unifiedledger.application.QueryManualExpenseOptions
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.SummarizeLedgerActivity
+import com.unifiedledger.application.backup.BackupContainerSink
+import com.unifiedledger.application.backup.BackupPlaintextReader
+import com.unifiedledger.application.backup.BackupPlaintextSource
+import com.unifiedledger.application.backup.JvmBackupCryptoPrimitives
+import com.unifiedledger.application.backup.writeBackupContainer
 import com.unifiedledger.data.currentSupportedSchemaVersion
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.DomainViolation
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.ui.BackupRestoreSwitchResult
+import com.unifiedledger.ui.BackupSourceOpenResult
+import com.unifiedledger.ui.BackupSourcePort
+import com.unifiedledger.ui.BackupSourceReader
+import com.unifiedledger.ui.LedgerFileSystem
 import com.unifiedledger.ui.LedgerStorageFailure
 import com.unifiedledger.ui.LedgerStorageRejectedException
 import com.unifiedledger.ui.P503LedgerFacade
@@ -35,12 +45,17 @@ import com.unifiedledger.ui.P503StartupState
 import com.unifiedledger.ui.RestoreIsolatedDatabasePort
 import com.unifiedledger.ui.RestoreMigrationOutcome
 import com.unifiedledger.ui.RestoreOwnerCounts
+import com.unifiedledger.ui.RestorePreflightResult
 import com.unifiedledger.ui.RestoreValidationFacts
 import com.unifiedledger.ui.ledgerStorageLayout
+import com.unifiedledger.ui.openExplicitGeneration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -49,6 +64,9 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+
+/** The deterministic preflight token the explicit-opener wiring test binds its staging artifacts to. */
+private const val RESTORE_WIRING_TEST_TOKEN = "restore-wiring-test-token"
 
 /**
  * P7-06 06.D (D-182; spec sections 5.3/5.4/6): the ANDROID composition-root wiring evidence for the
@@ -60,6 +78,10 @@ import kotlin.test.assertTrue
  * start surfaces the recovery face, the user-confirmed adoption publishes the pointer through the
  * frozen primitive and the retried startup reaches Ready, and a DECLINE mutates nothing.
  *
+ * It also pins the RC-2 wiring that the confirm switch's step-8 reopen depends on: the
+ * composition-root owner satisfies `GenerationSelection.Explicit` (the confirm flow COMMITS instead
+ * of rolling back), plus a source-level guard that the root still passes the opener argument.
+ *
  * The restore SOURCE port's SAF launch and ruling F's `sizeOf` ContentResolver query are android.jar
  * surfaces; the port shape is pinned by [AndroidBackupSourcePortTest] and the size query belongs to
  * the instrumented suite (the 06.C device-gate pattern), so they are not re-faked here.
@@ -69,21 +91,31 @@ class AndroidRestoreWiringTest {
         val integrityByPath = mutableMapOf<String, Boolean>()
         val versionByPath = mutableMapOf<String, Long>()
 
+        /**
+         * P7-06 06.D (D-182): the PREFLIGHT facts. The recovery tests never read them (recovery uses
+         * only [integrityCheckOk] and the authoritative version), so they stay unseeded there; the
+         * explicit-opener wiring test seeds them so a real decrypted snapshot can pass the 06.C
+         * preflight without a real framework SQLite open (the recovery's existing division).
+         */
+        var observedLedgerIdentities: List<String>? = null
+        var validationFacts: RestoreValidationFacts? = null
+        var ownerCounts: RestoreOwnerCounts? = null
+
         override fun readAuthoritativeUserVersion(snapshotPath: String): Long = requireNotNull(versionByPath[snapshotPath]) { "no version seeded" }
 
-        override fun readObservedLedgerIdentities(snapshotPath: String): List<String> = error("not used by the recovery")
+        override fun readObservedLedgerIdentities(snapshotPath: String): List<String> = requireNotNull(observedLedgerIdentities) { "no preflight identities seeded" }
 
         override fun migrateStrictly(
             snapshotPath: String,
             fromVersion: Long,
             supportedVersions: Set<Long>,
-        ): RestoreMigrationOutcome = error("not used by the recovery")
+        ): RestoreMigrationOutcome = error("not used by the recovery or the current-schema preflight")
 
-        override fun validate(snapshotPath: String): RestoreValidationFacts = error("not used by the recovery")
+        override fun validate(snapshotPath: String): RestoreValidationFacts = requireNotNull(validationFacts) { "no preflight validation seeded" }
 
         override fun integrityCheckOk(snapshotPath: String): Boolean = integrityByPath[snapshotPath] ?: false
 
-        override fun readOwnerCounts(snapshotPath: String): RestoreOwnerCounts = error("not used by the recovery")
+        override fun readOwnerCounts(snapshotPath: String): RestoreOwnerCounts = requireNotNull(ownerCounts) { "no preflight owner counts seeded" }
     }
 
     private val isolated = FakeRestoreIsolatedDatabase()
@@ -91,8 +123,16 @@ class AndroidRestoreWiringTest {
     private fun controller(
         host: Path,
         pointerGated: Boolean,
+        fileSystem: LedgerFileSystem = DesktopStyleTestFileSystem(),
+        sourcePort: BackupSourcePort =
+            AndroidBackupSourcePort<String>(
+                postToMainThread = { it() },
+                launchOpenDocument = {},
+                openInputStream = { null },
+            ),
+        openExplicitOpener: ((Int) -> CloseableLedgerGraph)? = null,
+        newToken: () -> String = { RESTORE_WIRING_TEST_TOKEN },
     ): AndroidStartupController {
-        val fileSystem = DesktopStyleTestFileSystem()
         val layout = ledgerStorageLayout(fileSystem, host.toString())
         return AndroidStartupController(
             openDatabase = {
@@ -105,18 +145,17 @@ class AndroidRestoreWiringTest {
             logFailure = {},
             startScope = CoroutineScope(Dispatchers.Unconfined),
             backgroundDispatcher = Dispatchers.Unconfined,
+            // The production root's argument (App.kt `app()`), passed straight through so the test
+            // exercises the REAL controller owner wiring rather than a re-declared one.
+            openExplicitGeneration = openExplicitOpener,
             restoreWiring =
                 AndroidRestoreWiring(
                     fileSystem = fileSystem,
                     layout = layout,
-                    sourcePort =
-                        AndroidBackupSourcePort<String>(
-                            postToMainThread = { it() },
-                            launchOpenDocument = {},
-                            openInputStream = { null },
-                        ),
+                    sourcePort = sourcePort,
                     legacyMainFile = java.io.File(host.toFile(), "legacy.db").absolutePath,
                     isolatedDatabase = isolated,
+                    newToken = newToken,
                 ),
         )
     }
@@ -171,6 +210,193 @@ class AndroidRestoreWiringTest {
         val launch = assertNotNull(ledger.restorePreflightLaunch("password123"))
         assertEquals(RESTORE_TARGET_LEDGER_ID, launch.request.targetLedgerId)
         assertEquals(1, launch.generation)
+    }
+
+    // ---------------------------------------------------------------- the explicit opener wiring (RC-2)
+
+    /**
+     * RC-2 (P7-06 06.D review): the composition root's controller passes an explicit-generation
+     * opener (Android `App.kt` `openExplicitGeneration = { ... }`; desktop `Main.kt` likewise), and
+     * the confirm switch's step 8 reopens the generation it just published through
+     * [GenerationSelection.Explicit]. Nothing pinned that wiring: a refactor dropping it would make
+     * `openGenerationForSelection` fail loudly at step 8 (mid-switch) and roll the switch back.
+     *
+     * This drives a WHOLE real preflight → confirm through the controller's OWN owner — the
+     * production `openGenerationForSelection(..., openExplicit = wiredExplicitOpener)` wiring — and
+     * asserts it COMMITS, opening gen-2 through the explicit route. If the explicit wiring is
+     * removed, step 8's `reopen(Explicit(2))` fails (`ReopenResult.Failed`) and the flow ROLLS BACK,
+     * so the `Committed` assertion goes RED (verified by ablation).
+     *
+     * SCOPE (what this does and does not prove): the controller constructor is the exact seam the
+     * root uses (the root builds `AndroidStartupController(openExplicitGeneration = { ... })`), and
+     * the opener runs the shared [openExplicitGeneration] the production Android opener delegates to
+     * (`openAndroidExplicitGenerationWith` → `openExplicitGeneration`). It does NOT execute the
+     * `app()` composable (a real `Context` is unavailable on a JVM unit test), so it does not read
+     * `App.kt`'s argument literal nor the Context-bound path resolution — those residuals are
+     * disclosed, not overclaimed.
+     */
+    @Test
+    fun theCompositionRootOwnerReopensThePublishedGenerationExplicitlyAndCommits() {
+        val host = Files.createTempDirectory("p706d-android-explicit-wiring-")
+        val fileSystem = DesktopStyleTestFileSystem()
+        val layout = ledgerStorageLayout(fileSystem, host.toString())
+        // The production pointer shape: gen-1 is the active disk generation, so the confirm's
+        // gen-(current + 1) staging targets gen-2.
+        Files.createDirectories(Path.of(layout.generationDirectory(1)))
+        java.io.File(layout.mainFile(layout.generationDirectory(1))).writeBytes(sqliteTestCandidateBytes)
+        java.io.File(layout.activePointerFile).writeText("gen-1")
+        // The preflight facts for the deterministic token the controller is wired with: the decrypted
+        // snapshot verifies current and belongs to the fixed target identity (the fake port supplies
+        // the verdicts; no real framework SQLite open, matching the recovery tests' division).
+        val snapshotFile = layout.restoreSnapshotFile(RESTORE_WIRING_TEST_TOKEN)
+        isolated.versionByPath[snapshotFile] = currentSupportedSchemaVersion()
+        isolated.observedLedgerIdentities = listOf(RESTORE_TARGET_LEDGER_ID)
+        isolated.validationFacts =
+            RestoreValidationFacts(
+                integrityOk = true,
+                foreignKeyOk = true,
+                domainOk = true,
+                ledgerIdentityCount = 1,
+                formalTableCount = 0,
+                postingImbalanceCount = 0,
+            )
+        isolated.ownerCounts = RestoreOwnerCounts(accountsCount = 0, categoriesCount = 0, transactionsCount = 0)
+        val sourcePort =
+            BackupSourcePort {
+                BackupSourceOpenResult.Opened(InMemoryBackupSourceReader(backupContainerOf(sqliteTestCandidateBytes, "password123")))
+            }
+        val explicitOpens = mutableListOf<Int>()
+        val controller =
+            controller(
+                host = host,
+                pointerGated = false,
+                sourcePort = sourcePort,
+                openExplicitOpener = { generation ->
+                    explicitOpens += generation
+                    // The shared function the production Android explicit opener delegates to
+                    // (openAndroidExplicitGenerationWith -> openExplicitGeneration), over the same
+                    // real filesystem adapter and layout.
+                    openExplicitGeneration(fileSystem, layout, generation) {
+                        CloseableLedgerGraph(fakeFacade(), close = {})
+                    }
+                },
+            )
+        controller.start()
+        assertEquals(P503StartupState.Ready, controller.state)
+        val ledger = assertNotNull(controller.ledger)
+
+        // A REAL preflight over a REAL container produces the token bound to the active generation.
+        val launch = assertNotNull(ledger.restorePreflightLaunch("password123"))
+        val wiring = assertNotNull(ledger.restoreWiring)
+        val preview =
+            assertIs<RestorePreflightResult.PreviewReady>(
+                wiring.preflight.preflight(launch.request),
+            )
+
+        // Step 8 reopens the just-published generation EXPLICITLY and the switch commits.
+        val committed = runBlocking { wiring.confirm.confirm(preview.token) }
+
+        assertIs<BackupRestoreSwitchResult.Committed>(
+            committed,
+            "the wired controller must honour Explicit and commit; a dropped explicit opener rolls back instead: $committed",
+        )
+        assertEquals(listOf(2), explicitOpens, "step 8 must reopen the published generation through the explicit route")
+        assertEquals("gen-2", fileSystem.readBytes(layout.activePointerFile).decodeToString())
+        assertTrue(fileSystem.exists(layout.mainFile(layout.generationDirectory(2))))
+        assertFalse(fileSystem.exists(layout.switchJournalFile), "a committed switch removes the journal")
+    }
+
+    /**
+     * RC-2 (P7-06 06.D review): the ROOT call site. The Android root's explicit opener is the
+     * `openExplicitGeneration = { generation -> openAndroidExplicitGeneration(...) }` argument that
+     * `app()` passes to `AndroidStartupController` (App.kt). `app()` is a Compose composable that
+     * reads `LocalContext`, so it is genuinely unreachable from a JVM unit test (no real `Context`).
+     *
+     * This is a SOURCE-LEVEL guard: it asserts the production root file still contains that argument
+     * call site (and the production explicit-opener function it delegates to), so a refactor that
+     * drops the argument — the exact regression RC-2 is about — turns this test RED. It proves the
+     * call site EXISTS; it does NOT execute it, and it does not prove the argument's runtime
+     * behaviour (the behavioural test above pins the controller-side wiring on the real seam).
+     */
+    @Test
+    fun theAndroidRootStillWiresTheExplicitGenerationOpener() {
+        val root = repositoryFile("android-app/src/main/kotlin/com/unifiedledger/android/App.kt").readText()
+        assertTrue(
+            root.contains("openExplicitGeneration = { generation ->"),
+            "the Android root must pass an explicit-generation opener to AndroidStartupController (RC-2)",
+        )
+        assertTrue(
+            root.contains("openAndroidExplicitGeneration(context, importFilePickPort, importPickChannel, generation)"),
+            "the Android root's explicit opener must delegate to the production openAndroidExplicitGeneration (RC-2)",
+        )
+    }
+
+    /**
+     * Resolves a path relative to the repository root by walking up from the test working directory
+     * to the settings file (the `LedgerDatabaseMigrationTest` precedent, ledger-data jvmTest).
+     */
+    private fun repositoryFile(relative: String): Path {
+        var candidate = Path.of(System.getProperty("user.dir"))
+        repeat(8) {
+            if (Files.isRegularFile(candidate.resolve("settings.gradle.kts"))) return candidate.resolve(relative)
+            candidate = candidate.parent ?: error("repository root not found")
+        }
+        error("repository root not found")
+    }
+
+    /**
+     * Writes one real authenticated container around [plaintext] with the product JCE primitives, so
+     * the preflight exercises its real format/size/decryption steps. The plaintext is the SQLite-magic
+     * candidate: enough for the pre-open usability gate the confirm's step-6 stage and step-8 explicit
+     * reopen apply.
+     */
+    private fun backupContainerOf(
+        plaintext: ByteArray,
+        password: String,
+    ): ByteArray {
+        val out = ByteArrayOutputStream()
+        writeBackupContainer(
+            plaintext =
+                BackupPlaintextSource {
+                    var position = 0
+                    object : BackupPlaintextReader {
+                        override fun read(buffer: ByteArray): Int {
+                            if (position >= plaintext.size) return -1
+                            val count = minOf(buffer.size, plaintext.size - position)
+                            plaintext.copyInto(buffer, 0, position, position + count)
+                            position += count
+                            return count
+                        }
+
+                        override fun close() {}
+                    }
+                },
+            sink = BackupContainerSink { bytes, offset, length -> out.write(bytes, offset, length) },
+            password = password,
+            schemaVersion = currentSupportedSchemaVersion(),
+            plaintextLength = plaintext.size.toLong(),
+            crypto = JvmBackupCryptoPrimitives(),
+        )
+        return out.toByteArray()
+    }
+
+    /** An in-memory bounded reader over the written container bytes (the preflight source port). */
+    private class InMemoryBackupSourceReader(
+        private val bytes: ByteArray,
+    ) : BackupSourceReader {
+        private var position = 0
+
+        override fun read(buffer: ByteArray): Int {
+            if (position >= bytes.size) return -1
+            val count = minOf(buffer.size, bytes.size - position)
+            bytes.copyInto(buffer, 0, position, position + count)
+            position += count
+            return count
+        }
+
+        override val reportedSize: Long get() = bytes.size.toLong()
+
+        override fun close() {}
     }
 
     // ---------------------------------------------------------------- the recovery flow (spec section 5.3)

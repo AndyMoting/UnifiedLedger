@@ -75,7 +75,16 @@ sealed interface GenerationSelection {
     /** Reopen the generation named by the on-disk active pointer (the default). */
     data object ActivePointer : GenerationSelection
 
-    /** Reopen an explicitly named on-disk generation (06.D switch skeleton). */
+    /**
+     * Reopen the explicitly named on-disk generation — the confirm switch's step-8 reopen
+     * (P7-06 06.D; `ConfirmBackupRestore.kt` step 8). This is production-reachable: both
+     * composition roots run the confirm switch, whose step 8 reopens the generation it just staged
+     * and published by name (through [openExplicitGeneration]) instead of through the pointer, so
+     * the startup sequence's switch-journal gate cannot consume the flow's own live `switched`
+     * journal (see [openGenerationForSelection]). The spec's frozen step-8 list still names
+     * `reopen(ActivePointer)`; 06.D's P1 fix establishes that the pointer route re-enters the
+     * journal gate and rolls the switch back, so step 8 must select the generation explicitly.
+     */
     data class Explicit(
         val generation: Int,
     ) : GenerationSelection

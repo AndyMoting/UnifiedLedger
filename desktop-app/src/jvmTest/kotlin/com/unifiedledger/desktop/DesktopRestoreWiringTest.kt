@@ -11,6 +11,7 @@ import com.unifiedledger.ui.ledgerStorageLayout
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.absolutePathString
+import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -170,6 +171,35 @@ class DesktopRestoreWiringTest {
             assertFalse(fileSystem.exists(layout.activePointerFile), "still fail-closed pointerless")
             assertNull(controller.ledger)
         }
+    }
+
+    @Test
+    fun theDesktopRootStillWiresTheExplicitGenerationOpener() {
+        // RC-2 (P7-06 06.D review): the desktop root (`main()` -> DesktopRoot) passes
+        // `openExplicitGeneration = { generation -> openExplicitDesktopLedger(...) }` to
+        // DesktopStartupController. `DesktopRoot` is a Compose composable, so it is not reachable
+        // from a JVM unit test; this SOURCE-LEVEL guard pins the call site so a refactor dropping the
+        // argument (the RC-2 regression) turns RED. It proves the call site EXISTS, not its runtime
+        // behaviour.
+        val root = repositoryFile("desktop-app/src/jvmMain/kotlin/com/unifiedledger/desktop/Main.kt").readText()
+        assertTrue(
+            root.contains("openExplicitGeneration = { generation ->"),
+            "the desktop root must pass an explicit-generation opener to DesktopStartupController (RC-2)",
+        )
+        assertTrue(
+            root.contains("openExplicitDesktopLedger(fileSystem, layout, generation)"),
+            "the desktop root's explicit opener must delegate to the production openExplicitDesktopLedger (RC-2)",
+        )
+    }
+
+    /** Resolves a repository-root-relative path (the ledger-data jvmTest precedent). */
+    private fun repositoryFile(relative: String): Path {
+        var candidate = Path.of(System.getProperty("user.dir"))
+        repeat(8) {
+            if (Files.isRegularFile(candidate.resolve("settings.gradle.kts"))) return candidate.resolve(relative)
+            candidate = candidate.parent ?: error("repository root not found")
+        }
+        error("repository root not found")
     }
 
     @Test

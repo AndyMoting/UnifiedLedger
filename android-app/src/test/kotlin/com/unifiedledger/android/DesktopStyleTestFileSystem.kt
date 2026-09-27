@@ -7,6 +7,9 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * P7-06 06.1 (D-176): a JVM filesystem [LedgerFileSystem] for the Android unit tests. The
@@ -48,9 +51,24 @@ internal class DesktopStyleTestFileSystem : LedgerFileSystem {
         target.parentFile?.mkdirs()
         val temporary = File(target.parentFile, target.name + ".tmp")
         FileOutputStream(temporary).use { it.write(bytes) }
-        if (!temporary.renameTo(target)) {
+        // The port contract is an atomic REPLACE (LedgerStableStorage.kt "Atomic replace: the bytes
+        // become visible at [path] in one platform atomic step"), and both production adapters
+        // replace an existing target (desktop `Files.move(..., REPLACE_EXISTING)`, Android
+        // `AtomicFile`). `File.renameTo` does NOT replace an existing target on Windows, so the
+        // earlier form threw here; no earlier test wrote over an existing pointer, so the
+        // infidelity surfaced only when the 06.D confirm switch republished the pointer (step 7).
+        // Mirror the production desktop adapter so this double keeps the frozen contract on every
+        // host.
+        try {
+            Files.move(
+                temporary.toPath(),
+                target.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } catch (unsupported: AtomicMoveNotSupportedException) {
             temporary.delete()
-            throw IllegalStateException("atomic rename failed for $path")
+            throw unsupported
         }
     }
 
