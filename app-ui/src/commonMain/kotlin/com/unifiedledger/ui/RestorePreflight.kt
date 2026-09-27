@@ -118,9 +118,20 @@ class RestoreOwnerCounts(
 
 /**
  * P7-06 06.C (spec section 8.2): the controlled isolated-database surface. The platform adapter
- * opens the decrypted snapshot / migrated copy by ABSOLUTE PATH read-write without create-on-open
- * and without automatic migration, runs the STRICT migration helper and the validation helpers, and
- * closes the connection. The shared preflight never sees a driver.
+ * opens the decrypted snapshot / migrated copy by ABSOLUTE PATH without create-on-open and without
+ * automatic migration, runs the STRICT migration helper and the validation helpers, and closes the
+ * connection. The shared preflight never sees a driver.
+ *
+ * OPEN MODE IS PER-PLATFORM (06.D device-gate defect 1, D-183). The inspection legs
+ * ([readAuthoritativeUserVersion], [readObservedLedgerIdentities], [validate],
+ * [integrityCheckOk], [readOwnerCounts]) must open READ-ONLY wherever the platform supports a
+ * read-only open, so inspecting an unverifiable candidate never writes into it or its directory
+ * (spec section 5.3); the migration leg ([migrateStrictly]) is READ-WRITE because a strict migration
+ * is a real transaction. Android implements exactly that split (`AndroidRestoreIsolatedDatabasePort`:
+ * `openAndroidReadOnlyDriver` / `openAndroidReadWriteDriver`); desktop currently opens read-write on
+ * every leg through `JdbcSqliteDriver`, which is acceptable because the desktop isolated copy is a
+ * file this preflight just wrote. This KDoc therefore states the contract the ports owe, not a claim
+ * that every platform already satisfies the read-only half.
  */
 interface RestoreIsolatedDatabasePort {
     /** The AUTHORITATIVE `PRAGMA user_version` of the payload (container-format spec section 4.3.2). */

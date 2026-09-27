@@ -715,19 +715,34 @@ internal fun deleteGenerationDirectory(
     // that silently no-ops (a surviving sidecar, a permission failure) must fail loud here, so the
     // discard branch can never report a success it did not achieve (defect 2).
     if (fileSystem.exists(directory)) {
-        throw LedgerGenerationDirectoryDeleteException(directory)
+        throw LedgerGenerationDirectoryDeleteException(LedgerGenerationDirectoryKind.GENERATION_DIRECTORY)
     }
+}
+
+/**
+ * Which directory a [LedgerGenerationDirectoryDeleteException] found still present. A typed code,
+ * not a path: this is a commonMain exception, and the platform host paths it would otherwise embed
+ * are machine-specific (the same reason [LedgerStorageRejectedException] carries an enum rather than
+ * a location). The two codes are the two deletion sites this strictness covers.
+ */
+enum class LedgerGenerationDirectoryKind {
+    /** One `gen-<n>` generation directory (the [deleteGenerationDirectory] contract). */
+    GENERATION_DIRECTORY,
+
+    /** The `generations/` parent directory (the discard branch's final emptied-parent check). */
+    GENERATIONS_DIRECTORY,
 }
 
 /**
  * The typed failure of a structured generation-directory deletion (06.D device-gate defect 2,
  * D-183): the directory survived the deletion attempt, so a caller that depends on its absence (the
  * discard-and-re-upgrade branch, the confirm-time delete-then-stage precondition) must fail closed
- * instead of reporting success.
+ * instead of reporting success. [target] names WHICH directory survived as a typed code; the message
+ * deliberately carries no runtime path (DG-3, D-183).
  */
 class LedgerGenerationDirectoryDeleteException(
-    directory: String,
-) : RuntimeException("generation directory survived deletion: $directory")
+    val target: LedgerGenerationDirectoryKind,
+) : RuntimeException("generation directory survived deletion: $target")
 
 /**
  * 06.D spec section 4.2/4.3: the restart half of the frozen ROLLBACK rule (container-format spec

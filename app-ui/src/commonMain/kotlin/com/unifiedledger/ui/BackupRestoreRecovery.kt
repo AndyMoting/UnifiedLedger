@@ -248,7 +248,7 @@ class PointerMissingRecoveryUseCase(
             // 5.3; 06.1 rule 2 keeps POINTER_MISSING fail-closed while the directory exists). A
             // platform `delete` that silently no-ops must not be reported as success (defect 2).
             if (fileSystem.exists(layout.generationsDirectory)) {
-                throw LedgerGenerationDirectoryDeleteException(layout.generationsDirectory)
+                throw LedgerGenerationDirectoryDeleteException(LedgerGenerationDirectoryKind.GENERATIONS_DIRECTORY)
             }
             PointerRecoveryDiscardResult.DiscardedAwaitingUpgrade
         } catch (failure: Error) {

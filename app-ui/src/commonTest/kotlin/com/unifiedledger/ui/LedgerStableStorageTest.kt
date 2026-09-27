@@ -288,10 +288,15 @@ class LedgerStableStorageTest {
         fileSystem.putFile(generationOneMain, sqliteLikeBytes())
         fileSystem.putFile(fileSystem.join(generationOneDirectory, "foreign.bin"), ByteArray(4))
 
-        assertFailsWith<LedgerGenerationDirectoryDeleteException> {
-            deleteGenerationDirectory(fileSystem, layout, 1)
-        }
+        val thrown =
+            assertFailsWith<LedgerGenerationDirectoryDeleteException> {
+                deleteGenerationDirectory(fileSystem, layout, 1)
+            }
         assertTrue(fileSystem.hasDirectory(generationOneDirectory))
+        // DG-3 (D-183): the failure names the surviving directory as a typed code, not a runtime
+        // path — a platform host path must never leak into a commonMain exception message.
+        assertEquals(LedgerGenerationDirectoryKind.GENERATION_DIRECTORY, thrown.target)
+        assertFalse("the message must not embed a runtime path", thrown.message.orEmpty().contains(generationOneDirectory))
     }
 
     @Test

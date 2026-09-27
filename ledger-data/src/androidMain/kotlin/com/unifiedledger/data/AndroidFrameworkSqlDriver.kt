@@ -87,7 +87,7 @@ fun openAndroidReadWriteDriver(path: String): SqlDriver = openAndroidDriver(path
  * the `BEGIN ... REINDEX ... COMMIT` block), so merely INSPECTING a candidate leaves it — and its
  * directory — byte-identical. That is the spec section 5.3 discipline the probe must keep: it
  * "never adopts, never discards", so it must also never write. The read-only shape has device
- * precedent: `verifyAndroidSnapshotFile` (`AndroidLedgerDatabaseHandle.kt:161-181`) is the same
+ * precedent: `verifyAndroidSnapshotFile` (`AndroidLedgerDatabaseHandle.kt:177-203`) is the same
  * read-only framework open and is pinned non-mutating by
  * `AndroidBackupSnapshotVerificationInstrumentedTest`.
  */
@@ -124,7 +124,7 @@ private fun openAndroidDriver(
  * throwing probe to a fail-closed verdict: the adapter's `executeQuery`/`execute` paths let it out,
  * and the use cases map a throwing probe to "cannot verify" (never an optimistic adoption). It is
  * the same shape as the product ledger's own `ForeignKeysCallback.onCorruption` override
- * (`AndroidLedgerDatabaseHandle.kt:209-220`), which exists for exactly this reason (D-132 D-2) and
+ * (`AndroidLedgerDatabaseHandle.kt:231-242`), which exists for exactly this reason (D-132 D-2) and
  * is pinned by a host test asserting zero recorded calls.
  *
  * The `dbObj` parameter is declared NULLABLE on purpose: the Java interface parameter is a platform

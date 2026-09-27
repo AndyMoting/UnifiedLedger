@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.unifiedledger.data.verifyAndroidSnapshotFile
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -118,6 +119,45 @@ class AndroidBackupSnapshotVerificationInstrumentedTest {
         } else {
             assertFalse(verification.getOrThrow().integrityOk)
         }
+    }
+
+    @Test
+    fun aCorruptSnapshotIsNeverDeletedByVerification() {
+        // DG-1 (D-183): verifyAndroidSnapshotFile used to open with the 3-argument
+        // SQLiteDatabase.openDatabase(path, null, OPEN_READONLY) overload, whose null error handler
+        // the constructor replaces with new DefaultDatabaseErrorHandler() (AOSP SQLiteDatabase.java
+        // :493); that default's onCorruption CLOSES then DELETES the file (AOSP
+        // DefaultDatabaseErrorHandler.java:53-108). So verifying a CORRUPT export snapshot deleted
+        // it — the same destructive defect the 06.D isolated opens fixed. The open now passes the
+        // shared non-deleting PreservingIsolatedDatabaseErrorHandler, so the snapshot must survive
+        // BYTE-IDENTICAL whether verification throws (typed corruption signal) or reports not-ok.
+        val dir = newTestDir()
+        val bogus = File(dir, "bogus-snapshot").apply { writeBytes(ByteArray(4096) { 0x5A }) }
+        val beforeBytes = bogus.readBytes()
+
+        val outcome = runCatching { verifyAndroidSnapshotFile(bogus.absolutePath) }
+
+        // The failure must be SURFACED (a thrown typed failure or a not-ok report): silently
+        // accepting a corrupt snapshot is the other half of the defect.
+        val failure = outcome.exceptionOrNull()
+        if (failure != null) {
+            assertFalse(
+                "a corrupt snapshot must be surfaced, not reported ok",
+                failure.message?.contains("Version must be >= 1") == true,
+            )
+        } else {
+            assertFalse("a corrupt snapshot must never verify ok", outcome.getOrThrow().integrityOk)
+        }
+
+        // The load-bearing device pin: the corrupt fixture is still there, byte-identical, and no
+        // sidecar or rewritten file appeared. Reverting to the 3-argument null-handler open deletes
+        // this fixture during the platform's corruption callback and turns this assertion RED.
+        assertTrue("a corrupt snapshot must never be deleted by verification", bogus.exists())
+        assertArrayEquals(
+            "verification must not rewrite the corrupt snapshot",
+            beforeBytes,
+            bogus.readBytes(),
+        )
     }
 
     /**

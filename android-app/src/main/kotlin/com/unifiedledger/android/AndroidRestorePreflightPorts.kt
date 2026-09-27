@@ -27,8 +27,10 @@ import java.util.concurrent.TimeUnit
  * P7-06 06.C (D-179; spec `docs/specs/2026-09-25-p7-06-restore-preflight-design.md` sections 8.1
  * and 8.2): the Android platform adapters for the restore preflight. The source port uses SAF
  * `OpenDocument` + `ContentResolver.openInputStream` (the `App.kt` precedent); the isolated-database
- * port opens the decrypted snapshot / migrated copy by ABSOLUTE PATH read-write WITHOUT
- * create-on-open and delegates to the commonMain strict helpers.
+ * port opens the decrypted snapshot / migrated copy by ABSOLUTE PATH through the minimal
+ * non-create-on-open drivers — READ-ONLY for every inspection leg, READ-WRITE only for the migration
+ * leg (06.D device-gate defect 1, D-183; see [AndroidRestoreIsolatedDatabasePort]) — and delegates to
+ * the commonMain strict helpers.
  */
 
 /** How long [AndroidBackupSourcePort.openSource] waits for the user's SAF choice. */
