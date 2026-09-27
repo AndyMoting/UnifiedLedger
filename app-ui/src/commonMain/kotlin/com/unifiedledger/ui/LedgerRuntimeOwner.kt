@@ -81,6 +81,42 @@ sealed interface GenerationSelection {
     ) : GenerationSelection
 }
 
+/**
+ * P7-06 06.D (D-182; spec `docs/specs/2026-09-26-p7-06-restore-confirm-switch-design.md` section 3
+ * step 8, sections 3.8/3.9): dispatches one [LedgerRuntimeOwner] open request to the matching
+ * opener. The two composition roots wire their owner through this function so BOTH honour
+ * [GenerationSelection.Explicit] identically instead of silently ignoring the selection.
+ *
+ * [GenerationSelection.ActivePointer] runs the full startup sequence ([openActivePointer]): the
+ * on-disk pointer decides, and the switch-journal gate stays live, so a crashed session's
+ * `prepared`/`switched` journal still rolls back at startup (container-format spec section 5.3).
+ * Startup, the section 3.10 restoration reopen and the section 3.8 rollback reopen all use it.
+ *
+ * [GenerationSelection.Explicit] runs [openExplicit] with the named disk generation and MUST NOT
+ * fall back to the pointer path: it is the confirm switch's step-8 reopen, which runs while this
+ * flow's OWN `switched` journal is still on disk (it is removed only after the read-back, spec
+ * section 3.9), so the pointer path's journal gate would consume that journal and roll the switch
+ * back. The explicit opener ([openExplicitGeneration]) opens the named generation directly.
+ *
+ * A null [openExplicit] (an unwired root, e.g. an existing startup test) makes an Explicit request
+ * fail LOUDLY instead of silently falling back to the pointer path — the fallback is exactly the
+ * defect that rolled the switch back, so it must never be a silent behaviour.
+ */
+fun <G> openGenerationForSelection(
+    selection: GenerationSelection,
+    openActivePointer: () -> G,
+    openExplicit: ((Int) -> G)?,
+): G =
+    when (selection) {
+        GenerationSelection.ActivePointer -> openActivePointer()
+        is GenerationSelection.Explicit -> {
+            val opener =
+                openExplicit
+                    ?: error("the explicit-generation opener is not wired; the confirm switch requires it")
+            opener(selection.generation)
+        }
+    }
+
 /** A successful startup. */
 sealed interface LedgerStartupResult {
     data class Started(
@@ -199,9 +235,10 @@ const val LEDGER_QUIESCE_TIMEOUT_MILLIS: Long = 5_000L
  * shared module stays free of platform types; the composition root supplies the open/close
  * actions and the facade projection.
  *
- * @param openActiveGeneration opens the active generation from stable storage (performing any
- *   legacy upgrade and the authoritative read-back) and returns the built graph; it throws on any
- *   failure, which the owner maps to fail-closed.
+ * @param openGeneration opens the requested generation from stable storage (performing any
+ *   legacy upgrade and the authoritative read-back for the [GenerationSelection.ActivePointer]
+ *   selection) and returns the built graph; it throws on any failure, which the owner maps to
+ *   fail-closed.
  * @param closeGraph releases the platform connection; idempotent.
  * @param facadeOf projects the business facade out of a graph.
  */
@@ -209,11 +246,14 @@ const val LEDGER_QUIESCE_TIMEOUT_MILLIS: Long = 5_000L
 class LedgerRuntimeOwner<G : Any>(
     /**
      * Opens the requested generation and performs the authoritative read-back, returning the built
-     * graph. Throwing fails the startup/reopen closed. Both composition roots always pass
-     * [GenerationSelection.ActivePointer] (the on-disk pointer is the only selection the product
-     * uses; the 06.D confirm & switch publishes the pointer and then reopens through it, it does
-     * NOT select a generation explicitly). [GenerationSelection.Explicit] is exercised only by the
-     * owner's own tests — no production caller supplies it.
+     * graph. Throwing fails the startup/reopen closed.
+     *
+     * Both composition roots dispatch this through [openGenerationForSelection], so BOTH selections
+     * are production-reachable: startup and every restoration/rollback reopen pass
+     * [GenerationSelection.ActivePointer] (the full pointer + journal-gate path), and the 06.D
+     * confirm switch's step-8 reopen passes [GenerationSelection.Explicit] with the generation it
+     * just staged and published — a path that must NOT re-enter the journal gate while its own
+     * `switched` journal is still on disk (see [openExplicitGeneration]).
      */
     private val openGeneration: (GenerationSelection) -> G,
     private val closeGraph: (G) -> Unit,

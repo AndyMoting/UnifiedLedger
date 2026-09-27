@@ -131,11 +131,13 @@ import com.unifiedledger.ui.BackupSnapshotPort
 import com.unifiedledger.ui.BackupSourcePort
 import com.unifiedledger.ui.BackupTargetPort
 import com.unifiedledger.ui.ConfirmBackupRestoreUseCase
+import com.unifiedledger.ui.GenerationSelection
 import com.unifiedledger.ui.ImportConfirmUseCaseSet
 import com.unifiedledger.ui.ImportDuplicateReviewIds
 import com.unifiedledger.ui.ImportFilePickResultChannel
 import com.unifiedledger.ui.LedgerFileSystem
 import com.unifiedledger.ui.LedgerLeaseScope
+import com.unifiedledger.ui.LedgerOpenTarget
 import com.unifiedledger.ui.LedgerRuntimeOwner
 import com.unifiedledger.ui.LedgerStartupResult
 import com.unifiedledger.ui.LedgerStorageFailure
@@ -156,6 +158,8 @@ import com.unifiedledger.ui.UuidV7ImportCommitIdSource
 import com.unifiedledger.ui.importCreditRefundOriginalExpenseProvider
 import com.unifiedledger.ui.isUsableSqliteMainFile
 import com.unifiedledger.ui.ledgerStorageLayout
+import com.unifiedledger.ui.openExplicitGeneration
+import com.unifiedledger.ui.openGenerationForSelection
 import com.unifiedledger.ui.openStableStorageLedger
 import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
@@ -252,6 +256,12 @@ fun main() {
             onExit = ::exitApplication,
             backupWiring = DesktopBackupWiring(fileSystem, layout),
             restoreWiring = DesktopRestoreWiring(fileSystem, layout),
+            // P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the confirm switch's step-8 reopen opens
+            // the generation it just published BY NAME, bypassing the startup journal gate that
+            // would otherwise consume its own live `switched` journal.
+            openExplicitGeneration = { generation ->
+                openExplicitDesktopLedger(fileSystem, layout, generation)
+            },
         )
     }
 }
@@ -274,8 +284,10 @@ internal fun DesktopRoot(
     onExit: () -> Unit,
     backupWiring: DesktopBackupWiring? = null,
     restoreWiring: DesktopRestoreWiring? = null,
+    // P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the confirm switch's step-8 explicit reopen.
+    openExplicitGeneration: ((Int) -> CloseableLedgerGraph)? = null,
 ) {
-    val controller = remember { DesktopStartupController(openDatabase, backupWiring, restoreWiring).also { it.start() } }
+    val controller = remember { DesktopStartupController(openDatabase, backupWiring, restoreWiring, openExplicitGeneration).also { it.start() } }
     Window(onCloseRequest = onExit, title = "UnifiedLedger Desktop") {
         val ledger = controller.ledger
         when {
@@ -356,6 +368,10 @@ internal class DesktopStartupController(
     // P7-06 06.D (D-182; spec section 6, P2-7): the optional restore wiring; present, it binds
     // exactly one set of use-case instances (the confirm single-flight guard assumes it).
     restoreWiring: DesktopRestoreWiring? = null,
+    // P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the explicit-generation opener the confirm
+    // switch's step-8 reopen needs. Null (the existing startup tests) keeps the owner on the
+    // pointer path only; a production root wires it so the two selections are honoured.
+    private val openExplicitGeneration: ((Int) -> CloseableLedgerGraph)? = null,
 ) {
     var state by mutableStateOf<P503StartupState>(P503StartupState.Starting)
         private set
@@ -363,15 +379,37 @@ internal class DesktopStartupController(
     /**
      * P7-06 06.1 (D-176; spec section 4): the single runtime owner of the active graph, exactly
      * like the Android controller. [openDatabase] is the injected graph builder the tests use.
+     *
+     * P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): both [GenerationSelection]s are honoured.
+     * ActivePointer keeps the full startup sequence (pointer + journal gate, so a crashed
+     * session's journal still rolls back at startup); Explicit opens the named generation directly
+     * with the SAME non-fresh usability guard, which is what the confirm switch's step-8 reopen
+     * needs while its own `switched` journal is still on disk. An Explicit request with no wired
+     * opener fails LOUDLY rather than silently falling back to the pointer path (the fallback is
+     * exactly the defect that rolled the switch back).
      */
     private val owner =
         LedgerRuntimeOwner(
-            openGeneration = {
-                openDatabase().also { graph -> lastOpenedGraph = graph }
+            openGeneration = { selection ->
+                openGenerationForSelection(
+                    selection = selection,
+                    openActivePointer = { openDatabase().also { graph -> lastOpenedGraph = graph } },
+                    openExplicit = wiredExplicitOpener,
+                )
             },
             closeGraph = { graph -> graph.close() },
             facadeOf = { graph -> graph.facade },
         )
+
+    /**
+     * The owner's Explicit route, tracking the opened graph like the pointer route. Null stays
+     * null so [openGenerationForSelection] owns the single fail-loud check (never a silent
+     * fallback to the pointer path, which is the defect that rolled the switch back).
+     */
+    private val wiredExplicitOpener: ((Int) -> CloseableLedgerGraph)? =
+        openExplicitGeneration?.let { opener ->
+            { generation: Int -> opener(generation).also { graph -> lastOpenedGraph = graph } }
+        }
 
     /**
      * P7-06 06.B (D-177): the most recently opened graph, captured so the export use case resolves
@@ -1092,11 +1130,42 @@ internal fun openStableStorageDesktopLedger(
         legacyMainFile = null,
         closeGraph = { graph -> graph.close() },
     ) { target ->
-        if (!target.allowCreateOnOpen && !isUsableSqliteMainFile(fileSystem, target.mainFile)) {
-            throw LedgerStorageRejectedException(LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE)
-        }
+        requireUsableDesktopTarget(fileSystem, target)
         openDesktopLedger("jdbc:sqlite:${target.mainFile}")
     }
+
+/**
+ * P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the desktop confirm switch's step-8 reopen — the
+ * named generation is opened DIRECTLY, without the startup sequence's pointer resolution and
+ * WITHOUT its switch-journal gate. The gate would consume this flow's own live `switched` journal
+ * and roll the switch back (see [openExplicitGeneration]); the explicit route is safe because
+ * step 6 already staged/fsynced/gated the generation and step 7 published the pointer to it.
+ *
+ * The same non-fresh usability guard as the startup open is applied (the JDBC driver creates on
+ * open, so a missing/invalid main file must fail closed rather than become an empty ledger).
+ */
+internal fun openExplicitDesktopLedger(
+    fileSystem: LedgerFileSystem,
+    layout: LedgerStorageLayout,
+    generation: Int,
+): CloseableLedgerGraph =
+    openExplicitGeneration(fileSystem, layout, generation) { target ->
+        requireUsableDesktopTarget(fileSystem, target)
+        openDesktopLedger("jdbc:sqlite:${target.mainFile}")
+    }
+
+/**
+ * P7-06 06.1 (D-176; spec section 4.5): the desktop non-fresh create-on-open guard, shared by the
+ * startup open and the 06.D explicit reopen so the two routes cannot drift.
+ */
+private fun requireUsableDesktopTarget(
+    fileSystem: LedgerFileSystem,
+    target: LedgerOpenTarget,
+) {
+    if (!target.allowCreateOnOpen && !isUsableSqliteMainFile(fileSystem, target.mainFile)) {
+        throw LedgerStorageRejectedException(LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE)
+    }
+}
 
 /**
  * Reads the SQLite user_version and conditionally creates, opens or migrates the schema.

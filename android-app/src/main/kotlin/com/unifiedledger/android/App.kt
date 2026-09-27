@@ -129,6 +129,7 @@ import com.unifiedledger.ui.BackupSourcePort
 import com.unifiedledger.ui.BackupTargetPort
 import com.unifiedledger.ui.CloseResult
 import com.unifiedledger.ui.ConfirmBackupRestoreUseCase
+import com.unifiedledger.ui.GenerationSelection
 import com.unifiedledger.ui.ImportConfirmUseCaseSet
 import com.unifiedledger.ui.ImportDuplicateReviewIds
 import com.unifiedledger.ui.ImportFilePickResultChannel
@@ -156,6 +157,8 @@ import com.unifiedledger.ui.UuidV7ImportCommitIdSource
 import com.unifiedledger.ui.importCreditRefundOriginalExpenseProvider
 import com.unifiedledger.ui.isUsableSqliteMainFile
 import com.unifiedledger.ui.ledgerStorageLayout
+import com.unifiedledger.ui.openExplicitGeneration
+import com.unifiedledger.ui.openGenerationForSelection
 import com.unifiedledger.ui.openStableStorageLedger
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -272,6 +275,12 @@ fun app() {
                     // guards the target before any create-on-open factory runs.
                     openAndroidStableStorageLedger(context, importFilePickPort, importPickChannel)
                 },
+                // P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the confirm switch's step-8 reopen
+                // opens the generation it just published BY NAME, bypassing the startup journal
+                // gate that would otherwise consume its own live `switched` journal.
+                openExplicitGeneration = { generation ->
+                    openAndroidExplicitGeneration(context, importFilePickPort, importPickChannel, generation)
+                },
                 // P0 hotfix (defect 2): [startScope] is the composition-scoped main dispatcher
                 // used only for the state writes; the blocking open runs on [backgroundDispatcher]
                 // (the controller's Dispatchers.IO default).
@@ -379,6 +388,10 @@ internal class AndroidStartupController(
     // restore + recovery surface absent; present, it binds exactly one set of use-case instances
     // (the single-flight guard assumes one confirm instance per runtime).
     private val restoreWiring: AndroidRestoreWiring? = null,
+    // P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the explicit-generation opener the confirm
+    // switch's step-8 reopen needs. Null (the existing startup tests) keeps the owner on the
+    // pointer path only; a production root wires it so the two selections are honoured.
+    private val openExplicitGeneration: ((Int) -> CloseableLedgerGraph)? = null,
 ) {
     var state by mutableStateOf<P503StartupState>(P503StartupState.Starting)
         private set
@@ -388,15 +401,37 @@ internal class AndroidStartupController(
      * controller no longer holds a graph itself — every open, close and generation increment goes
      * through the owner, so "at most one active graph" is the owner's invariant rather than the
      * controller's bookkeeping. [openDatabase] is the injected graph builder the tests already use.
+     *
+     * P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): both [GenerationSelection]s are honoured.
+     * ActivePointer keeps the full startup sequence (pointer + journal gate, so a crashed
+     * session's journal still rolls back at startup); Explicit opens the named generation directly
+     * with the SAME non-fresh usability guard, which is what the confirm switch's step-8 reopen
+     * needs while its own `switched` journal is still on disk. An Explicit request with no wired
+     * opener fails LOUDLY rather than silently falling back to the pointer path (the fallback is
+     * exactly the defect that rolled the switch back).
      */
     private val owner =
         LedgerRuntimeOwner(
-            openGeneration = {
-                openDatabase().also { graph -> lastOpenedGraph = graph }
+            openGeneration = { selection ->
+                openGenerationForSelection(
+                    selection = selection,
+                    openActivePointer = { openDatabase().also { graph -> lastOpenedGraph = graph } },
+                    openExplicit = wiredExplicitOpener,
+                )
             },
             closeGraph = { graph -> graph.close() },
             facadeOf = { graph -> graph.facade },
         )
+
+    /**
+     * The owner's Explicit route, tracking the opened graph like the pointer route. Null stays
+     * null so [openGenerationForSelection] owns the single fail-loud check (never a silent
+     * fallback to the pointer path, which is the defect that rolled the switch back).
+     */
+    private val wiredExplicitOpener: ((Int) -> CloseableLedgerGraph)? =
+        openExplicitGeneration?.let { opener ->
+            { generation: Int -> opener(generation).also { graph -> lastOpenedGraph = graph } }
+        }
 
     /**
      * P7-06 06.B (D-177): the most recently opened graph, captured so the export use case can
@@ -884,30 +919,92 @@ private fun openAndroidStableStorageLedgerLocked(
         legacyMainFile = legacyMainFile,
         closeGraph = { graph -> graph.close() },
     ) { target ->
-        // P7-06 06.1 fix (review Fix 7; spec section 4.5): the AndroidSqliteDriver creates on
-        // open, so a NON-fresh target must be re-guarded here exactly like the desktop root's JDBC
-        // guard — otherwise a missing/zero-length/invalid main file would be silently created as an
-        // empty ledger instead of failing closed (the silent-empty-DB prohibition).
-        requireUsableNonFreshTarget(fileSystem, target)
-        // P5-04.4 S3: a failure mid-open (after the handle exists) must not leak the driver, so
-        // the handle is closed before rethrowing; the controller additionally closes any graph it
-        // already holds in its catch block.
-        //
-        // P0 hotfix (defect 1): the driver name is the ABSOLUTE generation main file. A relative
-        // name containing a path separator (e.g. "ledger-generations/gen-1/ledger.db") is rejected
-        // by the framework: androidx FrameworkSQLiteOpenHelper passes the raw name to
-        // Context.getDatabasePath, whose non-separator-prefixed branch calls makeFilename, which
-        // throws IllegalArgumentException("File " + name + " contains a path separator"). The
-        // absolute branch resolves the parent directory itself and works. target.mainFile is
-        // already absolute (built by fileSystem.join over the absolute host directory), so
-        // androidGenerationDriverName returns it unchanged and openDriver receives an absolute path.
-        val handle = openDriver(androidGenerationDriverName(target.mainFile))
-        try {
-            buildLedgerGraph(handle, importFilePickPort, importPickChannel, AndroidBackupSnapshotPort(handle))
-        } catch (failure: Exception) {
-            handle.close()
-            throw failure
-        }
+        buildAndroidGenerationGraph(fileSystem, target, importFilePickPort, importPickChannel, openDriver)
+    }
+}
+
+/**
+ * P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the Android confirm switch's step-8 reopen — the
+ * named generation is opened DIRECTLY, without the startup sequence's pointer resolution and
+ * WITHOUT its switch-journal gate. The gate would consume this flow's own live `switched` journal
+ * and roll the switch back (see [openExplicitGeneration]); the explicit route is safe because
+ * step 6 already staged/fsynced/gated the generation and step 7 published the pointer to it.
+ *
+ * It still runs under [withAndroidStableStorageOpenLock] for the same reason the startup open
+ * does: the pointer was published just before this call, so a concurrent composition open could
+ * resolve the SAME generation and race this one onto the same database file. The lock is taken
+ * while the owner mutex is held (the established order — [openAndroidStableStorageLedger] takes
+ * it the same way), so the two never invert.
+ */
+internal fun openAndroidExplicitGeneration(
+    context: android.content.Context,
+    importFilePickPort: AndroidImportFilePickPort<Uri>,
+    importPickChannel: ImportFilePickResultChannel,
+    generation: Int,
+    openDriver: (String) -> AndroidLedgerDatabaseHandle = { name -> createAndroidLedgerDatabase(context, name) },
+): CloseableLedgerGraph =
+    withAndroidStableStorageOpenLock {
+        val databasePath = context.getDatabasePath(LEGACY_ANDROID_DATABASE_NAME)
+        val (hostDirectory, _) = androidStableStoragePaths(databasePath)
+        val fileSystem = AndroidLedgerFileSystem()
+        val layout = ledgerStorageLayout(fileSystem, hostDirectory)
+        openAndroidExplicitGenerationWith(fileSystem, layout, generation, importFilePickPort, importPickChannel, openDriver)
+    }
+
+/**
+ * The platform-independent body of [openAndroidExplicitGeneration] over an already-resolved
+ * filesystem and layout. Extracted so the explicit route's gate bypass and non-fresh guard are
+ * JVM-testable without a Context (the [AndroidStableStorageTest] pattern); production always
+ * arrives through [openAndroidExplicitGeneration], which resolves the paths from the platform.
+ */
+internal fun openAndroidExplicitGenerationWith(
+    fileSystem: LedgerFileSystem,
+    layout: LedgerStorageLayout,
+    generation: Int,
+    importFilePickPort: AndroidImportFilePickPort<Uri>,
+    importPickChannel: ImportFilePickResultChannel,
+    openDriver: (String) -> AndroidLedgerDatabaseHandle,
+): CloseableLedgerGraph =
+    openExplicitGeneration(fileSystem, layout, generation) { target ->
+        buildAndroidGenerationGraph(fileSystem, target, importFilePickPort, importPickChannel, openDriver)
+    }
+
+/**
+ * Builds one Android graph for an already-resolved open target: the non-fresh usability guard,
+ * the driver open at the absolute generation main file, and the graph build (closing the handle
+ * on a mid-open failure). Shared by the startup sequence and the explicit confirm reopen so the
+ * two routes cannot drift.
+ */
+private fun buildAndroidGenerationGraph(
+    fileSystem: LedgerFileSystem,
+    target: LedgerOpenTarget,
+    importFilePickPort: AndroidImportFilePickPort<Uri>,
+    importPickChannel: ImportFilePickResultChannel,
+    openDriver: (String) -> AndroidLedgerDatabaseHandle,
+): CloseableLedgerGraph {
+    // P7-06 06.1 fix (review Fix 7; spec section 4.5): the AndroidSqliteDriver creates on
+    // open, so a NON-fresh target must be re-guarded here exactly like the desktop root's JDBC
+    // guard — otherwise a missing/zero-length/invalid main file would be silently created as an
+    // empty ledger instead of failing closed (the silent-empty-DB prohibition).
+    requireUsableNonFreshTarget(fileSystem, target)
+    // P5-04.4 S3: a failure mid-open (after the handle exists) must not leak the driver, so
+    // the handle is closed before rethrowing; the controller additionally closes any graph it
+    // already holds in its catch block.
+    //
+    // P0 hotfix (defect 1): the driver name is the ABSOLUTE generation main file. A relative
+    // name containing a path separator (e.g. "ledger-generations/gen-1/ledger.db") is rejected
+    // by the framework: androidx FrameworkSQLiteOpenHelper passes the raw name to
+    // Context.getDatabasePath, whose non-separator-prefixed branch calls makeFilename, which
+    // throws IllegalArgumentException("File " + name + " contains a path separator"). The
+    // absolute branch resolves the parent directory itself and works. target.mainFile is
+    // already absolute (built by fileSystem.join over the absolute host directory), so
+    // androidGenerationDriverName returns it unchanged and openDriver receives an absolute path.
+    val handle = openDriver(androidGenerationDriverName(target.mainFile))
+    return try {
+        buildLedgerGraph(handle, importFilePickPort, importPickChannel, AndroidBackupSnapshotPort(handle))
+    } catch (failure: Exception) {
+        handle.close()
+        throw failure
     }
 }
 

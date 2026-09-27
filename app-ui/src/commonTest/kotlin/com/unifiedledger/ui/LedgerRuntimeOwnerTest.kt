@@ -20,6 +20,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
@@ -139,6 +140,62 @@ class LedgerRuntimeOwnerTest {
             listOf(GenerationSelection.ActivePointer, GenerationSelection.Explicit(3)),
             selections,
         )
+    }
+
+    @Test
+    fun openGenerationForSelectionHonoursBothSelectionsWithoutAnyFallback() {
+        // P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the shared dispatcher BOTH composition roots
+        // wire their owner through. ActivePointer must take the pointer route (whose journal gate
+        // keeps a crashed session's journal rolling back at startup); Explicit must open the NAMED
+        // generation and must NEVER fall back to the pointer route — the fallback is exactly the
+        // regression that made the confirm switch consume its own live `switched` journal and roll
+        // itself back.
+        val pointerOpens = mutableListOf<Unit>()
+        val explicitOpens = mutableListOf<Int>()
+
+        val viaPointer =
+            openGenerationForSelection(
+                selection = GenerationSelection.ActivePointer,
+                openActivePointer = {
+                    pointerOpens += Unit
+                    "pointer"
+                },
+                openExplicit = { generation ->
+                    explicitOpens += generation
+                    "explicit"
+                },
+            )
+        val viaExplicit =
+            openGenerationForSelection(
+                selection = GenerationSelection.Explicit(7),
+                openActivePointer = {
+                    pointerOpens += Unit
+                    "pointer"
+                },
+                openExplicit = { generation ->
+                    explicitOpens += generation
+                    "explicit"
+                },
+            )
+
+        assertEquals("pointer", viaPointer)
+        assertEquals("explicit", viaExplicit)
+        assertEquals(1, pointerOpens.size, "ActivePointer must use the pointer route exactly once")
+        assertEquals(listOf(7), explicitOpens, "Explicit must open the NAMED generation, never the pointer route")
+
+        // An Explicit request with NO wired opener fails loudly: it must never silently fall back
+        // to the pointer route (the fallback is the very defect that rolled the switch back).
+        assertFailsWith<IllegalStateException> {
+            openGenerationForSelection(
+                selection = GenerationSelection.Explicit(7),
+                openActivePointer = {
+                    pointerOpens += Unit
+                    "pointer"
+                },
+                openExplicit = null,
+            )
+        }
+        assertEquals(1, pointerOpens.size, "a null explicit opener must not touch the pointer route")
     }
 
     @Test

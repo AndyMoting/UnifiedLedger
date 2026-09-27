@@ -10,6 +10,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * P7-06 06.1 (D-176; spec sections 3.3/3.4/4.5/5.1 and 6): the desktop stable storage over the
@@ -161,6 +162,61 @@ class DesktopStableStorageTest {
             graph.close()
         } finally {
             Files.deleteIfExists(Path.of(url.removePrefix("jdbc:sqlite:")))
+        }
+    }
+
+    @Test
+    fun theExplicitReopenOpensTheNamedGenerationWithoutConsumingItsOwnSwitchedJournal() {
+        // P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the desktop confirm switch's step-8 reopen
+        // opens the named generation DIRECTLY. The startup route would run the journal gate on the
+        // flow's own still-present `switched` journal, republish the old pointer and delete the new
+        // generation — the switch would roll itself back while reporting success. This pins the
+        // bypass on the real filesystem, with a real SQLite generation opened.
+        val host = tempHost()
+        try {
+            val fileSystem = DesktopLedgerFileSystem()
+            val layout = ledgerStorageLayout(fileSystem, host.toString())
+            // A real current-schema generation 2, published, with the switched journal present.
+            // Materialize it through the product open so the schema/bootstrap is genuine, then
+            // publish it and stage the journal exactly as the confirm flow leaves them.
+            val generationTwoDirectory = layout.generationDirectory(2)
+            Files.createDirectories(Path.of(generationTwoDirectory))
+            val generationTwoMain = layout.mainFile(generationTwoDirectory)
+            openDesktopLedger("jdbc:sqlite:$generationTwoMain").close()
+            File(layout.activePointerFile).writeText("gen-2")
+            File(layout.switchJournalFile).writeText("unified-ledger switch journal v1\nstage=switched\nold=gen-1\nnew=gen-2")
+
+            val graph = openExplicitDesktopLedger(fileSystem, layout, 2)
+
+            // The generation really opened and the journal gate did NOT run: the pointer is
+            // untouched, the journal survives and the new generation directory is intact.
+            assertEquals("gen-2", File(layout.activePointerFile).readText())
+            assertTrue(File(layout.switchJournalFile).exists(), "the explicit route must not consume its own journal")
+            assertTrue(File(generationTwoMain).exists())
+            graph.close()
+        } finally {
+            deleteRecursively(host)
+        }
+    }
+
+    @Test
+    fun theExplicitReopenFailsClosedOnAnUnusableNamedGeneration() {
+        val host = tempHost()
+        try {
+            val fileSystem = DesktopLedgerFileSystem()
+            val layout = ledgerStorageLayout(fileSystem, host.toString())
+            val generationOneDirectory = layout.generationDirectory(1)
+            Files.createDirectories(Path.of(generationOneDirectory))
+            File(layout.mainFile(generationOneDirectory)).writeBytes(ByteArray(0))
+
+            val rejected =
+                assertFailsWith<LedgerStorageRejectedException> {
+                    openExplicitDesktopLedger(fileSystem, layout, 1)
+                }
+
+            assertEquals(LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE, rejected.failure)
+        } finally {
+            deleteRecursively(host)
         }
     }
 

@@ -200,6 +200,64 @@ class LedgerStableStorageTest {
         assertTrue(fileSystem.operationsSnapshot().none { it.startsWith("readBytes:") })
     }
 
+    // ---------------------------------------------------------------- explicit reopen (06.D spec 3.7/3.8)
+
+    @Test
+    fun openExplicitGenerationOpensTheNamedGenerationWithoutRunningTheJournalGate() {
+        // P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the confirm switch's step-8 reopen runs while
+        // its OWN `switched` journal is still on disk (it is removed only after the read-back). The
+        // explicit opener must NOT run the startup gate: the gate would republish the OLD pointer
+        // and delete the NEW generation directory, rolling the switch back. Reverting step 8 to the
+        // pointer route is what this primitive exists to prevent.
+        fileSystem.putDirectory(generationsDirectory)
+        fileSystem.putDirectory(generationOneDirectory)
+        fileSystem.putFile(generationOneMain, sqliteLikeBytes())
+        fileSystem.putFile(pointer, "gen-2")
+        val generationTwoDirectory = layout.generationDirectory(2)
+        fileSystem.putDirectory(generationTwoDirectory)
+        val generationTwoMain = layout.mainFile(generationTwoDirectory)
+        fileSystem.putFile(generationTwoMain, sqliteLikeBytes(filler = 1))
+        fileSystem.putFile(journal, ledgerSwitchJournalBytes(LedgerSwitchJournal(LedgerSwitchJournalStage.Switched, 1, 2)))
+        val targets = mutableListOf<LedgerOpenTarget>()
+
+        val graph =
+            openExplicitGeneration(fileSystem, layout, 2) { target ->
+                targets += target
+                "graph"
+            }
+
+        assertEquals("graph", graph)
+        assertEquals(listOf(LedgerOpenTarget(generationTwoMain, allowCreateOnOpen = false)), targets)
+        // Nothing was recovered or rewritten: the pointer still names the new generation, the
+        // journal is untouched and the new generation directory survives.
+        assertEquals("gen-2", fileSystem.fileBytes(pointer)?.decodeToString())
+        assertTrue(fileSystem.hasFile(journal))
+        assertTrue(fileSystem.hasDirectory(generationTwoDirectory))
+    }
+
+    @Test
+    fun openExplicitGenerationFailsClosedOnAnUnusableNamedGeneration() {
+        // The same silent-empty-database prohibition as every non-fresh startup path: a named
+        // generation that is missing, empty or header-less must fail closed and never reach the
+        // create-on-open factory.
+        fileSystem.putDirectory(generationsDirectory)
+        fileSystem.putDirectory(generationOneDirectory)
+        val generationOneMainUnusable = layout.mainFile(generationOneDirectory)
+        fileSystem.putFile(generationOneMainUnusable, ByteArray(0))
+        var opened = false
+
+        val rejected =
+            assertFailsWith<LedgerStorageRejectedException> {
+                openExplicitGeneration(fileSystem, layout, 1) {
+                    opened = true
+                    "graph"
+                }
+            }
+
+        assertEquals(LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE, rejected.failure)
+        assertFalse(opened)
+    }
+
     // ---------------------------------------------------------------- fresh install / upgrade sequence
 
     @Test

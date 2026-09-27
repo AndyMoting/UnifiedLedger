@@ -338,6 +338,46 @@ fun isUsableSqliteMainFile(
 }
 
 /**
+ * P7-06 06.D (D-182; spec `docs/specs/2026-09-26-p7-06-restore-confirm-switch-design.md` section 3
+ * step 8, section 3.8, section 4.3): opens an EXPLICITLY named on-disk generation DIRECTLY — no
+ * startup resolution, no pointer lookup and, crucially, NO switch-journal gate.
+ *
+ * This is what the confirm & switch step-8 reopen needs. The spec's step-8 line states
+ * `reopen(ActivePointer)`, but that is unimplementable here as written: step 6 already staged,
+ * fsynced and locally gated `gen-(n+1)` and step 7 already published the pointer to it while the
+ * `switched` journal is DELIBERATELY still present (it is removed only after the read-back
+ * succeeds, section 3.9). Running the normal startup sequence would execute
+ * `resolveLedgerStorage`'s journal gate (`recoverSwitchJournalAtStartup`) on this flow's OWN
+ * `switched` journal: it republishes the OLD pointer and deletes the NEW generation directory, so
+ * the switch would roll itself back while still reporting success. The step-8 reopen therefore
+ * selects the published generation explicitly.
+ *
+ * Only a caller that has JUST staged and published [generation] may use this. Startup
+ * ([openStableStorageLedger]), the section 3.10 restoration reopen and the section 3.8 rollback
+ * reopen all keep selecting through [GenerationSelection.ActivePointer], so a crashed session's
+ * `prepared`/`switched` journal still rolls back at startup exactly as the frozen restart rule
+ * (container-format spec section 5.3) requires.
+ *
+ * The same pre-open consistency gate as every non-fresh startup path applies: a named generation
+ * that is missing, empty or header-less fails closed with
+ * [LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE] instead of reaching a create-on-open factory
+ * (the silent-empty-database prohibition, D-176).
+ */
+fun <G> openExplicitGeneration(
+    fileSystem: LedgerFileSystem,
+    layout: LedgerStorageLayout,
+    generation: Int,
+    openGraph: (LedgerOpenTarget) -> G,
+): G {
+    val directory = layout.generationDirectory(generation)
+    val mainFile = layout.mainFile(directory)
+    if (!isUsableSqliteMainFile(fileSystem, mainFile)) {
+        throw LedgerStorageRejectedException(LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE)
+    }
+    return openGraph(LedgerOpenTarget(mainFile, allowCreateOnOpen = false))
+}
+
+/**
  * Section 5.1 startup order, steps 1-3: resolve the active generation. The journal check runs
  * FIRST (step 2). As of 06.D (D-182; spec section 4.3) the branch is EXTENDED from 06.1's
  * unconditional fail-closed gate: a RECOGNIZABLE journal (a versioned [LedgerSwitchJournal]) is

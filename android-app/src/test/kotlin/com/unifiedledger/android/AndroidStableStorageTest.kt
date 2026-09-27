@@ -1,5 +1,6 @@
 package com.unifiedledger.android
 
+import com.unifiedledger.ui.ImportFilePickResultChannel
 import com.unifiedledger.ui.LedgerOpenTarget
 import com.unifiedledger.ui.LedgerStorageFailure
 import com.unifiedledger.ui.LedgerStorageRejectedException
@@ -13,6 +14,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+
+/** A sentinel thrown by the recording explicit-reopen `openDriver` after it records the name. */
+private class ReopenRecordingOpenSentinel : RuntimeException("recording explicit reopen")
 
 /**
  * P7-06 06.1 (D-176; spec sections 3.2/3.4/4.5/6): the Android stable storage at the platform seam
@@ -234,8 +238,94 @@ class AndroidStableStorageTest {
 
     private fun sqliteHeaderBytes(): ByteArray = "SQLite format 3\u0000".encodeToByteArray() + ByteArray(1024)
 
-    // ---------------------------------------------------------------- non-fresh create-on-open guard (fix 7)
+    // ---------------------------------------------------------------- explicit reopen (06.D spec 3.7/3.8)
 
+    @Test
+    fun theAndroidExplicitReopenOpensTheNamedGenerationWithoutConsumingItsOwnSwitchedJournal() {
+        // P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the Android confirm switch's step-8 reopen
+        // runs the SAME guard the production closure applies, opens the ABSOLUTE named-generation
+        // main file at the driver seam, and does NOT run the startup journal gate — which would
+        // republish the OLD pointer and delete the NEW generation directory because the flow's own
+        // `switched` journal is still on disk. The recording openDriver throws the sentinel after
+        // recording, so the heavy graph build is never reached (the absolute-path suite's pattern).
+        val databases = tempDatabasesDirectory()
+        try {
+            val host = databases.toFile().absolutePath
+            val fileSystem = DesktopStyleTestFileSystem()
+            val layout = ledgerStorageLayout(fileSystem, host)
+            val generationTwoDirectory = File(layout.generationDirectory(2))
+            generationTwoDirectory.mkdirs()
+            val generationTwoMain = File(layout.mainFile(layout.generationDirectory(2)))
+            generationTwoMain.writeBytes(sqliteHeaderBytes())
+            File(layout.activePointerFile).writeText("gen-2")
+            // The frozen 06.D journal encoding (app-ui `ledgerSwitchJournalBytes`; its round trip
+            // is pinned by LedgerSwitchJournalTest). Written literally here because that writer is
+            // app-ui-internal and not visible from this module's tests.
+            File(layout.switchJournalFile).writeText("unified-ledger switch journal v1\nstage=switched\nold=gen-1\nnew=gen-2")
+            val recorded = mutableListOf<String>()
+
+            val thrown =
+                assertFailsWith<ReopenRecordingOpenSentinel> {
+                    openAndroidExplicitGenerationWith(
+                        fileSystem = fileSystem,
+                        layout = layout,
+                        generation = 2,
+                        importFilePickPort = AndroidImportFilePickPort<android.net.Uri>(launchOpenDocument = {}, resolveMetadata = { PickedSafFileMetadata("", null) }, openInputStream = { null }, onResult = {}),
+                        importPickChannel = ImportFilePickResultChannel(),
+                        openDriver = { name ->
+                            recorded += name
+                            throw ReopenRecordingOpenSentinel()
+                        },
+                    )
+                }
+
+            assertEquals(ReopenRecordingOpenSentinel::class, thrown::class)
+            assertEquals(listOf(generationTwoMain.absolutePath), recorded, "the explicit route must open the NAMED generation absolute main file")
+            // The journal gate never ran: the pointer is untouched, the journal survives and the
+            // new generation directory is intact (the confirm's step 9 removes the journal).
+            assertEquals("gen-2", File(layout.activePointerFile).readText())
+            assertTrue(File(layout.switchJournalFile).exists())
+            assertTrue(generationTwoMain.exists())
+        } finally {
+            deleteRecursively(databases)
+        }
+    }
+
+    @Test
+    fun theAndroidExplicitReopenFailsClosedOnAnUnusableNamedGenerationBeforeAnyDriverOpen() {
+        val databases = tempDatabasesDirectory()
+        try {
+            val host = databases.toFile().absolutePath
+            val fileSystem = DesktopStyleTestFileSystem()
+            val layout = ledgerStorageLayout(fileSystem, host)
+            val generationOneDirectory = File(layout.generationDirectory(1))
+            generationOneDirectory.mkdirs()
+            File(layout.mainFile(layout.generationDirectory(1))).writeBytes(ByteArray(0))
+            var driverOpened = false
+
+            val rejected =
+                assertFailsWith<LedgerStorageRejectedException> {
+                    openAndroidExplicitGenerationWith(
+                        fileSystem = fileSystem,
+                        layout = layout,
+                        generation = 1,
+                        importFilePickPort = AndroidImportFilePickPort<android.net.Uri>(launchOpenDocument = {}, resolveMetadata = { PickedSafFileMetadata("", null) }, openInputStream = { null }, onResult = {}),
+                        importPickChannel = ImportFilePickResultChannel(),
+                        openDriver = {
+                            driverOpened = true
+                            throw ReopenRecordingOpenSentinel()
+                        },
+                    )
+                }
+
+            assertEquals(LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE, rejected.failure)
+            assertFalse(driverOpened, "an unusable named generation must fail closed before the driver")
+        } finally {
+            deleteRecursively(databases)
+        }
+    }
+
+    // ---------------------------------------------------------------- non-fresh create-on-open guard (fix 7)
     @Test
     fun aNonFreshTargetWithAMissingMainFileIsRejectedBeforeAnyDriverOpen() {
         // Review Fix 7: the AndroidSqliteDriver creates on open, so the composition root must

@@ -16,8 +16,10 @@ import kotlinx.coroutines.withContext
  * (spec section 3.2), `quiesce` WITHOUT holding a lease, the post-quiesce generation recheck,
  * `closeActiveGraph`, the gen-(current+1) assembly with the delete-then-stage precondition and
  * the journal=prepared write, the atomic pointer publish through the frozen
- * [publishActivePointer] primitive plus journal=switched, the `reopen(ActivePointer)` with the
- * authoritative read-back, and the journal removal (committed) with the generation-guarded
+ * [publishActivePointer] primitive plus journal=switched, the `reopen(GenerationSelection.Explicit)`
+ * of the just-published generation with the authoritative read-back (the explicit route, so this
+ * flow's own live `switched` journal is NOT consumed by the startup gate — see
+ * [openExplicitGeneration]), and the journal removal (committed) with the generation-guarded
  * result delivery (spec section 3.9).
  *
  * CORE INVARIANTS (spec section 3, plan P706-A03/A05):
@@ -455,9 +457,18 @@ class ConfirmBackupRestoreUseCase(
                 return rollBack(currentDiskGeneration, newGeneration)
             }
 
-            // ---- Step 8: reopen through the on-disk pointer; the open closure performs the
-            // authoritative read-back. Anything but a clean reopen rolls back.
-            val reopened = reopenOldGraphWithRetry()
+            // ---- Step 8: reopen the generation this flow JUST staged and published, by its
+            // explicit name — NOT through the on-disk pointer. The pointer route would run the
+            // startup sequence's switch-journal gate, and this flow's OWN journal is still on
+            // disk here (it is removed only after the read-back succeeds, step 9). The gate would
+            // consume that journal, republish the OLD pointer and delete the NEW generation
+            // directory, rolling the switch back while still reporting success. The explicit
+            // selection opens the named generation directly (no pointer resolution, no journal
+            // gate) and the open closure still performs the authoritative read-back; the
+            // generation is safe to open directly because step 6 already staged, fsynced and
+            // locally gated it and step 7 published the pointer to it. Anything but a clean
+            // reopen rolls back.
+            val reopened = reopenOldGraphWithRetry(GenerationSelection.Explicit(newGeneration))
             if (reopened !is ReopenResult.Reopened) {
                 return rollBack(currentDiskGeneration, newGeneration)
             }
@@ -842,17 +853,26 @@ class ConfirmBackupRestoreUseCase(
     }
 
     /**
-     * `reopen(ActivePointer)` with the spec section 3.10 contention discipline: one retry after
-     * a bounded pause when the owner mutex was held by another transition; a hard reopen
-     * failure ([ReopenResult.Failed]) is returned immediately and never retried silently.
+     * `reopen(selection)` with the spec section 3.10 contention discipline: one retry after a
+     * bounded pause when the owner mutex was held by another transition; a hard reopen failure
+     * ([ReopenResult.Failed]) is returned immediately and never retried silently.
+     *
+     * The [selection] is parameterized because the two reopen sites target DIFFERENT generations
+     * through different routes (spec sections 3.8/3.9/3.10): step 8 passes
+     * [GenerationSelection.Explicit] with the generation it just published, while the rollback and
+     * the restoration program pass [GenerationSelection.ActivePointer] so the pointer (and, on
+     * the restoration path, its journal gate) decides. Defaulting to the pointer keeps every
+     * existing call site's semantics explicit.
      */
-    private suspend fun reopenOldGraphWithRetry(): ReopenResult {
-        val first = owner.reopen(GenerationSelection.ActivePointer)
+    private suspend fun reopenOldGraphWithRetry(
+        selection: GenerationSelection = GenerationSelection.ActivePointer,
+    ): ReopenResult {
+        val first = owner.reopen(selection)
         if (first is ReopenResult.Reopened || first is ReopenResult.Failed) {
             return first
         }
         delay(reopenRetryPauseMillis)
-        return owner.reopen(GenerationSelection.ActivePointer)
+        return owner.reopen(selection)
     }
 
     /**

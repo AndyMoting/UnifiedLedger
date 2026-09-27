@@ -320,6 +320,80 @@ class ConfirmBackupRestoreUseCaseTest {
             reopenRetryPauseMillis = reopenRetryPauseMillis,
         )
 
+    /**
+     * P1 regression harness (06.D): an owner whose `openGeneration` is PRODUCTION-SHAPED — the
+     * ActivePointer route runs the REAL [resolveLedgerStorage], so the 06.D switch-journal gate is
+     * LIVE, exactly as in both composition roots (`openStableStorageLedger`). The bare-lambda
+     * harness in [fixture] never consults the journal, which is why the original suite missed the
+     * defect where step 8's own reopen consumed the journal the flow had just written.
+     *
+     * The Explicit route opens the named generation through [openExplicitGeneration] (no
+     * resolution, no gate), mirroring the production closures. Every opened generation is recorded
+     * so a test can prove WHICH route step 8 took.
+     *
+     * The sweep is deliberately not run here: it is orthogonal to the gate and would delete the
+     * token's own staging artifacts mid-flow, obscuring the journal-gate behaviour under test.
+     */
+    private fun productionShapedOwner(
+        fileSystem: LedgerFileSystemFake,
+        openedGenerations: MutableList<Int> = mutableListOf(),
+    ): LedgerRuntimeOwner<Any> {
+        val layout = ledgerStorageLayout(fileSystem, hostDirectory)
+        return LedgerRuntimeOwner(
+            openGeneration = { selection ->
+                openGenerationForSelection(
+                    selection = selection,
+                    openActivePointer = {
+                        val resolution = resolveLedgerStorage(fileSystem, layout, legacyMainFile = null)
+                        when (resolution) {
+                            is LedgerStorageResolution.Rejected -> throw LedgerStorageRejectedException(resolution.failure)
+                            is LedgerStorageResolution.Planned -> {
+                                val plan = resolution.plan
+                                val generation =
+                                    when (plan) {
+                                        is LedgerStoragePlan.OpenGeneration -> plan.generation
+                                        else -> error("the production-shaped fixture only opens an existing generation")
+                                    }
+                                openedGenerations += generation
+                                Any()
+                            }
+                        }
+                    },
+                    openExplicit = { generation ->
+                        openExplicitGeneration(fileSystem, layout, generation) {
+                            openedGenerations += generation
+                            Any()
+                        }
+                    },
+                )
+            },
+            closeGraph = {},
+            facadeOf = { throw AssertionError("no facade in confirm tests") },
+            quiesceTimeoutMillis = 5_000L,
+        )
+    }
+
+    /**
+     * Seeds the production-shaped host: gen-1 active, pointer gen-1, and the token's own staging
+     * artifacts (snapshot + migrated copy) exactly as the 06.C preflight leaves them.
+     */
+    private fun seedProductionShapedHost(
+        fileSystem: LedgerFileSystemFake,
+        withMigration: Boolean = true,
+    ) {
+        // The generations directory itself must exist (the fake only materializes immediate
+        // parents), or resolveLedgerStorage would see no generation directory at all and resolve a
+        // fresh install instead of the pointer-selected generation.
+        fileSystem.putDirectory("/host/ledger-generations")
+        fileSystem.putFile(gen1Main, sqliteLikeBytes())
+        fileSystem.putFile(pointerFile, "gen-1")
+        fileSystem.putFile(snapshotFile, payload)
+        if (withMigration) {
+            fileSystem.putFile(migratedFile, payload)
+        }
+        fileSystem.usableSpaceBytes = 1L shl 40
+    }
+
     private fun token(
         owner: LedgerRuntimeOwner<Any>,
         withMigration: Boolean = true,
@@ -934,6 +1008,60 @@ class ConfirmBackupRestoreUseCaseTest {
         }
 
     // ---------------------------------------------------------------- steps 7-9: rollback and recovery (spec 3.8)
+
+    @Test
+    fun theHappyPathCommitsWhenTheReopenRunsTheRealStartupJournalGate() =
+        runBlocking {
+            // P1 REGRESSION (06.D): the owner's ActivePointer route runs the REAL
+            // resolveLedgerStorage, so the switch-journal gate is LIVE exactly as in production.
+            // The confirm writes journal=switched in step 7 and reopens in step 8; if that reopen
+            // went through the pointer route, the gate would consume the flow's own journal,
+            // republish gen-1 and delete gen-2 — the switch would roll itself back while still
+            // reporting Committed. Step 8 must therefore open gen-2 EXPLICITLY.
+            val fileSystem = LedgerFileSystemFake()
+            seedProductionShapedHost(fileSystem)
+            val openedGenerations = mutableListOf<Int>()
+            val owner = productionShapedOwner(fileSystem, openedGenerations)
+            assertIs<LedgerStartupResult.Started>(owner.startup())
+
+            val result = useCase(fileSystem, owner).confirm(token(owner))
+
+            val committed = assertIs<BackupRestoreSwitchResult.Committed>(result)
+            // The switch REALLY committed on disk: the pointer is the NEW generation, the new
+            // generation directory still exists, and the journal is gone.
+            assertEquals("gen-2", fileSystem.fileBytes(pointerFile)?.decodeToString(), "the pointer must still name the new generation")
+            assertTrue(fileSystem.hasDirectory(gen2Directory), "the new generation directory must survive the reopen")
+            assertTrue(fileSystem.hasFile(gen2Main), "the new generation main file must survive the reopen")
+            assertFalse(fileSystem.hasFile(journalFile), "the journal must be removed (committed)")
+            assertEquals(LedgerRuntimeState.Ready, owner.state)
+            // Step 8 reopened the EXPLICIT generation (2), not through the pointer.
+            assertEquals(2, openedGenerations.last(), "step 8 must open the just-published generation explicitly")
+        }
+
+    @Test
+    fun aCrashedSwitchedJournalStillRollsBackThroughTheProductionShapedStartupGate() =
+        runBlocking {
+            // The frozen section 4.1 restart semantics must NOT be weakened by the explicit step-8
+            // reopen: a session that crashed in the switched window (pointer = new gen, journal =
+            // switched) still rolls back at STARTUP through the pointer route's journal gate.
+            val fileSystem = LedgerFileSystemFake()
+            fileSystem.putDirectory("/host/ledger-generations")
+            fileSystem.putFile(gen1Main, sqliteLikeBytes())
+            fileSystem.putFile(gen2Main, sqliteLikeBytes(filler = 1))
+            fileSystem.putFile(pointerFile, "gen-2")
+            fileSystem.putFile(journalFile, ledgerSwitchJournalBytes(LedgerSwitchJournal(LedgerSwitchJournalStage.Switched, 1, 2)))
+            val openedGenerations = mutableListOf<Int>()
+            val owner = productionShapedOwner(fileSystem, openedGenerations)
+
+            assertIs<LedgerStartupResult.Started>(owner.startup())
+
+            // The startup gate republished the OLD pointer, removed the journal and discarded the
+            // new generation — then opened the old generation.
+            assertEquals("gen-1", fileSystem.fileBytes(pointerFile)?.decodeToString())
+            assertFalse(fileSystem.hasFile(journalFile))
+            assertFalse(fileSystem.hasDirectory(gen2Directory))
+            assertEquals(listOf(1), openedGenerations, "startup must have rolled back to gen-1")
+        }
 
     @Test
     fun aPostPublishReopenFailureRollsBackToTheByteIdenticalOldPointer() =
