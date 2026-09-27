@@ -3615,3 +3615,48 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 6. **验收状态**：本批**设计门已批准**；**06.4/06.D 的实施为后续实施批**，尚未开始；**不**把任何验收向量并入 PASS。
 
 **关联决定：** D-179（本条批准其 §2.2/§7/§10 登记的 06.D 义务——磁盘公式拆分、组合根接线、supportedSourceVersions、preview 字段集、token stale 策略、A03 端到端；不改其冻结裁决）、D-174（容器格式 §5.3 journal/ROLLBACK 机器——本规格实例化之，不改其冻结面）、D-176（owner/lease/generation/quiesce 契约与静默空库禁令——本规格只消费，不改其冻结面）、D-178（残余 (a) `POINTER_MISSING` 砖化窗口由本规格设计级闭合，(b)/(c) 仍承接）、D-180（06.C 实施登记——本规格承接其第 5(d) 条归 06.D 的五项义务）、D-181（前序最高 id；同日登记的 P7-05 片 1b 验收裁决，与本批无依赖）。
+
+## D-183 P7-06 06.D 恢复确认与切换实施批登记与规格 §3 步骤 8 reopen 路由修订
+
+**状态：** 已批准（2026-09-26，P7-06 切片 06.4/06.D（恢复确认、原子切换、回退与失败恢复）的**实施批**登记：实施承接已批准的 D-182 规格 `docs/specs/2026-09-26-p7-06-restore-confirm-switch-design.md`，由单一写者在隔离 worktree `UL-p7-06dimpl` 内实施，经两轮独立评审、distinct verifier 复核与设备测试编写期发现并复核的一处 P1 修复，并由主代理按用户既有授权登记；本条同时登记该实施对规格 §3 步骤 8 冻结文本的一处**必要且最小**的修订（reopen 路由）。**本条不把任何 P706 验收向量并入 PASS**。）
+
+**决定：**
+
+1. **交付与合并事实**：分支 `UL-p7-06dimpl`，基点 `a53b994`（merge：登记 D-182，即 06.D 设计门合并）。实施提交链（`git rev-list --oneline --reverse a53b994..6f18dc9` 实读，共 **10** 提交）：
+   - `760cb0c` stage 1: restore confirm & atomic switch use case with journal recovery；
+   - `b89175d` stage 1 fixup: close the dual-review findings on confirm & switch；
+   - `5e3a56f` stage 2a: `POINTER_MISSING` recovery use case, owner-count preview fields, repair-mask fix；
+   - `daaa594` stage 2b: shared restore confirm & switch surface, session-terminal face, startup recovery face；
+   - `f38ff73` stage 2c: composition-root wiring for both platforms and the recovery integration；
+   - `2be3bdf` fix batch (P1 core): F-1 landing generation, F-2 disk formula, F-7 escape repair；
+   - `5c9eb06` fix batch (polish): F-3 NUL byte, F-4 Long counts, F-5 tautology, F-6 sidecar assertion, F-8 shared id, F-9 probe KDoc, F-10 sizeOf tests, F-11 stale KDoc；
+   - `712978d` closure: device instrumented tests for the confirm/recovery surfaces and two stale KDoc corrections；
+   - `31aa399` P1 fix: step-8 confirm reopen must bypass the startup journal gate；
+   - `6f18dc9` review fixes: pin the explicit-opener wiring (RC-2) and finish the interrupted test (RC-4)。
+   本条登记时的工作头为 `6f18dc9`；本批收尾在该头之上追加 **2** 个提交——`4f35376`（"test: add the 06.D on-device confirm switch end-to-end instrumented test"，新增 `AndroidRestoreConfirmSwitchInstrumentedTest.kt`，即 §7 设备行遗留的确认切换端到端覆盖）与**本条登记自身的 docs 提交**（规格 §3 修订 + 本文档；一个提交无法在自身内容中记载自己的 SHA）。`a53b994..6f18dc9` 差异为 **38 文件 +7856/−76**（`git diff --shortstat a53b994 6f18dc9` 实读）；**零 schema/迁移/依赖变更**（schema 维持 **v31**，迁移链 `1.sqm`～`30.sqm` 零改动）。交付范围：共享 `ConfirmBackupRestoreUseCase`（app-ui，§3 九步冻结顺序 + §3.10 复原程序 + §5.1 的 single-flight 守卫）、`LedgerStableStorage` 的持久 switch journal（`prepared`/`switched` 编码、`recoverSwitchJournalAtStartup` 重启回滚半部、`deleteGenerationDirectory`、`openExplicitGeneration`）、`LedgerRuntimeOwner` 的 `GenerationSelection.Explicit` 与 `openGenerationForSelection` 分派、`PointerMissingRecoveryUseCase`（§5.3 采纳与废弃重跑两支）、预览 owner 计数（`readOwnerCountsOn`/`readOwnerCounts`）、`AndroidRestoreDocumentSizeInstrumentedTest` 的 `queryDocumentSize` 接线（§5.6 裁决 F）、两端组合根接线（Android `App.kt` 的 `AndroidRestoreWiring`/`AndroidRestoreUseCases` 与 `openAndroidExplicitGeneration`；桌面 `Main.kt` 对应接线）、共享 UI 恢复面与 `RestoreHostWiring`。承重不变量按 D-182 §3 实现：四项重校验任一失败 → stale 拒绝零切换；quiesce/close 被阻 → 推迟拒绝零切换；指针发布前失败 → 指针字节不变；发布后失败 → 按 journal 回滚（指针/journal/新代目录复原 + 旧图重开）；回滚也失败 → `RecoveryRequired` 且不循环初始化。
+
+2. **实际评审与验证拓扑**：
+   - **对 `f38ff73`（stage 2c 组合根接线）的独立双评审**：两份独立评审均 **REJECT**，且**独立收敛到同一 P1**——组合根 owner 的 `openGeneration` 未区分 `GenerationSelection`，`Explicit` 被静默当成 `ActivePointer` 处理（即显式直开不存在），故确认流程会走进 journal 门回滚；收敛的其余 findings 记为 F-1～F-11。
+   - **写者修复**：`2be3bdf`（P1 核心三项 F-1 landing generation / F-2 磁盘公式 / F-7 escape 修复）与 `5c9eb06`（F-3～F-11 打磨，含 F-8 单一 `PRODUCT_LEDGER_ID` 常量、F-10 `sizeOf`/`queryDocumentSize` 覆盖）。
+   - **收口复评**：两轮独立评审对修复结论均为 **APPROVE-WITH-FINDINGS**（无残留 P1）。
+   - **distinct verifier 在 `5c9eb06`**：独立复核 **8/8** 项主张 VERIFIED（含 **2** 项消融/负向验证）。
+   - **设备测试编写期发现 P1（本批最关键事实）**：在 `712978d` 为 §7 设备行编写确认切换端到端 instrumented 测试时，发现步骤 8 的 reopen（当时经 `GenerationSelection.ActivePointer`）会走启动序列的切换 journal 门（`resolveLedgerStorage` → `recoverSwitchJournalAtStartup`，`LedgerStableStorage.kt:397`/`:698`）：该门把**本流程自己的** live `switched` journal 当作崩溃残留消费——republish 旧指针（`gen-(n-1)`）、删除刚发布的新代目录，随后 reopen 仍**成功**打开旧代，于是流程**报告 `Committed`** 却已把切换回滚。该 P1 由 JVM 生产形状夹具（`ConfirmBackupRestoreUseCaseTest.theHappyPathCommitsWhenTheReopenRunsTheRealStartupJournalGate`，其 owner 的 `ActivePointer` 路由运行真实 `resolveLedgerStorage`）复现。
+   - **P1 修复**：`31aa399`——步骤 8 改为 `reopen(GenerationSelection.Explicit(newGeneration))`（`ConfirmBackupRestore.kt:471`），经组合根 `openExplicitGeneration`（Android `App.kt:281` → `openAndroidExplicitGeneration` `App.kt:939` → `openAndroidExplicitGenerationWith` `App.kt:960` → 共享 `openExplicitGeneration` `LedgerStableStorage.kt:366`）按名直开，不经指针解析、不经 journal 门；其余每一处 reopen（启动、§3.10 复原、§3.8 回滚收尾）保持 `ActivePointer`，崩溃会话的 journal 仍在启动时按冻结 ROLLBACK 规则回滚。
+   - **对该偏离的评审**：独立评审对 P1 修复与规格文本偏离结论 **APPROVE-WITH-FINDINGS**，遗留 **RC-1**（规格 §3 步骤 8 冻结文本仍写 `reopen(ActivePointer)`，与实施不一致；处置见第 3 条）与 **RC-2**（组合根 `Explicit` 接线无测试钉住）。
+   - **verifier 在 `6f18dc9`**：独立复核 **7/7** 项主张 VERIFIED（含 **2** 项消融/负向验证）。RC-2 由 `6f18dc9` 的 `AndroidRestoreWiringTest`（JVM，`theCompositionRootOwnerReopensThePublishedGenerationExplicitlyAndCommits` + 源级 `theAndroidRootStillWiresTheExplicitGenerationOpener`）与 `LedgerRuntimeOwnerTest.reopenPassesTheRequestedGenerationSelectionToTheOpener` 钉住。
+   - **本批设备门**由主代理在受管 AVD 上执行，**写者不执行**（沿 D-180 设备门协议：隔离 adb 端口、`ContextWrapper` 重定向测试目录、绝不触碰生产库）；本条不预支其结论。
+
+3. **规格修订（偏离冻结的步骤 8 文本，RC-1 处置）**：规格 `docs/specs/2026-09-26-p7-06-restore-confirm-switch-design.md` 的 §3 步骤 8（`:104`）与 §3.8 触发（`:159`）原冻结为 `reopen(ActivePointer)`，实施证明**不可实现**（机制见第 2 条：步骤 8 运行时本流程自己的 `switched` journal 仍在盘上——journal 只在步骤 9 读回通过后移除——`ActivePointer` 路由必然触发 journal 门把它消费掉）。本条登记对该两处的修订为 `reopen(GenerationSelection.Explicit(新代))`，并在 `**Revision:**` 增记 amended-by-D-183 及其依据；规格状态保持 `approved`（修订与 D-182 的批准意图一致：D-182 冻结的是「步骤 8 打开刚发布的新代并权威读回、失败即回滚」的**语义**，未冻结那条 reopen 的**路由**）。修订范围**最小**：§3 步骤 8 与 §3.8 触发两处措辞；**不改**容器格式（D-174）任何冻结面、**不改** owner 契约（D-176）、**不改** D-179/D-180，其余 reopen 全部保持 `ActivePointer`，崩溃 journal 的启动回滚（§4.3）不弱化。该偏离是本批唯一的规格文本改动。
+
+4. **承接的残余（不得静默丢弃；D-182 §4 各项 + 本批新增）**：
+   - **D-182 §4 承接项沿用**：成功后旧代清理策略（含已废弃新代目录删除失败遗留）；journal 编码与启动恢复状态机细节（本批已实现，细节随代码）；§3.10 复原程序编排细节（`reDrainAttempts = 2`、`reopenRetryPauseMillis = 100 ms`，归实施批）；确认/切换/回滚实测时长（61k 级读数未取）；`RecoveryRequired` 持久形状与 UI 呈现；Android provider 大小元数据设备侧读数（§5.6 接线后的真实分布）；严格结构识别与 A04 往返等价（归 06.4）；§4.6 AAD 跨端向量与新拒绝码建议名批准；D-180 残余 5(a)（`ImportScaleTraversalInstrumentedTest` 冷启动 a11y 环境限制，专项调查待办）、5(b)（Error 清扫一致性）、5(c)（设备 `PRAGMA` stated gap）。
+   - **新 P3-1（`NotRestored` 在竞态微调下的残余楔形窗口）**：§3.10 复原程序的「再排空」在预算内不能收敛时，owner 停在 `Quiescing` 并如实报告 `BackupRestoreRuntimeOutcome.NotRestored`——设计级已允许（D-182 规格 §3.10 不变量）。残余在于：该窗口内若有**并发 transition**（另一次 reopen/close 持 owner 互斥）与本复原竞争，复原 reopen 的单次重试仍可能失败而落到 `NotRestored`，此时 owner 非 Ready 且需要用户/上层再次触发才能复位；本批不引入自动重试循环（D-176 禁令与 §3.10 的诚实报告语义），登记的缓解手段是 host 面在 `NotRestored` 时呈现可重试的启动/恢复入口。归后续批评估是否需一次显式 backoff 重试或启动自愈。
+   - **新 P3-2（`queryDocumentSize` 的 JVM vs instrumented 覆盖）**：`AndroidRestorePreflightPorts.queryDocumentSize`（`:180`）的设备侧覆盖仅由 `AndroidRestoreDocumentSizeInstrumentedTest` **8** 项提供（真实 `ContentResolver` + fixture provider）；JVM 侧只覆盖了 `AndroidBackupSourcePort` 的**注入** `sizeOf` 闭包（`AndroidBackupSourcePortTest`），即「未注入时回退到计数流」的路径，不覆盖真实查询实现。该函数因此**只在设备门运行时**被验证——不得声称 JVM 已覆盖。
+   - **新 P3-3（两个常量的 `PRODUCT_LEDGER_ID`/`RESTORE_TARGET_LEDGER_ID` 别名）**：`App.kt:861`/`:864` 保留两个 `internal const val`，后者 = 前者（F-8 已把图 bootstrap 与确认目标身份收敛到同一字面量，消除漂移）；两个名字的存在是**文档化别名**而非两个真值，残余风险极低，但登记为可在后续清理中折叠为单名（避免将来有人误以为二者可独立变更）。
+   - **新 P3-4（`DesktopStyleTestFileSystem.JvmTestWriteStream.commit` 仍用 `renameTo`）**：测试替身 `DesktopStyleTestFileSystem.kt:129` 的写流 `commit()`（`:148`）仍以 `File.renameTo`（`:151`）发布，Windows 上对**已存在**目标不原子替换；`writeAtomic` 已修为 `Files.move(REPLACE_EXISTING)`（同文件注释 `:57` 记录了该失真的来历），写流路径尚未同步。当前无测试在同一路径上覆盖写（`restore-container-*` 每次新 token），故未致红；登记为测试替身保真度残余。
+
+5. **边界**：本条登记一项**实施批**；**不改** D-174 的冻结字节/参数/拒绝码/journal 机器/ROLLBACK 重启规则（本批只是实例化）、**不改** D-176 的 owner 契约与静默空库禁令、**不改** D-177/D-179/D-180 的既有决定；对 D-182 规格只做第 3 条所述**两处 reopen 路由措辞**的最小修订（语义不变、其余冻结面逐字不变）；**零 schema/迁移/依赖变更**（schema 维持 v31）；**不**把任何验收向量并入 PASS——**P706-A03/A04/A05/A06/A07 等全部 P706 向量均未记 PASS**：本批交付的是**实现**（已合并的主张），设备/instrumented 验证证据由本批的设备门产出，A04 的往返等价仍归 06.4；不改 P7-01～P7-05 既有冻结面；`rgXX_` 竖井与 golden fixtures/expected 零改动；`.external/` 只读未触碰；不写本机绝对路径、个人数据或临时讨论记录。
+
+6. **验收状态**：**06.4/06.D 的实施已实施、评审、验证并（由主代理）合并**；规格 §3 步骤 8 的 reopen 路由经本条修订。**P706 验收向量无一记 PASS**：端到端切换的**设备 instrumented 证据**归本批设备门（由主代理执行），本批交付的是**已合并的实现**而非验收结论；A04 往返等价归 06.4；本条**不**声称任何向量已通过。
+
+**关联决定：** D-182（本条承接并实施其批准规格；对其 §3 步骤 8 做本条第 3 条的最小 reopen 路由修订——前序最高 id）、D-179（06.C 预检规格：本批消费其预检产物与不透明 token，不改其冻结裁决）、D-180（06.C 实施登记：本批承接其第 5(d) 条归 06.D 的五项义务——P2-7 接线、白名单集合、preview 字段集、A03 端到端、sizeOf 复检；其残余 5(a)/5(b)/5(c) 仍承接）、D-174（容器格式 §5.3 journal/ROLLBACK 机器：本批实例化，不改其冻结面）、D-176（owner/lease/generation/quiesce 契约与静默空库禁令：本批消费 `quiesce`/`closeActiveGraph`/`reopen`，并按 06.1 规格自身登记的 06.D 义务扩展启动 journal 门的分支语义，不改其契约）、D-178（残余 (a) `POINTER_MISSING` 砖化窗口：本批以 `PointerMissingRecoveryUseCase` 实现设计级闭合，(b)/(c) 仍承接）、D-177（导出产物与 `BackupExport.kt` `catch (Throwable)` 一致性清扫仍承接）。
