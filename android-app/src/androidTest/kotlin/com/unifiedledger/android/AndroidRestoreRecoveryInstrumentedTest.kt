@@ -196,6 +196,12 @@ class AndroidRestoreRecoveryInstrumentedTest {
         // still on disk (removeLegacyFiles only runs after a successful pointer publish, so a
         // mid-copy kill necessarily leaves it).
         val candidate = seedRealSqliteDatabase(fileSystem, layout, generation = 1, userVersion = 1L)
+        // Defect 2 (D-183): the read-WRITE framework open in the seeding helper leaves a transient
+        // rollback journal beside the candidate on device. Seed it explicitly (idempotent if the
+        // engine already created it) so the pin is deterministic: the discard must delete it AND
+        // the emptied generations directory.
+        val candidateJournal = File("$candidate-journal")
+        candidateJournal.writeBytes(ByteArray(0))
         val legacyPath = context.getDatabasePath(LEGACY_DATABASE_NAME).absolutePath
         File(legacyPath).parentFile!!.mkdirs()
         val legacyData = "legacy-marker-row-0123456789"
@@ -215,6 +221,11 @@ class AndroidRestoreRecoveryInstrumentedTest {
         assertTrue("the legacy original makes the discard branch available", (probe as PointerMissingRecoveryProbe.Recoverable).state.legacyUpgradeAvailable)
         assertEquals(PointerRecoveryDiscardResult.DiscardedAwaitingUpgrade, recovery.discardUnvalidatableAndReUpgrade())
         assertFalse("the bricked candidate must be discarded", fileSystem.exists(candidate))
+        // Defect 2 (D-183), the exact failing assertion: the generations directory must actually be
+        // GONE. Before the fix a surviving `-journal` kept it non-empty, the platform directory
+        // delete silently no-opped, and the discard still reported DiscardedAwaitingUpgrade — so the
+        // pointerless shape stayed fail-closed forever. The rollback journal is deleted with it.
+        assertFalse("the candidate's transient journal must be deleted with it", candidateJournal.exists())
         assertFalse("the emptied generations directory must be gone so the re-upgrade can resolve", fileSystem.exists(layout.generationsDirectory))
         assertTrue("the legacy original must never be touched by the discard", File(legacyPath).exists())
         assertEquals(legacyData, readLegacyMarker(legacyPath))
@@ -290,8 +301,13 @@ class AndroidRestoreRecoveryInstrumentedTest {
         // A valid SQLite magic prefix followed by garbage: `isUsableSqliteMainFile` passes (it
         // reads only the 16-byte header) but the candidate cannot verify as complete-and-current,
         // so it must never be adopted.
-        fileSystem.writeAtomic(mainFile, "SQLite format 3\u0000".encodeToByteArray() + ByteArray(64) { 0x7F })
+        val corruptBytes = "SQLite format 3\u0000".encodeToByteArray() + ByteArray(64) { 0x7F }
+        fileSystem.writeAtomic(mainFile, corruptBytes)
         assertIsolatedFromProduction(File(mainFile))
+        // Defect 1 (D-183) precondition: a read-WRITE framework open left a transient rollback
+        // journal beside the candidate. The probe must leave BOTH files untouched.
+        val journalFile = File("$mainFile-journal")
+        journalFile.writeBytes(ByteArray(0))
 
         val recovery = recoveryUseCase(fileSystem, layout, legacyMainFile = absentLegacyPath(context))
         val probe = recovery.probe()
@@ -309,7 +325,13 @@ class AndroidRestoreRecoveryInstrumentedTest {
         assertEquals("a corrupt candidate must not be adoptable", null, state.adoptableGeneration)
         assertEquals(PointerRecoveryAdoptionResult.NoAdoptableCandidate, recovery.adopt())
         assertFalse("no partial adoption may publish a pointer", fileSystem.exists(layout.activePointerFile))
+        // Defect 1 (D-183), the device-level pin: merely PROBING a corrupt candidate must not delete
+        // it. Before the fix the platform's DefaultDatabaseErrorHandler deleted the file during the
+        // probe's framework open (logcat: "Corruption reported by sqlite on database", "deleting the
+        // database file"). The candidate must survive BYTE-IDENTICAL, with its sidecar intact.
         assertTrue("the non-adoptable candidate must be left in place", File(mainFile).exists())
+        assertArrayEquals("the probe must not rewrite the corrupt candidate", corruptBytes, File(mainFile).readBytes())
+        assertTrue("the candidate's journal sidecar must survive the probe", journalFile.exists())
         assertEquals(
             "with no legacy original the discard branch stays typed-unavailable",
             PointerRecoveryDiscardResult.LegacyOriginalMissing,

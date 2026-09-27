@@ -171,6 +171,43 @@ class BackupRestoreRecoveryTest {
         assertFalse(fileSystem.hasFile(pointerFile))
     }
 
+    @Test
+    fun theDiscardRemovesTheGenerationsDirectoryEvenWhenAJournalSidecarIsPresent() {
+        // P7-06 06.D device-gate defect 2 (D-183): the mid-copy bricked candidate carries a transient
+        // rollback journal (`<main>-journal`) left by a read-write SQLite open. The discard must
+        // delete it, and the emptied generations directory must actually be gone — otherwise the
+        // pointerless shape stays fail-closed forever and the re-upgrade cannot resolve.
+        seedPointerless(1, withLegacy = true)
+        seedVerdict(1, version = 30L)
+        fileSystem.putFile("${mainFileOf(1)}-journal", ByteArray(0))
+
+        val discarded = assertIs<PointerRecoveryDiscardResult.DiscardedAwaitingUpgrade>(useCase(isolatedDatabase, legacyMainFile).discardUnvalidatableAndReUpgrade())
+
+        assertEquals(PointerRecoveryDiscardResult.DiscardedAwaitingUpgrade, discarded)
+        assertFalse(fileSystem.hasFile("${mainFileOf(1)}-journal"), "the transient journal must be deleted with the candidate")
+        assertFalse(fileSystem.hasDirectory(layout.generationDirectory(1)))
+        assertFalse(fileSystem.hasDirectory(generationsDirectory), "the emptied generations parent must be gone despite the journal sidecar")
+        assertTrue(fileSystem.hasFile(legacyMainFile), "the legacy original is never touched by the discard")
+        // The next normal start resolves the frozen UpgradeLegacy path again.
+        val plan = assertIs<LedgerStoragePlan.UpgradeLegacy>(assertIs<LedgerStorageResolution.Planned>(resolveLedgerStorage(fileSystem, layout, legacyMainFile)).plan)
+        assertEquals(legacyMainFile, plan.legacyMainFile)
+    }
+
+    @Test
+    fun theDiscardRefusesTypedWhenTheEmptiedGenerationsDirectorySurvives() {
+        // Defect 2's strictness at the use-case seam: if the deletion silently no-ops (modelled by
+        // the fake for a non-empty directory), the discard must report DiscardFailed, never
+        // DiscardedAwaitingUpgrade with the directory still on disk.
+        seedPointerless(1, withLegacy = true)
+        seedVerdict(1, version = 30L)
+        // A foreign child survives the candidate deletion, keeping the directory non-empty.
+        fileSystem.putFile("$generationsDirectory/${layout.generationDirectoryName(1)}/foreign.bin", ByteArray(2))
+
+        assertIs<PointerRecoveryDiscardResult.DiscardFailed>(useCase(isolatedDatabase, legacyMainFile).discardUnvalidatableAndReUpgrade())
+
+        assertTrue(fileSystem.hasDirectory(generationsDirectory))
+    }
+
     // ---------------------------------------------------------------- the discard branch guards
 
     @Test
@@ -271,5 +308,72 @@ class BackupRestoreRecoveryTest {
         assertTrue(newOps.none { it.startsWith("writeAtomic:") || it.startsWith("delete:") }, "no journal means the probe mutates nothing: $newOps")
         assertFalse(fileSystem.hasFile(pointerFile))
         assertTrue(fileSystem.hasDirectory(layout.generationDirectory(1)))
+    }
+
+    @Test
+    fun probingAnUnverifiableCandidateLeavesItByteIdenticalOnDisk() {
+        // P7-06 06.D device-gate defect 1 (D-183): on device the platform's default
+        // `DatabaseErrorHandler` DELETED a corrupt candidate merely because the probe OPENED it.
+        // The use-case contract is that a probe performs no recovery action, so an unverifiable
+        // candidate must survive a probe untouched — its bytes and sidecars identical and no
+        // deletion logged. This is the shared-logic pin; the platform half (that the framework
+        // open itself no longer deletes) is the device suite's assertion.
+        seedPointerless(1)
+        seedVerdict(1, version = 31L, integrityOk = false)
+        val candidateBytes = fileSystem.fileBytes(mainFileOf(1))!!
+        val journalBytes = ByteArray(0)
+        fileSystem.putFile("${mainFileOf(1)}-journal", journalBytes)
+        val opsBefore = fileSystem.operationsSnapshot().size
+
+        val probe = assertIs<PointerMissingRecoveryProbe.Recoverable>(useCase(isolatedDatabase, null).probe())
+
+        val onlyCandidate = probe.state.candidates.single()
+        assertEquals(PointerRecoveryCandidateVerdict.Unusable, onlyCandidate.verdict)
+        assertNull(probe.state.adoptableGeneration)
+        assertTrue(candidateBytes.contentEquals(fileSystem.fileBytes(mainFileOf(1))), "the probe must not rewrite the candidate")
+        assertTrue(journalBytes.contentEquals(fileSystem.fileBytes("${mainFileOf(1)}-journal")), "the probe must not touch the candidate's sidecars")
+        assertTrue(fileSystem.hasDirectory(layout.generationDirectory(1)), "the probe must not delete the candidate's directory")
+        val newOps = fileSystem.operationsSnapshot().drop(opsBefore)
+        assertTrue(newOps.none { it.startsWith("writeAtomic:") || it.startsWith("delete:") }, "an unverifiable candidate probe must mutate nothing: $newOps")
+    }
+
+    @Test
+    fun aThrowingProbeOnACandidateIsUnusableAndLeavesItUntouched() {
+        // Defect 1 fail-closed shape at the use-case seam: a probe that cannot complete (the
+        // platform corruption handler now THROWS instead of deleting) is a candidate that cannot be
+        // verified — `Unusable`, never an optimistic adoption, and never a deletion.
+        seedPointerless(1)
+        val isolated = ThrowingRecoveryDatabase()
+        val opsBefore = fileSystem.operationsSnapshot().size
+
+        val probe = assertIs<PointerMissingRecoveryProbe.Recoverable>(useCase(isolated, null).probe())
+
+        val onlyCandidate = probe.state.candidates.single()
+        assertEquals(PointerRecoveryCandidateVerdict.Unusable, onlyCandidate.verdict)
+        assertNull(probe.state.adoptableGeneration)
+        assertIs<PointerRecoveryAdoptionResult.NoAdoptableCandidate>(useCase(isolated, null).adopt())
+        assertTrue(fileSystem.hasFile(mainFileOf(1)))
+        assertFalse(fileSystem.hasFile(pointerFile))
+        val newOps = fileSystem.operationsSnapshot().drop(opsBefore)
+        assertTrue(newOps.none { it.startsWith("writeAtomic:") || it.startsWith("delete:") }, "nothing may be mutated: $newOps")
+    }
+
+    /** A port whose probes THROW, modelling the platform corruption handler surfacing corruption. */
+    private class ThrowingRecoveryDatabase : RestoreIsolatedDatabasePort {
+        override fun readAuthoritativeUserVersion(snapshotPath: String): Long = error("corrupt candidate: user_version unreadable")
+
+        override fun readObservedLedgerIdentities(snapshotPath: String): List<String> = error("the recovery never reads identities")
+
+        override fun migrateStrictly(
+            snapshotPath: String,
+            fromVersion: Long,
+            supportedVersions: Set<Long>,
+        ): RestoreMigrationOutcome = error("the recovery never migrates")
+
+        override fun validate(snapshotPath: String): RestoreValidationFacts = error("the recovery never runs the full validation")
+
+        override fun integrityCheckOk(snapshotPath: String): Boolean = error("corrupt candidate: integrity_check unreadable")
+
+        override fun readOwnerCounts(snapshotPath: String): RestoreOwnerCounts = error("the recovery never reads owner counts")
     }
 }

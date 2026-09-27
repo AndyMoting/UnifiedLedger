@@ -105,8 +105,25 @@ internal class LedgerFileSystemFake : LedgerFileSystem {
         parentOf(target)?.let { directories += it }
     }
 
+    /**
+     * Models the REAL platform `File.delete()` semantics (P7-06 06.D device-gate defect 2, D-183):
+     * deleting a directory that still has any child is a no-op, and — exactly like the Android
+     * adapter's `File(path).delete()` (`AndroidLedgerFileSystem.delete`, whose boolean return is
+     * ignored by the port) — that no-op is SILENT, not a throw. This is what makes the defect
+     * reproducible on the JVM: a `-journal` sidecar left beside the main file keeps a generation
+     * directory non-empty, so the directory deletion silently fails. A prior fake that removed the
+     * path unconditionally could not observe this, which is how the defect escaped the JVM suite.
+     *
+     * `failOn` still injects a hard failure (an explicit throw) where a test wants one; the
+     * silent-no-op shape above is the DEFAULT, matching production.
+     */
     override fun delete(path: String) {
         record("delete:$path")
+        val prefix = if (path.endsWith("/")) path else "$path/"
+        if (directories.contains(path) && (files.keys.any { it.startsWith(prefix) } || directories.any { it != path && it.startsWith(prefix) })) {
+            // Non-empty directory: the platform delete silently no-ops.
+            return
+        }
         files.remove(path)
         directories.remove(path)
     }

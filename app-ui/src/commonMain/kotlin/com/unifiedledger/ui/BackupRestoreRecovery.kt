@@ -237,11 +237,19 @@ class PointerMissingRecoveryUseCase(
             } catch (failure: Throwable) {
                 // Fail-closed: a partial discard still leaves the pointerless shape; a retry
                 // re-runs the discard (the next confirm's delete-then-stage shares the discipline).
+                // deleteGenerationDirectory is STRICT: a surviving directory throws (defect 2), so a
+                // silent platform no-op can no longer be reported as a successful discard.
                 return PointerRecoveryDiscardResult.DiscardFailed
             }
         }
         return try {
             fileSystem.delete(layout.generationsDirectory)
+            // The emptied parent must actually be GONE for the re-upgrade to resolve (spec section
+            // 5.3; 06.1 rule 2 keeps POINTER_MISSING fail-closed while the directory exists). A
+            // platform `delete` that silently no-ops must not be reported as success (defect 2).
+            if (fileSystem.exists(layout.generationsDirectory)) {
+                throw LedgerGenerationDirectoryDeleteException(layout.generationsDirectory)
+            }
             PointerRecoveryDiscardResult.DiscardedAwaitingUpgrade
         } catch (failure: Error) {
             throw failure

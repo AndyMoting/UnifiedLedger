@@ -45,8 +45,30 @@ internal const val LEDGER_MAIN_FILE_NAME = "ledger.db"
 /** The generation directory name prefix; the full name is `gen-<n>`. */
 internal const val LEDGER_GENERATION_PREFIX = "gen-"
 
-/** The SQLite sidecar suffixes that must travel with the main file as one consistent set. */
+/**
+ * The SQLite sidecar suffixes that must travel with the main file as one consistent set on COPY.
+ *
+ * Deliberately EXCLUDES the rollback journal `-journal`: it is TRANSIENT (the write-side artifact of
+ * an in-progress transaction) and MUST NOT be copied into a new generation — a stale journal beside a
+ * copied database is a corruption hazard, not consistency. It must nonetheless be DELETED wherever a
+ * main file is deleted, which is what [LEDGER_DELETABLE_SIDECAR_SUFFIXES] exists for.
+ */
 internal val LEDGER_SIDECAR_SUFFIXES: List<String> = listOf("-wal", "-shm")
+
+/**
+ * The DELETION-ONLY superset of [LEDGER_SIDECAR_SUFFIXES] (P7-06 06.D device-gate defect 2, D-183):
+ * every sidecar that must never survive its main file, including the transient rollback journal that
+ * a read-WRITE framework open can leave behind (the behaviour the repo already documents on device —
+ * `AndroidBackupSnapshotVerificationInstrumentedTest`, the 0-byte `<name>-journal` beside a
+ * read-write-opened snapshot).
+ *
+ * WHY A SEPARATE LIST (and not a widened [LEDGER_SIDECAR_SUFFIXES]): the same suffix set governs the
+ * legacy-upgrade COPY and the confirm-time staging copy, where `-journal` must NOT travel; only the
+ * DELETE paths need the superset. Widening the shared list would copy transient journals into new
+ * generations. `-journal` is deliberately NOT a tracked sidecar for sizing either: it is transient
+ * and normally zero-length.
+ */
+internal val LEDGER_DELETABLE_SIDECAR_SUFFIXES: List<String> = listOf("-wal", "-shm", "-journal")
 
 /**
  * P7-06 06.B (D-177; spec `2026-09-24-p7-06-backup-export-design.md` section 6): the private
@@ -534,7 +556,8 @@ internal fun publishActivePointer(
 /**
  * Section 3.2 rule 1 step (e): only after the pointer is durable may the legacy set be removed.
  * Sidecars are removed with the main file so no stale `-wal` can be picked up by a later open of
- * the legacy name.
+ * the legacy name. The deletion set is the superset [LEDGER_DELETABLE_SIDECAR_SUFFIXES]: a transient
+ * `-journal` left by a read-write open must not survive its main file either (06.D defect 2, D-183).
  */
 internal fun removeLegacyFiles(
     fileSystem: LedgerFileSystem,
@@ -543,7 +566,7 @@ internal fun removeLegacyFiles(
     if (fileSystem.exists(legacyMainFile)) {
         fileSystem.delete(legacyMainFile)
     }
-    for (suffix in LEDGER_SIDECAR_SUFFIXES) {
+    for (suffix in LEDGER_DELETABLE_SIDECAR_SUFFIXES) {
         val legacySidecar = legacyMainFile + suffix
         if (fileSystem.exists(legacySidecar)) {
             fileSystem.delete(legacySidecar)
@@ -650,11 +673,23 @@ internal fun parseLedgerSwitchJournal(bytes: ByteArray): LedgerSwitchJournal? {
 }
 
 /**
- * Deletes one generation directory as one consistent set: the main file, any `-wal`/`-shm`
- * sidecars, then the directory entry — the same sidecar discipline as [removeLegacyFiles] (a
- * stale `-wal` must never survive its main file). Strict: a deletion failure throws, so the
- * delete-then-stage precondition of the confirm flow can observe it. Callers that only need a
- * best-effort cleanup wrap this in `runCatching`.
+ * Deletes one generation directory as one consistent set: the main file, every deletable sidecar
+ * ([LEDGER_DELETABLE_SIDECAR_SUFFIXES] — `-wal`/`-shm` plus the transient `-journal`), then the
+ * directory entry — the same sidecar discipline as [removeLegacyFiles] (a stale `-wal` must never
+ * survive its main file).
+ *
+ * STRICT (06.D device-gate defect 2, D-183): a deletion failure throws, and — the part that was
+ * missing — the function VERIFIES the directory is actually gone before returning. The previous
+ * version deleted only `-wal`/`-shm`; a `-journal` left by a read-write framework open kept the
+ * directory non-empty, so the platform adapters' `delete` (`File.delete()` ignoring its boolean)
+ * silently no-opped and the generation directory SURVIVED while this function reported success. That
+ * made `BackupRestoreRecovery.discardUnvalidatableAndReUpgrade` return `DiscardedAwaitingUpgrade`
+ * while the generations directory still existed, which per spec section 5.3 / the 06.1 rule keeps
+ * `POINTER_MISSING` fail-closed FOREVER — the discard-and-re-upgrade branch was useless on Android.
+ *
+ * Callers that only need a best-effort cleanup wrap this in `runCatching` (rollback, journal
+ * recovery); callers that depend on the deletion (the discard branch, the confirm-time
+ * delete-then-stage) observe the throw and route to their typed failure.
  */
 internal fun deleteGenerationDirectory(
     fileSystem: LedgerFileSystem,
@@ -667,7 +702,7 @@ internal fun deleteGenerationDirectory(
     if (fileSystem.exists(mainFile)) {
         fileSystem.delete(mainFile)
     }
-    for (suffix in LEDGER_SIDECAR_SUFFIXES) {
+    for (suffix in LEDGER_DELETABLE_SIDECAR_SUFFIXES) {
         val sidecar = layout.sidecarFile(directory, suffix)
         if (fileSystem.exists(sidecar)) {
             fileSystem.delete(sidecar)
@@ -676,7 +711,23 @@ internal fun deleteGenerationDirectory(
     if (fileSystem.exists(directory)) {
         fileSystem.delete(directory)
     }
+    // The KDoc's "strict" claim is only true if the directory is actually gone: a platform `delete`
+    // that silently no-ops (a surviving sidecar, a permission failure) must fail loud here, so the
+    // discard branch can never report a success it did not achieve (defect 2).
+    if (fileSystem.exists(directory)) {
+        throw LedgerGenerationDirectoryDeleteException(directory)
+    }
 }
+
+/**
+ * The typed failure of a structured generation-directory deletion (06.D device-gate defect 2,
+ * D-183): the directory survived the deletion attempt, so a caller that depends on its absence (the
+ * discard-and-re-upgrade branch, the confirm-time delete-then-stage precondition) must fail closed
+ * instead of reporting success.
+ */
+class LedgerGenerationDirectoryDeleteException(
+    directory: String,
+) : RuntimeException("generation directory survived deletion: $directory")
 
 /**
  * 06.D spec section 4.2/4.3: the restart half of the frozen ROLLBACK rule (container-format spec

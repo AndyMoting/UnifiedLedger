@@ -4,6 +4,7 @@ import com.unifiedledger.data.OwnerCountResult
 import com.unifiedledger.data.StrictMigrationResult
 import com.unifiedledger.data.foreignKeyCheckOn
 import com.unifiedledger.data.migrateIsolatedSnapshotStrictlyOn
+import com.unifiedledger.data.openAndroidReadOnlyDriver
 import com.unifiedledger.data.openAndroidReadWriteDriver
 import com.unifiedledger.data.readAuthoritativeUserVersionOn
 import com.unifiedledger.data.readIntegrityCheckRowsOn
@@ -109,21 +110,33 @@ internal const val ANDROID_BACKUP_CONTAINER_MIME: String = "application/octet-st
 
 /**
  * The Android isolated-database port (spec section 8.2). It opens the snapshot / migrated copy by
- * ABSOLUTE PATH read-write through [openAndroidReadWriteDriver] (the minimal non-create-on-open
- * driver, because `FrameworkSQLiteDatabase` is not on this module's compile classpath and adding it
- * needs separate approval) and delegates every fact to the commonMain strict helpers.
+ * ABSOLUTE PATH through the minimal non-create-on-open drivers (because `FrameworkSQLiteDatabase` is
+ * not on this module's compile classpath and adding it needs separate approval) and delegates every
+ * fact to the commonMain strict helpers.
+ *
+ * P7-06 06.D device-gate defect 1 (D-183) — TWO OPEN MODES, deliberately:
+ * - every INSPECTION leg (authoritative version, identity sweep, integrity, owner counts, domain
+ *   validation) opens STRICTLY READ-ONLY via [openAndroidReadOnlyDriver], so a probe never writes
+ *   into the inspected file or its directory. The 06.D recovery probe must leave an unverifiable
+ *   candidate byte-identical (spec section 5.3);
+ * - the MIGRATION leg ([migrateStrictly]) opens READ-WRITE via [openAndroidReadWriteDriver],
+ *   because a strict migration is a real transaction and a read-only connection cannot run it.
+ *
+ * Both drivers pass an explicit non-deleting corruption handler (see
+ * `AndroidFrameworkSqlDriver.kt`), so a corrupt candidate is surfaced as a typed failure instead of
+ * being deleted by the platform default.
  */
 internal class AndroidRestoreIsolatedDatabasePort : RestoreIsolatedDatabasePort {
-    override fun readAuthoritativeUserVersion(snapshotPath: String): Long = withDriver(snapshotPath) { driver -> readAuthoritativeUserVersionOn(driver) }
+    override fun readAuthoritativeUserVersion(snapshotPath: String): Long = withReadOnlyDriver(snapshotPath) { driver -> readAuthoritativeUserVersionOn(driver) }
 
-    override fun readObservedLedgerIdentities(snapshotPath: String): List<String> = withDriver(snapshotPath) { driver -> readObservedLedgerIdsOn(driver) }
+    override fun readObservedLedgerIdentities(snapshotPath: String): List<String> = withReadOnlyDriver(snapshotPath) { driver -> readObservedLedgerIdsOn(driver) }
 
     override fun migrateStrictly(
         snapshotPath: String,
         fromVersion: Long,
         supportedVersions: Set<Long>,
     ): RestoreMigrationOutcome =
-        withDriver(snapshotPath) { driver ->
+        withReadWriteDriver(snapshotPath) { driver ->
             when (val result = migrateIsolatedSnapshotStrictlyOn(driver, fromVersion, supportedVersions)) {
                 is StrictMigrationResult.Migrated -> RestoreMigrationOutcome.Migrated(result.fromVersion, result.targetVersion)
                 is StrictMigrationResult.Failed -> RestoreMigrationOutcome.Failed
@@ -131,7 +144,7 @@ internal class AndroidRestoreIsolatedDatabasePort : RestoreIsolatedDatabasePort 
         }
 
     override fun validate(snapshotPath: String): RestoreValidationFacts =
-        withDriver(snapshotPath) { driver ->
+        withReadOnlyDriver(snapshotPath) { driver ->
             val integrity = snapshotIntegrityOk(readIntegrityCheckRowsOn(driver))
             val foreignKeys = foreignKeyCheckOn(driver)
             val domain = validateDomainOn(driver)
@@ -145,28 +158,37 @@ internal class AndroidRestoreIsolatedDatabasePort : RestoreIsolatedDatabasePort 
             )
         }
 
-    // 06.D (D-182; spec section 5.3): the recovery candidate gate — integrity_check ALONE.
-    override fun integrityCheckOk(snapshotPath: String): Boolean = withDriver(snapshotPath) { driver -> snapshotIntegrityOk(readIntegrityCheckRowsOn(driver)) }
+    // 06.D (D-182; spec section 5.3): the recovery candidate gate — integrity_check ALONE. Read-only:
+    // the candidate must survive an unverifiable verdict untouched (device-gate defect 1).
+    override fun integrityCheckOk(snapshotPath: String): Boolean = withReadOnlyDriver(snapshotPath) { driver -> snapshotIntegrityOk(readIntegrityCheckRowsOn(driver)) }
 
     // 06.D (D-182; spec section 5.5 field 6): the user-checkable owner counts. The counts stay
     // Long end to end (F-4): narrowing to Int could wrap a huge row count into a wrong number.
     override fun readOwnerCounts(snapshotPath: String): RestoreOwnerCounts =
-        withDriver(snapshotPath) { driver ->
+        withReadOnlyDriver(snapshotPath) { driver ->
             val counts: OwnerCountResult = readOwnerCountsOn(driver)
             RestoreOwnerCounts(counts.accountsCount, counts.categoriesCount, counts.transactionsCount)
         }
 
-    private fun <T> withDriver(
+    private fun <T> withReadOnlyDriver(
         path: String,
         block: (app.cash.sqldelight.db.SqlDriver) -> T,
-    ): T {
-        val driver = openAndroidReadWriteDriver(path)
-        return try {
+    ): T = withDriver(openAndroidReadOnlyDriver(path), block)
+
+    private fun <T> withReadWriteDriver(
+        path: String,
+        block: (app.cash.sqldelight.db.SqlDriver) -> T,
+    ): T = withDriver(openAndroidReadWriteDriver(path), block)
+
+    private fun <T> withDriver(
+        driver: app.cash.sqldelight.db.SqlDriver,
+        block: (app.cash.sqldelight.db.SqlDriver) -> T,
+    ): T =
+        try {
             block(driver)
         } finally {
             driver.close()
         }
-    }
 }
 
 /**

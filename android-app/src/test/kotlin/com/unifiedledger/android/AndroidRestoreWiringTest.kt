@@ -332,6 +332,36 @@ class AndroidRestoreWiringTest {
     }
 
     /**
+     * Defect 1 (P7-06 06.D device gate, D-183): the isolated-database port must open every
+     * INSPECTION leg read-only, and only the migration leg read-write. The port is an Android-only
+     * class whose open takes a concrete `SQLiteDatabase`, so it cannot be JVM-exercised; the
+     * behaviour is device-pinned by
+     * `AndroidRestoreRecoveryInstrumentedTest.aStructurallyCorruptCandidateIsNeverAdopted` (a corrupt
+     * candidate survives the probe byte-identically). This source-level guard pins the wiring choice
+     * itself so a regression that routes an inspection back through the read-write opener — the
+     * shape that deleted the candidate on device — turns this test RED.
+     */
+    @Test
+    fun theIsolatedPortOpensEveryInspectionReadOnlyAndOnlyTheMigrationReadWrite() {
+        val port = repositoryFile("android-app/src/main/kotlin/com/unifiedledger/android/AndroidRestorePreflightPorts.kt").readText()
+        // The five INSPECTION legs — readAuthoritativeUserVersion, readObservedLedgerIdentities,
+        // validate, integrityCheckOk, readOwnerCounts — must ALL ride the read-only route. Counted
+        // by call site so routing even one back through the read-write opener (the shape that
+        // deleted the candidate on device) drops the count and turns this RED.
+        val readOnlyCalls = Regex(Regex.escape("withReadOnlyDriver(snapshotPath)")).findAll(port).count()
+        assertEquals(
+            5,
+            readOnlyCalls,
+            "all five inspection legs must open read-only (defect 1, D-183); a revert to the read-write opener drops this count",
+        )
+        assertEquals(
+            1,
+            Regex(Regex.escape("withReadWriteDriver(snapshotPath)")).findAll(port).count(),
+            "only the migration leg may open read-write (defect 1, D-183)",
+        )
+    }
+
+    /**
      * Resolves a path relative to the repository root by walking up from the test working directory
      * to the settings file (the `LedgerDatabaseMigrationTest` precedent, ledger-data jvmTest).
      */

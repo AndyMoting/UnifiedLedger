@@ -258,6 +258,80 @@ class LedgerStableStorageTest {
         assertFalse(opened)
     }
 
+    // ---------------------------------------------------------------- structured generation deletion (06.D defect 2)
+
+    @Test
+    fun deleteGenerationDirectoryRemovesARollbackJournalSidecarToo() {
+        // P7-06 06.D device-gate defect 2 (D-183): a read-WRITE framework open leaves a transient
+        // `<main>-journal` beside the main file (the repo documents this on device). The deletion
+        // must cover it, or the directory stays non-empty and the platform `delete` silently no-ops.
+        fileSystem.putDirectory(generationsDirectory)
+        fileSystem.putDirectory(generationOneDirectory)
+        fileSystem.putFile(generationOneMain, sqliteLikeBytes())
+        fileSystem.putFile("$generationOneMain-journal", ByteArray(0))
+
+        deleteGenerationDirectory(fileSystem, layout, 1)
+
+        assertFalse(fileSystem.hasFile("$generationOneMain-journal"), "the transient journal must be deleted with the main file")
+        assertFalse(fileSystem.hasDirectory(generationOneDirectory), "the emptied generation directory must be gone")
+    }
+
+    @Test
+    fun deleteGenerationDirectoryThrowsWhenTheDirectorySurvives() {
+        // Defect 2's second half: the platform `delete` silently no-ops on a non-empty directory
+        // (the fake models this). The deletion must therefore VERIFY absence and fail loud, so a
+        // caller that depends on the directory being gone (the discard branch, the confirm-time
+        // delete-then-stage) can never report success it did not achieve. A foreign child that is
+        // not part of the deletable sidecar set is the surviving-content case.
+        fileSystem.putDirectory(generationsDirectory)
+        fileSystem.putDirectory(generationOneDirectory)
+        fileSystem.putFile(generationOneMain, sqliteLikeBytes())
+        fileSystem.putFile(fileSystem.join(generationOneDirectory, "foreign.bin"), ByteArray(4))
+
+        assertFailsWith<LedgerGenerationDirectoryDeleteException> {
+            deleteGenerationDirectory(fileSystem, layout, 1)
+        }
+        assertTrue(fileSystem.hasDirectory(generationOneDirectory))
+    }
+
+    @Test
+    fun removeLegacyFilesAlsoRemovesARollbackJournalSidecar() {
+        // The legacy deletion shares the same discipline: a transient `-journal` beside the legacy
+        // main file must not survive it either (the deletion-only superset).
+        val legacy = "/data/databases/ledger.db"
+        fileSystem.putFile(legacy, sqliteLikeBytes())
+        fileSystem.putFile("$legacy-wal", "wal-bytes")
+        fileSystem.putFile("$legacy-shm", "shm-bytes")
+        fileSystem.putFile("$legacy-journal", "journal-bytes")
+
+        removeLegacyFiles(fileSystem, legacy)
+
+        assertFalse(fileSystem.hasFile(legacy))
+        assertFalse(fileSystem.hasFile("$legacy-wal"))
+        assertFalse(fileSystem.hasFile("$legacy-shm"))
+        assertFalse(fileSystem.hasFile("$legacy-journal"), "the transient legacy journal must be removed too")
+    }
+
+    @Test
+    fun theLegacyUpgradeCopiesOnlyTheConsistentSidecarSetAndNeverTheTransientJournal() {
+        // The COPY list must stay NARROWER than the deletion set: a transient `-journal` must never
+        // be copied into a new generation (a stale journal beside a copied database is a corruption
+        // hazard). Only `-wal`/`-shm` travel.
+        val legacy = "/data/databases/ledger.db"
+        fileSystem.putFile(legacy, sqliteLikeBytes())
+        fileSystem.putFile("$legacy-wal", "wal-bytes")
+        fileSystem.putFile("$legacy-journal", "journal-bytes")
+
+        openStableStorageLedger(fileSystem, layout, legacy, closeGraph = {}) { "graph" }
+
+        assertTrue(fileSystem.hasFile("$generationOneDirectory/ledger.db-wal"))
+        assertFalse(
+            fileSystem.hasFile("$generationOneDirectory/ledger.db-journal"),
+            "the transient journal must never be copied into a new generation",
+        )
+        assertFalse(fileSystem.hasFile(legacy))
+    }
+
     // ---------------------------------------------------------------- fresh install / upgrade sequence
 
     @Test
