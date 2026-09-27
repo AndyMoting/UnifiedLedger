@@ -13,5 +13,17 @@
             android:name="com.unifiedledger.android.FixedPayloadRestoreSourceProvider"
             android:authorities="com.unifiedledger.android.p706c.restoresource"
             android:exported="true" />
+
+        <!--
+          P7-06 06.D (D-182) androidTest-only provider for
+          AndroidRestoreDocumentSizeInstrumentedTest: serves the OpenableColumns.SIZE shapes
+          queryDocumentSize must distinguish (a reported size, a null value, a missing column, an
+          empty cursor, a throwing provider) so the DocumentSize query runs against a REAL
+          ContentResolver on device. Test-only, no product data, never in the product build.
+        -->
+        <provider
+            android:name="com.unifiedledger.android.OpenableColumnsSizeFixtureProvider"
+            android:authorities="com.unifiedledger.android.p706d.documentsize"
+            android:exported="true" />
     </application>
 </manifest>

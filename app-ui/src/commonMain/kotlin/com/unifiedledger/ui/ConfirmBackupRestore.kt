@@ -36,8 +36,9 @@ import kotlinx.coroutines.withContext
  * - the use case is SINGLE-FLIGHT: a second concurrent confirm — including one bound to a
  *   different token — is typed-postponed before touching anything, so two flows can never
  *   interleave their staging into the same `gen-(current+1)` directory;
- * - an ESCAPE from the guarded post-quiesce region (caller cancellation, or an Error from the
- *   fail-loud ports) rethrows honestly but never wedges the runtime: the applicable best-effort
+ * - an ESCAPE from the guarded post-quiesce region (caller cancellation, an Error from the
+ *   fail-loud ports, or an escaped RuntimeException — F-7 broadened the catch to every Throwable)
+ *   rethrows honestly but never wedges the runtime: the applicable best-effort
  *   restoration (spec section 3.10) or rollback (spec section 3.8) runs under `NonCancellable`
  *   first, so the owner always ends Ready, StartupError, or — only for a drain that cannot
  *   converge — Quiescing with the escape reported.

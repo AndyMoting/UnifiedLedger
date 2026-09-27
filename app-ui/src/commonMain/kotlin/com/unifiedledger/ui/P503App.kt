@@ -3282,11 +3282,14 @@ internal fun runRestorePreflight(
  *    A result whose owner generation is null (the fail-closed RecoveryRequired, or a restoration
  *    that ended in StartupError) is delivered UNGUARDED — there is no current generation to
  *    compare against and discarding it would strand the surface forever;
- * 4. [confirm]'s contract is to return typed results or rethrow ONLY a CancellationException or an
- *    Error (every other Throwable — including an escaped RuntimeException — is converted
- *    internally after the NonCancellable repair, P2-1): a cancellation rethrows (the caller is
- *    going away), any other escape rethrows fail-loud after the repair already restored the
- *    runtime.
+ * 4. [confirm]'s contract is to return typed results or RETHROW any escape from the guarded
+ *    region — a CancellationException, an Error from the fail-loud ports, or an escaped
+ *    RuntimeException (P2-1/F-7 broadened the catch to every Throwable) — after the NonCancellable
+ *    repair has already restored the runtime. An escaped RuntimeException is NOT converted into a
+ *    typed result: the fail-loud file-system port contract permits it, and the commonTest
+ *    `anEscapedRuntimeExceptionAfterTheQuiesceRestoresTheRuntimeBeforePropagating` pins that it
+ *    propagates. Most Throwables are converted to typed results INSIDE the guarded region; this is
+ *    the last-resort net for one that is not.
  */
 internal fun runRestoreConfirm(
     scope: CoroutineScope,
