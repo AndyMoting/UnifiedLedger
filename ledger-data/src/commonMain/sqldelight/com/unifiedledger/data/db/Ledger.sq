@@ -477,6 +477,8 @@ CREATE TABLE budget_settings_history (
   created_at TEXT NOT NULL,
   CHECK ((status = 'MONITORED' AND limit_minor IS NOT NULL AND limit_minor >= 0)
       OR (status = 'CLOSED' AND limit_minor IS NULL)),
+  CHECK ((scope_kind = 'TOTAL' AND scope_category_id IS NULL)
+      OR (scope_kind = 'CATEGORY' AND scope_category_id IS NOT NULL)),
   PRIMARY KEY (ledger_id, budget_id, revision_number),
   FOREIGN KEY (ledger_id, budget_id) REFERENCES budget_config(ledger_id, budget_id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (ledger_id, request_id) REFERENCES budget_command_request(ledger_id, request_id) DEFERRABLE INITIALLY DEFERRED

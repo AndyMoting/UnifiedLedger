@@ -294,8 +294,48 @@ class SqlDelightBudgetStoreTest {
             // The config cannot be deleted and the CAS pointer can only advance by one.
             assertFailsSql { driver.execute(null, "DELETE FROM budget_config", 0) }
             assertFailsSql { driver.execute(null, "UPDATE budget_config SET current_revision = 5", 0) }
+            // The guard's IDENTITY-FREEZE clause: even with a valid +1 revision bump, the stable
+            // identity columns (month/currency/scope) are immutable. Each statement below keeps
+            // current_revision = 2 (the legal successor of 1) so ONLY the identity clause can reject
+            // it; dropping that clause would let these updates through and this test go red.
+            assertFailsSql { driver.execute(null, "UPDATE budget_config SET month_key = '2026-04', current_revision = 2", 0) }
+            assertFailsSql { driver.execute(null, "UPDATE budget_config SET currency_code = 'USD', current_revision = 2", 0) }
+            assertFailsSql { driver.execute(null, "UPDATE budget_config SET scope_key = 'TOTAL-OTHER', current_revision = 2", 0) }
+            assertFailsSql { driver.execute(null, "UPDATE budget_config SET scope_kind = 'CATEGORY', scope_category_id = 'category-food', current_revision = 2", 0) }
             assertEquals(1L, queryLong(driver, "SELECT count(*) FROM budget_settings_history"))
             assertEquals(1L, queryLong(driver, "SELECT count(*) FROM budget_config"))
+            // The identity is untouched by the rejected attempts.
+            assertEquals("2026-03", queryText(driver, "SELECT month_key FROM budget_config"))
+            assertEquals("TOTAL", queryText(driver, "SELECT scope_key FROM budget_config"))
+        }
+    }
+
+    @Test
+    fun theHistoryScopeConsistencyCheckRejectsAMismatchedCategoryRow() {
+        withStore { store, driver ->
+            assertIs<BudgetCommandResult.Accepted>(saveCommand(store, driver, "request-add", "budget-1").setLimit(ledgerId, march, BudgetScope.Total, 100L, expectedRevision = 0L))
+            // F4: budget_settings_history now carries the same scope_kind<->scope_category_id CHECK
+            // as budget_config. The guard_update trigger blocks UPDATE, so the CHECK is exercised by
+            // a direct INSERT (the trigger is only BEFORE UPDATE/DELETE). A CATEGORY row with a NULL
+            // category and a TOTAL row that names a category must both be rejected; dropping the
+            // CHECK would let these inserts through and this test would go red.
+            assertFailsSql {
+                driver.execute(
+                    null,
+                    "INSERT INTO budget_settings_history(ledger_id, budget_id, revision_number, status, limit_minor, currency_code, currency_precision, scope_kind, scope_category_id, request_id, created_at) " +
+                        "VALUES ('ledger-budget','budget-1',2,'MONITORED',5,'CNY',2,'CATEGORY',NULL,'request-add','2026-03-05T02:00:00Z')",
+                    0,
+                )
+            }
+            assertFailsSql {
+                driver.execute(
+                    null,
+                    "INSERT INTO budget_settings_history(ledger_id, budget_id, revision_number, status, limit_minor, currency_code, currency_precision, scope_kind, scope_category_id, request_id, created_at) " +
+                        "VALUES ('ledger-budget','budget-1',3,'MONITORED',5,'CNY',2,'TOTAL','category-food','request-add','2026-03-05T02:00:00Z')",
+                    0,
+                )
+            }
+            assertEquals(1L, queryLong(driver, "SELECT count(*) FROM budget_settings_history"))
         }
     }
 
