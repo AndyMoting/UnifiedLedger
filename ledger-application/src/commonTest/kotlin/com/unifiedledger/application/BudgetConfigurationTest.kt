@@ -91,6 +91,39 @@ class BudgetConfigurationTest {
     }
 
     @Test
+    fun aNewBindingToADeactivatedExpenseCategoryIsRejectedWithZeroWrites() {
+        val recorder = RecordingCommitPort()
+        val useCase = useCase(recorder, catalog = catalogWithOneExpenseCategory(active = false))
+        // Spec section 3.5: a NEW binding (expectedRevision == 0) must not name a deactivated
+        // expense category, even though the kind is right.
+        val result = useCase.setLimit(ledgerId, march, BudgetScope.Category(CategoryId("category-food")), 100L, expectedRevision = 0L)
+        val rejected = assertIs<BudgetCommandResult.Rejected>(result)
+        assertEquals(BudgetFailureCode.BUDGET_SCOPE_CATEGORY_INVALID, rejected.failureCode)
+        assertEquals(0, recorder.requests.size)
+        // A fresh close of an inactive category is likewise a new binding and is rejected.
+        val closeRejected =
+            assertIs<BudgetCommandResult.Rejected>(
+                useCase.close(ledgerId, march, BudgetScope.Category(CategoryId("category-food")), expectedRevision = 0L),
+            )
+        assertEquals(BudgetFailureCode.BUDGET_SCOPE_CATEGORY_INVALID, closeRejected.failureCode)
+        assertEquals(0, recorder.requests.size)
+    }
+
+    @Test
+    fun anExistingBudgetOnANowInactiveCategoryStaysModifiableAndClosable() {
+        val recorder = RecordingCommitPort()
+        val useCase = useCase(recorder, catalog = catalogWithOneExpenseCategory(active = false))
+        val scope = BudgetScope.Category(CategoryId("category-food"))
+        // Spec section 3.5: "停用分类保留既有预算及统计"; adjusting an existing limit is NOT
+        // re-enabling the category, so an EXISTING budget (expectedRevision > 0) still reaches
+        // the commit port for both modify and close.
+        useCase.setLimit(ledgerId, march, scope, 250L, expectedRevision = 3L)
+        assertEquals(1, recorder.requests.size)
+        useCase.close(ledgerId, march, scope, expectedRevision = 4L)
+        assertEquals(2, recorder.requests.size)
+    }
+
+    @Test
     fun anUnknownLedgerRejectsACategoryScopeButStillAcceptsATotalScope() {
         val recorder = RecordingCommitPort()
         val useCase =
@@ -102,9 +135,10 @@ class BudgetConfigurationTest {
                 clock = LedgerClock { Instant.parse("2026-03-05T02:00:00Z") },
             )
         // A category scope cannot resolve without a catalog, so it is rejected with zero calls.
-        val rejected = assertIs<BudgetCommandResult.Rejected>(
-            useCase.setLimit(ledgerId, march, BudgetScope.Category(CategoryId("category-food")), 100L, expectedRevision = 0L),
-        )
+        val rejected =
+            assertIs<BudgetCommandResult.Rejected>(
+                useCase.setLimit(ledgerId, march, BudgetScope.Category(CategoryId("category-food")), 100L, expectedRevision = 0L),
+            )
         assertEquals(BudgetFailureCode.BUDGET_SCOPE_CATEGORY_INVALID, rejected.failureCode)
         assertEquals(0, recorder.requests.size)
         // A TOTAL scope needs no catalog at all, so it still reaches the commit port.
@@ -173,6 +207,29 @@ class BudgetConfigurationTest {
         ) {
             is com.unifiedledger.domain.DomainResult.Success -> result.value
             is com.unifiedledger.domain.DomainResult.Failure -> error("income catalog must be valid")
+        }
+
+    private fun catalogWithOneExpenseCategory(active: Boolean): LedgerCatalog =
+        when (
+            val result =
+                LedgerCatalog.create(
+                    accounts = emptyList(),
+                    categories =
+                        listOf(
+                            Category(
+                                id = CategoryId("category-food"),
+                                ledgerId = ledgerId,
+                                parentId = null,
+                                postingAccountId = null,
+                                active = active,
+                                kind = CategoryKind.EXPENSE,
+                                name = "food",
+                            ),
+                        ),
+                )
+        ) {
+            is com.unifiedledger.domain.DomainResult.Success -> result.value
+            is com.unifiedledger.domain.DomainResult.Failure -> error("expense catalog must be valid")
         }
 
     private class RecordingCommitPort : BudgetConfigurationCommitPort {

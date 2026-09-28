@@ -46,6 +46,11 @@ enum class BudgetFailureCode(
     ;
 
     companion object {
+        /**
+         * Maps a domain [BudgetViolation] to its frozen failure code. Mirrors the
+         * `CatalogFailureCode.of` precedent (a test-only mapping; the store uses the literals
+         * directly), so any other domain violation falls back to the generic constraint code.
+         */
         fun of(violation: DomainViolation): BudgetFailureCode =
             when (violation) {
                 BudgetViolation.LimitNegative -> BUDGET_LIMIT_NEGATIVE
@@ -256,7 +261,9 @@ data class BudgetSettingsVersion(
  * rejection before any claim, derives the canonical snapshot/fingerprint, and delegates the
  * atomic claim/history/receipt boundary to the injected [BudgetConfigurationCommitPort].
  * A category scope must be an existing `CategoryKind.EXPENSE` category and a negative limit
- * is refused; neither check writes anything.
+ * is refused; neither check writes anything. Spec section 3.5 additionally refuses a NEW
+ * binding (`expectedRevision == 0`) to a deactivated expense category while leaving an
+ * already-bound inactive category modifiable/closable (see [target]).
  */
 class SaveBudgetConfiguration(
     private val commitPort: BudgetConfigurationCommitPort,
@@ -280,9 +287,11 @@ class SaveBudgetConfiguration(
         if (limitMinorUnits < 0L) {
             return BudgetCommandResult.Rejected(BudgetFailureCode.BUDGET_LIMIT_NEGATIVE)
         }
-        val target = target(ledgerId, month, scope) ?: return BudgetCommandResult.Rejected(BudgetFailureCode.BUDGET_SCOPE_CATEGORY_INVALID)
+        val budgetTarget =
+            target(ledgerId, month, scope, expectedRevision)
+                ?: return BudgetCommandResult.Rejected(BudgetFailureCode.BUDGET_SCOPE_CATEGORY_INVALID)
         val payload = BudgetCommandPayload.SetLimit(limitMinorUnits)
-        return execute(target, expectedRevision, payload)
+        return execute(budgetTarget, expectedRevision, payload)
     }
 
     /** Stop monitoring by appending a CLOSED history row; configuration and history are kept. */
@@ -292,19 +301,26 @@ class SaveBudgetConfiguration(
         scope: BudgetScope,
         expectedRevision: Long,
     ): BudgetCommandResult {
-        val target = target(ledgerId, month, scope) ?: return BudgetCommandResult.Rejected(BudgetFailureCode.BUDGET_SCOPE_CATEGORY_INVALID)
-        return execute(target, expectedRevision, BudgetCommandPayload.Close)
+        val budgetTarget =
+            target(ledgerId, month, scope, expectedRevision)
+                ?: return BudgetCommandResult.Rejected(BudgetFailureCode.BUDGET_SCOPE_CATEGORY_INVALID)
+        return execute(budgetTarget, expectedRevision, BudgetCommandPayload.Close)
     }
 
     /**
      * Spec section 3.1: a category scope must name a stable `CategoryKind.EXPENSE` category
-     * of the ledger catalog. A missing or non-EXPENSE category is a typed rejection that
-     * writes nothing.
+     * of the ledger catalog. Spec section 3.5 adds the activation nuance: a NEW binding — a
+     * fresh identity with `expectedRevision == 0` — must NOT name a deactivated expense
+     * category, while an EXISTING budget (`expectedRevision > 0`) whose category was later
+     * deactivated stays modifiable and closable ("停用分类保留既有预算及统计"; adjusting an
+     * existing limit is explicitly NOT re-enabling the category). A missing, non-EXPENSE or
+     * newly-bound inactive category is a typed rejection that writes nothing.
      */
     private fun target(
         ledgerId: LedgerId,
         month: YearMonth,
         scope: BudgetScope,
+        expectedRevision: Long,
     ): BudgetTarget? {
         val scopeKey = budgetScopeKey(scope)
         if (scope !is BudgetScope.Category) {
@@ -315,6 +331,7 @@ class SaveBudgetConfiguration(
             catalog.categories.firstOrNull { it.id == scope.categoryId }
                 ?: return null
         if (category.kind != CategoryKind.EXPENSE) return null
+        if (expectedRevision == 0L && !category.active) return null
         return BudgetTarget(ledgerId, budgetMonthKey(month), configuredCurrency, scopeKey, scope.categoryId)
     }
 
