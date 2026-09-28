@@ -2,7 +2,7 @@
 
 状态：proposal（2026-09-28 起草；等待裁决，**不授权实现**）。本文是 P7-07「预算」的**设计门候选**，冻结 07.A 计量矩阵、07.B 配置模型、07.C 计算契约、07.D 模块/读取边界与 **07.T 时间投影技术门**的设计面。审批（含 Q15/Q16 裁决与 schema 版本号分配）是**独立裁决**；在裁决前本文不构成产品行为、迁移、技术选型或发布授权。本文不写实现、不写迁移文件、不分配 schema 版本号。
 
-**Revision:** draft-2（2026-09-28）。闭合独立评审（APPROVE-WITH-FINDINGS，无 P1）的六项 findings：**P2-1** §6.2 写入者枚举补全——SQL 侧四语句（含遗漏的 `Ledger.sq:2112 copyCurrentVersionWithNewNote`，生产路径 `SqlDelightConfirmedTransactionNoteUpdateCommitPort.kt:47`）与 Kotlin 侧全部可达调用点（含 RG-11 追加 `SqlDelightRg11Store.kt:606`、RG-12 追加 `SqlDelightRg12Store.kt:561`），并冻结这些行的投影义务；**P2-2** §5.1「目录与交易读一致版本」从无机制硬约束降为 OPEN（§8 项 9，候选机制 `CatalogAuthority.catalogVersion`）；**P2-3** §6.5 精度界——epoch 微秒的无损性显式绑定「写入者不产生亚微秒」前提，对称要求替代方案（§6.4 #4 精度界，二选一约束写入者或改 epoch 纳秒）；**P3-1** §6.2(a)/§6.3 移除误引的 `ParseManualExpenseOccurredAtTest.kt:88`（`everyFrozenRejectionVectorIsInvalid()` 的**被拒**输入，且 `Instant.toString()` 小数位为 3 的倍数，`.5Z` 非可产生形），改用实产生形 `"2026-03-05T00:00:00.500Z"`/`"2026-05-01T01:00:00Z"`；**P3-2** §1.5 更正为「无产品预算实体/配置/计算」，并点名 RG 报表字段 `Rg09Operations.kt:666`/`Rg10Operations.kt:765 budgetEffectMinor` 与领域按期预算 `Rg11Operations.kt:433/1214/1240 budgetMinor`；**P3-3** §6.4 #3 回填失败改为「只读预检 → 中止并类型化诊断、不改库」，避免不可解析行 brick 库，残余登记 §8 项 10。draft-1（2026-09-28）。初稿。工作基线 = 本 worktree 分支 `UL-p7-07design`，基点 `a895ee4`（当前 `main` 头）。schema 停留 **v31**，迁移链 `1.sqm`～`30.sqm`（30 个文件，v1→v31）；下一个可用版本号候选为 v32（`31.sqm`），**本文不分配、不创建**该文件。tracked 行号为本基点实读行号；`docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` 为主 checkout 的本地只读文件，本 worktree 内不存在，凡引用该计划一律标注「计划」并以其主 checkout 实读行号为准。本文**不**修改任何既有决定、已批准规格、`DECISIONS.md` 或代码；不复制大段产品代码；不写本机绝对路径、个人数据或工具轨迹；示例全部匿名合成。
+**Revision:** draft-3（2026-09-28）。闭合二次评审（APPROVE-WITH-FINDINGS）的三项 P3：**New-1** §6.2(a)/§6.5 移除误引的 `P705EffectiveSurfaceTest.kt:52`（该行是 void/restore 时钟瞬时，非 `statistics_at` 写入；void/restore 端口只写 `transaction_void_fact.created_at`，不追加 `transaction_version` 行），改用真实整秒写实例 `"2026-03-05T00:00:00Z"`（`SqlDelightConfirmedManualLendingCommitPortTest.kt:200-201`）与 `"2026-03-05T02:00:00Z"`（`P705Harness.kt:54`，由 `:261-263` 绑定入 `transaction_version`）；**New-2** §6.2 SQL 表第 1 行标签由「新建 version 1」更正为「写入一条 version 行；`version_number` 由调用方给出」；**New-3** §6.3 等值瞬时对改述为「等值瞬时却排序不等」，不再称「时间序相反」。draft-2（2026-09-28）。闭合独立评审（APPROVE-WITH-FINDINGS，无 P1）的六项 findings：**P2-1** §6.2 写入者枚举补全——SQL 侧四语句（含遗漏的 `Ledger.sq:2112 copyCurrentVersionWithNewNote`，生产路径 `SqlDelightConfirmedTransactionNoteUpdateCommitPort.kt:47`）与 Kotlin 侧全部可达调用点（含 RG-11 追加 `SqlDelightRg11Store.kt:606`、RG-12 追加 `SqlDelightRg12Store.kt:561`），并冻结这些行的投影义务；**P2-2** §5.1「目录与交易读一致版本」从无机制硬约束降为 OPEN（§8 项 9，候选机制 `CatalogAuthority.catalogVersion`）；**P2-3** §6.5 精度界——epoch 微秒的无损性显式绑定「写入者不产生亚微秒」前提，对称要求替代方案（§6.4 #4 精度界，二选一约束写入者或改 epoch 纳秒）；**P3-1** §6.2(a)/§6.3 移除误引的 `ParseManualExpenseOccurredAtTest.kt:88`（`everyFrozenRejectionVectorIsInvalid()` 的**被拒**输入，且 `Instant.toString()` 小数位为 3 的倍数，`.5Z` 非可产生形），改用实产生形 `"2026-03-05T00:00:00.500Z"`；**P3-2** §1.5 更正为「无产品预算实体/配置/计算」，并点名 RG 报表字段 `Rg09Operations.kt:666`/`Rg10Operations.kt:765 budgetEffectMinor` 与领域按期预算 `Rg11Operations.kt:433/1214/1240 budgetMinor`；**P3-3** §6.4 #3 回填失败改为「只读预检 → 中止并类型化诊断、不改库」，避免不可解析行 brick 库，残余登记 §8 项 10。draft-1（2026-09-28）。初稿。工作基线 = 本 worktree 分支 `UL-p7-07design`，基点 `a895ee4`（当前 `main` 头）。schema 停留 **v31**，迁移链 `1.sqm`～`30.sqm`（30 个文件，v1→v31）；下一个可用版本号候选为 v32（`31.sqm`），**本文不分配、不创建**该文件。tracked 行号为本基点实读行号；`docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` 为主 checkout 的本地只读文件，本 worktree 内不存在，凡引用该计划一律标注「计划」并以其主 checkout 实读行号为准。本文**不**修改任何既有决定、已批准规格、`DECISIONS.md` 或代码；不复制大段产品代码；不写本机绝对路径、个人数据或工具轨迹；示例全部匿名合成。
 
 **标记约定：** 全文用【已验证事实】标注本次实读代码/文档所得的现状，用【冻结设计提案】标注本文建议、尚未批准、实现者不得当作既有 API。
 
@@ -226,7 +226,7 @@
 
 | # | 语句（`Ledger.sq`） | 行为 |
 | --- | --- | --- |
-| 1 | `:1997 insertTransactionVersion`（新建 version 1） | 绑定调用方传入的三时间文本 |
+| 1 | `:1997 insertTransactionVersion`（写入一条 version 行；`version_number` 由调用方给出，RG-07 在 `:698`/`:1129` 硬编码 1，RG-04/RG-04Import/RG-05/RG-06 传 `version.versionNumber`） | 绑定调用方传入的三时间文本 |
 | 2 | `:2112 copyCurrentVersionWithNewNote` | **复制 `version.statistics_at` 原样**（`:2117`），只换 `note` |
 | 3 | `:9918 copyCurrentVersionWithNewPostingSet`（P7-05 修正） | 取请求的 `:statistics_at` |
 | 4 | `:9939 copyCurrentVersionReusingPostingSet`（P7-05 修正） | 取请求的 `:statistics_at` |
@@ -257,7 +257,7 @@
 | `ledger-data/.../SqlDelightRg07Store.kt:698`（及 `:1129`） | `input.occurredAt.toString()`（`occurred/statistics/effective` 三列同值） |
 | `ledger-data/.../SqlDelightTransactionCorrectionCommitPort.kt:79/157/170` | `requestSnapshot.statisticsAt.toString()` |
 
-该形**实际产生**的实例（测试/夹具实读）：`"2026-03-05T00:00:00.500Z"`（`SqlDelightConfirmedManualLendingCommitPortTest.kt:205-206`）、`"2026-05-01T01:00:00Z"`（`P705EffectiveSurfaceTest.kt:52`）。
+该形**实际产生**的实例（测试/夹具实读）：整秒 `"2026-03-05T00:00:00Z"`（`SqlDelightConfirmedManualLendingCommitPortTest.kt:200-201`，经 `insertTransactionVersion` 写入 `statistics_at`）与 `"2026-03-05T02:00:00Z"`（`P705Harness.kt:54 marchStatistics`，由 `:261-263` 以 `.toString()` 绑定入 `transaction_version`）；毫秒 `"2026-03-05T00:00:00.500Z"`（`SqlDelightConfirmedManualLendingCommitPortTest.kt:205-206`）。
 
 **(b) 原始文本透传（来源 JSON 原样字符串，带偏移量 `+08:00`）：**
 
@@ -277,7 +277,7 @@
 ### 6.3 字典序失效的具体反例【已验证事实】
 
 - **同刻不同形：** `"2026-01-21T11:00:00+08:00"`（(b)）与 `"2026-01-21T03:00:00Z"`（(a)）是**同一瞬时**，但字符串不同；`'+'`(0x2B) < `'Z'`(0x5A)，故偏移形**恒排**在 `Z` 形之前，与实际时间序无关。
-- **同刻不同精度：** `"2026-03-05T00:00:00.500Z"`（(a) 实际产生形）与一个零小数秒的 `"...T00:00:00Z"` 是**同一瞬时**（当小数部分为零时 `Instant.toString()` 省略小数段），但字节不同；`'.'`(0x2E) < `'Z'`(0x5A)，故带 `.500Z` 的形排在 `...00Z` 之前——**早于**它，字典序与时间序**相反**。
+- **同刻不同精度：** `"2026-03-05T00:00:00.500Z"`（(a) 实际产生形）与零小数秒的 `"2026-03-05T00:00:00Z"` 是**同一瞬时**（当小数部分为零时 `Instant.toString()` 省略小数段），二者**无时间先后**，但字节不同、字典序不同（`'.'`(0x2E) < `'Z'`(0x5A)，故带 `.500Z` 的形排在 `...00Z` 之前）——**等值瞬时却排序不等**，故字典序不是有效的时间序。
 - **结论：** 直接比较原始 ISO 字符串**不能**作为时间序，**不得**上线。
 
 ### 6.4 推荐方案【冻结设计提案】
@@ -294,7 +294,7 @@
 
 **精度界（P2-3 修正）。** 投影单位必须**无歧义地覆盖写入者可实际产生的精度**，且该界须**对称地**适用于推荐方案与任何替代方案：
 
-- **实读精度范围**：§6.2 实际产生的形含整秒（`"2026-05-01T01:00:00Z"`）与毫秒（`"2026-03-05T00:00:00.500Z"`），以及偏移形整秒（`"2026-01-21T11:00:00+08:00"`）。**本次未观察到亚毫秒（微秒/纳秒）写入者。**
+- **实读精度范围**：§6.2 实际产生的形含整秒（`"2026-03-05T00:00:00Z"`，`SqlDelightConfirmedManualLendingCommitPortTest.kt:200-201`）与毫秒（`"2026-03-05T00:00:00.500Z"`，同文件 `:205-206`），以及偏移形整秒（`"2026-01-21T11:00:00+08:00"`）。**本次未观察到亚毫秒（微秒/纳秒）写入者。**
 - **Kotlin `Instant` 可携带纳秒精度**，故「epoch 微秒 INTEGER」**不**能无条件声称无损；其无损性**仅**在「写入者不产生亚微秒精度」这一前提下成立。因此冻结为二选一（实施规格裁决其一）：
   - (a) **约束写入者**：规定产品写入路径只产生整秒/毫秒（`Instant` 经既有 `toString()` 形，小数位为 3 的倍数），并对亚微秒输入**类型化拒绝**；在此界内 epoch 微秒无损。或
   - (b) **选可证无损单位**：若需覆盖任意 `Instant`，改用 epoch **纳秒**（`Long` 在 2262 年前足够，与 `Instant` 精度一致）。
