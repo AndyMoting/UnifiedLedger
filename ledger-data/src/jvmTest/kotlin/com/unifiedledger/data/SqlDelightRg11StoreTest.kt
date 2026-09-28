@@ -181,6 +181,13 @@ class SqlDelightRg11StoreTest {
                 val v2 = tx2Versions.single { it.version_number == 2L }
                 assertEquals(VERSION_CORRECT.value, v2.version_id)
                 assertEquals(CONFIRMATION_CORRECT, v2.confirmation_id)
+                // P7-07 07.T: the append path (`persistAppendedVersions` -> `insertTransactionVersion`)
+                // projects the appended version's statistics_at in the same statement, so the RG-11
+                // appended version is never left unprojected. 2026-02-15T00:00:00+08:00 == 1771084800 s.
+                assertEquals(
+                    1_771_084_800_000_000_000L,
+                    projectionOf(driver, VERSION_CORRECT.value),
+                )
                 // The current version and the statistics time text advanced.
                 val tx2Row =
                     database.ledgerQueries
@@ -626,6 +633,23 @@ class SqlDelightRg11StoreTest {
             setProperty("foreign_keys", "true")
             setProperty("busy_timeout", "5000")
         }
+
+    /** P7-07 07.T: the numeric time projection of one version row. */
+    private fun projectionOf(
+        driver: JdbcSqliteDriver,
+        versionId: String,
+    ): Long =
+        driver
+            .executeQuery(
+                null,
+                "SELECT statistics_at_epoch_nanos FROM transaction_version WHERE version_id = '$versionId'",
+                { cursor ->
+                    check(cursor.next().value)
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(requireNotNull(cursor.getLong(0)))
+                },
+                0,
+            ).value
 
     private companion object {
         val CNY = CurrencyUnit("CNY", 2)

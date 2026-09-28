@@ -35,7 +35,7 @@ import kotlin.test.assertEquals
  * the artifact stays green.
  *
  * FIXTURE SHAPE (verified against the artifact before asserting anything): 61,000 candidates for one
- * ledger, 158,000 duplicate relations, `user_version=31`. The paged list query returns one row per
+ * ledger, 158,000 duplicate relations, `user_version=32`. The paged list query returns one row per
  * (candidate, duplicate relation) pair — 61,000 + 158,000 = 219,000 rows on the D-166 synthetic
  * profile; on this artifact it is 168,000 (every candidate has its base row; only the duplicate-
  * bearing candidates add relation rows, and the artifact's relation layout differs from the D-166

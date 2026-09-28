@@ -39,7 +39,7 @@ class P705VoidCorrectionMigrationV30ToV31Test {
 
     @Test
     fun versionThirtyOneIsCurrent() {
-        assertEquals(31, LedgerDatabase.Schema.version)
+        assertEquals(32, LedgerDatabase.Schema.version)
     }
 
     @Test
@@ -110,6 +110,8 @@ class P705VoidCorrectionMigrationV30ToV31Test {
         try {
             JdbcSqliteDriver(url, migrationProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
+                // The same-version reopen is asserted for the v31 surface this edge owns;
+                // stamp 31 so the no-op comparison is against the version under test.
                 driver.execute(null, "PRAGMA user_version = 31", 0)
             }
             JdbcSqliteDriver(url, migrationProperties()).use { driver ->

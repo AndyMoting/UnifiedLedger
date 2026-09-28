@@ -24,7 +24,7 @@ class DesktopCatalogMigrationTest {
             assertEquals(27L, queryUserVersion(url))
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(31L, driver.userVersion())
+                assertEquals(32L, driver.userVersion())
                 val database = LedgerDatabase(driver)
                 assertEquals(0L, database.ledgerQueries.countCatalogAccounts("ledger-local-test").executeAsOne())
             }
@@ -43,10 +43,10 @@ class DesktopCatalogMigrationTest {
         try {
             // The production open path creates and stamps a fresh file at the current version.
             JdbcSqliteDriver(url).use { driver -> migrateToCurrentSchema(driver) }
-            assertEquals(31L, queryUserVersion(url))
+            assertEquals(32L, queryUserVersion(url))
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(31L, driver.userVersion())
+                assertEquals(32L, driver.userVersion())
             }
         } finally {
             Files.deleteIfExists(path)
@@ -60,12 +60,14 @@ class DesktopCatalogMigrationTest {
         try {
             JdbcSqliteDriver(url).use { driver ->
                 LedgerDatabase.Schema.create(driver)
-                driver.execute(null, "PRAGMA user_version = 32", 0)
+                // One above the current schema (32 since the P7-07 07.T edge): the fail-closed
+                // branch is "library version is NEWER than supported".
+                driver.execute(null, "PRAGMA user_version = 33", 0)
             }
             assertFailsWith<IllegalStateException> {
                 JdbcSqliteDriver(url).use { driver -> migrateToCurrentSchema(driver) }
             }
-            JdbcSqliteDriver(url).use { driver -> assertEquals(32L, driver.userVersion()) }
+            JdbcSqliteDriver(url).use { driver -> assertEquals(33L, driver.userVersion()) }
             assertEquals(true, Files.exists(path))
         } finally {
             Files.deleteIfExists(path)
@@ -88,7 +90,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(31L, driver.userVersion())
+                assertEquals(32L, driver.userVersion())
             }
             // The same file still open through the real path, and it still has its tables.
             val graph = openDesktopLedger(url)
@@ -127,12 +129,15 @@ class DesktopCatalogMigrationTest {
                 // them the same way.
                 P7_V31_TABLES.forEach { table -> driver.execute(null, "DROP TABLE $table", 0) }
                 driver.execute(null, "DROP VIEW $P7_V31_VIEW", 0)
+                // ... and the P7-07 v32 time-projection column and its range index, or the
+                // in-place migration's 31.sqm aborts on the already-present column.
+                dropP7V32TimeProjection(driver)
                 driver.execute(null, "PRAGMA user_version = 0", 0)
             }
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(31L, driver.userVersion())
+                assertEquals(32L, driver.userVersion())
                 assertEquals(
                     1L,
                     queryLong(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'catalog_version'"),
@@ -164,7 +169,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(31L, driver.userVersion())
+                assertEquals(32L, driver.userVersion())
                 // No migration ran: the catalog tables were not created, and the v27 objects the
                 // guarded branch would have relied on are still absent.
                 assertEquals(
@@ -216,7 +221,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(31L, driver.userVersion())
+                assertEquals(32L, driver.userVersion())
                 // The v27-only objects were never created: the guards alone did not pass the gate.
                 assertEquals(
                     0L,
@@ -258,6 +263,8 @@ class DesktopCatalogMigrationTest {
             // ... and the P7-05 v31 objects, for the same reason (30.sqm).
             P7_V31_TABLES.forEach { table -> driver.execute(null, "DROP TABLE $table", 0) }
             driver.execute(null, "DROP VIEW $P7_V31_VIEW", 0)
+            // ... and the P7-07 v32 time-projection column and range index (31.sqm).
+            dropP7V32TimeProjection(driver)
             driver.execute(null, "PRAGMA user_version = 27", 0)
         }
     }
@@ -307,6 +314,19 @@ class DesktopCatalogMigrationTest {
                 "transaction_correction_request",
             )
         const val P7_V31_VIEW = "transaction_effective_state"
+    }
+
+    /**
+     * P7-07 07.T (D-184) objects of the schema v32 edge: the `statistics_at_epoch_nanos`
+     * projection column and its range index. A look-alike of an older surface is built from
+     * `Schema.create` (v32) minus these objects, so the in-place migration's 31.sqm
+     * `ALTER TABLE ... ADD COLUMN` does not abort on the already-present column. The column drop
+     * removes the range index with it; dropping the index explicitly keeps the two statements
+     * symmetric with the migration's own ADD COLUMN + CREATE INDEX pair.
+     */
+    private fun dropP7V32TimeProjection(driver: JdbcSqliteDriver) {
+        driver.execute(null, "DROP INDEX IF EXISTS transaction_version_statistics_at_range_idx", 0)
+        driver.execute(null, "ALTER TABLE transaction_version DROP COLUMN statistics_at_epoch_nanos", 0)
     }
 
     private fun queryLong(

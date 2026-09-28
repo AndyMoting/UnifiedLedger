@@ -1,0 +1,133 @@
+-- P7-07 07.T (D-184 item 4) time projection: v31 -> v32. Adds the numeric time projection
+-- column statistics_at_epoch_nanos to transaction_version, its range index and a backfill of
+-- every existing statistics_at. Purely additive to the row data: statistics_at TEXT is never
+-- rewritten. The caller wraps Schema.migrate in one outer transaction (26.sqm discipline), so
+-- any failure below rolls the whole migration back and the v31 file is left untouched.
+--
+-- ORDERING (spec section 6.4 item 3, the P3-3 anti-brick fix): the migration runs a READ-ONLY
+-- pre-check FIRST, BEFORE the Stage 2 ALTER TABLE ADD COLUMN. statistics_at is TEXT NOT NULL with
+-- no format CHECK (Ledger.sq), so a historical database can carry an unparseable row. A migration
+-- that simply "aborts on the first unparseable row" would leave that database permanently
+-- unopenable (brick), which the spec forbids. Instead the pre-check counts unparseable rows
+-- through a named guard constraint whose name IS the typed diagnostic; a non-zero count aborts
+-- the migration before any structure or data change, so the database stays openable and is
+-- byte-for-byte unchanged (the P7-06 restore-preflight "isolated copy / original untouched"
+-- discipline). Because the pre-check precedes the ALTER, even a caller that runs Schema.migrate
+-- OUTSIDE any transaction cannot leave a half-migrated schema (no column added before the
+-- abort), so a retry cannot fail on "duplicate column". The pre-check reads only the pre-existing
+-- statistics_at column and needs nothing added by this migration. The diagnostic name carries the
+-- constraint name only; SQLite reports the constraint name in the error text and does not include
+-- the count, so the count is not surfaced in the message (the spec section 6.4 item 3 count is
+-- available by querying the pre-check predicate if a richer diagnostic is added later). It never
+-- leaks any raw personal time text.
+--
+-- Every CREATE statement below matches the fresh Ledger.sq terminal definition byte for byte.
+PRAGMA defer_foreign_keys = 1;
+
+-- Stage 1: read-only pre-check (no writes, and deliberately before the Stage 2 ALTER). A row is
+-- refused when the SAME projection expression the backfill uses (Stage 3) evaluates to NULL for
+-- it, OR when it is not of the exact shape kotlin.time.Instant.parse admits. strftime('%s', ...)
+-- normalizes some forms SQLite accepts but Kotlin rejects (e.g. '2026-02-30T00:00:00Z' rolls to
+-- 2026-03-02, a date-only '2026-01-21' or a space separator '2026-01-21 11:00:00Z' parse), so the
+-- shape is pinned explicitly: a full 'YYYY-MM-DDTHH:MM:SS' prefix with the literal 'T' separator,
+-- a real calendar date (date(substr(...)) equals the input date), a 'Z'/'z' or '+HH:MM'/'-HH:MM'
+-- terminator, at most nine fractional digits (finer than the nanosecond bound), and a whole-second
+-- count inside the 64-bit nanosecond range (1677-09-21T00:12:45Z .. 2262-04-11T23:47:15Z). The
+-- guard table is created, the conditional INSERT fires the named CHECK only when at least one row
+-- is refused, and the guard is dropped again so no object survives into v32. The guard is preceded
+-- by DROP TABLE IF EXISTS so an unwrapped caller that aborted on a previous attempt can re-run the
+-- migration (a leftover guard from that attempt is cleared rather than failing "table exists"). The
+-- constraint name (P707T_UNPARSEABLE_STATISTICS_AT) is the typed diagnostic surfaced to the caller.
+DROP TABLE IF EXISTS p707t_time_projection_precheck_guard;
+CREATE TABLE p707t_time_projection_precheck_guard (
+  ok INTEGER NOT NULL,
+  CONSTRAINT P707T_UNPARSEABLE_STATISTICS_AT CHECK (ok = 0)
+);
+INSERT INTO p707t_time_projection_precheck_guard(ok)
+SELECT 1 WHERE (
+  SELECT count(*) FROM transaction_version
+  WHERE (
+    CASE
+      WHEN statistics_at NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*' THEN NULL
+      WHEN date(substr(statistics_at, 1, 10) || 'T00:00:00') IS NULL
+        OR date(substr(statistics_at, 1, 10) || 'T00:00:00') != substr(statistics_at, 1, 10) THEN NULL
+      WHEN strftime('%s', statistics_at) IS NULL THEN NULL
+      WHEN substr(statistics_at, length(statistics_at), 1) NOT IN ('Z', 'z')
+        AND substr(statistics_at, length(statistics_at) - 5, 1) NOT IN ('+', '-') THEN NULL
+      WHEN instr(statistics_at, '.') > 0
+        AND length(statistics_at) - instr(statistics_at, '.')
+          - CASE WHEN substr(statistics_at, length(statistics_at), 1) IN ('Z', 'z') THEN 1
+              WHEN substr(statistics_at, length(statistics_at) - 5, 1) IN ('+', '-')
+                AND substr(statistics_at, length(statistics_at) - 2, 1) = ':' THEN 6
+              ELSE 0 END > 9 THEN NULL
+      WHEN CAST(strftime('%s', statistics_at) AS INTEGER) NOT BETWEEN -9223372035 AND 9223372035 THEN NULL
+      ELSE CAST(strftime('%s', statistics_at) AS INTEGER) * 1000000000
+        + CASE WHEN instr(statistics_at, '.') = 0 THEN 0
+            ELSE CAST(substr(substr(substr(statistics_at, instr(statistics_at, '.') + 1), 1,
+                  length(statistics_at) - instr(statistics_at, '.')
+                  - CASE WHEN substr(statistics_at, length(statistics_at), 1) IN ('Z', 'z') THEN 1
+                      WHEN substr(statistics_at, length(statistics_at) - 5, 1) IN ('+', '-')
+                        AND substr(statistics_at, length(statistics_at) - 2, 1) = ':' THEN 6
+                      ELSE 0 END)
+                  || '000000000', 1, 9) AS INTEGER)
+          END
+    END
+  ) IS NULL
+) > 0;
+DROP TABLE p707t_time_projection_precheck_guard;
+
+-- Stage 2: the projection column. Added nullable (SQLite cannot ADD a NOT NULL column without
+-- a default to an existing table); the backfill below fills every parseable row, and the
+-- fail-loud read path refuses NULL rather than treating it as time zero (spec section 6.4
+-- item 5). The projection is epoch nanoseconds (spec section 6.5 option (b)): epochSeconds *
+-- 1e9 + nanosecondsOfSecond, provably lossless for any kotlin.time.Instant.
+ALTER TABLE transaction_version ADD COLUMN statistics_at_epoch_nanos INTEGER;
+
+-- Stage 3: backfill every parseable row from its own statistics_at text, using the SAME
+-- expression the four INSERT statements use, so the migration result and the live write path
+-- agree by construction. Rows the pre-check proved parseable all receive a non-NULL projection.
+UPDATE transaction_version
+SET statistics_at_epoch_nanos =
+  CASE
+    WHEN strftime('%s', statistics_at) IS NULL THEN NULL
+    WHEN substr(statistics_at, length(statistics_at), 1) NOT IN ('Z', 'z')
+      AND substr(statistics_at, length(statistics_at) - 5, 1) NOT IN ('+', '-') THEN NULL
+    WHEN instr(statistics_at, '.') > 0
+      AND length(statistics_at) - instr(statistics_at, '.')
+        - CASE WHEN substr(statistics_at, length(statistics_at), 1) IN ('Z', 'z') THEN 1
+            WHEN substr(statistics_at, length(statistics_at) - 5, 1) IN ('+', '-')
+              AND substr(statistics_at, length(statistics_at) - 2, 1) = ':' THEN 6
+            ELSE 0 END > 9 THEN NULL
+    WHEN CAST(strftime('%s', statistics_at) AS INTEGER) NOT BETWEEN -9223372035 AND 9223372035 THEN NULL
+    ELSE CAST(strftime('%s', statistics_at) AS INTEGER) * 1000000000
+      + CASE WHEN instr(statistics_at, '.') = 0 THEN 0
+          ELSE CAST(substr(substr(substr(statistics_at, instr(statistics_at, '.') + 1), 1,
+                length(statistics_at) - instr(statistics_at, '.')
+                - CASE WHEN substr(statistics_at, length(statistics_at), 1) IN ('Z', 'z') THEN 1
+                    WHEN substr(statistics_at, length(statistics_at) - 5, 1) IN ('+', '-')
+                      AND substr(statistics_at, length(statistics_at) - 2, 1) = ':' THEN 6
+                    ELSE 0 END)
+                || '000000000', 1, 9) AS INTEGER)
+        END
+  END;
+
+-- Stage 4: post-backfill guard (19.sqm fail-closed data-guard precedent). After the pre-check
+-- passed, every row must now carry a projection; a NULL here would mean the pre-check predicate
+-- and the backfill expression disagree, which must abort the whole migration rather than land a
+-- silently unprojected row. DROP TABLE IF EXISTS clears a guard left by a prior aborted attempt.
+DROP TABLE IF EXISTS p707t_time_projection_backfill_guard;
+CREATE TABLE p707t_time_projection_backfill_guard (
+  value INTEGER NOT NULL CHECK (value = 0)
+);
+INSERT INTO p707t_time_projection_backfill_guard(value)
+SELECT 1 WHERE (
+  SELECT count(*) FROM transaction_version WHERE statistics_at_epoch_nanos IS NULL
+) > 0;
+DROP TABLE p707t_time_projection_backfill_guard;
+
+-- Stage 5: the range index (spec section 6.4 item 2). Byte-for-byte the fresh Ledger.sq
+-- definition. The index covers (ledger_id, statistics_at_epoch_nanos, transaction_id); the
+-- read's ORDER BY additionally names version_id, whose last term SQLite resolves with a temp
+-- B-tree (the residual registered for spec section 8 open item 2, not a correctness concern).
+CREATE INDEX transaction_version_statistics_at_range_idx
+  ON transaction_version(ledger_id, statistics_at_epoch_nanos, transaction_id);

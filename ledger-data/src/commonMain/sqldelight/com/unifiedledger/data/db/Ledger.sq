@@ -23,6 +23,7 @@ CREATE TABLE transaction_version (
   effective_at TEXT NOT NULL,
   note TEXT,
   confirmation_id TEXT,
+  statistics_at_epoch_nanos INTEGER,
   UNIQUE (transaction_id, version_number),
   UNIQUE (transaction_id, version_id, ledger_id),
   FOREIGN KEY (transaction_id, ledger_id)
@@ -32,6 +33,32 @@ CREATE TABLE transaction_version (
     REFERENCES posting_set(posting_set_id, ledger_id)
     DEFERRABLE INITIALLY DEFERRED
 );
+
+-- P7-07 07.T (D-184 item 4; spec sections 6.4/6.5): the numeric time projection of
+-- transaction_version.statistics_at and its range index.
+--
+-- WHY (spec sections 6.1-6.3): statistics_at is TEXT written by several producers in
+-- different shapes ("...Z" whole-second, "...500Z" millisecond, and raw source text with an
+-- offset like "+08:00"). Lexicographic order is therefore NOT time order (a "+08:00" value
+-- sorts before the equivalent "Z" value; equal instants at different precision sort apart), so
+-- comparing the raw text is invalid. statistics_at_epoch_nanos is the comparable, indexable
+-- projection; the original statistics_at TEXT is preserved untouched.
+--
+-- UNIT AND PRECISION BOUND (spec section 6.5, option (b)): epoch NANOseconds
+-- (epochSeconds * 1e9 + nanosecondsOfSecond). Nanoseconds are provably lossless for ANY
+-- kotlin.time.Instant, so no writer needs to be constrained or to reject sub-microsecond
+-- input. A microsecond projection would be lossless only under the unproven premise "no
+-- writer emits sub-microsecond precision", which the spec forbids claiming without declaring
+-- the bound; option (b) removes the premise entirely. 64-bit Long covers nanoseconds until
+-- 2262-04-11; a statistics_at outside that window (or otherwise unparseable) projects to NULL
+-- and is rejected by the migration's read-only pre-check, never silently wrapped.
+--
+-- NULLABILITY: nullable only because ALTER TABLE ADD COLUMN cannot add a NOT NULL column
+-- without a default to an existing table. The v31 -> v32 migration backfills every parseable
+-- row; a read that needs the projection fails loudly on NULL (statisticsAtProjectionMissing)
+-- and never treats a missing projection as time zero (spec section 6.4 item 5).
+CREATE INDEX transaction_version_statistics_at_range_idx
+  ON transaction_version(ledger_id, statistics_at_epoch_nanos, transaction_id);
 
 CREATE TABLE posting (
   posting_id TEXT NOT NULL PRIMARY KEY,
@@ -1994,6 +2021,12 @@ insertPostingSet:
 INSERT INTO posting_set(posting_set_id, ledger_id) VALUES (?, ?);
 
 insertTransactionVersion:
+-- P7-07 07.T (D-184 item 4; spec section 6.4 item 4): the projection is computed in the SAME
+-- statement as statistics_at, from the same bound text, so a version row can never exist with
+-- statistics_at set but its projection missing. The expression is the frozen epoch-nanosecond
+-- parser documented at transaction_version_statistics_at_range_idx; a shape outside the
+-- declared bound (no Z/offset terminator, or more than nine fractional digits) projects to
+-- NULL and the migration's pre-check refuses the database rather than bricking it.
 INSERT INTO transaction_version(
   version_id,
   transaction_id,
@@ -2003,8 +2036,32 @@ INSERT INTO transaction_version(
   occurred_at,
   statistics_at,
   effective_at,
-  note
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+  note,
+  statistics_at_epoch_nanos
+) VALUES (?, ?, ?, ?, ?, ?, :statistics_at, ?, ?,
+  CASE
+    WHEN strftime('%s', :statistics_at) IS NULL THEN NULL
+    WHEN substr(:statistics_at, length(:statistics_at), 1) NOT IN ('Z', 'z')
+      AND substr(:statistics_at, length(:statistics_at) - 5, 1) NOT IN ('+', '-') THEN NULL
+    WHEN instr(:statistics_at, '.') > 0
+      AND length(:statistics_at) - instr(:statistics_at, '.')
+        - CASE WHEN substr(:statistics_at, length(:statistics_at), 1) IN ('Z', 'z') THEN 1
+            WHEN substr(:statistics_at, length(:statistics_at) - 5, 1) IN ('+', '-')
+              AND substr(:statistics_at, length(:statistics_at) - 2, 1) = ':' THEN 6
+            ELSE 0 END > 9 THEN NULL
+    WHEN CAST(strftime('%s', :statistics_at) AS INTEGER) NOT BETWEEN -9223372035 AND 9223372035 THEN NULL
+    ELSE CAST(strftime('%s', :statistics_at) AS INTEGER) * 1000000000
+      + CASE WHEN instr(:statistics_at, '.') = 0 THEN 0
+          ELSE CAST(substr(substr(substr(:statistics_at, instr(:statistics_at, '.') + 1), 1,
+                length(:statistics_at) - instr(:statistics_at, '.')
+                - CASE WHEN substr(:statistics_at, length(:statistics_at), 1) IN ('Z', 'z') THEN 1
+                    WHEN substr(:statistics_at, length(:statistics_at) - 5, 1) IN ('+', '-')
+                      AND substr(:statistics_at, length(:statistics_at) - 2, 1) = ':' THEN 6
+                    ELSE 0 END)
+                || '000000000', 1, 9) AS INTEGER)
+        END
+  END
+);
 
 insertPosting:
 INSERT INTO posting(
@@ -2109,12 +2166,17 @@ JOIN confirmed_transaction_note_update_receipt AS receipt
 WHERE request.ledger_id = :ledger_id AND request.request_id = :request_id;
 
 copyCurrentVersionWithNewNote:
+-- P7-07 07.T (D-184 item 4; spec section 6.4 item 4): statistics_at is copied verbatim from
+-- the source version, so the projection is copied verbatim too (the spec's "carry the source
+-- version's projection" form). The two are written by the same statement, so a note-update row
+-- can never be left unprojected.
 INSERT INTO transaction_version(
   version_id, transaction_id, ledger_id, version_number, posting_set_id,
-  occurred_at, statistics_at, effective_at, note
+  occurred_at, statistics_at, effective_at, note, statistics_at_epoch_nanos
 )
 SELECT :version_id, version.transaction_id, version.ledger_id, version.version_number + 1,
-  version.posting_set_id, version.occurred_at, version.statistics_at, version.effective_at, :note
+  version.posting_set_id, version.occurred_at, version.statistics_at, version.effective_at, :note,
+  version.statistics_at_epoch_nanos
 FROM transaction_version AS version
 JOIN ledger_transaction_current_version AS current_version
   ON current_version.transaction_id = version.transaction_id
@@ -9791,6 +9853,43 @@ SELECT transaction_id FROM transaction_effective_state
 WHERE ledger_id = ? AND is_effective = 1
 ORDER BY transaction_id;
 
+-- P7-07 07.T (D-184 item 4; spec section 6.4 items 5/6): the bounded statistical-month read over
+-- the numeric projection, driven by the range index (ledger_id, statistics_at_epoch_nanos,
+-- transaction_id). [start, end) are epoch-nanosecond bounds. A row whose projection is NULL is
+-- NOT in any window and is NOT silently treated as time zero; the caller first runs
+-- statisticsAtProjectionMissingForLedger and fails loudly when it is non-zero.
+--
+-- Spec section 6.4 item 6: the read is based on the effective predicate. The join to
+-- `transaction_effective_state` (the single SQL definition point of the effective set) plus the
+-- join to `ledger_transaction_current_version` returns exactly the CURRENT version of each
+-- EFFECTIVE transaction, so a corrected transaction contributes only its latest version and a
+-- voided transaction contributes nothing. Without these joins the window would return superseded
+-- versions (double counting) and versions of voided transactions. This is the same effective
+-- join pattern as ledgerEntryRowsForLedger (this file); no second state rule is introduced.
+projectedVersionsInStatisticsWindow:
+SELECT version.transaction_id, version.version_id, version.statistics_at_epoch_nanos
+FROM transaction_version AS version
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = version.ledger_id
+ AND current_version.transaction_id = version.transaction_id
+ AND current_version.current_version_id = version.version_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = version.ledger_id
+ AND effective.transaction_id = version.transaction_id
+ AND effective.is_effective = 1
+WHERE version.ledger_id = ?
+  AND version.statistics_at_epoch_nanos >= ?
+  AND version.statistics_at_epoch_nanos < ?
+ORDER BY version.statistics_at_epoch_nanos, version.transaction_id, version.version_id;
+
+-- The fail-loud probe (spec section 6.4 item 5): the count of rows in the ledger whose
+-- projection is missing (NULL). Any non-zero count means a read that needs the projection must
+-- report a typed failure rather than falling back to raw-text comparison or treating the
+-- instant as zero. A correctly migrated and maintained ledger returns 0.
+statisticsAtProjectionMissingForLedger:
+SELECT count(*) FROM transaction_version
+WHERE ledger_id = ? AND statistics_at_epoch_nanos IS NULL;
+
 -- Recycle-bin read path (spec section 3.4/DP-1): the voided complement of the effective
 -- surfaces — same table group, same row shape, same predicate view — plus the void metadata
 -- the recycle bin must show (reason, void time, dependency material).
@@ -9917,10 +10016,32 @@ INSERT INTO transaction_correction_receipt(
 copyCurrentVersionWithNewPostingSet:
 INSERT INTO transaction_version(
   version_id, transaction_id, ledger_id, version_number, posting_set_id,
-  occurred_at, statistics_at, effective_at, note
+  occurred_at, statistics_at, effective_at, note, statistics_at_epoch_nanos
 )
 SELECT :version_id, version.transaction_id, version.ledger_id, version.version_number + 1,
-  :new_posting_set_id, version.occurred_at, :statistics_at, version.effective_at, :note
+  :new_posting_set_id, version.occurred_at, :statistics_at, version.effective_at, :note,
+  CASE
+    WHEN strftime('%s', :statistics_at) IS NULL THEN NULL
+    WHEN substr(:statistics_at, length(:statistics_at), 1) NOT IN ('Z', 'z')
+      AND substr(:statistics_at, length(:statistics_at) - 5, 1) NOT IN ('+', '-') THEN NULL
+    WHEN instr(:statistics_at, '.') > 0
+      AND length(:statistics_at) - instr(:statistics_at, '.')
+        - CASE WHEN substr(:statistics_at, length(:statistics_at), 1) IN ('Z', 'z') THEN 1
+            WHEN substr(:statistics_at, length(:statistics_at) - 5, 1) IN ('+', '-')
+              AND substr(:statistics_at, length(:statistics_at) - 2, 1) = ':' THEN 6
+            ELSE 0 END > 9 THEN NULL
+    WHEN CAST(strftime('%s', :statistics_at) AS INTEGER) NOT BETWEEN -9223372035 AND 9223372035 THEN NULL
+    ELSE CAST(strftime('%s', :statistics_at) AS INTEGER) * 1000000000
+      + CASE WHEN instr(:statistics_at, '.') = 0 THEN 0
+          ELSE CAST(substr(substr(substr(:statistics_at, instr(:statistics_at, '.') + 1), 1,
+                length(:statistics_at) - instr(:statistics_at, '.')
+                - CASE WHEN substr(:statistics_at, length(:statistics_at), 1) IN ('Z', 'z') THEN 1
+                    WHEN substr(:statistics_at, length(:statistics_at) - 5, 1) IN ('+', '-')
+                      AND substr(:statistics_at, length(:statistics_at) - 2, 1) = ':' THEN 6
+                    ELSE 0 END)
+                || '000000000', 1, 9) AS INTEGER)
+        END
+  END
 FROM transaction_version AS version
 JOIN ledger_transaction_current_version AS current_version
   ON current_version.transaction_id = version.transaction_id
@@ -9938,10 +10059,32 @@ WHERE version.transaction_id = :transaction_id
 copyCurrentVersionReusingPostingSet:
 INSERT INTO transaction_version(
   version_id, transaction_id, ledger_id, version_number, posting_set_id,
-  occurred_at, statistics_at, effective_at, note
+  occurred_at, statistics_at, effective_at, note, statistics_at_epoch_nanos
 )
 SELECT :version_id, version.transaction_id, version.ledger_id, version.version_number + 1,
-  version.posting_set_id, version.occurred_at, :statistics_at, version.effective_at, :note
+  version.posting_set_id, version.occurred_at, :statistics_at, version.effective_at, :note,
+  CASE
+    WHEN strftime('%s', :statistics_at) IS NULL THEN NULL
+    WHEN substr(:statistics_at, length(:statistics_at), 1) NOT IN ('Z', 'z')
+      AND substr(:statistics_at, length(:statistics_at) - 5, 1) NOT IN ('+', '-') THEN NULL
+    WHEN instr(:statistics_at, '.') > 0
+      AND length(:statistics_at) - instr(:statistics_at, '.')
+        - CASE WHEN substr(:statistics_at, length(:statistics_at), 1) IN ('Z', 'z') THEN 1
+            WHEN substr(:statistics_at, length(:statistics_at) - 5, 1) IN ('+', '-')
+              AND substr(:statistics_at, length(:statistics_at) - 2, 1) = ':' THEN 6
+            ELSE 0 END > 9 THEN NULL
+    WHEN CAST(strftime('%s', :statistics_at) AS INTEGER) NOT BETWEEN -9223372035 AND 9223372035 THEN NULL
+    ELSE CAST(strftime('%s', :statistics_at) AS INTEGER) * 1000000000
+      + CASE WHEN instr(:statistics_at, '.') = 0 THEN 0
+          ELSE CAST(substr(substr(substr(:statistics_at, instr(:statistics_at, '.') + 1), 1,
+                length(:statistics_at) - instr(:statistics_at, '.')
+                - CASE WHEN substr(:statistics_at, length(:statistics_at), 1) IN ('Z', 'z') THEN 1
+                    WHEN substr(:statistics_at, length(:statistics_at) - 5, 1) IN ('+', '-')
+                      AND substr(:statistics_at, length(:statistics_at) - 2, 1) = ':' THEN 6
+                    ELSE 0 END)
+                || '000000000', 1, 9) AS INTEGER)
+        END
+  END
 FROM transaction_version AS version
 JOIN ledger_transaction_current_version AS current_version
   ON current_version.transaction_id = version.transaction_id

@@ -847,8 +847,16 @@ internal class AndroidRestoreUseCases(
 /**
  * P7-06 06.D (D-182; spec section 5.4): the wiring whitelist injected into the preflight request —
  * v1 is the CONDITIONALLY admitted old version (device-evidenced strict migration; the A04
- * round-trip leg is outstanding and a falsification removes it), 31 is the current schema. The
- * recovery validation set is deliberately DIFFERENT: `{currentSchemaVersion()}` only (spec 5.3).
+ * round-trip leg is outstanding and a falsification removes it), 31 is an admitted OLD version
+ * whose strict migration to the current schema is the P7-07 07.T `31.sqm` edge. The current
+ * schema version (32 since the 07.T time-projection edge) passes through WITHOUT consulting this
+ * set (`needsMigration == false`), so this set names only old versions that must be migrated.
+ * The recovery validation set is deliberately DIFFERENT: `{currentSchemaVersion()}` only (spec 5.3).
+ *
+ * D-182 section 5.4 froze the literal `{1, 31}` when 31 was the current schema; the 07.T slice
+ * does not re-decide that governance point. Leaving the literal unchanged preserves every restore
+ * path (v32 passthrough, v31 -> 32, v1 -> 32) with no regression; re-pointing the current-schema
+ * member at 32 is a separate decision that would stop v31 restores and is out of this slice.
  */
 internal val RESTORE_SUPPORTED_SOURCE_VERSIONS: Set<Long> = setOf(1L, 31L)
 
