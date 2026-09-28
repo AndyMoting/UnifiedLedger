@@ -20,7 +20,7 @@ package com.unifiedledger.ui
  *   primitive as ONE transaction of verify-then-publish: the candidates are re-verified inside
  *   the adoption, the highest passing generation wins, and there is never a partial adoption
  *   (verify fails -> no publish). The recovery set is pinned to `{current}` — deliberately
- *   DISTINCT from the wiring whitelist `{1, 31}` (spec section 5.4): a complete-but-OLD-version
+ *   DISTINCT from the wiring whitelist `{1, 31, 32}` (spec section 5.4): a complete-but-OLD-version
  *   candidate is the 06.1 upgrade window's raw copy and must reach the ledger only through the
  *   authoritative open path's migration + read-back, never by adoption.
  * - when NO candidate verifies, and the legacy original is still present and usable (guard 1 of
@@ -140,7 +140,7 @@ sealed interface PointerRecoveryDiscardResult {
  * @param layout the stable-storage layout over the SAME host directory the startup resolved.
  * @param isolatedDatabase the controlled isolated-database surface (integrity + version probes).
  * @param currentSchemaVersion the schema version this build supports — the recovery set is
- *   `{current}` (spec section 5.3), DISTINCT from the confirm-wiring whitelist `{1, 31}`.
+ *   `{current}` (spec section 5.3), DISTINCT from the confirm-wiring whitelist `{1, 31, 32}`.
  * @param legacyMainFile the platform's legacy product database path, or null when the platform
  *   has none (desktop): null disables the discard-and-re-upgrade branch entirely (typed).
  */

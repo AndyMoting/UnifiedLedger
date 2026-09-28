@@ -509,8 +509,8 @@ internal class AndroidStartupController(
         LedgerLeaseScope(owner).also { scope ->
             scope.backupExport = backupExportUseCase
             // P7-06 06.D (D-182; spec section 6): the section 5.4 ruling injects the wiring
-            // whitelist {1, 31} (v1 conditionally admitted on the device-evidenced strict-migration
-            // leg; A04 outstanding) and the current schema version from ledger-data.
+            // whitelist {1, 31, 32} (v1 and v32 conditionally admitted on their strict-migration
+            // legs; A04 outstanding for both) and the current schema version from ledger-data.
             scope.restoreWiring =
                 restoreUseCases?.let { cases ->
                     RestoreHostWiring(
@@ -846,17 +846,25 @@ internal class AndroidRestoreUseCases(
 
 /**
  * P7-06 06.D (D-182; spec section 5.4): the wiring whitelist injected into the preflight request —
- * v1 is the CONDITIONALLY admitted old version (device-evidenced strict migration; the A04
- * round-trip leg is outstanding and a falsification removes it), 31 is an admitted OLD version
- * whose strict migration to the current schema is the P7-07 07.T `31.sqm` edge, and 32 is the
- * immediately preceding version whose strict migration is the P7-07 07.B `32.sqm` budget edge. The
- * current schema version (33 since the 07.B budget-configuration edge) passes through WITHOUT
- * consulting this set (`needsMigration == false`), so this set names only old versions that must be
- * migrated. The recovery validation set is deliberately DIFFERENT: `{currentSchemaVersion()}` only
- * (spec 5.3).
+ * v1 is a CONDITIONALLY admitted old version (device-evidenced strict migration 1 -> current plus
+ * validation — `AndroidFrameworkSqlDriverInstrumentedTest.aSupportedV1FixtureStrictMigratesOnDeviceThroughTheAdapter`;
+ * its A04 round-trip-equivalence leg is outstanding and a falsification removes it), 31 is an
+ * admitted OLD version — the direct pass-through entry of the frozen section 5.4 set (the ruling
+ * recorded 31 as the then-current schema, i.e. the no-migration pass-through at freeze time; it now
+ * migrates to current through the P7-07 07.T `31.sqm` edge) — and
+ * 32 is the immediately preceding version whose strict migration is the P7-07 07.B `32.sqm` budget
+ * edge. v32 carries the SAME conditional-admission status as v1: its strict migration 32 -> 33 plus
+ * validation is proven (the `P707BudgetConfigMigrationV32ToV33Test` strict-migration leg) but its
+ * A04 round-trip-equivalence leg is likewise not yet proven, so a falsification removes it exactly
+ * as it would remove v1. The current schema version (33 since the 07.B budget-configuration edge)
+ * passes through WITHOUT consulting this set (`needsMigration == false`), so this set names only old
+ * versions that must be migrated. The recovery validation set is deliberately DIFFERENT:
+ * `{currentSchemaVersion()}` only (spec 5.3).
  *
- * D-182 section 5.4 froze the literal `{1, 31}` when 31 was the current schema. The 07.T slice left
- * it unchanged to avoid stopping v31 restores. The 07.B slice extends it to `{1, 31, 32}` (D-185) so
+ * D-182 section 5.4 froze the literal `{1, 31}` when 31 was the current schema; D-185 supersedes that
+ * literal for the WIRING set (the approved 06.D spec section 5.4 ruling text itself is unchanged and
+ * remains the record for v1's conditional admission). The 07.T slice left it unchanged to avoid
+ * stopping v31 restores. The 07.B slice extends it to `{1, 31, 32}` (D-185) so
  * the immediately preceding v32 backup keeps restoring through its `32.sqm` migration, mirroring the
  * v31 -> 32 pass-through preservation the 07.T slice relied on.
  */

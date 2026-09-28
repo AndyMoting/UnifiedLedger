@@ -48,8 +48,10 @@ enum class BudgetFailureCode(
     companion object {
         /**
          * Maps a domain [BudgetViolation] to its frozen failure code. Mirrors the
-         * `CatalogFailureCode.of` precedent (a test-only mapping; the store uses the literals
-         * directly), so any other domain violation falls back to the generic constraint code.
+         * `CatalogFailureCode.of` precedent — a domain-violation -> code mapper that the store's
+         * abort path calls in production (`SqlDelightCatalogStore.kt:145`,
+         * `abortCatalog(CatalogFailureCode.of(result.violation))`) — so any other domain violation
+         * falls back to the generic constraint code.
          */
         fun of(violation: DomainViolation): BudgetFailureCode =
             when (violation) {

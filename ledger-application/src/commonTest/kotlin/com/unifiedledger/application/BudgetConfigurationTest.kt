@@ -116,11 +116,16 @@ class BudgetConfigurationTest {
         val scope = BudgetScope.Category(CategoryId("category-food"))
         // Spec section 3.5: "停用分类保留既有预算及统计"; adjusting an existing limit is NOT
         // re-enabling the category, so an EXISTING budget (expectedRevision > 0) still reaches
-        // the commit port for both modify and close.
-        useCase.setLimit(ledgerId, march, scope, 250L, expectedRevision = 3L)
+        // the commit port for both modify and close — and the OUTCOME, not merely admission,
+        // must be the accepted command (a rejection of the inactive binding would still have
+        // reached the port had the guard been ordered differently, so admission alone is
+        // insufficient evidence).
+        val modified = useCase.setLimit(ledgerId, march, scope, 250L, expectedRevision = 3L)
         assertEquals(1, recorder.requests.size)
-        useCase.close(ledgerId, march, scope, expectedRevision = 4L)
+        assertIs<BudgetCommandResult.Accepted>(modified)
+        val closed = useCase.close(ledgerId, march, scope, expectedRevision = 4L)
         assertEquals(2, recorder.requests.size)
+        assertIs<BudgetCommandResult.Accepted>(closed)
     }
 
     @Test
