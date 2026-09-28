@@ -105,10 +105,33 @@ class RestoreValidationFacts(
 }
 
 /**
+ * The user-checkable owner counts of the preview (06.D spec section 5.5 field 6, D-182): accounts,
+ * categories and transactions, read straight from the migrated copy. These are the numbers a user
+ * actually verifies against their own knowledge before confirming the replace — the 06.C
+ * validation counts are integrity facts and deliberately do not substitute for them.
+ */
+class RestoreOwnerCounts(
+    val accountsCount: Long,
+    val categoriesCount: Long,
+    val transactionsCount: Long,
+)
+
+/**
  * P7-06 06.C (spec section 8.2): the controlled isolated-database surface. The platform adapter
- * opens the decrypted snapshot / migrated copy by ABSOLUTE PATH read-write without create-on-open
- * and without automatic migration, runs the STRICT migration helper and the validation helpers, and
- * closes the connection. The shared preflight never sees a driver.
+ * opens the decrypted snapshot / migrated copy by ABSOLUTE PATH without create-on-open and without
+ * automatic migration, runs the STRICT migration helper and the validation helpers, and closes the
+ * connection. The shared preflight never sees a driver.
+ *
+ * OPEN MODE IS PER-PLATFORM (06.D device-gate defect 1, D-183). The inspection legs
+ * ([readAuthoritativeUserVersion], [readObservedLedgerIdentities], [validate],
+ * [integrityCheckOk], [readOwnerCounts]) must open READ-ONLY wherever the platform supports a
+ * read-only open, so inspecting an unverifiable candidate never writes into it or its directory
+ * (spec section 5.3); the migration leg ([migrateStrictly]) is READ-WRITE because a strict migration
+ * is a real transaction. Android implements exactly that split (`AndroidRestoreIsolatedDatabasePort`:
+ * `openAndroidReadOnlyDriver` / `openAndroidReadWriteDriver`); desktop currently opens read-write on
+ * every leg through `JdbcSqliteDriver`, which is acceptable because the desktop isolated copy is a
+ * file this preflight just wrote. This KDoc therefore states the contract the ports owe, not a claim
+ * that every platform already satisfies the read-only half.
  */
 interface RestoreIsolatedDatabasePort {
     /** The AUTHORITATIVE `PRAGMA user_version` of the payload (container-format spec section 4.3.2). */
@@ -130,6 +153,17 @@ interface RestoreIsolatedDatabasePort {
 
     /** Integrity / foreign-key / domain validation on the migrated copy (spec section 6.4). */
     fun validate(snapshotPath: String): RestoreValidationFacts
+
+    /**
+     * 06.D (spec section 5.3): the `PRAGMA integrity_check` verdict ALONE — the recovery
+     * candidate-validation gate. Deliberately narrower than [validate]: the spec's recovery
+     * transaction pins exactly `isUsableSqliteMainFile` + integrity + the authoritative
+     * user_version, and adding the FK/domain gates here would reject candidates the spec adopts.
+     */
+    fun integrityCheckOk(snapshotPath: String): Boolean
+
+    /** The authoritative owner counts read straight from the (migrated) payload (spec section 5.5). */
+    fun readOwnerCounts(snapshotPath: String): RestoreOwnerCounts
 }
 
 /**
@@ -161,7 +195,11 @@ class RestorePreflightRequest(
     val containerSizeBound: Long = BACKUP_MAX_CONTAINER_BYTES,
 )
 
-/** The preview summary (spec section 7.4). Carries no password, key, path or plaintext detail. */
+/**
+ * The preview summary (spec section 7.4 with the 06.D field set, D-182 section 5.5). Carries no
+ * password, key, path or plaintext detail: the digest is the display hex form and the counts are
+ * the user-checkable owner counts.
+ */
 class RestorePreflightSummary(
     val containerFormatVersion: Int,
     val containerSize: Long,
@@ -180,6 +218,15 @@ class RestorePreflightSummary(
     val ledgerIdentityCount: Int,
     val formalTableCount: Int,
     val postingImbalanceCount: Int,
+    // 06.D (D-182; spec section 5.5): the owner counts and the preflight timestamp the user
+    // checks ("我何时预检的"). The counts are Long: they are row counts read from SQLite, and a
+    // silent Long->Int narrowing could wrap a huge transaction count into a wrong (even negative)
+    // number shown to the user (F-4).
+    val accountsCount: Long,
+    val categoriesCount: Long,
+    val transactionsCount: Long,
+    /** The epoch-milliseconds moment the preflight produced this preview (the host formats it). */
+    val preflightEpochMillis: Long,
 )
 
 /**
@@ -233,15 +280,13 @@ private class RestorePreflightCancelledException : RuntimeException("restore pre
  * a background thread (container-format spec section 4.8: KDF, streaming decryption, migration and
  * validation must never run on the UI thread).
  *
- * DEFERRED WIRING (P2-7, registered not silently dropped): this use case and its ports are NOT yet
- * constructed by either composition root. The 06.C design spec leaves two inputs OPEN that a root
- * needs before it can construct them — the supported old-schema whitelist SET (spec section 6.3 /
- * section 10 item 1, "must be fixed by a separate strict structure-identification gate") and the
- * preview/confirmation UI field set (spec section 10 item 13) — and the confirmation path itself
- * belongs to 06.D. On wiring, the root supplies `supportedSourceVersions` (the whitelist) and
- * `currentSchemaVersion` (`currentSupportedSchemaVersion()` from ledger-data), and dispatches
- * [preflight] off the UI thread. Until then A03/A04 are exercised through this use case's tests, not
- * end to end in the product.
+ * WIRED (F-11): this use case IS constructed by BOTH composition roots as of 06.D — the Android
+ * `AndroidStartupController` and the desktop `DesktopStartupController` build one instance over
+ * their owner and bind it into [LedgerLeaseScope.restoreWiring]. Each root supplies
+ * `supportedSourceVersions` (the section 5.4 wiring whitelist `{1, 31}`) and `currentSchemaVersion`
+ * (`currentSupportedSchemaVersion()` from ledger-data), and dispatches [preflight] off the UI
+ * thread. The earlier P2-7 "deferred wiring" note (the whitelist set and the preview field set were
+ * OPEN in the 06.C design) is resolved by the 06.D design (D-182) and this wiring.
  *
  * REGISTERED (P3-14): the operation lease is held while the platform source port waits for the user's
  * picker choice (the Android adapter's latch wait is bounded at 10 minutes), so a user who leaves the
@@ -257,6 +302,14 @@ class RestorePreflightUseCase(
     private val isolatedDatabase: RestoreIsolatedDatabasePort,
     private val crypto: BackupCryptoPrimitives,
     private val newToken: () -> String,
+    /**
+     * 06.D (D-182; spec section 5.5 field 7): the audit-time source of the preview's timestamp
+     * ("我何时预检的"). Injected like every other clock in the product so tests stay deterministic;
+     * the composition root supplies the platform clock. Deliberately NOT defaulted: a silent
+     * epoch-0 default would render a wrong "when did I preflight" to the user after a forgotten
+     * wiring instead of failing loudly at construction.
+     */
+    private val nowMillis: () -> Long,
 ) {
     /**
      * Runs the frozen 11-step preflight (spec section 3). Never blocks on the runtime (lease
@@ -498,6 +551,18 @@ class RestorePreflightUseCase(
             return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_DOMAIN_VALIDATION_FAILED)
         }
 
+        // 06.D step (D-182; spec section 5.5 field 6): the user-checkable owner counts, read
+        // straight from the same validated copy. A throwing probe is a typed read failure, never
+        // a zeroed count presented as fact.
+        val ownerCounts =
+            try {
+                isolatedDatabase.readOwnerCounts(validationPath)
+            } catch (failure: Error) {
+                throw failure
+            } catch (failure: Throwable) {
+                return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_SOURCE_READ_FAILED)
+            }
+
         // Step 11: preview summary + opaque token (spec section 7). Still zero current-library writes.
         val migratedDigest =
             if (needsMigration) {
@@ -528,6 +593,10 @@ class RestorePreflightUseCase(
                 ledgerIdentityCount = validation.ledgerIdentityCount,
                 formalTableCount = validation.formalTableCount,
                 postingImbalanceCount = validation.postingImbalanceCount,
+                accountsCount = ownerCounts.accountsCount,
+                categoriesCount = ownerCounts.categoriesCount,
+                transactionsCount = ownerCounts.transactionsCount,
+                preflightEpochMillis = nowMillis(),
             )
         val token =
             RestorePreflightToken(

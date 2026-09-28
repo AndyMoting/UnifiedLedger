@@ -111,6 +111,7 @@ import com.unifiedledger.data.SqlDelightImportSpineStore
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
 import com.unifiedledger.data.SqlDelightTransactionCorrectionCommitPort
 import com.unifiedledger.data.SqlDelightTransactionVoidCommitPort
+import com.unifiedledger.data.currentSupportedSchemaVersion
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.data.defaultCatalogSeed
 import com.unifiedledger.data.runFullAnalyzeOn
@@ -127,12 +128,16 @@ import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
 import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
 import com.unifiedledger.ui.BackupExportUseCase
 import com.unifiedledger.ui.BackupSnapshotPort
+import com.unifiedledger.ui.BackupSourcePort
 import com.unifiedledger.ui.BackupTargetPort
+import com.unifiedledger.ui.ConfirmBackupRestoreUseCase
+import com.unifiedledger.ui.GenerationSelection
 import com.unifiedledger.ui.ImportConfirmUseCaseSet
 import com.unifiedledger.ui.ImportDuplicateReviewIds
 import com.unifiedledger.ui.ImportFilePickResultChannel
 import com.unifiedledger.ui.LedgerFileSystem
 import com.unifiedledger.ui.LedgerLeaseScope
+import com.unifiedledger.ui.LedgerOpenTarget
 import com.unifiedledger.ui.LedgerRuntimeOwner
 import com.unifiedledger.ui.LedgerStartupResult
 import com.unifiedledger.ui.LedgerStorageFailure
@@ -142,10 +147,19 @@ import com.unifiedledger.ui.P503App
 import com.unifiedledger.ui.P503LedgerFacade
 import com.unifiedledger.ui.P503StartupScreen
 import com.unifiedledger.ui.P503StartupState
+import com.unifiedledger.ui.PointerMissingRecoveryProbe
+import com.unifiedledger.ui.PointerMissingRecoveryUseCase
+import com.unifiedledger.ui.PointerRecoveryAdoptionResult
+import com.unifiedledger.ui.PointerRecoveryDiscardResult
+import com.unifiedledger.ui.RestoreHostWiring
+import com.unifiedledger.ui.RestoreIsolatedDatabasePort
+import com.unifiedledger.ui.RestorePreflightUseCase
 import com.unifiedledger.ui.UuidV7ImportCommitIdSource
 import com.unifiedledger.ui.importCreditRefundOriginalExpenseProvider
 import com.unifiedledger.ui.isUsableSqliteMainFile
 import com.unifiedledger.ui.ledgerStorageLayout
+import com.unifiedledger.ui.openExplicitGeneration
+import com.unifiedledger.ui.openGenerationForSelection
 import com.unifiedledger.ui.openStableStorageLedger
 import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
@@ -170,6 +184,49 @@ internal class DesktopBackupWiring(
     val crypto: BackupCryptoPrimitives = JvmBackupCryptoPrimitives(),
     val newToken: () -> String = { randomUuidText() },
 )
+
+/**
+ * P7-06 06.D (D-182; spec section 6, P2-7): the composition-root restore wiring handed to
+ * [DesktopStartupController]. `legacyMainFile` is deliberately NULL (06.1 spec section 3.3: the
+ * desktop has no migratable legacy product location), so the section 5.3 discard-and-re-upgrade
+ * branch is typed-unavailable here and the adoption branch is the only recovery exit.
+ */
+internal class DesktopRestoreWiring(
+    val fileSystem: LedgerFileSystem,
+    val layout: LedgerStorageLayout,
+    val sourcePort: BackupSourcePort = DesktopBackupSourcePort(),
+    val isolatedDatabase: RestoreIsolatedDatabasePort = DesktopRestoreIsolatedDatabasePort(),
+    val crypto: BackupCryptoPrimitives = JvmBackupCryptoPrimitives(),
+    val newToken: () -> String = { randomUuidText() },
+    val nowMillis: () -> Long = { System.currentTimeMillis() },
+    val targetLedgerId: String = RESTORE_TARGET_LEDGER_ID,
+    val legacyMainFile: String? = null,
+)
+
+/** The controller-built restore use-case set (exactly one instance set per runtime). */
+internal class DesktopRestoreUseCases(
+    val preflight: RestorePreflightUseCase,
+    val confirm: ConfirmBackupRestoreUseCase,
+    val recovery: PointerMissingRecoveryUseCase,
+)
+
+/**
+ * P7-06 06.D (D-182; spec section 5.4): the wiring whitelist injected into the preflight request -
+ * v1 is the CONDITIONALLY admitted old version (device-evidenced strict migration; the A04
+ * round-trip leg is outstanding and a falsification removes it), 31 is the current schema.
+ */
+internal val RESTORE_SUPPORTED_SOURCE_VERSIONS: Set<Long> = setOf(1L, 31L)
+
+/**
+ * The product's fixed single-ledger identity. F-8: ONE constant, used both by [buildLedgerGraph]
+ * to bootstrap the catalog and by the restore wiring as the confirm target identity, so the
+ * confirm's target-identity check (spec section 3.1 item 4) cannot drift from the graph's actual
+ * ledger id.
+ */
+internal const val PRODUCT_LEDGER_ID: String = "ledger-local-test"
+
+/** The restore target ledger identity — the same fixed product identity the graph bootstraps. */
+internal const val RESTORE_TARGET_LEDGER_ID: String = PRODUCT_LEDGER_ID
 
 /** P7-06 06.B: one random token text (kept out of the data-class default so ktlint's chain rule is satisfied). */
 private fun randomUuidText(): String {
@@ -198,6 +255,13 @@ fun main() {
             },
             onExit = ::exitApplication,
             backupWiring = DesktopBackupWiring(fileSystem, layout),
+            restoreWiring = DesktopRestoreWiring(fileSystem, layout),
+            // P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the confirm switch's step-8 reopen opens
+            // the generation it just published BY NAME, bypassing the startup journal gate that
+            // would otherwise consume its own live `switched` journal.
+            openExplicitGeneration = { generation ->
+                openExplicitDesktopLedger(fileSystem, layout, generation)
+            },
         )
     }
 }
@@ -219,8 +283,11 @@ internal fun DesktopRoot(
     openDatabase: () -> CloseableLedgerGraph,
     onExit: () -> Unit,
     backupWiring: DesktopBackupWiring? = null,
+    restoreWiring: DesktopRestoreWiring? = null,
+    // P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the confirm switch's step-8 explicit reopen.
+    openExplicitGeneration: ((Int) -> CloseableLedgerGraph)? = null,
 ) {
-    val controller = remember { DesktopStartupController(openDatabase, backupWiring).also { it.start() } }
+    val controller = remember { DesktopStartupController(openDatabase, backupWiring, restoreWiring, openExplicitGeneration).also { it.start() } }
     Window(onCloseRequest = onExit, title = "UnifiedLedger Desktop") {
         val ledger = controller.ledger
         when {
@@ -237,6 +304,12 @@ internal fun DesktopRoot(
                     state = controller.state,
                     onRetry = controller::start,
                     onExit = onExit,
+                    // P7-06 06.D (spec section 5.3): the user-confirmed recovery actions; the
+                    // face decides which affordances exist (a verified candidate, the legacy
+                    // guard - on desktop there is no legacy location, so the discard branch is
+                    // typed-unavailable and renders no affordance).
+                    onAdoptPointer = controller::adoptPointerRecovery,
+                    onDiscardAndReUpgrade = controller::discardPointerRecoveryAndReUpgrade,
                 )
         }
     }
@@ -292,6 +365,13 @@ internal class DesktopStartupController(
     // P7-06 06.B (D-177): the optional backup-export wiring; null keeps the surface absent so the
     // existing startup tests construct the controller with the graph builder only.
     backupWiring: DesktopBackupWiring? = null,
+    // P7-06 06.D (D-182; spec section 6, P2-7): the optional restore wiring; present, it binds
+    // exactly one set of use-case instances (the confirm single-flight guard assumes it).
+    restoreWiring: DesktopRestoreWiring? = null,
+    // P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the explicit-generation opener the confirm
+    // switch's step-8 reopen needs. Null (the existing startup tests) keeps the owner on the
+    // pointer path only; a production root wires it so the two selections are honoured.
+    private val openExplicitGeneration: ((Int) -> CloseableLedgerGraph)? = null,
 ) {
     var state by mutableStateOf<P503StartupState>(P503StartupState.Starting)
         private set
@@ -299,15 +379,37 @@ internal class DesktopStartupController(
     /**
      * P7-06 06.1 (D-176; spec section 4): the single runtime owner of the active graph, exactly
      * like the Android controller. [openDatabase] is the injected graph builder the tests use.
+     *
+     * P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): both [GenerationSelection]s are honoured.
+     * ActivePointer keeps the full startup sequence (pointer + journal gate, so a crashed
+     * session's journal still rolls back at startup); Explicit opens the named generation directly
+     * with the SAME non-fresh usability guard, which is what the confirm switch's step-8 reopen
+     * needs while its own `switched` journal is still on disk. An Explicit request with no wired
+     * opener fails LOUDLY rather than silently falling back to the pointer path (the fallback is
+     * exactly the defect that rolled the switch back).
      */
     private val owner =
         LedgerRuntimeOwner(
-            openGeneration = {
-                openDatabase().also { graph -> lastOpenedGraph = graph }
+            openGeneration = { selection ->
+                openGenerationForSelection(
+                    selection = selection,
+                    openActivePointer = { openDatabase().also { graph -> lastOpenedGraph = graph } },
+                    openExplicit = wiredExplicitOpener,
+                )
             },
             closeGraph = { graph -> graph.close() },
             facadeOf = { graph -> graph.facade },
         )
+
+    /**
+     * The owner's Explicit route, tracking the opened graph like the pointer route. Null stays
+     * null so [openGenerationForSelection] owns the single fail-loud check (never a silent
+     * fallback to the pointer path, which is the defect that rolled the switch back).
+     */
+    private val wiredExplicitOpener: ((Int) -> CloseableLedgerGraph)? =
+        openExplicitGeneration?.let { opener ->
+            { generation: Int -> opener(generation).also { graph -> lastOpenedGraph = graph } }
+        }
 
     /**
      * P7-06 06.B (D-177): the most recently opened graph, captured so the export use case resolves
@@ -333,6 +435,44 @@ internal class DesktopStartupController(
         }
 
     /**
+     * P7-06 06.D (D-182; spec sections 5.3/6): the restore use cases and the POINTER_MISSING
+     * recovery use case, built over this controller's owner and the injected wiring. The recovery
+     * use case never touches the owner (a pointerless start never reached Ready); it is invoked
+     * only by the explicit user confirmations on the recovery face.
+     */
+    private val restoreUseCases: DesktopRestoreUseCases? =
+        restoreWiring?.let { wiring ->
+            val preflight =
+                RestorePreflightUseCase(
+                    owner = owner,
+                    fileSystem = wiring.fileSystem,
+                    layout = wiring.layout,
+                    source = wiring.sourcePort,
+                    isolatedDatabase = wiring.isolatedDatabase,
+                    crypto = wiring.crypto,
+                    newToken = wiring.newToken,
+                    nowMillis = wiring.nowMillis,
+                )
+            val confirm =
+                ConfirmBackupRestoreUseCase(
+                    owner = owner,
+                    fileSystem = wiring.fileSystem,
+                    layout = wiring.layout,
+                    crypto = wiring.crypto,
+                    targetLedgerId = wiring.targetLedgerId,
+                )
+            val recovery =
+                PointerMissingRecoveryUseCase(
+                    fileSystem = wiring.fileSystem,
+                    layout = wiring.layout,
+                    isolatedDatabase = wiring.isolatedDatabase,
+                    currentSchemaVersion = currentSupportedSchemaVersion(),
+                    legacyMainFile = wiring.legacyMainFile,
+                )
+            DesktopRestoreUseCases(preflight, confirm, recovery)
+        }
+
+    /**
      * P7-06 06.1 fix (review REJECT): the product surface handed to [P503App] is the LEASE-SCOPED
      * accessor, never the raw facade (which is module-private to app-ui). Every `facade.*`
      * business call in P503App therefore passes through [LedgerLeaseScope], so the operation
@@ -344,6 +484,17 @@ internal class DesktopStartupController(
     private val leaseScope =
         LedgerLeaseScope(owner).also { scope ->
             scope.backupExport = backupExportUseCase
+            // P7-06 06.D (D-182; spec section 6): the section 5.4 ruling injects the wiring
+            // whitelist {1, 31} and the current schema version from ledger-data.
+            scope.restoreWiring =
+                restoreUseCases?.let { cases ->
+                    RestoreHostWiring(
+                        preflight = cases.preflight,
+                        confirm = cases.confirm,
+                        supportedSourceVersions = RESTORE_SUPPORTED_SOURCE_VERSIONS,
+                        currentSchemaVersion = currentSupportedSchemaVersion(),
+                    )
+                }
         }
 
     /**
@@ -369,7 +520,12 @@ internal class DesktopStartupController(
             is LedgerStartupResult.Failed -> {
                 System.err.println("UnifiedLedger startup failed: " + result.cause)
                 result.cause.printStackTrace()
-                state = P503StartupState.StartupError
+                // P7-06 06.D (D-182; spec section 5.3): a pointerless start with the recovery
+                // wiring probes the shape and offers the recovery face; every other failure keeps
+                // the plain StartupError. The probe is read-only (nothing is adopted or deleted
+                // until the user confirms an action on the face); the desktop startup already
+                // runs on the caller thread, so the probe follows that convention.
+                state = probePointerRecoveryFace(result) ?: P503StartupState.StartupError
             }
             is LedgerStartupResult.Blocked -> {
                 System.err.println("UnifiedLedger startup blocked by ${result.inFlightLeases} in-flight lease(s)")
@@ -381,6 +537,71 @@ internal class DesktopStartupController(
                 state = P503StartupState.StartupError
             }
         }
+    }
+
+    /**
+     * P7-06 06.D (D-182; spec section 5.3): the read-only recovery probe after a pointerless start.
+     * The recovery face exists ONLY for the `POINTER_MISSING` shape (a journal-failed or other
+     * start stays the plain StartupError); null when the shape does not match or no wiring exists.
+     */
+    private fun probePointerRecoveryFace(result: LedgerStartupResult.Failed): P503StartupState? {
+        val cause = result.cause as? LedgerStorageRejectedException ?: return null
+        if (cause.failure != LedgerStorageFailure.POINTER_MISSING) return null
+        val recovery = restoreUseCases?.recovery ?: return null
+        return when (val probe = recovery.probe()) {
+            is PointerMissingRecoveryProbe.Recoverable -> P503StartupState.PointerRecovery(probe.state)
+            PointerMissingRecoveryProbe.NotPointerMissing -> null
+        }
+    }
+
+    /**
+     * P7-06 06.D (spec section 5.3, first branch): the user-confirmed ADOPTION of a verified
+     * candidate. Calling this IS the confirmation. On success the normal startup re-runs and opens
+     * the adopted generation; any refusal republishes the recovery face from a FRESH probe so the
+     * user always sees the current disk truth.
+     */
+    fun adoptPointerRecovery() {
+        val recovery = restoreUseCases?.recovery ?: return
+        if (state !is P503StartupState.PointerRecovery) return
+        when (val outcome = recovery.adopt()) {
+            is PointerRecoveryAdoptionResult.Adopted -> start()
+            else -> {
+                System.err.println("UnifiedLedger pointer recovery adoption refused: $outcome")
+                republishRecoveryFace()
+            }
+        }
+    }
+
+    /**
+     * P7-06 06.D (spec section 5.3, second branch): the user-confirmed DISCARD-AND-RE-UPGRADE.
+     * The desktop has no legacy product location, so this normally returns the typed
+     * `LegacyOriginalMissing` refusal (the face renders no discard affordance); a success re-runs
+     * the normal startup, which resolves the frozen `UpgradeLegacy` path.
+     */
+    fun discardPointerRecoveryAndReUpgrade() {
+        val recovery = restoreUseCases?.recovery ?: return
+        if (state !is P503StartupState.PointerRecovery) return
+        when (val outcome = recovery.discardUnvalidatableAndReUpgrade()) {
+            PointerRecoveryDiscardResult.DiscardedAwaitingUpgrade -> start()
+            else -> {
+                System.err.println("UnifiedLedger pointer recovery discard refused: $outcome")
+                republishRecoveryFace()
+            }
+        }
+    }
+
+    /** Re-probes after a refused recovery action and republishes the face (or the plain error). */
+    private fun republishRecoveryFace() {
+        val recovery = restoreUseCases?.recovery
+        if (recovery == null) {
+            state = P503StartupState.StartupError
+            return
+        }
+        state =
+            when (val probe = recovery.probe()) {
+                is PointerMissingRecoveryProbe.Recoverable -> P503StartupState.PointerRecovery(probe.state)
+                PointerMissingRecoveryProbe.NotPointerMissing -> P503StartupState.StartupError
+            }
     }
 }
 
@@ -455,7 +676,7 @@ internal fun buildLedgerGraph(
     }
     val database = LedgerDatabase(driver)
 
-    val ledgerId = LedgerId("ledger-local-test")
+    val ledgerId = LedgerId(PRODUCT_LEDGER_ID)
     val currency = CATALOG_MANAGED_CURRENCY
     val paymentAccountId = AccountId(DEFAULT_MANAGEABLE_ACCOUNT_ID)
     val categoryId = CategoryId(DEFAULT_EXPENSE_LEAF_ID)
@@ -909,11 +1130,42 @@ internal fun openStableStorageDesktopLedger(
         legacyMainFile = null,
         closeGraph = { graph -> graph.close() },
     ) { target ->
-        if (!target.allowCreateOnOpen && !isUsableSqliteMainFile(fileSystem, target.mainFile)) {
-            throw LedgerStorageRejectedException(LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE)
-        }
+        requireUsableDesktopTarget(fileSystem, target)
         openDesktopLedger("jdbc:sqlite:${target.mainFile}")
     }
+
+/**
+ * P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the desktop confirm switch's step-8 reopen — the
+ * named generation is opened DIRECTLY, without the startup sequence's pointer resolution and
+ * WITHOUT its switch-journal gate. The gate would consume this flow's own live `switched` journal
+ * and roll the switch back (see [openExplicitGeneration]); the explicit route is safe because
+ * step 6 already staged/fsynced/gated the generation and step 7 published the pointer to it.
+ *
+ * The same non-fresh usability guard as the startup open is applied (the JDBC driver creates on
+ * open, so a missing/invalid main file must fail closed rather than become an empty ledger).
+ */
+internal fun openExplicitDesktopLedger(
+    fileSystem: LedgerFileSystem,
+    layout: LedgerStorageLayout,
+    generation: Int,
+): CloseableLedgerGraph =
+    openExplicitGeneration(fileSystem, layout, generation) { target ->
+        requireUsableDesktopTarget(fileSystem, target)
+        openDesktopLedger("jdbc:sqlite:${target.mainFile}")
+    }
+
+/**
+ * P7-06 06.1 (D-176; spec section 4.5): the desktop non-fresh create-on-open guard, shared by the
+ * startup open and the 06.D explicit reopen so the two routes cannot drift.
+ */
+private fun requireUsableDesktopTarget(
+    fileSystem: LedgerFileSystem,
+    target: LedgerOpenTarget,
+) {
+    if (!target.allowCreateOnOpen && !isUsableSqliteMainFile(fileSystem, target.mainFile)) {
+        throw LedgerStorageRejectedException(LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE)
+    }
+}
 
 /**
  * Reads the SQLite user_version and conditionally creates, opens or migrates the schema.

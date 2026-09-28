@@ -9,6 +9,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -127,5 +128,61 @@ class AndroidBackupSourcePortTest {
         preflightThread.join(5_000)
 
         assertEquals(BackupSourceOpenResult.LaunchFailed, holder[0])
+    }
+
+    // ---------------------------------------------------------------- ruling F: the sizeOf wiring (F-10)
+
+    @Test
+    fun anInjectedSizeOfIsUsedForTheReaderAndReceivesThePickedDocument() {
+        // Ruling F (spec section 5.6, the D-180 5(d) sizeOf wiring): the composition root injects
+        // the single ContentResolver size query here. A non-null result must reach the reader's
+        // reportedSize (so the "do not read" fast path can reject an over-bound container before
+        // any byte is read), and the closure must receive the picked SAF document.
+        val launcher = RecordingLauncher()
+        val sizeOfCalls = mutableListOf<String>()
+        val port =
+            AndroidBackupSourcePort<String>(
+                { it() },
+                launcher.launch,
+                { ByteArrayInputStream(byteArrayOf(1, 2, 3, 4)) },
+                { picked ->
+                    sizeOfCalls += picked
+                    7L
+                },
+            )
+        val holder = arrayOfNulls<BackupSourceOpenResult>(1)
+        val preflightThread = daemonThread { holder[0] = port.openSource() }
+        preflightThread.start()
+        awaitLaunch(launcher)
+        port.onOpenDocumentResult("uri")
+        preflightThread.join(5_000)
+
+        val opened = assertIs<BackupSourceOpenResult.Opened>(holder[0])
+        assertEquals(7L, opened.reader.reportedSize, "the injected size must reach the reader")
+        assertEquals(listOf("uri"), sizeOfCalls, "the size query must receive the picked document")
+    }
+
+    @Test
+    fun aNullSizeOfFallsBackToTheCountedStream() {
+        // Ruling F: a provider that does not report a size (or a throwing query, which
+        // queryDocumentSize maps to null) yields null here, and the preflight falls back to the
+        // counted stream — a provider that under-reports still cannot bypass the bound.
+        val launcher = RecordingLauncher()
+        val port =
+            AndroidBackupSourcePort<String>(
+                { it() },
+                launcher.launch,
+                { ByteArrayInputStream(byteArrayOf(1, 2, 3, 4)) },
+                { null },
+            )
+        val holder = arrayOfNulls<BackupSourceOpenResult>(1)
+        val preflightThread = daemonThread { holder[0] = port.openSource() }
+        preflightThread.start()
+        awaitLaunch(launcher)
+        port.onOpenDocumentResult("uri")
+        preflightThread.join(5_000)
+
+        val opened = assertIs<BackupSourceOpenResult.Opened>(holder[0])
+        assertNull(opened.reader.reportedSize, "a null size means the counted-stream fallback")
     }
 }

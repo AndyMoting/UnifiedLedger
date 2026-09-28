@@ -111,6 +111,7 @@ import com.unifiedledger.data.CatalogBootstrapResult
 import com.unifiedledger.data.SqlDelightImportReviewReadAdapter
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
 import com.unifiedledger.data.createAndroidLedgerDatabase
+import com.unifiedledger.data.currentSupportedSchemaVersion
 import com.unifiedledger.data.defaultCatalogSeed
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AssetPaidOrdinaryExpenseCommand
@@ -124,8 +125,11 @@ import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
 import com.unifiedledger.domain.createAssetReceivedOrdinaryIncome
 import com.unifiedledger.ui.BackupExportUseCase
 import com.unifiedledger.ui.BackupSnapshotPort
+import com.unifiedledger.ui.BackupSourcePort
 import com.unifiedledger.ui.BackupTargetPort
 import com.unifiedledger.ui.CloseResult
+import com.unifiedledger.ui.ConfirmBackupRestoreUseCase
+import com.unifiedledger.ui.GenerationSelection
 import com.unifiedledger.ui.ImportConfirmUseCaseSet
 import com.unifiedledger.ui.ImportDuplicateReviewIds
 import com.unifiedledger.ui.ImportFilePickResultChannel
@@ -141,10 +145,20 @@ import com.unifiedledger.ui.P503App
 import com.unifiedledger.ui.P503LedgerFacade
 import com.unifiedledger.ui.P503StartupScreen
 import com.unifiedledger.ui.P503StartupState
+import com.unifiedledger.ui.PointerMissingRecoveryProbe
+import com.unifiedledger.ui.PointerMissingRecoveryState
+import com.unifiedledger.ui.PointerMissingRecoveryUseCase
+import com.unifiedledger.ui.PointerRecoveryAdoptionResult
+import com.unifiedledger.ui.PointerRecoveryDiscardResult
+import com.unifiedledger.ui.RestoreHostWiring
+import com.unifiedledger.ui.RestoreIsolatedDatabasePort
+import com.unifiedledger.ui.RestorePreflightUseCase
 import com.unifiedledger.ui.UuidV7ImportCommitIdSource
 import com.unifiedledger.ui.importCreditRefundOriginalExpenseProvider
 import com.unifiedledger.ui.isUsableSqliteMainFile
 import com.unifiedledger.ui.ledgerStorageLayout
+import com.unifiedledger.ui.openExplicitGeneration
+import com.unifiedledger.ui.openGenerationForSelection
 import com.unifiedledger.ui.openStableStorageLedger
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -191,6 +205,15 @@ fun app() {
         rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
             backupSaveTargetRef[0]?.onCreateDocumentResult(uri)
         }
+    // P7-06 06.D (D-182; spec section 6, P2-7): the SAF OpenDocument launcher for the restore
+    // SOURCE, registered in composition like the import/export launchers. The result callback
+    // reaches the source port through the same holder convention (the port is created with the
+    // ledger wiring, after the launcher).
+    val restoreSourceRef = remember { arrayOfNulls<AndroidBackupSourcePort<Uri>?>(1) }
+    val restoreSourceLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            restoreSourceRef[0]?.onOpenDocumentResult(uri)
+        }
     // P7-06 06.B (D-177; spec section 3.5 phase 2): the SAF CreateDocument launch must run on the
     // main thread, while the export use case runs on a background dispatcher. This poster is the
     // main-looper hop the target port uses; the handler is created once for the composition.
@@ -223,12 +246,40 @@ fun app() {
                     openOutputStream = { uri -> context.contentResolver.openOutputStream(uri) },
                 )
             backupSaveTargetRef[0] = backupTargetPort
+            // P7-06 06.D (D-182; spec sections 5.3/5.6/6): the restore wiring. The source port
+            // posts its SAF launch to the main thread (the target-port precedent) and its `sizeOf`
+            // is ruling F's single ContentResolver size query on the picked document (the
+            // counted-stream fallback stays, so a provider that cannot report a size still cannot
+            // bypass the bound). The recovery use case shares the startup sequence's legacy path
+            // resolution (`databases/ledger.db`); desktop has no equivalent and stays fail-closed.
+            val legacyMainFile = androidStableStoragePaths(databasePath).second
+            val restoreSourcePort =
+                AndroidBackupSourcePort<Uri>(
+                    postToMainThread = mainThreadPoster,
+                    launchOpenDocument = { mimeTypes -> restoreSourceLauncher.launch(mimeTypes) },
+                    openInputStream = { uri -> context.contentResolver.openInputStream(uri) },
+                    sizeOf = { uri -> queryDocumentSize(context.contentResolver, uri) },
+                )
+            restoreSourceRef[0] = restoreSourcePort
+            val restoreWiring =
+                AndroidRestoreWiring(
+                    fileSystem = fileSystem,
+                    layout = layout,
+                    sourcePort = restoreSourcePort,
+                    legacyMainFile = legacyMainFile,
+                )
             AndroidStartupController(
                 openDatabase = {
                     // P7-06 06.1 (D-176): the stable-storage sequence resolves the active
                     // generation, performs the non-destructive legacy upgrade on first start and
                     // guards the target before any create-on-open factory runs.
                     openAndroidStableStorageLedger(context, importFilePickPort, importPickChannel)
+                },
+                // P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the confirm switch's step-8 reopen
+                // opens the generation it just published BY NAME, bypassing the startup journal
+                // gate that would otherwise consume its own live `switched` journal.
+                openExplicitGeneration = { generation ->
+                    openAndroidExplicitGeneration(context, importFilePickPort, importPickChannel, generation)
                 },
                 // P0 hotfix (defect 2): [startScope] is the composition-scoped main dispatcher
                 // used only for the state writes; the blocking open runs on [backgroundDispatcher]
@@ -239,6 +290,9 @@ fun app() {
                 // launch to the main thread (see AndroidBackupTargetPort), so the export use case
                 // can run on a background dispatcher.
                 backupWiring = AndroidBackupWiring(fileSystem, layout, backupTargetPort),
+                // P7-06 06.D (D-182): the restore wiring; null keeps the surface absent (the
+                // existing startup tests construct the controller without it).
+                restoreWiring = restoreWiring,
             )
         }
     // MUST FIX 2: the controller's open now outlives a single composition pass, so dispose it
@@ -270,6 +324,11 @@ fun app() {
                     state = controller.state,
                     onRetry = controller::start,
                     onExit = { activity?.finish() },
+                    // P7-06 06.D (spec section 5.3): the user-confirmed recovery actions; the
+                    // face itself decides which affordances exist (a verified candidate, the
+                    // legacy guard), so the callbacks can always be handed over.
+                    onAdoptPointer = controller::adoptPointerRecovery,
+                    onDiscardAndReUpgrade = controller::discardPointerRecoveryAndReUpgrade,
                 )
         }
     }
@@ -325,6 +384,14 @@ internal class AndroidStartupController(
     // P7-06 06.B (D-177): the optional backup-export wiring. Null keeps the surface absent (the
     // existing startup tests construct the controller with the two base parameters only).
     private val backupWiring: AndroidBackupWiring? = null,
+    // P7-06 06.D (D-182; spec section 6, P2-7): the optional restore wiring. Null keeps the whole
+    // restore + recovery surface absent; present, it binds exactly one set of use-case instances
+    // (the single-flight guard assumes one confirm instance per runtime).
+    private val restoreWiring: AndroidRestoreWiring? = null,
+    // P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the explicit-generation opener the confirm
+    // switch's step-8 reopen needs. Null (the existing startup tests) keeps the owner on the
+    // pointer path only; a production root wires it so the two selections are honoured.
+    private val openExplicitGeneration: ((Int) -> CloseableLedgerGraph)? = null,
 ) {
     var state by mutableStateOf<P503StartupState>(P503StartupState.Starting)
         private set
@@ -334,15 +401,37 @@ internal class AndroidStartupController(
      * controller no longer holds a graph itself — every open, close and generation increment goes
      * through the owner, so "at most one active graph" is the owner's invariant rather than the
      * controller's bookkeeping. [openDatabase] is the injected graph builder the tests already use.
+     *
+     * P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): both [GenerationSelection]s are honoured.
+     * ActivePointer keeps the full startup sequence (pointer + journal gate, so a crashed
+     * session's journal still rolls back at startup); Explicit opens the named generation directly
+     * with the SAME non-fresh usability guard, which is what the confirm switch's step-8 reopen
+     * needs while its own `switched` journal is still on disk. An Explicit request with no wired
+     * opener fails LOUDLY rather than silently falling back to the pointer path (the fallback is
+     * exactly the defect that rolled the switch back).
      */
     private val owner =
         LedgerRuntimeOwner(
-            openGeneration = {
-                openDatabase().also { graph -> lastOpenedGraph = graph }
+            openGeneration = { selection ->
+                openGenerationForSelection(
+                    selection = selection,
+                    openActivePointer = { openDatabase().also { graph -> lastOpenedGraph = graph } },
+                    openExplicit = wiredExplicitOpener,
+                )
             },
             closeGraph = { graph -> graph.close() },
             facadeOf = { graph -> graph.facade },
         )
+
+    /**
+     * The owner's Explicit route, tracking the opened graph like the pointer route. Null stays
+     * null so [openGenerationForSelection] owns the single fail-loud check (never a silent
+     * fallback to the pointer path, which is the defect that rolled the switch back).
+     */
+    private val wiredExplicitOpener: ((Int) -> CloseableLedgerGraph)? =
+        openExplicitGeneration?.let { opener ->
+            { generation: Int -> opener(generation).also { graph -> lastOpenedGraph = graph } }
+        }
 
     /**
      * P7-06 06.B (D-177): the most recently opened graph, captured so the export use case can
@@ -369,6 +458,44 @@ internal class AndroidStartupController(
         }
 
     /**
+     * P7-06 06.D (D-182; spec sections 5.3/6): the restore use cases and the POINTER_MISSING
+     * recovery use case, built over this controller's owner and the injected wiring. The recovery
+     * use case never touches the owner (a pointerless start never reached Ready); it is invoked
+     * only by the explicit user confirmations on the recovery face.
+     */
+    private val restoreUseCases: AndroidRestoreUseCases? =
+        restoreWiring?.let { wiring ->
+            val preflight =
+                RestorePreflightUseCase(
+                    owner = owner,
+                    fileSystem = wiring.fileSystem,
+                    layout = wiring.layout,
+                    source = wiring.sourcePort,
+                    isolatedDatabase = wiring.isolatedDatabase,
+                    crypto = wiring.crypto,
+                    newToken = wiring.newToken,
+                    nowMillis = wiring.nowMillis,
+                )
+            val confirm =
+                ConfirmBackupRestoreUseCase(
+                    owner = owner,
+                    fileSystem = wiring.fileSystem,
+                    layout = wiring.layout,
+                    crypto = wiring.crypto,
+                    targetLedgerId = wiring.targetLedgerId,
+                )
+            val recovery =
+                PointerMissingRecoveryUseCase(
+                    fileSystem = wiring.fileSystem,
+                    layout = wiring.layout,
+                    isolatedDatabase = wiring.isolatedDatabase,
+                    currentSchemaVersion = currentSupportedSchemaVersion(),
+                    legacyMainFile = wiring.legacyMainFile,
+                )
+            AndroidRestoreUseCases(preflight, confirm, recovery)
+        }
+
+    /**
      * P7-06 06.1 fix (review REJECT): the product surface handed to [P503App] is the LEASE-SCOPED
      * accessor, never the raw facade. [LedgerRuntimeOwner.facade] is `internal` (module-private),
      * so this composition root cannot obtain the raw projection at all; every `facade.*` business
@@ -381,6 +508,18 @@ internal class AndroidStartupController(
     private val leaseScope =
         LedgerLeaseScope(owner).also { scope ->
             scope.backupExport = backupExportUseCase
+            // P7-06 06.D (D-182; spec section 6): the section 5.4 ruling injects the wiring
+            // whitelist {1, 31} (v1 conditionally admitted on the device-evidenced strict-migration
+            // leg; A04 outstanding) and the current schema version from ledger-data.
+            scope.restoreWiring =
+                restoreUseCases?.let { cases ->
+                    RestoreHostWiring(
+                        preflight = cases.preflight,
+                        confirm = cases.confirm,
+                        supportedSourceVersions = RESTORE_SUPPORTED_SOURCE_VERSIONS,
+                        currentSchemaVersion = currentSupportedSchemaVersion(),
+                    )
+                }
         }
 
     /**
@@ -466,8 +605,18 @@ internal class AndroidStartupController(
         }
     }
 
-    /** Applies the owner outcome to the observable startup state (runs on [startScope]). */
-    private fun applyStartupResult(result: LedgerStartupResult) {
+    /**
+     * P7-06 06.D (D-182; spec sections 5.3/6): applies the owner outcome to the observable startup
+     * state (runs on [startScope]), probing the recovery shape
+     * when the failure is the pointerless one. The startup gates themselves are UNTOUCHED — the
+     * probe only classifies the failure and reports what is on disk; nothing is adopted, deleted or
+     * published until the user confirms an action on the recovery face. Runs on [startScope]; the
+     * probe's file/SQLite work hops to [backgroundDispatcher] (container-format spec section 4.8).
+     */
+    private suspend fun applyStartupResult(result: LedgerStartupResult) {
+        // The recovery probe (a possible suspension) runs BEFORE the serialized decision section,
+        // so no suspension point ever sits inside the lifecycle-critical section.
+        val recoveryState = if (result is LedgerStartupResult.Failed) probePointerRecovery(result) else null
         synchronized(lifecycleLock) {
             if (disposed) {
                 // The composition was torn down while the open was in flight. Do not publish state
@@ -479,20 +628,94 @@ internal class AndroidStartupController(
             }
             logStartupResult(result)
             when (result) {
-                is LedgerStartupResult.Started -> {
-                    state = P503StartupState.Ready
-                }
-                is LedgerStartupResult.Failed,
+                is LedgerStartupResult.Started -> state = P503StartupState.Ready
+                is LedgerStartupResult.Failed ->
+                    state =
+                        if (recoveryState != null) {
+                            P503StartupState.PointerRecovery(recoveryState)
+                        } else {
+                            P503StartupState.StartupError
+                        }
                 is LedgerStartupResult.Blocked,
                 LedgerStartupResult.TransitionInProgress,
-                -> {
-                    // A failed/blocked/contended start: the graph was NOT touched (Failed leaves no
-                    // graph; Blocked/TransitionInProgress return before opening). Surface the
-                    // fail-closed state so Retry stays reachable (the reentrancy guard drops a
-                    // second tap while Starting).
-                    state = P503StartupState.StartupError
+                -> state = P503StartupState.StartupError
+            }
+        }
+    }
+
+    /**
+     * P7-06 06.D (spec section 5.3): the read-only recovery probe after a pointerless start. The
+     * recovery face exists ONLY for the `POINTER_MISSING` shape (a journal-failed or other start
+     * stays the plain StartupError); null when the shape does not match or no wiring exists.
+     */
+    private suspend fun probePointerRecovery(result: LedgerStartupResult.Failed): PointerMissingRecoveryState? {
+        val cause = result.cause as? LedgerStorageRejectedException ?: return null
+        if (cause.failure != LedgerStorageFailure.POINTER_MISSING) return null
+        val recovery = restoreUseCases?.recovery ?: return null
+        return withContext(backgroundDispatcher) {
+            when (val probe = recovery.probe()) {
+                is PointerMissingRecoveryProbe.Recoverable -> probe.state
+                PointerMissingRecoveryProbe.NotPointerMissing -> null
+            }
+        }
+    }
+
+    /**
+     * P7-06 06.D (spec section 5.3, first branch): the user-confirmed ADOPTION of a verified
+     * candidate. Calling this IS the confirmation. On success the normal startup re-runs and opens
+     * the adopted generation; any refusal republishes the recovery face from a FRESH probe so the
+     * user always sees the current disk truth. The work runs off the UI thread; the state decision
+     * lands on [startScope].
+     */
+    fun adoptPointerRecovery() {
+        val recovery = restoreUseCases?.recovery ?: return
+        if (state !is P503StartupState.PointerRecovery) return
+        startScope.launch {
+            withContext(NonCancellable) {
+                val outcome = withContext(backgroundDispatcher) { recovery.adopt() }
+                when (outcome) {
+                    is PointerRecoveryAdoptionResult.Adopted -> start()
+                    else -> republishRecoveryFace()
                 }
             }
+        }
+    }
+
+    /**
+     * P7-06 06.D (spec section 5.3, second branch): the user-confirmed DISCARD-AND-RE-UPGRADE.
+     * On success the normal startup re-runs the frozen `UpgradeLegacy` sequence from the user's
+     * real legacy database; any refusal republishes the face from a fresh probe.
+     */
+    fun discardPointerRecoveryAndReUpgrade() {
+        val recovery = restoreUseCases?.recovery ?: return
+        if (state !is P503StartupState.PointerRecovery) return
+        startScope.launch {
+            withContext(NonCancellable) {
+                val outcome = withContext(backgroundDispatcher) { recovery.discardUnvalidatableAndReUpgrade() }
+                when (outcome) {
+                    PointerRecoveryDiscardResult.DiscardedAwaitingUpgrade -> start()
+                    else -> republishRecoveryFace()
+                }
+            }
+        }
+    }
+
+    /** Re-probes after a refused recovery action and republishes the face (or the plain error). */
+    private suspend fun republishRecoveryFace() {
+        val recovery = restoreUseCases?.recovery
+        val next =
+            if (recovery != null) {
+                withContext(backgroundDispatcher) {
+                    when (val probe = recovery.probe()) {
+                        is PointerMissingRecoveryProbe.Recoverable -> probe.state
+                        PointerMissingRecoveryProbe.NotPointerMissing -> null
+                    }
+                }
+            } else {
+                null
+            }
+        synchronized(lifecycleLock) {
+            if (!disposed) state = if (next != null) P503StartupState.PointerRecovery(next) else P503StartupState.StartupError
         }
     }
 
@@ -592,6 +815,54 @@ internal class AndroidBackupWiring(
     val newToken: () -> String = { randomUuidText() },
 )
 
+/**
+ * P7-06 06.D (D-182; spec section 6, P2-7): the composition-root restore wiring handed to
+ * [AndroidStartupController]. One value, so the controller's constructor stays backward compatible
+ * (the existing startup tests pass nothing for it). The use cases themselves are constructed by the
+ * controller over ITS owner — exactly one preflight/confirm/recovery instance per runtime (the
+ * section 6 single-instance wiring, and the confirm flow's single-flight guard assumes it).
+ * `targetLedgerId` is the product's fixed single-ledger identity, the same value
+ * [buildLedgerGraph] bootstraps.
+ */
+internal class AndroidRestoreWiring(
+    val fileSystem: LedgerFileSystem,
+    val layout: LedgerStorageLayout,
+    val sourcePort: BackupSourcePort,
+    /** The platform's legacy product database path (spec section 5.3 guard 1); never null on Android. */
+    val legacyMainFile: String,
+    val isolatedDatabase: RestoreIsolatedDatabasePort = AndroidRestoreIsolatedDatabasePort(),
+    val crypto: BackupCryptoPrimitives = JvmBackupCryptoPrimitives(),
+    val newToken: () -> String = { randomUuidText() },
+    val nowMillis: () -> Long = { System.currentTimeMillis() },
+    val targetLedgerId: String = RESTORE_TARGET_LEDGER_ID,
+)
+
+/** The controller-built restore use-case set (exactly one instance set per runtime). */
+internal class AndroidRestoreUseCases(
+    val preflight: RestorePreflightUseCase,
+    val confirm: ConfirmBackupRestoreUseCase,
+    val recovery: PointerMissingRecoveryUseCase,
+)
+
+/**
+ * P7-06 06.D (D-182; spec section 5.4): the wiring whitelist injected into the preflight request —
+ * v1 is the CONDITIONALLY admitted old version (device-evidenced strict migration; the A04
+ * round-trip leg is outstanding and a falsification removes it), 31 is the current schema. The
+ * recovery validation set is deliberately DIFFERENT: `{currentSchemaVersion()}` only (spec 5.3).
+ */
+internal val RESTORE_SUPPORTED_SOURCE_VERSIONS: Set<Long> = setOf(1L, 31L)
+
+/**
+ * The product's fixed single-ledger identity. F-8: ONE constant, used both by [buildLedgerGraph]
+ * to bootstrap the catalog and by the restore wiring as the confirm target identity, so the
+ * confirm's target-identity check (spec section 3.1 item 4) cannot drift from the graph's actual
+ * ledger id.
+ */
+internal const val PRODUCT_LEDGER_ID: String = "ledger-local-test"
+
+/** The restore target ledger identity — the same fixed product identity the graph bootstraps. */
+internal const val RESTORE_TARGET_LEDGER_ID: String = PRODUCT_LEDGER_ID
+
 /** P7-06 06.B: one random token text (kept out of the data-class default so ktlint's chain rule is satisfied). */
 private fun randomUuidText(): String {
     val uuid = java.util.UUID.randomUUID()
@@ -648,30 +919,92 @@ private fun openAndroidStableStorageLedgerLocked(
         legacyMainFile = legacyMainFile,
         closeGraph = { graph -> graph.close() },
     ) { target ->
-        // P7-06 06.1 fix (review Fix 7; spec section 4.5): the AndroidSqliteDriver creates on
-        // open, so a NON-fresh target must be re-guarded here exactly like the desktop root's JDBC
-        // guard — otherwise a missing/zero-length/invalid main file would be silently created as an
-        // empty ledger instead of failing closed (the silent-empty-DB prohibition).
-        requireUsableNonFreshTarget(fileSystem, target)
-        // P5-04.4 S3: a failure mid-open (after the handle exists) must not leak the driver, so
-        // the handle is closed before rethrowing; the controller additionally closes any graph it
-        // already holds in its catch block.
-        //
-        // P0 hotfix (defect 1): the driver name is the ABSOLUTE generation main file. A relative
-        // name containing a path separator (e.g. "ledger-generations/gen-1/ledger.db") is rejected
-        // by the framework: androidx FrameworkSQLiteOpenHelper passes the raw name to
-        // Context.getDatabasePath, whose non-separator-prefixed branch calls makeFilename, which
-        // throws IllegalArgumentException("File " + name + " contains a path separator"). The
-        // absolute branch resolves the parent directory itself and works. target.mainFile is
-        // already absolute (built by fileSystem.join over the absolute host directory), so
-        // androidGenerationDriverName returns it unchanged and openDriver receives an absolute path.
-        val handle = openDriver(androidGenerationDriverName(target.mainFile))
-        try {
-            buildLedgerGraph(handle, importFilePickPort, importPickChannel, AndroidBackupSnapshotPort(handle))
-        } catch (failure: Exception) {
-            handle.close()
-            throw failure
-        }
+        buildAndroidGenerationGraph(fileSystem, target, importFilePickPort, importPickChannel, openDriver)
+    }
+}
+
+/**
+ * P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the Android confirm switch's step-8 reopen — the
+ * named generation is opened DIRECTLY, without the startup sequence's pointer resolution and
+ * WITHOUT its switch-journal gate. The gate would consume this flow's own live `switched` journal
+ * and roll the switch back (see [openExplicitGeneration]); the explicit route is safe because
+ * step 6 already staged/fsynced/gated the generation and step 7 published the pointer to it.
+ *
+ * It still runs under [withAndroidStableStorageOpenLock] for the same reason the startup open
+ * does: the pointer was published just before this call, so a concurrent composition open could
+ * resolve the SAME generation and race this one onto the same database file. The lock is taken
+ * while the owner mutex is held (the established order — [openAndroidStableStorageLedger] takes
+ * it the same way), so the two never invert.
+ */
+internal fun openAndroidExplicitGeneration(
+    context: android.content.Context,
+    importFilePickPort: AndroidImportFilePickPort<Uri>,
+    importPickChannel: ImportFilePickResultChannel,
+    generation: Int,
+    openDriver: (String) -> AndroidLedgerDatabaseHandle = { name -> createAndroidLedgerDatabase(context, name) },
+): CloseableLedgerGraph =
+    withAndroidStableStorageOpenLock {
+        val databasePath = context.getDatabasePath(LEGACY_ANDROID_DATABASE_NAME)
+        val (hostDirectory, _) = androidStableStoragePaths(databasePath)
+        val fileSystem = AndroidLedgerFileSystem()
+        val layout = ledgerStorageLayout(fileSystem, hostDirectory)
+        openAndroidExplicitGenerationWith(fileSystem, layout, generation, importFilePickPort, importPickChannel, openDriver)
+    }
+
+/**
+ * The platform-independent body of [openAndroidExplicitGeneration] over an already-resolved
+ * filesystem and layout. Extracted so the explicit route's gate bypass and non-fresh guard are
+ * JVM-testable without a Context (the [AndroidStableStorageTest] pattern); production always
+ * arrives through [openAndroidExplicitGeneration], which resolves the paths from the platform.
+ */
+internal fun openAndroidExplicitGenerationWith(
+    fileSystem: LedgerFileSystem,
+    layout: LedgerStorageLayout,
+    generation: Int,
+    importFilePickPort: AndroidImportFilePickPort<Uri>,
+    importPickChannel: ImportFilePickResultChannel,
+    openDriver: (String) -> AndroidLedgerDatabaseHandle,
+): CloseableLedgerGraph =
+    openExplicitGeneration(fileSystem, layout, generation) { target ->
+        buildAndroidGenerationGraph(fileSystem, target, importFilePickPort, importPickChannel, openDriver)
+    }
+
+/**
+ * Builds one Android graph for an already-resolved open target: the non-fresh usability guard,
+ * the driver open at the absolute generation main file, and the graph build (closing the handle
+ * on a mid-open failure). Shared by the startup sequence and the explicit confirm reopen so the
+ * two routes cannot drift.
+ */
+private fun buildAndroidGenerationGraph(
+    fileSystem: LedgerFileSystem,
+    target: LedgerOpenTarget,
+    importFilePickPort: AndroidImportFilePickPort<Uri>,
+    importPickChannel: ImportFilePickResultChannel,
+    openDriver: (String) -> AndroidLedgerDatabaseHandle,
+): CloseableLedgerGraph {
+    // P7-06 06.1 fix (review Fix 7; spec section 4.5): the AndroidSqliteDriver creates on
+    // open, so a NON-fresh target must be re-guarded here exactly like the desktop root's JDBC
+    // guard — otherwise a missing/zero-length/invalid main file would be silently created as an
+    // empty ledger instead of failing closed (the silent-empty-DB prohibition).
+    requireUsableNonFreshTarget(fileSystem, target)
+    // P5-04.4 S3: a failure mid-open (after the handle exists) must not leak the driver, so
+    // the handle is closed before rethrowing; the controller additionally closes any graph it
+    // already holds in its catch block.
+    //
+    // P0 hotfix (defect 1): the driver name is the ABSOLUTE generation main file. A relative
+    // name containing a path separator (e.g. "ledger-generations/gen-1/ledger.db") is rejected
+    // by the framework: androidx FrameworkSQLiteOpenHelper passes the raw name to
+    // Context.getDatabasePath, whose non-separator-prefixed branch calls makeFilename, which
+    // throws IllegalArgumentException("File " + name + " contains a path separator"). The
+    // absolute branch resolves the parent directory itself and works. target.mainFile is
+    // already absolute (built by fileSystem.join over the absolute host directory), so
+    // androidGenerationDriverName returns it unchanged and openDriver receives an absolute path.
+    val handle = openDriver(androidGenerationDriverName(target.mainFile))
+    return try {
+        buildLedgerGraph(handle, importFilePickPort, importPickChannel, AndroidBackupSnapshotPort(handle))
+    } catch (failure: Exception) {
+        handle.close()
+        throw failure
     }
 }
 
@@ -719,7 +1052,7 @@ private fun buildLedgerGraph(
     val database = handle.database
     val store = handle.catalogStore
 
-    val ledgerId = LedgerId("ledger-local-test")
+    val ledgerId = LedgerId(PRODUCT_LEDGER_ID)
     val currency = CATALOG_MANAGED_CURRENCY
     val paymentAccountId = AccountId(DEFAULT_MANAGEABLE_ACCOUNT_ID)
     val categoryId = CategoryId(DEFAULT_EXPENSE_LEAF_ID)

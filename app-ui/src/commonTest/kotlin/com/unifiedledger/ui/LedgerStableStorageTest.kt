@@ -200,6 +200,143 @@ class LedgerStableStorageTest {
         assertTrue(fileSystem.operationsSnapshot().none { it.startsWith("readBytes:") })
     }
 
+    // ---------------------------------------------------------------- explicit reopen (06.D spec 3.7/3.8)
+
+    @Test
+    fun openExplicitGenerationOpensTheNamedGenerationWithoutRunningTheJournalGate() {
+        // P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the confirm switch's step-8 reopen runs while
+        // its OWN `switched` journal is still on disk (it is removed only after the read-back). The
+        // explicit opener must NOT run the startup gate: the gate would republish the OLD pointer
+        // and delete the NEW generation directory, rolling the switch back. Reverting step 8 to the
+        // pointer route is what this primitive exists to prevent.
+        fileSystem.putDirectory(generationsDirectory)
+        fileSystem.putDirectory(generationOneDirectory)
+        fileSystem.putFile(generationOneMain, sqliteLikeBytes())
+        fileSystem.putFile(pointer, "gen-2")
+        val generationTwoDirectory = layout.generationDirectory(2)
+        fileSystem.putDirectory(generationTwoDirectory)
+        val generationTwoMain = layout.mainFile(generationTwoDirectory)
+        fileSystem.putFile(generationTwoMain, sqliteLikeBytes(filler = 1))
+        fileSystem.putFile(journal, ledgerSwitchJournalBytes(LedgerSwitchJournal(LedgerSwitchJournalStage.Switched, 1, 2)))
+        val targets = mutableListOf<LedgerOpenTarget>()
+
+        val graph =
+            openExplicitGeneration(fileSystem, layout, 2) { target ->
+                targets += target
+                "graph"
+            }
+
+        assertEquals("graph", graph)
+        assertEquals(listOf(LedgerOpenTarget(generationTwoMain, allowCreateOnOpen = false)), targets)
+        // Nothing was recovered or rewritten: the pointer still names the new generation, the
+        // journal is untouched and the new generation directory survives.
+        assertEquals("gen-2", fileSystem.fileBytes(pointer)?.decodeToString())
+        assertTrue(fileSystem.hasFile(journal))
+        assertTrue(fileSystem.hasDirectory(generationTwoDirectory))
+    }
+
+    @Test
+    fun openExplicitGenerationFailsClosedOnAnUnusableNamedGeneration() {
+        // The same silent-empty-database prohibition as every non-fresh startup path: a named
+        // generation that is missing, empty or header-less must fail closed and never reach the
+        // create-on-open factory.
+        fileSystem.putDirectory(generationsDirectory)
+        fileSystem.putDirectory(generationOneDirectory)
+        val generationOneMainUnusable = layout.mainFile(generationOneDirectory)
+        fileSystem.putFile(generationOneMainUnusable, ByteArray(0))
+        var opened = false
+
+        val rejected =
+            assertFailsWith<LedgerStorageRejectedException> {
+                openExplicitGeneration(fileSystem, layout, 1) {
+                    opened = true
+                    "graph"
+                }
+            }
+
+        assertEquals(LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE, rejected.failure)
+        assertFalse(opened)
+    }
+
+    // ---------------------------------------------------------------- structured generation deletion (06.D defect 2)
+
+    @Test
+    fun deleteGenerationDirectoryRemovesARollbackJournalSidecarToo() {
+        // P7-06 06.D device-gate defect 2 (D-183): a read-WRITE framework open leaves a transient
+        // `<main>-journal` beside the main file (the repo documents this on device). The deletion
+        // must cover it, or the directory stays non-empty and the platform `delete` silently no-ops.
+        fileSystem.putDirectory(generationsDirectory)
+        fileSystem.putDirectory(generationOneDirectory)
+        fileSystem.putFile(generationOneMain, sqliteLikeBytes())
+        fileSystem.putFile("$generationOneMain-journal", ByteArray(0))
+
+        deleteGenerationDirectory(fileSystem, layout, 1)
+
+        assertFalse(fileSystem.hasFile("$generationOneMain-journal"), "the transient journal must be deleted with the main file")
+        assertFalse(fileSystem.hasDirectory(generationOneDirectory), "the emptied generation directory must be gone")
+    }
+
+    @Test
+    fun deleteGenerationDirectoryThrowsWhenTheDirectorySurvives() {
+        // Defect 2's second half: the platform `delete` silently no-ops on a non-empty directory
+        // (the fake models this). The deletion must therefore VERIFY absence and fail loud, so a
+        // caller that depends on the directory being gone (the discard branch, the confirm-time
+        // delete-then-stage) can never report success it did not achieve. A foreign child that is
+        // not part of the deletable sidecar set is the surviving-content case.
+        fileSystem.putDirectory(generationsDirectory)
+        fileSystem.putDirectory(generationOneDirectory)
+        fileSystem.putFile(generationOneMain, sqliteLikeBytes())
+        fileSystem.putFile(fileSystem.join(generationOneDirectory, "foreign.bin"), ByteArray(4))
+
+        val thrown =
+            assertFailsWith<LedgerGenerationDirectoryDeleteException> {
+                deleteGenerationDirectory(fileSystem, layout, 1)
+            }
+        assertTrue(fileSystem.hasDirectory(generationOneDirectory))
+        // DG-3 (D-183): the failure names the surviving directory as a typed code, not a runtime
+        // path — a platform host path must never leak into a commonMain exception message.
+        assertEquals(LedgerGenerationDirectoryKind.GENERATION_DIRECTORY, thrown.target)
+        assertFalse(thrown.message.orEmpty().contains(generationOneDirectory), "the message must not embed a runtime path")
+    }
+
+    @Test
+    fun removeLegacyFilesAlsoRemovesARollbackJournalSidecar() {
+        // The legacy deletion shares the same discipline: a transient `-journal` beside the legacy
+        // main file must not survive it either (the deletion-only superset).
+        val legacy = "/data/databases/ledger.db"
+        fileSystem.putFile(legacy, sqliteLikeBytes())
+        fileSystem.putFile("$legacy-wal", "wal-bytes")
+        fileSystem.putFile("$legacy-shm", "shm-bytes")
+        fileSystem.putFile("$legacy-journal", "journal-bytes")
+
+        removeLegacyFiles(fileSystem, legacy)
+
+        assertFalse(fileSystem.hasFile(legacy))
+        assertFalse(fileSystem.hasFile("$legacy-wal"))
+        assertFalse(fileSystem.hasFile("$legacy-shm"))
+        assertFalse(fileSystem.hasFile("$legacy-journal"), "the transient legacy journal must be removed too")
+    }
+
+    @Test
+    fun theLegacyUpgradeCopiesOnlyTheConsistentSidecarSetAndNeverTheTransientJournal() {
+        // The COPY list must stay NARROWER than the deletion set: a transient `-journal` must never
+        // be copied into a new generation (a stale journal beside a copied database is a corruption
+        // hazard). Only `-wal`/`-shm` travel.
+        val legacy = "/data/databases/ledger.db"
+        fileSystem.putFile(legacy, sqliteLikeBytes())
+        fileSystem.putFile("$legacy-wal", "wal-bytes")
+        fileSystem.putFile("$legacy-journal", "journal-bytes")
+
+        openStableStorageLedger(fileSystem, layout, legacy, closeGraph = {}) { "graph" }
+
+        assertTrue(fileSystem.hasFile("$generationOneDirectory/ledger.db-wal"))
+        assertFalse(
+            fileSystem.hasFile("$generationOneDirectory/ledger.db-journal"),
+            "the transient journal must never be copied into a new generation",
+        )
+        assertFalse(fileSystem.hasFile(legacy))
+    }
+
     // ---------------------------------------------------------------- fresh install / upgrade sequence
 
     @Test

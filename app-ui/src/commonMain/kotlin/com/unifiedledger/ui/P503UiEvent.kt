@@ -906,6 +906,66 @@ sealed interface P503UiEvent {
      * a running export absorbs the close (提交中不得离开, the P7-05 Submitting discipline).
      */
     data object CloseBackupExport : P503UiEvent
+
+    // ---- P7-06 06.D restore confirm & switch events (D-182; spec sections 3/5.5/6) ----
+
+    /**
+     * Opens the restore surface from the HOME overview entry affordance. Effect only on
+     * OverviewEmpty; absorbed everywhere else. The host offers the affordance only when the
+     * restore use cases are wired, so this event never renders a dead button.
+     */
+    data object OpenBackupRestore : P503UiEvent
+
+    /**
+     * One password-field write on the restore surface. [password] stays in memory only (never
+     * persisted, logged or put in any diagnostic). Effect only on BackupRestore; absorbed
+     * everywhere else.
+     */
+    data class UpdateRestorePassword(
+        val password: String,
+    ) : P503UiEvent
+
+    /**
+     * The explicit preflight request (the artifact pick + decryption + validation run). The host
+     * runs the preflight OFF the UI thread (container-format spec section 4.8) and the reducer sets
+     * the [P503AppState.BackupRestore.runningPreflight] marker (a duplicate confirm is absorbed,
+     * 提交中不重入). Effect only on BackupRestore; absorbed everywhere else.
+     */
+    data object ConfirmRestorePreflight : P503UiEvent
+
+    /**
+     * The landed preflight result: a [RestorePreflightResult.PreviewReady] fills the 7-field
+     * preview and binds the opaque token; a rejection/cancel keeps the surface with a typed banner
+     * and the marker cleared. Effect only on BackupRestore; absorbed everywhere else.
+     */
+    data class RestorePreflightLanded(
+        val result: RestorePreflightResult,
+    ) : P503UiEvent
+
+    /**
+     * THE explicit replace confirmation (spec section 3: calling confirm IS the user's decision).
+     * The host runs the confirm & switch off the UI thread; the reducer sets the
+     * [P503AppState.BackupRestore.runningConfirm] marker (提交中不重入). Effect only on
+     * BackupRestore; absorbed everywhere else.
+     */
+    data object ConfirmBackupRestoreSwitch : P503UiEvent
+
+    /**
+     * The landed switch result: a [BackupRestoreSwitchResult.Committed] closes the surface back to
+     * the preserved overview (the committed closeout — the host then triggers the authoritative
+     * refresh); a RolledBack/stale/postponed/aborted result keeps the surface with a typed banner;
+     * a [BackupRestoreSwitchResult.RecoveryRequired] is SESSION-TERMINAL and moves the app to
+     * [P503AppState.RestoreSessionTerminal] — no business event can continue on that runtime.
+     */
+    data class RestoreSwitchResultLanded(
+        val result: BackupRestoreSwitchResult,
+    ) : P503UiEvent
+
+    /**
+     * Closes the restore surface back to the exact preserved overview. Effect only on
+     * BackupRestore; a running preflight or confirm absorbs the close (提交中不得离开).
+     */
+    data object CloseBackupRestore : P503UiEvent
 }
 
 /**

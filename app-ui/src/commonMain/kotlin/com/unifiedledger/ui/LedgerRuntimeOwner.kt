@@ -75,11 +75,56 @@ sealed interface GenerationSelection {
     /** Reopen the generation named by the on-disk active pointer (the default). */
     data object ActivePointer : GenerationSelection
 
-    /** Reopen an explicitly named on-disk generation (06.D switch skeleton). */
+    /**
+     * Reopen the explicitly named on-disk generation — the confirm switch's step-8 reopen
+     * (P7-06 06.D; `ConfirmBackupRestore.kt` step 8). This is production-reachable: both
+     * composition roots run the confirm switch, whose step 8 reopens the generation it just staged
+     * and published by name (through [openExplicitGeneration]) instead of through the pointer, so
+     * the startup sequence's switch-journal gate cannot consume the flow's own live `switched`
+     * journal (see [openGenerationForSelection]). The spec's frozen step-8 list still names
+     * `reopen(ActivePointer)`; 06.D's P1 fix establishes that the pointer route re-enters the
+     * journal gate and rolls the switch back, so step 8 must select the generation explicitly.
+     */
     data class Explicit(
         val generation: Int,
     ) : GenerationSelection
 }
+
+/**
+ * P7-06 06.D (D-182; spec `docs/specs/2026-09-26-p7-06-restore-confirm-switch-design.md` section 3
+ * step 8, sections 3.8/3.9): dispatches one [LedgerRuntimeOwner] open request to the matching
+ * opener. The two composition roots wire their owner through this function so BOTH honour
+ * [GenerationSelection.Explicit] identically instead of silently ignoring the selection.
+ *
+ * [GenerationSelection.ActivePointer] runs the full startup sequence ([openActivePointer]): the
+ * on-disk pointer decides, and the switch-journal gate stays live, so a crashed session's
+ * `prepared`/`switched` journal still rolls back at startup (container-format spec section 5.3).
+ * Startup, the section 3.10 restoration reopen and the section 3.8 rollback reopen all use it.
+ *
+ * [GenerationSelection.Explicit] runs [openExplicit] with the named disk generation and MUST NOT
+ * fall back to the pointer path: it is the confirm switch's step-8 reopen, which runs while this
+ * flow's OWN `switched` journal is still on disk (it is removed only after the read-back, spec
+ * section 3.9), so the pointer path's journal gate would consume that journal and roll the switch
+ * back. The explicit opener ([openExplicitGeneration]) opens the named generation directly.
+ *
+ * A null [openExplicit] (an unwired root, e.g. an existing startup test) makes an Explicit request
+ * fail LOUDLY instead of silently falling back to the pointer path — the fallback is exactly the
+ * defect that rolled the switch back, so it must never be a silent behaviour.
+ */
+fun <G> openGenerationForSelection(
+    selection: GenerationSelection,
+    openActivePointer: () -> G,
+    openExplicit: ((Int) -> G)?,
+): G =
+    when (selection) {
+        GenerationSelection.ActivePointer -> openActivePointer()
+        is GenerationSelection.Explicit -> {
+            val opener =
+                openExplicit
+                    ?: error("the explicit-generation opener is not wired; the confirm switch requires it")
+            opener(selection.generation)
+        }
+    }
 
 /** A successful startup. */
 sealed interface LedgerStartupResult {
@@ -199,9 +244,10 @@ const val LEDGER_QUIESCE_TIMEOUT_MILLIS: Long = 5_000L
  * shared module stays free of platform types; the composition root supplies the open/close
  * actions and the facade projection.
  *
- * @param openActiveGeneration opens the active generation from stable storage (performing any
- *   legacy upgrade and the authoritative read-back) and returns the built graph; it throws on any
- *   failure, which the owner maps to fail-closed.
+ * @param openGeneration opens the requested generation from stable storage (performing any
+ *   legacy upgrade and the authoritative read-back for the [GenerationSelection.ActivePointer]
+ *   selection) and returns the built graph; it throws on any failure, which the owner maps to
+ *   fail-closed.
  * @param closeGraph releases the platform connection; idempotent.
  * @param facadeOf projects the business facade out of a graph.
  */
@@ -209,9 +255,14 @@ const val LEDGER_QUIESCE_TIMEOUT_MILLIS: Long = 5_000L
 class LedgerRuntimeOwner<G : Any>(
     /**
      * Opens the requested generation and performs the authoritative read-back, returning the built
-     * graph. Throwing fails the startup/reopen closed. 06.1 always passes
-     * [GenerationSelection.ActivePointer] (the on-disk pointer is the only selection); the 06.D
-     * switch supplies a real [GenerationSelection.Explicit] implementation.
+     * graph. Throwing fails the startup/reopen closed.
+     *
+     * Both composition roots dispatch this through [openGenerationForSelection], so BOTH selections
+     * are production-reachable: startup and every restoration/rollback reopen pass
+     * [GenerationSelection.ActivePointer] (the full pointer + journal-gate path), and the 06.D
+     * confirm switch's step-8 reopen passes [GenerationSelection.Explicit] with the generation it
+     * just staged and published — a path that must NOT re-enter the journal gate while its own
+     * `switched` journal is still on disk (see [openExplicitGeneration]).
      */
     private val openGeneration: (GenerationSelection) -> G,
     private val closeGraph: (G) -> Unit,
@@ -555,6 +606,42 @@ class LedgerLeaseScope(
     var backupExport: BackupExportUseCase? = null
 
     /**
+     * P7-06 06.D (D-182; spec section 6, P2-7): the composition-root restore wiring — the preflight
+     * use case, the confirm & switch use case, and the two injected constants the spec rules fix
+     * (the section 5.4 whitelist `{1, 31}` and `currentSupportedSchemaVersion()`). Null when the
+     * surface is absent. Lease-free for the same reason as [backupExport]: the preflight acquires
+     * and releases its OWN whole-duration lease and the confirm deliberately holds none (the quiesce
+     * caller contract), so exposing them here adds no lease and no second lease.
+     */
+    var restoreWiring: RestoreHostWiring? = null
+
+    /**
+     * P7-06 06.D (spec sections 3.1/6): the preflight request resolved for the CURRENT active
+     * generation — the target identity is the facade's ledger id, the whitelist and current schema
+     * version come from the injected wiring. Null when the surface is absent or the owner has no
+     * active generation. The generation travels alongside the request so the host's landing hop can
+     * apply the standard discard rule (the export launch precedent).
+     */
+    fun restorePreflightLaunch(password: String): RestorePreflightLaunch? {
+        val wiring = restoreWiring ?: return null
+        val generation = owner.activeGeneration ?: return null
+        val request =
+            RestorePreflightRequest(
+                password = password,
+                targetLedgerId = requiredFacade().ledgerId.value,
+                supportedSourceVersions = wiring.supportedSourceVersions,
+                currentSchemaVersion = wiring.currentSchemaVersion,
+            )
+        return RestorePreflightLaunch(request, generation)
+    }
+
+    /**
+     * P7-06 06.D: the active generation captured at confirm-launch time for the landing guard of
+     * the generation-free switch results (the generation-bearing results carry their own).
+     */
+    fun activeGenerationForLanding(): Generation? = owner.activeGeneration
+
+    /**
      * P7-06 06.B (D-177; spec sections 3.1/3.2): the launch for the CURRENT active generation —
      * the export request plus the generation it was resolved under. Null when the export surface
      * is absent or the owner has no active generation (not Ready).
@@ -605,6 +692,9 @@ class LedgerLeaseScope(
                 // P7-06 06.B (D-177): the export use case is bound to this scope by the
                 // composition root; a pure field read, never an invocation.
                 backupExport = backupExport != null,
+                // P7-06 06.D (D-182): the restore use cases are bound by the composition root; a
+                // pure field read, never an invocation.
+                backupRestore = restoreWiring != null,
             )
         }
 
@@ -717,6 +807,9 @@ data class LedgerSurfaces(
     // A pure field probe, never an invocation, so the host renders the export entry only when the
     // surface exists (the "no dead affordance" convention).
     val backupExport: Boolean = false,
+    // P7-06 06.D (D-182; spec section 6): the composition root bound the restore use cases. Same
+    // pure-probe convention as [backupExport].
+    val backupRestore: Boolean = false,
 )
 
 /**
@@ -728,6 +821,34 @@ data class LedgerSurfaces(
 class BackupExportLaunch(
     val request: BackupExportRequest,
     val generation: Generation,
+)
+
+/**
+ * P7-06 06.D (D-182; spec section 6, P2-7): one restore-preflight launch — the request resolved for
+ * the active generation plus the generation it was resolved under, for the same landing-discard
+ * rule as [BackupExportLaunch]. The request carries the composition-root-injected section 5.4
+ * whitelist (`{1, 31}`) and `currentSupportedSchemaVersion()`; the shared host never hard-codes
+ * either.
+ */
+class RestorePreflightLaunch(
+    val request: RestorePreflightRequest,
+    val generation: Generation,
+)
+
+/**
+ * P7-06 06.D (D-182; spec section 6, P2-7): the composition-root restore wiring bound to
+ * [LedgerLeaseScope]. The whitelist `{1, 31}` is the section 5.4 RULING (v1 conditionally admitted
+ * on the device-evidenced strict-migration leg, A04 outstanding) and `currentSchemaVersion` comes
+ * from `currentSupportedSchemaVersion()` in ledger-data — both are injected here, never duplicated
+ * in the shared host.
+ */
+class RestoreHostWiring(
+    val preflight: RestorePreflightUseCase,
+    val confirm: ConfirmBackupRestoreUseCase,
+    /** The section 5.4 wiring whitelist: the versions the preflight's strict migration may accept. */
+    val supportedSourceVersions: Set<Long>,
+    /** The schema version this build supports (`currentSupportedSchemaVersion()`, P2-6). */
+    val currentSchemaVersion: Long,
 )
 
 /**

@@ -429,6 +429,50 @@ sealed interface P503AppState {
     }
 
     /**
+     * P7-06 06.D (D-182; spec sections 3/5.1/5.5/6): the restore CONFIRM & SWITCH surface. Reached
+     * from the HOME overview entry affordance when the composition root wired the restore use
+     * cases. [overview] is carried so every exit restores the exact tab/month/payload (the export
+     * surface's preserved-overview discipline). The password lives only in this in-memory draft —
+     * NEVER persisted, logged or placed in a diagnostic; [toString] redacts it (and the token's
+     * content) exactly like [BackupExport].
+     *
+     * Two phases share one surface: the PREFLIGHT (password in, typed [RestorePreflightResult]
+     * out; a [RestorePreflightResult.PreviewReady] fills [preview] and [token]) and the CONFIRM
+     * (the opaque token in, typed [BackupRestoreSwitchResult] out). [runningPreflight] and
+     * [runningConfirm] are the per-operation markers (提交中不重入/不得离开, the P7-05 submitting
+     * discipline); a confirm start clears the preflight banner and vice versa.
+     */
+    data class BackupRestore(
+        val overview: OverviewEmpty,
+        val password: String = "",
+        val runningPreflight: Boolean = false,
+        val preflightOutcome: RestorePreflightResult? = null,
+        /** The 7-field preview summary (spec section 5.5); non-null exactly when a token is bound. */
+        val preview: RestorePreflightSummary? = null,
+        val token: RestorePreflightToken? = null,
+        val runningConfirm: Boolean = false,
+        val confirmOutcome: BackupRestoreSwitchResult? = null,
+    ) : P503AppState {
+        override fun toString(): String =
+            "BackupRestore(overview=$overview, password=${if (password.isEmpty()) "\"\"" else "<redacted>"}," +
+                " runningPreflight=$runningPreflight, preflightOutcome=$preflightOutcome," +
+                " preview=${if (preview == null) "null" else "<summary>"}, token=${if (token == null) "null" else "<opaque>"}," +
+                " runningConfirm=$runningConfirm, confirmOutcome=$confirmOutcome)"
+    }
+
+    /**
+     * P7-06 06.D (D-182; spec section 3.8 with the composition-root session-terminal obligation):
+     * the fail-closed face after a rollback that ALSO failed ([BackupRestoreSwitchResult.RecoveryRequired]).
+     * SESSION-TERMINAL: the runtime owner is Closed or StartupError (the registered P3-2 finding —
+     * a `RecoveryRequired` carries no runtime-outcome field, so the composition root must treat it
+     * as session-terminal), every business surface is dead by construction, and this face offers no
+     * continuation beyond the exit. The typed [cause] is the only content; no path, no secret.
+     */
+    data class RestoreSessionTerminal(
+        val cause: BackupRestoreRecoveryCause,
+    ) : P503AppState
+
+    /**
      * P5-04.3: carries the flow context so the host can run a read-only commit-status
      * check and the flow can leave via Recovered/RequestIdentityConflict; nullable fields
      * follow the InfrastructureFailure SUBMISSION precedent.

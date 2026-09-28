@@ -102,6 +102,7 @@ import com.unifiedledger.application.TransferDraft
 import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.application.VoidTransactionRequest
 import com.unifiedledger.application.VoidTransactionResult
+import com.unifiedledger.application.backup.BackupPreflightRejection
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.P705FailureCode
@@ -2335,6 +2336,74 @@ fun P503App(
         )
     }
 
+    // ---------------------------------------------------------------- P7-06 06.D restore confirm & switch host surface
+    // P7-06 06.D (D-182; spec sections 3/5.5/6): the host call sites of the restore flow, mirroring
+    // the export surface's decisions: the work runs OFF the UI thread (container-format spec
+    // section 4.8 — the preflight's KDF/streaming crypto and the confirm's quiesce/staging must
+    // never touch the UI thread), the typed result hops back ON the composition's main dispatcher
+    // (the P704C-SPEC-01/QUAL-02 serial-write rule), and a result that lands after the graph was
+    // replaced is DISCARDED. The use cases acquire/release their own leases (the confirm holds
+    // none by design), so neither call is wrapped in `ledger.leased`.
+    //
+    // Secret discipline: the password lives only in the reducer's in-memory draft and the request;
+    // it is never logged and never placed in a UI text. The token is opaque; the host never opens
+    // it (its internals are module-internal).
+
+    /**
+     * P7-06 06.D (spec section 3.1/3.2): runs the preflight for the typed request resolved for the
+     * CURRENT active generation. The wiring/field guard runs BEFORE the reducer marks the surface
+     * running (the export precedent): an unwired use case, a missing active generation or a
+     * too-short password never strands the surface.
+     */
+    fun confirmRestorePreflight(current: P503AppState.BackupRestore) {
+        if (!ledger.surfaces.backupRestore) return
+        if (!restorePreflightConfirmEnabled(current.password, current.runningPreflight, current.runningConfirm)) return
+        val launch = ledger.restorePreflightLaunch(current.password) ?: return
+        val useCase = ledger.restoreWiring?.preflight ?: return
+        if (latestState.value !== current) return
+        dispatch(P503UiEvent.ConfirmRestorePreflight)
+        runRestorePreflight(
+            scope = scope,
+            generation = launch.generation,
+            request = launch.request,
+            preflight = useCase::preflight,
+            isCurrentGeneration = ledger::isCurrentGeneration,
+            land = { result -> dispatch(P503UiEvent.RestorePreflightLanded(result)) },
+        )
+    }
+
+    /**
+     * P7-06 06.D (spec section 3): THE explicit replace confirmation — calling [confirm] IS the
+     * user's decision, so this gate requires the bound preview (the 7-field checkable summary) and
+     * the opaque token from a landed [RestorePreflightResult.PreviewReady]. Nothing runs without it.
+     */
+    fun confirmRestoreSwitch(current: P503AppState.BackupRestore) {
+        if (!ledger.surfaces.backupRestore) return
+        if (!restoreSwitchConfirmEnabled(current)) return
+        val confirm = ledger.restoreWiring?.confirm ?: return
+        val token = current.token ?: return
+        // Readiness precondition only: the switch needs a Ready owner (no active generation means
+        // there is nothing to switch from). The landing guard no longer uses this capture — every
+        // result now carries its own post-operation generation (F-1).
+        ledger.activeGenerationForLanding() ?: return
+        if (latestState.value !== current) return
+        dispatch(P503UiEvent.ConfirmBackupRestoreSwitch)
+        runRestoreConfirm(
+            scope = scope,
+            token = token,
+            confirm = confirm::confirm,
+            isCurrentGeneration = ledger::isCurrentGeneration,
+            land = { result ->
+                dispatch(P503UiEvent.RestoreSwitchResultLanded(result))
+                // Committed closeout (spec section 3.9): the switch is durable and the new graph is
+                // open and read back. The reducer already closed the surface to the preserved
+                // overview; this triggers the authoritative refresh chain so the overview reloads
+                // from the NEW generation (the old cached read models are gone with the old graph).
+                if (result is BackupRestoreSwitchResult.Committed) refresh()
+            },
+        )
+    }
+
     // ---------------------------------------------------------------- P7-05 lost-commit manual re-check
     // V-19 (D-173; the P7-02 D-126 R4 precedent): the in-session manual re-check of a lost
     // correction/void/restore commit. Each entry re-invokes the SAME snapshot-aware resolver the
@@ -2513,6 +2582,14 @@ fun P503App(
                                 // open performs no IO and no secret handling; the password is
                                 // entered on the surface and stays in memory.
                                 onOpenBackupExport = if (backupExportEntryVisible(ledger.surfaces.backupExport)) ({ dispatch(P503UiEvent.OpenBackupExport) }) else null,
+                                // P7-06 06.D (D-182): the restore entry, offered only when the
+                                // restore use cases are wired (no dead affordance).
+                                onOpenBackupRestore =
+                                    if (backupRestoreEntryVisible(ledger.surfaces.backupRestore)) {
+                                        ({ dispatch(P503UiEvent.OpenBackupRestore) })
+                                    } else {
+                                        null
+                                    },
                             )
                         P503Tab.ACCOUNTS ->
                             P503CatalogManagementScreen(
@@ -2747,6 +2824,20 @@ fun P503App(
                     onConfirm = if (ledger.surfaces.backupExport) ({ confirmBackupExport(current) }) else null,
                     onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.CloseBackupExport) },
                 )
+            is P503AppState.BackupRestore ->
+                P503RestoreScreen(
+                    state = current,
+                    onUpdatePassword = { dispatch(P503UiEvent.UpdateRestorePassword(it)) },
+                    // The host restore call sites are passed only when the use cases are wired; an
+                    // unwired composition renders disabled confirms, never dead buttons.
+                    onPreflight = if (ledger.surfaces.backupRestore) ({ confirmRestorePreflight(current) }) else null,
+                    onConfirmSwitch = if (ledger.surfaces.backupRestore) ({ confirmRestoreSwitch(current) }) else null,
+                    onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.CloseBackupRestore) },
+                )
+            is P503AppState.RestoreSessionTerminal ->
+                // P7-06 06.D: the session-terminal RecoveryRequired face - no business affordance,
+                // only the typed cause and the platform exit (wired directly, outside the reducer).
+                P503RestoreSessionTerminalScreen(current, onExit)
             is P503AppState.Editing ->
                 P503EditScreen(
                     draft = current.draft,
@@ -3023,6 +3114,10 @@ private fun isBackEnabled(state: P503AppState): Boolean =
         // is running it keeps its marker and must not leave (提交中不得离开), so the back channel is
         // intercepted and swallowed like the P7-05 submitting surfaces.
         is P503AppState.BackupExport -> true
+        // P7-06 06.D (D-182): the restore surface behaves like the export surface. The
+        // session-terminal RecoveryRequired face is deliberately NOT back-able: there is no
+        // continuation to return to (the runtime is Closed/StartupError).
+        is P503AppState.BackupRestore -> true
         is P503AppState.Editing -> state.overview != null
         is P503AppState.AwaitingConfirmation -> state.overview != null
         is P503AppState.Submitting -> state.overview != null
@@ -3049,7 +3144,9 @@ private fun isBackDispatchSafe(state: P503AppState): Boolean =
         !(state is P503AppState.VoidConfirm && state.submitting) &&
         !(state is P503AppState.RecycleBin && state.restore?.submitting == true) &&
         // P7-06 06.B: a running export keeps the surface (提交中不得离开).
-        !(state is P503AppState.BackupExport && state.running)
+        !(state is P503AppState.BackupExport && state.running) &&
+        // P7-06 06.D: a running restore preflight or confirm keeps the surface (提交中不得离开).
+        !(state is P503AppState.BackupRestore && (state.runningPreflight || state.runningConfirm))
 
 /** P7-02.A E-2: origin tab of the in-flight entry flow, for the retained intent. */
 private fun currentOriginTab(state: P503AppState): P503Tab =
@@ -3127,6 +3224,87 @@ internal fun runBackupExport(
             }
         scope.launch {
             if (!isCurrentGeneration(generation)) return@launch
+            land(result)
+        }
+    }
+}
+
+/**
+ * P7-06 06.D (D-182; spec sections 3.1/3.2/6): the restore-preflight run/land pipeline, extracted
+ * from the `P503App` composable so it is JVM-testable (the [runBackupExport] precedent). Its
+ * load-bearing decisions are pinned by `P503RestoreHostPipelineTest`:
+ *
+ * 1. the preflight runs on [Dispatchers.Default] (off the UI thread; container-format spec
+ *    section 4.8 — the KDF, streaming decryption and validation are the heaviest work in the app);
+ * 2. the typed result hops back onto the composition's main dispatcher ([scope]'s context) before
+ *    the landing (the P704C-SPEC-01/QUAL-02 serial-write rule);
+ * 3. a result captured under a superseded generation is DISCARDED ([isCurrentGeneration]) — the
+ *    preflight holds a whole-duration lease, so the generation can only change through a reopen
+ *    that waited for it;
+ * 4. a throwing preflight still lands a typed rejection instead of stranding the surface running
+ *    (the runBackupExport decision): the preflight already converts every failure it can classify,
+ *    so an escaped throw is reported as the generic typed read failure, never a fake success.
+ */
+internal fun runRestorePreflight(
+    scope: CoroutineScope,
+    generation: Generation,
+    request: RestorePreflightRequest,
+    preflight: (RestorePreflightRequest) -> RestorePreflightResult,
+    isCurrentGeneration: (Generation) -> Boolean,
+    land: (RestorePreflightResult) -> Unit,
+) {
+    scope.launch(Dispatchers.Default) {
+        val result =
+            try {
+                preflight(request)
+            } catch (failure: Throwable) {
+                RestorePreflightResult.Rejected(BackupPreflightRejection.P706_SOURCE_READ_FAILED)
+            }
+        scope.launch {
+            if (!isCurrentGeneration(generation)) return@launch
+            land(result)
+        }
+    }
+}
+
+/**
+ * P7-06 06.D (D-182; spec sections 3.9/3.10/6): the confirm & switch run/land pipeline (the same
+ * extraction discipline). Its decisions are the load-bearing ones for the frozen landing rule:
+ *
+ * 1. the confirm runs on [Dispatchers.Default] (the quiesce, staging and reopen must never touch
+ *    the UI thread);
+ * 2. the typed result hops back onto the composition's main dispatcher before the landing;
+ * 3. the landing guard binds the result's OWN [BackupRestoreSwitchResult.landingGeneration] — the
+ *    POST-reopen generation for Committed/RolledBack, and the POST-restoration generation for the
+ *    abort results (Stale/Postponed/AbortedBeforePublish). A switch ADVANCES the generation, and
+ *    so does the section 3.10 restoration reopen on every post-quiesce abort, so guarding against
+ *    the pre-confirm capture would discard the success AND every abort, wedging the surface (F-1).
+ *    A result whose owner generation is null (the fail-closed RecoveryRequired, or a restoration
+ *    that ended in StartupError) is delivered UNGUARDED — there is no current generation to
+ *    compare against and discarding it would strand the surface forever;
+ * 4. [confirm]'s contract is to return typed results or RETHROW any escape from the guarded
+ *    region — a CancellationException, an Error from the fail-loud ports, or an escaped
+ *    RuntimeException (P2-1/F-7 broadened the catch to every Throwable) — after the NonCancellable
+ *    repair has already restored the runtime. An escaped RuntimeException is NOT converted into a
+ *    typed result: the fail-loud file-system port contract permits it, and the commonTest
+ *    `anEscapedRuntimeExceptionAfterTheQuiesceRestoresTheRuntimeBeforePropagating` pins that it
+ *    propagates. Most Throwables are converted to typed results INSIDE the guarded region; this is
+ *    the last-resort net for one that is not.
+ */
+internal fun runRestoreConfirm(
+    scope: CoroutineScope,
+    token: RestorePreflightToken,
+    confirm: suspend (RestorePreflightToken) -> BackupRestoreSwitchResult,
+    isCurrentGeneration: (Generation) -> Boolean,
+    land: (BackupRestoreSwitchResult) -> Unit,
+) {
+    scope.launch(Dispatchers.Default) {
+        val result = confirm(token)
+        scope.launch {
+            val resultGeneration = result.landingGeneration
+            // Null: the owner is fail-closed (no active generation to guard against) — land it,
+            // or the session-terminal/recovery face could never be reached (F-1).
+            if (resultGeneration != null && !isCurrentGeneration(resultGeneration)) return@launch
             land(result)
         }
     }

@@ -80,6 +80,7 @@ class P503ReducerImpl(
         // state's absorb list because the family's only designed effect is the one OverviewEmpty
         // transition and the one surface.
         if (backupExportEventAbsorbed(state, event)) return state
+        if (backupRestoreEventAbsorbed(state, event)) return state
         return when (state) {
             is P503AppState.Ready -> reduceReady(event)
             is P503AppState.OverviewEmpty -> reduceOverviewEmpty(state, event)
@@ -91,6 +92,8 @@ class P503ReducerImpl(
             is P503AppState.VoidConfirm -> reduceVoidConfirm(state, event)
             is P503AppState.RecycleBin -> reduceRecycleBin(state, event)
             is P503AppState.BackupExport -> reduceBackupExport(state, event)
+            is P503AppState.BackupRestore -> reduceBackupRestore(state, event)
+            is P503AppState.RestoreSessionTerminal -> reduceRestoreSessionTerminal(state, event)
             is P503AppState.Editing -> reduceEditing(state, event)
             is P503AppState.AwaitingConfirmation -> reduceAwaitingConfirmation(state, event)
             is P503AppState.Submitting -> reduceSubmitting(state, event)
@@ -120,6 +123,30 @@ class P503ReducerImpl(
             is P503UiEvent.BackupExportResultLanded,
             P503UiEvent.CloseBackupExport,
             -> state !is P503AppState.BackupExport
+            else -> false
+        }
+
+    /**
+     * P7-06 06.D (D-182): whether the restore event must be absorbed in [state] because it belongs
+     * to another state's surface (the export family's absorb discipline, same shape). The restore
+     * family's only designed effects are the one OverviewEmpty transition and the BackupRestore
+     * surface; everywhere else (including RestoreSessionTerminal, whose only exit is `Exit`) every
+     * restore event is absorbed, so a late/stale dispatch can never reach `unhandled` and turn
+     * into an ISE.
+     */
+    private fun backupRestoreEventAbsorbed(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): Boolean =
+        when (event) {
+            P503UiEvent.OpenBackupRestore -> state !is P503AppState.OverviewEmpty
+            is P503UiEvent.UpdateRestorePassword,
+            P503UiEvent.ConfirmRestorePreflight,
+            is P503UiEvent.RestorePreflightLanded,
+            P503UiEvent.ConfirmBackupRestoreSwitch,
+            is P503UiEvent.RestoreSwitchResultLanded,
+            P503UiEvent.CloseBackupRestore,
+            -> state !is P503AppState.BackupRestore
             else -> false
         }
 
@@ -512,6 +539,11 @@ class P503ReducerImpl(
             // button; the open itself performs no IO.
             P503UiEvent.OpenBackupExport ->
                 P503AppState.BackupExport(overview = state)
+            // P7-06 06.D (D-182; spec section 6): the HOME overview's restore entry opens the
+            // confirm & switch surface, carrying the exact overview so every exit restores it.
+            // The host wires this affordance only when the restore use cases exist.
+            P503UiEvent.OpenBackupRestore ->
+                P503AppState.BackupRestore(overview = state)
             is P503UiEvent.OpenTransactionEdit,
             is P503UiEvent.UpdateTransactionCorrectionField,
             P503UiEvent.PreviewTransactionEdit,
@@ -1764,6 +1796,66 @@ class P503ReducerImpl(
             P503UiEvent.CloseBackupExport, P503UiEvent.Back -> if (state.running) state else state.overview
             else -> absorbPreExisting(state, event)
         }
+
+    /**
+     * P7-06 06.D (D-182; spec sections 3/5.5/6): the restore confirm & switch surface. The family
+     * absorb guard has already filtered everything to this surface's own six events. A password
+     * write stays in memory; each phase's confirm sets its own marker and clears the other phase's
+     * banner (提交中不重入); a landed preflight fills the 7-field preview and binds the opaque token
+     * on success, or records the typed banner; a landed switch either COMMITS (closing back to the
+     * preserved overview — the committed closeout; the host triggers the authoritative refresh),
+     * REPORTS (rolled back / stale / postponed / aborted keep the surface with a typed banner), or
+     * ESCALATES a [BackupRestoreSwitchResult.RecoveryRequired] to the session-terminal face. Close
+     * leaves only when no operation is running (提交中不得离开). Every pre-existing event is
+     * absorbed; `Exit` stays unlisted (ISE).
+     */
+    private fun reduceBackupRestore(
+        state: P503AppState.BackupRestore,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            is P503UiEvent.UpdateRestorePassword -> state.copy(password = event.password)
+            P503UiEvent.ConfirmRestorePreflight ->
+                if (state.runningPreflight || state.runningConfirm) state else state.copy(runningPreflight = true, preflightOutcome = null)
+            is P503UiEvent.RestorePreflightLanded ->
+                when (val result = event.result) {
+                    is RestorePreflightResult.PreviewReady ->
+                        state.copy(runningPreflight = false, preflightOutcome = result, preview = result.summary, token = result.token)
+                    else -> state.copy(runningPreflight = false, preflightOutcome = result)
+                }
+            P503UiEvent.ConfirmBackupRestoreSwitch ->
+                if (state.runningConfirm || state.runningPreflight || state.token == null) {
+                    state
+                } else {
+                    state.copy(runningConfirm = true, confirmOutcome = null, preflightOutcome = null)
+                }
+            is P503UiEvent.RestoreSwitchResultLanded ->
+                when (val result = event.result) {
+                    // Committed closeout: the switch is durable, the journal removed, the new graph
+                    // open and read back — the surface closes to the preserved overview and the
+                    // host triggers the authoritative refresh on the new generation (spec 3.9).
+                    is BackupRestoreSwitchResult.Committed -> state.overview
+                    // Session-terminal: a rollback that also failed leaves the runtime Closed or
+                    // StartupError; no business event may continue (the P3-2 composition obligation).
+                    is BackupRestoreSwitchResult.RecoveryRequired -> P503AppState.RestoreSessionTerminal(result.cause)
+                    else -> state.copy(runningConfirm = false, confirmOutcome = result)
+                }
+            // Close (and Back) leave for the preserved overview only when neither phase is running.
+            P503UiEvent.CloseBackupRestore, P503UiEvent.Back ->
+                if (state.runningPreflight || state.runningConfirm) state else state.overview
+            else -> absorbPreExisting(state, event)
+        }
+
+    /**
+     * P7-06 06.D (D-182): the session-terminal face absorbs EVERY event — the runtime behind it is
+     * Closed or StartupError (the RecoveryRequired shape), so there is no continuation to route to.
+     * The only exit is the platform exit affordance the face renders (the host wires it directly,
+     * outside the reducer).
+     */
+    private fun reduceRestoreSessionTerminal(
+        state: P503AppState.RestoreSessionTerminal,
+        @Suppress("UNUSED_PARAMETER") event: P503UiEvent,
+    ): P503AppState = state
 
     /** P7-05.C: maps the merged void/restore result family onto the nested restore sub-state. */
     private fun reduceRestoreResult(

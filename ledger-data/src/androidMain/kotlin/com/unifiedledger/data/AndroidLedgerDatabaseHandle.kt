@@ -157,9 +157,31 @@ class AndroidLedgerDatabaseHandle internal constructor(
  *
  * `PRAGMA integrity_check` and `PRAGMA user_version` are plain read-only queries on that connection;
  * `user_version` is the non-authoritative header hint (container-format spec section 4.3.2).
+ *
+ * NON-DESTRUCTIVE CORRUPTION POLICY (06.D device-gate finding DG-1, D-183): this open passes the
+ * SAME explicit non-deleting handler as the 06.D isolated opens
+ * ([PreservingIsolatedDatabaseErrorHandler] in `AndroidFrameworkSqlDriver.kt`). The 3-argument
+ * overload it used before forwarded a `null` error handler, and the `SQLiteDatabase` constructor
+ * substitutes `new DefaultDatabaseErrorHandler()` (AOSP `SQLiteDatabase.java:493`), whose
+ * `onCorruption` CLOSES then DELETES the file (AOSP `DefaultDatabaseErrorHandler.java:53-108`). So
+ * verifying a CORRUPT export snapshot destroyed it. A read-only open does NOT by itself prevent that
+ * (the platform default is invoked on the corruption path regardless of flags); the handler is the
+ * deletion guard. With it, a corrupt snapshot is surfaced as the typed failure the export use case
+ * already maps to `SNAPSHOT_INTEGRITY_FAILED`, and the file is left byte-identical.
+ *
+ * The handler is REUSED rather than duplicated: the semantics are identical (an isolated file that
+ * cannot be verified must survive; the corruption is surfaced as a typed fail-closed failure), so a
+ * second type or a second handler object would only add a drift surface. `verifyAndroidSnapshotFile`
+ * is a read-only inspection leg of exactly the class the shared handler was introduced for.
  */
 fun verifyAndroidSnapshotFile(snapshotPath: String): SnapshotVerification {
-    val database = SQLiteDatabase.openDatabase(snapshotPath, null, SQLiteDatabase.OPEN_READONLY)
+    val database =
+        SQLiteDatabase.openDatabase(
+            snapshotPath,
+            null,
+            SQLiteDatabase.OPEN_READONLY,
+            PreservingIsolatedDatabaseErrorHandler,
+        )
     return try {
         // P2-D fix (06.B review): the rows -> integrityOk mapping is the shared, JVM-tested
         // snapshotIntegrityOk, so this device-only adapter cannot silently drift from the
