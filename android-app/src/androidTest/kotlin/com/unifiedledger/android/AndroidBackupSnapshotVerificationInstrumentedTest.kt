@@ -207,6 +207,14 @@ class AndroidBackupSnapshotVerificationInstrumentedTest {
         val seed = createMultiPageSnapshot(dir, userVersion = 31)
         val corrupt = File(dir, "bogus-snapshot")
         val corruptBytes = seed.readBytes()
+        // Self-check (P2-3, D-183 record-fix): the seed MUST spill past page 1, otherwise the loop
+        // below would corrupt nothing and the fixture would silently stop reaching the step-time
+        // corruption callback, de-pinning the device test. A future filler reduction that makes the
+        // seed fit in one page turns this RED instead of silently weakening the pin.
+        assertTrue(
+            "the corrupt fixture must span more than one page",
+            corruptBytes.size > pageSizeBytes(corruptBytes),
+        )
         for (index in pageSizeBytes(corruptBytes) until corruptBytes.size) {
             corruptBytes[index] = 0x7F
         }
