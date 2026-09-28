@@ -131,8 +131,32 @@ class AndroidBackupSnapshotVerificationInstrumentedTest {
         // it — the same destructive defect the 06.D isolated opens fixed. The open now passes the
         // shared non-deleting PreservingIsolatedDatabaseErrorHandler, so the snapshot must survive
         // BYTE-IDENTICAL whether verification throws (typed corruption signal) or reports not-ok.
+        //
+        // F-3 (measured ablation): the fixture must make SQLite discover the corruption while
+        // STEPPING rows, not while PREPARING the statement.
+        //  - `PRAGMA integrity_check` on a file whose PAGE 1 is already corrupt (a header-less
+        //    `ByteArray(4096) { 0x5A }`, `"SQLite format 3\u0000"` plus garbage, or even a valid
+        //    header with the rest overwritten) fails during statement COMPILE. Measured on the API 36
+        //    device: the exception says "..., while compiling: PRAGMA integrity_check" and the stack
+        //    is `SQLiteConnection.nativePrepareStatement <- SQLiteConnection$PreparedStatementCache
+        //    .createStatement`. `SQLiteProgram`'s constructor has no `SQLiteDatabaseCorruptException`
+        //    catch, so the throw passes straight out and `SQLiteDatabase.onCorruption()` — hence the
+        //    error handler — is NEVER invoked (measured: a custom counting handler stayed at 0 and the
+        //    file survived even with the default handler installed). Such a fixture therefore cannot
+        //    discriminate the handler fix.
+        //  - The callback fires only for corruption reached at STEP time: `SQLiteQuery.fillWindow`
+        //    catches `SQLiteDatabaseCorruptException` and calls `onCorruption()` (AOSP
+        //    SQLiteQuery.java:66-68). So the fixture keeps PAGE 1 (header + `sqlite_master` root)
+        //    byte-INTACT and corrupts page 2 onward: the statement compiles, then faults while
+        //    scanning the corrupt pages, which is exactly the callback the reverted null-handler
+        //    open's `DefaultDatabaseErrorHandler` answers by DELETING the file (measured: handler
+        //    count 1, `DefaultDatabaseErrorHandler: Corruption reported by sqlite` then `deleting the
+        //    database file`).
+        //  - The SQLITE_NOTADB(26)-vs-SQLITE_CORRUPT(11) error code is NOT the discriminator: on this
+        //    platform BOTH codes surface as `SQLiteDatabaseCorruptException` (measured directly), so
+        //    the code number alone changes nothing. What changes the outcome is the detection PHASE.
         val dir = newTestDir()
-        val bogus = File(dir, "bogus-snapshot").apply { writeBytes(ByteArray(4096) { 0x5A }) }
+        val bogus = createPageOneIntactCorruptSnapshot(dir)
         val beforeBytes = bogus.readBytes()
 
         val outcome = runCatching { verifyAndroidSnapshotFile(bogus.absolutePath) }
@@ -158,6 +182,67 @@ class AndroidBackupSnapshotVerificationInstrumentedTest {
             beforeBytes,
             bogus.readBytes(),
         )
+    }
+
+    /**
+     * A snapshot whose page 1 (the database header plus the `sqlite_master` root, which is what
+     * statement PREPARE reads) is byte-INTACT, but whose every later page is corrupted (F-3). This is
+     * the only shape that reaches the platform corruption CALLBACK under the read-only open used by
+     * [verifyAndroidSnapshotFile]:
+     *
+     * - The header parses (valid magic, page size and format versions), so the open and the
+     *   `PRAGMA integrity_check` compile both succeed.
+     * - `PRAGMA integrity_check` then faults while STEPPING onto the corrupt pages.
+     *   `SQLiteQuery.fillWindow` catches the resulting `SQLiteDatabaseCorruptException` and calls
+     *   `onCorruption()` (AOSP SQLiteQuery.java:66-68) — the callback the reverted null-handler
+     *   open's `DefaultDatabaseErrorHandler` answers by deleting the file.
+     *
+     * A header-only or magic-only image instead fails while the statement is COMPILED (its corruption
+     * is in page 1), and `SQLiteProgram`'s constructor has no corruption catch, so no callback and no
+     * deletion would ever happen: such a fixture cannot discriminate the handler fix. The seed is
+     * therefore made multi-page, and only the bytes from the first page boundary onward are
+     * overwritten.
+     */
+    private fun createPageOneIntactCorruptSnapshot(dir: File): File {
+        val seed = createMultiPageSnapshot(dir, userVersion = 31)
+        val corrupt = File(dir, "bogus-snapshot")
+        val corruptBytes = seed.readBytes()
+        for (index in pageSizeBytes(corruptBytes) until corruptBytes.size) {
+            corruptBytes[index] = 0x7F
+        }
+        corrupt.writeBytes(corruptBytes)
+        seed.delete()
+        File(dir, seed.name + "-journal").delete()
+        return corrupt
+    }
+
+    /** The page size recorded in the header (bytes 16-17), per the SQLite file-format spec 1.1. */
+    private fun pageSizeBytes(header: ByteArray): Int {
+        val encoded = ((header[16].toInt() and 0xFF) shl 8) or (header[17].toInt() and 0xFF)
+        return if (encoded == 1) 65536 else encoded
+    }
+
+    /**
+     * A real SQLite file carrying [userVersion] whose rows spill over several pages, so that
+     * overwriting everything after page 1 leaves page 1 (header and schema) valid.
+     */
+    private fun createMultiPageSnapshot(
+        dir: File,
+        userVersion: Int,
+    ): File {
+        val snapshot = File(dir, "snapshot-${System.nanoTime()}.db")
+        val database = SQLiteDatabase.openOrCreateDatabase(snapshot, null)
+        try {
+            database.execSQL("CREATE TABLE sample (id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
+            val filler = "X".repeat(6000)
+            for (row in 1..40) {
+                database.execSQL("INSERT INTO sample (value) VALUES ('row-$row-$filler')")
+            }
+            database.execSQL("PRAGMA user_version = $userVersion")
+        } finally {
+            database.close()
+        }
+        return snapshot
     }
 
     /**
