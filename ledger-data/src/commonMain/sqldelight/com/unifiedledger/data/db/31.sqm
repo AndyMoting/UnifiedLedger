@@ -1,0 +1,116 @@
+-- P7-07 07.T (D-184 item 4) time projection: v31 -> v32. Adds the numeric time projection
+-- column statistics_at_epoch_nanos to transaction_version, its range index and a backfill of
+-- every existing statistics_at. Purely additive to the row data: statistics_at TEXT is never
+-- rewritten. The caller wraps Schema.migrate in one outer transaction (26.sqm discipline), so
+-- any failure below rolls the whole migration back and the v31 file is left untouched.
+--
+-- ORDERING (spec section 6.4 item 3, the P3-3 anti-brick fix): the migration runs a READ-ONLY
+-- pre-check FIRST. statistics_at is TEXT NOT NULL with no format CHECK (Ledger.sq), so a
+-- historical database can carry an unparseable row. A migration that simply "aborts on the
+-- first unparseable row" would leave that database permanently unopenable (brick), which the
+-- spec forbids. Instead the pre-check counts unparseable rows through a named guard constraint
+-- whose name IS the typed diagnostic; a non-zero count aborts the migration before any
+-- structure or data change, so the database stays openable and is byte-for-byte unchanged
+-- (the P7-06 restore-preflight "isolated copy / original untouched" discipline). The diagnostic
+-- carries only the count of unparseable rows, never any raw personal time text.
+--
+-- Every CREATE statement below matches the fresh Ledger.sq terminal definition byte for byte.
+PRAGMA defer_foreign_keys = 1;
+
+-- Stage 1: the projection column. Added nullable (SQLite cannot ADD a NOT NULL column without
+-- a default to an existing table); the backfill below fills every parseable row, and the
+-- fail-loud read path refuses NULL rather than treating it as time zero (spec section 6.4
+-- item 5). The projection is epoch nanoseconds (spec section 6.5 option (b)): epochSeconds *
+-- 1e9 + nanosecondsOfSecond, provably lossless for any kotlin.time.Instant.
+ALTER TABLE transaction_version ADD COLUMN statistics_at_epoch_nanos INTEGER;
+
+-- Stage 2: read-only pre-check (no writes). A row is refused when the SAME projection expression
+-- the backfill uses (Stage 3) evaluates to NULL for it: strftime('%s', ...) is NULL (invalid or
+-- absent date), the text does not end in 'Z'/'z' or a '+HH:MM'/'-HH:MM' offset, its fractional
+-- part is longer than nine digits (finer than the nanosecond bound), or its whole-second count
+-- would overflow the 64-bit nanosecond range (outside 1678-09-21..2262-04-11). Using the
+-- identical expression makes "pre-check passed" and "backfill yields non-NULL" the same
+-- condition by construction, so the Stage 4 guard can never fire on a row the pre-check
+-- admitted. The guard table is created, the conditional INSERT fires the named CHECK only when
+-- at least one row projects to NULL, and the guard is dropped again so no object survives into
+-- v32. The constraint name (P707T_UNPARSEABLE_STATISTICS_AT) is the typed diagnostic surfaced to
+-- the caller; it reports only that a count is non-zero, never any raw personal time text.
+CREATE TABLE p707t_time_projection_precheck_guard (
+  ok INTEGER NOT NULL,
+  CONSTRAINT P707T_UNPARSEABLE_STATISTICS_AT CHECK (ok = 0)
+);
+INSERT INTO p707t_time_projection_precheck_guard(ok)
+SELECT 1 WHERE (
+  SELECT count(*) FROM transaction_version
+  WHERE (
+    CASE
+      WHEN strftime('%s', statistics_at) IS NULL THEN NULL
+      WHEN substr(statistics_at, length(statistics_at), 1) NOT IN ('Z', 'z')
+        AND substr(statistics_at, length(statistics_at) - 5, 1) NOT IN ('+', '-') THEN NULL
+      WHEN instr(statistics_at, '.') > 0
+        AND length(statistics_at) - instr(statistics_at, '.')
+          - CASE WHEN substr(statistics_at, length(statistics_at), 1) IN ('Z', 'z') THEN 1
+              WHEN substr(statistics_at, length(statistics_at) - 5, 1) IN ('+', '-')
+                AND substr(statistics_at, length(statistics_at) - 2, 1) = ':' THEN 6
+              ELSE 0 END > 9 THEN NULL
+      WHEN CAST(strftime('%s', statistics_at) AS INTEGER) NOT BETWEEN -9223372035 AND 9223372035 THEN NULL
+      ELSE CAST(strftime('%s', statistics_at) AS INTEGER) * 1000000000
+        + CASE WHEN instr(statistics_at, '.') = 0 THEN 0
+            ELSE CAST(substr(substr(substr(statistics_at, instr(statistics_at, '.') + 1), 1,
+                  length(statistics_at) - instr(statistics_at, '.')
+                  - CASE WHEN substr(statistics_at, length(statistics_at), 1) IN ('Z', 'z') THEN 1
+                      WHEN substr(statistics_at, length(statistics_at) - 5, 1) IN ('+', '-')
+                        AND substr(statistics_at, length(statistics_at) - 2, 1) = ':' THEN 6
+                      ELSE 0 END)
+                  || '000000000', 1, 9) AS INTEGER)
+          END
+    END
+  ) IS NULL
+) > 0;
+DROP TABLE p707t_time_projection_precheck_guard;
+
+-- Stage 3: backfill every parseable row from its own statistics_at text, using the SAME
+-- expression the four INSERT statements use, so the migration result and the live write path
+-- agree by construction. Rows the pre-check proved parseable all receive a non-NULL projection.
+UPDATE transaction_version
+SET statistics_at_epoch_nanos =
+  CASE
+    WHEN strftime('%s', statistics_at) IS NULL THEN NULL
+    WHEN substr(statistics_at, length(statistics_at), 1) NOT IN ('Z', 'z')
+      AND substr(statistics_at, length(statistics_at) - 5, 1) NOT IN ('+', '-') THEN NULL
+    WHEN instr(statistics_at, '.') > 0
+      AND length(statistics_at) - instr(statistics_at, '.')
+        - CASE WHEN substr(statistics_at, length(statistics_at), 1) IN ('Z', 'z') THEN 1
+            WHEN substr(statistics_at, length(statistics_at) - 5, 1) IN ('+', '-')
+              AND substr(statistics_at, length(statistics_at) - 2, 1) = ':' THEN 6
+            ELSE 0 END > 9 THEN NULL
+    WHEN CAST(strftime('%s', statistics_at) AS INTEGER) NOT BETWEEN -9223372035 AND 9223372035 THEN NULL
+    ELSE CAST(strftime('%s', statistics_at) AS INTEGER) * 1000000000
+      + CASE WHEN instr(statistics_at, '.') = 0 THEN 0
+          ELSE CAST(substr(substr(substr(statistics_at, instr(statistics_at, '.') + 1), 1,
+                length(statistics_at) - instr(statistics_at, '.')
+                - CASE WHEN substr(statistics_at, length(statistics_at), 1) IN ('Z', 'z') THEN 1
+                    WHEN substr(statistics_at, length(statistics_at) - 5, 1) IN ('+', '-')
+                      AND substr(statistics_at, length(statistics_at) - 2, 1) = ':' THEN 6
+                    ELSE 0 END)
+                || '000000000', 1, 9) AS INTEGER)
+        END
+  END;
+
+-- Stage 4: post-backfill guard (19.sqm fail-closed data-guard precedent). After the pre-check
+-- passed, every row must now carry a projection; a NULL here would mean the pre-check predicate
+-- and the backfill expression disagree, which must abort the whole migration rather than land a
+-- silently unprojected row.
+CREATE TABLE p707t_time_projection_backfill_guard (
+  value INTEGER NOT NULL CHECK (value = 0)
+);
+INSERT INTO p707t_time_projection_backfill_guard(value)
+SELECT 1 WHERE (
+  SELECT count(*) FROM transaction_version WHERE statistics_at_epoch_nanos IS NULL
+) > 0;
+DROP TABLE p707t_time_projection_backfill_guard;
+
+-- Stage 5: the range index (spec section 6.4 item 2). Byte-for-byte the fresh Ledger.sq
+-- definition.
+CREATE INDEX transaction_version_statistics_at_range_idx
+  ON transaction_version(ledger_id, statistics_at_epoch_nanos, transaction_id);

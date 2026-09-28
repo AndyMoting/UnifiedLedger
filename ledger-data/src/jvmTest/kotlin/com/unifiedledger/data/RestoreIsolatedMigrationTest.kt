@@ -68,7 +68,7 @@ class RestoreIsolatedMigrationTest {
         // P2-6: pin the value the composition roots inject into the preflight against the generated
         // schema, so a schema bump cannot leave a stale preflight upper bound.
         assertEquals(LedgerDatabase.Schema.version, currentSupportedSchemaVersion())
-        assertEquals(31L, currentSupportedSchemaVersion())
+        assertEquals(32L, currentSupportedSchemaVersion())
     }
 
     @Test
