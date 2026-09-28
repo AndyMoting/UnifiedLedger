@@ -40,6 +40,26 @@ class RestoreIsolatedMigrationTest {
         }
     }
 
+    /** Runs a scalar `count(*)`-style query through a plain SQLite connection. */
+    private fun countRowsOn(
+        driver: app.cash.sqldelight.db.SqlDriver,
+        sql: String,
+    ): Long {
+        var count = 0L
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    if (cursor.next().value) count = cursor.getLong(0) ?: 0L
+                    app.cash.sqldelight.db.QueryResult.Unit
+                },
+                0,
+                null,
+            ).value
+        return count
+    }
+
     /**
      * Builds the v1 base surface (the frozen `VERSION_ONE_STATEMENTS` raw SQL, which already carries
      * one balanced formal transaction under `ledger-a`), then runs the real migration chain up to
@@ -143,6 +163,26 @@ class RestoreIsolatedMigrationTest {
                 assertEquals(1L, migrated.fromVersion)
                 assertEquals(LedgerDatabase.Schema.version, migrated.targetVersion)
                 assertEquals(LedgerDatabase.Schema.version, readAuthoritativeUserVersionOn(isolated))
+            }
+        }
+    }
+
+    @Test
+    fun aV32SnapshotMigratesToTheCurrentSchemaThroughTheBudgetEdge() {
+        // F3 (D-185): after the v32 -> v33 bump a v32 backup has needsMigration == true. The strict
+        // helper must be able to migrate 32 -> 33 through the real `32.sqm` edge when 32 is in the
+        // caller's supported set; otherwise the whitelist extension would be a silent no-op.
+        withTempDatabase { path ->
+            val url = "jdbc:sqlite:${path.absolutePathString()}"
+            seedAtVersion(url, 32)
+            driver(url).use { isolated ->
+                val result = migrateIsolatedSnapshotStrictlyOn(isolated, 32, setOf(1L, 31L, 32L))
+                val migrated = assertIs<StrictMigrationResult.Migrated>(result)
+                assertEquals(32L, migrated.fromVersion)
+                assertEquals(LedgerDatabase.Schema.version, migrated.targetVersion)
+                assertEquals(LedgerDatabase.Schema.version, readAuthoritativeUserVersionOn(isolated))
+                // The 32.sqm edge really added the budget tables (not a stamp-only success).
+                assertEquals(1L, countRowsOn(isolated, "SELECT count(*) FROM sqlite_master WHERE name = 'budget_config'"))
             }
         }
     }
