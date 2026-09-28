@@ -31,6 +31,7 @@ import com.unifiedledger.domain.AccountTransferField
 import com.unifiedledger.domain.AccountTransferIds
 import com.unifiedledger.domain.AccountTransferViolation
 import com.unifiedledger.domain.BalanceAdjustmentViolation
+import com.unifiedledger.domain.BudgetViolation
 import com.unifiedledger.domain.CatalogAdmissionRejection
 import com.unifiedledger.domain.CatalogViolation
 import com.unifiedledger.domain.CategoryId
@@ -1412,6 +1413,8 @@ private fun DomainViolation.toRg03Rejected(): Rg03ExecutionResult.Rejected =
         is ManualLendingViolation,
 
         is CounterpartyViolation,
+
+        is BudgetViolation,
 
         -> Rg03ExecutionResult.Rejected(Rg03ExecutionError.DOMAIN_VALIDATION_FAILED)
     }

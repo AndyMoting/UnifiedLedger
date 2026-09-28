@@ -523,6 +523,11 @@ class SqlDelightCatalogStore private constructor(
         buildSet {
             addAll(database.ledgerQueries.catalogReferencedManualCategoryIds(ledger, ledger).executeAsList())
             addAll(database.ledgerQueries.catalogReferencedDecisionCategoryIds(ledger).executeAsList())
+            // P7-07 07.B (spec section 3.5): any current OR historical budget reference blocks a
+            // category delete. budget_settings_history is immutable and complete, so it is the
+            // whole budget reference surface; sharing this set keeps the bootstrap
+            // unknown-reference scan and the C-7 delete probe at least as wide as each other.
+            addAll(database.ledgerQueries.catalogReferencedBudgetCategoryIds(ledger).executeAsList())
             addAll(
                 database.ledgerQueries
                     .catalogReferencedSemanticCategoryIds(ledger, ledger, ledger, ledger, ledger, ledger, ledger)

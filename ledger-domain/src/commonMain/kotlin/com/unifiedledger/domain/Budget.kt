@@ -10,6 +10,31 @@ package com.unifiedledger.domain
  */
 
 /**
+ * Stable budget identity (spec section 3.4): exactly one id per
+ * `(ledgerId, month, currency, scope)`. The month key is carried as the canonical
+ * `YYYY-MM` text so this pure value object needs no `kotlinx-datetime` dependency; the
+ * application layer owns the `YearMonth` <-> key conversion.
+ */
+data class BudgetId(
+    val value: String,
+)
+
+/**
+ * Pure 07.B budget configuration violations (spec section 3.3). A negative limit is a typed
+ * rejection, not a stored budget; zero is a valid monitored budget distinct from
+ * unset/closed; a category scope must name an existing `CategoryKind.EXPENSE` category.
+ */
+sealed interface BudgetViolation : DomainViolation {
+    data object LimitNegative : BudgetViolation
+
+    data object ScopeUnsupported : BudgetViolation
+
+    data object ScopeCategoryInvalid : BudgetViolation
+
+    data object CurrencyUnsupported : BudgetViolation
+}
+
+/**
  * Budget scope identity (spec section 3.1). [Total] covers every ordinary net expense of
  * the month including 无分类; [Category] observes one stable `CategoryKind.EXPENSE` category
  * (a level-1 scope covers all of its level-2 children). Total and category scopes are

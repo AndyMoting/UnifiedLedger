@@ -24,7 +24,7 @@ class DesktopCatalogMigrationTest {
             assertEquals(27L, queryUserVersion(url))
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(32L, driver.userVersion())
+                assertEquals(33L, driver.userVersion())
                 val database = LedgerDatabase(driver)
                 assertEquals(0L, database.ledgerQueries.countCatalogAccounts("ledger-local-test").executeAsOne())
             }
@@ -43,10 +43,10 @@ class DesktopCatalogMigrationTest {
         try {
             // The production open path creates and stamps a fresh file at the current version.
             JdbcSqliteDriver(url).use { driver -> migrateToCurrentSchema(driver) }
-            assertEquals(32L, queryUserVersion(url))
+            assertEquals(33L, queryUserVersion(url))
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(32L, driver.userVersion())
+                assertEquals(33L, driver.userVersion())
             }
         } finally {
             Files.deleteIfExists(path)
@@ -60,14 +60,14 @@ class DesktopCatalogMigrationTest {
         try {
             JdbcSqliteDriver(url).use { driver ->
                 LedgerDatabase.Schema.create(driver)
-                // One above the current schema (32 since the P7-07 07.T edge): the fail-closed
+                // One above the current schema (33 since the P7-07 07.B edge): the fail-closed
                 // branch is "library version is NEWER than supported".
-                driver.execute(null, "PRAGMA user_version = 33", 0)
+                driver.execute(null, "PRAGMA user_version = 34", 0)
             }
             assertFailsWith<IllegalStateException> {
                 JdbcSqliteDriver(url).use { driver -> migrateToCurrentSchema(driver) }
             }
-            JdbcSqliteDriver(url).use { driver -> assertEquals(33L, driver.userVersion()) }
+            JdbcSqliteDriver(url).use { driver -> assertEquals(34L, driver.userVersion()) }
             assertEquals(true, Files.exists(path))
         } finally {
             Files.deleteIfExists(path)
@@ -90,7 +90,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(32L, driver.userVersion())
+                assertEquals(33L, driver.userVersion())
             }
             // The same file still open through the real path, and it still has its tables.
             val graph = openDesktopLedger(url)
@@ -132,12 +132,15 @@ class DesktopCatalogMigrationTest {
                 // ... and the P7-07 v32 time-projection column and its range index, or the
                 // in-place migration's 31.sqm aborts on the already-present column.
                 dropP7V32TimeProjection(driver)
+                // ... and the P7-07 07.B v33 budget configuration tables, or the in-place
+                // migration's 32.sqm aborts on the already-present tables.
+                dropP7V33BudgetConfiguration(driver)
                 driver.execute(null, "PRAGMA user_version = 0", 0)
             }
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(32L, driver.userVersion())
+                assertEquals(33L, driver.userVersion())
                 assertEquals(
                     1L,
                     queryLong(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'catalog_version'"),
@@ -169,7 +172,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(32L, driver.userVersion())
+                assertEquals(33L, driver.userVersion())
                 // No migration ran: the catalog tables were not created, and the v27 objects the
                 // guarded branch would have relied on are still absent.
                 assertEquals(
@@ -221,7 +224,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(32L, driver.userVersion())
+                assertEquals(33L, driver.userVersion())
                 // The v27-only objects were never created: the guards alone did not pass the gate.
                 assertEquals(
                     0L,
@@ -265,6 +268,8 @@ class DesktopCatalogMigrationTest {
             driver.execute(null, "DROP VIEW $P7_V31_VIEW", 0)
             // ... and the P7-07 v32 time-projection column and range index (31.sqm).
             dropP7V32TimeProjection(driver)
+            // ... and the P7-07 07.B v33 budget configuration tables (32.sqm).
+            dropP7V33BudgetConfiguration(driver)
             driver.execute(null, "PRAGMA user_version = 27", 0)
         }
     }
@@ -327,6 +332,23 @@ class DesktopCatalogMigrationTest {
     private fun dropP7V32TimeProjection(driver: JdbcSqliteDriver) {
         driver.execute(null, "DROP INDEX IF EXISTS transaction_version_statistics_at_range_idx", 0)
         driver.execute(null, "ALTER TABLE transaction_version DROP COLUMN statistics_at_epoch_nanos", 0)
+    }
+
+    /**
+     * P7-07 07.B (D-184 item 3) objects of the schema v33 edge: the four `budget_*` product
+     * tables and their indexes/guards. A look-alike of an older surface is built from
+     * `Schema.create` (v33) minus these objects, so the in-place migration's 32.sqm does not
+     * abort on the already-present tables. Child tables are dropped before their parents
+     * (history before config, receipt before request); the indexes and guard triggers go with
+     * their tables.
+     */
+    private fun dropP7V33BudgetConfiguration(driver: JdbcSqliteDriver) {
+        listOf(
+            "budget_settings_history",
+            "budget_command_receipt",
+            "budget_command_request",
+            "budget_config",
+        ).forEach { table -> driver.execute(null, "DROP TABLE $table", 0) }
     }
 
     private fun queryLong(

@@ -398,6 +398,105 @@ CREATE TABLE catalog_command_receipt (
 CREATE TRIGGER catalog_command_receipt_guard_update BEFORE UPDATE ON catalog_command_receipt BEGIN SELECT RAISE(ABORT, 'cannot update catalog command receipt'); END;
 CREATE TRIGGER catalog_command_receipt_guard_delete BEFORE DELETE ON catalog_command_receipt BEGIN SELECT RAISE(ABORT, 'cannot delete catalog command receipt'); END;
 
+-- P7-07 07.B (D-184 item 3; spec sections 3.1/3.4) product budget configuration. Non-rgXX_
+-- prefix shared product tables (D-098 option A). A stable budget identity per
+-- (ledger_id, month_key, currency_code, scope_key), an immutable settings history that every
+-- add/modify/close appends to, a current-revision CAS pointer, and a claim-first
+-- request/receipt idempotency pair mirroring the P7-01 catalog owner. All product DDL here is
+-- created verbatim by 32.sqm so the fresh and migrated schemas match byte for byte.
+--
+-- month_key is the canonical Shanghai calendar-month text 'YYYY-MM' (the application layer owns
+-- the YearMonth conversion); scope_key is a NON-NULL canonical scope token ('TOTAL' or
+-- 'CATEGORY:<categoryId>') so the UNIQUE key is well defined even though scope_category_id is
+-- NULL for a TOTAL scope (SQLite treats NULLs as distinct in a UNIQUE key, which would otherwise
+-- allow two TOTAL budgets for one month). scope_category_id carries the referential link and is
+-- constrained to be present exactly for a CATEGORY scope.
+--
+-- ZERO VS UNSET (spec section 3.3): a MONITORED history row always carries a non-negative
+-- limit_minor (zero is a valid monitored budget); a CLOSED row carries NULL. The two are
+-- distinct, and closing appends history rather than deleting the configuration.
+CREATE TABLE budget_config (
+  ledger_id TEXT NOT NULL,
+  budget_id TEXT NOT NULL,
+  month_key TEXT NOT NULL,
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  scope_key TEXT NOT NULL,
+  scope_kind TEXT NOT NULL CHECK (scope_kind IN ('TOTAL','CATEGORY')),
+  scope_category_id TEXT,
+  current_revision INTEGER NOT NULL CHECK (current_revision >= 0),
+  CHECK ((scope_kind = 'TOTAL' AND scope_category_id IS NULL)
+      OR (scope_kind = 'CATEGORY' AND scope_category_id IS NOT NULL)),
+  PRIMARY KEY (ledger_id, budget_id),
+  UNIQUE (ledger_id, month_key, currency_code, scope_key),
+  FOREIGN KEY (ledger_id, scope_category_id)
+    REFERENCES catalog_category(ledger_id, category_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE INDEX budget_config_by_month ON budget_config(ledger_id, month_key);
+-- The CAS pointer may only advance by exactly one and the identity columns are frozen, so no
+-- command can silently rebind a budget to another month/currency/scope or skip a revision.
+CREATE TRIGGER budget_config_guard_update BEFORE UPDATE ON budget_config BEGIN
+  SELECT CASE WHEN new.ledger_id != old.ledger_id OR new.budget_id != old.budget_id
+      OR new.month_key != old.month_key OR new.currency_code != old.currency_code
+      OR new.currency_precision != old.currency_precision OR new.scope_key != old.scope_key
+      OR new.scope_kind != old.scope_kind OR new.scope_category_id IS NOT old.scope_category_id
+      OR new.current_revision != old.current_revision + 1
+    THEN RAISE(ABORT, 'budget config revision must increase by one') END;
+END;
+CREATE TRIGGER budget_config_guard_delete BEFORE DELETE ON budget_config BEGIN SELECT RAISE(ABORT, 'cannot delete budget config'); END;
+
+CREATE TABLE budget_command_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  command TEXT NOT NULL,
+  budget_id TEXT NOT NULL,
+  request_snapshot TEXT NOT NULL,
+  input_fingerprint TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ACCEPTED','NO_CHANGE')),
+  reason_code TEXT,
+  expected_revision INTEGER NOT NULL CHECK (expected_revision >= 0),
+  result_revision INTEGER,
+  PRIMARY KEY (ledger_id, request_id)
+);
+
+-- Immutable settings history (spec section 3.4): every accepted add/modify/close appends one
+-- row; a closed budget keeps its whole history. No update and no delete is ever legal.
+-- Declared after budget_command_request because SQLDelight resolves a foreign key's target
+-- table by declaration order, and this table references that request row.
+CREATE TABLE budget_settings_history (
+  ledger_id TEXT NOT NULL,
+  budget_id TEXT NOT NULL,
+  revision_number INTEGER NOT NULL CHECK (revision_number > 0),
+  status TEXT NOT NULL CHECK (status IN ('MONITORED','CLOSED')),
+  limit_minor INTEGER,
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  scope_kind TEXT NOT NULL CHECK (scope_kind IN ('TOTAL','CATEGORY')),
+  scope_category_id TEXT,
+  request_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  CHECK ((status = 'MONITORED' AND limit_minor IS NOT NULL AND limit_minor >= 0)
+      OR (status = 'CLOSED' AND limit_minor IS NULL)),
+  PRIMARY KEY (ledger_id, budget_id, revision_number),
+  FOREIGN KEY (ledger_id, budget_id) REFERENCES budget_config(ledger_id, budget_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, request_id) REFERENCES budget_command_request(ledger_id, request_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE INDEX budget_settings_history_by_category ON budget_settings_history(ledger_id, scope_category_id);
+CREATE TRIGGER budget_settings_history_guard_update BEFORE UPDATE ON budget_settings_history BEGIN SELECT RAISE(ABORT, 'cannot update budget settings history'); END;
+CREATE TRIGGER budget_settings_history_guard_delete BEFORE DELETE ON budget_settings_history BEGIN SELECT RAISE(ABORT, 'cannot delete budget settings history'); END;
+
+CREATE TABLE budget_command_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ACCEPTED','NO_CHANGE')),
+  budget_id TEXT NOT NULL,
+  new_revision INTEGER NOT NULL CHECK (new_revision >= 0),
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES budget_command_request(ledger_id, request_id)
+);
+CREATE TRIGGER budget_command_receipt_guard_update BEFORE UPDATE ON budget_command_receipt BEGIN SELECT RAISE(ABORT, 'cannot update budget command receipt'); END;
+CREATE TRIGGER budget_command_receipt_guard_delete BEFORE DELETE ON budget_command_receipt BEGIN SELECT RAISE(ABORT, 'cannot delete budget command receipt'); END;
+
 CREATE TABLE rg03_operation_request (
   ledger_id TEXT NOT NULL,
   request_id TEXT NOT NULL,
@@ -9715,6 +9814,81 @@ UNION SELECT DISTINCT suggested_category_id FROM rg05_source_record WHERE ledger
 UNION SELECT DISTINCT suggested_category_id FROM rg05_candidate_item WHERE ledger_id = ? AND suggested_category_id IS NOT NULL
 UNION SELECT DISTINCT proposed_category_id FROM rg07_candidate WHERE ledger_id = ? AND proposed_category_id IS NOT NULL
 UNION SELECT DISTINCT interest_category_id FROM rg08_settlement WHERE ledger_id = ? AND interest_category_id IS NOT NULL;
+
+-- P7-07 07.B (D-184 item 3; spec sections 3.1/3.4/3.5) budget configuration queries. A stable
+-- budget identity per (ledger, month, currency, scope), an immutable settings history, the CAS
+-- pointer and the claim-first request/receipt pair. These are the only statements that read or
+-- write the budget_* product tables.
+--
+-- Scope identity is compared by the canonical scope_key token, never by scope_category_id,
+-- because SQLite treats NULLs as distinct in a UNIQUE/equality test and a TOTAL scope has a
+-- NULL category id.
+selectBudgetConfigByScope:
+SELECT budget_id, month_key, currency_code, currency_precision, scope_key, scope_kind, scope_category_id, current_revision
+FROM budget_config
+WHERE ledger_id = ? AND month_key = ? AND currency_code = ? AND scope_key = ?;
+
+insertBudgetConfig:
+INSERT INTO budget_config(ledger_id, budget_id, month_key, currency_code, currency_precision, scope_key, scope_kind, scope_category_id, current_revision)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+advanceBudgetRevision:
+UPDATE budget_config SET current_revision = current_revision + 1 WHERE ledger_id = ? AND budget_id = ?;
+
+selectBudgetSettingsHistory:
+SELECT revision_number, status, limit_minor, currency_code, currency_precision, scope_kind, scope_category_id, request_id, created_at
+FROM budget_settings_history WHERE ledger_id = ? AND budget_id = ? ORDER BY revision_number;
+
+countBudgetConfigs:
+SELECT count(*) FROM budget_config WHERE ledger_id = ?;
+
+insertBudgetSettingsHistory:
+INSERT INTO budget_settings_history(ledger_id, budget_id, revision_number, status, limit_minor, currency_code, currency_precision, scope_kind, scope_category_id, request_id, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+claimBudgetCommandRequest:
+INSERT INTO budget_command_request(ledger_id, request_id, command, budget_id, request_snapshot, input_fingerprint, outcome, reason_code, expected_revision, result_revision)
+VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL)
+ON CONFLICT (ledger_id, request_id) DO NOTHING;
+
+selectBudgetCommandRequest:
+SELECT command, budget_id, request_snapshot, input_fingerprint, outcome, expected_revision, result_revision
+FROM budget_command_request WHERE ledger_id = ? AND request_id = ?;
+
+-- The claim is inserted before the stable id is resolved (the id is minted only for a fresh
+-- identity, after the claim succeeds), so the request row's budget_id is bound once the
+-- identity is known. The request row is not under an immutability guard; only its terminal
+-- outcome/result_revision and this identity binding are ever written.
+updateBudgetCommandRequestBudgetId:
+UPDATE budget_command_request SET budget_id = ? WHERE ledger_id = ? AND request_id = ?;
+
+updateBudgetCommandRequestOutcome:
+UPDATE budget_command_request SET outcome = ?, result_revision = ?
+WHERE ledger_id = ? AND request_id = ?;
+
+insertBudgetCommandReceipt:
+INSERT INTO budget_command_receipt(ledger_id, request_id, outcome, budget_id, new_revision)
+VALUES (?, ?, ?, ?, ?);
+
+selectBudgetCommandReceipt:
+SELECT outcome, budget_id, new_revision
+FROM budget_command_receipt WHERE ledger_id = ? AND request_id = ?;
+
+countBudgetCommandRequests:
+SELECT count(*) FROM budget_command_request WHERE ledger_id = ?;
+
+countBudgetCommandReceipts:
+SELECT count(*) FROM budget_command_receipt WHERE ledger_id = ?;
+
+-- Spec section 3.5 reference rule: a category delete is refused when ANY current OR historical
+-- budget names it. budget_settings_history is the complete reference surface (every add, modify
+-- and close appends there and rows are immutable), so scanning it covers both the current and
+-- the superseded configuration of every budget. This query joins the shared
+-- referencedCategoryIds surface (bootstrap unknown-reference scan and C-7 delete probe), so a
+-- category bootstrap would treat as referenced can never be deleted and vice versa.
+catalogReferencedBudgetCategoryIds:
+SELECT DISTINCT scope_category_id FROM budget_settings_history
+WHERE ledger_id = ? AND scope_category_id IS NOT NULL;
 
 -- P7-05 (D-156) correction / void / restore substrate (spec sections 3.3/4.3). Append-only
 -- void/restore facts plus the two claim-first request/receipt pairs, the single

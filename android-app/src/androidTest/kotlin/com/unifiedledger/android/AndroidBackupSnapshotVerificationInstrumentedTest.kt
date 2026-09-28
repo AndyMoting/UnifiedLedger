@@ -28,7 +28,7 @@ import java.io.File
  *
  * [verifyAndroidSnapshotFile] now opens the ABSOLUTE path read-only through the framework
  * `SQLiteDatabase` (no helper, no schema/version logic, no create/migrate). This test produces a
- * real snapshot file with the current product `user_version` (32) and asserts the verification opens it,
+ * real snapshot file with the current product `user_version` (33) and asserts the verification opens it,
  * reports `integrity_check = ok`, reads the version hint and never migrates or writes it.
  *
  * Data safety: everything runs in the instrumentation target's cache dir; the production
@@ -48,14 +48,14 @@ class AndroidBackupSnapshotVerificationInstrumentedTest {
 
     @Test
     fun aValidSnapshotWithProductUserVersionVerifiesWithoutThrowing() {
-        val snapshot = createSnapshot(newTestDir(), userVersion = 32)
+        val snapshot = createSnapshot(newTestDir(), userVersion = 33)
 
         // The regression: the old driver-with-version-0 path threw at construction. This call must
         // return normally and report the snapshot self-consistent.
         val verification = verifyAndroidSnapshotFile(snapshot.absolutePath)
 
         assertTrue("a freshly vacuumed snapshot must pass integrity_check", verification.integrityOk)
-        assertEquals("the snapshot's user_version must be read as the header hint", 32L, verification.schemaVersion)
+        assertEquals("the snapshot's user_version must be read as the header hint", 33L, verification.schemaVersion)
     }
 
     @Test
@@ -64,7 +64,7 @@ class AndroidBackupSnapshotVerificationInstrumentedTest {
         // timestamped parent, so the "did verification add anything?" check below cannot be
         // polluted by a sibling test or by the shared cache parent.
         val dir = newTestDir()
-        val snapshot = createSnapshot(dir, userVersion = 32)
+        val snapshot = createSnapshot(dir, userVersion = 33)
 
         // Precondition, made explicit: the SETUP's own read-WRITE framework open
         // (`SQLiteDatabase.openOrCreateDatabase` in [createSnapshot]) is what leaves a 0-byte
@@ -204,7 +204,7 @@ class AndroidBackupSnapshotVerificationInstrumentedTest {
      * overwritten.
      */
     private fun createPageOneIntactCorruptSnapshot(dir: File): File {
-        val seed = createMultiPageSnapshot(dir, userVersion = 32)
+        val seed = createMultiPageSnapshot(dir, userVersion = 33)
         val corrupt = File(dir, "bogus-snapshot")
         val corruptBytes = seed.readBytes()
         // Self-check (P2-3, D-183 record-fix): the seed MUST spill past page 1, otherwise the loop
