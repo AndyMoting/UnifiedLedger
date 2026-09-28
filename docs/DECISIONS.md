@@ -3699,3 +3699,27 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 8. **验收状态**：本批**设计门已批准**；P7-07 的实施为**后续独立实施批**，尚未开始；规格 §8 除第 8 项外全部 OPEN 项承接至实施规格。
 
 **关联决定：** D-183（前序最高 id；P7-06 06.D 实施登记，与本批无依赖）、D-174/D-176/D-177/D-179/D-182（P7-06 已批准设计/实施冻结面——本条不改其任何决定）、D-156（设计门规格与证据纪律先例）、D-158（实施登记与残余承接形状；schema v31）。
+
+## D-185 P7-07 07.B 预算配置持久化实施批登记（schema v32→v33）
+
+**状态：** 已批准（2026-09-29，P7-07「预算」实施批 07.B 的登记；实现按 D-184 第 3 项冻结的 07.B 配置模型与规格 `docs/specs/2026-09-28-p7-07-budget-design.md` §3.1/§3.3/§3.4/§3.5 落地，经单一写者 + 独立规格符合性评审 + 独立质量评审（两者均 APPROVE-WITH-FINDINGS、无 P1）后由主代理登记；本条登记实施内容、评审拓扑、findings 闭合、schema 变更与残余承接）。
+
+**决定：**
+
+1. **交付与实施内容**：落地 07.B 预算配置持久化（D-184 第 3 项冻结面的实施）：`ledger-domain` 新增 `BudgetId` 与 `BudgetViolation` 值对象；`ledger-application` 新增 `SaveBudgetConfiguration` 用例、规范化 `requestSnapshot`/派生 `inputFingerprint`、scope/month 规范化键与 claim 前类型化拒绝（`BudgetConfiguration.kt`）；`ledger-data` 新增 `SqlDelightBudgetStore`，实现 claim-first 单事务边界——`(ledgerId, requestId)` 认领与身份/设置历史/CAS 指针/请求/回执同事务写入，等价 `requestSnapshot` replay 返回原回执且零写入，同 ID 异快照返回 `RequestIdentityConflict`，`expectedRevision` 不匹配返回 `BudgetRevisionConflict` 且零写入，关闭仅追加 CLOSED 历史而不删除配置/历史。协议形状镜像 P7-01 `CatalogManagement` 先例。
+
+2. **schema 变更（v32→v33，加性）**：新增迁移边 `32.sqm`（v32→v33），纯加性零回填，`PRAGMA defer_foreign_keys = 1` 由 caller 外层事务包裹（26.sqm 纪律，含 late-sentinel 回滚哨兵）：四张非 `rgXX_` 产品表 `budget_config`/`budget_command_request`/`budget_settings_history`/`budget_command_receipt` 及其索引与守卫触发器，与 fresh `Ledger.sq` 终态定义逐字节一致；`budget_settings_history` 与 `budget_config` 同样携带 `scope_kind`↔`scope_category_id` 一致性 CHECK。`Ledger.sq` 终态 DDL 与查询同步更新。当前 schema 版本由 v32 升至 **v33**。
+
+3. **目录删除引用面扩展（规格 §3.5）**：`CatalogCategoryReferenceProbe` 扩展 `catalogReferencedBudgetCategoryIds`，使分类删除路径由**任何当前或历史**预算引用即拒绝（复用 P7-01 既有 `hasReferences` 单一路径，不另立第二套预算探针）。
+
+4. **评审拓扑与提交链**：单一写者在隔离 worktree（分支 `UL-p7-07b`，基点 `9d4761f`）内实现；独立**规格符合性评审**与独立**质量评审**结论均为 **APPROVE-WITH-FINDINGS（无 P1）**。提交链：实现提交 `c122f70`；fix 提交 `eb7f5f7`（F1 ktlint + F2 停用分类）、`65a0d88`（F3 恢复白名单）、`5488304`（F4 schema/测试硬化）、`9ab054c`（F5/F6 文档同步与 D-185 登记）；doc-closure 提交 `140f712`。**被评审与被验证的候选（frozen candidate）为 `140f712`**（fix 轮之后的 tip），非原始实现提交 `c122f70`。**distinct verifier 结果**：独立验证者对冻结候选 `140f712` 逐项复核 10 项具名声明，**全部 TRUE**——迁移边加性且版本为 33；fresh-vs-migrated DDL 等价非空洞（逐对象 `budget_%` 比对）；claim-first/replay/CAS 语义；不可变历史 + close 仅追加 + 守卫触发器；两端恢复白名单 `{1, 31, 32}` 且含真实 v32→v33 严格迁移测试；测试计数（全 0 失败/0 错误）；停用分类修复；零 07.D 接线；D-185 如实；文档一致性。**本条不声称设备或同提交 CI 取证**：该两项由主代理在合并/推送后另行登记（**pending**）。
+
+5. **已闭合 findings**：实施后 fix round 闭合三项评审 findings——(a) **F1 ktlint**：`BudgetConfigurationTest.kt` 多行表达式换行违规修复，`:ledger-application:ktlintCheck` 与 `:ledger-data:ktlintCheck` 目标恢复通过；(b) **F2 停用分类绑定（规格 §3.5）**：**新**绑定（`expectedRevision == 0`）停用 EXPENSE 分类类型化拒绝且零写入，而**既有**预算（`expectedRevision > 0`）在分类随后停用时仍可修改/关闭（「停用分类保留既有预算及统计」；调整既有额度不等于重新启用分类）；(c) **F3 恢复白名单回归**：schema 升至 v33 后 v32 备份 `needsMigration == true` 而被旧白名单 `{1, 31}` 类型化拒绝，白名单扩展为 `{1, 31, 32}`（`App.kt`/`Main.kt`），保留紧邻前版本的恢复能力（白名单集合本身按 06.C 规格 §6.3 仍为规格认可的显式集合，非自动派生）。**澄清（本条对 06.D 规格 §5.4 字面的承接）**：06.D 规格 §5.4 裁决 D 冻结的接线字面 `{1, 31}` 就其**接线集合**而言**已被 D-185 取代**为 `{1, 31, 32}`——该规格文件（`docs/specs/2026-09-26-p7-06-restore-confirm-switch-design.md`）与 D-182 均为已合并的既批准记录，其 §5.4 文本与 D-182 条目**不改写**，v1 的**有条件准入**定性继续以该处为记录；本条仅登记接线集合的取代事实。**v32 条目与 v1 具有相同的准入状态**：v32 的严格迁移 32→33 + 校验已由 `P707BudgetConfigMigrationV32ToV33Test` 证成（对应 v1 的设备实证严格迁移腿），但其 **A04 往返等价腿尚未证明**，故 v32 与 v1 同为**有条件准入**，A04 若证伪 v32 则其必须从集合移除（与 v1 的移除条件一致）；v31 为直接直通项（无迁移）。`App.kt`/`Main.kt` 的 `RESTORE_SUPPORTED_SOURCE_VERSIONS` KDoc 已按此记录。另有 P3 硬化：`budget_settings_history` 身份一致性 CHECK、`budget_config` 身份冻结子句的不可变性测试覆盖、局部变量重命名避免遮蔽 `target()`。
+
+6. **承接的 OPEN 项（不得静默丢弃）**：D-184 第 6 项承接的 OPEN 项中，**第 4 项（schema 版本号）由本条闭合**（分配 v33 / `32.sqm`）；其余 OPEN 项保持承接：投影规范化选择（07.T 已按 D-184 实施）、既有月卡是否切换新读取路径、配置用例/端口实签名中的 **07.D 组合根接线与 `QueryBudgetMonth`/`MonthlyContributionReadPort` 读取端口**（本条**未**实现，属 07.D）、产品呈现选择、预付/储值完整消费预算另立契约、目录与交易读一致版本机制、回填诊断细节等。07.B 的读取端口与 UI **不在本条范围**。
+
+7. **边界**：本条只登记 07.B 预算配置**持久化**实施；**零** 07.D 组合根接线、**零** `QueryBudgetMonth`/`MonthlyContributionReadPort`、**零** UI；**不修改** D-184 的冻结设计裁决，**不修改** P7-01～P7-06 的既有冻结面；`rgXX_` 竖井与 golden fixtures/expected 零改动；`.external/` 只读未触碰。
+
+8. **验收状态**：本批实现与 fix round 已完成并提交于 worktree；冻结候选 `140f712` 上，受影响的完整模块套件通过——ledger-data 665、ledger-application 594、ledger-domain 187、android-app 55、desktop-app 77（合计 1578 测试，0 失败），另有全模块 `ktlintCheck` 与 `:ledger-data:verifyCommonMainLedgerDatabaseMigration`（SQLDelight 迁移验证器，同 `:ledger-data:verifySqlDelightMigration`）。本地检查日志：`local/artifacts/p7-07b/checks-07b-full4.log`（在 `9ab054c` 运行；五个模块的 jvmTest/testDebugUnitTest + 全模块 ktlintCheck，BUILD SUCCESSFUL）与 `local/artifacts/p7-07b/checks-07b-reverify.log`（在 `140f712` 运行；doc-closure 触及的受影响测试 + `verifyCommonMainLedgerDatabaseMigration`，BUILD SUCCESSFUL）+ `local/artifacts/p7-07b/checks-07b-ktlint3.log`（在 `140f712` 运行；ktlintCheck，BUILD SUCCESSFUL）。注意 full4.log 位于 `9ab054c`，reverify/ktlint3 位于 `140f712`，两者不可混同；模块套件计数取自 full4 运行（9ab054c）的结果 XML，迁移验证器与受影响测试取自 reverify（140f712）。**同提交 CI 结果与 DEVICE（设备）证据尚未产生，仍为 pending**，由主代理在合并/推送后登记；P7-07 的其余切片（07.D 等）尚未开始。
+
+**关联决定：** D-184（前序最高 id；P7-07 预算设计门批准与本条 07.B 的冻结设计面，本条为其实施）、D-158（实施登记与残余承接形状先例）、D-179（06.C 恢复预检规格 §6.3 白名单规则；本条据其扩展集合）、D-183（P7-06 06.D 实施登记，与本批无依赖）。

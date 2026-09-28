@@ -1,0 +1,93 @@
+-- P7-07 07.B (D-184 item 3) budget configuration: v32 -> v33. Purely additive: four new
+-- non-rgXX_ product tables (stable budget identity, immutable settings history, claim-first
+-- request/receipt pair) plus their indexes and guard triggers. Zero data backfill; the caller
+-- wraps Schema.migrate in one outer transaction (26.sqm discipline), so any guard failure rolls
+-- the whole migration back and the v32 file is left untouched.
+-- Every CREATE statement below matches the fresh Ledger.sq terminal definitions byte for byte.
+-- Declaration order (config, request, history, receipt) puts each foreign key's target table
+-- before its referrer, which SQLDelight requires.
+PRAGMA defer_foreign_keys = 1;
+
+CREATE TABLE budget_config (
+  ledger_id TEXT NOT NULL,
+  budget_id TEXT NOT NULL,
+  month_key TEXT NOT NULL,
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  scope_key TEXT NOT NULL,
+  scope_kind TEXT NOT NULL CHECK (scope_kind IN ('TOTAL','CATEGORY')),
+  scope_category_id TEXT,
+  current_revision INTEGER NOT NULL CHECK (current_revision >= 0),
+  CHECK ((scope_kind = 'TOTAL' AND scope_category_id IS NULL)
+      OR (scope_kind = 'CATEGORY' AND scope_category_id IS NOT NULL)),
+  PRIMARY KEY (ledger_id, budget_id),
+  UNIQUE (ledger_id, month_key, currency_code, scope_key),
+  FOREIGN KEY (ledger_id, scope_category_id)
+    REFERENCES catalog_category(ledger_id, category_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE INDEX budget_config_by_month ON budget_config(ledger_id, month_key);
+CREATE TRIGGER budget_config_guard_update BEFORE UPDATE ON budget_config BEGIN
+  SELECT CASE WHEN new.ledger_id != old.ledger_id OR new.budget_id != old.budget_id
+      OR new.month_key != old.month_key OR new.currency_code != old.currency_code
+      OR new.currency_precision != old.currency_precision OR new.scope_key != old.scope_key
+      OR new.scope_kind != old.scope_kind OR new.scope_category_id IS NOT old.scope_category_id
+      OR new.current_revision != old.current_revision + 1
+    THEN RAISE(ABORT, 'budget config revision must increase by one') END;
+END;
+CREATE TRIGGER budget_config_guard_delete BEFORE DELETE ON budget_config BEGIN SELECT RAISE(ABORT, 'cannot delete budget config'); END;
+
+CREATE TABLE budget_command_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  command TEXT NOT NULL,
+  budget_id TEXT NOT NULL,
+  request_snapshot TEXT NOT NULL,
+  input_fingerprint TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ACCEPTED','NO_CHANGE')),
+  reason_code TEXT,
+  expected_revision INTEGER NOT NULL CHECK (expected_revision >= 0),
+  result_revision INTEGER,
+  PRIMARY KEY (ledger_id, request_id)
+);
+
+CREATE TABLE budget_settings_history (
+  ledger_id TEXT NOT NULL,
+  budget_id TEXT NOT NULL,
+  revision_number INTEGER NOT NULL CHECK (revision_number > 0),
+  status TEXT NOT NULL CHECK (status IN ('MONITORED','CLOSED')),
+  limit_minor INTEGER,
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  scope_kind TEXT NOT NULL CHECK (scope_kind IN ('TOTAL','CATEGORY')),
+  scope_category_id TEXT,
+  request_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  CHECK ((status = 'MONITORED' AND limit_minor IS NOT NULL AND limit_minor >= 0)
+      OR (status = 'CLOSED' AND limit_minor IS NULL)),
+  CHECK ((scope_kind = 'TOTAL' AND scope_category_id IS NULL)
+      OR (scope_kind = 'CATEGORY' AND scope_category_id IS NOT NULL)),
+  PRIMARY KEY (ledger_id, budget_id, revision_number),
+  FOREIGN KEY (ledger_id, budget_id) REFERENCES budget_config(ledger_id, budget_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, request_id) REFERENCES budget_command_request(ledger_id, request_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE INDEX budget_settings_history_by_category ON budget_settings_history(ledger_id, scope_category_id);
+CREATE TRIGGER budget_settings_history_guard_update BEFORE UPDATE ON budget_settings_history BEGIN SELECT RAISE(ABORT, 'cannot update budget settings history'); END;
+CREATE TRIGGER budget_settings_history_guard_delete BEFORE DELETE ON budget_settings_history BEGIN SELECT RAISE(ABORT, 'cannot delete budget settings history'); END;
+
+CREATE TABLE budget_command_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ACCEPTED','NO_CHANGE')),
+  budget_id TEXT NOT NULL,
+  new_revision INTEGER NOT NULL CHECK (new_revision >= 0),
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES budget_command_request(ledger_id, request_id)
+);
+CREATE TRIGGER budget_command_receipt_guard_update BEFORE UPDATE ON budget_command_receipt BEGIN SELECT RAISE(ABORT, 'cannot update budget command receipt'); END;
+CREATE TRIGGER budget_command_receipt_guard_delete BEFORE DELETE ON budget_command_receipt BEGIN SELECT RAISE(ABORT, 'cannot delete budget command receipt'); END;
+
+-- Late-stage failure hook (26.sqm sentinel discipline): created after the table set, so a
+-- test-occupied budget_v33_late_sentinel name aborts the migration post-build and proves the
+-- whole transaction rolls back together. Dropped again before the version advances to 33.
+CREATE TABLE budget_v33_late_sentinel (ok INTEGER NOT NULL CHECK (ok = 1));
+DROP TABLE budget_v33_late_sentinel;

@@ -25,7 +25,7 @@ import kotlin.test.assertTrue
  * P7-06 06.D (D-182; spec sections 5.3/5.4/6): the desktop composition-root wiring evidence for
  * the restore surface, exercised on a REAL host directory and the REAL isolated-database adapter.
  * Pins the section 6 construction decisions (one use-case instance set, the section 5.4 whitelist
- * `{1, 31}` and `currentSupportedSchemaVersion()` injected from ledger-data) and the section 5.3
+ * `{1, 31, 32}` and `currentSupportedSchemaVersion()` injected from ledger-data) and the section 5.3
  * recovery flow through the controller: a pointerless start offers the recovery face, the
  * user-confirmed adoption publishes the pointer through the frozen primitive and the retried
  * startup reaches Ready, a DECLINE mutates nothing, and the discard-and-re-upgrade branch is
@@ -102,8 +102,12 @@ class DesktopRestoreWiringTest {
             val ledger = assertNotNull(controller.ledger)
             assertTrue(ledger.surfaces.backupRestore, "the wired composition renders the restore surface")
             val wiring = assertNotNull(ledger.restoreWiring)
-            // The section 5.4 RULING: the wiring whitelist is {1, 31}, injected from the root.
-            assertEquals(setOf(1L, 31L), wiring.supportedSourceVersions)
+            // The section 5.4 whitelist, extended by the 07.B slice (D-185): {1, 31, 32}. v1/v31
+            // remain and v32 — the immediately preceding version — is now migratable, not rejected.
+            assertEquals(setOf(1L, 31L, 32L), wiring.supportedSourceVersions)
+            assertTrue(32L in wiring.supportedSourceVersions, "v32 must stay restorable after the v33 bump")
+            assertTrue(31L in wiring.supportedSourceVersions, "v31 remains an admitted old version")
+            assertTrue(1L in wiring.supportedSourceVersions, "v1 remains the conditionally admitted old version")
             assertEquals(currentSupportedSchemaVersion(), wiring.currentSchemaVersion)
             // Exactly one instance set: the confirm flow's single-flight guard assumes it. Reading
             // the wiring twice must yield the SAME RestoreHostWiring and the same use-case

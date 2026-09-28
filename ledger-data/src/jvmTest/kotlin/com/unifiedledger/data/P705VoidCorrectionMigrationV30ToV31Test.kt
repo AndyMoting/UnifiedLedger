@@ -39,7 +39,7 @@ class P705VoidCorrectionMigrationV30ToV31Test {
 
     @Test
     fun versionThirtyOneIsCurrent() {
-        assertEquals(32, LedgerDatabase.Schema.version)
+        assertEquals(33, LedgerDatabase.Schema.version)
     }
 
     @Test
