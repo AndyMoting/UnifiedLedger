@@ -110,6 +110,15 @@ class SqlDelightRg12StoreTest {
                 assertEquals("root-correction-transaction-v2", v2.version_id)
                 assertEquals("root-correction-set-v2", v2.posting_set_id)
                 assertEquals("root-correction-confirmation", v2.confirmation_id)
+                // P7-07 07.T: the append path (`persistAppendedFormalDelta` ->
+                // `insertTransactionVersion`) projects the appended version's statistics_at in the
+                // same statement. The projection equals the Kotlin mirror of the row's own
+                // statistics_at text, so the RG-12 appended version is never left unprojected.
+                val v2StatisticsText = statisticsTextOf(driver, "root-correction-transaction-v2")
+                assertEquals(
+                    StatisticsAtProjection.project(Instant.parse(v2StatisticsText)),
+                    projectionOf(driver, "root-correction-transaction-v2"),
+                )
                 // The v2 posting set and its postings are inserted into the shared tables.
                 val v2Postings =
                     database.ledgerQueries
@@ -1177,6 +1186,40 @@ class SqlDelightRg12StoreTest {
             setProperty("foreign_keys", "true")
             setProperty("busy_timeout", "5000")
         }
+
+    /** P7-07 07.T: the numeric time projection of one version row. */
+    private fun projectionOf(
+        driver: JdbcSqliteDriver,
+        versionId: String,
+    ): Long =
+        driver
+            .executeQuery(
+                null,
+                "SELECT statistics_at_epoch_nanos FROM transaction_version WHERE version_id = '$versionId'",
+                { cursor ->
+                    check(cursor.next().value)
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(requireNotNull(cursor.getLong(0)))
+                },
+                0,
+            ).value
+
+    /** P7-07 07.T: the raw statistics_at text of one version row. */
+    private fun statisticsTextOf(
+        driver: JdbcSqliteDriver,
+        versionId: String,
+    ): String =
+        driver
+            .executeQuery(
+                null,
+                "SELECT statistics_at FROM transaction_version WHERE version_id = '$versionId'",
+                { cursor ->
+                    check(cursor.next().value)
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(requireNotNull(cursor.getString(0)))
+                },
+                0,
+            ).value
 
     private fun repositoryFile(relative: String): Path {
         var candidate = Path.of(System.getProperty("user.dir"))

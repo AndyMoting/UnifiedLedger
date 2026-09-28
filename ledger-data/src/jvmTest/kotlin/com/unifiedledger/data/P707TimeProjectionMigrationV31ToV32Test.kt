@@ -2,6 +2,7 @@ package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.data.db.LedgerDatabase
+import com.unifiedledger.domain.LedgerId
 import java.nio.file.Files
 import java.sql.SQLException
 import java.util.Properties
@@ -11,6 +12,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.time.Instant
 
 /**
  * P7-07 07.T (D-184 item 4) v31 -> v32 time-projection migration evidence.
@@ -24,7 +26,11 @@ import kotlin.test.assertTrue
  *    backfill to the correct projection, and the Kotlin mirror agrees with the SQL;
  *  - an unparseable row aborts with the typed diagnostic BEFORE any structure or data change, and
  *    the database stays openable (the P3-3 anti-brick fix) — the v31 surface is byte-for-byte
- *    intact and `user_version` stays 31;
+ *    intact and `user_version` stays 31. The read-only pre-check runs before the ADD COLUMN, so
+ *    the guarantee holds even for an unwrapped caller (no half-added column to retry against);
+ *  - the window returns only the current effective version per transaction (spec section 6.4
+ *    item 6), so corrected transactions do not double count and voided ones do not appear;
+ *  - the pre-check refuses SQL-parseable but Kotlin-unparseable or out-of-window shapes;
  *  - the range index exists with the exact fresh Ledger.sq definition, and fresh = migrated schema
  *    text for the projection objects.
  *
@@ -115,6 +121,40 @@ class P707TimeProjectionMigrationV31ToV32Test {
     }
 
     @Test
+    fun theReadPortReturnsOnlyTheCurrentEffectiveVersionPerTransaction() {
+        // P2-1 (spec section 6.4 item 6): the window must return the CURRENT version of each
+        // EFFECTIVE transaction. A corrected transaction contributes only its latest version
+        // (superseded versions must not appear, or the budget read would double count), and a
+        // voided transaction contributes nothing. Without the effective/current-version join
+        // this test goes RED (it would see version-old and tx-voided too).
+        val path = Files.createTempFile("p707t-effective-window-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            JdbcSqliteDriver(url, migrationProperties()).use { driver ->
+                LedgerDatabase.Schema.create(driver)
+                val database = LedgerDatabase(driver)
+                // Corrected transaction: version-old then version-new (current), same window.
+                seedVersion(database, driver, "version-old", "tx-corrected", "2026-03-05T02:00:00Z", versionNumber = 1L)
+                seedVersion(database, driver, "version-new", "tx-corrected", "2026-03-06T02:00:00Z", versionNumber = 2L)
+                // Voided transaction: one version in the window, but not effective.
+                seedVersion(database, driver, "version-voided", "tx-voided", "2026-03-07T02:00:00Z")
+                seedVoidFact(driver, "tx-voided", "version-voided")
+
+                val port = SqlDelightStatisticsAtProjectionReadPort(database)
+                val marchStart = requireNotNull(StatisticsAtProjection.project(Instant.parse("2026-03-01T00:00:00Z")))
+                val aprilStart = requireNotNull(StatisticsAtProjection.project(Instant.parse("2026-04-01T00:00:00Z")))
+                val rows = port.projectedVersionsInWindow(LedgerId("ledger-a"), marchStart, aprilStart)
+                assertEquals(listOf("version-new"), rows.map { it.versionId.value })
+                // Sanity: the raw table really does hold all three rows, so the single returned
+                // row is the join's effect and not a missing seed.
+                assertEquals(3L, queryLong(driver, "SELECT count(*) FROM transaction_version WHERE ledger_id = 'ledger-a'"))
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
     fun anUnparseableRowAbortsWithTheTypedDiagnosticAndLeavesTheDatabaseOpenable() {
         val path = Files.createTempFile("p707t-v31-v32-brick-", ".db")
         val url = "jdbc:sqlite:${path.absolutePathString()}"
@@ -150,6 +190,102 @@ class P707TimeProjectionMigrationV31ToV32Test {
             }
         } finally {
             Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun anUnwrappedMigrationOnABadRowLeavesTheDatabaseRemigratableWithoutDuplicateColumn() {
+        // P2-2: the read-only pre-check runs BEFORE the ADD COLUMN, so even a caller that runs
+        // Schema.migrate OUTSIDE any transaction cannot leave the projection column added before
+        // the abort. The database stays re-migratable: fixing the bad row and retrying succeeds
+        // (an ALTER-first order would have left the column and failed on "duplicate column").
+        val path = Files.createTempFile("p707t-unwrapped-brick-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            stageV31(url)
+            JdbcSqliteDriver(url, migrationProperties()).use { driver ->
+                seedVersion(driver, "version-bad", "not-a-timestamp")
+            }
+            // First attempt: NO outer transaction (a hypothetical unwrapped caller).
+            JdbcSqliteDriver(url, migrationProperties()).use { driver ->
+                assertFailsWith<SQLException> {
+                    LedgerDatabase.Schema.migrate(driver, 31, 32)
+                }
+            }
+            JdbcSqliteDriver(url, migrationProperties()).use { driver ->
+                // The abort happened before the ALTER: the projection column was never added, so
+                // the database is still v31 and re-migratable. The pre-check guard table may be
+                // left behind by an unwrapped abort (SQLite has no implicit per-statement
+                // rollback), which is why the migration begins the pre-check with DROP TABLE IF
+                // EXISTS; the retry below proves that residue does not brick.
+                assertEquals(31L, queryLong(driver, "PRAGMA user_version"))
+                assertEquals(
+                    0L,
+                    queryLong(driver, "SELECT count(*) FROM pragma_table_info('transaction_version') WHERE name = 'statistics_at_epoch_nanos'"),
+                )
+                // Repair the row and retry: the migration now succeeds with no duplicate-column error.
+                driver.execute(null, "UPDATE transaction_version SET statistics_at = '2026-03-05T02:00:00Z' WHERE version_id = 'version-bad'", 0)
+            }
+            JdbcSqliteDriver(url, migrationProperties()).use { driver ->
+                LedgerDatabase.Schema.migrate(driver, 31, 32)
+                driver.execute(null, "PRAGMA user_version = 32", 0)
+            }
+            JdbcSqliteDriver(url, migrationProperties()).use { driver ->
+                assertEquals(32L, queryLong(driver, "PRAGMA user_version"))
+                assertEquals(
+                    1L,
+                    queryLong(driver, "SELECT count(*) FROM pragma_table_info('transaction_version') WHERE name = 'statistics_at_epoch_nanos'"),
+                )
+                assertEquals(1_772_676_000_000_000_000L, queryLong(driver, "SELECT statistics_at_epoch_nanos FROM transaction_version WHERE version_id = 'version-bad'"))
+                // The successful retry left no guard residue (the DROP IF EXISTS cleared it).
+                assertEquals(0L, queryLong(driver, "SELECT count(*) FROM sqlite_master WHERE name LIKE 'p707t\\_%' ESCAPE '\\'"))
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun thePreCheckRejectsKotlinUnparseableAndOutOfWindowShapes() {
+        // P3-2/P3-6: the pre-check must refuse forms SQLite's strftime accepts but
+        // kotlin.time.Instant.parse rejects (2026-02-30 rolls to March, a date-only string, a
+        // space separator), and parseable-but-out-of-window timestamps (9999). Each is seeded
+        // alone so exactly one bad row aborts the migration with the typed diagnostic.
+        listOf(
+            "2026-02-30T00:00:00Z" to "rolled calendar date",
+            "2026-01-21" to "date-only",
+            "2026-01-21 11:00:00Z" to "space separator",
+            "9999-01-01T00:00:00Z" to "outside the 64-bit window",
+        ).forEach { (badText, reason) ->
+            val path = Files.createTempFile("p707t-precheck-reject-", ".db")
+            val url = "jdbc:sqlite:${path.absolutePathString()}"
+            try {
+                stageV31(url)
+                JdbcSqliteDriver(url, migrationProperties()).use { driver ->
+                    seedVersion(driver, "version-bad", badText)
+                }
+                JdbcSqliteDriver(url, migrationProperties()).use { driver ->
+                    val failure =
+                        assertFailsWith<SQLException>(reason) {
+                            LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 31, 32) }
+                        }
+                    assertTrue(
+                        failure.message.orEmpty().contains("P707T_UNPARSEABLE_STATISTICS_AT"),
+                        "$reason: expected the typed diagnostic, got: ${failure.message}",
+                    )
+                }
+                JdbcSqliteDriver(url, migrationProperties()).use { driver ->
+                    // Nothing was added and the row survived: the database is untouched and openable.
+                    assertEquals(31L, queryLong(driver, "PRAGMA user_version"))
+                    assertEquals(
+                        0L,
+                        queryLong(driver, "SELECT count(*) FROM pragma_table_info('transaction_version') WHERE name = 'statistics_at_epoch_nanos'"),
+                    )
+                    assertEquals(badText, queryText(driver, "SELECT statistics_at FROM transaction_version WHERE version_id = 'version-bad'"))
+                }
+            } finally {
+                Files.deleteIfExists(path)
+            }
         }
     }
 
@@ -312,6 +448,64 @@ class P707TimeProjectionMigrationV31ToV32Test {
             null,
         )
         database.ledgerQueries.insertTransactionCurrentVersion(transactionId, "ledger-a", versionId)
+    }
+
+    /**
+     * P7-07 07.T: seeds a projected version row on an explicit transaction id and points the
+     * current version at it (used to stage corrected/voided chains). Uses raw SQL with
+     * INSERT OR IGNORE so two versions of the same transaction can be staged in order.
+     */
+    private fun seedVersion(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+        versionId: String,
+        transactionId: String,
+        statisticsAt: String,
+        versionNumber: Long = 1L,
+    ) {
+        val postingSetId = "posting-set-$versionId"
+        driver.execute(
+            null,
+            "INSERT OR IGNORE INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('$transactionId', 'ledger-a', 'EXPENSE')",
+            0,
+        )
+        driver.execute(null, "INSERT OR IGNORE INTO posting_set(posting_set_id, ledger_id) VALUES ('$postingSetId', 'ledger-a')", 0)
+        database.ledgerQueries.insertTransactionVersion(
+            versionId,
+            transactionId,
+            "ledger-a",
+            versionNumber,
+            postingSetId,
+            statisticsAt,
+            statisticsAt,
+            statisticsAt,
+            null,
+        )
+        driver.execute(
+            null,
+            "INSERT OR REPLACE INTO ledger_transaction_current_version(transaction_id, ledger_id, current_version_id) VALUES ('$transactionId', 'ledger-a', '$versionId')",
+            0,
+        )
+    }
+
+    /** P7-07 07.T: appends a `void` fact so `transaction_effective_state` marks the tx ineffective. */
+    private fun seedVoidFact(
+        driver: JdbcSqliteDriver,
+        transactionId: String,
+        requestId: String,
+    ) {
+        driver.execute(
+            null,
+            "INSERT INTO transaction_void_request(ledger_id, request_id, transaction_id, fact_kind, reason_code, reason_note, confirmation_marker) " +
+                "VALUES ('ledger-a', '$requestId', '$transactionId', 'void', 'mis_entered', NULL, 'explicit_manual_save')",
+            0,
+        )
+        driver.execute(
+            null,
+            "INSERT INTO transaction_void_fact(ledger_id, transaction_id, sequence, fact_id, fact_kind, reason_code, reason_note, request_id, confirmation_id, created_at) " +
+                "VALUES ('ledger-a', '$transactionId', 1, 'fact-$requestId', 'void', 'mis_entered', NULL, '$requestId', 'confirmation-$requestId', '2026-03-08T00:00:00Z')",
+            0,
+        )
     }
 
     private fun migrationProperties(): Properties =

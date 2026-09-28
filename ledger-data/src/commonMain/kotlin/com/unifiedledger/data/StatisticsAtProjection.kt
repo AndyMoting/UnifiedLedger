@@ -17,8 +17,17 @@ import kotlin.time.Instant
  *
  *   1. a reader can turn a projected Long back into the exact `Instant` (lossless in both
  *      directions for the whole supported window), and
- *   2. a test can assert the SQL backfill and the Kotlin projection agree for every observed
- *      historical shape, so the two cannot drift.
+ *   2. a test can assert the SQL backfill and the Kotlin projection agree for sampled
+ *      historical shapes.
+ *
+ * DRIFT RISK (P3-1): the SQL projection CASE expression is not generated from this file and
+ * is copy-pasted at five sites — the four write statements `insertTransactionVersion`
+ * (Ledger.sq), `copyCurrentVersionWithNewNote` (which carries the source value), and the two
+ * correction statements `copyCurrentVersionWithNewPostingSet`/`copyCurrentVersionReusingPostingSet`
+ * (Ledger.sq), plus the v31->v32 backfill and pre-check in `31.sqm`. There is no single SQL
+ * source of truth; the agreement between the two halves is pinned by tests that compare sampled
+ * shapes (see `P707TimeProjectionMigrationV31ToV32Test`), not by construction. A future edit to
+ * any copy must update the others.
  *
  * PRECISION BOUND (spec section 6.5 option (b)): epoch nanoseconds. `kotlin.time.Instant` is
  * exactly `epochSeconds` + `nanosecondsOfSecond`, so `toEpochNanoseconds()` is lossless for any
@@ -27,9 +36,11 @@ import kotlin.time.Instant
  * unproven "writers never emit sub-microsecond" premise, which the spec forbids asserting
  * without declaring the bound.
  *
- * WINDOW: the 64-bit Long nanosecond range covers 1678-09-21T00:12:44Z .. 2262-04-11T23:47:16Z.
- * A value outside it cannot be represented and is refused (the SQL expression projects NULL for
- * it, and the migration pre-check rejects such a database rather than bricking it).
+ * WINDOW: the 64-bit Long nanosecond range accepts whole seconds in
+ * `[-9223372035, 9223372035]`, i.e. 1677-09-21T00:12:45Z .. 2262-04-11T23:47:15Z (verified with
+ * `datetime(-9223372035,'unixepoch')` / `datetime(9223372035,'unixepoch')`). A value outside it
+ * cannot be represented and is refused (the SQL expression projects NULL for it, and the
+ * migration pre-check rejects such a database rather than bricking it).
  */
 object StatisticsAtProjection {
     /**
@@ -96,20 +107,27 @@ data class ProjectedVersionRow(
 }
 
 /**
- * P7-07 07.T (D-184 item 4; spec section 6.4 items 2/5): the projection-backed bounded read over
- * a statistical window, plus the fail-loud guard that makes the projection's absence a visible
- * failure instead of a silent time zero.
+ * P7-07 07.T (D-184 item 4; spec section 6.4 items 2/5/6): the projection-backed bounded read
+ * over a statistical window, plus the fail-loud guard that makes the projection's absence a
+ * visible failure instead of a silent time zero.
  *
  * This is the read surface the future budget/period reads build on (07.D consumes it); it does
  * not itself change any existing read contract (spec section 8 open item 3 keeps the existing
  * monthly card switch OPEN). The bounded query uses the range index
  * `(ledger_id, statistics_at_epoch_nanos, transaction_id)`.
+ *
+ * EFFECTIVE/CURRENT-VERSION SCOPE (spec section 6.4 item 6): the window returns exactly the
+ * CURRENT version of each EFFECTIVE transaction. It joins `transaction_effective_state` (the
+ * single SQL definition point of the effective set) and `ledger_transaction_current_version`,
+ * so a corrected transaction contributes only its latest version (never a superseded version,
+ * which would double count) and a voided transaction contributes nothing.
  */
 class SqlDelightStatisticsAtProjectionReadPort(
     private val database: LedgerDatabase,
 ) {
     /**
-     * The projected rows whose statistics instant is in `[startInclusive, endExclusive)`.
+     * The projected rows whose statistics instant is in `[startInclusive, endExclusive)`,
+     * restricted to the current version of each effective transaction (spec section 6.4 item 6).
      *
      * FAIL-LOUD (spec section 6.4 item 5): before returning any row, this counts the ledger's
      * rows with a NULL projection and raises [MissingStatisticsAtProjectionException] when the

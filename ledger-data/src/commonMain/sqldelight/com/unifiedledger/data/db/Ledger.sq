@@ -9853,18 +9853,34 @@ SELECT transaction_id FROM transaction_effective_state
 WHERE ledger_id = ? AND is_effective = 1
 ORDER BY transaction_id;
 
--- P7-07 07.T (D-184 item 4; spec section 6.4 item 5): the bounded statistical-month read over
+-- P7-07 07.T (D-184 item 4; spec section 6.4 items 5/6): the bounded statistical-month read over
 -- the numeric projection, driven by the range index (ledger_id, statistics_at_epoch_nanos,
 -- transaction_id). [start, end) are epoch-nanosecond bounds. A row whose projection is NULL is
 -- NOT in any window and is NOT silently treated as time zero; the caller first runs
 -- statisticsAtProjectionMissingForLedger and fails loudly when it is non-zero.
+--
+-- Spec section 6.4 item 6: the read is based on the effective predicate. The join to
+-- `transaction_effective_state` (the single SQL definition point of the effective set) plus the
+-- join to `ledger_transaction_current_version` returns exactly the CURRENT version of each
+-- EFFECTIVE transaction, so a corrected transaction contributes only its latest version and a
+-- voided transaction contributes nothing. Without these joins the window would return superseded
+-- versions (double counting) and versions of voided transactions. This is the same effective
+-- join pattern as ledgerEntryRowsForLedger (this file); no second state rule is introduced.
 projectedVersionsInStatisticsWindow:
-SELECT transaction_id, version_id, statistics_at_epoch_nanos
-FROM transaction_version
-WHERE ledger_id = ?
-  AND statistics_at_epoch_nanos >= ?
-  AND statistics_at_epoch_nanos < ?
-ORDER BY statistics_at_epoch_nanos, transaction_id, version_id;
+SELECT version.transaction_id, version.version_id, version.statistics_at_epoch_nanos
+FROM transaction_version AS version
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = version.ledger_id
+ AND current_version.transaction_id = version.transaction_id
+ AND current_version.current_version_id = version.version_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = version.ledger_id
+ AND effective.transaction_id = version.transaction_id
+ AND effective.is_effective = 1
+WHERE version.ledger_id = ?
+  AND version.statistics_at_epoch_nanos >= ?
+  AND version.statistics_at_epoch_nanos < ?
+ORDER BY version.statistics_at_epoch_nanos, version.transaction_id, version.version_id;
 
 -- The fail-loud probe (spec section 6.4 item 5): the count of rows in the ledger whose
 -- projection is missing (NULL). Any non-zero count means a read that needs the projection must
