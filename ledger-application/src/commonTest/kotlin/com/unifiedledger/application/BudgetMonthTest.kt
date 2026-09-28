@@ -3,8 +3,11 @@ package com.unifiedledger.application
 import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
+import com.unifiedledger.domain.BudgetCalculation
+import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.Category
 import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CategoryKind
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerCatalog
@@ -27,10 +30,13 @@ import kotlin.time.Instant
 /**
  * P7-07 budget slice 07.A (measurement matrix) and 07.C (calculation contract) vectors,
  * approved by D-184 / `docs/specs/2026-09-28-p7-07-budget-design.md` sections 2 and 4.
- * Covers the full 16-kind inclusion/exclusion matrix (P707-A02), parent/child and
- * uncategorized handling (P707-A03), refund/limit/boundary/overflow semantics
- * (P707-A01/A05), and an equivalence test against the frozen [MonthlyBuckets] projection.
- * All data synthetic and anonymous with fixed instants.
+ * Covers the full 16-kind inclusion/exclusion matrix, parent/child and uncategorized
+ * handling, refund/limit/boundary/overflow semantics, fail-closed scope validation, and
+ * equivalence tests against the frozen [MonthlyBuckets] projection.
+ *
+ * The `P707-A0x` tags in individual test comments are intent labels only. D-184 section 7
+ * records no P707 vector as PASS; these tests exercise this slice, they do not close an
+ * acceptance vector. All data synthetic and anonymous with fixed instants.
  */
 class BudgetMonthTest {
     private val ledgerId = LedgerId("ledger-budget-test")
@@ -43,19 +49,24 @@ class BudgetMonthTest {
     private val dinnerExpenseId = AccountId("account-expense-dinner")
     private val uncategorizedExpenseId = AccountId("account-expense-uncategorized")
     private val incomeId = AccountId("account-income-salary")
+    private val usdExpenseId = AccountId("account-usd-expense")
+    private val usdAssetId = AccountId("account-usd-asset")
     private val foodParentId = CategoryId("category-food")
     private val breakfastId = CategoryId("category-breakfast")
     private val dinnerId = CategoryId("category-dinner")
+    private val incomeParentId = CategoryId("category-income-parent")
+    private val usdExpenseCategoryId = CategoryId("category-usd-expense")
     private val march = YearMonth(2026, 3)
 
     // ------------------------------------------------------------------ 07.A 16-kind matrix
 
     @Test
     fun budgetOrdinaryMatrixPinsAllSixteenKindsInclusionAndSign() {
-        // P707-A02: the six ordinary kinds contribute per the frozen account-kind dispatch
-        // (fee legs on EXPENSE accounts included, all principal legs removed, refund legs
-        // negative); the ten special/RG-10-frozen/prepaid kinds contribute exactly zero even
-        // when they carry an EXPENSE-account leg that would otherwise count.
+        // Intent label P707-A02 (not a PASS claim): the six ordinary kinds contribute per
+        // the frozen account-kind dispatch (fee legs on EXPENSE accounts included, all
+        // principal legs removed, refund legs negative); the ten special/RG-10-frozen/prepaid
+        // kinds contribute exactly zero even when they carry an EXPENSE-account leg that would
+        // otherwise count.
         val expected =
             mapOf(
                 TransactionKind.OPENING_BALANCE to 0L,
@@ -84,8 +95,9 @@ class BudgetMonthTest {
 
     @Test
     fun budgetIncomeNeverOffsetsExpenseLimit() {
-        // P707-A02: an ordinary income row contributes zero ordinary net expense (its income
-        // leg is not counted against the limit), while an expense row contributes positively.
+        // Intent label P707-A02 (not a PASS claim): an ordinary income row contributes zero
+        // ordinary net expense (its income leg is not counted against the limit), while an
+        // expense row contributes positively.
         val rows =
             listOf(
                 rowForKind(TransactionKind.EXPENSE),
@@ -99,8 +111,9 @@ class BudgetMonthTest {
 
     @Test
     fun parentScopeRollsUpChildrenAndTotalIncludesUncategorized() {
-        // P707-A03: parent scope = its two level-2 children (30 + 40 = 70); a child scope
-        // observes only itself (30); TOTAL includes the uncategorized expense (70 + 5 = 75).
+        // Intent label P707-A03 (not a PASS claim): parent scope = its two level-2 children
+        // (30 + 40 = 70); a child scope observes only itself (30); TOTAL includes the
+        // uncategorized expense (70 + 5 = 75).
         val rows =
             listOf(
                 expenseRow("tx-breakfast", breakfastExpenseId, 3_000L),
@@ -119,22 +132,36 @@ class BudgetMonthTest {
 
     @Test
     fun categoryScopeWithNoExpenseObservesZeroWithoutFailing() {
-        // A scope category with no posting this month yields an empty map (observational
-        // zero), never a fabricated category row or a failure.
+        // A valid EXPENSE category with no posting this month yields an empty map
+        // (observational zero), never a fabricated category row or a failure. This is the
+        // genuine-zero case, distinct from the invalid-catalog cases below.
         val rows = listOf(expenseRow("tx-breakfast", breakfastExpenseId, 3_000L))
         val contribution = contributionFor(rows, BudgetScope.Category(dinnerId))
         assertTrue(contribution.netExpenseByCurrency.isEmpty())
         assertEquals(0L, contribution.netExpenseByCurrency[cny] ?: 0L)
     }
 
+    // ------------------------------------------------------------ 07.A fail-loud discipline
+
     @Test
-    fun unknownScopeCategoryObservesZero() {
+    fun unknownScopeCategoryFailsLoudInsteadOfObservingZero() {
+        // Spec sections 3.1/5.1: a category scope absent from the catalog is an invalid
+        // state, never a zero execution amount.
         val rows = listOf(expenseRow("tx-breakfast", breakfastExpenseId, 3_000L))
-        val contribution = contributionFor(rows, BudgetScope.Category(CategoryId("category-missing")))
-        assertTrue(contribution.netExpenseByCurrency.isEmpty())
+        assertFailsWith<IllegalStateException> {
+            contributionFor(rows, BudgetScope.Category(CategoryId("category-missing")))
+        }
     }
 
-    // ------------------------------------------------------------ 07.A fail-loud discipline
+    @Test
+    fun incomeKindScopeCategoryFailsLoud() {
+        // Spec section 3.1: a category scope must be a CategoryKind.EXPENSE category; an
+        // INCOME-kind category is an invalid state even though it exists in the catalog.
+        val rows = listOf(expenseRow("tx-breakfast", breakfastExpenseId, 3_000L))
+        assertFailsWith<IllegalStateException> {
+            contributionFor(rows, BudgetScope.Category(incomeParentId))
+        }
+    }
 
     @Test
     fun missingPostingAccountFailsLoudInsteadOfContributingZero() {
@@ -148,7 +175,8 @@ class BudgetMonthTest {
 
     @Test
     fun remainingAndOverspentFollowTheFrozenContract() {
-        // P707-A01: limit 100.00, expense 120.00, refund 30.00 -> net 90.00, remaining 10.00.
+        // Intent label P707-A01 (not a PASS claim): limit 100.00, expense 120.00, refund
+        // 30.00 -> net 90.00, remaining 10.00.
         assertEquals(1_000L, BudgetCalculation.remainingMinorUnits(10_000L, 9_000L))
         assertEquals(0L, BudgetCalculation.overspentMinorUnits(10_000L, 9_000L))
         // Expense 80.00 refund 30.00 -> net 50.00, remaining 50.00.
@@ -232,6 +260,18 @@ class BudgetMonthTest {
         assertIs<BudgetMonthResult.InvalidState>(overflow)
     }
 
+    @Test
+    fun negativeLimitIsATypedRejection() {
+        // Spec section 3.3: limits are non-negative minor units; a negative input is a typed
+        // rejection, not a stored/observable budget.
+        assertIs<BudgetMonthResult.InvalidState>(
+            BudgetMonthProjection.compute(ledgerId, march, cny, BudgetScope.Total, -1L, 0L),
+        )
+        assertIs<BudgetMonthResult.InvalidState>(
+            BudgetMonthProjection.compute(ledgerId, march, cny, BudgetScope.Total, Long.MIN_VALUE, 0L),
+        )
+    }
+
     // ------------------------------------------------------------------ 07.A equivalence
 
     @Test
@@ -275,6 +315,58 @@ class BudgetMonthTest {
         assertEquals(0L, totalContribution(rows).netExpenseByCurrency[cny])
     }
 
+    @Test
+    fun budgetCategoryScopeEqualsTheFrozenMonthlyBucketsCategoryNode() {
+        // Equivalence for a category scope: the budget contribution must equal the signed net
+        // of the real MonthlyBuckets category node (positive + refund), not a hard-coded
+        // number. Compares against the frozen implementation, not a re-implementation.
+        val rows =
+            listOf(
+                expenseRow("tx-breakfast", breakfastExpenseId, 3_000L),
+                expenseRow("tx-dinner", dinnerExpenseId, 4_000L),
+                row("tx-refund", TransactionKind.REFUND_RECEIPT, "2026-03-11T02:00:00Z") {
+                    posting("posting-refund-expense", breakfastExpenseId, -1_000L)
+                    posting("posting-refund-payment", assetId, 1_000L)
+                },
+            )
+        val frozenActivity = MonthlyBuckets.aggregate(rows, ledgerId, catalog(), listOf(march)).getValue(march)
+        val frozenParent = frozenCategoryNet(frozenActivity, foodParentId)
+        val frozenChild = frozenCategoryNet(frozenActivity, breakfastId)
+
+        val parent = contributionFor(rows, BudgetScope.Category(foodParentId)).netExpenseByCurrency
+        val child = contributionFor(rows, BudgetScope.Category(breakfastId)).netExpenseByCurrency
+        assertEquals(frozenParent, parent)
+        assertEquals(frozenChild, child)
+        // Non-trivial vectors: parent = 30 - 10 + 40 = 60; child = 30 - 10 = 20.
+        assertEquals(6_000L, parent[cny])
+        assertEquals(2_000L, child[cny])
+    }
+
+    @Test
+    fun budgetCategoryScopeIsPerCurrencyWithNoCrossCurrencySummation() {
+        // Multi-currency: the USD expense category contributes only USD (no CNY total), and
+        // the value equals the frozen MonthlyBuckets node for that category.
+        val rows =
+            listOf(
+                expenseRow("tx-breakfast", breakfastExpenseId, 3_000L),
+                row("tx-usd-expense", TransactionKind.EXPENSE, "2026-03-12T02:00:00Z") {
+                    posting("posting-usd-expense", usdExpenseId, 700L, usd)
+                    posting("posting-usd-payment", usdAssetId, -700L, usd)
+                },
+            )
+        val frozenActivity = MonthlyBuckets.aggregate(rows, ledgerId, catalog(), listOf(march)).getValue(march)
+        val frozenUsd = frozenCategoryNet(frozenActivity, usdExpenseCategoryId)
+        val usdContribution = contributionFor(rows, BudgetScope.Category(usdExpenseCategoryId)).netExpenseByCurrency
+
+        assertEquals(frozenUsd, usdContribution)
+        assertEquals(700L, usdContribution[usd])
+        assertNull(usdContribution[cny])
+        // TOTAL sees both currencies, still per-currency and never summed across them.
+        val total = totalContribution(rows).netExpenseByCurrency
+        assertEquals(3_000L, total[cny])
+        assertEquals(700L, total[usd])
+    }
+
     // ------------------------------------------------------------------------------ helpers
 
     private fun totalContribution(rows: List<LedgerEntryRow>): BudgetMonthContribution = contributionFor(rows, BudgetScope.Total)
@@ -290,6 +382,30 @@ class BudgetMonthTest {
     private fun totalNetExpenseForSingleRow(kind: TransactionKind): Long {
         val row = rowForKind(kind)
         return totalContribution(listOf(row)).netExpenseByCurrency[cny] ?: 0L
+    }
+
+    /**
+     * Signed net per currency of a frozen MonthlyBuckets category node (positive + refund),
+     * searched recursively so a child node can be compared directly. This reads the real
+     * frozen output rather than a re-implementation.
+     */
+    private fun frozenCategoryNet(
+        activity: MonthlyActivity,
+        categoryId: CategoryId,
+    ): Map<CurrencyUnit, Long> {
+        val node = findNode(activity.expenseCategories, categoryId) ?: return emptyMap()
+        return node.totals.associate { it.currency to (it.positiveMinorUnits + it.refundMinorUnits) }
+    }
+
+    private fun findNode(
+        nodes: List<MonthlyCategoryTotal>,
+        id: CategoryId,
+    ): MonthlyCategoryTotal? {
+        for (node in nodes) {
+            if (node.categoryId == id) return node
+            findNode(node.children, id)?.let { return it }
+        }
+        return null
     }
 
     private fun expenseRow(
@@ -386,13 +502,16 @@ class BudgetMonthTest {
                             Account(dinnerExpenseId, ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
                             Account(uncategorizedExpenseId, ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
                             Account(incomeId, ledgerId, AccountKind.INCOME, cny, ownedByUser = false, realAccount = false),
-                            Account(AccountId("account-usd-expense"), ledgerId, AccountKind.EXPENSE, usd, ownedByUser = false, realAccount = false),
+                            Account(usdExpenseId, ledgerId, AccountKind.EXPENSE, usd, ownedByUser = false, realAccount = false),
+                            Account(usdAssetId, ledgerId, AccountKind.ASSET, usd, ownedByUser = true, realAccount = true),
                         ),
                     categories =
                         listOf(
                             Category(foodParentId, ledgerId, parentId = null, postingAccountId = null, active = true),
                             Category(breakfastId, ledgerId, parentId = foodParentId, postingAccountId = breakfastExpenseId, active = true),
                             Category(dinnerId, ledgerId, parentId = foodParentId, postingAccountId = dinnerExpenseId, active = true),
+                            Category(incomeParentId, ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.INCOME),
+                            Category(usdExpenseCategoryId, ledgerId, parentId = null, postingAccountId = usdExpenseId, active = true),
                         ),
                 )
         ) {
@@ -407,8 +526,9 @@ class BudgetMonthTest {
             id: String,
             accountId: AccountId,
             amountMinor: Long,
+            currency: CurrencyUnit = CurrencyUnit("CNY", 2),
         ) {
-            postings.add(Posting(PostingId(id), accountId, Money.ofMinor(amountMinor, CurrencyUnit("CNY", 2))))
+            postings.add(Posting(PostingId(id), accountId, Money.ofMinor(amountMinor, currency)))
         }
 
         fun toList(): List<Posting> = postings.toList()

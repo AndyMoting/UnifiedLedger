@@ -1,6 +1,9 @@
 package com.unifiedledger.application
 
+import com.unifiedledger.domain.BudgetCalculation
+import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CategoryKind
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
@@ -19,21 +22,13 @@ import kotlinx.datetime.YearMonth
  * expense" is derived, and it derives it by delegating to that frozen projection rather
  * than re-implementing a kind table or guessing from account types (spec section 2.2
  * behavior-equivalence hard constraint).
+ *
+ * Spec section 5 puts the pure value objects and `remaining`/`overspent` arithmetic in
+ * `ledger-domain`; they live there as [BudgetScope] and [BudgetCalculation]. The
+ * `YearMonth`-bearing observations below stay in `ledger-application` because
+ * `ledger-domain` deliberately declares no kotlinx-datetime dependency (moving them would
+ * require a new dependency, which this slice forbids).
  */
-
-/**
- * Budget scope identity (spec section 3.1). [Total] covers every ordinary net expense of
- * the month including 无分类; [Category] observes one stable `CategoryKind.EXPENSE` category
- * (a level-1 scope covers all of its level-2 children). Total and category scopes are
- * independent observations and are never summed (spec section 3.2).
- */
-sealed interface BudgetScope {
-    data object Total : BudgetScope
-
-    data class Category(
-        val categoryId: CategoryId,
-    ) : BudgetScope
-}
 
 /**
  * One month's ordinary net expense observation for a scope (spec section 2.3). Kept
@@ -56,11 +51,15 @@ data class BudgetMonthContribution(
  * `BALANCE_ADJUSTMENT_REVERSAL`, the four `STORED_VALUE_*` kinds, `PREPAID_PURCHASE`,
  * `PREPAID_RECOGNITION`) contribute zero.
  *
- * A posting account missing from [catalog] fails with [IllegalStateException] and checked
- * overflow fails with [ArithmeticException], both exactly as [MonthlyBuckets.aggregate]; the
- * use-case boundary maps them to [BudgetMonthResult.InvalidState] (fail closed, never a
- * silent zero). A scope category with no expense this month contributes an empty map, which
- * is the observationally correct zero for a stale or childless scope.
+ * Fail-closed: a scope [CategoryId] absent from the catalog or not a `CategoryKind.EXPENSE`
+ * category fails with [IllegalStateException] (spec section 5.1: a bad catalog must return an
+ * explicit failure and must never display a zero execution amount; spec section 3.1 restricts
+ * a category scope to a stable EXPENSE id). A posting account missing from [catalog] likewise
+ * fails with [IllegalStateException] and checked overflow with [ArithmeticException], exactly
+ * as [MonthlyBuckets.aggregate]. The mapping of these exceptions onto
+ * [BudgetMonthResult.InvalidState] is the responsibility of the (not yet implemented) budget
+ * use case; this pure classifier only throws. Only a valid EXPENSE category with no postings
+ * this month observes a genuine zero.
  */
 object BudgetOrdinaryNetExpense {
     fun contributions(
@@ -70,12 +69,30 @@ object BudgetOrdinaryNetExpense {
         months: Collection<YearMonth>,
         scope: BudgetScope,
     ): Map<YearMonth, BudgetMonthContribution> {
+        validateScope(scope, catalog)
         val activity = MonthlyBuckets.aggregate(rows, ledgerId, catalog, months)
         return activity.mapValues { (month, monthActivity) ->
             BudgetMonthContribution(
                 month = month,
                 netExpenseByCurrency = scopeNetExpense(monthActivity, scope),
             )
+        }
+    }
+
+    /**
+     * Spec sections 3.1/5.1: a category scope must name a stable `CategoryKind.EXPENSE`
+     * category of the catalog. Absent or non-EXPENSE ids are an invalid state, not a zero.
+     */
+    private fun validateScope(
+        scope: BudgetScope,
+        catalog: LedgerCatalog,
+    ) {
+        if (scope !is BudgetScope.Category) return
+        val category =
+            catalog.categories.firstOrNull { it.id == scope.categoryId }
+                ?: throw IllegalStateException("Budget scope category ${scope.categoryId.value} is not in the catalog")
+        if (category.kind != CategoryKind.EXPENSE) {
+            throw IllegalStateException("Budget scope category ${scope.categoryId.value} is not an EXPENSE category")
         }
     }
 
@@ -123,36 +140,6 @@ object BudgetOrdinaryNetExpense {
 }
 
 /**
- * 07.C calculation contract (spec section 4). Exact checked Long arithmetic; every add or
- * subtract fails loud with [ArithmeticException] instead of silently wrapping. Amounts are
- * never clamped to zero: a net refund can make the net expense negative and the remaining
- * exceed the limit. Exactly equal is not overspent.
- */
-object BudgetCalculation {
-    /** `remaining = limit - netExpense`; throws [ArithmeticException] on Long overflow. */
-    fun remainingMinorUnits(
-        limitMinorUnits: Long,
-        netExpenseMinorUnits: Long,
-    ): Long =
-        checkedSubtract(limitMinorUnits, netExpenseMinorUnits)
-            ?: throw ArithmeticException("budget remaining overflow")
-
-    /**
-     * `overspent = max(netExpense - limit, 0)`; throws [ArithmeticException] on Long
-     * overflow. `netExpense == limit` yields `0` (not overspent).
-     */
-    fun overspentMinorUnits(
-        limitMinorUnits: Long,
-        netExpenseMinorUnits: Long,
-    ): Long {
-        val delta =
-            checkedSubtract(netExpenseMinorUnits, limitMinorUnits)
-                ?: throw ArithmeticException("budget overspent overflow")
-        return if (delta > 0L) delta else 0L
-    }
-}
-
-/**
  * One month/scope budget observation (spec sections 3.3 and 4). [limitMinorUnits] is `null`
  * for an unset/closed budget (not monitored) and distinct from a monitored zero limit
  * (zero is a valid budget). [remainingMinorUnits]/[overspentMinorUnits] are `null` exactly
@@ -171,9 +158,9 @@ data class BudgetMonth(
 
 /**
  * Fail-closed budget month result (mirrors [MonthlyActivityResult], spec section 5.1).
- * [InvalidState] is a catalog/posting inconsistency or checked overflow; [Unavailable] is
- * reserved for the 07.D read-port failure (not produced by the pure projection of this
- * slice). Neither is ever rendered as a zero execution amount.
+ * [InvalidState] is a catalog/posting inconsistency, a negative limit (spec section 3.3) or
+ * checked overflow; [Unavailable] is reserved for the 07.D read-port failure (not produced by
+ * the pure projection of this slice). Neither is ever rendered as a zero execution amount.
  */
 sealed interface BudgetMonthResult {
     data class Success(
@@ -189,7 +176,8 @@ sealed interface BudgetMonthResult {
  * Pure combination of an 07.A contribution and a configured limit into a [BudgetMonth].
  * A `null` limit (unset/closed) yields a not-monitored result with null remaining/overspent;
  * a set limit — including zero — is evaluated with the checked [BudgetCalculation] and any
- * overflow becomes [BudgetMonthResult.InvalidState].
+ * overflow becomes [BudgetMonthResult.InvalidState]. Spec section 3.3: a negative limit is a
+ * typed rejection ([BudgetMonthResult.InvalidState]) rather than a stored budget.
  */
 object BudgetMonthProjection {
     fun compute(
@@ -200,6 +188,11 @@ object BudgetMonthProjection {
         limitMinorUnits: Long?,
         netExpenseMinorUnits: Long,
     ): BudgetMonthResult {
+        if (limitMinorUnits != null && limitMinorUnits < 0L) {
+            // Spec section 3.3: limits are non-negative minor units; a negative input is a
+            // typed rejection (the 07.B config layer will also refuse to persist it).
+            return BudgetMonthResult.InvalidState
+        }
         if (limitMinorUnits == null) {
             return BudgetMonthResult.Success(
                 BudgetMonth(
@@ -233,7 +226,7 @@ object BudgetMonthProjection {
     }
 }
 
-/** Checked addition; `null` on overflow (same idiom as [MonthlyBuckets]' private helpers). */
+/** Checked addition; `null` on overflow (same idiom as [MonthlyBuckets]' private helper). */
 private fun checkedAdd(
     left: Long,
     right: Long,
@@ -241,16 +234,6 @@ private fun checkedAdd(
     if (right > 0 && left > Long.MAX_VALUE - right) return null
     if (right < 0 && left < Long.MIN_VALUE - right) return null
     return left + right
-}
-
-/** Checked subtraction; `null` on overflow (same idiom as [MonthlyBuckets]' private helper). */
-private fun checkedSubtract(
-    left: Long,
-    right: Long,
-): Long? {
-    if (right < 0 && left > Long.MAX_VALUE + right) return null
-    if (right > 0 && left < Long.MIN_VALUE + right) return null
-    return left - right
 }
 
 private fun addTo(
