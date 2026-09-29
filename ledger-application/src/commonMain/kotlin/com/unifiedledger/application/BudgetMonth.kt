@@ -80,6 +80,30 @@ object BudgetOrdinaryNetExpense {
     }
 
     /**
+     * 07.D (spec sections 3.2/5.1): the per-scope observation of an ALREADY AGGREGATED
+     * [MonthlyActivity] — the one-fold shape [QueryBudgetMonth] uses. The caller runs
+     * [MonthlyBuckets.aggregate] exactly once over the bounded month rows and derives every
+     * configured scope's net expense from that single result, so no scope observation ever
+     * re-reads or re-aggregates the ledger (spec section 5.1's "not per budget" hard constraint).
+     *
+     * Same fail-closed contract as [contributions]: a scope [CategoryId] absent from the
+     * catalog or not a `CategoryKind.EXPENSE` category throws [IllegalStateException]; a
+     * checked overflow throws [ArithmeticException]. A level-1 scope observes its own node
+     * whose totals already equal the sum of its level-2 children (the frozen rollup); TOTAL
+     * observes the month's per-currency net expense (which includes 无分类).
+     */
+    fun scopeNetExpenseMinorUnits(
+        activity: MonthlyActivity,
+        catalog: LedgerCatalog,
+        scope: BudgetScope,
+        currency: CurrencyUnit,
+    ): Long {
+        validateScope(scope, catalog)
+        val netByCurrency = scopeNetExpense(activity, scope)
+        return netByCurrency[currency] ?: 0L
+    }
+
+    /**
      * Spec sections 3.1/5.1: a category scope must name a stable `CategoryKind.EXPENSE`
      * category of the catalog. Absent or non-EXPENSE ids are an invalid state, not a zero.
      */
