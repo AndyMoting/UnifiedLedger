@@ -41,9 +41,9 @@
 
 ### 1.1 无产品标签/商家目录【已验证事实】
 
-- 产品目录只有 account 与 category 两族：`catalog_category` 的 `kind` CHECK 仅允许 `('EXPENSE','INCOME')`（`ledger-data/src/commonMain/sqldelight/com/unifiedledger/data/db/Ledger.sq:343`）、`active` 列在 `:347`；目录管理协议（请求/authority/四态结果/commit port 契约）在 `ledger-application/src/commonMain/kotlin/com/unifiedledger/application/CatalogManagement.kt:143-207`（`CatalogCommandRequest` `:143-150`、`CatalogCommandResult` 四态 `:170-184`、`CatalogAuthority` 含 `catalogVersion` `:186-191`、claim-first 契约 KDoc `:193-207`）。
+- 产品目录只有 account 与 category 两族：`catalog_category` 的 `kind` CHECK 仅允许 `('EXPENSE','INCOME')`（`ledger-data/src/commonMain/sqldelight/com/unifiedledger/data/db/Ledger.sq:343`）、`active` 列在 `:347`；目录管理协议（请求/authority/四态结果/commit port 契约）在 `ledger-application/src/commonMain/kotlin/com/unifiedledger/application/CatalogManagement.kt:143-207`（`CatalogCommandRequest` `:143-150`、`CatalogCommandResult` 四态 `:168-184`、`CatalogAuthority` 含 `catalogVersion` `:186-191`、claim-first 契约 KDoc `:193-207`）。
 - 目录名历史与当前名读取：`SqlDelightCatalogStore.kt`（`ledger-data/src/commonMain/kotlin/com/unifiedledger/data/`）在 `:425-431` 以 `selectCatalogCurrentNamesByKind` 取当前名、`:466-470` 在装配时以 `currentCategoryNames[categoryId]` 填充——**名称不在主表**、当前名 = 名称历史末条，此形状将被新目录复用（§2.2）。
-- 对方（counterparty）目录是**借出领域**目录（`ledger-domain/src/commonMain/kotlin/com/unifiedledger/domain/Counterparty.kt:28-33`，含 `nameHistory`；`:58`/`:84` 的建/改名是 `normalizeCatalogName` 的既有复用点），**不是**商家目录，本文不扩展其语义。
+- 对方（counterparty）目录是**借出领域**目录（`ledger-domain/src/commonMain/kotlin/com/unifiedledger/domain/Counterparty.kt:26-33`，含 `nameHistory`；`:58`/`:84` 的建/改名是 `normalizeCatalogName` 的既有复用点），**不是**商家目录，本文不扩展其语义。
 - **结论**：tag 与 merchant 目录、交易注释聚合均为**新建面**；不存在可「打开」的既有产品实体。
 
 ### 1.2 无注释聚合，note 是唯一文本注释且语义独立【已验证事实】
@@ -99,10 +99,10 @@
 - **名称历史/当前名**：镜像 category 形状——主表不存名称，追加式名称历史表 + 「当前名 = 历史末条」读取（先例 `SqlDelightCatalogStore.kt:425-431`/`:466-470`【已验证事实】）；改名只追加历史、旧引用按 ID 连表后显示当前名（计划 Q17：「改名后当前与历史交易默认显示当前名」）。
 - **启用状态**：`active` 布尔（先例 `catalog_category.active`，`Ledger.sq:347`【已验证事实】）；停用（active=false）**可再启用**，保留全部历史引用，只禁止新增选择（计划 Q17：「停用保留所有历史引用，只禁止新增选择」）。
 - **删除 = tombstone（与 category 硬删不同）**：
-  - 前提：**无任何当前/历史引用**才允许删除；引用 = 任何注释 revision 的关联行（含作废交易上的注释与注释旧 revision 的关联行——计划 Q17 字面，计划 `:273`「作废交易、注释旧 revision 也算引用」）。引用探针沿 `CatalogCategoryReferenceProbe` 先例（`CatalogManagement.kt:213-218`）扩展注释引用面；注释 revision 与其关联行不可变，故关联表即**全部**引用面（与 budget 以不可变 `budget_settings_history` 为完整引用面同理，`SqlDelightCatalogStore.kt:526-530`【已验证事实】），探针宽度 ≥ 任何未来 bootstrap 扫描的纪律不变。
+  - 前提：**无任何当前/历史引用**才允许删除；引用 = 任何注释 revision 的关联行（含作废交易上的注释与注释旧 revision 的关联行——计划 Q17 字面，计划 `:273`「作废交易、注释旧 revision 也算引用」）。引用探针沿 `CatalogCategoryReferenceProbe` 先例（`CatalogManagement.kt:214-218`）扩展注释引用面；注释 revision 与其关联行不可变，故关联表即**全部**引用面（与 budget 以不可变 `budget_settings_history` 为完整引用面同理，`SqlDelightCatalogStore.kt:526-530`【已验证事实】），探针宽度 ≥ 任何未来 bootstrap 扫描的纪律不变。
   - 执行：行**保留**、打 tombstone 标记、**不可再选**（任何选择/引用该 ID 的后续请求类型化失败）、**稳定 ID 永不复用**；tombstone 不可逆、不可解除。
   - **tombstone 与停用两态的明确区分**：停用 = 可逆的软禁用（管理列表可见、可再启用、历史引用照常显示）；tombstone = 不可逆的审计 tomb（从选择器与管理主列表消失；是否在独立的审计视图展示见 §8 开放项 11）。二者互斥且都不得物理删除行。
-- **revision 与 owner**：每目录项一个 revision 计数器作命令 CAS（镜像 `BudgetCommandRequest.expectedRevision` 语义，`BudgetConfiguration.kt:14-27`【已验证事实】）；目录命令族（新建/改名/停用/启用/删除）使用**独立的** request/receipt owner——claim-first、等价 `requestSnapshot` replay 返回原回执且零写入、同 ID 异快照 `RequestIdentityConflict`、revision 失配版本冲突零写入（协议形状镜像 `CatalogManagement.kt:143-207` 与 `SqlDelightCatalogStore.kt:116-209` 先例【已验证事实】）；requestId 来源与既有源不共享消费计数（`CatalogManagementRequestIdSource` 独立先例，`CatalogManagement.kt:220-226`）。
+- **revision 与 owner**：每目录项一个 revision 计数器作命令 CAS（镜像 `BudgetCommandRequest.expectedRevision` 语义，`BudgetConfiguration.kt:14-27`【已验证事实】）；目录命令族（新建/改名/停用/启用/删除）使用**独立的** request/receipt owner——claim-first、等价 `requestSnapshot` replay 返回原回执且零写入、同 ID 异快照 `RequestIdentityConflict`、revision 失配版本冲突零写入（协议形状镜像 `CatalogManagement.kt:143-207` 与 `SqlDelightCatalogStore.kt:116-209` 先例【已验证事实】）；requestId 来源与既有源不共享消费计数（`CatalogManagementRequestIdSource` 独立先例，`CatalogManagement.kt:225`）。
 - 表族命名与精确 DDL、以及目录族是否复用统一名称历史表，**OPEN**（§8 开放项 3）；但冻结：全部新表为非 `rgXX_` 产品表，fresh `Ledger.sq` 终态 DDL 与迁移边逐字节一致（`32.sqm` 纪律【已验证事实】：`32.sqm` 头注「Every CREATE statement below matches the fresh Ledger.sq terminal definitions byte for byte」）。
 
 ### 2.3 名称规范化与唯一性【冻结设计提案】
@@ -197,7 +197,7 @@
 
 - 两步式有界读：(1) 以 EXISTS/semi-join 在注释关联表（当前 revision）上求**唯一 transactionId 集**（标签条件进 EXISTS 子查询；OR = 任一命中，AND = 逐标签 EXISTS 全命中）；(2) 对命中的 transactionId 取**当前有效版本**行（join `transaction_effective_state` 有效谓词 + current-version 指针）。
 - **禁止**：多标签 JOIN 倍增（同笔多标签会成倍展开行）、按金额 `DISTINCT` 去重（计划 `:290` 明禁——金额相同的不同交易会被误去重，P708-A01 第三向量「金额相同不被误去重」）、SQL 侧金额汇总标签分组（分组计数各自独立、重叠全额，Kotlin 侧折叠）。
-- 排序/分页：稳定时间（`statistics_at_epoch_nanos` 投影 + 既有范围索引，`Ledger.sq:61`【已验证事实】）+ transaction id 排序（镜像 `QueryLedgerEntryRows.kt:21-32` 的 Kotlin 侧排序语义【已验证事实】）；有界分页 + 单读事务快照（ACC-SNAP-01 先例，`SqlDelightImportReviewReadAdapter.kt:46-110`【已验证事实】）；目录名一次性批量装配，禁止全账逐笔查目录（计划 `:292`「无 N+1」）。EXISTS 先例目前只在守卫视图区段（`Ledger.sq:769-1126` 区段，探针摘要锚点），筛选查询为新建命名查询——精确 SQL 形状 OPEN（§8 开放项 3）。
+- 排序/分页：稳定时间（`statistics_at_epoch_nanos` 投影 + 既有范围索引，`Ledger.sq:61`【已验证事实】）+ transaction id 排序（镜像 `QueryLedgerEntryRows.kt:21-32` 的 Kotlin 侧排序语义【已验证事实】）；有界分页 + 单读事务快照（ACC-SNAP-01 先例，`SqlDelightImportReviewReadAdapter.kt:46-110`【已验证事实】）；目录名一次性批量装配，禁止全账逐笔查目录（计划 `:292`「无 N+1」）。EXISTS 在库内已有多种先例（守卫视图/触发器区段 `Ledger.sq:769-1126`；产品读查询如 `:9001` 的 evidence_link 历史判定与 `:9053`/`:9108`/`:9164` 的导入评审确认门【已验证事实】），但多标签筛选的 EXISTS/semi-join 查询是新建命名查询——精确 SQL 形状 OPEN（§8 开放项 3）。
 - 详情只查目标 transactionId（计划 `:292`）。
 
 ### 5.3 失败与旧结果纪律【冻结设计提案】
