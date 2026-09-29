@@ -39,6 +39,10 @@ kotlin {
             // F-2 (IMP-1): the desktop SQLite driver is declared in this module's jvmMain;
             // the ledger-data build script stays unchanged.
             implementation("app.cash.sqldelight:sqlite-driver:2.3.2")
+            // P7-07 07.D (D-184): the budget config-reader lambda adapts the application port
+            // whose invoke signature carries kotlinx.datetime.YearMonth; the artifact is already
+            // in the repo (application/app-ui), this only puts it on THIS module's main classpath.
+            implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
         }
 
         jvmTest.dependencies {

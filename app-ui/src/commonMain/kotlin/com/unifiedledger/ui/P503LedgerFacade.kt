@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.BudgetAuthorityReader
 import com.unifiedledger.application.CatalogConsumerSession
 import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.CounterpartyCommands
@@ -29,6 +30,7 @@ import com.unifiedledger.application.ManualTransferOptionsProvider
 import com.unifiedledger.application.ManualTransferRequestIdSource
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
+import com.unifiedledger.application.QueryBudgetMonth
 import com.unifiedledger.application.QueryImportCandidateDetail
 import com.unifiedledger.application.QueryImportDuplicateReviews
 import com.unifiedledger.application.QueryImportDuplicateReviewsForSession
@@ -45,6 +47,7 @@ import com.unifiedledger.application.ResolveManualTransferCommitStatus
 import com.unifiedledger.application.ResolveTransactionCorrectionCommitStatus
 import com.unifiedledger.application.ResolveTransactionVoidCommitStatus
 import com.unifiedledger.application.ReviewImportDuplicateCandidate
+import com.unifiedledger.application.SaveBudgetConfiguration
 import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerCatalog
@@ -187,6 +190,18 @@ class P503LedgerFacade(
     val resolveCorrectionCommitStatus: ResolveTransactionCorrectionCommitStatus? = null,
     val resolveVoidCommitStatus: ResolveTransactionVoidCommitStatus? = null,
     baseQueryRecycleBin: QueryRecycleBin? = null,
+    // P7-07 07.D (D-184; spec sections 4/5/5.1) budget surface. Null defaults keep legacy
+    // constructions (startup tests) valid. [queryBudgetMonth] is the bounded month read +
+    // one-fold use case (one [MonthlyContributionReadPort] read, never a read per budget);
+    // [saveBudgetConfiguration] is the 07.B claim-first write; [budgetAuthorityReader] is the
+    // current-revision lookup a setLimit/close needs (unconfigured = revision 0);
+    // [budgetExpectedCatalogVersion] resolves the session's authoritative catalog version per
+    // request (composition ruling B: a read whose snapshot generation differs fails typed and
+    // is never rendered as a zero execution amount).
+    val queryBudgetMonth: QueryBudgetMonth? = null,
+    val saveBudgetConfiguration: SaveBudgetConfiguration? = null,
+    val budgetAuthorityReader: BudgetAuthorityReader? = null,
+    val budgetExpectedCatalogVersion: () -> Long? = { null },
 ) {
     private val session = catalogSession
     private val fallbackOptionsProvider = baseOptionsProvider

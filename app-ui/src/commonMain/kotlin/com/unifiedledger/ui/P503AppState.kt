@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.BudgetMonthViewResult
 import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.EntryExpressionCode
 import com.unifiedledger.application.EntryPinTarget
@@ -9,6 +10,7 @@ import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CounterpartyId
 import com.unifiedledger.domain.TransactionId
@@ -119,6 +121,14 @@ sealed interface P503AppState {
          * pre-P7-04 constructor site compiling untouched.
          */
         val importReview: ImportReviewView? = null,
+        /**
+         * P7-07 07.D (D-184; spec section 5): the last landed budget-month read for the
+         * effective month (ONE bounded read folded into every configured scope). A typed
+         * failure is carried as-is — the budget region renders the explicit failure copy and
+         * never a zero; `null` before the first landing. The optional field keeps every
+         * pre-P7-07 constructor site compiling.
+         */
+        val budgetView: BudgetMonthViewResult? = null,
     ) : P503AppState
 
     data class Editing(
@@ -473,6 +483,36 @@ sealed interface P503AppState {
     ) : P503AppState
 
     /**
+     * P7-07 07.D (D-184; spec sections 3.4/4/5): the explicit budget-configuration surface.
+     * Reached only from the analysis tab's budget region (the host resolves the scope's
+     * current authority before opening). [overview] is carried so every exit restores the
+     * exact tab/month/payload (the TransactionEdit/BackupExport preserved-overview discipline).
+     * [submitting] is the per-operation marker (提交中不重入/不得离开, the P7-05 submitting
+     * discipline); [outcome] is the last landed typed result. The request id is deliberately
+     * NOT carried here: the 07.B claim-first protocol mints it inside the commit boundary
+     * (an equivalent replay must return the ORIGINAL receipt), so unlike the correction flow
+     * the host does not mint one.
+     */
+    data class BudgetConfig(
+        val overview: OverviewEmpty,
+        val scope: BudgetScope,
+        val month: kotlinx.datetime.YearMonth,
+        val revision: Long,
+        val closed: Boolean,
+        val limitMinorUnits: Long?,
+        val limitText: String = "",
+        val submitting: Boolean = false,
+        val outcome: com.unifiedledger.application.BudgetCommandResult? = null,
+        /**
+         * P7-07 fix round (P3): the commit ran but its outcome could not be resolved (an
+         * infrastructure escape; see [P503UiEvent.BudgetCommitUnknownLanded]). Distinct from
+         * [outcome]: the surface shows the explicit 结果未知 banner and stays re-attemptable
+         * (a landed first commit surfaces as the typed revision conflict on the retry).
+         */
+        val outcomeUnknown: Boolean = false,
+    ) : P503AppState
+
+    /**
      * P5-04.3: carries the flow context so the host can run a read-only commit-status
      * check and the flow can leave via Recovered/RequestIdentityConflict; nullable fields
      * follow the InfrastructureFailure SUBMISSION precedent.
@@ -588,6 +628,34 @@ sealed interface ExpressionPreview {
         val code: EntryExpressionCode,
     ) : ExpressionPreview
 }
+
+/**
+ * P1-2 fix round, review P3: THE single source of truth for the surfaces on which a budget
+ * month landing ([P503UiEvent.BudgetMonthLanded], [P503UiEvent.MonthlyActivityResult]'s
+ * carried-overview application) may be APPLIED — the live overview plus the five surfaces
+ * that hold a preserved [OverviewEmpty] and render no competing monthly region of their own.
+ *
+ * HONEST SUBSET (not "every surface that carries an OverviewEmpty"):
+ * [ImportCandidateDetail], [ImportBatchConfirm], [ImportBatchSubmitting],
+ * [TransactionEdit] and [VoidConfirm] also carry one, but a landing there is ABSORBED —
+ * their own event families own those surfaces, and the budget region never renders on
+ * them. REGISTERED NARROW RACE: a budget landing dispatched while the user has navigated
+ * INTO one of those five surfaces is silently dropped (the coordinator's guard already
+ * stamped the request); the next budget trigger (effective-month change, SelectMonth,
+ * config commit, a later P7-05/import arm) re-requests, and the region never renders there,
+ * so no wrong amount is ever shown — only a possibly-stale payload on RETURN, which the
+ * existing staleness semantics of the preserved-overview surfaces already accept.
+ */
+internal fun P503AppState.carriedBudgetMonthOverview(): P503AppState.OverviewEmpty? =
+    when (this) {
+        is P503AppState.OverviewEmpty -> this
+        is P503AppState.BudgetConfig -> overview
+        is P503AppState.TransactionDetail -> overview
+        is P503AppState.RecycleBin -> overview
+        is P503AppState.BackupExport -> overview
+        is P503AppState.BackupRestore -> overview
+        else -> null
+    }
 
 /**
  * The expense draft's former name, kept as a source-compatible alias so pre-P7-02 constructor

@@ -81,6 +81,7 @@ class P503ReducerImpl(
         // transition and the one surface.
         if (backupExportEventAbsorbed(state, event)) return state
         if (backupRestoreEventAbsorbed(state, event)) return state
+        if (budgetEventAbsorbed(state, event)) return state
         return when (state) {
             is P503AppState.Ready -> reduceReady(event)
             is P503AppState.OverviewEmpty -> reduceOverviewEmpty(state, event)
@@ -93,6 +94,7 @@ class P503ReducerImpl(
             is P503AppState.RecycleBin -> reduceRecycleBin(state, event)
             is P503AppState.BackupExport -> reduceBackupExport(state, event)
             is P503AppState.BackupRestore -> reduceBackupRestore(state, event)
+            is P503AppState.BudgetConfig -> reduceBudgetConfig(state, event)
             is P503AppState.RestoreSessionTerminal -> reduceRestoreSessionTerminal(state, event)
             is P503AppState.Editing -> reduceEditing(state, event)
             is P503AppState.AwaitingConfirmation -> reduceAwaitingConfirmation(state, event)
@@ -148,6 +150,151 @@ class P503ReducerImpl(
             P503UiEvent.CloseBackupRestore,
             -> state !is P503AppState.BackupRestore
             else -> false
+        }
+
+    /**
+     * P7-07 07.D (D-184; spec sections 3.4/4/5): whether the budget event must be absorbed in
+     * [state] because it belongs to another surface (the export family's absorb discipline).
+     * `OpenBudgetConfig` is designed for OverviewEmpty; the config-dialog events for
+     * BudgetConfig; `BudgetMonthLanded` applies to EVERY state in [carriesBudgetMonthSurface]
+     * — the live overview AND the surfaces that carry a preserved overview (fix round P1-2).
+     * Everywhere else (including Ready before the overview exists) every budget event is
+     * absorbed, so a late/stale dispatch can never reach `unhandled` and turn into an ISE.
+     * The guard is central because each family's designed effects are the one OverviewEmpty
+     * transition, the carried-overview applications and the one config surface.
+     */
+    private fun budgetEventAbsorbed(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): Boolean =
+        when (event) {
+            // The landed budget read applies to every state that carries a preserved overview
+            // (the P1-2 fix round): the overview copies, the carrying surface keeps its own
+            // fields. Absorbed only where no budget region can ever render.
+            is P503UiEvent.BudgetMonthLanded -> !carriesBudgetMonthSurface(state)
+            is P503UiEvent.OpenBudgetConfig -> state !is P503AppState.OverviewEmpty
+            is P503UiEvent.UpdateBudgetLimitText,
+            P503UiEvent.ConfirmBudgetLimit,
+            P503UiEvent.ConfirmBudgetClose,
+            is P503UiEvent.BudgetConfigResultLanded,
+            P503UiEvent.BudgetCommitUnknownLanded,
+            P503UiEvent.CloseBudgetConfig,
+            -> state !is P503AppState.BudgetConfig
+            else -> false
+        }
+
+    /**
+     * P1-2 fix round: the single source of truth for "a budget-month landing can be APPLIED
+     * here" lives on [carriedBudgetMonthOverview]; this predicate is its reducer-side view.
+     */
+    private fun carriesBudgetMonthSurface(state: P503AppState): Boolean = state.carriedBudgetMonthOverview() != null
+
+    private fun reduceBudgetConfig(
+        state: P503AppState.BudgetConfig,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            // 提交中不重入: field writes and duplicate confirms are absorbed while submitting.
+            is P503UiEvent.UpdateBudgetLimitText -> if (state.submitting) state else state.copy(limitText = event.text)
+            P503UiEvent.ConfirmBudgetLimit ->
+                if (state.submitting) state else state.copy(submitting = true, outcome = null, outcomeUnknown = false)
+            P503UiEvent.ConfirmBudgetClose ->
+                if (state.submitting) state else state.copy(submitting = true, outcome = null, outcomeUnknown = false)
+            // The landing clears the marker and shows the typed outcome; the surface stays
+            // until the explicit close (the banner must be readable).
+            is P503UiEvent.BudgetConfigResultLanded -> state.copy(submitting = false, outcome = event.result, outcomeUnknown = false)
+            // P1/P3 fix round: the commit ran but its outcome is unknown — an explicit banner,
+            // never a fabricated rejection; the surface stays re-attemptable.
+            P503UiEvent.BudgetCommitUnknownLanded -> state.copy(submitting = false, outcome = null, outcomeUnknown = true)
+            // P1-1 fix round: a budget read that completes behind the open config surface is
+            // APPLIED to the carried overview (the config commit's re-request lands here), so
+            // closing the surface returns the fresh payload instead of the pre-commit one.
+            is P503UiEvent.BudgetMonthLanded -> state.copy(overview = state.overview.copy(budgetView = event.result))
+            // Fix round 2 (P2): the monthly cycle landing follows the read-only detail
+            // precedent EXACTLY — the same landing hop that consumes the armed monthly
+            // re-request can run while this surface is open (the pre-fix unhandled path was a
+            // reachable ISE): a success updates the carried overview's monthly fields in
+            // place; a typed failure leaves the surface into the READ failure with this
+            // overview preserved as the monthlyOverview.
+            is P503UiEvent.MonthlyActivityResult ->
+                when (val result = event.result) {
+                    is com.unifiedledger.application.MonthlyActivityResult.Success ->
+                        state.copy(
+                            overview =
+                                state.overview.copy(
+                                    monthlyActivity = result.activity,
+                                    selectableMonths = event.selectableMonths,
+                                    monthlyReloadRequired = false,
+                                ),
+                        )
+                    com.unifiedledger.application.MonthlyActivityResult.InvalidState,
+                    com.unifiedledger.application.MonthlyActivityResult.Unavailable,
+                    -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ, monthlyOverview = state.overview)
+                }
+            // The refresh family follows the read-only detail absorb precedent: a completed
+            // refresh keeps the surface and its preserved overview AS IT WAS when the surface
+            // opened (the same staleness semantics the detail carries) — the fresh current
+            // state is NOT rebuilt here; the host mirror refreshes it on the next overview
+            // landing.
+            is P503UiEvent.InitialLoadResult,
+            P503UiEvent.InitialLoadFailed,
+            is P503UiEvent.RefreshResult,
+            P503UiEvent.RefreshFailed,
+            -> state
+            // Fix round 2 (exhaustive enumeration): every event whose dispatch site is an
+            // ASYNC LANDING HOP (no state-type guard) can arrive while this surface is open.
+            // None has a designed effect here — their surfaces are not rendered — so they are
+            // absorbed and the surface is kept; the full disposition table lives in the fix
+            // round report. The import family is absorbed as a whole (its user intents are
+            // unreachable here; its async results have no BudgetConfig effect).
+            is P503UiEvent.ImportFilePicked,
+            P503UiEvent.ImportFilePickCancelled,
+            is P503UiEvent.ImportFilePickFailed,
+            is P503UiEvent.ImportFileIntakeResult,
+            P503UiEvent.RefreshImportReview,
+            is P503UiEvent.ImportReviewResult,
+            is P503UiEvent.SelectImportCandidate,
+            P503UiEvent.CloseImportCandidateDetail,
+            is P503UiEvent.UpdateImportDecisionField,
+            is P503UiEvent.ToggleImportCandidateSelection,
+            is P503UiEvent.SubmitImportDuplicateReview,
+            is P503UiEvent.ImportDuplicateReviewResult,
+            is P503UiEvent.StartImportDuplicateGroupDisposition,
+            is P503UiEvent.ImportDuplicateGroupDispositionResult,
+            P503UiEvent.CloseImportDuplicateGroupDisposition,
+            P503UiEvent.ImportGroupEnumerationStarted,
+            P503UiEvent.ImportGroupEnumerationCompleted,
+            P503UiEvent.RequestImportBatchConfirm,
+            P503UiEvent.CancelImportBatchConfirm,
+            is P503UiEvent.AuthorizeImportBatch,
+            is P503UiEvent.ImportItemResult,
+            P503UiEvent.ResumeImportBatchDispatch,
+            P503UiEvent.AbandonImportBatch,
+            is P503UiEvent.ImportUnknownItemCheck,
+            is P503UiEvent.ImportUnknownItemCheckResult,
+            -> state
+            // The bin read's landing hop is async and state-ungated (requestRecycleBin): a
+            // fresh projection landing behind the open surface is absorbed (the bin opens
+            // fresh on its next open).
+            is P503UiEvent.OpenRecycleBin,
+            is P503UiEvent.RecycleBinResult,
+            -> state
+            // Defensive absorption: the entry flow and the unknown-commit check cannot be in
+            // flight while this surface is open (their states exclude BudgetConfig), but their
+            // landing hops are state-ungated, so the family is closed rather than left to ISE.
+            // TogglePin's landing hop is likewise state-ungated; its affordance renders only on
+            // the ACCOUNTS card (unreachable today), and it joins this absorbed family so the
+            // exhaustiveness claim above holds for every member.
+            is P503UiEvent.TogglePin,
+            is P503UiEvent.SubmissionResult,
+            is P503UiEvent.CommitStatusResolved,
+            -> state
+            // 提交中不得离开: a submitting surface absorbs the close/back (the P7-05 discipline);
+            // otherwise the exact preserved overview (with any budget read landed meanwhile)
+            // returns.
+            P503UiEvent.CloseBudgetConfig, P503UiEvent.Back ->
+                if (state.submitting) state else state.overview
+            else -> unhandled(state, event)
         }
 
     private fun reduceReady(event: P503UiEvent): P503AppState =
@@ -544,6 +691,22 @@ class P503ReducerImpl(
             // The host wires this affordance only when the restore use cases exist.
             P503UiEvent.OpenBackupRestore ->
                 P503AppState.BackupRestore(overview = state)
+            // ---- P7-07 07.D budget transitions (D-184; table 6.2a discipline) ----
+            // The landed budget-month read replaces the region's payload (a typed failure lands
+            // as-is — the region renders the explicit failure copy, never a zero); the month
+            // cursor and every other field are preserved by the copy.
+            is P503UiEvent.BudgetMonthLanded -> state.copy(budgetView = event.result)
+            // The config dialog opens with the host-resolved authority (revision/closed/limit)
+            // and the exact overview as the exit target.
+            is P503UiEvent.OpenBudgetConfig ->
+                P503AppState.BudgetConfig(
+                    overview = state,
+                    scope = event.scope,
+                    month = event.month,
+                    revision = event.revision,
+                    closed = event.closed,
+                    limitMinorUnits = event.limitMinorUnits,
+                )
             is P503UiEvent.OpenTransactionEdit,
             is P503UiEvent.UpdateTransactionCorrectionField,
             P503UiEvent.PreviewTransactionEdit,
@@ -630,6 +793,10 @@ class P503ReducerImpl(
                     com.unifiedledger.application.MonthlyActivityResult.Unavailable,
                     -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ, monthlyOverview = state.overview)
                 }
+            // P1-2 fix round: a budget read completing behind this carried-overview surface is
+            // APPLIED to the preserved overview (never absorbed, never ISE), so returning to
+            // the overview shows the fresh payload.
+            is P503UiEvent.BudgetMonthLanded -> state.copy(overview = state.overview.copy(budgetView = event.result))
             is P503UiEvent.SelectTransaction,
             is P503UiEvent.SelectMonth,
             is P503UiEvent.AnalysisMonthShift,
@@ -1770,6 +1937,10 @@ class P503ReducerImpl(
             is P503UiEvent.ConfirmVoid,
             is P503UiEvent.TransactionVoidResult,
             -> state
+            // P1-2 fix round: a budget read completing behind this carried-overview surface is
+            // APPLIED to the preserved overview (never absorbed, never ISE), so returning to
+            // the overview shows the fresh payload.
+            is P503UiEvent.BudgetMonthLanded -> state.copy(overview = state.overview.copy(budgetView = event.result))
             else -> absorbPreExisting(state, event)
         }
 
@@ -1794,6 +1965,10 @@ class P503ReducerImpl(
             // Close (and Back) leave for the preserved overview only when no export is in flight; a
             // running export absorbs the exit so a lost/cancelled commit keeps its marker.
             P503UiEvent.CloseBackupExport, P503UiEvent.Back -> if (state.running) state else state.overview
+            // P1-2 fix round: a budget read completing behind this carried-overview surface is
+            // APPLIED to the preserved overview (never absorbed, never ISE), so returning to
+            // the overview shows the fresh payload.
+            is P503UiEvent.BudgetMonthLanded -> state.copy(overview = state.overview.copy(budgetView = event.result))
             else -> absorbPreExisting(state, event)
         }
 
@@ -1843,6 +2018,9 @@ class P503ReducerImpl(
             // Close (and Back) leave for the preserved overview only when neither phase is running.
             P503UiEvent.CloseBackupRestore, P503UiEvent.Back ->
                 if (state.runningPreflight || state.runningConfirm) state else state.overview
+            // P1-2 fix round: a budget read completing behind this carried-overview surface is
+            // APPLIED to the preserved overview (never absorbed, never ISE).
+            is P503UiEvent.BudgetMonthLanded -> state.copy(overview = state.overview.copy(budgetView = event.result))
             else -> absorbPreExisting(state, event)
         }
 

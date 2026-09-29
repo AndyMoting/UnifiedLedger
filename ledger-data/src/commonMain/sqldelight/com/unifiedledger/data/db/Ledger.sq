@@ -9830,6 +9830,37 @@ SELECT budget_id, month_key, currency_code, currency_precision, scope_key, scope
 FROM budget_config
 WHERE ledger_id = ? AND month_key = ? AND currency_code = ? AND scope_key = ?;
 
+-- P7-07 07.D-1 (spec section 5.1): every configured budget scope of one (ledger, month, currency)
+-- for the month list / TOTAL + category scope enumeration. The 07.B surface only had the
+-- single-target selectBudgetConfigByScope, so this adds the month-scoped set. Read-only.
+--
+-- The current revision's status/limit are joined in ONE query (`current_revision` -> the matching
+-- immutable history row), so enumerating N scopes does NOT issue N single-target lookups: a
+-- revision 0 config has no history row yet (LEFT JOIN yields NULL = not monitored, not closed),
+-- while a revision > 0 config takes exactly its current history row (MONITORED with a non-null
+-- limit, or CLOSED with a null limit). currency_code is filtered because the first version fixes
+-- the budget currency to CNY (spec section 3.1); TOTAL scopes have a NULL scope_category_id and
+-- are decoded from scope_kind by the caller.
+selectBudgetConfigsForMonth:
+SELECT
+  config.budget_id,
+  config.month_key,
+  config.currency_code,
+  config.currency_precision,
+  config.scope_key,
+  config.scope_kind,
+  config.scope_category_id,
+  config.current_revision,
+  history.status,
+  history.limit_minor
+FROM budget_config AS config
+LEFT JOIN budget_settings_history AS history
+  ON history.ledger_id = config.ledger_id
+ AND history.budget_id = config.budget_id
+ AND history.revision_number = config.current_revision
+WHERE config.ledger_id = ? AND config.month_key = ? AND config.currency_code = ?
+ORDER BY config.scope_kind DESC, config.scope_key;
+
 insertBudgetConfig:
 INSERT INTO budget_config(ledger_id, budget_id, month_key, currency_code, currency_precision, scope_key, scope_kind, scope_category_id, current_revision)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
@@ -10065,6 +10096,56 @@ ORDER BY version.statistics_at_epoch_nanos, version.transaction_id, version.vers
 statisticsAtProjectionMissingForLedger:
 SELECT count(*) FROM transaction_version
 WHERE ledger_id = ? AND statistics_at_epoch_nanos IS NULL;
+
+-- P7-07 07.D-1 (D-184 item 3 residual; spec section 5.1): the bounded monthly contribution read
+-- for the budget read path. This is the projection-indexed analogue of `ledgerEntryRowsForLedger`
+-- (this file) with a `[start, end)` numeric-time predicate: the SAME table group, the SAME row
+-- shape and the SAME single effective-predicate definition point (`transaction_effective_state`)
+-- plus the current-version join, so it returns exactly the CURRENT version of each EFFECTIVE
+-- transaction whose statistics instant is in the window. It introduces NO second state rule and
+-- does NOT change `ledgerEntryRowsForLedger`'s contract (spec section 8 open item 3 keeps the
+-- existing monthly-card switch OPEN). Amounts are returned raw (never SUM/DISTINCT) so the
+-- frozen Kotlin classifier folds them with exact checked Long arithmetic.
+--
+-- A row whose projection is NULL is not in any window; the caller runs
+-- statisticsAtProjectionMissingForLedger first and fails loudly when it is non-zero (spec
+-- section 6.4 item 5), so an unprojected row is never silently omitted or treated as time zero.
+monthlyContributionRowsInWindow:
+SELECT
+  tx.transaction_id,
+  current_version.current_version_id,
+  COALESCE(tx.canonical_kind, tx.kind) AS kind,
+  version.occurred_at,
+  version.statistics_at,
+  version.note,
+  posting.posting_id,
+  posting.posting_index,
+  posting.account_id,
+  posting.amount_minor,
+  posting.currency_code,
+  posting.currency_precision
+FROM transaction_version AS version
+JOIN ledger_transaction AS tx
+  ON tx.ledger_id = version.ledger_id
+ AND tx.transaction_id = version.transaction_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+ AND current_version.current_version_id = version.version_id
+JOIN posting_set AS posting_set
+  ON posting_set.ledger_id = version.ledger_id
+ AND posting_set.posting_set_id = version.posting_set_id
+JOIN posting AS posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+WHERE version.ledger_id = ?
+  AND version.statistics_at_epoch_nanos >= ?
+  AND version.statistics_at_epoch_nanos < ?
+ORDER BY version.statistics_at_epoch_nanos, tx.transaction_id, posting.posting_index;
 
 -- Recycle-bin read path (spec section 3.4/DP-1): the voided complement of the effective
 -- surfaces — same table group, same row shape, same predicate view — plus the void metadata

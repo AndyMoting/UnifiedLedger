@@ -1,6 +1,7 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.db.SqlDriver
+import com.unifiedledger.application.BUDGET_CONFIGURED_CURRENCY
 import com.unifiedledger.application.BudgetAuthority
 import com.unifiedledger.application.BudgetAuthorityReader
 import com.unifiedledger.application.BudgetCommandPayload
@@ -9,10 +10,12 @@ import com.unifiedledger.application.BudgetCommandRequest
 import com.unifiedledger.application.BudgetCommandResult
 import com.unifiedledger.application.BudgetConfigurationCommitPort
 import com.unifiedledger.application.BudgetFailureCode
+import com.unifiedledger.application.BudgetMonthConfigRow
 import com.unifiedledger.application.BudgetReceiptOutcome
 import com.unifiedledger.application.BudgetRequestId
 import com.unifiedledger.application.BudgetSettingsVersion
 import com.unifiedledger.application.BudgetTarget
+import com.unifiedledger.application.budgetScopeFromStored
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.BudgetId
 import com.unifiedledger.domain.CategoryId
@@ -39,6 +42,47 @@ class SqlDelightBudgetStore private constructor(
     }
 
     override fun load(target: BudgetTarget): BudgetAuthority? = loadAuthority(target)
+
+    /**
+     * P7-07 07.D-1 (spec section 5.1): every configured budget scope of one
+     * `(ledgerId, month)` with its CURRENT settings, read in ONE bounded query. The current
+     * revision's status/limit are joined to `budget_config.current_revision` inside
+     * `selectBudgetConfigsForMonth`, so enumerating N scopes issues exactly one query and never
+     * one single-target lookup per scope. Read-only.
+     *
+     * The month arrives as the canonical `YYYY-MM` key ([com.unifiedledger.application.budgetMonthKey]
+     * at the call site) rather than a `YearMonth`: ledger-data deliberately keeps
+     * kotlinx-datetime a TEST-only dependency, and the [BudgetMonthConfigReader] lambda
+     * adapter lives with the composition roots that already own the reporting types.
+     */
+    fun configsForMonth(
+        ledgerId: LedgerId,
+        monthKey: String,
+    ): List<BudgetMonthConfigRow> =
+        database.ledgerQueries
+            .selectBudgetConfigsForMonth(ledgerId.value, monthKey, BUDGET_CONFIGURED_CURRENCY.code) {
+                budgetId,
+                _,
+                _,
+                _,
+                _,
+                scopeKind,
+                scopeCategoryId,
+                currentRevision,
+                status,
+                limitMinor,
+                ->
+                BudgetMonthConfigRow(
+                    budgetId = BudgetId(budgetId),
+                    scope = budgetScopeFromStored(scopeKind, scopeCategoryId),
+                    revision = currentRevision,
+                    // A revision-0 config has no history row yet (status NULL) and is not
+                    // monitored; a CLOSED history head is explicitly not monitored; a MONITORED
+                    // head always stores a non-null limit (zero is a real 0).
+                    closed = status == "CLOSED",
+                    limitMinorUnits = limitMinor,
+                )
+            }.executeAsList()
 
     /** Full immutable settings history for a budget, oldest revision first (spec section 3.4). */
     fun settingsHistory(

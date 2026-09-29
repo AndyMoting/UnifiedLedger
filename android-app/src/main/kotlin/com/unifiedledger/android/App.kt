@@ -19,6 +19,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import com.unifiedledger.application.BudgetMonthConfigReader
 import com.unifiedledger.application.CATALOG_MANAGED_CURRENCY
 import com.unifiedledger.application.CatalogAdmissionExpenseTransactionFactory
 import com.unifiedledger.application.CatalogAdmissionIncomeTransactionFactory
@@ -75,6 +76,7 @@ import com.unifiedledger.application.MixedPaymentFlowFormalFactory
 import com.unifiedledger.application.OrdinaryFlowFormalFactory
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
+import com.unifiedledger.application.QueryBudgetMonth
 import com.unifiedledger.application.QueryCatalogSnapshot
 import com.unifiedledger.application.QueryImportCandidateDetail
 import com.unifiedledger.application.QueryImportDuplicateReviews
@@ -87,7 +89,10 @@ import com.unifiedledger.application.ResolveManualTransferCommitStatus
 import com.unifiedledger.application.ResolveTransactionCorrectionCommitStatus
 import com.unifiedledger.application.ResolveTransactionVoidCommitStatus
 import com.unifiedledger.application.ReviewImportDuplicateCandidate
+import com.unifiedledger.application.SaveBudgetConfiguration
 import com.unifiedledger.application.TransferFlowFormalFactory
+import com.unifiedledger.application.UuidV7BudgetIdSource
+import com.unifiedledger.application.UuidV7BudgetRequestIdSource
 import com.unifiedledger.application.UuidV7CatalogEntityIdSource
 import com.unifiedledger.application.UuidV7CatalogManagementRequestIdSource
 import com.unifiedledger.application.UuidV7ConfirmedManualExpenseIdSource
@@ -105,11 +110,13 @@ import com.unifiedledger.application.UuidV7TransactionCorrectionIdSource
 import com.unifiedledger.application.UuidV7TransactionVoidFactIdSource
 import com.unifiedledger.application.backup.BackupCryptoPrimitives
 import com.unifiedledger.application.backup.JvmBackupCryptoPrimitives
+import com.unifiedledger.application.budgetMonthConfigKey
 import com.unifiedledger.application.import.JvmImportFileIntake
 import com.unifiedledger.data.AndroidLedgerDatabaseHandle
 import com.unifiedledger.data.CatalogBootstrapResult
 import com.unifiedledger.data.SqlDelightImportReviewReadAdapter
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
+import com.unifiedledger.data.SqlDelightMonthlyContributionReadAdapter
 import com.unifiedledger.data.createAndroidLedgerDatabase
 import com.unifiedledger.data.currentSupportedSchemaVersion
 import com.unifiedledger.data.defaultCatalogSeed
@@ -1328,6 +1335,31 @@ private fun buildLedgerGraph(
             clock = ledgerClock,
             admissionReader = store,
         )
+    // P7-07 07.D (D-184; spec sections 4/5/5.1): the budget surface on the same
+    // platform-configured connection — the 07.B claim-first write, the bounded month read
+    // (ONE MonthlyContributionReadPort read folded once over every configured scope) and the
+    // current-revision reader a setLimit/close needs. The config-reader lambda adapts the
+    // store's canonical month-key read to the application port (ledger-data keeps
+    // kotlinx-datetime TEST-only). The expected catalog version resolves from the session's
+    // current authority, so a read whose snapshot generation differs fails typed (ruling B).
+    val budgetStore = handle.budgetStore
+    val saveBudgetConfiguration =
+        SaveBudgetConfiguration(
+            commitPort = budgetStore,
+            requestIdSource = UuidV7BudgetRequestIdSource(UuidV7Generator(::secureRandomBytes)),
+            budgetIdSource = UuidV7BudgetIdSource(UuidV7Generator(::secureRandomBytes)),
+            catalogReader = store,
+            clock = ledgerClock,
+        )
+    val queryBudgetMonth =
+        QueryBudgetMonth(
+            readPort = SqlDelightMonthlyContributionReadAdapter(database, store),
+            authorityReader = budgetStore,
+            configReader =
+                BudgetMonthConfigReader { configLedgerId, configMonth ->
+                    budgetStore.configsForMonth(configLedgerId, budgetMonthConfigKey(configMonth))
+                },
+        )
     val facade =
         P503LedgerFacade(
             ledgerId = ledgerId,
@@ -1413,6 +1445,11 @@ private fun buildLedgerGraph(
             resolveCorrectionCommitStatus = ResolveTransactionCorrectionCommitStatus(readAdapter),
             resolveVoidCommitStatus = ResolveTransactionVoidCommitStatus(readAdapter),
             baseQueryRecycleBin = session.queryRecycleBin,
+            // P7-07 07.D: the budget surface (read + write + revision reader + session version).
+            queryBudgetMonth = queryBudgetMonth,
+            saveBudgetConfiguration = saveBudgetConfiguration,
+            budgetAuthorityReader = budgetStore,
+            budgetExpectedCatalogVersion = { session.authority.catalogVersion },
         )
     // A-PERF (spec section 2.1): the Android bootstrap-completion trigger point — the graph is
     // built (catalog bootstrap done), so SQLite's official open-time pattern runs once here, in

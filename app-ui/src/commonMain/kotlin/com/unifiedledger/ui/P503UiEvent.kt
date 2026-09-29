@@ -1,5 +1,7 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.BudgetCommandResult
+import com.unifiedledger.application.BudgetMonthViewResult
 import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.EntryPinTarget
@@ -14,6 +16,7 @@ import com.unifiedledger.application.ManualIncomeSubmissionResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
+import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
 import com.unifiedledger.domain.CounterpartyId
@@ -966,6 +969,84 @@ sealed interface P503UiEvent {
      * BackupRestore; a running preflight or confirm absorbs the close (提交中不得离开).
      */
     data object CloseBackupRestore : P503UiEvent
+
+    // ---- P7-07 07.D budget events (D-184; spec sections 3.4/4/5) ----
+
+    /**
+     * The landed budget-month read ([BudgetMonthViewResult]). Effect only on OverviewEmpty
+     * (the analysis tab's budget region consumes it); absorbed everywhere else. A typed
+     * failure lands exactly like a success — the region renders the explicit failure copy and
+     * never a zero — because the budget region is an ADDITIVE surface whose failure must not
+     * displace the whole overview (unlike the monthly card's InfrastructureFailure path).
+     */
+    data class BudgetMonthLanded(
+        val result: BudgetMonthViewResult,
+    ) : P503UiEvent
+
+    /**
+     * Opens the budget-configuration surface for one scope of the effective month. The host
+     * resolves the scope's current authority BEFORE dispatching (revision 0 = unset; closed
+     * and the current limit travel with the event). Effect only on OverviewEmpty; absorbed
+     * everywhere else. The host offers the affordance only when the budget surface is wired,
+     * so this event never renders a dead button.
+     */
+    data class OpenBudgetConfig(
+        val scope: BudgetScope,
+        val month: kotlinx.datetime.YearMonth,
+        val revision: Long,
+        val closed: Boolean,
+        val limitMinorUnits: Long?,
+    ) : P503UiEvent
+
+    /**
+     * One limit-field write on the config surface. Absorbed while submitting (提交中不重入).
+     * Effect only on BudgetConfig; absorbed everywhere else.
+     */
+    data class UpdateBudgetLimitText(
+        val text: String,
+    ) : P503UiEvent
+
+    /**
+     * The explicit save request (calling confirm IS the user's decision; the host gates the
+     * draft BEFORE dispatching, so only a valid non-negative parse reaches here). The host
+     * runs the 07.B claim-first commit off the UI thread and the reducer sets the
+     * [P503AppState.BudgetConfig.submitting] marker (提交中不重入). Effect only on BudgetConfig;
+     * absorbed everywhere else. NOTE: no requestId travels here — the 07.B protocol mints the
+     * request id inside its commit boundary, because an equivalent replay must return the
+     * ORIGINAL receipt (a host-minted fresh id per intent would break that identity).
+     */
+    data object ConfirmBudgetLimit : P503UiEvent
+
+    /**
+     * The explicit close-monitoring request (an append-only CLOSED history row; configuration
+     * and history are kept). Same run/landing discipline as [ConfirmBudgetLimit].
+     */
+    data object ConfirmBudgetClose : P503UiEvent
+
+    /**
+     * The landed budget command result ([BudgetCommandResult]): the marker clears and the
+     * typed outcome banner shows; the surface stays until the explicit close. Effect only on
+     * BudgetConfig; absorbed everywhere else.
+     */
+    data class BudgetConfigResultLanded(
+        val result: BudgetCommandResult,
+    ) : P503UiEvent
+
+    /**
+     * The commit ran but its outcome could not be resolved (an exception escaped the 07.B
+     * commit boundary; the store maps its own failures to typed results, so this is an
+     * infrastructure escape). The marker clears and the surface shows the explicit
+     * 结果未知 banner — never a fabricated rejection, never silence. A re-attempt is safe:
+     * if the first commit landed, the CAS check returns the typed revision conflict.
+     * Effect only on BudgetConfig; absorbed everywhere else.
+     */
+    data object BudgetCommitUnknownLanded : P503UiEvent
+
+    /**
+     * Closes the config surface back to the exact preserved overview. Effect only on
+     * BudgetConfig; a submitting surface absorbs it (提交中不得离开).
+     */
+    data object CloseBudgetConfig : P503UiEvent
 }
 
 /**

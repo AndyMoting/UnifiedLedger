@@ -56,10 +56,9 @@ data class BudgetMonthContribution(
  * explicit failure and must never display a zero execution amount; spec section 3.1 restricts
  * a category scope to a stable EXPENSE id). A posting account missing from [catalog] likewise
  * fails with [IllegalStateException] and checked overflow with [ArithmeticException], exactly
- * as [MonthlyBuckets.aggregate]. The mapping of these exceptions onto
- * [BudgetMonthResult.InvalidState] is the responsibility of the (not yet implemented) budget
- * use case; this pure classifier only throws. Only a valid EXPENSE category with no postings
- * this month observes a genuine zero.
+ * as [MonthlyBuckets.aggregate]. [QueryBudgetMonth] maps these exceptions onto
+ * [BudgetMonthResult.InvalidState]; this pure classifier only throws. Only a valid EXPENSE
+ * category with no postings this month observes a genuine zero.
  */
 object BudgetOrdinaryNetExpense {
     fun contributions(
@@ -77,6 +76,30 @@ object BudgetOrdinaryNetExpense {
                 netExpenseByCurrency = scopeNetExpense(monthActivity, scope),
             )
         }
+    }
+
+    /**
+     * 07.D (spec sections 3.2/5.1): the per-scope observation of an ALREADY AGGREGATED
+     * [MonthlyActivity] — the one-fold shape [QueryBudgetMonth] uses. The caller runs
+     * [MonthlyBuckets.aggregate] exactly once over the bounded month rows and derives every
+     * configured scope's net expense from that single result, so no scope observation ever
+     * re-reads or re-aggregates the ledger (spec section 5.1's "not per budget" hard constraint).
+     *
+     * Same fail-closed contract as [contributions]: a scope [CategoryId] absent from the
+     * catalog or not a `CategoryKind.EXPENSE` category throws [IllegalStateException]; a
+     * checked overflow throws [ArithmeticException]. A level-1 scope observes its own node
+     * whose totals already equal the sum of its level-2 children (the frozen rollup); TOTAL
+     * observes the month's per-currency net expense (which includes 无分类).
+     */
+    fun scopeNetExpenseMinorUnits(
+        activity: MonthlyActivity,
+        catalog: LedgerCatalog,
+        scope: BudgetScope,
+        currency: CurrencyUnit,
+    ): Long {
+        validateScope(scope, catalog)
+        val netByCurrency = scopeNetExpense(activity, scope)
+        return netByCurrency[currency] ?: 0L
     }
 
     /**
@@ -159,8 +182,8 @@ data class BudgetMonth(
 /**
  * Fail-closed budget month result (mirrors [MonthlyActivityResult], spec section 5.1).
  * [InvalidState] is a catalog/posting inconsistency, a negative limit (spec section 3.3) or
- * checked overflow; [Unavailable] is reserved for the 07.D read-port failure (not produced by
- * the pure projection of this slice). Neither is ever rendered as a zero execution amount.
+ * checked overflow; [Unavailable] is the 07.D read-port failure. Neither is ever rendered as a
+ * zero execution amount.
  */
 sealed interface BudgetMonthResult {
     data class Success(
