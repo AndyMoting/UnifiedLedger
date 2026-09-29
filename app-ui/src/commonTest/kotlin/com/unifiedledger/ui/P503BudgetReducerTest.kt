@@ -330,12 +330,24 @@ class P503BudgetReducerTest {
             P503UiEvent.ResumeImportBatchDispatch,
             P503UiEvent.AbandonImportBatch,
             P503UiEvent.CloseImportCandidateDetail,
+            // Fix round 3: the pin toggle's async landing joins the absorbed family (its
+            // affordance is unreachable here today, and the exhaustiveness claim now holds).
+            P503UiEvent.TogglePin(
+                target = pinTarget("category-x"),
+                pinned = true,
+            ),
         )) {
             config = assertIs<P503AppState.BudgetConfig>(reducer.reduce(config, event))
         }
         val landed = assertIs<P503AppState.BudgetConfig>(config)
         assertSame(overviewWithMonth, landed.overview)
     }
+
+    private fun pinTarget(categoryId: String): com.unifiedledger.application.EntryPinTarget =
+        com.unifiedledger.application.EntryPinTarget.CategoryTarget(
+            ledgerId = ledgerId,
+            categoryId = com.unifiedledger.domain.CategoryId(categoryId),
+        )
 
     private fun openConfig(): P503AppState.BudgetConfig =
         P503AppState.BudgetConfig(

@@ -282,6 +282,10 @@ class P503ReducerImpl(
             // Defensive absorption: the entry flow and the unknown-commit check cannot be in
             // flight while this surface is open (their states exclude BudgetConfig), but their
             // landing hops are state-ungated, so the family is closed rather than left to ISE.
+            // TogglePin's landing hop is likewise state-ungated; its affordance renders only on
+            // the ACCOUNTS card (unreachable today), and it joins this absorbed family so the
+            // exhaustiveness claim above holds for every member.
+            is P503UiEvent.TogglePin,
             is P503UiEvent.SubmissionResult,
             is P503UiEvent.CommitStatusResolved,
             -> state
