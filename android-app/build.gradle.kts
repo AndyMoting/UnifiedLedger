@@ -47,6 +47,10 @@ dependencies {
     // F-2 analog (IMP-11): the composition root consumes the Android system SQLite driver
     // itself; ledger-data declares it as implementation and does not expose it to consumers.
     implementation("app.cash.sqldelight:android-driver:2.3.2")
+    // P7-07 07.D (D-184): the budget config-reader lambda adapts the application port whose
+    // invoke signature carries kotlinx.datetime.YearMonth; the artifact is already in the repo
+    // (application/app-ui), this only puts it on THIS module's main classpath.
+    implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation(compose.runtime)
     // D-128: compose.foundation supplies Box/fillMaxSize/statusBarsPadding for the root status bar padding.

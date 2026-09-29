@@ -20,23 +20,27 @@ import kotlin.time.Instant
 /*
  * P7-07 07.D-1 bounded contribution read adapter (D-184 item 3 residual; spec section 5.1).
  *
- * Implements the shared [MonthlyContributionReadPort] over ONE SQLite read transaction:
+ * Implements the shared [MonthlyContributionReadPort]. The `[start, end)` bounds are projected to
+ * epoch nanoseconds ([StatisticsAtProjection]) BEFORE the transaction; inside ONE SQLite read
+ * transaction the adapter then:
  *
- *  1. project the `[start, end)` bounds to epoch nanoseconds ([StatisticsAtProjection]);
- *  2. run the fail-loud missing-projection probe (spec section 6.4 item 5) — a non-zero count
+ *  1. runs the fail-loud missing-projection probe (spec section 6.4 item 5) — a non-zero count
  *     is [MonthlyContributionReadFailure.MissingProjection], never a silent omission;
- *  3. load the catalog generation ([CatalogAuthorityReader]) and read the window's current-
+ *  2. loads the catalog generation ([CatalogAuthorityReader]) and reads the window's current-
  *     version effective rows (`monthlyContributionRowsInWindow`, the projection-indexed
  *     analogue of `ledgerEntryRowsForLedger` with a `[start, end)` predicate);
- *  4. re-read the catalog generation and fail with
- *     [MonthlyContributionReadFailure.CatalogVersionMismatch] if it changed mid-read or differs
- *     from the caller's `expectedCatalogVersion` (spec section 5.1 / open item 9).
+ *  3. fails with [MonthlyContributionReadFailure.CatalogVersionMismatch] unless the snapshot's
+ *     generation equals the caller's `expectedCatalogVersion` (spec section 5.1 / open item 9).
  *
- * Because all four steps run inside one `transactionWithResult` on one connection, SQLite keeps
- * a single read snapshot: the catalog version and the postings are from one generation. The
- * adapter reuses the frozen effective predicate (`transaction_effective_state`) through the SQL
- * query and never adds a second state rule. Amounts are folded in Kotlin by the caller's frozen
- * classifier; this adapter never SUMs or DISTINCTs in SQL.
+ * Steps 1-3 run inside one `transactionWithResult` on one connection, so SQLite keeps a single
+ * read snapshot: the catalog generation and the postings are read from the SAME generation (a
+ * catalog write cannot land between the generation read and the row read within one snapshot).
+ * The gate is therefore the caller's `expectedCatalogVersion` against that snapshot generation:
+ * a caller holding a stale generation, or a catalog write that committed before this read, is
+ * detected and never silently zeroed. The adapter reuses the frozen effective predicate
+ * (`transaction_effective_state`) through the SQL query and never adds a second state rule.
+ * Amounts are folded in Kotlin by the caller's frozen classifier; this adapter never SUMs or
+ * DISTINCTs in SQL.
  *
  * Read-only: no Posting is created, no balance/reconciliation is changed.
  */
@@ -55,22 +59,25 @@ class SqlDelightMonthlyContributionReadAdapter(
         val startNanos = StatisticsAtProjection.project(startInclusive) ?: return failed(MonthlyContributionReadFailure.Unavailable)
         val endNanos = StatisticsAtProjection.project(endExclusive) ?: return failed(MonthlyContributionReadFailure.Unavailable)
         return try {
-            database.transactionWithResult {
+            // One read-only snapshot covers the probe, the catalog load and the window rows: the
+            // generation and the postings cannot span two catalog generations inside one
+            // snapshot, so a single generation comparison is the complete gate. noEnclosing = true
+            // does not change the BEGIN mode on this driver version; it makes the nesting contract
+            // fail loud instead of silently nesting. (SQLDelight 2.3.2's
+            // Transacter.transactionWithResult names this parameter noEnclosing — there is no
+            // `readOnly` parameter.)
+            database.transactionWithResult(noEnclosing = true) {
                 val missing = database.ledgerQueries.statisticsAtProjectionMissingForLedger(ledgerId.value).executeAsOne()
                 if (missing != 0L) {
                     return@transactionWithResult failed(MonthlyContributionReadFailure.MissingProjection)
                 }
-                val authority = catalogReader.load(ledgerId)
-                    ?: return@transactionWithResult failed(MonthlyContributionReadFailure.Unavailable)
-                val rows = windowRows(ledgerId, startNanos, endNanos)
-                // Re-read the generation last: a catalog write that committed during this read
-                // makes the catalog and the postings span two generations (spec section 5.1).
-                val versionAtEnd =
-                    database.ledgerQueries
-                        .selectCatalogVersion(ledgerId.value)
-                        .executeAsOneOrNull()
+                val authority =
+                    catalogReader.load(ledgerId)
                         ?: return@transactionWithResult failed(MonthlyContributionReadFailure.Unavailable)
-                if (authority.catalogVersion != expectedCatalogVersion || versionAtEnd != expectedCatalogVersion) {
+                val rows = windowRows(ledgerId, startNanos, endNanos)
+                // The snapshot generation must be exactly the caller's; a mismatch (a stale
+                // caller generation, or a catalog write committed before this read) is typed.
+                if (authority.catalogVersion != expectedCatalogVersion) {
                     return@transactionWithResult failed(MonthlyContributionReadFailure.CatalogVersionMismatch)
                 }
                 MonthlyContributionReadResult.Success(
@@ -120,6 +127,5 @@ class SqlDelightMonthlyContributionReadAdapter(
                 )
             }
 
-    private fun failed(failure: MonthlyContributionReadFailure): MonthlyContributionReadResult =
-        MonthlyContributionReadResult.Failed(failure)
+    private fun failed(failure: MonthlyContributionReadFailure): MonthlyContributionReadResult = MonthlyContributionReadResult.Failed(failure)
 }

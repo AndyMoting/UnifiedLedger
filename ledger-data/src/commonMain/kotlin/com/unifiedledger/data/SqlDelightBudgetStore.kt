@@ -1,6 +1,7 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.db.SqlDriver
+import com.unifiedledger.application.BUDGET_CONFIGURED_CURRENCY
 import com.unifiedledger.application.BudgetAuthority
 import com.unifiedledger.application.BudgetAuthorityReader
 import com.unifiedledger.application.BudgetCommandPayload
@@ -44,10 +45,12 @@ class SqlDelightBudgetStore private constructor(
 
     /**
      * P7-07 07.D-1 (spec section 5.1): every configured budget scope of one
-     * `(ledgerId, month)` with its CURRENT settings, so the month list / TOTAL + category
-     * enumeration does not need one single-target lookup per scope. Read-only.
+     * `(ledgerId, month)` with its CURRENT settings, read in ONE bounded query. The current
+     * revision's status/limit are joined to `budget_config.current_revision` inside
+     * `selectBudgetConfigsForMonth`, so enumerating N scopes issues exactly one query and never
+     * one single-target lookup per scope. Read-only.
      *
-     * The month arrives as the canonical `YYYY-MM` key ([com.unifiedledger.application.budgetMonthConfigKey]
+     * The month arrives as the canonical `YYYY-MM` key ([com.unifiedledger.application.budgetMonthKey]
      * at the call site) rather than a `YearMonth`: ledger-data deliberately keeps
      * kotlinx-datetime a TEST-only dependency, and the [BudgetMonthConfigReader] lambda
      * adapter lives with the composition roots that already own the reporting types.
@@ -57,7 +60,7 @@ class SqlDelightBudgetStore private constructor(
         monthKey: String,
     ): List<BudgetMonthConfigRow> =
         database.ledgerQueries
-            .selectBudgetConfigsForMonth(ledgerId.value, monthKey) {
+            .selectBudgetConfigsForMonth(ledgerId.value, monthKey, BUDGET_CONFIGURED_CURRENCY.code) {
                 budgetId,
                 _,
                 _,
@@ -66,16 +69,18 @@ class SqlDelightBudgetStore private constructor(
                 scopeKind,
                 scopeCategoryId,
                 currentRevision,
+                status,
+                limitMinor,
                 ->
-                val limit = currentLimit(ledgerId.value, budgetId, currentRevision)
                 BudgetMonthConfigRow(
                     budgetId = BudgetId(budgetId),
                     scope = budgetScopeFromStored(scopeKind, scopeCategoryId),
                     revision = currentRevision,
-                    // A monitored budget always stores a non-null limit (zero is a real 0);
-                    // a null current limit at revision > 0 is a CLOSED history head.
-                    closed = currentRevision > 0L && limit == null,
-                    limitMinorUnits = limit,
+                    // A revision-0 config has no history row yet (status NULL) and is not
+                    // monitored; a CLOSED history head is explicitly not monitored; a MONITORED
+                    // head always stores a non-null limit (zero is a real 0).
+                    closed = status == "CLOSED",
+                    limitMinorUnits = limitMinor,
                 )
             }.executeAsList()
 

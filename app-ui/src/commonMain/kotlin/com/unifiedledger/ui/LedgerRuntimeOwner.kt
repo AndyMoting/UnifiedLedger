@@ -695,6 +695,9 @@ class LedgerLeaseScope(
                 // P7-06 06.D (D-182): the restore use cases are bound by the composition root; a
                 // pure field read, never an invocation.
                 backupRestore = restoreWiring != null,
+                // P7-07 07.D (D-184; spec section 5): the budget month read AND the configuration
+                // write are both wired. Pure null checks, never an invocation.
+                budget = facade.queryBudgetMonth != null && facade.saveBudgetConfiguration != null,
             )
         }
 
@@ -810,6 +813,10 @@ data class LedgerSurfaces(
     // P7-06 06.D (D-182; spec section 6): the composition root bound the restore use cases. Same
     // pure-probe convention as [backupExport].
     val backupRestore: Boolean = false,
+    // P7-07 07.D (D-184; spec section 5): the composition root wired the budget month read
+    // ([QueryBudgetMonth]) AND the configuration write ([SaveBudgetConfiguration]). A pure
+    // field probe, never an invocation, so the host renders no dead budget affordance.
+    val budget: Boolean = false,
 )
 
 /**

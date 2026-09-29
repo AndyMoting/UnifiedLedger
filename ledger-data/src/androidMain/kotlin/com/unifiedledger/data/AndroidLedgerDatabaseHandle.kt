@@ -65,6 +65,10 @@ fun createAndroidLedgerDatabase(
             SqlDelightTransactionCorrectionCommitPort
                 .forPlatformConfiguredDatabase(database),
         voidCommitPort = SqlDelightTransactionVoidCommitPort.forPlatformConfiguredDatabase(database),
+        // P7-07 07.D (D-184; spec section 5): the budget configuration store (07.B commit port,
+        // authority reader and month config enumeration) on the same platform-configured
+        // connection, for the same reason as the four manual ports above.
+        budgetStore = SqlDelightBudgetStore.forPlatformConfiguredDatabase(database),
         driver = driver,
     )
 }
@@ -82,6 +86,8 @@ class AndroidLedgerDatabaseHandle internal constructor(
     // P7-05.B/C (D-156/D-158 slice 1b): the correction and void/restore commit ports.
     val correctionCommitPort: SqlDelightTransactionCorrectionCommitPort,
     val voidCommitPort: SqlDelightTransactionVoidCommitPort,
+    // P7-07 07.D (D-184; spec section 5): the budget configuration store.
+    val budgetStore: SqlDelightBudgetStore,
     private val driver: AndroidSqliteDriver,
 ) : AutoCloseable {
     override fun close() {

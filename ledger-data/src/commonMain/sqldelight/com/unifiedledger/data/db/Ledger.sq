@@ -9830,15 +9830,36 @@ SELECT budget_id, month_key, currency_code, currency_precision, scope_key, scope
 FROM budget_config
 WHERE ledger_id = ? AND month_key = ? AND currency_code = ? AND scope_key = ?;
 
--- P7-07 07.D-1 (spec section 5.1): every configured budget scope of one (ledger, month) for the
--- month list / TOTAL + category scope enumeration. The 07.B surface only had the single-target
--- selectBudgetConfigByScope, so this adds the month-scoped set. Read-only; TOTAL scopes have a
--- NULL scope_category_id and are decoded from scope_kind by the caller.
+-- P7-07 07.D-1 (spec section 5.1): every configured budget scope of one (ledger, month, currency)
+-- for the month list / TOTAL + category scope enumeration. The 07.B surface only had the
+-- single-target selectBudgetConfigByScope, so this adds the month-scoped set. Read-only.
+--
+-- The current revision's status/limit are joined in ONE query (`current_revision` -> the matching
+-- immutable history row), so enumerating N scopes does NOT issue N single-target lookups: a
+-- revision 0 config has no history row yet (LEFT JOIN yields NULL = not monitored, not closed),
+-- while a revision > 0 config takes exactly its current history row (MONITORED with a non-null
+-- limit, or CLOSED with a null limit). currency_code is filtered because the first version fixes
+-- the budget currency to CNY (spec section 3.1); TOTAL scopes have a NULL scope_category_id and
+-- are decoded from scope_kind by the caller.
 selectBudgetConfigsForMonth:
-SELECT budget_id, month_key, currency_code, currency_precision, scope_key, scope_kind, scope_category_id, current_revision
-FROM budget_config
-WHERE ledger_id = ? AND month_key = ?
-ORDER BY scope_kind DESC, scope_key;
+SELECT
+  config.budget_id,
+  config.month_key,
+  config.currency_code,
+  config.currency_precision,
+  config.scope_key,
+  config.scope_kind,
+  config.scope_category_id,
+  config.current_revision,
+  history.status,
+  history.limit_minor
+FROM budget_config AS config
+LEFT JOIN budget_settings_history AS history
+  ON history.ledger_id = config.ledger_id
+ AND history.budget_id = config.budget_id
+ AND history.revision_number = config.current_revision
+WHERE config.ledger_id = ? AND config.month_key = ? AND config.currency_code = ?
+ORDER BY config.scope_kind DESC, config.scope_key;
 
 insertBudgetConfig:
 INSERT INTO budget_config(ledger_id, budget_id, month_key, currency_code, currency_precision, scope_key, scope_kind, scope_category_id, current_revision)
