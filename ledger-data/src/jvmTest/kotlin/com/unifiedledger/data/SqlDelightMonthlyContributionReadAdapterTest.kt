@@ -27,13 +27,18 @@ import kotlin.time.Instant
  * effective/current-version joins, the fail-loud probe or the catalog-version gate turns a
  * specific assertion red:
  *
- *  - `[start, end)` boundary: a transaction just inside is counted, one at `end` is not;
+ *  - `[start, end)` boundary: a transaction exactly AT `start` is INCLUDED (start-inclusive
+ *    `>=`), a transaction exactly at `end` is excluded (`<`); reverting `>=` to `>` drops the
+ *    start row and turns the assertion red;
+ *  - a corrected transaction whose SUPERSEDED version is in-window but whose CURRENT version is
+ *    out-of-window is excluded (the window applies to the current version only);
  *  - void/corrected transactions count once (effective + current version only);
  *  - a missing projection is the typed [MonthlyContributionReadFailure.MissingProjection];
- *  - a catalog generation different from the caller's is
+ *  - a catalog version different from the caller's is
  *    [MonthlyContributionReadFailure.CatalogVersionMismatch];
  *  - an out-of-window bound is [MonthlyContributionReadFailure.Unavailable], never an empty zero;
- *  - `configsFor` distinguishes a monitored zero from a closed (null) budget.
+ *  - `configsForMonth` distinguishes a monitored zero from a closed (null) budget and reads the
+ *    current revision in one query.
  *
  * All data synthetic and anonymous with fixed instants.
  */
@@ -44,11 +49,28 @@ class SqlDelightMonthlyContributionReadAdapterTest {
     @Test
     fun theWindowIncludesTheStartBoundAndExcludesTheEndBound() {
         withDatabase { database, driver, adapter ->
+            // tx-at-start is EXACTLY at the window start instant: the `>=` bound must include it
+            // (reverting `>=` to `>` drops it and turns this assertion red).
+            seedExpense(database, driver, "tx-at-start", "2026-03-01T00:00:00Z")
             seedExpense(database, driver, "tx-inside", "2026-03-10T02:00:00Z")
             seedExpense(database, driver, "tx-at-end", "2026-04-01T00:00:00Z")
             val rows = adapter.readContributions(ledgerId, Instant.parse("2026-03-01T00:00:00Z"), Instant.parse("2026-04-01T00:00:00Z"), expectedCatalogVersion = 1L)
             val success = assertIs<MonthlyContributionReadResult.Success>(rows)
-            assertEquals(listOf("tx-inside"), success.rows.map { it.transactionId.value })
+            assertEquals(listOf("tx-at-start", "tx-inside"), success.rows.map { it.transactionId.value })
+        }
+    }
+
+    @Test
+    fun aCorrectedTransactionWhoseCurrentVersionIsOutOfWindowIsExcluded() {
+        withDatabase { database, driver, adapter ->
+            // The superseded version is in-window but the CURRENT version moved to April: the
+            // window applies to the current version, so the March read must NOT include it.
+            seedExpense(database, driver, "tx-moved", "2026-03-15T02:00:00Z", versionId = "version-march")
+            seedExpense(database, driver, "tx-moved", "2026-04-10T02:00:00Z", versionId = "version-april", versionNumber = 2L)
+            val march = adapter.readContributions(ledgerId, Instant.parse("2026-03-01T00:00:00Z"), Instant.parse("2026-04-01T00:00:00Z"), 1L)
+            assertTrue(assertIs<MonthlyContributionReadResult.Success>(march).rows.isEmpty())
+            val april = adapter.readContributions(ledgerId, Instant.parse("2026-04-01T00:00:00Z"), Instant.parse("2026-05-01T00:00:00Z"), 1L)
+            assertEquals(listOf("tx-moved"), assertIs<MonthlyContributionReadResult.Success>(april).rows.map { it.transactionId.value })
         }
     }
 
@@ -64,7 +86,12 @@ class SqlDelightMonthlyContributionReadAdapterTest {
             val result = adapter.readContributions(ledgerId, Instant.parse("2026-03-01T00:00:00Z"), Instant.parse("2026-04-01T00:00:00Z"), 1L)
             val success = assertIs<MonthlyContributionReadResult.Success>(result)
             assertEquals(listOf("tx-corrected"), success.rows.map { it.transactionId.value })
-            assertEquals("version-new", success.rows.single().currentVersionId.value)
+            assertEquals(
+                "version-new",
+                success.rows
+                    .single()
+                    .currentVersionId.value,
+            )
         }
     }
 
@@ -243,16 +270,19 @@ private fun SqlDelightBudgetStore.setLimitMonitored(
             requestId = com.unifiedledger.application.BudgetRequestId("request-${budgetScopeKey(scope)}-set"),
             requestSnapshot = "snapshot-${budgetScopeKey(scope)}-set",
             inputFingerprint = "fingerprint",
-            expectedRevision = load(
-                BudgetTarget(
-                    ledgerId = ledgerId,
-                    monthKey = budgetMonthConfigKey(month),
-                    currency = CurrencyUnit("CNY", 2),
-                    scopeKey = budgetScopeKey(scope),
-                    scopeCategoryId = (scope as? BudgetScope.Category)?.categoryId,
-                ),
-            )?.revision ?: 0L,
-            command = com.unifiedledger.application.BudgetCommandPayload.SetLimit(limitMinorUnits),
+            expectedRevision =
+                load(
+                    BudgetTarget(
+                        ledgerId = ledgerId,
+                        monthKey = budgetMonthConfigKey(month),
+                        currency = CurrencyUnit("CNY", 2),
+                        scopeKey = budgetScopeKey(scope),
+                        scopeCategoryId = (scope as? BudgetScope.Category)?.categoryId,
+                    ),
+                )?.revision ?: 0L,
+            command =
+                com.unifiedledger.application.BudgetCommandPayload
+                    .SetLimit(limitMinorUnits),
             createdAt = Instant.parse("2026-03-05T02:00:00Z"),
         )
     commitOnce(request) { BudgetId("budget-${budgetScopeKey(scope)}") }

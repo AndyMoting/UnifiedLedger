@@ -92,6 +92,16 @@ class SqlDelightMonthlyContributionReadAdapter(
         }
     }
 
+    /**
+     * A persisted kind string outside [TransactionKind] makes [TransactionKind.valueOf] throw
+     * [IllegalArgumentException], which the caller maps to
+     * [MonthlyContributionReadFailure.Unavailable] (the port's only read-integrity failure). It
+     * is deliberately NOT a distinct invalid state: the port's failure family has no
+     * invalid-state member, and a corrupt/unrecognised persisted kind is a read-time data
+     * integrity failure the caller cannot act on differently from any other unreadable row
+     * (both fail closed, never a zero). The caller's InvalidState is reserved for the
+     * catalog/posting inconsistency detected during classification.
+     */
     private fun windowRows(
         ledgerId: LedgerId,
         startNanos: Long,

@@ -75,11 +75,15 @@ class QueryBudgetMonthTest {
         assertEquals(0L, view.total?.budgetMonth?.overspentMinorUnits)
         assertEquals(
             70_00L,
-            view.categories.first { it.budgetMonth.scope == BudgetScope.Category(foodParentId) }.budgetMonth.netExpenseMinorUnits,
+            view.categories
+                .first { it.budgetMonth.scope == BudgetScope.Category(foodParentId) }
+                .budgetMonth.netExpenseMinorUnits,
         )
         assertEquals(
             30_00L,
-            view.categories.first { it.budgetMonth.scope == BudgetScope.Category(breakfastId) }.budgetMonth.netExpenseMinorUnits,
+            view.categories
+                .first { it.budgetMonth.scope == BudgetScope.Category(breakfastId) }
+                .budgetMonth.netExpenseMinorUnits,
         )
         // Parent and child are independent observations, never summed.
         assertTrue(view.observations.map { it.budgetMonth.netExpenseMinorUnits }.none { it == 70_00L + 30_00L })
@@ -104,20 +108,51 @@ class QueryBudgetMonthTest {
 
     @Test
     fun refundsReduceNetExpenseAndRemainingIsNeverClamped() {
-        // P707-A01 intent: expense 80, refund 30 -> net 50, remaining 50. A REFUND_RECEIPT's
-        // EXPENSE leg is negative per the frozen account-kind dispatch.
+        // P707-A01/A05 intent (spec section 4: "净退款可使 netExpense 为负、remaining 大于 limit；
+        // 金额不得钳到零"). Expense 30, refund 80 -> net -50; a REFUND_RECEIPT's EXPENSE leg is
+        // negative per the frozen account-kind dispatch, so the net is genuinely negative. The
+        // remaining must then EXCEED the 50 limit (not clamp to 0) and overspent stays 0. If any
+        // clamp-to-zero were introduced, the remaining assertion below would go RED.
         val rows =
             listOf(
-                expenseRow("tx-expense", breakfastExpenseId, 8_000L),
-                expenseRow("tx-refund", breakfastExpenseId, -3_000L, kind = TransactionKind.REFUND_RECEIPT),
+                expenseRow("tx-expense", breakfastExpenseId, 3_000L),
+                expenseRow("tx-refund", breakfastExpenseId, -8_000L, kind = TransactionKind.REFUND_RECEIPT),
             )
         val result =
             useCase(RecordingPort(rows), listOf(config("budget-total", BudgetScope.Total, 50_00L)))
                 .query(ledgerId, march, BudgetScope.Total, expectedCatalogVersion = 1L)
         val observation = assertIs<BudgetMonthResult.Success>(result).budgetMonth
-        assertEquals(50_00L, observation.netExpenseMinorUnits)
+        assertEquals(-50_00L, observation.netExpenseMinorUnits)
         assertEquals(0L, observation.overspentMinorUnits)
-        assertEquals(0L, observation.remainingMinorUnits)
+        assertEquals(10_000L, observation.remainingMinorUnits)
+        assertTrue(
+            observation.remainingMinorUnits!! > observation.limitMinorUnits!!,
+            "a negative net expense must make remaining exceed the limit, never clamp to 0",
+        )
+    }
+
+    @Test
+    fun queryViewPresentsAConfiguredClosedScopeWithANullLimitAndNoRemaining() {
+        // Spec sections 3.2/3.3: a CLOSED scope is still a CONFIGURED scope. The month list must
+        // show it (present as Success) with limit/remaining/overspent null — configured but not
+        // monitored — while a scope with no configuration row is absent from the view entirely.
+        val rows = listOf(expenseRow("tx-breakfast", breakfastExpenseId, 1_000L))
+        val configs =
+            listOf(
+                BudgetMonthConfigRow(BudgetId("budget-total"), BudgetScope.Total, revision = 1L, closed = false, limitMinorUnits = 5_00L),
+                BudgetMonthConfigRow(BudgetId("budget-closed"), BudgetScope.Category(breakfastId), revision = 2L, closed = true, limitMinorUnits = null),
+            )
+        val view = assertIs<BudgetMonthViewResult.Success>(useCase(RecordingPort(rows), configs).queryView(ledgerId, march, 1L)).view
+        // The closed scope is PRESENT (its configuration exists), not dropped.
+        val closed = view.categories.single { it.budgetMonth.scope == BudgetScope.Category(breakfastId) }.budgetMonth
+        assertNull(closed.limitMinorUnits)
+        assertNull(closed.remainingMinorUnits)
+        assertNull(closed.overspentMinorUnits)
+        assertEquals(1_000L, closed.netExpenseMinorUnits)
+        // A configured TOTAL scope is still present and monitored.
+        assertEquals(5_00L, view.total?.budgetMonth?.limitMinorUnits)
+        // A scope with no configuration row is absent (never invented).
+        assertTrue(view.observations.none { it.budgetMonth.scope == BudgetScope.Category(dinnerId) })
     }
 
     @Test

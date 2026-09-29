@@ -27,20 +27,18 @@ import kotlin.time.Instant
  * these postings with EXACTLY the catalog generation they were read with; the caller never
  * re-supplies a possibly-newer catalog.
  *
- * CONSISTENT CATALOG/TRANSACTION VERSION (spec section 5.1 / open item 9). The port takes the
- * caller's `expectedCatalogVersion` — the generation of the [CatalogAuthority] the session
- * classified against — and the data adapter reads the catalog version at the START and END of
- * ONE read transaction: if the two differ (a catalog write committed mid-read) or either
- * differs from `expectedCatalogVersion`, the read fails with
+ * CONSISTENT CATALOG VERSION (spec section 5.1 / open item 9). The port takes the caller's
+ * `expectedCatalogVersion` — the catalog version of the [CatalogAuthority] the session
+ * classified against — and the data adapter reads the catalog version AND the postings inside
+ * ONE SQLite read transaction, so both come from the same snapshot generation. When that
+ * snapshot version differs from `expectedCatalogVersion` the read fails with
  * [MonthlyContributionReadFailure.CatalogVersionMismatch]. A catalog write between the
- * session's catalog load and this read is therefore detected, never silently zeroed. Reading
- * the version and the postings inside one SQLite read transaction makes the window a single
- * consistent snapshot.
+ * session's catalog load and this read is therefore detected, never silently zeroed.
  *
  * FAIL-CLOSED (spec section 5.1, mirroring [MonthlyActivityResult]): a database failure, a
- * missing time projection (spec section 6.4 item 5) or a catalog/tx generation mismatch is a
- * typed failure, never a zero execution amount. The use case maps every failure to its typed
- * result and never renders zero.
+ * missing time projection (spec section 6.4 item 5) or a catalog version mismatch is a typed
+ * failure, never a zero execution amount. The use case maps every failure to its typed result
+ * and never renders zero.
  */
 
 /** The typed failure family of the bounded contribution read (spec section 5.1). */
@@ -53,10 +51,9 @@ sealed interface MonthlyContributionReadFailure {
     data object MissingProjection : MonthlyContributionReadFailure
 
     /**
-     * The catalog generation inside the read snapshot differs from the caller's
-     * `expectedCatalogVersion` (or changed mid-read), so the caller's catalog and these
-     * postings are not from one generation. Reported as a typed failure, never a silent zero
-     * (spec section 5.1).
+     * The catalog version inside the read snapshot differs from the caller's
+     * `expectedCatalogVersion`, so the caller's catalog and these postings are not from one
+     * generation. Reported as a typed failure, never a silent zero (spec section 5.1).
      */
     data object CatalogVersionMismatch : MonthlyContributionReadFailure
 

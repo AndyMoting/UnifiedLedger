@@ -22,7 +22,7 @@ import kotlinx.datetime.plus
  * sections 2.3/3.2).
  *
  * Fail-closed (spec section 5.1; R-Q06-4 discipline): a read failure, a missing statistics-at
- * projection or a catalog/tx generation mismatch is [BudgetMonthResult.Unavailable] /
+ * projection or a catalog version mismatch is [BudgetMonthResult.Unavailable] /
  * [BudgetMonthViewResult.Unavailable]; a catalog/posting inconsistency, an unknown budget
  * scope category or checked overflow is the typed invalid state. None is ever rendered as a
  * zero execution amount, and an empty month with a configured scope is a genuine zero, not a
@@ -30,11 +30,13 @@ import kotlinx.datetime.plus
  */
 
 /**
- * The whole-month view (spec sections 3.2/5.1): the TOTAL observation (present exactly when the
- * month has a TOTAL configuration) plus one observation per configured category scope, all
- * folded from one bounded read. Unset/closed scopes are NOT monitored and are therefore absent
- * (there is no limit to observe); a monitored scope — including a zero limit — is present as a
- * [BudgetMonthResult.Success].
+ * The whole-month view (spec sections 3.2/3.3/5.1): the TOTAL observation (present exactly when
+ * the month has a TOTAL configuration) plus one observation per CONFIGURED category scope, all
+ * folded from one bounded read. A configured scope is present regardless of state — a monitored
+ * scope (including a zero limit) carries its limit/remaining/overspent, while a CLOSED or
+ * not-yet-set scope is present as a [BudgetMonthResult.Success] with `limitMinorUnits == null`
+ * and null remaining/overspent (spec section 3.3: configured-but-not-monitored is distinct from
+ * an unconfigured scope). A scope with NO configuration row at all is absent from the view.
  */
 data class BudgetMonthView(
     val ledgerId: LedgerId,
@@ -43,7 +45,7 @@ data class BudgetMonthView(
     val total: BudgetMonthResult.Success?,
     val categories: List<BudgetMonthResult.Success>,
 ) {
-    /** Every present observation, TOTAL first then categories in the reader's stable order. */
+    /** Every present observation, TOTAL first then categories ordered by category id. */
     val observations: List<BudgetMonthResult.Success>
         get() = listOfNotNull(total) + categories
 }
@@ -56,7 +58,7 @@ sealed interface BudgetMonthViewResult {
     /** Catalog/posting inconsistency, an unknown budget scope category, or checked overflow. */
     data object InvalidState : BudgetMonthViewResult
 
-    /** Read failure, missing projection or catalog/tx generation mismatch; never zeros. */
+    /** Read failure, missing projection or catalog version mismatch; never zeros. */
     data object Unavailable : BudgetMonthViewResult
 }
 
@@ -69,7 +71,8 @@ class QueryBudgetMonth(
     /**
      * The single-scope observation of `(ledgerId, month, scope)`. [expectedCatalogVersion] is
      * the consumer session's `CatalogAuthority.catalogVersion`; the read port fails with a
-     * typed mismatch when its snapshot generation differs (spec section 5.1 / open item 9).
+     * typed mismatch when its snapshot's catalog version differs (spec section 5.1 / open
+     * item 9).
      *
      * An unconfigured/closed scope is `Success` with a `null` limit (not monitored, distinct
      * from a monitored zero); a monitored zero limit is a real `0`. An empty month is a
@@ -183,6 +186,10 @@ class QueryBudgetMonth(
             BudgetMonthViewResult.InvalidState
         } catch (failure: ArithmeticException) {
             BudgetMonthViewResult.InvalidState
+        } catch (failure: Exception) {
+            // Symmetric with [query]: any other unexpected failure is the typed Unavailable,
+            // never a fabricated zero view (spec section 5.1).
+            BudgetMonthViewResult.Unavailable
         }
     }
 

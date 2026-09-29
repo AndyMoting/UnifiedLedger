@@ -43,7 +43,14 @@ fun interface BudgetMonthConfigReader {
     ): List<BudgetMonthConfigRow>
 }
 
-/** Canonical `YYYY-MM` month key shared with the 07.B configuration keys (spec section 3.1). */
+/**
+ * The canonical `YYYY-MM` month key of the read-path config enumeration (spec section 3.1).
+ * Kept as a named alias of [budgetMonthKey] rather than inlining the latter at the
+ * composition-root call sites that adapt [BudgetMonthConfigReader] to the store's string-keyed
+ * `configsForMonth`: it names the read-path contract explicitly and keeps the write-path
+ * ([budgetMonthKey] in 07.B) and read-path key forms visibly the same canonical value. It is a
+ * deliberate alias, not an independent implementation.
+ */
 fun budgetMonthConfigKey(month: YearMonth): String = budgetMonthKey(month)
 
 /** Decodes a stored scope row back into the domain [BudgetScope] (spec section 3.1). */

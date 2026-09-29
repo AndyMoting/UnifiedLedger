@@ -56,10 +56,9 @@ data class BudgetMonthContribution(
  * explicit failure and must never display a zero execution amount; spec section 3.1 restricts
  * a category scope to a stable EXPENSE id). A posting account missing from [catalog] likewise
  * fails with [IllegalStateException] and checked overflow with [ArithmeticException], exactly
- * as [MonthlyBuckets.aggregate]. The mapping of these exceptions onto
- * [BudgetMonthResult.InvalidState] is the responsibility of the (not yet implemented) budget
- * use case; this pure classifier only throws. Only a valid EXPENSE category with no postings
- * this month observes a genuine zero.
+ * as [MonthlyBuckets.aggregate]. [QueryBudgetMonth] maps these exceptions onto
+ * [BudgetMonthResult.InvalidState]; this pure classifier only throws. Only a valid EXPENSE
+ * category with no postings this month observes a genuine zero.
  */
 object BudgetOrdinaryNetExpense {
     fun contributions(
@@ -183,8 +182,8 @@ data class BudgetMonth(
 /**
  * Fail-closed budget month result (mirrors [MonthlyActivityResult], spec section 5.1).
  * [InvalidState] is a catalog/posting inconsistency, a negative limit (spec section 3.3) or
- * checked overflow; [Unavailable] is reserved for the 07.D read-port failure (not produced by
- * the pure projection of this slice). Neither is ever rendered as a zero execution amount.
+ * checked overflow; [Unavailable] is the 07.D read-port failure. Neither is ever rendered as a
+ * zero execution amount.
  */
 sealed interface BudgetMonthResult {
     data class Success(
