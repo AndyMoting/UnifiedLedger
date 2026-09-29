@@ -546,7 +546,9 @@ fun P503App(
         // open surface. States with no overview to render the region keep the monthly
         // payload's own early-return semantics (mirrored, not changed for monthly).
         val current = latestState.value
-        val overview = carriedOverviewOf(current) ?: return
+        // P3 review round: the carried-overview set has ONE source
+        // (P503AppState.carriedBudgetMonthOverview) shared with the reducer.
+        val overview = current.carriedBudgetMonthOverview() ?: return
         try {
             val clockMonth = MonthlyBuckets.currentMonth(ledger.ledgerClock)
             resolvedCurrentMonth = clockMonth
@@ -598,10 +600,12 @@ fun P503App(
     /**
      * P7-07 07.D: runs the 07.B commit off the UI thread inside ONE operation lease; the
      * captured generation gates the landing hop (the commitTransactionCorrection shape). The
-     * store maps its own constraint/claim failures to typed results; an escaped exception is
-     * the explicit generic rejection banner (never silent, never a fake success). A determinate
-     * success changed the budget observation surface with zero transaction effect, so the
-     * coordinator re-requests the budget month directly (no authoritative refresh rides it).
+     * store maps its own constraint/claim failures to typed results; an exception ESCAPING
+     * that boundary is an infrastructure failure and lands as the explicit 结果未知 state
+     * ([P503UiEvent.BudgetCommitUnknownLanded]) — never silence, never a fabricated typed
+     * result, and a cancellation is RETHROWN (取消 is not 结果未知). A determinate success
+     * changed the budget observation surface with zero transaction effect, so the coordinator
+     * re-requests the budget month directly (no authoritative refresh rides it).
      */
     fun runBudgetCommit(plan: BudgetCommitPlan) {
         scope.launch(Dispatchers.Default) {
@@ -619,6 +623,10 @@ fun P503App(
                         } else {
                             save.setLimit(ledger.ledgerId, plan.month, plan.scope, requireNotNull(plan.limitMinorUnits), plan.expectedRevision)
                         }
+                    } catch (failure: kotlinx.coroutines.CancellationException) {
+                        // P3 review round: a cancelled lease block is NOT an unknown outcome —
+                        // rethrow so structured cancellation keeps its semantics.
+                        throw failure
                     } catch (failure: Exception) {
                         null
                     }
@@ -3694,21 +3702,3 @@ private data class BudgetCommitPlan(
     val expectedRevision: Long,
     val close: Boolean,
 )
-
-/**
- * P1-2 fix round: the preserved overview a state carries, if any — the same set the
- * reducer's carriesBudgetMonthSurface covers (OverviewEmpty itself, BudgetConfig,
- * TransactionDetail, RecycleBin, BackupExport, BackupRestore). Shared by the budget month
- * request so a landing behind an open surface resolves the month and is applied by the
- * reducer instead of being dropped.
- */
-private fun carriedOverviewOf(state: P503AppState): P503AppState.OverviewEmpty? =
-    when (state) {
-        is P503AppState.OverviewEmpty -> state
-        is P503AppState.BudgetConfig -> state.overview
-        is P503AppState.TransactionDetail -> state.overview
-        is P503AppState.RecycleBin -> state.overview
-        is P503AppState.BackupExport -> state.overview
-        is P503AppState.BackupRestore -> state.overview
-        else -> null
-    }

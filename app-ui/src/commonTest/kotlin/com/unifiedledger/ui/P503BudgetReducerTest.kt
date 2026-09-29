@@ -7,6 +7,7 @@ import com.unifiedledger.application.BudgetMonthResult
 import com.unifiedledger.application.BudgetMonthViewResult
 import com.unifiedledger.application.BudgetReceiptOutcome
 import com.unifiedledger.application.LedgerCurrentState
+import com.unifiedledger.application.MonthlyActivityResult
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.domain.BudgetId
 import com.unifiedledger.domain.BudgetScope
@@ -279,6 +280,61 @@ class P503BudgetReducerTest {
             )
         assertFalse(config.submitting)
         assertTrue(config.outcome is BudgetCommandResult.Accepted)
+    }
+
+    @Test
+    fun theMonthlyCycleLandingBehindTheConfigSurfaceUpdatesTheCarriedOverview() {
+        // Fix round 2 (P2): the landing hop that consumes the armed MONTHLY re-request can run
+        // while the config surface is open (the pre-fix path was a reachable ISE). A success
+        // updates the carried overview's monthly fields in place; a typed failure follows the
+        // detail precedent into the READ failure with the overview preserved.
+        var config = openConfig()
+        val activity =
+            com.unifiedledger.application.MonthlyActivity(
+                ledgerId,
+                march,
+                currencies = emptyList(),
+                expenseCategories = emptyList(),
+                incomeCategories = emptyList(),
+            )
+        val landedSuccess = MonthlyActivityResult.Success(activity)
+        val landed = P503UiEvent.MonthlyActivityResult(landedSuccess, listOf(march))
+        config =
+            assertIs(
+                reducer.reduce(config, landed),
+            )
+        assertEquals(activity, config.overview.monthlyActivity)
+        assertEquals(listOf(march), config.overview.selectableMonths)
+        assertFalse(config.overview.monthlyReloadRequired)
+        val failed =
+            assertIs<P503AppState.InfrastructureFailure>(
+                reducer.reduce(config, P503UiEvent.MonthlyActivityResult(MonthlyActivityResult.Unavailable, emptyList())),
+            )
+        assertEquals(InfrastructureFailureContext.READ, failed.context)
+        assertEquals(config.overview, failed.monthlyOverview)
+    }
+
+    @Test
+    fun theAsyncLandingFamiliesAreAbsorbedOnTheConfigSurfaceNotUnhandled() {
+        // Fix round 2 (exhaustive enumeration): state-ungated async landing hops behind the
+        // open config surface are absorbed (representative members of each family; the full
+        // disposition table lives in the fix round report).
+        var config: P503AppState = openConfig()
+        for (event in listOf<P503UiEvent>(
+            P503UiEvent.ImportFilePickCancelled,
+            P503UiEvent.RefreshImportReview,
+            P503UiEvent.ImportGroupEnumerationStarted,
+            P503UiEvent.ImportGroupEnumerationCompleted,
+            P503UiEvent.RequestImportBatchConfirm,
+            P503UiEvent.CancelImportBatchConfirm,
+            P503UiEvent.ResumeImportBatchDispatch,
+            P503UiEvent.AbandonImportBatch,
+            P503UiEvent.CloseImportCandidateDetail,
+        )) {
+            config = assertIs<P503AppState.BudgetConfig>(reducer.reduce(config, event))
+        }
+        val landed = assertIs<P503AppState.BudgetConfig>(config)
+        assertSame(overviewWithMonth, landed.overview)
     }
 
     private fun openConfig(): P503AppState.BudgetConfig =
