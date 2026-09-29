@@ -87,8 +87,17 @@ class QueryBudgetMonth(
                 MonthRead.Unavailable -> return BudgetMonthResult.Unavailable
                 MonthRead.InvalidState -> return BudgetMonthResult.InvalidState
             }
+        // The configuration read fails SEPARATELY from the fold: a database failure in the
+        // authority reader is the typed Unavailable (spec section 5.1), never the invalid
+        // state and never a fabricated zero — even though `load` reports its failures with
+        // IllegalStateException, which the fold below maps to InvalidState.
+        val authority =
+            try {
+                authorityReader.load(budgetTargetFor(ledgerId, month, scope, configuredCurrency))
+            } catch (failure: Exception) {
+                return BudgetMonthResult.Unavailable
+            }
         return try {
-            val authority = authorityReader.load(budgetTargetFor(ledgerId, month, scope, configuredCurrency))
             val activity = MonthlyBuckets.aggregate(read.rows, ledgerId, read.catalog, listOf(month)).getValue(month)
             BudgetMonthProjection.compute(
                 ledgerId = ledgerId,

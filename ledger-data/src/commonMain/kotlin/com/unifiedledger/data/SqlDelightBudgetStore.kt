@@ -9,20 +9,17 @@ import com.unifiedledger.application.BudgetCommandRequest
 import com.unifiedledger.application.BudgetCommandResult
 import com.unifiedledger.application.BudgetConfigurationCommitPort
 import com.unifiedledger.application.BudgetFailureCode
-import com.unifiedledger.application.BudgetMonthConfigReader
 import com.unifiedledger.application.BudgetMonthConfigRow
 import com.unifiedledger.application.BudgetReceiptOutcome
 import com.unifiedledger.application.BudgetRequestId
 import com.unifiedledger.application.BudgetSettingsVersion
 import com.unifiedledger.application.BudgetTarget
-import com.unifiedledger.application.budgetMonthConfigKey
 import com.unifiedledger.application.budgetScopeFromStored
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.BudgetId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
-import kotlinx.datetime.YearMonth
 
 /**
  * P7-07 07.B budget configuration store (D-184 item 3; spec section 3.4).
@@ -38,8 +35,7 @@ import kotlinx.datetime.YearMonth
 class SqlDelightBudgetStore private constructor(
     private val database: LedgerDatabase,
 ) : BudgetConfigurationCommitPort,
-    BudgetAuthorityReader,
-    BudgetMonthConfigReader {
+    BudgetAuthorityReader {
     constructor(database: LedgerDatabase, driver: SqlDriver) : this(database) {
         configureSqliteConnection(driver)
     }
@@ -50,13 +46,18 @@ class SqlDelightBudgetStore private constructor(
      * P7-07 07.D-1 (spec section 5.1): every configured budget scope of one
      * `(ledgerId, month)` with its CURRENT settings, so the month list / TOTAL + category
      * enumeration does not need one single-target lookup per scope. Read-only.
+     *
+     * The month arrives as the canonical `YYYY-MM` key ([com.unifiedledger.application.budgetMonthConfigKey]
+     * at the call site) rather than a `YearMonth`: ledger-data deliberately keeps
+     * kotlinx-datetime a TEST-only dependency, and the [BudgetMonthConfigReader] lambda
+     * adapter lives with the composition roots that already own the reporting types.
      */
-    override fun configsFor(
+    fun configsForMonth(
         ledgerId: LedgerId,
-        month: YearMonth,
+        monthKey: String,
     ): List<BudgetMonthConfigRow> =
         database.ledgerQueries
-            .selectBudgetConfigsForMonth(ledgerId.value, budgetMonthConfigKey(month)) {
+            .selectBudgetConfigsForMonth(ledgerId.value, monthKey) {
                 budgetId,
                 _,
                 _,

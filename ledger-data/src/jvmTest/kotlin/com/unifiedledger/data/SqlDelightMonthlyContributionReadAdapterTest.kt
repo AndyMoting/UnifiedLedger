@@ -1,15 +1,14 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import com.unifiedledger.application.BudgetId
-import com.unifiedledger.application.BudgetMonthConfigReader
-import com.unifiedledger.application.BudgetScope
 import com.unifiedledger.application.BudgetTarget
 import com.unifiedledger.application.MonthlyContributionReadFailure
 import com.unifiedledger.application.MonthlyContributionReadResult
 import com.unifiedledger.application.budgetMonthConfigKey
 import com.unifiedledger.application.budgetScopeKey
 import com.unifiedledger.data.db.LedgerDatabase
+import com.unifiedledger.domain.BudgetId
+import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
@@ -133,8 +132,7 @@ class SqlDelightMonthlyContributionReadAdapterTest {
             store.setLimitMonitored(ledgerId, march, BudgetScope.Total, 0L)
             store.setLimitMonitored(ledgerId, march, BudgetScope.Category(CategoryId("expense-category-breakfast")), 500L)
             store.closeBudget(ledgerId, march, BudgetScope.Category(CategoryId("expense-category-breakfast")))
-            val configs: BudgetMonthConfigReader = store
-            val rows = configs.configsFor(ledgerId, march)
+            val rows = store.configsForMonth(ledgerId, budgetMonthConfigKey(march))
             assertEquals(2, rows.size)
             val total = rows.first { it.scope == BudgetScope.Total }
             assertEquals(0L, total.limitMinorUnits)
@@ -143,7 +141,7 @@ class SqlDelightMonthlyContributionReadAdapterTest {
             assertNull(closed.limitMinorUnits)
             assertTrue(closed.closed)
             // A month with no configuration returns no rows (never an invented one).
-            assertTrue(configs.configsFor(ledgerId, YearMonth(2026, 7)).isEmpty())
+            assertTrue(store.configsForMonth(ledgerId, budgetMonthConfigKey(YearMonth(2026, 7))).isEmpty())
         }
     }
 
