@@ -103,6 +103,9 @@ internal class P503HostCoordinator(
     private val onCheck: (draft: TypedEntryDraft, requestId: RequestId) -> Unit,
     // P7-03.C: the monthly request cycle the host runs (query + trend + entry rows + dispatch).
     private val onMonthlyRequest: () -> Unit = {},
+    // P7-07 07.D: the budget month request cycle the host runs (one bounded read + one-fold
+    // dispatch), triggered by the SAME shape of frozen trigger set as the monthly cycle.
+    private val onBudgetMonthRequest: () -> Unit = {},
     // P7-03.C: 本月 resolved by the host's reporting clock (R-Q06-2); null when the clock is
     // unusable, which still allows the initial request so the typed failure surfaces (R-Q06-4).
     private val currentMonth: () -> kotlinx.datetime.YearMonth? = { null },
@@ -134,6 +137,23 @@ internal class P503HostCoordinator(
      */
     @Volatile
     private var pendingMonthlyReRequestAfterRefresh = false
+
+    // ---- P7-07 07.D budget refresh linkage (D-184; spec section 5) ----
+
+    /** Whether any budget month request has been served (the budget analogue of the (a) gate). */
+    private var budgetEverRequested = false
+
+    /** The effective month of the last budget month request (the budget analogue of trigger (d)). */
+    private var budgetLastEffectiveMonth: kotlinx.datetime.YearMonth? = null
+
+    /**
+     * The budget arm of the shared post-landing re-request chain (the monthly arm's twin). Set
+     * by [onP705EffectiveSurfaceChanged] / [onImportBatchConfirmed] ONLY when the budget
+     * surface has already been loaded this session (预算面活跃或已加载)， and consumed by the same
+     * refresh landing hop ([consumeBudgetMonthReRequestAfterRefresh]).
+     */
+    @Volatile
+    private var pendingBudgetMonthReRequestAfterRefresh = false
 
     /**
      * P7-04.C (P704C-QUAL-02): an intake pipeline is currently running; a concurrent second pick
@@ -309,6 +329,9 @@ internal class P503HostCoordinator(
     internal fun onImportBatchConfirmed() {
         onRefresh()
         pendingMonthlyReRequestAfterRefresh = true
+        // P7-07 07.D: the SAME chain arms the budget re-request (only once the budget surface
+        // has been loaded — an unloaded surface has nothing to refresh).
+        armBudgetMonthReRequestIfLoaded()
     }
 
     /**
@@ -326,6 +349,74 @@ internal class P503HostCoordinator(
     internal fun onP705EffectiveSurfaceChanged() {
         onRefresh()
         pendingMonthlyReRequestAfterRefresh = true
+        // P7-07 07.D: a formal ledger effect moves budget observations too — arm the SAME
+        // post-landing budget re-request (only once the budget surface has been loaded).
+        armBudgetMonthReRequestIfLoaded()
+    }
+
+    /** Arms the budget re-request only when the budget surface has been loaded this session. */
+    private fun armBudgetMonthReRequestIfLoaded() {
+        if (budgetEverRequested) pendingBudgetMonthReRequestAfterRefresh = true
+    }
+
+    /**
+     * P7-07 07.D: the budget analogue of [decideMonthly] — the (a)/(d) trigger set for the
+     * budget month read. Requests exactly when no budget request was served yet (initial
+     * overview load) or when the effective month changed since the last request. Every other
+     * state returns false without touching the guards (the monthly semantics are untouched).
+     */
+    internal fun decideBudgetMonth(state: P503AppState): Boolean {
+        val overview = state as? P503AppState.OverviewEmpty ?: return false
+        val effectiveMonth = overview.selectedMonth ?: currentMonth()
+        if (budgetEverRequested && budgetLastEffectiveMonth == effectiveMonth) return false
+        budgetEverRequested = true
+        budgetLastEffectiveMonth = effectiveMonth
+        onBudgetMonthRequest()
+        return true
+    }
+
+    /**
+     * P7-07 07.D: the budget analogue of [requestMonthlyNow] — the unconditional re-request
+     * after SelectMonth / a moved analysis shift / a committed configuration. The effective
+     * month is stamped from the state the host passes (an OverviewEmpty, or a BudgetConfig
+     * surface whose own month is the one just committed), so the following (a)/(d) guard stays
+     * quiet for that month.
+     */
+    internal fun requestBudgetMonthNow(state: P503AppState): Boolean {
+        val effectiveMonth =
+            (state as? P503AppState.OverviewEmpty)?.selectedMonth
+                ?: (state as? P503AppState.BudgetConfig)?.month
+                ?: currentMonth()
+        budgetEverRequested = true
+        budgetLastEffectiveMonth = effectiveMonth
+        onBudgetMonthRequest()
+        return true
+    }
+
+    /**
+     * P7-07 07.D: completes the armed budget re-request AFTER the authoritative refresh landed
+     * (the monthly consume's twin). One unconditional request stamped on the landed month; a
+     * landing without an armed trigger is a no-op.
+     */
+    internal fun consumeBudgetMonthReRequestAfterRefresh(landedState: P503AppState) {
+        if (!pendingBudgetMonthReRequestAfterRefresh) return
+        pendingBudgetMonthReRequestAfterRefresh = false
+        requestBudgetMonthNow(landedState)
+    }
+
+    /** Clears the armed budget re-request on a failed refresh landing (the monthly drop's twin). */
+    internal fun dropBudgetMonthReRequestAfterFailedRefresh() {
+        pendingBudgetMonthReRequestAfterRefresh = false
+    }
+
+    /**
+     * P7-07 07.D: a committed budget configuration (Accepted/NoChange) changed the budget
+     * observation surface with ZERO transaction effect, so no authoritative refresh rides it —
+     * the budget month is re-requested directly from the landing state (the config surface,
+     * whose month is the one just committed).
+     */
+    internal fun onBudgetConfigCommitted(landedState: P503AppState) {
+        requestBudgetMonthNow(landedState)
     }
 
     /**

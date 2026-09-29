@@ -81,6 +81,7 @@ class P503ReducerImpl(
         // transition and the one surface.
         if (backupExportEventAbsorbed(state, event)) return state
         if (backupRestoreEventAbsorbed(state, event)) return state
+        if (budgetEventAbsorbed(state, event)) return state
         return when (state) {
             is P503AppState.Ready -> reduceReady(event)
             is P503AppState.OverviewEmpty -> reduceOverviewEmpty(state, event)
@@ -93,6 +94,7 @@ class P503ReducerImpl(
             is P503AppState.RecycleBin -> reduceRecycleBin(state, event)
             is P503AppState.BackupExport -> reduceBackupExport(state, event)
             is P503AppState.BackupRestore -> reduceBackupRestore(state, event)
+            is P503AppState.BudgetConfig -> reduceBudgetConfig(state, event)
             is P503AppState.RestoreSessionTerminal -> reduceRestoreSessionTerminal(state, event)
             is P503AppState.Editing -> reduceEditing(state, event)
             is P503AppState.AwaitingConfirmation -> reduceAwaitingConfirmation(state, event)
@@ -148,6 +150,51 @@ class P503ReducerImpl(
             P503UiEvent.CloseBackupRestore,
             -> state !is P503AppState.BackupRestore
             else -> false
+        }
+
+    /**
+     * P7-07 07.D (D-184; spec sections 3.4/4/5): whether the budget event must be absorbed in
+     * [state] because it belongs to another surface (the export family's absorb discipline).
+     * `BudgetMonthLanded` and `OpenBudgetConfig` are designed for OverviewEmpty; the rest for
+     * BudgetConfig. Everywhere else (including Ready before the overview exists) every budget
+     * event is absorbed, so a late/stale dispatch can never reach `unhandled` and turn into an
+     * ISE. The guard is central because each family's only designed effects are the one
+     * OverviewEmpty transition and the one config surface.
+     */
+    private fun budgetEventAbsorbed(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): Boolean =
+        when (event) {
+            is P503UiEvent.BudgetMonthLanded,
+            is P503UiEvent.OpenBudgetConfig,
+            -> state !is P503AppState.OverviewEmpty
+            is P503UiEvent.UpdateBudgetLimitText,
+            P503UiEvent.ConfirmBudgetLimit,
+            P503UiEvent.ConfirmBudgetClose,
+            is P503UiEvent.BudgetConfigResultLanded,
+            P503UiEvent.CloseBudgetConfig,
+            -> state !is P503AppState.BudgetConfig
+            else -> false
+        }
+
+    private fun reduceBudgetConfig(
+        state: P503AppState.BudgetConfig,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            // 提交中不重入: field writes and duplicate confirms are absorbed while submitting.
+            is P503UiEvent.UpdateBudgetLimitText -> if (state.submitting) state else state.copy(limitText = event.text)
+            P503UiEvent.ConfirmBudgetLimit -> if (state.submitting) state else state.copy(submitting = true, outcome = null)
+            P503UiEvent.ConfirmBudgetClose -> if (state.submitting) state else state.copy(submitting = true, outcome = null)
+            // The landing clears the marker and shows the typed outcome; the surface stays
+            // until the explicit close (the banner must be readable).
+            is P503UiEvent.BudgetConfigResultLanded -> state.copy(submitting = false, outcome = event.result)
+            // 提交中不得离开: a submitting surface absorbs the close/back (the P7-05 discipline);
+            // otherwise the exact preserved overview returns.
+            P503UiEvent.CloseBudgetConfig, P503UiEvent.Back ->
+                if (state.submitting) state else state.overview
+            else -> unhandled(state, event)
         }
 
     private fun reduceReady(event: P503UiEvent): P503AppState =
@@ -544,6 +591,22 @@ class P503ReducerImpl(
             // The host wires this affordance only when the restore use cases exist.
             P503UiEvent.OpenBackupRestore ->
                 P503AppState.BackupRestore(overview = state)
+            // ---- P7-07 07.D budget transitions (D-184; table 6.2a discipline) ----
+            // The landed budget-month read replaces the region's payload (a typed failure lands
+            // as-is — the region renders the explicit failure copy, never a zero); the month
+            // cursor and every other field are preserved by the copy.
+            is P503UiEvent.BudgetMonthLanded -> state.copy(budgetView = event.result)
+            // The config dialog opens with the host-resolved authority (revision/closed/limit)
+            // and the exact overview as the exit target.
+            is P503UiEvent.OpenBudgetConfig ->
+                P503AppState.BudgetConfig(
+                    overview = state,
+                    scope = event.scope,
+                    month = event.month,
+                    revision = event.revision,
+                    closed = event.closed,
+                    limitMinorUnits = event.limitMinorUnits,
+                )
             is P503UiEvent.OpenTransactionEdit,
             is P503UiEvent.UpdateTransactionCorrectionField,
             P503UiEvent.PreviewTransactionEdit,

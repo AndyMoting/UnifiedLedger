@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.BudgetMonthViewResult
 import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.EntryExpressionCode
 import com.unifiedledger.application.EntryPinTarget
@@ -9,6 +10,7 @@ import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CounterpartyId
 import com.unifiedledger.domain.TransactionId
@@ -119,6 +121,14 @@ sealed interface P503AppState {
          * pre-P7-04 constructor site compiling untouched.
          */
         val importReview: ImportReviewView? = null,
+        /**
+         * P7-07 07.D (D-184; spec section 5): the last landed budget-month read for the
+         * effective month (ONE bounded read folded into every configured scope). A typed
+         * failure is carried as-is — the budget region renders the explicit failure copy and
+         * never a zero; `null` before the first landing. The optional field keeps every
+         * pre-P7-07 constructor site compiling.
+         */
+        val budgetView: BudgetMonthViewResult? = null,
     ) : P503AppState
 
     data class Editing(
@@ -470,6 +480,29 @@ sealed interface P503AppState {
      */
     data class RestoreSessionTerminal(
         val cause: BackupRestoreRecoveryCause,
+    ) : P503AppState
+
+    /**
+     * P7-07 07.D (D-184; spec sections 3.4/4/5): the explicit budget-configuration surface.
+     * Reached only from the analysis tab's budget region (the host resolves the scope's
+     * current authority before opening). [overview] is carried so every exit restores the
+     * exact tab/month/payload (the TransactionEdit/BackupExport preserved-overview discipline).
+     * [submitting] is the per-operation marker (提交中不重入/不得离开, the P7-05 submitting
+     * discipline); [outcome] is the last landed typed result. The request id is deliberately
+     * NOT carried here: the 07.B claim-first protocol mints it inside the commit boundary
+     * (an equivalent replay must return the ORIGINAL receipt), so unlike the correction flow
+     * the host does not mint one.
+     */
+    data class BudgetConfig(
+        val overview: OverviewEmpty,
+        val scope: BudgetScope,
+        val month: kotlinx.datetime.YearMonth,
+        val revision: Long,
+        val closed: Boolean,
+        val limitMinorUnits: Long?,
+        val limitText: String = "",
+        val submitting: Boolean = false,
+        val outcome: com.unifiedledger.application.BudgetCommandResult? = null,
     ) : P503AppState
 
     /**

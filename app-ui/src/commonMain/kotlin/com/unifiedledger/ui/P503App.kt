@@ -29,6 +29,11 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.unifiedledger.application.BUDGET_CONFIGURED_CURRENCY
+import com.unifiedledger.application.BudgetCommandResult
+import com.unifiedledger.application.BudgetFailureCode
+import com.unifiedledger.application.BudgetMonthViewResult
+import com.unifiedledger.application.BudgetTarget
 import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.CollectDraft
@@ -103,6 +108,7 @@ import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.application.VoidTransactionRequest
 import com.unifiedledger.application.VoidTransactionResult
 import com.unifiedledger.application.backup.BackupPreflightRejection
+import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.P705FailureCode
@@ -113,6 +119,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.datetime.YearMonth
 import com.unifiedledger.application.MonthlyActivityResult as ApplicationMonthlyActivityResult
+import com.unifiedledger.application.budgetMonthKey
+import com.unifiedledger.application.budgetScopeKey
 
 /**
  * D-134 D2-D1 shared dual-theme wrapper: an explicit light/dark colorScheme following the
@@ -306,6 +314,21 @@ fun P503App(
     var ledgerEntryRows by remember { mutableStateOf<List<LedgerEntryRow>?>(null) }
     var resolvedCurrentMonth by remember { mutableStateOf<YearMonth?>(null) }
     val ledgerViewWired = ledger.surfaces.ledgerView
+    // P7-07 07.D (D-184; spec section 5): the budget surface wiring probe and the current-name
+    // derivations the budget region needs (from the CACHED authoritative snapshot; an unloaded
+    // snapshot degrades to the honest stable-id fallback, never an invented name).
+    val budgetWired = ledger.surfaces.budget
+    val budgetCategoryViews = remember(cachedCatalogSnapshot) { cachedCatalogSnapshot?.categories.orEmpty() }
+    val budgetCategoryNames = budgetCategoryViews.associate { it.categoryId to it.name }
+    val budgetCategoryParents = budgetCategoryViews.associate { it.categoryId to it.parentId }
+    // The 新增分类预算 picker lists the ACTIVE expense categories of the authoritative catalog
+    // (a new binding to a deactivated category is the use case's typed rejection, so an
+    // inactive one is never offered).
+    val budgetPickerChoices =
+        budgetCategoryViews
+            .filter { it.kind == com.unifiedledger.domain.CategoryKind.EXPENSE && it.active }
+            .sortedWith(compareBy({ it.parentId == null }, { it.name }))
+            .map { view -> BudgetCategoryChoice(BudgetScope.Category(view.categoryId), view.name) }
     // P7-04.C: the matrix format of the pick currently in flight. PickedImportFile deliberately
     // carries no format (frozen shape, spec 4.1.1), so the host remembers the launched format and
     // consumes the slot when the picked result arrives (one pick at a time: SAF is single-shot and
@@ -441,12 +464,16 @@ fun P503App(
                             // re-run lands later with the pending flag already consumed. The slot
                             // wiring note lives on [landingHopCoordinator] above.
                             landingHopCoordinator?.consumeMonthlyReRequestAfterRefresh(latestState.value)
+                            // P7-07 07.D: the SAME landing hop completes the armed budget
+                            // re-request (exactly one, stamped on the landed month).
+                            landingHopCoordinator?.consumeBudgetMonthReRequestAfterRefresh(latestState.value)
                         }
                         else -> {
                             dispatch(P503UiEvent.RefreshFailed)
                             // A-02 FIX-MONTH-1 (D-152): a failed landing requests nothing; the
                             // stale trigger must not be consumed by a later unrelated landing.
                             landingHopCoordinator?.dropMonthlyReRequestAfterFailedRefresh()
+                            landingHopCoordinator?.dropBudgetMonthReRequestAfterFailedRefresh()
                         }
                     }
                     if (currentStateLoadCoordinator.loadCompleted()) refresh()
@@ -500,6 +527,161 @@ fun P503App(
             dispatch(P503UiEvent.MonthlyActivityResult(ApplicationMonthlyActivityResult.Unavailable, emptyList()))
         }
     }
+
+    // ---------------------------------------------------------------- P7-07 07.D budget host surface
+
+    /**
+     * P7-07 07.D: one budget month request (the coordinator's budget trigger set calls this).
+     * ONE bounded read under a lease, folded once per configured scope, dispatched as one
+     * [P503UiEvent.BudgetMonthLanded]; the expected catalog version resolves from the session's
+     * current authority, so a snapshot-generation mismatch fails typed (ruling B). An unwired
+     * surface or a non-Ready runtime requests nothing (no region is rendered either way).
+     */
+    fun requestBudgetMonthPayload() {
+        if (!budgetWired) return
+        val current = latestState.value
+        val overview = (current as? P503AppState.OverviewEmpty) ?: (current as? P503AppState.BudgetConfig)?.overview ?: return
+        try {
+            val clockMonth = MonthlyBuckets.currentMonth(ledger.ledgerClock)
+            resolvedCurrentMonth = clockMonth
+            val effectiveMonth = overview.selectedMonth ?: clockMonth
+            val landed =
+                ledger.probe { facade ->
+                    val query = facade.queryBudgetMonth ?: return@probe null
+                    val expected = facade.budgetExpectedCatalogVersion() ?: return@probe null
+                    query.queryView(ledger.ledgerId, effectiveMonth, expected)
+                }
+            if (landed != null) dispatch(P503UiEvent.BudgetMonthLanded(landed))
+        } catch (failure: Exception) {
+            dispatch(P503UiEvent.BudgetMonthLanded(BudgetMonthViewResult.Unavailable))
+        }
+    }
+
+    /**
+     * P7-07 07.D: opens the config surface for one scope of the effective month. The scope's
+     * current authority is resolved HERE (under a lease, the single-target revision lookup),
+     * so the event carries revision/closed/limit and the reducer never reads the facade.
+     */
+    fun openBudgetConfig(scope: BudgetScope) {
+        if (!budgetWired) return
+        val current = latestState.value as? P503AppState.OverviewEmpty ?: return
+        val month = current.selectedMonth ?: resolvedCurrentMonth ?: return
+        val target =
+            BudgetTarget(
+                ledgerId = ledger.ledgerId,
+                monthKey = budgetMonthKey(month),
+                currency = BUDGET_CONFIGURED_CURRENCY,
+                scopeKey = budgetScopeKey(scope),
+                scopeCategoryId = (scope as? BudgetScope.Category)?.categoryId,
+            )
+        val authority = ledger.probe { facade -> facade.budgetAuthorityReader?.load(target) }
+        dispatch(
+            P503UiEvent.OpenBudgetConfig(
+                scope = scope,
+                month = month,
+                revision = authority?.revision ?: 0L,
+                closed = authority != null && authority.revision > 0L && authority.limitMinorUnits == null,
+                limitMinorUnits = authority?.limitMinorUnits,
+            ),
+        )
+    }
+
+    /**
+     * P7-07 07.D: runs the 07.B commit off the UI thread inside ONE operation lease; the
+     * captured generation gates the landing hop (the commitTransactionCorrection shape). The
+     * store maps its own constraint/claim failures to typed results; an escaped exception is
+     * the explicit generic rejection banner (never silent, never a fake success). A determinate
+     * success changed the budget observation surface with zero transaction effect, so the
+     * coordinator re-requests the budget month directly (no authoritative refresh rides it).
+     */
+    fun runBudgetCommit(plan: BudgetCommitPlan) {
+        scope.launch(Dispatchers.Default) {
+            val outcome =
+                ledger.leased { facade, _ ->
+                    try {
+                        val save = facade.saveBudgetConfiguration!!
+                        if (plan.close) {
+                            save.close(ledger.ledgerId, plan.month, plan.scope, plan.expectedRevision)
+                        } else {
+                            save.setLimit(ledger.ledgerId, plan.month, plan.scope, requireNotNull(plan.limitMinorUnits), plan.expectedRevision)
+                        }
+                    } catch (failure: Exception) {
+                        BudgetCommandResult.Rejected(BudgetFailureCode.BUDGET_CONSTRAINT_VIOLATION)
+                    }
+                }
+            scope.launch {
+                if (outcome !is LeaseOutcome.Completed || !ledger.isCurrentGeneration(outcome.generation)) return@launch
+                val result = outcome.value
+                dispatch(P503UiEvent.BudgetConfigResultLanded(result))
+                if (result is BudgetCommandResult.Accepted || result is BudgetCommandResult.NoChange) {
+                    // The forward-wiring slot (the A-02 FIX-MONTH-1 precedent): the coordinator
+                    // is constructed later in the composition, so the landing hop reads it here.
+                    landingHopCoordinator?.onBudgetConfigCommitted(latestState.value)
+                }
+            }
+        }
+    }
+
+    /**
+     * P7-07 07.D: the explicit save confirm. The draft is gated BEFORE the reducer marks
+     * submitting (the P704C-QUAL-04 call-site precedent): an invalid draft never strands the
+     * surface — the confirm affordance is already disabled, and this host guard is the second
+     * line. The whole decision runs inside [dispatchCurrentP503Action]'s instance guard, so a
+     * stale render can neither commit nor disturb an in-flight one. The 07.B commit mints its
+     * own request id (claim-first replay identity), so unlike the correction flow the host
+     * does not mint one here.
+     */
+    fun confirmBudgetLimit(current: P503AppState.BudgetConfig) {
+        if (!budgetWired) return
+        if (budgetLimitDraft(current.limitText, ledger.currency) !is BudgetLimitDraft.Valid) return
+        var plan: BudgetCommitPlan? = null
+        dispatchCurrentP503Action(
+            current,
+            latestState.value,
+            {
+                val draft = budgetLimitDraft(current.limitText, ledger.currency)
+                if (draft is BudgetLimitDraft.Valid) {
+                    plan =
+                        BudgetCommitPlan(
+                            scope = current.scope,
+                            month = current.month,
+                            limitMinorUnits = draft.minorUnits,
+                            expectedRevision = current.revision,
+                            close = false,
+                        )
+                }
+                P503UiEvent.ConfirmBudgetLimit
+            },
+            ::dispatch,
+        ) {
+            plan?.let(::runBudgetCommit)
+        }
+    }
+
+    /** P7-07 07.D: the explicit close-monitoring confirm (the same run/landing discipline). */
+    fun confirmBudgetClose(current: P503AppState.BudgetConfig) {
+        if (!budgetWired) return
+        var plan: BudgetCommitPlan? = null
+        dispatchCurrentP503Action(
+            current,
+            latestState.value,
+            {
+                plan =
+                    BudgetCommitPlan(
+                        scope = current.scope,
+                        month = current.month,
+                        limitMinorUnits = null,
+                        expectedRevision = current.revision,
+                        close = true,
+                    )
+                P503UiEvent.ConfirmBudgetClose
+            },
+            ::dispatch,
+        ) {
+            plan?.let(::runBudgetCommit)
+        }
+    }
+
 
     /** P7-03.C: opens the read-only detail with the host-resolved typed payload (C03). */
     fun selectTransaction(transactionId: TransactionId) {
@@ -954,6 +1136,9 @@ fun P503App(
                 // P7-03.C: the unified monthly cycle runs only on the frozen trigger set (a)-(e)
                 // (spec 6.2, P703SPEC-04); 本月 resolves from the reporting clock (R-Q06-2).
                 onMonthlyRequest = ::requestMonthlyPayload,
+                // P7-07 07.D: the budget month request cycle (the budget trigger set; the
+                // monthly trigger semantics are untouched).
+                onBudgetMonthRequest = ::requestBudgetMonthPayload,
                 currentMonth = {
                     try {
                         MonthlyBuckets.currentMonth(ledger.ledgerClock)
@@ -972,6 +1157,8 @@ fun P503App(
     fun selectMonth(month: YearMonth) {
         dispatch(P503UiEvent.SelectMonth(month))
         coordinator.requestMonthlyNow(latestState.value)
+        // P7-07 07.D: the budget region follows the shared month cursor (trigger (b) analogue).
+        coordinator.requestBudgetMonthNow(latestState.value)
     }
 
     // G3: trigger (c) still says a month shift re-requests — but only a shift that actually moved
@@ -981,7 +1168,11 @@ fun P503App(
         val before = latestState.value
         dispatch(P503UiEvent.AnalysisMonthShift(offset))
         val reRequest = analysisMonthShiftReRequest(before, latestState.value)
-        if (reRequest != null) coordinator.requestMonthlyNow(reRequest)
+        if (reRequest != null) {
+            coordinator.requestMonthlyNow(reRequest)
+            // P7-07 07.D: a moved cursor moves the budget region too (trigger (c) analogue).
+            coordinator.requestBudgetMonthNow(reRequest)
+        }
     }
 
     // Authoritative refresh after Created/NoChange/Recovered; never build the list from
@@ -990,6 +1181,9 @@ fun P503App(
     LaunchedEffect(state) {
         coordinator.decide(state)
         coordinator.decideMonthly(state)
+        // P7-07 07.D: the budget (a)/(d) trigger runs beside the monthly one; the monthly
+        // decision semantics above are unchanged.
+        coordinator.decideBudgetMonth(state)
     }
 
     // ---------------------------------------------------------------- P7-04.C import host surface
@@ -2608,7 +2802,25 @@ fun P503App(
                                 onSubmit = { dialog -> runCatalogForm(dialog) },
                                 onRefresh = { refreshCatalogSnapshot() },
                             )
-                        P503Tab.ANALYSIS ->
+                        P503Tab.ANALYSIS -> {
+                            // P7-07 07.D: the budget region slot — non-null exactly when the
+                            // budget surface is wired (no dead region). It owns its own loading/
+                            // failure copy and its config affordances; the retained read-failure
+                            // render below deliberately passes none (read-only, the F1 rule).
+                            val budgetRegionSlot: (@Composable () -> Unit)? =
+                                if (budgetWired) {
+                                    {
+                                        P503BudgetRegion(
+                                            view = current.budgetView,
+                                            categoryName = { id -> budgetCategoryNames[id] },
+                                            parentIdOf = { id -> budgetCategoryParents[id] },
+                                            pickerCategories = budgetPickerChoices,
+                                            onOpenBudgetConfig = ::openBudgetConfig,
+                                        )
+                                    }
+                                } else {
+                                    null
+                                }
                             P503AnalysisScreen(
                                 state = current.state,
                                 summarizeActivity = ledger.summarizeActivity,
@@ -2621,7 +2833,9 @@ fun P503App(
                                 trend = monthlyTrend,
                                 onSelectMonth = ::selectMonth,
                                 onAnalysisMonthShift = ::analysisMonthShift,
+                                budgetRegion = budgetRegionSlot,
                             )
+                        }
                         // P7-04.C: the IMPORT tab content — the review projection, the matrix
                         // format entries, the session summary and the group disposition surface.
                         // P7-04.D: the batch confirmation entry and the retained result summary
@@ -2815,6 +3029,16 @@ fun P503App(
                     )
                 }
             }
+            is P503AppState.BudgetConfig ->
+                P503BudgetConfigScreen(
+                    current = current,
+                    categoryName = { id -> budgetCategoryNames[id] },
+                    currency = ledger.currency,
+                    onLimitTextChange = { text -> dispatch(P503UiEvent.UpdateBudgetLimitText(text)) },
+                    onConfirmLimit = { confirmBudgetLimit(current) },
+                    onCloseMonitoring = { confirmBudgetClose(current) },
+                    onDismiss = { dispatch(P503UiEvent.CloseBudgetConfig) },
+                )
             is P503AppState.BackupExport ->
                 P503BackupExportScreen(
                     state = current,
@@ -3110,6 +3334,9 @@ private fun isBackEnabled(state: P503AppState): Boolean =
         is P503AppState.TransactionEdit -> true
         is P503AppState.VoidConfirm -> true
         is P503AppState.RecycleBin -> true
+        // P7-07 07.D (D-184): the budget config surface returns to its preserved overview; while
+        // a commit is in flight it keeps its marker and must not leave (提交中不得离开).
+        is P503AppState.BudgetConfig -> true
         // P7-06 06.B (D-177): the export surface returns to its preserved overview; while an export
         // is running it keeps its marker and must not leave (提交中不得离开), so the back channel is
         // intercepted and swallowed like the P7-05 submitting surfaces.
@@ -3143,6 +3370,8 @@ private fun isBackDispatchSafe(state: P503AppState): Boolean =
         !(state is P503AppState.TransactionEdit && state.submitting) &&
         !(state is P503AppState.VoidConfirm && state.submitting) &&
         !(state is P503AppState.RecycleBin && state.restore?.submitting == true) &&
+        // P7-07 07.D: a committing budget config keeps the surface (提交中不得离开).
+        !(state is P503AppState.BudgetConfig && state.submitting) &&
         // P7-06 06.B: a running export keeps the surface (提交中不得离开).
         !(state is P503AppState.BackupExport && state.running) &&
         // P7-06 06.D: a running restore preflight or confirm keeps the surface (提交中不得离开).
@@ -3435,3 +3664,16 @@ private fun P503InfrastructureSubmissionScreen(
         }
     }
 }
+
+/**
+ * P7-07 07.D: one resolved budget commit plan, built at the explicit confirm (the host-side
+ * analogue of the correction flow's built request) and executed off the UI thread. The 07.B
+ * commit mints its own request id, so no id travels here (see the ConfirmBudgetLimit event note).
+ */
+private data class BudgetCommitPlan(
+    val scope: BudgetScope,
+    val month: YearMonth,
+    val limitMinorUnits: Long?,
+    val expectedRevision: Long,
+    val close: Boolean,
+)

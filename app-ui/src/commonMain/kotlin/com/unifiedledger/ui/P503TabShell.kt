@@ -167,6 +167,11 @@ fun P503AnalysisScreen(
     onSelectMonth: (kotlinx.datetime.YearMonth) -> Unit = {},
     onAnalysisMonthShift: (Int) -> Unit = {},
     interactionsEnabled: Boolean = true,
+    // P7-07 07.D (D-184; spec section 5): the budget region slot. The host passes a non-null
+    // slot only when the budget surface is wired (no dead region); the region owns its own
+    // loading/failure copy, so a monthly not-loaded state does not mask it. Null keeps every
+    // pre-P7-07 call site compiling.
+    budgetRegion: (@Composable () -> Unit)? = null,
 ) {
     val summary = remember(state, summarizeActivity) { summarizeActivity.summarize(state) }
     Column(
@@ -233,6 +238,10 @@ fun P503AnalysisScreen(
                 uncategorized = monthlyActivity?.uncategorizedIncomeTotals ?: emptyList(),
                 reloadRequired = monthlyReloadRequired,
             )
+            // P7-07 07.D: the additive budget region rides between the category regions and the
+            // trend; it owns its own state copy (loaded/failure/unconfigured) independently of
+            // the monthly cycle's state.
+            budgetRegion?.invoke()
             Spacer(Modifier.height(8.dp))
             P503MonthlyTrendRegion(
                 trend = trend,
