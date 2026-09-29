@@ -36,7 +36,6 @@ import com.unifiedledger.application.BudgetMonthViewResult
 import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
-import kotlinx.datetime.YearMonth
 
 /*
  * P7-07 07.D budget presentations (D-184; spec sections 3.2/3.3/4/5). The region is an
@@ -116,8 +115,7 @@ internal fun P503BudgetRegion(
     }
 }
 
-private fun hasTotalRow(view: BudgetMonthViewResult?): Boolean =
-    view is BudgetMonthViewResult.Success && view.view.total != null
+private fun hasTotalRow(view: BudgetMonthViewResult?): Boolean = view is BudgetMonthViewResult.Success && view.view.total != null
 
 /**
  * The observation rows: the TOTAL row first, then the configured category scopes; a level-2

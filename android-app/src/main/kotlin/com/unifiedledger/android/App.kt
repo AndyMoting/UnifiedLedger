@@ -19,6 +19,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import com.unifiedledger.application.BudgetMonthConfigReader
 import com.unifiedledger.application.CATALOG_MANAGED_CURRENCY
 import com.unifiedledger.application.CatalogAdmissionExpenseTransactionFactory
 import com.unifiedledger.application.CatalogAdmissionIncomeTransactionFactory
@@ -107,16 +108,15 @@ import com.unifiedledger.application.UuidV7ManualLendingRequestIdSource
 import com.unifiedledger.application.UuidV7ManualTransferRequestIdSource
 import com.unifiedledger.application.UuidV7TransactionCorrectionIdSource
 import com.unifiedledger.application.UuidV7TransactionVoidFactIdSource
-import com.unifiedledger.application.BudgetMonthConfigReader
-import com.unifiedledger.application.budgetMonthConfigKey
 import com.unifiedledger.application.backup.BackupCryptoPrimitives
 import com.unifiedledger.application.backup.JvmBackupCryptoPrimitives
+import com.unifiedledger.application.budgetMonthConfigKey
 import com.unifiedledger.application.import.JvmImportFileIntake
 import com.unifiedledger.data.AndroidLedgerDatabaseHandle
 import com.unifiedledger.data.CatalogBootstrapResult
 import com.unifiedledger.data.SqlDelightImportReviewReadAdapter
-import com.unifiedledger.data.SqlDelightMonthlyContributionReadAdapter
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
+import com.unifiedledger.data.SqlDelightMonthlyContributionReadAdapter
 import com.unifiedledger.data.createAndroidLedgerDatabase
 import com.unifiedledger.data.currentSupportedSchemaVersion
 import com.unifiedledger.data.defaultCatalogSeed

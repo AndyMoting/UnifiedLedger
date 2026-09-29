@@ -11,6 +11,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import com.unifiedledger.application.BudgetMonthConfigReader
 import com.unifiedledger.application.CATALOG_MANAGED_CURRENCY
 import com.unifiedledger.application.CatalogAdmissionExpenseTransactionFactory
 import com.unifiedledger.application.CatalogAdmissionIncomeTransactionFactory
@@ -24,7 +25,6 @@ import com.unifiedledger.application.CommitOnceInvocationTrackerTransfer
 import com.unifiedledger.application.ConfirmImportCandidate
 import com.unifiedledger.application.ConfirmedExpenseTransactionFactory
 import com.unifiedledger.application.ConfirmedIncomeTransactionFactory
-import com.unifiedledger.application.BudgetMonthConfigReader
 import com.unifiedledger.application.ConfirmedLendingTransactionFactory
 import com.unifiedledger.application.ConfirmedManualExpenseCommit
 import com.unifiedledger.application.ConfirmedManualIncomeCommit
@@ -100,9 +100,9 @@ import com.unifiedledger.application.UuidV7ManualLendingRequestIdSource
 import com.unifiedledger.application.UuidV7ManualTransferRequestIdSource
 import com.unifiedledger.application.UuidV7TransactionCorrectionIdSource
 import com.unifiedledger.application.UuidV7TransactionVoidFactIdSource
-import com.unifiedledger.application.budgetMonthConfigKey
 import com.unifiedledger.application.backup.BackupCryptoPrimitives
 import com.unifiedledger.application.backup.JvmBackupCryptoPrimitives
+import com.unifiedledger.application.budgetMonthConfigKey
 import com.unifiedledger.application.import.JvmImportFileIntake
 import com.unifiedledger.data.CatalogBootstrapResult
 import com.unifiedledger.data.SqlDelightBudgetStore
@@ -114,9 +114,9 @@ import com.unifiedledger.data.SqlDelightConfirmedManualTransferCommitPort
 import com.unifiedledger.data.SqlDelightCounterpartyStore
 import com.unifiedledger.data.SqlDelightEntryPreferenceStore
 import com.unifiedledger.data.SqlDelightImportReviewReadAdapter
-import com.unifiedledger.data.SqlDelightMonthlyContributionReadAdapter
 import com.unifiedledger.data.SqlDelightImportSpineStore
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
+import com.unifiedledger.data.SqlDelightMonthlyContributionReadAdapter
 import com.unifiedledger.data.SqlDelightTransactionCorrectionCommitPort
 import com.unifiedledger.data.SqlDelightTransactionVoidCommitPort
 import com.unifiedledger.data.currentSupportedSchemaVersion

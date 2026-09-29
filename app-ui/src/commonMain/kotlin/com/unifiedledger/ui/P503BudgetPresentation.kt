@@ -74,8 +74,10 @@ internal fun budgetScopeLabel(
 ): String =
     when (scope) {
         BudgetScope.Total -> "总预算"
-        is BudgetScope.Category -> categoryName(scope.categoryId)?.let { name -> if (name.isBlank()) "分类 ${scope.categoryId.value}" else name }
-            ?: "分类 ${scope.categoryId.value}"
+        is BudgetScope.Category -> {
+            val name = categoryName(scope.categoryId)
+            if (name.isNullOrEmpty() || name.isBlank()) "分类 " + scope.categoryId.value else name
+        }
     }
 
 /** The config dialog's status line: unset / closed / monitored are the three distinct states. */

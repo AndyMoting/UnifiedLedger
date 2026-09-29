@@ -2,7 +2,6 @@ package com.unifiedledger.desktop
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.BudgetMonthViewResult
-import com.unifiedledger.application.BudgetMonthResult
 import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.ManualExpenseSaveInput
 import com.unifiedledger.application.ManualExpenseSaveResult
@@ -81,16 +80,16 @@ class DesktopBudgetCompositionRootTest {
             )
 
             val expectedVersion = graph.facade.budgetExpectedCatalogVersion()!!
-            val view = assertIs<BudgetMonthViewResult.Success>(graph.facade.queryBudgetMonth!!.queryView(graph.ledgerId, january, expectedVersion)).view
+            val januaryResult = graph.facade.queryBudgetMonth!!.queryView(graph.ledgerId, january, expectedVersion)
+            val view = assertIs<BudgetMonthViewResult.Success>(januaryResult).view
             val total = assertNotNull(view.total)
             assertEquals(20_500L, total.budgetMonth.netExpenseMinorUnits)
             assertEquals(9_500L, total.budgetMonth.remainingMinorUnits)
             assertEquals(0L, total.budgetMonth.overspentMinorUnits)
             // February carries no transactions and no configuration: a successful EMPTY view,
             // never a fabricated zero or a failure (the month cursor is preserved by the caller).
-            val february = assertIs<BudgetMonthViewResult.Success>(
-                graph.facade.queryBudgetMonth!!.queryView(graph.ledgerId, YearMonth(2026, 2), expectedVersion),
-            ).view
+            val februaryResult = graph.facade.queryBudgetMonth!!.queryView(graph.ledgerId, YearMonth(2026, 2), expectedVersion)
+            val february = assertIs<BudgetMonthViewResult.Success>(februaryResult).view
             assertNull(february.total)
             assertTrue(february.categories.isEmpty())
         } finally {
@@ -106,10 +105,8 @@ class DesktopBudgetCompositionRootTest {
             submitExpense(graph, "request-budget-2", 5_000L)
             // A caller holding a stale generation (e.g. the session refreshed after it loaded)
             // gets the typed failure, never a zero execution amount (composition ruling B).
-            val stale = assertIs<BudgetMonthViewResult.InvalidState>(
-                graph.facade.queryBudgetMonth!!.queryView(graph.ledgerId, YearMonth(2026, 1), expectedCatalogVersion = 99L),
-            )
-            assertEquals(BudgetMonthViewResult.InvalidState, stale)
+            val staleResult = graph.facade.queryBudgetMonth!!.queryView(graph.ledgerId, YearMonth(2026, 1), expectedCatalogVersion = 99L)
+            assertEquals(BudgetMonthViewResult.InvalidState, assertIs(staleResult))
         } finally {
             driver.close()
         }

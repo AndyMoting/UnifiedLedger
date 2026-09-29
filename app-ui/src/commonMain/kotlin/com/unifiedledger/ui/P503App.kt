@@ -108,6 +108,8 @@ import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.application.VoidTransactionRequest
 import com.unifiedledger.application.VoidTransactionResult
 import com.unifiedledger.application.backup.BackupPreflightRejection
+import com.unifiedledger.application.budgetMonthKey
+import com.unifiedledger.application.budgetScopeKey
 import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.Money
@@ -119,8 +121,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.datetime.YearMonth
 import com.unifiedledger.application.MonthlyActivityResult as ApplicationMonthlyActivityResult
-import com.unifiedledger.application.budgetMonthKey
-import com.unifiedledger.application.budgetScopeKey
 
 /**
  * D-134 D2-D1 shared dual-theme wrapper: an explicit light/dark colorScheme following the
@@ -681,7 +681,6 @@ fun P503App(
             plan?.let(::runBudgetCommit)
         }
     }
-
 
     /** P7-03.C: opens the read-only detail with the host-resolved typed payload (C03). */
     fun selectTransaction(transactionId: TransactionId) {
