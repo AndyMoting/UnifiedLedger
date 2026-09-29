@@ -1033,6 +1033,16 @@ sealed interface P503UiEvent {
     ) : P503UiEvent
 
     /**
+     * The commit ran but its outcome could not be resolved (an exception escaped the 07.B
+     * commit boundary; the store maps its own failures to typed results, so this is an
+     * infrastructure escape). The marker clears and the surface shows the explicit
+     * 结果未知 banner — never a fabricated rejection, never silence. A re-attempt is safe:
+     * if the first commit landed, the CAS check returns the typed revision conflict.
+     * Effect only on BudgetConfig; absorbed everywhere else.
+     */
+    data object BudgetCommitUnknownLanded : P503UiEvent
+
+    /**
      * Closes the config surface back to the exact preserved overview. Effect only on
      * BudgetConfig; a submitting surface absorbs it (提交中不得离开).
      */

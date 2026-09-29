@@ -128,6 +128,16 @@ class P503BudgetPresentationTest {
     }
 
     @Test
+    fun theUnknownCommitNoticeClaimsNeitherSuccessNorTypedRejection() {
+        // P3 fix round: the escape-hatch banner must be the explicit 结果未知 surface.
+        assertTrue(BUDGET_COMMIT_UNKNOWN_NOTICE.contains("结果未知"))
+        assertTrue(BUDGET_COMMIT_UNKNOWN_NOTICE.contains("可重试"))
+        // Not the success banner ("已保存（新 revision …）") nor the typed-rejection banner ("未能保存：<code>。").
+        assertFalse(BUDGET_COMMIT_UNKNOWN_NOTICE.contains("已保存（新 revision"))
+        assertFalse(BUDGET_COMMIT_UNKNOWN_NOTICE.contains("未能保存："))
+    }
+
+    @Test
     fun configNoticeTextCoversEveryOutcomeFamily() {
         val receipt =
             BudgetCommandReceipt(

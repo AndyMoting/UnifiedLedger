@@ -153,7 +153,23 @@ class P503BudgetReducerTest {
         assertFalse(config.submitting)
         assertEquals(BudgetCommandResult.Accepted(receipt), config.outcome)
         // The surface stays until the explicit close (the outcome banner is visible).
-        assertTrue(reducer.reduce(config, P503UiEvent.BudgetMonthLanded(BudgetMonthViewResult.Unavailable)) is P503AppState.BudgetConfig)
+        // P1-2 fix round: the config commit's re-request lands WHILE the surface is open —
+        // the fresh payload is applied to the carried overview, so closing returns the NEW
+        // budget view, never the pre-commit one.
+        val fresh =
+            BudgetMonthViewResult.Success(
+                com.unifiedledger.application.BudgetMonthView(
+                    ledgerId,
+                    march,
+                    catalogVersion = 2L,
+                    total = totalObservation(limit = 250L, net = 50L),
+                    categories = emptyList(),
+                ),
+            )
+        val refreshed = assertIs<P503AppState.BudgetConfig>(reducer.reduce(config, P503UiEvent.BudgetMonthLanded(fresh)))
+        assertEquals(fresh, refreshed.overview.budgetView)
+        // The carried overview is the preserved one with ONLY the budget view updated.
+        assertEquals(overviewWithMonth.copy(budgetView = fresh), refreshed.overview)
     }
 
     @Test
@@ -197,6 +213,83 @@ class P503BudgetReducerTest {
         assertFalse(config.submitting)
         assertEquals(BudgetFailureCode.BUDGET_REVISION_CONFLICT, (config.outcome as BudgetCommandResult.Rejected).failureCode)
     }
+
+    @Test
+    fun theRefreshFamilyIsAbsorbedOnTheConfigSurfaceWithoutLosingTheCarriedOverview() {
+        // P1-1 fix round: a background refresh landing behind the open config surface must not
+        // ISE (the pre-fix unhandled path) — the read-only-detail absorb precedent keeps the
+        // surface and its preserved overview; the fresh snapshot is rebuilt on close.
+        var config = openConfig()
+        val otherState = overview.state
+        config = assertIs(reducer.reduce(config, P503UiEvent.RefreshResult(otherState)))
+        assertSame(overviewWithMonth, config.overview)
+        config = assertIs(reducer.reduce(config, P503UiEvent.RefreshFailed))
+        config = assertIs(reducer.reduce(config, P503UiEvent.InitialLoadResult(otherState)))
+        config = assertIs(reducer.reduce(config, P503UiEvent.InitialLoadFailed))
+        assertSame(overviewWithMonth, config.overview)
+        assertFalse(config.submitting)
+    }
+
+    @Test
+    fun aBudgetMonthLandingBehindACarriedOverviewSurfaceIsAppliedToIt() {
+        // P1-2 fix round (secondary variant): the consume-after-refresh landing may hit a
+        // carried-overview surface; the payload must reach its overview, never drop silently.
+        val payload = BudgetMonthViewResult.Success(com.unifiedledger.application.BudgetMonthView(ledgerId, march, catalogVersion = 1L, total = totalObservation(100L, 50L), categories = emptyList()))
+        val detail = P503AppState.TransactionDetail(overview = overviewWithMonth, originTab = P503Tab.HOME, transactionId = com.unifiedledger.domain.TransactionId("tx-1"), detail = com.unifiedledger.application.TransactionDetailResult.NotFound)
+        val appliedToDetail = assertIs<P503AppState.TransactionDetail>(reducer.reduce(detail, P503UiEvent.BudgetMonthLanded(payload)))
+        assertEquals(payload, appliedToDetail.overview.budgetView)
+        val export = P503AppState.BackupExport(overview = overviewWithMonth)
+        val appliedToExport = assertIs<P503AppState.BackupExport>(reducer.reduce(export, P503UiEvent.BudgetMonthLanded(payload)))
+        assertEquals(payload, appliedToExport.overview.budgetView)
+    }
+
+    @Test
+    fun anUnknownCommitLandingClearsTheMarkerAndShowsTheUnknownBanner() {
+        // P3 fix round: an escaped commit exception claims neither success nor a typed
+        // rejection — the explicit outcomeUnknown surface, re-attemptable.
+        var config = submittingConfig()
+        config = assertIs(reducer.reduce(config, P503UiEvent.BudgetCommitUnknownLanded))
+        assertFalse(config.submitting)
+        assertNull(config.outcome)
+        assertTrue(config.outcomeUnknown)
+        // A subsequent confirm clears the unknown marker and re-enters the submitting state.
+        config = assertIs(reducer.reduce(config, P503UiEvent.ConfirmBudgetLimit))
+        assertTrue(config.submitting)
+        assertFalse(config.outcomeUnknown)
+    }
+
+    @Test
+    fun aClosedBudgetSurfaceKeepsItsReSetEntryFlow() {
+        // P2-2 fix round: a CLOSED budget's surface still runs the setLimit flow (07.B allows
+        // modifying an existing budget; the commit resumes monitoring with history kept).
+        var config =
+            assertIs(
+                reducer.reduce(
+                    overviewWithMonth,
+                    P503UiEvent.OpenBudgetConfig(BudgetScope.Total, march, revision = 3L, closed = true, limitMinorUnits = null),
+                ),
+            ) as P503AppState.BudgetConfig
+        assertTrue(config.closed)
+        config = assertIs(reducer.reduce(config, P503UiEvent.UpdateBudgetLimitText("80")))
+        config = assertIs(reducer.reduce(config, P503UiEvent.ConfirmBudgetLimit))
+        assertTrue(config.submitting)
+        config =
+            assertIs(
+                reducer.reduce(config, P503UiEvent.BudgetConfigResultLanded(BudgetCommandResult.Accepted(receipt))),
+            )
+        assertFalse(config.submitting)
+        assertTrue(config.outcome is BudgetCommandResult.Accepted)
+    }
+
+    private fun openConfig(): P503AppState.BudgetConfig =
+        P503AppState.BudgetConfig(
+            overview = overviewWithMonth,
+            scope = BudgetScope.Total,
+            month = march,
+            revision = 1L,
+            closed = false,
+            limitMinorUnits = 100L,
+        )
 
     private fun submittingConfig(): P503AppState.BudgetConfig =
         P503AppState.BudgetConfig(

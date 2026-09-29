@@ -31,7 +31,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.unifiedledger.application.BUDGET_CONFIGURED_CURRENCY
 import com.unifiedledger.application.BudgetCommandResult
-import com.unifiedledger.application.BudgetFailureCode
 import com.unifiedledger.application.BudgetMonthViewResult
 import com.unifiedledger.application.BudgetTarget
 import com.unifiedledger.application.CatalogCommandResult
@@ -324,10 +323,12 @@ fun P503App(
     // The 新增分类预算 picker lists the ACTIVE expense categories of the authoritative catalog
     // (a new binding to a deactivated category is the use case's typed rejection, so an
     // inactive one is never offered).
+    // P3 fix round: level-1 scopes FIRST, then their level-2 children, each group by name —
+    // the same 一级在前 direction the catalog tree and the category region read in.
     val budgetPickerChoices =
         budgetCategoryViews
             .filter { it.kind == com.unifiedledger.domain.CategoryKind.EXPENSE && it.active }
-            .sortedWith(compareBy({ it.parentId == null }, { it.name }))
+            .sortedWith(compareBy({ it.parentId != null }, { it.name }))
             .map { view -> BudgetCategoryChoice(BudgetScope.Category(view.categoryId), view.name) }
     // P7-04.C: the matrix format of the pick currently in flight. PickedImportFile deliberately
     // carries no format (frozen shape, spec 4.1.1), so the host remembers the launched format and
@@ -539,8 +540,13 @@ fun P503App(
      */
     fun requestBudgetMonthPayload() {
         if (!budgetWired) return
+        // P1-2 fix round: every state that CARRIES a preserved overview can receive the
+        // landing (the reducer applies BudgetMonthLanded to the carried overview on each of
+        // them), so the coordinator's stamped request is never silently dropped behind an
+        // open surface. States with no overview to render the region keep the monthly
+        // payload's own early-return semantics (mirrored, not changed for monthly).
         val current = latestState.value
-        val overview = (current as? P503AppState.OverviewEmpty) ?: (current as? P503AppState.BudgetConfig)?.overview ?: return
+        val overview = carriedOverviewOf(current) ?: return
         try {
             val clockMonth = MonthlyBuckets.currentMonth(ledger.ledgerClock)
             resolvedCurrentMonth = clockMonth
@@ -548,7 +554,10 @@ fun P503App(
             val landed =
                 ledger.probe { facade ->
                     val query = facade.queryBudgetMonth ?: return@probe null
-                    val expected = facade.budgetExpectedCatalogVersion() ?: return@probe null
+                    // P3 fix round: an unresolvable expected catalog version is an explicit
+                    // typed Unavailable landing (fail-closed, visible), never a silent skip
+                    // that would leave the coordinator's stamped request unanswered.
+                    val expected = facade.budgetExpectedCatalogVersion() ?: return@probe BudgetMonthViewResult.Unavailable
                     query.queryView(ledger.ledgerId, effectiveMonth, expected)
                 }
             if (landed != null) dispatch(P503UiEvent.BudgetMonthLanded(landed))
@@ -596,6 +605,11 @@ fun P503App(
      */
     fun runBudgetCommit(plan: BudgetCommitPlan) {
         scope.launch(Dispatchers.Default) {
+            // P3 fix round: an exception escaping the 07.B boundary lands as the explicit
+            // 结果未知 state (see BudgetCommitUnknownLanded) — the store maps its own
+            // constraint/claim failures to typed results, so an escape is an infrastructure
+            // failure and must claim neither success nor a typed rejection. A re-attempt is
+            // CAS-safe (a landed first commit returns the typed revision conflict).
             val outcome =
                 ledger.leased { facade, _ ->
                     try {
@@ -606,12 +620,16 @@ fun P503App(
                             save.setLimit(ledger.ledgerId, plan.month, plan.scope, requireNotNull(plan.limitMinorUnits), plan.expectedRevision)
                         }
                     } catch (failure: Exception) {
-                        BudgetCommandResult.Rejected(BudgetFailureCode.BUDGET_CONSTRAINT_VIOLATION)
+                        null
                     }
                 }
             scope.launch {
                 if (outcome !is LeaseOutcome.Completed || !ledger.isCurrentGeneration(outcome.generation)) return@launch
                 val result = outcome.value
+                if (result == null) {
+                    dispatch(P503UiEvent.BudgetCommitUnknownLanded)
+                    return@launch
+                }
                 dispatch(P503UiEvent.BudgetConfigResultLanded(result))
                 if (result is BudgetCommandResult.Accepted || result is BudgetCommandResult.NoChange) {
                     // The forward-wiring slot (the A-02 FIX-MONTH-1 precedent): the coordinator
@@ -3676,3 +3694,21 @@ private data class BudgetCommitPlan(
     val expectedRevision: Long,
     val close: Boolean,
 )
+
+/**
+ * P1-2 fix round: the preserved overview a state carries, if any — the same set the
+ * reducer's carriesBudgetMonthSurface covers (OverviewEmpty itself, BudgetConfig,
+ * TransactionDetail, RecycleBin, BackupExport, BackupRestore). Shared by the budget month
+ * request so a landing behind an open surface resolves the month and is applied by the
+ * reducer instead of being dropped.
+ */
+private fun carriedOverviewOf(state: P503AppState): P503AppState.OverviewEmpty? =
+    when (state) {
+        is P503AppState.OverviewEmpty -> state
+        is P503AppState.BudgetConfig -> state.overview
+        is P503AppState.TransactionDetail -> state.overview
+        is P503AppState.RecycleBin -> state.overview
+        is P503AppState.BackupExport -> state.overview
+        is P503AppState.BackupRestore -> state.overview
+        else -> null
+    }

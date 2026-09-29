@@ -93,6 +93,15 @@ internal fun budgetConfigStatusText(
         else -> "监控中：当前额度 " + formatMinorUnits(requireNotNull(limitMinorUnits), currency.precision)
     }
 
+/**
+ * P3 fix round: the explicit banner for a commit whose outcome could not be resolved (an
+ * infrastructure escape of the 07.B boundary). It claims neither success nor a typed
+ * rejection, and states that a re-attempt is safe (a landed first commit surfaces as the
+ * typed revision conflict).
+ */
+internal const val BUDGET_COMMIT_UNKNOWN_NOTICE: String =
+    "提交结果未知（本地数据库无响应）。可重试：若上次已保存，重试会返回版本冲突提示；返回后请以当前显示额度为准。"
+
 /** The landed command outcome banner; every family gets its own explicit copy. */
 internal fun budgetConfigNoticeText(result: BudgetCommandResult): String =
     when (result) {

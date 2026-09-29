@@ -503,6 +503,13 @@ sealed interface P503AppState {
         val limitText: String = "",
         val submitting: Boolean = false,
         val outcome: com.unifiedledger.application.BudgetCommandResult? = null,
+        /**
+         * P7-07 fix round (P3): the commit ran but its outcome could not be resolved (an
+         * infrastructure escape; see [P503UiEvent.BudgetCommitUnknownLanded]). Distinct from
+         * [outcome]: the surface shows the explicit 结果未知 banner and stays re-attemptable
+         * (a landed first commit surfaces as the typed revision conflict on the retry).
+         */
+        val outcomeUnknown: Boolean = false,
     ) : P503AppState
 
     /**

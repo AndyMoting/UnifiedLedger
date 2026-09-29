@@ -25,7 +25,14 @@ import kotlin.time.Instant
  * transaction the adapter then:
  *
  *  1. runs the fail-loud missing-projection probe (spec section 6.4 item 5) — a non-zero count
- *     is [MonthlyContributionReadFailure.MissingProjection], never a silent omission;
+ *     is [MonthlyContributionReadFailure.MissingProjection], never a silent omission.
+ *     REGISTERED CONSERVATISM (fix round P3): the probe counts the LEDGER'S WHOLE
+ *     `transaction_version` surface (`statisticsAtProjectionMissingForLedger`), not just the
+ *     window's rows, so a single unprojected row anywhere fails every windowed read loudly.
+ *     This is deliberately conservative — a per-window probe could miss rows a later window
+ *     would hit — and its whole-ledger count cost is carried by the P707-A08 scale baseline
+ *     (with the range index the count is an index scan, not a table scan); revisit only with
+ *     measured evidence that the probe dominates the windowed read;
  *  2. loads the catalog generation ([CatalogAuthorityReader]) and reads the window's current-
  *     version effective rows (`monthlyContributionRowsInWindow`, the projection-indexed
  *     analogue of `ledgerEntryRowsForLedger` with a `[start, end)` predicate);

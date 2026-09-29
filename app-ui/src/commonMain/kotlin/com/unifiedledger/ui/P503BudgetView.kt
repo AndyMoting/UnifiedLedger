@@ -24,7 +24,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
@@ -93,7 +92,15 @@ internal fun P503BudgetRegion(
         )
         if (view is BudgetMonthViewResult.Success) {
             Spacer(Modifier.height(4.dp))
-            P503BudgetObservationRows(view, categoryName, parentIdOf, onOpenBudgetConfig)
+            // P2-1 fix round: the empty-month statement is a PRODUCTION row (the pure
+            // budgetRegionRowsText is the single source), never a silently blank region.
+            if (view.view.observations.isEmpty()) {
+                budgetRegionRowsText(view, categoryName).forEach { rowText ->
+                    Text(rowText, style = MaterialTheme.typography.bodyMedium)
+                }
+            } else {
+                P503BudgetObservationRows(view, categoryName, parentIdOf, onOpenBudgetConfig)
+            }
         }
         Spacer(Modifier.height(4.dp))
         TextButton(onClick = { pickerOpen = true }, enabled = pickerCategories.isNotEmpty()) {
@@ -270,29 +277,42 @@ internal fun P503BudgetConfigScreen(
             style = MaterialTheme.typography.bodyMedium,
         )
         Spacer(Modifier.height(8.dp))
-        // A CLOSED budget keeps no editable limit (close is the current state; the history is
-        // kept); an unset or monitored budget offers the save affordance.
-        if (!current.closed) {
-            OutlinedTextField(
-                value = current.limitText,
-                onValueChange = onLimitTextChange,
-                enabled = !current.submitting,
-                label = { Text("额度（精确金额）") },
-                isError = current.limitText.isNotBlank() && draft is BudgetLimitDraft.Invalid,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(4.dp))
-            Button(
-                enabled = !current.submitting && draft is BudgetLimitDraft.Valid,
-                onClick = onConfirmLimit,
-            ) {
-                Text("确认保存")
-            }
+        // P2-2 fix round: a CLOSED budget keeps its re-set entry (07.B: an existing budget —
+        // expectedRevision = the closed revision — may be modified; setting a limit resumes
+        // monitoring). The close action itself only exists for an open budget.
+        if (current.closed) {
+            Text("可重新设置额度以恢复监控（历史保留）。", style = MaterialTheme.typography.bodySmall)
+        }
+        OutlinedTextField(
+            value = current.limitText,
+            onValueChange = onLimitTextChange,
+            enabled = !current.submitting,
+            label = { Text("额度（精确金额）") },
+            isError = current.limitText.isNotBlank() && draft is BudgetLimitDraft.Invalid,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(4.dp))
+        Button(
+            enabled = !current.submitting && draft is BudgetLimitDraft.Valid,
+            onClick = onConfirmLimit,
+        ) {
+            Text("确认保存")
         }
         if (current.revision > 0L && !current.closed) {
             TextButton(enabled = !current.submitting, onClick = onCloseMonitoring) {
                 Text("关闭监控（保留配置与历史）")
             }
+        }
+        if (current.outcomeUnknown) {
+            Text(
+                BUDGET_COMMIT_UNKNOWN_NOTICE,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier =
+                    Modifier
+                        .padding(top = 4.dp)
+                        .semantics { liveRegion = LiveRegionMode.Assertive },
+            )
         }
         current.outcome?.let { outcome ->
             val accepted = outcome is BudgetCommandResult.Accepted || outcome is BudgetCommandResult.NoChange
@@ -314,7 +334,7 @@ internal fun P503BudgetConfigScreen(
         }
         // The month cursor is preserved by the carried overview; nothing here invents amounts.
         if (current.submitting) {
-            Text("提交中…", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text("提交中…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

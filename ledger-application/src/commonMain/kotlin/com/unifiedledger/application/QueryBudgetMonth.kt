@@ -21,12 +21,16 @@ import kotlinx.datetime.plus
  * counted against a limit, and no scope observation is ever summed with another (spec
  * sections 2.3/3.2).
  *
- * Fail-closed (spec section 5.1; R-Q06-4 discipline): a read failure, a missing statistics-at
- * projection or a catalog version mismatch is [BudgetMonthResult.Unavailable] /
- * [BudgetMonthViewResult.Unavailable]; a catalog/posting inconsistency, an unknown budget
- * scope category or checked overflow is the typed invalid state. None is ever rendered as a
- * zero execution amount, and an empty month with a configured scope is a genuine zero, not a
- * failure.
+ * Fail-closed (spec section 5.1; R-Q06-4 discipline): a read failure or a missing statistics-at
+ * projection is [BudgetMonthResult.Unavailable] / [BudgetMonthViewResult.Unavailable]; a
+ * catalog version mismatch (the port's typed
+ * [MonthlyContributionReadFailure.CatalogVersionMismatch]) and a catalog/posting inconsistency,
+ * an unknown budget scope category or a checked overflow all fold to the typed INVALID state at
+ * this use-case granularity — the use case presents every "the snapshot you asked for is not
+ * coherent" outcome as one invalid-state family, while the PORT keeps the mismatch distinct for
+ * callers that need the finer grain (fix round P2-3: this paragraph states the code's actual
+ * mapping). None is ever rendered as a zero execution amount, and an empty month with a
+ * configured scope is a genuine zero, not a failure.
  */
 
 /**
