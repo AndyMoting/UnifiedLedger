@@ -3745,3 +3745,25 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 7. **验收状态**：**无 P707 向量记 PASS（P707-A01..A09 全为待实现/待验收）**；本批交付了 A01/A03/A05 实现面、A04 有界读/投影联动面、A06 配置语义（沿 07.B）的实现与自动测试证据；逐向量 PASS 判定属计划 §10 的验收批次，不在本批登记。
 
 **关联决定：** D-185（前序最高 id；07.B 配置持久化，本批消费其 owner 与组合根接线缺口）、D-184（07.D 冻结设计面与 OPEN 项清单）、D-183/D-182（P7-06 runtime owner/lease/generation——本批刷新联动与落定门消费其运行时）、D-158（claim-first/CAS/回执形状先例）。
+
+## D-187 P7-08 标签与商家设计门批准（Q17/Q18 裁决与首版切片裁决）
+
+**状态：** 已批准（2026-09-30，P7-08「可维护多标签与受管理商家」设计规格的批准登记；规格 `docs/specs/2026-09-30-p7-08-tag-merchant-design.md` 经独立评审拓扑（规格符合性 + 质量 + 质量闭包复评）后由主代理按用户既有授权批准；本条登记批准内容、冻结的设计裁决、首版切片、评审拓扑、承接的 OPEN 项与边界）。
+
+**决定：**
+
+1. **交付与批准**：批准规格 `docs/specs/2026-09-30-p7-08-tag-merchant-design.md`（源 = 阶段计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §8 与 §10.6 Q17/Q18 行），冻结 P7-08 的**设计级**方案：08.A 标签/商家目录契约（Q17）、08.A 交易注释聚合（Q18）、08.B 五类录入原子贯通与已有交易注释编辑、08.C 筛选与商家累计消费设计面、08.D 双端与 P7-06 往返设计面。规格状态由 `proposal` 转为 `approved`（本决定即批准依据）。本规格逐条对齐已批准权威：P7-01 目录协议先例（`CatalogManagement.kt`/`SqlDelightCatalogStore.kt`）、P7-02.C 对手方目录（`Counterparty.kt` 复用 `normalizeCatalogName`）、07.B 预算协议镜像（`BudgetConfiguration.kt`/`SqlDelightBudgetStore`）、P7-05 修正与 note-update 协议（`SqlDelightTransactionCorrectionCommitPort.kt`/`SqlDelightConfirmedTransactionNoteUpdateCommitPort.kt`）；**不重开**其任何冻结决定。
+
+2. **Q17 裁决（目录契约）**：账本内 tag 与 merchant 两独立命名空间目录——名称 trim 后 1~64 Unicode 码点、同类内区分大小写唯一（复用冻结的 `normalizeCatalogName`；唯一性=规范化后 Kotlin 相等谓词，SQL 侧 BINARY、排序不下推 SQL，两端一致性以 commonTest 属性测试为验证方式）；稳定 ID 不复用、名称历史/当前名模型沿 catalog 先例；停用（active=false）可逆且历史引用保留、展示名随目录当前名；**删除采用 tombstone**（行保留、不可再选、无任何当前/历史引用才可删——引用面含作废交易与旧注释 revision，不含 pending claim 行，后者由事务内 fail-closed 再校验兜底）；引用探针沿 `CatalogCategoryReferenceProbe` 先例扩展；目录 revision/CAS/回执沿 claim-first 协议（第四实例）。
+
+3. **Q18 裁决（注释聚合）**：交易 root 独立版本化注释聚合——`transaction_annotation_revision`（含可空 merchantId 与诚实语义的 `observedTransactionVersionId`，其悬挂防护依赖「金融 version 行永不删除」系统不变量）+ `(ledgerId, transactionId, annotationRevision, tagId)` 唯一关联表 + 当前注释指针 CAS；**哨兵裁决：`expectedAnnotationRevision = 0` 表示「无注释交易」的首次注释编辑**（0 ⟺ 指针行不存在；R>0 ⟺ 存在且相等；失配类型化失败零写入；命中后同事务创建 revision=1+关联+指针+回执——镜像 07.B `expectedRevision==0` 新建先例）；首笔交易与初始注释 revision 同事务提交、目录在事务内再校验；保守编辑门「当前未作废交易」；void 不删注释、restore 重新可见、回收站只读；**清空全部关联 = 追加 0 标签/无商家的空 revision**（revision 单调递增、指针行不删、不可再入「无注释」态）；**注释请求的等价 replay 用结构化逐列匹配**（沿 `StoredNoteUpdate.matches` 先例，旧无注释行缺字段取冻结默认参与匹配），不走裸字符串比较；金融修正（copyCurrentVersion*）不触注释聚合，`note` 列语义（P7-05 已批准）保持原样，注释聚合只管 tags+merchant。
+
+4. **首版切片裁决**：首版 = 08.A 目录/注释聚合 + 08.B 录入贯通与已有交易注释编辑；**导入确认前选择显式承接为后续切片**（计划 §8.2 强制登记项）。**现实差距如实登记**：`import_source_record` 无来源商户/对方文本列（D-146 不留原文件），「导入原始商家仅作候选」在当前存储现实下不可实现，导入交易的商家/标签关联首版只能由用户显式建立；扩展导入涉及 D-146 边界，须另立裁决。验收 ID 归属：首版 A02/A03/A04/A05（A07/A08 按腿）；A01/A06/A08 恢复腿/A09 属 08.C/08.D 批。
+
+5. **评审拓扑**：`a8703fc`（draft-1）→ `3d815d5`（draft-1 冻结候选，行锚自查）→ **双独立评审**（规格符合性 APPROVE-WITH-FINDINGS 3 P3 + 1 P4 行锚；质量 APPROVE-WITH-FINDINGS 1 high [无注释交易 CAS 哨兵未定义] + 5 medium + 5 low）→ fix-round `f4a3ccc`（draft-2，全部闭合）→ **质量闭包复评 APPROVE-WITH-FINDINGS**（全部 CLOSED，仅余 1 处行号范围精度 low，不阻塞）。**本条不声称 distinct verifier**：纯设计文档批未运行 verifier，与 D-184 同口径。
+
+6. **承接的 OPEN 项（不得静默丢弃）**：规格 §8 的 12 项开放项全部保持 OPEN、承接至实施规格/实施批：实现用例/端口实签名；schema v34 分配（`33.sqm` 仅候选，本决定不分配）；注释/目录表族字面 DDL 形状与索引；录入快照扩展编码（可空列 vs 子表）；导入关联承接切片；商家累计行来源（月读加列 vs 读端 join）；目录读代际机制；筛选查询 SQL 形状；P708-A09 类规模基线；注释历史页 UI 语义（归 08.B UI 切片，最迟随 A03）；tombstone 审计呈现（归 08.A 目录 UI 切片，最迟随 A02）；observed 列 FK 与否。
+
+7. **边界**：本条只批准一份**设计规格**；零产品代码、零测试、零 schema/迁移、零依赖（schema 维持 v33，`33.sqm` 不分配不创建）；**不授权任何实现**；**不修改** D-143/D-144/D-156/D-158/D-184/D-185/D-186 的任何冻结决定；`rgXX_` 竖井（含 `rg10_lot.merchant_id`）与 golden fixtures/expected、`.external/` 零改动；`transaction_effective_state` 保持有效谓词唯一 SQL 定义点；P7-05 修正协议不改写。**不把任何 P708 验收向量记 PASS**——P708-A01..A09 全部为未来实现/验证要求。
+
+**关联决定：** D-186（前序最高 id；07.D 交付面——本规格消费其月读行形状与刷新链锚点）、D-184（设计门先例与 P7-07 冻结面）、D-185（claim-first 哨兵先例）、D-143（目录协议）、D-146（导入留存边界——导入差距的事实依据）、D-156/D-158（修正协议先例）。
