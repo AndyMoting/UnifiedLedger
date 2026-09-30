@@ -106,5 +106,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        # The history scans (messages, paths, trees) must see the full
+        # history; the checkout default of depth 1 would silently reduce
+        # them to the tip commit.
+        with:
+          fetch-depth: 0
       - name: Trace scan
         run: bash tools/ci/trace-scan.sh

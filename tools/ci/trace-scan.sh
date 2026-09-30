@@ -10,14 +10,25 @@
 #
 # Usage:
 #   CI:    bash tools/ci/trace-scan.sh
-#   Local: the same command from the repository root; Git Bash on Windows
-#          behaves identically. The script is invoked through `bash`, so no
-#          executable bit or chmod is required.
+#   Local: the same command from any directory inside the repository; the
+#          script always re-roots itself at the repository top so the scans
+#          cover the whole tree. Git Bash on Windows behaves identically.
+#          The script is invoked through `bash`, so no executable bit or
+#          chmod is required.
 #   Optional: set ALLOWED_TRACE_PATH to a colon- or newline-separated list of
 #          exact repository-relative paths to exempt from the path-based
 #          scans (default: empty). CI runs with the default empty allowlist.
 #          The script always exempts its own file as well: it embeds the
 #          pattern literals verbatim and would otherwise match every scan.
+#
+# Known deviations from the harness trace scope:
+#   - This script's own repository-relative path is permanently invisible to
+#     the tracked-file, history-path and history-tree scans (self-exemption
+#     above). Trace words inside tools/ci/trace-scan.sh itself can therefore
+#     only be caught by human PR review.
+#   - On scan exit codes {0, 1} the git stderr is discarded; the harness
+#     merges stderr into its captured output (2>&1). Nothing is printed on
+#     stderr unless a scan fails or a hit is reported.
 #
 # Scans, mirroring the harness trace scope:
 #   1. Tracked files: `git grep` over the current worktree/index content.
@@ -91,12 +102,29 @@ is_allowed_path() {
 # Exempt this script's own repository-relative path: it must embed
 # TRACE_PATTERN and AGENT_PATH_PATTERN verbatim, so its content always
 # matches the trace scans. Without the exemption the scan would always fail
-# on its own implementation. When the script is not tracked in the current
-# repository (for example a copy run against another checkout), the content
-# scans cannot see it and the exemption is simply unnecessary.
+# on its own implementation. Three membership cases are distinguished:
+#   - The script belongs to another repository (or to no repository at all):
+#     the content scans of this repository cannot see it -> normal skip.
+#   - It belongs to this repository but git fails to resolve its path:
+#     unexpected failure -> exit 2.
+#   - It belongs to this repository and resolves: the path joins the
+#     allowlist (an untracked-but-present file also resolves here and stays
+#     harmless, because untracked files are invisible to git grep).
 add_self_exemption() {
-    local self_rel
-    self_rel="$(git ls-files --full-name -- "$0")" || return 0
+    local self_ref="$0" script_top self_rel rc
+    case "$self_ref" in
+        /*|[a-zA-Z]:*) : ;;
+        *) self_ref="$ORIGINAL_PWD/$self_ref" ;;
+    esac
+    script_top="$(git -C "$(dirname "$self_ref")" rev-parse --show-toplevel 2>/dev/null)"
+    if [ -z "$script_top" ] || [ "$script_top" != "$REPO_TOP" ]; then
+        return 0
+    fi
+    self_rel="$(git ls-files --full-name -- "$self_ref")"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        fatal "git ls-files failed while resolving the script path for self-exemption."
+    fi
     [ -n "$self_rel" ] || return 0
     ALLOWED_SET="${ALLOWED_SET:+$ALLOWED_SET:}$(normalize_path "$self_rel")"
 }
@@ -153,7 +181,8 @@ scan_history_paths() {
     run_git_scan "Git history path scan" \
         git log --all --name-only --pretty=format:
     # Drop blank lines, drop allowlisted paths, match the agent path pattern.
-    awk 'NF' "$TMP_OUT" > "$TMP_ERR"
+    awk 'NF' "$TMP_OUT" > "$TMP_ERR" ||
+        fatal "Awk failed during Git history path scan."
     : > "$TMP_HITS"
     while IFS= read -r p; do
         if ! is_allowed_path "$p"; then
@@ -163,7 +192,8 @@ scan_history_paths() {
     grep -i -E "$AGENT_PATH_PATTERN" "$TMP_HITS" > "$TMP_ERR"
     case $? in
         0)
-            head -n 10 "$TMP_ERR" > "$TMP_HITS"
+            head -n 10 "$TMP_ERR" > "$TMP_HITS" ||
+                fatal "Head failed during Git history path scan."
             report_hits "Agent-specific paths in Git history (first 10 shown)"
             ;;
         1) : ;;
@@ -211,7 +241,8 @@ scan_history_trees() {
         fi
     done < "$TMP_OUT"
     if [ -s "$TMP_ERR" ]; then
-        head -n 10 "$TMP_ERR" > "$TMP_HITS"
+        head -n 10 "$TMP_ERR" > "$TMP_HITS" ||
+            fatal "Head failed during historical tree deduplication."
         report_hits "historical trees (first 10 unique paths shown)"
     fi
 }
@@ -219,6 +250,11 @@ scan_history_trees() {
 main() {
     git rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
         fatal "Not a Git repository; run from the repository root."
+    # Mirror the harness Push-Location: scans must cover the whole repository
+    # tree regardless of the directory the script was started from.
+    ORIGINAL_PWD="$(pwd)"
+    REPO_TOP="$(git rev-parse --show-toplevel)" || fatal "Cannot resolve the repository root."
+    cd "$REPO_TOP" || fatal "Cannot enter the repository root."
     # Per-process scratch files: concurrent invocations must not interfere.
     TMP_OUT="$(mktemp)" || fatal "mktemp failed."
     TMP_ERR="$(mktemp)" || fatal "mktemp failed."

@@ -57,7 +57,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: windows-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: windows-gradle-
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
       - name: Windows JVM tests
         run: ./gradlew --no-daemon --max-workers=1 :ledger-data:jvmTest :desktop-app:jvmTest :app-ui:jvmTest :ledger-application:jvmTest :ledger-domain:jvmTest :android-app:testDebugUnitTest --warning-mode all
