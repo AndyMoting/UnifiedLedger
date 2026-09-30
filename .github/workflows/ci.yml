@@ -22,8 +22,11 @@ env:
   CI_TEST_MAX_PARALLEL_FORKS: '4'
 
 jobs:
-  kotlin:
-    name: Kotlin tests
+  # :ledger-data:jvmTest (93 classes / 673 tests) is by far the longest task, so it is
+  # split across three runners. tools/ci/ledger-data-shards.txt says which classes each
+  # runner takes; the two coverage guards below keep that list honest.
+  kotlin-core:
+    name: Kotlin tests core
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -31,28 +34,101 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
-      - uses: actions/cache@v5
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v5
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: ${{ runner.os }}-gradle-
-      - name: Gradle check
-        run: ./gradlew --no-daemon --max-workers=5 --parallel --init-script tools/ci/ci-parallel.init.gradle.kts check --warning-mode all
+      - name: Cache Gradle build cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.gradle/caches/build-cache-1
+          key: gradle-build-cache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: gradle-build-cache-${{ runner.os }}-
+      - name: Gradle check (every module except the sharded ledger-data test task)
+        run: ./gradlew --no-daemon --max-workers=5 --parallel --build-cache --init-script tools/ci/ci-parallel.init.gradle.kts check -x :ledger-data:jvmTest :ledger-data:jvmTestClasses --warning-mode all
       - name: Ktlint check
-        run: ./gradlew --no-daemon --max-workers=5 --init-script tools/ci/ci-parallel.init.gradle.kts ktlintCheck --warning-mode all
+        run: ./gradlew --no-daemon --max-workers=5 --build-cache --init-script tools/ci/ci-parallel.init.gradle.kts ktlintCheck --warning-mode all
       - name: Shared UI tests
-        run: ./gradlew --no-daemon --max-workers=5 --init-script tools/ci/ci-parallel.init.gradle.kts :app-ui:jvmTest --warning-mode all
+        run: ./gradlew --no-daemon --max-workers=5 --build-cache --init-script tools/ci/ci-parallel.init.gradle.kts :app-ui:jvmTest --warning-mode all
       - name: Desktop app build
-        run: ./gradlew --no-daemon --max-workers=5 --init-script tools/ci/ci-parallel.init.gradle.kts :desktop-app:build --warning-mode all
+        run: ./gradlew --no-daemon --max-workers=5 --build-cache --init-script tools/ci/ci-parallel.init.gradle.kts :desktop-app:build --warning-mode all
       - name: SQLDelight migration
-        run: ./gradlew --no-daemon --max-workers=5 --init-script tools/ci/ci-parallel.init.gradle.kts :ledger-data:verifyCommonMainLedgerDatabaseMigration --warning-mode all
+        run: ./gradlew --no-daemon --max-workers=5 --build-cache --init-script tools/ci/ci-parallel.init.gradle.kts :ledger-data:verifyCommonMainLedgerDatabaseMigration --warning-mode all
+      - name: Every compiled test class is listed in the shard manifest
+        run: python3 tools/ci/verify-shard-coverage.py --manifest tools/ci/ledger-data-shards.txt --classes ledger-data/build/classes/kotlin/jvm/test
       - name: Test timing report
         # Report-only: aggregates per-class JUnit XML timings into the job summary so
         # later tuning uses measured CI data. Never changes the check conclusion.
         if: always()
         run: python3 tools/ci/test-timing-report.py --root . --summary "$GITHUB_STEP_SUMMARY"
+
+  ledger-data-shards:
+    name: ledger-data shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      CI_TEST_MAX_PARALLEL_FORKS: '2'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
+      - name: Cache Gradle build cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.gradle/caches/build-cache-1
+          key: gradle-build-cache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: gradle-build-cache-${{ runner.os }}-
+      - name: ledger-data jvmTest (shard ${{ matrix.shard }})
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          mapfile -t classes < <(awk -F'\t' -v s="$SHARD" '$1==s {print $2}' tools/ci/ledger-data-shards.txt)
+          echo "shard $SHARD: ${#classes[@]} classes"
+          args=()
+          for one in "${classes[@]}"; do args+=(--tests "$one"); done
+          ./gradlew --no-daemon --max-workers=2 --build-cache --init-script tools/ci/ci-parallel.init.gradle.kts :ledger-data:jvmTest "${args[@]}" --warning-mode all
+      - name: Shard ran exactly its share of the manifest
+        run: python3 tools/ci/verify-shard-coverage.py --manifest tools/ci/ledger-data-shards.txt --shard ${{ matrix.shard }} --results ledger-data/build/test-results/jvmTest
+      - name: Test timing report
+        if: always()
+        run: python3 tools/ci/test-timing-report.py --root . --summary "$GITHUB_STEP_SUMMARY"
+
+  kotlin-gate:
+    # Owns the branch-protection context name "Kotlin tests". It must always run
+    # (a skipped job would leave the required check pending forever) and it fails
+    # whenever any Kotlin verification job failed.
+    name: Kotlin tests
+    needs: [kotlin-core, ledger-data-shards]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every Kotlin verification job to succeed
+        run: |
+          echo "kotlin-core=${{ needs.kotlin-core.result }}"
+          echo "ledger-data-shards=${{ needs.ledger-data-shards.result }}"
+          if [ "${{ needs.kotlin-core.result }}" != "success" ] || [ "${{ needs.ledger-data-shards.result }}" != "success" ]; then
+            echo "::error::Kotlin verification did not fully succeed"
+            exit 1
+          fi
 
   android:
     name: Android compile
