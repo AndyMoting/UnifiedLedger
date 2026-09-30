@@ -16,6 +16,8 @@
 #   Optional: set ALLOWED_TRACE_PATH to a colon- or newline-separated list of
 #          exact repository-relative paths to exempt from the path-based
 #          scans (default: empty). CI runs with the default empty allowlist.
+#          The script always exempts its own file as well: it embeds the
+#          pattern literals verbatim and would otherwise match every scan.
 #
 # Scans, mirroring the harness trace scope:
 #   1. Tracked files: `git grep` over the current worktree/index content.
@@ -84,6 +86,19 @@ is_allowed_path() {
         *":$needle:"*) return 0 ;;
     esac
     return 1
+}
+
+# Exempt this script's own repository-relative path: it must embed
+# TRACE_PATTERN and AGENT_PATH_PATTERN verbatim, so its content always
+# matches the trace scans. Without the exemption the scan would always fail
+# on its own implementation. When the script is not tracked in the current
+# repository (for example a copy run against another checkout), the content
+# scans cannot see it and the exemption is simply unnecessary.
+add_self_exemption() {
+    local self_rel
+    self_rel="$(git ls-files --full-name -- "$0")" || return 0
+    [ -n "$self_rel" ] || return 0
+    ALLOWED_SET="${ALLOWED_SET:+$ALLOWED_SET:}$(normalize_path "$self_rel")"
 }
 
 # Shared runner for a git command whose {0,1} exit codes both mean "the scan
@@ -170,19 +185,24 @@ scan_history_trees() {
         if [ "${#batch[@]}" -ge "$BATCH_SIZE" ]; then
             run_git_scan "Historical tree trace scan" \
                 git grep -l -i -I -E "$TRACE_PATTERN" "${batch[@]}" -- .
-            [ -s "$TMP_OUT" ] &&
-                sed -E 's/^[0-9a-fA-F]{40}://' "$TMP_OUT" >> "$TMP_HITS"
+            if [ -s "$TMP_OUT" ]; then
+                sed -E 's/^[0-9a-fA-F]{40}://' "$TMP_OUT" >> "$TMP_HITS" ||
+                    fatal "Sed failed during historical tree trace scan."
+            fi
             batch=()
         fi
     done
     if [ "${#batch[@]}" -gt 0 ]; then
         run_git_scan "Historical tree trace scan" \
             git grep -l -i -I -E "$TRACE_PATTERN" "${batch[@]}" -- .
-        [ -s "$TMP_OUT" ] &&
-            sed -E 's/^[0-9a-fA-F]{40}://' "$TMP_OUT" >> "$TMP_HITS"
+        if [ -s "$TMP_OUT" ]; then
+            sed -E 's/^[0-9a-fA-F]{40}://' "$TMP_OUT" >> "$TMP_HITS" ||
+                fatal "Sed failed during historical tree trace scan."
+        fi
     fi
     # Deduplicate: one file can appear in many commits; judge paths only.
-    sort -u "$TMP_HITS" > "$TMP_OUT"
+    sort -u "$TMP_HITS" > "$TMP_OUT" ||
+        fatal "Sort failed during historical tree deduplication."
     : > "$TMP_ERR"
     while IFS= read -r p; do
         [ -n "$p" ] || continue
@@ -205,6 +225,7 @@ main() {
     TMP_HITS="$(mktemp)" || fatal "mktemp failed."
     trap 'rm -f "$TMP_OUT" "$TMP_ERR" "$TMP_HITS"' EXIT
     load_allowlist
+    add_self_exemption
     scan_tracked_files
     scan_history_messages
     scan_history_paths

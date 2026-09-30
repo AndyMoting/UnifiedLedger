@@ -42,7 +42,7 @@ $env:GRADLE_OPTS='-Xmx1024m'
 bash tools/ci/trace-scan.sh
 ```
 
-同步义务：脚本内的 `TRACE_PATTERN` 与 agent 路径正则必须与 harness 技能的 `verify-project.ps1` trace scope 逐字一致；任一侧修改必须在同一变更中同步另一侧。豁免路径通过 `ALLOWED_TRACE_PATH` 环境变量注入（冒号或换行分隔的仓库相对路径），CI 默认为空。
+同步义务：脚本内的 `TRACE_PATTERN` 与 agent 路径正则必须与 harness 技能的 `verify-project.ps1` trace scope 逐字一致；任一侧修改必须在同一变更中同步另一侧。豁免路径通过 `ALLOWED_TRACE_PATH` 环境变量注入（冒号或换行分隔的仓库相对路径），CI 默认为空；脚本会自动豁免其自身路径（其内容逐字嵌入 pattern 常量，必然命中内容扫描），提交消息命中不接受任何豁免。
 
 ## Windows JVM tests
 
