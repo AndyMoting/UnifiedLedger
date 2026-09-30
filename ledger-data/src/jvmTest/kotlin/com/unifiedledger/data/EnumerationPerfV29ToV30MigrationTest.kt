@@ -28,7 +28,7 @@ import kotlin.test.assertTrue
 class EnumerationPerfV29ToV30MigrationTest {
     @Test
     fun versionThirtyIsCurrent() {
-        assertEquals(33, LedgerDatabase.Schema.version)
+        assertEquals(34, LedgerDatabase.Schema.version)
     }
 
     @Test

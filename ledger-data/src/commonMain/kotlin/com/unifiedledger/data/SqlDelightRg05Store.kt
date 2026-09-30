@@ -12,6 +12,8 @@ import com.unifiedledger.application.Rg05ManualSnapshot
 import com.unifiedledger.application.Rg05PreparedOperation
 import com.unifiedledger.application.Rg05ReceiptSnapshot
 import com.unifiedledger.data.db.LedgerDatabase
+import com.unifiedledger.domain.CatalogItemViolation
+import com.unifiedledger.domain.TransactionAnnotationViolation
 import com.unifiedledger.domain.AccountTransferViolation
 import com.unifiedledger.domain.BalanceAdjustmentViolation
 import com.unifiedledger.domain.BudgetViolation
@@ -1003,6 +1005,10 @@ private fun DomainViolation.toRg05Rejected(): Rg05ExecutionResult.Rejected =
         is CounterpartyViolation,
 
         is BudgetViolation,
+
+        is CatalogItemViolation,
+
+        is TransactionAnnotationViolation,
 
         -> Rg05ExecutionResult.Rejected(Rg05ExecutionError.INTERNAL_DOMAIN_VIOLATION, "operation")
     }

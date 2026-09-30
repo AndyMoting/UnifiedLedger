@@ -499,6 +499,220 @@ CREATE TABLE budget_command_receipt (
 CREATE TRIGGER budget_command_receipt_guard_update BEFORE UPDATE ON budget_command_receipt BEGIN SELECT RAISE(ABORT, 'cannot update budget command receipt'); END;
 CREATE TRIGGER budget_command_receipt_guard_delete BEFORE DELETE ON budget_command_receipt BEGIN SELECT RAISE(ABORT, 'cannot delete budget command receipt'); END;
 
+-- P7-08 08.A (D-187; spec docs/specs/2026-09-30-p7-08-tag-merchant-design.md sections 2 and 3)
+-- tag/merchant catalog and the transaction annotation aggregate. Non-rgXX_ product tables
+-- (D-098 option A). Two independently named catalog namespaces: a stable tag identity and a
+-- stable merchant identity, each with an `active` soft-disable flag, a terminal `tombstoned`
+-- audit flag and a per-item revision CAS pointer; one shared append-only name history whose
+-- current name is its newest CURRENT row; and ONE claim-first request/receipt pair serving both
+-- catalog kinds (mirroring `catalog_command_request`, which serves accounts and categories).
+-- The annotation aggregate is a ledger/transaction-scoped version history: one immutable
+-- `transaction_annotation_revision` per edit (annotation_revision from 1), an immutable tag
+-- association set (at most 20 per revision, guard-enforced), a current-pointer table whose
+-- shape mirrors `ledger_transaction_current_version`, and its own claim-first pair. All product
+-- DDL here is created verbatim by 33.sqm so the fresh and migrated schemas match byte for byte.
+--
+-- TOMBSTONE VS ACTIVE (spec section 2.2): active=false is a reversible soft disable that keeps
+-- every historical reference; tombstone is terminal (a tombstoned row may never be un-tombstoned
+-- and never physically deleted, only ever advanced by one revision). The delete command requires
+-- that no current OR historical annotation reference names the item.
+--
+-- Ledger-scoped monotonic tag/merchant catalog version (spec section 8 open item 9, ruled here):
+-- an INDEPENDENT counter from `catalog_version`, because the account/category owner and the
+-- tag/merchant owner have disjoint mutation sets and sharing one counter would make each owner's
+-- CAS spuriously stale on the other's writes. Advanced by exactly one per accepted catalog-item
+-- command; the future filter read compares it inside one read transaction (the D-186 section 2(b)
+-- mechanism on a dedicated counter).
+CREATE TABLE catalog_item_version (
+  ledger_id TEXT NOT NULL,
+  version INTEGER NOT NULL CHECK (version >= 0),
+  PRIMARY KEY (ledger_id)
+);
+CREATE TRIGGER catalog_item_version_guard_update BEFORE UPDATE ON catalog_item_version BEGIN
+  SELECT CASE WHEN new.ledger_id != old.ledger_id OR new.version != old.version + 1
+    THEN RAISE(ABORT, 'catalog item version must increase by one') END;
+END;
+
+CREATE TABLE catalog_tag (
+  ledger_id TEXT NOT NULL,
+  tag_id TEXT NOT NULL,
+  active INTEGER NOT NULL CHECK (active IN (0, 1)),
+  tombstoned INTEGER NOT NULL CHECK (tombstoned IN (0, 1)),
+  revision INTEGER NOT NULL CHECK (revision >= 0),
+  PRIMARY KEY (ledger_id, tag_id),
+  CHECK (tombstoned = 0 OR active = 0)
+);
+CREATE TRIGGER catalog_tag_guard_update BEFORE UPDATE ON catalog_tag BEGIN
+  SELECT CASE WHEN new.ledger_id != old.ledger_id OR new.tag_id != old.tag_id
+      OR new.revision != old.revision + 1
+      OR old.tombstoned = 1
+      OR new.tombstoned < old.tombstoned
+      OR new.tombstoned > 1
+      OR (new.tombstoned = 1 AND new.active != 0)
+    THEN RAISE(ABORT, 'catalog tag row is immutable except a forward revision') END;
+END;
+CREATE TRIGGER catalog_tag_guard_delete BEFORE DELETE ON catalog_tag BEGIN SELECT RAISE(ABORT, 'cannot delete catalog tag'); END;
+
+CREATE TABLE catalog_merchant (
+  ledger_id TEXT NOT NULL,
+  merchant_id TEXT NOT NULL,
+  active INTEGER NOT NULL CHECK (active IN (0, 1)),
+  tombstoned INTEGER NOT NULL CHECK (tombstoned IN (0, 1)),
+  revision INTEGER NOT NULL CHECK (revision >= 0),
+  PRIMARY KEY (ledger_id, merchant_id),
+  CHECK (tombstoned = 0 OR active = 0)
+);
+CREATE TRIGGER catalog_merchant_guard_update BEFORE UPDATE ON catalog_merchant BEGIN
+  SELECT CASE WHEN new.ledger_id != old.ledger_id OR new.merchant_id != old.merchant_id
+      OR new.revision != old.revision + 1
+      OR old.tombstoned = 1
+      OR new.tombstoned < old.tombstoned
+      OR new.tombstoned > 1
+      OR (new.tombstoned = 1 AND new.active != 0)
+    THEN RAISE(ABORT, 'catalog merchant row is immutable except a forward revision') END;
+END;
+CREATE TRIGGER catalog_merchant_guard_delete BEFORE DELETE ON catalog_merchant BEGIN SELECT RAISE(ABORT, 'cannot delete catalog merchant'); END;
+
+CREATE TABLE catalog_item_name_history (
+  ledger_id TEXT NOT NULL,
+  owner_kind TEXT NOT NULL CHECK (owner_kind IN ('tag', 'merchant')),
+  owner_id TEXT NOT NULL,
+  version_number INTEGER NOT NULL CHECK (version_number > 0),
+  name TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('CURRENT', 'SUPERSEDED')),
+  PRIMARY KEY (ledger_id, owner_kind, owner_id, version_number)
+);
+CREATE TRIGGER catalog_item_name_history_guard_update BEFORE UPDATE ON catalog_item_name_history BEGIN
+  SELECT CASE WHEN old.status != 'CURRENT' OR new.status != 'SUPERSEDED'
+      OR new.ledger_id != old.ledger_id OR new.owner_kind != old.owner_kind
+      OR new.owner_id != old.owner_id OR new.version_number != old.version_number
+      OR new.name != old.name
+    THEN RAISE(ABORT, 'cannot update catalog item name history') END;
+END;
+CREATE TRIGGER catalog_item_name_history_guard_delete BEFORE DELETE ON catalog_item_name_history BEGIN SELECT RAISE(ABORT, 'cannot delete catalog item name history'); END;
+
+CREATE TABLE catalog_item_command_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  command TEXT NOT NULL,
+  owner_kind TEXT NOT NULL CHECK (owner_kind IN ('tag', 'merchant')),
+  owner_id TEXT NOT NULL,
+  request_snapshot TEXT NOT NULL,
+  input_fingerprint TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ACCEPTED', 'NO_CHANGE')),
+  reason_code TEXT,
+  expected_revision INTEGER NOT NULL CHECK (expected_revision >= 0),
+  result_revision INTEGER,
+  PRIMARY KEY (ledger_id, request_id)
+);
+
+CREATE TABLE catalog_item_command_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ACCEPTED', 'NO_CHANGE')),
+  owner_kind TEXT NOT NULL CHECK (owner_kind IN ('tag', 'merchant')),
+  owner_id TEXT NOT NULL,
+  new_revision INTEGER NOT NULL CHECK (new_revision >= 0),
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES catalog_item_command_request(ledger_id, request_id)
+);
+CREATE TRIGGER catalog_item_command_receipt_guard_update BEFORE UPDATE ON catalog_item_command_receipt BEGIN SELECT RAISE(ABORT, 'cannot update catalog item command receipt'); END;
+CREATE TRIGGER catalog_item_command_receipt_guard_delete BEFORE DELETE ON catalog_item_command_receipt BEGIN SELECT RAISE(ABORT, 'cannot delete catalog item command receipt'); END;
+
+-- The annotation aggregate (spec section 3.1). `observed_transaction_version_id` honestly records
+-- the current financial version the edit saw; it is NOT NULL and carries a DEFERRABLE FK to the
+-- immutable `transaction_version`. The system invariant "financial version rows are never deleted"
+-- (transaction_version has no product delete path) keeps that reference from ever dangling.
+CREATE TABLE transaction_annotation_revision (
+  ledger_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  annotation_revision INTEGER NOT NULL CHECK (annotation_revision > 0),
+  observed_transaction_version_id TEXT NOT NULL,
+  merchant_id TEXT,
+  request_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, transaction_id, annotation_revision),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, observed_transaction_version_id, ledger_id)
+    REFERENCES transaction_version(transaction_id, version_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, merchant_id)
+    REFERENCES catalog_merchant(ledger_id, merchant_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE INDEX transaction_annotation_revision_by_merchant ON transaction_annotation_revision(ledger_id, merchant_id);
+CREATE TRIGGER transaction_annotation_revision_guard_update BEFORE UPDATE ON transaction_annotation_revision BEGIN SELECT RAISE(ABORT, 'cannot update annotation revision'); END;
+CREATE TRIGGER transaction_annotation_revision_guard_delete BEFORE DELETE ON transaction_annotation_revision BEGIN SELECT RAISE(ABORT, 'cannot delete annotation revision'); END;
+
+CREATE TABLE transaction_annotation_tag (
+  ledger_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  annotation_revision INTEGER NOT NULL CHECK (annotation_revision > 0),
+  tag_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, transaction_id, annotation_revision, tag_id),
+  FOREIGN KEY (ledger_id, transaction_id, annotation_revision)
+    REFERENCES transaction_annotation_revision(ledger_id, transaction_id, annotation_revision) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (ledger_id, tag_id)
+    REFERENCES catalog_tag(ledger_id, tag_id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE INDEX transaction_annotation_tag_by_tag ON transaction_annotation_tag(ledger_id, tag_id);
+-- Spec section 3.2 cardinality guard: a single revision can never hold more than 20 tags.
+CREATE TRIGGER transaction_annotation_tag_cardinality_guard BEFORE INSERT ON transaction_annotation_tag BEGIN
+  SELECT CASE WHEN (
+    SELECT count(*) FROM transaction_annotation_tag
+    WHERE ledger_id = new.ledger_id AND transaction_id = new.transaction_id
+      AND annotation_revision = new.annotation_revision
+  ) >= 20
+    THEN RAISE(ABORT, 'annotation tag cardinality exceeds 20') END;
+END;
+CREATE TRIGGER transaction_annotation_tag_guard_update BEFORE UPDATE ON transaction_annotation_tag BEGIN SELECT RAISE(ABORT, 'cannot update annotation tag'); END;
+CREATE TRIGGER transaction_annotation_tag_guard_delete BEFORE DELETE ON transaction_annotation_tag BEGIN SELECT RAISE(ABORT, 'cannot delete annotation tag'); END;
+
+-- Current annotation pointer (spec section 3.1), mirroring `ledger_transaction_current_version`:
+-- a missing row means "never annotated" and is only reachable before the first edit; once it
+-- exists it is never deleted and only ever advances.
+CREATE TABLE transaction_annotation_current (
+  ledger_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  annotation_revision INTEGER NOT NULL CHECK (annotation_revision > 0),
+  PRIMARY KEY (ledger_id, transaction_id),
+  FOREIGN KEY (ledger_id, transaction_id, annotation_revision)
+    REFERENCES transaction_annotation_revision(ledger_id, transaction_id, annotation_revision) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TRIGGER transaction_annotation_current_guard_update BEFORE UPDATE ON transaction_annotation_current BEGIN
+  SELECT CASE WHEN new.ledger_id != old.ledger_id OR new.transaction_id != old.transaction_id
+      OR new.annotation_revision <= old.annotation_revision
+    THEN RAISE(ABORT, 'annotation pointer must advance') END;
+END;
+CREATE TRIGGER transaction_annotation_current_guard_delete BEFORE DELETE ON transaction_annotation_current BEGIN SELECT RAISE(ABORT, 'cannot delete annotation pointer'); END;
+
+CREATE TABLE transaction_annotation_command_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  request_snapshot TEXT NOT NULL,
+  input_fingerprint TEXT NOT NULL,
+  expected_annotation_revision INTEGER NOT NULL CHECK (expected_annotation_revision >= 0),
+  expected_current_version_id TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ACCEPTED', 'NO_CHANGE')),
+  reason_code TEXT,
+  result_annotation_revision INTEGER,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE transaction_annotation_command_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ACCEPTED', 'NO_CHANGE')),
+  transaction_id TEXT NOT NULL,
+  new_annotation_revision INTEGER NOT NULL CHECK (new_annotation_revision > 0),
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id) REFERENCES transaction_annotation_command_request(ledger_id, request_id)
+);
+CREATE TRIGGER transaction_annotation_command_receipt_guard_update BEFORE UPDATE ON transaction_annotation_command_receipt BEGIN SELECT RAISE(ABORT, 'cannot update annotation command receipt'); END;
+CREATE TRIGGER transaction_annotation_command_receipt_guard_delete BEFORE DELETE ON transaction_annotation_command_receipt BEGIN SELECT RAISE(ABORT, 'cannot delete annotation command receipt'); END;
+
 CREATE TABLE rg03_operation_request (
   ledger_id TEXT NOT NULL,
   request_id TEXT NOT NULL,
@@ -10445,3 +10659,209 @@ FROM transaction_void_request AS request
 JOIN transaction_void_receipt AS receipt
   ON receipt.ledger_id = request.ledger_id AND receipt.request_id = request.request_id
 WHERE request.ledger_id = :ledger_id AND request.request_id = :request_id;
+
+-- P7-08 08.A (D-187; spec sections 2/3) tag/merchant catalog and transaction annotation queries.
+-- The catalog load path reads current names from the shared append-only name history (newest
+-- CURRENT row), mirrors the P7-01 catalog owner, and the annotation reads never restate the
+-- effective predicate: they look it up through the single `transaction_effective_state` view.
+selectCatalogItemVersion:
+SELECT version FROM catalog_item_version WHERE ledger_id = ?;
+
+insertCatalogItemVersion:
+INSERT INTO catalog_item_version(ledger_id, version) VALUES (?, ?)
+ON CONFLICT (ledger_id) DO NOTHING;
+
+advanceCatalogItemVersion:
+UPDATE catalog_item_version SET version = version + 1 WHERE ledger_id = ?;
+
+countCatalogItemVersions:
+SELECT count(*) FROM catalog_item_version WHERE ledger_id = ?;
+
+countCatalogTags:
+SELECT count(*) FROM catalog_tag WHERE ledger_id = ?;
+
+countCatalogMerchants:
+SELECT count(*) FROM catalog_merchant WHERE ledger_id = ?;
+
+selectCatalogTag:
+SELECT tag_id, active, tombstoned, revision FROM catalog_tag WHERE ledger_id = ? AND tag_id = ?;
+
+selectCatalogTags:
+SELECT tag_id, active, tombstoned, revision FROM catalog_tag WHERE ledger_id = ? ORDER BY tag_id;
+
+selectCatalogMerchant:
+SELECT merchant_id, active, tombstoned, revision FROM catalog_merchant WHERE ledger_id = ? AND merchant_id = ?;
+
+selectCatalogMerchants:
+SELECT merchant_id, active, tombstoned, revision FROM catalog_merchant WHERE ledger_id = ? ORDER BY merchant_id;
+
+insertCatalogTag:
+INSERT INTO catalog_tag(ledger_id, tag_id, active, tombstoned, revision) VALUES (?, ?, ?, ?, ?);
+
+insertCatalogMerchant:
+INSERT INTO catalog_merchant(ledger_id, merchant_id, active, tombstoned, revision) VALUES (?, ?, ?, ?, ?);
+
+setCatalogTagState:
+UPDATE catalog_tag SET active = ?, tombstoned = ?, revision = revision + 1
+WHERE ledger_id = ? AND tag_id = ?;
+
+setCatalogMerchantState:
+UPDATE catalog_merchant SET active = ?, tombstoned = ?, revision = revision + 1
+WHERE ledger_id = ? AND merchant_id = ?;
+
+renameCatalogTag:
+UPDATE catalog_tag SET revision = revision + 1 WHERE ledger_id = ? AND tag_id = ?;
+
+renameCatalogMerchant:
+UPDATE catalog_merchant SET revision = revision + 1 WHERE ledger_id = ? AND merchant_id = ?;
+
+selectCatalogItemCurrentName:
+SELECT version_number, name FROM catalog_item_name_history
+WHERE ledger_id = ? AND owner_kind = ? AND owner_id = ? AND status = 'CURRENT';
+
+selectCatalogItemCurrentNamesByKind:
+SELECT owner_id, name FROM catalog_item_name_history
+WHERE ledger_id = ? AND owner_kind = ? AND status = 'CURRENT';
+
+selectCatalogItemMaxNameVersion:
+SELECT max(version_number) FROM catalog_item_name_history
+WHERE ledger_id = ? AND owner_kind = ? AND owner_id = ?;
+
+supersedeCatalogItemCurrentName:
+UPDATE catalog_item_name_history SET status = 'SUPERSEDED'
+WHERE ledger_id = ? AND owner_kind = ? AND owner_id = ? AND status = 'CURRENT';
+
+insertCatalogItemNameHistory:
+INSERT INTO catalog_item_name_history(ledger_id, owner_kind, owner_id, version_number, name, status)
+VALUES (?, ?, ?, ?, ?, ?);
+
+claimCatalogItemCommandRequest:
+INSERT INTO catalog_item_command_request(ledger_id, request_id, command, owner_kind, owner_id, request_snapshot, input_fingerprint, outcome, reason_code, expected_revision, result_revision)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL)
+ON CONFLICT (ledger_id, request_id) DO NOTHING;
+
+selectCatalogItemCommandRequest:
+SELECT command, request_snapshot, input_fingerprint, outcome, expected_revision, result_revision, owner_kind, owner_id
+FROM catalog_item_command_request WHERE ledger_id = ? AND request_id = ?;
+
+updateCatalogItemCommandRequestOwner:
+UPDATE catalog_item_command_request SET owner_id = ? WHERE ledger_id = ? AND request_id = ?;
+
+updateCatalogItemCommandRequestOutcome:
+UPDATE catalog_item_command_request SET outcome = ?, result_revision = ?
+WHERE ledger_id = ? AND request_id = ?;
+
+deleteCatalogItemCommandRequest:
+DELETE FROM catalog_item_command_request WHERE ledger_id = ? AND request_id = ?;
+
+insertCatalogItemCommandReceipt:
+INSERT INTO catalog_item_command_receipt(ledger_id, request_id, outcome, owner_kind, owner_id, new_revision)
+VALUES (?, ?, ?, ?, ?, ?);
+
+selectCatalogItemCommandReceipt:
+SELECT outcome, owner_kind, owner_id, new_revision
+FROM catalog_item_command_receipt WHERE ledger_id = ? AND request_id = ?;
+
+countCatalogItemCommandRequests:
+SELECT count(*) FROM catalog_item_command_request WHERE ledger_id = ?;
+
+countCatalogItemCommandReceipts:
+SELECT count(*) FROM catalog_item_command_receipt WHERE ledger_id = ?;
+
+-- Tombstone reference probes (spec section 2.2): the association/revision rows are immutable, so
+-- they are the COMPLETE reference surface for a tag/merchant; any current OR historical annotation
+-- (including on voided transactions and superseded revisions) counts. Pending command claims are
+-- NOT references and are excluded (the commit transaction re-validates fail-closed instead).
+catalogReferencedTagIds:
+SELECT DISTINCT tag_id FROM transaction_annotation_tag WHERE ledger_id = ?;
+
+catalogReferencedMerchantIds:
+SELECT DISTINCT merchant_id FROM transaction_annotation_revision
+WHERE ledger_id = ? AND merchant_id IS NOT NULL;
+
+selectTransactionAnnotationRevision:
+SELECT annotation_revision, observed_transaction_version_id, merchant_id, request_id, created_at
+FROM transaction_annotation_revision
+WHERE ledger_id = ? AND transaction_id = ? AND annotation_revision = ?;
+
+selectTransactionAnnotationCurrentRevision:
+SELECT annotation_revision FROM transaction_annotation_current
+WHERE ledger_id = ? AND transaction_id = ?;
+
+selectTransactionAnnotationTagIds:
+SELECT tag_id FROM transaction_annotation_tag
+WHERE ledger_id = ? AND transaction_id = ? AND annotation_revision = ?
+ORDER BY tag_id;
+
+selectTransactionAnnotationCurrentTagIds:
+SELECT association.tag_id
+FROM transaction_annotation_tag AS association
+JOIN transaction_annotation_current AS current_annotation
+  ON current_annotation.ledger_id = association.ledger_id
+ AND current_annotation.transaction_id = association.transaction_id
+ AND current_annotation.annotation_revision = association.annotation_revision
+WHERE association.ledger_id = ? AND association.transaction_id = ?
+ORDER BY association.tag_id;
+
+insertTransactionAnnotationRevision:
+INSERT INTO transaction_annotation_revision(ledger_id, transaction_id, annotation_revision, observed_transaction_version_id, merchant_id, request_id, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+insertTransactionAnnotationTag:
+INSERT INTO transaction_annotation_tag(ledger_id, transaction_id, annotation_revision, tag_id)
+VALUES (?, ?, ?, ?);
+
+insertTransactionAnnotationCurrent:
+INSERT INTO transaction_annotation_current(ledger_id, transaction_id, annotation_revision)
+VALUES (?, ?, ?);
+
+advanceTransactionAnnotationCurrent:
+UPDATE transaction_annotation_current SET annotation_revision = ?
+WHERE ledger_id = ? AND transaction_id = ? AND annotation_revision = ?;
+
+transactionEffectiveState:
+SELECT is_effective FROM transaction_effective_state WHERE ledger_id = ? AND transaction_id = ?;
+
+selectCurrentVersionIdForTransaction:
+SELECT current_version_id FROM ledger_transaction_current_version
+WHERE ledger_id = ? AND transaction_id = ?;
+
+claimTransactionAnnotationCommandRequest:
+INSERT INTO transaction_annotation_command_request(ledger_id, request_id, transaction_id, request_snapshot, input_fingerprint, expected_annotation_revision, expected_current_version_id, outcome, reason_code, result_annotation_revision)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+ON CONFLICT (ledger_id, request_id) DO NOTHING;
+
+selectTransactionAnnotationCommandRequest:
+SELECT transaction_id, request_snapshot, input_fingerprint, outcome, expected_annotation_revision, expected_current_version_id, result_annotation_revision
+FROM transaction_annotation_command_request WHERE ledger_id = ? AND request_id = ?;
+
+updateTransactionAnnotationCommandRequestOutcome:
+UPDATE transaction_annotation_command_request SET outcome = ?, result_annotation_revision = ?
+WHERE ledger_id = ? AND request_id = ?;
+
+deleteTransactionAnnotationCommandRequest:
+DELETE FROM transaction_annotation_command_request WHERE ledger_id = ? AND request_id = ?;
+
+insertTransactionAnnotationCommandReceipt:
+INSERT INTO transaction_annotation_command_receipt(ledger_id, request_id, outcome, transaction_id, new_annotation_revision)
+VALUES (?, ?, ?, ?, ?);
+
+selectTransactionAnnotationCommandReceipt:
+SELECT outcome, transaction_id, new_annotation_revision
+FROM transaction_annotation_command_receipt WHERE ledger_id = ? AND request_id = ?;
+
+
+countTransactionAnnotationRevisions:
+SELECT count(*) FROM transaction_annotation_revision WHERE ledger_id = ?;
+
+countTransactionAnnotationTags:
+SELECT count(*) FROM transaction_annotation_tag WHERE ledger_id = ?;
+
+countTransactionAnnotationCurrents:
+SELECT count(*) FROM transaction_annotation_current WHERE ledger_id = ?;
+
+countTransactionAnnotationCommandRequests:
+SELECT count(*) FROM transaction_annotation_command_request WHERE ledger_id = ?;
+
+countTransactionAnnotationCommandReceipts:
+SELECT count(*) FROM transaction_annotation_command_receipt WHERE ledger_id = ?;

@@ -9,6 +9,8 @@ import com.unifiedledger.application.Rg04ManualSnapshot
 import com.unifiedledger.application.Rg04PreparedOperation
 import com.unifiedledger.application.Rg04RepaymentSnapshot
 import com.unifiedledger.data.db.LedgerDatabase
+import com.unifiedledger.domain.CatalogItemViolation
+import com.unifiedledger.domain.TransactionAnnotationViolation
 import com.unifiedledger.domain.AccountTransferViolation
 import com.unifiedledger.domain.BalanceAdjustmentViolation
 import com.unifiedledger.domain.BudgetViolation
@@ -486,6 +488,10 @@ private fun DomainViolation.rejected(): Rg04ExecutionResult.Rejected =
         is CounterpartyViolation,
 
         is BudgetViolation,
+
+        is CatalogItemViolation,
+
+        is TransactionAnnotationViolation,
 
         -> Rg04ExecutionResult.Rejected(Rg04ExecutionError.INTERNAL_DOMAIN_VIOLATION, "operation")
     }

@@ -25,6 +25,8 @@ import com.unifiedledger.application.Rg03SourceSnapshot
 import com.unifiedledger.application.SourceCompleteness
 import com.unifiedledger.application.SourceRecordId
 import com.unifiedledger.data.db.LedgerDatabase
+import com.unifiedledger.domain.CatalogItemViolation
+import com.unifiedledger.domain.TransactionAnnotationViolation
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountTransfer
 import com.unifiedledger.domain.AccountTransferField
@@ -1415,6 +1417,10 @@ private fun DomainViolation.toRg03Rejected(): Rg03ExecutionResult.Rejected =
         is CounterpartyViolation,
 
         is BudgetViolation,
+
+        is CatalogItemViolation,
+
+        is TransactionAnnotationViolation,
 
         -> Rg03ExecutionResult.Rejected(Rg03ExecutionError.DOMAIN_VALIDATION_FAILED)
     }

@@ -41,7 +41,7 @@ class P707BudgetConfigMigrationV32ToV33Test {
 
     @Test
     fun versionThirtyThreeIsCurrent() {
-        assertEquals(33, LedgerDatabase.Schema.version)
+        assertEquals(34, LedgerDatabase.Schema.version)
     }
 
     @Test
