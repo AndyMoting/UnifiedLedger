@@ -3855,3 +3855,5 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残余与观察（登记）**：若希望首次运行也命中缓存，需要在 `main` 上产生缓存（例如定期或人工 dispatch 一次 `ci.yml`），那会部分恢复 D-190 去掉的合并后运行，属新的取舍，本批不做；Python job 的 `Run tests` 实测 6.83 分钟（`Install dependencies` 仅 0.03 分钟），在 Kotlin 路径缩短后会成为新的关键路径——若要继续压缩总时长，应针对 Python 套件本身（分片或并行化），而不是缓存依赖安装。
 
 **关联决定：** D-191（分片拓扑与两道覆盖守卫；本批只修其缓存 key 与并发度，拓扑不变）、D-190（单遍 CI；缓存作用域结论依赖它）、D-189（CI 专属并行与逐类计时报告）。
+
+**实测（run `36770403615`，本批第一次运行）**：整条 run **8.3 分钟**（`20:07:25 → 20:15:44`，较上一轮的 10.7 分钟下降）。各 job：`ledger-data shard 1` 8.2、`shard 2` 7.5、`shard 3` 5.5、`Kotlin tests core` 7.2、`Python tests` 7.1、`Android compile` 5.2、`Trace scan` 3.5 分钟，收口 job 3 秒；三片合计 **93 类 / 673 例**，两道覆盖守卫通过。缓存 key 已按 job 分离（`gradle-build-cache-Linux-kotlin-core-0-<run>` 与 `…-ledger-data-shards-0/1/2-<run>`），本轮为**首次保存**，日志仍为 `Cache not found`（预期），需在第二次运行核对命中。分片用时 8.2 / 7.5 / 5.5 不均衡的原因：名单按本机耗时装箱，而 CI 侧 `shard 1` 含无法切分的长类 `LedgerDatabaseMigrationTest`（约 5 分钟），后续可依 CI 实测数据重排。
