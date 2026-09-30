@@ -1,10 +1,11 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  # Manual full re-run on main. The only case that needs it is a merge whose tree
+  # differs from the verified pull-request tree (see docs/CONTRIBUTING.md).
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

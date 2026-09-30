@@ -3803,3 +3803,19 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界**：只改 CI workflow、两个 CI 专用脚本与 `docs/CONTRIBUTING.md`；零产品代码、零测试内容、零 schema/迁移、零依赖变更；本机开发流程与四个 required check 的 job 名保持不变。
 
 **关联决定：** D-188（PR 门禁流与正式文档口径；本批沿用其验证分工且不改 job 名）、D-186（`kotlin` job 负载构成先例）。
+
+## D-190 单遍 CI：合并后不再重复全量运行
+
+**状态：** 已批准（2026-09-30，CI 提速批次 2 的登记；由用户在 2026-09-30 直接批准执行）。
+
+**决定：**
+
+1. **去掉合并后的重复运行**：`.github/workflows/ci.yml` 的 `on` 只保留 `pull_request: branches: [main]`，并新增 `workflow_dispatch` 供人工重跑；`push: branches: [main]` 移除。四个 job 的 job 名与内容不变，分支保护零改动。
+2. **证据口径改写**：`pull_request` run 检出并验证的是该 PR 的**预览合并树**（`Merge <head> into <base>`），因此发布证据是「合并树与该 PR tip 树逐字节相同」，用 `git rev-parse "<merge-sha>^{tree}" "<pr-tip-sha>^{tree}"` 核对；不同（合并引入了 PR tip 之外的内容，例如冲突解决或基点过期）必须用 `gh workflow run ci.yml --ref main` 重跑全量。`docs/CONTRIBUTING.md`「本机与 CI 的验证分工」与「合并」两段同步改写。
+3. **依据（已核实的历史事实）**：近四次合并的树逐字节相同——`tree(0927bf1)` = `tree(5bfe6aa)` = `1dd0b83d`、`tree(c8e5b1f)` = `tree(f85ede9)` = `52566ea6`、`tree(8f76b2a)` = `tree(cbcdb06)` = `72314c37`、`tree(ac3dace)` = `tree(a762e89)` = `15b612d3`；且 `pull_request` run 的检出提交确为合成预览合并（例：`45e892a Merge 5bfe6aa… into c8e5b1f…`，其基点 `c8e5b1f` 经 `git merge-base --is-ancestor` 确认为 `5bfe6aa` 的祖先）。分支保护的 `strict=true` 与 `enforce_admins=true` 保证合并时分支对 `main` 为最新。
+4. **收益与验收**：一次改动的等待由「PR run + 合并后 run」降为单遍。本批以合并后 `gh run list --event push` 不再出现 `CI`（`ci.yml`）运行为验收证据；本批 PR 自身的四个 required checks 需全绿。
+5. **残余风险（登记）**：`strict` 只保证「合并那一刻」分支最新；两个 PR 都最新并先后合并时，第二个的合并树可能与其预览树不同，须按第 2 条核对并重跑。当前为单人流程，窗口极小；本批不引入自动守卫，合并树守卫 workflow 作为可选后续批次。
+
+**边界**：只改 CI 触发配置与 `docs/CONTRIBUTING.md`；零产品代码、零测试内容、零 schema/迁移、零依赖变更；不改任何 job 名或 job 内容；`windows.yml` 的触发与语义不变。
+
+**关联决定：** D-189（同批次前半：CI 专属并行测试与计时报告；本批沿用其 job 名与 workflow）、D-188（PR 门禁流本身与四门禁口径）。

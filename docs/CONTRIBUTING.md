@@ -28,9 +28,21 @@ $env:GRADLE_OPTS='-Xmx1024m'
 
 ## 本机与 CI 的验证分工
 
-默认工作流是 PR 门禁流：在短期任务分支上开发，推送后创建 Pull Request（`gh pr create`），required checks（`.github/workflows/ci.yml` 的 `Kotlin tests`、`Android compile`、`Python tests`、`Trace scan` 四个 job）全部通过后以 merge commit 合并（`gh pr merge --merge`）。job name 与分支保护规则强耦合，改名必须同步更新分支保护配置。
+默认工作流是 PR 门禁流：在短期任务分支上开发，推送后创建 Pull Request（`gh pr create`），required checks（`.github/workflows/ci.yml` 的 `Kotlin tests`、`Android compile`、`Python tests`、`Trace scan` 四个 job）全部通过后以 merge commit 合并（`gh pr merge --merge`）。job name 与分支保护规则强耦合，改名必须同步更新分支保护配置。`ci.yml` 只在 `pull_request` 上触发（另留 `workflow_dispatch` 供人工重跑），**合并动作本身不再产生第二遍全量运行**。
 
-本机只保留快速反馈：受影响模块的聚焦定向测试、`project_docs`，以及可选的 `bash tools/ci/trace-scan.sh` 本地预检。完整 `check`、ktlint、Android/KMP 编译、Debug APK、完整 Python 测试、Desktop build、migration verifier 与 Windows JVM 测试由 CI 在资源更充足的 runner 上执行；同一提交的 CI 成功结果是这些聚合门禁的发布证据。只有在变更范围或失败诊断需要时，才在本机重复相应的资源密集型命令。
+本机只保留快速反馈：受影响模块的聚焦定向测试、`project_docs`，以及可选的 `bash tools/ci/trace-scan.sh` 本地预检。完整 `check`、ktlint、Android/KMP 编译、Debug APK、完整 Python 测试、Desktop build、migration verifier 与 Windows JVM 测试由 CI 在资源更充足的 runner 上执行。PR run 检出并验证的是该 PR 的**预览合并树**（`Merge <head> into <base>`），因此发布证据是「合并树与该 PR tip 树逐字节相同」，合并后立即核对：
+
+```bash
+git rev-parse "<merge-sha>^{tree}" "<pr-tip-sha>^{tree}"
+```
+
+两个哈希相同即为等价证据；不同（合并引入了 PR tip 之外的内容，例如冲突解决或基点过期）必须重跑全量：
+
+```bash
+gh workflow run ci.yml --ref main
+```
+
+只有在变更范围或失败诊断需要时，才在本机重复相应的资源密集型命令。
 
 修复轮纪律：每轮修改完成后一次性提交并推送。PR 的 concurrency 会在新一轮推送时取消旧 run，只有末次推送的 run 会跑完并产出完整的绿色检查；不要在旧 run 上等待结论。
 
@@ -212,7 +224,8 @@ CI 专属并行：`kotlin` job 以 `--max-workers=5 --parallel` 运行，并通�
 
 - 所有 tracked 变更通过 Pull Request 合入 `main`：任务分支推送后创建 PR，说明包含目的、行为变化、验证结果和适用决定编号。
 - 分支保护要求 required checks（`Kotlin tests`、`Android compile`、`Python tests`、`Trace scan`）全部通过且分支为最新（strict up-to-date）；ci.yml job name 改名时必须同步更新分支保护配置。
-- 合并前同步最新 `main`，解决冲突；本机按「本机与 CI 的验证分工」执行快速反馈检查，聚合检查由 CI 的同一次 run 承担。
+- 合并前同步最新 `main`，解决冲突；本机按「本机与 CI 的验证分工」执行快速反馈检查，聚合检查由 PR 的那一次 run 承担。
+- 合并后立即按同一节核对「合并树 == PR tip 树」；不一致时用 `gh workflow run ci.yml --ref main` 重跑全量，再继续后续工作。
 - 默认使用 merge commit（`gh pr merge --merge`），保留可独立理解的提交和分支边界。
 - 只有提交确实琐碎且无法独立理解时才使用 squash merge；不使用 rebase merge 合入 `main`。
 - 禁止强推或删除 `main`。
