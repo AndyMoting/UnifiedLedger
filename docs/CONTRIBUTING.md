@@ -196,6 +196,8 @@ CI 专属并行与分片：`.github/workflows/ci.yml` 把 Kotlin 验证拆成四
 
 并行与缓存：`tools/ci/ci-parallel.init.gradle.kts` 为全部 `Test` 任务设置 `maxParallelForks`（主 job 与分片均为 4，由 `CI_TEST_MAX_PARALLEL_FORKS` 控制），只由 CI workflow 显式传入——本机命令不受影响，「本机 Gradle 资源限制」的串行要求保持不变。各 job 以 `--max-workers`、`--parallel`、`--build-cache` 运行，并用独立缓存步骤持久化 Gradle 用户缓存目录下的 `caches/build-cache-1`：key 由 job 名、矩阵下标与运行号组成（每个 job 各存一条，避免并发 job 争抢同一条缓存而保存失败），`restore-keys` 前缀用于复用最新一条；缓存作用域按 ref，同一 PR 的后续运行（修复轮）可复用，首次运行不会命中。**`Test` 任务被显式排除在构建缓存之外**（init 脚本里的 `outputs.cacheIf { false }`）：实测同一提交重跑时出现过 `> Task :ledger-data:jvmTest FROM-CACHE`、整个分片 42 秒结束而测试并未执行——缓存只允许服务编译与分析任务，必过检查必须意味着「测试本次真的执行并通过」。每个 job 末尾的 `Test timing report` 步骤把逐类耗时与 runner 的 CPU/内存写入 job summary；该步骤只报告，不改变任何检查结论。
 
+Python 分片：`python-shards`（矩阵 1/2）按 `tools/ci/python-shards.txt`（每行 `shard<TAB>完整模块名`）各自运行一组测试模块，`Project docs` 固定由 shard 1 承担；收口 job **`Python tests`** 等两个分片全部结束（`if: always()`）后按结果放行——与 Kotlin 侧同一模式，该名字同样不得改名或被跳过。名单按实测逐模块耗时装箱，用 `python tools/ci/make-python-shards.py --times <每模块耗时 TSV> --out tools/ci/python-shards.txt` 重新生成；测试模块增删或改名必须重新生成。静态守卫以 `--python-manifest` 与 `--tests-dir` 断言「`tests/python/test_*.py` 的模块集合 == 名单且无重复」（不执行测试、秒级完成），漏加或重复登记即失败。
+
 ## 文档规则
 
 - 正式文档以中文为主，代码类型、文件名、命令和 API 名称保留英文。

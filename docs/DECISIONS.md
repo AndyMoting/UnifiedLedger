@@ -3859,3 +3859,21 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **实测（run `36770403615`，本批第一次运行）**：整条 run **8.3 分钟**（`20:07:25 → 20:15:44`，较上一轮的 10.7 分钟下降）。各 job：`ledger-data shard 1` 8.2、`shard 2` 7.5、`shard 3` 5.5、`Kotlin tests core` 7.2、`Python tests` 7.1、`Android compile` 5.2、`Trace scan` 3.5 分钟，收口 job 3 秒；三片合计 **93 类 / 673 例**，两道覆盖守卫通过。缓存 key 已按 job 分离（`gradle-build-cache-Linux-kotlin-core-0-<run>` 与 `…-ledger-data-shards-0/1/2-<run>`），本轮为**首次保存**，日志仍为 `Cache not found`（预期），需在第二次运行核对命中。分片用时 8.2 / 7.5 / 5.5 不均衡的原因：名单按本机耗时装箱，而 CI 侧 `shard 1` 含无法切分的长类 `LedgerDatabaseMigrationTest`（约 5 分钟），后续可依 CI 实测数据重排。
 
 **第二次运行（run `36772026182`）与随之发现的副作用**：缓存**命中成功**（四个 Kotlin job 均记录 `Cache restored from key: gradle-build-cache-Linux-ledger-data-shards-0-36770403615`，不再有 `Failed to save`），整条 run 7.0 分钟。但日志显示 `shard 1` 出现 **`> Task :ledger-data:jvmTest FROM-CACHE`**：该分片的测试**没有执行**、job **42 秒**结束（`shard 2` 因恢复到的条目不含其测试输出而正常执行；编译任务两者均为 `FROM-CACHE`）。Gradle 的 `Test` 任务默认可缓存，这会让必过检查退化为「该输入集曾绿过」，与「完成必须有真实检查结果」的纪律冲突。**处置（同一 PR 内）**：在 `tools/ci/ci-parallel.init.gradle.kts` 中对 `Test` 任务设置 `outputs.cacheIf { false }`——**构建缓存只服务编译与分析任务，测试每次必须真实执行**；代价是重跑时每个分片多约 1–1.5 分钟（编译仍命中），换来「绿 = 本次真的跑过」。
+
+## D-193 Python 测试分片（两片 + 收口 job）
+
+**状态：** 已批准（2026-09-30，CI 提速批次 4 的登记；由用户在 2026-09-30 批准计划步骤 1~3 时一并授权）。
+
+**决定：**
+
+1. **拆分**：`.github/workflows/ci.yml` 的 `python` job 拆为 `python-shards`（矩阵 1/2，各自按名单运行一组测试模块）与收口 job **`Python tests`**（`needs: [python-shards]`、`if: always()`、任一非 success 即失败）。`Project docs` 固定由 shard 1 承担，使其仍在该必过检查路径内。四个 required check 的名称与分支保护配置零改动。
+2. **名单与生成器**：新增 `tools/ci/python-shards.txt`（每行 `shard<TAB>完整模块名`，46 行）与 `tools/ci/make-python-shards.py`（按实测逐模块耗时贪心装箱）；输入为一次性的每模块计时 TSV。
+3. **静态覆盖守卫**：`tools/ci/verify-shard-coverage.py` 新增 Python 模式（`--python-manifest` 与 `--tests-dir`），断言 `tests/python/test_*.py` 的模块集合与名单**完全相等且无重复**，不执行测试；不符即退出码 1。原 Kotlin 两个模式不变。
+4. **依据（拆片前实测）**：CI 的 `python` job 中 `Run tests` = **6.83 分钟**（日志 `Ran 809 tests in 428.682s`），而 `Install dependencies` 仅 0.03 分钟、`Project docs` 0.02 分钟——时间几乎全部在跑测试本身，故分片有效且固定开销可忽略；按模块独立运行已验证可行（`python -m unittest tests.python.<module>` 正常返回，`Ran 10 tests … OK`）。
+5. **预期与验收**：Python 段 7.1 → 约 3.8 分钟，使整条 run 的稳定态落到约 5–6 分钟（届时 Kotlin 分片与 Android 成为新的上限）。验收：本批 PR 四个 required checks 全绿；两个分片的 `Ran N tests` 之和 == **809**；静态守卫通过；另在一次性分支上做负向验证（把某模块从名单删除），确认 `Python tests` 报 **failure** 而非停留在等待状态。
+
+**边界**：只改 CI workflow、`tools/ci/` 下两个文件与 `docs/CONTRIBUTING.md`；零产品代码、零测试内容、零 schema/迁移、零依赖变更；本机命令与串行纪律不变。
+
+**残余（登记）**：名单需随测试模块增删维护（静态守卫兜底，漏维护是响亮失败）；分片后一次运行的 job 数由 10 增到 12（Free 计划并发上限 20，安全）；各分片是独立 VM，测试写文件不会跨分片冲突，但分片内部仍与今天一样串行执行。
+
+**关联决定：** D-192（缓存与并发修正；Python 成为新瓶颈的结论由其「残余与观察」登记）、D-191（分片与收口 job 模式、覆盖守卫脚本）、D-190（单遍 CI）、D-189（CI 专属并行与逐类计时报告）。
