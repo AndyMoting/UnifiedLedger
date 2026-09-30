@@ -3785,3 +3785,21 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界**：本批为纯文档同步；零产品代码、零测试、零 schema/迁移、零依赖变更；`rgXX_` 竖井、golden fixtures/expected 与 `.external/` 零改动；不修改 D-186/D-187 的任何冻结决定。
 
 **关联决定：** D-186（07.D 交付面，本批同步其状态）、D-187（P7-08 设计门，本批同步其状态）、D-185（07.B 交付面与状态句先例）、D-183（P7-06 06.D 交付面）。
+
+## D-189 CI 专属并行测试与计时报告
+
+**状态：** 已批准（2026-09-30，CI 提速批次 1 的登记；由用户在 2026-09-30 直接批准执行）。
+
+**决定：**
+
+1. **CI 专属并行测试**：`.github/workflows/ci.yml` 的 `kotlin` job 由全串行改为 `--max-workers=5 --parallel`，并通过新增的 tracked init script `tools/ci/ci-parallel.init.gradle.kts` 为全部 `Test` 任务设置 `maxParallelForks`（默认 4，可用 `CI_TEST_MAX_PARALLEL_FORKS` 覆盖）。本机验证命令与「本机 Gradle 资源限制」的串行要求不变；init script 只由 CI workflow 显式传入。
+
+2. **计时报告**：新增 `tools/ci/test-timing-report.py`，在 `kotlin` job 末尾以 `if: always()` 汇总 `build/test-results` 的逐类耗时、测试例数，以及 runner 的 CPU 与内存信息到 job summary；该步骤只报告，不改变任何检查结论。
+
+3. **依据（一次性探测，未合并、已删除）**：临时分支的 run `36738085748` 在同一 runner 上实测 `:ledger-data:jvmTest`——forks=1 为 2010 s、forks=2 为 1232 s、forks=4 为 959 s（`nproc=4`；三次均执行 673 例、93 类），1→4 的墙钟缩放为 **2.10 倍**。
+
+4. **验收**：本批 PR 自身的四个 required checks 全绿，`Kotlin tests` job 时长与逐类报告作为证据；`:ledger-data:jvmTest` 执行例数不得低于 673。
+
+**边界**：只改 CI workflow、两个 CI 专用脚本与 `docs/CONTRIBUTING.md`；零产品代码、零测试内容、零 schema/迁移、零依赖变更；本机开发流程与四个 required check 的 job 名保持不变。
+
+**关联决定：** D-188（PR 门禁流与正式文档口径；本批沿用其验证分工且不改 job 名）、D-186（`kotlin` job 负载构成先例）。
