@@ -166,9 +166,16 @@ jobs:
           path: android-app/build/outputs/apk/debug/*.apk
           retention-days: 7
 
-  python:
-    name: Python tests
+  # The Python suite (46 modules / 809 tests, about 7 minutes) is split across two
+  # runners; tools/ci/python-shards.txt says which modules each runner takes.
+  python-shards:
+    name: Python shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -176,14 +183,38 @@ jobs:
           python-version: '3.12'
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
-      - name: Run tests
+      - name: Run this shard
+        env:
+          SHARD: ${{ matrix.shard }}
         run: |
+          set -euo pipefail
+          mapfile -t modules < <(awk -F'\t' -v s="$SHARD" '$1==s {print $2}' tools/ci/python-shards.txt)
+          echo "shard $SHARD: ${#modules[@]} modules"
           export PYTHONPATH=tools/python
-          python -m unittest discover -s tests -t . -v
+          python -m unittest -v "${modules[@]}"
       - name: Project docs
+        if: matrix.shard == 1
         run: |
           export PYTHONPATH=tools/python
           python -m project_docs .
+      - name: Every Python test module is listed in the shard manifest
+        run: python tools/ci/verify-shard-coverage.py --python-manifest tools/ci/python-shards.txt --tests-dir tests/python
+
+  python-gate:
+    # Owns the branch-protection context name "Python tests": it must always run and
+    # fails whenever a Python shard failed.
+    name: Python tests
+    needs: [python-shards]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every Python verification job to succeed
+        run: |
+          echo "python-shards=${{ needs.python-shards.result }}"
+          if [ "${{ needs.python-shards.result }}" != "success" ]; then
+            echo "::error::Python verification did not fully succeed"
+            exit 1
+          fi
 
   trace:
     name: Trace scan
