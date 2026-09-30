@@ -1,0 +1,57 @@
+# Single-pass CI (D-190) verifies only the pull-request preview merge tree, so
+# when two pull requests merge back to back the second one's landed combination
+# was never run (D-190 §5 residual risk). This thin guard closes that gap: every
+# push to main is judged by tools/ci/verify-merge-tree.py — the single
+# implementation of the criterion "tree(merge) == tree(merge^2)". A merge that
+# introduced nothing beyond the verified pull-request tip is zero action;
+# anything else (or an unreadable check) dispatches a full run of ci.yml on
+# main, the same manual path documented in docs/CONTRIBUTING.md.
+name: Merge tree guard
+
+on:
+  push:
+    branches: [main]
+
+# Only what the judgement and the dispatch need: read the pushed history, and
+# create a workflow_dispatch event for ci.yml. Never contents: write.
+permissions:
+  contents: read
+  actions: write
+
+# No concurrency block on purpose. The guard costs seconds, and cancelling an
+# in-progress guard could swallow exactly the dispatch this workflow exists for
+# (the second of two back-to-back merges). Dispatched ci.yml runs collapse
+# through ci.yml's own concurrency group instead.
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      # Default depth 1 cannot resolve HEAD^2; the criterion needs the second
+      # parent of the merge commit, so the full history is required.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Guard the landed merge tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          parents="$(git rev-list --parents -n 1 HEAD)"
+          echo "pushed commit and parents: $parents"
+          set +e
+          python3 tools/ci/verify-merge-tree.py $parents
+          status=$?
+          set -e
+          case $status in
+            0)
+              echo "landed tree matches the verified pull-request tree: zero action"
+              ;;
+            1)
+              echo "landed tree was not verified by a pull-request run: dispatching full CI on main"
+              gh workflow run ci.yml --ref main
+              ;;
+            *)
+              echo "merge tree guard failed to judge (exit $status): treating as blocking"
+              exit "$status"
+              ;;
+          esac

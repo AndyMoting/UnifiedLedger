@@ -3925,3 +3925,25 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残余（登记）**：名单仍按「类」切分，单个长类（`LedgerDatabaseMigrationTest`，CI 实测 236 秒）无法拆分，是分片墙钟的硬下限；若要继续压缩需把该类拆成多个测试类（属测试内容改动，需用例数守卫兜底），本批不做。runner 侧波动（同一份代码实测 8.3–15.4 分钟）大于本批收益，判断单次运行快慢时应以类秒数为主、墙钟为辅。
 
 **关联决定：** D-191（分片拓扑与两道覆盖守卫）、D-192（缓存与并发修正）、D-193（Python 分片，同一「按实测装箱」模式）、D-189（CI 专属并行与逐类计时报告）。
+
+## D-196 合并树守卫：push 到 main 后自动核对落地组合
+
+**状态：** 已批准（2026-10-01，合并树守卫批的登记；r69 停止位置所列下一动作 1 的落地）。
+
+**背景**：D-190 的单遍 CI 只验证 PR 的预览合并树，其 §5 登记的残余风险是两个 PR 先后合并时第二个的落地组合未被验证；当时的兜底是合并后手工 `git rev-parse` 核对。
+
+**决定：**
+
+1. **薄壳守卫 workflow**：新增 `.github/workflows/merge-tree-guard.yml`，`on: push: branches: [main]`，只判据、只 dispatch，不承担任何检查；checkout 用 `fetch-depth: 0`（默认 depth 1 取不到 `HEAD^2`，硬约束）。
+2. **判据唯一实现**：新增 `tools/ci/verify-merge-tree.py`——提交恰有第二父且 `tree(merge) == tree(merge^2)` → 零动作（exit 0）；线性提交、树不等或对象不可读 → 判需全量（exit 1，保守 fail-closed）；显式给出的父三元组与提交对象矛盾 → 输入错误（exit 2）；git 环境本身不可用 → 执行错误（exit 3）。workflow 只调用该脚本，判据零重复实现。
+3. **判据依据**：`tree(M) == tree(M^2)` ⇔ 合并未引入 PR tip 之外的内容；基点过期或冲突解决会使树不等而触发重跑，保守方向正确。比较基准必须是合并提交自身记录的第二父（合并那一刻被并入的 tip，冻结在提交对象里），不得用事件上下文另取的「PR head 树」——push 事件没有 PR 上下文，另取的基线可能反映合并之后分支的后续变动，造成保守误报，故禁用。
+4. **dispatch 机制（裁决）**：`gh workflow run ci.yml --ref main`（runner 预装 gh），`GH_TOKEN` 用默认 token；`permissions` 仅 `contents: read` + `actions: write`（创建 workflow dispatch 事件所需），不出现 `contents: write`。
+5. **无 concurrency 块（裁决）**：守卫只有秒级判据与至多一次 dispatch 调用；若设 cancel-in-progress，两个 PR 先后合并的窗口内第一个守卫可能在给出判据前被第二个推送取消，恰好吞掉本守卫要防的那次 dispatch。被 dispatch 的 `ci.yml` run 由其自身 concurrency（`CI-<ref>`，cancel-in-progress）收敛为最后一次。
+
+**边界**：只改守卫 workflow、`tools/ci/` 下一个新脚本与 `docs/CONTRIBUTING.md`；零产品代码、零测试内容、零 schema/迁移、零依赖变更；`ci.yml` 与 `windows.yml` 零改动（job 名、触发与语义均不动）；四个 required check 名称与分支保护零改动；守卫 workflow 顶层名（`Merge tree guard`）与 job 名不与 required check 名冲突；判据脚本不进 Python 分片名单（沿 `tools/ci` 脚本无单测的先例）。
+
+**验收**：判据脚本三条路径本地验证——`affffbe5c`（等树合并）零动作 exit 0、`12ee3e825`（线性提交）需全量 exit 1、`git commit-tree` 合成的树不等合并对象需全量 exit 1（refs 零移动）；workflow YAML 解析通过；`project_docs` exit 0。本批 PR 四个 required checks 全绿；合并后守卫在本批 merge commit 上产出「零动作」run 作为首个真实样本。
+
+**残余（登记）**：守卫只把 D-190 §5 的手工核对自动化并在需要时自动 dispatch，不改变分支保护语义——required checks 仍由 PR run 承担，dispatch 的全量结果不回填任何必过检查。`gh workflow run` 成功只保证 dispatch 被 API 接受；被 dispatch 的 run 若被后续 dispatch 经 concurrency 取消，以最后一次为准。
+
+**关联决定：** D-190（本批落地其 §5 残余风险的守卫，并沿用其证据口径）、D-188（PR 门禁流与四门禁口径）。
