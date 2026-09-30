@@ -3767,3 +3767,21 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 7. **边界**：本条只批准一份**设计规格**；零产品代码、零测试、零 schema/迁移、零依赖（schema 维持 v33，`33.sqm` 不分配不创建）；**不授权任何实现**；**不修改** D-143/D-144/D-156/D-158/D-184/D-185/D-186 的任何冻结决定；`rgXX_` 竖井（含 `rg10_lot.merchant_id`）与 golden fixtures/expected、`.external/` 零改动；`transaction_effective_state` 保持有效谓词唯一 SQL 定义点；P7-05 修正协议不改写。**不把任何 P708 验收向量记 PASS**——P708-A01..A09 全部为未来实现/验证要求。
 
 **关联决定：** D-186（前序最高 id；07.D 交付面——本规格消费其月读行形状与刷新链锚点）、D-184（设计门先例与 P7-07 冻结面）、D-185（claim-first 哨兵先例）、D-143（目录协议）、D-146（导入留存边界——导入差距的事实依据）、D-156/D-158（修正协议先例）。
+
+## D-188 验证流程切换与正式文档口径同步（PR 门禁流）
+
+**状态：** 已批准（2026-09-30，验证流程与正式文档口径同步批的登记；验证路由改写依据 `docs/CONTRIBUTING.md`「本机与 CI 的验证分工」段的既有事实，本决定只登记事实与同步范围，不新造表述）。
+
+**决定：**
+
+1. **验证流程切换（PR 门禁流）**：验证流程由「本地合并直推 `main` + 事后 CI」切换为 **PR 门禁流**——在短期任务分支上开发（`gh pr create`），四个 required checks（`.github/workflows/ci.yml` 的 `Kotlin tests`、`Android compile`、`Python tests`、`Trace scan`）全部通过且 strict up-to-date 后，以 merge commit 在 GitHub 上合并（`gh pr merge --merge`）。新增支撑工件：`tools/ci/trace-scan.sh`（tracked，等价 harness `verify-project.ps1` 的 trace scope，分批 200 commit 规避 Windows 32K argv 限制）、`.github/workflows/ci.yml` 的 `Trace scan` job（`fetch-depth: 0`）、`.github/workflows/windows.yml`（Windows JVM 测试，PR paths 过滤 + 每夜 + 非阻塞，堵 r32 类平台盲区）；`docs/CONTRIBUTING.md` 验证路由同步改写。
+
+2. **本会话此前交付一并登记**：P7-07 07.D 预算读取与产品接线（**D-186**，merge `8f76b2a`，同提交 CI run `36607124109` success，零 schema 变更）使 **P7-07 四子项全部收口**；P7-08 标签与商家设计门批准（**D-187**，规格 `docs/specs/2026-09-30-p7-08-tag-merchant-design.md`，merge `3a70e88`）。
+
+3. **正式文档口径同步**：`README.md`（`## 验证` 整节重写为「本机快速反馈 / 聚合门禁 CI / 本机执行约束」模型 + 当前阶段状态句）、`docs/CURRENT_STATE.md`（状态句、决定清单补 D-186/D-187、当前环境验证分工、唯一下一步改为 P7-08 实施）、`docs/ROADMAP.md`（阶段 7 状态句）、`docs/PROJECT_MAP.md`（状态句尾部）均已同步至上述事实；main = `c8e5b1f`；schema v33；最高决定 ID 由 D-187 更新为 **D-188**。
+
+4. **承接**：P7-08 实施（08.A 有未验证 WIP、分支未合并）为下一批；07.D/D-186 与 D-187 §6 的残余继续承接。
+
+**边界**：本批为纯文档同步；零产品代码、零测试、零 schema/迁移、零依赖变更；`rgXX_` 竖井、golden fixtures/expected 与 `.external/` 零改动；不修改 D-186/D-187 的任何冻结决定。
+
+**关联决定：** D-186（07.D 交付面，本批同步其状态）、D-187（P7-08 设计门，本批同步其状态）、D-185（07.B 交付面与状态句先例）、D-183（P7-06 06.D 交付面）。
