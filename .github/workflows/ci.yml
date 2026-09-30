@@ -64,7 +64,7 @@ jobs:
         # Report-only: aggregates per-class JUnit XML timings into the job summary so
         # later tuning uses measured CI data. Never changes the check conclusion.
         if: always()
-        run: python3 tools/ci/test-timing-report.py --root . --summary "$GITHUB_STEP_SUMMARY"
+        run: python3 tools/ci/test-timing-report.py --root . --summary "$GITHUB_STEP_SUMMARY" --top 200
 
   ledger-data-shards:
     name: ledger-data shard ${{ matrix.shard }}
@@ -110,7 +110,7 @@ jobs:
         run: python3 tools/ci/verify-shard-coverage.py --manifest tools/ci/ledger-data-shards.txt --shard ${{ matrix.shard }} --results ledger-data/build/test-results/jvmTest
       - name: Test timing report
         if: always()
-        run: python3 tools/ci/test-timing-report.py --root . --summary "$GITHUB_STEP_SUMMARY"
+        run: python3 tools/ci/test-timing-report.py --root . --summary "$GITHUB_STEP_SUMMARY" --top 200
 
   kotlin-gate:
     # Owns the branch-protection context name "Kotlin tests". It must always run
