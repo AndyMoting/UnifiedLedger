@@ -42,6 +42,8 @@ git rev-parse "<merge-sha>^{tree}" "<pr-tip-sha>^{tree}"
 gh workflow run ci.yml --ref main
 ```
 
+该核对由守卫 workflow 自动执行：`Merge tree guard`（`.github/workflows/merge-tree-guard.yml`）在每次 push 到 `main` 时运行，用判据脚本 `tools/ci/verify-merge-tree.py` 比较合并树与合并提交自身记录的第二父树（即合并那一刻被并入的 PR tip），相同即零动作；树不等、线性提交或无法判定时自动执行上面的 `gh workflow run ci.yml --ref main` 重跑全量。上面的手工 `git rev-parse` 命令保留为兜底与解释。
+
 只有在变更范围或失败诊断需要时，才在本机重复相应的资源密集型命令。
 
 修复轮纪律：每轮修改完成后一次性提交并推送。PR 的 concurrency 会在新一轮推送时取消旧 run，只有末次推送的 run 会跑完并产出完整的绿色检查；不要在旧 run 上等待结论。
@@ -229,7 +231,7 @@ Python 分片：`python-shards`（矩阵 1/2）按 `tools/ci/python-shards.txt`�
 - 所有 tracked 变更通过 Pull Request 合入 `main`：任务分支推送后创建 PR，说明包含目的、行为变化、验证结果和适用决定编号。
 - 分支保护要求 required checks（`Kotlin tests`、`Android compile`、`Python tests`、`Trace scan`）全部通过且分支为最新（strict up-to-date）；ci.yml job name 改名时必须同步更新分支保护配置。
 - 合并前同步最新 `main`，解决冲突；本机按「本机与 CI 的验证分工」执行快速反馈检查，聚合检查由 PR 的那一次 run 承担。
-- 合并后立即按同一节核对「合并树 == PR tip 树」；不一致时用 `gh workflow run ci.yml --ref main` 重跑全量，再继续后续工作。
+- 合并后由守卫 workflow（`Merge tree guard`）自动执行同一节「合并树 == PR tip 树」的核对，不一致时自动重跑全量；手工 `git rev-parse` 命令保留为兜底与解释，确认等价后再继续后续工作。
 - 默认使用 merge commit（`gh pr merge --merge`），保留可独立理解的提交和分支边界。
 - 只有提交确实琐碎且无法独立理解时才使用 squash merge；不使用 rebase merge 合入 `main`。
 - 禁止强推或删除 `main`。
