@@ -1,0 +1,63 @@
+# Windows JVM tests (non-blocking).
+#
+# This workflow is NOT part of the required PR checks. It runs the full JVM
+# test task set on a Windows runner as a platform signal:
+#
+# - Why all JVM tests instead of `check`: ktlint, packaging and the SQLDelight
+#   migration verifier are platform-neutral and already covered by the ubuntu
+#   CI workflow. The Windows-specific risk surface is xerial SQLite file
+#   locking, temp-directory cleanup and ATOMIC_MOVE semantics, distributed
+#   across ledger-data (94 classes) and desktop-app (14 classes), which maps
+#   exactly to the JVM test tasks below.
+# - Triggers: pull_request against main with a paths filter covering the
+#   r32-class historical defect paths, a nightly schedule (UTC 18:00 =
+#   Beijing 02:00, which runs the default branch), and workflow_dispatch.
+# - Resource discipline: 1024m heap limits mirror the local Windows Gradle
+#   limits in docs/CONTRIBUTING.md, not the ubuntu CI 3g defaults.
+name: Windows JVM tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ledger-data/**'
+      - 'desktop-app/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle/**'
+  schedule:
+    # UTC 18:00 = Beijing 02:00. Schedule events run the default branch.
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+
+# Cancel superseded PR runs, but let schedule and manual runs finish:
+# for those events github.ref is the default branch and a stale cancel would
+# discard the only platform signal of the day.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  windows-jvm-tests:
+    name: Windows JVM tests
+    runs-on: windows-latest
+    timeout-minutes: 180
+    env:
+      GRADLE_OPTS: >-
+        -Dorg.gradle.jvmargs=-Xmx1024m
+        -Dkotlin.daemon.jvmargs=-Xmx1024m
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
+      - name: Windows JVM tests
+        run: ./gradlew --no-daemon --max-workers=1 :ledger-data:jvmTest :desktop-app:jvmTest :app-ui:jvmTest :ledger-application:jvmTest :ledger-domain:jvmTest :android-app:testDebugUnitTest --warning-mode all

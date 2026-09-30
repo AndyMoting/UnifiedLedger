@@ -28,7 +28,27 @@ $env:GRADLE_OPTS='-Xmx1024m'
 
 ## 本机与 CI 的验证分工
 
-本机推送前优先执行受影响模块的定向测试、`ktlintCheck`、`project_docs` 和干净工作树上的 Harness trace 检查。完整 `check`、Android/KMP 编译、Debug APK、完整 Python 测试、Desktop build 与 migration verifier 已由 `.github/workflows/ci.yml` 在资源更充足的 CI runner 上执行；同一提交的 CI 成功结果是这些聚合门禁的发布证据。只有在变更范围或失败诊断需要时，才在本机重复相应的资源密集型命令。
+默认工作流是 PR 门禁流：在短期任务分支上开发，推送后创建 Pull Request（`gh pr create`），required checks（`.github/workflows/ci.yml` 的 `Kotlin tests`、`Android compile`、`Python tests`、`Trace scan` 四个 job）全部通过后以 merge commit 合并（`gh pr merge --merge`）。job name 与分支保护规则强耦合，改名必须同步更新分支保护配置。
+
+本机只保留快速反馈：受影响模块的聚焦定向测试、`project_docs`，以及可选的 `bash tools/ci/trace-scan.sh` 本地预检。完整 `check`、ktlint、Android/KMP 编译、Debug APK、完整 Python 测试、Desktop build、migration verifier 与 Windows JVM 测试由 CI 在资源更充足的 runner 上执行；同一提交的 CI 成功结果是这些聚合门禁的发布证据。只有在变更范围或失败诊断需要时，才在本机重复相应的资源密集型命令。
+
+修复轮纪律：每轮修改完成后一次性提交并推送。PR 的 concurrency 会在新一轮推送时取消旧 run，只有末次推送的 run 会跑完并产出完整的绿色检查；不要在旧 run 上等待结论。
+
+## Trace scan
+
+`tools/ci/trace-scan.sh` 是 harness `verify-project.ps1` trace scope 在产品仓内的 CI 等价实现（harness 脚本位于本地未跟踪的 unifiedledger-harness 技能目录，CI 无法读取）。它依次执行四项扫描：当前 tracked 文件内容、全部历史提交消息、全部历史路径（对照 agent 路径正则）、全部分批历史树内容（每批 200 commit，规避 Windows 32K argv 长度限制，Linux 保持同一分批语义）。CI 的 `Trace scan` job 与本机 Git Bash 使用同一命令：
+
+```bash
+bash tools/ci/trace-scan.sh
+```
+
+同步义务：脚本内的 `TRACE_PATTERN` 与 agent 路径正则必须与 harness 技能的 `verify-project.ps1` trace scope 逐字一致；任一侧修改必须在同一变更中同步另一侧。豁免路径通过 `ALLOWED_TRACE_PATH` 环境变量注入（冒号或换行分隔的仓库相对路径），CI 默认为空；脚本会自动豁免其自身路径（其内容逐字嵌入 pattern 常量，必然命中内容扫描），提交消息命中不接受任何豁免。
+
+## Windows JVM tests
+
+`.github/workflows/windows.yml` 在 `windows-latest` 上运行全部 JVM 测试任务（`:ledger-data:jvmTest`、`:desktop-app:jvmTest`、`:app-ui:jvmTest`、`:ledger-application:jvmTest`、`:ledger-domain:jvmTest`、`:android-app:testDebugUnitTest`）。该 workflow 不进入 required checks，属于非阻塞平台信号。
+
+触发条件：`pull_request`（仅当改动涉及 `ledger-data/**`、`desktop-app/**`、`build.gradle.kts`、`settings.gradle.kts`、`gradle/**`，对应 r32 类平台缺陷的历史波及路径）、每日 UTC 18:00（北京时间 02:00）对默认分支的定时运行，以及手动触发。运行全部 JVM 测试而非 `check` 的理由：ktlint、打包与 migration 校验平台中立且 ubuntu CI 已覆盖；Windows 特有风险面是 xerial 文件锁、临时目录删除与 `ATOMIC_MOVE` 语义，分布在 `ledger-data`（94 类）与 `desktop-app`（14 类）中。
 
 ## Kotlin 验证
 
@@ -188,20 +208,20 @@ python -m project_docs .
 
 ## 合并
 
-- 重要代码变更通过 Pull Request 合入 `main`；说明包含目的、行为变化、验证结果和适用决定编号。
-- 合并前同步最新 `main`，解决冲突，完成全量适用测试、文档检查、隐私检查和完整自审。
-- 默认使用 merge commit，保留可独立理解的提交和分支边界。
+- 所有 tracked 变更通过 Pull Request 合入 `main`：任务分支推送后创建 PR，说明包含目的、行为变化、验证结果和适用决定编号。
+- 分支保护要求 required checks（`Kotlin tests`、`Android compile`、`Python tests`、`Trace scan`）全部通过且分支为最新（strict up-to-date）；ci.yml job name 改名时必须同步更新分支保护配置。
+- 合并前同步最新 `main`，解决冲突；本机按「本机与 CI 的验证分工」执行快速反馈检查，聚合检查由 CI 的同一次 run 承担。
+- 默认使用 merge commit（`gh pr merge --merge`），保留可独立理解的提交和分支边界。
 - 只有提交确实琐碎且无法独立理解时才使用 squash merge；不使用 rebase merge 合入 `main`。
-- 仓库支持时为 `main` 启用必要状态检查，并禁止强推和删除。
+- 禁止强推或删除 `main`。
 
 ## 提交前检查
 
-1. 运行聚焦测试和完整测试。
+1. 运行受影响模块的聚焦测试（聚合检查、ktlint、迁移校验与 Windows JVM 测试由 CI 承担）。
 2. 运行正式文档验证。
-3. 运行适用的编译、构建或静态检查。
-4. 使用 `git diff --check` 检查空白错误，并复核暂存 diff 和工作树状态。
-5. 确认没有个人数据、本机信息、外部实现、临时计划、会话内容或开发过程署名。
-6. 推送前复核分支新增历史，确保提交信息和跟踪文件都符合隐私边界。
+3. 使用 `git diff --check` 检查空白错误，并复核暂存 diff 和工作树状态。
+4. 复核提交信息和跟踪文件没有个人数据、本机信息、外部实现、临时计划、会话内容或开发过程署名；可用 `bash tools/ci/trace-scan.sh` 做本地预检。
+5. 推送任务分支并创建 Pull Request；修复轮在每轮修改完成后一次推送，以末次推送的 run 作为 required checks 证据。
 
 ## 隐私与测试数据
 
