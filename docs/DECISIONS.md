@@ -3819,3 +3819,22 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界**：只改 CI 触发配置与 `docs/CONTRIBUTING.md`；零产品代码、零测试内容、零 schema/迁移、零依赖变更；不改任何 job 名或 job 内容；`windows.yml` 的触发与语义不变。
 
 **关联决定：** D-189（同批次前半：CI 专属并行测试与计时报告；本批沿用其 job 名与 workflow）、D-188（PR 门禁流本身与四门禁口径）。
+
+## D-191 Kotlin 验证分片（ledger-data 三片 + 收口 job）
+
+**状态：** 已批准（2026-09-30，CI 提速批次 3 的登记；由用户在 2026-09-30 直接批准执行）。
+
+**决定：**
+
+1. **拆分**：`.github/workflows/ci.yml` 的 Kotlin 验证由单个 job 拆为 `Kotlin tests core`（`check -x :ledger-data:jvmTest :ledger-data:jvmTestClasses`、ktlint、其余模块测试、migration verifier、覆盖守卫）、`ledger-data shard 1/2/3`（矩阵，各跑名单中三分之一的测试类，每台 `maxParallelForks=2`）与收口 job **`Kotlin tests`**（`needs` 前两者、`if: always()`、任一非 success 即失败）。分支保护要求的上下文名由收口 job 持有，四个 required check 的名称与配置均不变。
+2. **分片名单**：新增 `tools/ci/ledger-data-shards.txt`（每行 `shard<TAB>完整类名`，共 93 行）与生成器 `tools/ci/make-ledger-data-shards.py`（按实测逐类耗时贪心装箱，输入为 `build/test-results/<task>`）。测试类增删或改名必须重新生成。
+3. **覆盖守卫**：新增 `tools/ci/verify-shard-coverage.py`。主 job 以 `--classes` 断言「编译出的 `*Test` 类集合 == 名单」；每个分片以 `--shard`/`--results` 断言「实际产出结果的类集合 == 该片名单」。两者不符即以退出码 1 失败，防止新测试类被静默漏跑（Gradle 空过滤默认失败为第二道防线）。
+4. **并行与缓存**：分片 job 以 `CI_TEST_MAX_PARALLEL_FORKS=2` 覆盖 workflow 级默认值 4；各 job 追加 `--build-cache` 并新增 Gradle 用户缓存目录 `caches/build-cache-1` 的缓存步骤（key 含 `${{ github.sha }}`，`restore-keys` 前缀复用上一轮），用于摊掉三个分片各自重复的编译成本。
+5. **依据（一次性探测，未合并、已删除）**：临时分支 `UL-ci-shard-probe` 的 run `36759704641` 在同一 runner 上同时测四组——对照组（整份任务、4 fork）墙钟 **933 s（15.6 分钟）**，三片（每片 2 fork）分别为 **514 / 560 / 631 s（8.6 / 9.3 / 10.5 分钟）**；三片执行的类与例合计 **93 类 / 673 例**，与整份任务完全一致（无漏测）。预期 `Kotlin tests` 由 17–21 分钟降至约 11–12 分钟。
+6. **验收**：本批 PR 的四个 required checks 全绿且 `Kotlin tests` 落在目标区间；另在一次性分支上做**负向验证**——让一个分片的过滤条件必然落空，确认收口 job 能使 required check 报红而非停留在等待状态。
+
+**边界**：只改 CI workflow、`tools/ci/` 下三个新文件与 `docs/CONTRIBUTING.md`；零产品代码、零测试内容、零 schema/迁移、零依赖变更；四个 required check 名称不变、分支保护配置零改动；本机命令与串行纪律不变。
+
+**残余风险（登记）**：分片名单需随测试类增删维护（有双重守卫兜底，漏维护会失败而不是漏测）；一次运行的 runner 数由 4 台变为 7 台（public 仓库免费）；`Kotlin tests` 现在由收口 job 持有，误删 `if: always()` 或改名会让 PR 永久等待——该失效模式在负向验证中一并覆盖。
+
+**关联决定：** D-190（单遍 CI；分片落地后一次改动仍只等一遍）、D-189（CI 专属并行与逐类计时报告；本批沿用其 init script 与报告，分片名单建立在实测耗时之上）、D-188（PR 门禁流与四门禁口径）。
