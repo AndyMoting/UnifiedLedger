@@ -180,6 +180,8 @@ python -m project_docs .
 
 以上验证命令与 `.github/workflows/ci.yml` 的 CI 步骤保持一致。修改本地验证步骤时需同步更新 CI 配置；修改 CI 步骤时需同步更新本文档。
 
+CI 专属并行：`kotlin` job 以 `--max-workers=5 --parallel` 运行，并通过 `tools/ci/ci-parallel.init.gradle.kts` 为全部 `Test` 任务设置 `maxParallelForks`（默认 4，可用 `CI_TEST_MAX_PARALLEL_FORKS` 覆盖）。该 init script 只由 CI workflow 显式传入，本机命令不受影响，「本机 Gradle 资源限制」的串行要求保持不变。job 末尾的 `Test timing report` 步骤把逐类耗时与 runner 的 CPU/内存信息写入 job summary；该步骤只报告，不改变任何检查结论。
+
 ## 文档规则
 
 - 正式文档以中文为主，代码类型、文件名、命令和 API 名称保留英文。
