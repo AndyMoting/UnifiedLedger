@@ -43,6 +43,25 @@ def owner(root: str, path: str) -> str:
     return f"{module}:{task}"
 
 
+def class_name(element: ET.Element, fallback: str) -> str:
+    """The fully qualified class name of a suite.
+
+    Gradle names a KMP test task's suite with the SHORT class name plus a task
+    suffix (e.g. "LedgerDatabaseMigrationTest[jvm]"); the testcase elements carry
+    the qualified name, which is what the shard manifest and the rebalance tool
+    use. Suites that already report a qualified name are kept as they are.
+    """
+    name = element.get("name") or fallback
+    if "." in name:
+        return name
+    case = element.find("testcase")
+    if case is not None:
+        classname = case.get("classname") or ""
+        if "." in classname:
+            return classname
+    return name
+
+
 def collect(root: str) -> list[tuple[float, int, str, str]]:
     rows: list[tuple[float, int, str, str]] = []
     pattern = os.path.join(root, "**", "build", "test-results", "**", "TEST-*.xml")
@@ -55,7 +74,7 @@ def collect(root: str) -> list[tuple[float, int, str, str]]:
             (
                 float(element.get("time") or 0),
                 int(element.get("tests") or 0),
-                element.get("name") or path,
+                class_name(element, path),
                 owner(root, path),
             )
         )
@@ -66,7 +85,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=".")
     parser.add_argument("--summary", default="")
-    parser.add_argument("--top", type=int, default=15)
+    parser.add_argument("--top", type=int, default=15, help="0 lists every class")
     args = parser.parse_args()
 
     rows = sorted(collect(args.root), reverse=True)
@@ -95,7 +114,8 @@ def main() -> int:
             "| seconds | tests | class |",
             "| --- | --- | --- |",
         ]
-        out += [f"| {t:.1f} | {n} | {name} |" for t, n, name, _key in rows[: args.top]]
+        selected = rows if args.top <= 0 else rows[: args.top]
+        out += [f"| {t:.1f} | {n} | {name} |" for t, n, name, _key in selected]
         out.append("")
     if grouped:
         out += [
