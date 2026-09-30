@@ -3877,3 +3877,26 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残余（登记）**：名单需随测试模块增删维护（静态守卫兜底，漏维护是响亮失败）；分片后一次运行的 job 数由 10 增到 12（Free 计划并发上限 20，安全）；各分片是独立 VM，测试写文件不会跨分片冲突，但分片内部仍与今天一样串行执行。
 
 **关联决定：** D-192（缓存与并发修正；Python 成为新瓶颈的结论由其「残余与观察」登记）、D-191（分片与收口 job 模式、覆盖守卫脚本）、D-190（单遍 CI）、D-189（CI 专属并行与逐类计时报告）。
+
+## D-194 修复 AndroidStartupController 线程名断言的不稳定
+
+**状态：** 已批准（2026-09-30，由用户指示「先修这个 flaky 测试」）。
+
+**问题**：`android-app:testDebugUnitTest` 的 `AndroidStartupControllerTest.theBlockingOpenRunsOnTheInjectedBackgroundDispatcherNotTheCallerThread` 偶发失败（`org.junit.ComparisonFailure at AndroidStartupControllerTest.kt:294`），出现在 run `36776430152`——该运行与另一条 PR 运行并发，而同一份代码在并发的 PR 运行中通过。历史频率：最近 30 次 CI 运行中仅 2 次失败，且两次都是刻意构造的负向验证运行，本问题只出现 1 次。
+
+**定位（证据）**：
+
+1. 生产路径经枚举确认无误：controller 内唯一触发 open 的位置是 `start()` 里的 `withContext(backgroundDispatcher) { owner.startup() }`（`App.kt:579`），没有任何硬编码 dispatcher 的旁路。
+2. 一次性分支 `UL-flake-probe` 在 CI 上跑 1110 轮探针（含并发负载）并把 JUnit XML 作为制品上传：实际执行 open 的线程名为 **`probe-background @coroutine#<id>`**，调用栈为 `App.kt:579 → LedgerRuntimeOwner.startup → openGenerationForSelection → App.kt:425(openDatabase)`——即 open **确实**运行在注入的后台 dispatcher 的线程上。
+3. 失败原因：**kotlinx-coroutines 会在协程派发期间把线程名改写为 `<name> @coroutine#<id>`、派发结束后恢复**，测试读取线程名的时机与该恢复存在竞态（负载越高窗口越明显）。同一次 CI 运行中，跑 1 轮的该测试通过、跑 1110 轮的探针全部观察到后缀，印证这是瞬时改写而非调度错误。
+4. 本机确定性证明：用一个会改名的 dispatcher 模拟该行为，得到 `name-read-inside-open=test-background-open @coroutine#15`（按名字比对必然失败）而 `identity-match=true`（按身份比对成立）。
+
+**决定**：该测试改为**比对线程对象身份**。新增 `newNamedExecutor(threadName, created)` 重载，由注入的后台 executor 记录它创建的每个线程；断言执行 open 的线程 `===` 其中之一（并保留「不得是调用线程」的断言）。测试自身的共享列表改为 `CopyOnWriteArrayList`。不再比对线程名。
+
+**边界**：只改 `android-app` 的一个测试文件；零产品代码、零其他测试、零 schema/迁移、零依赖、零 CI 配置变更。
+
+**验收**：本机 `:android-app:testDebugUnitTest`（该类 13 个用例全过）与 `:android-app:ktlintTestSourceSetCheck` 通过；本批 PR 的四个 required checks 全绿。
+
+**残余（登记）**：该项目测试环境中线程名会被 kotlinx 瞬时改写，任何依赖精确线程名的断言都同样脆弱（当前未发现其他此类断言）；这是框架行为，不在本批改动范围。D-189/D-191/D-193 引入的更高并发会放大该竞态的暴露概率。
+
+**关联决定：** D-189（CI 专属并行）、D-191 与 D-193（分片拓扑，提高并发）、D-192（缓存与并发修正；本问题由该批次的负向验证暴露）。

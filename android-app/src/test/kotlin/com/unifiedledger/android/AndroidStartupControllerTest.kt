@@ -35,6 +35,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Rule
 import org.junit.rules.Timeout
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -267,13 +268,19 @@ class AndroidStartupControllerTest {
     @Test
     fun theBlockingOpenRunsOnTheInjectedBackgroundDispatcherNotTheCallerThread() {
         // P0 hotfix (defect 2): the legacy-upgrade copy must not run on the main thread. Record
-        // the thread that actually executes openDatabase and assert it is the injected background
-        // thread, never the caller/main thread. Deterministic: a real single-thread background
-        // dispatcher and a bounded await on the observed state (no sleeps).
-        val backgroundExecutor = newNamedExecutor("test-background-open")
+        // the thread that actually executes openDatabase and assert it is the thread created by the
+        // injected background dispatcher, never the caller/main thread. Deterministic: a real
+        // single-thread background dispatcher and a bounded await on the observed state (no sleeps).
+        //
+        // The assertion compares thread IDENTITY, not the thread NAME: kotlinx-coroutines renames a
+        // dispatcher thread to "<name> @coroutine#<id>" while a coroutine is dispatched on it and
+        // restores the name afterwards, so a name read can race the restore. Identity cannot be
+        // renamed.
+        val backgroundThreads = CopyOnWriteArrayList<Thread>()
+        val backgroundExecutor = newNamedExecutor("test-background-open", backgroundThreads)
         val stateExecutor = newNamedExecutor("test-state-writer")
         val callerThread = Thread.currentThread()
-        val openThreads = mutableListOf<Thread>()
+        val openThreads = CopyOnWriteArrayList<Thread>()
         try {
             val controller =
                 AndroidStartupController(
@@ -290,8 +297,12 @@ class AndroidStartupControllerTest {
             awaitState(controller, P503StartupState.Ready)
 
             assertEquals(1, openThreads.size)
-            assertNotEquals(callerThread, openThreads.single(), "the blocking open must not run on the caller/main thread")
-            assertEquals("test-background-open", openThreads.single().name)
+            val openThread = openThreads.single()
+            assertNotEquals(callerThread, openThread, "the blocking open must not run on the caller/main thread")
+            assertTrue(
+                backgroundThreads.any { created -> created === openThread },
+                "the blocking open must run on the thread created by the injected background dispatcher",
+            )
         } finally {
             backgroundExecutor.shutdownNow()
             stateExecutor.shutdownNow()
@@ -505,6 +516,21 @@ class AndroidStartupControllerTest {
             // MUST FIX D2: daemon threads, so a stuck test cannot pin the JVM after the JUnit
             // Timeout rule abandons it.
             Thread(runnable, threadName).apply { isDaemon = true }
+        }
+
+    /**
+     * Same as [newNamedExecutor], but records every thread the executor creates, so a test can
+     * assert the IDENTITY of the thread that ran a block instead of its (renameable) name.
+     */
+    private fun newNamedExecutor(
+        threadName: String,
+        created: MutableList<Thread>,
+    ): ExecutorService =
+        Executors.newSingleThreadExecutor { runnable ->
+            val thread = Thread(runnable, threadName)
+            thread.isDaemon = true
+            created += thread
+            thread
         }
 
     /**
