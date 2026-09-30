@@ -31,8 +31,20 @@ def machine_facts() -> list[str]:
     return lines
 
 
-def collect(root: str) -> list[tuple[float, int, str]]:
-    rows: list[tuple[float, int, str]] = []
+def owner(root: str, path: str) -> str:
+    """Name a JUnit XML path as `<module>:<task>` for <root>/<module>/build/test-results/<task>/."""
+    parts = os.path.relpath(path, root).split(os.sep)
+    module = parts[0] if parts else "?"
+    if "test-results" in parts:
+        index = parts.index("test-results")
+        task = parts[index + 1] if index + 1 < len(parts) else "?"
+    else:
+        task = "?"
+    return f"{module}:{task}"
+
+
+def collect(root: str) -> list[tuple[float, int, str, str]]:
+    rows: list[tuple[float, int, str, str]] = []
     pattern = os.path.join(root, "**", "build", "test-results", "**", "TEST-*.xml")
     for path in glob.glob(pattern, recursive=True):
         try:
@@ -44,6 +56,7 @@ def collect(root: str) -> list[tuple[float, int, str]]:
                 float(element.get("time") or 0),
                 int(element.get("tests") or 0),
                 element.get("name") or path,
+                owner(root, path),
             )
         )
     return rows
@@ -60,6 +73,13 @@ def main() -> int:
     total_seconds = sum(item[0] for item in rows)
     total_tests = sum(item[1] for item in rows)
 
+    grouped: dict[str, list[float]] = {}
+    for seconds, tests, _name, key in rows:
+        bucket = grouped.setdefault(key, [0.0, 0.0, 0.0])
+        bucket[0] += 1
+        bucket[1] += tests
+        bucket[2] += seconds
+
     out = [
         "## Test timing report",
         "",
@@ -69,8 +89,24 @@ def main() -> int:
         "",
     ]
     if rows:
-        out += ["| seconds | tests | class |", "| --- | --- | --- |"]
-        out += [f"| {t:.1f} | {n} | {name} |" for t, n, name in rows[: args.top]]
+        out += [
+            "### slowest classes",
+            "",
+            "| seconds | tests | class |",
+            "| --- | --- | --- |",
+        ]
+        out += [f"| {t:.1f} | {n} | {name} |" for t, n, name, _key in rows[: args.top]]
+        out.append("")
+    if grouped:
+        out += [
+            "### per module:task",
+            "",
+            "| module:task | classes | tests | seconds |",
+            "| --- | --- | --- | --- |",
+        ]
+        for key in sorted(grouped, key=lambda item: -grouped[item][2]):
+            classes, tests, seconds = grouped[key]
+            out.append(f"| {key} | {int(classes)} | {int(tests)} | {seconds:.1f} |")
         out.append("")
     out += ["### runner", ""]
     out += machine_facts()
