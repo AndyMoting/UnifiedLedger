@@ -3838,3 +3838,24 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残余风险（登记）**：分片名单需随测试类增删维护（有双重守卫兜底，漏维护会失败而不是漏测）；一次运行的 runner 数由 4 台变为 7 台（public 仓库免费）；`Kotlin tests` 现在由收口 job 持有，误删 `if: always()` 或改名会让 PR 永久等待——该失效模式在负向验证中一并覆盖。
 
 **关联决定：** D-190（单遍 CI；分片落地后一次改动仍只等一遍）、D-189（CI 专属并行与逐类计时报告；本批沿用其 init script 与报告，分片名单建立在实测耗时之上）、D-188（PR 门禁流与四门禁口径）。
+
+## D-192 CI 提速修正：构建缓存 key 竞争与分片并发度
+
+**状态：** 已批准（2026-09-30，CI 提速修正批的登记；由用户在 2026-09-30 直接批准执行）。
+
+**决定：**
+
+1. **修复构建缓存 key 竞争（D-191 引入的缺陷）**：原 key `gradle-build-cache-${{ runner.os }}-${{ github.sha }}` 被 `kotlin-core` 与三个分片 job 共用，4 个 job 并发争抢同一条缓存，日志证据为 `Failed to save: Unable to reserve cache …, another job may be creating this cache`；同时历史记录中 `Cache not found for input keys: …, gradle-build-cache-Linux-` 表明连 `restore-keys` 前缀都未命中——即 D-191 加入的构建缓存**从未保存成功、也从未命中**，每个分片每次都在从零编译 `ledger-data`。改为 `gradle-build-cache-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index }}-${{ github.run_id }}`（每个 job 各存一条，消除竞争），`restore-keys` 前缀保持 `gradle-build-cache-${{ runner.os }}-`。
+2. **分片并发度 2 → 4**：分片 job 的 `CI_TEST_MAX_PARALLEL_FORKS` 与 `--max-workers` 均改为 4，用满 runner 的 4 vCPU。依据为 D-191 的一次性探测（同一 runner 上 2 fork 的有效并行系数 1.69×、4 fork 2.66×），分片测试段约 320 s → 约 200 s。
+3. **效果预期（按实测推算，非承诺）**：直接收益来自第 2 条，约 −2 分钟／每次运行；第 1 条的收益**按 ref 作用域**只体现在同一 PR 的后续运行（修复轮）——首次运行不会命中，因为该 ref 下尚无缓存条目，且 `main` 自 D-190 起不再产生运行、没有可供 PR 复用的缓存。
+4. **验收**：本批 PR 的 `Kotlin tests` 与整个 run 的时长；第二次运行核对缓存恢复命中（日志应为恢复命中而非 `Cache not found`）。
+
+**边界**：只改 CI workflow 与 `docs/CONTRIBUTING.md`；零产品代码、零测试内容、零 schema/迁移、零依赖变更；四个 required check 名称与分支保护零改动。
+
+**残余与观察（登记）**：若希望首次运行也命中缓存，需要在 `main` 上产生缓存（例如定期或人工 dispatch 一次 `ci.yml`），那会部分恢复 D-190 去掉的合并后运行，属新的取舍，本批不做；Python job 的 `Run tests` 实测 6.83 分钟（`Install dependencies` 仅 0.03 分钟），在 Kotlin 路径缩短后会成为新的关键路径——若要继续压缩总时长，应针对 Python 套件本身（分片或并行化），而不是缓存依赖安装。
+
+**关联决定：** D-191（分片拓扑与两道覆盖守卫；本批只修其缓存 key 与并发度，拓扑不变）、D-190（单遍 CI；缓存作用域结论依赖它）、D-189（CI 专属并行与逐类计时报告）。
+
+**实测（run `36770403615`，本批第一次运行）**：整条 run **8.3 分钟**（`20:07:25 → 20:15:44`，较上一轮的 10.7 分钟下降）。各 job：`ledger-data shard 1` 8.2、`shard 2` 7.5、`shard 3` 5.5、`Kotlin tests core` 7.2、`Python tests` 7.1、`Android compile` 5.2、`Trace scan` 3.5 分钟，收口 job 3 秒；三片合计 **93 类 / 673 例**，两道覆盖守卫通过。缓存 key 已按 job 分离（`gradle-build-cache-Linux-kotlin-core-0-<run>` 与 `…-ledger-data-shards-0/1/2-<run>`），本轮为**首次保存**，日志仍为 `Cache not found`（预期），需在第二次运行核对命中。分片用时 8.2 / 7.5 / 5.5 不均衡的原因：名单按本机耗时装箱，而 CI 侧 `shard 1` 含无法切分的长类 `LedgerDatabaseMigrationTest`（约 5 分钟），后续可依 CI 实测数据重排。
+
+**第二次运行（run `36772026182`）与随之发现的副作用**：缓存**命中成功**（四个 Kotlin job 均记录 `Cache restored from key: gradle-build-cache-Linux-ledger-data-shards-0-36770403615`，不再有 `Failed to save`），整条 run 7.0 分钟。但日志显示 `shard 1` 出现 **`> Task :ledger-data:jvmTest FROM-CACHE`**：该分片的测试**没有执行**、job **42 秒**结束（`shard 2` 因恢复到的条目不含其测试输出而正常执行；编译任务两者均为 `FROM-CACHE`）。Gradle 的 `Test` 任务默认可缓存，这会让必过检查退化为「该输入集曾绿过」，与「完成必须有真实检查结果」的纪律冲突。**处置（同一 PR 内）**：在 `tools/ci/ci-parallel.init.gradle.kts` 中对 `Test` 任务设置 `outputs.cacheIf { false }`——**构建缓存只服务编译与分析任务，测试每次必须真实执行**；代价是重跑时每个分片多约 1–1.5 分钟（编译仍命中），换来「绿 = 本次真的跑过」。
