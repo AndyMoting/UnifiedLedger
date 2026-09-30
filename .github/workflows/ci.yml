@@ -100,3 +100,11 @@ jobs:
         run: |
           export PYTHONPATH=tools/python
           python -m project_docs .
+
+  trace:
+    name: Trace scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Trace scan
+        run: bash tools/ci/trace-scan.sh
