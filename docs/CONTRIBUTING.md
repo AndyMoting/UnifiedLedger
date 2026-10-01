@@ -78,6 +78,24 @@ bash tools/ci/trace-scan.sh
 
 人工 emulator 门仍然保留：探索式设备工作（坐标矩阵、dump 分析、像素采样）、UI/无障碍与性能向量由人工执行；本 workflow 只承担设备专属的**回归**执行。
 
+### Android maximum-scale long test
+
+`.github/workflows/android-scale.yml` 是**手动触发、非阻塞**的最大规模长测入口：只提供 `workflow_dispatch`，必填 `expected_sha` 为完整 40 位 SHA 且必须等于所选 ref 的 SHA；不加入 required checks，不设定时触发，也不因后续推送取消正在执行的手动运行。
+
+云端链路：先在托管 runner 上生成确定性匿名夹具（准备阶段五批各 10,000 条共享业务内容、不同导入会话的记录，加 1,000 条唯一记录 = 51,000 候选 / 100,000 重复关系；最后一次真实 SAF 导入后 61,000 候选 / 150,000 总重复关系 / 本次会话 50,000 关系），再在**模拟器会话之外**构建两个 APK；会话内由 host 驱动器 `tools/python/android_scale/runner.py` 独占设备交互——AVD 名固定 `ul-scale`、API 36 `google_apis` x86_64、2 核 / 2048M、`wm size 1080x2400`、`wm density 420`、字号 1.0、中文 locale、`Asia/Shanghai`、三个动画尺度 1.0（保留正常动画，程序化滚动依赖动画推进）——逐阶段执行整链并把证据写入 `scale-evidence/`。
+
+判据由 `tools/python/android_scale/result.py` 唯一实现：缺夹具、缺阶段、缺报告、SHA 不符、设备配置不符、计数 oracle 不符、超时或崩溃/OOM/ANR 一律失败；不以 `am instrument` 的 shell 返回码或单个 `OK` 字符串作为唯一通过依据。模拟器步之后另设一步独立的运行后校验（`tools/ci/android-scale-validate.py`，`if: always()`）：重跑严格判定器、重新校验夹具清单，并把设备上报的计数绑定到生成器独立算出的清单——成功信号不只依赖 host 驱动器经第三方 action 转达的退出码。工件 `android-scale-<sha>` 含 `host.json`、`device.json`、`junit.xml`、`memory.txt`、`configuration.txt`、`logcat.txt`、各阶段 instrumentation 日志，以及失败时的 `failure.png` 与 `failure-ui.xml`，保留 7 天；不上传数据库与整份输入文件。
+
+触发命令（仅在该提交已落到目标分支后）：
+
+```bash
+gh workflow run android-scale.yml --ref <branch> -f expected_sha=<完整40位SHA>
+```
+
+云端耗时与采样内存只作观察（标注「观察到的最大值」），不替代固定设备性能阈值。**该 workflow 的云端首跑尚未发生**：设施交付、本次功能整链通过、历史规模验收闭合是三个独立结论，不得互相替代；首跑须对精确 merge SHA 发起，通过后同 SHA 再独立跑一次确认可重复性。
+
+旧的 `ImportScaleTraversalInstrumentedTest` 保留为人工取证工具，语义不变；`android-instrumented.yml` 的 `notClass` 已同时排除它与 `AndroidScaleLongInstrumentedTest`，长测入口不会被普通 PR 带入。本机不跑该链：不启动模拟器，也不为该链装配 APK。
+
 ## Kotlin 验证
 
 确认 Gradle 使用 JDK 21：

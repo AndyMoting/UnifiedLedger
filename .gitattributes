@@ -10,3 +10,7 @@ android-app/src/androidTest/assets/fixtures/ccb/expected-batch-bp01-ccb.json tex
 tests/fixtures/batch-bp01-cmb-*.csv text eol=crlf
 tests/fixtures/batch-bp01-cmb-f-nonutf8.bin binary
 tests/fixtures/batch-bp01-ccb-*.xls binary
+
+# These production Alipay header/data bytes must stay LF on every platform.
+tests/fixtures/android-scale/shared-small.csv text eol=lf
+tests/fixtures/android-scale/unique-small.csv text eol=lf

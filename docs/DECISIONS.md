@@ -3972,3 +3972,28 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残余（登记）**：探索式设备工作与 UI/无障碍/性能向量仍为人工；`ImportScaleTraversalInstrumentedTest` 的纳入以固定匹配的 1080×2400 profile 为前提，本批不做；不设 schedule 意味着长期无相关改动时该信号不会自发产生（`workflow_dispatch` 可手工补）；本批不做 APK 工件复用与 AVD 快照缓存（两者都能压缩构建与启动耗时）；flaky 率以合并后前几次运行的数据为准，若偏高再收窄范围或调整 boot timeout。
 
 **关联决定：** D-133（本决定取代其 P6-D4 中「不新增模拟器 job」的边界，取代范围仅限非阻塞设备回归 job）、D-136（同上，取代其「`:connectedDebugAndroidTest` 不新增」）、D-188（PR 门禁流与四门禁口径）、D-189（CI 专属并行与逐类计时报告，本批沿用其非阻塞信号与实测记账习惯）。
+
+## D-198 最大规模 Android 长测设施：云端手动长测与严格证据判定
+
+**状态：** 已批准（2026-10-02；设施接线与功能验收分离）。
+
+**背景**：61k 规模的导入审核可操作性、列表遍历与经济效果验证此前只能靠本机人工设备门完成（D-161/D-162/D-166/D-169/D-171/D-175 记录了程序化遍历基础设施、61k OOM 与残余耗时的设备侧归因），单次占用开发机数十分钟并依赖人工在场。本决定把这套长测搬进云端：本机不再启动模拟器，也不再为该链装配 APK。
+
+**决定：**
+
+1. **手动非阻塞 workflow**：新增 `.github/workflows/android-scale.yml`，仅 `workflow_dispatch`，必填 `expected_sha`（40 位完整 SHA，且必须等于所选 ref 的 SHA）；不进 required checks，不设定时触发；`cancel-in-progress: false`（后续推送不得取消正在执行的手动长测）。
+2. **固定环境**：`ubuntu-24.04`、JDK 21、API 36 `google_apis` x86_64、KVM 硬件加速、2 核 / 2048M、`emulator-boot-timeout 300`、AVD 名固定 `ul-scale`（host 驱动器只接受这个名字的自有设备）、保留正常动画（程序化滚动依赖动画推进，host 驱动器自行把三个动画尺度钉为 1.0）、时区 `Asia/Shanghai`、中文 locale、`wm size 1080x2400`、`wm density 420`、字号 1.0。
+3. **合成数据与独立预期**：`tools/python/android_scale/fixture.py` 以固定 seed 生成匿名确定性清单——准备阶段五批各 10,000 条共享业务内容、不同导入会话的记录加 1,000 条唯一记录（51,000 候选、100,000 重复关系），最后一次真实 SAF 导入后 61,000 候选、150,000 总重复关系、本次会话 50,000 关系；初始正式交易为零，单次明确确认后预期 1 笔正式交易与 2 条平衡分录。预期由生成规则独立计算，不从运行结果回抄。
+4. **云端执行分工**：workflow 只在模拟器会话之外生成夹具与构建两个 APK；会话内只调用 host 驱动器 `tools/python/android_scale/runner.py`（CI-only：非托管 Linux runner 环境直接拒绝运行），由它独占设备交互（`adb root`、locale 与时区、尺寸/密度/动画、安装 APK、把夹具推进应用私有目录、逐阶段 `am instrument`、内存采样、失败截图与界面树）。
+5. **严格证据判定**：`tools/python/android_scale/result.py` 是唯一判据实现——要求 `host.json`、`device.json`、五份阶段日志、`junit.xml`、`logcat.txt`、`memory.txt`、`configuration.txt` 与两个 APK 的 SHA-256；核对提交 SHA、设备实际配置、11 个阶段全部 PASS 且计时单调、10 项规模与经济计数、UI 遍历身份范围；缺任一证据或任一不符即失败。
+6. **失败闭合**：缺夹具、零测试执行、缺阶段、缺报告、SHA 不符、设备启动失败、超时、崩溃/OOM/ANR 一律不得绿；不以 `am instrument` 的 shell 返回码或单个 `OK` 字符串作为唯一通过依据；失败现场证据（`failure.png`、`failure-ui.xml`）与阶段日志必须上传，保留 7 天；不上传数据库与整份输入文件。
+7. **快速设备回归不受影响**：`.github/workflows/android-instrumented.yml` 的 `notClass` 已同时排除 `ImportScaleTraversalInstrumentedTest` 与 `AndroidScaleLongInstrumentedTest`，长测入口不会被普通 PR 带入；旧 `ImportScaleTraversalInstrumentedTest` 保留为人工取证工具，语义不变。
+8. **独立的运行后校验**：模拟器步之后另设一步（`if: always()`，`tools/ci/android-scale-validate.py`）重跑严格判定器、重新校验夹具清单（篡改检测），并把**设备上报的计数绑定到生成器独立算出的清单**；成功信号不只依赖 host 驱动器经第三方 action 转达的退出码。缺证据、清单非 maximum 档或任一计数与清单不符一律失败。
+
+**边界**：只新增该 workflow 与其依赖的测试与工具，并同步 `docs/CONTRIBUTING.md`；零产品行为、零 schema/迁移、零依赖变更；`ci.yml` 与 `windows.yml` 零改动，四个 required check 名称与分支保护零改动；本机不跑该链（不构建、不起模拟器）。
+
+**验收**：夹具生成与篡改负向测试、判定器与 host 驱动器守卫的离线负向测试、YAML 静态检查、`project_docs` 与 trace 扫描必须通过；本批 PR 只跑四个 required checks。**该 workflow 的云端首跑尚未发生**，功能整链结论与历史规模验收闭合均不得在此之前宣布；首跑须对精确 merge SHA 发起，通过后同 SHA 再独立跑一次确认可重复性。
+
+**残余（登记）**：host 驱动器为 CI-only，其首次真实执行即云端首跑（离线单测只覆盖纯逻辑与报告写入）；云端耗时与采样内存只作观察，标注「观察到的最大值」，不替代固定设备性能阈值；若首跑暴露产品缺陷，保留失败证据与 `NOT_RUN` 阶段并另批处理，不反复重跑；本批不做 AVD 快照缓存与 APK 工件复用。另四项已登记：(a) 两个 APK 的 SHA-256 只校验存在与格式，未与提交或任何期望值绑定，二进制层面的"同一提交"由 checkout 的固定 ref 保证；(b) host 侧没有逐阶段上限，逐阶段由设备侧 `activeDeadlineElapsedMs` 自约束，外层由全局 13800 秒兜底；(c) 判定器期望的 instrumentation 记录形状（恰好两条身份记录、码为 [1,0]）目前只对合成日志验证，尚无真实 `am instrument -r` 转录样本，若真实输出多出带 `class=`/`test=` 的记录会导致干净运行被误判为失败（假阴性）；(d) `owned_serial` 只统计 `emulator-` 行，托管 runner 上不会出现第二个非模拟器 adb 设备，该缺口不可达。
+
+**关联决定：** D-161/D-162（规模遍历基础设施与整链顺序）、D-164/D-166/D-175（历史规模证据与 61k 缺陷归因）、D-197（设备回归 workflow 与人工门边界）、D-188（PR 门禁流与四门禁口径）。

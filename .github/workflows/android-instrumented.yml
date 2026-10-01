@@ -91,7 +91,7 @@ jobs:
           script: |
             set -eu
             rc=0
-            ./gradlew --no-daemon --max-workers=1 -Pandroid.testInstrumentationRunnerArguments.notClass=com.unifiedledger.android.ImportScaleTraversalInstrumentedTest :android-app:connectedDebugAndroidTest --warning-mode all || rc=$?
+            ./gradlew --no-daemon --max-workers=1 -Pandroid.testInstrumentationRunnerArguments.notClass=com.unifiedledger.android.ImportScaleTraversalInstrumentedTest,com.unifiedledger.android.AndroidScaleLongInstrumentedTest :android-app:connectedDebugAndroidTest --warning-mode all || rc=$?
             adb logcat -d > logcat.txt || true
             exit $rc
       - name: Upload evidence
