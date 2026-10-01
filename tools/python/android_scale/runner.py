@@ -124,8 +124,7 @@ class ScaleRunner:
             remaining_seconds(boot_deadline, time.monotonic())
             time.sleep(1)
         self.await_framework()
-        self.adb("shell", "wm", "size", "1080x2400")
-        self.adb("shell", "wm", "density", "420")
+        self.pin_display()
         self.adb("shell", "settings", "put", "system", "font_scale", "1.0")
         for name in ("window_animation_scale", "transition_animation_scale", "animator_duration_scale"):
             self.adb("shell", "settings", "put", "global", name, "1.0")
@@ -153,6 +152,37 @@ class ScaleRunner:
         self.device_deadline = int(float(self.adb("shell", "cat", "/proc/uptime").split()[0]) * 1000 +
                                    remaining_seconds(self.deadline, time.monotonic(), 14400) * 1000)
 
+    def pin_display(self, size: str = "1080x2400", density: str = "420", attempts: int = 5) -> None:
+        """Pin the display size/density and confirm the override took effect.
+
+        The framework can still apply its boot-time display configuration after
+        the first `wm size` write and silently revert the override, so a single
+        write is not enough: write, read back, retry, and fail loudly with the
+        observed value.
+        """
+        observed = "unknown"
+        for _ in range(attempts):
+            self.adb("shell", "wm", "size", size, timeout=60)
+            self.adb("shell", "wm", "density", density, timeout=60)
+            reported = self.adb("shell", "wm", "size", timeout=60)
+            matches = re.findall(r"(?:Physical|Override) size: ([0-9]+x[0-9]+)", reported)
+            observed = matches[-1] if matches else "unknown"
+            if observed == size:
+                return
+            time.sleep(2)
+        raise RuntimeError(f"display override did not take effect: requested {size}, observed {observed}")
+
+    def ensure_app_data_dir(self) -> None:
+        """Materialize the app's data directory before using `run-as`.
+
+        `pm install` does not create `/data/user/0/<pkg>` on this image (the
+        platform creates it on first launch), and `run-as` refuses to stat a
+        missing directory. Launch the app once, then stop it again so the chain
+        still starts from a cold start.
+        """
+        self.adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/.MainActivity", timeout=180)
+        self.adb("shell", "am", "force-stop", PACKAGE)
+
     def install(self):
         validate_manifest(load_manifest(self.fixture / "manifest.json"), self.fixture)
         for role, apk in (("app", self.app), ("test", self.test)):
@@ -160,7 +190,8 @@ class ScaleRunner:
             self.adb("install", "-t", str(apk), timeout=120)
         # Private preparation files never rely on targetSdk scoped shared-storage access.
         self.adb("shell", "mkdir", "-p", "/data/local/tmp/ul-scale")
-        self.adb("push", str(self.fixture) + "/.", "/data/local/tmp/ul-scale/", timeout=120)
+        self.adb("shell", "push", str(self.fixture) + "/.", "/data/local/tmp/ul-scale/", timeout=120)
+        self.ensure_app_data_dir()
         self.adb("shell", "run-as", PACKAGE, "mkdir", "-p", "files/scale-fixture")
         for file in sorted(self.fixture.iterdir()):
             self.adb("shell", "run-as", PACKAGE, "cp", "/data/local/tmp/ul-scale/" + file.name, "files/scale-fixture/" + file.name)
