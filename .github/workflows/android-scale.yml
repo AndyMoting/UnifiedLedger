@@ -1,0 +1,126 @@
+# Android maximum-scale long test (manual, non-blocking).
+#
+# This workflow is NOT part of the required PR checks and is never triggered by
+# a pull request: it runs only through workflow_dispatch, after the change has
+# been merged, against the exact merge SHA. It is the cloud replacement for the
+# local emulator long run, so the development host never boots an emulator and
+# never assembles APKs for this chain.
+#
+# Facts this file depends on:
+# - The device chain is driven by tools/python/android_scale/runner.py, which
+#   refuses to run outside a GitHub-hosted Linux runner (GITHUB_ACTIONS=true,
+#   RUNNER_ENVIRONMENT=github-hosted, RUNNER_OS=Linux) and refuses to touch any
+#   emulator other than the one it owns, named `ul-scale`. The avd-name below
+#   must therefore stay `ul-scale`.
+# - The runner owns every device interaction (adb root, locale/timezone, wm size
+#   1080x2400, wm density 420, animation scales 1.0, APK install, fixture push
+#   into the app's private files dir, per-phase `am instrument`, memory
+#   sampling, failure screenshot/UI dump). The workflow must not duplicate any
+#   of that.
+# - The runner's global deadline is bounded by its own code (see runner.py) and
+#   must stay below the 240-minute emulator step so that reports are written and
+#   uploaded before the step is killed.
+# - GitHub hosted Linux runners provide KVM hardware acceleration (2-vCPU
+#   runners since the 2024-04-02 changelog); the udev snippet below is the
+#   documented one.
+# - API 36 / google_apis / x86_64 mirrors the managed local AVD. `adb root` and
+#   `adb shell stop/start` need a non-playstore image, which google_apis is.
+# - The emulator action runs `script` with /usr/bin/sh (dash): no `set -o
+#   pipefail` and no backslash line continuations there.
+# - Animations stay enabled (disable-animations: false): the chain drives
+#   scrolling that depends on animation progress, and the runner pins all three
+#   animation scales to 1.0 itself.
+name: Android maximum-scale long test
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact 40-character commit SHA to test
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# A long run must never be cancelled by a later push: this workflow only runs on
+# demand, and its evidence is tied to the SHA the operator asked for.
+concurrency:
+  group: android-scale-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  android-scale:
+    name: Android maximum-scale long test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      GRADLE_OPTS: >-
+        -Dorg.gradle.jvmargs=-Xmx3g
+        -Dkotlin.daemon.jvmargs=-Xmx2g
+      TZ: Asia/Shanghai
+      LANG: zh_CN.UTF-8
+    steps:
+      - name: Check selected ref and exact SHA
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          test "${EXPECTED_SHA}" =~ ^[0-9a-fA-F]{40}$
+          git init .scale-check
+          git -C .scale-check remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          selected_ref="${GITHUB_REF#refs/heads/}"
+          selected_sha="$(git ls-remote origin "refs/heads/${selected_ref}" | awk '{print $1}')"
+          test -n "${selected_sha}" && test "${selected_sha}" = "${EXPECTED_SHA}"
+          rm -rf .scale-check
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 1
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: temurin
+      - name: Generate deterministic synthetic fixture
+        run: |
+          python tools/ci/android-scale-fixture.py --out scale-fixture
+          python tools/ci/android-scale-fixture.py --out scale-fixture --validate
+      - name: Build APKs before the emulator session
+        # Built outside the emulator session: the emulator action kills the
+        # emulator when `script` ends, so compilation must not sit inside it.
+        run: ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebug :android-app:assembleDebugAndroidTest --warning-mode all
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run the scale chain on the pinned emulator
+        timeout-minutes: 240
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          avd-name: ul-scale
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          cores: 2
+          ram-size: 2048M
+          emulator-boot-timeout: 300
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            set -u
+            python tools/ci/android-scale-run.py --fixture scale-fixture --evidence scale-evidence --app android-app/build/outputs/apk/debug/android-app-debug.apk --test android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk --sha "${EXPECTED_SHA}"
+      - name: Upload scale evidence
+        # Evidence is written by the runner even on failure (host.json,
+        # device.json, junit.xml, memory.txt, configuration.txt, logcat.txt,
+        # per-phase instrumentation logs, and failure.png/failure-ui.xml).
+        # Missing evidence fails the job rather than passing silently.
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-scale-${{ inputs.expected_sha }}
+          path: scale-evidence/**
+          if-no-files-found: error
+          retention-days: 7
