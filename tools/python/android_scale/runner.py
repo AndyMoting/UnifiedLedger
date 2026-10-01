@@ -89,6 +89,24 @@ class ScaleRunner:
                 time.sleep(2)
         raise RuntimeError(f"adb root did not settle after {attempts} attempts: {last}")
 
+    def await_framework(self, timeout: float = 300) -> None:
+        """Wait for the framework to answer again after `stop`/`start`.
+
+        `sys.boot_completed` keeps its value from the previous boot across a
+        framework restart, so waiting on that property alone lets the driver
+        issue `wm`/`settings` calls while the window service is still down
+        ("Failure calling service window: Broken pipe"). Probe a real framework
+        command instead.
+        """
+        deadline = min(self.deadline, time.monotonic() + timeout)
+        while True:
+            remaining_seconds(deadline, time.monotonic())
+            try:
+                self.adb("shell", "wm", "size", timeout=30)
+                return
+            except (RuntimeError, subprocess.TimeoutExpired):
+                time.sleep(2)
+
     def configure(self):
         devices = self.adb("devices")
         matches = re.findall(r"^(emulator-[0-9]+)\s+device$", devices, re.MULTILINE)
@@ -105,6 +123,7 @@ class ScaleRunner:
         while self.adb("shell", "getprop", "sys.boot_completed").strip() != "1":
             remaining_seconds(boot_deadline, time.monotonic())
             time.sleep(1)
+        self.await_framework()
         self.adb("shell", "wm", "size", "1080x2400")
         self.adb("shell", "wm", "density", "420")
         self.adb("shell", "settings", "put", "system", "font_scale", "1.0")
