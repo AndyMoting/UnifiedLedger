@@ -702,6 +702,36 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
             self.assertIn("did not settle", host["errorMessage"])
             self.assertEqual(host["phases"], [])
 
+    def test_await_framework_waits_out_a_restarting_framework(self):
+        # `sys.boot_completed` still reads 1 from the previous boot across a
+        # framework restart, so the driver must probe a real framework command.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.make_runner(root)
+            calls = {"count": 0}
+
+            def restarting(*_args, **_kwargs):
+                calls["count"] += 1
+                if calls["count"] <= 2:
+                    raise RuntimeError("command failed: adb (224): cmd: Failure calling service window: Broken pipe (32)")
+                return "Physical size: 1080x2400"
+
+            runner.adb = restarting
+            runner.await_framework(timeout=60)
+            self.assertEqual(calls["count"], 3)
+
+    def test_await_framework_gives_up_at_its_deadline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.make_runner(root)
+
+            def never_ready(*_args, **_kwargs):
+                raise RuntimeError("cmd: Failure calling service window: Broken pipe (32)")
+
+            runner.adb = never_ready
+            with self.assertRaises(ScaleDeadlineError):
+                runner.await_framework(timeout=1)
+
 
 if __name__ == "__main__":
     unittest.main()
