@@ -630,5 +630,78 @@ class ManifestCrossCheckBindsDeviceCounters(unittest.TestCase):
             cross_check_manifest(self.device, self.manifest)
 
 
+class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
+    """The host driver's first cloud run failed on a transient adb hiccup; the
+    retry and the diagnostics that make such a failure readable are exercised
+    here, offline."""
+
+    def make_runner(self, root: Path) -> ScaleRunner:
+        os.environ.update(GITHUB_ACTIONS="true", RUNNER_ENVIRONMENT="github-hosted", RUNNER_OS="Linux")
+        self.addCleanup(
+            lambda: [os.environ.pop(name, None)
+                     for name in ("GITHUB_ACTIONS", "RUNNER_ENVIRONMENT", "RUNNER_OS")]
+        )
+        return ScaleRunner(root, root / "evidence", root / "app.apk", root / "test.apk", SHA)
+
+    def test_command_error_carries_the_command_diagnostics(self):
+        # A bare "command failed: adb (1)" is not diagnosable from the cloud log.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.make_runner(root)
+            with self.assertRaises(RuntimeError) as caught:
+                runner.command([sys.executable, "-c",
+                                "import sys; sys.stderr.write('boom-marker'); sys.exit(3)"])
+            message = str(caught.exception)
+            self.assertIn("boom-marker", message)
+            self.assertIn("(3)", message)
+
+    def test_root_and_settle_retries_transient_failures(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.make_runner(root)
+            calls = {"count": 0}
+
+            def flaky(*_args, **_kwargs):
+                calls["count"] += 1
+                if calls["count"] <= 2:
+                    raise RuntimeError("adb: device 'emulator-5554' not found")
+                return ""
+
+            runner.adb = flaky
+            runner.root_and_settle(attempts=5)
+            # Two failed attempts cost one call each; the successful attempt makes
+            # three (wait-for-device, root, wait-for-device).
+            self.assertEqual(calls["count"], 5)
+
+    def test_root_and_settle_gives_up_loudly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.make_runner(root)
+
+            def always_failing(*_args, **_kwargs):
+                raise RuntimeError("adb: device not found")
+
+            runner.adb = always_failing
+            with self.assertRaises(RuntimeError) as caught:
+                runner.root_and_settle(attempts=2)
+            self.assertIn("did not settle after 2 attempts", str(caught.exception))
+
+    def test_run_records_the_error_message_in_host_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.make_runner(root)
+
+            def boom():
+                raise RuntimeError("adb root did not settle after 5 attempts: adb: device not found")
+
+            runner.configure = boom
+            self.assertEqual(runner.run(), 1)
+            host = json.loads((root / "evidence" / "host.json").read_text(encoding="utf-8"))
+            self.assertEqual(host["status"], "FAIL")
+            self.assertEqual(host["errorType"], "RuntimeError")
+            self.assertIn("did not settle", host["errorMessage"])
+            self.assertEqual(host["phases"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
