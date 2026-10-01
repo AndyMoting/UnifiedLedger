@@ -35,6 +35,21 @@ def independent_facts(path):
 
 
 class AndroidScaleFixtureTests(unittest.TestCase):
+    def test_maximum_profile_is_byte_deterministic(self):
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            left, right = Path(first), Path(second)
+            generate_fixture(left)
+            generate_fixture(right)
+            self.assertEqual(
+                (left / "manifest.json").read_bytes(), (right / "manifest.json").read_bytes()
+            )
+            for path in sorted(left.iterdir()):
+                self.assertEqual(
+                    hashlib.sha256(path.read_bytes()).hexdigest(),
+                    hashlib.sha256((right / path.name).read_bytes()).hexdigest(),
+                    path.name,
+                )
+
     def test_maximum_actual_bytes_have_independent_relationship_oracle(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)

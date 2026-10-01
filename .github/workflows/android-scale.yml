@@ -66,7 +66,10 @@ jobs:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           set -euo pipefail
-          test "${EXPECTED_SHA}" =~ ^[0-9a-fA-F]{40}$
+          # `[[ ... =~ ... ]]` is required here: the POSIX `test`/`[` builtin has
+          # no `=~` operator and would abort this step before any other check.
+          # Lowercase only, matching the driver's and the reducer's [0-9a-f]{40}.
+          [[ "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ ]]
           git init .scale-check
           git -C .scale-check remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
           selected_ref="${GITHUB_REF#refs/heads/}"
@@ -83,8 +86,8 @@ jobs:
           distribution: temurin
       - name: Generate deterministic synthetic fixture
         run: |
-          python tools/ci/android-scale-fixture.py --out scale-fixture
-          python tools/ci/android-scale-fixture.py --out scale-fixture --validate
+          python3 tools/ci/android-scale-fixture.py --out scale-fixture
+          python3 tools/ci/android-scale-fixture.py --out scale-fixture --validate
       - name: Build APKs before the emulator session
         # Built outside the emulator session: the emulator action kills the
         # emulator when `script` ends, so compilation must not sit inside it.
@@ -111,12 +114,27 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
             set -u
-            python tools/ci/android-scale-run.py --fixture scale-fixture --evidence scale-evidence --app android-app/build/outputs/apk/debug/android-app-debug.apk --test android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk --sha "${EXPECTED_SHA}"
+            python3 tools/ci/android-scale-run.py --fixture scale-fixture --evidence scale-evidence --app android-app/build/outputs/apk/debug/android-app-debug.apk --test android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk --sha "${EXPECTED_SHA}"
+      - name: Independently validate the collected evidence
+        # The job must not rely solely on the driver's own exit code relayed
+        # through the emulator action. This step re-runs the strict reducer,
+        # re-validates the generated fixture against its own manifest, and binds
+        # the device-reported counters to that independently generated manifest.
+        # It runs even when the emulator step failed, so a red evidence set can
+        # never leave the job green.
+        if: always()
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          python3 tools/ci/android-scale-validate.py --evidence scale-evidence --sha "${EXPECTED_SHA}" --fixture scale-fixture
       - name: Upload scale evidence
         # Evidence is written by the runner even on failure (host.json,
         # device.json, junit.xml, memory.txt, configuration.txt, logcat.txt,
         # per-phase instrumentation logs, and failure.png/failure-ui.xml).
-        # Missing evidence fails the job rather than passing silently.
+        # Partial evidence still uploads by design (the runner creates the
+        # directory and the phase logs early); the gate is the independent
+        # validation step above, not this upload.
         if: always()
         uses: actions/upload-artifact@v7
         with:

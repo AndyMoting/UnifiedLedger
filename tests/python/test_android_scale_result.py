@@ -3,8 +3,9 @@
 These tests never touch a device: they build synthetic evidence directories and
 assert that `validate_evidence` refuses anything short of a complete, clean,
 correctly identified run. The reducer is the only thing standing between a
-partial or crashed long run and a green workflow, so every rejection path it
-documents is exercised here.
+partial or crashed long run and a green workflow, so the rejection paths that can
+be reproduced offline are exercised here; the ones that need a real
+`am instrument` transcript are registered as residuals in D-198.
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ from android_scale.result import (  # noqa: E402
     STAGES,
     TEST_CLASS,
     TEST_METHOD,
+    cross_check_manifest,
     validate_evidence,
 )
 from android_scale.runner import (  # noqa: E402
@@ -503,6 +505,129 @@ class RunnerGuardsAreOfflineTestable(unittest.TestCase):
                     os.environ.pop(name, None)
             with self.assertRaises((ValueError, OSError, KeyError, ET.ParseError)):
                 validate_evidence(root / "evidence", SHA)
+
+
+class ReducerHardeningRejectsSubtleBypasses(unittest.TestCase):
+    """Wrong types, extra status codes and malformed JSON must all be rejected."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.directory = Path(self._tmp.name)
+        build_valid(self.directory)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def assert_rejected(self, *, sha: str = SHA):
+        with self.assertRaises((ValueError, OSError, KeyError, ET.ParseError)):
+            validate_evidence(self.directory, sha)
+
+    def test_nonfinite_json_is_rejected(self):
+        (self.directory / "host.json").write_text('{"sha": NaN}', encoding="utf-8")
+        self.assert_rejected()
+
+    def test_non_object_host_json_is_rejected(self):
+        (self.directory / "host.json").write_text("[]", encoding="utf-8")
+        self.assert_rejected()
+
+    def test_boolean_schema_is_rejected(self):
+        device = load(self.directory, "device.json")
+        device["schema"] = True
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+    def test_stage_timer_wrong_type_is_rejected(self):
+        device = load(self.directory, "device.json")
+        device["stages"][STAGES[0]]["elapsedMs"] = "10"
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+    def test_zero_stage_timer_is_rejected(self):
+        device = load(self.directory, "device.json")
+        device["stages"][STAGES[0]]["elapsedMs"] = 0
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+    def test_boolean_counter_is_rejected(self):
+        # `true` compares equal to 1 in Python, so only the int type guard rejects it.
+        device = load(self.directory, "device.json")
+        device["formalTransactions"] = True
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+    def test_extra_non_identity_status_code_is_rejected(self):
+        path = self.directory / f"instrumentation-{PHASES[0]}.txt"
+        path.write_text(status_log() + "INSTRUMENTATION_STATUS_CODE: -2\n", encoding="utf-8")
+        self.assert_rejected()
+
+    def test_wrong_instrumentation_code_is_rejected(self):
+        (self.directory / f"instrumentation-{PHASES[0]}.txt").write_text(
+            status_log(code=-2), encoding="utf-8")
+        self.assert_rejected()
+
+    def test_missing_logcat_is_rejected(self):
+        (self.directory / "logcat.txt").unlink()
+        self.assert_rejected()
+
+    def test_junit_classname_mismatch_is_rejected(self):
+        root = ET.parse(self.directory / "junit.xml").getroot()
+        root.findall("testcase")[0].set("classname", "com.example.Other")
+        ET.ElementTree(root).write(self.directory / "junit.xml", encoding="utf-8")
+        self.assert_rejected()
+
+    def test_junit_zero_time_is_rejected(self):
+        root = ET.parse(self.directory / "junit.xml").getroot()
+        root.findall("testcase")[0].set("time", "0")
+        ET.ElementTree(root).write(self.directory / "junit.xml", encoding="utf-8")
+        self.assert_rejected()
+
+    def test_other_crash_signals_are_rejected(self):
+        for signal_text in ("Fatal signal 11 (SIGSEGV)", "am_anr: com.unifiedledger.android",
+                            "am_crash: com.unifiedledger.android", "INSTRUMENTATION_ABORTED"):
+            with self.subTest(signal=signal_text):
+                (self.directory / "logcat.txt").write_text(signal_text + "\n", encoding="utf-8")
+                self.assert_rejected()
+
+
+class ManifestCrossCheckBindsDeviceCounters(unittest.TestCase):
+    """The independent gate must bind device counters to the generated manifest."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.directory = Path(self._tmp.name)
+        build_valid(self.directory)
+        self.device = load(self.directory, "device.json")
+        self.manifest = {
+            "profile": "maximum",
+            "initial_candidates": 51000,
+            "initial_duplicate_relations": 100000,
+            "initially_confirmed_relations": 100,
+            "final_candidates": 61000,
+            "final_duplicate_relations": 150000,
+            "new_session_duplicate_relations": 50000,
+            "expected_formal_transactions_after_confirmation": 1,
+        }
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_matching_counters_are_accepted(self):
+        cross_check_manifest(self.device, self.manifest)
+
+    def test_counter_drift_is_rejected(self):
+        self.manifest["final_duplicate_relations"] = 149999
+        with self.assertRaises(ValueError):
+            cross_check_manifest(self.device, self.manifest)
+
+    def test_non_maximum_profile_is_rejected(self):
+        self.manifest["profile"] = "parser-small"
+        with self.assertRaises(ValueError):
+            cross_check_manifest(self.device, self.manifest)
+
+    def test_missing_manifest_field_is_rejected(self):
+        del self.manifest["initial_candidates"]
+        with self.assertRaises(ValueError):
+            cross_check_manifest(self.device, self.manifest)
 
 
 if __name__ == "__main__":
