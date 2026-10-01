@@ -58,12 +58,36 @@ class ScaleRunner:
         bound = timeout if best_effort else remaining_seconds(self.deadline, time.monotonic(), timeout)
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=bound)
         if result.returncode and not best_effort:
-            raise RuntimeError(f"command failed: {command[0]} ({result.returncode})")
+            # Carry the command's own diagnostics into the failure: without this
+            # the cloud log and host.json say only "a command failed", which is
+            # not enough to tell a transient device hiccup from a real defect.
+            detail = (result.stderr or result.stdout).decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"command failed: {command[0]} ({result.returncode}): {detail[:400]}")
         return result.stdout if binary else result.stdout.decode("utf-8", errors="replace")
 
     def adb(self, *args: str, **kwargs):
         prefix = ["adb"] + (["-s", self.serial] if self.serial else [])
         return self.command(prefix + list(args), **kwargs)
+
+    def root_and_settle(self, attempts: int = 5) -> None:
+        """Restart adbd as root, tolerating the window where the device drops.
+
+        `adb root` restarts adbd, so the device is briefly unreachable; right
+        after boot the first attempt can legitimately fail (the emulator action
+        observes the same window). Retry with a wait-for-device in between
+        instead of abandoning the whole run on the first failure.
+        """
+        last: Exception | None = None
+        for _ in range(attempts):
+            try:
+                self.adb("wait-for-device", timeout=60)
+                self.adb("root", timeout=60)
+                self.adb("wait-for-device", timeout=60)
+                return
+            except (RuntimeError, subprocess.TimeoutExpired) as error:
+                last = error
+                time.sleep(2)
+        raise RuntimeError(f"adb root did not settle after {attempts} attempts: {last}")
 
     def configure(self):
         devices = self.adb("devices")
@@ -72,8 +96,7 @@ class ScaleRunner:
             raise ValueError("one owned CI emulator required")
         self.serial = matches[0]
         self.serial = owned_serial(devices, self.adb("emu", "avd", "name"))
-        self.adb("root")
-        self.adb("wait-for-device", timeout=60)
+        self.root_and_settle()
         self.adb("shell", "setprop", "persist.sys.locale", "zh-CN")
         self.adb("shell", "setprop", "persist.sys.timezone", "Asia/Shanghai")
         self.adb("shell", "stop")
@@ -221,6 +244,7 @@ class ScaleRunner:
             self.report["status"] = "PASS"
         except (Exception, KeyboardInterrupt) as error:
             self.report["errorType"] = type(error).__name__
+            self.report["errorMessage"] = str(error)[:800]
             self.report["status"] = "ERROR"
         finally:
             self.diagnostics(failure=self.report["status"] != "PASS")
