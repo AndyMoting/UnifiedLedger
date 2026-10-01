@@ -70,12 +70,12 @@ jobs:
           # no `=~` operator and would abort this step before any other check.
           # Lowercase only, matching the driver's and the reducer's [0-9a-f]{40}.
           [[ "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ ]]
-          git init .scale-check
-          git -C .scale-check remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          # Query the remote URL directly: this step runs BEFORE actions/checkout,
+          # so there is no local repository and no configured `origin` to ask yet
+          # (a bare `git ls-remote origin` here fails with exit 128).
           selected_ref="${GITHUB_REF#refs/heads/}"
-          selected_sha="$(git ls-remote origin "refs/heads/${selected_ref}" | awk '{print $1}')"
+          selected_sha="$(git ls-remote "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" "refs/heads/${selected_ref}" | awk '{print $1}')"
           test -n "${selected_sha}" && test "${selected_sha}" = "${EXPECTED_SHA}"
-          rm -rf .scale-check
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.expected_sha }}
