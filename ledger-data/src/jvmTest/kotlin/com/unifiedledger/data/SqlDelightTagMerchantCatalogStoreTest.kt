@@ -1,7 +1,6 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import com.unifiedledger.application.CatalogItemCommandPayload
 import com.unifiedledger.application.CatalogItemIdSource
 import com.unifiedledger.application.CatalogItemReferenceProbe
 import com.unifiedledger.application.ExecuteTagMerchantCommand
@@ -16,7 +15,6 @@ import com.unifiedledger.domain.LedgerId
 import java.util.Properties
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -187,8 +185,7 @@ class SqlDelightTagMerchantCatalogStoreTest {
         }
     }
 
-    private fun migrationProperties(): Properties =
-        Properties().apply { setProperty("foreign_keys", "true") }
+    private fun migrationProperties(): Properties = Properties().apply { setProperty("foreign_keys", "true") }
 
     private fun queryLong(
         driver: JdbcSqliteDriver,
@@ -200,7 +197,8 @@ class SqlDelightTagMerchantCatalogStoreTest {
                 sql,
                 { cursor ->
                     check(cursor.next().value)
-                    app.cash.sqldelight.db.QueryResult.Value(requireNotNull(cursor.getLong(0)))
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(requireNotNull(cursor.getLong(0)))
                 },
                 0,
             ).value
@@ -215,7 +213,8 @@ class SqlDelightTagMerchantCatalogStoreTest {
                 sql,
                 { cursor ->
                     check(cursor.next().value)
-                    app.cash.sqldelight.db.QueryResult.Value(requireNotNull(cursor.getString(0)))
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(requireNotNull(cursor.getString(0)))
                 },
                 0,
             ).value

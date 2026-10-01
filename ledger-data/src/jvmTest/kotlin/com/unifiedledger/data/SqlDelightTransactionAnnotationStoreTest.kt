@@ -2,6 +2,8 @@ package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.AnnotationFailureCode
+import com.unifiedledger.application.AnnotationRequestId
+import com.unifiedledger.application.AnnotationRequestIdSource
 import com.unifiedledger.application.CatalogItemIdSource
 import com.unifiedledger.application.CatalogItemReferenceProbe
 import com.unifiedledger.application.ExecuteTagMerchantCommand
@@ -11,8 +13,6 @@ import com.unifiedledger.application.TagMerchantRequestId
 import com.unifiedledger.application.TagMerchantRequestIdSource
 import com.unifiedledger.application.TransactionAnnotationResult
 import com.unifiedledger.application.UpdateTransactionAnnotation
-import com.unifiedledger.application.AnnotationRequestId
-import com.unifiedledger.application.AnnotationRequestIdSource
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.CatalogItemKind
 import com.unifiedledger.domain.LedgerId
@@ -23,7 +23,6 @@ import com.unifiedledger.domain.TransactionVersionId
 import java.util.Properties
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.time.Instant
 
@@ -97,9 +96,10 @@ class SqlDelightTransactionAnnotationStoreTest {
     @Test
     fun staleExpectedCurrentVersionIsAConflictWithZeroWrites() {
         withStore { ctx ->
-            val conflict = assertIs<TransactionAnnotationResult.Conflict>(
-                ctx.update("r1", listOf(TagId("tag-1")), null, expectedRevision = 0L, expectedVersion = TransactionVersionId("version-other")),
-            )
+            val conflict =
+                assertIs<TransactionAnnotationResult.Conflict>(
+                    ctx.update("r1", listOf(TagId("tag-1")), null, expectedRevision = 0L, expectedVersion = TransactionVersionId("version-other")),
+                )
             assertEquals(AnnotationFailureCode.ANNOTATION_CURRENT_VERSION_CONFLICT, conflict.failureCode)
             assertEquals(0L, queryLong(ctx.driver, "SELECT count(*) FROM transaction_annotation_revision"))
         }
@@ -108,9 +108,10 @@ class SqlDelightTransactionAnnotationStoreTest {
     @Test
     fun moreThanTwentyTagsIsATypedRejectionWithZeroWrites() {
         withStore(tagCount = 25) { ctx ->
-            val rejected = assertIs<TransactionAnnotationResult.Rejected>(
-                ctx.update("r1", (1..21).map { TagId("tag-%02d".format(it)) }, null, 0L),
-            )
+            val rejected =
+                assertIs<TransactionAnnotationResult.Rejected>(
+                    ctx.update("r1", (1..21).map { TagId("tag-$it") }, null, 0L),
+                )
             assertEquals(AnnotationFailureCode.ANNOTATION_TOO_MANY_TAGS, rejected.failureCode)
             assertEquals(0L, queryLong(ctx.driver, "SELECT count(*) FROM transaction_annotation_revision"))
         }
@@ -119,7 +120,7 @@ class SqlDelightTransactionAnnotationStoreTest {
     @Test
     fun theTwentyTagBoundIsAcceptedAtExactlyTwenty() {
         withStore(tagCount = 25) { ctx ->
-            val accepted = assertIs<TransactionAnnotationResult.Accepted>(ctx.update("r1", (1..20).map { TagId("tag-%02d".format(it)) }, null, 0L))
+            val accepted = assertIs<TransactionAnnotationResult.Accepted>(ctx.update("r1", (1..20).map { TagId("tag-$it") }, null, 0L))
             assertEquals(1L, accepted.receipt.newAnnotationRevision)
             assertEquals(20L, queryLong(ctx.driver, "SELECT count(*) FROM transaction_annotation_tag"))
         }
@@ -249,15 +250,14 @@ class SqlDelightTransactionAnnotationStoreTest {
         store: SqlDelightTagMerchantCatalogStore,
         tagCount: Int,
     ) {
-        var tagIndex = 0
-        val executor =
-            ExecuteTagMerchantCommand(
-                commitPort = store,
-                requestIdSource = TagMerchantRequestIdSource { TagMerchantRequestId("catalog-tag-${tagIndex++}") },
-                idSource = CatalogItemIdSource { "tag-%02d".format(++tagIndex) },
-                referenceProbe = CatalogItemReferenceProbe { _, _, _ -> false },
-            )
         (1..tagCount).forEach { index ->
+            val executor =
+                ExecuteTagMerchantCommand(
+                    commitPort = store,
+                    requestIdSource = TagMerchantRequestIdSource { TagMerchantRequestId("catalog-tag-$index") },
+                    idSource = CatalogItemIdSource { "tag-$index" },
+                    referenceProbe = CatalogItemReferenceProbe { _, _, _ -> false },
+                )
             assertIs<TagMerchantCommandResult.Accepted>(executor.createItem(ledgerId, CatalogItemKind.TAG, "tag-name-$index", 0L))
         }
         // A single merchant for the 0..1 tests.
@@ -300,8 +300,7 @@ class SqlDelightTransactionAnnotationStoreTest {
         }
     }
 
-    private fun migrationProperties(): Properties =
-        Properties().apply { setProperty("foreign_keys", "true") }
+    private fun migrationProperties(): Properties = Properties().apply { setProperty("foreign_keys", "true") }
 
     private fun queryLong(
         driver: JdbcSqliteDriver,
@@ -313,7 +312,8 @@ class SqlDelightTransactionAnnotationStoreTest {
                 sql,
                 { cursor ->
                     check(cursor.next().value)
-                    app.cash.sqldelight.db.QueryResult.Value(requireNotNull(cursor.getLong(0)))
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(requireNotNull(cursor.getLong(0)))
                 },
                 0,
             ).value

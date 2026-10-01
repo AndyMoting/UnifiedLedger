@@ -236,9 +236,10 @@ class ExecuteTagMerchantCommand(
         kind: CatalogItemKind,
         name: String,
         expectedRevision: Long,
-    ): TagMerchantCommandResult = execute(ledgerId, expectedRevision, CatalogItemCommandPayload.CreateItem(kind, name)) { authority, mintedId ->
-        createCatalogItem(kind, items(authority, kind), ledgerId, mintedId, name)
-    }
+    ): TagMerchantCommandResult =
+        execute(ledgerId, expectedRevision, CatalogItemCommandPayload.CreateItem(kind, name)) { authority, mintedId ->
+            createCatalogItem(kind, items(authority, kind), ledgerId, mintedId, name)
+        }
 
     fun renameItem(
         ledgerId: LedgerId,
@@ -246,9 +247,10 @@ class ExecuteTagMerchantCommand(
         id: String,
         newName: String,
         expectedRevision: Long,
-    ): TagMerchantCommandResult = execute(ledgerId, expectedRevision, CatalogItemCommandPayload.RenameItem(kind, id, newName)) { authority, _ ->
-        renameCatalogItem(items(authority, kind), ledgerId, kind, id, newName)
-    }
+    ): TagMerchantCommandResult =
+        execute(ledgerId, expectedRevision, CatalogItemCommandPayload.RenameItem(kind, id, newName)) { authority, _ ->
+            renameCatalogItem(items(authority, kind), ledgerId, kind, id, newName)
+        }
 
     fun setItemActive(
         ledgerId: LedgerId,
@@ -256,20 +258,22 @@ class ExecuteTagMerchantCommand(
         id: String,
         active: Boolean,
         expectedRevision: Long,
-    ): TagMerchantCommandResult = execute(ledgerId, expectedRevision, CatalogItemCommandPayload.SetItemActive(kind, id, active)) { authority, _ ->
-        setCatalogItemActive(items(authority, kind), ledgerId, kind, id, active)
-    }
+    ): TagMerchantCommandResult =
+        execute(ledgerId, expectedRevision, CatalogItemCommandPayload.SetItemActive(kind, id, active)) { authority, _ ->
+            setCatalogItemActive(items(authority, kind), ledgerId, kind, id, active)
+        }
 
     fun deleteItem(
         ledgerId: LedgerId,
         kind: CatalogItemKind,
         id: String,
         expectedRevision: Long,
-    ): TagMerchantCommandResult = execute(ledgerId, expectedRevision, CatalogItemCommandPayload.DeleteItem(kind, id)) { authority, _ ->
-        tombstoneCatalogItem(items(authority, kind), ledgerId, kind, id) {
-            referenceProbe.hasReferences(ledgerId, kind, id)
+    ): TagMerchantCommandResult =
+        execute(ledgerId, expectedRevision, CatalogItemCommandPayload.DeleteItem(kind, id)) { authority, _ ->
+            tombstoneCatalogItem(items(authority, kind), ledgerId, kind, id) {
+                referenceProbe.hasReferences(ledgerId, kind, id)
+            }
         }
-    }
 
     private fun execute(
         ledgerId: LedgerId,

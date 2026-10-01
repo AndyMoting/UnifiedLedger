@@ -12,12 +12,11 @@ import com.unifiedledger.application.Rg05ManualSnapshot
 import com.unifiedledger.application.Rg05PreparedOperation
 import com.unifiedledger.application.Rg05ReceiptSnapshot
 import com.unifiedledger.data.db.LedgerDatabase
-import com.unifiedledger.domain.CatalogItemViolation
-import com.unifiedledger.domain.TransactionAnnotationViolation
 import com.unifiedledger.domain.AccountTransferViolation
 import com.unifiedledger.domain.BalanceAdjustmentViolation
 import com.unifiedledger.domain.BudgetViolation
 import com.unifiedledger.domain.CatalogAdmissionRejection
+import com.unifiedledger.domain.CatalogItemViolation
 import com.unifiedledger.domain.CatalogViolation
 import com.unifiedledger.domain.CategoryRenameViolation
 import com.unifiedledger.domain.CorrectTransactionVersionViolation
@@ -46,6 +45,7 @@ import com.unifiedledger.domain.PostingReplacementViolation
 import com.unifiedledger.domain.PrincipalTransferViolation
 import com.unifiedledger.domain.ReconciliationMatchViolation
 import com.unifiedledger.domain.StoredValueViolation
+import com.unifiedledger.domain.TransactionAnnotationViolation
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.createMergedPaymentExpense

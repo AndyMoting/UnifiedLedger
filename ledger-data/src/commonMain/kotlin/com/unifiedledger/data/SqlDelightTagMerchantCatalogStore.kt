@@ -95,7 +95,7 @@ class SqlDelightTagMerchantCatalogStore private constructor(
                     }
 
                 val newRevision = currentRevision + 1L
-                writes.forEach { applyWrite(ledger, it) }
+                writes.forEach { applyWrite(ledger, it, newRevision) }
                 database.ledgerQueries.insertCatalogItemVersion(ledger, 0L)
                 database.ledgerQueries.advanceCatalogItemVersion(ledger)
 
@@ -165,13 +165,16 @@ class SqlDelightTagMerchantCatalogStore private constructor(
     private fun applyWrite(
         ledger: String,
         write: CatalogItemWrite,
+        newRevision: Long,
     ) {
         when (write) {
             is CatalogItemWrite.Insert -> {
+                // The inserted row's revision equals the receipt's newRevision: the item revision
+                // counter and the per-ledger catalog_item_version advance together (spec 2.2).
                 if (write.kind == CatalogItemKind.TAG) {
-                    database.ledgerQueries.insertCatalogTag(ledger, write.id, 1L, 0L, 0L)
+                    database.ledgerQueries.insertCatalogTag(ledger, write.id, 1L, 0L, newRevision)
                 } else {
-                    database.ledgerQueries.insertCatalogMerchant(ledger, write.id, 1L, 0L, 0L)
+                    database.ledgerQueries.insertCatalogMerchant(ledger, write.id, 1L, 0L, newRevision)
                 }
                 appendNameVersion(ledger, write.kind, write.id, write.name)
             }

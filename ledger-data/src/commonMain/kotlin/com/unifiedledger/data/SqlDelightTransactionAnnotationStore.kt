@@ -212,8 +212,7 @@ private data class StoredAnnotationRequest(
     val transactionId: String,
     val requestSnapshot: String,
 ) {
-    fun matches(request: TransactionAnnotationRequest): Boolean =
-        transactionId == request.transactionId.value && requestSnapshot == request.requestSnapshot
+    fun matches(request: TransactionAnnotationRequest): Boolean = transactionId == request.transactionId.value && requestSnapshot == request.requestSnapshot
 }
 
 private class AnnotationTypedRollback(

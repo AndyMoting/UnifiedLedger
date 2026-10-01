@@ -30,6 +30,7 @@ class P708TagMerchantV33ToV34MigrationTest {
             "catalog_tag",
             "catalog_merchant",
             "catalog_item_name_history",
+            "catalog_item_version",
             "catalog_item_command_request",
             "catalog_item_command_receipt",
             "transaction_annotation_revision",
@@ -45,6 +46,7 @@ class P708TagMerchantV33ToV34MigrationTest {
             "catalog_merchant_guard_delete",
             "catalog_item_name_history_guard_update",
             "catalog_item_name_history_guard_delete",
+            "catalog_item_version_guard_update",
             "catalog_item_command_receipt_guard_update",
             "catalog_item_command_receipt_guard_delete",
             "transaction_annotation_revision_guard_update",
@@ -58,7 +60,7 @@ class P708TagMerchantV33ToV34MigrationTest {
             "transaction_annotation_command_receipt_guard_delete",
         )
 
-    /** The ten new tables, in child-before-parent drop order. */
+    /** The eleven new tables, in child-before-parent drop order. */
     private val newTables =
         listOf(
             "transaction_annotation_command_receipt",
@@ -69,6 +71,7 @@ class P708TagMerchantV33ToV34MigrationTest {
             "catalog_item_command_receipt",
             "catalog_item_command_request",
             "catalog_item_name_history",
+            "catalog_item_version",
             "catalog_merchant",
             "catalog_tag",
         )
@@ -219,14 +222,18 @@ class P708TagMerchantV33ToV34MigrationTest {
             }
             JdbcSqliteDriver(url, migrationProperties()).use { driver ->
                 assertEquals(33L, queryLong(driver, "PRAGMA user_version"))
-                // The whole new table set rolled back together; only the occupied sentinel (which
-                // also matches the pattern) survives.
+                // The whole new table set rolled back together. The v33 catalog_% surface
+                // (catalog_version, catalog_account, catalog_category, catalog_name_history,
+                // catalog_command_request, catalog_command_receipt) is untouched, and only the
+                // occupied sentinel (which also matches the pattern) survives.
                 assertEquals(
                     0L,
                     queryLong(
                         driver,
                         "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name LIKE 'catalog\\_%' ESCAPE '\\' " +
-                            "AND name != 'catalog_annotation_v34_late_sentinel'",
+                            "AND name NOT IN ('catalog_annotation_v34_late_sentinel', 'catalog_version', " +
+                            "'catalog_account', 'catalog_category', 'catalog_name_history', " +
+                            "'catalog_command_request', 'catalog_command_receipt')",
                     ),
                 )
                 assertEquals(
