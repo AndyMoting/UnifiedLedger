@@ -1,0 +1,509 @@
+"""Offline negatives for the strict maximum-scale evidence reducer.
+
+These tests never touch a device: they build synthetic evidence directories and
+assert that `validate_evidence` refuses anything short of a complete, clean,
+correctly identified run. The reducer is the only thing standing between a
+partial or crashed long run and a green workflow, so every rejection path it
+documents is exercised here.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from xml.etree import ElementTree as ET
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools" / "python"))
+
+from android_scale.result import (  # noqa: E402
+    PHASES,
+    STAGES,
+    TEST_CLASS,
+    TEST_METHOD,
+    validate_evidence,
+)
+from android_scale.runner import (  # noqa: E402
+    ScaleDeadlineError,
+    ScaleRunner,
+    owned_serial,
+    remaining_seconds,
+)
+
+SHA = "a" * 40
+CONFIG = {
+    "api": "36",
+    "abi": "x86_64",
+    "size": "1080x2400",
+    "density": "420",
+    "font_scale": "1.0",
+    "locale": "zh-CN",
+    "timezone": "Asia/Shanghai",
+    "window_animation_scale": "1.0",
+    "transition_animation_scale": "1.0",
+    "animator_duration_scale": "1.0",
+}
+COUNTERS = {
+    "preparedCandidates": 51000,
+    "preparedRelations": 100000,
+    "preparedDispositions": 100,
+    "finalCandidates": 61000,
+    "finalRelations": 150000,
+    "observedCandidates": 61000,
+    "mainGroupRelations": 50000,
+    "groupDispositions": 50000,
+    "formalTransactions": 1,
+    "balancedPostings": 2,
+}
+
+
+def status_log(*, numtests: str = "1", code: int = -1, junit: str = "OK (1 test)",
+               records: int = 2, test_name: str = TEST_METHOD) -> str:
+    lines = []
+    for index in range(records):
+        lines += [
+            f"INSTRUMENTATION_STATUS: class={TEST_CLASS}",
+            f"INSTRUMENTATION_STATUS: test={test_name}",
+            f"INSTRUMENTATION_STATUS: numtests={numtests}",
+            f"INSTRUMENTATION_STATUS_CODE: {1 if index == 0 else 0}",
+        ]
+    if code is not None:
+        lines.append(f"INSTRUMENTATION_CODE: {code}")
+    if junit:
+        lines.append(junit)
+    return "\n".join(lines) + "\n"
+
+
+def build_valid(directory: Path, *, sha: str = SHA) -> None:
+    """Write a complete, clean evidence set that validate_evidence accepts."""
+    directory.mkdir(parents=True, exist_ok=True)
+    host = {
+        "sha": sha,
+        "status": "PASS",
+        "timed_out": False,
+        "crash_detected": False,
+        "phases": list(PHASES),
+        "apk_sha256": {"app": "b" * 64, "test": "c" * 64},
+        "config": dict(CONFIG),
+        "elapsed_seconds": 120.0,
+    }
+    (directory / "host.json").write_text(json.dumps(host), encoding="utf-8")
+    stages = {}
+    for index, stage in enumerate(STAGES):
+        stages[stage] = {"status": "PASS", "startedMs": index * 1000, "elapsedMs": 10}
+    device = {"schema": 1, "sha": sha, "stages": stages, "firstLastObserved": True,
+              "uiIdentityScope": "projected-sequence-multiplicity-order"}
+    device.update(COUNTERS)
+    (directory / "device.json").write_text(json.dumps(device), encoding="utf-8")
+    for phase in PHASES:
+        (directory / f"instrumentation-{phase}.txt").write_text(status_log(), encoding="utf-8")
+    root = ET.Element("testsuite", name="AndroidMaximumScale", tests="5", failures="0",
+                      errors="0", skipped="0")
+    for phase in PHASES:
+        ET.SubElement(root, "testcase", name=phase, classname=TEST_CLASS, time="1.0")
+    ET.ElementTree(root).write(directory / "junit.xml", encoding="utf-8", xml_declaration=True)
+    (directory / "logcat.txt").write_text("I/ActivityManager: start\n", encoding="utf-8")
+    (directory / "memory.txt").write_text("phase=prepare total=1000\n", encoding="utf-8")
+    (directory / "configuration.txt").write_text(json.dumps(CONFIG, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def load(directory: Path, name: str) -> dict:
+    return json.loads((directory / name).read_text(encoding="utf-8"))
+
+
+def save(directory: Path, name: str, data: dict) -> None:
+    (directory / name).write_text(json.dumps(data), encoding="utf-8")
+
+
+def junit(directory: Path, **attributes: str) -> None:
+    root = ET.parse(directory / "junit.xml").getroot()
+    for key, value in attributes.items():
+        root.set(key, value)
+    ET.ElementTree(root).write(directory / "junit.xml", encoding="utf-8", xml_declaration=True)
+
+
+class ReducerRejectsPartialEvidence(unittest.TestCase):
+    """Missing or short evidence must never be reported as success."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.directory = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def assert_rejected(self, *, sha: str = SHA):
+        with self.assertRaises((ValueError, OSError, KeyError, ET.ParseError)):
+            validate_evidence(self.directory, sha)
+
+    def test_accepts_the_complete_clean_set(self):
+        build_valid(self.directory)
+        self.assertEqual(validate_evidence(self.directory, SHA)["status"], "PASS")
+
+    def test_fewer_junit_cases_is_rejected(self):
+        build_valid(self.directory)
+        junit(self.directory, tests="4")
+        self.assert_rejected()
+
+    def test_extra_or_missing_junit_case_is_rejected(self):
+        build_valid(self.directory)
+        root = ET.parse(self.directory / "junit.xml").getroot()
+        root.remove(root.findall("testcase")[0])
+        ET.ElementTree(root).write(self.directory / "junit.xml", encoding="utf-8")
+        self.assert_rejected()
+
+    def test_junit_error_child_is_rejected(self):
+        build_valid(self.directory)
+        root = ET.parse(self.directory / "junit.xml").getroot()
+        ET.SubElement(root.findall("testcase")[0], "error", message="boom")
+        ET.ElementTree(root).write(self.directory / "junit.xml", encoding="utf-8")
+        self.assert_rejected()
+
+    def test_unparseable_junit_is_rejected(self):
+        build_valid(self.directory)
+        (self.directory / "junit.xml").write_text("<testsuite", encoding="utf-8")
+        self.assert_rejected()
+
+    def test_missing_phase_log_is_rejected(self):
+        build_valid(self.directory)
+        (self.directory / f"instrumentation-{PHASES[0]}.txt").unlink()
+        self.assert_rejected()
+
+    def test_extra_phase_log_is_rejected(self):
+        build_valid(self.directory)
+        (self.directory / "instrumentation-stale.txt").write_text(status_log(), encoding="utf-8")
+        self.assert_rejected()
+
+    def test_single_instrumentation_record_is_rejected(self):
+        build_valid(self.directory)
+        (self.directory / f"instrumentation-{PHASES[0]}.txt").write_text(
+            status_log(records=1), encoding="utf-8")
+        self.assert_rejected()
+
+    def test_wrong_numtests_is_rejected(self):
+        build_valid(self.directory)
+        (self.directory / f"instrumentation-{PHASES[0]}.txt").write_text(
+            status_log(numtests="2"), encoding="utf-8")
+        self.assert_rejected()
+
+    def test_unexpected_test_identity_is_rejected(self):
+        build_valid(self.directory)
+        (self.directory / f"instrumentation-{PHASES[0]}.txt").write_text(
+            status_log(test_name="someOtherMethod"), encoding="utf-8")
+        self.assert_rejected()
+
+    def test_missing_junit_completion_is_rejected(self):
+        build_valid(self.directory)
+        (self.directory / f"instrumentation-{PHASES[0]}.txt").write_text(
+            status_log(junit=""), encoding="utf-8")
+        self.assert_rejected()
+
+    def test_missing_instrumentation_completion_is_rejected(self):
+        build_valid(self.directory)
+        (self.directory / f"instrumentation-{PHASES[0]}.txt").write_text(
+            status_log(code=None), encoding="utf-8")
+        self.assert_rejected()
+
+    def test_instrumentation_failure_marker_is_rejected(self):
+        build_valid(self.directory)
+        (self.directory / f"instrumentation-{PHASES[0]}.txt").write_text(
+            status_log() + "INSTRUMENTATION_FAILED: com.unifiedledger.android\n", encoding="utf-8")
+        self.assert_rejected()
+
+    def test_missing_host_report_is_rejected(self):
+        build_valid(self.directory)
+        (self.directory / "host.json").unlink()
+        self.assert_rejected()
+
+    def test_missing_device_report_is_rejected(self):
+        build_valid(self.directory)
+        (self.directory / "device.json").unlink()
+        self.assert_rejected()
+
+    def test_unsupported_device_schema_is_rejected(self):
+        build_valid(self.directory)
+        device = load(self.directory, "device.json")
+        device["schema"] = 2
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+    def test_missing_memory_sample_is_rejected(self):
+        build_valid(self.directory)
+        (self.directory / "memory.txt").unlink()
+        self.assert_rejected()
+
+    def test_empty_configuration_evidence_is_rejected(self):
+        build_valid(self.directory)
+        (self.directory / "configuration.txt").write_text("", encoding="utf-8")
+        self.assert_rejected()
+
+    def test_missing_stage_is_rejected(self):
+        build_valid(self.directory)
+        device = load(self.directory, "device.json")
+        del device["stages"][STAGES[0]]
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+    def test_extra_stage_is_rejected(self):
+        build_valid(self.directory)
+        device = load(self.directory, "device.json")
+        device["stages"]["invented_stage"] = {"status": "PASS", "startedMs": 0, "elapsedMs": 1}
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+    def test_stage_not_pass_is_rejected(self):
+        build_valid(self.directory)
+        device = load(self.directory, "device.json")
+        device["stages"][STAGES[3]]["status"] = "FAIL"
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+    def test_stage_ordering_violation_is_rejected(self):
+        build_valid(self.directory)
+        device = load(self.directory, "device.json")
+        device["stages"][STAGES[2]]["startedMs"] = 0
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+    def test_stage_timer_above_its_limit_is_rejected(self):
+        build_valid(self.directory)
+        device = load(self.directory, "device.json")
+        device["stages"]["saf_import"]["elapsedMs"] = 1800001
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+
+class ReducerRejectsWrongIdentityAndCrashes(unittest.TestCase):
+    """Identity, configuration, oracle and crash evidence are all load-bearing."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.directory = Path(self._tmp.name)
+        build_valid(self.directory)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def assert_rejected(self, *, sha: str = SHA):
+        with self.assertRaises((ValueError, OSError, KeyError, ET.ParseError)):
+            validate_evidence(self.directory, sha)
+
+    def test_host_sha_mismatch_is_rejected(self):
+        host = load(self.directory, "host.json")
+        host["sha"] = "d" * 40
+        save(self.directory, "host.json", host)
+        self.assert_rejected()
+
+    def test_device_sha_mismatch_is_rejected(self):
+        device = load(self.directory, "device.json")
+        device["sha"] = "d" * 40
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+    def test_short_expected_sha_is_rejected(self):
+        self.assert_rejected(sha="a" * 39)
+
+    def test_host_not_pass_is_rejected(self):
+        host = load(self.directory, "host.json")
+        host["status"] = "ERROR"
+        save(self.directory, "host.json", host)
+        self.assert_rejected()
+
+    def test_incomplete_phase_list_is_rejected(self):
+        host = load(self.directory, "host.json")
+        host["phases"] = list(PHASES)[:-1]
+        save(self.directory, "host.json", host)
+        self.assert_rejected()
+
+    def test_host_timeout_flag_is_rejected(self):
+        host = load(self.directory, "host.json")
+        host["timed_out"] = True
+        save(self.directory, "host.json", host)
+        self.assert_rejected()
+
+    def test_host_crash_flag_is_rejected(self):
+        host = load(self.directory, "host.json")
+        host["crash_detected"] = True
+        save(self.directory, "host.json", host)
+        self.assert_rejected()
+
+    def test_device_configuration_mismatch_is_rejected(self):
+        host = load(self.directory, "host.json")
+        host["config"]["density"] = "480"
+        save(self.directory, "host.json", host)
+        self.assert_rejected()
+
+    def test_device_font_scale_mismatch_is_rejected(self):
+        host = load(self.directory, "host.json")
+        host["config"]["font_scale"] = "1.3"
+        save(self.directory, "host.json", host)
+        self.assert_rejected()
+
+    def test_disabled_animation_is_rejected(self):
+        host = load(self.directory, "host.json")
+        host["config"]["animator_duration_scale"] = "0.0"
+        save(self.directory, "host.json", host)
+        self.assert_rejected()
+
+    def test_missing_apk_hashes_is_rejected(self):
+        host = load(self.directory, "host.json")
+        host["apk_sha256"] = {}
+        save(self.directory, "host.json", host)
+        self.assert_rejected()
+
+    def test_malformed_apk_hash_is_rejected(self):
+        host = load(self.directory, "host.json")
+        host["apk_sha256"]["app"] = "not-a-hash"
+        save(self.directory, "host.json", host)
+        self.assert_rejected()
+
+    def test_oracle_counter_drift_is_rejected(self):
+        device = load(self.directory, "device.json")
+        device["finalCandidates"] = 60000
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+    def test_string_counter_is_rejected(self):
+        device = load(self.directory, "device.json")
+        device["preparedRelations"] = "100000"
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+    def test_missing_ui_scope_evidence_is_rejected(self):
+        device = load(self.directory, "device.json")
+        device["uiIdentityScope"] = "row-count"
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+    def test_missing_first_last_evidence_is_rejected(self):
+        device = load(self.directory, "device.json")
+        device["firstLastObserved"] = False
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+    def test_driver_elapsed_time_bound_is_rejected(self):
+        host = load(self.directory, "host.json")
+        host["elapsed_seconds"] = 14401
+        save(self.directory, "host.json", host)
+        self.assert_rejected()
+
+    def test_duplicate_json_key_is_rejected(self):
+        host = (self.directory / "host.json").read_text(encoding="utf-8")
+        (self.directory / "host.json").write_text(
+            host.replace('{"sha"', '{"sha": "duplicate", "sha"', 1), encoding="utf-8")
+        self.assert_rejected()
+
+    def test_crash_in_logcat_is_rejected(self):
+        (self.directory / "logcat.txt").write_text(
+            "E/AndroidRuntime: FATAL EXCEPTION: main\n", encoding="utf-8")
+        self.assert_rejected()
+
+    def test_oom_in_logcat_is_rejected(self):
+        (self.directory / "logcat.txt").write_text(
+            "E/art: OutOfMemoryError: Failed to allocate\n", encoding="utf-8")
+        self.assert_rejected()
+
+    def test_anr_in_logcat_is_rejected(self):
+        (self.directory / "logcat.txt").write_text(
+            "W/ActivityManager: ANR in com.unifiedledger.android\n", encoding="utf-8")
+        self.assert_rejected()
+
+
+class RunnerGuardsAreOfflineTestable(unittest.TestCase):
+    """The host driver's pure logic is exercised here, not first in the cloud."""
+
+    def test_owned_serial_accepts_only_the_ci_emulator(self):
+        devices = "List of devices attached\nemulator-5554\tdevice\n"
+        self.assertEqual(owned_serial(devices, "ul-scale\nOK"), "emulator-5554")
+
+    def test_owned_serial_rejects_second_device(self):
+        devices = "List of devices attached\nemulator-5554\tdevice\nemulator-5556\tdevice\n"
+        with self.assertRaises(ValueError):
+            owned_serial(devices, "ul-scale\nOK")
+
+    def test_owned_serial_rejects_foreign_avd_name(self):
+        devices = "List of devices attached\nemulator-5554\tdevice\n"
+        with self.assertRaises(ValueError):
+            owned_serial(devices, "test\nOK")
+
+    def test_owned_serial_rejects_non_device_state(self):
+        devices = "List of devices attached\nemulator-5554\toffline\n"
+        with self.assertRaises(ValueError):
+            owned_serial(devices, "ul-scale\nOK")
+
+    def test_remaining_seconds_caps_and_expires(self):
+        self.assertEqual(remaining_seconds(deadline=100.0, now=0.0, cap=30), 30)
+        self.assertEqual(remaining_seconds(deadline=100.0, now=90.0, cap=30), 10)
+        with self.assertRaises(ScaleDeadlineError):
+            remaining_seconds(deadline=100.0, now=100.0)
+
+    def test_runner_refuses_outside_the_hosted_runner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            saved = {name: os.environ.pop(name, None) for name in
+                     ("GITHUB_ACTIONS", "RUNNER_ENVIRONMENT", "RUNNER_OS")}
+            try:
+                with self.assertRaises(ValueError):
+                    ScaleRunner(Path(directory), Path(directory) / "evidence",
+                                Path(directory) / "app.apk", Path(directory) / "test.apk", SHA)
+            finally:
+                for name, value in saved.items():
+                    if value is not None:
+                        os.environ[name] = value
+
+    def test_runner_refuses_a_short_sha(self):
+        with tempfile.TemporaryDirectory() as directory:
+            os.environ.update(GITHUB_ACTIONS="true", RUNNER_ENVIRONMENT="github-hosted", RUNNER_OS="Linux")
+            try:
+                with self.assertRaises(ValueError):
+                    ScaleRunner(Path(directory), Path(directory) / "evidence",
+                                Path(directory) / "app.apk", Path(directory) / "test.apk", "abc")
+            finally:
+                for name in ("GITHUB_ACTIONS", "RUNNER_ENVIRONMENT", "RUNNER_OS"):
+                    os.environ.pop(name, None)
+
+    def test_reports_mark_unreached_phases_as_not_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            os.environ.update(GITHUB_ACTIONS="true", RUNNER_ENVIRONMENT="github-hosted", RUNNER_OS="Linux")
+            try:
+                runner = ScaleRunner(root, root / "evidence", root / "app.apk", root / "test.apk", SHA)
+                runner.deadline = runner.started + 13800
+                runner.cases.append({"name": PHASES[0], "status": "PASS", "seconds": 1.0})
+                runner.report["status"] = "ERROR"
+                runner.write_reports()
+            finally:
+                for name in ("GITHUB_ACTIONS", "RUNNER_ENVIRONMENT", "RUNNER_OS"):
+                    os.environ.pop(name, None)
+            host = json.loads((root / "evidence" / "host.json").read_text(encoding="utf-8"))
+            self.assertEqual(host["sha"], SHA)
+            self.assertLessEqual(host["elapsed_seconds"], 13800)
+            suite = ET.parse(root / "evidence" / "junit.xml").getroot()
+            self.assertEqual(suite.get("tests"), "5")
+            self.assertEqual(suite.get("failures"), "0")
+            self.assertEqual(suite.get("errors"), "0")
+            self.assertEqual(suite.get("skipped"), "4")
+            names = [case.get("name") for case in suite.findall("testcase")]
+            self.assertEqual(names, list(PHASES))
+            cases = suite.findall("testcase")
+            self.assertIsNone(cases[0].find("skipped"))
+            self.assertIsNotNone(cases[1].find("skipped"))
+
+    def test_reports_are_refused_when_evidence_is_incomplete(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            os.environ.update(GITHUB_ACTIONS="true", RUNNER_ENVIRONMENT="github-hosted", RUNNER_OS="Linux")
+            try:
+                runner = ScaleRunner(root, root / "evidence", root / "app.apk", root / "test.apk", SHA)
+                runner.write_reports()
+                self.assertEqual(runner.report["status"], "ERROR")
+            finally:
+                for name in ("GITHUB_ACTIONS", "RUNNER_ENVIRONMENT", "RUNNER_OS"):
+                    os.environ.pop(name, None)
+            with self.assertRaises((ValueError, OSError, KeyError, ET.ParseError)):
+                validate_evidence(root / "evidence", SHA)
+
+
+if __name__ == "__main__":
+    unittest.main()

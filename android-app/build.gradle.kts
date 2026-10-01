@@ -32,6 +32,10 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Shared pure test helpers are exercised by JVM negatives and the device chain.
+    sourceSets.getByName("test").kotlin.srcDir("src/scaleTest/kotlin")
+    sourceSets.getByName("androidTest").kotlin.srcDir("src/scaleTest/kotlin")
+
     // AGP 9 built-in Kotlin (no org.jetbrains.kotlin.android): the Kotlin jvmTarget
     // defaults to android.compileOptions.targetCompatibility; align both with JDK 21.
     compileOptions {

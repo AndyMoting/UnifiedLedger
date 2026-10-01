@@ -1,0 +1,130 @@
+"""Strict scale evidence reducer. Missing evidence is never success."""
+from __future__ import annotations
+
+import json
+import math
+import re
+from pathlib import Path
+from xml.etree import ElementTree as ET
+
+PHASES = ("prepare", "chain", "reopen", "replay", "final-reopen")
+STAGES = ("preparation", "coldstart", "saf_import", "detail_decision", "traversal",
+          "group_disposition", "batch_confirmation", "detail_monthly_refresh", "reopen",
+          "same_request_replay", "final_reopen")
+EXPECTED = {"preparedCandidates": 51000, "preparedRelations": 100000, "preparedDispositions": 100,
+            "finalCandidates": 61000, "finalRelations": 150000, "observedCandidates": 61000,
+            "mainGroupRelations": 50000, "groupDispositions": 50000,
+            "formalTransactions": 1, "balancedPostings": 2}
+TEST_CLASS = "com.unifiedledger.android.AndroidScaleLongInstrumentedTest"
+TEST_METHOD = "maximumScalePhase"
+
+
+def strict_json(path: Path) -> dict:
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON key")
+            result[key] = value
+        return result
+    data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique,
+                      parse_constant=lambda value: (_ for _ in ()).throw(ValueError("nonfinite JSON")))
+    if not isinstance(data, dict):
+        raise ValueError("JSON report must be object")
+    return data
+
+
+def crash_present(log: str) -> bool:
+    return bool(re.search(r"FATAL EXCEPTION|Fatal signal|OutOfMemoryError|ANR in |am_anr|am_crash|INSTRUMENTATION_ABORTED", log))
+
+
+def instrumentation_pass(log: str) -> None:
+    """Require one named executed JUnit case and complete runner termination, not shell rc."""
+    if re.search(r"FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed|shortMsg=|INSTRUMENTATION_ABORTED", log):
+        raise ValueError("instrumentation failure")
+    records = []
+    status = {}
+    for line in log.splitlines():
+        if line.startswith("INSTRUMENTATION_STATUS: "):
+            field = line[len("INSTRUMENTATION_STATUS: "):]
+            if "=" in field:
+                key, value = field.split("=", 1)
+                status[key] = value
+        elif line.startswith("INSTRUMENTATION_STATUS_CODE: "):
+            records.append((int(line.split(": ", 1)[1]), status))
+            status = {}
+    tests = [(code, fields) for code, fields in records if "test" in fields or "class" in fields]
+    if len(tests) != 2 or [code for code, _ in tests] != [1, 0]:
+        raise ValueError("missing, extra, skipped, or failed instrumented test")
+    for _, fields in tests:
+        if fields.get("class") != TEST_CLASS or fields.get("test") != TEST_METHOD or fields.get("numtests") != "1":
+            raise ValueError("unexpected instrumented test identity/count")
+    if re.findall(r"^INSTRUMENTATION_CODE: (-?\d+)$", log, re.MULTILINE) != ["-1"]:
+        raise ValueError("missing instrumentation completion")
+    if not re.search(r"^OK \(1 test\)\s*$", log, re.MULTILINE):
+        raise ValueError("missing JUnit completion")
+
+
+def validate_evidence(directory: Path, expected_sha: str) -> dict:
+    if not re.fullmatch(r"[0-9a-f]{40}", expected_sha):
+        raise ValueError("expected SHA must be exact full lowercase SHA")
+    report = strict_json(directory / "host.json")
+    device = strict_json(directory / "device.json")
+    if device.get("schema") != 1:
+        raise ValueError("unsupported device evidence schema")
+    if report.get("sha") != expected_sha or device.get("sha") != expected_sha:
+        raise ValueError("evidence SHA mismatch")
+    if report.get("status") != "PASS" or report.get("phases") != list(PHASES):
+        raise ValueError("host did not complete all phases")
+    if report.get("timed_out") is not False or report.get("crash_detected") is not False:
+        raise ValueError("timeout/crash/OOM/ANR evidence")
+    config = report.get("config", {})
+    expected_config = {"api": "36", "abi": "x86_64", "size": "1080x2400", "density": "420",
+                       "font_scale": "1.0", "locale": "zh-CN", "timezone": "Asia/Shanghai",
+                       "window_animation_scale": "1.0", "transition_animation_scale": "1.0",
+                       "animator_duration_scale": "1.0"}
+    if not isinstance(config, dict) or any(config.get(key) != value for key, value in expected_config.items()):
+        raise ValueError("actual device configuration mismatch")
+    if set(report.get("apk_sha256", {})) != {"app", "test"} or any(
+            not re.fullmatch(r"[0-9a-f]{64}", value) for value in report["apk_sha256"].values()):
+        raise ValueError("APK hashes missing/invalid")
+    stages = device.get("stages", {})
+    if set(stages) != set(STAGES):
+        raise ValueError("missing/extra stages")
+    previous_end = 0
+    limits = {"preparation": 14400000, "saf_import": 1800000, "traversal": 14400000, "group_disposition": 5400000}
+    for stage in STAGES:
+        item = stages[stage]
+        if not isinstance(item, dict) or item.get("status") != "PASS" or type(item.get("elapsedMs")) is not int or not 0 <= item["elapsedMs"] <= limits.get(stage, 180000):
+            raise ValueError(f"stage did not pass: {stage}")
+        if type(item.get("startedMs")) is not int or item["startedMs"] < previous_end:
+            raise ValueError("stage ordering/timer mismatch")
+        previous_end = item["startedMs"] + item["elapsedMs"]
+    for key, value in EXPECTED.items():
+        if type(device.get(key)) is not int or device[key] != value:
+            raise ValueError(f"scale/economic oracle mismatch: {key}")
+    if device.get("firstLastObserved") is not True or device.get("uiIdentityScope") != "projected-sequence-multiplicity-order":
+        raise ValueError("UI traversal scope evidence missing")
+    if {p.name for p in directory.glob("instrumentation-*.txt")} != {f"instrumentation-{phase}.txt" for phase in PHASES}:
+        raise ValueError("extra/stale/missing phase logs")
+    for phase in PHASES:
+        instrumentation_pass((directory / f"instrumentation-{phase}.txt").read_text(encoding="utf-8"))
+    root = ET.parse(directory / "junit.xml").getroot()
+    cases = root.findall("testcase")
+    if (root.get("tests"), root.get("failures"), root.get("errors"), root.get("skipped")) != ("5", "0", "0", "0"):
+        raise ValueError("JUnit aggregate not clean")
+    if [case.get("name") for case in cases] != list(PHASES) or any(len(case) for case in cases) or any(case.get("classname") != TEST_CLASS for case in cases):
+        raise ValueError("JUnit cases missing/failed/skipped")
+    for case in cases:
+        seconds = float(case.get("time", "nan"))
+        if not math.isfinite(seconds) or not 0 < seconds <= 14400:
+            raise ValueError("invalid JUnit timer")
+    for name in ("logcat.txt", "memory.txt", "configuration.txt"):
+        if not (directory / name).is_file() or (directory / name).stat().st_size == 0:
+            raise ValueError(f"required evidence absent: {name}")
+    elapsed = report.get("elapsed_seconds")
+    if type(elapsed) not in (int, float) or not math.isfinite(elapsed) or not 0 < elapsed <= 14400:
+        raise ValueError("driver elapsed-time bound")
+    if crash_present((directory / "logcat.txt").read_text(encoding="utf-8")):
+        raise ValueError("crash/OOM/ANR in actual logcat")
+    return report
