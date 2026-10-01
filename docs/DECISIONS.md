@@ -3947,3 +3947,28 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残余（登记）**：守卫只把 D-190 §5 的手工核对自动化并在需要时自动 dispatch，不改变分支保护语义——required checks 仍由 PR run 承担，dispatch 的全量结果不回填任何必过检查。`gh workflow run` 成功只保证 dispatch 被 API 接受；被 dispatch 的 run 若被后续 dispatch 经 concurrency 取消，以最后一次为准。
 
 **关联决定：** D-190（本批落地其 §5 残余风险的守卫，并沿用其证据口径）、D-188（PR 门禁流与四门禁口径）。
+
+## D-197 安卓模拟器 instrumented 回归上 CI：非阻塞设备信号
+
+**状态：** 已批准（2026-10-01，阶段 0 实测通过后接线；本条目取代 D-133 P6-D4 与 D-136 中「不新增模拟器 job、不新增 connectedAndroidTest」的边界，取代范围仅限非阻塞设备回归 job）。
+
+**背景**：CI 一直只编译 `android-app` 的 androidTest 源而不执行（`.github/workflows/ci.yml` 的 instrumented 源编译步骤），设备专属回归依赖人工 emulator 门：在 16 GB 开发机上起受管 AVD、下载固定 SHA 的 CI APK、安装、执行、写证据，单次约半小时到一小时，且与开发机上的其他用途竞争资源。历史数据显示该层并非可选项：进度日志 234 个条目中 59 个（25%）含设备内容，三周内 7 个设备门证据目录，且该层抓到过 P0 缺陷（AOSP 拒绝含路径分隔符的相对库名致启动砖化、主线程复制 371 MB 旧库致 ANR、损坏快照被平台默认处理器删除、关闭按钮命中死区）。同时设备层的发现多数来自探索式人工工作（坐标矩阵、dump 分析、像素采样），因此本决定只自动化其中的**回归**执行。
+
+**决定：**
+
+1. **独立非阻塞 workflow**：新增 `.github/workflows/android-instrumented.yml`，workflow 名与 job 名均为 `Android instrumented tests`，`runs-on: ubuntu-latest`，`timeout-minutes: 30`；不进入 required checks，`ci.yml` 与 `windows.yml` 零改动。
+2. **触发为事件驱动**：`pull_request`（路径过滤 `android-app/**`、`app-ui/**`、`ledger-data/**`、`ledger-application/**`、`build.gradle.kts`、`settings.gradle.kts`、`gradle/**` 以及本 workflow 文件自身，最后一项使设备 job 的改动能在自己的 PR 上自验）与 `workflow_dispatch`；**不设 schedule**——提交与批次的节奏是全天候的（最近 120 次提交覆盖 00–23 时），日历触发不产生有效反馈。
+3. **范围 41 例**：执行 `:android-app:connectedDebugAndroidTest`，以 `-Pandroid.testInstrumentationRunnerArguments.notClass=...ImportScaleTraversalInstrumentedTest` 排除该套件——它硬编码 1080×2400 的 tab-bar 几何与回退坐标，与单一设备 profile 耦合；`notClass` 是 `AndroidJUnitRunner` 的既有参数。首跑以日志中的 `Finished 41 tests` 作为排除生效的证据；若该参数未生效则改用显式 `class=` 白名单，并登记「新增套件会被静默跳过」的残余。
+4. **模拟器配置**：`api-level 36`、`target google_apis`、`arch x86_64`（对齐本机受管 AVD；API 37 镜像在本机从未达 adb）、`cores 2`、`ram-size 2048M`、`emulator-boot-timeout 300`（默认 600 过长，卡死需快速失败）、`disable-animations: true`；KVM 由 workflow 内的 udev 片段开放（GitHub 自 2024-04-02 起对 2 vCPU 的托管 Linux runner 提供硬件加速）。
+5. **APK 在模拟器会话之外构建**：先 `:android-app:assembleDebug` 与 `:android-app:assembleDebugAndroidTest`，再进入 action 的 `script` 执行安装与测试——action 在 `script` 结束后杀掉模拟器，编译不应占用模拟器在线时间。
+6. **证据工件**：`if: always()` 上传 `android-instrumented-<sha>`（`logcat.txt` 与 `android-app/build/outputs/androidTest-results/**`、`android-app/build/reports/androidTests/**`），保留 7 天。
+7. **脚本环境约束（实测）**：action 以 `/usr/bin/sh`（dash）执行 `script`，该段内不能用 `set -o pipefail`，也不能用反斜杠续行（反斜杠会被当作 Gradle 任务名并报 `Task '\' not found`）；约束写入 workflow 注释与 `docs/CONTRIBUTING.md`。
+8. **人工门边界不变**：探索式设备工作、UI/无障碍与性能向量仍由人工 emulator 门承担。
+
+**边界**：只新增一个 workflow 文件、修改 `docs/CONTRIBUTING.md` 与登记本条目；零产品代码、零测试内容、零 schema/迁移、零依赖变更；`ci.yml` 与 `windows.yml` 零改动（job 名、触发与语义均不动）；四个 required check 名称与分支保护零改动；不改本机命令与串行纪律。
+
+**验收**：阶段 0 以一次性探针（分支与文件均为一次性，测完删除）在同一提交上取三次样本：3/3 全绿，每次 7 例 0 失败；整条 job 407–417 秒（构建两个 APK 212–225 秒、模拟器启动 44.6–52.5 秒、7 例安装加执行约 122 秒）；runner 镜像 `ubuntu-24.04` 且硬件加速生效；工件含 JUnit XML（`tests="7" failures="0" errors="0"`）与 `logcat.txt`。本批接线后在本批 PR 上核验：该检查出现且非必需、日志出现 `Finished 41 tests`、工件含 XML 与 logcat、四个 required check 名称与 `ci.yml` 零改动、`project_docs` exit 0、trace 扫描干净。
+
+**残余（登记）**：探索式设备工作与 UI/无障碍/性能向量仍为人工；`ImportScaleTraversalInstrumentedTest` 的纳入以固定匹配的 1080×2400 profile 为前提，本批不做；不设 schedule 意味着长期无相关改动时该信号不会自发产生（`workflow_dispatch` 可手工补）；本批不做 APK 工件复用与 AVD 快照缓存（两者都能压缩构建与启动耗时）；flaky 率以合并后前几次运行的数据为准，若偏高再收窄范围或调整 boot timeout。
+
+**关联决定：** D-133（本决定取代其 P6-D4 中「不新增模拟器 job」的边界，取代范围仅限非阻塞设备回归 job）、D-136（同上，取代其「`:connectedDebugAndroidTest` 不新增」）、D-188（PR 门禁流与四门禁口径）、D-189（CI 专属并行与逐类计时报告，本批沿用其非阻塞信号与实测记账习惯）。

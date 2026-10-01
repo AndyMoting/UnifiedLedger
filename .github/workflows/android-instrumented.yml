@@ -1,0 +1,107 @@
+# Android instrumented tests (non-blocking device signal, D-197).
+#
+# NOT part of the required PR checks. It runs the device-only regression suites
+# on a hardware-accelerated GitHub-hosted emulator, so that layer stops depending
+# on someone remembering to boot a local AVD.
+#
+# Measured on this repository (2026-10-01, throwaway probe, three attempts of one
+# commit): whole job 407-417s; building both APKs 212-225s; emulator boot
+# 44.6-52.5s; the 7 P0 guards (install + run) about 122s; 3/3 green.
+#
+# Facts this file depends on:
+# - GitHub announced hardware acceleration for 2-vCPU hosted Linux runners
+#   (2024-04-02 changelog); this repository is public, so the runner has
+#   4 vCPU / 16 GB. The KVM snippet below is the documented one.
+# - api-level 36 / target google_apis / arch x86_64 mirror the managed local AVD;
+#   API 37 images have never reached adb on the development host.
+# - The APKs are built OUTSIDE the emulator session: the action kills the
+#   emulator when `script` ends, so compilation must not sit inside it.
+# - The action runs `script` with /usr/bin/sh (dash): `set -o pipefail` is illegal
+#   there, and a trailing backslash reaches Gradle as a task name ("Task '\' not
+#   found"). Keep every command in that script on a single line.
+# - ImportScaleTraversalInstrumentedTest is excluded: it hardcodes 1080x2400
+#   tab-bar geometry and fallback coordinates, so it is coupled to one device
+#   profile. Pin a matching profile before including it.
+name: Android instrumented tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'android-app/**'
+      - 'app-ui/**'
+      - 'ledger-data/**'
+      - 'ledger-application/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle/**'
+      # This workflow file itself, so that a change to the device job is verified
+      # by the device job on its own pull request (for pull_request events the
+      # workflow file is taken from the pull request head).
+      - '.github/workflows/android-instrumented.yml'
+  workflow_dispatch:
+
+# Cancel superseded pull-request runs, but let a manual run finish: for
+# workflow_dispatch github.ref is the default branch, and a stale cancel would
+# discard the only signal that run was asked for.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  android-instrumented:
+    name: Android instrumented tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GRADLE_OPTS: >-
+        -Dorg.gradle.jvmargs=-Xmx3g
+        -Dkotlin.daemon.jvmargs=-Xmx2g
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Build app and androidTest APKs
+        run: ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebug :android-app:assembleDebugAndroidTest --warning-mode all
+      - name: Run the instrumented suites on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          cores: 2
+          ram-size: 2048M
+          emulator-boot-timeout: 300
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            set -eu
+            rc=0
+            ./gradlew --no-daemon --max-workers=1 -Pandroid.testInstrumentationRunnerArguments.notClass=com.unifiedledger.android.ImportScaleTraversalInstrumentedTest :android-app:connectedDebugAndroidTest --warning-mode all || rc=$?
+            adb logcat -d > logcat.txt || true
+            exit $rc
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-instrumented-${{ github.sha }}
+          path: |
+            logcat.txt
+            android-app/build/outputs/androidTest-results/**
+            android-app/build/reports/androidTests/**
+          if-no-files-found: warn
+          retention-days: 7
