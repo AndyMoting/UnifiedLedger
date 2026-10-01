@@ -10,7 +10,9 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlPreparedStatement
 
 /** Test-only bridge; caller owns one read-only snapshot and all writes are forbidden. */
-internal class AndroidScaleReadDriver(private val database: SQLiteDatabase) : SqlDriver {
+internal class AndroidScaleReadDriver(
+    private val database: SQLiteDatabase,
+) : SqlDriver {
     private var transaction: Transacter.Transaction? = null
 
     override fun <R> executeQuery(
@@ -51,29 +53,60 @@ internal class AndroidScaleReadDriver(private val database: SQLiteDatabase) : Sq
 
     override fun currentTransaction(): Transacter.Transaction? = transaction
 
-    override fun addListener(queryKeys: Array<out String>, listener: Query.Listener) = error("not a live subscription")
+    override fun addListener(
+        queryKeys: Array<out String>,
+        listener: Query.Listener,
+    ) = error("not a live subscription")
 
-    override fun removeListener(queryKeys: Array<out String>, listener: Query.Listener) = error("not a live subscription")
+    override fun removeListener(
+        queryKeys: Array<out String>,
+        listener: Query.Listener,
+    ) = error("not a live subscription")
 
     override fun notifyListeners(queryKeys: Array<out String>) = error("read-only bridge")
 
     override fun close() = Unit // Snapshot owner closes the handle.
 
-    private class Bindings(size: Int) : SqlPreparedStatement {
+    private class Bindings(
+        size: Int,
+    ) : SqlPreparedStatement {
         val values = arrayOfNulls<String>(size)
 
-        override fun bindString(index: Int, string: String?) { values[index] = string }
+        override fun bindString(
+            index: Int,
+            string: String?,
+        ) {
+            values[index] = string
+        }
 
-        override fun bindLong(index: Int, long: Long?) { values[index] = long?.toString() }
+        override fun bindLong(
+            index: Int,
+            long: Long?,
+        ) {
+            values[index] = long?.toString()
+        }
 
-        override fun bindBoolean(index: Int, boolean: Boolean?) { values[index] = boolean?.let { if (it) "1" else "0" } }
+        override fun bindBoolean(
+            index: Int,
+            boolean: Boolean?,
+        ) {
+            values[index] = boolean?.let { if (it) "1" else "0" }
+        }
 
-        override fun bindDouble(index: Int, double: Double?) = error("no floating-point query parameters")
+        override fun bindDouble(
+            index: Int,
+            double: Double?,
+        ) = error("no floating-point query parameters")
 
-        override fun bindBytes(index: Int, bytes: ByteArray?) = error("no blob query parameters")
+        override fun bindBytes(
+            index: Int,
+            bytes: ByteArray?,
+        ) = error("no blob query parameters")
     }
 
-    private class ReadCursor(private val cursor: Cursor) : SqlCursor {
+    private class ReadCursor(
+        private val cursor: Cursor,
+    ) : SqlCursor {
         override fun next(): QueryResult<Boolean> = QueryResult.Value(cursor.moveToNext())
 
         override fun getString(index: Int): String? = if (cursor.isNull(index)) null else cursor.getString(index)

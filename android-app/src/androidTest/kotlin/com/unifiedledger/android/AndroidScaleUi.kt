@@ -13,14 +13,18 @@ import android.view.accessibility.AccessibilityNodeInfo
 import java.util.ArrayDeque
 
 /** Fresh semantic nodes only; gesture geometry comes from the current scroll container. */
-internal class AndroidScaleUi(private val instrumentation: Instrumentation, private val tick: () -> Unit) {
+internal class AndroidScaleUi(
+    private val instrumentation: Instrumentation,
+    private val tick: () -> Unit,
+) {
     private val automation get() = instrumentation.uiAutomation
     private val target = "com.unifiedledger.android"
 
     init {
-        automation.serviceInfo = automation.serviceInfo.apply {
-            flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
-        }
+        automation.serviceInfo =
+            automation.serviceInfo.apply {
+                flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            }
     }
 
     fun launch() {
@@ -45,11 +49,18 @@ internal class AndroidScaleUi(private val instrumentation: Instrumentation, priv
 
     fun labels(node: AccessibilityNodeInfo): List<String> = nodes(node).flatMap { listOfNotNull(it.text?.toString(), it.contentDescription?.toString()) }
 
-    fun has(text: String, prefix: Boolean = false): Boolean = nodes(root()).any { node ->
-        node.isVisibleToUser && listOfNotNull(node.text?.toString(), node.contentDescription?.toString()).any { if (prefix) it.startsWith(text) else it == text }
-    }
+    fun has(
+        text: String,
+        prefix: Boolean = false,
+    ): Boolean =
+        nodes(root()).any { node ->
+            node.isVisibleToUser && listOfNotNull(node.text?.toString(), node.contentDescription?.toString()).any { if (prefix) it.startsWith(text) else it == text }
+        }
 
-    fun await(timeout: Long = 180000, predicate: () -> Boolean) {
+    fun await(
+        timeout: Long = 180000,
+        predicate: () -> Boolean,
+    ) {
         val end = SystemClock.elapsedRealtime() + timeout
         while (SystemClock.elapsedRealtime() < end) {
             tick()
@@ -72,7 +83,10 @@ internal class AndroidScaleUi(private val instrumentation: Instrumentation, priv
         error("semantic click refused")
     }
 
-    fun click(text: String, prefix: Boolean = false) {
+    fun click(
+        text: String,
+        prefix: Boolean = false,
+    ) {
         await { has(text, prefix) }
         val node = nodes(root()).first { candidate -> candidate.isVisibleToUser && listOfNotNull(candidate.text?.toString(), candidate.contentDescription?.toString()).any { if (prefix) it.startsWith(text) else it == text } }
         clickNode(node)
@@ -82,7 +96,10 @@ internal class AndroidScaleUi(private val instrumentation: Instrumentation, priv
 
     private fun bounds(node: AccessibilityNodeInfo): Rect = Rect().also(node::getBoundsInScreen)
 
-    fun scroll(forward: Boolean = true, fraction: Float = 0.6f) {
+    fun scroll(
+        forward: Boolean = true,
+        fraction: Float = 0.6f,
+    ) {
         tick()
         val bounds = bounds(scrollable())
         check(bounds.width() > 0 && bounds.height() > 100)
@@ -120,7 +137,11 @@ internal class AndroidScaleUi(private val instrumentation: Instrumentation, priv
         }
     }
 
-    fun seek(text: String, forward: Boolean = true, maxScrolls: Int = 80) {
+    fun seek(
+        text: String,
+        forward: Boolean = true,
+        maxScrolls: Int = 80,
+    ) {
         repeat(maxScrolls) {
             if (has(text, prefix = true)) return
             scroll(forward)
@@ -162,9 +183,15 @@ internal class AndroidScaleUi(private val instrumentation: Instrumentation, priv
             val picker = automation.windows.mapNotNull { it.root }.firstOrNull { it.packageName?.toString()?.contains("documentsui") == true } ?: return@await false
             val entries = nodes(picker)
             val file = entries.firstOrNull { it.text?.toString() == "session-06.csv" && it.isVisibleToUser }
-            if (file != null) { clickNode(file); true } else {
+            if (file != null) {
+                clickNode(file)
+                true
+            } else {
                 val downloads = entries.firstOrNull { it.text?.toString() in listOf("下载", "Downloads") && it.isVisibleToUser }
-                if (downloads != null && !navigated) { clickNode(downloads); navigated = true }
+                if (downloads != null && !navigated) {
+                    clickNode(downloads)
+                    navigated = true
+                }
                 if (downloads == null && !navigated) {
                     entries.firstOrNull { it.contentDescription?.toString() in listOf("显示根目录", "Show roots", "打开导航抽屉", "Open navigation drawer") }?.let(::clickNode)
                 }
@@ -176,10 +203,12 @@ internal class AndroidScaleUi(private val instrumentation: Instrumentation, priv
     private fun candidateNodes(): List<AccessibilityNodeInfo> {
         val container = scrollable()
         val viewport = bounds(container)
-        return nodes(container).filter { node ->
-            node.isVisibleToUser && node.actionList.any { it.label?.toString() == "查看候选详情" } &&
-                bounds(node).let { it.height() > 0 && it.top >= viewport.top && it.bottom <= viewport.bottom }
-        }.sortedBy { bounds(it).top }
+        return nodes(container)
+            .filter { node ->
+                node.isVisibleToUser &&
+                    node.actionList.any { it.label?.toString() == "查看候选详情" } &&
+                    bounds(node).let { it.height() > 0 && it.top >= viewport.top && it.bottom <= viewport.bottom }
+            }.sortedBy { bounds(it).top }
     }
 
     private fun signature(node: AccessibilityNodeInfo): String {
@@ -189,18 +218,30 @@ internal class AndroidScaleUi(private val instrumentation: Instrumentation, priv
         return "$amount|$meta"
     }
 
-    fun openCandidate(row: ScaleRow, expected: List<ScaleRow>) {
+    fun openCandidate(
+        row: ScaleRow,
+        expected: List<ScaleRow>,
+    ) {
         val rank = expected.indexOfFirst { it.id == row.id }
         check(rank >= 0)
         val container = scrollable()
         // This is detail navigation, not traversal coverage. A unique live signature is still mandatory.
         check(container.actionList.any { it.id == AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id }) { "indexed detail navigation unavailable" }
-        check(container.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id, Bundle().apply {
-            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_ROW_INT, rank + 200)
-        }))
+        check(
+            container.performAction(
+                AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id,
+                Bundle().apply {
+                    putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_ROW_INT, rank + 200)
+                },
+            ),
+        )
         settle()
         repeat(80) {
-            candidateNodes().firstOrNull { signature(it) == row.signature }?.let { clickNode(it); await { has("候选详情") }; return }
+            candidateNodes().firstOrNull { signature(it) == row.signature }?.let {
+                clickNode(it)
+                await { has("候选详情") }
+                return
+            }
             val window = candidateNodes().map(::signature)
             val first = window.firstOrNull()?.let { signature -> expected.indexOfFirst { it.signature == signature } }
             scroll(forward = first == null || first < rank, fraction = 0.3f)
@@ -219,7 +260,11 @@ internal class AndroidScaleUi(private val instrumentation: Instrumentation, priv
         while (observed < expected.size) {
             tick()
             val window = candidateNodes().map(::signature)
-            if (window.isEmpty()) { check(observed == 0); scroll(fraction = 0.3f); continue }
+            if (window.isEmpty()) {
+                check(observed == 0)
+                scroll(fraction = 0.3f)
+                continue
+            }
             val start = scaleWindowOffset(signatures, window, previousStart, observed)
             if (start == null || (window == previous && observed > 0)) {
                 check(++retries <= 4) { "ambiguous, skipped or stationary candidate window" }

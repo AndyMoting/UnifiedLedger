@@ -66,9 +66,9 @@ class AndroidScaleFixtureParserJvmTest {
         sessions.forEach { assertEquals(sessions.first(), it) }
         assertTrue(unique.none { it in sessions.first() })
         assertEquals(3, sessions.first().toSet().size)
+
         // Enumerate actual parsed equal pairs independently of the generator's formula.
-        fun pairs(sources: List<ImportSourceFacts>): Int =
-            sources.indices.sumOf { right -> (0 until right).count { left -> sources[left] == sources[right] } }
+        fun pairs(sources: List<ImportSourceFacts>): Int = sources.indices.sumOf { right -> (0 until right).count { left -> sources[left] == sources[right] } }
         val prepared = sessions.take(5).flatten() + unique
         assertEquals(17, prepared.size)
         assertEquals(30, pairs(prepared))

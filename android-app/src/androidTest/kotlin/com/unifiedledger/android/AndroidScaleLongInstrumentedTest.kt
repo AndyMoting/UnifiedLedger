@@ -1,7 +1,7 @@
 package com.unifiedledger.android
 
-import android.net.Uri
 import android.content.ContentValues
+import android.net.Uri
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.AtomicFile
@@ -25,11 +25,11 @@ import com.unifiedledger.application.ImportRequestIdentity
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.ui.ImportFilePickResultChannel
-import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 
 /** Five host-separated phases; the continuous UI chain has no process restart or DB reset. */
 @RunWith(AndroidJUnit4::class)
@@ -51,8 +51,15 @@ class AndroidScaleLongInstrumentedTest {
     @Test
     fun maximumScalePhase() {
         check(Regex("[0-9a-f]{40}").matches(sha))
-        evidence = if (evidenceFile.exists()) JSONObject(evidenceFile.readText()) else JSONObject()
-            .put("schema", 1).put("sha", sha).put("stages", JSONObject())
+        evidence =
+            if (evidenceFile.exists()) {
+                JSONObject(evidenceFile.readText())
+            } else {
+                JSONObject()
+                    .put("schema", 1)
+                    .put("sha", sha)
+                    .put("stages", JSONObject())
+            }
         check(evidence.getString("sha") == sha)
         state = if (stateFile.exists()) JSONObject(stateFile.readText()) else JSONObject()
         try {
@@ -74,7 +81,10 @@ class AndroidScaleLongInstrumentedTest {
     }
 
     private fun save() {
-        fun atomic(file: File, value: JSONObject) {
+        fun atomic(
+            file: File,
+            value: JSONObject,
+        ) {
             val target = AtomicFile(file)
             val output = target.startWrite()
             try {
@@ -89,7 +99,11 @@ class AndroidScaleLongInstrumentedTest {
         atomic(evidenceFile, evidence)
     }
 
-    private fun stage(name: String, limitMs: Long = 180000, action: () -> Unit) {
+    private fun stage(
+        name: String,
+        limitMs: Long = 180000,
+        action: () -> Unit,
+    ) {
         val stages = evidence.getJSONObject("stages")
         check(!stages.has(name)) { "stage must not be retried" }
         val started = SystemClock.elapsedRealtime()
@@ -104,7 +118,9 @@ class AndroidScaleLongInstrumentedTest {
             stages.getJSONObject(name).put("status", "PASS")
         } catch (failure: Throwable) {
             val assertion = failure is AssertionError || (failure is IllegalStateException && failure.message?.contains("deadline") != true)
-            stages.getJSONObject(name).put("status", if (assertion) "FAIL" else "ERROR")
+            stages
+                .getJSONObject(name)
+                .put("status", if (assertion) "FAIL" else "ERROR")
                 .put("errorType", failure.javaClass.simpleName)
             throw failure
         } finally {
@@ -115,16 +131,17 @@ class AndroidScaleLongInstrumentedTest {
         }
     }
 
-    private fun openGraph(): CloseableLedgerGraph = openAndroidStableStorageLedger(
-        context,
-        AndroidImportFilePickPort<Uri>(
-            launchOpenDocument = { error("preparation must not launch UI") },
-            resolveMetadata = { error("no pick in preparation") },
-            openInputStream = { error("no pick in preparation") },
-            onResult = { error("no pick in preparation") },
-        ),
-        ImportFilePickResultChannel(),
-    )
+    private fun openGraph(): CloseableLedgerGraph =
+        openAndroidStableStorageLedger(
+            context,
+            AndroidImportFilePickPort<Uri>(
+                launchOpenDocument = { error("preparation must not launch UI") },
+                resolveMetadata = { error("no pick in preparation") },
+                openInputStream = { error("no pick in preparation") },
+                onResult = { error("no pick in preparation") },
+            ),
+            ImportFilePickResultChannel(),
+        )
 
     private fun prepare() {
         // Only a new CI-installed app may be prepared. No clearing of a prior ledger.
@@ -157,19 +174,24 @@ class AndroidScaleLongInstrumentedTest {
             val options = facade.optionsProvider.queryOptions()
             val category = options.expenseCategories.first()
             val account = options.paymentAccounts.first { it.currency.code == "CNY" }
-            state.put("categoryId", category.categoryId.value).put("categoryLabel", category.label)
+            state
+                .put("categoryId", category.categoryId.value)
+                .put("categoryLabel", category.label)
                 .put("expenseAccountId", category.postingAccountId.value)
-                .put("accountId", account.accountId.value).put("accountLabel", account.label)
+                .put("accountId", account.accountId.value)
+                .put("accountLabel", account.label)
             val preparation = names.take(5) + "unique-rows.csv"
             preparation.forEachIndexed { index, name ->
                 val started = SystemClock.elapsedRealtime()
-                evidence.put("activeDeadlineElapsedMs", minOf(deadline, started + 1800000))
+                evidence
+                    .put("activeDeadlineElapsedMs", minOf(deadline, started + 1800000))
                     .put("activeOperation", "prepare-intake-${index + 1}")
                 save()
                 val session = checkNotNull(facade.importIntakeSessionFactory())
-                val result = checkNotNull(facade.importFileIntake).intake(
-                    ImportFileIntakeInput(ImportFormatCapabilities.ALIPAY_CSV.identifier, ImportPlatformKind.ANDROID, session, File(fixtureRoot, name).readBytes()),
-                )
+                val result =
+                    checkNotNull(facade.importFileIntake).intake(
+                        ImportFileIntakeInput(ImportFormatCapabilities.ALIPAY_CSV.identifier, ImportPlatformKind.ANDROID, session, File(fixtureRoot, name).readBytes()),
+                    )
                 tick()
                 check(SystemClock.elapsedRealtime() - started <= 1800000) { "preparation intake exceeded 30 minutes" }
                 check(result is ImportFileIntakeOutcome.Accepted)
@@ -178,8 +200,11 @@ class AndroidScaleLongInstrumentedTest {
                 result.records.forEachIndexed { ordinal, row ->
                     check(row.recordOrdinal == ordinal && row.disposition == ImportIntakeRecordDisposition.INTAKE_ACCEPTED)
                 }
-                state.getJSONArray("sessions").put(JSONObject().put("inputRef", session.inputRef)
-                    .put("candidateIds", JSONArray(result.newCandidateIds.map { it.value })))
+                state.getJSONArray("sessions").put(
+                    JSONObject()
+                        .put("inputRef", session.inputRef)
+                        .put("candidateIds", JSONArray(result.newCandidateIds.map { it.value })),
+                )
                 graph.runFullAnalyze()
                 evidence.put("activeDeadlineElapsedMs", phaseDeadline).remove("activeOperation")
                 save()
@@ -194,14 +219,21 @@ class AndroidScaleLongInstrumentedTest {
             selected.forEach { (id, fingerprint) ->
                 tick()
                 val ids = checkNotNull(facade.importDuplicateReviewIds())
-                val result = checkNotNull(facade.importDuplicateReview).execute(
-                    ImportDuplicateReviewRequest(
-                        ImportRequestIdentity(facade.ledgerId, ids.requestId), ImportDuplicateCandidateId(id),
-                        fingerprint, ImportDuplicateStatus.CONFIRMED_DUPLICATE, "user-reviewed",
-                        "2026-01-16T08:00:00+08:00", "scale-test-review", "2026-01-16T08:00:00+08:00",
-                        ids.reviewId, ids.historyId,
-                    ),
-                )
+                val result =
+                    checkNotNull(facade.importDuplicateReview).execute(
+                        ImportDuplicateReviewRequest(
+                            ImportRequestIdentity(facade.ledgerId, ids.requestId),
+                            ImportDuplicateCandidateId(id),
+                            fingerprint,
+                            ImportDuplicateStatus.CONFIRMED_DUPLICATE,
+                            "user-reviewed",
+                            "2026-01-16T08:00:00+08:00",
+                            "scale-test-review",
+                            "2026-01-16T08:00:00+08:00",
+                            ids.reviewId,
+                            ids.historyId,
+                        ),
+                    )
                 check(result is ImportDuplicateReviewResult.Accepted)
             }
             val prepared = oracle.snapshot(ledger, compareReadPath = true)
@@ -218,20 +250,22 @@ class AndroidScaleLongInstrumentedTest {
             graph.close()
         }
         // Publish only the final fixture through MediaStore so DocumentsUI can actually find it.
-        val values = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, "session-06.csv")
-            put(MediaStore.Downloads.MIME_TYPE, "text/csv")
-            put(MediaStore.Downloads.RELATIVE_PATH, "Download/")
-            put(MediaStore.Downloads.IS_PENDING, 1)
-        }
+        val values =
+            ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, "session-06.csv")
+                put(MediaStore.Downloads.MIME_TYPE, "text/csv")
+                put(MediaStore.Downloads.RELATIVE_PATH, "Download/")
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
         val uri = checkNotNull(context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values))
         checkNotNull(context.contentResolver.openOutputStream(uri)).use { it.write(File(fixtureRoot, "session-06.csv").readBytes()) }
         check(context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null) == 1)
     }
 
-    private fun preparedSessions(): List<String> = state.getJSONArray("sessions").let { sessions ->
-        (0 until sessions.length()).map { sessions.getJSONObject(it).getString("inputRef") }
-    }
+    private fun preparedSessions(): List<String> =
+        state.getJSONArray("sessions").let { sessions ->
+            (0 until sessions.length()).map { sessions.getJSONObject(it).getString("inputRef") }
+        }
 
     private fun assertPreparedUnchanged(snapshot: ScaleSnapshot) {
         val sessions = preparedSessions()
@@ -301,7 +335,9 @@ class AndroidScaleLongInstrumentedTest {
             val observed = ui.traverse(before.displayRows)
             val after = oracle.snapshot(ledger)
             check(after == before)
-            evidence.put("observedCandidates", observed).put("firstLastObserved", true)
+            evidence
+                .put("observedCandidates", observed)
+                .put("firstLastObserved", true)
                 .put("uiIdentityScope", "projected-sequence-multiplicity-order")
         }
         stage("group_disposition", 5400000) {
@@ -317,7 +353,10 @@ class AndroidScaleLongInstrumentedTest {
             ui.click("确认整组标记")
             ui.await(5400000) {
                 oracle.read { database, _ ->
-                    database.rawQuery("SELECT COUNT(*) FROM import_duplicate_review_receipt", null).use { check(it.moveToFirst()); it.getLong(0) == 50100L }
+                    database.rawQuery("SELECT COUNT(*) FROM import_duplicate_review_receipt", null).use {
+                        check(it.moveToFirst())
+                        it.getLong(0) == 50100L
+                    }
                 }
             }
             val after = oracle.snapshot(ledger, compareReadPath = true)
@@ -413,26 +452,31 @@ class AndroidScaleLongInstrumentedTest {
 
     private fun replay() {
         val before = oracle.snapshot(state.getString("ledger"))
-        val saved = oracle.read { database, _ ->
-            database.rawQuery(
-                "SELECT d.request_id,d.candidate_id,d.expected_content_hash,d.explicit_confirmed_at,d.category_id,d.funding_account_id,r.source_id,r.evidence_id,r.confirmation_id,r.transaction_id FROM import_candidate_decision_snapshot d JOIN import_receipt r ON r.ledger_id=d.ledger_id AND r.request_id=d.request_id WHERE d.decision='confirm'",
-                null,
-            ).use { cursor ->
-                check(cursor.moveToFirst())
-                val fields = (0..9).map { if (cursor.isNull(it)) null else cursor.getString(it) }
-                check(!cursor.moveToNext())
-                fields
+        val saved =
+            oracle.read { database, _ ->
+                database
+                    .rawQuery(
+                        "SELECT d.request_id,d.candidate_id,d.expected_content_hash,d.explicit_confirmed_at,d.category_id,d.funding_account_id,r.source_id,r.evidence_id,r.confirmation_id,r.transaction_id FROM import_candidate_decision_snapshot d JOIN import_receipt r ON r.ledger_id=d.ledger_id AND r.request_id=d.request_id WHERE d.decision='confirm'",
+                        null,
+                    ).use { cursor ->
+                        check(cursor.moveToFirst())
+                        val fields = (0..9).map { if (cursor.isNull(it)) null else cursor.getString(it) }
+                        check(!cursor.moveToNext())
+                        fields
+                    }
             }
-        }
         val graph = openGraph()
         try {
-            val result = checkNotNull(checkNotNull(graph.facade.importConfirmUseCases).invoke()?.ordinaryFlow).execute(
-                ImportCandidateConfirmRequest(
-                    ImportRequestIdentity(graph.facade.ledgerId, ImportRequestId(checkNotNull(saved[0]))),
-                    ImportCandidateId(checkNotNull(saved[1])), checkNotNull(saved[2]), saved[3],
-                    ImportConfirmDecisionFields.OrdinaryFlow(CategoryId(checkNotNull(saved[4])), AccountId(checkNotNull(saved[5]))),
-                ),
-            )
+            val result =
+                checkNotNull(checkNotNull(graph.facade.importConfirmUseCases).invoke()?.ordinaryFlow).execute(
+                    ImportCandidateConfirmRequest(
+                        ImportRequestIdentity(graph.facade.ledgerId, ImportRequestId(checkNotNull(saved[0]))),
+                        ImportCandidateId(checkNotNull(saved[1])),
+                        checkNotNull(saved[2]),
+                        saved[3],
+                        ImportConfirmDecisionFields.OrdinaryFlow(CategoryId(checkNotNull(saved[4])), AccountId(checkNotNull(saved[5]))),
+                    ),
+                )
             check(result is ImportCandidateDecisionResult.NoChange && result.reasonCode == "equivalent_replay")
             val receipt = result.receipt
             check(listOf(receipt.requestId.value, receipt.candidateId.value, receipt.sourceId?.value, receipt.evidenceId?.value, receipt.confirmationId?.value, receipt.transactionId?.value) == listOf(saved[0], saved[1], saved[6], saved[7], saved[8], saved[9]))
