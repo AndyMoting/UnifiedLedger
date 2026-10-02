@@ -732,6 +732,54 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
             with self.assertRaises(ScaleDeadlineError):
                 runner.await_framework(timeout=1)
 
+    def test_pin_display_retries_until_the_override_sticks(self):
+        # The framework can revert a single `wm size` write while it finishes its
+        # boot-time display configuration.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.make_runner(root)
+            reads = {"count": 0}
+
+            def fake(*args, **_kwargs):
+                if args[:3] == ("shell", "wm", "size") and len(args) == 3:
+                    reads["count"] += 1
+                    if reads["count"] == 1:
+                        return "Physical size: 1080x1920\n"
+                    return "Physical size: 1080x1920\nOverride size: 1080x2400\n"
+                return ""
+
+            runner.adb = fake
+            runner.pin_display(attempts=3)
+            self.assertEqual(reads["count"], 2)
+
+    def test_pin_display_fails_loudly_when_the_override_never_sticks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.make_runner(root)
+            runner.adb = lambda *_args, **_kwargs: "Physical size: 1080x1920\n"
+            with self.assertRaises(RuntimeError) as caught:
+                runner.pin_display(attempts=2)
+            message = str(caught.exception)
+            self.assertIn("1080x2400", message)
+            self.assertIn("observed 1080x1920", message)
+
+    def test_ensure_app_data_dir_launches_then_stops_the_app(self):
+        # `pm install` does not create /data/user/0/<pkg> on this image, and
+        # `run-as` needs it; the app must be launched once first.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.make_runner(root)
+            calls = []
+
+            def record(*args, **_kwargs):
+                calls.append(args)
+                return ""
+
+            runner.adb = record
+            runner.ensure_app_data_dir()
+            self.assertEqual(calls[0], ("shell", "am", "start", "-W", "-n", "com.unifiedledger.android/.MainActivity"))
+            self.assertEqual(calls[1], ("shell", "am", "force-stop", "com.unifiedledger.android"))
+
 
 if __name__ == "__main__":
     unittest.main()
