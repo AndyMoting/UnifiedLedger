@@ -32,7 +32,6 @@ object AndroidColdstartForensics {
         val type: Int,
         val active: Boolean,
         val focused: Boolean,
-        val packageName: String?,
         val rootPackage: String?,
     )
 
@@ -51,9 +50,15 @@ object AndroidColdstartForensics {
         val signals: List<String>,
     )
 
-    data class ThreadStack(val name: String, val frames: List<String>)
+    data class ThreadStack(
+        val name: String,
+        val frames: List<String>,
+    )
 
-    data class Stacks(val threads: List<ThreadStack>, val truncated: Boolean)
+    data class Stacks(
+        val threads: List<ThreadStack>,
+        val truncated: Boolean,
+    )
 
     /** Keeps the first samples, refuses later ones and records the truncation. */
     class ColdstartSampleBuffer {
@@ -97,9 +102,10 @@ object AndroidColdstartForensics {
         val threads = ArrayList<ThreadStack>()
         var truncated = false
         for ((name, frames) in entries) {
-            val relevant = name == MAIN_THREAD ||
-                name.startsWith(DISPATCHER_PREFIX) ||
-                frames.any { it.className.startsWith(TARGET_PREFIX) }
+            val relevant =
+                name == MAIN_THREAD ||
+                    name.startsWith(DISPATCHER_PREFIX) ||
+                    frames.any { it.className.startsWith(TARGET_PREFIX) }
             if (!relevant) continue
             if (threads.size >= MAX_THREADS) {
                 truncated = true

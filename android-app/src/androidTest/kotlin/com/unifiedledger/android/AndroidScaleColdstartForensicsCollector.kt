@@ -201,7 +201,6 @@ internal class AndroidScaleColdstartForensicsCollector(
                     .put("type", window.type)
                     .put("active", window.active)
                     .put("focused", window.focused)
-                    .put("package", window.packageName ?: JSONObject.NULL)
                     .put("rootPackage", window.rootPackage ?: JSONObject.NULL),
             )
         }

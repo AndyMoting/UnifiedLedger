@@ -7,7 +7,12 @@ import kotlin.test.assertTrue
 
 /** JVM negatives for the bounded coldstart forensics contracts (no device). */
 class AndroidColdstartForensicsTest {
-    private fun stack(name: String, vararg frames: StackTraceElement) = name to arrayOf(*frames)
+    private fun stack(
+        name: String,
+        vararg frames: StackTraceElement,
+    ): Pair<String, Array<StackTraceElement>> {
+        return name to arrayOf(*frames)
+    }
 
     @Test
     fun signalHitsKeepOnlyWhitelistedStartupWords() {
@@ -34,6 +39,7 @@ class AndroidColdstartForensicsTest {
     @Test
     fun sampleBufferKeepsTheFirstSamplesAndFlagsTruncation() {
         val buffer = AndroidColdstartForensics.ColdstartSampleBuffer()
+
         fun sample(atMs: Long) = AndroidColdstartForensics.Sample(atMs, emptyList(), false, false, false, 0, emptyList())
         repeat(AndroidColdstartForensics.MAX_SAMPLES) { buffer.add(sample(it.toLong())) }
         assertFalse(buffer.truncated)
@@ -46,7 +52,7 @@ class AndroidColdstartForensicsTest {
 
     @Test
     fun boundWindowsCapsAndFlagsTheTruncation() {
-        val window = AndroidColdstartForensics.WindowInfo(1, 1, true, false, "com.unifiedledger.android", "com.unifiedledger.android")
+        val window = AndroidColdstartForensics.WindowInfo(1, 1, true, false, "com.unifiedledger.android")
         val within = AndroidColdstartForensics.boundWindows(List(AndroidColdstartForensics.MAX_WINDOWS_PER_SAMPLE) { window })
         assertFalse(within.truncated)
         assertEquals(AndroidColdstartForensics.MAX_WINDOWS_PER_SAMPLE, within.windows.size)
@@ -76,8 +82,12 @@ class AndroidColdstartForensicsTest {
     fun stackFramesAreCappedAndThreadTruncationFlagged() {
         val longFrame = StackTraceElement("com.unifiedledger.android.Ledger", "open", "Ledger.kt", 7)
         val result = AndroidColdstartForensics.filterStacks(listOf(stack("main", *Array(100) { longFrame })))
-        assertEquals(AndroidColdstartForensics.MAX_FRAMES, result.threads.single().frames.size)
-        assertTrue(result.threads.single().frames.all { it.length <= AndroidColdstartForensics.MAX_FRAME_CHARS })
+        val frames =
+            result.threads
+                .single()
+                .frames
+        assertEquals(AndroidColdstartForensics.MAX_FRAMES, frames.size)
+        assertTrue(frames.all { it.length <= AndroidColdstartForensics.MAX_FRAME_CHARS })
         val excess =
             List(AndroidColdstartForensics.MAX_THREADS + 5) { index ->
                 stack("main-$index", StackTraceElement("com.unifiedledger.android.T$index", "run", "T.kt", index))

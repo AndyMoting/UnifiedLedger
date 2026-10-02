@@ -46,7 +46,6 @@ internal class AndroidScaleUi(
                 type = window.type,
                 active = window.isActive,
                 focused = window.isFocused,
-                packageName = window.packageName?.toString(),
                 rootPackage = window.root?.packageName?.toString(),
             )
         }

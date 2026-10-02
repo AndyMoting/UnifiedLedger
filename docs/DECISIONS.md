@@ -4071,7 +4071,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **决定：**
 
-1. 仅在 coldstart launch 的等待路径上做有界采样：约 5 秒一次、硬上限 48 条；每条记录相对时间、窗口清单（每窗口 id/type/active/focused/packageName/root 包名，不只记第一个 root；窗口数超上限记录 `windowsTruncated`）、「账本：」在第一个目标 root 与任一目标 root 两个口径的命中、目标 root 可见节点计数与白名单就绪/错误信号。其他 await 调用点与预检零行为变化。
+1. 仅在 coldstart launch 的等待路径上做有界采样：约 5 秒一次、硬上限 48 条；每条记录相对时间、窗口清单（每窗口 id/type/active/focused 与 root 节点包名，不只记第一个 root；窗口数超上限记录 `windowsTruncated`）、「账本：」在第一个目标 root 与任一目标 root 两个口径的命中、目标 root 可见节点计数与白名单就绪/错误信号。其他 await 调用点与预检零行为变化。
 2. 首次失败后、rethrow 前做一次尽力现场采集：多窗口完整清单、目标窗口信号、同一 UiAutomation 连接的截图、本进程线程栈（过滤到 main/目标包/协程 dispatcher 线程）。采集不调用 tick()、总耗时 ≤30 秒、observation/栈/截图/写盘各阶段之间补预算检查，超预算的剩余阶段记 skipped 并降级为最小记录；数组与文本全部硬上限、超限记录截断；采样错误记为有界列表（≤5 条，超限置 `sampleErrorsTruncated`）；完整记录构建或写盘失败时尽力补写仅含 captureError、原始失败类型/消息、sampleErrors 与截断标志的最小 fallback 记录，fallback 亦失败才不落盘；采集异常绝不掩盖或替换原始失败，不改 stage 的 PASS/ERROR/NOT_RUN 判定，不重置任何 deadline。
 3. 证据只写 context.filesDir 下固定名 `android-scale-coldstart-forensics.json` / `.png`，JSON 绑定 expectedSha、phase/stage、startedElapsedMs、采集耗时、pid/进程名、采样数组与截断说明；正常路径与预检不产生取证文件。host 侧 diagnostics 以 run-as cat 尽力回收为 `coldstart-forensics.json` / `.png`，存在时在 host.json 记录 sha256/字节/json 有效性/SHA 匹配，缺失记 absent；畸形或旧文件不得冒充本次现场。两种 reducer 均不要求取证文件存在，取证与业务 oracle 分离。
 4. 白名单之外不出正文：仅启动/就绪/错误信号词、窗口元数据与按包过滤的线程帧；不上传数据库、真实账务或本机路径。纯逻辑（白名单、缓冲上限、栈过滤、尺寸守卫）做 JVM 单元测试；宿主编排做存在/缺失/畸形三态 mock；平台路径由云端 maximum 运行验证。instrumentation 41 例清单不变，不新增 @Test。
