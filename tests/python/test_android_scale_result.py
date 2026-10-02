@@ -32,7 +32,6 @@ from android_scale.result import (  # noqa: E402
     validate_evidence,
 )
 from android_scale.runner import (  # noqa: E402
-    LAUNCHER_FALLBACK,
     PHASE_BUDGETS,
     ScaleDeadlineError,
     ScaleRunner,
@@ -90,6 +89,7 @@ def build_valid(directory: Path, *, sha: str = SHA) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     host = {
         "sha": sha,
+        "mode": "maximum",
         "status": "PASS",
         "timed_out": False,
         "crash_detected": False,
@@ -116,6 +116,7 @@ def build_valid(directory: Path, *, sha: str = SHA) -> None:
     (directory / "logcat.txt").write_text("I/ActivityManager: start\n", encoding="utf-8")
     (directory / "memory.txt").write_text("phase=prepare total=1000\n", encoding="utf-8")
     (directory / "configuration.txt").write_text(json.dumps(CONFIG, sort_keys=True) + "\n", encoding="utf-8")
+    (directory / "logcat-collection.json").write_text(json.dumps({"started": True, "stopped": True, "stream_bytes": 100, "gaps": []}), encoding="utf-8")
 
 
 def load(directory: Path, name: str) -> dict:
@@ -490,6 +491,7 @@ class RunnerGuardsAreOfflineTestable(unittest.TestCase):
                 runner = ScaleRunner(root, root / "evidence", root / "app.apk", root / "test.apk", SHA)
                 runner.deadline = runner.started + 13800
                 runner.cases.append({"name": PHASES[0], "status": "PASS", "seconds": 1.0})
+                runner.setup_complete = True
                 runner.report["status"] = "ERROR"
                 runner.write_reports()
             finally:
@@ -499,13 +501,13 @@ class RunnerGuardsAreOfflineTestable(unittest.TestCase):
             self.assertEqual(host["sha"], SHA)
             self.assertLessEqual(host["elapsed_seconds"], 13800)
             suite = ET.parse(root / "evidence" / "junit.xml").getroot()
-            self.assertEqual(suite.get("tests"), "5")
+            self.assertEqual(suite.get("tests"), "6")
             self.assertEqual(suite.get("failures"), "0")
-            self.assertEqual(suite.get("errors"), "0")
+            self.assertEqual(suite.get("errors"), "1")
             self.assertEqual(suite.get("skipped"), "4")
             names = [case.get("name") for case in suite.findall("testcase")]
-            self.assertEqual(names, list(PHASES))
-            cases = suite.findall("testcase")
+            self.assertEqual(names, ["evidence"] + list(PHASES))
+            cases = suite.findall("testcase")[1:]
             self.assertIsNone(cases[0].find("skipped"))
             self.assertIsNotNone(cases[1].find("skipped"))
 
@@ -732,7 +734,7 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
             runner.configure = boom
             self.assertEqual(runner.run(), 1)
             host = json.loads((root / "evidence" / "host.json").read_text(encoding="utf-8"))
-            self.assertEqual(host["status"], "FAIL")
+            self.assertEqual(host["status"], "ERROR")
             self.assertEqual(host["errorType"], "RuntimeError")
             self.assertIn("did not settle", host["errorMessage"])
             self.assertEqual(host["phases"], [])
@@ -745,15 +747,19 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
             runner = self.make_runner(root)
             calls = {"count": 0}
 
-            def restarting(*_args, **_kwargs):
+            def restarting(*args, **_kwargs):
                 calls["count"] += 1
                 if calls["count"] <= 2:
                     raise RuntimeError("command failed: adb (224): cmd: Failure calling service window: Broken pipe (32)")
+                if args[:3] == ("shell", "am", "get-started-user-state"):
+                    return "RUNNING_UNLOCKED"
+                if args[:3] == ("shell", "cmd", "package"):
+                    return "package:android\n"
                 return "Physical size: 1080x2400"
 
             runner.adb = restarting
             runner.await_framework(timeout=60)
-            self.assertEqual(calls["count"], 3)
+            self.assertEqual(calls["count"], 5)
 
     def test_await_framework_gives_up_at_its_deadline(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -811,15 +817,17 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
                 calls.append(args)
                 if args[:3] == ("shell", "cmd", "package"):
                     return "priority=0\ncom.unifiedledger.android/.MainActivity\n"
+                if args[:3] == ("shell", "am", "start"):
+                    return "Status: ok\n"
                 return ""
 
             runner.adb = record
             runner.ensure_app_data_dir()
             self.assertEqual(calls[0], ("shell", "cmd", "package", "resolve-activity",
-                                        "--brief", "-a", "android.intent.action.MAIN",
+                                        "--brief", "--user", "0", "-a", "android.intent.action.MAIN",
                                         "-c", "android.intent.category.LAUNCHER",
                                         "-p", "com.unifiedledger.android"))
-            self.assertEqual(calls[1], ("shell", "am", "start", "-W", "-n",
+            self.assertEqual(calls[1], ("shell", "am", "start", "-W", "--user", "0", "-n",
                                         "com.unifiedledger.android/.MainActivity"))
             self.assertEqual(calls[2], ("shell", "am", "force-stop", "com.unifiedledger.android"))
 
@@ -839,22 +847,20 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
                     if starts["count"] == 1:
                         raise RuntimeError("command failed: adb (1): Error type 3\n"
                                            "Error: Activity class does not exist.")
-                    return ""
+                    return "Status: ok\n"
                 return ""
 
             runner.adb = fake
             runner.ensure_app_data_dir(attempts=3)
             self.assertEqual(starts["count"], 2)
 
-    def test_launcher_component_falls_back_to_the_manifest_component(self):
-        # The bare-package form of `resolve-activity` answers "No activity found"
-        # on API 36; the manifest's LAUNCHER component is the fallback, and a
-        # wrong component then fails loudly at `am start` instead of silently.
+    def test_launcher_component_refuses_an_unresolvable_manifest_component(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             runner = self.make_runner(root)
             runner.adb = lambda *_args, **_kwargs: "No activity found\n"
-            self.assertEqual(LAUNCHER_FALLBACK, runner.launcher_component())
+            with self.assertRaises(RuntimeError):
+                runner.launcher_component()
 
     def test_launcher_component_prefers_the_platform_answer(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -899,6 +905,14 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
                     return "Success"
                 if args[:3] == ("shell", "cmd", "package"):
                     return "priority=0\ncom.unifiedledger.android/.MainActivity\n"
+                if args[:3] == ("shell", "am", "start"):
+                    return "Status: ok\n"
+                if args[:3] == ("shell", "pm", "list"):
+                    return f"instrumentation:{runner_module.RUNNER} (target=com.unifiedledger.android)\n"
+                if args[:3] == ("shell", "pm", "path"):
+                    return "package:/data/app/base.apk\n"
+                if args[:3] == ("exec-out", "run-as", "com.unifiedledger.android"):
+                    return (fixture / args[-1].split("/")[-1]).read_bytes()
                 return ""
 
             runner.adb = record
@@ -971,9 +985,11 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
             with self.assertRaises(ScaleDeadlineError):
                 runner.poll_once("reopen")
 
-    def test_every_phase_has_a_host_budget(self):
+    def test_prepare_chain_share_global_budget_and_short_phases_have_caps(self):
         self.assertEqual(set(PHASES), set(PHASE_BUDGETS))
-        self.assertTrue(all(isinstance(value, int) and value > 0 for value in PHASE_BUDGETS.values()))
+        self.assertIsNone(PHASE_BUDGETS["prepare"])
+        self.assertIsNone(PHASE_BUDGETS["chain"])
+        self.assertTrue(all(PHASE_BUDGETS[phase] == 480 for phase in PHASES[2:]))
 
     def test_last_match_reports_unreadable_device_output(self):
         self.assertEqual("1080x2400", last_match(r"size: ([0-9]+x[0-9]+)", "Physical size: 1080x2400\n", "display size"))

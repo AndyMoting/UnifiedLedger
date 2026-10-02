@@ -70,7 +70,9 @@ bash tools/ci/trace-scan.sh
 
 模拟器配置：`api-level 36`、`target google_apis`、`arch x86_64`（对齐本机受管 AVD；API 37 镜像在本机从未达 adb）、`cores 2`、`ram-size 2048M`、`emulator-boot-timeout 300`（默认 600 过长，卡死需快速失败）。**两个 APK 在模拟器会话之外构建**：action 在 `script` 结束后会杀掉模拟器，编译不应占用模拟器在线时间。
 
-触发条件：`pull_request`（仅当改动涉及 `android-app/**`、`app-ui/**`、`ledger-data/**`、`ledger-application/**`、`build.gradle.kts`、`settings.gradle.kts`、`gradle/**` 或本 workflow 文件自身——最后一项使设备 job 的改动能在自己的 PR 上自验）与手动触发；**不设定时运行**（提交与批次的节奏是全天候的，日历触发没有意义）。
+触发条件：`pull_request` 覆盖 `android-app/**`、`app-ui/**`、`ledger-data/**`、`ledger-application/**`、`ledger-domain/**`、根 Gradle 构建/settings/properties、wrapper 脚本与 `gradle/**`，以及本 workflow、普通测试清单及其校验工具/测试；另支持手动触发，不设定时运行。无关文档变动不启动设备。
+
+`tools/ci/android-instrumented-inventory.txt` 是显式用例清单（当前 41 例）。构建后先核对源码中的类/方法集合；运行后 `tools/ci/android-instrumented-inventory.py` 再核对真实 JUnit XML 的精确集合及通过状态。缺报告、零执行、重复、遗漏、多余用例、失败或跳过均失败；新增、删除或改名用例必须同步清单。普通回归排除 `ImportScaleTraversalInstrumentedTest`、`AndroidScaleLongInstrumentedTest` 与专用 `AndroidScalePreflightInstrumentedTest`。
 
 实测成本（2026-10-01 一次性探针，同一提交三次）：整条 job 407–417 秒，其中构建两个 APK 212–225 秒、模拟器启动 44.6–52.5 秒、7 个 P0 守卫的安装加执行约 122 秒；3/3 全绿。失败时上传 `android-instrumented-<sha>` 工件（JUnit XML 与 `logcat.txt`）。
 
@@ -92,9 +94,35 @@ bash tools/ci/trace-scan.sh
 gh workflow run android-scale.yml --ref <branch> -f expected_sha=<完整40位SHA>
 ```
 
-云端耗时与采样内存只作观察（标注「观察到的最大值」），不替代固定设备性能阈值。**该 workflow 的云端首跑尚未发生**：设施交付、本次功能整链通过、历史规模验收闭合是三个独立结论，不得互相替代；首跑须对精确 merge SHA 发起，通过后同 SHA 再独立跑一次确认可重复性。
+云端耗时与采样内存只作观察（标注「观察到的最大值」），不替代固定设备性能阈值。2026-10-02 的已观察运行在设施启动阶段失败，业务阶段未执行，尚无完整长测通过证据。设施交付、本次功能整链通过、历史规模验收闭合是三个独立结论。验收对精确 merge SHA 发起，完整通过后同 SHA 再独立跑一次确认可重复性。
 
 旧的 `ImportScaleTraversalInstrumentedTest` 保留为人工取证工具，语义不变；`android-instrumented.yml` 的 `notClass` 已同时排除它与 `AndroidScaleLongInstrumentedTest`，长测入口不会被普通 PR 带入。本机不跑该链：不启动模拟器，也不为该链装配 APK。
+
+### Android scale preflight 与 APK 来源（D-200）
+
+可信双 APK 工件与专用预检支持同仓库 PR 和手动运行；fork PR 跳过这两项，其既有 `Android compile` 编译、单测、APK 构建及普通单 APK 上传照常执行。预检 producer 被跳过时，其依赖的设备 job 同步跳过。
+
+`.github/workflows/android-preflight.yml` 对相关 PR 自动运行非 required 的设施预检，另支持手动运行。触发路径覆盖 Android 全部传递模块、构建入口、`tools/python/android_scale/**`、`tools/ci/android-*`、相关 Python 测试及 CI/Android workflow。预检复用长测驱动器的设备配置、安装、启动与应用私有目录传输路径；`--mode preflight` 只准备含提交 SHA 的匿名小探针并执行 `AndroidScalePreflightInstrumentedTest.privateFixtureRoundTrip`，设备读回、重新写入并上报探针哈希。每个 job 最多 30 分钟，设备步骤 15 分钟，驱动执行 600 秒，失败诊断最多另用 120 秒。两个 APK 在独立 producer job 准备，模拟器会话内不构建。
+
+默认 `--mode maximum` 保持五阶段、十一业务步骤及 61,000 候选 / 150,000 关系判据。预检报告明确标 `mode=preflight`，工件 `android-preflight-<sha>-<attempt>` 独立保存；最大规模 reducer 要求 `mode=maximum`，不能接受预检报告。两次同候选的独立预检通过后再进行最大规模验收；只重跑设备 job 可复用已经成功的 producer 产物。
+
+框架重启后最多 300 秒等待窗口服务、包管理服务及用户 0 的 `RUNNING_UNLOCKED` 状态，安装后核对应用/测试包、instrumentation target、launcher 实际启动结果，并通过 `run-as` 对暂存文件逐个读回校验。应用数据根由 Android 自行管理。设施失败在 JUnit 增记 `setup ERROR`，未执行业务阶段保持 `NOT_RUN`；后续缺证只追加诊断，不覆盖首因。logcat 持续采集，断线重连/可能缺口单独记录；证据保留 7 天，仍不上传数据库或完整输入。
+
+最大规模执行全局预算仍为 13,800 秒，设备步骤 240 分钟，设备 job 300 分钟。`prepare` 与 `chain` 共用剩余全局预算；`reopen`、`replay`、`final-reopen` 各最多 480 秒。全部命令和 best-effort 探针受当前阶段/全局剩余时间约束；结束后的采证总预算 120 秒。不宣称准备或主链拥有能提前阻止其耗尽全局时间的独立预算。
+
+设备步骤的时间包含模拟器启动：workflow 在 emulator action 前记录绝对截止时间，驱动入口必须收到 `--outer-deadline-epoch`，再一次性转换为单调时钟。实际执行上限取模式上限（600 / 13,800 秒）与「外层剩余时间 − 120 秒采证 − 30 秒报告/清理余量」中的较小值；采证也受外层截止前 30 秒约束。即使启动已用尽可执行时间，仍先写 `setup ERROR` 与未运行报告，不再启动设备操作。
+
+主 CI 的 `Android compile` 保留 `android-debug-apk-<sha>` 单 APK 工件，新增两个 APK 与 `provenance.json` 组成的 `android-apks-<完整Git-tree>-<run-id>-<attempt>` 工件，保留 7 天。长测与预检先用 `tools/ci/android-apks.py` 明确查找历史 run/artifact，再用最小 `actions: read` 权限下载；仅接受同仓库的主 CI、长测 APK producer 或预检 APK producer 的成功 job，拒绝 fork 来源。校验来源 run/attempt、workflow、GitHub 实际 commit/tree、PR 预览合并父提交关系与两个 APK 的 SHA-256；复用后的新清单保留原始构建来源和直接复用来源。只有完整受控文件树相同才可复用；无匹配、已过期或下载前已删除时在云端构建，来源不符、缺 APK、清单损坏或哈希不符直接失败。产物名包含 attempt，整条重跑不与旧工件冲突。普通设备回归本批继续自行构建。
+
+PR 产物清单只从构建时 `GITHUB_EVENT_PATH` 留存 PR 编号和当时 base/head SHA。消费时把它们与实际 source commit 的两个父提交和 run 的 head SHA 绑定，再分页查询该历史 head 所关联的 PR，验证编号、同仓库来源及 main 目标分支。PR 后来合并、关闭或继续提交导致 run 的 PR 数组清空、当前 base/head 变化，不会抹去合法历史来源；同 tip 已合并的 PR 另核实落地 merge commit（两父合并核对第二父；允许单父 squash）。
+
+聚焦离线验证（不执行构建或设备操作）：
+
+```powershell
+$env:PYTHONPATH="tools\python"
+python -m unittest tests.python.test_android_ci_repair tests.python.test_android_scale_result tests.python.test_android_scale_fixture
+python tools/ci/android-instrumented-inventory.py --source android-app/src/androidTest --manifest tools/ci/android-instrumented-inventory.txt
+```
 
 ## Kotlin 验证
 

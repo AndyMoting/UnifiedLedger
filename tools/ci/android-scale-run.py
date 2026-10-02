@@ -15,8 +15,11 @@ def main():
     parser.add_argument("--app", type=Path, required=True)
     parser.add_argument("--test", type=Path, required=True)
     parser.add_argument("--sha", required=True)
+    parser.add_argument("--mode", choices=("preflight", "maximum"), default="maximum")
+    parser.add_argument("--outer-deadline-epoch", type=float, required=True)
     args = parser.parse_args()
-    return ScaleRunner(args.fixture, args.evidence, args.app, args.test, args.sha).run()
+    return ScaleRunner(args.fixture, args.evidence, args.app, args.test, args.sha, args.mode,
+                       outer_deadline_epoch=args.outer_deadline_epoch).run()
 
 
 if __name__ == "__main__":

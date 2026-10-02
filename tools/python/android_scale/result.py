@@ -17,6 +17,8 @@ EXPECTED = {"preparedCandidates": 51000, "preparedRelations": 100000, "preparedD
             "formalTransactions": 1, "balancedPostings": 2}
 TEST_CLASS = "com.unifiedledger.android.AndroidScaleLongInstrumentedTest"
 TEST_METHOD = "maximumScalePhase"
+PREFLIGHT_CLASS = "com.unifiedledger.android.AndroidScalePreflightInstrumentedTest"
+PREFLIGHT_METHOD = "privateFixtureRoundTrip"
 
 
 def strict_json(path: Path) -> dict:
@@ -87,7 +89,12 @@ def crash_present(log: str, package: str = PACKAGE) -> bool:
     return bool(crash_markers(log, package)[0])
 
 
-def instrumentation_pass(log: str) -> None:
+def transcript_shape(records: list[tuple[int, dict]]) -> str:
+    return str([(code, fields.get("class", "-"), fields.get("test", "-"), fields.get("numtests", "-"))
+                for code, fields in records][:6])
+
+
+def instrumentation_pass(log: str, test_class: str = TEST_CLASS, test_method: str = TEST_METHOD) -> None:
     """Require one named executed JUnit case and complete runner termination, not shell rc."""
     if re.search(r"FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed|shortMsg=|INSTRUMENTATION_ABORTED", log):
         raise ValueError("instrumentation failure")
@@ -106,22 +113,35 @@ def instrumentation_pass(log: str) -> None:
     # Reject any status code outside the clean {start=1, ok=0} pair, including
     # records that carry no class/test field at all.
     if any(code not in (1, 0) for code, _ in records):
-        raise ValueError("unexpected instrumentation status code")
+        raise ValueError(f"unexpected instrumentation status code: {transcript_shape(records)}")
     if len(tests) != 2 or [code for code, _ in tests] != [1, 0]:
-        raise ValueError("missing, extra, skipped, or failed instrumented test")
+        raise ValueError(f"missing, extra, skipped, or failed instrumented test: {transcript_shape(records)}")
     for _, fields in tests:
-        if fields.get("class") != TEST_CLASS or fields.get("test") != TEST_METHOD or fields.get("numtests") != "1":
-            raise ValueError("unexpected instrumented test identity/count")
+        if fields.get("class") != test_class or fields.get("test") != test_method or fields.get("numtests") != "1":
+            raise ValueError(f"unexpected instrumented test identity/count: {transcript_shape(tests)}")
     if re.findall(r"^INSTRUMENTATION_CODE: (-?\d+)$", log, re.MULTILINE) != ["-1"]:
         raise ValueError("missing instrumentation completion")
     if not re.search(r"^OK \(1 test\)\s*$", log, re.MULTILINE):
         raise ValueError("missing JUnit completion")
 
 
+def validate_log_collection(directory: Path) -> None:
+    collection = strict_json(directory / "logcat-collection.json")
+    if collection.get("started") is not True or collection.get("stopped") is not True:
+        raise ValueError("continuous logcat collector did not run/stop cleanly")
+    if type(collection.get("stream_bytes")) is not int or collection["stream_bytes"] <= 0:
+        raise ValueError("continuous logcat did not collect any bytes")
+    if not isinstance(collection.get("gaps"), list):
+        raise ValueError("continuous logcat gaps not recorded")
+
+
 def validate_evidence(directory: Path, expected_sha: str) -> dict:
     if not re.fullmatch(r"[0-9a-f]{40}", expected_sha):
         raise ValueError("expected SHA must be exact full lowercase SHA")
     report = strict_json(directory / "host.json")
+    if report.get("mode") != "maximum":
+        raise ValueError("maximum evidence mode required")
+    validate_log_collection(directory)
     device = strict_json(directory / "device.json")
     # `type(...) is not int` also rejects JSON true/false, which compare equal to 1/0.
     if type(device.get("schema")) is not int or device.get("schema") != 1:

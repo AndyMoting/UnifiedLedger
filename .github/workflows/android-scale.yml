@@ -42,6 +42,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 # A long run must never be cancelled by a later push: this workflow only runs on
 # demand, and its evidence is tied to the SHA the operator asked for.
@@ -50,10 +51,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  android-scale:
-    name: Android maximum-scale long test
+  apks:
+    name: Android scale APKs
     runs-on: ubuntu-24.04
-    timeout-minutes: 300
+    timeout-minutes: 30
+    outputs:
+      artifact: ${{ steps.bundle.outputs.artifact }}
     env:
       GRADLE_OPTS: >-
         -Dorg.gradle.jvmargs=-Xmx3g
@@ -84,48 +87,70 @@ jobs:
         with:
           java-version: '21'
           distribution: temurin
+      - name: Discover and verify an earlier whole-tree APK bundle
+        id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/android-apks.py reuse --directory reused-apks
+      - name: Build APKs before the emulator session
+        # Built outside the emulator session: the emulator action kills the
+        # emulator when `script` ends, so compilation must not sit inside it.
+        if: steps.reuse.outputs.hit != 'true'
+        run: ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebug :android-app:assembleDebugAndroidTest --warning-mode all
+      - name: Package APKs with this producer's provenance
+        id: bundle
+        run: |
+          set -euo pipefail
+          if [ '${{ steps.reuse.outputs.hit }}' = 'true' ]; then
+            python3 tools/ci/android-apks.py pack --directory scale-apks --app reused-apks/android-app-debug.apk --test reused-apks/android-app-debug-androidTest.apk --reused-from reused-apks
+          else
+            python3 tools/ci/android-apks.py pack --directory scale-apks --app android-app/build/outputs/apk/debug/android-app-debug.apk --test android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
+          fi
+      - name: Upload APKs independently of device results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.bundle.outputs.artifact }}
+          path: scale-apks/*
+          if-no-files-found: error
+          retention-days: 7
+
+  android-scale:
+    name: Android maximum-scale long test
+    needs: apks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      TZ: Asia/Shanghai
+      LANG: zh_CN.UTF-8
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.expected_sha }}
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: temurin
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.apks.outputs.artifact }}
+          path: scale-apks-staged
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify downloaded source and both APK hashes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/android-apks.py verify --directory scale-apks-staged
       - name: Generate deterministic synthetic fixture
         run: |
           python3 tools/ci/android-scale-fixture.py --out scale-fixture
           python3 tools/ci/android-scale-fixture.py --out scale-fixture --validate
-      - name: Reuse the APKs of an earlier run of this SHA
-        # Re-runs of the same SHA reuse the APKs built for it, which removes the
-        # ~6-7 minute build from every iteration. The driver still records both
-        # APK hashes in host.json, so reused bytes stay visible in the evidence.
-        id: reuse
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: android-scale-apks-${{ inputs.expected_sha }}
-          path: scale-apks
-      - name: Build APKs before the emulator session
-        # Built outside the emulator session: the emulator action kills the
-        # emulator when `script` ends, so compilation must not sit inside it.
-        if: steps.reuse.outcome != 'success'
-        run: ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebug :android-app:assembleDebugAndroidTest --warning-mode all
-      - name: Stage the APK paths
-        run: |
-          set -euo pipefail
-          mkdir -p scale-apks-staged
-          if [ -f scale-apks/android-app-debug.apk ]; then
-            cp scale-apks/android-app-debug.apk scale-apks-staged/
-            cp scale-apks/android-app-debug-androidTest.apk scale-apks-staged/
-          else
-            cp android-app/build/outputs/apk/debug/android-app-debug.apk scale-apks-staged/
-            cp android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk scale-apks-staged/
-          fi
-      - name: Upload the built APKs for re-runs
-        if: steps.reuse.outcome != 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-scale-apks-${{ inputs.expected_sha }}
-          path: scale-apks-staged/*.apk
-          retention-days: 7
       - name: Enable KVM group perms
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      - name: Record outer deadline before emulator boot
+        run: echo "ANDROID_CI_OUTER_DEADLINE_EPOCH=$(( $(date +%s) + 14400 ))" >> "$GITHUB_ENV"
       - name: Run the scale chain on the pinned emulator
         timeout-minutes: 240
         env:
@@ -148,7 +173,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
             set -u
-            python3 tools/ci/android-scale-run.py --fixture scale-fixture --evidence scale-evidence --app scale-apks-staged/android-app-debug.apk --test scale-apks-staged/android-app-debug-androidTest.apk --sha "${EXPECTED_SHA}"
+            python3 tools/ci/android-scale-run.py --fixture scale-fixture --evidence scale-evidence --app scale-apks-staged/android-app-debug.apk --test scale-apks-staged/android-app-debug-androidTest.apk --sha "${EXPECTED_SHA}" --outer-deadline-epoch "$ANDROID_CI_OUTER_DEADLINE_EPOCH"
       - name: Independently validate the collected evidence
         # The job must not rely solely on the driver's own exit code relayed
         # through the emulator action. This step re-runs the strict reducer,

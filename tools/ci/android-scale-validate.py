@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 
 from android_scale.fixture import load_manifest, validate_manifest  # noqa: E402
 from android_scale.result import cross_check_manifest, validate_evidence  # noqa: E402
+from android_scale.preflight import validate_preflight  # noqa: E402
 
 FAILURES = (ValueError, OSError, KeyError, json.JSONDecodeError, ET.ParseError)
 
@@ -29,9 +30,14 @@ def main() -> int:
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--sha", required=True)
     parser.add_argument("--fixture", type=Path, required=True)
+    parser.add_argument("--mode", choices=("preflight", "maximum"), default="maximum")
     args = parser.parse_args()
 
     try:
+        if args.mode == "preflight":
+            validate_preflight(args.evidence, args.sha)
+            print("PASS infrastructure preflight (not maximum-scale acceptance)", flush=True)
+            return 0
         validate_evidence(args.evidence, args.sha)
     except FAILURES as error:
         print(f"FAIL evidence validation: {type(error).__name__}: {error}", flush=True)

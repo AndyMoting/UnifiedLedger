@@ -1,5 +1,6 @@
 1	tests.python.test_android_scale_fixture
 1	tests.python.test_android_scale_result
+1	tests.python.test_android_ci_repair
 1	tests.python.test_golden_v2
 1	tests.python.test_golden_v2_rg03_expected
 1	tests.python.test_golden_v2_rg04_expected

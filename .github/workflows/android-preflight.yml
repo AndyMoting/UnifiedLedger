@@ -1,0 +1,128 @@
+name: Android scale preflight
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'android-app/**'
+      - 'app-ui/**'
+      - 'ledger-domain/**'
+      - 'ledger-data/**'
+      - 'ledger-application/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - 'gradle/**'
+      - 'tools/python/android_scale/**'
+      - 'tools/ci/android-*'
+      - 'tests/python/test_android_*'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/android-*.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: android-preflight-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  apks:
+    name: Android preflight APKs
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      artifact: ${{ steps.bundle.outputs.artifact }}
+    env:
+      GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx3g -Dkotlin.daemon.jvmargs=-Xmx2g
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: temurin
+      - name: Discover and verify an earlier whole-tree APK bundle
+        id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/android-apks.py reuse --directory reused-apks
+      - name: Build missing APKs outside the emulator session
+        if: steps.reuse.outputs.hit != 'true'
+        run: ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebug :android-app:assembleDebugAndroidTest --warning-mode all
+      - name: Package APKs with this producer's provenance
+        id: bundle
+        run: |
+          set -euo pipefail
+          if [ '${{ steps.reuse.outputs.hit }}' = 'true' ]; then
+            python3 tools/ci/android-apks.py pack --directory preflight-apks --app reused-apks/android-app-debug.apk --test reused-apks/android-app-debug-androidTest.apk --reused-from reused-apks
+          else
+            python3 tools/ci/android-apks.py pack --directory preflight-apks --app android-app/build/outputs/apk/debug/android-app-debug.apk --test android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.bundle.outputs.artifact }}
+          path: preflight-apks/*
+          if-no-files-found: error
+          retention-days: 7
+
+  preflight:
+    name: Android scale preflight
+    needs: apks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TZ: Asia/Shanghai
+      LANG: zh_CN.UTF-8
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: temurin
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.apks.outputs.artifact }}
+          path: preflight-apks
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify downloaded source and both APK hashes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/android-apks.py verify --directory preflight-apks
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Record outer deadline before emulator boot
+        run: echo "ANDROID_CI_OUTER_DEADLINE_EPOCH=$(( $(date +%s) + 900 ))" >> "$GITHUB_ENV"
+      - name: Exercise real scale setup and named instrumentation
+        timeout-minutes: 15
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          avd-name: ul-scale
+          profile: pixel_6
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          cores: 2
+          ram-size: 2048M
+          emulator-boot-timeout: 300
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: python3 tools/ci/android-scale-run.py --mode preflight --fixture preflight-fixture --evidence preflight-evidence --app preflight-apks/android-app-debug.apk --test preflight-apks/android-app-debug-androidTest.apk --sha "${{ github.sha }}" --outer-deadline-epoch "$ANDROID_CI_OUTER_DEADLINE_EPOCH"
+      - name: Independently validate preflight evidence
+        if: always()
+        run: python3 tools/ci/android-scale-validate.py --mode preflight --fixture preflight-fixture --evidence preflight-evidence --sha "${{ github.sha }}"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android-preflight-${{ github.sha }}-${{ github.run_attempt }}
+          path: preflight-evidence/**
+          if-no-files-found: error
+          retention-days: 7
