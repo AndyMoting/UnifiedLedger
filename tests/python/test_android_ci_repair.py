@@ -21,9 +21,9 @@ from android_scale import apks
 from android_scale.inventory import check_inventory
 from android_scale.preflight import prepare_probe, probe_bytes, validate_preflight
 from android_scale.result import PREFLIGHT_CLASS, PREFLIGHT_METHOD, TEST_CLASS, TEST_METHOD, validate_evidence
-from android_scale.result import validate_log_collection
+from android_scale.result import validate_app_ready, validate_log_collection
 from android_scale.runner import PACKAGE, RUNNER, ScaleDeadlineError, ScaleRunner
-from tests.python.test_android_scale_result import CONFIG, SHA, status_log
+from tests.python.test_android_scale_result import CONFIG, READY_XML, SHA, ready_adb_reply, ready_proof, status_log
 
 
 class HostOrchestration(unittest.TestCase):
@@ -62,7 +62,7 @@ class HostOrchestration(unittest.TestCase):
             self.private[args[-1]] = (self.runner.fixture / args[-2].split("/")[-1]).read_bytes()
         if args[:4] == ("exec-out", "run-as", PACKAGE, "cat"):
             return self.private[args[-1]]
-        return ""
+        return ready_adb_reply(args)
 
     def test_install_exercises_both_packages_launch_private_copy_and_readback(self):
         self.runner.adb = self.adb
@@ -71,6 +71,135 @@ class HostOrchestration(unittest.TestCase):
         self.assertEqual(self.private["files/scale-fixture/probe.txt"], probe_bytes(SHA))
         self.assertEqual(len([call for call in self.calls if call[0] == "install"]), 2)
         self.assertFalse(any("chown" in call or "restorecon" in call for call in self.calls))
+
+    def test_starting_then_ready_precedes_normal_stop(self):
+        observations = iter((READY_XML.replace("账本：synthetic", "正在打开本地账本…"), READY_XML))
+        def controlled(*args, **kwargs):
+            if args[:2] == ("exec-out", "cat"):
+                self.calls.append(args)
+                self.assertFalse(any("force-stop" in call for call in self.calls))
+                return next(observations)
+            return self.adb(*args, **kwargs)
+        self.runner.adb = controlled
+        with patch("android_scale.runner.time.sleep"):
+            self.runner.ensure_app_data_dir()
+        dumps = [call for call in self.calls if "dump" in call]
+        self.assertEqual(len(dumps), 2)
+        self.assertNotEqual(dumps[0][-1], dumps[1][-1])
+        self.assertEqual(self.calls[-1], ("shell", "am", "force-stop", PACKAGE))
+        validate_app_ready(self.runner.evidence, self.runner.report)
+
+    def test_startup_error_and_pointer_recovery_take_priority_over_ready(self):
+        for error in ("无法打开本地账本（本地数据库不可用）", "无法打开本地账本：缺少活动代指针，但磁盘上存在候选代目录。"):
+            self.calls.clear()
+            xml = READY_XML.replace("</hierarchy>", f'<node package="{PACKAGE}" text="{error}" bounds="[0,80][500,160]" /></hierarchy>')
+            def controlled(*args, **kwargs):
+                return xml if args[:2] == ("exec-out", "cat") else self.adb(*args, **kwargs)
+            self.runner.adb = controlled
+            with self.subTest(error=error), self.assertRaisesRegex(RuntimeError, "startup error/recovery"):
+                self.runner.ensure_app_data_dir()
+            self.assertEqual(len([call for call in self.calls if call[:3] == ("shell", "am", "start")]), 1)
+            self.assertFalse(any("force-stop" in call for call in self.calls))
+            self.assertFalse(any(call[:2] == ("shell", "rm") for call in self.calls))
+            self.assertNotIn("app_ready", self.runner.report)
+
+    def test_unknown_missing_malformed_foreign_or_invisible_xml_never_passes(self):
+        samples = ("", "<hierarchy", "<unknown />", "<hierarchy><unknown /></hierarchy>",
+                   READY_XML.replace(PACKAGE, "other.package"), READY_XML.replace("账本：synthetic", "unknown"),
+                   READY_XML.replace('bounds=', 'visible-to-user="false" bounds='),
+                   READY_XML.replace("[0,0][500,80]", "[0,0][0,0]"),
+                   READY_XML.replace('bounds="[0,0][500,80]"', ""))
+        for xml in samples:
+            self.calls.clear()
+            now = [100.0]
+            self.runner.deadline = self.runner.active_deadline = 105
+            def controlled(*args, **kwargs):
+                return xml if args[:2] == ("exec-out", "cat") else self.adb(*args, **kwargs)
+            self.runner.adb = controlled
+            with self.subTest(xml=xml), patch("android_scale.runner.time.monotonic", side_effect=lambda: now[0]), \
+                    patch("android_scale.runner.time.sleep", side_effect=lambda seconds: now.__setitem__(0, now[0] + seconds)), \
+                    self.assertRaises(ScaleDeadlineError):
+                self.runner.ensure_app_data_dir()
+            self.assertEqual(now[0], 105)
+            self.assertFalse(any("force-stop" in call for call in self.calls))
+            self.assertNotIn("app_ready", self.runner.report)
+
+    def test_failed_dump_cannot_reuse_a_previous_ready_file_or_output(self):
+        for failure in (RuntimeError("dump failed after old file"), "UI hierchary dumped to: /data/local/tmp/old.xml", "ERROR: no idle state"):
+            self.calls.clear()
+            self.runner.report["app_ready"] = ready_proof(self.runner.evidence)
+            now = [100.0]
+            self.runner.deadline = self.runner.active_deadline = 104
+            def controlled(*args, **kwargs):
+                self.calls.append(args)
+                if args[:3] == ("shell", "uiautomator", "dump"):
+                    if isinstance(failure, Exception):
+                        raise failure
+                    return failure
+                if args[:2] == ("exec-out", "cat"):
+                    self.fail("must not read XML after an unsuccessful dump")
+                return self.adb(*args, **kwargs)
+            self.runner.adb = controlled
+            with self.subTest(failure=failure), patch("android_scale.runner.time.monotonic", side_effect=lambda: now[0]), \
+                    patch("android_scale.runner.time.sleep", side_effect=lambda seconds: now.__setitem__(0, now[0] + seconds)), \
+                    self.assertRaises(ScaleDeadlineError):
+                self.runner.ensure_app_data_dir()
+            self.assertNotIn("app_ready", self.runner.report)
+            self.assertFalse(any("force-stop" in call for call in self.calls))
+
+    def test_transient_ui_read_failure_retries_with_a_new_dump(self):
+        reads = [0]
+        def controlled(*args, **kwargs):
+            if args[:2] == ("exec-out", "cat"):
+                reads[0] += 1
+                if reads[0] == 1:
+                    raise RuntimeError("read temporarily unavailable")
+            return self.adb(*args, **kwargs)
+        self.runner.adb = controlled
+        with patch("android_scale.runner.time.sleep"):
+            self.runner.ensure_app_data_dir()
+        self.assertEqual(reads[0], 2)
+        self.assertEqual(len([call for call in self.calls if "dump" in call]), 2)
+        validate_app_ready(self.runner.evidence, self.runner.report)
+
+    def test_ready_timeout_is_180_seconds_or_remaining_deadline(self):
+        for remaining, expected in ((500, 180), (3, 3)):
+            now = [100.0]
+            self.runner.deadline = self.runner.active_deadline = 100 + remaining
+            self.runner.adb = Mock(return_value="")
+            with self.subTest(remaining=remaining), patch("android_scale.runner.time.monotonic", side_effect=lambda: now[0]), \
+                    patch("android_scale.runner.time.sleep", side_effect=lambda seconds: now.__setitem__(0, now[0] + seconds)), \
+                    self.assertRaises(ScaleDeadlineError):
+                self.runner.await_app_ready()
+            self.assertEqual(now[0], 100 + expected)
+            self.assertEqual(self.runner.active_deadline, 100 + remaining)
+
+    def test_ready_failure_is_setup_error_and_never_enters_instrumentation(self):
+        self.runner.configure = Mock()
+        self.runner.phase = Mock()
+        def controlled(*args, **kwargs):
+            if args[:2] == ("exec-out", "cat"):
+                return READY_XML.replace("账本：synthetic", "无法打开本地账本")
+            return self.adb(*args, **kwargs)
+        self.runner.adb = controlled
+        self.assertEqual(self.runner.run(), 1)
+        self.runner.phase.assert_not_called()
+        self.assertFalse(self.runner.setup_complete)
+        host = json.loads((self.runner.evidence / "host.json").read_text())
+        self.assertEqual(host["status"], "ERROR")
+        self.assertEqual(host["phases"], [])
+        self.assertIn("startup error/recovery", host["errorMessage"])
+        suite = ET.parse(self.runner.evidence / "junit.xml").getroot()
+        self.assertEqual(suite.find("testcase").get("name"), "setup")
+        self.assertEqual(suite.get("errors"), "1")
+        self.assertFalse(any("force-stop" in call for call in self.calls))
+
+    def test_phase_cannot_start_without_ready_proof(self):
+        self.runner.adb = Mock()
+        with patch("android_scale.runner.subprocess.Popen") as process, self.assertRaises((OSError, ValueError)):
+            self.runner.phase("preflight")
+        self.runner.adb.assert_not_called()
+        process.assert_not_called()
 
     def test_install_refuses_wrong_runner_and_private_staging_failures(self):
         for fault in ("runner", "copy", "readback", "launch", "package"):
@@ -136,12 +265,15 @@ class HostOrchestration(unittest.TestCase):
         self.assertEqual(root.find("testcase").get("name"), "setup")
         self.assertEqual(root.get("skipped"), "1")
 
-    def test_real_preflight_phase_orchestration_requires_named_test_and_device_evidence(self):
+    def run_valid_preflight(self):
         self.runner.adb = self.adb
         self.runner.install()
         self.runner.setup_complete = True
         self.runner.report.update(readiness={"user": "RUNNING_UNLOCKED", "package_service": True, "window_service": True}, config=CONFIG)
-        data = {"schema": 1, "mode": "preflight", "sha": SHA, "probeSha256": hashlib.sha256(probe_bytes(SHA)).hexdigest(), "roundTrip": True}
+        identity = {"ledger": "synthetic", "generation": "gen-1", "transactions": 0, "postings": 0}
+        data = {"schema": 2, "mode": "preflight", "sha": SHA, "probeSha256": hashlib.sha256(probe_bytes(SHA)).hexdigest(),
+                "roundTrip": True, "pointerObservedBeforeOpen": True,
+                "beforeOpen": dict(identity), "firstOpen": dict(identity), "reopen": dict(identity)}
         def output_process(command, stdout, **kwargs):
             self.assertIn(PREFLIGHT_CLASS + "#" + PREFLIGHT_METHOD, command)
             stdout.write(status_log(test_name=PREFLIGHT_METHOD).replace(TEST_CLASS, PREFLIGHT_CLASS).encode())
@@ -159,10 +291,45 @@ class HostOrchestration(unittest.TestCase):
             (self.runner.evidence / name).write_text("evidence\n")
         (self.runner.evidence / "logcat-collection.json").write_text(json.dumps({"started": True, "stopped": True, "stream_bytes": 100, "gaps": []}))
         validate_preflight(self.runner.evidence, SHA)
+        return data
+
+    def test_real_preflight_phase_orchestration_requires_named_test_and_device_evidence(self):
+        self.run_valid_preflight()
         with self.assertRaisesRegex(ValueError, "maximum evidence mode"):
             validate_evidence(self.runner.evidence, SHA)
         (self.runner.evidence / "instrumentation-preflight.txt").write_text(status_log())
         with self.assertRaises(ValueError):
+            validate_preflight(self.runner.evidence, SHA)
+
+    def test_preflight_rejects_missing_pointer_changed_identity_and_economic_effects(self):
+        original = self.run_valid_preflight()
+        variants = []
+        for key in original:
+            missing = copy.deepcopy(original)
+            missing.pop(key)
+            variants.append(missing)
+        for value in (False, 1, None):
+            variants.append(dict(original, pointerObservedBeforeOpen=value))
+        for stage in ("beforeOpen", "firstOpen", "reopen"):
+            for key, values in (("ledger", ("changed", "", None)), ("generation", ("gen-2", "", "gen-0", None)),
+                                ("transactions", (1, False, "0")), ("postings", (1, False, "0"))):
+                for value in values:
+                    data = copy.deepcopy(original)
+                    data[stage][key] = value
+                    variants.append(data)
+        for index, data in enumerate(variants):
+            with self.subTest(index=index):
+                (self.runner.evidence / "device.json").write_text(json.dumps(data))
+                with self.assertRaises(ValueError):
+                    validate_preflight(self.runner.evidence, SHA)
+
+    def test_preflight_rejects_missing_ready_even_when_device_roundtrip_passes(self):
+        self.run_valid_preflight()
+        path = self.runner.evidence / "host.json"
+        host = json.loads(path.read_text())
+        host.pop("app_ready")
+        path.write_text(json.dumps(host))
+        with self.assertRaisesRegex(ValueError, "Ready proof"):
             validate_preflight(self.runner.evidence, SHA)
 
     def test_rejected_avd_never_enters_diagnostics_or_force_stop(self):

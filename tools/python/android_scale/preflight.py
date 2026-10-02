@@ -8,7 +8,8 @@ import re
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from .result import PREFLIGHT_CLASS, PREFLIGHT_METHOD, crash_present, instrumentation_pass, strict_json, validate_log_collection
+from .result import (PREFLIGHT_CLASS, PREFLIGHT_METHOD, crash_present, instrumentation_pass, strict_json,
+                     validate_app_ready, validate_log_collection)
 
 
 def probe_bytes(sha: str) -> bytes:
@@ -25,6 +26,7 @@ def prepare_probe(directory: Path, sha: str) -> None:
 def validate_preflight(directory: Path, sha: str) -> dict:
     host = strict_json(directory / "host.json")
     validate_log_collection(directory)
+    validate_app_ready(directory, host)
     device = strict_json(directory / "device.json")
     if host.get("mode") != "preflight" or host.get("sha") != sha or device.get("sha") != sha:
         raise ValueError("preflight identity mismatch")
@@ -47,8 +49,26 @@ def validate_preflight(directory: Path, sha: str) -> dict:
     ):
         raise ValueError("preflight APK hashes missing")
     digest = hashlib.sha256(probe_bytes(sha)).hexdigest()
-    if type(device.get("schema")) is not int or device != {"schema": 1, "mode": "preflight", "sha": sha, "probeSha256": digest, "roundTrip": True}:
+    expected_keys = {"schema", "mode", "sha", "probeSha256", "roundTrip", "pointerObservedBeforeOpen",
+                     "beforeOpen", "firstOpen", "reopen"}
+    if (set(device) != expected_keys or type(device.get("schema")) is not int or device["schema"] != 2
+            or device.get("mode") != "preflight" or device.get("probeSha256") != digest or device.get("roundTrip") is not True):
         raise ValueError("preflight private roundtrip evidence mismatch")
+    if device.get("pointerObservedBeforeOpen") is not True:
+        raise ValueError("preflight existing active pointer not observed before opener")
+    original = device["beforeOpen"]
+    for stage in ("beforeOpen", "firstOpen", "reopen"):
+        snapshot = device[stage]
+        if not isinstance(snapshot, dict) or set(snapshot) != {"ledger", "generation", "transactions", "postings"}:
+            raise ValueError("preflight storage snapshot missing: " + stage)
+        if not isinstance(snapshot["ledger"], str) or not snapshot["ledger"].strip():
+            raise ValueError("preflight ledger identity missing")
+        if not isinstance(snapshot["generation"], str) or not re.fullmatch(r"gen-[1-9][0-9]*", snapshot["generation"]):
+            raise ValueError("preflight active generation invalid")
+        if any(type(snapshot[key]) is not int or snapshot[key] != 0 for key in ("transactions", "postings")):
+            raise ValueError("preflight unexpected economic effect: " + stage)
+        if snapshot != original:
+            raise ValueError("preflight reopen identity mismatch")
     if {path.name for path in directory.glob("instrumentation-*.txt")} != {"instrumentation-preflight.txt"}:
         raise ValueError("unexpected preflight logs")
     instrumentation_pass((directory / "instrumentation-preflight.txt").read_text(encoding="utf-8"), PREFLIGHT_CLASS, PREFLIGHT_METHOD)

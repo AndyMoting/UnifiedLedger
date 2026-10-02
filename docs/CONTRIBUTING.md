@@ -98,15 +98,17 @@ gh workflow run android-scale.yml --ref <branch> -f expected_sha=<完整40位SHA
 
 旧的 `ImportScaleTraversalInstrumentedTest` 保留为人工取证工具，语义不变；`android-instrumented.yml` 的 `notClass` 已同时排除它与 `AndroidScaleLongInstrumentedTest`，长测入口不会被普通 PR 带入。本机不跑该链：不启动模拟器，也不为该链装配 APK。
 
-### Android scale preflight 与 APK 来源（D-200）
+### Android scale preflight 与 APK 来源（D-200 / D-201）
 
 可信双 APK 工件与专用预检支持同仓库 PR 和手动运行；fork PR 跳过这两项，其既有 `Android compile` 编译、单测、APK 构建及普通单 APK 上传照常执行。预检 producer 被跳过时，其依赖的设备 job 同步跳过。
 
-`.github/workflows/android-preflight.yml` 对相关 PR 自动运行非 required 的设施预检，另支持手动运行。触发路径覆盖 Android 全部传递模块、构建入口、`tools/python/android_scale/**`、`tools/ci/android-*`、相关 Python 测试及 CI/Android workflow。预检复用长测驱动器的设备配置、安装、启动与应用私有目录传输路径；`--mode preflight` 只准备含提交 SHA 的匿名小探针并执行 `AndroidScalePreflightInstrumentedTest.privateFixtureRoundTrip`，设备读回、重新写入并上报探针哈希。每个 job 最多 30 分钟，设备步骤 15 分钟，驱动执行 600 秒，失败诊断最多另用 120 秒。两个 APK 在独立 producer job 准备，模拟器会话内不构建。
+`.github/workflows/android-preflight.yml` 对相关 PR 自动运行非 required 的设施预检，另支持手动运行。触发路径覆盖 Android 全部传递模块、构建入口、`tools/python/android_scale/**`、`tools/ci/android-*`、相关 Python 测试及 CI/Android workflow。预检复用长测驱动器的设备配置、安装、启动与应用私有目录传输路径；`--mode preflight` 准备含提交 SHA 的匿名小探针并执行 `AndroidScalePreflightInstrumentedTest.privateFixtureRoundTrip`，设备读回、重新写入并上报探针哈希。该用例先以只读 oracle 确认已有有效活动指针、代目录及账本，再调用正式 `openAndroidStableStorageLedger`、权威读回、关闭并重开；开前、首次打开和重开均须是同一账本/代，正式交易与 posting 均为零。必须先观察已有存储，不能让生产 opener 的 FreshInstall 补建掩盖首启失败。每个 job 最多 30 分钟，设备步骤 15 分钟，驱动执行 600 秒，失败诊断最多另用 120 秒。两个 APK 在独立 producer job 准备，模拟器会话内不构建。
 
-默认 `--mode maximum` 保持五阶段、十一业务步骤及 61,000 候选 / 150,000 关系判据。预检报告明确标 `mode=preflight`，工件 `android-preflight-<sha>-<attempt>` 独立保存；最大规模 reducer 要求 `mode=maximum`，不能接受预检报告。两次同候选的独立预检通过后再进行最大规模验收；只重跑设备 job 可复用已经成功的 producer 产物。
+默认 `--mode maximum` 保持五阶段、十一业务步骤及 61,000 候选 / 150,000 关系判据。预检报告明确标 `mode=preflight`，工件 `android-preflight-<sha>-<attempt>` 独立保存；最大规模 reducer 要求 `mode=maximum`，不能接受预检报告。D-201 加固候选必须新跑两次同候选的独立加强预检，再进行最大规模验收；旧版仅探针往返成功不满足新门。只重跑设备 job 可复用已经成功的 producer 产物。
 
 框架重启后最多 300 秒等待窗口服务、包管理服务及用户 0 的 `RUNNING_UNLOCKED` 状态，安装后核对应用/测试包、instrumentation target、launcher 实际启动结果，并通过 `run-as` 对暂存文件逐个读回校验。应用数据根由 Android 自行管理。设施失败在 JUnit 增记 `setup ERROR`，未执行业务阶段保持 `NOT_RUN`；后续缺证只追加诊断，不覆盖首因。logcat 持续采集，断线重连/可能缺口单独记录；证据保留 7 天，仍不上传数据库或完整输入。
+
+`am start -W` 返回不等于账本初始化完成。两种模式均需在当前剩余执行预算内、最多 180 秒，以每次独立输出路径的新鲜 UI XML 等待本包可见的 `账本：` 前缀；同包启动失败/指针恢复提示优先判错，Starting、短暂读取失败、缺失或未知 XML 均不得当作 Ready。失败 dump 的残留、其他包的文本和不可见节点不能通过。只有 Ready 后才正常 force-stop 或启动 instrumentation；失败保留 `setup ERROR`，不点击恢复、不清库、不补写指针，已有的 owned 失败清理仍可停止本包。host 必须保存 `app_ready` 与哈希绑定的 `ready-ui.xml`，预检和 maximum reducer 均强制校验；预检设备 schema 2 还必须包含开前指针观察及三次同一空账本快照，缺字段即失败。普通设备回归清单仍为 41 例，专用预检不混入其中。
 
 最大规模执行全局预算仍为 13,800 秒，设备步骤 240 分钟，设备 job 300 分钟。`prepare` 与 `chain` 共用剩余全局预算；`reopen`、`replay`、`final-reopen` 各最多 480 秒。全部命令和 best-effort 探针受当前阶段/全局剩余时间约束；结束后的采证总预算 120 秒。不宣称准备或主链拥有能提前阻止其耗尽全局时间的独立预算。
 
