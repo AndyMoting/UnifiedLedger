@@ -4102,3 +4102,28 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 本决定只授权计时打点；不授权任何启动行为、判据、规模或诊断预算改动，不授权归因结论。
 
 **关联决定：** D-202（coldstart 有界取证）、D-198（最大规模契约）、A-PERF/P7-04（查询统计先例）。
+
+## D-204 coldstart 观察器修复、host 判别探针与 scale workflow 并行验收
+
+**状态：** 已批准（2026-10-02；用户明确授权「最全方案、CI 能并行就并行、修复走完整门」。仅测试设施与 workflow 并发组改动，不改任何判据、规模、产品语义或 instrumented 清单）。
+
+**背景：** D-203 归因：产品冷启动 +2.994s Ready、+3.424s 首读完成，无慢问题；但测试观察器 AndroidScaleUi（进程内 UiAutomation a11y）在 180s 等待全程读到 8 节点加载屏树，两轮失败瞬间帧缓冲截图均为就绪主界面——交接书 §6 结果 2 成立（界面就绪但 helper 未看到）。批 2A/2B 因此无对象，批 2C（观察器修复）为本决定。
+
+**机制依据（本机 AOSP android-36.1 源码，只读取证）：**
+
+1. 进程内客户端的每棵 a11y 树都经客户端侧 `AccessibilityCache` 读取：`AccessibilityInteractionClient.findAccessibilityNodeInfoByAccessibilityId` 缓存优先且无过期（`AccessibilityInteractionClient.java:604-630`，android-36.1）；窗口列表同样缓存优先（`:490-533`）。
+2. 缓存只靠投递到本连接的事件失效：`IAccessibilityServiceClientWrapper.onAccessibilityEvent` 无条件把事件交给缓存（先于 `serviceWantsEvent` 服务回调门），故掩码不能过滤本连接自己的缓存流（`AccessibilityService.java:2989-3000`）——投递面由系统侧按下发 info 收窄，AMS 源码不在本机取证范围；`TYPE_WINDOW_STATE_CHANGED`/`TYPE_WINDOWS_CHANGED` 触发整树 `clear()`，`TYPE_WINDOW_CONTENT_CHANGED`/`TYPE_VIEW_SCROLLED` 逐子树逐出（`AccessibilityCache.java:262-305`）。事件流一旦停止，查询将永远命中陈旧缓存——与 D-203 的 36 采样全程同态签名一致。
+3. 平台注册 UiAutomation 时的 `eventTypes=TYPES_ALL_MASK`（`UiAutomationConnection.java:674-675`），而 `UiAutomation.setServiceInfo` 是对整份 info 的整体替换并先清一次客户端缓存（`UiAutomation.java:839-855`）；缓存关键事件的投递契约见 `AccessibilityCache.CACHE_CRITICAL_EVENTS_MASK`（`AccessibilityCache.java:61-72`）。因投递面收窄点不在客户端源码内，修复按「保证事件投递面不因 serviceInfo 替换而收窄 + 缺席判定前强制绕缓存复核」双层实施，不宣称单一根因已证。
+
+**决定：**
+
+1. 观察器修复（`AndroidScaleUi.init`）：serviceInfo 替换时在保留既有 `flags or FLAG_RETRIEVE_INTERACTIVE_WINDOWS` 语义的同时显式设 `eventTypes = AccessibilityEvent.TYPES_ALL_MASK`，KDoc 记录上述机制依据（含该层为纵深防御、非已证根因的如实标注）。防御层：`has()` 缺席路径对 root 做一次 `refresh()`（`AccessibilityNodeInfo.java:1339-1362`，`refresh()` → `refresh(null, true)`）后重走一次；边界如实：绕缓存仅限 root 本身，子节点仍走缓存优先路径（`getChild` → `bypassCache=false`，`AccessibilityNodeInfo.java:1452-1468`），故这是「一次额外当前根读取」而非全树免缓存。命中即返回，行为不变。
+2. host 判别探针（runner.py `poll_once`/`coldstart_host_probe`）：仅当 device evidence 显示 chain 阶段 coldstart stage 处于 `NOT_RUN`（运行中）且已运行 ≥30s 时，执行独立客户端 `uiautomator dump`（与进程内观察器不同连接，best_effort，单次 ≤30s），存 `evidence/coldstart-hostdump.xml`，host.json `coldstart_host_probe` 记 {elapsed, sha256, bytes, containsReadyMarker, containsLoadingMarker}；每次运行至多 2 次、间隔 ≥60s；dump 失败或读回为空记 `probeFailed`。诊断自包含纪律：判定门（uptime 读取）、dump 与 `rm -f` 清理任一处失败都不得逃逸出 poll_once 或改变运行结局；清理失败记 `cleanupFailed` 并把运行级状态标 `probeFailed`，但成功样本保留其 sha256/bytes/marker，门阶段故障只记 memory.txt `gate-failed`（不虚增 attempts/probeFailed）。纯诊断：不参与任何判定/validation。
+3. workflow 并行化（`.github/workflows/android-scale.yml`）：concurrency group 由 ref 级改为 `android-scale-${{ github.run_id }}`，每次运行独立组 → 同 ref 多次 dispatch 可并行验收；`cancel-in-progress: false` 保持不变。与 D-202「workflow 结构不变」边界的关系：D-202 未动并发组；本批获用户明确授权并行验收轮，且每次运行拥有独立 runner 与独占 `ul-scale` 模拟器（代码强制），并行安全。
+4. 测试：探针三态（成功含就绪 marker 记哈希与 marker 布尔 / 失败记 `probeFailed` 且不落文件 / 条件不满足不触发）+ 上限与间隔约束 + 失败收敛（空读回、清理失败保留样本、门阶段故障均不逃逸）进 `tests/python/test_android_ci_repair.py`（新增 `ColdstartHostProbe` 8 例、`WorkflowConcurrency` 1 例）；并发组改动静态断言同文件。Kotlin `eventTypes` 设置位于 androidTest 源集、依赖真实 instrumentation 环境，无可抽的纯 JVM 逻辑，如实标注 CI-owned（Android compile/ktlint 均为 required check 路径）。
+
+**验收要求：** 改动模块定向 ktlintCheck 通过（含 src/androidTest）；聚焦 Python 测试与 project_docs 退出 0；Kotlin 编译/设备行为由 CI 验证；instrumented 41 例清单零变化；下一次 maximum 验收可并行 dispatch 且各自产出按 SHA 绑定的独立证据。
+
+**边界：** coldstart PASS 判据不变（仍为 `has("账本：")` 等 a11y 信号）；探针与 `refresh()` 都只是修「眼睛」，不引入第二判据；不授权产品代码改动。机制结论以客户端侧源码为限：事件投递为何停摆的系统侧成因未取证、不在本决定宣称范围。
+
+**关联决定：** D-203（启动计时归因，本决定的证据来源）、D-202（coldstart 取证与 workflow 结构边界）、D-200/D-201（scale 设施与 Ready 门）。
