@@ -1,6 +1,7 @@
 """Strict scale evidence reducer. Missing evidence is never success."""
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -37,6 +38,48 @@ def strict_json(path: Path) -> dict:
 
 
 PACKAGE = "com.unifiedledger.android"
+READY_MARKER = "账本："
+
+
+def app_ui_state(xml: str) -> str:
+    """Classify visible app nodes only; startup failure takes precedence."""
+    root = ET.fromstring(xml)
+    if root.tag != "hierarchy" or any(node.tag != "node" for node in root.iter() if node is not root):
+        raise ValueError("unknown UI hierarchy")
+    texts = []
+
+    def visit(node, visible=True):
+        visible = visible and node.get("visible-to-user", "true") == "true"
+        if node.tag == "node":
+            bounds = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.get("bounds", ""))
+            visible = visible and bounds is not None
+            if bounds is not None:
+                x1, y1, x2, y2 = map(int, bounds.groups())
+                visible = visible and x2 > x1 and y2 > y1
+            if visible and node.get("package") == PACKAGE:
+                texts.extend((node.get("text", ""), node.get("content-desc", "")))
+        for child in node:
+            visit(child, visible)
+
+    visit(root)
+    if any(text.startswith("无法打开本地账本") for text in texts):
+        return "Error"
+    if any(text.startswith(READY_MARKER) for text in texts):
+        return "Ready"
+    return "Starting" if "正在打开本地账本…" in texts else "Unknown"
+
+
+def validate_app_ready(directory: Path, report: dict) -> None:
+    xml = (directory / "ready-ui.xml").read_bytes()
+    expected = {"state": "Ready", "package": PACKAGE, "marker": READY_MARKER, "fresh_dump": True,
+                "xml_sha256": hashlib.sha256(xml).hexdigest()}
+    proof = report.get("app_ready")
+    if not isinstance(proof, dict) or proof.get("fresh_dump") is not True or proof != expected:
+        raise ValueError("missing/invalid app Ready proof")
+    if app_ui_state(xml.decode("utf-8")) != "Ready":
+        raise ValueError("app Ready XML does not prove readiness")
+
+
 CRASH_MARKER = re.compile(r"FATAL EXCEPTION|Fatal signal|OutOfMemoryError|ANR in |am_anr|am_crash|INSTRUMENTATION_ABORTED")
 CRASH_ATTRIBUTION_WINDOW = 5
 PROCESS_NAME = re.compile(r"Process:\s*([^\s,]+)|>>>\s*([^\s]+)\s*<<<")
@@ -142,6 +185,7 @@ def validate_evidence(directory: Path, expected_sha: str) -> dict:
     if report.get("mode") != "maximum":
         raise ValueError("maximum evidence mode required")
     validate_log_collection(directory)
+    validate_app_ready(directory, report)
     device = strict_json(directory / "device.json")
     # `type(...) is not int` also rejects JSON true/false, which compare equal to 1/0.
     if type(device.get("schema")) is not int or device.get("schema") != 1:

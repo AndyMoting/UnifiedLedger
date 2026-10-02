@@ -9,12 +9,13 @@ import re
 import subprocess
 import threading
 import time
+import uuid
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from .fixture import load_manifest, validate_manifest
 from .result import (PHASES, PACKAGE, STAGES, TEST_CLASS, TEST_METHOD, PREFLIGHT_CLASS, PREFLIGHT_METHOD, crash_markers,
-                     instrumentation_pass, validate_evidence)
+                     READY_MARKER, app_ui_state, instrumentation_pass, validate_app_ready, validate_evidence)
 from .preflight import prepare_probe, validate_preflight
 
 RUNNER = "com.unifiedledger.android.test/androidx.test.runner.AndroidJUnitRunner"
@@ -225,7 +226,7 @@ class ScaleRunner:
         return components[0]
 
     def ensure_app_data_dir(self, attempts: int = 5) -> None:
-        """Prove launchability; leave private directory creation to Android."""
+        """Wait for completed ledger startup before any normal process stop."""
         last = "no attempt made"
         for _ in range(attempts):
             try:
@@ -234,14 +235,57 @@ class ScaleRunner:
                 if not re.search(r"^Status: ok\s*$", output, re.MULTILINE) or re.search(r"Error:|Error type|Exception", output):
                     raise RuntimeError(f"launcher failed: {output[:400]}")
                 self.report["launcher"] = component
-                self.adb("shell", "am", "force-stop", PACKAGE)
-                return
+                break
             except ScaleDeadlineError:
                 raise
             except RuntimeError as error:
                 last = str(error)
                 time.sleep(2)
-        raise RuntimeError(f"could not launch {PACKAGE} to create its data directory: {last}")
+        else:
+            raise RuntimeError(f"could not launch {PACKAGE} to create its data directory: {last}")
+        # Outside the launch retry: a recovery/error screen must fail immediately,
+        # not relaunch or mutate the ledger in an attempt to hide startup failure.
+        self.await_app_ready()
+        self.adb("shell", "am", "force-stop", PACKAGE)
+
+    def await_app_ready(self, timeout: float = 180) -> None:
+        prior = self.active_deadline
+        deadline = min(prior, self.deadline, time.monotonic() + min(timeout, 180))
+        self.active_deadline = deadline
+        self.report.pop("app_ready", None)
+        last = "no fresh UI dump"
+        try:
+            while True:
+                remaining_seconds(deadline, time.monotonic())
+                state = "Unknown"
+                try:
+                    # Never read the fixed path used by diagnostics, or reuse an
+                    # earlier poll's XML after a failed/non-writing dump command.
+                    path = "/data/local/tmp/ul-ready-" + uuid.uuid4().hex + ".xml"
+                    output = self.adb("shell", "uiautomator", "dump", path)
+                    if "dumped to:" not in output or not output.strip().endswith(path):
+                        raise ValueError("UI dump did not confirm its fresh output path")
+                    xml = self.adb("exec-out", "cat", path)
+                    state = app_ui_state(xml)
+                    if state != "Error":
+                        self.adb("shell", "rm", "-f", path, best_effort=True)
+                    last = state
+                except ScaleDeadlineError:
+                    raise
+                except (RuntimeError, subprocess.TimeoutExpired, ValueError, ET.ParseError) as error:
+                    last = str(error)[:200]
+                if state == "Error":
+                    raise RuntimeError("app startup error/recovery UI; refusing instrumentation")
+                if state == "Ready":
+                    data = xml.encode("utf-8")
+                    (self.evidence / "ready-ui.xml").write_bytes(data)
+                    self.report["app_ready"] = {"state": "Ready", "package": PACKAGE, "marker": READY_MARKER,
+                                                "fresh_dump": True, "xml_sha256": hashlib.sha256(data).hexdigest()}
+                    return
+                self.report["app_ready_last_observation"] = last
+                time.sleep(remaining_seconds(deadline, time.monotonic(), 2))
+        finally:
+            self.active_deadline = prior
 
     def install(self):
         if self.mode == "maximum":
@@ -410,6 +454,7 @@ class ScaleRunner:
 
     def phase(self, phase: str):
         # Only the host kills the exact app between phases; instrumentation never kills itself.
+        validate_app_ready(self.evidence, self.report)
         self.adb("shell", "am", "force-stop", PACKAGE)
         test_class, test_method = (PREFLIGHT_CLASS, PREFLIGHT_METHOD) if self.mode == "preflight" else (TEST_CLASS, TEST_METHOD)
         command = ["adb", "-s", self.serial, "shell", "am", "instrument", "-w", "-r",

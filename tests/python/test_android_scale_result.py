@@ -9,6 +9,7 @@ be reproduced offline are exercised here; the ones that need a real
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -41,6 +42,24 @@ from android_scale.runner import (  # noqa: E402
 )
 
 SHA = "a" * 40
+READY_XML = '<hierarchy rotation="0"><node package="com.unifiedledger.android" text="账本：synthetic" bounds="[0,0][500,80]" /></hierarchy>'
+
+
+def ready_proof(directory: Path) -> dict:
+    data = READY_XML.encode("utf-8")
+    (directory / "ready-ui.xml").write_bytes(data)
+    return {"state": "Ready", "package": "com.unifiedledger.android", "marker": "账本：", "fresh_dump": True,
+            "xml_sha256": hashlib.sha256(data).hexdigest()}
+
+
+def ready_adb_reply(args):
+    if args[:3] == ("shell", "uiautomator", "dump"):
+        return "UI hierchary dumped to: " + args[-1]
+    if args[:2] == ("exec-out", "cat"):
+        return READY_XML
+    return ""
+
+
 CONFIG = {
     "api": "36",
     "abi": "x86_64",
@@ -97,6 +116,7 @@ def build_valid(directory: Path, *, sha: str = SHA) -> None:
         "apk_sha256": {"app": "b" * 64, "test": "c" * 64},
         "config": dict(CONFIG),
         "elapsed_seconds": 120.0,
+        "app_ready": ready_proof(directory),
     }
     (directory / "host.json").write_text(json.dumps(host), encoding="utf-8")
     stages = {}
@@ -151,6 +171,27 @@ class ReducerRejectsPartialEvidence(unittest.TestCase):
     def test_accepts_the_complete_clean_set(self):
         build_valid(self.directory)
         self.assertEqual(validate_evidence(self.directory, SHA)["status"], "PASS")
+
+    def test_maximum_requires_true_ready_and_matching_visible_xml(self):
+        for fault in ("missing", "false", "numeric", "hash", "xml", "package", "invisible", "error"):
+            with self.subTest(fault=fault):
+                build_valid(self.directory)
+                host_path = self.directory / "host.json"
+                host = json.loads(host_path.read_text())
+                if fault == "missing":
+                    host.pop("app_ready")
+                elif fault in ("false", "numeric"):
+                    host["app_ready"]["fresh_dump"] = False if fault == "false" else 1
+                elif fault == "hash":
+                    host["app_ready"]["xml_sha256"] = "0" * 64
+                else:
+                    xml = {"xml": "<hierarchy", "package": READY_XML.replace("com.unifiedledger.android", "other"),
+                           "invisible": READY_XML.replace('bounds=', 'visible-to-user="false" bounds='),
+                           "error": READY_XML.replace("账本：synthetic", "无法打开本地账本")}[fault]
+                    (self.directory / "ready-ui.xml").write_bytes(xml.encode("utf-8"))
+                    host["app_ready"]["xml_sha256"] = hashlib.sha256(xml.encode("utf-8")).hexdigest()
+                host_path.write_text(json.dumps(host), encoding="utf-8")
+                self.assert_rejected()
 
     def test_fewer_junit_cases_is_rejected(self):
         build_valid(self.directory)
@@ -819,7 +860,7 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
                     return "priority=0\ncom.unifiedledger.android/.MainActivity\n"
                 if args[:3] == ("shell", "am", "start"):
                     return "Status: ok\n"
-                return ""
+                return ready_adb_reply(args)
 
             runner.adb = record
             runner.ensure_app_data_dir()
@@ -829,7 +870,8 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
                                         "-p", "com.unifiedledger.android"))
             self.assertEqual(calls[1], ("shell", "am", "start", "-W", "--user", "0", "-n",
                                         "com.unifiedledger.android/.MainActivity"))
-            self.assertEqual(calls[2], ("shell", "am", "force-stop", "com.unifiedledger.android"))
+            self.assertEqual(calls[2][:3], ("shell", "uiautomator", "dump"))
+            self.assertEqual(calls[-1], ("shell", "am", "force-stop", "com.unifiedledger.android"))
 
     def test_ensure_app_data_dir_retries_the_post_install_launcher_race(self):
         # ATMS answers START_CLASS_NOT_FOUND (result code=-92) for a fifth of a
@@ -848,7 +890,7 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
                         raise RuntimeError("command failed: adb (1): Error type 3\n"
                                            "Error: Activity class does not exist.")
                     return "Status: ok\n"
-                return ""
+                return ready_adb_reply(args)
 
             runner.adb = fake
             runner.ensure_app_data_dir(attempts=3)
@@ -913,7 +955,7 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
                     return "package:/data/app/base.apk\n"
                 if args[:3] == ("exec-out", "run-as", "com.unifiedledger.android"):
                     return (fixture / args[-1].split("/")[-1]).read_bytes()
-                return ""
+                return ready_adb_reply(args)
 
             runner.adb = record
             runner.install()
