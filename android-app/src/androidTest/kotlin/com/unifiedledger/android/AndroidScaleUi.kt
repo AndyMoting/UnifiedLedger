@@ -33,18 +33,19 @@ internal class AndroidScaleUi(
         // AccessibilityCache.java:262-305, android-36.1), while node and window
         // queries are cache-first with no expiry (node lookup
         // AccessibilityInteractionClient.java:604-630; window list
-        // AccessibilityInteractionClient.java:490-533). A connection whose
+        // AccessibilityInteractionClient.java:490-533, reached from
+        // UiAutomation.java:880-890). A connection whose
         // event delivery stalls therefore serves the same stale startup tree
         // indefinitely -- the D-203 signature. That client-side feed is
         // unconditional, so this process cannot filter its own cache stream;
         // delivery breadth is fixed by the platform registration, which sets
-        // eventTypes=TYPES_ALL_MASK (UiAutomationConnection.java:674-679). The
+        // eventTypes=TYPES_ALL_MASK (UiAutomationConnection.java:674-675). The
         // setServiceInfo below replaces the whole info in one call after
-        // clearing the client cache once (UiAutomation.java:839-860), so
+        // clearing the client cache once (UiAutomation.java:839-855), so
         // re-asserting TYPES_ALL_MASK keeps this flag edit from narrowing the
         // registered delivery surface, preserving the documented critical-event
         // contract (AccessibilityCache.CACHE_CRITICAL_EVENTS_MASK,
-        // AccessibilityCache.java:57-72). It is defense in depth: whether the
+        // AccessibilityCache.java:61-72). It is defense in depth: whether the
         // stall was a narrowed surface or another delivery failure cannot be
         // decided from client-side sources (the enforcement point is in
         // AMS, not in this source tree), so the absence re-read below stays as
@@ -113,21 +114,27 @@ internal class AndroidScaleUi(
     fun has(
         text: String,
         prefix: Boolean = false,
-    ): Boolean {
+    ): Boolean = findNode { candidate -> matches(candidate, text, prefix) } != null
+
+    /**
+     * Locates one node with the same two-pass rule as [has]: a hit is served from
+     * the cached walk, and only a miss pays for one root re-read that bypasses the
+     * cache (`refresh()`), after which the walk is retried. Callers must not
+     * re-walk [nodes] after this returns -- that walk could disagree with the
+     * refreshed tree; this helper is the single source of the found node.
+     */
+    private fun findNode(predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
         val root = root()
-        if (matches(nodes(root), text, prefix)) return true
-        if (root == null || !root.refresh()) return false
-        return matches(nodes(root), text, prefix)
+        nodes(root).firstOrNull(predicate)?.let { return it }
+        if (root == null || !root.refresh()) return null
+        return nodes(root).firstOrNull(predicate)
     }
 
     private fun matches(
-        nodes: List<AccessibilityNodeInfo>,
+        candidate: AccessibilityNodeInfo,
         text: String,
         prefix: Boolean,
-    ): Boolean =
-        nodes.any { node ->
-            node.isVisibleToUser && listOfNotNull(node.text?.toString(), node.contentDescription?.toString()).any { if (prefix) it.startsWith(text) else it == text }
-        }
+    ): Boolean = candidate.isVisibleToUser && listOfNotNull(candidate.text?.toString(), candidate.contentDescription?.toString()).any { if (prefix) it.startsWith(text) else it == text }
 
     // `onPoll` is a coldstart-only forensics hook: it runs after a passed tick,
     // must never call tick(), and stays null at every other call site.
@@ -164,7 +171,7 @@ internal class AndroidScaleUi(
         prefix: Boolean = false,
     ) {
         await { has(text, prefix) }
-        val node = nodes(root()).first { candidate -> candidate.isVisibleToUser && listOfNotNull(candidate.text?.toString(), candidate.contentDescription?.toString()).any { if (prefix) it.startsWith(text) else it == text } }
+        val node = findNode { candidate -> matches(candidate, text, prefix) } ?: error("clickable target absent: $text")
         clickNode(node)
     }
 
@@ -248,7 +255,7 @@ internal class AndroidScaleUi(
 
     fun selectSafFixture() {
         seek("支付宝账单（CSV）", forward = false)
-        val format = nodes(root()).first { it.text?.toString() == "支付宝账单（CSV）" }
+        val format = findNode { it.text?.toString() == "支付宝账单（CSV）" } ?: error("Alipay format entry absent")
         val picks = nodes(root()).filter { it.text?.toString() == "选择文件" && it.isVisibleToUser }
         clickNode(picks.minByOrNull { kotlin.math.abs(bounds(it).centerY() - bounds(format).centerY()) } ?: error("Alipay picker absent"))
         await {

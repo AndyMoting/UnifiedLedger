@@ -639,6 +639,57 @@ class ColdstartHostProbe(unittest.TestCase):
         self.assertEqual(state, {"attempts": 0, "probes": [], "probeFailed": False})
         self.assertIn("gate-failed", (self.runner.evidence / "memory.txt").read_text(encoding="utf-8"))
 
+    def test_probe_is_chain_only(self):
+        # Only the chain phase can hold a coldstart; other phases must not dump.
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+        self.runner.adb = self.adb
+        self.runner.poll_once("prepare")
+        self.assertEqual(self.runner.report["coldstart_host_probe"], {"attempts": 0, "probes": [], "probeFailed": False})
+        self.assertFalse(any(args[:3] == ("shell", "uiautomator", "dump") for args in self.calls))
+
+    def test_probe_does_not_trigger_without_device_evidence(self):
+        # Evidence not yet written (common early-chain) and a failing probe both
+        # leave `device` None; neither may attempt a dump or escape poll_once.
+        def no_evidence(*args, **kwargs):
+            if args[:3] == ("exec-out", "run-as", PACKAGE):
+                return ""
+            return self.adb(*args, **kwargs)
+
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+        self.runner.adb = no_evidence
+        self.runner.poll_once("chain")
+        self.assertEqual(self.runner.report["coldstart_host_probe"], {"attempts": 0, "probes": [], "probeFailed": False})
+
+        def evidence_breaks(*args, **kwargs):
+            if args[:3] == ("exec-out", "run-as", PACKAGE):
+                raise RuntimeError("run-as interrupted")
+            return self.adb(*args, **kwargs)
+
+        self.runner.adb = evidence_breaks
+        self.runner.poll_once("chain")
+        self.assertEqual(self.runner.report["coldstart_host_probe"], {"attempts": 0, "probes": [], "probeFailed": False})
+        self.assertFalse(any(args[:3] == ("shell", "uiautomator", "dump") for args in self.calls))
+
+    def test_deadline_inside_the_probe_propagates_to_the_phase_loop(self):
+        # An exhausted deadline is the one failure the probe must NOT contain:
+        # the phase loop re-checks the budget on its next tick. Cleanup and the
+        # sample record still happen (they run in the finally block).
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+
+        def dump_exhausts_deadline(*args, **kwargs):
+            if args[:3] == ("shell", "uiautomator", "dump"):
+                raise ScaleDeadlineError("global deadline exceeded")
+            return self.adb(*args, **kwargs)
+
+        self.runner.adb = dump_exhausts_deadline
+        with self.assertRaises(ScaleDeadlineError):
+            self.runner.poll_once("chain")
+        state = self.runner.report["coldstart_host_probe"]
+        self.assertEqual(state["attempts"], 1)
+        self.assertEqual(len(state["probes"]), 1)
+        self.assertTrue(any(args[:3] == ("shell", "rm", "-f") for args in self.calls))
+        self.assertIn("coldstart-host-probe", (self.runner.evidence / "memory.txt").read_text(encoding="utf-8"))
+
     def test_at_most_two_probes_at_least_sixty_seconds_apart(self):
         self.dump_xml = self.LOADING_XML
         self.uptime_s = (self.started_ms + 40_000) / 1000
@@ -667,6 +718,17 @@ class WorkflowConcurrency(unittest.TestCase):
         self.assertIn("group: android-scale-${{ github.run_id }}", concurrency)
         self.assertIn("cancel-in-progress: false", concurrency)
         self.assertNotIn("github.ref", concurrency)
+
+    def test_evidence_artifact_name_carries_the_run_identity(self):
+        # Parallel acceptance means two runs of the same SHA produce two
+        # evidence sets; their artifact names must stay tellable apart. The
+        # upload step still ships the same directory.
+        workflow = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "android-scale.yml"
+        text = workflow.read_text(encoding="utf-8")
+        self.assertIn("name: android-scale-${{ inputs.expected_sha }}-${{ github.run_id }}", text)
+        self.assertNotIn("name: android-scale-${{ inputs.expected_sha }}\n", text)
+        block = text.split("name: android-scale-${{ inputs.expected_sha }}-${{ github.run_id }}", 1)[1]
+        self.assertIn("path: scale-evidence/**", block)
 
 
 class ApkProvenance(unittest.TestCase):
