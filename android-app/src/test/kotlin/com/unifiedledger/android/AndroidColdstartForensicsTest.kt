@@ -10,9 +10,8 @@ class AndroidColdstartForensicsTest {
     private fun stack(
         name: String,
         vararg frames: StackTraceElement,
-    ): Pair<String, Array<StackTraceElement>> {
-        return name to arrayOf(*frames)
-    }
+    ): Pair<String, Array<StackTraceElement>> =
+        name to arrayOf(*frames)
 
     @Test
     fun signalHitsKeepOnlyWhitelistedStartupWords() {
