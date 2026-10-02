@@ -3997,3 +3997,25 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残余（登记）**：host 驱动器为 CI-only，其首次真实执行即云端首跑（离线单测只覆盖纯逻辑与报告写入）；云端耗时与采样内存只作观察，标注「观察到的最大值」，不替代固定设备性能阈值；若首跑暴露产品缺陷，保留失败证据与 `NOT_RUN` 阶段并另批处理，不反复重跑；本批不做 AVD 快照缓存与 APK 工件复用。另四项已登记：(a) 两个 APK 的 SHA-256 只校验存在与格式，未与提交或任何期望值绑定，二进制层面的"同一提交"由 checkout 的固定 ref 保证；(b) host 侧没有逐阶段上限，逐阶段由设备侧 `activeDeadlineElapsedMs` 自约束，外层由全局 13800 秒兜底；(c) 判定器期望的 instrumentation 记录形状（恰好两条身份记录、码为 [1,0]）目前只对合成日志验证，尚无真实 `am instrument -r` 转录样本，若真实输出多出带 `class=`/`test=` 的记录会导致干净运行被误判为失败（假阴性）；(d) `owned_serial` 只统计 `emulator-` 行，托管 runner 上不会出现第二个非模拟器 adb 设备，该缺口不可达。
 
 **关联决定：** D-161/D-162（规模遍历基础设施与整链顺序）、D-164/D-166/D-175（历史规模证据与 61k 缺陷归因）、D-197（设备回归 workflow 与人工门边界）、D-188（PR 门禁流与四门禁口径）。
+
+## D-199 最大规模长测设施：首跑缺陷修复、证据规则修订与逐阶段预算
+
+**状态：** 已批准（2026-10-02；对 D-198 的实施加固，不改变其交付面与门禁口径）。
+
+**背景**：D-198 的云端首跑在 2026-10-02 实际执行，连续七次尝试均在**模拟器会话内的设施层**失败，且失败点逐次后移：①workflow 首步在 checkout 之前查 `origin`（exit 128）→②`adb root` 撞上 adbd 重启窗口（且异常不携带命令输出）→③`stop`/`start` 后只等 `sys.boot_completed`（该属性跨框架重启保留旧值，`wm size` 打在框架未就绪时）→④该镜像 `pm install` 不创建应用数据目录、`run-as` 失败，同时单次 `wm size` 被框架启动期显示配置重置（实测 1080x1920）→⑤AVD 物理尺寸 1080x1920 使 `wm size` 覆盖无法生效（改为固定 `profile: pixel_6` = 1080x2400/420）→⑥宿主把 adb 宿主命令 `push` 误写成 `adb shell push`（设备 exit 127）→⑦装完 0.18 秒即启动，命中包管理器竞态（ATMS 报 `START_CLASS_NOT_FOUND`，`result code=-92`）。七次均为**设施缺陷**，`host.json` 每次显示 `phases: []`，产品链尚未执行；失败闭合机制每次按设计工作（报告落盘、阶段标 `NOT_RUN`、独立校验步报红、证据上传）。随后对设施做了完整代码审查，发现两条会把设施脆弱性伪装成产品结论的**假失败路径**，并在本轮一并修订。
+
+**决定：**
+
+1. **驱动器健壮性（D-198 第 4 条的加固）**：`adb root` 在 `wait-for-device` 之间重试；`stop`/`start` 后轮询真实框架命令而非信任 `sys.boot_completed`；显示尺寸写入后回读校验并重试、仍不生效则响亮报出实测值；装完先解析 launcher 组件再启动（退避重试）以落地应用数据目录；`install()` 校验安装输出含 `Success`——`adb install` 失败亦返回 exit 0，该静默通路此前会让真失败在很后面以误导形式暴露。`command()` 失败时把该命令的 stdout/stderr 并入异常，`host.json` 增记 `errorMessage`。
+2. **证据规则修订（本条修订 D-198 第 6 条的崩溃判定）**：崩溃标记改为**按包名定界**——仅当标记明确归属 `com.unifiedledger.android` 时判失败（同行带包名的 `ANR in`/`am_crash`/`am_anr`；`INSTRUMENTATION_ABORTED` 恒属本包；其余标记由其后 `Process: <pkg>,` 或 tombstone `>>> <pkg> <<<` 行归属）。不归属本包的标记**原样记入 `host.json` 的 `foreign_crash_markers`**（记录而非静默）。理由：模拟器系统进程（SystemUI、launcher、gms）在数小时链上会自行崩溃与 ANR，若一律判失败会把不存在的产品缺陷报成结论。
+3. **逐阶段宿主预算（闭合 D-198 残余 (b)）**：驱动器为每个阶段设宿主上限（`PHASE_BUDGETS`，取设备侧 stage 上限加余量），某阶段挂死不再吃光全局预算，失败信息直接指出是哪个阶段超预算。
+4. **轮询容错**：阶段轮询期间的设备探针全部 best-effort（`/proc/uptime`、`dumpsys meminfo`、证据读取），瞬时 adb 抖动记入 `memory.txt` 后继续；`timed_out` 只由真实 deadline（全局、逐阶段、设备上报的 `activeDeadlineElapsedMs`）置位——此前一次 `dumpsys` 超时即可把整轮长跑记为"超时"。
+5. **APK 工件复用（修订 D-198 残余中"本批不做 APK 工件复用"）**：以 `android-scale-apks-<sha>` 命名上传两个 APK，同一 SHA 的重跑直接复用、跳过构建（单次迭代由约 10 分钟降至约 4 分钟）；驱动器仍把两个 APK 的 SHA-256 记入 `host.json`。
+
+**验收**：离线测试 `100 passed / 51 subtests`（含本轮新增的归属拆分、外来崩溃不致命、轮询抖动不致命、设备 deadline 仍致命、逐阶段预算覆盖、显示解析失败可读、非法 JSON 可读等向量）、`python -m project_docs .` exit 0、Python 分片覆盖守卫通过、workflow YAML 解析通过且 `profile: pixel_6` 与暂存 APK 路径就位。**云端首跑仍未发生**，本条不主张任何功能整链结论，也不改变 D-198「设施接线与功能验收分离」的口径。
+
+**残余（登记）**：沿用 D-198 的 (c) 判定器期望的 instrumentation 记录形状仍只对合成日志验证，尚无真实 `am instrument -r` 样本（假阴性风险未变）与 (d) `owned_serial` 只统计 `emulator-` 行（托管 runner 上不可达）。D-198 的 (b) 由本条第 3 项闭合。新增两项：(e) APK 工件复用后"二进制属于该提交"的强度更弱——工件按 SHA 命名但字节取自更早一次运行，`host.json` 的哈希仅供追溯，不作绑定；(f) 崩溃归属依赖平台日志格式，若真实崩溃块的行形状与预期不同，本包崩溃可能被记入外来标记——缓解是外来标记全部落盘、人工可判，且 `INSTRUMENTATION_ABORTED` 与设备证据链不依赖该归属。
+
+**边界：** 只改 `tools/python/android_scale/runner.py`、`tools/python/android_scale/result.py`、`tests/python/test_android_scale_result.py` 与 `.github/workflows/android-scale.yml`；零产品行为、零 schema/迁移、零依赖变更；`ci.yml`、`windows.yml`、四个 required check 名称与分支保护零改动；本机不跑该链。
+
+**关联决定：** D-198（本条加固其实施面，并修订其第 6 条的崩溃判定、残余 (b) 与「不做 APK 工件复用」一项）、D-197（设备回归 workflow 与人工门边界）、D-188（PR 门禁流与四门禁口径）。

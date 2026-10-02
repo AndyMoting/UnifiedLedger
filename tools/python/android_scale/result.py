@@ -34,8 +34,57 @@ def strict_json(path: Path) -> dict:
     return data
 
 
-def crash_present(log: str) -> bool:
-    return bool(re.search(r"FATAL EXCEPTION|Fatal signal|OutOfMemoryError|ANR in |am_anr|am_crash|INSTRUMENTATION_ABORTED", log))
+PACKAGE = "com.unifiedledger.android"
+CRASH_MARKER = re.compile(r"FATAL EXCEPTION|Fatal signal|OutOfMemoryError|ANR in |am_anr|am_crash|INSTRUMENTATION_ABORTED")
+CRASH_ATTRIBUTION_WINDOW = 5
+PROCESS_NAME = re.compile(r"Process:\s*([^\s,]+)|>>>\s*([^\s]+)\s*<<<")
+
+
+def crash_markers(log: str, package: str = PACKAGE) -> tuple[list[str], list[str]]:
+    """Split crash markers into those attributable to `package` and the rest.
+
+    Attribution is explicit and never a fuzzy "the package appears nearby":
+    `am_crash`/`am_anr` carry the package on their own line,
+    `INSTRUMENTATION_ABORTED` is always ours, and a crash block is matched
+    through the process line that follows it (`Process: com..., PID: ...` for
+    AndroidRuntime, `>>> com... <<<` for a tombstone).
+
+    Markers that name another process, or nothing at all, come back as foreign
+    evidence: they are recorded and reviewed instead of failing a maximum-scale
+    run, because emulator system processes (SystemUI, launcher, gms) crash and
+    ANR on their own over a multi-hour chain.
+    """
+    lines = log.splitlines()
+    ours: list[str] = []
+    foreign: list[str] = []
+    for index, line in enumerate(lines):
+        if not CRASH_MARKER.search(line):
+            continue
+        if "INSTRUMENTATION_ABORTED" in line:
+            ours.append(line.strip())
+            continue
+        if package in line:
+            # `ANR in com...` and `am_crash: [... com...]` name the package on the
+            # marker line itself; only the marker line is consulted here, never a
+            # window, so a foreign crash cannot be claimed by a nearby log line.
+            ours.append(line.strip())
+            continue
+        if re.search(r"am_(?:crash|anr)", line):
+            foreign.append(line.strip())
+            continue
+        attributed = None
+        for following in lines[index + 1:index + CRASH_ATTRIBUTION_WINDOW + 1]:
+            found = PROCESS_NAME.search(following)
+            if found:
+                attributed = found.group(1) or found.group(2)
+                break
+        (ours if attributed == package else foreign).append(line.strip())
+    return ours, foreign
+
+
+def crash_present(log: str, package: str = PACKAGE) -> bool:
+    """True only for a crash attributable to `package`."""
+    return bool(crash_markers(log, package)[0])
 
 
 def instrumentation_pass(log: str) -> None:
