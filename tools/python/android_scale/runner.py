@@ -172,22 +172,47 @@ class ScaleRunner:
             time.sleep(2)
         raise RuntimeError(f"display override did not take effect: requested {size}, observed {observed}")
 
-    def ensure_app_data_dir(self) -> None:
+    def ensure_app_data_dir(self, attempts: int = 5) -> None:
         """Materialize the app's data directory before using `run-as`.
 
         `pm install` does not create `/data/user/0/<pkg>` on this image (the
         platform creates it on first launch), and `run-as` refuses to stat a
         missing directory. Launch the app once, then stop it again so the chain
         still starts from a cold start.
+
+        Launching immediately after the install hits a package-manager race: the
+        install is complete (the platform logs `installation completed`) but
+        ATMS still answers `START_CLASS_NOT_FOUND` (`result code=-92`) about a
+        fifth of a second later. Resolve the launcher component and retry
+        instead of trusting a single `am start`.
         """
-        self.adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/.MainActivity", timeout=180)
-        self.adb("shell", "am", "force-stop", PACKAGE)
+        last = "no attempt made"
+        for _ in range(attempts):
+            resolved = self.adb("shell", "cmd", "package", "resolve-activity", "--brief", PACKAGE, timeout=60)
+            component = resolved.strip().splitlines()[-1].strip() if resolved.strip() else ""
+            if "/" not in component:
+                last = f"launcher component not resolvable: {resolved.strip()!r}"
+                time.sleep(2)
+                continue
+            try:
+                self.adb("shell", "am", "start", "-W", "-n", component, timeout=180)
+                self.adb("shell", "am", "force-stop", PACKAGE)
+                return
+            except RuntimeError as error:
+                last = str(error)
+                time.sleep(2)
+        raise RuntimeError(f"could not launch {PACKAGE} to create its data directory: {last}")
 
     def install(self):
         validate_manifest(load_manifest(self.fixture / "manifest.json"), self.fixture)
         for role, apk in (("app", self.app), ("test", self.test)):
             self.report["apk_sha256"][role] = hashlib.sha256(apk.read_bytes()).hexdigest()
-            self.adb("install", "-t", str(apk), timeout=120)
+            output = self.adb("install", "-t", str(apk), timeout=120)
+            # `adb install` exits 0 even when the install fails; the verdict is in
+            # the output, so a silent failure here would surface much later as a
+            # confusing "activity does not exist" or a missing device evidence file.
+            if "Success" not in output:
+                raise RuntimeError(f"install of the {role} APK failed: {output.strip()[:400]}")
         # Private preparation files never rely on targetSdk scoped shared-storage access.
         self.adb("shell", "mkdir", "-p", "/data/local/tmp/ul-scale")
         # `push` is an adb host command: `adb shell push` fails with exit 127.

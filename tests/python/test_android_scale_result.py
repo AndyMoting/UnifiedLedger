@@ -765,9 +765,10 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
             self.assertIn("1080x2400", message)
             self.assertIn("observed 1080x1920", message)
 
-    def test_ensure_app_data_dir_launches_then_stops_the_app(self):
+    def test_ensure_app_data_dir_resolves_launches_and_stops_the_app(self):
         # `pm install` does not create /data/user/0/<pkg> on this image, and
-        # `run-as` needs it; the app must be launched once first.
+        # `run-as` needs it; the app must be launched once first, using the
+        # component the platform itself resolves.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             runner = self.make_runner(root)
@@ -775,12 +776,49 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
 
             def record(*args, **_kwargs):
                 calls.append(args)
+                if args[:3] == ("shell", "cmd", "package"):
+                    return "priority=0\ncom.unifiedledger.android/.MainActivity\n"
                 return ""
 
             runner.adb = record
             runner.ensure_app_data_dir()
-            self.assertEqual(calls[0], ("shell", "am", "start", "-W", "-n", "com.unifiedledger.android/.MainActivity"))
-            self.assertEqual(calls[1], ("shell", "am", "force-stop", "com.unifiedledger.android"))
+            self.assertEqual(calls[0], ("shell", "cmd", "package", "resolve-activity",
+                                        "--brief", "com.unifiedledger.android"))
+            self.assertEqual(calls[1], ("shell", "am", "start", "-W", "-n",
+                                        "com.unifiedledger.android/.MainActivity"))
+            self.assertEqual(calls[2], ("shell", "am", "force-stop", "com.unifiedledger.android"))
+
+    def test_ensure_app_data_dir_retries_the_post_install_launcher_race(self):
+        # ATMS answers START_CLASS_NOT_FOUND (result code=-92) for a fifth of a
+        # second after a completed install; a single `am start` is not enough.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.make_runner(root)
+            starts = {"count": 0}
+
+            def fake(*args, **_kwargs):
+                if args[:3] == ("shell", "cmd", "package"):
+                    return "priority=0\ncom.unifiedledger.android/.MainActivity\n"
+                if args[:3] == ("shell", "am", "start"):
+                    starts["count"] += 1
+                    if starts["count"] == 1:
+                        raise RuntimeError("command failed: adb (1): Error type 3\n"
+                                           "Error: Activity class does not exist.")
+                    return ""
+                return ""
+
+            runner.adb = fake
+            runner.ensure_app_data_dir(attempts=3)
+            self.assertEqual(starts["count"], 2)
+
+    def test_ensure_app_data_dir_fails_loudly_when_the_launcher_is_unresolvable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.make_runner(root)
+            runner.adb = lambda *_args, **_kwargs: ""
+            with self.assertRaises(RuntimeError) as caught:
+                runner.ensure_app_data_dir(attempts=1)
+            self.assertIn("launcher component not resolvable", str(caught.exception))
 
     def test_install_pushes_the_fixture_with_the_host_command(self):
         # `adb push` is a host command; `adb shell push` fails with exit 127
@@ -799,6 +837,10 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
 
             def record(*args, **_kwargs):
                 calls.append(args)
+                if args and args[0] == "install":
+                    return "Success"
+                if args[:3] == ("shell", "cmd", "package"):
+                    return "priority=0\ncom.unifiedledger.android/.MainActivity\n"
                 return ""
 
             runner.adb = record
@@ -806,6 +848,25 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
             pushed = ("push", str(fixture) + "/.", "/data/local/tmp/ul-scale/")
             self.assertIn(pushed, calls)
             self.assertNotIn(("shell",) + pushed, calls)
+
+    def test_install_rejects_a_silent_install_failure(self):
+        # `adb install` exits 0 even when the install fails; the verdict is in
+        # the output text, and a silent failure surfaces much later as a
+        # confusing "activity does not exist".
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture"
+            generate_fixture(fixture)
+            app = root / "app.apk"
+            app.write_bytes(b"app")
+            test = root / "test.apk"
+            test.write_bytes(b"test")
+            runner = self.make_runner(root)
+            runner.fixture, runner.app, runner.test = fixture, app, test
+            runner.adb = lambda *_args, **_kwargs: "Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]\n"
+            with self.assertRaises(RuntimeError) as caught:
+                runner.install()
+            self.assertIn("INSTALL_FAILED_INSUFFICIENT_STORAGE", str(caught.exception))
 
     def test_no_host_command_is_invoked_through_the_shell(self):
         # Structural guard for the whole class of mistake: a host adb command
