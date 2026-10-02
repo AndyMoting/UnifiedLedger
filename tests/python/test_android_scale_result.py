@@ -19,6 +19,8 @@ from xml.etree import ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools" / "python"))
 
+from android_scale.fixture import generate_fixture  # noqa: E402
+import android_scale.runner as runner_module  # noqa: E402
 from android_scale.result import (  # noqa: E402
     PHASES,
     STAGES,
@@ -779,6 +781,45 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
             runner.ensure_app_data_dir()
             self.assertEqual(calls[0], ("shell", "am", "start", "-W", "-n", "com.unifiedledger.android/.MainActivity"))
             self.assertEqual(calls[1], ("shell", "am", "force-stop", "com.unifiedledger.android"))
+
+    def test_install_pushes_the_fixture_with_the_host_command(self):
+        # `adb push` is a host command; `adb shell push` fails with exit 127
+        # ("/system/bin/sh: push: inaccessible or not found").
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture"
+            generate_fixture(fixture)
+            app = root / "app.apk"
+            app.write_bytes(b"app")
+            test = root / "test.apk"
+            test.write_bytes(b"test")
+            runner = self.make_runner(root)
+            runner.fixture, runner.app, runner.test = fixture, app, test
+            calls = []
+
+            def record(*args, **_kwargs):
+                calls.append(args)
+                return ""
+
+            runner.adb = record
+            runner.install()
+            pushed = ("push", str(fixture) + "/.", "/data/local/tmp/ul-scale/")
+            self.assertIn(pushed, calls)
+            self.assertNotIn(("shell",) + pushed, calls)
+
+    def test_no_host_command_is_invoked_through_the_shell(self):
+        # Structural guard for the whole class of mistake: a host adb command
+        # routed through `adb shell` fails on the device with exit 127.
+        source = Path(runner_module.__file__).read_text(encoding="utf-8")
+        host_commands = ("push", "pull", "install", "uninstall", "devices", "wait-for-device",
+                         "root", "unroot", "logcat", "exec-out", "emu", "forward", "reverse",
+                         "reboot", "bugreport", "sideload")
+        offenders = [
+            line.strip()
+            for line in source.splitlines()
+            if 'self.adb("shell"' in line and any(f'"{name}"' in line for name in host_commands)
+        ]
+        self.assertEqual([], offenders)
 
 
 if __name__ == "__main__":
