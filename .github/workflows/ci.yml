@@ -154,8 +154,8 @@ jobs:
         run: ./gradlew --no-daemon --max-workers=1 :android-app:testDebugUnitTest --warning-mode all
       - name: Android app instrumented test sources compile
         # P0 hotfix (defect 1) guard: compile the androidTest sources so the absolute-driver-path
-        # regression guard cannot rot without CI noticing. Execution stays the manual emulator
-        # gate (CI keeps zero connectedAndroidTest).
+        # regression guard cannot rot. Device execution belongs to the separate
+        # ordinary regression and scale preflight workflows.
         run: ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebugAndroidTest --warning-mode all
       - name: Android app assemble debug
         run: ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebug --warning-mode all
@@ -164,6 +164,19 @@ jobs:
         with:
           name: android-debug-apk-${{ github.sha }}
           path: android-app/build/outputs/apk/debug/*.apk
+          retention-days: 7
+
+      - name: Package both APKs with whole-tree provenance
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+        id: apk-bundle
+        run: python3 tools/ci/android-apks.py pack --directory android-apks --app android-app/build/outputs/apk/debug/android-app-debug.apk --test android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
+      - name: Upload verified APK bundle
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk-bundle.outputs.artifact }}
+          path: android-apks/*
+          if-no-files-found: error
           retention-days: 7
 
   # The Python suite (46 modules / 809 tests, about 7 minutes) is split across two

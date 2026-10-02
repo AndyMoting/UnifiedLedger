@@ -3,29 +3,27 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from .fixture import load_manifest, validate_manifest
-from .result import (PHASES, PACKAGE, STAGES, TEST_CLASS, TEST_METHOD, crash_markers,
+from .result import (PHASES, PACKAGE, STAGES, TEST_CLASS, TEST_METHOD, PREFLIGHT_CLASS, PREFLIGHT_METHOD, crash_markers,
                      instrumentation_pass, validate_evidence)
+from .preflight import prepare_probe, validate_preflight
 
 RUNNER = "com.unifiedledger.android.test/androidx.test.runner.AndroidJUnitRunner"
 
-# Host-side per-phase budgets. The device enforces its own stage limits (180 s
-# by default, 4 h for preparation), so these only catch a phase that is wedged
-# rather than slow; the margin keeps a slow-but-progressing phase alive. Without
-# them one stuck phase consumes the whole global budget and the remaining phases
-# are never attempted at all.
-PHASE_BUDGETS = {"prepare": 14700, "chain": 22500, "reopen": 480, "replay": 480, "final-reopen": 480}
-
-# The app manifest declares this under its own LAUNCHER filter; it is the
-# fallback when the platform's `resolve-activity` does not answer.
-LAUNCHER_FALLBACK = f"{PACKAGE}/.MainActivity"
+# Preparation and chain deliberately share the remaining global budget.
+# Only the three short reopen/replay phases have independent host limits.
+PHASE_BUDGETS = {"prepare": None, "chain": None, "reopen": 480, "replay": 480, "final-reopen": 480}
+DIAGNOSTIC_SECONDS = 120
+CLEANUP_RESERVE_SECONDS = 30
 
 
 def last_match(pattern: str, text: str, label: str) -> str:
@@ -54,26 +52,45 @@ def owned_serial(devices: str, avd: str) -> str:
 
 
 class ScaleRunner:
-    def __init__(self, fixture: Path, evidence: Path, app: Path, test: Path, sha: str):
+    def __init__(self, fixture: Path, evidence: Path, app: Path, test: Path, sha: str, mode: str = "maximum",
+                 *, outer_deadline_epoch: float | None = None):
         if (os.environ.get("GITHUB_ACTIONS"), os.environ.get("RUNNER_ENVIRONMENT"), os.environ.get("RUNNER_OS")) != ("true", "github-hosted", "Linux"):
             raise ValueError("this driver is CI-only; local devices are forbidden")
         if not re.fullmatch(r"[0-9a-f]{40}", sha):
             raise ValueError("full lowercase SHA required")
+        if mode not in ("maximum", "preflight"):
+            raise ValueError("unknown execution mode")
+        self.mode = mode
         self.fixture, self.evidence, self.app, self.test, self.sha = fixture, evidence, app, test, sha
         self.started = time.monotonic()
-        # Bounded below the 240-minute emulator step so that reports are written
-        # and evidence can still be uploaded before the step is killed.
-        self.deadline = self.started + 13800
+        # Workflow records this BEFORE the emulator action, so boot/action setup
+        # consumes the same outer budget as execution, diagnostics and cleanup.
+        if outer_deadline_epoch is not None and not math.isfinite(outer_deadline_epoch):
+            raise ValueError("outer deadline must be finite")
+        self.outer_deadline = None if outer_deadline_epoch is None else self.started + outer_deadline_epoch - time.time()
+        mode_limit = 600 if mode == "preflight" else 13800
+        self.deadline = self.started + mode_limit
+        if self.outer_deadline is not None:
+            self.deadline = min(self.deadline, self.outer_deadline - DIAGNOSTIC_SECONDS - CLEANUP_RESERVE_SECONDS)
+        self.active_deadline = self.deadline
+        self.log_stop = threading.Event()
+        self.log_thread = None
+        self.log_process = None
+        self.log_started = False
+        self.log_gaps = []
+        self.setup_complete = False
         self.serial = None
         self.device_deadline = 0
-        self.report = {"sha": sha, "status": "ERROR", "timed_out": False, "crash_detected": False,
-                       "phases": [], "apk_sha256": {}, "config": {}}
+        self.report = {"sha": sha, "mode": mode, "status": "ERROR", "timed_out": False, "crash_detected": False,
+                       "phases": [], "apk_sha256": {}, "config": {},
+                       "execution_budget_seconds": max(0, self.deadline - self.started),
+                       "outer_remaining_seconds_at_start": None if self.outer_deadline is None else self.outer_deadline - self.started}
         self.cases = []
         evidence.mkdir(parents=True, exist_ok=False)
 
     def command(self, command: list[str], *, timeout: float = 30, binary: bool = False,
                 best_effort: bool = False) -> str | bytes:
-        bound = timeout if best_effort else remaining_seconds(self.deadline, time.monotonic(), timeout)
+        bound = remaining_seconds(self.active_deadline, time.monotonic(), timeout)
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=bound)
         if result.returncode and not best_effort:
             # Carry the command's own diagnostics into the failure: without this
@@ -102,45 +119,53 @@ class ScaleRunner:
                 self.adb("root", timeout=60)
                 self.adb("wait-for-device", timeout=60)
                 return
+            except ScaleDeadlineError:
+                raise
             except (RuntimeError, subprocess.TimeoutExpired) as error:
                 last = error
                 time.sleep(2)
         raise RuntimeError(f"adb root did not settle after {attempts} attempts: {last}")
 
     def await_framework(self, timeout: float = 300) -> None:
-        """Wait for the framework to answer again after `stop`/`start`.
-
-        `sys.boot_completed` keeps its value from the previous boot across a
-        framework restart, so waiting on that property alone lets the driver
-        issue `wm`/`settings` calls while the window service is still down
-        ("Failure calling service window: Broken pipe"). Probe a real framework
-        command instead.
-        """
+        """Wait for window/package services AND credential-encrypted user storage."""
         deadline = min(self.deadline, time.monotonic() + timeout)
-        while True:
-            remaining_seconds(deadline, time.monotonic())
-            try:
-                self.adb("shell", "wm", "size", timeout=30)
-                return
-            except (RuntimeError, subprocess.TimeoutExpired):
-                time.sleep(2)
+        prior = self.active_deadline
+        self.active_deadline = deadline
+        try:
+            while True:
+                remaining_seconds(deadline, time.monotonic())
+                try:
+                    state = self.adb("shell", "am", "get-started-user-state", "0").strip()
+                    packages = self.adb("shell", "cmd", "package", "list", "packages", "--user", "0", "android")
+                    size = self.adb("shell", "wm", "size")
+                    self.report["readiness"] = {"user": state, "package_service": "package:android" in packages.splitlines(),
+                                                "window_service": bool(re.search(r"size: [0-9]+x[0-9]+", size))}
+                    if state == "RUNNING_UNLOCKED" and all(self.report["readiness"][k] for k in ("package_service", "window_service")):
+                        return
+                    self.adb("shell", "input", "keyevent", "82", best_effort=True)
+                except ScaleDeadlineError:
+                    raise
+                except (RuntimeError, subprocess.TimeoutExpired):
+                    pass
+                time.sleep(remaining_seconds(deadline, time.monotonic(), 2))
+        finally:
+            self.active_deadline = prior
 
     def configure(self):
         devices = self.adb("devices")
         matches = re.findall(r"^(emulator-[0-9]+)\s+device$", devices, re.MULTILINE)
         if len(matches) != 1:
             raise ValueError("one owned CI emulator required")
-        self.serial = matches[0]
-        self.serial = owned_serial(devices, self.adb("emu", "avd", "name"))
+        candidate = matches[0]
+        # Identity is the only permitted query before ownership is established.
+        avd = self.command(["adb", "-s", candidate, "emu", "avd", "name"])
+        self.serial = owned_serial(devices, avd)
         self.root_and_settle()
+        self.start_logcat()
         self.adb("shell", "setprop", "persist.sys.locale", "zh-CN")
         self.adb("shell", "setprop", "persist.sys.timezone", "Asia/Shanghai")
         self.adb("shell", "stop")
         self.adb("shell", "start")
-        boot_deadline = min(self.deadline, time.monotonic() + 300)
-        while self.adb("shell", "getprop", "sys.boot_completed").strip() != "1":
-            remaining_seconds(boot_deadline, time.monotonic())
-            time.sleep(1)
         self.await_framework()
         self.pin_display()
         self.adb("shell", "settings", "put", "system", "font_scale", "1.0")
@@ -191,61 +216,52 @@ class ScaleRunner:
         raise RuntimeError(f"display override did not take effect: requested {size}, observed {observed}")
 
     def launcher_component(self) -> str:
-        """The app's launcher component, from the platform when it answers.
-
-        `cmd package resolve-activity` needs an explicit MAIN/LAUNCHER intent:
-        the bare-package form answers "No activity found" on API 36, and asking
-        it five times only wastes ten seconds. Fall back to the component the
-        app manifest declares under its own LAUNCHER filter, and let `am start`
-        fail loudly if that is wrong.
-        """
-        queries = (
-            ("--brief", "-a", "android.intent.action.MAIN",
-             "-c", "android.intent.category.LAUNCHER", "-p", PACKAGE),
-            ("--brief", PACKAGE),
-        )
-        for query in queries:
-            resolved = self.adb("shell", "cmd", "package", "resolve-activity", *query, timeout=60)
-            component = resolved.strip().splitlines()[-1].strip() if resolved.strip() else ""
-            if "/" in component and "No activity found" not in resolved:
-                return component
-        return LAUNCHER_FALLBACK
+        resolved = self.adb("shell", "cmd", "package", "resolve-activity", "--brief", "--user", "0",
+                            "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-p", PACKAGE)
+        components = [line.strip() for line in resolved.splitlines()
+                      if re.fullmatch(re.escape(PACKAGE) + r"/[.A-Za-z0-9_$]+", line.strip())]
+        if len(components) != 1:
+            raise RuntimeError(f"launcher not resolvable: {resolved[:300]}")
+        return components[0]
 
     def ensure_app_data_dir(self, attempts: int = 5) -> None:
-        """Materialize the app's data directory before using `run-as`.
-
-        `pm install` does not create `/data/user/0/<pkg>` on this image (the
-        platform creates it on first launch), and `run-as` refuses to stat a
-        missing directory. Launch the app once, then stop it again so the chain
-        still starts from a cold start.
-
-        Launching immediately after the install hits a package-manager race: the
-        install is complete (the platform logs `installation completed`) but
-        ATMS still answers `START_CLASS_NOT_FOUND` (`result code=-92`) about a
-        fifth of a second later, so the launch is retried.
-        """
-        component = self.launcher_component()
+        """Prove launchability; leave private directory creation to Android."""
         last = "no attempt made"
         for _ in range(attempts):
             try:
-                self.adb("shell", "am", "start", "-W", "-n", component, timeout=180)
+                component = self.launcher_component()
+                output = self.adb("shell", "am", "start", "-W", "--user", "0", "-n", component, timeout=60)
+                if not re.search(r"^Status: ok\s*$", output, re.MULTILINE) or re.search(r"Error:|Error type|Exception", output):
+                    raise RuntimeError(f"launcher failed: {output[:400]}")
+                self.report["launcher"] = component
                 self.adb("shell", "am", "force-stop", PACKAGE)
                 return
+            except ScaleDeadlineError:
+                raise
             except RuntimeError as error:
                 last = str(error)
                 time.sleep(2)
         raise RuntimeError(f"could not launch {PACKAGE} to create its data directory: {last}")
 
     def install(self):
-        validate_manifest(load_manifest(self.fixture / "manifest.json"), self.fixture)
+        if self.mode == "maximum":
+            validate_manifest(load_manifest(self.fixture / "manifest.json"), self.fixture)
+        else:
+            prepare_probe(self.fixture, self.sha)
         for role, apk in (("app", self.app), ("test", self.test)):
             self.report["apk_sha256"][role] = hashlib.sha256(apk.read_bytes()).hexdigest()
             output = self.adb("install", "-t", str(apk), timeout=120)
             # `adb install` exits 0 even when the install fails; the verdict is in
             # the output, so a silent failure here would surface much later as a
             # confusing "activity does not exist" or a missing device evidence file.
-            if "Success" not in output:
+            if not re.search(r"^Success\s*$", output, re.MULTILINE) or "Failure" in output:
                 raise RuntimeError(f"install of the {role} APK failed: {output.strip()[:400]}")
+        listed = self.adb("shell", "pm", "list", "instrumentation")
+        if f"instrumentation:{RUNNER} (target={PACKAGE})" not in listed.splitlines():
+            raise RuntimeError("installed test runner does not target the app")
+        for package in (PACKAGE, PACKAGE + ".test"):
+            if not self.adb("shell", "pm", "path", "--user", "0", package).strip().startswith("package:"):
+                raise RuntimeError(f"installed package is not available: {package}")
         # Private preparation files never rely on targetSdk scoped shared-storage access.
         self.adb("shell", "mkdir", "-p", "/data/local/tmp/ul-scale")
         # `push` is an adb host command: `adb shell push` fails with exit 127.
@@ -254,10 +270,16 @@ class ScaleRunner:
         self.adb("shell", "run-as", PACKAGE, "mkdir", "-p", "files/scale-fixture")
         for file in sorted(self.fixture.iterdir()):
             self.adb("shell", "run-as", PACKAGE, "cp", "/data/local/tmp/ul-scale/" + file.name, "files/scale-fixture/" + file.name)
-        self.adb("logcat", "-c")
+        # Byte-for-byte readback proves the actual run-as staging path.
+        for file in sorted(self.fixture.iterdir()):
+            copied = self.adb("exec-out", "run-as", PACKAGE, "cat", "files/scale-fixture/" + file.name, binary=True, timeout=120)
+            if hashlib.sha256(copied).digest() != hashlib.sha256(file.read_bytes()).digest():
+                raise RuntimeError(f"private staging readback mismatch: {file.name}")
+        self.report["staging_verified"] = True
 
     def collect_device(self, *, best_effort=False):
-        text = self.adb("exec-out", "run-as", PACKAGE, "cat", "files/android-scale-evidence.json", best_effort=best_effort)
+        filename = "android-preflight-evidence.json" if self.mode == "preflight" else "android-scale-evidence.json"
+        text = self.adb("exec-out", "run-as", PACKAGE, "cat", "files/" + filename, best_effort=best_effort)
         if text:
             try:
                 data = json.loads(text)
@@ -271,12 +293,63 @@ class ScaleRunner:
             return data
         return None
 
+    def start_logcat(self):
+        """Keep a streaming log across framework restarts; record every reconnect."""
+        def collect():
+            try:
+                with (self.evidence / "logcat.txt").open("ab") as output, (self.evidence / "logcat-stderr.txt").open("ab") as errors:
+                    while not self.log_stop.is_set():
+                        try:
+                            self.log_process = subprocess.Popen(
+                                ["adb", "-s", self.serial, "logcat", "-v", "threadtime"],
+                                stdout=output, stderr=errors)
+                            self.log_started = True
+                            while self.log_process.poll() is None and not self.log_stop.wait(0.2):
+                                pass
+                            if self.log_stop.is_set():
+                                break
+                            self.log_gaps.append({"elapsed_seconds": time.monotonic() - self.started,
+                                                  "reason": "logcat disconnected; ring-buffer replay on reconnect"})
+                        except OSError as error:
+                            self.log_gaps.append({"elapsed_seconds": time.monotonic() - self.started,
+                                                  "reason": type(error).__name__})
+                        self.log_stop.wait(1)
+            finally:
+                if self.log_process is not None and self.log_process.poll() is None:
+                    self.log_process.kill()
+                    self.log_process.wait(timeout=5)
+        self.log_thread = threading.Thread(target=collect, daemon=True)
+        self.log_thread.start()
+
+    def stop_logcat(self):
+        self.log_stop.set()
+        if self.log_thread:
+            if self.log_process is not None and self.log_process.poll() is None:
+                self.log_process.kill()
+            self.log_thread.join(timeout=max(0, min(6, self.active_deadline - time.monotonic())))
+            if self.log_thread.is_alive():
+                self.log_gaps.append({"reason": "collector did not stop within six seconds"})
+        self.report["logcat_gaps"] = self.log_gaps
+        path = self.evidence / "logcat.txt"
+        collection = {"started": self.log_started, "stream_bytes": path.stat().st_size if path.exists() else 0,
+                      "stopped": self.log_thread is not None and not self.log_thread.is_alive(), "gaps": self.log_gaps}
+        (self.evidence / "logcat-collection.json").write_text(json.dumps(collection), encoding="utf-8")
+
     def diagnostics(self, *, failure: bool):
         if not self.serial:
             return
         try:
-            log = self.adb("logcat", "-d", "-v", "threadtime", best_effort=True)
-            (self.evidence / "logcat.txt").write_text(log, encoding="utf-8")
+            sections = []
+            for args in (("shell", "am", "get-started-user-state", "0"),
+                         ("shell", "cmd", "package", "list", "packages", "-U", PACKAGE),
+                         ("shell", "pm", "list", "instrumentation"),
+                         ("shell", "dumpsys", "package", PACKAGE)):
+                sections.append(" ".join(args) + "\n" + "\n".join(self.adb(*args, best_effort=True, timeout=10).splitlines()[:120]))
+            (self.evidence / "pm.txt").write_text("\n".join(sections), encoding="utf-8")
+            tail = self.adb("logcat", "-d", "-v", "threadtime", best_effort=True, timeout=15)
+            with (self.evidence / "logcat.txt").open("a", encoding="utf-8") as output:
+                output.write(tail)
+            log = (self.evidence / "logcat.txt").read_text(encoding="utf-8", errors="replace")
             ours, foreign = crash_markers(log)
             self.report["crash_detected"] = bool(ours)
             if foreign:
@@ -292,7 +365,7 @@ class ScaleRunner:
                 self.adb("shell", "uiautomator", "dump", "/data/local/tmp/ul-scale-window.xml", best_effort=True)
                 tree = self.adb("exec-out", "cat", "/data/local/tmp/ul-scale-window.xml", best_effort=True)
                 (self.evidence / "failure-ui.xml").write_text(tree, encoding="utf-8")
-        except (OSError, subprocess.TimeoutExpired, ValueError):
+        except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
             self.report["diagnostic_error"] = True
 
     def record_memory(self, phase: str, text: str) -> None:
@@ -333,16 +406,19 @@ class ScaleRunner:
             return remaining_seconds(deadline, time.monotonic())
         except ScaleDeadlineError:
             raise ScaleDeadlineError(
-                f"phase {phase} did not finish within its {PHASE_BUDGETS[phase]}s host budget") from None
+                f"phase {phase} exceeded {'remaining global' if PHASE_BUDGETS.get(phase) is None else str(PHASE_BUDGETS[phase]) + 's'} budget") from None
 
     def phase(self, phase: str):
         # Only the host kills the exact app between phases; instrumentation never kills itself.
         self.adb("shell", "am", "force-stop", PACKAGE)
+        test_class, test_method = (PREFLIGHT_CLASS, PREFLIGHT_METHOD) if self.mode == "preflight" else (TEST_CLASS, TEST_METHOD)
         command = ["adb", "-s", self.serial, "shell", "am", "instrument", "-w", "-r",
-                   "-e", "class", TEST_CLASS + "#" + TEST_METHOD, "-e", "scalePhase", phase,
+                   "-e", "class", test_class + "#" + test_method, "-e", "scalePhase", phase,
                    "-e", "expectedSha", self.sha, "-e", "deadlineElapsedMs", str(self.device_deadline), RUNNER]
         started = time.monotonic()
-        phase_deadline = min(self.deadline, started + PHASE_BUDGETS[phase])
+        limit = PHASE_BUDGETS.get(phase)
+        phase_deadline = min(self.deadline, started + limit) if limit is not None else self.deadline
+        self.active_deadline = phase_deadline
         path = self.evidence / f"instrumentation-{phase}.txt"
         case = {"name": phase, "status": "ERROR", "seconds": 0}
         self.cases.append(case)
@@ -354,38 +430,45 @@ class ScaleRunner:
                     self.poll_once(phase)
                 if process.returncode != 0:
                     raise RuntimeError("instrumentation shell failed")
-                instrumentation_pass(path.read_text(encoding="utf-8", errors="replace"))
+                self.check_phase_budget(phase, phase_deadline)
+                instrumentation_pass(path.read_text(encoding="utf-8", errors="replace"), test_class, test_method)
                 self.collect_device()
                 case["status"] = "PASS"
                 self.report["phases"].append(phase)
             except ScaleDeadlineError:
                 self.report["timed_out"] = True
-                self.diagnostics(failure=True)
-                self.adb("shell", "am", "force-stop", PACKAGE, best_effort=True)
                 raise
             finally:
                 if process.poll() is None:
                     process.kill()  # This exact adb client only; never the shared adb server.
                     process.wait(timeout=10)
                 case["seconds"] = time.monotonic() - started
+                self.active_deadline = self.deadline
 
     def write_reports(self):
         self.report["elapsed_seconds"] = time.monotonic() - self.started
         (self.evidence / "host.json").write_text(json.dumps(self.report, indent=2), encoding="utf-8")
-        root = ET.Element("testsuite", name="AndroidMaximumScale", tests="5", failures="0",
-                          errors=str(sum(case["status"] != "PASS" for case in self.cases)),
-                          skipped=str(len(PHASES) - len(self.cases)))
+        phases = ("preflight",) if self.mode == "preflight" else PHASES
+        setup_error = not self.setup_complete
+        report_error = self.report["status"] != "PASS" and not setup_error and all(case["status"] == "PASS" for case in self.cases)
+        root = ET.Element("testsuite", name="AndroidPreflight" if self.mode == "preflight" else "AndroidMaximumScale",
+                          tests=str(len(phases) + int(setup_error) + int(report_error)), failures="0",
+                          errors=str(sum(case["status"] != "PASS" for case in self.cases) + int(setup_error) + int(report_error)),
+                          skipped=str(len(phases) - len(self.cases)))
+        if setup_error or report_error:
+            extra = ET.SubElement(root, "testcase", name="setup" if setup_error else "evidence", classname="AndroidCI", time="0")
+            ET.SubElement(extra, "error", message=self.report.get("errorMessage", self.report.get("validationError", "incomplete evidence")))
         by_phase = {case["name"]: case for case in self.cases}
-        for phase in PHASES:
+        for phase in phases:
             case = by_phase.get(phase)
-            child = ET.SubElement(root, "testcase", name=phase, classname=TEST_CLASS, time=str(case["seconds"] if case else 0))
+            child = ET.SubElement(root, "testcase", name=phase, classname=PREFLIGHT_CLASS if self.mode == "preflight" else TEST_CLASS, time=str(case["seconds"] if case else 0))
             if not case:
                 ET.SubElement(child, "skipped", message="NOT_RUN after earlier failure")
             elif case["status"] != "PASS":
                 ET.SubElement(child, "error", message="instrumentation incomplete or failed; see phase log")
         ET.ElementTree(root).write(self.evidence / "junit.xml", encoding="utf-8", xml_declaration=True)
         device_path = self.evidence / "device.json"
-        if device_path.exists():
+        if device_path.exists() and self.mode == "maximum":
             device = json.loads(device_path.read_text(encoding="utf-8"))
             for stage in STAGES:
                 device.setdefault("stages", {}).setdefault(stage, {"status": "NOT_RUN"})
@@ -393,24 +476,42 @@ class ScaleRunner:
 
     def run(self) -> int:
         try:
+            # Even when boot used all execution time, emit host/JUnit reports
+            # without performing another device command.
+            remaining_seconds(self.deadline, time.monotonic())
             self.configure()
             self.install()
-            for phase in PHASES:
+            self.setup_complete = True
+            for phase in (("preflight",) if self.mode == "preflight" else PHASES):
                 self.phase(phase)
             self.report["status"] = "PASS"
         except (Exception, KeyboardInterrupt) as error:
             self.report["errorType"] = type(error).__name__
             self.report["errorMessage"] = str(error)[:800]
             self.report["status"] = "ERROR"
+            if isinstance(error, ScaleDeadlineError):
+                self.report["timed_out"] = True
         finally:
+            # Diagnostics share the action deadline and leave room for report
+            # writes plus the emulator action's own cleanup.
+            self.active_deadline = time.monotonic() + DIAGNOSTIC_SECONDS
+            if self.outer_deadline is not None:
+                self.active_deadline = min(self.active_deadline, self.outer_deadline - CLEANUP_RESERVE_SECONDS)
+            self.stop_logcat()
             self.diagnostics(failure=self.report["status"] != "PASS")
-            if self.report["crash_detected"]:
+            if self.serial and self.report["status"] != "PASS":
+                try:
+                    self.adb("shell", "am", "force-stop", PACKAGE, best_effort=True, timeout=10)
+                except (RuntimeError, OSError, subprocess.TimeoutExpired):
+                    pass
+            if self.report["crash_detected"] and self.report["status"] == "PASS":
                 self.report["status"] = "FAIL"
             self.write_reports()
         try:
-            validate_evidence(self.evidence, self.sha)
+            (validate_preflight if self.mode == "preflight" else validate_evidence)(self.evidence, self.sha)
         except (ValueError, OSError, KeyError, ET.ParseError) as error:
-            self.report["status"] = "FAIL"
+            if self.report["status"] == "PASS":
+                self.report["status"] = "FAIL"
             self.report["validationError"] = str(error)
             self.write_reports()
             return 1

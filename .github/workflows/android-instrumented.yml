@@ -32,13 +32,20 @@ on:
       - 'app-ui/**'
       - 'ledger-data/**'
       - 'ledger-application/**'
+      - 'ledger-domain/**'
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradlew'
+      - 'gradlew.bat'
       - 'gradle/**'
       # This workflow file itself, so that a change to the device job is verified
       # by the device job on its own pull request (for pull_request events the
       # workflow file is taken from the pull request head).
       - '.github/workflows/android-instrumented.yml'
+      - 'tools/ci/android-instrumented-*'
+      - 'tools/python/android_scale/inventory.py'
+      - 'tests/python/test_android_ci_repair.py'
   workflow_dispatch:
 
 # Cancel superseded pull-request runs, but let a manual run finish: for
@@ -77,6 +84,8 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Build app and androidTest APKs
         run: ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebug :android-app:assembleDebugAndroidTest --warning-mode all
+      - name: Check ordinary device source inventory
+        run: python3 tools/ci/android-instrumented-inventory.py --source android-app/src/androidTest --manifest tools/ci/android-instrumented-inventory.txt
       - name: Run the instrumented suites on an emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -91,9 +100,12 @@ jobs:
           script: |
             set -eu
             rc=0
-            ./gradlew --no-daemon --max-workers=1 -Pandroid.testInstrumentationRunnerArguments.notClass=com.unifiedledger.android.ImportScaleTraversalInstrumentedTest,com.unifiedledger.android.AndroidScaleLongInstrumentedTest :android-app:connectedDebugAndroidTest --warning-mode all || rc=$?
+            ./gradlew --no-daemon --max-workers=1 -Pandroid.testInstrumentationRunnerArguments.notClass=com.unifiedledger.android.ImportScaleTraversalInstrumentedTest,com.unifiedledger.android.AndroidScaleLongInstrumentedTest,com.unifiedledger.android.AndroidScalePreflightInstrumentedTest :android-app:connectedDebugAndroidTest --warning-mode all || rc=$?
             adb logcat -d > logcat.txt || true
             exit $rc
+      - name: Require every expected device test actually passed
+        if: always()
+        run: python3 tools/ci/android-instrumented-inventory.py --source android-app/src/androidTest --manifest tools/ci/android-instrumented-inventory.txt --results android-app/build/outputs/androidTest-results/connected
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -103,5 +115,5 @@ jobs:
             logcat.txt
             android-app/build/outputs/androidTest-results/**
             android-app/build/reports/androidTests/**
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
