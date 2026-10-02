@@ -4006,7 +4006,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **决定：**
 
-1. **驱动器健壮性（D-198 第 4 条的加固）**：`adb root` 在 `wait-for-device` 之间重试；`stop`/`start` 后轮询真实框架命令而非信任 `sys.boot_completed`；显示尺寸写入后回读校验并重试、仍不生效则响亮报出实测值；装完先解析 launcher 组件再启动（退避重试）以落地应用数据目录；`install()` 校验安装输出含 `Success`——`adb install` 失败亦返回 exit 0，该静默通路此前会让真失败在很后面以误导形式暴露。`command()` 失败时把该命令的 stdout/stderr 并入异常，`host.json` 增记 `errorMessage`。
+1. **驱动器健壮性（D-198 第 4 条的加固）**：`adb root` 在 `wait-for-device` 之间重试；`stop`/`start` 后轮询真实框架命令而非信任 `sys.boot_completed`；显示尺寸写入后回读校验并重试、仍不生效则响亮报出实测值；装完先解析 launcher 组件（平台的裸包名查询在 API 36 上答「No activity found」，故查询带显式 MAIN/LAUNCHER intent，仍无答案时回退到 manifest 声明的 LAUNCHER 组件）再启动（退避重试）以落地应用数据目录；`install()` 校验安装输出含 `Success`——`adb install` 失败亦返回 exit 0，该静默通路此前会让真失败在很后面以误导形式暴露。`command()` 失败时把该命令的 stdout/stderr 并入异常，`host.json` 增记 `errorMessage`。
 2. **证据规则修订（本条修订 D-198 第 6 条的崩溃判定）**：崩溃标记改为**按包名定界**——仅当标记明确归属 `com.unifiedledger.android` 时判失败（同行带包名的 `ANR in`/`am_crash`/`am_anr`；`INSTRUMENTATION_ABORTED` 恒属本包；其余标记由其后 `Process: <pkg>,` 或 tombstone `>>> <pkg> <<<` 行归属）。不归属本包的标记**原样记入 `host.json` 的 `foreign_crash_markers`**（记录而非静默）。理由：模拟器系统进程（SystemUI、launcher、gms）在数小时链上会自行崩溃与 ANR，若一律判失败会把不存在的产品缺陷报成结论。
 3. **逐阶段宿主预算（闭合 D-198 残余 (b)）**：驱动器为每个阶段设宿主上限（`PHASE_BUDGETS`，取设备侧 stage 上限加余量），某阶段挂死不再吃光全局预算，失败信息直接指出是哪个阶段超预算。
 4. **轮询容错**：阶段轮询期间的设备探针全部 best-effort（`/proc/uptime`、`dumpsys meminfo`、证据读取），瞬时 adb 抖动记入 `memory.txt` 后继续；`timed_out` 只由真实 deadline（全局、逐阶段、设备上报的 `activeDeadlineElapsedMs`）置位——此前一次 `dumpsys` 超时即可把整轮长跑记为"超时"。
