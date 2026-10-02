@@ -11,10 +11,24 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from .fixture import load_manifest, validate_manifest
-from .result import PHASES, STAGES, TEST_CLASS, TEST_METHOD, crash_present, instrumentation_pass, validate_evidence
+from .result import (PHASES, PACKAGE, STAGES, TEST_CLASS, TEST_METHOD, crash_markers,
+                     instrumentation_pass, validate_evidence)
 
-PACKAGE = "com.unifiedledger.android"
 RUNNER = "com.unifiedledger.android.test/androidx.test.runner.AndroidJUnitRunner"
+
+# Host-side per-phase budgets. The device enforces its own stage limits (180 s
+# by default, 4 h for preparation), so these only catch a phase that is wedged
+# rather than slow; the margin keeps a slow-but-progressing phase alive. Without
+# them one stuck phase consumes the whole global budget and the remaining phases
+# are never attempted at all.
+PHASE_BUDGETS = {"prepare": 14700, "chain": 22500, "reopen": 480, "replay": 480, "final-reopen": 480}
+
+
+def last_match(pattern: str, text: str, label: str) -> str:
+    matches = re.findall(pattern, text)
+    if not matches:
+        raise RuntimeError(f"cannot read {label} from the device: {text.strip()[:200]!r}")
+    return matches[-1]
 
 
 class ScaleDeadlineError(RuntimeError):
@@ -137,8 +151,8 @@ class ScaleRunner:
         }
         size = self.adb("shell", "wm", "size")
         density = self.adb("shell", "wm", "density")
-        config["size"] = re.findall(r"(?:Physical|Override) size: ([0-9]+x[0-9]+)", size)[-1]
-        config["density"] = re.findall(r"(?:Physical|Override) density: ([0-9]+)", density)[-1]
+        config["size"] = last_match(r"(?:Physical|Override) size: ([0-9]+x[0-9]+)", size, "display size")
+        config["density"] = last_match(r"(?:Physical|Override) density: ([0-9]+)", density, "display density")
         for name in ("window_animation_scale", "transition_animation_scale", "animator_duration_scale"):
             config[name] = self.adb("shell", "settings", "get", "global", name).strip()
         actual = self.adb("shell", "am", "get-config")
@@ -226,7 +240,14 @@ class ScaleRunner:
     def collect_device(self, *, best_effort=False):
         text = self.adb("exec-out", "run-as", PACKAGE, "cat", "files/android-scale-evidence.json", best_effort=best_effort)
         if text:
-            data = json.loads(text)
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError as error:
+                # The device writes with AtomicFile, so this should not happen; if
+                # it does, say what happened instead of leaking a parse trace.
+                if best_effort:
+                    return None
+                raise ValueError(f"device evidence is not valid JSON: {error}") from None
             (self.evidence / "device.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
             return data
         return None
@@ -237,7 +258,14 @@ class ScaleRunner:
         try:
             log = self.adb("logcat", "-d", "-v", "threadtime", best_effort=True)
             (self.evidence / "logcat.txt").write_text(log, encoding="utf-8")
-            self.report["crash_detected"] = crash_present(log)
+            ours, foreign = crash_markers(log)
+            self.report["crash_detected"] = bool(ours)
+            if foreign:
+                # Recorded, never silent: unrelated emulator system processes
+                # (SystemUI, launcher, gms) crash and ANR on their own over a
+                # multi-hour chain, and failing the run for those would report a
+                # product defect that does not exist.
+                self.report["foreign_crash_markers"] = foreign[:20]
             self.collect_device(best_effort=True)
             if failure:
                 png = self.adb("exec-out", "screencap", "-p", binary=True, best_effort=True)
@@ -248,6 +276,46 @@ class ScaleRunner:
         except (OSError, subprocess.TimeoutExpired, ValueError):
             self.report["diagnostic_error"] = True
 
+    def record_memory(self, phase: str, text: str) -> None:
+        with (self.evidence / "memory.txt").open("a", encoding="utf-8") as memory:
+            memory.write(f"phase={phase} elapsed={time.monotonic() - self.started:.3f}\n")
+            memory.write(text)
+
+    def uptime_ms(self) -> float | None:
+        """Best-effort device uptime; None when the probe itself hiccups."""
+        text = self.adb("shell", "cat", "/proc/uptime", timeout=30, best_effort=True)
+        try:
+            return float(text.split()[0]) * 1000
+        except (IndexError, ValueError):
+            return None
+
+    def poll_once(self, phase: str) -> None:
+        """One polling tick: sample the device and record memory evidence.
+
+        Every probe here is best effort on purpose. A transient adb hiccup under
+        a heavy chain must not be recorded as a timeout -- only a real deadline
+        does that -- but it is written to memory.txt so it stays visible.
+        """
+        try:
+            device = self.collect_device(best_effort=True)
+            if device and device.get("activeDeadlineElapsedMs"):
+                uptime = self.uptime_ms()
+                if uptime is not None and uptime >= device["activeDeadlineElapsedMs"]:
+                    raise ScaleDeadlineError("instrumentation operation deadline exceeded")
+            self.record_memory(phase, self.adb("shell", "dumpsys", "meminfo", PACKAGE,
+                                               timeout=60, best_effort=True))
+        except ScaleDeadlineError:
+            raise
+        except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+            self.record_memory(phase, f"device probe failed: {type(error).__name__}: {str(error)[:200]}\n")
+
+    def check_phase_budget(self, phase: str, deadline: float) -> float:
+        try:
+            return remaining_seconds(deadline, time.monotonic())
+        except ScaleDeadlineError:
+            raise ScaleDeadlineError(
+                f"phase {phase} did not finish within its {PHASE_BUDGETS[phase]}s host budget") from None
+
     def phase(self, phase: str):
         # Only the host kills the exact app between phases; instrumentation never kills itself.
         self.adb("shell", "am", "force-stop", PACKAGE)
@@ -255,6 +323,7 @@ class ScaleRunner:
                    "-e", "class", TEST_CLASS + "#" + TEST_METHOD, "-e", "scalePhase", phase,
                    "-e", "expectedSha", self.sha, "-e", "deadlineElapsedMs", str(self.device_deadline), RUNNER]
         started = time.monotonic()
+        phase_deadline = min(self.deadline, started + PHASE_BUDGETS[phase])
         path = self.evidence / f"instrumentation-{phase}.txt"
         case = {"name": phase, "status": "ERROR", "seconds": 0}
         self.cases.append(case)
@@ -262,23 +331,15 @@ class ScaleRunner:
             process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT)
             try:
                 while process.poll() is None:
-                    remaining_seconds(self.deadline, time.monotonic())
-                    time.sleep(min(3, remaining_seconds(self.deadline, time.monotonic())))
-                    device = self.collect_device(best_effort=True)
-                    if device and device.get("activeDeadlineElapsedMs"):
-                        uptime = float(self.adb("shell", "cat", "/proc/uptime").split()[0]) * 1000
-                        if uptime >= device["activeDeadlineElapsedMs"]:
-                            raise ScaleDeadlineError("instrumentation operation deadline exceeded")
-                    with (self.evidence / "memory.txt").open("a", encoding="utf-8") as memory:
-                        memory.write(f"phase={phase} elapsed={time.monotonic() - self.started:.3f}\n")
-                        memory.write(self.adb("shell", "dumpsys", "meminfo", PACKAGE, timeout=15))
+                    time.sleep(min(3, self.check_phase_budget(phase, phase_deadline)))
+                    self.poll_once(phase)
                 if process.returncode != 0:
                     raise RuntimeError("instrumentation shell failed")
                 instrumentation_pass(path.read_text(encoding="utf-8", errors="replace"))
                 self.collect_device()
                 case["status"] = "PASS"
                 self.report["phases"].append(phase)
-            except (ScaleDeadlineError, subprocess.TimeoutExpired):
+            except ScaleDeadlineError:
                 self.report["timed_out"] = True
                 self.diagnostics(failure=True)
                 self.adb("shell", "am", "force-stop", PACKAGE, best_effort=True)

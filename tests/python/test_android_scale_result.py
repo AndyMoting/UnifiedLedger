@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -26,12 +27,15 @@ from android_scale.result import (  # noqa: E402
     STAGES,
     TEST_CLASS,
     TEST_METHOD,
+    crash_markers,
     cross_check_manifest,
     validate_evidence,
 )
 from android_scale.runner import (  # noqa: E402
+    PHASE_BUDGETS,
     ScaleDeadlineError,
     ScaleRunner,
+    last_match,
     owned_serial,
     remaining_seconds,
 )
@@ -401,13 +405,23 @@ class ReducerRejectsWrongIdentityAndCrashes(unittest.TestCase):
 
     def test_crash_in_logcat_is_rejected(self):
         (self.directory / "logcat.txt").write_text(
-            "E/AndroidRuntime: FATAL EXCEPTION: main\n", encoding="utf-8")
+            "E/AndroidRuntime: FATAL EXCEPTION: main\n"
+            "E/AndroidRuntime: Process: com.unifiedledger.android, PID: 4321\n", encoding="utf-8")
         self.assert_rejected()
 
     def test_oom_in_logcat_is_rejected(self):
         (self.directory / "logcat.txt").write_text(
-            "E/art: OutOfMemoryError: Failed to allocate\n", encoding="utf-8")
+            "E/art: OutOfMemoryError: Failed to allocate\n"
+            "E/AndroidRuntime: Process: com.unifiedledger.android, PID: 4321\n", encoding="utf-8")
         self.assert_rejected()
+
+    def test_foreign_crash_is_recorded_not_fatal(self):
+        # Emulator system processes (SystemUI, launcher, gms) crash on their own;
+        # only crashes attributable to our package may fail a long run.
+        (self.directory / "logcat.txt").write_text(
+            "E/AndroidRuntime: FATAL EXCEPTION: main\n"
+            "E/AndroidRuntime: Process: com.android.systemui, PID: 999\n", encoding="utf-8")
+        validate_evidence(self.directory, SHA)
 
     def test_anr_in_logcat_is_rejected(self):
         (self.directory / "logcat.txt").write_text(
@@ -584,11 +598,29 @@ class ReducerHardeningRejectsSubtleBypasses(unittest.TestCase):
         self.assert_rejected()
 
     def test_other_crash_signals_are_rejected(self):
-        for signal_text in ("Fatal signal 11 (SIGSEGV)", "am_anr: com.unifiedledger.android",
-                            "am_crash: com.unifiedledger.android", "INSTRUMENTATION_ABORTED"):
-            with self.subTest(signal=signal_text):
-                (self.directory / "logcat.txt").write_text(signal_text + "\n", encoding="utf-8")
+        for signal_text in ("Fatal signal 11 (SIGSEGV)\n"
+                            "pid: 4321, tid: 4321, name: unifiedledger  >>> com.unifiedledger.android <<<\n",
+                            "am_anr: [0,4321,com.unifiedledger.android,Executing service]\n",
+                            "am_crash: [4321,0,com.unifiedledger.android,OutOfMemoryError,oom]\n",
+                            "INSTRUMENTATION_ABORTED: System has crashed.\n"):
+            with self.subTest(signal=signal_text.splitlines()[0]):
+                (self.directory / "logcat.txt").write_text(signal_text, encoding="utf-8")
                 self.assert_rejected()
+
+    def test_crash_markers_split_by_package(self):
+        log = (
+            "E/AndroidRuntime: FATAL EXCEPTION: main\n"
+            "E/AndroidRuntime: Process: com.unifiedledger.android, PID: 1\n"
+            "E/AndroidRuntime: FATAL EXCEPTION: main\n"
+            "E/AndroidRuntime: Process: com.android.systemui, PID: 2\n"
+            "W/ActivityManager: ANR in com.unifiedledger.android\n"
+            "I/ActivityManager: am_crash: [999,0,com.other.app,OutOfMemoryError]\n"
+        )
+        ours, foreign = crash_markers(log)
+        self.assertEqual(["E/AndroidRuntime: FATAL EXCEPTION: main",
+                          "W/ActivityManager: ANR in com.unifiedledger.android"], ours)
+        self.assertEqual(["E/AndroidRuntime: FATAL EXCEPTION: main",
+                          "I/ActivityManager: am_crash: [999,0,com.other.app,OutOfMemoryError]"], foreign)
 
 
 class ManifestCrossCheckBindsDeviceCounters(unittest.TestCase):
@@ -881,6 +913,57 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
             if 'self.adb("shell"' in line and any(f'"{name}"' in line for name in host_commands)
         ]
         self.assertEqual([], offenders)
+
+    def test_poll_once_survives_a_transient_probe_failure(self):
+        # A transient adb hiccup under a heavy chain must not become a timeout;
+        # it is written to memory.txt and polling continues.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.make_runner(root)
+            calls = []
+
+            def flaky(*args, **_kwargs):
+                calls.append(args)
+                if args[:3] == ("shell", "cat", "/proc/uptime"):
+                    raise RuntimeError("command failed: adb (1): device offline")
+                if args[:2] == ("shell", "dumpsys"):
+                    raise subprocess.TimeoutExpired("adb", 60)
+                return "1234.5 9876.5\n"
+
+            runner.adb = flaky
+            runner.poll_once("reopen")
+            memory = (root / "evidence" / "memory.txt").read_text(encoding="utf-8")
+            self.assertIn("phase=reopen", memory)
+            self.assertIn("device probe failed", memory)
+
+    def test_poll_once_still_reports_the_device_deadline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.make_runner(root)
+            runner.collect_device = lambda **_kwargs: {"activeDeadlineElapsedMs": 1000}
+            runner.adb = lambda *_args, **_kwargs: "9999.0 1.0\n"
+            with self.assertRaises(ScaleDeadlineError):
+                runner.poll_once("reopen")
+
+    def test_every_phase_has_a_host_budget(self):
+        self.assertEqual(set(PHASES), set(PHASE_BUDGETS))
+        self.assertTrue(all(isinstance(value, int) and value > 0 for value in PHASE_BUDGETS.values()))
+
+    def test_last_match_reports_unreadable_device_output(self):
+        self.assertEqual("1080x2400", last_match(r"size: ([0-9]+x[0-9]+)", "Physical size: 1080x2400\n", "display size"))
+        with self.assertRaises(RuntimeError) as caught:
+            last_match(r"size: ([0-9]+x[0-9]+)", "unexpected output\n", "display size")
+        self.assertIn("cannot read display size", str(caught.exception))
+
+    def test_collect_device_rejects_invalid_json_with_a_clear_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.make_runner(root)
+            runner.adb = lambda *_args, **_kwargs: "{not json"
+            with self.assertRaises(ValueError) as caught:
+                runner.collect_device()
+            self.assertIn("device evidence is not valid JSON", str(caught.exception))
+            self.assertIsNone(runner.collect_device(best_effort=True))
 
 
 if __name__ == "__main__":
