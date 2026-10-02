@@ -45,9 +45,13 @@ permissions:
   actions: read
 
 # A long run must never be cancelled by a later push: this workflow only runs on
-# demand, and its evidence is tied to the SHA the operator asked for.
+# demand, and its evidence is tied to the SHA the operator asked for. Each run
+# gets its own concurrency group (D-204, user-authorized parallel acceptance
+# rounds): multiple dispatches against the same ref may run side by side
+# because every run owns an isolated runner and its own exclusive `ul-scale`
+# emulator, and no run is ever cancelled by another.
 concurrency:
-  group: android-scale-${{ github.workflow }}-${{ github.ref }}
+  group: android-scale-${{ github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -194,10 +198,13 @@ jobs:
         # Partial evidence still uploads by design (the runner creates the
         # directory and the phase logs early); the gate is the independent
         # validation step above, not this upload.
+        # The name carries the run id and attempt: parallel acceptance rounds of
+        # one SHA (D-204) must stay tellable apart, and a whole-run re-run in
+        # place must not collide with the artifacts it retried.
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: android-scale-${{ inputs.expected_sha }}
+          name: android-scale-${{ inputs.expected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: scale-evidence/**
           if-no-files-found: error
           retention-days: 7

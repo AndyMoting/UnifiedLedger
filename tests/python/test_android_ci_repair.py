@@ -482,6 +482,293 @@ class HostOrchestration(unittest.TestCase):
         self.assertFalse(record["sha_match"])
 
 
+class ColdstartHostProbe(unittest.TestCase):
+    """D-204 host-side discriminating probe: three states, diagnostics only."""
+
+    LOADING_XML = '<hierarchy rotation="0"><node package="com.unifiedledger.android" text="正在打开本地账本…" bounds="[0,0][500,80]" /></hierarchy>'
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        env = patch.dict(os.environ, GITHUB_ACTIONS="true", RUNNER_ENVIRONMENT="github-hosted", RUNNER_OS="Linux")
+        env.start()
+        self.addCleanup(env.stop)
+        self.runner = ScaleRunner(self.root / "fixture", self.root / "evidence", self.root / "app.apk", self.root / "test.apk", SHA, "maximum")
+        self.calls = []
+        self.started_ms = 1_000_000
+        self.uptime_s = None
+        self.dump_succeeds = True
+        self.dump_xml = self.LOADING_XML
+
+    def adb(self, *args, **kwargs):
+        self.calls.append(args)
+        if args[:3] == ("exec-out", "run-as", PACKAGE):
+            return json.dumps({"stages": {"coldstart": {"status": "NOT_RUN", "startedMs": self.started_ms}}})
+        if args[:3] == ("shell", "cat", "/proc/uptime"):
+            return f"{self.uptime_s:.3f} 0.00\n"
+        if args[:3] == ("shell", "dumpsys", "meminfo"):
+            return "meminfo sample\n"
+        if args[:3] == ("shell", "uiautomator", "dump"):
+            if self.dump_succeeds:
+                return "UI hierchary dumped to: " + args[-1]
+            return "ERROR: could not get idle state.\n"
+        if args[:2] == ("exec-out", "cat"):
+            return self.dump_xml
+        return ""
+
+    def probe(self, adb=None):
+        self.runner.adb = adb or self.adb
+        self.runner.poll_once("chain")
+        return self.runner.report.get("coldstart_host_probe")
+
+    def test_ready_host_dump_is_recorded_with_hash_and_markers(self):
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+        self.dump_xml = READY_XML
+        state = self.probe()
+        self.assertEqual(state["attempts"], 1)
+        record = state["probes"][0]
+        data = READY_XML.encode("utf-8")
+        self.assertEqual(record["elapsed"], 40_000)
+        self.assertEqual(record["sha256"], hashlib.sha256(data).hexdigest())
+        self.assertEqual(record["bytes"], len(data))
+        self.assertTrue(record["containsReadyMarker"])
+        self.assertFalse(record["containsLoadingMarker"])
+        self.assertFalse(state["probeFailed"])
+        self.assertEqual((self.runner.evidence / "coldstart-hostdump.xml").read_bytes(), data)
+        self.assertIn("coldstart-host-probe", (self.runner.evidence / "memory.txt").read_text(encoding="utf-8"))
+
+    def test_failed_dump_records_probe_failed_and_changes_nothing(self):
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+        self.dump_succeeds = False
+        state = self.probe()
+        self.assertEqual(state["attempts"], 1)
+        record = state["probes"][0]
+        self.assertTrue(record["probeFailed"])
+        self.assertIn("error", record)
+        self.assertTrue(state["probeFailed"])
+        self.assertFalse((self.runner.evidence / "coldstart-hostdump.xml").exists())
+        self.assertNotIn("sha256", record)
+
+    def test_probe_does_not_trigger_before_thirty_seconds_of_running_coldstart(self):
+        self.uptime_s = (self.started_ms + 10_000) / 1000
+        state = self.probe()
+        self.assertEqual(state, {"attempts": 0, "probes": [], "probeFailed": False})
+        self.assertFalse(any(args[:3] == ("shell", "uiautomator", "dump") for args in self.calls))
+        # A finished coldstart stage is equally out of scope.
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+
+        def finished(*args, **kwargs):
+            if args[:3] == ("exec-out", "run-as", PACKAGE):
+                return json.dumps({"stages": {"coldstart": {"status": "PASS", "startedMs": self.started_ms}}})
+            return self.adb(*args, **kwargs)
+
+        self.runner.adb = finished
+        self.runner.poll_once("chain")
+        self.assertEqual(self.runner.report["coldstart_host_probe"]["attempts"], 0)
+
+    def test_empty_readback_is_probe_failed_not_a_zero_byte_sample(self):
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+
+        def empty_cat(*args, **kwargs):
+            if args[:2] == ("exec-out", "cat"):
+                return ""
+            return self.adb(*args, **kwargs)
+
+        self.runner.adb = empty_cat
+        state = self.probe(empty_cat)
+        record = state["probes"][0]
+        self.assertTrue(record["probeFailed"])
+        self.assertEqual(record["error"], "UI dump read back empty")
+        self.assertNotIn("bytes", record)
+        self.assertFalse((self.runner.evidence / "coldstart-hostdump.xml").exists())
+
+    def test_probe_cleanup_failure_keeps_the_sample_and_never_aborts_the_run(self):
+        # The `rm` cleanup runs in a finally block: if a stuck adb there raises
+        # (TimeoutExpired/OSError are not suppressed by best_effort), the
+        # diagnostic must still not escape poll_once or replace the run outcome,
+        # and a real capture must not be discarded just because its device-side
+        # leftover could not be removed.
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+        self.dump_xml = READY_XML
+
+        def cleanup_times_out(*args, **kwargs):
+            if args[:3] == ("shell", "rm", "-f"):
+                raise subprocess.TimeoutExpired("adb", 15)
+            return self.adb(*args, **kwargs)
+
+        self.runner.adb = cleanup_times_out
+        self.runner.poll_once("chain")
+        state = self.runner.report["coldstart_host_probe"]
+        self.assertEqual(state["attempts"], 1)
+        record = state["probes"][0]
+        self.assertIn("cleanupFailed", record)
+        self.assertTrue(record["containsReadyMarker"])
+        self.assertNotIn("probeFailed", record)
+        self.assertTrue(state["probeFailed"])
+        self.assertIn("coldstart-host-probe", (self.runner.evidence / "memory.txt").read_text(encoding="utf-8"))
+
+    def test_failed_capture_with_failed_cleanup_records_both(self):
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+
+        def both_fail(*args, **kwargs):
+            if args[:3] in (("shell", "uiautomator", "dump"), ("shell", "rm", "-f")):
+                raise subprocess.TimeoutExpired("adb", 30)
+            return self.adb(*args, **kwargs)
+
+        self.runner.adb = both_fail
+        self.runner.poll_once("chain")
+        record = self.runner.report["coldstart_host_probe"]["probes"][0]
+        self.assertTrue(record["probeFailed"])
+        self.assertIn("cleanupFailed", record)
+        self.assertNotIn("sha256", record)
+
+    def test_probe_gate_hiccup_is_contained_and_changes_nothing(self):
+        # The ≥30s gate reads device uptime before any dump exists. A stuck adb
+        # there must degrade into a recorded diagnostic, never into a run error.
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+
+        def uptime_times_out(*args, **kwargs):
+            if args[:3] == ("shell", "cat", "/proc/uptime"):
+                raise subprocess.TimeoutExpired("adb", 30)
+            return self.adb(*args, **kwargs)
+
+        self.runner.adb = uptime_times_out
+        self.runner.poll_once("chain")
+        state = self.runner.report["coldstart_host_probe"]
+        self.assertEqual(state, {"attempts": 0, "probes": [], "probeFailed": False})
+        self.assertIn("gate-failed", (self.runner.evidence / "memory.txt").read_text(encoding="utf-8"))
+
+    def test_probe_is_chain_only(self):
+        # Only the chain phase can hold a coldstart; other phases must not dump.
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+        self.runner.adb = self.adb
+        self.runner.poll_once("prepare")
+        self.assertEqual(self.runner.report["coldstart_host_probe"], {"attempts": 0, "probes": [], "probeFailed": False})
+        self.assertFalse(any(args[:3] == ("shell", "uiautomator", "dump") for args in self.calls))
+
+    def test_probe_does_not_trigger_without_device_evidence(self):
+        # Evidence not yet written (common early-chain) and a failing probe both
+        # leave `device` None; neither may attempt a dump or escape poll_once.
+        def no_evidence(*args, **kwargs):
+            if args[:3] == ("exec-out", "run-as", PACKAGE):
+                return ""
+            return self.adb(*args, **kwargs)
+
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+        self.runner.adb = no_evidence
+        self.runner.poll_once("chain")
+        self.assertEqual(self.runner.report["coldstart_host_probe"], {"attempts": 0, "probes": [], "probeFailed": False})
+
+        def evidence_breaks(*args, **kwargs):
+            if args[:3] == ("exec-out", "run-as", PACKAGE):
+                raise RuntimeError("run-as interrupted")
+            return self.adb(*args, **kwargs)
+
+        self.runner.adb = evidence_breaks
+        self.runner.poll_once("chain")
+        self.assertEqual(self.runner.report["coldstart_host_probe"], {"attempts": 0, "probes": [], "probeFailed": False})
+        self.assertFalse(any(args[:3] == ("shell", "uiautomator", "dump") for args in self.calls))
+
+    def test_deadline_inside_the_probe_propagates_to_the_phase_loop(self):
+        # An exhausted deadline is the one failure the probe must NOT contain:
+        # the phase loop re-checks the budget on its next tick. Cleanup and the
+        # sample record still happen (they run in the finally block).
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+
+        def dump_exhausts_deadline(*args, **kwargs):
+            if args[:3] == ("shell", "uiautomator", "dump"):
+                raise ScaleDeadlineError("global deadline exceeded")
+            return self.adb(*args, **kwargs)
+
+        self.runner.adb = dump_exhausts_deadline
+        with self.assertRaises(ScaleDeadlineError):
+            self.runner.poll_once("chain")
+        state = self.runner.report["coldstart_host_probe"]
+        self.assertEqual(state["attempts"], 1)
+        self.assertEqual(len(state["probes"]), 1)
+        self.assertTrue(any(args[:3] == ("shell", "rm", "-f") for args in self.calls))
+        self.assertIn("coldstart-host-probe", (self.runner.evidence / "memory.txt").read_text(encoding="utf-8"))
+
+    def test_tail_failure_is_contained_and_keeps_the_attempt(self):
+        # probes.append + record_memory sit after every capture guard and outside
+        # the capture try. An OSError while recording the probe must not escape
+        # poll_once or drop the attempt the probe already made. poll_once's own
+        # memory writes (meminfo) are left working, so this targets the tail.
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+        self.dump_xml = READY_XML
+        real_memory = self.runner.record_memory
+
+        def memory_fails_for_the_probe(phase, text):
+            if "coldstart-host-probe" in text:
+                raise OSError("evidence directory vanished")
+            return real_memory(phase, text)
+
+        self.runner.record_memory = memory_fails_for_the_probe
+        state = self.probe()
+        self.assertEqual(state["attempts"], 1)
+        self.assertEqual(len(state["probes"]), 1)
+        self.assertTrue(state["probes"][0]["containsReadyMarker"])
+
+    def test_gate_phase_deadline_propagates_instead_of_being_contained(self):
+        # M18: without activeDeadlineElapsedMs the poll_once deadline check is
+        # skipped, so a deadline surfaces in the probe's own uptime read. That
+        # one is the phase loop's signal, not a diagnostic hiccup: it must
+        # propagate, and no dump may be attempted.
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+
+        def dead_uptime():
+            raise ScaleDeadlineError("global deadline exceeded")
+
+        self.runner.uptime_ms = dead_uptime
+        with self.assertRaises(ScaleDeadlineError):
+            self.probe()
+        self.assertEqual(self.runner.report["coldstart_host_probe"], {"attempts": 0, "probes": [], "probeFailed": False})
+        self.assertFalse(any(args[:3] == ("shell", "uiautomator", "dump") for args in self.calls))
+
+    def test_at_most_two_probes_at_least_sixty_seconds_apart(self):
+        self.dump_xml = self.LOADING_XML
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+        state = self.probe()
+        self.assertEqual(state["attempts"], 1)
+        self.assertTrue(state["probes"][0]["containsLoadingMarker"])
+        self.uptime_s = (self.started_ms + 50_000) / 1000
+        self.probe()
+        self.assertEqual(state["attempts"], 1)
+        self.uptime_s = (self.started_ms + 110_000) / 1000
+        state = self.probe()
+        self.assertEqual(state["attempts"], 2)
+        self.assertEqual(state["probes"][1]["elapsed"], 110_000)
+        self.uptime_s = (self.started_ms + 200_000) / 1000
+        self.probe()
+        self.assertEqual(state["attempts"], 2)
+
+
+class WorkflowConcurrency(unittest.TestCase):
+    """Static proof of the D-204 parallel-acceptance concurrency contract."""
+
+    def test_each_run_owns_its_concurrency_group_and_never_cancels(self):
+        workflow = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "android-scale.yml"
+        text = workflow.read_text(encoding="utf-8")
+        concurrency = text.split("concurrency:", 1)[1].split("jobs:", 1)[0]
+        self.assertIn("group: android-scale-${{ github.run_id }}", concurrency)
+        self.assertIn("cancel-in-progress: false", concurrency)
+        self.assertNotIn("github.ref", concurrency)
+
+    def test_evidence_artifact_name_carries_the_run_identity(self):
+        # Parallel acceptance means two runs of the same SHA produce two
+        # evidence sets; their artifact names must stay tellable apart. Both the
+        # run id (parallel rounds) and the run attempt (an in-place whole-run
+        # retry) belong in the name; the bare sha-only name must be gone.
+        workflow = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "android-scale.yml"
+        text = workflow.read_text(encoding="utf-8")
+        name = "android-scale-${{ inputs.expected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}"
+        self.assertIn("name: " + name, text)
+        self.assertNotIn("name: android-scale-${{ inputs.expected_sha }}\n", text)
+        self.assertNotIn("name: android-scale-${{ inputs.expected_sha }}-${{ github.run_id }}\n", text)
+        self.assertIn("path: scale-evidence/**", text.split("name: " + name, 1)[1])
+
+
 class ApkProvenance(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

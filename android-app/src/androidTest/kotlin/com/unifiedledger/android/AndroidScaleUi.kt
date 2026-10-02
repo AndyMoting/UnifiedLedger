@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
+import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import java.util.ArrayDeque
 
@@ -21,9 +22,38 @@ internal class AndroidScaleUi(
     private val target = "com.unifiedledger.android"
 
     init {
+        // D-204 observer repair (test facility only; criteria, product code and
+        // the 41-case instrumented list are untouched). The in-process
+        // UiAutomation reads every a11y tree through its client-side
+        // AccessibilityCache, whose only runtime invalidation is an event
+        // delivered to this connection
+        // (IAccessibilityServiceClientWrapper.onAccessibilityEvent delegates to
+        // the cache before the serviceWantsEvent gate,
+        // AccessibilityService.java:2989-3000; eviction and clear paths in
+        // AccessibilityCache.java:262-305, android-36.1), while node and window
+        // queries are cache-first with no expiry (node lookup
+        // AccessibilityInteractionClient.java:604-630; window list
+        // AccessibilityInteractionClient.java:490-533, reached from
+        // UiAutomation.java:880-890). A connection whose
+        // event delivery stalls therefore serves the same stale startup tree
+        // indefinitely -- the D-203 signature. That client-side feed is
+        // unconditional, so this process cannot filter its own cache stream;
+        // delivery breadth is fixed by the platform registration, which sets
+        // eventTypes=TYPES_ALL_MASK (UiAutomationConnection.java:674-675). The
+        // setServiceInfo below replaces the whole info in one call after
+        // clearing the client cache once (UiAutomation.java:839-855), so
+        // re-asserting TYPES_ALL_MASK keeps this flag edit from narrowing the
+        // registered delivery surface, preserving the documented critical-event
+        // contract (AccessibilityCache.CACHE_CRITICAL_EVENTS_MASK,
+        // AccessibilityCache.java:61-72). It is defense in depth: whether the
+        // stall was a narrowed surface or another delivery failure cannot be
+        // decided from client-side sources (the enforcement point is in
+        // AMS, not in this source tree), so the absence re-read below stays as
+        // the bounded second layer.
         automation.serviceInfo =
             automation.serviceInfo.apply {
                 flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+                eventTypes = AccessibilityEvent.TYPES_ALL_MASK
             }
     }
 
@@ -68,13 +98,41 @@ internal class AndroidScaleUi(
 
     fun labels(node: AccessibilityNodeInfo): List<String> = nodes(node).flatMap { listOfNotNull(it.text?.toString(), it.contentDescription?.toString()) }
 
+    /**
+     * Semantic presence test: true when [findNode] locates a matching node, with
+     * that helper's cached-hit / refresh-on-miss rule.
+     */
     fun has(
         text: String,
         prefix: Boolean = false,
-    ): Boolean =
-        nodes(root()).any { node ->
-            node.isVisibleToUser && listOfNotNull(node.text?.toString(), node.contentDescription?.toString()).any { if (prefix) it.startsWith(text) else it == text }
-        }
+    ): Boolean = findNode { candidate -> matches(candidate, text, prefix) } != null
+
+    /**
+     * Locates one node with the D-204 two-pass rule (test facility only): a hit is
+     * served from the cached walk, and only a miss pays for one root re-read that
+     * bypasses the cache. [AccessibilityNodeInfo.refresh] re-fetches the root with
+     * `bypassCache=true` (AccessibilityNodeInfo.java:1339-1362, android-36.1) and
+     * swaps in its current child ids, after which the walk is retried. The bound
+     * is explicit: the re-read bypasses the cache for the root only -- each child
+     * fetch still goes through the cache-first path (`getChild` ->
+     * `findAccessibilityNodeInfoByAccessibilityId(..., false, ...)`,
+     * AccessibilityNodeInfo.java:1452-1468) -- so a miss costs one extra
+     * current-root read, not a cache-proof tree walk. Callers must not re-walk
+     * [nodes] after this returns -- that walk could disagree with the refreshed
+     * tree; this helper is the single source of the found node.
+     */
+    private fun findNode(predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        val root = root()
+        nodes(root).firstOrNull(predicate)?.let { return it }
+        if (root == null || !root.refresh()) return null
+        return nodes(root).firstOrNull(predicate)
+    }
+
+    private fun matches(
+        candidate: AccessibilityNodeInfo,
+        text: String,
+        prefix: Boolean,
+    ): Boolean = candidate.isVisibleToUser && listOfNotNull(candidate.text?.toString(), candidate.contentDescription?.toString()).any { if (prefix) it.startsWith(text) else it == text }
 
     // `onPoll` is a coldstart-only forensics hook: it runs after a passed tick,
     // must never call tick(), and stays null at every other call site.
@@ -111,7 +169,7 @@ internal class AndroidScaleUi(
         prefix: Boolean = false,
     ) {
         await { has(text, prefix) }
-        val node = nodes(root()).first { candidate -> candidate.isVisibleToUser && listOfNotNull(candidate.text?.toString(), candidate.contentDescription?.toString()).any { if (prefix) it.startsWith(text) else it == text } }
+        val node = findNode { candidate -> matches(candidate, text, prefix) } ?: error("clickable target absent: $text")
         clickNode(node)
     }
 
@@ -195,7 +253,7 @@ internal class AndroidScaleUi(
 
     fun selectSafFixture() {
         seek("支付宝账单（CSV）", forward = false)
-        val format = nodes(root()).first { it.text?.toString() == "支付宝账单（CSV）" }
+        val format = findNode { it.text?.toString() == "支付宝账单（CSV）" } ?: error("Alipay format entry absent")
         val picks = nodes(root()).filter { it.text?.toString() == "选择文件" && it.isVisibleToUser }
         clickNode(picks.minByOrNull { kotlin.math.abs(bounds(it).centerY() - bounds(format).centerY()) } ?: error("Alipay picker absent"))
         await {

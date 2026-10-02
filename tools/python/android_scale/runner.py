@@ -28,6 +28,19 @@ COLDSTART_FORENSICS_DEVICE_FILES = {
     "files/android-scale-coldstart-forensics.png": "coldstart-forensics.png",
 }
 
+# Host-side coldstart discriminating probe (D-204, diagnostics only; it never
+# feeds validation or any PASS/FAIL judgment). While the device evidence shows
+# the coldstart stage running for >=30s, an independent host a11y client
+# (`uiautomator dump`, a separate connection from the in-process observer) is
+# sampled at most twice per run, >=60s apart, to distinguish "product not
+# ready" from "in-process observer blind" if the observer ever sticks again.
+COLDSTART_HOST_DUMP = "coldstart-hostdump.xml"
+COLDSTART_HOST_DUMP_DEVICE_PREFIX = "/data/local/tmp/ul-coldstart-host-"
+COLDSTART_HOST_PROBE_MIN_ELAPSED_MS = 30000
+COLDSTART_HOST_PROBE_SPACING_MS = 60000
+COLDSTART_HOST_PROBE_MAX = 2
+COLDSTART_HOST_LOADING_MARKER = "正在打开本地账本"
+
 # Preparation and chain deliberately share the remaining global budget.
 # Only the three short reopen/replay phases have independent host limits.
 PHASE_BUDGETS = {"prepare": None, "chain": None, "reopen": 480, "replay": 480, "final-reopen": 480}
@@ -468,6 +481,7 @@ class ScaleRunner:
         a heavy chain must not be recorded as a timeout -- only a real deadline
         does that -- but it is written to memory.txt so it stays visible.
         """
+        device = None
         try:
             device = self.collect_device(best_effort=True)
             if device and device.get("activeDeadlineElapsedMs"):
@@ -480,6 +494,103 @@ class ScaleRunner:
             raise
         except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
             self.record_memory(phase, f"device probe failed: {type(error).__name__}: {str(error)[:200]}\n")
+        self.coldstart_host_probe(phase, device)
+
+    def coldstart_host_probe(self, phase: str, device: dict | None) -> None:
+        """Independent host a11y sample of a stuck coldstart (D-204, diagnostics).
+
+        Only a `uiautomator dump` from a separate client connection can tell
+        whether a screen the in-process observer keeps reading as the loading
+        tree is actually ready (the D-203 situation). The probe is strictly
+        bounded (at most two dumps per run, >=60s apart, only while the device
+        evidence shows the coldstart stage running >=30s) and strictly
+        diagnostic: every failure degrades into a probeFailed record and never
+        raises into the run's judgment or validation.
+        """
+        state = self.report.setdefault("coldstart_host_probe", {"attempts": 0, "probes": [], "probeFailed": False})
+        if phase != "chain" or state["attempts"] >= COLDSTART_HOST_PROBE_MAX or not isinstance(device, dict):
+            return
+        try:
+            stages = device.get("stages")
+            coldstart = stages.get("coldstart") if isinstance(stages, dict) else None
+            if not isinstance(coldstart, dict) or coldstart.get("status") != "NOT_RUN" or "startedMs" not in coldstart:
+                return
+            uptime = self.uptime_ms()
+            if uptime is None:
+                return
+            elapsed = float(uptime) - float(coldstart["startedMs"])
+        except ScaleDeadlineError:
+            raise
+        except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired, TypeError) as error:
+            # The gate itself reads device state; a hiccup while deciding must
+            # not escape into the run. No dump was attempted, so the recorded
+            # state stays untouched and the hiccup is written to memory.txt the
+            # same way poll_once records its own probe failures.
+            self.record_memory(phase, f"coldstart-host-probe gate-failed: {type(error).__name__}: {str(error)[:200]}\n")
+            return
+        if not math.isfinite(elapsed) or elapsed < COLDSTART_HOST_PROBE_MIN_ELAPSED_MS:
+            return
+        if state["probes"] and elapsed - state["probes"][-1].get("elapsed", 0) < COLDSTART_HOST_PROBE_SPACING_MS:
+            return
+        state["attempts"] += 1
+        record = {"elapsed": round(elapsed)}
+        path = COLDSTART_HOST_DUMP_DEVICE_PREFIX + uuid.uuid4().hex + ".xml"
+        try:
+            output = self.adb("shell", "uiautomator", "dump", path, timeout=30, best_effort=True)
+            if "dumped to:" not in output or not output.strip().endswith(path):
+                raise ValueError("UI dump did not confirm its fresh output path")
+            xml = self.adb("exec-out", "cat", path, timeout=30, best_effort=True)
+            if not xml.strip():
+                # An empty read-back is not a dump: recording it as a successful
+                # sample with zero bytes would be a silent false negative.
+                raise ValueError("UI dump read back empty")
+            data = xml.encode("utf-8")
+            (self.evidence / COLDSTART_HOST_DUMP).write_bytes(data)
+            record.update({
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "bytes": len(data),
+                "containsReadyMarker": READY_MARKER in xml,
+                "containsLoadingMarker": COLDSTART_HOST_LOADING_MARKER in xml,
+            })
+        except ScaleDeadlineError:
+            raise
+        except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+            record["probeFailed"] = True
+            record["error"] = str(error)[:200]
+            state["probeFailed"] = True
+        finally:
+            # Cleanup is the last ancillary act of a diagnostic probe, so a
+            # stuck adb here must not surface as an exception from a finally
+            # block -- that would let a diagnostic change the run outcome. An
+            # exhausted deadline (ScaleDeadlineError is a RuntimeError) is
+            # deliberately included: the phase loop re-checks the budget on its
+            # next tick, so nothing is lost by not raising from here.
+            try:
+                self.adb("shell", "rm", "-f", path, best_effort=True, timeout=15)
+            except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
+                # A successful capture keeps its hash and markers: the sample is
+                # real, only its device-side leftover could not be removed. It
+                # is flagged as a cleanup anomaly, never as a lost sample.
+                record["cleanupFailed"] = str(error)[:200]
+                state["probeFailed"] = True
+            # Recording is the probe's own bookkeeping. It sits outside the
+            # capture try and inside a finally block, so an OSError here would
+            # otherwise escape poll_once and change the run outcome the probe
+            # exists only to observe. The attempt is kept either way; a failed
+            # write is itself written to memory.txt, and if even that write
+            # fails it is swallowed (there is nothing safer left to do).
+            try:
+                state["probes"].append(record)
+                self.record_memory(phase, f"coldstart-host-probe {json.dumps(record, sort_keys=True)}\n")
+            except ScaleDeadlineError:
+                raise
+            except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+                try:
+                    self.record_memory(phase, f"coldstart-host-probe record-failed: {type(error).__name__}: {str(error)[:200]}\n")
+                except ScaleDeadlineError:
+                    raise
+                except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired):
+                    pass
 
     def check_phase_budget(self, phase: str, deadline: float) -> float:
         try:
