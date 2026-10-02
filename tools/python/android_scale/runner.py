@@ -23,10 +23,6 @@ RUNNER = "com.unifiedledger.android.test/androidx.test.runner.AndroidJUnitRunner
 # are never attempted at all.
 PHASE_BUDGETS = {"prepare": 14700, "chain": 22500, "reopen": 480, "replay": 480, "final-reopen": 480}
 
-# The app manifest declares this under its own LAUNCHER filter; it is the
-# fallback when the platform's `resolve-activity` does not answer.
-LAUNCHER_FALLBACK = f"{PACKAGE}/.MainActivity"
-
 
 def last_match(pattern: str, text: str, label: str) -> str:
     matches = re.findall(pattern, text)
@@ -190,51 +186,51 @@ class ScaleRunner:
             time.sleep(2)
         raise RuntimeError(f"display override did not take effect: requested {size}, observed {observed}")
 
-    def launcher_component(self) -> str:
-        """The app's launcher component, from the platform when it answers.
+    def app_uid(self) -> str:
+        """The uid the platform assigned to the installed app."""
+        text = self.adb("shell", "cmd", "package", "list", "packages", "-U", PACKAGE, timeout=60)
+        found = re.search(r"uid:(\d+)", text)
+        if not found:
+            raise RuntimeError(f"cannot read the uid of {PACKAGE}: {text.strip()[:200]!r}")
+        return found.group(1)
 
-        `cmd package resolve-activity` needs an explicit MAIN/LAUNCHER intent:
-        the bare-package form answers "No activity found" on API 36, and asking
-        it five times only wastes ten seconds. Fall back to the component the
-        app manifest declares under its own LAUNCHER filter, and let `am start`
-        fail loudly if that is wrong.
+    def materialize_app_data_dir(self) -> str:
+        """Create the app's data directory as root, and return the app's uid.
+
+        `pm install` does not create `/data/user/0/<pkg>` on this image, and
+        `run-as` refuses to stat a missing directory. Launching the app to make
+        the platform create it is not reliable here: the installed APK manifest
+        clearly declares `com.unifiedledger.android.MainActivity` (verified with
+        `aapt2 dump badging`) yet ATMS answers `START_CLASS_NOT_FOUND`
+        (`result code=-92`) for that explicit component, five times in a row.
+        Creating the directory as root and then fixing ownership and SELinux
+        context does not depend on component resolution at all.
         """
-        queries = (
-            ("--brief", "-a", "android.intent.action.MAIN",
-             "-c", "android.intent.category.LAUNCHER", "-p", PACKAGE),
-            ("--brief", PACKAGE),
-        )
-        for query in queries:
-            resolved = self.adb("shell", "cmd", "package", "resolve-activity", *query, timeout=60)
-            component = resolved.strip().splitlines()[-1].strip() if resolved.strip() else ""
-            if "/" in component and "No activity found" not in resolved:
-                return component
-        return LAUNCHER_FALLBACK
+        uid = self.app_uid()
+        root = f"/data/user/0/{PACKAGE}"
+        self.adb("shell", "mkdir", "-p", f"{root}/files/scale-fixture")
+        self.adb("shell", "chown", "-R", f"{uid}:{uid}", root)
+        # The files were created by root, so their label is not the app's.
+        self.adb("shell", "restorecon", "-R", root, best_effort=True)
+        return uid
 
-    def ensure_app_data_dir(self, attempts: int = 5) -> None:
-        """Materialize the app's data directory before using `run-as`.
+    def record_package_evidence(self) -> None:
+        """Write the package manager's own view into the evidence directory.
 
-        `pm install` does not create `/data/user/0/<pkg>` on this image (the
-        platform creates it on first launch), and `run-as` refuses to stat a
-        missing directory. Launch the app once, then stop it again so the chain
-        still starts from a cold start.
-
-        Launching immediately after the install hits a package-manager race: the
-        install is complete (the platform logs `installation completed`) but
-        ATMS still answers `START_CLASS_NOT_FOUND` (`result code=-92`) about a
-        fifth of a second later, so the launch is retried.
+        This is the view that decides whether `am instrument` can resolve our
+        test component, so it belongs in the evidence even on a run that later
+        passes.
         """
-        component = self.launcher_component()
-        last = "no attempt made"
-        for _ in range(attempts):
-            try:
-                self.adb("shell", "am", "start", "-W", "-n", component, timeout=180)
-                self.adb("shell", "am", "force-stop", PACKAGE)
-                return
-            except RuntimeError as error:
-                last = str(error)
-                time.sleep(2)
-        raise RuntimeError(f"could not launch {PACKAGE} to create its data directory: {last}")
+        listed = self.adb("shell", "cmd", "package", "list", "packages", "-U", PACKAGE,
+                          timeout=120, best_effort=True)
+        instrumentations = self.adb("shell", "pm", "list", "instrumentation", timeout=120, best_effort=True)
+        dump = self.adb("shell", "dumpsys", "package", PACKAGE, timeout=120, best_effort=True)
+        sections = [
+            "### list packages\n" + listed,
+            "### list instrumentation\n" + instrumentations,
+            "### dumpsys package (first 120 lines)\n" + "\n".join(dump.splitlines()[:120]) + "\n",
+        ]
+        (self.evidence / "pm.txt").write_text("\n".join(sections), encoding="utf-8")
 
     def install(self):
         validate_manifest(load_manifest(self.fixture / "manifest.json"), self.fixture)
@@ -250,10 +246,13 @@ class ScaleRunner:
         self.adb("shell", "mkdir", "-p", "/data/local/tmp/ul-scale")
         # `push` is an adb host command: `adb shell push` fails with exit 127.
         self.adb("push", str(self.fixture) + "/.", "/data/local/tmp/ul-scale/", timeout=120)
-        self.ensure_app_data_dir()
-        self.adb("shell", "run-as", PACKAGE, "mkdir", "-p", "files/scale-fixture")
+        uid = self.materialize_app_data_dir()
         for file in sorted(self.fixture.iterdir()):
-            self.adb("shell", "run-as", PACKAGE, "cp", "/data/local/tmp/ul-scale/" + file.name, "files/scale-fixture/" + file.name)
+            self.adb("shell", "cp", "/data/local/tmp/ul-scale/" + file.name,
+                     f"/data/user/0/{PACKAGE}/files/scale-fixture/" + file.name)
+        self.adb("shell", "chown", "-R", f"{uid}:{uid}", f"/data/user/0/{PACKAGE}")
+        self.adb("shell", "restorecon", "-R", f"/data/user/0/{PACKAGE}", best_effort=True)
+        self.record_package_evidence()
         self.adb("logcat", "-c")
 
     def collect_device(self, *, best_effort=False):

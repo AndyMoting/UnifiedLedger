@@ -32,7 +32,6 @@ from android_scale.result import (  # noqa: E402
     validate_evidence,
 )
 from android_scale.runner import (  # noqa: E402
-    LAUNCHER_FALLBACK,
     PHASE_BUDGETS,
     ScaleDeadlineError,
     ScaleRunner,
@@ -798,10 +797,27 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
             self.assertIn("1080x2400", message)
             self.assertIn("observed 1080x1920", message)
 
-    def test_ensure_app_data_dir_resolves_launches_and_stops_the_app(self):
-        # `pm install` does not create /data/user/0/<pkg> on this image, and
-        # `run-as` needs it; the app must be launched once first, using the
-        # component the platform itself resolves.
+    def test_app_uid_is_read_from_the_package_manager(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.make_runner(root)
+            runner.adb = lambda *_args, **_kwargs: "package:com.unifiedledger.android uid:10216\n"
+            self.assertEqual("10216", runner.app_uid())
+
+    def test_app_uid_fails_loudly_when_the_platform_does_not_answer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.make_runner(root)
+            runner.adb = lambda *_args, **_kwargs: ""
+            with self.assertRaises(RuntimeError) as caught:
+                runner.app_uid()
+            self.assertIn("cannot read the uid of com.unifiedledger.android", str(caught.exception))
+
+    def test_materialize_app_data_dir_creates_reowns_and_relabels(self):
+        # The installed APK manifest declares the launcher (aapt2 dump badging
+        # confirms it), yet ATMS answers START_CLASS_NOT_FOUND for that exact
+        # component on this image, five times in a row. The driver therefore must
+        # not depend on launching the app to create its data directory.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             runner = self.make_runner(root)
@@ -810,73 +826,31 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
             def record(*args, **_kwargs):
                 calls.append(args)
                 if args[:3] == ("shell", "cmd", "package"):
-                    return "priority=0\ncom.unifiedledger.android/.MainActivity\n"
+                    return "package:com.unifiedledger.android uid:10216\n"
                 return ""
 
             runner.adb = record
-            runner.ensure_app_data_dir()
-            self.assertEqual(calls[0], ("shell", "cmd", "package", "resolve-activity",
-                                        "--brief", "-a", "android.intent.action.MAIN",
-                                        "-c", "android.intent.category.LAUNCHER",
-                                        "-p", "com.unifiedledger.android"))
-            self.assertEqual(calls[1], ("shell", "am", "start", "-W", "-n",
-                                        "com.unifiedledger.android/.MainActivity"))
-            self.assertEqual(calls[2], ("shell", "am", "force-stop", "com.unifiedledger.android"))
+            self.assertEqual("10216", runner.materialize_app_data_dir())
+            self.assertEqual(calls[0], ("shell", "cmd", "package", "list", "packages", "-U",
+                                        "com.unifiedledger.android"))
+            self.assertEqual(calls[1], ("shell", "mkdir", "-p",
+                                        "/data/user/0/com.unifiedledger.android/files/scale-fixture"))
+            self.assertEqual(calls[2], ("shell", "chown", "-R", "10216:10216",
+                                        "/data/user/0/com.unifiedledger.android"))
+            self.assertEqual(calls[3], ("shell", "restorecon", "-R",
+                                        "/data/user/0/com.unifiedledger.android"))
 
-    def test_ensure_app_data_dir_retries_the_post_install_launcher_race(self):
-        # ATMS answers START_CLASS_NOT_FOUND (result code=-92) for a fifth of a
-        # second after a completed install; a single `am start` is not enough.
+    def test_record_package_evidence_writes_the_package_manager_view(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             runner = self.make_runner(root)
-            starts = {"count": 0}
-
-            def fake(*args, **_kwargs):
-                if args[:3] == ("shell", "cmd", "package"):
-                    return "priority=0\ncom.unifiedledger.android/.MainActivity\n"
-                if args[:3] == ("shell", "am", "start"):
-                    starts["count"] += 1
-                    if starts["count"] == 1:
-                        raise RuntimeError("command failed: adb (1): Error type 3\n"
-                                           "Error: Activity class does not exist.")
-                    return ""
-                return ""
-
-            runner.adb = fake
-            runner.ensure_app_data_dir(attempts=3)
-            self.assertEqual(starts["count"], 2)
-
-    def test_launcher_component_falls_back_to_the_manifest_component(self):
-        # The bare-package form of `resolve-activity` answers "No activity found"
-        # on API 36; the manifest's LAUNCHER component is the fallback, and a
-        # wrong component then fails loudly at `am start` instead of silently.
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            runner = self.make_runner(root)
-            runner.adb = lambda *_args, **_kwargs: "No activity found\n"
-            self.assertEqual(LAUNCHER_FALLBACK, runner.launcher_component())
-
-    def test_launcher_component_prefers_the_platform_answer(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            runner = self.make_runner(root)
-            runner.adb = lambda *_args, **_kwargs: "priority=0\ncom.unifiedledger.android/.MainActivity\n"
-            self.assertEqual("com.unifiedledger.android/.MainActivity", runner.launcher_component())
-
-    def test_ensure_app_data_dir_fails_loudly_when_the_launch_never_succeeds(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            runner = self.make_runner(root)
-
-            def never_launches(*args, **_kwargs):
-                if args[:3] == ("shell", "cmd", "package"):
-                    return "No activity found\n"
-                raise RuntimeError("command failed: adb (1): Error: Activity class does not exist.")
-
-            runner.adb = never_launches
-            with self.assertRaises(RuntimeError) as caught:
-                runner.ensure_app_data_dir(attempts=2)
-            self.assertIn("could not launch com.unifiedledger.android", str(caught.exception))
+            runner.adb = lambda *_args, **_kwargs: "package:com.unifiedledger.android uid:10216\n"
+            runner.record_package_evidence()
+            text = (root / "evidence" / "pm.txt").read_text(encoding="utf-8")
+            self.assertIn("### list packages", text)
+            self.assertIn("### list instrumentation", text)
+            self.assertIn("### dumpsys package", text)
+            self.assertIn("uid:10216", text)
 
     def test_install_pushes_the_fixture_with_the_host_command(self):
         # `adb push` is a host command; `adb shell push` fails with exit 127
@@ -898,7 +872,7 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
                 if args and args[0] == "install":
                     return "Success"
                 if args[:3] == ("shell", "cmd", "package"):
-                    return "priority=0\ncom.unifiedledger.android/.MainActivity\n"
+                    return "package:com.unifiedledger.android uid:10216\n"
                 return ""
 
             runner.adb = record
