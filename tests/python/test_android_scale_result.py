@@ -32,6 +32,7 @@ from android_scale.result import (  # noqa: E402
     validate_evidence,
 )
 from android_scale.runner import (  # noqa: E402
+    LAUNCHER_FALLBACK,
     PHASE_BUDGETS,
     ScaleDeadlineError,
     ScaleRunner,
@@ -815,7 +816,9 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
             runner.adb = record
             runner.ensure_app_data_dir()
             self.assertEqual(calls[0], ("shell", "cmd", "package", "resolve-activity",
-                                        "--brief", "com.unifiedledger.android"))
+                                        "--brief", "-a", "android.intent.action.MAIN",
+                                        "-c", "android.intent.category.LAUNCHER",
+                                        "-p", "com.unifiedledger.android"))
             self.assertEqual(calls[1], ("shell", "am", "start", "-W", "-n",
                                         "com.unifiedledger.android/.MainActivity"))
             self.assertEqual(calls[2], ("shell", "am", "force-stop", "com.unifiedledger.android"))
@@ -843,14 +846,37 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
             runner.ensure_app_data_dir(attempts=3)
             self.assertEqual(starts["count"], 2)
 
-    def test_ensure_app_data_dir_fails_loudly_when_the_launcher_is_unresolvable(self):
+    def test_launcher_component_falls_back_to_the_manifest_component(self):
+        # The bare-package form of `resolve-activity` answers "No activity found"
+        # on API 36; the manifest's LAUNCHER component is the fallback, and a
+        # wrong component then fails loudly at `am start` instead of silently.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             runner = self.make_runner(root)
-            runner.adb = lambda *_args, **_kwargs: ""
+            runner.adb = lambda *_args, **_kwargs: "No activity found\n"
+            self.assertEqual(LAUNCHER_FALLBACK, runner.launcher_component())
+
+    def test_launcher_component_prefers_the_platform_answer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.make_runner(root)
+            runner.adb = lambda *_args, **_kwargs: "priority=0\ncom.unifiedledger.android/.MainActivity\n"
+            self.assertEqual("com.unifiedledger.android/.MainActivity", runner.launcher_component())
+
+    def test_ensure_app_data_dir_fails_loudly_when_the_launch_never_succeeds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self.make_runner(root)
+
+            def never_launches(*args, **_kwargs):
+                if args[:3] == ("shell", "cmd", "package"):
+                    return "No activity found\n"
+                raise RuntimeError("command failed: adb (1): Error: Activity class does not exist.")
+
+            runner.adb = never_launches
             with self.assertRaises(RuntimeError) as caught:
-                runner.ensure_app_data_dir(attempts=1)
-            self.assertIn("launcher component not resolvable", str(caught.exception))
+                runner.ensure_app_data_dir(attempts=2)
+            self.assertIn("could not launch com.unifiedledger.android", str(caught.exception))
 
     def test_install_pushes_the_fixture_with_the_host_command(self):
         # `adb push` is a host command; `adb shell push` fails with exit 127

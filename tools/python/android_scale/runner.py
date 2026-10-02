@@ -23,6 +23,10 @@ RUNNER = "com.unifiedledger.android.test/androidx.test.runner.AndroidJUnitRunner
 # are never attempted at all.
 PHASE_BUDGETS = {"prepare": 14700, "chain": 22500, "reopen": 480, "replay": 480, "final-reopen": 480}
 
+# The app manifest declares this under its own LAUNCHER filter; it is the
+# fallback when the platform's `resolve-activity` does not answer.
+LAUNCHER_FALLBACK = f"{PACKAGE}/.MainActivity"
+
 
 def last_match(pattern: str, text: str, label: str) -> str:
     matches = re.findall(pattern, text)
@@ -186,6 +190,27 @@ class ScaleRunner:
             time.sleep(2)
         raise RuntimeError(f"display override did not take effect: requested {size}, observed {observed}")
 
+    def launcher_component(self) -> str:
+        """The app's launcher component, from the platform when it answers.
+
+        `cmd package resolve-activity` needs an explicit MAIN/LAUNCHER intent:
+        the bare-package form answers "No activity found" on API 36, and asking
+        it five times only wastes ten seconds. Fall back to the component the
+        app manifest declares under its own LAUNCHER filter, and let `am start`
+        fail loudly if that is wrong.
+        """
+        queries = (
+            ("--brief", "-a", "android.intent.action.MAIN",
+             "-c", "android.intent.category.LAUNCHER", "-p", PACKAGE),
+            ("--brief", PACKAGE),
+        )
+        for query in queries:
+            resolved = self.adb("shell", "cmd", "package", "resolve-activity", *query, timeout=60)
+            component = resolved.strip().splitlines()[-1].strip() if resolved.strip() else ""
+            if "/" in component and "No activity found" not in resolved:
+                return component
+        return LAUNCHER_FALLBACK
+
     def ensure_app_data_dir(self, attempts: int = 5) -> None:
         """Materialize the app's data directory before using `run-as`.
 
@@ -197,17 +222,11 @@ class ScaleRunner:
         Launching immediately after the install hits a package-manager race: the
         install is complete (the platform logs `installation completed`) but
         ATMS still answers `START_CLASS_NOT_FOUND` (`result code=-92`) about a
-        fifth of a second later. Resolve the launcher component and retry
-        instead of trusting a single `am start`.
+        fifth of a second later, so the launch is retried.
         """
+        component = self.launcher_component()
         last = "no attempt made"
         for _ in range(attempts):
-            resolved = self.adb("shell", "cmd", "package", "resolve-activity", "--brief", PACKAGE, timeout=60)
-            component = resolved.strip().splitlines()[-1].strip() if resolved.strip() else ""
-            if "/" not in component:
-                last = f"launcher component not resolvable: {resolved.strip()!r}"
-                time.sleep(2)
-                continue
             try:
                 self.adb("shell", "am", "start", "-W", "-n", component, timeout=180)
                 self.adb("shell", "am", "force-stop", PACKAGE)
