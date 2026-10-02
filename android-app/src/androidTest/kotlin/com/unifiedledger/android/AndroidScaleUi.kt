@@ -35,8 +35,7 @@ internal class AndroidScaleUi(
     fun root(): AccessibilityNodeInfo? = automation.windows.mapNotNull { it.root }.firstOrNull { it.packageName?.toString() == target }
 
     /** Every target-package root, not just the first one: multi-window ambiguity stays observable. */
-    fun targetRoots(): List<AccessibilityNodeInfo> =
-        automation.windows.mapNotNull { it.root }.filter { it.packageName?.toString() == target }
+    fun targetRoots(): List<AccessibilityNodeInfo> = automation.windows.mapNotNull { it.root }.filter { it.packageName?.toString() == target }
 
     /** Raw window snapshot; capping with a truncation flag is the caller's bound concern. */
     fun windowInfos(): List<AndroidColdstartForensics.WindowInfo> =
@@ -50,8 +49,7 @@ internal class AndroidScaleUi(
             )
         }
 
-    fun visibleTexts(root: AccessibilityNodeInfo?): List<String> =
-        nodes(root).filter { it.isVisibleToUser }.flatMap { listOfNotNull(it.text?.toString(), it.contentDescription?.toString()) }
+    fun visibleTexts(root: AccessibilityNodeInfo?): List<String> = nodes(root).filter { it.isVisibleToUser }.flatMap { listOfNotNull(it.text?.toString(), it.contentDescription?.toString()) }
 
     fun visibleNodeCount(root: AccessibilityNodeInfo?): Int = nodes(root).count { it.isVisibleToUser }
 

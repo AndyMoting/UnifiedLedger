@@ -6,10 +6,10 @@ import android.graphics.Bitmap
 import android.os.Process
 import android.os.SystemClock
 import android.util.AtomicFile
-import java.io.ByteArrayOutputStream
-import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.io.File
 
 /**
  * Bounded coldstart forensics captured before instrumentation exits.
@@ -89,8 +89,9 @@ internal class AndroidScaleColdstartForensicsCollector(
             }
         val stacks =
             if (SystemClock.elapsedRealtime() < budgetEnd) {
+                val stackTraces = Thread.getAllStackTraces()
                 AndroidColdstartForensics.filterStacks(
-                    Thread.getAllStackTraces().entries.map { it.key.name to it.value }.sortedBy { it.first },
+                    stackTraces.entries.map { it.key.name to it.value }.sortedBy { it.first },
                 )
             } else {
                 skipped += "filterStacks"
@@ -172,8 +173,7 @@ internal class AndroidScaleColdstartForensicsCollector(
         )
     }
 
-    private fun emptyObservation(atMs: Long): AndroidColdstartForensics.Sample =
-        AndroidColdstartForensics.Sample(atMs, emptyList(), false, false, false, 0, emptyList())
+    private fun emptyObservation(atMs: Long): AndroidColdstartForensics.Sample = AndroidColdstartForensics.Sample(atMs, emptyList(), false, false, false, 0, emptyList())
 
     private fun samplesJson(): JSONArray {
         val samples = JSONArray()
