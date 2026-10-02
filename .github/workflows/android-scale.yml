@@ -198,12 +198,13 @@ jobs:
         # Partial evidence still uploads by design (the runner creates the
         # directory and the phase logs early); the gate is the independent
         # validation step above, not this upload.
-        # The name carries the run id: parallel acceptance rounds of one SHA
-        # (D-204) must stay tellable apart by artifact name alone.
+        # The name carries the run id and attempt: parallel acceptance rounds of
+        # one SHA (D-204) must stay tellable apart, and a whole-run re-run in
+        # place must not collide with the artifacts it retried.
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: android-scale-${{ inputs.expected_sha }}-${{ github.run_id }}
+          name: android-scale-${{ inputs.expected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: scale-evidence/**
           if-no-files-found: error
           retention-days: 7

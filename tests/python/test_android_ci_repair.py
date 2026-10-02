@@ -690,6 +690,42 @@ class ColdstartHostProbe(unittest.TestCase):
         self.assertTrue(any(args[:3] == ("shell", "rm", "-f") for args in self.calls))
         self.assertIn("coldstart-host-probe", (self.runner.evidence / "memory.txt").read_text(encoding="utf-8"))
 
+    def test_tail_failure_is_contained_and_keeps_the_attempt(self):
+        # probes.append + record_memory sit after every capture guard and outside
+        # the capture try. An OSError while recording the probe must not escape
+        # poll_once or drop the attempt the probe already made. poll_once's own
+        # memory writes (meminfo) are left working, so this targets the tail.
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+        self.dump_xml = READY_XML
+        real_memory = self.runner.record_memory
+
+        def memory_fails_for_the_probe(phase, text):
+            if "coldstart-host-probe" in text:
+                raise OSError("evidence directory vanished")
+            return real_memory(phase, text)
+
+        self.runner.record_memory = memory_fails_for_the_probe
+        state = self.probe()
+        self.assertEqual(state["attempts"], 1)
+        self.assertEqual(len(state["probes"]), 1)
+        self.assertTrue(state["probes"][0]["containsReadyMarker"])
+
+    def test_gate_phase_deadline_propagates_instead_of_being_contained(self):
+        # M18: without activeDeadlineElapsedMs the poll_once deadline check is
+        # skipped, so a deadline surfaces in the probe's own uptime read. That
+        # one is the phase loop's signal, not a diagnostic hiccup: it must
+        # propagate, and no dump may be attempted.
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+
+        def dead_uptime():
+            raise ScaleDeadlineError("global deadline exceeded")
+
+        self.runner.uptime_ms = dead_uptime
+        with self.assertRaises(ScaleDeadlineError):
+            self.probe()
+        self.assertEqual(self.runner.report["coldstart_host_probe"], {"attempts": 0, "probes": [], "probeFailed": False})
+        self.assertFalse(any(args[:3] == ("shell", "uiautomator", "dump") for args in self.calls))
+
     def test_at_most_two_probes_at_least_sixty_seconds_apart(self):
         self.dump_xml = self.LOADING_XML
         self.uptime_s = (self.started_ms + 40_000) / 1000
@@ -721,14 +757,16 @@ class WorkflowConcurrency(unittest.TestCase):
 
     def test_evidence_artifact_name_carries_the_run_identity(self):
         # Parallel acceptance means two runs of the same SHA produce two
-        # evidence sets; their artifact names must stay tellable apart. The
-        # upload step still ships the same directory.
+        # evidence sets; their artifact names must stay tellable apart. Both the
+        # run id (parallel rounds) and the run attempt (an in-place whole-run
+        # retry) belong in the name; the bare sha-only name must be gone.
         workflow = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "android-scale.yml"
         text = workflow.read_text(encoding="utf-8")
-        self.assertIn("name: android-scale-${{ inputs.expected_sha }}-${{ github.run_id }}", text)
+        name = "android-scale-${{ inputs.expected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}"
+        self.assertIn("name: " + name, text)
         self.assertNotIn("name: android-scale-${{ inputs.expected_sha }}\n", text)
-        block = text.split("name: android-scale-${{ inputs.expected_sha }}-${{ github.run_id }}", 1)[1]
-        self.assertIn("path: scale-evidence/**", block)
+        self.assertNotIn("name: android-scale-${{ inputs.expected_sha }}-${{ github.run_id }}\n", text)
+        self.assertIn("path: scale-evidence/**", text.split("name: " + name, 1)[1])
 
 
 class ApkProvenance(unittest.TestCase):

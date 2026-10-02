@@ -99,17 +99,8 @@ internal class AndroidScaleUi(
     fun labels(node: AccessibilityNodeInfo): List<String> = nodes(node).flatMap { listOfNotNull(it.text?.toString(), it.contentDescription?.toString()) }
 
     /**
-     * Semantic presence test. Absence is confirmed only after one cache-bypassing
-     * re-read of the root (D-204): [AccessibilityNodeInfo.refresh] re-fetches the
-     * root with `bypassCache=true` (AccessibilityNodeInfo.java:1339-1362,
-     * android-36.1) and swaps in its current child ids, so the second walk starts
-     * from a current tree instead of the exact node objects the first pass read.
-     * The bound is explicit: the re-read bypasses the cache for the root only --
-     * each child fetch still goes through the cache-first path
-     * (`getChild` -> `findAccessibilityNodeInfoByAccessibilityId(..., false, ...)`,
-     * AccessibilityNodeInfo.java:1452-1468) -- so this is one extra current-root
-     * read, not a cache-proof tree walk. A match from the cached pass returns
-     * immediately, so only the absence verdict pays for it.
+     * Semantic presence test: true when [findNode] locates a matching node, with
+     * that helper's cached-hit / refresh-on-miss rule.
      */
     fun has(
         text: String,
@@ -117,11 +108,18 @@ internal class AndroidScaleUi(
     ): Boolean = findNode { candidate -> matches(candidate, text, prefix) } != null
 
     /**
-     * Locates one node with the same two-pass rule as [has]: a hit is served from
-     * the cached walk, and only a miss pays for one root re-read that bypasses the
-     * cache (`refresh()`), after which the walk is retried. Callers must not
-     * re-walk [nodes] after this returns -- that walk could disagree with the
-     * refreshed tree; this helper is the single source of the found node.
+     * Locates one node with the D-204 two-pass rule (test facility only): a hit is
+     * served from the cached walk, and only a miss pays for one root re-read that
+     * bypasses the cache. [AccessibilityNodeInfo.refresh] re-fetches the root with
+     * `bypassCache=true` (AccessibilityNodeInfo.java:1339-1362, android-36.1) and
+     * swaps in its current child ids, after which the walk is retried. The bound
+     * is explicit: the re-read bypasses the cache for the root only -- each child
+     * fetch still goes through the cache-first path (`getChild` ->
+     * `findAccessibilityNodeInfoByAccessibilityId(..., false, ...)`,
+     * AccessibilityNodeInfo.java:1452-1468) -- so a miss costs one extra
+     * current-root read, not a cache-proof tree walk. Callers must not re-walk
+     * [nodes] after this returns -- that walk could disagree with the refreshed
+     * tree; this helper is the single source of the found node.
      */
     private fun findNode(predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
         val root = root()

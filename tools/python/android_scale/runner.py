@@ -573,8 +573,24 @@ class ScaleRunner:
                 # is flagged as a cleanup anomaly, never as a lost sample.
                 record["cleanupFailed"] = str(error)[:200]
                 state["probeFailed"] = True
-            state["probes"].append(record)
-            self.record_memory(phase, f"coldstart-host-probe {json.dumps(record, sort_keys=True)}\n")
+            # Recording is the probe's own bookkeeping. It sits outside the
+            # capture try and inside a finally block, so an OSError here would
+            # otherwise escape poll_once and change the run outcome the probe
+            # exists only to observe. The attempt is kept either way; a failed
+            # write is itself written to memory.txt, and if even that write
+            # fails it is swallowed (there is nothing safer left to do).
+            try:
+                state["probes"].append(record)
+                self.record_memory(phase, f"coldstart-host-probe {json.dumps(record, sort_keys=True)}\n")
+            except ScaleDeadlineError:
+                raise
+            except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+                try:
+                    self.record_memory(phase, f"coldstart-host-probe record-failed: {type(error).__name__}: {str(error)[:200]}\n")
+                except ScaleDeadlineError:
+                    raise
+                except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired):
+                    pass
 
     def check_phase_budget(self, phase: str, deadline: float) -> float:
         try:

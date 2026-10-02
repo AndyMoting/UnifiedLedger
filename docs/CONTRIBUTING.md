@@ -86,7 +86,7 @@ bash tools/ci/trace-scan.sh
 
 云端链路：先在托管 runner 上生成确定性匿名夹具（准备阶段五批各 10,000 条共享业务内容、不同导入会话的记录，加 1,000 条唯一记录 = 51,000 候选 / 100,000 重复关系；最后一次真实 SAF 导入后 61,000 候选 / 150,000 总重复关系 / 本次会话 50,000 关系），再在**模拟器会话之外**构建两个 APK；会话内由 host 驱动器 `tools/python/android_scale/runner.py` 独占设备交互——AVD 名固定 `ul-scale`、API 36 `google_apis` x86_64、2 核 / 2048M、`wm size 1080x2400`、`wm density 420`、字号 1.0、中文 locale、`Asia/Shanghai`、三个动画尺度 1.0（保留正常动画，程序化滚动依赖动画推进）——逐阶段执行整链并把证据写入 `scale-evidence/`。
 
-判据由 `tools/python/android_scale/result.py` 唯一实现：缺夹具、缺阶段、缺报告、SHA 不符、设备配置不符、计数 oracle 不符、超时或崩溃/OOM/ANR 一律失败；不以 `am instrument` 的 shell 返回码或单个 `OK` 字符串作为唯一通过依据。模拟器步之后另设一步独立的运行后校验（`tools/ci/android-scale-validate.py`，`if: always()`）：重跑严格判定器、重新校验夹具清单，并把设备上报的计数绑定到生成器独立算出的清单——成功信号不只依赖 host 驱动器经第三方 action 转达的退出码。工件 `android-scale-<sha>-<run-id>`（含 run 标识：同一 SHA 的并行验收轮各自产出按名可辨的独立证据）含 `host.json`、`device.json`、`junit.xml`、`memory.txt`、`configuration.txt`、`logcat.txt`、各阶段 instrumentation 日志，以及失败时的 `failure.png` 与 `failure-ui.xml`，保留 7 天；不上传数据库与整份输入文件。
+判据由 `tools/python/android_scale/result.py` 唯一实现：缺夹具、缺阶段、缺报告、SHA 不符、设备配置不符、计数 oracle 不符、超时或崩溃/OOM/ANR 一律失败；不以 `am instrument` 的 shell 返回码或单个 `OK` 字符串作为唯一通过依据。模拟器步之后另设一步独立的运行后校验（`tools/ci/android-scale-validate.py`，`if: always()`）：重跑严格判定器、重新校验夹具清单，并把设备上报的计数绑定到生成器独立算出的清单——成功信号不只依赖 host 驱动器经第三方 action 转达的退出码。工件 `android-scale-<sha>-<run-id>-<attempt>`（含 run 标识与 attempt：同一 SHA 的并行验收轮各自产出按名可辨的独立证据，整条重跑不与旧工件冲突）含 `host.json`、`device.json`、`junit.xml`、`memory.txt`、`configuration.txt`、`logcat.txt`、各阶段 instrumentation 日志，以及失败时的 `failure.png` 与 `failure-ui.xml`，保留 7 天；不上传数据库与整份输入文件。
 
 触发命令（仅在该提交已落到目标分支后）：
 
