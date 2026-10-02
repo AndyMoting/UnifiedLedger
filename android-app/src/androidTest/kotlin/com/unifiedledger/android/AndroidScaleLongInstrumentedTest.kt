@@ -262,6 +262,22 @@ class AndroidScaleLongInstrumentedTest {
         check(context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null) == 1)
     }
 
+    /**
+     * Coldstart-only bounded forensics: sampling during the launch wait and one
+     * best-effort capture after the first failure, before rethrow. Every other
+     * launch/await call site keeps its exact behavior; the stage verdict, the
+     * original Throwable and the remaining NOT_RUN stages never change.
+     */
+    private fun coldstartLaunch() {
+        val forensics = AndroidScaleColdstartForensicsCollector(instrumentation, ui, sha)
+        try {
+            ui.launch { forensics.sample() }
+        } catch (failure: Throwable) {
+            forensics.capture(failure)
+            throw failure
+        }
+    }
+
     private fun preparedSessions(): List<String> =
         state.getJSONArray("sessions").let { sessions ->
             (0 until sessions.length()).map { sessions.getJSONObject(it).getString("inputRef") }
@@ -279,7 +295,7 @@ class AndroidScaleLongInstrumentedTest {
         check(evidence.getJSONObject("stages").getJSONObject("preparation").getString("status") == "PASS")
         val ledger = state.getString("ledger")
         stage("coldstart") {
-            ui.launch()
+            coldstartLaunch()
             check(ui.has("账本为空，还没有任何交易。"))
             oracle.zeroEconomics(oracle.snapshot(ledger))
         }

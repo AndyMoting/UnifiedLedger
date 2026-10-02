@@ -27,12 +27,33 @@ internal class AndroidScaleUi(
             }
     }
 
-    fun launch() {
+    fun launch(onPoll: (() -> Unit)? = null) {
         instrumentation.targetContext.startActivity(Intent.makeMainActivity(ComponentName(target, "$target.MainActivity")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        await { has("账本：", prefix = true) }
+        await(onPoll = onPoll) { has("账本：", prefix = true) }
     }
 
     fun root(): AccessibilityNodeInfo? = automation.windows.mapNotNull { it.root }.firstOrNull { it.packageName?.toString() == target }
+
+    /** Every target-package root, not just the first one: multi-window ambiguity stays observable. */
+    fun targetRoots(): List<AccessibilityNodeInfo> =
+        automation.windows.mapNotNull { it.root }.filter { it.packageName?.toString() == target }
+
+    fun windowInfos(): List<AndroidColdstartForensics.WindowInfo> =
+        automation.windows.take(AndroidColdstartForensics.MAX_WINDOWS_PER_SAMPLE).map { window ->
+            AndroidColdstartForensics.WindowInfo(
+                id = window.id,
+                type = window.type,
+                active = window.isActive,
+                focused = window.isFocused,
+                packageName = window.packageName?.toString(),
+                rootPackage = window.root?.packageName?.toString(),
+            )
+        }
+
+    fun visibleTexts(root: AccessibilityNodeInfo?): List<String> =
+        nodes(root).filter { it.isVisibleToUser }.flatMap { listOfNotNull(it.text?.toString(), it.contentDescription?.toString()) }
+
+    fun visibleNodeCount(root: AccessibilityNodeInfo?): Int = nodes(root).count { it.isVisibleToUser }
 
     fun nodes(root: AccessibilityNodeInfo?): List<AccessibilityNodeInfo> {
         if (root == null) return emptyList()
@@ -57,13 +78,17 @@ internal class AndroidScaleUi(
             node.isVisibleToUser && listOfNotNull(node.text?.toString(), node.contentDescription?.toString()).any { if (prefix) it.startsWith(text) else it == text }
         }
 
+    // `onPoll` is a coldstart-only forensics hook: it runs after a passed tick,
+    // must never call tick(), and stays null at every other call site.
     fun await(
         timeout: Long = 180000,
+        onPoll: (() -> Unit)? = null,
         predicate: () -> Boolean,
     ) {
         val end = SystemClock.elapsedRealtime() + timeout
         while (SystemClock.elapsedRealtime() < end) {
             tick()
+            onPoll?.invoke()
             if (predicate()) return
             SystemClock.sleep(150)
         }
