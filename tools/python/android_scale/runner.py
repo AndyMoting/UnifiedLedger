@@ -190,7 +190,8 @@ class ScaleRunner:
             self.adb("install", "-t", str(apk), timeout=120)
         # Private preparation files never rely on targetSdk scoped shared-storage access.
         self.adb("shell", "mkdir", "-p", "/data/local/tmp/ul-scale")
-        self.adb("shell", "push", str(self.fixture) + "/.", "/data/local/tmp/ul-scale/", timeout=120)
+        # `push` is an adb host command: `adb shell push` fails with exit 127.
+        self.adb("push", str(self.fixture) + "/.", "/data/local/tmp/ul-scale/", timeout=120)
         self.ensure_app_data_dir()
         self.adb("shell", "run-as", PACKAGE, "mkdir", "-p", "files/scale-fixture")
         for file in sorted(self.fixture.iterdir()):
