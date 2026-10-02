@@ -29,6 +29,7 @@ from android_scale.result import (  # noqa: E402
     TEST_METHOD,
     crash_markers,
     cross_check_manifest,
+    instrumentation_pass,
     validate_evidence,
 )
 from android_scale.runner import (  # noqa: E402
@@ -622,6 +623,30 @@ class ReducerHardeningRejectsSubtleBypasses(unittest.TestCase):
                           "W/ActivityManager: ANR in com.unifiedledger.android"], ours)
         self.assertEqual(["E/AndroidRuntime: FATAL EXCEPTION: main",
                           "I/ActivityManager: am_crash: [999,0,com.other.app,OutOfMemoryError]"], foreign)
+
+    def test_transcript_shape_is_reported_on_mismatch(self):
+        # The expected transcript shape has only been checked against synthetic
+        # logs, so a real mismatch must say what the platform actually emitted.
+        transcript = (
+            "INSTRUMENTATION_STATUS: class=com.unifiedledger.android.AndroidScaleLongInstrumentedTest\n"
+            "INSTRUMENTATION_STATUS: test=maximumScalePhase\n"
+            "INSTRUMENTATION_STATUS: numtests=1\n"
+            "INSTRUMENTATION_STATUS_CODE: 1\n"
+            "INSTRUMENTATION_STATUS: class=com.unifiedledger.android.AndroidScaleLongInstrumentedTest\n"
+            "INSTRUMENTATION_STATUS: test=maximumScalePhase\n"
+            "INSTRUMENTATION_STATUS: numtests=1\n"
+            "INSTRUMENTATION_STATUS_CODE: 0\n"
+            "INSTRUMENTATION_STATUS: class=com.unifiedledger.android.AndroidScaleLongInstrumentedTest\n"
+            "INSTRUMENTATION_STATUS: test=anotherPhase\n"
+            "INSTRUMENTATION_STATUS: numtests=1\n"
+            "INSTRUMENTATION_STATUS_CODE: 0\n"
+        )
+        with self.assertRaises(ValueError) as caught:
+            instrumentation_pass(transcript)
+        message = str(caught.exception)
+        self.assertIn("missing, extra, skipped, or failed instrumented test", message)
+        self.assertIn("maximumScalePhase", message)
+        self.assertIn("anotherPhase", message)
 
 
 class ManifestCrossCheckBindsDeviceCounters(unittest.TestCase):

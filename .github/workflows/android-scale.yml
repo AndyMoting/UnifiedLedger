@@ -88,15 +88,23 @@ jobs:
         run: |
           python3 tools/ci/android-scale-fixture.py --out scale-fixture
           python3 tools/ci/android-scale-fixture.py --out scale-fixture --validate
-      - name: Reuse the APKs of an earlier run of this SHA
-        # Re-runs of the same SHA reuse the APKs built for it, which removes the
-        # ~6-7 minute build from every iteration. The driver still records both
-        # APK hashes in host.json, so reused bytes stay visible in the evidence.
+      - name: Identify the APK inputs
+        # Key the cached APKs on the inputs they actually depend on rather than on
+        # the commit: a facility-only change (the driver, the reducer, this file)
+        # must not force a six-minute rebuild before every long run.
+        id: apk-inputs
+        run: |
+          set -euo pipefail
+          hash="$(git rev-parse HEAD:android-app HEAD:gradle HEAD:build.gradle.kts HEAD:settings.gradle.kts | sha256sum | cut -c1-16)"
+          echo "hash=${hash}" >> "$GITHUB_OUTPUT"
+      - name: Reuse the APKs built for these inputs
+        # The driver still records both APK hashes in host.json, so reused bytes
+        # stay visible in the evidence.
         id: reuse
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: android-scale-apks-${{ inputs.expected_sha }}
+          name: android-scale-apks-${{ steps.apk-inputs.outputs.hash }}
           path: scale-apks
       - name: Build APKs before the emulator session
         # Built outside the emulator session: the emulator action kills the
@@ -118,7 +126,7 @@ jobs:
         if: steps.reuse.outcome != 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: android-scale-apks-${{ inputs.expected_sha }}
+          name: android-scale-apks-${{ steps.apk-inputs.outputs.hash }}
           path: scale-apks-staged/*.apk
           retention-days: 7
       - name: Enable KVM group perms
