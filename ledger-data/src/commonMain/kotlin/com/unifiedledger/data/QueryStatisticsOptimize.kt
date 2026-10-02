@@ -80,7 +80,8 @@ fun runQueryStatisticsOptimizeOn(driver: SqlDriver) {
                     "SELECT count(*) FROM sqlite_master WHERE name = 'sqlite_stat1'",
                     { cursor ->
                         val hasRow = cursor.next().value
-                        QueryResult.Value(hasRow && cursor.getLong(0) > 0L)
+                        // sqldelight 2.3.2: SqlCursor.getLong returns Long? (D-203 review P1 fix).
+                        QueryResult.Value(hasRow && (cursor.getLong(0) ?: 0L) > 0L)
                     },
                     0,
                     null,
