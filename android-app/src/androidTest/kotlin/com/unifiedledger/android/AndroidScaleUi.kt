@@ -22,34 +22,38 @@ internal class AndroidScaleUi(
     private val target = "com.unifiedledger.android"
 
     init {
-        // D-204 observer repair (test facility only; criteria, product code and
-        // the 41-case instrumented list are untouched). The in-process
-        // UiAutomation reads every a11y tree through its client-side
-        // AccessibilityCache, whose only runtime invalidation is an event
-        // delivered to this connection
-        // (IAccessibilityServiceClientWrapper.onAccessibilityEvent delegates to
-        // the cache before the serviceWantsEvent gate,
-        // AccessibilityService.java:2989-3000; eviction and clear paths in
-        // AccessibilityCache.java:262-305, android-36.1), while node and window
-        // queries are cache-first with no expiry (node lookup
-        // AccessibilityInteractionClient.java:604-630; window list
-        // AccessibilityInteractionClient.java:490-533, reached from
-        // UiAutomation.java:880-890). A connection whose
-        // event delivery stalls therefore serves the same stale startup tree
-        // indefinitely -- the D-203 signature. That client-side feed is
-        // unconditional, so this process cannot filter its own cache stream;
-        // delivery breadth is fixed by the platform registration, which sets
-        // eventTypes=TYPES_ALL_MASK (UiAutomationConnection.java:674-675). The
-        // setServiceInfo below replaces the whole info in one call after
-        // clearing the client cache once (UiAutomation.java:839-855), so
-        // re-asserting TYPES_ALL_MASK keeps this flag edit from narrowing the
-        // registered delivery surface, preserving the documented critical-event
-        // contract (AccessibilityCache.CACHE_CRITICAL_EVENTS_MASK,
-        // AccessibilityCache.java:61-72). It is defense in depth: whether the
-        // stall was a narrowed surface or another delivery failure cannot be
-        // decided from client-side sources (the enforcement point is in
-        // AMS, not in this source tree), so the absence re-read below stays as
-        // the bounded second layer.
+        setServiceInfo()
+    }
+
+    /**
+     * D-204 observer repair (test facility only; criteria, product code and the
+     * 41-case instrumented list are untouched). The in-process UiAutomation
+     * reads every a11y tree through its client-side AccessibilityCache, whose
+     * only runtime invalidation is an event delivered to this connection
+     * (IAccessibilityServiceClientWrapper.onAccessibilityEvent delegates to the
+     * cache before the serviceWantsEvent gate,
+     * AccessibilityService.java:2989-3000; eviction and clear paths in
+     * AccessibilityCache.java:262-305, android-36.1), while node and window
+     * queries are cache-first with no expiry (node lookup
+     * AccessibilityInteractionClient.java:604-630; window list
+     * AccessibilityInteractionClient.java:490-533, reached from
+     * UiAutomation.java:880-890). A connection whose event delivery stalls
+     * therefore serves the same stale startup tree indefinitely -- the D-203
+     * signature. That client-side feed is unconditional, so this process cannot
+     * filter its own cache stream; delivery breadth is fixed by the platform
+     * registration, which sets eventTypes=TYPES_ALL_MASK
+     * (UiAutomationConnection.java:674-675). The setServiceInfo call below
+     * replaces the whole info in one call after clearing the client cache once
+     * (UiAutomation.java:839-855), so re-asserting TYPES_ALL_MASK keeps this
+     * flag edit from narrowing the registered delivery surface, preserving the
+     * documented critical-event contract
+     * (AccessibilityCache.CACHE_CRITICAL_EVENTS_MASK, AccessibilityCache.java:61-72).
+     * It is defense in depth: whether the stall was a narrowed surface or
+     * another delivery failure cannot be decided from client-side sources (the
+     * enforcement point is in AMS, not in this source tree), so the absence
+     * re-read in [findNode] stays as the bounded second layer.
+     */
+    private fun setServiceInfo() {
         automation.serviceInfo =
             automation.serviceInfo.apply {
                 flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
@@ -57,9 +61,12 @@ internal class AndroidScaleUi(
             }
     }
 
-    fun launch(onPoll: (() -> Unit)? = null) {
+    fun launch(
+        onPoll: (() -> Unit)? = null,
+        diagnostic: AndroidScaleObserverDiagWriter? = null,
+    ) {
         instrumentation.targetContext.startActivity(Intent.makeMainActivity(ComponentName(target, "$target.MainActivity")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        await(onPoll = onPoll) { has("账本：", prefix = true) }
+        await(onPoll = onPoll, diagnostic = diagnostic) { has("账本：", prefix = true) }
     }
 
     fun root(): AccessibilityNodeInfo? = automation.windows.mapNotNull { it.root }.firstOrNull { it.packageName?.toString() == target }
@@ -134,22 +141,75 @@ internal class AndroidScaleUi(
         prefix: Boolean,
     ): Boolean = candidate.isVisibleToUser && listOfNotNull(candidate.text?.toString(), candidate.contentDescription?.toString()).any { if (prefix) it.startsWith(text) else it == text }
 
-    // `onPoll` is a coldstart-only forensics hook: it runs after a passed tick,
-    // must never call tick(), and stays null at every other call site.
+    /**
+     * D-205 cache-reset repair of the D-204 shortfall, plus its forced-reset
+     * diagnostic. Test facility only: criteria, product code, scale and the
+     * 41-case instrumented list are untouched.
+     *
+     * D-204 answered a miss with one root-only [AccessibilityNodeInfo.refresh]
+     * (children stay cache-first) and a single TYPES_ALL_MASK re-assert at init,
+     * which is too early to matter. Two further maximum rounds still read the
+     * 8-node loading tree for the whole 180s wait while ULStartup timing and
+     * frame-buffer screenshots proved Ready in ~3s: the client cache was filled
+     * with the loading tree during the 0.6-3.5s load window and a stalled event
+     * feed never invalidated it. [resetAutomationCache] re-runs the same
+     * setServiceInfo() whose replacement clears the client AccessibilityCache
+     * once (UiAutomation.java:839-855), so while the observer stays blind a
+     * bounded, periodic reset forces queries to re-read the current window
+     * state. The system-side cause of the stalled delivery stays unproven; this
+     * is a client-side programmable forced invalidation, not a root-cause
+     * claim, and it does not change the readiness criterion (`has("账本：")`).
+     *
+     * `onPoll` is a coldstart-only forensics hook: it runs after a passed tick,
+     * must never call tick(), and stays null at every other call site. The same
+     * holds for `diagnostic`: only the coldstart wait path attaches a writer,
+     * and without one this loop performs no reset and writes nothing, so every
+     * other `await` call site keeps its exact D-204 behavior. No predicate,
+     * timeout or product behavior changes.
+     */
     fun await(
         timeout: Long = 180000,
         onPoll: (() -> Unit)? = null,
+        diagnostic: AndroidScaleObserverDiagWriter? = null,
         predicate: () -> Boolean,
     ) {
         val end = SystemClock.elapsedRealtime() + timeout
+        var lastReset = SystemClock.elapsedRealtime()
         while (SystemClock.elapsedRealtime() < end) {
             tick()
             onPoll?.invoke()
             if (predicate()) return
+            // Bounded forced invalidation, mounted only where a writer is
+            // attached (the coldstart wait path). A call site without a writer
+            // keeps its exact D-204 behavior: this branch is the only change.
+            val now = SystemClock.elapsedRealtime()
+            if (diagnostic != null && scaleCacheResetDue(now, lastReset)) {
+                lastReset = now
+                resetAutomationCache()
+                diagnostic.record(resetAutomationCacheObservation())
+            }
             SystemClock.sleep(150)
         }
         error("UI condition deadline exceeded")
     }
+
+    /**
+     * Forced client-cache invalidation; see [await]. Deliberately a second call
+     * site of the D-204 [setServiceInfo] so the flag/event-mask semantics cannot
+     * drift between initial setup and the bounded reset.
+     */
+    private fun resetAutomationCache() {
+        setServiceInfo()
+    }
+
+    /** One post-reset observation: the decisive evidence for the next attribution round. */
+    private fun resetAutomationCacheObservation(): AndroidScaleObserverDiag.Entry =
+        AndroidScaleObserverDiag.Entry(
+            atMs = SystemClock.elapsedRealtime(),
+            targetWindowIds = automation.windows.filter { it.root?.packageName?.toString() == target }.map { it.id },
+            hasReadyTitle = has("账本：", prefix = true),
+            visibleTexts = targetRoots().firstOrNull()?.let(::visibleTexts).orEmpty(),
+        )
 
     fun clickNode(node: AccessibilityNodeInfo) {
         var current: AccessibilityNodeInfo? = node

@@ -483,9 +483,41 @@ class HostOrchestration(unittest.TestCase):
 
 
 class ColdstartHostProbe(unittest.TestCase):
-    """D-204 host-side discriminating probe: three states, diagnostics only."""
+    """D-205 host-side discriminating probe: dumpsys window, diagnostics only.
 
-    LOADING_XML = '<hierarchy rotation="0"><node package="com.unifiedledger.android" text="正在打开本地账本…" bounds="[0,0][500,80]" /></hierarchy>'
+    D-204 used `uiautomator dump`, which needs its own UiAutomation connection
+    and therefore fails for the whole duration of the instrumentation run (the
+    AndroidJUnitRunner holds the single connection; the same dump succeeded
+    during install, before instrumentation). The probe no longer touches a11y:
+    `dumpsys window windows` reports the window list and focus, and a second
+    `dumpsys activity activities` reports the resumed activity.
+    """
+
+    WINDOW_READY = (
+        "WINDOW MANAGER WINDOWS (dumpsys window windows)\n"
+        "  Window #0 Window{11 u0 com.unifiedledger.android/com.unifiedledger.android.MainActivity}:\n"
+        "    mOwnerUid=10123 package=com.unifiedledger.android\n"
+        "    mHasSurface=true isOnScreen=true\n"
+        "  Window #1 Window{22 u0 com.android.systemui/com.android.systemui.statusbar.phone.StatusBar}:\n"
+        "    mOwnerUid=10021 package=com.android.systemui\n"
+        "  mCurrentFocus=Window{11 u0 com.unifiedledger.android/com.unifiedledger.android.MainActivity}\n"
+        "  mFocusedApp=ActivityRecord{aa u0 com.unifiedledger.android/.MainActivity t42}\n"
+    )
+    WINDOW_LAUNCHER = (
+        "WINDOW MANAGER WINDOWS (dumpsys window windows)\n"
+        "  Window #0 Window{33 u0 com.android.launcher3/com.android.launcher3.Launcher}:\n"
+        "    mOwnerUid=10007 package=com.android.launcher3\n"
+        "  mCurrentFocus=Window{33 u0 com.android.launcher3/com.android.launcher3.Launcher}\n"
+        "  mFocusedApp=ActivityRecord{bb u0 com.android.launcher3/.Launcher t42}\n"
+    )
+    ACTIVITY_READY = (
+        "ACTIVITY MANAGER ACTIVITIES (dumpsys activity activities)\n"
+        "  ResumedActivity: ActivityRecord{aa u0 com.unifiedledger.android/.MainActivity t42}\n"
+    )
+    ACTIVITY_LAUNCHER = (
+        "ACTIVITY MANAGER ACTIVITIES (dumpsys activity activities)\n"
+        "  ResumedActivity: ActivityRecord{bb u0 com.android.launcher3/.Launcher t42}\n"
+    )
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -498,8 +530,9 @@ class ColdstartHostProbe(unittest.TestCase):
         self.calls = []
         self.started_ms = 1_000_000
         self.uptime_s = None
-        self.dump_succeeds = True
-        self.dump_xml = self.LOADING_XML
+        self.window_text = self.WINDOW_READY
+        self.activity_text = self.ACTIVITY_READY
+        self.window_fails = False
 
     def adb(self, *args, **kwargs):
         self.calls.append(args)
@@ -509,12 +542,12 @@ class ColdstartHostProbe(unittest.TestCase):
             return f"{self.uptime_s:.3f} 0.00\n"
         if args[:3] == ("shell", "dumpsys", "meminfo"):
             return "meminfo sample\n"
-        if args[:3] == ("shell", "uiautomator", "dump"):
-            if self.dump_succeeds:
-                return "UI hierchary dumped to: " + args[-1]
-            return "ERROR: could not get idle state.\n"
-        if args[:2] == ("exec-out", "cat"):
-            return self.dump_xml
+        if args[:4] == ("shell", "dumpsys", "window", "windows"):
+            if self.window_fails:
+                raise RuntimeError("dumpsys window unavailable")
+            return self.window_text
+        if args[:4] == ("shell", "dumpsys", "activity", "activities"):
+            return self.activity_text
         return ""
 
     def probe(self, adb=None):
@@ -522,39 +555,129 @@ class ColdstartHostProbe(unittest.TestCase):
         self.runner.poll_once("chain")
         return self.runner.report.get("coldstart_host_probe")
 
-    def test_ready_host_dump_is_recorded_with_hash_and_markers(self):
+    def test_target_window_and_resumed_activity_are_recorded(self):
         self.uptime_s = (self.started_ms + 40_000) / 1000
-        self.dump_xml = READY_XML
         state = self.probe()
         self.assertEqual(state["attempts"], 1)
         record = state["probes"][0]
-        data = READY_XML.encode("utf-8")
         self.assertEqual(record["elapsed"], 40_000)
-        self.assertEqual(record["sha256"], hashlib.sha256(data).hexdigest())
-        self.assertEqual(record["bytes"], len(data))
-        self.assertTrue(record["containsReadyMarker"])
-        self.assertFalse(record["containsLoadingMarker"])
+        self.assertTrue(record["targetWindowPresent"])
+        self.assertTrue(record["targetActivityPresent"])
+        self.assertEqual(record["currentFocusPackage"], PACKAGE)
+        self.assertEqual(record["focusedAppPackage"], PACKAGE)
+        self.assertEqual(record["resumedActivity"], PACKAGE + "/.MainActivity")
+        self.assertEqual(record["windowSha256"], hashlib.sha256(self.WINDOW_READY.encode("utf-8")).hexdigest())
+        self.assertEqual(record["windowBytes"], len(self.WINDOW_READY.encode("utf-8")))
+        self.assertEqual(record["activitySha256"], hashlib.sha256(self.ACTIVITY_READY.encode("utf-8")).hexdigest())
         self.assertFalse(state["probeFailed"])
-        self.assertEqual((self.runner.evidence / "coldstart-hostdump.xml").read_bytes(), data)
         self.assertIn("coldstart-host-probe", (self.runner.evidence / "memory.txt").read_text(encoding="utf-8"))
+        self.assertEqual((self.runner.evidence / "coldstart-host-window.txt").read_text(encoding="utf-8"), self.WINDOW_READY)
+        self.assertEqual((self.runner.evidence / "coldstart-host-activity.txt").read_text(encoding="utf-8"), self.ACTIVITY_READY)
 
-    def test_failed_dump_records_probe_failed_and_changes_nothing(self):
+    def test_launcher_window_records_absence_without_failing(self):
         self.uptime_s = (self.started_ms + 40_000) / 1000
-        self.dump_succeeds = False
+        self.window_text = self.WINDOW_LAUNCHER
+        self.activity_text = self.ACTIVITY_LAUNCHER
+        state = self.probe()
+        record = state["probes"][0]
+        self.assertFalse(record["targetWindowPresent"])
+        self.assertFalse(record["targetActivityPresent"])
+        self.assertEqual(record["currentFocusPackage"], "com.android.launcher3")
+        self.assertEqual(record["focusedAppPackage"], "com.android.launcher3")
+        self.assertEqual(record["resumedActivity"], "com.android.launcher3/.Launcher")
+        self.assertFalse(state["probeFailed"])
+
+    def test_unrecognizable_window_output_records_raw_prefix_and_fails(self):
+        # An adb/dumpsys contention window can return an error line instead of a
+        # window list; that must be recorded honestly (raw prefix) instead of
+        # being read as "no target window".
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+        self.window_text = "Can't find service: window\n"
+        state = self.probe()
+        record = state["probes"][0]
+        self.assertTrue(record["probeFailed"])
+        self.assertTrue(record["error"].startswith("window dump not recognizable: "))
+        self.assertIn("Can't find service: window", record["error"])
+        self.assertLessEqual(len(record["error"]), 200)
+        self.assertNotIn("targetWindowPresent", record)
+        self.assertFalse((self.runner.evidence / "coldstart-host-window.txt").exists())
+
+    def test_activity_dump_failure_keeps_the_window_sample(self):
+        # The window dump answers the primary question (is the target window
+        # there, and who holds focus); the resumed-activity read is
+        # supplementary and its failure must not discard a valid window sample.
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+
+        def activity_fails(*args, **kwargs):
+            if args[:4] == ("shell", "dumpsys", "activity", "activities"):
+                raise subprocess.TimeoutExpired("adb", 30)
+            return self.adb(*args, **kwargs)
+
+        state = self.probe(activity_fails)
+        record = state["probes"][0]
+        self.assertIn("activityError", record)
+        self.assertNotIn("probeFailed", record)
+        self.assertEqual(record["currentFocusPackage"], PACKAGE)
+        self.assertTrue(record["targetWindowPresent"])
+        self.assertFalse((self.runner.evidence / "coldstart-host-activity.txt").exists())
+        self.assertEqual((self.runner.evidence / "coldstart-host-window.txt").read_text(encoding="utf-8"), self.WINDOW_READY)
+
+    def test_focus_naming_the_target_does_not_override_a_missing_window_entry(self):
+        # Window presence is answered by the window list alone. If focus names
+        # the target while the list does not (a contradictory snapshot), the
+        # record must keep both facts visible instead of resolving the
+        # contradiction in either direction.
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+        self.window_text = (
+            "WINDOW MANAGER WINDOWS (dumpsys window windows)\n"
+            "  Window #0 Window{33 u0 com.android.launcher3/com.android.launcher3.Launcher}:\n"
+            "    mOwnerUid=10007 package=com.android.launcher3\n"
+            "  mCurrentFocus=Window{11 u0 com.unifiedledger.android/com.unifiedledger.android.MainActivity}\n"
+            "  mFocusedApp=ActivityRecord{aa u0 com.unifiedledger.android/.MainActivity t42}\n"
+        )
+        record = self.probe()["probes"][0]
+        self.assertFalse(record["targetWindowPresent"])
+        self.assertEqual(record["windowCount"], 1)
+        self.assertEqual(record["currentFocusPackage"], PACKAGE)
+        self.assertEqual(record["focusedAppPackage"], PACKAGE)
+        self.assertNotIn("probeFailed", record)
+
+    def test_window_count_reports_every_window_entry(self):
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+        record = self.probe()["probes"][0]
+        self.assertEqual(record["windowCount"], 2)
+        self.assertTrue(record["targetWindowPresent"])
+
+    def test_background_target_window_is_not_reported_as_the_resumed_activity(self):
+        # The decisive cross-check for the D-205 question: the target window can
+        # exist (and even hold surface) while another app stays resumed. The
+        # window and activity reads are reported independently.
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+        self.window_text = self.WINDOW_READY
+        self.activity_text = self.ACTIVITY_LAUNCHER
+        record = self.probe()["probes"][0]
+        self.assertTrue(record["targetWindowPresent"])
+        self.assertFalse(record["targetActivityPresent"])
+        self.assertEqual(record["resumedActivity"], "com.android.launcher3/.Launcher")
+        self.assertNotIn("probeFailed", record)
+
+    def test_failed_dumpsys_records_probe_failed_and_changes_nothing(self):
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+        self.window_fails = True
         state = self.probe()
         self.assertEqual(state["attempts"], 1)
         record = state["probes"][0]
         self.assertTrue(record["probeFailed"])
         self.assertIn("error", record)
         self.assertTrue(state["probeFailed"])
-        self.assertFalse((self.runner.evidence / "coldstart-hostdump.xml").exists())
-        self.assertNotIn("sha256", record)
+        self.assertNotIn("windowSha256", record)
+        self.assertFalse((self.runner.evidence / "coldstart-host-window.txt").exists())
 
     def test_probe_does_not_trigger_before_thirty_seconds_of_running_coldstart(self):
         self.uptime_s = (self.started_ms + 10_000) / 1000
         state = self.probe()
         self.assertEqual(state, {"attempts": 0, "probes": [], "probeFailed": False})
-        self.assertFalse(any(args[:3] == ("shell", "uiautomator", "dump") for args in self.calls))
+        self.assertFalse(any(args[:4] == ("shell", "dumpsys", "window", "windows") for args in self.calls))
         # A finished coldstart stage is equally out of scope.
         self.uptime_s = (self.started_ms + 40_000) / 1000
 
@@ -567,61 +690,20 @@ class ColdstartHostProbe(unittest.TestCase):
         self.runner.poll_once("chain")
         self.assertEqual(self.runner.report["coldstart_host_probe"]["attempts"], 0)
 
-    def test_empty_readback_is_probe_failed_not_a_zero_byte_sample(self):
+    def test_empty_dumpsys_readback_is_probe_failed_not_a_zero_byte_sample(self):
         self.uptime_s = (self.started_ms + 40_000) / 1000
 
-        def empty_cat(*args, **kwargs):
-            if args[:2] == ("exec-out", "cat"):
-                return ""
+        def empty_window(*args, **kwargs):
+            if args[:4] == ("shell", "dumpsys", "window", "windows"):
+                return "   \n"
             return self.adb(*args, **kwargs)
 
-        self.runner.adb = empty_cat
-        state = self.probe(empty_cat)
+        state = self.probe(empty_window)
         record = state["probes"][0]
         self.assertTrue(record["probeFailed"])
-        self.assertEqual(record["error"], "UI dump read back empty")
-        self.assertNotIn("bytes", record)
-        self.assertFalse((self.runner.evidence / "coldstart-hostdump.xml").exists())
-
-    def test_probe_cleanup_failure_keeps_the_sample_and_never_aborts_the_run(self):
-        # The `rm` cleanup runs in a finally block: if a stuck adb there raises
-        # (TimeoutExpired/OSError are not suppressed by best_effort), the
-        # diagnostic must still not escape poll_once or replace the run outcome,
-        # and a real capture must not be discarded just because its device-side
-        # leftover could not be removed.
-        self.uptime_s = (self.started_ms + 40_000) / 1000
-        self.dump_xml = READY_XML
-
-        def cleanup_times_out(*args, **kwargs):
-            if args[:3] == ("shell", "rm", "-f"):
-                raise subprocess.TimeoutExpired("adb", 15)
-            return self.adb(*args, **kwargs)
-
-        self.runner.adb = cleanup_times_out
-        self.runner.poll_once("chain")
-        state = self.runner.report["coldstart_host_probe"]
-        self.assertEqual(state["attempts"], 1)
-        record = state["probes"][0]
-        self.assertIn("cleanupFailed", record)
-        self.assertTrue(record["containsReadyMarker"])
-        self.assertNotIn("probeFailed", record)
-        self.assertTrue(state["probeFailed"])
-        self.assertIn("coldstart-host-probe", (self.runner.evidence / "memory.txt").read_text(encoding="utf-8"))
-
-    def test_failed_capture_with_failed_cleanup_records_both(self):
-        self.uptime_s = (self.started_ms + 40_000) / 1000
-
-        def both_fail(*args, **kwargs):
-            if args[:3] in (("shell", "uiautomator", "dump"), ("shell", "rm", "-f")):
-                raise subprocess.TimeoutExpired("adb", 30)
-            return self.adb(*args, **kwargs)
-
-        self.runner.adb = both_fail
-        self.runner.poll_once("chain")
-        record = self.runner.report["coldstart_host_probe"]["probes"][0]
-        self.assertTrue(record["probeFailed"])
-        self.assertIn("cleanupFailed", record)
-        self.assertNotIn("sha256", record)
+        self.assertEqual(record["error"], "window dump read back empty")
+        self.assertNotIn("windowBytes", record)
+        self.assertFalse((self.runner.evidence / "coldstart-host-window.txt").exists())
 
     def test_probe_gate_hiccup_is_contained_and_changes_nothing(self):
         # The ≥30s gate reads device uptime before any dump exists. A stuck adb
@@ -645,7 +727,7 @@ class ColdstartHostProbe(unittest.TestCase):
         self.runner.adb = self.adb
         self.runner.poll_once("prepare")
         self.assertEqual(self.runner.report["coldstart_host_probe"], {"attempts": 0, "probes": [], "probeFailed": False})
-        self.assertFalse(any(args[:3] == ("shell", "uiautomator", "dump") for args in self.calls))
+        self.assertFalse(any(args[:4] == ("shell", "dumpsys", "window", "windows") for args in self.calls))
 
     def test_probe_does_not_trigger_without_device_evidence(self):
         # Evidence not yet written (common early-chain) and a failing probe both
@@ -668,16 +750,33 @@ class ColdstartHostProbe(unittest.TestCase):
         self.runner.adb = evidence_breaks
         self.runner.poll_once("chain")
         self.assertEqual(self.runner.report["coldstart_host_probe"], {"attempts": 0, "probes": [], "probeFailed": False})
-        self.assertFalse(any(args[:3] == ("shell", "uiautomator", "dump") for args in self.calls))
+        self.assertFalse(any(args[:4] == ("shell", "dumpsys", "window", "windows") for args in self.calls))
+
+    def test_late_probe_failure_after_a_clean_sample_records_both_attempts(self):
+        # A first clean sample must not stop the second probe from trying: the
+        # budget is attempts, not successes. A failure then flags probeFailed
+        # and keeps the first sample's hashes intact.
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+        state = self.probe()
+        self.assertEqual(state["attempts"], 1)
+        self.assertFalse(state["probeFailed"])
+        self.assertTrue(state["probes"][0]["targetWindowPresent"])
+        self.uptime_s = (self.started_ms + 110_000) / 1000
+        self.window_fails = True
+        state = self.probe()
+        self.assertEqual(state["attempts"], 2)
+        self.assertTrue(state["probes"][1]["probeFailed"])
+        self.assertTrue(state["probeFailed"])
+        self.assertIn("windowSha256", state["probes"][0])
 
     def test_deadline_inside_the_probe_propagates_to_the_phase_loop(self):
         # An exhausted deadline is the one failure the probe must NOT contain:
-        # the phase loop re-checks the budget on its next tick. Cleanup and the
-        # sample record still happen (they run in the finally block).
+        # the phase loop re-checks the budget on its next tick. The attempt
+        # record still happens (it runs in the finally block).
         self.uptime_s = (self.started_ms + 40_000) / 1000
 
         def dump_exhausts_deadline(*args, **kwargs):
-            if args[:3] == ("shell", "uiautomator", "dump"):
+            if args[:4] == ("shell", "dumpsys", "window", "windows"):
                 raise ScaleDeadlineError("global deadline exceeded")
             return self.adb(*args, **kwargs)
 
@@ -687,7 +786,6 @@ class ColdstartHostProbe(unittest.TestCase):
         state = self.runner.report["coldstart_host_probe"]
         self.assertEqual(state["attempts"], 1)
         self.assertEqual(len(state["probes"]), 1)
-        self.assertTrue(any(args[:3] == ("shell", "rm", "-f") for args in self.calls))
         self.assertIn("coldstart-host-probe", (self.runner.evidence / "memory.txt").read_text(encoding="utf-8"))
 
     def test_tail_failure_is_contained_and_keeps_the_attempt(self):
@@ -696,7 +794,6 @@ class ColdstartHostProbe(unittest.TestCase):
         # poll_once or drop the attempt the probe already made. poll_once's own
         # memory writes (meminfo) are left working, so this targets the tail.
         self.uptime_s = (self.started_ms + 40_000) / 1000
-        self.dump_xml = READY_XML
         real_memory = self.runner.record_memory
 
         def memory_fails_for_the_probe(phase, text):
@@ -708,7 +805,7 @@ class ColdstartHostProbe(unittest.TestCase):
         state = self.probe()
         self.assertEqual(state["attempts"], 1)
         self.assertEqual(len(state["probes"]), 1)
-        self.assertTrue(state["probes"][0]["containsReadyMarker"])
+        self.assertTrue(state["probes"][0]["targetWindowPresent"])
 
     def test_gate_phase_deadline_propagates_instead_of_being_contained(self):
         # M18: without activeDeadlineElapsedMs the poll_once deadline check is
@@ -724,14 +821,13 @@ class ColdstartHostProbe(unittest.TestCase):
         with self.assertRaises(ScaleDeadlineError):
             self.probe()
         self.assertEqual(self.runner.report["coldstart_host_probe"], {"attempts": 0, "probes": [], "probeFailed": False})
-        self.assertFalse(any(args[:3] == ("shell", "uiautomator", "dump") for args in self.calls))
+        self.assertFalse(any(args[:4] == ("shell", "dumpsys", "window", "windows") for args in self.calls))
 
     def test_at_most_two_probes_at_least_sixty_seconds_apart(self):
-        self.dump_xml = self.LOADING_XML
         self.uptime_s = (self.started_ms + 40_000) / 1000
         state = self.probe()
         self.assertEqual(state["attempts"], 1)
-        self.assertTrue(state["probes"][0]["containsLoadingMarker"])
+        self.assertTrue(state["probes"][0]["targetWindowPresent"])
         self.uptime_s = (self.started_ms + 50_000) / 1000
         self.probe()
         self.assertEqual(state["attempts"], 1)
@@ -742,6 +838,68 @@ class ColdstartHostProbe(unittest.TestCase):
         self.uptime_s = (self.started_ms + 200_000) / 1000
         self.probe()
         self.assertEqual(state["attempts"], 2)
+
+
+class ObserverDiagRecycle(unittest.TestCase):
+    """D-205 device-side observer diagnostic recycled by the host, three states."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        env = patch.dict(os.environ, GITHUB_ACTIONS="true", RUNNER_ENVIRONMENT="github-hosted", RUNNER_OS="Linux")
+        env.start()
+        self.addCleanup(env.stop)
+        self.runner = ScaleRunner(self.root / "fixture", self.root / "evidence", self.root / "app.apk", self.root / "test.apk", SHA, "maximum")
+        self.runner.serial = "emulator-5554"
+
+    def diag_adb(self, payload):
+        def controlled(*args, **kwargs):
+            if args[:4] == ("exec-out", "run-as", PACKAGE, "cat"):
+                return payload
+            return b"" if kwargs.get("binary") else ""
+        return controlled
+
+    def test_present_observer_diag_is_recycled_with_hash_and_json_validity(self):
+        payload = json.dumps({"schema": 1, "kind": "observer-diag", "sha": SHA,
+                              "phase": "chain", "stage": "coldstart", "records": [], "truncated": False}).encode("utf-8")
+        self.runner.adb = self.diag_adb(payload)
+        self.runner.diagnostics(failure=True)
+        record = self.runner.report["observer_diag"]
+        self.assertEqual(record, {"sha256": hashlib.sha256(payload).hexdigest(), "bytes": len(payload),
+                                  "json_valid": True, "sha_match": True})
+        self.assertEqual((self.runner.evidence / "observer-diag.json").read_bytes(), payload)
+
+    def test_absent_observer_diag_is_recorded_absent_and_creates_no_file(self):
+        self.runner.adb = self.diag_adb(b"")
+        self.runner.diagnostics(failure=True)
+        self.assertEqual(self.runner.report["observer_diag"], "absent")
+        self.assertFalse((self.runner.evidence / "observer-diag.json").exists())
+
+    def test_malformed_or_sha_mismatched_observer_diag_is_kept_but_flagged(self):
+        self.runner.adb = self.diag_adb(b"{not json")
+        self.runner.diagnostics(failure=True)
+        record = self.runner.report["observer_diag"]
+        self.assertEqual(record, {"sha256": hashlib.sha256(b"{not json").hexdigest(), "bytes": 9, "json_valid": False})
+        self.assertEqual((self.runner.evidence / "observer-diag.json").read_bytes(), b"{not json")
+        self.runner.adb = self.diag_adb(json.dumps({"schema": 1, "sha": "b" * 40}).encode("utf-8"))
+        self.runner.diagnostics(failure=True)
+        record = self.runner.report["observer_diag"]
+        self.assertTrue(record["json_valid"])
+        self.assertFalse(record["sha_match"])
+
+    def test_observer_diag_absence_does_not_affect_the_coldstart_forensics_record(self):
+        payload = json.dumps({"schema": 1, "kind": "coldstart-forensics", "sha": SHA}).encode("utf-8")
+
+        def by_path(*args, **kwargs):
+            if args[:4] == ("exec-out", "run-as", PACKAGE, "cat") and args[-1].endswith("coldstart-forensics.json"):
+                return payload
+            return b"" if kwargs.get("binary") else ""
+
+        self.runner.adb = by_path
+        self.runner.diagnostics(failure=True)
+        self.assertIn("coldstart-forensics.json", self.runner.report["coldstart_forensics"])
+        self.assertEqual(self.runner.report["observer_diag"], "absent")
 
 
 class WorkflowConcurrency(unittest.TestCase):

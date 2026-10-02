@@ -28,18 +28,45 @@ COLDSTART_FORENSICS_DEVICE_FILES = {
     "files/android-scale-coldstart-forensics.png": "coldstart-forensics.png",
 }
 
-# Host-side coldstart discriminating probe (D-204, diagnostics only; it never
+# Device-side observer diagnostic the instrumentation may have written before
+# teardown (files/<name> inside the app's private dir, fixed name). Purely
+# supplementary: the oracle never reads it and validation does not require it.
+COLDSTART_OBSERVER_DIAG_DEVICE_FILE = "files/android-scale-observer-diag.json"
+COLDSTART_OBSERVER_DIAG = "observer-diag.json"
+
+# Host-side coldstart discriminating probe (D-205, diagnostics only; it never
 # feeds validation or any PASS/FAIL judgment). While the device evidence shows
-# the coldstart stage running for >=30s, an independent host a11y client
-# (`uiautomator dump`, a separate connection from the in-process observer) is
-# sampled at most twice per run, >=60s apart, to distinguish "product not
-# ready" from "in-process observer blind" if the observer ever sticks again.
-COLDSTART_HOST_DUMP = "coldstart-hostdump.xml"
-COLDSTART_HOST_DUMP_DEVICE_PREFIX = "/data/local/tmp/ul-coldstart-host-"
+# the coldstart stage running for >=30s, an independent host read of the device
+# window state is sampled at most twice per run, >=60s apart.
+#
+# D-204 probed with `uiautomator dump`, which must create its own UiAutomation
+# connection; during instrumentation (AndroidJUnitRunner) the single connection
+# is already held, so every D-204 attempt failed ("UI dump did not confirm its
+# fresh output path") even though the same dump succeeded while only the app was
+# installed. D-205 therefore stops touching a11y entirely: `dumpsys window
+# windows` needs no connection and stays available during instrumentation, and
+# it reports the window list plus mCurrentFocus/mFocusedApp; a second `dumpsys
+# activity activities` reports the resumed activity. Both are best-effort
+# diagnostics whose output is recorded verbatim (window text in
+# coldstart-host-window.txt, activity text in coldstart-host-activity.txt).
+COLDSTART_HOST_WINDOW = "coldstart-host-window.txt"
+COLDSTART_HOST_ACTIVITY = "coldstart-host-activity.txt"
 COLDSTART_HOST_PROBE_MIN_ELAPSED_MS = 30000
 COLDSTART_HOST_PROBE_SPACING_MS = 60000
 COLDSTART_HOST_PROBE_MAX = 2
-COLDSTART_HOST_LOADING_MARKER = "正在打开本地账本"
+COLDSTART_HOST_PROBE_TIMEOUT = 30
+COLDSTART_HOST_RAW_PREFIX_CHARS = 200
+
+# Window/activity dump parsing. `dumpsys window windows` prints one
+# `Window{<hash> u<user> <pkg>/<component>}` token per window plus trailing
+# `mCurrentFocus=`/`mFocusedApp=` lines; `dumpsys activity activities` prints
+# `ResumedActivity: ActivityRecord{... <pkg>/<component> ...}`. An unrecognized
+# dump is recorded as probeFailed with a bounded raw prefix, never read as
+# "no target window".
+WINDOW_COMPONENT = re.compile(r"Window\{[^}]*?\s([A-Za-z0-9_.]+)/[.A-Za-z0-9_$]+")
+WINDOW_FOCUS = re.compile(r"(?m)^\s*(mCurrentFocus|mFocusedApp)=(.+?)\s*$")
+ACTIVITY_RESUMED = re.compile(r"(?m)^\s*(?:ResumedActivity|mResumedActivity)\s*[=:]\s*(.+?)\s*$")
+COMPONENT = re.compile(r"([A-Za-z0-9_.]+)/[.A-Za-z0-9_$]+")
 
 # Preparation and chain deliberately share the remaining global budget.
 # Only the three short reopen/replay phases have independent host limits.
@@ -53,6 +80,51 @@ def last_match(pattern: str, text: str, label: str) -> str:
     if not matches:
         raise RuntimeError(f"cannot read {label} from the device: {text.strip()[:200]!r}")
     return matches[-1]
+
+
+WINDOW_FOCUS_LINE = re.compile(r"(?m)^\s*(?:mCurrentFocus|mFocusedApp|mFocusedWindow)\s*=")
+
+
+def parse_window_dump(text: str) -> dict:
+    """Parse a `dumpsys window windows` dump into window/focus facts.
+
+    Only real window entries answer "is a target window present"; the focus
+    lines are reported separately. Keeping the two apart means a contradictory
+    snapshot (focus names the target, the window list does not) stays visible
+    in the record instead of being silently resolved. Raises ValueError for
+    output that carries no window list at all (for example an adb/dumpsys
+    contention error line): reading that as "no target window present" would
+    silently invert the diagnostic's meaning.
+    """
+    listed = "\n".join(line for line in text.splitlines() if not WINDOW_FOCUS_LINE.match(line))
+    windows = WINDOW_COMPONENT.findall(listed)
+    if not windows:
+        raise ValueError("window dump not recognizable: " + text.strip()[:COLDSTART_HOST_RAW_PREFIX_CHARS])
+    current_focus = None
+    focused_app = None
+    for key, value in WINDOW_FOCUS.findall(text):
+        component = COMPONENT.search(value)
+        package = component[1] if component else None
+        if key == "mCurrentFocus":
+            current_focus = package
+        elif key == "mFocusedApp":
+            focused_app = package
+    return {
+        "targetWindowPresent": PACKAGE in windows,
+        "windowCount": len(windows),
+        "currentFocusPackage": current_focus,
+        "focusedAppPackage": focused_app,
+    }
+
+
+def parse_activity_dump(text: str) -> dict:
+    """Parse a `dumpsys activity activities` dump into the resumed activity."""
+    matches = ACTIVITY_RESUMED.findall(text)
+    if not matches:
+        raise ValueError("activity dump not recognizable: " + text.strip()[:COLDSTART_HOST_RAW_PREFIX_CHARS])
+    resumed = matches[-1]
+    component = COMPONENT.search(resumed)
+    return {"resumedActivity": component[0] if component else resumed[:COLDSTART_HOST_RAW_PREFIX_CHARS]}
 
 
 class ScaleDeadlineError(RuntimeError):
@@ -431,6 +503,7 @@ class ScaleRunner:
                 tree = self.adb("exec-out", "cat", "/data/local/tmp/ul-scale-window.xml", best_effort=True)
                 (self.evidence / "failure-ui.xml").write_text(tree, encoding="utf-8")
                 self.collect_coldstart_forensics()
+                self.collect_observer_diag()
         except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
             self.report["diagnostic_error"] = True
 
@@ -460,6 +533,35 @@ class ScaleRunner:
         except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
             collected["error"] = True
         self.report["coldstart_forensics"] = collected
+
+    def collect_observer_diag(self) -> None:
+        """Best-effort retrieval of the device-side observer diagnostic (D-205).
+
+        The instrumentation writes one fixed-name JSON file per coldstart wait
+        run when it force-resets the client a11y cache, so the next maximum
+        round can attribute the D-204-bitten observation path. Never faked and
+        never required: absence is recorded as absent, a malformed payload is
+        kept and flagged, and neither changes a validation verdict (the oracle
+        never reads it).
+        """
+        try:
+            payload = self.adb("exec-out", "run-as", PACKAGE, "cat",
+                               COLDSTART_OBSERVER_DIAG_DEVICE_FILE, binary=True, best_effort=True, timeout=15)
+            if not payload or not isinstance(payload, (bytes, bytearray)):
+                self.report["observer_diag"] = "absent"
+                return
+            (self.evidence / COLDSTART_OBSERVER_DIAG).write_bytes(payload)
+            record = {"sha256": hashlib.sha256(payload).hexdigest(), "bytes": len(payload)}
+            try:
+                parsed = json.loads(payload.decode("utf-8"))
+                record["json_valid"] = isinstance(parsed, dict)
+                if isinstance(parsed, dict):
+                    record["sha_match"] = parsed.get("sha") == self.sha
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                record["json_valid"] = False
+            self.report["observer_diag"] = record
+        except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
+            self.report["observer_diag"] = {"error": True}
 
     def record_memory(self, phase: str, text: str) -> None:
         with (self.evidence / "memory.txt").open("a", encoding="utf-8") as memory:
@@ -497,15 +599,22 @@ class ScaleRunner:
         self.coldstart_host_probe(phase, device)
 
     def coldstart_host_probe(self, phase: str, device: dict | None) -> None:
-        """Independent host a11y sample of a stuck coldstart (D-204, diagnostics).
+        """Independent host window/activity sample of a stuck coldstart (D-205, diagnostics).
 
-        Only a `uiautomator dump` from a separate client connection can tell
-        whether a screen the in-process observer keeps reading as the loading
-        tree is actually ready (the D-203 situation). The probe is strictly
-        bounded (at most two dumps per run, >=60s apart, only while the device
-        evidence shows the coldstart stage running >=30s) and strictly
-        diagnostic: every failure degrades into a probeFailed record and never
-        raises into the run's judgment or validation.
+        D-204 used `uiautomator dump`, which must create its own UiAutomation
+        connection: during instrumentation the single connection is already held
+        by AndroidJUnitRunner, so every D-204 probe failed for the whole run. The
+        D-205 probe reads `dumpsys window windows` (window list, mCurrentFocus,
+        mFocusedApp) and `dumpsys activity activities` (resumed activity) --
+        neither needs an a11y connection -- to tell a blind in-process observer
+        apart from a product that is genuinely not showing the ledger.
+
+        Strictly bounded (at most two probes per run, >=60s apart, only while
+        the device evidence shows the coldstart stage running >=30s) and
+        strictly diagnostic: every failure degrades into a probeFailed record
+        and never raises into the run's judgment or validation. The one
+        exception is ScaleDeadlineError, which the phase loop re-checks on its
+        next tick.
         """
         state = self.report.setdefault("coldstart_host_probe", {"attempts": 0, "probes": [], "probeFailed": False})
         if phase != "chain" or state["attempts"] >= COLDSTART_HOST_PROBE_MAX or not isinstance(device, dict):
@@ -523,7 +632,7 @@ class ScaleRunner:
             raise
         except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired, TypeError) as error:
             # The gate itself reads device state; a hiccup while deciding must
-            # not escape into the run. No dump was attempted, so the recorded
+            # not escape into the run. No probe was attempted, so the recorded
             # state stays untouched and the hiccup is written to memory.txt the
             # same way poll_once records its own probe failures.
             self.record_memory(phase, f"coldstart-host-probe gate-failed: {type(error).__name__}: {str(error)[:200]}\n")
@@ -534,45 +643,41 @@ class ScaleRunner:
             return
         state["attempts"] += 1
         record = {"elapsed": round(elapsed)}
-        path = COLDSTART_HOST_DUMP_DEVICE_PREFIX + uuid.uuid4().hex + ".xml"
         try:
-            output = self.adb("shell", "uiautomator", "dump", path, timeout=30, best_effort=True)
-            if "dumped to:" not in output or not output.strip().endswith(path):
-                raise ValueError("UI dump did not confirm its fresh output path")
-            xml = self.adb("exec-out", "cat", path, timeout=30, best_effort=True)
-            if not xml.strip():
+            window_text = self.adb("shell", "dumpsys", "window", "windows",
+                                   timeout=COLDSTART_HOST_PROBE_TIMEOUT, best_effort=True)
+            if not window_text.strip():
                 # An empty read-back is not a dump: recording it as a successful
                 # sample with zero bytes would be a silent false negative.
-                raise ValueError("UI dump read back empty")
-            data = xml.encode("utf-8")
-            (self.evidence / COLDSTART_HOST_DUMP).write_bytes(data)
-            record.update({
-                "sha256": hashlib.sha256(data).hexdigest(),
-                "bytes": len(data),
-                "containsReadyMarker": READY_MARKER in xml,
-                "containsLoadingMarker": COLDSTART_HOST_LOADING_MARKER in xml,
-            })
+                raise ValueError("window dump read back empty")
+            record.update(parse_window_dump(window_text))
+            window_data = window_text.encode("utf-8")
+            (self.evidence / COLDSTART_HOST_WINDOW).write_bytes(window_data)
+            record["windowSha256"] = hashlib.sha256(window_data).hexdigest()
+            record["windowBytes"] = len(window_data)
+            # The resumed activity is supplementary: its failure keeps the
+            # window sample, it only adds an activityError note.
+            try:
+                activity_text = self.adb("shell", "dumpsys", "activity", "activities",
+                                         timeout=COLDSTART_HOST_PROBE_TIMEOUT, best_effort=True)
+                if not activity_text.strip():
+                    raise ValueError("activity dump read back empty")
+                record.update(parse_activity_dump(activity_text))
+                record["targetActivityPresent"] = PACKAGE in str(record["resumedActivity"])
+                activity_data = activity_text.encode("utf-8")
+                (self.evidence / COLDSTART_HOST_ACTIVITY).write_bytes(activity_data)
+                record["activitySha256"] = hashlib.sha256(activity_data).hexdigest()
+            except ScaleDeadlineError:
+                raise
+            except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+                record["activityError"] = str(error)[:COLDSTART_HOST_RAW_PREFIX_CHARS]
         except ScaleDeadlineError:
             raise
         except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
             record["probeFailed"] = True
-            record["error"] = str(error)[:200]
+            record["error"] = str(error)[:COLDSTART_HOST_RAW_PREFIX_CHARS]
             state["probeFailed"] = True
         finally:
-            # Cleanup is the last ancillary act of a diagnostic probe, so a
-            # stuck adb here must not surface as an exception from a finally
-            # block -- that would let a diagnostic change the run outcome. An
-            # exhausted deadline (ScaleDeadlineError is a RuntimeError) is
-            # deliberately included: the phase loop re-checks the budget on its
-            # next tick, so nothing is lost by not raising from here.
-            try:
-                self.adb("shell", "rm", "-f", path, best_effort=True, timeout=15)
-            except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
-                # A successful capture keeps its hash and markers: the sample is
-                # real, only its device-side leftover could not be removed. It
-                # is flagged as a cleanup anomaly, never as a lost sample.
-                record["cleanupFailed"] = str(error)[:200]
-                state["probeFailed"] = True
             # Recording is the probe's own bookkeeping. It sits outside the
             # capture try and inside a finally block, so an OSError here would
             # otherwise escape poll_once and change the run outcome the probe
