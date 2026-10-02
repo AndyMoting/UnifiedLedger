@@ -193,6 +193,8 @@ fun P503App(
      */
     fun requestCatalogSnapshotLoad() {
         catalogSnapshotLoadCoordinator.startLoadOnce {
+            // D-203 startup trace: the catalog snapshot read window begins (background).
+            StartupTrace.emit("read.catalogSnapshot begin")
             scope.launch(Dispatchers.Default) {
                 // P7-06 06.1 (D-176; spec 4.3): the read runs under an operation lease, and the
                 // acquire-time generation travels to the landing hop (4.4) so a result captured
@@ -203,12 +205,20 @@ fun P503App(
                         is LeaseOutcome.Completed ->
                             if (ledger.isCurrentGeneration(outcome.generation)) {
                                 cachedCatalogSnapshot = catalogSnapshotLoadCoordinator.loadCompleted(cachedCatalogSnapshot, outcome.value)
+                                // D-203 startup trace: the snapshot read landed.
+                                StartupTrace.emit("read.catalogSnapshot end kind=completed")
                             } else {
                                 // Stale generation (P706-A07): discard the payload, release the
                                 // single-flight slot only.
                                 catalogSnapshotLoadCoordinator.loadCompleted(cachedCatalogSnapshot, null)
+                                // D-203 startup trace: the snapshot read landed on a stale generation.
+                                StartupTrace.emit("read.catalogSnapshot end kind=stale")
                             }
-                        LeaseOutcome.NotReady -> catalogSnapshotLoadCoordinator.loadCompleted(cachedCatalogSnapshot, null)
+                        LeaseOutcome.NotReady -> {
+                            catalogSnapshotLoadCoordinator.loadCompleted(cachedCatalogSnapshot, null)
+                            // D-203 startup trace: the runtime was not Ready for the snapshot read.
+                            StartupTrace.emit("read.catalogSnapshot end kind=notReady")
+                        }
                     }
                 }
             }
@@ -496,6 +506,8 @@ fun P503App(
      */
     fun requestMonthlyPayload() {
         val overview = latestState.value as? P503AppState.OverviewEmpty
+        // D-203 startup trace: the monthly payload read window begins (main thread).
+        StartupTrace.emit("read.monthlyPayload begin")
         try {
             val clockMonth = MonthlyBuckets.currentMonth(ledger.ledgerClock)
             resolvedCurrentMonth = clockMonth
@@ -514,17 +526,28 @@ fun P503App(
                         )
                     val rows = if (cycle is MonthlyCycleOutcome.Ready) facade.queryLedgerEntryRows?.query() else null
                     cycle to rows
-                } ?: return
+                } ?: run {
+                    // D-203 startup trace: the runtime was not Ready for the monthly read.
+                    StartupTrace.emit("read.monthlyPayload end kind=notReady")
+                    return
+                }
             when (val cycle = outcome.first) {
                 is MonthlyCycleOutcome.Ready -> {
+                    // D-203 startup trace: the monthly read completed ready.
+                    StartupTrace.emit("read.monthlyPayload end kind=ready")
                     monthlyTrend = cycle.trend
                     ledgerEntryRows = outcome.second
                     dispatch(P503UiEvent.MonthlyActivityResult(ApplicationMonthlyActivityResult.Success(cycle.activity), cycle.selectableMonths))
                 }
-                is MonthlyCycleOutcome.Failed ->
+                is MonthlyCycleOutcome.Failed -> {
+                    // D-203 startup trace: the monthly read completed failed.
+                    StartupTrace.emit("read.monthlyPayload end kind=failed")
                     dispatch(P503UiEvent.MonthlyActivityResult(cycle.result, emptyList()))
+                }
             }
         } catch (failure: Exception) {
+            // D-203 startup trace: the monthly read errored (cause class only).
+            StartupTrace.emit("read.monthlyPayload end kind=error causeClass=${failure::class.simpleName}")
             dispatch(P503UiEvent.MonthlyActivityResult(ApplicationMonthlyActivityResult.Unavailable, emptyList()))
         }
     }
@@ -1115,6 +1138,8 @@ fun P503App(
     // batch governs).
     LaunchedEffect(Unit) {
         currentStateLoadCoordinator.startLoadOnce {
+            // D-203 startup trace: the initial current-state read window begins (background).
+            StartupTrace.emit("read.currentState begin")
             scope.launch(Dispatchers.Default) {
                 // APQUAL-05: the same guarded read as refresh() — an unexpected throw maps to
                 // the typed InitialLoadFailed and the slot release in the hop below is guaranteed.
@@ -1130,16 +1155,24 @@ fun P503App(
                 scope.launch {
                     if (outcome is LeaseOutcome.Completed && !ledger.isCurrentGeneration(outcome.generation)) {
                         // Stale generation: discard entirely (P706-A07), release the slot only.
+                        // D-203 startup trace: the initial read landed on a stale generation.
+                        StartupTrace.emit("read.currentState end kind=stale")
                         if (currentStateLoadCoordinator.loadCompleted()) refresh()
                         return@launch
                     }
                     when (val result = (outcome as? LeaseOutcome.Completed)?.value?.first) {
                         is LedgerCurrentStateResult.Success -> {
+                            // D-203 startup trace: the initial read landed.
+                            StartupTrace.emit("read.currentState end kind=success")
                             // P7-02.D E-4: seed the persisted pins so they survive an app restart.
                             (outcome as LeaseOutcome.Completed).value.second?.let { pins -> pinnedTargets = pins }
                             dispatch(P503UiEvent.InitialLoadResult(result.state, pinnedTargets))
                         }
-                        else -> dispatch(P503UiEvent.InitialLoadFailed)
+                        else -> {
+                            // D-203 startup trace: the initial read failed.
+                            StartupTrace.emit("read.currentState end kind=failed")
+                            dispatch(P503UiEvent.InitialLoadFailed)
+                        }
                     }
                     if (currentStateLoadCoordinator.loadCompleted()) refresh()
                 }

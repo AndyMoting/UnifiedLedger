@@ -185,6 +185,8 @@ import kotlin.time.Clock
  */
 @Composable
 fun app() {
+    // D-203 startup trace: composition-root assembly window begins (remember blocks below).
+    StartupTrace.emit("compositionRoot.begin")
     val context = LocalContext.current
     val activity = context as? Activity
     // P7-04.A (D-146 R-Q08-1): the SAF OpenDocument launcher must be registered in
@@ -302,6 +304,8 @@ fun app() {
                 restoreWiring = restoreWiring,
             )
         }
+    // D-203 startup trace: composition root assembled (all wiring remember blocks done).
+    StartupTrace.emit("compositionRoot.controllerCreated")
     // MUST FIX 2: the controller's open now outlives a single composition pass, so dispose it
     // when this composition leaves. dispose() ATTEMPTS to close the owner's active graph (best
     // effort — see the AndroidStartupController class note for the TransitionInProgress /
@@ -559,11 +563,19 @@ internal class AndroidStartupController(
      * discloses the paths where the close is declined and the graph is left open).
      */
     fun start() {
+        // D-203 startup trace: dispatch window (the open itself is traced by the owner).
+        StartupTrace.emit("startupController.start begin")
         // P5-04.4 reentrancy guard: a double "Retry" tap while already starting is ignored so
         // it neither rebuilds the graph nor double-closes a connection.
-        if (startedOnce && state == P503StartupState.Starting) return
+        if (startedOnce && state == P503StartupState.Starting) {
+            // D-203 startup trace: guard hit (a second tap while a start is in flight).
+            StartupTrace.emit("startupController.start guardHit=true")
+            return
+        }
         startedOnce = true
         state = P503StartupState.Starting
+        // D-203 startup trace: the open coroutine is dispatched.
+        StartupTrace.emit("startupController.start dispatched=true")
         startScope.launch {
             // MUST FIX 2: NonCancellable is established BEFORE the blocking open, so cancelling
             // startScope mid-open cannot discard the result. The open runs on the background
@@ -621,6 +633,15 @@ internal class AndroidStartupController(
      * probe's file/SQLite work hops to [backgroundDispatcher] (container-format spec section 4.8).
      */
     private suspend fun applyStartupResult(result: LedgerStartupResult) {
+        // D-203 startup trace: the owner outcome arrived (Failed carries only the cause class).
+        StartupTrace.emit(
+            when (result) {
+                is LedgerStartupResult.Started -> "startupController.result kind=Started"
+                is LedgerStartupResult.Failed -> "startupController.result kind=Failed causeClass=${result.cause::class.simpleName}"
+                is LedgerStartupResult.Blocked -> "startupController.result kind=Blocked inFlightLeases=${result.inFlightLeases}"
+                LedgerStartupResult.TransitionInProgress -> "startupController.result kind=TransitionInProgress"
+            },
+        )
         // The recovery probe (a possible suspension) runs BEFORE the serialized decision section,
         // so no suspension point ever sits inside the lifecycle-critical section.
         val recoveryState = if (result is LedgerStartupResult.Failed) probePointerRecovery(result) else null
@@ -647,6 +668,8 @@ internal class AndroidStartupController(
                 LedgerStartupResult.TransitionInProgress,
                 -> state = P503StartupState.StartupError
             }
+            // D-203 startup trace: the observable startup state was published.
+            StartupTrace.emit("startupController.state state=$state")
         }
     }
 
@@ -1074,6 +1097,8 @@ private fun buildLedgerGraph(
     importPickChannel: ImportFilePickResultChannel,
     snapshotPort: BackupSnapshotPort? = null,
 ): CloseableLedgerGraph {
+    // D-203 startup trace: graph assembly window (includes the catalog bootstrap below).
+    StartupTrace.emit("graph.assemble begin")
     val database = handle.database
     val store = handle.catalogStore
 
@@ -1457,8 +1482,13 @@ private fun buildLedgerGraph(
     // PRAGMA optimize must not add its cost to first frame). A daemon one-shot thread is the
     // minimal background surface at this composition-root layer; a refresh failure never
     // surfaces to the user (statistics are a planner concern, zero product semantics).
+    // D-203 startup trace: graph assembly complete (facade and use cases wired).
+    StartupTrace.emit("graph.assembled")
     kotlin.concurrent.thread(isDaemon = true, name = "ul-query-statistics-optimize") {
-        runCatching { handle.runQueryStatisticsOptimize() }
+        // D-203 startup trace: the background statistics-refresh window (the suspect lane).
+        StartupTrace.emit("optimize.thread begin")
+        val optimizeOutcome = runCatching { handle.runQueryStatisticsOptimize() }
+        StartupTrace.emit("optimize.thread end ok=${optimizeOutcome.isSuccess}")
     }
     return CloseableLedgerGraph(
         facade,

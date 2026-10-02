@@ -53,6 +53,8 @@ import app.cash.sqldelight.db.SqlDriver
  * the planner pick the already-shipped indexes.
  */
 fun runQueryStatisticsOptimizeOn(driver: SqlDriver) {
+    // D-203 startup trace: the PRAGMA optimize window (the startup-suspect lane, D-202 evidence).
+    StartupTrace.emit("optimize.pragma begin")
     driver
         .executeQuery(
             null,
@@ -68,6 +70,30 @@ fun runQueryStatisticsOptimizeOn(driver: SqlDriver) {
             0,
             null,
         ).value
+    // D-203 startup trace: statistics-history diagnostic only (read-only, after the optimize
+    // completed, never throws and never reaches a caller) — did stat1 exist at this point?
+    val stat1Present =
+        runCatching {
+            driver
+                .executeQuery(
+                    null,
+                    "SELECT count(*) FROM sqlite_master WHERE name = 'sqlite_stat1'",
+                    { cursor ->
+                        val hasRow = cursor.next().value
+                        // sqldelight 2.3.2: SqlCursor.getLong returns Long? (D-203 review P1 fix).
+                        QueryResult.Value(hasRow && (cursor.getLong(0) ?: 0L) > 0L)
+                    },
+                    0,
+                    null,
+                ).value
+        }.getOrNull()
+    StartupTrace.emit(
+        when (stat1Present) {
+            null -> "optimize.pragma end stat1=probeFailed"
+            true -> "optimize.pragma end stat1=true"
+            false -> "optimize.pragma end stat1=false"
+        },
+    )
 }
 
 /**

@@ -4083,3 +4083,22 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残留披露：** 同 SHA 重试时，设备目录中的旧取证文件可能被 host 记为 sha_match=true（CI 每轮使用全新模拟器，风险趋近于零；可用 startedElapsedMs/pid 事后甄别）。host.json 的 json_valid 语义是「合法 JSON 且为 object」，sha_match 仅在该语义成立时记录。
 
 **关联决定：** D-198（最大规模契约与严格证据）、D-200（预检与 APK 来源）、D-201（真实 Ready 门）。
+
+## D-203 coldstart 归因的零行为启动计时插桩
+
+**状态：** 已批准（2026-10-02；仅加启动计时打点与最小注入缝，不改任何产品行为、语义、UI、判据或预算）。
+
+**背景：** D-202 取证批定类了 51k 候选库 coldstart 180s 停滞的「现场」（应用进程装载期间主线程与协程池全空闲、无任何应用日志），但产品内部时间构成缺证。两大嫌疑：大库首开 I/O；`PRAGMA optimize` 后台线程与启动读共用单连接且 stats 缺失触发全索引 ANALYZE（QueryStatisticsOptimize 自录 255.98s 先例）。下一次云端 maximum 诊断需要 logcat 打点来归因这 180 秒的构成。
+
+**决定：**
+
+1. 插桩范围（冷启动主链全段）：应用入口（MainActivity.onCreate、组合根开始/装配完成）→ AndroidStartupController.start() 派发（含重入守卫命中）→ LedgerRuntimeOwner.startup 进入与各结果（含 Blocked/Failed）→ resolveLedgerStorage 完成结局 → driver eager 打开（构造/探测前后）→ graph/facade 装配 → applyStartupResult 收到与状态发布 → optimize 后台线程开始/结束 → 首读链（catalog 快照、current state 初始读、月度 payload）各自开始/结束。
+2. 注入缝：KMP 源集 expect/actual `internal` StartupTrace 对象（android-app 用等价的本地对象；app-ui、ledger-data 各自 commonMain expect + androidMain actual + jvmMain actual）。androidMain actual 以 `Log.i("ULStartup", "<elapsedRealtime> <event>")` 输出并由实际侧盖时间戳；commonMain 只发事件名；desktop actual 为空实现。事件内容只允许阶段名、布尔、计数、耗时；禁止账本 id、行数据、绝对路径；异常只记类名。sqlite_stat1 存在性以 optimize 完成后的只读 sqlite_master 探测取得，探测失败记 `probeFailed`，绝不抛出。
+3. 零行为边界：不改任何执行顺序、条件、异常处理逻辑；所有 emit 吞自身异常（runCatching 或设计上不可抛），打点失败不影响主流程；stat1 探测为 optimize 完成后的附加只读查询，异常吞掉。不新增依赖、不改 workflow、不改判据与预算；instrumentation 清单不变。
+4. 与 D-202 取证批的关系：D-202 是退出前的外部观察采样（窗口/线程栈/截图），D-203 是产品内部的时序打点；两者互补，共同服务于下一次 maximum 诊断的 180s 归因。本决定不修改 D-202 原文，不预支归因结论。
+
+**验收要求：** 改动模块定向 ktlintCheck 通过；Python 定向测试与 project_docs 不受影响；Kotlin 编译与设备路径由 CI 验证。下一次 maximum 诊断的 logcat 中 `ULStartup` 打点完整覆盖上述阶段（允许 emit 之外的日志缺失）。
+
+**边界：** 本决定只授权计时打点；不授权任何启动行为、判据、规模或诊断预算改动，不授权归因结论。
+
+**关联决定：** D-202（coldstart 有界取证）、D-198（最大规模契约）、A-PERF/P7-04（查询统计先例）。

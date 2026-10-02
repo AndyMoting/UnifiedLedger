@@ -10,6 +10,8 @@ import com.unifiedledger.ui.P503Theme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        // D-203 startup trace: the earliest application-code point of the cold-start path.
+        StartupTrace.emit("entry.activityCreate")
         super.onCreate(savedInstanceState)
         // targetSdk 37 enforces edge-to-edge on Android 15+ with no opt-out; enable it explicitly
         // before setContent per the official migration path so insets dispatch is set up (D-128).

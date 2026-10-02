@@ -11,6 +11,8 @@ fun createAndroidLedgerDatabase(
     context: Context,
     name: String,
 ): AndroidLedgerDatabaseHandle {
+    // D-203 startup trace: the eager-open window begins (driver construction + the probe below).
+    StartupTrace.emit("db.open begin")
     val driver =
         AndroidSqliteDriver(
             schema = LedgerDatabase.Schema,
@@ -18,6 +20,8 @@ fun createAndroidLedgerDatabase(
             name = name,
             callback = ForeignKeysCallback(),
         )
+    // D-203 startup trace: the driver object exists; the real open may still be pending.
+    StartupTrace.emit("db.open driverCreated")
     // P5-04.5-FOUND-001 (D-132 D-1, amended A-1): one minimal read-only probe forces the real
     // open (openHelper.writableDatabase) synchronously, so onCreate/onUpgrade and corruption
     // failures surface from this factory call into the startup controller's catch instead of at
@@ -31,6 +35,8 @@ fun createAndroidLedgerDatabase(
             0,
             null,
         ).value
+    // D-203 startup trace: the eager probe completed (onCreate/onUpgrade ran inside it).
+    StartupTrace.emit("db.open eagerProbeDone")
     val database = LedgerDatabase(driver)
     return AndroidLedgerDatabaseHandle(
         database = database,
