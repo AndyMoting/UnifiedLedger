@@ -431,6 +431,56 @@ class HostOrchestration(unittest.TestCase):
         self.assertEqual(observed, [970])
         self.assertEqual(command.call_args.kwargs["timeout"], 20)
 
+    def forensics_adb(self, responses):
+        def controlled(*args, **kwargs):
+            if args[:4] == ("exec-out", "run-as", PACKAGE, "cat"):
+                return responses.get(args[-1])
+            # Mirror command(): binary callers get bytes, text callers get str.
+            return b"" if kwargs.get("binary") else ""
+        return controlled
+
+    def test_diagnostics_collects_present_coldstart_forensics_with_hashes(self):
+        self.runner.serial = "emulator-5554"
+        payload = json.dumps({"schema": 1, "kind": "coldstart-forensics", "sha": SHA}).encode("utf-8")
+        png = b"\x89PNG\r\n\x1a\n synthetic coldstart frame"
+        self.runner.adb = self.forensics_adb({
+            "files/android-scale-coldstart-forensics.json": payload,
+            "files/android-scale-coldstart-forensics.png": png,
+        })
+        self.runner.diagnostics(failure=True)
+        records = self.runner.report["coldstart_forensics"]
+        self.assertEqual(records["coldstart-forensics.json"], {
+            "sha256": hashlib.sha256(payload).hexdigest(), "bytes": len(payload),
+            "json_valid": True, "sha_match": True})
+        self.assertEqual(records["coldstart-forensics.png"],
+                         {"sha256": hashlib.sha256(png).hexdigest(), "bytes": len(png)})
+        self.assertEqual((self.runner.evidence / "coldstart-forensics.json").read_bytes(), payload)
+        self.assertEqual((self.runner.evidence / "coldstart-forensics.png").read_bytes(), png)
+
+    def test_missing_coldstart_forensics_is_recorded_absent_and_changes_nothing(self):
+        self.runner.serial = "emulator-5554"
+        self.runner.adb = self.forensics_adb({})
+        self.runner.diagnostics(failure=True)
+        self.assertEqual(self.runner.report["coldstart_forensics"],
+                         {"coldstart-forensics.json": "absent", "coldstart-forensics.png": "absent"})
+        self.assertFalse((self.runner.evidence / "coldstart-forensics.json").exists())
+        self.assertFalse((self.runner.evidence / "coldstart-forensics.png").exists())
+
+    def test_malformed_or_sha_mismatched_forensics_is_kept_but_flagged(self):
+        self.runner.serial = "emulator-5554"
+        responses = {"files/android-scale-coldstart-forensics.json": b"{not json"}
+        self.runner.adb = self.forensics_adb(responses)
+        self.runner.diagnostics(failure=True)
+        record = self.runner.report["coldstart_forensics"]["coldstart-forensics.json"]
+        self.assertFalse(record["json_valid"])
+        self.assertNotIn("sha_match", record)
+        self.assertEqual((self.runner.evidence / "coldstart-forensics.json").read_bytes(), b"{not json")
+        responses["files/android-scale-coldstart-forensics.json"] = json.dumps({"schema": 1, "sha": "b" * 40}).encode("utf-8")
+        self.runner.diagnostics(failure=True)
+        record = self.runner.report["coldstart_forensics"]["coldstart-forensics.json"]
+        self.assertTrue(record["json_valid"])
+        self.assertFalse(record["sha_match"])
+
 
 class ApkProvenance(unittest.TestCase):
     def setUp(self):

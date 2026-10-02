@@ -20,6 +20,14 @@ from .preflight import prepare_probe, validate_preflight
 
 RUNNER = "com.unifiedledger.android.test/androidx.test.runner.AndroidJUnitRunner"
 
+# Device-side coldstart forensics the instrumentation may have written before
+# teardown (files/<name> inside the app's private dir, fixed names). Purely
+# supplementary diagnostics: the oracle never reads them.
+COLDSTART_FORENSICS_DEVICE_FILES = {
+    "files/android-scale-coldstart-forensics.json": "coldstart-forensics.json",
+    "files/android-scale-coldstart-forensics.png": "coldstart-forensics.png",
+}
+
 # Preparation and chain deliberately share the remaining global budget.
 # Only the three short reopen/replay phases have independent host limits.
 PHASE_BUDGETS = {"prepare": None, "chain": None, "reopen": 480, "replay": 480, "final-reopen": 480}
@@ -409,8 +417,36 @@ class ScaleRunner:
                 self.adb("shell", "uiautomator", "dump", "/data/local/tmp/ul-scale-window.xml", best_effort=True)
                 tree = self.adb("exec-out", "cat", "/data/local/tmp/ul-scale-window.xml", best_effort=True)
                 (self.evidence / "failure-ui.xml").write_text(tree, encoding="utf-8")
+                self.collect_coldstart_forensics()
         except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
             self.report["diagnostic_error"] = True
+
+    def collect_coldstart_forensics(self) -> None:
+        """Best-effort retrieval of the device-side coldstart forensics the
+        instrumentation wrote before teardown. Never faked and never required:
+        absence is recorded as absent, a malformed payload is kept and flagged,
+        and neither changes a validation verdict (the oracle never reads these).
+        """
+        collected: dict = {}
+        try:
+            for source, target in COLDSTART_FORENSICS_DEVICE_FILES.items():
+                payload = self.adb("exec-out", "run-as", PACKAGE, "cat", source, binary=True, best_effort=True, timeout=15)
+                if not payload or not isinstance(payload, (bytes, bytearray)):
+                    collected[target] = "absent"
+                    continue
+                (self.evidence / target).write_bytes(payload)
+                record = {"sha256": hashlib.sha256(payload).hexdigest(), "bytes": len(payload)}
+                if target.endswith(".json"):
+                    try:
+                        parsed = json.loads(payload.decode("utf-8"))
+                        record["json_valid"] = isinstance(parsed, dict)
+                        record["sha_match"] = isinstance(parsed, dict) and parsed.get("sha") == self.sha
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        record["json_valid"] = False
+                collected[target] = record
+        except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
+            collected["error"] = True
+        self.report["coldstart_forensics"] = collected
 
     def record_memory(self, phase: str, text: str) -> None:
         with (self.evidence / "memory.txt").open("a", encoding="utf-8") as memory:
