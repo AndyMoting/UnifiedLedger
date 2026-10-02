@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
+import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import java.util.ArrayDeque
 
@@ -21,9 +22,37 @@ internal class AndroidScaleUi(
     private val target = "com.unifiedledger.android"
 
     init {
+        // D-204 observer repair (test facility only; criteria, product code and
+        // the 41-case instrumented list are untouched). The in-process
+        // UiAutomation reads every a11y tree through its client-side
+        // AccessibilityCache, whose only runtime invalidation is an event
+        // delivered to this connection
+        // (IAccessibilityServiceClientWrapper.onAccessibilityEvent delegates to
+        // the cache before the serviceWantsEvent gate,
+        // AccessibilityService.java:2989-3000; eviction and clear paths in
+        // AccessibilityCache.java:262-305, android-36.1), while node and window
+        // queries are cache-first with no expiry (node lookup
+        // AccessibilityInteractionClient.java:604-630; window list
+        // AccessibilityInteractionClient.java:490-533). A connection whose
+        // event delivery stalls therefore serves the same stale startup tree
+        // indefinitely -- the D-203 signature. That client-side feed is
+        // unconditional, so this process cannot filter its own cache stream;
+        // delivery breadth is fixed by the platform registration, which sets
+        // eventTypes=TYPES_ALL_MASK (UiAutomationConnection.java:674-679). The
+        // setServiceInfo below replaces the whole info in one call after
+        // clearing the client cache once (UiAutomation.java:839-860), so
+        // re-asserting TYPES_ALL_MASK keeps this flag edit from narrowing the
+        // registered delivery surface, preserving the documented critical-event
+        // contract (AccessibilityCache.CACHE_CRITICAL_EVENTS_MASK,
+        // AccessibilityCache.java:57-72). It is defense in depth: whether the
+        // stall was a narrowed surface or another delivery failure cannot be
+        // decided from client-side sources (the enforcement point is in
+        // AMS, not in this source tree), so the absence re-read below stays as
+        // the bounded second layer.
         automation.serviceInfo =
             automation.serviceInfo.apply {
                 flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+                eventTypes = AccessibilityEvent.TYPES_ALL_MASK
             }
     }
 
@@ -68,11 +97,35 @@ internal class AndroidScaleUi(
 
     fun labels(node: AccessibilityNodeInfo): List<String> = nodes(node).flatMap { listOfNotNull(it.text?.toString(), it.contentDescription?.toString()) }
 
+    /**
+     * Semantic presence test. Absence is confirmed only after one cache-bypassing
+     * re-read of the root (D-204): [AccessibilityNodeInfo.refresh] re-fetches the
+     * root with `bypassCache=true` (AccessibilityNodeInfo.java:1339-1362,
+     * android-36.1) and swaps in its current child ids, so the second walk starts
+     * from a current tree instead of the exact node objects the first pass read.
+     * The bound is explicit: the re-read bypasses the cache for the root only --
+     * each child fetch still goes through the cache-first path
+     * (`getChild` -> `findAccessibilityNodeInfoByAccessibilityId(..., false, ...)`,
+     * AccessibilityNodeInfo.java:1452-1468) -- so this is one extra current-root
+     * read, not a cache-proof tree walk. A match from the cached pass returns
+     * immediately, so only the absence verdict pays for it.
+     */
     fun has(
         text: String,
         prefix: Boolean = false,
+    ): Boolean {
+        val root = root()
+        if (matches(nodes(root), text, prefix)) return true
+        if (root == null || !root.refresh()) return false
+        return matches(nodes(root), text, prefix)
+    }
+
+    private fun matches(
+        nodes: List<AccessibilityNodeInfo>,
+        text: String,
+        prefix: Boolean,
     ): Boolean =
-        nodes(root()).any { node ->
+        nodes.any { node ->
             node.isVisibleToUser && listOfNotNull(node.text?.toString(), node.contentDescription?.toString()).any { if (prefix) it.startsWith(text) else it == text }
         }
 
