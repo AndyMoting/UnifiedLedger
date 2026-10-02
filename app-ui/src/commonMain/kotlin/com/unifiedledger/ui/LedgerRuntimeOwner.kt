@@ -335,10 +335,20 @@ class LedgerRuntimeOwner<G : Any>(
      * returns the distinct [LedgerStartupResult.TransitionInProgress]; neither touches the graph.
      */
     fun startup(): LedgerStartupResult {
-        if (!mutex.tryLock()) return LedgerStartupResult.TransitionInProgress
+        // D-203 startup trace: the blocking open window begins.
+        StartupTrace.emit("owner.startup begin")
+        if (!mutex.tryLock()) {
+            // D-203 startup trace: another transition holds the owner.
+            StartupTrace.emit("owner.startup end kind=TransitionInProgress")
+            return LedgerStartupResult.TransitionInProgress
+        }
         try {
             val inFlight = inFlightLeases.load()
-            if (inFlight > 0) return LedgerStartupResult.Blocked(inFlight)
+            if (inFlight > 0) {
+                // D-203 startup trace: in-flight business work refused the open.
+                StartupTrace.emit("owner.startup end kind=Blocked inFlightLeases=$inFlight")
+                return LedgerStartupResult.Blocked(inFlight)
+            }
             // A restart must never leak a previously held connection (the existing "close before
             // open" resource-safety discipline of both controllers, now under the owner).
             closeHeldGraphLocked()
@@ -351,6 +361,8 @@ class LedgerRuntimeOwner<G : Any>(
                 } catch (failure: Throwable) {
                     state = LedgerRuntimeState.StartupError
                     activeGeneration = null
+                    // D-203 startup trace: the open failed (cause class only, never the detail).
+                    StartupTrace.emit("owner.startup end kind=Failed causeClass=${failure::class.simpleName}")
                     return LedgerStartupResult.Failed(failure)
                 }
             activeGraph = graph
@@ -358,6 +370,8 @@ class LedgerRuntimeOwner<G : Any>(
             generationCounter = generation
             activeGeneration = generation
             state = LedgerRuntimeState.Ready
+            // D-203 startup trace: the open succeeded.
+            StartupTrace.emit("owner.startup end kind=Started")
             return LedgerStartupResult.Started(generation)
         } finally {
             mutex.unlock()

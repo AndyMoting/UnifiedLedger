@@ -431,6 +431,8 @@ internal fun resolveLedgerStorage(
                 null
             }
         if (journal == null || !recoverSwitchJournalAtStartup(fileSystem, layout, journal)) {
+            // D-203 startup trace: resolution completed, fail-closed on the journal gate.
+            StartupTrace.emit("storage.resolve end outcome=journalPresent")
             return LedgerStorageResolution.Rejected(LedgerStorageFailure.JOURNAL_PRESENT)
         }
     }
@@ -442,20 +444,30 @@ internal fun resolveLedgerStorage(
         // again; the pointer alone decides. Any invalid pointer fails closed and never falls back
         // to a fresh install (the (a)->(d) crash window of rule 1 must not become an empty ledger).
         if (!fileSystem.exists(layout.activePointerFile)) {
+            // D-203 startup trace: resolution completed, fail-closed without an active pointer.
+            StartupTrace.emit("storage.resolve end outcome=pointerMissing")
             return LedgerStorageResolution.Rejected(LedgerStorageFailure.POINTER_MISSING)
         }
         val generation = parsePointer(fileSystem.readBytes(layout.activePointerFile), layout)
         if (generation == null) {
+            // D-203 startup trace: resolution completed, fail-closed on an invalid pointer.
+            StartupTrace.emit("storage.resolve end outcome=pointerInvalid")
             return LedgerStorageResolution.Rejected(LedgerStorageFailure.POINTER_INVALID)
         }
         val directory = layout.generationDirectory(generation)
         val mainFile = layout.mainFile(directory)
         if (!fileSystem.exists(directory) || !fileSystem.isDirectory(directory) || !fileSystem.exists(mainFile)) {
+            // D-203 startup trace: resolution completed, fail-closed on a missing generation.
+            StartupTrace.emit("storage.resolve end outcome=activeGenerationMissing")
             return LedgerStorageResolution.Rejected(LedgerStorageFailure.ACTIVE_GENERATION_MISSING)
         }
         if (!isUsableSqliteMainFile(fileSystem, mainFile)) {
+            // D-203 startup trace: resolution completed, fail-closed on an unusable main file.
+            StartupTrace.emit("storage.resolve end outcome=activeGenerationUnusable")
             return LedgerStorageResolution.Rejected(LedgerStorageFailure.ACTIVE_GENERATION_UNUSABLE)
         }
+        // D-203 startup trace: resolution completed, a generation open is planned.
+        StartupTrace.emit("storage.resolve end outcome=plannedGeneration")
         return LedgerStorageResolution.Planned(LedgerStoragePlan.OpenGeneration(generation, directory, mainFile))
     }
 
@@ -463,10 +475,14 @@ internal fun resolveLedgerStorage(
     // as an empty install. Rule 3: only when neither exists is this a genuine fresh install.
     val freshDirectory = layout.generationDirectory(1)
     if (legacyMainFile != null && fileSystem.exists(legacyMainFile)) {
+        // D-203 startup trace: resolution completed, a legacy upgrade is planned.
+        StartupTrace.emit("storage.resolve end outcome=plannedUpgradeLegacy")
         return LedgerStorageResolution.Planned(
             LedgerStoragePlan.UpgradeLegacy(legacyMainFile, freshDirectory, layout.mainFile(freshDirectory)),
         )
     }
+    // D-203 startup trace: resolution completed, a fresh install is planned.
+    StartupTrace.emit("storage.resolve end outcome=plannedFreshInstall")
     return LedgerStorageResolution.Planned(
         LedgerStoragePlan.FreshInstall(freshDirectory, layout.mainFile(freshDirectory)),
     )
