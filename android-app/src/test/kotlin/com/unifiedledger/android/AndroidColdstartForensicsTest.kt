@@ -34,7 +34,7 @@ class AndroidColdstartForensicsTest {
     @Test
     fun sampleBufferKeepsTheFirstSamplesAndFlagsTruncation() {
         val buffer = AndroidColdstartForensics.ColdstartSampleBuffer()
-        fun sample(atMs: Long) = AndroidColdstartForensics.Sample(atMs, emptyList(), false, false, 0, emptyList())
+        fun sample(atMs: Long) = AndroidColdstartForensics.Sample(atMs, emptyList(), false, false, false, 0, emptyList())
         repeat(AndroidColdstartForensics.MAX_SAMPLES) { buffer.add(sample(it.toLong())) }
         assertFalse(buffer.truncated)
         buffer.add(sample(10000))
@@ -42,6 +42,17 @@ class AndroidColdstartForensicsTest {
         assertEquals(AndroidColdstartForensics.MAX_SAMPLES, buffer.samples.size)
         assertEquals(0, buffer.samples.first().atMs)
         assertEquals((AndroidColdstartForensics.MAX_SAMPLES - 1).toLong(), buffer.samples.last().atMs)
+    }
+
+    @Test
+    fun boundWindowsCapsAndFlagsTheTruncation() {
+        val window = AndroidColdstartForensics.WindowInfo(1, 1, true, false, "com.unifiedledger.android", "com.unifiedledger.android")
+        val within = AndroidColdstartForensics.boundWindows(List(AndroidColdstartForensics.MAX_WINDOWS_PER_SAMPLE) { window })
+        assertFalse(within.truncated)
+        assertEquals(AndroidColdstartForensics.MAX_WINDOWS_PER_SAMPLE, within.windows.size)
+        val excess = AndroidColdstartForensics.boundWindows(List(AndroidColdstartForensics.MAX_WINDOWS_PER_SAMPLE + 1) { window })
+        assertTrue(excess.truncated)
+        assertEquals(AndroidColdstartForensics.MAX_WINDOWS_PER_SAMPLE, excess.windows.size)
     }
 
     @Test

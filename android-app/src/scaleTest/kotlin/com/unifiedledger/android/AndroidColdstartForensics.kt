@@ -25,6 +25,7 @@ object AndroidColdstartForensics {
     const val MAX_FRAME_CHARS = 200
     const val MAX_JSON_CHARS = 512000
     const val MAX_PNG_BYTES = 4000000
+    const val MAX_SAMPLE_ERRORS = 5
 
     data class WindowInfo(
         val id: Int,
@@ -35,9 +36,15 @@ object AndroidColdstartForensics {
         val rootPackage: String?,
     )
 
+    data class Windows(
+        val windows: List<WindowInfo>,
+        val truncated: Boolean,
+    )
+
     data class Sample(
         val atMs: Long,
         val windows: List<WindowInfo>,
+        val windowsTruncated: Boolean,
         val readyOnFirstTargetRoot: Boolean,
         val readyOnAnyTargetRoot: Boolean,
         val targetRootVisibleNodes: Int,
@@ -104,4 +111,12 @@ object AndroidColdstartForensics {
     }
 
     fun jsonOversized(chars: Int): Boolean = chars > MAX_JSON_CHARS
+
+    /** Caps the window list and records the truncation instead of dropping silently. */
+    fun boundWindows(windows: List<WindowInfo>): Windows =
+        if (windows.size <= MAX_WINDOWS_PER_SAMPLE) {
+            Windows(windows, false)
+        } else {
+            Windows(windows.take(MAX_WINDOWS_PER_SAMPLE), true)
+        }
 }

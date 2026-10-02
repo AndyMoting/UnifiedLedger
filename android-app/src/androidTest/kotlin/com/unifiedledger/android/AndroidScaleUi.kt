@@ -38,8 +38,9 @@ internal class AndroidScaleUi(
     fun targetRoots(): List<AccessibilityNodeInfo> =
         automation.windows.mapNotNull { it.root }.filter { it.packageName?.toString() == target }
 
+    /** Raw window snapshot; capping with a truncation flag is the caller's bound concern. */
     fun windowInfos(): List<AndroidColdstartForensics.WindowInfo> =
-        automation.windows.take(AndroidColdstartForensics.MAX_WINDOWS_PER_SAMPLE).map { window ->
+        automation.windows.map { window ->
             AndroidColdstartForensics.WindowInfo(
                 id = window.id,
                 type = window.type,
