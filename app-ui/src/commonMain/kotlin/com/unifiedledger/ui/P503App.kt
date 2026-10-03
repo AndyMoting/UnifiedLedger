@@ -1176,7 +1176,7 @@ fun P503App(
                             // itself did not complete) is the only extra content — diagnostics
                             // only, dispatch and retry behavior unchanged.
                             val readFailure = (outcome as? LeaseOutcome.Completed)?.value?.second
-                            val errorType = readFailure?.javaClass.simpleName ?: "unknown"
+                            val errorType = readFailure?.javaClass?.simpleName ?: "unknown"
                             StartupTrace.emit("read.currentState end kind=failed errorType=$errorType")
                             dispatch(P503UiEvent.InitialLoadFailed)
                         }
