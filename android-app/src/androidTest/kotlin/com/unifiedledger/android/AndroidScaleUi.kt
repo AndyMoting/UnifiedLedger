@@ -160,6 +160,20 @@ internal class AndroidScaleUi(
      * is a client-side programmable forced invalidation, not a root-cause
      * claim, and it does not change the readiness criterion (`has("账本：")`).
      *
+     * Reset robustness (D-205 review): `UiAutomation.getServiceInfo` and
+     * `setServiceInfo` are synchronous binder calls with no client-side
+     * timeout. On a wedged accessibility connection they can block this thread
+     * past the stage deadline; the client cannot bound that, and only the host
+     * phase deadline (which kills the instrumentation process) ends the wait.
+     * `tick()` therefore runs both immediately before and immediately after
+     * the reset, so the latest runnable moment is deadline-checked and a binder
+     * call that overran the deadline surfaces on the very next line; the call
+     * itself cannot be interrupted. The interval is wide
+     * (`AndroidScaleObserverDiag.CACHE_RESET_INTERVAL_MS`, 30s) to keep the
+     * exposure small. Both the reset and the observation are contained: a
+     * failure is recorded as a degraded entry and never replaces the wait's own
+     * failure with a new throw.
+     *
      * `onPoll` is a coldstart-only forensics hook: it runs after a passed tick,
      * must never call tick(), and stays null at every other call site. The same
      * holds for `diagnostic`: only the coldstart wait path attaches a writer,
@@ -174,24 +188,60 @@ internal class AndroidScaleUi(
         predicate: () -> Boolean,
     ) {
         val end = SystemClock.elapsedRealtime() + timeout
-        var lastReset = SystemClock.elapsedRealtime()
+        // `end - timeout` is exactly the start instant: reusing it keeps the
+        // no-writer path free of any additional clock read.
+        var lastReset = end - timeout
         while (SystemClock.elapsedRealtime() < end) {
             tick()
             onPoll?.invoke()
             if (predicate()) return
             // Bounded forced invalidation, mounted only where a writer is
             // attached (the coldstart wait path). A call site without a writer
-            // keeps its exact D-204 behavior: this branch is the only change.
-            val now = SystemClock.elapsedRealtime()
-            if (diagnostic != null && scaleCacheResetDue(now, lastReset)) {
-                lastReset = now
-                resetAutomationCache()
-                diagnostic.record(resetAutomationCacheObservation())
+            // keeps its exact D-204 behavior and reads no clock here.
+            if (diagnostic != null) {
+                val now = SystemClock.elapsedRealtime()
+                if (scaleCacheResetDue(now, lastReset)) {
+                    lastReset = now
+                    tick()
+                    val reset = resetAutomationCacheSafely(diagnostic)
+                    // Re-check the deadline after the synchronous binder call
+                    // returns: the check cannot interrupt a wedged binder (only
+                    // the host phase deadline can), but it is the first moment
+                    // the loop is runnable again.
+                    tick()
+                    if (reset) {
+                        try {
+                            diagnostic.record(resetAutomationCacheObservation())
+                        } catch (failure: Throwable) {
+                            diagnostic.recordObservationFailure(SystemClock.elapsedRealtime(), failure)
+                        }
+                    }
+                }
             }
             SystemClock.sleep(150)
         }
         error("UI condition deadline exceeded")
     }
+
+    /**
+     * Runs the forced reset and contains any failure as a degraded entry.
+     *
+     * Returns true only when the reset itself succeeded, so the caller can tell
+     * "reset failed" apart from "reset worked, observation failed" without
+     * nesting their handlers. Both record methods catch their own write
+     * failures, so neither can escape into the wait loop.
+     */
+    private fun resetAutomationCacheSafely(diagnostic: AndroidScaleObserverDiagWriter): Boolean =
+        try {
+            resetAutomationCache()
+            true
+        } catch (failure: Throwable) {
+            // A reset failure must not replace the wait's own deadline failure
+            // with a new exception: it is recorded and the loop keeps waiting,
+            // exactly as it did before the reset existed.
+            diagnostic.recordResetFailure(SystemClock.elapsedRealtime(), failure)
+            false
+        }
 
     /**
      * Forced client-cache invalidation; see [await]. Deliberately a second call

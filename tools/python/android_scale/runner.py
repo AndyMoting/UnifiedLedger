@@ -59,12 +59,19 @@ COLDSTART_HOST_RAW_PREFIX_CHARS = 200
 
 # Window/activity dump parsing. `dumpsys window windows` prints one
 # `Window{<hash> u<user> <pkg>/<component>}` token per window plus trailing
-# `mCurrentFocus=`/`mFocusedApp=` lines; `dumpsys activity activities` prints
+# focus lines (`mCurrentFocus=`/`mFocusedApp=`/`mFocusedWindow=`, the latter
+# carrying the same `Window{...}` token); `dumpsys activity activities` prints
 # `ResumedActivity: ActivityRecord{... <pkg>/<component> ...}`. An unrecognized
 # dump is recorded as probeFailed with a bounded raw prefix, never read as
 # "no target window".
+#
+# WINDOW_FOCUS_KEYS is the single source for both the focus-value regex and the
+# line filter that keeps focus tokens out of the window count; the two must not
+# drift or a focus fact is dropped or an extra window is counted.
+WINDOW_FOCUS_KEYS = ("mCurrentFocus", "mFocusedApp", "mFocusedWindow")
 WINDOW_COMPONENT = re.compile(r"Window\{[^}]*?\s([A-Za-z0-9_.]+)/[.A-Za-z0-9_$]+")
-WINDOW_FOCUS = re.compile(r"(?m)^\s*(mCurrentFocus|mFocusedApp)=(.+?)\s*$")
+WINDOW_FOCUS = re.compile(r"(?m)^\s*(" + "|".join(WINDOW_FOCUS_KEYS) + r")=(.+?)\s*$")
+WINDOW_FOCUS_LINE = re.compile(r"(?m)^\s*(?:" + "|".join(WINDOW_FOCUS_KEYS) + r")\s*=")
 ACTIVITY_RESUMED = re.compile(r"(?m)^\s*(?:ResumedActivity|mResumedActivity)\s*[=:]\s*(.+?)\s*$")
 COMPONENT = re.compile(r"([A-Za-z0-9_.]+)/[.A-Za-z0-9_$]+")
 
@@ -82,38 +89,38 @@ def last_match(pattern: str, text: str, label: str) -> str:
     return matches[-1]
 
 
-WINDOW_FOCUS_LINE = re.compile(r"(?m)^\s*(?:mCurrentFocus|mFocusedApp|mFocusedWindow)\s*=")
-
-
 def parse_window_dump(text: str) -> dict:
     """Parse a `dumpsys window windows` dump into window/focus facts.
 
-    Only real window entries answer "is a target window present"; the focus
-    lines are reported separately. Keeping the two apart means a contradictory
-    snapshot (focus names the target, the window list does not) stays visible
-    in the record instead of being silently resolved. Raises ValueError for
-    output that carries no window list at all (for example an adb/dumpsys
-    contention error line): reading that as "no target window present" would
-    silently invert the diagnostic's meaning.
+    Only real window entries answer "is a target window present" (focus lines
+    carry the same `Window{...}` token and are filtered out first, so they can
+    never be miscounted as a window). Every focus line is captured, including
+    `mFocusedWindow`. `mCurrentFocus=null` (a genuinely absent focus) and a
+    missing focus line are different facts, so both the value and its presence
+    are recorded: a contradictory snapshot (focus names the target, the window
+    list does not) stays visible instead of being silently resolved. Raises
+    ValueError for output that carries no window list at all (for example an
+    adb/dumpsys contention error line): reading that as "no target window
+    present" would silently invert the diagnostic's meaning.
     """
     listed = "\n".join(line for line in text.splitlines() if not WINDOW_FOCUS_LINE.match(line))
     windows = WINDOW_COMPONENT.findall(listed)
     if not windows:
         raise ValueError("window dump not recognizable: " + text.strip()[:COLDSTART_HOST_RAW_PREFIX_CHARS])
-    current_focus = None
-    focused_app = None
+    fields = {"mCurrentFocus": "currentFocusPackage", "mFocusedApp": "focusedAppPackage",
+              "mFocusedWindow": "focusedWindowPackage"}
+    facts = {field: None for field in fields.values()}
     for key, value in WINDOW_FOCUS.findall(text):
         component = COMPONENT.search(value)
-        package = component[1] if component else None
-        if key == "mCurrentFocus":
-            current_focus = package
-        elif key == "mFocusedApp":
-            focused_app = package
+        facts[fields[key]] = component[1] if component else None
+    for key, field in fields.items():
+        # `currentFocusPackagePresent` would read badly; strip the value suffix.
+        flag = field.removesuffix("Package") + "Present"
+        facts[flag] = any(line.lstrip().startswith(key + "=") for line in text.splitlines())
     return {
         "targetWindowPresent": PACKAGE in windows,
         "windowCount": len(windows),
-        "currentFocusPackage": current_focus,
-        "focusedAppPackage": focused_app,
+        **facts,
     }
 
 
@@ -663,10 +670,12 @@ class ScaleRunner:
                 if not activity_text.strip():
                     raise ValueError("activity dump read back empty")
                 record.update(parse_activity_dump(activity_text))
-                record["targetActivityPresent"] = PACKAGE in str(record["resumedActivity"])
+                # Exact package/component match, not a substring of the whole record.
+                record["targetActivityPresent"] = record["resumedActivity"].startswith(PACKAGE + "/")
                 activity_data = activity_text.encode("utf-8")
                 (self.evidence / COLDSTART_HOST_ACTIVITY).write_bytes(activity_data)
                 record["activitySha256"] = hashlib.sha256(activity_data).hexdigest()
+                record["activityBytes"] = len(activity_data)
             except ScaleDeadlineError:
                 raise
             except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:

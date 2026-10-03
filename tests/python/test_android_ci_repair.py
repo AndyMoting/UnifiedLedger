@@ -502,6 +502,7 @@ class ColdstartHostProbe(unittest.TestCase):
         "    mOwnerUid=10021 package=com.android.systemui\n"
         "  mCurrentFocus=Window{11 u0 com.unifiedledger.android/com.unifiedledger.android.MainActivity}\n"
         "  mFocusedApp=ActivityRecord{aa u0 com.unifiedledger.android/.MainActivity t42}\n"
+        "  mFocusedWindow=Window{11 u0 com.unifiedledger.android/com.unifiedledger.android.MainActivity}\n"
     )
     WINDOW_LAUNCHER = (
         "WINDOW MANAGER WINDOWS (dumpsys window windows)\n"
@@ -566,9 +567,14 @@ class ColdstartHostProbe(unittest.TestCase):
         self.assertEqual(record["currentFocusPackage"], PACKAGE)
         self.assertEqual(record["focusedAppPackage"], PACKAGE)
         self.assertEqual(record["resumedActivity"], PACKAGE + "/.MainActivity")
+        self.assertEqual(record["focusedWindowPackage"], PACKAGE)
+        self.assertTrue(record["currentFocusPresent"])
+        self.assertTrue(record["focusedAppPresent"])
+        self.assertTrue(record["focusedWindowPresent"])
         self.assertEqual(record["windowSha256"], hashlib.sha256(self.WINDOW_READY.encode("utf-8")).hexdigest())
         self.assertEqual(record["windowBytes"], len(self.WINDOW_READY.encode("utf-8")))
         self.assertEqual(record["activitySha256"], hashlib.sha256(self.ACTIVITY_READY.encode("utf-8")).hexdigest())
+        self.assertEqual(record["activityBytes"], len(self.ACTIVITY_READY.encode("utf-8")))
         self.assertFalse(state["probeFailed"])
         self.assertIn("coldstart-host-probe", (self.runner.evidence / "memory.txt").read_text(encoding="utf-8"))
         self.assertEqual((self.runner.evidence / "coldstart-host-window.txt").read_text(encoding="utf-8"), self.WINDOW_READY)
@@ -584,6 +590,8 @@ class ColdstartHostProbe(unittest.TestCase):
         self.assertFalse(record["targetActivityPresent"])
         self.assertEqual(record["currentFocusPackage"], "com.android.launcher3")
         self.assertEqual(record["focusedAppPackage"], "com.android.launcher3")
+        self.assertIsNone(record["focusedWindowPackage"])
+        self.assertFalse(record["focusedWindowPresent"])
         self.assertEqual(record["resumedActivity"], "com.android.launcher3/.Launcher")
         self.assertFalse(state["probeFailed"])
 
@@ -648,6 +656,29 @@ class ColdstartHostProbe(unittest.TestCase):
         self.assertEqual(record["windowCount"], 2)
         self.assertTrue(record["targetWindowPresent"])
 
+    def test_focused_window_line_is_captured_and_kept_out_of_the_window_count(self):
+        # mFocusedWindow carries the same Window{...} token as a list entry: it
+        # must be recorded as a focus fact and must not be counted as a window.
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+        self.window_text = (
+            "WINDOW MANAGER WINDOWS (dumpsys window windows)\n"
+            "  Window #0 Window{33 u0 com.android.launcher3/com.android.launcher3.Launcher}:\n"
+            "    mOwnerUid=10007 package=com.android.launcher3\n"
+            "  mCurrentFocus=null\n"
+            "  mFocusedWindow=Window{11 u0 com.unifiedledger.android/com.unifiedledger.android.MainActivity}\n"
+        )
+        record = self.probe()["probes"][0]
+        self.assertEqual(record["windowCount"], 1)
+        self.assertFalse(record["targetWindowPresent"])
+        self.assertEqual(record["focusedWindowPackage"], PACKAGE)
+        self.assertTrue(record["focusedWindowPresent"])
+        # An explicit null is a present line with no value, not a missing line.
+        self.assertTrue(record["currentFocusPresent"])
+        self.assertIsNone(record["currentFocusPackage"])
+        self.assertFalse(record["focusedAppPresent"])
+        self.assertIsNone(record["focusedAppPackage"])
+        self.assertNotIn("probeFailed", record)
+
     def test_background_target_window_is_not_reported_as_the_resumed_activity(self):
         # The decisive cross-check for the D-205 question: the target window can
         # exist (and even hold surface) while another app stays resumed. The
@@ -660,6 +691,18 @@ class ColdstartHostProbe(unittest.TestCase):
         self.assertFalse(record["targetActivityPresent"])
         self.assertEqual(record["resumedActivity"], "com.android.launcher3/.Launcher")
         self.assertNotIn("probeFailed", record)
+
+    def test_lookalike_package_is_not_taken_for_the_target_activity(self):
+        # `com.unifiedledger.android.other/...` must not satisfy the target test;
+        # only an exact package prefix followed by `/` does.
+        self.uptime_s = (self.started_ms + 40_000) / 1000
+        self.activity_text = (
+            "ACTIVITY MANAGER ACTIVITIES (dumpsys activity activities)\n"
+            "  ResumedActivity: ActivityRecord{cc u0 com.unifiedledger.android.other/.Other t42}\n"
+        )
+        record = self.probe()["probes"][0]
+        self.assertFalse(record["targetActivityPresent"])
+        self.assertEqual(record["resumedActivity"], "com.unifiedledger.android.other/.Other")
 
     def test_failed_dumpsys_records_probe_failed_and_changes_nothing(self):
         self.uptime_s = (self.started_ms + 40_000) / 1000
