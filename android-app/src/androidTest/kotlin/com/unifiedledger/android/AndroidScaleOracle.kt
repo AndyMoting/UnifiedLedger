@@ -138,11 +138,12 @@ internal class AndroidScaleOracle(
         var consecutiveEmpty = 0
         var waitedMs = 0L
         while (true) {
-            val journalLen = try {
-                journal.length()
-            } catch (failure: Throwable) {
-                0L
-            }
+            val journalLen =
+                try {
+                    journal.length()
+                } catch (failure: Throwable) {
+                    0L
+                }
             val consecutive = if (journalLen <= 0) consecutiveEmpty + 1 else 0
             when (AndroidScaleOracleRetry.journalWaitDecision(journalLen, consecutive, waitedMs)) {
                 AndroidScaleOracleRetry.JournalWait.PROCEED, AndroidScaleOracleRetry.JournalWait.GIVE_UP -> return
