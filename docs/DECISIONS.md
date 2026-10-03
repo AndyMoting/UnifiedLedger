@@ -4171,3 +4171,25 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残留披露：** `waitedMs` 记录的是采集窗口而非阶段耗时（不为此新增失败路径状态）；阶段耗时仍以 device.json 的 `elapsedMs` 为准（沿 D-202 先例，其含采集时间）。与 D-202 相同，同 SHA 重试时旧文件可能被 host 记为 sha_match=true（CI 每轮全新模拟器，可用 startedElapsedMs/pid 事后甄别）。
 
 **关联决定：** D-202（coldstart 有界取证与固定文件名边界）、D-203（判别手段：帧缓冲截图 + a11y 快照对）、D-204/D-205（观察器修复及其仅限 coldstart 的边界，本决定为业务阶段失败路径补盲）、D-198（最大规模契约）。
+
+## D-207 coldstart 首读失败类型可观测与 host 回收 absent 误判修复
+
+**状态：** 已批准（2026-10-03；产品诊断打点一处 + host 证据回收缺陷修复，零行为、判据、预算或清单改动）。
+
+**背景：** 诊断性 maximum run 37123941430 上 ULStartup 打点证明产品冷启动全程成功（`storage.resolve=plannedGeneration`、db.open 约 1.2s、`state=Ready` @963997），但 10ms 后 `read.currentState end kind=failed` @964081（同期 `read.catalogSnapshot kind=completed`），产品随即进入 fail-closed「无法读取账本数据（本地数据库不可用）+ 重试」界面并停留整个等待期；observer-diag 五次重置记录读到的都是该错误界面（观察器健康，D-205 修复有效、本轮未发生盲态）。首读 `queryCurrentState.query()` 的异常被 `P503App.kt` 初始加载块 `runCatching { ... }.getOrNull()` 吞掉，trace 只发 `kind=failed`，异常类型完全不可见，归因被产品可观测性缺口阻断（故障为间歇性：上一轮同路径成功）。同一轮暴露 D-206 的 host 回收实现缺陷：`adb exec-out` 不传播设备侧退出码，设备文件缺失时 pull 仍以退出码 0 结束，adb 的 `cat: files/android-scale-stage-forensics.json: No such file or directory`（73 字节）错误文本混入 stdout 流，host 把它当文件内容记录并计算 sha256，而非记 `absent`；Python 测试 fake 未建模该真实行为。
+
+**决定：**
+
+1. 产品侧（app-ui `P503App.kt` 初始加载块，唯一产品改动）：状态读改为保留失败的 `runCatching`——行为零改动（仍 `getOrNull()` 作行为值、仍派发 `P503UiEvent.InitialLoadFailed`、无重试策略变化、无读路径变化），捕获的 Throwable 仅用于诊断：失败分支经既有 D-203 trace 面追加发 `read.currentState end kind=failed errorType=<异常类 simpleName>`（异常不可得时记 `unknown`，例如 lease 未完成或非 Success 结果不抛异常的情形）。异常类 simpleName 属于登记合同明确允许的「failures are reported by exception class name」，不含消息、栈、ledger id 或绝对路径。不新增 expect/actual 成员（Android 侧完整栈走 logcat warning 通道需要新缝，按边界跳过）。`pins` 读保持原状；`read.currentState begin` 与 stale/success 打点字节不变；`refresh()`、monthly payload 及其他一切 trace 点不动。
+
+2. host 侧（`tools/python/android_scale/runner.py`）：新增共享 helper `pull_forensics_file`（coldstart 与 stage 两处回收共用一份，不复制两份），pull 返回空或匹配 adb not-found 签名（以 `cat:`/`run-as:` 开头且含 `No such file or directory`）时记 `absent`——绝不写证据文件、不造 sha/bytes；真实存在但损坏的文件仍按原规则保留并标记（畸形 JSON → `json_valid=false`；sha 不匹配 → `sha_match=false`）。run-as 调用形状、真实文件的 sha 计算、memory.txt 降级记录均不变；取证永不参与 PASS/FAIL（`result.py` 与 `android-scale-validate.py` 零改动）。
+
+3. 测试（`tests/python/test_android_ci_repair.py`）：fake adb 建模真实行为——coldstart 与 stage 各新增 not-found 签名一例（`cat: ...: No such file or directory` 文本作为输出返回，而非异常或空输出加非零退出码；断言记 `absent` 且不产生证据文件/sha/bytes）；stage 新增 present-but-malformed 一例（保留并标记，不得误判 absent）；既有各例零改动保持通过。
+
+**验收要求：** 聚焦 Python 测试（`test_android_ci_repair` / `test_android_scale_result` / `test_android_scale_fixture`）全绿；`project_docs` 退出 0；trace 扫描 clean；Kotlin 为 CI-owned（本批零行为改动，app-ui 全量由 CI 验证）。下一次诊断性 maximum 上，首读再失败时 `read.currentState end kind=failed errorType=` 应携带异常类名（或 `unknown`）直接指向根因类；host.json 的 coldstart/stage forensics 在设备文件缺失时记 `absent` 而非错误文本内容。取证与打点不改变任何验收结论，规模契约不变。
+
+**边界：** 产品面仅 `app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503App.kt` 初始加载块；零 schema/依赖/gradle/workflow 改动；零重试/判据/预算/instrumented 清单改动。隐私：trace 行仅异常类名（D-203 合同），host.json 记录格式不变，无个人数据。
+
+**残留披露：** (a) `collect_observer_diag` 的 run-as cat 回收是同型内联实现，本批按范围未改——设备侧 observer-diag 文件缺失时会复现同一误判，应在下一触达批次用同一 helper 收敛；(b) `errorType=unknown` 不区分「lease 未完成」与「非 Success 结果未抛异常」两情形（不为此扩大打点面）；(c) 完整异常栈不进产品 trace（需新增 expect/actual 成员，本批禁止），异常类名之外的细节依赖下一次诊断轮的 logcat 全量采集。
+
+**关联决定：** D-203（trace 面登记合同：仅 stage 名/布尔/计数/异常类名）、D-202/D-206（host 取证回收与诚实规则）、D-205（观察器健康对照，证明本轮无盲态）、D-198（最大规模契约）。
