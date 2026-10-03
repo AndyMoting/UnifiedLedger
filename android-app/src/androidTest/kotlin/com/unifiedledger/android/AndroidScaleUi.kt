@@ -21,8 +21,17 @@ internal class AndroidScaleUi(
     private val automation get() = instrumentation.uiAutomation
     private val target = "com.unifiedledger.android"
 
+    /**
+     * D-208 shared rate limiter: the one stamp every forced reset updates (the
+     * init re-assert below, the await periodic reset, and the miss-triggered
+     * resets in [findNode] and [scrollable]), so the 30s periodic interval and
+     * the 5s miss interval bound one shared reset stream and cannot compound.
+     */
+    private var lastResetElapsedMs: Long
+
     init {
         setServiceInfo()
+        lastResetElapsedMs = SystemClock.elapsedRealtime()
     }
 
     /**
@@ -107,7 +116,9 @@ internal class AndroidScaleUi(
 
     /**
      * Semantic presence test: true when [findNode] locates a matching node, with
-     * that helper's cached-hit / refresh-on-miss rule.
+     * that helper's cached-hit / refresh-on-miss rule. A miss can now also
+     * trigger one bounded, rate-limited forced cache reset (the D-208 third
+     * layer) before the final false is returned.
      */
     fun has(
         text: String,
@@ -127,12 +138,38 @@ internal class AndroidScaleUi(
      * current-root read, not a cache-proof tree walk. Callers must not re-walk
      * [nodes] after this returns -- that walk could disagree with the refreshed
      * tree; this helper is the single source of the found node.
+     *
+     * D-208 adds a third, miss-triggered layer (evidence: run 37130347905 --
+     * the saf_import stage failed in 825ms while the frame-buffer screenshot
+     * showed the import screen fully rendered, the D-203 stale-cache signature
+     * recurring outside the coldstart path): when both passes miss and the
+     * shared limiter allows ([missResetDue] over the one stamp every reset
+     * updates, [AndroidScaleObserverDiag.MISS_RESET_INTERVAL_MS]), one forced
+     * reset clears the client cache once and one final cached walk -- over a
+     * freshly fetched root, since the reset also invalidates the cached window
+     * list -- returns whatever it finds. Containment is scoped precisely: the
+     * reset itself (the setServiceInfo replacement) is fully contained and never
+     * throws, while the post-reset walk carries the same exposure class as the
+     * pre-existing pass-1/pass-2 walks -- no new failure class. A reset failure
+     * is swallowed (findNode has no writer access; call sites that own a writer
+     * record resets on their own paths) and the final walk's result is still
+     * returned; the helper never ticks -- its callers own the deadline checks,
+     * and the await predicates among them already tick.
      */
     private fun findNode(predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
         val root = root()
         nodes(root).firstOrNull(predicate)?.let { return it }
         if (root == null || !root.refresh()) return null
-        return nodes(root).firstOrNull(predicate)
+        nodes(root).firstOrNull(predicate)?.let { return it }
+        if (!missResetDue(SystemClock.elapsedRealtime(), lastResetElapsedMs)) return null
+        lastResetElapsedMs = SystemClock.elapsedRealtime()
+        try {
+            resetAutomationCache()
+        } catch (ignored: Throwable) {
+            // Contained by contract: findNode has no writer access, so the
+            // failed reset is swallowed and the final walk still answers.
+        }
+        return nodes(root()).firstOrNull(predicate)
     }
 
     private fun matches(
@@ -143,8 +180,9 @@ internal class AndroidScaleUi(
 
     /**
      * D-205 cache-reset repair of the D-204 shortfall, plus its forced-reset
-     * diagnostic. Test facility only: criteria, product code, scale and the
-     * 41-case instrumented list are untouched.
+     * diagnostic; D-208 promotes the bounded periodic reset to every wait.
+     * Test facility only: criteria, product code, scale and the 41-case
+     * instrumented list are untouched.
      *
      * D-204 answered a miss with one root-only [AccessibilityNodeInfo.refresh]
      * (children stay cache-first) and a single TYPES_ALL_MASK re-assert at init,
@@ -175,11 +213,21 @@ internal class AndroidScaleUi(
      * failure with a new throw.
      *
      * `onPoll` is a coldstart-only forensics hook: it runs after a passed tick,
-     * must never call tick(), and stays null at every other call site. The same
-     * holds for `diagnostic`: only the coldstart wait path attaches a writer,
-     * and without one this loop performs no reset and writes nothing, so every
-     * other `await` call site keeps its exact D-204 behavior. No predicate,
-     * timeout or product behavior changes.
+     * must never call tick(), and stays null at every other call site.
+     *
+     * D-208 (evidence: run 37130347905 -- the 825ms saf_import failure while
+     * the frame-buffer screenshot showed the import screen fully rendered,
+     * i.e. business-stage waits were unprotected): the D-205 gate that mounted
+     * the periodic reset only where a writer is attached is removed from the
+     * reset itself. Every wait now performs the 30s bounded reset on the same
+     * terms -- `tick()` immediately before and after the synchronous binder
+     * call, rate-limited by the one shared `lastResetElapsedMs` stamp every
+     * reset updates. The D-205 sentence "without one this loop performs no
+     * reset" is superseded by D-208: `diagnostic` is recording-only. When a
+     * writer is attached (the coldstart wait path) resets and observations are
+     * recorded exactly as before; without one, a reset failure is swallowed
+     * silently and no observation is recorded. No predicate, timeout or
+     * product behavior changes.
      */
     fun await(
         timeout: Long = 180000,
@@ -188,33 +236,27 @@ internal class AndroidScaleUi(
         predicate: () -> Boolean,
     ) {
         val end = SystemClock.elapsedRealtime() + timeout
-        // `end - timeout` is exactly the start instant: reusing it keeps the
-        // no-writer path free of any additional clock read.
-        var lastReset = end - timeout
         while (SystemClock.elapsedRealtime() < end) {
             tick()
             onPoll?.invoke()
             if (predicate()) return
-            // Bounded forced invalidation, mounted only where a writer is
-            // attached (the coldstart wait path). A call site without a writer
-            // keeps its exact D-204 behavior and reads no clock here.
-            if (diagnostic != null) {
-                val now = SystemClock.elapsedRealtime()
-                if (scaleCacheResetDue(now, lastReset)) {
-                    lastReset = now
-                    tick()
-                    val reset = resetAutomationCacheSafely(diagnostic)
-                    // Re-check the deadline after the synchronous binder call
-                    // returns: the check cannot interrupt a wedged binder (only
-                    // the host phase deadline can), but it is the first moment
-                    // the loop is runnable again.
-                    tick()
-                    if (reset) {
-                        try {
-                            diagnostic.record(resetAutomationCacheObservation())
-                        } catch (failure: Throwable) {
-                            diagnostic.recordObservationFailure(SystemClock.elapsedRealtime(), failure)
-                        }
+            // Bounded forced invalidation for every wait (D-208): rate-limited
+            // by the shared stamp, tick-bracketed exactly as D-205.
+            val now = SystemClock.elapsedRealtime()
+            if (scaleCacheResetDue(now, lastResetElapsedMs)) {
+                lastResetElapsedMs = now
+                tick()
+                val reset = resetAutomationCacheSafely(diagnostic)
+                // Re-check the deadline after the synchronous binder call
+                // returns: the check cannot interrupt a wedged binder (only
+                // the host phase deadline can), but it is the first moment
+                // the loop is runnable again.
+                tick()
+                if (reset && diagnostic != null) {
+                    try {
+                        diagnostic.record(resetAutomationCacheObservation())
+                    } catch (failure: Throwable) {
+                        diagnostic.recordObservationFailure(SystemClock.elapsedRealtime(), failure)
                     }
                 }
             }
@@ -224,29 +266,35 @@ internal class AndroidScaleUi(
     }
 
     /**
-     * Runs the forced reset and contains any failure as a degraded entry.
+     * Runs the forced reset and contains any failure.
      *
      * Returns true only when the reset itself succeeded, so the caller can tell
      * "reset failed" apart from "reset worked, observation failed" without
-     * nesting their handlers. Both record methods catch their own write
-     * failures, so neither can escape into the wait loop.
+     * nesting their handlers. With a writer attached, a reset failure is
+     * recorded as a degraded entry; without one (D-208: every wait performs
+     * resets, not every wait has a writer) it is swallowed silently. The write
+     * path catches its own failures too, so nothing can escape into the wait
+     * loop.
      */
-    private fun resetAutomationCacheSafely(diagnostic: AndroidScaleObserverDiagWriter): Boolean =
+    private fun resetAutomationCacheSafely(diagnostic: AndroidScaleObserverDiagWriter?): Boolean =
         try {
             resetAutomationCache()
             true
         } catch (failure: Throwable) {
             // A reset failure must not replace the wait's own deadline failure
-            // with a new exception: it is recorded and the loop keeps waiting,
-            // exactly as it did before the reset existed.
-            diagnostic.recordResetFailure(SystemClock.elapsedRealtime(), failure)
+            // with a new exception: it is recorded where a writer exists and
+            // the loop keeps waiting, exactly as it did before the reset
+            // existed on this path.
+            diagnostic?.recordResetFailure(SystemClock.elapsedRealtime(), failure)
             false
         }
 
     /**
      * Forced client-cache invalidation; see [await]. Deliberately a second call
      * site of the D-204 [setServiceInfo] so the flag/event-mask semantics cannot
-     * drift between initial setup and the bounded reset.
+     * drift between initial setup and the bounded reset. D-208 reuses it for the
+     * miss-triggered resets in [findNode] and [scrollable] under the shared
+     * limiter.
      */
     private fun resetAutomationCache() {
         setServiceInfo()
@@ -283,7 +331,35 @@ internal class AndroidScaleUi(
         clickNode(node)
     }
 
-    fun scrollable(): AccessibilityNodeInfo = nodes(root()).filter { it.isScrollable && it.isVisibleToUser }.maxByOrNull { bounds(it).height() } ?: error("scroll container absent")
+    /**
+     * D-208: when the cached walk finds no visible scrollable container, one
+     * rate-limited forced reset plus a single re-walk run before the error, so
+     * a client cache frozen on a previous screen (run 37130347905: saf_import
+     * failed in 825ms with `scroll container absent` while the frame-buffer
+     * screenshot showed the import screen fully rendered) cannot fail the
+     * stage while the real tree is fine. Containment is scoped precisely: the
+     * reset itself (the setServiceInfo replacement) is fully contained and
+     * never throws, while the re-walk carries the same exposure class as the
+     * pre-existing first walk -- no new failure class. The reset is limited
+     * by the shared stamp and never ticks (its callers own the deadline
+     * checks), and the error text is unchanged when the re-walk still finds
+     * nothing.
+     */
+    fun scrollable(): AccessibilityNodeInfo {
+        widestVisibleScrollable()?.let { return it }
+        if (missResetDue(SystemClock.elapsedRealtime(), lastResetElapsedMs)) {
+            lastResetElapsedMs = SystemClock.elapsedRealtime()
+            try {
+                resetAutomationCache()
+            } catch (ignored: Throwable) {
+                // Contained by contract: scrollable has no writer access, so
+                // the failed reset is swallowed and the re-walk still answers.
+            }
+        }
+        return widestVisibleScrollable() ?: error("scroll container absent")
+    }
+
+    private fun widestVisibleScrollable(): AccessibilityNodeInfo? = nodes(root()).filter { it.isScrollable && it.isVisibleToUser }.maxByOrNull { bounds(it).height() }
 
     private fun bounds(node: AccessibilityNodeInfo): Rect = Rect().also(node::getBoundsInScreen)
 

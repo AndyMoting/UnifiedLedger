@@ -2,7 +2,7 @@ package com.unifiedledger.android
 
 /**
  * D-205 bounded observer-cache-reset policy, diagnostic bounds and the shared
- * record shape.
+ * record shape, extended by D-208 with the miss-triggered reset interval.
  *
  * D-204 (eventTypes=TYPES_ALL_MASK plus a root-only refresh-on-miss rule) did
  * not repair the coldstart observation path: two maximum rounds kept reading
@@ -45,6 +45,18 @@ internal object AndroidScaleObserverDiag {
      * the 180s coldstart wait, which still exercises a stalled cache.
      */
     const val CACHE_RESET_INTERVAL_MS = 30000L
+
+    /**
+     * D-208: at most one miss-triggered forced reset per this interval. The
+     * 825ms `saf_import` failure of run 37130347905 (frame-buffer screenshot
+     * showed the import screen fully rendered while the in-process UiAutomation
+     * still answered from the previous screen) needs a reset that can fire
+     * inside a business-stage read path, so the interval is short -- but the
+     * synchronous-binder exposure is bounded the same way as the 30s periodic
+     * interval: at most one miss reset per 5s, sharing one stamp with the
+     * periodic reset so the two cannot compound.
+     */
+    const val MISS_RESET_INTERVAL_MS = 5000L
 
     /** Records and text samples are capped; the cap never drops silently. */
     const val MAX_RECORDS = 200
@@ -127,3 +139,13 @@ internal fun scaleCacheResetDue(
     nowMs: Long,
     lastResetMs: Long,
 ): Boolean = nowMs - lastResetMs >= AndroidScaleObserverDiag.CACHE_RESET_INTERVAL_MS
+
+/**
+ * D-208 miss-triggered counterpart of [scaleCacheResetDue]: true when at least
+ * [AndroidScaleObserverDiag.MISS_RESET_INTERVAL_MS] passed since the last
+ * reset of any kind (both intervals read the same shared stamp).
+ */
+internal fun missResetDue(
+    nowMs: Long,
+    lastResetMs: Long,
+): Boolean = nowMs - lastResetMs >= AndroidScaleObserverDiag.MISS_RESET_INTERVAL_MS
