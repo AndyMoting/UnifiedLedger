@@ -4127,3 +4127,26 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** coldstart PASS 判据不变（仍为 `has("账本：")` 等 a11y 信号）；探针与 `refresh()` 都只是修「眼睛」，不引入第二判据；不授权产品代码改动。机制结论以客户端侧源码为限：事件投递为何停摆的系统侧成因未取证、不在本决定宣称范围。
 
 **关联决定：** D-203（启动计时归因，本决定的证据来源）、D-202（coldstart 取证与 workflow 结构边界）、D-200/D-201（scale 设施与 Ready 门）。
+
+## D-205 观察器缓存清除修复、host dumpsys 探针改型与观察器诊断
+
+**状态：** 已批准（2026-10-03；仅测试设施、androidTest 观测路径与 host runner，零产品改动）。
+
+**背景（D-204 不足的实测证据）：** 同 SHA `6bd9c41c` 并行两轮 maximum：R1 `37061470727` 死于安装期基础设施抖动（`private staging readback mismatch: session-01.csv`，97s，未进 instrumentation）；R2 `37061492906` 走到 coldstart——ULStartup 打点第二次独立证明产品 +3.477s Ready（`db.open eager 662ms`、optimize 12ms `stat1=true`），但观察器仍盲 180s（36 采样全为 8 节点加载树/「正在打开本地账本」/`readyOnAnyTargetRoot=false`），失败瞬间帧缓冲截图再次为就绪主界面。更早的 maximum `37015437669` 同签名（+2.994s Ready、36 采样同态）。**host 独立探针两轮尝试均失败**：`UI dump did not confirm its fresh output path`（30s/93s 两次）。机制：`uiautomator dump` 需自建 UiAutomation 连接，而 instrumentation（AndroidJUnitRunner）运行期已持有唯一连接（安装期无 instrumentation 时同款 dump 曾成功，见 `ready-ui.xml` 先例），故探针与观察器互相排斥。
+
+**机制依据（本机 AOSP android-36.1 只读取证，已钉死）：** 客户端 `AccessibilityCache` 缓存优先且无过期（`AccessibilityInteractionClient.java:604-630`）；唯一失效途径是投递到本连接的事件（`AccessibilityService.java:2989-3000`，先于 `serviceWantsEvent` 门）；装载窗口期（0.6–3.5s）的轮询把加载树填入缓存后，事件投递停摆则窗口列表/root/文本全由陈旧缓存作答。`UiAutomation.setServiceInfo` 整体替换 info 并**先清一次客户端缓存**（`UiAutomation.java:839-855`：`clearCache(mConnectionId)` 后 `connection.setServiceInfo(info)`）——这是已知可编程的强制失效手段。`AccessibilityNodeInfo.refresh()` 只绕 root（子节点仍 `getChild` → `bypassCache=false`）。
+
+**决定：**
+
+1. **观察器缓存重置修复（`AndroidScaleUi`，主修）**：把 D-204 的 init 内 serviceInfo 替换抽为 `setServiceInfo()`（语义不变：`flags or FLAG_RETRIEVE_INTERACTIVE_WINDOWS` + `eventTypes = TYPES_ALL_MASK`），新增 `resetAutomationCache()` 复用同一逻辑；`await` 轮询循环按有界策略调用：仅当 `predicate()` 未命中且 `scaleCacheResetDue(now, lastReset)` 满足（距上次重置 ≥30s，`AndroidScaleObserverDiag.CACHE_RESET_INTERVAL_MS`；180s 窗口内至多 6 次）时重置一次并记录。重置前后各 `tick()` 一次：同步 binder 调用不可由客户端超时兜底，只能由 host 阶段截止杀 instrumentation 兜底（KDoc 如实登记）；重置与观测各自 try/catch，失败记为降级记录（`resetFailed`/`observationFailed` + 受限异常文本），绝不抛入等待循环、不替换等待自身的失败。KDoc 如实标注：这是对 D-204 不足的修复（依据 `UiAutomation.setServiceInfo` 清缓存行为），**缓存停摆的系统侧成因仍未证，此为客户端可编程强制失效**，不是根因结论；判据仍是 `has("账本：")`。
+2. **判决性诊断（随修复记录）**：每次强制重置后立刻读取并记录目标窗口 id 列表（`automation.windows` 中 target 包窗口的 `AccessibilityWindowInfo.getId()`；窗口存在性以窗口表本身为准，焦点行只作交叉核对、矛盾原样保留）、`has("账本：", prefix=true)` 结果、可见文本样本（≤5 条、每条 ≤120 字符）。设备侧固定名 JSON `android-scale-observer-diag.json`（`AtomicFile`），绑定 sha/phase/stage、pid/进程名、间隔与上限，条数上限 200（超限置 `truncated`，不静默丢弃）。尺寸守卫按 UTF-8 字节（写盘实际字节）判定，命中时**真正丢弃尾部记录**并记 `oversized` 与 `recordsDroppedForSize`。写入失败被吞但**计数**：`writeFailureCount`/`lastWriteError` 随下一次成功写入落盘，使 host 侧可区分「从未重置」与「每次写盘都失败」。强制重置与记录都只在挂载 writer 时生效：仅 coldstart 等待路径通过 `await`/`launch` 的可选参数挂载 writer，其他调用点既不重置也不落盘，行为零变化。
+3. **host 探针改型（不依赖 a11y）**：`coldstart_host_probe` 从 `uiautomator dump` 改为 `dumpsys window windows` + `dumpsys activity activities`（均不建 UiAutomation 连接，instrumentation 期可用），单次超时 30s；解析并记录：目标包窗口存在与否与窗口条目数、`mCurrentFocus`/`mFocusedApp`/`mFocusedWindow` 三个焦点包的取值与「行是否存在」（`mCurrentFocus=null` 与缺行可区分）、`ResumedActivity`（精确包名/组件匹配）及目标包 Activity 存在与否、两份输出的 sha256/bytes（窗口表另有 windowBytes、activity 另有 activityBytes）；输出原文存 `evidence/coldstart-host-window.txt` / `coldstart-host-activity.txt`。无法解析的输出（例如服务不可用的错误行）记 `probeFailed` 且附 ≤200 字符 raw 前缀，绝不当作「无目标窗口」；activity 读失败只记 `activityError`、保留窗口样本。仍为纯诊断：≤2 次、≥60s 间隔、门与失败不逃逸 poll_once（`ScaleDeadlineError` 例外，交 phase loop 重查预算）。
+4. **诊断文件回收**：`diagnostics` 按固定名 `run-as cat files/android-scale-observer-diag.json` 回收为 `evidence/observer-diag.json`，host.json `observer_diag` 记 sha256/bytes/json_valid/sha_match；缺失记 `absent`，畸形仍保存并置 `json_valid=false`。reducer/`validate_evidence` 不要求其存在。
+5. **测试**：Python——`ColdstartHostProbe` 全部更新为 dumpsys window 三态（含 launcher 对照、焦点行不计入窗口数、显式 null 焦点、lookalike 包名不冒充目标、raw 前缀失败、activity 失败保窗口、attempts/间隔上限），新增 `ObserverDiagRecycle` 三态（present/absent/malformed）；聚焦 166 例、全量 985 例。Kotlin——`AndroidScaleObserverDiagTest`（`src/test`，经现有 `src/scaleTest` 共享源集）由 `:android-app:testDebugUnitTest` 覆盖（纯策略：`scaleCacheResetDue` 边界、180s 窗口内重置次数上界、记录上限、文本截断、错误文本受限、写失败计数、尺寸预算真丢弃、常量钉死）；真实重置调用依赖 instrumentation 环境，如实标注 CI-owned（Android compile/ktlint 为 required check 路径）。
+6. **边界**：判据不变（仍 `has("账本：")`）；产品代码零改动；规模/fixture/180s/五阶段/十一业务步骤/预算/41 例 instrumented 清单零改动；探针纯诊断、不引入第二判据；不宣称系统侧缓存停摆成因已证。不修改 D-202/D-204 原文。
+
+**验收要求：** 改动模块定向 ktlintCheck 通过（含 `src/androidTest` 与 `src/scaleTest`）；聚焦 Python 测试与 `project_docs` 退出 0；Kotlin 编译/设备行为由 CI 验证；下一次 maximum 验收应有 `observer-diag.json`（或如实 absent）与 `coldstart-host-window.txt` 供归因。
+
+**接受残余（D-205 双评审裁定）：** 可见文本样本为屏幕原始合成文本（工件内、长度受限）；空字节/非 bytes 的回收结果合并记为 `absent`（沿 D-202 先例）；`coldstart-host-*` 不设残留清理断言（`rm` 路径已随探针改型消失，落盘即诊断产物）。
+
+**关联决定：** D-204（本决定修复其不足）、D-203（启动计时归因）、D-202（coldstart 有界取证，本决定沿用其边界与假名纪律）、D-200/D-201（scale 设施与 Ready 门）。

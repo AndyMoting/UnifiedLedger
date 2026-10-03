@@ -264,14 +264,18 @@ class AndroidScaleLongInstrumentedTest {
 
     /**
      * Coldstart-only bounded forensics: sampling during the launch wait and one
-     * best-effort capture after the first failure, before rethrow. Every other
-     * launch/await call site keeps its exact behavior; the stage verdict, the
-     * original Throwable and the remaining NOT_RUN stages never change.
+     * best-effort capture after the first failure, before rethrow. The D-205
+     * observer diagnostic is attached to the same wait path only: it records
+     * one entry per forced client-cache reset (see [AndroidScaleUi.await]).
+     * Every other launch/await call site keeps its exact behavior; the stage
+     * verdict, the original Throwable and the remaining NOT_RUN stages never
+     * change.
      */
     private fun coldstartLaunch() {
         val forensics = AndroidScaleColdstartForensicsCollector(instrumentation, ui, sha)
+        val observerDiag = AndroidScaleObserverDiagWriter(instrumentation, sha)
         try {
-            ui.launch { forensics.sample() }
+            ui.launch(onPoll = { forensics.sample() }, diagnostic = observerDiag)
         } catch (failure: Throwable) {
             forensics.capture(failure)
             throw failure
