@@ -4193,3 +4193,26 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残留披露：** (a) `collect_observer_diag` 的 run-as cat 回收是同型内联实现，本批按范围未改——设备侧 observer-diag 文件缺失时会复现同一误判，应在下一触达批次用同一 helper 收敛；(b) `errorType=unknown` 不区分「lease 未完成」与「非 Success 结果未抛异常」两情形（不为此扩大打点面）；(c) 完整异常栈不进产品 trace（需新增 expect/actual 成员，本批禁止），异常类名之外的细节依赖下一次诊断轮的 logcat 全量采集。
 
 **关联决定：** D-203（trace 面登记合同：仅 stage 名/布尔/计数/异常类名）、D-202/D-206（host 取证回收与诚实规则）、D-205（观察器健康对照，证明本轮无盲态）、D-198（最大规模契约）。
+
+## D-208 业务阶段读路径的有界强制缓存重置（共享限速）
+
+**状态：** 已批准（2026-10-03；仅测试设施 androidTest/scaleTest/JVM 测试，零产品、判据、预算或 instrumented 清单改动）。
+
+**背景（D-205 保护面之外的实测证据）：** run 37130347905 的 `saf_import` 阶段在 825ms 内以 `scroll container absent` 失败；失败瞬间帧缓冲截图显示导入界面完整渲染，而在程 UiAutomation 仍从上一屏（主界面）的陈旧客户端 AccessibilityCache 作答——D-203 同签名在 coldstart 路径之外复发，失败现场 documentsui 窗口不在场。D-205 的周期性强制重置只挂在 coldstart 等待路径（以 `diagnostic != null` 门控），业务阶段的等待与读路径完全不受保护；且即便挂上，30s 间隔对一个 825ms 内结束的失败也无济于事。
+
+**决定：**
+
+1. **共享限速器**：`AndroidScaleUi` 只保留一个可变 `lastResetElapsedMs`，由每一次强制重置（init、await 周期、miss 触发）统一盖章，使两类间隔约束同一条重置流、不能叠加。await 周期重置维持既有 30s（`AndroidScaleObserverDiag.CACHE_RESET_INTERVAL_MS`）；miss 触发重置用新增 5000ms（`AndroidScaleObserverDiag.MISS_RESET_INTERVAL_MS`，纯逻辑、JVM 可测，配套纯函数 `missResetDue(nowMs, lastResetMs)` 镜像 `scaleCacheResetDue`）。共享盖章使两类重置互相抑制：await 重置后 5s 内 miss 不到期，miss 重置同样把下一次周期重置推迟整 30s。
+2. **findNode miss 触发重置**：D-204 两遍（缓存遍历；`root.refresh()` 重遍历）都未命中后，若限速器允许（距任一重置 ≥5000ms），执行一次强制重置（`setServiceInfo()`，清一次客户端缓存）加最后一遍缓存式遍历（基于重置后新取的 root——重置同时使缓存的窗口表失效），返回该遍历的结果。完全自包含：重置失败即吞掉（findNode 无 writer 访问，writer 由挂载它的调用点路径自行记录），仍返回最后一遍的结果；绝不抛出；绝不在 findNode 内 tick（其调用方 own 截止检查，await 谓词本就 tick）。
+3. **scrollable miss 触发重置**：缓存遍历找不到可见可滚动容器时，套用同一限速重置加单次重遍历；仍找不到才报 `scroll container absent`（错误文本不变）。
+4. **await 周期重置推广到全部等待**：移除 `diagnostic != null` 对「执行重置」的门控——每个等待都获得 30s 有界重置（tick 紧贴重置前后各一次，与 D-205 完全一致）。`diagnostic` writer（coldstart 路径挂载）仍照旧记录重置与观测；无 writer 时重置失败静默吞掉。重置后的观测记录（`resetAutomationCacheObservation`）保持 writer 门控不变。KDoc 如实更新：D-205 的「without one this loop performs no reset」一句自 D-208 起被取代，`diagnostic` 退为纯记录参数。
+
+**包容规则：** 任何重置路径不得把异常抛出 findNode/scrollable/await；tick 只在它原本运行的位置（await 循环、scroll）运行，tick 前后夹逼仅用于 await 周期重置（沿 D-205）；findNode/scrollable 的重置不 tick（调用方 own 截止检查）。
+
+**测试：** JVM（`AndroidScaleObserverDiagTest`，经 scaleTest 共享源集）钉死 `missResetDue` 边界（<5000ms 不到期、恰 5000ms 到期、之后到期）、新常量值，以及共享盖章交互（await 周期重置盖章后紧接的 miss 重置不到期；miss 重置同样推迟下一次周期重置）。Kotlin 编译与设备行为 CI-owned。
+
+**边界：** 零产品代码（android-app/src/main、app-ui、ledger-*）；判据零改动（coldstart PASS 仍 `has("账本：")`，saf_import 断言不变）；零 scale/workflow/Python 改动；androidTest 无新增 @Test（41 例 instrumented 清单不变）；不修改 D-202–D-207 原文（D-205 语义由本决定显式取代的部分仅在 KDoc/本条说明）。
+
+**残留披露：** (a) 同步 binder 无客户端超时的残余与 D-205 相同，且现在可从更多调用点触达：miss 重置发生在未 tick 的调用方（如 seek/edge 的 has()、click 的 findNode）时，楔死的 binder 只能由宿主阶段截止兜底；(b) 重置风暴由共享限速器封顶（miss 重置至多每 5s 一次、周期重置至多每 30s 一次，且共享盖章互相抑制）；(c) settle() 可能在每个重置窗口内多见一次不稳定并自行收敛（其谓词比较可见节点文本与边界，缓存清除引发的重新查询若与上一采样一致即恢复稳定计数）。
+
+**关联决定：** D-205（重置原语与 writer 诊断，本决定推广其触发面并取代其「无 writer 不重置」语义）、D-204（两遍规则，miss 重置是其第三层）、D-206（业务阶段失败取证，本轮证据来源）、D-203（stale-cache 签名与判别手段）、D-198（最大规模契约）。
