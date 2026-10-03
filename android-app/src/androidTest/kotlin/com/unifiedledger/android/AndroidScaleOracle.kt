@@ -89,7 +89,7 @@ internal class AndroidScaleOracle(
                 return attemptRead(action)
             } catch (failure: Throwable) {
                 retry++
-                if (retry < AndroidScaleOracleRetry.LOCK_RETRY_MAX_ATTEMPTS && isLockRetryable(failure)) {
+                if (retry < AndroidScaleOracleRetry.LOCK_RETRY_MAX_ATTEMPTS && AndroidScaleOracleRetry.isLockRetryable(failure)) {
                     SystemClock.sleep(AndroidScaleOracleRetry.lockRetryBackoffMs(retry))
                     tick()
                 } else {
