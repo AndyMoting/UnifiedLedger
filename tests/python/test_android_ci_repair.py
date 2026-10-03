@@ -945,6 +945,93 @@ class ObserverDiagRecycle(unittest.TestCase):
         self.assertEqual(self.runner.report["observer_diag"], "absent")
 
 
+class StageForensicsRecycle(unittest.TestCase):
+    """D-206 device-side stage forensics recycled by the host, three states.
+
+    The instrumentation writes a fixed-name JSON + PNG pair at the failure
+    instant of any non-coldstart business stage (D-206); the host pulls both
+    best-effort with the same honesty rules as the coldstart forensics: present
+    records sha256/bytes (plus json_valid/sha_match for the JSON), absent is
+    recorded as "absent", and a pull failure degrades to an error record
+    without touching validation or any verdict.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        env = patch.dict(os.environ, GITHUB_ACTIONS="true", RUNNER_ENVIRONMENT="github-hosted", RUNNER_OS="Linux")
+        env.start()
+        self.addCleanup(env.stop)
+        self.runner = ScaleRunner(self.root / "fixture", self.root / "evidence", self.root / "app.apk", self.root / "test.apk", SHA, "maximum")
+        self.runner.serial = "emulator-5554"
+
+    def forensics_adb(self, responses):
+        def controlled(*args, **kwargs):
+            if args[:4] == ("exec-out", "run-as", PACKAGE, "cat"):
+                return responses.get(args[-1])
+            # Mirror command(): binary callers get bytes, text callers get str.
+            return b"" if kwargs.get("binary") else ""
+        return controlled
+
+    def test_present_stage_forensics_is_recycled_with_hashes(self):
+        payload = json.dumps({"schema": 1, "kind": "stage-forensics", "sha": SHA,
+                              "phase": "chain", "stage": "saf_import"}).encode("utf-8")
+        png = b"\x89PNG\r\n\x1a\n synthetic stage failure frame"
+        self.runner.adb = self.forensics_adb({
+            "files/android-scale-stage-forensics.json": payload,
+            "files/android-scale-stage-forensics.png": png,
+        })
+        self.runner.diagnostics(failure=True)
+        records = self.runner.report["stage_forensics"]
+        self.assertEqual(records["stage-forensics.json"], {
+            "sha256": hashlib.sha256(payload).hexdigest(), "bytes": len(payload),
+            "json_valid": True, "sha_match": True})
+        self.assertEqual(records["stage-forensics.png"],
+                         {"sha256": hashlib.sha256(png).hexdigest(), "bytes": len(png)})
+        self.assertEqual((self.runner.evidence / "stage-forensics.json").read_bytes(), payload)
+        self.assertEqual((self.runner.evidence / "stage-forensics.png").read_bytes(), png)
+
+    def test_absent_stage_forensics_is_recorded_absent_and_creates_no_file(self):
+        self.runner.adb = self.forensics_adb({})
+        self.runner.diagnostics(failure=True)
+        self.assertEqual(self.runner.report["stage_forensics"],
+                         {"stage-forensics.json": "absent", "stage-forensics.png": "absent"})
+        self.assertFalse((self.runner.evidence / "stage-forensics.json").exists())
+        self.assertFalse((self.runner.evidence / "stage-forensics.png").exists())
+
+    def test_pull_failure_is_recorded_as_degraded_and_keeps_coldstart_record_independent(self):
+        payload = json.dumps({"schema": 1, "kind": "coldstart-forensics", "sha": SHA}).encode("utf-8")
+
+        def failing_pull(*args, **kwargs):
+            if args[:4] == ("exec-out", "run-as", PACKAGE, "cat") and args[-1].startswith("files/android-scale-stage-forensics"):
+                raise RuntimeError("run-as cat failed")
+            if args[:4] == ("exec-out", "run-as", PACKAGE, "cat") and args[-1].endswith("coldstart-forensics.json"):
+                return payload
+            return b"" if kwargs.get("binary") else ""
+
+        self.runner.adb = failing_pull
+        self.runner.diagnostics(failure=True)
+        self.assertEqual(self.runner.report["stage_forensics"], {"error": True})
+        self.assertEqual(self.runner.report["coldstart_forensics"]["coldstart-forensics.json"],
+                         {"sha256": hashlib.sha256(payload).hexdigest(), "bytes": len(payload),
+                          "json_valid": True, "sha_match": True})
+
+    def test_malformed_or_sha_mismatched_stage_forensics_is_kept_but_flagged(self):
+        self.runner.adb = self.forensics_adb({"files/android-scale-stage-forensics.json": b"{not json"})
+        self.runner.diagnostics(failure=True)
+        record = self.runner.report["stage_forensics"]["stage-forensics.json"]
+        self.assertFalse(record["json_valid"])
+        self.assertNotIn("sha_match", record)
+        self.assertEqual((self.runner.evidence / "stage-forensics.json").read_bytes(), b"{not json")
+        self.runner.adb = self.forensics_adb(
+            {"files/android-scale-stage-forensics.json": json.dumps({"schema": 1, "sha": "b" * 40}).encode("utf-8")})
+        self.runner.diagnostics(failure=True)
+        record = self.runner.report["stage_forensics"]["stage-forensics.json"]
+        self.assertTrue(record["json_valid"])
+        self.assertFalse(record["sha_match"])
+
+
 class WorkflowConcurrency(unittest.TestCase):
     """Static proof of the D-204 parallel-acceptance concurrency contract."""
 
