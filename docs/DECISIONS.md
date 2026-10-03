@@ -4267,7 +4267,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **状态：** 已批准（2026-10-03；仅测试设施 androidTest/scaleTest/JVM 测试，零产品、判据、SQL、Python 或 workflow 改动）。
 
-**背景（D-210 判别探针裁决后的机制图景）：** 三个连续最大轮次在 `saf_import` 的同一处只读观测完全同型地失败——阶段耗时 342s/454s/432s，D-209 的 12 次只读重试（退避上限 5s，最坏约 47s 预算）全部在 `SQLITE_BUSY` 上耗尽。D-210 的 host 侧 journal 判别探针在失败取证捕获到：`journalNonEmpty=false`（捕获时无被遗弃事务——假设 B 被削弱），同时 `ledger.db` 的 mtime 与捕获同分钟（写入仍在进行——假设 A 成为工作图景）：产品以连续短写事务的持续突发落盘（分钟级），在 rollback-journal 模式下饿死一个只读观察者；D-209 的重试预算总是烧在写突发内部，而不是等在突发之外。
+**背景（D-210 判别探针裁决后的机制图景）：** 三个连续最大轮次在 `saf_import` 的同一处只读观测完全同型地失败——阶段耗时 342s/454s/432s，D-209 的 12 次尝试（首次 + 11 次重试，退避上限 5s，最坏约 47s 预算）全部在 `SQLITE_BUSY` 上耗尽。D-210 的 host 侧 journal 判别探针在失败取证捕获到：`journalNonEmpty=false`（捕获时无被遗弃事务——假设 B 被削弱），同时 `ledger.db` 的 mtime 与捕获同分钟（写入仍在进行——假设 A 成为工作图景）：产品以连续短写事务的持续突发落盘（分钟级），在 rollback-journal 模式下饿死一个只读观察者；D-209 的重试预算总是烧在写突发内部，而不是等在突发之外。
 
 **决定：**
 
@@ -4280,6 +4280,6 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **边界：** 零产品代码（android-app/src/main、app-ui、ledger-*）；判据零改动（全部 fixture 断言/oracle 检查语义不变）；零 SQL、零 Python/workflow 改动；改动面仅 `AndroidScaleOracle.kt`、`AndroidScaleOracleRetry.kt`、`AndroidScaleOracleRetryTest.kt` 与本条目；不修改 D-202–D-210 原文。
 
-**残留披露：** (a) journal stat 与尝试之间存在竞窗——静默确认后、尝试打开连接前，产品可能恰好开始下一个写事务；此时尝试照常失败并进入下一次重试的门控，静默门控降低而非消除撞上突发的概率；(b) GIVE_UP 意味着产品写窗口超过 5 分钟预算——此时按既有锁失败如实浮出，不被掩盖；(c) 门控以 active generation 的 journal 为代理信号：指针解析失败（含瞬时 IO 错误）会跳过门控直接退避，该轮失去静默等待但仍受 D-209 重试次数与阶段截止约束。
+**残留披露：** (a) journal stat 与尝试之间存在竞窗——静默确认后、尝试打开连接前，产品可能恰好开始下一个写事务；此时尝试照常失败并进入下一次重试的门控，静默门控降低而非消除撞上突发的概率；(b) GIVE_UP 意味着产品写窗口超过 5 分钟预算——此时按既有锁失败如实浮出，不被掩盖；(c) 门控以 active generation 的 journal 为代理信号：指针解析失败（含瞬时 IO 错误）会跳过门控直接退避，该轮失去静默等待但仍受 D-209 重试次数与阶段截止约束；(d) `File.length()` 对存在但不可读的 journal 返回 0 而非抛错，极端情况下可能伪装静默（false-PROCEED）；该路径由后续尝试的真实锁结果兜底。
 
 **关联决定：** D-210（本轮证据来源，journal 判别探针裁决 A/B 假设）、D-209（被门控包裹的既有重试链）、D-206（失败取证模式）、D-199（逐阶段预算与 tick 截止，仍是硬界）。

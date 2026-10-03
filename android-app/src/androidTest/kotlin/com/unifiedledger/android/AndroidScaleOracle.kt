@@ -158,10 +158,10 @@ internal class AndroidScaleOracle(
 
     /**
      * Best-effort path of the active generation's rollback journal
-     * (`main` + `"-journal"`): resolves pointer → generation → main file the
-     * same way [attemptRead] does, but with every failure contained to null —
-     * the caller then skips the gate, and the attempt re-validates the pointer
-     * and generation invariants exactly as before.
+     * (`main` + `"-journal"`): resolves the pointer → generation → main-file
+     * chain without [attemptRead]'s length/containment bounds (every failure
+     * is contained to null, in which case the caller skips the gate); the
+     * attempt itself re-validates the pointer and generation invariants.
      */
     private fun activeGenerationJournalPath(): String? =
         try {
