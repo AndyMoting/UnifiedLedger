@@ -359,8 +359,7 @@ internal class AndroidScaleUi(
         return widestVisibleScrollable() ?: error("scroll container absent")
     }
 
-    private fun widestVisibleScrollable(): AccessibilityNodeInfo? =
-        nodes(root()).filter { it.isScrollable && it.isVisibleToUser }.maxByOrNull { bounds(it).height() }
+    private fun widestVisibleScrollable(): AccessibilityNodeInfo? = nodes(root()).filter { it.isScrollable && it.isVisibleToUser }.maxByOrNull { bounds(it).height() }
 
     private fun bounds(node: AccessibilityNodeInfo): Rect = Rect().also(node::getBoundsInScreen)
 
