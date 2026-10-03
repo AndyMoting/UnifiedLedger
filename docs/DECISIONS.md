@@ -4216,3 +4216,24 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残留披露：** (a) 同步 binder 无客户端超时的残余与 D-205 相同，且现在可从更多调用点触达：miss 重置发生在未 tick 的调用方（如 seek/edge 的 has()、click 的 findNode）时，楔死的 binder 只能由宿主阶段截止兜底；(b) 重置风暴由共享限速器封顶（miss 重置至多每 5s 一次、周期重置至多每 30s 一次，且共享盖章互相抑制）；(c) settle() 可能在每个重置窗口内多见一次不稳定并自行收敛（其谓词比较可见节点文本与边界，缓存清除引发的重新查询若与上一采样一致即恢复稳定计数）。
 
 **关联决定：** D-205（重置原语与 writer 诊断，本决定推广其触发面并取代其「无 writer 不重置」语义）、D-204（两遍规则，miss 重置是其第三层）、D-206（业务阶段失败取证，本轮证据来源）、D-203（stale-cache 签名与判别手段）、D-198（最大规模契约）。
+
+## D-209 规模预言机只读观测的有界 SQLITE_BUSY 重试
+
+**状态：** 已批准（2026-10-03；仅测试设施 androidTest/scaleTest/JVM 测试，零产品、判据、预算或 instrumented 清单改动）。
+
+**背景（D-208 保护面之外的新实测证据）：** run 37136633556 达到最大规模链的最深点——coldstart PASS 26.5s，`saf_import` 运行 342s（导航、SAF 选择、10k 导入全部成功，D-208 已被证实有效）——随后 `oracle.assertFixture` 在 `AndroidScaleOracle.kt:246`（经 `read`，:84）抛出 `android.database.sqlite.SQLiteDatabaseLockedException: database is locked (code 5 SQLITE_BUSY)`。机制：`AndroidScaleOracle.read` 每次观测新开一个只读连接（`SQLiteDatabase.openDatabase(main.path, null, OPEN_READONLY)`）加 `beginTransactionReadOnly`，无任何 busy 重试；链阶段应用进程存活并持有写事务（导入后的 flush），默认约 2.5s 的 busy 超时到期即抛。链设计本就意图对存活应用并发观测，因此只读观测重试是安全的：每次尝试重读 active 指针、重验 generation/journal 不变量，调用方的 `tick()` 仍own截止。
+
+**决定：**
+
+1. **纯重试决策逻辑（scaleTest，JVM 可测，镜像 D-208 模式）**：新增 `AndroidScaleOracleRetry`——`LOCK_RETRY_MAX_ATTEMPTS = 12`（首次尝试 + 11 次重试，独立于截止的有界值）；指数退避带 5s 上限 `lockRetryBackoffMs(attempt) = minOf(1000L shl (attempt - 1), 5000L)`（attempt 为正整数）→ 1000、2000、4000、之后每轮 5000（11 次重试最坏等待约 47s）；纯函数 `isLockRetryable(throwable)` 恰对 `SQLiteDatabaseLockedException`（含子类）为真——corruption、指针/不变量失败、截止到期、断言失败一律不重试并立即上抛。因 stub android.jar 在 JVM 上无法构造该异常（构造即 `RuntimeException: Stub!`），真分支经类型级分类器 `isLockRetryableType` 以精确类字面量钉死。
+2. **接线进 `AndroidScaleOracle.read`**：单次观测尝试（指针检查 → openDatabase → beginTransactionReadOnly → action → 复查 → endTransaction）整体提取为私有 `attemptRead`（指针/journal 一致性检查本就每次执行，保持在尝试内部），`read` 循环：尝试；锁失败且尚余尝试次数时 `SystemClock.sleep(lockRetryBackoffMs(retry))` 后 `tick()` 再重试；非锁失败立即原样上抛；尝试耗尽后上抛最后一次锁异常。非锁失败的单次尝试行为与原实现逐字节一致；成功路径恰一次尝试，除尝试自身外不新增时钟读取。
+
+**包容规则：** `tick()` 只在每个 sleep 之后运行（绝不在 sleep 期间）——阶段截止仍是硬界，截止到期按既有截止失败浮出、不被掩盖；每次重试重执行完整尝试（含指针/journal 一致性复查，重试观测满足与首次尝试完全相同的检查）；SQL 查询零改动；不对应用自身连接做任何 busy_timeout pragma 改动；重试只包裹观测路径。
+
+**测试：** JVM（`AndroidScaleOracleRetryTest`，经 scaleTest 共享源集）钉死退避序列 1000/2000/4000/5000/5000…、5000 上限、分类器（精确类字面量为真、子类规则为真；IllegalStateException/AssertionError/RuntimeException/null 为假）与 `LOCK_RETRY_MAX_ATTEMPTS = 12` 常量。Kotlin 编译与设备行为 CI-owned；`android.database.sqlite` API 仅存在于 Android，throwable 级分类器在纯测试之外属设备 CI 责任。androidTest/scaleTest 无新增 @Test（41 例 instrumented 清单不变）。
+
+**边界：** 零产品代码（android-app/src/main、app-ui、ledger-*）；判据零改动（全部 fixture 断言/oracle 检查语义不变）；零 Python/workflow 改动；改动面仅 `AndroidScaleOracle.kt`、新增 scaleTest 纯逻辑文件、新增 JVM 测试与本条目；不修改 D-202–D-208 原文。
+
+**残留披露：** (a) 一次足够长的写事务仍可让全部 12 次尝试（约 47s 等待加上此前各阶段等待）全部落空——届时按既有阶段截止失败如实浮出，不被掩盖；(b) 真分支分类器依赖 stub android.jar 无法构造的 Android 异常，JVM 侧只覆盖类字面量与子类规则，实例级行为属设备 CI 责任；(c) 重试期间的观测时点相对原单次尝试后移（最长约 47s），对只读观测的快照内容无影响（每次尝试在一致事务内读取并复验指针不变量）。
+
+**关联决定：** D-208（本轮证据来源，业务阶段可观测性与缓存重置）、D-199（逐阶段预算与 tick 截止，仍是硬界）、D-198（最大规模契约）。
