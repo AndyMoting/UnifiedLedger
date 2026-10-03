@@ -42,6 +42,35 @@ class AndroidScaleObserverDiagTest {
     }
 
     @Test
+    fun missResetIsDueOnlyAfterTheShortIntervalHasPassed() {
+        assertFalse(missResetDue(4_999, 0))
+        assertTrue(missResetDue(5_000, 0))
+        assertTrue(missResetDue(5_001, 0))
+        assertFalse(missResetDue(0, 0))
+        assertTrue(missResetDue(10_000, 5_000))
+    }
+
+    @Test
+    fun missResetBoundaryIsExactAtTheIntervalEdge() {
+        assertFalse(missResetDue(AndroidScaleObserverDiag.MISS_RESET_INTERVAL_MS - 1, 0))
+        assertTrue(missResetDue(AndroidScaleObserverDiag.MISS_RESET_INTERVAL_MS, 0))
+    }
+
+    @Test
+    fun theSharedStampMakesTheTwoIntervalsSuppressEachOther() {
+        // D-208: one shared stamp -- an await periodic reset at t=40s makes a
+        // miss reset not due for the next 5s...
+        val awaitResetAt = 40_000L
+        assertFalse(missResetDue(awaitResetAt + AndroidScaleObserverDiag.MISS_RESET_INTERVAL_MS - 1, awaitResetAt))
+        assertTrue(missResetDue(awaitResetAt + AndroidScaleObserverDiag.MISS_RESET_INTERVAL_MS, awaitResetAt))
+        // ...and a miss reset stamps the same field, so it pushes the next
+        // periodic reset a full 30s interval out.
+        val missResetAt = awaitResetAt + AndroidScaleObserverDiag.MISS_RESET_INTERVAL_MS
+        assertFalse(scaleCacheResetDue(missResetAt + AndroidScaleObserverDiag.CACHE_RESET_INTERVAL_MS - 1, missResetAt))
+        assertTrue(scaleCacheResetDue(missResetAt + AndroidScaleObserverDiag.CACHE_RESET_INTERVAL_MS, missResetAt))
+    }
+
+    @Test
     fun recordBudgetStopsAtTheCap() {
         assertTrue(AndroidScaleObserverDiag.recordAllowed(0))
         assertTrue(AndroidScaleObserverDiag.recordAllowed(AndroidScaleObserverDiag.MAX_RECORDS - 1))
@@ -101,5 +130,6 @@ class AndroidScaleObserverDiagTest {
         assertEquals(5, AndroidScaleObserverDiag.MAX_TEXT_SAMPLES)
         assertEquals(120, AndroidScaleObserverDiag.MAX_TEXT_CHARS)
         assertEquals(30000L, AndroidScaleObserverDiag.CACHE_RESET_INTERVAL_MS)
+        assertEquals(5000L, AndroidScaleObserverDiag.MISS_RESET_INTERVAL_MS)
     }
 }
