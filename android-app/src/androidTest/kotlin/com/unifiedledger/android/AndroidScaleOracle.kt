@@ -2,6 +2,7 @@ package com.unifiedledger.android
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import android.os.SystemClock
 import com.unifiedledger.application.ImportReviewRowsResult
 import com.unifiedledger.application.QueryImportReviewRows
 import com.unifiedledger.data.SqlDelightImportReviewReadAdapter
@@ -60,8 +61,46 @@ internal class AndroidScaleOracle(
 ) {
     private val layout = ledgerStorageLayout(AndroidLedgerFileSystem(), androidStableStoragePaths(context.getDatabasePath("ledger.db")).first)
 
+    /**
+     * One read-only observation of the live ledger, with the D-209 bounded
+     * SQLITE_BUSY retry. Run 37136633556 reached the maximum chain's deepest
+     * point (coldstart PASS 26.5s, `saf_import` 342s) and then
+     * `assertFixture` threw `SQLiteDatabaseLockedException` here: this read
+     * opens a fresh read-only connection per observation with no busy retry,
+     * while the live app process still held write transactions for its
+     * post-import flush, so the default ~2.5s busy timeout expired. The chain
+     * design intends concurrent observation of a live app, so a lock on a
+     * read-only observation is transient contention and retrying is safe:
+     * every attempt re-reads the active pointer, re-validates the
+     * generation/journal invariants, and re-runs the full observation, so a
+     * retried read satisfies exactly the same checks as a first-attempt one.
+     * The retries are bounded independently of deadlines
+     * ([AndroidScaleOracleRetry.LOCK_RETRY_MAX_ATTEMPTS]); the stage deadline
+     * stays the hard bound because [tick] runs after every sleep (never
+     * during) and its usual deadline failure then surfaces unmasked. Non-lock
+     * failures are never retried and rethrow immediately; after exhausting
+     * the attempts the last lock exception is rethrown.
+     */
     fun <T> read(action: (SQLiteDatabase, String) -> T): T {
         tick()
+        var retry = 0
+        while (true) {
+            try {
+                return attemptRead(action)
+            } catch (failure: Throwable) {
+                retry++
+                if (retry < AndroidScaleOracleRetry.LOCK_RETRY_MAX_ATTEMPTS && isLockRetryable(failure)) {
+                    SystemClock.sleep(AndroidScaleOracleRetry.lockRetryBackoffMs(retry))
+                    tick()
+                } else {
+                    throw failure
+                }
+            }
+        }
+    }
+
+    /** One full observation attempt: pointer/journal checks, open, read, re-check. */
+    private fun <T> attemptRead(action: (SQLiteDatabase, String) -> T): T {
         val pointer = File(layout.activePointerFile)
         check(pointer.isFile && pointer.length() in 5..32) { "active pointer missing/invalid" }
         val original = pointer.readBytes()
