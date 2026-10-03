@@ -4262,3 +4262,24 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残留披露：** (a) 探针在失败取证阶段执行，与失败瞬间之间有非零时延（含 D-209 重试等待）；若应用在该窗口内自行完成提交/恢复，journal 可能已被清理——此时 `journalNonEmpty=false` 对假设 A 只是弱证据，必须结合 mtime 与 logcat/host 时戳复核；(b) mtime 是设备本地时区下 `ls` 的字符串，相对解释依赖评审时人工对照，host 不做时区换算；(c) 输出呈非 `gen-N` 形状（例如目录布局变化）时本轮无判别结论——这是有意的诚实降级而非失效。
 
 **关联决定：** D-209（本轮证据来源，重试预算耗尽仍 BUSY）、D-206（失败瞬间取证模式，本探针挂在同一失败路径）、D-199/D-198（最大规模契约与预算）。
+
+## D-211 规模预言机重试前的 journal 静默门控（quiescence gating）
+
+**状态：** 已批准（2026-10-03；仅测试设施 androidTest/scaleTest/JVM 测试，零产品、判据、SQL、Python 或 workflow 改动）。
+
+**背景（D-210 判别探针裁决后的机制图景）：** 三个连续最大轮次在 `saf_import` 的同一处只读观测完全同型地失败——阶段耗时 342s/454s/432s，D-209 的 12 次只读重试（退避上限 5s，最坏约 47s 预算）全部在 `SQLITE_BUSY` 上耗尽。D-210 的 host 侧 journal 判别探针在失败取证捕获到：`journalNonEmpty=false`（捕获时无被遗弃事务——假设 B 被削弱），同时 `ledger.db` 的 mtime 与捕获同分钟（写入仍在进行——假设 A 成为工作图景）：产品以连续短写事务的持续突发落盘（分钟级），在 rollback-journal 模式下饿死一个只读观察者；D-209 的重试预算总是烧在写突发内部，而不是等在突发之外。
+
+**决定：**
+
+1. **纯静默决策逻辑（scaleTest，JVM 可测）**：`AndroidScaleOracleRetry` 新增 `JOURNAL_WAIT_POLL_MS = 1000L`（静默等待轮询间隔）、`JOURNAL_WAIT_BUDGET_MS = 300_000L`（每次重试间隙的 journal 等待上限 5 分钟，独立于阶段截止的有界值）、`JOURNAL_QUIESCE_CONSECUTIVE = 2`（连续 2 次空/不存在 journal 读数方视为静默）；纯函数 `journalWaitDecision(journalLen, consecutiveEmpty, waitedMs)` 返回三值 `JournalWait`：`PROCEED`（`journalLen <= 0` 且 `consecutiveEmpty >= JOURNAL_QUIESCE_CONSECUTIVE`——静默充分，尝试）；`WAIT`（journal 非空或连续空读数不足，且 `waitedMs < JOURNAL_WAIT_BUDGET_MS`）；`GIVE_UP`（预算耗尽——仍然尝试而非失败：无法确认静默的有界观察者照样尝试，因为产生锁错误或成功的正是尝试本身）。纯逻辑，无 File/时钟访问。
+2. **接线进 `AndroidScaleOracle.read`**：每次锁重试前（首次尝试绝不等待，与 D-209 一致）在既有退避+尝试步之前叠一层 journal 静默门控：按 `attemptRead` 同一方式解析 active 指针 → generation → 主文件，取 `主文件 + "-journal"` 作为 journal 路径（每次重试间隙解析一次；陈旧 generation 的 journal 检查无害，尝试本就重验指针）；等待循环每轮 `File(journal).length()`（不存在即 0，任何 stat 错误按 0/继续处理、contained 不外抛），喂给纯决策函数——`WAIT` 则 sleep `JOURNAL_WAIT_POLL_MS` 后 `tick()` 再轮询，`PROCEED`/`GIVE_UP` 则进入 D-209 既有 `lockRetryBackoffMs` 退避与下一次尝试；generation 解析失败跳过门控直接退避。
+
+**包容规则：** 非锁失败立即上抛、尝试耗尽上抛最后一次锁异常、D-209 分类器语义与退避序列逐字节不变——门控只叠加在既有退避+尝试步之前；`tick()` 在每次 sleep 之后运行（绝不在 sleep 期间），阶段截止仍是硬界，截止到期按既有截止失败浮出；重试观测的重执行语义不变（每次尝试重读指针、重验不变量、重跑完整观测）；SQL 查询零改动；不对应用自身连接做任何改动。
+
+**测试：** JVM（`AndroidScaleOracleRetryTest`）新增五例：PROCEED 要求空 journal 且连续空读数达阈值（1 次空 → WAIT，2 次空 → PROCEED）；journal 非空则无论连续计数一律 WAIT（预算未尽时）；预算耗尽 → GIVE_UP 即使 journal 非空；常量钉死（1000/300000/2）；边界 `waitedMs == JOURNAL_WAIT_BUDGET_MS` → GIVE_UP 而非 WAIT（差 1ms 仍 WAIT）。Kotlin 编译与设备行为 CI-owned；androidTest/scaleTest 无新增 @Test（41 例 instrumented 清单不变）。
+
+**边界：** 零产品代码（android-app/src/main、app-ui、ledger-*）；判据零改动（全部 fixture 断言/oracle 检查语义不变）；零 SQL、零 Python/workflow 改动；改动面仅 `AndroidScaleOracle.kt`、`AndroidScaleOracleRetry.kt`、`AndroidScaleOracleRetryTest.kt` 与本条目；不修改 D-202–D-210 原文。
+
+**残留披露：** (a) journal stat 与尝试之间存在竞窗——静默确认后、尝试打开连接前，产品可能恰好开始下一个写事务；此时尝试照常失败并进入下一次重试的门控，静默门控降低而非消除撞上突发的概率；(b) GIVE_UP 意味着产品写窗口超过 5 分钟预算——此时按既有锁失败如实浮出，不被掩盖；(c) 门控以 active generation 的 journal 为代理信号：指针解析失败（含瞬时 IO 错误）会跳过门控直接退避，该轮失去静默等待但仍受 D-209 重试次数与阶段截止约束。
+
+**关联决定：** D-210（本轮证据来源，journal 判别探针裁决 A/B 假设）、D-209（被门控包裹的既有重试链）、D-206（失败取证模式）、D-199（逐阶段预算与 tick 截止，仍是硬界）。
