@@ -97,12 +97,16 @@ internal object AndroidScaleStageForensics {
                 AndroidColdstartForensics.Windows(emptyList(), false)
             }
         val roots =
-            if (SystemClock.elapsedRealtime() < budgetEnd) ui.targetRoots() else {
+            if (SystemClock.elapsedRealtime() < budgetEnd) {
+                ui.targetRoots()
+            } else {
                 skipped += "targetRoots"
                 emptyList()
             }
         val texts =
-            if (SystemClock.elapsedRealtime() < budgetEnd) rootTexts(ui, roots) else {
+            if (SystemClock.elapsedRealtime() < budgetEnd) {
+                rootTexts(ui, roots)
+            } else {
                 skipped += "texts"
                 JSONObject().put("roots", JSONArray()).put("rootsTruncated", roots.size > MAX_TARGET_ROOTS)
             }
@@ -139,7 +143,11 @@ internal object AndroidScaleStageForensics {
         // array is dropped and the drop is recorded, never hidden. captureMs is
         // finalized after this re-serialization decision.
         if (AndroidColdstartForensics.jsonOversized(body.toString().length)) {
-            body.getJSONObject("failure").put("threads", JSONArray()).put("threadsTruncated", true).put("threadsDroppedForSize", true)
+            body
+                .getJSONObject("failure")
+                .put("threads", JSONArray())
+                .put("threadsTruncated", true)
+                .put("threadsDroppedForSize", true)
         }
         body.getJSONObject("failure").put("captureMs", SystemClock.elapsedRealtime() - captureStarted)
         return body
@@ -166,7 +174,10 @@ internal object AndroidScaleStageForensics {
             )
 
     /** Bounded visible-text samples per target root; the truncation flag records dropped roots. */
-    private fun rootTexts(ui: AndroidScaleUi, roots: List<AccessibilityNodeInfo>): JSONObject {
+    private fun rootTexts(
+        ui: AndroidScaleUi,
+        roots: List<AccessibilityNodeInfo>,
+    ): JSONObject {
         val array = JSONArray()
         for (root in roots.take(MAX_TARGET_ROOTS)) {
             val texts = ui.visibleTexts(root)
@@ -203,7 +214,10 @@ internal object AndroidScaleStageForensics {
     }
 
     /** Same UiAutomation connection only: no uiautomator process, no reconnect. */
-    private fun screenshot(instrumentation: Instrumentation, budgetEnd: Long): JSONObject {
+    private fun screenshot(
+        instrumentation: Instrumentation,
+        budgetEnd: Long,
+    ): JSONObject {
         if (SystemClock.elapsedRealtime() >= budgetEnd) {
             return JSONObject().put("skipped", "capture budget exhausted")
         }
@@ -225,7 +239,10 @@ internal object AndroidScaleStageForensics {
         }
     }
 
-    private fun write(instrumentation: Instrumentation, report: JSONObject) {
+    private fun write(
+        instrumentation: Instrumentation,
+        report: JSONObject,
+    ) {
         val target = AtomicFile(File(instrumentation.targetContext.filesDir, DEVICE_JSON))
         val output = target.startWrite()
         try {
@@ -253,8 +270,7 @@ internal object AndroidScaleStageForensics {
             .put("processName", processName(instrumentation))
             .put("startedElapsedMs", captureStarted)
 
-    private fun processName(instrumentation: Instrumentation): String =
-        runCatching { Application.getProcessName() }.getOrNull() ?: instrumentation.targetContext.packageName
+    private fun processName(instrumentation: Instrumentation): String = runCatching { Application.getProcessName() }.getOrNull() ?: instrumentation.targetContext.packageName
 
     private fun note(failure: Throwable): String = (failure.javaClass.simpleName + ": " + (failure.message ?: "no message")).take(200)
 }
