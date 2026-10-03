@@ -4306,3 +4306,23 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残留披露：** (a) 60s 超时延长的是单次锁等待的内核等待上限——若产品的连续写跨度超过 60s，尝试仍可能在一次等待上 BUSY 失败并进入既有重试链（重试链本身不变）；(b) 每次尝试的事务总时长因此可能显著变长（等待期间持有只读快照），阶段截止经由 `tick()` 在尝试内部查询之间的既有调用点仍然生效，但单个耗时的锁等待本身不受 tick 中断——最坏情况下阶段截止失败会比之前更晚浮出；(c) pragma 只影响观测连接：它与存活应用的写连接之间仍由 SQLite 内核仲裁，本决定不改变产品的写行为。
 
 **关联决定：** D-211（本轮证据来源，门控生效后仍同型失败的第四轮）、D-209（被叠加的既有重试链）、D-210（journal 判别确立的持续写突发图景）、D-199（逐阶段预算与 tick 截止，仍是硬界）、D-198（最大规模契约）。
+## D-213 失败取证的全线程无过滤捕获与预言机 journal 模式记录
+
+**状态：** 已批准（2026-10-03；仅测试设施 androidTest/scaleTest/JVM 测试，零产品、判据、SQL、Python 或 workflow 改动）。
+
+**背景（D-212 之后、止损裁决之前的判别证据缺口）：** 四个连续最大轮次在 `saf_import` 的同一处只读观测同型失败（SQLITE_BUSY，同一 JOIN，阶段耗时 342/454/432/384s，另见 1034s 观测），而失败瞬间的 stage 取证始终显示"全部线程空闲"。但 D-202 的线程过滤器（main / DefaultDispatcher / 目标包前缀）本是为 coldstart 观察者取证设计的：logcat 中可见的长数据库操作线程（tid 8572/8589）名字未知、从未在任何捕获中被确认——"空闲"很可能是过滤器盲区而非事实。工作假设（本批要判别的对象）：泄漏的读者（池化连接上未关闭的读事务/游标）永久持有 SHARED 锁，迫使写者进入 PENDING、饿死预言机——这与三项既有证据全部吻合：journal 为空（TRUNCATE 模式下从未有写者写过页）、线程看起来空闲（泄漏协程停在 park 处）、锁持续存在；与之竞争的是"长写者"图景（D-210/D-211/D-212 的持续写突发）。两者的判别证据只在泄漏持有者的 park 位置上，而它恰被过滤器丢掉。
+
+**决定：**
+
+1. **无过滤全线程有界捕获（scaleTest 纯逻辑 + androidTest 接线）**：新 scaleTest 对象 `AndroidScaleAllThreads` 提供 `MAX_ALL_THREADS = 64`、`MAX_ALL_FRAMES_PER_THREAD = 48` 与纯函数 `boundAllThreads(names+frames) -> (bounded, threadsTruncated, framesTruncated)`（按名排序确定化，镜像 D-202 `boundWindows` 的截断诚实模式）；`AndroidScaleStageForensics` 失败报告在既有 `threads` 字段（内容与格式逐字节不变，coldstart 连续性）旁新增 `allThreads` 字段——`Thread.getAllStackTraces()` 的全部线程，同一次快照同时喂给过滤与无过滤两条捕获路径，自带独立截断旗标（`allThreadsTruncated`/`allThreadsFramesTruncated`）；512KB payload 守卫扩为两级：先丢 `allThreads`（如实记录 `allThreadsDroppedForSize`），仍超限再按既有行为丢 `threads`。KDoc 明示动机：过滤器盲区使历次捕获未见 tid 8572/8589，无过滤 dump 直接暴露 SHARED 持有者的 park 位置。
+2. **journal 模式记录（androidTest，一行日志）**：`AndroidScaleOracle.attemptRead` 在既有 `PRAGMA busy_timeout`（D-212）执行之后、事务开始之前，以同一方式执行 `PRAGMA journal_mode`（`rawQuery(...).use { moveToFirst() }`）并经 `Log.i("ULStartup", "oracle.journalMode=" + mode)` 记录该观测连接实际看到的模式；整体 runCatching 包含，诊断绝不改变尝试语义。
+
+**包容规则：** 本条目不触及 D-212 止损条款——无新增重试、等待、门控或连接参数调整，journal_mode 是只读诊断记录，零行为改动。`threads` 字段逐字节不变、`filterStacks`/`boundWindows`/D-212 pragma/D-211 门控/D-209 重试链与 `attemptRead` 检查语义全部不变；`allThreads` 只读进程内线程快照，不触碰任何锁、连接或产品状态；journal_mode 查询失败被包含不外抛；预算耗尽路径的 skipped 列表如实追加 `allThreads`；截图预算与 fallback 路径语义不变。
+
+**测试：** JVM（`AndroidScaleAllThreadsTest`）五例：上限内透传（含按名排序断言）、线程数截断旗标、单线程帧数截断旗标、组合边界（双旗标）、常量钉死（64/48）。Kotlin 编译与设备行为 CI-owned；androidTest/scaleTest 无新增 @Test（41 例 instrumented 清单不变）。
+
+**边界：** 零产品代码（android-app/src/main、app-ui、ledger-*）；判据零改动；零 SQL 查询、零 Python/workflow 改动；改动面仅 `AndroidScaleStageForensics.kt`、`AndroidScaleAllThreads.kt`（新 scaleTest 文件）、`AndroidScaleOracle.kt`（一行日志）、`AndroidScaleAllThreadsTest.kt` 与本条目；不修改 D-202–D-212 原文。
+
+**残留披露：** (a) `allThreads` 是捕获瞬间的快照——瞬时写者可能在快照之后才开始或已经结束，捕获不到不证明不存在；(b) 若泄漏读者假设被证实，指向产品缺陷，其修复是独立且受门的后续批次，本条目只负责证据捕获；(c) 无过滤 dump 暴露线程名与帧文本（进程内代码标识符），仍不含账本内容，但 payload 体积显著大于过滤路径——由既有 JSON 守卫与两级丢弃兜底；(d) journal 模式日志反映观测连接在尝试开启时的视角，与失败瞬间可能有时间间隔。
+
+**关联决定：** D-212（本轮证据来源与止损承诺的判别证据批次）、D-206（stage 失败取证模式）、D-202（被旁路的线程过滤器与截断诚实模式）、D-210（空 journal 证据的来源探针）、D-211/D-209（既有重试链，零改动）、D-198（最大规模契约）。
