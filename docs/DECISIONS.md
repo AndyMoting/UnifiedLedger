@@ -4283,3 +4283,26 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残留披露：** (a) journal stat 与尝试之间存在竞窗——静默确认后、尝试打开连接前，产品可能恰好开始下一个写事务；此时尝试照常失败并进入下一次重试的门控，静默门控降低而非消除撞上突发的概率；(b) GIVE_UP 意味着产品写窗口超过 5 分钟预算——此时按既有锁失败如实浮出，不被掩盖；(c) 门控以 active generation 的 journal 为代理信号：指针解析失败（含瞬时 IO 错误）会跳过门控直接退避，该轮失去静默等待但仍受 D-209 重试次数与阶段截止约束；(d) `File.length()` 对存在但不可读的 journal 返回 0 而非抛错，极端情况下可能伪装静默（false-PROCEED）；该路径由后续尝试的真实锁结果兜底。
 
 **关联决定：** D-210（本轮证据来源，journal 判别探针裁决 A/B 假设）、D-209（被门控包裹的既有重试链）、D-206（失败取证模式）、D-199（逐阶段预算与 tick 截止，仍是硬界）。
+
+## D-212 规模预言机只读连接的 busy_timeout 提升与 oracle 侧止损承诺
+
+**状态：** 已批准（2026-10-03；仅测试设施 androidTest/scaleTest/JVM 测试，零产品、判据、SQL 查询、Python 或 workflow 改动；含预承诺的 oracle 侧止损条款）。
+
+**背景（D-211 门控之后仍然同型的第四轮失败）：** 四个连续最大轮次在 `saf_import` 的同一处只读观测（`assertFixture` 的 `import_duplicate_candidate` JOIN，经 `read`）完全同型地失败——阶段耗时 342s/454s/432s/384s，D-209 的 12 次尝试与 D-211 的 journal 静默门控全部生效但仍在 `SQLITE_BUSY` 上耗尽。机制图景由此完整：rollback-journal 模式下读者与写者互斥，预言机的第二条只读连接与存活应用的持续读写竞争同一数据库；SQLite 内核级 busy 等待默认仅约 2.5s，远短于产品连续运行的操作跨度（分钟级短写事务突发）——D-209 的应用层 sleep 与 D-211 的 journal 静默轮询无论怎样排列，都在突发内部以内核超时先死，因为重试链的所有等待都发生在应用层，而互斥失败发生在内核层。
+
+**决定：**
+
+1. **纯常量与 pragma 文本（scaleTest，JVM 可测）**：`AndroidScaleOracleRetry` 新增 `ORACLE_BUSY_TIMEOUT_MS = 60_000L`（内核级每次锁等待的 busy 超时 60s）与纯函数 `busyTimeoutPragma() = "PRAGMA busy_timeout=$ORACLE_BUSY_TIMEOUT_MS"`；D-209/D-210/D-211 既有成员零改动。
+2. **接线进 `AndroidScaleOracle.attemptRead`**：只读连接打开成功之后、`beginTransactionReadOnly` 之前，每次尝试恰执行一次 `database.rawQuery(busyTimeoutPragma(), null).use { it.moveToFirst() }`（PRAGMA 返回单行应用值，`moveToFirst` 即完成消费）；该超时随后约束该次尝试事务内的所有锁等待（`beginTransactionReadOnly`、action 的查询、以及 action 之后的指针复查）。
+
+**包容规则：** PRAGMA 是连接级设置而非查询改动——SQL 查询零改动、判据零改动（全部 fixture 断言/oracle 检查语义不变）；D-211 门控、D-209 退避/尝试数/分类器与 `attemptRead` 的检查语义逐字节不变——pragma 恰叠加在连接打开与事务开始之间，属每次尝试而非连接池共享（观测本就每次新开连接）；`tick()` 语义不变，阶段截止仍是硬界；不对应用自身连接做任何 pragma 改动。
+
+**测试：** JVM（`AndroidScaleOracleRetryTest`）新增两例：钉死 `ORACLE_BUSY_TIMEOUT_MS = 60_000L` 与 `busyTimeoutPragma() == "PRAGMA busy_timeout=60000"`。既有测试零改动；Kotlin 编译与设备行为 CI-owned；androidTest/scaleTest 无新增 @Test（41 例 instrumented 清单不变）。
+
+**止损承诺（本条目的显式边界条款）：** 若本批之后仍以完全同型的方式失败在同一观测处，oracle 侧修补到此为止——不再有进一步的 oracle 侧批次（无更多重试、等待、门控或连接参数调整）；设计裁决转移为产品侧 WAL 模式与链观测重设计之间的取舍，由用户裁决；届时按 D-212 失败证据直接进入该设计决定，不再消耗 oracle 侧变体。
+
+**边界：** 零产品代码（android-app/src/main、app-ui、ledger-*）；判据零改动；零 SQL 查询、零 Python/workflow 改动；改动面仅 `AndroidScaleOracle.kt`、`AndroidScaleOracleRetry.kt`、`AndroidScaleOracleRetryTest.kt` 与本条目；不修改 D-202–D-211 原文。
+
+**残留披露：** (a) 60s 超时延长的是单次锁等待的内核等待上限——若产品的连续写跨度超过 60s，尝试仍可能在一次等待上 BUSY 失败并进入既有重试链（重试链本身不变）；(b) 每次尝试的事务总时长因此可能显著变长（等待期间持有只读快照），阶段截止经由 `tick()` 在尝试内部查询之间的既有调用点仍然生效，但单个耗时的锁等待本身不受 tick 中断——最坏情况下阶段截止失败会比之前更晚浮出；(c) pragma 只影响观测连接：它与存活应用的写连接之间仍由 SQLite 内核仲裁，本决定不改变产品的写行为。
+
+**关联决定：** D-211（本轮证据来源，门控生效后仍同型失败的第四轮）、D-209（被叠加的既有重试链）、D-210（journal 判别确立的持续写突发图景）、D-199（逐阶段预算与 tick 截止，仍是硬界）、D-198（最大规模契约）。
