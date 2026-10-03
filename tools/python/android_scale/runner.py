@@ -157,6 +157,81 @@ def parse_activity_dump(text: str) -> dict:
     return {"resumedActivity": component[0] if component else resumed[:COLDSTART_HOST_RAW_PREFIX_CHARS]}
 
 
+# Host-side db-journal discriminator probe (D-210, diagnostics only; it never
+# feeds validation or any PASS/FAIL judgment). Two consecutive maximum rounds
+# died in `saf_import` with SQLITE_BUSY on the oracle's read-only observation
+# while the live app held the write lock, with split evidence: long post-import
+# background writes in logcat (hypothesis A: minutes-level legitimate writes)
+# versus failure-instant thread stacks showing the whole app process IDLE while
+# the lock persisted 75s (hypothesis B: an abandoned write transaction). In
+# SQLite rollback-journal mode an in-flight or abandoned write transaction
+# leaves a non-empty `ledger.db-journal` beside `ledger.db`; after a clean
+# commit it is deleted or zero-length. One `run-as ... ls -laR databases`
+# command at the failure capture, parsed on the host only, records the raw
+# listing plus per-entry existence/size/mtime facts and the derived
+# `journalNonEmpty` boolean: true leans B, false leans A, neither alone is a
+# verdict (the recorded `ledger.db` mtime relative to the capture is the
+# second interpretation input, reviewed against logcat/host timestamps).
+DB_JOURNAL_PROBE_RAW = "db-journal-ls.txt"
+DB_JOURNAL_PROBE_TIMEOUT = 30
+DB_JOURNAL_ENTRY_NAMES = ("ledger.db", "ledger.db-journal", "ledger.db-wal", "ledger.db-shm")
+DB_JOURNAL_GEN_DIR = re.compile(r"gen-\d+")
+# `ls -laR` section headers (`databases/ledger-generations/gen-1:`) versus
+# entry lines (`-rw-rw---- 1 u0_a123 u0_a123 8192 2026-10-02 02:19 ledger.db`).
+DB_JOURNAL_SECTION = re.compile(r"^(?P<path>\S+):\s*$")
+DB_JOURNAL_ENTRY = re.compile(
+    r"^[-dlbcps][rwxstST-]{9}\s+\S+\s+\S+\s+\S+\s+(?P<size>\d+)\s+"
+    r"(?P<mtime>\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?|[A-Z][a-z]{2} +\d{1,2} +\d{2}:\d{2}|[A-Z][a-z]{2} +\d{1,2} +\d{4})"
+    r"\s+(?P<name>\S+)\s*$")
+
+
+def parse_db_journal_listing(text: str) -> dict | None:
+    """Parse `run-as ... ls -laR databases` output into D-210 journal facts.
+
+    Only the ls text is parsed (regex on lines) — no second adb command. Every
+    `gen-N` directory header and every `ledger.db`/`ledger.db-journal`/
+    `ledger.db-wal`/`ledger.db-shm` entry inside it is captured with its
+    existence, byte size and mtime string as reported by `ls`; entries of the
+    four watched names outside any `gen-N` directory are recorded as-is too.
+    `journalNonEmpty` is the discriminator: any `ledger.db-journal` with size
+    > 0. An unexpected shape (no `gen-N` directory line at all) returns None —
+    the raw output is still recorded, but no parsed fact and no
+    journalNonEmpty verdict is fabricated from output the parser does not
+    understand. Raises nothing.
+    """
+    sections: dict[str, dict] = {}
+    gen_sections: list[str] = []
+    section = ""
+    for line in text.splitlines():
+        header = DB_JOURNAL_SECTION.match(line)
+        if header:
+            section = header.group("path")
+            if DB_JOURNAL_GEN_DIR.fullmatch(section.rsplit("/", 1)[-1]) and section not in gen_sections:
+                gen_sections.append(section)
+            continue
+        entry = DB_JOURNAL_ENTRY.match(line)
+        if entry and entry.group("name") in DB_JOURNAL_ENTRY_NAMES:
+            sections.setdefault(section, {})[entry.group("name")] = {
+                "present": True, "size": int(entry.group("size")), "mtime": entry.group("mtime")}
+    if not gen_sections:
+        return None
+    files: dict = {}
+    for path in gen_sections:
+        seen = sections.get(path, {})
+        prefix = path.rsplit("/", 1)[-1] + "/"
+        for name in DB_JOURNAL_ENTRY_NAMES:
+            files[prefix + name] = dict(seen.get(name, {"present": False, "size": None, "mtime": None}))
+    for path, seen in sections.items():
+        if path in gen_sections:
+            continue
+        prefix = path + "/" if path else ""
+        for name, facts in seen.items():
+            files[prefix + name] = dict(facts)
+    return {"generations": [path.rsplit("/", 1)[-1] for path in gen_sections], "files": files,
+            "journalNonEmpty": any(facts["size"] > 0 for key, facts in files.items()
+                                   if facts["present"] and key.rsplit("/", 1)[-1] == "ledger.db-journal")}
+
+
 class ScaleDeadlineError(RuntimeError):
     pass
 
@@ -535,6 +610,7 @@ class ScaleRunner:
                 self.collect_coldstart_forensics()
                 self.collect_observer_diag()
                 self.collect_stage_forensics()
+                self.collect_db_journal_probe()
         except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
             self.report["diagnostic_error"] = True
 
@@ -624,6 +700,39 @@ class ScaleRunner:
         except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
             collected["error"] = True
         self.report["stage_forensics"] = collected
+
+    def collect_db_journal_probe(self) -> None:
+        """One-shot host probe of the app's rollback-journal state (D-210, diagnostics).
+
+        The failure capture runs while the app process is still untouched (the
+        force-stop only happens after diagnostics), so the journal state next
+        to `ledger.db` still reflects whatever the app left behind at the
+        SQLITE_BUSY failure: an in-flight or abandoned write transaction keeps
+        a non-empty `ledger.db-journal`, a clean commit deletes it or truncates
+        it to zero. One `run-as ... ls -laR databases` command, best-effort
+        with a bounded timeout; only the ls text is parsed. Never faked and
+        never required: a pull failure degrades to an error record, an adb
+        not-found/run-as error signature is recorded as absent via the shared
+        helper, and neither changes a validation verdict (the oracle never
+        reads this).
+        """
+        try:
+            text = self.adb("shell", "run-as", PACKAGE, "ls", "-laR", "databases",
+                            best_effort=True, timeout=DB_JOURNAL_PROBE_TIMEOUT)
+            data = text.encode("utf-8")
+            if not data or is_adb_not_found(data):
+                self.report["db_journal_probe"] = "absent"
+                return
+            (self.evidence / DB_JOURNAL_PROBE_RAW).write_bytes(data)
+            record = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+            parsed = parse_db_journal_listing(text)
+            if parsed is not None:
+                record["journalNonEmpty"] = parsed["journalNonEmpty"]
+                record["generations"] = parsed["generations"]
+                record["files"] = parsed["files"]
+            self.report["db_journal_probe"] = record
+        except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
+            self.report["db_journal_probe"] = {"error": True}
 
     def record_memory(self, phase: str, text: str) -> None:
         with (self.evidence / "memory.txt").open("a", encoding="utf-8") as memory:

@@ -4237,3 +4237,28 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残留披露：** (a) 一次足够长的写事务仍可让全部 12 次尝试（约 47s 等待加上此前各阶段等待）全部落空——届时按既有阶段截止失败如实浮出，不被掩盖；(b) 真分支分类器依赖 stub android.jar 无法构造的 Android 异常，JVM 侧只覆盖类字面量与子类规则，实例级行为属设备 CI 责任；(c) 重试期间的观测时点相对原单次尝试后移（最长约 47s），对只读观测的快照内容无影响（每次尝试在一致事务内读取并复验指针不变量）。
 
 **关联决定：** D-208（本轮证据来源，业务阶段可观测性与缓存重置）、D-199（逐阶段预算与 tick 截止，仍是硬界）、D-198（最大规模契约）。
+
+## D-210 失败取证的 journal 文件判别探针（host 侧，A/B 假设判别）
+
+**状态：** 已批准（2026-10-03；仅 host 侧测试设施 `tools/python/android_scale/runner.py` 与其 Python 测试，零 Kotlin、零产品、零判据、零 workflow 改动）。
+
+**背景（D-209 之后的实测证据分裂）：** 两个连续最大轮次在 `saf_import` 的同一 JOIN 观测处失败——D-209 的 12 次只读重试（最坏约 47s 等待）全部落空后仍抛 `SQLiteDatabaseLockedException`（SQLITE_BUSY），应用进程存活并持有写锁。证据分裂为两个假设：(A) run 37142336739 的 logcat 中线程 9032 `Long db operation` 在 02:20:58/02:21:19 出现——导入后的后台写可能是分钟级合法长事务，重试预算应当增长；(B) 失败瞬间的线程栈显示整个应用进程 IDLE，而锁持续了 75s——更可能是被遗弃/泄漏的写事务占住锁，需要产品修复。两者在当时证据下无法裁决。
+
+**判别设计：** SQLite 回滚日志（rollback-journal）模式下，进行中或被遗弃的写事务会在 `ledger.db` 旁留下非空的 `ledger.db-journal`；干净提交后该文件被删除或为零长度。因此失败瞬间的一次 `ls` 即可判别。设备 DB 路径（memory.txt 证据）：`/data/user/0/com.unifiedledger.android/databases/ledger-generations/gen-1/ledger.db`。
+
+**决定：**
+
+1. **探针本体（host 侧，`collect_db_journal_probe`）**：挂在 `diagnostics(failure=True)` 取证区（`collect_coldstart_forensics`/`collect_stage_forensics` 旁，同样只在失败路径执行），恰一条 adb 命令 `run-as com.unifiedledger.android ls -laR databases`（best_effort，超时 30s）。原始 ls 文本按既有拉取的诚实规则记录：写入证据文件 `db-journal-ls.txt`，并在 host.json 的 `db_journal_probe` 下记录字节数 + sha256。
+2. **解析规则（只解析 ls 文本，逐行正则，无第二次 adb 调用）**：对每个 `gen-N` 目录行与每个 `ledger.db`/`ledger.db-journal`/`ledger.db-wal`/`ledger.db-shm` 条目记录存在性、字节大小与 ls 报告的 mtime 字符串；派生布尔 `journalNonEmpty`（任一 `ledger.db-journal` size > 0）——这是 THE 判别量。
+3. **诚实降级与既有取证拉取一致**：拉取失败降级为 `{"error": True}`；输出呈 adb not-found/run-as 错误签名时经共享助手 `is_adb_not_found` 记为 `"absent"`；意外形状（无任何 `gen-N` 目录行）保留原始记录、解析事实缺位，不捏造 `journalNonEmpty`、不抛异常。
+4. **严格 diagnostics-only**：`result.py`/`android-scale-validate.py` 零改动，验证路径永不读取，绝不影响 PASS/FAIL。
+
+**解释规则：** 捕获时 `journalNonEmpty=true` ⇒ 假设 B（被遗弃事务）获得证据；journal 空/不存在且 `ledger.db` 的 mtime 距捕获很近 ⇒ 假设 A（长写）获得证据；两者单独都不是裁决——`ledger.db` 的 mtime 相对捕获时刻同样被解析并记录，供评审时对照 logcat/host 时间戳。
+
+**测试：** `tests/python/test_android_ci_repair.py` 新增 `DbJournalProbe` 六例（复用既有 fake-adb 缝隙）：非空 journal → 解析事实 + `journalNonEmpty=true`；干净列表（无 journal 与零长 journal）→ `false`；adb not-found 签名 → `"absent"`；拉取失败 → 降级 `{"error": True}`；意外形状 → 原始记录 + 解析事实缺位且不抛异常；成功路径不执行探针。
+
+**边界：** 零 Kotlin（androidTest/scaleTest/test 源零改动）、零产品代码（android-app/src/main、app-ui、ledger-*）、零 workflow、零判据改动；改动面仅 `runner.py`、该 Python 测试与本条目；不修改 D-202–D-209 原文。
+
+**残留披露：** (a) 探针在失败取证阶段执行，与失败瞬间之间有非零时延（含 D-209 重试等待）；若应用在该窗口内自行完成提交/恢复，journal 可能已被清理——此时 `journalNonEmpty=false` 对假设 A 只是弱证据，必须结合 mtime 与 logcat/host 时戳复核；(b) mtime 是设备本地时区下 `ls` 的字符串，相对解释依赖评审时人工对照，host 不做时区换算；(c) 输出呈非 `gen-N` 形状（例如目录布局变化）时本轮无判别结论——这是有意的诚实降级而非失效。
+
+**关联决定：** D-209（本轮证据来源，重试预算耗尽仍 BUSY）、D-206（失败瞬间取证模式，本探针挂在同一失败路径）、D-199/D-198（最大规模契约与预算）。

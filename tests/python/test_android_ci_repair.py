@@ -1076,6 +1076,135 @@ class StageForensicsRecycle(unittest.TestCase):
         self.assertFalse(record["sha_match"])
 
 
+class DbJournalProbe(unittest.TestCase):
+    """D-210 host-side db-journal discriminator probe, diagnostics only.
+
+    Two consecutive maximum rounds died in `saf_import` with SQLITE_BUSY on the
+    oracle's read-only observation while the live app held the write lock, yet
+    the failure-instant thread stacks showed the whole app process IDLE. In
+    rollback-journal mode an in-flight or abandoned write transaction leaves a
+    non-empty `ledger.db-journal` beside `ledger.db`; after a clean commit it is
+    deleted or zero-length. One `run-as ... ls -laR databases` command per
+    failed run, parsed on the host only: `journalNonEmpty=true` leans
+    hypothesis B (abandoned transaction), false leans hypothesis A (long
+    writes had completed by capture time). The probe never feeds validation or
+    any PASS/FAIL judgment.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        env = patch.dict(os.environ, GITHUB_ACTIONS="true", RUNNER_ENVIRONMENT="github-hosted", RUNNER_OS="Linux")
+        env.start()
+        self.addCleanup(env.stop)
+        self.runner = ScaleRunner(self.root / "fixture", self.root / "evidence", self.root / "app.apk", self.root / "test.apk", SHA, "maximum")
+        self.runner.serial = "emulator-5554"
+        self.ls_calls = []
+
+    def journal_adb(self, response=None, error=None):
+        def controlled(*args, **kwargs):
+            if args[:6] == ("shell", "run-as", PACKAGE, "ls", "-laR", "databases"):
+                self.ls_calls.append(args)
+                if error is not None:
+                    raise error
+                return response
+            # Mirror command(): binary callers get bytes, text callers get str.
+            return b"" if kwargs.get("binary") else ""
+        return controlled
+
+    DIRTY_LISTING = (
+        "databases:\n"
+        "total 12\n"
+        "drwxrwx--x 3 u0_a123 u0_a123 4096 2026-10-02 02:20 .\n"
+        "drwxrwx--x 4 u0_a123 u0_a123 4096 2026-10-02 02:20 ..\n"
+        "\n"
+        "databases/ledger-generations:\n"
+        "total 8\n"
+        "drwxrwx--x 3 u0_a123 u0_a123 4096 2026-10-02 02:20 .\n"
+        "\n"
+        "databases/ledger-generations/gen-1:\n"
+        "total 40\n"
+        "-rw-rw---- 1 u0_a123 u0_a123 24576 2026-10-02 02:19 ledger.db\n"
+        "-rw------- 1 u0_a123 u0_a123 12345 2026-10-02 02:20 ledger.db-journal\n"
+    )
+
+    def test_dirty_journal_is_parsed_with_journal_non_empty_true(self):
+        self.runner.adb = self.journal_adb(self.DIRTY_LISTING)
+        self.runner.diagnostics(failure=True)
+        record = self.runner.report["db_journal_probe"]
+        data = self.DIRTY_LISTING.encode("utf-8")
+        self.assertEqual(record["bytes"], len(data))
+        self.assertEqual(record["sha256"], hashlib.sha256(data).hexdigest())
+        self.assertTrue(record["journalNonEmpty"])
+        self.assertEqual(record["generations"], ["gen-1"])
+        self.assertEqual(record["files"]["gen-1/ledger.db"],
+                         {"present": True, "size": 24576, "mtime": "2026-10-02 02:19"})
+        self.assertEqual(record["files"]["gen-1/ledger.db-journal"],
+                         {"present": True, "size": 12345, "mtime": "2026-10-02 02:20"})
+        self.assertEqual(record["files"]["gen-1/ledger.db-wal"],
+                         {"present": False, "size": None, "mtime": None})
+        self.assertEqual(record["files"]["gen-1/ledger.db-shm"],
+                         {"present": False, "size": None, "mtime": None})
+        self.assertEqual((self.runner.evidence / "db-journal-ls.txt").read_bytes(), data)
+        self.assertEqual(len(self.ls_calls), 1)
+
+    def test_clean_listing_records_journal_non_empty_false(self):
+        clean = self.DIRTY_LISTING.replace(
+            "-rw------- 1 u0_a123 u0_a123 12345 2026-10-02 02:20 ledger.db-journal\n", "")
+        zeroed = self.DIRTY_LISTING.replace("12345 2026-10-02 02:20 ledger.db-journal",
+                                            "0 2026-10-02 02:20 ledger.db-journal")
+        kinds = ("no-journal", "zero-length-journal")
+        for kind, listing in zip(kinds, (clean, zeroed)):
+            with self.subTest(kind=kind):
+                self.runner = ScaleRunner(self.root / "fixture", self.root / ("evidence-" + kind),
+                                          self.root / "app.apk", self.root / "test.apk", SHA, "maximum")
+                self.runner.serial = "emulator-5554"
+                self.runner.adb = self.journal_adb(listing)
+                self.runner.diagnostics(failure=True)
+                record = self.runner.report["db_journal_probe"]
+                self.assertFalse(record["journalNonEmpty"])
+                self.assertEqual(record["generations"], ["gen-1"])
+                self.assertEqual(record["files"]["gen-1/ledger.db-journal"]["present"], kind == "zero-length-journal")
+
+    def test_run_as_not_found_signature_is_recorded_absent(self):
+        # Same adb not-found/run-as error signature rule as the file pulls: the
+        # error text is never kept as probe content and no sha256 is fabricated.
+        self.runner.adb = self.journal_adb("run-as: com.unifiedledger.android: No such file or directory\n")
+        self.runner.diagnostics(failure=True)
+        self.assertEqual(self.runner.report["db_journal_probe"], "absent")
+        self.assertFalse((self.runner.evidence / "db-journal-ls.txt").exists())
+
+    def test_pull_failure_is_recorded_as_degraded(self):
+        self.runner.adb = self.journal_adb(error=RuntimeError("run-as ls failed"))
+        self.runner.diagnostics(failure=True)
+        self.assertEqual(self.runner.report["db_journal_probe"], {"error": True})
+        self.assertFalse((self.runner.evidence / "db-journal-ls.txt").exists())
+
+    def test_unexpected_listing_shape_records_raw_without_parsed_facts(self):
+        # A listing with a ledger entry but no gen-N directory line is not
+        # parseable into generation facts: the raw output is still recorded
+        # with its sha256, but no journalNonEmpty verdict is fabricated and no
+        # exception escapes into the run.
+        odd = "-rw-rw---- 1 u0_a123 u0_a123 24576 2026-10-02 02:19 ledger.db\n"
+        self.runner.adb = self.journal_adb(odd)
+        self.runner.diagnostics(failure=True)
+        record = self.runner.report["db_journal_probe"]
+        data = odd.encode("utf-8")
+        self.assertEqual(record["bytes"], len(data))
+        self.assertEqual(record["sha256"], hashlib.sha256(data).hexdigest())
+        self.assertNotIn("journalNonEmpty", record)
+        self.assertNotIn("generations", record)
+        self.assertNotIn("files", record)
+        self.assertEqual((self.runner.evidence / "db-journal-ls.txt").read_bytes(), data)
+
+    def test_probe_runs_only_on_the_failure_path(self):
+        self.runner.adb = self.journal_adb(error=AssertionError("probe must not run on success"))
+        self.runner.diagnostics(failure=False)
+        self.assertEqual(self.ls_calls, [])
+        self.assertNotIn("db_journal_probe", self.runner.report)
+
+
 class WorkflowConcurrency(unittest.TestCase):
     """Static proof of the D-204 parallel-acceptance concurrency contract."""
 
