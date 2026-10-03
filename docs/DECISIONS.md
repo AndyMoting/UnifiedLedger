@@ -4202,12 +4202,12 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **决定：**
 
-1. **共享限速器**：`AndroidScaleUi` 只保留一个可变 `lastResetElapsedMs`，由每一次强制重置（init、await 周期、miss 触发）统一盖章，使两类间隔约束同一条重置流、不能叠加。await 周期重置维持既有 30s（`AndroidScaleObserverDiag.CACHE_RESET_INTERVAL_MS`）；miss 触发重置用新增 5000ms（`AndroidScaleObserverDiag.MISS_RESET_INTERVAL_MS`，纯逻辑、JVM 可测，配套纯函数 `missResetDue(nowMs, lastResetMs)` 镜像 `scaleCacheResetDue`）。共享盖章使两类重置互相抑制：await 重置后 5s 内 miss 不到期，miss 重置同样把下一次周期重置推迟整 30s。
+1. **共享限速器**：`AndroidScaleUi` 只保留一个可变 `lastResetElapsedMs`，由每一次强制重置（init、await 周期、miss 触发）统一盖章，使两类间隔约束同一条重置流、不能叠加。await 周期重置维持既有 30s（`AndroidScaleObserverDiag.CACHE_RESET_INTERVAL_MS`）；miss 触发重置用新增 5000ms（`AndroidScaleObserverDiag.MISS_RESET_INTERVAL_MS`，纯逻辑、JVM 可测，配套纯函数 `missResetDue(nowMs, lastResetMs)` 镜像 `scaleCacheResetDue`）。共享盖章使两类重置互相抑制：await 重置后 5s 内 miss 不到期，miss 重置同样把下一次周期重置推迟整 30s。共享盖章同时带来一个时序差：距上次重置超过 30s 才开始的 await，会在循环第一轮就触发其周期重置（间隔仍是 30s 不变，只是相位从 D-205 的「等待起点相对 30s」变为「全局上次重置相对 30s」）；`resetAutomationCacheObservation` → `has()` → `findNode` 的嵌套重置路径由共享盖章封在深度 1（观测读取距盖章不足 5s，miss 重置必不到期）。
 2. **findNode miss 触发重置**：D-204 两遍（缓存遍历；`root.refresh()` 重遍历）都未命中后，若限速器允许（距任一重置 ≥5000ms），执行一次强制重置（`setServiceInfo()`，清一次客户端缓存）加最后一遍缓存式遍历（基于重置后新取的 root——重置同时使缓存的窗口表失效），返回该遍历的结果。完全自包含：重置失败即吞掉（findNode 无 writer 访问，writer 由挂载它的调用点路径自行记录），仍返回最后一遍的结果；绝不抛出；绝不在 findNode 内 tick（其调用方 own 截止检查，await 谓词本就 tick）。
 3. **scrollable miss 触发重置**：缓存遍历找不到可见可滚动容器时，套用同一限速重置加单次重遍历；仍找不到才报 `scroll container absent`（错误文本不变）。
 4. **await 周期重置推广到全部等待**：移除 `diagnostic != null` 对「执行重置」的门控——每个等待都获得 30s 有界重置（tick 紧贴重置前后各一次，与 D-205 完全一致）。`diagnostic` writer（coldstart 路径挂载）仍照旧记录重置与观测；无 writer 时重置失败静默吞掉。重置后的观测记录（`resetAutomationCacheObservation`）保持 writer 门控不变。KDoc 如实更新：D-205 的「without one this loop performs no reset」一句自 D-208 起被取代，`diagnostic` 退为纯记录参数。
 
-**包容规则：** 任何重置路径不得把异常抛出 findNode/scrollable/await；tick 只在它原本运行的位置（await 循环、scroll）运行，tick 前后夹逼仅用于 await 周期重置（沿 D-205）；findNode/scrollable 的重置不 tick（调用方 own 截止检查）。
+**包容规则：** 重置本身（`setServiceInfo` 替换）完全包含不抛出；重置后的遍历与既有第一/第二趟遍历属同类暴露，不新增失败类。tick 只在它原本运行的位置（await 循环、scroll）运行，tick 前后夹逼仅用于 await 周期重置（沿 D-205）；findNode/scrollable 的重置不 tick（调用方 own 截止检查）。
 
 **测试：** JVM（`AndroidScaleObserverDiagTest`，经 scaleTest 共享源集）钉死 `missResetDue` 边界（<5000ms 不到期、恰 5000ms 到期、之后到期）、新常量值，以及共享盖章交互（await 周期重置盖章后紧接的 miss 重置不到期；miss 重置同样推迟下一次周期重置）。Kotlin 编译与设备行为 CI-owned。
 

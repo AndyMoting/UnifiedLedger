@@ -116,7 +116,9 @@ internal class AndroidScaleUi(
 
     /**
      * Semantic presence test: true when [findNode] locates a matching node, with
-     * that helper's cached-hit / refresh-on-miss rule.
+     * that helper's cached-hit / refresh-on-miss rule. A miss can now also
+     * trigger one bounded, rate-limited forced cache reset (the D-208 third
+     * layer) before the final false is returned.
      */
     fun has(
         text: String,
@@ -145,11 +147,14 @@ internal class AndroidScaleUi(
      * updates, [AndroidScaleObserverDiag.MISS_RESET_INTERVAL_MS]), one forced
      * reset clears the client cache once and one final cached walk -- over a
      * freshly fetched root, since the reset also invalidates the cached window
-     * list -- returns whatever it finds. Fully contained: a reset failure is
-     * swallowed (findNode has no writer access; call sites that own a writer
+     * list -- returns whatever it finds. Containment is scoped precisely: the
+     * reset itself (the setServiceInfo replacement) is fully contained and never
+     * throws, while the post-reset walk carries the same exposure class as the
+     * pre-existing pass-1/pass-2 walks -- no new failure class. A reset failure
+     * is swallowed (findNode has no writer access; call sites that own a writer
      * record resets on their own paths) and the final walk's result is still
-     * returned; the helper never throws and never ticks -- its callers own the
-     * deadline checks, and the await predicates among them already tick.
+     * returned; the helper never ticks -- its callers own the deadline checks,
+     * and the await predicates among them already tick.
      */
     private fun findNode(predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
         val root = root()
@@ -332,10 +337,13 @@ internal class AndroidScaleUi(
      * a client cache frozen on a previous screen (run 37130347905: saf_import
      * failed in 825ms with `scroll container absent` while the frame-buffer
      * screenshot showed the import screen fully rendered) cannot fail the
-     * stage while the real tree is fine. Same containment as [findNode]: the
-     * reset is limited by the shared stamp, never throws and never ticks
-     * (its callers own the deadline checks), and the error text is unchanged
-     * when the re-walk still finds nothing.
+     * stage while the real tree is fine. Containment is scoped precisely: the
+     * reset itself (the setServiceInfo replacement) is fully contained and
+     * never throws, while the re-walk carries the same exposure class as the
+     * pre-existing first walk -- no new failure class. The reset is limited
+     * by the shared stamp and never ticks (its callers own the deadline
+     * checks), and the error text is unchanged when the re-walk still finds
+     * nothing.
      */
     fun scrollable(): AccessibilityNodeInfo {
         widestVisibleScrollable()?.let { return it }
