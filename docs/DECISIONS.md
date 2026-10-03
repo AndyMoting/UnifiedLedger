@@ -4150,3 +4150,24 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **接受残余（D-205 双评审裁定）：** 可见文本样本为屏幕原始合成文本（工件内、长度受限）；空字节/非 bytes 的回收结果合并记为 `absent`（沿 D-202 先例）；`coldstart-host-*` 不设残留清理断言（`rm` 路径已随探针改型消失，落盘即诊断产物）。
 
 **关联决定：** D-204（本决定修复其不足）、D-203（启动计时归因）、D-202（coldstart 有界取证，本决定沿用其边界与假名纪律）、D-200/D-201（scale 设施与 Ready 门）。
+
+## D-206 业务阶段失败瞬间的有界取证
+
+**状态：** 已批准（2026-10-03；仅 androidTest 诊断采集与 host runner 证据回收，零产品、判据、预算或 instrumented 清单改动）。
+
+**背景：** 诊断性 maximum run 37118587515 首次证明 coldstart 真实 PASS（D-205 修复有效），但 chain 的第一个业务阶段 `saf_import` 在 524ms 内以 `IllegalStateException: scroll container absent`（AndroidScaleUi.kt:286，经 selectSafFixture→seek→scroll）失败。失败瞬间屏幕未知：host 侧 failure-ui.xml 在 instrumentation 退出后才采集（只剩 launcher），D-205 观察器诊断只挂在 coldstart 等待路径。两大竞争假设待下一次诊断运行判别：a11y 客户端缓存陈旧在 coldstart 路径之外复发（D-203/D-204 同签名），或较慢 hosted 渲染下真实的 UI 状态差异。缺证：失败瞬间的帧缓冲截图 + a11y 快照对（D-203 判别手段）。
+
+**决定：**
+
+1. 设备侧（`AndroidScaleStageForensics`，androidTest 源集，D-202 采集器风格）：`stage()` catch 在 rethrow 前对除 coldstart 外的每个失败阶段（coldstart 保留 D-202 采样型取证与其固定文件名，覆盖会破坏样本缓冲）执行一次有界、完全自包含的现场采集：窗口清单（id/type/active/focused/rootPackage，`boundWindows` 上限与 `windowsTruncated`）、每个目标 root 的可见文本样本（复用 `MAX_TEXT_SAMPLES`/`MAX_TEXT_CHARS`，超限记 `textsTruncated`；root 数上限并记 `rootsTruncated`）、第一个目标 root 可见节点计数、本进程线程栈（复用 `filterStacks` 与截断标志）、同一 UiAutomation 连接的截图（PNG 尺寸上限同 D-202）与 `captureMs`；JSON 绑定 schema/kind（`stage-forensics`）/sha/phase（instrumentation 参数 `scalePhase`）/stage/pid/进程名/startedElapsedMs（采集开始时刻）。
+2. 包容规则：固定采集预算沿用 `CAPTURE_BUDGET_MS`（30s），全程不调用 tick()、绝不抛出——每步独立预算检查并记 `skipped`；观察器惰性构造经 provider lambda 纳入同一守卫（replay 等未触 UI 的阶段失败时也不得替换原始失败）；整体构建失败降级为含 `captureError` 与原始失败类型/消息的最小 fallback payload，fallback 亦失败才静默放弃；超尺寸守卫命中时只丢弃线程数组并记 `threadsDroppedForSize`；原始 Throwable 原样 rethrow，stage 的状态/耗时记账零改动，只在失败分支调用（通过路径零写入）。
+3. host 侧：`diagnostics(failure=True)` 在 coldstart 取证与 observer diag 之后以 run-as cat 尽力回收两个新固定名文件为 `evidence/stage-forensics.json` / `.png`，host.json `stage_forensics` 记 sha256/bytes（JSON 另记 json_valid/sha_match）；缺失记 `absent`，畸形保存并置 `json_valid=false`，回收失败记降级 `error`。validation/oracle 不要求其存在，取证永不参与 PASS/FAIL。零 workflow 改动（evidence 目录整体上传机制不变）。
+4. 测试：Python 新增 `StageForensicsRecycle` 四例（present→哈希+字节、absent→absent、回收失败→降级 error 且与 coldstart 记录相互独立、畸形/SHA 不匹配→保留并标记）；Kotlin 采集类全部位于 androidTest 平台路径（UiAutomation/AtomicFile/takeScreenshot），无新增纯 JVM 可测逻辑（文本样本/root 截断复用已测的 `AndroidScaleObserverDiag` 契约），如实标注 CI-owned；instrumented 41 例清单零变化（新增源文件不含 @Test）。
+
+**验收要求：** 改动模块定向 ktlintCheck 通过（含 `src/androidTest`）；聚焦 Python 测试与 `project_docs` 退出 0；Kotlin 编译/设备行为由 CI 验证。下一次 maximum 诊断运行在任一业务阶段失败时应有 `stage-forensics.json`/`.png`（或如实 absent）供归因；取证成功不改变任何验收结论，规模契约（61,000 候选 / 150,000 关系、五阶段 / 十一业务步骤、同 SHA 二次重复）不变。
+
+**边界：** 零产品代码（android-app/src/main、app-ui、ledger-*）；零 schema/依赖/gradle/workflow 改动；AndroidScaleUi 的 await/reset/scroll 行为零改动（周期性缓存重置仍仅限 coldstart 等待路径）；无谓词、超时或阶段判定改动；判据不变。取证只写固定新文件名，与 coldstart 取证文件名不冲突。隐私沿用 D-202 纪律：白名单之外的正文不出设备，仅窗口元数据、有界文本样本与按包过滤的线程帧。
+
+**残留披露：** `waitedMs` 记录的是采集窗口而非阶段耗时（不为此新增失败路径状态）；阶段耗时仍以 device.json 的 `elapsedMs` 为准（沿 D-202 先例，其含采集时间）。与 D-202 相同，同 SHA 重试时旧文件可能被 host 记为 sha_match=true（CI 每轮全新模拟器，可用 startedElapsedMs/pid 事后甄别）。
+
+**关联决定：** D-202（coldstart 有界取证与固定文件名边界）、D-203（判别手段：帧缓冲截图 + a11y 快照对）、D-204/D-205（观察器修复及其仅限 coldstart 的边界，本决定为业务阶段失败路径补盲）、D-198（最大规模契约）。
