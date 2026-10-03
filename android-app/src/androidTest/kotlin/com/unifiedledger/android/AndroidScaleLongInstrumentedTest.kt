@@ -122,6 +122,11 @@ class AndroidScaleLongInstrumentedTest {
                 .getJSONObject(name)
                 .put("status", if (assertion) "FAIL" else "ERROR")
                 .put("errorType", failure.javaClass.simpleName)
+            // D-206 stage forensics: failure-instant screenshot + a11y snapshot,
+            // diagnostics only and fully contained (it never throws, never ticks
+            // and never masks this original failure). coldstart keeps its own
+            // richer D-202 capture with the sample buffer, so it is excluded.
+            if (name != "coldstart") AndroidScaleStageForensics.capture(instrumentation, { ui }, sha, name, failure)
             throw failure
         } finally {
             stages.getJSONObject(name).put("elapsedMs", SystemClock.elapsedRealtime() - started)

@@ -28,6 +28,16 @@ COLDSTART_FORENSICS_DEVICE_FILES = {
     "files/android-scale-coldstart-forensics.png": "coldstart-forensics.png",
 }
 
+# Device-side stage forensics (D-206): written by the instrumentation at the
+# failure instant of any non-coldstart business stage, before it rethrows (the
+# coldstart wait keeps its own D-202 capture and file names). Purely
+# supplementary diagnostics: the oracle never reads them and validation does
+# not require them.
+STAGE_FORENSICS_DEVICE_FILES = {
+    "files/android-scale-stage-forensics.json": "stage-forensics.json",
+    "files/android-scale-stage-forensics.png": "stage-forensics.png",
+}
+
 # Device-side observer diagnostic the instrumentation may have written before
 # teardown (files/<name> inside the app's private dir, fixed name). Purely
 # supplementary: the oracle never reads it and validation does not require it.
@@ -511,6 +521,7 @@ class ScaleRunner:
                 (self.evidence / "failure-ui.xml").write_text(tree, encoding="utf-8")
                 self.collect_coldstart_forensics()
                 self.collect_observer_diag()
+                self.collect_stage_forensics()
         except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
             self.report["diagnostic_error"] = True
 
@@ -569,6 +580,37 @@ class ScaleRunner:
             self.report["observer_diag"] = record
         except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
             self.report["observer_diag"] = {"error": True}
+
+    def collect_stage_forensics(self) -> None:
+        """Best-effort retrieval of the device-side stage forensics (D-206).
+
+        The instrumentation writes one fixed-name JSON + PNG pair at the failure
+        instant of any non-coldstart business stage, so the failure-instant
+        screen (frame buffer + a11y window state, the D-203 discriminator pair)
+        survives instrumentation teardown. Never faked and never required:
+        absence is recorded as absent, a malformed payload is kept and flagged,
+        and neither changes a validation verdict (the oracle never reads these).
+        """
+        collected: dict = {}
+        try:
+            for source, target in STAGE_FORENSICS_DEVICE_FILES.items():
+                payload = self.adb("exec-out", "run-as", PACKAGE, "cat", source, binary=True, best_effort=True, timeout=15)
+                if not payload or not isinstance(payload, (bytes, bytearray)):
+                    collected[target] = "absent"
+                    continue
+                (self.evidence / target).write_bytes(payload)
+                record = {"sha256": hashlib.sha256(payload).hexdigest(), "bytes": len(payload)}
+                if target.endswith(".json"):
+                    try:
+                        parsed = json.loads(payload.decode("utf-8"))
+                        record["json_valid"] = isinstance(parsed, dict)
+                        record["sha_match"] = isinstance(parsed, dict) and parsed.get("sha") == self.sha
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        record["json_valid"] = False
+                collected[target] = record
+        except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
+            collected["error"] = True
+        self.report["stage_forensics"] = collected
 
     def record_memory(self, phase: str, text: str) -> None:
         with (self.evidence / "memory.txt").open("a", encoding="utf-8") as memory:
