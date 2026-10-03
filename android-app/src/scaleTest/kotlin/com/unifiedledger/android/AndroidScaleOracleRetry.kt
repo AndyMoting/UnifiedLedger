@@ -54,4 +54,61 @@ internal object AndroidScaleOracleRetry {
      * literals where instances cannot be constructed.
      */
     fun isLockRetryableType(type: Class<*>): Boolean = SQLiteDatabaseLockedException::class.java.isAssignableFrom(type)
+
+    /**
+     * D-211 quiescence gating: poll interval while waiting for the active
+     * generation's rollback journal to drain before a lock retry.
+     */
+    const val JOURNAL_WAIT_POLL_MS = 1000L
+
+    /**
+     * D-211 quiescence gating: cap on journal waiting per retry gap (5 minutes),
+     * bounded independently of the stage deadline, which stays the hard bound
+     * because tick runs after every sleep.
+     */
+    const val JOURNAL_WAIT_BUDGET_MS = 300_000L
+
+    /**
+     * D-211 quiescence gating: consecutive empty/absent journal reads required
+     * before a retry attempt may proceed.
+     */
+    const val JOURNAL_QUIESCE_CONSECUTIVE = 2
+
+    /** D-211 outcome of one journal quiescence evaluation for a retry gap. */
+    enum class JournalWait {
+        /** Journal empty for long enough: quiescent enough to attempt now. */
+        PROCEED,
+
+        /** Journal non-empty or not yet quiesced long enough, and budget remains. */
+        WAIT,
+
+        /**
+         * Budget exhausted: proceed with the attempt anyway rather than fail —
+         * a bounded observer that cannot confirm quiescence still tries, since
+         * attempts are what produce the lock error or success.
+         */
+        GIVE_UP,
+    }
+
+    /**
+     * D-211 pure journal quiescence decision for one poll: [journalLen] is the
+     * rollback journal's length (0 for absent, and any stat error is treated
+     * as 0 by the caller), [consecutiveEmpty] counts consecutive empty/absent
+     * journal reads including this one, and [waitedMs] is the time already
+     * spent journal-waiting in this retry gap. [JournalWait.PROCEED] requires
+     * both an empty/absent journal and [JOURNAL_QUIESCE_CONSECUTIVE]
+     * consecutive empty reads; [JournalWait.GIVE_UP] fires once the budget is
+     * exhausted (waited >= [JOURNAL_WAIT_BUDGET_MS]) so the attempt still runs;
+     * otherwise [JournalWait.WAIT]. Pure: no File or clock access.
+     */
+    fun journalWaitDecision(
+        journalLen: Long,
+        consecutiveEmpty: Int,
+        waitedMs: Long,
+    ): JournalWait =
+        when {
+            journalLen <= 0 && consecutiveEmpty >= JOURNAL_QUIESCE_CONSECUTIVE -> JournalWait.PROCEED
+            waitedMs >= JOURNAL_WAIT_BUDGET_MS -> JournalWait.GIVE_UP
+            else -> JournalWait.WAIT
+        }
 }

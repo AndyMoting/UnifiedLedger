@@ -80,6 +80,23 @@ internal class AndroidScaleOracle(
      * during) and its usual deadline failure then surfaces unmasked. Non-lock
      * failures are never retried and rethrow immediately; after exhausting
      * the attempts the last lock exception is rethrown.
+     *
+     * D-211 layers a journal-quiescence gate in front of every retry (never
+     * the first attempt): three consecutive maximum rounds failed identically
+     * in `saf_import` (stage elapsed 342/454/432s) with the same SQLITE_BUSY
+     * out of this read, and the D-210 discriminator readings at capture
+     * (`journalNonEmpty=false`, `ledger.db` mtime same-minute as capture)
+     * confirmed the live app writes in sustained bursts of short transactions
+     * rather than holding one abandoned transaction — so the D-209 retry
+     * chain (12 attempts, ~47s worst-case budget) always exhausted inside a
+     * burst. Before each retry [waitUntilJournalQuiesces] now polls the
+     * active generation's rollback journal and only proceeds to the backoff
+     * and the next attempt once the journal has read empty for
+     * [AndroidScaleOracleRetry.JOURNAL_QUIESCE_CONSECUTIVE] consecutive
+     * polls; the wait is bounded by
+     * [AndroidScaleOracleRetry.JOURNAL_WAIT_BUDGET_MS] and, independently,
+     * by the stage deadline via [tick]. A stale generation's journal check is
+     * harmless because every attempt re-validates the active pointer anyway.
      */
     fun <T> read(action: (SQLiteDatabase, String) -> T): T {
         tick()
@@ -90,6 +107,7 @@ internal class AndroidScaleOracle(
             } catch (failure: Throwable) {
                 retry++
                 if (retry < AndroidScaleOracleRetry.LOCK_RETRY_MAX_ATTEMPTS && AndroidScaleOracleRetry.isLockRetryable(failure)) {
+                    waitUntilJournalQuiesces()
                     SystemClock.sleep(AndroidScaleOracleRetry.lockRetryBackoffMs(retry))
                     tick()
                 } else {
@@ -98,6 +116,76 @@ internal class AndroidScaleOracle(
             }
         }
     }
+
+    /**
+     * D-211 journal quiescence gate for one retry gap: polls the active
+     * generation's rollback journal every
+     * [AndroidScaleOracleRetry.JOURNAL_WAIT_POLL_MS] and returns as soon as it
+     * reads empty/absent for
+     * [AndroidScaleOracleRetry.JOURNAL_QUIESCE_CONSECUTIVE] consecutive polls,
+     * or once [AndroidScaleOracleRetry.JOURNAL_WAIT_BUDGET_MS] of waiting is
+     * spent (give up — the caller still sleeps its backoff and attempts,
+     * because attempts are what surface the lock error or success honestly).
+     * The journal stat never throws out of this loop: any stat error counts
+     * that poll as empty, and pointer resolution failures skip the gate
+     * entirely so the caller proceeds straight to the backoff. The stage
+     * deadline stays the hard bound: [tick] runs after every sleep, never
+     * during one.
+     */
+    private fun waitUntilJournalQuiesces() {
+        val journalPath = activeGenerationJournalPath() ?: return
+        val journal = File(journalPath)
+        var consecutiveEmpty = 0
+        var waitedMs = 0L
+        while (true) {
+            val journalLen = try {
+                journal.length()
+            } catch (failure: Throwable) {
+                0L
+            }
+            val consecutive = if (journalLen <= 0) consecutiveEmpty + 1 else 0
+            when (AndroidScaleOracleRetry.journalWaitDecision(journalLen, consecutive, waitedMs)) {
+                AndroidScaleOracleRetry.JournalWait.PROCEED, AndroidScaleOracleRetry.JournalWait.GIVE_UP -> return
+                AndroidScaleOracleRetry.JournalWait.WAIT -> {
+                    SystemClock.sleep(AndroidScaleOracleRetry.JOURNAL_WAIT_POLL_MS)
+                    waitedMs += AndroidScaleOracleRetry.JOURNAL_WAIT_POLL_MS
+                    consecutiveEmpty = consecutive
+                    tick()
+                }
+            }
+        }
+    }
+
+    /**
+     * Best-effort path of the active generation's rollback journal
+     * (`main` + `"-journal"`): resolves pointer → generation → main file the
+     * same way [attemptRead] does, but with every failure contained to null —
+     * the caller then skips the gate, and the attempt re-validates the pointer
+     * and generation invariants exactly as before.
+     */
+    private fun activeGenerationJournalPath(): String? =
+        try {
+            val pointer = File(layout.activePointerFile)
+            if (pointer.isFile) {
+                val name = pointer.readBytes().toString(Charsets.UTF_8)
+                if (Regex("gen-[1-9][0-9]*").matches(name)) {
+                    val number = name.removePrefix("gen-").toInt()
+                    val base = File(layout.generationsDirectory).canonicalFile.toPath()
+                    val directory = File(layout.generationDirectory(number)).canonicalFile
+                    if (directory.toPath().startsWith(base) && directory.toPath() != base) {
+                        "${layout.mainFile(directory.path)}-journal"
+                    } else {
+                        null
+                    }
+                } else {
+                    null
+                }
+            } else {
+                null
+            }
+        } catch (failure: Throwable) {
+            null
+        }
 
     /** One full observation attempt: pointer/journal checks, open, read, re-check. */
     private fun <T> attemptRead(action: (SQLiteDatabase, String) -> T): T {

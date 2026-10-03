@@ -52,6 +52,78 @@ class AndroidScaleOracleRetryTest {
         // Initial attempt + 11 retries, bounded independently of deadlines.
         assertEquals(12, AndroidScaleOracleRetry.LOCK_RETRY_MAX_ATTEMPTS)
     }
+
+    @Test
+    fun quiescenceRequiresEmptyJournalAndConsecutiveThreshold() {
+        // D-211: PROCEED needs both an empty/absent journal and the
+        // consecutive-empty threshold; fewer consecutive empty polls wait.
+        assertEquals(
+            AndroidScaleOracleRetry.JournalWait.WAIT,
+            AndroidScaleOracleRetry.journalWaitDecision(0L, 0, 0L),
+        )
+        assertEquals(
+            AndroidScaleOracleRetry.JournalWait.WAIT,
+            AndroidScaleOracleRetry.journalWaitDecision(0L, 1, 0L),
+        )
+        assertEquals(
+            AndroidScaleOracleRetry.JournalWait.PROCEED,
+            AndroidScaleOracleRetry.journalWaitDecision(0L, AndroidScaleOracleRetry.JOURNAL_QUIESCE_CONSECUTIVE, 0L),
+        )
+        assertEquals(
+            AndroidScaleOracleRetry.JournalWait.PROCEED,
+            AndroidScaleOracleRetry.journalWaitDecision(0L, AndroidScaleOracleRetry.JOURNAL_QUIESCE_CONSECUTIVE + 3, 0L),
+        )
+    }
+
+    @Test
+    fun nonEmptyJournalAlwaysWaitsWhileBudgetRemains() {
+        // D-211: a non-empty journal waits regardless of the consecutive count.
+        assertEquals(
+            AndroidScaleOracleRetry.JournalWait.WAIT,
+            AndroidScaleOracleRetry.journalWaitDecision(512L, 0, 0L),
+        )
+        assertEquals(
+            AndroidScaleOracleRetry.JournalWait.WAIT,
+            AndroidScaleOracleRetry.journalWaitDecision(1L, AndroidScaleOracleRetry.JOURNAL_QUIESCE_CONSECUTIVE + 3, 0L),
+        )
+        assertEquals(
+            AndroidScaleOracleRetry.JournalWait.WAIT,
+            AndroidScaleOracleRetry.journalWaitDecision(512L, 0, AndroidScaleOracleRetry.JOURNAL_WAIT_BUDGET_MS - 1),
+        )
+    }
+
+    @Test
+    fun exhaustedBudgetGivesUpEvenWhenJournalNonEmpty() {
+        // D-211: give-up proceeds with the attempt rather than failing; a
+        // bounded observer that cannot confirm quiescence still tries.
+        assertEquals(
+            AndroidScaleOracleRetry.JournalWait.GIVE_UP,
+            AndroidScaleOracleRetry.journalWaitDecision(512L, 0, AndroidScaleOracleRetry.JOURNAL_WAIT_BUDGET_MS),
+        )
+        assertEquals(
+            AndroidScaleOracleRetry.JournalWait.GIVE_UP,
+            AndroidScaleOracleRetry.journalWaitDecision(1L, AndroidScaleOracleRetry.JOURNAL_QUIESCE_CONSECUTIVE + 3, AndroidScaleOracleRetry.JOURNAL_WAIT_BUDGET_MS),
+        )
+    }
+
+    @Test
+    fun theJournalWaitBudgetBoundaryIsInclusiveGiveUpNotWait() {
+        assertEquals(
+            AndroidScaleOracleRetry.JournalWait.GIVE_UP,
+            AndroidScaleOracleRetry.journalWaitDecision(512L, 1, AndroidScaleOracleRetry.JOURNAL_WAIT_BUDGET_MS),
+        )
+        assertEquals(
+            AndroidScaleOracleRetry.JournalWait.WAIT,
+            AndroidScaleOracleRetry.journalWaitDecision(512L, 1, AndroidScaleOracleRetry.JOURNAL_WAIT_BUDGET_MS - 1),
+        )
+    }
+
+    @Test
+    fun theJournalWaitConstantsStayPinned() {
+        assertEquals(1000L, AndroidScaleOracleRetry.JOURNAL_WAIT_POLL_MS)
+        assertEquals(300_000L, AndroidScaleOracleRetry.JOURNAL_WAIT_BUDGET_MS)
+        assertEquals(2, AndroidScaleOracleRetry.JOURNAL_QUIESCE_CONSECUTIVE)
+    }
 }
 
 /** Declared only for the subclass rule; never constructed on the JVM. */
