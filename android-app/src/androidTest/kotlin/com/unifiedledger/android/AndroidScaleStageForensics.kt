@@ -49,11 +49,11 @@ import java.io.File
  * DefaultDispatcher / target-package-prefixed threads, but the lock-holder
  * thread's name is unknown -- the long-DB-op threads seen in logcat (tids
  * 8572/8589) were never confirmed in a capture -- and was likely filtered out
- * of every failure capture so far, which is exactly why the failure-instant
- * forensics always looked idle while the oracle starved on SQLITE_BUSY. The
- * unfiltered, name-sorted, count-bounded dump exposes the SHARED-lock
- * holder's park location directly; the filtered field stays byte-compatible
- * for coldstart continuity.
+ * of every failure capture so far. Under the leaked-reader working hypothesis
+ * the idle-looking capture is the filter's blind spot rather than evidence
+ * that the process was idle; the unfiltered, name-sorted, count-bounded dump
+ * exposes the SHARED-lock holder's park location directly. The filtered field
+ * stays byte-compatible for coldstart continuity.
  */
 internal object AndroidScaleStageForensics {
     const val DEVICE_JSON = "android-scale-stage-forensics.json"
@@ -163,10 +163,20 @@ internal object AndroidScaleStageForensics {
                         .put("skipped", JSONArray(skipped))
                         .put("screenshot", screenshot),
                 )
-        // Hard file-size boundary: when the guard trips, the bulk thread
-        // arrays are dropped (the larger unfiltered dump first, then the
-        // filtered one if still oversized) and each drop is recorded, never
-        // hidden. captureMs is finalized after this re-serialization decision.
+        // Hard file-size boundary: when the guard trips, the filtered thread
+        // array is dropped first -- allThreads is an information superset of
+        // it (64 >= 24 threads, 48 >= 40 frames, the same 200-char frame cap,
+        // no name/frame filter), so the lock-holder evidence survives; only
+        // if still oversized is the unfiltered dump dropped too. Each drop is
+        // recorded, never hidden. captureMs is finalized after this
+        // re-serialization decision.
+        if (AndroidColdstartForensics.jsonOversized(body.toString().length)) {
+            body
+                .getJSONObject("failure")
+                .put("threads", JSONArray())
+                .put("threadsTruncated", true)
+                .put("threadsDroppedForSize", true)
+        }
         if (AndroidColdstartForensics.jsonOversized(body.toString().length)) {
             body
                 .getJSONObject("failure")
@@ -174,13 +184,6 @@ internal object AndroidScaleStageForensics {
                 .put("allThreadsTruncated", true)
                 .put("allThreadsFramesTruncated", true)
                 .put("allThreadsDroppedForSize", true)
-        }
-        if (AndroidColdstartForensics.jsonOversized(body.toString().length)) {
-            body
-                .getJSONObject("failure")
-                .put("threads", JSONArray())
-                .put("threadsTruncated", true)
-                .put("threadsDroppedForSize", true)
         }
         body.getJSONObject("failure").put("captureMs", SystemClock.elapsedRealtime() - captureStarted)
         return body

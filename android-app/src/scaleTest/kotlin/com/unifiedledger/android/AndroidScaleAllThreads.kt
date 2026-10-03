@@ -24,6 +24,9 @@ internal object AndroidScaleAllThreads {
     const val MAX_ALL_THREADS = 64
     const val MAX_ALL_FRAMES_PER_THREAD = 48
 
+    /** Matches the D-202 [AndroidColdstartForensics.MAX_FRAME_CHARS] frame cap. */
+    const val MAX_ALL_FRAME_CHARS = 200
+
     /** Outcome of one unfiltered capture: bounded threads plus truncation flags. */
     data class AllStacks(
         val threads: List<AndroidColdstartForensics.ThreadStack>,
@@ -34,7 +37,9 @@ internal object AndroidScaleAllThreads {
     /**
      * Bounds every thread with no name or frame filtering, sorted by name for
      * determinism; dropped threads and dropped frames are recorded via the
-     * flags instead of being hidden.
+     * flags instead of being hidden. Frame text is clamped to
+     * [MAX_ALL_FRAME_CHARS] so one pathological frame cannot blow the JSON
+     * size guard.
      */
     fun boundAllThreads(entries: List<Pair<String, List<String>>>): AllStacks {
         var threadsTruncated = false
@@ -48,7 +53,11 @@ internal object AndroidScaleAllThreads {
             if (frames.size > MAX_ALL_FRAMES_PER_THREAD) {
                 framesTruncated = true
             }
-            threads += AndroidColdstartForensics.ThreadStack(name, frames.take(MAX_ALL_FRAMES_PER_THREAD))
+            val bounded =
+                frames
+                    .take(MAX_ALL_FRAMES_PER_THREAD)
+                    .map { it.take(MAX_ALL_FRAME_CHARS) }
+            threads += AndroidColdstartForensics.ThreadStack(name, bounded)
         }
         return AllStacks(threads, threadsTruncated, framesTruncated)
     }

@@ -64,8 +64,51 @@ class AndroidScaleAllThreadsTest {
     }
 
     @Test
+    fun exactlySixtyFourThreadsPassThroughUntruncated() {
+        // The >=/> off-by-one: the cap itself is kept, one more is dropped.
+        val entries = (0 until AndroidScaleAllThreads.MAX_ALL_THREADS).map { index -> "t%03d".format(index) to listOf("frame") }
+        val bounded = AndroidScaleAllThreads.boundAllThreads(entries)
+        assertFalse(bounded.threadsTruncated)
+        assertFalse(bounded.framesTruncated)
+        assertEquals(AndroidScaleAllThreads.MAX_ALL_THREADS, bounded.threads.size)
+        assertEquals("t000", bounded.threads.first().name)
+        assertEquals("t%03d".format(AndroidScaleAllThreads.MAX_ALL_THREADS - 1), bounded.threads.last().name)
+    }
+
+    @Test
+    fun exactlyFortyEightFramesPassThroughUnflagged() {
+        val entries =
+            listOf(
+                "main" to (0 until AndroidScaleAllThreads.MAX_ALL_FRAMES_PER_THREAD).map { index -> "frame$index" },
+                "short" to listOf("f1"),
+            )
+        val bounded = AndroidScaleAllThreads.boundAllThreads(entries)
+        assertFalse(bounded.threadsTruncated)
+        assertFalse(bounded.framesTruncated)
+        assertEquals(AndroidScaleAllThreads.MAX_ALL_FRAMES_PER_THREAD, bounded.threads.first().frames.size)
+        assertEquals(listOf("f1"), bounded.threads.last().frames)
+    }
+
+    @Test
+    fun frameTextBeyondTheCharCapIsClamped() {
+        // A pathological frame is clamped to the D-202-matching char cap so
+        // one long frame cannot blow the JSON size guard; the clamp is not a
+        // count truncation, so the flag stays false.
+        val bounded =
+            AndroidScaleAllThreads.boundAllThreads(
+                listOf("main" to listOf("x".repeat(500), "short")),
+            )
+        assertFalse(bounded.threadsTruncated)
+        assertFalse(bounded.framesTruncated)
+        assertEquals(2, bounded.threads.single().frames.size)
+        assertEquals("x".repeat(AndroidScaleAllThreads.MAX_ALL_FRAME_CHARS), bounded.threads.single().frames.first())
+        assertEquals("short", bounded.threads.single().frames.last())
+    }
+
+    @Test
     fun theAllThreadBoundsStayPinned() {
         assertEquals(64, AndroidScaleAllThreads.MAX_ALL_THREADS)
         assertEquals(48, AndroidScaleAllThreads.MAX_ALL_FRAMES_PER_THREAD)
+        assertEquals(200, AndroidScaleAllThreads.MAX_ALL_FRAME_CHARS)
     }
 }
