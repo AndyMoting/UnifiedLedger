@@ -44,6 +44,19 @@ STAGE_FORENSICS_DEVICE_FILES = {
 COLDSTART_OBSERVER_DIAG_DEVICE_FILE = "files/android-scale-observer-diag.json"
 COLDSTART_OBSERVER_DIAG = "observer-diag.json"
 
+# `adb exec-out` does not propagate the device-side exit code: when the pulled
+# file does not exist, the pull still exits 0 and adb's not-found error text
+# arrives inside the stdout stream (D-207: run 37123941430 recorded 73 bytes of
+# `cat: files/...: No such file or directory` as payload with a sha256). Such a
+# payload must be classified as absent, never kept as file content.
+ADB_NOT_FOUND_PREFIXES = (b"cat:", b"run-as:")
+
+
+def is_adb_not_found(payload: bytes | bytearray) -> bool:
+    """True when a pulled forensics payload is adb's device-side not-found error text."""
+    text = bytes(payload).strip()
+    return text.startswith(ADB_NOT_FOUND_PREFIXES) and b"No such file or directory" in text
+
 # Host-side coldstart discriminating probe (D-205, diagnostics only; it never
 # feeds validation or any PASS/FAIL judgment). While the device evidence shows
 # the coldstart stage running for >=30s, an independent host read of the device
@@ -525,6 +538,32 @@ class ScaleRunner:
         except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
             self.report["diagnostic_error"] = True
 
+    def pull_forensics_file(self, source: str, target: str) -> str | dict:
+        """Pull one device forensics file and build its host.json record (D-207).
+
+        `adb exec-out` exits 0 even when the device-side `cat` fails, with the
+        error text merged into the stream; a payload matching the adb not-found
+        signature (or an empty one) is recorded as absent — never as file
+        content with a sha256. A present-but-corrupt file is still kept and
+        flagged exactly as before (malformed JSON => json_valid=false; sha
+        mismatch => sha_match=false).
+        """
+        payload = self.adb("exec-out", "run-as", PACKAGE, "cat", source, binary=True, best_effort=True, timeout=15)
+        if not payload or not isinstance(payload, (bytes, bytearray)):
+            return "absent"
+        if is_adb_not_found(payload):
+            return "absent"
+        (self.evidence / target).write_bytes(payload)
+        record = {"sha256": hashlib.sha256(payload).hexdigest(), "bytes": len(payload)}
+        if target.endswith(".json"):
+            try:
+                parsed = json.loads(payload.decode("utf-8"))
+                record["json_valid"] = isinstance(parsed, dict)
+                record["sha_match"] = isinstance(parsed, dict) and parsed.get("sha") == self.sha
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                record["json_valid"] = False
+        return record
+
     def collect_coldstart_forensics(self) -> None:
         """Best-effort retrieval of the device-side coldstart forensics the
         instrumentation wrote before teardown. Never faked and never required:
@@ -534,20 +573,7 @@ class ScaleRunner:
         collected: dict = {}
         try:
             for source, target in COLDSTART_FORENSICS_DEVICE_FILES.items():
-                payload = self.adb("exec-out", "run-as", PACKAGE, "cat", source, binary=True, best_effort=True, timeout=15)
-                if not payload or not isinstance(payload, (bytes, bytearray)):
-                    collected[target] = "absent"
-                    continue
-                (self.evidence / target).write_bytes(payload)
-                record = {"sha256": hashlib.sha256(payload).hexdigest(), "bytes": len(payload)}
-                if target.endswith(".json"):
-                    try:
-                        parsed = json.loads(payload.decode("utf-8"))
-                        record["json_valid"] = isinstance(parsed, dict)
-                        record["sha_match"] = isinstance(parsed, dict) and parsed.get("sha") == self.sha
-                    except (UnicodeDecodeError, json.JSONDecodeError):
-                        record["json_valid"] = False
-                collected[target] = record
+                collected[target] = self.pull_forensics_file(source, target)
         except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
             collected["error"] = True
         self.report["coldstart_forensics"] = collected
@@ -594,20 +620,7 @@ class ScaleRunner:
         collected: dict = {}
         try:
             for source, target in STAGE_FORENSICS_DEVICE_FILES.items():
-                payload = self.adb("exec-out", "run-as", PACKAGE, "cat", source, binary=True, best_effort=True, timeout=15)
-                if not payload or not isinstance(payload, (bytes, bytearray)):
-                    collected[target] = "absent"
-                    continue
-                (self.evidence / target).write_bytes(payload)
-                record = {"sha256": hashlib.sha256(payload).hexdigest(), "bytes": len(payload)}
-                if target.endswith(".json"):
-                    try:
-                        parsed = json.loads(payload.decode("utf-8"))
-                        record["json_valid"] = isinstance(parsed, dict)
-                        record["sha_match"] = isinstance(parsed, dict) and parsed.get("sha") == self.sha
-                    except (UnicodeDecodeError, json.JSONDecodeError):
-                        record["json_valid"] = False
-                collected[target] = record
+                collected[target] = self.pull_forensics_file(source, target)
         except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
             collected["error"] = True
         self.report["stage_forensics"] = collected

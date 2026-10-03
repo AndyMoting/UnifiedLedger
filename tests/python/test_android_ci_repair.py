@@ -466,6 +466,23 @@ class HostOrchestration(unittest.TestCase):
         self.assertFalse((self.runner.evidence / "coldstart-forensics.json").exists())
         self.assertFalse((self.runner.evidence / "coldstart-forensics.png").exists())
 
+    def test_coldstart_adb_not_found_text_is_recorded_absent_and_never_kept_as_content(self):
+        # D-207: real `adb exec-out` behavior — a missing device file still
+        # exits 0 and adb's `cat: ...: No such file or directory` error text
+        # arrives inside the stdout stream instead of a device-side failure.
+        self.runner.serial = "emulator-5554"
+        self.runner.adb = self.forensics_adb({
+            "files/android-scale-coldstart-forensics.json":
+                b"cat: files/android-scale-coldstart-forensics.json: No such file or directory\n",
+            "files/android-scale-coldstart-forensics.png":
+                b"cat: files/android-scale-coldstart-forensics.png: No such file or directory\n",
+        })
+        self.runner.diagnostics(failure=True)
+        self.assertEqual(self.runner.report["coldstart_forensics"],
+                         {"coldstart-forensics.json": "absent", "coldstart-forensics.png": "absent"})
+        self.assertFalse((self.runner.evidence / "coldstart-forensics.json").exists())
+        self.assertFalse((self.runner.evidence / "coldstart-forensics.png").exists())
+
     def test_malformed_or_sha_mismatched_forensics_is_kept_but_flagged(self):
         self.runner.serial = "emulator-5554"
         responses = {"files/android-scale-coldstart-forensics.json": b"{not json"}
@@ -999,6 +1016,33 @@ class StageForensicsRecycle(unittest.TestCase):
                          {"stage-forensics.json": "absent", "stage-forensics.png": "absent"})
         self.assertFalse((self.runner.evidence / "stage-forensics.json").exists())
         self.assertFalse((self.runner.evidence / "stage-forensics.png").exists())
+
+    def test_stage_adb_not_found_text_is_recorded_absent_and_never_kept_as_content(self):
+        # D-207: same adb not-found signature as the coldstart pull — the 73
+        # bytes of `cat: ...: No such file or directory` from run 37123941430
+        # must be recorded as absent, with no fabricated sha256 or bytes.
+        self.runner.adb = self.forensics_adb({
+            "files/android-scale-stage-forensics.json":
+                b"cat: files/android-scale-stage-forensics.json: No such file or directory\n",
+            "files/android-scale-stage-forensics.png":
+                b"cat: files/android-scale-stage-forensics.png: No such file or directory\n",
+        })
+        self.runner.diagnostics(failure=True)
+        self.assertEqual(self.runner.report["stage_forensics"],
+                         {"stage-forensics.json": "absent", "stage-forensics.png": "absent"})
+        self.assertFalse((self.runner.evidence / "stage-forensics.json").exists())
+        self.assertFalse((self.runner.evidence / "stage-forensics.png").exists())
+
+    def test_present_but_malformed_stage_forensics_is_kept_and_flagged_not_absent(self):
+        # A present-but-corrupt file does not match the adb not-found signature
+        # and must survive exactly as before: kept on disk, json_valid=false,
+        # no sha_match — never misclassified as absent.
+        self.runner.adb = self.forensics_adb({"files/android-scale-stage-forensics.json": b"{not json"})
+        self.runner.diagnostics(failure=True)
+        record = self.runner.report["stage_forensics"]["stage-forensics.json"]
+        self.assertEqual(record,
+                         {"sha256": hashlib.sha256(b"{not json").hexdigest(), "bytes": 9, "json_valid": False})
+        self.assertEqual((self.runner.evidence / "stage-forensics.json").read_bytes(), b"{not json")
 
     def test_pull_failure_is_recorded_as_degraded_and_keeps_coldstart_record_independent(self):
         payload = json.dumps({"schema": 1, "kind": "coldstart-forensics", "sha": SHA}).encode("utf-8")

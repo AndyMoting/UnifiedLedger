@@ -1147,9 +1147,11 @@ fun P503App(
                 // operation lease; the captured generation gates the landing (stale => discard).
                 val outcome =
                     ledger.leased { facade, _ ->
-                        val state = runCatching { facade.queryCurrentState.query() }.getOrNull()
+                        // D-207: the swallowed state-read failure is kept (runCatching behavior
+                        // unchanged) so the D-203 trace can carry the exception class name.
+                        val stateResult = runCatching { facade.queryCurrentState.query() }
                         val pins = runCatching { facade.entryPreferences?.pinnedTargets(ledger.ledgerId) }.getOrNull()
-                        state to pins
+                        Triple(stateResult.getOrNull(), stateResult.exceptionOrNull(), pins)
                     }
                 // Back on the main dispatcher: seed the pin mirror, then dispatch serially.
                 scope.launch {
@@ -1165,12 +1167,17 @@ fun P503App(
                             // D-203 startup trace: the initial read landed.
                             StartupTrace.emit("read.currentState end kind=success")
                             // P7-02.D E-4: seed the persisted pins so they survive an app restart.
-                            (outcome as LeaseOutcome.Completed).value.second?.let { pins -> pinnedTargets = pins }
+                            (outcome as LeaseOutcome.Completed).value.third?.let { pins -> pinnedTargets = pins }
                             dispatch(P503UiEvent.InitialLoadResult(result.state, pinnedTargets))
                         }
                         else -> {
-                            // D-203 startup trace: the initial read failed.
-                            StartupTrace.emit("read.currentState end kind=failed")
+                            // D-203 startup trace: the initial read failed. D-207: the class name
+                            // of the swallowed state-read failure (or "unknown" when the lease
+                            // itself did not complete) is the only extra content — diagnostics
+                            // only, dispatch and retry behavior unchanged.
+                            val readFailure = (outcome as? LeaseOutcome.Completed)?.value?.second
+                            val errorType = readFailure?.javaClass.simpleName ?: "unknown"
+                            StartupTrace.emit("read.currentState end kind=failed errorType=$errorType")
                             dispatch(P503UiEvent.InitialLoadFailed)
                         }
                     }
