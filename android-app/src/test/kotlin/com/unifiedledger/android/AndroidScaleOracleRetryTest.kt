@@ -124,6 +124,20 @@ class AndroidScaleOracleRetryTest {
         assertEquals(300_000L, AndroidScaleOracleRetry.JOURNAL_WAIT_BUDGET_MS)
         assertEquals(2, AndroidScaleOracleRetry.JOURNAL_QUIESCE_CONSECUTIVE)
     }
+
+    @Test
+    fun theBusyTimeoutConstantStaysPinned() {
+        // D-212: kernel-level busy wait per lock wait, layered over the D-209
+        // attempts and the D-211 quiescence gate.
+        assertEquals(60_000L, AndroidScaleOracleRetry.ORACLE_BUSY_TIMEOUT_MS)
+    }
+
+    @Test
+    fun theBusyTimeoutPragmaIsExact() {
+        // D-212: the pragma the oracle executes once per attempt right after
+        // the read-only connection opens and before its transaction begins.
+        assertEquals("PRAGMA busy_timeout=60000", AndroidScaleOracleRetry.busyTimeoutPragma())
+    }
 }
 
 /** Declared only for the subclass rule; never constructed on the JVM. */

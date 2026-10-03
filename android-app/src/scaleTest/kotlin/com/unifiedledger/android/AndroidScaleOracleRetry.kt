@@ -74,6 +74,24 @@ internal object AndroidScaleOracleRetry {
      */
     const val JOURNAL_QUIESCE_CONSECUTIVE = 2
 
+    /**
+     * D-212 kernel-level busy wait for the oracle's read-only connection:
+     * SQLite itself waits up to this long on every lock conflict instead of
+     * failing after the default ~2.5s, because four maximum rounds failed
+     * identically at the same observation (342/454/432/384s stage elapsed)
+     * with the D-209 attempts and the D-211 gate intact — the in-SQLite busy
+     * wait was far shorter than the live app's contiguous write spans.
+     */
+    const val ORACLE_BUSY_TIMEOUT_MS = 60_000L
+
+    /**
+     * D-212 pragma executed once per attempt immediately after the read-only
+     * connection opens and before its transaction begins; the busy timeout
+     * then governs every lock wait inside that attempt's transaction. The
+     * result row returns the applied timeout value.
+     */
+    fun busyTimeoutPragma(): String = "PRAGMA busy_timeout=$ORACLE_BUSY_TIMEOUT_MS"
+
     /** D-211 outcome of one journal quiescence evaluation for a retry gap. */
     enum class JournalWait {
         /** Journal empty for long enough: quiescent enough to attempt now. */

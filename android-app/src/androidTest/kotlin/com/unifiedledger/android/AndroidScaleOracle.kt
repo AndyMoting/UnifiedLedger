@@ -97,6 +97,22 @@ internal class AndroidScaleOracle(
      * [AndroidScaleOracleRetry.JOURNAL_WAIT_BUDGET_MS] and, independently,
      * by the stage deadline via [tick]. A stale generation's journal check is
      * harmless because every attempt re-validates the active pointer anyway.
+     *
+     * D-212 layers a kernel-level busy wait on every attempt: four maximum
+     * rounds then failed identically at the same read-only observation (the
+     * `assertFixture` JOIN, stage elapsed 342/454/432/384s) with the D-209
+     * attempts and the D-211 gate intact, because the in-SQLite busy wait
+     * (default ~2.5s) is far shorter than the live app's contiguous write
+     * spans — every app-layer wait arrangement still died inside a burst.
+     * Immediately after the connection opens, [attemptRead] executes
+     * [AndroidScaleOracleRetry.busyTimeoutPragma] once per attempt, raising
+     * the per-wait kernel busy timeout to
+     * [AndroidScaleOracleRetry.ORACLE_BUSY_TIMEOUT_MS]; the timeout then
+     * governs every lock wait inside that attempt's transaction
+     * (beginTransactionReadOnly, the action's queries and the post-action
+     * pointer re-checks). Pre-committed stop-loss: if this round still fails
+     * at the same observation, oracle-side patching is over and the design
+     * decision moves to product-side WAL mode vs chain observation redesign.
      */
     fun <T> read(action: (SQLiteDatabase, String) -> T): T {
         tick()
@@ -207,6 +223,7 @@ internal class AndroidScaleOracle(
                 error("database corruption; preserve file")
             }.use { database ->
                 check(database.isReadOnly)
+                database.rawQuery(AndroidScaleOracleRetry.busyTimeoutPragma(), null).use { it.moveToFirst() }
                 database.beginTransactionReadOnly()
                 try {
                     val result = action(database, name)
