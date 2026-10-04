@@ -507,7 +507,12 @@ class ScaleRunner:
 
     def install(self):
         if self.mode == "maximum":
-            validate_manifest(load_manifest(self.fixture / "manifest.json"), self.fixture)
+            manifest = load_manifest(self.fixture / "manifest.json")
+            # D-216: the local diagnostic channel drives the profile the staged
+            # fixture itself declares (its generator-consistency is still fully
+            # validated); the default CI path stays pinned to `maximum`.
+            expected_profile = manifest.profile if self.local_diagnostic else "maximum"
+            validate_manifest(manifest, self.fixture, expected_profile=expected_profile)
         else:
             prepare_probe(self.fixture, self.sha)
         for role, apk in (("app", self.app), ("test", self.test)):

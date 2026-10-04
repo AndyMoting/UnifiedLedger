@@ -376,17 +376,15 @@ class ReducerRejectsWrongIdentityAndCrashes(unittest.TestCase):
         host["authority"] = "local-diagnostic"
         save(self.directory, "host.json", host)
         self.assert_rejected()
-        # An unknown/rewritten authority value is refused too; only an omitted
-        # (cloud) authority or an explicit "cloud" is accepted.
-        for value in ("cloud", None):
+        # Nothing ever stamps `cloud` (a cloud run omits the key entirely), so
+        # any present value — a hand-rewritten `cloud` included — is refused.
+        for value in ("cloud", "local"):
             host["authority"] = value
-            if value is None:
-                del host["authority"]
             save(self.directory, "host.json", host)
-            self.assertEqual(validate_evidence(self.directory, SHA)["status"], "PASS")
-        host["authority"] = "local"
+            self.assert_rejected()
+        del host["authority"]
         save(self.directory, "host.json", host)
-        self.assert_rejected()
+        self.assertEqual(validate_evidence(self.directory, SHA)["status"], "PASS")
 
     def test_host_timeout_flag_is_rejected(self):
         host = load(self.directory, "host.json")
@@ -1070,6 +1068,48 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
             pushed = ("push", str(fixture) + "/.", "/data/local/tmp/ul-scale/")
             self.assertIn(pushed, calls)
             self.assertNotIn(("shell",) + pushed, calls)
+
+    def test_install_pins_maximum_on_the_default_channel_only(self):
+        # D-216: the CI channel keeps validating the staged fixture against
+        # `maximum` even when a smaller fixture directory is handed to it;
+        # only the local diagnostic channel accepts the profile the fixture
+        # itself declares (still fully generator-validated).
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture"
+            generate_fixture(fixture, profile="local-small")
+            app = root / "app.apk"
+            app.write_bytes(b"app")
+            test = root / "test.apk"
+            test.write_bytes(b"test")
+            runner = self.make_runner(root)
+            runner.fixture, runner.app, runner.test = fixture, app, test
+            with self.assertRaisesRegex(ValueError, "^fixture profile mismatch$"):
+                runner.install()
+            local = ScaleRunner(root, root / "evidence-local", root / "app.apk", root / "test.apk", SHA,
+                                local_diagnostic=True)
+            local.fixture, local.app, local.test = fixture, app, test
+            calls = []
+
+            def record(*args, **_kwargs):
+                calls.append(args)
+                if args and args[0] == "install":
+                    return "Success"
+                if args[:3] == ("shell", "cmd", "package"):
+                    return "priority=0\ncom.unifiedledger.android/.MainActivity\n"
+                if args[:3] == ("shell", "am", "start"):
+                    return "Status: ok\n"
+                if args[:3] == ("shell", "pm", "list"):
+                    return f"instrumentation:{runner_module.RUNNER} (target=com.unifiedledger.android)\n"
+                if args[:3] == ("shell", "pm", "path"):
+                    return "package:/data/app/base.apk\n"
+                if args[:3] == ("exec-out", "run-as", "com.unifiedledger.android"):
+                    return (fixture / args[-1].split("/")[-1]).read_bytes()
+                return ready_adb_reply(args)
+
+            local.adb = record
+            local.install()
+            self.assertTrue(calls)
 
     def test_install_rejects_a_silent_install_failure(self):
         # `adb install` exits 0 even when the install fails; the verdict is in

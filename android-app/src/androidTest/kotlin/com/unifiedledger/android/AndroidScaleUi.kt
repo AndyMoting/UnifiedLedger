@@ -437,7 +437,7 @@ internal class AndroidScaleUi(
         error("edge traversal bound exceeded")
     }
 
-    fun selectSafFixture() {
+    fun selectSafFixture(fileName: String) {
         seek("支付宝账单（CSV）", forward = false)
         val format = findNode { it.text?.toString() == "支付宝账单（CSV）" } ?: error("Alipay format entry absent")
         val picks = nodes(root()).filter { it.text?.toString() == "选择文件" && it.isVisibleToUser }
@@ -449,7 +449,7 @@ internal class AndroidScaleUi(
         await {
             val picker = automation.windows.mapNotNull { it.root }.firstOrNull { it.packageName?.toString()?.contains("documentsui") == true } ?: return@await false
             val entries = nodes(picker)
-            val file = entries.firstOrNull { it.text?.toString() == "session-06.csv" && it.isVisibleToUser }
+            val file = entries.firstOrNull { it.text?.toString() == fileName && it.isVisibleToUser }
             if (file != null) {
                 clickNode(file)
                 true

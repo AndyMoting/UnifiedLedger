@@ -186,11 +186,10 @@ def validate_evidence(directory: Path, expected_sha: str) -> dict:
         raise ValueError("maximum evidence mode required")
     # D-216 authority boundary: a local diagnostic run (opt-in runner flag) is
     # never acceptance evidence, even when it targeted the five-phase maximum
-    # mode. The runner stamps `authority: local-diagnostic` on that channel; a
-    # cloud run omits the key entirely. Any other authority value is refused
-    # too, so a rewritten report cannot smuggle a local run past acceptance.
-    authority = report.get("authority")
-    if authority is not None and authority != "cloud":
+    # mode. The runner stamps `authority: local-diagnostic` on that channel and
+    # nothing ever stamps `cloud`, so a cloud report simply omits the key: any
+    # present value — including a hand-rewritten `cloud` — is refused.
+    if report.get("authority") is not None:
         raise ValueError("cloud acceptance authority required; local-diagnostic evidence is not acceptance")
     validate_log_collection(directory)
     validate_app_ready(directory, report)

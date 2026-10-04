@@ -347,13 +347,14 @@ internal class AndroidScaleOracle(
     fun assertFixture(
         snapshot: ScaleSnapshot,
         state: JSONObject,
+        spec: AndroidScaleFixtureSpec,
         final: Boolean,
     ) {
         check(snapshot.generation == state.getString("generation"))
         val sessions = state.getJSONArray("sessions")
         val bySession = snapshot.rows.groupBy { it.session }
         check(bySession.size == sessions.length() + if (final) 1 else 0)
-        check(sessions.length() == 6)
+        check(sessions.length() == spec.stateSessions)
         val known = HashSet<String>()
         for (index in 0 until sessions.length()) {
             val session = sessions.getJSONObject(index)
@@ -361,21 +362,22 @@ internal class AndroidScaleOracle(
             known += inputRef
             val actual = bySession.getValue(inputRef).sortedBy { it.ordinal }
             val ids = session.getJSONArray("candidateIds")
-            val count = if (index < 5) 10000 else 1000
+            val count = spec.sessionRows(index)
+            val offset = spec.sessionAmountOffset(index)
             check(actual.size == count && ids.length() == count)
             actual.forEachIndexed { ordinal, row ->
                 check(row.ordinal == ordinal && row.id == ids.getString(ordinal))
-                check(row.amount == state.getLong("seed") + 1 + ordinal + if (index < 5) 0 else 10000)
+                check(row.amount == state.getLong("seed") + 1 + ordinal + offset)
             }
         }
         if (final) {
             val main = (bySession.keys - known).single()
             val actual = bySession.getValue(main).sortedBy { it.ordinal }
-            check(actual.size == 10000)
+            check(actual.size == spec.mainSessionRows)
             actual.forEachIndexed { ordinal, row -> check(row.ordinal == ordinal && row.amount == state.getLong("seed") + 1 + ordinal) }
             if (state.has("mainInputRef")) check(main == state.getString("mainInputRef")) else state.put("mainInputRef", main)
         }
-        check(snapshot.rows.size == if (final) 61000 else 51000)
+        check(snapshot.rows.size == spec.candidates(final))
         check(
             snapshot.rows
                 .map { it.id }
@@ -389,14 +391,14 @@ internal class AndroidScaleOracle(
                 .size == snapshot.rows.size,
         )
         val frequencies = snapshot.rows.groupingBy { it.amount }.eachCount()
-        check(frequencies.size == 11000)
-        check(frequencies.values.count { it == if (final) 6 else 5 } == 10000)
-        check(frequencies.values.count { it == 1 } == 1000)
-        check(snapshot.relations == if (final) 150000 else 100000)
-        val ranks = (0 until 5).associate { sessions.getJSONObject(it).getString("inputRef") to it }.toMutableMap()
-        if (final) ranks[state.getString("mainInputRef")] = 5
-        val pairCount = if (final) 15 else 10
-        val seen = BooleanArray(10000 * pairCount)
+        check(frequencies.size == spec.distinctAmounts)
+        check(frequencies.values.count { it == spec.multiplicity(final) } == spec.rowsPerSession)
+        check(frequencies.values.count { it == 1 } == spec.uniqueRows)
+        check(snapshot.relations == spec.duplicateRelations(final))
+        val ranks = (0 until spec.initialSessions).associate { sessions.getJSONObject(it).getString("inputRef") to it }.toMutableMap()
+        if (final) ranks[state.getString("mainInputRef")] = spec.initialSessions
+        val pairCount = spec.pairCount(final)
+        val seen = BooleanArray(spec.rowsPerSession * pairCount)
         read { database, _ ->
             database
                 .rawQuery(
@@ -409,7 +411,7 @@ internal class AndroidScaleOracle(
                         val subject = ranks.getValue(cursor.getString(0))
                         val previous = ranks.getValue(cursor.getString(3))
                         val ordinal = cursor.getInt(1)
-                        check(subject > previous && ordinal in 0 until 10000)
+                        check(subject > previous && ordinal in 0 until spec.rowsPerSession)
                         check(ordinal == cursor.getInt(4) && cursor.getLong(2) == cursor.getLong(5))
                         val index = ordinal * pairCount + subject * (subject - 1) / 2 + previous
                         check(!seen[index]) { "duplicate endpoint pair" }
