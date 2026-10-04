@@ -117,6 +117,7 @@ import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVoidFactKind
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.datetime.YearMonth
 import com.unifiedledger.application.MonthlyActivityResult as ApplicationMonthlyActivityResult
@@ -1136,6 +1137,23 @@ fun P503App(
     // The pin seeding stays on the main thread (it reads the preference store after the result
     // lands; the store read is the entry-preference surface, not the current-state read this
     // batch governs).
+    // D-215: the startup fires this read CONCURRENTLY with requestCatalogSnapshotLoad(), and the
+    // runtime exposes a single global, non-blocking lease whose acquisition can refuse without
+    // waiting. In run 37209978362 the read failed with `cause=leaseNotReady` 4ms after its begin
+    // while the sibling catalog read completed in 55ms and `state=Ready` had already been emitted.
+    // The cause is NOT proven: LeaseOutcome.NotReady has three sub-sources (facade unwired;
+    // runtime not Ready / no activeGeneration; the non-blocking mutex.tryLock momentarily busy),
+    // and the reviewer's counter-evidence refutes "the sibling query holds the lease" because
+    // acquireLease releases the mutex before the block runs (see InitialReadLeaseRetry KDoc).
+    // Fix A attributes the sub-source via `read.leaseNotReady reason=...` trace lines at each
+    // origin; the retry deliberately covers ALL THREE (only the bare NotReady is observable here,
+    // all three are plausibly transient at startup, the added window is bounded to at most
+    // InitialReadLeaseRetry.MAX_ATTEMPTS attempts 100ms apart, and exhaustion still surfaces the
+    // failure). The read is read-only, so re-attempting the SAME acquisition is safe; a Completed
+    // outcome (success, stale generation, readThrew, or any readResult variant) is handled exactly
+    // as before, and exhaustion preserves the D-214 fail-closed trace + InitialLoadFailed
+    // dispatch unchanged. Trace honesty: `read.currentState begin` stays and the success path is
+    // silent; each actual retry emits one bounded `read.currentState retry attempt=N` line.
     LaunchedEffect(Unit) {
         currentStateLoadCoordinator.startLoadOnce {
             // D-203 startup trace: the initial current-state read window begins (background).
@@ -1145,13 +1163,42 @@ fun P503App(
                 // the typed InitialLoadFailed and the slot release in the hop below is guaranteed.
                 // P7-06 06.1 (D-176; spec 4.3/4.4): the read and the pin seeding run under one
                 // operation lease; the captured generation gates the landing (stale => discard).
-                val outcome =
+                fun readInitialState() =
                     ledger.leased { facade, _ ->
                         // D-207: the swallowed state-read failure is kept (runCatching behavior
                         // unchanged) so the D-203 trace can carry the exception class name.
                         val stateResult = runCatching { facade.queryCurrentState.query() }
                         val pins = runCatching { facade.entryPreferences?.pinnedTargets(ledger.ledgerId) }.getOrNull()
                         Triple(stateResult.getOrNull(), stateResult.exceptionOrNull(), pins)
+                    }
+                // D-215: retry ONLY a bare LeaseOutcome.NotReady, bounded by InitialReadLeaseRetry;
+                // the same read-only acquisition is re-attempted. A Completed outcome — success,
+                // stale generation, readThrew or any readResult variant — exits the loop
+                // immediately and is handled unchanged.
+                val outcome =
+                    try {
+                        var attemptsMade = 1
+                        var attempt = readInitialState()
+                        while (attempt is LeaseOutcome.NotReady && InitialReadLeaseRetry.shouldRetry(attemptsMade, InitialReadLeaseRetry.LEASE_NOT_READY_CAUSE)) {
+                            // D-203 trace: one bounded line per actual retry (1..MAX_ATTEMPTS-1).
+                            StartupTrace.emit("read.currentState retry attempt=$attemptsMade")
+                            delay(InitialReadLeaseRetry.RETRY_DELAY_MS)
+                            attempt = readInitialState()
+                            attemptsMade += 1
+                        }
+                        attempt
+                    } catch (failure: kotlinx.coroutines.CancellationException) {
+                        // D-215 Fix C: `delay` is the first suspension point this initial-load
+                        // path has ever had, so a cancellation landing during a retry would abort
+                        // before the landing hop and leave the single-flight slot set. The only
+                        // cancellation source is `scope` (cancelled when P503App leaves the
+                        // composition), at which point this remember-scoped coordinator is
+                        // discarded too — but release defensively anyway. NOT an unconditional
+                        // finally: on the normal path the landing hop consumes the coalesced
+                        // `deferredRequested` marker, and a Default-thread finally could consume
+                        // it early; this catch only runs when the normal path did not start.
+                        currentStateLoadCoordinator.loadCompleted()
+                        throw failure
                     }
                 // Back on the main dispatcher: seed the pin mirror, then dispatch serially.
                 scope.launch {
@@ -1181,8 +1228,9 @@ fun P503App(
                             val cause =
                                 if (outcome !is LeaseOutcome.Completed) {
                                     // The lease itself refused (acquireLease's non-blocking
-                                    // tryLock / RuntimeNotReady path).
-                                    "leaseNotReady"
+                                    // tryLock / RuntimeNotReady path). D-215 Fix B: the token is
+                                    // the shared constant, never a duplicated literal.
+                                    InitialReadLeaseRetry.LEASE_NOT_READY_CAUSE
                                 } else if (readFailure != null) {
                                     "readThrew errorType=${readFailure.javaClass.simpleName}"
                                 } else {

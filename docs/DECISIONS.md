@@ -4357,3 +4357,33 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 - `cause=readResult variant=null` ⇒ **当前逻辑下防御性不可达**：`getOrNull() == null` 意味着 `runCatching` 捕获了异常，于是 `exceptionOrNull() != null`，分支 2（`readThrew`）总是先胜出；因此现场若真观测到 `variant=null`，它证伪的是「分支 2 覆盖全部 null 结果」这一假设，属异常信号而非正常状态，应另案调查（既非抛异常也非枚举变体）。
 
 **关联决定：** D-213（本轮 trace 证据与全线程取证，本批迭代其仪表）、D-207（errorType 仪表与其残留披露 (b) 三因合并，本批拆分）、D-209/D-211/D-212（oracle 侧重试/门控/busy_timeout 链与止损条款，本批只读其证据）、D-203（trace 面登记合同与隐私边界）、D-198（最大规模契约）。
+
+## D-215 初始当前状态读的 leaseNotReady 有界重试与子来源归因（产品修复）
+
+**状态：** 已批准（2026-10-03；用户批准的产品修复，仅 app-ui 初始加载块、`LedgerRuntimeOwner.kt` 的 trace 归因与新增 app-ui 纯逻辑/测试，零 ledger-*、android-app、scaleTest、Python、workflow 改动）。
+
+**背景（观测事实，根因未证实）：** run 37209978362 的 trace（设备 22:55:21）为 `optimize.thread end ok=true` @958617 → `startupController.state state=Ready` @958618 → `read.catalogSnapshot begin` @958659 → `read.currentState begin` @958663 → **`read.currentState end kind=failed cause=leaseNotReady` @958667（begin 后仅 4ms）** → `read.catalogSnapshot end kind=completed` @958714（其 begin 后 55ms）。应用在启动时并发发起两个读：`P503App.kt` 初始加载 `LaunchedEffect` 里的 `read.currentState`，以及 `requestCatalogSnapshotLoad` 的 `read.catalogSnapshot`；两者都要取运行时**唯一、全局、非阻塞**的租约——`LedgerRuntimeOwner.kt:386-396` 里 `mutex.tryLock()` 失败直接返回 `RuntimeNotReady`，不等待（P7-06 规范 4.2）。`state=Ready` 已发出、目录读在同一 facade 下成功，此二者是事实。
+
+**根因归属（评审否决了「兄弟读持锁」的解释）：** D-214 解释规则列出 `LeaseOutcome.NotReady` 的三个子来源，本批**不预设**是哪一支：(a) `leased` 里 `owner.facade == null`（facade 未装配，LedgerRuntimeOwner.kt:778）；(b) `acquireLease` 里 `state != Ready` 或 `activeGeneration == null`（同文件 389-390）；(c) `mutex.tryLock()` 瞬时失败（同文件 387）。评审的反证成立：`acquireLease()` 在 `finally` 中（:394）先 `mutex.unlock()`，`leased` 之后才运行 `block()`（:782），故 55ms 的目录查询**从不持有该 mutex**，tryLock 的碰撞窗口只有微秒级——「兄弟读持续持锁」不是解释。本批据此改为**先归因、再修复**，修复不依赖归因结论。
+
+**决定：**
+
+1. **子来源归因（Fix A，`LedgerRuntimeOwner.kt`，纯 trace、零行为改动）**：在每个 `LeaseOutcome.NotReady` 源点、既有 `return` 之前 emit 一行 `read.leaseNotReady reason=<facadeNull|stateNotReady|generationAbsent|mutexBusy>`——`facadeNull` 在 `leased`（:778），`stateNotReady`/`generationAbsent`/`mutexBusy` 在 `acquireLease`（:387/389/390）。无签名/类型改动、无新公开 API；`acquireLease` 是共享路径，非读租约调用方（restore/backup）也会 emit，故靠 reason token 与时间邻近度关联到具体读者的 `cause=leaseNotReady`。遵守 StartupTrace 合同（无 id/消息/路径）。
+2. **纯重试策略（`app-ui/src/commonMain/kotlin/com/unifiedledger/ui/InitialReadLeaseRetry.kt`，JVM 可测，镜像 scaleTest `AndroidScaleOracleRetry` 的纯逻辑模式）**：`MAX_ATTEMPTS = 4`（首次 + 3 次重试）、`RETRY_DELAY_MS = 100L`、判别字 `LEASE_NOT_READY_CAUSE = "leaseNotReady"`（**单一事实来源**：生产失败 trace 插值该常量而非重复字面量，Fix B）；纯函数 `shouldRetryCause(cause)` 只对 `"leaseNotReady"` 为真，对 D-214 的 `readThrew errorType=...` / `readResult variant=...` 与其它一切为假；`attemptsRemaining(attemptsMade)` 与 `shouldRetry(attemptsMade, cause)` 提供纯尝试计数边界。KDoc 明示决策形状、三子来源、以及评审反证。
+3. **只接线进初始加载块**（`P503App.kt` 初始加载 `LaunchedEffect`，约 1157-1247 行）：把既有 `ledger.leased { ... }` 提取为局部 `readInitialState()`，在既有 `scope.launch(Dispatchers.Default)` 体内做有界重试——`while (attempt is LeaseOutcome.NotReady && InitialReadLeaseRetry.shouldRetry(...))` 则 `delay(RETRY_DELAY_MS)` 后重跑**同一个** `readInitialState()` 并累加 `attemptsMade`；循环整体包在 `try` 内，`catch (CancellationException)` 释放单飞槽后重抛（Fix C）。读本就在非主线程执行，落点跳转（内层 `scope.launch`）保持原样，仍以最终 outcome 恰运行一次。
+
+**重试范围（Fix B，诚实声明）：** 重试覆盖**全部三个子来源**。理由：循环决策点只能观测到裸 `LeaseOutcome.NotReady`，看不到子来源；初始启动瞬间三者都可能是瞬态（facade 装配、Ready 迁移、tryLock 竞争都在组合启动窗口内收敛）；新增窗口有界（最多 `(MAX_ATTEMPTS-1)*RETRY_DELAY_MS` = 300ms）；真正失效的运行时在耗尽后仍如实浮出。读是只读的（`queryCurrentState.query()` 加一次 pin preference 读），故重跑同一租约获取不创建/替换任何账本状态。**不**再声称「只重试瞬态 tryLock」。
+
+**取消安全（Fix C）：** `delay` 是本初始加载路径引入的**首个挂起点**。取消来源只有 `scope = rememberCoroutineScope()`，它仅在 P503App 离开 composition 时被取消；此时 `currentStateLoadCoordinator = remember(ledger)` 的实例也一并被丢弃，故「槽永久 `loadInFlight=true`」在该唯一场景下本就无害（下次进入 composition 会重建协调器）。尽管如此仍加防御性释放：重试块整体包在 `try` 内，`catch (kotlinx.coroutines.CancellationException)` 先 `currentStateLoadCoordinator.loadCompleted()` 再重抛，保持结构化取消语义。**不**用无条件 `finally` 释放：正常路径的落点跳转（主线程）会在合适时机调用 `loadCompleted()` 并消费 `deferredRequested`（可能存在的合并重跑），Default 线程上的 `finally` 若先跑会提前消费该标记、丢掉合并重跑；`except CancellationException` 仅在正常路径**未**运行（取消在落点跳转启动前中止）时触发，故不与合并语义冲突。`loadCompleted()` 是普通 `@Volatile` 写、释放幂等，残余竞态下依然安全。
+
+**包容规则（语义逐字节不变）：** `LeaseOutcome.Completed`（成功、stale generation、readThrew 或任何 readResult 变体）绝不重试，走与今日完全相同的分支；只有裸 `NotReady` 被重试，且最多 `MAX_ATTEMPTS` 次；耗尽后既有的 D-214 trace 构造与 `InitialLoadFailed` 派发原样运行，**不论尝试次数派发恰一次**；pin 播种、stale-generation 丢弃、`loadCompleted()`/`refresh()` 语义不变；无新增 expect/actual、无依赖新增、不修改其它 `LeaseOutcome.NotReady` 处理点（含目录读路径）。
+
+**trace 诚实（D-203 合同）：** 既有 `read.currentState begin` 保留；成功路径零新增输出；每次真实重试输出一条有界 `read.currentState retry attempt=N`（N 在 1..MAX_ATTEMPTS-1）；失败行仍为 `read.currentState end kind=failed cause=leaseNotReady`。Fix A 的 `read.leaseNotReady reason=...` 为固定 stage 字与判别 token。全部不含消息、栈、ledger id、行数据或绝对路径。
+
+**测试：** `app-ui/src/commonTest/kotlin/com/unifiedledger/ui/InitialReadLeaseRetryTest.kt` 新增九例：钉死 `MAX_ATTEMPTS=4` / `RETRY_DELAY_MS=100L`；`LEASE_NOT_READY_CAUSE` 与 `shouldRetryCause` 对 `"leaseNotReady"` 为真；D-214 既有 token 形状（`readThrew errorType=SQLiteException`、`readResult variant=Unavailable/InvalidState/null`）全为假；未知/空/带尾空格/`stale` 全为假；`attemptsRemaining` 边界（1/2/3 真、4/5 假）；`shouldRetry` 在 1/2/3 为真、4 及以上为假；非瞬态 cause 即使首次尝试也不重试；**生产循环形状在永久 NotReady 下恰于 `MAX_ATTEMPTS` 次尝试终止**（有界循环终止）；success 分支立即退出（attemptsMade 保持 1）。Kotlin 编译与 JVM 测试 CI-owned。
+
+**边界：** 改动面仅 `P503App.kt`（初始加载块 + `delay` import）、`LedgerRuntimeOwner.kt`（四处 trace emit，零行为）、新增 `InitialReadLeaseRetry.kt` 与 `InitialReadLeaseRetryTest.kt`、本条目；零 ledger-*/android-app/scaleTest/Python/workflow 改动；不修改 D-202–D-214 原文。
+
+**残留披露：** (a) 重试在最坏情况下给初始加载增加 `(MAX_ATTEMPTS - 1) * RETRY_DELAY_MS` = 300ms（且仅在连续 NotReady 时）；(b) 重试覆盖全部三子来源，故若子来源是「facade 未装配 / 运行时确实不 Ready」这类非瞬态生命周期缺陷，重试会白跑至多 300ms 后才如实失败——Fix A 的归因行在下次现场即可判定，届时可收窄；(c) 真正失效的运行时在耗尽后仍按原样失败；(d) 启动的两个并发读与唯一全局非阻塞租约仍是既有设计，本批不改变它；(e) 重试 classification 输入是 D-214 的判别串，若该串构造未来变化需同步更新本策略与其测试；(f) Fix A 的 emit 位于共享 `acquireLease` 路径，会对非读调用方一并打点（reason token 区分），带来少量额外 trace 行。
+
+**关联决定：** D-214（本批输入 contract 与三子来源解释规则的来源；耗尽行为保持不变，本批先归因）、D-207（首读失败仪表）、D-203（trace 面登记合同与隐私边界）、D-176（P7-06 规范 4.2/4.3/4.4 操作租约与非阻塞 tryLock）、D-198（最大规模契约，零改动）。

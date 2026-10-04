@@ -384,10 +384,26 @@ class LedgerRuntimeOwner<G : Any>(
      * instead of waiting.
      */
     fun acquireLease(): LeaseAcquireResult {
-        if (!mutex.tryLock()) return LeaseAcquireResult.RuntimeNotReady
+        if (!mutex.tryLock()) {
+            // D-215 Fix A: attribute the RuntimeNotReady sub-source (trace only, zero behavior
+            // change). Emitted on the shared acquire path, so it also covers non-read lease
+            // callers (restore/backup); the `read.` namespace is the D-215 read-attribution
+            // namespace, and the reason token is the discriminating value. Correlation with a
+            // specific reader's `cause=leaseNotReady` failure is by reason token and time
+            // proximity (the failure line is emitted later on that reader's landing hop).
+            StartupTrace.emit("read.leaseNotReady reason=mutexBusy")
+            return LeaseAcquireResult.RuntimeNotReady
+        }
         try {
-            if (state != LedgerRuntimeState.Ready) return LeaseAcquireResult.RuntimeNotReady
-            val generation = activeGeneration ?: return LeaseAcquireResult.RuntimeNotReady
+            if (state != LedgerRuntimeState.Ready) {
+                StartupTrace.emit("read.leaseNotReady reason=stateNotReady")
+                return LeaseAcquireResult.RuntimeNotReady
+            }
+            val generation = activeGeneration
+            if (generation == null) {
+                StartupTrace.emit("read.leaseNotReady reason=generationAbsent")
+                return LeaseAcquireResult.RuntimeNotReady
+            }
             inFlightLeases.fetchAndAdd(1)
             return LeaseAcquireResult.Acquired(LedgerLease(generation, ::releaseLease))
         } finally {
@@ -775,7 +791,13 @@ class LedgerLeaseScope(
      * result", and carries the captured generation for the discard check.
      */
     fun <T> leased(block: (P503LedgerFacade, Generation) -> T): LeaseOutcome<T> {
-        val facade = owner.facade ?: return LeaseOutcome.NotReady
+        val facade = owner.facade
+        if (facade == null) {
+            // D-215 Fix A: distinguish the facade-unwired sub-source of LeaseOutcome.NotReady
+            // (trace only, zero behavior change).
+            StartupTrace.emit("read.leaseNotReady reason=facadeNull")
+            return LeaseOutcome.NotReady
+        }
         return when (val acquired = owner.acquireLease()) {
             is LeaseAcquireResult.Acquired -> {
                 try {
