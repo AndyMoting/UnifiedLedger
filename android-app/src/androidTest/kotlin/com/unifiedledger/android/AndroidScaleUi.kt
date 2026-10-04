@@ -477,25 +477,38 @@ internal class AndroidScaleUi(
     private fun candidateNodes(): List<AccessibilityNodeInfo> {
         val container = scrollable()
         val viewport = bounds(container)
-        val labeled = nodes(container).filter { node ->
-            node.isVisibleToUser &&
-                node.actionList.any { it.label?.toString() == "查看候选详情" } &&
-                bounds(node).let { it.height() > 0 && it.top >= viewport.top && it.bottom <= viewport.bottom }
-        }
+        val labeled =
+            nodes(container).filter { node ->
+                node.isVisibleToUser &&
+                    node.actionList.any { it.label?.toString() == "查看候选详情" } &&
+                    bounds(node).let { it.height() > 0 && it.top >= viewport.top && it.bottom <= viewport.bottom }
+            }
         if (labeled.isNotEmpty()) return labeled.sortedBy { bounds(it).top }
         // D-216 fallback: the labeled click action may never surface to the
-        // instrumentation client (the local-small run scrolled the whole list
-        // without ever seeing one; this path had never executed anywhere
-        // before). Locate row roots by content instead: ascend from a visible
-        // amount text to the nearest ancestor carrying the candidate metadata
-        // line, then to the nearest clickable node — the same row the labeled
-        // action would have identified. Signature exactness is unchanged.
+        // instrumentation client, and the container-scoped walk can miss the
+        // rendered rows entirely (both observed in the local-small runs where
+        // this path had never executed anywhere before). Locate row roots by
+        // content from the window root instead — a superset walk that does not
+        // depend on which scrollable the client exposes — after one
+        // rate-limited forced cache reset clears any stale client tree.
+        // Ascend from a visible amount text to the nearest ancestor carrying
+        // the candidate metadata line, then to the nearest clickable node —
+        // the same row the labeled action would have identified. Signature
+        // exactness is unchanged.
+        if (missResetDue(SystemClock.elapsedRealtime(), lastResetElapsedMs)) {
+            lastResetElapsedMs = SystemClock.elapsedRealtime()
+            try {
+                resetAutomationCache()
+            } catch (ignored: Throwable) {
+                // Contained by contract, same as findNode/scrollable.
+            }
+        }
         val amount = Regex("^[0-9]+\\.[0-9]{2} CNY$")
         val meta = Regex("类型 ordinary_flow；发生 [0-9T:+\\-]+；方向 out；状态 settled；重复 ")
         val roots = ArrayList<AccessibilityNodeInfo>()
-        for (text in nodes(container)) {
+        for (text in nodes(root())) {
             if (!text.isVisibleToUser || !amount.matches(text.text?.toString() ?: "")) continue
-            if (bounds(text).let { it.height() <= 0 || it.top < viewport.top || it.bottom > viewport.bottom }) continue
+            if (bounds(text).height() <= 0) continue
             var node = text.parent
             var hops = 0
             while (node != null && hops++ < 8) {
