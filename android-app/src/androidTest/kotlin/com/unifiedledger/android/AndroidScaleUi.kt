@@ -438,6 +438,13 @@ internal class AndroidScaleUi(
     }
 
     fun selectSafFixture(fileName: String) {
+        // The caller clicks 导入 and returns immediately; on a fast host the
+        // import screen can still be unrendered when the first seek fires, and
+        // seeking on the (unscrollable, empty) home tree dies with "scroll
+        // container absent" — the local-small run's saf_import failure at
+        // 810ms. Await the format entry itself: await polls has() with the
+        // D-208 rate-limited resets, so a stale cache cannot hide the screen.
+        await { has("支付宝账单（CSV）") }
         seek("支付宝账单（CSV）", forward = false)
         val format = findNode { it.text?.toString() == "支付宝账单（CSV）" } ?: error("Alipay format entry absent")
         val picks = nodes(root()).filter { it.text?.toString() == "选择文件" && it.isVisibleToUser }
