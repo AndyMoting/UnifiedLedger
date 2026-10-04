@@ -71,6 +71,9 @@ internal object InitialReadLeaseRetry {
      * production loop passes [LEASE_NOT_READY_CAUSE] (the only cause it can observe) and also
      * requires `outcome is LeaseOutcome.NotReady`, so the loop terminates at [MAX_ATTEMPTS].
      */
-    fun shouldRetry(attemptsMade: Int, cause: String): Boolean =
+    fun shouldRetry(
+        attemptsMade: Int,
+        cause: String,
+    ): Boolean =
         attemptsRemaining(attemptsMade) && shouldRetryCause(cause)
 }
