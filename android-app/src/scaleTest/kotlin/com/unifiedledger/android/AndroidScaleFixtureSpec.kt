@@ -67,7 +67,9 @@ internal data class AndroidScaleFixtureSpec(
     fun multiplicity(final: Boolean): Int = if (final) finalSessions else initialSessions
 
     fun pairCount(final: Boolean): Int = if (final) finalPairCount else initialPairCount
+
     fun duplicateRelations(final: Boolean): Int = if (final) finalDuplicateRelations else initialDuplicateRelations
+
     fun candidates(final: Boolean): Int = if (final) finalCandidates else initialCandidates
 
     /**
