@@ -260,7 +260,12 @@ def owned_serial(devices: str, avd: str, expected: str = "ul-scale") -> str:
     else:
         reason = f"expected exactly one owned emulator named {expected!r}"
     connected = [line.split() for line in devices.splitlines() if line.startswith("emulator-")]
-    if len(connected) != 1 or connected[0][1:] != ["device"] or avd.strip().splitlines() != [expected, "OK"]:
+    # `emu avd name` is a console command whose output already carries CRLF;
+    # Windows host text-mode translation adds a second \r (`name\r\r\n`), so a
+    # plain strip().splitlines() yields a phantom empty line and would reject
+    # the one owned emulator. CR carries no meaning in this transcript.
+    normalized = avd.replace("\r", "")
+    if len(connected) != 1 or connected[0][1:] != ["device"] or normalized.strip().splitlines() != [expected, "OK"]:
         raise ValueError(reason)
     return connected[0][0]
 

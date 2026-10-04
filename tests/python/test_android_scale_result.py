@@ -573,6 +573,14 @@ class RunnerGuardsAreOfflineTestable(unittest.TestCase):
         self.assertEqual(owned_serial(devices, "ul-scale\nOK"), "emulator-5680")
         with self.assertRaisesRegex(ValueError, "ul_p7_d01"):
             owned_serial(devices, "ul-scale\nOK", "ul_p7_d01")
+        # D-216 local channel: `emu avd name` is a console command whose CRLF
+        # Windows text-mode translation doubles to \r\r\n; the doubled CR must
+        # not manufacture a phantom line that rejects the one owned emulator
+        # (the second real local run died exactly there).
+        doubled = "ul_p7_d01\r\r\nOK\r\r\n"
+        self.assertEqual(owned_serial(devices, doubled, "ul_p7_d01"), "emulator-5680")
+        with self.assertRaisesRegex(ValueError, "ul_p7_d01"):
+            owned_serial(devices, "other_avd\r\r\nOK\r\r\n", "ul_p7_d01")
 
     def test_owned_device_matches_tolerates_windows_crlf(self):
         # D-216 local channel: adb on Windows emits CRLF. The first local run
