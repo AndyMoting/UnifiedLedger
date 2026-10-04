@@ -559,17 +559,33 @@ internal class AndroidScaleUi(
             )
             settle()
         }
+        // D-216 diagnostics for the local channel: bound the loop exactly as
+        // before but record what the walk actually saw, so a "not reached"
+        // failure says whether row nodes were found at all and which
+        // signatures the client tree delivered. Removed once attributed.
+        var minRoots = Int.MAX_VALUE
+        var maxRoots = 0
+        var sawTargetAmount = false
+        val seen = LinkedHashSet<String>()
         repeat(80) {
-            candidateNodes().firstOrNull { signature(it) == row.signature }?.let {
+            val roots = candidateNodes()
+            minRoots = minOf(minRoots, roots.size)
+            maxRoots = maxOf(maxRoots, roots.size)
+            roots.forEach { seen += signature(it) }
+            sawTargetAmount = sawTargetAmount || roots.any { labels(it).any { line -> line == (row.amountText) } }
+            roots.firstOrNull { signature(it) == row.signature }?.let {
                 clickNode(it)
                 await { has("候选详情") }
                 return
             }
-            val window = candidateNodes().map(::signature)
+            val window = roots.map(::signature)
             val first = window.firstOrNull()?.let { signature -> expected.indexOfFirst { it.signature == signature } }
             scroll(forward = first == null || first < rank, fraction = 0.3f)
         }
-        error("unique candidate not reached")
+        error(
+            "unique candidate not reached (rank=$rank minRoots=$minRoots maxRoots=$maxRoots " +
+                "sawTargetAmount=$sawTargetAmount seen=" + seen.take(6) + ")",
+        )
     }
 
     fun traverse(expected: List<ScaleRow>): Int {
