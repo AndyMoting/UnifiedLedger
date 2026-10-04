@@ -576,8 +576,9 @@ class RunnerGuardsAreOfflineTestable(unittest.TestCase):
 
     def test_owned_device_matches_tolerates_windows_crlf(self):
         # D-216 local channel: adb on Windows emits CRLF. The first local run
-        # died in configure() because the trailing \r defeated `device$`; the
-        # caller now normalizes CRLF before matching, and this pins the parse.
+        # died in configure() because the trailing \r defeated `device$`;
+        # owned_device_matches() now normalizes CRLF before matching, and this
+        # pins the parse.
         crlf = "List of devices attached\r\nemulator-5680\tdevice\r\n\r\n"
         self.assertEqual(owned_device_matches(crlf), ["emulator-5680"])
         self.assertEqual(owned_device_matches("List of devices attached\nemulator-5680\tdevice\n"), ["emulator-5680"])
