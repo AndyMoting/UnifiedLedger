@@ -46,6 +46,30 @@ class AndroidScaleLongInstrumentedTest {
     private lateinit var evidence: JSONObject
     private val oracle by lazy { AndroidScaleOracle(context, ::tick) }
     private val ui by lazy { AndroidScaleUi(instrumentation, ::tick) }
+
+    // D-216: every scale expectation derives from the generated manifest, so the
+    // same device test drives `maximum` (cloud) and `local-small` (local
+    // diagnostic) without hard-coding maximum's oracle literals.
+    private val spec by lazy {
+        val manifest = JSONObject(File(File(context.filesDir, "scale-fixture"), "manifest.json").readText())
+        val parsed =
+            AndroidScaleFixtureSpec(
+                profile = manifest.getString("profile"),
+                seed = manifest.getLong("seed"),
+                initialSessions = manifest.getInt("initial_sessions"),
+                rowsPerSession = manifest.getInt("rows_per_session"),
+                uniqueRows = manifest.getInt("unique_rows"),
+                mainSessionRows = manifest.getInt("main_session_rows"),
+                initialCandidates = manifest.getInt("initial_candidates"),
+                finalCandidates = manifest.getInt("final_candidates"),
+                initialDuplicateRelations = manifest.getInt("initial_duplicate_relations"),
+                finalDuplicateRelations = manifest.getInt("final_duplicate_relations"),
+                newSessionDuplicateRelations = manifest.getInt("new_session_duplicate_relations"),
+                initiallyConfirmedRelations = manifest.getInt("initially_confirmed_relations"),
+            )
+        check(parsed.isValid()) { "unsupported scale fixture manifest" }
+        parsed
+    }
     private var phaseDeadline = Long.MAX_VALUE
 
     @Test
@@ -156,10 +180,10 @@ class AndroidScaleLongInstrumentedTest {
         check(scaleWindowOffset(listOf("a", "a", "b"), listOf("a"), 0, 2) == null)
         val fixtureRoot = File(context.filesDir, "scale-fixture")
         val manifest = JSONObject(File(fixtureRoot, "manifest.json").readText())
-        check(manifest.getInt("schema_version") == 2 && manifest.getString("profile") == "maximum")
-        check(manifest.getInt("final_candidates") == 61000 && manifest.getInt("final_duplicate_relations") == 150000)
+        check(manifest.getInt("schema_version") == 2 && manifest.getString("profile") == spec.profile)
+        check(manifest.getInt("final_candidates") == spec.finalCandidates && manifest.getInt("final_duplicate_relations") == spec.finalDuplicateRelations)
         val files = manifest.getJSONObject("files")
-        val names = (1..6).map { "session-" + it.toString().padStart(2, '0') + ".csv" } + "unique-rows.csv"
+        val names = (1..spec.stateSessions).map { "session-" + it.toString().padStart(2, '0') + ".csv" } + "unique-rows.csv"
         check(files.keys().asSequence().toSet() == names.toSet())
         names.forEach { name ->
             val bytes = File(fixtureRoot, name).readBytes()
@@ -185,7 +209,7 @@ class AndroidScaleLongInstrumentedTest {
                 .put("expenseAccountId", category.postingAccountId.value)
                 .put("accountId", account.accountId.value)
                 .put("accountLabel", account.label)
-            val preparation = names.take(5) + "unique-rows.csv"
+            val preparation = names.take(spec.initialSessions) + "unique-rows.csv"
             preparation.forEachIndexed { index, name ->
                 val started = SystemClock.elapsedRealtime()
                 evidence
@@ -200,7 +224,7 @@ class AndroidScaleLongInstrumentedTest {
                 tick()
                 check(SystemClock.elapsedRealtime() - started <= 1800000) { "preparation intake exceeded 30 minutes" }
                 check(result is ImportFileIntakeOutcome.Accepted)
-                val count = if (index < 5) 10000 else 1000
+                val count = spec.sessionRows(index)
                 check(result.records.size == count && result.newCandidateIds.size == count)
                 result.records.forEachIndexed { ordinal, row ->
                     check(row.recordOrdinal == ordinal && row.disposition == ImportIntakeRecordDisposition.INTAKE_ACCEPTED)
@@ -215,11 +239,16 @@ class AndroidScaleLongInstrumentedTest {
                 save()
             }
             val initial = oracle.snapshot(ledger)
-            oracle.assertFixture(initial, state, final = false)
+            oracle.assertFixture(initial, state, spec, final = false)
             oracle.zeroEconomics(initial)
             check(initial.confirmedRelations.isEmpty())
-            val selected = oracle.relationIds(ledger, state.getJSONArray("sessions").getJSONObject(1).getString("inputRef"), 100)
-            check(selected.size == 100)
+            val selected =
+                oracle.relationIds(
+                    ledger,
+                    state.getJSONArray("sessions").getJSONObject(1).getString("inputRef"),
+                    spec.initiallyConfirmedRelations,
+                )
+            check(selected.size == spec.initiallyConfirmedRelations)
             state.put("preparedRelationIds", JSONArray(selected.map { it.first }))
             selected.forEach { (id, fingerprint) ->
                 tick()
@@ -242,28 +271,32 @@ class AndroidScaleLongInstrumentedTest {
                 check(result is ImportDuplicateReviewResult.Accepted)
             }
             val prepared = oracle.snapshot(ledger, compareReadPath = true)
-            oracle.assertFixture(prepared, state, final = false)
+            oracle.assertFixture(prepared, state, spec, final = false)
             check(prepared.confirmedRelations == selected.map { it.first }.toSet())
             check(prepared.identityDigest == initial.identityDigest && prepared.relationDigest == initial.relationDigest)
-            check(prepared.counts.getValue("import_duplicate_status_history") == 100100L)
-            check(prepared.counts.getValue("import_duplicate_review_receipt") == 100L)
+            check(prepared.counts.getValue("import_duplicate_status_history") == spec.duplicateHistoryAfterPrepare)
+            check(prepared.counts.getValue("import_duplicate_review_receipt") == spec.duplicateReviewReceiptAfterPrepare)
             oracle.zeroEconomics(prepared)
             state.put("preparedIdentity", prepared.identityDigest)
             state.put("preparedRelationships", oracle.relationshipBaseline(ledger, preparedSessions()))
-            evidence.put("preparedCandidates", 51000).put("preparedRelations", 100000).put("preparedDispositions", 100)
+            evidence
+                .put("preparedCandidates", spec.initialCandidates)
+                .put("preparedRelations", spec.initialDuplicateRelations)
+                .put("preparedDispositions", spec.initiallyConfirmedRelations)
         } finally {
             graph.close()
         }
         // Publish only the final fixture through MediaStore so DocumentsUI can actually find it.
+        val mainSessionName = spec.mainSessionFileName
         val values =
             ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, "session-06.csv")
+                put(MediaStore.Downloads.DISPLAY_NAME, mainSessionName)
                 put(MediaStore.Downloads.MIME_TYPE, "text/csv")
                 put(MediaStore.Downloads.RELATIVE_PATH, "Download/")
                 put(MediaStore.Downloads.IS_PENDING, 1)
             }
         val uri = checkNotNull(context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values))
-        checkNotNull(context.contentResolver.openOutputStream(uri)).use { it.write(File(fixtureRoot, "session-06.csv").readBytes()) }
+        checkNotNull(context.contentResolver.openOutputStream(uri)).use { it.write(File(fixtureRoot, mainSessionName).readBytes()) }
         check(context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null) == 1)
     }
 
@@ -310,21 +343,21 @@ class AndroidScaleLongInstrumentedTest {
         }
         stage("saf_import", 1800000) {
             ui.click("导入")
-            ui.selectSafFixture()
-            ui.await(1800000) { ui.has("接治完成：新增 10000，等价重放 0，解析拒绝 0，接治拒绝 0。") }
+            ui.selectSafFixture(spec.mainSessionFileName)
+            ui.await(1800000) { ui.has("接治完成：新增 " + spec.mainSessionRows + "，等价重放 0，解析拒绝 0，接治拒绝 0。") }
             ui.click("刷新清单")
             ui.settle()
             val imported = oracle.snapshot(ledger, compareReadPath = true)
-            oracle.assertFixture(imported, state, final = true)
+            oracle.assertFixture(imported, state, spec, final = true)
             assertPreparedUnchanged(imported)
-            check(imported.confirmedRelations.size == 100)
+            check(imported.confirmedRelations.size == spec.initiallyConfirmedRelations)
             oracle.zeroEconomics(imported)
             state.put("finalIdentity", imported.identityDigest).put("finalRelations", imported.relationDigest)
             evidence.put("finalCandidates", imported.rows.size).put("finalRelations", imported.relations)
         }
         stage("detail_decision") {
             val imported = oracle.snapshot(ledger)
-            val uniqueSession = state.getJSONArray("sessions").getJSONObject(5).getString("inputRef")
+            val uniqueSession = state.getJSONArray("sessions").getJSONObject(spec.initialSessions).getString("inputRef")
             val selected = imported.rows.first { it.session == uniqueSession && it.ordinal == 0 }
             state.put("selectedId", selected.id).put("selectedAmount", selected.amount)
             ui.openCandidate(selected, imported.displayRows)
@@ -355,7 +388,7 @@ class AndroidScaleLongInstrumentedTest {
         }
         stage("traversal", 14400000) {
             val before = oracle.snapshot(ledger, compareReadPath = true)
-            oracle.assertFixture(before, state, final = true)
+            oracle.assertFixture(before, state, spec, final = true)
             check(before.identityDigest == state.getString("finalIdentity"))
             val observed = ui.traverse(before.displayRows)
             val after = oracle.snapshot(ledger)
@@ -368,10 +401,10 @@ class AndroidScaleLongInstrumentedTest {
         stage("group_disposition", 5400000) {
             val before = oracle.snapshot(ledger)
             val group = oracle.relationIds(ledger, state.getString("mainInputRef")).map { it.first }.toSet()
-            check(group.size == 50000 && group.intersect(before.confirmedRelations).isEmpty())
+            check(group.size == spec.newSessionDuplicateRelations && group.intersect(before.confirmedRelations).isEmpty())
             ui.seek("整组标记为重复")
             ui.click("整组标记为重复")
-            ui.await { ui.has("将逐条提交人工审核判定为重复，每条独立生效；某一条失败不影响其余各条。共 50000 条。") }
+            ui.await { ui.has("将逐条提交人工审核判定为重复，每条独立生效；某一条失败不影响其余各条。共 " + spec.newSessionDuplicateRelations + " 条。") }
             check(ui.has("本次会话：" + state.getString("mainInputRef")))
             ui.edge(last = true)
             ui.seek("确认整组标记", forward = false)
@@ -380,17 +413,17 @@ class AndroidScaleLongInstrumentedTest {
                 oracle.read { database, _ ->
                     database.rawQuery("SELECT COUNT(*) FROM import_duplicate_review_receipt", null).use {
                         check(it.moveToFirst())
-                        it.getLong(0) == 50100L
+                        it.getLong(0) == spec.duplicateReviewReceiptAfterGroup
                     }
                 }
             }
             val after = oracle.snapshot(ledger, compareReadPath = true)
             check(after.identityDigest == before.identityDigest && after.relationDigest == before.relationDigest)
             check(after.confirmedRelations == before.confirmedRelations + group)
-            check(after.counts.getValue("import_duplicate_status_history") == 200100L)
+            check(after.counts.getValue("import_duplicate_status_history") == spec.duplicateHistoryAfterGroup)
             assertPreparedUnchanged(after)
             oracle.zeroEconomics(after)
-            evidence.put("mainGroupRelations", 50000).put("groupDispositions", 50000)
+            evidence.put("mainGroupRelations", spec.newSessionDuplicateRelations).put("groupDispositions", spec.newSessionDuplicateRelations)
         }
         stage("batch_confirmation") {
             ui.edge(last = true)
@@ -412,12 +445,12 @@ class AndroidScaleLongInstrumentedTest {
 
     private fun assertEconomics() {
         val snapshot = oracle.snapshot(state.getString("ledger"))
-        oracle.assertFixture(snapshot, state, final = true)
+        oracle.assertFixture(snapshot, state, spec, final = true)
         assertPreparedUnchanged(snapshot)
         val prepared = state.getJSONArray("preparedRelationIds").let { ids -> (0 until ids.length()).map { ids.getString(it) }.toSet() }
         val main = oracle.relationIds(state.getString("ledger"), state.getString("mainInputRef")).map { it.first }.toSet()
         check(snapshot.confirmedRelations == prepared + main)
-        check(snapshot.counts.getValue("import_duplicate_status_history") == 200100L)
+        check(snapshot.counts.getValue("import_duplicate_status_history") == spec.duplicateHistoryAfterGroup)
         check(snapshot.rows.count { it.status == "confirmed" } == 1)
         check(snapshot.rows.single { it.status == "confirmed" }.id == state.getString("selectedId"))
         check(snapshot.counts.getValue("ledger_transaction") == 1L)

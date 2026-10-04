@@ -243,23 +243,36 @@ def remaining_seconds(deadline: float, now: float, cap: float = 30) -> float:
     return min(cap, remaining)
 
 
-def owned_serial(devices: str, avd: str) -> str:
+def owned_serial(devices: str, avd: str, expected: str = "ul-scale") -> str:
+    if expected == "ul-scale":
+        reason = "expected exactly the CI-owned ul-scale emulator"
+    else:
+        reason = f"expected exactly one owned emulator named {expected!r}"
     connected = [line.split() for line in devices.splitlines() if line.startswith("emulator-")]
-    if len(connected) != 1 or connected[0][1:] != ["device"] or avd.strip().splitlines() != ["ul-scale", "OK"]:
-        raise ValueError("expected exactly the CI-owned ul-scale emulator")
+    if len(connected) != 1 or connected[0][1:] != ["device"] or avd.strip().splitlines() != [expected, "OK"]:
+        raise ValueError(reason)
     return connected[0][0]
 
 
 class ScaleRunner:
     def __init__(self, fixture: Path, evidence: Path, app: Path, test: Path, sha: str, mode: str = "maximum",
-                 *, outer_deadline_epoch: float | None = None):
-        if (os.environ.get("GITHUB_ACTIONS"), os.environ.get("RUNNER_ENVIRONMENT"), os.environ.get("RUNNER_OS")) != ("true", "github-hosted", "Linux"):
+                 *, outer_deadline_epoch: float | None = None, local_diagnostic: bool = False,
+                 avd_name: str = "ul-scale"):
+        # D-216: `local_diagnostic` opens an explicit, opt-in local channel for
+        # diagnosing this chain without a cloud round trip. The default (False)
+        # keeps the CI-only guard byte-identical: local devices stay forbidden.
+        # Even when enabled the device ownership check is NOT dropped (see
+        # `configure`); only the hosted-runner environment triple is skipped,
+        # and the expected AVD stays configurable instead of hard-coded.
+        if not local_diagnostic and (os.environ.get("GITHUB_ACTIONS"), os.environ.get("RUNNER_ENVIRONMENT"), os.environ.get("RUNNER_OS")) != ("true", "github-hosted", "Linux"):
             raise ValueError("this driver is CI-only; local devices are forbidden")
         if not re.fullmatch(r"[0-9a-f]{40}", sha):
             raise ValueError("full lowercase SHA required")
         if mode not in ("maximum", "preflight"):
             raise ValueError("unknown execution mode")
         self.mode = mode
+        self.local_diagnostic = local_diagnostic
+        self.avd_name = avd_name
         self.fixture, self.evidence, self.app, self.test, self.sha = fixture, evidence, app, test, sha
         self.started = time.monotonic()
         # Workflow records this BEFORE the emulator action, so boot/action setup
@@ -284,6 +297,13 @@ class ScaleRunner:
                        "phases": [], "apk_sha256": {}, "config": {},
                        "execution_budget_seconds": max(0, self.deadline - self.started),
                        "outer_remaining_seconds_at_start": None if self.outer_deadline is None else self.outer_deadline - self.started}
+        # D-216: mark the run's authority class in the evidence itself. A local
+        # diagnostic run is not acceptance evidence; the reducer's maximum
+        # profile/authority gate can then reject a local report even if someone
+        # tried to hand it to acceptance. The key is absent on the default path,
+        # so CI evidence is byte-identical.
+        if local_diagnostic:
+            self.report["authority"] = "local-diagnostic"
         self.cases = []
         evidence.mkdir(parents=True, exist_ok=False)
 
@@ -358,7 +378,7 @@ class ScaleRunner:
         candidate = matches[0]
         # Identity is the only permitted query before ownership is established.
         avd = self.command(["adb", "-s", candidate, "emu", "avd", "name"])
-        self.serial = owned_serial(devices, avd)
+        self.serial = owned_serial(devices, avd, self.avd_name)
         self.root_and_settle()
         self.start_logcat()
         self.adb("shell", "setprop", "persist.sys.locale", "zh-CN")
@@ -487,7 +507,12 @@ class ScaleRunner:
 
     def install(self):
         if self.mode == "maximum":
-            validate_manifest(load_manifest(self.fixture / "manifest.json"), self.fixture)
+            manifest = load_manifest(self.fixture / "manifest.json")
+            # D-216: the local diagnostic channel drives the profile the staged
+            # fixture itself declares (its generator-consistency is still fully
+            # validated); the default CI path stays pinned to `maximum`.
+            expected_profile = manifest.profile if self.local_diagnostic else "maximum"
+            validate_manifest(manifest, self.fixture, expected_profile=expected_profile)
         else:
             prepare_probe(self.fixture, self.sha)
         for role, apk in (("app", self.app), ("test", self.test)):

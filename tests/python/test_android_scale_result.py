@@ -368,6 +368,24 @@ class ReducerRejectsWrongIdentityAndCrashes(unittest.TestCase):
         save(self.directory, "host.json", host)
         self.assert_rejected()
 
+    def test_local_diagnostic_evidence_is_never_acceptance(self):
+        # D-216: a structurally clean maximum-shaped evidence set stamped as a
+        # local diagnostic run must still be refused by the acceptance reducer.
+        build_valid(self.directory)
+        host = load(self.directory, "host.json")
+        host["authority"] = "local-diagnostic"
+        save(self.directory, "host.json", host)
+        self.assert_rejected()
+        # Nothing ever stamps `cloud` (a cloud run omits the key entirely), so
+        # any present value — a hand-rewritten `cloud` included — is refused.
+        for value in ("cloud", "local"):
+            host["authority"] = value
+            save(self.directory, "host.json", host)
+            self.assert_rejected()
+        del host["authority"]
+        save(self.directory, "host.json", host)
+        self.assertEqual(validate_evidence(self.directory, SHA)["status"], "PASS")
+
     def test_host_timeout_flag_is_rejected(self):
         host = load(self.directory, "host.json")
         host["timed_out"] = True
@@ -512,6 +530,94 @@ class RunnerGuardsAreOfflineTestable(unittest.TestCase):
                 for name, value in saved.items():
                     if value is not None:
                         os.environ[name] = value
+
+    def test_local_diagnostic_default_is_still_ci_only(self):
+        # D-216: the opt-in flag is False by default, so the default path keeps
+        # the exact CI-only refusal (byte-identical behavior).
+        with tempfile.TemporaryDirectory() as directory:
+            saved = {name: os.environ.pop(name, None) for name in
+                     ("GITHUB_ACTIONS", "RUNNER_ENVIRONMENT", "RUNNER_OS")}
+            try:
+                with self.assertRaisesRegex(ValueError, "^this driver is CI-only; local devices are forbidden$"):
+                    ScaleRunner(Path(directory), Path(directory) / "evidence",
+                                Path(directory) / "app.apk", Path(directory) / "test.apk", SHA,
+                                local_diagnostic=False)
+            finally:
+                for name, value in saved.items():
+                    if value is not None:
+                        os.environ[name] = value
+
+    def test_local_diagnostic_flag_skips_only_the_hosted_triple(self):
+        # D-216: with the flag set the environment guard is skipped, the report
+        # is stamped as local-diagnostic, and the ownership check still applies.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            saved = {name: os.environ.pop(name, None) for name in
+                     ("GITHUB_ACTIONS", "RUNNER_ENVIRONMENT", "RUNNER_OS")}
+            try:
+                runner = ScaleRunner(root, root / "evidence", root / "app.apk", root / "test.apk", SHA,
+                                     local_diagnostic=True, avd_name="ul_p7_d01")
+            finally:
+                for name, value in saved.items():
+                    if value is not None:
+                        os.environ[name] = value
+            self.assertTrue(runner.local_diagnostic)
+            self.assertEqual(runner.avd_name, "ul_p7_d01")
+            self.assertEqual(runner.report["authority"], "local-diagnostic")
+
+    def test_owned_serial_honors_a_configurable_expected_avd(self):
+        devices = "List of devices attached\nemulator-5680\tdevice\n"
+        self.assertEqual(owned_serial(devices, "ul_p7_d01\nOK", "ul_p7_d01"), "emulator-5680")
+        # The default still requires the CI AVD name exactly.
+        self.assertEqual(owned_serial(devices, "ul-scale\nOK"), "emulator-5680")
+        with self.assertRaisesRegex(ValueError, "ul_p7_d01"):
+            owned_serial(devices, "ul-scale\nOK", "ul_p7_d01")
+
+    def test_local_diagnostic_still_enforces_device_ownership(self):
+        # D-216: the local channel does not drop the ownership check. configure()
+        # must reject a single connected device whose `emu avd name` does not
+        # match the configured AVD, and accept it (setting the serial) when it
+        # does — both before any further device interaction.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            saved = {name: os.environ.pop(name, None) for name in
+                     ("GITHUB_ACTIONS", "RUNNER_ENVIRONMENT", "RUNNER_OS")}
+            try:
+                runner = ScaleRunner(root, root / "evidence", root / "app.apk", root / "test.apk", SHA,
+                                     "preflight", local_diagnostic=True, avd_name="ul_p7_d01")
+            finally:
+                for name, value in saved.items():
+                    if value is not None:
+                        os.environ[name] = value
+            devices = "List of devices attached\nemulator-5680\tdevice\n"
+            seen = []
+
+            def rejected(args, **kwargs):
+                seen.append(args)
+                if args == ["adb", "devices"]:
+                    return devices
+                if args == ["adb", "-s", "emulator-5680", "emu", "avd", "name"]:
+                    return "some_other_avd\nOK\n"
+                self.fail("unexpected device command after ownership rejection: " + repr(args))
+
+            runner.command = rejected
+            with self.assertRaises(ValueError):
+                runner.configure()
+            self.assertIsNone(runner.serial)
+            self.assertEqual(seen, [["adb", "devices"], ["adb", "-s", "emulator-5680", "emu", "avd", "name"]])
+
+            def accepted(args, **kwargs):
+                seen.append(args)
+                if args == ["adb", "devices"]:
+                    return devices
+                if args == ["adb", "-s", "emulator-5680", "emu", "avd", "name"]:
+                    return "ul_p7_d01\nOK\n"
+                raise RuntimeError("stop after ownership is established")
+
+            runner.command = accepted
+            with self.assertRaisesRegex(RuntimeError, "stop after ownership"):
+                runner.configure()
+            self.assertEqual(runner.serial, "emulator-5680")
 
     def test_runner_refuses_a_short_sha(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -962,6 +1068,48 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
             pushed = ("push", str(fixture) + "/.", "/data/local/tmp/ul-scale/")
             self.assertIn(pushed, calls)
             self.assertNotIn(("shell",) + pushed, calls)
+
+    def test_install_pins_maximum_on_the_default_channel_only(self):
+        # D-216: the CI channel keeps validating the staged fixture against
+        # `maximum` even when a smaller fixture directory is handed to it;
+        # only the local diagnostic channel accepts the profile the fixture
+        # itself declares (still fully generator-validated).
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture"
+            generate_fixture(fixture, profile="local-small")
+            app = root / "app.apk"
+            app.write_bytes(b"app")
+            test = root / "test.apk"
+            test.write_bytes(b"test")
+            runner = self.make_runner(root)
+            runner.fixture, runner.app, runner.test = fixture, app, test
+            with self.assertRaisesRegex(ValueError, "^fixture profile mismatch$"):
+                runner.install()
+            local = ScaleRunner(root, root / "evidence-local", root / "app.apk", root / "test.apk", SHA,
+                                local_diagnostic=True)
+            local.fixture, local.app, local.test = fixture, app, test
+            calls = []
+
+            def record(*args, **_kwargs):
+                calls.append(args)
+                if args and args[0] == "install":
+                    return "Success"
+                if args[:3] == ("shell", "cmd", "package"):
+                    return "priority=0\ncom.unifiedledger.android/.MainActivity\n"
+                if args[:3] == ("shell", "am", "start"):
+                    return "Status: ok\n"
+                if args[:3] == ("shell", "pm", "list"):
+                    return f"instrumentation:{runner_module.RUNNER} (target=com.unifiedledger.android)\n"
+                if args[:3] == ("shell", "pm", "path"):
+                    return "package:/data/app/base.apk\n"
+                if args[:3] == ("exec-out", "run-as", "com.unifiedledger.android"):
+                    return (fixture / args[-1].split("/")[-1]).read_bytes()
+                return ready_adb_reply(args)
+
+            local.adb = record
+            local.install()
+            self.assertTrue(calls)
 
     def test_install_rejects_a_silent_install_failure(self):
         # `adb install` exits 0 even when the install fails; the verdict is in
