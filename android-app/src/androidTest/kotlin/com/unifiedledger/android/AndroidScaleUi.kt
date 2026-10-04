@@ -498,6 +498,17 @@ internal class AndroidScaleUi(
     ) {
         val rank = expected.indexOfFirst { it.id == row.id }
         check(rank >= 0)
+        // Detail navigation needs the indexed (scrollToPosition) list — the
+        // rendered review rows. On a fast host the refresh清单 list can still
+        // be rendering when this runs, and the widest visible scrollable is
+        // then the formats column (no indexed action) — the local-small run
+        // died here at 287ms. Await the indexed container; on the cloud the
+        // condition is already true when this stage starts, so behavior and
+        // bounds are unchanged (await polls with the D-208 resets and ticks).
+        await {
+            widestVisibleScrollable()?.actionList
+                ?.any { it.id == AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id } == true
+        }
         val container = scrollable()
         // This is detail navigation, not traversal coverage. A unique live signature is still mandatory.
         check(container.actionList.any { it.id == AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id }) { "indexed detail navigation unavailable" }
