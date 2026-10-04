@@ -6,10 +6,11 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * D-215: the bounded retry policy for the initial current-state read's transient lease refusal.
- * The retryable token is EXACTLY `leaseNotReady`; the D-214 `readThrew`/`readResult` causes are
- * never retried. The policy is pure, so the JVM tests pin the constants and every classifier
- * boundary against the real D-214 token strings.
+ * D-215: the bounded retry policy for the initial current-state read's lease refusal. The retry
+ * covers a bare `leaseNotReady` (the only observable `LeaseOutcome.NotReady` shape) but the
+ * policy is bounded to [InitialReadLeaseRetry.MAX_ATTEMPTS]; the D-214 `readThrew`/`readResult`
+ * causes are never retried. The policy is pure, so the JVM tests pin the constants, every
+ * classifier boundary, and that the production loop shape terminates.
  */
 class InitialReadLeaseRetryTest {
     @Test
@@ -20,7 +21,7 @@ class InitialReadLeaseRetryTest {
     }
 
     @Test
-    fun exactlyTheLeaseNotReadyTokenIsRetryable() {
+    fun exactlyTheLeaseNotReadyTokenIsRetryableAtTheSharedConstant() {
         assertTrue(InitialReadLeaseRetry.shouldRetryCause("leaseNotReady"))
         assertEquals("leaseNotReady", InitialReadLeaseRetry.LEASE_NOT_READY_CAUSE)
     }
@@ -45,9 +46,18 @@ class InitialReadLeaseRetryTest {
     }
 
     @Test
+    fun theAttemptBoundaryIsExclusiveAtMaxAttempts() {
+        // attemptsMade counts attempts already performed: the first three may still retry, the
+        // fourth (== MAX_ATTEMPTS) is the last and must not.
+        assertTrue(InitialReadLeaseRetry.attemptsRemaining(1))
+        assertTrue(InitialReadLeaseRetry.attemptsRemaining(2))
+        assertTrue(InitialReadLeaseRetry.attemptsRemaining(3))
+        assertFalse(InitialReadLeaseRetry.attemptsRemaining(4))
+        assertFalse(InitialReadLeaseRetry.attemptsRemaining(5))
+    }
+
+    @Test
     fun retryStopsAtTheAttemptBoundForTheTransientCause() {
-        // attemptsMade counts attempts already performed: the first attempt (1) may still
-        // retry; the fourth (== MAX_ATTEMPTS) is the last and must not.
         assertTrue(InitialReadLeaseRetry.shouldRetry(1, "leaseNotReady"))
         assertTrue(InitialReadLeaseRetry.shouldRetry(2, "leaseNotReady"))
         assertTrue(InitialReadLeaseRetry.shouldRetry(3, "leaseNotReady"))
@@ -59,5 +69,32 @@ class InitialReadLeaseRetryTest {
     fun aNonTransientCauseIsNeverRetriedEvenOnTheFirstAttempt() {
         assertFalse(InitialReadLeaseRetry.shouldRetry(1, "readThrew errorType=SQLiteException"))
         assertFalse(InitialReadLeaseRetry.shouldRetry(1, "readResult variant=Unavailable"))
+    }
+
+    @Test
+    fun theProductionLoopShapeTerminatesAtTheAttemptBound() {
+        // Mirrors the P503App initial-load loop: while the outcome is NotReady AND the policy
+        // admits another attempt, retry. `refusals` is far larger than the bound, so the POLICY
+        // (not the synthetic input) must stop the loop at MAX_ATTEMPTS total attempts.
+        var attemptsMade = 1
+        var refusals = Int.MAX_VALUE
+        while (refusals > 0 && InitialReadLeaseRetry.shouldRetry(attemptsMade, InitialReadLeaseRetry.LEASE_NOT_READY_CAUSE)) {
+            attemptsMade += 1
+            refusals -= 1
+        }
+        assertEquals(InitialReadLeaseRetry.MAX_ATTEMPTS, attemptsMade)
+    }
+
+    @Test
+    fun theProductionLoopShapeExitsImmediatelyOnASuccessOutcome() {
+        // A first-attempt success is not NotReady (`refusals == 0`), so the loop never runs and
+        // the landing hop sees a Completed outcome on attempt 1.
+        var attemptsMade = 1
+        var refusals = 0
+        while (refusals > 0 && InitialReadLeaseRetry.shouldRetry(attemptsMade, InitialReadLeaseRetry.LEASE_NOT_READY_CAUSE)) {
+            attemptsMade += 1
+            refusals -= 1
+        }
+        assertEquals(1, attemptsMade)
     }
 }
