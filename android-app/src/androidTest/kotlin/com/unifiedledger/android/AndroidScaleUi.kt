@@ -498,29 +498,27 @@ internal class AndroidScaleUi(
     ) {
         val rank = expected.indexOfFirst { it.id == row.id }
         check(rank >= 0)
-        // Detail navigation needs the indexed (scrollToPosition) list — the
-        // rendered review rows. On a fast host the refresh清单 list can still
-        // be rendering when this runs, and the widest visible scrollable is
-        // then the formats column (no indexed action) — the local-small run
-        // died here at 287ms. Await the indexed container; on the cloud the
-        // condition is already true when this stage starts, so behavior and
-        // bounds are unchanged (await polls with the D-208 resets and ticks).
-        await {
-            widestVisibleScrollable()?.actionList
-                ?.any { it.id == AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id } == true
+        // Detail navigation, not traversal coverage: a unique live signature
+        // stays mandatory. The indexed scrollToPosition jump is an accelerator
+        // for deep ranks, not a precondition — the local-small run proved the
+        // review LazyColumn can render without exposing ACTION_SCROLL_TO_
+        // POSITION to the instrumentation client (180s await never saw it;
+        // detail_decision had never executed anywhere before), while the
+        // signature loop below is the actual navigation mechanism and keeps
+        // its own bound. Jump when the action exists; always fall through to
+        // the bounded loop.
+        val container = widestVisibleScrollable()
+        if (container != null && container.actionList.any { it.id == AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id }) {
+            check(
+                container.performAction(
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id,
+                    Bundle().apply {
+                        putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_ROW_INT, rank + 200)
+                    },
+                ),
+            )
+            settle()
         }
-        val container = scrollable()
-        // This is detail navigation, not traversal coverage. A unique live signature is still mandatory.
-        check(container.actionList.any { it.id == AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id }) { "indexed detail navigation unavailable" }
-        check(
-            container.performAction(
-                AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id,
-                Bundle().apply {
-                    putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_ROW_INT, rank + 200)
-                },
-            ),
-        )
-        settle()
         repeat(80) {
             candidateNodes().firstOrNull { signature(it) == row.signature }?.let {
                 clickNode(it)
