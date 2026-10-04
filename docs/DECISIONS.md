@@ -4334,11 +4334,11 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **背景（D-213 诊断轮 trace 的三因合并）：** 诊断性 maximum run 37166674695 上 D-207 仪表首次捕获 coldstart 首读失败，精确时间线为 `optimize.thread end ok=true` @573761 → `read.currentState begin` @573787（+26ms）→ `read.currentState end kind=failed errorType=unknown` @573865（begin 后 78ms），同期 `read.catalogSnapshot kind=completed`。`errorType=unknown` 证明 `runCatching { facade.queryCurrentState.query() }` 未捕获到任何 Throwable（D-207 已如实登记该合并），故非 SQLite 异常；同一轮另有 `journalMode=delete` 与 prepare 内部 09:10–09:11 六次重试连接（D-209/D-211 机制首次真实救场）。本批只解决首读失败根因的**可观测性缺口**：`unknown` 一个 token 同时覆盖三种互斥成因，无法据 trace 决定下一跳；回滚日志模式下第二只读连接与活应用互斥的结构性问题（D-212 止损条款对象）不在本批范围。
 
-**三因合并（D-207 残留披露 (b) 的兑现）：** `unknown` 目前合并了三种互斥情形：(a) `acquireLease` 的非阻塞 `mutex.tryLock()` 瞬时失败（`RuntimeNotReady`，LedgerRuntimeOwner.kt:386-396）——与 optimize 线程仅差 26ms，启动竞态嫌疑最大；(b) 租约完成但 `query()` 自身把异常吞成 `LedgerCurrentStateResult.Unavailable`（QueryLedgerCurrentState.kt:67-69）——产品自己的读撞锁，与 saf_import 的 SQLITE_BUSY 同源；(c) 租约完成、无异常、结果是 `InvalidState` 防御分支（同文件第 50 行）。
+**三因合并（D-207 残留披露 (b) 的兑现）：** `unknown` 目前合并了三种互斥情形：(a) 租约被拒（`LeaseOutcome.NotReady`；其三个子来源见解释规则，其中 `mutex.tryLock()` 瞬时失败与 optimize 线程仅差 26ms，是启动竞态的头号嫌疑）；(b) 租约完成但 `query()` 自身把异常吞成 `LedgerCurrentStateResult.Unavailable`（QueryLedgerCurrentState.kt:67-69）——产品自己的读撞锁，与 saf_import 的 SQLITE_BUSY 同源；(c) 租约完成、无异常、结果是 `InvalidState` 防御分支（同文件第 50 行）。
 
 **决定：** 在 `P503App.kt` 初始加载块的 `else ->`（失败）分支，用已经可得的三个值（`outcome` 的租约结果、捕获到的 `readFailure`、`result` 本身）把单条 `errorType=<simpleName|unknown>` 改为判别式 `cause=` 串，零新状态、零行为改动：
 
-1. `outcome !is LeaseOutcome.Completed` → `read.currentState end kind=failed cause=leaseNotReady`（租约本身拒绝，即 `acquireLease` 的 tryLock/RuntimeNotReady 路径）。
+1. `outcome !is LeaseOutcome.Completed` → `read.currentState end kind=failed cause=leaseNotReady`（租约本身拒绝，即 `LedgerLeaseScope.leased` 走到 `LeaseOutcome.NotReady`；该结果有三个子来源，见解释规则，trace 今日不细分）。
 2. 租约完成且 `readFailure != null` → `read.currentState end kind=failed cause=readThrew errorType=<simpleName>`（内容与 D-207 相同，仅加 `cause=readThrew` 前缀便于机器判别）。
 3. 租约完成、无异常、结果非 Success → `read.currentState end kind=failed cause=readResult variant=<variant>`，`variant` 取 `result?.javaClass?.simpleName`，`result` 为 null 时取字面量 `"null"`——`.getOrNull()` 的 null 情形是独立事实，不得并入前两因。
 
@@ -4351,9 +4351,9 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 产品面仅 `app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503App.kt` 初始加载失败分支；零 ledger-*/android-app/Python/workflow/schema/gradle 改动；判据、预算、11 业务步骤、41 例 instrumented 清单不变；不修改 D-202–D-213 原文。
 
 **解释规则（各 cause 的下一跳）：**
-- `cause=leaseNotReady` ⇒ 启动竞态成立：修复方向是 UI 层有界重试小批（租约未就绪不等于失败，首读应等运行时 Ready 而非立即 fail-closed）。
+- `cause=leaseNotReady` ⇒ 租约被拒，但 `LeaseOutcome.NotReady` 有三个子来源，trace 今日**无法区分**：(a) `LedgerLeaseScope.leased` 里 `owner.facade == null`（LedgerRuntimeOwner.kt:778）——facade 未装配，属生命周期配置问题；(b) `acquireLease` 里 `state != LedgerRuntimeState.Ready` 或 `activeGeneration == null`（同文件 389-390）——运行时不在 Ready，属生命周期状态问题；(c) `mutex.tryLock()` 瞬时失败（同文件 387）——唯一良性的竞争窗口，与 optimize 线程仅差 26ms，启动竞态嫌疑最大。只有 (c) 是「等一会儿就会好」的瞬态，(a)/(b) 是生命周期/facade 缺陷，重试只会掩盖问题。故不以 UI 层重试作为 `leaseNotReady` 的预设修复；若现场观测到该 cause，**下一步诊断是把 trace 扩展到命名子来源**（例如一个能区分三者的子原因 token），子来源确定后才决定修复方向。
 - `cause=readThrew` / `cause=readResult variant=Unavailable` ⇒ 读本身撞锁：归入 D-212 止损条款指向的存储层裁决（WAL vs 链路观察重设计），由用户仲裁，不在 UI 层加重试。
 - `cause=readResult variant=InvalidState` ⇒ 防御分支调查（catalog/posting 一致性在固定 fixture 下本应不可达）。
-- `variant=null` ⇒ `.getOrNull()` 吞掉 null，另案调查（既非抛异常也非枚举变体）。
+- `cause=readResult variant=null` ⇒ **当前逻辑下防御性不可达**：`getOrNull() == null` 意味着 `runCatching` 捕获了异常，于是 `exceptionOrNull() != null`，分支 2（`readThrew`）总是先胜出；因此现场若真观测到 `variant=null`，它证伪的是「分支 2 覆盖全部 null 结果」这一假设，属异常信号而非正常状态，应另案调查（既非抛异常也非枚举变体）。
 
 **关联决定：** D-213（本轮 trace 证据与全线程取证，本批迭代其仪表）、D-207（errorType 仪表与其残留披露 (b) 三因合并，本批拆分）、D-209/D-211/D-212（oracle 侧重试/门控/busy_timeout 链与止损条款，本批只读其证据）、D-203（trace 面登记合同与隐私边界）、D-198（最大规模契约）。
