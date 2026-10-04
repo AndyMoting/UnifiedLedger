@@ -477,12 +477,39 @@ internal class AndroidScaleUi(
     private fun candidateNodes(): List<AccessibilityNodeInfo> {
         val container = scrollable()
         val viewport = bounds(container)
-        return nodes(container)
-            .filter { node ->
-                node.isVisibleToUser &&
-                    node.actionList.any { it.label?.toString() == "查看候选详情" } &&
-                    bounds(node).let { it.height() > 0 && it.top >= viewport.top && it.bottom <= viewport.bottom }
-            }.sortedBy { bounds(it).top }
+        val labeled = nodes(container).filter { node ->
+            node.isVisibleToUser &&
+                node.actionList.any { it.label?.toString() == "查看候选详情" } &&
+                bounds(node).let { it.height() > 0 && it.top >= viewport.top && it.bottom <= viewport.bottom }
+        }
+        if (labeled.isNotEmpty()) return labeled.sortedBy { bounds(it).top }
+        // D-216 fallback: the labeled click action may never surface to the
+        // instrumentation client (the local-small run scrolled the whole list
+        // without ever seeing one; this path had never executed anywhere
+        // before). Locate row roots by content instead: ascend from a visible
+        // amount text to the nearest ancestor carrying the candidate metadata
+        // line, then to the nearest clickable node — the same row the labeled
+        // action would have identified. Signature exactness is unchanged.
+        val amount = Regex("^[0-9]+\\.[0-9]{2} CNY$")
+        val meta = Regex("类型 ordinary_flow；发生 [0-9T:+\\-]+；方向 out；状态 settled；重复 ")
+        val roots = ArrayList<AccessibilityNodeInfo>()
+        for (text in nodes(container)) {
+            if (!text.isVisibleToUser || !amount.matches(text.text?.toString() ?: "")) continue
+            if (bounds(text).let { it.height() <= 0 || it.top < viewport.top || it.bottom > viewport.bottom }) continue
+            var node = text.parent
+            var hops = 0
+            while (node != null && hops++ < 8) {
+                if (meta.containsMatchIn(labels(node).joinToString("\n"))) {
+                    var click: AccessibilityNodeInfo? = node
+                    var clickHops = 0
+                    while (click != null && clickHops++ < 4 && !click.isClickable) click = click.parent
+                    click?.let { roots += it }
+                    break
+                }
+                node = node.parent
+            }
+        }
+        return roots.distinctBy { bounds(it) }.sortedBy { bounds(it).top }
     }
 
     private fun signature(node: AccessibilityNodeInfo): String {
