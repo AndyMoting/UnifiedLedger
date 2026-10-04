@@ -3,6 +3,7 @@ package com.unifiedledger.android
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.os.SystemClock
+import android.util.Log
 import com.unifiedledger.application.ImportReviewRowsResult
 import com.unifiedledger.application.QueryImportReviewRows
 import com.unifiedledger.data.SqlDelightImportReviewReadAdapter
@@ -224,6 +225,16 @@ internal class AndroidScaleOracle(
             }.use { database ->
                 check(database.isReadOnly)
                 database.rawQuery(AndroidScaleOracleRetry.busyTimeoutPragma(), null).use { it.moveToFirst() }
+                // D-213 diagnostics only: record the journal mode this
+                // observation connection sees, contained so the attempt's
+                // semantics never depend on the log succeeding.
+                runCatching {
+                    database.rawQuery("PRAGMA journal_mode", null).use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            Log.i("ULStartup", "oracle.journalMode=" + cursor.getString(0))
+                        }
+                    }
+                }
                 database.beginTransactionReadOnly()
                 try {
                     val result = action(database, name)

@@ -41,8 +41,19 @@ import java.io.File
  * No ledger content leaves the device: window metadata, bounded visible-text
  * samples ([AndroidScaleObserverDiag.MAX_TEXT_SAMPLES] entries of at most
  * [AndroidScaleObserverDiag.MAX_TEXT_CHARS] characters per target root) and
- * package-filtered thread frames only, with the same truncation honesty as the
- * coldstart forensics.
+ * thread frames only, with the same truncation honesty as the coldstart
+ * forensics.
+ *
+ * D-213 adds an unfiltered `allThreads` field ([AndroidScaleAllThreads])
+ * alongside the D-202 filtered `threads` field: the filter keeps only main /
+ * DefaultDispatcher / target-package-prefixed threads, but the lock-holder
+ * thread's name is unknown -- the long-DB-op threads seen in logcat (tids
+ * 8572/8589) were never confirmed in a capture -- and was likely filtered out
+ * of every failure capture so far. Under the leaked-reader working hypothesis
+ * the idle-looking capture is the filter's blind spot rather than evidence
+ * that the process was idle; the unfiltered, name-sorted, count-bounded dump
+ * exposes the SHARED-lock holder's park location directly. The filtered field
+ * stays byte-compatible for coldstart continuity.
  */
 internal object AndroidScaleStageForensics {
     const val DEVICE_JSON = "android-scale-stage-forensics.json"
@@ -110,16 +121,26 @@ internal object AndroidScaleStageForensics {
                 skipped += "texts"
                 JSONObject().put("roots", JSONArray()).put("rootsTruncated", roots.size > MAX_TARGET_ROOTS)
             }
-        val stacks =
-            if (SystemClock.elapsedRealtime() < budgetEnd) {
-                val stackTraces = Thread.getAllStackTraces()
+        val stacks: AndroidColdstartForensics.Stacks
+        val allThreads: AndroidScaleAllThreads.AllStacks
+        if (SystemClock.elapsedRealtime() < budgetEnd) {
+            // One snapshot feeds both captures so the filtered and unfiltered
+            // views describe the same instant.
+            val entries = Thread.getAllStackTraces().entries.map { it.key.name to it.value }
+            stacks =
                 AndroidColdstartForensics.filterStacks(
-                    stackTraces.entries.map { it.key.name to it.value }.sortedBy { it.first },
+                    entries.sortedBy { it.first },
                 )
-            } else {
-                skipped += "filterStacks"
-                AndroidColdstartForensics.Stacks(emptyList(), false)
-            }
+            allThreads =
+                AndroidScaleAllThreads.boundAllThreads(
+                    entries.map { (name, frames) -> name to frames.map { frame -> frame.toString() } },
+                )
+        } else {
+            skipped += "filterStacks"
+            skipped += "allThreads"
+            stacks = AndroidColdstartForensics.Stacks(emptyList(), false)
+            allThreads = AndroidScaleAllThreads.AllStacks(emptyList(), false, false)
+        }
         val screenshot =
             if (SystemClock.elapsedRealtime() < budgetEnd) screenshot(instrumentation, budgetEnd) else JSONObject().put("skipped", "capture budget exhausted")
         val body =
@@ -136,18 +157,33 @@ internal object AndroidScaleStageForensics {
                         .put("targetRootVisibleNodes", ui.visibleNodeCount(roots.firstOrNull()))
                         .put("threads", threadsJson(stacks.threads))
                         .put("threadsTruncated", stacks.truncated)
+                        .put("allThreads", threadsJson(allThreads.threads))
+                        .put("allThreadsTruncated", allThreads.threadsTruncated)
+                        .put("allThreadsFramesTruncated", allThreads.framesTruncated)
                         .put("skipped", JSONArray(skipped))
                         .put("screenshot", screenshot),
                 )
-        // Hard file-size boundary: when the guard trips, only the bulk thread
-        // array is dropped and the drop is recorded, never hidden. captureMs is
-        // finalized after this re-serialization decision.
+        // Hard file-size boundary: when the guard trips, the filtered thread
+        // array is dropped first -- allThreads is an information superset of
+        // it (64 >= 24 threads, 48 >= 40 frames, the same 200-char frame cap,
+        // no name/frame filter), so the lock-holder evidence survives; only
+        // if still oversized is the unfiltered dump dropped too. Each drop is
+        // recorded, never hidden. captureMs is finalized after this
+        // re-serialization decision.
         if (AndroidColdstartForensics.jsonOversized(body.toString().length)) {
             body
                 .getJSONObject("failure")
                 .put("threads", JSONArray())
                 .put("threadsTruncated", true)
                 .put("threadsDroppedForSize", true)
+        }
+        if (AndroidColdstartForensics.jsonOversized(body.toString().length)) {
+            body
+                .getJSONObject("failure")
+                .put("allThreads", JSONArray())
+                .put("allThreadsTruncated", true)
+                .put("allThreadsFramesTruncated", true)
+                .put("allThreadsDroppedForSize", true)
         }
         body.getJSONObject("failure").put("captureMs", SystemClock.elapsedRealtime() - captureStarted)
         return body
