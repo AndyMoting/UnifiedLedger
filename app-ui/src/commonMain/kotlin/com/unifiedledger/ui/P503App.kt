@@ -1171,13 +1171,25 @@ fun P503App(
                             dispatch(P503UiEvent.InitialLoadResult(result.state, pinnedTargets))
                         }
                         else -> {
-                            // D-203 startup trace: the initial read failed. D-207: the class name
-                            // of the swallowed state-read failure (or "unknown" when the lease
-                            // itself did not complete) is the only extra content — diagnostics
-                            // only, dispatch and retry behavior unchanged.
+                            // D-203 startup trace: the initial read failed. D-207 kept the class
+                            // name of the swallowed state-read failure; D-214 discriminates the
+                            // three causes that D-207's "unknown" conflated, so the trace alone
+                            // separates the non-blocking lease refusal from a swallowed read
+                            // throw and from a non-Success read result — diagnostics only,
+                            // dispatch and retry behavior unchanged.
                             val readFailure = (outcome as? LeaseOutcome.Completed)?.value?.second
-                            val errorType = readFailure?.javaClass?.simpleName ?: "unknown"
-                            StartupTrace.emit("read.currentState end kind=failed errorType=$errorType")
+                            val cause =
+                                if (outcome !is LeaseOutcome.Completed) {
+                                    // The lease itself refused (acquireLease's non-blocking
+                                    // tryLock / RuntimeNotReady path).
+                                    "leaseNotReady"
+                                } else if (readFailure != null) {
+                                    "readThrew errorType=${readFailure.javaClass.simpleName}"
+                                } else {
+                                    val variant = result?.javaClass?.simpleName ?: "null"
+                                    "readResult variant=$variant"
+                                }
+                            StartupTrace.emit("read.currentState end kind=failed cause=$cause")
                             dispatch(P503UiEvent.InitialLoadFailed)
                         }
                     }
