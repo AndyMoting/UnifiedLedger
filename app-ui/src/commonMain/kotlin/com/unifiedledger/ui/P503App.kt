@@ -117,6 +117,7 @@ import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVoidFactKind
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.datetime.YearMonth
 import com.unifiedledger.application.MonthlyActivityResult as ApplicationMonthlyActivityResult
@@ -1136,6 +1137,19 @@ fun P503App(
     // The pin seeding stays on the main thread (it reads the preference store after the result
     // lands; the store read is the entry-preference surface, not the current-state read this
     // batch governs).
+    // D-215: the startup fires this read CONCURRENTLY with requestCatalogSnapshotLoad(), and the
+    // runtime exposes a single global, non-blocking lease whose tryLock failure returns NotReady
+    // without waiting. In run 37209978362 the catalog read held that lease for 55ms while this
+    // read refused it after 4ms (`cause=leaseNotReady`), even though `state=Ready` had already
+    // been emitted and the catalog read succeeded under the same facade — the only remaining
+    // NotReady source is that tryLock race. This read performs no writes (a plain
+    // queryCurrentState.query() plus a pin preference read), so re-attempting the SAME lease
+    // acquisition is safe; the retry is bounded to InitialReadLeaseRetry.MAX_ATTEMPTS (initial +
+    // three, 100ms apart) and applies ONLY to a bare NotReady. A Completed outcome (success,
+    // stale generation, readThrew, or any readResult variant) is handled exactly as before, and
+    // exhaustion preserves the D-214 fail-closed trace + InitialLoadFailed dispatch unchanged.
+    // Trace honesty: `read.currentState begin` stays and the success path is silent; each actual
+    // retry emits one bounded `read.currentState retry attempt=N` line (N in 1..MAX_ATTEMPTS-1).
     LaunchedEffect(Unit) {
         currentStateLoadCoordinator.startLoadOnce {
             // D-203 startup trace: the initial current-state read window begins (background).
@@ -1145,7 +1159,7 @@ fun P503App(
                 // the typed InitialLoadFailed and the slot release in the hop below is guaranteed.
                 // P7-06 06.1 (D-176; spec 4.3/4.4): the read and the pin seeding run under one
                 // operation lease; the captured generation gates the landing (stale => discard).
-                val outcome =
+                fun readInitialState() =
                     ledger.leased { facade, _ ->
                         // D-207: the swallowed state-read failure is kept (runCatching behavior
                         // unchanged) so the D-203 trace can carry the exception class name.
@@ -1153,6 +1167,19 @@ fun P503App(
                         val pins = runCatching { facade.entryPreferences?.pinnedTargets(ledger.ledgerId) }.getOrNull()
                         Triple(stateResult.getOrNull(), stateResult.exceptionOrNull(), pins)
                     }
+                // D-215: retry ONLY a bare LeaseOutcome.NotReady (the transient single non-blocking
+                // lease refusal), bounded by InitialReadLeaseRetry; the same read-only acquisition
+                // is re-attempted. A Completed outcome — success, stale generation, readThrew or
+                // any readResult variant — exits the loop immediately and is handled unchanged.
+                var attemptsMade = 1
+                var outcome = readInitialState()
+                while (outcome is LeaseOutcome.NotReady && InitialReadLeaseRetry.shouldRetry(attemptsMade, InitialReadLeaseRetry.LEASE_NOT_READY_CAUSE)) {
+                    // D-203 trace: one bounded line per actual retry (1..MAX_ATTEMPTS-1).
+                    StartupTrace.emit("read.currentState retry attempt=$attemptsMade")
+                    delay(InitialReadLeaseRetry.RETRY_DELAY_MS)
+                    outcome = readInitialState()
+                    attemptsMade += 1
+                }
                 // Back on the main dispatcher: seed the pin mirror, then dispatch serially.
                 scope.launch {
                     if (outcome is LeaseOutcome.Completed && !ledger.isCurrentGeneration(outcome.generation)) {

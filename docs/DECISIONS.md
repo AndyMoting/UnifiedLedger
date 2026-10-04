@@ -4357,3 +4357,26 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 - `cause=readResult variant=null` ⇒ **当前逻辑下防御性不可达**：`getOrNull() == null` 意味着 `runCatching` 捕获了异常，于是 `exceptionOrNull() != null`，分支 2（`readThrew`）总是先胜出；因此现场若真观测到 `variant=null`，它证伪的是「分支 2 覆盖全部 null 结果」这一假设，属异常信号而非正常状态，应另案调查（既非抛异常也非枚举变体）。
 
 **关联决定：** D-213（本轮 trace 证据与全线程取证，本批迭代其仪表）、D-207（errorType 仪表与其残留披露 (b) 三因合并，本批拆分）、D-209/D-211/D-212（oracle 侧重试/门控/busy_timeout 链与止损条款，本批只读其证据）、D-203（trace 面登记合同与隐私边界）、D-198（最大规模契约）。
+
+## D-215 初始当前状态读的 leaseNotReady 有界重试（产品修复）
+
+**状态：** 已批准（2026-10-03；用户批准的产品修复，仅 app-ui 初始加载块与新增 app-ui 纯逻辑/测试，零 ledger-*、android-app、scaleTest、Python、workflow 改动）。
+
+**背景（根因已证实，不再复议）：** run 37209978362 的 trace（设备 22:55:21）为 `optimize.thread end ok=true` @958617 → `startupController.state state=Ready` @958618 → `read.catalogSnapshot begin` @958659 → `read.currentState begin` @958663 → **`read.currentState end kind=failed cause=leaseNotReady` @958667（仅 4ms）** → `read.catalogSnapshot end kind=completed` @958714。应用在启动时并发发起两个读：`P503App.kt` 初始加载 `LaunchedEffect` 里的 `read.currentState`，以及 `requestCatalogSnapshotLoad` 的 `read.catalogSnapshot`；两者都要取运行时**唯一、全局、非阻塞**的租约——`LedgerRuntimeOwner.kt:386-396` 里 `mutex.tryLock()` 失败直接返回 `RuntimeNotReady`，不等待（P7-06 规范 4.2）。`state=Ready` 已发出，且 `catalogSnapshot` 在同一 facade 下于 55ms 内成功，故 `LeaseOutcome.NotReady` 剩余的唯一来源就是这次 tryLock 竞争。目录路径已经容忍 NotReady（保留旧值/载入中），而 `currentState` 路径把它当致命错误 → 无重试地落入 fail-closed 错误屏。
+
+**决定：**
+
+1. **纯重试策略（`app-ui/src/commonMain/kotlin/com/unifiedledger/ui/InitialReadLeaseRetry.kt`，JVM 可测，镜像 scaleTest `AndroidScaleOracleRetry` 的纯逻辑模式）**：`MAX_ATTEMPTS = 4`（首次 + 3 次重试——兄弟读在数十 ms 内完成，保持小而有界）、`RETRY_DELAY_MS = 100L`、判别字 `LEASE_NOT_READY_CAUSE = "leaseNotReady"`；纯函数 `shouldRetryCause(cause)` 只对瞬态 token `"leaseNotReady"` 为真，对 D-214 的 `readThrew errorType=...` / `readResult variant=...` 与其它一切为假；`shouldRetry(attemptsMade, cause)` 在其上叠加尝试次数上限（`attemptsMade < MAX_ATTEMPTS`）。KDoc 明示该决策形状。
+2. **只接线进初始加载块**（`P503App.kt` 初始加载 `LaunchedEffect`，约 1153-1227 行）：把既有 `ledger.leased { ... }` 提取为局部 `readInitialState()`，在既有 `scope.launch(Dispatchers.Default)` 体内做有界重试——`while (outcome is LeaseOutcome.NotReady && InitialReadLeaseRetry.shouldRetry(attemptsMade, InitialReadLeaseRetry.LEASE_NOT_READY_CAUSE))` 则 `delay(RETRY_DELAY_MS)` 后重跑**同一个** `readInitialState()` 并累加 `attemptsMade`。读本就在非主线程执行，落点跳转（内层 `scope.launch`）保持原样，仍以最终 outcome 恰运行一次。
+
+**包容规则（语义逐字节不变）：** `LeaseOutcome.Completed`（成功、stale generation、readThrew 或任何 readResult 变体）绝不重试，走与今日完全相同的分支；只有裸 `NotReady` 被重试，且最多 `MAX_ATTEMPTS` 次；耗尽后既有的 D-214 trace 构造与 `InitialLoadFailed` 派发原样运行，**不论尝试次数派发恰一次**；pin 播种、stale-generation 丢弃、`loadCompleted()`/`refresh()` 语义不变；无新增 expect/actual、无依赖新增、不修改任何其它 `LeaseOutcome.NotReady` 处理点（含目录读路径）。
+
+**trace 诚实（D-203 合同）：** 既有 `read.currentState begin` 保留；成功路径零新增输出；每次真实重试输出一条有界 `read.currentState retry attempt=N`（N 在 1..MAX_ATTEMPTS-1），失败行仍为 `read.currentState end kind=failed cause=leaseNotReady`（耗尽时反映最终尝试）。新增 token 仅为固定 stage 字与计数，不含消息、栈、ledger id、行数据或绝对路径。
+
+**测试：** `app-ui/src/commonTest/kotlin/com/unifiedledger/ui/InitialReadLeaseRetryTest.kt` 新增六例：钉死 `MAX_ATTEMPTS=4` / `RETRY_DELAY_MS=100L`；`LEASE_NOT_READY_CAUSE` 与 `shouldRetryCause` 对 `"leaseNotReady"` 为真；D-214 既有 token 形状（`readThrew errorType=SQLiteException`、`readResult variant=Unavailable/InvalidState/null`）全为假；未知/空/带尾空格/`stale` 全为假；`shouldRetry` 在 1/2/3 为真、4 及以上为假；非瞬态 cause 即使首次尝试也不重试。Kotlin 编译与 JVM 测试 CI-owned。
+
+**边界：** 改动面仅 `P503App.kt`（初始加载块 + `delay` import）、新增 `InitialReadLeaseRetry.kt` 与 `InitialReadLeaseRetryTest.kt`、本条目；零 ledger-*/android-app/scaleTest/Python/workflow 改动；不修改 D-202–D-214 原文。
+
+**残留披露：** (a) 重试在最坏情况下给初始加载增加 `(MAX_ATTEMPTS - 1) * RETRY_DELAY_MS` = 300ms（且仅在连续 NotReady 时）；(b) 真正失效的运行时（非 Ready / facade 未装配）仍按原样失败——本批不掩盖生命周期缺陷，重试只针对与兄弟读的瞬态 tryLock 竞争这一被证实的来源；(c) 启动的两个并发读仍是既有设计，本批不改变它，也不改变唯一全局非阻塞租约；(d) 重试 classification 输入是 D-214 的判别串，若该串构造未来变化需同步更新本策略与其测试。
+
+**关联决定：** D-214（本批输入 contract 的来源：leaseNotReady/readThrew/readResult 三分支判别，耗尽行为保持不变）、D-207（首读失败仪表）、D-203（trace 面登记合同与隐私边界）、D-176（P7-06 规范 4.2/4.3/4.4 操作租约与非阻塞 tryLock）、D-198（最大规模契约，零改动）。
