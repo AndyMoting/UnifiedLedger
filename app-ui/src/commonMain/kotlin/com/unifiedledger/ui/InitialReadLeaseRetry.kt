@@ -74,6 +74,5 @@ internal object InitialReadLeaseRetry {
     fun shouldRetry(
         attemptsMade: Int,
         cause: String,
-    ): Boolean =
-        attemptsRemaining(attemptsMade) && shouldRetryCause(cause)
+    ): Boolean = attemptsRemaining(attemptsMade) && shouldRetryCause(cause)
 }
