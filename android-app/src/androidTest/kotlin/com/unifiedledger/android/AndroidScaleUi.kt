@@ -559,33 +559,32 @@ internal class AndroidScaleUi(
             )
             settle()
         }
-        // D-216 diagnostics for the local channel: bound the loop exactly as
-        // before but record what the walk actually saw, so a "not reached"
-        // failure says whether row nodes were found at all and which
-        // signatures the client tree delivered. Removed once attributed.
-        var minRoots = Int.MAX_VALUE
-        var maxRoots = 0
-        var sawTargetAmount = false
-        val seen = LinkedHashSet<String>()
-        repeat(80) {
-            val roots = candidateNodes()
-            minRoots = minOf(minRoots, roots.size)
-            maxRoots = maxOf(maxRoots, roots.size)
-            roots.forEach { seen += signature(it) }
-            sawTargetAmount = sawTargetAmount || roots.any { labels(it).any { line -> line == (row.amountText) } }
-            roots.firstOrNull { signature(it) == row.signature }?.let {
+        // Deterministic scan (D-216): the list renders the product's own class
+        // groups in query order, which is a different domain from the
+        // displayRows (group, id) rank the loop used to compare against — the
+        // local-small runs showed the rank heuristic oscillating forever
+        // without ever visiting the target. Scroll to the top (backward until
+        // the row window is stationary), then scan forward exactly once until
+        // the unique signature appears or the list bottom proves stationary.
+        var previous = ""
+        repeat(120) {
+            val current = candidateNodes().joinToString("|") { signature(it) }
+            if (current.isNotEmpty() && current == previous) break
+            previous = current
+            scroll(forward = false, fraction = 0.8f)
+        }
+        repeat(240) {
+            candidateNodes().firstOrNull { signature(it) == row.signature }?.let {
                 clickNode(it)
                 await { has("候选详情") }
                 return
             }
-            val window = roots.map(::signature)
-            val first = window.firstOrNull()?.let { signature -> expected.indexOfFirst { it.signature == signature } }
-            scroll(forward = first == null || first < rank, fraction = 0.3f)
+            val top = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signature(it) } ?: ""
+            scroll(forward = true, fraction = 0.6f)
+            val after = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signature(it) } ?: ""
+            if (top.isNotEmpty() && top == after) break
         }
-        error(
-            "unique candidate not reached (rank=$rank minRoots=$minRoots maxRoots=$maxRoots " +
-                "sawTargetAmount=$sawTargetAmount seen=" + seen.take(6) + ")",
-        )
+        error("unique candidate not reached (rank=$rank, deterministic scan exhausted)")
     }
 
     fun traverse(expected: List<ScaleRow>): Int {
