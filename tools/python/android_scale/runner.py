@@ -243,6 +243,17 @@ def remaining_seconds(deadline: float, now: float, cap: float = 30) -> float:
     return min(cap, remaining)
 
 
+def owned_device_matches(devices: str) -> list[str]:
+    """Serials of connected `emulator-*` devices, from an `adb devices` transcript.
+
+    adb on Windows emits CRLF; a trailing `\\r` would defeat the plain
+    `device$` line match, so the transcript is normalized before matching.
+    The D-216 local diagnostic channel runs on Windows dev hosts; CI Linux
+    output is unchanged by the normalization.
+    """
+    return re.findall(r"^(emulator-[0-9]+)\s+device$", devices.replace("\r\n", "\n"), re.MULTILINE)
+
+
 def owned_serial(devices: str, avd: str, expected: str = "ul-scale") -> str:
     if expected == "ul-scale":
         reason = "expected exactly the CI-owned ul-scale emulator"
@@ -372,7 +383,7 @@ class ScaleRunner:
 
     def configure(self):
         devices = self.adb("devices")
-        matches = re.findall(r"^(emulator-[0-9]+)\s+device$", devices, re.MULTILINE)
+        matches = owned_device_matches(devices)
         if len(matches) != 1:
             raise ValueError("one owned CI emulator required")
         candidate = matches[0]
