@@ -37,6 +37,7 @@ from android_scale.runner import (  # noqa: E402
     ScaleDeadlineError,
     ScaleRunner,
     last_match,
+    owned_device_matches,
     owned_serial,
     remaining_seconds,
 )
@@ -572,6 +573,15 @@ class RunnerGuardsAreOfflineTestable(unittest.TestCase):
         self.assertEqual(owned_serial(devices, "ul-scale\nOK"), "emulator-5680")
         with self.assertRaisesRegex(ValueError, "ul_p7_d01"):
             owned_serial(devices, "ul-scale\nOK", "ul_p7_d01")
+
+    def test_owned_device_matches_tolerates_windows_crlf(self):
+        # D-216 local channel: adb on Windows emits CRLF. The first local run
+        # died in configure() because the trailing \r defeated `device$`; the
+        # caller now normalizes CRLF before matching, and this pins the parse.
+        crlf = "List of devices attached\r\nemulator-5680\tdevice\r\n\r\n"
+        self.assertEqual(owned_device_matches(crlf), ["emulator-5680"])
+        self.assertEqual(owned_device_matches("List of devices attached\nemulator-5680\tdevice\n"), ["emulator-5680"])
+        self.assertEqual(owned_device_matches("List of devices attached\nemulator-5680\toffline\r\n"), [])
 
     def test_local_diagnostic_still_enforces_device_ownership(self):
         # D-216: the local channel does not drop the ownership check. configure()
