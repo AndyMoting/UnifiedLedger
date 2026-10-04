@@ -11,7 +11,18 @@ from pathlib import Path
 SCHEMA_VERSION = 2
 DEFAULT_SEED = 197198
 INITIAL_SESSIONS = 5
-PROFILES = {"maximum": (10_000, 1_000, 100), "parser-small": (3, 2, 1)}
+# Dimensions are (rows_per_session, unique_rows, initially_confirmed_relations).
+# "maximum" and "parser-small" keep their exact values. "local-small" is the
+# D-216 local-diagnostic profile: 20 shared rows per session (5 prepare
+# sessions + 1 main-SAF session) + 5 unique rows = 105 initial / 125 final
+# candidates with 200 initial / 300 final duplicate relations (6 copies of each
+# shared value: C(6,2)=15 relations each), and 4 initially confirmed relations
+# to drive the detail-decision stage. Small enough to complete every stage in a
+# few minutes on one local emulator, large enough to exercise SAF import,
+# detail decision, traversal, group disposition (100 new-session relations) and
+# batch confirmation with many relations. Diagnostic only: result.py and the
+# maximum cross-check still accept the "maximum" profile alone.
+PROFILES = {"maximum": (10_000, 1_000, 100), "parser-small": (3, 2, 1), "local-small": (20, 5, 4)}
 HEADER = "交易时间,交易分类,交易对方,对方账号,商品说明,收/支,金额,收/付款方式,交易状态,交易订单号,商家订单号,备注,"
 OCCURRED_AT = "2026-01-15 08:00:00"
 

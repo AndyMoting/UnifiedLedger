@@ -8,7 +8,7 @@ from collections import Counter
 from dataclasses import asdict, replace
 from pathlib import Path
 
-from android_scale.fixture import generate_fixture, load_manifest, validate_manifest
+from android_scale.fixture import PROFILES, generate_fixture, load_manifest, validate_manifest
 
 ROOT = Path(__file__).resolve().parents[2]
 TINY = ROOT / "tests/fixtures/android-scale"
@@ -203,6 +203,37 @@ class AndroidScaleFixtureTests(unittest.TestCase):
             manifest = generate_fixture(path, 0, profile="parser-small")
             self.assertEqual([fact[1] for fact in independent_facts(path / "session-01.csv")], [1, 2, 3])
             validate_manifest(manifest, path, expected_profile="parser-small")
+
+    def test_existing_profile_dimensions_are_unchanged(self):
+        # D-216 must not move the maximum/parser-small dimensions: only the new
+        # local-diagnostic profile is additive.
+        self.assertEqual(PROFILES["maximum"], (10_000, 1_000, 100))
+        self.assertEqual(PROFILES["parser-small"], (3, 2, 1))
+
+    def test_local_diagnostic_profile_generates_valid_manifest_for_every_stage(self):
+        # D-216 local-small: small enough for a few-minute local chain, but every
+        # stage still has non-trivial input (SAF import, detail decision,
+        # traversal, group disposition, batch confirmation).
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            a, b = Path(first), Path(second)
+            manifest = generate_fixture(a, profile="local-small")
+            self.assertEqual(manifest, generate_fixture(b, profile="local-small"))
+            for file in a.iterdir():
+                self.assertEqual(file.read_bytes(), (b / file.name).read_bytes())
+            # Six sessions at 20 shared rows each + 5 unique rows.
+            for index in range(1, 7):
+                self.assertEqual(len(independent_facts(a / f"session-{index:02d}.csv")), 20)
+            self.assertEqual(len(independent_facts(a / "unique-rows.csv")), 5)
+            self.assertEqual((manifest.initial_candidates, manifest.final_candidates), (105, 125))
+            self.assertEqual((manifest.initial_duplicate_relations, manifest.final_duplicate_relations), (200, 300))
+            self.assertEqual(manifest.new_session_duplicate_relations, 100)  # group disposition
+            self.assertEqual(manifest.initially_confirmed_relations, 4)  # detail decision
+            self.assertEqual(manifest.expected_formal_transactions_after_confirmation, 1)  # batch confirmation
+            validate_manifest(manifest, a, expected_profile="local-small")
+            # The default expected profile stays maximum: a local manifest is
+            # never accepted as the acceptance fixture.
+            with self.assertRaisesRegex(ValueError, "profile"):
+                validate_manifest(load_manifest(a / "manifest.json"), a)
 
 
 if __name__ == "__main__":

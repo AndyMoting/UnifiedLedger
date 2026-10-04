@@ -98,6 +98,26 @@ gh workflow run android-scale.yml --ref <branch> -f expected_sha=<完整40位SHA
 
 旧的 `ImportScaleTraversalInstrumentedTest` 保留为人工取证工具，语义不变；`android-instrumented.yml` 的 `notClass` 已同时排除它与 `AndroidScaleLongInstrumentedTest`，长测入口不会被普通 PR 带入。本机不跑该链：不启动模拟器，也不为该链装配 APK。
 
+### 本地诊断通道（D-216，仅诊断，不是验收）
+
+云端 `maximum` 长测仍是唯一验收权威，但每次失败要等 20–40 分钟的云往返。D-216 开放一条**显式 opt-in** 的本地诊断通道：默认关闭，关闭时 host 驱动器行为与今日逐字节相同（非托管 runner 环境仍直接报 `this driver is CI-only; local devices are forbidden`）；只有显式传 `--local-diagnostic` 才跳过托管 runner 环境三元组检查。该通道**不**替代验收，本地证据不得作为验收证据。
+
+本地通道不放宽设备所有权检查：与 CI 相同，仍要求恰好一个 `emulator-` 行且 `state=device`，并 `adb -s <serial> emu avd name` 返回配置的 AVD 名（`--avd-name`，默认 `ul-scale`，故 CI 不受影响）。这取代了原先只认 `ul-scale` 名字的排他检查，强度等价：只接受本会话由 agent 亲自启动并核实过的模拟器。绝不能用于用户的 MuMu/ALas 设备。
+
+本地运行步骤（一并遵守 `unifiedledger-harness` skill 的 MuMu 共存协议）：
+
+1. 用隔离端口 5038 的 adb（`ANDROID_ADB_SERVER_PORT=5038`），**绝不对默认端口执行 `adb kill-server`/`start-server`**。
+2. 由 agent 亲自启动一个 API 36 `google_apis` x86_64 AVD（例如 `ul_p7_d01`），显式用高位端口（`-port 5680` 附近），记录 serial 与 AVD 名；绝不操作用户 MuMu 编写的任何 `emulator-NNNN`。
+3. 生成小档夹具（数分钟内跑完，仍覆盖 SAF 导入、明细判定、遍历、组处置、批量确认五个阶段；`local-small` = 20 行/会话 ×6 + 5 唯一行）：
+   `PYTHONPATH=tools/python python -c "from pathlib import Path; from android_scale.fixture import generate_fixture; generate_fixture(Path('<fixture-dir>'), profile='local-small')"`。验收用的 `tools/ci/android-scale-fixture.py` 仍只生成/校验 `maximum` 档，不新增本地档参数。
+4. 构建两个 APK 后调用驱动器（`--mode maximum` 仍指五阶段机器）：
+   `python tools/ci/android-scale-run.py --fixture <fixture-dir> --evidence <evidence-dir> --app <app.apk> --test <test.apk> --sha <完整40位SHA> --outer-deadline-epoch <epoch> --local-diagnostic --avd-name ul_p7_d01`。
+   本地运行会在 `host.json` 打上 `authority: local-diagnostic`，严格判定器 `validate_evidence` 会因此拒绝它作为验收证据。
+
+**已知边界（务必知悉）**：设备侧 `AndroidScaleLongInstrumentedTest` 目前硬编码 `profile == "maximum"` 与 61,000/150,000 判据，故 `local-small` 夹具在本地目前无法驱动该 instrumentation 走完业务阶段——本批只打通 host 侧的 opt-in 通道与档位，本地端到端调试的最后一环（参数化设备侧 oracle）留作后续批次。此外本机模拟器与 CI 托管 runner 并非逐位相同；本地运行只作诊断，绝不产生任何验收结论。
+
+云端 `maximum` 在**精确 merge SHA** 上的完整通过（同 SHA 再独立跑一次确认可重复）仍是该链唯一验收权威；`--local-diagnostic` 与 `--avd-name` 不得出现在任何 CI 调用中（`.github/workflows/android-scale.yml` 零改动，仍走默认路径）。
+
 ### Android scale preflight 与 APK 来源（D-200 / D-201）
 
 可信双 APK 工件与专用预检支持同仓库 PR 和手动运行；fork PR 跳过这两项，其既有 `Android compile` 编译、单测、APK 构建及普通单 APK 上传照常执行。预检 producer 被跳过时，其依赖的设备 job 同步跳过。

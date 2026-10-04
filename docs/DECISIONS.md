@@ -4387,3 +4387,26 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残留披露：** (a) 重试在最坏情况下给初始加载增加 `(MAX_ATTEMPTS - 1) * RETRY_DELAY_MS` = 300ms（且仅在连续 NotReady 时）；(b) 重试覆盖全部三子来源，故若子来源是「facade 未装配 / 运行时确实不 Ready」这类非瞬态生命周期缺陷，重试会白跑至多 300ms 后才如实失败——Fix A 的归因行在下次现场即可判定，届时可收窄；(c) 真正失效的运行时在耗尽后仍按原样失败；(d) 启动的两个并发读与唯一全局非阻塞租约仍是既有设计，本批不改变它；(e) 重试 classification 输入是 D-214 的判别串，若该串构造未来变化需同步更新本策略与其测试；(f) Fix A 的 emit 位于共享 `acquireLease` 路径，会对非读调用方一并打点（reason token 区分），带来少量额外 trace 行。
 
 **关联决定：** D-214（本批输入 contract 与三子来源解释规则的来源；耗尽行为保持不变，本批先归因）、D-207（首读失败仪表）、D-203（trace 面登记合同与隐私边界）、D-176（P7-06 规范 4.2/4.3/4.4 操作租约与非阻塞 tryLock）、D-198（最大规模契约，零改动）。
+
+## D-216 规模长测的本地诊断通道（opt-in 本地模式、小档夹具与权威边界）
+
+**状态：** 已批准（2026-10-03；用户批准的设施设计变更。改动面仅 host 驱动器、fixture、CLI、判定器 authority 门、两个 Python 测试模块与文档；零产品、零 Kotlin、零 workflow）。
+
+**背景（动机）：** 规模长测驱动器 `tools/python/android_scale/runner.py` 被硬编码为仅云端（非托管 Linux runner 环境直接报 `this driver is CI-only; local devices are forbidden`，见 D-198 第 4 条），设备侧 `AndroidScaleLongInstrumentedTest` 亦硬编码 maximum 判据。结果是任何失败都要等一次 20–40 分钟的云往返才能再观察一次，调试环路极长。实际的锁有三层：(a) D-198 的 CI-only 政策加 runner 环境守卫；(b) MuMu/ALas 共存协议（禁止触碰用户设备，必须用隔离 adb 端口与 agent 自启并核实的模拟器）；(c) 缺少中间档夹具——只有 10k/会话的 `maximum` 与 3 行的 `parser-small`，没有能几分钟跑完整链又可用的档位。
+
+**决定：**
+
+1. **opt-in 本地模式，默认逐字节不变**：`ScaleRunner.__init__` 增 `local_diagnostic: bool = False`；`tools/ci/android-scale-run.py` 增 `--local-diagnostic`（store_true）与 `--avd-name`（默认 `ul-scale`）。`local_diagnostic=False` 时环境守卫逐字节保持原样（仍抛同一 `this driver is CI-only; local devices are forbidden`）；为真时**只**跳过托管 runner 环境三元组检查，阶段顺序、deadline、证据写入与 `am instrument` 调用一律不变。
+2. **所有权检查不放宽（同强度替换）**：`configure()` 仍要求恰好一个 `emulator-` 行且 `state=device`，且 `adb -s <serial> emu avd name` 必须返回配置的 AVD 名。`owned_serial(devices, avd, expected="ul-scale")` 的期望名由 `--avd-name` 传入，取代原先把 `ul-scale` 硬编码进函数的排他检查，强度等价；CI 走默认值。任何非本会话 agent 亲自启动并核实的模拟器（含 MuMu 伪造的 `emulator-NNNN`）仍被拒绝。
+3. **小档夹具 `local-small`**：`fixture.py` 的 `PROFILES` 增 `"local-small": (20, 5, 4)`（维度 = 会话行数 / 唯一行数 / 初始确认关系数）。6 个 20 行会话（5 个 prepare + 1 个 main-SAF）加 5 行唯一记录 = 105 初始 / 125 最终候选、200 初始 / 300 最终重复关系（每个共享值 6 份，C(6,2)=15 关系）、4 条初始确认与 1 笔确认后正式交易——数分钟可跑完，而五阶段（SAF 导入、明细判定、遍历、组处置 100 条新会话关系、批量确认）都仍有非平凡输入。`maximum` 与 `parser-small` 的值逐字节不变；`generate_fixture`/`validate_manifest` 对既有档行为不变。
+4. **权威边界显式化（不弱化 maximum）**：`result.py` 的 `validate_evidence` 在既有 `mode == "maximum"` 检查之后新增一道 authority 门——只接受**缺失**（云端，即今日行为）或显式 `"cloud"` 的 `authority` 字段，任何其它值一律 `cloud acceptance authority required; local-diagnostic evidence is not acceptance`。runner 在本地 opt-in 运行时会于 `host.json` 打上 `authority: "local-diagnostic"`，因此即便五阶段齐备，判定器仍拒绝它作为验收证据；默认路径不写该键，CI 证据逐字节不变，`cross_check_manifest` 的 `profile == "maximum"` 门与整套 maximum 校验（EXPECTED 计数、阶段、配置、SHA、崩溃归属）零弱化、零改动。**推论（如实登记）**：本地运行会在末尾自校验时被该门拒绝，故本地运行的退出码与 `status` 不是链路判定，只作诊断；证据仍全部落盘供人工读取。
+5. **测试**：默认无 flag 仍报 CI-only；有 flag 时跳过三元组、`authority=local-diagnostic` 且 `configure` 在本地模式下仍拒绝 AVD 名不符、接受匹配名（镜像既有 fake-adb seam）；`owned_serial` 尊重可配置期望名且默认仍要 `ul-scale`；`local-small` 生成有效清单且每阶段输入非平凡、与自身可确定性复现；既有档位尺寸不变且 `maximum` 清单校验不受影响；本地 `authority` 证据被判定器拒绝，而缺失/`"cloud"` 的 maximum 证据仍被接受。
+6. **文档**：`docs/CONTRIBUTING.md` 增本地诊断通道小节（隔离端口 5038、agent 自启高位端口模拟器、`--local-diagnostic`/`--avd-name`、`local-small` 生成方式，以及云端 `maximum` 在精确 merge SHA 上仍是唯一权威的声明）。
+
+**本地已验证**：`local-small` 夹具可生成并通过自身清单校验（105/125 候选、200/300 关系、4 条初始确认、100 条新会话关系，7 个文件）；聚焦 Python 测试 196 例全绿。
+
+**残余（登记）**：(a) 设备侧 `AndroidScaleLongInstrumentedTest` 硬编码 `profile == "maximum"` 与 61,000/150,000 判据，且 runner 的 `install()` 以 `expected_profile="maximum"` 校验清单，故 `local-small` 目前无法端到端驱动本地 instrumentation 走完业务阶段——本批只打通 host 侧 opt-in 通道与档位，参数化设备侧 oracle 留作后续批次；当下本地通道的可用形态是用既有 `maximum` 夹具在本地缩短 host 编排/coldstart 的调试环路。(b) 本机模拟器与 CI 托管 runner 并非逐位相同（资源、加速、镜像），本地运行只作诊断，绝不产生任何验收结论。(c) `--local-diagnostic`/`--avd-name` 不得出现在任何 CI 调用中；`.github/workflows/android-scale.yml` 零改动，仍走默认路径。(d) 由第 4 条推论，本地运行默认以非 PASS 结束（authority 被拒），这是边界在生效，不是链路结论。
+
+**边界：** 只改 `tools/python/android_scale/runner.py`、`tools/python/android_scale/fixture.py`、`tools/ci/android-scale-run.py`、`tests/python/test_android_scale_fixture.py`、`tests/python/test_android_scale_result.py`、`docs/CONTRIBUTING.md` 与本条目；`result.py` 仅新增第 4 条的 authority 门，maximum 校验零弱化；零 Kotlin/产品/ledger-*/workflow 改动；`.github/workflows/android-scale.yml` 零改动；不修改 D-198/D-199 原文。
+
+**关联决定：** D-198（本条修订其第 4 条 CI-only 政策的运行面，新增 opt-in 本地诊断通道；云端 `maximum` 仍为唯一验收权威）、D-199（驱动器守卫加固面）、D-200（预检设施、执行清单与清单绑定）、D-205（host 探针改型与本条诊断面）。
