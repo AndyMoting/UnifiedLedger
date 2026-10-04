@@ -45,7 +45,13 @@ class AndroidScaleAllThreadsTest {
             )
         assertFalse(bounded.threadsTruncated)
         assertTrue(bounded.framesTruncated)
-        assertEquals(AndroidScaleAllThreads.MAX_ALL_FRAMES_PER_THREAD, bounded.threads.first().frames.size)
+        assertEquals(
+            AndroidScaleAllThreads.MAX_ALL_FRAMES_PER_THREAD,
+            bounded.threads
+                .first()
+                .frames
+                .size,
+        )
         assertEquals(listOf("f1"), bounded.threads.last().frames)
     }
 
@@ -60,7 +66,13 @@ class AndroidScaleAllThreadsTest {
         assertTrue(bounded.threadsTruncated)
         assertTrue(bounded.framesTruncated)
         assertEquals(AndroidScaleAllThreads.MAX_ALL_THREADS, bounded.threads.size)
-        assertEquals(AndroidScaleAllThreads.MAX_ALL_FRAMES_PER_THREAD, bounded.threads.first().frames.size)
+        assertEquals(
+            AndroidScaleAllThreads.MAX_ALL_FRAMES_PER_THREAD,
+            bounded.threads
+                .first()
+                .frames
+                .size,
+        )
     }
 
     @Test
@@ -85,7 +97,13 @@ class AndroidScaleAllThreadsTest {
         val bounded = AndroidScaleAllThreads.boundAllThreads(entries)
         assertFalse(bounded.threadsTruncated)
         assertFalse(bounded.framesTruncated)
-        assertEquals(AndroidScaleAllThreads.MAX_ALL_FRAMES_PER_THREAD, bounded.threads.first().frames.size)
+        assertEquals(
+            AndroidScaleAllThreads.MAX_ALL_FRAMES_PER_THREAD,
+            bounded.threads
+                .first()
+                .frames
+                .size,
+        )
         assertEquals(listOf("f1"), bounded.threads.last().frames)
     }
 
@@ -100,9 +118,27 @@ class AndroidScaleAllThreadsTest {
             )
         assertFalse(bounded.threadsTruncated)
         assertFalse(bounded.framesTruncated)
-        assertEquals(2, bounded.threads.single().frames.size)
-        assertEquals("x".repeat(AndroidScaleAllThreads.MAX_ALL_FRAME_CHARS), bounded.threads.single().frames.first())
-        assertEquals("short", bounded.threads.single().frames.last())
+        assertEquals(
+            2,
+            bounded.threads
+                .single()
+                .frames
+                .size,
+        )
+        assertEquals(
+            "x".repeat(AndroidScaleAllThreads.MAX_ALL_FRAME_CHARS),
+            bounded.threads
+                .single()
+                .frames
+                .first(),
+        )
+        assertEquals(
+            "short",
+            bounded.threads
+                .single()
+                .frames
+                .last(),
+        )
     }
 
     @Test
