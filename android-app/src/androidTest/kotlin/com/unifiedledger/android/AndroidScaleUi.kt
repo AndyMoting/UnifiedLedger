@@ -567,13 +567,15 @@ internal class AndroidScaleUi(
         // the row window is stationary), then scan forward exactly once until
         // the unique signature appears or the list bottom proves stationary.
         var previous = ""
-        repeat(120) {
+        var topScrolls = 0
+        while (topScrolls++ < 120) {
             val current = candidateNodes().joinToString("|") { signature(it) }
             if (current.isNotEmpty() && current == previous) break
             previous = current
             scroll(forward = false, fraction = 0.8f)
         }
-        repeat(240) {
+        var scans = 0
+        while (scans++ < 240) {
             candidateNodes().firstOrNull { signature(it) == row.signature }?.let {
                 clickNode(it)
                 await { has("候选详情") }
