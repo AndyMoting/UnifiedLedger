@@ -4443,6 +4443,8 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 5. **oracle 的 D-209/211/212 重试/门控机制保留**：静止点读无竞争，机制成为纯安全网；不删除（避免判据面抖动）。
 6. **测试拓扑**：纯测试设施改动（androidTest + 可能的 result.py 阶段上限核对）；独立评审 + verifier + PR/CI/合并照常；合并后先本地 local-small 验证新链，再对精确 merge SHA 派发云端 maximum 验收（两轮同 SHA 规则不变）。
 
-**边界：** 本批（local-medium 档位）只改 `tools/python/android_scale/fixture.py`、`android-app` 的 `scaleTest`/`test` 源集；实施批边界在实施时登记。零产品/ledger-* 改动；`.github/workflows/android-scale.yml` 零改动。
+**实施批落地记录（2026-10-05/06，提交 c9d5eb5）：** 设计第 1–5 条按计划落地；实施中依本地证据追加三条具体化：(a) `openCandidateByAmount`——目标行按内容锚定（种子+1 金额在夹具构造上唯一属于唯一会话首行，行不渲染会话 ID），从"待确认——缺用户决策"组标题（冻结展示序的第一个组）小步向下定位，点击带坐标兜底与"详情须显示目标金额"校验；(b) `collectTraversal`——收集式遍历从同一标题锚起步，每步用 findNode（缓存→刷新→强制重置三层）探测目标行；(c) 原 chain 中由 oracle 发现的 `mainInput`/`selectedId` 等状态改在静止点推导。**本地验证（26 次运行，`local/artifacts/d217-impl-run/`）**：preparation/coldstart/saf_import 稳定 PASS（各约 10 秒——30 分钟撞墙时代结束）；**detail_decision 连续 4 次 PASS（约 247 秒，该阶段史上首次完成）**；traversal 通过 1 次后连续 4 次被 D-203 家族间歇性客户端树盲区击败（目标行整轮不可见，三种导航变体同症状），登记为残余——它依赖的容器扫描/标题锚定/findNode 三层机制在 detail_decision 中均验证有效，故判定为基础设施间歇性而非新代码逻辑错误，需独立定因轮。result.py 仅 uiIdentityScope 值更新（collect-then-align 语义），EXPECTED 字面量、manifest 绑定、阶段上限全部不变。
+
+**边界：** 诊断批（local-medium 档位）只改 `tools/python/android_scale/fixture.py`、`android-app` 的 `scaleTest`/`test` 源集；实施批只改 `android-app` 的 `androidTest` 源集（`AndroidScaleLongInstrumentedTest`/`AndroidScaleUi`）、`tools/python/android_scale/result.py` 的 uiIdentityScope 值、`tests/python/test_android_scale_result.py` 的对应值。零产品/ledger-* 改动；`.github/workflows/android-scale.yml` 零改动。
 
 **关联决定：** D-212（止损条款与本条的定因前置）、D-216（本地诊断通道——本条目的复现手段）、D-198（验收权威不变）、D-209/D-211（保留的 oracle 机制）。
