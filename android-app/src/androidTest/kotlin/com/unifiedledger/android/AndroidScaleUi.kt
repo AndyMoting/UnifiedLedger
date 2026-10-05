@@ -332,6 +332,31 @@ internal class AndroidScaleUi(
     }
 
     /**
+     * Clicks [clickText] until the observable postcondition [effectText]
+     * surfaces (bounded). The D-216 local runs proved a click performed on a
+     * stale client-cache node can fail silently (the checkbox toggled nothing
+     * and the screen never changed), so the caller must be able to retry; a
+     * click that did register surfaces the effect immediately, so the retry
+     * loop is a no-op in the honest path. The short effect wait keeps a ghost
+     * from burning the stage deadline.
+     */
+    fun clickUntil(
+        clickText: String,
+        effectText: String,
+        attempts: Int = 5,
+    ) {
+        repeat(attempts) {
+            click(clickText)
+            try {
+                await(10000) { has(effectText) }
+                return
+            } catch (ignored: IllegalStateException) {
+            }
+        }
+        error("click effect not observed: $clickText -> $effectText")
+    }
+
+    /**
      * D-208: when the cached walk finds no visible scrollable container, one
      * rate-limited forced reset plus a single re-walk run before the error, so
      * a client cache frozen on a previous screen (run 37130347905: saf_import

@@ -362,8 +362,10 @@ class AndroidScaleLongInstrumentedTest {
             state.put("selectedId", selected.id).put("selectedAmount", selected.amount)
             ui.openCandidate(selected, imported.displayRows)
             check(ui.has("决策未补全，尚不可提交确认。"))
-            ui.click("勾选候选")
-            ui.seek("进入批量确认")
+            // The checkbox click must be verified by its effect: a click on a
+            // stale client-cache node fails silently (D-216 local finding), and
+            // the screen carries no scrollable container for seek's fallback.
+            ui.clickUntil("勾选候选", "进入批量确认")
             ui.click("进入批量确认")
             ui.click("授权逐项入账")
             ui.await { ui.has("导入", prefix = true) }
@@ -375,11 +377,13 @@ class AndroidScaleLongInstrumentedTest {
             oracle.zeroEconomics(rejected)
             ui.edge(last = false)
             ui.openCandidate(selected, imported.displayRows)
-            ui.seek("○ " + state.getString("categoryLabel"))
+            // The detail screen carries no scrollable container (verified on
+            // the D-216 local channel), so seek's scroll fallback can never
+            // rescue a miss here; click's own await + miss-reset is the whole
+            // navigation. Both options are single-entry catalogs.
             ui.click("○ " + state.getString("categoryLabel"))
-            ui.seek("○ " + state.getString("accountLabel"))
             ui.click("○ " + state.getString("accountLabel"))
-            ui.seek("决策已补全。")
+            ui.await { ui.has("决策已补全。") }
             ui.edge(last = false)
             // Selection may remain after a skipped batch; only toggle when actually unchecked.
             val checkbox = ui.nodes(ui.root()).first { it.contentDescription?.toString() == "勾选候选" }
