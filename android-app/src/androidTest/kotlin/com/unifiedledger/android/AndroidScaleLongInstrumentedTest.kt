@@ -342,7 +342,10 @@ class AndroidScaleLongInstrumentedTest {
             oracle.zeroEconomics(oracle.snapshot(ledger))
         }
         stage("saf_import", 1800000) {
-            ui.click("导入")
+            // Verified click: the tab switch is also a silent-failure candidate
+            // on a stale client-cache node (observed once on the local channel
+            // as a 180s wait for a screen that never opened).
+            ui.clickUntil("导入", "支付宝账单（CSV）")
             ui.selectSafFixture(spec.mainSessionFileName)
             ui.await(1800000) { ui.has("接治完成：新增 " + spec.mainSessionRows + "，等价重放 0，解析拒绝 0，接治拒绝 0。") }
             ui.click("刷新清单")
