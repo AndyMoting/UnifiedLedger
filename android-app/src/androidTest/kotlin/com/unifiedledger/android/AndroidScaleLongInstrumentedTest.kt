@@ -366,7 +366,12 @@ class AndroidScaleLongInstrumentedTest {
             state.put("finalIdentity", imported.identityDigest).put("finalRelations", imported.relationDigest)
             evidence.put("finalCandidates", imported.rows.size).put("finalRelations", imported.relations)
         }
-        stage("detail_decision") {
+        // D-216: the local-small profile navigates without the indexed jump
+        // (the client never exposes it here), so the deterministic scan is the
+        // whole mechanism and needs more than the 180s the cloud contract caps
+        // detail_decision at (result.py keeps that cap for maximum; the outer
+        // budget still governs the local run).
+        stage("detail_decision", if (spec.profile == "maximum") 180000L else 600000L) {
             val imported = oracle.snapshot(ledger)
             val uniqueSession = state.getJSONArray("sessions").getJSONObject(spec.initialSessions).getString("inputRef")
             val selected = imported.rows.first { it.session == uniqueSession && it.ordinal == 0 }

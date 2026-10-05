@@ -636,8 +636,17 @@ internal class AndroidScaleUi(
         }
         var scans = 0
         while (scans++ < 60) {
-            val rows = candidateNodes()
-            rows.firstOrNull { signature(it) == row.signature }?.let {
+            // The client tree flaps: the same position can read empty (or miss
+            // the target) on one walk and read fine on the next. Re-walk each
+            // position a bounded three times before scrolling on.
+            var rows = candidateNodes()
+            var matched = rows.firstOrNull { signature(it) == row.signature }
+            var polls = 0
+            while (matched == null && polls++ < 2) {
+                rows = candidateNodes()
+                matched = rows.firstOrNull { signature(it) == row.signature }
+            }
+            matched?.let {
                 clickNode(it)
                 // A ghost match (stale-cache node that does not open the
                 // detail) must not burn the stage deadline in the 180s
@@ -652,7 +661,7 @@ internal class AndroidScaleUi(
                 if (opened) return
             }
             val top = rows.firstOrNull()?.let { bounds(it).toString() + signature(it) } ?: ""
-            scroll(forward = true, fraction = 0.6f)
+            scroll(forward = true, fraction = 0.8f)
             val after = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signature(it) } ?: ""
             if (top.isNotEmpty() && top == after) break
         }
