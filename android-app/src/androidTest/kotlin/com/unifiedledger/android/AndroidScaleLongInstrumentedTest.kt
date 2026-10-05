@@ -288,6 +288,17 @@ class AndroidScaleLongInstrumentedTest {
         }
         // Publish only the final fixture through MediaStore so DocumentsUI can actually find it.
         val mainSessionName = spec.mainSessionFileName
+        // D-216 local channel: every prepare published the same display name,
+        // and MediaStore deduplicates with " (n)" suffixes — the exact name the
+        // picker matches eventually ceased to exist (14 numbered copies on the
+        // local AVD). Remove this run's prior publishes first; the cloud's
+        // fresh emulator never accumulates them.
+        val base = mainSessionName.removeSuffix(".csv")
+        context.contentResolver.delete(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            "${MediaStore.Downloads.DISPLAY_NAME} LIKE ?",
+            arrayOf("$base%"),
+        )
         val values =
             ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, mainSessionName)
