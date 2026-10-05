@@ -454,7 +454,20 @@ internal class AndroidScaleUi(
         repeat(30000) {
             val current = nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text?.toString().orEmpty() }
             if (current == previous) {
-                check(if (last) has("进入批量确认", prefix = true) || has("确认整组标记") || has("最近批量结果", prefix = true) else has("刷新清单")) { "stationary viewport is not a proven edge" }
+                // D-216: the client tree can be momentarily blind at the edge
+                // (observed once on the local channel — the top of the list was
+                // visibly rendered while a single has() returned false); give
+                // the proof three bounded attempts, each carrying findNode's
+                // rate-limited miss reset, before declaring the edge unproven.
+                var proven = false
+                var proofs = 0
+                while (!proven && proofs++ < 3) {
+                    proven = has("进入批量确认", prefix = true) ||
+                        has("确认整组标记") ||
+                        has("最近批量结果", prefix = true) ||
+                        has("刷新清单")
+                }
+                check(proven) { "stationary viewport is not a proven edge" }
                 return
             }
             previous = current
