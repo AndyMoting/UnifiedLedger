@@ -452,7 +452,7 @@ internal class AndroidScaleUi(
         }
         var previous = ""
         repeat(30000) {
-            val current = nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text.toString() }
+            val current = nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text?.toString().orEmpty() }
             if (current == previous) {
                 check(if (last) has("进入批量确认", prefix = true) || has("确认整组标记") || has("最近批量结果", prefix = true) else has("刷新清单")) { "stationary viewport is not a proven edge" }
                 return
