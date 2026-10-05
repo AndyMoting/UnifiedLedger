@@ -1,5 +1,6 @@
 package com.unifiedledger.android
 
+import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.Instrumentation
 import android.content.ComponentName
@@ -463,6 +464,24 @@ internal class AndroidScaleUi(
     }
 
     fun selectSafFixture(fileName: String) {
+        // The documentsui window can appear with a readable window list but an
+        // unreadable root (node fetches stay empty for the whole default await
+        // — observed intermittently on the local channel while the window was
+        // focused and the app alive). Close the sheet and re-enter the picker;
+        // a fresh window is readable again.
+        repeat(3) { attempt ->
+            try {
+                selectSafFixtureOnce(fileName)
+                return
+            } catch (failure: IllegalStateException) {
+                if (attempt == 2) throw failure
+                runCatching { automation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK) }
+                await(20000) { has("选择文件") }
+            }
+        }
+    }
+
+    private fun selectSafFixtureOnce(fileName: String) {
         // The caller clicks 导入 and returns immediately; on a fast host the
         // import screen can still be unrendered when the first seek fires, and
         // seeking on the (unscrollable, empty) home tree dies with "scroll
