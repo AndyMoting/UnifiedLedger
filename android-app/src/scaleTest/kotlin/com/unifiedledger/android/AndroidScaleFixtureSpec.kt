@@ -1,7 +1,7 @@
 package com.unifiedledger.android
 
 /** Profiles the cloud chain may be driven with (see D-216). */
-internal val ANDROID_SCALE_LONG_PROFILES = setOf("maximum", "local-small")
+internal val ANDROID_SCALE_LONG_PROFILES = setOf("maximum", "local-small", "local-medium")
 
 /**
  * D-216: manifest-derived expectations for the long chain, so the same device

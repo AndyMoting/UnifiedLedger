@@ -22,7 +22,20 @@ INITIAL_SESSIONS = 5
 # detail decision, traversal, group disposition (100 new-session relations) and
 # batch confirmation with many relations. Diagnostic only: result.py and the
 # maximum cross-check still accept the "maximum" profile alone.
-PROFILES = {"maximum": (10_000, 1_000, 100), "parser-small": (3, 2, 1), "local-small": (20, 5, 4)}
+#
+# "local-medium" is the D-217 diagnostic tier: 2,000 shared rows per session
+# + 100 unique rows = 10,100 initial / 11,100 final candidates with 20,000 /
+# 30,000 duplicate relations and 20 initially confirmed relations. Its
+# post-import write burst approaches the cloud scale that produced the
+# D-212 rollback-journal lock wall, so the wall can be reproduced and
+# attributed on the local channel instead of through 20-40 minute cloud
+# round trips. Diagnostic only: result.py still accepts "maximum" alone.
+PROFILES = {
+    "maximum": (10_000, 1_000, 100),
+    "parser-small": (3, 2, 1),
+    "local-small": (20, 5, 4),
+    "local-medium": (2_000, 100, 20),
+}
 HEADER = "交易时间,交易分类,交易对方,对方账号,商品说明,收/支,金额,收/付款方式,交易状态,交易订单号,商家订单号,备注,"
 OCCURRED_AT = "2026-01-15 08:00:00"
 
