@@ -288,6 +288,17 @@ class AndroidScaleLongInstrumentedTest {
         }
         // Publish only the final fixture through MediaStore so DocumentsUI can actually find it.
         val mainSessionName = spec.mainSessionFileName
+        // D-216 local channel: every prepare published the same display name,
+        // and MediaStore deduplicates with " (n)" suffixes — the exact name the
+        // picker matches eventually ceased to exist (14 numbered copies on the
+        // local AVD). Remove this run's prior publishes first; the cloud's
+        // fresh emulator never accumulates them.
+        val base = mainSessionName.removeSuffix(".csv")
+        context.contentResolver.delete(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            "${MediaStore.Downloads.DISPLAY_NAME} LIKE ?",
+            arrayOf("$base%"),
+        )
         val values =
             ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, mainSessionName)
@@ -355,15 +366,22 @@ class AndroidScaleLongInstrumentedTest {
             state.put("finalIdentity", imported.identityDigest).put("finalRelations", imported.relationDigest)
             evidence.put("finalCandidates", imported.rows.size).put("finalRelations", imported.relations)
         }
-        stage("detail_decision") {
+        // D-216: the local-small profile navigates without the indexed jump
+        // (the client never exposes it here), so the deterministic scan is the
+        // whole mechanism and needs more than the 180s the cloud contract caps
+        // detail_decision at (result.py keeps that cap for maximum; the outer
+        // budget still governs the local run).
+        stage("detail_decision", if (spec.profile == "maximum") 180000L else 600000L) {
             val imported = oracle.snapshot(ledger)
             val uniqueSession = state.getJSONArray("sessions").getJSONObject(spec.initialSessions).getString("inputRef")
             val selected = imported.rows.first { it.session == uniqueSession && it.ordinal == 0 }
             state.put("selectedId", selected.id).put("selectedAmount", selected.amount)
             ui.openCandidate(selected, imported.displayRows)
             check(ui.has("决策未补全，尚不可提交确认。"))
-            ui.click("勾选候选")
-            ui.seek("进入批量确认")
+            // The checkbox click must be verified by its effect: a click on a
+            // stale client-cache node fails silently (D-216 local finding), and
+            // the screen carries no scrollable container for seek's fallback.
+            ui.clickUntil("勾选候选", "进入批量确认")
             ui.click("进入批量确认")
             ui.click("授权逐项入账")
             ui.await { ui.has("导入", prefix = true) }
@@ -375,11 +393,13 @@ class AndroidScaleLongInstrumentedTest {
             oracle.zeroEconomics(rejected)
             ui.edge(last = false)
             ui.openCandidate(selected, imported.displayRows)
-            ui.seek("○ " + state.getString("categoryLabel"))
+            // The detail screen carries no scrollable container (verified on
+            // the D-216 local channel), so seek's scroll fallback can never
+            // rescue a miss here; click's own await + miss-reset is the whole
+            // navigation. Both options are single-entry catalogs.
             ui.click("○ " + state.getString("categoryLabel"))
-            ui.seek("○ " + state.getString("accountLabel"))
             ui.click("○ " + state.getString("accountLabel"))
-            ui.seek("决策已补全。")
+            ui.await { ui.has("决策已补全。") }
             ui.edge(last = false)
             // Selection may remain after a skipped batch; only toggle when actually unchecked.
             val checkbox = ui.nodes(ui.root()).first { it.contentDescription?.toString() == "勾选候选" }

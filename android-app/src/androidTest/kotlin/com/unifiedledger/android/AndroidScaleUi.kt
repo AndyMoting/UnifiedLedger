@@ -1,5 +1,6 @@
 package com.unifiedledger.android
 
+import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.Instrumentation
 import android.content.ComponentName
@@ -332,6 +333,31 @@ internal class AndroidScaleUi(
     }
 
     /**
+     * Clicks [clickText] until the observable postcondition [effectText]
+     * surfaces (bounded). The D-216 local runs proved a click performed on a
+     * stale client-cache node can fail silently (the checkbox toggled nothing
+     * and the screen never changed), so the caller must be able to retry; a
+     * click that did register surfaces the effect immediately, so the retry
+     * loop is a no-op in the honest path. The short effect wait keeps a ghost
+     * from burning the stage deadline.
+     */
+    fun clickUntil(
+        clickText: String,
+        effectText: String,
+        attempts: Int = 5,
+    ) {
+        repeat(attempts) {
+            click(clickText)
+            try {
+                await(10000) { has(effectText) }
+                return
+            } catch (ignored: IllegalStateException) {
+            }
+        }
+        error("click effect not observed: $clickText -> $effectText")
+    }
+
+    /**
      * D-208: when the cached walk finds no visible scrollable container, one
      * rate-limited forced reset plus a single re-walk run before the error, so
      * a client cache frozen on a previous screen (run 37130347905: saf_import
@@ -426,9 +452,22 @@ internal class AndroidScaleUi(
         }
         var previous = ""
         repeat(30000) {
-            val current = nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text.toString() }
+            val current = nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text?.toString().orEmpty() }
             if (current == previous) {
-                check(if (last) has("进入批量确认", prefix = true) || has("确认整组标记") || has("最近批量结果", prefix = true) else has("刷新清单")) { "stationary viewport is not a proven edge" }
+                // D-216: the client tree can be momentarily blind at the edge
+                // (observed once on the local channel — the top of the list was
+                // visibly rendered while a single has() returned false); give
+                // the proof three bounded attempts, each carrying findNode's
+                // rate-limited miss reset, before declaring the edge unproven.
+                var proven = false
+                var proofs = 0
+                while (!proven && proofs++ < 3) {
+                    proven = has("进入批量确认", prefix = true) ||
+                        has("确认整组标记") ||
+                        has("最近批量结果", prefix = true) ||
+                        has("刷新清单")
+                }
+                check(proven) { "stationary viewport is not a proven edge" }
                 return
             }
             previous = current
@@ -438,6 +477,31 @@ internal class AndroidScaleUi(
     }
 
     fun selectSafFixture(fileName: String) {
+        // The documentsui window can appear with a readable window list but an
+        // unreadable root (node fetches stay empty for the whole default await
+        // — observed intermittently on the local channel while the window was
+        // focused and the app alive). Close the sheet and re-enter the picker;
+        // a fresh window is readable again.
+        repeat(3) { attempt ->
+            try {
+                selectSafFixtureOnce(fileName)
+                return
+            } catch (failure: IllegalStateException) {
+                if (attempt == 2) throw failure
+                runCatching { automation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK) }
+                await(20000) { has("选择文件") }
+            }
+        }
+    }
+
+    private fun selectSafFixtureOnce(fileName: String) {
+        // The caller clicks 导入 and returns immediately; on a fast host the
+        // import screen can still be unrendered when the first seek fires, and
+        // seeking on the (unscrollable, empty) home tree dies with "scroll
+        // container absent" — the local-small run's saf_import failure at
+        // 810ms. Await the format entry itself: await polls has() with the
+        // D-208 rate-limited resets, so a stale cache cannot hide the screen.
+        await { has("支付宝账单（CSV）") }
         seek("支付宝账单（CSV）", forward = false)
         val format = findNode { it.text?.toString() == "支付宝账单（CSV）" } ?: error("Alipay format entry absent")
         val picks = nodes(root()).filter { it.text?.toString() == "选择文件" && it.isVisibleToUser }
@@ -470,12 +534,52 @@ internal class AndroidScaleUi(
     private fun candidateNodes(): List<AccessibilityNodeInfo> {
         val container = scrollable()
         val viewport = bounds(container)
-        return nodes(container)
-            .filter { node ->
+        val labeled =
+            nodes(container).filter { node ->
                 node.isVisibleToUser &&
                     node.actionList.any { it.label?.toString() == "查看候选详情" } &&
                     bounds(node).let { it.height() > 0 && it.top >= viewport.top && it.bottom <= viewport.bottom }
-            }.sortedBy { bounds(it).top }
+            }
+        if (labeled.isNotEmpty()) return labeled.sortedBy { bounds(it).top }
+        // D-216 fallback: the labeled click action may never surface to the
+        // instrumentation client, and the container-scoped walk can miss the
+        // rendered rows entirely (both observed in the local-small runs where
+        // this path had never executed anywhere before). Locate row roots by
+        // content from the window root instead — a superset walk that does not
+        // depend on which scrollable the client exposes — after one
+        // rate-limited forced cache reset clears any stale client tree.
+        // Ascend from a visible amount text to the nearest ancestor carrying
+        // the candidate metadata line, then to the nearest clickable node —
+        // the same row the labeled action would have identified. Signature
+        // exactness is unchanged.
+        if (missResetDue(SystemClock.elapsedRealtime(), lastResetElapsedMs)) {
+            lastResetElapsedMs = SystemClock.elapsedRealtime()
+            try {
+                resetAutomationCache()
+            } catch (ignored: Throwable) {
+                // Contained by contract, same as findNode/scrollable.
+            }
+        }
+        val amount = Regex("^[0-9]+\\.[0-9]{2} CNY$")
+        val meta = Regex("类型 ordinary_flow；发生 [0-9T:+\\-]+；方向 out；状态 settled；重复 ")
+        val roots = ArrayList<AccessibilityNodeInfo>()
+        for (text in nodes(root())) {
+            if (!text.isVisibleToUser || !amount.matches(text.text?.toString() ?: "")) continue
+            if (bounds(text).height() <= 0) continue
+            var node = text.parent
+            var hops = 0
+            while (node != null && hops++ < 8) {
+                if (meta.containsMatchIn(labels(node).joinToString("\n"))) {
+                    var click: AccessibilityNodeInfo? = node
+                    var clickHops = 0
+                    while (click != null && clickHops++ < 4 && !click.isClickable) click = click.parent
+                    click?.let { roots += it }
+                    break
+                }
+                node = node.parent
+            }
+        }
+        return roots.distinctBy { bounds(it) }.sortedBy { bounds(it).top }
     }
 
     private fun signature(node: AccessibilityNodeInfo): String {
@@ -491,29 +595,84 @@ internal class AndroidScaleUi(
     ) {
         val rank = expected.indexOfFirst { it.id == row.id }
         check(rank >= 0)
-        val container = scrollable()
-        // This is detail navigation, not traversal coverage. A unique live signature is still mandatory.
-        check(container.actionList.any { it.id == AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id }) { "indexed detail navigation unavailable" }
-        check(
-            container.performAction(
-                AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id,
-                Bundle().apply {
-                    putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_ROW_INT, rank + 200)
-                },
-            ),
-        )
-        settle()
-        repeat(80) {
-            candidateNodes().firstOrNull { signature(it) == row.signature }?.let {
-                clickNode(it)
-                await { has("候选详情") }
-                return
-            }
-            val window = candidateNodes().map(::signature)
-            val first = window.firstOrNull()?.let { signature -> expected.indexOfFirst { it.signature == signature } }
-            scroll(forward = first == null || first < rank, fraction = 0.3f)
+        // Detail navigation, not traversal coverage: a unique live signature
+        // stays mandatory. The indexed scrollToPosition jump is an accelerator
+        // for deep ranks, not a precondition — the local-small run proved the
+        // review LazyColumn can render without exposing ACTION_SCROLL_TO_
+        // POSITION to the instrumentation client (180s await never saw it;
+        // detail_decision had never executed anywhere before), while the
+        // signature loop below is the actual navigation mechanism and keeps
+        // its own bound. Jump when the action exists; always fall through to
+        // the bounded loop.
+        val container = widestVisibleScrollable()
+        if (container != null && container.actionList.any { it.id == AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id }) {
+            check(
+                container.performAction(
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id,
+                    Bundle().apply {
+                        putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_ROW_INT, rank + 200)
+                    },
+                ),
+            )
+            settle()
         }
-        error("unique candidate not reached")
+        // Deterministic scan (D-216): the list renders the product's own class
+        // groups in query order, which is a different domain from the
+        // displayRows (group, id) rank the loop used to compare against — the
+        // local-small runs showed the rank heuristic oscillating forever
+        // without ever visiting the target. Scroll to the top (backward until
+        // the row window is stationary), then scan forward exactly once until
+        // the unique signature appears or the list bottom proves stationary.
+        // The client tree flaps (D-203 family): one whole pass can miss the
+        // target row, so the pass runs twice with a forced cache reset between
+        // attempts before the honest failure.
+        for (attempt in 0 until 2) {
+            if (attempt > 0) runCatching { resetAutomationCache() }
+            var previous = ""
+            var topScrolls = 0
+            while (topScrolls++ < 30) {
+                val current = candidateNodes().joinToString("|") { signature(it) }
+                // An empty window means no rows are visible at all: nothing is
+                // above to reach, and waiting for rows here burned the whole
+                // stage budget once already.
+                if (current.isEmpty() || current == previous) break
+                previous = current
+                scroll(forward = false, fraction = 0.8f)
+            }
+            var scans = 0
+            while (scans++ < 60) {
+                // The client tree flaps: the same position can read empty (or
+                // miss the target) on one walk and read fine on the next.
+                // Re-walk each position a bounded three times before scrolling
+                // on.
+                var rows = candidateNodes()
+                var matched = rows.firstOrNull { signature(it) == row.signature }
+                var polls = 0
+                while (matched == null && polls++ < 2) {
+                    rows = candidateNodes()
+                    matched = rows.firstOrNull { signature(it) == row.signature }
+                }
+                matched?.let {
+                    clickNode(it)
+                    // A ghost match (stale-cache node that does not open the
+                    // detail) must not burn the stage deadline in the 180s
+                    // default await; retry the scan instead.
+                    val opened =
+                        try {
+                            await(20000) { has("候选详情") }
+                            true
+                        } catch (ignored: IllegalStateException) {
+                            false
+                        }
+                    if (opened) return
+                }
+                val top = rows.firstOrNull()?.let { bounds(it).toString() + signature(it) } ?: ""
+                scroll(forward = true, fraction = 0.8f)
+                val after = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signature(it) } ?: ""
+                if (top.isNotEmpty() && top == after) break
+            }
+        }
+        error("unique candidate not reached (rank=$rank, deterministic scan exhausted)")
     }
 
     fun traverse(expected: List<ScaleRow>): Int {

@@ -113,6 +113,7 @@ gh workflow run android-scale.yml --ref <branch> -f expected_sha=<完整40位SHA
 4. 构建两个 APK 后调用驱动器（`--mode maximum` 仍指五阶段机器）：
    `python tools/ci/android-scale-run.py --fixture <fixture-dir> --evidence <evidence-dir> --app <app.apk> --test <test.apk> --sha <完整40位SHA> --outer-deadline-epoch <epoch> --local-diagnostic --avd-name ul_p7_d01`。
    本地运行会在 `host.json` 打上 `authority: local-diagnostic`，严格判定器 `validate_evidence` 会因此拒绝它作为验收证据。
+5. **每次本地运行之间必须重置设备状态**：`adb -s <serial> uninstall com.unifiedledger.android`（CI 每次都是全新模拟器，本地 AVD 会跨运行残留应用数据，上一轮的设备证据文件会让 prepare 以 "stage must not be retried" 秒退）。prepare 现在会在发布 SAF 夹具前清理本档的旧 MediaStore 副本（去重副本会让 picker 的精确名匹配落空——本地实测根因之一）；若运行在 prepare 之前崩溃，`rm -f /sdcard/Download/session-06*.csv` 手动兜底。
 
 **已知边界（务必知悉）**：设备侧判据已全部由 `AndroidScaleFixtureSpec`（纯数据类，从夹具 manifest 派生，JVM 纯逻辑测试锁定其与 `maximum` 历史字面量逐项一致）参数化，`local-small` 与 `maximum` 走同一条设备链，云端判据严格不变。本机模拟器与 CI 托管 runner 并非逐位相同；本地运行只作诊断，绝不产生任何验收结论。
 
