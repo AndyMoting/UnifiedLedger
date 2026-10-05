@@ -103,18 +103,19 @@ class AndroidScaleFixtureSpecTest {
 
     @Test
     fun localMediumCoversEveryStageWithNonTrivialInput() {
-        val medium = localSmall.copy(
-            profile = "local-medium",
-            rowsPerSession = 2_000,
-            uniqueRows = 100,
-            mainSessionRows = 2_000,
-            initialCandidates = 10_100,
-            finalCandidates = 12_100,
-            initialDuplicateRelations = 20_000,
-            finalDuplicateRelations = 30_000,
-            newSessionDuplicateRelations = 10_000,
-            initiallyConfirmedRelations = 20,
-        )
+        val medium =
+            localSmall.copy(
+                profile = "local-medium",
+                rowsPerSession = 2_000,
+                uniqueRows = 100,
+                mainSessionRows = 2_000,
+                initialCandidates = 10_100,
+                finalCandidates = 12_100,
+                initialDuplicateRelations = 20_000,
+                finalDuplicateRelations = 30_000,
+                newSessionDuplicateRelations = 10_000,
+                initiallyConfirmedRelations = 20,
+            )
         assertEquals(10_100, medium.candidates(final = false))
         assertEquals(12_100, medium.candidates(final = true))
         assertEquals(20_000, medium.duplicateRelations(final = false))
