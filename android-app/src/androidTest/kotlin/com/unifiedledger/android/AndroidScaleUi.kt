@@ -568,20 +568,33 @@ internal class AndroidScaleUi(
         // the unique signature appears or the list bottom proves stationary.
         var previous = ""
         var topScrolls = 0
-        while (topScrolls++ < 120) {
+        while (topScrolls++ < 30) {
             val current = candidateNodes().joinToString("|") { signature(it) }
-            if (current.isNotEmpty() && current == previous) break
+            // An empty window means no rows are visible at all: nothing is
+            // above to reach, and waiting for rows here burned the whole stage
+            // budget once already.
+            if (current.isEmpty() || current == previous) break
             previous = current
             scroll(forward = false, fraction = 0.8f)
         }
         var scans = 0
-        while (scans++ < 240) {
-            candidateNodes().firstOrNull { signature(it) == row.signature }?.let {
+        while (scans++ < 60) {
+            val rows = candidateNodes()
+            rows.firstOrNull { signature(it) == row.signature }?.let {
                 clickNode(it)
-                await { has("候选详情") }
-                return
+                // A ghost match (stale-cache node that does not open the
+                // detail) must not burn the stage deadline in the 180s
+                // default await; retry the scan instead.
+                val opened =
+                    try {
+                        await(20000) { has("候选详情") }
+                        true
+                    } catch (ignored: IllegalStateException) {
+                        false
+                    }
+                if (opened) return
             }
-            val top = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signature(it) } ?: ""
+            val top = rows.firstOrNull()?.let { bounds(it).toString() + signature(it) } ?: ""
             scroll(forward = true, fraction = 0.6f)
             val after = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signature(it) } ?: ""
             if (top.isNotEmpty() && top == after) break
