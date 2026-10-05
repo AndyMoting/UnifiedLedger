@@ -4418,3 +4418,31 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 只改 `tools/python/android_scale/runner.py`、`tools/python/android_scale/fixture.py`、`tools/ci/android-scale-run.py`、`tools/ci/android-scale-fixture.py`、`tests/python/test_android_scale_fixture.py`、`tests/python/test_android_scale_result.py`、`android-app` 的 `scaleTest`/`androidTest`/`test` 源集（spec、其 JVM 测试与设备链参数化）、`docs/CONTRIBUTING.md` 与本条目；`result.py` 仅 authority 门（修复轮内收紧）；修复轮 2 仅 `runner.py` 的设备行匹配与测试；修复轮 3 仅 `owned_serial` 的 avd 回执归一与测试；修复轮 4 仅 `android-app` 的 androidTest 设备链（`AndroidScaleUi`/`AndroidScaleLongInstrumentedTest`）与 `docs/CONTRIBUTING.md` 的本地运行重置规程段；maximum 校验零弱化；零产品/ledger-* 改动；`.github/workflows/android-scale.yml` 零改动；不修改 D-198/D-199 原文。
 
 **关联决定：** D-198（本条修订其第 4 条 CI-only 政策的运行面，新增 opt-in 本地诊断通道；云端 `maximum` 仍为唯一验收权威）、D-199（驱动器守卫加固面）、D-200（预检设施、执行清单与清单绑定）、D-205（host 探针改型与本条诊断面）。
+
+## D-217 锁墙本地定因与观察时序重设计（路线一：重型断言挪应用静止点）
+
+**状态：** 已批准（2026-10-05；用户批准「路线一」——不切 WAL、不动产品源码，重设计观察时机。本条目登记本地锁墙复现的定因证据与重设计方案；实施批另行交付）。
+
+**背景：** D-212 止损条款终结了 oracle 侧补丁后，云端 maximum 验收停在 saf_import 的 SQLITE_BUSY 墙（342/454/432/384/1034s 五轮同位）。用户裁决采用路线一：把重型 SQL 断言挪到应用停止的静止点（reopen/replay/final-reopen），链内活动阶段只做 UI 观察。立项时登记一个事实缺口：锁墙期间到底是谁在持锁（应用写突发？应用长读？），五轮云端取证未定因。
+
+**本地复现与定因证据（local-medium 档位首航，run 证据 `local/artifacts/d217-medium-run/`）：**
+
+1. **档位**：`local-medium` = (2000, 100, 20) → 10,100 初始 / 12,100 最终候选、20,000/30,000 重复关系——写入突发量级接近云端。prepare PASS 258s（10k 行装入）、coldstart PASS 15.7s。
+2. **墙复现**：saf_import ERROR 1800143ms（打满 30 分钟阶段预算）——云端 1034s 同型，本地通道达成复现目的。
+3. **反直觉读数（推翻「单一持续写者持锁」旧模型）**：logcat 零 SQLITE_BUSY/database-locked 记录；oracle 仅**一次**连接尝试（journalMode=delete 后无第二次）；失败瞬间应用主线程空闲在 Looper、协程池全 parked、Instr 线程已在取证捕获——**没有任何线程在干活**。
+4. **新模型**：观察器单次大读横跨几十个查询页，每页在读写围栏上静默吞满 60s busy_timeout（busy_timeout 内核等待不产生任何日志）——~30 页 × 60s ≈ 30 分钟，与观测吻合。即**墙 = 高频短写围栏 × 大读的页数，超线性放大**，而非单一长事务。应用在观察窗口内持续产生短写（来源待实施批用 journal 门控日志钉死）。
+5. **混杂因素如实登记**：本地无头模拟器在负载下严重退化——system_server 高频 churn（freezer 反复切换 ~3k 行、startProcess slow-op 数百次）、模拟器时钟跳变（36 分钟运行的日志时间戳横跨 4.5 小时墙钟）。本地时序测量只能作定性用。
+6. **云/本地症状差异的解释**：云端 BUSY 异常是同一围栏机制的另一表现（重试路径显式抛出），本地单次尝试把等待全部吞进 busy_timeout 内核层。
+
+**决定（路线一设计，实施批交付）：**
+
+1. **链内活动阶段零 oracle 读**：`chain()` 的七个 stage 全部只做 UI 观察（spec 派生的期望文案/计数），删除全部 `oracle.snapshot`/`oracle.read` 活动调用（coldstart 的空库快照保留——空库无写者、且是 generation 锚点）。
+2. **重型 SQL 断言整体迁移到静止点**：saf_import 的 assertFixture/计数、traversal 前置基线、group_disposition 的回执计数、batch_confirmation 的 economics——全部挪到 `reopen()`（该阶段开始时应用已被宿主停止，`ui.launch` 在断言之后）+ replay/final-reopen 保持原样。oracle 的 SQL 直读独立性在静止点完整保留。
+3. **遍历（traversal）改为自包含收集**：活阶段只收集观察到的签名序列/计数（滚动到顶→单向前扫到底部静止），不做期望对齐；reopen 阶段用静止点 oracle 计算期望多重集并比对（每签名出现次数级），保留「逐行都被看到、无重复无遗漏」的覆盖力。
+4. **evidence 契约不变**：`preparedCandidates`/`finalCandidates`/`mainGroupRelations` 等键是 device evidence 顶层键，产出阶段从 chain 迁到 reopen，`result.py` 的绑定键与数值零改动；阶段清单（PHASES）零改动；各阶段 elapsedMs 上限按新时序复核（saf_import 变快，reopen 变重——上限调整在实施批内逐项列出并保持 result.py 一致）。
+5. **oracle 的 D-209/211/212 重试/门控机制保留**：静止点读无竞争，机制成为纯安全网；不删除（避免判据面抖动）。
+6. **测试拓扑**：纯测试设施改动（androidTest + 可能的 result.py 阶段上限核对）；独立评审 + verifier + PR/CI/合并照常；合并后先本地 local-small 验证新链，再对精确 merge SHA 派发云端 maximum 验收（两轮同 SHA 规则不变）。
+
+**边界：** 本批（local-medium 档位）只改 `tools/python/android_scale/fixture.py`、`android-app` 的 `scaleTest`/`test` 源集；实施批边界在实施时登记。零产品/ledger-* 改动；`.github/workflows/android-scale.yml` 零改动。
+
+**关联决定：** D-212（止损条款与本条的定因前置）、D-216（本地诊断通道——本条目的复现手段）、D-198（验收权威不变）、D-209/D-211（保留的 oracle 机制）。
