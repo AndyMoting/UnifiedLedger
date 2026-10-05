@@ -320,7 +320,23 @@ internal class AndroidScaleUi(
             }
             current = candidate.parent
         }
-        error("semantic click refused")
+        // D-217 fallback: the semantic click path can be refused on this
+        // stack even for a visible, enabled row (the client tree exposes the
+        // node but its clickable ancestor rejects ACTION_CLICK). Tap the
+        // node's screen coordinates instead — the same target the semantic
+        // path aimed at.
+        val rect = bounds(node)
+        check(rect.width() > 0 && rect.height() > 0) { "semantic click refused and node has no on-screen bounds" }
+        val down = SystemClock.uptimeMillis()
+        val events = listOf(
+            MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, rect.exactCenterX(), rect.exactCenterY(), 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN },
+            MotionEvent.obtain(down, down + 60, MotionEvent.ACTION_UP, rect.exactCenterX(), rect.exactCenterY(), 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN },
+        )
+        events.forEach { event ->
+            check(automation.injectInputEvent(event, true)) { "coordinate tap injection refused" }
+            event.recycle()
+        }
+        SystemClock.sleep(180)
     }
 
     fun click(
@@ -673,6 +689,189 @@ internal class AndroidScaleUi(
             }
         }
         error("unique candidate not reached (rank=$rank, deterministic scan exhausted)")
+    }
+
+    /**
+     * D-217: detail navigation without an oracle read. The target row is
+     * identified by its unique spec-derived amount — the seed+1 amount is
+     * unique to the first row of the unique session by fixture construction,
+     * and rows do not render their session id (verified interactively) —
+     * then opened through the same deterministic scan as [openCandidate].
+     * Signature uniqueness is enforced by requiring exactly one visible row
+     * to carry the amount.
+     */
+    fun openCandidateByAmount(amount: Long) {
+        val target = amountText(amount)
+        // The review screen can be parked anywhere between its "recent
+        // imports" header and the candidate groups; any of these markers (or
+        // the target amount itself) proves the review surface is live.
+        await { has("刷新清单") || has("待确认——缺用户决策", prefix = true) || has(target) }
+        // D-217: the target row (unique session, first ordinal, no duplicate
+        // candidate) is classified PENDING_USER_DECISION, and that group is
+        // the FIRST group of the review list (frozen display order). Locate
+        // the group header on screen, then match the amount among the rows
+        // rendered below it — no list-wide scanning, no reliance on scroll
+        // physics. If the header or the row is not visible, scroll down one
+        // page and retry; the group sits at the top of the list so a couple
+        // of pages suffice.
+        var pages = 0
+        var sawHeader = false
+        var sawTargetRow = false
+        var clickAttempts = 0
+        for (attempt in 0 until 2) {
+            if (attempt > 0) runCatching { resetAutomationCache() }
+            pages = 0
+            // The candidate groups sit below the format section; scroll in
+            // SMALL steps until the pending-decision group header is on
+            // screen — a full-viewport seek overshoots the header between
+            // has() polls (observed: the walk ended four groups down without
+            // ever seeing the text). Scrolling up first is unnecessary: from
+            // any parking position the downward walk reaches the header.
+            var found = false
+            var steps = 0
+            while (steps++ < 40 && !found) {
+                if (has("待确认——缺用户决策", prefix = true)) {
+                    found = true
+                    break
+                }
+                scroll(forward = true, fraction = 0.25f)
+                if (has("待确认——缺用户决策", prefix = true)) found = true
+            }
+            check(found) { "pending-decision group header never became visible" }
+            while (pages++ < 6) {
+                val header = findNode { node -> node.isVisibleToUser && (node.text?.toString() ?: "").startsWith("待确认——缺用户决策") }
+                if (header == null) {
+                    scroll(forward = false, fraction = 0.9f)
+                    continue
+                }
+                sawHeader = true
+                val headerBottom = bounds(header).bottom
+                val rows = candidateNodes().filter { bounds(it).top >= headerBottom }
+                val matches = rows.filter { signatureAmount(it) == target }
+                if (matches.isNotEmpty()) sawTargetRow = true
+                val row = matches.singleOrNull()
+                if (row != null) {
+                    clickAttempts++
+                    clickNode(row)
+                    val opened =
+                        try {
+                            await(20000) { has("候选详情") }
+                            true
+                        } catch (ignored: IllegalStateException) {
+                            false
+                        }
+                    // The coordinate-tap fallback can land on a stale node
+                    // whose rendered neighbor is a different row, so the
+                    // detail must show the target amount; a wrong row cannot
+                    // be selected at all, so back out and keep looking.
+                    if (opened && has(target)) return
+                    if (opened) {
+                        click("返回")
+                        await { has("刷新清单") }
+                    }
+                }
+                scroll(forward = true, fraction = 0.7f)
+            }
+        }
+        error("unique candidate not reached (amount=$target sawHeader=$sawHeader sawTargetRow=$sawTargetRow clickAttempts=$clickAttempts pages=$pages)")
+    }
+
+    /**
+     * D-217: collect-only traversal. Walks the review list once — top, then a
+     * single forward pass to the stationary bottom — recording every visible
+     * row signature in encounter order, and returns the number of collected
+     * rows. The list renders the product's class groups in query order, a
+     * different domain from the spec's row order, so no in-chain alignment is
+     * attempted; reopen() aligns the collected multiset against the oracle's
+     * quiescent snapshot. The unique-session first row must appear (its
+     * amount is spec-derived), anchoring the collection to the fixture.
+     */
+    fun collectTraversal(seed: Long): List<String> {
+        // D-217: the previous stage may have left the app on the detail
+        // screen (its back click can silently fail on a stale node); the
+        // detail screen has no scrollable container, so edge() below would
+        // die there. Return to the review list with a verified click, then
+        // run the top walk.
+        if (has("候选详情")) {
+            clickUntil("返回", "刷新清单")
+        }
+        // D-217: do NOT rely on backward scrolling to reach the list top —
+        // the scrollable container selection can pick a container that does
+        // not move under the gesture (observed: backward loops terminated
+        // while the viewport sat below the target row). Anchor like
+        // openCandidateByAmount does: locate the PENDING group header (first
+        // group of the list, the one the target row belongs to) with small
+        // downward steps from wherever we are, then start collecting from
+        // the header.
+        var found = false
+        var steps = 0
+        while (steps++ < 40 && !found) {
+            if (has("待确认——缺用户决策", prefix = true)) {
+                found = true
+                break
+            }
+            scroll(forward = true, fraction = 0.25f)
+            if (has("待确认——缺用户决策", prefix = true)) found = true
+        }
+        check(found) { "pending-decision group header never became visible" }
+        val seen = LinkedHashSet<String>()
+        var scans = 0
+        // The seed+1 amount is unique to the unique session's first row by
+        // fixture construction (rows do not render session ids), so the amount
+        // prefix alone is the anchor.
+        val anchor = amountText(seed + 1L) + "|"
+        var sawAnchor = false
+        while (scans++ < 4000) {
+            candidateNodes().forEach { seen += signature(it) }
+            // The container-scoped walk can blind out whole groups; the
+            // targeted findNode (cache walk -> root refresh -> forced cache
+            // reset) probes the anchor row through a different path every
+            // iteration and reads its signature through the same walk's
+            // result, so the anchor has three independent chances per step.
+            if (!sawAnchor) {
+                findNode { node ->
+                    node.isVisibleToUser && signatureAmount(node) == anchor.removeSuffix("|")
+                }?.let {
+                    seen += signature(it)
+                    sawAnchor = true
+                }
+            }
+            val top = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signature(it) } ?: ""
+            scroll(forward = true, fraction = 0.8f)
+            val after = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signature(it) } ?: ""
+            if (top.isNotEmpty() && top == after) break
+        }
+        check(sawAnchor) { "traversal never reached the unique-session first row" }
+        return seen.toList()
+    }
+
+    private fun amountText(amount: Long): String = (amount / 100).toString() + "." + (amount % 100).toString().padStart(2, '0') + " CNY"
+
+    private fun signatureAmount(node: AccessibilityNodeInfo): String? = Regex("[0-9]+\\.[0-9]{2} CNY").find(labels(node).joinToString("\n"))?.value
+
+    /**
+     * D-217: scrolls backward in small steps until the top of the list is
+     * stationary or the given marker text becomes visible; the small fraction
+     * keeps each step inside the client tree's refresh window (a full-viewport
+     * fling outruns it — the D-203 family blindness).
+     */
+    fun seekBackToTop(marker: String = "最近批量结果") {
+        var previous = ""
+        var steps = 0
+        while (steps++ < 40) {
+            if (has(marker, prefix = true)) return
+            val current = nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text?.toString().orEmpty() }
+            scroll(forward = false, fraction = 0.25f)
+            val after = nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text?.toString().orEmpty() }
+            if (current.isNotEmpty() && current == after) {
+                // Stationary viewport: one final bounded wait for the marker
+                // (each has() carries findNode's rate-limited miss reset).
+                var proofs = 0
+                while (!has(marker, prefix = true) && proofs++ < 3) { /* bounded retries */ }
+                return
+            }
+            previous = after
+        }
     }
 
     fun traverse(expected: List<ScaleRow>): Int {

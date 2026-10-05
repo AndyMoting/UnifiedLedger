@@ -124,7 +124,7 @@ def build_valid(directory: Path, *, sha: str = SHA) -> None:
     for index, stage in enumerate(STAGES):
         stages[stage] = {"status": "PASS", "startedMs": index * 1000, "elapsedMs": 10}
     device = {"schema": 1, "sha": sha, "stages": stages, "firstLastObserved": True,
-              "uiIdentityScope": "projected-sequence-multiplicity-order"}
+              "uiIdentityScope": "projected-class-groups-query-order"}
     device.update(COUNTERS)
     (directory / "device.json").write_text(json.dumps(device), encoding="utf-8")
     for phase in PHASES:

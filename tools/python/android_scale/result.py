@@ -228,7 +228,13 @@ def validate_evidence(directory: Path, expected_sha: str) -> dict:
     for key, value in EXPECTED.items():
         if type(device.get(key)) is not int or device[key] != value:
             raise ValueError(f"scale/economic oracle mismatch: {key}")
-    if device.get("firstLastObserved") is not True or device.get("uiIdentityScope") != "projected-sequence-multiplicity-order":
+    # D-217: the in-chain stages observe the UI only; heavy SQL assertions run
+    # in the app-stopped phases. The traversal no longer aligns against the
+    # spec order in-chain (the list renders class groups in query order), so
+    # the scope label reflects the collect-then-align design and the alignment
+    # itself is asserted on-device in reopen() against the quiescent oracle
+    # snapshot (collected signatures == expected display-row multiset).
+    if device.get("firstLastObserved") is not True or device.get("uiIdentityScope") != "projected-class-groups-query-order":
         raise ValueError("UI traversal scope evidence missing")
     if {p.name for p in directory.glob("instrumentation-*.txt")} != {f"instrumentation-{phase}.txt" for phase in PHASES}:
         raise ValueError("extra/stale/missing phase logs")
