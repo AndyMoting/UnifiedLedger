@@ -623,47 +623,54 @@ internal class AndroidScaleUi(
         // without ever visiting the target. Scroll to the top (backward until
         // the row window is stationary), then scan forward exactly once until
         // the unique signature appears or the list bottom proves stationary.
-        var previous = ""
-        var topScrolls = 0
-        while (topScrolls++ < 30) {
-            val current = candidateNodes().joinToString("|") { signature(it) }
-            // An empty window means no rows are visible at all: nothing is
-            // above to reach, and waiting for rows here burned the whole stage
-            // budget once already.
-            if (current.isEmpty() || current == previous) break
-            previous = current
-            scroll(forward = false, fraction = 0.8f)
-        }
-        var scans = 0
-        while (scans++ < 60) {
-            // The client tree flaps: the same position can read empty (or miss
-            // the target) on one walk and read fine on the next. Re-walk each
-            // position a bounded three times before scrolling on.
-            var rows = candidateNodes()
-            var matched = rows.firstOrNull { signature(it) == row.signature }
-            var polls = 0
-            while (matched == null && polls++ < 2) {
-                rows = candidateNodes()
-                matched = rows.firstOrNull { signature(it) == row.signature }
+        // The client tree flaps (D-203 family): one whole pass can miss the
+        // target row, so the pass runs twice with a forced cache reset between
+        // attempts before the honest failure.
+        for (attempt in 0 until 2) {
+            if (attempt > 0) runCatching { resetAutomationCache() }
+            var previous = ""
+            var topScrolls = 0
+            while (topScrolls++ < 30) {
+                val current = candidateNodes().joinToString("|") { signature(it) }
+                // An empty window means no rows are visible at all: nothing is
+                // above to reach, and waiting for rows here burned the whole
+                // stage budget once already.
+                if (current.isEmpty() || current == previous) break
+                previous = current
+                scroll(forward = false, fraction = 0.8f)
             }
-            matched?.let {
-                clickNode(it)
-                // A ghost match (stale-cache node that does not open the
-                // detail) must not burn the stage deadline in the 180s
-                // default await; retry the scan instead.
-                val opened =
-                    try {
-                        await(20000) { has("候选详情") }
-                        true
-                    } catch (ignored: IllegalStateException) {
-                        false
-                    }
-                if (opened) return
+            var scans = 0
+            while (scans++ < 60) {
+                // The client tree flaps: the same position can read empty (or
+                // miss the target) on one walk and read fine on the next.
+                // Re-walk each position a bounded three times before scrolling
+                // on.
+                var rows = candidateNodes()
+                var matched = rows.firstOrNull { signature(it) == row.signature }
+                var polls = 0
+                while (matched == null && polls++ < 2) {
+                    rows = candidateNodes()
+                    matched = rows.firstOrNull { signature(it) == row.signature }
+                }
+                matched?.let {
+                    clickNode(it)
+                    // A ghost match (stale-cache node that does not open the
+                    // detail) must not burn the stage deadline in the 180s
+                    // default await; retry the scan instead.
+                    val opened =
+                        try {
+                            await(20000) { has("候选详情") }
+                            true
+                        } catch (ignored: IllegalStateException) {
+                            false
+                        }
+                    if (opened) return
+                }
+                val top = rows.firstOrNull()?.let { bounds(it).toString() + signature(it) } ?: ""
+                scroll(forward = true, fraction = 0.8f)
+                val after = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signature(it) } ?: ""
+                if (top.isNotEmpty() && top == after) break
             }
-            val top = rows.firstOrNull()?.let { bounds(it).toString() + signature(it) } ?: ""
-            scroll(forward = true, fraction = 0.8f)
-            val after = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signature(it) } ?: ""
-            if (top.isNotEmpty() && top == after) break
         }
         error("unique candidate not reached (rank=$rank, deterministic scan exhausted)")
     }
