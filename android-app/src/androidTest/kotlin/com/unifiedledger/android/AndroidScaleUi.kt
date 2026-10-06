@@ -750,6 +750,7 @@ internal class AndroidScaleUi(
             // D-217 walk diagnostics (revert before PR if not wanted)
             Log.i("ULScaleWalk", "open seekDone attempt=$attempt markerVisible=${has("刷新清单")} rows=${candidateNodes().size}")
             var steps = 0
+            var stationaryCount = 0
             while (steps++ < 60) {
                 scans++
                 // Staleness hardening: the click/back interactions can stale
@@ -761,7 +762,7 @@ internal class AndroidScaleUi(
                 val matches = rows.filter { signatureAmount(it) == target }
                 if (matches.isNotEmpty()) sawTargetRow = true
                 // D-217 walk diagnostics (revert before PR if not wanted)
-                Log.i("ULScaleWalk", "open scan attempt=$attempt step=$steps matches=${matches.size} rows=${rows.size}")
+                Log.i("ULScaleWalk", "open scan attempt=$attempt step=$steps matches=${matches.size} rows=${rows.size} stationaryCount=$stationaryCount")
                 // Global uniqueness is a fixture invariant: more than one
                 // visible row carrying the amount is a real anomaly, not a
                 // scoping problem to retry around.
@@ -793,12 +794,29 @@ internal class AndroidScaleUi(
                 }
                 // Advance and detect the stationary bottom exactly like
                 // collectTraversal (first-row bounds+signature identical
-                // before/after); the minimum-scan guard keeps a slow first
-                // render from ending the scan at step 1-2.
+                // before/after). The client tree lags the gestures (round-4
+                // evidence: the first visible row changes only every ~5 scroll
+                // steps), so a SINGLE unchanged sample cannot distinguish the
+                // list bottom from a tree that is not refreshed yet — the
+                // round-5 attempts (evidence8) both died on it, steps after
+                // the candidate rows first appeared. A stationary verdict
+                // requires three consecutive unchanged samples, each followed
+                // by a forced refresh and another scroll attempt; three
+                // samples cannot occur in the first steps, so the old
+                // minimum-scan guard is subsumed.
                 val top = rows.firstOrNull()?.let { bounds(it).toString() + signatureOrNull(it) } ?: ""
                 scroll(forward = true, fraction = 0.6f)
                 val after = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signatureOrNull(it) } ?: ""
-                if (steps > 2 && top.isNotEmpty() && top == after) break
+                if (top.isNotEmpty() && top == after) {
+                    stationaryCount++
+                    if (stationaryCount >= 3) break
+                    // The tree lags the gestures: force a fresh tree before
+                    // the next sample so "not refreshed yet" is not counted
+                    // as stationary.
+                    runCatching { resetAutomationCache() }
+                } else {
+                    stationaryCount = 0
+                }
             }
         }
         error("unique candidate not reached (amount=$target sawTargetRow=$sawTargetRow clickAttempts=$clickAttempts scans=$scans)")
