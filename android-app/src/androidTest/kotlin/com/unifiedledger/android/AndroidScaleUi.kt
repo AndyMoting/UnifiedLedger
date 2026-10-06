@@ -908,7 +908,7 @@ internal class AndroidScaleUi(
      * requires exactly one matching k and appends only window.drop(k); a
      * window that matches none, or matches more than one k, is a blind/
      * skipped or boundary-ambiguous viewport and is retried with the bounded
-     * backward+forward nudge under one shared budget, erroring only when the
+     * backward nudge under one shared budget, erroring only when the
      * budget is exhausted. The first non-empty window seeds the collection
      * whole (there is no collected prefix to overlap against yet). This is
      * the pre-D-217 [traverse] overlap mechanism
@@ -921,10 +921,10 @@ internal class AndroidScaleUi(
      *
      * [expectedRows] bounds the walk by collected size (the pre-D-217
      * `traverse` did the same against the oracle size): each forward scroll
-     * advances only ~8-10 rows of an ~11-13-row viewport, so a fixed scan cap
-     * cannot reach the 61,000-row maximum. The internal safety cap
-     * (expectedRows*4 + 200) is a generous stuck-viewport guard above the
-     * worst-case rows-to-scans ratio.
+     * advances ~1.5 rows of an ~11-13-row viewport (round-11 fraction 0.12),
+     * so a fixed scan cap cannot reach the 61,000-row maximum. The internal
+     * safety cap (expectedRows*4 + 200) is a generous stuck-viewport guard
+     * above the worst-case rows-to-scans ratio.
      */
     fun collectTraversal(anchorAmount: Long, expectedRows: Int): List<String> {
         // D-217: the previous stage may have left the app on the detail
@@ -959,11 +959,12 @@ internal class AndroidScaleUi(
         check(expectedRows > 0)
         val collected = ArrayList<String>()
         // Bound by collected size, not a fixed scan budget: each forward scroll
-        // advances only ~8-10 rows of an ~11-13-row viewport, so the 61,000-row
-        // maximum needs ~6,000-8,000 scans. safetyCap = expectedRows*4 + 200 is
-        // comfortably above that worst-case rows-to-scans ratio while still
-        // terminating a stuck/duplicated viewport (the pre-D-217 `traverse`
-        // bounded against the oracle size for the same reason).
+        // advances ~1.5 rows of an ~11-13-row viewport (round-11 fraction
+        // 0.12), so the 61,000-row maximum needs ~40,000-45,000 scans.
+        // safetyCap = expectedRows*4 + 200 is comfortably above that
+        // worst-case rows-to-scans ratio while still terminating a
+        // stuck/duplicated viewport (the pre-D-217 `traverse` bounded against
+        // the oracle size for the same reason).
         val safetyCap = expectedRows.toLong() * 4L + 200L
         var scans = 0L
         var retries = 0
@@ -1017,8 +1018,13 @@ internal class AndroidScaleUi(
                 if (matches.size != 1) {
                     val reason = if (matches.isEmpty()) "traversal window did not overlap" else "ambiguous traversal window"
                     check(++retries <= 4) { reason }
-                    scroll(forward = false, fraction = 0.2f)
-                    scroll(fraction = 0.3f)
+                    // D-217 round 11: a no-overlap window means rows were
+                    // SKIPPED — the missed rows lie ABOVE the window, so the
+                    // old back-0.2-then-forward-0.3 nudge moved net forward,
+                    // the wrong direction for a gap. A single backward 0.3
+                    // scroll restores the overlap with the stale tail; the
+                    // normal forward stride then re-covers the gap.
+                    scroll(forward = false, fraction = 0.3f)
                     continue
                 }
                 collected.addAll(window.subList(matches.single(), window.size))
@@ -1037,16 +1043,22 @@ internal class AndroidScaleUi(
                 }
             }
             val top = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signatureOrNull(it) } ?: ""
-            // D-217 round 9: the advance scroll uses fraction 0.25 — the
-            // only fraction that has ever moved this list on device
-            // (evidence6, round-4-era walk at 0.25: the first-row amount
-            // advanced across all steps), while the 0.8 gestures of rounds
-            // 5-7 left rows frozen (evidence14: rows stay 10-11 across every
-            // step, three consecutive cache-reset samples read an identical
-            // first row). The mechanism why 0.8 fails is unknown; the
-            // evidence is what fixes the parameter — the same one the amount
-            // scan adopted in round 8.
-            scroll(forward = true, fraction = 0.25f)
+            // D-217 round 9: 0.25 was the only fraction that had ever moved
+            // this list on device (evidence6, round-4-era walk at 0.25: the
+            // first-row amount advanced across all steps), while the 0.8
+            // gestures of rounds 5-7 left rows frozen (evidence14: rows stay
+            // 10-11 across every step, three consecutive cache-reset samples
+            // read an identical first row). The mechanism why 0.8 fails is
+            // unknown; the evidence is what fixes the parameter.
+            // D-217 round 11: halved to 0.12 (~1.5 rows/gesture). Evidence17
+            // (round 10) collected 117 of 125: the a11y tree lags the
+            // gestures by ~5 samples, so at ~3 rows/gesture the tree can
+            // advance ~15 rows between samples — more than the ~10-11-row
+            // window — and a sample then skips rows entirely, a loss the
+            // unique-overlap merge can never recover. At ~1.5 rows/gesture
+            // the ~5-gesture lag advance is ~7-8 rows, under the window, so
+            // no window can skip rows.
+            scroll(forward = true, fraction = 0.12f)
             val after = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signatureOrNull(it) } ?: ""
             // Bottom verdict — D-217 round 10: movement is decided by
             // COLLECTION GROWTH, not the first-row comparison alone. The
@@ -1069,8 +1081,16 @@ internal class AndroidScaleUi(
             // mean the viewport is truly parked at the bottom.
             val growth = collected.size - sizeBefore
             val firstRowUnchanged = top.isNotEmpty() && top == after
-            // D-217 walk diagnostics (revert before PR if not wanted)
-            Log.i("ULScaleWalk", "collect scan scans=$scans rows=${window.size} collected=${collected.size} growth=$growth stationaryCount=$stationaryCount")
+            // D-217 walk diagnostics (revert before PR if not wanted);
+            // round 11 adds first/last window signatures (truncated) so a
+            // post-mortem can see window jumps directly.
+            val firstSig = window.firstOrNull()?.take(24) ?: "none"
+            val lastSig = window.lastOrNull()?.take(24) ?: "none"
+            Log.i(
+                "ULScaleWalk",
+                "collect scan scans=$scans rows=${window.size} collected=${collected.size} growth=$growth " +
+                    "stationaryCount=$stationaryCount first=$firstSig last=$lastSig",
+            )
             if (firstRowUnchanged) {
                 // The tree lags the gestures: force a fresh tree before the
                 // next sample so later reads are not stale.
