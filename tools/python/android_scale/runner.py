@@ -100,7 +100,9 @@ COMPONENT = re.compile(r"([A-Za-z0-9_.]+)/[.A-Za-z0-9_$]+")
 
 # Preparation and chain deliberately share the remaining global budget.
 # Only the three short reopen/replay phases have independent host limits.
-PHASE_BUDGETS = {"prepare": None, "chain": None, "reopen": 480, "replay": 480, "final-reopen": 480}
+# D-217 round 12: the traversal walk moved into reopen(), so that phase now
+# contains a multi-hour collect walk (old traversal stage cap was 14400s).
+PHASE_BUDGETS = {"prepare": None, "chain": None, "reopen": 18000, "replay": 480, "final-reopen": 480}
 DIAGNOSTIC_SECONDS = 120
 CLEANUP_RESERVE_SECONDS = 30
 

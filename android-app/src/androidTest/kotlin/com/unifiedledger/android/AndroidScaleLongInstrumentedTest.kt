@@ -504,34 +504,14 @@ class AndroidScaleLongInstrumentedTest {
             if (!checkbox.isChecked) ui.clickNode(checkbox)
             ui.click("返回")
         }
-        stage("traversal", 14400000) {
-            // D-217: collect-only traversal. The list renders the product's
-            // class groups in query order — a different domain from the
-            // spec's row order — so the observed signatures are collected
-            // without in-chain alignment; reopen() aligns them against the
-            // oracle's quiescent snapshot. The collection walks the whole
-            // list exactly once and requires the unique-session first row
-            // (its amount is derived from the manifest seed) to appear,
-            // keeping the traversal's coverage mandate without a live-app
-            // oracle read.
-            //
-            // D-217 review (read-only guard): the old `traverse` asserted
-            // after == before over a full ScaleSnapshot plus the identity
-            // digest; this stage now issues no clicks at all (collect-only,
-            // scroll gestures only), so the review list is UI-read-only by
-            // construction. The lost snapshot equality is not silenced: the
-            // final state invariant it protected is asserted in reopen()'s
-            // quiescent snapshot (assertFixture final=true plus the
-            // confirmed-relations/duplicate-history/counts checks), which
-            // pins the whole final state. An in-chain re-read is deliberately
-            // avoided — it would reintroduce the D-212 write-fence wall.
-            val collected = ui.collectTraversal(uniqueSessionFirstAmount(), spec.finalCandidates)
-            state.put("observedSignatures", JSONArray(collected))
-            evidence
-                .put("observedCandidates", collected.size)
-                .put("firstLastObserved", true)
-                .put("uiIdentityScope", "projected-class-groups-query-order")
-        }
+        // D-217 round 12 (evidence20): the collect-only traversal stage moved
+        // out of the chain into reopen(). The walk used to run BEFORE
+        // group_disposition/batch_confirmation, so it collected CHAIN-TIME
+        // signatures while reopen() compared them against the POST-chain
+        // quiescent snapshot — a temporal mismatch that made the multiset
+        // equality unsatisfiable by design. The walk now runs inside
+        // reopen(), after ui.launch(), where the UI displays exactly the
+        // snapshot-consistent final list.
         stage("group_disposition", 5400000) {
             ui.seek("整组标记为重复")
             ui.click("整组标记为重复")
@@ -653,16 +633,63 @@ class AndroidScaleLongInstrumentedTest {
             database.rawQuery("PRAGMA foreign_key_check", null).use { check(!it.moveToFirst()) }
         }
         evidence.put("formalTransactions", 1).put("balancedPostings", 2)
-        // Traversal alignment: the collected signatures must cover exactly the
-        // expected multiset of display rows (every row seen, no duplicates).
-        // collectTraversal preserves multiplicity, so both sides are genuine
-        // multisets and the sizes are directly comparable.
-        val observedSignatures = state.getJSONArray("observedSignatures")
-        val expected = snapshot.displayRows.map { it.signature }
-        val collected = (0 until observedSignatures.length()).map { observedSignatures.getString(it) }
-        check(collected.sorted() == expected.sorted()) { "traversal coverage mismatch (collected=${collected.size} expected=${expected.size})" }
         state.put("endIdentity", snapshot.identityDigest).put("endPersistence", snapshot.persistenceDigest)
         ui.launch()
+        // D-217 round 12 (evidence20): the traversal walk moved here from the
+        // chain. In the chain it ran BEFORE group_disposition and
+        // batch_confirmation, so the signatures it collected reflected the
+        // CHAIN-TIME state (main-session rows still DEFERRED, the unique row
+        // unconfirmed), while the multiset comparison below checked them
+        // against the POST-chain quiescent snapshot (those same rows
+        // CONFIRMED_DUPLICATE, the unique row confirmed) — roughly 21
+        // signatures drifted, so the equality was unsatisfiable BY DESIGN.
+        // The walk now runs after ui.launch(): the relaunched UI displays
+        // exactly the snapshot-consistent final list, so both sides of the
+        // comparison observe the SAME state.
+        //
+        // State-silence invariant: the relaunch plus the collect-only walk
+        // (scroll gestures only, no clicks) must not write to the database
+        // between the snapshot above and this walk. final-reopen re-runs
+        // reopen() on a fresh snapshot — if the relaunch or walk wrote
+        // anything, its assertions would fail; and on this phase the tail
+        // check below (reopened == snapshot) re-reads the oracle after the
+        // walk, so a stray write fails here too. The walk is proven
+        // state-silent on every run.
+        //
+        // reopen() executes for BOTH the reopen and final-reopen phases, and
+        // stage() throws "stage must not be retried" on the second
+        // execution — the phase gate makes the walk run EXACTLY ONCE, in the
+        // reopen phase.
+        if (phase == "reopen") {
+            stage("traversal", 14400000) {
+                // The app relaunched to the home screen; 导入 opens the import
+                // screen whose review list collectTraversal walks (the same
+                // navigation the chain's saf_import stage and this phase's
+                // tail use).
+                ui.click("导入")
+                ui.await { ui.has("支付宝账单（CSV）") }
+                // collectTraversal seek-backs to the 刷新清单 anchor itself
+                // before walking the whole list exactly once; it requires the
+                // unique-session first row (its amount is derived from the
+                // manifest seed) to appear, keeping the traversal's coverage
+                // mandate without a live-app oracle read.
+                val collected = ui.collectTraversal(uniqueSessionFirstAmount(), spec.finalCandidates)
+                state.put("observedSignatures", JSONArray(collected))
+                evidence
+                    .put("observedCandidates", collected.size)
+                    .put("firstLastObserved", true)
+                    .put("uiIdentityScope", "projected-class-groups-query-order")
+                // Traversal alignment: the collected signatures must cover
+                // exactly the expected multiset of display rows (every row
+                // seen, no duplicates). collectTraversal preserves
+                // multiplicity, so both sides are genuine multisets and the
+                // sizes are directly comparable. The snapshot was read with
+                // the app stopped and the walk writes nothing (invariant
+                // above), so the comparison is same-state by construction.
+                val expected = snapshot.displayRows.map { it.signature }
+                check(collected.sorted() == expected.sorted()) { "traversal coverage mismatch (collected=${collected.size} expected=${expected.size})" }
+            }
+        }
         checkEconomicUi()
         ui.click("导入")
         ui.await { ui.has("支付宝账单（CSV）") }

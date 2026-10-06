@@ -1198,7 +1198,11 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
         self.assertEqual(set(PHASES), set(PHASE_BUDGETS))
         self.assertIsNone(PHASE_BUDGETS["prepare"])
         self.assertIsNone(PHASE_BUDGETS["chain"])
-        self.assertTrue(all(PHASE_BUDGETS[phase] == 480 for phase in PHASES[2:]))
+        # D-217 round 12: the collection walk moved into reopen(), so that
+        # phase now hosts a multi-hour walk (the old traversal stage cap was
+        # 14400s); replay/final-reopen stay short.
+        self.assertEqual(PHASE_BUDGETS["reopen"], 18000)
+        self.assertTrue(all(PHASE_BUDGETS[phase] == 480 for phase in PHASES[3:]))
 
     def test_last_match_reports_unreadable_device_output(self):
         self.assertEqual("1080x2400", last_match(r"size: ([0-9]+x[0-9]+)", "Physical size: 1080x2400\n", "display size"))
