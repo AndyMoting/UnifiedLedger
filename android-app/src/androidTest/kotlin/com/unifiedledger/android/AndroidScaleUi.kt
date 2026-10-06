@@ -493,7 +493,13 @@ internal class AndroidScaleUi(
                 return
             }
             previous = current
-            scroll(last, 0.8f)
+            // D-217 round 14 (evidence23): 0.8 gestures freeze this list —
+            // the first comparison then reads stationary at the TOP of the
+            // card, where none of the edge markers is visible, and the proof
+            // fails ("stationary viewport is not a proven edge"). 0.25 is the
+            // only fraction that has ever moved this list on device
+            // (rounds 8/9/11).
+            scroll(last, 0.25f)
         }
         error("edge traversal bound exceeded")
     }
