@@ -1134,12 +1134,22 @@ internal class AndroidScaleUi(
      * stationary or the given marker text becomes visible; the small fraction
      * keeps each step inside the client tree's refresh window (a full-viewport
      * fling outruns it — the D-203 family blindness).
+     *
+     * D-217 round 15 (evidence27): the client tree lags the gestures by ~5
+     * samples, so a single unchanged before/after comparison is not evidence
+     * of the top — it is a lag plateau (observed: this walk exited after one
+     * step with stationary=true while the list was still mid-scroll, and the
+     * caller's marker await timed out 180s later). Ported the edge() round-14
+     * verdict: require eight consecutive unchanged samples — each carrying a
+     * forced cache reset and a bounded marker proof — before declaring the
+     * walk stationary; a movement resumption resets the count.
      */
     fun seekBackToTop(marker: String = "最近批量结果") {
         var previous = ""
         var steps = 0
         // D-217 walk diagnostics (revert before PR if not wanted)
         var exitedStationary = false
+        var stationaryCount = 0
         while (steps++ < 40) {
             if (has(marker, prefix = true)) {
                 // D-217 walk diagnostics (revert before PR if not wanted)
@@ -1152,14 +1162,25 @@ internal class AndroidScaleUi(
             scroll(forward = false, fraction = 0.25f)
             val after = nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text?.toString().orEmpty() }
             if (current.isNotEmpty() && current == after) {
+                stationaryCount++
+                runCatching { resetAutomationCache() }
                 // Stationary viewport: one final bounded wait for the marker
                 // (each has() carries findNode's rate-limited miss reset).
                 var proofs = 0
                 while (!has(marker, prefix = true) && proofs++ < 3) { /* bounded retries */ }
-                // D-217 walk diagnostics (revert before PR if not wanted)
-                exitedStationary = true
-                Log.i("ULScaleWalk", "seekReturn marker=${has(marker, prefix = true)} steps=$steps stationary=$exitedStationary")
-                return
+                if (has(marker, prefix = true)) {
+                    // D-217 walk diagnostics (revert before PR if not wanted)
+                    Log.i("ULScaleWalk", "seekReturn marker=${has(marker, prefix = true)} steps=$steps stationary=$exitedStationary")
+                    return
+                }
+                if (stationaryCount >= 8) {
+                    // D-217 walk diagnostics (revert before PR if not wanted)
+                    exitedStationary = true
+                    Log.i("ULScaleWalk", "seekReturn marker=${has(marker, prefix = true)} steps=$steps stationary=$exitedStationary")
+                    return
+                }
+            } else {
+                stationaryCount = 0
             }
             previous = after
         }
