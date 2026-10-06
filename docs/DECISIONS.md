@@ -4445,6 +4445,8 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **实施批落地记录（2026-10-05/06，提交 c9d5eb5）：** 设计第 1–5 条按计划落地；实施中依本地证据追加三条具体化：(a) `openCandidateByAmount`——目标行按内容锚定（种子+1 金额在夹具构造上唯一属于唯一会话首行，行不渲染会话 ID），从"待确认——缺用户决策"组标题（冻结展示序的第一个组）小步向下定位，点击带坐标兜底与"详情须显示目标金额"校验；(b) `collectTraversal`——收集式遍历从同一标题锚起步，每步用 findNode（缓存→刷新→强制重置三层）探测目标行；(c) 原 chain 中由 oracle 发现的 `mainInput`/`selectedId` 等状态改在静止点推导。**本地验证（26 次运行，`local/artifacts/d217-impl-run/`）**：preparation/coldstart/saf_import 稳定 PASS（各约 10 秒——30 分钟撞墙时代结束）；**detail_decision 连续 4 次 PASS（约 247 秒，该阶段史上首次完成）**；traversal 通过 1 次后连续 4 次被 D-203 家族间歇性客户端树盲区击败（目标行整轮不可见，三种导航变体同症状），登记为残余——它依赖的容器扫描/标题锚定/findNode 三层机制在 detail_decision 中均验证有效，故判定为基础设施间歇性而非新代码逻辑错误，需独立定因轮。result.py 仅 uiIdentityScope 值更新（collect-then-align 语义），EXPECTED 字面量、manifest 绑定、阶段上限全部不变。
 
+**实施批修复轮记录（round 1–3，提交 07bf2f0 与本批）：** 两轮独立评审均返回 CHANGES_REQUIRED。第一轮四项阻塞——收集用非单射签名集导致集合塌缩、锚金额误用 `seed+1`（指向共享会话首行而非唯一会话首行）、spec 回声计数器、重试异常被吞——已在 07bf2f0 修复。第二轮确认收集器从未播种（`collected` 初始为空，首个窗口按零重叠处理并耗尽重试预算）——本批修复：首个非空窗口整体作为收集前缀，重叠纪律从第二个窗口起生效；窗口重叠歧义（多个匹配 k）从立即报错改为与零匹配相同的有界后退+前进重试（共享计数器、总预算 ≤4），耗尽仍大声报错，绝不猜测 k。第二轮并指出链内收集把有序对齐替换为多重集相等——经用户裁决（路线 B）登记为**已接受的残余**：UI 不渲染行标识、逐行身份在设备上不可观测，多重集相等（同尺寸、同频次）是设备侧可观察的最强判据。推送前必须完成设备实跑验证。
+
 **边界：** 诊断批（local-medium 档位）只改 `tools/python/android_scale/fixture.py`、`android-app` 的 `scaleTest`/`test` 源集；实施批只改 `android-app` 的 `androidTest` 源集（`AndroidScaleLongInstrumentedTest`/`AndroidScaleUi`）、`tools/python/android_scale/result.py` 的 uiIdentityScope 值、`tests/python/test_android_scale_result.py` 的对应值。零产品/ledger-* 改动；`.github/workflows/android-scale.yml` 零改动。
 
 **关联决定：** D-212（止损条款与本条的定因前置）、D-216（本地诊断通道——本条目的复现手段）、D-198（验收权威不变）、D-209/D-211（保留的 oracle 机制）。

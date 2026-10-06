@@ -810,10 +810,13 @@ internal class AndroidScaleUi(
      * 1..min(window, collected) satisfies collected.takeLast(k) ==
      * window.take(k), the true boundary is unrecoverable and guessing the
      * largest k can silently drop or double-count rows. So each scroll step
-     * requires exactly one matching k, appends only window.drop(k), and fails
-     * loudly on an ambiguous window; a window that matches none is a
-     * blind/skipped viewport and is retried with a bounded backward+forward
-     * nudge. This is the pre-D-217 [traverse] overlap mechanism
+     * requires exactly one matching k and appends only window.drop(k); a
+     * window that matches none, or matches more than one k, is a blind/
+     * skipped or boundary-ambiguous viewport and is retried with the bounded
+     * backward+forward nudge under one shared budget, erroring only when the
+     * budget is exhausted. The first non-empty window seeds the collection
+     * whole (there is no collected prefix to overlap against yet). This is
+     * the pre-D-217 [traverse] overlap mechanism
      * (scaleWindowOffset + its retry loop) without its oracle dependency: it
      * needs no expected order and no oracle read, so it stays inside the D-212
      * wall. The unique-session first row must appear (its amount is
@@ -883,28 +886,45 @@ internal class AndroidScaleUi(
                 scroll(fraction = 0.3f)
                 continue
             }
-            // Require a UNIQUE contiguous overlap confined to the collected
-            // prefix; a repeated signature (the fixture renders shared values
-            // adjacently) makes multiple k match, and any guess can drop or
-            // double-count rows, so ambiguity fails loudly. Mirrors
-            // scaleWindowOffset's uniqueness requirement in the old traverse.
-            val maxK = minOf(window.size, collected.size)
-            val matches = (1..maxK).filter { k ->
-                collected.subList(collected.size - k, collected.size) == window.subList(0, k)
-            }
-            if (matches.size > 1) error("ambiguous traversal window")
-            if (matches.isEmpty()) {
-                // No overlap at all: a blind/skipped viewport, not a real
-                // scroll step. Appending the whole window would double-count
-                // the overlap, so nudge backward then forward and retry a
-                // bounded number of times (the old traverse's retry budget).
-                check(++retries <= 4) { "traversal window did not overlap" }
-                scroll(forward = false, fraction = 0.2f)
-                scroll(fraction = 0.3f)
-                continue
+            if (collected.isEmpty()) {
+                // Seed (round-2 review fix): the first non-empty window has
+                // no collected prefix to overlap against, so the WHOLE
+                // window becomes the collected prefix and the overlap
+                // discipline starts with the next window. Without this the
+                // first step computes minOf(window.size, 0) = 0, matches
+                // nothing, and burns the retry budget on every start.
+                collected.addAll(window)
+            } else {
+                // Require a UNIQUE contiguous overlap confined to the
+                // collected prefix; a repeated signature (the fixture renders
+                // shared values adjacently) makes multiple k match, and any
+                // guess can drop or double-count rows. Mirrors
+                // scaleWindowOffset's uniqueness requirement in the old
+                // traverse.
+                val maxK = minOf(window.size, collected.size)
+                val matches = (1..maxK).filter { k ->
+                    collected.subList(collected.size - k, collected.size) == window.subList(0, k)
+                }
+                // Ambiguity (multiple matching k) retries under the SAME
+                // bounded budget as the no-overlap path instead of erroring
+                // immediately: it arises when a viewport boundary lands
+                // inside a run of identical signatures, and a different
+                // scroll offset moves that boundary and usually resolves it,
+                // while the fixture's real render is session-major ascending
+                // (adjacent amounts differ), so ambiguity is a
+                // low-probability event, not a structural one. One shared
+                // counter keeps the total budget honest, and the loud error
+                // remains the last resort — a k is never guessed silently.
+                if (matches.size != 1) {
+                    val reason = if (matches.isEmpty()) "traversal window did not overlap" else "ambiguous traversal window"
+                    check(++retries <= 4) { reason }
+                    scroll(forward = false, fraction = 0.2f)
+                    scroll(fraction = 0.3f)
+                    continue
+                }
+                collected.addAll(window.subList(matches.single(), window.size))
             }
             retries = 0
-            collected.addAll(window.subList(matches.single(), window.size))
             // The container-scoped walk can blind out whole groups; the
             // targeted findNode (cache walk -> root refresh -> forced cache
             // reset) probes the anchor row through a different path every
