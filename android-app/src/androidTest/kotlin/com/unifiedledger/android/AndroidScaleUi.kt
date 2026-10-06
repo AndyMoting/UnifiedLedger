@@ -8,6 +8,7 @@ import android.content.Intent
 import android.graphics.Rect
 import android.os.Bundle
 import android.os.SystemClock
+import android.util.Log
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityEvent
@@ -749,6 +750,8 @@ internal class AndroidScaleUi(
             // the seek. The marker is guaranteed here: it renders whenever
             // the review list renders, independent of any batch result.
             seekBackToTop("刷新清单")
+            // D-217 walk diagnostics (revert before PR if not wanted)
+            Log.i("ULScaleWalk", "open seekDone markerVisible=${has("刷新清单")} pendingVisible=${has("待确认——缺用户决策", prefix = true)} rows=${candidateNodes().size}")
             // The candidate groups sit below the format section; scroll in
             // SMALL steps until the pending-decision group header is on
             // screen — a full-viewport seek overshoots the header between
@@ -758,6 +761,8 @@ internal class AndroidScaleUi(
             var found = false
             var steps = 0
             while (steps++ < 40 && !found) {
+                // D-217 walk diagnostics (revert before PR if not wanted)
+                Log.i("ULScaleWalk", "open step=$steps pending=${has("待确认——缺用户决策", prefix = true)} firstRow=${candidateNodes().firstOrNull()?.let { signatureAmount(it) } ?: "none"}")
                 if (has("待确认——缺用户决策", prefix = true)) {
                     found = true
                     break
@@ -867,9 +872,13 @@ internal class AndroidScaleUi(
         // header (first group of the list, the one the target row belongs to)
         // and start collecting from the header.
         seekBackToTop("刷新清单")
+        // D-217 walk diagnostics (revert before PR if not wanted)
+        Log.i("ULScaleWalk", "collect seekDone markerVisible=${has("刷新清单")} pendingVisible=${has("待确认——缺用户决策", prefix = true)} rows=${candidateNodes().size}")
         var found = false
         var steps = 0
         while (steps++ < 40 && !found) {
+            // D-217 walk diagnostics (revert before PR if not wanted)
+            Log.i("ULScaleWalk", "collect step=$steps pending=${has("待确认——缺用户决策", prefix = true)} firstRow=${candidateNodes().firstOrNull()?.let { signatureAmount(it) } ?: "none"}")
             if (has("待确认——缺用户决策", prefix = true)) {
                 found = true
                 break
