@@ -967,6 +967,7 @@ internal class AndroidScaleUi(
         val safetyCap = expectedRows.toLong() * 4L + 200L
         var scans = 0L
         var retries = 0
+        var stationaryCount = 0
         // The unique session's first-row amount is unique to that row by
         // fixture construction (rows do not render session ids): the shared
         // sessions span seed+1..seed+rowsPerSession and the unique session
@@ -977,6 +978,8 @@ internal class AndroidScaleUi(
         var sawAnchor = false
         while (collected.size < expectedRows && scans++ < safetyCap) {
             val window = candidateNodes().mapNotNull(::signatureOrNull)
+            // D-217 walk diagnostics (revert before PR if not wanted)
+            Log.i("ULScaleWalk", "collect scan scans=$scans rows=${window.size} collected=${collected.size} stationaryCount=$stationaryCount")
             if (window.isEmpty() && collected.isEmpty()) {
                 // Nothing rendered yet (the header just settled): one plain
                 // forward scroll without an overlap claim.
@@ -1035,9 +1038,39 @@ internal class AndroidScaleUi(
                 }
             }
             val top = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signatureOrNull(it) } ?: ""
-            scroll(forward = true, fraction = 0.8f)
+            // D-217 round 9: the advance scroll uses fraction 0.25 — the
+            // only fraction that has ever moved this list on device
+            // (evidence6, round-4-era walk at 0.25: the first-row amount
+            // advanced across all steps), while the 0.8 gestures of rounds
+            // 5-7 left rows frozen (evidence14: rows stay 10-11 across every
+            // step, three consecutive cache-reset samples read an identical
+            // first row). The mechanism why 0.8 fails is unknown; the
+            // evidence is what fixes the parameter — the same one the amount
+            // scan adopted in round 8.
+            scroll(forward = true, fraction = 0.25f)
             val after = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signatureOrNull(it) } ?: ""
-            if (top.isNotEmpty() && top == after) break
+            // Bottom verdict with tree-lag immunity — the same consecutive
+            // verdict the amount scan uses (D-217 round 9): the client tree
+            // lags the gestures (the first visible row changes only every
+            // ~5 scroll steps), so a SINGLE unchanged sample cannot
+            // distinguish the list bottom from a tree that is not refreshed
+            // yet and false-triggers the break after the first window or
+            // two. A stationary verdict requires eight consecutive unchanged
+            // samples, each followed by a forced refresh and another scroll
+            // attempt; eight exceeds the ~5 gesture plateau, so the verdict
+            // cannot fire inside a tree-lag window where the list is
+            // actually moving (round-4-era evidence6 logcat: firstRow
+            // plateaus of ~5 steps between advances).
+            if (top.isNotEmpty() && top == after) {
+                stationaryCount++
+                if (stationaryCount >= 8) break
+                // The tree lags the gestures: force a fresh tree before the
+                // next sample so "not refreshed yet" is not counted as
+                // stationary.
+                runCatching { resetAutomationCache() }
+            } else {
+                stationaryCount = 0
+            }
         }
         check(sawAnchor) { "traversal never reached the unique-session first row" }
         // A stationary viewport or the safety cap ends the walk; if either
