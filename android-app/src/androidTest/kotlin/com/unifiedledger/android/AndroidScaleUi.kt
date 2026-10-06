@@ -713,9 +713,20 @@ internal class AndroidScaleUi(
      * identified by its unique spec-derived amount (the caller derives it from
      * the manifest as the unique session's offset-based first-row amount — see
      * `uniqueSessionFirstAmount`; rows do not render their session id, verified
-     * interactively), then opened through the same deterministic scan as
-     * [openCandidate]. Signature uniqueness is enforced by requiring exactly one
-     * visible row to carry the amount.
+     * interactively). D-217 round 5: the amount is GLOBALLY unique by fixture
+     * construction — shared amounts span seed+1..seed+rowsPerSession and the
+     * unique session starts at seed+rowsPerSession+1 — so NO header scoping is
+     * needed: any visible row carrying the amount IS the target row, and more
+     * than one is a real anomaly. The round-4 header-scoped pages loop
+     * oscillated (scroll forward hunting the row, scroll back to re-find the
+     * header) and never advanced past the pending group's first viewport — the
+     * target renders at the BOTTOM of the ~25-row group (within-batch
+     * candidate_id order, unique session imported last), about two viewports
+     * below the header (evidence7 logcat: `open page=1..6 header=true
+     * matches=0` on both attempts). The mechanism is instead one bounded
+     * downward scan from the list top, as in [openCandidate]: each step re-reads
+     * the visible rows, clicks the single row carrying the amount, and advances
+     * until the list bottom proves stationary.
      */
     fun openCandidateByAmount(amount: Long) {
         val target = amountText(amount)
@@ -723,73 +734,44 @@ internal class AndroidScaleUi(
         // imports" header and the candidate groups; any of these markers (or
         // the target amount itself) proves the review surface is live.
         await { has("刷新清单") || has("待确认——缺用户决策", prefix = true) || has(target) }
-        // D-217: the target row (unique session, first ordinal, no duplicate
-        // candidate) is classified PENDING_USER_DECISION, and that group is
-        // the FIRST group of the review list (frozen display order). Locate
-        // the group header on screen, then match the amount among the rows
-        // rendered below it — no list-wide scanning, no reliance on scroll
-        // physics. If the header or the row is not visible, scroll down one
-        // page and retry; the group sits at the top of the list so a couple
-        // of pages suffice.
-        var pages = 0
-        var sawHeader = false
+        var scans = 0
         var sawTargetRow = false
         var clickAttempts = 0
         for (attempt in 0 until 2) {
             if (attempt > 0) runCatching { resetAutomationCache() }
-            pages = 0
-            // D-217 round-4 device evidence (local-small, ba86346): this walk
-            // is downward-only and the review list can be parked BELOW the
-            // pending group when the stage starts, so the walk covered the
-            // whole list and failed without the header ever matching. Seek
-            // the list top first: the TitleBar (「刷新清单」, the first render
-            // item of the review list, P503ImportReviewPresentation) is
-            // visible only at the top, seekBackToTop returns immediately when
-            // it is already visible, and a container that refuses to move
-            // ends the seek bounded with no error — no worse off than without
-            // the seek. The marker is guaranteed here: it renders whenever
-            // the review list renders, independent of any batch result.
+            // Seek the list top first: the TitleBar (「刷新清单」, the first
+            // render item of the review list, P503ImportReviewPresentation)
+            // is visible only at the top, seekBackToTop returns immediately
+            // when it is already visible, and a container that refuses to
+            // move ends the seek bounded with no error. The reset above
+            // (attempt 2) clears the stale client tree the first attempt's
+            // interactions can leave behind, so the seek's has() reads fresh.
             seekBackToTop("刷新清单")
             // D-217 walk diagnostics (revert before PR if not wanted)
-            Log.i("ULScaleWalk", "open seekDone markerVisible=${has("刷新清单")} pendingVisible=${has("待确认——缺用户决策", prefix = true)} rows=${candidateNodes().size}")
-            // The candidate groups sit below the format section; scroll in
-            // SMALL steps until the pending-decision group header is on
-            // screen — a full-viewport seek overshoots the header between
-            // has() polls (observed: the walk ended four groups down without
-            // ever seeing the text). From the top the header is reached
-            // within a couple of viewports.
-            var found = false
+            Log.i("ULScaleWalk", "open seekDone attempt=$attempt markerVisible=${has("刷新清单")} rows=${candidateNodes().size}")
             var steps = 0
-            while (steps++ < 40 && !found) {
-                // D-217 walk diagnostics (revert before PR if not wanted)
-                Log.i("ULScaleWalk", "open step=$steps pending=${has("待确认——缺用户决策", prefix = true)} firstRow=${candidateNodes().firstOrNull()?.let { signatureAmount(it) } ?: "none"}")
-                if (has("待确认——缺用户决策", prefix = true)) {
-                    found = true
-                    break
-                }
-                scroll(forward = true, fraction = 0.25f)
-                if (has("待确认——缺用户决策", prefix = true)) found = true
-            }
-            check(found) { "pending-decision group header never became visible" }
-            while (pages++ < 6) {
-                val header = findNode { node -> node.isVisibleToUser && (node.text?.toString() ?: "").startsWith("待确认——缺用户决策") }
-                if (header == null) {
-                    // D-217 walk diagnostics (revert before PR if not wanted)
-                    Log.i("ULScaleWalk", "open page=$pages header=false matches=0 sawTarget=$sawTargetRow")
-                    scroll(forward = false, fraction = 0.9f)
-                    continue
-                }
-                sawHeader = true
-                val headerBottom = bounds(header).bottom
-                val rows = candidateNodes().filter { bounds(it).top >= headerBottom }
+            while (steps++ < 60) {
+                scans++
+                // Staleness hardening: the click/back interactions can stale
+                // the client tree mid-scan; every 8th step forces one bounded
+                // cache reset, rate-limited by step parity alone (no
+                // time-based throttle needed).
+                if (steps % 8 == 0) runCatching { resetAutomationCache() }
+                val rows = candidateNodes()
                 val matches = rows.filter { signatureAmount(it) == target }
                 if (matches.isNotEmpty()) sawTargetRow = true
                 // D-217 walk diagnostics (revert before PR if not wanted)
-                Log.i("ULScaleWalk", "open page=$pages header=true matches=${matches.size} sawTarget=$sawTargetRow")
-                val row = matches.singleOrNull()
-                if (row != null) {
+                Log.i("ULScaleWalk", "open scan attempt=$attempt step=$steps matches=${matches.size} rows=${rows.size}")
+                // Global uniqueness is a fixture invariant: more than one
+                // visible row carrying the amount is a real anomaly, not a
+                // scoping problem to retry around.
+                if (matches.size > 1) error("target amount is not globally unique on screen (count=${matches.size} amount=$target)")
+                matches.singleOrNull()?.let { row ->
                     clickAttempts++
                     clickNode(row)
+                    // A ghost match (stale-cache node that does not open the
+                    // detail) must not burn the stage deadline in the 180s
+                    // default await; retry the scan instead.
                     val opened =
                         try {
                             await(20000) { has("候选详情") }
@@ -802,17 +784,24 @@ internal class AndroidScaleUi(
                     // detail must show the target amount; a wrong row cannot
                     // be selected at all, so back out and keep looking.
                     // D-217 walk diagnostics (revert before PR if not wanted)
-                    Log.i("ULScaleWalk", "open click=$clickAttempts opened=$opened targetVisible=${has(target)}")
+                    Log.i("ULScaleWalk", "open click attempt=$attempt step=$steps clicks=$clickAttempts opened=$opened targetVisible=${has(target)}")
                     if (opened && has(target)) return
                     if (opened) {
                         click("返回")
                         await { has("刷新清单") }
                     }
                 }
-                scroll(forward = true, fraction = 0.7f)
+                // Advance and detect the stationary bottom exactly like
+                // collectTraversal (first-row bounds+signature identical
+                // before/after); the minimum-scan guard keeps a slow first
+                // render from ending the scan at step 1-2.
+                val top = rows.firstOrNull()?.let { bounds(it).toString() + signatureOrNull(it) } ?: ""
+                scroll(forward = true, fraction = 0.6f)
+                val after = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signatureOrNull(it) } ?: ""
+                if (steps > 2 && top.isNotEmpty() && top == after) break
             }
         }
-        error("unique candidate not reached (amount=$target sawHeader=$sawHeader sawTargetRow=$sawTargetRow clickAttempts=$clickAttempts pages=$pages)")
+        error("unique candidate not reached (amount=$target sawTargetRow=$sawTargetRow clickAttempts=$clickAttempts scans=$scans)")
     }
 
     /**
@@ -864,35 +853,26 @@ internal class AndroidScaleUi(
             clickUntil("返回", "刷新清单")
         }
         // D-217 round 4: the previous "do NOT rely on backward scrolling"
-        // reasoning removed the top walk and left a downward-only header walk
+        // reasoning removed the top walk and left a downward-only walk
         // from an unknown parking position — exactly the fragility the round-3
-        // device run then hit (the walk covered the whole list from below the
-        // pending group and never saw the header; the same signature appeared
-        // at this stage in the previous session's evidence26). Seek the list
-        // top first — the TitleBar (「刷新清单」, the first render item of the
-        // review list) is guaranteed on this screen at this stage and is
-        // visible only at the top; seekBackToTop is bounded and silent when
-        // the container refuses to move, so the worst case is the pre-fix
-        // behavior, and the await/miss-reset inside the walk below still
-        // applies. Then run the small downward steps to the PENDING group
-        // header (first group of the list, the one the target row belongs to)
-        // and start collecting from the header.
+        // device run then hit. Seek the list top first — the TitleBar
+        // (「刷新清单」, the first render item of the review list) is
+        // guaranteed on this screen at this stage and is visible only at the
+        // top; seekBackToTop is bounded and silent when the container refuses
+        // to move, so the worst case is the pre-fix behavior, and the
+        // await/miss-reset inside the walk below still applies.
+        // D-217 round 5: the old small downward header-search loop with its
+        // fatal `check(found)` gate is REMOVED. The header anchor added
+        // nothing the existing `check(sawAnchor)` below does not already pin
+        // (the unique session's first-row amount is globally unique by fixture
+        // construction), and the same mid-list/stale-tree fragility that broke
+        // the detail walk would kill traversal at exactly that gate. The
+        // pending group is the FIRST group of the review list, so the first
+        // non-empty window after the top seek is the pending group's own rows
+        // and the seeding logic below starts the collection correctly.
         seekBackToTop("刷新清单")
         // D-217 walk diagnostics (revert before PR if not wanted)
         Log.i("ULScaleWalk", "collect seekDone markerVisible=${has("刷新清单")} pendingVisible=${has("待确认——缺用户决策", prefix = true)} rows=${candidateNodes().size}")
-        var found = false
-        var steps = 0
-        while (steps++ < 40 && !found) {
-            // D-217 walk diagnostics (revert before PR if not wanted)
-            Log.i("ULScaleWalk", "collect step=$steps pending=${has("待确认——缺用户决策", prefix = true)} firstRow=${candidateNodes().firstOrNull()?.let { signatureAmount(it) } ?: "none"}")
-            if (has("待确认——缺用户决策", prefix = true)) {
-                found = true
-                break
-            }
-            scroll(forward = true, fraction = 0.25f)
-            if (has("待确认——缺用户决策", prefix = true)) found = true
-        }
-        check(found) { "pending-decision group header never became visible" }
         check(expectedRows > 0)
         val collected = ArrayList<String>()
         // Bound by collected size, not a fixed scan budget: each forward scroll
