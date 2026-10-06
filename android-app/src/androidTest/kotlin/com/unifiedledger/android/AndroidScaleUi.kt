@@ -737,12 +737,24 @@ internal class AndroidScaleUi(
         for (attempt in 0 until 2) {
             if (attempt > 0) runCatching { resetAutomationCache() }
             pages = 0
+            // D-217 round-4 device evidence (local-small, ba86346): this walk
+            // is downward-only and the review list can be parked BELOW the
+            // pending group when the stage starts, so the walk covered the
+            // whole list and failed without the header ever matching. Seek
+            // the list top first: the TitleBar (「刷新清单」, the first render
+            // item of the review list, P503ImportReviewPresentation) is
+            // visible only at the top, seekBackToTop returns immediately when
+            // it is already visible, and a container that refuses to move
+            // ends the seek bounded with no error — no worse off than without
+            // the seek. The marker is guaranteed here: it renders whenever
+            // the review list renders, independent of any batch result.
+            seekBackToTop("刷新清单")
             // The candidate groups sit below the format section; scroll in
             // SMALL steps until the pending-decision group header is on
             // screen — a full-viewport seek overshoots the header between
             // has() polls (observed: the walk ended four groups down without
-            // ever seeing the text). Scrolling up first is unnecessary: from
-            // any parking position the downward walk reaches the header.
+            // ever seeing the text). From the top the header is reached
+            // within a couple of viewports.
             var found = false
             var steps = 0
             while (steps++ < 40 && !found) {
@@ -840,14 +852,21 @@ internal class AndroidScaleUi(
         if (has("候选详情")) {
             clickUntil("返回", "刷新清单")
         }
-        // D-217: do NOT rely on backward scrolling to reach the list top —
-        // the scrollable container selection can pick a container that does
-        // not move under the gesture (observed: backward loops terminated
-        // while the viewport sat below the target row). Anchor like
-        // openCandidateByAmount does: locate the PENDING group header (first
-        // group of the list, the one the target row belongs to) with small
-        // downward steps from wherever we are, then start collecting from
-        // the header.
+        // D-217 round 4: the previous "do NOT rely on backward scrolling"
+        // reasoning removed the top walk and left a downward-only header walk
+        // from an unknown parking position — exactly the fragility the round-3
+        // device run then hit (the walk covered the whole list from below the
+        // pending group and never saw the header; the same signature appeared
+        // at this stage in the previous session's evidence26). Seek the list
+        // top first — the TitleBar (「刷新清单」, the first render item of the
+        // review list) is guaranteed on this screen at this stage and is
+        // visible only at the top; seekBackToTop is bounded and silent when
+        // the container refuses to move, so the worst case is the pre-fix
+        // behavior, and the await/miss-reset inside the walk below still
+        // applies. Then run the small downward steps to the PENDING group
+        // header (first group of the list, the one the target row belongs to)
+        // and start collecting from the header.
+        seekBackToTop("刷新清单")
         var found = false
         var steps = 0
         while (steps++ < 40 && !found) {
