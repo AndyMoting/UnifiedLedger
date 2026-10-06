@@ -332,9 +332,14 @@ internal class AndroidScaleUi(
             MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, rect.exactCenterX(), rect.exactCenterY(), 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN },
             MotionEvent.obtain(down, down + 60, MotionEvent.ACTION_UP, rect.exactCenterX(), rect.exactCenterY(), 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN },
         )
-        events.forEach { event ->
-            check(automation.injectInputEvent(event, true)) { "coordinate tap injection refused" }
-            event.recycle()
+        try {
+            events.forEach { event ->
+                check(automation.injectInputEvent(event, true)) { "coordinate tap injection refused" }
+            }
+        } finally {
+            // Recycle the whole batch even when an injection throws, so a failed
+            // tap cannot leak the remaining MotionEvents from the pool.
+            events.forEach { it.recycle() }
         }
         SystemClock.sleep(180)
     }
@@ -598,10 +603,21 @@ internal class AndroidScaleUi(
         return roots.distinctBy { bounds(it) }.sortedBy { bounds(it).top }
     }
 
-    private fun signature(node: AccessibilityNodeInfo): String {
+    private fun signature(node: AccessibilityNodeInfo): String = signatureOrNull(node) ?: error("candidate signature absent")
+
+    /**
+     * D-217 review: the nullable signature used by the collect-only traversal.
+     * A node that carries an amount but no candidate metadata (the labeled-action
+     * path can surface such a row) is skipped instead of aborting the whole pass;
+     * the then-missing row fails the strict multiset comparison in reopen(), so
+     * the coverage mandate still lands at the acceptance boundary. Detail
+     * navigation keeps the strict [signature], where a malformed target must
+     * fail loudly.
+     */
+    private fun signatureOrNull(node: AccessibilityNodeInfo): String? {
         val text = labels(node).joinToString("\n")
-        val amount = Regex("[0-9]+\\.[0-9]{2} CNY").find(text)?.value ?: error("candidate amount absent")
-        val meta = Regex("类型 ordinary_flow；发生 [^\n]+?；方向 out；状态 settled；重复 (?:无|[A-Z_]+)").find(text)?.value ?: error("candidate metadata absent")
+        val amount = Regex("[0-9]+\\.[0-9]{2} CNY").find(text)?.value ?: return null
+        val meta = Regex("类型 ordinary_flow；发生 [^\n]+?；方向 out；状态 settled；重复 (?:无|[A-Z_]+)").find(text)?.value ?: return null
         return "$amount|$meta"
     }
 
@@ -693,12 +709,12 @@ internal class AndroidScaleUi(
 
     /**
      * D-217: detail navigation without an oracle read. The target row is
-     * identified by its unique spec-derived amount — the seed+1 amount is
-     * unique to the first row of the unique session by fixture construction,
-     * and rows do not render their session id (verified interactively) —
-     * then opened through the same deterministic scan as [openCandidate].
-     * Signature uniqueness is enforced by requiring exactly one visible row
-     * to carry the amount.
+     * identified by its unique spec-derived amount (the caller derives it from
+     * the manifest as the unique session's offset-based first-row amount — see
+     * `uniqueSessionFirstAmount`; rows do not render their session id, verified
+     * interactively), then opened through the same deterministic scan as
+     * [openCandidate]. Signature uniqueness is enforced by requiring exactly one
+     * visible row to carry the amount.
      */
     fun openCandidateByAmount(amount: Long) {
         val target = amountText(amount)
@@ -777,16 +793,42 @@ internal class AndroidScaleUi(
     }
 
     /**
-     * D-217: collect-only traversal. Walks the review list once — top, then a
-     * single forward pass to the stationary bottom — recording every visible
-     * row signature in encounter order, and returns the number of collected
-     * rows. The list renders the product's class groups in query order, a
-     * different domain from the spec's row order, so no in-chain alignment is
-     * attempted; reopen() aligns the collected multiset against the oracle's
-     * quiescent snapshot. The unique-session first row must appear (its
-     * amount is spec-derived), anchoring the collection to the fixture.
+     * D-217: collect-only traversal, multiset-preserving. Walks the review list
+     * once — top, then a single forward pass to the stationary bottom —
+     * recording ONE entry per rendered row occurrence, and returns the collected
+     * signature list (the caller stores it as observedCandidates). The list
+     * renders the product's class groups in query order, a different domain from
+     * the spec's row order, so no in-chain alignment is attempted; reopen()
+     * compares the collected list against the oracle's quiescent displayRows as
+     * an exact multiset (same size, same frequencies).
+     *
+     * Overlap resolution, not value dedupe: a signature is NOT injective (the
+     * maximum fixture has ~11,000 distinct signatures for 61,000 rows, so a
+     * value-keyed set can never reach the true row count). Because the same
+     * signature repeats adjacently in the fixture (a value can appear many
+     * rows in a row), the overlap length must be UNIQUE: if more than one k in
+     * 1..min(window, collected) satisfies collected.takeLast(k) ==
+     * window.take(k), the true boundary is unrecoverable and guessing the
+     * largest k can silently drop or double-count rows. So each scroll step
+     * requires exactly one matching k, appends only window.drop(k), and fails
+     * loudly on an ambiguous window; a window that matches none is a
+     * blind/skipped viewport and is retried with a bounded backward+forward
+     * nudge. This is the pre-D-217 [traverse] overlap mechanism
+     * (scaleWindowOffset + its retry loop) without its oracle dependency: it
+     * needs no expected order and no oracle read, so it stays inside the D-212
+     * wall. The unique-session first row must appear (its amount is
+     * spec-derived and passed in as [anchorAmount]; the caller derives it from
+     * the manifest so this facility needs no spec type), anchoring the
+     * collection to the fixture.
+     *
+     * [expectedRows] bounds the walk by collected size (the pre-D-217
+     * `traverse` did the same against the oracle size): each forward scroll
+     * advances only ~8-10 rows of an ~11-13-row viewport, so a fixed scan cap
+     * cannot reach the 61,000-row maximum. The internal safety cap
+     * (expectedRows*4 + 200) is a generous stuck-viewport guard above the
+     * worst-case rows-to-scans ratio.
      */
-    fun collectTraversal(seed: Long): List<String> {
+    fun collectTraversal(anchorAmount: Long, expectedRows: Int): List<String> {
         // D-217: the previous stage may have left the app on the detail
         // screen (its back click can silently fail on a stale node); the
         // detail screen has no scrollable container, so edge() below would
@@ -814,15 +856,55 @@ internal class AndroidScaleUi(
             if (has("待确认——缺用户决策", prefix = true)) found = true
         }
         check(found) { "pending-decision group header never became visible" }
-        val seen = LinkedHashSet<String>()
-        var scans = 0
-        // The seed+1 amount is unique to the unique session's first row by
-        // fixture construction (rows do not render session ids), so the amount
-        // prefix alone is the anchor.
-        val anchor = amountText(seed + 1L) + "|"
+        check(expectedRows > 0)
+        val collected = ArrayList<String>()
+        // Bound by collected size, not a fixed scan budget: each forward scroll
+        // advances only ~8-10 rows of an ~11-13-row viewport, so the 61,000-row
+        // maximum needs ~6,000-8,000 scans. safetyCap = expectedRows*4 + 200 is
+        // comfortably above that worst-case rows-to-scans ratio while still
+        // terminating a stuck/duplicated viewport (the pre-D-217 `traverse`
+        // bounded against the oracle size for the same reason).
+        val safetyCap = expectedRows.toLong() * 4L + 200L
+        var scans = 0L
+        var retries = 0
+        // The unique session's first-row amount is unique to that row by
+        // fixture construction (rows do not render session ids): the shared
+        // sessions span seed+1..seed+rowsPerSession and the unique session
+        // starts at seed+rowsPerSession+1, so the amount prefix alone is the
+        // anchor. The caller derives it from the manifest (D-217 review: the
+        // old seed+1 targeted the FIRST shared row, not the unique one).
+        val anchor = amountText(anchorAmount) + "|"
         var sawAnchor = false
-        while (scans++ < 4000) {
-            candidateNodes().forEach { seen += signature(it) }
+        while (collected.size < expectedRows && scans++ < safetyCap) {
+            val window = candidateNodes().mapNotNull(::signatureOrNull)
+            if (window.isEmpty() && collected.isEmpty()) {
+                // Nothing rendered yet (the header just settled): one plain
+                // forward scroll without an overlap claim.
+                scroll(fraction = 0.3f)
+                continue
+            }
+            // Require a UNIQUE contiguous overlap confined to the collected
+            // prefix; a repeated signature (the fixture renders shared values
+            // adjacently) makes multiple k match, and any guess can drop or
+            // double-count rows, so ambiguity fails loudly. Mirrors
+            // scaleWindowOffset's uniqueness requirement in the old traverse.
+            val maxK = minOf(window.size, collected.size)
+            val matches = (1..maxK).filter { k ->
+                collected.subList(collected.size - k, collected.size) == window.subList(0, k)
+            }
+            if (matches.size > 1) error("ambiguous traversal window")
+            if (matches.isEmpty()) {
+                // No overlap at all: a blind/skipped viewport, not a real
+                // scroll step. Appending the whole window would double-count
+                // the overlap, so nudge backward then forward and retry a
+                // bounded number of times (the old traverse's retry budget).
+                check(++retries <= 4) { "traversal window did not overlap" }
+                scroll(forward = false, fraction = 0.2f)
+                scroll(fraction = 0.3f)
+                continue
+            }
+            retries = 0
+            collected.addAll(window.subList(matches.single(), window.size))
             // The container-scoped walk can blind out whole groups; the
             // targeted findNode (cache walk -> root refresh -> forced cache
             // reset) probes the anchor row through a different path every
@@ -832,17 +914,21 @@ internal class AndroidScaleUi(
                 findNode { node ->
                     node.isVisibleToUser && signatureAmount(node) == anchor.removeSuffix("|")
                 }?.let {
-                    seen += signature(it)
                     sawAnchor = true
                 }
             }
-            val top = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signature(it) } ?: ""
+            val top = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signatureOrNull(it) } ?: ""
             scroll(forward = true, fraction = 0.8f)
-            val after = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signature(it) } ?: ""
+            val after = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signatureOrNull(it) } ?: ""
             if (top.isNotEmpty() && top == after) break
         }
         check(sawAnchor) { "traversal never reached the unique-session first row" }
-        return seen.toList()
+        // A stationary viewport or the safety cap ends the walk; if either
+        // fires before every expected row is collected, fail loudly here with
+        // the real cause instead of returning a short list that only surfaces
+        // later as an opaque multiset mismatch (D-217 review).
+        check(collected.size == expectedRows) { "traversal incomplete (collected=${collected.size} expected=$expectedRows scans=$scans)" }
+        return collected
     }
 
     private fun amountText(amount: Long): String = (amount / 100).toString() + "." + (amount % 100).toString().padStart(2, '0') + " CNY"

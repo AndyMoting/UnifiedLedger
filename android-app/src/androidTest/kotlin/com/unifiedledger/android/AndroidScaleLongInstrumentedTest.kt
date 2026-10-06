@@ -339,6 +339,15 @@ class AndroidScaleLongInstrumentedTest {
     /** The unique-rows session: the last one registered during preparation. */
     private fun uniqueSessionInputRef(): String = state.getJSONArray("sessions").getJSONObject(spec.initialSessions).getString("inputRef")
 
+    /**
+     * D-217 review fix: the unique-rows session's ordinal-0 amount. Its rows
+     * start after the shared range ([AndroidScaleFixtureSpec.sessionAmountOffset]),
+     * so the amount is seed + 1 + rowsPerSession — disjoint from every shared
+     * session's seed+1..seed+rowsPerSession range. The old `seed + 1` was the
+     * first shared session's first row, not the unique one.
+     */
+    private fun uniqueSessionFirstAmount(): Long = state.getLong("seed") + 1L + spec.sessionAmountOffset(spec.initialSessions)
+
     private fun assertPreparedUnchanged(snapshot: ScaleSnapshot) {
         val sessions = preparedSessions()
         check(snapshot.copy(rows = snapshot.rows.filter { it.session in sessions }).identityDigest == state.getString("preparedIdentity"))
@@ -369,7 +378,11 @@ class AndroidScaleLongInstrumentedTest {
             ui.await(1800000) { ui.has("接治完成：新增 " + spec.mainSessionRows + "，等价重放 0，解析拒绝 0，接治拒绝 0。") }
             ui.click("刷新清单")
             ui.settle()
-            evidence.put("finalCandidates", spec.finalCandidates).put("finalRelations", spec.finalDuplicateRelations)
+            // D-217 review fix: this stage performs NO oracle read (D-212 wall),
+            // so it must not claim a measured candidate/relation count by echoing
+            // the spec — that would make cross_check_manifest compare the manifest
+            // against itself. finalCandidates/finalRelations are measured in
+            // reopen() from the quiescent snapshot.
         }
         // D-216: the local-small profile navigates without the indexed jump
         // (the client never exposes it here), so the deterministic scan is the
@@ -380,8 +393,12 @@ class AndroidScaleLongInstrumentedTest {
         // unique session is the only one holding this amount, so the UI
         // selection stays spec-derived without an oracle read.
         stage("detail_decision", if (spec.profile == "maximum") 180000L else 600000L) {
-            val uniqueSession = state.getJSONArray("sessions").getJSONObject(spec.initialSessions).getString("inputRef")
-            val amount = state.getLong("seed") + 1L
+            // D-217 review fix: the unique-rows session's ordinal-0 amount is
+            // seed + 1 + its sessionAmountOffset (== rowsPerSession); the old
+            // `seed + 1` targeted the FIRST shared session's first row, which
+            // has multiplicity 6 in the final fixture and can never open the
+            // unique row the decision must confirm.
+            val amount = uniqueSessionFirstAmount()
             state.put("selectedAmount", amount)
             ui.openCandidateByAmount(amount)
             check(ui.has("决策未补全，尚不可提交确认。"))
@@ -434,8 +451,9 @@ class AndroidScaleLongInstrumentedTest {
             // shape. The acceptance-grade decision-fact check runs in reopen()
             // against the oracle.
             var decisionCompleted = false
-            repeat(3) { attempt ->
-                runCatching {
+            var lastMiss: IllegalStateException? = null
+            for (attempt in 0 until 3) {
+                try {
                     if (attempt > 0) {
                         // A failed attempt leaves the app at an unknown
                         // screen. Re-anchor: back to the review list, then
@@ -448,10 +466,28 @@ class AndroidScaleLongInstrumentedTest {
                     ui.click("○ " + state.getString("accountLabel"))
                     ui.await(20000) { ui.has("决策已补全。") }
                     decisionCompleted = true
+                } catch (miss: IllegalStateException) {
+                    // D-217 review: only a transient click/navigation miss is
+                    // retried. A deadline overrun (tick's "scale deadline
+                    // exceeded" or await's "UI condition deadline exceeded",
+                    // both flagged by the stage classifier's `contains("deadline")`
+                    // rule) and any unexpected throwable must propagate —
+                    // swallowing them here misclassified a deadline as FAIL and
+                    // hid the real cause. An information-free exception is also
+                    // treated as unexpected and propagates. The last miss is
+                    // rethrown if every attempt fails, so the cause survives.
+                    val overrun = miss.message?.contains("deadline") ?: true
+                    if (overrun) throw miss
+                    lastMiss = miss
                 }
-                if (decisionCompleted) return@repeat
+                // D-217 review: `return@repeat` only advanced to the next
+                // iteration, so a success still re-clicked the completed
+                // detail screen twice more (re-clicking a decided row is a
+                // real hazard). Stop the retry loop the moment the
+                // postcondition holds.
+                if (decisionCompleted) break
             }
-            check(decisionCompleted) { "decision completion never observed" }
+            if (!decisionCompleted) throw lastMiss ?: IllegalStateException("decision completion never observed")
             // The detail screen carries no scrollable container, so edge's
             // scrollable() lookup cannot run here (D-216 verified); the
             // re-open position below is found content-anchored, so no scroll
@@ -471,7 +507,18 @@ class AndroidScaleLongInstrumentedTest {
             // (its amount is derived from the manifest seed) to appear,
             // keeping the traversal's coverage mandate without a live-app
             // oracle read.
-            val collected = ui.collectTraversal(state.getLong("seed"))
+            //
+            // D-217 review (read-only guard): the old `traverse` asserted
+            // after == before over a full ScaleSnapshot plus the identity
+            // digest; this stage now issues no clicks at all (collect-only,
+            // scroll gestures only), so the review list is UI-read-only by
+            // construction. The lost snapshot equality is not silenced: the
+            // final state invariant it protected is asserted in reopen()'s
+            // quiescent snapshot (assertFixture final=true plus the
+            // confirmed-relations/duplicate-history/counts checks), which
+            // pins the whole final state. An in-chain re-read is deliberately
+            // avoided — it would reintroduce the D-212 write-fence wall.
+            val collected = ui.collectTraversal(uniqueSessionFirstAmount(), spec.finalCandidates)
             state.put("observedSignatures", JSONArray(collected))
             evidence
                 .put("observedCandidates", collected.size)
@@ -552,6 +599,22 @@ class AndroidScaleLongInstrumentedTest {
         val snapshot = oracle.snapshot(state.getString("ledger"), compareReadPath = true)
         oracle.assertFixture(snapshot, state, spec, final = true)
         assertPreparedUnchanged(snapshot)
+        // D-217 review fix: measure the counters this phase owns from the
+        // quiescent snapshot itself (the in-chain saf_import stage cannot read
+        // the oracle across the D-212 wall and must not echo the spec).
+        evidence.put("finalCandidates", snapshot.rows.size).put("finalRelations", snapshot.relations)
+        // D-217 review fix (group disposition): assertFixture(final=true) above
+        // discovered the main SAF session into state.mainInputRef from the
+        // quiescent snapshot, so the group-disposition invariants the in-chain
+        // stage could no longer check are restored here — the confirmed set is
+        // exactly the prepared baseline plus the main session's whole relation
+        // group, that group is disjoint from the baseline, and its size is the
+        // spec's new-session relation count.
+        val mainGroupIds = oracle.relationIds(state.getString("ledger"), state.getString("mainInputRef")).map { it.first }.toSet()
+        val preparedRelationIds = state.getJSONArray("preparedRelationIds").let { ids -> (0 until ids.length()).map { ids.getString(it) }.toSet() }
+        check(mainGroupIds.size == spec.newSessionDuplicateRelations)
+        check(mainGroupIds.intersect(preparedRelationIds).isEmpty())
+        check(snapshot.confirmedRelations == preparedRelationIds + mainGroupIds)
         check(snapshot.confirmedRelations.size == spec.initiallyConfirmedRelations + spec.newSessionDuplicateRelations)
         check(snapshot.counts.getValue("import_duplicate_status_history") == spec.duplicateHistoryAfterGroup)
         check(snapshot.counts.getValue("import_duplicate_review_receipt") == spec.duplicateReviewReceiptAfterGroup)
@@ -585,10 +648,12 @@ class AndroidScaleLongInstrumentedTest {
         evidence.put("formalTransactions", 1).put("balancedPostings", 2)
         // Traversal alignment: the collected signatures must cover exactly the
         // expected multiset of display rows (every row seen, no duplicates).
+        // collectTraversal preserves multiplicity, so both sides are genuine
+        // multisets and the sizes are directly comparable.
         val observedSignatures = state.getJSONArray("observedSignatures")
         val expected = snapshot.displayRows.map { it.signature }
         val collected = (0 until observedSignatures.length()).map { observedSignatures.getString(it) }
-        check(collected.sorted() == expected.sorted()) { "traversal coverage mismatch" }
+        check(collected.sorted() == expected.sorted()) { "traversal coverage mismatch (collected=${collected.size} expected=${expected.size})" }
         state.put("endIdentity", snapshot.identityDigest).put("endPersistence", snapshot.persistenceDigest)
         ui.launch()
         checkEconomicUi()
