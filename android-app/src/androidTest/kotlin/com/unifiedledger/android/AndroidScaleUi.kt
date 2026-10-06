@@ -742,7 +742,7 @@ internal class AndroidScaleUi(
      * — up to the 200-line intake record cap on maximum — is absorbed by the
      * forward scan below, while overshooting past the target would be
      * unrecoverable because the scan never moves backward. Without the action
-     * (the local channel) the 60-step scan from the top stays the whole
+     * (the local channel) the 120-step scan from the top stays the whole
      * mechanism: local-small/medium keep the target ~2 viewports down. A
      * maximum profile WITHOUT the action cannot be scanned within the
      * detail_decision budget — that stays the pre-existing D-216 residual, not
@@ -801,7 +801,10 @@ internal class AndroidScaleUi(
             Log.i("ULScaleWalk", "open jump attempt=$attempt exposed=$jumpExposed index=$jumpRow")
             var steps = 0
             var stationaryCount = 0
-            while (steps++ < 60) {
+            // D-217 round 8: the cap is 120. At the 0.25 advance fraction
+            // (~3 rows/step) absorbing the jump accelerator's <= ~201-item
+            // undershoot on maximum needs ~70 steps; 120 leaves margin.
+            while (steps++ < 120) {
                 scans++
                 // Staleness hardening: the click/back interactions can stale
                 // the client tree mid-scan; every 8th step forces one bounded
@@ -850,16 +853,28 @@ internal class AndroidScaleUi(
                 // list bottom from a tree that is not refreshed yet — the
                 // round-5 attempts (evidence8) both died on it, steps after
                 // the candidate rows first appeared. A stationary verdict
-                // requires three consecutive unchanged samples, each followed
-                // by a forced refresh and another scroll attempt; three
+                // requires eight consecutive unchanged samples, each followed
+                // by a forced refresh and another scroll attempt; eight
                 // samples cannot occur in the first steps, so the old
-                // minimum-scan guard is subsumed.
+                // minimum-scan guard is subsumed, and eight exceeds the ~5
+                // gesture plateau so the verdict cannot fire inside a
+                // tree-lag window where the list is actually moving
+                // (round-4-era evidence6 logcat: firstRow plateaus of ~5
+                // steps between advances).
                 val top = rows.firstOrNull()?.let { bounds(it).toString() + signatureOrNull(it) } ?: ""
-                scroll(forward = true, fraction = 0.6f)
+                // D-217 round 8: the advance scroll uses fraction 0.25 — the
+                // only fraction that has ever moved this list on device
+                // (evidence6, round-4-era walk at 0.25: the first-row amount
+                // advanced across all 40 steps), while the 0.6 gestures of
+                // rounds 5-7 left rows frozen (evidence14: rows stay 10-11
+                // across every step, three consecutive cache-reset samples
+                // read an identical first row). The mechanism why 0.6 fails
+                // is unknown; the evidence is what fixes the parameter.
+                scroll(forward = true, fraction = 0.25f)
                 val after = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signatureOrNull(it) } ?: ""
                 if (top.isNotEmpty() && top == after) {
                     stationaryCount++
-                    if (stationaryCount >= 3) break
+                    if (stationaryCount >= 8) break
                     // The tree lags the gestures: force a fresh tree before
                     // the next sample so "not refreshed yet" is not counted
                     // as stationary.
