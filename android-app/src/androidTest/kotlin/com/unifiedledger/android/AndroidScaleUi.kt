@@ -774,6 +774,8 @@ internal class AndroidScaleUi(
             while (pages++ < 6) {
                 val header = findNode { node -> node.isVisibleToUser && (node.text?.toString() ?: "").startsWith("待确认——缺用户决策") }
                 if (header == null) {
+                    // D-217 walk diagnostics (revert before PR if not wanted)
+                    Log.i("ULScaleWalk", "open page=$pages header=false matches=0 sawTarget=$sawTargetRow")
                     scroll(forward = false, fraction = 0.9f)
                     continue
                 }
@@ -782,6 +784,8 @@ internal class AndroidScaleUi(
                 val rows = candidateNodes().filter { bounds(it).top >= headerBottom }
                 val matches = rows.filter { signatureAmount(it) == target }
                 if (matches.isNotEmpty()) sawTargetRow = true
+                // D-217 walk diagnostics (revert before PR if not wanted)
+                Log.i("ULScaleWalk", "open page=$pages header=true matches=${matches.size} sawTarget=$sawTargetRow")
                 val row = matches.singleOrNull()
                 if (row != null) {
                     clickAttempts++
@@ -797,6 +801,8 @@ internal class AndroidScaleUi(
                     // whose rendered neighbor is a different row, so the
                     // detail must show the target amount; a wrong row cannot
                     // be selected at all, so back out and keep looking.
+                    // D-217 walk diagnostics (revert before PR if not wanted)
+                    Log.i("ULScaleWalk", "open click=$clickAttempts opened=$opened targetVisible=${has(target)}")
                     if (opened && has(target)) return
                     if (opened) {
                         click("返回")
@@ -992,9 +998,17 @@ internal class AndroidScaleUi(
     fun seekBackToTop(marker: String = "最近批量结果") {
         var previous = ""
         var steps = 0
+        // D-217 walk diagnostics (revert before PR if not wanted)
+        var exitedStationary = false
         while (steps++ < 40) {
-            if (has(marker, prefix = true)) return
+            if (has(marker, prefix = true)) {
+                // D-217 walk diagnostics (revert before PR if not wanted)
+                Log.i("ULScaleWalk", "seekReturn marker=${has(marker, prefix = true)} steps=$steps stationary=$exitedStationary")
+                return
+            }
             val current = nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text?.toString().orEmpty() }
+            // D-217 walk diagnostics (revert before PR if not wanted)
+            if (steps % 10 == 0) Log.i("ULScaleWalk", "seek step=$steps texts=${current.take(80)}")
             scroll(forward = false, fraction = 0.25f)
             val after = nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text?.toString().orEmpty() }
             if (current.isNotEmpty() && current == after) {
@@ -1002,10 +1016,15 @@ internal class AndroidScaleUi(
                 // (each has() carries findNode's rate-limited miss reset).
                 var proofs = 0
                 while (!has(marker, prefix = true) && proofs++ < 3) { /* bounded retries */ }
+                // D-217 walk diagnostics (revert before PR if not wanted)
+                exitedStationary = true
+                Log.i("ULScaleWalk", "seekReturn marker=${has(marker, prefix = true)} steps=$steps stationary=$exitedStationary")
                 return
             }
             previous = after
         }
+        // D-217 walk diagnostics (revert before PR if not wanted)
+        Log.i("ULScaleWalk", "seekReturn marker=${has(marker, prefix = true)} steps=$steps stationary=$exitedStationary")
     }
 
     fun traverse(expected: List<ScaleRow>): Int {
