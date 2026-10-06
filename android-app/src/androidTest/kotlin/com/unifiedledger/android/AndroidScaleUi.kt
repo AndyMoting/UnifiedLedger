@@ -977,9 +977,8 @@ internal class AndroidScaleUi(
         val anchor = amountText(anchorAmount) + "|"
         var sawAnchor = false
         while (collected.size < expectedRows && scans++ < safetyCap) {
+            val sizeBefore = collected.size
             val window = candidateNodes().mapNotNull(::signatureOrNull)
-            // D-217 walk diagnostics (revert before PR if not wanted)
-            Log.i("ULScaleWalk", "collect scan scans=$scans rows=${window.size} collected=${collected.size} stationaryCount=$stationaryCount")
             if (window.isEmpty() && collected.isEmpty()) {
                 // Nothing rendered yet (the header just settled): one plain
                 // forward scroll without an overlap claim.
@@ -1049,25 +1048,37 @@ internal class AndroidScaleUi(
             // scan adopted in round 8.
             scroll(forward = true, fraction = 0.25f)
             val after = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signatureOrNull(it) } ?: ""
-            // Bottom verdict with tree-lag immunity — the same consecutive
-            // verdict the amount scan uses (D-217 round 9): the client tree
-            // lags the gestures (the first visible row changes only every
-            // ~5 scroll steps), so a SINGLE unchanged sample cannot
-            // distinguish the list bottom from a tree that is not refreshed
-            // yet and false-triggers the break after the first window or
-            // two. A stationary verdict requires eight consecutive unchanged
-            // samples, each followed by a forced refresh and another scroll
-            // attempt; eight exceeds the ~5 gesture plateau, so the verdict
-            // cannot fire inside a tree-lag window where the list is
-            // actually moving (round-4-era evidence6 logcat: firstRow
-            // plateaus of ~5 steps between advances).
-            if (top.isNotEmpty() && top == after) {
-                stationaryCount++
-                if (stationaryCount >= 8) break
+            // Bottom verdict — D-217 round 10: movement is decided by
+            // COLLECTION GROWTH, not the first-row comparison alone. The
+            // first-row bounds+signature comparison is unreliable because
+            // the client tree lags the gestures: the tree's first row can
+            // read identical for many consecutive samples while the list is
+            // actually moving (evidence16, round-9 run: stationaryCount
+            // climbed 1->7 across scans 8-14 while collected grew 12->28
+            // over the same scans — the merge kept appending new rows, so
+            // the list provably moved, yet the 8-sample first-row verdict
+            // was about to fire). The unique-overlap merge appends exactly
+            // when new rows appear, so collected growth is the
+            // authoritative movement signal: a sample counts toward the
+            // stationary verdict ONLY when the first row is unchanged AND
+            // the collection did not grow during the step, and any growth
+            // resets the counter no matter what the first-row comparison
+            // says. With growth absorbing the tree-lag plateaus, 5
+            // consecutive no-growth samples — each unchanged sample still
+            // followed by a forced refresh and another scroll attempt —
+            // mean the viewport is truly parked at the bottom.
+            val growth = collected.size - sizeBefore
+            val firstRowUnchanged = top.isNotEmpty() && top == after
+            // D-217 walk diagnostics (revert before PR if not wanted)
+            Log.i("ULScaleWalk", "collect scan scans=$scans rows=${window.size} collected=${collected.size} growth=$growth stationaryCount=$stationaryCount")
+            if (firstRowUnchanged) {
                 // The tree lags the gestures: force a fresh tree before the
-                // next sample so "not refreshed yet" is not counted as
-                // stationary.
+                // next sample so later reads are not stale.
                 runCatching { resetAutomationCache() }
+            }
+            if (firstRowUnchanged && growth == 0) {
+                stationaryCount++
+                if (stationaryCount >= 5) break
             } else {
                 stationaryCount = 0
             }
