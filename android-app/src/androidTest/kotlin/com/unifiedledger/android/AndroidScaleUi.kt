@@ -473,14 +473,19 @@ internal class AndroidScaleUi(
             return
         }
         var previous = ""
+        // D-217 round 14 (evidence23/24): the client tree lags the gestures
+        // by ~5 samples, so the FIRST unchanged comparison is not evidence of
+        // an edge — it is a lag plateau (observed: the proof failed at the
+        // TOP of the disposition card, viewport unmoved). Require eight
+        // consecutive unchanged samples — each carrying a forced cache reset
+        // and a marker proof — before declaring the edge unproven; a movement
+        // resumption resets the count.
+        var stationaryCount = 0
         repeat(30000) {
             val current = nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text?.toString().orEmpty() }
             if (current == previous) {
-                // D-216: the client tree can be momentarily blind at the edge
-                // (observed once on the local channel — the top of the list was
-                // visibly rendered while a single has() returned false); give
-                // the proof three bounded attempts, each carrying findNode's
-                // rate-limited miss reset, before declaring the edge unproven.
+                stationaryCount++
+                runCatching { resetAutomationCache() }
                 var proven = false
                 var proofs = 0
                 while (!proven && proofs++ < 3) {
@@ -489,8 +494,10 @@ internal class AndroidScaleUi(
                         has("最近批量结果", prefix = true) ||
                         has("刷新清单")
                 }
-                check(proven) { "stationary viewport is not a proven edge" }
-                return
+                if (proven) return
+                check(stationaryCount < 8) { "stationary viewport is not a proven edge" }
+            } else {
+                stationaryCount = 0
             }
             previous = current
             // D-217 round 14 (evidence23): 0.8 gestures freeze this list —
