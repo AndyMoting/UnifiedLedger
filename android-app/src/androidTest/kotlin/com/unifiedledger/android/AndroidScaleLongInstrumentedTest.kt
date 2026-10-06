@@ -400,7 +400,13 @@ class AndroidScaleLongInstrumentedTest {
             // unique row the decision must confirm.
             val amount = uniqueSessionFirstAmount()
             state.put("selectedAmount", amount)
-            ui.openCandidateByAmount(amount)
+            // D-217 round 7: the target's candidate index within the review list
+            // is rowsPerSession — group 0 leads with session-01's rowsPerSession
+            // never-subject rows and the unique session is imported last within
+            // prepare — so the spec field is the jump index the
+            // ACTION_SCROLL_TO_POSITION accelerator consumes (never a hardcoded
+            // profile literal).
+            ui.openCandidateByAmount(amount, spec.rowsPerSession)
             check(ui.has("决策未补全，尚不可提交确认。"))
             // The checkbox click must be verified by its effect: a click on a
             // stale client-cache node fails silently (D-216 local finding), and
@@ -436,7 +442,8 @@ class AndroidScaleLongInstrumentedTest {
             // markers that sit below the batch-result section this view may
             // still be showing, so it is the wrong tool here.
             ui.seekBackToTop("刷新清单")
-            ui.openCandidateByAmount(amount)
+            // Same spec-derived jump index as the first open (round 7).
+            ui.openCandidateByAmount(amount, spec.rowsPerSession)
             // The detail screen carries no scrollable container (verified on
             // the D-216 local channel), so seek's scroll fallback can never
             // rescue a miss here; click's own await + miss-reset is the whole
@@ -460,7 +467,7 @@ class AndroidScaleLongInstrumentedTest {
                         // reopen the target row (content-anchored, idempotent
                         // from any list position).
                         if (ui.has("候选详情")) ui.click("返回")
-                        ui.openCandidateByAmount(amount)
+                        ui.openCandidateByAmount(amount, spec.rowsPerSession)
                     }
                     ui.click("○ " + state.getString("categoryLabel"))
                     ui.click("○ " + state.getString("accountLabel"))

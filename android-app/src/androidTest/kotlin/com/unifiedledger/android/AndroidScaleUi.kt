@@ -727,8 +727,31 @@ internal class AndroidScaleUi(
      * downward scan from the list top, as in [openCandidate]: each step re-reads
      * the visible rows, clicks the single row carrying the amount, and advances
      * until the list bottom proves stationary.
+     *
+     * D-217 round 7 (device ground truth: evidence13 local-small, evidence8
+     * tree-lag samples): after the top seek the walk performs the pre-D-217
+     * ACTION_SCROLL_TO_POSITION accelerator when the container exposes it
+     * (CI-hosted runners do; the local emulator does not — D-216), jumping to
+     * [jumpIndex] + 12. [jumpIndex] is the target's candidate index within the
+     * review list (the caller passes spec.rowsPerSession: group 0 leads with
+     * session-01's rowsPerSession never-subject rows and the unique session is
+     * imported last within prepare). The +12 slack is deliberately
+     * undershoot-biased: it covers the non-candidate render items ahead of the
+     * first candidate (title bar, dividers, format section and entries, intake
+     * summary lines, pending header, group 0's GroupHeader), and any shortfall
+     * — up to the 200-line intake record cap on maximum — is absorbed by the
+     * forward scan below, while overshooting past the target would be
+     * unrecoverable because the scan never moves backward. Without the action
+     * (the local channel) the 60-step scan from the top stays the whole
+     * mechanism: local-small/medium keep the target ~2 viewports down. A
+     * maximum profile WITHOUT the action cannot be scanned within the
+     * detail_decision budget — that stays the pre-existing D-216 residual, not
+     * something this walk fixes.
      */
-    fun openCandidateByAmount(amount: Long) {
+    fun openCandidateByAmount(
+        amount: Long,
+        jumpIndex: Int,
+    ) {
         val target = amountText(amount)
         // The review screen can be parked anywhere between its "recent
         // imports" header and the candidate groups; any of these markers (or
@@ -749,6 +772,33 @@ internal class AndroidScaleUi(
             seekBackToTop("刷新清单")
             // D-217 walk diagnostics (revert before PR if not wanted)
             Log.i("ULScaleWalk", "open seekDone attempt=$attempt markerVisible=${has("刷新清单")} rows=${candidateNodes().size}")
+            // D-217 round 7 accelerator: jump when the container exposes
+            // ACTION_SCROLL_TO_POSITION (same shape as the pre-D-217
+            // [openCandidate] accelerator). The slack is undershoot-biased on
+            // purpose — 12 covers the review list's non-candidate render items
+            // ahead of the first candidate (title bar, dividers, format section
+            // and entries, intake summary, pending header, group 0's
+            // GroupHeader); a larger constant would overshoot past the target
+            // on profiles with a shorter preamble, and an overshoot can never
+            // be recovered because the scan below never moves backward. Any
+            // undershoot (up to the 200-line intake record cap on maximum,
+            // ~32 extra scan steps) is absorbed by the bounded scan.
+            val jumpRow = jumpIndex + 12
+            val container = widestVisibleScrollable()
+            val jumpExposed = container?.actionList?.any { it.id == AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id } == true
+            if (container != null && jumpExposed) {
+                check(
+                    container.performAction(
+                        AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id,
+                        Bundle().apply {
+                            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_ROW_INT, jumpRow)
+                        },
+                    ),
+                )
+                settle()
+            }
+            // D-217 walk diagnostics (revert before PR if not wanted)
+            Log.i("ULScaleWalk", "open jump attempt=$attempt exposed=$jumpExposed index=$jumpRow")
             var steps = 0
             var stationaryCount = 0
             while (steps++ < 60) {
