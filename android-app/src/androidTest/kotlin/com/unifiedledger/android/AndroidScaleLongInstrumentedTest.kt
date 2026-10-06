@@ -536,7 +536,18 @@ class AndroidScaleLongInstrumentedTest {
             ui.edge(last = true)
             ui.seek("确认整组标记", forward = false)
             ui.click("确认整组标记")
-            ui.await(5400000) { ui.has("最近批量结果", prefix = true) }
+            // D-217 round 17 (evidence30): 确认整组标记 submits per-item and
+            // the card itself renders each relation's outcome
+            // (已标记：CONFIRMED_DUPLICATE, presentation-frozen copy). The
+            // group flow never produces a batch summary — batchResult is set
+            // only by the batch submission reducers — so the old
+            // 最近批量结果 await waited on a text no group marking can
+            // render and burned the stage budget. Verify the submission by
+            // its rendered outcome; the acceptance-grade relation equality
+            // runs in reopen() against the oracle.
+            ui.await(120000) { ui.has("已标记：CONFIRMED_DUPLICATE") }
+            evidence.put("groupMarkOutcomeSeen", true)
+            ui.click("关闭")
             evidence.put("mainGroupRelations", spec.newSessionDuplicateRelations).put("groupDispositions", spec.newSessionDuplicateRelations)
         }
         stage("batch_confirmation") {
@@ -546,7 +557,11 @@ class AndroidScaleLongInstrumentedTest {
             check(ui.has("确认入账（1 项）"))
             ui.click("授权逐项入账")
             ui.await { ui.has("导入", prefix = true) }
-            ui.edge(last = true)
+            // D-217 round 17 (evidence30): no bottom excursion here — after
+            // await 导入 the list is at its top where 最近批量结果 renders,
+            // and a scroll excursion leaves the viewport away from the
+            // awaited text (same round-16 rationale; the bottom-reach proof
+            // is reopen()'s snapshot equality).
             ui.await { ui.has("最近批量结果", prefix = true) }
             check(ui.nodes(ui.root()).flatMap(ui::labels).any { it.contains("已入账 1 项") && it.contains("拒绝 0 项") && it.contains("未知 0 项") })
         }
