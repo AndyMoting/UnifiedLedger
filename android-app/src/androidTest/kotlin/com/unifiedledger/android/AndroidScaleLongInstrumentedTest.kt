@@ -505,8 +505,18 @@ class AndroidScaleLongInstrumentedTest {
             // re-open position below is found content-anchored, so no scroll
             // reset is needed before returning to the list.
             // Selection may remain after a skipped batch; only toggle when actually unchecked.
+            // D-217 round 18 (evidence31): a stale-node clickNode fails silently
+            // (D-216), and the unverified toggle left the decided candidate
+            // unselected — the skip batch's residual selection then entered the
+            // final batch alone and was skipped IMPORT_BATCH_DECISION_INCOMPLETE.
+            // Verify the toggle by re-reading the detail checkbox state.
             val checkbox = ui.nodes(ui.root()).first { it.contentDescription?.toString() == "勾选候选" }
-            if (!checkbox.isChecked) ui.clickNode(checkbox)
+            if (!checkbox.isChecked) {
+                ui.clickNode(checkbox)
+                ui.await(20000) {
+                    ui.nodes(ui.root()).firstOrNull { it.contentDescription?.toString() == "勾选候选" }?.isChecked == true
+                }
+            }
             // D-217 round 13 (evidence22): a plain 返回 click can fail
             // silently on a stale detail-screen node — the next stage then
             // starts on 候选详情 and its seek dies with "scroll container
