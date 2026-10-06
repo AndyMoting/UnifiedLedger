@@ -415,13 +415,18 @@ class AndroidScaleLongInstrumentedTest {
             ui.click("进入批量确认")
             ui.click("授权逐项入账")
             ui.await { ui.has("导入", prefix = true) }
-            ui.edge(last = true)
-            // D-217: the batch result summary sits at the TOP of the list
-            // ("最近批量结果" + 已入账/跳过 counters). The instrumentation
-            // client's tree intermittently blinds out scrolled-off content,
-            // so walk back up in small steps until the summary becomes
-            // visible, then assert its counters; the acceptance-grade check
-            // of the actual effect happens in reopen() against the oracle.
+            // D-217 round 16 (evidence27/28/29): the a11y event feed stalls
+            // for tens of seconds after the batch flow while injected
+            // gestures still physically scroll (framebuffer moved, tree
+            // frozen), so any post-batch scroll excursion makes the
+            // top-anchor seek below read a stationary-but-frozen viewport
+            // and its entry await starve. After await 导入 the list is
+            // already at its top with the batch summary; the bottom-reach
+            // proof's acceptance-grade counterpart is the reopen() snapshot
+            // equality (Route B: in-chain stages are UI observation only).
+            // The remaining seekBackToTop calls are no-op-at-top anchored by
+            // the lag-aware stationary verdict (round 14/15) — bounded, no
+            // backward movement needed.
             ui.seekBackToTop()
             // D-217: the summary counters are best-effort on-device UI
             // evidence — the instrumentation client's tree intermittently
