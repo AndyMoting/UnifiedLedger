@@ -502,7 +502,12 @@ class AndroidScaleLongInstrumentedTest {
             // Selection may remain after a skipped batch; only toggle when actually unchecked.
             val checkbox = ui.nodes(ui.root()).first { it.contentDescription?.toString() == "勾选候选" }
             if (!checkbox.isChecked) ui.clickNode(checkbox)
-            ui.click("返回")
+            // D-217 round 13 (evidence22): a plain 返回 click can fail
+            // silently on a stale detail-screen node — the next stage then
+            // starts on 候选详情 and its seek dies with "scroll container
+            // absent" (226ms). clickUntil verifies the effect: the review
+            // list (刷新清单) must be visible before the stage ends.
+            ui.clickUntil("返回", "刷新清单")
         }
         // D-217 round 12 (evidence20): the collect-only traversal stage moved
         // out of the chain into reopen(). The walk used to run BEFORE
