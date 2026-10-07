@@ -73,7 +73,7 @@ private const val RESTORE_WIRING_TEST_TOKEN = "restore-wiring-test-token"
  * restore surface, JVM-exercisable because the controller's open, log channel and dispatchers are
  * injected (the AndroidStartupControllerTest harness) and the filesystem is the real-filesystem
  * test adapter (DesktopStyleTestFileSystem, the 06.1 precedent). Pins the section 6 construction
- * decisions (the section 5.4 whitelist `{1, 31, 32}` and `currentSupportedSchemaVersion()` injected,
+ * decisions (the section 5.4 whitelist `{1, 31, 32, 33}` and `currentSupportedSchemaVersion()` injected,
  * one use-case instance set bound to the scope) and the section 5.3 recovery flow: a pointerless
  * start surfaces the recovery face, the user-confirmed adoption publishes the pointer through the
  * frozen primitive and the retried startup reaches Ready, and a DECLINE mutates nothing.
@@ -194,10 +194,13 @@ class AndroidRestoreWiringTest {
         val ledger = assertNotNull(controller.ledger)
         assertTrue(ledger.surfaces.backupRestore, "the wired composition renders the restore surface")
         val wiring = assertNotNull(ledger.restoreWiring)
-        // The section 5.4 whitelist, extended by the 07.B slice (D-185): {1, 31, 32}. v1/v31 remain
-        // and v32 — the immediately preceding version — is now migratable rather than typed-rejected.
-        assertEquals(setOf(1L, 31L, 32L), wiring.supportedSourceVersions)
-        assertTrue(32L in wiring.supportedSourceVersions, "v32 must stay restorable after the v33 bump")
+        // The section 5.4 whitelist, extended by the 07.B slice (D-185) and the 08.A slice (D-187):
+        // {1, 31, 32, 33}. v1/v31 remain and v32/v33 — the immediately preceding versions — are now
+        // migratable rather than typed-rejected (v33 is conditionally admitted until its A04
+        // round-trip-equivalence leg is proven, exactly like v1/v32).
+        assertEquals(setOf(1L, 31L, 32L, 33L), wiring.supportedSourceVersions)
+        assertTrue(33L in wiring.supportedSourceVersions, "v33 must stay restorable after the v34 bump")
+        assertTrue(32L in wiring.supportedSourceVersions, "v32 must stay restorable after the v34 bump")
         assertTrue(31L in wiring.supportedSourceVersions, "v31 remains an admitted old version")
         assertTrue(1L in wiring.supportedSourceVersions, "v1 remains the conditionally admitted old version")
         assertEquals(currentSupportedSchemaVersion(), wiring.currentSchemaVersion)

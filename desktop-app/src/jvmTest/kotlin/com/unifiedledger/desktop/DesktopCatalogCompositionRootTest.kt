@@ -63,8 +63,11 @@ class DesktopCatalogCompositionRootTest {
             JdbcSqliteDriver(url).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 // A real current-version file is stamped by the production open path; stamp it
-                // here so the probe opens directly instead of re-running Schema.create.
-                driver.execute(null, "PRAGMA user_version = 33", 0)
+                // here so the probe opens directly instead of re-running Schema.create. It must be
+                // the REAL current version, not a stale literal: stamping an older version onto a
+                // fresh current-schema Database would force the production open path to re-run an
+                // already-applied migration against a populated schema and throw.
+                driver.execute(null, "PRAGMA user_version = ${LedgerDatabase.Schema.version}", 0)
                 driver.execute(
                     null,
                     "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind, canonical_kind) VALUES ('tx-x','ledger-local-test','EXPENSE',NULL)",

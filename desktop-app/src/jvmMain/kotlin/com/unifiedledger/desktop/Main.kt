@@ -230,18 +230,22 @@ internal class DesktopRestoreUseCases(
  * edge. v32 carries the SAME conditional-admission status as v1: its strict migration 32 -> 33 plus
  * validation is proven (the `P707BudgetConfigMigrationV32ToV33Test` strict-migration leg) but its
  * A04 round-trip-equivalence leg is likewise not yet proven, so a falsification removes it exactly
- * as it would remove v1. The current schema version (33 since the 07.B budget-configuration edge)
- * passes through WITHOUT consulting this set (`needsMigration == false`), so this set names only old
- * versions that must be migrated.
+ * as it would remove v1. 33 is the immediately preceding version whose strict migration is the
+ * P7-08 08.A `33.sqm` tag/merchant edge; it is likewise CONDITIONALLY admitted — its strict
+ * migration 33 -> 34 plus validation is proven (`P708TagMerchantV33ToV34MigrationTest`) but its A04
+ * round-trip-equivalence leg is not yet proven and a falsification removes it too. The current
+ * schema version (34 since the 08.A tag/merchant edge) passes through WITHOUT consulting this set
+ * (`needsMigration == false`), so this set names only old versions that must be migrated.
  *
  * D-182 section 5.4 froze the literal `{1, 31}` when 31 was the current schema; D-185 supersedes that
  * literal for the WIRING set (the approved 06.D spec section 5.4 ruling text itself is unchanged and
  * remains the record for v1's conditional admission). The 07.T slice left it unchanged to avoid
- * stopping v31 restores. The 07.B slice extends it to `{1, 31, 32}` (D-185) so
- * the immediately preceding v32 backup keeps restoring through its `32.sqm` migration, mirroring the
- * v31 -> 32 pass-through preservation the 07.T slice relied on.
+ * stopping v31 restores. The 07.B slice extends it to `{1, 31, 32}` (D-185); the 08.A slice extends
+ * it to `{1, 31, 32, 33}` (D-187) so the immediately preceding v33 backup keeps restoring through its
+ * `33.sqm` migration, mirroring the v32 preservation the 07.B slice relied on. The set remains a
+ * spec-recognised EXPLICIT set, never automatically derived.
  */
-internal val RESTORE_SUPPORTED_SOURCE_VERSIONS: Set<Long> = setOf(1L, 31L, 32L)
+internal val RESTORE_SUPPORTED_SOURCE_VERSIONS: Set<Long> = setOf(1L, 31L, 32L, 33L)
 
 /**
  * The product's fixed single-ledger identity. F-8: ONE constant, used both by [buildLedgerGraph]
@@ -511,7 +515,7 @@ internal class DesktopStartupController(
         LedgerLeaseScope(owner).also { scope ->
             scope.backupExport = backupExportUseCase
             // P7-06 06.D (D-182; spec section 6): the section 5.4 ruling injects the wiring
-            // whitelist {1, 31, 32} and the current schema version from ledger-data.
+            // whitelist {1, 31, 32, 33} and the current schema version from ledger-data.
             scope.restoreWiring =
                 restoreUseCases?.let { cases ->
                     RestoreHostWiring(

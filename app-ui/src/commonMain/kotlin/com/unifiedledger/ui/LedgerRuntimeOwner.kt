@@ -638,7 +638,7 @@ class LedgerLeaseScope(
     /**
      * P7-06 06.D (D-182; spec section 6, P2-7): the composition-root restore wiring — the preflight
      * use case, the confirm & switch use case, and the two injected constants the spec rules fix
-     * (the section 5.4 whitelist `{1, 31, 32}` and `currentSupportedSchemaVersion()`). Null when the
+     * (the section 5.4 whitelist `{1, 31, 32, 33}` and `currentSupportedSchemaVersion()`). Null when the
      * surface is absent. Lease-free for the same reason as [backupExport]: the preflight acquires
      * and releases its OWN whole-duration lease and the confirm deliberately holds none (the quiesce
      * caller contract), so exposing them here adds no lease and no second lease.
@@ -870,7 +870,7 @@ class BackupExportLaunch(
  * P7-06 06.D (D-182; spec section 6, P2-7): one restore-preflight launch — the request resolved for
  * the active generation plus the generation it was resolved under, for the same landing-discard
  * rule as [BackupExportLaunch]. The request carries the composition-root-injected section 5.4
- * whitelist (`{1, 31, 32}`) and `currentSupportedSchemaVersion()`; the shared host never hard-codes
+ * whitelist (`{1, 31, 32, 33}`) and `currentSupportedSchemaVersion()`; the shared host never hard-codes
  * either.
  */
 class RestorePreflightLaunch(
@@ -880,10 +880,11 @@ class RestorePreflightLaunch(
 
 /**
  * P7-06 06.D (D-182; spec section 6, P2-7): the composition-root restore wiring bound to
- * [LedgerLeaseScope]. The whitelist `{1, 31, 32}` is the section 5.4 RULING (v1 conditionally admitted
+ * [LedgerLeaseScope]. The whitelist `{1, 31, 32, 33}` is the section 5.4 RULING (v1 conditionally admitted
  * on the device-evidenced strict-migration leg, A04 outstanding; v32 carries the same
  * conditional-admission status on its `P707BudgetConfigMigrationV32ToV33Test` strict-migration leg,
- * A04 outstanding) and `currentSchemaVersion` comes
+ * A04 outstanding; v33 carries the same conditional-admission status on its
+ * `P708TagMerchantV33ToV34MigrationTest` strict-migration leg, A04 outstanding) and `currentSchemaVersion` comes
  * from `currentSupportedSchemaVersion()` in ledger-data — both are injected here, never duplicated
  * in the shared host.
  */
