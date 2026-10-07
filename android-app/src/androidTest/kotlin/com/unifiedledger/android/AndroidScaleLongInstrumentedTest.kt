@@ -504,18 +504,22 @@ class AndroidScaleLongInstrumentedTest {
             // scrollable() lookup cannot run here (D-216 verified); the
             // re-open position below is found content-anchored, so no scroll
             // reset is needed before returning to the list.
-            // Selection may remain after a skipped batch; only toggle when actually unchecked.
-            // D-217 round 18 (evidence31): a stale-node clickNode fails silently
-            // (D-216), and the unverified toggle left the decided candidate
-            // unselected — the skip batch's residual selection then entered the
-            // final batch alone and was skipped IMPORT_BATCH_DECISION_INCOMPLETE.
-            // Verify the toggle by re-reading the detail checkbox state.
+            // Selection may remain after a skipped batch (the overview keeps
+            // its selection set), so the final batch must be driven from this
+            // detail's own toggle. D-217 round 18 (evidence31): a stale-node
+            // clickNode fails silently (D-216), so the toggle is verified by
+            // re-reading the detail checkbox state. D-217 round 19
+            // (evidence32): the pre-toggle isChecked read itself answered from
+            // the stale client tree ("already checked" on a candidate never
+            // selected in the run), the guarded toggle was skipped, and the
+            // final batch carried only the residual skip-batch selection
+            // (IMPORT_BATCH_DECISION_INCOMPLETE again). In this chain the
+            // decided candidate is never pre-selected, so toggle
+            // unconditionally and verify the checked postcondition.
             val checkbox = ui.nodes(ui.root()).first { it.contentDescription?.toString() == "勾选候选" }
-            if (!checkbox.isChecked) {
-                ui.clickNode(checkbox)
-                ui.await(20000) {
-                    ui.nodes(ui.root()).firstOrNull { it.contentDescription?.toString() == "勾选候选" }?.isChecked == true
-                }
+            ui.clickNode(checkbox)
+            ui.await(20000) {
+                ui.nodes(ui.root()).firstOrNull { it.contentDescription?.toString() == "勾选候选" }?.isChecked == true
             }
             // D-217 round 13 (evidence22): a plain 返回 click can fail
             // silently on a stale detail-screen node — the next stage then
