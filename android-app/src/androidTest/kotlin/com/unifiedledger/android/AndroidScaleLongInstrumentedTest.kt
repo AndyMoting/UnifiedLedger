@@ -561,7 +561,10 @@ class AndroidScaleLongInstrumentedTest {
             // runs in reopen() against the oracle.
             ui.await(120000) { ui.has("已标记：CONFIRMED_DUPLICATE") }
             evidence.put("groupMarkOutcomeSeen", true)
-            ui.click("关闭")
+            // D-217 round 20 (evidence33): the card stays open — the
+            // 进入批量确认 button remains in the list with the card open, and a
+            // 关闭 click on a stale node can navigate clean off the review
+            // list (the run ended on the import root screen).
             evidence.put("mainGroupRelations", spec.newSessionDuplicateRelations).put("groupDispositions", spec.newSessionDuplicateRelations)
         }
         stage("batch_confirmation") {
