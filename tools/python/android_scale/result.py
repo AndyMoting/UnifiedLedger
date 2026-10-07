@@ -9,9 +9,13 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 PHASES = ("prepare", "chain", "reopen", "replay", "final-reopen")
-STAGES = ("preparation", "coldstart", "saf_import", "detail_decision", "traversal",
+# D-217 round 21 (closure review): `traversal` immediately follows `reopen` —
+# the walk is a sibling stage registered only after the reopen stage fully
+# completes (a traversal nested inside reopen starts after reopen started and
+# can never satisfy the strictly increasing startedMs rule validated below).
+STAGES = ("preparation", "coldstart", "saf_import", "detail_decision",
           "group_disposition", "batch_confirmation", "detail_monthly_refresh", "reopen",
-          "same_request_replay", "final_reopen")
+          "traversal", "same_request_replay", "final_reopen")
 EXPECTED = {"preparedCandidates": 51000, "preparedRelations": 100000, "preparedDispositions": 100,
             "finalCandidates": 61000, "finalRelations": 150000, "observedCandidates": 61000,
             "mainGroupRelations": 50000, "groupDispositions": 50000,
@@ -217,7 +221,13 @@ def validate_evidence(directory: Path, expected_sha: str) -> dict:
     if set(stages) != set(STAGES):
         raise ValueError("missing/extra stages")
     previous_end = 0
-    limits = {"preparation": 14400000, "saf_import": 1800000, "traversal": 14400000, "group_disposition": 5400000}
+    # D-217 round 21 (closure review): `reopen` gets an explicit cap — the
+    # snapshot's oracle ticks on maximum can exceed the 180000ms default the
+    # unlisted default would impose, while the walk itself stays bounded by
+    # `traversal`'s 14400000 entry. The 18000s host phase budget remains the
+    # outer bound.
+    limits = {"preparation": 14400000, "saf_import": 1800000, "group_disposition": 5400000,
+              "reopen": 1800000, "traversal": 14400000}
     for stage in STAGES:
         item = stages[stage]
         if not isinstance(item, dict) or item.get("status") != "PASS" or type(item.get("elapsedMs")) is not int or not 0 < item["elapsedMs"] <= limits.get(stage, 180000):

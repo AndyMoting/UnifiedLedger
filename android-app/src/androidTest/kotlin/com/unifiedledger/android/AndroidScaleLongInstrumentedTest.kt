@@ -90,9 +90,24 @@ class AndroidScaleLongInstrumentedTest {
             when (phase) {
                 "prepare" -> stage("preparation", 14400000) { prepare() }
                 "chain" -> chain()
-                "reopen" -> stage("reopen") { reopen() }
+                // D-217 round 21 (closure review): the reopen phase registers
+                // two SIBLING stages — the quiescent reopen stage and, after
+                // it fully completes, the traversal walk stage. The walk used
+                // to be nested INSIDE the reopen stage's action, which broke
+                // result.py two ways: its STAGES order requires strictly
+                // increasing startedMs across stages, so a traversal that
+                // starts after reopen started can never validate (reopen is
+                // validated after the walk in the tuple), and reopen's
+                // elapsedMs swallowed the up-to-4h walk under a 180s default
+                // cap that result.py's limits has no reopen entry for. The
+                // dispatch also keeps both stages exactly-once: reopenPhase()
+                // runs only for phase "reopen", and final-reopen re-enters
+                // the shared assertions through finalReopen(), which
+                // registers only "final_reopen" — the "stage must not be
+                // retried" guard can never fire.
+                "reopen" -> reopenPhase()
                 "replay" -> stage("same_request_replay") { replay() }
-                "final-reopen" -> stage("final_reopen") { reopen() }
+                "final-reopen" -> stage("final_reopen") { finalReopen() }
                 else -> error("unknown scale phase")
             }
         } finally {
@@ -123,23 +138,29 @@ class AndroidScaleLongInstrumentedTest {
         atomic(evidenceFile, evidence)
     }
 
-    private fun stage(
+    private fun <T> stage(
         name: String,
         limitMs: Long = 180000,
-        action: () -> Unit,
-    ) {
+        action: () -> T,
+    ): T {
         val stages = evidence.getJSONObject("stages")
         check(!stages.has(name)) { "stage must not be retried" }
         val started = SystemClock.elapsedRealtime()
+        // D-217 round 21 (closure review): save the enclosing phase deadline
+        // before overwriting it, so this stage's finally restores the outer
+        // stage's remaining budget instead of erasing it to Long.MAX_VALUE
+        // for the rest of the outer body.
+        val previousDeadline = phaseDeadline
         phaseDeadline = minOf(deadline, started + limitMs)
         stages.put(name, JSONObject().put("status", "NOT_RUN").put("startedMs", started))
         evidence.put("activeDeadlineElapsedMs", phaseDeadline)
         save()
         try {
             tick()
-            action()
+            val result = action()
             tick()
             stages.getJSONObject(name).put("status", "PASS")
+            return result
         } catch (failure: Throwable) {
             val assertion = failure is AssertionError || (failure is IllegalStateException && failure.message?.contains("deadline") != true)
             stages
@@ -154,7 +175,7 @@ class AndroidScaleLongInstrumentedTest {
             throw failure
         } finally {
             stages.getJSONObject(name).put("elapsedMs", SystemClock.elapsedRealtime() - started)
-            phaseDeadline = Long.MAX_VALUE
+            phaseDeadline = previousDeadline
             evidence.remove("activeDeadlineElapsedMs")
             save()
         }
@@ -371,7 +392,10 @@ class AndroidScaleLongInstrumentedTest {
         // against the live app died at the D-212 write-fence wall (high
         // frequency short writes x the big read's many query pages, each page
         // silently eating the busy timeout); the heavy SQL assertions moved
-        // verbatim to reopen(), which runs while the app is stopped.
+        // verbatim to the reopen phase's quiescent reopen stage, which runs
+        // while the app is force-stopped (round 21 reword: only the
+        // post-launch tail read runs against the live app — there the guard
+        // is post-chain quiescence, not the force-stop).
         stage("saf_import", 1800000) {
             ui.click("导入")
             ui.selectSafFixture(spec.mainSessionFileName)
@@ -480,18 +504,24 @@ class AndroidScaleLongInstrumentedTest {
                     ui.await(20000) { ui.has("决策已补全。") }
                     decisionCompleted = true
                 } catch (miss: IllegalStateException) {
-                    // D-217 review: only a transient click/navigation miss is
-                    // retried. A deadline overrun (tick's "scale deadline
-                    // exceeded" or await's "UI condition deadline exceeded",
-                    // both flagged by the stage classifier's `contains("deadline")`
-                    // rule) and any unexpected throwable must propagate —
-                    // swallowing them here misclassified a deadline as FAIL and
-                    // hid the real cause. An information-free exception is also
-                    // treated as unexpected and propagates. The last miss is
-                    // rethrown if every attempt fails, so the cause survives.
-                    val overrun = miss.message?.contains("deadline") ?: true
-                    if (overrun) throw miss
-                    lastMiss = miss
+                    // D-217 round 21 (closure review): only a transient miss is
+                    // retried. The dominant transient is `ui.await`'s own
+                    // timeout ("UI condition deadline exceeded") — the old
+                    // `contains("deadline")` guard threw that same message
+                    // family back, so the loop only ever retried the narrow
+                    // "clickable target absent" race and never an await
+                    // timeout. Retry ONLY an await timeout; tick's "scale
+                    // deadline exceeded" is a real phase overrun and must
+                    // propagate, as must any unexpected throwable (an
+                    // information-free exception included) — swallowing them
+                    // here would misclassify a deadline as FAIL and hide the
+                    // real cause. The last miss is rethrown if every attempt
+                    // fails, so the cause survives.
+                    if (miss.message?.contains("UI condition deadline exceeded") == true) {
+                        lastMiss = miss
+                    } else {
+                        throw miss
+                    }
                 }
                 // D-217 review: `return@repeat` only advanced to the next
                 // iteration, so a success still re-clicked the completed
@@ -517,11 +547,31 @@ class AndroidScaleLongInstrumentedTest {
             // (IMPORT_BATCH_DECISION_INCOMPLETE again). In this chain the
             // decided candidate is never pre-selected, so toggle
             // unconditionally and verify the checked postcondition.
-            val checkbox = ui.nodes(ui.root()).first { it.contentDescription?.toString() == "勾选候选" }
-            ui.clickNode(checkbox)
-            ui.await(20000) {
-                ui.nodes(ui.root()).firstOrNull { it.contentDescription?.toString() == "勾选候选" }?.isChecked == true
+            // D-217 round 21 (closure review): the verified toggle is wrapped
+            // in a 2-attempt loop. Each attempt re-finds the checkbox node
+            // FRESH — AndroidScaleUi exposes no public cache reset, and a
+            // fresh lookup through findNode's cache/refresh path is the
+            // available refresh — clicks it, and awaits the checked
+            // postcondition; on a 20s await miss the second attempt clicks
+            // again, while a real phase overrun (tick's "scale deadline
+            // exceeded") still propagates.
+            var checked = false
+            for (attempt in 0 until 2) {
+                val checkbox = ui.nodes(ui.root()).first { it.contentDescription?.toString() == "勾选候选" }
+                ui.clickNode(checkbox)
+                checked =
+                    try {
+                        ui.await(20000) {
+                            ui.nodes(ui.root()).firstOrNull { it.contentDescription?.toString() == "勾选候选" }?.isChecked == true
+                        }
+                        true
+                    } catch (miss: IllegalStateException) {
+                        if (miss.message?.contains("scale deadline exceeded") == true) throw miss
+                        false
+                    }
+                if (checked) break
             }
+            check(checked) { "detail checkbox toggle was never observed (checked=false)" }
             // D-217 round 13 (evidence22): a plain 返回 click can fail
             // silently on a stale detail-screen node — the next stage then
             // starts on 候选详情 and its seek dies with "scroll container
@@ -620,12 +670,16 @@ class AndroidScaleLongInstrumentedTest {
         ui.click("返回")
     }
 
-    private fun reopen() {
+    private fun reopen(): ScaleSnapshot {
         check(evidence.getJSONObject("stages").getJSONObject("batch_confirmation").getString("status") == "PASS")
-        // D-217: the host has force-stopped the app, so every oracle read
-        // below runs against a database with no live writer — the D-212 wall
-        // cannot occur. This is where all heavy SQL assertions live now; the
-        // in-chain stages only observed the UI.
+        // D-217 (round 21 reword): the host has force-stopped the app, so
+        // the heavy oracle reads below — every one taken BEFORE ui.launch()
+        // — run against a database with no live writer and the D-212 wall
+        // cannot occur for them. The post-launch tail read (reopenTail) is
+        // different: there the app is live again, and its safety rests on
+        // post-chain quiescence, not on the force-stop. This is where all
+        // heavy SQL assertions live now; the in-chain stages only observed
+        // the UI.
         val snapshot = oracle.snapshot(state.getString("ledger"), compareReadPath = true)
         oracle.assertFixture(snapshot, state, spec, final = true)
         assertPreparedUnchanged(snapshot)
@@ -678,66 +732,103 @@ class AndroidScaleLongInstrumentedTest {
         evidence.put("formalTransactions", 1).put("balancedPostings", 2)
         state.put("endIdentity", snapshot.identityDigest).put("endPersistence", snapshot.persistenceDigest)
         ui.launch()
-        // D-217 round 12 (evidence20): the traversal walk moved here from the
-        // chain. In the chain it ran BEFORE group_disposition and
-        // batch_confirmation, so the signatures it collected reflected the
-        // CHAIN-TIME state (main-session rows still DEFERRED, the unique row
-        // unconfirmed), while the multiset comparison below checked them
-        // against the POST-chain quiescent snapshot (those same rows
-        // CONFIRMED_DUPLICATE, the unique row confirmed) — roughly 21
-        // signatures drifted, so the equality was unsatisfiable BY DESIGN.
-        // The walk now runs after ui.launch(): the relaunched UI displays
-        // exactly the snapshot-consistent final list, so both sides of the
-        // comparison observe the SAME state.
-        //
-        // State-silence invariant: the relaunch plus the collect-only walk
-        // (scroll gestures only, no clicks) must not write to the database
-        // between the snapshot above and this walk. final-reopen re-runs
-        // reopen() on a fresh snapshot — if the relaunch or walk wrote
-        // anything, its assertions would fail; and on this phase the tail
-        // check below (reopened == snapshot) re-reads the oracle after the
-        // walk, so a stray write fails here too. The walk is proven
-        // state-silent on every run.
-        //
-        // reopen() executes for BOTH the reopen and final-reopen phases, and
-        // stage() throws "stage must not be retried" on the second
-        // execution — the phase gate makes the walk run EXACTLY ONCE, in the
-        // reopen phase.
+        return snapshot
+    }
+
+    /**
+     * D-217 round 21 (closure review): the reopen phase's two sibling
+     * stages. The traversal walk used to be registered as a stage NESTED
+     * inside the reopen stage's action — see the `when` dispatch comment in
+     * [maximumScalePhase] for why that could never validate — so it now
+     * registers only after the reopen stage has fully completed (PASS
+     * status and elapsedMs written, phase deadline restored). The explicit
+     * `if (phase == "reopen")` gate keeps the walk exactly-once even if a
+     * future caller re-enters this function from another phase.
+     */
+    private fun reopenPhase() {
+        val snapshot = stage("reopen", 1800000) { reopen() }
         if (phase == "reopen") {
             stage("traversal", 14400000) {
-                // The app relaunched to the home screen; 导入 opens the import
-                // screen whose review list collectTraversal walks (the same
-                // navigation the chain's saf_import stage and this phase's
-                // tail use).
-                ui.click("导入")
-                ui.await { ui.has("支付宝账单（CSV）") }
-                // collectTraversal seek-backs to the 刷新清单 anchor itself
-                // before walking the whole list exactly once; it requires the
-                // unique-session first row (its amount is derived from the
-                // manifest seed) to appear, keeping the traversal's coverage
-                // mandate without a live-app oracle read.
-                val collected = ui.collectTraversal(uniqueSessionFirstAmount(), spec.finalCandidates)
-                state.put("observedSignatures", JSONArray(collected))
-                evidence
-                    .put("observedCandidates", collected.size)
-                    .put("firstLastObserved", true)
-                    .put("uiIdentityScope", "projected-class-groups-query-order")
-                // Traversal alignment: the collected signatures must cover
-                // exactly the expected multiset of display rows (every row
-                // seen, no duplicates). collectTraversal preserves
-                // multiplicity, so both sides are genuine multisets and the
-                // sizes are directly comparable. The snapshot was read with
-                // the app stopped and the walk writes nothing (invariant
-                // above), so the comparison is same-state by construction.
-                val expected = snapshot.displayRows.map { it.signature }
-                check(collected.sorted() == expected.sorted()) { "traversal coverage mismatch (collected=${collected.size} expected=${expected.size})" }
+                traversalWalk(snapshot)
+                reopenTail(snapshot)
             }
         }
+    }
+
+    /**
+     * D-217 round 12 (evidence20): the traversal walk moved out of the
+     * chain into the reopen phase. In the chain it ran BEFORE
+     * group_disposition and batch_confirmation, so the signatures it
+     * collected reflected the CHAIN-TIME state (main-session rows still
+     * DEFERRED, the unique row unconfirmed), while the multiset comparison
+     * below checked them against the POST-chain quiescent snapshot (those
+     * same rows CONFIRMED_DUPLICATE, the unique row confirmed) — roughly 21
+     * signatures drifted, so the equality was unsatisfiable BY DESIGN. The
+     * walk runs after ui.launch() (the reopen stage's tail): the relaunched
+     * UI displays exactly the snapshot-consistent final list, so both sides
+     * of the comparison observe the SAME state.
+     *
+     * State-silence invariant: the relaunch plus the collect-only walk
+     * (scroll gestures only, no clicks) must not write to the database
+     * between the snapshot (read with the app stopped) and this walk. The
+     * traversal stage's own tail ([reopenTail]) re-reads the oracle after
+     * the walk, so a stray write fails in the same phase, and final-reopen
+     * re-runs [reopen] on a fresh snapshot — if the relaunch or walk wrote
+     * anything, its assertions would fail there too. The walk is proven
+     * state-silent on every run.
+     */
+    private fun traversalWalk(snapshot: ScaleSnapshot) {
+        // The app relaunched to the home screen; 导入 opens the import
+        // screen whose review list collectTraversal walks (the same
+        // navigation the chain's saf_import stage and the reopen tail use).
+        ui.click("导入")
+        ui.await { ui.has("支付宝账单（CSV）") }
+        // collectTraversal seek-backs to the 刷新清单 anchor itself
+        // before walking the whole list exactly once; it requires the
+        // unique-session first row (its amount is derived from the
+        // manifest seed) to appear, keeping the traversal's coverage
+        // mandate without a live-app oracle read.
+        val collected = ui.collectTraversal(uniqueSessionFirstAmount(), spec.finalCandidates)
+        state.put("observedSignatures", JSONArray(collected))
+        evidence
+            .put("observedCandidates", collected.size)
+            .put("firstLastObserved", true)
+            .put("uiIdentityScope", "projected-class-groups-query-order")
+        // Traversal alignment: the collected signatures must cover
+        // exactly the expected multiset of display rows (every row
+        // seen, no duplicates). collectTraversal preserves
+        // multiplicity, so both sides are genuine multisets and the
+        // sizes are directly comparable. The snapshot was read with
+        // the app stopped and the walk writes nothing (invariant
+        // above), so the comparison is same-state by construction.
+        val expected = snapshot.displayRows.map { it.signature }
+        check(collected.sorted() == expected.sorted()) { "traversal coverage mismatch (collected=${collected.size} expected=${expected.size})" }
+    }
+
+    /**
+     * The post-launch tail shared by the reopen and final-reopen phases:
+     * re-reads the oracle after the traversal walk (or, in final-reopen,
+     * after the relaunch alone) and fails on any stray write. D-217 round
+     * 21 (closure review): the app is LIVE here — ui.launch() ran — so this
+     * read's safety rests on post-chain quiescence, not on the force-stop.
+     */
+    private fun reopenTail(snapshot: ScaleSnapshot) {
         checkEconomicUi()
         ui.click("导入")
         ui.await { ui.has("支付宝账单（CSV）") }
         val reopened = oracle.snapshot(state.getString("ledger"))
         check(reopened == snapshot)
+    }
+
+    /**
+     * The final-reopen phase: the shared quiescent assertions plus the tail
+     * inside the final_reopen stage, with NO traversal stage — the walk ran
+     * exactly once, in the reopen phase (D-217 round 21: this branch never
+     * touches the "reopen"/"traversal" registrations, so the "stage must
+     * not be retried" guard never fires).
+     */
+    private fun finalReopen() {
+        reopenTail(reopen())
     }
 
     private fun replay() {

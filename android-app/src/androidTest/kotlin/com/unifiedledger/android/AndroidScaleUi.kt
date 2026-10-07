@@ -494,6 +494,11 @@ internal class AndroidScaleUi(
                         has("确认整组标记") ||
                         has("最近批量结果", prefix = true) ||
                         has("刷新清单")
+                    // D-217 round 21 (closure review): sample over time, not
+                    // back-to-back — consecutive has() reads against the
+                    // lagging client tree need spacing to observe movement
+                    // or resolution.
+                    if (!proven) SystemClock.sleep(150)
                 }
                 if (proven) return
                 check(stationaryCount < 8) { "stationary viewport is not a proven edge" }
@@ -815,10 +820,16 @@ internal class AndroidScaleUi(
             Log.i("ULScaleWalk", "open jump attempt=$attempt exposed=$jumpExposed index=$jumpRow")
             var steps = 0
             var stationaryCount = 0
-            // D-217 round 8: the cap is 120. At the 0.25 advance fraction
-            // (~3 rows/step) absorbing the jump accelerator's <= ~201-item
-            // undershoot on maximum needs ~70 steps; 120 leaves margin.
-            while (steps++ < 120) {
+            // D-217 round 8 set the cap at 120 for the 0.25 stride (~3
+            // rows/step: the jump accelerator's <= ~201-item undershoot on
+            // maximum needed ~70 steps; 120 left margin). D-217 round 21
+            // (closure review) halves the advance to 0.12 (~1.5 rows/step),
+            // so the arithmetic moved: the same <= ~201-item undershoot now
+            // needs ~134 steps, plus up to 8 stationary-verdict samples —
+            // the 120 cap can no longer cover it, so the cap is 160.
+            // Local-small (no accelerator, target ~2 viewports = ~22-26 rows
+            // down the list) needs only ~15-18 steps from the top.
+            while (steps++ < 160) {
                 scans++
                 // Staleness hardening: the click/back interactions can stale
                 // the client tree mid-scan; every 8th step forces one bounded
@@ -876,15 +887,22 @@ internal class AndroidScaleUi(
                 // (round-4-era evidence6 logcat: firstRow plateaus of ~5
                 // steps between advances).
                 val top = rows.firstOrNull()?.let { bounds(it).toString() + signatureOrNull(it) } ?: ""
-                // D-217 round 8: the advance scroll uses fraction 0.25 — the
-                // only fraction that has ever moved this list on device
+                // D-217 round 8: the advance scroll used fraction 0.25 — the
+                // only fraction that had ever moved this list on device
                 // (evidence6, round-4-era walk at 0.25: the first-row amount
                 // advanced across all 40 steps), while the 0.6 gestures of
                 // rounds 5-7 left rows frozen (evidence14: rows stay 10-11
                 // across every step, three consecutive cache-reset samples
                 // read an identical first row). The mechanism why 0.6 fails
                 // is unknown; the evidence is what fixes the parameter.
-                scroll(forward = true, fraction = 0.25f)
+                // D-217 round 21 (closure review): halved to 0.12, the
+                // round-11 stride already proven in collectTraversal — at
+                // ~3 rows/gesture the client tree's ~5-sample lag advances
+                // the view ~15 rows between samples, more than the
+                // ~10-11-row window, so a sample can skip rows entirely
+                // (evidence17's signature loss); at ~1.5 rows/gesture the
+                // lag advance is ~7-8 rows, inside the window.
+                scroll(forward = true, fraction = 0.12f)
                 val after = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signatureOrNull(it) } ?: ""
                 if (top.isNotEmpty() && top == after) {
                     stationaryCount++
@@ -1171,8 +1189,13 @@ internal class AndroidScaleUi(
                 runCatching { resetAutomationCache() }
                 // Stationary viewport: one final bounded wait for the marker
                 // (each has() carries findNode's rate-limited miss reset).
+                // D-217 round 21 (closure review): sleep between proofs so
+                // consecutive has() reads sample the tree over time instead
+                // of back-to-back.
                 var proofs = 0
-                while (!has(marker, prefix = true) && proofs++ < 3) { /* bounded retries */ }
+                while (!has(marker, prefix = true) && proofs++ < 3) {
+                    SystemClock.sleep(150)
+                }
                 if (has(marker, prefix = true)) {
                     // D-217 walk diagnostics (revert before PR if not wanted)
                     Log.i("ULScaleWalk", "seekReturn marker=${has(marker, prefix = true)} steps=$steps stationary=$exitedStationary")
