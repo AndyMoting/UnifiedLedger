@@ -124,7 +124,7 @@ def build_valid(directory: Path, *, sha: str = SHA) -> None:
     for index, stage in enumerate(STAGES):
         stages[stage] = {"status": "PASS", "startedMs": index * 1000, "elapsedMs": 10}
     device = {"schema": 1, "sha": sha, "stages": stages, "firstLastObserved": True,
-              "uiIdentityScope": "projected-sequence-multiplicity-order"}
+              "uiIdentityScope": "projected-class-groups-query-order"}
     device.update(COUNTERS)
     (directory / "device.json").write_text(json.dumps(device), encoding="utf-8")
     for phase in PHASES:
@@ -325,6 +325,51 @@ class ReducerRejectsPartialEvidence(unittest.TestCase):
         device["stages"]["saf_import"]["elapsedMs"] = 1800001
         save(self.directory, "device.json", device)
         self.assert_rejected()
+
+    def test_traversal_is_a_sibling_stage_immediately_after_reopen(self):
+        # D-217 round 21 (closure review): the walk is registered only after
+        # the reopen stage fully completes, so STAGES must list traversal
+        # immediately after reopen — a traversal nested inside reopen starts
+        # after reopen started and can never satisfy the strictly increasing
+        # startedMs rule. The reopen cap is explicit (1800000ms): the
+        # maximum snapshot's oracle ticks exceed the 180000ms default, and
+        # the walk itself stays under traversal's 14400000ms entry — pinned
+        # behaviorally by rejecting a reopen stage one millisecond over.
+        self.assertEqual(STAGES.index("traversal"), STAGES.index("reopen") + 1)
+        build_valid(self.directory)
+        device = load(self.directory, "device.json")
+        device["stages"]["reopen"]["elapsedMs"] = 1800001
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+    def test_accepts_the_round21_reopen_then_traversal_timeline(self):
+        # D-217 round 21 (closure review): the legal post-fix timeline —
+        # the chain stages with increasing startedMs, then reopen under its
+        # explicit 1800000ms cap, then traversal starting after reopen with
+        # elapsedMs under 14400000ms, then the two short final stages. The
+        # nested-walk design could never produce this shape.
+        build_valid(self.directory)
+        device = load(self.directory, "device.json")
+        timeline = {
+            "preparation": (0, 60000),
+            "coldstart": (70000, 20000),
+            "saf_import": (100000, 120000),
+            "detail_decision": (300000, 150000),
+            "group_disposition": (600000, 300000),
+            "batch_confirmation": (1000000, 100000),
+            "detail_monthly_refresh": (1200000, 50000),
+            "reopen": (1300000, 1700000),
+            "traversal": (3100000, 14000000),
+            "same_request_replay": (17200000, 60000),
+            "final_reopen": (17300000, 60000),
+        }
+        self.assertEqual(set(timeline), set(STAGES))
+        device["stages"] = {
+            name: {"status": "PASS", "startedMs": started, "elapsedMs": elapsed}
+            for name, (started, elapsed) in timeline.items()
+        }
+        save(self.directory, "device.json", device)
+        self.assertEqual(validate_evidence(self.directory, SHA)["status"], "PASS")
 
 
 class ReducerRejectsWrongIdentityAndCrashes(unittest.TestCase):
@@ -1198,7 +1243,11 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
         self.assertEqual(set(PHASES), set(PHASE_BUDGETS))
         self.assertIsNone(PHASE_BUDGETS["prepare"])
         self.assertIsNone(PHASE_BUDGETS["chain"])
-        self.assertTrue(all(PHASE_BUDGETS[phase] == 480 for phase in PHASES[2:]))
+        # D-217 round 12: the collection walk moved into reopen(), so that
+        # phase now hosts a multi-hour walk (the old traversal stage cap was
+        # 14400s); replay/final-reopen stay short.
+        self.assertEqual(PHASE_BUDGETS["reopen"], 18000)
+        self.assertTrue(all(PHASE_BUDGETS[phase] == 480 for phase in PHASES[3:]))
 
     def test_last_match_reports_unreadable_device_output(self):
         self.assertEqual("1080x2400", last_match(r"size: ([0-9]+x[0-9]+)", "Physical size: 1080x2400\n", "display size"))
