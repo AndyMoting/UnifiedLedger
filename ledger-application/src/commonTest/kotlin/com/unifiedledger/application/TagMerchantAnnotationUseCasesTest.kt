@@ -74,6 +74,7 @@ class TagMerchantAnnotationUseCasesTest {
         assertEquals("AnnotationUnknownMerchant", AnnotationFailureCode.of(TransactionAnnotationViolation.UnknownMerchant).code)
         assertEquals("AnnotationMerchantNotSelectable", AnnotationFailureCode.of(TransactionAnnotationViolation.MerchantNotSelectable).code)
         assertEquals("AnnotationMerchantCrossLedger", AnnotationFailureCode.of(TransactionAnnotationViolation.MerchantCrossLedger).code)
+        assertEquals("RequestIdentityConflict", AnnotationFailureCode.REQUEST_IDENTITY_CONFLICT.code)
         assertEquals("AnnotationConstraintViolation", AnnotationFailureCode.ANNOTATION_CONSTRAINT_VIOLATION.code)
     }
 }
