@@ -515,7 +515,7 @@ internal class DesktopStartupController(
         LedgerLeaseScope(owner).also { scope ->
             scope.backupExport = backupExportUseCase
             // P7-06 06.D (D-182; spec section 6): the section 5.4 ruling injects the wiring
-            // whitelist {1, 31, 32} and the current schema version from ledger-data.
+            // whitelist {1, 31, 32, 33} and the current schema version from ledger-data.
             scope.restoreWiring =
                 restoreUseCases?.let { cases ->
                     RestoreHostWiring(

@@ -283,7 +283,7 @@ private class RestorePreflightCancelledException : RuntimeException("restore pre
  * WIRED (F-11): this use case IS constructed by BOTH composition roots as of 06.D — the Android
  * `AndroidStartupController` and the desktop `DesktopStartupController` build one instance over
  * their owner and bind it into [LedgerLeaseScope.restoreWiring]. Each root supplies
- * `supportedSourceVersions` (the section 5.4 wiring whitelist `{1, 31, 32}`) and `currentSchemaVersion`
+ * `supportedSourceVersions` (the section 5.4 wiring whitelist `{1, 31, 32, 33}`) and `currentSchemaVersion`
  * (`currentSupportedSchemaVersion()` from ledger-data), and dispatches [preflight] off the UI
  * thread. The earlier P2-7 "deferred wiring" note (the whitelist set and the preview field set were
  * OPEN in the 06.C design) is resolved by the 06.D design (D-182) and this wiring.

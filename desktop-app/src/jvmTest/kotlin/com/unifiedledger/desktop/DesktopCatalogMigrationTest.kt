@@ -24,7 +24,7 @@ class DesktopCatalogMigrationTest {
             assertEquals(27L, queryUserVersion(url))
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(33L, driver.userVersion())
+                assertEquals(34L, driver.userVersion())
                 val database = LedgerDatabase(driver)
                 assertEquals(0L, database.ledgerQueries.countCatalogAccounts("ledger-local-test").executeAsOne())
             }
@@ -43,10 +43,10 @@ class DesktopCatalogMigrationTest {
         try {
             // The production open path creates and stamps a fresh file at the current version.
             JdbcSqliteDriver(url).use { driver -> migrateToCurrentSchema(driver) }
-            assertEquals(33L, queryUserVersion(url))
+            assertEquals(34L, queryUserVersion(url))
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(33L, driver.userVersion())
+                assertEquals(34L, driver.userVersion())
             }
         } finally {
             Files.deleteIfExists(path)
@@ -60,14 +60,15 @@ class DesktopCatalogMigrationTest {
         try {
             JdbcSqliteDriver(url).use { driver ->
                 LedgerDatabase.Schema.create(driver)
-                // One above the current schema (33 since the P7-07 07.B edge): the fail-closed
-                // branch is "library version is NEWER than supported".
-                driver.execute(null, "PRAGMA user_version = 34", 0)
+                // One above the current schema: the fail-closed branch is "library version is
+                // NEWER than supported". Derived from the schema constant so a version bump cannot
+                // silently turn this into the equal-version (direct reopen) branch.
+                driver.execute(null, "PRAGMA user_version = ${LedgerDatabase.Schema.version + 1}", 0)
             }
             assertFailsWith<IllegalStateException> {
                 JdbcSqliteDriver(url).use { driver -> migrateToCurrentSchema(driver) }
             }
-            JdbcSqliteDriver(url).use { driver -> assertEquals(34L, driver.userVersion()) }
+            JdbcSqliteDriver(url).use { driver -> assertEquals(LedgerDatabase.Schema.version + 1L, driver.userVersion()) }
             assertEquals(true, Files.exists(path))
         } finally {
             Files.deleteIfExists(path)
@@ -90,7 +91,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(33L, driver.userVersion())
+                assertEquals(34L, driver.userVersion())
             }
             // The same file still open through the real path, and it still has its tables.
             val graph = openDesktopLedger(url)
@@ -135,12 +136,15 @@ class DesktopCatalogMigrationTest {
                 // ... and the P7-07 07.B v33 budget configuration tables, or the in-place
                 // migration's 32.sqm aborts on the already-present tables.
                 dropP7V33BudgetConfiguration(driver)
+                // ... and the 08.A v34 tag/merchant + annotation objects, or the in-place
+                // migration's 33.sqm aborts on the already-present tables.
+                dropP7V34TagMerchantAnnotation(driver)
                 driver.execute(null, "PRAGMA user_version = 0", 0)
             }
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(33L, driver.userVersion())
+                assertEquals(34L, driver.userVersion())
                 assertEquals(
                     1L,
                     queryLong(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'catalog_version'"),
@@ -172,7 +176,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(33L, driver.userVersion())
+                assertEquals(34L, driver.userVersion())
                 // No migration ran: the catalog tables were not created, and the v27 objects the
                 // guarded branch would have relied on are still absent.
                 assertEquals(
@@ -224,7 +228,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(33L, driver.userVersion())
+                assertEquals(34L, driver.userVersion())
                 // The v27-only objects were never created: the guards alone did not pass the gate.
                 assertEquals(
                     0L,
@@ -270,6 +274,8 @@ class DesktopCatalogMigrationTest {
             dropP7V32TimeProjection(driver)
             // ... and the P7-07 07.B v33 budget configuration tables (32.sqm).
             dropP7V33BudgetConfiguration(driver)
+            // ... and the 08.A v34 tag/merchant + annotation objects (33.sqm).
+            dropP7V34TagMerchantAnnotation(driver)
             driver.execute(null, "PRAGMA user_version = 27", 0)
         }
     }
@@ -348,6 +354,29 @@ class DesktopCatalogMigrationTest {
             "budget_command_receipt",
             "budget_command_request",
             "budget_config",
+        ).forEach { table -> driver.execute(null, "DROP TABLE $table", 0) }
+    }
+
+    /**
+     * P7-08 08.A (D-218) objects of the schema v34 edge: the eleven tag/merchant + annotation
+     * product tables and their indexes/guard triggers. A look-alike of an older surface is built
+     * from `Schema.create` (v34) minus these objects, so the in-place migration's 33.sqm does not
+     * abort on the already-present tables. Child tables are dropped before their parents; the
+     * indexes and guard triggers go with their tables.
+     */
+    private fun dropP7V34TagMerchantAnnotation(driver: JdbcSqliteDriver) {
+        listOf(
+            "transaction_annotation_tag",
+            "transaction_annotation_current",
+            "transaction_annotation_command_receipt",
+            "transaction_annotation_command_request",
+            "transaction_annotation_revision",
+            "catalog_item_name_history",
+            "catalog_item_command_receipt",
+            "catalog_item_command_request",
+            "catalog_tag",
+            "catalog_merchant",
+            "catalog_item_version",
         ).forEach { table -> driver.execute(null, "DROP TABLE $table", 0) }
     }
 

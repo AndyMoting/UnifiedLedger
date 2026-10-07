@@ -12,6 +12,7 @@ import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.CatalogItem
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.NO_ANNOTATION_REVISION
 import com.unifiedledger.domain.TransactionAnnotation
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVersionId
@@ -88,7 +89,7 @@ class SqlDelightTransactionAnnotationStore private constructor(
                 if (currentVersionId != request.expectedCurrentVersionId.value) {
                     abortAnnotation(AnnotationFailureCode.ANNOTATION_CURRENT_VERSION_CONFLICT, conflict = true)
                 }
-                val currentRevision = pointer ?: 0L
+                val currentRevision = pointer ?: NO_ANNOTATION_REVISION
                 if (currentRevision != request.expectedAnnotationRevision) {
                     abortAnnotation(AnnotationFailureCode.ANNOTATION_REVISION_CONFLICT, conflict = true)
                 }
@@ -130,6 +131,10 @@ class SqlDelightTransactionAnnotationStore private constructor(
                     database.ledgerQueries.insertTransactionAnnotationCurrent(ledger, transactionId, newRevision)
                 } else {
                     database.ledgerQueries.advanceTransactionAnnotationCurrent(newRevision, ledger, transactionId, currentRevision)
+                    // CAS on the current-pointer row must have matched exactly one row; a zero-row
+                    // advance would commit a half-written aggregate with an ACCEPTED receipt
+                    // (mirrors SqlDelightConfirmedTransactionNoteUpdateCommitPort.kt:64).
+                    check(database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() == 1L)
                 }
 
                 database.ledgerQueries.updateTransactionAnnotationCommandRequestOutcome(

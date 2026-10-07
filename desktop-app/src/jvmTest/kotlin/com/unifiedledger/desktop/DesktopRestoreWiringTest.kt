@@ -25,7 +25,7 @@ import kotlin.test.assertTrue
  * P7-06 06.D (D-182; spec sections 5.3/5.4/6): the desktop composition-root wiring evidence for
  * the restore surface, exercised on a REAL host directory and the REAL isolated-database adapter.
  * Pins the section 6 construction decisions (one use-case instance set, the section 5.4 whitelist
- * `{1, 31, 32}` and `currentSupportedSchemaVersion()` injected from ledger-data) and the section 5.3
+ * `{1, 31, 32, 33}` and `currentSupportedSchemaVersion()` injected from ledger-data) and the section 5.3
  * recovery flow through the controller: a pointerless start offers the recovery face, the
  * user-confirmed adoption publishes the pointer through the frozen primitive and the retried
  * startup reaches Ready, a DECLINE mutates nothing, and the discard-and-re-upgrade branch is

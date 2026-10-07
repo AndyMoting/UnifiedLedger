@@ -144,6 +144,49 @@ class SqlDelightTagMerchantCatalogStoreTest {
     }
 
     @Test
+    fun aRealAnnotationReferenceBlocksTheTombstoneDeleteThroughTheRealStoreProbe() {
+        withStore { harness, _, driver ->
+            assertIs<TagMerchantCommandResult.Accepted>(harness.executor("c").createItem(ledgerId, CatalogItemKind.TAG, "咖啡", 0L))
+            // A REAL annotation revision referencing tag-1, read back through the store's own probe
+            // (never a stubbed `forceReferences`): the spec 2.2 safety property is only proven when
+            // the probe actually observes a seeded reference.
+            seedAnnotationReferencing(driver, "tag-1")
+            assertTrue(harness.store.hasReferences(ledgerId, CatalogItemKind.TAG, "tag-1"))
+            val rejected =
+                assertIs<TagMerchantCommandResult.Rejected>(
+                    harness.realProbeExecutor("del-referenced").deleteItem(ledgerId, CatalogItemKind.TAG, "tag-1", expectedRevision = 1L),
+                )
+            assertEquals(TagMerchantFailureCode.TAG_MERCHANT_HAS_REFERENCES, rejected.failureCode)
+            assertEquals(0L, queryLong(driver, "SELECT tombstoned FROM catalog_tag WHERE tag_id = 'tag-1'"))
+            // Non-vacuity: through the SAME real probe an unreferenced second tag still deletes.
+            harness.nextId = "tag-2"
+            assertIs<TagMerchantCommandResult.Accepted>(harness.executor("c2").createItem(ledgerId, CatalogItemKind.TAG, "茶", 0L))
+            assertTrue(!harness.store.hasReferences(ledgerId, CatalogItemKind.TAG, "tag-2"))
+            assertIs<TagMerchantCommandResult.Accepted>(
+                harness.realProbeExecutor("del-unreferenced").deleteItem(ledgerId, CatalogItemKind.TAG, "tag-2", expectedRevision = 1L),
+            )
+            assertEquals(1L, queryLong(driver, "SELECT count(*) FROM catalog_tag WHERE tag_id = 'tag-2' AND tombstoned = 1"))
+        }
+    }
+
+    @Test
+    fun aStateWriteAgainstAVanishedRowReportsZeroChangedRows() {
+        withStore { _, _, driver ->
+            // The catalog has no physical delete path, so the store's row-count guard is defensive;
+            // this pins the statement semantics it relies on: a state write against a missing row
+            // changes zero rows instead of silently succeeding.
+            assertEquals(
+                0L,
+                changedRows(driver, "UPDATE catalog_tag SET active = 0, tombstoned = 0, revision = revision + 1 WHERE ledger_id = 'ledger-tm' AND tag_id = 'ghost'"),
+            )
+            assertEquals(
+                0L,
+                changedRows(driver, "UPDATE catalog_merchant SET active = 0, tombstoned = 0, revision = revision + 1 WHERE ledger_id = 'ledger-tm' AND merchant_id = 'ghost'"),
+            )
+        }
+    }
+
+    @Test
     fun loadReturnsTheAuthorityWithThePerLedgerItemVersion() {
         withStore { harness, executor, driver ->
             val before = harness.store.load(ledgerId)
@@ -172,6 +215,15 @@ class SqlDelightTagMerchantCatalogStoreTest {
                 idSource = CatalogItemIdSource { nextId },
                 referenceProbe = CatalogItemReferenceProbe { _, _, _ -> forceReferences },
             )
+
+        /** The same executor but wired to the STORE'S OWN reference probe (never a stub). */
+        fun realProbeExecutor(requestId: String): ExecuteTagMerchantCommand =
+            ExecuteTagMerchantCommand(
+                commitPort = store,
+                requestIdSource = TagMerchantRequestIdSource { TagMerchantRequestId(requestId) },
+                idSource = CatalogItemIdSource { nextId },
+                referenceProbe = store,
+            )
     }
 
     private fun withStore(block: (Harness, (String) -> ExecuteTagMerchantCommand, JdbcSqliteDriver) -> Unit) {
@@ -186,6 +238,43 @@ class SqlDelightTagMerchantCatalogStoreTest {
     }
 
     private fun migrationProperties(): Properties = Properties().apply { setProperty("foreign_keys", "true") }
+
+    /**
+     * Seeds a REAL annotation revision referencing [tagId] (plus its tag association row and the
+     * current pointer), so the store's own `hasReferences` probe has something to observe. The
+     * annotation chain needs a live transaction + version to satisfy its deferred FKs.
+     */
+    private fun seedAnnotationReferencing(
+        driver: JdbcSqliteDriver,
+        tagId: String,
+    ) {
+        val ledger = ledgerId.value
+        driver.execute(null, "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('tx-ref', '$ledger', 'EXPENSE')", 0)
+        driver.execute(null, "INSERT INTO posting_set VALUES ('ps-ref', '$ledger')", 0)
+        driver.execute(
+            null,
+            "INSERT INTO transaction_version(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note) " +
+                "VALUES ('ver-ref', 'tx-ref', '$ledger', 1, 'ps-ref', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL)",
+            0,
+        )
+        driver.execute(null, "INSERT INTO ledger_transaction_current_version VALUES ('tx-ref', '$ledger', 'ver-ref')", 0)
+        driver.execute(
+            null,
+            "INSERT INTO transaction_annotation_revision(ledger_id, transaction_id, annotation_revision, observed_transaction_version_id, merchant_id, request_id, created_at) " +
+                "VALUES ('$ledger', 'tx-ref', 1, 'ver-ref', NULL, 'annot-ref-req', '2026-01-02T00:00:00Z')",
+            0,
+        )
+        driver.execute(null, "INSERT INTO transaction_annotation_tag(ledger_id, transaction_id, annotation_revision, tag_id) VALUES ('$ledger', 'tx-ref', 1, '$tagId')", 0)
+        driver.execute(null, "INSERT INTO transaction_annotation_current(ledger_id, transaction_id, annotation_revision) VALUES ('$ledger', 'tx-ref', 1)", 0)
+    }
+
+    private fun changedRows(
+        driver: JdbcSqliteDriver,
+        sql: String,
+    ): Long {
+        driver.execute(null, sql, 0)
+        return queryLong(driver, "SELECT changes()")
+    }
 
     private fun queryLong(
         driver: JdbcSqliteDriver,

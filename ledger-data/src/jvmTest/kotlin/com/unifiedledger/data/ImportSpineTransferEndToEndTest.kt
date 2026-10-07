@@ -2272,10 +2272,10 @@ class ImportSpineTransferEndToEndTest {
             JdbcSqliteDriver(url, migrationProps()).use { driver ->
                 LedgerDatabase(driver).transaction {
                     LedgerDatabase.Schema.migrate(driver, oldVersion = 22, newVersion = 34)
-                    driver.execute(null, "PRAGMA user_version = 33", 0)
+                    driver.execute(null, "PRAGMA user_version = 34", 0)
                 }
             }
-            assertEquals(33L, queryLongJdbc(url, "PRAGMA user_version"))
+            assertEquals(34L, queryLongJdbc(url, "PRAGMA user_version"))
             JdbcSqliteDriver(url, migrationProps()).use { driver ->
                 val database = LedgerDatabase(driver)
                 assertEquals(34, LedgerDatabase.Schema.version)

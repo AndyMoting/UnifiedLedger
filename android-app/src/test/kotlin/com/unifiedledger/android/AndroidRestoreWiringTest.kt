@@ -73,7 +73,7 @@ private const val RESTORE_WIRING_TEST_TOKEN = "restore-wiring-test-token"
  * restore surface, JVM-exercisable because the controller's open, log channel and dispatchers are
  * injected (the AndroidStartupControllerTest harness) and the filesystem is the real-filesystem
  * test adapter (DesktopStyleTestFileSystem, the 06.1 precedent). Pins the section 6 construction
- * decisions (the section 5.4 whitelist `{1, 31, 32}` and `currentSupportedSchemaVersion()` injected,
+ * decisions (the section 5.4 whitelist `{1, 31, 32, 33}` and `currentSupportedSchemaVersion()` injected,
  * one use-case instance set bound to the scope) and the section 5.3 recovery flow: a pointerless
  * start surfaces the recovery face, the user-confirmed adoption publishes the pointer through the
  * frozen primitive and the retried startup reaches Ready, and a DECLINE mutates nothing.

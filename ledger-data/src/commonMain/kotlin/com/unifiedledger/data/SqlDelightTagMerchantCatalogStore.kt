@@ -185,6 +185,7 @@ class SqlDelightTagMerchantCatalogStore private constructor(
                 } else {
                     database.ledgerQueries.setCatalogMerchantState(write.active.toBit(), 0L, ledger, write.id)
                 }
+                requireOneRowChanged()
             }
 
             is CatalogItemWrite.Rename -> {
@@ -202,8 +203,18 @@ class SqlDelightTagMerchantCatalogStore private constructor(
                 } else {
                     database.ledgerQueries.setCatalogMerchantState(0L, 1L, ledger, write.id)
                 }
+                requireOneRowChanged()
             }
         }
+    }
+
+    /**
+     * The state writes are CAS-like updates against a row the authority just loaded; a zero-row
+     * result means the row vanished mid-transaction. Throwing rolls the whole command back, so the
+     * receipt can never report ACCEPTED for a state write that silently no-opped (spec 2.2).
+     */
+    private fun requireOneRowChanged() {
+        check(database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() == 1L)
     }
 
     private fun appendNameVersion(

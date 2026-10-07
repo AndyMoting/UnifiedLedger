@@ -22,7 +22,7 @@ env:
   CI_TEST_MAX_PARALLEL_FORKS: '4'
 
 jobs:
-  # :ledger-data:jvmTest (93 classes / 673 tests) is by far the longest task, so it is
+  # :ledger-data:jvmTest (96 classes / 706 tests) is by far the longest task, so it is
   # split across three runners. tools/ci/ledger-data-shards.txt says which classes each
   # runner takes; the two coverage guards below keep that list honest.
   kotlin-core:

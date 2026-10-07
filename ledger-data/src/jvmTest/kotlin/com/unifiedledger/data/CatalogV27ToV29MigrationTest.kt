@@ -170,8 +170,12 @@ class CatalogV27ToV29MigrationTest {
                 LedgerDatabase.Schema.create(driver)
             }
             seedVersionOne(migratedUrl)
+            // Compare the FULL chain to the current schema, not just v28: later edges (v33->v34)
+            // add further `catalog_*` objects, so stopping at 28 would compare a partial catalog
+            // face against the fresh terminal definition. Using the schema constant also keeps this
+            // from silently drifting when the version bumps again (mirrors LedgerDatabaseMigrationTest).
             JdbcSqliteDriver(migratedUrl, migrationProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 1, 28)
+                LedgerDatabase.Schema.migrate(driver, 1, LedgerDatabase.Schema.version)
             }
             assertEquals(catalogSchemaText(freshUrl), catalogSchemaText(migratedUrl))
         } finally {

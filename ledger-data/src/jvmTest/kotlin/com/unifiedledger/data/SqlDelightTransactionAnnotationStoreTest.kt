@@ -193,6 +193,31 @@ class SqlDelightTransactionAnnotationStoreTest {
         }
     }
 
+    @Test
+    fun thePointerAdvanceIsAZeroRowChangeUnlessTheExpectedRevisionStillMatches() {
+        withStore { ctx ->
+            assertIs<TransactionAnnotationResult.Accepted>(ctx.update("r1", listOf(TagId("tag-1")), null, 0L))
+            // Seed revision 2 so an advance target exists and only the CAS predicate decides the count.
+            ctx.driver.execute(
+                null,
+                "INSERT INTO transaction_annotation_revision(ledger_id, transaction_id, annotation_revision, observed_transaction_version_id, merchant_id, request_id, created_at) " +
+                    "VALUES ('ledger-ann', 'tx-1', 2, 'version-1', NULL, 'annot-rev-2', '2026-03-05T02:00:00Z')",
+                0,
+            )
+            val queries = LedgerDatabase(ctx.driver).ledgerQueries
+            // A CAS advance whose expected revision no longer matches changes zero rows; the store
+            // guards exactly this with a changed-row check so it can never commit a half-written
+            // aggregate behind an ACCEPTED receipt.
+            queries.advanceTransactionAnnotationCurrent(2L, ledgerId.value, transactionId.value, 99L)
+            assertEquals(0L, queries.lastStatementChangedRowCount().executeAsOne())
+            assertEquals(1L, queryLong(ctx.driver, "SELECT annotation_revision FROM transaction_annotation_current WHERE transaction_id = 'tx-1'"))
+            // With the expected revision still matching, the same statement advances exactly one row.
+            queries.advanceTransactionAnnotationCurrent(2L, ledgerId.value, transactionId.value, 1L)
+            assertEquals(1L, queries.lastStatementChangedRowCount().executeAsOne())
+            assertEquals(2L, queryLong(ctx.driver, "SELECT annotation_revision FROM transaction_annotation_current WHERE transaction_id = 'tx-1'"))
+        }
+    }
+
     private inner class Context(
         val driver: JdbcSqliteDriver,
         private val transaction: TransactionId,
