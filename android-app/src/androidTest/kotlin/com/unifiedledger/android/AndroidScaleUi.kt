@@ -329,10 +329,11 @@ internal class AndroidScaleUi(
         val rect = bounds(node)
         check(rect.width() > 0 && rect.height() > 0) { "semantic click refused and node has no on-screen bounds" }
         val down = SystemClock.uptimeMillis()
-        val events = listOf(
-            MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, rect.exactCenterX(), rect.exactCenterY(), 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN },
-            MotionEvent.obtain(down, down + 60, MotionEvent.ACTION_UP, rect.exactCenterX(), rect.exactCenterY(), 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN },
-        )
+        val events =
+            listOf(
+                MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, rect.exactCenterX(), rect.exactCenterY(), 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN },
+                MotionEvent.obtain(down, down + 60, MotionEvent.ACTION_UP, rect.exactCenterX(), rect.exactCenterY(), 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN },
+            )
         try {
             events.forEach { event ->
                 check(automation.injectInputEvent(event, true)) { "coordinate tap injection refused" }
@@ -939,7 +940,10 @@ internal class AndroidScaleUi(
      * safety cap (expectedRows*4 + 200) is a generous stuck-viewport guard
      * above the worst-case rows-to-scans ratio.
      */
-    fun collectTraversal(anchorAmount: Long, expectedRows: Int): List<String> {
+    fun collectTraversal(
+        anchorAmount: Long,
+        expectedRows: Int,
+    ): List<String> {
         // D-217: the previous stage may have left the app on the detail
         // screen (its back click can silently fail on a stale node); the
         // detail screen has no scrollable container, so edge() below would
@@ -1015,9 +1019,10 @@ internal class AndroidScaleUi(
                 // scaleWindowOffset's uniqueness requirement in the old
                 // traverse.
                 val maxK = minOf(window.size, collected.size)
-                val matches = (1..maxK).filter { k ->
-                    collected.subList(collected.size - k, collected.size) == window.subList(0, k)
-                }
+                val matches =
+                    (1..maxK).filter { k ->
+                        collected.subList(collected.size - k, collected.size) == window.subList(0, k)
+                    }
                 // Ambiguity (multiple matching k) retries under the SAME
                 // bounded budget as the no-overlap path instead of erroring
                 // immediately: it arises when a viewport boundary lands

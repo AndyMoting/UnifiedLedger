@@ -436,10 +436,11 @@ class AndroidScaleLongInstrumentedTest {
             // snapshot equality) runs in reopen() against the oracle, so a
             // UI-blind miss here must not fail the chain; the attempt and
             // outcome stay in the evidence for the forensics to read.
-            val sawSummary = runCatching {
-                ui.await(20000) { ui.has("最近批量结果", prefix = true) }
-                ui.nodes(ui.root()).flatMap(ui::labels).any { it.contains("已入账 0 项") && it.contains("跳过 1 项") }
-            }.getOrDefault(false)
+            val sawSummary =
+                runCatching {
+                    ui.await(20000) { ui.has("最近批量结果", prefix = true) }
+                    ui.nodes(ui.root()).flatMap(ui::labels).any { it.contains("已入账 0 项") && it.contains("跳过 1 项") }
+                }.getOrDefault(false)
             evidence.put("batchSkipSummarySeen", sawSummary)
             // D-217: return to the review list top by scrolling back until the
             // format section (the list's fixed first viewport) is visible —
