@@ -4506,7 +4506,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 2. **八项条款（condensed）**：
    - 三族版本字面量穷尽枚举并逐处标注「当前版本 → 升」或「历史边 → 保持」语义（`assertEquals(N, LedgerDatabase.Schema.version)` 族、`Schema.migrate(driver, …, N)` 族、`assertEquals(NL, <派生表达式>)` 族——末族须用宽 grep 自证）；
    - fresh-vs-migrated 比较必须比到当前版本的全链，迁移目标由 `LedgerDatabase.Schema.version` 派生，禁止硬编码当前版本号；
-   - 加列批次沿 `columnInfo` 契约验证（列名/类型/可空性 + 列序在表尾），禁止要求 `sqlite_master` 文本逐字节一致；
+   - 加列批次沿 `columnInfo` 契约验证（列名/类型/非空/主键：`name|type|notnull|pk`，按声明行序；新列位于表尾），禁止要求 `sqlite_master` 文本逐字节一致；
    - 位置式 `INSERT INTO <table> VALUES (…)` 随加列批改写为显式列清单；
    - 被广泛构造类型（SQLDelight 生成类型、快照/SaveInput 等）的新字段一律带 Kotlin 默认值，或把全部构造点（生产代码与测试）纳入写范围；
    - `RESTORE_SUPPORTED_SOURCE_VERSIONS` 与两端组合根（`android-app` 的 `App.kt`、`desktop-app` 的 `Main.kt`）同步扩展，新版本沿 D-185 先例为有条件准入；
