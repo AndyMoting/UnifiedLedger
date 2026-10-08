@@ -257,6 +257,30 @@ adb shell am start -n com.unifiedledger.android/.MainActivity
 .\gradlew.bat ktlintCheck --stacktrace --rerun-tasks --warning-mode all
 ```
 
+## Schema 迁移批次清单
+
+升版本号（N→N+1）或扩展被广泛引用的表/类型时，实施批必须穷尽下列落点，并把每个落点纳入写范围。
+
+1. **穷尽枚举三族版本字面量**，逐处标注语义：是「当前版本 → 升」还是「历史边 → 保持」。
+   - `assertEquals(N, LedgerDatabase.Schema.version)` 族（08.A 后为 26 处）；
+   - `Schema.migrate(driver, …, N)` / `migrate(driver, oldVersion = …, newVersion = N)` 族；
+   - `assertEquals(NL, <派生表达式>)` 族，例如 `verification.schemaVersion`（`ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/BackupSnapshotDriverTest.kt:50`）、`queryUserVersion(url)`（`desktop-app/src/jvmTest/kotlin/com/unifiedledger/desktop/DesktopCatalogMigrationTest.kt:46`）、`currentSupportedSchemaVersion()`（`ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/RestoreIsolatedMigrationTest.kt:91`）。这一族最易漏：命名式 grep（如按 `user_version = N`）捕不到它，自证时用可执行的宽 grep（`grep -rniE 'user_?version|schema_?version' --include='*.kt' .`，并另搜当前版本字面量）；
+   - 历史边示例：`ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/P708TagMerchantV33ToV34MigrationTest.kt:107` 与 `:191` 的 `assertEquals(34L, queryLong(driver, "PRAGMA user_version"))`，升 v35 时必须保持 34。
+
+2. **fresh-vs-migrated 比较必须比到当前版本的全链**：只迁到某个中间版本再与 fresh（当前版本）比 `schemaMetadata`/schema 文本，升版本后必然不一致；迁移目标用 `LedgerDatabase.Schema.version` 派生（先例 `ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/CatalogV27ToV29MigrationTest.kt:178`），不要硬编码当前版本号。
+
+3. **加列批次沿 `columnInfo` 契约验证**：`ALTER TABLE ADD COLUMN` 无法与 fresh 一行一列 DDL 逐字节相等（SQLite 把新列定义拼在末列同一物理行）；仓库冻结的契约是比较 `columnInfo`（列名/类型/非空/主键：`name|type|notnull|pk`，按声明行序；新列位于表尾），说明与用法见 `ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/P707TimeProjectionMigrationV31ToV32Test.kt:300-312`，禁止要求 `sqlite_master` 文本逐字节一致。
+
+4. **同步改写位置式 INSERT**：`INSERT INTO <table> VALUES (…)` 不给列名时，加列后 SQLite 报 `has N columns but M values were supplied`（值个数校验先于缺省填充，新列加 `DEFAULT NULL` 也救不了）；以 `manual_expense_request` 与 `manual_income_request` 两表为例共 6 处须随加列批改写为显式列清单：`ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/LedgerDatabaseMigrationTest.kt:174`、`SqlDelightCatalogStoreTest.kt:290/539/544`、`SqlDelightRg06StoreTest.kt:1593/1603`。加列批必须以受影响表为范围在批时重新 grep 盘点位置式 INSERT 落点，不得复用本清单的数字；写范围必须覆盖盘点结果。
+
+5. **给被广泛构造的类型加必填字段会打断所有构造点**：SQLDelight 生成函数不给可空参数 Kotlin 默认值，快照/SaveInput 等类型同理；新字段一律带 Kotlin 默认值，或把全部构造点纳入写范围（生产代码与测试都要数；示例构造点：`ledger-application/src/commonMain/kotlin/com/unifiedledger/application/GoldenManualExpenseAdapter.kt`、`Rg02ManualIncomeAdapter.kt`，及多个 `desktop-app/src/jvmTest/kotlin/com/unifiedledger/desktop/*CompositionRootTest.kt`）。
+
+6. **同步恢复白名单与组合根**：`RESTORE_SUPPORTED_SOURCE_VERSIONS` 在 `android-app/src/main/kotlin/com/unifiedledger/android/App.kt` 与 `desktop-app/src/jvmMain/kotlin/com/unifiedledger/desktop/Main.kt` 两处必须同步扩展；新版本沿 D-185 先例为有条件准入。
+
+7. **重生成 ledger-data 分片名单**：新增/重命名 ledger-data 测试类必须重生成 `tools/ci/ledger-data-shards.txt`（覆盖守卫逐类比对，漏登会让测试永不执行），并同步 `.github/workflows/ci.yml` 头注释的类数/例数。
+
+8. **登记正式状态文档残余**：`docs/CURRENT_STATE.md`、`docs/ARCHITECTURE.md`、`README.md`、`docs/ROADMAP.md` 中的 schema 版本与迁移链文件数属独立 A-DOC 同步批（D-160 先例），不在实施批内改，但必须登记残余。
+
 ## 完整 Python 测试
 
 从仓库根目录执行：

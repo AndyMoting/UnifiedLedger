@@ -4494,3 +4494,25 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 - **R-218-1 tombstone 名称复用与 `catalogItemNameTaken` 的交互（产品语义开放项）**：`TagMerchant.kt:213-222` 的 `catalogItemNameTaken` 不排除 tombstoned 项，故被 tombstoned 的项其名称仍占用同命名空间，复用同名会永久返回 `TagMerchantNameConflict`。规格只规定**稳定 ID 不复用**，未规定**名称不复用**——因此这是产品语义选择而非缺陷。**本批不改行为**；待产品裁决：tombstoned 名称是否应释放（或由管理面显式重命名/复用）。登记为 OPEN。
 - **R-218-2 正式状态文档仍写 schema v33（文档同步批次残余）**：`docs/CURRENT_STATE.md`、`README.md`、`docs/ROADMAP.md` 仍陈述 schema v33。按 D-160 先例，正式状态文档同步属**独立的 A-DOC 同步批次**，不在本实施/修复批内。**本批不改这三份文档**；登记为待 A-DOC 同步批次处理的残余。
 - **R-218-3 恢复白名单 A04 往返等价腿未证**：`{1, 31, 32, 33}` 中 v33 为**有条件准入**——严格迁移 33→34 与校验已由 `P708TagMerchantV33ToV34MigrationTest` 证成，但 A04 往返等价腿未证（与 v1/v32 同状态）。沿用 D-185 先例登记，不在本批闭合。
+
+## D-219 schema 迁移批次清单正式化（迁移批次的版本字面量影响面与写范围纪律）
+
+**状态：** 已批准（2026-10-08，迁移批次清单正式化登记；由用户批准将该清单确立为正式规则）。
+
+**决定：**
+
+1. **权威归属**：`docs/CONTRIBUTING.md` 的「Schema 迁移批次清单」小节为本规则的权威出处；升版本号（N→N+1）或扩展被广泛引用的表/类型的迁移批必须逐项执行下列八条，并把每项落点纳入实施批自身的写范围。本条不复制全文，后续批次以该节为准并引用之。
+
+2. **八项条款（condensed）**：
+   - 三族版本字面量穷尽枚举并逐处标注「当前版本 → 升」或「历史边 → 保持」语义（`assertEquals(N, LedgerDatabase.Schema.version)` 族、`Schema.migrate(driver, …, N)` 族、`assertEquals(NL, <派生表达式>)` 族——末族须用宽 grep 自证）；
+   - fresh-vs-migrated 比较必须比到当前版本的全链，迁移目标由 `LedgerDatabase.Schema.version` 派生，禁止硬编码当前版本号；
+   - 加列批次沿 `columnInfo` 契约验证（列名/类型/非空/主键：`name|type|notnull|pk`，按声明行序；新列位于表尾），禁止要求 `sqlite_master` 文本逐字节一致；
+   - 位置式 `INSERT INTO <table> VALUES (…)` 随加列批改写为显式列清单；
+   - 被广泛构造类型（SQLDelight 生成类型、快照/SaveInput 等）的新字段一律带 Kotlin 默认值，或把全部构造点（生产代码与测试）纳入写范围；
+   - `RESTORE_SUPPORTED_SOURCE_VERSIONS` 与两端组合根（`android-app` 的 `App.kt`、`desktop-app` 的 `Main.kt`）同步扩展，新版本沿 D-185 先例为有条件准入；
+   - 新增/重命名 ledger-data 测试类必须重生成 `tools/ci/ledger-data-shards.txt`（覆盖守卫逐类比对）并同步 `.github/workflows/ci.yml` 头注释的类数/例数；
+   - 正式状态文档（`docs/CURRENT_STATE.md`、`docs/ARCHITECTURE.md`、`README.md`、`docs/ROADMAP.md`）的 schema 版本与迁移链文件数属独立 A-DOC 同步批（D-160 先例），不在实施批内改，但必须登记残余。
+
+3. **理据**：迁移批次的失败面集中在跨文件字面量与构造点，盘点属实施批自身的写范围责任，不得外包给下游环节。
+
+**关联决定：** D-218（08.A 实施批登记——本条例的清单在本批与后续迁移批适用）、D-185（恢复白名单有条件准入先例）、D-160（正式状态文档独立同步批先例）、D-191 与 D-195（分片名单与覆盖守卫先例：测试类增删/改名必须重生成名单，D-195 另立按实测重排与完整类名计时先例）。
