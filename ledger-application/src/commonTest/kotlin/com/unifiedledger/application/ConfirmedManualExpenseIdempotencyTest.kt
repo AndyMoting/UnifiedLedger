@@ -319,6 +319,7 @@ private class InMemoryConfirmedManualExpenseCommitPort : ConfirmedManualExpenseC
     override fun commitOnce(
         identity: ManualExpenseRequestIdentity,
         requestSnapshot: ManualExpenseRequestSnapshot,
+        createdAt: Instant,
         createFormalTransaction: () -> DomainResult<ConfirmedManualExpenseCommit>,
     ): ConfirmedManualExpenseResult {
         val existing = requests[identity]
@@ -492,6 +493,9 @@ private class Rg01ApplicationFixture {
         paymentAccountId = paymentAccountId,
         occurredAt = expenseOccurredAt,
         note = "",
+        tagIds = emptySet(),
+        merchantId = null,
+        createdAt = Instant.parse("2026-01-01T00:00:00Z"),
         confirmation = confirmation,
     )
 

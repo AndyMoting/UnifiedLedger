@@ -638,6 +638,32 @@ class P503EntryEfficiencyReducerTest {
     }
 
     @Test
+    fun recordAgainCarriesNoOldAssociationForAnyOfTheFiveKinds() {
+        // P7-08 08.B-1 (D-221; spec section 4.2): "record again" rebuilds a fresh per-type draft
+        // from the retained intent, and the retained intent deliberately does NOT carry the
+        // kind-independent tag/merchant association, so every rebuilt draft starts with no tags and
+        // no merchant. This guards the reduce path against silently carrying the previous
+        // transaction's association into the next entry (the specs' "record again clears tags/
+        // merchant" rule).
+        val overviewState = P503AppState.OverviewEmpty(emptyState, P503Tab.ACCOUNTS)
+        val intents =
+            listOf(
+                RetainedEntryIntent(EntryType.EXPENSE, "35.80", accountId, expenseCategoryId, "lunch", occurredAt, P503Tab.ACCOUNTS),
+                RetainedEntryIntent(EntryType.INCOME, "300.00", accountId, incomeCategoryId, "salary", occurredAt, P503Tab.ACCOUNTS),
+                RetainedEntryIntent(EntryType.TRANSFER, "50.00", accountId, feeCategoryId, "move", occurredAt, P503Tab.ACCOUNTS),
+                RetainedEntryIntent(EntryType.LEND, "100.00", accountId, null, "lend", occurredAt, P503Tab.ACCOUNTS),
+                RetainedEntryIntent(EntryType.COLLECT, "45.00", accountId, incomeCategoryId, "collect", occurredAt, P503Tab.ACCOUNTS),
+            )
+        for (intent in intents) {
+            val editing = assertIs<P503AppState.Editing>(reducer.reduce(overviewState.copy(retainedIntent = intent), P503UiEvent.SaveAndRecordAgain(revalidation)))
+            val draft = editing.draft
+            assertEquals(draft.entryType, intent.type)
+            assertEquals(emptySet(), draft.tagIds, "${intent.type} record-again must not carry old tags")
+            assertNull(draft.merchantId, "${intent.type} record-again must not carry an old merchant")
+        }
+    }
+
+    @Test
     fun recordAgainDropsObjectsTheCurrentCatalogNoLongerOffers() {
         val overviewState = P503AppState.OverviewEmpty(emptyState)
         val staleAccountIntent =

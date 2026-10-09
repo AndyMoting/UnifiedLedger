@@ -270,6 +270,7 @@ private class SubmissionFixture {
             paymentAccountId = AccountId("asset-payment-local"),
             occurredAt = occurredAt,
             note = "",
+            createdAt = occurredAt,
             confirmation = ExplicitManualSave,
         )
 
@@ -313,6 +314,7 @@ private class ReturningCommitPort(
     override fun commitOnce(
         identity: ManualExpenseRequestIdentity,
         requestSnapshot: ManualExpenseRequestSnapshot,
+        createdAt: kotlin.time.Instant,
         createFormalTransaction: () -> DomainResult<ConfirmedManualExpenseCommit>,
     ): ConfirmedManualExpenseResult = result
 }
@@ -321,6 +323,7 @@ private class ThrowingCommitPort : ConfirmedManualExpenseCommitPort {
     override fun commitOnce(
         identity: ManualExpenseRequestIdentity,
         requestSnapshot: ManualExpenseRequestSnapshot,
+        createdAt: kotlin.time.Instant,
         createFormalTransaction: () -> DomainResult<ConfirmedManualExpenseCommit>,
     ): ConfirmedManualExpenseResult = throw IllegalStateException("database unavailable")
 }
@@ -338,6 +341,7 @@ private class RecordingCommitPort : ConfirmedManualExpenseCommitPort {
     override fun commitOnce(
         identity: ManualExpenseRequestIdentity,
         requestSnapshot: ManualExpenseRequestSnapshot,
+        createdAt: kotlin.time.Instant,
         createFormalTransaction: () -> DomainResult<ConfirmedManualExpenseCommit>,
     ): ConfirmedManualExpenseResult {
         invocationCount += 1

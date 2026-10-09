@@ -45,17 +45,17 @@ class SqlDelightConfirmedManualTransferCommitPortTest {
     fun sameSnapshotReplaysAndDifferentSnapshotConflictsWithoutCallback() {
         transferHarness().use { harness ->
             val fixture = TransferPortFixture()
-            assertIs<ConfirmedManualTransferResult.Created>(harness.port.commitOnce(fixture.identity, fixture.snapshot) { DomainResult.Success(fixture.commit()) })
+            assertIs<ConfirmedManualTransferResult.Created>(harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) { DomainResult.Success(fixture.commit()) })
 
             var callbackCalls = 0
             assertIs<ConfirmedManualTransferResult.NoChange>(
-                harness.port.commitOnce(fixture.identity, fixture.snapshot) {
+                harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) {
                     callbackCalls++
                     error("must not create")
                 },
             )
             assertIs<ConfirmedManualTransferResult.RequestIdentityConflict>(
-                harness.port.commitOnce(fixture.identity, fixture.snapshot.copy(note = "different")) {
+                harness.port.commitOnce(fixture.identity, fixture.snapshot.copy(note = "different"), fixture.annotationCreatedAt) {
                     callbackCalls++
                     error("must not create")
                 },
@@ -73,7 +73,7 @@ class SqlDelightConfirmedManualTransferCommitPortTest {
             val fixture = TransferPortFixture()
             val rejected =
                 assertIs<ConfirmedManualTransferResult.Rejected>(
-                    harness.port.commitOnce(fixture.identity, fixture.snapshot) {
+                    harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) {
                         DomainResult.Failure(com.unifiedledger.domain.ManualTransferViolation.TransferSameAccount)
                     },
                 )
@@ -81,7 +81,7 @@ class SqlDelightConfirmedManualTransferCommitPortTest {
             assertEquals(listOf(0L, 0L, 0L, 0L, 0L), harness.counts())
 
             // The identity is retryable after the rolled-back claim.
-            assertIs<ConfirmedManualTransferResult.Created>(harness.port.commitOnce(fixture.identity, fixture.snapshot) { DomainResult.Success(fixture.commit()) })
+            assertIs<ConfirmedManualTransferResult.Created>(harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) { DomainResult.Success(fixture.commit()) })
             assertEquals(listOf(1L, 1L, 1L, 1L, 3L), harness.counts())
         }
     }
@@ -90,7 +90,7 @@ class SqlDelightConfirmedManualTransferCommitPortTest {
     fun sqlFailureRollsBackRequestAndFormalRows() {
         transferHarness().use { harness ->
             val fixture = TransferPortFixture()
-            assertFailsWith<IllegalStateException> { harness.port.commitOnce(fixture.identity, fixture.snapshot) { error("callback failure") } }
+            assertFailsWith<IllegalStateException> { harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) { error("callback failure") } }
             assertEquals(listOf(0L, 0L, 0L, 0L, 0L), harness.counts())
         }
     }
@@ -100,10 +100,10 @@ class SqlDelightConfirmedManualTransferCommitPortTest {
         transferHarness().use { harness ->
             val fixture = TransferPortFixture()
             assertFailsWith<IllegalArgumentException> {
-                harness.port.commitOnce(fixture.identity.copy(ledgerId = LedgerId("other")), fixture.snapshot) { DomainResult.Success(fixture.commit()) }
+                harness.port.commitOnce(fixture.identity.copy(ledgerId = LedgerId("other")), fixture.snapshot, fixture.annotationCreatedAt) { DomainResult.Success(fixture.commit()) }
             }
             assertFailsWith<IllegalArgumentException> {
-                harness.port.commitOnce(fixture.identity, fixture.snapshot) { DomainResult.Success(fixture.commit(LedgerId("other"))) }
+                harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) { DomainResult.Success(fixture.commit(LedgerId("other"))) }
             }
             assertEquals(listOf(0L, 0L, 0L, 0L, 0L), harness.counts())
         }
@@ -113,7 +113,7 @@ class SqlDelightConfirmedManualTransferCommitPortTest {
     fun ledgerIsolatedLookupsReturnNullAcrossLedgersAndTheNoteReachesTheVersion() {
         transferHarness().use { harness ->
             val fixture = TransferPortFixture()
-            val created = assertIs<ConfirmedManualTransferResult.Created>(harness.port.commitOnce(fixture.identity, fixture.snapshot) { DomainResult.Success(fixture.commit()) })
+            val created = assertIs<ConfirmedManualTransferResult.Created>(harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) { DomainResult.Success(fixture.commit()) })
 
             assertEquals(
                 "rent",
@@ -189,6 +189,9 @@ private class TransferPortFixture(
 ) {
     private val ledger = LedgerId("ledger-a")
     private val currency = CurrencyUnit("CNY", 2)
+
+    /** P7-08 08.B-1 (D-221; R3): deterministic write-path annotation audit instant. */
+    val annotationCreatedAt = Instant.parse("2026-01-15T00:35:00Z")
 
     val identity = ManualTransferRequestIdentity(ledger, RequestId(request))
 

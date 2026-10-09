@@ -16,14 +16,14 @@ class ConfirmedManualIncomeTest {
         var calls = 0
         val confirmed =
             ExecuteConfirmedManualIncome(
-                ConfirmedManualIncomeCommitPort { _, _, _ ->
+                ConfirmedManualIncomeCommitPort { _, _, _, _ ->
                     calls++
                     error("must not commit")
                 },
                 ConfirmedManualIncomeIdSource { error("must not allocate") },
                 ConfirmedIncomeTransactionFactory { _, _ -> error("must not create") },
             )
-        val result = ExecuteManualIncomeSave(confirmed).execute(ManualIncomeSaveInput(LedgerId("ledger"), RequestId("request"), null, null, null, Instant.parse("2026-01-01T00:00:00Z"), "", ExplicitManualSave))
+        val result = ExecuteManualIncomeSave(confirmed).execute(ManualIncomeSaveInput(LedgerId("ledger"), RequestId("request"), null, null, null, Instant.parse("2026-01-01T00:00:00Z"), "", Instant.parse("2026-01-01T00:00:00Z"), confirmation = ExplicitManualSave))
         assertIs<ManualIncomeSaveResult.InvalidInput>(result)
         assertEquals(0, calls)
     }
@@ -35,7 +35,7 @@ class ConfirmedManualIncomeTest {
         var calls = 0
         var first: ManualIncomeRequestSnapshot? = null
         val port =
-            ConfirmedManualIncomeCommitPort { identity, snapshot, callback ->
+            ConfirmedManualIncomeCommitPort { identity, snapshot, _, callback ->
                 if (first == null) {
                     first = snapshot
                     calls++
@@ -47,7 +47,7 @@ class ConfirmedManualIncomeTest {
                 }
             }
         val execute = ExecuteConfirmedManualIncome(port, ConfirmedManualIncomeIdSource { error("ids not needed") }, ConfirmedIncomeTransactionFactory { _, _ -> error("factory not needed") })
-        val request = ExplicitlyConfirmedManualIncome(ledger, RequestId("request"), Money.ofMinor(1, currency), CategoryId("income"), AccountId("asset"), Instant.parse("2026-01-01T00:00:00Z"), "", ExplicitManualSave)
+        val request = ExplicitlyConfirmedManualIncome(ledger, RequestId("request"), Money.ofMinor(1, currency), CategoryId("income"), AccountId("asset"), Instant.parse("2026-01-01T00:00:00Z"), "", emptySet(), null, Instant.parse("2026-01-01T00:00:00Z"), ExplicitManualSave)
         assertIs<ConfirmedManualIncomeResult.Created>(execute.execute(request))
         assertIs<ConfirmedManualIncomeResult.NoChange>(execute.execute(request))
         assertIs<ConfirmedManualIncomeResult.RequestIdentityConflict>(execute.execute(request.copy(note = "x")))

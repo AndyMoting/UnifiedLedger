@@ -187,9 +187,9 @@ private class ExecutionHarness(
                 .required() to checkNotNull(decoded.distinct.expected.transactionId),
         )
     private val commitPort =
-        ConfirmedManualExpenseCommitPort { identity, snapshot, callback ->
+        ConfirmedManualExpenseCommitPort { identity, snapshot, createdAt, callback ->
             commitCalls += 1
-            SqlDelightConfirmedManualExpenseCommitPort(database, driver).commitOnce(identity, snapshot, callback)
+            SqlDelightConfirmedManualExpenseCommitPort(database, driver).commitOnce(identity, snapshot, createdAt, callback)
         }
     private val noteCommitPort =
         ConfirmedTransactionNoteUpdateCommitPort { identity, snapshot, callback ->

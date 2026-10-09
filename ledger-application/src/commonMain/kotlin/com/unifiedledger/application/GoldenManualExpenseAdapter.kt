@@ -192,6 +192,7 @@ fun parseRg01ManualExpenseInput(
                     paymentAccountId = paymentAccountId,
                     occurredAt = occurredAt,
                     note = note,
+                    createdAt = GOLDEN_MANUAL_ANNOTATION_CREATED_AT,
                     confirmation = ExplicitManualSave,
                 ),
             originalAmountText = originalAmountText,

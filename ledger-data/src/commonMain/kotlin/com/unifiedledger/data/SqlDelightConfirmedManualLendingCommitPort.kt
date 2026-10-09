@@ -11,6 +11,7 @@ import com.unifiedledger.application.ManualLendingCommitRecord
 import com.unifiedledger.application.ManualLendingRequestIdentity
 import com.unifiedledger.application.ManualLendingRequestSnapshot
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.TagMerchantAuthority
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
@@ -19,9 +20,15 @@ import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.TagId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVersionId
+import com.unifiedledger.domain.decodeAnnotationMerchantId
+import com.unifiedledger.domain.decodeAnnotationTagIds
+import com.unifiedledger.domain.encodeAnnotationMerchantId
+import com.unifiedledger.domain.encodeAnnotationTagIds
 import kotlin.time.Instant
 
 /**
@@ -29,7 +36,8 @@ import kotlin.time.Instant
  * [SqlDelightConfirmedManualTransferCommitPort]: one atomic claim/work/receipt transaction that
  * also appends the per-object position history, equivalent replay returns the original receipt,
  * a differing snapshot is an identity conflict, and a typed rejection rolls the claim back so the
- * identity stays retryable.
+ * identity stays retryable. P7-08 08.B-1 (D-221) additionally writes the initial annotation
+ * aggregate in that same transaction (COLLECT goes through this lending port too).
  *
  * The transaction factory rebuilds the outstanding position from the same claim transaction, so a
  * concurrent collect can never pass admission against a stale balance (L-3).
@@ -41,9 +49,13 @@ class SqlDelightConfirmedManualLendingCommitPort private constructor(
         configureSqliteConnection(driver)
     }
 
+    private val catalogReader: SqlDelightTagMerchantCatalogStore =
+        SqlDelightTagMerchantCatalogStore.forPlatformConfiguredDatabase(database)
+
     override fun commitOnce(
         identity: ManualLendingRequestIdentity,
         requestSnapshot: ManualLendingRequestSnapshot,
+        createdAt: Instant,
         createFormalTransaction: () -> DomainResult<ConfirmedManualLendingCommit>,
     ): ConfirmedManualLendingResult {
         require(identity.ledgerId == requestSnapshot.ledgerId) {
@@ -89,6 +101,7 @@ class SqlDelightConfirmedManualLendingCommitPort private constructor(
                     }
                     persistFormalTransaction(commit.transaction)
                     persistPosition(identity.ledgerId.value, requestSnapshot, commit)
+                    appendAnnotation(identity, requestSnapshot, commit, createdAt)
                     database.ledgerQueries.insertConfirmedLendingReceipt(
                         identity.ledgerId.value,
                         identity.requestId.value,
@@ -102,6 +115,54 @@ class SqlDelightConfirmedManualLendingCommitPort private constructor(
                         ),
                     )
                 }
+            }
+        }
+    }
+
+    private fun appendAnnotation(
+        identity: ManualLendingRequestIdentity,
+        requestSnapshot: ManualLendingRequestSnapshot,
+        commit: ConfirmedManualLendingCommit,
+        createdAt: Instant,
+    ) {
+        requireActiveCatalogItems(identity.ledgerId, requestSnapshot.tagIds, requestSnapshot.merchantId)
+        database.ledgerQueries.updateManualLendingRequestAnnotation(
+            annotation_tag_ids = encodeAnnotationTagIds(requestSnapshot.tagIds),
+            annotation_merchant_id = encodeAnnotationMerchantId(requestSnapshot.merchantId),
+            ledger_id = identity.ledgerId.value,
+            request_id = identity.requestId.value,
+        )
+        database.requireOneAnnotationRowChanged()
+        database.appendManualCreateAnnotation(
+            ledgerId = identity.ledgerId.value,
+            transactionId = commit.transaction.transaction.id.value,
+            requestId = identity.requestId.value,
+            currentVersionId = commit.transaction.transaction.currentVersionId.value,
+            tagIds = requestSnapshot.tagIds,
+            merchantId = requestSnapshot.merchantId,
+            createdAt = createdAt,
+        )
+    }
+
+    private fun requireActiveCatalogItems(
+        ledgerId: LedgerId,
+        tagIds: Set<TagId>,
+        merchantId: MerchantId?,
+    ) {
+        if (tagIds.isEmpty() && merchantId == null) return
+        val authority: TagMerchantAuthority = requireNotNull(catalogReader.load(ledgerId)) {
+            "Manual create with an association requires an existing tag/merchant catalog"
+        }
+        tagIds.forEach { tagId ->
+            val tag = authority.tags.firstOrNull { it.id == tagId.value }
+            require(tag != null && tag.active && !tag.tombstoned) {
+                "Manual create references an unknown, inactive or tombstoned tag"
+            }
+        }
+        if (merchantId != null) {
+            val merchant = authority.merchants.firstOrNull { it.id == merchantId.value }
+            require(merchant != null && merchant.active && !merchant.tombstoned) {
+                "Manual create references an unknown, inactive or tombstoned merchant"
             }
         }
     }
@@ -161,6 +222,8 @@ class SqlDelightConfirmedManualLendingCommitPort private constructor(
                         occurredAt,
                         note,
                         confirmationMarker,
+                        annotationTagIds,
+                        annotationMerchantId,
                         confirmationId,
                         transactionId,
                         ->
@@ -178,6 +241,8 @@ class SqlDelightConfirmedManualLendingCommitPort private constructor(
                             occurredAt = occurredAt,
                             note = note,
                             confirmationMarker = confirmationMarker,
+                            annotationTagIds = annotationTagIds,
+                            annotationMerchantId = annotationMerchantId,
                             receipt = ConfirmedLendingReceipt(ConfirmationId(confirmationId), TransactionId(transactionId)),
                         )
                     }.executeAsOneOrNull(),
@@ -259,6 +324,8 @@ private data class StoredLendingCommit(
     val occurredAt: String,
     val note: String,
     val confirmationMarker: String,
+    val annotationTagIds: String?,
+    val annotationMerchantId: String?,
     val receipt: ConfirmedLendingReceipt,
 ) {
     fun matches(snapshot: ManualLendingRequestSnapshot): Boolean =
@@ -276,7 +343,9 @@ private data class StoredLendingCommit(
                 .toLong() &&
             occurredAt == snapshot.occurredAt.toString() &&
             note == snapshot.note &&
-            confirmationMarker == LENDING_EXPLICIT_MANUAL_SAVE_MARKER
+            confirmationMarker == LENDING_EXPLICIT_MANUAL_SAVE_MARKER &&
+            annotationTagIds == encodeAnnotationTagIds(snapshot.tagIds) &&
+            annotationMerchantId == encodeAnnotationMerchantId(snapshot.merchantId)
 }
 
 private const val LENDING_EXPLICIT_MANUAL_SAVE_MARKER = "explicit_manual_save"
@@ -298,6 +367,8 @@ internal fun com.unifiedledger.data.db.ManualLendingCommitByRequest.toRecord(led
                 interestCategoryId = interest_category_id?.let(::CategoryId),
                 occurredAt = Instant.parse(occurred_at),
                 note = note,
+                tagIds = decodeAnnotationTagIds(annotation_tag_ids).toSet(),
+                merchantId = decodeAnnotationMerchantId(annotation_merchant_id),
             ),
         receipt = ConfirmedLendingReceipt(ConfirmationId(confirmation_id), TransactionId(transaction_id)),
         currentVersionId = TransactionVersionId(current_version_id),
@@ -320,6 +391,8 @@ internal fun com.unifiedledger.data.db.ManualLendingCommitByReceipt.toRecord(led
                 interestCategoryId = interest_category_id?.let(::CategoryId),
                 occurredAt = Instant.parse(occurred_at),
                 note = note,
+                tagIds = decodeAnnotationTagIds(annotation_tag_ids).toSet(),
+                merchantId = decodeAnnotationMerchantId(annotation_merchant_id),
             ),
         receipt = ConfirmedLendingReceipt(ConfirmationId(confirmation_id), TransactionId(transaction_id)),
         currentVersionId = TransactionVersionId(current_version_id),

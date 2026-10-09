@@ -7,7 +7,9 @@ import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.DomainViolation
 import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.TagId
 import com.unifiedledger.domain.TransactionId
 import kotlin.time.Instant
 
@@ -19,6 +21,10 @@ data class ExplicitlyConfirmedManualIncome(
     val receivingAccountId: AccountId,
     val occurredAt: Instant,
     val note: String,
+    val tagIds: Set<TagId>,
+    val merchantId: MerchantId?,
+    /** P7-08 08.B-1 (D-221; ruling R3): write-path-only annotation audit time (no default). */
+    val createdAt: Instant,
     val confirmation: ExplicitManualSave,
 )
 
@@ -34,6 +40,8 @@ data class ManualIncomeRequestSnapshot(
     val receivingAccountId: AccountId,
     val occurredAt: Instant,
     val note: String,
+    val tagIds: Set<TagId> = emptySet(),
+    val merchantId: MerchantId? = null,
 )
 
 data class ConfirmedIncomeReceipt(
@@ -84,6 +92,7 @@ fun interface ConfirmedManualIncomeCommitPort {
     fun commitOnce(
         identity: ManualIncomeRequestIdentity,
         requestSnapshot: ManualIncomeRequestSnapshot,
+        createdAt: Instant,
         createFormalTransaction: () -> DomainResult<ConfirmedManualIncomeCommit>,
     ): ConfirmedManualIncomeResult
 }
@@ -95,8 +104,18 @@ class ExecuteConfirmedManualIncome(
 ) {
     fun execute(request: ExplicitlyConfirmedManualIncome): ConfirmedManualIncomeResult {
         val identity = ManualIncomeRequestIdentity(request.ledgerId, request.requestId)
-        val snapshot = ManualIncomeRequestSnapshot(request.ledgerId, request.amount, request.categoryId, request.receivingAccountId, request.occurredAt, request.note)
-        return commitPort.commitOnce(identity, snapshot) { createFormalTransaction.create(snapshot, idSource.next()) }
+        val snapshot =
+            ManualIncomeRequestSnapshot(
+                ledgerId = request.ledgerId,
+                amount = request.amount,
+                categoryId = request.categoryId,
+                receivingAccountId = request.receivingAccountId,
+                occurredAt = request.occurredAt,
+                note = request.note,
+                tagIds = request.tagIds,
+                merchantId = request.merchantId,
+            )
+        return commitPort.commitOnce(identity, snapshot, request.createdAt) { createFormalTransaction.create(snapshot, idSource.next()) }
     }
 }
 
@@ -108,6 +127,10 @@ data class ManualIncomeSaveInput(
     val receivingAccountId: AccountId?,
     val occurredAt: Instant,
     val note: String,
+    /** P7-08 08.B-1 (D-221; ruling R3): sampled once from `LedgerClock` by the confirming action. */
+    val createdAt: Instant,
+    val tagIds: Set<TagId> = emptySet(),
+    val merchantId: MerchantId? = null,
     val confirmation: ExplicitManualSave,
 )
 
@@ -134,6 +157,22 @@ class ExecuteManualIncomeSave(
                 if (input.receivingAccountId == null) add(ManualIncomeInputField.RECEIVING_ACCOUNT)
             }
         if (missing.isNotEmpty()) return ManualIncomeSaveResult.InvalidInput(missing)
-        return ManualIncomeSaveResult.Executed(executeConfirmed.execute(ExplicitlyConfirmedManualIncome(input.ledgerId, input.requestId, checkNotNull(input.amount), checkNotNull(input.categoryId), checkNotNull(input.receivingAccountId), input.occurredAt, input.note, input.confirmation)))
+        return ManualIncomeSaveResult.Executed(
+            executeConfirmed.execute(
+                ExplicitlyConfirmedManualIncome(
+                    ledgerId = input.ledgerId,
+                    requestId = input.requestId,
+                    amount = checkNotNull(input.amount),
+                    categoryId = checkNotNull(input.categoryId),
+                    receivingAccountId = checkNotNull(input.receivingAccountId),
+                    occurredAt = input.occurredAt,
+                    note = input.note,
+                    tagIds = input.tagIds,
+                    merchantId = input.merchantId,
+                    createdAt = input.createdAt,
+                    confirmation = input.confirmation,
+                ),
+            ),
+        )
     }
 }

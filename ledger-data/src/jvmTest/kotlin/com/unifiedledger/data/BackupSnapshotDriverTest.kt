@@ -32,7 +32,7 @@ class BackupSnapshotDriverTest {
         try {
             driver.execute(null, "CREATE TABLE sample (id INTEGER PRIMARY KEY, value TEXT)", 0)
             driver.execute(null, "INSERT INTO sample (value) VALUES ('a'), ('b'), ('c')", 0)
-            driver.execute(null, "PRAGMA user_version = 34", 0)
+            driver.execute(null, "PRAGMA user_version = 35", 0)
 
             val snapshotFile = File(dir, "snapshot")
             runSnapshotIntoOn(driver, snapshotFile.path)
@@ -47,7 +47,7 @@ class BackupSnapshotDriverTest {
             try {
                 val verification = verifySnapshotOn(verificationDriver)
                 assertTrue(verification.integrityOk)
-                assertEquals(34L, verification.schemaVersion)
+                assertEquals(35L, verification.schemaVersion)
             } finally {
                 verificationDriver.close()
             }

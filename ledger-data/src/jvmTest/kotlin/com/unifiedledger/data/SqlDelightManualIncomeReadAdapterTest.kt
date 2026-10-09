@@ -58,6 +58,9 @@ class SqlDelightManualIncomeReadAdapterTest {
     private val parentCategoryId = CategoryId("income-category-salary")
     private val categoryId = CategoryId("income-category-monthly")
     private val occurredAt = Instant.parse("2026-01-15T00:30:00Z")
+
+    /** P7-08 08.B-1 (D-221; R3): deterministic write-path annotation audit instant. */
+    private val annotationCreatedAt = Instant.parse("2026-01-15T00:35:00Z")
     private val catalog =
         incomeCatalog(
             ledgerId = ledgerId,
@@ -200,6 +203,9 @@ class SqlDelightManualIncomeReadAdapterTest {
             receivingAccountId = receivingAccountId,
             occurredAt = occurredAt,
             note = "monthly salary",
+            createdAt = annotationCreatedAt,
+            tagIds = emptySet(),
+            merchantId = null,
             confirmation = ExplicitManualSave,
         )
 

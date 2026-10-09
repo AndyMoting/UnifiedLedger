@@ -49,10 +49,11 @@ class CommitOnceInvocationTrackerLending(
     override fun commitOnce(
         identity: ManualLendingRequestIdentity,
         requestSnapshot: ManualLendingRequestSnapshot,
+        createdAt: kotlin.time.Instant,
         createFormalTransaction: () -> DomainResult<ConfirmedManualLendingCommit>,
     ): ConfirmedManualLendingResult {
         commitOnceInvoked = true
-        return delegate.commitOnce(identity, requestSnapshot, createFormalTransaction)
+        return delegate.commitOnce(identity, requestSnapshot, createdAt, createFormalTransaction)
     }
 }
 
@@ -76,6 +77,8 @@ private fun ManualLendSaveInput.attemptedSnapshot(): ManualLendingRequestSnapsho
         interestCategoryId = null,
         occurredAt = occurredAt,
         note = note,
+        tagIds = tagIds,
+        merchantId = merchantId,
     )
 }
 
@@ -100,6 +103,8 @@ private fun ManualCollectSaveInput.attemptedSnapshot(): ManualLendingRequestSnap
         interestCategoryId = interestCategoryId,
         occurredAt = occurredAt,
         note = note,
+        tagIds = tagIds,
+        merchantId = merchantId,
     )
 }
 

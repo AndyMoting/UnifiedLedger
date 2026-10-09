@@ -598,7 +598,7 @@ class AndroidStartupControllerTest {
             }
         val resolver = ResolveManualExpenseCommitStatus(readPort)
         val commitPort =
-            ConfirmedManualExpenseCommitPort { _, _, _ ->
+            ConfirmedManualExpenseCommitPort { _, _, _, _ ->
                 ConfirmedManualExpenseResult.Rejected(DomainViolation.InvalidOrdinaryExpense)
             }
         val tracker = CommitOnceInvocationTracker(commitPort)

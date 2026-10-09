@@ -171,7 +171,7 @@ class LedgerDatabaseMigrationTest {
             DriverManager.getConnection(url).use { connection -> connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) } }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.migrate(driver, 1, 4)
-                driver.execute(null, "INSERT INTO manual_income_request VALUES ('ledger-a','income-existing',500,'CNY',2,'income-category','asset-bank-a','2026-01-16T00:00:00Z','','explicit_manual_save')", 0)
+                driver.execute(null, "INSERT INTO manual_income_request(ledger_id, request_id, amount_minor, currency_code, currency_precision, category_id, receiving_account_id, occurred_at, note, confirmation_marker) VALUES ('ledger-a','income-existing',500,'CNY',2,'income-category','asset-bank-a','2026-01-16T00:00:00Z','','explicit_manual_save')", 0)
                 driver.execute(null, "INSERT INTO confirmed_income_receipt VALUES ('ledger-a','income-existing','income-confirmation','tx-existing')", 0)
             }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
@@ -304,7 +304,7 @@ class LedgerDatabaseMigrationTest {
             val database = LedgerDatabase(driver)
             SqlDelightConfirmedManualExpenseCommitPort(database, driver)
 
-            assertEquals(34, LedgerDatabase.Schema.version)
+            assertEquals(35, LedgerDatabase.Schema.version)
             assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
             assertEquals(0, database.ledgerQueries.countRequests().executeAsOne())
             assertEquals(0, database.ledgerQueries.countReceipts().executeAsOne())
@@ -535,7 +535,7 @@ class LedgerDatabaseMigrationTest {
                 LedgerDatabase.Schema.migrate(driver, 22, 23)
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 23, 34)
+                LedgerDatabase.Schema.migrate(driver, 23, 35)
             }
 
             assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))
@@ -557,7 +557,7 @@ class LedgerDatabaseMigrationTest {
                 connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
             }
             JdbcSqliteDriver("jdbc:sqlite:${migratedPath.absolutePathString()}", migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 1, 34)
+                LedgerDatabase.Schema.migrate(driver, 1, 35)
             }
             assertEquals(
                 schemaMetadata("jdbc:sqlite:${freshPath.absolutePathString()}"),
@@ -966,7 +966,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(34, LedgerDatabase.Schema.version)
+                assertEquals(35, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -1037,7 +1037,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(34, LedgerDatabase.Schema.version)
+                assertEquals(35, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -1076,7 +1076,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(34, LedgerDatabase.Schema.version)
+                assertEquals(35, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -1149,7 +1149,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(34, LedgerDatabase.Schema.version)
+                assertEquals(35, LedgerDatabase.Schema.version)
                 assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(1L, database.ledgerQueries.countVersions().executeAsOne())
                 assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
@@ -1303,7 +1303,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(34, LedgerDatabase.Schema.version)
+                assertEquals(35, LedgerDatabase.Schema.version)
                 // Formal rows of both v1 owners and the v16 RG-11 rows are preserved.
                 assertEquals(2L, database.ledgerQueries.countTransactions().executeAsOne())
                 assertEquals(3L, database.ledgerQueries.countVersions().executeAsOne())
@@ -1574,7 +1574,7 @@ class LedgerDatabaseMigrationTest {
 
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(34, LedgerDatabase.Schema.version)
+                assertEquals(35, LedgerDatabase.Schema.version)
                 // The rebuilt current-state guards and the new history guard exist with
                 // the v19 text; the temporary migration guard never lands in the schema.
                 assertEquals(1L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'rg12_match_current_guard_insert'"))
@@ -2459,7 +2459,7 @@ class LedgerDatabaseMigrationTest {
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
                 val db = LedgerDatabase(driver)
-                assertEquals(34, LedgerDatabase.Schema.version)
+                assertEquals(35, LedgerDatabase.Schema.version)
                 assertEquals(1L, db.ledgerQueries.countEvidenceProjectionRows().executeAsOne())
                 val rows = queryCount(driver, "SELECT count(*) FROM evidence_projection WHERE state='READY' AND normalized_amount_minor=9900 AND rule_id='p408_evidence_projection_backfill_v26'")
                 assertEquals(1L, rows)
@@ -2538,7 +2538,7 @@ class LedgerDatabaseMigrationTest {
                 }
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 34)
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 35)
             }
 
             assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))

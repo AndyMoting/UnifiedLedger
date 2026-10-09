@@ -9,9 +9,11 @@ import com.unifiedledger.domain.DomainViolation
 import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.LendingPosition
+import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.PostingSetId
+import com.unifiedledger.domain.TagId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVersionId
 import kotlin.time.Instant
@@ -60,6 +62,8 @@ data class ManualLendingRequestSnapshot(
     val interestCategoryId: CategoryId?,
     val occurredAt: Instant,
     val note: String,
+    val tagIds: Set<TagId> = emptySet(),
+    val merchantId: MerchantId? = null,
 )
 
 data class ConfirmedLendingReceipt(
@@ -139,6 +143,7 @@ fun interface ConfirmedManualLendingCommitPort {
     fun commitOnce(
         identity: ManualLendingRequestIdentity,
         requestSnapshot: ManualLendingRequestSnapshot,
+        createdAt: Instant,
         createFormalTransaction: () -> DomainResult<ConfirmedManualLendingCommit>,
     ): ConfirmedManualLendingResult
 }
@@ -151,7 +156,7 @@ class ExecuteConfirmedManualLending(
     fun execute(request: ExplicitlyConfirmedManualLending): ConfirmedManualLendingResult {
         val identity = ManualLendingRequestIdentity(request.ledgerId, request.requestId)
         val snapshot = request.toSnapshot()
-        return commitPort.commitOnce(identity, snapshot) {
+        return commitPort.commitOnce(identity, snapshot, request.createdAt) {
             createFormalTransaction.create(snapshot, idSource.next())
         }
     }
@@ -170,6 +175,10 @@ data class ExplicitlyConfirmedManualLending(
     val interestCategoryId: CategoryId?,
     val occurredAt: Instant,
     val note: String,
+    val tagIds: Set<TagId>,
+    val merchantId: MerchantId?,
+    /** P7-08 08.B-1 (D-221; ruling R3): write-path-only annotation audit time (no default). */
+    val createdAt: Instant,
     val confirmation: ExplicitManualSave,
 ) {
     fun toSnapshot(): ManualLendingRequestSnapshot =
@@ -185,6 +194,8 @@ data class ExplicitlyConfirmedManualLending(
             interestCategoryId = interestCategoryId,
             occurredAt = occurredAt,
             note = note,
+            tagIds = tagIds,
+            merchantId = merchantId,
         )
 }
 
@@ -211,6 +222,10 @@ data class ManualLendSaveInput(
     val amount: Money?,
     val occurredAt: Instant,
     val note: String,
+    /** P7-08 08.B-1 (D-221; ruling R3): sampled once from `LedgerClock` by the confirming action. */
+    val createdAt: Instant,
+    val tagIds: Set<TagId> = emptySet(),
+    val merchantId: MerchantId? = null,
     val confirmation: ExplicitManualSave,
 )
 
@@ -225,6 +240,10 @@ data class ManualCollectSaveInput(
     val interestCategoryId: CategoryId?,
     val occurredAt: Instant,
     val note: String,
+    /** P7-08 08.B-1 (D-221; ruling R3): sampled once from `LedgerClock` by the confirming action. */
+    val createdAt: Instant,
+    val tagIds: Set<TagId> = emptySet(),
+    val merchantId: MerchantId? = null,
     val confirmation: ExplicitManualSave,
 )
 
@@ -275,6 +294,9 @@ class ExecuteManualLendingSave(
                     interestCategoryId = null,
                     occurredAt = input.occurredAt,
                     note = input.note,
+                    tagIds = input.tagIds,
+                    merchantId = input.merchantId,
+                    createdAt = input.createdAt,
                     confirmation = input.confirmation,
                 ),
             ),
@@ -308,6 +330,9 @@ class ExecuteManualLendingSave(
                     interestCategoryId = checkNotNull(input.interestCategoryId),
                     occurredAt = input.occurredAt,
                     note = input.note,
+                    tagIds = input.tagIds,
+                    merchantId = input.merchantId,
+                    createdAt = input.createdAt,
                     confirmation = input.confirmation,
                 ),
             ),

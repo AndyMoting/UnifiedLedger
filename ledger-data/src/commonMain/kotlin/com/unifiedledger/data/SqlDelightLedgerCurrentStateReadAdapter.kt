@@ -41,6 +41,8 @@ import com.unifiedledger.domain.TransactionVersionId
 import com.unifiedledger.domain.TransactionVoidFactKind
 import com.unifiedledger.domain.VoidReason
 import com.unifiedledger.domain.VoidReasonCode
+import com.unifiedledger.domain.decodeAnnotationMerchantId
+import com.unifiedledger.domain.decodeAnnotationTagIds
 import kotlin.time.Instant
 
 /**
@@ -472,6 +474,8 @@ private fun com.unifiedledger.data.db.ManualExpenseCommitByRequest.toRecord(ledg
                 paymentAccountId = AccountId(payment_account_id),
                 occurredAt = Instant.parse(occurred_at),
                 note = note,
+                tagIds = decodeAnnotationTagIds(annotation_tag_ids).toSet(),
+                merchantId = decodeAnnotationMerchantId(annotation_merchant_id),
             ),
         receipt =
             ConfirmedExpenseReceipt(
@@ -493,6 +497,8 @@ private fun com.unifiedledger.data.db.ManualExpenseCommitByReceipt.toRecord(ledg
                 paymentAccountId = AccountId(payment_account_id),
                 occurredAt = Instant.parse(occurred_at),
                 note = note,
+                tagIds = decodeAnnotationTagIds(annotation_tag_ids).toSet(),
+                merchantId = decodeAnnotationMerchantId(annotation_merchant_id),
             ),
         receipt =
             ConfirmedExpenseReceipt(
@@ -514,6 +520,8 @@ private fun com.unifiedledger.data.db.ManualIncomeCommitByRequest.toRecord(ledge
                 receivingAccountId = AccountId(receiving_account_id),
                 occurredAt = Instant.parse(occurred_at),
                 note = note,
+                tagIds = decodeAnnotationTagIds(annotation_tag_ids).toSet(),
+                merchantId = decodeAnnotationMerchantId(annotation_merchant_id),
             ),
         receipt =
             ConfirmedIncomeReceipt(
@@ -535,6 +543,8 @@ private fun com.unifiedledger.data.db.ManualIncomeCommitByReceipt.toRecord(ledge
                 receivingAccountId = AccountId(receiving_account_id),
                 occurredAt = Instant.parse(occurred_at),
                 note = note,
+                tagIds = decodeAnnotationTagIds(annotation_tag_ids).toSet(),
+                merchantId = decodeAnnotationMerchantId(annotation_merchant_id),
             ),
         receipt =
             ConfirmedIncomeReceipt(
@@ -558,6 +568,8 @@ private fun com.unifiedledger.data.db.ManualTransferCommitByRequest.toRecord(led
                 feeCategoryId = fee_category_id?.let(::CategoryId),
                 occurredAt = Instant.parse(occurred_at),
                 note = note,
+                tagIds = decodeAnnotationTagIds(annotation_tag_ids).toSet(),
+                merchantId = decodeAnnotationMerchantId(annotation_merchant_id),
             ),
         receipt = ConfirmedTransferReceipt(ConfirmationId(confirmation_id), TransactionId(transaction_id)),
         currentVersionId = TransactionVersionId(current_version_id),
@@ -577,6 +589,8 @@ private fun com.unifiedledger.data.db.ManualTransferCommitByReceipt.toRecord(led
                 feeCategoryId = fee_category_id?.let(::CategoryId),
                 occurredAt = Instant.parse(occurred_at),
                 note = note,
+                tagIds = decodeAnnotationTagIds(annotation_tag_ids).toSet(),
+                merchantId = decodeAnnotationMerchantId(annotation_merchant_id),
             ),
         receipt = ConfirmedTransferReceipt(ConfirmationId(confirmation_id), TransactionId(transaction_id)),
         currentVersionId = TransactionVersionId(current_version_id),

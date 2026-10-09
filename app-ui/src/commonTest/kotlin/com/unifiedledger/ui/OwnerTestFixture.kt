@@ -82,7 +82,7 @@ internal fun minimalP503LedgerFacade(
         }
     val resolver = ResolveManualExpenseCommitStatus(readPort)
     val commitPort =
-        ConfirmedManualExpenseCommitPort { _, _, _ ->
+        ConfirmedManualExpenseCommitPort { _, _, _, _ ->
             ConfirmedManualExpenseResult.Rejected(DomainViolation.InvalidOrdinaryExpense)
         }
     val tracker = CommitOnceInvocationTracker(commitPort)

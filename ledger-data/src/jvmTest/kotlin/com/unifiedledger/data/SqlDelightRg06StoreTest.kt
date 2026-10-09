@@ -1590,7 +1590,7 @@ class SqlDelightRg06StoreTest {
         driver.execute(null, "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('legacy-tx','ledger-a','EXPENSE')", 0)
         when (owner) {
             "expense" -> {
-                driver.execute(null, "INSERT INTO manual_expense_request VALUES ('ledger-a','legacy-request',100,'CNY',2,'expense-service','asset-bank','2026-01-01T00:00:00Z','','explicit_manual_save')", 0)
+                driver.execute(null, "INSERT INTO manual_expense_request(ledger_id, request_id, amount_minor, currency_code, currency_precision, category_id, payment_account_id, occurred_at, note, confirmation_marker) VALUES ('ledger-a','legacy-request',100,'CNY',2,'expense-service','asset-bank','2026-01-01T00:00:00Z','','explicit_manual_save')", 0)
                 driver.execute(null, "INSERT INTO confirmed_expense_receipt VALUES ('ledger-a','legacy-request','$confirmationId','legacy-tx')", 0)
             }
             "note-update" -> {
@@ -1600,7 +1600,7 @@ class SqlDelightRg06StoreTest {
                 driver.execute(null, "INSERT INTO confirmed_transaction_note_update_receipt VALUES ('ledger-a','legacy-request','$confirmationId','legacy-tx','legacy-version','legacy-version')", 0)
             }
             "income" -> {
-                driver.execute(null, "INSERT INTO manual_income_request VALUES ('ledger-a','legacy-request',100,'CNY',2,'income-category','asset-bank','2026-01-01T00:00:00Z','','explicit_manual_save')", 0)
+                driver.execute(null, "INSERT INTO manual_income_request(ledger_id, request_id, amount_minor, currency_code, currency_precision, category_id, receiving_account_id, occurred_at, note, confirmation_marker) VALUES ('ledger-a','legacy-request',100,'CNY',2,'income-category','asset-bank','2026-01-01T00:00:00Z','','explicit_manual_save')", 0)
                 driver.execute(null, "INSERT INTO confirmed_income_receipt VALUES ('ledger-a','legacy-request','$confirmationId','legacy-tx')", 0)
             }
             else -> error("unknown owner")

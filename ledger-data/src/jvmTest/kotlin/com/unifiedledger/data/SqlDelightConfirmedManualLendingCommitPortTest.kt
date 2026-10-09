@@ -50,6 +50,9 @@ import kotlin.time.Instant
  * rejection family with zero writes rolling the claim back, B04 equivalent replay / identity
  * conflict / unknown recovery, and the frozen `(occurred_at, entry_id)` read order.
  */
+/** P7-08 08.B-1 (D-221; R3): deterministic write-path annotation audit instant for this test. */
+private val ANNOTATION_CREATED_AT = Instant.parse("2026-03-01T00:05:00Z")
+
 class SqlDelightConfirmedManualLendingCommitPortTest {
     @Test
     fun b02SyntheticLendCollectExampleIsolatesObjectsByPrincipal() {
@@ -288,7 +291,7 @@ private class LendingHarness : AutoCloseable {
         identity: ManualLendingRequestIdentity,
         snapshot: ManualLendingRequestSnapshot,
         create: () -> DomainResult<ConfirmedManualLendingCommit>,
-    ): ConfirmedManualLendingResult = port.commitOnce(identity, snapshot, create)
+    ): ConfirmedManualLendingResult = port.commitOnce(identity, snapshot, ANNOTATION_CREATED_AT, create)
 
     fun lendSnapshot(
         counterpartyId: CounterpartyId,

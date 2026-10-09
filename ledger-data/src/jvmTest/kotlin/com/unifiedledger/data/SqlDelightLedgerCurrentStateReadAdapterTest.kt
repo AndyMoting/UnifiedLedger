@@ -59,6 +59,9 @@ class SqlDelightLedgerCurrentStateReadAdapterTest {
     private val parentCategoryId = CategoryId("expense-category-food")
     private val categoryId = CategoryId("expense-category-breakfast")
     private val occurredAt = Instant.parse("2026-01-15T00:30:00Z")
+
+    /** P7-08 08.B-1 (D-221; R3): deterministic write-path annotation audit instant. */
+    private val annotationCreatedAt = Instant.parse("2026-01-15T00:35:00Z")
     private val catalog =
         fixedCatalog(
             ledgerId = ledgerId,
@@ -264,6 +267,9 @@ class SqlDelightLedgerCurrentStateReadAdapterTest {
         paymentAccountId = paymentAccountId,
         occurredAt = occurredAt,
         note = "",
+        createdAt = annotationCreatedAt,
+        tagIds = emptySet(),
+        merchantId = null,
         confirmation = ExplicitManualSave,
     )
 

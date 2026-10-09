@@ -86,8 +86,8 @@ class ManualTransferChainTest {
         val execute =
             ExecuteManualTransferSave(
                 ExecuteConfirmedManualTransfer(
-                    commitPort = { _, snapshot, _ ->
-                        received = ExplicitlyConfirmedManualTransfer(ledgerId, requestId, snapshot.sourceAccountId, snapshot.destinationAccountId, snapshot.destinationCredit, snapshot.fee, snapshot.feeCategoryId, snapshot.occurredAt, snapshot.note, ExplicitManualSave)
+                    commitPort = { _, snapshot, _, _ ->
+                        received = ExplicitlyConfirmedManualTransfer(ledgerId, requestId, snapshot.sourceAccountId, snapshot.destinationAccountId, snapshot.destinationCredit, snapshot.fee, snapshot.feeCategoryId, snapshot.occurredAt, snapshot.note, emptySet(), null, snapshot.occurredAt, ExplicitManualSave)
                         ConfirmedManualTransferResult.Created(receipt)
                     },
                     idSource = { error("no ids") },
@@ -106,6 +106,7 @@ class ManualTransferChainTest {
                     feeCategoryId = null,
                     occurredAt = occurredAt,
                     note = "",
+                    createdAt = occurredAt,
                     confirmation = ExplicitManualSave,
                 ),
             )
@@ -119,7 +120,7 @@ class ManualTransferChainTest {
         val execute =
             ExecuteManualTransferSave(
                 ExecuteConfirmedManualTransfer(
-                    commitPort = { _, _, _ ->
+                    commitPort = { _, _, _, _ ->
                         calls++
                         ConfirmedManualTransferResult.Created(receipt)
                     },
@@ -139,6 +140,7 @@ class ManualTransferChainTest {
                     feeCategoryId = null,
                     occurredAt = occurredAt,
                     note = "",
+                    createdAt = occurredAt,
                     confirmation = ExplicitManualSave,
                 ),
             )
@@ -151,14 +153,14 @@ class ManualTransferChainTest {
         val execute =
             ExecuteManualTransferSave(
                 ExecuteConfirmedManualTransfer(
-                    commitPort = { _, _, _ -> error("no commit") },
+                    commitPort = { _, _, _, _ -> error("no commit") },
                     idSource = { error("no ids") },
                     createFormalTransaction = { _, _ -> error("no factory") },
                 ),
             )
         val result =
             execute.execute(
-                ManualTransferSaveInput(ledgerId, requestId, null, null, null, null, null, occurredAt, "", ExplicitManualSave),
+                ManualTransferSaveInput(ledgerId, requestId, null, null, null, null, null, occurredAt, "", occurredAt, confirmation = ExplicitManualSave),
             )
         val invalid = assertIs<ManualTransferSaveResult.InvalidInput>(result)
         assertEquals(
@@ -169,7 +171,7 @@ class ManualTransferChainTest {
 
     @Test
     fun postHandoffFailureWithoutPersistedRecordStaysUnknownCommit() {
-        val tracker = CommitOnceInvocationTrackerTransfer { _, _, _ -> error("handoff before persistence") }
+        val tracker = CommitOnceInvocationTrackerTransfer { _, _, _, _ -> error("handoff before persistence") }
         val submission =
             ExecuteManualTransferSubmission(
                 ExecuteManualTransferSave(ExecuteConfirmedManualTransfer(tracker, { error("no ids") }, { _, _ -> error("no factory") })),
@@ -177,7 +179,7 @@ class ManualTransferChainTest {
                 ResolveManualTransferCommitStatus(port(null)),
             )
         val input =
-            ManualTransferSaveInput(ledgerId, requestId, AccountId("asset-a"), AccountId("asset-b"), Money.ofMinor(1_000L, cny), null, null, occurredAt, "", ExplicitManualSave)
+            ManualTransferSaveInput(ledgerId, requestId, AccountId("asset-a"), AccountId("asset-b"), Money.ofMinor(1_000L, cny), null, null, occurredAt, "", occurredAt, confirmation = ExplicitManualSave)
         assertEquals(ManualTransferSubmissionResult.UnknownCommit, submission.submit(input))
     }
 }

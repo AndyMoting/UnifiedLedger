@@ -287,7 +287,7 @@ class SqlDelightCatalogStoreTest {
             assertIs<CatalogBootstrapResult.Seeded>(store.bootstrap(ledgerId, defaultCatalogSeed()))
             driver.execute(
                 null,
-                "INSERT INTO manual_expense_request VALUES ('ledger-a','request-ref',100,'CNY',2,'expense-category-breakfast','asset-payment-local','2026-01-01T00:00:00+08:00','','explicit_manual_save')",
+                "INSERT INTO manual_expense_request(ledger_id, request_id, amount_minor, currency_code, currency_precision, category_id, payment_account_id, occurred_at, note, confirmation_marker) VALUES ('ledger-a','request-ref',100,'CNY',2,'expense-category-breakfast','asset-payment-local','2026-01-01T00:00:00+08:00','','explicit_manual_save')",
                 0,
             )
             val command = commandExecutor(store, singleRequestId("request-delete"), fixedIds())
@@ -461,6 +461,9 @@ class SqlDelightCatalogStoreTest {
                         paymentAccountId = AccountId("asset-payment-local"),
                         occurredAt = kotlin.time.Instant.parse("2026-01-15T00:30:00Z"),
                         note = "",
+                        createdAt = kotlin.time.Instant.parse("2026-01-15T00:35:00Z"),
+                        tagIds = emptySet(),
+                        merchantId = null,
                         confirmation = com.unifiedledger.application.ExplicitManualSave,
                     ),
                 )
@@ -536,12 +539,12 @@ class SqlDelightCatalogStoreTest {
             // A2: the product manual entry points are part of the bootstrap reference surface.
             driver.execute(
                 null,
-                "INSERT INTO manual_expense_request VALUES ('ledger-a','request-manual','100','CNY',2,'category-not-seeded','asset-payment-local','2026-01-01T00:00:00+08:00','','explicit_manual_save')",
+                "INSERT INTO manual_expense_request(ledger_id, request_id, amount_minor, currency_code, currency_precision, category_id, payment_account_id, occurred_at, note, confirmation_marker) VALUES ('ledger-a','request-manual','100','CNY',2,'category-not-seeded','asset-payment-local','2026-01-01T00:00:00+08:00','','explicit_manual_save')",
                 0,
             )
             driver.execute(
                 null,
-                "INSERT INTO manual_income_request VALUES ('ledger-a','request-income','100','CNY',2,'category-not-seeded','asset-payment-local','2026-01-01T00:00:00+08:00','','explicit_manual_save')",
+                "INSERT INTO manual_income_request(ledger_id, request_id, amount_minor, currency_code, currency_precision, category_id, receiving_account_id, occurred_at, note, confirmation_marker) VALUES ('ledger-a','request-income','100','CNY',2,'category-not-seeded','asset-payment-local','2026-01-01T00:00:00+08:00','','explicit_manual_save')",
                 0,
             )
 
@@ -629,6 +632,9 @@ class SqlDelightCatalogStoreTest {
                         paymentAccountId = AccountId("asset-payment-local"),
                         occurredAt = kotlin.time.Instant.parse("2026-01-15T00:30:00Z"),
                         note = "",
+                        createdAt = kotlin.time.Instant.parse("2026-01-15T00:35:00Z"),
+                        tagIds = emptySet(),
+                        merchantId = null,
                         confirmation = com.unifiedledger.application.ExplicitManualSave,
                     ),
                 )
