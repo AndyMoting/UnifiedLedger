@@ -221,19 +221,19 @@ class ManualLendingChainTest {
         val execute =
             ExecuteManualLendingSave(
                 ExecuteConfirmedManualLending(
-                    commitPort = { _, _, _ -> error("no commit") },
+                    commitPort = { _, _, _, _ -> error("no commit") },
                     idSource = { error("no ids") },
                     createFormalTransaction = { _, _ -> error("no factory") },
                 ),
             )
         val lend =
             assertIs<ManualLendSaveResult.InvalidInput>(
-                execute.saveLend(ManualLendSaveInput(ledgerId, RequestId("r"), null, null, null, at, "", ExplicitManualSave)),
+                execute.saveLend(ManualLendSaveInput(ledgerId, RequestId("r"), null, null, null, at, "", at, confirmation = ExplicitManualSave)),
             )
         assertEquals(setOf(ManualLendInputField.COUNTERPARTY, ManualLendInputField.FUNDING_ACCOUNT, ManualLendInputField.AMOUNT), lend.fields)
         val collect =
             assertIs<ManualCollectSaveResult.InvalidInput>(
-                execute.saveCollect(ManualCollectSaveInput(ledgerId, RequestId("r"), null, null, null, null, null, null, at, "", ExplicitManualSave)),
+                execute.saveCollect(ManualCollectSaveInput(ledgerId, RequestId("r"), null, null, null, null, null, null, at, "", at, confirmation = ExplicitManualSave)),
             )
         assertEquals(
             setOf(ManualCollectInputField.COUNTERPARTY, ManualCollectInputField.DESTINATION_ACCOUNT, ManualCollectInputField.TOTAL_RECEIVED, ManualCollectInputField.PRINCIPAL, ManualCollectInputField.INTEREST, ManualCollectInputField.INTEREST_CATEGORY),
@@ -243,7 +243,7 @@ class ManualLendingChainTest {
 
     @Test
     fun postHandoffFailureWithoutRecordStaysUnknown() {
-        val tracker = CommitOnceInvocationTrackerLending { _, _, _ -> error("handoff before persistence") }
+        val tracker = CommitOnceInvocationTrackerLending { _, _, _, _ -> error("handoff before persistence") }
         val submission =
             ExecuteManualLendingSubmission(
                 ExecuteManualLendingSave(ExecuteConfirmedManualLending(tracker, { error("no ids") }, { _, _ -> error("no factory") })),
@@ -251,7 +251,7 @@ class ManualLendingChainTest {
                 ResolveManualLendingCommitStatus(emptyPort(null)),
             )
         val input =
-            ManualLendSaveInput(ledgerId, RequestId("r"), counterpartyId, fundingId, Money.ofMinor(1_000L, cny), at, "", ExplicitManualSave)
+            ManualLendSaveInput(ledgerId, RequestId("r"), counterpartyId, fundingId, Money.ofMinor(1_000L, cny), at, "", at, confirmation = ExplicitManualSave)
         assertEquals(ManualLendSubmissionResult.UnknownCommit, submission.saveLend(input))
     }
 

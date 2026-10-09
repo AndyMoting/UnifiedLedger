@@ -7,7 +7,9 @@ import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.DomainViolation
 import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.TagId
 import com.unifiedledger.domain.TransactionId
 import kotlin.time.Instant
 
@@ -29,6 +31,15 @@ data class ExplicitlyConfirmedManualExpense(
     val paymentAccountId: AccountId,
     val occurredAt: Instant,
     val note: String,
+    val tagIds: Set<TagId>,
+    val merchantId: MerchantId?,
+    /**
+     * P7-08 08.B-1 (D-221; ruling R3): the annotation `created_at`, sampled ONCE from the
+     * injected `LedgerClock` at the confirming action and carried down the request chain. It is a
+     * write-path-only audit time and MUST NOT participate in replay equivalence. No default value
+     * (a default instant would be a silently wrong audit time).
+     */
+    val createdAt: Instant,
     val confirmation: ExplicitManualSave,
 )
 
@@ -44,6 +55,8 @@ data class ManualExpenseRequestSnapshot(
     val paymentAccountId: AccountId,
     val occurredAt: Instant,
     val note: String,
+    val tagIds: Set<TagId> = emptySet(),
+    val merchantId: MerchantId? = null,
 )
 
 data class ConfirmedExpenseReceipt(
@@ -112,11 +125,14 @@ fun interface ConfirmedManualExpenseCommitPort {
      *   request record, receipt, or transaction, and the identity MUST remain available for a
      *   corrected request.
      * - On [DomainResult.Success], the request record, receipt, and formal transaction MUST be
-     *   committed as one indivisible all-or-nothing operation.
+     *   committed as one indivisible all-or-nothing operation, together with the transaction's
+     *   initial annotation aggregate (revision 1) whose `created_at` is [createdAt] (P7-08 08.B-1,
+     *   ruling R1). [createdAt] is write-path only and MUST NOT participate in equivalent replay.
      */
     fun commitOnce(
         identity: ManualExpenseRequestIdentity,
         requestSnapshot: ManualExpenseRequestSnapshot,
+        createdAt: Instant,
         createFormalTransaction: () -> DomainResult<ConfirmedManualExpenseCommit>,
     ): ConfirmedManualExpenseResult
 }
@@ -140,11 +156,14 @@ class ExecuteConfirmedManualExpense(
                 paymentAccountId = request.paymentAccountId,
                 occurredAt = request.occurredAt,
                 note = request.note,
+                tagIds = request.tagIds,
+                merchantId = request.merchantId,
             )
 
         return commitPort.commitOnce(
             identity = identity,
             requestSnapshot = snapshot,
+            createdAt = request.createdAt,
         ) {
             createFormalTransaction.create(
                 request = snapshot,

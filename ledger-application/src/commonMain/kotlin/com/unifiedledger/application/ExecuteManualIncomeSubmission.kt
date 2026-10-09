@@ -48,10 +48,11 @@ class CommitOnceInvocationTrackerIncome(
     override fun commitOnce(
         identity: ManualIncomeRequestIdentity,
         requestSnapshot: ManualIncomeRequestSnapshot,
+        createdAt: kotlin.time.Instant,
         createFormalTransaction: () -> DomainResult<ConfirmedManualIncomeCommit>,
     ): ConfirmedManualIncomeResult {
         commitOnceInvoked = true
-        return delegate.commitOnce(identity, requestSnapshot, createFormalTransaction)
+        return delegate.commitOnce(identity, requestSnapshot, createdAt, createFormalTransaction)
     }
 }
 
@@ -105,6 +106,8 @@ class ExecuteManualIncomeSubmission(
             receivingAccountId = receivingAccountId,
             occurredAt = input.occurredAt,
             note = input.note,
+            tagIds = input.tagIds,
+            merchantId = input.merchantId,
         )
     }
 }

@@ -58,6 +58,7 @@ class DesktopManualIncomeCompositionRootTest {
                         receivingAccountId = receivingAccount.accountId,
                         occurredAt = Instant.parse("2026-01-15T00:30:00Z"),
                         note = "monthly salary",
+                        createdAt = Instant.parse("2026-01-15T00:35:00Z"),
                         confirmation = ExplicitManualSave,
                     ),
                 )
@@ -93,6 +94,7 @@ class DesktopManualIncomeCompositionRootTest {
                         receivingAccountId = receivingAccount.accountId,
                         occurredAt = Instant.parse("2026-01-15T00:30:00Z"),
                         note = "monthly salary",
+                        createdAt = Instant.parse("2026-01-15T00:35:00Z"),
                         confirmation = ExplicitManualSave,
                     ),
                 )
@@ -147,6 +149,7 @@ class DesktopManualIncomeCompositionRootTest {
                         receivingAccountId = com.unifiedledger.domain.AccountId("asset-payment-local"),
                         occurredAt = Instant.parse("2026-01-15T00:30:00Z"),
                         note = "",
+                        createdAt = Instant.parse("2026-01-15T00:35:00Z"),
                         confirmation = ExplicitManualSave,
                     ),
                 )

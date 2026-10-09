@@ -8,10 +8,16 @@ import com.unifiedledger.application.ConfirmedManualExpenseCommitPort
 import com.unifiedledger.application.ConfirmedManualExpenseResult
 import com.unifiedledger.application.ManualExpenseRequestIdentity
 import com.unifiedledger.application.ManualExpenseRequestSnapshot
+import com.unifiedledger.application.TagMerchantAuthority
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.FormalTransaction
+import com.unifiedledger.domain.MerchantId
+import com.unifiedledger.domain.TagId
 import com.unifiedledger.domain.TransactionId
+import com.unifiedledger.domain.encodeAnnotationMerchantId
+import com.unifiedledger.domain.encodeAnnotationTagIds
+import kotlin.time.Instant
 
 class SqlDelightConfirmedManualExpenseCommitPort private constructor(
     private val database: LedgerDatabase,
@@ -20,9 +26,13 @@ class SqlDelightConfirmedManualExpenseCommitPort private constructor(
         configureSqliteConnection(driver)
     }
 
+    private val catalogReader: SqlDelightTagMerchantCatalogStore =
+        SqlDelightTagMerchantCatalogStore.forPlatformConfiguredDatabase(database)
+
     override fun commitOnce(
         identity: ManualExpenseRequestIdentity,
         requestSnapshot: ManualExpenseRequestSnapshot,
+        createdAt: Instant,
         createFormalTransaction: () -> DomainResult<ConfirmedManualExpenseCommit>,
     ): ConfirmedManualExpenseResult {
         require(identity.ledgerId == requestSnapshot.ledgerId) {
@@ -66,6 +76,7 @@ class SqlDelightConfirmedManualExpenseCommitPort private constructor(
                         creation.value.transaction.transaction.ledgerId == identity.ledgerId,
                     ) { "Committed transaction must belong to the request ledger" }
                     persistFormalTransaction(creation.value.transaction)
+                    appendAnnotation(identity, requestSnapshot, creation.value, createdAt)
                     persistReceipt(identity, creation.value)
                     ConfirmedManualExpenseResult.Created(
                         ConfirmedExpenseReceipt(
@@ -74,6 +85,62 @@ class SqlDelightConfirmedManualExpenseCommitPort private constructor(
                         ),
                     )
                 }
+            }
+        }
+    }
+
+    /**
+     * P7-08 08.B-1 (D-221; R1/R-5/R-7/R-8): validate the requested association against the
+     * same-transaction catalog snapshot (fail-closed on unknown/inactive/other-ledger ids),
+     * stamp the canonical claim columns onto the just-claimed request row (asserting exactly one
+     * row changed so a mismatch rolls the whole transaction back) and append the revision-1
+     * annotation aggregate unconditionally.
+     */
+    private fun appendAnnotation(
+        identity: ManualExpenseRequestIdentity,
+        requestSnapshot: ManualExpenseRequestSnapshot,
+        commit: ConfirmedManualExpenseCommit,
+        createdAt: Instant,
+    ) {
+        requireActiveCatalogItems(identity.ledgerId, requestSnapshot.tagIds, requestSnapshot.merchantId)
+        database.ledgerQueries.updateManualExpenseRequestAnnotation(
+            annotation_tag_ids = encodeAnnotationTagIds(requestSnapshot.tagIds),
+            annotation_merchant_id = encodeAnnotationMerchantId(requestSnapshot.merchantId),
+            ledger_id = identity.ledgerId.value,
+            request_id = identity.requestId.value,
+        )
+        database.requireOneAnnotationRowChanged()
+        database.appendManualCreateAnnotation(
+            ledgerId = identity.ledgerId.value,
+            transactionId = commit.transaction.transaction.id.value,
+            requestId = identity.requestId.value,
+            currentVersionId = commit.transaction.transaction.currentVersionId.value,
+            tagIds = requestSnapshot.tagIds,
+            merchantId = requestSnapshot.merchantId,
+            createdAt = createdAt,
+        )
+    }
+
+    private fun requireActiveCatalogItems(
+        ledgerId: com.unifiedledger.domain.LedgerId,
+        tagIds: Set<TagId>,
+        merchantId: MerchantId?,
+    ) {
+        if (tagIds.isEmpty() && merchantId == null) return
+        val authority: TagMerchantAuthority =
+            requireNotNull(catalogReader.load(ledgerId)) {
+                "Manual create with an association requires an existing tag/merchant catalog"
+            }
+        tagIds.forEach { tagId ->
+            val tag = authority.tags.firstOrNull { it.id == tagId.value }
+            require(tag != null && tag.active && !tag.tombstoned) {
+                "Manual create references an unknown, inactive or tombstoned tag"
+            }
+        }
+        if (merchantId != null) {
+            val merchant = authority.merchants.firstOrNull { it.id == merchantId.value }
+            require(merchant != null && merchant.active && !merchant.tombstoned) {
+                "Manual create references an unknown, inactive or tombstoned merchant"
             }
         }
     }
@@ -97,6 +164,8 @@ class SqlDelightConfirmedManualExpenseCommitPort private constructor(
                         occurredAt,
                         note,
                         confirmationMarker,
+                        annotationTagIds,
+                        annotationMerchantId,
                         confirmationId,
                         transactionId,
                         ->
@@ -109,6 +178,8 @@ class SqlDelightConfirmedManualExpenseCommitPort private constructor(
                             occurredAt = occurredAt,
                             note = note,
                             confirmationMarker = confirmationMarker,
+                            annotationTagIds = annotationTagIds,
+                            annotationMerchantId = annotationMerchantId,
                             receipt =
                                 ConfirmedExpenseReceipt(
                                     confirmationId = ConfirmationId(confirmationId),
@@ -217,6 +288,8 @@ private data class StoredCommit(
     val occurredAt: String,
     val note: String,
     val confirmationMarker: String,
+    val annotationTagIds: String?,
+    val annotationMerchantId: String?,
     val receipt: ConfirmedExpenseReceipt,
 ) {
     fun matches(snapshot: ManualExpenseRequestSnapshot): Boolean =
@@ -229,5 +302,10 @@ private data class StoredCommit(
             paymentAccountId == snapshot.paymentAccountId.value &&
             occurredAt == snapshot.occurredAt.toString() &&
             note == snapshot.note &&
-            confirmationMarker == EXPLICIT_MANUAL_SAVE_MARKER
+            confirmationMarker == EXPLICIT_MANUAL_SAVE_MARKER &&
+            // P7-08 08.B-1 (D-221; R-2/R-5): structured per-column match. A legacy row (NULL) is
+            // the frozen "no annotation" default; a new row must carry the canonical encoding of
+            // the same tag set / merchant. R-4: createdAt never participates in replay.
+            annotationTagIds == encodeAnnotationTagIds(snapshot.tagIds) &&
+            annotationMerchantId == encodeAnnotationMerchantId(snapshot.merchantId)
 }

@@ -638,7 +638,7 @@ class GoldenManualExpenseAdapterTest {
                 executeConfirmed =
                     ExecuteConfirmedManualExpense(
                         commitPort =
-                            ConfirmedManualExpenseCommitPort { _, snapshot, callback ->
+                            ConfirmedManualExpenseCommitPort { _, snapshot, _, callback ->
                                 val existing = storedSnapshot
                                 if (existing != null) {
                                     return@ConfirmedManualExpenseCommitPort if (existing == snapshot) {

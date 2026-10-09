@@ -245,7 +245,7 @@ internal class DesktopRestoreUseCases(
  * `33.sqm` migration, mirroring the v32 preservation the 07.B slice relied on. The set remains a
  * spec-recognised EXPLICIT set, never automatically derived.
  */
-internal val RESTORE_SUPPORTED_SOURCE_VERSIONS: Set<Long> = setOf(1L, 31L, 32L, 33L)
+internal val RESTORE_SUPPORTED_SOURCE_VERSIONS: Set<Long> = setOf(1L, 31L, 32L, 33L, 34L)
 
 /**
  * The product's fixed single-ledger identity. F-8: ONE constant, used both by [buildLedgerGraph]

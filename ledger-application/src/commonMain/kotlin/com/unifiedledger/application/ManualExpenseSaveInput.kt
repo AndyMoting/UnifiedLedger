@@ -3,7 +3,9 @@ package com.unifiedledger.application
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.TagId
 import kotlin.time.Instant
 
 data class ManualExpenseSaveInput(
@@ -14,6 +16,10 @@ data class ManualExpenseSaveInput(
     val paymentAccountId: AccountId?,
     val occurredAt: Instant,
     val note: String,
+    /** P7-08 08.B-1 (D-221; ruling R3): sampled once from `LedgerClock` by the confirming action. */
+    val createdAt: Instant,
+    val tagIds: Set<TagId> = emptySet(),
+    val merchantId: MerchantId? = null,
     val confirmation: ExplicitManualSave,
 )
 
@@ -70,6 +76,9 @@ class ExecuteManualExpenseSave(
                 paymentAccountId = checkNotNull(paymentAccountId),
                 occurredAt = input.occurredAt,
                 note = input.note,
+                tagIds = input.tagIds,
+                merchantId = input.merchantId,
+                createdAt = input.createdAt,
                 confirmation = input.confirmation,
             )
         return ManualExpenseSaveResult.Executed(executeConfirmed.execute(confirmed))

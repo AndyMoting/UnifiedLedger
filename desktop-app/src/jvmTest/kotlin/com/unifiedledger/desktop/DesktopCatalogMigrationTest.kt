@@ -24,7 +24,7 @@ class DesktopCatalogMigrationTest {
             assertEquals(27L, queryUserVersion(url))
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(34L, driver.userVersion())
+                assertEquals(35L, driver.userVersion())
                 val database = LedgerDatabase(driver)
                 assertEquals(0L, database.ledgerQueries.countCatalogAccounts("ledger-local-test").executeAsOne())
             }
@@ -43,10 +43,10 @@ class DesktopCatalogMigrationTest {
         try {
             // The production open path creates and stamps a fresh file at the current version.
             JdbcSqliteDriver(url).use { driver -> migrateToCurrentSchema(driver) }
-            assertEquals(34L, queryUserVersion(url))
+            assertEquals(35L, queryUserVersion(url))
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(34L, driver.userVersion())
+                assertEquals(35L, driver.userVersion())
             }
         } finally {
             Files.deleteIfExists(path)
@@ -91,7 +91,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(34L, driver.userVersion())
+                assertEquals(35L, driver.userVersion())
             }
             // The same file still open through the real path, and it still has its tables.
             val graph = openDesktopLedger(url)
@@ -139,12 +139,15 @@ class DesktopCatalogMigrationTest {
                 // ... and the 08.A v34 tag/merchant + annotation objects, or the in-place
                 // migration's 33.sqm aborts on the already-present tables.
                 dropP7V34TagMerchantAnnotation(driver)
+                // ... and the P7-08 08.B-1 v35 manual-create annotation columns (34.sqm), or the
+                // in-place migration's 34.sqm aborts with "duplicate column name".
+                dropP7V35ManualAnnotationColumns(driver)
                 driver.execute(null, "PRAGMA user_version = 0", 0)
             }
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(34L, driver.userVersion())
+                assertEquals(35L, driver.userVersion())
                 assertEquals(
                     1L,
                     queryLong(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'catalog_version'"),
@@ -176,7 +179,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(34L, driver.userVersion())
+                assertEquals(35L, driver.userVersion())
                 // No migration ran: the catalog tables were not created, and the v27 objects the
                 // guarded branch would have relied on are still absent.
                 assertEquals(
@@ -228,7 +231,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(34L, driver.userVersion())
+                assertEquals(35L, driver.userVersion())
                 // The v27-only objects were never created: the guards alone did not pass the gate.
                 assertEquals(
                     0L,
@@ -276,6 +279,8 @@ class DesktopCatalogMigrationTest {
             dropP7V33BudgetConfiguration(driver)
             // ... and the 08.A v34 tag/merchant + annotation objects (33.sqm).
             dropP7V34TagMerchantAnnotation(driver)
+            // ... and the P7-08 08.B-1 v35 manual-create annotation columns (34.sqm).
+            dropP7V35ManualAnnotationColumns(driver)
             driver.execute(null, "PRAGMA user_version = 27", 0)
         }
     }
@@ -378,6 +383,42 @@ class DesktopCatalogMigrationTest {
             "catalog_merchant",
             "catalog_item_version",
         ).forEach { table -> driver.execute(null, "DROP TABLE $table", 0) }
+    }
+
+    /**
+     * P7-08 08.B-1 (D-221) columns of the schema v35 edge (34.sqm): the two NULLABLE annotation
+     * claim columns appended to each claim-first manual request table. A look-alike of an older
+     * surface is built from `Schema.create` (v35) minus these columns, so the in-place migration's
+     * 34.sqm does not abort with "duplicate column name".
+     */
+    private fun dropP7V35ManualAnnotationColumns(driver: JdbcSqliteDriver) {
+        // Only the request tables present at this older surface (the v29 look-alike has already
+        // dropped manual_transfer_request / manual_lending_request).
+        listOf(
+            "manual_expense_request",
+            "manual_income_request",
+            "manual_transfer_request",
+            "manual_lending_request",
+        ).forEach { table ->
+            if (driver.hasTableForMigrationTest(table)) {
+                driver.execute(null, "ALTER TABLE $table DROP COLUMN annotation_tag_ids", 0)
+                driver.execute(null, "ALTER TABLE $table DROP COLUMN annotation_merchant_id", 0)
+            }
+        }
+    }
+
+    private fun JdbcSqliteDriver.hasTableForMigrationTest(table: String): Boolean {
+        var present = false
+        executeQuery(
+            null,
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = '$table'",
+            { cursor ->
+                if (cursor.next().value) present = (cursor.getLong(0) ?: 0L) > 0L
+                app.cash.sqldelight.db.QueryResult.Unit
+            },
+            0,
+        )
+        return present
     }
 
     private fun queryLong(

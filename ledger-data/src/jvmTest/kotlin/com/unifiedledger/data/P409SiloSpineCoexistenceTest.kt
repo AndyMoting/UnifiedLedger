@@ -178,6 +178,13 @@ class P409SiloSpineCoexistenceTest {
      */
     private val earlySiloLedger = LedgerId("ledger-p409-early-silos")
 
+    /**
+     * P7-08 08.B-1 (D-221; ruling R3): the fixed annotation audit instant for the rg01 manual-expense
+     * create/replay in this coexistence fixture. It is a deterministic fixture constant (not a wall
+     * clock) and, per R-4, never participates in replay equivalence.
+     */
+    private val rg01AnnotationCreatedAt = Instant.parse("2026-01-15T00:30:00Z")
+
     /** Mirror evidence for the spine RL-03 confirmLink: the posting's own Z-shaped instant. */
     private val rl03MirrorFacts = ImportSourceFacts(3000, "CNY", 2, "2026-08-03T04:00:00Z", "out", "settled", ImportFundingState.SETTLED, IMPORT_FUNDING_RULE_LEGACY_SETTLED, 1)
 
@@ -211,7 +218,7 @@ class P409SiloSpineCoexistenceTest {
                 val rg01Expense = rg01Commit()
                 val expensePort = SqlDelightConfirmedManualExpenseCommitPort(database, driver)
                 assertIs<com.unifiedledger.application.ConfirmedManualExpenseResult.Created>(
-                    expensePort.commitOnce(rg01Expense.first, rg01Expense.second) { DomainResult.Success(rg01Expense.third) },
+                    expensePort.commitOnce(rg01Expense.first, rg01Expense.second, rg01AnnotationCreatedAt) { DomainResult.Success(rg01Expense.third) },
                 )
 
                 // RG-02 (i): the raw-json adapter feeding the income save, create + replay.
@@ -314,7 +321,7 @@ class P409SiloSpineCoexistenceTest {
                 val rg01 = rg01Commit()
                 var rg01Callback = 0
                 assertIs<com.unifiedledger.application.ConfirmedManualExpenseResult.NoChange>(
-                    SqlDelightConfirmedManualExpenseCommitPort(database, driver).commitOnce(rg01.first, rg01.second) {
+                    SqlDelightConfirmedManualExpenseCommitPort(database, driver).commitOnce(rg01.first, rg01.second, rg01AnnotationCreatedAt) {
                         rg01Callback += 1
                         DomainResult.Success(rg01.third)
                     },

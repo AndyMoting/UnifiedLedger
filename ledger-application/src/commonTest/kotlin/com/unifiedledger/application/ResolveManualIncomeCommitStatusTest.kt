@@ -141,7 +141,7 @@ class ResolveManualIncomeCommitStatusTest {
 
     @Test
     fun incomeSubmissionAfterHandoffWithoutPersistedRecordStaysUnknownCommit() {
-        val tracker = CommitOnceInvocationTrackerIncome { _, _, _ -> error("handoff failure before persistence") }
+        val tracker = CommitOnceInvocationTrackerIncome { _, _, _, _ -> error("handoff failure before persistence") }
         val resolver = ResolveManualIncomeCommitStatus(port(null))
         val submission =
             ExecuteManualIncomeSubmission(
@@ -159,6 +159,7 @@ class ResolveManualIncomeCommitStatusTest {
                     receivingAccountId = AccountId("asset-payment-local"),
                     occurredAt = occurredAt,
                     note = "salary",
+                    createdAt = occurredAt,
                     confirmation = ExplicitManualSave,
                 ),
             )
@@ -172,7 +173,7 @@ class ResolveManualIncomeCommitStatusTest {
         var commits = 0
         val tracker =
             CommitOnceInvocationTrackerIncome(
-                ConfirmedManualIncomeCommitPort { _, _, _ ->
+                ConfirmedManualIncomeCommitPort { _, _, _, _ ->
                     commits += 1
                     throw IllegalStateException("handoff failure")
                 },
@@ -193,6 +194,7 @@ class ResolveManualIncomeCommitStatusTest {
                     receivingAccountId = AccountId("asset-payment-local"),
                     occurredAt = occurredAt,
                     note = "salary",
+                    createdAt = occurredAt,
                     confirmation = ExplicitManualSave,
                 ),
             )
@@ -208,7 +210,7 @@ class ResolveManualIncomeCommitStatusTest {
                 executeSave =
                     ExecuteManualExpenseSave(
                         ExecuteConfirmedManualExpense(
-                            CommitOnceInvocationTracker { _, _, _ ->
+                            CommitOnceInvocationTracker { _, _, _, _ ->
                                 expenseCalls++
                                 error("must not commit")
                             },
@@ -217,13 +219,13 @@ class ResolveManualIncomeCommitStatusTest {
                         ),
                     ),
                 tracker =
-                    CommitOnceInvocationTracker { _, _, _ ->
+                    CommitOnceInvocationTracker { _, _, _, _ ->
                         expenseCalls++
                         error("must not commit")
                     },
                 resolver = ResolveManualExpenseCommitStatus(port(null)),
             )
-        val incomeTracker = CommitOnceInvocationTrackerIncome { _, _, _ -> error("must not commit") }
+        val incomeTracker = CommitOnceInvocationTrackerIncome { _, _, _, _ -> error("must not commit") }
         val entry =
             ExecuteManualEntrySubmission(
                 expense = expense,
@@ -246,6 +248,7 @@ class ResolveManualIncomeCommitStatusTest {
                         receivingAccountId = AccountId("asset-payment-local"),
                         occurredAt = occurredAt,
                         note = tooLong,
+                        createdAt = occurredAt,
                         confirmation = ExplicitManualSave,
                     ),
                 ),

@@ -55,10 +55,11 @@ class CommitOnceInvocationTracker(
     override fun commitOnce(
         identity: ManualExpenseRequestIdentity,
         requestSnapshot: ManualExpenseRequestSnapshot,
+        createdAt: kotlin.time.Instant,
         createFormalTransaction: () -> DomainResult<ConfirmedManualExpenseCommit>,
     ): ConfirmedManualExpenseResult {
         commitOnceInvoked = true
-        return delegate.commitOnce(identity, requestSnapshot, createFormalTransaction)
+        return delegate.commitOnce(identity, requestSnapshot, createdAt, createFormalTransaction)
     }
 }
 
@@ -112,6 +113,8 @@ class ExecuteManualExpenseSubmission(
             paymentAccountId = paymentAccountId,
             occurredAt = input.occurredAt,
             note = input.note,
+            tagIds = input.tagIds,
+            merchantId = input.merchantId,
         )
     }
 }

@@ -106,7 +106,7 @@ class DesktopRestoreWiringTest {
             // (D-187): {1, 31, 32, 33}. v1/v31 remain and v32/v33 — the immediately preceding
             // versions — are now migratable, not rejected (v33 is conditionally admitted until its
             // A04 round-trip-equivalence leg is proven, exactly like v1/v32).
-            assertEquals(setOf(1L, 31L, 32L, 33L), wiring.supportedSourceVersions)
+            assertEquals(setOf(1L, 31L, 32L, 33L, 34L), wiring.supportedSourceVersions)
             assertTrue(33L in wiring.supportedSourceVersions, "v33 must stay restorable after the v34 bump")
             assertTrue(32L in wiring.supportedSourceVersions, "v32 must stay restorable after the v34 bump")
             assertTrue(31L in wiring.supportedSourceVersions, "v31 remains an admitted old version")

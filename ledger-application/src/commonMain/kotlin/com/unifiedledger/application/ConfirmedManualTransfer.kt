@@ -8,7 +8,9 @@ import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.DomainViolation
 import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.TagId
 import com.unifiedledger.domain.TransactionId
 import kotlin.time.Instant
 
@@ -35,6 +37,8 @@ data class ManualTransferRequestSnapshot(
     val feeCategoryId: CategoryId?,
     val occurredAt: Instant,
     val note: String,
+    val tagIds: Set<TagId> = emptySet(),
+    val merchantId: MerchantId? = null,
 )
 
 data class ConfirmedTransferReceipt(
@@ -99,6 +103,7 @@ fun interface ConfirmedManualTransferCommitPort {
     fun commitOnce(
         identity: ManualTransferRequestIdentity,
         requestSnapshot: ManualTransferRequestSnapshot,
+        createdAt: Instant,
         createFormalTransaction: () -> DomainResult<ConfirmedManualTransferCommit>,
     ): ConfirmedManualTransferResult
 }
@@ -120,8 +125,10 @@ class ExecuteConfirmedManualTransfer(
                 feeCategoryId = request.feeCategoryId,
                 occurredAt = request.occurredAt,
                 note = request.note,
+                tagIds = request.tagIds,
+                merchantId = request.merchantId,
             )
-        return commitPort.commitOnce(identity, snapshot) {
+        return commitPort.commitOnce(identity, snapshot, request.createdAt) {
             createFormalTransaction.create(snapshot, idSource.next())
         }
     }
@@ -137,6 +144,10 @@ data class ExplicitlyConfirmedManualTransfer(
     val feeCategoryId: CategoryId?,
     val occurredAt: Instant,
     val note: String,
+    val tagIds: Set<TagId>,
+    val merchantId: MerchantId?,
+    /** P7-08 08.B-1 (D-221; ruling R3): write-path-only annotation audit time (no default). */
+    val createdAt: Instant,
     val confirmation: ExplicitManualSave,
 )
 
@@ -169,6 +180,10 @@ data class ManualTransferSaveInput(
     val feeCategoryId: CategoryId?,
     val occurredAt: Instant,
     val note: String,
+    /** P7-08 08.B-1 (D-221; ruling R3): sampled once from `LedgerClock` by the confirming action. */
+    val createdAt: Instant,
+    val tagIds: Set<TagId> = emptySet(),
+    val merchantId: MerchantId? = null,
     val confirmation: ExplicitManualSave,
 )
 
@@ -203,6 +218,9 @@ class ExecuteManualTransferSave(
                     feeCategoryId = input.feeCategoryId,
                     occurredAt = input.occurredAt,
                     note = input.note,
+                    tagIds = input.tagIds,
+                    merchantId = input.merchantId,
+                    createdAt = input.createdAt,
                     confirmation = input.confirmation,
                 ),
             ),

@@ -39,12 +39,12 @@ class SqlDelightConfirmedManualIncomeCommitPortTest {
 
             val fixture = IncomePortFixture()
 
-            assertIs<ConfirmedManualIncomeResult.Created>(harness.port.commitOnce(fixture.identity, fixture.snapshot) { DomainResult.Success(fixture.commit()) })
+            assertIs<ConfirmedManualIncomeResult.Created>(harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) { DomainResult.Success(fixture.commit()) })
 
             var callbackCalls = 0
 
             assertIs<ConfirmedManualIncomeResult.NoChange>(
-                harness.port.commitOnce(fixture.identity, fixture.snapshot) {
+                harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) {
                     callbackCalls++
 
                     error("must not create")
@@ -52,7 +52,7 @@ class SqlDelightConfirmedManualIncomeCommitPortTest {
             )
 
             assertIs<ConfirmedManualIncomeResult.RequestIdentityConflict>(
-                harness.port.commitOnce(fixture.identity, fixture.snapshot.copy(note = "different")) {
+                harness.port.commitOnce(fixture.identity, fixture.snapshot.copy(note = "different"), fixture.annotationCreatedAt) {
                     callbackCalls++
 
                     error("must not create")
@@ -71,15 +71,15 @@ class SqlDelightConfirmedManualIncomeCommitPortTest {
 
             val fixture = IncomePortFixture()
 
-            assertFailsWith<IllegalStateException> { harness.port.commitOnce(fixture.identity, fixture.snapshot) { error("callback failure") } }
+            assertFailsWith<IllegalStateException> { harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) { error("callback failure") } }
 
             assertEquals(listOf(0L, 0L, 0L, 0L, 0L), harness.counts())
 
-            assertIs<ConfirmedManualIncomeResult.Created>(harness.port.commitOnce(fixture.identity, fixture.snapshot) { DomainResult.Success(fixture.commit()) })
+            assertIs<ConfirmedManualIncomeResult.Created>(harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) { DomainResult.Success(fixture.commit()) })
 
             val colliding = IncomePortFixture(request = "request-b", suffix = "b", postingSuffix = "a")
 
-            assertFailsWith<SQLException> { harness.port.commitOnce(colliding.identity, colliding.snapshot) { DomainResult.Success(colliding.commit()) } }
+            assertFailsWith<SQLException> { harness.port.commitOnce(colliding.identity, colliding.snapshot, colliding.annotationCreatedAt) { DomainResult.Success(colliding.commit()) } }
 
             assertEquals(listOf(1L, 1L, 1L, 1L, 2L), harness.counts())
         }
@@ -91,9 +91,9 @@ class SqlDelightConfirmedManualIncomeCommitPortTest {
 
             val fixture = IncomePortFixture()
 
-            assertFailsWith<IllegalArgumentException> { harness.port.commitOnce(fixture.identity.copy(ledgerId = LedgerId("other")), fixture.snapshot) { DomainResult.Success(fixture.commit()) } }
+            assertFailsWith<IllegalArgumentException> { harness.port.commitOnce(fixture.identity.copy(ledgerId = LedgerId("other")), fixture.snapshot, fixture.annotationCreatedAt) { DomainResult.Success(fixture.commit()) } }
 
-            assertFailsWith<IllegalArgumentException> { harness.port.commitOnce(fixture.identity, fixture.snapshot) { DomainResult.Success(fixture.commit(LedgerId("other"))) } }
+            assertFailsWith<IllegalArgumentException> { harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) { DomainResult.Success(fixture.commit(LedgerId("other"))) } }
 
             assertEquals(listOf(0L, 0L, 0L, 0L, 0L), harness.counts())
         }
@@ -130,6 +130,9 @@ private class IncomePortFixture(
     private val ledger = LedgerId("ledger-a")
 
     private val currency = CurrencyUnit("CNY", 2)
+
+    /** P7-08 08.B-1 (D-221; R3): deterministic write-path annotation audit instant. */
+    val annotationCreatedAt = Instant.parse("2026-01-01T00:05:00Z")
 
     val identity = ManualIncomeRequestIdentity(ledger, RequestId(request))
 

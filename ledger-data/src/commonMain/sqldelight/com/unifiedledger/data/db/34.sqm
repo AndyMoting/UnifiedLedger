@@ -1,0 +1,30 @@
+-- P7-08 08.B-1 (D-221; spec docs/specs/2026-09-30-p7-08-tag-merchant-design.md sections 4.2/4.3)
+-- finalizes the manual-create annotation claim columns: v34 -> v35. Purely additive, zero backfill:
+-- each of the four claim-first manual request tables gains two NULLABLE annotation columns
+-- (annotation_tag_ids, annotation_merchant_id) at the table tail. The canonical encoding (ruling
+-- R-5) is NULL annotation_tag_ids == the empty tag set; a non-empty set is the deduplicated,
+-- stable-id-sorted join; NULL annotation_merchant_id == no merchant. Legacy rows are NULL and the
+-- structured replay matcher reads them as "no annotation", so a pre-v35 request replays
+-- equivalently with zero writes (ruling R2 / spec section 4.3).
+-- The caller wraps Schema.migrate in one outer transaction (26.sqm discipline), so any failure
+-- below rolls the whole migration back and the v34 file is left untouched.
+-- ALTER TABLE ADD COLUMN appends the new column definition onto the existing physical row, so the
+-- fresh-vs-migrated contract is columnInfo (name|type|notnull|pk in declaration order; the new
+-- columns at the tail), never a byte-for-byte sqlite_master text compare (31.sqm precedent).
+PRAGMA defer_foreign_keys = 1;
+
+ALTER TABLE manual_expense_request ADD COLUMN annotation_tag_ids TEXT;
+ALTER TABLE manual_expense_request ADD COLUMN annotation_merchant_id TEXT;
+ALTER TABLE manual_income_request ADD COLUMN annotation_tag_ids TEXT;
+ALTER TABLE manual_income_request ADD COLUMN annotation_merchant_id TEXT;
+ALTER TABLE manual_transfer_request ADD COLUMN annotation_tag_ids TEXT;
+ALTER TABLE manual_transfer_request ADD COLUMN annotation_merchant_id TEXT;
+ALTER TABLE manual_lending_request ADD COLUMN annotation_tag_ids TEXT;
+ALTER TABLE manual_lending_request ADD COLUMN annotation_merchant_id TEXT;
+
+-- Late-stage failure hook (26.sqm sentinel discipline): created after the column set, so a
+-- test-occupied manual_annotation_v35_late_sentinel name aborts the migration post-build and
+-- proves the whole transaction rolls back together. Dropped again before the version advances
+-- to 35.
+CREATE TABLE manual_annotation_v35_late_sentinel (ok INTEGER NOT NULL CHECK (ok = 1));
+DROP TABLE manual_annotation_v35_late_sentinel;

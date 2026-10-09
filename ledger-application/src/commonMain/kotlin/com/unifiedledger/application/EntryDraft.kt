@@ -4,6 +4,8 @@ import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CounterpartyId
 import com.unifiedledger.domain.DomainViolation
+import com.unifiedledger.domain.MerchantId
+import com.unifiedledger.domain.TagId
 import kotlin.time.Instant
 
 /**
@@ -43,6 +45,15 @@ sealed interface TypedEntryDraft {
      */
     val primaryAccountId: AccountId?
 
+    /**
+     * P7-08 08.B-1 (D-221; spec section 4.1): optional tag/merchant associations carried by every
+     * draft. They are kind-independent (stored on the transaction root) and never mandatory, so
+     * they add no required field to normal entry. Both default to "no association".
+     */
+    val tagIds: Set<TagId>
+
+    val merchantId: MerchantId?
+
     fun withAmountText(text: String): TypedEntryDraft
 
     fun withOccurredAt(instant: Instant): TypedEntryDraft
@@ -56,6 +67,8 @@ data class ExpenseDraft(
     override val amountText: String,
     override val occurredAt: Instant?,
     override val note: String = "",
+    override val tagIds: Set<TagId> = emptySet(),
+    override val merchantId: MerchantId? = null,
 ) : TypedEntryDraft {
     override val entryType: EntryType get() = EntryType.EXPENSE
 
@@ -74,6 +87,8 @@ data class IncomeDraft(
     override val amountText: String,
     override val occurredAt: Instant?,
     override val note: String = "",
+    override val tagIds: Set<TagId> = emptySet(),
+    override val merchantId: MerchantId? = null,
 ) : TypedEntryDraft {
     override val entryType: EntryType get() = EntryType.INCOME
 
@@ -99,6 +114,8 @@ data class TransferDraft(
     val feeCategoryId: CategoryId? = null,
     override val occurredAt: Instant?,
     override val note: String = "",
+    override val tagIds: Set<TagId> = emptySet(),
+    override val merchantId: MerchantId? = null,
 ) : TypedEntryDraft {
     override val entryType: EntryType get() = EntryType.TRANSFER
 
@@ -126,6 +143,8 @@ data class LendDraft(
     val fundingAccountId: AccountId?,
     override val occurredAt: Instant?,
     override val note: String = "",
+    override val tagIds: Set<TagId> = emptySet(),
+    override val merchantId: MerchantId? = null,
 ) : TypedEntryDraft {
     override val entryType: EntryType get() = EntryType.LEND
 
@@ -157,6 +176,8 @@ data class CollectDraft(
     val destinationAccountId: AccountId?,
     override val occurredAt: Instant?,
     override val note: String = "",
+    override val tagIds: Set<TagId> = emptySet(),
+    override val merchantId: MerchantId? = null,
 ) : TypedEntryDraft {
     override val entryType: EntryType get() = EntryType.COLLECT
 
@@ -174,45 +195,49 @@ data class CollectDraft(
 }
 
 /**
- * P7-02 E-1 single implementation of the frozen type-switch retention matrix. The UI must not
- * re-derive it (E-5).
+ * P7-02 E-1 single implementation of the frozen type-switch retention matrix, extended by P7-08
+ * 08.B-1 (D-221; spec section 4.2) with the kind-independent optional associations. The UI must
+ * not re-derive it (E-5).
  *
- * Cross-type retained: amount raw text (migrated to each target's main amount field), `occurredAt`
- * and `note`. The asset-account class (expense payment / transfer source / lend funding account)
- * is mutually retained. Type-specific fields are cleared on a switch away and never restored: the
- * transfer destination, the income receiving account, the collect destination, the lending
- * counterparty and every category.
+ * Cross-type retained: amount raw text (migrated to each target's main amount field), `occurredAt`,
+ * `note` and — because the annotation lives on the transaction root and is kind-independent — the
+ * optional `tagIds`/`merchantId`. The asset-account class (expense payment / transfer source / lend
+ * funding account) is mutually retained. Type-specific fields are cleared on a switch away and
+ * never restored: the transfer destination, the income receiving account, the collect destination,
+ * the lending counterparty and every category.
  */
 object EntryFieldRetention {
     fun switchType(
         current: TypedEntryDraft,
         target: EntryType,
-    ): TypedEntryDraft? =
-        when (target) {
+    ): TypedEntryDraft? {
+        val tags = current.tagIds
+        val merchant = current.merchantId
+        return when (target) {
             EntryType.EXPENSE ->
                 when (current) {
                     is ExpenseDraft -> current
                     is IncomeDraft ->
-                        ExpenseDraft(null, null, current.amountText, current.occurredAt, current.note)
+                        ExpenseDraft(null, null, current.amountText, current.occurredAt, current.note, tags, merchant)
                     is TransferDraft ->
-                        ExpenseDraft(current.sourceAccountId, null, current.destinationCredit, current.occurredAt, current.note)
+                        ExpenseDraft(current.sourceAccountId, null, current.destinationCredit, current.occurredAt, current.note, tags, merchant)
                     is LendDraft ->
-                        ExpenseDraft(current.fundingAccountId, null, current.amount, current.occurredAt, current.note)
+                        ExpenseDraft(current.fundingAccountId, null, current.amount, current.occurredAt, current.note, tags, merchant)
                     is CollectDraft ->
-                        ExpenseDraft(current.destinationAccountId, null, current.totalReceived, current.occurredAt, current.note)
+                        ExpenseDraft(current.destinationAccountId, null, current.totalReceived, current.occurredAt, current.note, tags, merchant)
                 }
 
             EntryType.INCOME ->
                 when (current) {
                     is IncomeDraft -> current
                     is ExpenseDraft ->
-                        IncomeDraft(null, null, current.amountText, current.occurredAt, current.note)
+                        IncomeDraft(null, null, current.amountText, current.occurredAt, current.note, tags, merchant)
                     is TransferDraft ->
-                        IncomeDraft(null, null, current.destinationCredit, current.occurredAt, current.note)
+                        IncomeDraft(null, null, current.destinationCredit, current.occurredAt, current.note, tags, merchant)
                     is LendDraft ->
-                        IncomeDraft(null, null, current.amount, current.occurredAt, current.note)
+                        IncomeDraft(null, null, current.amount, current.occurredAt, current.note, tags, merchant)
                     is CollectDraft ->
-                        IncomeDraft(null, null, current.totalReceived, current.occurredAt, current.note)
+                        IncomeDraft(null, null, current.totalReceived, current.occurredAt, current.note, tags, merchant)
                 }
 
             EntryType.TRANSFER ->
@@ -227,6 +252,8 @@ object EntryFieldRetention {
                             feeCategoryId = null,
                             occurredAt = current.occurredAt,
                             note = current.note,
+                            tagIds = tags,
+                            merchantId = merchant,
                         )
                     is IncomeDraft ->
                         TransferDraft(
@@ -237,6 +264,8 @@ object EntryFieldRetention {
                             feeCategoryId = null,
                             occurredAt = current.occurredAt,
                             note = current.note,
+                            tagIds = tags,
+                            merchantId = merchant,
                         )
                     is LendDraft ->
                         TransferDraft(
@@ -247,6 +276,8 @@ object EntryFieldRetention {
                             feeCategoryId = null,
                             occurredAt = current.occurredAt,
                             note = current.note,
+                            tagIds = tags,
+                            merchantId = merchant,
                         )
                     is CollectDraft ->
                         TransferDraft(
@@ -257,6 +288,8 @@ object EntryFieldRetention {
                             feeCategoryId = null,
                             occurredAt = current.occurredAt,
                             note = current.note,
+                            tagIds = tags,
+                            merchantId = merchant,
                         )
                 }
 
@@ -264,28 +297,29 @@ object EntryFieldRetention {
                 when (current) {
                     is LendDraft -> current
                     is ExpenseDraft ->
-                        LendDraft(counterpartyId = null, amount = current.amountText, fundingAccountId = current.paymentAccountId, occurredAt = current.occurredAt, note = current.note)
+                        LendDraft(counterpartyId = null, amount = current.amountText, fundingAccountId = current.paymentAccountId, occurredAt = current.occurredAt, note = current.note, tagIds = tags, merchantId = merchant)
                     is IncomeDraft ->
-                        LendDraft(counterpartyId = null, amount = current.amountText, fundingAccountId = null, occurredAt = current.occurredAt, note = current.note)
+                        LendDraft(counterpartyId = null, amount = current.amountText, fundingAccountId = null, occurredAt = current.occurredAt, note = current.note, tagIds = tags, merchantId = merchant)
                     is TransferDraft ->
-                        LendDraft(counterpartyId = null, amount = current.destinationCredit, fundingAccountId = current.sourceAccountId, occurredAt = current.occurredAt, note = current.note)
+                        LendDraft(counterpartyId = null, amount = current.destinationCredit, fundingAccountId = current.sourceAccountId, occurredAt = current.occurredAt, note = current.note, tagIds = tags, merchantId = merchant)
                     is CollectDraft ->
-                        LendDraft(counterpartyId = null, amount = current.totalReceived, fundingAccountId = current.destinationAccountId, occurredAt = current.occurredAt, note = current.note)
+                        LendDraft(counterpartyId = null, amount = current.totalReceived, fundingAccountId = current.destinationAccountId, occurredAt = current.occurredAt, note = current.note, tagIds = tags, merchantId = merchant)
                 }
 
             EntryType.COLLECT ->
                 when (current) {
                     is CollectDraft -> current
                     is ExpenseDraft ->
-                        CollectDraft(counterpartyId = null, totalReceived = current.amountText, principal = "", interest = "", destinationAccountId = null, occurredAt = current.occurredAt, note = current.note)
+                        CollectDraft(counterpartyId = null, totalReceived = current.amountText, principal = "", interest = "", destinationAccountId = null, occurredAt = current.occurredAt, note = current.note, tagIds = tags, merchantId = merchant)
                     is IncomeDraft ->
-                        CollectDraft(counterpartyId = null, totalReceived = current.amountText, principal = "", interest = "", destinationAccountId = null, occurredAt = current.occurredAt, note = current.note)
+                        CollectDraft(counterpartyId = null, totalReceived = current.amountText, principal = "", interest = "", destinationAccountId = null, occurredAt = current.occurredAt, note = current.note, tagIds = tags, merchantId = merchant)
                     is TransferDraft ->
-                        CollectDraft(counterpartyId = null, totalReceived = current.destinationCredit, principal = "", interest = "", destinationAccountId = null, occurredAt = current.occurredAt, note = current.note)
+                        CollectDraft(counterpartyId = null, totalReceived = current.destinationCredit, principal = "", interest = "", destinationAccountId = null, occurredAt = current.occurredAt, note = current.note, tagIds = tags, merchantId = merchant)
                     is LendDraft ->
-                        CollectDraft(counterpartyId = null, totalReceived = current.amount, principal = "", interest = "", destinationAccountId = null, occurredAt = current.occurredAt, note = current.note)
+                        CollectDraft(counterpartyId = null, totalReceived = current.amount, principal = "", interest = "", destinationAccountId = null, occurredAt = current.occurredAt, note = current.note, tagIds = tags, merchantId = merchant)
                 }
         }
+    }
 }
 
 const val DEFAULT_TRANSFER_FEE_TEXT: String = "0.00"

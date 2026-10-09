@@ -8,16 +8,23 @@ import com.unifiedledger.application.ConfirmedManualIncomeCommitPort
 import com.unifiedledger.application.ConfirmedManualIncomeResult
 import com.unifiedledger.application.ManualIncomeRequestIdentity
 import com.unifiedledger.application.ManualIncomeRequestSnapshot
+import com.unifiedledger.application.TagMerchantAuthority
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.FormalTransaction
+import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.MerchantId
+import com.unifiedledger.domain.TagId
 import com.unifiedledger.domain.TransactionId
+import com.unifiedledger.domain.encodeAnnotationMerchantId
+import com.unifiedledger.domain.encodeAnnotationTagIds
+import kotlin.time.Instant
 
 /**
  * P7-02.A S-1: income claim-first commit boundary, aligned with
  * [SqlDelightConfirmedManualExpenseCommitPort] (same atomic claim/work/receipt discipline,
- * same SQL semantics; this batch only adds the companion entry point, the marker constant and
- * the documentation).
+ * same SQL semantics; this commit additionally writes the initial annotation aggregate in the same
+ * transaction, P7-08 08.B-1 / D-221).
  */
 class SqlDelightConfirmedManualIncomeCommitPort private constructor(
     private val database: LedgerDatabase,
@@ -26,9 +33,13 @@ class SqlDelightConfirmedManualIncomeCommitPort private constructor(
         configureSqliteConnection(driver)
     }
 
+    private val catalogReader: SqlDelightTagMerchantCatalogStore =
+        SqlDelightTagMerchantCatalogStore.forPlatformConfiguredDatabase(database)
+
     override fun commitOnce(
         identity: ManualIncomeRequestIdentity,
         requestSnapshot: ManualIncomeRequestSnapshot,
+        createdAt: Instant,
         createFormalTransaction: () -> DomainResult<ConfirmedManualIncomeCommit>,
     ): ConfirmedManualIncomeResult {
         require(identity.ledgerId == requestSnapshot.ledgerId) {
@@ -66,9 +77,59 @@ class SqlDelightConfirmedManualIncomeCommitPort private constructor(
                         "Committed transaction must belong to the request ledger"
                     }
                     persistFormalTransaction(created.value.transaction)
+                    appendAnnotation(identity, requestSnapshot, created.value, createdAt)
                     database.ledgerQueries.insertConfirmedIncomeReceipt(identity.ledgerId.value, identity.requestId.value, created.value.confirmationId.value, created.value.transaction.transaction.id.value)
                     ConfirmedManualIncomeResult.Created(ConfirmedIncomeReceipt(created.value.confirmationId, created.value.transaction.transaction.id))
                 }
+            }
+        }
+    }
+
+    private fun appendAnnotation(
+        identity: ManualIncomeRequestIdentity,
+        requestSnapshot: ManualIncomeRequestSnapshot,
+        commit: ConfirmedManualIncomeCommit,
+        createdAt: Instant,
+    ) {
+        requireActiveCatalogItems(identity.ledgerId, requestSnapshot.tagIds, requestSnapshot.merchantId)
+        database.ledgerQueries.updateManualIncomeRequestAnnotation(
+            annotation_tag_ids = encodeAnnotationTagIds(requestSnapshot.tagIds),
+            annotation_merchant_id = encodeAnnotationMerchantId(requestSnapshot.merchantId),
+            ledger_id = identity.ledgerId.value,
+            request_id = identity.requestId.value,
+        )
+        database.requireOneAnnotationRowChanged()
+        database.appendManualCreateAnnotation(
+            ledgerId = identity.ledgerId.value,
+            transactionId = commit.transaction.transaction.id.value,
+            requestId = identity.requestId.value,
+            currentVersionId = commit.transaction.transaction.currentVersionId.value,
+            tagIds = requestSnapshot.tagIds,
+            merchantId = requestSnapshot.merchantId,
+            createdAt = createdAt,
+        )
+    }
+
+    private fun requireActiveCatalogItems(
+        ledgerId: LedgerId,
+        tagIds: Set<TagId>,
+        merchantId: MerchantId?,
+    ) {
+        if (tagIds.isEmpty() && merchantId == null) return
+        val authority: TagMerchantAuthority =
+            requireNotNull(catalogReader.load(ledgerId)) {
+                "Manual create with an association requires an existing tag/merchant catalog"
+            }
+        tagIds.forEach { tagId ->
+            val tag = authority.tags.firstOrNull { it.id == tagId.value }
+            require(tag != null && tag.active && !tag.tombstoned) {
+                "Manual create references an unknown, inactive or tombstoned tag"
+            }
+        }
+        if (merchantId != null) {
+            val merchant = authority.merchants.firstOrNull { it.id == merchantId.value }
+            require(merchant != null && merchant.active && !merchant.tombstoned) {
+                "Manual create references an unknown, inactive or tombstoned merchant"
             }
         }
     }
@@ -77,7 +138,7 @@ class SqlDelightConfirmedManualIncomeCommitPort private constructor(
         identity: ManualIncomeRequestIdentity,
         snapshot: ManualIncomeRequestSnapshot,
     ): ConfirmedManualIncomeResult {
-        val stored = checkNotNull(database.ledgerQueries.selectCommittedManualIncomeRequest(identity.ledgerId.value, identity.requestId.value) { amount, code, precision, category, account, occurred, note, marker, confirmation, transaction -> StoredIncomeCommit(amount, code, precision, category, account, occurred, note, marker, ConfirmedIncomeReceipt(ConfirmationId(confirmation), TransactionId(transaction))) }.executeAsOneOrNull())
+        val stored = checkNotNull(database.ledgerQueries.selectCommittedManualIncomeRequest(identity.ledgerId.value, identity.requestId.value) { amount, code, precision, category, account, occurred, note, marker, tagIds, merchantId, confirmation, transaction -> StoredIncomeCommit(amount, code, precision, category, account, occurred, note, marker, tagIds, merchantId, ConfirmedIncomeReceipt(ConfirmationId(confirmation), TransactionId(transaction))) }.executeAsOneOrNull())
 
         return if (stored.matches(snapshot)) ConfirmedManualIncomeResult.NoChange(stored.receipt) else ConfirmedManualIncomeResult.RequestIdentityConflict(identity)
     }
@@ -128,6 +189,8 @@ private data class StoredIncomeCommit(
     val occurred: String,
     val note: String,
     val marker: String,
+    val annotationTagIds: String?,
+    val annotationMerchantId: String?,
     val receipt: ConfirmedIncomeReceipt,
 ) {
     fun matches(value: ManualIncomeRequestSnapshot) =
@@ -140,5 +203,7 @@ private data class StoredIncomeCommit(
             account == value.receivingAccountId.value &&
             occurred == value.occurredAt.toString() &&
             note == value.note &&
-            marker == EXPLICIT_MANUAL_SAVE_MARKER
+            marker == EXPLICIT_MANUAL_SAVE_MARKER &&
+            annotationTagIds == encodeAnnotationTagIds(value.tagIds) &&
+            annotationMerchantId == encodeAnnotationMerchantId(value.merchantId)
 }

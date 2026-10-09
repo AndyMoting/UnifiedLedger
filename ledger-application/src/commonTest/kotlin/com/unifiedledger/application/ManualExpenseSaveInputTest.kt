@@ -165,6 +165,7 @@ private class ManualExpenseSaveFixture {
             paymentAccountId = paymentAccountId,
             occurredAt = Instant.parse("2026-01-15T00:30:00Z"),
             note = "",
+            createdAt = Instant.parse("2026-01-15T00:30:00Z"),
             confirmation = ExplicitManualSave,
         )
 
@@ -217,6 +218,7 @@ private class RecordingConfirmedManualExpenseCommitPort(
     override fun commitOnce(
         identity: ManualExpenseRequestIdentity,
         requestSnapshot: ManualExpenseRequestSnapshot,
+        createdAt: kotlin.time.Instant,
         createFormalTransaction: () -> DomainResult<ConfirmedManualExpenseCommit>,
     ): ConfirmedManualExpenseResult {
         invocationCount += 1

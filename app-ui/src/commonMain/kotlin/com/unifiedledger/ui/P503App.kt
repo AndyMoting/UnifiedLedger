@@ -763,6 +763,10 @@ fun P503App(
             paymentAccountId = paymentAccountId,
             occurredAt = occurredAt,
             note = draft.note,
+            // P7-08 08.B-1 (D-221; R3): the confirming action samples the ledger clock ONCE.
+            createdAt = ledger.ledgerClock.now(),
+            tagIds = draft.tagIds,
+            merchantId = draft.merchantId,
             confirmation = ExplicitManualSave,
         )
     }
@@ -788,6 +792,9 @@ fun P503App(
             receivingAccountId = receivingAccountId,
             occurredAt = occurredAt,
             note = draft.note,
+            createdAt = ledger.ledgerClock.now(),
+            tagIds = draft.tagIds,
+            merchantId = draft.merchantId,
             confirmation = ExplicitManualSave,
         )
     }
@@ -820,6 +827,9 @@ fun P503App(
             feeCategoryId = draft.feeCategoryId,
             occurredAt = occurredAt,
             note = draft.note,
+            createdAt = ledger.ledgerClock.now(),
+            tagIds = draft.tagIds,
+            merchantId = draft.merchantId,
             confirmation = ExplicitManualSave,
         )
     }
@@ -842,6 +852,9 @@ fun P503App(
             amount = amount,
             occurredAt = occurredAt,
             note = draft.note,
+            createdAt = ledger.ledgerClock.now(),
+            tagIds = draft.tagIds,
+            merchantId = draft.merchantId,
             confirmation = ExplicitManualSave,
         )
     }
@@ -872,6 +885,9 @@ fun P503App(
             interestCategoryId = interestCategoryId,
             occurredAt = occurredAt,
             note = draft.note,
+            createdAt = ledger.ledgerClock.now(),
+            tagIds = draft.tagIds,
+            merchantId = draft.merchantId,
             confirmation = ExplicitManualSave,
         )
     }

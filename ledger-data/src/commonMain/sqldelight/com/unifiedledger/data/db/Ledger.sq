@@ -89,6 +89,13 @@ CREATE TABLE ledger_transaction_current_version (
     DEFERRABLE INITIALLY DEFERRED
 );
 
+-- P7-08 08.B-1 (D-221; spec section 4.3, rulings R2/R-5): optional annotation claim columns on
+-- the claim-first manual request tables. NULL annotation_tag_ids == the canonical empty set; a
+-- non-empty set is the deduplicated, stable-id-sorted join. NULL annotation_merchant_id == no
+-- merchant. Legacy rows (pre-v35) carry NULL and read as "no annotation" in the structured replay
+-- match. The comments live OUTSIDE the CREATE TABLE text so the fresh `sqlite_master.sql` stays
+-- free of inline comments and matches what `ALTER TABLE ADD COLUMN` can produce (the raw
+-- fresh-vs-migrated schema comparison in LedgerDatabaseMigrationTest).
 CREATE TABLE manual_expense_request (
   ledger_id TEXT NOT NULL,
   request_id TEXT NOT NULL,
@@ -100,6 +107,8 @@ CREATE TABLE manual_expense_request (
   occurred_at TEXT NOT NULL,
   note TEXT NOT NULL,
   confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  annotation_tag_ids TEXT,
+  annotation_merchant_id TEXT,
   PRIMARY KEY (ledger_id, request_id)
 );
 
@@ -155,6 +164,7 @@ CREATE TABLE manual_income_request (
   currency_code TEXT NOT NULL, currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
   category_id TEXT NOT NULL, receiving_account_id TEXT NOT NULL, occurred_at TEXT NOT NULL,
   note TEXT NOT NULL, confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  annotation_tag_ids TEXT, annotation_merchant_id TEXT,
   PRIMARY KEY (ledger_id, request_id)
 );
 CREATE TABLE confirmed_income_receipt (
@@ -179,6 +189,8 @@ CREATE TABLE manual_transfer_request (
   occurred_at TEXT NOT NULL,
   note TEXT NOT NULL,
   confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  annotation_tag_ids TEXT,
+  annotation_merchant_id TEXT,
   PRIMARY KEY (ledger_id, request_id)
 );
 CREATE TABLE confirmed_transfer_receipt (
@@ -271,6 +283,8 @@ CREATE TABLE manual_lending_request (
   occurred_at TEXT NOT NULL,
   note TEXT NOT NULL,
   confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  annotation_tag_ids TEXT,
+  annotation_merchant_id TEXT,
   PRIMARY KEY (ledger_id, request_id)
 );
 CREATE TABLE confirmed_lending_receipt (
@@ -1969,6 +1983,8 @@ SELECT
   request.occurred_at,
   request.note,
   request.confirmation_marker,
+  request.annotation_tag_ids,
+  request.annotation_merchant_id,
   receipt.confirmation_id,
   receipt.transaction_id
 FROM manual_expense_request AS request
@@ -1980,6 +1996,7 @@ WHERE request.ledger_id = :ledger_id AND request.request_id = :request_id;
 selectCommittedManualIncomeRequest:
 SELECT request.amount_minor, request.currency_code, request.currency_precision, request.category_id,
   request.receiving_account_id, request.occurred_at, request.note, request.confirmation_marker,
+  request.annotation_tag_ids, request.annotation_merchant_id,
   receipt.confirmation_id, receipt.transaction_id
 FROM manual_income_request AS request JOIN confirmed_income_receipt AS receipt
   ON receipt.ledger_id = request.ledger_id AND receipt.request_id = request.request_id
@@ -2413,6 +2430,25 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (ledger_id, request_id) DO NOT
 lastStatementChangedRowCount:
 SELECT changes();
 
+-- P7-08 08.B-1 (D-221; ruling R-7): the annotation claim columns are stamped onto the just-claimed
+-- request row inside the same transaction. The port asserts exactly one row changed, so a missing
+-- row throws and rolls the whole financial transaction back (no half-written aggregate).
+updateManualExpenseRequestAnnotation:
+UPDATE manual_expense_request SET annotation_tag_ids = ?, annotation_merchant_id = ?
+WHERE ledger_id = ? AND request_id = ?;
+
+updateManualIncomeRequestAnnotation:
+UPDATE manual_income_request SET annotation_tag_ids = ?, annotation_merchant_id = ?
+WHERE ledger_id = ? AND request_id = ?;
+
+updateManualTransferRequestAnnotation:
+UPDATE manual_transfer_request SET annotation_tag_ids = ?, annotation_merchant_id = ?
+WHERE ledger_id = ? AND request_id = ?;
+
+updateManualLendingRequestAnnotation:
+UPDATE manual_lending_request SET annotation_tag_ids = ?, annotation_merchant_id = ?
+WHERE ledger_id = ? AND request_id = ?;
+
 deleteManualExpenseRequest:
 DELETE FROM manual_expense_request
 WHERE ledger_id = :ledger_id AND request_id = :request_id;
@@ -2439,6 +2475,7 @@ selectCommittedManualTransferRequest:
 SELECT request.source_account_id, request.destination_account_id, request.destination_credit_minor,
   request.currency_code, request.currency_precision, request.fee_minor, request.fee_category_id,
   request.occurred_at, request.note, request.confirmation_marker,
+  request.annotation_tag_ids, request.annotation_merchant_id,
   receipt.confirmation_id, receipt.transaction_id
 FROM manual_transfer_request AS request
 JOIN confirmed_transfer_receipt AS receipt
@@ -9540,6 +9577,8 @@ SELECT
   request.payment_account_id,
   request.occurred_at,
   request.note,
+  request.annotation_tag_ids,
+  request.annotation_merchant_id,
   receipt.confirmation_id,
   receipt.transaction_id,
   current_version.current_version_id
@@ -9564,6 +9603,8 @@ SELECT
   request.payment_account_id,
   request.occurred_at,
   request.note,
+  request.annotation_tag_ids,
+  request.annotation_merchant_id,
   receipt.confirmation_id,
   receipt.transaction_id,
   current_version.current_version_id
@@ -9590,6 +9631,8 @@ SELECT
   request.receiving_account_id,
   request.occurred_at,
   request.note,
+  request.annotation_tag_ids,
+  request.annotation_merchant_id,
   receipt.confirmation_id,
   receipt.transaction_id,
   current_version.current_version_id
@@ -9614,6 +9657,8 @@ SELECT
   request.receiving_account_id,
   request.occurred_at,
   request.note,
+  request.annotation_tag_ids,
+  request.annotation_merchant_id,
   receipt.confirmation_id,
   receipt.transaction_id,
   current_version.current_version_id
@@ -9642,6 +9687,8 @@ SELECT
   request.fee_category_id,
   request.occurred_at,
   request.note,
+  request.annotation_tag_ids,
+  request.annotation_merchant_id,
   receipt.confirmation_id,
   receipt.transaction_id,
   current_version.current_version_id
@@ -9668,6 +9715,8 @@ SELECT
   request.fee_category_id,
   request.occurred_at,
   request.note,
+  request.annotation_tag_ids,
+  request.annotation_merchant_id,
   receipt.confirmation_id,
   receipt.transaction_id,
   current_version.current_version_id
@@ -9702,6 +9751,7 @@ SELECT request.behavior_code, request.counterparty_id, request.principal_account
   request.amount_minor, request.interest_minor, request.fee_minor, request.total_received_minor,
   request.interest_category_id, request.currency_code, request.currency_precision,
   request.occurred_at, request.note, request.confirmation_marker,
+  request.annotation_tag_ids, request.annotation_merchant_id,
   receipt.confirmation_id, receipt.transaction_id
 FROM manual_lending_request AS request
 JOIN confirmed_lending_receipt AS receipt
@@ -9731,6 +9781,8 @@ SELECT
   request.currency_precision,
   request.occurred_at,
   request.note,
+  request.annotation_tag_ids,
+  request.annotation_merchant_id,
   receipt.confirmation_id,
   receipt.transaction_id,
   current_version.current_version_id
@@ -9760,6 +9812,8 @@ SELECT
   request.currency_precision,
   request.occurred_at,
   request.note,
+  request.annotation_tag_ids,
+  request.annotation_merchant_id,
   receipt.confirmation_id,
   receipt.transaction_id,
   current_version.current_version_id

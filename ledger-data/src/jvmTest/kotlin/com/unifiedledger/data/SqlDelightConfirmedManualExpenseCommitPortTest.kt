@@ -50,7 +50,7 @@ class SqlDelightConfirmedManualExpenseCommitPortTest {
             var callbackCount = 0
 
             val result =
-                harness.port.commitOnce(fixture.identity, fixture.snapshot) {
+                harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) {
                     callbackCount += 1
                     DomainResult.Success(fixture.commit())
                 }
@@ -74,7 +74,7 @@ class SqlDelightConfirmedManualExpenseCommitPortTest {
             val fixture = ExpenseFixture()
             file.open(createSchema = true).use { first ->
                 assertIs<ConfirmedManualExpenseResult.Created>(
-                    first.port.commitOnce(fixture.identity, fixture.snapshot) {
+                    first.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) {
                         DomainResult.Success(fixture.commit())
                     },
                 )
@@ -84,7 +84,7 @@ class SqlDelightConfirmedManualExpenseCommitPortTest {
             var callbackCount = 0
             file.open().use { reopened ->
                 val result =
-                    reopened.port.commitOnce(fixture.identity, fixture.snapshot) {
+                    reopened.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) {
                         callbackCount += 1
                         DomainResult.Success(fixture.commit())
                     }
@@ -106,7 +106,7 @@ class SqlDelightConfirmedManualExpenseCommitPortTest {
         DatabaseHarness.fileBacked().use { file ->
             val fixture = ExpenseFixture()
             file.open(createSchema = true).use { first ->
-                first.port.commitOnce(fixture.identity, fixture.snapshot) {
+                first.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) {
                     DomainResult.Success(fixture.commit())
                 }
             }
@@ -128,7 +128,7 @@ class SqlDelightConfirmedManualExpenseCommitPortTest {
                 conflicts.forEach { conflict ->
                     assertEquals(
                         ConfirmedManualExpenseResult.RequestIdentityConflict(fixture.identity),
-                        reopened.port.commitOnce(fixture.identity, conflict) {
+                        reopened.port.commitOnce(fixture.identity, conflict, fixture.annotationCreatedAt) {
                             callbackCount += 1
                             DomainResult.Success(fixture.commit())
                         },
@@ -147,7 +147,7 @@ class SqlDelightConfirmedManualExpenseCommitPortTest {
             val fixture = ExpenseFixture()
 
             val rejected =
-                harness.port.commitOnce(fixture.identity, fixture.snapshot) {
+                harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) {
                     DomainResult.Failure(OrdinaryExpenseViolation.AmountMustBePositive)
                 }
 
@@ -160,7 +160,7 @@ class SqlDelightConfirmedManualExpenseCommitPortTest {
             assertEquals(StorageCounts.EMPTY, harness.counts())
 
             val created =
-                harness.port.commitOnce(fixture.identity, fixture.snapshot) {
+                harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) {
                     DomainResult.Success(fixture.commit())
                 }
             assertIs<ConfirmedManualExpenseResult.Created>(created)
@@ -180,12 +180,12 @@ class SqlDelightConfirmedManualExpenseCommitPortTest {
                 )
 
             assertIs<ConfirmedManualExpenseResult.Created>(
-                harness.port.commitOnce(first.identity, first.snapshot) {
+                harness.port.commitOnce(first.identity, first.snapshot, first.annotationCreatedAt) {
                     DomainResult.Success(first.commit())
                 },
             )
             assertIs<ConfirmedManualExpenseResult.Created>(
-                harness.port.commitOnce(second.identity, second.snapshot) {
+                harness.port.commitOnce(second.identity, second.snapshot, second.annotationCreatedAt) {
                     DomainResult.Success(second.commit())
                 },
             )
@@ -206,12 +206,12 @@ class SqlDelightConfirmedManualExpenseCommitPortTest {
                     confirmationId = "confirmation-b",
                     postingIdSuffix = "a",
                 )
-            harness.port.commitOnce(first.identity, first.snapshot) {
+            harness.port.commitOnce(first.identity, first.snapshot, first.annotationCreatedAt) {
                 DomainResult.Success(first.commit())
             }
 
             assertFailsWith<SQLException> {
-                harness.port.commitOnce(colliding.identity, colliding.snapshot) {
+                harness.port.commitOnce(colliding.identity, colliding.snapshot, colliding.annotationCreatedAt) {
                     DomainResult.Success(colliding.commit())
                 }
             }
@@ -229,6 +229,7 @@ class SqlDelightConfirmedManualExpenseCommitPortTest {
                 harness.port.commitOnce(
                     fixture.identity.copy(ledgerId = LedgerId("ledger-other")),
                     fixture.snapshot,
+                    fixture.annotationCreatedAt,
                 ) {
                     DomainResult.Success(fixture.commit())
                 }
@@ -256,7 +257,7 @@ class SqlDelightConfirmedManualExpenseCommitPortTest {
                             ready.countDown()
                             check(start.await(5, TimeUnit.SECONDS))
                             file.open().use { harness ->
-                                harness.port.commitOnce(fixture.identity, fixture.snapshot) {
+                                harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) {
                                     callbackCount.incrementAndGet()
                                     callbackEntered.countDown()
                                     check(releaseCallback.await(5, TimeUnit.SECONDS))
@@ -305,7 +306,7 @@ class SqlDelightConfirmedManualExpenseCommitPortTest {
                             ready.countDown()
                             check(start.await(5, TimeUnit.SECONDS))
                             file.open().use { harness ->
-                                harness.port.commitOnce(fixture.identity, snapshot) {
+                                harness.port.commitOnce(fixture.identity, snapshot, fixture.annotationCreatedAt) {
                                     callbackCount.incrementAndGet()
                                     callbackEntered.countDown()
                                     check(releaseCallback.await(5, TimeUnit.SECONDS))
@@ -336,7 +337,7 @@ class SqlDelightConfirmedManualExpenseCommitPortTest {
             val fixture = ExpenseFixture()
 
             assertFailsWith<IllegalStateException> {
-                harness.port.commitOnce(fixture.identity, fixture.snapshot) {
+                harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) {
                     error("synthetic callback failure")
                 }
             }
@@ -351,7 +352,7 @@ class SqlDelightConfirmedManualExpenseCommitPortTest {
             val fixture = ExpenseFixture()
 
             assertFailsWith<IllegalArgumentException> {
-                harness.port.commitOnce(fixture.identity, fixture.snapshot) {
+                harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) {
                     DomainResult.Success(fixture.commitForLedger(LedgerId("ledger-other")))
                 }
             }
@@ -378,7 +379,7 @@ class SqlDelightConfirmedManualExpenseCommitPortTest {
                 )
             }
 
-            harness.port.commitOnce(fixture.identity, fixture.snapshot) {
+            harness.port.commitOnce(fixture.identity, fixture.snapshot, fixture.annotationCreatedAt) {
                 DomainResult.Success(fixture.commit())
             }
             harness.driver.execute(
@@ -689,6 +690,9 @@ private class ExpenseFixture(
 ) {
     private val ledgerId = LedgerId("ledger-a")
     val occurredAt = Instant.parse("2026-01-15T00:30:00Z")
+
+    /** P7-08 08.B-1 (D-221; R3): deterministic write-path annotation audit instant. */
+    val annotationCreatedAt = Instant.parse("2026-01-15T00:35:00Z")
     val transactionId = TransactionId("tx-expense-$suffix")
     val postingSetId = PostingSetId("posting-set-expense-$suffix")
 

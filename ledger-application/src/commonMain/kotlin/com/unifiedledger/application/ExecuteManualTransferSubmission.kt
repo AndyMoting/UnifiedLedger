@@ -35,10 +35,11 @@ class CommitOnceInvocationTrackerTransfer(
     override fun commitOnce(
         identity: ManualTransferRequestIdentity,
         requestSnapshot: ManualTransferRequestSnapshot,
+        createdAt: kotlin.time.Instant,
         createFormalTransaction: () -> DomainResult<ConfirmedManualTransferCommit>,
     ): ConfirmedManualTransferResult {
         commitOnceInvoked = true
-        return delegate.commitOnce(identity, requestSnapshot, createFormalTransaction)
+        return delegate.commitOnce(identity, requestSnapshot, createdAt, createFormalTransaction)
     }
 }
 
@@ -97,6 +98,8 @@ class ExecuteManualTransferSubmission(
             feeCategoryId = input.feeCategoryId,
             occurredAt = input.occurredAt,
             note = input.note,
+            tagIds = input.tagIds,
+            merchantId = input.merchantId,
         )
     }
 }

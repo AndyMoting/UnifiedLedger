@@ -2,6 +2,8 @@ package com.unifiedledger.application
 
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.MerchantId
+import com.unifiedledger.domain.TagId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -135,5 +137,32 @@ class EntryDraftTest {
         assertNull(validateEntryTypeSupported(EntryType.TRANSFER))
         assertNull(validateEntryTypeSupported(EntryType.LEND))
         assertNull(validateEntryTypeSupported(EntryType.COLLECT))
+    }
+
+    @Test
+    fun `switch type carries the kind-independent tag and merchant association across every target`() {
+        // P7-08 08.B-1 (D-221; spec section 4.2): the annotation lives on the transaction root, so a
+        // type switch retains the optional tag/merchant association while clearing the type-specific
+        // fields. Every target must carry both fields through unchanged (the matrix is a single
+        // implementation, so this pins it against a per-branch drift).
+        val associated =
+            ExpenseDraft(
+                paymentAccountId = AccountId("asset"),
+                categoryId = CategoryId("expense-leaf"),
+                amountText = "35.80",
+                occurredAt = occurredAt,
+                note = "lunch",
+                tagIds = setOf(TagId("tag-1"), TagId("tag-2")),
+                merchantId = MerchantId("merchant-1"),
+            )
+        for (target in EntryType.entries) {
+            val switched = EntryFieldRetention.switchType(associated, target)!!
+            assertEquals(setOf(TagId("tag-1"), TagId("tag-2")), switched.tagIds, "tags must survive the switch to $target")
+            assertEquals(MerchantId("merchant-1"), switched.merchantId, "merchant must survive the switch to $target")
+        }
+        // An unassociated draft stays unassociated across a switch.
+        val switchedPlain = EntryFieldRetention.switchType(expense(), EntryType.INCOME)!!
+        assertEquals(emptySet(), switchedPlain.tagIds)
+        assertNull(switchedPlain.merchantId)
     }
 }

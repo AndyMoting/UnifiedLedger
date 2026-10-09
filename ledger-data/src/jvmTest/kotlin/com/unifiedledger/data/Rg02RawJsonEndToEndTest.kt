@@ -219,7 +219,7 @@ class Rg02RawJsonEndToEndTest {
             val execute =
                 ExecuteManualIncomeSave(
                     ExecuteConfirmedManualIncome(
-                        ConfirmedManualIncomeCommitPort { _, _, _ ->
+                        ConfirmedManualIncomeCommitPort { _, _, _, _ ->
                             commitCalls++
                             error("contract-invalid mutation must not commit")
                         },
@@ -389,9 +389,9 @@ class Rg02RawJsonEndToEndTest {
             val sqlPort = SqlDelightConfirmedManualIncomeCommitPort(database, driver)
             val executeConfirmed =
                 ExecuteConfirmedManualIncome(
-                    ConfirmedManualIncomeCommitPort { identity, snapshot, callback ->
+                    ConfirmedManualIncomeCommitPort { identity, snapshot, createdAt, callback ->
                         commitPortCalls++
-                        sqlPort.commitOnce(identity, snapshot, callback)
+                        sqlPort.commitOnce(identity, snapshot, createdAt, callback)
                     },
                     ConfirmedManualIncomeIdSource { invalidIds(operation.sourceId) },
                     ConfirmedIncomeTransactionFactory { snapshot, ids ->

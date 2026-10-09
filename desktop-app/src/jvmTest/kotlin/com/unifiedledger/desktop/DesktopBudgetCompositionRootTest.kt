@@ -46,6 +46,7 @@ class DesktopBudgetCompositionRootTest {
                     paymentAccountId = graph.paymentAccountId,
                     occurredAt = Instant.parse("2026-01-15T00:30:00Z"),
                     note = "",
+                    createdAt = Instant.parse("2026-01-15T00:35:00Z"),
                     confirmation = ExplicitManualSave,
                 ),
             )

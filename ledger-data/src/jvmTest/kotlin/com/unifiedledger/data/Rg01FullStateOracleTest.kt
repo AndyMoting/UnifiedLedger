@@ -223,8 +223,8 @@ private class Rg01OracleHarness(
                 .required() to requireNotNull(decoded.distinct.expected.transactionId),
         )
     private val expenseCommitPort =
-        ConfirmedManualExpenseCommitPort { identity, snapshot, callback ->
-            SqlDelightConfirmedManualExpenseCommitPort(database, driver).commitOnce(identity, snapshot, callback)
+        ConfirmedManualExpenseCommitPort { identity, snapshot, createdAt, callback ->
+            SqlDelightConfirmedManualExpenseCommitPort(database, driver).commitOnce(identity, snapshot, createdAt, callback)
         }
     private val noteCommitPort =
         ConfirmedTransactionNoteUpdateCommitPort { identity, snapshot, callback ->
