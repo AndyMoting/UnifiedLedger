@@ -4516,3 +4516,22 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 3. **理据**：迁移批次的失败面集中在跨文件字面量与构造点，盘点属实施批自身的写范围责任，不得外包给下游环节。
 
 **关联决定：** D-218（08.A 实施批登记——本条例的清单在本批与后续迁移批适用）、D-185（恢复白名单有条件准入先例）、D-160（正式状态文档独立同步批先例）、D-191 与 D-195（分片名单与覆盖守卫先例：测试类增删/改名必须重生成名单，D-195 另立按实测重排与完整类名计时先例）。
+## D-220 A-DOC 正式状态同步批登记（schema v34 与 P7-08 08.A 事实落地；闭合 R-218-2）
+
+**状态：** 已批准并交付（2026-10-09，A-DOC 正式状态同步批的登记）。本条为登记，把已经发生的同步补登，不引入新裁决，不改变产品行为、schema、迁移与依赖——本批为零 DDL 的文档批，schema 维持 v34。
+
+**决定：**
+
+1. **范围与交付**：本批同步 `README.md`、`docs/CURRENT_STATE.md`、`docs/ARCHITECTURE.md`、`docs/ROADMAP.md`、`docs/PROJECT_MAP.md` 五份 tracked 文档（+13/−13），及其头字符串同步至 v34 现实。同步的事实：schema **v33→v34**；迁移链 `1.sqm`~`33.sqm`（**33 个文件**，v1→v34）；新边 `33.sqm` 即 D-218（P7-08 08.A 标签/商家目录与交易注释聚合：11 张新表（非 `rgXX_` 产品表）、2 个新索引、18 个守卫触发器）；恢复白名单 `{1, 31, 32}→{1, 31, 32, 33}`；P7-08 08.A 已实施并合入（PR #72，merge `8b7c6ae`），08.B 未开始，P7-09 未启动；`origin/main` 由 `c8e5b1f` 推进至 `86506d0`；最高决定编号由 `D-188` 推进至 `D-219`。交付路径：PR #74，merge `7a2b370433f4cdfcc761075045a717c8ce63fda5`（短 `7a2b370`），已验证 PR tip `b437d363534a49a12d8b3daa2118e36f3f646305`（短 `b437d36`），base `86506d02129f65c862e78b8de6753bb9516de39f`（短 `86506d0`）；merge 树 `88d672fdb3f5a514cc64e0502dafa4ac8b58f144` == tip 树（merge-tree guard `37884161466` = 零动作）。PR CI run `37882971070` success，四个 required checks（`Kotlin tests`/`Android compile`/`Python tests`/`Trace scan`）全绿。
+
+2. **R-218-2 闭合**：D-218「残余」登记的 **R-218-2（正式状态文档仍写 schema v33）** 由本批**闭合（CLOSED）**。R-218-2 原文只点名 `docs/CURRENT_STATE.md`、`README.md`、`docs/ROADMAP.md`，但 A-DOC 的权威范围（`docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §2 A-DOC 行；D-219 第 2 条第 8 项）同时点名 `docs/ARCHITECTURE.md`——该文档同样陈旧，本批一并同步，故本条按权威范围扩正该残余的物件清单。同步按 D-160 先例只改「当前版本」声明：历史性陈述（逐版本条目与按批登记的 v33 陈述）一律保留原样，不回改、不重写。
+
+3. **本批未闭合、仍开放的事项（登记，不得视为已闭）**：D-218 第 8/9/10 条的**延期验收与证据登记**（08.A 的独立规格/质量评审、distinct verifier、设备取证、同提交 CI）仍待主代理后续登记，本批不代为声称；**R-218-1**（tombstone 名称复用，产品语义开放项）与 **R-218-3**（恢复白名单 v33 的 A04 往返等价腿）按 D-218 原登记**保持 OPEN**；**P708-A01..A09 无一记 PASS** 的状态不变。
+
+4. **批次治理与拓扑（如实披露）**：本批经 `recover` 快照 + `gate-opener`（零副作用）后手动派发，隔离 worktree `UL-a-doc-sync` 中单一写者；主代理关键差异检查（非写者自报）发现一处缺失编辑——`docs/CURRENT_STATE.md` 第 6 行缺 v34 逐版本条目且 v33 分句重复——并退回同一写者修复；独立评审员在修复环后判 **APPROVE**（其首判 APPROVE-WITH-FINDINGS 的 P2「文档夸大 08.A 的独立评审/验证」已在 `b437d36` 修复，P3/P4 经证据反驳，P2-1 作为残余接受）；distinct verifier 独立复跑全部声明（全部验证通过；其一行「refuted」为任务书预期错误而非产品缺陷）；`merge-evidence` 绿；merge-tree guard 零动作。
+
+5. **验证证据**：`project_docs`（exit 0）在冻结 tip 上通过；漂移自检零陈旧 token；评审员 APPROVE；verifier 全部验证通过；merge-evidence 绿；guard 零动作 run `37884161466`；PR CI run `37882971070`。
+
+**边界：** 入：本条登记与本批五份文档的最高-ID/head 同步。出：零产品代码、零测试、零 schema/迁移/依赖/Golden/fixture，零 `docs/DECISIONS.md` 既有条目改写（本条为追加），零 `docs/specs/**` 改动。
+
+**关联决定：** D-218（R-218-2 的来源，本条第 2 条闭合其残余）、D-219（第 2 条第 8 项的 A-DOC 独立同步批范围与第 2 条批次清单规则）、D-160（A-DOC 批登记的结构先例）。
