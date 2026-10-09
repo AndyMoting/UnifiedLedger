@@ -161,7 +161,7 @@ class P708TagMerchantV33ToV34MigrationTest {
                 connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
             }
             JdbcSqliteDriver(migratedUrl, migrationProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 1, 34)
+                LedgerDatabase.Schema.migrate(driver, 1, LedgerDatabase.Schema.version)
             }
             assertEquals(
                 schemaText(migratedUrl, "catalog\\_tag%"),

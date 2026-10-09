@@ -119,7 +119,7 @@ class P708ManualCreateAnnotationV34ToV35MigrationTest {
                 connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
             }
             JdbcSqliteDriver(migratedUrl, migrationProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 1, 35)
+                LedgerDatabase.Schema.migrate(driver, 1, LedgerDatabase.Schema.version)
             }
             JdbcSqliteDriver(freshUrl, migrationProperties()).use { fresh ->
                 JdbcSqliteDriver(migratedUrl, migrationProperties()).use { migrated ->
