@@ -57,8 +57,8 @@ import com.unifiedledger.domain.createLendingPosition
 import java.util.Properties
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertIs
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 

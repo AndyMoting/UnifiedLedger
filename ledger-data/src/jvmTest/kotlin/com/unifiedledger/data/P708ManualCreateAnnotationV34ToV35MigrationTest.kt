@@ -254,7 +254,7 @@ class P708ManualCreateAnnotationV34ToV35MigrationTest {
         }
     }
 
-    /**
+    /*
      * The five-version restore whitelist `{1,31,32,33,34}` is asserted at the composition-root level
      * by `AndroidRestoreWiringTest` / `DesktopRestoreWiringTest` (the real platform constants this
      * module cannot import); this class owns only the edge + fresh/migrated schema legs.
@@ -301,12 +301,14 @@ class P708ManualCreateAnnotationV34ToV35MigrationTest {
                 null,
                 "PRAGMA table_info($table)",
                 { cursor ->
-                    val rows = buildList {
-                        while (cursor.next().value) {
-                            add("${cursor.getString(1)}|${cursor.getString(2)}|${cursor.getLong(3)}|${cursor.getLong(5)}")
+                    val rows =
+                        buildList {
+                            while (cursor.next().value) {
+                                add("${cursor.getString(1)}|${cursor.getString(2)}|${cursor.getLong(3)}|${cursor.getLong(5)}")
+                            }
                         }
-                    }
-                    app.cash.sqldelight.db.QueryResult.Value(rows)
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(rows)
                 },
                 0,
             ).value

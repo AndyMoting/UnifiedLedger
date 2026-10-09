@@ -32,7 +32,12 @@ fun decodeAnnotationTagIds(encoded: String?): List<TagId> =
     if (encoded.isNullOrEmpty()) {
         emptyList()
     } else {
-        encoded.split(ANNOTATION_TAG_SEPARATOR).filter { it.isNotEmpty() }.distinct().sorted().map(::TagId)
+        encoded
+            .split(ANNOTATION_TAG_SEPARATOR)
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .sorted()
+            .map(::TagId)
     }
 
 /** Decodes the canonical merchant encoding back into an optional stable id. */

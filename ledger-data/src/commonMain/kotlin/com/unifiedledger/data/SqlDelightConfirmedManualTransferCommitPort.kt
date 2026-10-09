@@ -129,9 +129,10 @@ class SqlDelightConfirmedManualTransferCommitPort private constructor(
         merchantId: MerchantId?,
     ) {
         if (tagIds.isEmpty() && merchantId == null) return
-        val authority: TagMerchantAuthority = requireNotNull(catalogReader.load(ledgerId)) {
-            "Manual create with an association requires an existing tag/merchant catalog"
-        }
+        val authority: TagMerchantAuthority =
+            requireNotNull(catalogReader.load(ledgerId)) {
+                "Manual create with an association requires an existing tag/merchant catalog"
+            }
         tagIds.forEach { tagId ->
             val tag = authority.tags.firstOrNull { it.id == tagId.value }
             require(tag != null && tag.active && !tag.tombstoned) {

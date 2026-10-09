@@ -228,7 +228,8 @@ class SqlDelightConfirmedManualExpenseCommitPortTest {
             assertFailsWith<IllegalArgumentException> {
                 harness.port.commitOnce(
                     fixture.identity.copy(ledgerId = LedgerId("ledger-other")),
-                    fixture.snapshot, fixture.annotationCreatedAt,
+                    fixture.snapshot,
+                    fixture.annotationCreatedAt,
                 ) {
                     DomainResult.Success(fixture.commit())
                 }
