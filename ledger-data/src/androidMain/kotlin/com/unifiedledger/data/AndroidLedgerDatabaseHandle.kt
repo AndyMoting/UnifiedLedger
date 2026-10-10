@@ -75,6 +75,12 @@ fun createAndroidLedgerDatabase(
         // authority reader and month config enumeration) on the same platform-configured
         // connection, for the same reason as the four manual ports above.
         budgetStore = SqlDelightBudgetStore.forPlatformConfiguredDatabase(database),
+        // P7-08 08.B-2 (D-221 residual R-221-1): the tag/merchant catalog owner (selection read)
+        // and the transaction annotation owner (edit read + commit) on the same platform-configured
+        // connection, for the same reason as the owners above — the driver stays private to this
+        // handle, so the composition root reaches them through the platform-configured factories.
+        tagMerchantCatalogStore = SqlDelightTagMerchantCatalogStore.forPlatformConfiguredDatabase(database),
+        annotationStore = SqlDelightTransactionAnnotationStore.forPlatformConfiguredDatabase(database),
         driver = driver,
     )
 }
@@ -94,6 +100,10 @@ class AndroidLedgerDatabaseHandle internal constructor(
     val voidCommitPort: SqlDelightTransactionVoidCommitPort,
     // P7-07 07.D (D-184; spec section 5): the budget configuration store.
     val budgetStore: SqlDelightBudgetStore,
+    // P7-08 08.B-2 (D-221 residual R-221-1): the tag/merchant catalog selection read and the
+    // transaction annotation edit read + commit.
+    val tagMerchantCatalogStore: SqlDelightTagMerchantCatalogStore,
+    val annotationStore: SqlDelightTransactionAnnotationStore,
     private val driver: AndroidSqliteDriver,
 ) : AutoCloseable {
     override fun close() {

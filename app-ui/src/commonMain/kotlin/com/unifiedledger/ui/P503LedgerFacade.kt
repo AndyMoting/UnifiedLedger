@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.AnnotationRequestIdSource
 import com.unifiedledger.application.BudgetAuthorityReader
 import com.unifiedledger.application.CatalogConsumerSession
 import com.unifiedledger.application.CatalogSnapshotView
@@ -49,9 +50,20 @@ import com.unifiedledger.application.ResolveTransactionVoidCommitStatus
 import com.unifiedledger.application.ReviewImportDuplicateCandidate
 import com.unifiedledger.application.SaveBudgetConfiguration
 import com.unifiedledger.application.SummarizeLedgerActivity
+import com.unifiedledger.application.TagMerchantAuthority
+import com.unifiedledger.application.TagMerchantCatalogReader
+import com.unifiedledger.application.TransactionAnnotationReader
+import com.unifiedledger.application.TransactionAnnotationResult
+import com.unifiedledger.application.TransactionAnnotationSnapshot
+import com.unifiedledger.application.UpdateTransactionAnnotation
+import com.unifiedledger.domain.CatalogItemKind
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.MerchantId
+import com.unifiedledger.domain.TagId
+import com.unifiedledger.domain.TransactionId
+import com.unifiedledger.domain.TransactionVersionId
 
 /**
  * P5-03 composition-root facade (spec section 4.7). Assembled by each platform composition
@@ -202,6 +214,22 @@ class P503LedgerFacade(
     val saveBudgetConfiguration: SaveBudgetConfiguration? = null,
     val budgetAuthorityReader: BudgetAuthorityReader? = null,
     val budgetExpectedCatalogVersion: () -> Long? = { null },
+    // P7-08 08.B-2 (D-221 §8 open item R-221-1; spec sections 4.1/4.4). The tag/merchant
+    // selection surface: [tagMerchantCatalogReader] is the READ-ONLY catalog-authority port the
+    // editor's optional selectors project from (the composition roots wire the platform-configured
+    // store; a null keeps legacy constructions and every pre-08.B-2 startup test compiling), and
+    // [updateTransactionAnnotation] is the §4.4 explicit-confirmation edit command for an existing
+    // not-yet-voided transaction. Both are plain nullable defaults: no new lease model is invented
+    // here — [tagMerchantCatalogReader] is read through the same composition-root supplier pattern
+    // as [catalogSnapshot], and the command shares the caller's existing lease discipline.
+    val tagMerchantCatalogReader: (() -> TagMerchantCatalogReader?)? = null,
+    val updateTransactionAnnotation: UpdateTransactionAnnotation? = null,
+    // The pre-commit read the §4.4 edit entry needs (the current annotation revision + financial
+    // version the CAS compares against) and the independent request-id source the command consumes.
+    // Both default to null so every legacy construction keeps compiling; the entry renders no
+    // affordance until the composition root wires them together.
+    val transactionAnnotationReader: TransactionAnnotationReader? = null,
+    val annotationRequestIdSource: AnnotationRequestIdSource? = null,
 ) {
     private val session = catalogSession
     private val fallbackOptionsProvider = baseOptionsProvider
@@ -290,4 +318,97 @@ class P503LedgerFacade(
      */
     val queryImportDuplicateReviewsForSession: QueryImportDuplicateReviewsForSession?
         get() = fallbackQueryImportDuplicateReviewsForSession
+
+    /**
+     * P7-08 08.B-2 (R-222-1; spec section 4.1): the current authoritative tag/merchant selection
+     * options for this ledger, ALREADY FILTERED to selectable rows (`active && !tombstoned`).
+     *
+     * The raw [TagMerchantCatalogReader] authority includes disabled AND tombstoned rows (spec
+     * section 2.2: the authority is the full audit surface); the selector must never present them,
+     * so the filter lives here — the single place the UI reads the catalog through — mirroring the
+     * existing counterparty-option `.filter { it.active }` precedent on the edit screen. A
+     * disable/tombstone therefore removes the item from every future selection without touching the
+     * historical references the authority still carries.
+     *
+     * `null` when the surface is unwired (legacy facades and startup tests): the editor then renders
+     * no selector, never a dead empty picker.
+     */
+    fun tagMerchantSelectionOptions(): TagMerchantSelectionOptions? {
+        val reader = tagMerchantCatalogReader?.invoke() ?: return null
+        val authority: TagMerchantAuthority = reader.load(ledgerId) ?: return TagMerchantSelectionOptions(emptyList(), emptyList())
+        return TagMerchantSelectionOptions(
+            tags = authority.tags.filter { it.kind == CatalogItemKind.TAG && it.active && !it.tombstoned },
+            merchants = authority.merchants.filter { it.kind == CatalogItemKind.MERCHANT && it.active && !it.tombstoned },
+        )
+    }
+
+    /**
+     * P7-08 08.B-2 (spec section 4.4): the pre-commit annotation projection for one transaction —
+     * the current annotation revision (sentinel `0` == no annotation) and current financial version
+     * the edit's CAS will compare against, plus the current selection as the form's starting point.
+     * `null` when the read port is unwired or the transaction cannot be resolved: the detail then
+     * renders no annotation-edit entry rather than a form with fabricated CAS tokens.
+     */
+    fun transactionAnnotationSnapshot(transactionId: TransactionId): TransactionAnnotationSnapshot? = transactionAnnotationReader?.load(ledgerId, transactionId)
 }
+
+/**
+ * P7-08 08.B-2 (R-222-1; spec section 4.1): the selectable tag/merchant option projection the
+ * editor renders. Both lists are already filtered to `active && !tombstoned` by
+ * [P503LedgerFacade.tagMerchantSelectionOptions]; [CatalogItem.id] is the stable id the draft
+ * association stores, and [CatalogItem.name] is the display name resolved from the current catalog
+ * (spec section 2.2: rename keeps the id and shows the current name).
+ */
+data class TagMerchantSelectionOptions(
+    val tags: List<com.unifiedledger.domain.CatalogItem>,
+    val merchants: List<com.unifiedledger.domain.CatalogItem>,
+)
+
+/**
+ * P7-08 08.B-2 (spec section 4.4): one annotation-edit attempt captured by the host for a
+ * transaction-detail surface. [transactionId]/[expectedAnnotationRevision]/[expectedCurrentVersionId]
+ * are the values read from the transaction the edit targets; the local [tagIds]/[merchantId] are the
+ * user's pending selection. Kept in the shared UI so the reducer carries no IO — the host dispatches
+ * its result back as a typed event.
+ */
+data class TransactionAnnotationEditIntent(
+    val transactionId: TransactionId,
+    val expectedAnnotationRevision: Long,
+    val expectedCurrentVersionId: TransactionVersionId,
+    val tagIds: Set<TagId> = emptySet(),
+    val merchantId: MerchantId? = null,
+)
+
+/**
+ * P7-08 08.B-2 (spec section 4.4): the surfaced outcome of one [UpdateTransactionAnnotation] call.
+ * The four states mirror the frozen four-state result family, so the page renders an honest
+ * accepted / no-change / rejected-with-code / conflict line — the result is never silently
+ * swallowed. [failureCode] is the stable literal (`AnnotationFailureCode.code`) for the rejected and
+ * conflict states; the no-change state carries the original receipt's new revision.
+ */
+sealed interface TransactionAnnotationEditOutcome {
+    data class Accepted(
+        val newAnnotationRevision: Long,
+    ) : TransactionAnnotationEditOutcome
+
+    data class NoChange(
+        val newAnnotationRevision: Long,
+    ) : TransactionAnnotationEditOutcome
+
+    data class Rejected(
+        val failureCode: String,
+    ) : TransactionAnnotationEditOutcome
+
+    data class Conflict(
+        val failureCode: String,
+    ) : TransactionAnnotationEditOutcome
+}
+
+/** P7-08 08.B-2 (spec section 4.4): maps the application four-state result to the surfaced outcome. */
+fun TransactionAnnotationResult.toEditOutcome(): TransactionAnnotationEditOutcome =
+    when (this) {
+        is TransactionAnnotationResult.Accepted -> TransactionAnnotationEditOutcome.Accepted(receipt.newAnnotationRevision)
+        is TransactionAnnotationResult.NoChange -> TransactionAnnotationEditOutcome.NoChange(receipt.newAnnotationRevision)
+        is TransactionAnnotationResult.Rejected -> TransactionAnnotationEditOutcome.Rejected(failureCode.code)
+        is TransactionAnnotationResult.Conflict -> TransactionAnnotationEditOutcome.Conflict(failureCode.code)
+    }

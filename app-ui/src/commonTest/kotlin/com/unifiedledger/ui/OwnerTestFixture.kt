@@ -41,6 +41,9 @@ import kotlin.time.Clock
  */
 internal fun minimalP503LedgerFacade(
     importConfirmUseCases: (() -> ImportConfirmUseCaseSet?)? = null,
+    // P7-08 08.B-2: the tag/merchant selection read source, defaulted null so every existing call
+    // site keeps its frozen "no selector" behavior; the selection tests pass a stub reader.
+    tagMerchantCatalogReader: (() -> com.unifiedledger.application.TagMerchantCatalogReader?)? = null,
 ): P503LedgerFacade {
     val ledgerId = LedgerId("ledger-local-test")
     val currency = CurrencyUnit("CNY", 2)
@@ -108,5 +111,6 @@ internal fun minimalP503LedgerFacade(
         ledgerClock = LedgerClock { Clock.System.now() },
         baseSummarizeActivity = SummarizeLedgerActivity(catalog),
         importConfirmUseCases = importConfirmUseCases,
+        tagMerchantCatalogReader = tagMerchantCatalogReader,
     )
 }

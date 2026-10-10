@@ -14,6 +14,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -64,6 +65,8 @@ import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.MerchantId
+import com.unifiedledger.domain.TagId
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.toLocalDateTime
@@ -109,6 +112,13 @@ fun P503EditScreen(
     lendingOptions: ManualLendingOptions = ManualLendingOptions(emptyList(), emptyList()),
     onSelectEntryType: (EntryType) -> Unit = {},
     onUpdateNote: (String) -> Unit = {},
+    // P7-08 08.B-2 (spec section 4.1): the optional tag/merchant association. Both are optional on
+    // every kind (never a required field); a null projection (unwired root or not-yet-loaded) hides
+    // the whole section rather than rendering an empty picker that would read as an authoritative
+    // empty catalog. The options are already filtered to selectable rows by the facade.
+    tagMerchantOptions: TagMerchantSelectionOptions? = null,
+    onToggleTag: (TagId) -> Unit = {},
+    onSelectMerchant: (MerchantId?) -> Unit = {},
     onUpdateReceivingAccount: (AccountId) -> Unit = onUpdatePaymentAccount,
     onUpdateIncomeCategory: (CategoryId) -> Unit = onUpdateCategory,
     onUpdateTransferSourceAccount: (AccountId) -> Unit = onUpdatePaymentAccount,
@@ -498,6 +508,20 @@ fun P503EditScreen(
         )
         Spacer(Modifier.height(8.dp))
 
+        // P7-08 08.B-2 (spec section 4.1): the optional tag/merchant association. Kind-independent
+        // (the annotation lives on the transaction root), never required. Hidden when the catalog
+        // projection is unwired/not loaded, so no empty authoritative-looking picker is shown.
+        if (tagMerchantOptions != null) {
+            AnnotationAssociationSection(
+                tagMerchantOptions = tagMerchantOptions,
+                selectedTagIds = draft.tagIds,
+                selectedMerchantId = draft.merchantId,
+                onToggleTag = onToggleTag,
+                onSelectMerchant = onSelectMerchant,
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+
         // P7-02.D E-3: the exact amount calculator. Evaluation writes the preview only; the
         // user confirms the exact result with an explicit apply, which is the sole path that
         // rewrites the amount text.
@@ -863,4 +887,47 @@ private fun CounterpartyFormDialog(
             TextButton(onClick = onDismiss) { Text("取消") }
         },
     )
+}
+
+/**
+ * P7-08 08.B-2 (spec section 4.1): the optional tag/merchant association section shared by all five
+ * entry kinds. The tag list is a multi-select (0..MAX_ANNOTATION_TAGS) and the merchant list a
+ * single-select with an explicit "不关联商家" choice; both are optional, so an empty selection is a
+ * valid state and no required field is added to ordinary entry. The options arrive already filtered
+ * to selectable rows (`active && !tombstoned`), so a disabled or deleted item is never offered for a
+ * new association while historical references keep displaying it elsewhere.
+ */
+@Composable
+private fun AnnotationAssociationSection(
+    tagMerchantOptions: TagMerchantSelectionOptions,
+    selectedTagIds: Set<TagId>,
+    selectedMerchantId: MerchantId?,
+    onToggleTag: (TagId) -> Unit,
+    onSelectMerchant: (MerchantId?) -> Unit,
+) {
+    Text("标签（可选，可多选）", style = MaterialTheme.typography.titleSmall)
+    if (tagMerchantOptions.tags.isEmpty()) {
+        Text("当前没有可选的标签。", style = MaterialTheme.typography.bodySmall)
+    } else {
+        tagMerchantOptions.tags.forEach { tag ->
+            val id = TagId(tag.id)
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = id in selectedTagIds, onCheckedChange = { onToggleTag(id) })
+                Text(tag.name)
+            }
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    Text("商家（可选，最多一个）", style = MaterialTheme.typography.titleSmall)
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        RadioButton(selected = selectedMerchantId == null, onClick = { onSelectMerchant(null) })
+        Text("不关联商家")
+    }
+    tagMerchantOptions.merchants.forEach { merchant ->
+        val id = MerchantId(merchant.id)
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(selected = selectedMerchantId == id, onClick = { onSelectMerchant(id) })
+            Text(merchant.name)
+        }
+    }
 }
