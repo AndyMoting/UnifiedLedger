@@ -111,8 +111,10 @@ import com.unifiedledger.application.budgetMonthKey
 import com.unifiedledger.application.budgetScopeKey
 import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.P705FailureCode
+import com.unifiedledger.domain.TagId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVoidFactKind
 import kotlinx.coroutines.CoroutineScope
@@ -179,6 +181,20 @@ fun P503App(
     // The single-flight admission and the stale-merge decision live in the pure, JVM-tested
     // [P503CatalogSnapshotLoadCoordinator] (the P503HostCoordinator extraction precedent).
     val catalogSnapshotLoadCoordinator = remember(ledger) { P503CatalogSnapshotLoadCoordinator() }
+    // P7-08 08.B-2 (spec section 4.1): the selectable tag/merchant projection the editor renders.
+    // Read OFF the main thread (the A-PERF layer-2 ruling: no direct facade catalog read during
+    // recomposition) and refreshed with the same catalog-snapshot trigger that already reloads
+    // `cachedCatalogSnapshot`, so a rename/disable/delete is reflected without a second refresh
+    // path. `null` is the honest "not yet loaded / not wired" window: the editor then presents no
+    // selector rather than an empty picker that would read as an authoritative empty catalog.
+    var cachedTagMerchantSelection by
+        remember(ledger) { mutableStateOf<TagMerchantSelectionOptions?>(null) }
+    // P7-08 08.B-2 (spec section 4.4): whether the annotation-edit entry can be offered. The
+    // command, its id source and its read port live on the facade behind the lease, so the host
+    // cannot test them on the main thread; the flag is learned once off-thread (the runtime is
+    // built once per graph) and gates the detail's entry affordance. A null/unwired root leaves it
+    // false, so the detail renders no dead button.
+    var annotationEditWired by remember(ledger) { mutableStateOf(false) }
     // A-PERF (rework path 1a): the single-flight coalescing admission of the authoritative
     // current-state read behind refresh() and the initial load (pure, JVM-tested the same way).
     val currentStateLoadCoordinator = remember(ledger) { P503CurrentStateLoadCoordinator() }
@@ -201,6 +217,15 @@ fun P503App(
                 // acquire-time generation travels to the landing hop (4.4) so a result captured
                 // under a superseded graph is discarded instead of polluting the new one.
                 val outcome = ledger.leased { facade, _ -> runCatching { facade.catalogSnapshot() }.getOrNull() }
+                // P7-08 08.B-2: the selectable tag/merchant projection loads in the SAME leased
+                // read as the catalog snapshot (one lease, one trigger — a rename/disable/delete
+                // that changes the catalog snapshot also refreshes the selector's options). A null
+                // read (unwired root, or a not-yet-created per-ledger authority) keeps the
+                // previous value standing, never a faked empty catalog.
+                val selectionOutcome =
+                    ledger.leased { facade, _ -> runCatching { facade.tagMerchantSelectionOptions() }.getOrNull() }
+                val annotationWiredOutcome =
+                    ledger.leased { facade, _ -> facade.updateTransactionAnnotation != null && facade.annotationRequestIdSource != null && facade.transactionAnnotationReader != null }
                 scope.launch {
                     when (outcome) {
                         is LeaseOutcome.Completed ->
@@ -221,6 +246,12 @@ fun P503App(
                             StartupTrace.emit("read.catalogSnapshot end kind=notReady")
                         }
                     }
+                    (selectionOutcome as? LeaseOutcome.Completed)
+                        ?.takeIf { ledger.isCurrentGeneration(it.generation) }
+                        ?.let { if (it.value != null) cachedTagMerchantSelection = it.value }
+                    (annotationWiredOutcome as? LeaseOutcome.Completed)
+                        ?.takeIf { ledger.isCurrentGeneration(it.generation) }
+                        ?.let { annotationEditWired = it.value }
                 }
             }
         }
@@ -742,6 +773,26 @@ fun P503App(
     // P5-04.3: shared input construction for the submission and the unknown-commit status
     // check so both build a field-identical per-type snapshot (the resolver compares field by
     // field). Returns null when the draft is incomplete.
+
+    /**
+     * P7-08 08.B-2 (spec section 4.2): the confirmation-time re-validation of the draft's optional
+     * associations. The draft keeps its selections across a type switch, so between the user's
+     * choice and the confirm a tag/merchant can have been deleted (tombstoned), disabled or become
+     * cross-ledger; the commit's own in-transaction validation would then reject the whole request
+     * for a stale reference the user never saw. Filtering here mirrors the account/category
+     * clearing semantics and keeps the confirmation path honest: only still-selectable ids reach
+     * the request, exactly like the frozen `RetainedIntentRevalidation` behavior for accounts and
+     * categories. A null projection (unwired root) passes the selection through unchanged — the
+     * pre-08.B-2 behavior — and the store's own authority check remains the final gate.
+     */
+    fun revalidatedAssociation(draft: TypedEntryDraft): Pair<Set<TagId>, MerchantId?> {
+        val selection = cachedTagMerchantSelection ?: return draft.tagIds to draft.merchantId
+        val selectableTags = selection.tags.mapTo(mutableSetOf()) { TagId(it.id) }
+        val selectableMerchants = selection.merchants.mapTo(mutableSetOf()) { MerchantId(it.id) }
+        return draft.tagIds.filterTo(mutableSetOf()) { it in selectableTags } to
+            draft.merchantId?.takeIf { it in selectableMerchants }
+    }
+
     fun expenseSaveInput(
         draft: ExpenseDraft,
         requestId: RequestId,
@@ -755,6 +806,7 @@ fun P503App(
         if (amount == null || categoryId == null || paymentAccountId == null || occurredAt == null) {
             return null
         }
+        val (tagIds, merchantId) = revalidatedAssociation(draft)
         return ManualExpenseSaveInput(
             ledgerId = ledger.ledgerId,
             requestId = requestId,
@@ -765,8 +817,8 @@ fun P503App(
             note = draft.note,
             // P7-08 08.B-1 (D-221; R3): the confirming action samples the ledger clock ONCE.
             createdAt = ledger.ledgerClock.now(),
-            tagIds = draft.tagIds,
-            merchantId = draft.merchantId,
+            tagIds = tagIds,
+            merchantId = merchantId,
             confirmation = ExplicitManualSave,
         )
     }
@@ -784,6 +836,7 @@ fun P503App(
         if (amount == null || categoryId == null || receivingAccountId == null || occurredAt == null) {
             return null
         }
+        val (tagIds, merchantId) = revalidatedAssociation(draft)
         return ManualIncomeSaveInput(
             ledgerId = ledger.ledgerId,
             requestId = requestId,
@@ -793,8 +846,8 @@ fun P503App(
             occurredAt = occurredAt,
             note = draft.note,
             createdAt = ledger.ledgerClock.now(),
-            tagIds = draft.tagIds,
-            merchantId = draft.merchantId,
+            tagIds = tagIds,
+            merchantId = merchantId,
             confirmation = ExplicitManualSave,
         )
     }
@@ -817,6 +870,7 @@ fun P503App(
         if (destinationCredit == null || fee == null || sourceAccountId == null || destinationAccountId == null || occurredAt == null) {
             return null
         }
+        val (tagIds, merchantId) = revalidatedAssociation(draft)
         return ManualTransferSaveInput(
             ledgerId = ledger.ledgerId,
             requestId = requestId,
@@ -828,8 +882,8 @@ fun P503App(
             occurredAt = occurredAt,
             note = draft.note,
             createdAt = ledger.ledgerClock.now(),
-            tagIds = draft.tagIds,
-            merchantId = draft.merchantId,
+            tagIds = tagIds,
+            merchantId = merchantId,
             confirmation = ExplicitManualSave,
         )
     }
@@ -844,6 +898,7 @@ fun P503App(
         val fundingAccountId = draft.fundingAccountId
         val occurredAt = draft.occurredAt
         if (amount == null || counterpartyId == null || fundingAccountId == null || occurredAt == null) return null
+        val (tagIds, merchantId) = revalidatedAssociation(draft)
         return ManualLendSaveInput(
             ledgerId = ledger.ledgerId,
             requestId = requestId,
@@ -853,8 +908,8 @@ fun P503App(
             occurredAt = occurredAt,
             note = draft.note,
             createdAt = ledger.ledgerClock.now(),
-            tagIds = draft.tagIds,
-            merchantId = draft.merchantId,
+            tagIds = tagIds,
+            merchantId = merchantId,
             confirmation = ExplicitManualSave,
         )
     }
@@ -874,6 +929,7 @@ fun P503App(
         val interestCategoryId = draft.interestCategoryId
         val occurredAt = draft.occurredAt
         if (totalReceived == null || principal == null || interest == null || counterpartyId == null || destinationAccountId == null || interestCategoryId == null || occurredAt == null) return null
+        val (tagIds, merchantId) = revalidatedAssociation(draft)
         return ManualCollectSaveInput(
             ledgerId = ledger.ledgerId,
             requestId = requestId,
@@ -886,8 +942,8 @@ fun P503App(
             occurredAt = occurredAt,
             note = draft.note,
             createdAt = ledger.ledgerClock.now(),
-            tagIds = draft.tagIds,
-            merchantId = draft.merchantId,
+            tagIds = tagIds,
+            merchantId = merchantId,
             confirmation = ExplicitManualSave,
         )
     }
@@ -2394,6 +2450,45 @@ fun P503App(
     }
 
     /**
+     * P7-08 08.B-2 (spec section 4.4): opens the annotation-edit surface from the read-only detail.
+     * The CAS tokens and the current selection come from the pre-commit read
+     * ([P503LedgerFacade.transactionAnnotationSnapshot]) — never from the detail projection, which
+     * does not carry the annotation — and the read runs OFF the main thread under a lease (the
+     * A-PERF read-governance ruling: no facade catalog/ledger read during recomposition). A null
+     * snapshot (unwired read port, or an unresolvable transaction) opens nothing rather than a form
+     * with fabricated tokens; the open is a main-thread dispatch after the read lands.
+     */
+    fun openTransactionAnnotationEdit(detail: TransactionDetail) {
+        if (!annotationEditWired) return
+        val transactionId = detail.transactionId
+        scope.launch(Dispatchers.Default) {
+            val outcome = ledger.leased { facade, _ -> runCatching { facade.transactionAnnotationSnapshot(transactionId) }.getOrNull() }
+            scope.launch {
+                val snapshot = (outcome as? LeaseOutcome.Completed)?.takeIf { ledger.isCurrentGeneration(it.generation) }?.value ?: return@launch
+                dispatch(
+                    P503UiEvent.OpenTransactionAnnotationEdit(
+                        TransactionAnnotationEditIntent(
+                            transactionId = snapshot.transactionId,
+                            expectedAnnotationRevision = snapshot.currentAnnotationRevision,
+                            expectedCurrentVersionId = snapshot.currentVersionId,
+                            tagIds = snapshot.tagIds.toSet(),
+                            merchantId = snapshot.merchantId,
+                        ),
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * P7-08 08.B-2: whether the detail's annotation-edit entry can be offered. Gated on the wired
+     * trio only (learned once off-thread); the per-transaction resolvability is settled by the read
+     * [openTransactionAnnotationEdit] performs, so a target it cannot read opens nothing rather than
+     * a form with fabricated CAS tokens.
+     */
+    fun annotationEditResolvable(detail: TransactionDetail): Boolean = annotationEditWired
+
+    /**
      * P7-05.B: runs the correction commit off the UI thread. A lost commit is resolved
      * snapshot-aware (spec section 4.2): a matching receipt is the original success, a mismatched
      * snapshot is the stable identity conflict, and an absent/unreadable row stays unknown — the
@@ -2467,6 +2562,72 @@ fun P503App(
                 // re-check (the draft stays editable, so it must never be re-derived).
                 retainedP705Request = built.toRetainedRequest()
                 commitTransactionCorrection(built)
+            }
+        }
+    }
+
+    /**
+     * P7-08 08.B-2 (spec section 4.4): the explicit confirm of an annotation edit runs off the UI
+     * thread through the caller's existing lease (the correction path's discipline). The CAS tokens
+     * ride the state's intent — the host captured them from the detail read inside the same lease,
+     * so the reducer never re-reads the ledger. The four-state result is mapped onto the surface
+     * verbatim; a determinate success also triggers the authoritative refresh so the detail and the
+     * month projection re-read the new revision (spec section 3.2/presentation refresh discipline).
+     */
+    fun confirmTransactionAnnotationEdit(current: P503AppState.TransactionAnnotationEdit) {
+        if (!annotationEditWired) return
+        dispatch(P503UiEvent.ConfirmTransactionAnnotationEdit)
+        scope.launch(Dispatchers.Default) {
+            val leased =
+                ledger.leased { facade, _ ->
+                    val command = facade.updateTransactionAnnotation
+                    val requestId = facade.annotationRequestIdSource?.next()
+                    if (command == null || requestId == null) {
+                        // The command was unwired between the render gate and the confirm: an
+                        // honest contract rejection, never a faked success (the enum's real token).
+                        TransactionAnnotationEditOutcome.Rejected(
+                            com.unifiedledger.application.AnnotationFailureCode.ANNOTATION_CONSTRAINT_VIOLATION.code,
+                        )
+                    } else {
+                        try {
+                            command
+                                .update(
+                                    ledgerId = facade.ledgerId,
+                                    transactionId = current.intent.transactionId,
+                                    tagIds = current.intent.tagIds.toList(),
+                                    merchantId = current.intent.merchantId,
+                                    expectedAnnotationRevision = current.intent.expectedAnnotationRevision,
+                                    expectedCurrentVersionId = current.intent.expectedCurrentVersionId,
+                                ).toEditOutcome()
+                        } catch (failure: kotlinx.coroutines.CancellationException) {
+                            // A cancelled lease block is NOT an unknown outcome — rethrow so
+                            // structured cancellation keeps its semantics (the budget precedent).
+                            throw failure
+                        } catch (failure: Exception) {
+                            // A failed call is surfaced as a rejection, never swallowed (the P705
+                            // resolver discipline); the message is not echoed to avoid leaking detail.
+                            TransactionAnnotationEditOutcome.Rejected(
+                                com.unifiedledger.application.AnnotationFailureCode.ANNOTATION_CONSTRAINT_VIOLATION.code,
+                            )
+                        }
+                    }
+                }
+            val outcome =
+                (leased as? LeaseOutcome.Completed)
+                    ?.takeIf { ledger.isCurrentGeneration(it.generation) }
+                    ?.value
+                    // A non-completed or stale-generation lease has NO result to land; the surface
+                    // must not stay 提交中 forever (提交中不得离开 would trap the user), so it lands a
+                    // typed rejection that clears the marker — never a silent hang, never a fake success.
+                    ?: TransactionAnnotationEditOutcome.Rejected(
+                        com.unifiedledger.application.AnnotationFailureCode.ANNOTATION_CONSTRAINT_VIOLATION.code,
+                    )
+            scope.launch { dispatch(P503UiEvent.TransactionAnnotationEditResult(outcome)) }
+            if (outcome is TransactionAnnotationEditOutcome.Accepted || outcome is TransactionAnnotationEditOutcome.NoChange) {
+                // Determinate success: the detail and the month projection re-read the new revision
+                // through the same effective-surface refresh the P7-05 commits use (spec section
+                // 3.2; a rejection/stale/conflict refreshes nothing — the annotation is unchanged).
+                coordinator.onP705EffectiveSurfaceChanged()
             }
         }
     }
@@ -3019,6 +3180,16 @@ fun P503App(
                             null
                         },
                     onVoidTransaction = if (ledger.surfaces.voidTransaction) ({ target -> openVoidConfirm(target) }) else null,
+                    // P7-08 08.B-2 (spec section 4.4): the annotation-edit entry, passed only when
+                    // the host can resolve the target's CAS tokens right now (wired command + id
+                    // source + read port AND a readable transaction); otherwise `null` renders no
+                    // button rather than a form with fabricated tokens.
+                    onEditAnnotation =
+                        if (detail is TransactionDetailResult.Success && annotationEditResolvable(detail.detail)) {
+                            { target -> openTransactionAnnotationEdit(target) }
+                        } else {
+                            null
+                        },
                 )
             }
             // P7-04.C: the import candidate detail (spec sections 6.1/6.2). The catalog options
@@ -3128,6 +3299,32 @@ fun P503App(
                             null
                         },
                 )
+            // P7-08 08.B-2 (spec section 4.4): the annotation-edit surface. The selectable options
+            // come from the facade's already-filtered projection. A null projection (not yet loaded,
+            // or an unwired root) is passed through as null so the screen presents an honest
+            // 载入中 placeholder instead of an authoritative-looking empty catalog (the S2-2
+            // discipline); the confirm callback is null until the command is wired.
+            is P503AppState.TransactionAnnotationEdit -> {
+                val selection = cachedTagMerchantSelection
+                P503TransactionAnnotationEditScreen(
+                    state = current,
+                    tagOptions = selection?.tags,
+                    merchantOptions = selection?.merchants,
+                    onToggleTag = { tagId ->
+                        val next = current.intent.tagIds.toMutableSet()
+                        if (!next.add(tagId)) next.remove(tagId)
+                        dispatch(P503UiEvent.UpdateAnnotationTagSelection(next))
+                    },
+                    onSelectMerchant = { merchantId -> dispatch(P503UiEvent.UpdateAnnotationMerchant(merchantId)) },
+                    onConfirm =
+                        if (annotationEditWired) {
+                            { confirmTransactionAnnotationEdit(current) }
+                        } else {
+                            null
+                        },
+                    onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                )
+            }
             is P503AppState.VoidConfirm ->
                 P503VoidConfirmScreen(
                     state = current,
@@ -3234,6 +3431,15 @@ fun P503App(
                     onUpdateOccurredAt = { dispatch(P503UiEvent.UpdateOccurredAt(it)) },
                     onSelectEntryType = { dispatch(P503UiEvent.SelectEntryType(it)) },
                     onUpdateNote = { dispatch(P503UiEvent.UpdateNote(it)) },
+                    // P7-08 08.B-2 (spec section 4.1): the optional tag/merchant association.
+                    // The options come from the cached projection (never a main-thread facade read).
+                    tagMerchantOptions = cachedTagMerchantSelection,
+                    onToggleTag = { tagId ->
+                        val next = current.draft.tagIds.toMutableSet()
+                        if (!next.add(tagId)) next.remove(tagId)
+                        dispatch(P503UiEvent.UpdateTagSelection(next))
+                    },
+                    onSelectMerchant = { merchantId -> dispatch(P503UiEvent.UpdateMerchant(merchantId)) },
                     onUpdateReceivingAccount = { dispatch(P503UiEvent.UpdateReceivingAccount(it)) },
                     onUpdateIncomeCategory = { dispatch(P503UiEvent.UpdateIncomeCategory(it)) },
                     // P7-02.D E-3: the calculator lives on the editable screen only.
@@ -3336,6 +3542,15 @@ fun P503App(
                     onUpdateOccurredAt = { dispatch(P503UiEvent.UpdateOccurredAt(it)) },
                     onSelectEntryType = { dispatch(P503UiEvent.SelectEntryType(it)) },
                     onUpdateNote = { dispatch(P503UiEvent.UpdateNote(it)) },
+                    // P7-08 08.B-2 (spec section 4.1): the optional tag/merchant association.
+                    // The options come from the cached projection (never a main-thread facade read).
+                    tagMerchantOptions = cachedTagMerchantSelection,
+                    onToggleTag = { tagId ->
+                        val next = current.draft.tagIds.toMutableSet()
+                        if (!next.add(tagId)) next.remove(tagId)
+                        dispatch(P503UiEvent.UpdateTagSelection(next))
+                    },
+                    onSelectMerchant = { merchantId -> dispatch(P503UiEvent.UpdateMerchant(merchantId)) },
                     onUpdateReceivingAccount = { dispatch(P503UiEvent.UpdateReceivingAccount(it)) },
                     onUpdateIncomeCategory = { dispatch(P503UiEvent.UpdateIncomeCategory(it)) },
                     occurredAtText = hoistedOccurredAtText ?: (current.draft.occurredAt?.toString() ?: ""),
@@ -3385,6 +3600,15 @@ fun P503App(
                     onUpdateOccurredAt = { dispatch(P503UiEvent.UpdateOccurredAt(it)) },
                     onSelectEntryType = { dispatch(P503UiEvent.SelectEntryType(it)) },
                     onUpdateNote = { dispatch(P503UiEvent.UpdateNote(it)) },
+                    // P7-08 08.B-2 (spec section 4.1): the optional tag/merchant association.
+                    // The options come from the cached projection (never a main-thread facade read).
+                    tagMerchantOptions = cachedTagMerchantSelection,
+                    onToggleTag = { tagId ->
+                        val next = current.draft.tagIds.toMutableSet()
+                        if (!next.add(tagId)) next.remove(tagId)
+                        dispatch(P503UiEvent.UpdateTagSelection(next))
+                    },
+                    onSelectMerchant = { merchantId -> dispatch(P503UiEvent.UpdateMerchant(merchantId)) },
                     onUpdateReceivingAccount = { dispatch(P503UiEvent.UpdateReceivingAccount(it)) },
                     onUpdateIncomeCategory = { dispatch(P503UiEvent.UpdateIncomeCategory(it)) },
                     occurredAtText = hoistedOccurredAtText ?: (current.draft.occurredAt?.toString() ?: ""),
@@ -3509,6 +3733,8 @@ private fun isBackDispatchSafe(state: P503AppState): Boolean =
         // P7-05: a commit in flight keeps the surface (提交中不得离开); a non-submitting P7-05
         // surface dispatches `Back` (its reducer maps it to the preserved overview).
         !(state is P503AppState.TransactionEdit && state.submitting) &&
+        // P7-08 08.B-2: the same rule for the annotation-edit surface.
+        !(state is P503AppState.TransactionAnnotationEdit && state.submitting) &&
         !(state is P503AppState.VoidConfirm && state.submitting) &&
         !(state is P503AppState.RecycleBin && state.restore?.submitting == true) &&
         // P7-07 07.D: a committing budget config keeps the surface (提交中不得离开).

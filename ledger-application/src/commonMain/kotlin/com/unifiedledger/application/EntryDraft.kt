@@ -59,6 +59,16 @@ sealed interface TypedEntryDraft {
     fun withOccurredAt(instant: Instant): TypedEntryDraft
 
     fun withNote(text: String): TypedEntryDraft
+
+    /**
+     * P7-08 08.B-2 (spec section 4.1): replaces the optional tag association (multi-select). The
+     * whole set is written; an empty set is the "no tags" state. A pure draft write — nothing is
+     * committed until the explicit confirm, and the commit re-validates the ids.
+     */
+    fun withTagIds(tagIds: Set<TagId>): TypedEntryDraft
+
+    /** P7-08 08.B-2 (spec section 4.1): sets the optional merchant association (0..1); null clears. */
+    fun withMerchantId(merchantId: MerchantId?): TypedEntryDraft
 }
 
 data class ExpenseDraft(
@@ -79,6 +89,10 @@ data class ExpenseDraft(
     override fun withOccurredAt(instant: Instant): TypedEntryDraft = copy(occurredAt = instant)
 
     override fun withNote(text: String): TypedEntryDraft = copy(note = text)
+
+    override fun withTagIds(tagIds: Set<TagId>): TypedEntryDraft = copy(tagIds = tagIds)
+
+    override fun withMerchantId(merchantId: MerchantId?): TypedEntryDraft = copy(merchantId = merchantId)
 }
 
 data class IncomeDraft(
@@ -99,6 +113,10 @@ data class IncomeDraft(
     override fun withOccurredAt(instant: Instant): TypedEntryDraft = copy(occurredAt = instant)
 
     override fun withNote(text: String): TypedEntryDraft = copy(note = text)
+
+    override fun withTagIds(tagIds: Set<TagId>): TypedEntryDraft = copy(tagIds = tagIds)
+
+    override fun withMerchantId(merchantId: MerchantId?): TypedEntryDraft = copy(merchantId = merchantId)
 }
 
 /**
@@ -130,6 +148,10 @@ data class TransferDraft(
     override fun withOccurredAt(instant: Instant): TypedEntryDraft = copy(occurredAt = instant)
 
     override fun withNote(text: String): TypedEntryDraft = copy(note = text)
+
+    override fun withTagIds(tagIds: Set<TagId>): TypedEntryDraft = copy(tagIds = tagIds)
+
+    override fun withMerchantId(merchantId: MerchantId?): TypedEntryDraft = copy(merchantId = merchantId)
 }
 
 /**
@@ -159,6 +181,10 @@ data class LendDraft(
     override fun withOccurredAt(instant: Instant): TypedEntryDraft = copy(occurredAt = instant)
 
     override fun withNote(text: String): TypedEntryDraft = copy(note = text)
+
+    override fun withTagIds(tagIds: Set<TagId>): TypedEntryDraft = copy(tagIds = tagIds)
+
+    override fun withMerchantId(merchantId: MerchantId?): TypedEntryDraft = copy(merchantId = merchantId)
 }
 
 /**
@@ -192,6 +218,10 @@ data class CollectDraft(
     override fun withOccurredAt(instant: Instant): TypedEntryDraft = copy(occurredAt = instant)
 
     override fun withNote(text: String): TypedEntryDraft = copy(note = text)
+
+    override fun withTagIds(tagIds: Set<TagId>): TypedEntryDraft = copy(tagIds = tagIds)
+
+    override fun withMerchantId(merchantId: MerchantId?): TypedEntryDraft = copy(merchantId = merchantId)
 }
 
 /**

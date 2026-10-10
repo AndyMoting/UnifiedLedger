@@ -5,14 +5,18 @@ import com.unifiedledger.application.AnnotationFailureCode
 import com.unifiedledger.application.AnnotationReceiptOutcome
 import com.unifiedledger.application.TransactionAnnotationAuthority
 import com.unifiedledger.application.TransactionAnnotationCommitPort
+import com.unifiedledger.application.TransactionAnnotationReader
 import com.unifiedledger.application.TransactionAnnotationReceipt
 import com.unifiedledger.application.TransactionAnnotationRequest
 import com.unifiedledger.application.TransactionAnnotationResult
+import com.unifiedledger.application.TransactionAnnotationSnapshot
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.CatalogItem
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.NO_ANNOTATION_REVISION
+import com.unifiedledger.domain.TagId
 import com.unifiedledger.domain.TransactionAnnotation
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVersionId
@@ -41,13 +45,68 @@ import com.unifiedledger.domain.TransactionVersionId
  */
 class SqlDelightTransactionAnnotationStore private constructor(
     private val database: LedgerDatabase,
-) : TransactionAnnotationCommitPort {
+) : TransactionAnnotationCommitPort,
+    TransactionAnnotationReader {
     constructor(database: LedgerDatabase, driver: SqlDriver) : this(database) {
         configureSqliteConnection(driver)
     }
 
     private val catalogReader: SqlDelightTagMerchantCatalogStore =
         SqlDelightTagMerchantCatalogStore.forPlatformConfiguredDatabase(database)
+
+    /**
+     * P7-08 08.B-2 (spec section 4.4): the pre-commit projection the edit entry needs. Reads the
+     * current annotation pointer (absent ⇒ the sentinel [NO_ANNOTATION_REVISION]), that revision's
+     * tag rows and merchant, and the transaction's current financial version — the same values
+     * [commitOnce]'s CAS compares against, read here without a claim so the form can show the
+     * current selection. Returns `null` when the current version cannot be resolved (an unknown
+     * transaction, or a ledger this database does not hold), which the entry treats as "not
+     * editable" rather than fabricating CAS tokens.
+     */
+    override fun load(
+        ledgerId: LedgerId,
+        transactionId: TransactionId,
+    ): TransactionAnnotationSnapshot? {
+        val ledger = ledgerId.value
+        val transaction = transactionId.value
+        val currentVersionId =
+            database.ledgerQueries
+                .selectCurrentVersionIdForTransaction(ledger, transaction)
+                .executeAsOneOrNull()
+                ?: return null
+        val pointer =
+            database.ledgerQueries
+                .selectTransactionAnnotationCurrentRevision(ledger, transaction)
+                .executeAsOneOrNull()
+        val revision = pointer ?: NO_ANNOTATION_REVISION
+        val tags =
+            if (pointer == null) {
+                emptyList()
+            } else {
+                database.ledgerQueries
+                    .selectTransactionAnnotationCurrentTagIds(ledger, transaction)
+                    .executeAsList()
+            }
+        val merchantId =
+            if (pointer == null) {
+                null
+            } else {
+                // The generated mapper is `<T : Any>`, so the nullable column cannot be returned
+                // directly; box it, then unbox after the query resolves.
+                database.ledgerQueries
+                    .selectTransactionAnnotationRevision(ledger, transaction, revision) { _, _, merchant, _, _ -> merchant.orEmpty() }
+                    .executeAsOneOrNull()
+                    ?.takeIf { it.isNotEmpty() }
+            }
+        return TransactionAnnotationSnapshot(
+            ledgerId = ledgerId,
+            transactionId = transactionId,
+            currentAnnotationRevision = revision,
+            currentVersionId = TransactionVersionId(currentVersionId),
+            tagIds = tags.map(::TagId),
+            merchantId = merchantId?.let(::MerchantId),
+        )
+    }
 
     override fun commitOnce(
         request: TransactionAnnotationRequest,

@@ -12,6 +12,7 @@ import com.unifiedledger.application.TagMerchantCommandResult
 import com.unifiedledger.application.TagMerchantRequestId
 import com.unifiedledger.application.TagMerchantRequestIdSource
 import com.unifiedledger.application.TransactionAnnotationResult
+import com.unifiedledger.application.TransactionAnnotationSnapshot
 import com.unifiedledger.application.UpdateTransactionAnnotation
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.CatalogItemKind
@@ -24,6 +25,8 @@ import java.util.Properties
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import kotlin.time.Instant
 
 /**
@@ -194,6 +197,36 @@ class SqlDelightTransactionAnnotationStoreTest {
     }
 
     @Test
+    fun p708b2ThePreCommitReadReportsTheSentinelAndCurrentVersionBeforeAnyAnnotation() {
+        withStore { ctx ->
+            val snapshot = assertNotNull(ctx.load())
+            assertEquals(0L, snapshot.currentAnnotationRevision, "no pointer row => the frozen sentinel 0")
+            assertEquals(currentVersionId, snapshot.currentVersionId)
+            assertTrue(snapshot.tagIds.isEmpty())
+            assertEquals(null, snapshot.merchantId)
+        }
+    }
+
+    @Test
+    fun p708b2ThePreCommitReadReportsTheCurrentAssociationAfterAnEdit() {
+        withStore { ctx ->
+            assertIs<TransactionAnnotationResult.Accepted>(ctx.update("r1", listOf(TagId("tag-1"), TagId("tag-2")), MerchantId("merchant-1"), 0L))
+            val snapshot = assertNotNull(ctx.load())
+            assertEquals(1L, snapshot.currentAnnotationRevision)
+            assertEquals(listOf(TagId("tag-1"), TagId("tag-2")), snapshot.tagIds)
+            assertEquals(MerchantId("merchant-1"), snapshot.merchantId)
+        }
+    }
+
+    @Test
+    fun p708b2ThePreCommitReadReturnsNullForAnUnreadableTransaction() {
+        withStore { ctx ->
+            val store = SqlDelightTransactionAnnotationStore(LedgerDatabase(ctx.driver), ctx.driver)
+            assertEquals(null, store.load(ledgerId, TransactionId("no-such-transaction")))
+        }
+    }
+
+    @Test
     fun thePointerAdvanceIsAZeroRowChangeUnlessTheExpectedRevisionStillMatches() {
         withStore { ctx ->
             assertIs<TransactionAnnotationResult.Accepted>(ctx.update("r1", listOf(TagId("tag-1")), null, 0L))
@@ -239,6 +272,9 @@ class SqlDelightTransactionAnnotationStoreTest {
                 )
             return useCase.update(ledgerId, transaction, tagIds, merchantId, expectedRevision, expectedVersion)
         }
+
+        /** P7-08 08.B-2: the pre-commit read the §4.4 edit entry uses to learn its CAS tokens. */
+        fun load(): TransactionAnnotationSnapshot? = SqlDelightTransactionAnnotationStore(LedgerDatabase(driver), driver).load(ledgerId, transaction)
 
         fun deactivateTag(tagId: String) {
             val executor =

@@ -82,6 +82,7 @@ class P503ReducerImpl(
         if (backupExportEventAbsorbed(state, event)) return state
         if (backupRestoreEventAbsorbed(state, event)) return state
         if (budgetEventAbsorbed(state, event)) return state
+        if (annotationEditEventAbsorbed(state, event)) return state
         return when (state) {
             is P503AppState.Ready -> reduceReady(event)
             is P503AppState.OverviewEmpty -> reduceOverviewEmpty(state, event)
@@ -90,6 +91,7 @@ class P503ReducerImpl(
             is P503AppState.ImportBatchConfirm -> reduceImportBatchConfirm(state, event)
             is P503AppState.ImportBatchSubmitting -> reduceImportBatchSubmitting(state, event)
             is P503AppState.TransactionEdit -> reduceTransactionEdit(state, event)
+            is P503AppState.TransactionAnnotationEdit -> reduceTransactionAnnotationEdit(state, event)
             is P503AppState.VoidConfirm -> reduceVoidConfirm(state, event)
             is P503AppState.RecycleBin -> reduceRecycleBin(state, event)
             is P503AppState.BackupExport -> reduceBackupExport(state, event)
@@ -188,6 +190,27 @@ class P503ReducerImpl(
      * here" lives on [carriedBudgetMonthOverview]; this predicate is its reducer-side view.
      */
     private fun carriesBudgetMonthSurface(state: P503AppState): Boolean = state.carriedBudgetMonthOverview() != null
+
+    /**
+     * P7-08 08.B-2 (spec section 4.4): the annotation-edit event family is state-preserving outside
+     * its own surface. `OpenTransactionAnnotationEdit` has its one effect on TransactionDetail
+     * (below); the other four act only on TransactionAnnotationEdit. Everywhere else they are
+     * absorbed here so a late/stale dispatch can never reach `unhandled` (the P7-04/P7-05 "new
+     * events never ISE" discipline) — the same central-guard shape as the backup/budget families.
+     */
+    private fun annotationEditEventAbsorbed(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): Boolean =
+        when (event) {
+            is P503UiEvent.OpenTransactionAnnotationEdit -> state !is P503AppState.TransactionDetail
+            is P503UiEvent.UpdateAnnotationTagSelection,
+            is P503UiEvent.UpdateAnnotationMerchant,
+            P503UiEvent.ConfirmTransactionAnnotationEdit,
+            is P503UiEvent.TransactionAnnotationEditResult,
+            -> state !is P503AppState.TransactionAnnotationEdit
+            else -> false
+        }
 
     private fun reduceBudgetConfig(
         state: P503AppState.BudgetConfig,
@@ -294,6 +317,11 @@ class P503ReducerImpl(
             // returns.
             P503UiEvent.CloseBudgetConfig, P503UiEvent.Back ->
                 if (state.submitting) state else state.overview
+            // P7-08 08.B-2: the entry-draft association writes are meaningful only in the editor
+            // states; absorbed here so the family's "never ISE in any state" claim holds.
+            is P503UiEvent.UpdateTagSelection,
+            is P503UiEvent.UpdateMerchant,
+            -> state
             else -> unhandled(state, event)
         }
 
@@ -307,6 +335,8 @@ class P503ReducerImpl(
             // the overview exists they are absorbed.
             is P503UiEvent.SelectEntryType,
             is P503UiEvent.UpdateNote,
+            is P503UiEvent.UpdateTagSelection,
+            is P503UiEvent.UpdateMerchant,
             is P503UiEvent.UpdateReceivingAccount,
             is P503UiEvent.UpdateIncomeCategory,
             is P503UiEvent.UpdateTransferSourceAccount,
@@ -729,6 +759,8 @@ class P503ReducerImpl(
             // overview they are absorbed (§6.2a).
             is P503UiEvent.SelectEntryType,
             is P503UiEvent.UpdateNote,
+            is P503UiEvent.UpdateTagSelection,
+            is P503UiEvent.UpdateMerchant,
             is P503UiEvent.UpdateReceivingAccount,
             is P503UiEvent.UpdateIncomeCategory,
             is P503UiEvent.UpdateTransferSourceAccount,
@@ -849,6 +881,15 @@ class P503ReducerImpl(
                     origin = event.origin,
                     draft = transactionCorrectionDraftFromOrigin(event.origin),
                 )
+            // P7-08 08.B-2 (spec section 4.4): the annotation edit opens from the same read-only
+            // detail as the correction surface. The host has already resolved the CAS tokens
+            // (sentinel 0 == no current annotation) and the pending initial selection, so the
+            // reducer stays IO-free and carries the detail's overview as the back-target.
+            is P503UiEvent.OpenTransactionAnnotationEdit ->
+                P503AppState.TransactionAnnotationEdit(
+                    overview = state.overview,
+                    intent = event.intent,
+                )
             is P503UiEvent.OpenVoidConfirm ->
                 P503AppState.VoidConfirm(
                     overview = state.overview,
@@ -874,6 +915,11 @@ class P503ReducerImpl(
             is P503UiEvent.TransactionRestoreResult,
             P503UiEvent.CloseRestoreConfirm,
             is P503UiEvent.RetryP705CommitStatusCheck,
+            -> state
+            // P7-08 08.B-2: the entry-draft association writes are meaningful only in the editor
+            // states; absorbed here so the family's "never ISE in any state" claim holds.
+            is P503UiEvent.UpdateTagSelection,
+            is P503UiEvent.UpdateMerchant,
             -> state
             else -> unhandled(state, event)
         }
@@ -1197,6 +1243,8 @@ class P503ReducerImpl(
             // editor flow; §6.2a).
             is P503UiEvent.SelectEntryType,
             is P503UiEvent.UpdateNote,
+            is P503UiEvent.UpdateTagSelection,
+            is P503UiEvent.UpdateMerchant,
             is P503UiEvent.UpdateReceivingAccount,
             is P503UiEvent.UpdateIncomeCategory,
             is P503UiEvent.UpdateTransferSourceAccount,
@@ -1372,6 +1420,8 @@ class P503ReducerImpl(
             // P7-02: the entry-foundation events are absorbed (§6.2a).
             is P503UiEvent.SelectEntryType,
             is P503UiEvent.UpdateNote,
+            is P503UiEvent.UpdateTagSelection,
+            is P503UiEvent.UpdateMerchant,
             is P503UiEvent.UpdateReceivingAccount,
             is P503UiEvent.UpdateIncomeCategory,
             is P503UiEvent.UpdateTransferSourceAccount,
@@ -1523,6 +1573,8 @@ class P503ReducerImpl(
             P503UiEvent.ImportGroupEnumerationCompleted,
             is P503UiEvent.SelectEntryType,
             is P503UiEvent.UpdateNote,
+            is P503UiEvent.UpdateTagSelection,
+            is P503UiEvent.UpdateMerchant,
             is P503UiEvent.UpdateReceivingAccount,
             is P503UiEvent.UpdateIncomeCategory,
             is P503UiEvent.UpdateTransferSourceAccount,
@@ -1767,6 +1819,57 @@ class P503ReducerImpl(
             // A second OpenTransactionEdit while a surface is open stays on the open surface (the
             // UI affords no nested navigation).
             is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.OpenVoidConfirm,
+            is P503UiEvent.UpdateVoidReasonField,
+            is P503UiEvent.ConfirmVoid,
+            is P503UiEvent.TransactionVoidResult,
+            is P503UiEvent.OpenRecycleBin,
+            is P503UiEvent.RecycleBinResult,
+            P503UiEvent.CloseRecycleBin,
+            is P503UiEvent.OpenRestoreConfirm,
+            is P503UiEvent.UpdateRestoreReasonField,
+            is P503UiEvent.ConfirmRestore,
+            is P503UiEvent.TransactionRestoreResult,
+            P503UiEvent.CloseRestoreConfirm,
+            -> state
+            else -> absorbPreExisting(state, event)
+        }
+
+    /**
+     * P7-08 08.B-2 (D-221 §8 open item R-221-1; spec section 4.4): the annotation-edit surface.
+     * Only its designed events react — a selection write is a pure draft write, and the explicit
+     * confirm sets the per-operation submitting marker (提交中不重入). A determinate result stays on
+     * the surface with its outcome surfaced (the page shows the accepted/no-change/rejected/conflict
+     * line and the user leaves explicitly); the authoritative refresh is the host's job on a
+     * determinate success. Nothing is ever silently swallowed.
+     */
+    private fun reduceTransactionAnnotationEdit(
+        state: P503AppState.TransactionAnnotationEdit,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            is P503UiEvent.UpdateAnnotationTagSelection ->
+                state.copy(intent = state.intent.copy(tagIds = event.tagIds))
+            is P503UiEvent.UpdateAnnotationMerchant ->
+                state.copy(intent = state.intent.copy(merchantId = event.merchantId))
+            P503UiEvent.ConfirmTransactionAnnotationEdit ->
+                // 提交中不重入: a second confirm while the first is in flight changes nothing.
+                if (state.submitting) state else state.copy(submitting = true, outcome = null)
+            is P503UiEvent.TransactionAnnotationEditResult ->
+                state.copy(submitting = false, outcome = event.outcome)
+            // Cancel/Back return to the preserved overview; while a commit is in flight the surface
+            // must not leave (提交中不得离开, the TransactionEdit precedent).
+            P503UiEvent.Cancel,
+            P503UiEvent.Back,
+            -> if (state.submitting) state else state.overview
+            // A second open of any surface while one is already open stays put (no nested
+            // navigation), and the other surfaces' events are absorbed.
+            is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.OpenTransactionAnnotationEdit,
+            is P503UiEvent.UpdateTransactionCorrectionField,
+            P503UiEvent.PreviewTransactionEdit,
+            is P503UiEvent.ConfirmTransactionEdit,
+            is P503UiEvent.TransactionEditResult,
             is P503UiEvent.OpenVoidConfirm,
             is P503UiEvent.UpdateVoidReasonField,
             is P503UiEvent.ConfirmVoid,
@@ -2097,6 +2200,8 @@ class P503ReducerImpl(
             is P503UiEvent.UpdateOccurredAt,
             is P503UiEvent.SelectEntryType,
             is P503UiEvent.UpdateNote,
+            is P503UiEvent.UpdateTagSelection,
+            is P503UiEvent.UpdateMerchant,
             is P503UiEvent.UpdateReceivingAccount,
             is P503UiEvent.UpdateIncomeCategory,
             is P503UiEvent.UpdateTransferSourceAccount,
@@ -2212,6 +2317,12 @@ class P503ReducerImpl(
             // P7-02 S-4 note write.
             is P503UiEvent.UpdateNote ->
                 state.copy(draft = state.draft.withNote(event.text))
+            // P7-08 08.B-2 (spec section 4.1): the optional tag/merchant association writes. Pure
+            // draft writes — the commit re-validates the ids against the in-transaction authority.
+            is P503UiEvent.UpdateTagSelection ->
+                state.copy(draft = state.draft.withTagIds(event.tagIds))
+            is P503UiEvent.UpdateMerchant ->
+                state.copy(draft = state.draft.withMerchantId(event.merchantId))
             is P503UiEvent.UpdateReceivingAccount ->
                 state.copy(draft = state.draft.withPrimaryAccount(event.accountId))
             is P503UiEvent.UpdateIncomeCategory ->
@@ -2408,6 +2519,8 @@ class P503ReducerImpl(
             // P7-02: entry-field intents are absorbed while awaiting confirmation (§6.2a).
             is P503UiEvent.SelectEntryType,
             is P503UiEvent.UpdateNote,
+            is P503UiEvent.UpdateTagSelection,
+            is P503UiEvent.UpdateMerchant,
             is P503UiEvent.UpdateReceivingAccount,
             is P503UiEvent.UpdateIncomeCategory,
             is P503UiEvent.UpdateTransferSourceAccount,
@@ -2524,6 +2637,8 @@ class P503ReducerImpl(
             // P7-02: entry-field intents are absorbed while submitting (§6.2a).
             is P503UiEvent.SelectEntryType,
             is P503UiEvent.UpdateNote,
+            is P503UiEvent.UpdateTagSelection,
+            is P503UiEvent.UpdateMerchant,
             is P503UiEvent.UpdateReceivingAccount,
             is P503UiEvent.UpdateIncomeCategory,
             is P503UiEvent.UpdateTransferSourceAccount,
@@ -2848,6 +2963,8 @@ class P503ReducerImpl(
             // P7-02: new entry-foundation events are absorbed in every transient result state.
             is P503UiEvent.SelectEntryType,
             is P503UiEvent.UpdateNote,
+            is P503UiEvent.UpdateTagSelection,
+            is P503UiEvent.UpdateMerchant,
             is P503UiEvent.UpdateReceivingAccount,
             is P503UiEvent.UpdateIncomeCategory,
             is P503UiEvent.UpdateTransferSourceAccount,
@@ -2947,6 +3064,12 @@ class P503ReducerImpl(
             // P7-02: note/income/transfer field edits return to Editing with typing retention (D-140).
             is P503UiEvent.UpdateNote ->
                 P503AppState.Editing(state.draft.withNote(event.text), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+            // P7-08 08.B-2: the association writes follow the same typing-retention rule as
+            // UpdateNote (D-140) so a late dispatch can never reach `unhandled` and ISE.
+            is P503UiEvent.UpdateTagSelection ->
+                P503AppState.Editing(state.draft.withTagIds(event.tagIds), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+            is P503UiEvent.UpdateMerchant ->
+                P503AppState.Editing(state.draft.withMerchantId(event.merchantId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateReceivingAccount ->
                 P503AppState.Editing(state.draft.withPrimaryAccount(event.accountId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateIncomeCategory ->
@@ -3080,6 +3203,12 @@ class P503ReducerImpl(
             // P7-02: note/income/transfer field edits return to Editing with typing retention (D-140).
             is P503UiEvent.UpdateNote ->
                 P503AppState.Editing(state.draft.withNote(event.text), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+            // P7-08 08.B-2: the association writes follow the same typing-retention rule as
+            // UpdateNote (D-140) so a late dispatch can never reach `unhandled` and ISE.
+            is P503UiEvent.UpdateTagSelection ->
+                P503AppState.Editing(state.draft.withTagIds(event.tagIds), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+            is P503UiEvent.UpdateMerchant ->
+                P503AppState.Editing(state.draft.withMerchantId(event.merchantId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateReceivingAccount ->
                 P503AppState.Editing(state.draft.withPrimaryAccount(event.accountId), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateIncomeCategory ->
@@ -3218,6 +3347,8 @@ class P503ReducerImpl(
                     P503UiEvent.RefreshFailed,
                     is P503UiEvent.SelectEntryType,
                     is P503UiEvent.UpdateNote,
+                    is P503UiEvent.UpdateTagSelection,
+                    is P503UiEvent.UpdateMerchant,
                     is P503UiEvent.UpdateReceivingAccount,
                     is P503UiEvent.UpdateIncomeCategory,
                     is P503UiEvent.UpdateTransferSourceAccount,
@@ -3331,6 +3462,8 @@ class P503ReducerImpl(
                     // P7-02: new entry-foundation events are absorbed in READ failure too.
                     is P503UiEvent.SelectEntryType,
                     is P503UiEvent.UpdateNote,
+                    is P503UiEvent.UpdateTagSelection,
+                    is P503UiEvent.UpdateMerchant,
                     is P503UiEvent.UpdateReceivingAccount,
                     is P503UiEvent.UpdateIncomeCategory,
                     is P503UiEvent.UpdateTransferSourceAccount,

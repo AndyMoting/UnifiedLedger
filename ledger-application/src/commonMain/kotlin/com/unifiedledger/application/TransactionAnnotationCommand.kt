@@ -130,6 +130,41 @@ data class TransactionAnnotationAuthority(
 )
 
 /**
+ * P7-08 08.B-2 (spec section 4.4): the read-only projection the annotation-edit entry needs BEFORE
+ * committing — the values the commit's CAS compares against. There is no other way for the UI to
+ * learn them, because [TransactionAnnotationAuthority] is only materialized inside `commitOnce`.
+ *
+ * [currentAnnotationRevision] uses the frozen sentinel `0` for "this transaction has no current
+ * annotation" (spec section 3.1), so a first edit on a never-annotated transaction (including every
+ * import-confirmed transaction) sends 0 exactly like the 07.B fresh-binding precedent.
+ * [currentVersionId] is the transaction's current financial version — the same value the detail's
+ * `TransactionDetail.currentVersionId` carries — pinned so a concurrent financial correction makes
+ * the edit fail closed rather than silently annotating a version the user never saw.
+ * [tagIds]/[merchantId] are the CURRENT association (empty/null when none), the edit form's initial
+ * selection. A `null` authority means the transaction is not readable in this ledger.
+ */
+data class TransactionAnnotationSnapshot(
+    val ledgerId: LedgerId,
+    val transactionId: TransactionId,
+    val currentAnnotationRevision: Long,
+    val currentVersionId: TransactionVersionId,
+    val tagIds: List<TagId>,
+    val merchantId: MerchantId?,
+)
+
+/**
+ * Read-only companion to [TransactionAnnotationCommitPort]: the pre-commit projection for the edit
+ * entry. A separate fun interface so a composition root may wire the command without the read (the
+ * entry then stays unavailable) and so tests exercise the read independently of the commit.
+ */
+fun interface TransactionAnnotationReader {
+    fun load(
+        ledgerId: LedgerId,
+        transactionId: TransactionId,
+    ): TransactionAnnotationSnapshot?
+}
+
+/**
  * Claim-first atomic annotation boundary. Implementations MUST:
  *
  * - claim `(ledgerId, requestId)` in the same transaction as the revision/association/pointer/receipt;

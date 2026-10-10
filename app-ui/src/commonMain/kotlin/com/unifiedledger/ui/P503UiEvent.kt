@@ -20,6 +20,8 @@ import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
 import com.unifiedledger.domain.CounterpartyId
+import com.unifiedledger.domain.MerchantId
+import com.unifiedledger.domain.TagId
 import com.unifiedledger.domain.TransactionId
 import kotlin.time.Instant
 
@@ -75,6 +77,24 @@ sealed interface P503UiEvent {
     /** P7-02.A S-4: writes the optional note draft field. */
     data class UpdateNote(
         val text: String,
+    ) : P503UiEvent
+
+    /**
+     * P7-08 08.B-2 (spec section 4.1): replaces the draft's optional tag selection. The whole set
+     * is written (multi-select, 0..[com.unifiedledger.domain.MAX_ANNOTATION_TAGS]); the association
+     * lives on the transaction root and is kind-independent, so it applies to all five draft types.
+     * Never a required field: an empty set is the "no tags" state. Payload-validated only at commit.
+     */
+    data class UpdateTagSelection(
+        val tagIds: Set<TagId>,
+    ) : P503UiEvent
+
+    /**
+     * P7-08 08.B-2 (spec section 4.1): sets the draft's optional merchant (0..1). A null clears the
+     * selection. Kind-independent; never a required field.
+     */
+    data class UpdateMerchant(
+        val merchantId: MerchantId?,
     ) : P503UiEvent
 
     /** P7-02.A income receiving-account field update. */
@@ -701,6 +721,54 @@ sealed interface P503UiEvent {
         val result: com.unifiedledger.application.CorrectTransactionVersionResult,
     ) : P503UiEvent
 
+    // ---- P7-08 08.B-2 annotation-edit events (D-221 §8 open item R-221-1; spec section 4.4) ----
+    // Same discipline as the P7-05 family above: each has its designed effect only in its designed
+    // state, is absorbed in every other state and never throws (table 6.2a).
+
+    /**
+     * Opens the annotation-edit surface from the read-only detail (spec section 4.4: the edit entry
+     * lives on the transaction detail / edit face). [intent] carries the host-resolved CAS tokens —
+     * the target's current annotation revision (sentinel 0 == no annotation) and current financial
+     * version — read inside the same lease as the detail, plus the currently selected tags/merchant
+     * as the starting point. The detail's overview is preserved as the back-target. Effect only on
+     * TransactionDetail; absorbed everywhere else.
+     */
+    data class OpenTransactionAnnotationEdit(
+        val intent: TransactionAnnotationEditIntent,
+    ) : P503UiEvent
+
+    /**
+     * Replaces the pending tag selection of the annotation-edit surface (pure draft; nothing is
+     * committed until the explicit confirm). Effect only on TransactionAnnotationEdit; absorbed
+     * everywhere else.
+     */
+    data class UpdateAnnotationTagSelection(
+        val tagIds: Set<TagId>,
+    ) : P503UiEvent
+
+    /** Sets the pending merchant (null clears) of the annotation-edit surface. Effect only on TransactionAnnotationEdit. */
+    data class UpdateAnnotationMerchant(
+        val merchantId: MerchantId?,
+    ) : P503UiEvent
+
+    /**
+     * The explicit confirm of an annotation edit. Carries no payload: the request id is minted by
+     * the host INSIDE the commit lease (the annotation command owns its own id source, spec section
+     * 3.1), so the reducer only flips the submitting marker — an already-submitting surface absorbs
+     * a duplicate confirm. Absorbed everywhere else.
+     */
+    data object ConfirmTransactionAnnotationEdit : P503UiEvent
+
+    /**
+     * The surfaced four-state outcome of one annotation edit. Effect only on
+     * TransactionAnnotationEdit: accepted/no-change record the new revision and clear the pending
+     * marker; rejected/conflict surface the stable failure literal and clear the pending marker.
+     * Never silently swallowed. Absorbed everywhere else.
+     */
+    data class TransactionAnnotationEditResult(
+        val outcome: TransactionAnnotationEditOutcome,
+    ) : P503UiEvent
+
     /**
      * Opens the void confirmation page from the read-only detail (DP-12). [transactionId] names
      * the target; the detail's overview is preserved. The merged void/restore family carries no
@@ -1055,6 +1123,14 @@ sealed interface P503UiEvent {
  * authoritative catalog and clear (not carry) objects that are no longer offered. All five
  * entry types share the same owned-real-ASSET account option set; the category sets are
  * per kind (EXPENSE for expense/fee categories, INCOME for income/interest categories).
+ *
+ * P7-08 08.B-2 (D-221 §8 open item R-221-1; spec section 4.2): the tag/merchant association is
+ * re-validated at CONFIRMATION TIME on the live draft — see `P503App.revalidatedAssociation` — and
+ * deliberately NOT through this payload. The spec's frozen "record again clears tags/merchant"
+ * (section 4.2) means the retained intent carries no association at all, and a type switch carries
+ * the live selection straight through `EntryFieldRetention.switchType`, so there is no
+ * retained-intent association for this payload to revalidate. Adding inert tag/merchant id sets
+ * here would have no consumer and would misstate the implemented behavior.
  */
 data class RetainedIntentRevalidation(
     val accountIds: Set<AccountId>,

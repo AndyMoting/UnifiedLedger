@@ -83,6 +83,8 @@ import com.unifiedledger.application.ResolveTransactionVoidCommitStatus
 import com.unifiedledger.application.ReviewImportDuplicateCandidate
 import com.unifiedledger.application.SaveBudgetConfiguration
 import com.unifiedledger.application.TransferFlowFormalFactory
+import com.unifiedledger.application.UpdateTransactionAnnotation
+import com.unifiedledger.application.UuidV7AnnotationRequestIdSource
 import com.unifiedledger.application.UuidV7BudgetIdSource
 import com.unifiedledger.application.UuidV7BudgetRequestIdSource
 import com.unifiedledger.application.UuidV7CatalogEntityIdSource
@@ -117,6 +119,8 @@ import com.unifiedledger.data.SqlDelightImportReviewReadAdapter
 import com.unifiedledger.data.SqlDelightImportSpineStore
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
 import com.unifiedledger.data.SqlDelightMonthlyContributionReadAdapter
+import com.unifiedledger.data.SqlDelightTagMerchantCatalogStore
+import com.unifiedledger.data.SqlDelightTransactionAnnotationStore
 import com.unifiedledger.data.SqlDelightTransactionCorrectionCommitPort
 import com.unifiedledger.data.SqlDelightTransactionVoidCommitPort
 import com.unifiedledger.data.currentSupportedSchemaVersion
@@ -993,6 +997,13 @@ internal fun buildLedgerGraph(
     // version resolves from the session's current authority, so a read whose snapshot generation
     // differs fails typed (composition ruling B).
     val budgetStore = SqlDelightBudgetStore(database, driver)
+    // P7-08 08.B-2 (spec sections 4.1/4.4): the tag/merchant catalog selection read and the
+    // transaction annotation edit read + commit on the same platform-configured connection the
+    // budget store above binds to. The independent annotation request-id counter never shares a
+    // consumption count with the manual-expense source (spec section 3.1).
+    val tagMerchantCatalogStore = SqlDelightTagMerchantCatalogStore(database, driver)
+    val annotationStore = SqlDelightTransactionAnnotationStore(database, driver)
+    val annotationRequestIdSource = UuidV7AnnotationRequestIdSource(UuidV7Generator(::secureRandomBytes))
     val saveBudgetConfiguration =
         SaveBudgetConfiguration(
             commitPort = budgetStore,
@@ -1097,6 +1108,17 @@ internal fun buildLedgerGraph(
             saveBudgetConfiguration = saveBudgetConfiguration,
             budgetAuthorityReader = budgetStore,
             budgetExpectedCatalogVersion = { session.authority.catalogVersion },
+            // P7-08 08.B-2 (spec sections 4.1/4.4): the tag/merchant selection surface and the
+            // annotation-edit command on the same connection the owners above bind to.
+            tagMerchantCatalogReader = { tagMerchantCatalogStore },
+            transactionAnnotationReader = annotationStore,
+            updateTransactionAnnotation =
+                UpdateTransactionAnnotation(
+                    commitPort = annotationStore,
+                    requestIdSource = annotationRequestIdSource,
+                    clock = ledgerClock,
+                ),
+            annotationRequestIdSource = annotationRequestIdSource,
         )
 
     return DesktopLedgerGraph(

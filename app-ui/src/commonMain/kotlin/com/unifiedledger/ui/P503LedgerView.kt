@@ -352,6 +352,10 @@ internal fun P503TransactionDetailScreen(
     onClose: (() -> Unit)?,
     onEditTransaction: ((TransactionDetail) -> Unit)? = null,
     onVoidTransaction: ((TransactionDetail) -> Unit)? = null,
+    // P7-08 08.B-2 (spec section 4.4): the tag/merchant annotation-edit entry. Null renders no
+    // button (the file's "no dead affordance" pattern) — the host supplies it only when the command,
+    // its id source and its pre-commit read are all wired.
+    onEditAnnotation: ((TransactionDetail) -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -398,6 +402,14 @@ internal fun P503TransactionDetailScreen(
                             OutlinedButton(onClick = { onVoidTransaction?.invoke(data) }) { Text("作废") }
                         }
                     }
+                }
+                // P7-08 08.B-2 (spec section 4.4): the tag/merchant association entry. Independent
+                // of the correction/void support matrix — any effective transaction may be
+                // annotated (the read path already guarantees effectiveness), so this renders on
+                // its own condition rather than inside the correction affordance gate.
+                if (onEditAnnotation != null) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(onClick = { onEditAnnotation.invoke(data) }) { Text("标签与商家") }
                 }
                 Spacer(Modifier.height(8.dp))
                 Text("金额明细", style = MaterialTheme.typography.titleMedium)

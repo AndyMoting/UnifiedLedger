@@ -91,6 +91,8 @@ import com.unifiedledger.application.ResolveTransactionVoidCommitStatus
 import com.unifiedledger.application.ReviewImportDuplicateCandidate
 import com.unifiedledger.application.SaveBudgetConfiguration
 import com.unifiedledger.application.TransferFlowFormalFactory
+import com.unifiedledger.application.UpdateTransactionAnnotation
+import com.unifiedledger.application.UuidV7AnnotationRequestIdSource
 import com.unifiedledger.application.UuidV7BudgetIdSource
 import com.unifiedledger.application.UuidV7BudgetRequestIdSource
 import com.unifiedledger.application.UuidV7CatalogEntityIdSource
@@ -1172,6 +1174,9 @@ private fun buildLedgerGraph(
     val factory = CatalogAdmissionExpenseTransactionFactory(admissionReader = store, delegate = delegate)
     val idSource = UuidV7ConfirmedManualExpenseIdSource(UuidV7Generator(::secureRandomBytes))
     val requestIdSource = UuidV7ManualExpenseRequestIdSource(UuidV7Generator(::secureRandomBytes))
+    // P7-08 08.B-2 (spec section 3.1): the annotation command's INDEPENDENT request-id counter —
+    // its own generator so consumption never shares a count with the manual-expense requests.
+    val annotationRequestIdSource = UuidV7AnnotationRequestIdSource(UuidV7Generator(::secureRandomBytes))
     val executeConfirmed = ExecuteConfirmedManualExpense(tracker, idSource, factory)
     val executeSave = ExecuteManualExpenseSave(executeConfirmed)
     val resolver = ResolveManualExpenseCommitStatus(readAdapter)
@@ -1479,6 +1484,19 @@ private fun buildLedgerGraph(
             saveBudgetConfiguration = saveBudgetConfiguration,
             budgetAuthorityReader = budgetStore,
             budgetExpectedCatalogVersion = { session.authority.catalogVersion },
+            // P7-08 08.B-2 (spec sections 4.1/4.4): the tag/merchant selection surface and the
+            // annotation-edit command. The reads share the handle's platform-configured stores
+            // (the same connection the other owners bind to); the request id source is the
+            // INDEPENDENT annotation counter (spec section 3.1 — never the manual-expense counter).
+            tagMerchantCatalogReader = { handle.tagMerchantCatalogStore },
+            transactionAnnotationReader = handle.annotationStore,
+            updateTransactionAnnotation =
+                UpdateTransactionAnnotation(
+                    commitPort = handle.annotationStore,
+                    requestIdSource = annotationRequestIdSource,
+                    clock = ledgerClock,
+                ),
+            annotationRequestIdSource = annotationRequestIdSource,
         )
     // A-PERF (spec section 2.1): the Android bootstrap-completion trigger point — the graph is
     // built (catalog bootstrap done), so SQLite's official open-time pattern runs once here, in

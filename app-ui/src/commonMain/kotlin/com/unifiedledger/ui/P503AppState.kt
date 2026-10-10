@@ -414,6 +414,27 @@ sealed interface P503AppState {
     ) : P503AppState
 
     /**
+     * P7-08 08.B-2 (D-221 §8 open item R-221-1; spec section 4.4): the annotation-edit surface for
+     * an existing not-yet-voided transaction. Reached only from the read-only transaction detail
+     * (the `OpenTransactionEdit` surface parallel). [overview] is carried so every exit restores
+     * the exact tab/month/payload. [intent] carries the host-resolved CAS tokens
+     * (`expectedAnnotationRevision` — sentinel 0 means no current annotation — and
+     * `expectedCurrentVersionId`) plus the pending tags/merchant; it is the single source of the
+     * commit payload, so the reducer never re-reads the ledger. [submitting] is the per-operation
+     * marker (提交中不重入); [outcome] is the last surfaced four-state result — accepted / no-change
+     * / rejected-with-code / conflict — and is never silently swallowed. The page is reachable only
+     * when the facade wired the command AND the target is currently effective (spec section 3.2
+     * conservative gate); the store re-checks and the voided case surfaces the typed rejection
+     * rather than a faked success.
+     */
+    data class TransactionAnnotationEdit(
+        val overview: OverviewEmpty,
+        val intent: TransactionAnnotationEditIntent,
+        val submitting: Boolean = false,
+        val outcome: TransactionAnnotationEditOutcome? = null,
+    ) : P503AppState
+
+    /**
      * P7-06 06.B (D-177; spec sections 3/6): the backup-export surface. Reached from the HOME
      * overview entry affordance when the composition root wired the export use case. [overview] is
      * carried so every exit restores the exact tab, month cursor and monthly payload. [password] is
