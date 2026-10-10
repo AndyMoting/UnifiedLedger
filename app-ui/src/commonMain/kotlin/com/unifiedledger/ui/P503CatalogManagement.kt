@@ -2,6 +2,8 @@ package com.unifiedledger.ui
 
 import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.CatalogFailureCode
+import com.unifiedledger.application.TagMerchantCommandResult
+import com.unifiedledger.application.TagMerchantFailureCode
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.CategoryId
@@ -47,6 +49,39 @@ sealed interface CatalogDialog {
     data class ConfirmCategoryDelete(
         val categoryId: CategoryId,
     ) : CatalogDialog
+
+    // ---- P7-08 08.C tag/merchant catalog management (R-222-11; open item 11) ----
+    // The dialog shape mirrors the category family; deletion is the terminal TOMBSTONE confirm
+    // (spec section 2.2) and a tombstoned item never re-enters these dialogs (the audit block
+    // below offers no actions).
+
+    /** The tag-create form (P7-08 domain rules validate the name; the dialog only collects it). */
+    data class CreateTagItem(
+        val nameText: String = "",
+    ) : CatalogDialog
+
+    data class RenameTagItem(
+        val itemId: String,
+        val nameText: String,
+    ) : CatalogDialog
+
+    data class ConfirmTagItemDelete(
+        val itemId: String,
+    ) : CatalogDialog
+
+    /** The merchant-create form (R-222-2's承接; same independent namespace rules). */
+    data class CreateMerchantItem(
+        val nameText: String = "",
+    ) : CatalogDialog
+
+    data class RenameMerchantItem(
+        val itemId: String,
+        val nameText: String,
+    ) : CatalogDialog
+
+    data class ConfirmMerchantItemDelete(
+        val itemId: String,
+    ) : CatalogDialog
 }
 
 /**
@@ -86,6 +121,34 @@ fun catalogFailureMessage(code: CatalogFailureCode): String =
         CatalogFailureCode.CATALOG_CONSTRAINT_VIOLATION -> "操作未生效，请刷新后重试"
     }
 
+/**
+ * P7-08 08.C: stable tag/merchant failure-code to readable Chinese text. The codes are the
+ * frozen `TagMerchantFailureCode` literals; only this display text may change. The tombstone
+ * rejection wording states the reference rule (已有引用不能删除) instead of jargon.
+ */
+fun tagMerchantFailureMessage(code: TagMerchantFailureCode): String =
+    when (code) {
+        TagMerchantFailureCode.TAG_MERCHANT_NAME_EMPTY -> "名称不能为空"
+        TagMerchantFailureCode.TAG_MERCHANT_NAME_TOO_LONG -> "名称过长（最多 64 个字符）"
+        TagMerchantFailureCode.TAG_MERCHANT_NAME_INVALID -> "名称包含不可用字符"
+        TagMerchantFailureCode.TAG_MERCHANT_NAME_CONFLICT -> "名称已存在，请换一个"
+        TagMerchantFailureCode.TAG_MERCHANT_NOT_FOUND -> "目标不存在，请刷新"
+        TagMerchantFailureCode.TAG_MERCHANT_KIND_MISMATCH -> "目标类型不符，请刷新"
+        TagMerchantFailureCode.TAG_MERCHANT_TOMBSTONED -> "该项已删除，不能再修改"
+        TagMerchantFailureCode.TAG_MERCHANT_HAS_REFERENCES -> "已有交易引用，不能删除，请改用停用"
+        TagMerchantFailureCode.TAG_MERCHANT_REVISION_CONFLICT -> "目录已变化，请刷新"
+        TagMerchantFailureCode.REQUEST_IDENTITY_CONFLICT -> "请求编号与内容不一致，请刷新后重试"
+        TagMerchantFailureCode.TAG_MERCHANT_CONSTRAINT_VIOLATION -> "操作未生效，请刷新后重试"
+    }
+
+/** Maps one tag/merchant command result to its banner: Accepted/NoChange succeed, the rest fail. */
+fun tagMerchantNoticeFor(result: TagMerchantCommandResult): CatalogNotice =
+    when (result) {
+        is TagMerchantCommandResult.Accepted, is TagMerchantCommandResult.NoChange -> CatalogNotice("已保存", error = false)
+        is TagMerchantCommandResult.Rejected -> CatalogNotice(tagMerchantFailureMessage(result.failureCode), error = true)
+        is TagMerchantCommandResult.Conflict -> CatalogNotice(tagMerchantFailureMessage(result.failureCode), error = true)
+    }
+
 /** Maps one command result to its banner: Accepted/NoChange succeed, Rejected/Conflict fail. */
 fun catalogNoticeFor(result: CatalogCommandResult): CatalogNotice =
     when (result) {
@@ -102,7 +165,15 @@ internal fun CatalogDialog.withPrimaryText(text: String): CatalogDialog =
         is CatalogDialog.CreateCategoryGroup -> copy(groupNameText = text)
         is CatalogDialog.AppendCategoryChild -> copy(nameText = text)
         is CatalogDialog.RenameCategory -> copy(nameText = text)
-        CatalogDialog.None, is CatalogDialog.ConfirmCategoryDelete -> this
+        is CatalogDialog.CreateTagItem -> copy(nameText = text)
+        is CatalogDialog.RenameTagItem -> copy(nameText = text)
+        is CatalogDialog.CreateMerchantItem -> copy(nameText = text)
+        is CatalogDialog.RenameMerchantItem -> copy(nameText = text)
+        CatalogDialog.None,
+        is CatalogDialog.ConfirmCategoryDelete,
+        is CatalogDialog.ConfirmTagItemDelete,
+        is CatalogDialog.ConfirmMerchantItemDelete,
+        -> this
     }
 
 /** Second text field update, meaningful only for the C-2 level-1 group form. */

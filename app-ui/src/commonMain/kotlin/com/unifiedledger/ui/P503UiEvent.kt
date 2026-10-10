@@ -13,7 +13,11 @@ import com.unifiedledger.application.ManualExpenseCommitResolution
 import com.unifiedledger.application.ManualExpenseSubmissionResult
 import com.unifiedledger.application.ManualIncomeCommitResolution
 import com.unifiedledger.application.ManualIncomeSubmissionResult
+import com.unifiedledger.application.MerchantMonthlyAccumulationResult
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.TagMerchantCommandResult
+import com.unifiedledger.application.TagMerchantFilterReadResult
+import com.unifiedledger.application.TagMerchantTagMatchMode
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.BudgetScope
@@ -1115,6 +1119,131 @@ sealed interface P503UiEvent {
      * BudgetConfig; a submitting surface absorbs it (提交中不得离开).
      */
     data object CloseBudgetConfig : P503UiEvent
+
+    // ---- P7-08 08.C tag/merchant filter events (spec sections 5.1-5.5) ----
+    // Same discipline as the budget family: each event has its designed effect only in its
+    // designed state, is absorbed in every other state and never throws.
+
+    /**
+     * Opens the tag/merchant filter surface from the analysis tab. [accumulationMonth] is the
+     * host-resolved effective month the merchant accumulation starts from. Effect only on
+     * OverviewEmpty; absorbed everywhere else.
+     */
+    data class OpenTagMerchantFilter(
+        val accumulationMonth: kotlinx.datetime.YearMonth,
+    ) : P503UiEvent
+
+    /** Toggles one tag of the filter condition. A condition change resets the loaded pages. */
+    data class ToggleFilterTag(
+        val tagId: TagId,
+    ) : P503UiEvent
+
+    /** Sets the OR/AND tag match mode. A condition change resets the loaded pages. */
+    data class SetFilterTagMatch(
+        val mode: TagMerchantTagMatchMode,
+    ) : P503UiEvent
+
+    /** Sets (or clears) the merchant condition; it ANDs with the tag conditions (spec 5.1). */
+    data class SetFilterMerchant(
+        val merchantId: MerchantId?,
+    ) : P503UiEvent
+
+    /** Shifts the merchant accumulation month; a month change drops the stale accumulation. */
+    data class SetFilterAccumulationMonth(
+        val month: kotlinx.datetime.YearMonth,
+    ) : P503UiEvent
+
+    /**
+     * The host's filter-page request trigger. [replace] clears the accumulated entries first
+     * (a fresh-condition or refreshed read) versus appending a continuation page. Absorbed
+     * while a page read is already in flight (一次一页).
+     */
+    data class RequestTagMerchantFilterPage(
+        val replace: Boolean,
+    ) : P503UiEvent
+
+    /**
+     * One filter-page landing. [conditionFingerprint] is the condition the request carried: the
+     * reducer applies the page ONLY when it equals the live condition's fingerprint — an
+     * old-condition return is dropped, never allowed to overwrite the page (spec section 5.3;
+     * the lease generation was already gated by the host's landing hop). A typed failure lands
+     * as the explicit failure copy and never as an empty page.
+     */
+    data class TagMerchantFilterPageLanded(
+        val conditionFingerprint: String,
+        val result: TagMerchantFilterReadResult,
+    ) : P503UiEvent
+
+    /** The host's merchant-accumulation request trigger (absorbed while one is in flight). */
+    data object RequestMerchantAccumulation : P503UiEvent
+
+    /**
+     * One accumulation landing, gated exactly like [TagMerchantFilterPageLanded]: applied only
+     * when both the condition fingerprint AND the month still match the surface's live values.
+     */
+    data class MerchantAccumulationLanded(
+        val conditionFingerprint: String,
+        val month: kotlinx.datetime.YearMonth,
+        val result: MerchantMonthlyAccumulationResult,
+    ) : P503UiEvent
+
+    // ---- P7-08 08.C tag/merchant catalog management events (R-222-11; open item 11) ----
+
+    /** Opens the tag-create dialog. Effect only on OverviewEmpty; absorbed everywhere else. */
+    data object OpenTagCreateDialog : P503UiEvent
+
+    /** Opens the merchant-create dialog (R-222-2's承接). Effect only on OverviewEmpty. */
+    data object OpenMerchantCreateDialog : P503UiEvent
+
+    /** Opens the tag-rename dialog with the name captured by the screen at open time. */
+    data class OpenTagRenameDialog(
+        val itemId: String,
+        val currentName: String,
+    ) : P503UiEvent
+
+    /** Opens the merchant-rename dialog with the name captured by the screen at open time. */
+    data class OpenMerchantRenameDialog(
+        val itemId: String,
+        val currentName: String,
+    ) : P503UiEvent
+
+    /** Opens the tombstone-delete confirmation for a tag (spec section 2.2: 删除 = tombstone). */
+    data class OpenTagDeleteDialog(
+        val itemId: String,
+        val currentName: String,
+    ) : P503UiEvent
+
+    /** Opens the tombstone-delete confirmation for a merchant. */
+    data class OpenMerchantDeleteDialog(
+        val itemId: String,
+        val currentName: String,
+    ) : P503UiEvent
+
+    /**
+     * The host-handled enable/disable toggles (the ManageAccountActive precedent: the host
+     * intercepts and runs the command; the reducer only absorbs them, so a stray dispatch can
+     * never reach `unhandled`).
+     */
+    data class ManageTagActive(
+        val itemId: String,
+        val active: Boolean,
+    ) : P503UiEvent
+
+    /** See [ManageTagActive]. */
+    data class ManageMerchantActive(
+        val itemId: String,
+        val active: Boolean,
+    ) : P503UiEvent
+
+    /**
+     * The landed four-state catalog-item command result. Effect only on OverviewEmpty: the
+     * dialog closes, the typed outcome becomes the management banner, and a determinate
+     * success rides the host's authoritative refresh (the command changed the catalog surface).
+     * Absorbed everywhere else.
+     */
+    data class TagMerchantCommandLanded(
+        val result: TagMerchantCommandResult,
+    ) : P503UiEvent
 }
 
 /**

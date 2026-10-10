@@ -28,8 +28,11 @@ import com.unifiedledger.application.ManualTransferSaveResult
 import com.unifiedledger.application.ManualTransferSubmissionResult
 import com.unifiedledger.application.MonthlyBuckets
 import com.unifiedledger.application.ParseManualExpenseAmount
+import com.unifiedledger.application.TagMerchantFilterReadResult
 import com.unifiedledger.application.TransferDraft
 import com.unifiedledger.application.TypedEntryDraft
+import com.unifiedledger.application.sortTagMerchantFilterEntriesForDisplay
+import com.unifiedledger.application.tagMerchantFilterConditionFingerprint
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.CategoryId
@@ -83,6 +86,7 @@ class P503ReducerImpl(
         if (backupRestoreEventAbsorbed(state, event)) return state
         if (budgetEventAbsorbed(state, event)) return state
         if (annotationEditEventAbsorbed(state, event)) return state
+        if (tagMerchantEventAbsorbed(state, event)) return state
         return when (state) {
             is P503AppState.Ready -> reduceReady(event)
             is P503AppState.OverviewEmpty -> reduceOverviewEmpty(state, event)
@@ -97,6 +101,7 @@ class P503ReducerImpl(
             is P503AppState.BackupExport -> reduceBackupExport(state, event)
             is P503AppState.BackupRestore -> reduceBackupRestore(state, event)
             is P503AppState.BudgetConfig -> reduceBudgetConfig(state, event)
+            is P503AppState.TagMerchantFilter -> reduceTagMerchantFilter(state, event)
             is P503AppState.RestoreSessionTerminal -> reduceRestoreSessionTerminal(state, event)
             is P503AppState.Editing -> reduceEditing(state, event)
             is P503AppState.AwaitingConfirmation -> reduceAwaitingConfirmation(state, event)
@@ -210,6 +215,135 @@ class P503ReducerImpl(
             is P503UiEvent.TransactionAnnotationEditResult,
             -> state !is P503AppState.TransactionAnnotationEdit
             else -> false
+        }
+
+    /**
+     * P7-08 08.C: the tag/merchant filter + catalog-management event family is state-preserving
+     * outside its own surfaces (the annotation-edit family's absorb discipline). The open events
+     * have their one effect on OverviewEmpty; the filter events act only on TagMerchantFilter.
+     * Everywhere else they are absorbed here so a late/stale dispatch can never reach
+     * `unhandled` (the "new events never ISE" discipline).
+     */
+    private fun tagMerchantEventAbsorbed(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): Boolean =
+        when (event) {
+            is P503UiEvent.OpenTagMerchantFilter -> state !is P503AppState.OverviewEmpty
+            is P503UiEvent.ToggleFilterTag,
+            is P503UiEvent.SetFilterTagMatch,
+            is P503UiEvent.SetFilterMerchant,
+            is P503UiEvent.SetFilterAccumulationMonth,
+            is P503UiEvent.RequestTagMerchantFilterPage,
+            is P503UiEvent.TagMerchantFilterPageLanded,
+            P503UiEvent.RequestMerchantAccumulation,
+            is P503UiEvent.MerchantAccumulationLanded,
+            -> state !is P503AppState.TagMerchantFilter
+            P503UiEvent.OpenTagCreateDialog,
+            P503UiEvent.OpenMerchantCreateDialog,
+            is P503UiEvent.OpenTagRenameDialog,
+            is P503UiEvent.OpenMerchantRenameDialog,
+            is P503UiEvent.OpenTagDeleteDialog,
+            is P503UiEvent.OpenMerchantDeleteDialog,
+            is P503UiEvent.ManageTagActive,
+            is P503UiEvent.ManageMerchantActive,
+            is P503UiEvent.TagMerchantCommandLanded,
+            -> state !is P503AppState.OverviewEmpty
+            else -> false
+        }
+
+    /**
+     * P7-08 08.C: the filter surface's transitions. Every landing is fingerprint-gated against
+     * the LIVE condition (and, for the accumulation, its month): an old-condition return is
+     * dropped whole (spec section 5.3), never merged into the page. A condition change resets
+     * the accumulated pages (results of the old condition must not render under the new one);
+     * a merchant or month change drops the accumulation. All other events are absorbed.
+     */
+    private fun reduceTagMerchantFilter(
+        state: P503AppState.TagMerchantFilter,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            // Back = close semantics: the exact preserved overview (tab/month/payload, C03).
+            P503UiEvent.Back -> state.overview
+            is P503UiEvent.ToggleFilterTag -> {
+                val next = state.condition.tagIds.toMutableSet()
+                if (!next.add(event.tagId)) next.remove(event.tagId)
+                state.copy(
+                    condition = state.condition.copy(tagIds = next.toSet()),
+                    loadedEntries = emptyList(),
+                    hasMore = false,
+                    pageFailure = null,
+                    pageLoading = false,
+                )
+            }
+            is P503UiEvent.SetFilterTagMatch ->
+                state.copy(
+                    condition = state.condition.copy(tagMatch = event.mode),
+                    loadedEntries = emptyList(),
+                    hasMore = false,
+                    pageFailure = null,
+                    pageLoading = false,
+                )
+            is P503UiEvent.SetFilterMerchant ->
+                // The accumulation observes the condition's merchant: a merchant change drops it.
+                state.copy(
+                    condition = state.condition.copy(merchantId = event.merchantId),
+                    loadedEntries = emptyList(),
+                    hasMore = false,
+                    pageFailure = null,
+                    pageLoading = false,
+                    accumulation = null,
+                    accumulationLoading = false,
+                )
+            is P503UiEvent.SetFilterAccumulationMonth ->
+                state.copy(accumulationMonth = event.month, accumulation = null, accumulationLoading = false)
+            is P503UiEvent.RequestTagMerchantFilterPage ->
+                if (state.pageLoading) {
+                    state
+                } else {
+                    state.copy(
+                        pageLoading = true,
+                        pageFailure = null,
+                        loadedEntries = if (event.replace) emptyList() else state.loadedEntries,
+                        hasMore = if (event.replace) false else state.hasMore,
+                    )
+                }
+            is P503UiEvent.TagMerchantFilterPageLanded -> {
+                val liveFingerprint = tagMerchantFilterConditionFingerprint(state.overview.state.ledgerId, state.condition)
+                if (event.conditionFingerprint != liveFingerprint) {
+                    // An old-condition return: dropped whole (spec section 5.3).
+                    state
+                } else {
+                    when (val result = event.result) {
+                        is TagMerchantFilterReadResult.Success ->
+                            state.copy(
+                                pageLoading = false,
+                                loadedEntries =
+                                    sortTagMerchantFilterEntriesForDisplay(state.loadedEntries + result.page.entries),
+                                hasMore = result.page.hasMore,
+                                nextCursor = result.page.nextCursor,
+                                pageFailure = null,
+                                entryCatalog = result.page.catalog,
+                            )
+                        is TagMerchantFilterReadResult.Failed ->
+                            // Fail-closed: the explicit failure copy replaces nothing silently —
+                            // the already-loaded pages stay visible next to the banner.
+                            state.copy(pageLoading = false, pageFailure = result.failureCode)
+                    }
+                }
+            }
+            P503UiEvent.RequestMerchantAccumulation ->
+                if (state.accumulationLoading) state else state.copy(accumulationLoading = true)
+            is P503UiEvent.MerchantAccumulationLanded -> {
+                val liveFingerprint = tagMerchantFilterConditionFingerprint(state.overview.state.ledgerId, state.condition)
+                if (event.conditionFingerprint != liveFingerprint || event.month != state.accumulationMonth) {
+                    state
+                } else {
+                    state.copy(accumulationLoading = false, accumulation = event.result)
+                }
+            }
+            else -> state
         }
 
     private fun reduceBudgetConfig(
@@ -572,13 +706,39 @@ class P503ReducerImpl(
                 state.copy(catalogDialog = CatalogDialog.None)
             P503UiEvent.DismissCatalogNotice ->
                 state.copy(catalogNotice = null)
+            // ---- P7-08 08.C the filter surface's entry (from the analysis tab) ----
+            is P503UiEvent.OpenTagMerchantFilter ->
+                P503AppState.TagMerchantFilter(overview = state, accumulationMonth = event.accumulationMonth)
+            // ---- P7-08 08.C tag/merchant catalog management (R-222-11; open item 11) ----
+            P503UiEvent.OpenTagCreateDialog ->
+                state.copy(catalogDialog = CatalogDialog.CreateTagItem(), catalogNotice = null)
+            P503UiEvent.OpenMerchantCreateDialog ->
+                state.copy(catalogDialog = CatalogDialog.CreateMerchantItem(), catalogNotice = null)
+            is P503UiEvent.OpenTagRenameDialog ->
+                state.copy(catalogDialog = CatalogDialog.RenameTagItem(event.itemId, event.currentName), catalogNotice = null)
+            is P503UiEvent.OpenMerchantRenameDialog ->
+                state.copy(catalogDialog = CatalogDialog.RenameMerchantItem(event.itemId, event.currentName), catalogNotice = null)
+            is P503UiEvent.OpenTagDeleteDialog ->
+                state.copy(catalogDialog = CatalogDialog.ConfirmTagItemDelete(event.itemId), catalogNotice = null)
+            is P503UiEvent.OpenMerchantDeleteDialog ->
+                state.copy(catalogDialog = CatalogDialog.ConfirmMerchantItemDelete(event.itemId), catalogNotice = null)
+            is P503UiEvent.TagMerchantCommandLanded ->
+                // The dialog closes and the typed outcome becomes the banner (the catalog
+                // command family's shape); the host's refresh follows for a determinate success.
+                state.copy(
+                    catalogDialog = CatalogDialog.None,
+                    catalogNotice = tagMerchantNoticeFor(event.result),
+                )
             // Active-toggle intents are executed by the host (command + refresh), which then
             // dispatches CatalogCommandCompleted; the pure reducer performs no IO, so the intent
             // leaves the state untouched until that result arrives. "整组启用" (C-8) is its own
             // command, so it joins the absorbed intents rather than reusing SetCategoryActive.
+            // P7-08 08.C: the tag/merchant toggles join the same absorbed family (host-handled).
             is P503UiEvent.ManageAccountActive,
             is P503UiEvent.ManageCategoryActive,
             is P503UiEvent.EnableCategoryGroup,
+            is P503UiEvent.ManageTagActive,
+            is P503UiEvent.ManageMerchantActive,
             -> state
             // ---- P7-03.C/D ledger-view read-only transitions (table 6.2a) ----
             is P503UiEvent.SelectTransaction ->

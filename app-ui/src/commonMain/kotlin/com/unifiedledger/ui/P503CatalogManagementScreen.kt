@@ -29,8 +29,10 @@ import com.unifiedledger.application.AccountCurrencyBalance
 import com.unifiedledger.application.CategoryTreeView
 import com.unifiedledger.application.EntryPinTarget
 import com.unifiedledger.application.ManageableAccountView
+import com.unifiedledger.application.TagMerchantAuthority
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
+import com.unifiedledger.domain.CatalogItem
 import com.unifiedledger.domain.CategoryKind
 
 /**
@@ -53,6 +55,10 @@ fun P503CatalogManagementScreen(
     onEvent: (P503UiEvent) -> Unit,
     onSubmit: (CatalogDialog) -> Unit,
     onRefresh: () -> Unit = {},
+    // P7-08 08.C (R-222-11; open item 11): the tag/merchant authority the two new sections
+    // render. `null` = not yet loaded / unwired: the sections present the honest 载入中
+    // placeholder instead of an authoritative-looking empty catalog (the S2-2 discipline).
+    tagMerchantAuthority: TagMerchantAuthority? = null,
 ) {
     val snapshot = state.catalogSnapshot
     Column(
@@ -129,6 +135,8 @@ fun P503CatalogManagementScreen(
             ledgerId = state.state.ledgerId,
             onEvent = onEvent,
         )
+        HorizontalDivider()
+        TagMerchantSections(authority = tagMerchantAuthority, onEvent = onEvent)
         Spacer(Modifier.height(24.dp))
     }
 
@@ -321,6 +329,110 @@ private fun LeafRow(
     }
 }
 
+/**
+ * P7-08 08.C (R-222-11): the tag and merchant management sections. Each section lists its live
+ * items (active and disabled — a disabled item keeps its 改名/启用/删除 actions) and renders the
+ * TOMBSTONED items as a READ-ONLY audit block (the open-item-11 ruling): a tombstoned item
+ * offers no rename/disable/delete affordance at all — the domain blocks every command on it and
+ * the UI exposes no dead entry either.
+ */
+/**
+ * The section's ACTIONABLE rows: every non-tombstoned item (active and disabled — a disabled
+ * item keeps its 改名/启用/删除 actions). Pure so the UI test pins the production split.
+ */
+internal fun tagMerchantLiveItems(items: List<CatalogItem>): List<CatalogItem> = items.filter { !it.tombstoned }
+
+/**
+ * The section's READ-ONLY audit rows (open item 11): the tombstoned items. They render in the
+ * 已删除（审计记录） block with no rename/disable/delete affordance — the domain rejects every
+ * command on them and the UI exposes no entry either. Pure so the UI test pins the split.
+ */
+internal fun tagMerchantAuditItems(items: List<CatalogItem>): List<CatalogItem> = items.filter { it.tombstoned }
+
+@Composable
+private fun TagMerchantSections(
+    authority: TagMerchantAuthority?,
+    onEvent: (P503UiEvent) -> Unit,
+) {
+    if (authority == null) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Text("标签与商家", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text("标签与商家目录载入中…", style = MaterialTheme.typography.bodyLarge)
+        }
+        HorizontalDivider()
+        return
+    }
+    CatalogItemsSection(
+        title = "标签",
+        createText = "新建标签",
+        items = authority.tags,
+        onCreate = { onEvent(P503UiEvent.OpenTagCreateDialog) },
+        onRename = { item -> onEvent(P503UiEvent.OpenTagRenameDialog(item.id, item.name)) },
+        onToggleActive = { item -> onEvent(P503UiEvent.ManageTagActive(item.id, active = !item.active)) },
+        onDelete = { item -> onEvent(P503UiEvent.OpenTagDeleteDialog(item.id, item.name)) },
+    )
+    HorizontalDivider()
+    CatalogItemsSection(
+        title = "商家",
+        createText = "新建商家",
+        items = authority.merchants,
+        onCreate = { onEvent(P503UiEvent.OpenMerchantCreateDialog) },
+        onRename = { item -> onEvent(P503UiEvent.OpenMerchantRenameDialog(item.id, item.name)) },
+        onToggleActive = { item -> onEvent(P503UiEvent.ManageMerchantActive(item.id, active = !item.active)) },
+        onDelete = { item -> onEvent(P503UiEvent.OpenMerchantDeleteDialog(item.id, item.name)) },
+    )
+}
+
+@Composable
+private fun CatalogItemsSection(
+    title: String,
+    createText: String,
+    items: List<CatalogItem>,
+    onCreate: () -> Unit,
+    onRename: (CatalogItem) -> Unit,
+    onToggleActive: (CatalogItem) -> Unit,
+    onDelete: (CatalogItem) -> Unit,
+) {
+    val live = tagMerchantLiveItems(items)
+    val tombstoned = tagMerchantAuditItems(items)
+    Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Button(onClick = onCreate, modifier = Modifier.semantics { contentDescription = createText }) {
+                Text(createText)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        if (live.isEmpty() && tombstoned.isEmpty()) {
+            Text("还没有任何条目。", style = MaterialTheme.typography.bodyLarge)
+        }
+        live.forEach { item ->
+            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                Text(item.name + if (item.active) "" else " 已停用", style = MaterialTheme.typography.bodyLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { onRename(item) }) { Text("改名") }
+                    TextButton(onClick = { onToggleActive(item) }) { Text(if (item.active) "停用" else "启用") }
+                    TextButton(onClick = { onDelete(item) }) { Text("删除") }
+                }
+            }
+        }
+        if (tombstoned.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            // The read-only tombstone audit block (open item 11): visible for audit, never
+            // actionable — no rename/disable/delete affordance exists on these rows.
+            Text("已删除（审计记录，不可恢复）", style = MaterialTheme.typography.titleSmall)
+            tombstoned.forEach { item ->
+                Text(
+                    item.name + "（已删除）",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(vertical = 2.dp),
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun CatalogDialogHost(
     dialog: CatalogDialog,
@@ -428,6 +540,91 @@ private fun CatalogDialogHost(
                 onDismissRequest = { onEvent(P503UiEvent.DismissCatalogDialog) },
                 title = { Text("删除分类") },
                 text = { Text("仅无任何引用的分类可以删除；已有引用时请改用停用。") },
+                confirmButton = {
+                    TextButton(onClick = { onSubmit(dialog) }) { Text("确认删除") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { onEvent(P503UiEvent.DismissCatalogDialog) }) { Text("取消") }
+                },
+            )
+        // ---- P7-08 08.C tag/merchant dialogs (R-222-11) ----
+        is CatalogDialog.CreateTagItem ->
+            CatalogFormDialog(
+                title = "新建标签",
+                confirmText = "创建",
+                confirmEnabled = dialog.nameText.isNotBlank(),
+                onDismiss = { onEvent(P503UiEvent.DismissCatalogDialog) },
+                onConfirm = { onSubmit(dialog) },
+            ) {
+                OutlinedTextField(
+                    value = dialog.nameText,
+                    onValueChange = { onEvent(P503UiEvent.UpdateCatalogFormText(it)) },
+                    label = { Text("名称") },
+                    singleLine = true,
+                )
+            }
+        is CatalogDialog.RenameTagItem ->
+            CatalogFormDialog(
+                title = "标签改名",
+                confirmText = "保存",
+                confirmEnabled = dialog.nameText.isNotBlank(),
+                onDismiss = { onEvent(P503UiEvent.DismissCatalogDialog) },
+                onConfirm = { onSubmit(dialog) },
+            ) {
+                OutlinedTextField(
+                    value = dialog.nameText,
+                    onValueChange = { onEvent(P503UiEvent.UpdateCatalogFormText(it)) },
+                    label = { Text("新名称") },
+                    singleLine = true,
+                )
+            }
+        is CatalogDialog.ConfirmTagItemDelete ->
+            AlertDialog(
+                onDismissRequest = { onEvent(P503UiEvent.DismissCatalogDialog) },
+                title = { Text("删除标签") },
+                text = { Text("仅无任何引用的标签可以删除；删除后不可恢复、名称不可再建。已有引用时请改用停用。") },
+                confirmButton = {
+                    TextButton(onClick = { onSubmit(dialog) }) { Text("确认删除") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { onEvent(P503UiEvent.DismissCatalogDialog) }) { Text("取消") }
+                },
+            )
+        is CatalogDialog.CreateMerchantItem ->
+            CatalogFormDialog(
+                title = "新建商家",
+                confirmText = "创建",
+                confirmEnabled = dialog.nameText.isNotBlank(),
+                onDismiss = { onEvent(P503UiEvent.DismissCatalogDialog) },
+                onConfirm = { onSubmit(dialog) },
+            ) {
+                OutlinedTextField(
+                    value = dialog.nameText,
+                    onValueChange = { onEvent(P503UiEvent.UpdateCatalogFormText(it)) },
+                    label = { Text("名称") },
+                    singleLine = true,
+                )
+            }
+        is CatalogDialog.RenameMerchantItem ->
+            CatalogFormDialog(
+                title = "商家改名",
+                confirmText = "保存",
+                confirmEnabled = dialog.nameText.isNotBlank(),
+                onDismiss = { onEvent(P503UiEvent.DismissCatalogDialog) },
+                onConfirm = { onSubmit(dialog) },
+            ) {
+                OutlinedTextField(
+                    value = dialog.nameText,
+                    onValueChange = { onEvent(P503UiEvent.UpdateCatalogFormText(it)) },
+                    label = { Text("新名称") },
+                    singleLine = true,
+                )
+            }
+        is CatalogDialog.ConfirmMerchantItemDelete ->
+            AlertDialog(
+                onDismissRequest = { onEvent(P503UiEvent.DismissCatalogDialog) },
+                title = { Text("删除商家") },
+                text = { Text("仅无任何引用的商家可以删除；删除后不可恢复、名称不可再建。已有引用时请改用停用。") },
                 confirmButton = {
                     TextButton(onClick = { onSubmit(dialog) }) { Text("确认删除") }
                 },

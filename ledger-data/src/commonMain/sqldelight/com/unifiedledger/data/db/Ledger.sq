@@ -10919,3 +10919,191 @@ SELECT count(*) FROM transaction_annotation_command_request WHERE ledger_id = ?;
 
 countTransactionAnnotationCommandReceipts:
 SELECT count(*) FROM transaction_annotation_command_receipt WHERE ledger_id = ?;
+
+-- P7-08 08.C (spec docs/specs/2026-09-30-p7-08-tag-merchant-design.md sections 5.2/5.3; open item 3)
+-- the bounded tag/merchant filter read. ONE statement computes BOTH spec steps: the tag/merchant
+-- conditions enter as EXISTS semi-joins on the CURRENT annotation (step 1: the unique matched
+-- transactionId set — a transaction carrying several selected tags is never row-multiplied), and
+-- the outer select returns each matched transaction's CURRENT EFFECTIVE version rows (step 2: the
+-- same single effective-predicate definition point `transaction_effective_state` + current-version
+-- join as monthlyContributionRowsInWindow above). Amounts are returned raw — no SUM, no DISTINCT
+-- on amounts, no SQL-side per-tag group totals (the groups fold independently in Kotlin, spec 5.2).
+--
+-- Condition binding: `min_tag_hits` = 0 means "no tag condition" (the tag EXISTS is then false for
+-- every row and the leading `= 0` disjunct admits all rows — the caller passes a one-element tag
+-- list so the IN list is never empty); 1 = OR over the tag list; the selected-tag count = AND.
+-- `merchant_id` NULL means "no merchant condition" (spec 5.1: the merchant condition ANDs with the
+-- tag conditions when present). The keyset cursor (`statistics_at_epoch_nanos`, transaction_id)
+-- with the DESC ordering rides the projection range index (transaction_version_statistics_at_range_idx);
+-- NULL is the first page. A NULL projection row can never satisfy the keyset predicate, so the
+-- caller runs statisticsAtProjectionMissingForLedger first and fails loudly (fail-loud discipline).
+-- The keyset LIMIT binds in the `page_ids` CTE (one row per TRANSACTION), so the outer posting
+-- join can neither straddle a page boundary nor break the page bound.
+tagMerchantFilterRows:
+WITH page_ids AS (
+  SELECT version.transaction_id AS page_transaction_id, version.statistics_at_epoch_nanos AS page_nanos
+  FROM transaction_version AS version
+  JOIN ledger_transaction AS tx
+    ON tx.ledger_id = version.ledger_id
+   AND tx.transaction_id = version.transaction_id
+  JOIN ledger_transaction_current_version AS current_version
+    ON current_version.ledger_id = tx.ledger_id
+   AND current_version.transaction_id = tx.transaction_id
+   AND current_version.current_version_id = version.version_id
+  JOIN transaction_effective_state AS effective
+    ON effective.ledger_id = tx.ledger_id
+   AND effective.transaction_id = tx.transaction_id
+   AND effective.is_effective = 1
+  WHERE version.ledger_id = :ledger_id
+    AND (
+      :min_tag_hits = 0
+      OR EXISTS (
+        SELECT 1
+        FROM transaction_annotation_current AS tag_annotation
+        JOIN transaction_annotation_tag AS annotation_tag
+          ON annotation_tag.ledger_id = tag_annotation.ledger_id
+         AND annotation_tag.transaction_id = tag_annotation.transaction_id
+         AND annotation_tag.annotation_revision = tag_annotation.annotation_revision
+        WHERE tag_annotation.ledger_id = version.ledger_id
+          AND tag_annotation.transaction_id = tx.transaction_id
+          AND annotation_tag.tag_id IN :tags
+        GROUP BY tag_annotation.transaction_id
+        HAVING count(DISTINCT annotation_tag.tag_id) >= :min_tag_hits
+      )
+    )
+    AND (
+      :merchant_id IS NULL
+      OR EXISTS (
+        SELECT 1
+        FROM transaction_annotation_current AS merchant_annotation
+        JOIN transaction_annotation_revision AS merchant_revision
+          ON merchant_revision.ledger_id = merchant_annotation.ledger_id
+         AND merchant_revision.transaction_id = merchant_annotation.transaction_id
+         AND merchant_revision.annotation_revision = merchant_annotation.annotation_revision
+        WHERE merchant_annotation.ledger_id = version.ledger_id
+          AND merchant_annotation.transaction_id = tx.transaction_id
+          AND merchant_revision.merchant_id = :merchant_id
+      )
+    )
+    AND (
+      :cursor_nanos IS NULL
+      OR version.statistics_at_epoch_nanos < :cursor_nanos
+      OR (
+        version.statistics_at_epoch_nanos = :cursor_nanos
+        AND version.transaction_id < :cursor_transaction_id
+      )
+    )
+  ORDER BY version.statistics_at_epoch_nanos DESC, version.transaction_id DESC
+  LIMIT :page_size
+)
+SELECT
+  tx.transaction_id,
+  current_version.current_version_id,
+  COALESCE(tx.canonical_kind, tx.kind) AS kind,
+  version.occurred_at,
+  version.statistics_at,
+  version.note,
+  posting.posting_id,
+  posting.posting_index,
+  posting.account_id,
+  posting.amount_minor,
+  posting.currency_code,
+  posting.currency_precision,
+  page_ids.page_nanos AS statistics_at_epoch_nanos,
+  current_annotation_revision.merchant_id AS annotation_merchant_id
+FROM page_ids
+JOIN transaction_version AS version
+  ON version.ledger_id = :ledger_id
+ AND version.transaction_id = page_ids.page_transaction_id
+JOIN ledger_transaction AS tx
+  ON tx.ledger_id = version.ledger_id
+ AND tx.transaction_id = version.transaction_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+ AND current_version.current_version_id = version.version_id
+JOIN posting_set AS posting_set
+  ON posting_set.ledger_id = version.ledger_id
+ AND posting_set.posting_set_id = version.posting_set_id
+JOIN posting AS posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+LEFT JOIN transaction_annotation_current AS current_annotation
+  ON current_annotation.ledger_id = tx.ledger_id
+ AND current_annotation.transaction_id = tx.transaction_id
+LEFT JOIN transaction_annotation_revision AS current_annotation_revision
+  ON current_annotation_revision.ledger_id = current_annotation.ledger_id
+ AND current_annotation_revision.transaction_id = current_annotation.transaction_id
+ AND current_annotation_revision.annotation_revision = current_annotation.annotation_revision
+ORDER BY page_ids.page_nanos DESC, tx.transaction_id DESC, posting.posting_index;
+
+-- Step-2 companion (spec section 5.2): the CURRENT annotation's tag set of the page's matched
+-- transactions, batched for the whole page in ONE query (never per-transaction lookups, spec 5.2
+-- "无 N+1"). Bounded by the page's transaction count times the 20-tag revision bound.
+tagMerchantFilterTagsForTransactions:
+SELECT current_annotation.transaction_id, association.tag_id
+FROM transaction_annotation_current AS current_annotation
+JOIN transaction_annotation_tag AS association
+  ON association.ledger_id = current_annotation.ledger_id
+ AND association.transaction_id = current_annotation.transaction_id
+ AND association.annotation_revision = current_annotation.annotation_revision
+WHERE current_annotation.ledger_id = :ledger_id
+  AND current_annotation.transaction_id IN :transaction_ids
+ORDER BY current_annotation.transaction_id, association.tag_id;
+
+-- P7-08 08.C merchant accumulation row source (spec section 5.4; open item 6 ruled option (b)):
+-- the bounded month-window rows of the transactions whose CURRENT annotation names the merchant,
+-- over the SAME table group, the SAME 12-column row shape and the SAME single effective-predicate
+-- definition point as monthlyContributionRowsInWindow above (the D-184 behavior-equivalence hard
+-- constraint: the frozen Kotlin classifier folds these rows; no second kind table exists). The
+-- merchant constraint is a semi-join on the current annotation pointer, so it never duplicates
+-- rows; a refund counts only when the refund transaction's OWN annotation names the merchant.
+-- A NULL-projection row cannot fall in the window; the caller runs
+-- statisticsAtProjectionMissingForLedger first and fails loudly.
+tagMerchantAccumulationRowsInWindow:
+SELECT
+  tx.transaction_id,
+  current_version.current_version_id,
+  COALESCE(tx.canonical_kind, tx.kind) AS kind,
+  version.occurred_at,
+  version.statistics_at,
+  version.note,
+  posting.posting_id,
+  posting.posting_index,
+  posting.account_id,
+  posting.amount_minor,
+  posting.currency_code,
+  posting.currency_precision
+FROM transaction_version AS version
+JOIN ledger_transaction AS tx
+  ON tx.ledger_id = version.ledger_id
+ AND tx.transaction_id = version.transaction_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+ AND current_version.current_version_id = version.version_id
+JOIN posting_set AS posting_set
+  ON posting_set.ledger_id = version.ledger_id
+ AND posting_set.posting_set_id = version.posting_set_id
+JOIN posting AS posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+WHERE version.ledger_id = :ledger_id
+  AND version.statistics_at_epoch_nanos >= :start_nanos
+  AND version.statistics_at_epoch_nanos < :end_nanos
+  AND EXISTS (
+    SELECT 1
+    FROM transaction_annotation_current AS merchant_annotation
+    JOIN transaction_annotation_revision AS merchant_revision
+      ON merchant_revision.ledger_id = merchant_annotation.ledger_id
+     AND merchant_revision.transaction_id = merchant_annotation.transaction_id
+     AND merchant_revision.annotation_revision = merchant_annotation.annotation_revision
+    WHERE merchant_annotation.ledger_id = version.ledger_id
+      AND merchant_annotation.transaction_id = tx.transaction_id
+      AND merchant_revision.merchant_id = :merchant_id
+  )
+ORDER BY version.statistics_at_epoch_nanos, tx.transaction_id, posting.posting_index;

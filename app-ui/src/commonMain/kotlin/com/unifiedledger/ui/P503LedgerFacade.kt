@@ -12,6 +12,7 @@ import com.unifiedledger.application.ExecuteManualEntrySubmission
 import com.unifiedledger.application.ExecuteManualExpenseSubmission
 import com.unifiedledger.application.ExecuteManualIncomeSubmission
 import com.unifiedledger.application.ExecuteRestoreTransaction
+import com.unifiedledger.application.ExecuteTagMerchantCommand
 import com.unifiedledger.application.ExecuteVoidTransaction
 import com.unifiedledger.application.ImportFileIntakePort
 import com.unifiedledger.application.ImportIntakeSessionIdentity
@@ -38,8 +39,10 @@ import com.unifiedledger.application.QueryImportDuplicateReviewsForSession
 import com.unifiedledger.application.QueryImportReviewRows
 import com.unifiedledger.application.QueryLedgerCurrentState
 import com.unifiedledger.application.QueryLedgerEntryRows
+import com.unifiedledger.application.QueryMerchantMonthlyAccumulation
 import com.unifiedledger.application.QueryMonthlyActivity
 import com.unifiedledger.application.QueryRecycleBin
+import com.unifiedledger.application.QueryTagMerchantFilterPage
 import com.unifiedledger.application.QueryTransactionDetail
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.ResolveManualIncomeCommitStatus
@@ -230,6 +233,16 @@ class P503LedgerFacade(
     // affordance until the composition root wires them together.
     val transactionAnnotationReader: TransactionAnnotationReader? = null,
     val annotationRequestIdSource: AnnotationRequestIdSource? = null,
+    // P7-08 08.C (spec sections 5.1-5.5): the filter/accumulation read surface and the catalog
+    // command surface. All nullable with plain defaults (the R-222-4 discipline): legacy
+    // constructions and every pre-08.C startup test keep compiling, and the host renders no
+    // dead affordance while a surface is unwired. The expected tag/merchant catalog generation
+    // resolves from the host's cached authority (the adapter compares it inside its single read
+    // snapshot — the D-186 mechanism on the dedicated catalog_item_version counter).
+    val queryTagMerchantFilterPage: QueryTagMerchantFilterPage? = null,
+    val queryMerchantAccumulation: QueryMerchantMonthlyAccumulation? = null,
+    val tagMerchantExpectedCatalogItemVersion: () -> Long? = { null },
+    val executeTagMerchantCommand: ExecuteTagMerchantCommand? = null,
 ) {
     private val session = catalogSession
     private val fallbackOptionsProvider = baseOptionsProvider
@@ -343,6 +356,13 @@ class P503LedgerFacade(
     }
 
     /**
+     * P7-08 08.C (spec section 5.1): the filter surface's option projection is derived by the
+     * host from its single cached [TagMerchantAuthority] load (one authority read feeds the
+     * selection options, the filter options, the management sections and the per-item CAS
+     * revisions). The filter's own rule — DISABLED items included, tombstoned excluded (a
+     * disabled tag still matches its historical annotations; a tombstoned item can never match
+     * anything) — lives at that derivation point.
+     *
      * P7-08 08.B-2 (spec section 4.4): the pre-commit annotation projection for one transaction —
      * the current annotation revision (sentinel `0` == no annotation) and current financial version
      * the edit's CAS will compare against, plus the current selection as the form's starting point.
