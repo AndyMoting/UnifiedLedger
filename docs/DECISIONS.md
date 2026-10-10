@@ -4559,3 +4559,43 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 - **R-221-2 恢复白名单 v34 的 A04 往返等价腿未证**：`{1,31,32,33,34}` 中 v34 为**有条件准入**（严格迁移 + `columnInfo` 已证；A04 往返等价腿未证，与 v1/v32/v33 同状态）。
 - **R-221-3 `stageV34` 测试夹具保真**：新迁移测试用「fresh v35 建库后 `DROP COLUMN` 反向构造 v34 外观」，仅按 `columnInfo` 契约比对，非与真实 v34 库逐字节等价（评审 P4，接受）。
 - **R-221-4 规模/设备腿**：P708-A08 恢复腿、设备向量（P708 设备取证）沿 08.D/验收批。
+
+## D-222 P7-08 08.B-2 编辑器 tag/merchant 选择器与注释编辑接线实施登记（零 schema 变更）
+
+**状态：** 已批准并交付（2026-10-10，P7-08「标签与商家」08.B 第二切片「编辑器关联选择与注释编辑接线」的实施与规格条款落地登记）。设计依据 = D-187 批准的规格 `docs/specs/2026-09-30-p7-08-tag-merchant-design.md` §2.2/§4.1/§4.2/§4.4；本批裁决 B5-2 与 R-222-1..R-222-8 见下。**零 schema/迁移变更**（schema 维持 v35，34 个 `.sqm`；本批不分配版本号）。
+
+**决定：**
+
+1. **交付与实施内容（08.B-2）**：把 08.B-1 已在域/应用/数据/状态层贯通的可选 tag/merchant 接到产品界面——(a) `P503EditScreen` 新增可选 tag 多选 + merchant 单选区块（共享 body，五类录入均显示），并在全部三个 `P503EditScreen` 调用点（`Editing`/`RequestIdentityConflict`/`DomainRejected`）接线；(b) `TypedEntryDraft` 增 `withTagIds`/`withMerchantId`（接口 + 五实现）；(c) `P503App` 增缓存、非主线程的选择器投影与**确认时刻关联重校验**（`revalidatedAssociation`，五 `*SaveInput` 生效）；(d) 交易详情增注释编辑入口与提交宿主，接线规格 §4.4 `UpdateTransactionAnnotation` 命令；(e) reducer 增录入草稿关联事件 + `P503AnnotationEditScreen` 表面 reducer/事件族（其余状态一律吸收）；(f) `ledger-application` 增 `TransactionAnnotationSnapshot` + `TransactionAnnotationReader` 读端口，`ledger-data` 增其 SQLDelight 实现 `load()` 与 `AndroidLedgerDatabaseHandle` 两 store；(g) 两组合根接线。**未交付**：规格 §8 开放项 7 注释历史页 UI（保持 OPEN，见残余）。
+
+2. **B5-2（读源注入归属）**：读源注入**随本切片**，不推迟到 08.D。依据规格 §4.1/§4.2/§4.4 明文把选择器 UI 与 §4.4 编辑入口列为 08.B 首版面；B5 归 08.D 的对象是双端恢复/重开往返，不是「让 08.B 的 UI 能取数」。新增 `P503LedgerFacade` 参数一律带默认 `null`（沿 `catalogSnapshot`/`executeCatalogCommand` 先例），组合根只在生产两处接线。
+
+3. **R-222-1（选择器过滤面）**：`TagMerchantAuthority` 携带全量行（含停用/tombstone，为审计面）；选择器**自身**过滤 `active && !tombstoned` 后才呈现可选项。停用项不得出现在新增选择面（规格 §2.2）；历史引用仍由 authority 承载并可见。
+
+4. **R-222-2（商家新建范围）**：本切片**不含**商家新建对话框（属 08.A 目录管理 UI / 开放项 11）；只做已有目录项的选择。
+
+5. **R-222-3（§4.4 编辑入口范围）**：实现命令面 + 门面方法 + 交易详情最小可用入口；**不建**注释历史页（开放项 7 保持 OPEN）。
+
+6. **R-222-4（默认参数纪律）**：新增 facade 参数一律带默认值，保证 5 处既有构造（两组合根 + `OwnerTestFixture` + 两 android 测试）继续编译。
+
+7. **R-222-5（再记一笔清空关联）**：规格 §4.2 冻结「再记一笔清空标签/商家」——`RetainedEntryIntent` **不**增 tag/merchant 字段，重建草稿天然无关联（既有测试 `recordAgainCarriesNoOldAssociationForAnyOfTheFiveKinds` 钉住）。
+
+8. **R-222-6（切类型保留关联）**：规格 §4.2 冻结「切类型保留可选关联」——由既有 `EntryFieldRetention.switchType` 实现，本批补状态机测试钉住。
+
+9. **R-222-7（重校验落点，改做法）**：tag/merchant 重校验**不**加进 `RetainedIntentRevalidation`——该 payload 在 retained-intent 路径**无消费者**（intent 按 §4.2 不带关联、切类型走实时草稿），加入即为死参数。改放**确认时刻的实时草稿** `P503App.revalidatedAssociation`（五 `*SaveInput` 在构建请求前按当前可选集过滤），这是有真实消费者的位置。
+
+10. **R-222-8（读源线程纪律）**：选择器读源走**缓存投影** `cachedTagMerchantSelection`，随既有 `requestCatalogSnapshotLoad` 在同一 lease 内加载，不在重组/UI 回调中直读 facade（沿 A-PERF 层 2「不得在组装期直读 facade 目录」先例）。
+
+11. **审验拓扑（如实登记）**：**两次派 writer 子代理均返回空输出**（仅留 3 个文件半成品，第二派零增量），**改由主会话主代理手工实施全部改动**——实施者为该会话主代理。**独立评审另派**：独立规格符合性评审 + 独立质量评审 → **均 REJECT**（共同 P1：编辑器无选择器、生产无事件发射点，§4.1 交付面不可达）→ 修复轮（P1 + 7 项 P2：ISE 洞、死代码、自造失败字面量、CancellationException 吞噬、提交中陷阱、空选择器假象、死事件字段）→ 闭包复评 **APPROVE-WITH-FINDINGS**（8/8 修复项 CLOSED）→ **distinct verifier V1–V10 TRUE**（V3 首判 PARTIAL：`reduceTransactionDetail`/`reduceBudgetConfig` 未吸收两条草稿事件；补两状态吸收后复验 **TRUE**）。
+
+12. **验证与交付证据**：三模块编译通过（`:app-ui:compileKotlinJvm`、`:android-app:compileDebugKotlin`、`:desktop-app:compileKotlinJvm`）；五模块 `ktlintCheck` 全绿；聚焦测试绿（`P503AnnotationReducerTest` 13 例、`P503TagMerchantSelectionOptionsTest` 3 例、`SqlDelightTransactionAnnotationStoreTest` 新增 3 例）；`project_docs` exit 0；`tools/ci/trace-scan.sh` all clean。**交付路径**：PR #78，merge `f32bf414e77cb6f9c7bff60ada0e1427112c3d08`（短 `f32bf41`），已验证 PR tip `0df0012`，base `bac84cf`；merge 树 `0aa59f4d448d3cd1de5071276150e8990f4699c2` == tip 树（merge-tree guard run `38057477217` = **zero-action**）。四 required checks（`Kotlin tests`/`Android compile`/`Python tests`/`Trace scan`）全绿；`Android scale preflight` 首两跑为 emulator-boot infra flake（`Emulator boot timeout: 300`，非本批代码面），rerun 后 pass。
+
+**关联决定：** D-221（08.B-1 登记与本条承接的 R-221-1——本条交付其剩余 UI/接线面），D-218（08.A 目录/注释聚合），D-187（P7-08 设计门批准与切片划分），D-185（恢复白名单与 claim-first 先例），D-146（导入不留原文件——§4.5 承接不变），D-176（运行时租约纪律——读源同 lease 加载），D-219（Schema 迁移批次清单——本批零迁移、不适用版本字面量族）。
+
+**残余（登记，本批不改行为）：**
+
+- **R-222-9 规格 §8 开放项 7（注释历史页 UI 语义）**：入口/粒度/与交易详情及金融版本历史的分离呈现**仍 OPEN**；本批只交付 §4.4 编辑命令与最小入口，不声称历史页可用。
+- **R-222-10 导入确认前关联选择**：规格 §4.5 首版明示不含，承接不变（已确认导入交易经 §4.4 编辑链显式关联）。
+- **R-222-11 08.A 目录管理 UI**：新建/改名/停用/删除与 tombstone 呈现（开放项 11）仍未交付；本批只做选择面。
+- **承接（不改状态）**：**R-221-2**（v34 恢复白名单 A04 往返腿）、**R-221-3**（`stageV34` 夹具 `columnInfo` 契约）、**R-221-4**（P708-A08 恢复腿/设备腿归 08.D）、R-218-1/R-218-3 沿前批。
+- **P708 向量**：本批交付 A02/A03/A04/A07 的实现与证据面，**无 P708 向量记 PASS**（A01/A06/A09 属 08.C；设备腿未做）。
