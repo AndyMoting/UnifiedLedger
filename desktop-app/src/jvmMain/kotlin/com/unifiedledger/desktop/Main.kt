@@ -54,6 +54,7 @@ import com.unifiedledger.application.ExecuteManualTransferSubmission
 import com.unifiedledger.application.ExecuteRenameCounterparty
 import com.unifiedledger.application.ExecuteRestoreTransaction
 import com.unifiedledger.application.ExecuteSetCounterpartyActive
+import com.unifiedledger.application.ExecuteTagMerchantCommand
 import com.unifiedledger.application.ExecuteVoidTransaction
 import com.unifiedledger.application.ImportContentFingerprint
 import com.unifiedledger.application.ImportDuplicateReviewId
@@ -74,6 +75,8 @@ import com.unifiedledger.application.QueryImportCandidateDetail
 import com.unifiedledger.application.QueryImportDuplicateReviews
 import com.unifiedledger.application.QueryImportDuplicateReviewsForSession
 import com.unifiedledger.application.QueryImportReviewRows
+import com.unifiedledger.application.QueryMerchantMonthlyAccumulation
+import com.unifiedledger.application.QueryTagMerchantFilterPage
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.ResolveManualIncomeCommitStatus
 import com.unifiedledger.application.ResolveManualLendingCommitStatus
@@ -88,6 +91,7 @@ import com.unifiedledger.application.UuidV7AnnotationRequestIdSource
 import com.unifiedledger.application.UuidV7BudgetIdSource
 import com.unifiedledger.application.UuidV7BudgetRequestIdSource
 import com.unifiedledger.application.UuidV7CatalogEntityIdSource
+import com.unifiedledger.application.UuidV7CatalogItemIdSource
 import com.unifiedledger.application.UuidV7CatalogManagementRequestIdSource
 import com.unifiedledger.application.UuidV7ConfirmedManualExpenseIdSource
 import com.unifiedledger.application.UuidV7ConfirmedManualIncomeIdSource
@@ -100,6 +104,7 @@ import com.unifiedledger.application.UuidV7ManualExpenseRequestIdSource
 import com.unifiedledger.application.UuidV7ManualIncomeRequestIdSource
 import com.unifiedledger.application.UuidV7ManualLendingRequestIdSource
 import com.unifiedledger.application.UuidV7ManualTransferRequestIdSource
+import com.unifiedledger.application.UuidV7TagMerchantRequestIdSource
 import com.unifiedledger.application.UuidV7TransactionCorrectionIdSource
 import com.unifiedledger.application.UuidV7TransactionVoidFactIdSource
 import com.unifiedledger.application.backup.BackupCryptoPrimitives
@@ -120,6 +125,7 @@ import com.unifiedledger.data.SqlDelightImportSpineStore
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
 import com.unifiedledger.data.SqlDelightMonthlyContributionReadAdapter
 import com.unifiedledger.data.SqlDelightTagMerchantCatalogStore
+import com.unifiedledger.data.SqlDelightTagMerchantFilterReadAdapter
 import com.unifiedledger.data.SqlDelightTransactionAnnotationStore
 import com.unifiedledger.data.SqlDelightTransactionCorrectionCommitPort
 import com.unifiedledger.data.SqlDelightTransactionVoidCommitPort
@@ -1004,6 +1010,27 @@ internal fun buildLedgerGraph(
     val tagMerchantCatalogStore = SqlDelightTagMerchantCatalogStore(database, driver)
     val annotationStore = SqlDelightTransactionAnnotationStore(database, driver)
     val annotationRequestIdSource = UuidV7AnnotationRequestIdSource(UuidV7Generator(::secureRandomBytes))
+    // P7-08 08.C (spec sections 5.1-5.5): the bounded filter/accumulation read surface and the
+    // catalog-item command surface, on the same platform-configured connection every owner
+    // above binds to. The read adapter carries BOTH ports (the filter page and the merchant
+    // month-window rows) and its generation gate compares the dedicated catalog_item_version
+    // counter inside one read snapshot. The command source's request-id and item-id counters
+    // are the 08.A owner's own — never a shared consumption count.
+    val tagMerchantFilterReadAdapter =
+        SqlDelightTagMerchantFilterReadAdapter(
+            database = database,
+            accountCatalogReader = store,
+            tagMerchantCatalogReader = tagMerchantCatalogStore,
+        )
+    val queryTagMerchantFilterPage = QueryTagMerchantFilterPage(tagMerchantFilterReadAdapter)
+    val queryMerchantAccumulation = QueryMerchantMonthlyAccumulation(tagMerchantFilterReadAdapter)
+    val executeTagMerchantCommand =
+        ExecuteTagMerchantCommand(
+            commitPort = tagMerchantCatalogStore,
+            requestIdSource = UuidV7TagMerchantRequestIdSource(UuidV7Generator(::secureRandomBytes)),
+            idSource = UuidV7CatalogItemIdSource(UuidV7Generator(::secureRandomBytes)),
+            referenceProbe = tagMerchantCatalogStore,
+        )
     val saveBudgetConfiguration =
         SaveBudgetConfiguration(
             commitPort = budgetStore,
@@ -1111,6 +1138,14 @@ internal fun buildLedgerGraph(
             // P7-08 08.B-2 (spec sections 4.1/4.4): the tag/merchant selection surface and the
             // annotation-edit command on the same connection the owners above bind to.
             tagMerchantCatalogReader = { tagMerchantCatalogStore },
+            // P7-08 08.C: the filter/accumulation reads and the catalog-item command surface.
+            // The expected generation resolves from the tag/merchant authority itself (the
+            // adapter re-compares it inside its single read snapshot, so a write landing
+            // between request assembly and the read fails typed — never a stale page).
+            queryTagMerchantFilterPage = queryTagMerchantFilterPage,
+            queryMerchantAccumulation = queryMerchantAccumulation,
+            tagMerchantExpectedCatalogItemVersion = { tagMerchantCatalogStore.load(ledgerId)?.catalogItemVersion },
+            executeTagMerchantCommand = executeTagMerchantCommand,
             transactionAnnotationReader = annotationStore,
             updateTransactionAnnotation =
                 UpdateTransactionAnnotation(

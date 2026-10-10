@@ -7,13 +7,20 @@ import com.unifiedledger.application.EntryPinTarget
 import com.unifiedledger.application.EntryType
 import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.LedgerCurrentState
+import com.unifiedledger.application.MerchantMonthlyAccumulationResult
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.TagMerchantFilterCondition
+import com.unifiedledger.application.TagMerchantFilterCursor
+import com.unifiedledger.application.TagMerchantFilterEntry
+import com.unifiedledger.application.TagMerchantFilterFailureCode
 import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CounterpartyId
+import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.TransactionId
+import kotlinx.datetime.YearMonth
 import kotlin.time.Instant
 
 /**
@@ -531,6 +538,51 @@ sealed interface P503AppState {
          * (a landed first commit surfaces as the typed revision conflict on the retry).
          */
         val outcomeUnknown: Boolean = false,
+    ) : P503AppState
+
+    /**
+     * P7-08 08.C (spec sections 5.1-5.5): the tag/merchant filter surface. Reached only from
+     * the analysis tab's explicit entry. [overview] is carried so every exit restores the exact
+     * tab/month/payload (the preserved-overview discipline). [condition] is the pure filter
+     * condition (tags OR/AND + optional merchant); [accumulationMonth] is the merchant
+     * accumulation's month (the analysis month it was opened from, shiftable).
+     *
+     * [loadedEntries] accumulates the landed keyset pages and is re-sorted by the frozen
+     * display order on every landing; [hasMore] gates the 加载更多 affordance; [pageFailure] is
+     * the last landed typed read failure (fail-closed — never an empty page rendered as "no
+     * matches", spec section 5.3). [accumulation] is the last landed merchant accumulation for
+     * [accumulationMonth]. The loading markers absorb duplicate request events (一次一页).
+     *
+     * A landing applies only when its condition fingerprint (and, for the accumulation, its
+     * month) still matches this surface's live values AND its request token is still the
+     * surface's current one — an old-condition or old-generation return can never overwrite the
+     * page (spec section 5.3; the host gates the lease generation, the reducer gates the
+     * fingerprint and the fix round's request token).
+     */
+    data class TagMerchantFilter(
+        val overview: OverviewEmpty,
+        val accumulationMonth: YearMonth,
+        val condition: TagMerchantFilterCondition = TagMerchantFilterCondition(),
+        val loadedEntries: List<TagMerchantFilterEntry> = emptyList(),
+        val hasMore: Boolean = false,
+        /** The last landed page's continuation cursor (null = no further page). */
+        val nextCursor: TagMerchantFilterCursor? = null,
+        val pageFailure: TagMerchantFilterFailureCode? = null,
+        val pageLoading: Boolean = false,
+        /**
+         * Fix round (P3-1): the monotonic request identity of the page read. EVERY page-request
+         * dispatch advances it (absorbed 一次一页 appends included), the host presents it back on
+         * the landing, and the reducer applies a landing only when its token is still current — a
+         * duplicate same-condition read or a read superseded by a newer request can never append
+         * or merge. Pure bookkeeping: never rendered.
+         */
+        val pageRequestToken: Long = 0L,
+        val accumulation: MerchantMonthlyAccumulationResult? = null,
+        val accumulationLoading: Boolean = false,
+        /** [pageRequestToken]'s accumulation twin (see [P503UiEvent.MerchantAccumulationLanded]). */
+        val accumulationRequestToken: Long = 0L,
+        /** The latest landed page's account catalog snapshot (the group fold's kind dispatch). */
+        val entryCatalog: LedgerCatalog? = null,
     ) : P503AppState
 
     /**

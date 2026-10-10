@@ -13,6 +13,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -92,12 +93,18 @@ import com.unifiedledger.application.ManualTransferRequestSnapshot
 import com.unifiedledger.application.ManualTransferSaveInput
 import com.unifiedledger.application.ManualTransferSaveResult
 import com.unifiedledger.application.ManualTransferSubmissionResult
+import com.unifiedledger.application.MerchantMonthlyAccumulationResult
 import com.unifiedledger.application.MonthlyBuckets
 import com.unifiedledger.application.MonthlyTrend
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.RecycleBinResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.SummarizeLedgerActivity
+import com.unifiedledger.application.TagMerchantAuthority
+import com.unifiedledger.application.TagMerchantCommandResult
+import com.unifiedledger.application.TagMerchantFilterCursor
+import com.unifiedledger.application.TagMerchantFilterFailureCode
+import com.unifiedledger.application.TagMerchantFilterReadResult
 import com.unifiedledger.application.TransactionCorrectionRequestIdentity
 import com.unifiedledger.application.TransactionDetail
 import com.unifiedledger.application.TransactionDetailResult
@@ -109,7 +116,9 @@ import com.unifiedledger.application.VoidTransactionResult
 import com.unifiedledger.application.backup.BackupPreflightRejection
 import com.unifiedledger.application.budgetMonthKey
 import com.unifiedledger.application.budgetScopeKey
+import com.unifiedledger.application.tagMerchantFilterConditionFingerprint
 import com.unifiedledger.domain.BudgetScope
+import com.unifiedledger.domain.CatalogItemKind
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.Money
@@ -121,7 +130,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.YearMonth
+import kotlinx.datetime.minus
+import kotlinx.datetime.plus
 import com.unifiedledger.application.MonthlyActivityResult as ApplicationMonthlyActivityResult
 
 /**
@@ -189,6 +201,22 @@ fun P503App(
     // selector rather than an empty picker that would read as an authoritative empty catalog.
     var cachedTagMerchantSelection by
         remember(ledger) { mutableStateOf<TagMerchantSelectionOptions?>(null) }
+    // P7-08 08.C (spec sections 5.1-5.5): the FULL tag/merchant authority (disabled and
+    // tombstoned rows included — the audit surface) loaded in the SAME leased read as the
+    // catalog snapshot. One authority load feeds the editor's selection options, the filter
+    // surface's options (disabled included, tombstoned excluded — spec 5.1), the management
+    // sections and the per-item CAS revisions. `null` = not yet loaded / unwired: consumers
+    // present the honest 载入中 placeholder (S2-2), never a faked empty catalog.
+    var cachedTagMerchantAuthority by remember(ledger) { mutableStateOf<TagMerchantAuthority?>(null) }
+    // The 08.C wiring probes, learned once off-thread (the 08.B-2 annotationEditWired precedent
+    // — no new LedgerSurfaces field, no main-thread facade read).
+    var tagMerchantFilterWired by remember(ledger) { mutableStateOf(false) }
+    var tagMerchantCatalogWired by remember(ledger) { mutableStateOf(false) }
+    // T5 (spec section 5.5): whether a filter surface was opened this session, and the armed
+    // re-request that follows an annotation/formal-surface change (the budget arm/consume twin,
+    // hosted locally because the shared P503HostCoordinator is not part of this batch's scope).
+    var tagMerchantFilterEverRequested by remember(ledger) { mutableStateOf(false) }
+    var pendingTagMerchantFilterReRequestAfterRefresh by remember(ledger) { mutableStateOf(false) }
     // P7-08 08.B-2 (spec section 4.4): whether the annotation-edit entry can be offered. The
     // command, its id source and its read port live on the facade behind the lease, so the host
     // cannot test them on the main thread; the flag is learned once off-thread (the runtime is
@@ -226,6 +254,17 @@ fun P503App(
                     ledger.leased { facade, _ -> runCatching { facade.tagMerchantSelectionOptions() }.getOrNull() }
                 val annotationWiredOutcome =
                     ledger.leased { facade, _ -> facade.updateTransactionAnnotation != null && facade.annotationRequestIdSource != null && facade.transactionAnnotationReader != null }
+                // P7-08 08.C: one lease covers the authority load and both wiring probes.
+                val tagMerchantOutcome =
+                    ledger.leased { facade, _ ->
+                        Triple(
+                            runCatching { facade.tagMerchantCatalogReader?.invoke()?.load(facade.ledgerId) }.getOrNull(),
+                            facade.queryTagMerchantFilterPage != null &&
+                                facade.queryMerchantAccumulation != null &&
+                                facade.tagMerchantExpectedCatalogItemVersion() != null,
+                            facade.executeTagMerchantCommand != null,
+                        )
+                    }
                 scope.launch {
                     when (outcome) {
                         is LeaseOutcome.Completed ->
@@ -252,6 +291,16 @@ fun P503App(
                     (annotationWiredOutcome as? LeaseOutcome.Completed)
                         ?.takeIf { ledger.isCurrentGeneration(it.generation) }
                         ?.let { annotationEditWired = it.value }
+                    (tagMerchantOutcome as? LeaseOutcome.Completed)
+                        ?.takeIf { ledger.isCurrentGeneration(it.generation) }
+                        ?.value
+                        ?.let { (authority, filterWired, catalogWired) ->
+                            // A null authority (unwired reader, or no per-ledger catalog yet)
+                            // keeps the previous value standing (the selection-load discipline).
+                            if (authority != null) cachedTagMerchantAuthority = authority
+                            tagMerchantFilterWired = filterWired
+                            tagMerchantCatalogWired = catalogWired
+                        }
                 }
             }
         }
@@ -407,6 +456,149 @@ fun P503App(
         retainedP705Request = retainedP705RequestAfterLanding(retainedP705Request, landed)
         state = landed.also { latestState.value = it }
     }
+    // ---------------------------------------------------------------- P7-08 08.C tag/merchant filter + catalog host surface
+
+    /**
+     * P7-08 08.C (spec sections 5.1/5.3): one bounded filter-page read, run OFF the UI thread
+     * under ONE lease that also resolves the expected catalog generation (the D-186
+     * compare-in-transaction gate consumes it inside the read's single snapshot). The landing
+     * is fingerprint-gated by the reducer (an old-condition return never overwrites the page),
+     * generation-gated here (a superseded lease never dispatches at all), and token-gated by
+     * the reducer (fix round P3-1: the landing presents the request token THIS dispatch was
+     * assigned; a read duplicated or superseded by a later dispatch can never append or merge).
+     */
+    fun requestTagMerchantFilterPage(
+        state: P503AppState.TagMerchantFilter,
+        replace: Boolean,
+        cursor: TagMerchantFilterCursor?,
+    ) {
+        if (!tagMerchantFilterWired) return
+        dispatch(P503UiEvent.RequestTagMerchantFilterPage(replace))
+        // Fix round (P3-1): dispatch is synchronous, so the token read back here is the one the
+        // reducer assigned to THIS request. A null means the event landed outside the filter
+        // surface (absorbed, no token advanced) — fail closed, no read is launched.
+        val requestToken = (latestState.value as? P503AppState.TagMerchantFilter)?.pageRequestToken ?: return
+        val fingerprint = tagMerchantFilterConditionFingerprint(ledger.ledgerId, state.condition)
+        val condition = state.condition
+        scope.launch(Dispatchers.Default) {
+            val outcome =
+                ledger.leased { facade, _ ->
+                    val expected =
+                        facade.tagMerchantExpectedCatalogItemVersion()
+                            ?: return@leased TagMerchantFilterReadResult.Failed(TagMerchantFilterFailureCode.FILTER_UNAVAILABLE)
+                    val read = facade.queryTagMerchantFilterPage
+                    if (read == null) {
+                        TagMerchantFilterReadResult.Failed(TagMerchantFilterFailureCode.FILTER_UNAVAILABLE)
+                    } else {
+                        try {
+                            read.query(ledger.ledgerId, condition, expected, TAG_MERCHANT_FILTER_PAGE_SIZE, cursor)
+                        } catch (failure: kotlinx.coroutines.CancellationException) {
+                            throw failure
+                        } catch (failure: Exception) {
+                            TagMerchantFilterReadResult.Failed(TagMerchantFilterFailureCode.FILTER_UNAVAILABLE)
+                        }
+                    }
+                }
+            val result =
+                (outcome as? LeaseOutcome.Completed)
+                    ?.takeIf { ledger.isCurrentGeneration(it.generation) }
+                    ?.value
+                    ?: TagMerchantFilterReadResult.Failed(TagMerchantFilterFailureCode.FILTER_UNAVAILABLE)
+            scope.launch { dispatch(P503UiEvent.TagMerchantFilterPageLanded(fingerprint, requestToken, result)) }
+        }
+    }
+
+    /**
+     * P7-08 08.C (spec section 5.4): one bounded merchant accumulation read for the surface's
+     * effective month; the landing is fingerprint-, month- AND request-token-gated by the
+     * reducer (the token twin of [requestTagMerchantFilterPage], fix round P3-1).
+     */
+    fun requestMerchantAccumulation(state: P503AppState.TagMerchantFilter) {
+        if (!tagMerchantFilterWired) return
+        val merchantId = state.condition.merchantId ?: return
+        dispatch(P503UiEvent.RequestMerchantAccumulation)
+        val requestToken = (latestState.value as? P503AppState.TagMerchantFilter)?.accumulationRequestToken ?: return
+        val fingerprint = tagMerchantFilterConditionFingerprint(ledger.ledgerId, state.condition)
+        val month = state.accumulationMonth
+        scope.launch(Dispatchers.Default) {
+            val outcome =
+                ledger.leased { facade, _ ->
+                    val expected =
+                        facade.tagMerchantExpectedCatalogItemVersion()
+                            ?: return@leased MerchantMonthlyAccumulationResult.Failed(TagMerchantFilterFailureCode.FILTER_UNAVAILABLE)
+                    val read = facade.queryMerchantAccumulation
+                    if (read == null) {
+                        MerchantMonthlyAccumulationResult.Failed(TagMerchantFilterFailureCode.FILTER_UNAVAILABLE)
+                    } else {
+                        try {
+                            read.query(ledger.ledgerId, merchantId, month, expected)
+                        } catch (failure: kotlinx.coroutines.CancellationException) {
+                            throw failure
+                        } catch (failure: Exception) {
+                            MerchantMonthlyAccumulationResult.Failed(TagMerchantFilterFailureCode.FILTER_UNAVAILABLE)
+                        }
+                    }
+                }
+            val result =
+                (outcome as? LeaseOutcome.Completed)
+                    ?.takeIf { ledger.isCurrentGeneration(it.generation) }
+                    ?.value
+                    ?: MerchantMonthlyAccumulationResult.Failed(TagMerchantFilterFailureCode.FILTER_UNAVAILABLE)
+            scope.launch { dispatch(P503UiEvent.MerchantAccumulationLanded(fingerprint, requestToken, month, result)) }
+        }
+    }
+
+    /**
+     * The filter surface's fresh request after OPEN or a condition/month change: one replace
+     * page read (spec section 5.3: a new condition is a new generation request) plus the
+     * accumulation when the condition names a merchant.
+     */
+    fun requestTagMerchantFilterFresh() {
+        val current = latestState.value as? P503AppState.TagMerchantFilter ?: return
+        requestTagMerchantFilterPage(current, replace = true, cursor = null)
+        if (current.condition.merchantId != null) requestMerchantAccumulation(current)
+    }
+
+    /** Opens the filter surface from the analysis tab's entry (the effective month seeds the accumulation). */
+    fun openTagMerchantFilter() {
+        if (!tagMerchantFilterWired) return
+        val month =
+            (latestState.value as? P503AppState.OverviewEmpty)?.selectedMonth
+                ?: resolvedCurrentMonth
+                ?: MonthlyBuckets.currentMonth(ledger.ledgerClock)
+        dispatch(P503UiEvent.OpenTagMerchantFilter(month))
+        tagMerchantFilterEverRequested = true
+        requestTagMerchantFilterFresh()
+    }
+
+    /**
+     * T5 (spec section 5.5): a condition or month change is a NEW generation request — dispatch
+     * the pure event (which resets the stale results) and immediately re-request.
+     */
+    fun dispatchTagMerchantFilterChange(event: P503UiEvent) {
+        dispatch(event)
+        requestTagMerchantFilterFresh()
+    }
+
+    /** T5: arms the post-refresh filter re-request (only once the surface has been opened). */
+    fun armTagMerchantFilterReRequestIfLoaded() {
+        if (tagMerchantFilterEverRequested) pendingTagMerchantFilterReRequestAfterRefresh = true
+    }
+
+    /** T5: completes the armed re-request after the authoritative refresh landed. */
+    fun consumeTagMerchantFilterReRequestAfterRefresh() {
+        if (!pendingTagMerchantFilterReRequestAfterRefresh) return
+        pendingTagMerchantFilterReRequestAfterRefresh = false
+        val current = latestState.value as? P503AppState.TagMerchantFilter ?: return
+        if (current.loadedEntries.isEmpty() && current.accumulation == null) return
+        requestTagMerchantFilterPage(current, replace = true, cursor = null)
+        if (current.condition.merchantId != null) requestMerchantAccumulation(current)
+    }
+
+    /** T5: clears the armed re-request on a failed refresh landing (the budget drop's twin). */
+    fun dropTagMerchantFilterReRequestAfterFailedRefresh() {
+        pendingTagMerchantFilterReRequestAfterRefresh = false
+    }
 
     // P5-04.2: system back only intercepts while the editor flow is on screen and carries the
     // overview snapshot needed to close back to the originating tab. Submitting swallows the
@@ -510,6 +702,9 @@ fun P503App(
                             // P7-07 07.D: the SAME landing hop completes the armed budget
                             // re-request (exactly one, stamped on the landed month).
                             landingHopCoordinator?.consumeBudgetMonthReRequestAfterRefresh(latestState.value)
+                            // P7-08 08.C (T5): the SAME landing hop completes the armed
+                            // tag/merchant filter re-request (exactly one, replace-mode).
+                            consumeTagMerchantFilterReRequestAfterRefresh()
                         }
                         else -> {
                             dispatch(P503UiEvent.RefreshFailed)
@@ -517,6 +712,7 @@ fun P503App(
                             // stale trigger must not be consumed by a later unrelated landing.
                             landingHopCoordinator?.dropMonthlyReRequestAfterFailedRefresh()
                             landingHopCoordinator?.dropBudgetMonthReRequestAfterFailedRefresh()
+                            dropTagMerchantFilterReRequestAfterFailedRefresh()
                         }
                     }
                     if (currentStateLoadCoordinator.loadCompleted()) refresh()
@@ -1981,6 +2177,8 @@ fun P503App(
                         if (completed) {
                             if (shouldArmImportBatchConfirmed(latestState.value)) {
                                 coordinator.onImportBatchConfirmed()
+                                // P7-08 08.C (T5): the same formal-surface change arms the filter re-request.
+                                armTagMerchantFilterReRequestIfLoaded()
                             }
                             requestImportReviewRowsRead()
                         }
@@ -2125,6 +2323,8 @@ fun P503App(
                         // arms exactly once).
                         if (shouldArmImportBatchConfirmed(latestState.value)) {
                             coordinator.onImportBatchConfirmed()
+                            // P7-08 08.C (T5): the same formal-surface change arms the filter re-request.
+                            armTagMerchantFilterReRequestIfLoaded()
                         }
                     }
                 }
@@ -2273,6 +2473,15 @@ fun P503App(
                             command.renameCategory(ledger.ledgerId, dialog.categoryId, dialog.nameText, version)
                         is CatalogDialog.ConfirmCategoryDelete ->
                             command.deleteCategory(ledger.ledgerId, dialog.categoryId, version)
+                        // P7-08 08.C: the tag/merchant dialogs route to runTagMerchantForm, so a
+                        // stray dispatch here performs nothing (null = no command result).
+                        is CatalogDialog.CreateTagItem,
+                        is CatalogDialog.RenameTagItem,
+                        is CatalogDialog.ConfirmTagItemDelete,
+                        is CatalogDialog.CreateMerchantItem,
+                        is CatalogDialog.RenameMerchantItem,
+                        is CatalogDialog.ConfirmMerchantItemDelete,
+                        -> null
                         CatalogDialog.None -> null
                     }
                 } ?: return@launch
@@ -2516,6 +2725,8 @@ fun P503App(
                 val result = outcome.value ?: return@launch
                 dispatch(P503UiEvent.TransactionEditResult(result))
                 refreshAfterP705Commit(result, coordinator)
+                // P7-08 08.C (T5): the same formal-surface change arms the filter re-request.
+                armTagMerchantFilterReRequestIfLoaded()
             }
         }
     }
@@ -2628,6 +2839,98 @@ fun P503App(
                 // through the same effective-surface refresh the P7-05 commits use (spec section
                 // 3.2; a rejection/stale/conflict refreshes nothing — the annotation is unchanged).
                 coordinator.onP705EffectiveSurfaceChanged()
+                // P7-08 08.C (T5): the same formal-surface change arms the filter re-request.
+                armTagMerchantFilterReRequestIfLoaded()
+            }
+        }
+    }
+
+    /**
+     * T5 (spec section 5.5 row 1): a catalog command changed the tag/merchant surface with ZERO
+     * transaction effect — the authoritative session refresh (options/reads follow one catalog
+     * version), the tag/merchant authority reload, and the loaded filter/accumulation
+     * re-request all follow.
+     */
+    fun refreshTagMerchantSurfacesAfterCommand() {
+        refreshCatalogSnapshot()
+        scope.launch(Dispatchers.Default) {
+            val outcome =
+                ledger.leased { facade, _ -> runCatching { facade.tagMerchantCatalogReader?.invoke()?.load(facade.ledgerId) }.getOrNull() }
+            scope.launch {
+                (outcome as? LeaseOutcome.Completed)
+                    ?.takeIf { ledger.isCurrentGeneration(it.generation) }
+                    ?.let { if (it.value != null) cachedTagMerchantAuthority = it.value }
+                val current = latestState.value as? P503AppState.TagMerchantFilter ?: return@launch
+                if (current.loadedEntries.isEmpty() && current.accumulation == null) return@launch
+                requestTagMerchantFilterPage(current, replace = true, cursor = null)
+                if (current.condition.merchantId != null) requestMerchantAccumulation(current)
+            }
+        }
+    }
+
+    /** The per-item CAS revision for one authority item (create uses the 0 sentinel). */
+    fun tagMerchantRevisionOf(
+        authority: TagMerchantAuthority,
+        kind: CatalogItemKind,
+        itemId: String,
+    ): Long? =
+        (if (kind == CatalogItemKind.TAG) authority.tags else authority.merchants)
+            .firstOrNull { it.id == itemId }
+            ?.revision
+
+    /** Runs one tag/merchant catalog-item command from a management dialog (off the UI thread). */
+    fun runTagMerchantForm(dialog: CatalogDialog) {
+        if (!tagMerchantCatalogWired) return
+        val authority = cachedTagMerchantAuthority ?: return
+        scope.launch {
+            val result =
+                ledger.probe { facade ->
+                    val command = facade.executeTagMerchantCommand ?: return@probe null
+                    when (dialog) {
+                        is CatalogDialog.CreateTagItem -> command.createItem(ledger.ledgerId, CatalogItemKind.TAG, dialog.nameText, expectedRevision = 0L)
+                        is CatalogDialog.RenameTagItem ->
+                            tagMerchantRevisionOf(authority, CatalogItemKind.TAG, dialog.itemId)
+                                ?.let { revision -> command.renameItem(ledger.ledgerId, CatalogItemKind.TAG, dialog.itemId, dialog.nameText, revision) }
+                        is CatalogDialog.ConfirmTagItemDelete ->
+                            tagMerchantRevisionOf(authority, CatalogItemKind.TAG, dialog.itemId)
+                                ?.let { revision -> command.deleteItem(ledger.ledgerId, CatalogItemKind.TAG, dialog.itemId, revision) }
+                        is CatalogDialog.CreateMerchantItem -> command.createItem(ledger.ledgerId, CatalogItemKind.MERCHANT, dialog.nameText, expectedRevision = 0L)
+                        is CatalogDialog.RenameMerchantItem ->
+                            tagMerchantRevisionOf(authority, CatalogItemKind.MERCHANT, dialog.itemId)
+                                ?.let { revision -> command.renameItem(ledger.ledgerId, CatalogItemKind.MERCHANT, dialog.itemId, dialog.nameText, revision) }
+                        is CatalogDialog.ConfirmMerchantItemDelete ->
+                            tagMerchantRevisionOf(authority, CatalogItemKind.MERCHANT, dialog.itemId)
+                                ?.let { revision -> command.deleteItem(ledger.ledgerId, CatalogItemKind.MERCHANT, dialog.itemId, revision) }
+                        else -> null
+                    }
+                } ?: return@launch
+            dispatch(P503UiEvent.TagMerchantCommandLanded(result))
+            if (result is TagMerchantCommandResult.Accepted ||
+                result is TagMerchantCommandResult.NoChange
+            ) {
+                refreshTagMerchantSurfacesAfterCommand()
+            }
+        }
+    }
+
+    /** Runs one enable/disable toggle (the ManageAccountActive host-handled precedent). */
+    fun runTagMerchantToggle(
+        kind: CatalogItemKind,
+        itemId: String,
+        active: Boolean,
+    ) {
+        if (!tagMerchantCatalogWired) return
+        val authority = cachedTagMerchantAuthority ?: return
+        val revision = tagMerchantRevisionOf(authority, kind, itemId) ?: return
+        scope.launch {
+            val result =
+                ledger.probe { facade -> facade.executeTagMerchantCommand?.setItemActive(ledger.ledgerId, kind, itemId, active, revision) }
+                    ?: return@launch
+            dispatch(P503UiEvent.TagMerchantCommandLanded(result))
+            if (result is TagMerchantCommandResult.Accepted ||
+                result is TagMerchantCommandResult.NoChange
+            ) {
+                refreshTagMerchantSurfacesAfterCommand()
             }
         }
     }
@@ -2652,6 +2955,8 @@ fun P503App(
                 val result = outcome.value ?: return@launch
                 dispatch(P503UiEvent.TransactionVoidResult(result))
                 refreshAfterP705Commit(result, coordinator)
+                // P7-08 08.C (T5): the same formal-surface change arms the filter re-request.
+                armTagMerchantFilterReRequestIfLoaded()
             }
         }
     }
@@ -2711,6 +3016,8 @@ fun P503App(
                 val result = outcome.value ?: return@launch
                 dispatch(P503UiEvent.TransactionRestoreResult(result))
                 refreshAfterP705Commit(result, coordinator)
+                // P7-08 08.C (T5): the same formal-surface change arms the filter re-request.
+                armTagMerchantFilterReRequestIfLoaded()
             }
         }
     }
@@ -3090,18 +3397,38 @@ fun P503App(
                         P503Tab.ACCOUNTS ->
                             P503CatalogManagementScreen(
                                 state = current,
+                                // P7-08 08.C: the same cached authority feeds the two new
+                                // sections (null = loading/unwired: honest 载入中 placeholder).
+                                tagMerchantAuthority = cachedTagMerchantAuthority,
                                 onEvent = { event ->
                                     when (event) {
                                         is P503UiEvent.ManageAccountActive,
                                         is P503UiEvent.ManageCategoryActive,
                                         is P503UiEvent.EnableCategoryGroup,
                                         -> runCatalogToggle(event)
+                                        // P7-08 08.C: the tag/merchant toggles are host-handled
+                                        // too (command + authority reload + filter re-request).
+                                        is P503UiEvent.ManageTagActive ->
+                                            runTagMerchantToggle(com.unifiedledger.domain.CatalogItemKind.TAG, event.itemId, event.active)
+                                        is P503UiEvent.ManageMerchantActive ->
+                                            runTagMerchantToggle(com.unifiedledger.domain.CatalogItemKind.MERCHANT, event.itemId, event.active)
                                         // P7-02.D E-4: persist the toggle first, then dispatch.
                                         is P503UiEvent.TogglePin -> runPinToggle(event.target)
                                         else -> dispatch(event)
                                     }
                                 },
-                                onSubmit = { dialog -> runCatalogForm(dialog) },
+                                onSubmit = { dialog ->
+                                    when (dialog) {
+                                        is CatalogDialog.CreateTagItem,
+                                        is CatalogDialog.RenameTagItem,
+                                        is CatalogDialog.ConfirmTagItemDelete,
+                                        is CatalogDialog.CreateMerchantItem,
+                                        is CatalogDialog.RenameMerchantItem,
+                                        is CatalogDialog.ConfirmMerchantItemDelete,
+                                        -> runTagMerchantForm(dialog)
+                                        else -> runCatalogForm(dialog)
+                                    }
+                                },
                                 onRefresh = { refreshCatalogSnapshot() },
                             )
                         P503Tab.ANALYSIS -> {
@@ -3109,16 +3436,27 @@ fun P503App(
                             // budget surface is wired (no dead region). It owns its own loading/
                             // failure copy and its config affordances; the retained read-failure
                             // render below deliberately passes none (read-only, the F1 rule).
+                            // P7-08 08.C: the filter entry rides the analysis tab's existing
+                            // composable-slot seam (the budget region slot) — the entry button
+                            // precedes the budget region inside the slot, and the slot is
+                            // non-null when EITHER surface is wired (no dead affordance).
                             val budgetRegionSlot: (@Composable () -> Unit)? =
-                                if (budgetWired) {
+                                if (budgetWired || tagMerchantFilterWired) {
                                     {
-                                        P503BudgetRegion(
-                                            view = current.budgetView,
-                                            categoryName = { id -> budgetCategoryNames[id] },
-                                            parentIdOf = { id -> budgetCategoryParents[id] },
-                                            pickerCategories = budgetPickerChoices,
-                                            onOpenBudgetConfig = ::openBudgetConfig,
-                                        )
+                                        if (tagMerchantFilterWired) {
+                                            TextButton(onClick = ::openTagMerchantFilter) {
+                                                Text("标签与商家筛选")
+                                            }
+                                        }
+                                        if (budgetWired) {
+                                            P503BudgetRegion(
+                                                view = current.budgetView,
+                                                categoryName = { id -> budgetCategoryNames[id] },
+                                                parentIdOf = { id -> budgetCategoryParents[id] },
+                                                pickerCategories = budgetPickerChoices,
+                                                onOpenBudgetConfig = ::openBudgetConfig,
+                                            )
+                                        }
                                     }
                                 } else {
                                     null
@@ -3377,6 +3715,36 @@ fun P503App(
                     onCloseMonitoring = { confirmBudgetClose(current) },
                     onDismiss = { dispatch(P503UiEvent.CloseBudgetConfig) },
                 )
+            // P7-08 08.C (spec sections 5.1/5.4): the filter surface. The option projections
+            // come from the cached authority — the filter's own rule (DISABLED included,
+            // tombstoned excluded, spec 5.1) applies HERE, on the same single authority load
+            // that feeds the editor's selection options and the management sections.
+            is P503AppState.TagMerchantFilter -> {
+                val authority = cachedTagMerchantAuthority
+                P503TagMerchantFilterScreen(
+                    state = current,
+                    tagOptions = authority?.tags?.let(::tagMerchantFilterTagOptions),
+                    merchantOptions = authority?.merchants?.let(::tagMerchantFilterMerchantOptions),
+                    onToggleTag = { tagId -> dispatchTagMerchantFilterChange(P503UiEvent.ToggleFilterTag(tagId)) },
+                    onSetTagMatch = { mode -> dispatchTagMerchantFilterChange(P503UiEvent.SetFilterTagMatch(mode)) },
+                    onSelectMerchant = { merchantId -> dispatchTagMerchantFilterChange(P503UiEvent.SetFilterMerchant(merchantId)) },
+                    onLoadMore = {
+                        val currentFilter = latestState.value as? P503AppState.TagMerchantFilter ?: return@P503TagMerchantFilterScreen
+                        requestTagMerchantFilterPage(currentFilter, replace = false, cursor = currentFilter.nextCursor)
+                    },
+                    onShiftMonth = { delta ->
+                        val currentFilter = latestState.value as? P503AppState.TagMerchantFilter ?: return@P503TagMerchantFilterScreen
+                        val next =
+                            if (delta < 0) {
+                                currentFilter.accumulationMonth.minus(1, DateTimeUnit.MONTH)
+                            } else {
+                                currentFilter.accumulationMonth.plus(1, DateTimeUnit.MONTH)
+                            }
+                        dispatchTagMerchantFilterChange(P503UiEvent.SetFilterAccumulationMonth(next))
+                    },
+                    onBack = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                )
+            }
             is P503AppState.BackupExport ->
                 P503BackupExportScreen(
                     state = current,
@@ -3702,6 +4070,9 @@ private fun isBackEnabled(state: P503AppState): Boolean =
         // P7-07 07.D (D-184): the budget config surface returns to its preserved overview; while
         // a commit is in flight it keeps its marker and must not leave (提交中不得离开).
         is P503AppState.BudgetConfig -> true
+        // P7-08 08.C: the filter surface returns to its preserved overview (its reads are
+        // absorbable, so there is no submitting marker to intercept).
+        is P503AppState.TagMerchantFilter -> true
         // P7-06 06.B (D-177): the export surface returns to its preserved overview; while an export
         // is running it keeps its marker and must not leave (提交中不得离开), so the back channel is
         // intercepted and swallowed like the P7-05 submitting surfaces.
@@ -3719,6 +4090,9 @@ private fun isBackEnabled(state: P503AppState): Boolean =
             state.context == InfrastructureFailureContext.SUBMISSION && state.overview != null
         else -> false
     }
+
+/** P7-08 08.C: the frozen filter page size (the bounded read's UI-facing bound). */
+private const val TAG_MERCHANT_FILTER_PAGE_SIZE = 50
 
 /**
  * P5-04.3: dispatching Back is only legal from the Back-able states; Submitting swallows the
