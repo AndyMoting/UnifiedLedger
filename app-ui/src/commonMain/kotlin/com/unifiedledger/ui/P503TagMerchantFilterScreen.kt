@@ -160,10 +160,11 @@ internal fun P503TagMerchantFilterScreen(
                 message,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.semantics {
-                    contentDescription = message
-                    liveRegion = LiveRegionMode.Polite
-                },
+                modifier =
+                    Modifier.semantics {
+                        contentDescription = message
+                        liveRegion = LiveRegionMode.Polite
+                    },
             )
             Spacer(Modifier.height(4.dp))
         }
@@ -197,10 +198,11 @@ internal fun P503TagMerchantFilterScreen(
             Text(
                 message,
                 style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.semantics {
-                    contentDescription = message
-                    liveRegion = LiveRegionMode.Polite
-                },
+                modifier =
+                    Modifier.semantics {
+                        contentDescription = message
+                        liveRegion = LiveRegionMode.Polite
+                    },
             )
         }
         Spacer(Modifier.height(4.dp))
@@ -248,10 +250,11 @@ internal fun P503TagMerchantFilterScreen(
                         Text(
                             message,
                             style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.semantics {
-                                contentDescription = message
-                                liveRegion = LiveRegionMode.Polite
-                            },
+                            modifier =
+                                Modifier.semantics {
+                                    contentDescription = message
+                                    liveRegion = LiveRegionMode.Polite
+                                },
                         )
                     }
                     is MerchantMonthlyAccumulationResult.Failed -> {
@@ -260,10 +263,11 @@ internal fun P503TagMerchantFilterScreen(
                             message,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.semantics {
-                                contentDescription = message
-                                liveRegion = LiveRegionMode.Polite
-                            },
+                            modifier =
+                                Modifier.semantics {
+                                    contentDescription = message
+                                    liveRegion = LiveRegionMode.Polite
+                                },
                         )
                     }
                 }

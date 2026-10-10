@@ -20,8 +20,8 @@ import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CounterpartyId
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.TransactionId
-import kotlin.time.Instant
 import kotlinx.datetime.YearMonth
+import kotlin.time.Instant
 
 /**
  * P5-03 shared UI state machine (spec sections 7.1-7.2). Twelve P5-03/P7-01/P7-02 states plus

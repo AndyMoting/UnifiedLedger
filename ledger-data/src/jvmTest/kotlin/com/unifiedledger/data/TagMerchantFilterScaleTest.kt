@@ -9,14 +9,13 @@ import com.unifiedledger.application.TagMerchantFilterCursor
 import com.unifiedledger.application.TagMerchantFilterReadResult
 import com.unifiedledger.application.TagMerchantTagMatchMode
 import com.unifiedledger.application.foldTagMerchantGroups
-import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.TagId
+import kotlinx.datetime.YearMonth
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Instant
-import kotlinx.datetime.YearMonth
 
 /**
  * P7-08 08.C scale leg (P708-A09 intent; the A09 acceptance registration belongs to the main
@@ -122,7 +121,12 @@ class TagMerchantFilterScaleTest {
                 }
             assertEquals(annotated.filter { it % TAG_COUNT == 0 }.size, overlapEntries.size)
             val overlapGroups = foldTagMerchantGroups(overlapEntries, overlapCondition.tagIds, ledgerId, catalog)
-            val overlapTotal = overlapEntries.sumOf { entry -> entry.row.postings.first().amount.minorUnits }
+            val overlapTotal =
+                overlapEntries.sumOf { entry ->
+                    entry.row.postings
+                        .first()
+                        .amount.minorUnits
+                }
             assertEquals(overlapTotal, overlapGroups.getValue(TagId("tag-00")).values.single())
             assertEquals(overlapTotal, overlapGroups.getValue(TagId("tag-07")).values.single())
             assertTrue(
@@ -132,7 +136,8 @@ class TagMerchantFilterScaleTest {
 
             // Stable first/last items: a second read's endpoints equal the manifest's.
             val secondFirst =
-                (adapter.readPage(ledgerId, orCondition, GENERATION, PAGE_SIZE, null) as TagMerchantFilterReadResult.Success).page.entries
+                (adapter.readPage(ledgerId, orCondition, GENERATION, PAGE_SIZE, null) as TagMerchantFilterReadResult.Success)
+                    .page.entries
                     .first()
             assertEquals(expectedOrOrder.first(), secondFirst.row.transactionId.value)
             assertEquals(expectedOrOrder.last(), visited.last())
@@ -285,8 +290,7 @@ class TagMerchantFilterScaleTest {
 
     private fun amountMinor(index: Int): Long = 1_000L + index % 97 * 137L
 
-    private fun statisticsInstant(index: Int): Instant =
-        if (index % 3 == 0) P705Fixture.aprilStatistics else P705Fixture.marchStatistics
+    private fun statisticsInstant(index: Int): Instant = if (index % 3 == 0) P705Fixture.aprilStatistics else P705Fixture.marchStatistics
 
     private companion object {
         /** The fixed catalog generation the scale fixture's tag/merchant catalog sits at. */

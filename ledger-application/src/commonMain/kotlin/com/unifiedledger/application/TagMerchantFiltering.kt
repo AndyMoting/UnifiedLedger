@@ -5,10 +5,10 @@ import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.TagId
-import kotlin.time.Instant
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.YearMonth
 import kotlinx.datetime.plus
+import kotlin.time.Instant
 
 /*
  * P7-08 08.C (D-187; spec docs/specs/2026-09-30-p7-08-tag-merchant-design.md sections 5.1-5.4)
@@ -71,7 +71,11 @@ fun canonicalTagMerchantFilterConditionSnapshot(
     ledgerId: LedgerId,
     condition: TagMerchantFilterCondition,
 ): String {
-    val tags = condition.tagIds.map { it.value }.distinct().sorted()
+    val tags =
+        condition.tagIds
+            .map { it.value }
+            .distinct()
+            .sorted()
     return "{\"ledger\":${jcsString(ledgerId.value)},\"tags\":[" +
         tags.joinToString(separator = ",") { jcsString(it) } +
         "],\"match\":${jcsString(condition.tagMatch.name)},\"merchant\":" +
@@ -110,7 +114,6 @@ enum class TagMerchantFilterFailureCode(
 
     /** The catalog authority is unreadable/inconsistent (posting account or catalog item unknown). */
     FILTER_BAD_CATALOG("TagMerchantFilterBadCatalog"),
-    ;
 }
 
 /** Keyset cursor of the bounded filter read: the statistics projection instant + transaction id. */
@@ -301,8 +304,9 @@ fun foldTagMerchantGroups(
                     .values
                     .flatMap { month -> month.currencies }
                     .fold(emptyMap<CurrencyUnit, Long>()) { acc, activity ->
-                        val merged = checkedAddMinor(acc[activity.currency] ?: 0L, activity.netExpenseMinorUnits)
-                            ?: throw ArithmeticException("tag group net expense overflow for ${activity.currency.code}")
+                        val merged =
+                            checkedAddMinor(acc[activity.currency] ?: 0L, activity.netExpenseMinorUnits)
+                                ?: throw ArithmeticException("tag group net expense overflow for ${activity.currency.code}")
                         acc + (activity.currency to merged)
                     }
             }

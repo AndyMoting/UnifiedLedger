@@ -67,7 +67,11 @@ class SqlDelightTagMerchantFilterReadAdapter(
         cursor: TagMerchantFilterCursor?,
     ): TagMerchantFilterReadResult {
         require(pageSize > 0) { "filter page size must be positive" }
-        val tags = condition.tagIds.map { it.value }.distinct().sorted()
+        val tags =
+            condition.tagIds
+                .map { it.value }
+                .distinct()
+                .sorted()
         // An empty tag condition is "all transactions" (spec 5.1); the IN list must never be
         // empty, so the dormant EXISTS receives a one-element list that matches nothing while
         // `min_tag_hits = 0` admits every row.
@@ -97,17 +101,18 @@ class SqlDelightTagMerchantFilterReadAdapter(
                 // TRANSACTION is dropped (the CTE binds the LIMIT per transaction, so the
                 // lookahead is whole transactions) and the page never exceeds the bound.
                 val raw =
-                    database.ledgerQueries.tagMerchantFilterRows(
-                        ledger_id = ledgerId.value,
-                        min_tag_hits = minTagHits,
-                        tags = tagList,
-                        merchant_id = condition.merchantId?.value,
-                        cursor_nanos = cursor?.statisticsAtNanos,
-                        cursor_transaction_id = cursor?.transactionId ?: "",
-                        page_size = pageSize.toLong() + 1L,
-                    ).executeAsList()
-                    .groupBy { it.transaction_id }
-                    .toList()
+                    database.ledgerQueries
+                        .tagMerchantFilterRows(
+                            ledger_id = ledgerId.value,
+                            min_tag_hits = minTagHits,
+                            tags = tagList,
+                            merchant_id = condition.merchantId?.value,
+                            cursor_nanos = cursor?.statisticsAtNanos,
+                            cursor_transaction_id = cursor?.transactionId ?: "",
+                            page_size = pageSize.toLong() + 1L,
+                        ).executeAsList()
+                        .groupBy { it.transaction_id }
+                        .toList()
                 val hasMore = raw.size > pageSize
                 val groupedRows = if (hasMore) raw.dropLast(1) else raw
                 val tagIdsByTransaction =

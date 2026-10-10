@@ -94,7 +94,6 @@ import com.unifiedledger.application.ManualTransferSaveInput
 import com.unifiedledger.application.ManualTransferSaveResult
 import com.unifiedledger.application.ManualTransferSubmissionResult
 import com.unifiedledger.application.MerchantMonthlyAccumulationResult
-import com.unifiedledger.application.MonthlyActivityResult as ApplicationMonthlyActivityResult
 import com.unifiedledger.application.MonthlyBuckets
 import com.unifiedledger.application.MonthlyTrend
 import com.unifiedledger.application.ParseManualExpenseAmount
@@ -103,7 +102,6 @@ import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.application.TagMerchantAuthority
 import com.unifiedledger.application.TagMerchantCommandResult
-import com.unifiedledger.application.TagMerchantFilterCondition
 import com.unifiedledger.application.TagMerchantFilterCursor
 import com.unifiedledger.application.TagMerchantFilterFailureCode
 import com.unifiedledger.application.TagMerchantFilterReadResult
@@ -136,6 +134,7 @@ import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.YearMonth
 import kotlinx.datetime.minus
 import kotlinx.datetime.plus
+import com.unifiedledger.application.MonthlyActivityResult as ApplicationMonthlyActivityResult
 
 /**
  * D-134 D2-D1 shared dual-theme wrapper: an explicit light/dark colorScheme following the
@@ -600,7 +599,6 @@ fun P503App(
     fun dropTagMerchantFilterReRequestAfterFailedRefresh() {
         pendingTagMerchantFilterReRequestAfterRefresh = false
     }
-
 
     // P5-04.2: system back only intercepts while the editor flow is on screen and carries the
     // overview snapshot needed to close back to the originating tab. Submitting swallows the
@@ -2877,7 +2875,8 @@ fun P503App(
         itemId: String,
     ): Long? =
         (if (kind == CatalogItemKind.TAG) authority.tags else authority.merchants)
-            .firstOrNull { it.id == itemId }?.revision
+            .firstOrNull { it.id == itemId }
+            ?.revision
 
     /** Runs one tag/merchant catalog-item command from a management dialog (off the UI thread). */
     fun runTagMerchantForm(dialog: CatalogDialog) {
@@ -4092,15 +4091,15 @@ private fun isBackEnabled(state: P503AppState): Boolean =
         else -> false
     }
 
+/** P7-08 08.C: the frozen filter page size (the bounded read's UI-facing bound). */
+private const val TAG_MERCHANT_FILTER_PAGE_SIZE = 50
+
 /**
  * P5-04.3: dispatching Back is only legal from the Back-able states; Submitting swallows the
  * back and every other state (including the HOME overview root) must not dispatch one.
  * P7-04.D: the import batch dispatch state joins Submitting in swallowing the back — the only
  * exits are the explicit Resume/Abandon affordances (显式退出只经 AbandonImportBatch).
  */
-/** P7-08 08.C: the frozen filter page size (the bounded read's UI-facing bound). */
-private const val TAG_MERCHANT_FILTER_PAGE_SIZE = 50
-
 private fun isBackDispatchSafe(state: P503AppState): Boolean =
     isBackEnabled(state) &&
         state !is P503AppState.Submitting &&

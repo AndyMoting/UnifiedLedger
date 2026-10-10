@@ -62,8 +62,20 @@ class TagMerchantFilterReadTest {
             // Three transactions of the SAME 1_000 minor amount: all three are returned —
             // an amount-based DISTINCT would silently drop two of them (A01 third vector).
             assertEquals(listOf("tx-only-b", "tx-only-a", "tx-both"), orPage.entries.map { it.row.transactionId.value })
-            assertTrue(orPage.entries.all { it.row.postings.first().amount.minorUnits == 1_000L })
-            assertEquals(setOf(tagA, tagB), orPage.entries.first { it.row.transactionId.value == "tx-both" }.tagIds.toSet())
+            assertTrue(
+                orPage.entries.all {
+                    it.row.postings
+                        .first()
+                        .amount.minorUnits == 1_000L
+                },
+            )
+            assertEquals(
+                setOf(tagA, tagB),
+                orPage.entries
+                    .first { it.row.transactionId.value == "tx-both" }
+                    .tagIds
+                    .toSet(),
+            )
 
             val and =
                 assertIs<TagMerchantFilterReadResult.Success>(
