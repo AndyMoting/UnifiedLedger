@@ -276,7 +276,11 @@ fun sortTagMerchantFilterEntriesForDisplay(entries: List<TagMerchantFilterEntry>
  *
  * Fail-closed like every fold: a posting account absent from [catalog] throws
  * [IllegalStateException] and a checked overflow throws [ArithmeticException] (both via
- * [MonthlyBuckets.aggregate]); the caller maps them to the typed bad-catalog failure.
+ * [MonthlyBuckets.aggregate]). The two callers handle that differently — the host's tag/merchant
+ * read adapter (ledger-data) catches and maps the exceptions to the typed bad-catalog failure,
+ * while the filter screen folds its already-landed, adapter-validated pages inside
+ * `remember {}` and fails loud instead (the shell's unhandled-event precedent): a catalog
+ * snapshot that lost a posting account is a broken invariant, not a renderable empty result.
  */
 fun foldTagMerchantGroups(
     entries: List<TagMerchantFilterEntry>,

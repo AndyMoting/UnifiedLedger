@@ -13,6 +13,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -101,6 +102,7 @@ import com.unifiedledger.application.RecycleBinResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.application.TagMerchantAuthority
+import com.unifiedledger.application.TagMerchantCommandResult
 import com.unifiedledger.application.TagMerchantFilterCondition
 import com.unifiedledger.application.TagMerchantFilterCursor
 import com.unifiedledger.application.TagMerchantFilterFailureCode
@@ -461,8 +463,10 @@ fun P503App(
      * P7-08 08.C (spec sections 5.1/5.3): one bounded filter-page read, run OFF the UI thread
      * under ONE lease that also resolves the expected catalog generation (the D-186
      * compare-in-transaction gate consumes it inside the read's single snapshot). The landing
-     * is fingerprint-gated by the reducer (an old-condition return never overwrites the page)
-     * and generation-gated here (a superseded lease never dispatches at all).
+     * is fingerprint-gated by the reducer (an old-condition return never overwrites the page),
+     * generation-gated here (a superseded lease never dispatches at all), and token-gated by
+     * the reducer (fix round P3-1: the landing presents the request token THIS dispatch was
+     * assigned; a read duplicated or superseded by a later dispatch can never append or merge).
      */
     fun requestTagMerchantFilterPage(
         state: P503AppState.TagMerchantFilter,
@@ -471,6 +475,10 @@ fun P503App(
     ) {
         if (!tagMerchantFilterWired) return
         dispatch(P503UiEvent.RequestTagMerchantFilterPage(replace))
+        // Fix round (P3-1): dispatch is synchronous, so the token read back here is the one the
+        // reducer assigned to THIS request. A null means the event landed outside the filter
+        // surface (absorbed, no token advanced) — fail closed, no read is launched.
+        val requestToken = (latestState.value as? P503AppState.TagMerchantFilter)?.pageRequestToken ?: return
         val fingerprint = tagMerchantFilterConditionFingerprint(ledger.ledgerId, state.condition)
         val condition = state.condition
         scope.launch(Dispatchers.Default) {
@@ -497,18 +505,20 @@ fun P503App(
                     ?.takeIf { ledger.isCurrentGeneration(it.generation) }
                     ?.value
                     ?: TagMerchantFilterReadResult.Failed(TagMerchantFilterFailureCode.FILTER_UNAVAILABLE)
-            scope.launch { dispatch(P503UiEvent.TagMerchantFilterPageLanded(fingerprint, result)) }
+            scope.launch { dispatch(P503UiEvent.TagMerchantFilterPageLanded(fingerprint, requestToken, result)) }
         }
     }
 
     /**
      * P7-08 08.C (spec section 5.4): one bounded merchant accumulation read for the surface's
-     * effective month; the landing is fingerprint- AND month-gated by the reducer.
+     * effective month; the landing is fingerprint-, month- AND request-token-gated by the
+     * reducer (the token twin of [requestTagMerchantFilterPage], fix round P3-1).
      */
     fun requestMerchantAccumulation(state: P503AppState.TagMerchantFilter) {
         if (!tagMerchantFilterWired) return
         val merchantId = state.condition.merchantId ?: return
         dispatch(P503UiEvent.RequestMerchantAccumulation)
+        val requestToken = (latestState.value as? P503AppState.TagMerchantFilter)?.accumulationRequestToken ?: return
         val fingerprint = tagMerchantFilterConditionFingerprint(ledger.ledgerId, state.condition)
         val month = state.accumulationMonth
         scope.launch(Dispatchers.Default) {
@@ -535,7 +545,7 @@ fun P503App(
                     ?.takeIf { ledger.isCurrentGeneration(it.generation) }
                     ?.value
                     ?: MerchantMonthlyAccumulationResult.Failed(TagMerchantFilterFailureCode.FILTER_UNAVAILABLE)
-            scope.launch { dispatch(P503UiEvent.MerchantAccumulationLanded(fingerprint, month, result)) }
+            scope.launch { dispatch(P503UiEvent.MerchantAccumulationLanded(fingerprint, requestToken, month, result)) }
         }
     }
 
@@ -2896,8 +2906,8 @@ fun P503App(
                     }
                 } ?: return@launch
             dispatch(P503UiEvent.TagMerchantCommandLanded(result))
-            if (result is com.unifiedledger.application.TagMerchantCommandResult.Accepted ||
-                result is com.unifiedledger.application.TagMerchantCommandResult.NoChange
+            if (result is TagMerchantCommandResult.Accepted ||
+                result is TagMerchantCommandResult.NoChange
             ) {
                 refreshTagMerchantSurfacesAfterCommand()
             }
@@ -2918,8 +2928,8 @@ fun P503App(
                 ledger.probe { facade -> facade.executeTagMerchantCommand?.setItemActive(ledger.ledgerId, kind, itemId, active, revision) }
                     ?: return@launch
             dispatch(P503UiEvent.TagMerchantCommandLanded(result))
-            if (result is com.unifiedledger.application.TagMerchantCommandResult.Accepted ||
-                result is com.unifiedledger.application.TagMerchantCommandResult.NoChange
+            if (result is TagMerchantCommandResult.Accepted ||
+                result is TagMerchantCommandResult.NoChange
             ) {
                 refreshTagMerchantSurfacesAfterCommand()
             }
@@ -3435,8 +3445,8 @@ fun P503App(
                                 if (budgetWired || tagMerchantFilterWired) {
                                     {
                                         if (tagMerchantFilterWired) {
-                                            androidx.compose.material3.TextButton(onClick = ::openTagMerchantFilter) {
-                                                androidx.compose.material3.Text("标签与商家筛选")
+                                            TextButton(onClick = ::openTagMerchantFilter) {
+                                                Text("标签与商家筛选")
                                             }
                                         }
                                         if (budgetWired) {

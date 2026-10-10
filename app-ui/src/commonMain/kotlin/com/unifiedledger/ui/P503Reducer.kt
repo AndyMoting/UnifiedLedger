@@ -253,11 +253,13 @@ class P503ReducerImpl(
         }
 
     /**
-     * P7-08 08.C: the filter surface's transitions. Every landing is fingerprint-gated against
-     * the LIVE condition (and, for the accumulation, its month): an old-condition return is
-     * dropped whole (spec section 5.3), never merged into the page. A condition change resets
-     * the accumulated pages (results of the old condition must not render under the new one);
-     * a merchant or month change drops the accumulation. All other events are absorbed.
+     * P7-08 08.C: the filter surface's transitions. Every landing is gated against the LIVE
+     * condition fingerprint (and, for the accumulation, its month) AND the surface's current
+     * request token: an old-condition return is dropped whole (spec section 5.3), never merged
+     * into the page, and a landing whose read was superseded or duplicated is dropped whole too
+     * (fix round P3-1). A condition change resets the accumulated pages (results of the old
+     * condition must not render under the new one); a merchant or month change drops the
+     * accumulation. All other events are absorbed.
      */
     private fun reduceTagMerchantFilter(
         state: P503AppState.TagMerchantFilter,
@@ -298,21 +300,28 @@ class P503ReducerImpl(
                 )
             is P503UiEvent.SetFilterAccumulationMonth ->
                 state.copy(accumulationMonth = event.month, accumulation = null, accumulationLoading = false)
-            is P503UiEvent.RequestTagMerchantFilterPage ->
-                if (state.pageLoading) {
-                    state
-                } else {
-                    state.copy(
-                        pageLoading = true,
-                        pageFailure = null,
-                        loadedEntries = if (event.replace) emptyList() else state.loadedEntries,
-                        hasMore = if (event.replace) false else state.hasMore,
-                    )
-                }
+            is P503UiEvent.RequestTagMerchantFilterPage -> {
+                // Fix round (P3-1): the page token is the request identity. EVERY dispatch
+                // advances it — including an append absorbed under 一次一页 (its fields below
+                // add nothing) — so the host's landing for THIS dispatch presents a token only
+                // it can carry, and a read superseded by a newer request (a replace) or
+                // duplicated by a same-frame re-tap can never have its landing applied.
+                // A replace is a generation change: it supersedes whatever read is in flight
+                // and clears the accumulated rows it would have merged into.
+                state.copy(
+                    pageRequestToken = state.pageRequestToken + 1,
+                    pageLoading = true,
+                    pageFailure = null,
+                    loadedEntries = if (event.replace) emptyList() else state.loadedEntries,
+                    hasMore = if (event.replace) false else state.hasMore,
+                )
+            }
             is P503UiEvent.TagMerchantFilterPageLanded -> {
                 val liveFingerprint = tagMerchantFilterConditionFingerprint(state.overview.state.ledgerId, state.condition)
-                if (event.conditionFingerprint != liveFingerprint) {
-                    // An old-condition return: dropped whole (spec section 5.3).
+                if (event.conditionFingerprint != liveFingerprint || event.pageRequestToken != state.pageRequestToken) {
+                    // An old-condition return, or a landing whose read is no longer this
+                    // surface's current page request (a superseded generation or a duplicate
+                    // read): dropped whole (spec section 5.3 + the fix round's token gate).
                     state
                 } else {
                     when (val result = event.result) {
@@ -334,10 +343,17 @@ class P503ReducerImpl(
                 }
             }
             P503UiEvent.RequestMerchantAccumulation ->
-                if (state.accumulationLoading) state else state.copy(accumulationLoading = true)
+                // Fix round (P3-1): the accumulation's request twin — every dispatch advances
+                // the token, so a landing from a read superseded by a newer request (a month/
+                // merchant change or a refresh re-request) can never overwrite the result.
+                state.copy(accumulationRequestToken = state.accumulationRequestToken + 1, accumulationLoading = true)
             is P503UiEvent.MerchantAccumulationLanded -> {
                 val liveFingerprint = tagMerchantFilterConditionFingerprint(state.overview.state.ledgerId, state.condition)
-                if (event.conditionFingerprint != liveFingerprint || event.month != state.accumulationMonth) {
+                if (
+                    event.conditionFingerprint != liveFingerprint ||
+                    event.month != state.accumulationMonth ||
+                    event.requestToken != state.accumulationRequestToken
+                ) {
                     state
                 } else {
                     state.copy(accumulationLoading = false, accumulation = event.result)

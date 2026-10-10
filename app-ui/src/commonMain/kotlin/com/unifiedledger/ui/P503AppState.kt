@@ -7,14 +7,21 @@ import com.unifiedledger.application.EntryPinTarget
 import com.unifiedledger.application.EntryType
 import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.LedgerCurrentState
+import com.unifiedledger.application.MerchantMonthlyAccumulationResult
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.TagMerchantFilterCondition
+import com.unifiedledger.application.TagMerchantFilterCursor
+import com.unifiedledger.application.TagMerchantFilterEntry
+import com.unifiedledger.application.TagMerchantFilterFailureCode
 import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CounterpartyId
+import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.TransactionId
 import kotlin.time.Instant
+import kotlinx.datetime.YearMonth
 
 /**
  * P5-03 shared UI state machine (spec sections 7.1-7.2). Twelve P5-03/P7-01/P7-02 states plus
@@ -547,25 +554,35 @@ sealed interface P503AppState {
      * [accumulationMonth]. The loading markers absorb duplicate request events (一次一页).
      *
      * A landing applies only when its condition fingerprint (and, for the accumulation, its
-     * month) still matches this surface's live values — an old-condition or old-generation
-     * return can never overwrite the page (spec section 5.3; the host gates the lease
-     * generation, the reducer gates the fingerprint).
+     * month) still matches this surface's live values AND its request token is still the
+     * surface's current one — an old-condition or old-generation return can never overwrite the
+     * page (spec section 5.3; the host gates the lease generation, the reducer gates the
+     * fingerprint and the fix round's request token).
      */
     data class TagMerchantFilter(
         val overview: OverviewEmpty,
-        val accumulationMonth: kotlinx.datetime.YearMonth,
-        val condition: com.unifiedledger.application.TagMerchantFilterCondition =
-            com.unifiedledger.application.TagMerchantFilterCondition(),
-        val loadedEntries: List<com.unifiedledger.application.TagMerchantFilterEntry> = emptyList(),
+        val accumulationMonth: YearMonth,
+        val condition: TagMerchantFilterCondition = TagMerchantFilterCondition(),
+        val loadedEntries: List<TagMerchantFilterEntry> = emptyList(),
         val hasMore: Boolean = false,
         /** The last landed page's continuation cursor (null = no further page). */
-        val nextCursor: com.unifiedledger.application.TagMerchantFilterCursor? = null,
-        val pageFailure: com.unifiedledger.application.TagMerchantFilterFailureCode? = null,
+        val nextCursor: TagMerchantFilterCursor? = null,
+        val pageFailure: TagMerchantFilterFailureCode? = null,
         val pageLoading: Boolean = false,
-        val accumulation: com.unifiedledger.application.MerchantMonthlyAccumulationResult? = null,
+        /**
+         * Fix round (P3-1): the monotonic request identity of the page read. EVERY page-request
+         * dispatch advances it (absorbed 一次一页 appends included), the host presents it back on
+         * the landing, and the reducer applies a landing only when its token is still current — a
+         * duplicate same-condition read or a read superseded by a newer request can never append
+         * or merge. Pure bookkeeping: never rendered.
+         */
+        val pageRequestToken: Long = 0L,
+        val accumulation: MerchantMonthlyAccumulationResult? = null,
         val accumulationLoading: Boolean = false,
+        /** [pageRequestToken]'s accumulation twin (see [P503UiEvent.MerchantAccumulationLanded]). */
+        val accumulationRequestToken: Long = 0L,
         /** The latest landed page's account catalog snapshot (the group fold's kind dispatch). */
-        val entryCatalog: com.unifiedledger.domain.LedgerCatalog? = null,
+        val entryCatalog: LedgerCatalog? = null,
     ) : P503AppState
 
     /**

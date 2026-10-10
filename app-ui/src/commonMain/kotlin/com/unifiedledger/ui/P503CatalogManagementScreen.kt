@@ -330,13 +330,6 @@ private fun LeafRow(
 }
 
 /**
- * P7-08 08.C (R-222-11): the tag and merchant management sections. Each section lists its live
- * items (active and disabled — a disabled item keeps its 改名/启用/删除 actions) and renders the
- * TOMBSTONED items as a READ-ONLY audit block (the open-item-11 ruling): a tombstoned item
- * offers no rename/disable/delete affordance at all — the domain blocks every command on it and
- * the UI exposes no dead entry either.
- */
-/**
  * The section's ACTIONABLE rows: every non-tombstoned item (active and disabled — a disabled
  * item keeps its 改名/启用/删除 actions). Pure so the UI test pins the production split.
  */
@@ -349,6 +342,13 @@ internal fun tagMerchantLiveItems(items: List<CatalogItem>): List<CatalogItem> =
  */
 internal fun tagMerchantAuditItems(items: List<CatalogItem>): List<CatalogItem> = items.filter { it.tombstoned }
 
+/**
+ * P7-08 08.C (R-222-11): the tag and merchant management sections. Each section lists its live
+ * items (active and disabled — a disabled item keeps its 改名/启用/删除 actions) and renders the
+ * TOMBSTONED items as a READ-ONLY audit block (the open-item-11 ruling): a tombstoned item
+ * offers no rename/disable/delete affordance at all — the domain blocks every command on it and
+ * the UI exposes no dead entry either.
+ */
 @Composable
 private fun TagMerchantSections(
     authority: TagMerchantAuthority?,

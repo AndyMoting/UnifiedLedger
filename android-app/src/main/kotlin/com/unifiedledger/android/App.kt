@@ -175,15 +175,15 @@ import com.unifiedledger.ui.ledgerStorageLayout
 import com.unifiedledger.ui.openExplicitGeneration
 import com.unifiedledger.ui.openGenerationForSelection
 import com.unifiedledger.ui.openStableStorageLedger
-import java.io.File
-import java.security.SecureRandom
-import kotlin.time.Clock
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.security.SecureRandom
+import kotlin.time.Clock
 
 /**
  * Android composition root (P5-03 spec sections 8/10.2). Uses the application-private

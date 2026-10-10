@@ -136,10 +136,11 @@ class P503TagMerchantFilterStateTest {
                 reducer.reduce(
                     reducer.reduce(
                         filterState(),
-                        P503UiEvent.TagMerchantFilterPageLanded(fingerprint(TagMerchantFilterCondition()), successPage(entry("tx-1", Instant.parse("2026-03-01T00:00:00Z")))),
+                        P503UiEvent.TagMerchantFilterPageLanded(fingerprint(TagMerchantFilterCondition()), 0L, successPage(entry("tx-1", Instant.parse("2026-03-01T00:00:00Z")))),
                     ),
                     P503UiEvent.TagMerchantFilterPageLanded(
                         fingerprint(TagMerchantFilterCondition(tagIds = setOf(tagA))),
+                        0L,
                         successPage(entry("tx-2", Instant.parse("2026-03-02T00:00:00Z"))),
                     ),
                 ),
@@ -160,7 +161,7 @@ class P503TagMerchantFilterStateTest {
             assertIs<P503AppState.TagMerchantFilter>(
                 reducer.reduce(
                     withMerchant,
-                    P503UiEvent.MerchantAccumulationLanded(fingerprint(withMerchant.condition), march, successAccumulation()),
+                    P503UiEvent.MerchantAccumulationLanded(fingerprint(withMerchant.condition), 0L, march, successAccumulation()),
                 ),
             )
         assertEquals(merchant, landed.condition.merchantId)
@@ -178,7 +179,7 @@ class P503TagMerchantFilterStateTest {
         val state = filterState(condition = liveCondition)
         val landed =
             assertIs<P503AppState.TagMerchantFilter>(
-                reducer.reduce(state, P503UiEvent.TagMerchantFilterPageLanded(oldFingerprint, successPage(entry("tx-old", Instant.parse("2026-03-01T00:00:00Z"))))),
+                reducer.reduce(state, P503UiEvent.TagMerchantFilterPageLanded(oldFingerprint, 0L, successPage(entry("tx-old", Instant.parse("2026-03-01T00:00:00Z"))))),
             )
         // The old-condition return never overwrites the page.
         assertTrue(landed.loadedEntries.isEmpty())
@@ -199,7 +200,7 @@ class P503TagMerchantFilterStateTest {
             assertIs<P503AppState.TagMerchantFilter>(
                 reducer.reduce(
                     reducer.reduce(state, P503UiEvent.RequestTagMerchantFilterPage(replace = true)),
-                    P503UiEvent.TagMerchantFilterPageLanded(fingerprint(condition), page1),
+                    P503UiEvent.TagMerchantFilterPageLanded(fingerprint(condition), 1L, page1),
                 ),
             )
         assertEquals(listOf("tx-newer", "tx-older"), afterFirst.loadedEntries.map { it.row.transactionId.value })
@@ -211,7 +212,7 @@ class P503TagMerchantFilterStateTest {
             assertIs<P503AppState.TagMerchantFilter>(
                 reducer.reduce(
                     afterFirst,
-                    P503UiEvent.TagMerchantFilterPageLanded(fingerprint(condition), page2),
+                    P503UiEvent.TagMerchantFilterPageLanded(fingerprint(condition), 1L, page2),
                 ),
             )
         assertEquals(
@@ -232,14 +233,14 @@ class P503TagMerchantFilterStateTest {
             assertIs(
                 reducer.reduce(
                     reducer.reduce(state, P503UiEvent.RequestTagMerchantFilterPage(replace = true)),
-                    P503UiEvent.TagMerchantFilterPageLanded(fingerprint(condition), successPage(entry("tx-1", Instant.parse("2026-03-01T00:00:00Z")))),
+                    P503UiEvent.TagMerchantFilterPageLanded(fingerprint(condition), 1L, successPage(entry("tx-1", Instant.parse("2026-03-01T00:00:00Z")))),
                 ),
             )
         state =
             assertIs(
                 reducer.reduce(
                     reducer.reduce(state, P503UiEvent.RequestTagMerchantFilterPage(replace = false)),
-                    P503UiEvent.TagMerchantFilterPageLanded(fingerprint(condition), TagMerchantFilterReadResult.Failed(TagMerchantFilterFailureCode.FILTER_UNAVAILABLE)),
+                    P503UiEvent.TagMerchantFilterPageLanded(fingerprint(condition), 2L, TagMerchantFilterReadResult.Failed(TagMerchantFilterFailureCode.FILTER_UNAVAILABLE)),
                 ),
             )
         assertEquals(TagMerchantFilterFailureCode.FILTER_UNAVAILABLE, state.pageFailure)
@@ -251,7 +252,97 @@ class P503TagMerchantFilterStateTest {
     fun aPageRequestIsAbsorbedWhileOneIsInFlight() {
         val loading = assertIs<P503AppState.TagMerchantFilter>(reducer.reduce(filterState(), P503UiEvent.RequestTagMerchantFilterPage(replace = true)))
         assertTrue(loading.pageLoading)
-        assertEquals(loading, reducer.reduce(loading, P503UiEvent.RequestTagMerchantFilterPage(replace = false)))
+        val absorbed =
+            assertIs<P503AppState.TagMerchantFilter>(reducer.reduce(loading, P503UiEvent.RequestTagMerchantFilterPage(replace = false)))
+        // 一次一页: the absorbed append adds no page fields — but the request token STILL
+        // advances (fix round P3-1), so the duplicate read's landing can never double-append.
+        assertEquals(loading.loadedEntries, absorbed.loadedEntries)
+        assertTrue(absorbed.pageLoading)
+        assertEquals(loading.pageRequestToken + 1, absorbed.pageRequestToken)
+    }
+
+    // ---- the request-token gate (fix round P3-1; ablation: removing the token check turns
+    // both tests below red — the stale landing would append) ----
+
+    @Test
+    fun aDuplicateSameConditionReadLandingIsRejectedByItsStaleRequestToken() {
+        // Vector ①: a same-frame double tap of 加载更多 dispatches two identical page requests;
+        // each dispatch advances the token, so only the LAST read's landing may apply and the
+        // accumulated page can never double-append.
+        val condition = TagMerchantFilterCondition(tagIds = setOf(tagA))
+        val fp = fingerprint(condition)
+        val state = filterState(condition = condition)
+        val afterFirstRequest =
+            assertIs<P503AppState.TagMerchantFilter>(reducer.reduce(state, P503UiEvent.RequestTagMerchantFilterPage(replace = false)))
+        val afterDuplicateRequest =
+            assertIs<P503AppState.TagMerchantFilter>(reducer.reduce(afterFirstRequest, P503UiEvent.RequestTagMerchantFilterPage(replace = false)))
+        assertEquals(afterFirstRequest.pageRequestToken + 1, afterDuplicateRequest.pageRequestToken)
+        val page = successPage(entry("tx-1", Instant.parse("2026-03-01T00:00:00Z"), tagIds = listOf(tagA)))
+        // The first read's landing carries its (now stale) token: dropped whole.
+        val stale =
+            assertIs<P503AppState.TagMerchantFilter>(
+                reducer.reduce(afterDuplicateRequest, P503UiEvent.TagMerchantFilterPageLanded(fp, afterFirstRequest.pageRequestToken, page)),
+            )
+        assertTrue(stale.loadedEntries.isEmpty())
+        assertTrue(stale.pageLoading)
+        // The current read's landing applies exactly once.
+        val current =
+            assertIs<P503AppState.TagMerchantFilter>(
+                reducer.reduce(stale, P503UiEvent.TagMerchantFilterPageLanded(fp, afterDuplicateRequest.pageRequestToken, page)),
+            )
+        assertEquals(1, current.loadedEntries.size)
+        assertTrue(!current.pageLoading)
+    }
+
+    @Test
+    fun aLoadMoreLandingSupersededByAReplaceReRequestNeverMergesIntoTheFreshPage() {
+        // Vector ②: a load-more read still in flight when a catalog command's replace
+        // re-request dispatches — the replace advances the token and clears the rows, and the
+        // old read's landing must never merge into the fresh page.
+        val condition = TagMerchantFilterCondition(tagIds = setOf(tagA))
+        val fp = fingerprint(condition)
+        val page1 = successPage(entry("tx-1", Instant.parse("2026-03-01T00:00:00Z"), tagIds = listOf(tagA)), hasMore = true)
+        val withPage1 =
+            assertIs<P503AppState.TagMerchantFilter>(
+                reducer.reduce(
+                    reducer.reduce(filterState(condition = condition), P503UiEvent.RequestTagMerchantFilterPage(replace = true)),
+                    P503UiEvent.TagMerchantFilterPageLanded(fp, 1L, page1),
+                ),
+            )
+        val loadMoreInFlight =
+            assertIs<P503AppState.TagMerchantFilter>(reducer.reduce(withPage1, P503UiEvent.RequestTagMerchantFilterPage(replace = false)))
+        val replaced =
+            assertIs<P503AppState.TagMerchantFilter>(reducer.reduce(loadMoreInFlight, P503UiEvent.RequestTagMerchantFilterPage(replace = true)))
+        assertTrue(replaced.loadedEntries.isEmpty())
+        assertTrue(replaced.pageLoading)
+        // The superseded load-more landing is dropped whole — it never appends its rows.
+        val oldLanding =
+            assertIs<P503AppState.TagMerchantFilter>(
+                reducer.reduce(
+                    replaced,
+                    P503UiEvent.TagMerchantFilterPageLanded(
+                        fp,
+                        loadMoreInFlight.pageRequestToken,
+                        successPage(entry("tx-2", Instant.parse("2026-03-02T00:00:00Z"), tagIds = listOf(tagA))),
+                    ),
+                ),
+            )
+        assertTrue(oldLanding.loadedEntries.isEmpty())
+        assertTrue(oldLanding.pageLoading)
+        // The replace read's landing rebuilds the page exactly once.
+        val freshLanding =
+            assertIs<P503AppState.TagMerchantFilter>(
+                reducer.reduce(
+                    oldLanding,
+                    P503UiEvent.TagMerchantFilterPageLanded(
+                        fp,
+                        replaced.pageRequestToken,
+                        successPage(entry("tx-3", Instant.parse("2026-03-03T00:00:00Z"), tagIds = listOf(tagA))),
+                    ),
+                ),
+            )
+        assertEquals(listOf("tx-3"), freshLanding.loadedEntries.map { it.row.transactionId.value })
+        assertTrue(!freshLanding.pageLoading)
     }
 
     // ---- the accumulation's month gate ----
@@ -262,7 +353,7 @@ class P503TagMerchantFilterStateTest {
         val state = filterState(condition = condition)
         val landed =
             assertIs<P503AppState.TagMerchantFilter>(
-                reducer.reduce(state, P503UiEvent.MerchantAccumulationLanded(fingerprint(condition), march, successAccumulation())),
+                reducer.reduce(state, P503UiEvent.MerchantAccumulationLanded(fingerprint(condition), 0L, march, successAccumulation())),
             )
         assertEquals(1, landed.accumulation?.let { (it as com.unifiedledger.application.MerchantMonthlyAccumulationResult.Success).transactionCount })
         // A month change clears the result; the OLD month's landing is dropped.
@@ -270,12 +361,12 @@ class P503TagMerchantFilterStateTest {
         assertNull(shifted.accumulation)
         val stale =
             assertIs<P503AppState.TagMerchantFilter>(
-                reducer.reduce(shifted, P503UiEvent.MerchantAccumulationLanded(fingerprint(condition), march, successAccumulation())),
+                reducer.reduce(shifted, P503UiEvent.MerchantAccumulationLanded(fingerprint(condition), 0L, march, successAccumulation())),
             )
         assertNull(stale.accumulation)
         val fresh =
             assertIs<P503AppState.TagMerchantFilter>(
-                reducer.reduce(shifted, P503UiEvent.MerchantAccumulationLanded(fingerprint(condition), YearMonth(2026, 4), successAccumulation())),
+                reducer.reduce(shifted, P503UiEvent.MerchantAccumulationLanded(fingerprint(condition), 0L, YearMonth(2026, 4), successAccumulation())),
             )
         assertEquals(YearMonth(2026, 4), fresh.accumulationMonth)
     }

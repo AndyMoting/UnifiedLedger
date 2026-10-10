@@ -1155,8 +1155,10 @@ sealed interface P503UiEvent {
 
     /**
      * The host's filter-page request trigger. [replace] clears the accumulated entries first
-     * (a fresh-condition or refreshed read) versus appending a continuation page. Absorbed
-     * while a page read is already in flight (一次一页).
+     * (a fresh-condition or refreshed read) versus appending a continuation page. The page
+     * fields of an append are absorbed while a read is already in flight (一次一页), while a
+     * replace always supersedes the in-flight read — in BOTH cases the request token advances,
+     * so the landing of any read this dispatch supersedes (or duplicates) is rejected whole.
      */
     data class RequestTagMerchantFilterPage(
         val replace: Boolean,
@@ -1166,23 +1168,30 @@ sealed interface P503UiEvent {
      * One filter-page landing. [conditionFingerprint] is the condition the request carried: the
      * reducer applies the page ONLY when it equals the live condition's fingerprint — an
      * old-condition return is dropped, never allowed to overwrite the page (spec section 5.3;
-     * the lease generation was already gated by the host's landing hop). A typed failure lands
-     * as the explicit failure copy and never as an empty page.
+     * the lease generation was already gated by the host's landing hop). [pageRequestToken] is
+     * the request identity the host captured for THIS read: the reducer applies the page only
+     * when it is still the surface's current token, so a duplicate same-condition read or a read
+     * superseded by a newer request can never append or merge (fix round P3-1). A typed failure
+     * lands as the explicit failure copy and never as an empty page.
      */
     data class TagMerchantFilterPageLanded(
         val conditionFingerprint: String,
+        val pageRequestToken: Long,
         val result: TagMerchantFilterReadResult,
     ) : P503UiEvent
 
-    /** The host's merchant-accumulation request trigger (absorbed while one is in flight). */
+    /** The host's merchant-accumulation request trigger (its token advances on every dispatch). */
     data object RequestMerchantAccumulation : P503UiEvent
 
     /**
      * One accumulation landing, gated exactly like [TagMerchantFilterPageLanded]: applied only
-     * when both the condition fingerprint AND the month still match the surface's live values.
+     * when the condition fingerprint, the month AND the request token ([requestToken], the
+     * accumulation surface's current [P503AppState.TagMerchantFilter.accumulationRequestToken])
+     * still match the surface's live values.
      */
     data class MerchantAccumulationLanded(
         val conditionFingerprint: String,
+        val requestToken: Long,
         val month: kotlinx.datetime.YearMonth,
         val result: MerchantMonthlyAccumulationResult,
     ) : P503UiEvent

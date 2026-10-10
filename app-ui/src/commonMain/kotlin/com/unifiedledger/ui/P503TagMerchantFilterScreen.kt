@@ -31,6 +31,7 @@ import com.unifiedledger.application.TagMerchantFilterCondition
 import com.unifiedledger.application.TagMerchantFilterFailureCode
 import com.unifiedledger.application.TagMerchantTagMatchMode
 import com.unifiedledger.application.foldTagMerchantGroups
+import com.unifiedledger.application.tagMerchantGroupTransactionCount
 import com.unifiedledger.domain.CatalogItem
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.MerchantId
@@ -175,7 +176,9 @@ internal fun P503TagMerchantFilterScreen(
                 Text("各分组金额为该组全额，相互独立，不可相加为总额。", style = MaterialTheme.typography.bodySmall)
                 condition.tagIds.sortedBy { it.value }.forEach { tag ->
                     val totals = groupTotals[tag]
-                    val count = tagGroupTransactionCountOf(state, tag)
+                    // Fix round (P4-2): the application layer owns the group count — no parallel
+                    // UI implementation.
+                    val count = tagMerchantGroupTransactionCount(state.loadedEntries, tag)
                     val amounts =
                         totals
                             ?.map { (currency, minor) -> formatMinorUnitsText(currency, minor) }
@@ -185,6 +188,20 @@ internal fun P503TagMerchantFilterScreen(
                     Text("「${tagLabelText(tag, tagOptions)}」· $count 笔 · $amounts")
                 }
             }
+        } else if (state.pageFailure == null) {
+            // Fix round (P4-5): a selected tag condition whose first page has not landed yet
+            // (no catalog snapshot to fold) shows an explicit loading copy — never a silent
+            // gap and never a fabricated "no matches". A landed first-page failure already
+            // renders its typed banner above, so the loading copy yields to it.
+            val message = "筛选结果载入中…"
+            Text(
+                message,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.semantics {
+                    contentDescription = message
+                    liveRegion = LiveRegionMode.Polite
+                },
+            )
         }
         Spacer(Modifier.height(4.dp))
         Text("已加载 ${state.loadedEntries.size} 笔", style = MaterialTheme.typography.bodySmall)
@@ -266,11 +283,6 @@ internal fun tagMerchantFilterTagOptions(items: List<CatalogItem>): List<Catalog
 
 /** The filter's merchant-option rule — same disabled-included/tombstoned-excluded shape. */
 internal fun tagMerchantFilterMerchantOptions(items: List<CatalogItem>): List<CatalogItem> = items.filter { !it.tombstoned }
-
-internal fun tagGroupTransactionCountOf(
-    state: P503AppState.TagMerchantFilter,
-    tagId: TagId,
-): Int = state.loadedEntries.count { entry -> entry.tagIds.any { it.value == tagId.value } }
 
 internal fun tagLabelText(
     tagId: TagId,
