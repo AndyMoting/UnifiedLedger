@@ -243,17 +243,24 @@ internal class DesktopRestoreUseCases(
  * as it would remove v1. 33 is the immediately preceding version whose strict migration is the
  * P7-08 08.A `33.sqm` tag/merchant edge; it is likewise CONDITIONALLY admitted — its strict
  * migration 33 -> 34 plus validation is proven (`P708TagMerchantV33ToV34MigrationTest`) but its A04
- * round-trip-equivalence leg is not yet proven and a falsification removes it too. The current
- * schema version (34 since the 08.A tag/merchant edge) passes through WITHOUT consulting this set
- * (`needsMigration == false`), so this set names only old versions that must be migrated.
+ * round-trip-equivalence leg is not yet proven and a falsification removes it too. 34 is the
+ * immediately preceding version whose strict migration is the P7-08 08.B-1 `34.sqm` manual-create
+ * annotation-column edge; it is likewise CONDITIONALLY admitted (D-221 item 6) — its strict
+ * migration 34 -> 35 plus validation is proven (`P708ManualCreateAnnotationV34ToV35MigrationTest`)
+ * and its A04 round-trip-equivalence leg is delivered by the 08.D restore round-trip test
+ * (`P708RestoreRoundtripEquivalenceTest`), with the final admission registration staying with the
+ * main agent's acceptance. The current schema version (35 since the 08.B-1 annotation-column edge)
+ * passes through WITHOUT consulting this set (`needsMigration == false`), so this set names only
+ * old versions that must be migrated.
  *
  * D-182 section 5.4 froze the literal `{1, 31}` when 31 was the current schema; D-185 supersedes that
  * literal for the WIRING set (the approved 06.D spec section 5.4 ruling text itself is unchanged and
  * remains the record for v1's conditional admission). The 07.T slice left it unchanged to avoid
  * stopping v31 restores. The 07.B slice extends it to `{1, 31, 32}` (D-185); the 08.A slice extends
  * it to `{1, 31, 32, 33}` (D-187) so the immediately preceding v33 backup keeps restoring through its
- * `33.sqm` migration, mirroring the v32 preservation the 07.B slice relied on. The set remains a
- * spec-recognised EXPLICIT set, never automatically derived.
+ * `33.sqm` migration, mirroring the v32 preservation the 07.B slice relied on; the 08.B-1 slice
+ * extends it to `{1, 31, 32, 33, 34}` (D-221) on the same immediately-preceding-version
+ * preservation. The set remains a spec-recognised EXPLICIT set, never automatically derived.
  */
 internal val RESTORE_SUPPORTED_SOURCE_VERSIONS: Set<Long> = setOf(1L, 31L, 32L, 33L, 34L)
 

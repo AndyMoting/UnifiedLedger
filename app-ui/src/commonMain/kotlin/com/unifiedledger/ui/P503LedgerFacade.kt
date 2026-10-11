@@ -55,6 +55,7 @@ import com.unifiedledger.application.SaveBudgetConfiguration
 import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.application.TagMerchantAuthority
 import com.unifiedledger.application.TagMerchantCatalogReader
+import com.unifiedledger.application.TransactionAnnotationHistoryEntry
 import com.unifiedledger.application.TransactionAnnotationReader
 import com.unifiedledger.application.TransactionAnnotationResult
 import com.unifiedledger.application.TransactionAnnotationSnapshot
@@ -370,6 +371,15 @@ class P503LedgerFacade(
      * renders no annotation-edit entry rather than a form with fabricated CAS tokens.
      */
     fun transactionAnnotationSnapshot(transactionId: TransactionId): TransactionAnnotationSnapshot? = transactionAnnotationReader?.load(ledgerId, transactionId)
+
+    /**
+     * P7-08 08.D (spec section 3.5): the transaction's read-only annotation history through the
+     * SAME wired reader as [transactionAnnotationSnapshot] — no new facade parameter (the R-222-4
+     * discipline), so unwired constructions render no history block. `null` = the read is
+     * unavailable (unwired port or unreadable transaction); an EMPTY list is the honest
+     * "never annotated" and the detail block renders that line.
+     */
+    fun transactionAnnotationHistory(transactionId: TransactionId): List<TransactionAnnotationHistoryEntry>? = transactionAnnotationReader?.loadHistory(ledgerId, transactionId)
 }
 
 /**
@@ -397,6 +407,18 @@ data class TransactionAnnotationEditIntent(
     val expectedCurrentVersionId: TransactionVersionId,
     val tagIds: Set<TagId> = emptySet(),
     val merchantId: MerchantId? = null,
+    // P7-08 08.D (spec section 2.2 停用保留语义; plan :273): the association the edit KEEPS,
+    // captured at open from the pre-commit read — an inactive (disabled, never tombstoned)
+    // reference already on the transaction stays allowed when the whole set is replaced, while any
+    // inactive reference NOT in this set is still the frozen typed rejection. Empty defaults keep
+    // the strict fail-closed behavior for constructions that carry no kept association.
+    val retainedTagIds: Set<TagId> = emptySet(),
+    val retainedMerchantId: MerchantId? = null,
+    // The display names of the retained-but-inactive items, resolved from the authority in the
+    // same lease that read the snapshot; the edit screen renders them checked and disabled with
+    // the （已停用） marker (the 08.C filter-screen precedent) and never offers them as a new pick.
+    val inactiveTagLabels: Map<String, String> = emptyMap(),
+    val inactiveMerchantLabel: String? = null,
 )
 
 /**

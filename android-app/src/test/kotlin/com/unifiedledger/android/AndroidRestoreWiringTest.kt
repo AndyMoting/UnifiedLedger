@@ -194,10 +194,12 @@ class AndroidRestoreWiringTest {
         val ledger = assertNotNull(controller.ledger)
         assertTrue(ledger.surfaces.backupRestore, "the wired composition renders the restore surface")
         val wiring = assertNotNull(ledger.restoreWiring)
-        // The section 5.4 whitelist, extended by the 07.B slice (D-185) and the 08.A slice (D-187):
-        // {1, 31, 32, 33}. v1/v31 remain and v32/v33 — the immediately preceding versions — are now
-        // migratable rather than typed-rejected (v33 is conditionally admitted until its A04
-        // round-trip-equivalence leg is proven, exactly like v1/v32).
+        // The section 5.4 whitelist, extended by the 07.B slice (D-185), the 08.A slice (D-187) and
+        // the 08.B-1 slice (D-221): {1, 31, 32, 33, 34}. v1/v31 remain and v32/v33/34 — the
+        // immediately preceding versions — are migratable rather than typed-rejected (34 is
+        // conditionally admitted per D-221 until its A04 round-trip-equivalence leg is proven,
+        // exactly like v1/v32/v33; the 08.D round-trip test delivers that leg's evidence).
+        assertTrue(34L in wiring.supportedSourceVersions, "v34 must stay restorable after the v35 bump")
         assertEquals(setOf(1L, 31L, 32L, 33L, 34L), wiring.supportedSourceVersions)
         assertTrue(33L in wiring.supportedSourceVersions, "v33 must stay restorable after the v34 bump")
         assertTrue(32L in wiring.supportedSourceVersions, "v32 must stay restorable after the v34 bump")

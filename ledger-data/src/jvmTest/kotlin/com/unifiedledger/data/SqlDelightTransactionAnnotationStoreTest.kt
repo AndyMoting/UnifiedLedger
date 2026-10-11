@@ -251,6 +251,90 @@ class SqlDelightTransactionAnnotationStoreTest {
         }
     }
 
+    // ------------------------------------------------------------------ P7-08 08.D (T6) 停用保留
+
+    @Test
+    fun aDisabledTagKeptFromTheCurrentRevisionSurvivesTheWholeReplacement() {
+        withStore { ctx ->
+            assertIs<TransactionAnnotationResult.Accepted>(ctx.update("r1", listOf(TagId("tag-1")), null, 0L))
+            // The real catalog command disables tag-1 AFTER the association exists (spec 2.2:
+            // 停用保留所有历史引用，只禁止新增选择).
+            ctx.deactivate(CatalogItemKind.TAG, "tag-1")
+            val kept =
+                assertIs<TransactionAnnotationResult.Accepted>(
+                    ctx.update("r2", listOf(TagId("tag-1"), TagId("tag-2")), null, expectedRevision = 1L, retainedTagIds = setOf(TagId("tag-1"))),
+                )
+            assertEquals(2L, kept.receipt.newAnnotationRevision)
+            // The disabled reference is preserved into the new revision, next to the new pick.
+            assertEquals(1L, queryLong(ctx.driver, "SELECT count(*) FROM transaction_annotation_tag WHERE annotation_revision = 2 AND tag_id = 'tag-1'"))
+            assertEquals(1L, queryLong(ctx.driver, "SELECT count(*) FROM transaction_annotation_tag WHERE annotation_revision = 2 AND tag_id = 'tag-2'"))
+        }
+    }
+
+    @Test
+    fun anInactiveReferenceOutsideTheRetainedSetIsStillTheTypedRejectionWithZeroWrites() {
+        withStore { ctx ->
+            assertIs<TransactionAnnotationResult.Accepted>(ctx.update("r1", listOf(TagId("tag-1")), null, 0L))
+            ctx.deactivate(CatalogItemKind.TAG, "tag-2")
+            // tag-2 was never associated: keeping tag-1 does not admit introducing it.
+            val rejected =
+                assertIs<TransactionAnnotationResult.Rejected>(
+                    ctx.update("r2", listOf(TagId("tag-1"), TagId("tag-2")), null, expectedRevision = 1L, retainedTagIds = setOf(TagId("tag-1"))),
+                )
+            assertEquals(AnnotationFailureCode.ANNOTATION_TAG_NOT_SELECTABLE, rejected.failureCode)
+            assertEquals(1L, queryLong(ctx.driver, "SELECT count(*) FROM transaction_annotation_revision"))
+        }
+    }
+
+    @Test
+    fun aDisabledMerchantIsKeptOnlyWhenItIsTheRetainedMerchant() {
+        withStore { ctx ->
+            assertIs<TransactionAnnotationResult.Accepted>(ctx.update("r1", emptyList(), MerchantId("merchant-1"), 0L))
+            ctx.deactivate(CatalogItemKind.MERCHANT, "merchant-1")
+            // The retained merchant survives the replacement (spec 2.2 停用保留).
+            assertIs<TransactionAnnotationResult.Accepted>(
+                ctx.update("r2", emptyList(), MerchantId("merchant-1"), expectedRevision = 1L, retainedMerchantId = MerchantId("merchant-1")),
+            )
+            // Dropping the retained set re-introduces the reference: typed rejection, zero writes.
+            val rejected =
+                assertIs<TransactionAnnotationResult.Rejected>(
+                    ctx.update("r3", emptyList(), MerchantId("merchant-1"), expectedRevision = 2L),
+                )
+            assertEquals(AnnotationFailureCode.ANNOTATION_MERCHANT_NOT_SELECTABLE, rejected.failureCode)
+            assertEquals(2L, queryLong(ctx.driver, "SELECT count(*) FROM transaction_annotation_revision"))
+        }
+    }
+
+    // ------------------------------------------------------------------ P7-08 08.D (T7) 历史读
+
+    @Test
+    fun theHistoryReadReturnsEveryRevisionWithItsAssociationRequestAndAuditInstant() {
+        withStore { ctx ->
+            assertIs<TransactionAnnotationResult.Accepted>(ctx.update("r1", listOf(TagId("tag-1")), MerchantId("merchant-1"), 0L))
+            assertIs<TransactionAnnotationResult.Accepted>(ctx.update("r2", listOf(TagId("tag-2")), null, expectedRevision = 1L))
+            val history = assertNotNull(ctx.loadHistory())
+            assertEquals(2, history.size)
+            val first = history[0]
+            assertEquals(1L, first.annotationRevision)
+            assertEquals(listOf(TagId("tag-1")), first.tagIds)
+            assertEquals(MerchantId("merchant-1"), first.merchantId)
+            assertEquals(currentVersionId, first.observedTransactionVersionId)
+            assertEquals("r1", first.requestId)
+            assertEquals("2026-03-05T02:00:00Z", first.createdAt)
+            val second = history[1]
+            assertEquals(2L, second.annotationRevision)
+            assertEquals(listOf(TagId("tag-2")), second.tagIds)
+            assertEquals(null, second.merchantId)
+        }
+    }
+
+    @Test
+    fun theHistoryReadIsHonestlyEmptyForANeverAnnotatedTransaction() {
+        withStore { ctx ->
+            assertEquals(0, assertNotNull(ctx.loadHistory()).size)
+        }
+    }
+
     private inner class Context(
         val driver: JdbcSqliteDriver,
         private val transaction: TransactionId,
@@ -263,6 +347,8 @@ class SqlDelightTransactionAnnotationStoreTest {
             merchantId: MerchantId?,
             expectedRevision: Long,
             expectedVersion: TransactionVersionId = currentVersionId,
+            retainedTagIds: Set<TagId> = emptySet(),
+            retainedMerchantId: MerchantId? = null,
         ): TransactionAnnotationResult {
             val useCase =
                 UpdateTransactionAnnotation(
@@ -270,23 +356,33 @@ class SqlDelightTransactionAnnotationStoreTest {
                     requestIdSource = AnnotationRequestIdSource { AnnotationRequestId(requestId) },
                     clock = LedgerClock { Instant.parse("2026-03-05T02:00:00Z") },
                 )
-            return useCase.update(ledgerId, transaction, tagIds, merchantId, expectedRevision, expectedVersion)
+            return useCase.update(ledgerId, transaction, tagIds, merchantId, expectedRevision, expectedVersion, retainedTagIds, retainedMerchantId)
         }
 
         /** P7-08 08.B-2: the pre-commit read the §4.4 edit entry uses to learn its CAS tokens. */
         fun load(): TransactionAnnotationSnapshot? = SqlDelightTransactionAnnotationStore(LedgerDatabase(driver), driver).load(ledgerId, transaction)
 
-        fun deactivateTag(tagId: String) {
+        /** P7-08 08.D: the read-only annotation history the detail block renders. */
+        fun loadHistory(): List<com.unifiedledger.application.TransactionAnnotationHistoryEntry>? = SqlDelightTransactionAnnotationStore(LedgerDatabase(driver), driver).loadHistory(ledgerId, transaction)
+
+        fun deactivate(
+            kind: CatalogItemKind,
+            itemId: String,
+        ) {
             val executor =
                 ExecuteTagMerchantCommand(
                     commitPort = catalogStore,
-                    requestIdSource = TagMerchantRequestIdSource { TagMerchantRequestId("deactivate-$tagId") },
+                    requestIdSource = TagMerchantRequestIdSource { TagMerchantRequestId("deactivate-$itemId") },
                     idSource = CatalogItemIdSource { "unused" },
                     referenceProbe = CatalogItemReferenceProbe { _, _, _ -> false },
                 )
             assertIs<TagMerchantCommandResult.Accepted>(
-                executor.setItemActive(ledgerId, CatalogItemKind.TAG, tagId, false, expectedRevision = 1L),
+                executor.setItemActive(ledgerId, kind, itemId, false, expectedRevision = 1L),
             )
+        }
+
+        fun deactivateTag(tagId: String) {
+            deactivate(CatalogItemKind.TAG, tagId)
         }
     }
 

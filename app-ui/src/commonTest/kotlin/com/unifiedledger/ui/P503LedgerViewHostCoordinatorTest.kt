@@ -444,4 +444,22 @@ class P503LedgerViewHostCoordinatorTest {
         assertTrue(host.decideMonthly(overview(month = null)))
         assertEquals(2, probe.monthlyRequests.size)
     }
+
+    // ------------------------------------------------------------------ P7-08 08.D (A07/T8)
+
+    @Test
+    fun aRestoreOrCorrectionEffectiveSurfaceChangeArmsAndConsumesExactlyOneMonthlyReRequest() {
+        // P7-08 08.D (P708-A07; spec section 5.5 row 5): a void/restore (and its P7-05 siblings)
+        // fires onP705EffectiveSurfaceChanged — the authoritative refresh PLUS the armed monthly
+        // re-request the landing hop consumes exactly once on the LANDED state. A landing without
+        // an armed trigger requests nothing (the A-02 FIX-MONTH-1 guard, re-pinned as the
+        // restore-triggered instance).
+        val (host, probe) = coordinator()
+        host.onP705EffectiveSurfaceChanged()
+        host.consumeMonthlyReRequestAfterRefresh(overview())
+        assertEquals(1, probe.monthlyRequests.size)
+        // The arm is consumed: a further landing requests nothing.
+        host.consumeMonthlyReRequestAfterRefresh(overview())
+        assertEquals(1, probe.monthlyRequests.size)
+    }
 }

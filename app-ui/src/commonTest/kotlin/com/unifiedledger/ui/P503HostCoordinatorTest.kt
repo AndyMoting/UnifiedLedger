@@ -6,11 +6,13 @@ import com.unifiedledger.application.CatalogFailureCode
 import com.unifiedledger.application.CatalogReceiptOutcome
 import com.unifiedledger.application.CatalogRequestId
 import com.unifiedledger.application.CatalogSnapshotView
+import com.unifiedledger.application.CorrectTransactionVersionResult
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.ManualExpenseSubmissionResult
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TypedEntryDraft
+import com.unifiedledger.application.VoidTransactionResult
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
@@ -332,5 +334,128 @@ class P503HostCoordinatorTest {
         coordinator.p705RecheckCompleted()
         assertEquals(true, coordinator.recheckP705CommitOnce { started += 1 })
         assertEquals(3, started)
+    }
+
+    // ------------------------------------------------------------------ P7-08 08.D (A07) arm 触发向量
+
+    /**
+     * P7-08 08.D (P708-A07; spec section 5.5 row 2): the filter re-request arm rides EVERY
+     * determinate formal-surface landing and NO typed failure. The production `P503App` call sites
+     * delegate to the four seams below (the D-156 "JVM-assertable seam" precedent — the
+     * composable hop itself stays uncovered, no Compose harness exists); each seam's branch is
+     * pinned here so a changed trigger matrix turns a vector red.
+     */
+    private class ArmProbe {
+        var refreshes = 0
+        var batchConfirmed = 0
+        var arms = 0
+    }
+
+    private fun armCoordinator(probe: ArmProbe): P503HostCoordinator =
+        P503HostCoordinator(
+            onRefresh = { probe.refreshes += 1 },
+            onSubmit = { _, _ -> },
+            onCheck = { _, _ -> },
+        )
+
+    private fun correctionCreated() =
+        CorrectTransactionVersionResult.Created(
+            com.unifiedledger.application.TransactionCorrectionReceipt(
+                confirmationId = com.unifiedledger.application.ConfirmationId("conf-a07"),
+                transactionId = com.unifiedledger.domain.TransactionId("tx-a07"),
+                versionId = com.unifiedledger.domain.TransactionVersionId("tx-a07-v2"),
+                expectedCurrentVersionId = com.unifiedledger.domain.TransactionVersionId("tx-a07-v1"),
+            ),
+        )
+
+    private fun voidCreated() =
+        VoidTransactionResult.Created(
+            com.unifiedledger.application.TransactionVoidReceipt(
+                confirmationId = com.unifiedledger.application.ConfirmationId("conf-a07-void"),
+                transactionId = com.unifiedledger.domain.TransactionId("tx-a07"),
+                factId = "fact-a07",
+                factKind = com.unifiedledger.domain.TransactionVoidFactKind.VOID,
+            ),
+        )
+
+    @Test
+    fun a07ACorrectionLandingArmsTheFilterReRequestOnlyOnADeterminateSuccess() {
+        val probe = ArmProbe()
+        val coordinator = armCoordinator(probe)
+        refreshAndArmAfterP705CommitLanding(correctionCreated(), coordinator) { probe.arms += 1 }
+        assertEquals(1, probe.refreshes)
+        assertEquals(1, probe.arms)
+        // A typed rejection writes nothing: no refresh, no arm.
+        refreshAndArmAfterP705CommitLanding(CorrectTransactionVersionResult.StaleCurrentVersion, coordinator) { probe.arms += 1 }
+        assertEquals(1, probe.refreshes)
+        assertEquals(1, probe.arms)
+    }
+
+    @Test
+    fun a07VoidAndRestoreLandingsShareTheSameArmGate() {
+        val probe = ArmProbe()
+        val coordinator = armCoordinator(probe)
+        refreshAndArmAfterVoidRestoreCommit(voidCreated(), coordinator) { probe.arms += 1 }
+        assertEquals(1, probe.refreshes)
+        assertEquals(1, probe.arms)
+        refreshAndArmAfterVoidRestoreCommit(VoidTransactionResult.Rejected(com.unifiedledger.domain.P705FailureCode.P705_TRANSACTION_VOIDED), coordinator) { probe.arms += 1 }
+        assertEquals(1, probe.refreshes)
+        assertEquals(1, probe.arms)
+    }
+
+    @Test
+    fun a07AnAnnotationEditLandingArmsTheFilterReRequestAndRejectsArmNothing() {
+        val probe = ArmProbe()
+        val coordinator = armCoordinator(probe)
+        refreshAndArmAfterAnnotationEdit(TransactionAnnotationEditOutcome.Accepted(2L), coordinator) { probe.arms += 1 }
+        // onP705EffectiveSurfaceChanged fires the authoritative refresh exactly once.
+        assertEquals(1, probe.refreshes)
+        assertEquals(1, probe.arms)
+        refreshAndArmAfterAnnotationEdit(TransactionAnnotationEditOutcome.Rejected("AnnotationRevisionConflict"), coordinator) { probe.arms += 1 }
+        assertEquals(1, probe.refreshes)
+        assertEquals(1, probe.arms)
+    }
+
+    @Test
+    fun a07AnAllTerminalImportBatchLandingArmsTheFilterReRequestExactlyOnce() {
+        val probe = ArmProbe()
+        val coordinator = armCoordinator(probe)
+        val confirmedItem =
+            com.unifiedledger.application.ImportReceipt(
+                requestId = com.unifiedledger.application.ImportRequestId("req-a07"),
+                sourceId = null,
+                evidenceId = null,
+                candidateId = com.unifiedledger.application.ImportCandidateId("candidate-a07"),
+                confirmationId = null,
+                transactionId = null,
+            )
+        val allTerminal =
+            P503AppState.OverviewEmpty(
+                LedgerCurrentState(LedgerId("ledger-a07"), emptyList(), emptyList()),
+                importReview =
+                    com.unifiedledger.ui.ImportReviewView(
+                        batchResult =
+                            com.unifiedledger.ui.ImportBatchResultSummary(
+                                confirmedAt = "2026-03-05T02:00:00Z",
+                                items =
+                                    listOf(
+                                        com.unifiedledger.ui.ImportBatchResultItem(
+                                            item = com.unifiedledger.ui.ImportBatchItem(com.unifiedledger.application.ImportCandidateId("candidate-a07"), com.unifiedledger.application.ImportRequestId("req-a07")),
+                                            outcome =
+                                                com.unifiedledger.ui.ImportBatchItemOutcome
+                                                    .Confirmed(confirmedItem),
+                                        ),
+                                    ),
+                            ),
+                    ),
+            )
+        armAfterImportBatchConfirmation(allTerminal, coordinator) { probe.arms += 1 }
+        // onImportBatchConfirmed fired the authoritative refresh exactly once.
+        assertEquals(1, probe.refreshes)
+        assertEquals(1, probe.arms)
+        // A landing without the all-terminal state arms nothing (the mid-batch discipline).
+        armAfterImportBatchConfirmation(P503AppState.Created, coordinator) { probe.arms += 1 }
+        assertEquals(1, probe.refreshes)
+        assertEquals(1, probe.arms)
     }
 }

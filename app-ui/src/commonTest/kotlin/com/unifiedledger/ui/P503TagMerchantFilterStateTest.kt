@@ -440,4 +440,62 @@ class P503TagMerchantFilterStateTest {
             tombstoned = tombstoned,
             revision = 1L,
         )
+
+    // ------------------------------------------------------------------ P7-08 08.D (T8/T9)
+
+    @Test
+    fun aRestoreTriggeredReplaceReRequestDropsTheStalePreRestoreLanding() {
+        // T8 (P708-A07 恢复腿; spec section 5.5 row 5): a restore commit arms the filter
+        // re-request; the consume hop dispatches a REPLACE request which advances the request
+        // token and clears the rows. The pre-restore read's late landing carries its stale token
+        // and is dropped whole by the SAME frozen mechanism the two vectors above pin (token +
+        // fingerprint — re-pinned here only as the restore-triggered instance); the fresh read's
+        // landing rebuilds the page with the restored transaction.
+        val condition = TagMerchantFilterCondition(tagIds = setOf(tagA))
+        val fp = fingerprint(condition)
+        val preRestorePage = successPage(entry("tx-restored", Instant.parse("2026-03-01T00:00:00Z"), tagIds = listOf(tagA)))
+        // Before the restore the transaction was voided: the stale read returns an empty page
+        // (its landing rides the pre-restore token).
+        val withPreRestoreLanding =
+            assertIs<P503AppState.TagMerchantFilter>(
+                reducer.reduce(
+                    reducer.reduce(filterState(condition = condition), P503UiEvent.RequestTagMerchantFilterPage(replace = true)),
+                    P503UiEvent.TagMerchantFilterPageLanded(fp, 1L, successPage()),
+                ),
+            )
+        // The restore arms + re-requests: a replace dispatch advances the token.
+        val replaced =
+            assertIs<P503AppState.TagMerchantFilter>(reducer.reduce(withPreRestoreLanding, P503UiEvent.RequestTagMerchantFilterPage(replace = true)))
+        assertTrue(replaced.pageRequestToken > withPreRestoreLanding.pageRequestToken)
+        // The stale (pre-restore) landing arrives late: dropped whole, never merged.
+        val stale =
+            assertIs<P503AppState.TagMerchantFilter>(
+                reducer.reduce(
+                    replaced,
+                    P503UiEvent.TagMerchantFilterPageLanded(fp, withPreRestoreLanding.pageRequestToken, preRestorePage),
+                ),
+            )
+        assertTrue(stale.loadedEntries.isEmpty())
+        // The post-restore read's landing (fresh token) rebuilds the page with the restored row.
+        val fresh =
+            assertIs<P503AppState.TagMerchantFilter>(
+                reducer.reduce(stale, P503UiEvent.TagMerchantFilterPageLanded(fp, replaced.pageRequestToken, preRestorePage)),
+            )
+        assertEquals(listOf("tx-restored"), fresh.loadedEntries.map { it.row.transactionId.value })
+        assertTrue(!fresh.pageLoading)
+    }
+
+    @Test
+    fun theRenameShowsTheNewCurrentNameOnTheConditionText() {
+        // T9 (Q17 :273): the condition text resolves display names through the caller's resolver,
+        // so a renamed item renders under its CURRENT name while the stable id (and thus the
+        // matching annotation) is unchanged — the data-layer leg of the rename chain is pinned in
+        // TagMerchantFilterReadTest; this pins the presentation half.
+        val renamedResolver: (TagId) -> String? = { if (it == tagA) "标签甲（新）" else null }
+        val condition = TagMerchantFilterCondition(tagIds = setOf(tagA), merchantId = merchant)
+        val text = tagMerchantFilterConditionText(condition, renamedResolver, { "商家一" })
+        assertTrue(text.contains("标签甲（新）"), "the condition text must show the renamed current name: $text")
+        assertTrue(text.contains("商家一"), "the merchant condition shows the current name: $text")
+        assertTrue(!text.contains("tag-a"), "the stable id must never leak into the condition text: $text")
+    }
 }

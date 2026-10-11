@@ -281,4 +281,183 @@ class P503AnnotationReducerTest {
             events.forEach { event -> assertEquals(state, reducer.reduce(state, event), "$event must be absorbed in ${state::class.simpleName}") }
         }
     }
+
+    // ------------------------------------------------------------------ P7-08 08.D (T7) 注释历史
+
+    /** A minimal Success detail payload for the history-landing vectors. */
+    private fun successDetail(transactionId: String): com.unifiedledger.application.TransactionDetailResult =
+        com.unifiedledger.application.TransactionDetailResult.Success(
+            com.unifiedledger.application.TransactionDetail(
+                ledgerId = ledgerId,
+                transactionId = TransactionId(transactionId),
+                currentVersionId = TransactionVersionId("version-$transactionId"),
+                kind = com.unifiedledger.domain.TransactionKind.EXPENSE,
+                occurredAt = occurredAt,
+                statisticsAt = occurredAt,
+                note = null,
+                legs = emptyList(),
+                creationEntry = com.unifiedledger.application.CreationEntry.UNMARKED,
+                reconciliation = com.unifiedledger.application.TransactionReconciliationProjection(legs = emptyList(), rollup = null),
+            ),
+        )
+
+    private fun detailState(transactionId: String = "txn-1"): P503AppState.TransactionDetail =
+        P503AppState.TransactionDetail(
+            overview = overviewState,
+            originTab = P503Tab.HOME,
+            transactionId = TransactionId(transactionId),
+            detail = successDetail(transactionId),
+        )
+
+    private fun historyEntry(revision: Long) =
+        com.unifiedledger.application.TransactionAnnotationHistoryEntry(
+            annotationRevision = revision,
+            observedTransactionVersionId = TransactionVersionId("version-1"),
+            tagIds = listOf(tagA),
+            merchantId = merchant,
+            requestId = "annot-request-$revision",
+            createdAt = "2026-03-05T02:00:00Z",
+        )
+
+    @Test
+    fun p708dHistoryLandingAppliesToTheMatchingOpenDetail() {
+        val state = detailState()
+        val landed =
+            assertIs<P503AppState.TransactionDetail>(
+                reducer.reduce(state, P503UiEvent.TransactionAnnotationHistoryLanded(TransactionId("txn-1"), listOf(historyEntry(1L), historyEntry(2L)))),
+            )
+        assertEquals(2, landed.annotationHistory?.size)
+        assertEquals("annot-request-1", landed.annotationHistory?.first()?.requestId)
+    }
+
+    @Test
+    fun p708dAHistoryLandingForADifferentTransactionIsAbsorbedWhole() {
+        val state = detailState(transactionId = "txn-1")
+        assertEquals(
+            state,
+            reducer.reduce(state, P503UiEvent.TransactionAnnotationHistoryLanded(TransactionId("txn-other"), listOf(historyEntry(1L)))),
+        )
+        // A non-Success detail payload absorbs too (the block would render nothing anyway).
+        val notFound = state.copy(detail = com.unifiedledger.application.TransactionDetailResult.NotFound)
+        assertEquals(
+            notFound,
+            reducer.reduce(notFound, P503UiEvent.TransactionAnnotationHistoryLanded(TransactionId("txn-1"), listOf(historyEntry(1L)))),
+        )
+    }
+
+    @Test
+    fun p708dHistoryLandingsAreAbsorbedInEveryOtherReducerState() {
+        // The D-222 V3 lesson: a NEW event must be absorbed in EVERY state it was not designed
+        // for — a late/stale dispatch can never reach `unhandled` and turn into an ISE.
+        val states =
+            listOf<P503AppState>(
+                overviewState,
+                annotationState(),
+                editing(expenseDraft()),
+                P503AppState.BudgetConfig(
+                    overview = overviewState,
+                    scope = com.unifiedledger.domain.BudgetScope.Total,
+                    month = kotlinx.datetime.YearMonth(2026, 1),
+                    revision = 0L,
+                    closed = false,
+                    limitMinorUnits = null,
+                ),
+            )
+        val event = P503UiEvent.TransactionAnnotationHistoryLanded(TransactionId("txn-1"), listOf(historyEntry(1L)))
+        states.forEach { state ->
+            assertEquals(state, reducer.reduce(state, event), "$event must be absorbed in ${state::class.simpleName}")
+        }
+    }
+
+    @Test
+    fun p708dTheRetainedAssociationSurvivesTheEditSurfaceTransitions() {
+        val retained = setOf(tagA)
+        val state =
+            annotationState().copy(
+                intent =
+                    annotationState().intent.copy(
+                        tagIds = setOf(tagA),
+                        merchantId = merchant,
+                        retainedTagIds = retained,
+                        retainedMerchantId = merchant,
+                        inactiveTagLabels = mapOf("tag-a" to "标签甲"),
+                        inactiveMerchantLabel = "商家一",
+                    ),
+            )
+        // The explicit confirm keeps every intent member (the commit reads them off the state).
+        val submitting = assertIs<P503AppState.TransactionAnnotationEdit>(reducer.reduce(state, P503UiEvent.ConfirmTransactionAnnotationEdit))
+        assertEquals(retained, submitting.intent.retainedTagIds)
+        assertEquals(merchant, submitting.intent.retainedMerchantId)
+        assertEquals(mapOf("tag-a" to "标签甲"), submitting.intent.inactiveTagLabels)
+        // A pending selection write changes ONLY the tag set — the retained set stays frozen.
+        val retoggled =
+            assertIs<P503AppState.TransactionAnnotationEdit>(
+                reducer.reduce(state, P503UiEvent.UpdateAnnotationTagSelection(setOf(tagB))),
+            )
+        assertEquals(setOf(tagB), retoggled.intent.tagIds)
+        assertEquals(retained, retoggled.intent.retainedTagIds)
+    }
+
+    // ------------------------------------------------------------------ P7-08 08.D (T6) 停用保留显示
+
+    @Test
+    fun p708dRetainedInactiveTagLabelsMarkOnlyTheKeptInactiveReferences() {
+        val intent =
+            annotationState().intent.copy(
+                retainedTagIds = setOf(tagA, tagB),
+                inactiveTagLabels = mapOf("tag-a" to "标签甲"),
+            )
+        val options = listOf(catalogItemFor("tag-b", "标签乙"))
+        // tag-b is still selectable → a normal toggle row; tag-a is inactive → the kept marker row.
+        assertEquals(
+            listOf("tag-a" to "标签甲（已停用）"),
+            annotationEditRetainedInactiveTagLabels(intent, options),
+        )
+        // An id without an authority label degrades to the raw stable id — never dropped, never fabricated.
+        val unlabeled = intent.copy(inactiveTagLabels = emptyMap())
+        assertEquals(listOf("tag-a" to "tag-a（已停用）"), annotationEditRetainedInactiveTagLabels(unlabeled, options))
+        // A null (unloaded) option list keeps every retained row visible as inactive.
+        assertEquals(
+            listOf("tag-a" to "标签甲（已停用）", "tag-b" to "tag-b（已停用）"),
+            annotationEditRetainedInactiveTagLabels(intent, null),
+        )
+    }
+
+    private fun catalogItemFor(
+        id: String,
+        name: String,
+    ): com.unifiedledger.domain.CatalogItem =
+        com.unifiedledger.domain.CatalogItem(
+            kind = com.unifiedledger.domain.CatalogItemKind.TAG,
+            id = id,
+            ledgerId = ledgerId,
+            name = name,
+            active = true,
+            tombstoned = false,
+            revision = 1L,
+        )
+
+    @Test
+    fun p708dTheHistoryLineCarriesRevisionObservedVersionRequestAssociationAndAuditInstant() {
+        val entry =
+            com.unifiedledger.application.TransactionAnnotationHistoryEntry(
+                annotationRevision = 2L,
+                observedTransactionVersionId = TransactionVersionId("version-1"),
+                tagIds = listOf(tagA, tagB),
+                merchantId = merchant,
+                requestId = "annot-request-2",
+                createdAt = "2026-03-06T03:00:00Z",
+            )
+        val line = transactionAnnotationHistoryLine(entry) { id -> if (id == "tag-a") "标签甲（新）" else id }
+        assertTrue(line.contains("修订 2"))
+        assertTrue(line.contains("所见版本 version-1"))
+        assertTrue(line.contains("请求 annot-request-2"))
+        assertTrue(line.contains("2026-03-06T03:00:00Z"))
+        assertTrue(line.contains("标签甲（新）"), "the tag label resolver supplies the current display name")
+        assertTrue(line.contains("商家：merchant-1"))
+        // An unresolvable tag id falls back to the raw stable id; an unresolvable merchant too.
+        val raw = transactionAnnotationHistoryLine(entry.copy(merchantId = null), null)
+        assertTrue(raw.contains("tag-a"))
+        assertTrue(raw.contains("商家：无"))
+    }
 }
