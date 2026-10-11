@@ -4641,3 +4641,43 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 - **R-224-5** 全 schema 逐字节 DDL 等价不在本批证据内（columnInfo 契约 + 值等价）
 - **R-224-6** 分片 seconds 配平推迟（合并后用 PR #83 CI 计时执行 `make-ledger-data-shards.py`）
 - **承接（不改状态）**：R-222-9 历史页 UI 语义（本批交付历史块只读面，规格 §8 开放项 7 语义归验收）、R-222-10、R-221-2/R-221-3/R-221-4、R-218-1/R-218-3 沿前批。
+
+## D-225 P7-09 系统入口设计门批准（Q19/Q20 裁决；零 schema 变更）
+
+**状态：** 已批准（2026-10-12，P7-09「系统入口」设计门批准）。批准对象 = 规格 `docs/specs/2026-10-12-p7-09-system-entry-design.md`（状态由 `draft` 转为 `approved`；本决定即批准依据）。**零代码 / 零 schema / 零迁移 / 零依赖**——本条只批准一份**设计规格**，**不分配 schema 版本号**（沿 D-187 先例；schema 维持 v35，34 个 `.sqm`）。规格起草于隔离 worktree `UL-p7-09design`（基点 `27c842f`），冻结候选提交链 `46fc1da3109d340602f60fcb2edfcc54bd2856f9`（draft-1）→ `0e64029c4c441de7cd35c7c5cbdff5198c5923e9`（draft-2，闭合评审 findings）。**不授权任何实现**；实施、设备取证与最终验收属后续独立实施批。
+
+**决定：**
+
+1. **Q19 裁决（统一导航门 + 单文件分享）**：批准规格 §2/§3/§4 冻结的设计面——Android 侧把 `Intent` 校验为**中立请求**，common app-ui 只接 `OpenNewEntry`/`OpenImport`/`OpenCurrentMonth` 三类，`Uri`/文件名/平台对象留 Android 适配器；本地不透明 `deliveryId`（统一术语）消费状态跨重组/Activity 重建保持（`onNewIntent` 须 `setIntent()`）；启动未 Ready 暂存**一个**请求（single pending slot），已有请求时冻结为「**保留原请求 + 可见 Busy + 用户显式保留/替换，替换须显式确认、不改原 requestId/确认快照/授权时间**」，**禁止无界队列与静默丢弃**（修 AlreadyInFlight 静默丢弃）。分享面逐项校验（仅 `ACTION_SEND`、单 `content://` stream、`EXTRA_STREAM` 与 `ClipData` 一致性、实际可读权限；多流/`file://`+`http(s)://`/无权限/异常 extras/缺格式/假 MIME/超 16 MiB/超 10k 候选类型化拒绝、流关闭、零正式效果）；沿 D-146 不保存副本/不长期持 URI/不调 `takePersistableUriPermission`。**首版只接受单文件 `ACTION_SEND`**。
+
+2. **Q20 裁决（月度小组件）**：批准规格 §6 冻结的设计面——`RemoteViews` + `AppWidgetProvider`、**默认隐藏金额**、先用现有平台 API 验证（不先引 Glance/WorkManager）；共享月度快照含 `ledgerId`/`month`/`currency`/三项精确金额/`asOf`/`generation`/**`catalogVersion`**/可用-失效-失败状态，计算复用 §7.2 有界月份读取（`MonthlyContributionReadPort`）与 P7-03 语义（不抄第二套公式）；widget 经 runtime owner 受控租约（不直调 `buildLedgerGraph`、不后台造空库/静默迁移）；刷新 = 已知写入成功/恢复成功的合并失效 + 周期请求（≥30 分钟）+ 主动刷新；`PendingIntent` 显式 `FLAG_IMMUTABLE` 仅带通用路由/widgetId；隐藏态载荷集合（`RemoteViews` 文本/contentDescription/PendingIntent extras/shortcut 元数据/widget 配置/日志轨迹）**硬禁明文金额**；widget 本地配置为平台偏好、**不入 ledger schema、排除 P7-06 备份**。
+
+3. **P1 结构性裁决（widget/非组合入口访问路径）**：规格 §1.4 已实证 owner 为 composition-scoped（`App.kt:239 remember(context)` → `:288/:433` → `:323-324 dispose`；全仓无 `Application` 子类/进程级持有者）。批准规格 §6.3 冻结的**设计要求**：非组合入口（widget receiver / shortcut）**必须**经**进程作用域 owner 持有者**取得受控租约，**不得**经组合作用域持有者、**不得**调 `buildLedgerGraph`，进程内**至多一个** owner/活动图（保 P7-06 单活动图/单代际/租约不变量）。**精确机制 OPEN**（开放项 13，见残余）。
+
+4. **切片与首版边界**：09.0 导航门 + 09.A 单文件分享 → 09.B 动态快捷方式 → 09.C 有界只读快照/小组件 → 09.D 完整平台回归；09.C 依赖 07.T（已交付），未满足则只推进独立状态机/布局设计。**非目标**：多文件分享、跨设备/云、持久 URI grant/磁盘排队、Glance/WorkManager/导航框架（除非资源证据）、receiver 主线程 DB 聚合、绕过启动门直接正式写账、widget 未开启显示金额。
+
+5. **审验拓扑（如实登记）**：单 writer（隔离 worktree `UL-p7-09design`，基点 `27c842f`）→ 独立**规格符合性评审** APPROVE-WITH-FINDINGS（3 P3 + 2 Info）→ 独立**质量评审** **REJECT**（1 阻断 P1〔widget 访问路径结构性不可实现——主代理独立核实为真〕+ 3 P2 + 11 P3）→ **主代理裁决 P1 修法**（承认差距 + 冻结要求 + 登记机制开放项）→ 修复轮（同 writer，`0e64029c4c441de7cd35c7c5cbdff5198c5923e9`）→ **闭包复评**：规格评审 **APPROVE**（5 findings 全 CLOSED、无回归）、质量评审 **APPROVE-WITH-FINDINGS**（全部 CLOSED、无 P1/P2、2 Info 残余）→ **distinct verifier V1–V11**（V1 口径 PARTIAL〔两提交批次 vs 单提交措辞〕、其余 VERIFIED；P1/P2 关键事实独立复核为真）。
+
+6. **验证与证据**：`project_docs` exit 0；`tools/ci/trace-scan.sh` all clean；`git diff --stat 27c842f..0e64029c4c441de7cd35c7c5cbdff5198c5923e9` 仅该 1 个 spec 文件（零代码/schema）；UTF-8 无 BOM、全 CRLF（278/278）；§7 表 P709-A01..A09 九向量齐备；§8 开放项 15 条。**本门零 PASS 声明**（P709-A01..A09 全为未来实现/验证要求，设备证据归验收批）。
+
+**关联决定：** D-187（设计门批准先例：不分配 schema 版本号、Q 项裁决由决定登记）、D-176（P7-06 runtime owner/稳定存储/代际——widget 受控租约的承载）、D-184（07.T 有界月份读取与 fail-closed）、D-186（07.D 交付 `MonthlyContributionReadPort`）、D-146（导入不留原文件/不持久 URI grant）、D-161/D-162（程序化滚动/规模设备证据先例）、D-224（上一个登记批，P7-08 08.D）。
+
+**残余/开放项承接（沿规格 §8 15 条开放项，逐条点名，不得静默丢弃）：**
+
+1. 中立导航请求实签名与失败码族。
+2. `deliveryId` 生命周期精确契约。
+3. 快捷方式动态 vs 静态/trampoline。
+4. widget 配置存储机制（已冻结不入 ledger schema）。
+5. 更新调度是否需 WorkManager 的门。
+6. 平台常量/能力取证（`MAX_INIT_VIEW_COUNT`/`getMaxShortcutCountPerActivity`/锁屏 widget/shortcut extras）。
+7. `ACTION_SEND` 发送方兼容性实测门。
+8. receiver 主线程 DB 聚合失败模式与 `goAsync` 时间。
+9. 第三方分享方/临时 grant 行为。
+10. 官方未证实能力逐项承接。
+11. 平台载荷/TalkBack 设备隐私测试归属。
+12. 本决定已批准，编号落定 D-225。
+13. **非组合入口进程作用域 owner 持有者机制（P1 承接）**。
+14. 分享读等待上界。
+15. manifest 安全面逐入口裁决。
+
+另加 2 条 Info 残余（非阻断，登记不改）：(i) §6.2 `catalogVersion` 措辞可读作自来源（语义可实现，仅措辞）；(ii) §1.5 引 D-186 而 Authority 决定列表未列 D-186（引用卫生，无正确性影响）。**P709-A01..A09 无一记 PASS。**
