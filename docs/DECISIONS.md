@@ -4599,3 +4599,21 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 - **R-222-11 08.A 目录管理 UI**：新建/改名/停用/删除与 tombstone 呈现（开放项 11）仍未交付；本批只做选择面。
 - **承接（不改状态）**：**R-221-2**（v34 恢复白名单 A04 往返腿）、**R-221-3**（`stageV34` 夹具 `columnInfo` 契约）、**R-221-4**（P708-A08 恢复腿/设备腿归 08.D）、R-218-1/R-218-3 沿前批。
 - **P708 向量**：本批交付 A02/A03/A04/A07 的实现与证据面，**无 P708 向量记 PASS**（A01/A06/A09 属 08.C；设备腿未做）。
+
+## D-223 P7-08 08.C 多标签筛选、商家月累计与目录管理 UI 实施登记（零 schema 变更）
+
+**状态：** 已批准并交付（2026-10-10，P7-08 第三切片 08.C「筛选与统计」的实施与规格条款落地登记）。设计依据 = D-187 批准的规格 `docs/specs/2026-09-30-p7-08-tag-merchant-design.md` §5 与 §8；范围 = 计划 §8.3 切片顺序中的 08.C；承接 D-222 残余 R-222-11。**零 schema/迁移变更**（schema 维持 v35，34 个 `.sqm`；本批不分配版本号）。实施提交链（基点 `7ba1b5b`）：`b810edd017e0a9020b985f1cb4a909c5bccdf958`（实施 18 文件）→ `0611310f95212e53054c0834283c01e0d9241f8a`（修复轮：单调请求 token 落地门 + 5 项评审清理）→ `d11b64ebd3463668451d4f9f8dec75625c58680a`（ktlint 轮）→ `7d10aac27ba83ad05a1140b620b879ac895d0339`（ledger-data 分片清单重生成）；PR #81 merge `fd165aa401eadccca596cf34f4355f1d11de9601`，merge tree guard run `38093800828` zero-action（合并树 == tip 树 `df09adc2`）。
+
+**决定：**
+
+1. **交付内容（08.C）**：多标签 OR/AND 筛选与商家条件（规格 §5.1：默认 OR 可切 AND、商家 AND 单选、停用项可选可命中历史、tombstone 不入可选集）；keyset 有界分页两步式 EXISTS 半连接读取（§5.2：先求唯一 transactionId 集再取当前有效版本行；按页批量标签装配；无多标签 JOIN 倍增、无按金额 DISTINCT、金额原样返回 Kotlin 折叠）；商家普通净支出月累计（§5.4：复用 `MonthlyBuckets.aggregate` 与 `OrdinaryFlowClassification`，D-184 行为等价硬约束，退款只按自身明确关联计入，界面声明不含特殊消费）；筛选 UI（§5.3/§5.5：四码 fail-closed 类型化失败、条件指纹 + 宿主 lease 代际 + 读事务内 `catalog_item_version` 比对 + 单调请求 token 门；§5.5 刷新挂点矩阵）；08.A 目录管理 UI（开放项 11：五命令接 `ExecuteTagMerchantCommand`、11 个冻结失败码类型化中文呈现、tombstone 只读审计块零操作入口）。`Ledger.sq` 仅 EOF 追加三条命名查询，零 DDL；5 个新测试类。
+2. **开放项 3（查询形状）**：单语句两步 CTE（page_ids 内 EXISTS 半连接 + keyset LIMIT 每交易一行）+ 专用月窗累计查询；理由与 §5.2 禁令逐条对应。
+3. **开放项 6（商家累计行来源）**：**独立命名查询** `tagMerchantAccumulationRowsInWindow`——符合选项 (b) 的精神（不扩展 `monthlyContributionRowsInWindow` 行形状），但与规格字面 (b)「读端按筛选命中的 transactionId 二次关联折叠」机制不同（按月窗 + 商家 EXISTS 自行取数，不以筛选命中集为输入）；差异如实登记，不改写规格。
+4. **开放项 8（筛选 UI 形态）**：多选 checkbox + OR/AND 开关 + 商家单选 + 停用项「（已停用）」标注仍可选。
+5. **开放项 9（读时比对落点）**：读端口在单个 `transactionWithResult(noEnclosing=true)` 事务内做投影探针 → 目录权威读 → `catalog_item_version` 精确比对（D-186 §2(b) compare-in-transaction 先例；计数器本体为 D-218 第 6 条的独立计数器）。
+6. **开放项 11（tombstone 呈现）**：管理屏内只读审计块（「已删除（审计记录，不可恢复）」），零改名/停用/删除入口；与域层 `catalogItemNameTaken` 不排除 tombstone（R-218-1 保持 OPEN）一致。
+7. **P3-1 修复轮（落地门）**：双独立评审同指「同条件并发落地可重复追加、分组合计虚增」（仅 UI 显示态）——采用**单调请求 token**（Request 每次分发必推进 token、landing 持过期 token 整体丢弃；宿主 dispatch 后同步取 token 回带，非筛选面 fail-closed 不发读）而非 catalogItemVersion 门（同条件同版本两次读无法区分）；双竞态向量（同帧双击重复追加 / replace 后旧页合并）有消融承重测试。
+8. **残余登记 R-223-1..R-223-6（全部不阻断）**：R-223-1 token 门为状态内计数，跨状态实例重建（在飞读→Back→重开同默认条件）不续代，两读同 token 同指纹可双落地（窗口窄、只读展示、下次请求自愈）；R-223-2 条件切换窗口 `entryCatalog` 沿用旧快照，短暂渲染「没有命中」直至新页落地；R-223-3 A04 目录并发停用读腿以计数器推进模拟（读侧语义等价，非真实命令链）；R-223-4 目录命令后月视图重请求对本目录族为语义空转裁剪（tag/merchant 推进独立计数器，不影响月视图）；R-223-5 测试名 `aPageRequestIsAbsorbedWhileOneIsInFlight` 已成误称（事件不再被吸收，仅页字段被吸收）；R-223-6 verifier V5 的 EXPLAIN 注释字面命中裁定不阻断（「Deliberately NOT asserted」声明注释，P7-05 冻结决定）。
+9. **验收边界**：P708-A01/A06/A09 的读向量腿随批测试交付；设备腿与 50k/61k 腿明文不声称；**无 P708 向量记 PASS**（记 PASS 归验收登记）。审验拓扑如实：双独立评审 APPROVE-WITH-FINDINGS（各 1×P3 同指）→ 修复轮 → 闭包复评 APPROVE-WITH-FINDINGS（全 CLOSED）→ distinct verifier VERIFIED → CI 三跑（ktlint 轮 + 分片清单重生成由主代理亲修）→ 四 required checks 全绿。
+
+**关联决定：** D-187（P7-08 设计门批准与切片划分——本条实施其 §5/§8 条款），D-222（08.B-2 登记——本条承接其 R-222-11），D-218（08.A 目录/注释聚合与独立计数器；R-218-1 保持 OPEN），D-221（08.B-1 schema v35 与恢复白名单），D-184（`MonthlyBuckets.aggregate` 与 `OrdinaryFlowClassification` 行为等价硬约束），D-186（compare-in-transaction 先例），D-219（Schema 迁移批次清单——本批零迁移、不适用版本字面量族）。
