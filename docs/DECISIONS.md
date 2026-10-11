@@ -4617,3 +4617,27 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 9. **验收边界**：P708-A01/A06/A09 的读向量腿随批测试交付；设备腿与 50k/61k 腿明文不声称；**无 P708 向量记 PASS**（记 PASS 归验收登记）。审验拓扑如实：双独立评审 APPROVE-WITH-FINDINGS（各 1×P3 同指）→ 修复轮 → 闭包复评 APPROVE-WITH-FINDINGS（全 CLOSED）→ distinct verifier VERIFIED → CI 三跑（ktlint 轮 + 分片清单重生成由主代理亲修）→ 四 required checks 全绿。
 
 **关联决定：** D-187（P7-08 设计门批准与切片划分——本条实施其 §5/§8 条款），D-222（08.B-2 登记——本条承接其 R-222-11），D-218（08.A 目录/注释聚合与独立计数器；R-218-1 保持 OPEN），D-221（08.B-1 schema v35 与恢复白名单），D-184（`MonthlyBuckets.aggregate` 与 `OrdinaryFlowClassification` 行为等价硬约束），D-186（compare-in-transaction 先例），D-219（Schema 迁移批次清单——本批零迁移、不适用版本字面量族）。
+
+## D-224 P7-08 08.D 联动与恢复实施登记（零 schema 变更）
+
+**状态：** 已批准并交付（2026-10-11/12，P7-08 第四切片 08.D「联动与恢复」的实施与规格条款落地登记）。设计依据 = D-187 批准的规格 `docs/specs/2026-09-30-p7-08-tag-merchant-design.md` §6；范围 = 计划 §8.3 切片顺序中的 08.D；承接 D-222 残余 R-222-9 的历史块面与 D-223 残余。**零 schema/迁移变更**（schema 维持 v35，34 个 `.sqm`；`Ledger.sq` 仅 EOF 追加两条命名查询；恢复白名单常量 `{1,31,32,33,34}` **零变更**——本批交付的是其 v34 腿的**证据**，非字面量编辑）。实施提交链（基点 `41d5e4b`）：`bf314344540aef0d0c401c282feba83a17fd9ece`（实施 26 文件 +2156/−59）→ `933a021375afe46b0c51da52c27ac7ddb1a321cf`（ktlint 轮 7 文件机械格式化 + 1 测试属性改名）；PR #83 merge `6ef0d6c476f2faf0efd8f664d9fd7df9f440f594`，merge tree guard run `38155924818` zero-action（合并树 == tip 树 `2f06a5e5f404da78fc584bd500020324618169e3`）。
+
+**决定：**
+
+1. **交付内容（08.D）**：注释历史读全链（`Ledger.sq` 两条命名查询 `transactionAnnotationHistoryForTransaction`/`transactionAnnotationHistoryTagsForTransaction`（`ORDER BY annotation_revision`，最早 revision 在前） + `TransactionAnnotationReader.loadHistory`（默认 null = 未接线不渲染）+ `SqlDelightTransactionAnnotationStore` 实现 + 交易详情只读历史块，revision/observedTransactionVersionId/tagIds/merchantId/requestId/createdAt 存储文本逐字显示）；停用引用保留（域校验 `validateTransactionAnnotation` 参数化 `retainedTagIds`/`retainedMerchantId`——inactive 且未 tombstone 的既有引用仅当 ∈ retained 集合才放行、tombstone 一律拒绝、默认空集 = 新建路径既有拒绝不变；编辑面以 checked+disabled 呈现「（已停用）」项）；恢复白名单 v34 有条件准入的 A04 往返等价腿（`P708RestoreRoundtripEquivalenceTest` 四腿：v35 直读值等价 / v34→v35 严格迁移 + legacy 注释列 NULL = 冻结「无注释」默认 / v33→v35 全链 11 张 08.A owner 表 fresh-vs-migrated columnInfo 等价 + 零回填 / 迟哨兵占位迁移失败隔离副本数据原样）；Unknown 重开 replay（`P708UnknownReopenAnnotationReplayTest`）；A03 修正×注释交互（`P708CorrectionAnnotationInteractionTest` 真实命令链）；A07 四个 arm seam 矩阵（确定成功才 arm）；目录并发停用读腿升级为真实命令链（闭 D-223 残余 R-223-3 方向，原计数器模拟测试保留钉「不可读 authority」腿）。
+2. **主代理裁决（随批落地，本条登记）**：分片清单 class-count 追加（103 类守卫通过，seconds 配平**推迟**合并后用 CI 计时执行——残余）；T8 锚点漂移按实际 **6 处**挂点；arm **收紧为 determinate success 才 arm**（原失败路径 arm 为可证明 no-op）；手工保存无 arm 挂点（R-223-4 同型语义空转）；ci.yml 头注释修正（**纯注释**，弃用已漂移的 98/722 计数，主代理亲审）；五类支持矩阵以 lending 代表类披露承接；columnInfo 契约等价非逐字节 DDL 等价（诚实边界注在测试头，R-221-3 先例）。
+3. **审验拓扑（如实登记）**：autopilot 首派 writer 完成实施但报 done:false（两项披露 + 三项规格外决定请裁决）→ 脚本无中途裁决通道/无 worktree 复用语义，主代理六次 amend + 两处补丁缺陷后**主代理手工接管收口**：亲审修复增量（3 行 import 顺序）、ktlint 轮、独立闭包评审 **APPROVE-WITH-FINDINGS 零阻断**（1 Low + 4 Info 列入残余）→ PR #83 四 required checks 全绿。教训（结构弱点非偶发）：dispatcher 任务书锚点错误与不可完成任务项两次复现；在飞 amend 补丁自身引入两轮新故障；autopilot 缺中断恢复语义——**autopilot v2 已于 2026-10-12 另批收口**（冻结锚点参数化 / 机械核验门 / finalize 通道 / worktree 复用 / 升级提问协议）。
+4. **验证与交付证据**：distinct verifier PASS `bf314344540aef0d0c401c282feba83a17fd9ece`（聚焦 XML 全绿：3 新类 / Store / 筛选读 / app-ui 四类 / AndroidRestoreWiring；全量 ledger-data jvmTest 绿；分片守卫 103==103）；主代理 ktlint 轮后复跑受影响聚焦测试绿；独立闭包评审 APPROVE-WITH-FINDINGS 零阻断（5 项评审要求全过、5 处消融推演成立、`project_docs` 补跑 exit 0）；`tools/ci/trace-scan.sh` all clean；PR #83 四 required checks 全绿；merge `6ef0d6c476f2faf0efd8f664d9fd7df9f440f594`，guard zero-action（树 `2f06a5e5f404da78fc584bd500020324618169e3`）。
+5. **验收边界**：P708-A03/A04/A07/A08 证据腿随批交付；**设备腿 / 50k / 61k 明文不声称**；**无 P708 向量记 PASS**（记 PASS 归验收登记）。
+
+**关联决定：** D-187（P7-08 设计门批准与切片划分——本条实施其 §6 条款），D-222（08.B-2 登记——本条承接其 R-222-9 历史块面），D-223（08.C 登记——本条承接其残余 R-223-3 闭合方向），D-218（08.A 目录/注释聚合），D-221（08.B-1 schema v35 与恢复白名单），D-185（恢复白名单有条件准入与 claim-first 先例），D-219（Schema 迁移批次清单——本批零迁移、不适用版本字面量族）。
+
+**残余（登记，本批不改行为）：**
+
+- **R-224-1** 停用保留 tag 在编辑界面暂无取消路径（checked+disabled，须重新启用后解除；merchant 侧为 enabled 可选项，能力不对称）
+- **R-224-2** 注释历史块在详情打开期间不随提交刷新（只读详情快照语义，重进详情刷新）
+- **R-224-3** `validateTransactionAnnotation` KDoc 首段措辞未同步 retained 语义
+- **R-224-4** 五类支持矩阵以 lending 代表类披露承接
+- **R-224-5** 全 schema 逐字节 DDL 等价不在本批证据内（columnInfo 契约 + 值等价）
+- **R-224-6** 分片 seconds 配平推迟（合并后用 PR #83 CI 计时执行 `make-ledger-data-shards.py`）
+- **承接（不改状态）**：R-222-9 历史页 UI 语义（本批交付历史块只读面，规格 §8 开放项 7 语义归验收）、R-222-10、R-221-2/R-221-3/R-221-4、R-218-1/R-218-3 沿前批。
