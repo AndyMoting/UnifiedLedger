@@ -260,7 +260,7 @@
 9. **第三方分享方 / 临时 grant 行为**：官方仅证明「MIME 不可信、临时 grant 不能普遍持久化」（计划 `:108`）；具体发送方与设备上的实际行为须实测（§2.3）。
 10. **官方未证实能力的逐项承接（本文 C 组）**：shortcut 自定义 extras、`getMaxShortcutCountPerActivity()`、`onNewIntent` 后编辑态保留、锁屏 widget 可用性、`MAX_INIT_VIEW_COUNT=16`、`updatePeriodMillis` 投递节流、`goAsync` 30 秒无精确保证、receiver 主线程 DB 聚合失败模式——全部**不得当既有事实**，逐项列为技术门。
 11. **平台载荷/TalkBack 设备隐私测试归属**：隐藏态载荷无金额、朗读无金额的测试须另做**平台载荷与设备隐私测试**（T09 行，计划 `:445`）——OPEN（属 09.C/09.D）。
-12. **Q19/Q20 审批与批准编号**：本文即 Q19/Q20 的审批载体（计划 `:325-339`/`:345-351`）；批准由主代理以后续决定（编号**建议** D-225，**未登记**）登记。未批准前本文**无授权力**。
+12. **Q19/Q20 审批与批准编号**：本文即 Q19/Q20 的审批载体（计划 `:325-339`/`:345-351`）；已由 `docs/DECISIONS.md` **D-225** 批准（本决定即批准依据），状态转为 `approved`。
 13. **非组合入口的进程作用域 owner 持有者机制（P1 承接）**：§6.3 已冻结**语义要求**——非组合入口（widget receiver / shortcut）必须经**进程作用域 owner 持有者**取得受控租约，不得经组合作用域 `remember` 持有者、不得调 `buildLedgerGraph`，且进程内至多一个 owner/活动图（保持 P7-06 单活动图/单代际/租约不变量）。**精确机制 OPEN**：Application 子类 vs 进程单例持有者；与 06.1/06.D `LedgerRuntimeOwner` 生命周期的衔接（构造/启动/`dispose` 时机）；进程死亡/换库时的重建语义。由实施规格冻结并取证。
 14. **分享读等待上界（P3-10 承接）**：§2.3 已冻结「读在当前会话内、无界等待禁止、超时呈现 Busy/失败、不落盘排队」；**长耗时旧库复制阻塞 grant 有效窗口的精确上界 OPEN**（须与 09.D 冷启动实测/资源证据一起定），由实施规格/设备取证冻结。
 15. **manifest 安全面逐入口裁决（P3-9 承接）**：§2.4 已冻结 share 入口 `exported="true"` 故校验面为安全关键；**widget provider receiver 的 `exported`/`android:permission`、shortcut activity 声明与 launchMode 组合 OPEN**，实施批前须逐项裁决并取证。

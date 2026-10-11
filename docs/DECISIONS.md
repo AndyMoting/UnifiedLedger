@@ -4656,7 +4656,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 4. **切片与首版边界**：09.0 导航门 + 09.A 单文件分享 → 09.B 动态快捷方式 → 09.C 有界只读快照/小组件 → 09.D 完整平台回归；09.C 依赖 07.T（已交付），未满足则只推进独立状态机/布局设计。**非目标**：多文件分享、跨设备/云、持久 URI grant/磁盘排队、Glance/WorkManager/导航框架（除非资源证据）、receiver 主线程 DB 聚合、绕过启动门直接正式写账、widget 未开启显示金额。
 
-5. **审验拓扑（如实登记）**：单 writer（隔离 worktree `UL-p7-09design`，基点 `27c842f`）→ 独立**规格符合性评审** APPROVE-WITH-FINDINGS（3 P3 + 2 Info）→ 独立**质量评审** **REJECT**（1 阻断 P1〔widget 访问路径结构性不可实现——主代理独立核实为真〕+ 3 P2 + 11 P3）→ **主代理裁决 P1 修法**（承认差距 + 冻结要求 + 登记机制开放项）→ 修复轮（同 writer，`0e64029c4c441de7cd35c7c5cbdff5198c5923e9`）→ **闭包复评**：规格评审 **APPROVE**（5 findings 全 CLOSED、无回归）、质量评审 **APPROVE-WITH-FINDINGS**（全部 CLOSED、无 P1/P2、2 Info 残余）→ **distinct verifier V1–V11**（V1 口径 PARTIAL〔两提交批次 vs 单提交措辞〕、其余 VERIFIED；P1/P2 关键事实独立复核为真）。
+5. **审验拓扑（如实登记）**：单 writer（隔离 worktree `UL-p7-09design`，基点 `27c842f`）→ 独立**规格符合性评审** APPROVE-WITH-FINDINGS（3 P3 + 2 Info）→ 独立**质量评审** **REJECT**（1 阻断 P1〔widget 访问路径结构性不可实现——主代理独立核实为真〕+ 3 P2 + 7 P3）→ **主代理裁决 P1 修法**（承认差距 + 冻结要求 + 登记机制开放项）→ 修复轮（同 writer，`0e64029c4c441de7cd35c7c5cbdff5198c5923e9`）→ **闭包复评**：规格评审 **APPROVE**（5 findings 全 CLOSED、无回归）、质量评审 **APPROVE-WITH-FINDINGS**（全部 CLOSED、无 P1/P2、2 Info 残余）→ **distinct verifier V1–V11**（V1 口径 PARTIAL〔两提交批次 vs 单提交措辞〕、其余 VERIFIED；P1/P2 关键事实独立复核为真）。
 
 6. **验证与证据**：`project_docs` exit 0；`tools/ci/trace-scan.sh` all clean；`git diff --stat 27c842f..0e64029c4c441de7cd35c7c5cbdff5198c5923e9` 仅该 1 个 spec 文件（零代码/schema）；UTF-8 无 BOM、全 CRLF（278/278）；§7 表 P709-A01..A09 九向量齐备；§8 开放项 15 条。**本门零 PASS 声明**（P709-A01..A09 全为未来实现/验证要求，设备证据归验收批）。
 
