@@ -23,8 +23,8 @@ import com.unifiedledger.application.UpdateTransactionAnnotation
 import com.unifiedledger.application.VoidTransactionRequest
 import com.unifiedledger.application.VoidTransactionResult
 import com.unifiedledger.domain.CatalogItemKind
-import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.MerchantId
+import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.TagId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVersionId
@@ -285,6 +285,5 @@ private object AnnotationHarness {
     }
 
     /** The tag/merchant catalog generation the filter read compares inside its read transaction. */
-    fun catalogGeneration(harness: P705Database): Long =
-        requireNotNull(SqlDelightTagMerchantCatalogStore.forPlatformConfiguredDatabase(harness.database).load(P705Fixture.ledgerId)).catalogItemVersion
+    fun catalogGeneration(harness: P705Database): Long = requireNotNull(SqlDelightTagMerchantCatalogStore.forPlatformConfiguredDatabase(harness.database).load(P705Fixture.ledgerId)).catalogItemVersion
 }

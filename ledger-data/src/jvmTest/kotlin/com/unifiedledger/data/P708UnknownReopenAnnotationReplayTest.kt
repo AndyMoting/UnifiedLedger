@@ -70,7 +70,6 @@ import kotlin.time.Instant
  * All data synthetic and anonymous with fixed instants.
  */
 class P708UnknownReopenAnnotationReplayTest {
-
     @Test
     fun theUnknownLendingCommitReplaysTheOriginalReceiptAndKeepsTheAnnotationConsistent() {
         UnknownHarness().use { harness ->
@@ -356,7 +355,8 @@ private class UnknownHarness : AutoCloseable {
                 sql,
                 { cursor ->
                     check(cursor.next().value)
-                    app.cash.sqldelight.db.QueryResult.Value(requireNotNull(cursor.getLong(0)))
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(requireNotNull(cursor.getLong(0)))
                 },
                 0,
             ).value

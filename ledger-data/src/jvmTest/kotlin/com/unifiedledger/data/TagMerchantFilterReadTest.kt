@@ -305,10 +305,11 @@ class TagMerchantFilterReadTest {
             val executor =
                 com.unifiedledger.application.ExecuteTagMerchantCommand(
                     commitPort = catalogStore,
-                    requestIdSource = com.unifiedledger.application.TagMerchantRequestIdSource {
-                        commandCounter += 1
-                        com.unifiedledger.application.TagMerchantRequestId("cmd-tag-a-$commandCounter")
-                    },
+                    requestIdSource =
+                        com.unifiedledger.application.TagMerchantRequestIdSource {
+                            commandCounter += 1
+                            com.unifiedledger.application.TagMerchantRequestId("cmd-tag-a-$commandCounter")
+                        },
                     idSource = com.unifiedledger.application.CatalogItemIdSource { "tag-a" },
                     referenceProbe = com.unifiedledger.application.CatalogItemReferenceProbe { _, _, _ -> false },
                 )
@@ -351,10 +352,11 @@ class TagMerchantFilterReadTest {
             val executor =
                 com.unifiedledger.application.ExecuteTagMerchantCommand(
                     commitPort = catalogStore,
-                    requestIdSource = com.unifiedledger.application.TagMerchantRequestIdSource {
-                        renameCommandCounter += 1
-                        com.unifiedledger.application.TagMerchantRequestId("cmd-rename-$renameCommandCounter")
-                    },
+                    requestIdSource =
+                        com.unifiedledger.application.TagMerchantRequestIdSource {
+                            renameCommandCounter += 1
+                            com.unifiedledger.application.TagMerchantRequestId("cmd-rename-$renameCommandCounter")
+                        },
                     idSource = com.unifiedledger.application.CatalogItemIdSource { "tag-a" },
                     referenceProbe = com.unifiedledger.application.CatalogItemReferenceProbe { _, _, _ -> false },
                 )
@@ -385,7 +387,8 @@ class TagMerchantFilterReadTest {
                             while (cursor.next().value) {
                                 add(requireNotNull(cursor.getString(0)) to requireNotNull(cursor.getString(1)))
                             }
-                            app.cash.sqldelight.db.QueryResult.Value(Unit)
+                            app.cash.sqldelight.db.QueryResult
+                                .Value(Unit)
                         },
                         1,
                     ) {

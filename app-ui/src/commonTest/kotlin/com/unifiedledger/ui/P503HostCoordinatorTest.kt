@@ -7,12 +7,12 @@ import com.unifiedledger.application.CatalogReceiptOutcome
 import com.unifiedledger.application.CatalogRequestId
 import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.CorrectTransactionVersionResult
-import com.unifiedledger.application.VoidTransactionResult
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.ManualExpenseSubmissionResult
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TypedEntryDraft
+import com.unifiedledger.application.VoidTransactionResult
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
@@ -441,7 +441,9 @@ class P503HostCoordinatorTest {
                                     listOf(
                                         com.unifiedledger.ui.ImportBatchResultItem(
                                             item = com.unifiedledger.ui.ImportBatchItem(com.unifiedledger.application.ImportCandidateId("candidate-a07"), com.unifiedledger.application.ImportRequestId("req-a07")),
-                                            outcome = com.unifiedledger.ui.ImportBatchItemOutcome.Confirmed(confirmedItem),
+                                            outcome =
+                                                com.unifiedledger.ui.ImportBatchItemOutcome
+                                                    .Confirmed(confirmedItem),
                                         ),
                                     ),
                             ),

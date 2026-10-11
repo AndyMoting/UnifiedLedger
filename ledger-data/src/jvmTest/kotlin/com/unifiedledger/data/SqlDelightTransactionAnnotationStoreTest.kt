@@ -363,8 +363,7 @@ class SqlDelightTransactionAnnotationStoreTest {
         fun load(): TransactionAnnotationSnapshot? = SqlDelightTransactionAnnotationStore(LedgerDatabase(driver), driver).load(ledgerId, transaction)
 
         /** P7-08 08.D: the read-only annotation history the detail block renders. */
-        fun loadHistory(): List<com.unifiedledger.application.TransactionAnnotationHistoryEntry>? =
-            SqlDelightTransactionAnnotationStore(LedgerDatabase(driver), driver).loadHistory(ledgerId, transaction)
+        fun loadHistory(): List<com.unifiedledger.application.TransactionAnnotationHistoryEntry>? = SqlDelightTransactionAnnotationStore(LedgerDatabase(driver), driver).loadHistory(ledgerId, transaction)
 
         fun deactivate(
             kind: CatalogItemKind,

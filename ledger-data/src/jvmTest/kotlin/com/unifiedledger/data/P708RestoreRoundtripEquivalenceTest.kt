@@ -74,7 +74,7 @@ class P708RestoreRoundtripEquivalenceTest {
      * `34.sqm` edge projects onto these (the edge ADDS the two annotation columns, so a `SELECT *`
      * would compare different column counts — the annotation columns are asserted NULL separately).
      */
-    private val COMMON_MANUAL_EXPENSE_COLUMNS =
+    private val commonManualExpenseColumns =
         "ledger_id, request_id, amount_minor, currency_code, currency_precision, category_id, payment_account_id, occurred_at, note, confirmation_marker"
 
     @Test
@@ -129,7 +129,7 @@ class P708RestoreRoundtripEquivalenceTest {
                     source.path,
                     snapshot.path,
                     manualRequestTables,
-                ) { table -> if (table == "manual_expense_request") COMMON_MANUAL_EXPENSE_COLUMNS else null }
+                ) { table -> if (table == "manual_expense_request") commonManualExpenseColumns else null }
                 manualRequestTables.forEach { table ->
                     val expectedRows = if (table == "manual_expense_request") 1L else 0L
                     assertEquals(expectedRows, countOn(isolated, "SELECT count(*) FROM $table"), table)
@@ -175,7 +175,7 @@ class P708RestoreRoundtripEquivalenceTest {
                 // manual claim row projected onto its v33 columns — the edge added the two
                 // annotation columns).
                 assertValueIdentical(source.path, snapshot.path, preV34SurvivorTables)
-                assertValueIdentical(source.path, snapshot.path, listOf("manual_expense_request")) { COMMON_MANUAL_EXPENSE_COLUMNS }
+                assertValueIdentical(source.path, snapshot.path, listOf("manual_expense_request")) { commonManualExpenseColumns }
             }
         } finally {
             dir.deleteRecursively()
@@ -206,7 +206,7 @@ class P708RestoreRoundtripEquivalenceTest {
                 assertEquals(34L, readAuthoritativeUserVersionOn(reopened))
                 assertValueIdentical(source.path, snapshot.path, annotationOwnerTables)
                 assertValueIdentical(source.path, snapshot.path, manualRequestTables) { table ->
-                    if (table == "manual_expense_request") COMMON_MANUAL_EXPENSE_COLUMNS else null
+                    if (table == "manual_expense_request") commonManualExpenseColumns else null
                 }
             }
         } finally {
@@ -414,7 +414,8 @@ class P708RestoreRoundtripEquivalenceTest {
                 sql,
                 { cursor ->
                     check(cursor.next().value)
-                    app.cash.sqldelight.db.QueryResult.Value(requireNotNull(cursor.getLong(0)))
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(requireNotNull(cursor.getLong(0)))
                 },
                 0,
             ).value
@@ -434,7 +435,8 @@ class P708RestoreRoundtripEquivalenceTest {
                                 add("${cursor.getString(1)}|${cursor.getString(2)}|${cursor.getLong(3)}|${cursor.getLong(5)}")
                             }
                         }
-                    app.cash.sqldelight.db.QueryResult.Value(rows)
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(rows)
                 },
                 0,
             ).value

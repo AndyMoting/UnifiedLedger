@@ -16,9 +16,9 @@ import com.unifiedledger.application.ManualIncomeSubmissionResult
 import com.unifiedledger.application.MerchantMonthlyAccumulationResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TagMerchantCommandResult
-import com.unifiedledger.application.TransactionAnnotationHistoryEntry
 import com.unifiedledger.application.TagMerchantFilterReadResult
 import com.unifiedledger.application.TagMerchantTagMatchMode
+import com.unifiedledger.application.TransactionAnnotationHistoryEntry
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.BudgetScope
