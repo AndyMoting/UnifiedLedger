@@ -153,15 +153,45 @@ data class TransactionAnnotationSnapshot(
 )
 
 /**
+ * P7-08 08.D (spec section 3.5; plan :280 分开显示): one immutable annotation revision of a
+ * transaction's read-only annotation history. `annotationRevision` is the revision number,
+ * [observedTransactionVersionId] the financial version the annotation operation SAW (the honest
+ * semantics — never a claim that every historical financial version had this snapshot), and
+ * [tagIds]/[merchantId] that revision's association. 「谁请求」 is carried as [requestId], the
+ * stored annotation request id — the only requester identity the aggregate records (spec section
+ * 3.1's `request_id` column); no actor field exists and none is invented. [createdAt] is the
+ * stored audit instant text, displayed verbatim (never re-parsed or reformatted).
+ */
+data class TransactionAnnotationHistoryEntry(
+    val annotationRevision: Long,
+    val observedTransactionVersionId: TransactionVersionId,
+    val tagIds: List<TagId>,
+    val merchantId: MerchantId?,
+    val requestId: String,
+    val createdAt: String,
+)
+
+/**
  * Read-only companion to [TransactionAnnotationCommitPort]: the pre-commit projection for the edit
  * entry. A separate fun interface so a composition root may wire the command without the read (the
  * entry then stays unavailable) and so tests exercise the read independently of the commit.
+ *
+ * P7-08 08.D (spec section 3.5): [loadHistory] returns the transaction's WHOLE annotation history —
+ * every revision with its association — ordered by revision. An empty list is an honest
+ * "never annotated"; a `null` means the read is unavailable (unwired port, unreadable transaction)
+ * and the UI renders no history block rather than a fabricated empty one. The default `null` keeps
+ * every pre-08.D implementation (test fakes, partial wirings) compiling.
  */
 fun interface TransactionAnnotationReader {
     fun load(
         ledgerId: LedgerId,
         transactionId: TransactionId,
     ): TransactionAnnotationSnapshot?
+
+    fun loadHistory(
+        ledgerId: LedgerId,
+        transactionId: TransactionId,
+    ): List<TransactionAnnotationHistoryEntry>? = null
 }
 
 /**
@@ -205,6 +235,13 @@ class UpdateTransactionAnnotation(
     private val requestIdSource: AnnotationRequestIdSource,
     private val clock: LedgerClock,
 ) {
+    /**
+     * P7-08 08.D (spec section 2.2 停用保留语义): [retainedTagIds]/[retainedMerchantId] are the
+     * association the edit KEEPS (the current annotation revision's association as the edit entry
+     * read it). An inactive reference inside the retained set stays allowed; every other inactive
+     * reference is the frozen typed rejection. The defaults keep the strict fail-closed behavior
+     * for callers that do not carry a kept association.
+     */
     fun update(
         ledgerId: LedgerId,
         transactionId: TransactionId,
@@ -212,6 +249,8 @@ class UpdateTransactionAnnotation(
         merchantId: MerchantId?,
         expectedAnnotationRevision: Long,
         expectedCurrentVersionId: TransactionVersionId,
+        retainedTagIds: Set<TagId> = emptySet(),
+        retainedMerchantId: MerchantId? = null,
     ): TransactionAnnotationResult {
         val snapshot = canonicalTransactionAnnotationSnapshot(transactionId, tagIds, merchantId)
         val request =
@@ -234,6 +273,8 @@ class UpdateTransactionAnnotation(
                 merchantId = merchantId,
                 tags = authority.tags,
                 merchants = authority.merchants,
+                retainedTagIds = retainedTagIds.map { it.value }.toSet(),
+                retainedMerchantId = retainedMerchantId,
             )
         }
     }

@@ -11,7 +11,10 @@
 1	com.unifiedledger.data.P409SiloSpineCoexistenceTest
 1	com.unifiedledger.data.P705VoidCorrectionMigrationV30ToV31Test
 1	com.unifiedledger.data.P707TimeProjectionWriteMaintenanceTest
+1	com.unifiedledger.data.P708CorrectionAnnotationInteractionTest
+1	com.unifiedledger.data.P708RestoreRoundtripEquivalenceTest
 1	com.unifiedledger.data.P708TagMerchantV33ToV34MigrationTest
+1	com.unifiedledger.data.P708UnknownReopenAnnotationReplayTest
 1	com.unifiedledger.data.P7SequenceV28ToV29MigrationTest
 1	com.unifiedledger.data.Rg01FullStateOracleTest
 1	com.unifiedledger.data.Rg01RawJsonEndToEndTest

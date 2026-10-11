@@ -356,6 +356,15 @@ internal fun P503TransactionDetailScreen(
     // button (the file's "no dead affordance" pattern) — the host supplies it only when the command,
     // its id source and its pre-commit read are all wired.
     onEditAnnotation: ((TransactionDetail) -> Unit)? = null,
+    // P7-08 08.D (spec section 3.5): the read-only annotation history (every immutable revision
+    // with its own association/request/version), read under the same lease as the detail payload.
+    // `null` renders no block (unwired or unreadable); an empty list renders the honest
+    // "never annotated" line. The block is display-only — ZERO action entries ride it (the D-223
+    // tombstone audit-block precedent: 只读、零操作入口). [tagNameOf] resolves a stable tag id to
+    // its current display name (spec section 2.2: rename keeps the id and shows the current name);
+    // null falls back to the raw id, never a fabricated name.
+    annotationHistory: List<com.unifiedledger.application.TransactionAnnotationHistoryEntry>? = null,
+    tagNameOf: ((String) -> String)? = null,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -412,6 +421,25 @@ internal fun P503TransactionDetailScreen(
                     OutlinedButton(onClick = { onEditAnnotation.invoke(data) }) { Text("标签与商家") }
                 }
                 Spacer(Modifier.height(8.dp))
+                // P7-08 08.D (spec section 3.5; plan :280 历史金融版本与注释历史分开显示): the
+                // read-only annotation history block. One line per revision — 何时 (the stored audit
+                // instant), 所见版本, 谁请求 (the stored annotation request id; the aggregate records
+                // no actor field and none is invented), and that revision's tags/merchant. Never an
+                // entry on the financial-version timeline and never an edit affordance.
+                if (annotationHistory != null) {
+                    Text("标签与商家历史", style = MaterialTheme.typography.titleMedium)
+                    if (annotationHistory.isEmpty()) {
+                        Text("该交易没有注释历史。", style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        annotationHistory.forEach { entry ->
+                            Text(
+                                transactionAnnotationHistoryLine(entry, tagNameOf),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
                 Text("金额明细", style = MaterialTheme.typography.titleMedium)
                 data.legs.forEach { leg ->
                     Text(
@@ -455,4 +483,25 @@ internal fun P503TransactionDetailScreen(
         Spacer(Modifier.height(8.dp))
         HorizontalDivider()
     }
+}
+
+/**
+ * P7-08 08.D (spec section 3.5): one read-only annotation-history line. The revision number, the
+ * financial version the operation SAW (honest semantics — never "this snapshot existed at every
+ * financial version"), the stored request id (the only requester identity recorded), the stored
+ * audit instant verbatim, and the revision's tags (current display names via [tagNameOf], raw
+ * stable ids when no resolver is wired) and merchant.
+ */
+internal fun transactionAnnotationHistoryLine(
+    entry: com.unifiedledger.application.TransactionAnnotationHistoryEntry,
+    tagNameOf: ((String) -> String)?,
+): String {
+    val tags =
+        if (entry.tagIds.isEmpty()) {
+            "无"
+        } else {
+            entry.tagIds.joinToString("、") { tag -> tagNameOf?.invoke(tag.value) ?: tag.value }
+        }
+    val merchant = entry.merchantId?.value ?: "无"
+    return "修订 ${entry.annotationRevision}（${entry.createdAt}）· 所见版本 ${entry.observedTransactionVersionId.value} · 请求 ${entry.requestId} · 标签：$tags · 商家：$merchant"
 }

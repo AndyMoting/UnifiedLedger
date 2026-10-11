@@ -16,6 +16,7 @@ import com.unifiedledger.application.ManualIncomeSubmissionResult
 import com.unifiedledger.application.MerchantMonthlyAccumulationResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TagMerchantCommandResult
+import com.unifiedledger.application.TransactionAnnotationHistoryEntry
 import com.unifiedledger.application.TagMerchantFilterReadResult
 import com.unifiedledger.application.TagMerchantTagMatchMode
 import com.unifiedledger.domain.AccountId
@@ -771,6 +772,19 @@ sealed interface P503UiEvent {
      */
     data class TransactionAnnotationEditResult(
         val outcome: TransactionAnnotationEditOutcome,
+    ) : P503UiEvent
+
+    /**
+     * P7-08 08.D (spec section 3.5): the read-only annotation history the host read under the SAME
+     * lease as the detail, landing on the matching open detail (spec 3.5 分开显示: the history is a
+     * read-only block inside the detail, never an entry on the financial-version timeline). A
+     * mismatched transaction id is a stale landing and is absorbed whole. Absorbed in every state
+     * other than the matching TransactionDetail (the central-guard discipline — a late/stale
+     * dispatch can never reach `unhandled`).
+     */
+    data class TransactionAnnotationHistoryLanded(
+        val transactionId: TransactionId,
+        val entries: List<TransactionAnnotationHistoryEntry>,
     ) : P503UiEvent
 
     /**

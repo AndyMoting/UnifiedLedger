@@ -282,6 +282,127 @@ class TagMerchantFilterReadTest {
         }
     }
 
+    // ------------------------------------------------------------------ P7-08 08.D (T4/T9) 真实命令链
+
+    /**
+     * R-223-3 closure: the A04 "目录并发停用" read leg driven by the REAL
+     * `ExecuteTagMerchantCommand` chain — the disable command commits (claim → guard trigger →
+     * receipt → the `catalog_item_version` counter's `advance-by-one` trigger), and a filter read
+     * holding the pre-command generation is typed-rejected. Ablating the compare-in-transaction
+     * gate (or the counter advance) turns this test red. The raw-counter simulation test above is
+     * KEPT: it alone can pin the unreadable-authority leg (the counter row deleted outright),
+     * which no real command chain produces.
+     */
+    @Test
+    fun aRealCatalogDisableCommandAdvancesTheGenerationAndAStaleFilterReadIsTypedRejected() {
+        withDatabase { database, driver, adapter, _, generation ->
+            // The tag is created through the REAL catalog command chain (claim/receipt/counter),
+            // so the generation the caller loads is the chain's own counter value.
+            val catalogStore = SqlDelightTagMerchantCatalogStore.forPlatformConfiguredDatabase(database)
+            // A FRESH request id per command (the claim-first identity discipline): a shared
+            // fixed id would make the second command an identity conflict.
+            var commandCounter = 0
+            val executor =
+                com.unifiedledger.application.ExecuteTagMerchantCommand(
+                    commitPort = catalogStore,
+                    requestIdSource = com.unifiedledger.application.TagMerchantRequestIdSource {
+                        commandCounter += 1
+                        com.unifiedledger.application.TagMerchantRequestId("cmd-tag-a-$commandCounter")
+                    },
+                    idSource = com.unifiedledger.application.CatalogItemIdSource { "tag-a" },
+                    referenceProbe = com.unifiedledger.application.CatalogItemReferenceProbe { _, _, _ -> false },
+                )
+            assertIs<com.unifiedledger.application.TagMerchantCommandResult.Accepted>(
+                executor.createItem(ledgerId, com.unifiedledger.domain.CatalogItemKind.TAG, "标签甲", 0L),
+            )
+            seedExpense(database, "tx-inside", "2026-03-01T02:00:00Z")
+            annotate(database, "tx-inside", "version-tx-inside-1", tagIds = listOf("tag-a"))
+            val loadedGeneration = requireNotNull(catalogStore.load(ledgerId)).catalogItemVersion
+            assertTrue(loadedGeneration > generation, "the real create command must advance the dedicated counter")
+
+            val before = adapter.readPage(ledgerId, TagMerchantFilterCondition(tagIds = setOf(tagA)), loadedGeneration, 10, null)
+            assertIs<TagMerchantFilterReadResult.Success>(before)
+
+            // The REAL disable command (no counter simulation): the guard trigger advances the
+            // counter inside the command transaction.
+            assertIs<com.unifiedledger.application.TagMerchantCommandResult.Accepted>(
+                executor.setItemActive(ledgerId, com.unifiedledger.domain.CatalogItemKind.TAG, "tag-a", false, expectedRevision = 1L),
+            )
+            val afterDisable = requireNotNull(catalogStore.load(ledgerId))
+            assertTrue(afterDisable.catalogItemVersion > loadedGeneration)
+
+            // The read still holding the pre-command generation is the typed mismatch.
+            val stale = adapter.readPage(ledgerId, TagMerchantFilterCondition(tagIds = setOf(tagA)), loadedGeneration, 10, null)
+            assertEquals(TagMerchantFilterFailureCode.FILTER_CATALOG_GENERATION_MISMATCH, assertIs<TagMerchantFilterReadResult.Failed>(stale).failureCode)
+        }
+    }
+
+    /**
+     * Q17 (:273) end-to-end display-name leg: the REAL rename command appends a new name-history
+     * version, the current-name read returns the NEW name, the stable id never changes, the old
+     * name is superseded (kept, auditable), and the filter still matches the historical annotation
+     * by the stable id — so the renamed item's history keeps resolving under its current name.
+     */
+    @Test
+    fun aRealCatalogRenameShowsTheNewCurrentNameWhileTheHistoricalAnnotationKeepsMatching() {
+        withDatabase { database, driver, adapter, _, _ ->
+            val catalogStore = SqlDelightTagMerchantCatalogStore.forPlatformConfiguredDatabase(database)
+            var renameCommandCounter = 0
+            val executor =
+                com.unifiedledger.application.ExecuteTagMerchantCommand(
+                    commitPort = catalogStore,
+                    requestIdSource = com.unifiedledger.application.TagMerchantRequestIdSource {
+                        renameCommandCounter += 1
+                        com.unifiedledger.application.TagMerchantRequestId("cmd-rename-$renameCommandCounter")
+                    },
+                    idSource = com.unifiedledger.application.CatalogItemIdSource { "tag-a" },
+                    referenceProbe = com.unifiedledger.application.CatalogItemReferenceProbe { _, _, _ -> false },
+                )
+            assertIs<com.unifiedledger.application.TagMerchantCommandResult.Accepted>(
+                executor.createItem(ledgerId, com.unifiedledger.domain.CatalogItemKind.TAG, "标签甲", 0L),
+            )
+            seedExpense(database, "tx-historic", "2026-03-01T02:00:00Z")
+            annotate(database, "tx-historic", "version-tx-historic-1", tagIds = listOf("tag-a"))
+
+            // Before: the current name is the create-time name.
+            assertEquals("标签甲", requireNotNull(catalogStore.load(ledgerId)).tags.single { it.id == "tag-a" }.name)
+
+            // The REAL rename command (claim/name-history supersede+append/receipt/counter).
+            assertIs<com.unifiedledger.application.TagMerchantCommandResult.Accepted>(
+                executor.renameItem(ledgerId, com.unifiedledger.domain.CatalogItemKind.TAG, "tag-a", "标签甲（新）", 1L),
+            )
+            val renamed = requireNotNull(catalogStore.load(ledgerId)).tags.single { it.id == "tag-a" }
+            // Q17: 改名后当前与历史交易默认显示当前名 — the id is stable, the name is current.
+            assertEquals("tag-a", renamed.id)
+            assertEquals("标签甲（新）", renamed.name)
+            // The old name stays in the history as superseded (auditable, never rewritten).
+            val historyRows =
+                buildList {
+                    driver.executeQuery(
+                        null,
+                        "SELECT name, status FROM catalog_item_name_history WHERE ledger_id = ? AND owner_kind = 'tag' AND owner_id = 'tag-a' ORDER BY version_number",
+                        { cursor ->
+                            while (cursor.next().value) {
+                                add(requireNotNull(cursor.getString(0)) to requireNotNull(cursor.getString(1)))
+                            }
+                            app.cash.sqldelight.db.QueryResult.Value(Unit)
+                        },
+                        1,
+                    ) {
+                        bindString(0, ledgerId.value)
+                    }
+                }
+            assertEquals(listOf("标签甲" to "SUPERSEDED", "标签甲（新）" to "CURRENT"), historyRows)
+
+            // The filter still matches the historical annotation by the STABLE id.
+            val page =
+                assertIs<TagMerchantFilterReadResult.Success>(
+                    adapter.readPage(ledgerId, TagMerchantFilterCondition(tagIds = setOf(tagA)), requireNotNull(catalogStore.load(ledgerId)).catalogItemVersion, 10, null),
+                ).page
+            assertEquals(listOf("tx-historic"), page.entries.map { it.row.transactionId.value })
+        }
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private fun withDatabase(block: (LedgerDatabase, JdbcSqliteDriver, SqlDelightTagMerchantFilterReadAdapter, SqlDelightCatalogStore, Long) -> Unit) {

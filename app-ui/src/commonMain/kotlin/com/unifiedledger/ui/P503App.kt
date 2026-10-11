@@ -37,6 +37,7 @@ import com.unifiedledger.application.BudgetTarget
 import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.CollectDraft
+import com.unifiedledger.application.CorrectTransactionVersionResult
 import com.unifiedledger.application.EntryPinOrdering
 import com.unifiedledger.application.EntryPinResult
 import com.unifiedledger.application.EntryPinTarget
@@ -962,8 +963,18 @@ fun P503App(
     /** P7-03.C: opens the read-only detail with the host-resolved typed payload (C03). */
     fun selectTransaction(transactionId: TransactionId) {
         // P7-06 06.1 (spec 4.3(b)): the synchronous detail read runs under an operation lease.
-        val detail = ledger.probe { facade -> facade.queryTransactionDetail?.query(transactionId) } ?: return
+        // P7-08 08.D (spec section 3.5): the SAME lease reads the annotation history (the R-222-8
+        // read-discipline — no facade read outside a lease); a null (unwired/unreadable) renders no
+        // history block, an empty list is the honest "never annotated".
+        val read =
+            ledger.probe { facade ->
+                facade.queryTransactionDetail?.query(transactionId)?.let { detail -> detail to facade.transactionAnnotationHistory(transactionId) }
+            } ?: return
+        val (detail, history) = read
         dispatch(P503UiEvent.SelectTransaction(transactionId, detail))
+        if (detail is TransactionDetailResult.Success && history != null) {
+            dispatch(P503UiEvent.TransactionAnnotationHistoryLanded(transactionId, history))
+        }
     }
 
     // P5-04.3: shared input construction for the submission and the unknown-commit status
@@ -2175,11 +2186,8 @@ fun P503App(
                             return@launch
                         }
                         if (completed) {
-                            if (shouldArmImportBatchConfirmed(latestState.value)) {
-                                coordinator.onImportBatchConfirmed()
-                                // P7-08 08.C (T5): the same formal-surface change arms the filter re-request.
-                                armTagMerchantFilterReRequestIfLoaded()
-                            }
+                            // P7-08 08.D (A07): the arm landing runs through the JVM-assertable seam.
+                            armAfterImportBatchConfirmation(latestState.value, coordinator) { armTagMerchantFilterReRequestIfLoaded() }
                             requestImportReviewRowsRead()
                         }
                     }
@@ -2321,11 +2329,8 @@ fun P503App(
                         // StillUnknown verdict, or a summary still holding another Unknown arms
                         // nothing (the run continues or stays incomplete — its completing site
                         // arms exactly once).
-                        if (shouldArmImportBatchConfirmed(latestState.value)) {
-                            coordinator.onImportBatchConfirmed()
-                            // P7-08 08.C (T5): the same formal-surface change arms the filter re-request.
-                            armTagMerchantFilterReRequestIfLoaded()
-                        }
+                        // P7-08 08.D (A07): the arm landing runs through the JVM-assertable seam.
+                        armAfterImportBatchConfirmation(latestState.value, coordinator) { armTagMerchantFilterReRequestIfLoaded() }
                     }
                 }
             }
@@ -2671,9 +2676,31 @@ fun P503App(
         if (!annotationEditWired) return
         val transactionId = detail.transactionId
         scope.launch(Dispatchers.Default) {
-            val outcome = ledger.leased { facade, _ -> runCatching { facade.transactionAnnotationSnapshot(transactionId) }.getOrNull() }
+            // P7-08 08.D (spec section 2.2 停用保留): the SAME lease also reads the authority so the
+            // retained-but-inactive references carry their display names; an unreadable authority
+            // degrades to raw-id labels, never to a fabricated name.
+            val outcome =
+                ledger.leased { facade, _ ->
+                    runCatching {
+                        val snapshot = facade.transactionAnnotationSnapshot(transactionId) ?: return@runCatching null
+                        val authority = facade.tagMerchantCatalogReader?.invoke()?.load(facade.ledgerId)
+                        snapshot to authority
+                    }.getOrNull()
+                }
             scope.launch {
-                val snapshot = (outcome as? LeaseOutcome.Completed)?.takeIf { ledger.isCurrentGeneration(it.generation) }?.value ?: return@launch
+                val resolved =
+                    (outcome as? LeaseOutcome.Completed)
+                        ?.takeIf { ledger.isCurrentGeneration(it.generation) }
+                        ?.value ?: return@launch
+                val (snapshot, authority) = resolved
+                val inactiveTags =
+                    snapshot.tagIds.mapNotNull { tagId ->
+                        authority?.tags?.firstOrNull { it.id == tagId.value }?.takeIf { !it.active || it.tombstoned }
+                    }
+                val inactiveMerchant =
+                    snapshot.merchantId?.let { merchantId ->
+                        authority?.merchants?.firstOrNull { it.id == merchantId.value }?.takeIf { !it.active || it.tombstoned }
+                    }
                 dispatch(
                     P503UiEvent.OpenTransactionAnnotationEdit(
                         TransactionAnnotationEditIntent(
@@ -2682,6 +2709,10 @@ fun P503App(
                             expectedCurrentVersionId = snapshot.currentVersionId,
                             tagIds = snapshot.tagIds.toSet(),
                             merchantId = snapshot.merchantId,
+                            retainedTagIds = snapshot.tagIds.toSet(),
+                            retainedMerchantId = snapshot.merchantId,
+                            inactiveTagLabels = inactiveTags.associate { it.id to it.name },
+                            inactiveMerchantLabel = inactiveMerchant?.name,
                         ),
                     ),
                 )
@@ -2724,9 +2755,9 @@ fun P503App(
                 if (outcome !is LeaseOutcome.Completed || !ledger.isCurrentGeneration(outcome.generation)) return@launch
                 val result = outcome.value ?: return@launch
                 dispatch(P503UiEvent.TransactionEditResult(result))
-                refreshAfterP705Commit(result, coordinator)
-                // P7-08 08.C (T5): the same formal-surface change arms the filter re-request.
-                armTagMerchantFilterReRequestIfLoaded()
+                // P7-08 08.D (A07): the refresh-and-arm landing runs through the JVM-assertable
+                // seam (the D-156 precedent) so the trigger matrix stays pinned.
+                refreshAndArmAfterP705CommitLanding(result, coordinator) { armTagMerchantFilterReRequestIfLoaded() }
             }
         }
     }
@@ -2809,6 +2840,11 @@ fun P503App(
                                     merchantId = current.intent.merchantId,
                                     expectedAnnotationRevision = current.intent.expectedAnnotationRevision,
                                     expectedCurrentVersionId = current.intent.expectedCurrentVersionId,
+                                    // P7-08 08.D (spec section 2.2 停用保留): the association captured at
+                                    // open — an inactive reference the user kept stays allowed, while any
+                                    // newly introduced inactive one is still the typed rejection.
+                                    retainedTagIds = current.intent.retainedTagIds,
+                                    retainedMerchantId = current.intent.retainedMerchantId,
                                 ).toEditOutcome()
                         } catch (failure: kotlinx.coroutines.CancellationException) {
                             // A cancelled lease block is NOT an unknown outcome — rethrow so
@@ -2834,14 +2870,11 @@ fun P503App(
                         com.unifiedledger.application.AnnotationFailureCode.ANNOTATION_CONSTRAINT_VIOLATION.code,
                     )
             scope.launch { dispatch(P503UiEvent.TransactionAnnotationEditResult(outcome)) }
-            if (outcome is TransactionAnnotationEditOutcome.Accepted || outcome is TransactionAnnotationEditOutcome.NoChange) {
-                // Determinate success: the detail and the month projection re-read the new revision
-                // through the same effective-surface refresh the P7-05 commits use (spec section
-                // 3.2; a rejection/stale/conflict refreshes nothing — the annotation is unchanged).
-                coordinator.onP705EffectiveSurfaceChanged()
-                // P7-08 08.C (T5): the same formal-surface change arms the filter re-request.
-                armTagMerchantFilterReRequestIfLoaded()
-            }
+            // Determinate success: the detail and the month projection re-read the new revision
+            // through the same effective-surface refresh the P7-05 commits use (spec section
+            // 3.2; a rejection/stale/conflict refreshes nothing — the annotation is unchanged).
+            // P7-08 08.D (A07): the refresh-and-arm landing runs through the JVM-assertable seam.
+            refreshAndArmAfterAnnotationEdit(outcome, coordinator) { armTagMerchantFilterReRequestIfLoaded() }
         }
     }
 
@@ -2954,9 +2987,8 @@ fun P503App(
                 if (outcome !is LeaseOutcome.Completed || !ledger.isCurrentGeneration(outcome.generation)) return@launch
                 val result = outcome.value ?: return@launch
                 dispatch(P503UiEvent.TransactionVoidResult(result))
-                refreshAfterP705Commit(result, coordinator)
-                // P7-08 08.C (T5): the same formal-surface change arms the filter re-request.
-                armTagMerchantFilterReRequestIfLoaded()
+                // P7-08 08.D (A07): the refresh-and-arm landing runs through the JVM-assertable seam.
+                refreshAndArmAfterVoidRestoreCommit(result, coordinator) { armTagMerchantFilterReRequestIfLoaded() }
             }
         }
     }
@@ -3015,9 +3047,8 @@ fun P503App(
                 if (outcome !is LeaseOutcome.Completed || !ledger.isCurrentGeneration(outcome.generation)) return@launch
                 val result = outcome.value ?: return@launch
                 dispatch(P503UiEvent.TransactionRestoreResult(result))
-                refreshAfterP705Commit(result, coordinator)
-                // P7-08 08.C (T5): the same formal-surface change arms the filter re-request.
-                armTagMerchantFilterReRequestIfLoaded()
+                // P7-08 08.D (A07): the refresh-and-arm landing runs through the JVM-assertable seam.
+                refreshAndArmAfterVoidRestoreCommit(result, coordinator) { armTagMerchantFilterReRequestIfLoaded() }
             }
         }
     }
@@ -3528,6 +3559,13 @@ fun P503App(
                         } else {
                             null
                         },
+                    // P7-08 08.D (spec section 3.5): the read-only annotation history read under the
+                    // same lease as the detail, plus the current-name resolver for the stable tag ids
+                    // (spec section 2.2: rename keeps the id and shows the current name).
+                    annotationHistory = current.annotationHistory,
+                    tagNameOf = { id ->
+                        cachedTagMerchantAuthority?.tags?.firstOrNull { it.id == id }?.name ?: id
+                    },
                 )
             }
             // P7-04.C: the import candidate detail (spec sections 6.1/6.2). The catalog options
@@ -4418,3 +4456,70 @@ private data class BudgetCommitPlan(
     val expectedRevision: Long,
     val close: Boolean,
 )
+
+// -------------------------------------------------------------------------------------------
+// P7-08 08.D (P708-A07): the JVM-assertable seams of the filter re-request arm call sites. The
+// `@Composable` `P503App` cannot be exercised by a plain JVM test (the P7-03/P7-04/D-156
+// precedent), so each production landing hop delegates to one of these functions and the
+// coordinator tests pin the branch directly. The P503App -> seam hop itself remains uncovered:
+// no Compose harness exists for `P503App`, and `app-ui` has an Android target, so `commonTest`
+// cannot source-scan it (the same registered disclosure as `refreshAfterP705Commit`).
+// -------------------------------------------------------------------------------------------
+
+/**
+ * The correction commit's landing: a determinate success ([CorrectTransactionVersionResult.Created]/
+ * [CorrectTransactionVersionResult.NoChange]) fires the authoritative refresh AND arms the loaded
+ * filter re-request (spec section 5.5 row 2); every other outcome refreshes and arms nothing.
+ */
+internal fun refreshAndArmAfterP705CommitLanding(
+    result: CorrectTransactionVersionResult,
+    coordinator: P503HostCoordinator,
+    arm: () -> Unit,
+) {
+    refreshAfterP705Commit(result, coordinator)
+    if (shouldRefreshAfterP705Commit(result)) arm()
+}
+
+/**
+ * The void/restore commit's landing — the merged result family's shared seam (the two host call
+ * sites cannot diverge, the `refreshAfterP705Commit` discipline).
+ */
+internal fun refreshAndArmAfterVoidRestoreCommit(
+    result: VoidTransactionResult,
+    coordinator: P503HostCoordinator,
+    arm: () -> Unit,
+) {
+    refreshAfterP705Commit(result, coordinator)
+    if (shouldRefreshAfterP705Commit(result)) arm()
+}
+
+/**
+ * The annotation edit's landing: accepted/no-change record the new revision through the effective
+ * refresh and arm the filter re-request; a rejection/stale/conflict refreshes and arms nothing.
+ */
+internal fun refreshAndArmAfterAnnotationEdit(
+    outcome: TransactionAnnotationEditOutcome,
+    coordinator: P503HostCoordinator,
+    arm: () -> Unit,
+) {
+    if (outcome is TransactionAnnotationEditOutcome.Accepted || outcome is TransactionAnnotationEditOutcome.NoChange) {
+        coordinator.onP705EffectiveSurfaceChanged()
+        arm()
+    }
+}
+
+/**
+ * The completed import batch confirmation's arm: the SAME all-terminal gate
+ * ([shouldArmImportBatchConfirmed]) fires the coordinator's batch-confirmed hook AND the filter
+ * arm exactly once per run; a landing without the all-terminal state does neither.
+ */
+internal fun armAfterImportBatchConfirmation(
+    landedState: P503AppState,
+    coordinator: P503HostCoordinator,
+    arm: () -> Unit,
+) {
+    if (shouldArmImportBatchConfirmed(landedState)) {
+        coordinator.onImportBatchConfirmed()
+        arm()
+    }
+}

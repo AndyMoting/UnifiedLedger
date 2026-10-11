@@ -11107,3 +11107,21 @@ WHERE version.ledger_id = :ledger_id
       AND merchant_revision.merchant_id = :merchant_id
   )
 ORDER BY version.statistics_at_epoch_nanos, tx.transaction_id, posting.posting_index;
+
+-- P7-08 08.D (spec docs/specs/2026-09-30-p7-08-tag-merchant-design.md section 3.5; plan :280
+-- "历史金融版本与注释历史分开显示"): the read-only annotation history of ONE transaction — every
+-- immutable annotation revision with its own observed version, merchant, request id and audit
+-- instant, ordered by revision. Zero DDL, additive named queries only (the 08.C precedent). The
+-- per-revision tag sets ride the step-2 companion query below (the same one-read-then-one-batch
+-- shape the filter read uses, never a per-revision lookup loop).
+transactionAnnotationHistoryForTransaction:
+SELECT annotation_revision, observed_transaction_version_id, merchant_id, request_id, created_at
+FROM transaction_annotation_revision
+WHERE ledger_id = ? AND transaction_id = ?
+ORDER BY annotation_revision;
+
+transactionAnnotationHistoryTagsForTransaction:
+SELECT annotation_revision, tag_id
+FROM transaction_annotation_tag
+WHERE ledger_id = ? AND transaction_id = ?
+ORDER BY annotation_revision, tag_id;

@@ -306,6 +306,11 @@ sealed interface P503AppState {
         val originTab: P503Tab,
         val transactionId: TransactionId,
         val detail: com.unifiedledger.application.TransactionDetailResult,
+        // P7-08 08.D (spec section 3.5): the read-only annotation history the host read under the
+        // SAME lease as the detail payload. `null` = the read is unavailable (unwired port or
+        // unreadable) and the detail renders no history block; an EMPTY list is the honest
+        // "never annotated". Read-only display only — zero edit entries ride this field.
+        val annotationHistory: List<com.unifiedledger.application.TransactionAnnotationHistoryEntry>? = null,
     ) : P503AppState
 
     /**

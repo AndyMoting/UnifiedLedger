@@ -105,8 +105,9 @@ internal fun P503TransactionAnnotationEditScreen(
         when {
             // Null = not yet loaded / unwired: an honest 载入中, never an authoritative empty picker.
             tagOptions == null -> Text("标签目录载入中…", style = MaterialTheme.typography.bodySmall)
-            tagOptions.isEmpty() -> Text("当前没有可选的标签。", style = MaterialTheme.typography.bodySmall)
-            else ->
+            tagOptions.isEmpty() && annotationEditRetainedInactiveTagLabels(intent, tagOptions).isEmpty() ->
+                Text("当前没有可选的标签。", style = MaterialTheme.typography.bodySmall)
+            else -> {
                 tagOptions.forEach { tag ->
                     val id = TagId(tag.id)
                     val selected = id in intent.tagIds
@@ -119,6 +120,20 @@ internal fun P503TransactionAnnotationEditScreen(
                         Text(tag.name)
                     }
                 }
+                // P7-08 08.D (spec section 2.2 停用保留): a retained inactive reference renders
+                // checked and disabled with the （已停用） marker — kept by the replacement, never
+                // offered as a new pick, and never silently dropped from the shown association.
+                annotationEditRetainedInactiveTagLabels(intent, tagOptions).forEach { (id, label) ->
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.Checkbox(
+                            checked = true,
+                            onCheckedChange = null,
+                            enabled = false,
+                        )
+                        Text(label)
+                    }
+                }
+            }
         }
         Spacer(Modifier.height(12.dp))
         Text("商家（可选，最多一个）", style = MaterialTheme.typography.titleSmall)
@@ -143,6 +158,20 @@ internal fun P503TransactionAnnotationEditScreen(
                         enabled = !state.submitting,
                     )
                     Text(merchant.name)
+                }
+            }
+            // P7-08 08.D (spec section 2.2 停用保留): the retained inactive merchant is the KEPT
+            // association, so re-selecting it is not a new pick — the row renders with the marker.
+            val retainedInactiveMerchant =
+                intent.merchantId?.takeIf { current -> merchantOptions.none { it.id == current.value } }
+            if (retainedInactiveMerchant != null) {
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(
+                        selected = intent.merchantId == retainedInactiveMerchant,
+                        onClick = { onSelectMerchant(retainedInactiveMerchant) },
+                        enabled = !state.submitting,
+                    )
+                    Text(annotationEditInactiveLabel(intent.inactiveMerchantLabel ?: retainedInactiveMerchant.value))
                 }
             }
         }
@@ -176,3 +205,22 @@ internal fun annotationEditOutcomeText(outcome: TransactionAnnotationEditOutcome
         is TransactionAnnotationEditOutcome.Rejected -> "未保存：${outcome.failureCode}"
         is TransactionAnnotationEditOutcome.Conflict -> "未保存（冲突）：${outcome.failureCode}"
     }
+
+/**
+ * P7-08 08.D (spec section 2.2 停用保留; the 08.C filter-screen 文案先例 P503TagMerchantFilterScreen.kt:89):
+ * the inactive retained tags of the current association, as renderable (id, label) rows. A retained
+ * id that the selectable options already carry is NOT returned (it renders as a normal toggle);
+ * an id without an authority label falls back to the raw stable id — an honest row, never a
+ * silently dropped association. The marker is part of the label.
+ */
+internal fun annotationEditRetainedInactiveTagLabels(
+    intent: TransactionAnnotationEditIntent,
+    tagOptions: List<CatalogItem>?,
+): List<Pair<String, String>> =
+    intent.retainedTagIds
+        .filter { retained -> tagOptions?.none { it.id == retained.value } ?: true }
+        .sortedBy { it.value }
+        .map { retained -> retained.value to annotationEditInactiveLabel(intent.inactiveTagLabels[retained.value] ?: retained.value) }
+
+/** P7-08 08.D: the （已停用） marker, shared by the tag rows and the retained merchant row. */
+internal fun annotationEditInactiveLabel(name: String): String = "$name（已停用）"

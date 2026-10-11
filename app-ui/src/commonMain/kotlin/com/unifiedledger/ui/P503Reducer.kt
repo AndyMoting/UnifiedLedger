@@ -87,6 +87,7 @@ class P503ReducerImpl(
         if (budgetEventAbsorbed(state, event)) return state
         if (annotationEditEventAbsorbed(state, event)) return state
         if (tagMerchantEventAbsorbed(state, event)) return state
+        if (annotationHistoryEventAbsorbed(state, event)) return state
         return when (state) {
             is P503AppState.Ready -> reduceReady(event)
             is P503AppState.OverviewEmpty -> reduceOverviewEmpty(state, event)
@@ -249,6 +250,26 @@ class P503ReducerImpl(
             is P503UiEvent.ManageMerchantActive,
             is P503UiEvent.TagMerchantCommandLanded,
             -> state !is P503AppState.OverviewEmpty
+            else -> false
+        }
+
+    /**
+     * P7-08 08.D (spec section 3.5): the annotation-history landing is state-preserving everywhere
+     * except the matching read-only detail (its ONE designed effect: the history block's payload).
+     * A landing for a different transaction, a non-Success detail payload, or any other state is
+     * absorbed here — the central-guard shape keeps a late/stale dispatch from ever reaching
+     * `unhandled` (the D-222 V3 lesson: a new event must be absorbed in EVERY reducer state).
+     */
+    private fun annotationHistoryEventAbsorbed(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): Boolean =
+        when (event) {
+            is P503UiEvent.TransactionAnnotationHistoryLanded -> {
+                val detail = (state as? P503AppState.TransactionDetail)?.detail
+                detail !is com.unifiedledger.application.TransactionDetailResult.Success ||
+                    detail.detail.transactionId != event.transactionId
+            }
             else -> false
         }
 
@@ -986,6 +1007,10 @@ class P503ReducerImpl(
             P503UiEvent.CloseTransactionDetail -> state.overview
             // System back = CloseTransactionDetail semantics (spec section 6.2 back bullet).
             P503UiEvent.Back -> state.overview
+            // P7-08 08.D (spec section 3.5): the read-only history block's payload. The central
+            // guard has already matched the transaction id, so this applies whole; the block is
+            // display-only and no other field of the detail changes.
+            is P503UiEvent.TransactionAnnotationHistoryLanded -> state.copy(annotationHistory = event.entries)
             is P503UiEvent.MonthlyActivityResult ->
                 when (val result = event.result) {
                     is com.unifiedledger.application.MonthlyActivityResult.Success ->

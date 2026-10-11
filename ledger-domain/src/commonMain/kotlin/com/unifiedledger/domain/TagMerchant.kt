@@ -269,6 +269,16 @@ sealed interface TransactionAnnotationViolation : DomainViolation {
  * Validates a requested annotation against the loaded catalogs (spec sections 2.1/3.2). Returns the
  * canonical aggregate (deduplicated, stable-id-ordered) on success. A reference to an unknown,
  * tombstoned or inactive item, or an item of another ledger, is a typed failure and writes nothing.
+ *
+ * P7-08 08.D (spec section 2.2 "停用保留所有历史引用，只禁止新增选择"; plan :273): [retainedTagIds]/
+ * [retainedMerchantId] carry the association the edit KEEPS from the current annotation revision —
+ * an inactive (disabled, never tombstoned) reference already on the transaction stays allowed, so
+ * disabling a catalog item never turns the next honest re-save of an existing association into a
+ * typed rejection. Any inactive reference NOT in the retained set is still a typed rejection: the
+ * five manual-create paths and every annotation edit that introduces an unassociated inactive item
+ * pass the defaults (empty set / null) and fail closed exactly as before. A tombstoned reference is
+ * rejected unconditionally — a tombstone requires zero references, so a retained tombstone cannot
+ * exist and reaching that branch means the probe invariant broke.
  */
 fun validateTransactionAnnotation(
     ledgerId: LedgerId,
@@ -276,6 +286,8 @@ fun validateTransactionAnnotation(
     merchantId: MerchantId?,
     tags: List<CatalogItem>,
     merchants: List<CatalogItem>,
+    retainedTagIds: Set<String> = emptySet(),
+    retainedMerchantId: MerchantId? = null,
 ): DomainResult<TransactionAnnotation> {
     val distinctTagIds = tagIds.map { it.value }.distinct().sorted()
     if (distinctTagIds.size > MAX_ANNOTATION_TAGS) {
@@ -286,7 +298,8 @@ fun validateTransactionAnnotation(
         when {
             tag == null -> return DomainResult.Failure(TransactionAnnotationViolation.UnknownTag)
             tag.ledgerId != ledgerId -> return DomainResult.Failure(TransactionAnnotationViolation.TagCrossLedger)
-            tag.tombstoned || !tag.active -> return DomainResult.Failure(TransactionAnnotationViolation.TagNotSelectable)
+            tag.tombstoned -> return DomainResult.Failure(TransactionAnnotationViolation.TagNotSelectable)
+            !tag.active && tagId !in retainedTagIds -> return DomainResult.Failure(TransactionAnnotationViolation.TagNotSelectable)
         }
     }
     if (merchantId != null) {
@@ -294,7 +307,8 @@ fun validateTransactionAnnotation(
         when {
             merchant == null -> return DomainResult.Failure(TransactionAnnotationViolation.UnknownMerchant)
             merchant.ledgerId != ledgerId -> return DomainResult.Failure(TransactionAnnotationViolation.MerchantCrossLedger)
-            merchant.tombstoned || !merchant.active -> return DomainResult.Failure(TransactionAnnotationViolation.MerchantNotSelectable)
+            merchant.tombstoned -> return DomainResult.Failure(TransactionAnnotationViolation.MerchantNotSelectable)
+            !merchant.active && merchantId != retainedMerchantId -> return DomainResult.Failure(TransactionAnnotationViolation.MerchantNotSelectable)
         }
     }
     return DomainResult.Success(

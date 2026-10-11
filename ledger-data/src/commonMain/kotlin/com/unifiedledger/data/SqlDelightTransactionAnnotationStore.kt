@@ -5,6 +5,7 @@ import com.unifiedledger.application.AnnotationFailureCode
 import com.unifiedledger.application.AnnotationReceiptOutcome
 import com.unifiedledger.application.TransactionAnnotationAuthority
 import com.unifiedledger.application.TransactionAnnotationCommitPort
+import com.unifiedledger.application.TransactionAnnotationHistoryEntry
 import com.unifiedledger.application.TransactionAnnotationReader
 import com.unifiedledger.application.TransactionAnnotationReceipt
 import com.unifiedledger.application.TransactionAnnotationRequest
@@ -106,6 +107,37 @@ class SqlDelightTransactionAnnotationStore private constructor(
             tagIds = tags.map(::TagId),
             merchantId = merchantId?.let(::MerchantId),
         )
+    }
+
+    /**
+     * P7-08 08.D (spec section 3.5): the transaction's WHOLE read-only annotation history — every
+     * immutable revision with its association, request id and audit instant, ordered by revision.
+     * Two additive named queries (the revisions, then one batched tag read — never a per-revision
+     * lookup loop). An empty list is an honest "never annotated"; a SQL failure propagates so the
+     * caller can map it to "no history block" instead of a fabricated empty one.
+     */
+    override fun loadHistory(
+        ledgerId: LedgerId,
+        transactionId: TransactionId,
+    ): List<TransactionAnnotationHistoryEntry> {
+        val ledger = ledgerId.value
+        val transaction = transactionId.value
+        val tagsByRevision =
+            database.ledgerQueries
+                .transactionAnnotationHistoryTagsForTransaction(ledger, transaction) { revision, tagId -> revision to tagId }
+                .executeAsList()
+                .groupBy({ it.first }, { it.second })
+        return database.ledgerQueries
+            .transactionAnnotationHistoryForTransaction(ledger, transaction) { revision, observedVersion, merchant, requestId, createdAt ->
+                TransactionAnnotationHistoryEntry(
+                    annotationRevision = revision,
+                    observedTransactionVersionId = TransactionVersionId(observedVersion),
+                    tagIds = (tagsByRevision[revision] ?: emptyList()).map(::TagId),
+                    merchantId = merchant?.let(::MerchantId),
+                    requestId = requestId,
+                    createdAt = createdAt,
+                )
+            }.executeAsList()
     }
 
     override fun commitOnce(
