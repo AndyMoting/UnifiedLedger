@@ -414,7 +414,7 @@ class P503LedgerViewHostCoordinatorTest {
 
         // An absorbed landing without the retained summary never arms.
         assertFalse(shouldArmImportBatchConfirmed(overview()))
-        assertFalse(shouldArmImportBatchConfirmed(P503AppState.Ready))
+        assertFalse(shouldArmImportBatchConfirmed(P503AppState.Ready()))
     }
 
     // Nothing outside the frozen set re-requests.
@@ -424,7 +424,7 @@ class P503LedgerViewHostCoordinatorTest {
         val (host, probe) = coordinator()
         // (a) the initial overview request is served first; nothing below may re-request.
         assertTrue(host.decideMonthly(overview()))
-        assertFalse(host.decideMonthly(P503AppState.Ready))
+        assertFalse(host.decideMonthly(P503AppState.Ready()))
         assertFalse(host.decideMonthly(P503AppState.Created))
         assertFalse(host.decideMonthly(P503AppState.Editing(ManualExpenseDraft(null, null, "", null), null)))
         assertFalse(host.decideMonthly(P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ)))

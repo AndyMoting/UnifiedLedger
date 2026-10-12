@@ -62,7 +62,7 @@ class APQUAL01RefreshEventAbsorbReducerTest {
         assertSame(state, reducer.reduce(state, P503UiEvent.InitialLoadFailed), "InitialLoadFailed must be absorbed with the state instance unchanged")
     }
 
-    private fun overview(): P503AppState.OverviewEmpty = assertIs(reducer.reduce(P503AppState.Ready, P503UiEvent.InitialLoadResult(emptyState)))
+    private fun overview(): P503AppState.OverviewEmpty = assertIs(reducer.reduce(P503AppState.Ready(), P503UiEvent.InitialLoadResult(emptyState)))
 
     private fun editing(): P503AppState.Editing = P503AppState.Editing(fullDraft(), requestId, emptyState, P503Tab.HOME)
 

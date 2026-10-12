@@ -28,6 +28,7 @@ class ExternalNavigationIntakeTest {
         readableUris: List<String> = listOf("content://synthetic-provider/bill.csv"),
         declaredSizeBytes: Long? = null,
         hasUnexpectedStreamExtra: Boolean = false,
+        streamExtraIsList: Boolean = false,
     ) = ShareIntentSnapshot(
         action = action,
         mimeType = mimeType,
@@ -38,6 +39,7 @@ class ExternalNavigationIntakeTest {
         readableUris = readableUris,
         declaredSizeBytes = declaredSizeBytes,
         hasUnexpectedStreamExtra = hasUnexpectedStreamExtra,
+        streamExtraIsList = streamExtraIsList,
     )
 
     private fun rejection(result: ExternalNavigationIntakeResult): ShareIntakeRejection =
@@ -218,5 +220,108 @@ class ExternalNavigationIntakeTest {
         val intake = InboundNavigationIntake { "fixed-delivery" }
         assertIs<ExternalNavigationRequest.OpenImport>(intake.requestFor(snapshot()))
         assertEquals(null, intake.requestFor(snapshot()))
+    }
+
+    // ---- P7-09 P2-4 fix: EXTRA_STREAM shape classification (adapter layer, pure) ----
+
+    @Test
+    fun theStreamExtraShapeClassifierDistinguishesSingleListMalformedAndAbsent() {
+        // P2-4: a LIST extra must be recognized (never coerced to its first element nor silently
+        // nulled by a blind `as? Uri`). The classifier is pure, so it is driven with plain values.
+        assertEquals(ShareStreamExtraShape.LIST, classifyShareStreamExtra(present = true, rawValue = listOf("content://p/a.csv", "content://p/b.csv")))
+        assertEquals(ShareStreamExtraShape.LIST, classifyShareStreamExtra(present = true, rawValue = arrayOf("content://p/a.csv")))
+        assertEquals(ShareStreamExtraShape.ABSENT, classifyShareStreamExtra(present = false, rawValue = null))
+        // Present but neither a Uri nor a list (a String path, an opaque value or an explicit null).
+        assertEquals(ShareStreamExtraShape.MALFORMED, classifyShareStreamExtra(present = true, rawValue = "content://p/a.csv"))
+        assertEquals(ShareStreamExtraShape.MALFORMED, classifyShareStreamExtra(present = true, rawValue = null))
+    }
+
+    @Test
+    fun aListStreamExtraIsRejectedAsMultipleStreamsAndIsNeverAccepted() {
+        // P2-4 end to end through the validator: the list flag yields a typed MULTIPLE_STREAMS
+        // rejection even though a single ClipData fallback would otherwise look acceptable.
+        val listSnapshot =
+            snapshot(
+                clipDataUris = listOf("content://synthetic-provider/bill.csv"),
+                streamExtraIsList = true,
+            )
+        assertEquals(ShareIntakeRejection.MULTIPLE_STREAMS, rejection(validateShareIntake(listSnapshot, "d")))
+    }
+
+    // ---- P7-09 P2-3 fix: declared size + unexpected-extras populated by the adapter ----
+
+    @Test
+    fun theDeclaredSizeHintIsParsedFromLongNumberOrNumericString() {
+        // P2-3: the adapter genuinely reads the sender's declared-size hint (Long / Number / String),
+        // degrading a malformed/absent value to null (unknown size, which is accepted).
+        assertEquals(1234L, parseDeclaredShareSize(1234L))
+        assertEquals(1234L, parseDeclaredShareSize(1234))
+        assertEquals(1234L, parseDeclaredShareSize("1234"))
+        assertEquals(null, parseDeclaredShareSize(null))
+        assertEquals(null, parseDeclaredShareSize("not-a-number"))
+        assertEquals(null, parseDeclaredShareSize(true))
+        // The parsed value feeds the frozen bound check: over-limit is a typed rejection.
+        assertEquals(
+            ShareIntakeRejection.DECLARED_SIZE_EXCEEDS_LIMIT,
+            rejection(validateShareIntake(snapshot(declaredSizeBytes = parseDeclaredShareSize("${IMPORT_FILE_PICK_MAX_READ_BYTES + 1}")), "d")),
+        )
+    }
+
+    @Test
+    fun aMalformedStreamExtraIsRejectedAsUnexpectedExtras() {
+        // P2-3: an EXTRA_STREAM that is present but unusable is the spec's 异常 extras vector; the
+        // adapter maps the MALFORMED shape to hasUnexpectedStreamExtra, which the validator rejects.
+        val malformed = classifyShareStreamExtra(present = true, rawValue = 42) == ShareStreamExtraShape.MALFORMED
+        assertEquals(
+            ShareIntakeRejection.MALFORMED_EXTRAS,
+            rejection(validateShareIntake(snapshot(hasUnexpectedStreamExtra = malformed), "d")),
+        )
+    }
+
+    // ---- P7-09 P2-5 fix: the non-opening read-grant probe ----
+
+    @Test
+    fun theReadGrantProbeIsANonOpeningPermissionCheck() {
+        // P2-5: readability is decided by a NON-opening permission probe (never openInputStream). The
+        // probe performs no read; the seam simply compares the permission result.
+        var probed = 0
+        assertTrue(shareUriReadGranted("content://synthetic-provider/bill.csv", { probed += 1; 0 }, permissionGranted = 0))
+        assertEquals(1, probed)
+        assertEquals(false, shareUriReadGranted("content://synthetic-provider/bill.csv", { -1 }, permissionGranted = 0))
+    }
+
+    // ---- P7-09 P1-B fix: the process-scoped receipt identity across Activity recreation ----
+
+    @Test
+    fun aColdLaunchReceiptKeepsOneDeliveryIdAcrossAnActivityRecreationAndIsNotReConsumed() {
+        // P1-B regression: the SAME launch Intent is re-read on every onCreate (a rotation /
+        // configuration recreation). The process-scoped intake must deliver it ONCE; the recreation
+        // re-read yields nothing and mints NO second deliveryId.
+        var minted = 0
+        val intake = ProcessInboundNavigationIntake { "delivery-${++minted}" }
+        val first = assertIs<ExternalNavigationRequest.OpenImport>(intake.coldLaunchRequest(snapshot()))
+        assertEquals("delivery-1", first.deliveryId)
+        // The recreation re-reads the same launch Intent: refused, and no new id minted.
+        assertEquals(null, intake.coldLaunchRequest(snapshot()))
+        assertEquals(1, minted)
+    }
+
+    @Test
+    fun aHotOnNewIntentReceiptMintsAFreshDeliveryIdForANewShare() {
+        // Spec section 4: a hot receipt is a genuinely NEW user share, so it mints a new deliveryId
+        // even for an identical URI (a new import, subject to the human duplicate review).
+        var minted = 0
+        val intake = ProcessInboundNavigationIntake { "delivery-${++minted}" }
+        assertIs<ExternalNavigationRequest.OpenImport>(intake.coldLaunchRequest(snapshot()))
+        val hot = assertIs<ExternalNavigationRequest.OpenImport>(intake.hotReceiptRequest(snapshot()))
+        assertEquals("delivery-2", hot.deliveryId)
+        assertEquals(2, minted)
+    }
+
+    @Test
+    fun anOrdinaryMainLaunchIsNotAnInboundEntryForEitherReceiptKind() {
+        val intake = ProcessInboundNavigationIntake { "delivery-1" }
+        assertEquals(null, intake.coldLaunchRequest(snapshot(action = Intent.ACTION_MAIN)))
+        assertEquals(null, intake.hotReceiptRequest(snapshot(action = Intent.ACTION_MAIN)))
     }
 }

@@ -319,7 +319,7 @@ class P503LedgerViewReducerTest {
 
         // No overview on either side: nothing to re-request.
         assertNull(analysisMonthShiftReRequest(null, atTheEdge))
-        assertNull(analysisMonthShiftReRequest(atTheEdge, P503AppState.Ready))
+        assertNull(analysisMonthShiftReRequest(atTheEdge, P503AppState.Ready()))
     }
 
     @Test
@@ -388,7 +388,7 @@ class P503LedgerViewReducerTest {
         // F1/F8: every pre-P7-03 READ failure path has no retained monthly overview, so the bare
         // recoverable page applies; only a monthly-cycle failure selects the retained surface.
         val failedInitialLoad =
-            assertIs<P503AppState.InfrastructureFailure>(clockedReducer.reduce(P503AppState.Ready, P503UiEvent.InitialLoadFailed))
+            assertIs<P503AppState.InfrastructureFailure>(clockedReducer.reduce(P503AppState.Ready(), P503UiEvent.InitialLoadFailed))
         assertEquals(InfrastructureFailureContext.READ, failedInitialLoad.context)
         assertNull(retainedReadFailureOverview(failedInitialLoad))
 
@@ -575,7 +575,7 @@ class P503LedgerViewReducerTest {
         val requestId = RequestId("request-1")
         val states =
             listOf<P503AppState>(
-                P503AppState.Ready,
+                P503AppState.Ready(),
                 P503AppState.Editing(draft, requestId),
                 P503AppState.AwaitingConfirmation(draft, requestId),
                 P503AppState.Submitting(draft, requestId),

@@ -43,6 +43,13 @@ internal class LedgerProcessHolder(
     val safSlot: AndroidSafLaunchSlot,
     /** The process-scoped inbound-navigation channel the composition root delivers requests into. */
     val externalNavigationChannel: ExternalNavigationChannel,
+    /**
+     * P7-09 09.0 fix (P1-B; spec sections 2.2/4): the PROCESS-scoped inbound receipt ledger. It lives
+     * here (not on the Activity) so a cold-launch receipt keeps ONE deliveryId across an Activity
+     * recreation and the same launch Intent is never admitted twice. The mint is the product's
+     * opaque UUID source.
+     */
+    val inboundIntake: ProcessInboundNavigationIntake = ProcessInboundNavigationIntake { java.util.UUID.randomUUID().toString() },
 ) {
     /** The process's single startup controller; built exactly once. */
     val controller: AndroidStartupController by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
@@ -56,9 +63,13 @@ internal class LedgerProcessHolder(
      * Activity composition, a re-composition, an Activity recreation, a future non-composition
      * entry), so the single active graph is opened exactly once under the owner's own
      * single-flight guard.
+     *
+     * P7-09 P2-6 fix: the idempotence is delegated to the pure [ensureStartedOnce] seam so it is
+     * JVM-assertable without an Android `Context` (the composition root can only build a real holder
+     * on a device).
      */
     fun ensureStarted() {
-        if (startedOnce.compareAndSet(false, true)) controller.start()
+        ensureStartedOnce(startedOnce) { controller.start() }
     }
 
     /**
@@ -71,4 +82,19 @@ internal class LedgerProcessHolder(
      */
     val ledger: LedgerLeaseScope?
         get() = controller.ledger
+}
+
+/**
+ * P7-09 P2-6 (spec section 6.3; D-225 Q19 P1): the pure single-flight admission of the process's
+ * controller start. Returns true (and runs [start]) exactly once per [startedOnce]; every later
+ * call is a no-op. Extracted from [LedgerProcessHolder.ensureStarted] so the "started exactly once"
+ * invariant is JVM-assertable without an Android `Context`.
+ */
+internal fun ensureStartedOnce(
+    startedOnce: AtomicBoolean,
+    start: () -> Unit,
+): Boolean {
+    if (!startedOnce.compareAndSet(false, true)) return false
+    start()
+    return true
 }

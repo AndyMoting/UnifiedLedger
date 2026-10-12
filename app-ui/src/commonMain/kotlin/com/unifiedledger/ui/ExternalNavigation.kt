@@ -150,6 +150,10 @@ sealed interface ExternalNavigationDecision {
  * - quiesce / 换库: postpone; after recovery the caller re-validates against the new
  *   generation;
  * - `OverviewEmpty` (Idle): route without a formal-ledger write;
+ * - `Ready` (the startup-concluded ENTRY surface, before the initial load lands): HOLD with the
+ *   visible Busy/待处理 result. This is the P1-A fix: the entry surface is an Idle-class entry, but
+ *   it has no overview to route INTO yet, so a request must land a VISIBLE slot here rather than
+ *   fall through to the `else ->` absorb (which silently dropped a cold-start share);
  * - `Editing` / `AwaitingConfirmation`: hold for the explicit retain-or-discard decision;
  * - `Submitting` / `UnknownCommit` / `ImportBatchSubmitting`: hold; the original requestId,
  *   confirmation snapshot and authorization time are untouched and no batch is auto-continued;
@@ -185,6 +189,11 @@ internal fun decideExternalNavigation(
     }
     return when (state) {
         is P503AppState.OverviewEmpty -> ExternalNavigationDecision.Routed(request)
+        // P1-A: the startup-concluded ENTRY surface is Idle-class but has no overview to route
+        // INTO yet, so the request lands a VISIBLE held slot here (never the `else ->` absorb). The
+        // reason names "still opening" — the surface advances to OverviewEmpty once the initial
+        // authoritative load lands, which carries the slot forward (reduceReady).
+        is P503AppState.Ready -> held(request, ExternalNavigationHoldReason.STARTUP_NOT_READY)
         is P503AppState.Editing -> held(request, ExternalNavigationHoldReason.DRAFT_IN_PROGRESS)
         is P503AppState.AwaitingConfirmation -> held(request, ExternalNavigationHoldReason.CONFIRMATION_PENDING)
         is P503AppState.Submitting,
@@ -251,18 +260,42 @@ class ExternalNavigationChannel {
 }
 
 /**
- * P7-09 09.0 (spec section 2.2): the single pending slot carried by the six routing-table
- * surfaces, or `null` on a surface that carries none (the host's routing decision reads this
- * without knowing which surface is live).
+ * P7-09 09.0 (spec section 2.2): the single pending slot carried by the routing-table surfaces, or
+ * `null` on a surface that carries none (the host's routing decision reads this without knowing
+ * which surface is live).
+ *
+ * P1-A fix: the startup-concluded [P503AppState.Ready] ENTRY surface now carries the slot too (a
+ * cold-start share drains from the channel while the host is still on it), so the host can see and
+ * preserve it instead of absorbing the decision.
  */
 internal fun P503AppState.pendingExternalNavigationSlot(): PendingExternalNavigation? =
     when (this) {
+        is P503AppState.Ready -> pendingExternalNavigation
         is P503AppState.OverviewEmpty -> pendingExternalNavigation
         is P503AppState.Editing -> pendingExternalNavigation
         is P503AppState.AwaitingConfirmation -> pendingExternalNavigation
         is P503AppState.Submitting -> pendingExternalNavigation
         is P503AppState.UnknownCommit -> pendingExternalNavigation
         is P503AppState.ImportBatchSubmitting -> pendingExternalNavigation
+        else -> null
+    }
+
+/**
+ * P7-09 09.0 / T4 (spec sections 1.7/2.2; P2-2 fix): the visible Busy/待处理 result carried by any
+ * slot surface, or `null` on a surface that carries none. Before the P2-2 fix only the [OverviewEmpty]
+ * carried (and rendered) it, so a refused second pick on Editing / AwaitingConfirmation / Submitting
+ * / ImportBatchSubmitting / Ready was equivalent to the silent drop this batch removes. The accessor
+ * is the render seam [P503App] uses so every slot surface presents the Busy strip.
+ */
+internal fun P503AppState.externalNavigationBusyOrNull(): ExternalNavigationBusy? =
+    when (this) {
+        is P503AppState.Ready -> externalNavigationBusy
+        is P503AppState.OverviewEmpty -> externalNavigationBusy
+        is P503AppState.Editing -> externalNavigationBusy
+        is P503AppState.AwaitingConfirmation -> externalNavigationBusy
+        is P503AppState.Submitting -> externalNavigationBusy
+        is P503AppState.UnknownCommit -> externalNavigationBusy
+        is P503AppState.ImportBatchSubmitting -> externalNavigationBusy
         else -> null
     }
 

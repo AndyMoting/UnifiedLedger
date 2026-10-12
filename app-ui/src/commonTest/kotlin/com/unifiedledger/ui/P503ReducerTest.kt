@@ -325,7 +325,7 @@ class P503ReducerTest {
 
     @Test
     fun initialLoadFailureMapsToReadInfrastructureFailureAndRetries() {
-        val failed = reducer.reduce(P503AppState.Ready, P503UiEvent.InitialLoadFailed)
+        val failed = reducer.reduce(P503AppState.Ready(), P503UiEvent.InitialLoadFailed)
         val readFailure = assertIs<P503AppState.InfrastructureFailure>(failed)
         assertEquals(InfrastructureFailureContext.READ, readFailure.context)
         assertNull(readFailure.draft)
@@ -410,7 +410,7 @@ class P503ReducerTest {
     fun initialLoadResultEntersOverviewOnTheHomeTab() {
         val overview =
             assertIs<P503AppState.OverviewEmpty>(
-                reducer.reduce(P503AppState.Ready, P503UiEvent.InitialLoadResult(oneTransactionState)),
+                reducer.reduce(P503AppState.Ready(), P503UiEvent.InitialLoadResult(oneTransactionState)),
             )
         assertEquals(oneTransactionState, overview.state)
         assertEquals(P503Tab.HOME, overview.selectedTab)

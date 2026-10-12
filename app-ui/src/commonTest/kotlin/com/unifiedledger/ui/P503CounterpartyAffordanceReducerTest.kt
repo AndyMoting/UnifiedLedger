@@ -39,7 +39,7 @@ class P503CounterpartyAffordanceReducerTest {
 
     private fun nonEditingStates() =
         listOf(
-            P503AppState.Ready,
+            P503AppState.Ready(),
             P503AppState.OverviewEmpty(emptyState),
             P503AppState.AwaitingConfirmation(lendEditing().draft, requestId),
             P503AppState.Submitting(lendEditing().draft, requestId),

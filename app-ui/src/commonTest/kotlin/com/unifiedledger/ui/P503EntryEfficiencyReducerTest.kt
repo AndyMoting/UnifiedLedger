@@ -66,7 +66,7 @@ class P503EntryEfficiencyReducerTest {
 
     private val nonEditingStates =
         listOf<P503AppState>(
-            P503AppState.Ready,
+            P503AppState.Ready(),
             P503AppState.OverviewEmpty(emptyState),
             P503AppState.AwaitingConfirmation(expenseDraft(), requestId),
             P503AppState.Submitting(expenseDraft(), requestId),
@@ -366,7 +366,7 @@ class P503EntryEfficiencyReducerTest {
         assertEquals(pins, afterRetryWithoutPayload.pinnedTargets)
 
         // Startup seeds the persisted pins.
-        val afterLoad = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(P503AppState.Ready, P503UiEvent.InitialLoadResult(emptyState, pins)))
+        val afterLoad = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(P503AppState.Ready(), P503UiEvent.InitialLoadResult(emptyState, pins)))
         assertEquals(pins, afterLoad.pinnedTargets)
     }
 

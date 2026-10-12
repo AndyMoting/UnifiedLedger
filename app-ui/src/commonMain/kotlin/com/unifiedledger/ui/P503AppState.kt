@@ -61,7 +61,36 @@ import kotlin.time.Instant
  * unchanged and every unlisted combination stays `unhandled` (the G-B discipline).
  */
 sealed interface P503AppState {
-    data object Ready : P503AppState
+    /**
+     * P5-03 platform-startup-concluded ENTRY state (the surface rendered between the startup gate
+     * reaching Ready and the initial authoritative load landing on [OverviewEmpty]).
+     *
+     * P7-09 09.0 fix (P1-A; spec sections 2.2/3/4; D-225 Q19): the ENTRY surface carries the SAME
+     * single pending inbound-navigation slot the routing-table surfaces carry. Before this fix
+     * `Ready` was a field-less `data object`, so a cold-start share (buffered in the composition
+     * root's channel and drained on subscribe, while the shared host is still on this entry
+     * surface) was routed into the `else ->` branch of [decideExternalNavigation] and the slot
+     * write was ABSORBED — the request was silently dropped, exactly the defect 09.0 exists to
+     * remove. Because the spec FREEZES the slot in the reducer (not a host field), the entry
+     * surface must be able to hold it: a cold-start share now lands a VISIBLE Busy slot here and
+     * is retained until the surface advances. The `null` default keeps every pre-P7-09
+     * construction and copy site compiling.
+     */
+    data class Ready(
+        /**
+         * P7-09 09.0 (spec sections 2.2/3): the single pending inbound-navigation slot; see
+         * [OverviewEmpty.pendingExternalNavigation]. Non-null renders the visible Busy/待处理 result
+         * on the entry surface, so a cold-start share is never silently absorbed.
+         */
+        val pendingExternalNavigation: PendingExternalNavigation? = null,
+        /**
+         * P7-09 09.0 / T4 (spec sections 1.7/2.2; P2-2 fix): the visible Busy/待处理 result of a
+         * blocked host operation (a second file pick while one intake pipeline runs). Carried by
+         * EVERY slot surface (not only [OverviewEmpty]), so a refused second pick is visible on the
+         * very surface the user is on rather than dropped.
+         */
+        val externalNavigationBusy: ExternalNavigationBusy? = null,
+    ) : P503AppState
 
     /**
      * P7-01.D catalog management lives on the overview as optional fields (spec section 7):
@@ -197,6 +226,8 @@ sealed interface P503AppState {
         val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
         /** P7-09 09.0 (spec sections 2.2/3): the single pending inbound-navigation slot; see [OverviewEmpty.pendingExternalNavigation]. */
         val pendingExternalNavigation: PendingExternalNavigation? = null,
+        /** P7-09 09.0 / T4 (P2-2 fix): the visible Busy/待处理 result; see [OverviewEmpty.externalNavigationBusy]. */
+        val externalNavigationBusy: ExternalNavigationBusy? = null,
     ) : P503AppState
 
     data class AwaitingConfirmation(
@@ -226,6 +257,8 @@ sealed interface P503AppState {
         val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
         /** P7-09 09.0 (spec sections 2.2/3): the single pending inbound-navigation slot; see [OverviewEmpty.pendingExternalNavigation]. */
         val pendingExternalNavigation: PendingExternalNavigation? = null,
+        /** P7-09 09.0 / T4 (P2-2 fix): the visible Busy/待处理 result; see [OverviewEmpty.externalNavigationBusy]. */
+        val externalNavigationBusy: ExternalNavigationBusy? = null,
     ) : P503AppState
 
     data class Submitting(
@@ -243,6 +276,8 @@ sealed interface P503AppState {
         val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
         /** P7-09 09.0 (spec sections 2.2/3): the single pending inbound-navigation slot; see [OverviewEmpty.pendingExternalNavigation]. */
         val pendingExternalNavigation: PendingExternalNavigation? = null,
+        /** P7-09 09.0 / T4 (P2-2 fix): the visible Busy/待处理 result; see [OverviewEmpty.externalNavigationBusy]. */
+        val externalNavigationBusy: ExternalNavigationBusy? = null,
     ) : P503AppState
 
     data object Created : P503AppState
@@ -384,6 +419,8 @@ sealed interface P503AppState {
         val dispatchPaused: Boolean = false,
         /** P7-09 09.0 (spec sections 2.2/3): the single pending inbound-navigation slot; see [OverviewEmpty.pendingExternalNavigation]. */
         val pendingExternalNavigation: PendingExternalNavigation? = null,
+        /** P7-09 09.0 / T4 (P2-2 fix): the visible Busy/待处理 result; see [OverviewEmpty.externalNavigationBusy]. */
+        val externalNavigationBusy: ExternalNavigationBusy? = null,
     ) : P503AppState
 
     /**
@@ -634,6 +671,8 @@ sealed interface P503AppState {
         val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
         /** P7-09 09.0 (spec sections 2.2/3): the single pending inbound-navigation slot; see [OverviewEmpty.pendingExternalNavigation]. */
         val pendingExternalNavigation: PendingExternalNavigation? = null,
+        /** P7-09 09.0 / T4 (P2-2 fix): the visible Busy/待处理 result; see [OverviewEmpty.externalNavigationBusy]. */
+        val externalNavigationBusy: ExternalNavigationBusy? = null,
     ) : P503AppState
 
     data object Recovered : P503AppState

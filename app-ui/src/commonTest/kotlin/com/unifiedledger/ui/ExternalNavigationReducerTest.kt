@@ -289,7 +289,7 @@ class ExternalNavigationReducerTest {
         // The family never throws in any state (the "new events never ISE" discipline).
         val states =
             listOf(
-                P503AppState.Ready,
+                P503AppState.Ready(),
                 P503AppState.Created,
                 P503AppState.TransactionDetail(overview(), P503Tab.HOME, TransactionId("tx-1"), com.unifiedledger.application.TransactionDetailResult.Unavailable),
                 P503AppState.TagMerchantFilter(overview(), kotlinx.datetime.YearMonth(2026, 1)),
@@ -301,8 +301,12 @@ class ExternalNavigationReducerTest {
             assertSame(state, reduce(state, P503UiEvent.ExternalNavigationReplaced))
             assertSame(state, reduce(state, P503UiEvent.ExternalNavigationKeptCurrent))
             assertSame(state, reduce(state, P503UiEvent.ExternalNavigationDiscarded))
-            assertSame(state, reduce(state, P503UiEvent.ImportIntakeBusyLanded))
-            assertSame(state, reduce(state, P503UiEvent.DismissExternalNavigationBusy))
+            // P2-2: the Busy events are absorbed (state-preserving) on a NON-slot surface; on a slot
+            // surface they write the field, which the dedicated P2-2 tests below assert.
+            if (state !is P503AppState.Ready) {
+                assertSame(state, reduce(state, P503UiEvent.ImportIntakeBusyLanded))
+                assertSame(state, reduce(state, P503UiEvent.DismissExternalNavigationBusy))
+            }
         }
     }
 
@@ -374,19 +378,143 @@ class ExternalNavigationReducerTest {
 
     @Test
     fun theInboundRequestSeamRoutesThroughTheFrozenTable() {
+        val ready = ExternalNavigationRuntimeFacts(ready = true, quiesced = false)
         // The call-site seam wires the pure table: an idle overview routes, a share is held.
-        val routedEvent = assertIs<P503UiEvent.ExternalNavigationDecisionLanded>(externalNavigationDecisionEvent(overview(), newExpense, runtimeQuiesced = false))
+        val routedEvent = assertIs<P503UiEvent.ExternalNavigationDecisionLanded>(externalNavigationDecisionEvent(overview(), newExpense, ready))
         assertIs<ExternalNavigationDecision.Routed>(routedEvent.decision)
 
-        val heldEvent = assertIs<P503UiEvent.ExternalNavigationDecisionLanded>(externalNavigationDecisionEvent(overview(), shareImport, runtimeQuiesced = false))
+        val heldEvent = assertIs<P503UiEvent.ExternalNavigationDecisionLanded>(externalNavigationDecisionEvent(overview(), shareImport, ready))
         assertEquals(ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED, assertIs<ExternalNavigationDecision.Held>(heldEvent.decision).pending.holdReason)
 
         // End to end through the reducer: the seam's event lands the visible slot.
-        val landed = reduce(overview(), externalNavigationDecisionEvent(overview(), shareImport, runtimeQuiesced = false))
+        val landed = reduce(overview(), externalNavigationDecisionEvent(overview(), shareImport, ready))
         assertEquals(
             ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED,
             assertIs<P503AppState.OverviewEmpty>(landed).pendingExternalNavigation?.holdReason,
         )
+    }
+
+    // ---------------------------------------------------------------- P2-1 runtime facts seam
+
+    @Test
+    fun theRuntimeFactsMappingObservesTheLeaseFaceAndTheSwitchingFlag() {
+        // P2-1: the exact mapping the P503App call site uses (ExternalNavigationRuntimeFacts.from):
+        // a null active generation means not Ready; a live generation means Ready; the host's own
+        // switching flag is the quiesce observation.
+        val readyIdle = ExternalNavigationRuntimeFacts.from(activeGeneration = 3, switchingRuntime = false)
+        assertEquals(true, readyIdle.ready)
+        assertEquals(false, readyIdle.quiesced)
+        val notReady = ExternalNavigationRuntimeFacts.from(activeGeneration = null, switchingRuntime = false)
+        assertEquals(false, notReady.ready)
+        val readySwitching = ExternalNavigationRuntimeFacts.from(activeGeneration = 3, switchingRuntime = true)
+        assertEquals(true, readySwitching.ready)
+        assertEquals(true, readySwitching.quiesced)
+    }
+
+    @Test
+    fun theRuntimeFactsSeamDefersWhenTheLeaseFaceHasNoActiveGeneration() {
+        // P2-1: the not-Ready row must be production-reachable. The facts are derived from the
+        // lease face (a null active generation == not Ready), and the seam then DEFERS — never the
+        // former hard-coded `runtimeReady = true` that made this row dead code.
+        val notReady = ExternalNavigationRuntimeFacts.from(activeGeneration = null, switchingRuntime = false)
+        assertEquals(false, notReady.ready)
+        val event = assertIs<P503UiEvent.ExternalNavigationDecisionLanded>(externalNavigationDecisionEvent(overview(), newExpense, notReady))
+        assertEquals(newExpense, assertIs<ExternalNavigationDecision.DeferredUntilReady>(event.decision).request)
+        // End to end: the deferred request still lands a VISIBLE held slot (never dropped).
+        val landed = assertIs<P503AppState.OverviewEmpty>(reduce(overview(), event))
+        assertEquals(ExternalNavigationHoldReason.STARTUP_NOT_READY, landed.pendingExternalNavigation?.holdReason)
+    }
+
+    @Test
+    fun theRuntimeFactsSeamHoldsWhenTheLeaseFaceReportsAQuiesce() {
+        // P2-1: the quiesce / 换库 row must be production-reachable via the observed facts.
+        val quiesced = ExternalNavigationRuntimeFacts.from(activeGeneration = 7, switchingRuntime = true)
+        assertEquals(true, quiesced.ready)
+        assertEquals(true, quiesced.quiesced)
+        val event = assertIs<P503UiEvent.ExternalNavigationDecisionLanded>(externalNavigationDecisionEvent(overview(), newExpense, quiesced))
+        assertEquals(ExternalNavigationHoldReason.RUNTIME_QUIESCED, assertIs<ExternalNavigationDecision.Held>(event.decision).pending.holdReason)
+    }
+
+    // ---------------------------------------------------------------- P1-A Ready entry surface
+
+    @Test
+    fun aColdStartShareOnTheReadyEntrySurfaceLandsAVisibleSlotNotASilentDrop() {
+        // P1-A regression: a cold-start share drains from the channel while the host is still on
+        // the Ready ENTRY surface. The routing table must HOLD it into the Ready slot (visible Busy)
+        // rather than absorb it into `else ->` (the pre-fix silent drop).
+        val event =
+            externalNavigationDecisionEvent(
+                P503AppState.Ready(),
+                shareImport,
+                ExternalNavigationRuntimeFacts(ready = true, quiesced = false),
+            )
+        val held = assertIs<ExternalNavigationDecision.Held>(assertIs<P503UiEvent.ExternalNavigationDecisionLanded>(event).decision)
+        assertEquals(ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED, held.pending.holdReason)
+        // The slot lands on the Ready surface and is visible.
+        val landed = assertIs<P503AppState.Ready>(reduce(P503AppState.Ready(), event))
+        assertEquals(ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED, landed.pendingExternalNavigation?.holdReason)
+        assertEquals(ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED, landed.pendingExternalNavigationSlot()?.holdReason)
+    }
+
+    @Test
+    fun aColdStartNewEntryOnReadyIsHeldVisiblyAndCarriedOntoTheOverview() {
+        // A cold-start 记支出 on the Ready entry surface: no overview exists yet, so it is held (not
+        // routed into a dead editor), and when the initial load lands the slot is CARRIED forward.
+        val ready = P503AppState.Ready()
+        val event = externalNavigationDecisionEvent(ready, newExpense, ExternalNavigationRuntimeFacts(ready = true, quiesced = false))
+        assertEquals(ExternalNavigationHoldReason.STARTUP_NOT_READY, assertIs<ExternalNavigationDecision.Held>(assertIs<P503UiEvent.ExternalNavigationDecisionLanded>(event).decision).pending.holdReason)
+        val held = assertIs<P503AppState.Ready>(reduce(ready, event))
+        assertEquals(newExpense, held.pendingExternalNavigation?.request)
+        // The initial authoritative load advances the surface and CARRIES the held slot (P1-A).
+        val overview = assertIs<P503AppState.OverviewEmpty>(reduce(held, P503UiEvent.InitialLoadResult(emptyState)))
+        assertEquals(newExpense, overview.pendingExternalNavigation?.request)
+    }
+
+    @Test
+    fun aDecisionLandingOnReadyWithoutASlotValueStillLandsTheSlot() {
+        // The absolute slot write point must cover Ready (P1-A): a Held decision lands even though
+        // Ready started with a null slot.
+        val landed =
+            assertIs<P503AppState.Ready>(
+                reduce(
+                    P503AppState.Ready(),
+                    P503UiEvent.ExternalNavigationDecisionLanded(
+                        ExternalNavigationDecision.Held(PendingExternalNavigation(shareImport, ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED)),
+                    ),
+                ),
+            )
+        assertEquals(shareImport, landed.pendingExternalNavigation?.request)
+    }
+
+    // ---------------------------------------------------------------- P2-2 Busy on every surface
+
+    @Test
+    fun theSecondPickBusyIsVisibleOnEverySlotSurfaceNotOnlyTheOverview() {
+        // P2-2 regression: the T4 Busy must be visible on Editing / AwaitingConfirmation /
+        // Submitting / ImportBatchSubmitting / Ready too — before the fix it was only written (and
+        // rendered) on OverviewEmpty, so a second pick there was the silent drop this batch removes.
+        val editing = P503AppState.Editing(expenseDraft(), requestId1)
+        val awaiting = P503AppState.AwaitingConfirmation(expenseDraft(), requestId1)
+        val submitting = P503AppState.Submitting(expenseDraft(), requestId1)
+        val batch = P503AppState.ImportBatchSubmitting(overview(), "2026-01-15T00:30:00Z", emptyList())
+        val states: List<P503AppState> = listOf(P503AppState.Ready(), overview(), editing, awaiting, submitting, batch)
+        for (state in states) {
+            val landed = reduce(state, P503UiEvent.ImportIntakeBusyLanded)
+            assertEquals(
+                ExternalNavigationHoldReason.IMPORT_INTAKE_IN_FLIGHT,
+                landed.externalNavigationBusyOrNull()?.reason,
+                "the Busy must be visible on ${state::class.simpleName}",
+            )
+            // Dismiss clears it on the same surface.
+            assertNull(reduce(landed, P503UiEvent.DismissExternalNavigationBusy).externalNavigationBusyOrNull())
+        }
+    }
+
+    @Test
+    fun theBusyAccessorIsNullOnANonSlotSurface() {
+        val detail =
+            P503AppState.TransactionDetail(overview(), P503Tab.HOME, TransactionId("tx-1"), com.unifiedledger.application.TransactionDetailResult.Unavailable)
+        assertNull(detail.externalNavigationBusyOrNull())
     }
 
     @Test

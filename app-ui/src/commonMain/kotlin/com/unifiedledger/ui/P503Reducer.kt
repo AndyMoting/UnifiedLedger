@@ -91,7 +91,7 @@ class P503ReducerImpl(
         if (annotationHistoryEventAbsorbed(state, event)) return state
         externalNavigationTransition(state, event)?.let { return it }
         return when (state) {
-            is P503AppState.Ready -> reduceReady(event)
+            is P503AppState.Ready -> reduceReady(state, event)
             is P503AppState.OverviewEmpty -> reduceOverviewEmpty(state, event)
             is P503AppState.TransactionDetail -> reduceTransactionDetail(state, event)
             is P503AppState.ImportCandidateDetail -> reduceImportCandidateDetail(state, event)
@@ -290,10 +290,10 @@ class P503ReducerImpl(
      * [ExternalNavigationDecision.Routed] performs the Idle navigation without any formal-ledger
      * write.
      *
-     * The slot field is carried by the six routing-table surfaces ([OverviewEmpty], [Editing],
-     * [AwaitingConfirmation], [Submitting], [UnknownCommit], [ImportBatchSubmitting]); a decision
-     * landing on any other surface is absorbed here (that surface owns its own event family and
-     * never routes an inbound request in this slice).
+     * The slot field is carried by the seven routing-table surfaces ([Ready], [OverviewEmpty],
+     * [Editing], [AwaitingConfirmation], [Submitting], [UnknownCommit], [ImportBatchSubmitting]); a
+     * decision landing on any other surface is absorbed here (that surface owns its own event family
+     * and never routes an inbound request in this slice).
      */
     private fun externalNavigationTransition(
         state: P503AppState,
@@ -306,12 +306,27 @@ class P503ReducerImpl(
             P503UiEvent.ExternalNavigationReplaced -> withPendingExternalNavigation(state) { replacePendingExternalNavigation(it) }
             P503UiEvent.ExternalNavigationKeptCurrent -> withPendingExternalNavigation(state) { null }
             P503UiEvent.ExternalNavigationDiscarded -> discardCurrentFlowAndRoute(state)
-            P503UiEvent.ImportIntakeBusyLanded ->
-                (state as? P503AppState.OverviewEmpty)?.copy(externalNavigationBusy = ExternalNavigationBusy(ExternalNavigationHoldReason.IMPORT_INTAKE_IN_FLIGHT))
-                    ?: state
-            P503UiEvent.DismissExternalNavigationBusy ->
-                (state as? P503AppState.OverviewEmpty)?.copy(externalNavigationBusy = null) ?: state
+            // P2-2 fix: the visible T4 Busy lands on EVERY slot surface (not only OverviewEmpty), so
+            // a refused second pick is visible wherever the user is (Editing/Submitting/... /Ready).
+            P503UiEvent.ImportIntakeBusyLanded -> withExternalNavigationBusy(state, ExternalNavigationBusy(ExternalNavigationHoldReason.IMPORT_INTAKE_IN_FLIGHT))
+            P503UiEvent.DismissExternalNavigationBusy -> withExternalNavigationBusy(state, null)
             else -> null
+        }
+
+    /** Sets (or clears) the visible T4 Busy on every slot surface; a non-slot surface is unchanged. */
+    private fun withExternalNavigationBusy(
+        state: P503AppState,
+        busy: ExternalNavigationBusy?,
+    ): P503AppState =
+        when (state) {
+            is P503AppState.Ready -> state.copy(externalNavigationBusy = busy)
+            is P503AppState.OverviewEmpty -> state.copy(externalNavigationBusy = busy)
+            is P503AppState.Editing -> state.copy(externalNavigationBusy = busy)
+            is P503AppState.AwaitingConfirmation -> state.copy(externalNavigationBusy = busy)
+            is P503AppState.Submitting -> state.copy(externalNavigationBusy = busy)
+            is P503AppState.UnknownCommit -> state.copy(externalNavigationBusy = busy)
+            is P503AppState.ImportBatchSubmitting -> state.copy(externalNavigationBusy = busy)
+            else -> state
         }
 
     /** Applies one host routing decision to the single pending slot (see [externalNavigationTransition]). */
@@ -415,6 +430,7 @@ class P503ReducerImpl(
         transform: (PendingExternalNavigation) -> PendingExternalNavigation?,
     ): P503AppState =
         when (state) {
+            is P503AppState.Ready -> state.copy(pendingExternalNavigation = transform(state.pendingExternalNavigation ?: return state))
             is P503AppState.OverviewEmpty -> state.copy(pendingExternalNavigation = transform(state.pendingExternalNavigation ?: return state))
             is P503AppState.Editing -> state.copy(pendingExternalNavigation = transform(state.pendingExternalNavigation ?: return state))
             is P503AppState.AwaitingConfirmation -> state.copy(pendingExternalNavigation = transform(state.pendingExternalNavigation ?: return state))
@@ -434,6 +450,7 @@ class P503ReducerImpl(
         pending: PendingExternalNavigation,
     ): P503AppState =
         when (state) {
+            is P503AppState.Ready -> state.copy(pendingExternalNavigation = pending)
             is P503AppState.OverviewEmpty -> state.copy(pendingExternalNavigation = pending)
             is P503AppState.Editing -> state.copy(pendingExternalNavigation = pending)
             is P503AppState.AwaitingConfirmation -> state.copy(pendingExternalNavigation = pending)
@@ -666,11 +683,24 @@ class P503ReducerImpl(
             else -> unhandled(state, event)
         }
 
-    private fun reduceReady(event: P503UiEvent): P503AppState =
+    private fun reduceReady(
+        state: P503AppState.Ready,
+        event: P503UiEvent,
+    ): P503AppState =
         when (event) {
             // The authoritative load always lands on the home tab (D-122). P7-02.D E-4: the
             // host seeds the persisted pin set read from the EntryPreferenceStore at startup.
-            is P503UiEvent.InitialLoadResult -> P503AppState.OverviewEmpty(event.currentState, P503Tab.HOME, pinnedTargets = event.pinnedTargets)
+            // P7-09 09.0 (P1-A fix): the entry surface's pending inbound-navigation slot is CARRIED
+            // onto the overview, so a cold-start share held while the initial load was in flight is
+            // never silently dropped when the surface advances.
+            is P503UiEvent.InitialLoadResult ->
+                P503AppState.OverviewEmpty(
+                    event.currentState,
+                    P503Tab.HOME,
+                    pinnedTargets = event.pinnedTargets,
+                    pendingExternalNavigation = state.pendingExternalNavigation,
+                    externalNavigationBusy = state.externalNavigationBusy,
+                )
             P503UiEvent.InitialLoadFailed -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ)
             // P7-02: the entry-foundation events never throw an ISE in any state (§6.2a); before
             // the overview exists they are absorbed.
@@ -759,8 +789,8 @@ class P503ReducerImpl(
             is P503UiEvent.TransactionRestoreResult,
             P503UiEvent.CloseRestoreConfirm,
             is P503UiEvent.RetryP705CommitStatusCheck,
-            -> P503AppState.Ready
-            else -> unhandled(P503AppState.Ready, event)
+            -> state
+            else -> unhandled(state, event)
         }
 
     private fun reduceOverviewEmpty(

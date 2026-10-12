@@ -647,23 +647,53 @@ internal fun importPickDecisionEvent(decision: ImportPickIntakeDecision): P503Ui
     }
 
 /**
- * P7-09 09.0 (spec sections 2/3; D-225 Q19): the JVM-assertable seam of the host call site that
- * routes one inbound neutral request. It reads the current state and the host-observed runtime
- * facts, applies the frozen routing table ([decideExternalNavigation]) and returns the ONE event
- * that carries the decision back into the reducer. The `P503App` composable itself has no JVM
- * harness, so this seam is where the call-site wiring is pinned.
+ * P7-09 09.0 (spec sections 2/3; D-225 Q19; P2-1 fix): the runtime facts [decideExternalNavigation]
+ * needs, observed from the P7-06 lease surface rather than hard-coded.
+ *
+ * Before the P2-1 fix the host seam hard-coded `runtimeReady = true` and only carried a caller
+ * `runtimeQuiesced`, so the `!runtimeReady` (STARTUP_NOT_READY / DeferredUntilReady) and quiesce
+ * rows of the frozen table were UNREACHABLE in production — the host never observed the runtime it
+ * was routing against. [ready] is whether the runtime has an active generation (the lease face's
+ * Ready); [quiesced] is whether a P7-06 quiesce/换库 is in progress for the active generation.
+ */
+internal data class ExternalNavigationRuntimeFacts(
+    val ready: Boolean,
+    val quiesced: Boolean,
+) {
+    companion object {
+        /**
+         * Derives the facts from the lease face in [P503App]: the owner exposes an active
+         * generation exactly while it is Ready (`LedgerLeaseScope.activeGenerationForLanding()`),
+         * and the host's own render state names an in-progress quiesce/换库. Kept here (not inline
+         * in the composable) so the mapping is JVM-assertable.
+         */
+        fun from(
+            activeGeneration: Generation?,
+            switchingRuntime: Boolean,
+        ): ExternalNavigationRuntimeFacts = ExternalNavigationRuntimeFacts(ready = activeGeneration != null, quiesced = switchingRuntime)
+    }
+}
+
+/**
+ * P7-09 09.0 (spec sections 2/3; D-225 Q19; P2-1 fix): the JVM-assertable seam of the host call site
+ * that routes one inbound neutral request. It reads the current state and the host-OBSERVED runtime
+ * facts ([facts], from [ExternalNavigationRuntimeFacts.from] over the lease face), applies the frozen
+ * routing table ([decideExternalNavigation]) and returns the ONE event that carries the decision back
+ * into the reducer. The `P503App` composable itself has no JVM harness, so this seam is where the
+ * call-site wiring is pinned — and it is the seam that makes the not-Ready / quiesced rows reachable
+ * (the P2-1 fix).
  */
 internal fun externalNavigationDecisionEvent(
     state: P503AppState,
     request: ExternalNavigationRequest,
-    runtimeQuiesced: Boolean,
+    facts: ExternalNavigationRuntimeFacts,
 ): P503UiEvent =
     P503UiEvent.ExternalNavigationDecisionLanded(
         decideExternalNavigation(
             state = state,
             request = request,
-            runtimeReady = true,
-            runtimeQuiesced = runtimeQuiesced,
+            runtimeReady = facts.ready,
+            runtimeQuiesced = facts.quiesced,
             existingPending = state.pendingExternalNavigationSlot(),
         ),
     )

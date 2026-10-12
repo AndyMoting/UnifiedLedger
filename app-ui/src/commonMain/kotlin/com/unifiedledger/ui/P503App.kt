@@ -449,8 +449,8 @@ fun P503App(
                 baseLendingOptions.counterparties,
             )
         }
-    var state by remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
-    val latestState = remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
+    var state by remember { mutableStateOf<P503AppState>(P503AppState.Ready()) }
+    val latestState = remember { mutableStateOf<P503AppState>(P503AppState.Ready()) }
     // P5-04.3 single-flight marker for the unknown-commit status check (read-only resolve).
     var statusCheckInFlight by remember { mutableStateOf(false) }
     var editDialogOpen by remember { mutableStateOf(false) }
@@ -1777,17 +1777,28 @@ fun P503App(
     }
 
     /**
-     * P7-09 09.0 (spec sections 2/3; D-225 Q19): one inbound neutral request from the platform
-     * adapter (a share Intent, a launcher shortcut). The routing DECISION (and the host-observed
-     * runtime facts it needs) lives in the JVM-assertable [externalNavigationDecisionEvent] seam;
-     * this method only dispatches the two events the reducer consumes.
+     * P7-09 09.0 (spec sections 2/3; D-225 Q19; P2-1 fix): one inbound neutral request from the
+     * platform adapter (a share Intent, a launcher shortcut). The routing DECISION lives in the
+     * JVM-assertable [externalNavigationDecisionEvent] seam; this method only dispatches the two
+     * events the reducer consumes.
+     *
+     * P2-1 fix: the runtime facts are OBSERVED, not hard-coded. [ExternalNavigationRuntimeFacts.from]
+     * maps the lease face's active generation (`LedgerLeaseScope.activeGenerationForLanding()` returns
+     * null whenever the owner is not Ready) and the host's own in-progress quiesce/换库 observation (a
+     * restore confirm is running). This makes the not-Ready and quiesce rows of the frozen table
+     * production-reachable instead of dead code. The observed facts are injectable so a focused test
+     * can pin the mapping without a Compose harness.
      */
     fun onExternalNavigationRequested(
         request: ExternalNavigationRequest,
-        runtimeQuiesced: Boolean = false,
+        facts: ExternalNavigationRuntimeFacts =
+            ExternalNavigationRuntimeFacts.from(
+                activeGeneration = ledger.activeGenerationForLanding(),
+                switchingRuntime = (latestState.value as? P503AppState.BackupRestore)?.runningConfirm == true,
+            ),
     ) {
         dispatch(P503UiEvent.ExternalNavigationRequested(request))
-        dispatch(externalNavigationDecisionEvent(latestState.value, request, runtimeQuiesced))
+        dispatch(externalNavigationDecisionEvent(latestState.value, request, facts))
     }
 
     /**
@@ -3475,7 +3486,10 @@ fun P503App(
                     onDiscard = { dispatch(P503UiEvent.ExternalNavigationDiscarded) },
                 )
             }
-            (state as? P503AppState.OverviewEmpty)?.externalNavigationBusy?.let { busy ->
+            // P2-2 fix: the T4 Busy strip renders on EVERY slot surface (not only the overview), so
+            // a refused second pick is visible wherever the user is — including the Ready entry
+            // surface, where a cold-start share's Busy must not be silently absorbed.
+            state.externalNavigationBusyOrNull()?.let { busy ->
                 ExternalNavigationBusyStrip(
                     busy = busy,
                     onKeepCurrent = { dispatch(P503UiEvent.DismissExternalNavigationBusy) },
@@ -3486,7 +3500,7 @@ fun P503App(
             }
             Box(Modifier.weight(1f)) {
         when (val current = state) {
-            P503AppState.Ready -> P503StartupScreen(P503StartupState.Starting, onRetry = {}, onExit = onExit)
+            is P503AppState.Ready -> P503StartupScreen(P503StartupState.Starting, onRetry = {}, onExit = onExit)
             is P503AppState.OverviewEmpty ->
                 P503TabShell(
                     selectedTab = current.selectedTab,
