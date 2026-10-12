@@ -321,6 +321,9 @@ internal class DeliveryIdLedger {
 
     /** True exactly once per [deliveryId]: the first consumption. */
     fun consumeOnce(deliveryId: String): Boolean = consumed.add(deliveryId)
+
+    /** Whether [deliveryId] was already consumed (the repeated-delivery probe). */
+    fun contains(deliveryId: String): Boolean = deliveryId in consumed
 }
 
 /**
@@ -363,6 +366,9 @@ internal class InboundNavigationIntake(
             ExternalNavigationIntakeResult.NotAnInboundEntry -> null
         }
     }
+
+    /** Whether [deliveryId] has already been consumed by this intake (the repeated-delivery probe). */
+    fun alreadyConsumed(deliveryId: String): Boolean = delivered.contains(deliveryId)
 }
 
 /**
@@ -383,9 +389,11 @@ internal class InboundNavigationIntake(
  *   section 4: a new share is a new import, subject to the human suspected-duplicate review).
  *
  * Honest residual (disclosed, not silently reduced): this closes the double intake and the id
- * identity. The reducer-side pending slot is not itself persisted across process death — a
- * cold-launch share lost to process death is a typed "re-share" case (spec sections 2.3/4), not a
- * silent re-consume; the hot-share-then-rotate edge is a separate receipt-identity question.
+ * identity. The reducer-side pending slot is NOT persisted across an Activity recreation or process
+ * death — the full "slot survives config change" fix is device-gated (spec section 8 item 7). The
+ * Activity therefore makes a refused repeat read of the same launch Intent NON-SILENT by re-holding
+ * the request under its existing id while its retained source is present ([ColdLaunchReceipt]); a
+ * share with no retained source stays the typed re-share case, never a silent re-consume.
  */
 internal class ProcessInboundNavigationIntake(
     private val mintDeliveryId: () -> String,
@@ -411,4 +419,26 @@ internal class ProcessInboundNavigationIntake(
         if (snapshot.action == Intent.ACTION_MAIN) return null
         return intake.requestFor(snapshot, mintDeliveryId())
     }
+
+    /**
+     * P7-09 09.A fix round (B3; spec section 2.2 line 105 / section 4): the state of the PROCESS
+     * launch's cold-start receipt for the caller to make its loss NON-SILENT. The stable cold-launch
+     * [deliveryId] (null before any cold share) lets the Activity recognize a repeat read of the same
+     * launch Intent — a repeated delivery the idempotent intake REFUSES (no re-consume). The Activity
+     * then re-holds that request by its EXISTING id when its retained source is still present, so a
+     * config recreation never leaves the share in an un-signalled void (the full slot-survives-config
+     * -change fix is device-gated, spec section 8 item 7).
+     */
+    fun coldLaunchReceipt(): ColdLaunchReceipt? {
+        val deliveryId = coldLaunchDeliveryId ?: return null
+        return ColdLaunchReceipt(deliveryId)
+    }
+
+    /** Whether a repeated read of [deliveryId] is a refused (already-consumed) delivery. */
+    fun isRefusedRepeat(deliveryId: String): Boolean = intake.alreadyConsumed(deliveryId)
 }
+
+/** P7-09 09.A fix round (B3): the current cold-launch receipt identity (see [ProcessInboundNavigationIntake.coldLaunchReceipt]). */
+internal class ColdLaunchReceipt(
+    val deliveryId: String,
+)

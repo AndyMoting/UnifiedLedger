@@ -26,9 +26,15 @@ class MainActivity : ComponentActivity() {
         // Activity is validated into a neutral request here (before the composition subscribes);
         // the channel buffers it and the host routes it once Ready. A non-share launch is a no-op.
         //
-        // P1-B fix: the receipt is resolved by the PROCESS-scoped intake, so an Activity recreation
-        // (rotation / config change) re-reading the SAME launch Intent reuses the SAME deliveryId
-        // and is refused — the same share is never admitted twice and its held slot is not lost.
+        // P1-B + B3 (spec sections 2.2/4): the receipt is resolved by the PROCESS-scoped intake, so
+        // an Activity recreation (rotation / config change) re-reading the SAME launch Intent reuses
+        // the SAME deliveryId and its repeated delivery is REFUSED by the idempotent intake (the same
+        // share is never admitted twice). HONEST LIMIT: the reducer-side pending slot lives in a
+        // composition `remember`, so a recreation DOES lose the previously admitted held slot — this
+        // is the spec section 8 item 7 device-gated residual, NOT a "slot survives config change"
+        // guarantee. To keep the loss NON-SILENT, a refused repeat whose retained source is still
+        // present is re-held under its EXISTING deliveryId (below), so the share surfaces the same
+        // format prompt / typed re-share rather than vanishing.
         handleInboundIntent(intent, coldLaunch = true)
         setContent {
             // D-134 D2-D1: pre-Ready screens render outside P503App, so the shared dual theme
@@ -90,7 +96,29 @@ class MainActivity : ComponentActivity() {
                 holder.inboundIntake.coldLaunchRequest(snapshot)
             } else {
                 holder.inboundIntake.hotReceiptRequest(snapshot)
-            } ?: return
+            }
+        if (request == null) {
+            // P7-09 09.A fix round (B3; spec section 2.2 line 105 / section 4): a bare early return
+            // here would silently drop an already-admitted share on a config recreation. When the
+            // repeat read of the SAME cold-launch Intent is REFUSED (already consumed) AND its
+            // retained source is still present, re-hold the request under its EXISTING deliveryId so
+            // the share is non-silent (the format prompt / typed re-share surfaces again). The id is
+            // NOT re-consumed (the receipt ledger is untouched) and the retained source is not
+            // re-retained; zero formal effect. A genuine non-share launch or a share with no retained
+            // source is a true no-op.
+            if (coldLaunch) {
+                val receipt = holder.inboundIntake.coldLaunchReceipt()
+                if (receipt != null &&
+                    holder.inboundIntake.isRefusedRepeat(receipt.deliveryId) &&
+                    holder.shareImportRegistry.contains(receipt.deliveryId) &&
+                    retainedShareUri(intent) != null
+                ) {
+                    StartupTrace.emit("entry.inboundIntake kind=reHeldRefusedRepeat")
+                    holder.externalNavigationChannel.deliver(com.unifiedledger.ui.ExternalNavigationRequest.OpenImport(receipt.deliveryId))
+                }
+            }
+            return
+        }
         // P7-09 09.A closed loop (spec sections 2.3/4; D-225; invariant 2): the accepted share's
         // platform Uri is retained IN-PROCESS, keyed by the neutral deliveryId, so the later format
         // selection can read the SAME stream. It is NEVER persisted, NEVER written to disk/env and

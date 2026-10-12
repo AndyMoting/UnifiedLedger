@@ -21,27 +21,53 @@ import java.io.InputStream
  * `takePersistableUriPermission`. [take] REMOVES the entry (consumption is one-shot), so no retained
  * grant outlives its use; [release] drops an unconsumed entry when the user abandons the choice.
  *
+ * Fix round (B1; spec section 2.2 line 106 禁止静默丢弃): the access is synchronized (the receipt
+ * runs on the Activity thread, the release runs from the host dispatch path) and BOUNDED — at most
+ * [MAX_RETAINED] handles, eldest evicted. With the frozen single pending slot (plus at most one
+ * displaced request) at most two handles are ever meaningfully live; the bound is a leak backstop,
+ * and the host additionally releases on EVERY abandon path.
+ *
  * The registry is generic over the handle type so it is JVM-assertable with a plain `String` (the
  * `AndroidImportFilePickPort` injection pattern); the product root instantiates it with `Uri`.
  */
 internal class ShareImportSourceRegistry<T> {
-    private val retained = HashMap<String, T>()
+    private val retained = LinkedHashMap<String, T>()
+    private val lock = Any()
 
     /** Retains one platform handle for [deliveryId] until it is taken or released. */
     fun retain(deliveryId: String, handle: T) {
-        retained[deliveryId] = handle
+        synchronized(lock) {
+            retained[deliveryId] = handle
+            // Bounded: evict the eldest unconsumed handle beyond the cap (a leak backstop only; the
+            // single pending slot means at most ~2 are ever meaningfully live).
+            while (retained.size > MAX_RETAINED) {
+                val eldest = retained.keys.firstOrNull() ?: break
+                retained.remove(eldest)
+            }
+        }
     }
 
     /** Removes and returns the handle for [deliveryId], or null when none is retained (one-shot). */
-    fun take(deliveryId: String): T? = retained.remove(deliveryId)
+    fun take(deliveryId: String): T? = synchronized(lock) { retained.remove(deliveryId) }
 
     /** Drops an unconsumed handle (the choice was abandoned); a no-op when none is retained. */
     fun release(deliveryId: String) {
-        retained.remove(deliveryId)
+        synchronized(lock) {
+            retained.remove(deliveryId)
+            Unit
+        }
     }
 
+    /** Whether an unconsumed handle is currently retained for [deliveryId] (B3 re-delivery probe). */
+    fun contains(deliveryId: String): Boolean = synchronized(lock) { retained.containsKey(deliveryId) }
+
     /** The number of retained-but-unconsumed handles (test/observability only). */
-    fun size(): Int = retained.size
+    fun size(): Int = synchronized(lock) { retained.size }
+
+    companion object {
+        /** The bounded capacity of the retained-handle backstop (see the class KDoc). */
+        const val MAX_RETAINED: Int = 4
+    }
 }
 
 /**

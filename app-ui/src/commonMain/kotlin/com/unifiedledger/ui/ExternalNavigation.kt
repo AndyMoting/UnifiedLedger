@@ -290,6 +290,25 @@ internal fun P503AppState.pendingExternalNavigationSlot(): PendingExternalNaviga
     }
 
 /**
+ * P7-09 09.A fix round (B2; spec section 2.2 line 106): whether this surface CLASS can carry the
+ * single pending slot at all (independent of the current value). The host uses it to decide when a
+ * request it held in its fallback (a non-slot surface, where the reducer cannot represent the slot)
+ * can be handed back to the reducer once a routable surface becomes live.
+ */
+internal fun P503AppState.carriesExternalNavigationSlot(): Boolean =
+    when (this) {
+        is P503AppState.Ready,
+        is P503AppState.OverviewEmpty,
+        is P503AppState.Editing,
+        is P503AppState.AwaitingConfirmation,
+        is P503AppState.Submitting,
+        is P503AppState.UnknownCommit,
+        is P503AppState.ImportBatchSubmitting,
+        -> true
+        else -> false
+    }
+
+/**
  * P7-09 09.0 / T4 (spec sections 1.7/2.2; P2-2 fix): the visible Busy/待处理 result carried by any
  * slot surface, or `null` on a surface that carries none. Before the P2-2 fix only the [OverviewEmpty]
  * carried (and rendered) it, so a refused second pick on Editing / AwaitingConfirmation / Submitting

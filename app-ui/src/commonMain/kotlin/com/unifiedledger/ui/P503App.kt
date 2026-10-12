@@ -512,9 +512,20 @@ fun P503App(
     // consumes the slot when the picked result arrives (one pick at a time: SAF is single-shot and
     // the desktop chooser is modal).
     var pendingImportFormat by remember { mutableStateOf<ImportFormatId?>(null) }
+    // P7-09 09.A fix round (B2; spec section 2.2 line 106 禁止静默丢弃, section 3 line 154 暂缓):
+    // the HOST-level fallback hold for surfaces the reducer cannot carry the single pending slot on
+    // (a read-only detail, the recycle bin, a restore-confirm quiesce, ...). Without it an arriving
+    // request landing on such a surface was absorbed into `setPendingExternalNavigation`'s unchanged
+    // return and vanished with no visible Busy. This never widens [P503AppState], so the ~25
+    // unrelated state-construction sites stay untouched; the request is surfaced (and rendered) from
+    // the host instead. See [hostFallbackHeldNavigation].
+    var hostHeldNavigation by remember { mutableStateOf<PendingExternalNavigation?>(null) }
     // P7-04.C: the decision-form validation over the shared parse facade (P503DraftValidation
     // pattern; the detail screen renders its one-shot errors).
     val importDecisionValidation = remember(ledger) { P503ImportDecisionValidation(ledger.parseAmount) }
+
+    /** The visible held request on the live surface: the reducer's slot, else the host fallback. */
+    fun visibleHeldNavigation(): PendingExternalNavigation? = state.pendingExternalNavigationSlot() ?: hostHeldNavigation
 
     fun dispatch(event: P503UiEvent) {
         // D-140 (spec 2.2): 全新草稿流事件重置 hoisted 文本（枚举表：#1 唯一）。P7-02.D E-2:
@@ -538,8 +549,48 @@ fun P503App(
         // row tapped while a lost restore is in flight), and an event-based clear would drop the
         // snapshot of a still-lost commit. A determinate hit or a conflict clears `submitting` and
         // releases it; a LOST commit (Absent/Unavailable) keeps it for the manual re-check.
-        val landed = reducer.reduce(state, event)
+        //
+        // P7-09 09.A fix round (B1/B2): the single-pass tail. `previousHeld`/`nextHeld` are the
+        // effective held request BEFORE/AFTER this transition — the reducer's slot OR the host
+        // fallback (a surface that cannot carry the slot). B1: the retained share source is released
+        // whenever the awaiting-format share leaves the effective hold (keep-current, a consumed
+        // format selection, a typed re-share, a replace) — the ONE release point. B2: the fallback is
+        // dropped on an explicit clear / an applied retain-replace, and FLUSHED back into the reducer
+        // once a routable surface is live with an empty slot (no nested dispatch: one fold pass).
+        val previousHeld = visibleHeldNavigation()
+        val previousFallback = hostHeldNavigation
+        var landed = reducer.reduce(state, event)
         retainedP705Request = retainedP705RequestAfterLanding(retainedP705Request, landed)
+        when {
+            clearsExternalNavigation(event) -> hostHeldNavigation = null
+            // The retain/replace actions are absorbed by the reducer on a non-slot surface; the host
+            // applies them to its fallback so the §2.2 buttons are never a silent no-op there.
+            event === P503UiEvent.ExternalNavigationRetained -> hostHeldNavigation = hostHeldNavigation?.let(::retainPendingExternalNavigation)
+            event === P503UiEvent.ExternalNavigationReplaced -> hostHeldNavigation = hostHeldNavigation?.let(::replacePendingExternalNavigation)
+        }
+        val heldFallback = hostHeldNavigation
+        if (heldFallback != null) {
+            hostHeldNavigation =
+                when {
+                    // The reducer's own slot is the single slot: a duplicate fallback is dropped (its
+                    // retained share, if different, is released by the seam below).
+                    landed.pendingExternalNavigationSlot() != null -> null
+                    landed.carriesExternalNavigationSlot() -> {
+                        landed = reducer.reduce(landed, P503UiEvent.ExternalNavigationDecisionLanded(ExternalNavigationDecision.Held(heldFallback)))
+                        null
+                    }
+                    else -> heldFallback
+                }
+        }
+        val nextHeld = landed.pendingExternalNavigationSlot() ?: hostHeldNavigation
+        // Release EVERY awaiting-format share that was held before (the reducer slot OR the dropped
+        // fallback) and is no longer the effective hold — the ONE point that guarantees no retained
+        // grant outlives its use on any abandon path.
+        listOf(previousHeld, previousFallback).forEach { prior ->
+            releasedShareDeliveryId(prior, nextHeld)?.let { deliveryId ->
+                ledger.shareImportSource?.release(deliveryId)
+            }
+        }
         state = landed.also { latestState.value = it }
     }
     // ---------------------------------------------------------------- P7-08 08.C tag/merchant filter + catalog host surface
@@ -1811,18 +1862,14 @@ fun P503App(
             is ImportPickIntakeDecision.StartIntake -> runImportIntakePipeline(decision.file, sharePath = sharePath)
             // P7-09 09.0 / T4: the refused second pick lands its visible Busy event (the seam
             // returns exactly this event for AlreadyInFlight), never a silent `-> Unit` drop.
-            // P7-09 09.A: on the share path the single-flight refusal is a VISIBLE Busy (the honest
-            // "已有文件正在导入" cause), NOT the re-share prompt — the cause is a concurrent intake,
-            // not an unreadable source. The seeded format slot is cleared so it cannot mis-associate
-            // a later SAF pick (the retained source was already taken and cannot be re-admitted; the
-            // path is practically unreachable — P704C-QUAL-03 — and disclosed, not silently dropped).
-            is ImportPickIntakeDecision.AlreadyInFlight ->
-                if (sharePath) {
-                    pendingImportFormat = null
-                    importPickDecisionEvent(decision)?.let(::dispatch)
-                } else {
-                    importPickDecisionEvent(decision)?.let(::dispatch)
-                }
+            // P7-09 09.A fix round (B5; spec section 2.2 lines 107-108): on the share path the
+            // single-flight refusal is a VISIBLE Busy (the honest "已有文件正在导入" cause), NOT the
+            // re-share prompt — the cause is a concurrent intake, not an unreadable source. The
+            // retained source and the format slot are KEPT (admission is checked before the take in
+            // [selectShareImportFormat], so this path is practically unreachable — the residual race
+            // only — and a retry must still be able to read the same stream). NEVER clear
+            // `pendingImportFormat` here.
+            is ImportPickIntakeDecision.AlreadyInFlight -> importPickDecisionEvent(decision)?.let(::dispatch)
             ImportPickIntakeDecision.NoPipeline -> Unit
         }
     }
@@ -1849,7 +1896,16 @@ fun P503App(
             ),
     ) {
         dispatch(P503UiEvent.ExternalNavigationRequested(request))
-        dispatch(externalNavigationDecisionEvent(latestState.value, request, facts))
+        val decision = externalNavigationDecision(latestState.value, request, facts, existingPending = visibleHeldNavigation())
+        dispatch(P503UiEvent.ExternalNavigationDecisionLanded(decision))
+        // P7-09 09.A fix round (B2; spec section 2.2 line 106 禁止静默丢弃): a Held/Deferred request
+        // landing on a surface the reducer cannot carry the slot on (a read-only detail, the recycle
+        // bin, a restore-confirm quiesce, ...) would otherwise be absorbed and VANISH. The host holds
+        // it in its fallback so it stays VISIBLE (never silently discarded). The pure seam returns
+        // null whenever the landed state itself carries the slot (the reducer owns it) or the request
+        // routed/absorbed with nothing to hold; it flushes back into the reducer once a routable
+        // surface becomes live (see `dispatch`).
+        hostFallbackHeldNavigation(latestState.value, decision)?.let { held -> hostHeldNavigation = held }
     }
 
     /**
@@ -1862,6 +1918,15 @@ fun P503App(
      * delivered into the old pick channel (spec section 2.3 line 126).
      */
     fun selectShareImportFormat(format: ExternalNavigationRequest.OpenImport, formatId: ImportFormatId) {
+        // P7-09 09.A fix round (B5; spec section 2.2 lines 107-108): check the intake single flight
+        // BEFORE consuming the retained source. A refused relay must NOT `take` the handle: the
+        // source and the format slot stay valid and the attempt surfaces the visible Busy, so a
+        // later retry can still read the same stream (the pre-fix order consumed first and left the
+        // share unrecoverable without re-sharing).
+        if (!shareImportRelayAllowed(intakeBusy = coordinator.importIntakeBusy())) {
+            dispatch(P503UiEvent.ImportIntakeBusyLanded)
+            return
+        }
         val port = ledger.shareImportSource
         val decision = shareImportTakeDecision(port?.take(format.deliveryId))
         // The re-share case releases any retained entry (idempotent no-op when already gone) and
@@ -3560,7 +3625,12 @@ fun P503App(
         // frozen 可见 Busy rule). The copy carries no amount, URI or file name, and the strip never
         // blocks the underlying surface (a held request is a routing decision, not a modal).
         Column(Modifier.fillMaxSize()) {
-            state.pendingExternalNavigationSlot()?.let { pending ->
+            // P7-09 09.A fix round (B2; spec section 2.2 line 106): render the EFFECTIVE held request
+            // — the reducer's slot when the surface carries one, else the host fallback hold for a
+            // surface the reducer cannot represent the slot on (a read-only detail, the recycle bin, a
+            // restore-confirm quiesce). Either way an arriving request stays VISIBLE, never a silent
+            // discard.
+            visibleHeldNavigation()?.let { pending ->
                 // P7-09 09.A closed loop (spec section 2.3): while the held request is a share
                 // awaiting its format, the strip offers the EXISTING capability-matrix formats. The
                 // selection runs the closed loop (take the retained stream → the existing pipeline);

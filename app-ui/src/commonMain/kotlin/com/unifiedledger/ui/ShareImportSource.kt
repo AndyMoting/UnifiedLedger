@@ -61,6 +61,16 @@ internal fun shareImportTakeDecision(file: PickedImportFile?): ShareImportTakeDe
     }
 
 /**
+ * P7-09 09.A fix round (B5; spec section 2.2 lines 107-108): the single-flight ADMISSION for the
+ * share closed loop, evaluated BEFORE the retained source is consumed. When the import intake single
+ * flight is already occupied ([intakeBusy]) the selection must NOT `take` the retained handle — the
+ * source and the format slot stay valid for a retry, and the refused attempt surfaces the visible
+ * Busy. Consuming first (the pre-fix order) removed the handle and left only a Busy, making the
+ * share unrecoverable without re-sharing.
+ */
+internal fun shareImportRelayAllowed(intakeBusy: Boolean): Boolean = !intakeBusy
+
+/**
  * P7-09 09.A (spec section 2.3 line 128; section 4; invariant 5): whether an intake-pipeline outcome
  * on the SHARE path must additionally present the typed re-share prompt. The four frozen vectors are
  * grant expiry/revocation before the read, a mid-read failure, an over-16 MiB source and a missing
@@ -82,3 +92,74 @@ internal fun PendingExternalNavigation?.awaitsShareImportFormat(): Boolean =
     this != null &&
         request is ExternalNavigationRequest.OpenImport &&
         holdReason == ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED
+
+/**
+ * P7-09 09.A fix round (B1; spec section 2.3 line 127 / section 9 line 271; D-146): the
+ * `deliveryId` whose retained share source the HOST must RELEASE when the single pending slot
+ * transitions away from the awaiting-format share. The reducer is pure, so the release is a host
+ * action keyed on the slot transition: [previous] is the slot before the landing, [next] after.
+ *
+ * Returns the previous awaiting-format share's `deliveryId` when the next state no longer holds
+ * that SAME awaiting-format share — i.e. the share was CONSUMED by a format selection, abandoned
+ * via 保留当前, replaced, or translated to a typed re-share (放弃后切换 on an idle overview RE-HELDS
+ * the share, so it correctly releases nothing). Returns null when there is nothing to release (no
+ * previous awaiting-format share, or the same share is still held awaiting its format). This is the
+ * ONE seam that makes "no retained grant outlives its use" hold on EVERY abandon path (the former
+ * code released only on the take-miss branch).
+ */
+internal fun releasedShareDeliveryId(
+    previous: PendingExternalNavigation?,
+    next: PendingExternalNavigation?,
+): String? {
+    if (!previous.awaitsShareImportFormat()) return null
+    val previousId = (previous!!.request as ExternalNavigationRequest.OpenImport).deliveryId
+    val nextId = if (next.awaitsShareImportFormat()) (next!!.request as ExternalNavigationRequest.OpenImport).deliveryId else null
+    return if (nextId == previousId) null else previousId
+}
+
+/**
+ * P7-09 09.A fix round (B2; spec section 2.2 line 106 禁止静默丢弃, section 3 line 154 暂缓): the
+ * HOST-level fallback hold for surfaces the reducer CANNOT carry the single pending slot on (a
+ * read-only detail, the recycle bin, a restore-confirm quiesce, ...). The reducer's
+ * `setPendingExternalNavigation` deliberately returns such a surface UNCHANGED — which, without this
+ * seam, made an arriving share VANISH with no visible Busy. This is the minimal host-level mechanism
+ * that never widens [P503AppState] (so the ~25 unrelated construction sites stay out of scope):
+ *
+ * - when the landed state CARRIES the slot, the reducer already owns it — the host holds nothing;
+ * - otherwise a [ExternalNavigationDecision.Held]/[ExternalNavigationDecision.DeferredUntilReady]
+ *   request is surfaced by the host so the request stays VISIBLE (never silently discarded).
+ *
+ * Pure and JVM-assertable; [P503App] stores and renders the returned value.
+ */
+internal fun hostFallbackHeldNavigation(
+    landed: P503AppState,
+    decision: ExternalNavigationDecision,
+): PendingExternalNavigation? {
+    if (landed.pendingExternalNavigationSlot() != null) return null
+    return when (decision) {
+        is ExternalNavigationDecision.Held -> decision.pending
+        is ExternalNavigationDecision.DeferredUntilReady ->
+            PendingExternalNavigation(decision.request, ExternalNavigationHoldReason.STARTUP_NOT_READY)
+        // Mirror the reducer's RetainOrReplace landing (spec section 2.2): keep the ORIGINAL request
+        // and carry the incoming one as `displaced` for the explicit retain/replace decision.
+        is ExternalNavigationDecision.RetainOrReplace ->
+            PendingExternalNavigation(
+                request = decision.existing.request,
+                holdReason = decision.existing.holdReason,
+                awaitingUserDecision = true,
+                displaced = decision.incoming,
+            )
+        is ExternalNavigationDecision.Routed -> null
+    }
+}
+
+/**
+ * P7-09 09.A fix round (B1/B2): whether [event] is a navigation event that CLEARS the held request
+ * (the user consumed/abandoned it). Used by the host to drop its fallback hold and release the
+ * retained share source on the same transitions the reducer uses to clear a slot.
+ */
+internal fun clearsExternalNavigation(event: P503UiEvent): Boolean =
+    event === P503UiEvent.ExternalNavigationKeptCurrent ||
+        event === P503UiEvent.ExternalNavigationDiscarded ||
+        event === P503UiEvent.ShareImportConsumed ||
+        event === P503UiEvent.ShareImportReShareLanded

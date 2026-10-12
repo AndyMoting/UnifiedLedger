@@ -188,4 +188,114 @@ class ShareImportClosedLoopTest {
         assertSame(detail, reduce(detail, P503UiEvent.ShareImportConsumed))
         assertSame(detail, reduce(detail, P503UiEvent.ShareImportReShareLanded))
     }
+
+    // ---------------------------------------------------------------- fix round B1: release on abandon
+
+    @Test
+    fun abandoningTheHeldShareViaKeepCurrentConsumeOrReShareReleasesTheRetainedDelivery() {
+        // B1: leaving the awaiting-format share by 保留当前, a consumed format selection or the typed
+        // re-share must RELEASE the retained source (the slot transition is the host's release key).
+        val held = PendingExternalNavigation(shareImport, ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED)
+
+        // 保留当前 clears the slot (OverviewEmpty carries it) — the id is released.
+        val keptCurrent = assertIs<P503AppState.OverviewEmpty>(reduce(heldShare(), P503UiEvent.ExternalNavigationKeptCurrent))
+        assertNull(keptCurrent.pendingExternalNavigation)
+        assertEquals("delivery-1", releasedShareDeliveryId(held, keptCurrent.pendingExternalNavigationSlot()))
+
+        // A CONSUMED format selection (the pipeline owns the result) also releases.
+        val consumed = reduce(heldShare(), P503UiEvent.ShareImportConsumed)
+        assertEquals("delivery-1", releasedShareDeliveryId(held, consumed.pendingExternalNavigationSlot()))
+        // The typed re-share also releases (nothing is retained after a failed read).
+        assertEquals("delivery-1", releasedShareDeliveryId(held, reduce(heldShare(), P503UiEvent.ShareImportReShareLanded).pendingExternalNavigationSlot()))
+    }
+
+    @Test
+    fun discardAndSwitchRoutsTheHeldShareRatherThanAbandoningIt() {
+        // B1 boundary: 放弃后切换 on an IDLE overview ROUTES the held request (spec section 3 Editing
+        // row). For a share that means it is RE-HELD awaiting its format — the grant is still needed,
+        // so the retained source must NOT be released by this transition.
+        val held = PendingExternalNavigation(shareImport, ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED)
+        val discarded = assertIs<P503AppState.OverviewEmpty>(reduce(heldShare(), P503UiEvent.ExternalNavigationDiscarded))
+        assertEquals("delivery-1", (discarded.pendingExternalNavigation?.request as ExternalNavigationRequest.OpenImport).deliveryId)
+        assertNull(releasedShareDeliveryId(held, discarded.pendingExternalNavigationSlot()))
+    }
+
+    @Test
+    fun aShareStillAwaitingItsFormatIsNotReleased() {
+        // B1 negative: while the SAME awaiting-format share is still held, nothing is released (an
+        // unrelated event must not drop the retained grant the format choice still needs).
+        val held = PendingExternalNavigation(shareImport, ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED)
+        assertNull(releasedShareDeliveryId(held, held))
+        // A different still-awaiting share (an explicit replace) releases the ORIGINAL id.
+        val replaced = PendingExternalNavigation(ExternalNavigationRequest.OpenImport("delivery-2"), ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED)
+        assertEquals("delivery-1", releasedShareDeliveryId(held, replaced))
+        // Nothing to release when the previous slot held no share at all.
+        assertNull(releasedShareDeliveryId(null, held))
+        assertNull(releasedShareDeliveryId(PendingExternalNavigation(ExternalNavigationRequest.OpenCurrentMonth, ExternalNavigationHoldReason.UNROUTABLE_TARGET), null))
+    }
+
+    // ---------------------------------------------------------------- fix round B2: never a silent discard
+
+    @Test
+    fun aRequestOnANonSlotSurfaceIsNotSilentlyDiscarded() {
+        // B2: the reducer cannot carry the slot on TransactionDetail (it returns the state
+        // unchanged), so the HOST fallback must surface the request instead of letting it vanish.
+        val detail =
+            P503AppState.TransactionDetail(
+                overview(),
+                P503Tab.HOME,
+                com.unifiedledger.domain.TransactionId("tx-1"),
+                com.unifiedledger.application.TransactionDetailResult.Unavailable,
+            )
+        assertEquals(false, detail.carriesExternalNavigationSlot())
+        val decision = ExternalNavigationDecision.Held(PendingExternalNavigation(shareImport, ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED))
+        // The reducer absorbs it (unchanged, no slot)...
+        assertSame(detail, reduce(detail, P503UiEvent.ExternalNavigationDecisionLanded(decision)))
+        // ...but the host fallback HOLDS it, so the request stays visible and is never discarded.
+        val fallback = hostFallbackHeldNavigation(detail, decision)
+        assertEquals("delivery-1", (fallback?.request as ExternalNavigationRequest.OpenImport).deliveryId)
+        assertTrue(fallback!!.awaitsShareImportFormat())
+    }
+
+    @Test
+    fun aQuiescedRequestOnANonSlotSurfaceIsHeldNotDiscarded() {
+        // B2: a share arriving during a restore-confirm quiesce (BackupRestore has no slot) is
+        // translated to a VISIBLE held outcome, never a discard.
+        val quiesced = P503AppState.BackupRestore(overview(), runningConfirm = true)
+        assertEquals(false, quiesced.carriesExternalNavigationSlot())
+        val decision = ExternalNavigationDecision.Held(PendingExternalNavigation(shareImport, ExternalNavigationHoldReason.RUNTIME_QUIESCED))
+        val fallback = hostFallbackHeldNavigation(quiesced, decision)
+        assertEquals(ExternalNavigationHoldReason.RUNTIME_QUIESCED, fallback?.holdReason)
+    }
+
+    @Test
+    fun noHostFallbackIsNeededOnASlotSurfaceOrForARoutedRequest() {
+        // B2: when the landed surface carries the slot (the reducer owns it) the host holds nothing.
+        val heldDecision = ExternalNavigationDecision.Held(PendingExternalNavigation(shareImport, ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED))
+        assertNull(hostFallbackHeldNavigation(heldShare(), heldDecision))
+        // A routed request on a slot surface is the reducer's Idle navigation, not a hold.
+        assertNull(hostFallbackHeldNavigation(overview(), ExternalNavigationDecision.Routed(ExternalNavigationRequest.OpenNewEntry(com.unifiedledger.application.EntryType.EXPENSE))))
+        // A Deferred request on a non-slot surface is held as STARTUP_NOT_READY (visible).
+        val detail =
+            P503AppState.TransactionDetail(
+                overview(),
+                P503Tab.HOME,
+                com.unifiedledger.domain.TransactionId("tx-1"),
+                com.unifiedledger.application.TransactionDetailResult.Unavailable,
+            )
+        assertEquals(
+            ExternalNavigationHoldReason.STARTUP_NOT_READY,
+            hostFallbackHeldNavigation(detail, ExternalNavigationDecision.DeferredUntilReady(shareImport))?.holdReason,
+        )
+    }
+
+    // ---------------------------------------------------------------- fix round B5: admission before consume
+
+    @Test
+    fun theRelayAdmissionRefusesWhenTheIntakeSingleFlightIsBusy() {
+        // B5: the single-flight admission predicate refuses a relay while an intake is in flight, so
+        // the retained source is never consumed on a refused attempt (the source/slot stay retryable).
+        assertTrue(shareImportRelayAllowed(intakeBusy = false))
+        assertFalse(shareImportRelayAllowed(intakeBusy = true))
+    }
 }

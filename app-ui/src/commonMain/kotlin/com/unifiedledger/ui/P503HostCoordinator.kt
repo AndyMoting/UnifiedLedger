@@ -505,6 +505,14 @@ internal class P503HostCoordinator(
     }
 
     /**
+     * P7-09 09.A fix round (B5; spec section 2.2 lines 107-108): a read-only probe of the import
+     * intake single flight, so the share closed loop can check admission BEFORE consuming the
+     * retained source (a refused relay then keeps the handle and the format slot for a retry). This
+     * never mutates the marker — the existing [handleImportPickResult] remains the sole admission.
+     */
+    internal fun importIntakeBusy(): Boolean = importIntakeInFlight
+
+    /**
      * The duplicate-review single-flight (期间禁重复提交): one core review submission may be in
      * flight; duplicate evaluations are dropped until [importDuplicateReviewCompleted] clears the
      * marker. Returns whether this evaluation started the submission.
@@ -687,15 +695,30 @@ internal fun externalNavigationDecisionEvent(
     state: P503AppState,
     request: ExternalNavigationRequest,
     facts: ExternalNavigationRuntimeFacts,
-): P503UiEvent =
-    P503UiEvent.ExternalNavigationDecisionLanded(
-        decideExternalNavigation(
-            state = state,
-            request = request,
-            runtimeReady = facts.ready,
-            runtimeQuiesced = facts.quiesced,
-            existingPending = state.pendingExternalNavigationSlot(),
-        ),
+): P503UiEvent = P503UiEvent.ExternalNavigationDecisionLanded(externalNavigationDecision(state, request, facts))
+
+/**
+ * P7-09 09.A fix round (B2; spec section 2.2 line 106): the DECISION itself (not the wrapped event),
+ * so the host can both land it in the reducer AND decide whether to additionally hold it in its
+ * host-level fallback for a surface the reducer cannot carry the slot on. [externalNavigationDecisionEvent]
+ * is the event wrapper over this single decision.
+ */
+internal fun externalNavigationDecision(
+    state: P503AppState,
+    request: ExternalNavigationRequest,
+    facts: ExternalNavigationRuntimeFacts,
+    // P7-09 09.A fix round (B2): the caller may pass the EFFECTIVE existing pending (the reducer's
+    // slot OR the host fallback hold on a surface that cannot carry the slot), so a second request
+    // arriving while one is host-held hits the frozen RetainOrReplace row instead of silently
+    // displacing the first.
+    existingPending: PendingExternalNavigation? = state.pendingExternalNavigationSlot(),
+): ExternalNavigationDecision =
+    decideExternalNavigation(
+        state = state,
+        request = request,
+        runtimeReady = facts.ready,
+        runtimeQuiesced = facts.quiesced,
+        existingPending = existingPending,
     )
 
 /**
