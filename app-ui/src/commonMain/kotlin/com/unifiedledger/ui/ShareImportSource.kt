@@ -94,28 +94,42 @@ internal fun PendingExternalNavigation?.awaitsShareImportFormat(): Boolean =
         holdReason == ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED
 
 /**
- * P7-09 09.A fix round (B1; spec section 2.3 line 127 / section 9 line 271; D-146): the
- * `deliveryId` whose retained share source the HOST must RELEASE when the single pending slot
- * transitions away from the awaiting-format share. The reducer is pure, so the release is a host
- * action keyed on the slot transition: [previous] is the slot before the landing, [next] after.
- *
- * Returns the previous awaiting-format share's `deliveryId` when the next state no longer holds
- * that SAME awaiting-format share — i.e. the share was CONSUMED by a format selection, abandoned
- * via 保留当前, replaced, or translated to a typed re-share (放弃后切换 on an idle overview RE-HELDS
- * the share, so it correctly releases nothing). Returns null when there is nothing to release (no
- * previous awaiting-format share, or the same share is still held awaiting its format). This is the
- * ONE seam that makes "no retained grant outlives its use" hold on EVERY abandon path (the former
- * code released only on the take-miss branch).
+ * P7-09 09.A (spec section 2.2): every OpenImport `deliveryId` a pending slot currently HOLDS —
+ * its [PendingExternalNavigation.request] and, when a second request is awaiting the user's
+ * retain/replace decision, its [PendingExternalNavigation.displaced]. A non-OpenImport request
+ * contributes no id (nothing was retained for it). Pure.
  */
-internal fun releasedShareDeliveryId(
+internal fun PendingExternalNavigation?.heldShareDeliveryIds(): Set<String> {
+    if (this == null) return emptySet()
+    val ids = mutableSetOf<String>()
+    (request as? ExternalNavigationRequest.OpenImport)?.let { ids += it.deliveryId }
+    (displaced as? ExternalNavigationRequest.OpenImport)?.let { ids += it.deliveryId }
+    return ids
+}
+
+/**
+ * P7-09 09.A fix round (B1 + NF1; spec section 2.3 line 127 及时释放 / section 9 line 271; D-146):
+ * THE set of retained share sources the HOST must RELEASE when the single pending slot transitions.
+ * The reducer is pure, so the release is a host action keyed on the slot transition ([previous] is
+ * the effective slot before the landing, [next] after): the result is the SET DIFFERENCE of the two
+ * sides' held share ids ([heldShareDeliveryIds]).
+ *
+ * NF1: the seam covers the DISPLACED share too, not just the slot's `request`. When `OpenImport(d1)`
+ * is held awaiting its format and `OpenImport(d2)` arrives, the reducer lands `RetainOrReplace`
+ * (`{request=d1, awaitingUserDecision, displaced=d2}`) and d2 was already retained by the Activity on
+ * receipt; a later 保留原请求 clears `displaced`, so d2 leaves the slot and MUST be released. The
+ * set-difference shape releases it (the former request-id-only comparison did not).
+ *
+ * Invariants preserved exactly:
+ * - the SAME awaiting-format share still held → the difference is empty → nothing is released;
+ * - 放弃后切换 on an idle overview RE-HELDS the share under the same id → nothing is released;
+ * - a replace (保留/replace swaps `request`) releases whatever left (d1);
+ * - a consumed/abandoned/re-shared slot releases every id it held.
+ */
+internal fun releasedShareDeliveryIds(
     previous: PendingExternalNavigation?,
     next: PendingExternalNavigation?,
-): String? {
-    if (!previous.awaitsShareImportFormat()) return null
-    val previousId = (previous!!.request as ExternalNavigationRequest.OpenImport).deliveryId
-    val nextId = if (next.awaitsShareImportFormat()) (next!!.request as ExternalNavigationRequest.OpenImport).deliveryId else null
-    return if (nextId == previousId) null else previousId
-}
+): Set<String> = previous.heldShareDeliveryIds() - next.heldShareDeliveryIds()
 
 /**
  * P7-09 09.A fix round (B2; spec section 2.2 line 106 禁止静默丢弃, section 3 line 154 暂缓): the

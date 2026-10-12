@@ -200,13 +200,13 @@ class ShareImportClosedLoopTest {
         // 保留当前 clears the slot (OverviewEmpty carries it) — the id is released.
         val keptCurrent = assertIs<P503AppState.OverviewEmpty>(reduce(heldShare(), P503UiEvent.ExternalNavigationKeptCurrent))
         assertNull(keptCurrent.pendingExternalNavigation)
-        assertEquals("delivery-1", releasedShareDeliveryId(held, keptCurrent.pendingExternalNavigationSlot()))
+        assertEquals(setOf("delivery-1"), releasedShareDeliveryIds(held, keptCurrent.pendingExternalNavigationSlot()))
 
         // A CONSUMED format selection (the pipeline owns the result) also releases.
         val consumed = reduce(heldShare(), P503UiEvent.ShareImportConsumed)
-        assertEquals("delivery-1", releasedShareDeliveryId(held, consumed.pendingExternalNavigationSlot()))
+        assertEquals(setOf("delivery-1"), releasedShareDeliveryIds(held, consumed.pendingExternalNavigationSlot()))
         // The typed re-share also releases (nothing is retained after a failed read).
-        assertEquals("delivery-1", releasedShareDeliveryId(held, reduce(heldShare(), P503UiEvent.ShareImportReShareLanded).pendingExternalNavigationSlot()))
+        assertEquals(setOf("delivery-1"), releasedShareDeliveryIds(held, reduce(heldShare(), P503UiEvent.ShareImportReShareLanded).pendingExternalNavigationSlot()))
     }
 
     @Test
@@ -217,7 +217,7 @@ class ShareImportClosedLoopTest {
         val held = PendingExternalNavigation(shareImport, ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED)
         val discarded = assertIs<P503AppState.OverviewEmpty>(reduce(heldShare(), P503UiEvent.ExternalNavigationDiscarded))
         assertEquals("delivery-1", (discarded.pendingExternalNavigation?.request as ExternalNavigationRequest.OpenImport).deliveryId)
-        assertNull(releasedShareDeliveryId(held, discarded.pendingExternalNavigationSlot()))
+        assertTrue(releasedShareDeliveryIds(held, discarded.pendingExternalNavigationSlot()).isEmpty())
     }
 
     @Test
@@ -225,13 +225,63 @@ class ShareImportClosedLoopTest {
         // B1 negative: while the SAME awaiting-format share is still held, nothing is released (an
         // unrelated event must not drop the retained grant the format choice still needs).
         val held = PendingExternalNavigation(shareImport, ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED)
-        assertNull(releasedShareDeliveryId(held, held))
+        assertTrue(releasedShareDeliveryIds(held, held).isEmpty())
         // A different still-awaiting share (an explicit replace) releases the ORIGINAL id.
         val replaced = PendingExternalNavigation(ExternalNavigationRequest.OpenImport("delivery-2"), ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED)
-        assertEquals("delivery-1", releasedShareDeliveryId(held, replaced))
+        assertEquals(setOf("delivery-1"), releasedShareDeliveryIds(held, replaced))
         // Nothing to release when the previous slot held no share at all.
-        assertNull(releasedShareDeliveryId(null, held))
-        assertNull(releasedShareDeliveryId(PendingExternalNavigation(ExternalNavigationRequest.OpenCurrentMonth, ExternalNavigationHoldReason.UNROUTABLE_TARGET), null))
+        assertTrue(releasedShareDeliveryIds(null, held).isEmpty())
+        assertTrue(releasedShareDeliveryIds(PendingExternalNavigation(ExternalNavigationRequest.OpenCurrentMonth, ExternalNavigationHoldReason.UNROUTABLE_TARGET), null).isEmpty())
+    }
+
+    // ---------------------------------------------------------------- fix round NF1: displaced share released
+
+    @Test
+    fun retainedOriginalReleasesTheDisplacedShareAndReplaceReleasesTheOriginal() {
+        // NF1: a SECOND share `d2` arrives while `d1` is held awaiting its format. The reducer lands
+        // RetainOrReplace (`{request=d1, awaitingUserDecision, displaced=d2}`) and the Activity has
+        // ALREADY retained d2. Both sides hold both ids, so the slot's held-share set is {d1, d2}.
+        val held = PendingExternalNavigation(shareImport, ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED)
+        val d2 = ExternalNavigationRequest.OpenImport("delivery-2")
+        val retainedOrReplace =
+            reduce(
+                heldShare(),
+                P503UiEvent.ExternalNavigationDecisionLanded(ExternalNavigationDecision.RetainOrReplace(held, d2)),
+            )
+        val displaceSlot = assertIs<P503AppState.OverviewEmpty>(retainedOrReplace).pendingExternalNavigation!!
+        assertEquals(setOf("delivery-1", "delivery-2"), displaceSlot.heldShareDeliveryIds())
+
+        // 保留原请求 clears `displaced` → d2 leaves the slot and MUST be released (the former
+        // request-id-only comparison returned null here and leaked d2's grant).
+        val retained = assertIs<P503AppState.OverviewEmpty>(reduce(retainedOrReplace, P503UiEvent.ExternalNavigationRetained)).pendingExternalNavigation!!
+        assertEquals("delivery-1", (retained.request as ExternalNavigationRequest.OpenImport).deliveryId)
+        assertNull(retained.displaced)
+        assertEquals(setOf("delivery-2"), releasedShareDeliveryIds(displaceSlot, retained))
+
+        // The REPLACE path swaps `request` to the incoming d2 → d1 leaves and MUST be released.
+        val replaced = assertIs<P503AppState.OverviewEmpty>(reduce(retainedOrReplace, P503UiEvent.ExternalNavigationReplaced)).pendingExternalNavigation!!
+        assertEquals("delivery-2", (replaced.request as ExternalNavigationRequest.OpenImport).deliveryId)
+        assertEquals(setOf("delivery-1"), releasedShareDeliveryIds(displaceSlot, replaced))
+    }
+
+    @Test
+    fun anOnCurrentMonthDisplacedRequestContributesNoHeldShareId() {
+        // NF1 boundary: only OpenImport ids are ever retained; a non-share displaced request (or a
+        // non-share request) contributes nothing, so the difference cannot release an unrelated id.
+        val held = PendingExternalNavigation(shareImport, ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED)
+        val withNonShareDisplaced =
+            PendingExternalNavigation(
+                request = shareImport,
+                holdReason = ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED,
+                awaitingUserDecision = true,
+                displaced = ExternalNavigationRequest.OpenCurrentMonth,
+            )
+        assertEquals(setOf("delivery-1"), withNonShareDisplaced.heldShareDeliveryIds())
+        // Retaining drops the non-share displaced request; no share id leaves, so nothing is released.
+        val retained = retainPendingExternalNavigation(withNonShareDisplaced)
+        assertTrue(releasedShareDeliveryIds(withNonShareDisplaced, retained).isEmpty())
+        // A share with no displaced request holds exactly its own id (no regression).
+        assertEquals(setOf("delivery-1"), held.heldShareDeliveryIds())
     }
 
     // ---------------------------------------------------------------- fix round B2: never a silent discard

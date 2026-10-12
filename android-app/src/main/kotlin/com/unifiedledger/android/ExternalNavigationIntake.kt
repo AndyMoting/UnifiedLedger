@@ -391,9 +391,12 @@ internal class InboundNavigationIntake(
  * Honest residual (disclosed, not silently reduced): this closes the double intake and the id
  * identity. The reducer-side pending slot is NOT persisted across an Activity recreation or process
  * death — the full "slot survives config change" fix is device-gated (spec section 8 item 7). The
- * Activity therefore makes a refused repeat read of the same launch Intent NON-SILENT by re-holding
- * the request under its existing id while its retained source is present ([ColdLaunchReceipt]); a
- * share with no retained source stays the typed re-share case, never a silent re-consume.
+ * Activity makes a refused repeat read of the same launch Intent NON-SILENT ONLY while the retained
+ * source is still present: it then re-holds the request under its existing id ([ColdLaunchReceipt]).
+ * With NO retained source (already consumed/read, or a new process) the recreation cannot re-surface
+ * any prompt — the source is GONE and the attempt returns silently; the user must SHARE AGAIN (spec
+ * section 4 未接治源需重新分享). This is the honest limit: the no-source branch shows no typed prompt
+ * because there is nothing to prompt about, and no `rememberSaveable` slot persistence is attempted.
  */
 internal class ProcessInboundNavigationIntake(
     private val mintDeliveryId: () -> String,

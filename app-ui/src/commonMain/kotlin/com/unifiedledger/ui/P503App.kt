@@ -583,13 +583,15 @@ fun P503App(
                 }
         }
         val nextHeld = landed.pendingExternalNavigationSlot() ?: hostHeldNavigation
-        // Release EVERY awaiting-format share that was held before (the reducer slot OR the dropped
-        // fallback) and is no longer the effective hold — the ONE point that guarantees no retained
-        // grant outlives its use on any abandon path.
-        listOf(previousHeld, previousFallback).forEach { prior ->
-            releasedShareDeliveryId(prior, nextHeld)?.let { deliveryId ->
-                ledger.shareImportSource?.release(deliveryId)
-            }
+        // Release EVERY retained share source that was held before (the reducer slot OR the dropped
+        // fallback) and is NO LONGER held (as `request` OR `displaced`) — the ONE point that
+        // guarantees no retained grant outlives its use on any abandon path. NF1: the set difference
+        // covers the DISPLACED share too (a second request held for the retain/replace decision).
+        val releaseIds =
+            releasedShareDeliveryIds(previousHeld, nextHeld) +
+                releasedShareDeliveryIds(previousFallback, nextHeld)
+        releaseIds.forEach { deliveryId ->
+            ledger.shareImportSource?.release(deliveryId)
         }
         state = landed.also { latestState.value = it }
     }
