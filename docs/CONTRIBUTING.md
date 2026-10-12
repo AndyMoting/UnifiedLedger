@@ -13,6 +13,16 @@
 
 所有命令从仓库根目录使用 PowerShell 7 执行。Gradle 命令统一使用仓库内的 Wrapper；首次联网运行会下载固定版本的 Gradle 分发包和依赖，缓存完备时可以追加 `--offline`。当前有 `ledger-domain`、`ledger-application`、`ledger-data` 与 `app-ui` 四个 library 模块，以及 `desktop-app` 与 `android-app` 两个组合根应用模块；`ledger-data` 与 `app-ui` 带 Android 编译目标。桌面应用运行命令（启动 P5-03 演示面 B 并打开本地测试账本）：
 
+## PowerShell 执行规范
+
+编写或运行任何脚本、命令与幂等环境交互时遵守以下五条。
+
+- **解释器**：PowerShell 命令用 `pwsh`（PowerShell 7，本机 7.6.3），不用旧版 `powershell.exe`，也不用 `cmd.exe`。由脚本自身解释器决定的命令按其解释器原样调用——`bash tools/ci/trace-scan.sh`（本文件「Trace scan」与「本机与 CI 的验证分工」两节）以及 `bash` 围栏内的 `git`/`gh` 命令不受本条限制。
+- **不混 shell 语法**：bash 与 PowerShell 的转义、引号、变量规则不同；跨平台脚本里按调用解释器一种语法写到底，不混用另一种的写法。
+- **失败即停**：新建或修改的 `.ps1` 首部必须包含 `$ErrorActionPreference = 'Stop'`，让命令失败立即中断并报错，避免静默通过。harness `scripts/` 下的脚本与 `test-powershell-hygiene.ps1` 守卫共同保证这一点。
+- **编码**：脚本读写文本显式指定 `-Encoding UTF8`，防止中文与特殊符号乱码。
+- **对象管道优先**：解析数据优先用 `Select-Object`/`Where-Object` 等对象管道，少用文本截取与字符串切分。
+
 ## 本机 Gradle 资源限制
 
 当前 16 GB Windows 主机上的 Gradle/Kotlin 验证必须串行执行；不得并发运行 Gradle、Kotlin 编译或共享测试输出的任务。每次 Gradle 验证前后使用以下命令。该限制仅适用于本机资源控制，不改变 CI 验证语义。
