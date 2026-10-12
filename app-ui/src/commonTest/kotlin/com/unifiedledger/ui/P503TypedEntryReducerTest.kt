@@ -80,7 +80,7 @@ class P503TypedEntryReducerTest {
     fun lendingEventsAreAbsorbedInEveryNonEditingState() {
         val states =
             listOf(
-                P503AppState.Ready,
+                P503AppState.Ready(),
                 P503AppState.OverviewEmpty(emptyState),
                 P503AppState.AwaitingConfirmation(expenseDraft(), requestId),
                 P503AppState.Submitting(expenseDraft(), requestId),
@@ -171,7 +171,7 @@ class P503TypedEntryReducerTest {
     fun newEventsAreAbsorbedInEveryNonEditingState() {
         val states =
             listOf(
-                P503AppState.Ready,
+                P503AppState.Ready(),
                 P503AppState.OverviewEmpty(emptyState),
                 P503AppState.AwaitingConfirmation(expenseDraft(), requestId),
                 P503AppState.Submitting(expenseDraft(), requestId),

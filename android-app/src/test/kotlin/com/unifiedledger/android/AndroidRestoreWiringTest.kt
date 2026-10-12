@@ -335,7 +335,7 @@ class AndroidRestoreWiringTest {
             "the Android root must pass an explicit-generation opener to AndroidStartupController (RC-2)",
         )
         assertTrue(
-            root.contains("openAndroidExplicitGeneration(context, importFilePickPort, importPickChannel, generation)"),
+            root.contains("openAndroidExplicitGeneration(context, importFilePickPort, importPickChannel, generation"),
             "the Android root's explicit opener must delegate to the production openAndroidExplicitGeneration (RC-2)",
         )
     }

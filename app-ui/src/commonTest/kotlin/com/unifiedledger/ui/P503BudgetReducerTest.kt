@@ -82,22 +82,22 @@ class P503BudgetReducerTest {
 
     @Test
     fun budgetEventsAreAbsorbedOutsideTheirDesignedSurface() {
-        assertSame(P503AppState.Ready, reducer.reduce(P503AppState.Ready, P503UiEvent.BudgetMonthLanded(BudgetMonthViewResult.Unavailable)))
-        assertSame(
-            P503AppState.Ready,
+        assertEquals(P503AppState.Ready(), reducer.reduce(P503AppState.Ready(), P503UiEvent.BudgetMonthLanded(BudgetMonthViewResult.Unavailable)))
+        assertEquals(
+            P503AppState.Ready(),
             reducer.reduce(
-                P503AppState.Ready,
+                P503AppState.Ready(),
                 P503UiEvent.OpenBudgetConfig(BudgetScope.Total, march, revision = 0L, closed = false, limitMinorUnits = null),
             ),
         )
-        assertSame(P503AppState.Ready, reducer.reduce(P503AppState.Ready, P503UiEvent.UpdateBudgetLimitText("50")))
-        assertSame(P503AppState.Ready, reducer.reduce(P503AppState.Ready, P503UiEvent.ConfirmBudgetLimit))
-        assertSame(P503AppState.Ready, reducer.reduce(P503AppState.Ready, P503UiEvent.ConfirmBudgetClose))
-        assertSame(
-            P503AppState.Ready,
-            reducer.reduce(P503AppState.Ready, P503UiEvent.BudgetConfigResultLanded(BudgetCommandResult.Accepted(receipt))),
+        assertEquals(P503AppState.Ready(), reducer.reduce(P503AppState.Ready(), P503UiEvent.UpdateBudgetLimitText("50")))
+        assertEquals(P503AppState.Ready(), reducer.reduce(P503AppState.Ready(), P503UiEvent.ConfirmBudgetLimit))
+        assertEquals(P503AppState.Ready(), reducer.reduce(P503AppState.Ready(), P503UiEvent.ConfirmBudgetClose))
+        assertEquals(
+            P503AppState.Ready(),
+            reducer.reduce(P503AppState.Ready(), P503UiEvent.BudgetConfigResultLanded(BudgetCommandResult.Accepted(receipt))),
         )
-        assertSame(P503AppState.Ready, reducer.reduce(P503AppState.Ready, P503UiEvent.CloseBudgetConfig))
+        assertEquals(P503AppState.Ready(), reducer.reduce(P503AppState.Ready(), P503UiEvent.CloseBudgetConfig))
         // On the overview the dialog-only events are absorbed too (the dialog is not open).
         assertSame(overview, reducer.reduce(overview, P503UiEvent.UpdateBudgetLimitText("50")))
         assertSame(overview, reducer.reduce(overview, P503UiEvent.CloseBudgetConfig))

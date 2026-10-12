@@ -66,7 +66,7 @@ class P503BudgetHostCoordinatorTest {
                 closed = false,
                 limitMinorUnits = null,
             )
-        assertFalse(coordinator.decideBudgetMonth(P503AppState.Ready))
+        assertFalse(coordinator.decideBudgetMonth(P503AppState.Ready()))
         assertFalse(coordinator.decideBudgetMonth(config))
         assertTrue(fired.isEmpty())
     }

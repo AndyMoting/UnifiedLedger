@@ -2,10 +2,12 @@ package com.unifiedledger.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
@@ -138,6 +140,85 @@ import kotlinx.datetime.plus
 import com.unifiedledger.application.MonthlyActivityResult as ApplicationMonthlyActivityResult
 
 /**
+ * P7-09 09.0 (spec sections 2.2/3; D-225 Q19): the visible Busy/待处理 strip for a held inbound
+ * navigation request or a blocked host operation. The copy names the routing-table row that held
+ * the request; it NEVER carries an amount, a URI, a file name or any inbound payload (spec section
+ * 2.2 可见 Busy + 硬禁明文金额 discipline). The strip offers the explicit retain/replace actions
+ * only while a second request is waiting for the user's decision, plus the 保留当前/放弃后切换
+ * choice of the Editing row.
+ */
+@Composable
+internal fun ExternalNavigationBusyStrip(
+    busy: ExternalNavigationBusy,
+    onKeepCurrent: () -> Unit,
+    onRetain: (() -> Unit)?,
+    onReplace: (() -> Unit)?,
+    onDiscard: (() -> Unit)?,
+    // P7-09 09.A (spec section 2.3): while a held share awaits its format choice, the strip offers
+    // the EXISTING capability-matrix formats. Defaults keep every other call site compiling.
+    formatChoices: List<ImportFormatEntry> = emptyList(),
+    onSelectFormat: ((ImportFormatId) -> Unit)? = null,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .semantics { liveRegion = LiveRegionMode.Polite },
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Text(
+                text = externalNavigationBusyText(busy),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (onSelectFormat != null && formatChoices.isNotEmpty()) {
+                // One choice per matrix format (不静默省略). A unit still pending device verification
+                // is not offered as a live pick (R-Q08-3), matching the IMPORT tab's honest matrix.
+                Row {
+                    formatChoices.forEach { entry ->
+                        if (entry.availability == com.unifiedledger.application.ImportFormatAvailability.AVAILABLE) {
+                            TextButton(onClick = { onSelectFormat(entry.descriptor.identifier) }) {
+                                Text(entry.descriptor.displayName)
+                            }
+                        }
+                    }
+                }
+            }
+            Row {
+                if (onRetain != null) {
+                    TextButton(onClick = onRetain) { Text("保留原请求") }
+                }
+                if (onReplace != null) {
+                    TextButton(onClick = onReplace) { Text("替换为当前请求") }
+                }
+                if (onDiscard != null) {
+                    TextButton(onClick = onDiscard) { Text("放弃后切换") }
+                }
+                TextButton(onClick = onKeepCurrent) { Text("保留当前") }
+            }
+        }
+    }
+}
+
+/**
+ * P7-09 09.0 (spec section 3): the display copy of one Busy/待处理 strip. Pure and JVM-assertable
+ * (the `importReviewNoticeText` precedent); the copy is static per reason and leaks no payload.
+ */
+internal fun externalNavigationBusyText(busy: ExternalNavigationBusy): String =
+    when (busy.reason) {
+        ExternalNavigationHoldReason.STARTUP_NOT_READY -> "正在打开本地账本，已暂存外部请求…"
+        ExternalNavigationHoldReason.DRAFT_IN_PROGRESS -> "当前有未保存的草稿，外部请求已暂存。"
+        ExternalNavigationHoldReason.CONFIRMATION_PENDING -> "当前有一笔待确认的录入，外部请求已暂存。"
+        ExternalNavigationHoldReason.COMMIT_IN_FLIGHT -> "当前提交尚未结束，外部请求已暂存。"
+        ExternalNavigationHoldReason.IMPORT_BATCH_IN_FLIGHT -> "导入批次处理中，外部请求已暂存。"
+        ExternalNavigationHoldReason.IMPORT_INTAKE_IN_FLIGHT -> "已有文件正在导入，请稍候。"
+        ExternalNavigationHoldReason.RUNTIME_QUIESCED -> "本地账本正在切换，外部请求已暂缓。"
+        ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED -> "已收到分享文件，请选择账单格式后导入。"
+        ExternalNavigationHoldReason.IMPORT_SOURCE_UNAVAILABLE -> "分享的文件已无法读取（授权已过期或进程已重启），请重新分享后再导入。"
+        ExternalNavigationHoldReason.UNROUTABLE_TARGET -> "外部请求暂无法打开，已暂存。"
+    }
+
+/**
  * D-134 D2-D1 shared dual-theme wrapper: an explicit light/dark colorScheme following the
  * system mode plus a full-size background paint, so screens without their own background
  * (edit, startup, infrastructure failure) never expose the platform window default
@@ -175,6 +256,10 @@ fun P503App(
     ledger: LedgerLeaseScope,
     onExit: () -> Unit,
     backHandler: (@Composable (enabled: Boolean, onBack: () -> Unit) -> Unit)? = null,
+    // P7-09 09.0 (spec sections 2.1/2.2; D-225 Q19): the composition root's inbound-navigation
+    // channel. Null (the desktop root and existing tests) keeps the surface absent and renders no
+    // dead affordance; a wired root delivers neutral requests the host routes.
+    externalNavigationChannel: ExternalNavigationChannel? = null,
 ) {
     val reducer = remember(ledger) { P503ReducerImpl(ledger.parseAmount, ledger.currency, ledger.ledgerClock) }
     val validation = remember(ledger) { P503DraftValidation(ledger.parseAmount, ledger.parseOccurredAt, ledger.ledgerClock) }
@@ -382,8 +467,8 @@ fun P503App(
                 baseLendingOptions.counterparties,
             )
         }
-    var state by remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
-    val latestState = remember { mutableStateOf<P503AppState>(P503AppState.Ready) }
+    var state by remember { mutableStateOf<P503AppState>(P503AppState.Ready()) }
+    val latestState = remember { mutableStateOf<P503AppState>(P503AppState.Ready()) }
     // P5-04.3 single-flight marker for the unknown-commit status check (read-only resolve).
     var statusCheckInFlight by remember { mutableStateOf(false) }
     var editDialogOpen by remember { mutableStateOf(false) }
@@ -427,9 +512,20 @@ fun P503App(
     // consumes the slot when the picked result arrives (one pick at a time: SAF is single-shot and
     // the desktop chooser is modal).
     var pendingImportFormat by remember { mutableStateOf<ImportFormatId?>(null) }
+    // P7-09 09.A fix round (B2; spec section 2.2 line 106 禁止静默丢弃, section 3 line 154 暂缓):
+    // the HOST-level fallback hold for surfaces the reducer cannot carry the single pending slot on
+    // (a read-only detail, the recycle bin, a restore-confirm quiesce, ...). Without it an arriving
+    // request landing on such a surface was absorbed into `setPendingExternalNavigation`'s unchanged
+    // return and vanished with no visible Busy. This never widens [P503AppState], so the ~25
+    // unrelated state-construction sites stay untouched; the request is surfaced (and rendered) from
+    // the host instead. See [hostFallbackHeldNavigation].
+    var hostHeldNavigation by remember { mutableStateOf<PendingExternalNavigation?>(null) }
     // P7-04.C: the decision-form validation over the shared parse facade (P503DraftValidation
     // pattern; the detail screen renders its one-shot errors).
     val importDecisionValidation = remember(ledger) { P503ImportDecisionValidation(ledger.parseAmount) }
+
+    /** The visible held request on the live surface: the reducer's slot, else the host fallback. */
+    fun visibleHeldNavigation(): PendingExternalNavigation? = state.pendingExternalNavigationSlot() ?: hostHeldNavigation
 
     fun dispatch(event: P503UiEvent) {
         // D-140 (spec 2.2): 全新草稿流事件重置 hoisted 文本（枚举表：#1 唯一）。P7-02.D E-2:
@@ -453,8 +549,50 @@ fun P503App(
         // row tapped while a lost restore is in flight), and an event-based clear would drop the
         // snapshot of a still-lost commit. A determinate hit or a conflict clears `submitting` and
         // releases it; a LOST commit (Absent/Unavailable) keeps it for the manual re-check.
-        val landed = reducer.reduce(state, event)
+        //
+        // P7-09 09.A fix round (B1/B2): the single-pass tail. `previousHeld`/`nextHeld` are the
+        // effective held request BEFORE/AFTER this transition — the reducer's slot OR the host
+        // fallback (a surface that cannot carry the slot). B1: the retained share source is released
+        // whenever the awaiting-format share leaves the effective hold (keep-current, a consumed
+        // format selection, a typed re-share, a replace) — the ONE release point. B2: the fallback is
+        // dropped on an explicit clear / an applied retain-replace, and FLUSHED back into the reducer
+        // once a routable surface is live with an empty slot (no nested dispatch: one fold pass).
+        val previousHeld = visibleHeldNavigation()
+        val previousFallback = hostHeldNavigation
+        var landed = reducer.reduce(state, event)
         retainedP705Request = retainedP705RequestAfterLanding(retainedP705Request, landed)
+        when {
+            clearsExternalNavigation(event) -> hostHeldNavigation = null
+            // The retain/replace actions are absorbed by the reducer on a non-slot surface; the host
+            // applies them to its fallback so the §2.2 buttons are never a silent no-op there.
+            event === P503UiEvent.ExternalNavigationRetained -> hostHeldNavigation = hostHeldNavigation?.let(::retainPendingExternalNavigation)
+            event === P503UiEvent.ExternalNavigationReplaced -> hostHeldNavigation = hostHeldNavigation?.let(::replacePendingExternalNavigation)
+        }
+        val heldFallback = hostHeldNavigation
+        if (heldFallback != null) {
+            hostHeldNavigation =
+                when {
+                    // The reducer's own slot is the single slot: a duplicate fallback is dropped (its
+                    // retained share, if different, is released by the seam below).
+                    landed.pendingExternalNavigationSlot() != null -> null
+                    landed.carriesExternalNavigationSlot() -> {
+                        landed = reducer.reduce(landed, P503UiEvent.ExternalNavigationDecisionLanded(ExternalNavigationDecision.Held(heldFallback)))
+                        null
+                    }
+                    else -> heldFallback
+                }
+        }
+        val nextHeld = landed.pendingExternalNavigationSlot() ?: hostHeldNavigation
+        // Release EVERY retained share source that was held before (the reducer slot OR the dropped
+        // fallback) and is NO LONGER held (as `request` OR `displaced`) — the ONE point that
+        // guarantees no retained grant outlives its use on any abandon path. NF1: the set difference
+        // covers the DISPLACED share too (a second request held for the retain/replace decision).
+        val releaseIds =
+            releasedShareDeliveryIds(previousHeld, nextHeld) +
+                releasedShareDeliveryIds(previousFallback, nextHeld)
+        releaseIds.forEach { deliveryId ->
+            ledger.shareImportSource?.release(deliveryId)
+        }
         state = landed.also { latestState.value = it }
     }
     // ---------------------------------------------------------------- P7-08 08.C tag/merchant filter + catalog host surface
@@ -1613,14 +1751,23 @@ fun P503App(
      * pick (`ImportIntakeSessionIdentity.forFilePick`, R-Q09-1) and the pipeline result returns
      * as one `ImportFileIntakeResult` with the re-read review list.
      */
-    fun runImportIntakePipeline(file: PickedImportFile) {
+    fun runImportIntakePipeline(
+        file: PickedImportFile,
+        // P7-09 09.A (spec section 4; invariant 5): true when this run came from the SHARE closed
+        // loop. A read-failure/over-limit outcome then ALSO surfaces the typed re-share prompt (the
+        // source's short-lived grant is gone; the user must re-share, never a silent drop). The SAF
+        // pick path leaves it `false` and keeps its existing typed banner only.
+        sharePath: Boolean = false,
+    ) {
         val format = pendingImportFormat
         val platform = ledger.importPlatformKind
         val session = ledger.importIntakeSessionFactory()
         val intakeWired = ledger.probe { it.importFileIntake } != null
         if (format == null || !intakeWired || platform == null || session == null) {
             // No pipeline can run (unwired surface or a lost format slot): release the coordinator's
-            // single-flight slot so a later pick is not permanently blocked.
+            // single-flight slot so a later pick is not permanently blocked. On the share path this
+            // is also the typed re-share case (nothing was read).
+            if (sharePath) dispatch(P503UiEvent.ShareImportReShareLanded)
             coordinator.importIntakeCompleted()
             return
         }
@@ -1663,7 +1810,8 @@ fun P503App(
                 }
                 if (outcome !is LeaseOutcome.Completed) {
                     // The lease could not be acquired: surface the typed read-failure outcome
-                    // rather than a silently dropped pick.
+                    // rather than a silently dropped pick (and on the share path, the re-share cue).
+                    if (sharePath) dispatch(P503UiEvent.ShareImportReShareLanded)
                     dispatch(
                         P503UiEvent.ImportFileIntakeResult(
                             ImportIntakeSessionSummary(file.displayName, session.inputRef, ImportIntakePipelineOutcome.ReadFailed(ImportPickReadFailure.STREAM_READ_FAILED)),
@@ -1671,6 +1819,12 @@ fun P503App(
                         ),
                     )
                     return@launch
+                }
+                // P7-09 09.A: on the share path a read failure (expired/revoked grant, mid-read
+                // failure, over-16 MiB) additionally lands the typed re-share prompt — zero formal
+                // effect, never a silent drop.
+                if (sharePath && shareImportReShareRequired(outcome.value.first)) {
+                    dispatch(P503UiEvent.ShareImportReShareLanded)
                 }
                 dispatch(
                     P503UiEvent.ImportFileIntakeResult(
@@ -1690,18 +1844,113 @@ fun P503App(
      * P7-04.C: one platform pick result (table 6.2a — the channel events are reducer-absorbed; this
      * handler owns the host action). A picked file starts the single-flight bounded-read + intake
      * pipeline; a cancellation or a typed platform failure starts nothing.
+     *
+     * P7-09 09.0 / T4 (spec sections 1.7/2.2; D-225): a refused second pick is NO LONGER a silent
+     * `-> Unit` drop — it lands the visible Busy result on the overview (zero formal effect).
      */
-    fun handleImportPickResult(result: ImportFilePickResult) {
+    fun handleImportPickResult(
+        result: ImportFilePickResult,
+        // P7-09 09.A (spec section 4; invariant 5): true when the pick came from the SHARE closed
+        // loop, so a read failure/over-limit additionally surfaces the typed re-share prompt. The
+        // SAF pick channel passes `false` (its default) and keeps its existing typed banner only.
+        sharePath: Boolean = false,
+    ) {
         when (result) {
             is ImportFilePickResult.Picked -> dispatch(P503UiEvent.ImportFilePicked(result.file))
             ImportFilePickResult.Cancelled -> dispatch(P503UiEvent.ImportFilePickCancelled)
             is ImportFilePickResult.Failed -> dispatch(P503UiEvent.ImportFilePickFailed(result.reason))
         }
         when (val decision = coordinator.handleImportPickResult(result)) {
-            is ImportPickIntakeDecision.StartIntake -> runImportIntakePipeline(decision.file)
-            ImportPickIntakeDecision.AlreadyInFlight,
-            ImportPickIntakeDecision.NoPipeline,
-            -> Unit
+            is ImportPickIntakeDecision.StartIntake -> runImportIntakePipeline(decision.file, sharePath = sharePath)
+            // P7-09 09.0 / T4: the refused second pick lands its visible Busy event (the seam
+            // returns exactly this event for AlreadyInFlight), never a silent `-> Unit` drop.
+            // P7-09 09.A fix round (B5; spec section 2.2 lines 107-108): on the share path the
+            // single-flight refusal is a VISIBLE Busy (the honest "已有文件正在导入" cause), NOT the
+            // re-share prompt — the cause is a concurrent intake, not an unreadable source. The
+            // retained source and the format slot are KEPT (admission is checked before the take in
+            // [selectShareImportFormat], so this path is practically unreachable — the residual race
+            // only — and a retry must still be able to read the same stream). NEVER clear
+            // `pendingImportFormat` here.
+            is ImportPickIntakeDecision.AlreadyInFlight -> importPickDecisionEvent(decision)?.let(::dispatch)
+            ImportPickIntakeDecision.NoPipeline -> Unit
+        }
+    }
+
+    /**
+     * P7-09 09.0 (spec sections 2/3; D-225 Q19; P2-1 fix): one inbound neutral request from the
+     * platform adapter (a share Intent, a launcher shortcut). The routing DECISION lives in the
+     * JVM-assertable [externalNavigationDecisionEvent] seam; this method only dispatches the two
+     * events the reducer consumes.
+     *
+     * P2-1 fix: the runtime facts are OBSERVED, not hard-coded. [ExternalNavigationRuntimeFacts.from]
+     * maps the lease face's active generation (`LedgerLeaseScope.activeGenerationForLanding()` returns
+     * null whenever the owner is not Ready) and the host's own in-progress quiesce/换库 observation (a
+     * restore confirm is running). This makes the not-Ready and quiesce rows of the frozen table
+     * production-reachable instead of dead code. The observed facts are injectable so a focused test
+     * can pin the mapping without a Compose harness.
+     */
+    fun onExternalNavigationRequested(
+        request: ExternalNavigationRequest,
+        facts: ExternalNavigationRuntimeFacts =
+            ExternalNavigationRuntimeFacts.from(
+                activeGeneration = ledger.activeGenerationForLanding(),
+                switchingRuntime = (latestState.value as? P503AppState.BackupRestore)?.runningConfirm == true,
+            ),
+    ) {
+        dispatch(P503UiEvent.ExternalNavigationRequested(request))
+        val decision = externalNavigationDecision(latestState.value, request, facts, existingPending = visibleHeldNavigation())
+        dispatch(P503UiEvent.ExternalNavigationDecisionLanded(decision))
+        // P7-09 09.A fix round (B2; spec section 2.2 line 106 禁止静默丢弃): a Held/Deferred request
+        // landing on a surface the reducer cannot carry the slot on (a read-only detail, the recycle
+        // bin, a restore-confirm quiesce, ...) would otherwise be absorbed and VANISH. The host holds
+        // it in its fallback so it stays VISIBLE (never silently discarded). The pure seam returns
+        // null whenever the landed state itself carries the slot (the reducer owns it) or the request
+        // routed/absorbed with nothing to hold; it flushes back into the reducer once a routable
+        // surface becomes live (see `dispatch`).
+        hostFallbackHeldNavigation(latestState.value, decision)?.let { held -> hostHeldNavigation = held }
+    }
+
+    /**
+     * P7-09 09.A share-import CLOSED LOOP (spec sections 2.3/4; D-225; batch invariant 3): the
+     * format was chosen for the HELD share. Unlike [startImportFilePick] this does NOT launch a
+     * fresh SAF picker — it reads the RETAINED shared stream through the existing pipeline. The
+     * retained source is taken by the held request's `deliveryId`; a non-null source seeds the
+     * EXISTING `pendingImportFormat` slot and runs [runImportIntakePipeline], a null source is the
+     * typed re-share case. Either way the pending slot is cleared and no format-less request is ever
+     * delivered into the old pick channel (spec section 2.3 line 126).
+     */
+    fun selectShareImportFormat(
+        format: ExternalNavigationRequest.OpenImport,
+        formatId: ImportFormatId,
+    ) {
+        // P7-09 09.A fix round (B5; spec section 2.2 lines 107-108): check the intake single flight
+        // BEFORE consuming the retained source. A refused relay must NOT `take` the handle: the
+        // source and the format slot stay valid and the attempt surfaces the visible Busy, so a
+        // later retry can still read the same stream (the pre-fix order consumed first and left the
+        // share unrecoverable without re-sharing).
+        if (!shareImportRelayAllowed(intakeBusy = coordinator.importIntakeBusy())) {
+            dispatch(P503UiEvent.ImportIntakeBusyLanded)
+            return
+        }
+        val port = ledger.shareImportSource
+        val decision = shareImportTakeDecision(port?.take(format.deliveryId))
+        // The re-share case releases any retained entry (idempotent no-op when already gone) and
+        // lands the typed prompt; the consumed case clears the slot in the reducer and, for a real
+        // source, runs the pipeline. Zero formal effect on the re-share branch.
+        if (decision is ShareImportTakeDecision.ReShareRequired) {
+            port?.release(format.deliveryId)
+        }
+        dispatch(shareImportTakeEvent(decision))
+        when (decision) {
+            is ShareImportTakeDecision.StartIntake -> {
+                // Seed the EXISTING format slot, then run the EXISTING pipeline through the SAME
+                // host admission the SAF pick uses (single reader, single parser, single intake, the
+                // existing `importIntakeInFlight` single-flight — invariant 3). A concurrent second
+                // intake is refused with the visible Busy, never a second pipeline.
+                pendingImportFormat = formatId
+                handleImportPickResult(ImportFilePickResult.Picked(decision.file), sharePath = true)
+            }
+            ShareImportTakeDecision.ReShareRequired -> Unit
         }
     }
 
@@ -2344,6 +2593,17 @@ fun P503App(
     DisposableEffect(ledger) {
         ledger.importPickResultChannel?.subscribe(::handleImportPickResult)
         onDispose { ledger.importPickResultChannel?.subscribe(null) }
+    }
+
+    // P7-09 09.0 (spec sections 2.1/2.2; D-225 Q19): the inbound neutral navigation requests flow
+    // back through the composition root's channel (the pick-channel precedent). The channel buffers
+    // one undelivered cold-start request, so a share received before this subscription is not lost;
+    // it drains here on subscribe and is routed through [onExternalNavigationRequested]. The
+    // channel rides the composition root's P503App argument rather than the lease scope, so the
+    // shared lease surface (`LedgerLeaseScope`) is untouched by this batch.
+    DisposableEffect(ledger, externalNavigationChannel) {
+        externalNavigationChannel?.subscribe { request -> onExternalNavigationRequested(request) }
+        onDispose { externalNavigationChannel?.subscribe(null) }
     }
 
     // P7-02.D E-4: the authoritative snapshot with the pinned-first sort derivation applied to
@@ -3363,719 +3623,764 @@ fun P503App(
     }
 
     P503Theme {
-        when (val current = state) {
-            P503AppState.Ready -> P503StartupScreen(P503StartupState.Starting, onRetry = {}, onExit = onExit)
-            is P503AppState.OverviewEmpty ->
-                P503TabShell(
-                    selectedTab = current.selectedTab,
-                    onSelectTab = { tab ->
-                        if (tab == P503Tab.ACCOUNTS) {
-                            dispatch(P503UiEvent.SelectTab(tab, pinnedCatalogSnapshot()))
-                        } else {
-                            dispatch(P503UiEvent.SelectTab(tab))
+        // P7-09 09.0 (spec sections 2.2/3; D-225 Q19): the visible Busy/待处理 strip for a held
+        // inbound request and for a blocked host operation. It renders ABOVE the whole surface
+        // stack (not only the overview), so a request held while the user is Editing / Awaiting
+        // confirmation / Submitting / in an import batch stays VISIBLE on that very surface (the
+        // frozen 可见 Busy rule). The copy carries no amount, URI or file name, and the strip never
+        // blocks the underlying surface (a held request is a routing decision, not a modal).
+        Column(Modifier.fillMaxSize()) {
+            // P7-09 09.A fix round (B2; spec section 2.2 line 106): render the EFFECTIVE held request
+            // — the reducer's slot when the surface carries one, else the host fallback hold for a
+            // surface the reducer cannot represent the slot on (a read-only detail, the recycle bin, a
+            // restore-confirm quiesce). Either way an arriving request stays VISIBLE, never a silent
+            // discard.
+            visibleHeldNavigation()?.let { pending ->
+                // P7-09 09.A closed loop (spec section 2.3): while the held request is a share
+                // awaiting its format, the strip offers the EXISTING capability-matrix formats. The
+                // selection runs the closed loop (take the retained stream → the existing pipeline);
+                // any other held request renders no format choices.
+                val awaitingShare = pending.awaitsShareImportFormat()
+                val share = pending.request as? ExternalNavigationRequest.OpenImport
+                val sharePlatform = ledger.importPlatformKind
+                ExternalNavigationBusyStrip(
+                    busy = ExternalNavigationBusy(pending.holdReason),
+                    onKeepCurrent = { dispatch(P503UiEvent.ExternalNavigationKeptCurrent) },
+                    onRetain = if (pending.awaitingUserDecision) ({ dispatch(P503UiEvent.ExternalNavigationRetained) }) else null,
+                    onReplace = if (pending.awaitingUserDecision) ({ dispatch(P503UiEvent.ExternalNavigationReplaced) }) else null,
+                    onDiscard = { dispatch(P503UiEvent.ExternalNavigationDiscarded) },
+                    formatChoices = if (awaitingShare && sharePlatform != null) importFormatEntries(sharePlatform) else emptyList(),
+                    onSelectFormat = if (awaitingShare && share != null) ({ format -> selectShareImportFormat(share, format) }) else null,
+                )
+            }
+            // P2-2 fix: the T4 Busy strip renders on EVERY slot surface (not only the overview), so
+            // a refused second pick is visible wherever the user is — including the Ready entry
+            // surface, where a cold-start share's Busy must not be silently absorbed.
+            state.externalNavigationBusyOrNull()?.let { busy ->
+                ExternalNavigationBusyStrip(
+                    busy = busy,
+                    onKeepCurrent = { dispatch(P503UiEvent.DismissExternalNavigationBusy) },
+                    onRetain = null,
+                    onReplace = null,
+                    onDiscard = null,
+                )
+            }
+            Box(Modifier.weight(1f)) {
+                when (val current = state) {
+                    is P503AppState.Ready -> P503StartupScreen(P503StartupState.Starting, onRetry = {}, onExit = onExit)
+                    is P503AppState.OverviewEmpty ->
+                        P503TabShell(
+                            selectedTab = current.selectedTab,
+                            onSelectTab = { tab ->
+                                if (tab == P503Tab.ACCOUNTS) {
+                                    dispatch(P503UiEvent.SelectTab(tab, pinnedCatalogSnapshot()))
+                                } else {
+                                    dispatch(P503UiEvent.SelectTab(tab))
+                                }
+                                // P7-04.C: the first IMPORT entry requests the review list (the
+                                // projection starts null; the refresh button re-requests later loads).
+                                if (tab == P503Tab.IMPORT && (latestState.value as? P503AppState.OverviewEmpty)?.importReview == null) {
+                                    requestImportReview()
+                                }
+                            },
+                            onStartNewExpense = { dispatch(P503UiEvent.StartNewExpense) },
+                            // P7-02.D E-2: the "record again" affordance is available on the success home
+                            // page; the revalidation view is snapshotted from the current authoritative
+                            // options at click time.
+                            onSaveAndRecordAgain =
+                                if (current.selectedTab == P503Tab.HOME && current.retainedIntent != null) {
+                                    { dispatch(P503UiEvent.SaveAndRecordAgain(retainedIntentRevalidation())) }
+                                } else {
+                                    null
+                                },
+                        ) {
+                            when (current.selectedTab) {
+                                P503Tab.HOME ->
+                                    P503OverviewScreen(
+                                        state = current.state,
+                                        showMonthlyRegion = ledgerViewWired,
+                                        selectedMonth = current.selectedMonth,
+                                        resolvedCurrentMonth = resolvedCurrentMonth,
+                                        selectableMonths = current.selectableMonths,
+                                        monthlyActivity = current.monthlyActivity,
+                                        monthlyReloadRequired = current.monthlyReloadRequired,
+                                        entryRows = ledgerEntryRows,
+                                        onSelectTransaction = ::selectTransaction,
+                                        onSelectMonth = ::selectMonth,
+                                        // P7-05.C (D-156; slice 1b Piece 4): the ledger-wide recycle-bin
+                                        // entry, offered only when the read surface is wired (an unwired
+                                        // facade renders no dead button). Opening always reads the bin
+                                        // fresh off the UI thread; the read dispatches OpenRecycleBin (a
+                                        // re-open in place refreshes the projection instead).
+                                        onOpenRecycleBin = if (ledger.surfaces.recycleBin) ::requestRecycleBin else null,
+                                        // P7-06 06.B (D-177; spec section 3): the ledger-wide backup-export
+                                        // entry, offered only when the composition root wired the export
+                                        // use case (an unwired composition renders no dead button). The
+                                        // open performs no IO and no secret handling; the password is
+                                        // entered on the surface and stays in memory.
+                                        onOpenBackupExport = if (backupExportEntryVisible(ledger.surfaces.backupExport)) ({ dispatch(P503UiEvent.OpenBackupExport) }) else null,
+                                        // P7-06 06.D (D-182): the restore entry, offered only when the
+                                        // restore use cases are wired (no dead affordance).
+                                        onOpenBackupRestore =
+                                            if (backupRestoreEntryVisible(ledger.surfaces.backupRestore)) {
+                                                ({ dispatch(P503UiEvent.OpenBackupRestore) })
+                                            } else {
+                                                null
+                                            },
+                                    )
+                                P503Tab.ACCOUNTS ->
+                                    P503CatalogManagementScreen(
+                                        state = current,
+                                        // P7-08 08.C: the same cached authority feeds the two new
+                                        // sections (null = loading/unwired: honest 载入中 placeholder).
+                                        tagMerchantAuthority = cachedTagMerchantAuthority,
+                                        onEvent = { event ->
+                                            when (event) {
+                                                is P503UiEvent.ManageAccountActive,
+                                                is P503UiEvent.ManageCategoryActive,
+                                                is P503UiEvent.EnableCategoryGroup,
+                                                -> runCatalogToggle(event)
+                                                // P7-08 08.C: the tag/merchant toggles are host-handled
+                                                // too (command + authority reload + filter re-request).
+                                                is P503UiEvent.ManageTagActive ->
+                                                    runTagMerchantToggle(com.unifiedledger.domain.CatalogItemKind.TAG, event.itemId, event.active)
+                                                is P503UiEvent.ManageMerchantActive ->
+                                                    runTagMerchantToggle(com.unifiedledger.domain.CatalogItemKind.MERCHANT, event.itemId, event.active)
+                                                // P7-02.D E-4: persist the toggle first, then dispatch.
+                                                is P503UiEvent.TogglePin -> runPinToggle(event.target)
+                                                else -> dispatch(event)
+                                            }
+                                        },
+                                        onSubmit = { dialog ->
+                                            when (dialog) {
+                                                is CatalogDialog.CreateTagItem,
+                                                is CatalogDialog.RenameTagItem,
+                                                is CatalogDialog.ConfirmTagItemDelete,
+                                                is CatalogDialog.CreateMerchantItem,
+                                                is CatalogDialog.RenameMerchantItem,
+                                                is CatalogDialog.ConfirmMerchantItemDelete,
+                                                -> runTagMerchantForm(dialog)
+                                                else -> runCatalogForm(dialog)
+                                            }
+                                        },
+                                        onRefresh = { refreshCatalogSnapshot() },
+                                    )
+                                P503Tab.ANALYSIS -> {
+                                    // P7-07 07.D: the budget region slot — non-null exactly when the
+                                    // budget surface is wired (no dead region). It owns its own loading/
+                                    // failure copy and its config affordances; the retained read-failure
+                                    // render below deliberately passes none (read-only, the F1 rule).
+                                    // P7-08 08.C: the filter entry rides the analysis tab's existing
+                                    // composable-slot seam (the budget region slot) — the entry button
+                                    // precedes the budget region inside the slot, and the slot is
+                                    // non-null when EITHER surface is wired (no dead affordance).
+                                    val budgetRegionSlot: (@Composable () -> Unit)? =
+                                        if (budgetWired || tagMerchantFilterWired) {
+                                            {
+                                                if (tagMerchantFilterWired) {
+                                                    TextButton(onClick = ::openTagMerchantFilter) {
+                                                        Text("标签与商家筛选")
+                                                    }
+                                                }
+                                                if (budgetWired) {
+                                                    P503BudgetRegion(
+                                                        view = current.budgetView,
+                                                        categoryName = { id -> budgetCategoryNames[id] },
+                                                        parentIdOf = { id -> budgetCategoryParents[id] },
+                                                        pickerCategories = budgetPickerChoices,
+                                                        onOpenBudgetConfig = ::openBudgetConfig,
+                                                    )
+                                                }
+                                            }
+                                        } else {
+                                            null
+                                        }
+                                    P503AnalysisScreen(
+                                        state = current.state,
+                                        summarizeActivity = ledger.summarizeActivity,
+                                        showMonthlyRegion = ledgerViewWired,
+                                        selectedMonth = current.selectedMonth,
+                                        resolvedCurrentMonth = resolvedCurrentMonth,
+                                        selectableMonths = current.selectableMonths,
+                                        monthlyActivity = current.monthlyActivity,
+                                        monthlyReloadRequired = current.monthlyReloadRequired,
+                                        trend = monthlyTrend,
+                                        onSelectMonth = ::selectMonth,
+                                        onAnalysisMonthShift = ::analysisMonthShift,
+                                        budgetRegion = budgetRegionSlot,
+                                    )
+                                }
+                                // P7-04.C: the IMPORT tab content — the review projection, the matrix
+                                // format entries, the session summary and the group disposition surface.
+                                // P7-04.D: the batch confirmation entry and the retained result summary
+                                // (with the Unknown items' check entries) render on the same projection.
+                                P503Tab.IMPORT ->
+                                    P503ImportScreen(
+                                        view = current.importReview,
+                                        platform = ledger.importPlatformKind,
+                                        onRefresh = ::requestImportReview,
+                                        onStartFilePick = { format -> startImportFilePick(format) },
+                                        onSelectCandidate = ::selectImportCandidate,
+                                        onToggleSelection = { candidateId ->
+                                            dispatch(P503UiEvent.ToggleImportCandidateSelection(candidateId))
+                                        },
+                                        onGroupDisposition = ::startImportDuplicateGroupDisposition,
+                                        onGroupConfirm = ::confirmImportDuplicateGroupDisposition,
+                                        onGroupClose = { dispatch(P503UiEvent.CloseImportDuplicateGroupDisposition) },
+                                        onRequestBatchConfirm = ::requestImportBatchConfirm,
+                                        onCheckUnknownItem = ::checkImportUnknownItem,
+                                    )
+                            }
                         }
-                        // P7-04.C: the first IMPORT entry requests the review list (the
-                        // projection starts null; the refresh button re-requests later loads).
-                        if (tab == P503Tab.IMPORT && (latestState.value as? P503AppState.OverviewEmpty)?.importReview == null) {
-                            requestImportReview()
-                        }
-                    },
-                    onStartNewExpense = { dispatch(P503UiEvent.StartNewExpense) },
-                    // P7-02.D E-2: the "record again" affordance is available on the success home
-                    // page; the revalidation view is snapshotted from the current authoritative
-                    // options at click time.
-                    onSaveAndRecordAgain =
-                        if (current.selectedTab == P503Tab.HOME && current.retainedIntent != null) {
-                            { dispatch(P503UiEvent.SaveAndRecordAgain(retainedIntentRevalidation())) }
+                    is P503AppState.TransactionDetail -> {
+                        val detail = current.detail
+                        P503TransactionDetailScreen(
+                            detail = detail,
+                            // Back = CloseTransactionDetail semantics (tab/month preserved, C03).
+                            onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                            // P7-05 (D-156; spec section 3.5): the correction/void entries. The screen's
+                            // affordance gate treats a non-null callback as "the host resolved this entry",
+                            // so the host passes the callback ONLY when it can actually resolve the target
+                            // now — the detail is a Success AND the correction origin resolves against the
+                            // current catalog (an unwired facade, a still-loading catalog or an
+                            // unresolvable amount leg passes `null`, so the page renders no dead button,
+                            // the F1 precedent). The void entry needs only the wired use case.
+                            onEditTransaction =
+                                if (detail is TransactionDetailResult.Success && correctionOriginResolvable(detail.detail)) {
+                                    { target -> openTransactionEdit(target) }
+                                } else {
+                                    null
+                                },
+                            onVoidTransaction = if (ledger.surfaces.voidTransaction) ({ target -> openVoidConfirm(target) }) else null,
+                            // P7-08 08.B-2 (spec section 4.4): the annotation-edit entry, passed only when
+                            // the host can resolve the target's CAS tokens right now (wired command + id
+                            // source + read port AND a readable transaction); otherwise `null` renders no
+                            // button rather than a form with fabricated tokens.
+                            onEditAnnotation =
+                                if (detail is TransactionDetailResult.Success && annotationEditResolvable(detail.detail)) {
+                                    { target -> openTransactionAnnotationEdit(target) }
+                                } else {
+                                    null
+                                },
+                            // P7-08 08.D (spec section 3.5): the read-only annotation history read under the
+                            // same lease as the detail, plus the current-name resolver for the stable tag ids
+                            // (spec section 2.2: rename keeps the id and shows the current name).
+                            annotationHistory = current.annotationHistory,
+                            tagNameOf = { id ->
+                                cachedTagMerchantAuthority?.tags?.firstOrNull { it.id == id }?.name ?: id
+                            },
+                        )
+                    }
+                    // P7-04.C: the import candidate detail (spec sections 6.1/6.2). The catalog options
+                    // are the same authoritative projections the entry flow consumes (D-143 同源).
+                    is P503AppState.ImportCandidateDetail ->
+                        P503ImportCandidateDetailScreen(
+                            state = current,
+                            defaultCurrency = ledger.currency,
+                            validation = importDecisionValidation,
+                            // A-PERF (spec section 2.3): the detail screen's catalog accounts read the
+                            // CACHED snapshot (the previous direct facade read ran on the main thread
+                            // during every detail recomposition); `catalogLoading` carries the honest
+                            // null window so the decision form presents the placeholder instead of an
+                            // empty authoritative catalog (S2-2).
+                            catalogAccounts = cachedCatalogSnapshot?.manageableAccounts ?: emptyList(),
+                            catalogLoading = cachedCatalogSnapshot == null,
+                            expenseCategories = options.expenseCategories,
+                            // FIX-INCOME-FACE-1 (D-154): the income-side options for the decision face's
+                            // direction-matched 分类 block (in-direction candidates); same authoritative
+                            // projection the entry income flow consumes, pin-sorted like the expense list.
+                            // The direction itself lives on the candidate detail row the screen already
+                            // holds, so only the options cross this call site.
+                            incomeCategories = incomeOptions.incomeCategories,
+                            onUpdateDecisionField = { update -> dispatch(P503UiEvent.UpdateImportDecisionField(update)) },
+                            onToggleSelection = { candidateId ->
+                                dispatch(P503UiEvent.ToggleImportCandidateSelection(candidateId))
+                            },
+                            onSubmitDuplicateReview = { decision ->
+                                // P704C-QUAL-04 call-site guard: the wiring/target precondition runs
+                                // BEFORE the reducer marks the detail reviewPending — with an unwired
+                                // facade the event must never be dispatched, or the page would be
+                                // stranded in 审核提交中 forever. The guard mints one id triple that is
+                                // then discarded (fresh per intent, nothing persisted); the submit path
+                                // mints its own.
+                                val current = latestState.value as? P503AppState.ImportCandidateDetail
+                                val reviewable = current != null && importDuplicateReviewTarget(current.duplicates) != null
+                                val wired = current != null && ledger.surfaces.importDuplicateReview && ledger.importDuplicateReviewIds() != null
+                                if (reviewable && wired) {
+                                    dispatchCurrentP503Action(
+                                        current,
+                                        latestState.value,
+                                        { P503UiEvent.SubmitImportDuplicateReview(decision, IMPORT_DUPLICATE_REVIEW_REASON_TOKEN) },
+                                        ::dispatch,
+                                    ) {
+                                        submitImportDuplicateReview(decision)
+                                    }
+                                }
+                            },
+                            // P7-04.D: the detail's 批量确认 entry (afforded only for a non-empty
+                            // selection; the reducer effect carries the detail's draft into the page).
+                            onRequestBatchConfirm = ::requestImportBatchConfirm,
+                            // Back = close semantics (SPEC:281: 返回 OverviewEmpty(IMPORT) 保留清单/勾选集).
+                            onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                        )
+                    // P7-04.D: the 授权快照确认页. The wiring guard runs inside the authorize action, so
+                    // an unwired surface never strands the page in a dispatch state it cannot leave.
+                    is P503AppState.ImportBatchConfirm ->
+                        P503ImportBatchConfirmScreen(
+                            state = current,
+                            parseAmount = ledger.parseAmount,
+                            defaultCurrency = ledger.currency,
+                            onAuthorize = ::authorizeImportBatch,
+                            // Back = cancel semantics (→ 原 OverviewEmpty， 保留勾选集与清单).
+                            onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                        )
+                    // P7-04.D: the per-item dispatch state. System back is intercepted and swallowed
+                    // (沿 Submitting 语义)； the only exits are the explicit Resume/Abandon affordances
+                    // (rendered in the paused sub-state AND the residual stopped sub-state — a cleanly
+                    // finished resumed run with an Unknown item remaining, [importBatchExitAvailable],
+                    // P704D-SPEC-01), plus the Unknown items' check actions.
+                    is P503AppState.ImportBatchSubmitting ->
+                        P503ImportBatchSubmittingScreen(
+                            state = current,
+                            onResume = ::resumeImportBatchDispatch,
+                            onAbandon = ::abandonImportBatch,
+                            onCheckUnknownItem = ::checkImportUnknownItem,
+                        )
+                    // P7-05 (D-156; slice 1b Piece 3): the correction/void/recycle-bin screens. The screens take
+                    // callbacks; this piece wires only the pure navigation/draft events the state machine
+                    // already owns (form writes, the preview request, opening the nested restore page, the
+                    // back channel). The host call sites that run the use cases (the correction/void/restore
+                    // commits and the recycle-bin read) are Piece 4, so the commit callbacks stay `null` and
+                    // the confirm affordances render disabled rather than dead.
+                    is P503AppState.TransactionEdit ->
+                        P503TransactionEditScreen(
+                            state = current,
+                            // P7-05.B (slice 1b Piece 4): the preview and the commit amount parse at the
+                            // transaction's OWN currency (the Piece 3 residual is retired); the ledger
+                            // default remains only the fallback for a legacy origin without one.
+                            currency = current.origin.currency ?: ledger.currency,
+                            categoryNames = cachedCatalogSnapshot?.correctionCategoryNames() ?: emptyMap(),
+                            accountNames = cachedCatalogSnapshot?.correctionAccountNames() ?: emptyMap(),
+                            categoryOptions =
+                                cachedCatalogSnapshot?.let { correctionCategoryOptions(it, current.origin.categoryId) } ?: emptyList(),
+                            accountOptions = cachedCatalogSnapshot?.let { correctionAccountOptions(it) } ?: emptyList(),
+                            onUpdateField = { update -> dispatch(P503UiEvent.UpdateTransactionCorrectionField(update)) },
+                            onPreview = { dispatch(P503UiEvent.PreviewTransactionEdit) },
+                            onConfirm = { confirmTransactionCorrection(current) },
+                            onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                            // V-19 (D-173): the manual re-check is offered only while a commit is in flight
+                            // AND the host still holds the retained snapshot for this surface; a `null`
+                            // callback renders no button (the file's "no dead affordance" pattern).
+                            onRecheck =
+                                if (current.submitting && retainedP705Request is RetainedP705Request.Correction) {
+                                    { recheckCorrectionCommitStatus() }
+                                } else {
+                                    null
+                                },
+                        )
+                    // P7-08 08.B-2 (spec section 4.4): the annotation-edit surface. The selectable options
+                    // come from the facade's already-filtered projection. A null projection (not yet loaded,
+                    // or an unwired root) is passed through as null so the screen presents an honest
+                    // 载入中 placeholder instead of an authoritative-looking empty catalog (the S2-2
+                    // discipline); the confirm callback is null until the command is wired.
+                    is P503AppState.TransactionAnnotationEdit -> {
+                        val selection = cachedTagMerchantSelection
+                        P503TransactionAnnotationEditScreen(
+                            state = current,
+                            tagOptions = selection?.tags,
+                            merchantOptions = selection?.merchants,
+                            onToggleTag = { tagId ->
+                                val next = current.intent.tagIds.toMutableSet()
+                                if (!next.add(tagId)) next.remove(tagId)
+                                dispatch(P503UiEvent.UpdateAnnotationTagSelection(next))
+                            },
+                            onSelectMerchant = { merchantId -> dispatch(P503UiEvent.UpdateAnnotationMerchant(merchantId)) },
+                            onConfirm =
+                                if (annotationEditWired) {
+                                    { confirmTransactionAnnotationEdit(current) }
+                                } else {
+                                    null
+                                },
+                            onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                        )
+                    }
+                    is P503AppState.VoidConfirm ->
+                        P503VoidConfirmScreen(
+                            state = current,
+                            onUpdateReason = { update -> dispatch(P503UiEvent.UpdateVoidReasonField(update)) },
+                            onConfirm = { confirmVoid(current) },
+                            onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                            // V-19 (D-173): see the correction surface's re-check wiring.
+                            onRecheck =
+                                if (current.submitting && (retainedP705Request as? RetainedP705Request.VoidOrRestore)?.snapshot?.factKind == TransactionVoidFactKind.VOID) {
+                                    { recheckVoidCommitStatus() }
+                                } else {
+                                    null
+                                },
+                        )
+                    is P503AppState.RecycleBin -> {
+                        val restore = current.restore
+                        if (restore == null) {
+                            P503RecycleBinScreen(
+                                state = current,
+                                onOpenRestore = { transactionId -> dispatch(P503UiEvent.OpenRestoreConfirm(transactionId)) },
+                                onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                            )
                         } else {
-                            null
-                        },
-                ) {
-                    when (current.selectedTab) {
-                        P503Tab.HOME ->
-                            P503OverviewScreen(
-                                state = current.state,
-                                showMonthlyRegion = ledgerViewWired,
-                                selectedMonth = current.selectedMonth,
-                                resolvedCurrentMonth = resolvedCurrentMonth,
-                                selectableMonths = current.selectableMonths,
-                                monthlyActivity = current.monthlyActivity,
-                                monthlyReloadRequired = current.monthlyReloadRequired,
-                                entryRows = ledgerEntryRows,
-                                onSelectTransaction = ::selectTransaction,
-                                onSelectMonth = ::selectMonth,
-                                // P7-05.C (D-156; slice 1b Piece 4): the ledger-wide recycle-bin
-                                // entry, offered only when the read surface is wired (an unwired
-                                // facade renders no dead button). Opening always reads the bin
-                                // fresh off the UI thread; the read dispatches OpenRecycleBin (a
-                                // re-open in place refreshes the projection instead).
-                                onOpenRecycleBin = if (ledger.surfaces.recycleBin) ::requestRecycleBin else null,
-                                // P7-06 06.B (D-177; spec section 3): the ledger-wide backup-export
-                                // entry, offered only when the composition root wired the export
-                                // use case (an unwired composition renders no dead button). The
-                                // open performs no IO and no secret handling; the password is
-                                // entered on the surface and stays in memory.
-                                onOpenBackupExport = if (backupExportEntryVisible(ledger.surfaces.backupExport)) ({ dispatch(P503UiEvent.OpenBackupExport) }) else null,
-                                // P7-06 06.D (D-182): the restore entry, offered only when the
-                                // restore use cases are wired (no dead affordance).
-                                onOpenBackupRestore =
-                                    if (backupRestoreEntryVisible(ledger.surfaces.backupRestore)) {
-                                        ({ dispatch(P503UiEvent.OpenBackupRestore) })
+                            // The nested restore page shows the catalog revalidation result the bin row
+                            // already carries (spec section 4.4); the rows are the query's frozen order.
+                            val row = (current.rows as? RecycleBinResult.Success)?.rows?.firstOrNull { it.voided.transactionId == restore.transactionId }
+                            P503RestoreConfirmScreen(
+                                restore = restore,
+                                row = row,
+                                onUpdateReason = { update -> dispatch(P503UiEvent.UpdateRestoreReasonField(update)) },
+                                onConfirm = { confirmRestore(current) },
+                                onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.CloseRestoreConfirm) },
+                                // V-19 (D-173): see the correction surface's re-check wiring.
+                                onRecheck =
+                                    if (restore.submitting && (retainedP705Request as? RetainedP705Request.VoidOrRestore)?.snapshot?.factKind == TransactionVoidFactKind.RESTORE) {
+                                        { recheckRestoreCommitStatus() }
                                     } else {
                                         null
                                     },
                             )
-                        P503Tab.ACCOUNTS ->
-                            P503CatalogManagementScreen(
-                                state = current,
-                                // P7-08 08.C: the same cached authority feeds the two new
-                                // sections (null = loading/unwired: honest 载入中 placeholder).
-                                tagMerchantAuthority = cachedTagMerchantAuthority,
-                                onEvent = { event ->
-                                    when (event) {
-                                        is P503UiEvent.ManageAccountActive,
-                                        is P503UiEvent.ManageCategoryActive,
-                                        is P503UiEvent.EnableCategoryGroup,
-                                        -> runCatalogToggle(event)
-                                        // P7-08 08.C: the tag/merchant toggles are host-handled
-                                        // too (command + authority reload + filter re-request).
-                                        is P503UiEvent.ManageTagActive ->
-                                            runTagMerchantToggle(com.unifiedledger.domain.CatalogItemKind.TAG, event.itemId, event.active)
-                                        is P503UiEvent.ManageMerchantActive ->
-                                            runTagMerchantToggle(com.unifiedledger.domain.CatalogItemKind.MERCHANT, event.itemId, event.active)
-                                        // P7-02.D E-4: persist the toggle first, then dispatch.
-                                        is P503UiEvent.TogglePin -> runPinToggle(event.target)
-                                        else -> dispatch(event)
+                        }
+                    }
+                    is P503AppState.BudgetConfig ->
+                        P503BudgetConfigScreen(
+                            current = current,
+                            categoryName = { id -> budgetCategoryNames[id] },
+                            currency = ledger.currency,
+                            onLimitTextChange = { text -> dispatch(P503UiEvent.UpdateBudgetLimitText(text)) },
+                            onConfirmLimit = { confirmBudgetLimit(current) },
+                            onCloseMonitoring = { confirmBudgetClose(current) },
+                            onDismiss = { dispatch(P503UiEvent.CloseBudgetConfig) },
+                        )
+                    // P7-08 08.C (spec sections 5.1/5.4): the filter surface. The option projections
+                    // come from the cached authority — the filter's own rule (DISABLED included,
+                    // tombstoned excluded, spec 5.1) applies HERE, on the same single authority load
+                    // that feeds the editor's selection options and the management sections.
+                    is P503AppState.TagMerchantFilter -> {
+                        val authority = cachedTagMerchantAuthority
+                        P503TagMerchantFilterScreen(
+                            state = current,
+                            tagOptions = authority?.tags?.let(::tagMerchantFilterTagOptions),
+                            merchantOptions = authority?.merchants?.let(::tagMerchantFilterMerchantOptions),
+                            onToggleTag = { tagId -> dispatchTagMerchantFilterChange(P503UiEvent.ToggleFilterTag(tagId)) },
+                            onSetTagMatch = { mode -> dispatchTagMerchantFilterChange(P503UiEvent.SetFilterTagMatch(mode)) },
+                            onSelectMerchant = { merchantId -> dispatchTagMerchantFilterChange(P503UiEvent.SetFilterMerchant(merchantId)) },
+                            onLoadMore = {
+                                val currentFilter = latestState.value as? P503AppState.TagMerchantFilter ?: return@P503TagMerchantFilterScreen
+                                requestTagMerchantFilterPage(currentFilter, replace = false, cursor = currentFilter.nextCursor)
+                            },
+                            onShiftMonth = { delta ->
+                                val currentFilter = latestState.value as? P503AppState.TagMerchantFilter ?: return@P503TagMerchantFilterScreen
+                                val next =
+                                    if (delta < 0) {
+                                        currentFilter.accumulationMonth.minus(1, DateTimeUnit.MONTH)
+                                    } else {
+                                        currentFilter.accumulationMonth.plus(1, DateTimeUnit.MONTH)
                                     }
-                                },
-                                onSubmit = { dialog ->
-                                    when (dialog) {
-                                        is CatalogDialog.CreateTagItem,
-                                        is CatalogDialog.RenameTagItem,
-                                        is CatalogDialog.ConfirmTagItemDelete,
-                                        is CatalogDialog.CreateMerchantItem,
-                                        is CatalogDialog.RenameMerchantItem,
-                                        is CatalogDialog.ConfirmMerchantItemDelete,
-                                        -> runTagMerchantForm(dialog)
-                                        else -> runCatalogForm(dialog)
-                                    }
-                                },
-                                onRefresh = { refreshCatalogSnapshot() },
-                            )
-                        P503Tab.ANALYSIS -> {
-                            // P7-07 07.D: the budget region slot — non-null exactly when the
-                            // budget surface is wired (no dead region). It owns its own loading/
-                            // failure copy and its config affordances; the retained read-failure
-                            // render below deliberately passes none (read-only, the F1 rule).
-                            // P7-08 08.C: the filter entry rides the analysis tab's existing
-                            // composable-slot seam (the budget region slot) — the entry button
-                            // precedes the budget region inside the slot, and the slot is
-                            // non-null when EITHER surface is wired (no dead affordance).
-                            val budgetRegionSlot: (@Composable () -> Unit)? =
-                                if (budgetWired || tagMerchantFilterWired) {
-                                    {
-                                        if (tagMerchantFilterWired) {
-                                            TextButton(onClick = ::openTagMerchantFilter) {
-                                                Text("标签与商家筛选")
-                                            }
-                                        }
-                                        if (budgetWired) {
-                                            P503BudgetRegion(
-                                                view = current.budgetView,
-                                                categoryName = { id -> budgetCategoryNames[id] },
-                                                parentIdOf = { id -> budgetCategoryParents[id] },
-                                                pickerCategories = budgetPickerChoices,
-                                                onOpenBudgetConfig = ::openBudgetConfig,
-                                            )
-                                        }
-                                    }
+                                dispatchTagMerchantFilterChange(P503UiEvent.SetFilterAccumulationMonth(next))
+                            },
+                            onBack = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                        )
+                    }
+                    is P503AppState.BackupExport ->
+                        P503BackupExportScreen(
+                            state = current,
+                            onUpdatePassword = { dispatch(P503UiEvent.UpdateBackupPassword(it)) },
+                            // The host export call site is passed only when the use case is wired; an
+                            // unwired composition renders the disabled confirm, never a dead button.
+                            onConfirm = if (ledger.surfaces.backupExport) ({ confirmBackupExport(current) }) else null,
+                            onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.CloseBackupExport) },
+                        )
+                    is P503AppState.BackupRestore ->
+                        P503RestoreScreen(
+                            state = current,
+                            onUpdatePassword = { dispatch(P503UiEvent.UpdateRestorePassword(it)) },
+                            // The host restore call sites are passed only when the use cases are wired; an
+                            // unwired composition renders disabled confirms, never dead buttons.
+                            onPreflight = if (ledger.surfaces.backupRestore) ({ confirmRestorePreflight(current) }) else null,
+                            onConfirmSwitch = if (ledger.surfaces.backupRestore) ({ confirmRestoreSwitch(current) }) else null,
+                            onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.CloseBackupRestore) },
+                        )
+                    is P503AppState.RestoreSessionTerminal ->
+                        // P7-06 06.D: the session-terminal RecoveryRequired face - no business affordance,
+                        // only the typed cause and the platform exit (wired directly, outside the reducer).
+                        P503RestoreSessionTerminalScreen(current, onExit)
+                    is P503AppState.Editing ->
+                        P503EditScreen(
+                            draft = current.draft,
+                            options = options,
+                            incomeOptions = incomeOptions,
+                            transferOptions = transferOptions,
+                            lendingOptions = lendingOptions,
+                            onUpdateTransferSourceAccount = { dispatch(P503UiEvent.UpdateTransferSourceAccount(it)) },
+                            onUpdateTransferDestinationAccount = { dispatch(P503UiEvent.UpdateTransferDestinationAccount(it)) },
+                            onUpdateTransferDestinationCredit = { dispatch(P503UiEvent.UpdateTransferDestinationCredit(it)) },
+                            onUpdateTransferFee = { dispatch(P503UiEvent.UpdateTransferFee(it)) },
+                            onUpdateTransferFeeCategory = { dispatch(P503UiEvent.UpdateTransferFeeCategory(it)) },
+                            onUpdateLendCounterparty = { dispatch(P503UiEvent.UpdateLendCounterparty(it)) },
+                            onUpdateLendFundingAccount = { dispatch(P503UiEvent.UpdateLendFundingAccount(it)) },
+                            onUpdateLendAmount = { dispatch(P503UiEvent.UpdateLendAmount(it)) },
+                            onUpdateCollectCounterparty = { dispatch(P503UiEvent.UpdateCollectCounterparty(it)) },
+                            onUpdateCollectDestinationAccount = { dispatch(P503UiEvent.UpdateCollectDestinationAccount(it)) },
+                            onUpdateCollectTotal = { dispatch(P503UiEvent.UpdateCollectTotal(it)) },
+                            onUpdateCollectPrincipal = { dispatch(P503UiEvent.UpdateCollectPrincipal(it)) },
+                            onUpdateCollectInterest = { dispatch(P503UiEvent.UpdateCollectInterest(it)) },
+                            onUpdateCollectInterestCategory = { dispatch(P503UiEvent.UpdateCollectInterestCategory(it)) },
+                            validation = validation,
+                            currency = resolvedCurrency(current.draft),
+                            ledgerClock = ledger.ledgerClock,
+                            parseOccurredAt = ledger.parseOccurredAt,
+                            onUpdateAmount = { dispatch(P503UiEvent.UpdateAmount(it)) },
+                            onUpdatePaymentAccount = { dispatch(P503UiEvent.UpdatePaymentAccount(it)) },
+                            onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
+                            onUpdateOccurredAt = { dispatch(P503UiEvent.UpdateOccurredAt(it)) },
+                            onSelectEntryType = { dispatch(P503UiEvent.SelectEntryType(it)) },
+                            onUpdateNote = { dispatch(P503UiEvent.UpdateNote(it)) },
+                            // P7-08 08.B-2 (spec section 4.1): the optional tag/merchant association.
+                            // The options come from the cached projection (never a main-thread facade read).
+                            tagMerchantOptions = cachedTagMerchantSelection,
+                            onToggleTag = { tagId ->
+                                val next = current.draft.tagIds.toMutableSet()
+                                if (!next.add(tagId)) next.remove(tagId)
+                                dispatch(P503UiEvent.UpdateTagSelection(next))
+                            },
+                            onSelectMerchant = { merchantId -> dispatch(P503UiEvent.UpdateMerchant(merchantId)) },
+                            onUpdateReceivingAccount = { dispatch(P503UiEvent.UpdateReceivingAccount(it)) },
+                            onUpdateIncomeCategory = { dispatch(P503UiEvent.UpdateIncomeCategory(it)) },
+                            // P7-02.D E-3: the calculator lives on the editable screen only.
+                            expressionPreview = current.expressionPreview,
+                            onEvaluateExpression = { dispatch(P503UiEvent.EvaluateEntryExpression(it)) },
+                            onApplyExpression = { dispatch(P503UiEvent.ApplyExpressionResult) },
+                            // P702SPEC-03: the counterparty create/rename affordance.
+                            counterpartyDialog = current.counterpartyDialog,
+                            onCounterpartyEvent = { dispatch(it) },
+                            onCounterpartyFormSubmit = { runCounterpartyForm(it) },
+                            occurredAtText = hoistedOccurredAtText ?: (current.draft.occurredAt?.toString() ?: ""),
+                            onOccurredAtTextChange = { hoistedOccurredAtText = it },
+                            onContinue = {
+                                dispatchCurrentP503Action(current, latestState.value, {
+                                    // requestId single rule (spec 7.4): allocate unconditionally when the
+                                    // draft has none, reuse it otherwise; never reallocate mid-intent.
+                                    val requestId = current.requestId ?: ledger.requestIdSource.next()
+                                    P503UiEvent.Continue(
+                                        requestId,
+                                        // P5-04.3: display labels resolved from the options; absent
+                                        // options fall back to the draft id values in the reducer.
+                                        paymentAccountLabel = accountLabel(current.draft),
+                                        categoryLabel = categoryLabel(current.draft),
+                                        // A-02 FIX-CONFIRM-1: the type-owned confirmation labels.
+                                        destinationAccountLabel = destinationAccountLabel(current.draft),
+                                        counterpartyLabel = counterpartyLabel(current.draft),
+                                    )
+                                }, ::dispatch)
+                            },
+                            onClose =
+                                if (current.overview != null) {
+                                    { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) }
                                 } else {
                                     null
-                                }
-                            P503AnalysisScreen(
-                                state = current.state,
-                                summarizeActivity = ledger.summarizeActivity,
-                                showMonthlyRegion = ledgerViewWired,
-                                selectedMonth = current.selectedMonth,
-                                resolvedCurrentMonth = resolvedCurrentMonth,
-                                selectableMonths = current.selectableMonths,
-                                monthlyActivity = current.monthlyActivity,
-                                monthlyReloadRequired = current.monthlyReloadRequired,
-                                trend = monthlyTrend,
-                                onSelectMonth = ::selectMonth,
-                                onAnalysisMonthShift = ::analysisMonthShift,
-                                budgetRegion = budgetRegionSlot,
-                            )
-                        }
-                        // P7-04.C: the IMPORT tab content — the review projection, the matrix
-                        // format entries, the session summary and the group disposition surface.
-                        // P7-04.D: the batch confirmation entry and the retained result summary
-                        // (with the Unknown items' check entries) render on the same projection.
-                        P503Tab.IMPORT ->
-                            P503ImportScreen(
-                                view = current.importReview,
-                                platform = ledger.importPlatformKind,
-                                onRefresh = ::requestImportReview,
-                                onStartFilePick = { format -> startImportFilePick(format) },
-                                onSelectCandidate = ::selectImportCandidate,
-                                onToggleSelection = { candidateId ->
-                                    dispatch(P503UiEvent.ToggleImportCandidateSelection(candidateId))
                                 },
-                                onGroupDisposition = ::startImportDuplicateGroupDisposition,
-                                onGroupConfirm = ::confirmImportDuplicateGroupDisposition,
-                                onGroupClose = { dispatch(P503UiEvent.CloseImportDuplicateGroupDisposition) },
-                                onRequestBatchConfirm = ::requestImportBatchConfirm,
-                                onCheckUnknownItem = ::checkImportUnknownItem,
-                            )
-                    }
-                }
-            is P503AppState.TransactionDetail -> {
-                val detail = current.detail
-                P503TransactionDetailScreen(
-                    detail = detail,
-                    // Back = CloseTransactionDetail semantics (tab/month preserved, C03).
-                    onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
-                    // P7-05 (D-156; spec section 3.5): the correction/void entries. The screen's
-                    // affordance gate treats a non-null callback as "the host resolved this entry",
-                    // so the host passes the callback ONLY when it can actually resolve the target
-                    // now — the detail is a Success AND the correction origin resolves against the
-                    // current catalog (an unwired facade, a still-loading catalog or an
-                    // unresolvable amount leg passes `null`, so the page renders no dead button,
-                    // the F1 precedent). The void entry needs only the wired use case.
-                    onEditTransaction =
-                        if (detail is TransactionDetailResult.Success && correctionOriginResolvable(detail.detail)) {
-                            { target -> openTransactionEdit(target) }
-                        } else {
-                            null
-                        },
-                    onVoidTransaction = if (ledger.surfaces.voidTransaction) ({ target -> openVoidConfirm(target) }) else null,
-                    // P7-08 08.B-2 (spec section 4.4): the annotation-edit entry, passed only when
-                    // the host can resolve the target's CAS tokens right now (wired command + id
-                    // source + read port AND a readable transaction); otherwise `null` renders no
-                    // button rather than a form with fabricated tokens.
-                    onEditAnnotation =
-                        if (detail is TransactionDetailResult.Success && annotationEditResolvable(detail.detail)) {
-                            { target -> openTransactionAnnotationEdit(target) }
-                        } else {
-                            null
-                        },
-                    // P7-08 08.D (spec section 3.5): the read-only annotation history read under the
-                    // same lease as the detail, plus the current-name resolver for the stable tag ids
-                    // (spec section 2.2: rename keeps the id and shows the current name).
-                    annotationHistory = current.annotationHistory,
-                    tagNameOf = { id ->
-                        cachedTagMerchantAuthority?.tags?.firstOrNull { it.id == id }?.name ?: id
-                    },
-                )
-            }
-            // P7-04.C: the import candidate detail (spec sections 6.1/6.2). The catalog options
-            // are the same authoritative projections the entry flow consumes (D-143 同源).
-            is P503AppState.ImportCandidateDetail ->
-                P503ImportCandidateDetailScreen(
-                    state = current,
-                    defaultCurrency = ledger.currency,
-                    validation = importDecisionValidation,
-                    // A-PERF (spec section 2.3): the detail screen's catalog accounts read the
-                    // CACHED snapshot (the previous direct facade read ran on the main thread
-                    // during every detail recomposition); `catalogLoading` carries the honest
-                    // null window so the decision form presents the placeholder instead of an
-                    // empty authoritative catalog (S2-2).
-                    catalogAccounts = cachedCatalogSnapshot?.manageableAccounts ?: emptyList(),
-                    catalogLoading = cachedCatalogSnapshot == null,
-                    expenseCategories = options.expenseCategories,
-                    // FIX-INCOME-FACE-1 (D-154): the income-side options for the decision face's
-                    // direction-matched 分类 block (in-direction candidates); same authoritative
-                    // projection the entry income flow consumes, pin-sorted like the expense list.
-                    // The direction itself lives on the candidate detail row the screen already
-                    // holds, so only the options cross this call site.
-                    incomeCategories = incomeOptions.incomeCategories,
-                    onUpdateDecisionField = { update -> dispatch(P503UiEvent.UpdateImportDecisionField(update)) },
-                    onToggleSelection = { candidateId ->
-                        dispatch(P503UiEvent.ToggleImportCandidateSelection(candidateId))
-                    },
-                    onSubmitDuplicateReview = { decision ->
-                        // P704C-QUAL-04 call-site guard: the wiring/target precondition runs
-                        // BEFORE the reducer marks the detail reviewPending — with an unwired
-                        // facade the event must never be dispatched, or the page would be
-                        // stranded in 审核提交中 forever. The guard mints one id triple that is
-                        // then discarded (fresh per intent, nothing persisted); the submit path
-                        // mints its own.
-                        val current = latestState.value as? P503AppState.ImportCandidateDetail
-                        val reviewable = current != null && importDuplicateReviewTarget(current.duplicates) != null
-                        val wired = current != null && ledger.surfaces.importDuplicateReview && ledger.importDuplicateReviewIds() != null
-                        if (reviewable && wired) {
-                            dispatchCurrentP503Action(
-                                current,
-                                latestState.value,
-                                { P503UiEvent.SubmitImportDuplicateReview(decision, IMPORT_DUPLICATE_REVIEW_REASON_TOKEN) },
-                                ::dispatch,
-                            ) {
-                                submitImportDuplicateReview(decision)
-                            }
-                        }
-                    },
-                    // P7-04.D: the detail's 批量确认 entry (afforded only for a non-empty
-                    // selection; the reducer effect carries the detail's draft into the page).
-                    onRequestBatchConfirm = ::requestImportBatchConfirm,
-                    // Back = close semantics (SPEC:281: 返回 OverviewEmpty(IMPORT) 保留清单/勾选集).
-                    onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
-                )
-            // P7-04.D: the 授权快照确认页. The wiring guard runs inside the authorize action, so
-            // an unwired surface never strands the page in a dispatch state it cannot leave.
-            is P503AppState.ImportBatchConfirm ->
-                P503ImportBatchConfirmScreen(
-                    state = current,
-                    parseAmount = ledger.parseAmount,
-                    defaultCurrency = ledger.currency,
-                    onAuthorize = ::authorizeImportBatch,
-                    // Back = cancel semantics (→ 原 OverviewEmpty， 保留勾选集与清单).
-                    onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
-                )
-            // P7-04.D: the per-item dispatch state. System back is intercepted and swallowed
-            // (沿 Submitting 语义)； the only exits are the explicit Resume/Abandon affordances
-            // (rendered in the paused sub-state AND the residual stopped sub-state — a cleanly
-            // finished resumed run with an Unknown item remaining, [importBatchExitAvailable],
-            // P704D-SPEC-01), plus the Unknown items' check actions.
-            is P503AppState.ImportBatchSubmitting ->
-                P503ImportBatchSubmittingScreen(
-                    state = current,
-                    onResume = ::resumeImportBatchDispatch,
-                    onAbandon = ::abandonImportBatch,
-                    onCheckUnknownItem = ::checkImportUnknownItem,
-                )
-            // P7-05 (D-156; slice 1b Piece 3): the correction/void/recycle-bin screens. The screens take
-            // callbacks; this piece wires only the pure navigation/draft events the state machine
-            // already owns (form writes, the preview request, opening the nested restore page, the
-            // back channel). The host call sites that run the use cases (the correction/void/restore
-            // commits and the recycle-bin read) are Piece 4, so the commit callbacks stay `null` and
-            // the confirm affordances render disabled rather than dead.
-            is P503AppState.TransactionEdit ->
-                P503TransactionEditScreen(
-                    state = current,
-                    // P7-05.B (slice 1b Piece 4): the preview and the commit amount parse at the
-                    // transaction's OWN currency (the Piece 3 residual is retired); the ledger
-                    // default remains only the fallback for a legacy origin without one.
-                    currency = current.origin.currency ?: ledger.currency,
-                    categoryNames = cachedCatalogSnapshot?.correctionCategoryNames() ?: emptyMap(),
-                    accountNames = cachedCatalogSnapshot?.correctionAccountNames() ?: emptyMap(),
-                    categoryOptions =
-                        cachedCatalogSnapshot?.let { correctionCategoryOptions(it, current.origin.categoryId) } ?: emptyList(),
-                    accountOptions = cachedCatalogSnapshot?.let { correctionAccountOptions(it) } ?: emptyList(),
-                    onUpdateField = { update -> dispatch(P503UiEvent.UpdateTransactionCorrectionField(update)) },
-                    onPreview = { dispatch(P503UiEvent.PreviewTransactionEdit) },
-                    onConfirm = { confirmTransactionCorrection(current) },
-                    onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
-                    // V-19 (D-173): the manual re-check is offered only while a commit is in flight
-                    // AND the host still holds the retained snapshot for this surface; a `null`
-                    // callback renders no button (the file's "no dead affordance" pattern).
-                    onRecheck =
-                        if (current.submitting && retainedP705Request is RetainedP705Request.Correction) {
-                            { recheckCorrectionCommitStatus() }
-                        } else {
-                            null
-                        },
-                )
-            // P7-08 08.B-2 (spec section 4.4): the annotation-edit surface. The selectable options
-            // come from the facade's already-filtered projection. A null projection (not yet loaded,
-            // or an unwired root) is passed through as null so the screen presents an honest
-            // 载入中 placeholder instead of an authoritative-looking empty catalog (the S2-2
-            // discipline); the confirm callback is null until the command is wired.
-            is P503AppState.TransactionAnnotationEdit -> {
-                val selection = cachedTagMerchantSelection
-                P503TransactionAnnotationEditScreen(
-                    state = current,
-                    tagOptions = selection?.tags,
-                    merchantOptions = selection?.merchants,
-                    onToggleTag = { tagId ->
-                        val next = current.intent.tagIds.toMutableSet()
-                        if (!next.add(tagId)) next.remove(tagId)
-                        dispatch(P503UiEvent.UpdateAnnotationTagSelection(next))
-                    },
-                    onSelectMerchant = { merchantId -> dispatch(P503UiEvent.UpdateAnnotationMerchant(merchantId)) },
-                    onConfirm =
-                        if (annotationEditWired) {
-                            { confirmTransactionAnnotationEdit(current) }
-                        } else {
-                            null
-                        },
-                    onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
-                )
-            }
-            is P503AppState.VoidConfirm ->
-                P503VoidConfirmScreen(
-                    state = current,
-                    onUpdateReason = { update -> dispatch(P503UiEvent.UpdateVoidReasonField(update)) },
-                    onConfirm = { confirmVoid(current) },
-                    onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
-                    // V-19 (D-173): see the correction surface's re-check wiring.
-                    onRecheck =
-                        if (current.submitting && (retainedP705Request as? RetainedP705Request.VoidOrRestore)?.snapshot?.factKind == TransactionVoidFactKind.VOID) {
-                            { recheckVoidCommitStatus() }
-                        } else {
-                            null
-                        },
-                )
-            is P503AppState.RecycleBin -> {
-                val restore = current.restore
-                if (restore == null) {
-                    P503RecycleBinScreen(
-                        state = current,
-                        onOpenRestore = { transactionId -> dispatch(P503UiEvent.OpenRestoreConfirm(transactionId)) },
-                        onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
-                    )
-                } else {
-                    // The nested restore page shows the catalog revalidation result the bin row
-                    // already carries (spec section 4.4); the rows are the query's frozen order.
-                    val row = (current.rows as? RecycleBinResult.Success)?.rows?.firstOrNull { it.voided.transactionId == restore.transactionId }
-                    P503RestoreConfirmScreen(
-                        restore = restore,
-                        row = row,
-                        onUpdateReason = { update -> dispatch(P503UiEvent.UpdateRestoreReasonField(update)) },
-                        onConfirm = { confirmRestore(current) },
-                        onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.CloseRestoreConfirm) },
-                        // V-19 (D-173): see the correction surface's re-check wiring.
-                        onRecheck =
-                            if (restore.submitting && (retainedP705Request as? RetainedP705Request.VoidOrRestore)?.snapshot?.factKind == TransactionVoidFactKind.RESTORE) {
-                                { recheckRestoreCommitStatus() }
-                            } else {
-                                null
-                            },
-                    )
-                }
-            }
-            is P503AppState.BudgetConfig ->
-                P503BudgetConfigScreen(
-                    current = current,
-                    categoryName = { id -> budgetCategoryNames[id] },
-                    currency = ledger.currency,
-                    onLimitTextChange = { text -> dispatch(P503UiEvent.UpdateBudgetLimitText(text)) },
-                    onConfirmLimit = { confirmBudgetLimit(current) },
-                    onCloseMonitoring = { confirmBudgetClose(current) },
-                    onDismiss = { dispatch(P503UiEvent.CloseBudgetConfig) },
-                )
-            // P7-08 08.C (spec sections 5.1/5.4): the filter surface. The option projections
-            // come from the cached authority — the filter's own rule (DISABLED included,
-            // tombstoned excluded, spec 5.1) applies HERE, on the same single authority load
-            // that feeds the editor's selection options and the management sections.
-            is P503AppState.TagMerchantFilter -> {
-                val authority = cachedTagMerchantAuthority
-                P503TagMerchantFilterScreen(
-                    state = current,
-                    tagOptions = authority?.tags?.let(::tagMerchantFilterTagOptions),
-                    merchantOptions = authority?.merchants?.let(::tagMerchantFilterMerchantOptions),
-                    onToggleTag = { tagId -> dispatchTagMerchantFilterChange(P503UiEvent.ToggleFilterTag(tagId)) },
-                    onSetTagMatch = { mode -> dispatchTagMerchantFilterChange(P503UiEvent.SetFilterTagMatch(mode)) },
-                    onSelectMerchant = { merchantId -> dispatchTagMerchantFilterChange(P503UiEvent.SetFilterMerchant(merchantId)) },
-                    onLoadMore = {
-                        val currentFilter = latestState.value as? P503AppState.TagMerchantFilter ?: return@P503TagMerchantFilterScreen
-                        requestTagMerchantFilterPage(currentFilter, replace = false, cursor = currentFilter.nextCursor)
-                    },
-                    onShiftMonth = { delta ->
-                        val currentFilter = latestState.value as? P503AppState.TagMerchantFilter ?: return@P503TagMerchantFilterScreen
-                        val next =
-                            if (delta < 0) {
-                                currentFilter.accumulationMonth.minus(1, DateTimeUnit.MONTH)
-                            } else {
-                                currentFilter.accumulationMonth.plus(1, DateTimeUnit.MONTH)
-                            }
-                        dispatchTagMerchantFilterChange(P503UiEvent.SetFilterAccumulationMonth(next))
-                    },
-                    onBack = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
-                )
-            }
-            is P503AppState.BackupExport ->
-                P503BackupExportScreen(
-                    state = current,
-                    onUpdatePassword = { dispatch(P503UiEvent.UpdateBackupPassword(it)) },
-                    // The host export call site is passed only when the use case is wired; an
-                    // unwired composition renders the disabled confirm, never a dead button.
-                    onConfirm = if (ledger.surfaces.backupExport) ({ confirmBackupExport(current) }) else null,
-                    onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.CloseBackupExport) },
-                )
-            is P503AppState.BackupRestore ->
-                P503RestoreScreen(
-                    state = current,
-                    onUpdatePassword = { dispatch(P503UiEvent.UpdateRestorePassword(it)) },
-                    // The host restore call sites are passed only when the use cases are wired; an
-                    // unwired composition renders disabled confirms, never dead buttons.
-                    onPreflight = if (ledger.surfaces.backupRestore) ({ confirmRestorePreflight(current) }) else null,
-                    onConfirmSwitch = if (ledger.surfaces.backupRestore) ({ confirmRestoreSwitch(current) }) else null,
-                    onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.CloseBackupRestore) },
-                )
-            is P503AppState.RestoreSessionTerminal ->
-                // P7-06 06.D: the session-terminal RecoveryRequired face - no business affordance,
-                // only the typed cause and the platform exit (wired directly, outside the reducer).
-                P503RestoreSessionTerminalScreen(current, onExit)
-            is P503AppState.Editing ->
-                P503EditScreen(
-                    draft = current.draft,
-                    options = options,
-                    incomeOptions = incomeOptions,
-                    transferOptions = transferOptions,
-                    lendingOptions = lendingOptions,
-                    onUpdateTransferSourceAccount = { dispatch(P503UiEvent.UpdateTransferSourceAccount(it)) },
-                    onUpdateTransferDestinationAccount = { dispatch(P503UiEvent.UpdateTransferDestinationAccount(it)) },
-                    onUpdateTransferDestinationCredit = { dispatch(P503UiEvent.UpdateTransferDestinationCredit(it)) },
-                    onUpdateTransferFee = { dispatch(P503UiEvent.UpdateTransferFee(it)) },
-                    onUpdateTransferFeeCategory = { dispatch(P503UiEvent.UpdateTransferFeeCategory(it)) },
-                    onUpdateLendCounterparty = { dispatch(P503UiEvent.UpdateLendCounterparty(it)) },
-                    onUpdateLendFundingAccount = { dispatch(P503UiEvent.UpdateLendFundingAccount(it)) },
-                    onUpdateLendAmount = { dispatch(P503UiEvent.UpdateLendAmount(it)) },
-                    onUpdateCollectCounterparty = { dispatch(P503UiEvent.UpdateCollectCounterparty(it)) },
-                    onUpdateCollectDestinationAccount = { dispatch(P503UiEvent.UpdateCollectDestinationAccount(it)) },
-                    onUpdateCollectTotal = { dispatch(P503UiEvent.UpdateCollectTotal(it)) },
-                    onUpdateCollectPrincipal = { dispatch(P503UiEvent.UpdateCollectPrincipal(it)) },
-                    onUpdateCollectInterest = { dispatch(P503UiEvent.UpdateCollectInterest(it)) },
-                    onUpdateCollectInterestCategory = { dispatch(P503UiEvent.UpdateCollectInterestCategory(it)) },
-                    validation = validation,
-                    currency = resolvedCurrency(current.draft),
-                    ledgerClock = ledger.ledgerClock,
-                    parseOccurredAt = ledger.parseOccurredAt,
-                    onUpdateAmount = { dispatch(P503UiEvent.UpdateAmount(it)) },
-                    onUpdatePaymentAccount = { dispatch(P503UiEvent.UpdatePaymentAccount(it)) },
-                    onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
-                    onUpdateOccurredAt = { dispatch(P503UiEvent.UpdateOccurredAt(it)) },
-                    onSelectEntryType = { dispatch(P503UiEvent.SelectEntryType(it)) },
-                    onUpdateNote = { dispatch(P503UiEvent.UpdateNote(it)) },
-                    // P7-08 08.B-2 (spec section 4.1): the optional tag/merchant association.
-                    // The options come from the cached projection (never a main-thread facade read).
-                    tagMerchantOptions = cachedTagMerchantSelection,
-                    onToggleTag = { tagId ->
-                        val next = current.draft.tagIds.toMutableSet()
-                        if (!next.add(tagId)) next.remove(tagId)
-                        dispatch(P503UiEvent.UpdateTagSelection(next))
-                    },
-                    onSelectMerchant = { merchantId -> dispatch(P503UiEvent.UpdateMerchant(merchantId)) },
-                    onUpdateReceivingAccount = { dispatch(P503UiEvent.UpdateReceivingAccount(it)) },
-                    onUpdateIncomeCategory = { dispatch(P503UiEvent.UpdateIncomeCategory(it)) },
-                    // P7-02.D E-3: the calculator lives on the editable screen only.
-                    expressionPreview = current.expressionPreview,
-                    onEvaluateExpression = { dispatch(P503UiEvent.EvaluateEntryExpression(it)) },
-                    onApplyExpression = { dispatch(P503UiEvent.ApplyExpressionResult) },
-                    // P702SPEC-03: the counterparty create/rename affordance.
-                    counterpartyDialog = current.counterpartyDialog,
-                    onCounterpartyEvent = { dispatch(it) },
-                    onCounterpartyFormSubmit = { runCounterpartyForm(it) },
-                    occurredAtText = hoistedOccurredAtText ?: (current.draft.occurredAt?.toString() ?: ""),
-                    onOccurredAtTextChange = { hoistedOccurredAtText = it },
-                    onContinue = {
-                        dispatchCurrentP503Action(current, latestState.value, {
-                            // requestId single rule (spec 7.4): allocate unconditionally when the
-                            // draft has none, reuse it otherwise; never reallocate mid-intent.
-                            val requestId = current.requestId ?: ledger.requestIdSource.next()
-                            P503UiEvent.Continue(
-                                requestId,
-                                // P5-04.3: display labels resolved from the options; absent
-                                // options fall back to the draft id values in the reducer.
-                                paymentAccountLabel = accountLabel(current.draft),
-                                categoryLabel = categoryLabel(current.draft),
-                                // A-02 FIX-CONFIRM-1: the type-owned confirmation labels.
-                                destinationAccountLabel = destinationAccountLabel(current.draft),
-                                counterpartyLabel = counterpartyLabel(current.draft),
-                            )
-                        }, ::dispatch)
-                    },
-                    onClose =
-                        if (current.overview != null) {
-                            { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) }
-                        } else {
-                            null
-                        },
-                    onDialogVisibilityChanged = { editDialogOpen = it },
-                )
-            is P503AppState.AwaitingConfirmation ->
-                P503ConfirmationScreen(
-                    draft = current.draft,
-                    currencyCode = resolvedCurrency(current.draft).code,
-                    currencyPrecision = resolvedCurrency(current.draft).precision,
-                    labels =
-                        ConfirmationLabels(
-                            paymentAccount = current.paymentAccountLabel,
-                            category = current.categoryLabel,
-                            destinationAccount = current.destinationAccountLabel,
-                            counterparty = current.counterpartyLabel,
-                        ),
-                    onCancel = { dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.Cancel }, ::dispatch) },
-                    confirmEnabled = latestState.value === current,
-                    cancelEnabled = latestState.value === current,
-                    onConfirm = {
-                        dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.Confirm }, ::dispatch) {
-                            submit(current.draft, current.requestId)
-                        }
-                    },
-                )
-            is P503AppState.Submitting -> P503SubmittingScreen()
-            P503AppState.Created,
-            P503AppState.NoChange,
-            P503AppState.Recovered,
-            -> P503ResultScreen(current)
-            is P503AppState.UnknownCommit ->
-                P503UnknownCommitScreen(current) {
-                    // P5-04.3: manual re-check mirrors the RetrySubmission pattern — dispatch
-                    // the state-preserving event and run the read-only check directly.
-                    dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.RetryCommitStatusCheck }, ::dispatch) {
-                        coordinator.retryCommitStatusCheck(current)
-                    }
-                }
-            is P503AppState.RequestIdentityConflict ->
-                P503EditScreen(
-                    draft = current.draft,
-                    options = options,
-                    incomeOptions = incomeOptions,
-                    transferOptions = transferOptions,
-                    lendingOptions = lendingOptions,
-                    onUpdateTransferSourceAccount = { dispatch(P503UiEvent.UpdateTransferSourceAccount(it)) },
-                    onUpdateTransferDestinationAccount = { dispatch(P503UiEvent.UpdateTransferDestinationAccount(it)) },
-                    onUpdateTransferDestinationCredit = { dispatch(P503UiEvent.UpdateTransferDestinationCredit(it)) },
-                    onUpdateTransferFee = { dispatch(P503UiEvent.UpdateTransferFee(it)) },
-                    onUpdateTransferFeeCategory = { dispatch(P503UiEvent.UpdateTransferFeeCategory(it)) },
-                    onUpdateLendCounterparty = { dispatch(P503UiEvent.UpdateLendCounterparty(it)) },
-                    onUpdateLendFundingAccount = { dispatch(P503UiEvent.UpdateLendFundingAccount(it)) },
-                    onUpdateLendAmount = { dispatch(P503UiEvent.UpdateLendAmount(it)) },
-                    onUpdateCollectCounterparty = { dispatch(P503UiEvent.UpdateCollectCounterparty(it)) },
-                    onUpdateCollectDestinationAccount = { dispatch(P503UiEvent.UpdateCollectDestinationAccount(it)) },
-                    onUpdateCollectTotal = { dispatch(P503UiEvent.UpdateCollectTotal(it)) },
-                    onUpdateCollectPrincipal = { dispatch(P503UiEvent.UpdateCollectPrincipal(it)) },
-                    onUpdateCollectInterest = { dispatch(P503UiEvent.UpdateCollectInterest(it)) },
-                    onUpdateCollectInterestCategory = { dispatch(P503UiEvent.UpdateCollectInterestCategory(it)) },
-                    validation = validation,
-                    currency = resolvedCurrency(current.draft),
-                    ledgerClock = ledger.ledgerClock,
-                    parseOccurredAt = ledger.parseOccurredAt,
-                    onUpdateAmount = { dispatch(P503UiEvent.UpdateAmount(it)) },
-                    onUpdatePaymentAccount = { dispatch(P503UiEvent.UpdatePaymentAccount(it)) },
-                    onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
-                    onUpdateOccurredAt = { dispatch(P503UiEvent.UpdateOccurredAt(it)) },
-                    onSelectEntryType = { dispatch(P503UiEvent.SelectEntryType(it)) },
-                    onUpdateNote = { dispatch(P503UiEvent.UpdateNote(it)) },
-                    // P7-08 08.B-2 (spec section 4.1): the optional tag/merchant association.
-                    // The options come from the cached projection (never a main-thread facade read).
-                    tagMerchantOptions = cachedTagMerchantSelection,
-                    onToggleTag = { tagId ->
-                        val next = current.draft.tagIds.toMutableSet()
-                        if (!next.add(tagId)) next.remove(tagId)
-                        dispatch(P503UiEvent.UpdateTagSelection(next))
-                    },
-                    onSelectMerchant = { merchantId -> dispatch(P503UiEvent.UpdateMerchant(merchantId)) },
-                    onUpdateReceivingAccount = { dispatch(P503UiEvent.UpdateReceivingAccount(it)) },
-                    onUpdateIncomeCategory = { dispatch(P503UiEvent.UpdateIncomeCategory(it)) },
-                    occurredAtText = hoistedOccurredAtText ?: (current.draft.occurredAt?.toString() ?: ""),
-                    onOccurredAtTextChange = { hoistedOccurredAtText = it },
-                    onContinue = null,
-                    banner = {
-                        P503ConflictBanner(
-                            onAbandonConflict = { dispatch(P503UiEvent.AbandonConflict) },
+                            onDialogVisibilityChanged = { editDialogOpen = it },
                         )
-                    },
-                    onClose =
-                        if (current.overview != null) {
-                            { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) }
-                        } else {
-                            null
-                        },
-                    onDialogVisibilityChanged = { editDialogOpen = it },
-                )
-            is P503AppState.DomainRejected ->
-                P503EditScreen(
-                    draft = current.draft,
-                    options = options,
-                    incomeOptions = incomeOptions,
-                    transferOptions = transferOptions,
-                    lendingOptions = lendingOptions,
-                    onUpdateTransferSourceAccount = { dispatch(P503UiEvent.UpdateTransferSourceAccount(it)) },
-                    onUpdateTransferDestinationAccount = { dispatch(P503UiEvent.UpdateTransferDestinationAccount(it)) },
-                    onUpdateTransferDestinationCredit = { dispatch(P503UiEvent.UpdateTransferDestinationCredit(it)) },
-                    onUpdateTransferFee = { dispatch(P503UiEvent.UpdateTransferFee(it)) },
-                    onUpdateTransferFeeCategory = { dispatch(P503UiEvent.UpdateTransferFeeCategory(it)) },
-                    onUpdateLendCounterparty = { dispatch(P503UiEvent.UpdateLendCounterparty(it)) },
-                    onUpdateLendFundingAccount = { dispatch(P503UiEvent.UpdateLendFundingAccount(it)) },
-                    onUpdateLendAmount = { dispatch(P503UiEvent.UpdateLendAmount(it)) },
-                    onUpdateCollectCounterparty = { dispatch(P503UiEvent.UpdateCollectCounterparty(it)) },
-                    onUpdateCollectDestinationAccount = { dispatch(P503UiEvent.UpdateCollectDestinationAccount(it)) },
-                    onUpdateCollectTotal = { dispatch(P503UiEvent.UpdateCollectTotal(it)) },
-                    onUpdateCollectPrincipal = { dispatch(P503UiEvent.UpdateCollectPrincipal(it)) },
-                    onUpdateCollectInterest = { dispatch(P503UiEvent.UpdateCollectInterest(it)) },
-                    onUpdateCollectInterestCategory = { dispatch(P503UiEvent.UpdateCollectInterestCategory(it)) },
-                    validation = validation,
-                    currency = resolvedCurrency(current.draft),
-                    ledgerClock = ledger.ledgerClock,
-                    parseOccurredAt = ledger.parseOccurredAt,
-                    onUpdateAmount = { dispatch(P503UiEvent.UpdateAmount(it)) },
-                    onUpdatePaymentAccount = { dispatch(P503UiEvent.UpdatePaymentAccount(it)) },
-                    onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
-                    onUpdateOccurredAt = { dispatch(P503UiEvent.UpdateOccurredAt(it)) },
-                    onSelectEntryType = { dispatch(P503UiEvent.SelectEntryType(it)) },
-                    onUpdateNote = { dispatch(P503UiEvent.UpdateNote(it)) },
-                    // P7-08 08.B-2 (spec section 4.1): the optional tag/merchant association.
-                    // The options come from the cached projection (never a main-thread facade read).
-                    tagMerchantOptions = cachedTagMerchantSelection,
-                    onToggleTag = { tagId ->
-                        val next = current.draft.tagIds.toMutableSet()
-                        if (!next.add(tagId)) next.remove(tagId)
-                        dispatch(P503UiEvent.UpdateTagSelection(next))
-                    },
-                    onSelectMerchant = { merchantId -> dispatch(P503UiEvent.UpdateMerchant(merchantId)) },
-                    onUpdateReceivingAccount = { dispatch(P503UiEvent.UpdateReceivingAccount(it)) },
-                    onUpdateIncomeCategory = { dispatch(P503UiEvent.UpdateIncomeCategory(it)) },
-                    occurredAtText = hoistedOccurredAtText ?: (current.draft.occurredAt?.toString() ?: ""),
-                    onOccurredAtTextChange = { hoistedOccurredAtText = it },
-                    onContinue = null,
-                    banner = { P503RejectedBanner() },
-                    onClose =
-                        if (current.overview != null) {
-                            { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) }
-                        } else {
-                            null
-                        },
-                    onDialogVisibilityChanged = { editDialogOpen = it },
-                )
-            is P503AppState.InfrastructureFailure ->
-                when (current.context) {
-                    InfrastructureFailureContext.READ -> {
-                        val retryRefresh = {
-                            dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.RetryRefresh }, ::dispatch) {
-                                coordinator.retryRefresh(current)
-                            }
-                        }
-                        // F1 (spec 4.3/C04, table 6.2a): a monthly read failure keeps the already
-                        // rendered month visible next to the explicit failure banner instead of
-                        // replacing the whole HOME/ANALYSIS surface with the bare failure page.
-                        // The retained surface is deliberately read-only: while the READ failure
-                        // stands the reducer absorbs every interaction except the retry, so no
-                        // affordance is left dead. `monthlyOverview == null` (every pre-P7-03 READ
-                        // failure) keeps the bare recoverable page and its exact retry semantics.
-                        val retained = retainedReadFailureOverview(current)
-                        if (retained != null) {
-                            P503RetainedOverviewFailureScreen(
-                                overview = retained,
-                                showMonthlyRegion = ledgerViewWired,
-                                resolvedCurrentMonth = resolvedCurrentMonth,
-                                monthlyTrend = monthlyTrend,
-                                entryRows = ledgerEntryRows,
-                                summarizeActivity = ledger.summarizeActivity,
-                                onRetryRefresh = retryRefresh,
-                            )
-                        } else {
-                            P503InfrastructureReadScreen(onRetryRefresh = retryRefresh)
-                        }
-                    }
-                    InfrastructureFailureContext.SUBMISSION ->
-                        P503InfrastructureSubmissionScreen(
-                            onRetry = {
-                                // Defensive (P5-04.4 I-001): verify draft/requestId before
-                                // dispatching RetrySubmission, matching the baseline guard.
-                                // The reducer's SUBMISSION branch uses checkNotNull, so the
-                                // retry entry must not dispatch a degraded event.
-                                if (current.draft == null || current.requestId == null) {
-                                    return@P503InfrastructureSubmissionScreen
-                                }
-                                dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.RetrySubmission }, ::dispatch) {
-                                    coordinator.retrySubmission(current)
-                                }
-                            },
+                    is P503AppState.AwaitingConfirmation ->
+                        P503ConfirmationScreen(
+                            draft = current.draft,
+                            currencyCode = resolvedCurrency(current.draft).code,
+                            currencyPrecision = resolvedCurrency(current.draft).precision,
+                            labels =
+                                ConfirmationLabels(
+                                    paymentAccount = current.paymentAccountLabel,
+                                    category = current.categoryLabel,
+                                    destinationAccount = current.destinationAccountLabel,
+                                    counterparty = current.counterpartyLabel,
+                                ),
                             onCancel = { dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.Cancel }, ::dispatch) },
+                            confirmEnabled = latestState.value === current,
+                            cancelEnabled = latestState.value === current,
+                            onConfirm = {
+                                dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.Confirm }, ::dispatch) {
+                                    submit(current.draft, current.requestId)
+                                }
+                            },
                         )
+                    is P503AppState.Submitting -> P503SubmittingScreen()
+                    P503AppState.Created,
+                    P503AppState.NoChange,
+                    P503AppState.Recovered,
+                    -> P503ResultScreen(current)
+                    is P503AppState.UnknownCommit ->
+                        P503UnknownCommitScreen(current) {
+                            // P5-04.3: manual re-check mirrors the RetrySubmission pattern — dispatch
+                            // the state-preserving event and run the read-only check directly.
+                            dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.RetryCommitStatusCheck }, ::dispatch) {
+                                coordinator.retryCommitStatusCheck(current)
+                            }
+                        }
+                    is P503AppState.RequestIdentityConflict ->
+                        P503EditScreen(
+                            draft = current.draft,
+                            options = options,
+                            incomeOptions = incomeOptions,
+                            transferOptions = transferOptions,
+                            lendingOptions = lendingOptions,
+                            onUpdateTransferSourceAccount = { dispatch(P503UiEvent.UpdateTransferSourceAccount(it)) },
+                            onUpdateTransferDestinationAccount = { dispatch(P503UiEvent.UpdateTransferDestinationAccount(it)) },
+                            onUpdateTransferDestinationCredit = { dispatch(P503UiEvent.UpdateTransferDestinationCredit(it)) },
+                            onUpdateTransferFee = { dispatch(P503UiEvent.UpdateTransferFee(it)) },
+                            onUpdateTransferFeeCategory = { dispatch(P503UiEvent.UpdateTransferFeeCategory(it)) },
+                            onUpdateLendCounterparty = { dispatch(P503UiEvent.UpdateLendCounterparty(it)) },
+                            onUpdateLendFundingAccount = { dispatch(P503UiEvent.UpdateLendFundingAccount(it)) },
+                            onUpdateLendAmount = { dispatch(P503UiEvent.UpdateLendAmount(it)) },
+                            onUpdateCollectCounterparty = { dispatch(P503UiEvent.UpdateCollectCounterparty(it)) },
+                            onUpdateCollectDestinationAccount = { dispatch(P503UiEvent.UpdateCollectDestinationAccount(it)) },
+                            onUpdateCollectTotal = { dispatch(P503UiEvent.UpdateCollectTotal(it)) },
+                            onUpdateCollectPrincipal = { dispatch(P503UiEvent.UpdateCollectPrincipal(it)) },
+                            onUpdateCollectInterest = { dispatch(P503UiEvent.UpdateCollectInterest(it)) },
+                            onUpdateCollectInterestCategory = { dispatch(P503UiEvent.UpdateCollectInterestCategory(it)) },
+                            validation = validation,
+                            currency = resolvedCurrency(current.draft),
+                            ledgerClock = ledger.ledgerClock,
+                            parseOccurredAt = ledger.parseOccurredAt,
+                            onUpdateAmount = { dispatch(P503UiEvent.UpdateAmount(it)) },
+                            onUpdatePaymentAccount = { dispatch(P503UiEvent.UpdatePaymentAccount(it)) },
+                            onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
+                            onUpdateOccurredAt = { dispatch(P503UiEvent.UpdateOccurredAt(it)) },
+                            onSelectEntryType = { dispatch(P503UiEvent.SelectEntryType(it)) },
+                            onUpdateNote = { dispatch(P503UiEvent.UpdateNote(it)) },
+                            // P7-08 08.B-2 (spec section 4.1): the optional tag/merchant association.
+                            // The options come from the cached projection (never a main-thread facade read).
+                            tagMerchantOptions = cachedTagMerchantSelection,
+                            onToggleTag = { tagId ->
+                                val next = current.draft.tagIds.toMutableSet()
+                                if (!next.add(tagId)) next.remove(tagId)
+                                dispatch(P503UiEvent.UpdateTagSelection(next))
+                            },
+                            onSelectMerchant = { merchantId -> dispatch(P503UiEvent.UpdateMerchant(merchantId)) },
+                            onUpdateReceivingAccount = { dispatch(P503UiEvent.UpdateReceivingAccount(it)) },
+                            onUpdateIncomeCategory = { dispatch(P503UiEvent.UpdateIncomeCategory(it)) },
+                            occurredAtText = hoistedOccurredAtText ?: (current.draft.occurredAt?.toString() ?: ""),
+                            onOccurredAtTextChange = { hoistedOccurredAtText = it },
+                            onContinue = null,
+                            banner = {
+                                P503ConflictBanner(
+                                    onAbandonConflict = { dispatch(P503UiEvent.AbandonConflict) },
+                                )
+                            },
+                            onClose =
+                                if (current.overview != null) {
+                                    { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) }
+                                } else {
+                                    null
+                                },
+                            onDialogVisibilityChanged = { editDialogOpen = it },
+                        )
+                    is P503AppState.DomainRejected ->
+                        P503EditScreen(
+                            draft = current.draft,
+                            options = options,
+                            incomeOptions = incomeOptions,
+                            transferOptions = transferOptions,
+                            lendingOptions = lendingOptions,
+                            onUpdateTransferSourceAccount = { dispatch(P503UiEvent.UpdateTransferSourceAccount(it)) },
+                            onUpdateTransferDestinationAccount = { dispatch(P503UiEvent.UpdateTransferDestinationAccount(it)) },
+                            onUpdateTransferDestinationCredit = { dispatch(P503UiEvent.UpdateTransferDestinationCredit(it)) },
+                            onUpdateTransferFee = { dispatch(P503UiEvent.UpdateTransferFee(it)) },
+                            onUpdateTransferFeeCategory = { dispatch(P503UiEvent.UpdateTransferFeeCategory(it)) },
+                            onUpdateLendCounterparty = { dispatch(P503UiEvent.UpdateLendCounterparty(it)) },
+                            onUpdateLendFundingAccount = { dispatch(P503UiEvent.UpdateLendFundingAccount(it)) },
+                            onUpdateLendAmount = { dispatch(P503UiEvent.UpdateLendAmount(it)) },
+                            onUpdateCollectCounterparty = { dispatch(P503UiEvent.UpdateCollectCounterparty(it)) },
+                            onUpdateCollectDestinationAccount = { dispatch(P503UiEvent.UpdateCollectDestinationAccount(it)) },
+                            onUpdateCollectTotal = { dispatch(P503UiEvent.UpdateCollectTotal(it)) },
+                            onUpdateCollectPrincipal = { dispatch(P503UiEvent.UpdateCollectPrincipal(it)) },
+                            onUpdateCollectInterest = { dispatch(P503UiEvent.UpdateCollectInterest(it)) },
+                            onUpdateCollectInterestCategory = { dispatch(P503UiEvent.UpdateCollectInterestCategory(it)) },
+                            validation = validation,
+                            currency = resolvedCurrency(current.draft),
+                            ledgerClock = ledger.ledgerClock,
+                            parseOccurredAt = ledger.parseOccurredAt,
+                            onUpdateAmount = { dispatch(P503UiEvent.UpdateAmount(it)) },
+                            onUpdatePaymentAccount = { dispatch(P503UiEvent.UpdatePaymentAccount(it)) },
+                            onUpdateCategory = { dispatch(P503UiEvent.UpdateCategory(it)) },
+                            onUpdateOccurredAt = { dispatch(P503UiEvent.UpdateOccurredAt(it)) },
+                            onSelectEntryType = { dispatch(P503UiEvent.SelectEntryType(it)) },
+                            onUpdateNote = { dispatch(P503UiEvent.UpdateNote(it)) },
+                            // P7-08 08.B-2 (spec section 4.1): the optional tag/merchant association.
+                            // The options come from the cached projection (never a main-thread facade read).
+                            tagMerchantOptions = cachedTagMerchantSelection,
+                            onToggleTag = { tagId ->
+                                val next = current.draft.tagIds.toMutableSet()
+                                if (!next.add(tagId)) next.remove(tagId)
+                                dispatch(P503UiEvent.UpdateTagSelection(next))
+                            },
+                            onSelectMerchant = { merchantId -> dispatch(P503UiEvent.UpdateMerchant(merchantId)) },
+                            onUpdateReceivingAccount = { dispatch(P503UiEvent.UpdateReceivingAccount(it)) },
+                            onUpdateIncomeCategory = { dispatch(P503UiEvent.UpdateIncomeCategory(it)) },
+                            occurredAtText = hoistedOccurredAtText ?: (current.draft.occurredAt?.toString() ?: ""),
+                            onOccurredAtTextChange = { hoistedOccurredAtText = it },
+                            onContinue = null,
+                            banner = { P503RejectedBanner() },
+                            onClose =
+                                if (current.overview != null) {
+                                    { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) }
+                                } else {
+                                    null
+                                },
+                            onDialogVisibilityChanged = { editDialogOpen = it },
+                        )
+                    is P503AppState.InfrastructureFailure ->
+                        when (current.context) {
+                            InfrastructureFailureContext.READ -> {
+                                val retryRefresh = {
+                                    dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.RetryRefresh }, ::dispatch) {
+                                        coordinator.retryRefresh(current)
+                                    }
+                                }
+                                // F1 (spec 4.3/C04, table 6.2a): a monthly read failure keeps the already
+                                // rendered month visible next to the explicit failure banner instead of
+                                // replacing the whole HOME/ANALYSIS surface with the bare failure page.
+                                // The retained surface is deliberately read-only: while the READ failure
+                                // stands the reducer absorbs every interaction except the retry, so no
+                                // affordance is left dead. `monthlyOverview == null` (every pre-P7-03 READ
+                                // failure) keeps the bare recoverable page and its exact retry semantics.
+                                val retained = retainedReadFailureOverview(current)
+                                if (retained != null) {
+                                    P503RetainedOverviewFailureScreen(
+                                        overview = retained,
+                                        showMonthlyRegion = ledgerViewWired,
+                                        resolvedCurrentMonth = resolvedCurrentMonth,
+                                        monthlyTrend = monthlyTrend,
+                                        entryRows = ledgerEntryRows,
+                                        summarizeActivity = ledger.summarizeActivity,
+                                        onRetryRefresh = retryRefresh,
+                                    )
+                                } else {
+                                    P503InfrastructureReadScreen(onRetryRefresh = retryRefresh)
+                                }
+                            }
+                            InfrastructureFailureContext.SUBMISSION ->
+                                P503InfrastructureSubmissionScreen(
+                                    onRetry = {
+                                        // Defensive (P5-04.4 I-001): verify draft/requestId before
+                                        // dispatching RetrySubmission, matching the baseline guard.
+                                        // The reducer's SUBMISSION branch uses checkNotNull, so the
+                                        // retry entry must not dispatch a degraded event.
+                                        if (current.draft == null || current.requestId == null) {
+                                            return@P503InfrastructureSubmissionScreen
+                                        }
+                                        dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.RetrySubmission }, ::dispatch) {
+                                            coordinator.retrySubmission(current)
+                                        }
+                                    },
+                                    onCancel = { dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.Cancel }, ::dispatch) },
+                                )
+                        }
                 }
+            }
         }
     }
 }

@@ -306,7 +306,7 @@ class P503RestoreReducerTest {
         val requestId = RequestId("request-1")
         val transactionId = com.unifiedledger.domain.TransactionId("tx-1")
         return listOf(
-            P503AppState.Ready,
+            P503AppState.Ready(),
             overview(),
             P503AppState.TransactionDetail(
                 overview = overview(),

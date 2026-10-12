@@ -98,6 +98,40 @@ internal class AndroidImportFilePickPort<Picked>(
 }
 
 /**
+ * P7-09 09.0 (spec section 6.3; D-225 Q19 P1): the SAF launcher slot shared between the
+ * process-scoped runtime holder and the Activity composition.
+ *
+ * SAF launchers MUST be registered in the Activity's composition (before it is RESUMED) and they
+ * are Activity-scoped, while the runtime owner is now PROCESS-scoped. The slot decouples the two:
+ * the composition writes its launcher functions and result deliveries here on every composition
+ * (so an Activity recreation re-points them), and the process-scoped port reads them at launch
+ * time. A null launcher is an honest "no picker registered yet" — the port then reports its
+ * existing typed launch failure rather than crashing.
+ *
+ * No platform object escapes: the slot stays in this composition root, and `common` sees only the
+ * neutral result family (spec section 2.1).
+ */
+internal class AndroidSafLaunchSlot {
+    /** Launches the import OpenDocument picker for the given MIME filters. */
+    var launchOpenDocument: ((Array<String>) -> Unit)? = null
+
+    /** Launches the backup-export CreateDocument picker for the suggested name. */
+    var launchCreateDocument: ((String) -> Unit)? = null
+
+    /** Launches the restore OpenDocument picker for the given MIME filters. */
+    var launchRestoreSource: ((Array<String>) -> Unit)? = null
+
+    /** Delivers the import picker's result back into the process-scoped pick port. */
+    var deliverOpenDocumentResult: ((Uri?) -> Unit)? = null
+
+    /** Delivers the backup CreateDocument result back into the process-scoped target port. */
+    var deliverCreateDocumentResult: ((Uri?) -> Unit)? = null
+
+    /** Delivers the restore OpenDocument result back into the process-scoped source port. */
+    var deliverRestoreSourceResult: ((Uri?) -> Unit)? = null
+}
+
+/**
  * Resolves the SAF display metadata of a picked document (D06: display/diagnostic only).
  * The query is read-only; any failure or absence resolves to honest empty metadata instead
  * of failing the pick — the bounded read is independent of display metadata, and a missing

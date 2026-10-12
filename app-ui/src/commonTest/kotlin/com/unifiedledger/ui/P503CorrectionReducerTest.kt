@@ -604,7 +604,7 @@ class P503CorrectionReducerTest {
         val draft = ManualExpenseDraft(AccountId("asset-payment-local"), null, "35.80", statisticsAt)
         val requestId = RequestId("request-1")
         return listOf(
-            P503AppState.Ready,
+            P503AppState.Ready(),
             overview(),
             detail(),
             P503AppState.ImportCandidateDetail(

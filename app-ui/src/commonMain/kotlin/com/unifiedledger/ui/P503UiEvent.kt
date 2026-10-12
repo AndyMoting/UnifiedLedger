@@ -1267,6 +1267,93 @@ sealed interface P503UiEvent {
     data class TagMerchantCommandLanded(
         val result: TagMerchantCommandResult,
     ) : P503UiEvent
+
+    // ---- P7-09 09.0 inbound navigation events (spec sections 2/3; D-225 Q19) ----
+    // Same discipline as the families above: each event has its designed effect only in its
+    // designed state, is absorbed (state-preserving) in every other state and never throws, so
+    // a late/stale dispatch can never reach `unhandled`. The family is handled centrally in the
+    // reducer, so it never ISEs anywhere.
+
+    /**
+     * The host's intent event for one inbound neutral request (spec section 2.1). State-preserving
+     * in every state: the routing DECISION belongs to the host (it alone observes the runtime
+     * readiness/quiesce facts and the current pending slot), and the decision lands as
+     * [ExternalNavigationDecisionLanded].
+     */
+    data class ExternalNavigationRequested(
+        val request: ExternalNavigationRequest,
+    ) : P503UiEvent
+
+    /**
+     * The host's landed routing decision (spec section 3). The reducer applies it to the single
+     * pending slot: [ExternalNavigationDecision.Held]/[ExternalNavigationDecision.DeferredUntilReady]
+     * set the slot (visible Busy), [ExternalNavigationDecision.RetainOrReplace] keeps the original
+     * request and carries the incoming one as `displaced` until the user explicitly decides, and
+     * [ExternalNavigationDecision.Routed] performs the Idle navigation on the overview.
+     */
+    data class ExternalNavigationDecisionLanded(
+        val decision: ExternalNavigationDecision,
+    ) : P503UiEvent
+
+    /**
+     * The user explicitly RETAINS the original held request (spec section 2.2): the incoming
+     * request is dropped, the original stays held with its visible Busy, and the current surface
+     * is untouched.
+     */
+    data object ExternalNavigationRetained : P503UiEvent
+
+    /**
+     * The user explicitly CONFIRMS the replace (spec section 2.2): the incoming request replaces
+     * the held one. Nothing about the current surface — a requestId, a confirmation snapshot, an
+     * authorization time — is rewritten by this event.
+     */
+    data object ExternalNavigationReplaced : P503UiEvent
+
+    /**
+     * The user chooses 保留当前并不切换 (spec section 3 Editing row): the held navigation is
+     * declined and the pending slot clears; the current draft is NOT overwritten.
+     */
+    data object ExternalNavigationKeptCurrent : P503UiEvent
+
+    /**
+     * The user chooses 放弃后切换 (spec section 3 Editing row): the current editable flow is
+     * discarded and the held request routes. Honoured only where a flow may be discarded
+     * (the overview and the editor); a confirmation/submitting surface absorbs it and keeps the
+     * request held — a navigation decision never silently abandons a pending commit.
+     */
+    data object ExternalNavigationDiscarded : P503UiEvent
+
+    /**
+     * P7-09 09.0 / T4 (spec sections 1.7/2.2): the host's visible Busy result for a second
+     * platform file pick that arrived while one intake pipeline was already running. The previous
+     * behavior dropped it into `-> Unit` (a silent discard); this event surfaces it as a visible
+     * Busy/待处理 strip on the overview (zero formal effect — no candidate, no write).
+     */
+    data object ImportIntakeBusyLanded : P503UiEvent
+
+    /** Dismisses the visible Busy strip (the user acknowledged it). */
+    data object DismissExternalNavigationBusy : P503UiEvent
+
+    // ---- P7-09 09.A share-import closed loop (spec sections 2.3/4; D-225) ----
+    // The held share that validated into `OpenImport(deliveryId)` is consumed by the format
+    // selection: the existing bounded read + intake pipeline runs, and this event clears the
+    // single pending slot on the surface that held the share (ZERO formal effect of its own — the
+    // pipeline's own result lands separately). Absorbed everywhere unchanged.
+
+    /**
+     * P7-09 09.A (spec sections 2.3/4; invariant 3): the held share's source was taken and the
+     * EXISTING intake pipeline is running. Clears the pending slot on the sharing surface (the
+     * request is consumed); a slot not holding the awaiting-format share is untouched.
+     */
+    data object ShareImportConsumed : P503UiEvent
+
+    /**
+     * P7-09 09.A (spec section 4; invariant 5): the closed loop could not read the share (grant
+     * expired/revoked, read failure, over-16 MiB, or a missing source after process death). Clears
+     * the pending slot AND lands the typed re-share prompt ([ExternalNavigationHoldReason
+     * .IMPORT_SOURCE_UNAVAILABLE]) as a visible strip — never a silent drop, zero formal effect.
+     */
+    data object ShareImportReShareLanded : P503UiEvent
 }
 
 /**

@@ -224,7 +224,7 @@ class P503AnnotationReducerTest {
             )
         val states =
             listOf<P503AppState>(
-                P503AppState.Ready,
+                P503AppState.Ready(),
                 overviewState,
                 P503AppState.RequestIdentityConflict(expenseDraft(), requestId, currentState, P503Tab.HOME),
                 P503AppState.DomainRejected(expenseDraft(), requestId, currentState, P503Tab.HOME),

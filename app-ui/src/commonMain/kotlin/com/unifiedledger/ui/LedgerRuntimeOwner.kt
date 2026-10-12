@@ -623,6 +623,15 @@ class LedgerLeaseScope(
     val importFilePickPort: ImportFilePickPort?
         get() = owner.facade?.importFilePickPort
 
+    /**
+     * P7-09 09.A (spec sections 2.3/4; D-225): the retained share-source port, or null when this
+     * composition root wires no share closed loop (desktop, legacy). Lease-free: taking a retained
+     * source performs no ledger work (it returns the neutral [PickedImportFile]; the bounded read
+     * still runs inside the existing pipeline's lease).
+     */
+    val shareImportSource: ShareImportSourcePort?
+        get() = owner.facade?.shareImportSource
+
     fun importDuplicateReviewIds(): ImportDuplicateReviewIds? = owner.facade?.importDuplicateReviewIds?.invoke()
 
     fun importIntakeSessionFactory(): ImportIntakeSessionIdentity? = owner.facade?.importIntakeSessionFactory?.invoke()

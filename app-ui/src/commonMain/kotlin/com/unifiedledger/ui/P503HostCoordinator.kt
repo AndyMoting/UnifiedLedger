@@ -485,7 +485,11 @@ internal class P503HostCoordinator(
         when (result) {
             is ImportFilePickResult.Picked ->
                 if (importIntakeInFlight) {
-                    ImportPickIntakeDecision.AlreadyInFlight
+                    // P7-09 09.0 / T4 (spec sections 1.7/2.2): the refused second pick must be a
+                    // VISIBLE Busy result, never a silent drop (D-225 Q19 修 AlreadyInFlight).
+                    ImportPickIntakeDecision.AlreadyInFlight(
+                        ExternalNavigationBusy(ExternalNavigationHoldReason.IMPORT_INTAKE_IN_FLIGHT),
+                    )
                 } else {
                     importIntakeInFlight = true
                     onImportPickIntake(result.file)
@@ -499,6 +503,14 @@ internal class P503HostCoordinator(
     internal fun importIntakeCompleted() {
         importIntakeInFlight = false
     }
+
+    /**
+     * P7-09 09.A fix round (B5; spec section 2.2 lines 107-108): a read-only probe of the import
+     * intake single flight, so the share closed loop can check admission BEFORE consuming the
+     * retained source (a refused relay then keeps the handle and the format slot for a retry). This
+     * never mutates the marker — the existing [handleImportPickResult] remains the sole admission.
+     */
+    internal fun importIntakeBusy(): Boolean = importIntakeInFlight
 
     /**
      * The duplicate-review single-flight (期间禁重复提交): one core review submission may be in
@@ -628,6 +640,88 @@ internal class P503HostCoordinator(
 }
 
 /**
+ * P7-09 09.0 / T4 (spec sections 1.7/2.2; D-225 Q19): the JVM-assertable seam of the host call site
+ * that turns one platform pick decision into the event the host dispatches. `P503App` is a
+ * `@Composable` with no JVM harness (the `refreshAfterP705Commit` precedent), so the branch that
+ * replaced the silent `-> Unit` drop is extracted here: [ImportPickIntakeDecision.AlreadyInFlight]
+ * MUST produce the visible Busy event (the defect this batch removes), while a started intake and
+ * a resolved non-pick produce no event of their own (the pipeline / the channel events own them).
+ */
+internal fun importPickDecisionEvent(decision: ImportPickIntakeDecision): P503UiEvent? =
+    when (decision) {
+        is ImportPickIntakeDecision.StartIntake -> null
+        is ImportPickIntakeDecision.AlreadyInFlight -> P503UiEvent.ImportIntakeBusyLanded
+        ImportPickIntakeDecision.NoPipeline -> null
+    }
+
+/**
+ * P7-09 09.0 (spec sections 2/3; D-225 Q19; P2-1 fix): the runtime facts [decideExternalNavigation]
+ * needs, observed from the P7-06 lease surface rather than hard-coded.
+ *
+ * Before the P2-1 fix the host seam hard-coded `runtimeReady = true` and only carried a caller
+ * `runtimeQuiesced`, so the `!runtimeReady` (STARTUP_NOT_READY / DeferredUntilReady) and quiesce
+ * rows of the frozen table were UNREACHABLE in production — the host never observed the runtime it
+ * was routing against. [ready] is whether the runtime has an active generation (the lease face's
+ * Ready); [quiesced] is whether a P7-06 quiesce/换库 is in progress for the active generation.
+ */
+internal data class ExternalNavigationRuntimeFacts(
+    val ready: Boolean,
+    val quiesced: Boolean,
+) {
+    companion object {
+        /**
+         * Derives the facts from the lease face in [P503App]: the owner exposes an active
+         * generation exactly while it is Ready (`LedgerLeaseScope.activeGenerationForLanding()`),
+         * and the host's own render state names an in-progress quiesce/换库. Kept here (not inline
+         * in the composable) so the mapping is JVM-assertable.
+         */
+        fun from(
+            activeGeneration: Generation?,
+            switchingRuntime: Boolean,
+        ): ExternalNavigationRuntimeFacts = ExternalNavigationRuntimeFacts(ready = activeGeneration != null, quiesced = switchingRuntime)
+    }
+}
+
+/**
+ * P7-09 09.0 (spec sections 2/3; D-225 Q19; P2-1 fix): the JVM-assertable seam of the host call site
+ * that routes one inbound neutral request. It reads the current state and the host-OBSERVED runtime
+ * facts ([facts], from [ExternalNavigationRuntimeFacts.from] over the lease face), applies the frozen
+ * routing table ([decideExternalNavigation]) and returns the ONE event that carries the decision back
+ * into the reducer. The `P503App` composable itself has no JVM harness, so this seam is where the
+ * call-site wiring is pinned — and it is the seam that makes the not-Ready / quiesced rows reachable
+ * (the P2-1 fix).
+ */
+internal fun externalNavigationDecisionEvent(
+    state: P503AppState,
+    request: ExternalNavigationRequest,
+    facts: ExternalNavigationRuntimeFacts,
+): P503UiEvent = P503UiEvent.ExternalNavigationDecisionLanded(externalNavigationDecision(state, request, facts))
+
+/**
+ * P7-09 09.A fix round (B2; spec section 2.2 line 106): the DECISION itself (not the wrapped event),
+ * so the host can both land it in the reducer AND decide whether to additionally hold it in its
+ * host-level fallback for a surface the reducer cannot carry the slot on. [externalNavigationDecisionEvent]
+ * is the event wrapper over this single decision.
+ */
+internal fun externalNavigationDecision(
+    state: P503AppState,
+    request: ExternalNavigationRequest,
+    facts: ExternalNavigationRuntimeFacts,
+    // P7-09 09.A fix round (B2): the caller may pass the EFFECTIVE existing pending (the reducer's
+    // slot OR the host fallback hold on a surface that cannot carry the slot), so a second request
+    // arriving while one is host-held hits the frozen RetainOrReplace row instead of silently
+    // displacing the first.
+    existingPending: PendingExternalNavigation? = state.pendingExternalNavigationSlot(),
+): ExternalNavigationDecision =
+    decideExternalNavigation(
+        state = state,
+        request = request,
+        runtimeReady = facts.ready,
+        runtimeQuiesced = facts.quiesced,
+        existingPending = existingPending,
+    )
+
+/**
  * A-PERF (P7-04 read-governance batch, spec section 2.3, D-A ruling): the pure decision
  * skeleton of the cached authoritative catalog snapshot's background loading. Non-`@Composable`
  * and stateless of Compose so the single-flight admission and the stale-merge contract are
@@ -743,16 +837,28 @@ internal fun consumeRetainedIntentAfterRefresh(
 
 /**
  * P7-04.C: the host decision for one platform pick result. [StartIntake] runs the bounded read +
- * intake pipeline (the injected callback), [AlreadyInFlight] drops a concurrent second pick, and
- * [NoPipeline] means the pick itself resolved (cancellation or typed platform failure) with zero
- * pipeline work.
+ * intake pipeline (the injected callback), [AlreadyInFlight] reports a concurrent second pick that
+ * the single-flight guard refused, and [NoPipeline] means the pick itself resolved (cancellation
+ * or typed platform failure) with zero pipeline work.
+ *
+ * P7-09 09.0 / T4 (spec sections 1.7/2.2; D-225): [AlreadyInFlight] is no longer a silent drop.
+ * It carries the visible [ExternalNavigationBusy] the host must land on the overview, so the
+ * second pick becomes a visible Busy/待处理 result with zero formal effect (the frozen
+ * 禁止静默丢弃 rule). [NoPipeline] stays a zero-diagnostic outcome: a cancellation or a typed
+ * launch failure is not a blocked operation and surfaces nothing.
  */
 internal sealed interface ImportPickIntakeDecision {
     data class StartIntake(
         val file: PickedImportFile,
     ) : ImportPickIntakeDecision
 
-    data object AlreadyInFlight : ImportPickIntakeDecision
+    /**
+     * A concurrent second pick was refused by the single-flight guard. The host MUST land
+     * [busy] as a visible result; dropping it into `-> Unit` is the defect this batch removes.
+     */
+    data class AlreadyInFlight(
+        val busy: ExternalNavigationBusy,
+    ) : ImportPickIntakeDecision
 
     data object NoPipeline : ImportPickIntakeDecision
 }

@@ -188,7 +188,7 @@ class P503ImportReviewReducerTest {
         val draft = ManualExpenseDraft(AccountId("asset-payment-local"), null, "35.80", occurredAt)
         val requestId = RequestId("request-1")
         return listOf(
-            P503AppState.Ready,
+            P503AppState.Ready(),
             overview(),
             P503AppState.TransactionDetail(overview(), P503Tab.HOME, TransactionId("tx-1"), TransactionDetailResult.NotFound),
             detail(),
