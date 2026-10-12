@@ -150,6 +150,11 @@ class P503LedgerFacade(
     val importFileIntake: ImportFileIntakePort? = null,
     val importPlatformKind: ImportPlatformKind? = null,
     val importIntakeSessionFactory: () -> ImportIntakeSessionIdentity? = { null },
+    // P7-09 09.A share-import closed loop (spec sections 2.3/4; D-225): the port that yields the
+    // RETAINED share source for an opaque `deliveryId` (no `Uri` crosses this boundary). Plain
+    // nullable default so every legacy construction and the desktop root keep compiling with the
+    // closed loop simply absent; the Android root implements it from its process-scoped registry.
+    val shareImportSource: ShareImportSourcePort? = null,
     // P7-04.C (D-146; spec sections 4.5/6.1): the import review read surface (the three read use
     // cases over the fail-loud read port), the core duplicate-review use case, its per-intent id
     // mint (requestId/reviewId/historyId, fresh UUIDv7 per review intent, R-Q09-2), and the

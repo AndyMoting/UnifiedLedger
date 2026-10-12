@@ -1,6 +1,7 @@
 package com.unifiedledger.android
 
 import android.content.Context
+import android.net.Uri
 import com.unifiedledger.ui.ExternalNavigationChannel
 import com.unifiedledger.ui.LedgerLeaseScope
 import java.util.concurrent.atomic.AtomicBoolean
@@ -50,10 +51,18 @@ internal class LedgerProcessHolder(
      * opaque UUID source.
      */
     val inboundIntake: ProcessInboundNavigationIntake = ProcessInboundNavigationIntake { java.util.UUID.randomUUID().toString() },
+    /**
+     * P7-09 09.A closed loop (spec sections 2.3/4; D-225; invariant 2): the PROCESS-scoped registry of
+     * the accepted share's platform `Uri`, keyed by the neutral `deliveryId`. It lives here (not on
+     * the Activity) so a cold-start share's retained handle survives an Activity recreation; the
+     * composition root reads it through [AndroidShareImportSourcePort] on the later format choice. The
+     * handle is never persisted (D-146).
+     */
+    val shareImportRegistry: ShareImportSourceRegistry<Uri> = ShareImportSourceRegistry(),
 ) {
     /** The process's single startup controller; built exactly once. */
     val controller: AndroidStartupController by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        buildAndroidStartupController(applicationContext, safSlot)
+        buildAndroidStartupController(applicationContext, safSlot, shareImportRegistry)
     }
 
     private val startedOnce = AtomicBoolean(false)

@@ -167,6 +167,7 @@ import com.unifiedledger.ui.PointerRecoveryDiscardResult
 import com.unifiedledger.ui.RestoreHostWiring
 import com.unifiedledger.ui.RestoreIsolatedDatabasePort
 import com.unifiedledger.ui.RestorePreflightUseCase
+import com.unifiedledger.ui.ShareImportSourcePort
 import com.unifiedledger.ui.UuidV7ImportCommitIdSource
 import com.unifiedledger.ui.importCreditRefundOriginalExpenseProvider
 import com.unifiedledger.ui.isUsableSqliteMainFile
@@ -886,9 +887,13 @@ internal fun openAndroidStableStorageLedger(
     importFilePickPort: AndroidImportFilePickPort<Uri>,
     importPickChannel: ImportFilePickResultChannel,
     openDriver: (String) -> AndroidLedgerDatabaseHandle = { name -> createAndroidLedgerDatabase(context, name) },
+    // P7-09 09.A (spec sections 2.3/4; D-225): the retained-share source port threaded to the graph
+    // build (the facade's closed-loop port). Defaulted null so every pre-P7-09.A call site keeps
+    // compiling; the product root passes the process-scoped port.
+    shareImportSource: ShareImportSourcePort? = null,
 ): CloseableLedgerGraph =
     withAndroidStableStorageOpenLock {
-        openAndroidStableStorageLedgerLocked(context, importFilePickPort, importPickChannel, openDriver)
+        openAndroidStableStorageLedgerLocked(context, importFilePickPort, importPickChannel, openDriver, shareImportSource)
     }
 
 /** The body of [openAndroidStableStorageLedger]; the caller holds the process-wide open lock. */
@@ -897,6 +902,7 @@ private fun openAndroidStableStorageLedgerLocked(
     importFilePickPort: AndroidImportFilePickPort<Uri>,
     importPickChannel: ImportFilePickResultChannel,
     openDriver: (String) -> AndroidLedgerDatabaseHandle,
+    shareImportSource: ShareImportSourcePort? = null,
 ): CloseableLedgerGraph {
     val databasePath = context.getDatabasePath(LEGACY_ANDROID_DATABASE_NAME)
     val (hostDirectory, legacyMainFile) = androidStableStoragePaths(databasePath)
@@ -911,7 +917,7 @@ private fun openAndroidStableStorageLedgerLocked(
         legacyMainFile = legacyMainFile,
         closeGraph = { graph -> graph.close() },
     ) { target ->
-        buildAndroidGenerationGraph(fileSystem, target, importFilePickPort, importPickChannel, openDriver)
+        buildAndroidGenerationGraph(fileSystem, target, importFilePickPort, importPickChannel, openDriver, shareImportSource)
     }
 }
 
@@ -934,13 +940,14 @@ internal fun openAndroidExplicitGeneration(
     importPickChannel: ImportFilePickResultChannel,
     generation: Int,
     openDriver: (String) -> AndroidLedgerDatabaseHandle = { name -> createAndroidLedgerDatabase(context, name) },
+    shareImportSource: ShareImportSourcePort? = null,
 ): CloseableLedgerGraph =
     withAndroidStableStorageOpenLock {
         val databasePath = context.getDatabasePath(LEGACY_ANDROID_DATABASE_NAME)
         val (hostDirectory, _) = androidStableStoragePaths(databasePath)
         val fileSystem = AndroidLedgerFileSystem()
         val layout = ledgerStorageLayout(fileSystem, hostDirectory)
-        openAndroidExplicitGenerationWith(fileSystem, layout, generation, importFilePickPort, importPickChannel, openDriver)
+        openAndroidExplicitGenerationWith(fileSystem, layout, generation, importFilePickPort, importPickChannel, openDriver, shareImportSource)
     }
 
 /**
@@ -956,9 +963,10 @@ internal fun openAndroidExplicitGenerationWith(
     importFilePickPort: AndroidImportFilePickPort<Uri>,
     importPickChannel: ImportFilePickResultChannel,
     openDriver: (String) -> AndroidLedgerDatabaseHandle,
+    shareImportSource: ShareImportSourcePort? = null,
 ): CloseableLedgerGraph =
     openExplicitGeneration(fileSystem, layout, generation) { target ->
-        buildAndroidGenerationGraph(fileSystem, target, importFilePickPort, importPickChannel, openDriver)
+        buildAndroidGenerationGraph(fileSystem, target, importFilePickPort, importPickChannel, openDriver, shareImportSource)
     }
 
 /**
@@ -973,6 +981,7 @@ private fun buildAndroidGenerationGraph(
     importFilePickPort: AndroidImportFilePickPort<Uri>,
     importPickChannel: ImportFilePickResultChannel,
     openDriver: (String) -> AndroidLedgerDatabaseHandle,
+    shareImportSource: ShareImportSourcePort? = null,
 ): CloseableLedgerGraph {
     // P7-06 06.1 fix (review Fix 7; spec section 4.5): the AndroidSqliteDriver creates on
     // open, so a NON-fresh target must be re-guarded here exactly like the desktop root's JDBC
@@ -993,7 +1002,7 @@ private fun buildAndroidGenerationGraph(
     // androidGenerationDriverName returns it unchanged and openDriver receives an absolute path.
     val handle = openDriver(androidGenerationDriverName(target.mainFile))
     return try {
-        buildLedgerGraph(handle, importFilePickPort, importPickChannel, AndroidBackupSnapshotPort(handle))
+        buildLedgerGraph(handle, importFilePickPort, importPickChannel, AndroidBackupSnapshotPort(handle), shareImportSource)
     } catch (failure: Exception) {
         handle.close()
         throw failure
@@ -1040,6 +1049,7 @@ private fun buildLedgerGraph(
     importFilePickPort: AndroidImportFilePickPort<Uri>,
     importPickChannel: ImportFilePickResultChannel,
     snapshotPort: BackupSnapshotPort? = null,
+    shareImportSource: ShareImportSourcePort? = null,
 ): CloseableLedgerGraph {
     // D-203 startup trace: graph assembly window (includes the catalog bootstrap below).
     StartupTrace.emit("graph.assemble begin")
@@ -1398,6 +1408,10 @@ private fun buildLedgerGraph(
             importFileIntake = importFileIntake,
             importPlatformKind = ImportPlatformKind.ANDROID,
             importIntakeSessionFactory = { ImportIntakeSessionIdentity.forFilePick(importIntakeGenerator) },
+            // P7-09 09.A closed loop (spec sections 2.3/4; D-225): the retained-share source port —
+            // the Android implementation over the process-scoped registry. Null on pre-P7-09.A call
+            // sites that build a graph without a share surface (tests/instrumented helpers).
+            shareImportSource = shareImportSource,
             // P7-04.C: the review read surface + the duplicate-review use case + its id mint +
             // the shared pick-result channel (the SAF onResult above delivers into it).
             baseQueryImportReviewRows = QueryImportReviewRows(importReviewReadAdapter),
@@ -1530,8 +1544,13 @@ internal fun mainThreadPoster(): (() -> Unit) -> Unit {
 internal fun buildAndroidStartupController(
     context: android.content.Context,
     safSlot: AndroidSafLaunchSlot,
+    // P7-09 09.A (spec sections 2.3/4; D-225): the process-scoped retained-share registry the
+    // composition root reads through the [ShareImportSourcePort]. Defaulted so a test/helper that
+    // builds a controller without a share surface keeps compiling (the closed loop is then absent).
+    shareImportRegistry: ShareImportSourceRegistry<Uri> = ShareImportSourceRegistry(),
 ): AndroidStartupController {
     val importPickChannel = ImportFilePickResultChannel()
+    val shareImportSource = androidShareImportSourcePort(shareImportRegistry, context.contentResolver)
     val importFilePickPort =
         AndroidImportFilePickPort<Uri>(
             launchOpenDocument = { mimeFilters -> safSlot.launchOpenDocument?.invoke(mimeFilters) ?: throw IllegalStateException("no import SAF launcher registered") },
@@ -1570,10 +1589,10 @@ internal fun buildAndroidStartupController(
         )
     return AndroidStartupController(
         openDatabase = {
-            openAndroidStableStorageLedger(context, importFilePickPort, importPickChannel)
+            openAndroidStableStorageLedger(context, importFilePickPort, importPickChannel, shareImportSource = shareImportSource)
         },
         openExplicitGeneration = { generation ->
-            openAndroidExplicitGeneration(context, importFilePickPort, importPickChannel, generation)
+            openAndroidExplicitGeneration(context, importFilePickPort, importPickChannel, generation, shareImportSource = shareImportSource)
         },
         startScope = processMainDispatcher(),
         backgroundDispatcher = Dispatchers.IO,

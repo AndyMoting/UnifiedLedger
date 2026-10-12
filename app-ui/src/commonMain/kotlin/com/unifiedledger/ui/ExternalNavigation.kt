@@ -69,6 +69,15 @@ enum class ExternalNavigationHoldReason {
      */
     IMPORT_FORMAT_REQUIRED,
 
+    /**
+     * P7-09 09.A closed loop (spec section 4; invariant 5): the retained share source could not be
+     * read — the temporary content grant expired/was revoked before the read, a read failed, the
+     * file exceeded the 16 MiB bound, or the process died and the source is gone. This is the
+     * typed re-share prompt's reason: the pending slot is cleared, zero formal effect, and the user
+     * is told to share the file again (never a silent drop).
+     */
+    IMPORT_SOURCE_UNAVAILABLE,
+
     /** The request's target is not routable from the current state in this slice. */
     UNROUTABLE_TARGET,
 }
@@ -315,4 +324,17 @@ internal fun retainPendingExternalNavigation(pending: PendingExternalNavigation)
 internal fun replacePendingExternalNavigation(pending: PendingExternalNavigation): PendingExternalNavigation {
     val incoming = pending.displaced ?: return pending.copy(awaitingUserDecision = false)
     return PendingExternalNavigation(request = incoming, holdReason = pending.holdReason)
+}
+
+/**
+ * P7-09 09.A (spec sections 2.3/4; invariant 3): the closed loop's SOURCE step maps the taken
+ * file (or its absence) to the ONE event the reducer consumes. A non-null take consumes the held
+ * share ([P503UiEvent.ShareImportConsumed]); a null take is the typed re-share case
+ * ([P503UiEvent.ShareImportReShareLanded]). The pipeline is started by the host in BOTH branches
+ * only for a non-null take — this mapping never fabricates a read result.
+ */
+internal fun shareImportTakeEvent(decision: ShareImportTakeDecision): P503UiEvent =
+    when (decision) {
+        is ShareImportTakeDecision.StartIntake -> P503UiEvent.ShareImportConsumed
+        ShareImportTakeDecision.ReShareRequired -> P503UiEvent.ShareImportReShareLanded
 }

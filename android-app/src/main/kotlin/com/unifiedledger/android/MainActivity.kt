@@ -91,6 +91,14 @@ class MainActivity : ComponentActivity() {
             } else {
                 holder.inboundIntake.hotReceiptRequest(snapshot)
             } ?: return
+        // P7-09 09.A closed loop (spec sections 2.3/4; D-225; invariant 2): the accepted share's
+        // platform Uri is retained IN-PROCESS, keyed by the neutral deliveryId, so the later format
+        // selection can read the SAME stream. It is NEVER persisted, NEVER written to disk/env and
+        // takePersistableUriPermission is NEVER called (D-146); the composition root's
+        // AndroidShareImportSourcePort takes (and thereby releases) it on read/abandon.
+        if (request is com.unifiedledger.ui.ExternalNavigationRequest.OpenImport) {
+            retainedShareUri(intent)?.let { uri -> holder.shareImportRegistry.retain(request.deliveryId, uri) }
+        }
         StartupTrace.emit("entry.inboundIntake kind=${request::class.simpleName}")
         holder.externalNavigationChannel.deliver(request)
     }

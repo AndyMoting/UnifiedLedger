@@ -1333,6 +1333,27 @@ sealed interface P503UiEvent {
 
     /** Dismisses the visible Busy strip (the user acknowledged it). */
     data object DismissExternalNavigationBusy : P503UiEvent
+
+    // ---- P7-09 09.A share-import closed loop (spec sections 2.3/4; D-225) ----
+    // The held share that validated into `OpenImport(deliveryId)` is consumed by the format
+    // selection: the existing bounded read + intake pipeline runs, and this event clears the
+    // single pending slot on the surface that held the share (ZERO formal effect of its own — the
+    // pipeline's own result lands separately). Absorbed everywhere unchanged.
+
+    /**
+     * P7-09 09.A (spec sections 2.3/4; invariant 3): the held share's source was taken and the
+     * EXISTING intake pipeline is running. Clears the pending slot on the sharing surface (the
+     * request is consumed); a slot not holding the awaiting-format share is untouched.
+     */
+    data object ShareImportConsumed : P503UiEvent
+
+    /**
+     * P7-09 09.A (spec section 4; invariant 5): the closed loop could not read the share (grant
+     * expired/revoked, read failure, over-16 MiB, or a missing source after process death). Clears
+     * the pending slot AND lands the typed re-share prompt ([ExternalNavigationHoldReason
+     * .IMPORT_SOURCE_UNAVAILABLE]) as a visible strip — never a silent drop, zero formal effect.
+     */
+    data object ShareImportReShareLanded : P503UiEvent
 }
 
 /**

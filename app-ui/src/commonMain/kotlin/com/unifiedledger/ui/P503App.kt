@@ -163,6 +163,10 @@ internal fun ExternalNavigationBusyStrip(
     onRetain: (() -> Unit)?,
     onReplace: (() -> Unit)?,
     onDiscard: (() -> Unit)?,
+    // P7-09 09.A (spec section 2.3): while a held share awaits its format choice, the strip offers
+    // the EXISTING capability-matrix formats. Defaults keep every other call site compiling.
+    formatChoices: List<ImportFormatEntry> = emptyList(),
+    onSelectFormat: ((ImportFormatId) -> Unit)? = null,
 ) {
     Surface(
         color = MaterialTheme.colorScheme.secondaryContainer,
@@ -176,6 +180,19 @@ internal fun ExternalNavigationBusyStrip(
                 text = externalNavigationBusyText(busy),
                 style = MaterialTheme.typography.bodyMedium,
             )
+            if (onSelectFormat != null && formatChoices.isNotEmpty()) {
+                // One choice per matrix format (不静默省略). A unit still pending device verification
+                // is not offered as a live pick (R-Q08-3), matching the IMPORT tab's honest matrix.
+                Row {
+                    formatChoices.forEach { entry ->
+                        if (entry.availability == com.unifiedledger.application.ImportFormatAvailability.AVAILABLE) {
+                            TextButton(onClick = { onSelectFormat(entry.descriptor.identifier) }) {
+                                Text(entry.descriptor.displayName)
+                            }
+                        }
+                    }
+                }
+            }
             Row {
                 if (onRetain != null) {
                     TextButton(onClick = onRetain) { Text("保留原请求") }
@@ -206,6 +223,7 @@ internal fun externalNavigationBusyText(busy: ExternalNavigationBusy): String =
         ExternalNavigationHoldReason.IMPORT_INTAKE_IN_FLIGHT -> "已有文件正在导入，请稍候。"
         ExternalNavigationHoldReason.RUNTIME_QUIESCED -> "本地账本正在切换，外部请求已暂缓。"
         ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED -> "已收到分享文件，请选择账单格式后导入。"
+        ExternalNavigationHoldReason.IMPORT_SOURCE_UNAVAILABLE -> "分享的文件已无法读取（授权已过期或进程已重启），请重新分享后再导入。"
         ExternalNavigationHoldReason.UNROUTABLE_TARGET -> "外部请求暂无法打开，已暂存。"
     }
 
@@ -1680,14 +1698,23 @@ fun P503App(
      * pick (`ImportIntakeSessionIdentity.forFilePick`, R-Q09-1) and the pipeline result returns
      * as one `ImportFileIntakeResult` with the re-read review list.
      */
-    fun runImportIntakePipeline(file: PickedImportFile) {
+    fun runImportIntakePipeline(
+        file: PickedImportFile,
+        // P7-09 09.A (spec section 4; invariant 5): true when this run came from the SHARE closed
+        // loop. A read-failure/over-limit outcome then ALSO surfaces the typed re-share prompt (the
+        // source's short-lived grant is gone; the user must re-share, never a silent drop). The SAF
+        // pick path leaves it `false` and keeps its existing typed banner only.
+        sharePath: Boolean = false,
+    ) {
         val format = pendingImportFormat
         val platform = ledger.importPlatformKind
         val session = ledger.importIntakeSessionFactory()
         val intakeWired = ledger.probe { it.importFileIntake } != null
         if (format == null || !intakeWired || platform == null || session == null) {
             // No pipeline can run (unwired surface or a lost format slot): release the coordinator's
-            // single-flight slot so a later pick is not permanently blocked.
+            // single-flight slot so a later pick is not permanently blocked. On the share path this
+            // is also the typed re-share case (nothing was read).
+            if (sharePath) dispatch(P503UiEvent.ShareImportReShareLanded)
             coordinator.importIntakeCompleted()
             return
         }
@@ -1730,7 +1757,8 @@ fun P503App(
                 }
                 if (outcome !is LeaseOutcome.Completed) {
                     // The lease could not be acquired: surface the typed read-failure outcome
-                    // rather than a silently dropped pick.
+                    // rather than a silently dropped pick (and on the share path, the re-share cue).
+                    if (sharePath) dispatch(P503UiEvent.ShareImportReShareLanded)
                     dispatch(
                         P503UiEvent.ImportFileIntakeResult(
                             ImportIntakeSessionSummary(file.displayName, session.inputRef, ImportIntakePipelineOutcome.ReadFailed(ImportPickReadFailure.STREAM_READ_FAILED)),
@@ -1738,6 +1766,12 @@ fun P503App(
                         ),
                     )
                     return@launch
+                }
+                // P7-09 09.A: on the share path a read failure (expired/revoked grant, mid-read
+                // failure, over-16 MiB) additionally lands the typed re-share prompt — zero formal
+                // effect, never a silent drop.
+                if (sharePath && shareImportReShareRequired(outcome.value.first)) {
+                    dispatch(P503UiEvent.ShareImportReShareLanded)
                 }
                 dispatch(
                     P503UiEvent.ImportFileIntakeResult(
@@ -1761,17 +1795,34 @@ fun P503App(
      * P7-09 09.0 / T4 (spec sections 1.7/2.2; D-225): a refused second pick is NO LONGER a silent
      * `-> Unit` drop — it lands the visible Busy result on the overview (zero formal effect).
      */
-    fun handleImportPickResult(result: ImportFilePickResult) {
+    fun handleImportPickResult(
+        result: ImportFilePickResult,
+        // P7-09 09.A (spec section 4; invariant 5): true when the pick came from the SHARE closed
+        // loop, so a read failure/over-limit additionally surfaces the typed re-share prompt. The
+        // SAF pick channel passes `false` (its default) and keeps its existing typed banner only.
+        sharePath: Boolean = false,
+    ) {
         when (result) {
             is ImportFilePickResult.Picked -> dispatch(P503UiEvent.ImportFilePicked(result.file))
             ImportFilePickResult.Cancelled -> dispatch(P503UiEvent.ImportFilePickCancelled)
             is ImportFilePickResult.Failed -> dispatch(P503UiEvent.ImportFilePickFailed(result.reason))
         }
         when (val decision = coordinator.handleImportPickResult(result)) {
-            is ImportPickIntakeDecision.StartIntake -> runImportIntakePipeline(decision.file)
+            is ImportPickIntakeDecision.StartIntake -> runImportIntakePipeline(decision.file, sharePath = sharePath)
             // P7-09 09.0 / T4: the refused second pick lands its visible Busy event (the seam
             // returns exactly this event for AlreadyInFlight), never a silent `-> Unit` drop.
-            is ImportPickIntakeDecision.AlreadyInFlight -> importPickDecisionEvent(decision)?.let(::dispatch)
+            // P7-09 09.A: on the share path the single-flight refusal is a VISIBLE Busy (the honest
+            // "已有文件正在导入" cause), NOT the re-share prompt — the cause is a concurrent intake,
+            // not an unreadable source. The seeded format slot is cleared so it cannot mis-associate
+            // a later SAF pick (the retained source was already taken and cannot be re-admitted; the
+            // path is practically unreachable — P704C-QUAL-03 — and disclosed, not silently dropped).
+            is ImportPickIntakeDecision.AlreadyInFlight ->
+                if (sharePath) {
+                    pendingImportFormat = null
+                    importPickDecisionEvent(decision)?.let(::dispatch)
+                } else {
+                    importPickDecisionEvent(decision)?.let(::dispatch)
+                }
             ImportPickIntakeDecision.NoPipeline -> Unit
         }
     }
@@ -1799,6 +1850,38 @@ fun P503App(
     ) {
         dispatch(P503UiEvent.ExternalNavigationRequested(request))
         dispatch(externalNavigationDecisionEvent(latestState.value, request, facts))
+    }
+
+    /**
+     * P7-09 09.A share-import CLOSED LOOP (spec sections 2.3/4; D-225; batch invariant 3): the
+     * format was chosen for the HELD share. Unlike [startImportFilePick] this does NOT launch a
+     * fresh SAF picker — it reads the RETAINED shared stream through the existing pipeline. The
+     * retained source is taken by the held request's `deliveryId`; a non-null source seeds the
+     * EXISTING `pendingImportFormat` slot and runs [runImportIntakePipeline], a null source is the
+     * typed re-share case. Either way the pending slot is cleared and no format-less request is ever
+     * delivered into the old pick channel (spec section 2.3 line 126).
+     */
+    fun selectShareImportFormat(format: ExternalNavigationRequest.OpenImport, formatId: ImportFormatId) {
+        val port = ledger.shareImportSource
+        val decision = shareImportTakeDecision(port?.take(format.deliveryId))
+        // The re-share case releases any retained entry (idempotent no-op when already gone) and
+        // lands the typed prompt; the consumed case clears the slot in the reducer and, for a real
+        // source, runs the pipeline. Zero formal effect on the re-share branch.
+        if (decision is ShareImportTakeDecision.ReShareRequired) {
+            port?.release(format.deliveryId)
+        }
+        dispatch(shareImportTakeEvent(decision))
+        when (decision) {
+            is ShareImportTakeDecision.StartIntake -> {
+                // Seed the EXISTING format slot, then run the EXISTING pipeline through the SAME
+                // host admission the SAF pick uses (single reader, single parser, single intake, the
+                // existing `importIntakeInFlight` single-flight — invariant 3). A concurrent second
+                // intake is refused with the visible Busy, never a second pipeline.
+                pendingImportFormat = formatId
+                handleImportPickResult(ImportFilePickResult.Picked(decision.file), sharePath = true)
+            }
+            ShareImportTakeDecision.ReShareRequired -> Unit
+        }
     }
 
     /**
@@ -3478,12 +3561,21 @@ fun P503App(
         // blocks the underlying surface (a held request is a routing decision, not a modal).
         Column(Modifier.fillMaxSize()) {
             state.pendingExternalNavigationSlot()?.let { pending ->
+                // P7-09 09.A closed loop (spec section 2.3): while the held request is a share
+                // awaiting its format, the strip offers the EXISTING capability-matrix formats. The
+                // selection runs the closed loop (take the retained stream → the existing pipeline);
+                // any other held request renders no format choices.
+                val awaitingShare = pending.awaitsShareImportFormat()
+                val share = pending.request as? ExternalNavigationRequest.OpenImport
+                val sharePlatform = ledger.importPlatformKind
                 ExternalNavigationBusyStrip(
                     busy = ExternalNavigationBusy(pending.holdReason),
                     onKeepCurrent = { dispatch(P503UiEvent.ExternalNavigationKeptCurrent) },
                     onRetain = if (pending.awaitingUserDecision) ({ dispatch(P503UiEvent.ExternalNavigationRetained) }) else null,
                     onReplace = if (pending.awaitingUserDecision) ({ dispatch(P503UiEvent.ExternalNavigationReplaced) }) else null,
                     onDiscard = { dispatch(P503UiEvent.ExternalNavigationDiscarded) },
+                    formatChoices = if (awaitingShare && sharePlatform != null) importFormatEntries(sharePlatform) else emptyList(),
+                    onSelectFormat = if (awaitingShare && share != null) ({ format -> selectShareImportFormat(share, format) }) else null,
                 )
             }
             // P2-2 fix: the T4 Busy strip renders on EVERY slot surface (not only the overview), so

@@ -310,7 +310,27 @@ class P503ReducerImpl(
             // a refused second pick is visible wherever the user is (Editing/Submitting/... /Ready).
             P503UiEvent.ImportIntakeBusyLanded -> withExternalNavigationBusy(state, ExternalNavigationBusy(ExternalNavigationHoldReason.IMPORT_INTAKE_IN_FLIGHT))
             P503UiEvent.DismissExternalNavigationBusy -> withExternalNavigationBusy(state, null)
+            // P7-09 09.A share-import closed loop (spec sections 2.3/4): the held share is consumed
+            // by the format selection (the pipeline owns the result) or could not be read (typed
+            // re-share). BOTH clear the awaiting-format share's slot; the re-share branch also lands
+            // the visible prompt. Neither touches an unrelated held request (no cross-request clear).
+            P503UiEvent.ShareImportConsumed -> clearShareImportPendingSlot(state)
+            P503UiEvent.ShareImportReShareLanded ->
+                withExternalNavigationBusy(clearShareImportPendingSlot(state), ExternalNavigationBusy(ExternalNavigationHoldReason.IMPORT_SOURCE_UNAVAILABLE))
             else -> null
+        }
+
+    /**
+     * P7-09 09.A (spec sections 2.3/4; invariants 3/5): clears the single pending slot ONLY when it
+     * holds a share import still awaiting its format choice (the consumed/abandoned request). Any
+     * other held request — and every surface with no slot — is returned UNCHANGED (same instance),
+     * so a share event can never silently discard an unrelated pending navigation.
+     */
+    private fun clearShareImportPendingSlot(state: P503AppState): P503AppState =
+        if (state.pendingExternalNavigationSlot().awaitsShareImportFormat()) {
+            withPendingExternalNavigation(state) { null }
+        } else {
+            state
         }
 
     /** Sets (or clears) the visible T4 Busy on every slot surface; a non-slot surface is unchanged. */
