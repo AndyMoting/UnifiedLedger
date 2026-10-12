@@ -356,4 +356,4 @@ internal fun shareImportTakeEvent(decision: ShareImportTakeDecision): P503UiEven
     when (decision) {
         is ShareImportTakeDecision.StartIntake -> P503UiEvent.ShareImportConsumed
         ShareImportTakeDecision.ReShareRequired -> P503UiEvent.ShareImportReShareLanded
-}
+    }

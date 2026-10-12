@@ -64,8 +64,7 @@ class ShareImportSourceTest {
         registry: ShareImportSourceRegistry<String>,
         metadata: (String) -> PickedSafFileMetadata = { PickedSafFileMetadata("shared-statement.csv", null) },
         open: (String) -> InputStream? = { ByteArrayInputStream(ByteArray(0)) },
-    ): AndroidShareImportSourcePort<String> =
-        AndroidShareImportSourcePort(registry = registry, resolveMetadata = metadata, openInputStream = open)
+    ): AndroidShareImportSourcePort<String> = AndroidShareImportSourcePort(registry = registry, resolveMetadata = metadata, openInputStream = open)
 
     @Test
     fun aRetainedDeliveryYieldsAPickedFileWhoseReadIsBounded() {

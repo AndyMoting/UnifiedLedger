@@ -50,7 +50,12 @@ internal class LedgerProcessHolder(
      * recreation and the same launch Intent is never admitted twice. The mint is the product's
      * opaque UUID source.
      */
-    val inboundIntake: ProcessInboundNavigationIntake = ProcessInboundNavigationIntake { java.util.UUID.randomUUID().toString() },
+    val inboundIntake: ProcessInboundNavigationIntake =
+        ProcessInboundNavigationIntake {
+            java.util.UUID
+                .randomUUID()
+                .toString()
+        },
     /**
      * P7-09 09.A closed loop (spec sections 2.3/4; D-225; invariant 2): the PROCESS-scoped registry of
      * the accepted share's platform `Uri`, keyed by the neutral `deliveryId`. It lives here (not on

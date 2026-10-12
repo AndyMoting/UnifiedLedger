@@ -14,7 +14,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -1607,8 +1606,7 @@ internal fun buildAndroidStartupController(
  * cancels with any composition, matching the holder's process lifecycle; the state writes it
  * carries are `mutableStateOf` writes observed by whatever composition is currently attached.
  */
-internal fun processMainDispatcher(): CoroutineScope =
-    CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+internal fun processMainDispatcher(): CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
 /**
  * P3-L fix (06.B review): the pure dispatch decision of [mainThreadPoster], extracted so it is

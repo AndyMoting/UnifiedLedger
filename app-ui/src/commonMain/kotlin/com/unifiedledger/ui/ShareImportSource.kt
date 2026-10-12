@@ -79,8 +79,7 @@ internal fun shareImportRelayAllowed(intakeBusy: Boolean): Boolean = !intakeBusy
  * [ImportIntakePipelineOutcome.ReadExceedsLimit]). A successful/typed-intake outcome re-shared
  * nothing — a format rejection is not a re-share case.
  */
-internal fun shareImportReShareRequired(outcome: ImportIntakePipelineOutcome): Boolean =
-    outcome is ImportIntakePipelineOutcome.ReadFailed || outcome is ImportIntakePipelineOutcome.ReadExceedsLimit
+internal fun shareImportReShareRequired(outcome: ImportIntakePipelineOutcome): Boolean = outcome is ImportIntakePipelineOutcome.ReadFailed || outcome is ImportIntakePipelineOutcome.ReadExceedsLimit
 
 /**
  * P7-09 09.A (spec sections 2.2/2.3): whether the single pending slot currently holds a share import

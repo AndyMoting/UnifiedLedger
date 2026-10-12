@@ -114,7 +114,10 @@ class MainActivity : ComponentActivity() {
                     retainedShareUri(intent) != null
                 ) {
                     StartupTrace.emit("entry.inboundIntake kind=reHeldRefusedRepeat")
-                    holder.externalNavigationChannel.deliver(com.unifiedledger.ui.ExternalNavigationRequest.OpenImport(receipt.deliveryId))
+                    holder.externalNavigationChannel.deliver(
+                        com.unifiedledger.ui.ExternalNavigationRequest
+                            .OpenImport(receipt.deliveryId),
+                    )
                 }
             }
             return

@@ -1,9 +1,8 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.ImportFileIntakeOutcome
-import com.unifiedledger.application.ImportIntakeRecordSummary
 import com.unifiedledger.application.ImportIntakeRecordDisposition
-import com.unifiedledger.application.ImportIntakeSessionIdentity
+import com.unifiedledger.application.ImportIntakeRecordSummary
 import com.unifiedledger.application.ImportPlatformKind
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.ParseManualExpenseAmount

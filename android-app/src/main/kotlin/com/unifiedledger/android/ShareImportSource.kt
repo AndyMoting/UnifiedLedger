@@ -35,7 +35,10 @@ internal class ShareImportSourceRegistry<T> {
     private val lock = Any()
 
     /** Retains one platform handle for [deliveryId] until it is taken or released. */
-    fun retain(deliveryId: String, handle: T) {
+    fun retain(
+        deliveryId: String,
+        handle: T,
+    ) {
         synchronized(lock) {
             retained[deliveryId] = handle
             // Bounded: evict the eldest unconsumed handle beyond the cap (a leak backstop only; the

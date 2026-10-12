@@ -35,5 +35,4 @@ class UnifiedLedgerApplication : Application() {
  * runs without [UnifiedLedgerApplication] (a plain unit-test context), so callers can fall back
  * explicitly rather than assume a holder exists.
  */
-internal fun ledgerProcessHolderFor(context: Context): LedgerProcessHolder? =
-    (context.applicationContext as? UnifiedLedgerApplication)?.ledgerProcessHolder()
+internal fun ledgerProcessHolderFor(context: Context): LedgerProcessHolder? = (context.applicationContext as? UnifiedLedgerApplication)?.ledgerProcessHolder()

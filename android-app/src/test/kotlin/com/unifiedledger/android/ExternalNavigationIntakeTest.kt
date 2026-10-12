@@ -42,8 +42,7 @@ class ExternalNavigationIntakeTest {
         streamExtraIsList = streamExtraIsList,
     )
 
-    private fun rejection(result: ExternalNavigationIntakeResult): ShareIntakeRejection =
-        assertIs<ExternalNavigationIntakeResult.Rejected>(result).code
+    private fun rejection(result: ExternalNavigationIntakeResult): ShareIntakeRejection = assertIs<ExternalNavigationIntakeResult.Rejected>(result).code
 
     @Test
     fun aSingleReadableContentStreamIsAcceptedWithTheGivenDeliveryId() {
@@ -285,7 +284,12 @@ class ExternalNavigationIntakeTest {
         // P2-5: readability is decided by a NON-opening permission probe (never openInputStream). The
         // probe performs no read; the seam simply compares the permission result.
         var probed = 0
-        assertTrue(shareUriReadGranted("content://synthetic-provider/bill.csv", { probed += 1; 0 }, permissionGranted = 0))
+        assertTrue(
+            shareUriReadGranted("content://synthetic-provider/bill.csv", {
+                probed += 1
+                0
+            }, permissionGranted = 0),
+        )
         assertEquals(1, probed)
         assertEquals(false, shareUriReadGranted("content://synthetic-provider/bill.csv", { -1 }, permissionGranted = 0))
     }

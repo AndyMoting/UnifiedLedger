@@ -233,12 +233,13 @@ class ExternalNavigationReducerTest {
     @Test
     fun discardAndSwitchDropsTheDraftAndRoutesTheHeldRequest() {
         val editing =
-            P503AppState.Editing(
-                draft = expenseDraft(),
-                requestId = requestId1,
-                overview = emptyState,
-                originTab = P503Tab.HOME,
-            ).copy(pendingExternalNavigation = PendingExternalNavigation(newExpense, ExternalNavigationHoldReason.DRAFT_IN_PROGRESS))
+            P503AppState
+                .Editing(
+                    draft = expenseDraft(),
+                    requestId = requestId1,
+                    overview = emptyState,
+                    originTab = P503Tab.HOME,
+                ).copy(pendingExternalNavigation = PendingExternalNavigation(newExpense, ExternalNavigationHoldReason.DRAFT_IN_PROGRESS))
         val landed = reduce(editing, P503UiEvent.ExternalNavigationDiscarded)
         val routed = assertIs<P503AppState.Editing>(landed)
         assertEquals("", routed.draft.amountText, "the held request's fresh draft replaces the discarded one")
@@ -534,5 +535,4 @@ class ExternalNavigationReducerTest {
         val routed = assertIs<P503AppState.OverviewEmpty>(landed)
         assertNull(routed.pendingExternalNavigation)
     }
-
 }
