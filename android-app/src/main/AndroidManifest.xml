@@ -32,5 +32,33 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
+
+        <!--
+          P7-09 09.C monthly widget (D-225 Q20; spec sections 6.1/6.4). The AppWidgetProvider is a
+          BroadcastReceiver the host system drives; it is the non-composition entry that reads the
+          shared monthly snapshot through the process-scoped runtime owner's lease (spec section
+          6.3) and renders RemoteViews.
+
+          SECURITY FACE (spec section 8 open item 15): the frozen ruling for a widget provider's
+          `exported`/`android:permission` is NOT made in this batch. It is declared `exported="false"`
+          here as the conservative choice — an unexported receiver can never be triggered by an
+          unauthorized external broadcast — while the per-entry ruling and its device evidence stay
+          registered as an open item in the batch report. No `android:permission` is declared.
+
+          `APPWIDGET_UPDATE` is the system action that drives onUpdate; the toggle action is this
+          provider's own per-widget visibility broadcast. The provider info resource is the
+          appwidget-provider metadata (30-minute update period, spec section 6.4).
+        -->
+        <receiver
+            android:name=".LedgerWidgetProvider"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.unifiedledger.android.widget.ACTION_TOGGLE_AMOUNTS" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/ledger_widget_info" />
+        </receiver>
     </application>
 </manifest>
