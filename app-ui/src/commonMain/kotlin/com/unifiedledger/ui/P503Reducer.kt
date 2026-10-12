@@ -7,6 +7,7 @@ import com.unifiedledger.application.ConfirmedManualLendingResult
 import com.unifiedledger.application.ConfirmedManualTransferResult
 import com.unifiedledger.application.EntryExpressionEvaluator
 import com.unifiedledger.application.EntryFieldRetention
+import com.unifiedledger.application.EntryType
 import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerClock
@@ -88,6 +89,7 @@ class P503ReducerImpl(
         if (annotationEditEventAbsorbed(state, event)) return state
         if (tagMerchantEventAbsorbed(state, event)) return state
         if (annotationHistoryEventAbsorbed(state, event)) return state
+        externalNavigationTransition(state, event)?.let { return it }
         return when (state) {
             is P503AppState.Ready -> reduceReady(event)
             is P503AppState.OverviewEmpty -> reduceOverviewEmpty(state, event)
@@ -271,6 +273,174 @@ class P503ReducerImpl(
                     detail.detail.transactionId != event.transactionId
             }
             else -> false
+        }
+
+    /**
+     * P7-09 09.0 (spec sections 2/3; D-225 Q19): the inbound-navigation family's ONE transition
+     * point. Returns the reduced state when [event] belongs to this family, `null` when it does
+     * not (the caller then dispatches to the ordinary per-state reducer).
+     *
+     * The family is state-preserving in every state outside its designed effect, so a late/stale
+     * dispatch can never reach `unhandled` (the "new events never ISE" discipline). The routing
+     * DECISION is the host's ([decideExternalNavigation]); the reducer only applies the landed
+     * decision to the single pending slot, so no unbounded queue and no silent drop exists here:
+     * every [ExternalNavigationDecision.Held]/[DeferredUntilReady] writes a visible Busy slot, a
+     * [ExternalNavigationDecision.RetainOrReplace] keeps the ORIGINAL request and carries the
+     * incoming one as `displaced` until the user explicitly decides, and a
+     * [ExternalNavigationDecision.Routed] performs the Idle navigation without any formal-ledger
+     * write.
+     *
+     * The slot field is carried by the six routing-table surfaces ([OverviewEmpty], [Editing],
+     * [AwaitingConfirmation], [Submitting], [UnknownCommit], [ImportBatchSubmitting]); a decision
+     * landing on any other surface is absorbed here (that surface owns its own event family and
+     * never routes an inbound request in this slice).
+     */
+    private fun externalNavigationTransition(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): P503AppState? =
+        when (event) {
+            is P503UiEvent.ExternalNavigationRequested -> state
+            is P503UiEvent.ExternalNavigationDecisionLanded -> applyExternalNavigationDecision(state, event.decision)
+            P503UiEvent.ExternalNavigationRetained -> withPendingExternalNavigation(state) { retainPendingExternalNavigation(it) }
+            P503UiEvent.ExternalNavigationReplaced -> withPendingExternalNavigation(state) { replacePendingExternalNavigation(it) }
+            P503UiEvent.ExternalNavigationKeptCurrent -> withPendingExternalNavigation(state) { null }
+            P503UiEvent.ExternalNavigationDiscarded -> discardCurrentFlowAndRoute(state)
+            P503UiEvent.ImportIntakeBusyLanded ->
+                (state as? P503AppState.OverviewEmpty)?.copy(externalNavigationBusy = ExternalNavigationBusy(ExternalNavigationHoldReason.IMPORT_INTAKE_IN_FLIGHT))
+                    ?: state
+            P503UiEvent.DismissExternalNavigationBusy ->
+                (state as? P503AppState.OverviewEmpty)?.copy(externalNavigationBusy = null) ?: state
+            else -> null
+        }
+
+    /** Applies one host routing decision to the single pending slot (see [externalNavigationTransition]). */
+    private fun applyExternalNavigationDecision(
+        state: P503AppState,
+        decision: ExternalNavigationDecision,
+    ): P503AppState =
+        when (decision) {
+            is ExternalNavigationDecision.Held -> setPendingExternalNavigation(state, decision.pending)
+            is ExternalNavigationDecision.DeferredUntilReady ->
+                setPendingExternalNavigation(state, PendingExternalNavigation(decision.request, ExternalNavigationHoldReason.STARTUP_NOT_READY))
+            is ExternalNavigationDecision.RetainOrReplace ->
+                setPendingExternalNavigation(
+                    state,
+                    PendingExternalNavigation(
+                        request = decision.existing.request,
+                        holdReason = decision.existing.holdReason,
+                        awaitingUserDecision = true,
+                        displaced = decision.incoming,
+                    ),
+                )
+            is ExternalNavigationDecision.Routed -> routeExternalNavigation(state, decision.request)
+        }
+
+    /**
+     * The Idle navigation (spec section 3 Idle row): route into the existing editor/看账 surface
+     * with ZERO formal-ledger write. Only the overview can route; the slot clears as the request
+     * is consumed. An unroutable request is held rather than dropped.
+     */
+    private fun routeExternalNavigation(
+        state: P503AppState,
+        request: ExternalNavigationRequest,
+    ): P503AppState {
+        val overview = state as? P503AppState.OverviewEmpty ?: return state
+        return when (request) {
+            is ExternalNavigationRequest.OpenNewEntry -> {
+                val draft =
+                    when (request.type) {
+                        EntryType.EXPENSE -> ExpenseDraft(paymentAccountId = null, categoryId = null, amountText = "", occurredAt = null)
+                        EntryType.INCOME -> IncomeDraft(receivingAccountId = null, categoryId = null, amountText = "", occurredAt = null)
+                        else -> return overview.copy(pendingExternalNavigation = PendingExternalNavigation(request, ExternalNavigationHoldReason.UNROUTABLE_TARGET))
+                    }
+                P503AppState.Editing(
+                    draft = draft,
+                    requestId = null,
+                    overview = overview.state,
+                    originTab = overview.selectedTab,
+                    pinnedTargets = overview.pinnedTargets,
+                    selectedMonth = overview.selectedMonth,
+                    selectableMonths = overview.selectableMonths,
+                    monthlyActivity = overview.monthlyActivity,
+                )
+            }
+            // 回到应用当前月份/看账: the overview already renders the shared month cursor
+            // (`null` = 本月, R-Q06-2), so the route is the preserved overview with the slot cleared
+            // and zero ledger work.
+            ExternalNavigationRequest.OpenCurrentMonth -> overview.copy(pendingExternalNavigation = null)
+            // A share import is never routed directly (spec section 2.3: it needs the capability
+            // matrix's format slot first); the decision helper already holds it, so reaching here
+            // keeps it held rather than dropping it.
+            is ExternalNavigationRequest.OpenImport ->
+                overview.copy(pendingExternalNavigation = PendingExternalNavigation(request, ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED))
+        }
+    }
+
+    /**
+     * The explicit 放弃后切换 branch (spec section 3 Editing row). Only the overview and the
+     * editor may discard a flow: the overview routes the held request directly; the editor drops
+     * its draft and routes the held request against the editor's preserved overview. A
+     * confirmation, submitting or batch surface ABSORBS this and keeps the request held — a
+     * navigation decision never silently abandons a pending confirmation or an in-flight commit.
+     */
+    private fun discardCurrentFlowAndRoute(state: P503AppState): P503AppState =
+        when (state) {
+            is P503AppState.OverviewEmpty -> state.pendingExternalNavigation?.let { routeExternalNavigation(state, it.request) } ?: state
+            is P503AppState.Editing -> {
+                val pending = state.pendingExternalNavigation ?: return state
+                val overview = state.overview ?: return state
+                routeExternalNavigation(
+                    P503AppState.OverviewEmpty(
+                        state = overview,
+                        selectedTab = state.originTab,
+                        pinnedTargets = state.pinnedTargets,
+                        selectedMonth = state.selectedMonth,
+                        selectableMonths = state.selectableMonths,
+                        monthlyActivity = state.monthlyActivity,
+                    ),
+                    pending.request,
+                )
+            }
+            else -> state
+        }
+
+    /**
+     * The slot-carrying surfaces' single write point. Returns [state] unchanged when the surface
+     * carries no slot (an absorbed decision) so a landing on a non-routing surface can never
+     * create a hidden queue.
+     */
+    private fun withPendingExternalNavigation(
+        state: P503AppState,
+        transform: (PendingExternalNavigation) -> PendingExternalNavigation?,
+    ): P503AppState =
+        when (state) {
+            is P503AppState.OverviewEmpty -> state.copy(pendingExternalNavigation = transform(state.pendingExternalNavigation ?: return state))
+            is P503AppState.Editing -> state.copy(pendingExternalNavigation = transform(state.pendingExternalNavigation ?: return state))
+            is P503AppState.AwaitingConfirmation -> state.copy(pendingExternalNavigation = transform(state.pendingExternalNavigation ?: return state))
+            is P503AppState.Submitting -> state.copy(pendingExternalNavigation = transform(state.pendingExternalNavigation ?: return state))
+            is P503AppState.UnknownCommit -> state.copy(pendingExternalNavigation = transform(state.pendingExternalNavigation ?: return state))
+            is P503AppState.ImportBatchSubmitting -> state.copy(pendingExternalNavigation = transform(state.pendingExternalNavigation ?: return state))
+            else -> state
+        }
+
+    /**
+     * The slot-carrying surfaces' ABSOLUTE write point (used by the host's landed decisions, where
+     * the incoming slot value is authoritative regardless of the current one). A non-routing
+     * surface is left unchanged, so a decision landing there can never create a hidden queue.
+     */
+    private fun setPendingExternalNavigation(
+        state: P503AppState,
+        pending: PendingExternalNavigation,
+    ): P503AppState =
+        when (state) {
+            is P503AppState.OverviewEmpty -> state.copy(pendingExternalNavigation = pending)
+            is P503AppState.Editing -> state.copy(pendingExternalNavigation = pending)
+            is P503AppState.AwaitingConfirmation -> state.copy(pendingExternalNavigation = pending)
+            is P503AppState.Submitting -> state.copy(pendingExternalNavigation = pending)
+            is P503AppState.UnknownCommit -> state.copy(pendingExternalNavigation = pending)
+            is P503AppState.ImportBatchSubmitting -> state.copy(pendingExternalNavigation = pending)
+            else -> state
         }
 
     /**

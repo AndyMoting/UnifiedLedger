@@ -136,6 +136,21 @@ sealed interface P503AppState {
          * pre-P7-07 constructor site compiling.
          */
         val budgetView: BudgetMonthViewResult? = null,
+        /**
+         * P7-09 09.0 (spec sections 2.2/3; D-225): the single pending inbound-navigation slot
+         * (at most one held request; no unbounded queue, no silent drop). Non-null renders the
+         * visible Busy/待处理 result. Additive with a `null` default so every pre-P7-09
+         * constructor and copy site keeps compiling; the slot carries no URI, file name or
+         * amount.
+         */
+        val pendingExternalNavigation: PendingExternalNavigation? = null,
+        /**
+         * P7-09 09.0 / T4 (spec sections 1.7/2.2): the visible Busy/待处理 result of a blocked
+         * host operation (the second file pick that arrived while one intake pipeline ran — the
+         * former silent `-> Unit` drop). Additive with a `null` default; renders a strip with
+         * zero formal effect.
+         */
+        val externalNavigationBusy: ExternalNavigationBusy? = null,
     ) : P503AppState
 
     data class Editing(
@@ -180,6 +195,8 @@ sealed interface P503AppState {
         val selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
         /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
         val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
+        /** P7-09 09.0 (spec sections 2.2/3): the single pending inbound-navigation slot; see [OverviewEmpty.pendingExternalNavigation]. */
+        val pendingExternalNavigation: PendingExternalNavigation? = null,
     ) : P503AppState
 
     data class AwaitingConfirmation(
@@ -207,6 +224,8 @@ sealed interface P503AppState {
         val selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
         /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
         val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
+        /** P7-09 09.0 (spec sections 2.2/3): the single pending inbound-navigation slot; see [OverviewEmpty.pendingExternalNavigation]. */
+        val pendingExternalNavigation: PendingExternalNavigation? = null,
     ) : P503AppState
 
     data class Submitting(
@@ -222,6 +241,8 @@ sealed interface P503AppState {
         val selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
         /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
         val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
+        /** P7-09 09.0 (spec sections 2.2/3): the single pending inbound-navigation slot; see [OverviewEmpty.pendingExternalNavigation]. */
+        val pendingExternalNavigation: PendingExternalNavigation? = null,
     ) : P503AppState
 
     data object Created : P503AppState
@@ -361,6 +382,8 @@ sealed interface P503AppState {
         val items: List<ImportBatchSubmittingItem>,
         /** True once an Unknown outcome paused the loop (派发暂停； Resume clears it, Abandon leaves). */
         val dispatchPaused: Boolean = false,
+        /** P7-09 09.0 (spec sections 2.2/3): the single pending inbound-navigation slot; see [OverviewEmpty.pendingExternalNavigation]. */
+        val pendingExternalNavigation: PendingExternalNavigation? = null,
     ) : P503AppState
 
     /**
@@ -609,6 +632,8 @@ sealed interface P503AppState {
         val selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
         /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
         val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
+        /** P7-09 09.0 (spec sections 2.2/3): the single pending inbound-navigation slot; see [OverviewEmpty.pendingExternalNavigation]. */
+        val pendingExternalNavigation: PendingExternalNavigation? = null,
     ) : P503AppState
 
     data object Recovered : P503AppState

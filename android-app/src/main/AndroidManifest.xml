@@ -1,14 +1,35 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      P7-09 09.0 (spec section 6.3; D-225 Q19 P1): the process-scoped runtime owner holder lives
+      on the Application subclass, so the whole process shares one owner/active graph.
+    -->
     <application
+        android:name=".UnifiedLedgerApplication"
         android:label="UnifiedLedger"
         android:theme="@style/Theme.UnifiedLedger">
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!--
+              P7-09 09.A (spec sections 2.3/2.4; D-225 Q19): the single-file ACTION_SEND share
+              entry. The share surface MUST be exported="true" for an external app to deliver into
+              it, so the Intent validation face (ExternalNavigationIntake) is security-critical:
+              an untrusted Intent is validated before use and every unknown/multi/conflicting/
+              non-content/unreadable share is a typed rejection with zero formal effect.
+              launchMode="singleTop" makes a hot share reuse the top instance through onNewIntent
+              (which calls setIntent) instead of building a second Activity; a cold share still
+              starts the Activity normally.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
     </application>

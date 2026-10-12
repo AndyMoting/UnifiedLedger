@@ -34,9 +34,10 @@ class P503ImportReviewHostCoordinatorTest {
         assertEquals("synthetic-bill.csv", started.file.displayName)
         assertEquals(1, intakes)
 
-        // Single flight: a concurrent second pick is dropped (its channel events are absorbed by
-        // the reducer; the host starts no second pipeline).
-        assertEquals(ImportPickIntakeDecision.AlreadyInFlight, coordinator.handleImportPickResult(ImportFilePickResult.Picked(pickedFile)))
+        // Single flight: a concurrent second pick is REFUSED (P7-09 09.0 / T4: no longer a silent
+        // drop — the decision carries the visible Busy the host must land).
+        val refused = assertIs<ImportPickIntakeDecision.AlreadyInFlight>(coordinator.handleImportPickResult(ImportFilePickResult.Picked(pickedFile)))
+        assertEquals(ExternalNavigationHoldReason.IMPORT_INTAKE_IN_FLIGHT, refused.busy.reason)
         assertEquals(1, intakes)
 
         // The pipeline completing re-arms the single-flight slot.

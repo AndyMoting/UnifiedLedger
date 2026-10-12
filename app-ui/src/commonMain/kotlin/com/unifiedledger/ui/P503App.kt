@@ -2,10 +2,12 @@ package com.unifiedledger.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
@@ -146,6 +148,67 @@ import com.unifiedledger.application.MonthlyActivityResult as ApplicationMonthly
  * nesting is harmless, while a bare inner MaterialTheme would reset to the default light
  * scheme.
  */
+/**
+ * P7-09 09.0 (spec sections 2.2/3; D-225 Q19): the visible Busy/待处理 strip for a held inbound
+ * navigation request or a blocked host operation. The copy names the routing-table row that held
+ * the request; it NEVER carries an amount, a URI, a file name or any inbound payload (spec section
+ * 2.2 可见 Busy + 硬禁明文金额 discipline). The strip offers the explicit retain/replace actions
+ * only while a second request is waiting for the user's decision, plus the 保留当前/放弃后切换
+ * choice of the Editing row.
+ */
+@Composable
+internal fun ExternalNavigationBusyStrip(
+    busy: ExternalNavigationBusy,
+    onKeepCurrent: () -> Unit,
+    onRetain: (() -> Unit)?,
+    onReplace: (() -> Unit)?,
+    onDiscard: (() -> Unit)?,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .semantics { liveRegion = LiveRegionMode.Polite },
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Text(
+                text = externalNavigationBusyText(busy),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row {
+                if (onRetain != null) {
+                    TextButton(onClick = onRetain) { Text("保留原请求") }
+                }
+                if (onReplace != null) {
+                    TextButton(onClick = onReplace) { Text("替换为当前请求") }
+                }
+                if (onDiscard != null) {
+                    TextButton(onClick = onDiscard) { Text("放弃后切换") }
+                }
+                TextButton(onClick = onKeepCurrent) { Text("保留当前") }
+            }
+        }
+    }
+}
+
+/**
+ * P7-09 09.0 (spec section 3): the display copy of one Busy/待处理 strip. Pure and JVM-assertable
+ * (the `importReviewNoticeText` precedent); the copy is static per reason and leaks no payload.
+ */
+internal fun externalNavigationBusyText(busy: ExternalNavigationBusy): String =
+    when (busy.reason) {
+        ExternalNavigationHoldReason.STARTUP_NOT_READY -> "正在打开本地账本，已暂存外部请求…"
+        ExternalNavigationHoldReason.DRAFT_IN_PROGRESS -> "当前有未保存的草稿，外部请求已暂存。"
+        ExternalNavigationHoldReason.CONFIRMATION_PENDING -> "当前有一笔待确认的录入，外部请求已暂存。"
+        ExternalNavigationHoldReason.COMMIT_IN_FLIGHT -> "当前提交尚未结束，外部请求已暂存。"
+        ExternalNavigationHoldReason.IMPORT_BATCH_IN_FLIGHT -> "导入批次处理中，外部请求已暂存。"
+        ExternalNavigationHoldReason.IMPORT_INTAKE_IN_FLIGHT -> "已有文件正在导入，请稍候。"
+        ExternalNavigationHoldReason.RUNTIME_QUIESCED -> "本地账本正在切换，外部请求已暂缓。"
+        ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED -> "已收到分享文件，请选择账单格式后导入。"
+        ExternalNavigationHoldReason.UNROUTABLE_TARGET -> "外部请求暂无法打开，已暂存。"
+    }
+
 @Composable
 fun P503Theme(content: @Composable () -> Unit) {
     MaterialTheme(
@@ -175,6 +238,10 @@ fun P503App(
     ledger: LedgerLeaseScope,
     onExit: () -> Unit,
     backHandler: (@Composable (enabled: Boolean, onBack: () -> Unit) -> Unit)? = null,
+    // P7-09 09.0 (spec sections 2.1/2.2; D-225 Q19): the composition root's inbound-navigation
+    // channel. Null (the desktop root and existing tests) keeps the surface absent and renders no
+    // dead affordance; a wired root delivers neutral requests the host routes.
+    externalNavigationChannel: ExternalNavigationChannel? = null,
 ) {
     val reducer = remember(ledger) { P503ReducerImpl(ledger.parseAmount, ledger.currency, ledger.ledgerClock) }
     val validation = remember(ledger) { P503DraftValidation(ledger.parseAmount, ledger.parseOccurredAt, ledger.ledgerClock) }
@@ -1690,6 +1757,9 @@ fun P503App(
      * P7-04.C: one platform pick result (table 6.2a — the channel events are reducer-absorbed; this
      * handler owns the host action). A picked file starts the single-flight bounded-read + intake
      * pipeline; a cancellation or a typed platform failure starts nothing.
+     *
+     * P7-09 09.0 / T4 (spec sections 1.7/2.2; D-225): a refused second pick is NO LONGER a silent
+     * `-> Unit` drop — it lands the visible Busy result on the overview (zero formal effect).
      */
     fun handleImportPickResult(result: ImportFilePickResult) {
         when (result) {
@@ -1699,10 +1769,25 @@ fun P503App(
         }
         when (val decision = coordinator.handleImportPickResult(result)) {
             is ImportPickIntakeDecision.StartIntake -> runImportIntakePipeline(decision.file)
-            ImportPickIntakeDecision.AlreadyInFlight,
-            ImportPickIntakeDecision.NoPipeline,
-            -> Unit
+            // P7-09 09.0 / T4: the refused second pick lands its visible Busy event (the seam
+            // returns exactly this event for AlreadyInFlight), never a silent `-> Unit` drop.
+            is ImportPickIntakeDecision.AlreadyInFlight -> importPickDecisionEvent(decision)?.let(::dispatch)
+            ImportPickIntakeDecision.NoPipeline -> Unit
         }
+    }
+
+    /**
+     * P7-09 09.0 (spec sections 2/3; D-225 Q19): one inbound neutral request from the platform
+     * adapter (a share Intent, a launcher shortcut). The routing DECISION (and the host-observed
+     * runtime facts it needs) lives in the JVM-assertable [externalNavigationDecisionEvent] seam;
+     * this method only dispatches the two events the reducer consumes.
+     */
+    fun onExternalNavigationRequested(
+        request: ExternalNavigationRequest,
+        runtimeQuiesced: Boolean = false,
+    ) {
+        dispatch(P503UiEvent.ExternalNavigationRequested(request))
+        dispatch(externalNavigationDecisionEvent(latestState.value, request, runtimeQuiesced))
     }
 
     /**
@@ -2344,6 +2429,17 @@ fun P503App(
     DisposableEffect(ledger) {
         ledger.importPickResultChannel?.subscribe(::handleImportPickResult)
         onDispose { ledger.importPickResultChannel?.subscribe(null) }
+    }
+
+    // P7-09 09.0 (spec sections 2.1/2.2; D-225 Q19): the inbound neutral navigation requests flow
+    // back through the composition root's channel (the pick-channel precedent). The channel buffers
+    // one undelivered cold-start request, so a share received before this subscription is not lost;
+    // it drains here on subscribe and is routed through [onExternalNavigationRequested]. The
+    // channel rides the composition root's P503App argument rather than the lease scope, so the
+    // shared lease surface (`LedgerLeaseScope`) is untouched by this batch.
+    DisposableEffect(ledger, externalNavigationChannel) {
+        externalNavigationChannel?.subscribe { request -> onExternalNavigationRequested(request) }
+        onDispose { externalNavigationChannel?.subscribe(null) }
     }
 
     // P7-02.D E-4: the authoritative snapshot with the pinned-first sort derivation applied to
@@ -3363,6 +3459,32 @@ fun P503App(
     }
 
     P503Theme {
+        // P7-09 09.0 (spec sections 2.2/3; D-225 Q19): the visible Busy/待处理 strip for a held
+        // inbound request and for a blocked host operation. It renders ABOVE the whole surface
+        // stack (not only the overview), so a request held while the user is Editing / Awaiting
+        // confirmation / Submitting / in an import batch stays VISIBLE on that very surface (the
+        // frozen 可见 Busy rule). The copy carries no amount, URI or file name, and the strip never
+        // blocks the underlying surface (a held request is a routing decision, not a modal).
+        Column(Modifier.fillMaxSize()) {
+            state.pendingExternalNavigationSlot()?.let { pending ->
+                ExternalNavigationBusyStrip(
+                    busy = ExternalNavigationBusy(pending.holdReason),
+                    onKeepCurrent = { dispatch(P503UiEvent.ExternalNavigationKeptCurrent) },
+                    onRetain = if (pending.awaitingUserDecision) ({ dispatch(P503UiEvent.ExternalNavigationRetained) }) else null,
+                    onReplace = if (pending.awaitingUserDecision) ({ dispatch(P503UiEvent.ExternalNavigationReplaced) }) else null,
+                    onDiscard = { dispatch(P503UiEvent.ExternalNavigationDiscarded) },
+                )
+            }
+            (state as? P503AppState.OverviewEmpty)?.externalNavigationBusy?.let { busy ->
+                ExternalNavigationBusyStrip(
+                    busy = busy,
+                    onKeepCurrent = { dispatch(P503UiEvent.DismissExternalNavigationBusy) },
+                    onRetain = null,
+                    onReplace = null,
+                    onDiscard = null,
+                )
+            }
+            Box(Modifier.weight(1f)) {
         when (val current = state) {
             P503AppState.Ready -> P503StartupScreen(P503StartupState.Starting, onRetry = {}, onExit = onExit)
             is P503AppState.OverviewEmpty ->
@@ -4076,6 +4198,8 @@ fun P503App(
                             onCancel = { dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.Cancel }, ::dispatch) },
                         )
                 }
+        }
+            }
         }
     }
 }

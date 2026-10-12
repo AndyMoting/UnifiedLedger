@@ -15,7 +15,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -179,6 +178,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -193,161 +193,86 @@ import kotlin.time.Clock
  */
 @Composable
 fun app() {
-    // D-203 startup trace: composition-root assembly window begins (remember blocks below).
+    // D-203 startup trace: composition-root assembly window begins (the launcher registrations below).
     StartupTrace.emit("compositionRoot.begin")
     val context = LocalContext.current
     val activity = context as? Activity
-    // P7-04.A (D-146 R-Q08-1): the SAF OpenDocument launcher must be registered in
-    // composition before the activity is RESUMED; its result callback reaches the pick port
-    // through a plain holder because the port is created together with the ledger graph,
-    // after the launcher.
-    val importPickPortRef = remember { arrayOfNulls<AndroidImportFilePickPort<Uri>?>(1) }
-    // P7-04.C (D-146; spec 4.1.1): the shared result channel — the SAF port's onResult delivers
-    // here and the shared P503App host subscribes through the facade (the frozen port shape never
-    // carries the result in its signature).
-    val importPickChannel = remember { ImportFilePickResultChannel() }
+    // P7-09 09.0 (spec section 6.3; D-225 Q19 P1): the runtime owner is now PROCESS-scoped. The
+    // composition no longer constructs a controller of its own; it resolves the ONE holder owned by
+    // UnifiedLedgerApplication and reads the same controller every non-composition entry reaches
+    // (spec section 6.3: at most one owner/active graph per process; no buildLedgerGraph). The
+    // holder is absent only when the process runs without the Application subclass (a plain unit
+    // test); the composition then fails closed rather than constructing a second owner.
+    val holder = ledgerProcessHolderFor(context)
+    // P7-04.A (D-146 R-Q08-1): the SAF launchers must be registered in composition before the
+    // activity is RESUMED; they stay Activity-scoped, while the owner they feed is process-scoped.
+    // The holder's launch slot decouples the two: the composition re-points the launchers here on
+    // every composition (so an Activity recreation re-points them), and the process-scoped ports
+    // read them at launch time.
     val importSafLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            importPickPortRef[0]?.onOpenDocumentResult(uri)
+            holder?.safSlot?.deliverOpenDocumentResult?.invoke(uri)
         }
-    // P0 hotfix (defect 2): the composition-scoped main-dispatcher scope the startup controller
-    // launches its non-blocking start on. Only the state writes resume here; the blocking open
-    // itself runs on the controller's background dispatcher (Dispatchers.IO).
-    val startupScope = rememberCoroutineScope()
-    // P7-06 06.B (D-177; spec section 3.5 phase 2): the SAF CreateDocument launcher for the
-    // backup export target. Registered in composition like the import picker; the result callback
-    // hands the chosen document to the pending save closure.
-    val backupSaveTargetRef = remember { arrayOfNulls<AndroidBackupTargetPort<Uri>?>(1) }
+    // P7-06 06.B (D-177; spec section 3.5 phase 2): the SAF CreateDocument launcher for the backup
+    // export target, registered in composition like the import picker.
     val backupSaveLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
-            backupSaveTargetRef[0]?.onCreateDocumentResult(uri)
+            holder?.safSlot?.deliverCreateDocumentResult?.invoke(uri)
         }
     // P7-06 06.D (D-182; spec section 6, P2-7): the SAF OpenDocument launcher for the restore
-    // SOURCE, registered in composition like the import/export launchers. The result callback
-    // reaches the source port through the same holder convention (the port is created with the
-    // ledger wiring, after the launcher).
-    val restoreSourceRef = remember { arrayOfNulls<AndroidBackupSourcePort<Uri>?>(1) }
+    // SOURCE, registered in composition like the import/export launchers.
     val restoreSourceLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            restoreSourceRef[0]?.onOpenDocumentResult(uri)
+            holder?.safSlot?.deliverRestoreSourceResult?.invoke(uri)
         }
-    // P7-06 06.B (D-177; spec section 3.5 phase 2): the SAF CreateDocument launch must run on the
-    // main thread, while the export use case runs on a background dispatcher. This poster is the
-    // main-looper hop the target port uses; the handler is created once for the composition.
-    val mainThreadPoster = remember { mainThreadPoster() }
-    val controller =
-        remember(context) {
-            // The Android pick port with SAF launch/metadata/stream closures; one-shot
-            // ContentResolver read, no persistable URI permission, no copy. P7-04.C wires the
-            // results into the shared coordinator channel; the SAF callback runs on the main
-            // thread, so the deliveries are UI-thread-safe.
-            val importFilePickPort =
-                AndroidImportFilePickPort<Uri>(
-                    launchOpenDocument = importSafLauncher::launch,
-                    resolveMetadata = { uri -> resolveSafFileMetadata(context.contentResolver, uri) },
-                    openInputStream = { uri -> context.contentResolver.openInputStream(uri) },
-                    onResult = importPickChannel::deliver,
-                )
-            importPickPortRef[0] = importFilePickPort
-            // P7-06 06.B: the private staging host and the SAF save target.
-            val databasePath = context.getDatabasePath(LEGACY_ANDROID_DATABASE_NAME)
-            val (hostDirectory, _) = androidStableStoragePaths(databasePath)
-            val fileSystem = AndroidLedgerFileSystem()
-            val layout = ledgerStorageLayout(fileSystem, hostDirectory)
-            val backupTargetPort =
-                AndroidBackupTargetPort<Uri>(
-                    // SAF launchers are main-thread only; the export runs on a background
-                    // dispatcher, so the launch is posted onto the main looper here.
-                    postToMainThread = mainThreadPoster,
-                    launchCreateDocument = backupSaveLauncher::launch,
-                    openOutputStream = { uri -> context.contentResolver.openOutputStream(uri) },
-                )
-            backupSaveTargetRef[0] = backupTargetPort
-            // P7-06 06.D (D-182; spec sections 5.3/5.6/6): the restore wiring. The source port
-            // posts its SAF launch to the main thread (the target-port precedent) and its `sizeOf`
-            // is ruling F's single ContentResolver size query on the picked document (the
-            // counted-stream fallback stays, so a provider that cannot report a size still cannot
-            // bypass the bound). The recovery use case shares the startup sequence's legacy path
-            // resolution (`databases/ledger.db`); desktop has no equivalent and stays fail-closed.
-            val legacyMainFile = androidStableStoragePaths(databasePath).second
-            val restoreSourcePort =
-                AndroidBackupSourcePort<Uri>(
-                    postToMainThread = mainThreadPoster,
-                    launchOpenDocument = { mimeTypes -> restoreSourceLauncher.launch(mimeTypes) },
-                    openInputStream = { uri -> context.contentResolver.openInputStream(uri) },
-                    sizeOf = { uri -> queryDocumentSize(context.contentResolver, uri) },
-                )
-            restoreSourceRef[0] = restoreSourcePort
-            val restoreWiring =
-                AndroidRestoreWiring(
-                    fileSystem = fileSystem,
-                    layout = layout,
-                    sourcePort = restoreSourcePort,
-                    legacyMainFile = legacyMainFile,
-                )
-            AndroidStartupController(
-                openDatabase = {
-                    // P7-06 06.1 (D-176): the stable-storage sequence resolves the active
-                    // generation, performs the non-destructive legacy upgrade on first start and
-                    // guards the target before any create-on-open factory runs.
-                    openAndroidStableStorageLedger(context, importFilePickPort, importPickChannel)
-                },
-                // P7-06 06.D (D-182; spec section 3 step 8 (with 3.8)): the confirm switch's step-8 reopen
-                // opens the generation it just published BY NAME, bypassing the startup journal
-                // gate that would otherwise consume its own live `switched` journal.
-                openExplicitGeneration = { generation ->
-                    openAndroidExplicitGeneration(context, importFilePickPort, importPickChannel, generation)
-                },
-                // P0 hotfix (defect 2): [startScope] is the composition-scoped main dispatcher
-                // used only for the state writes; the blocking open runs on [backgroundDispatcher]
-                // (the controller's Dispatchers.IO default).
-                startScope = startupScope,
-                backgroundDispatcher = Dispatchers.IO,
-                // P7-06 06.B (D-177): the backup-export wiring. The target port posts its SAF
-                // launch to the main thread (see AndroidBackupTargetPort), so the export use case
-                // can run on a background dispatcher.
-                backupWiring = AndroidBackupWiring(fileSystem, layout, backupTargetPort),
-                // P7-06 06.D (D-182): the restore wiring; null keeps the surface absent (the
-                // existing startup tests construct the controller without it).
-                restoreWiring = restoreWiring,
-            )
+    // Point the process-scoped holder's slot at THIS composition's launchers. Re-pointed on every
+    // composition so an Activity recreation cannot leave a stale launcher behind.
+    DisposableEffect(holder, importSafLauncher, backupSaveLauncher, restoreSourceLauncher) {
+        val slot = holder?.safSlot
+        if (slot != null) {
+            slot.launchOpenDocument = importSafLauncher::launch
+            slot.launchCreateDocument = backupSaveLauncher::launch
+            slot.launchRestoreSource = restoreSourceLauncher::launch
         }
-    // D-203 startup trace: composition root assembled (all wiring remember blocks done).
-    StartupTrace.emit("compositionRoot.controllerCreated")
-    // MUST FIX 2: the controller's open now outlives a single composition pass, so dispose it
-    // when this composition leaves. dispose() ATTEMPTS to close the owner's active graph (best
-    // effort — see the AndroidStartupController class note for the TransitionInProgress /
-    // QuiesceBlocked paths where the close is declined and the graph is left open), and the
-    // NonCancellable decision makes the teardown-after-open case reach that attempt instead of
-    // silently dropping it.
-    DisposableEffect(controller) {
-        onDispose { controller.dispose() }
+        onDispose {
+            // Deliberately does NOT clear the slot: the launchers themselves are disposed with the
+            // composition, and clearing here would race a recreation that re-points them.
+        }
     }
-    LaunchedEffect(Unit) {
-        controller.start()
+    // D-203 startup trace: composition root assembled (launchers registered).
+    StartupTrace.emit("compositionRoot.controllerCreated")
+    // Start the process's ONE controller at most once for the whole process (idempotent across
+    // re-compositions, Activity recreations and any non-composition entry).
+    LaunchedEffect(holder) {
+        holder?.ensureStarted()
     }
 
-    val facade = controller.ledger
+    val controller = holder?.controller
+    val facade = controller?.ledger
     // Enforced edge-to-edge draws content behind the status bar; a root-level statusBarsPadding
     // keeps every screen's top controls reachable without touching the shared UI (D-128).
     Box(Modifier.fillMaxSize().statusBarsPadding()) {
         when {
-            controller.state == P503StartupState.Ready && facade != null ->
+            controller != null && controller.state == P503StartupState.Ready && facade != null ->
                 P503App(
                     facade,
                     onExit = { activity?.finish() },
                     backHandler = { enabled, onBack -> BackHandler(enabled, onBack) },
+                    // P7-09 09.0 (spec sections 2.1/2.2; D-225 Q19): the process-scoped
+                    // inbound-navigation channel, so the shared host subscribes and routes the
+                    // neutral requests the Activity's share intake delivers.
+                    externalNavigationChannel = holder?.externalNavigationChannel,
                 )
             else ->
                 P503StartupScreen(
-                    state = controller.state,
-                    onRetry = controller::start,
+                    state = controller?.state ?: P503StartupState.StartupError,
+                    onRetry = { controller?.start() },
                     onExit = { activity?.finish() },
                     // P7-06 06.D (spec section 5.3): the user-confirmed recovery actions; the
                     // face itself decides which affordances exist (a verified candidate, the
                     // legacy guard), so the callbacks can always be handed over.
-                    onAdoptPointer = controller::adoptPointerRecovery,
-                    onDiscardAndReUpgrade = controller::discardPointerRecoveryAndReUpgrade,
+                    onAdoptPointer = controller?.let { { it.adoptPointerRecovery() } },
+                    onDiscardAndReUpgrade = controller?.let { { it.discardPointerRecoveryAndReUpgrade() } },
                 )
         }
     }
@@ -1586,6 +1511,85 @@ internal fun mainThreadPoster(): (() -> Unit) -> Unit {
         )
     }
 }
+
+/**
+ * P7-09 09.0 (spec section 6.3; D-225 Q19 P1): builds the ONE Android startup controller for the
+ * PROCESS, from an application context and the Activity-composition SAF launcher slot.
+ *
+ * This is the same wiring the composition used to build inside its `remember(context)` block, moved
+ * out so a NON-composition entry (a widget receiver, a shortcut cold start) reaches the SAME owner
+ * instead of opening a graph of its own or calling the bootstrap/migrate builder. The SAF launchers
+ * stay Activity-scoped: they are read from [safSlot] at launch time (the composition re-points them
+ * on every composition), and the blocking ledger open does NOT depend on them (the slot is only
+ * consulted by the pick/target/source ports when a pick is actually launched).
+ *
+ * The blocking open runs on [Dispatchers.IO] and the state writes on a process-lifetime main
+ * dispatcher, so the open never blocks the process's main thread regardless of which entry
+ * triggered it.
+ */
+internal fun buildAndroidStartupController(
+    context: android.content.Context,
+    safSlot: AndroidSafLaunchSlot,
+): AndroidStartupController {
+    val importPickChannel = ImportFilePickResultChannel()
+    val importFilePickPort =
+        AndroidImportFilePickPort<Uri>(
+            launchOpenDocument = { mimeFilters -> safSlot.launchOpenDocument?.invoke(mimeFilters) ?: throw IllegalStateException("no import SAF launcher registered") },
+            resolveMetadata = { uri -> resolveSafFileMetadata(context.contentResolver, uri) },
+            openInputStream = { uri -> context.contentResolver.openInputStream(uri) },
+            onResult = importPickChannel::deliver,
+        )
+    safSlot.deliverOpenDocumentResult = { uri -> importFilePickPort.onOpenDocumentResult(uri) }
+    val mainThreadPoster = mainThreadPoster()
+    val databasePath = context.getDatabasePath(LEGACY_ANDROID_DATABASE_NAME)
+    val (hostDirectory, _) = androidStableStoragePaths(databasePath)
+    val fileSystem = AndroidLedgerFileSystem()
+    val layout = ledgerStorageLayout(fileSystem, hostDirectory)
+    val backupTargetPort =
+        AndroidBackupTargetPort<Uri>(
+            postToMainThread = mainThreadPoster,
+            launchCreateDocument = { name -> safSlot.launchCreateDocument?.invoke(name) ?: throw IllegalStateException("no backup SAF launcher registered") },
+            openOutputStream = { uri -> context.contentResolver.openOutputStream(uri) },
+        )
+    safSlot.deliverCreateDocumentResult = { uri -> backupTargetPort.onCreateDocumentResult(uri) }
+    val legacyMainFile = androidStableStoragePaths(databasePath).second
+    val restoreSourcePort =
+        AndroidBackupSourcePort<Uri>(
+            postToMainThread = mainThreadPoster,
+            launchOpenDocument = { mimeTypes -> safSlot.launchRestoreSource?.invoke(mimeTypes) ?: throw IllegalStateException("no restore SAF launcher registered") },
+            openInputStream = { uri -> context.contentResolver.openInputStream(uri) },
+            sizeOf = { uri -> queryDocumentSize(context.contentResolver, uri) },
+        )
+    safSlot.deliverRestoreSourceResult = { uri -> restoreSourcePort.onOpenDocumentResult(uri) }
+    val restoreWiring =
+        AndroidRestoreWiring(
+            fileSystem = fileSystem,
+            layout = layout,
+            sourcePort = restoreSourcePort,
+            legacyMainFile = legacyMainFile,
+        )
+    return AndroidStartupController(
+        openDatabase = {
+            openAndroidStableStorageLedger(context, importFilePickPort, importPickChannel)
+        },
+        openExplicitGeneration = { generation ->
+            openAndroidExplicitGeneration(context, importFilePickPort, importPickChannel, generation)
+        },
+        startScope = processMainDispatcher(),
+        backgroundDispatcher = Dispatchers.IO,
+        backupWiring = AndroidBackupWiring(fileSystem, layout, backupTargetPort),
+        restoreWiring = restoreWiring,
+    )
+}
+
+/**
+ * P7-09 09.0 (spec section 6.3): a process-lifetime main-dispatcher [CoroutineScope] for the
+ * process-scoped controller's state writes. A `SupervisorJob` + `Dispatchers.Main` scope never
+ * cancels with any composition, matching the holder's process lifecycle; the state writes it
+ * carries are `mutableStateOf` writes observed by whatever composition is currently attached.
+ */
+internal fun processMainDispatcher(): CoroutineScope =
+    CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
 /**
  * P3-L fix (06.B review): the pure dispatch decision of [mainThreadPoster], extracted so it is
