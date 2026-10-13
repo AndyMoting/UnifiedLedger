@@ -63,24 +63,51 @@ internal fun dispatchCurrentP503Action(
  * changes the shared monthly snapshot's inputs, so every widget instance on screen must be
  * invalidated (re-rendered) without waiting for the platform period (`≥30 分钟`) or a user refresh.
  *
- * [P503App] reports every determinate landing through this observer at exactly the two composition
- * points it already uses for the authoritative refresh — [P503HostCoordinator.onP705EffectiveSurfaceChanged]
- * (financial correction / void / restore, gated by `shouldRefreshAfterP705Commit`) and
- * [P503HostCoordinator.onImportBatchConfirmed] (a manual entry success and a fully terminal import
- * batch run, gated by the `decide` success branch and `shouldArmImportBatchConfirmed`). The widget
- * leg therefore REUSES the existing success judgements and adds NO second success rule: a typed
- * rejection, a stale CAS, an identity conflict, or a pure parse candidate never reaches it, so the
- * widget can never react to a non-effect.
+ * [P503App] reports every determinate landing through this observer at the SAME points it already
+ * uses for the authoritative refresh — [P503HostCoordinator.onP705EffectiveSurfaceChanged]
+ * (financial correction / void / restore, gated by `shouldRefreshAfterP705Commit`),
+ * [P503HostCoordinator.onImportBatchConfirmed] (a fully terminal import batch run, gated by
+ * `shouldArmImportBatchConfirmed`) and [P503HostCoordinator.decide]'s Created/NoChange/Recovered
+ * branch (a manual entry success). The restore-switch closeout (换库, spec section 6.4) rides the
+ * same callback from [P503App]'s restore-confirm landing. The widget leg therefore REUSES the
+ * existing success judgements and adds NO second success rule: a typed rejection, a stale CAS, an
+ * identity conflict, or a pure parse candidate never reaches it, so the widget can never react to a
+ * non-effect.
  *
  * commonMain cannot name `AppWidgetManager`/`Context` (the spec section 2.1 platform boundary), so
  * the observer is a plain platform-neutral callback. The Android composition root supplies the
  * widget fan-out (the process holder's half of this seam); a root that wires nothing (desktop, the
  * JVM tests) keeps the no-op default. The callback carries no amount, no month and no ledger id — a
  * pure "your inputs changed" signal — so the spec section 6.5 hidden-state payload set is untouched.
+ *
+ * The observer is a NON-AUTHORITATIVE side effect: it is invoked best-effort through
+ * [invalidateWidgetsBestEffort], so a failure in the widget fan-out can never disturb the
+ * authoritative refresh chain or the post-landing re-request arms it rides beside.
  */
 fun interface WidgetInvalidationObserver {
     /** Invalidates and re-renders every host-assigned widget instance (nothing else). */
     fun invalidateAllWidgets()
+}
+
+/**
+ * P7-09 09.C (spec section 6.4; D-225 Q20): runs [WidgetInvalidationObserver.invalidateAllWidgets]
+ * as a best-effort side effect. The widget fan-out is not authoritative — it is a convenience
+ * re-render that the platform period and the user refresh also provide — so a throw inside it must
+ * NEVER skip the authoritative bookkeeping that follows it (the P7-03 (e) monthly re-request arm,
+ * the P7-07 budget arm, the `HostAction.RefreshAfterResult` return) nor escape into the composition
+ * (a `LaunchedEffect(state)` evaluation or a landing hop). Swallowing the failure here is deliberate:
+ * the widget simply keeps its previous render until the next platform period or manual refresh, and
+ * the `asOf` line keeps the data's age visible.
+ */
+internal fun invalidateWidgetsBestEffort(observer: WidgetInvalidationObserver) {
+    try {
+        observer.invalidateAllWidgets()
+    } catch (failure: Exception) {
+        // Diagnostics only, through the established trace seam (event names + failure class name,
+        // never an amount, never a ledger id): the widget fan-out is non-authoritative and carries
+        // no amount. The `emit` itself never throws and never changes product behavior.
+        StartupTrace.emit("widget.invalidation.skipped causeClass=${failure::class.simpleName}")
+    }
 }
 
 /**
@@ -236,12 +263,6 @@ internal class P503HostCoordinator(
                 } else {
                     refreshAfterResultServed = state
                     onRefresh()
-                    // P7-09 09.C (spec section 6.4; D-225 Q20): the manual-entry determinate
-                    // success (Created/NoChange/Recovered) is the spec's "已知正式写入成功" leg, so it
-                    // invalidates every widget through the SAME reused success branch (no second
-                    // success rule). A `decide` null (already served) or any non-trigger state never
-                    // reaches this line.
-                    widgetInvalidation.invalidateAllWidgets()
                     // Trigger (e): the authoritative refresh of a determinate success re-requests
                     // the monthly payload for the fresh overview (P703SPEC-04). A-02 FIX-MONTH-1
                     // (D-152): the re-request is armed here and COMPLETED by the host after the
@@ -250,6 +271,13 @@ internal class P503HostCoordinator(
                     // request beside the refresh would read the still-transient result state and
                     // its payload would be absorbed, leaving the month card AWAITING.
                     pendingMonthlyReRequestAfterRefresh = true
+                    // P7-09 09.C (spec section 6.4; D-225 Q20): the manual-entry determinate
+                    // success (Created/NoChange/Recovered) is the spec's "已知正式写入成功" leg, so it
+                    // invalidates every widget through the SAME reused success branch (no second
+                    // success rule). Runs AFTER the arm bookkeeping, best-effort, so a widget-side
+                    // failure can never skip the (e) re-request arm or escape into the composition
+                    // (QUAL-001).
+                    invalidateWidgetsBestEffort(widgetInvalidation)
                     HostAction.RefreshAfterResult
                 }
             }
@@ -366,13 +394,14 @@ internal class P503HostCoordinator(
     internal fun onImportBatchConfirmed() {
         onRefresh()
         pendingMonthlyReRequestAfterRefresh = true
-        // P7-09 09.C (spec section 6.4; D-225 Q20): a fully terminal batch confirmation is "已知正式
-        // 写入成功" (import 逐项成功), so it invalidates every widget through the SAME success gate
-        // ([shouldArmImportBatchConfirmed]) the caller already applied — no second success rule.
-        widgetInvalidation.invalidateAllWidgets()
         // P7-07 07.D: the SAME chain arms the budget re-request (only once the budget surface
         // has been loaded — an unloaded surface has nothing to refresh).
         armBudgetMonthReRequestIfLoaded()
+        // P7-09 09.C (spec section 6.4; D-225 Q20): a fully terminal batch confirmation is "已知正式
+        // 写入成功" (import 逐项成功), so it invalidates every widget through the SAME success gate
+        // ([shouldArmImportBatchConfirmed]) the caller already applied — no second success rule.
+        // Best-effort and AFTER the arm bookkeeping (QUAL-001).
+        invalidateWidgetsBestEffort(widgetInvalidation)
     }
 
     /**
@@ -390,14 +419,15 @@ internal class P503HostCoordinator(
     internal fun onP705EffectiveSurfaceChanged() {
         onRefresh()
         pendingMonthlyReRequestAfterRefresh = true
+        // P7-07 07.D: a formal ledger effect moves budget observations too — arm the SAME
+        // post-landing budget re-request (only once the budget surface has been loaded).
+        armBudgetMonthReRequestIfLoaded()
         // P7-09 09.C (spec section 6.4; D-225 Q20): a correction / void / restore determinate success
         // is "已知正式写入成功/恢复成功", so it invalidates every widget through the SAME success gate
         // the caller applies ([refreshAfterP705Commit] → here only on Created/NoChange) — no second
         // success rule and never on a typed rejection/stale/conflict (which never reach this line).
-        widgetInvalidation.invalidateAllWidgets()
-        // P7-07 07.D: a formal ledger effect moves budget observations too — arm the SAME
-        // post-landing budget re-request (only once the budget surface has been loaded).
-        armBudgetMonthReRequestIfLoaded()
+        // Best-effort and AFTER the arm bookkeeping (QUAL-001).
+        invalidateWidgetsBestEffort(widgetInvalidation)
     }
 
     /** Arms the budget re-request only when the budget surface has been loaded this session. */

@@ -3508,7 +3508,16 @@ fun P503App(
                 // open and read back. The reducer already closed the surface to the preserved
                 // overview; this triggers the authoritative refresh chain so the overview reloads
                 // from the NEW generation (the old cached read models are gone with the old graph).
-                if (result is BackupRestoreSwitchResult.Committed) refresh()
+                if (result is BackupRestoreSwitchResult.Committed) {
+                    refresh()
+                    // P7-09 09.C (spec section 6.4; D-225 Q20): 换库 (the backup-restore switch) is
+                    // one of the frozen merge-invalidation causes, so every widget is invalidated
+                    // here too — the widget would otherwise keep the OLD ledger's amount until the
+                    // next platform period or a manual refresh. Best-effort (the fan-out is
+                    // non-authoritative; the generation guard already prevents a stale read from
+                    // landing), and it never blocks the refresh above (QUAL-001).
+                    invalidateWidgetsBestEffort(currentWidgetInvalidation)
+                }
             },
         )
     }

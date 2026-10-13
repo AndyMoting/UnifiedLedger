@@ -416,6 +416,34 @@ class P503HostCoordinatorTest {
         assertEquals(1, probe.arms)
     }
 
+    /**
+     * P7-09 09.C (spec section 6.4; D-225 Q20; QUAL-008): the annotation-edit landing is a fourth
+     * determinate-success route into the SAME refresh chain (it delegates to
+     * [P503HostCoordinator.onP705EffectiveSurfaceChanged] on Accepted/NoChange), so it must
+     * invalidate every widget exactly once and NOT on a rejection. Pins the branch the QUAL-008
+     * finding called out as untested.
+     *
+     * ABLATION (承重): remove the invalidation call from `onP705EffectiveSurfaceChanged` (which this
+     * route delegates to) and this test goes RED on the Accepted assertion.
+     */
+    @Test
+    fun anAnnotationEditAcceptedLandingInvalidatesTheWidgetAndARejectionDoesNot() {
+        var invalidations = 0
+        val coordinator =
+            P503HostCoordinator(
+                onRefresh = { },
+                onSubmit = { _, _ -> },
+                onCheck = { _, _ -> },
+                widgetInvalidation = WidgetInvalidationObserver { invalidations += 1 },
+            )
+        refreshAndArmAfterAnnotationEdit(TransactionAnnotationEditOutcome.Accepted(3L), coordinator) { }
+        assertEquals(1, invalidations)
+        refreshAndArmAfterAnnotationEdit(TransactionAnnotationEditOutcome.NoChange(3L), coordinator) { }
+        assertEquals(2, invalidations)
+        refreshAndArmAfterAnnotationEdit(TransactionAnnotationEditOutcome.Rejected("AnnotationRevisionConflict"), coordinator) { }
+        assertEquals(2, invalidations)
+    }
+
     @Test
     fun a07AnAllTerminalImportBatchLandingArmsTheFilterReRequestExactlyOnce() {
         val probe = ArmProbe()
@@ -541,5 +569,48 @@ class P503HostCoordinatorTest {
             ),
         )
         assertEquals(0, invalidations)
+    }
+
+    /**
+     * P7-09 09.C (spec section 6.4; D-225 Q20; QUAL-001): the widget fan-out is a NON-AUTHORITATIVE
+     * side effect, so a throw inside it must not skip the authoritative bookkeeping the invalidation
+     * rides beside — the P7-03 (e) monthly re-request arm, the P7-07 budget arm and the
+     * `HostAction.RefreshAfterResult` return — nor escape into the caller. An observer that always
+     * throws is injected; every hook must still complete its authoritative work.
+     *
+     * ABLATION (承重): drop the `try/catch` in `invalidateWidgetsBestEffort` and the throwing observer
+     * propagates out of `decide`/`onP705EffectiveSurfaceChanged`/`onImportBatchConfirmed`, turning
+     * this test RED at the first throwing call.
+     */
+    @Test
+    fun aThrowingWidgetInvalidationNeverBreaksTheAuthoritativeRefreshChain() {
+        var refreshes = 0
+        var budgetRequests = 0
+        val coordinator =
+            P503HostCoordinator(
+                onRefresh = { refreshes += 1 },
+                onSubmit = { _, _ -> },
+                onCheck = { _, _ -> },
+                onBudgetMonthRequest = { budgetRequests += 1 },
+                widgetInvalidation = WidgetInvalidationObserver { error("widget fan-out failed") },
+            )
+        // Load the budget surface so the arm actually arms (budgetEverRequested).
+        coordinator.decideBudgetMonth(P503AppState.OverviewEmpty(LedgerCurrentState(LedgerId("ledger-widget-throw"), emptyList(), emptyList())))
+
+        // decide's success branch: the action is still returned and the refresh still fired.
+        assertEquals(HostAction.RefreshAfterResult, coordinator.decide(P503AppState.Created))
+        assertEquals(1, refreshes)
+
+        // onP705: the refresh fired and the budget re-request arm completed despite the throw.
+        coordinator.onP705EffectiveSurfaceChanged()
+        assertEquals(2, refreshes)
+        // The armed re-request is consumed by a landing exactly once (the arm was not skipped).
+        coordinator.consumeMonthlyReRequestAfterRefresh(P503AppState.Created)
+        coordinator.consumeBudgetMonthReRequestAfterRefresh(P503AppState.Created)
+        assertEquals(2, budgetRequests, "the budget re-request arm must survive a throwing widget fan-out")
+
+        // onImportBatchConfirmed: same guarantee.
+        coordinator.onImportBatchConfirmed()
+        assertEquals(3, refreshes)
     }
 }

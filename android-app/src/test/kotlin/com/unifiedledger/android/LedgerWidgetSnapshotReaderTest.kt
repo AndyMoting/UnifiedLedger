@@ -279,6 +279,21 @@ class LedgerWidgetSnapshotReaderTest {
             source.contains("override fun onDeleted("),
             "the provider must clear the per-widget preference when a widget is removed (spec section 6.5)",
         )
+        // QUAL-002: a per-widget failure must stay inside its own failure domain (renderOneSafely)
+        // and the scope must carry an uncaught handler, so one widget cannot skip the rest or tear
+        // the process down. QUAL-005: the invalidation enumeration runs inside the coroutine.
+        assertTrue(
+            source.contains("renderOneSafely("),
+            "each widget must render inside its own failure domain (QUAL-002)",
+        )
+        assertTrue(
+            source.contains("CoroutineExceptionHandler"),
+            "the render scope must carry an uncaught-exception handler (QUAL-002)",
+        )
+        assertTrue(
+            source.contains("provideIds: () -> IntArray"),
+            "the invalidation id enumeration must run inside the render coroutine, off the main thread (QUAL-005)",
+        )
     }
 
     @Test
@@ -322,10 +337,13 @@ class LedgerWidgetSnapshotReaderTest {
 
     @Test
     fun theProductionRootWiresTheWidgetInvalidationLegToTheProcessHolder() {
-        // ASSEMBLY GUARD (the `AndroidRestoreWiringTest` source-pin precedent): the first refresh leg
-        // ("已知正式写入成功/恢复成功的合并失效", spec section 6.4; D-225 Q20) must be WIRED, not merely
-        // implemented — the Android root must hand the platform-neutral observer the process-scoped
-        // holder's fan-out. Deleting the argument (or pointing it elsewhere) turns this RED.
+        // ASSEMBLY GUARD (the `AndroidRestoreWiringTest` source-pin precedent). This is a SOURCE-PIN:
+        // it asserts the call-site LITERALS exist, not that the wiring behaves — replacing the
+        // observer body with a no-op while keeping the literals (or leaving them in a comment) would
+        // still pass. The BEHAVIOURAL coverage of the leg lives in the JVM coordinator tests
+        // (`P503HostCoordinatorTest`), which count the observer invocations on the real success
+        // branches; the two together are the evidence. The pin's job is only to catch a deletion or
+        // rename of the production wiring in the Android root/holder/provider.
         val root = repositoryFile("android-app/src/main/kotlin/com/unifiedledger/android/App.kt").toFile().readText()
         assertTrue(
             root.contains("widgetInvalidation ="),
@@ -348,6 +366,23 @@ class LedgerWidgetSnapshotReaderTest {
         assertTrue(
             provider.contains("getAppWidgetIds("),
             "the fan-out must enumerate the host-assigned widget ids (no full-ledger scan)",
+        )
+    }
+
+    @Test
+    fun theRestoreSwitchCommittedLandingAlsoInvalidatesTheWidgets() {
+        // SOURCE-PIN (QUAL-003; spec section 6.4): 换库 (the backup-restore switch) is one of the
+        // frozen merge-invalidation causes, so its Committed closeout in `P503App` must invalidate
+        // the widgets beside its authoritative refresh. Source-pin only (it asserts the literals
+        // exist); the restore-switch path itself is not JVM-exercisable here.
+        val source = repositoryFile("app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503App.kt").toFile().readText()
+        assertTrue(
+            source.contains("BackupRestoreSwitchResult.Committed"),
+            "the restore-switch Committed closeout must exist in the composition root",
+        )
+        assertTrue(
+            source.contains("invalidateWidgetsBestEffort(currentWidgetInvalidation)"),
+            "the restore-switch (换库) closeout must invalidate the widgets (spec section 6.4)",
         )
     }
 

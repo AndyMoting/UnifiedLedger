@@ -775,8 +775,11 @@ class LedgerLeaseScope(
                 // write are both wired. Pure null checks, never an invocation.
                 budget = facade.queryBudgetMonth != null && facade.saveBudgetConfiguration != null,
                 // P7-09 09.C (D-225 Q20; spec section 6.2): the monthly-widget snapshot read is
-                // wired. A pure null check of the use case, never an invocation, so the widget
-                // provider renders the typed 不可用 state instead of issuing a dead read.
+                // wired. A pure null check of the use case, never an invocation. The widget
+                // provider itself distinguishes "unwired" from a failed read through the
+                // [widgetMonthlySnapshot] accessor's own [WidgetSnapshotOutcome.SurfaceAbsent]
+                // result, so this probe is a composition-wiring observation (asserted by the widget
+                // reader test), not a provider input.
                 widgetMonthlySnapshot = facade.queryWidgetMonthlySnapshot != null,
             )
         }

@@ -11,6 +11,7 @@ import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.MonthlyBuckets
 import com.unifiedledger.ui.ExternalNavigationRequest
 import com.unifiedledger.ui.WidgetSnapshotOutcome
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -52,8 +53,13 @@ import kotlin.time.Clock
  * [com.unifiedledger.ui.WidgetInvalidationObserver], the Android root hands it
  * [LedgerProcessHolder.invalidateAllWidgets] (this class's [reRenderAllWidgets]), and that fans the
  * SAME guarded render path out to every host-assigned widget id — so a confirmed write is picked up
- * immediately instead of at the next platform period or manual refresh. The widget still always
- * shows its `asOf` time, so the data's age is visible rather than implied live.
+ * immediately instead of at the next platform period or manual refresh. The composition reports the
+ * spec section 6.4 causes it OBSERVES — 手工录入, 导入逐项成功 (a fully terminal batch), 金融修正,
+ * void/restore, and 换库 (the restore-switch closeout). 月界 is carried by the read path itself: every
+ * render resolves the current reporting month afresh, so a period/refresh render after a month
+ * boundary shows the new month and never a stale one. 重启 relies on the platform re-delivering the
+ * update (a device leg, spec section 9). The widget still always shows its `asOf` time, so the
+ * data's age is visible rather than implied live.
  *
  * The receiver `exported`/`android:permission` values are NOT decided here: spec section 8 open item
  * 15 leaves the manifest security face to a per-entry ruling (main-session/device evidence). This
@@ -69,7 +75,7 @@ class LedgerWidgetProvider : AppWidgetProvider() {
         // goAsync extends the broadcast budget; the work itself is posted to a background
         // dispatcher below (spec section 6.6), so the main thread is never blocked on a DB read.
         val pendingResult = goAsync()
-        renderAll(context, appWidgetManager, appWidgetIds) { pendingResult.finish() }
+        renderAll(context, appWidgetManager, provideIds = { appWidgetIds }) { pendingResult.finish() }
     }
 
     /**
@@ -79,22 +85,56 @@ class LedgerWidgetProvider : AppWidgetProvider() {
      * ([reRenderAllWidgets], which has no broadcast and therefore no `goAsync` budget); the
      * generation/month/revision landing discard inside [renderOne] applies identically to every
      * caller (spec section 6.4).
+     *
+     * Each widget renders in its OWN failure domain ([renderOneSafely]): one widget's failure must
+     * not skip the remaining widgets of the same batch, and it must not escape this scope's default
+     * uncaught-exception handler (which on Android can tear the process down) — the fan-out is
+     * non-authoritative, so a failed widget simply keeps its previous render until the next period.
      */
     private fun renderAll(
         context: Context,
         appWidgetManager: AppWidgetManager,
-        appWidgetIds: IntArray,
+        provideIds: () -> IntArray,
         onDone: () -> Unit,
     ) {
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        // The handler is the last-resort net for a Throwable that escapes [renderOneSafely] (an
+        // `Error`, not an `Exception`): it keeps such an escape from reaching the process's default
+        // uncaught-exception handler, where it could tear the process down. Diagnostics only.
+        val handler =
+            CoroutineExceptionHandler { _, failure ->
+                StartupTrace.emit("widget.render uncaught causeClass=${failure::class.simpleName}")
+            }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + handler)
         scope.launch {
             try {
-                for (widgetId in appWidgetIds) {
-                    renderOne(context, appWidgetManager, widgetId)
+                // The ids are resolved INSIDE the background coroutine: the invalidation path's
+                // enumeration is an `AppWidgetManager` binder round-trip (QUAL-005), so it must not
+                // run on the composition main thread.
+                for (widgetId in provideIds()) {
+                    renderOneSafely(context, appWidgetManager, widgetId)
                 }
             } finally {
                 onDone()
             }
+        }
+    }
+
+    /**
+     * Renders one widget inside its own failure domain (spec section 6.4). A throw anywhere in
+     * [renderOne] — the clock, `RemoteViews` construction or `updateAppWidget` — is caught and
+     * reported through the diagnostics seam, so the remaining widgets of the batch still render and
+     * the exception cannot escape to the scope's uncaught handler. The message carries no amount and
+     * no ledger id (the widget payload privacy set, spec section 6.5(f)).
+     */
+    private suspend fun renderOneSafely(
+        context: Context,
+        appWidgetManager: AppWidgetManager,
+        widgetId: Int,
+    ) {
+        try {
+            renderOne(context, appWidgetManager, widgetId)
+        } catch (failure: Exception) {
+            StartupTrace.emit("widget.render skipped causeClass=${failure::class.simpleName}")
         }
     }
 
@@ -359,9 +399,16 @@ class LedgerWidgetProvider : AppWidgetProvider() {
          */
         fun reRenderAllWidgets(context: Context) {
             val manager = AppWidgetManager.getInstance(context)
-            val ids = activeWidgetIds(manager.getAppWidgetIds(ComponentName(context, LedgerWidgetProvider::class.java)))
-            if (ids.isEmpty()) return
-            LedgerWidgetProvider().renderAll(context, manager, ids, onDone = {})
+            // The ids are enumerated INSIDE the render coroutine (a binder round-trip off the main
+            // thread, QUAL-005); an app with no placed widget enumerates zero ids and does no work.
+            LedgerWidgetProvider().renderAll(
+                context,
+                manager,
+                provideIds = {
+                    activeWidgetIds(manager.getAppWidgetIds(ComponentName(context, LedgerWidgetProvider::class.java)))
+                },
+                onDone = {},
+            )
         }
 
         /**
