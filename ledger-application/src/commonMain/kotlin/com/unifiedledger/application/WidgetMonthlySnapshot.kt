@@ -132,11 +132,14 @@ data class WidgetMonthlySnapshot(
  * lease; spec section 6.3) and never sums amounts in SQL.
  *
  * MULTI-CURRENCY MONTHS ARE NOT COLLAPSED (spec section 6.2 freezes a SINGLE `currency` on the
- * snapshot, while the P7-03 projection yields one row per activity currency — spec section 8 open
- * item 4 leaves the mapping unfrozen). This implementation therefore fails CLOSED: a month whose
- * read window carries postings in more than one currency is the 失效 state, never a silently picked
- * (or silently summed) single-currency number. A month with no posting currency at all is the
- * genuine zero in the configured product currency.
+ * snapshot, while the P7-03 projection yields one row per activity currency). The spec does NOT
+ * cover that case — it neither freezes a mapping nor assigns it to any of its section 8 open items
+ * (item 4 is only the widget-config storage mechanism) — so this batch treats it as an unresolved
+ * gap it must resolve fail-closed, and registers it as a NEW open item (batch open item O-CUR),
+ * deliberately NOT folded into spec section 8 item 4. This implementation therefore fails CLOSED: a
+ * month whose read window carries postings in more than one currency is the 失效 state, never a
+ * silently picked (or silently summed) single-currency number. A month with no posting currency at
+ * all is the genuine zero in the configured product currency.
  *
  * [expectedCatalogVersion] is the caller's `CatalogAuthority.catalogVersion`; the port already
  * fails closed when the read snapshot's catalog version differs, and that typed
@@ -215,7 +218,7 @@ class QueryWidgetMonthlySnapshot(
 
     /**
      * The three frozen amounts of the read month, or null when the month cannot be expressed as ONE
-     * currency (spec section 8 open item 4; the multi-currency fail-closed rule documented above).
+     * currency (batch open item O-CUR; the multi-currency fail-closed rule documented above).
      */
     private fun widgetAmounts(
         activity: MonthlyActivity,

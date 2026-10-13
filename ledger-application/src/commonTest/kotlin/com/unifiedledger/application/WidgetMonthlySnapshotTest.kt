@@ -119,7 +119,8 @@ class WidgetMonthlySnapshotTest {
 
     @Test
     fun aMultiCurrencyMonthIsTheTypedInvalidStateAndIsNeverCollapsed() {
-        // Spec section 8 open item 4 / batch open item O-CUR: the snapshot freezes ONE currency
+        // Batch open item O-CUR (a gap the spec does NOT cover, so it is registered as a NEW open
+        // item rather than folded into spec section 8 item 4): the snapshot freezes ONE currency
         // while the projection yields a currency LIST. A month with two activity currencies is
         // 失效 — never a silently picked or summed single-currency number.
         val rows =
