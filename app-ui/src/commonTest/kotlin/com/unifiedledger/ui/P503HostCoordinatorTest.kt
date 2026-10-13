@@ -458,4 +458,88 @@ class P503HostCoordinatorTest {
         assertEquals(1, probe.refreshes)
         assertEquals(1, probe.arms)
     }
+
+    // ---------------------------------------------------------- P7-09 09.C widget invalidation leg
+
+    /**
+     * P7-09 09.C (spec section 6.4 first leg; D-225 Q20): a KNOWN formal write/restore success
+     * invalidates every widget EXACTLY ONCE. The leg reuses the existing success judgements rather
+     * than a second rule, so it is asserted at the two coordinator hooks they already gate:
+     * [P503HostCoordinator.decide]'s Created/NoChange/Recovered branch (manual entry),
+     * [P503HostCoordinator.onP705EffectiveSurfaceChanged] (correction/void/restore) and
+     * [P503HostCoordinator.onImportBatchConfirmed] (terminal import batch).
+     *
+     * ABLATION (承重): delete the `widgetInvalidation.invalidateAllWidgets()` line from any of the
+     * three hooks and this test goes RED — the counter stops advancing there.
+     */
+    @Test
+    fun aConfirmedWriteOrRestoreLandingInvalidatesEveryWidgetExactlyOnce() {
+        var refreshes = 0
+        var invalidations = 0
+        val coordinator =
+            P503HostCoordinator(
+                onRefresh = { refreshes += 1 },
+                onSubmit = { _, _ -> },
+                onCheck = { _, _ -> },
+                widgetInvalidation = WidgetInvalidationObserver { invalidations += 1 },
+            )
+
+        // Manual-entry determinate success: the decide() Created/NoChange/Recovered branch.
+        assertEquals(HostAction.RefreshAfterResult, coordinator.decide(P503AppState.Created))
+        assertEquals(1, refreshes)
+        assertEquals(1, invalidations)
+        // The same instance is served once; a re-evaluation invalidates nothing.
+        assertNull(coordinator.decide(P503AppState.Created))
+        assertEquals(1, invalidations)
+
+        // Financial correction / void / restore determinate landing.
+        coordinator.onP705EffectiveSurfaceChanged()
+        assertEquals(2, invalidations)
+
+        // A fully terminal import batch confirmation.
+        coordinator.onImportBatchConfirmed()
+        assertEquals(3, invalidations)
+    }
+
+    /**
+     * P7-09 09.C (spec section 6.4; D-225 Q20): the invalidation leg must NEVER fire on a non-effect —
+     * a typed rejection, a stale CAS, an identity conflict, an absorbed (non-all-terminal) batch, or a
+     * pure parse candidate / idle overview. The `onRefresh`/`arm` callbacks are wired to `error(...)`
+     * so any accidental call is a hard failure, and the widget counter must stay at zero.
+     *
+     * ABLATION (承重): move the `widgetInvalidation.invalidateAllWidgets()` call OUTSIDE its success
+     * branch (e.g. into the `else` of [P503HostCoordinator.decide]) and this test goes RED.
+     */
+    @Test
+    fun aRejectedStaleConflictOrPureParseLandingNeverInvalidatesTheWidget() {
+        var invalidations = 0
+        val coordinator =
+            P503HostCoordinator(
+                onRefresh = { error("no refresh on a non-success") },
+                onSubmit = { _, _ -> },
+                onCheck = { _, _ -> },
+                widgetInvalidation = WidgetInvalidationObserver { invalidations += 1 },
+            )
+
+        // The shared success gate rejects every non-effect: nothing refreshes and nothing invalidates.
+        refreshAndArmAfterP705CommitLanding(CorrectTransactionVersionResult.StaleCurrentVersion, coordinator) { error("no arm") }
+        refreshAndArmAfterP705CommitLanding(
+            CorrectTransactionVersionResult.Rejected(com.unifiedledger.domain.P705FailureCode.P705_TRANSACTION_VOIDED),
+            coordinator,
+        ) { error("no arm") }
+        refreshAndArmAfterVoidRestoreCommit(
+            VoidTransactionResult.Rejected(com.unifiedledger.domain.P705FailureCode.P705_TRANSACTION_VOIDED),
+            coordinator,
+        ) { error("no arm") }
+        refreshAndArmAfterAnnotationEdit(TransactionAnnotationEditOutcome.Rejected("AnnotationRevisionConflict"), coordinator) { error("no arm") }
+        // A landing without the all-terminal batch state arms (and invalidates) nothing.
+        armAfterImportBatchConfirmation(P503AppState.Created, coordinator) { error("no arm") }
+        // A pure parse candidate / idle overview is not a trigger state at all.
+        assertNull(
+            coordinator.decide(
+                P503AppState.OverviewEmpty(LedgerCurrentState(LedgerId("ledger-widget-none"), emptyList(), emptyList())),
+            ),
+        )
+        assertEquals(0, invalidations)
+    }
 }

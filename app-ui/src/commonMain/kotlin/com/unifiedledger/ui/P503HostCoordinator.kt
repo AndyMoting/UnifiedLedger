@@ -58,6 +58,32 @@ internal fun dispatchCurrentP503Action(
 }
 
 /**
+ * P7-09 09.C (spec section 6.4; D-225 Q20): the platform-neutral observation seam of the FIRST
+ * widget refresh leg — "已知正式写入成功/恢复成功的合并失效". A confirmed formal write or restore
+ * changes the shared monthly snapshot's inputs, so every widget instance on screen must be
+ * invalidated (re-rendered) without waiting for the platform period (`≥30 分钟`) or a user refresh.
+ *
+ * [P503App] reports every determinate landing through this observer at exactly the two composition
+ * points it already uses for the authoritative refresh — [P503HostCoordinator.onP705EffectiveSurfaceChanged]
+ * (financial correction / void / restore, gated by `shouldRefreshAfterP705Commit`) and
+ * [P503HostCoordinator.onImportBatchConfirmed] (a manual entry success and a fully terminal import
+ * batch run, gated by the `decide` success branch and `shouldArmImportBatchConfirmed`). The widget
+ * leg therefore REUSES the existing success judgements and adds NO second success rule: a typed
+ * rejection, a stale CAS, an identity conflict, or a pure parse candidate never reaches it, so the
+ * widget can never react to a non-effect.
+ *
+ * commonMain cannot name `AppWidgetManager`/`Context` (the spec section 2.1 platform boundary), so
+ * the observer is a plain platform-neutral callback. The Android composition root supplies the
+ * widget fan-out (the process holder's half of this seam); a root that wires nothing (desktop, the
+ * JVM tests) keeps the no-op default. The callback carries no amount, no month and no ledger id — a
+ * pure "your inputs changed" signal — so the spec section 6.5 hidden-state payload set is untouched.
+ */
+fun interface WidgetInvalidationObserver {
+    /** Invalidates and re-renders every host-assigned widget instance (nothing else). */
+    fun invalidateAllWidgets()
+}
+
+/**
  * P5-04.4 S5: pure Kotlin host-behavior coordinator (spec section 7).
  *
  * [P503App] is `@Composable`, so its host wiring (which pass-through callback a given state
@@ -114,6 +140,11 @@ internal class P503HostCoordinator(
     // precedent). The production host may instead act on the decision
     // [handleImportPickResult] returns; the callback is the injection/counting seam.
     private val onImportPickIntake: (PickedImportFile) -> Unit = {},
+    // P7-09 09.C (spec section 6.4; D-225 Q20): the FIRST refresh leg — invalidate every widget on a
+    // KNOWN formal write/restore success. Wired by the Android composition root to the process
+    // holder's widget fan-out; the no-op default keeps the desktop root and every existing JVM
+    // construction site compiling unchanged (the R-222-4 default-value convention).
+    private val widgetInvalidation: WidgetInvalidationObserver = WidgetInvalidationObserver {},
 ) {
     /** The transient-result instance whose automatic refresh has already been dispatched. */
     private var refreshAfterResultServed: P503AppState? = null
@@ -205,6 +236,12 @@ internal class P503HostCoordinator(
                 } else {
                     refreshAfterResultServed = state
                     onRefresh()
+                    // P7-09 09.C (spec section 6.4; D-225 Q20): the manual-entry determinate
+                    // success (Created/NoChange/Recovered) is the spec's "已知正式写入成功" leg, so it
+                    // invalidates every widget through the SAME reused success branch (no second
+                    // success rule). A `decide` null (already served) or any non-trigger state never
+                    // reaches this line.
+                    widgetInvalidation.invalidateAllWidgets()
                     // Trigger (e): the authoritative refresh of a determinate success re-requests
                     // the monthly payload for the fresh overview (P703SPEC-04). A-02 FIX-MONTH-1
                     // (D-152): the re-request is armed here and COMPLETED by the host after the
@@ -329,6 +366,10 @@ internal class P503HostCoordinator(
     internal fun onImportBatchConfirmed() {
         onRefresh()
         pendingMonthlyReRequestAfterRefresh = true
+        // P7-09 09.C (spec section 6.4; D-225 Q20): a fully terminal batch confirmation is "已知正式
+        // 写入成功" (import 逐项成功), so it invalidates every widget through the SAME success gate
+        // ([shouldArmImportBatchConfirmed]) the caller already applied — no second success rule.
+        widgetInvalidation.invalidateAllWidgets()
         // P7-07 07.D: the SAME chain arms the budget re-request (only once the budget surface
         // has been loaded — an unloaded surface has nothing to refresh).
         armBudgetMonthReRequestIfLoaded()
@@ -349,6 +390,11 @@ internal class P503HostCoordinator(
     internal fun onP705EffectiveSurfaceChanged() {
         onRefresh()
         pendingMonthlyReRequestAfterRefresh = true
+        // P7-09 09.C (spec section 6.4; D-225 Q20): a correction / void / restore determinate success
+        // is "已知正式写入成功/恢复成功", so it invalidates every widget through the SAME success gate
+        // the caller applies ([refreshAfterP705Commit] → here only on Created/NoChange) — no second
+        // success rule and never on a typed rejection/stale/conflict (which never reach this line).
+        widgetInvalidation.invalidateAllWidgets()
         // P7-07 07.D: a formal ledger effect moves budget observations too — arm the SAME
         // post-landing budget re-request (only once the budget surface has been loaded).
         armBudgetMonthReRequestIfLoaded()

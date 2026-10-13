@@ -35,6 +35,7 @@ import com.unifiedledger.ui.P503LedgerFacade
 import com.unifiedledger.ui.WidgetSnapshotOutcome
 import kotlinx.datetime.YearMonth
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
@@ -115,16 +116,40 @@ class LedgerWidgetSnapshotReaderTest {
     }
 
     @Test
-    fun theClickRoutePayloadCarriesOnlyTheGenericRouteAndTheWidgetId() {
-        // Spec sections 6.1/6.5(c): the PendingIntent extras carry a generic route token plus the
-        // widget id, never an amount, a ledger id or an account name. The route is the enum name of
-        // a frozen generic token, and the id is a host-assigned int.
+    fun theClickRouteIsTheExistingOpenCurrentMonthRequestNotANewOne() {
+        // Spec sections 6.1/6.5 + J5: the widget click reuses the EXISTING neutral request family.
+        // The route is the generic OpenCurrentMonth surface (ExternalNavigation.kt:34-35), it carries
+        // no amount and no widget data, and the widget must NOT add a fourth neutral request type.
         val snapshot = snapshot(ordinaryIncome = 123_456L, netExpense = -78_900L, balance = 202_356L)
         val state = widgetViewState(march, WidgetSnapshotOutcome.Read(snapshot), LedgerWidgetConfig.hidden(), 5, 7)
         assertEquals(WidgetClickRoute.OPEN_CURRENT_MONTH, state.clickRoute)
         assertFalse(state.clickRoute.name.contains("1234"))
         assertEquals(7, state.widgetId)
-        assertTrue(WIDGET_CLICK_ROUTE_EXTRA.isNotBlank())
+        // The click path in the provider maps the click to the existing request, never a new type.
+        val provider = repositoryFile("android-app/src/main/kotlin/com/unifiedledger/android/LedgerWidgetProvider.kt").toFile().readText()
+        assertTrue(
+            provider.contains("ExternalNavigationRequest.OpenCurrentMonth"),
+            "the widget click must reuse the existing OpenCurrentMonth neutral request (J5)",
+        )
+        val existing = repositoryFile("app-ui/src/commonMain/kotlin/com/unifiedledger/ui/ExternalNavigation.kt").toFile().readText()
+        assertEquals(
+            3,
+            Regex("(data class|data object) Open\\w+").findAll(existing).count(),
+            "the neutral request family must still have exactly three members (A6 frozen face)",
+        )
+    }
+
+    @Test
+    fun theHostBoundaryNoticeIsAlwaysPresentAndAmountFree() {
+        // Spec section 6.5: the host-control / no-screenshot-recall disclosure must be present, and
+        // it is amount-free, so it appears in the HIDDEN state as well.
+        val snapshot = snapshot(ordinaryIncome = 123_456L, netExpense = -78_900L, balance = 202_356L)
+        val hidden = widgetViewState(march, WidgetSnapshotOutcome.Read(snapshot), LedgerWidgetConfig.hidden(), 5, 7)
+        assertEquals(WIDGET_HOST_NOTICE, hidden.hostNoticeText)
+        assertTrue(hidden.contentDescription.contains(WIDGET_HOST_NOTICE), "the host notice must be read aloud too")
+        for (payload in listOf(hidden.hostNoticeText, hidden.contentDescription)) {
+            assertFalse(payload.contains("1234.56"), "the host notice must be amount-free: $payload")
+        }
     }
 
     @Test
@@ -242,6 +267,18 @@ class LedgerWidgetSnapshotReaderTest {
             source.contains("buildLedgerGraph"),
             "the provider must never call the bootstrap/migrate graph builder (spec section 6.3)",
         )
+        assertTrue(
+            source.contains("ACTION_REFRESH"),
+            "the user-initiated refresh leg (spec section 6.4) must be wired",
+        )
+        assertTrue(
+            source.contains("state.hostNoticeText"),
+            "the provider must render the host-boundary notice (spec section 6.5)",
+        )
+        assertTrue(
+            source.contains("override fun onDeleted("),
+            "the provider must clear the per-widget preference when a widget is removed (spec section 6.5)",
+        )
     }
 
     @Test
@@ -264,13 +301,69 @@ class LedgerWidgetSnapshotReaderTest {
         // The platform face the widget cannot work without: a receiver declared with the appwidget
         // provider metadata. Asserted on the manifest source (a device leg belongs to the acceptance
         // batch). The receiver is NOT exported in this batch (spec section 8 open item 15 leaves the
-        // exported/permission ruling open; an unexported receiver is the conservative choice).
+        // exported/permission RULING open; an unexported receiver is the conservative choice, and the
+        // platform evidence that the system-driven update still reaches it is recorded in the
+        // manifest comment).
         val manifest = repositoryFile("android-app/src/main/AndroidManifest.xml").toFile().readText()
         assertTrue(manifest.contains("android:name=\".LedgerWidgetProvider\""), "the widget receiver must be declared")
         assertTrue(manifest.contains("android.appwidget.provider"), "the receiver must declare its appwidget provider metadata")
         assertTrue(manifest.contains("android:resource=\"@xml/ledger_widget_info\""), "the provider metadata must point at the widget info resource")
         assertTrue(manifest.contains("android.appwidget.action.APPWIDGET_UPDATE"), "the receiver must handle the system update action")
+        assertTrue(
+            manifest.contains("com.unifiedledger.android.widget.ACTION_REFRESH"),
+            "the user-initiated refresh action must be declared (spec section 6.4)",
+        )
+        assertTrue(
+            manifest.contains("com.unifiedledger.android.widget.ACTION_OPEN_CURRENT_MONTH"),
+            "the click route action must be declared (J5)",
+        )
         assertTrue(manifest.contains("android:exported=\"false\""), "this batch declares the widget receiver non-exported")
+    }
+
+    @Test
+    fun theProductionRootWiresTheWidgetInvalidationLegToTheProcessHolder() {
+        // ASSEMBLY GUARD (the `AndroidRestoreWiringTest` source-pin precedent): the first refresh leg
+        // ("已知正式写入成功/恢复成功的合并失效", spec section 6.4; D-225 Q20) must be WIRED, not merely
+        // implemented — the Android root must hand the platform-neutral observer the process-scoped
+        // holder's fan-out. Deleting the argument (or pointing it elsewhere) turns this RED.
+        val root = repositoryFile("android-app/src/main/kotlin/com/unifiedledger/android/App.kt").toFile().readText()
+        assertTrue(
+            root.contains("widgetInvalidation ="),
+            "the Android root must pass the widget-invalidation observer to P503App (spec section 6.4)",
+        )
+        assertTrue(
+            root.contains("invalidateAllWidgets()"),
+            "the observer must invoke the process holder's widget fan-out",
+        )
+        val holder = repositoryFile("android-app/src/main/kotlin/com/unifiedledger/android/LedgerProcessHolder.kt").toFile().readText()
+        assertTrue(
+            holder.contains("LedgerWidgetProvider.reRenderAllWidgets(applicationContext)"),
+            "the process-scoped holder must fan out to the widget provider's re-render (spec section 6.3)",
+        )
+        val provider = repositoryFile("android-app/src/main/kotlin/com/unifiedledger/android/LedgerWidgetProvider.kt").toFile().readText()
+        assertTrue(
+            provider.contains("fun reRenderAllWidgets(context: Context)"),
+            "the provider must expose the re-render fan-out the holder binds",
+        )
+        assertTrue(
+            provider.contains("getAppWidgetIds("),
+            "the fan-out must enumerate the host-assigned widget ids (no full-ledger scan)",
+        )
+    }
+
+    @Test
+    fun theWidgetFanOutEnumeratesOnlyTheLiveIdsAndToleratesAnAbsentArray() {
+        // The JVM-assertable seam of the fan-out: a real array is copied (so the render loop cannot
+        // mutate the platform's array) and a defensive null/empty read is the honest "no widget
+        // placed" case — zero work, never a crash. The Android framework itself is not exercised
+        // here (a device leg belongs to the acceptance batch).
+        val ids = intArrayOf(3, 7, 11)
+        val copied = LedgerWidgetProvider.activeWidgetIds(ids)
+        assertContentEquals(ids, copied)
+        copied[0] = 99
+        assertEquals(3, ids[0], "the fan-out must copy the platform array, not alias it")
+        assertEquals(0, LedgerWidgetProvider.activeWidgetIds(IntArray(0)).size)
+        assertEquals(0, LedgerWidgetProvider.activeWidgetIds(null).size)
     }
 
     /** Resolves a repository-relative path by walking up to the settings file (the precedent helper). */

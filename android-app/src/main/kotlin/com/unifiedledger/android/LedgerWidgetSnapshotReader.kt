@@ -15,20 +15,18 @@ import kotlinx.datetime.YearMonth
  *
  * The hidden-state payload set of spec section 6.5 is enforced HERE, by construction: when the
  * per-widget visibility setting is off, [WidgetViewState.amountLines] is EMPTY and every other
- * string is built from the month label, the status and the update time only — the amount strings
- * are never even formatted. The `PendingIntent` payload ([WidgetClickRoute]) carries a generic
- * route token plus the widget id, never an amount, a ledger id or an account name. A test asserts
- * each of those payloads against a snapshot that DOES carry amounts.
+ * string is built from the month label, the status, the update time and the host notice only — the
+ * amount strings are never even formatted. The click `PendingIntent` carries the generic route
+ * token only (the widget id rides on the toggle broadcast, never on the click intent) and the toggle
+ * `PendingIntent` carries the widget id only — neither carries an amount, a ledger id or an account
+ * name. A test asserts each of those payloads against a snapshot that DOES carry amounts.
  */
 
-/** The generic click route a widget `PendingIntent` may carry (spec sections 6.1/6.5). */
+/** The generic click route the widget body reuses (spec sections 6.1/6.5; J5). */
 internal enum class WidgetClickRoute {
     /** Open the app on its current month (the app's default 看账 surface). */
     OPEN_CURRENT_MONTH,
 }
-
-/** The frozen generic-route extra key; its value is a [WidgetClickRoute] name, never data. */
-internal const val WIDGET_CLICK_ROUTE_EXTRA: String = "com.unifiedledger.android.widget.ROUTE"
 
 /** The widget-id extra key. The id is a host-assigned int, never personal data. */
 internal const val WIDGET_ID_EXTRA: String = "appWidgetId"
@@ -50,6 +48,12 @@ internal data class WidgetViewState(
     val amountLines: List<String>,
     /** The update-time line, or null when no `asOf` is known; never an amount. */
     val updateText: String?,
+    /**
+     * P7-09 09.C (spec section 6.5: "需提示系统桌面/锁屏由 host 控制，隐藏开关不能撤回历史截图"):
+     * the always-present host-boundary notice. It is amount-free by construction, so it can be shown
+     * in the hidden state too.
+     */
+    val hostNoticeText: String,
     /** The accessibility text; equals the visible lines and never contains an amount while hidden. */
     val contentDescription: String,
     /** The generic click route; never an amount and never a ledger identifier. */
@@ -82,12 +86,14 @@ internal fun widgetViewState(
     val statusText = widgetStatusText(outcome)
     val updateText = snapshot?.asOf?.let { WIDGET_UPDATED_PREFIX + it.toString() }
     val amountLines = widgetAmountLines(snapshot, config)
-    val lines = listOfNotNull(month.toString(), statusText) + amountLines + listOfNotNull(updateText)
+    val lines =
+        listOfNotNull(month.toString(), statusText) + amountLines + listOfNotNull(updateText, WIDGET_HOST_NOTICE)
     return WidgetViewState(
         month = month,
         statusText = statusText,
         amountLines = amountLines,
         updateText = updateText,
+        hostNoticeText = WIDGET_HOST_NOTICE,
         contentDescription = lines.joinToString(WIDGET_LINE_SEPARATOR),
         clickRoute = WidgetClickRoute.OPEN_CURRENT_MONTH,
         widgetId = widgetId,
@@ -186,6 +192,12 @@ internal const val WIDGET_STATUS_INVALID: String = "数据不一致，打开应�
 internal const val WIDGET_STATUS_UNAVAILABLE: String = "数据不可用，打开应用查看"
 internal const val WIDGET_STATUS_OPEN_APP: String = "打开应用以查看本月收支"
 internal const val WIDGET_UPDATED_PREFIX: String = "更新于 "
+/**
+ * P7-09 09.C (spec section 6.5): the frozen host-boundary disclosure. The desktop/lock-screen
+ * presentation is controlled by the host, and hiding amounts cannot recall screenshots the host
+ * already took. Amount-free, so it is shown in both the hidden and the visible state.
+ */
+internal const val WIDGET_HOST_NOTICE: String = "桌面与锁屏由系统控制；隐藏金额不能撤回已产生的截图"
 internal const val WIDGET_LABEL_INCOME: String = "收入"
 internal const val WIDGET_LABEL_NET_EXPENSE: String = "净支出"
 internal const val WIDGET_LABEL_BALANCE: String = "结余"

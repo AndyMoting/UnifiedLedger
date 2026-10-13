@@ -241,10 +241,13 @@ class QueryWidgetMonthlySnapshot(
     }
 
     /**
-     * The P7-03 read consistency predicate (spec section 6.2: the projection is reused, not
-     * re-invented): every posting's account must exist in the read catalog, belong to this ledger
-     * and carry the posting's own currency. A violation means the catalog and the postings are not
-     * one coherent snapshot, which is the typed 失效 state — never a silently folded amount.
+     * The read-consistency predicate, mirroring the shape the P7-03 read path applies
+     * ([QueryMonthlyActivity.isCatalogConsistent]): every posting's account must exist in the read
+     * catalog, belong to this ledger and carry the posting's own currency. A violation means the
+     * catalog and the postings are not one coherent snapshot, which is the typed 失效 state — never
+     * a silently folded amount. The predicate is deliberately re-stated rather than shared, because
+     * [QueryMonthlyActivity] is not part of the widget's frozen reuse surface (spec section 6.2
+     * freezes the bounded port and the classifier, not this guard).
      */
     private fun isCatalogConsistent(
         rows: List<LedgerEntryRow>,

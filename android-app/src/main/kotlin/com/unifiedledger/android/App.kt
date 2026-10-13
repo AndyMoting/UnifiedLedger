@@ -169,6 +169,7 @@ import com.unifiedledger.ui.RestoreIsolatedDatabasePort
 import com.unifiedledger.ui.RestorePreflightUseCase
 import com.unifiedledger.ui.ShareImportSourcePort
 import com.unifiedledger.ui.UuidV7ImportCommitIdSource
+import com.unifiedledger.ui.WidgetInvalidationObserver
 import com.unifiedledger.ui.importCreditRefundOriginalExpenseProvider
 import com.unifiedledger.ui.isUsableSqliteMainFile
 import com.unifiedledger.ui.ledgerStorageLayout
@@ -263,6 +264,13 @@ fun app() {
                     // inbound-navigation channel, so the shared host subscribes and routes the
                     // neutral requests the Activity's share intake delivers.
                     externalNavigationChannel = holder?.externalNavigationChannel,
+                    // P7-09 09.C (spec section 6.4; D-225 Q20): the first refresh leg — a confirmed
+                    // formal write/restore invalidates every widget. The composition reports the
+                    // determinate landing through this platform-neutral observer and the
+                    // process-scoped holder fans it out to the widgets (the same holder the receiver
+                    // reads through, spec section 6.3). A null holder leaves the no-op default.
+                    widgetInvalidation =
+                        WidgetInvalidationObserver { holder?.invalidateAllWidgets() },
                 )
             else ->
                 P503StartupScreen(

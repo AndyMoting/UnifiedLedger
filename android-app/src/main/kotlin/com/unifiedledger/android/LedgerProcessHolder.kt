@@ -21,7 +21,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * one, never `buildLedgerGraph`, and there must be AT MOST ONE owner/active graph per process
  * (the P7-06 single-active-graph/single-generation/lease invariant).
  *
- * Frozen mechanism (spec section 8 open item 13; registered in the batch report):
+ * Mechanism selected by this batch (spec section 8 open item 13: the precise mechanism is OPEN and
+ * its approval/evidence belongs to the main session — nothing here is that ruling):
  * - the holder is owned by the [UnifiedLedgerApplication] subclass, so it exists from process
  *   start and lives until process death;
  * - [controller] is created LAZILY and exactly once (the first caller wins; a racing second
@@ -96,6 +97,20 @@ internal class LedgerProcessHolder(
      */
     val ledger: LedgerLeaseScope?
         get() = controller.ledger
+
+    /**
+     * P7-09 09.C (spec section 6.4; D-225 Q20): re-render EVERY host-assigned widget instance. This
+     * is the process-scoped half of the first refresh leg — "已知正式写入成功/恢复成功的合并失效". The
+     * Android composition root hands it to `P503App`'s platform-neutral
+     * `com.unifiedledger.ui.WidgetInvalidationObserver`, so a determinate write/restore success
+     * observed in the composition invalidates the widgets through the SAME process-scoped holder the
+     * widget receiver reads through (spec section 6.3: one owner/active graph per process, no second
+     * graph, no composition-scoped owner). It carries no amount and no month; the fan-out lives on
+     * [LedgerWidgetProvider] and re-runs the existing guarded render path (no full-ledger scan).
+     */
+    fun invalidateAllWidgets() {
+        LedgerWidgetProvider.reRenderAllWidgets(applicationContext)
+    }
 }
 
 /**

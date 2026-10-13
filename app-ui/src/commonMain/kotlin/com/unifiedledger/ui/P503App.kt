@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -260,6 +261,13 @@ fun P503App(
     // channel. Null (the desktop root and existing tests) keeps the surface absent and renders no
     // dead affordance; a wired root delivers neutral requests the host routes.
     externalNavigationChannel: ExternalNavigationChannel? = null,
+    // P7-09 09.C (spec section 6.4; D-225 Q20): the widget-invalidation seam of the FIRST refresh
+    // leg ("已知正式写入成功/恢复成功的合并失效"). The Android root wires the process holder's
+    // widget fan-out; the no-op default keeps the desktop root and every existing call site/tests
+    // compiling unchanged (the R-222-4 default-value convention). It is read through a
+    // `rememberUpdatedState` at its use site below, so a recomposition with a fresh observer cannot
+    // leave the remembered coordinator holding a stale one.
+    widgetInvalidation: WidgetInvalidationObserver = WidgetInvalidationObserver {},
 ) {
     val reducer = remember(ledger) { P503ReducerImpl(ledger.parseAmount, ledger.currency, ledger.ledgerClock) }
     val validation = remember(ledger) { P503DraftValidation(ledger.parseAmount, ledger.parseOccurredAt, ledger.ledgerClock) }
@@ -1669,12 +1677,19 @@ fun P503App(
     // JVM-testable; the callbacks below are the actual IO/dispatch performed in this
     // composition root. The closures capture the stable state delegate and facade, so the
     // remembered coordinator stays current across recompositions.
+    // P7-09 09.C (spec section 6.4): read through `rememberUpdatedState` so the remembered
+    // coordinator below always calls the LATEST observer (the `P503EditScreen` precedent), instead of
+    // pinning the first-recomposition instance inside a `remember {}` that outlives it.
+    val currentWidgetInvalidation by rememberUpdatedState(widgetInvalidation)
     val coordinator =
         remember {
             P503HostCoordinator(
                 onRefresh = ::refresh,
                 onSubmit = { draft, requestId -> submit(draft, requestId) },
                 onCheck = { draft, requestId -> checkCommitStatus(draft, requestId) },
+                // P7-09 09.C (spec section 6.4; D-225 Q20): the widget-invalidation seam of the FIRST
+                // refresh leg. Delegates to the latest observer so a fresh root wiring is honoured.
+                widgetInvalidation = WidgetInvalidationObserver { currentWidgetInvalidation.invalidateAllWidgets() },
                 // P7-03.C: the unified monthly cycle runs only on the frozen trigger set (a)-(e)
                 // (spec 6.2, P703SPEC-04); 本月 resolves from the reporting clock (R-Q06-2).
                 onMonthlyRequest = ::requestMonthlyPayload,

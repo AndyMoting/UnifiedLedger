@@ -80,4 +80,13 @@ internal class LedgerWidgetConfigStore(
             .putLong(WIDGET_CONFIG_REVISION_KEY, config.revision)
             .apply()
     }
+
+    /**
+     * Clears the per-widget state when the widget is removed (spec section 6.5: the setting is
+     * per-widget and defaults to hidden). Removing a widget must not leave its "show amounts" flag
+     * behind, or a later widget the host assigns the same id would inherit a visible state.
+     */
+    fun clear(widgetId: Int) {
+        context.getSharedPreferences(widgetConfigStorageKey(widgetId), Context.MODE_PRIVATE).edit().clear().apply()
+    }
 }

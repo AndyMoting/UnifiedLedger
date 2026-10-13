@@ -39,15 +39,30 @@
           shared monthly snapshot through the process-scoped runtime owner's lease (spec section
           6.3) and renders RemoteViews.
 
-          SECURITY FACE (spec section 8 open item 15): the frozen ruling for a widget provider's
-          `exported`/`android:permission` is NOT made in this batch. It is declared `exported="false"`
-          here as the conservative choice — an unexported receiver can never be triggered by an
-          unauthorized external broadcast — while the per-entry ruling and its device evidence stay
-          registered as an open item in the batch report. No `android:permission` is declared.
+          SECURITY FACE (spec section 8 open item 15). The per-entry `exported`/`android:permission`
+          RULING belongs to the main session; this batch makes the conservative implementation choice
+          declared below and registers the ruling as open. EVIDENCE for that choice (gathered this
+          batch, from the local Android SDK and the official docs):
+          (1) `res/values/attrs_manifest.xml` (platform attribute doc) states the default is TRUE for a
+              receiver that DOES specify intent filters, and that an unexported component "can only be
+              accessed by applications with its same user id" — so `exported="false"` is an explicit
+              narrowing of that default, not a value the widget needs for its own traffic;
+          (2) AOSP `AppWidgetServiceImpl.createUpdateIntentLocked` builds the update as an EXPLICIT
+              `intent.setComponent(provider.id.componentName)` and sends it from the system server,
+              whose uid `ActivityManager.checkComponentPermission` grants unconditionally
+              (`canAccessUnexportedComponents` covers SYSTEM_UID/ROOT_UID);
+          (3) the official Android widget guide's manifest snippet declares an AppWidgetProvider
+              receiver with `android:exported="false"`.
+          So `exported="false"` is functional for the system-driven APPWIDGET_UPDATE and for this
+          provider's own explicit PendingIntent broadcasts, while refusing unauthorized external
+          broadcasts. `android:permission` is intentionally NOT declared (the spec's BIND_APPWIDGET
+          route is the HOST-side authorization, not a receiver attribute). The main session may rule
+          otherwise on evidence; the KDoc here must not be read as that ruling.
 
-          `APPWIDGET_UPDATE` is the system action that drives onUpdate; the toggle action is this
-          provider's own per-widget visibility broadcast. The provider info resource is the
-          appwidget-provider metadata (30-minute update period, spec section 6.4).
+          `APPWIDGET_UPDATE` is the system action that drives onUpdate; the toggle/refresh/open
+          actions are this provider's own broadcasts, all delivered through explicit immutable
+          PendingIntents. The provider info resource is the appwidget-provider metadata
+          (30-minute update period, spec section 6.4).
         -->
         <receiver
             android:name=".LedgerWidgetProvider"
@@ -55,6 +70,8 @@
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="com.unifiedledger.android.widget.ACTION_TOGGLE_AMOUNTS" />
+                <action android:name="com.unifiedledger.android.widget.ACTION_REFRESH" />
+                <action android:name="com.unifiedledger.android.widget.ACTION_OPEN_CURRENT_MONTH" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
