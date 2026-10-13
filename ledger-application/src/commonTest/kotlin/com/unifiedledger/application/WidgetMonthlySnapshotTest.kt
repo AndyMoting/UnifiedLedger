@@ -81,7 +81,11 @@ class WidgetMonthlySnapshotTest {
                 expenseRow("tx-refund", -2_500L, "2026-03-12T02:00:00Z", kind = TransactionKind.REFUND_RECEIPT),
             )
         val expected =
-            MonthlyBuckets.aggregate(rows, ledgerId, catalog(), listOf(march)).getValue(march).currencies.single()
+            MonthlyBuckets
+                .aggregate(rows, ledgerId, catalog(), listOf(march))
+                .getValue(march)
+                .currencies
+                .single()
         val amounts = amounts(useCase(RecordingPort(rows)).read(ledgerId, march, 1L, 3))
         assertEquals(expected.currency, amounts.currency)
         assertEquals(expected.ordinaryIncomeMinorUnits, amounts.ordinaryIncomeMinorUnits)
@@ -140,8 +144,9 @@ class WidgetMonthlySnapshotTest {
             MonthlyContributionReadPort { _, _, _, _ ->
                 MonthlyContributionReadResult.Failed(MonthlyContributionReadFailure.CatalogVersionMismatch)
             }
-        val snapshot = QueryWidgetMonthlySnapshot(port, FixedLedgerClock(Instant.parse("2026-03-20T05:00:00Z")))
-            .read(ledgerId, march, 1L, 5)
+        val snapshot =
+            QueryWidgetMonthlySnapshot(port, FixedLedgerClock(Instant.parse("2026-03-20T05:00:00Z")))
+                .read(ledgerId, march, 1L, 5)
         assertEquals(WidgetMonthlySnapshotStatus.INVALID, snapshot.status)
         assertNull(snapshot.amounts)
         assertEquals(5, snapshot.generation)
@@ -151,8 +156,9 @@ class WidgetMonthlySnapshotTest {
     fun aMissingProjectionOrReadFailureIsUnavailableAndNeverZeros() {
         for (failure in listOf(MonthlyContributionReadFailure.MissingProjection, MonthlyContributionReadFailure.Unavailable)) {
             val port = MonthlyContributionReadPort { _, _, _, _ -> MonthlyContributionReadResult.Failed(failure) }
-            val snapshot = QueryWidgetMonthlySnapshot(port, FixedLedgerClock(Instant.parse("2026-03-20T05:00:00Z")))
-                .read(ledgerId, march, 1L, 1)
+            val snapshot =
+                QueryWidgetMonthlySnapshot(port, FixedLedgerClock(Instant.parse("2026-03-20T05:00:00Z")))
+                    .read(ledgerId, march, 1L, 1)
             assertEquals(WidgetMonthlySnapshotStatus.UNAVAILABLE, snapshot.status)
             assertNull(snapshot.amounts)
             assertNull(snapshot.asOf)
@@ -162,8 +168,9 @@ class WidgetMonthlySnapshotTest {
     @Test
     fun aThrowingReadPortIsUnavailableNotAZero() {
         val port = MonthlyContributionReadPort { _, _, _, _ -> throw IllegalStateException("database gone") }
-        val snapshot = QueryWidgetMonthlySnapshot(port, FixedLedgerClock(Instant.parse("2026-03-20T05:00:00Z")))
-            .read(ledgerId, march, 1L, 1)
+        val snapshot =
+            QueryWidgetMonthlySnapshot(port, FixedLedgerClock(Instant.parse("2026-03-20T05:00:00Z")))
+                .read(ledgerId, march, 1L, 1)
         assertEquals(WidgetMonthlySnapshotStatus.UNAVAILABLE, snapshot.status)
         assertNull(snapshot.amounts)
     }
@@ -201,8 +208,9 @@ class WidgetMonthlySnapshotTest {
         // The P7-03 read-consistency predicate: the account in the read catalog must carry the
         // posting's own currency; otherwise the snapshot is not one coherent generation.
         val rows = listOf(expenseRow("tx-mismatch", 1_000L, "2026-03-10T02:00:00Z", currency = usd))
-        val snapshot = QueryWidgetMonthlySnapshot(RecordingPort(rows), FixedLedgerClock(Instant.parse("2026-03-20T05:00:00Z")))
-            .read(ledgerId, march, 1L, 1)
+        val snapshot =
+            QueryWidgetMonthlySnapshot(RecordingPort(rows), FixedLedgerClock(Instant.parse("2026-03-20T05:00:00Z")))
+                .read(ledgerId, march, 1L, 1)
         assertEquals(WidgetMonthlySnapshotStatus.INVALID, snapshot.status)
     }
 

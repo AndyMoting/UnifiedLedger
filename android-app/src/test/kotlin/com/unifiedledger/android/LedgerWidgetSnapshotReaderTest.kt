@@ -403,9 +403,15 @@ class LedgerWidgetSnapshotReaderTest {
 
     /** Resolves a repository-relative path by walking up to the settings file (the precedent helper). */
     private fun repositoryFile(relative: String): java.nio.file.Path {
-        var candidate = java.nio.file.Path.of(System.getProperty("user.dir"))
+        var candidate =
+            java.nio.file.Path
+                .of(System.getProperty("user.dir"))
         repeat(8) {
-            if (java.nio.file.Files.isRegularFile(candidate.resolve("settings.gradle.kts"))) return candidate.resolve(relative)
+            if (java.nio.file.Files
+                    .isRegularFile(candidate.resolve("settings.gradle.kts"))
+            ) {
+                return candidate.resolve(relative)
+            }
             candidate = candidate.parent ?: error("repository root not found")
         }
         error("repository root not found")
@@ -478,8 +484,7 @@ class LedgerWidgetSnapshotReaderTest {
         )
     }
 
-    private fun emptyCatalog(): LedgerCatalog =
-        (LedgerCatalog.create(accounts = emptyList(), categories = emptyList()) as DomainResult.Success).value
+    private fun emptyCatalog(): LedgerCatalog = (LedgerCatalog.create(accounts = emptyList(), categories = emptyList()) as DomainResult.Success).value
 
     private fun emptyReadPort(): LedgerCurrentStateReadPort =
         object : LedgerCurrentStateReadPort {
@@ -553,6 +558,5 @@ class LedgerWidgetSnapshotReaderTest {
             asOf = Instant.parse("2026-03-20T05:00:00Z"),
         )
 
-    private fun emptySnapshot(): WidgetMonthlySnapshot =
-        snapshot(ordinaryIncome = 0L, netExpense = 0L, balance = 0L)
+    private fun emptySnapshot(): WidgetMonthlySnapshot = snapshot(ordinaryIncome = 0L, netExpense = 0L, balance = 0L)
 }
