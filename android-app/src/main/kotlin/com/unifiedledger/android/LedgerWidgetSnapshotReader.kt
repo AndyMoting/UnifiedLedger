@@ -192,6 +192,7 @@ internal const val WIDGET_STATUS_INVALID: String = "数据不一致，打开应�
 internal const val WIDGET_STATUS_UNAVAILABLE: String = "数据不可用，打开应用查看"
 internal const val WIDGET_STATUS_OPEN_APP: String = "打开应用以查看本月收支"
 internal const val WIDGET_UPDATED_PREFIX: String = "更新于 "
+
 /**
  * P7-09 09.C (spec section 6.5): the frozen host-boundary disclosure. The desktop/lock-screen
  * presentation is controlled by the host, and hiding amounts cannot recall screenshots the host

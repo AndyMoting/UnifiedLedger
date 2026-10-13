@@ -87,6 +87,10 @@ internal class LedgerWidgetConfigStore(
      * behind, or a later widget the host assigns the same id would inherit a visible state.
      */
     fun clear(widgetId: Int) {
-        context.getSharedPreferences(widgetConfigStorageKey(widgetId), Context.MODE_PRIVATE).edit().clear().apply()
+        context
+            .getSharedPreferences(widgetConfigStorageKey(widgetId), Context.MODE_PRIVATE)
+            .edit()
+            .clear()
+            .apply()
     }
 }
