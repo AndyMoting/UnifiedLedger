@@ -9,12 +9,14 @@ import com.unifiedledger.application.ManualExpenseRequestIdSource
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.SummarizeLedgerActivity
+import com.unifiedledger.application.WidgetMonthlySnapshot
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.datetime.YearMonth
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicInt
@@ -637,6 +639,41 @@ class LedgerLeaseScope(
     fun importIntakeSessionFactory(): ImportIntakeSessionIdentity? = owner.facade?.importIntakeSessionFactory?.invoke()
 
     /**
+     * P7-09 09.C (D-225 Q20; spec sections 6.2/6.3): one monthly-widget snapshot for [month],
+     * read through THIS scope's operation lease.
+     *
+     * A non-composition entry (the widget receiver) has no composition to `remember` an owner in,
+     * so it must reach the runtime through the process-scoped holder and this accessor. The read
+     * then runs inside [leased], so it holds an operation lease for its whole duration and captures
+     * the generation the caller must compare on landing (spec section 6.4: a result whose generation
+     * is no longer active is DISCARDED, never displayed). It never calls the bootstrap/migrate graph
+     * builder and never creates an empty ledger (spec section 6.3: a missing/corrupt ledger is the
+     * typed 不可用 state, not a new empty database).
+     *
+     * [WidgetSnapshotOutcome.SurfaceAbsent] is the honest "this composition root wired no widget
+     * surface" result; [WidgetSnapshotOutcome.RuntimeNotReady] is the typed not-Ready result (the
+     * caller renders 不可用 and guides the user to open the app). The expected catalog version is
+     * resolved INSIDE the lease from the same facade, so a session whose authoritative version moved
+     * makes the read fail closed instead of returning an incoherent amount.
+     */
+    fun widgetMonthlySnapshot(month: YearMonth): WidgetSnapshotOutcome =
+        when (
+            val outcome =
+                leased { facade, generation ->
+                    val query = facade.queryWidgetMonthlySnapshot
+                    val expected = facade.widgetExpectedCatalogVersion()
+                    if (query == null || expected == null) {
+                        WidgetSnapshotOutcome.SurfaceAbsent
+                    } else {
+                        WidgetSnapshotOutcome.Read(query.read(facade.ledgerId, month, expected, generation))
+                    }
+                }
+        ) {
+            is LeaseOutcome.Completed -> outcome.value
+            LeaseOutcome.NotReady -> WidgetSnapshotOutcome.RuntimeNotReady
+        }
+
+    /**
      * P7-06 06.B (D-177; spec section 3): the shared backup-export use case the composition root
      * bound to this scope, or null when the surface is absent. Lease-free: the use case acquires and
      * releases its OWN operation lease for the whole export (spec section 3.1), so exposing it here
@@ -737,6 +774,13 @@ class LedgerLeaseScope(
                 // P7-07 07.D (D-184; spec section 5): the budget month read AND the configuration
                 // write are both wired. Pure null checks, never an invocation.
                 budget = facade.queryBudgetMonth != null && facade.saveBudgetConfiguration != null,
+                // P7-09 09.C (D-225 Q20; spec section 6.2): the monthly-widget snapshot read is
+                // wired. A pure null check of the use case, never an invocation. The widget
+                // provider itself distinguishes "unwired" from a failed read through the
+                // [widgetMonthlySnapshot] accessor's own [WidgetSnapshotOutcome.SurfaceAbsent]
+                // result, so this probe is a composition-wiring observation (asserted by the widget
+                // reader test), not a provider input.
+                widgetMonthlySnapshot = facade.queryWidgetMonthlySnapshot != null,
             )
         }
 
@@ -862,7 +906,29 @@ data class LedgerSurfaces(
     // ([QueryBudgetMonth]) AND the configuration write ([SaveBudgetConfiguration]). A pure
     // field probe, never an invocation, so the host renders no dead budget affordance.
     val budget: Boolean = false,
+    // P7-09 09.C (D-225 Q20; spec section 6.2): the composition root wired the monthly-widget
+    // snapshot read ([QueryWidgetMonthlySnapshot]). Same pure-probe convention as [budget]; the
+    // widget provider checks it to distinguish "unwired surface" from a genuinely failed read.
+    val widgetMonthlySnapshot: Boolean = false,
 )
+
+/**
+ * P7-09 09.C (D-225 Q20; spec sections 6.2/6.3): the outcome of one lease-scoped widget snapshot
+ * read. [Read] carries the application-layer snapshot (including the generation the read ran
+ * under); the other two members are the honest "no snapshot" cases — the surface is unwired, or the
+ * runtime is not Ready — both of which the widget renders as the typed 不可用 state, never as a zero.
+ */
+sealed interface WidgetSnapshotOutcome {
+    data class Read(
+        val snapshot: WidgetMonthlySnapshot,
+    ) : WidgetSnapshotOutcome
+
+    /** No widget snapshot surface is wired in this composition root. */
+    data object SurfaceAbsent : WidgetSnapshotOutcome
+
+    /** The runtime is not Ready (starting/quiescing/closed); the read did not run. */
+    data object RuntimeNotReady : WidgetSnapshotOutcome
+}
 
 /**
  * P7-06 06.B (D-177; spec sections 3.1/3.2): one export launch — the request resolved for the

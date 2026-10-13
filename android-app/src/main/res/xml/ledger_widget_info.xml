@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  P7-09 09.C monthly widget provider info (D-225 Q20; spec sections 6.1/6.4).
+
+  `updatePeriodMillis` is 1,800,000 (30 minutes), the platform MINIMUM: the platform rejects a
+  smaller value, so spec section 6.4's "≥30 分钟" floor is expressed by the smallest legal period.
+  The platform only throttles these periodic broadcasts further, so this is a floor, never a
+  promise of punctuality (spec section 6.4). `configure` is intentionally absent: this slice has no
+  configuration Activity (the per-widget visibility toggle is a broadcast), so the widget is added
+  with a usable default. `targetCellWidth`/`targetCellHeight` are 2x1 — left out deliberately so the
+  host's default cell size applies and no platform constant is asserted here.
+
+  `android:description` is intentionally OMITTED: it would need a `res/values/strings.xml` entry and
+  that directory is out of this batch's frozen writable scope, so no string resource is introduced.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:initialLayout="@layout/ledger_widget"
+    android:minHeight="40dp"
+    android:minWidth="180dp"
+    android:previewLayout="@layout/ledger_widget"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="1800000" />

@@ -44,6 +44,7 @@ import com.unifiedledger.application.QueryMonthlyActivity
 import com.unifiedledger.application.QueryRecycleBin
 import com.unifiedledger.application.QueryTagMerchantFilterPage
 import com.unifiedledger.application.QueryTransactionDetail
+import com.unifiedledger.application.QueryWidgetMonthlySnapshot
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.ResolveManualIncomeCommitStatus
 import com.unifiedledger.application.ResolveManualLendingCommitStatus
@@ -249,6 +250,16 @@ class P503LedgerFacade(
     val queryMerchantAccumulation: QueryMerchantMonthlyAccumulation? = null,
     val tagMerchantExpectedCatalogItemVersion: () -> Long? = { null },
     val executeTagMerchantCommand: ExecuteTagMerchantCommand? = null,
+    // P7-09 09.C (D-225 Q20; spec section 6.2): the monthly-widget snapshot surface. Both are plain
+    // nullable/defaulted values (the R-222-4 discipline) so every legacy construction — the
+    // desktop root, the startup tests and the app-ui owner fixtures — keeps compiling with the
+    // widget surface simply absent (a device widget then reads the typed 不可用 state instead of a
+    // fabricated zero). [queryWidgetMonthlySnapshot] is the bounded read + one-fold use case;
+    // [widgetExpectedCatalogVersion] resolves the session's authoritative catalog version per
+    // request, exactly like [budgetExpectedCatalogVersion], so a read whose snapshot generation
+    // differs fails closed rather than rendering an incoherent amount.
+    val queryWidgetMonthlySnapshot: QueryWidgetMonthlySnapshot? = null,
+    val widgetExpectedCatalogVersion: () -> Long? = { null },
 ) {
     private val session = catalogSession
     private val fallbackOptionsProvider = baseOptionsProvider

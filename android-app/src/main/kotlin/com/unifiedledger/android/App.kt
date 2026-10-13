@@ -83,6 +83,7 @@ import com.unifiedledger.application.QueryImportDuplicateReviewsForSession
 import com.unifiedledger.application.QueryImportReviewRows
 import com.unifiedledger.application.QueryMerchantMonthlyAccumulation
 import com.unifiedledger.application.QueryTagMerchantFilterPage
+import com.unifiedledger.application.QueryWidgetMonthlySnapshot
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.ResolveManualIncomeCommitStatus
 import com.unifiedledger.application.ResolveManualLendingCommitStatus
@@ -168,6 +169,7 @@ import com.unifiedledger.ui.RestoreIsolatedDatabasePort
 import com.unifiedledger.ui.RestorePreflightUseCase
 import com.unifiedledger.ui.ShareImportSourcePort
 import com.unifiedledger.ui.UuidV7ImportCommitIdSource
+import com.unifiedledger.ui.WidgetInvalidationObserver
 import com.unifiedledger.ui.importCreditRefundOriginalExpenseProvider
 import com.unifiedledger.ui.isUsableSqliteMainFile
 import com.unifiedledger.ui.ledgerStorageLayout
@@ -262,6 +264,13 @@ fun app() {
                     // inbound-navigation channel, so the shared host subscribes and routes the
                     // neutral requests the Activity's share intake delivers.
                     externalNavigationChannel = holder?.externalNavigationChannel,
+                    // P7-09 09.C (spec section 6.4; D-225 Q20): the first refresh leg — a confirmed
+                    // formal write/restore invalidates every widget. The composition reports the
+                    // determinate landing through this platform-neutral observer and the
+                    // process-scoped holder fans it out to the widgets (the same holder the receiver
+                    // reads through, spec section 6.3). A null holder leaves the no-op default.
+                    widgetInvalidation =
+                        WidgetInvalidationObserver { holder?.invalidateAllWidgets() },
                 )
             else ->
                 P503StartupScreen(
@@ -1341,6 +1350,14 @@ private fun buildLedgerGraph(
                     budgetStore.configsForMonth(configLedgerId, budgetMonthConfigKey(configMonth))
                 },
         )
+    // P7-09 09.C (D-225 Q20; spec section 6.2): the monthly-widget snapshot read. It reuses the
+    // SAME bounded contribution port the budget month read uses (one read + one P7-03 fold, never a
+    // second money formula, never the whole-ledger path) and the graph's reporting clock.
+    val queryWidgetMonthlySnapshot =
+        QueryWidgetMonthlySnapshot(
+            readPort = SqlDelightMonthlyContributionReadAdapter(database, store),
+            clock = ledgerClock,
+        )
     // P7-08 08.C (spec sections 5.1-5.5): the bounded filter/accumulation read surface and the
     // catalog-item command surface, on the handle's platform-configured stores (the same
     // connection every owner binds to). The read adapter carries BOTH ports; its generation
@@ -1455,6 +1472,11 @@ private fun buildLedgerGraph(
             saveBudgetConfiguration = saveBudgetConfiguration,
             budgetAuthorityReader = budgetStore,
             budgetExpectedCatalogVersion = { session.authority.catalogVersion },
+            // P7-09 09.C (D-225 Q20; spec section 6.2): the monthly-widget snapshot surface on the
+            // same session version the budget read uses, so a widget read whose catalog generation
+            // differs from the authoritative session fails closed (never an incoherent amount).
+            queryWidgetMonthlySnapshot = queryWidgetMonthlySnapshot,
+            widgetExpectedCatalogVersion = { session.authority.catalogVersion },
             // P7-08 08.B-2 (spec sections 4.1/4.4): the tag/merchant selection surface and the
             // annotation-edit command. The reads share the handle's platform-configured stores
             // (the same connection the other owners bind to); the request id source is the
