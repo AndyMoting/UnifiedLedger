@@ -409,6 +409,13 @@ class P503ReducerImpl(
             // keeps it held rather than dropping it.
             is ExternalNavigationRequest.OpenImport ->
                 overview.copy(pendingExternalNavigation = PendingExternalNavigation(request, ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED))
+            // P7-09 09.B (D-226; spec section 2.1 `OpenImportTab`): the launcher shortcut's 导入 leg
+            // opens the EXISTING IMPORT surface. This is the `SelectTab(P503Tab.IMPORT)` navigation
+            // semantic (the same tab switch `P503UiEvent.SelectTab` performs, P503Reducer.kt
+            // `reduceOverviewEmpty`) with the slot consumed and ZERO formal-ledger write: no new
+            // import flow is started and no file is carried. The IMPORT projection itself is loaded
+            // by the host's state-driven effect, not from here (a pure reducer never reads).
+            ExternalNavigationRequest.OpenImportTab -> overview.copy(selectedTab = P503Tab.IMPORT, pendingExternalNavigation = null)
         }
     }
 

@@ -13,6 +13,7 @@ import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionId
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -45,6 +46,10 @@ class ExternalNavigationReducerTest {
 
     private val newExpense = ExternalNavigationRequest.OpenNewEntry(EntryType.EXPENSE)
     private val shareImport = ExternalNavigationRequest.OpenImport("delivery-1")
+
+    // P7-09 09.B (D-226; spec section 2.1 `OpenImportTab`): the fourth neutral request — open the
+    // EXISTING IMPORT surface, carrying no file and no deliveryId.
+    private val importTab = ExternalNavigationRequest.OpenImportTab
 
     private fun reduce(
         state: P503AppState,
@@ -534,5 +539,263 @@ class ExternalNavigationReducerTest {
         val landed = reduce(overview().copy(pendingExternalNavigation = pending), P503UiEvent.ExternalNavigationDiscarded)
         val routed = assertIs<P503AppState.OverviewEmpty>(landed)
         assertNull(routed.pendingExternalNavigation)
+    }
+
+    // ---------------------------------------------------------------- P7-09 09.B OpenImportTab (D-226)
+
+    @Test
+    fun anIdleOpenImportTabRoutesToTheExistingImportSurfaceWithZeroFormalWrite() {
+        // D-226: 打开既有 IMPORT 面 is the `SelectTab(P503Tab.IMPORT)` navigation semantic with the
+        // slot consumed. Zero formal-ledger write: the overview's read state is untouched.
+        val decision = decideExternalNavigation(overview(), importTab, runtimeReady = true, runtimeQuiesced = false, existingPending = null)
+        assertEquals(importTab, assertIs<ExternalNavigationDecision.Routed>(decision).request)
+
+        val landed = reduce(overview(), P503UiEvent.ExternalNavigationDecisionLanded(ExternalNavigationDecision.Routed(importTab)))
+        val routed = assertIs<P503AppState.OverviewEmpty>(landed)
+        assertEquals(P503Tab.IMPORT, routed.selectedTab)
+        assertNull(routed.pendingExternalNavigation, "the routed request is consumed, not left held")
+        // The projection is NOT fabricated by the pure reducer (the host's state effect loads it).
+        assertNull(routed.importReview)
+    }
+
+    @Test
+    fun anOpenImportTabOnTheReadyEntrySurfaceIsHeldNotRoutedAndCarriedOntoTheOverview() {
+        // A cold-start 导入 shortcut: no overview exists yet, so it is held with the visible slot
+        // (never routed into a dead surface) and CARRIED once the initial load lands.
+        val ready = P503AppState.Ready()
+        val event = externalNavigationDecisionEvent(ready, importTab, ExternalNavigationRuntimeFacts(ready = true, quiesced = false))
+        assertEquals(
+            ExternalNavigationHoldReason.STARTUP_NOT_READY,
+            assertIs<ExternalNavigationDecision.Held>(assertIs<P503UiEvent.ExternalNavigationDecisionLanded>(event).decision).pending.holdReason,
+        )
+        val held = assertIs<P503AppState.Ready>(reduce(ready, event))
+        assertEquals(importTab, held.pendingExternalNavigation?.request)
+        val carried = assertIs<P503AppState.OverviewEmpty>(reduce(held, P503UiEvent.InitialLoadResult(emptyState)))
+        assertEquals(importTab, carried.pendingExternalNavigation?.request)
+    }
+
+    @Test
+    fun anOpenImportTabDoesNotBypassTheConfirmationChain() {
+        // The frozen table applies to the fourth request exactly as to the others: an editor with an
+        // unsaved draft holds it for the user's decision (不绕过确认/不丢草稿).
+        val editing = P503AppState.Editing(expenseDraft(), requestId1)
+        assertEquals(
+            ExternalNavigationHoldReason.DRAFT_IN_PROGRESS,
+            assertIs<ExternalNavigationDecision.Held>(
+                decideExternalNavigation(editing, importTab, true, false, null),
+            ).pending.holdReason,
+        )
+        assertEquals(
+            ExternalNavigationHoldReason.CONFIRMATION_PENDING,
+            assertIs<ExternalNavigationDecision.Held>(
+                decideExternalNavigation(P503AppState.AwaitingConfirmation(expenseDraft(), requestId1), importTab, true, false, null),
+            ).pending.holdReason,
+        )
+    }
+
+    // ------------------------------------------------ P7-09 09.B / T11 startup re-entry (D-226; spec section 3 line 150)
+
+    private fun startupHeld(request: ExternalNavigationRequest) = PendingExternalNavigation(request, ExternalNavigationHoldReason.STARTUP_NOT_READY)
+
+    @Test
+    fun aCarriedStartupHeldNewEntryReEntersTheGateAndRoutesIntoTheEditor() {
+        // T11 leg 1: a cold-start 记支出 carried onto the overview re-runs the SAME gate and ROUTES
+        // (it no longer stays on the Busy strip until the user presses 放弃后切换).
+        val carried = overview().copy(pendingExternalNavigation = startupHeld(newExpense))
+        val decision = startupHeldReRoutingDecision(carried, ExternalNavigationRuntimeFacts(ready = true, quiesced = false), carried.pendingExternalNavigation)
+        assertIs<ExternalNavigationDecision.Routed>(decision)
+        val landed = reduce(carried, P503UiEvent.ExternalNavigationDecisionLanded(decision!!))
+        val editing = assertIs<P503AppState.Editing>(landed)
+        assertEquals("", editing.draft.amountText, "a re-route is a navigation, never a formal write")
+        assertNull(editing.requestId)
+    }
+
+    @Test
+    fun aCarriedStartupHeldImportTabReEntersTheGateAndOpensImport() {
+        // T11 leg 2: the cold-start 导入 shortcut ends on the SAME surface the hot path reaches.
+        val carried = overview().copy(pendingExternalNavigation = startupHeld(importTab))
+        val decision = startupHeldReRoutingDecision(carried, ExternalNavigationRuntimeFacts(ready = true, quiesced = false), carried.pendingExternalNavigation)
+        assertIs<ExternalNavigationDecision.Routed>(decision)
+        val landed = reduce(carried, P503UiEvent.ExternalNavigationDecisionLanded(decision!!))
+        assertEquals(P503Tab.IMPORT, assertIs<P503AppState.OverviewEmpty>(landed).selectedTab)
+    }
+
+    @Test
+    fun aShareAwaitingItsFormatIsNeverReRouted() {
+        // T11 leg 3 (negative): the 09.A closed loop must not be disturbed. Its slot reason is
+        // IMPORT_FORMAT_REQUIRED, so the guard rejects it before the gate is ever consulted.
+        val heldShare = PendingExternalNavigation(shareImport, ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED)
+        val carried = overview().copy(pendingExternalNavigation = heldShare)
+        assertNull(startupHeldReRoutingDecision(carried, ExternalNavigationRuntimeFacts(ready = true, quiesced = false), carried.pendingExternalNavigation))
+    }
+
+    @Test
+    fun aSlotAwaitingTheRetainOrReplaceDecisionIsNeverReRoutedAndStillRetains() {
+        // T11 leg 4 (the B1′ pin): a slot the user has not yet adjudicated carries
+        // awaitingUserDecision/displaced. A re-route must NEVER decide it for them — otherwise the
+        // un-adjudicated incoming request would be routed straight into the editor through the
+        // OverviewEmpty row and the displaced request would be silently dropped (spec section 2.2).
+        val pending =
+            PendingExternalNavigation(
+                request = newExpense,
+                holdReason = ExternalNavigationHoldReason.STARTUP_NOT_READY,
+                awaitingUserDecision = true,
+                displaced = importTab,
+            )
+        val carried = overview().copy(pendingExternalNavigation = pending)
+        assertNull(
+            startupHeldReRoutingDecision(carried, ExternalNavigationRuntimeFacts(ready = true, quiesced = false), carried.pendingExternalNavigation),
+            "a slot awaiting the retain/replace decision must not be re-routed",
+        )
+        // The explicit retain/replace semantics remain reachable and unchanged.
+        val retained = assertIs<P503AppState.OverviewEmpty>(reduce(carried, P503UiEvent.ExternalNavigationRetained)).pendingExternalNavigation!!
+        assertEquals(newExpense, retained.request)
+        assertNull(retained.displaced)
+        val replaced = assertIs<P503AppState.OverviewEmpty>(reduce(carried, P503UiEvent.ExternalNavigationReplaced)).pendingExternalNavigation!!
+        assertEquals(importTab, replaced.request)
+    }
+
+    @Test
+    fun aStartupHeldRequestWhileEditingStaysHeldWithTheCorrectedReasonNotRouted() {
+        // T11 leg 5: a cold-start request whose runtime was not Ready while the user was Editing must
+        // NOT be routed (不丢草稿); the re-entry only CORRECTS the reason to DRAFT_IN_PROGRESS.
+        val editing = P503AppState.Editing(expenseDraft(), requestId1).copy(pendingExternalNavigation = startupHeld(newExpense))
+        val decision = startupHeldReRoutingDecision(editing, ExternalNavigationRuntimeFacts(ready = true, quiesced = false), editing.pendingExternalNavigation)
+        assertEquals(ExternalNavigationHoldReason.DRAFT_IN_PROGRESS, assertIs<ExternalNavigationDecision.Held>(decision).pending.holdReason)
+        val landed = assertIs<P503AppState.Editing>(reduce(editing, P503UiEvent.ExternalNavigationDecisionLanded(decision!!)))
+        assertEquals(expenseDraft(), landed.draft, "the draft must survive the re-entry")
+        assertEquals(requestId1, landed.requestId)
+    }
+
+    @Test
+    fun aStartupHeldSlotOnAStillNotReadyRuntimeIsNotReRoutedAndDoesNotChurn() {
+        // T11 leg 6 (idempotence): while the runtime is still not Ready the gate concludes the SAME
+        // STARTUP_NOT_READY hold, so the seam returns null — nothing changes and repeated dispatches
+        // cannot churn the same value.
+        val carried = overview().copy(pendingExternalNavigation = startupHeld(newExpense))
+        assertNull(startupHeldReRoutingDecision(carried, ExternalNavigationRuntimeFacts(ready = false, quiesced = false), carried.pendingExternalNavigation))
+        // And nothing to re-route at all when the surface carries no slot.
+        assertNull(startupHeldReRoutingDecision(overview(), ExternalNavigationRuntimeFacts(ready = true, quiesced = false), null))
+    }
+
+    @Test
+    fun aStartupHeldSlotOnAQuiescedRuntimeIsReHeldWithTheRuntimeQuiescedReason() {
+        // T11: the quiesce row still applies on re-entry — the slot's reason is corrected (a genuine
+        // change, so a decision is returned) and the request stays held, never routed.
+        val carried = overview().copy(pendingExternalNavigation = startupHeld(newExpense))
+        val decision = startupHeldReRoutingDecision(carried, ExternalNavigationRuntimeFacts(ready = true, quiesced = true), carried.pendingExternalNavigation)
+        assertEquals(ExternalNavigationHoldReason.RUNTIME_QUIESCED, assertIs<ExternalNavigationDecision.Held>(decision).pending.holdReason)
+    }
+
+    @Test
+    fun theReRoutingSeamIsSelfTerminatingAfterOneLanding() {
+        // T11 self-termination: once the re-route has landed, the landing itself changes the slot, so
+        // the guard is false on the next pass (no loop, no repeated landing).
+        val carried = overview().copy(pendingExternalNavigation = startupHeld(newExpense))
+        val decision = startupHeldReRoutingDecision(carried, ExternalNavigationRuntimeFacts(ready = true, quiesced = false), carried.pendingExternalNavigation)!!
+        val landed = reduce(carried, P503UiEvent.ExternalNavigationDecisionLanded(decision))
+        assertNull(startupHeldReRoutingDecision(landed, ExternalNavigationRuntimeFacts(ready = true, quiesced = false), landed.pendingExternalNavigationSlot()))
+        // The Editing landing (leg 5) is equally terminal: its reason is no longer STARTUP_NOT_READY.
+        val editing = P503AppState.Editing(expenseDraft(), requestId1).copy(pendingExternalNavigation = startupHeld(newExpense))
+        val held = reduce(editing, P503UiEvent.ExternalNavigationDecisionLanded(startupHeldReRoutingDecision(editing, ExternalNavigationRuntimeFacts(ready = true, quiesced = false), editing.pendingExternalNavigation)!!))
+        assertNull(startupHeldReRoutingDecision(held, ExternalNavigationRuntimeFacts(ready = true, quiesced = false), held.pendingExternalNavigationSlot()))
+    }
+
+    // -------------------- P7-09 09.B / T11 failure leg (spec section 3 line 151 "启动失败不消费请求")
+
+    @Test
+    fun aFailedInitialReadDropsTheCarriedSlotSoTheHostMustPreserveIt() {
+        // The failure leg this seam closes: `InitialLoadFailed` advances the entry surface to
+        // InfrastructureFailure(READ), which carries NO pending slot. The pure reducer alone therefore
+        // CONSUMES the startup-held request — which the frozen row forbids. This asserts the DROP (so
+        // the host seam below is demonstrably necessary, not decorative).
+        val ready = P503AppState.Ready(pendingExternalNavigation = startupHeld(newExpense))
+        val failed = reduce(ready, P503UiEvent.InitialLoadFailed)
+        assertIs<P503AppState.InfrastructureFailure>(failed)
+        assertNull(failed.pendingExternalNavigationSlot(), "the failure surface cannot carry the slot")
+        assertFalse(failed.carriesExternalNavigationSlot())
+        assertTrue(failed.externalNavigationBusyOrNull() == null, "the failure surface carries no Busy either")
+        // The host seam preserves it from the EFFECTIVE pre-transition hold.
+        val preserved = startupHeldFallbackAfterLanding(failed, ready.pendingExternalNavigation, holdExplicitlyCleared = false)
+        assertEquals(newExpense, preserved?.request)
+        assertEquals(ExternalNavigationHoldReason.STARTUP_NOT_READY, preserved?.holdReason)
+    }
+
+    @Test
+    fun thePreservedRequestIsHandedBackAndRoutedOnceARoutableSurfaceIsLiveAgain() {
+        // End to end after the failure: the preserved request is flushed back into a rebuilt
+        // OverviewEmpty (the `dispatch` flush), where the SAME re-entry gate routes it into the editor.
+        val preserved = PendingExternalNavigation(newExpense, ExternalNavigationHoldReason.STARTUP_NOT_READY)
+        val rebuilt = overview().copy(pendingExternalNavigation = preserved)
+        val decision = startupHeldReRoutingDecision(rebuilt, ExternalNavigationRuntimeFacts(ready = true, quiesced = false), rebuilt.pendingExternalNavigation)
+        assertIs<ExternalNavigationDecision.Routed>(decision)
+        val landed = assertIs<P503AppState.Editing>(reduce(rebuilt, P503UiEvent.ExternalNavigationDecisionLanded(decision!!)))
+        assertEquals("", landed.draft.amountText)
+        assertNull(landed.requestId)
+    }
+
+    @Test
+    fun theFailureLegPreservationIsSkippedOnASlotSurfaceAndForANonStartupWaitSlot() {
+        // No preservation when the landed surface carries the slot (the reducer owns it) ...
+        assertNull(startupHeldFallbackAfterLanding(overview().copy(pendingExternalNavigation = startupHeld(newExpense)), startupHeld(newExpense), holdExplicitlyCleared = false))
+        // ... nor when nothing was held ...
+        assertNull(startupHeldFallbackAfterLanding(P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ), null, holdExplicitlyCleared = false))
+        // ... nor for a share awaiting its format (out of this seam's scope, registered as a residual) ...
+        val failed = P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ)
+        val shareHeld = PendingExternalNavigation(shareImport, ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED)
+        assertNull(startupHeldFallbackAfterLanding(failed, shareHeld, holdExplicitlyCleared = false))
+        // ... nor for a slot the user has not adjudicated (the retain/replace pin, same as T11 leg 4).
+        val adjudicated =
+            PendingExternalNavigation(
+                request = newExpense,
+                holdReason = ExternalNavigationHoldReason.STARTUP_NOT_READY,
+                awaitingUserDecision = true,
+                displaced = importTab,
+            )
+        assertNull(startupHeldFallbackAfterLanding(failed, adjudicated, holdExplicitlyCleared = false))
+    }
+
+    @Test
+    fun anExplicitUserClearIsNeverUndoneByTheFailureLegPreservation() {
+        // REVIEW REGRESSION PIN (the P2 found in review): on a surface without a slot, 保留当前 /
+        // 放弃后切换 null the host fallback (P503App's `clearsExternalNavigation` branch) while the
+        // reducer absorbs them, so a preservation seam that re-held here would UNDO the user's explicit
+        // decision and leave the Busy strip on screen forever. With the clear signalled the seam holds
+        // nothing, on the failure surface and on any non-slot surface alike.
+        val failed = P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ)
+        val startupSlot = PendingExternalNavigation(newExpense, ExternalNavigationHoldReason.STARTUP_NOT_READY)
+        assertNull(
+            startupHeldFallbackAfterLanding(failed, startupSlot, holdExplicitlyCleared = true),
+            "an explicit 保留当前/放弃后切换 must not be undone on the failure surface",
+        )
+        val detail =
+            P503AppState.TransactionDetail(
+                overview(),
+                P503Tab.HOME,
+                TransactionId("tx-1"),
+                com.unifiedledger.application.TransactionDetailResult.Unavailable,
+            )
+        assertNull(
+            startupHeldFallbackAfterLanding(detail, startupSlot, holdExplicitlyCleared = true),
+            "the same holds on every other non-slot surface",
+        )
+        // The two events that signal the clear are exactly those the host branch honours.
+        assertTrue(clearsExternalNavigation(P503UiEvent.ExternalNavigationKeptCurrent))
+        assertTrue(clearsExternalNavigation(P503UiEvent.ExternalNavigationDiscarded))
+        // Without the clear signal the preservation still works (the failure leg it exists for).
+        assertEquals(newExpense, startupHeldFallbackAfterLanding(failed, startupSlot, holdExplicitlyCleared = false)?.request)
+    }
+
+    @Test
+    fun theFailureLegPreservationDoesNotChurnAcrossRepeatedDispatches() {
+        // Once preserved, the next synchronous pass sees the fallback as the effective hold and the
+        // surface still not carrying it: the same slot is returned, so the value is stable (no churn,
+        // no growth — the fallback is a single value, not a queue).
+        val failed = P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ)
+        val slot = PendingExternalNavigation(newExpense, ExternalNavigationHoldReason.STARTUP_NOT_READY)
+        val first = startupHeldFallbackAfterLanding(failed, slot, holdExplicitlyCleared = false)
+        val second = startupHeldFallbackAfterLanding(failed, first, holdExplicitlyCleared = false)
+        assertEquals(slot, first)
+        assertEquals(first, second)
     }
 }

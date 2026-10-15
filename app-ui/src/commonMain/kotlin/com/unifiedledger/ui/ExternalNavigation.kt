@@ -6,7 +6,7 @@ import com.unifiedledger.application.EntryType
  * P7-09 09.0 (spec sections 2.1/3; D-225): the NEUTRAL inbound navigation request family.
  *
  * The Android composition root validates a platform entry (a share Intent, a launcher
- * shortcut) into exactly one of these three requests; commonMain never sees a `Uri`, a file
+ * shortcut) into exactly one of these four requests; commonMain never sees a `Uri`, a file
  * name or any platform object (the [ImportFilePickPort] boundary discipline, spec section
  * 2.1). The requests only express ROUTING — they never carry a formal-ledger write, a
  * snapshot or an authorization time.
@@ -33,6 +33,16 @@ sealed interface ExternalNavigationRequest {
 
     /** 回到应用当前月份/看账 (spec section 2.1 `OpenCurrentMonth`). */
     data object OpenCurrentMonth : ExternalNavigationRequest
+
+    /**
+     * 打开既有 IMPORT 面 (D-226 authorization; spec section 2.1 `OpenImportTab`). This is the
+     * launcher shortcut's 导入 leg: it NAVIGATES to the existing IMPORT surface (the 09.A/09.C
+     * import review projection) and does NOT start a new import flow and carries NO file, NO
+     * `deliveryId` and no platform object. It is deliberately distinct from [OpenImport], which
+     * is the controlled single-file share's import and always waits for the capability matrix's
+     * format choice (spec section 2.3).
+     */
+    data object OpenImportTab : ExternalNavigationRequest
 }
 
 /**
@@ -225,6 +235,122 @@ private fun held(
  * than silently dropped or routed into a dead editor.
  */
 internal fun isRoutableNewEntryType(type: EntryType): Boolean = type == EntryType.EXPENSE || type == EntryType.INCOME
+
+/**
+ * P7-09 09.B / T11 (spec section 3 line 150: "等待 `Ready`；启动失败**不消费**请求；`Retry` 成功后
+ * **重新过导航门**"): the STARTUP-WAIT slot's re-entry into the SAME navigation gate once a routable
+ * surface is live.
+ *
+ * The defect this closes (cold-start/hot-start target divergence): a request that arrived while the
+ * runtime was not Ready is held with [ExternalNavigationHoldReason.STARTUP_NOT_READY] on the
+ * startup-concluded entry surface and then CARRIED onto the overview by the initial load
+ * (`reduceReady`). The carry alone never re-runs the routing table, so the cold-start request sat on
+ * the visible Busy strip until the user pressed 放弃后切换, while the hot path routed straight into
+ * the editor / IMPORT surface. This seam re-applies the frozen table to the CARRIED slot.
+ *
+ * WHY THIS IS A HOST SEAM (not a reducer rule): the routing table reads runtime facts the pure
+ * reducer cannot see ([ExternalNavigationRuntimeFacts]); the reducer's carry is therefore correct as
+ * written and stays untouched (the `aColdStartNewEntryOnReadyIsHeldVisiblyAndCarriedOntoTheOverview`
+ * assertion is preserved). The caller ([P503App]'s dispatch tail) observes the facts and lands the
+ * returned decision through the ordinary decision event.
+ *
+ * Returns `null` when there is nothing to re-route (no state change), under these hard conditions:
+ * - the slot must be a STARTUP-WAIT slot: [PendingExternalNavigation.holdReason] ==
+ *   [ExternalNavigationHoldReason.STARTUP_NOT_READY], [PendingExternalNavigation.awaitingUserDecision]
+ *   false and [PendingExternalNavigation.displaced] `null`. A slot awaiting the user's retain/replace
+ *   decision, or one carrying a displaced request, is EXCLUDED — only the explicit
+ *   [P503UiEvent.ExternalNavigationRetained]/[P503UiEvent.ExternalNavigationReplaced] actions may
+ *   evolve those (spec section 2.2: the user decides retain vs replace; a re-route must never decide
+ *   it for them, and must never silently drop the displaced request). A share held for its format
+ *   choice ([ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED]) is likewise excluded by the same
+ *   reason test, so the 09.A closed loop is untouched.
+ * - [decideExternalNavigation] is invoked with `existingPending = null`: passing the slot itself would
+ *   hit the `existingPending != null` RetainOrReplace row and turn the re-entry into self-displacement.
+ *   With `null`, every row of the frozen table applies unchanged (Editing → 草稿保留、AwaitingConfirmation
+ *   → 确认挂起、Submitting/UnknownCommit → 提交中、ImportBatchSubmitting → 批次中、quiesce → 暂缓), so
+ *   this seam writes NO second state table: "不绕过确认、不丢草稿、不打断提交" is guaranteed by the
+ *   existing decision function alone.
+ * - the recomputed decision must actually CHANGE the slot; a conclusion identical to the current value
+ *   (still not Ready → the same STARTUP_NOT_READY hold) returns `null`, so a dispatch cannot churn the
+ *   same value on every pass. Self-terminating: once the slot lands on [P503AppState.OverviewEmpty] it
+ *   is consumed (`routeExternalNavigation` clears it), and on any other surface its reason is no longer
+ *   STARTUP_NOT_READY, so the guard above is false on the next pass.
+ */
+internal fun startupHeldReRoutingDecision(
+    state: P503AppState,
+    facts: ExternalNavigationRuntimeFacts,
+    existingPending: PendingExternalNavigation?,
+): ExternalNavigationDecision? {
+    val slot = existingPending ?: return null
+    if (slot.holdReason != ExternalNavigationHoldReason.STARTUP_NOT_READY) return null
+    if (slot.awaitingUserDecision || slot.displaced != null) return null
+    // The same gate the inbound path uses; `existingPending = null` so the frozen rows apply directly.
+    val decision = decideExternalNavigation(state, slot.request, runtimeReady = facts.ready, runtimeQuiesced = facts.quiesced, existingPending = null)
+    return if (decision.landsTheSameStartupHoldAs(slot)) null else decision
+}
+
+/**
+ * Whether [decision] would leave the slot exactly as it already is (the no-churn guard of
+ * [startupHeldReRoutingDecision]). Pure.
+ */
+private fun ExternalNavigationDecision.landsTheSameStartupHoldAs(slot: PendingExternalNavigation): Boolean =
+    when (this) {
+        is ExternalNavigationDecision.Held -> pending == slot
+        // A not-Ready conclusion lands the same STARTUP_NOT_READY slot the carry already holds.
+        is ExternalNavigationDecision.DeferredUntilReady ->
+            slot.request == request &&
+                slot.holdReason == ExternalNavigationHoldReason.STARTUP_NOT_READY &&
+                !slot.awaitingUserDecision &&
+                slot.displaced == null
+        is ExternalNavigationDecision.RetainOrReplace -> false
+        is ExternalNavigationDecision.Routed -> false
+    }
+
+/**
+ * P7-09 09.B / T11 (spec section 3 line 151, "启动失败**不消费**请求；`Retry` 成功后**重新过导航门**"):
+ * the STARTUP-WAIT slot's preservation across a transition that DROPS it.
+ *
+ * [startupHeldReRoutingDecision] re-enters the gate once a routable surface is live, but a failed
+ * INITIAL authoritative read advances the surface to `P503AppState.InfrastructureFailure(READ)` —
+ * a state that carries NO pending slot (its `monthlyOverview` field is a read-only month retention,
+ * not the navigation slot). `reduceReady`'s `InitialLoadFailed` therefore DROPS the startup-held
+ * request, and the subsequent `RefreshResult` rebuilds a fresh `OverviewEmpty` with no slot either.
+ * Without this seam the request would be consumed by the failure — exactly what the frozen row
+ * forbids — and the cold-start/hot-start targets would diverge again on that path.
+ *
+ * The reducer cannot carry the slot on the failure surface and [P503AppState] is not widened by this
+ * batch, so the request is held by the EXISTING host-level fallback (`hostHeldNavigation`, the B2
+ * mechanism for "a surface the reducer cannot carry the slot on"), from which the ordinary flush
+ * returns it to the reducer once a slot surface is live again — at which point
+ * [startupHeldReRoutingDecision] re-enters the gate. The visible Busy strip renders above the
+ * failure page, so the request stays visible rather than vanishing.
+ *
+ * Returns the slot to hold, or `null` when this transition needs no preservation:
+ * - [holdExplicitlyCleared] is true: the transition was an EXPLICIT user clear (保留当前 /
+ *   放弃后切换 / a consumed or re-shared import). The user's decision is final — re-holding here
+ *   would undo it and leave the Busy strip on screen forever, so this is checked FIRST;
+ * - the landed surface carries the slot (the reducer owns it — nothing to hold here);
+ * - the effective held request before the transition is absent, or is not a STARTUP-WAIT slot:
+ *   [ExternalNavigationHoldReason.STARTUP_NOT_READY] only, with
+ *   [PendingExternalNavigation.awaitingUserDecision] false and [PendingExternalNavigation.displaced]
+ *   `null`. The same exclusion as [startupHeldReRoutingDecision] applies, for the same reason: a slot
+ *   awaiting the user's retain/replace decision is the user's to adjudicate, never this seam's.
+ *   A share held for its format choice ([ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED]) is
+ *   likewise out of this seam's scope (registered as a residual in the batch report, not silently
+ *   narrowed). Pure and JVM-assertable; [P503App] stores and renders the returned value.
+ */
+internal fun startupHeldFallbackAfterLanding(
+    landed: P503AppState,
+    previousHeld: PendingExternalNavigation?,
+    holdExplicitlyCleared: Boolean,
+): PendingExternalNavigation? {
+    if (holdExplicitlyCleared) return null
+    if (landed.carriesExternalNavigationSlot()) return null
+    val slot = previousHeld ?: return null
+    if (slot.holdReason != ExternalNavigationHoldReason.STARTUP_NOT_READY) return null
+    if (slot.awaitingUserDecision || slot.displaced != null) return null
+    return slot
+}
 
 /**
  * P7-09 09.0 (spec sections 2.1/2.2; D-225 Q19): the composition-root channel for inbound neutral

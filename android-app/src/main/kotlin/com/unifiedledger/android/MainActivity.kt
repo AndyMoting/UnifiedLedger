@@ -35,7 +35,17 @@ class MainActivity : ComponentActivity() {
         // guarantee. To keep the loss NON-SILENT, a refused repeat whose retained source is still
         // present is re-held under its EXISTING deliveryId (below), so the share surfaces the same
         // format prompt / typed re-share rather than vanishing.
+        //
+        // P7-09 09.B (D-226; spec section 5): a launcher SHORTCUT cold start takes the same path —
+        // its explicit action is recognized here, resolved by the same process-scoped intake and
+        // delivered into the same channel, so the shortcut goes through the SAME navigation gate as a
+        // share and can never bypass the startup door or the confirmation chain.
         handleInboundIntent(intent, coldLaunch = true)
+        // P7-09 09.B (D-226; spec sections 5/5.1): publish the dynamic shortcuts at most once per
+        // process (a re-composition / recreation re-run is a no-op). Publication touches no ledger
+        // data and only describes generic routes; the device leg (launcher task stack, app upgrade,
+        // TalkBack) is 09.D's, not claimed here.
+        AppShortcuts.publishOnce(this)
         setContent {
             // D-134 D2-D1: pre-Ready screens render outside P503App, so the shared dual theme
             // wraps the whole root; nesting with P503App's inner wrapper is harmless.
@@ -77,6 +87,29 @@ class MainActivity : ComponentActivity() {
         coldLaunch: Boolean,
     ) {
         if (intent == null) return
+        val holder = ledgerProcessHolderFor(this) ?: return
+        // P7-09 09.B (D-226; spec sections 2.1/5): a launcher shortcut Intent is recognized by its
+        // explicit, checkable action (never `ACTION_MAIN`) and resolved to one neutral request by the
+        // SAME process-scoped intake, then delivered into the SAME channel and navigation gate the
+        // share path uses. It is checked BEFORE the share face because a shortcut carries no stream:
+        // running the share validator over it would produce a meaningless typed rejection. An action
+        // that is neither a recognized shortcut action nor a share falls through to the share face and
+        // is typed exactly as before (`ACTION_MAIN` → non-entry, other → UNSUPPORTED_ACTION), so this
+        // never widens the launch path.
+        val shortcutAction = intent.action
+        if (ShortcutNavigationAction.requestFor(shortcutAction) != null) {
+            val shortcutRequest =
+                if (coldLaunch) {
+                    holder.inboundIntake.coldLaunchShortcutRequest(shortcutAction)
+                } else {
+                    holder.inboundIntake.hotShortcutRequest(shortcutAction)
+                }
+            if (shortcutRequest != null) {
+                StartupTrace.emit("entry.inboundShortcut kind=${shortcutRequest::class.simpleName}")
+                holder.externalNavigationChannel.deliver(shortcutRequest)
+            }
+            return
+        }
         val snapshot =
             snapshotShareIntent(intent) { uri ->
                 // The read grant check: a NON-opening permission probe. It must never open the
@@ -90,7 +123,6 @@ class MainActivity : ComponentActivity() {
                     permissionGranted = android.content.pm.PackageManager.PERMISSION_GRANTED,
                 )
             }
-        val holder = ledgerProcessHolderFor(this) ?: return
         val request =
             if (coldLaunch) {
                 holder.inboundIntake.coldLaunchRequest(snapshot)

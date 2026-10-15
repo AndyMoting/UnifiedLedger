@@ -93,12 +93,13 @@
 
 ### 2.1 中立导航请求与 common/app-ui 边界【冻结设计提案；沿计划 Q19，计划 `:325`】
 
-- Android 侧把收到的 `Intent` **校验**为**中立请求**；`common` app-ui 只接收三类中立请求：
+- Android 侧把收到的 `Intent` **校验**为**中立请求**；`common` app-ui 只接收四类中立请求：
   - `OpenNewEntry(type)`——记支出/记收入等直达录入；
   - `OpenImport(deliveryId)`——受控文件分享的导入（含格式由用户在 Android capability matrix 选择后再并入统一命令）。**术语统一【冻结设计提案】：** `inputToken`/`token`/`deliveryId` 是**同一概念**的漂移拼写；本文冻结**单一概念名 `deliveryId`**（本地不透明入站身份），导航请求形参名为 `deliveryId`；§4 的「token」一律读作 `deliveryId`。
   - `OpenCurrentMonth`——回到应用当前月份/看账。
+  - `OpenImportTab`——打开**既有** IMPORT 面（D-226 授权的第 4 类，09.B 图标快捷方式的「导入」腿）；**无文件、无 `deliveryId`、不新建导入流程**，与 `OpenImport`（受控分享导入、必经格式选择）语义不同。
 - **Uri、文件名与平台对象留在 Android 适配器内**：`common` 侧不出现 `android.net.Uri`/`ContentResolver`/`java.io` 形状（沿 `ImportFilePick.kt:102-108` 的 commonMain 边界纪律）。
-- **实签名建议、字面留开放项**：三类请求的精确 sealed 形状、字段类型与失败码族 OPEN（§8 开放项 1）；实现者不得把本文的示意名当作既有 API。
+- **实签名建议、字面留开放项**：四类请求的精确 sealed 形状、字段类型与失败码族 OPEN（§8 开放项 1）；实现者不得把本文的示意名当作既有 API。
 
 ### 2.2 deliveryId 与本地不透明身份【冻结设计提案；沿计划 `:325`】
 
