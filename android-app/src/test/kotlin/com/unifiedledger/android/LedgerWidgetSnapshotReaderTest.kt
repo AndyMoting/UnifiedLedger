@@ -133,9 +133,10 @@ class LedgerWidgetSnapshotReaderTest {
         )
         val existing = repositoryFile("app-ui/src/commonMain/kotlin/com/unifiedledger/ui/ExternalNavigation.kt").toFile().readText()
         assertEquals(
-            3,
+            4,
             Regex("(data class|data object) Open\\w+").findAll(existing).count(),
-            "the neutral request family must still have exactly three members (A6 frozen face)",
+            "the neutral request family must have exactly four members (D-226 authorizes the fourth; " +
+                "the A6 face is re-baselined from 09.C's exactly-three baseline by this batch's new authority)",
         )
     }
 

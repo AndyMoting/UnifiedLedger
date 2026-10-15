@@ -328,4 +328,71 @@ class ExternalNavigationIntakeTest {
         assertEquals(null, intake.coldLaunchRequest(snapshot(action = Intent.ACTION_MAIN)))
         assertEquals(null, intake.hotReceiptRequest(snapshot(action = Intent.ACTION_MAIN)))
     }
+
+    // ---- P7-09 09.B (D-226; spec sections 2.1/5): the launcher shortcut receipt ----
+
+    @Test
+    fun everyShortcutActionMapsToItsNeutralRequest() {
+        assertEquals(
+            ExternalNavigationRequest.OpenNewEntry(com.unifiedledger.application.EntryType.EXPENSE),
+            ShortcutNavigationAction.requestFor(ShortcutNavigationAction.NEW_EXPENSE),
+        )
+        assertEquals(
+            ExternalNavigationRequest.OpenNewEntry(com.unifiedledger.application.EntryType.INCOME),
+            ShortcutNavigationAction.requestFor(ShortcutNavigationAction.NEW_INCOME),
+        )
+        assertEquals(ExternalNavigationRequest.OpenImportTab, ShortcutNavigationAction.requestFor(ShortcutNavigationAction.OPEN_IMPORT))
+    }
+
+    @Test
+    fun anUnknownActionMapsToNoRequest() {
+        // The typed-rejection discipline: an unrecognized or foreign action is never coerced.
+        assertEquals(null, ShortcutNavigationAction.requestFor(null))
+        assertEquals(null, ShortcutNavigationAction.requestFor(Intent.ACTION_MAIN))
+        assertEquals(null, ShortcutNavigationAction.requestFor(Intent.ACTION_SEND))
+        assertEquals(null, ShortcutNavigationAction.requestFor("com.example.action.NOPE"))
+    }
+
+    @Test
+    fun shortcutActionsNeverCollideWithMainOrSend() {
+        // REGRESSION RED LINE: the shortcut family stays an explicit, disjoint action set — it must
+        // never be ACTION_MAIN (an ordinary launch) nor an accepted share action.
+        assertTrue(ShortcutNavigationAction.ALL.none { it == Intent.ACTION_MAIN || it == Intent.ACTION_SEND || it == Intent.ACTION_SEND_MULTIPLE })
+        assertEquals(3, ShortcutNavigationAction.ALL.size, "exactly the three 09.B shortcuts are published")
+    }
+
+    @Test
+    fun aRecognizedShortcutActionIsDeliveredOnceAndARepeatIsRefused() {
+        val intake = InboundNavigationIntake { "shortcut-id" }
+        val first = assertIs<ExternalNavigationRequest.OpenNewEntry>(intake.shortcutRequestFor(ShortcutNavigationAction.NEW_EXPENSE, "shortcut:expense"))
+        assertEquals(com.unifiedledger.application.EntryType.EXPENSE, first.type)
+        // The same delivery key is consumed exactly once (idempotent re-consumption).
+        assertEquals(null, intake.shortcutRequestFor(ShortcutNavigationAction.NEW_EXPENSE, "shortcut:expense"))
+        // An unknown action consumes nothing and yields nothing.
+        assertEquals(null, intake.shortcutRequestFor("com.example.action.NOPE", "shortcut:nope"))
+    }
+
+    @Test
+    fun aColdLaunchShortcutKeepsOneKeyAcrossARecreationWhileAHotTapIsFresh() {
+        var minted = 0
+        val intake = ProcessInboundNavigationIntake { "delivery-${++minted}" }
+        val cold = assertIs<ExternalNavigationRequest.OpenImportTab>(intake.coldLaunchShortcutRequest(ShortcutNavigationAction.OPEN_IMPORT))
+        assertEquals(ExternalNavigationRequest.OpenImportTab, cold)
+        // The recreation re-reads the SAME launch Intent: refused, no new id, nothing delivered.
+        assertEquals(null, intake.coldLaunchShortcutRequest(ShortcutNavigationAction.OPEN_IMPORT))
+        assertEquals(0, minted, "the cold receipt keys on the action, not on a minted id")
+        // A HOT tap is a new user action: it mints a fresh id and always routes.
+        val hot = assertIs<ExternalNavigationRequest.OpenNewEntry>(intake.hotShortcutRequest(ShortcutNavigationAction.NEW_INCOME))
+        assertEquals(1, minted)
+        assertEquals(com.unifiedledger.application.EntryType.INCOME, hot.type)
+    }
+
+    @Test
+    fun ordinaryMainAndShareActionsRemainNonShortcutReceipts() {
+        val intake = ProcessInboundNavigationIntake { "d" }
+        assertEquals(null, intake.coldLaunchShortcutRequest(Intent.ACTION_MAIN))
+        assertEquals(null, intake.hotShortcutRequest(Intent.ACTION_SEND))
+        // The share face still returns null for ACTION_MAIN (the red line: MAIN is not an entry).
+        assertEquals(null, intake.coldLaunchRequest(snapshot(action = Intent.ACTION_MAIN)))
+    }
 }

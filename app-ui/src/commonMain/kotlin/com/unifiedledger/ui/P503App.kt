@@ -590,6 +590,26 @@ fun P503App(
                     else -> heldFallback
                 }
         }
+        // P7-09 09.B / T11 (spec section 3 line 150 "Retry 成功后重新过导航门"): the STARTUP-WAIT
+        // slot's re-entry into the SAME navigation gate. A request held while the runtime was not
+        // Ready is CARRIED onto the overview by the initial load but was never re-routed, so a
+        // cold-start 记支出/导入 stopped at the Busy strip while the hot path went straight through.
+        // The pure seam (startupHeldReRoutingDecision) re-applies the FROZEN table with
+        // `existingPending = null`; the runtime facts come from the SAME lease-face observation
+        // [onExternalNavigationRequested] uses, so both paths route identically. It returns null when
+        // the slot is not a startup-wait slot (a share awaiting its format, or one awaiting the user's
+        // retain/replace decision, is never re-routed) or when the conclusion changes nothing, so this
+        // cannot churn. Self-terminating: the routed slot is consumed and any other landing leaves a
+        // non-STARTUP_NOT_READY reason.
+        startupHeldReRoutingDecision(
+            state = landed,
+            facts =
+                ExternalNavigationRuntimeFacts.from(
+                    activeGeneration = ledger.activeGenerationForLanding(),
+                    switchingRuntime = (landed as? P503AppState.BackupRestore)?.runningConfirm == true,
+                ),
+            existingPending = landed.pendingExternalNavigationSlot(),
+        )?.let { reRouted -> landed = reducer.reduce(landed, P503UiEvent.ExternalNavigationDecisionLanded(reRouted)) }
         val nextHeld = landed.pendingExternalNavigationSlot() ?: hostHeldNavigation
         // Release EVERY retained share source that was held before (the reducer slot OR the dropped
         // fallback) and is NO LONGER held (as `request` OR `displaced`) — the ONE point that
@@ -2619,6 +2639,22 @@ fun P503App(
     DisposableEffect(ledger, externalNavigationChannel) {
         externalNavigationChannel?.subscribe { request -> onExternalNavigationRequested(request) }
         onDispose { externalNavigationChannel?.subscribe(null) }
+    }
+
+    // P7-09 09.B (D-226; spec section 2.1 `OpenImportTab`): load the EXISTING IMPORT surface when
+    // the overview sits on the IMPORT tab with no projection yet. An inbound `OpenImportTab` request
+    // (and the shortcut leg generally) does NOT pass through the tab bar's `onSelectTab` lambda that
+    // owns the first-load request, so the load is driven from the LANDED state here instead — the
+    // same trigger the tab tap uses (`requestImportReview` on `importReview == null`), and the same
+    // shape as the existing state-keyed effect below (`LaunchedEffect(state)`). A wired/unwired
+    // surface is handled inside [requestImportReview] (it returns early and dispatches nothing when
+    // the import-review rows surface is absent), so an unwired composition renders no dead load.
+    // The read itself is leased and generation-gated; this effect only starts it.
+    LaunchedEffect(state) {
+        val overview = state as? P503AppState.OverviewEmpty ?: return@LaunchedEffect
+        if (overview.selectedTab == P503Tab.IMPORT && overview.importReview == null) {
+            requestImportReview()
+        }
     }
 
     // P7-02.D E-4: the authoritative snapshot with the pinned-first sort derivation applied to

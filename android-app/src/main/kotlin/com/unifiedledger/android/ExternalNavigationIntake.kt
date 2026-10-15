@@ -2,6 +2,7 @@ package com.unifiedledger.android
 
 import android.content.Intent
 import android.net.Uri
+import com.unifiedledger.application.EntryType
 import com.unifiedledger.ui.ExternalNavigationRequest
 import com.unifiedledger.ui.IMPORT_FILE_PICK_MAX_READ_BYTES
 
@@ -65,6 +66,53 @@ enum class ShareIntakeRejection {
 
     /** The Intent carried no usable share surface at all. */
     NOT_A_SHARE,
+}
+
+/**
+ * P7-09 09.B (D-226; spec sections 2.1/5): the launcher shortcut action family. These are this
+ * app's OWN explicit actions (the `LedgerWidgetProvider` action precedent), never
+ * `Intent.ACTION_MAIN`: a shortcut Intent is recognized by an explicit, checkable action string and
+ * mapped to one neutral request, while `ACTION_MAIN` remains a non-entry (an ordinary launch).
+ *
+ * The actions carry NO account name, category name or amount — only which existing surface to open
+ * (spec section 5: the launcher can read shortcut metadata, so nothing sensitive may live here).
+ * `ShortcutManager` also requires an explicit target Activity; the extras express ROUTING only and
+ * are never a formal submission snapshot (spec section 5).
+ */
+object ShortcutNavigationAction {
+    /** 记支出 shortcut → `OpenNewEntry(EXPENSE)`. */
+    const val NEW_EXPENSE: String = "com.unifiedledger.android.action.NEW_EXPENSE"
+
+    /** 记收入 shortcut → `OpenNewEntry(INCOME)`. */
+    const val NEW_INCOME: String = "com.unifiedledger.android.action.NEW_INCOME"
+
+    /** 导入 shortcut → `OpenImportTab` (the existing IMPORT surface; no file, no deliveryId). */
+    const val OPEN_IMPORT: String = "com.unifiedledger.android.action.OPEN_IMPORT"
+
+    /** Every recognized shortcut action, in declaration order. */
+    val ALL: List<String> = listOf(NEW_EXPENSE, NEW_INCOME, OPEN_IMPORT)
+
+    /**
+     * The neutral request one shortcut action routes to, or null when [action] is not a recognized
+     * shortcut action — an unknown or foreign action is never coerced into a route (typed rejection
+     * discipline). Pure, so the mapping is JVM-assertable without an `Intent` (the widget-route
+     * precedent).
+     */
+    fun requestFor(action: String?): ExternalNavigationRequest? =
+        when (action) {
+            NEW_EXPENSE -> ExternalNavigationRequest.OpenNewEntry(EntryType.EXPENSE)
+            NEW_INCOME -> ExternalNavigationRequest.OpenNewEntry(EntryType.INCOME)
+            OPEN_IMPORT -> ExternalNavigationRequest.OpenImportTab
+            else -> null
+        }
+
+    /**
+     * The `DeliveryIdLedger` key for one shortcut action. A shortcut carries no delivery identity
+     * (`ACTION_SEND` has none either, spec section 4), so the action string itself keys the
+     * idempotent re-consumption of a COLD-LAUNCH receipt; the `shortcut:` prefix keeps the key
+     * space disjoint from the share's opaque UUIDs so the two can never collide.
+     */
+    fun ledgerKey(action: String): String = "shortcut:$action"
 }
 
 /**
@@ -369,6 +417,24 @@ internal class InboundNavigationIntake(
 
     /** Whether [deliveryId] has already been consumed by this intake (the repeated-delivery probe). */
     fun alreadyConsumed(deliveryId: String): Boolean = delivered.contains(deliveryId)
+
+    /**
+     * P7-09 09.B (D-226; spec sections 2.1/5): the neutral request for one received SHORTCUT action,
+     * or null when [action] is not a recognized shortcut action or its [deliveryId] was already
+     * consumed.
+     *
+     * A shortcut carries no file, no URI and no share grant, so unlike [requestFor] there is nothing
+     * to validate beyond the action itself: recognition IS the validation. An unrecognized action
+     * returns null and consumes nothing (an unknown action is never coerced into a route). The
+     * [deliveryId] is the same idempotent-consumption key the share path uses.
+     */
+    fun shortcutRequestFor(
+        action: String?,
+        deliveryId: String,
+    ): ExternalNavigationRequest? {
+        val request = ShortcutNavigationAction.requestFor(action) ?: return null
+        return if (delivered.consumeOnce(deliveryId)) request else null
+    }
 }
 
 /**
@@ -439,6 +505,29 @@ internal class ProcessInboundNavigationIntake(
 
     /** Whether a repeated read of [deliveryId] is a refused (already-consumed) delivery. */
     fun isRefusedRepeat(deliveryId: String): Boolean = intake.alreadyConsumed(deliveryId)
+
+    /**
+     * P7-09 09.B (D-226; spec sections 2.2/5): the request for the process launch's cold-start
+     * SHORTCUT receipt. A shortcut has no delivery identity of its own (`ACTION_SEND` has none
+     * either, spec section 4), so the ACTION string keys the idempotent re-consumption: a recreation
+     * that re-reads the SAME launch Intent reuses the same key and the repeat is refused, while a
+     * genuinely new tap in a new process starts from a fresh [DeliveryIdLedger]. Null for a
+     * non-shortcut action and for a refused repeat.
+     */
+    fun coldLaunchShortcutRequest(action: String?): ExternalNavigationRequest? {
+        if (action == null || ShortcutNavigationAction.requestFor(action) == null) return null
+        return intake.shortcutRequestFor(action, ShortcutNavigationAction.ledgerKey(action))
+    }
+
+    /**
+     * P7-09 09.B (D-226; spec section 5): the request for a HOT shortcut receipt (a second tap while
+     * the app is alive). It is a genuinely new user action, so it mints a fresh id and always routes
+     * — the app is left where it was only for the surface the user chose next.
+     */
+    fun hotShortcutRequest(action: String?): ExternalNavigationRequest? {
+        if (ShortcutNavigationAction.requestFor(action) == null) return null
+        return intake.shortcutRequestFor(action, mintDeliveryId())
+    }
 }
 
 /** P7-09 09.A fix round (B3): the current cold-launch receipt identity (see [ProcessInboundNavigationIntake.coldLaunchReceipt]). */

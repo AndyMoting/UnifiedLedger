@@ -4681,3 +4681,31 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 15. manifest 安全面逐入口裁决。
 
 另加 2 条 Info 残余（非阻断，登记不改）：(i) §6.2 `catalogVersion` 措辞可读作自来源（语义可实现，仅措辞）；(ii) §1.5 引 D-186 而 Authority 决定列表未列 D-186（引用卫生，无正确性影响）。**P709-A01..A09 无一记 PASS。**
+
+## D-226 P7-09 09.B 图标快捷方式实施登记（方案 A：新增第 4 类中立请求；零 schema 变更）
+
+**状态：** 已批准（2026-10-14，P7-09「系统入口」09.B 图标快捷方式实施批）。批准依据 = D-225（P7-09 设计门批准，规格 `docs/specs/2026-10-12-p7-09-system-entry-design.md`）与规格 §5/§5.1（09.B 冻结设计面）。**零 schema / 零迁移 / 零新依赖**——本批不分配 schema 版本号、不改任何 `.sqm`、不改 `build.gradle.kts` 依赖，schema 维持 v35。实施于隔离 worktree（分支 `UL-p7-09b`，基点 `f24d136009f0019bc1a36620967b07c8ff181494`）。
+
+**决定：**
+
+1. **方案 A 裁决（新增第 4 类中立请求）**：批准在 `ExternalNavigationRequest` 家族新增 `data object OpenImportTab`——打开**既有** IMPORT 面，**无文件、无 `deliveryId`、无任何平台对象**，**不新建导入流程**。与 `OpenImport`（受控单文件分享导入，必经 capability matrix 格式选择）语义不同。规格 §2.1「三类」措辞同步修订为**四类**（`docs/specs/2026-10-12-p7-09-system-entry-design.md` §2.1 `:96`/`:101` 原地最小修订，先例：D-183 §3 的规格原地最小修订）。该请求由「导入」快捷方式产生，路由语义 = 既有 `SelectTab(P503Tab.IMPORT)`（`P503Reducer.kt` 的 `routeExternalNavigation` 穷尽 `when (request)` 唯一补点；不补即编译失败），**零正式写入**；IMPORT 面的加载由宿主的状态驱动 effect 完成（外部请求不经过 `onSelectTab` lambda）。本批**不新增** `ExternalNavigationHoldReason` 成员：非 Idle 状态沿用既有 reason，故 Busy 文案 `when` 无需改动。
+
+2. **动态快捷方式（`ShortcutManager`）与任务栈策略**：批准 09.B 首版以**动态**快捷方式实现（记支出/记收入/导入三条），**不新增** `res/xml/shortcuts.xml` 静态资源。证据（本批实读本地 API 面：`$ANDROID_HOME/platforms/android-37.0/android.jar` javap + `android-36.1` 平台源码 `android/content/pm/ShortcutInfo.java`、`ShortcutManager.java`）：`ShortcutInfo.enforceMandatoryFields(forPinned=false)` 强制 id/activity/short label/非空 intent 数组，**icon 非强制**（故不新增图标资源）；`Builder.setIntents` 要求每个 intent 带 action；`addDynamicShortcuts`/`setDynamicShortcuts` 为 `@WorkerThread` + 限流但**不要求前台** activity（仅 `requestPinShortcut` 要求）；动态快捷方式 intent 是普通 `startActivity` intent，故**静态**快捷方式默认的 `NEW_TASK`+`CLEAR_TASK`（规格 §5.1：会销毁既有 task、可能丢草稿/打断提交）**不适用**且刻意不复制。每条 intent 显式指向 `MainActivity` 并仅带 `FLAG_ACTIVITY_NEW_TASK`：`MainActivity` 是 task root 且 `launchMode="singleTop"`（官方 `Intent` 参考所述经 `onNewIntent` 交付的两个条件），`onNewIntent` 已 `setIntent()`；冷交付（无活 task）走 `onCreate`。两路都经**同一** `ExternalNavigationChannel` 与**同一**导航门，故快捷方式**不绕启动门、不绕确认链**。`CLEAR_TASK`/`CLEAR_TOP` 刻意不设。**动态 vs 静态的最终机制选择仍归主会话/规格评审判定**（规格 §8 开放项 3），本批只登记实现选择与证据。
+
+3. **入站校验扩展与回归红线**：快捷方式 action 是**本应用自有**的显式、可识别常量（`com.unifiedledger.android.action.NEW_EXPENSE`/`NEW_INCOME`/`OPEN_IMPORT`），映射为 `OpenNewEntry(EXPENSE)`/`OpenNewEntry(INCOME)`/`OpenImportTab`；未识别 action **一律不接受**（返回 null、不消费）。**`ACTION_MAIN` 仍是普通启动、不是入站入口**——分享校验面「`ACTION_MAIN` 一律 `return null`」保持不变，快捷方式分支**不**把 `ACTION_MAIN` 放宽为任意 launch 接受路径。进程作用域 receipt ledger 对冷启动快捷方式按 **action 字面量**幂等（`shortcut:` 前缀与分享的 UUID 键空间不相交），热 tap 走新 id。快捷方式 intent **不带任何 extras**（只表达路由，不成为正式提交快照）。
+
+4. **本批按规格 §3 `:150` 补入的冷启动重过导航门腿（实施冻结语义的缺口闭合）**：规格 §3 `:150` 已冻结「启动 / 失败重试 | 等待 `Ready`；启动失败**不消费**请求；`Retry` 成功后**重新过导航门**」。既有实现只在**入站那一刻**过门：请求在未 Ready 时被 `Held(STARTUP_NOT_READY)`/`DeferredUntilReady`，初始载入只把槽**携带**到 `OverviewEmpty`（`P503Reducer.kt` 的 `reduceReady`）而**从不重过门**，故冷启动停在 Busy 条直到用户点「放弃后切换」，与热启动直达编辑器/IMPORT **目标不一致**（计划 `:319` 的 09.B 验收列含「冷/热启动目标一致」）。本批按已冻结语义补入**逻辑腿**：纯缝 `startupHeldReRoutingDecision`（放 `ExternalNavigation.kt`）在宿主 dispatch 尾部（`P503App.kt`）以**同一** `decideExternalNavigation` 重过门，硬条件为 (i) 仅槽为启动等待型（`holdReason == STARTUP_NOT_READY` **且** `awaitingUserDecision == false` **且** `displaced == null`）；(ii) `existingPending` 传 `null`（传槽本身会命中 `RetainOrReplace` 行而成自位移空转）；(iii) 结论与当前槽相同则返回 null（不 churn）。由此：(a) 用户未裁决的 retain-vs-replace 槽**不被替用户裁决**（否则 `awaitingUserDecision=true`/`displaced` 的槽会被 `OverviewEmpty` 行直接 `Routed`，§2.2 提示被绕过且 displaced 无声丢失）；(b) 09.A 分享槽（`IMPORT_FORMAT_REQUIRED`）不被重过；(c) `Editing`/`AwaitingConfirmation`/`Submitting`/`UnknownCommit`/`ImportBatchSubmitting`/quiesce 各行**逐条不变**（不丢草稿、不打断提交、不绕确认由既有决策表保证，未另写第二套判断）。**范围口径**：本条按「实施已冻结语义的缺口闭合」登记（非新权威），最终属范围判断，交主会话/规格评审裁定（残余 O-6）。
+
+5. **审验拓扑与验收边界**：单 writer（隔离 worktree `UL-p7-09b`，基点 `f24d136`）；独立评审与验证由后续角色承担（本批 writer 只交付候选与聚焦证据）。**本批不声称** 09.B 的「冷/热启动目标一致」在**设备层**通过：真实任务栈、launcher 动态/固定快捷方式、应用升级、TalkBack（规格 §5.1/§8 项 3/6/7，P709-A04）归 09.D 设备实测；`getMaxShortcutCountPerActivity()` 具体数值与 shortcut 自定义 extras 官方支持面仍为规格 §8 项 6 开放项。**P709-A01..A09 无一记 PASS。**
+
+**关联决定：** D-225（P7-09 设计门批准——本条实施其 §2.1/§5/§5.1 与 §3 `:150` 冻结面），D-187（设计门批准先例：不分配 schema 版本号），D-183（规格原地最小修订先例），D-176（P7-06 进程作用域 owner 持有者——非组合入口承载），D-146（导入不留原文件/不持久 URI grant），D-224（上一个登记批，P7-08 08.D）。
+
+**残余与开放项承接（登记，本批不改行为）：**
+
+- **O-6(i)** T11 闭合「等待 `Ready` 后重新过导航门」的**逻辑腿**，但**未做设备运行**：真实任务栈下的冷/热启动一致性（含 launcher 动态/固定快捷方式、应用升级）仍为**缺证**，归 09.D；**不得声称** 09.B 的「冷/热启动目标一致」在设备层通过。
+- **O-6(ii)** 范围口径：T11 记为「实施冻结语义的缺口闭合」还是「修订 09.0/09.A 已合并路由语义」，属范围判断，交主会话/规格评审裁定。
+- **O-6(iii)** 若主会话裁定该腿**不在**本批实施，须保留本条登记并禁止声称该验收腿通过，且需另行登记 Busy 文案在启动已完成后的失实问题。
+- **O-6(iv)** **B1′ 尖角**：既有门对「在飞请求」按 `existingPending` 非空判断（`ExternalNavigation.kt:182`），而槽另带非状态的 `awaitingUserDecision`/`displaced`（`:110`/`:112`）；故**任何**重过门实现都必须同时满足本决定第 4 条的硬条件才不绕过规格 §2.2。该耦合本身（门的 RetainOrReplace 判据只看 `existingPending` 是否非空、不看槽是否已被用户裁决）仍是既有设计的脆弱点，登记为残余交主会话/规格评审决定是否另行处置。
+- **O-5** `android-app/src/main/kotlin/com/unifiedledger/android/LedgerWidgetProvider.kt`（`:170-171` 与 `:374`）注释「This adds NO fourth neutral request type (the A6 frozen face)」在本批后即陈旧；该文件不在本批可写清单内，**本批不可改**，登记为残余（可在 09.B 收口批或 09.D 一并修正，届时需扩列该文件）。
+- **O-2** 规格 §8 开放项 1（`:252`）的三名枚举是否同步为四名——属范围判断，交主会话/规格评审（本批只按批准范围修订 §2.1）。
+- **A6 基线重定**：`android-app/src/test/kotlin/com/unifiedledger/android/LedgerWidgetSnapshotReaderTest.kt` 的结构计数断言由 09.C 的「恰 3 个成员」在本批依新权威（D-226）重定为「恰 4 个成员」；保留结构计数性质（不删、不改 `>=`、不放宽），属测试基线随新权威更新，非缩减目标。
