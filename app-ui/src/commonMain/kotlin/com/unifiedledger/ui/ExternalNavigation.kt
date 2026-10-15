@@ -307,6 +307,47 @@ private fun ExternalNavigationDecision.landsTheSameStartupHoldAs(slot: PendingEx
     }
 
 /**
+ * P7-09 09.B / T11 (spec section 3 line 151, "启动失败**不消费**请求；`Retry` 成功后**重新过导航门**"):
+ * the STARTUP-WAIT slot's preservation across a transition that DROPS it.
+ *
+ * [startupHeldReRoutingDecision] re-enters the gate once a routable surface is live, but a failed
+ * INITIAL authoritative read advances the surface to `P503AppState.InfrastructureFailure(READ)` —
+ * a state that carries NO pending slot (its `monthlyOverview` field is a read-only month retention,
+ * not the navigation slot). `reduceReady`'s `InitialLoadFailed` therefore DROPS the startup-held
+ * request, and the subsequent `RefreshResult` rebuilds a fresh `OverviewEmpty` with no slot either.
+ * Without this seam the request would be consumed by the failure — exactly what the frozen row
+ * forbids — and the cold-start/hot-start targets would diverge again on that path.
+ *
+ * The reducer cannot carry the slot on the failure surface and [P503AppState] is not widened by this
+ * batch, so the request is held by the EXISTING host-level fallback (`hostHeldNavigation`, the B2
+ * mechanism for "a surface the reducer cannot carry the slot on"), from which the ordinary flush
+ * returns it to the reducer once a slot surface is live again — at which point
+ * [startupHeldReRoutingDecision] re-enters the gate. The visible Busy strip renders above the
+ * failure page, so the request stays visible rather than vanishing.
+ *
+ * Returns the slot to hold, or `null` when this transition needs no preservation:
+ * - the landed surface carries the slot (the reducer owns it — nothing to hold here);
+ * - the effective held request before the transition is absent, or is not a STARTUP-WAIT slot:
+ *   [ExternalNavigationHoldReason.STARTUP_NOT_READY] only, with
+ *   [PendingExternalNavigation.awaitingUserDecision] false and [PendingExternalNavigation.displaced]
+ *   `null`. The same exclusion as [startupHeldReRoutingDecision] applies, for the same reason: a slot
+ *   awaiting the user's retain/replace decision is the user's to adjudicate, never this seam's.
+ *   A share held for its format choice ([ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED]) is
+ *   likewise out of this seam's scope (registered as a residual in the batch report, not silently
+ *   narrowed). Pure and JVM-assertable; [P503App] stores and renders the returned value.
+ */
+internal fun startupHeldFallbackAfterLanding(
+    landed: P503AppState,
+    previousHeld: PendingExternalNavigation?,
+): PendingExternalNavigation? {
+    if (landed.carriesExternalNavigationSlot()) return null
+    val slot = previousHeld ?: return null
+    if (slot.holdReason != ExternalNavigationHoldReason.STARTUP_NOT_READY) return null
+    if (slot.awaitingUserDecision || slot.displaced != null) return null
+    return slot
+}
+
+/**
  * P7-09 09.0 (spec sections 2.1/2.2; D-225 Q19): the composition-root channel for inbound neutral
  * navigation requests (the [ImportFilePickResultChannel] precedent). The platform adapter validates
  * a received Intent into a request and delivers it here; the shared host subscribes via

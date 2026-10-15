@@ -1,6 +1,10 @@
 package com.unifiedledger.android
 
 import com.unifiedledger.ui.ExternalNavigationRequest
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicBoolean
@@ -76,18 +80,31 @@ class AppShortcutsTest {
     }
 
     @Test
-    fun thePublishPlanPublishesOncePerProcessAndNeverRisksAnEmptyPlatformCapacity() {
-        // The call-site gate the product's `publishOnce` uses: the first caller plans the publish and
-        // every later re-composition / Activity recreation is refused (null), so ordinary use never
+    fun thePublishSeamPublishesOncePerProcessAndNeverRisksAnEmptyPlatformCapacity() {
+        // The call-site gate the product's `publishOnce` uses: the first caller schedules the publish
+        // and every later re-composition / Activity recreation is refused, so ordinary use never
         // approaches the platform's publish rate limit.
         val gate = AtomicBoolean(false)
-        assertEquals(LEDGER_SHORTCUT_SPECS, shortcutPublishPlan(gate, 5))
-        assertEquals(null, shortcutPublishPlan(gate, 5), "a second call must not re-publish")
-        // A platform reporting no capacity yields an EMPTY plan (publishing would throw platform-side).
-        val freshGate = AtomicBoolean(false)
-        assertEquals(emptyList(), shortcutPublishPlan(freshGate, 0))
-        // The gate is consumed even by the empty plan: the decision was made, so it is not retried.
-        assertEquals(null, shortcutPublishPlan(freshGate, 5))
+        val published = mutableListOf<List<LedgerShortcutSpec>>()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val record: (List<LedgerShortcutSpec>) -> Unit = { published += it }
+        publishShortcutsOnce(gate, scope, { LEDGER_SHORTCUT_SPECS }, record)
+        assertEquals(listOf(LEDGER_SHORTCUT_SPECS), published)
+        publishShortcutsOnce(gate, scope, { LEDGER_SHORTCUT_SPECS }, record)
+        assertEquals(1, published.size, "a second call must not re-publish")
+        // An absent platform surface (a null plan) publishes nothing...
+        val nullGate = AtomicBoolean(false)
+        publishShortcutsOnce(nullGate, scope, { null }, record)
+        assertEquals(1, published.size)
+        // ...as does a platform reporting no usable capacity (an empty plan would make the platform
+        // `addDynamicShortcuts` throw IllegalArgumentException, so it must never be published)...
+        val emptyGate = AtomicBoolean(false)
+        publishShortcutsOnce(emptyGate, scope, { emptyList() }, record)
+        assertEquals(1, published.size)
+        // ...and the empty-plan gate is consumed too: the decision was made, so it is not retried.
+        publishShortcutsOnce(emptyGate, scope, { LEDGER_SHORTCUT_SPECS }, record)
+        assertEquals(1, published.size)
+        scope.cancel()
     }
 
     @Test

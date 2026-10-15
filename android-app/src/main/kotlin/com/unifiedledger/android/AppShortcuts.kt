@@ -6,6 +6,11 @@ import android.content.Intent
 import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
 import android.os.PersistableBundle
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 
 /*
@@ -15,8 +20,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * session; this batch's implementation choice, registered in the batch report, is DYNAMIC):
  * `ShortcutManager` dynamic shortcuts are used and NO static `res/xml/shortcuts.xml` is added.
  * Evidence gathered this batch, all from the local API surface
- * (`$ANDROID_HOME/platforms/android-37.0/android.jar` javap plus the `android-36.1` platform
- * sources — `android/content/pm/ShortcutInfo.java`, `android/content/pm/ShortcutManager.java`):
+ * (the local Android SDK: `javap` over the android-37.0 `android.jar`, plus the android-36.1
+ * platform sources `android/content/pm/ShortcutInfo.java`, `android/content/pm/ShortcutManager.java`):
  * - `ShortcutInfo.enforceMandatoryFields(forPinned = false)` requires ID, activity, short label and
  *   a non-empty intent array; an ICON is NOT required, so this batch adds no icon drawable;
  * - `ShortcutInfo.Builder.setIntents` requires every intent to carry an ACTION
@@ -111,24 +116,34 @@ internal fun ledgerShortcutSpecsWithinLimit(
 ): List<LedgerShortcutSpec> = if (maxShortcutCountPerActivity <= 0) emptyList() else specs.take(maxShortcutCountPerActivity)
 
 /**
- * P7-09 09.B (D-226; spec section 8 item 6): the publish PLAN — what this process should publish,
- * under the once-per-process gate and the platform's reported per-activity limit. Pure (no
- * `Context`, no platform object), so the gate and the cap are JVM-assertable at the real decision
- * point rather than only on their parts:
- * - `null` = this process has already published (the gate was taken by an earlier caller) — nothing
- *   to do, which is what keeps a re-composition / Activity recreation off the platform's publish
- *   rate limit;
- * - an empty list = the platform reported no usable capacity, so nothing is published (publishing
- *   anyway would make `setDynamicShortcuts`/`addDynamicShortcuts` throw
- *   `IllegalArgumentException`, `android/content/pm/ShortcutManager.java`);
- * - otherwise the specs to publish, capped by the reported limit.
+ * P7-09 09.B (D-226; spec section 8 item 6): the once-per-process publish gate. Pure in its control
+ * flow (the platform work is injected), so the gate, the cap and the background hop are
+ * JVM-assertable at the real decision point rather than only on their parts:
+ * - a later caller (a re-composition, an Activity recreation, a second entry) finds the gate already
+ *   claimed and returns WITHOUT scheduling anything — this is what keeps ordinary use off the
+ *   platform's publish rate limit;
+ * - the first caller claims the gate and runs [planFor]/[publish] on [scope] (the caller's background
+ *   hop, because `addDynamicShortcuts` is `@WorkerThread`);
+ * - [planFor] returning `null` (an absent `ShortcutManager`) or an empty list (the platform reported
+ *   no usable capacity — publishing anyway would make `addDynamicShortcuts` throw
+ *   `IllegalArgumentException`, `android/content/pm/ShortcutManager.java`) publishes nothing.
+ *
+ * [scope] is supplied by the caller so a test drives it with a direct dispatcher.
  */
-internal fun shortcutPublishPlan(
+internal fun publishShortcutsOnce(
     gate: AtomicBoolean,
-    maxShortcutCountPerActivity: Int,
-): List<LedgerShortcutSpec>? {
-    if (!gate.compareAndSet(false, true)) return null
-    return ledgerShortcutSpecsWithinLimit(LEDGER_SHORTCUT_SPECS, maxShortcutCountPerActivity)
+    scope: CoroutineScope,
+    planFor: () -> List<LedgerShortcutSpec>?,
+    publish: (List<LedgerShortcutSpec>) -> Unit,
+) {
+    if (!gate.compareAndSet(false, true)) return
+    scope.launch {
+        runCatching {
+            val plan = planFor() ?: return@runCatching
+            if (plan.isEmpty()) return@runCatching
+            publish(plan)
+        }
+    }
 }
 
 /**
@@ -144,26 +159,45 @@ internal object AppShortcuts {
     private val publishedOnce = AtomicBoolean(false)
 
     /**
+     * The dispatcher the platform publish hops to. `ShortcutManager.addDynamicShortcuts` is annotated
+     * `@WorkerThread` (`android/content/pm/ShortcutManager.java`), so calling it from `onCreate` (the
+     * main thread) would violate that contract; the publish therefore runs on `Dispatchers.IO`, the
+     * same background class the process controller's blocking open uses. Publication is fire-and-
+     * forget (it only describes generic routes and touches no ledger data), so a caller never waits
+     * on it.
+     */
+    private val publishDispatcher: CoroutineDispatcher = Dispatchers.IO
+
+    /**
      * Publishes the dynamic shortcuts at most once per process; every later call is a no-op. The
-     * once-per-process gate and the platform-limit cap are decided by the pure [shortcutPublishPlan]
-     * (the `ensureStartedOnce` extraction precedent), so the call-site wiring is JVM-assertable
-     * without a `Context`.
+     * once-per-process gate, the platform-limit cap and the background hop are decided by the pure
+     * [publishShortcutsOnce] / [shortcutPublishPlan] seams (the `ensureStartedOnce` extraction
+     * precedent), so the wiring is JVM-assertable without a `Context`.
      *
-     * `getMaxShortcutCountPerActivity()` needs the platform service, so it is read here and the plan
-     * is computed from it; an absent `ShortcutManager` (a plain unit-test context) publishes nothing.
+     * The `@WorkerThread` platform calls run on [publishDispatcher], off the caller's thread;
+     * `getMaxShortcutCountPerActivity()` is read there too. An absent `ShortcutManager` (a plain
+     * unit-test context) publishes nothing.
      */
     fun publishOnce(context: Context) {
-        runCatching {
-            val manager = context.getSystemService(ShortcutManager::class.java) ?: return
-            val plan = shortcutPublishPlan(publishedOnce, manager.maxShortcutCountPerActivity) ?: return
-            publish(context, plan)
-        }
+        val applicationContext = context.applicationContext ?: context
+        publishShortcutsOnce(
+            gate = publishedOnce,
+            scope = CoroutineScope(SupervisorJob() + publishDispatcher),
+            planFor = {
+                val manager =
+                    applicationContext.getSystemService(ShortcutManager::class.java)
+                        ?: return@publishShortcutsOnce null
+                ledgerShortcutSpecsWithinLimit(LEDGER_SHORTCUT_SPECS, manager.maxShortcutCountPerActivity)
+            },
+            publish = { plan -> publish(applicationContext, plan) },
+        )
     }
 
     /**
-     * Publishes one already-decided [plan]. Idempotent by ID (`addDynamicShortcuts` updates an
-     * existing shortcut with the same ID), so a repeat cannot duplicate a launcher entry. Empty plan
-     * → nothing published.
+     * Publishes one already-decided [plan] on the CURRENT (already background) thread. Idempotent by
+     * ID (`addDynamicShortcuts` updates an existing shortcut with the same ID), so a repeat cannot
+     * duplicate a launcher entry. Empty plan → nothing published. `@WorkerThread` contract: the
+     * caller is [publishOnce]'s background hop.
      */
     fun publish(
         context: Context,

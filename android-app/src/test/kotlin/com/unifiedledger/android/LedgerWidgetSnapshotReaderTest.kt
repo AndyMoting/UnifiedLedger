@@ -118,8 +118,10 @@ class LedgerWidgetSnapshotReaderTest {
     @Test
     fun theClickRouteIsTheExistingOpenCurrentMonthRequestNotANewOne() {
         // Spec sections 6.1/6.5 + J5: the widget click reuses the EXISTING neutral request family.
-        // The route is the generic OpenCurrentMonth surface (ExternalNavigation.kt:34-35), it carries
-        // no amount and no widget data, and the widget must NOT add a fourth neutral request type.
+        // The route is the generic OpenCurrentMonth surface (ExternalNavigation.kt:52-53), it carries
+        // no amount and no widget data, and the WIDGET still adds no request type of its own: the
+        // fourth member counted below (OpenImportTab) was added by 09.B's launcher shortcut under
+        // D-226, never by this widget's click route.
         val snapshot = snapshot(ordinaryIncome = 123_456L, netExpense = -78_900L, balance = 202_356L)
         val state = widgetViewState(march, WidgetSnapshotOutcome.Read(snapshot), LedgerWidgetConfig.hidden(), 5, 7)
         assertEquals(WidgetClickRoute.OPEN_CURRENT_MONTH, state.clickRoute)
