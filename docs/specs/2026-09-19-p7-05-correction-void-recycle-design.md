@@ -2,7 +2,7 @@
 
 状态：approved（2026-09-19 设计门闭环：主代理按常设授权裁决 Q11/Q12 与 DP-1..DP-13 并登记 `docs/DECISIONS.md` D-156；独立规格评审与独立质量评审终局 **APPROVE WITH CONDITIONS**，P3 残余已随 draft-4 修复；§6/§7 为裁决记录）。实施仍按高风险路由由主代理另行建立实施批；本文不写实现、不写迁移、不分配 schema 版本号。
 
-**Revision:** draft-4（2026-09-19；终局评审修复并转 approved：DP-9 澄清（改名但 active 可准入）同步 D-156、stale 结果面单元格改 `StaleCurrentVersion` 变体、DP-10 收窄后两处过期表述更正（§1.2/§1.4）、`Rg08FixtureReplay.kt:1034` 补入枚举、V-15 降级为索引存在性/行为断言（不冻结 `EXPLAIN QUERY PLAN`）、§3.6 增列目录删除引用面（#15，有意不过滤）、事实/回执形状三处不一致修正（`fact_id` 声明 + `UNIQUE(ledger_id, transaction_id, fact_id)`、void/restore 合并为单一父表、回执 FK 父键声明）、A-DOC 清单补 `LedgerEntryReadModels.kt:18`、新增 V-23 谓词双表示等价、V-21 收窄为可观测项、V-08 增 transfer-free fixture 前置）。draft-3（2026-09-19；规格评审修复轮：P705QUAL-001/002 有效谓词扩展到全部交易派生读面并登记 P7-03 读模型重冻结（§3.6）、P705QUAL-003 收窄 DP-10 至后续转账切片（首切片零对账暴露）、P705SPEC-001 更正 `CREDIT_REPAYMENT` 可达性，P705SPEC-002..015 与 P705QUAL-004..009 逐项落地）。draft-2（2026-09-19）按主代理 D-156 裁决记录 Q11/Q12 批准与 DP-1..DP-13 结果、DP-10 授权范围与 DP-13 否决。draft-1（2026-09-19）工作基线 `main` = `23d3bd2`（P7-04 A05IMPORT-INCOME-FACE-001 收口批），schema v30；tracked 行号为该基线实读行号；`.local.md` 与 `local/artifacts/` 以主 checkout 为准、只读；示例全部匿名合成；引用不粘贴大段产品代码。
+**Revision:** 指针更新（2026-10-16；**仅指针与状态**：`ACCOUNT_TRANSFER` 行（§3.1 `:102`）与 §9「本批不做」转账项加「已由 P7-05 第二切片规格 + D-228 承接」指针，指向 `docs/specs/2026-10-16-p7-05-transfer-correction-slice-design.md`；历史叙述与既有裁决**一律保留不回改**，DP-2/DP-10 的冻结措辞不变）。draft-4（2026-09-19；终局评审修复并转 approved：DP-9 澄清（改名但 active 可准入）同步 D-156、stale 结果面单元格改 `StaleCurrentVersion` 变体、DP-10 收窄后两处过期表述更正（§1.2/§1.4）、`Rg08FixtureReplay.kt:1034` 补入枚举、V-15 降级为索引存在性/行为断言（不冻结 `EXPLAIN QUERY PLAN`）、§3.6 增列目录删除引用面（#15，有意不过滤）、事实/回执形状三处不一致修正（`fact_id` 声明 + `UNIQUE(ledger_id, transaction_id, fact_id)`、void/restore 合并为单一父表、回执 FK 父键声明）、A-DOC 清单补 `LedgerEntryReadModels.kt:18`、新增 V-23 谓词双表示等价、V-21 收窄为可观测项、V-08 增 transfer-free fixture 前置）。draft-3（2026-09-19；规格评审修复轮：P705QUAL-001/002 有效谓词扩展到全部交易派生读面并登记 P7-03 读模型重冻结（§3.6）、P705QUAL-003 收窄 DP-10 至后续转账切片（首切片零对账暴露）、P705SPEC-001 更正 `CREDIT_REPAYMENT` 可达性，P705SPEC-002..015 与 P705QUAL-004..009 逐项落地）。draft-2（2026-09-19）按主代理 D-156 裁决记录 Q11/Q12 批准与 DP-1..DP-13 结果、DP-10 授权范围与 DP-13 否决。draft-1（2026-09-19）工作基线 `main` = `23d3bd2`（P7-04 A05IMPORT-INCOME-FACE-001 收口批），schema v30；tracked 行号为该基线实读行号；`.local.md` 与 `local/artifacts/` 以主 checkout 为准、只读；示例全部匿名合成；引用不粘贴大段产品代码。
 
 **Scope:** 冻结 P7-05「修错、作废/删除、回收站恢复」的设计候选面：05.A 支持矩阵与契约、05.B 版本修正、05.C 逻辑作废与恢复、05.D 产品接线。**首个可实施切片 = 手工创建的 `EXPENSE`/`INCOME`（同一五字段形态）的备注/统计时间/金额/分类/资金账户修正 + 逻辑作废 + 回收站恢复**；转账、借贷、导入关联交易各自为后续切片，各有独立支持矩阵行与独立决定点（§3.1、§6）。逻辑作废首版不做永久清除。
 
@@ -99,7 +99,7 @@
 | `INCOME`（手工创建） | 可改 | 可改 | 可改 | 可作废/恢复 | **首切片** | — |
 | `EXPENSE`/`INCOME`（导入创建） | 待定 | 待定 | 待定 | 待定 | 后续切片 | DP-5（原候选能否再确认、终态守卫） |
 | `CREDIT_REPAYMENT`（导入创建） | 待定 | 待定 | 待定 | 待定 | 后续切片 | DP-5（导入 lineage：`CreditFlowFormalFactory.kt:107-135` → `createCreditPrincipalRepayment` → `TransactionKind.CREDIT_REPAYMENT`（`MixedPayment.kt:206`），两端组合根已装配 `CreditFlowFormalFactory`（`android-app/.../App.kt:507`、`desktop-app/.../Main.kt:573`），故为**产品可达**；首切片不含） |
-| `ACCOUNT_TRANSFER` | 待定 | 待定 | 待定（含手续费腿） | 待定 | 后续切片 | DP-2 |
+| `ACCOUNT_TRANSFER` | 待定 | 待定 | 待定（含手续费腿） | 待定 | 后续切片 | DP-2；**已由 P7-05 第二切片规格 + D-228 承接**（见 `docs/specs/2026-10-16-p7-05-transfer-correction-slice-design.md`） |
 | `LEND`/`COLLECT` | 待定 | 待定 | 待定 | 待定（本金历史硬墙） | 后续切片 | DP-4 |
 | `REFUND_RECEIPT` | 待定 | 待定 | 待定 | 待定（关联退款场景） | 后续切片 | DP-13 |
 | `OPENING_BALANCE`/`STORED_VALUE_*`/`PREPAID_*`/`BALANCE_ADJUSTMENT` | 不支持 | 不支持 | 不支持 | 不支持 | 不交付 | 产品组合根无可达创建路径（`ledger_transaction.kind` CHECK `Ledger.sq:4` 仅五值，其余经 `canonical_kind` 表达；产品类型权威见 `ARCHITECTURE.md:81`（D-144）；复核：`TransactionKind.OPENING_BALANCE`/`STORED_VALUE*`/`PREPAID*`/`BALANCE_ADJUSTMENT` 在 `ledger-application`/`ledger-data` commonMain 与两端组合根的非 RG 路径零命中，创建仅存在于 `Rg08FixtureReplay.kt:1034`（OPENING_BALANCE）与 `Rg09`/`Rg10`/`Rg11` 回放）；**显式说明不支持**，不得静默 no-op |
@@ -301,7 +301,7 @@
 
 ## 9. 本批不做（逐项）
 
-转账、借贷（LEND/COLLECT）、退款与导入关联交易的修正/作废/恢复；对存在有效关联退款的交易作废（DP-13 否决，后续切片）；`occurredAt` 修改；kind 修改；永久删除/清除；批量作废；作废循环（>1 次）；事后版本历史视图（§4.4 冻结为提交前预览）；多币种；自动重试；跨账本操作；`rgXX_` 竖井/golden/迁移既有边改动；**作废/恢复**对对账 owner、借贷历史与导入 owner 零写入；**修正**仅按 DP-10 授权面写入（首切片授权面为空——无对账行可失效）；`P408CorrectionCommitPort` 在 DP-10 授权面之外的任何复用。
+转账（**已由 P7-05 第二切片规格 + D-228 承接**，见 `docs/specs/2026-10-16-p7-05-transfer-correction-slice-design.md`）、借贷（LEND/COLLECT）、退款与导入关联交易的修正/作废/恢复；对存在有效关联退款的交易作废（DP-13 否决，后续切片）；`occurredAt` 修改；kind 修改；永久删除/清除；批量作废；作废循环（>1 次）；事后版本历史视图（§4.4 冻结为提交前预览）；多币种；自动重试；跨账本操作；`rgXX_` 竖井/golden/迁移既有边改动；**作废/恢复**对对账 owner、借贷历史与导入 owner 零写入；**修正**仅按 DP-10 授权面写入（首切片授权面为空——无对账行可失效）；`P408CorrectionCommitPort` 在 DP-10 授权面之外的任何复用。
 
 ## 10. 实施与验证流程
 
