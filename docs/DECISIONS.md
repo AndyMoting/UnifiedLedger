@@ -4710,3 +4710,20 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 - **O-5** `android-app/src/main/kotlin/com/unifiedledger/android/LedgerWidgetProvider.kt`（`:170-171` 与 `:374`）注释「This adds NO fourth neutral request type (the A6 frozen face)」在本批后即陈旧；该文件不在本批可写清单内，**本批不可改**，登记为残余（可在 09.B 收口批或 09.D 一并修正，届时需扩列该文件）。
 - **O-2** 规格 §8 开放项 1（冻结文件 `:253`）的三名枚举是否同步为四名——属范围判断，交主会话/规格评审（本批只按批准范围修订 §2.1）。
 - **A6 基线重定**：`android-app/src/test/kotlin/com/unifiedledger/android/LedgerWidgetSnapshotReaderTest.kt` 的结构计数断言由 09.C 的「恰 3 个成员」在本批依新权威（D-226）重定为「恰 4 个成员」；保留结构计数性质（不删、不改 `>=`、不放宽），属测试基线随新权威更新，非缩减目标。
+## D-227 A-DOC P7-09 正式状态同步批登记（纯文档；零代码/零 schema）
+
+**状态：** 已批准（2026-10-16，A-DOC 正式状态同步批——把 P7-09 系统入口的实施事实落到 4 份正式状态文档）。批准依据 = 计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §2 A-DOC 行（「完成证据与正式状态同步：随各收口批同步 CURRENT_STATE、ROADMAP、README、PROJECT_MAP 等确有滞后的 owner」）与 §10「全计划验收」。**纯文档批：零代码 / 零 schema / 零迁移 / 零依赖**（schema 维持 v35，34 个 `.sqm` 未动）。
+
+**决定：**
+
+1. **同步范围（只改「当前状态」声明，不回改历史叙事）**：沿 D-160 先例（历史性逐版本条目一律保留不回改），仅更新四份文档的当前状态声明，共 **6 行 / 4 文件**：
+   - **P7-09 状态**（3 处 `CURRENT_STATE.md`、各 1 处 `ROADMAP.md`/`README.md`/`PROJECT_MAP.md`）：原「**P7-09 设计门已批准（D-225），实施未启动**」→「**P7-09 系统入口已交付**：设计门 D-225 批准；四个切片全部合入 `main`——`09.0` 导航门 + `09.A` 单文件分享导入（PR #87，merge `da0929e`）、`09.C` 月度小组件（PR #88，merge `f24d136`）、`09.B` 图标快捷方式（PR #89，merge `9a0dfe2`，登记 **D-226**：新增第 4 类中立请求 `OpenImportTab`）、`09.D` 平台回归设备取证已完成；**P709-A01..A09 无一记 PASS**」。
+   - **`origin/main` 指针**：原 `27c842f`（README/ROADMAP/PROJECT_MAP）与 `6ef0d6c`（CURRENT_STATE「唯一下一步」段）→ **`9a0dfe2050989fa9120026aca940107ea5808957`**。
+   - **最高决定编号**（`CURRENT_STATE.md`）：原 **D-225** → **D-226**（新条目用 D-227）。
+2. **不动的面**：`docs/ARCHITECTURE.md` 全文 **P7-09 零提及**（实测），其 schema 段落已为 v35，无需同步；`ROADMAP.md`/`README.md`/`PROJECT_MAP.md` 无「最高决定编号」声明，故只改前两项。四份文档的历史逐批叙事（含各批 merge SHA、评审拓扑、残余登记）**一律保留**。
+3. **审验拓扑（如实登记，与本批轻量相称）**：本批为**纯文档微调**，按计划 §10 与用户 goal 第 2 条「轻活手工派发」由**主代理亲手**在隔离 worktree 内完成实施与自查（**未派 writer 子代理、未做独立评审**——6 行文档同步不配该流程重量；先例偏差如实登记）；验证以 `project_docs` 与四份文档的机械一致性检查（旧声明零残留）为证。合并仍走 PR 门禁流（四 required checks）。
+4. **边界**：不改任何代码/测试/schema/迁移/依赖；不改 `docs/PROJECT_STATE.local.md`（本地 ignored，其现实已另行更正）；不声称任何验收向量 PASS（**P709-A01..A09 全部未记 PASS**）；不把 09.D 设备取证当成完整平台验收（残余见下）。
+
+**残余（登记，不阻断）：** ① **P709-A01..A09 无一 PASS**——设备/平台腿完整本仍缺（widget 实例级真实 RemoteViews 渲染、TalkBack 朗读巡检、锁屏 widget、厂商节流、应用升级、launcher 固定快捷方式），需真机或人工长程；② **P7-05 后续类型切片**（转账/借贷的修正作废，D-156 DP-2 明确 OPEN）未交付；③ 第一部分 61k 可操作性缺陷 `ACC-D-PERF-01` 已归因未修复；④ 09.B 残余（`LedgerWidgetProvider.kt` 陈旧注释、规格 §8 项 1 仍列三名、门的 `existingPending` 判定脆弱点、启动等待型分享槽）；⑤ 09.C 新增开放项 **O-CUR**（多币种月映射口径，规格未覆盖）；⑥ OS 自动备份/设备迁移排除（归后续隐私规格）。
+
+**关联决定：** D-220（A-DOC 正式状态同步批先例：schema v34/08.A 事实落地）、D-224（08.D 登记 + 四份状态文档最小指针更新先例）、D-160（历史性陈述不回改先例）、D-225（P7-09 设计门批准）、D-226（09.B 方案 A：第 4 类中立请求）。
