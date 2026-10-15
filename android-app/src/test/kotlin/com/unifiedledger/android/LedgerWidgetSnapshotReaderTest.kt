@@ -118,7 +118,7 @@ class LedgerWidgetSnapshotReaderTest {
     @Test
     fun theClickRouteIsTheExistingOpenCurrentMonthRequestNotANewOne() {
         // Spec sections 6.1/6.5 + J5: the widget click reuses the EXISTING neutral request family.
-        // The route is the generic OpenCurrentMonth surface (ExternalNavigation.kt:52-53), it carries
+        // The route is the generic OpenCurrentMonth surface (ExternalNavigation.kt:35), it carries
         // no amount and no widget data, and the WIDGET still adds no request type of its own: the
         // fourth member counted below (OpenImportTab) was added by 09.B's launcher shortcut under
         // D-226, never by this widget's click route.

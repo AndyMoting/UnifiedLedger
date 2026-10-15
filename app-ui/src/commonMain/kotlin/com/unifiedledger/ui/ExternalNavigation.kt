@@ -326,6 +326,9 @@ private fun ExternalNavigationDecision.landsTheSameStartupHoldAs(slot: PendingEx
  * failure page, so the request stays visible rather than vanishing.
  *
  * Returns the slot to hold, or `null` when this transition needs no preservation:
+ * - [holdExplicitlyCleared] is true: the transition was an EXPLICIT user clear (保留当前 /
+ *   放弃后切换 / a consumed or re-shared import). The user's decision is final — re-holding here
+ *   would undo it and leave the Busy strip on screen forever, so this is checked FIRST;
  * - the landed surface carries the slot (the reducer owns it — nothing to hold here);
  * - the effective held request before the transition is absent, or is not a STARTUP-WAIT slot:
  *   [ExternalNavigationHoldReason.STARTUP_NOT_READY] only, with
@@ -339,7 +342,9 @@ private fun ExternalNavigationDecision.landsTheSameStartupHoldAs(slot: PendingEx
 internal fun startupHeldFallbackAfterLanding(
     landed: P503AppState,
     previousHeld: PendingExternalNavigation?,
+    holdExplicitlyCleared: Boolean,
 ): PendingExternalNavigation? {
+    if (holdExplicitlyCleared) return null
     if (landed.carriesExternalNavigationSlot()) return null
     val slot = previousHeld ?: return null
     if (slot.holdReason != ExternalNavigationHoldReason.STARTUP_NOT_READY) return null

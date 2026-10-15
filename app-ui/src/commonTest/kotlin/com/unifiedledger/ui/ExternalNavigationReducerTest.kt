@@ -716,7 +716,7 @@ class ExternalNavigationReducerTest {
         assertFalse(failed.carriesExternalNavigationSlot())
         assertTrue(failed.externalNavigationBusyOrNull() == null, "the failure surface carries no Busy either")
         // The host seam preserves it from the EFFECTIVE pre-transition hold.
-        val preserved = startupHeldFallbackAfterLanding(failed, ready.pendingExternalNavigation)
+        val preserved = startupHeldFallbackAfterLanding(failed, ready.pendingExternalNavigation, holdExplicitlyCleared = false)
         assertEquals(newExpense, preserved?.request)
         assertEquals(ExternalNavigationHoldReason.STARTUP_NOT_READY, preserved?.holdReason)
     }
@@ -737,13 +737,13 @@ class ExternalNavigationReducerTest {
     @Test
     fun theFailureLegPreservationIsSkippedOnASlotSurfaceAndForANonStartupWaitSlot() {
         // No preservation when the landed surface carries the slot (the reducer owns it) ...
-        assertNull(startupHeldFallbackAfterLanding(overview().copy(pendingExternalNavigation = startupHeld(newExpense)), startupHeld(newExpense)))
+        assertNull(startupHeldFallbackAfterLanding(overview().copy(pendingExternalNavigation = startupHeld(newExpense)), startupHeld(newExpense), holdExplicitlyCleared = false))
         // ... nor when nothing was held ...
-        assertNull(startupHeldFallbackAfterLanding(P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ), null))
+        assertNull(startupHeldFallbackAfterLanding(P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ), null, holdExplicitlyCleared = false))
         // ... nor for a share awaiting its format (out of this seam's scope, registered as a residual) ...
         val failed = P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ)
         val shareHeld = PendingExternalNavigation(shareImport, ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED)
-        assertNull(startupHeldFallbackAfterLanding(failed, shareHeld))
+        assertNull(startupHeldFallbackAfterLanding(failed, shareHeld, holdExplicitlyCleared = false))
         // ... nor for a slot the user has not adjudicated (the retain/replace pin, same as T11 leg 4).
         val adjudicated =
             PendingExternalNavigation(
@@ -752,7 +752,38 @@ class ExternalNavigationReducerTest {
                 awaitingUserDecision = true,
                 displaced = importTab,
             )
-        assertNull(startupHeldFallbackAfterLanding(failed, adjudicated))
+        assertNull(startupHeldFallbackAfterLanding(failed, adjudicated, holdExplicitlyCleared = false))
+    }
+
+    @Test
+    fun anExplicitUserClearIsNeverUndoneByTheFailureLegPreservation() {
+        // REVIEW REGRESSION PIN (the P2 found in review): on a surface without a slot, 保留当前 /
+        // 放弃后切换 null the host fallback (P503App's `clearsExternalNavigation` branch) while the
+        // reducer absorbs them, so a preservation seam that re-held here would UNDO the user's explicit
+        // decision and leave the Busy strip on screen forever. With the clear signalled the seam holds
+        // nothing, on the failure surface and on any non-slot surface alike.
+        val failed = P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ)
+        val startupSlot = PendingExternalNavigation(newExpense, ExternalNavigationHoldReason.STARTUP_NOT_READY)
+        assertNull(
+            startupHeldFallbackAfterLanding(failed, startupSlot, holdExplicitlyCleared = true),
+            "an explicit 保留当前/放弃后切换 must not be undone on the failure surface",
+        )
+        val detail =
+            P503AppState.TransactionDetail(
+                overview(),
+                P503Tab.HOME,
+                TransactionId("tx-1"),
+                com.unifiedledger.application.TransactionDetailResult.Unavailable,
+            )
+        assertNull(
+            startupHeldFallbackAfterLanding(detail, startupSlot, holdExplicitlyCleared = true),
+            "the same holds on every other non-slot surface",
+        )
+        // The two events that signal the clear are exactly those the host branch honours.
+        assertTrue(clearsExternalNavigation(P503UiEvent.ExternalNavigationKeptCurrent))
+        assertTrue(clearsExternalNavigation(P503UiEvent.ExternalNavigationDiscarded))
+        // Without the clear signal the preservation still works (the failure leg it exists for).
+        assertEquals(newExpense, startupHeldFallbackAfterLanding(failed, startupSlot, holdExplicitlyCleared = false)?.request)
     }
 
     @Test
@@ -762,8 +793,8 @@ class ExternalNavigationReducerTest {
         // no growth — the fallback is a single value, not a queue).
         val failed = P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ)
         val slot = PendingExternalNavigation(newExpense, ExternalNavigationHoldReason.STARTUP_NOT_READY)
-        val first = startupHeldFallbackAfterLanding(failed, slot)
-        val second = startupHeldFallbackAfterLanding(failed, first)
+        val first = startupHeldFallbackAfterLanding(failed, slot, holdExplicitlyCleared = false)
+        val second = startupHeldFallbackAfterLanding(failed, first, holdExplicitlyCleared = false)
         assertEquals(slot, first)
         assertEquals(first, second)
     }

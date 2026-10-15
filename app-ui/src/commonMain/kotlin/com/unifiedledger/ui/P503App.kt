@@ -617,8 +617,12 @@ fun P503App(
         // and is never consumed by the failure; the ordinary flush below returns it to the reducer once a
         // slot surface is live again, where the re-entry above routes it. The seam returns null for every
         // other case (a surface that carries the slot, or a non-startup-wait slot), so it cannot clobber
-        // an unrelated hold.
-        startupHeldFallbackAfterLanding(landed, previousHeld)?.let { preserved -> hostHeldNavigation = preserved }
+        // an unrelated hold. `holdExplicitlyCleared` is the `clearsExternalNavigation(event)` decision
+        // the `when` above just honoured, passed in so this seam can never UNDO an explicit user clear
+        // (保留当前 / 放弃后切换): re-holding there would resurrect the Busy strip the user just
+        // dismissed and contradict §2.2/§3 on every non-slot surface.
+        startupHeldFallbackAfterLanding(landed, previousHeld, holdExplicitlyCleared = clearsExternalNavigation(event))
+            ?.let { preserved -> hostHeldNavigation = preserved }
         val nextHeld = landed.pendingExternalNavigationSlot() ?: hostHeldNavigation
         // Release EVERY retained share source that was held before (the reducer slot OR the dropped
         // fallback) and is NO LONGER held (as `request` OR `displaced`) — the ONE point that

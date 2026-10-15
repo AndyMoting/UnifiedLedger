@@ -133,6 +133,30 @@ class AppShortcutsTest {
         )
     }
 
+    @Test
+    fun theFailureLegPreservationWiringRespectsTheExplicitClearDecision() {
+        // REVIEW REGRESSION PIN (the P2 found in review): the failure-leg preservation in P503App's
+        // dispatch tail must be told when the transition was an EXPLICIT user clear (保留当前 / 放弃后
+        // 切换). Without that signal it would re-hold the startup-wait request right after the host's
+        // `clearsExternalNavigation` branch nulled it, undoing the user's decision and pinning the Busy
+        // strip on screen on every non-slot surface. The behaviour is asserted at the pure seam
+        // (ExternalNavigationReducerTest.anExplicitUserClearIsNeverUndoneByTheFailureLegPreservation);
+        // this pins the CALL SITE so the two cannot drift apart. Pinned structurally because the fold
+        // runs inside the P503App composable, which has no JVM harness.
+        val app =
+            repositoryFile("app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503App.kt")
+                .toFile()
+                .readText()
+        assertTrue(
+            app.contains("startupHeldFallbackAfterLanding(landed, previousHeld, holdExplicitlyCleared = clearsExternalNavigation(event))"),
+            "the preservation must pass the explicit-clear decision, not a hard-coded false",
+        )
+        assertTrue(
+            app.contains("clearsExternalNavigation(event) -> hostHeldNavigation = null"),
+            "the explicit-clear branch that nulls the fallback must remain",
+        )
+    }
+
     /**
      * Resolves a path relative to the repository root by walking up from the test working directory
      * to the settings file (the `AndroidRestoreWiringTest` precedent).

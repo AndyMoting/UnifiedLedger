@@ -171,8 +171,8 @@ internal object AppShortcuts {
     /**
      * Publishes the dynamic shortcuts at most once per process; every later call is a no-op. The
      * once-per-process gate, the platform-limit cap and the background hop are decided by the pure
-     * [publishShortcutsOnce] / [shortcutPublishPlan] seams (the `ensureStartedOnce` extraction
-     * precedent), so the wiring is JVM-assertable without a `Context`.
+     * [publishShortcutsOnce] and [ledgerShortcutSpecsWithinLimit] seams (the `ensureStartedOnce`
+     * extraction precedent), so the wiring is JVM-assertable without a `Context`.
      *
      * The `@WorkerThread` platform calls run on [publishDispatcher], off the caller's thread;
      * `getMaxShortcutCountPerActivity()` is read there too. An absent `ShortcutManager` (a plain
