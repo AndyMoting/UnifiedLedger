@@ -4,7 +4,7 @@
 
 **Revision:** draft-1（2026-10-16）。初稿。单一写者起草于隔离 worktree（分支 `UL-p7-05-transfer-design`，基点 = `cea2940d3167f988a1a7c48d89a4acdff14cc82f`）。tracked 行号为该基点实读行号，**引用时以符号为准重新定位**（行号会随提交漂移）。`docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md`、`docs/PROJECT_STATE.local.md` 等 `.local.md` 为主 checkout 的本地只读文件，凡引用一律标注「计划」/「checkpoint」并以其主 checkout 实读行号为准。示例全部匿名合成；不复制大段产品代码；不写本机绝对路径、个人账务数据或工具轨迹。
 
-**标记约定：** 全文用【已验证事实】标注本次在基点实读代码/文档所得的现状；用【本次 Explore 结论】标注本次 Explore 会话内推导（非仓库冻结权威，附可定位 file:line）；用【冻结设计提案】标注本文建议、**尚未批准**、实现者不得当作既有 API 的内容；用【开放项】标注须主会话裁决、本文不自行裁决的项。
+**标记约定：** 全文用【已验证事实】标注本次在基点实读代码/文档所得的现状；用【本次会话内推导】标注本会话内推导、非仓库冻结权威的结论（附可定位 file:line）；用【开放项】标注须主会话裁决、本文不自行裁决的项。**凡本文冻结的形状均显式标注「冻结形状」**；未标者一律为建议或待裁决项。
 
 ## Scope
 
@@ -27,7 +27,7 @@
 - **主 checkout 根 `AGENTS.md`**（任务书以绝对路径点名，写作时已实读）：`Load By Task`、`Non-Negotiable Boundaries`、`Change And Review Routing`。工作树内**不得**创建或复制任何嵌套 `AGENTS.md`。
 - **项目 harness skill**（任务书点名 `unifiedledger-harness`，主 checkout 内实读）：高风险路由（本批涉及账务/架构/迁移，属高风险）、角色拓扑、`Non-Negotiable Boundaries`。
 - **第一切片设计规格（approved，D-156）**：`docs/specs/2026-09-19-p7-05-correction-void-recycle-design.md`——§3.1 支持矩阵 `ACCOUNT_TRANSFER` 行 `:102`【已验证事实：`:102` = `| \`ACCOUNT_TRANSFER\` | 待定 | 待定 | 待定（含手续费腿） | 待定 | 后续切片 | DP-2 |`】、§3.2 修正契约、§3.3 作废与恢复契约、§3.4 读路径与回收站、§3.6 有效派生面枚举（`:147-171`）、§6 决定点表（`:260-279`）、§9 本批不做（`:302`）。
-- **决定**：D-156（`docs/DECISIONS.md:2947-2969`，Q11/Q12 与 DP-1..DP-13；DP-2 转账为后续切片、DP-4 借贷保持 OPEN、DP-5 导入候选终态、DP-10 收窄、DP-13 否决）；D-158（`:2987-3017`，片 1a 基底层交付与边界，含「转账切片必须收窄 DP-10 保守占位」具名残余）；D-187（`:3749-3785`）与 D-225（`:4645-4684`）设计门批准先例（只写规格与决定登记，零产品代码/零测试/零 schema/零迁移/**不分配 schema 版本号**）；D-219（`:4498-4518`，迁移批次清单；本批不分配版本号，但新切片所需 schema 面须登记为后续实施批承接项）。
+- **决定**：D-156（`docs/DECISIONS.md:2947-2969`，Q11/Q12 与 DP-1..DP-13；DP-2 转账为后续切片、DP-4 借贷保持 OPEN、DP-5 导入候选终态、DP-10 收窄、DP-13 否决）；D-158（`:2987-3017`，片 1a 基底层交付与边界，含「转账切片必须收窄 DP-10 保守占位」具名残余）；D-187（`:3749-3769`）与 D-225（`:4645-4684`）设计门批准先例（只写规格与决定登记，零产品代码/零测试/零 schema/零迁移/**不分配 schema 版本号**）；D-219（`:4498-4518`，迁移批次清单；本批不分配版本号，但新切片所需 schema 面须登记为后续实施批承接项）。
 - **账务规则** `docs/ACCOUNTING_RULES.md`：`:52-56`（转账基础：一对一账户互转、本金不计对外收支、手续费独立，含 `:56` 的 60/59/1 示例）、`:271-275`（手工转账 P7-02.B 不变量；`:273` = 手续费 > 0.00 须有当前目录可用二级支出分类、= 0.00 不得携带费用分类；`:275` = 本金两腿不计入对外收入或支出、手续费计入普通支出并按其资金腿独立对账）、`:243`（对账状态不改余额/报表）、`:249`/`:251`/`:253`（修正与失效/未变化腿对账保留）、`:299`（P7-03 月度口径，含有效谓词与「本金互转不入普通收支」）。
 - **开发与验证** `docs/CONTRIBUTING.md`：「文档规则」节的 specs 状态标记条目（`:327`【已验证事实：`:327` = 「新建或实质修改的 `docs/specs/` 设计…必须标记为 `approved`、`proposal`、`superseded` 或 `historical`」】）、「文档验证」、「本机与 CI 的验证分工」、「Schema 迁移批次清单」（`:270`）。
 - **阶段计划** `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §5（`:114-127`；05.A 行 `:120`）。
@@ -72,9 +72,9 @@
 
 - **DP-10 探针**：`Ledger.sq:10672-10684` `matchedCurrentVersionReconciliationCount`【已验证事实】（当前版本上任一对账行即计数）。
 - **P408 完整性查询**：`Ledger.sq:9027-9039` `selectP408PostingIntegrity`【已验证事实】，条件 `COALESCE(tx.canonical_kind, tx.kind) = 'ACCOUNT_TRANSFER'` 在 `:9038`。
-- **P408 端口**：接口 `ledger-application/src/commonMain/kotlin/com/unifiedledger/application/P408CorrectionCommitPort.kt:171`【已验证事实】；实现 `ledger-data/src/commonMain/kotlin/com/unifiedledger/data/SqlDelightCorrectionStore.kt:26-28`【已验证事实】。失效原因码 `P408CorrectionReason.POSTING_REPLACED`（`P408CorrectionCommitPort.kt:28`）；`evidence_link_history.reason` CHECK `Ledger.sq:7754`（`('EXACT_EVIDENCE','POSTING_REPLACED')`）【已验证事实】。
+- **P408 端口**：接口 `ledger-application/src/commonMain/kotlin/com/unifiedledger/application/P408CorrectionCommitPort.kt:171`【已验证事实】；实现 `ledger-data/src/commonMain/kotlin/com/unifiedledger/data/SqlDelightCorrectionStore.kt:26-28`【已验证事实】。失效原因码 `P408CorrectionReason.POSTING_REPLACED`（`P408CorrectionCommitPort.kt:28`）【已验证事实】；`evidence_link_history.reason` CHECK 在 `Ledger.sq:8469`（`('confirmed','posting_replaced','corrected')`，三值）【已验证事实】。**注意**：`Ledger.sq:7754` 的同名值域 `('EXACT_EVIDENCE','POSTING_REPLACED')` 属 **`rg12_reconciliation_match_history`**（建表 `:7749`），**不是** `evidence_link_history`——第一切片规格旧引的 `:8055` 亦非该表；两者均不得以 `evidence_link_history` 冠名（本条已按表身份重新定位）。
 - **种子面**：fresh `Ledger.sq:9103-9122`【已验证事实】——`:9103-9104` 为注释，`:9105`/`:9112`/`:9119` 为三条 INSERT，条件均为 `COALESCE(tx.canonical_kind, tx.kind) = 'ACCOUNT_TRANSFER'`，**空库 no-op**（无 ACCOUNT_TRANSFER posting 时零行）。迁移种子 `ledger-data/src/commonMain/sqldelight/com/unifiedledger/data/db/22.sqm:134-152`【已验证事实】（v22→v23，`:135`/`:143`/`:150` 三条 INSERT，条件 `:141`/`:149` 同款）。
-- **手工转账提交端口零写对账/证据**：`SqlDelightConfirmedManualTransferCommitPort.kt:51-230` 只发 10 条命名查询（claim/delete request/insert receipt/update annotation/insert posting set/insert transaction/insert version/insert current version/insert posting）【已验证事实】，**零写 `posting_reconciliation`/`evidence_link`**。
+- **手工转账提交端口零写对账/证据**：`SqlDelightConfirmedManualTransferCommitPort.kt:51-230` 只发 **11 条**命名查询（claim/delete request/insert receipt/update annotation/insert posting set/insert transaction/insert version/insert current version/insert posting，以及等价 replay 比对用的 `selectCommittedManualTransferRequest`）【已验证事实】，**零写 `posting_reconciliation`/`evidence_link`**。
 - **导入 spine store 零写**：`ledger-data/src/commonMain/kotlin/com/unifiedledger/data/SqlDelightImportSpineStore.kt` 对 `posting_reconciliation`/`evidence_link` 命中数 **0**【已验证事实：`grep -c` exit 1】。
 - **触发器面零写**：以正则遍历 `Ledger.sq` 全部 `CREATE TRIGGER … END;` 块（526 块）得 `INSERT INTO posting_reconciliation` 命中 **0**、`INSERT INTO evidence_link` 命中 **0**【已验证事实：本次 `python` 正则扫描】。
 - **诚实推论（重要）**：`posting_reconciliation` 行**只**由 v22→v23 迁移种子（`22.sqm:143`）与 fresh 种子（`Ledger.sq:9112`）产生，条件都是**当时的** ACCOUNT_TRANSFER posting。因此：**新库且无转账 → 零行**；**经 v23 迁移且当时已有 ACCOUNT_TRANSFER posting → 该批 posting 有 PENDING 行**；**v23 之后由产品路径新建的转账（手工或导入）→ 零行**。DP-10 的「受影响资金腿」收窄对**有行的那批**才有实际意义。
@@ -89,7 +89,7 @@
 
 ### 1.8 版本追加原语只有三形态
 
-- `ledger-domain/src/commonMain/kotlin/com/unifiedledger/domain/TransactionVersionAppend.kt`【已验证事实】：`TransactionVersionChange` 三形态 `Note`（`:30`）/`StatisticsAt`（`:34`）/`Postings`（`:38`）；`appendVersion`（`:48`）以 `currentVersion.copy(...)` 追加 `version_number + 1`，`occurred_at`/`effective_at` 逐字复制、仅 `statistics_at` 随请求变【已验证事实：`:96-97` 只改 `statisticsAt`】。**无 `occurredAt` 变更形态**（DP-7 保持 OPEN）。
+- `ledger-domain/src/commonMain/kotlin/com/unifiedledger/domain/TransactionVersionAppend.kt`【已验证事实】：`TransactionVersionChange` 三形态 `Note`（`:30`）/`StatisticsAt`（`:34`）/`Postings`（`:38`）；`appendVersion`（`:47`）以 `currentVersion.copy(...)` 追加 `version_number + 1`，`occurred_at`/`effective_at` 逐字复制、仅 `statistics_at` 随请求变【已验证事实：`:94-99` 的 `times` 构造只对 `StatisticsAt` 形态改 `statisticsAt`】。**无 `occurredAt` 变更形态**（DP-7 保持 OPEN）。
 - `reuseCurrentPostingSet` 写形标志：`ledger-application/src/commonMain/kotlin/com/unifiedledger/application/CorrectTransactionVersion.kt:120`【已验证事实】；D-158 第 4 条已登记「片 1b 不得把该标志接入用户可见判定」。
 
 ## 2. 支持矩阵（转账行）
@@ -98,7 +98,7 @@
 
 | kind | 备注 | `statisticsAt` | 金额 | 源账户 | 目标账户 | 手续费 | 手续费分类 | 作废/恢复 | 切片 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `ACCOUNT_TRANSFER`（手工创建） | 可改 | 可改 | 可改（`destinationCredit`，`sourceDebit = destinationCredit + fee` 派生） | 可改 | 可改 | 可改 | 可改 | 可作废/恢复（交易粒度） | **本文切片** |
+| `ACCOUNT_TRANSFER`（手工创建） | 可改【开放项 J1】 | 可改【开放项 J1】 | 可改（`destinationCredit`，`sourceDebit = destinationCredit + fee` 派生）【开放项 J1】 | 可改【开放项 J1】 | 可改【开放项 J1】 | 可改【开放项 J1】 | 可改【开放项 J1】 | 建议候选 A：交易粒度（三腿同进退）【开放项 J1，待裁决】 | **本文切片** |
 | `ACCOUNT_TRANSFER`（导入创建） | 见 §5.1（J2 开放项） | 同左 | 同左 | 同左 | 同左 | 同左 | 同左 | 同左 | **OPEN** |
 
 - **冻结（不因 J1/J2/J3 裁决而变）**：**永不修改 kind**（含 `canonical_kind`）；修正后的交易保持原 kind、原 `occurredAt`、原创建身份与来源关系；`occurredAt` 不在可改字段集内（DP-7 保持 OPEN）。
@@ -113,7 +113,7 @@
 
 - **流程（冻结，沿第一切片 §3.2）**：读当前有效版本 → 预览差异（纯读、零写入）→ 用户明确确认 → 分配新 requestId → claim-first 原子提交（`expectedCurrentVersionId` CAS）→ 权威回读。预览不得作为提交许可。
 - **字段集（J1 覆盖，【开放项】）**：`note` / `statisticsAt` / `destinationCredit`（及派生 `sourceDebit = destinationCredit + fee`）/ `sourceAccountId` / `destinationAccountId` / `fee` / `feeCategoryId`。`occurredAt`（DP-7 OPEN）与 `kind`（永不修改）不在内。
-- **写形（冻结形状，沿 `TransactionVersionChange.Postings`）**：以当前版本为基追加 `version_number + 1`；新 posting set 必须**逐币种平衡**且覆盖旧 set 每条 posting 恰好一次；三腿/两腿形状由**修正后的目标状态**决定（`fee > 0` → 三腿含手续费腿；`fee == 0` → 两腿且不得携带分类，沿 `ManualTransferTransactionFactory.kt:82`）。`occurred_at`/`effective_at` 逐字复制（`TransactionVersionAppend.kt:94-99` 的 `times` 构造只对 `StatisticsAt` 形态改 `statisticsAt`，其余形态 `else -> currentVersion.times` 原样复制）。
+- **写形（冻结形状，沿 `TransactionVersionChange.Postings`）**：以当前版本为基追加 `version_number + 1`；**腿数不变时**（两腿→两腿、三腿→三腿）新 posting set 必须**逐币种平衡**且覆盖旧 set 每条 posting 恰好一次；**腿数变化时**（三腿→两腿，即 `fee > 0` → `fee == 0`）旧 `FEE` 腿**不是**必须覆盖项，新 set 只须覆盖旧本金两腿各一次并逐币种平衡（§8.1/§8.3、T-03）。三腿/两腿形状由**修正后的目标状态**决定（`fee > 0` → 三腿含手续费腿；`fee == 0` → 两腿且不得携带分类，沿 `ManualTransferTransactionFactory.kt:82`）。`occurred_at`/`effective_at` 逐字复制（`TransactionVersionAppend.kt:94-99` 的 `times` 构造只对 `StatisticsAt` 形态改 `statisticsAt`，其余形态 `else -> currentVersion.times` 原样复制）。
 - **校验（冻结）**：新版本的账户/分类引用必须在写入事务内按**当前权威目录**重校验——两端账户须同一账本、同币种、`realAccount`、`ownedByUser`、`AccountKind.ASSET`、互不相同（沿 `AccountTransfer.kt:70-93` 与 `:112-175`）；`fee > 0` 时手续费分类须 active 二级 EXPENSE 分类、其过账账户须同账本隐藏 EXPENSE 账户、同币种（沿 `:256-286`）；金额须为币种精度的精确十进制；手续费不得为负（沿 `ManualTransferTransactionFactory.kt:44`）。
 - **对账影响（J3 覆盖，【开放项】）**：受影响资金腿 = 新版本中真实资产分录且 `(accountId, amount, currency)` 相对旧版本变化者；未变化资金腿的对账行与证据链接零改动（沿 `ACCOUNTING_RULES.md:253`、D-048）。**是否在本切片组合 D-113 `P408CorrectionCommitPort` 见 §11 J3，本文不裁决。**
 - **DP-10 保守占位必须收窄（冻结要求，非裁决）**：`SqlDelightTransactionCorrectionCommitPort.kt:110-120` 现为「当前版本上存在**任何**对账行即拒绝」；其注释明写「the transfer slice that wires DP-10 must narrow it to legs that actually changed, or a note-only correction would be rejected for no reason」【已验证事实】。本切片实施时必须收窄为**实际变化的资金腿**，否则仅改备注的转账修正也会被无理由拒绝（D-158 第 4 条具名残余）。收窄后的语义归 J3 裁决。
@@ -121,7 +121,7 @@
 
 ## 4. 作废与恢复契约（05.C 的转账实例）
 
-### 4.1 交易粒度语义（substrate 现实，冻结）
+### 4.1 交易粒度语义（substrate 事实，非裁决；腿粒度语义归 J1 待裁决）
 
 - **作废 = 追加一条不可变事实，使该转账从全部有效派生面移除**；不删除、不改写、不创建补偿交易。恢复 = 追加第二条事实使原转账重新有效；每笔最多一次作废 + 一次恢复（`sequence ≤ 2`）。
 - **substrate 现实（J1 2b 的前提，必须写清）**：`transaction_void_fact` PK = `(ledger_id, transaction_id, sequence)`（`Ledger.sq:10226`）→ **作废是交易粒度，不是腿粒度**。三腿转账作废时，本金两腿与手续费腿**一起**从有效面移除；**无法**表达「仅手续费腿作废」。
@@ -162,15 +162,15 @@
 ## 6. 读路径与回收站
 
 - **冻结约束（沿第一切片 §3.4）**：回收站读路径**不得发明第二事实来源**——从 `ledger_transaction` + `ledger_transaction_current_version` + `transaction_version` + `transaction_void_fact` 派生，与有效面共用同一有效谓词（`transaction_effective_state`）与同一行形状。
-- **现状（实读）**：`QueryRecycleBin.kt:114-152` 对每行发三次 SQL 往返，其中目录重校验调 `revalidateOrdinaryVersionReferences`（`OrdinaryVersionRevalidation.kt:25`）——**对转账在 `:31` 即被 kind 门拒绝**，回收站会把转账行的 `restoreRejectionCode` 置为 `P705_KIND_NOT_SUPPORTED`【本次 Explore 结论：由 `QueryRecycleBin.kt:128-140` 与 `OrdinaryVersionRevalidation.kt:31` 推导】。
+- **现状（实读）**：`QueryRecycleBin.kt:114-152` 对每行发三次 SQL 往返，其中目录重校验调 `revalidateOrdinaryVersionReferences`（`OrdinaryVersionRevalidation.kt:25`）——**对转账在 `:31` 即被 kind 门拒绝**，回收站会把转账行的 `restoreRejectionCode` 置为 `P705_KIND_NOT_SUPPORTED`【本次会话内推导：由 `QueryRecycleBin.kt:128-140` 与 `OrdinaryVersionRevalidation.kt:31` 推导】。
 - **冻结要求**：本切片必须让转账行在回收站可列出（原因、作废时间、依赖说明）并可恢复；恢复前展示目录重校验结果（§8.2）。转账的「依赖说明」须含两端账户与手续费分类的当前名与可准入状态。
 - **O(rows) 成本**：D-158 第 4 条已登记回收站每行三次往返；本切片**不得**继续放大（若新增转账专用探针，须按账本批量）。
 
 ## 7. 有效派生面枚举与相对 D-156 §3.6 的差异
 
-### 7.1 D-156 §3.6 的漂移（【本次 Explore 结论】，附可定位 file:line）
+### 7.1 D-156 §3.6 的漂移（【本次会话内推导】，附可定位 file:line）
 
-D-156 §3.6（`:147-171`）枚举的 15 面（#1-#15）**全部存活、零消失**，但其全部 file:line 引用因 P7-07/08/09 追加而**整体漂移**。本会话实读的当前锚点（以符号为准）：
+D-156 §3.6（`:147-171`）枚举的 15 面（#1-#15）**全部存活、零消失**；其 file:line 引用**部分漂移**——`Ledger.sq` 锚（4 条）与 `SqlDelightLedgerCurrentStateReadAdapter.kt` 锚（`:47-74`/`:191-192`/`:223`/`:242`/`:272-276`）确已漂移（该 adapter 由 416 行增至 597 行），而 `QueryMonthlyActivity.kt:92`、`QueryTransactionDetail.kt:38`/`:58`/`:104`、`QueryLedgerCurrentState.kt:64`/`:92`、`SummarizeLedgerActivity.kt:48`/`:99`、`QueryLedgerEntryRows.kt:16` 与 `23d3bd2` 逐字相同（`git diff 23d3bd2 HEAD -- <file>` 为空）【已验证事实】。引用一律以符号为准重新定位。本会话实读的当前锚点（以符号为准）：
 
 | 符号 | D-156 记录 | 本会话实读 |
 | --- | --- | --- |
@@ -179,20 +179,25 @@ D-156 §3.6（`:147-171`）枚举的 15 面（#1-#15）**全部存活、零消�
 | `catalogReferencedPostingAccounts` | `:9518` | `:10025` |
 | `transaction_effective_state`（视图） | 视图在 D-158 记 ≈`:9719` | `:10316` |
 
-### 7.2 D-156 之后**新增**的交易派生读面（N1-N10，【本次 Explore 结论】）
+### 7.2 D-156 之后**新增**的交易派生读面（N1-N5、N10 须移除效果；N2b、N6-N9 须保留；【本次会话内推导】）
 
 | # | 符号 | 行锚 | 处置 |
 | --- | --- | --- | --- |
 | N1 | `projectedVersionsInStatisticsWindow` | `Ledger.sq:10344` | 已 join `transaction_effective_state`（`:10351`）；作废后须移除效果 |
-| N2 | `monthlyContributionRowsInWindow` | `Ledger.sq:10381` | 已 join（`:10409`/`:10440`）；作废后须移除效果 |
+| N2 | `monthlyContributionRowsInWindow` | `Ledger.sq:10381` | 已 join（`:10409`，`is_effective = 1`）；作废后须移除效果 |
+| N2b | `voidedTransactionRowsForLedger`（回收站补集读） | `Ledger.sq:10421` | 已 join（`:10440`，`is_effective = 0`）；**须保留**（作废行必须可见，非移除对象） |
 | N3 | 09.C widget 复用 N2 | 经 `MonthlyContributionReadPort` | 随 N2 移除效果 |
 | N4 | `tagMerchantFilterRows` | `Ledger.sq:10942` | 已 join（`:10953`）；作废后须移除效果 |
 | N5 | `tagMerchantAccumulationRowsInWindow` | `Ledger.sq:11063` | 已 join（`:11091`）；作废后须移除效果 |
 | N10 | `productLinkedRefundCountForTransaction` | `Ledger.sq:10643` | 已 join（`:10649`）；作废后须移除效果 |
 
-**须保留（历史/引用/请求身份/备份校验）的面**：#6 `transactionReconciliationLegs`（`Ledger.sq:9231`）、#7 `importCreationConfirmationByTransaction`（`:9209`）/`manualCreationReceiptByTransaction`（`:9216`）、#8 手工链 request/receipt、#13 `selectP408ReconciliationReport`（`:9073`）、#15 `catalogReferencedPostingAccounts`（`:10025`，有意不过滤）、N6 注解写守卫（`transactionEffectiveState`，`:10876`）、N7 注解历史（`transactionAnnotationHistoryForTransaction`，`:11117`）、N8 `catalogReferencedTagIds`（`:10829`）/`catalogReferencedMerchantIds`（`:10832`）、N9 备份/校验。
+**须保留（历史/引用/请求身份/备份校验）的面**：#6 `transactionReconciliationLegs`（`Ledger.sq:9231`）、#7 `importCreationConfirmationByTransaction`（`:9209`）/`manualCreationReceiptByTransaction`（`:9216`）、#8 手工链 request/receipt、#13 `selectP408ReconciliationReport`（`:9073`）、#15 `catalogReferencedPostingAccounts`（`:10025`，有意不过滤）、N6 注解写守卫（`transactionEffectiveState`，`:10876`）、N7 注解历史（`transactionAnnotationHistoryForTransaction`，`:11117`）、N8 `catalogReferencedTagIds`（`:10829`）/`catalogReferencedMerchantIds`（`:10832`）、N9 备份/校验、**N2b** `voidedTransactionRowsForLedger`（`:10421`，回收站补集读，作废行必须可见）。
 
-### 7.3 转账在 {#1-#5, N1-N5, N10} 的移除语义（J1 覆盖字段集，但移除语义冻结）
+**归 J3 面（本批不裁）的读面**：`selectP408PostingIntegrity`（`Ledger.sq:9027-9039`，条件 `COALESCE(tx.canonical_kind, tx.kind) = 'ACCOUNT_TRANSFER'` 在 `:9038`）——**不 join** `transaction_effective_state`，故作废后的转账 posting 仍会被判为 D-113 invalidation-only 路径的合法目标（`SqlDelightCorrectionStore.kt:174-181`）。该查询是否须纳入有效谓词，取决于 J3（DP-10 是否组合 D-113），**本批不裁**；登记为 J3 子项。
+
+**枚举完备性义务（沿 D-156 §3.6 R-1）**：本节的「须移除 / 须保留 / 归 J3」三分是本轮枚举的结果；**实施时必须在全部交易派生读面上重跑该枚举，任何新增消费者必须登记并纳入相应分类（不得遗漏、不得各自另写谓词）**——沿第一切片规格 R-1（`.md:294`）与 §3.6（`:151`「实施时若出现新消费者必须登记并纳入，不得遗漏」）的同一纪律。本规格不因本次枚举完成而免除此义务。
+
+### 7.3 转账在 {#1-#5, N1-N5, N10} 的移除语义（J1 覆盖字段集；移除语义 = substrate 事实 + D-156 已批准口径，腿粒度归 J1 待裁决）
 
 - **本金两腿**：走 ASSET 账户，本不入对外收支（`MonthlyBuckets.kt:341-343` 说明 ASSET/LIABILITY/EQUITY posting 不计普通收支）；作废后它们从余额面（#4 HOME 余额）移除。
 - **手续费腿**：走 EXPENSE 过账账户，作废后从普通支出移除（`MonthlyBuckets.kt:145-158` 的 EXPENSE 分支；`ACCOUNTING_RULES.md:275`）。
@@ -216,6 +221,7 @@ D-156 §3.6（`:147-171`）枚举的 15 面（#1-#15）**全部存活、零消�
 - **复用**：`FormalTransaction.appendVersion`（`TransactionVersionAppend.kt:47`）与三形态 `TransactionVersionChange` 作为唯一版本追加原语；`TransactionVoidState.isEffective`（`TransactionVoidState.kt:44`）作为有效谓词的领域单点；`VoidReason`/`VoidReasonCode` 作为原因的唯一领域表达。
 - **新增（形状冻结）**：转账修正的纯校验函数（两端账户 + 手续费分类 + 手续费过账账户准入、金额/平衡派生、受影响资金腿派生），**复用** `AccountTransfer.kt:256-286` 的手续费分类准入规则与 `:70-93` 的端点账户准入规则，**不得**再造第二套。
 - **不改既有规则**：`AccountTransfer`/`OwnAssetPrincipalTransfer` 工厂、`RefundReceipt`、`LendingPosition`、`PostingFactsCorrection`（RG-12 校验器）一律不动。
+- **腿数变化时的覆盖校验（冻结约束）**：转账修正的纯校验函数**不得**直接复用 `PostingFactsCorrection` 的等数覆盖分支——`ledger-domain/src/commonMain/kotlin/com/unifiedledger/domain/PostingFactsCorrection.kt:95-96`（`replacementPostings.size != oldPostingIds.size → CompleteReplacementPostingsRequired`）与 `:113`（`seenSources != oldPostingIds.toSet()`）要求替换腿数恒等于旧腿数，仅对首切片的两腿形态成立；三腿→两腿（`fee > 0` → `fee == 0`）时旧 `FEE` 腿不属必覆盖项（§3 写形、T-03）。
 
 ### 8.2 应用（`ledger-application`）
 
@@ -226,8 +232,16 @@ D-156 §3.6（`:147-171`）枚举的 15 面（#1-#15）**全部存活、零消�
 
 ### 8.3 持久化形状（`ledger-data`；只冻结形状，不分配版本号、不写迁移）
 
-- **修正请求表扩展（形状冻结）**：`transaction_correction_request`（`Ledger.sq:10279-10294`）必须能承载转账目标状态。所需新增列（形状建议，列名待实施冻结）：`source_account_id`、`destination_account_id`、`destination_credit_minor`、`fee_minor`、`fee_category_id`（可空，`fee == 0` 时为 NULL）。等价 replay 的**逐列比较**必须纳入这些列。沿 D-219 的加列纪律（`docs/CONTRIBUTING.md:270`）：新列带 Kotlin 默认值或把全部构造点纳入写范围；位置式 `INSERT` 改显式列清单；`columnInfo` 契约验证。
-- **作废/恢复事实表**：**形状不变**（`transaction_void_fact` PK/守卫/索引全部复用），因为作废是交易粒度。若 J1 裁向腿粒度（候选 B），须新增 schema 面并重开谓词单点——**本文不授权**。
+- **修正请求表扩展（形状冻结）**：`transaction_correction_request`（`Ledger.sq:10279-10294`）必须能承载转账目标状态。**既有列在转账行与普通行的取值/可空化（冻结形状，不得留给实施者猜）**：
+  - `amount_minor`/`currency_code`/`currency_precision`：**复用**为「修正后的规范金额三元组」——普通行 = 修正金额；转账行 = `destinationCredit`（`sourceDebit` 为派生值，**从不单独存储**，沿 `ConfirmedManualTransfer.kt:22-24`）。**不**新增 `destination_credit_minor` 冗余列。
+  - `funding_account_id`：**复用**——普通行 = 资金账户；转账行 = **源账户**（真实资产腿）。保持 NOT NULL。
+  - `category_id`：**可空化**（迁移需重建表）。普通行仍恒非 NULL（写入事务内按 kind 强制）；转账行 `fee > 0` = 手续费分类 ID、`fee == 0` = NULL。可空化是本形状唯一的既有列约束放宽，其迁移代价 = 表重建（沿 D-219 加列/重建纪律）。
+  - `note`/`statistics_at`/`expected_current_version_id`/`transaction_id`/`confirmation_marker`：语义不变，两类行同用。
+  - **新增列**：`destination_account_id TEXT`（可空；普通行 NULL、转账行必填）、`fee_minor INTEGER NOT NULL DEFAULT 0`（普通行 0）、`fee_category_id TEXT`（可空）。
+  - **写入期不变量（fail-closed，由端口在事务内强制；因请求表无 kind 列、无法用表级 CHECK 判别，故不设表级 CHECK）**：转账行要求 `destination_account_id` 非空、`fee_minor >= 0`、且 `fee_category_id` 非空当且仅当 `fee_minor > 0`；普通行要求 `destination_account_id IS NULL`、`fee_minor = 0`、`fee_category_id IS NULL`。
+  - **若主会话偏好不同映射**（如新增独立 `source_account_id`/`destination_credit_minor` 而不复用既有列），须在本规格修订中冻结，**不得**由实施者临场选择；本段即为「实施批必须冻结的参数 + 判据」，默认采用上述复用映射。
+  - 等价 replay 的**逐列比较**必须纳入上述全部列。沿 D-219 的加列纪律（`docs/CONTRIBUTING.md:270`）：新列带 Kotlin 默认值或把全部构造点纳入写范围；位置式 `INSERT` 改显式列清单；`columnInfo` 契约验证。
+- **作废/恢复事实表**：**形状不变**（`transaction_void_fact` PK/守卫/索引全部复用）——这是 substrate 事实（作废事实以 `(ledger_id, transaction_id)` 为粒度，见 §4.1），**非** J1 裁决；腿粒度语义归 J1 待裁决。若 J1 裁向腿粒度（候选 B），须新增 schema 面并重开谓词单点——**本文不授权**。
 - **手续费腿**：三腿转账的 `FEE` posting 在修正后的新 posting set 中按 `fee > 0` 保留、`fee == 0` 丢弃（沿 `ACCOUNTING_RULES.md:273`）。
 - **迁移**：加性、只建结构零回填，fresh = migrated 逐字一致；**版本号在实施时分配**，本规格不预占；新切片所需 schema 面登记为后续实施批承接项（沿 D-219）。
 - **对账面**：本文不新增对账写面；是否组合 D-113 见 §11 J3。
@@ -281,7 +295,7 @@ D-156 §3.6（`:147-171`）枚举的 15 面（#1-#15）**全部存活、零消�
 
 **J3 的实读事实（列全，供裁决）**：
 1. D-113 `P408CorrectionCommitPort` 为 **ACCOUNT_TRANSFER 专用**：affected-posting 完整性查询以 `COALESCE(tx.canonical_kind, tx.kind) = 'ACCOUNT_TRANSFER'` 为条件（`Ledger.sq:9027-9039`，条件在 `:9038`；同款条件见 v23 种子 `22.sqm:141`/`:149`）。
-2. 手工转账提交端口零写对账/证据（`SqlDelightConfirmedManualTransferCommitPort.kt:51-230`，10 条命名查询）；导入 spine store 亦零写；全部触发器块零写（526 块扫描，0 命中）。
+2. 手工转账提交端口零写对账/证据（`SqlDelightConfirmedManualTransferCommitPort.kt:51-230`，11 条命名查询，含 replay 比对用的 `selectCommittedManualTransferRequest`）；导入 spine store 亦零写；全部触发器块零写（526 块扫描，0 命中）。
 3. 对账行**只**由 v22→v23 迁移种子与 fresh 种子为**当时的** ACCOUNT_TRANSFER posting 产生；空库 no-op。
 4. port 未接入两端组合根——`grep` 在 `android-app/src`、`desktop-app/src`、`app-ui/src` 对 `P408ReconciliationCommitPort`/`SqlDelightCorrectionStore`/`P408CorrectionCommitPort` **三处均零命中**。
 5. 无论选哪条候选，`SqlDelightTransactionCorrectionCommitPort.kt:110-120` 的保守占位**必须**收窄为实际变化的资金腿（D-158 第 4 条具名残余）。
@@ -296,7 +310,7 @@ D-156 §3.6（`:147-171`）枚举的 15 面（#1-#15）**全部存活、零消�
 | R-4 | 恢复重校验硬编码 | 转账恢复在 `OrdinaryVersionRevalidation.kt:31` 即被拒 | §8.2 冻结替换要求 |
 | R-5 | 有对账行的转账（v23 前遗留） | 修正后旧匹配残留（若不组合 D-113） | J3 候选 (a)/(b)/(c) 各自代价已列 |
 | R-6 | 回收站 O(rows) 成本 | 转账行新增探针会放大 | §6 冻结「不得放大，须按账本批量」 |
-| R-7 | D-156 §3.6 行锚整体漂移 | 引用失准 | §7.1 以符号重新定位；引用一律以符号为准 |
+| R-7 | D-156 §3.6 行锚部分漂移（`Ledger.sq` 与 adapter 锚漂移；`Query*` 应用层锚不变） | 引用失准 | §7.1 以符号重新定位；引用一律以符号为准 |
 | R-8 | 新增 schema 边与迁移 | 版本断言漂移 | 版本在实施时分配、fresh = migrated 逐字一致、迁移 verifier（D-219 清单） |
 
 ## 13. 指针维护说明（对第一切片规格的就地最小修订）
