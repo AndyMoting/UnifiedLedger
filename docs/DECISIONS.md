@@ -4727,3 +4727,44 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残余（登记，不阻断）：** ① **P709-A01..A09 无一 PASS**——设备/平台腿完整本仍缺（widget 实例级真实 RemoteViews 渲染、TalkBack 朗读巡检、锁屏 widget、厂商节流、应用升级、launcher 固定快捷方式），需真机或人工长程；② **P7-05 后续类型切片**（转账/借贷的修正作废，D-156 DP-2 明确 OPEN）未交付；③ 第一部分 61k 可操作性缺陷 `ACC-D-PERF-01` 已归因未修复；④ 09.B 残余（`LedgerWidgetProvider.kt` 陈旧注释、规格 §8 项 1 仍列三名、门的 `existingPending` 判定脆弱点、启动等待型分享槽）；⑤ 09.C 新增开放项 **O-CUR**（多币种月映射口径，规格未覆盖）；⑥ OS 自动备份/设备迁移排除（归后续隐私规格）。
 
 **关联决定：** D-220（A-DOC 正式状态同步批先例：schema v34/08.A 事实落地）、D-224（08.D 登记 + 四份状态文档最小指针更新先例）、D-160（历史性陈述不回改先例）、D-225（P7-09 设计门批准）、D-226（09.B 方案 A：第 4 类中立请求）。
+## D-228 P7-05 转账（ACCOUNT_TRANSFER）修错/作废/恢复第二切片设计门批准（J1/J2/J3 裁决；零 schema 变更）
+
+**状态：** **已批准**（2026-10-16，P7-05 第二切片「转账 `ACCOUNT_TRANSFER`」设计门闭环）。批准对象 = 规格 `docs/specs/2026-10-16-p7-05-transfer-correction-slice-design.md`（状态由 `proposal` 转为 `approved`；本决定即批准依据）。主代理按常设授权（用户既有 goal 授权：计划范围内经独立取证后的评审推荐方案由主代理批准并继续）在**独立规格评审 + 独立质量评审 + distinct verifier** 之后裁决 J1/J2/J3 并批准本文。**零代码 / 零 schema / 零迁移 / 零依赖**：本条只登记一份设计规格候选，**不分配 schema 版本号**（沿 D-187/D-225 设计门先例；schema 维持 v35，34 个 `.sqm`）。起草于隔离 worktree（分支 `UL-p7-05-transfer-design`，基点 `cea2940d3167f988a1a7c48d89a4acdff14cc82f`）。**不授权任何实现**；实施、设备取证与最终验收属后续独立实施批。
+
+**承接依据：** D-156 **DP-2**（转账为后续独立切片，首切片仅只读支持矩阵行）与 D-156 **DP-10 收窄**（D-113 `P408CorrectionCommitPort` 的组合授权「延后至转账切片单独裁决」）；D-158 第 4 条具名残余「`P705_MATCHED_FUNDING_LEG_CHANGED` 为保守占位……转账切片必须收窄，否则仅改备注的修正也会被无理由拒绝」；计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §5 的 05.A 行（计划 `:120`：「转账/借贷/导入及复杂关联分别列出后续切片」「未交付切片继续 OPEN，不能用普通支出通过宣布全批完成」）。
+
+**决定（批准范围与冻结面）：**
+
+1. **规格与状态**：规格 `docs/specs/2026-10-16-p7-05-transfer-correction-slice-design.md` 已由本条批准，状态 `proposal` → **`approved`**。前提已满足：独立规格评审 APPROVE-WITH-FINDINGS（12 条验收条目全 PASS、历轮 findings 全 CLOSED、无阻断）、独立质量评审 APPROVE-WITH-FINDINGS（`currentBatchBlockers` 空）、distinct verifier **PASS**（V1–V11，70+ 锚点独立复核、两条强制复验命中、`project_docs` exit 0、`trace-scan` all clean）。**本条不声称任何验收向量 PASS**（T-01..T-14 与 T-03b 全为未来实现/验证要求）。
+
+2. **冻结（不因 J1/J2/J3 裁决而变的形状）**：转账支持矩阵行（手工创建 `ACCOUNT_TRANSFER`）；**永不修改 kind**（含 `canonical_kind`）；`occurredAt` 不在可改字段集内（DP-7 保持 OPEN）；**金额修正的派生关系 `sourceDebit = destinationCredit + fee` 恒等**（`ACCOUNTING_RULES.md:275` 不变量，沿 `ConfirmedManualTransfer.kt` 的 T-4/P1-2 语义；**J1 已裁决采纳该派生式**：`destinationCredit` 可改、`sourceDebit` 不可独立改，见 §3）；修正写形沿 `TransactionVersionChange.Postings`（腿数不变时新 posting set 逐币种平衡且逐条覆盖旧 set；腿数减少（三腿→两腿）时旧 `FEE` 腿不属必覆盖项；腿数增加（两腿→三腿）时须覆盖旧本金两腿各一次并新增带分类的 `FEE` 腿；`occurred_at`/`effective_at` 逐字复制）；`fee > 0` 三腿含手续费腿、`fee == 0` 两腿且不得携带分类（沿 `ManualTransferTransactionFactory` 分发）；作废/恢复事实以**交易粒度**承载（`transaction_void_fact` PK = `(ledger_id, transaction_id, sequence)`——这是 substrate 事实，**非** J1 裁决；腿粒度语义归 J1 待裁决）；`transaction_effective_state` 保持有效谓词**唯一 SQL 定义点**；`lending_position_history` append-only 硬墙、对账 owner guard、导入终态守卫不得绕过或放宽；金额一律精确整数 minor units，禁浮点。
+
+3. **必须收窄的既有占位（冻结要求，非新裁决）**：`SqlDelightTransactionCorrectionCommitPort.kt` 的 DP-10 保守占位（当前版本上存在任何对账行即拒绝）**必须**收窄为实际变化的资金腿，否则仅改备注的转账修正会被无理由拒绝（D-158 第 4 条具名残余）。收窄后的对账面语义归 J3 裁决。
+
+**J1/J2/J3 裁决（主代理按常设授权，经独立规格评审 + 独立质量评审 + distinct verifier 后作出）：**
+
+- **J1 = 采纳建议基线。** ① **可改字段集** = 规格 §3 所列：`note` / `statisticsAt` / `destinationCredit`（及派生 `sourceDebit = destinationCredit + fee`）/ `sourceAccountId` / `destinationAccountId` / `fee` / `feeCategoryId`；`occurredAt`（DP-7 保持 OPEN）与 `kind`（永不修改）不在内。② **两腿/手续费腿的失效、作废语义 = 候选 A（交易粒度，三腿同进退）**。理由：现有 substrate 的作废事实 PK 为 `(ledger_id, transaction_id, sequence)`（交易粒度），与守卫/视图/回收站读路径完全一致，零新增 schema 面；「只改手续费金额/分类」本质是**修正**（新 posting set）而非腿粒度作废，候选 A 已能表达。**候选 B（腿粒度）不在本切片**——其路径 (ii) 需新增 posting 级谓词，会产生 `transaction_effective_state` 之外的**第二谓词定义点**，违反冻结面（第一切片 §3.3）；路径 (i) 已由候选 A 的修正写形覆盖。若未来确需「只作废手续费」语义，须另立设计门并同时重开第一切片 §3.3。
+- **J2 = 保持 OPEN，显式登记。** 导入创建的转账（DP-T4）、借贷 `LEND`/`COLLECT`（DP-4）、关联退款归属（DP-13）**一律保持 OPEN**，不纳入本切片、不静默缩小；`lending_position_history` append-only 硬墙零写入。理由：D-156 DP-4 已冻结「无新规则前作废借贷会破坏本金历史一致性，必须保持 OPEN」，DP-5 已冻结「原导入候选保持终态、不得再次确认」；纳入任一都需各自的独立决定点（DP-5 候选终态兼容性、DP-13 退款归属语义），混入本切片显著扩大回归面。
+- **J3 = 采纳候选 (a) 开放组合。** 在**收窄 DP-10 保守占位**（`SqlDelightTransactionCorrectionCommitPort.kt` 的「当前版本存在任何对账行即拒绝」→「仅当实际变化的资金腿存在对账行时才走失效」）之后，**组合** D-113 `P408CorrectionCommitPort`，处理有对账行的转账修正。理由：对账状态属于**真实账户 posting**（`ACCOUNTING_RULES.md:253`、D-048），修正一旦改变该 posting 的 `(accountId, amount, currency)`，其旧对账匹配即失效——这是正确性要求而非可协商边界；候选 (b)/(c) 都会留下「金额修正后旧匹配残留」的静默正确性缺口。**边界（不变）**：作废/恢复对账 owner **零写入**；受影响资金腿 = 新版本中真实资产分录且三元组相对旧版本变化者，未变化资金腿的对账行与证据链接零改动；D-113 的查询设计不在本切片重开（沿 D-156 §3.6 立场）。**必须收窄占位**（D-158 第 4 条具名残余）无论选哪条候选都成立，本裁决下它是候选 (a) 的前置。
+
+**边界（本设计门）：** 本条只批准**设计规格**；**零代码 / 零 schema / 零迁移 / 零依赖**（不分配 schema 版本号，schema 维持 v35、34 个 `.sqm`）；不授权实现、迁移、技术选型或发布；不声称任何验收向量 PASS（T-01..T-14 与 T-03b 全为未来要求）；不改 D-156/D-158 的任何裁决（只承接其 DP-2/DP-4/DP-5/DP-10/DP-13 的后续切片义务）。
+
+**修复轮（首轮独立审验后，同一 writer，2026-10-16）：** 首轮结论（**由各角色自行产出、本条仅转述其自报，主会话以其持有的证据工件为准**）：独立规格评审 APPROVE-WITH-FINDINGS、独立质量评审 REJECT、distinct verifier PARTIAL（候选 `fbc3df1e5150c9b9de4fabfd1b7c5e858cbda5e0`，父 `cea2940d3`）。本轮按这些 findings 就地修复，**只改本文与本规格（新建的 `docs/specs/2026-10-16-…`）、不扩范围**：① P1 假锚——`evidence_link_history.reason` CHECK 由误引 `Ledger.sq:7754`（实为 `rg12_reconciliation_match_history`）更正为 `:8469` 并给出正确三值域，同时显式标注 `:7754`/旧引 `:8055` 均非该表；② 写形与腿数矛盾——§3 写形改为「腿数不变时逐条覆盖、腿数减少时旧 `FEE` 腿不属必覆盖项、腿数增加时须新增 `FEE` 腿并携带分类」，并注明不得直接复用 `PostingFactsCorrection` 的等数覆盖分支；③ §8.3 既有 NOT NULL 列取值/可空化已冻结（复用映射 + `category_id` 可空化 + 写入期不变量），登记为「实施批必须冻结的参数 + 判据」；④ N2 的 `:10440` 误归属更正，单列 N2b（`voidedTransactionRowsForLedger`，须保留）；⑤ J1 覆盖处的「冻结」标签改为「substrate 事实/非裁决」，支持矩阵七列与作废/恢复列加【开放项 J1】标记；⑥ `TransactionVersionAppend.kt:48`→`:47`（同文另一处已为 `:47`）；⑦ 手工转账提交端口「10 条」→「11 条」（含 replay 比对查询）；⑧ D-156 §3.6「整体漂移」→「部分漂移」（应用层 `Query*` 锚不变，附 `git diff 23d3bd2 HEAD` 证据）；⑨ D-187 引用范围 `:3749-3785`→`:3749-3769`；⑩ 补 `selectP408PostingIntegrity` 归 J3 面分类与 R-1「实施时重跑枚举」承接义务；⑪ 删除未使用的【冻结设计提案】标记约定；⑫ harness 角色名改为中性表述（避免 agent/tool 痕迹）。**第二轮修复（同一 writer，2026-10-16，对修复轮候选 `7d924a344c53bdeb229d758b11ab2e7630dbab68` 的首轮闭包复评 findings）：** ⑬ 补「两腿→三腿」（`fee == 0` → `fee > 0`）写形规则与 T-03b 向量，并统一 D-228 第 2 条措辞；⑭ §8.3 删除与 `category_id` 冗余的 `fee_category_id` 列（手续费分类一律存 `category_id`）；⑮ 本拓扑段与「修复轮」段改为如实陈述（首轮评审/verifier 已完成、闭包复评待做）；⑯ D-187 锚计数改 3 条并补 adapter `:76-169`；⑰ §7 标记约定改为「冻结项以『冻结』字样标注；未带者一律为建议或待裁决项；J1/J2/J3 覆盖处的『冻结』只附着于已批准部分」；⑱ §7.2 表补 N6-N9 行；⑲ DP-T3 金额表示改「待主会话裁决（J1）」；⑳ `:77` 枚举补全 11 条命名查询名。**第三轮修复（同一 writer，2026-10-16，对候选 `fac1d0c` 的第二轮闭包复评 findings）：** ㉑ D-228 第 2 条的「金额表示」改为只冻结**派生恒等式** `sourceDebit = destinationCredit + fee`，并显式说明「金额是否属可改字段集」归 J1 待裁决（消除与规格 DP-T3 的矛盾）；㉒ 规格 §3 写形标题改为「冻结形状 = 版本追加与 posting 覆盖机制；『金额/手续费是否属可改字段集』归 J1 待裁决」；㉓ 规格 §8.1 覆盖校验约束补「腿数增加方向（两腿→三腿）同样不得走等数覆盖分支」；㉔ 本审验拓扑段改为「截至最后一次编辑」的分轮次如实陈述，与「修复轮」段不再互斥。复验机械项同本段上句。
+
+**边界（本批）：** 入：本规格候选、第一切片规格的**指针与状态最小修订**（§3.1 `ACCOUNT_TRANSFER` 行与 §9 转账项加「已由 P7-05 第二切片规格 + D-228 承接」指针 + 头部 Revision 追加一行）、本条登记。出：零产品代码、零测试、零 schema/迁移/依赖、**零版本号预占**；不改 `rgXX_` 竖井/golden/`.external/`；不改 D-156/D-158 的任何裁决（第一切片支持矩阵 `EXPENSE`/`INCOME` 行不变；`transaction_effective_state` 单点地位不变）；不改其他 `docs/*` 与 `docs/PROJECT_STATE.local.md`。
+
+**承接的 OPEN 项（逐条点名，不得静默丢弃）：**
+
+1. **J1** 转账可改字段集与腿失效/作废语义（含腿粒度是否引入新 schema 面）。
+2. **J2** 导入创建的转账是否纳入本切片（DP-T4）。
+3. **J2** DP-13 退款探针对转账是否空转的独立语义（DP-T5）。
+4. **J2** 借贷（`LEND`/`COLLECT`）切片保持 OPEN。
+5. **J3** DP-10 组合 / 收窄 / 保持 OPEN 三候选（DP-T6）。
+6. **DP-10 占位收窄**：`SqlDelightTransactionCorrectionCommitPort.kt` 保守占位必须收窄为实际变化腿（D-158 第 4 条承接）。
+7. **恢复重校验替换**：`OrdinaryVersionRevalidation.kt` 的 EXPENSE/INCOME 硬编码必须替换为转账感知规则（两端账户 + 手续费分类 + 手续费过账账户）。
+8. **修正请求表扩展**：`transaction_correction_request` 须承载转账目标状态；规格 §8.3 已冻结既有列的复用映射（`amount_minor`/`currency_*` = 规范金额三元组、转账行取 `destinationCredit`；`funding_account_id` = 转账行取源账户；`category_id` 可空化，转账行手续费分类一律存于此列）与新增列（`destination_account_id`/`fee_minor`；**不新增 `fee_category_id`**，避免与 `category_id` 冗余）及写入期不变量，沿 D-219 加列纪律；版本号在实施批分配。
+9. **失败码族新增**：转账专用码是否需要（规格 §9 建议尽量复用既有 15 码）。
+10. **D-156 §3.6 行锚部分漂移**：15 面全部存活、零消失；`Ledger.sq` 与 `SqlDelightLedgerCurrentStateReadAdapter.kt` 锚已漂移，应用层 `Query*` 锚不变（`git diff 23d3bd2 HEAD` 为空）；引用一律以符号为准。新增派生读面 N1-N5、N10 须移除效果；N2b（`voidedTransactionRowsForLedger`）与 N6-N9 须保留；`selectP408PostingIntegrity` 归 J3 面（规格 §7）。**实施时必须在全部交易派生读面重跑枚举，新增消费者必须登记并纳入（沿 D-156 §3.6 R-1 义务）**。
+11. **回收站 O(rows) 成本**：D-158 第 4 条登记项；本切片不得放大。
+
+**关联决定：** D-156（P7-05 设计门与 Q11/Q12、DP-1..DP-13；DP-2 转账后续切片、DP-4 借贷 OPEN、DP-5 导入候选终态、DP-10 收窄、DP-13 否决——本条不改其裁决）、D-158（片 1a 基底层交付与具名残余——DP-10 占位收窄承接来源）、D-187（设计门批准先例：不分配 schema 版本号）、D-225（P7-09 设计门批准先例：零代码/零 schema、不分配版本号）、D-219（迁移批次清单；本批不分配版本号，新切片所需 schema 面登记为实施批承接项）、D-047/D-048（版本替代与受影响分录失效语义）、D-113（DP-10 组合授权对象；本批不重开其查询设计）、D-145（P7-03 读模型；按 D-156 已重冻结，本批只新增派生读面登记）、D-223（历史叙述不回改教训：第一切片规格只做指针最小修订）。
