@@ -4768,3 +4768,26 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 11. **回收站 O(rows) 成本**：D-158 第 4 条登记项；本切片不得放大。
 
 **关联决定：** D-156（P7-05 设计门与 Q11/Q12、DP-1..DP-13；DP-2 转账后续切片、DP-4 借贷 OPEN、DP-5 导入候选终态、DP-10 收窄、DP-13 否决——本条不改其裁决）、D-158（片 1a 基底层交付与具名残余——DP-10 占位收窄承接来源）、D-187（设计门批准先例：不分配 schema 版本号）、D-225（P7-09 设计门批准先例：零代码/零 schema、不分配版本号）、D-219（迁移批次清单；本批不分配版本号，新切片所需 schema 面登记为实施批承接项）、D-047/D-048（版本替代与受影响分录失效语义）、D-113（DP-10 组合授权对象；本批不重开其查询设计）、D-145（P7-03 读模型；按 D-156 已重冻结，本批只新增派生读面登记）、D-223（历史叙述不回改教训：第一切片规格只做指针最小修订）。
+
+## D-229 A-DOC P7-05 转账切片正式状态同步批登记（纯文档；零代码/零 schema）
+
+**状态：** 已批准（2026-10-17，A-DOC 正式状态同步批——把 PR #91/D-228 的 P7-05 转账切片设计门事实落到四份正式状态文档）。批准依据 = 计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §2 A-DOC 行（「完成证据与正式状态同步：随各收口批同步 CURRENT_STATE、ROADMAP、README、PROJECT_MAP 等确有滞后的 owner」）与 §10.4.7。**纯文档批：零代码 / 零 schema / 零迁移 / 零依赖**（schema 维持 v35，34 个 `.sqm` 未动）。
+
+**决定：**
+
+1. **同步范围（只改「当前状态」声明，不回改历史叙事）**：沿 D-160 先例，仅更新四份文档的当前状态声明，共 **4 行 / 4 文件**（+6/−6）：
+   - **`origin/main` 指针**：原 `9a0dfe2050989fa9120026aca940107ea5808957`（PR #90 merge）→ **`cf17444f9f46dd412c723a48f6a9af4b8caf746a`**（PR #91 merge；`CURRENT_STATE.md` 2 处、`PROJECT_MAP.md` 2 处、`ROADMAP.md`/`README.md` 各 1 处）。历史事实 `09.B merge 9a0dfe2` 保留不变（过去合并哈希，非指针）。
+   - **最高决定编号**（`CURRENT_STATE.md`）：原 **D-226**（新条目用 D-227）→ **D-228**（新条目用 D-229）；新阶段决定范围 `D-189～D-225` → `D-189～D-228`。
+   - **唯一下一步**（`CURRENT_STATE.md`）：原「**唯一下一步 = P7-09 系统入口**（…设计门未开，须先走设计门取证）」——与同一段「P7-09 系统入口已交付」**自相矛盾**——改为「**唯一下一步 = P7-05 转账第二切片实施**（计划 §5 05.A 转账行；设计门已按 D-228 批准，实施批暂停、待用户选择复起路线——见 `docs/PROJECT_STATE.local.md`）。**P7-09 系统入口已交付**（计划 §9 最后实施切片，四切片全部合入，见下）」。
+   - **D-228 指针**：四份文档各加一处「P7-05 转账（`ACCOUNT_TRANSFER`）修错/作废/恢复第二切片设计门已按 **D-228** 批准（规格 `docs/specs/2026-10-16-p7-05-transfer-correction-slice-design.md`，零 schema，实施未启动）」。
+2. **不动的面**：`docs/ARCHITECTURE.md` 全文 **P7-05 转账零提及、schema 段落已为 v35**（实测），无需同步；四份文档的历史逐批叙事（各批 merge SHA、评审拓扑、残余登记、逐版本 schema 条目）**一律保留**。
+3. **审验拓扑（如实登记，与本批轻量相称）**：本批为**纯文档微调**，按计划 §10 与用户 goal 第 2 条「轻活手工派发」，由**主代理亲手**在隔离 worktree（`UL-adoc-p705`，基点 `cf17444`）内完成实施；冻结候选 `b8fbe7bd46a5dbe447bd4bf3c63a8f6bd6438d8e` 交**一次独立只读评审**（沿 docs 路由，轻量）——七条声明（指针同步 / 决定编号同步 / 陈旧声明清除 / D-228 指针 / 陈旧 token 归零 / 编码 / 无 PASS 夸大）全部 **VERIFIED**，verdict **APPROVE-WITH-FINDINGS**、`currentBatchBlockers` 空；唯一 finding 为 **P3**（P7-09 块枚举五个条目却写作「四个实施切片」的措辞残留——**先于本批存在**、非本批引入，仅登记）。验证以 `project_docs` exit 0、`trace-scan` all clean、`git diff --check` exit 0、UTF-8 无 BOM + LF 字节检查、四份文档旧声明零残留机械检查为证；合并走 PR 门禁流（PR #92，四 required checks 全绿）。
+4. **边界**：不改任何代码/测试/schema/迁移/依赖；不改 `docs/PROJECT_STATE.local.md`（本地 ignored，现实另行更正）；不声称任何验收向量 PASS（**P709-A01..A09 全部未记 PASS**；P7-05 转账切片 T-01..T-14/T-03b 全为未来要求，实施未启动）；不改 D-156/D-158/D-228 的任何裁决；不把 09.D 设备取证当成完整平台验收。
+
+**编号说明（如实披露）：** checkpoint 曾把 **D-229** 暂记为暂停中的 P7-05 转账实施批的登记号（2026-10-17 暂停态条目）。该批**未交付、零写入**，而登记不得超前于能力（`EXECUTION_DISCIPLINE`：登记可落后于能力、绝不可超前），故本条 A-DOC 同步批按当前唯一可用的下一个顺序号占用 **D-229**；暂停中的 P7-05 转账实施批**复起并交付时使用届时的下一个可用号**（`PROJECT_STATE.local.md` 已同步此更正）。
+
+**交付证据：** 四份文档 4 行 / +6−6；PR **#92** head `b8fbe7b`、`mergeable=CLEAN`、四 required checks（`Kotlin tests`/`Android compile`/`Python tests`/`Trace scan`）全绿；merge `800d14a74118ceb0954c7df6636a77cf94d3a34e`；Merge tree guard run `39041327051` **zero-action**（"tree(800d14a) == tree(b8fbe7b) == c287b7c1301dfad9353a9831447ecd6aca82978c; the merge introduced nothing beyond the verified pull-request tip"）；本地 `main` 已 ff 到 `800d14a`，worktree/分支已清理。`project_docs` exit 0；`bash tools/ci/trace-scan.sh` all clean。
+
+**残余（登记，不阻断）：** ① **P709-A01..A09 无一 PASS**——设备/平台腿完整本仍缺（widget 实例级真实 RemoteViews 渲染、TalkBack 朗读巡检、锁屏 widget、厂商节流、应用升级、launcher 固定快捷方式），需真机或人工长程；② **P7-05 转账切片实施批暂停**（用户 2026-10-17 主动停止，9 次派发 5 轮冷审全部阻断于批指令、非产品设计；复起三选项见 `docs/PROJECT_STATE.local.md`）；③ **P7-05 借贷 `LEND`/`COLLECT`、导入关联、关联退款**（D-228 J2 显式保持 OPEN）；④ 第一部分 61k 可操作性缺陷 `ACC-D-PERF-01` 已归因未修复；⑤ 09.B/09.C 残余（`LedgerWidgetProvider.kt` 陈旧注释、规格 §8 项 1、O-CUR 多币种月映射口径、OS 自动备份排除）；⑥ 评审 **P3**（P7-09 块「四个实施切片」措辞与五个枚举条目不符，先于本批存在，登记不改）。
+
+**关联决定：** D-227（A-DOC P7-09 正式状态同步批先例，紧邻的同类批）、D-220（A-DOC 正式状态同步批先例：schema v34/08.A 事实落地；闭合 R-218-2）、D-224（08.D 登记 + 四份状态文档最小指针更新先例）、D-160（历史性陈述不回改先例）、D-228（P7-05 转账切片设计门批准——本批同步的对象）。
