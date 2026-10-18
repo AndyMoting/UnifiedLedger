@@ -54,8 +54,10 @@ import kotlin.test.assertTrue
  *                            plan section 10.1 "new tasks use a sub-item ID plus an ordinal")
  *  - P704OOM-T-BATCH-01b     blockingFirstFoldPicksTheStrengthMinimum (sub-item of BATCH-01: the
  *                            in-batch reduction direction, three distinct statuses in one group)
+ *  - P704OOM-T-BATCH-01c     pagedReadEmitsEachCandidateRowsContiguously (sub-item of BATCH-01:
+ *                            asserts the query premise the run-walking fold relies on)
  *  - P704OOM-T-PARAM-01a     frozenDefaultPageSizeIsTenThousandCandidates (sub-item of PARAM-01:
- *                            the default remains 10,000 candidates, so J8 stays untriggered)
+ *                            the default remains 10,000 candidates, so D-230 J8 stays untriggered)
  *  - P704OOM-T-BOUNDARY-01   pageBoundaryCandidateCompleteness
  *  - P704OOM-T-PARAM-01      pageSizeEndpoints
  *  - P704OOM-T-TAIL-01       emptyLibraryAndFullTailTermination
@@ -380,13 +382,81 @@ class ImportReviewPagedReadEquivalenceTest {
     }
 
     @Test
+    fun pagedReadEmitsEachCandidateRowsContiguously() {
+        // P704OOM-T-BATCH-01c (sub-item of BATCH-01): the run-walking fold assumes each
+        // candidate's rows are ADJACENT in the batch — the old `groupBy { it.candidate_id }` was
+        // indifferent to row spacing, so this premise is now load-bearing for fold correctness.
+        // It holds because the query orders by candidate_id and the candidate-boundary IN
+        // subquery admits candidates whole (ACC-SORT-01, spec section 3 item 1). Pin the premise
+        // on the query itself across several page sizes: for EVERY candidate, its rows must form
+        // one unbroken run, and the number of runs must equal the number of distinct candidates.
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            intake(database, driver, duplicateHeavyDescriptors("adj"))
+            val allRows =
+                database.ledgerQueries
+                    .importReviewRowsForLedger(ledgerId.value)
+                    .executeAsList()
+            // Non-vacuity: some candidate must carry more than one row, otherwise a contiguity
+            // assertion would pass trivially. Read from the rows, not from a guessed fixture shape
+            // (the spine's duplicate minting is not re-derived here — only the ordering premise).
+            val distinctCandidates = allRows.map { it.candidate_id }.distinct().size
+            assertTrue(
+                allRows.size > distinctCandidates,
+                "fixture must contain at least one multi-row candidate for the contiguity check to be meaningful",
+            )
+            // Rows arrive already in candidate order (the ORDER BY premise).
+            assertEquals(
+                allRows.map { it.candidate_id },
+                allRows.map { it.candidate_id }.sorted(),
+                "rows must already arrive in candidate order",
+            )
+            // The premise the run-walking fold depends on: each candidate's rows form ONE
+            // unbroken run. Count run starts in the whole-ledger row order and require it to
+            // equal the distinct-candidate count.
+            fun runStarts(ids: List<String>): Int =
+                ids.foldIndexed(0) { index, acc, id -> if (index == 0 || id != ids[index - 1]) acc + 1 else acc }
+            assertEquals(
+                distinctCandidates,
+                runStarts(allRows.map { it.candidate_id }),
+                "whole-ledger rows: one unbroken run per candidate",
+            )
+
+            for (pageSize in listOf(1L, 2L, 3L, 100L)) {
+                val pagedRows = mutableListOf<String>()
+                var afterCandidateId = ""
+                while (true) {
+                    val batch =
+                        database.ledgerQueries
+                            .importReviewRowsForLedgerPage(ledgerId.value, ledgerId.value, afterCandidateId, pageSize)
+                            .executeAsList()
+                    pagedRows += batch.map { it.candidate_id }
+                    if (batch.size.toLong() < pageSize) break
+                    afterCandidateId = batch.maxOf { it.candidate_id }
+                }
+                val runs = pagedRows.fold(mutableListOf<String>()) { acc, id -> if (acc.lastOrNull() != id) acc.add(id); acc }
+                assertEquals(
+                    distinctCandidates,
+                    runs.size,
+                    "pageSize=$pageSize: each candidate's rows must be contiguous, so run count == candidate count",
+                )
+                assertEquals(runs, runs.distinct(), "pageSize=$pageSize: no candidate run may repeat after another candidate")
+            }
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
     fun frozenDefaultPageSizeIsTenThousandCandidates() {
         // P704OOM-T-PARAM-01a (sub-item of PARAM-01): the candidate-per-batch default stays
         // 10,000. This batch does NOT retune the batch size, so the BEGIN IMMEDIATE hold window
         // is unchanged and the connection-hold instrumentation prerequisite (D-230 J7) is not
         // triggered; D-230 J8 (tuning effect) therefore stays deferred to a device evidence
-        // batch. Changing this constant is the one-line act that would trigger J7/J8 — the
-        // assertion is here so that act cannot happen silently.
+        // batch. Changing this constant is the one-line act that would trigger both D-230 J7 and
+        // D-230 J8 — the assertion is here so that act cannot happen silently.
         assertEquals(10_000L, IMPORT_REVIEW_ROWS_PAGE_SIZE, "the frozen default page size must not be retuned in this batch")
         // The default-constructed adapter must still be valid and equivalent: a default of 0 or a
         // negative value would be rejected by the pageSize >= 1 guard before any query.
