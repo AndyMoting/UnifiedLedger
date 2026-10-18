@@ -1,5 +1,6 @@
 package com.unifiedledger.data
 
+import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.ExecuteImportIntake
 import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
@@ -8,6 +9,9 @@ import com.unifiedledger.application.ImportCompleteness
 import com.unifiedledger.application.ImportContentFingerprint
 import com.unifiedledger.application.ImportDuplicateCandidateId
 import com.unifiedledger.application.ImportDuplicateIntakeIds
+import com.unifiedledger.application.ImportDuplicateReviewId
+import com.unifiedledger.application.ImportDuplicateReviewRequest
+import com.unifiedledger.application.ImportDuplicateReviewResult
 import com.unifiedledger.application.ImportDuplicateStatus
 import com.unifiedledger.application.ImportEvidenceId
 import com.unifiedledger.application.ImportFundingState
@@ -24,6 +28,7 @@ import com.unifiedledger.application.ImportSourceFacts
 import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.QueryImportReviewRows
+import com.unifiedledger.application.ReviewImportDuplicateCandidate
 import com.unifiedledger.data.db.ImportReviewRowsForLedger
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.LedgerId
@@ -45,6 +50,12 @@ import kotlin.test.assertTrue
  *
  * The stable acceptance IDs (spec section 7) map to the tests as:
  *  - P704OOM-T-BATCH-01      batchVsWholeLedgerFullEquivalence (small pageSize forces multi-batch)
+ *  - P704OOM-T-BATCH-01a     multiDuplicateGroupFoldsAcrossEveryPageBoundary (sub-item of BATCH-01,
+ *                            plan section 10.1 "new tasks use a sub-item ID plus an ordinal")
+ *  - P704OOM-T-BATCH-01b     blockingFirstFoldPicksTheStrengthMinimum (sub-item of BATCH-01: the
+ *                            in-batch reduction direction, three distinct statuses in one group)
+ *  - P704OOM-T-PARAM-01a     frozenDefaultPageSizeIsTenThousandCandidates (sub-item of PARAM-01:
+ *                            the default remains 10,000 candidates, so J8 stays untriggered)
  *  - P704OOM-T-BOUNDARY-01   pageBoundaryCandidateCompleteness
  *  - P704OOM-T-PARAM-01      pageSizeEndpoints
  *  - P704OOM-T-TAIL-01       emptyLibraryAndFullTailTermination
@@ -207,6 +218,68 @@ class ImportReviewPagedReadEquivalenceTest {
             "$prefix-05" to 3_000L,
         )
 
+    /** Duplicate-heavy library for the page-size sweep: six records of ONE business tuple (the
+     * last candidate carries five duplicates) plus two lone candidates. */
+    private fun duplicateHeavyDescriptors(prefix: String): List<Pair<String, Long>> =
+        listOf(
+            "$prefix-00" to 1_000L,
+            "$prefix-01" to 1_000L,
+            "$prefix-02" to 1_000L,
+            "$prefix-03" to 1_000L,
+            "$prefix-04" to 1_000L,
+            "$prefix-05" to 1_000L,
+            "$prefix-06" to 2_000L,
+            "$prefix-07" to 3_000L,
+        )
+
+    /** Reviews one duplicate candidate to the given decision through the real spine write path,
+     * reading the expected comparison fingerprint from the row (never assumed). */
+    private fun review(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+        duplicateCandidateId: String,
+        decision: ImportDuplicateStatus,
+    ) {
+        val fingerprint =
+            driver
+                .executeQuery(
+                    null,
+                    "SELECT comparison_fingerprint FROM import_duplicate_candidate WHERE candidate_id='$duplicateCandidateId'",
+                    { cursor ->
+                        cursor.next()
+                        QueryResult.Value(requireNotNull(cursor.getString(0)))
+                    },
+                    0,
+                ).value
+        assertIs<ImportDuplicateReviewResult.Accepted>(
+            ReviewImportDuplicateCandidate(SqlDelightImportSpineStore(database, driver)).execute(
+                ImportDuplicateReviewRequest(
+                    identity = ImportRequestIdentity(ledgerId, ImportRequestId("review-$duplicateCandidateId")),
+                    candidateId = ImportDuplicateCandidateId(duplicateCandidateId),
+                    expectedComparisonFingerprint = fingerprint,
+                    decision = decision,
+                    reasonToken = "duplicate",
+                    reviewedAt = "2026-09-22T09:00:00+08:00",
+                    reviewerReference = "p704oom-test",
+                    generatedAt = "2026-09-22T09:00:00+08:00",
+                    reviewId = ImportDuplicateReviewId("review-$duplicateCandidateId"),
+                    historyId = ImportStatusHistoryId("review-history-$duplicateCandidateId"),
+                ),
+            ),
+        )
+    }
+
+    /** The raw (candidate, duplicate) rows of one candidate, in query order. */
+    private fun duplicateStatusTokens(
+        database: LedgerDatabase,
+        candidateId: String,
+    ): List<String> =
+        database.ledgerQueries
+            .importReviewRowsForLedger(ledgerId.value)
+            .executeAsList()
+            .filter { it.candidate_id == candidateId && it.duplicate_candidate_id != null }
+            .mapNotNull { it.duplicate_latest_status }
+
     private fun withMixedLibrary(block: (LedgerDatabase) -> Unit) {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
@@ -233,6 +306,95 @@ class ImportReviewPagedReadEquivalenceTest {
             assertEquals(null, reference.first { it.candidateId.value == "p704-05" }.duplicateStatus)
             val paged = SqlDelightImportReviewReadAdapter(database, pageSize = 2).loadImportReviewRows(ledgerId)
             assertEquals(reference, paged)
+        }
+    }
+
+    @Test
+    fun multiDuplicateGroupFoldsAcrossEveryPageBoundary() {
+        // P704OOM-T-BATCH-01a (sub-item of BATCH-01): a duplicate-heavy library — six records of
+        // ONE business tuple, so the last candidate carries five duplicate rows whose page
+        // positions straddle every candidate boundary — read at pageSize = 1, 2, 3 and 4. Each
+        // run must equal the whole-ledger reference row for row, so a fold that lost or merged a
+        // group across a batch boundary (the failure this implementation change could introduce)
+        // fails here rather than in production.
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            intake(database, driver, duplicateHeavyDescriptors("sweep"))
+            val reference = wholeLedgerReference(database)
+            assertEquals(8, reference.size, "fixture must yield one folded row per candidate")
+            // Five duplicates on the tuple's last candidate: the whole-ledger fold input.
+            assertEquals(5, duplicateStatusTokens(database, "sweep-05").size)
+            assertEquals(ImportDuplicateStatus.DEFERRED, reference.first { it.candidateId.value == "sweep-05" }.duplicateStatus)
+            for (pageSize in listOf(1L, 2L, 3L, 4L)) {
+                assertEquals(
+                    reference,
+                    SqlDelightImportReviewReadAdapter(database, pageSize = pageSize).loadImportReviewRows(ledgerId),
+                    "pageSize=$pageSize must fold to the whole-ledger result",
+                )
+            }
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun blockingFirstFoldPicksTheStrengthMinimum() {
+        // P704OOM-T-BATCH-01b (sub-item of BATCH-01): the fold is a MINIMUM over the frozen
+        // blocking-first priority order, and the winning token is deliberately NOT the first row
+        // of the group. Four records of one tuple give the last candidate three duplicates; they
+        // are reviewed to REJECTED (first in duplicate-id order), DISMISSED_LOOKALIKE, then
+        // CONFIRMED_DUPLICATE (last). The folded verdict must be CONFIRMED_DUPLICATE on BOTH the
+        // whole-ledger reference and the paged read — an implementation that kept `first()`
+        // (or that folded in the wrong direction) reads REJECTED / DISMISSED_LOOKALIKE here.
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            intake(
+                database,
+                driver,
+                listOf("fold-00" to 1_000L, "fold-01" to 1_000L, "fold-02" to 1_000L, "fold-03" to 1_000L),
+            )
+            review(database, driver, "duplicate-fold-03-0", ImportDuplicateStatus.REJECTED)
+            review(database, driver, "duplicate-fold-03-1", ImportDuplicateStatus.DISMISSED_LOOKALIKE)
+            review(database, driver, "duplicate-fold-03-2", ImportDuplicateStatus.CONFIRMED_DUPLICATE)
+            // The group's query order starts at the WEAKEST token, so first() is the wrong answer.
+            assertEquals(
+                listOf("REJECTED", "DISMISSED_LOOKALIKE", "CONFIRMED_DUPLICATE"),
+                duplicateStatusTokens(database, "fold-03"),
+            )
+            val reference = wholeLedgerReference(database)
+            assertEquals(ImportDuplicateStatus.CONFIRMED_DUPLICATE, reference.first { it.candidateId.value == "fold-03" }.duplicateStatus)
+            for (pageSize in listOf(1L, 3L)) {
+                assertEquals(
+                    reference,
+                    SqlDelightImportReviewReadAdapter(database, pageSize = pageSize).loadImportReviewRows(ledgerId),
+                    "pageSize=$pageSize must fold the group to its blocking-first minimum",
+                )
+            }
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun frozenDefaultPageSizeIsTenThousandCandidates() {
+        // P704OOM-T-PARAM-01a (sub-item of PARAM-01): the candidate-per-batch default stays
+        // 10,000. This batch does NOT retune the batch size, so the BEGIN IMMEDIATE hold window
+        // is unchanged and the connection-hold instrumentation prerequisite (D-230 J7) is not
+        // triggered; D-230 J8 (tuning effect) therefore stays deferred to a device evidence
+        // batch. Changing this constant is the one-line act that would trigger J7/J8 — the
+        // assertion is here so that act cannot happen silently.
+        assertEquals(10_000L, IMPORT_REVIEW_ROWS_PAGE_SIZE, "the frozen default page size must not be retuned in this batch")
+        // The default-constructed adapter must still be valid and equivalent: a default of 0 or a
+        // negative value would be rejected by the pageSize >= 1 guard before any query.
+        withMixedLibrary { database ->
+            assertEquals(
+                wholeLedgerReference(database),
+                SqlDelightImportReviewReadAdapter(database).loadImportReviewRows(ledgerId),
+            )
         }
     }
 

@@ -19,8 +19,15 @@ import com.unifiedledger.domain.LedgerId
  * P7-04 OOM fix (design spec 2026-09-21 v0.2, D-168): candidates read per batch. 10,000 keeps
  * the 61k-candidate ledger at 7 batches; injectable through the adapter constructor so tests
  * can force the multi-batch path with a tiny value.
+ *
+ * D-230 J1 mechanism (b): the value is deliberately unchanged by the 61k operability batch. The
+ * batch count fixes the `BEGIN IMMEDIATE` hold window (OOM spec section 2.5), so retuning it
+ * would trigger the connection-hold instrumentation prerequisite (D-230 J7) and the tuning
+ * effect re-measurement (D-230 J8, OOM spec section 6 item 1: "re-run device plan items 1/3
+ * after tuning"). Both need device evidence and are deferred. `internal` (not file-private) so
+ * the frozen default is pinned by a test instead of being silently editable.
  */
-private const val IMPORT_REVIEW_ROWS_PAGE_SIZE = 10_000L
+internal const val IMPORT_REVIEW_ROWS_PAGE_SIZE = 10_000L
 
 /**
  * P7-04.B import review read adapter (D-146; implementation spec section 4.5, Appendix A).
@@ -100,12 +107,30 @@ class SqlDelightImportReviewReadAdapter(
                             afterCandidateId,
                             pageSize,
                         ).executeAsList()
-                        .map { it.toColumns() }
-                result +=
-                    batch
-                        .groupBy { it.candidate_id }
-                        .map { (_, groupedRows) -> groupedRows.first().toImportReviewRow(groupedRows) }
+                // D-230 J1 mechanism (b): fold one contiguous candidate run at a time instead of
+                // widening the whole batch into a second projection list and then re-grouping it.
+                // The generated rows of one candidate are adjacent — the query orders by
+                // candidate_id and the candidate-boundary IN subquery admits candidates whole —
+                // so walking the batch once yields exactly the runs `groupBy { it.candidate_id }`
+                // produced, in the same key order, with the same first-row choice. The only extra
+                // structure is the current run (one candidate's rows, at most `max dup_count`
+                // projections), released when the run closes; the per-batch projection list and
+                // the groupBy map no longer coexist with the accumulated result.
+                var index = 0
+                while (index < batch.size) {
+                    val candidateId = batch[index].candidate_id
+                    val run = mutableListOf(batch[index].toColumns())
+                    index++
+                    while (index < batch.size && batch[index].candidate_id == candidateId) {
+                        run += batch[index].toColumns()
+                        index++
+                    }
+                    result += run.first().toImportReviewRow(run)
+                }
                 if (batch.size.toLong() < pageSize) break
+                // Kept as `maxOf` (Kotlin UTF-16 order), NOT `last()` (SQLite BINARY order): the
+                // two disagree on supplementary-plane ids and the divergence is pinned by
+                // P704OOM-T-COLLATION-01 as a duplicate candidate rather than silent loss.
                 afterCandidateId = batch.maxOf { it.candidate_id }
             }
             result
