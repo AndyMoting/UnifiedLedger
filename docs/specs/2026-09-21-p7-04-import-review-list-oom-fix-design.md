@@ -2,6 +2,8 @@
 
 状态：approved（修订版 v0.2。修复机制经独立规格评审确认**sound**（首轮评审结论 REVISE，机制不需重新设计）；v0.2 按评审缺陷清单逐条修订 P1-1..P1-7、P2-1..P2-6 与 P3 项后重新提交评审，独立闭包复评对本修订（`9c43787`）给出结论 **APPROVE**——既有阻断条件 C1–C4 全部闭合、未引入新 P1/P2，且独立复核了 `runtime-jvm-2.3.2.jar` 中 `transactionWithResult` 的参数名为 `noEnclosing`（默认 `false`、嵌套抛 `IllegalStateException("Already in a transaction")`）这一关键依赖事实。CONTRIBUTING.md:162 的允许分类为 `approved`/`proposal`/`superseded`/`historical`（v0.1 的 `draft` 不在允许分类内，该标记已在 v0.2 更正）；**主代理已于本次批准本规格**，批准依据即上述独立规格评审的首轮与闭包复评（闭包复评结论 APPROVE），故本规格按 `approved` 分类。实施、Git 写操作与最终验收属后续实施批）。
 
+**指针更新（2026-10-18，仅加指针，不改本文任何既有条目）：** 本规格 §3.1 的「列表读可操作耗时（61k）≤ 3 s」中的 `ACC-D-PERF-01` **可操作性部分**已由后续设计门承接——规格 `docs/specs/2026-10-18-p7-04-import-review-61k-operability-design.md`（`approved`）与决定 **D-230**。**承接范围仅限该 ≤3 s 可操作性部分**；本规格的 OOM 修复机制、阈值、§4/§5 证据与其余裁决**均不变**。
+
 **Revision:** v0.2（2026-09-21 修订，回应独立规格评审 REVISE）。v0.1 的机制骨架（候选边界 keyset 分批 + 批内折叠 + 事务包裹）经评审确认成立并逐字保留；本轮修订集中于**可编译性**（P1-1 参数绑定、P1-2 `LIMIT ?` 类型）、**证据更正**（P1-3 行数推演与峰值口径、P1-4 夹具归属）、**治理补齐**（P1-5 非目标冻结的显式取代、P1-7 稳定验收项 ID）、**平台事实更正**（P1-6 Android BEGIN 模式与连接持有风险）、以及 P2/P3 的边界与阈值补齐。依据：`docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §2 A-PERF 与 §10.3/§10.4；`docs/specs/2026-09-17-p7-04-a-perf-import-read-governance-design.md`（approved，本规格显式取代其一条非目标）；D-147/D-148（读治理与 A-PERF 证据纪律）；D-158 第 5 条与 D-159（热读增本的实测纪律）；D-166（DECISIONS.md:3186，第 3 条 OOM 缺陷登记、第 5 条承接）；本 worktree 基线 `83f92bf` 上的只读复核（行数/查询计划/分批等价性，见 §2.4 与 §8）。本规格不改动任何既有裁决，只对 D-166 登记的缺陷给出修复设计。
 
 ## Authority And Boundary
@@ -362,6 +364,8 @@ class SqlDelightImportReviewReadAdapter(
 | P704OOM-D-PERF-01 | 设备 | 批数/各批行数/耗时/峰值 + 整表读对照 + B2 ≤3 s | §5 第 3 项 |
 | P704OOM-D-CONN-01 | 设备 | 连接持有窗口不触发 D-148 ANR 链形态 | §5 第 4 项 |
 | P704OOM-D-20K-01 | 设备 | 20k 库 B2/B3/B6 不退化 | §5 第 5 项 |
+
+**指针（2026-10-18 追加，不修改上表任何条目）：** 上表中 `P704OOM-ACC-THRESH-01`（§3.1）的「列表可操作 ≤3 s」在 **61k 规模**的达成判定与 `P704OOM-D-PERF-01` 在 61k 的状态，已由后续设计门规格 `docs/specs/2026-10-18-p7-04-import-review-61k-operability-design.md`（`approved`）与决定 **D-230** 承接（`ACC-D-PERF-01` 在 61k 现为 NOT MET、维持开放）。上表其余 ID 与本规格其余裁决**不变**。
 
 ## 8. 本规格自身的只读复核证据（P1-3/P1-4 更正依据）
 
