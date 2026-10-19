@@ -4998,3 +4998,34 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 9. **边界**：入：本条登记 + 四份正式状态文档的最小指针同步（另行 A-DOC 批）。出：零代码/测试/schema/迁移/依赖/清单/Golden；不改 D-225/D-226/D-227 的任何裁决与开放项；**不把 A01/A03/A04/A05/A06/A07/A08 并入 PASS**；不改 `ACC-D-PERF-01` 任何状态。
 
 **关联决定：** D-225（P7-09 系统入口设计门与 Q19/Q20 裁决）、D-226（09.B 图标快捷方式与第 4 类中立请求）、D-227（09.D 平台回归取证；其登记的设备限制与本轮 `am` grant 限制同类）、D-234/D-235（同会话前两批）、阶段计划 §9.3 与 §10.1/§10.2。
+
+## D-237 P7-07 验收向量裁决批：A01/A02/A03/A05 判 PASS（JVM 维度），其余开放
+
+**状态：** 已批准并登记（2026-10-20，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §7.3 的 P707-A01..A09 + §10.1 逐项状态登记 + §10.4.5「报告逐项状态总数」）。**零产品代码、零测试、零 schema/迁移、零依赖**（schema 维持 v35、34 个 `.sqm`）。证据在 ignored `local/artifacts/p707-accept/`。
+
+**决定：**
+
+1. **判据边界**：计划 §10.1 明写「某维度确实不适用时说明理由，不强求每个纯逻辑用例都做设备测试」。P7-07 的预算是**纯派生观察视图**——不创建 Posting、不改变余额或对账状态（07.A 冻结口径），故其纯函数与有界读语义的判据，**JVM 测试即为其适用证据**。本条不把「无设备测试」当成缺陷，也不据此免除依赖持久化/规模/恢复的向量。
+
+2. **本轮取证**：`./gradlew.bat :ledger-application:jvmTest --tests "*BudgetMonthTest*" --tests "*QueryBudgetMonthTest*" --tests "*BudgetConfigurationTest*"` → **exit 0**，3 类 **43 tests / 0 failures / 0 errors / 0 skipped**（`BudgetMonthTest` 18、`QueryBudgetMonthTest` 15、`BudgetConfigurationTest` 10）。
+
+3. **判 PASS 的四项（JVM 维度）**：
+   - **A01**（净支出与退款口径、跨月归属）：`QueryBudgetMonthTest.refundsReduceNetExpenseAndRemainingIsNeverClamped`、`BudgetMonthTest.remainingAndOverspentFollowTheFrozenContract` / `netRefundMakesRemainingExceedLimitWithoutClamping`；跨月归属由 `BudgetMonthTest.budgetTotalEqualsTheFrozenMonthlyBucketsOrdinaryNetExpense` 钉住与冻结月度投影同源。
+   - **A02**（16 kind 纳入矩阵）：`BudgetMonthTest.budgetOrdinaryMatrixPinsAllSixteenKindsInclusionAndSign`（全 16 kind 逐项断言）、`budgetIncomeNeverOffsetsExpenseLimit`。
+   - **A03**（父/子/总预算独立观察）：`BudgetMonthTest.parentScopeRollsUpChildrenAndTotalIncludesUncategorized`、`QueryBudgetMonthTest.oneFoldYieldsTotalAndEveryConfiguredCategoryScopeWithIndependentObservations`。
+   - **A05**（零额度/未设置/负退款/恰好额度/负额度/溢出/坏目录/读失败的明确结果）：`BudgetMonthTest.zeroLimitIsAMonitoredBudgetAndUnsetLimitIsNotMonitored`、`exactlyEqualLimitIsNotOverspent`、`checkedArithmeticFailsLoudOnOverflow`、`negativeLimitIsATypedRejection`、`unknownScopeCategoryFailsLoudInsteadOfObservingZero`；`QueryBudgetMonthTest.closedAndZeroAndUnsetScopesAreDistinguishable`、`aCheckedOverflowIsInvalidStateNotAWraparound`、`aMissingProjectionOrReadFailureIsUnavailableAndNeverZeros`、`aThrowingReadPortIsUnavailable`、`aConfiguredScopeAbsentFromTheCatalogIsInvalidStateNotZero`、`aConfigReaderFailureIsUnavailableNotAnEmptyMonth`、`aMonthWithNoConfiguredScopeYieldsAnEmptySuccessfulView`。
+
+4. **未判 PASS 的五项（逐项写明缺口，不得静默丢弃）**：
+   - **A04（缺证）**：预算读经 `transaction_effective_state` 有效谓词（D-156 冻结的唯一 SQL 定义点），但**未见针对预算面的「修正 × 预算」交叉测试**；判据要求的「旧版本不双算 + 来源时间与对账不变」需专门向量。
+   - **A06（部分证据）**：replay、同 ID 异快照、CAS 冲突、分类停用/删除均由 `SqlDelightBudgetStoreTest` 与 `BudgetConfigurationTest` 覆盖；**「Unknown 后重开」无显式测试**。
+   - **A07（缺证）**：07.T 时间投影与 `MonthlyBuckets` 的 `REPORT_TIME_ZONE` 已按 D-184 冻结并有其测试，但本轮**未逐项复核**「月界亚秒 / 不同精度偏移等值 / 闰月 / 设备时区变化」四类边界。
+   - **A08（缺证）**：`QueryBudgetMonthTest.theBoundedReadIsIssuedOnceForTheMonthWindow` 钉住「一次读一折叠」，但**20k/50k 规模测量未做**（D-186 已登记该残余）；该向量的判据含扫描行、查询数、峰值内存、连接持有与端到端响应，非纯函数证据可替代。
+   - **A09（部分证据）**：历史版本可追溯、稳定归属、不可变性由 `SqlDelightBudgetStoreTest.settingsHistoryReturnsEveryRevisionOldestFirstIncludingClose` / `distinctScopesAndMonthsGetDistinctStableIdentities` / `receiptAndHistoryAndConfigAreImmutable` 覆盖；**重开与备份恢复腿未针对预算面取证**。
+
+5. **逐项状态汇总（计划 §10.4.5 要求）**：P707-A01..A09 中 **PASS 4 项**（A01/A02/A03/A05）、**部分证据 2 项**（A06/A09）、**缺证 3 项**（A04/A07/A08）。**P7-07 整体不判通过**；「P7-07 已收口」的历史表述仅指**实施**已交付（D-185/D-186），不等于九向量全部通过。
+
+6. **审验拓扑（如实登记，轻量相称）**：本批为**测试取证 + 逐向量裁决 + 登记**，零 tracked 变更可供独立评审；按 goal 第 2 条「轻活与登记批可手工派发」由主代理亲手执行。裁决依据是**既有测试名与断言目标的逐项对照**，未新增测试；任何一项若需新测试则属后续实施批。
+
+7. **边界**：入：本条登记 + 四份正式状态文档的最小指针同步。出：零代码/测试/schema/迁移/依赖/清单/Golden；不改 D-184/D-185/D-186 的任何裁决与开放项；**不把 A04/A06/A07/A08/A09 并入 PASS**；不改 `ACC-D-PERF-01`、`ACC-D-20K-01` 状态。
+
+**关联决定：** D-184（P7-07 设计门与 07.T 时间投影技术门）、D-185（07.B 预算配置持久化，schema v32→v33）、D-186（07.D 预算读取与产品接线，其登记的 A08 规模基线残余在本条保持开放）、D-156（`transaction_effective_state` 有效谓词唯一 SQL 定义点）、阶段计划 §7.3 与 §10.1/§10.4.5。
