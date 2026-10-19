@@ -4859,3 +4859,26 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 入：本条登记与 `docs/CURRENT_STATE.md` 的同步。出：零产品代码、零测试、零 schema/迁移/依赖/清单、零 Golden/fixture；不改 D-168/D-169/D-170/D-171/D-175/D-230 的任何裁决与其开放状态；不改 A-PERF approved 规格本体；不改其他 `docs/*` 与 checkpoint；不实施任何修复；不把任何残余并入 PASS。
 
 **关联决定：** D-230（J5/J2 为本条承接对象、J1 方向为第 8 条对照、J4/J7 为本条部分闭合/仍未决项）、D-169（第 5 条 61k 可操作性缺陷登记与其 ≈11 s 读数为本条对照基线与开放状态来源——本条不改）、D-171（宿主侧分量先例）、D-175（设备侧 atrace 归因先例与本条重测对象——本条按其实施面限定重测）、D-170（`ACC-D-CONN-01`/`ACC-D-20K-01` 登记）、D-168（OOM 修复冻结阈值 ≤160 MB / ≤3 s / 零 ANR-OOM 为本条第 3/4 条判据）、阶段计划 §2 A-PERF 行与 §10.1/§10.3/§10.4.5。
+## D-232 P7-04 导入审核分页读的瞬时共存结构压缩实施登记（D-230 J1 机制 (b)；零 schema 变更）
+
+**状态：** 已批准并交付（2026-10-19，D-230 **J1 机制 (b)** 的实施批登记）。**PR #97 已合并 `14088ed`**（3 文件 +288/−7）；四项 required（`Kotlin tests`/`Android compile`/`Python tests`/`Trace scan`）全绿，merge-tree guard **zero-action**（`tree(14088ed)==tree(5360004)==9049652f`）。**零 schema / 零迁移 / 零依赖**（schema 维持 v35、34 个 `.sqm`）；**零端口签名变更**；**未调批大小**。**不声称任何验收向量 PASS**：`ACC-D-PERF-01` 在 61k **维持 NOT MET**。
+
+**决定：**
+
+1. **交付对象与机制**：`ledger-data/src/commonMain/kotlin/com/unifiedledger/data/SqlDelightImportReviewReadAdapter.kt` 的 `loadImportReviewRows` 逐批折叠，由「`executeAsList()` → 整批 `.map { toColumns() }` 投影列表 → `.groupBy { candidate_id }` → 逐组折叠」改为**按候选连续段（run）单遍行走、逐段直接折叠为终对象**。目标（承 D-230 J1(b)）是消除投影列表与 groupBy map 与累积结果的**瞬时共存**。端口签名、`transactionWithResult(noEnclosing = true)` 事务边界、异常语义（G6：读失败→`Unavailable`，绝不返回部分结果）、`maxOf` 游标推进**均未改动**。
+
+2. **输出等价性（承重）**：run 顺序 = 候选升序 = 旧 `groupBy` 的键插入序；每组「首行」同为该候选在批内首行；折叠输入为**整个 run**（`run.first().toImportReviewRow(run)`），故 blocking-first 折叠取值不变。既有 `batchVsWholeLedgerFullEquivalence` 等 9 个用例零回归；新增 4 个用例（多重复组跨 1/2/3/4 批大小的整表等价、blocking-first 方向断言 `CONFIRMED_DUPLICATE`、查询前提「同候选行连续」与折叠端到端一致、默认批大小钉住）。
+
+3. **可见性变更（本批唯一的 API 面变化）**：`IMPORT_REVIEW_ROWS_PAGE_SIZE` 与构造参数 `pageSize` 由 `private` 放宽为 **`internal`**，理由是让测试能直接钉住**构造默认值**——否则只把默认值改成别的字面量，常量断言与默认构造的等价性断言**同时保持绿色**，会静默改变批数与 `BEGIN IMMEDIATE` 持有窗口（D-230 J7 的治理对象）。**模块外无消费者**（生产构造点 `App.kt:1263`、`Main.kt:939` 只用构造参数），`internal` 为模块内可见，改动纯加性。**变异测试证明承重**：把默认值改为 `5_000L` → 默认批大小用例 FAILED，还原后复绿。
+
+4. **量化主张的边界（诚实口径）**：本批**只声称结构性瞬时内存削减，不声称任何速度改善**。保留的宿主计时证据**未与候选源码绑定**（21/25 两份 XML 无源码态标记；32/41 绑定 `b2ddd34` 且带工作区测试字节），且 side-A 读数在多轮间漂移（约 3.57–3.68 s → 4.61–4.88 s → 5.89–6.34 s），差异落在噪声内。故**任何把本批引作性能改善的表述均不成立**；设备侧 ≤3 s 复测属后续独立设备证据批。
+
+5. **未触发的下游项（显式登记，不静默丢弃）**：批大小保持 **10,000 候选/批**，故批数与 `BEGIN IMMEDIATE` 持有窗口不变——**D-230 J7**（`ACC-D-CONN-01` 连接持有窗口仪器化）**未触发**、仍开放；**D-230 J8**（批大小调参效果）因未调参**未触发**、仍开放；两者一并顺延至后续独立设备证据批。**D-230 J4**（`DefaultDispatch` 内「读/映射 CPU vs GC 检查点 CPU」的精确拆分）仍开放。
+
+6. **审验拓扑（如实登记，含一次偏离）**：`autopilot` run `dwfrun-f072fd09`（基点 `c87d02f`；冻结锚点 A1–A9 mechanical + J1–J5 judgment）→ 计划冷审三项阻断（B1 锚点与本批 J1–J5 同 D-230 J1–J9 同名异义／B2 J7 未处置／B3 T1 与 T4 互斥），**全属批指令缺陷**，修后进入实施 → 候选 `b2ddd34` → **独立规格符合性评审 AWF** + **distinct verifier PASS** → **独立质量评审 agent 停滞**（约 68 分钟 token 计数不变、无工件、无 Gradle 进程）→ 主代理 `TaskStop` 该 run（阶段 6 已标记 done），**另派一名独立质量评审**（自 `f5a8959` 起评）给出 **AWF、`currentBatchBlockers` 空、1 项窄 FAIL**（构造默认值未被钉住）→ 主代理修复轮 `63f1e4f` + 文档漂移补充 `3c65f39` → **同一评审闭包复评：该项与两条 P3 全 CLOSED、零阻塞、无新缺陷**。**偏离说明**：停滞 agent 未产出任何结论，故其「第二份评审」由新派独立评审替代——这不是降低独立性，而是恢复独立性（原 agent 无产出）。**主代理亲自修复的内容**：钉住构造默认值（含变异测试）、收紧两处夸大措辞、补充可见性变更登记。**修复轮后未重跑规格评审**——修复仅涉及默认值断言、注释措辞与文档登记行，不改折叠逻辑、端口、事务与输出语义；该偏差如实登记。
+
+7. **CI 首轮红（主代理亲修）**：`Kotlin tests core` 因 **ktlint** 在新增测试的局部函数处报两处格式问题（`Expected a blank line for this declaration`／`First line of body expression fits on same line as function signature`）。ktlint 归 CI（本地未跑属预期）；以 `ktlintJvmTestSourceSetFormat` 机械修复后，`ktlintCheck` 与聚焦测试均绿，提交 `5360004`。
+
+8. **边界**：入：`SqlDelightImportReviewReadAdapter.kt`、`ImportReviewPagedReadEquivalenceTest.kt`、既有 OOM 修复规格的**最小指针行**（+1/−0，登记 §2.3/§2.4 为改造前形态、可见性变更与 J7/J8 顺延）。出：零 schema/迁移/依赖/清单、零 Golden/fixture；不改 `ImportReviewReadPort` 与任何 `.rows` 消费点；不改 D-168/D-169/D-170/D-171/D-175/D-230/D-231 的裁决与开放状态；不改 A-PERF approved 规格本体；不声称任何验收向量 PASS。
+
+**关联决定：** D-230（J1 机制方向与 J2 口径、J3 承接边界、J7/J8 归属——本条为其机制 (b) 的实施登记）、D-231（J4/J5 设备读数与 SQL/GC 上界——为本批方向选择的证据基础）、D-168（OOM 修复的冻结阈值与最小修订治理）、D-169（61k 可操作性缺陷登记与其 NOT MET 状态——本条不改）、D-171（宿主侧分量归因）、D-175（设备侧归因）、D-219（迁移批次清单；本批零 schema 故不适用）、阶段计划 §2 A-PERF 行与 §10.1/§10.3/§10.4.5。
