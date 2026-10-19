@@ -314,11 +314,12 @@ class ImportReviewPagedReadEquivalenceTest {
     @Test
     fun multiDuplicateGroupFoldsAcrossEveryPageBoundary() {
         // P704OOM-T-BATCH-01a (sub-item of BATCH-01): a duplicate-heavy library — six records of
-        // ONE business tuple, so the last candidate carries five duplicate rows whose page
-        // positions straddle every candidate boundary — read at pageSize = 1, 2, 3 and 4. Each
-        // run must equal the whole-ledger reference row for row, so a fold that lost or merged a
-        // group across a batch boundary (the failure this implementation change could introduce)
-        // fails here rather than in production.
+        // ONE business tuple, so the last candidate carries five duplicate rows — read at
+        // pageSize = 1, 2, 3 and 4. Each run must equal the whole-ledger reference row for row, so
+        // a fold that lost or merged a group fails here rather than in production. Note the bound:
+        // `LIMIT :page_size` counts CANDIDATES, so one candidate's duplicate rows can never be
+        // split across two batches; what these page sizes actually exercise is a multi-row run
+        // sitting on each batch boundary, not a split run.
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             LedgerDatabase.Schema.create(driver)
@@ -473,6 +474,17 @@ class ImportReviewPagedReadEquivalenceTest {
         // batch. Changing this constant is the one-line act that would trigger both D-230 J7 and
         // D-230 J8 — the assertion is here so that act cannot happen silently.
         assertEquals(10_000L, IMPORT_REVIEW_ROWS_PAGE_SIZE, "the frozen default page size must not be retuned in this batch")
+        // The DEFAULT must be pinned as well as the constant: changing `pageSize: Long =
+        // IMPORT_REVIEW_ROWS_PAGE_SIZE` to another literal would keep both the constant assertion
+        // and the default-constructed equivalence check below green, while silently changing the
+        // batch count and therefore the BEGIN IMMEDIATE hold window that D-230 J7 governs.
+        withMixedLibrary { database ->
+            assertEquals(
+                10_000L,
+                SqlDelightImportReviewReadAdapter(database).pageSize,
+                "the constructor default must remain the frozen 10,000-candidate batch size",
+            )
+        }
         // The default-constructed adapter must still be valid and equivalent: a default of 0 or a
         // negative value would be rejected by the pageSize >= 1 guard before any query.
         withMixedLibrary { database ->

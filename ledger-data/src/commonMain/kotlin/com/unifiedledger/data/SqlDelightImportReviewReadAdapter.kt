@@ -60,7 +60,11 @@ class SqlDelightImportReviewReadAdapter(
     private val database: LedgerDatabase,
     // P7-04 OOM fix: candidate-per-batch bound, injectable so tests exercise the multi-batch
     // path with a tiny page size. Long because SQLDelight types a LIMIT bind as INTEGER=Long.
-    private val pageSize: Long = IMPORT_REVIEW_ROWS_PAGE_SIZE,
+    // `internal` (not private) so a test can pin this DEFAULT as well as the constant: retuning
+    // only the default would otherwise pass both the constant assertion and the default-
+    // constructed equivalence check, silently changing the batch count (and therefore the
+    // BEGIN IMMEDIATE hold window that D-230 J7 governs).
+    internal val pageSize: Long = IMPORT_REVIEW_ROWS_PAGE_SIZE,
 ) : ImportReviewReadPort {
     override fun loadImportReviewRows(ledgerId: LedgerId): List<ImportReviewRow> {
         // pageSize <= 0 is rejected up front. 0 would make `batch.size < pageSize` false on an
@@ -113,8 +117,8 @@ class SqlDelightImportReviewReadAdapter(
                 // candidate_id and the candidate-boundary IN subquery admits candidates whole —
                 // so walking the batch once yields exactly the runs `groupBy { it.candidate_id }`
                 // produced, in the same key order, with the same first-row choice. The only extra
-                // structure is the current run (one candidate's rows, at most `max dup_count`
-                // projections), released when the run closes; the per-batch projection list and
+                // structure is the current run (one candidate's rows: its base row plus one
+                // projection per duplicate), released when the run closes; the per-batch projection list and
                 // the groupBy map no longer coexist with the accumulated result.
                 var index = 0
                 while (index < batch.size) {
