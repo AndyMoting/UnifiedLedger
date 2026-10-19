@@ -418,11 +418,11 @@ class ImportReviewPagedReadEquivalenceTest {
                 allRows.map { it.candidate_id }.sorted(),
                 "rows must already arrive in candidate order",
             )
+
             // The premise the run-walking fold depends on: each candidate's rows form ONE
             // unbroken run. Count run starts in the whole-ledger row order and require it to
             // equal the distinct-candidate count.
-            fun runStarts(ids: List<String>): Int =
-                ids.foldIndexed(0) { index, acc, id -> if (index == 0 || id != ids[index - 1]) acc + 1 else acc }
+            fun runStarts(ids: List<String>): Int = ids.foldIndexed(0) { index, acc, id -> if (index == 0 || id != ids[index - 1]) acc + 1 else acc }
             assertEquals(
                 distinctCandidates,
                 runStarts(allRows.map { it.candidate_id }),
