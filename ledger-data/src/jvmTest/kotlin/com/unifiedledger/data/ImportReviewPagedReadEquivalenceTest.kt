@@ -387,9 +387,13 @@ class ImportReviewPagedReadEquivalenceTest {
         // candidate's rows are ADJACENT in the batch — the old `groupBy { it.candidate_id }` was
         // indifferent to row spacing, so this premise is now load-bearing for fold correctness.
         // It holds because the query orders by candidate_id and the candidate-boundary IN
-        // subquery admits candidates whole (ACC-SORT-01, spec section 3 item 1). Pin the premise
-        // on the query itself across several page sizes: for EVERY candidate, its rows must form
-        // one unbroken run, and the number of runs must equal the number of distinct candidates.
+        // subquery admits candidates whole (ACC-SORT-01, spec section 3 item 1). This test asserts
+        // two things on this multi-row-per-candidate library: (1) the query premise itself — each
+        // candidate's rows form one unbroken run at several page sizes — and (2) that the
+        // adapter's fold still equals the whole-ledger reference, so the run merge dropping or
+        // splitting a group is caught here. The blocking-first fold DIRECTION is pinned by
+        // P704OOM-T-BATCH-01b instead (this fixture's duplicates are uniformly DEFERRED, so a
+        // direction change would not alter its output).
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             LedgerDatabase.Schema.create(driver)
@@ -436,13 +440,24 @@ class ImportReviewPagedReadEquivalenceTest {
                     if (batch.size.toLong() < pageSize) break
                     afterCandidateId = batch.maxOf { it.candidate_id }
                 }
-                val runs = pagedRows.fold(mutableListOf<String>()) { acc, id -> if (acc.lastOrNull() != id) acc.add(id); acc }
+                val runs = mutableListOf<String>()
+                for (id in pagedRows) {
+                    if (runs.lastOrNull() != id) runs.add(id)
+                }
                 assertEquals(
                     distinctCandidates,
                     runs.size,
                     "pageSize=$pageSize: each candidate's rows must be contiguous, so run count == candidate count",
                 )
                 assertEquals(runs, runs.distinct(), "pageSize=$pageSize: no candidate run may repeat after another candidate")
+                // End-to-end on the SAME fixture: the adapter's run-walking fold must reproduce the
+                // whole-ledger reference at every page size, so this test also goes red if the fold
+                // (not just the query premise) regresses on this multi-row-per-candidate library.
+                assertEquals(
+                    wholeLedgerReference(database),
+                    SqlDelightImportReviewReadAdapter(database, pageSize = pageSize).loadImportReviewRows(ledgerId),
+                    "pageSize=$pageSize: the adapter fold must equal the whole-ledger reference",
+                )
             }
         } finally {
             driver.close()
