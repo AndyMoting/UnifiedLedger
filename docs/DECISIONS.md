@@ -4969,3 +4969,32 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 10. **边界**：入：`app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503ImportReview.kt`、`.../P503ImportReviewPresentation.kt`、`app-ui/src/commonTest/kotlin/com/unifiedledger/ui/P503ImportReviewPresentationTest.kt` 与本条登记。出：零账务语义、候选分类、审核决定值、导入接治与持久状态变更；零 schema/迁移/依赖/清单/Golden；不改 D-146/D-156/D-164 等既有裁决；**不声称任何 P704 验收向量或 `ACC-D-PERF-01` 状态变化**。
 
 **关联决定：** D-146（P7-04 导入与草稿确认；其义务①「整组确认页逐项枚举呈现比较快照」是 R1 的直接依据）、D-164（整组处置流程的规模证据）、D-168/D-169/D-175（A-PERF 证据纪律与 61k 缺陷，本批的 `itemOrdinal` 残余归其后续批）、D-181（TalkBack 缺证接受延期的先例）、D-234（同会话前一批 61k 设备证据登记）、阶段计划 §2 A-VIS 行与 §10.1/§10.4.5。
+
+## D-236 P7-09 验收取证批登记：A09 判 PASS、A02 部分证据、分享接受路径受测试工具限制（计划 §9.3）
+
+**状态：** 已批准并登记（2026-10-20，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §9.3 的 P709-A01..A09 验收 + §10.1/§10.2 逐项登记纪律）。**零产品代码、零测试、零 schema/迁移、零依赖**（schema 维持 v35、34 个 `.sqm`）。证据全部在 ignored `local/artifacts/p709-accept/`。
+
+**决定：**
+
+1. **绑定**：AVD `ul_p7_d01`（serial `emulator-5680`，隔离 adb **5038**，API 36，**本会话自启**并经 `emu avd name` 核实）；APK = **当前 main 树 `d788f401…`** 的 CI 工件（run `39294296780`），sha256 `e7f41e7f…`。树绑定：`tree(d99e810) == tree(1390532) == d788f401`（merge-tree guard zero-action），故该 CI 运行覆盖当前 main。
+
+2. **P709-A09 判 PASS（JVM 维度）**：`./gradlew.bat :desktop-app:jvmTest --tests "*CompositionRoot*"` **exit 0**，9 个测试类 **32 tests / 0 failures / 0 errors / 0 skipped**，覆盖 `DesktopLedgerView`、`DesktopManualExpense/Income/Transfer`、`DesktopImportReview`、`DesktopImportBatchConfirmation`、`DesktopCatalog`、`DesktopBudget`、`DesktopP705` 各组合根。该向量的判据是「Android 新接口未破坏 common/desktop 装配、原确认规则不变」，属**逻辑腿**，JVM 证据即为其适用证据；计划 §10.1 明写「某维度确实不适用时说明理由，不强求每个纯逻辑用例都做设备测试」。**这是 P709 九向量中首个记 PASS 的一项。**
+
+3. **P709-A02 部分证据（不记 PASS）**：三个拒绝向量在设备上取得**零正式效果**证据——非 `content://`（`file://`）、无 stream、多流（`SEND_MULTIPLE`）三种投递方式下，应用均停在首页、无导入面出现，`import_candidate` 保持 **0**。但该向量的完整判据还包含「类型化拒绝**可见**」「流关闭」「known/unknown size 超 16 MiB」「超 10k 候选」「实际可读权限的正向半部」，本轮未覆盖，故只登记为部分证据。
+
+4. **分享接受路径无法用 `am` 取证——测试工具链限制，非产品缺陷（关键发现）**：以 `am start -a SEND --eu extra.STREAM content://media/external/file/<id> --grant-read-uri-permission`（含显式 `-f 0x1`、以及 `adb root` 后重试）投递合法 `content://` 分享，应用**始终停在首页**，`ULStartup` 中只有 `entry.activityCreate` 而**没有 `entry.inboundIntake`**。系统侧给出决定性证据：
+   - `E ContentProviderHelper: Unable to check Uri permission because caller is holding WM lock; assuming permission denied`
+   - `W Bundle: at com.android.server.uri.UriGrantsManagerService.enforceRequireContentUriPermissionFromCallerOnIntentExtraStreamUnlocked(...)`
+   即 **`am` 从 shell 派发带 `content://` 的 Intent 时，系统在 WM lock 下判定 permission denied**，读授权无法传递到目标应用；`adb root` 不改变该 Intent-grant 语义。因此 **A01**（同 `deliveryId` 只接治一次、同 URI 再分享产生新候选）、**A03**（编辑中分享的 Busy/保留/替换）、以及 **A02 的「实际可读权限」正向半部**都必须有**真实分享方 App**（自带 grant）才能观测。该限制与 A-03/V-17 的 TalkBack 环境限制同类：设备/工具边界，**不能据此判 PASS**。
+
+5. **仍未覆盖的平台腿（如实登记）**：**A04** 真实任务栈（分享方前台、本应用后台、launcher 动态/固定快捷方式、应用升级，需真机或人工长程）；**A05/A07** widget 实例级真实 RemoteViews 渲染与隐藏态载荷逐项断言（`cmd appwidget` 在本镜像无 bind 子命令，D-227 已登记）；**A06** 20k/50k 叠加下的后台刷新与恢复竞争、旧读晚到；**A08** 月界、设备时区/时钟调整、清除数据、恢复备份。
+
+6. **状态收口（禁止合并签收）**：`P709-A01..A09` 中**仅 A09 记 PASS**，A02 为**部分证据（缺证）**，其余七项**仍无证据**。P7-09 整体**不判通过**；本轮只是把 A09 从「无证据」推进到 PASS，并为 A02 增加三个拒绝向量的零写入证据。
+
+7. **后续取证的最低成本路径（登记，供后续批次复用）**：需要一个自带读授权的分享方——可行的自建方案是写一个最小的测试 APK，用 `Uri.parse("content://…")` 指向它自己的 `FileProvider` 并 `startActivity(Intent.createChooser/显式 component)`，从而让 grant 由真实发送方建立；或改用真机上的第三方文件管理器执行「分享到」。**不得**以 `am` 投递的失败当作产品缺陷，也不得据此改产品代码。
+
+8. **审验拓扑（如实登记，轻量相称）**：本批为**设备取证 + JVM 回归 + 登记**，无 tracked 代码或测试变更可供独立评审；按 goal 第 2 条「轻活与登记批可手工派发」由**主代理亲手**执行并记录。该处置是对高风险角色拓扑的有意不适用（无可评审候选实现），而非省略评审。
+
+9. **边界**：入：本条登记 + 四份正式状态文档的最小指针同步（另行 A-DOC 批）。出：零代码/测试/schema/迁移/依赖/清单/Golden；不改 D-225/D-226/D-227 的任何裁决与开放项；**不把 A01/A03/A04/A05/A06/A07/A08 并入 PASS**；不改 `ACC-D-PERF-01` 任何状态。
+
+**关联决定：** D-225（P7-09 系统入口设计门与 Q19/Q20 裁决）、D-226（09.B 图标快捷方式与第 4 类中立请求）、D-227（09.D 平台回归取证；其登记的设备限制与本轮 `am` grant 限制同类）、D-234/D-235（同会话前两批）、阶段计划 §9.3 与 §10.1/§10.2。
