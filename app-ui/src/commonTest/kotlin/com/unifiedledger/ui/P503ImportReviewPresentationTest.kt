@@ -400,12 +400,189 @@ class P503ImportReviewPresentationTest {
             )
         // 待处置 / 已标记 / 失败: the per-item copy mirrors the pre-lazy card's outcome lines.
         assertEquals("候选 candidate-dup-1", groupDispositionItemCandidateText(pending))
+        // A-VIS R1: the 整组确认页 defaults to expanded — the frozen 执行前逐条列出 duty lives on
+        // this surface, so the confirm action is never one tap away from an unexpanded payload.
+        // The candidate/outcome lines above and below are unaffected by the disclosure state.
         assertEquals("比较信息：{\"amount_minor\":3580}", groupDispositionItemComparisonText(pending))
+        assertEquals(
+            "比较信息（已折叠）：原文 21 个字符，展开后原样显示。",
+            groupDispositionItemComparisonText(pending, expanded = false),
+        )
         assertEquals("待处置", groupDispositionItemOutcomeText(pending))
         val reviewed = pending.copy(outcome = ImportDuplicateGroupItemResult.Reviewed(ImportDuplicateStatus.CONFIRMED_DUPLICATE))
         assertEquals("已标记：CONFIRMED_DUPLICATE", groupDispositionItemOutcomeText(reviewed))
         val rejected = pending.copy(outcome = ImportDuplicateGroupItemResult.Rejected("SPINE_DUPLICATE_NOT_PENDING"))
         assertEquals("失败（SPINE_DUPLICATE_NOT_PENDING）", groupDispositionItemOutcomeText(rejected))
+    }
+
+    // ---- A-VIS: narrow-screen comparison disclosure (J1–J4) ----
+
+    private fun comparisonItem(
+        duplicateCandidateId: String,
+        snapshot: String,
+    ): ImportDuplicateGroupItemState =
+        ImportDuplicateGroupItemState(
+            item =
+                ImportDuplicateGroupDispositionItem(
+                    candidateId = ImportCandidateId("candidate-$duplicateCandidateId"),
+                    duplicateCandidateId = ImportDuplicateCandidateId(duplicateCandidateId),
+                    comparisonSnapshot = snapshot,
+                    expectedComparisonFingerprint = "sha256:fixed-fingerprint",
+                ),
+        )
+
+    @Test
+    fun collapsedComparisonSummaryDisclosesTheExactHiddenSizeAndNeverLeaksTheRawPayload() {
+        // J2: the collapsed state must say exactly what it hides (character count), never a bare
+        // ellipsis, and must not render the raw JSON whose tokens break mid-word on 309dp. On the
+        // 整组确认页 collapse is opt-in (R1), so the state is asserted with the explicit flag.
+        val snapshot = "{\"possible_existing_source_id\":\"source-1\",\"subject_source_id\":\"source-2\",\"tuple\":{\"amount_minor\":3580,\"currency_code\":\"CNY\"}}"
+        val collapsed = groupDispositionItemComparisonText(comparisonItem("dup-1", snapshot), expanded = false)
+        assertEquals("比较信息（已折叠）：原文 ${snapshot.length} 个字符，展开后原样显示。", collapsed)
+        assertFalse(collapsed.contains(snapshot))
+        assertTrue(collapsed.contains("${snapshot.length} 个字符"))
+    }
+
+    @Test
+    fun groupCardComparisonDefaultsToExpandedWhileTheDetailFaceDefaultsToCollapsed() {
+        // R1: the two surfaces have DIFFERENT defaults by design, and this test covers the PRODUCTION
+        // wiring rather than a mere parameter default: both composables initialize their remember
+        // state from the named initial functions below. The frozen 执行前逐条列出 duty binds the
+        // 整组确认页 only, so that card renders the persisted snapshot verbatim by default; the
+        // candidate-detail face is a user-opened inspection surface with no such enumeration duty
+        // and starts folded through initialDetailExpandedRows() (its per-row flag starts false).
+        val snapshot = "{\"amount_minor\":3580}"
+        val item = comparisonItem("dup-1", snapshot)
+        assertEquals("比较信息：$snapshot", groupDispositionItemComparisonText(item))
+        assertEquals("比较信息：$snapshot", importComparisonSnapshotText(snapshot))
+        assertEquals("比较信息（已折叠）：原文 21 个字符，展开后原样显示。", importComparisonSnapshotText(snapshot, expanded = false))
+
+        // The production initial card state is fully expanded — including ids the card never saw.
+        val initialCardState = initialGroupComparisonExpansion()
+        assertTrue(initialCardState.isExpanded(ImportDuplicateCandidateId("dup-1")))
+        assertTrue(initialCardState.isExpanded(ImportDuplicateCandidateId("dup-unseen")))
+        val cardIds = listOf(ImportDuplicateCandidateId("dup-1"), ImportDuplicateCandidateId("dup-2"))
+        assertFalse(initialCardState.allCollapsed(cardIds))
+        // ... and the header's INITIAL text is therefore 收起全部比较信息 (the switch is the
+        // user's own density reduction), never 展开全部.
+        assertEquals("收起全部比较信息", groupDispositionComparisonBatchToggleText(initialCardState.allCollapsed(cardIds)))
+
+        // The production initial detail state expands nothing: the derived per-row flag is false.
+        val initialDetailRows = initialDetailExpandedRows()
+        assertTrue(initialDetailRows.isEmpty())
+        val detailRow = ImportDuplicateCandidateId("dup-1")
+        assertFalse(detailRow in initialDetailRows, "the detail face starts collapsed")
+        assertEquals(
+            "比较信息（已折叠）：原文 ${snapshot.length} 个字符，展开后原样显示。",
+            importComparisonSnapshotText(snapshot, detailRow in initialDetailRows),
+        )
+    }
+
+    @Test
+    fun expandedComparisonRendersThePersistedSnapshotVerbatimWithNoNormalization() {
+        // J2: no key dropping, no re-ordering, no truncation — expanded text is the prefix plus
+        // the persisted string byte-for-byte (the exact frozen P4-07 projection).
+        val snapshot = "{ \"b\" : 1,  \"a\":{\"z\":null}, \"tuple\":[] }"
+        val expanded = groupDispositionItemComparisonText(comparisonItem("dup-1", snapshot), expanded = true)
+        assertEquals("比较信息：$snapshot", expanded)
+        assertEquals("比较信息：".length + snapshot.length, expanded.length)
+        assertTrue(expanded.endsWith(snapshot))
+        // The 整组确认页 item and the candidate-detail row share the same disclosure rule, so the
+        // verbatim/normalization contract cannot drift between the two rendering surfaces.
+        assertEquals(importComparisonSnapshotText(snapshot, expanded = true), expanded)
+    }
+
+    @Test
+    fun everyDisclosureStateStillCarriesTheCandidateAndOutcomeLines() {
+        // J3: the disclosure only affects the comparison payload; candidate identity and the
+        // 待处置/已标记/失败 result never disappear and never depend on the expansion flag.
+        val pending = comparisonItem("dup-1", "{\"amount_minor\":3580}")
+        assertEquals("候选 candidate-dup-1", groupDispositionItemCandidateText(pending))
+        assertEquals("待处置", groupDispositionItemOutcomeText(pending))
+        val failed = pending.copy(outcome = ImportDuplicateGroupItemResult.Rejected("SPINE_DUPLICATE_NOT_PENDING"))
+        assertEquals("失败（SPINE_DUPLICATE_NOT_PENDING）", groupDispositionItemOutcomeText(failed))
+    }
+
+    @Test
+    fun perItemExpansionTogglesOnlyTheTargetedComparison() {
+        val first = ImportDuplicateCandidateId("dup-1")
+        val second = ImportDuplicateCandidateId("dup-2")
+        val initial = initialGroupComparisonExpansion()
+        // R1: the card starts fully expanded.
+        assertTrue(initial.isExpanded(first))
+        assertTrue(initial.isExpanded(second))
+
+        val afterFirst = initial.toggle(first)
+        assertFalse(afterFirst.isExpanded(first))
+        assertTrue(afterFirst.isExpanded(second))
+        assertTrue(initial.isExpanded(first), "toggle returns a new value, never mutates the old state")
+
+        val afterSecond = afterFirst.toggle(second)
+        assertFalse(afterSecond.isExpanded(first) || afterSecond.isExpanded(second))
+        assertTrue(afterSecond.toggle(first).isExpanded(first))
+        assertFalse(afterSecond.toggle(first).isExpanded(second))
+    }
+
+    @Test
+    fun batchToggleCollapsesEveryComparedItemThenRestoresTheExpandedDefault() {
+        // R1: the card-level switch now starts at 收起全部 (the card is expanded by default), and
+        // its single action is the user's own density reduction; toggling again restores the
+        // default full enumeration (the frozen duty stays one action away, never hidden).
+        val ids = listOf(ImportDuplicateCandidateId("dup-1"), ImportDuplicateCandidateId("dup-2"), ImportDuplicateCandidateId("dup-3"))
+        val expanded = initialGroupComparisonExpansion()
+        assertTrue(ids.all { expanded.isExpanded(it) })
+        assertFalse(expanded.allCollapsed(ids))
+        // An empty card is never reported as fully collapsed (no phantom switch state).
+        assertFalse(expanded.allCollapsed(emptyList()))
+        assertEquals("收起全部比较信息", groupDispositionComparisonBatchToggleText(expanded.allCollapsed(ids)))
+
+        val collapsed = expanded.batchToggle(ids)
+        assertTrue(collapsed.allCollapsed(ids))
+        assertTrue(ids.none { collapsed.isExpanded(it) })
+        assertEquals("展开全部比较信息", groupDispositionComparisonBatchToggleText(collapsed.allCollapsed(ids)))
+
+        // A partially collapsed card offers 收起全部, and the toggle then collapses the rest.
+        val partial = expanded.toggle(ids[1])
+        assertFalse(ids.all { partial.isExpanded(it) })
+        assertFalse(partial.allCollapsed(ids))
+        assertTrue(partial.batchToggle(ids).allCollapsed(ids))
+
+        val restored = collapsed.batchToggle(ids)
+        assertTrue(ids.all { restored.isExpanded(it) })
+        // The batch switch is a no-op on an empty card (no phantom collapse state).
+        assertEquals(expanded, expanded.batchToggle(emptyList()))
+    }
+
+    @Test
+    fun disclosureControlsCarryExplicitAccessibilityCopy() {
+        // J4: both the per-item and the card-level controls name their action and target, so a
+        // screen-reader user can reach the full comparison that is visually collapsed.
+        assertEquals("展开比较信息", groupDispositionItemComparisonToggleText(expanded = false))
+        assertEquals("收起比较信息", groupDispositionItemComparisonToggleText(expanded = true))
+        assertEquals(
+            "展开候选 candidate-dup-1 的第 1 条比较信息",
+            groupDispositionItemComparisonToggleDescription(expanded = false, candidateId = ImportCandidateId("candidate-dup-1"), itemOrdinal = 1),
+        )
+        assertEquals(
+            "收起候选 candidate-dup-1 的第 1 条比较信息",
+            groupDispositionItemComparisonToggleDescription(expanded = true, candidateId = ImportCandidateId("candidate-dup-1"), itemOrdinal = 1),
+        )
+        // R1: the card defaults to expanded, so the switch's initial action is 收起全部; the
+        // description names the action it will perform and the exact item count.
+        assertEquals(
+            "收起全部比较信息（共 3 条）",
+            groupDispositionComparisonBatchToggleDescription(collapsedAll = false, itemCount = 3),
+        )
+        assertEquals(
+            "展开全部比较信息（共 3 条）",
+            groupDispositionComparisonBatchToggleDescription(collapsedAll = true, itemCount = 3),
+        )
+        // The detail page's per-row control names the row ordinal (several duplicate rows can
+        // coexist on one candidate, so 该条 alone would be ambiguous for a screen reader).
+        assertEquals("展开第 2 条比较信息", importDuplicateReviewComparisonToggleDescription(expanded = false, itemOrdinal = 2))
+        assertEquals("收起第 2 条比较信息", importDuplicateReviewComparisonToggleDescription(expanded = true, itemOrdinal = 2))
+        assertEquals("展开该条比较信息", importDuplicateReviewComparisonToggleText(expanded = false))
+        assertEquals("收起该条比较信息", importDuplicateReviewComparisonToggleText(expanded = true))
     }
 
     // ---- possibly-existing source facts copy (P704C-SPEC-04; spec section 4.5.4) ----
