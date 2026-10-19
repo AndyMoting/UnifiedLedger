@@ -1,6 +1,7 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.ImportCandidateId
+import com.unifiedledger.application.ImportDuplicateCandidateId
 import com.unifiedledger.application.ImportDuplicateCandidateKind
 import com.unifiedledger.application.ImportDuplicateReviewRow
 import com.unifiedledger.application.ImportDuplicateReviewsResult
@@ -601,8 +602,139 @@ internal fun groupDispositionCardFooterCloseText(): String = "关闭"
 /** The subject-candidate copy of one flattened card item. */
 internal fun groupDispositionItemCandidateText(state: ImportDuplicateGroupItemState): String = "候选 ${state.item.candidateId.value}"
 
-/** The privacy-safe comparison-snapshot copy of one flattened card item. */
-internal fun groupDispositionItemComparisonText(state: ImportDuplicateGroupItemState): String = "比较信息：${state.item.comparisonSnapshot}"
+// ------------------------------------------------------------------ comparison disclosure (A-VIS)
+
+/**
+ * A-VIS (J1–J4, R1): the disclosure state of the comparison snapshots inside one open 整组确认页
+ * card. The card defaults to **all comparisons expanded** — the frozen 执行前逐条列出 duty
+ * (PRODUCT_REQUIREMENTS:79, spec:181, D-146 obligation ①) applies to this surface, so the
+ * confirm-whole-group action is never one tap away from an unexpanded payload. The card-level
+ * [batchToggle] is therefore the user's own density reduction (收起 all, then 展开 all again),
+ * never a system default that hides anything. Pure, immutable session state: no persistence, no
+ * accounting semantics, and the collapsed payload is never a truncation of the persisted string.
+ *
+ * State is the set of explicitly collapsed items; the empty set means "everything expanded" and
+ * is also the default for rows the card has not seen.
+ */
+internal data class ImportComparisonExpansion(
+    private val collapsed: Set<ImportDuplicateCandidateId> = emptySet(),
+) {
+    fun isExpanded(duplicateCandidateId: ImportDuplicateCandidateId): Boolean = duplicateCandidateId !in collapsed
+
+    /** Returns a new state with exactly one item flipped (the original is never mutated). */
+    fun toggle(duplicateCandidateId: ImportDuplicateCandidateId): ImportComparisonExpansion =
+        ImportComparisonExpansion(
+            if (duplicateCandidateId in collapsed) collapsed - duplicateCandidateId else collapsed + duplicateCandidateId,
+        )
+
+    /** True iff the card has at least one item and every one of them is explicitly collapsed. */
+    fun allCollapsed(duplicateCandidateIds: List<ImportDuplicateCandidateId>): Boolean = duplicateCandidateIds.isNotEmpty() && duplicateCandidateIds.all { it in collapsed }
+
+    /**
+     * The card-level switch: when every listed item is already collapsed it clears the collapsed
+     * set (back to the default 全展开); otherwise it collapses every listed item. An empty card is
+     * a no-op (never a phantom 展开 state).
+     */
+    fun batchToggle(duplicateCandidateIds: List<ImportDuplicateCandidateId>): ImportComparisonExpansion =
+        if (allCollapsed(duplicateCandidateIds)) {
+            ImportComparisonExpansion(collapsed - duplicateCandidateIds.toSet())
+        } else {
+            ImportComparisonExpansion(collapsed + duplicateCandidateIds)
+        }
+}
+
+/**
+ * The production initial disclosure state of the 整组确认页 card (A-VIS R1): fully expanded. The
+ * composable calls this function — not a bare constructor — so the frozen 执行前逐条列出 default
+ * is one named, JVM-testable product decision rather than an incidental parameter default.
+ */
+internal fun initialGroupComparisonExpansion(): ImportComparisonExpansion = ImportComparisonExpansion()
+
+/**
+ * The production initial expansion set of the candidate-detail face (A-VIS R1): empty, i.e. every
+ * duplicate row's comparison starts collapsed. Independent of [initialGroupComparisonExpansion]
+ * by design: the detail face has no 逐条枚举 duty and is the narrow-screen dense surface.
+ */
+internal fun initialDetailExpandedRows(): Set<ImportDuplicateCandidateId> = emptySet()
+
+/**
+ * The privacy-safe comparison-snapshot copy of one flattened card item. A-VIS (J1/J2, R1): the
+ * 整组确认页 defaults to EXPANDED (the frozen 执行前逐条列出 duty lives on this surface), and the
+ * collapsed line discloses the EXACT hidden size instead of a bare ellipsis, so nothing is
+ * silently dropped. The count is the Kotlin `String.length` UTF-16 code-unit count while the copy
+ * says 个字符; the frozen P4-07 comparison snapshots are ASCII, so the two are equal in practice.
+ * Expanded renders the persisted `comparisonSnapshot` verbatim: no normalization, no key
+ * dropping, no truncation. This is presentation only; the candidate/outcome lines and the
+ * confirm action never depend on it.
+ */
+internal fun groupDispositionItemComparisonText(
+    state: ImportDuplicateGroupItemState,
+    expanded: Boolean = true,
+): String = importComparisonSnapshotText(state.item.comparisonSnapshot, expanded)
+
+/**
+ * A-VIS (J2): the one comparison-disclosure rendering rule shared by the 整组确认页 items and the
+ * candidate-detail duplicate rows. Expanded = the persisted snapshot verbatim; collapsed = the
+ * exact hidden length (UTF-16 code units; the frozen P4-07 snapshots are ASCII, so this equals
+ * the character count), never an elided payload. The default is expanded because the 整组确认页
+ * relies on it; the detail face derives its own per-row flag from
+ * [initialDetailExpandedRows] (initially collapsed) and passes it explicitly. Pure, so both
+ * surfaces are asserted against the same verbatim/normalization contract.
+ */
+internal fun importComparisonSnapshotText(
+    snapshot: String,
+    expanded: Boolean = true,
+): String =
+    if (expanded) {
+        "比较信息：$snapshot"
+    } else {
+        "比较信息（已折叠）：原文 ${snapshot.length} 个字符，展开后原样显示。"
+    }
+
+/** The detail page's comparison disclosure label (A-VIS J4; one repeat row at a time). */
+internal fun importDuplicateReviewComparisonToggleText(expanded: Boolean): String = if (expanded) "收起该条比较信息" else "展开该条比较信息"
+
+/**
+ * The detail page's comparison disclosure `contentDescription` (A-VIS J4): names the action and
+ * the 1-based row ordinal, so a screen-reader user with several duplicate rows knows which
+ * collapsed payload the control reveals.
+ */
+internal fun importDuplicateReviewComparisonToggleDescription(
+    expanded: Boolean,
+    itemOrdinal: Int,
+): String = if (expanded) "收起第 $itemOrdinal 条比较信息" else "展开第 $itemOrdinal 条比较信息"
+
+/** The visible label of one item's comparison disclosure control (J4). */
+internal fun groupDispositionItemComparisonToggleText(expanded: Boolean): String = if (expanded) "收起比较信息" else "展开比较信息"
+
+/**
+ * The `contentDescription` of one item's comparison disclosure control (J4): names the acted-on
+ * candidate and the 1-based ordinal of the comparison inside the open card, because one subject
+ * candidate can contribute several duplicate rows to the same card.
+ */
+internal fun groupDispositionItemComparisonToggleDescription(
+    expanded: Boolean,
+    candidateId: ImportCandidateId,
+    itemOrdinal: Int,
+): String =
+    if (expanded) {
+        "收起候选 ${candidateId.value} 的第 $itemOrdinal 条比较信息"
+    } else {
+        "展开候选 ${candidateId.value} 的第 $itemOrdinal 条比较信息"
+    }
+
+/**
+ * The visible label of the card-level switch (J1, R1). The parameter names the CURRENT state
+ * (whether every comparison is collapsed), not the action: the card defaults to expanded, so the
+ * initial label is 收起全部比较信息 and the switch is a user-initiated density reduction.
+ */
+internal fun groupDispositionComparisonBatchToggleText(collapsedAll: Boolean): String = if (collapsedAll) "展开全部比较信息" else "收起全部比较信息"
+
+/** The `contentDescription` of the card-level switch: names the action and the item count (J4). */
+internal fun groupDispositionComparisonBatchToggleDescription(
+    collapsedAll: Boolean,
+    itemCount: Int,
+): String = if (collapsedAll) "展开全部比较信息（共 $itemCount 条）" else "收起全部比较信息（共 $itemCount 条）"
 
 /** The per-item outcome copy of one flattened card item (待处置 / 已标记 / 失败, frozen verbatim). */
 internal fun groupDispositionItemOutcomeText(state: ImportDuplicateGroupItemState): String =

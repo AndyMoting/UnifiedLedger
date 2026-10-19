@@ -1,7 +1,10 @@
 package com.unifiedledger.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,6 +25,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
@@ -370,6 +377,21 @@ internal fun P503ImportScreen(
     onRequestBatchConfirm: () -> Unit,
     onCheckUnknownItem: (ImportCandidateId) -> Unit,
 ) {
+    // A-VIS (J1/J4, R1): the 整组确认页 card defaults to fully expanded — the frozen duty
+    // (执行前逐条列出比较信息) binds this surface — and one card-level switch lets the user
+    // collapse them all as a density reduction. Closing the card (inputRef becomes null) or a new
+    // pick session handle resets it; re-enumerating the group under the SAME handle keeps the
+    // user's chosen collapse state. The initial value comes from
+    // [initialGroupComparisonExpansion] so the production default is itself assertable. Pure
+    // presentation state: no reducer event, no persistence, no accounting semantics.
+    val openGroupInputRef = view?.groupDisposition?.inputRef
+    var comparisonExpansion by remember(openGroupInputRef) { mutableStateOf(initialGroupComparisonExpansion()) }
+    val groupDuplicateCandidateIds =
+        view
+            ?.groupDisposition
+            ?.items
+            ?.map { it.item.duplicateCandidateId }
+            .orEmpty()
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(16.dp),
     ) {
@@ -380,6 +402,10 @@ internal fun P503ImportScreen(
         ) { item ->
             ImportReviewOverviewItem(
                 item = item,
+                groupDuplicateCandidateIds = groupDuplicateCandidateIds,
+                comparisonExpansion = comparisonExpansion,
+                onToggleItemComparison = { duplicateCandidateId -> comparisonExpansion = comparisonExpansion.toggle(duplicateCandidateId) },
+                onToggleAllComparisons = { comparisonExpansion = comparisonExpansion.batchToggle(groupDuplicateCandidateIds) },
                 onRefresh = onRefresh,
                 onStartFilePick = onStartFilePick,
                 onSelectCandidate = onSelectCandidate,
@@ -405,6 +431,10 @@ internal fun P503ImportScreen(
 @Composable
 private fun ImportReviewOverviewItem(
     item: ImportReviewRenderItem,
+    groupDuplicateCandidateIds: List<ImportDuplicateCandidateId>,
+    comparisonExpansion: ImportComparisonExpansion,
+    onToggleItemComparison: (ImportDuplicateCandidateId) -> Unit,
+    onToggleAllComparisons: () -> Unit,
     onRefresh: () -> Unit,
     onStartFilePick: (ImportFormatId) -> Unit,
     onSelectCandidate: (ImportCandidateId) -> Unit,
@@ -513,18 +543,55 @@ private fun ImportReviewOverviewItem(
                     groupDispositionCardHeaderSessionText(item.inputRef),
                     style = MaterialTheme.typography.bodySmall,
                 )
+                // A-VIS (J1, R1): the 整组确认页 defaults to fully expanded (the frozen 执行前逐条
+                // 列出 duty lives here); this switch is the user's own density reduction — 收起
+                // all, then 展开 all again — never a system default that hides the payload.
+                val collapsedAll = comparisonExpansion.allCollapsed(groupDuplicateCandidateIds)
+                TextButton(
+                    onClick = onToggleAllComparisons,
+                    modifier =
+                        Modifier.semantics {
+                            contentDescription =
+                                groupDispositionComparisonBatchToggleDescription(
+                                    collapsedAll = collapsedAll,
+                                    itemCount = item.itemCount,
+                                )
+                        },
+                ) {
+                    Text(groupDispositionComparisonBatchToggleText(collapsedAll))
+                }
             }
         }
         is ImportReviewRenderItem.GroupDispositionItem -> {
+            // A-VIS (J3): candidate identity and the 待处置/已标记/失败 outcome are unconditional —
+            // only the comparison payload discloses.
+            val expanded = comparisonExpansion.isExpanded(item.state.item.duplicateCandidateId)
+            val itemOrdinal = groupDuplicateCandidateIds.indexOf(item.state.item.duplicateCandidateId) + 1
             Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                 Text(
                     groupDispositionItemCandidateText(item.state),
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    groupDispositionItemComparisonText(item.state),
+                    groupDispositionItemComparisonText(item.state, expanded),
                     style = MaterialTheme.typography.bodySmall,
                 )
+                // J4: a dedicated, described control so the collapsed payload is reachable by
+                // assistive technology (expanding renders it verbatim, never merely truncated).
+                TextButton(
+                    onClick = { onToggleItemComparison(item.state.item.duplicateCandidateId) },
+                    modifier =
+                        Modifier.semantics {
+                            contentDescription =
+                                groupDispositionItemComparisonToggleDescription(
+                                    expanded = expanded,
+                                    candidateId = item.state.item.candidateId,
+                                    itemOrdinal = itemOrdinal,
+                                )
+                        },
+                ) {
+                    Text(groupDispositionItemComparisonToggleText(expanded))
+                }
                 Text(
                     groupDispositionItemOutcomeText(item.state),
                     style = MaterialTheme.typography.bodySmall,
@@ -919,11 +986,18 @@ private fun ImportDecisionFormSection(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ImportDuplicateReviewSection(
     state: P503AppState.ImportCandidateDetail,
     onSubmitDuplicateReview: (ImportDuplicateReviewUiDecision) -> Unit,
 ) {
+    // A-VIS (J1/J2/J4, R1): the candidate-detail face is a user-opened single-candidate inspection
+    // surface — the frozen 执行前逐条列出 duty binds the 整组确认页 only — so each duplicate row's
+    // comparison payload starts COLLAPSED here. The initial set comes from
+    // [initialDetailExpandedRows] (empty = nothing expanded), deliberately independent of
+    // [initialGroupComparisonExpansion]; expanding renders the persisted snapshot verbatim.
+    var expandedReviewRows by remember(state.detail) { mutableStateOf(initialDetailExpandedRows()) }
     when (val duplicates = state.duplicates) {
         ImportDuplicateReviewsResult.NoDuplicates -> Text("无重复候选。", style = MaterialTheme.typography.bodyMedium)
         ImportDuplicateReviewsResult.Absent -> Text("该候选不存在或不在当前账本。", color = MaterialTheme.colorScheme.error)
@@ -932,14 +1006,37 @@ private fun ImportDuplicateReviewSection(
         is ImportDuplicateReviewsResult.Reviews -> {
             Text("重复比较", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(4.dp))
-            duplicates.reviews.forEach { reviewRow ->
+            duplicates.reviews.forEachIndexed { reviewIndex, reviewRow ->
+                val rowExpanded = reviewRow.duplicateCandidateId in expandedReviewRows
                 Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                     Text("类型：${reviewRow.kind}", style = MaterialTheme.typography.bodySmall)
                     Text("最新状态：${reviewRow.latestStatus.name}", style = MaterialTheme.typography.bodySmall)
                     Text(
-                        "比较信息：${reviewRow.comparisonSnapshot}",
+                        importComparisonSnapshotText(reviewRow.comparisonSnapshot, rowExpanded),
                         style = MaterialTheme.typography.bodySmall,
                     )
+                    // J4: the disclosure control carries an explicit description so the full
+                    // comparison stays reachable for assistive technology while collapsed.
+                    TextButton(
+                        onClick = {
+                            expandedReviewRows =
+                                if (rowExpanded) {
+                                    expandedReviewRows - reviewRow.duplicateCandidateId
+                                } else {
+                                    expandedReviewRows + reviewRow.duplicateCandidateId
+                                }
+                        },
+                        modifier =
+                            Modifier.semantics {
+                                contentDescription =
+                                    importDuplicateReviewComparisonToggleDescription(
+                                        expanded = rowExpanded,
+                                        itemOrdinal = reviewIndex + 1,
+                                    )
+                            },
+                    ) {
+                        Text(importDuplicateReviewComparisonToggleText(rowExpanded))
+                    }
                     // P704C-SPEC-04 (spec 4.5.4): the possibly-existing source facts projection —
                     // exact amounts, privacy-safe tokens, and the explicit no-target copy for a
                     // CLOSED_OR_FAILED_NO_FUNDS row.
@@ -961,15 +1058,20 @@ private fun ImportDuplicateReviewSection(
                     Text("审核提交中……", style = MaterialTheme.typography.bodyMedium)
                 } else {
                     Text("人工处置（三值）", style = MaterialTheme.typography.titleSmall)
-                    Row {
+                    // A-VIS (J5): a wrap layout keeps each button at its intrinsic size — on a
+                    // narrow screen the row wraps instead of squeezing 略过相似 into vertical
+                    // characters. Same three decisions and the same callbacks, no new dependency
+                    // (Compose foundation 1.12.0 ships FlowRow).
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
                         Button(onClick = { onSubmitDuplicateReview(ImportDuplicateReviewUiDecision.CONFIRMED_DUPLICATE) }) {
                             Text("确认重复")
                         }
-                        Spacer(Modifier.width(8.dp))
                         OutlinedButton(onClick = { onSubmitDuplicateReview(ImportDuplicateReviewUiDecision.CONFIRMED_DISTINCT) }) {
                             Text("不是重复")
                         }
-                        Spacer(Modifier.width(8.dp))
                         OutlinedButton(onClick = { onSubmitDuplicateReview(ImportDuplicateReviewUiDecision.DISMISSED_LOOKALIKE) }) {
                             Text("略过相似")
                         }
