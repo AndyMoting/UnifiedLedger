@@ -4931,3 +4931,41 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 10. **边界**：入：本条登记 + 四份正式状态文档的最小指针同步（另行 A-DOC 批）。出：零代码/测试/schema/迁移/依赖/清单/Golden；不改 D-168/D-169/D-170/D-171/D-175/D-230/D-231/D-232 的任何裁决与开放状态；不改 A-PERF approved 规格本体；不声称任何验收向量 PASS；`ACC-D-20K-01` 的 B6 与 20k 对照库仍未测；模拟器绝对值不代表真机。
 
 **关联决定：** D-230（J2 口径、J4/J5/J7/J8 归属与 J1 机制族边界）、D-231（当前基线前一次设备重测与 J4 归因，本批为其机制 (b) 后的对照）、D-232（机制 (b) 实施登记——本批为其首个设备读数，且**不改变**其「不声称速度改善」的边界：本批测量的是该实施之后的现象，非该批的量化主张）、D-168（OOM 修复冻结阈值）、D-169（`ACC-D-PERF-01` 登记与 NOT MET 状态）、D-171/D-175（宿主侧与设备侧归因）、阶段计划 §2 A-PERF 行、§3、§10.1/§10.3/§10.4.5。
+
+## D-235 A-VIS 重复比较快照窄屏可读性批实施登记（计划 §2 A-VIS 行；零 schema/零依赖）
+
+**状态：** 已批准并交付（2026-10-19，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §2 **A-VIS** 行「重复比较快照窄屏可读性，低优先级」+ 用户明确批准的扩展范围「原范围 + 窄屏三值审核按钮换行」）。**PR #101 已合并 `82c6886`**，13 项 checks 全绿（含四项 required）、merge-tree guard **zero-action**（`tree(82c6886) == tree(5ffbd68) == ada67acb`）。**3 文件 +419/−8**；**零 schema/迁移/依赖**（schema 维持 v35、34 个 `.sqm`；`app-ui/build.gradle.kts` 未改）。
+
+**决定：**
+
+1. **基线缺陷（设备实测，基线 `8970c65`）**：比较信息以原始 JSON 平铺渲染，单条快照约 382 字符。实测占用随宽度递减——411dp ≈6 行（已出现 `"tupl e"` 类断词）、360dp ≈7 行、**309dp ≈14 行且断词严重**；同时三值审核按钮 `确认重复 / 不是重复 / 略过相似` 在 309dp 下被压缩为**逐字竖排**（「略过相似」占 4 行）。后者超出计划字面、经用户批准纳入本批。
+
+2. **R1 裁决（主代理作出，理由是冻结权威的适用范围）——两个呈现面的默认态必须不同**：
+   - **整组确认页：默认全展开。** 依据 `docs/PRODUCT_REQUIREMENTS.md:79`「对同一次导入中判定为疑似重复且尚未处置的条目，系统提供整组标记为重复的便捷操作，并在**执行前逐条列出**各条目的比较信息供核对」、`docs/specs/2026-09-14-p7-04-import-draft-confirmation-design.md:181`「**整组确认页**逐项枚举并展示隐私安全比较快照…供人工核验」、`docs/DECISIONS.md:2753`（D-146 义务①）「整组确认页…逐项枚举 `comparisonSnapshot` **原样呈现**」。默认折叠会让用户不经展开即可点「确认整组标记」，**等于削弱冻结的审核义务**；卡片级开关因此改为「收起全部比较信息 → 展开全部比较信息」，是用户主动降低密度而非系统代用户隐藏。
+   - **候选详情页：默认折叠。** 该面是用户主动打开的单候选检视面，上述三处权威均**不约束**它；而它正是 309dp 下 14 行渲染的主要受害者。用独立的逐行状态，**不复用**卡片默认值。
+   - **该裁决的审验依据**：独立评审的 `COLD-AVIS-B4` 指出「参数默认值 ≠ 产品默认态」——生产调用点均显式传值，故仅断言默认参数不能证明 R1。修复轮引入具名初始函数 `initialGroupComparisonExpansion()` / `initialDetailExpandedRows()` 并让两处 `remember { mutableStateOf(...) }` 真实调用它们，使**生产接线本身**可被 JVM 测试观测（`AVIS-R-02` 由此 CLOSED）。
+
+3. **信息完整性约束**：展开态**逐字原样**拼接持久化的 `comparisonSnapshot`（不 trim、不截断、不重排、不丢键）；折叠态披露**精确隐藏长度**（「原文 N 个字符」，N 为 Kotlin `String.length` 即 UTF-16 码元；P4-07 冻结快照为 ASCII 故两者相等），**不是裸省略号**。逐项审核义务零弱化：候选 ID 与 `待处置 / 已标记 / 失败` 无条件渲染，组确认动作在任何展开状态下可用。
+
+4. **无障碍**：两类展开控件均带明确 `contentDescription`——组卡片内为「收起/展开候选 `<candidateId>` 的第 `N` 条比较信息」（含候选 ID 与 1-based 序号），详情页为「收起/展开第 `N` 条比较信息」。折叠时完整比较信息仍可经展开动作被辅助技术取得。
+
+5. **三值按钮换行**：`Row` → `FlowRow`（`androidx.compose.foundation.layout.FlowRow`，Compose 1.12.0 现有依赖，**零新 artifact**），`Arrangement.spacedBy` 保持按钮固有尺寸；三个决策值与回调逐字未变（`CONFIRMED_DUPLICATE` / `CONFIRMED_DISTINCT` / `DISMISSED_LOOKALIKE`）。
+
+6. **设备复测（309dp，AVD `ul_p7_d01`/API 36，隔离 adb 5038，本会话自启；APK = 本批本地构建 sha256 `03caacb0…`，dex 内已核含新增符号）**：
+   - **详情页**：折叠文案「比较信息（已折叠）：原文 382 个字符，展开后原样显示。」；`content-desc="展开第 1 条比较信息"`；展开后 382 字符 JSON 完整逐字呈现；**14 行 → 2 行**；三值按钮正常换行、不再竖排。
+   - **整组确认页**：逐项渲染「收起比较信息」（= 当前已展开，**直接证明 R1 默认全展开**）并同屏渲染完整 JSON，`已折叠` 零出现；逐项 `content-desc` 含候选 ID 与 1-based 序号；`待处置` 与比较信息并列；页脚「确认整组标记」「关闭」均可用。
+   - 证据：`local/artifacts/p704-61k-device2/`（`avis-post-detail.xml`、`avis-post-expanded.png`、`avis-post-narrow-detail.png`、`GROUP-CARD-narrow-card.xml`、`AVIS-REPORT.md`）。
+
+7. **审验拓扑（如实登记，含两次偏离）**：`autopilot` run `dwfrun-bf0900c6` **首跑即零写中止**（mechanical 锚点的 `check` 我误传为字符串命令，脚本要求结构化对象 `{method,pattern,glob}`）→ 修正后重派 `dwfrun-789cd37f`，锚点门通过、进入任务书冷审，但**冷审 agent 停滞 22 分钟且 token 计数完全冻结** → 主代理 `TaskStop` 并**改走手工高风险拓扑**（worktree `UL-avis-worktree`，分支 `UL-avis`）：单 writer → 独立评审 **REJECT**（2 阻断）→ 修复轮 → **闭包复评全部 CLOSED、`currentBatchBlockers` 空**；distinct verifier **V1–V10 全部 VERIFIED**。**偏离说明**：① workflow 停滞属运行时停顿，非脚本缺陷，故未 amend 重跑；② 第二轮修复期间主代理执行 `git stash` 与 writer 并行、导致其改动一度丢失，writer 已按最终版本完整重建，主代理复核当前磁盘内容为最终态。
+
+8. **主代理亲手订正（如实登记）**：评审指出我把 `GROUP-CARD-narrow.xml` 当作组卡片证据，但该文件实际是**候选列表尾部**的 dump（`收起比较信息`/`确认整组标记` 各 0 命中）；真正的卡片证据是同批抓取的 `kk1.xml`。已把误名文件改名为 `listing-tail-narrow.xml`、把 `kk1.xml` 复制为 `GROUP-CARD-narrow-card.xml` 并更新报告指针。**教训**：证据落盘后必须机械核对文件名与内容是否一致（grep 关键文案），不能凭抓取顺序推断。
+
+9. **残余（登记，不阻断）**：
+   - **卡片头部批量开关的设备语义树未观测**——卡片含 13 项，窄屏下头部未稳定落入可见窗口（约 40 次滚动/翻转尝试）；其文案与 `contentDescription` 纯函数有 JVM 断言，且最坏情形只是要求用户逐项收起，**不违反「全部比较信息仍可访问」**（默认本就全展开）。未观测项明确为：头部标签、其 `contentDescription`、批量折叠/展开的实际效果。
+   - **TalkBack 实际朗读**沿 A-03 / D-181 先例披露为环境限制（headless AVD 不产出 speech 日志），以语义树替代。
+   - `itemOrdinal` 用 `indexOf(...) + 1`（每可见行 O(n)，id 列表每次重组重建），登记归 **A-PERF**；评审确认为非阻断（LazyColumn 仅组合窗口，id 为短字符串）。
+   - 详情面默认折叠与 `spec:171`（§3.3.1 矩阵措辞「显示隐私安全比较快照」）存在措辞张力；R1 已裁决该面无逐条枚举义务，登记为残余。
+
+10. **边界**：入：`app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503ImportReview.kt`、`.../P503ImportReviewPresentation.kt`、`app-ui/src/commonTest/kotlin/com/unifiedledger/ui/P503ImportReviewPresentationTest.kt` 与本条登记。出：零账务语义、候选分类、审核决定值、导入接治与持久状态变更；零 schema/迁移/依赖/清单/Golden；不改 D-146/D-156/D-164 等既有裁决；**不声称任何 P704 验收向量或 `ACC-D-PERF-01` 状态变化**。
+
+**关联决定：** D-146（P7-04 导入与草稿确认；其义务①「整组确认页逐项枚举呈现比较快照」是 R1 的直接依据）、D-164（整组处置流程的规模证据）、D-168/D-169/D-175（A-PERF 证据纪律与 61k 缺陷，本批的 `itemOrdinal` 残余归其后续批）、D-181（TalkBack 缺证接受延期的先例）、D-234（同会话前一批 61k 设备证据登记）、阶段计划 §2 A-VIS 行与 §10.1/§10.4.5。
