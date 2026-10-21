@@ -3,6 +3,7 @@ package com.unifiedledger.domain
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 /**
  * P7-01 pure catalog lifecycle evidence (spec sections 4.6 / 6.1 / 6.3). Every transition is a
@@ -57,6 +58,63 @@ class CatalogLifecycleTest {
             failure(normalizeCatalogName("x".repeat(CATALOG_MAX_NAME_CODE_POINTS + 1))),
         )
         assertIs<DomainResult.Success<String>>(normalizeCatalogName("x".repeat(CATALOG_MAX_NAME_CODE_POINTS)))
+    }
+
+    @Test
+    fun normalizationCountsSupplementaryPlaneNamesByCodePointsNotUtf16Units() {
+        // Spec section 2.3: 64 astral code points are 128 UTF-16 units and must still be accepted.
+        val sixtyFourAstral = "\uD83D\uDE00".repeat(CATALOG_MAX_NAME_CODE_POINTS)
+        // Discriminating control (in-test, zero product writes): the raw length is strictly greater
+        // than the limit, so an implementation that counted `String.length` would reject this input.
+        // The Success below is therefore only reachable through code-point counting.
+        assertEquals(128, sixtyFourAstral.length)
+        assertTrue(sixtyFourAstral.length > CATALOG_MAX_NAME_CODE_POINTS)
+        assertEquals(DomainResult.Success(sixtyFourAstral), normalizeCatalogName(sixtyFourAstral))
+        assertEquals(
+            CatalogViolation.CatalogNameTooLong,
+            failure(normalizeCatalogName("\uD83D\uDE00".repeat(CATALOG_MAX_NAME_CODE_POINTS + 1))),
+        )
+    }
+
+    @Test
+    fun normalizationFoldsAndTrimsIdeographicSpacesBeforeCountingCodePoints() {
+        // Mixed U+0020/U+3000 runs collapse to a single ASCII space.
+        assertEquals(DomainResult.Success("a b"), normalizeCatalogName("a \u3000 \u3000 b"))
+        // A U+3000-only name is empty, not a name made of spaces.
+        assertEquals(CatalogViolation.CatalogNameEmpty, failure(normalizeCatalogName("\u3000\u3000")))
+        // Leading and trailing U+3000 are trimmed away, so a 74-code-point input is accepted as 64.
+        val padded = "\u3000".repeat(5) + "x".repeat(CATALOG_MAX_NAME_CODE_POINTS) + "\u3000".repeat(5)
+        assertEquals(74, padded.length)
+        assertEquals(DomainResult.Success("x".repeat(CATALOG_MAX_NAME_CODE_POINTS)), normalizeCatalogName(padded))
+        // The limit applies AFTER collapsing: 64 code points containing one U+3000 stay accepted
+        // (the folded ASCII space is itself a code point), while 65 code points are rejected.
+        assertEquals(
+            DomainResult.Success("x".repeat(31) + " " + "x".repeat(32)),
+            normalizeCatalogName("x".repeat(31) + "\u3000" + "x".repeat(32)),
+        )
+        assertEquals(
+            CatalogViolation.CatalogNameTooLong,
+            failure(normalizeCatalogName("x".repeat(32) + "\u3000" + "x".repeat(32))),
+        )
+    }
+
+    @Test
+    fun normalizationRejectsExactlyTheControlRangesAndSparesU0020AndU00A0() {
+        listOf("\u0000", "\u001F", "\u007F", "\u009F").forEach { control ->
+            assertEquals(
+                CatalogViolation.CatalogNameInvalid,
+                failure(normalizeCatalogName("a${control}b")),
+                control,
+            )
+        }
+        // The boundaries just outside the rejected ranges: U+0020 is collapsible whitespace, and
+        // U+00A0 is neither a control code point nor collapsible, so it survives as a literal.
+        assertEquals(DomainResult.Success("a b"), normalizeCatalogName("a\u0020b"))
+        assertEquals(DomainResult.Success("a\u00A0b"), normalizeCatalogName("a\u00A0b"))
+        // Layer mapping: the same rejection surfaces as the item-level token above the domain one.
+        assertIs<CatalogItemViolation.CatalogNameTooLong>(
+            failure(createCatalogItem(CatalogItemKind.TAG, emptyList(), ledgerId, "tag-1", "\uD83D\uDE00".repeat(CATALOG_MAX_NAME_CODE_POINTS + 1))),
+        )
     }
 
     @Test
