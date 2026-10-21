@@ -193,9 +193,10 @@ class SqlDelightTagMerchantCatalogStoreTest {
                 0L,
                 queryLong(driver, "SELECT count(*) FROM transaction_effective_state WHERE ledger_id = 'ledger-tm' AND is_effective = 1"),
             )
-            // The ablation itself, executed: the effective-filtered twin of `catalogReferencedTagIds`
-            // observes ZERO rows for tag-1 at this instant. This is the executable control that the
-            // readings above only describe — the reference probe must NOT be this query.
+            // The discriminating control, executed: the effective-filtered twin of
+            // `catalogReferencedTagIds` observes ZERO rows for tag-1 at this instant. This is the
+            // executable control that the readings above only describe — the reference probe must
+            // NOT be this query.
             assertEquals(
                 0L,
                 queryLong(

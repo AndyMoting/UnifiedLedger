@@ -248,7 +248,7 @@ class CatalogNameNormalizationPropertyTest {
     }
 
     // ---------------------------------------------------------------------------------------
-    // Independent reference implementation (no production helper is called).
+    // Reference model (written here; the production helpers are private and are not called).
     // ---------------------------------------------------------------------------------------
 
     private fun referenceOutcome(raw: String): DomainResult<String> {
