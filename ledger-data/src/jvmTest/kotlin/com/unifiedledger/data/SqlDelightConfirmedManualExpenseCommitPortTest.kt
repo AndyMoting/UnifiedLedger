@@ -991,8 +991,9 @@ private fun snapshotOf(
  * Opens [snapshot] as the restored database, through the same `sqliteProperties()` (foreign_keys ON)
  * path [FileDatabase.open] uses, so the restored harness is configured exactly like a live one.
  */
-private fun openRestored(snapshot: java.nio.file.Path): DatabaseHarness =
-    DatabaseHarness(JdbcSqliteDriver("jdbc:sqlite:${snapshot.absolutePathString()}", sqliteProperties()))
+private fun openRestored(snapshot: java.nio.file.Path): DatabaseHarness = DatabaseHarness(
+    JdbcSqliteDriver("jdbc:sqlite:${snapshot.absolutePathString()}", sqliteProperties()),
+)
 
 private fun DatabaseHarness.Companion.fileBacked(): FileDatabase = FileDatabase.create()
 
