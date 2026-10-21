@@ -2,15 +2,25 @@ package com.unifiedledger.data
 
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import com.unifiedledger.application.BudgetCommandResult
+import com.unifiedledger.application.BudgetIdSource
+import com.unifiedledger.application.BudgetRequestId
+import com.unifiedledger.application.BudgetRequestIdSource
+import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.SaveBudgetConfiguration
 import com.unifiedledger.data.db.LedgerDatabase
+import com.unifiedledger.domain.BudgetId
+import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionId
+import kotlinx.datetime.YearMonth
 import java.io.File
 import java.nio.file.Files
 import kotlin.io.path.absolutePathString
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.time.Instant
 
 /**
  * P7-08 08.D A04/A08 restore round-trip evidence (spec sections 4.3/6.1; plan :181 P706-A01
@@ -22,10 +32,14 @@ import kotlin.test.assertIs
  *
  * The supply chain is the real one (BackupSnapshotDriverTest.kt:27 precedent): a seeded library
  * (catalog command receipt + multi-revision annotation history with its current pointer + a manual
- * expense request row carrying the annotation columns) is copied out with `VACUUM INTO`, read back
+ * expense request row carrying the annotation columns + a three-revision budget chain — two limit
+ * revisions plus a CLOSED one — written through the real claim-first command port) is copied out
+ * with `VACUUM INTO`, read back
  * through the isolated-strict-migration path, and compared TABLE BY TABLE, VALUE BY VALUE — every
- * 08.A owner table (the 11 tables D-218 §3 froze), the four `manual_*_request` annotation columns
- * and the receipt tables. Three legs:
+ * 08.A owner table (the 11 tables D-218 §3 froze), the four `manual_*_request` annotation columns,
+ * the receipt tables and the four 07.B budget tables. The budget leg supplies the "预算配置历史"
+ * owner half of P706-A11 ("最终 schema 含预算配置历史及标签/商家注释历史…所有新增 owner 往返"); it
+ * registers no vector PASS. Three legs:
  *
  *  - (a) v35 direct: the snapshot's authoritative version equals the current schema
  *    (`needsMigration == false`) and the read-back is value-identical;
@@ -33,6 +47,14 @@ import kotlin.test.assertIs
  *    legacy rows (the frozen "no annotation" default) and every other owner row is value-identical;
  *  - (c) v33 → v35 (the full chain through `33.sqm` + `34.sqm`): the pre-v34 rows survive
  *    value-for-value and the 11 08.A tables land EMPTY (zero backfill).
+ *
+ * Budget tables exist from v33 onward (`32.sqm` is the v32 → v33 edge and neither `33.sqm` nor
+ * `34.sqm` touches them), so every leg carries a seeded budget chain and compares it value-for-value.
+ * Asserting them EMPTY on the v33 leg would be an "empty vs empty" vacuous claim, not evidence. The
+ * seeded chain ends CLOSED so both legal `budget_settings_history` row shapes (MONITORED with a
+ * non-null limit, CLOSED with NULL) are covered; a CATEGORY-scope budget is deliberately NOT seeded
+ * because it needs a bootstrapped `catalog_category` FK target the v33 fixture does not have — that
+ * remains a registered residual.
  *
  * Contract honesty (R-221-3 precedent): the v34/v33 fixtures are reverse-engineered from the fresh
  * schema (DROP COLUMN / DROP TABLE), so the legs prove the `columnInfo` contract and VALUE
@@ -70,6 +92,22 @@ class P708RestoreRoundtripEquivalenceTest {
         listOf("ledger_transaction", "transaction_version", "posting", "ledger_transaction_current_version")
 
     /**
+     * The 07.B budget owner tables (P706-A11's "预算配置历史" half). `32.sqm` creates them on the
+     * v32 → v33 edge, so they exist on EVERY leg seeded here; the restore must carry the whole
+     * chain — config row, claim-first request, immutable settings history and receipt.
+     */
+    private val budgetOwnerTables =
+        listOf(
+            "budget_config",
+            "budget_command_request",
+            "budget_settings_history",
+            "budget_command_receipt",
+        )
+
+    /** The stable budget identity the seeded chain binds: two limit revisions then a CLOSED one. */
+    private val budgetId = BudgetId("budget-roundtrip")
+
+    /**
      * The manual_*_request columns shared by v34 and v35 shapes: the value comparison across the
      * `34.sqm` edge projects onto these (the edge ADDS the two annotation columns, so a `SELECT *`
      * would compare different column counts — the annotation columns are asserted NULL separately).
@@ -90,7 +128,11 @@ class P708RestoreRoundtripEquivalenceTest {
             // Leg (a): the snapshot is already at the current schema — nothing to migrate.
             JdbcSqliteDriver("jdbc:sqlite:${snapshot.path}").use { snapshotDriver ->
                 assertEquals(LedgerDatabase.Schema.version, readAuthoritativeUserVersionOn(snapshotDriver))
-                assertValueIdentical(source.path, snapshot.path, annotationOwnerTables + manualRequestTables + listOf("confirmed_expense_receipt"))
+                assertValueIdentical(
+                    source.path,
+                    snapshot.path,
+                    annotationOwnerTables + manualRequestTables + budgetOwnerTables + listOf("confirmed_expense_receipt"),
+                )
                 // The 08.D read path returns the whole history off the restored snapshot.
                 val database = LedgerDatabase(snapshotDriver)
                 val history =
@@ -101,6 +143,18 @@ class P708RestoreRoundtripEquivalenceTest {
                 assertEquals(listOf("tag-a"), history[0].tagIds.map { it.value })
                 assertEquals("merchant-1", history[0].merchantId?.value)
                 assertEquals(0, history[1].tagIds.size)
+                // P706-A11's "预算配置历史" half: the restored snapshot must return the IMMUTABLE
+                // revision chain, not merely the current config row. Revision 1's superseded limit
+                // and the CLOSED revision's NULL limit surviving next to the current revision is
+                // what proves the history crossed the roundtrip. Both legal row shapes of
+                // budget_settings_history are covered (spec section 3.3: MONITORED carries a
+                // non-null limit, CLOSED carries NULL — close appends, it never deletes).
+                val settings =
+                    SqlDelightBudgetStore(database, snapshotDriver)
+                        .settingsHistory(LedgerId(ledgerId), budgetId)
+                assertEquals(listOf(1L, 2L, 3L), settings.map { it.revisionNumber })
+                assertEquals(listOf(false, false, true), settings.map { it.closed })
+                assertEquals(listOf(100_000L, 150_000L, null), settings.map { it.limitMinorUnits })
             }
         } finally {
             dir.deleteRecursively()
@@ -123,8 +177,9 @@ class P708RestoreRoundtripEquivalenceTest {
                 assertEquals(LedgerDatabase.Schema.version, migrated.targetVersion)
                 // Every owner row survives value-for-value; the manual_expense_request legacy
                 // row's annotation columns are NULL == the frozen "no annotation" default
-                // (D-221 R2) and the three unseeded manual tables stay empty.
-                assertValueIdentical(source.path, snapshot.path, annotationOwnerTables)
+                // (D-221 R2) and the three unseeded manual tables stay empty. `34.sqm` does not
+                // touch the budget tables, so the seeded chain crosses this edge value-for-value.
+                assertValueIdentical(source.path, snapshot.path, annotationOwnerTables + budgetOwnerTables)
                 assertValueIdentical(
                     source.path,
                     snapshot.path,
@@ -167,14 +222,44 @@ class P708RestoreRoundtripEquivalenceTest {
                             assertEquals(columnInfo(freshDriver, table), columnInfo(isolated, table), "$table fresh-vs-migrated columnInfo drift")
                             assertEquals(0L, countOn(isolated, "SELECT count(*) FROM $table"), table)
                         }
+                        // The budget tables are NOT part of the zero-backfill claim: `32.sqm`
+                        // created them on the v32 -> v33 edge and neither later edge touches
+                        // them, so a v33 file ALREADY carries the seeded chain. Asserting them
+                        // empty here would be an "empty vs empty" vacuous claim; the VALUES are
+                        // compared below. Note the shape check below is a DRIFT GUARD only: the
+                        // fixture builds these tables from the fresh schema (no edge re-creates
+                        // them), unlike the 11 annotation tables that `33.sqm` really creates.
+                        budgetOwnerTables.forEach { table ->
+                            assertEquals(columnInfo(freshDriver, table), columnInfo(isolated, table), "$table fresh-vs-migrated columnInfo drift")
+                        }
                     }
                 } finally {
                     Files.deleteIfExists(fresh)
                 }
                 // The pre-v34 owner rows survive value-for-value through the whole chain (the
                 // manual claim row projected onto its v33 columns — the edge added the two
-                // annotation columns).
-                assertValueIdentical(source.path, snapshot.path, preV34SurvivorTables)
+                // annotation columns). The budget chain was already present at v33 and must
+                // cross the untouched edges unchanged.
+                assertValueIdentical(source.path, snapshot.path, preV34SurvivorTables + budgetOwnerTables)
+                // Non-vacuity guard for the budget leg: all three revisions really are on the
+                // migrated copy, so the comparison above compares data rather than two empty
+                // results. `commitOnce` writes exactly one receipt per ACCEPTED command — three
+                // here (two limit revisions plus the close) — so the receipt count is 3 too.
+                assertEquals(
+                    3L,
+                    countOn(isolated, "SELECT count(*) FROM budget_settings_history"),
+                    "the seeded three-revision budget history must survive the chain",
+                )
+                assertEquals(
+                    1L,
+                    countOn(isolated, "SELECT count(*) FROM budget_settings_history WHERE status = 'CLOSED' AND limit_minor IS NULL"),
+                    "the CLOSED NULL-limit row shape must survive the chain",
+                )
+                assertEquals(
+                    3L,
+                    countOn(isolated, "SELECT count(*) FROM budget_command_receipt"),
+                    "the budget receipts must survive the chain",
+                )
                 assertValueIdentical(source.path, snapshot.path, listOf("manual_expense_request")) { commonManualExpenseColumns }
             }
         } finally {
@@ -204,7 +289,7 @@ class P708RestoreRoundtripEquivalenceTest {
             // is NOT asserted: the sentinel tamper above is a deliberate write to this copy.
             JdbcSqliteDriver("jdbc:sqlite:${snapshot.path}").use { reopened ->
                 assertEquals(34L, readAuthoritativeUserVersionOn(reopened))
-                assertValueIdentical(source.path, snapshot.path, annotationOwnerTables)
+                assertValueIdentical(source.path, snapshot.path, annotationOwnerTables + budgetOwnerTables)
                 assertValueIdentical(source.path, snapshot.path, manualRequestTables) { table ->
                     if (table == "manual_expense_request") commonManualExpenseColumns else null
                 }
@@ -229,8 +314,11 @@ class P708RestoreRoundtripEquivalenceTest {
 
     /**
      * Seeds one anonymous library at [stage]: a manual expense chain + its claim row and receipt
-     * (with the annotation columns at v35 only), and — at v34/v35 — the tag catalog with its
-     * command receipt plus a two-revision annotation history with its current pointer.
+     * (with the annotation columns at v35 only), the tag catalog with its command receipt plus a
+     * two-revision annotation history with its current pointer (at v34/v35 only), and — at EVERY
+     * stage — a three-revision budget chain (two limit revisions plus a CLOSED revision) through the
+     * real claim-first command port (see [seedBudgetChain]); `32.sqm` created the budget tables on
+     * the v32 -> v33 edge.
      */
     private fun seedCurrentLibrary(
         url: String,
@@ -353,7 +441,54 @@ class P708RestoreRoundtripEquivalenceTest {
                 )
                 database.ledgerQueries.insertTransactionAnnotationCommandReceipt(ledgerId, "annot-request-2", "ACCEPTED", "tx-annotated", 2L)
             }
+
+            // Every leg carries a real budget chain: `32.sqm` is the v32 -> v33 edge, so a file
+            // stamped 33 (Stage.V33) already contains the four budget tables, and neither `33.sqm`
+            // nor `34.sqm` touches them. Writing the chain here (rather than only at V35) is what
+            // makes the v33/v34 comparisons evidence of survival instead of empty-vs-empty.
+            seedBudgetChain(database, driver)
         }
+    }
+
+    /**
+     * Writes one TOTAL budget through the REAL claim-first command chain ([SaveBudgetConfiguration]
+     * over [SqlDelightBudgetStore]), so the request rows, the immutable settings history and the
+     * receipts are all produced by the production guards rather than hand-inserted: a hand-written
+     * row could not prove the roundtrip carries a legal chain. Three revisions: two MONITORED
+     * limits then a CLOSED revision, so BOTH legal row shapes of `budget_settings_history`
+     * (MONITORED with a non-null limit, CLOSED with NULL) cross the snapshot.
+     *
+     * Three DIFFERENT request ids are used because the claim identity is `(ledgerId, requestId)`: a
+     * shared id makes the later command an identity conflict, not the next revision.
+     */
+    private fun seedBudgetChain(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
+        fun command(requestId: String): SaveBudgetConfiguration =
+            SaveBudgetConfiguration(
+                commitPort = SqlDelightBudgetStore(database, driver),
+                requestIdSource = BudgetRequestIdSource { BudgetRequestId(requestId) },
+                budgetIdSource = BudgetIdSource { budgetId },
+                catalogReader = SqlDelightCatalogStore(database, driver),
+                clock = LedgerClock { Instant.parse("2026-03-05T02:00:00Z") },
+            )
+
+        val march = YearMonth(2026, 3)
+        assertIs<BudgetCommandResult.Accepted>(
+            command("budget-request-1")
+                .setLimit(LedgerId(ledgerId), march, BudgetScope.Total, 100_000L, expectedRevision = 0L),
+        )
+        assertIs<BudgetCommandResult.Accepted>(
+            command("budget-request-2")
+                .setLimit(LedgerId(ledgerId), march, BudgetScope.Total, 150_000L, expectedRevision = 1L),
+        )
+        // Close appends a CLOSED NULL-limit revision and keeps the whole history (spec section 3.3);
+        // without it the restore evidence would only ever see the MONITORED row shape.
+        assertIs<BudgetCommandResult.Accepted>(
+            command("budget-request-3")
+                .close(LedgerId(ledgerId), march, BudgetScope.Total, expectedRevision = 2L),
+        )
     }
 
     private fun stageVersion(stage: Stage): Long =
@@ -365,7 +500,11 @@ class P708RestoreRoundtripEquivalenceTest {
 
     // ------------------------------------------------------------------ equivalence probes
 
-    /** Reads EVERY row of [table] on both files and compares them as values ([projection] defaults to all columns). */
+    /**
+     * Reads EVERY row of [table] on both files and compares them as values ([projection] defaults to
+     * all columns). Row order comes from [deterministicOrder] — per table, because the four budget
+     * tables need a key-based order rather than `rowid`.
+     */
     private fun assertValueIdentical(
         sourcePath: String,
         snapshotPath: String,
@@ -374,12 +513,43 @@ class P708RestoreRoundtripEquivalenceTest {
     ) {
         tables.forEach { table ->
             val columns = projection(table) ?: "*"
-            assertEquals(rowsOf(sourcePath, table, columns), rowsOf(snapshotPath, table, columns), "$table round-trip drift")
+            assertEquals(
+                rowsOf(sourcePath, table, columns, deterministicOrder(table)),
+                rowsOf(snapshotPath, table, columns, deterministicOrder(table)),
+                "$table round-trip drift",
+            )
         }
     }
 
     /**
-     * All rows of [table] (rowid order), the projected columns as stored values; NULL stays NULL.
+     * Deterministic row order per table.
+     *
+     * `rowid` is NOT a contract for row order: `VACUUM` may renumber implicit rowids, so an
+     * `ORDER BY rowid` comparison is not guaranteed by the format. It is stable in practice here
+     * only because `VACUUM` copies rows in rowid order, which is why the snapshot this class takes
+     * with `VACUUM INTO` currently reads back in the same order.
+     *
+     * The 11 08.A annotation tables and the manual/receipt tables therefore KEEP `ORDER BY rowid`
+     * deliberately: their value assertions were already proven under that order and this batch must
+     * not perturb them.
+     *
+     * The four budget tables instead order by their declared TEXT COMPOSITE primary key, because
+     * that key IS a contract: it fully determines the order of these rows, unlike an implicit
+     * rowid. They are new comparisons with no prior evidence to preserve, so the stronger ordering
+     * costs nothing. Ordering by the full primary key is stable across VACUUM and across the
+     * copy/migrate path.
+     */
+    private fun deterministicOrder(table: String): String =
+        when (table) {
+            "budget_config" -> "ledger_id, budget_id"
+            "budget_command_request" -> "ledger_id, request_id"
+            "budget_settings_history" -> "ledger_id, budget_id, revision_number"
+            "budget_command_receipt" -> "ledger_id, request_id"
+            else -> "rowid"
+        }
+
+    /**
+     * All rows of [table] ([order] clause), the projected columns as stored values; NULL stays NULL.
      * The JDBC access rides the same `JdbcSqliteDriver` the rest of the module uses (a bare
      * `DriverManager.getConnection` has no registered sqlite driver in this JVM).
      */
@@ -387,11 +557,12 @@ class P708RestoreRoundtripEquivalenceTest {
         path: String,
         table: String,
         columns: String,
+        order: String,
     ): List<List<String?>> {
         val driver = JdbcSqliteDriver("jdbc:sqlite:$path")
         return try {
             driver.getConnection().createStatement().use { statement ->
-                statement.executeQuery("SELECT $columns FROM $table ORDER BY rowid").use { rows ->
+                statement.executeQuery("SELECT $columns FROM $table ORDER BY $order").use { rows ->
                     buildList {
                         while (rows.next()) {
                             add((1..rows.metaData.columnCount).map { column -> rows.getString(column) })
