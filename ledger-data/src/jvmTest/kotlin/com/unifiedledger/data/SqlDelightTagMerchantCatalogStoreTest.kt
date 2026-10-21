@@ -170,6 +170,66 @@ class SqlDelightTagMerchantCatalogStoreTest {
     }
 
     @Test
+    fun aReferenceOnAVoidedTransactionStillBlocksTheTombstoneDeleteThroughTheRealStoreProbe() {
+        withStore { harness, _, driver ->
+            assertIs<TagMerchantCommandResult.Accepted>(
+                harness.realProbeExecutor("c").createItem(ledgerId, CatalogItemKind.TAG, "咖啡", 0L),
+            )
+            // The spec 2.2 reference surface must not depend on the effective predicate: an
+            // annotation that lives on a VOIDED transaction is still a reference.
+            seedAnnotationReferencing(driver, "tag-1")
+            voidTheReferencedTransaction(driver)
+            // (a) premise: the transaction really is voided on the single effective surface.
+            assertEquals(
+                0L,
+                queryLong(driver, "SELECT is_effective FROM transaction_effective_state WHERE transaction_id = 'tx-ref'"),
+            )
+            // Discriminating control (in-test, zero product writes): at this instant the effective
+            // surface for the ledger is EMPTY, yet the reference probe below still reports the
+            // association. The two readings are the discriminator: if anyone added an
+            // `is_effective = 1` filter to the probe SQL, the `hasReferences` assertion (b) and the
+            // rejection (c) turn RED while this count and the effective-filtered twin stay green.
+            assertEquals(
+                0L,
+                queryLong(driver, "SELECT count(*) FROM transaction_effective_state WHERE ledger_id = 'ledger-tm' AND is_effective = 1"),
+            )
+            // The ablation itself, executed: the effective-filtered twin of `catalogReferencedTagIds`
+            // observes ZERO rows for tag-1 at this instant. This is the executable control that the
+            // readings above only describe — the reference probe must NOT be this query.
+            assertEquals(
+                0L,
+                queryLong(
+                    driver,
+                    "SELECT count(*) FROM transaction_annotation_tag AS association " +
+                        "JOIN transaction_effective_state AS effective " +
+                        "ON effective.ledger_id = association.ledger_id AND effective.transaction_id = association.transaction_id " +
+                        "WHERE association.ledger_id = 'ledger-tm' AND association.tag_id = 'tag-1' AND effective.is_effective = 1",
+                ),
+            )
+            // (b) the store's own probe counts the association on the voided transaction.
+            assertTrue(harness.store.hasReferences(ledgerId, CatalogItemKind.TAG, "tag-1"))
+            // (c) the real probe path (never the `forceReferences` stub) rejects the delete.
+            val rejected =
+                assertIs<TagMerchantCommandResult.Rejected>(
+                    harness.realProbeExecutor("del-voided").deleteItem(ledgerId, CatalogItemKind.TAG, "tag-1", expectedRevision = 1L),
+                )
+            assertEquals(TagMerchantFailureCode.TAG_MERCHANT_HAS_REFERENCES, rejected.failureCode)
+            // (d) the rejection is fail-closed: zero formal catalog effect.
+            assertEquals(0L, queryLong(driver, "SELECT tombstoned FROM catalog_tag WHERE tag_id = 'tag-1'"))
+            // (e) non-vacuity: through the SAME real probe an unreferenced second tag still deletes.
+            harness.nextId = "tag-2"
+            assertIs<TagMerchantCommandResult.Accepted>(
+                harness.realProbeExecutor("c2").createItem(ledgerId, CatalogItemKind.TAG, "茶", 0L),
+            )
+            assertTrue(!harness.store.hasReferences(ledgerId, CatalogItemKind.TAG, "tag-2"))
+            assertIs<TagMerchantCommandResult.Accepted>(
+                harness.realProbeExecutor("del-unreferenced").deleteItem(ledgerId, CatalogItemKind.TAG, "tag-2", expectedRevision = 1L),
+            )
+            assertEquals(1L, queryLong(driver, "SELECT count(*) FROM catalog_tag WHERE tag_id = 'tag-2' AND tombstoned = 1"))
+        }
+    }
+
+    @Test
     fun aStateWriteAgainstAVanishedRowReportsZeroChangedRows() {
         withStore { _, _, driver ->
             // The catalog has no physical delete path, so the store's row-count guard is defensive;
@@ -266,6 +326,29 @@ class SqlDelightTagMerchantCatalogStoreTest {
         )
         driver.execute(null, "INSERT INTO transaction_annotation_tag(ledger_id, transaction_id, annotation_revision, tag_id) VALUES ('$ledger', 'tx-ref', 1, '$tagId')", 0)
         driver.execute(null, "INSERT INTO transaction_annotation_current(ledger_id, transaction_id, annotation_revision) VALUES ('$ledger', 'tx-ref', 1)", 0)
+    }
+
+    /**
+     * Voids the transaction seeded by [seedAnnotationReferencing] by writing the REAL request +
+     * fact rows (never a stub), mirroring the raw-insert order of `P705Harness.insertRawVoidFact`.
+     * A single `void` fact at sequence 1 satisfies both the sequence guard (next = max + 1) and the
+     * alternation guard (the first fact must be a void, depth is capped at 2), and it is the last
+     * fact, so the effective predicate flips the transaction to is_effective = 0.
+     */
+    private fun voidTheReferencedTransaction(driver: JdbcSqliteDriver) {
+        val ledger = ledgerId.value
+        driver.execute(
+            null,
+            "INSERT INTO transaction_void_request(ledger_id, request_id, transaction_id, fact_kind, reason_code, reason_note, confirmation_marker) " +
+                "VALUES ('$ledger', 'void-ref-req', 'tx-ref', 'void', 'other', NULL, 'explicit_manual_save')",
+            0,
+        )
+        driver.execute(
+            null,
+            "INSERT INTO transaction_void_fact(ledger_id, transaction_id, sequence, fact_id, fact_kind, reason_code, reason_note, request_id, confirmation_id, created_at) " +
+                "VALUES ('$ledger', 'tx-ref', 1, 'void-ref-fact', 'void', 'other', NULL, 'void-ref-req', 'void-ref-confirmation', '2026-01-03T00:00:00Z')",
+            0,
+        )
     }
 
     private fun changedRows(
