@@ -1,15 +1,16 @@
 """Surface the recorded scale readings from JUnit XML into the job summary.
 
 The P7-07/P7-08 scale tests (P707BudgetScaleTest, TagMerchantFilterScaleTest)
-record their measurements by printing lines under a stable prefix. Gradle only
-writes that text into the JUnit XML when the test task enables per-case output
-(`reports.junitXml.outputPerTestCase`, set in tools/ci/ci-parallel.init.gradle.kts);
-without it the readings exist only in a console CI neither prints nor archives.
+record their measurements by printing lines under a stable prefix. Gradle writes
+those lines into the suite-level <system-out> of the JUnit XML, which is
+neither displayed in CI nor archived, so a delivered reading becomes unreadable
+as soon as the job ends. This script copies exactly the prefixed lines into the
+GitHub Actions job summary, so a recorded figure can be cited later without
+re-running a 20k/50k fixture build.
 
-This script copies exactly the prefixed lines into the GitHub Actions job
-summary, so a recorded figure can be cited later without re-running a 20k/50k
-fixture build. It reads <system-out> at both the testcase and the suite level,
-because the two report shapes differ in where they place it.
+Gradle attaches the text to the <testsuite>, not to each <testcase>; both
+positions are read so a future report-shape change cannot silently reintroduce
+the gap.
 
 Report-only: it never changes a check result, and a run that printed nothing is
 not an error (the 20k-only shards legitimately print nothing).
@@ -47,7 +48,7 @@ def prefixed_lines(system_out: str, prefixes: tuple[str, ...]) -> list[str]:
 
 
 def collect(root: str, prefixes: tuple[str, ...]) -> list[tuple[str, str, list[str]]]:
-    """(owner, testcase name, lines) for every case that printed a reading."""
+    """(owner, suite or case name, lines) for every site that printed a reading."""
     rows = []
     pattern = os.path.join(root, "**", "build", "test-results", "**", "TEST-*.xml")
     for path in sorted(glob.glob(pattern, recursive=True)):
@@ -56,17 +57,16 @@ def collect(root: str, prefixes: tuple[str, ...]) -> list[tuple[str, str, list[s
         except ET.ParseError as failure:
             print(f"warning: unparsable {path}: {failure}", file=sys.stderr)
             continue
+        root_element = tree.getroot()
         owner = class_of(root, path)
-        for case in tree.iter("testcase"):
-            system_out = case.findtext("system-out") or ""
-            lines = prefixed_lines(system_out, prefixes)
-            if lines:
-                rows.append((owner, case.get("name") or "?", lines))
-        # Some report shapes put the case's output on the suite instead.
-        suite_out = tree.getroot().findtext("system-out") or ""
+        suite_out = root_element.findtext("system-out") or ""
         suite_lines = prefixed_lines(suite_out, prefixes)
         if suite_lines:
-            rows.append((owner, "(suite)", suite_lines))
+            rows.append((owner, root_element.get("name") or "(suite)", suite_lines))
+        for case in root_element.iter("testcase"):
+            case_lines = prefixed_lines(case.findtext("system-out") or "", prefixes)
+            if case_lines:
+                rows.append((owner, case.get("name") or "?", case_lines))
     return rows
 
 
@@ -85,15 +85,10 @@ def main() -> int:
         print("no recorded scale reading found in any JUnit XML (not an error)")
         return 0
 
-    out = []
-    out.append("## Recorded scale readings")
-    out.append("")
+    out = ["## Recorded scale readings", ""]
     out.append("Values are recorded, never threshold-asserted. JVM heap figures are JVM-heap-only.")
     for owner, name, lines in rows:
-        out.append("")
-        out.append(f"### {owner} — {name}")
-        out.append("")
-        out.append("```")
+        out.extend(["", f"### {owner} — {name}", "", "```"])
         out.extend(lines)
         out.append("```")
 

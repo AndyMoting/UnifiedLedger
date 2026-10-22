@@ -14,16 +14,9 @@
 // "> Task :ledger-data:jvmTest FROM-CACHE" and finished an entire shard in 42 s. The
 // required check must mean "these tests ran and passed now", so only compile and
 // analysis tasks may be served from the cache.
-//
-// stdout/stderr is attached to each test case's JUnit XML. Gradle's default report
-// drops it, and the scale tests (P707-A08 / P708-A09) record their measurements by
-// printing prefixed lines; without this flag those readings exist only in a console
-// that CI neither prints nor archives. tools/ci/scale-readings-report.py reads them
-// back out of the XML. Nothing asserts on the text, so this changes no check result.
 allprojects {
     tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
         maxParallelForks = (System.getenv("CI_TEST_MAX_PARALLEL_FORKS") ?: "4").toInt()
         outputs.cacheIf { false }
-        reports.junitXml.outputPerTestCase = true
     }
 }
