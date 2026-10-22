@@ -248,6 +248,14 @@ class SqlDelightBudgetStore private constructor(
         return BudgetCommandResult.NoChange(receipt)
     }
 
+    /**
+     * The stored configuration row and the current limit are resolved in two steps on purpose.
+     * `currentLimit` issues its own query, and a nested query executed from inside another
+     * query's row mapper closes the thread's connection before the outer query's cleanup runs
+     * (the JDBC driver's per-thread connection manager), which fails on file-backed databases.
+     * The mapper therefore only copies the row's columns; the [BudgetAuthority] is assembled
+     * after the outer query has returned.
+     */
     private fun loadAuthority(target: BudgetTarget): BudgetAuthority? {
         val row =
             database.ledgerQueries
@@ -266,22 +274,42 @@ class SqlDelightBudgetStore private constructor(
                     scopeCategoryId,
                     currentRevision,
                     ->
-                    BudgetAuthority(
-                        budgetId = BudgetId(budgetId),
-                        target =
-                            BudgetTarget(
-                                ledgerId = target.ledgerId,
-                                monthKey = monthKey,
-                                currency = CurrencyUnit(currencyCode, currencyPrecision.toInt()),
-                                scopeKey = scopeKey,
-                                scopeCategoryId = scopeCategoryId?.let(::CategoryId),
-                            ),
-                        revision = currentRevision,
-                        limitMinorUnits = currentLimit(target.ledgerId.value, budgetId, currentRevision),
+                    StoredBudgetConfigRow(
+                        budgetId = budgetId,
+                        monthKey = monthKey,
+                        currencyCode = currencyCode,
+                        currencyPrecision = currencyPrecision,
+                        scopeKey = scopeKey,
+                        scopeCategoryId = scopeCategoryId,
+                        currentRevision = currentRevision,
                     )
                 }.executeAsOneOrNull()
-        return row
+                ?: return null
+        return BudgetAuthority(
+            budgetId = BudgetId(row.budgetId),
+            target =
+                BudgetTarget(
+                    ledgerId = target.ledgerId,
+                    monthKey = row.monthKey,
+                    currency = CurrencyUnit(row.currencyCode, row.currencyPrecision.toInt()),
+                    scopeKey = row.scopeKey,
+                    scopeCategoryId = row.scopeCategoryId?.let(::CategoryId),
+                ),
+            revision = row.currentRevision,
+            limitMinorUnits = currentLimit(target.ledgerId.value, row.budgetId, row.currentRevision),
+        )
     }
+
+    /** One `budget_config` row exactly as stored; nothing is derived inside the query mapper. */
+    private data class StoredBudgetConfigRow(
+        val budgetId: String,
+        val monthKey: String,
+        val currencyCode: String,
+        val currencyPrecision: Long,
+        val scopeKey: String,
+        val scopeCategoryId: String?,
+        val currentRevision: Long,
+    )
 
     /** The current limit is the newest history row's limit (`null` when closed). */
     private fun currentLimit(

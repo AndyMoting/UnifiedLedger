@@ -1,6 +1,8 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import com.unifiedledger.application.BudgetCommandPayload
+import com.unifiedledger.application.BudgetCommandRequest
 import com.unifiedledger.application.BudgetCommandResult
 import com.unifiedledger.application.BudgetFailureCode
 import com.unifiedledger.application.BudgetIdSource
@@ -13,16 +15,21 @@ import com.unifiedledger.application.CatalogEntityIds
 import com.unifiedledger.application.CatalogFailureCode
 import com.unifiedledger.application.CatalogManagementRequestIdSource
 import com.unifiedledger.application.CatalogRequestId
+import com.unifiedledger.application.DEFAULT_EXPENSE_GROUP_ID
+import com.unifiedledger.application.DEFAULT_EXPENSE_LEAF_ID
 import com.unifiedledger.application.ExecuteCatalogCommand
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.SaveBudgetConfiguration
+import com.unifiedledger.application.budgetMonthConfigKey
 import com.unifiedledger.application.budgetMonthKey
 import com.unifiedledger.application.budgetScopeKey
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.BudgetId
 import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CategoryKind
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
 import kotlinx.datetime.YearMonth
@@ -369,6 +376,219 @@ class SqlDelightBudgetStoreTest {
         }
     }
 
+    /**
+     * P7-07 A06 "Unknown after reopen" (plan section 7.3 line 251; D-237 item 4). A request
+     * whose commit already returned Accepted is replayed after the process genuinely closed its
+     * connection and reopened the SAME file: the replay returns the original receipt with zero
+     * new writes, so an Unknown outcome can always be resolved by re-sending the same request.
+     *
+     * The reopen is real, not a second concurrent connection: [P705Database.closePreservingFile]
+     * closes the underlying JDBC connection, the probe below proves the old handle can no longer
+     * serve reads, and the replay runs on [P705Database.open] of the same path.
+     */
+    @Test
+    fun aReplayedBudgetRequestAfterARealCloseAndReopenReturnsTheOriginalReceipt() {
+        P705Database.create("p707-a06-").use { writer ->
+            val store = SqlDelightBudgetStore.forPlatformConfiguredDatabase(writer.database)
+            val target = BudgetTarget(ledgerId, budgetMonthKey(march), cny, budgetScopeKey(BudgetScope.Total), null)
+            val request = setLimitRequest(target, requestId = "request-reopen", limitMinorUnits = 100_000L)
+            val accepted = assertIs<BudgetCommandResult.Accepted>(store.commitOnce(request) { BudgetId("budget-reopen") })
+            val originalReceipt = accepted.receipt
+            val countsBeforeReopen = budgetTableCounts(writer)
+            // Positive control: the four tables really hold rows, so the equality below is not an
+            // all-empty comparison.
+            assertEquals(
+                mapOf(
+                    "budget_config" to 1L,
+                    "budget_settings_history" to 1L,
+                    "budget_command_request" to 1L,
+                    "budget_command_receipt" to 1L,
+                ),
+                countsBeforeReopen,
+            )
+
+            writer.closePreservingFile()
+            assertTrue(
+                runCatching { writer.ledgerQueryCount("SELECT 1") }.isFailure,
+                "the closed writer connection must not serve reads",
+            )
+
+            P705Database.open(writer.filePath).use { reopened ->
+                val reopenedStore = SqlDelightBudgetStore.forPlatformConfiguredDatabase(reopened.database)
+                // A replay must never mint a new stable id: the lambda errors if it is called.
+                val replay =
+                    assertIs<BudgetCommandResult.NoChange>(
+                        reopenedStore.commitOnce(request) { error("an equivalent replay must not mint a budget id") },
+                    )
+                assertEquals(originalReceipt, replay.receipt)
+                assertEquals(BudgetId("budget-reopen"), replay.receipt.budgetId)
+                // Zero new writes: the four budget tables are row-for-row what they were.
+                assertEquals(countsBeforeReopen, budgetTableCounts(reopened))
+                val authority = requireNotNull(reopenedStore.load(target))
+                assertEquals(BudgetId("budget-reopen"), authority.budgetId)
+                assertEquals(1L, authority.revision)
+                assertEquals(100_000L, authority.limitMinorUnits)
+            }
+        }
+    }
+
+    /** The same request id with a different snapshot stays an identity conflict after reopen. */
+    @Test
+    fun aDifferentSnapshotForTheSameRequestIdAfterReopenIsAnIdentityConflict() {
+        P705Database.create("p707-a06-").use { writer ->
+            val store = SqlDelightBudgetStore.forPlatformConfiguredDatabase(writer.database)
+            val target = BudgetTarget(ledgerId, budgetMonthKey(march), cny, budgetScopeKey(BudgetScope.Total), null)
+            val request = setLimitRequest(target, requestId = "request-reopen", limitMinorUnits = 100_000L)
+            assertIs<BudgetCommandResult.Accepted>(store.commitOnce(request) { BudgetId("budget-reopen") })
+            val countsBeforeReopen = budgetTableCounts(writer)
+            assertEquals(1L, countsBeforeReopen.getValue("budget_settings_history"))
+
+            writer.closePreservingFile()
+            assertTrue(runCatching { writer.ledgerQueryCount("SELECT 1") }.isFailure)
+
+            P705Database.open(writer.filePath).use { reopened ->
+                val reopenedStore = SqlDelightBudgetStore.forPlatformConfiguredDatabase(reopened.database)
+                val conflict =
+                    assertIs<BudgetCommandResult.Conflict>(
+                        reopenedStore.commitOnce(
+                            request.copy(
+                                requestSnapshot = "snapshot-set-999",
+                                command = BudgetCommandPayload.SetLimit(999L),
+                            ),
+                        ) { error("an identity conflict must not mint a budget id") },
+                    )
+                assertEquals(BudgetFailureCode.REQUEST_IDENTITY_CONFLICT, conflict.failureCode)
+                assertEquals(countsBeforeReopen, budgetTableCounts(reopened))
+                assertEquals(100_000L, requireNotNull(reopenedStore.load(target)).limitMinorUnits)
+            }
+        }
+    }
+
+    /**
+     * P7-07 A09 (plan section 7.3 line 254; D-237 item 4): a real close and reopen keeps the
+     * stable identity, the full revision history (including the CLOSED NULL-limit row) and the
+     * month rows exactly as they were. The reopen is proven genuine by the failing old-handle
+     * probe before [P705Database.open] reads the same file.
+     */
+    @Test
+    fun aRealCloseAndReopenKeepsBudgetIdentityHistoryAndMonthRows() {
+        P705Database.create("p707-a09-").use { writer ->
+            val catalogStore = SqlDelightCatalogStore.forPlatformConfiguredDatabase(writer.database)
+            assertIs<CatalogBootstrapResult.Seeded>(catalogStore.bootstrap(ledgerId, fileBackedCatalogSeed()))
+            val store = SqlDelightBudgetStore.forPlatformConfiguredDatabase(writer.database)
+            val leaf = CategoryId(DEFAULT_EXPENSE_LEAF_ID)
+            val target = BudgetTarget(ledgerId, budgetMonthKey(march), cny, budgetScopeKey(BudgetScope.Category(leaf)), leaf)
+            val commands = BudgetCommands(store, catalogStore, ledgerId)
+            assertIs<BudgetCommandResult.Accepted>(commands.setLimit(march, BudgetScope.Category(leaf), 100_000L, expectedRevision = 0L))
+            assertIs<BudgetCommandResult.Accepted>(commands.setLimit(march, BudgetScope.Category(leaf), 150_000L, expectedRevision = 1L))
+            assertIs<BudgetCommandResult.Accepted>(commands.close(march, BudgetScope.Category(leaf), expectedRevision = 2L))
+
+            val authority = requireNotNull(store.load(target))
+            val history = store.settingsHistory(ledgerId, authority.budgetId)
+            val monthRows = store.configsForMonth(ledgerId, budgetMonthConfigKey(march))
+            assertEquals(BudgetId("budget-a09-1"), authority.budgetId)
+            assertEquals(3L, authority.revision)
+            assertNull(authority.limitMinorUnits)
+            assertEquals(listOf(1L, 2L, 3L), history.map { it.revisionNumber })
+            assertEquals(listOf(100_000L, 150_000L, null), history.map { it.limitMinorUnits })
+            assertEquals(listOf(false, false, true), history.map { it.closed })
+
+            writer.closePreservingFile()
+            assertTrue(runCatching { writer.ledgerQueryCount("SELECT 1") }.isFailure)
+
+            P705Database.open(writer.filePath).use { reopened ->
+                val reopenedStore = SqlDelightBudgetStore.forPlatformConfiguredDatabase(reopened.database)
+                assertEquals(authority, reopenedStore.load(target))
+                assertEquals(history, reopenedStore.settingsHistory(ledgerId, authority.budgetId))
+                assertEquals(monthRows, reopenedStore.configsForMonth(ledgerId, budgetMonthConfigKey(march)))
+                val reloaded = requireNotNull(reopenedStore.load(target))
+                assertEquals(BudgetId("budget-a09-1"), reloaded.budgetId)
+                assertEquals(3L, reloaded.revision)
+                assertNull(reloaded.limitMinorUnits)
+            }
+        }
+    }
+
+    /**
+     * P7-07 A09: renaming and then deactivating the budgeted category keeps the stable category
+     * attribution (the stored `scope_category_id` is the stable id, never the display name) and
+     * the whole history, and neither catalog command touches a ledger row.
+     *
+     * The default seed has a single leaf, so deactivating it would be refused with
+     * `CATEGORY_HAS_NO_ACTIVE_CHILD`; [fileBackedCatalogSeed] adds the active sibling the rule
+     * requires (CatalogManagement leafActiveWrites).
+     */
+    @Test
+    fun renamingAndDeactivatingTheCategoryKeepsStableAttributionAndZeroLedgerSideEffects() {
+        P705Database.create("p707-a09-rename-").use { writer ->
+            val catalogStore = SqlDelightCatalogStore.forPlatformConfiguredDatabase(writer.database)
+            assertIs<CatalogBootstrapResult.Seeded>(catalogStore.bootstrap(ledgerId, fileBackedCatalogSeed()))
+            val store = SqlDelightBudgetStore.forPlatformConfiguredDatabase(writer.database)
+            val leaf = CategoryId(DEFAULT_EXPENSE_LEAF_ID)
+            val target = BudgetTarget(ledgerId, budgetMonthKey(march), cny, budgetScopeKey(BudgetScope.Category(leaf)), leaf)
+            val commands = BudgetCommands(store, catalogStore, ledgerId)
+            assertIs<BudgetCommandResult.Accepted>(commands.setLimit(march, BudgetScope.Category(leaf), 100_000L, expectedRevision = 0L))
+
+            val authorityBefore = requireNotNull(store.load(target))
+            val historyBefore = store.settingsHistory(ledgerId, authorityBefore.budgetId)
+            val monthRowsBefore = store.configsForMonth(ledgerId, budgetMonthConfigKey(march))
+            val ledgerBefore = ledgerSideEffectCounts(writer)
+            assertEquals(0L, ledgerBefore.values.sum())
+
+            var catalogRequestCounter = 0
+            val executor =
+                ExecuteCatalogCommand(
+                    commitPort = catalogStore,
+                    // Every catalog command is a distinct identity: a reused request id would be
+                    // an identity conflict by the same claim-first rule the budget owner uses.
+                    requestIdSource = CatalogManagementRequestIdSource { CatalogRequestId("request-a09-catalog-${++catalogRequestCounter}") },
+                    entityIdSource =
+                        CatalogEntityIdSource {
+                            CatalogEntityIds(
+                                manageableAccountId = AccountId("asset-a09-managed"),
+                                postingAccountId = AccountId("expense-a09-posting"),
+                                parentCategoryId = CategoryId("category-a09-parent"),
+                                childCategoryId = CategoryId("category-a09-child"),
+                            )
+                        },
+                    categoryReferenceProbe = catalogStore,
+                )
+
+            val catalogVersionBeforeRename = requireNotNull(catalogStore.load(ledgerId)).catalogVersion
+            val renamed =
+                assertIs<CatalogCommandResult.Accepted>(
+                    executor.renameCategory(ledgerId, leaf, "早餐-改名", catalogVersionBeforeRename),
+                )
+            assertEquals(catalogVersionBeforeRename + 1L, renamed.receipt.newCatalogVersion)
+            // The rename really happened (non-vacuous control), and it changed the display name
+            // only: identity, history and month rows are equal.
+            assertEquals("早餐-改名", reloadedCategory(catalogStore, leaf).name)
+            assertEquals(authorityBefore, store.load(target))
+            assertEquals(historyBefore, store.settingsHistory(ledgerId, authorityBefore.budgetId))
+            assertEquals(monthRowsBefore, store.configsForMonth(ledgerId, budgetMonthConfigKey(march)))
+            assertEquals(leaf.value, writer.ledgerQueryText("SELECT scope_category_id FROM budget_config"))
+
+            // Deactivate (the sibling leaf keeps the group admissible) and re-check the same.
+            assertIs<CatalogCommandResult.Accepted>(
+                executor.setCategoryActive(ledgerId, leaf, false, requireNotNull(catalogStore.load(ledgerId)).catalogVersion),
+            )
+            // The deactivation really happened; the budget still resolves by the stable id.
+            assertTrue(!reloadedCategory(catalogStore, leaf).active)
+            assertEquals(authorityBefore, store.load(target))
+            assertEquals(historyBefore, store.settingsHistory(ledgerId, authorityBefore.budgetId))
+            assertEquals(monthRowsBefore, store.configsForMonth(ledgerId, budgetMonthConfigKey(march)))
+            assertEquals(leaf.value, writer.ledgerQueryText("SELECT scope_category_id FROM budget_config"))
+            assertEquals(ledgerBefore, ledgerSideEffectCounts(writer))
+        }
+    }
+
+    /** The current catalog view of one category, as the persisted catalog tree resolves it. */
+    private fun reloadedCategory(
+        catalogStore: SqlDelightCatalogStore,
+        categoryId: CategoryId,
+    ) = requireNotNull(catalogStore.load(ledgerId)).catalog.categories.firstOrNull { it.id == categoryId }
+        ?: error("the catalog must still contain ${categoryId.value}")
+
     private fun withStore(block: (SqlDelightBudgetStore, JdbcSqliteDriver) -> Unit) {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY, migrationProperties())
         try {
@@ -470,4 +690,112 @@ class SqlDelightBudgetStoreTest {
             // The guard trigger fired as required.
         }
     }
+
+    /** One direct 07.B request for the file-backed replay vectors. */
+    private fun setLimitRequest(
+        target: BudgetTarget,
+        requestId: String,
+        limitMinorUnits: Long,
+    ): BudgetCommandRequest =
+        BudgetCommandRequest(
+            target = target,
+            requestId = BudgetRequestId(requestId),
+            requestSnapshot = "snapshot-set-$limitMinorUnits",
+            inputFingerprint = "fingerprint",
+            expectedRevision = 0L,
+            command = BudgetCommandPayload.SetLimit(limitMinorUnits),
+            createdAt = Instant.parse("2026-03-05T02:00:00Z"),
+        )
+
+    private fun budgetTableCounts(database: P705Database): Map<String, Long> =
+        listOf("budget_config", "budget_settings_history", "budget_command_request", "budget_command_receipt")
+            .associateWith { table -> database.ledgerQueryCount("SELECT count(*) FROM $table") }
+
+    /** Ledger rows plus the `posting_reconciliation*` and `evidence_link*` families, including the rgXX silos. */
+    private fun ledgerSideEffectCounts(database: P705Database): Map<String, Long> {
+        val ownerTables =
+            database.ledgerQueryTexts(
+                "SELECT name FROM sqlite_master WHERE type = 'table' " +
+                    "AND (name LIKE '%posting_reconciliation%' OR name LIKE '%evidence_link%') ORDER BY name",
+            )
+        return (
+            listOf("ledger_transaction", "transaction_version", "ledger_transaction_current_version", "posting_set", "posting") +
+                ownerTables
+        ).associateWith { table -> database.ledgerQueryCount("SELECT count(*) FROM $table") }
+    }
+
+    /**
+     * The default product seed plus one active sibling leaf (and its hidden posting account), so
+     * deactivating the default leaf is admissible: `CatalogManagement.leafActiveWrites` refuses
+     * the last active child of a group.
+     */
+    private fun fileBackedCatalogSeed(): CatalogSeed {
+        val secondLeaf = CategoryId("expense-category-second-leaf")
+        val secondLeafAccount = AccountId("expense-account-second-leaf")
+        val base = defaultCatalogSeed()
+        return base.copy(
+            accounts =
+                base.accounts +
+                    CatalogSeedAccount(
+                        accountId = secondLeafAccount,
+                        name = "午市",
+                        kind = AccountKind.EXPENSE,
+                        currency = cny,
+                        ownedByUser = false,
+                        realAccount = false,
+                        hidden = true,
+                    ),
+            categories =
+                base.categories +
+                    CatalogSeedCategory(
+                        categoryId = secondLeaf,
+                        name = "午市",
+                        kind = CategoryKind.EXPENSE,
+                        parentId = CategoryId(DEFAULT_EXPENSE_GROUP_ID),
+                        postingAccountId = secondLeafAccount,
+                    ),
+        )
+    }
+}
+
+/** Real 07.B commands over one store; every command gets a unique request and budget id. */
+private class BudgetCommands(
+    private val store: SqlDelightBudgetStore,
+    private val catalogStore: SqlDelightCatalogStore,
+    private val ledgerId: LedgerId,
+) {
+    private var counter = 0
+
+    fun setLimit(
+        month: YearMonth,
+        scope: BudgetScope,
+        limitMinorUnits: Long,
+        expectedRevision: Long,
+    ): BudgetCommandResult {
+        val sequence = next()
+        return command(sequence).setLimit(ledgerId, month, scope, limitMinorUnits, expectedRevision)
+    }
+
+    fun close(
+        month: YearMonth,
+        scope: BudgetScope,
+        expectedRevision: Long,
+    ): BudgetCommandResult {
+        val sequence = next()
+        return command(sequence).close(ledgerId, month, scope, expectedRevision)
+    }
+
+    private fun next(): Int {
+        counter += 1
+        return counter
+    }
+
+    private fun command(sequence: Int): SaveBudgetConfiguration =
+        SaveBudgetConfiguration(
+            commitPort = store,
+            requestIdSource = BudgetRequestIdSource { BudgetRequestId("request-a09-$sequence") },
+            budgetIdSource = BudgetIdSource { BudgetId("budget-a09-$sequence") },
+            catalogReader = catalogStore,
+            clock = LedgerClock { Instant.parse("2026-03-05T02:00:00Z") },
+        )
 }
