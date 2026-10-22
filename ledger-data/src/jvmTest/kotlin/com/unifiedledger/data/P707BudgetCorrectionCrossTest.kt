@@ -436,7 +436,7 @@ class P707BudgetCorrectionCrossTest {
             return tables.associateWith { table -> harness.ledgerQueryCount("SELECT count(*) FROM $table") }
         }
 
-        /** Every reconciliation/evidence table family, including the rgXX silos. */
+        /** The `posting_reconciliation*` and `evidence_link*` families, including the rgXX silos. */
         private fun ownerTables(): List<String> =
             harness.ledgerQueryTexts(
                 "SELECT name FROM sqlite_master WHERE type = 'table' " +

@@ -711,7 +711,7 @@ class SqlDelightBudgetStoreTest {
         listOf("budget_config", "budget_settings_history", "budget_command_request", "budget_command_receipt")
             .associateWith { table -> database.ledgerQueryCount("SELECT count(*) FROM $table") }
 
-    /** Ledger rows plus every reconciliation/evidence owner family, including the rgXX silos. */
+    /** Ledger rows plus the `posting_reconciliation*` and `evidence_link*` families, including the rgXX silos. */
     private fun ledgerSideEffectCounts(database: P705Database): Map<String, Long> {
         val ownerTables =
             database.ledgerQueryTexts(
