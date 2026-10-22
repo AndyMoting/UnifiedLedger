@@ -172,6 +172,99 @@ class SqlDelightMonthlyContributionReadAdapterTest {
         }
     }
 
+    /**
+     * P7-07 A07 sub-second and equivalent-text leg (plan section 7.3 line 252; D-237 item 4;
+     * budget design spec section 6.4 item 1): `Z`, `+08:00` and `-08:00` spellings of the same
+     * instant project to ONE epoch-nanosecond value, so the `[start, end)` window admits or
+     * excludes them identically; a row one nanosecond before the boundary is in the earlier
+     * month and a row on the boundary is in the later one. Comparing the raw `statistics_at`
+     * text instead (the frozen fail-loud reason for the projection) would leave the three
+     * spellings in different months, which the March/April assertions below would catch.
+     */
+    @Test
+    fun equivalentTextFormsProjectToTheSameEpochNanosAndTheSubsecondWindowStaysHalfOpen() {
+        withDatabase { database, driver, adapter ->
+            // Three spellings of 2026-04-01 00:00 +08:00: Z, +08:00 and -08:00.
+            seedExpense(database, driver, "tx-utc", "2026-03-31T16:00:00Z")
+            seedExpense(database, driver, "tx-plus-eight", "2026-04-01T00:00:00+08:00")
+            seedExpense(database, driver, "tx-minus-eight", "2026-03-31T08:00:00-08:00")
+            // One nanosecond before the March/April boundary, and the 2028 leap-February
+            // boundary with its own last nanosecond of February.
+            seedExpense(database, driver, "tx-subsecond", "2026-03-31T15:59:59.999999999Z")
+            seedExpense(database, driver, "tx-leap-boundary", "2028-02-29T16:00:00Z")
+            seedExpense(database, driver, "tx-leap-subsecond", "2028-02-29T15:59:59.999999999Z")
+
+            assertEquals(
+                1_774_972_800_000_000_000L,
+                projectionEpochNanos(driver, "tx-utc-version-1"),
+            )
+            assertEquals(
+                1_774_972_800_000_000_000L,
+                projectionEpochNanos(driver, "tx-plus-eight-version-1"),
+            )
+            assertEquals(
+                1_774_972_800_000_000_000L,
+                projectionEpochNanos(driver, "tx-minus-eight-version-1"),
+            )
+            assertEquals(1_774_972_799_999_999_999L, projectionEpochNanos(driver, "tx-subsecond-version-1"))
+            assertEquals(1_835_452_800_000_000_000L, projectionEpochNanos(driver, "tx-leap-boundary-version-1"))
+            assertEquals(1_835_452_799_999_999_999L, projectionEpochNanos(driver, "tx-leap-subsecond-version-1"))
+
+            // March 2026 = [2026-02-28T16:00:00Z, 2026-03-31T16:00:00Z): the three equivalent
+            // forms sit on the exclusive end and are excluded; the sub-second row is included.
+            val march =
+                adapter.readContributions(
+                    ledgerId,
+                    Instant.parse("2026-02-28T16:00:00Z"),
+                    Instant.parse("2026-03-31T16:00:00Z"),
+                    expectedCatalogVersion = 1L,
+                )
+            assertEquals(
+                listOf("tx-subsecond"),
+                assertIs<MonthlyContributionReadResult.Success>(march).rows.map { it.transactionId.value },
+            )
+
+            // April 2026 = [2026-03-31T16:00:00Z, 2026-04-30T16:00:00Z): all three spellings are
+            // admitted at the start bound and the row one nanosecond earlier is not.
+            val april =
+                adapter.readContributions(
+                    ledgerId,
+                    Instant.parse("2026-03-31T16:00:00Z"),
+                    Instant.parse("2026-04-30T16:00:00Z"),
+                    expectedCatalogVersion = 1L,
+                )
+            assertEquals(
+                listOf("tx-minus-eight", "tx-plus-eight", "tx-utc"),
+                assertIs<MonthlyContributionReadResult.Success>(april).rows.map { it.transactionId.value },
+            )
+
+            // Leap February 2028 = [2028-01-31T16:00:00Z, 2028-02-29T16:00:00Z); March 2028 starts
+            // at 2028-02-29T16:00:00Z (2028-03-01 00:00 +08:00), so the boundary row is March.
+            val february2028 =
+                adapter.readContributions(
+                    ledgerId,
+                    Instant.parse("2028-01-31T16:00:00Z"),
+                    Instant.parse("2028-02-29T16:00:00Z"),
+                    expectedCatalogVersion = 1L,
+                )
+            assertEquals(
+                listOf("tx-leap-subsecond"),
+                assertIs<MonthlyContributionReadResult.Success>(february2028).rows.map { it.transactionId.value },
+            )
+            val march2028 =
+                adapter.readContributions(
+                    ledgerId,
+                    Instant.parse("2028-02-29T16:00:00Z"),
+                    Instant.parse("2028-03-31T16:00:00Z"),
+                    expectedCatalogVersion = 1L,
+                )
+            assertEquals(
+                listOf("tx-leap-boundary"),
+                assertIs<MonthlyContributionReadResult.Success>(march2028).rows.map { it.transactionId.value },
+            )
+        }
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private fun withDatabase(block: (LedgerDatabase, JdbcSqliteDriver, SqlDelightMonthlyContributionReadAdapter) -> Unit) {
@@ -249,6 +342,22 @@ class SqlDelightMonthlyContributionReadAdapterTest {
         Properties().apply {
             setProperty("foreign_keys", "true")
         }
+
+    /** The raw numeric projection of one version row, read without the generated queries. */
+    private fun projectionEpochNanos(
+        driver: JdbcSqliteDriver,
+        versionId: String,
+    ): Long =
+        driver
+            .executeQuery(
+                null,
+                "SELECT statistics_at_epoch_nanos FROM transaction_version WHERE version_id = '$versionId'",
+                { cursor ->
+                    check(cursor.next().value)
+                    app.cash.sqldelight.db.QueryResult.Value(requireNotNull(cursor.getLong(0)))
+                },
+                0,
+            ).value
 }
 
 private fun SqlDelightBudgetStore.setLimitMonitored(

@@ -9,8 +9,13 @@ import com.unifiedledger.application.BudgetRequestIdSource
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.SaveBudgetConfiguration
 import com.unifiedledger.data.db.LedgerDatabase
+import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.BudgetId
 import com.unifiedledger.domain.BudgetScope
+import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CategoryKind
+import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionId
 import kotlinx.datetime.YearMonth
@@ -50,11 +55,14 @@ import kotlin.time.Instant
  *
  * Budget tables exist from v33 onward (`32.sqm` is the v32 → v33 edge and neither `33.sqm` nor
  * `34.sqm` touches them), so every leg carries a seeded budget chain and compares it value-for-value.
- * Asserting them EMPTY on the v33 leg would be an "empty vs empty" vacuous claim, not evidence. The
- * seeded chain ends CLOSED so both legal `budget_settings_history` row shapes (MONITORED with a
- * non-null limit, CLOSED with NULL) are covered; a CATEGORY-scope budget is deliberately NOT seeded
- * because it needs a bootstrapped `catalog_category` FK target the v33 fixture does not have — that
- * remains a registered residual.
+ * Asserting them EMPTY on the v33 leg would be an "empty vs empty" vacuous claim, not evidence. Two
+ * chains are seeded through the real claim-first command port: a TOTAL chain whose three revisions
+ * end CLOSED (so both legal `budget_settings_history` row shapes — MONITORED with a non-null limit
+ * and CLOSED with NULL — are covered) and an independent CATEGORY chain on the `cat-local` expense
+ * leaf (two MONITORED revisions). The CATEGORY chain needs a bootstrapped `catalog_category` FK
+ * target, so every stage first runs the real product catalog bootstrap with [restoreCatalogSeed];
+ * that seed carries every id the fixture already references, because bootstrap fails closed on an
+ * unresolved posting/manual reference (`SqlDelightCatalogStore.unresolvedReferences`).
  *
  * Contract honesty (R-221-3 precedent): the v34/v33 fixtures are reverse-engineered from the fresh
  * schema (DROP COLUMN / DROP TABLE), so the legs prove the `columnInfo` contract and VALUE
@@ -107,6 +115,12 @@ class P708RestoreRoundtripEquivalenceTest {
     /** The stable budget identity the seeded chain binds: two limit revisions then a CLOSED one. */
     private val budgetId = BudgetId("budget-roundtrip")
 
+    /** The independent CATEGORY-scope chain: two MONITORED revisions on the `cat-local` leaf. */
+    private val categoryBudgetId = BudgetId("budget-roundtrip-category")
+
+    /** The stable expense leaf both the manual-expense row and the CATEGORY budget name. */
+    private val categoryLocal = CategoryId("cat-local")
+
     /**
      * The manual_*_request columns shared by v34 and v35 shapes: the value comparison across the
      * `34.sqm` edge projects onto these (the edge ADDS the two annotation columns, so a `SELECT *`
@@ -149,12 +163,7 @@ class P708RestoreRoundtripEquivalenceTest {
                 // what proves the history crossed the roundtrip. Both legal row shapes of
                 // budget_settings_history are covered (spec section 3.3: MONITORED carries a
                 // non-null limit, CLOSED carries NULL — close appends, it never deletes).
-                val settings =
-                    SqlDelightBudgetStore(database, snapshotDriver)
-                        .settingsHistory(LedgerId(ledgerId), budgetId)
-                assertEquals(listOf(1L, 2L, 3L), settings.map { it.revisionNumber })
-                assertEquals(listOf(false, false, true), settings.map { it.closed })
-                assertEquals(listOf(100_000L, 150_000L, null), settings.map { it.limitMinorUnits })
+                assertBothBudgetHistoriesReadBack(snapshotDriver)
             }
         } finally {
             dir.deleteRecursively()
@@ -180,6 +189,7 @@ class P708RestoreRoundtripEquivalenceTest {
                 // (D-221 R2) and the three unseeded manual tables stay empty. `34.sqm` does not
                 // touch the budget tables, so the seeded chain crosses this edge value-for-value.
                 assertValueIdentical(source.path, snapshot.path, annotationOwnerTables + budgetOwnerTables)
+                assertBothBudgetHistoriesReadBack(isolated)
                 assertValueIdentical(
                     source.path,
                     snapshot.path,
@@ -241,14 +251,18 @@ class P708RestoreRoundtripEquivalenceTest {
                 // annotation columns). The budget chain was already present at v33 and must
                 // cross the untouched edges unchanged.
                 assertValueIdentical(source.path, snapshot.path, preV34SurvivorTables + budgetOwnerTables)
-                // Non-vacuity guard for the budget leg: all three revisions really are on the
+                // The migrated copy also READS BACK both immutable chains through the real store.
+                assertBothBudgetHistoriesReadBack(isolated)
+                // Non-vacuity guard for the budget leg: every seeded revision really is on the
                 // migrated copy, so the comparison above compares data rather than two empty
-                // results. `commitOnce` writes exactly one receipt per ACCEPTED command — three
-                // here (two limit revisions plus the close) — so the receipt count is 3 too.
+                // results. Two chains: the TOTAL chain's three revisions (two limits plus the
+                // close) and the CATEGORY chain's two MONITORED revisions. `commitOnce` writes
+                // exactly one receipt and one request row per ACCEPTED command, so both tables
+                // hold 5 too, and exactly two stable identities exist.
                 assertEquals(
-                    3L,
+                    5L,
                     countOn(isolated, "SELECT count(*) FROM budget_settings_history"),
-                    "the seeded three-revision budget history must survive the chain",
+                    "both seeded budget chains must survive the chain",
                 )
                 assertEquals(
                     1L,
@@ -256,9 +270,36 @@ class P708RestoreRoundtripEquivalenceTest {
                     "the CLOSED NULL-limit row shape must survive the chain",
                 )
                 assertEquals(
-                    3L,
+                    5L,
                     countOn(isolated, "SELECT count(*) FROM budget_command_receipt"),
                     "the budget receipts must survive the chain",
+                )
+                assertEquals(
+                    5L,
+                    countOn(isolated, "SELECT count(*) FROM budget_command_request"),
+                    "the claim-first request rows must survive the chain",
+                )
+                assertEquals(
+                    2L,
+                    countOn(isolated, "SELECT count(*) FROM budget_config"),
+                    "each chain keeps exactly one stable budget identity",
+                )
+                // The CATEGORY-scope chain exists with its stable category attribution; without the
+                // catalog bootstrap and the seeded category the FK could not even be written.
+                assertEquals(
+                    2L,
+                    countOn(isolated, "SELECT count(*) FROM budget_settings_history WHERE scope_kind = 'CATEGORY'"),
+                    "the CATEGORY chain's two revisions must survive",
+                )
+                assertEquals(
+                    2L,
+                    countOn(isolated, "SELECT count(*) FROM budget_settings_history WHERE scope_category_id = 'cat-local'"),
+                    "the CATEGORY chain must stay bound to the stable category id",
+                )
+                assertEquals(
+                    1L,
+                    countOn(isolated, "SELECT count(*) FROM budget_config WHERE scope_kind = 'CATEGORY' AND scope_category_id = 'cat-local'"),
+                    "the CATEGORY config row must keep its FK target",
                 )
                 assertValueIdentical(source.path, snapshot.path, listOf("manual_expense_request")) { commonManualExpenseColumns }
             }
@@ -316,9 +357,9 @@ class P708RestoreRoundtripEquivalenceTest {
      * Seeds one anonymous library at [stage]: a manual expense chain + its claim row and receipt
      * (with the annotation columns at v35 only), the tag catalog with its command receipt plus a
      * two-revision annotation history with its current pointer (at v34/v35 only), and — at EVERY
-     * stage — a three-revision budget chain (two limit revisions plus a CLOSED revision) through the
-     * real claim-first command port (see [seedBudgetChain]); `32.sqm` created the budget tables on
-     * the v32 -> v33 edge.
+     * stage — the product catalog bootstrap plus two budget chains (a TOTAL chain of two limits and
+     * a CLOSED revision, and a CATEGORY chain of two limits) through the real claim-first command
+     * port (see [seedBudgetChain]); `32.sqm` created the budget tables on the v32 -> v33 edge.
      */
     private fun seedCurrentLibrary(
         url: String,
@@ -446,48 +487,123 @@ class P708RestoreRoundtripEquivalenceTest {
             // stamped 33 (Stage.V33) already contains the four budget tables, and neither `33.sqm`
             // nor `34.sqm` touches them. Writing the chain here (rather than only at V35) is what
             // makes the v33/v34 comparisons evidence of survival instead of empty-vs-empty.
+            // The catalog comes FIRST because the CATEGORY chain's `budget_config` row carries a
+            // real FK to `catalog_category`, and bootstrap itself fails closed on any existing
+            // posting/manual reference the seed cannot resolve.
+            assertIs<CatalogBootstrapResult.Seeded>(
+                SqlDelightCatalogStore(database, driver).bootstrap(LedgerId(ledgerId), restoreCatalogSeed()),
+            )
             seedBudgetChain(database, driver)
         }
     }
 
     /**
-     * Writes one TOTAL budget through the REAL claim-first command chain ([SaveBudgetConfiguration]
+     * The catalog the round-trip fixture needs. Bootstrap fails closed on any posting account or
+     * manual-request category it does not know (`unresolvedReferences` scans `posting.account_id`
+     * and `manual_expense_request.category_id`), so the three ids the seeded ledger rows already
+     * name must exist: the `cat-local` EXPENSE leaf, its hidden `expense-account-local` posting
+     * account, and the `asset-payment-local` funding account. `cat-local` is a level-2 leaf because
+     * the product catalog validation refuses a level-1 category that carries a posting account.
+     * Everything here is an anonymous synthetic value.
+     */
+    private fun restoreCatalogSeed(): CatalogSeed =
+        CatalogSeed(
+            accounts =
+                listOf(
+                    CatalogSeedAccount(
+                        accountId = AccountId("expense-account-local"),
+                        name = "本地支出",
+                        kind = AccountKind.EXPENSE,
+                        currency = CurrencyUnit("CNY", 2),
+                        ownedByUser = false,
+                        realAccount = false,
+                        hidden = true,
+                    ),
+                    CatalogSeedAccount(
+                        accountId = AccountId("asset-payment-local"),
+                        name = "本地支付",
+                        kind = AccountKind.ASSET,
+                        currency = CurrencyUnit("CNY", 2),
+                        ownedByUser = true,
+                        realAccount = true,
+                        hidden = false,
+                    ),
+                ),
+            categories =
+                listOf(
+                    CatalogSeedCategory(
+                        categoryId = CategoryId("cat-group-local"),
+                        name = "本地支出",
+                        kind = CategoryKind.EXPENSE,
+                        parentId = null,
+                        postingAccountId = null,
+                    ),
+                    CatalogSeedCategory(
+                        categoryId = categoryLocal,
+                        name = "本地餐饮",
+                        kind = CategoryKind.EXPENSE,
+                        parentId = CategoryId("cat-group-local"),
+                        postingAccountId = AccountId("expense-account-local"),
+                    ),
+                ),
+        )
+
+    /**
+     * Writes two budget chains through the REAL claim-first command chain ([SaveBudgetConfiguration]
      * over [SqlDelightBudgetStore]), so the request rows, the immutable settings history and the
      * receipts are all produced by the production guards rather than hand-inserted: a hand-written
-     * row could not prove the roundtrip carries a legal chain. Three revisions: two MONITORED
-     * limits then a CLOSED revision, so BOTH legal row shapes of `budget_settings_history`
-     * (MONITORED with a non-null limit, CLOSED with NULL) cross the snapshot.
+     * row could not prove the roundtrip carries a legal chain.
      *
-     * Three DIFFERENT request ids are used because the claim identity is `(ledgerId, requestId)`: a
-     * shared id makes the later command an identity conflict, not the next revision.
+     *  - TOTAL `budget-roundtrip`: three revisions — two MONITORED limits then a CLOSED revision, so
+     *    BOTH legal row shapes of `budget_settings_history` cross the snapshot.
+     *  - CATEGORY `budget-roundtrip-category` on `cat-local`: two MONITORED revisions, an
+     *    independent stable identity whose `budget_config` row carries the real `catalog_category`
+     *    FK and whose scope must survive the round-trip value-for-value.
+     *
+     * Every command uses its own request id: the claim identity is `(ledgerId, requestId)`, so a
+     * shared id would make the later command an identity conflict, not the next revision.
      */
     private fun seedBudgetChain(
         database: LedgerDatabase,
         driver: JdbcSqliteDriver,
     ) {
-        fun command(requestId: String): SaveBudgetConfiguration =
+        val catalogReader = SqlDelightCatalogStore(database, driver)
+
+        fun command(
+            requestId: String,
+            mintedBudgetId: BudgetId,
+        ): SaveBudgetConfiguration =
             SaveBudgetConfiguration(
                 commitPort = SqlDelightBudgetStore(database, driver),
                 requestIdSource = BudgetRequestIdSource { BudgetRequestId(requestId) },
-                budgetIdSource = BudgetIdSource { budgetId },
-                catalogReader = SqlDelightCatalogStore(database, driver),
+                budgetIdSource = BudgetIdSource { mintedBudgetId },
+                catalogReader = catalogReader,
                 clock = LedgerClock { Instant.parse("2026-03-05T02:00:00Z") },
             )
 
         val march = YearMonth(2026, 3)
         assertIs<BudgetCommandResult.Accepted>(
-            command("budget-request-1")
+            command("budget-request-1", budgetId)
                 .setLimit(LedgerId(ledgerId), march, BudgetScope.Total, 100_000L, expectedRevision = 0L),
         )
         assertIs<BudgetCommandResult.Accepted>(
-            command("budget-request-2")
+            command("budget-request-2", budgetId)
                 .setLimit(LedgerId(ledgerId), march, BudgetScope.Total, 150_000L, expectedRevision = 1L),
         )
         // Close appends a CLOSED NULL-limit revision and keeps the whole history (spec section 3.3);
         // without it the restore evidence would only ever see the MONITORED row shape.
         assertIs<BudgetCommandResult.Accepted>(
-            command("budget-request-3")
+            command("budget-request-3", budgetId)
                 .close(LedgerId(ledgerId), march, BudgetScope.Total, expectedRevision = 2L),
+        )
+        // The independent CATEGORY chain (two MONITORED revisions, no CLOSED row).
+        assertIs<BudgetCommandResult.Accepted>(
+            command("budget-request-category-1", categoryBudgetId)
+                .setLimit(LedgerId(ledgerId), march, BudgetScope.Category(categoryLocal), 80_000L, expectedRevision = 0L),
+        )
+        assertIs<BudgetCommandResult.Accepted>(
+            command("budget-request-category-2", categoryBudgetId)
+                .setLimit(LedgerId(ledgerId), march, BudgetScope.Category(categoryLocal), 90_000L, expectedRevision = 1L),
         )
     }
 
@@ -499,6 +615,32 @@ class P708RestoreRoundtripEquivalenceTest {
         }
 
     // ------------------------------------------------------------------ equivalence probes
+
+    /**
+     * Reads BOTH seeded budget chains off a restored/migrated snapshot through the real store and
+     * asserts the full immutable revision history FIELD BY FIELD. Revision 1's superseded limit,
+     * the CLOSED revision's NULL limit and the independent CATEGORY chain are exactly the values a
+     * "current config row only" read would lose.
+     */
+    private fun assertBothBudgetHistoriesReadBack(driver: SqlDriver) {
+        val store = SqlDelightBudgetStore.forPlatformConfiguredDatabase(LedgerDatabase(driver))
+        val settings = store.settingsHistory(LedgerId(ledgerId), budgetId)
+        assertEquals(listOf(1L, 2L, 3L), settings.map { it.revisionNumber })
+        assertEquals(listOf(false, false, true), settings.map { it.closed })
+        assertEquals(listOf(100_000L, 150_000L, null), settings.map { it.limitMinorUnits })
+        assertEquals(
+            listOf("budget-request-1", "budget-request-2", "budget-request-3"),
+            settings.map { it.requestId.value },
+        )
+        val categorySettings = store.settingsHistory(LedgerId(ledgerId), categoryBudgetId)
+        assertEquals(listOf(1L, 2L), categorySettings.map { it.revisionNumber })
+        assertEquals(listOf(false, false), categorySettings.map { it.closed })
+        assertEquals(listOf(80_000L, 90_000L), categorySettings.map { it.limitMinorUnits })
+        assertEquals(
+            listOf("budget-request-category-1", "budget-request-category-2"),
+            categorySettings.map { it.requestId.value },
+        )
+    }
 
     /**
      * Reads EVERY row of [table] on both files and compares them as values ([projection] defaults to

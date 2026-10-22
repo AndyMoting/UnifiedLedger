@@ -14,6 +14,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.nanoseconds
 import kotlin.time.Instant
 
 /**
@@ -43,6 +44,30 @@ class MonthlyBucketsTest {
         // Non-leap February ends one day earlier (2026-03-01 00:00 +08 = 2026-02-28T16:00:00Z).
         assertEquals(YearMonth(2026, 2), MonthlyBuckets.bucketKey(Instant.parse("2026-02-28T15:59:59Z")))
         assertEquals(YearMonth(2026, 3), MonthlyBuckets.bucketKey(Instant.parse("2026-02-28T16:00:00Z")))
+    }
+
+    /**
+     * P7-07 A07 sub-second leg (plan section 7.3 line 252; D-237 item 4; budget design spec
+     * section 6.4 item 1): the Shanghai month boundary is defined to the nanosecond, and
+     * [MonthlyBuckets.monthStart] is its half-open lower bound.
+     */
+    @Test
+    fun subsecondLeapAndNonLeapMonthBoundariesUseTheFrozenShanghaiMonth() {
+        // Both sides of the 2026-04-01 00:00 +08:00 boundary, at full Instant precision.
+        assertEquals(YearMonth(2026, 3), MonthlyBuckets.bucketKey(Instant.parse("2026-03-31T15:59:59.999999999Z")))
+        assertEquals(YearMonth(2026, 4), MonthlyBuckets.bucketKey(Instant.parse("2026-03-31T16:00:00Z")))
+        assertEquals(YearMonth(2026, 4), MonthlyBuckets.bucketKey(Instant.parse("2026-03-31T16:00:00.000000001Z")))
+        // Leap February 2028 and non-leap February 2026 end one day apart.
+        assertEquals(YearMonth(2028, 2), MonthlyBuckets.bucketKey(Instant.parse("2028-02-29T15:59:59.999999999Z")))
+        assertEquals(YearMonth(2028, 3), MonthlyBuckets.bucketKey(Instant.parse("2028-02-29T16:00:00Z")))
+        assertEquals(YearMonth(2026, 2), MonthlyBuckets.bucketKey(Instant.parse("2026-02-28T15:59:59.999999999Z")))
+        assertEquals(YearMonth(2026, 3), MonthlyBuckets.bucketKey(Instant.parse("2026-02-28T16:00:00Z")))
+        // monthStart is the start-inclusive lower bound: the same instant buckets into this
+        // month, and one nanosecond earlier belongs to the previous month.
+        val marchStart = MonthlyBuckets.monthStart(YearMonth(2026, 3))
+        assertEquals(Instant.parse("2026-02-28T16:00:00Z"), marchStart)
+        assertEquals(YearMonth(2026, 3), MonthlyBuckets.bucketKey(marchStart))
+        assertEquals(YearMonth(2026, 2), MonthlyBuckets.bucketKey(marchStart - 1.nanoseconds))
     }
 
     @Test
