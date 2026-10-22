@@ -5096,3 +5096,28 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 8. **边界**：入：本条登记 + 四份正式状态文档的最小指针同步。出：零代码/测试/schema/迁移/依赖/清单/Golden；不改 D-176/D-177/D-179/D-181/D-183 的任何裁决与开放项（OS 自动备份/设备迁移排除归尚不存在的隐私规格、61k 大库峰值内存、06.B 取消控件延期全部保持开放）；不改 `ACC-D-PERF-01`、`ACC-D-20K-01` 状态；**不把 A01/A04/A06/A07/A10/A11 并入 PASS，不把 A02/A08/A09/A12 判 FAIL**（它们是未取证，不是已证伪）。
 
 **关联决定：** D-174（06.0/06.A 容器格式与 Q13 技术门）、D-176（06.1 稳定存储与 runtime owner）、D-177（06.2/06.B 备份导出）、D-179（06.3/06.C 恢复预检）、D-181（06.D 前置与 V-17 收口口径）、D-182（06.D 设计门规格）、D-183（06.D 恢复确认与切换实施登记，其 41/41 设备门为本条设备腿证据来源）、D-156（`transaction_effective_state` 有效谓词唯一 SQL 定义点）、阶段计划 §6「切片与验收」与 §10.1/§10.4.5/§10.3。
+
+## D-240 P7-07 验收向量补测批：A04/A06/A07/A09 判 PASS（JVM 维度），文件库预算 authority 读取缺陷 ACC-D-BUDGET-01 修复
+
+**状态：** 已批准并登记（2026-10-22，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §7.3 的 P707-A04/A06/A07/A09 + §10.1 逐项状态与 §10.4.5「报告逐项状态总数」+ `ACC-D-BUDGET-01` 修复登记）。**一批 tracked 变更**：产品修复 1 文件（`ledger-data/src/commonMain/kotlin/com/unifiedledger/data/SqlDelightBudgetStore.kt` 的 `loadAuthority`）+ 4 个既有测试文件 + 2 个新测试类 + `tools/ci/ledger-data-shards.txt` 1 行 + `.github/workflows/ci.yml` 头注释类数；PR #110 merge `5b93e1cdd32daf154c1dede21a70324129f6d554`（head `af2a135`）。schema 维持 v35（34 个 `.sqm`），零迁移/零依赖。
+
+**决定：**
+
+1. **产品缺陷 `ACC-D-BUDGET-01`（已修复）**：`SqlDelightBudgetStore.loadAuthority` 在 `selectBudgetConfigByScope` 的 row mapper 内调用 `currentLimit`（其自身再发一次 `selectBudgetSettingsHistory`）。SQLDelight 2.3.2 `ThreadedConnectionManager.closeConnection` 要求关闭的连接必须是线程本地连接；嵌套查询结束时已关闭并移除该连接，外层查询清理随即抛 `Connections must be closed on the thread that opened them`。内存库走 `StaticConnectionManager`（`closeConnection` 空实现），故既有 25 个内存用例从未暴露。桌面 `desktop-app/src/jvmMain/kotlin/com/unifiedledger/desktop/Main.kt:1012`（驱动在 `:1216`）以文件库 `JdbcSqliteDriver` 构造该 store，`ledger-application/src/commonMain/kotlin/com/unifiedledger/application/QueryBudgetMonth.kt:101-106` 把异常映射为 `Unavailable` → 任何已配置预算（revision>0）的桌面月视图不可用。修复：先 `executeAsOneOrNull()` 取配置行，再在 mapper 闭包外组装 `BudgetAuthority` 并调用 `currentLimit`；不改 SQL、schema、失败码、金额/舍入语义、协议或公开签名。覆盖调用点：`load`（`BudgetAuthorityReader`）与 `commitOnce` 内的 authority 读。Android 运行时未验证（`SqlDelightBudgetStore` 当前无 Android 组合点），影响陈述仅对桌面/JVM 确定。
+
+2. **判 PASS 四项（JVM 维度）**：
+   - **A04**：`P707BudgetCorrectionCrossTest` 五个用例（同月金额 `sameMonthAmountCorrectionCountsTheCurrentVersionOnce`、统计月 `statisticsMonthCorrectionMovesTheCurrentVersionAndLeavesNoOldVersionInEitherMonth`、分类 `categoryCorrectionMovesTheExpenseBetweenCategoryScopes`、void/restore `voidAndRestoreExcludeAndReturnTheCurrentVersionExactlyOnce`、预算零副作用 `budgetCommandsHaveZeroLedgerSideEffects`），全部驱动真实 `ExecuteCorrectTransactionVersion`/`ExecuteVoidTransaction`/`ExecuteRestoreTransaction` 与真实 `SqlDelightMonthlyContributionReadAdapter` + `SqlDelightBudgetStore` + `QueryBudgetMonth` 文件库；旧版本不双算、`occurred_at`/`effective_at` 逐字不变、对账/证据 owner 行数不变。
+   - **A06**：`SqlDelightBudgetStoreTest.aReplayedBudgetRequestAfterARealCloseAndReopenReturnsTheOriginalReceipt` 与 `aDifferentSnapshotForTheSameRequestIdAfterReopenIsAnIdentityConflict`（真实 `closePreservingFile` + 新连接重开；同请求重放返回原 receipt 且四张预算表零新写；同 requestId 异 snapshot 为 identity conflict 零写）。
+   - **A07**：`MonthlyBucketsTest.subsecondLeapAndNonLeapMonthBoundariesUseTheFrozenShanghaiMonth`（亚秒/闰年/非闰年/`monthStart`）；`MonthlyBucketsTimeZoneJvmTest`（三默认时区 + 子 JVM `-Duser.timezone=UTC` 首次初始化）；`SqlDelightMonthlyContributionReadAdapterTest.equivalentTextFormsProjectToTheSameEpochNanosAndTheSubsecondWindowStaysHalfOpen`（`Z`/`+08:00`/`-08:00` 等值投影、半开窗、闰年二月窗口）。
+   - **A09**：`SqlDelightBudgetStoreTest.aRealCloseAndReopenKeepsBudgetIdentityHistoryAndMonthRows` 与 `renamingAndDeactivatingTheCategoryKeepsStableAttributionAndZeroLedgerSideEffects`；`P708RestoreRoundtripEquivalenceTest` 三个 stage 的 CATEGORY-scope 预算链 + 四张预算表全值比较 + 两条链 `settingsHistory` 逐字段（含 `createdAt`）读回。
+   - **补充条款归属**：A04 的 note-update/RG-11/RG-12 追加版本条款与 A07「四语句 + 追加路径」条款由既有 `P707TimeProjectionWriteMaintenanceTest`、`SqlDelightRg11StoreTest`、`SqlDelightRg12StoreTest` 覆盖；本批未新增这些路径的证据，CI 全量执行时一并成立。
+
+3. **未判 PASS/保持开放**：**A08（缺证）**——20k/50k 规模、扫描/返回行、查询数、峰值内存、连接持有与端到端响应仍未测（D-237 item 4 / D-186）；**P7-07 整体仍不判通过**（A08 未闭合）。本条不改变 D-237 对 A01/A02/A03/A05 的 PASS。
+
+4. **证据**：PR head `af2a135` 的 CI run `39762818759` 全绿（`Kotlin tests`/`Android compile`/`Python tests`/`Trace scan`；`ledger-data shard 1/2/3` 全绿且 `verify-shard-coverage.py` 覆盖新增类 `com.unifiedledger.data.P707BudgetCorrectionCrossTest`，清单 104 行）；merge `5b93e1c` 的 merge tree guard run `39763887230` success（zero-action）。独立 verifier 在父提交 `4b7489a` 上以 `--rerun-tasks` 聚焦复跑：4 类 43 tests / 0 failures/errors/skips + 应用 2 类 9 tests / 0 failures。reviewer 结论 APPROVE-WITH-FINDINGS；3 条 P3 已在 `d022f4c` 修复（rgXX 对账探针、`createdAt` 读回、权威引用），delta 经独立 reviewer 复核为 APPROVE，其唯一非阻断备注（探针注释范围过宽）已在 `af2a135` 收窄。第一轮 CI 仅因两处 ktlint 违规失败，修复后重推（`13c5d39`）。
+
+5. **边界**：不改 D-237 的 A01/A02/A03/A05 PASS；不改 `ACC-D-PERF-01`/`ACC-D-20K-01`；不把 A08 并入 PASS；不改 P7-05/P7-06/P7-08/P7-09 的任何状态。已知残余：`P705Database` 的 `PRAGMA foreign_keys = ON` 在 `ThreadedConnectionManager` 上不跨语句保持（既有 harness 限制，无新断言依赖它）；预算规格行号漂移（`copyCurrentVersionWithNewNote` 实测在 `Ledger.sq:2520`，规格写 `:2112`）另行登记，不在本条改规格。
+
+6. **审验拓扑**：批次由 `autopilot` 编排（单 writer → 独立 reviewer → distinct verifier）；冻结候选 `4b7489a` 后主代理按评审 P3 追加两个测试/注释提交，并按要求取独立 delta 评审。测试执行按当前路由归 CI（PR head 的 required checks + merge tree guard），本地不再重复。
+
+**关联决定：** D-184（07.T 时间投影与预算口径冻结）、D-185（07.B 预算配置持久化，schema v32→v33）、D-186（07.D 预算读取与产品接线）、D-237（P7-07 验收向量裁决，A04/A06/A07/A09 在此前开放；本条闭合其中四项，A08 保持开放）、D-156（`transaction_effective_state` 有效谓词唯一 SQL 定义点）、D-230/D-234（`ACC-D-PERF-01` 与设备证据，不受本条影响）、阶段计划 §7.3 与 §10.1/§10.4.5。
