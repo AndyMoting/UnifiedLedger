@@ -10,10 +10,10 @@ import kotlin.test.assertTrue
 import kotlin.time.Instant
 
 /**
- * P7-07 A07 "device time zone changes" leg (plan section 7.3 line 252; D-237 item 4; budget
- * design spec section 6.4 item 1): the reporting zone is the frozen constant
- * `Asia/Shanghai`, never the host default, so an instant's Shanghai month does not move when
- * the device zone changes.
+ * P7-07 A07 "device time zone changes" leg (plan section 7.3 line 252; D-237 item 4;
+ * `MonthlyBuckets.REPORT_TIME_ZONE` is the frozen `Asia/Shanghai` constant): the reporting zone
+ * never follows the host default, so an instant's Shanghai month does not move when the device
+ * zone changes.
  *
  * Two independent legs, because `MonthlyBuckets.REPORT_TIME_ZONE` is a `val` of a Kotlin
  * `object` and therefore initializes exactly once per JVM:

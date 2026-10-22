@@ -632,6 +632,10 @@ class P708RestoreRoundtripEquivalenceTest {
             listOf("budget-request-1", "budget-request-2", "budget-request-3"),
             settings.map { it.requestId.value },
         )
+        assertEquals(
+            listOf("2026-03-05T02:00:00Z", "2026-03-05T02:00:00Z", "2026-03-05T02:00:00Z"),
+            settings.map { it.createdAt },
+        )
         val categorySettings = store.settingsHistory(LedgerId(ledgerId), categoryBudgetId)
         assertEquals(listOf(1L, 2L), categorySettings.map { it.revisionNumber })
         assertEquals(listOf(false, false), categorySettings.map { it.closed })
@@ -639,6 +643,10 @@ class P708RestoreRoundtripEquivalenceTest {
         assertEquals(
             listOf("budget-request-category-1", "budget-request-category-2"),
             categorySettings.map { it.requestId.value },
+        )
+        assertEquals(
+            listOf("2026-03-05T02:00:00Z", "2026-03-05T02:00:00Z"),
+            categorySettings.map { it.createdAt },
         )
     }
 

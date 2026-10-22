@@ -53,9 +53,10 @@ import kotlin.time.Instant
  * and a restore are each observed exactly once — through the CURRENT effective version only —
  * and the source times plus the reconciliation/evidence owners stay unchanged.
  *
- * Every vector drives the real P7-05 correction/void/restore ports and the real budget read
- * (bounded contribution adapter + [QueryBudgetMonth]) over one file-backed database, so the
- * assertions pin the frozen SQL mechanics rather than a Kotlin re-statement of them:
+ * Every correction/void/restore vector drives the real P7-05 ports; every vector reads through
+ * the real budget read (bounded contribution adapter + [QueryBudgetMonth]) over one file-backed
+ * database, so the assertions pin the frozen SQL mechanics rather than a Kotlin re-statement of
+ * them:
  *  - `monthlyContributionRowsInWindow` joins `ledger_transaction_current_version` and filters
  *    `transaction_effective_state.is_effective = 1` (Ledger.sq projection query). Reverting the
  *    current-version join to "any version" would count the superseded 10 000 version as well
@@ -122,7 +123,8 @@ class P707BudgetCorrectionCrossTest {
                 ),
             )
 
-            // The correction touches no reconciliation/evidence row (spec 6.4 item 4).
+            // The correction touches no reconciliation/evidence row (plan section 7.3 A04;
+            // D-237 item 1).
             assertEquals(ownersBefore, surface.ownerCounts())
         }
     }
@@ -421,13 +423,16 @@ class P707BudgetCorrectionCrossTest {
 
         /** Ledger rows plus the reconciliation/evidence owners the budget commands must never touch. */
         fun sideEffectCounts(): Map<String, Long> =
-            (listOf("ledger_transaction", "posting_set", "posting") + ownerTables())
-                .associateWith { table -> harness.ledgerQueryCount("SELECT count(*) FROM $table") }
+            (
+                listOf("ledger_transaction", "transaction_version", "ledger_transaction_current_version", "posting_set", "posting") +
+                    ownerTables()
+            ).associateWith { table -> harness.ledgerQueryCount("SELECT count(*) FROM $table") }
 
+        /** Every reconciliation/evidence table family, including the rgXX silos. */
         private fun ownerTables(): List<String> =
             harness.ledgerQueryTexts(
                 "SELECT name FROM sqlite_master WHERE type = 'table' " +
-                    "AND (name LIKE 'posting_reconciliation%' OR name LIKE '%evidence_link%') ORDER BY name",
+                    "AND (name LIKE '%posting_reconciliation%' OR name LIKE '%evidence_link%') ORDER BY name",
             )
 
         private fun command(): SaveBudgetConfiguration {

@@ -711,15 +711,17 @@ class SqlDelightBudgetStoreTest {
         listOf("budget_config", "budget_settings_history", "budget_command_request", "budget_command_receipt")
             .associateWith { table -> database.ledgerQueryCount("SELECT count(*) FROM $table") }
 
-    /** Ledger rows plus the reconciliation/evidence owners a catalog or budget command must not touch. */
+    /** Ledger rows plus every reconciliation/evidence owner family, including the rgXX silos. */
     private fun ledgerSideEffectCounts(database: P705Database): Map<String, Long> {
         val ownerTables =
             database.ledgerQueryTexts(
                 "SELECT name FROM sqlite_master WHERE type = 'table' " +
-                    "AND (name LIKE 'posting_reconciliation%' OR name LIKE '%evidence_link%') ORDER BY name",
+                    "AND (name LIKE '%posting_reconciliation%' OR name LIKE '%evidence_link%') ORDER BY name",
             )
-        return (listOf("ledger_transaction", "posting_set", "posting") + ownerTables)
-            .associateWith { table -> database.ledgerQueryCount("SELECT count(*) FROM $table") }
+        return (
+            listOf("ledger_transaction", "transaction_version", "ledger_transaction_current_version", "posting_set", "posting") +
+                ownerTables
+        ).associateWith { table -> database.ledgerQueryCount("SELECT count(*) FROM $table") }
     }
 
     /**

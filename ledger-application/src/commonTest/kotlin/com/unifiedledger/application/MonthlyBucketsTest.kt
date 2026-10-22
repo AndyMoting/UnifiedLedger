@@ -48,8 +48,8 @@ class MonthlyBucketsTest {
 
     /**
      * P7-07 A07 sub-second leg (plan section 7.3 line 252; D-237 item 4; budget design spec
-     * section 6.4 item 1): the Shanghai month boundary is defined to the nanosecond, and
-     * [MonthlyBuckets.monthStart] is its half-open lower bound.
+     * section 6.5 on the lossless numeric time projection): the Shanghai month boundary is
+     * defined to the nanosecond, and [MonthlyBuckets.monthStart] is its half-open lower bound.
      */
     @Test
     fun subsecondLeapAndNonLeapMonthBoundariesUseTheFrozenShanghaiMonth() {
