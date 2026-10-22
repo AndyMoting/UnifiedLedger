@@ -1,12 +1,15 @@
 """Surface the recorded scale readings from JUnit XML into the job summary.
 
 The P7-07/P7-08 scale tests (P707BudgetScaleTest, TagMerchantFilterScaleTest)
-record their measurements by printing lines under a stable prefix. Those lines
-land in the JUnit XML's <system-out> — which a normal CI run neither displays
-nor archives, so the readings a scale batch delivers would be unreadable the
-moment the job ends. This script copies exactly the prefixed lines into the
-GitHub Actions job summary, so a recorded figure can be cited later without
-re-running a 20k/50k fixture build.
+record their measurements by printing lines under a stable prefix. Gradle only
+writes that text into the JUnit XML when the test task enables per-case output
+(`reports.junitXml.outputPerTestCase`, set in tools/ci/ci-parallel.init.gradle.kts);
+without it the readings exist only in a console CI neither prints nor archives.
+
+This script copies exactly the prefixed lines into the GitHub Actions job
+summary, so a recorded figure can be cited later without re-running a 20k/50k
+fixture build. It reads <system-out> at both the testcase and the suite level,
+because the two report shapes differ in where they place it.
 
 Report-only: it never changes a check result, and a run that printed nothing is
 not an error (the 20k-only shards legitimately print nothing).
@@ -46,8 +49,8 @@ def prefixed_lines(system_out: str, prefixes: tuple[str, ...]) -> list[str]:
 def collect(root: str, prefixes: tuple[str, ...]) -> list[tuple[str, str, list[str]]]:
     """(owner, testcase name, lines) for every case that printed a reading."""
     rows = []
-    pattern = os.path.join(root, "*", "build", "test-results", "*", "TEST-*.xml")
-    for path in sorted(glob.glob(pattern)):
+    pattern = os.path.join(root, "**", "build", "test-results", "**", "TEST-*.xml")
+    for path in sorted(glob.glob(pattern, recursive=True)):
         try:
             tree = ET.parse(path)
         except ET.ParseError as failure:
@@ -59,6 +62,11 @@ def collect(root: str, prefixes: tuple[str, ...]) -> list[tuple[str, str, list[s
             lines = prefixed_lines(system_out, prefixes)
             if lines:
                 rows.append((owner, case.get("name") or "?", lines))
+        # Some report shapes put the case's output on the suite instead.
+        suite_out = tree.getroot().findtext("system-out") or ""
+        suite_lines = prefixed_lines(suite_out, prefixes)
+        if suite_lines:
+            rows.append((owner, "(suite)", suite_lines))
     return rows
 
 
