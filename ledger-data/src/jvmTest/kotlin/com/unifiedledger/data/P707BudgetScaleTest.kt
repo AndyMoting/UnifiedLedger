@@ -30,8 +30,8 @@ import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
 import com.unifiedledger.domain.LedgerId
-import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionId
+import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.VoidReason
 import com.unifiedledger.domain.VoidReasonCode
 import kotlinx.datetime.DateTimeUnit
@@ -277,9 +277,7 @@ class P707BudgetScaleTest {
     private fun observation(
         view: BudgetMonthView,
         scope: BudgetScope,
-    ): BudgetMonth {
-        return assertIs<BudgetMonthResult.Success>(view.observations.single { it.budgetMonth.scope == scope }).budgetMonth
-    }
+    ): BudgetMonth = assertIs<BudgetMonthResult.Success>(view.observations.single { it.budgetMonth.scope == scope }).budgetMonth
 
     /**
      * Every returned row must be the CURRENT version of an EFFECTIVE transaction of that month,
@@ -378,9 +376,7 @@ class P707BudgetScaleTest {
         )
     }
 
-    private fun openCountingSurface(harness: P705Database): CountingBudgetSurface {
-        return CountingBudgetSurface(JdbcSqliteDriver("jdbc:sqlite:${harness.filePath}"))
-    }
+    private fun openCountingSurface(harness: P705Database): CountingBudgetSurface = CountingBudgetSurface(JdbcSqliteDriver("jdbc:sqlite:${harness.filePath}"))
 
     /**
      * Surface (b) of the three reported row counts: how many `transaction_version` rows of the
