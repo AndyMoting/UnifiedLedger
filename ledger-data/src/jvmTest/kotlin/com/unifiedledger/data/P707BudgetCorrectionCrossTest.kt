@@ -418,15 +418,23 @@ class P707BudgetCorrectionCrossTest {
             )
 
         /** The reconciliation/evidence owners a correction must never touch. */
-        fun ownerCounts(): Map<String, Long> =
-            ownerTables().associateWith { table -> harness.ledgerQueryCount("SELECT count(*) FROM $table") }
+        fun ownerCounts(): Map<String, Long> {
+            val tables = ownerTables()
+            return tables.associateWith { table -> harness.ledgerQueryCount("SELECT count(*) FROM $table") }
+        }
 
         /** Ledger rows plus the reconciliation/evidence owners the budget commands must never touch. */
-        fun sideEffectCounts(): Map<String, Long> =
-            (
-                listOf("ledger_transaction", "transaction_version", "ledger_transaction_current_version", "posting_set", "posting") +
-                    ownerTables()
-            ).associateWith { table -> harness.ledgerQueryCount("SELECT count(*) FROM $table") }
+        fun sideEffectCounts(): Map<String, Long> {
+            val tables =
+                listOf(
+                    "ledger_transaction",
+                    "transaction_version",
+                    "ledger_transaction_current_version",
+                    "posting_set",
+                    "posting",
+                ) + ownerTables()
+            return tables.associateWith { table -> harness.ledgerQueryCount("SELECT count(*) FROM $table") }
+        }
 
         /** Every reconciliation/evidence table family, including the rgXX silos. */
         private fun ownerTables(): List<String> =

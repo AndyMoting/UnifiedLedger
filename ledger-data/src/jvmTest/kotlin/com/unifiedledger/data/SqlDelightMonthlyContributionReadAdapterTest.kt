@@ -354,7 +354,8 @@ class SqlDelightMonthlyContributionReadAdapterTest {
                 "SELECT statistics_at_epoch_nanos FROM transaction_version WHERE version_id = '$versionId'",
                 { cursor ->
                     check(cursor.next().value)
-                    app.cash.sqldelight.db.QueryResult.Value(requireNotNull(cursor.getLong(0)))
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(requireNotNull(cursor.getLong(0)))
                 },
                 0,
             ).value
