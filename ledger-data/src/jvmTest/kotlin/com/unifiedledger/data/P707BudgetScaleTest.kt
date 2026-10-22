@@ -11,12 +11,16 @@ import com.unifiedledger.application.BudgetMonthView
 import com.unifiedledger.application.BudgetMonthViewResult
 import com.unifiedledger.application.BudgetRequestId
 import com.unifiedledger.application.BudgetRequestIdSource
+import com.unifiedledger.application.ExecuteVoidTransaction
+import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.LedgerEntryRow
 import com.unifiedledger.application.MonthlyBuckets
 import com.unifiedledger.application.MonthlyContributionReadPort
 import com.unifiedledger.application.MonthlyContributionReadResult
 import com.unifiedledger.application.QueryBudgetMonth
 import com.unifiedledger.application.SaveBudgetConfiguration
+import com.unifiedledger.application.VoidTransactionRequest
+import com.unifiedledger.application.VoidTransactionResult
 import com.unifiedledger.application.budgetMonthConfigKey
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.AccountId
@@ -27,6 +31,9 @@ import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionKind
+import com.unifiedledger.domain.TransactionId
+import com.unifiedledger.domain.VoidReason
+import com.unifiedledger.domain.VoidReasonCode
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.YearMonth
 import kotlinx.datetime.plus
@@ -270,8 +277,9 @@ class P707BudgetScaleTest {
     private fun observation(
         view: BudgetMonthView,
         scope: BudgetScope,
-    ): BudgetMonth =
-        assertIs<BudgetMonthResult.Success>(view.observations.single { it.budgetMonth.scope == scope }).budgetMonth
+    ): BudgetMonth {
+        return assertIs<BudgetMonthResult.Success>(view.observations.single { it.budgetMonth.scope == scope }).budgetMonth
+    }
 
     /**
      * Every returned row must be the CURRENT version of an EFFECTIVE transaction of that month,
@@ -370,8 +378,9 @@ class P707BudgetScaleTest {
         )
     }
 
-    private fun openCountingSurface(harness: P705Database): CountingBudgetSurface =
-        CountingBudgetSurface(JdbcSqliteDriver("jdbc:sqlite:${harness.filePath}"))
+    private fun openCountingSurface(harness: P705Database): CountingBudgetSurface {
+        return CountingBudgetSurface(JdbcSqliteDriver("jdbc:sqlite:${harness.filePath}"))
+    }
 
     /**
      * Surface (b) of the three reported row counts: how many `transaction_version` rows of the
@@ -503,13 +512,23 @@ class P707BudgetScaleTest {
                     "AND (CAST(substr(posting_set_id, 4, 5) AS INTEGER) - 1) % 9 >= 3",
             )
         }
-        VOIDED_INDICES.sorted().forEachIndexed { ordinal, index ->
-            harness.insertRawVoidFact(
-                transactionIdOf(index),
-                ordinal + 1L,
-                factKind = "void",
-                factId = "p707-a08-void-fact-${ordinal + 1}",
-            )
+        // Void the subset through the real product use case, so the effective predicate is
+        // exercised against fact rows the commit port actually wrote (the raw insert would have
+        // to re-create the per-transaction sequence guard's bookkeeping by hand).
+        val voidIds = P705Ids("p707-a08-void")
+        val voidTransaction = ExecuteVoidTransaction(harness.voidPort, voidIds.voidSource, fixedClock(P705Fixture.voidedAt))
+        VOIDED_INDICES.sorted().forEach { index ->
+            val outcome =
+                voidTransaction.execute(
+                    VoidTransactionRequest(
+                        ledgerId = P705Fixture.ledgerId,
+                        requestId = voidIds.requestId(),
+                        transactionId = TransactionId(transactionIdOf(index)),
+                        reason = VoidReason(VoidReasonCode.MIS_ENTERED, "scale fixture void"),
+                        confirmation = ExplicitManualSave,
+                    ),
+                )
+            check(outcome is VoidTransactionResult.Created) { "the fixture void must be accepted, got $outcome" }
         }
     }
 
@@ -716,9 +735,10 @@ internal class CountingBudgetSurface(
         QueryBudgetMonth(
             readPort = readPort,
             authorityReader = budgetStore,
-            configReader = BudgetMonthConfigReader { ledger, month ->
-                budgetStore.configsForMonth(ledger, budgetMonthConfigKey(month))
-            },
+            configReader =
+                BudgetMonthConfigReader { ledger, month ->
+                    budgetStore.configsForMonth(ledger, budgetMonthConfigKey(month))
+                },
         )
     val catalogVersion: Long = requireNotNull(catalogStore.load(P705Fixture.ledgerId)).catalogVersion
 
