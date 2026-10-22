@@ -113,6 +113,9 @@ jobs:
       - name: Test timing report
         if: always()
         run: python3 tools/ci/test-timing-report.py --root . --summary "$GITHUB_STEP_SUMMARY" --top 0
+      - name: Recorded scale readings
+        if: always()
+        run: python3 tools/ci/scale-readings-report.py --root . --summary "$GITHUB_STEP_SUMMARY"
 
   kotlin-gate:
     # Owns the branch-protection context name "Kotlin tests". It must always run

@@ -1,0 +1,107 @@
+"""Surface the recorded scale readings from JUnit XML into the job summary.
+
+The P7-07/P7-08 scale tests (P707BudgetScaleTest, TagMerchantFilterScaleTest)
+record their measurements by printing lines under a stable prefix. Gradle writes
+those lines into the suite-level <system-out> of the JUnit XML, which is
+neither displayed in CI nor archived, so a delivered reading becomes unreadable
+as soon as the job ends. This script copies exactly the prefixed lines into the
+GitHub Actions job summary, so a recorded figure can be cited later without
+re-running a 20k/50k fixture build.
+
+Gradle attaches the text to the <testsuite>, not to each <testcase>; both
+positions are read so a future report-shape change cannot silently reintroduce
+the gap.
+
+Report-only: it never changes a check result, and a run that printed nothing is
+not an error (the 20k-only shards legitimately print nothing).
+"""
+
+import argparse
+import glob
+import os
+import sys
+import xml.etree.ElementTree as ET
+
+DEFAULT_PREFIXES = ("P707-A08 ", "P708-A09 ")
+
+
+def class_of(root: str, path: str) -> str:
+    """The module and test task a JUnit XML belongs to, for the summary heading."""
+    parts = os.path.relpath(path, root).split(os.sep)
+    module = parts[0] if parts else "?"
+    task = "?"
+    if "test-results" in parts:
+        index = parts.index("test-results")
+        if index + 1 < len(parts):
+            task = parts[index + 1]
+    return f"{module}:{task}"
+
+
+def prefixed_lines(system_out: str, prefixes: tuple[str, ...]) -> list[str]:
+    """Every stdout line that starts with one of the recorded-reading prefixes."""
+    found = []
+    for line in system_out.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(prefixes):
+            found.append(stripped)
+    return found
+
+
+def collect(root: str, prefixes: tuple[str, ...]) -> list[tuple[str, str, list[str]]]:
+    """(owner, suite or case name, lines) for every site that printed a reading."""
+    rows = []
+    pattern = os.path.join(root, "**", "build", "test-results", "**", "TEST-*.xml")
+    for path in sorted(glob.glob(pattern, recursive=True)):
+        try:
+            tree = ET.parse(path)
+        except ET.ParseError as failure:
+            print(f"warning: unparsable {path}: {failure}", file=sys.stderr)
+            continue
+        root_element = tree.getroot()
+        owner = class_of(root, path)
+        suite_out = root_element.findtext("system-out") or ""
+        suite_lines = prefixed_lines(suite_out, prefixes)
+        if suite_lines:
+            rows.append((owner, root_element.get("name") or "(suite)", suite_lines))
+        for case in root_element.iter("testcase"):
+            case_lines = prefixed_lines(case.findtext("system-out") or "", prefixes)
+            if case_lines:
+                rows.append((owner, case.get("name") or "?", case_lines))
+    return rows
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--root", default=".")
+    parser.add_argument("--summary", default=None, help="write to this file (e.g. $GITHUB_STEP_SUMMARY)")
+    parser.add_argument("--only-missing", action="store_true", help="exit 1 when no reading was found")
+    arguments = parser.parse_args()
+
+    rows = collect(arguments.root, DEFAULT_PREFIXES)
+    if not rows:
+        if arguments.only_missing:
+            print("no recorded scale reading found in any JUnit XML", file=sys.stderr)
+            return 1
+        print("no recorded scale reading found in any JUnit XML (not an error)")
+        return 0
+
+    out = ["## Recorded scale readings", ""]
+    out.append("Values are recorded, never threshold-asserted. JVM heap figures are JVM-heap-only.")
+    for owner, name, lines in rows:
+        out.extend(["", f"### {owner} — {name}", "", "```"])
+        out.extend(lines)
+        out.append("```")
+
+    text = "\n".join(out) + "\n"
+    # Written to the summary AND to stdout: the summary is the human view, but the
+    # job log is the only form that stays retrievable through the actions API, and a
+    # later batch cites these figures from CI rather than rebuilding a 20k/50k fixture.
+    print(text)
+    if arguments.summary:
+        with open(arguments.summary, "a", encoding="utf-8") as handle:
+            handle.write(text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
