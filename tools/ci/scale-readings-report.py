@@ -93,11 +93,13 @@ def main() -> int:
         out.append("```")
 
     text = "\n".join(out) + "\n"
+    # Written to the summary AND to stdout: the summary is the human view, but the
+    # job log is the only form that stays retrievable through the actions API, and a
+    # later batch cites these figures from CI rather than rebuilding a 20k/50k fixture.
+    print(text)
     if arguments.summary:
         with open(arguments.summary, "a", encoding="utf-8") as handle:
             handle.write(text)
-    else:
-        print(text)
     return 0
 
 
