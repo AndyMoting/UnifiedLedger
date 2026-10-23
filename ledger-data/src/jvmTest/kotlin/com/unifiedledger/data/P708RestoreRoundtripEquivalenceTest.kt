@@ -12,6 +12,8 @@ import com.unifiedledger.application.CatalogEntityIds
 import com.unifiedledger.application.CatalogManagementRequestIdSource
 import com.unifiedledger.application.CatalogRequestId
 import com.unifiedledger.application.ConfirmationId
+import com.unifiedledger.application.ConfirmedManualLendingCommit
+import com.unifiedledger.application.ConfirmedManualLendingResult
 import com.unifiedledger.application.CounterpartyCommandResult
 import com.unifiedledger.application.EntryPinResult
 import com.unifiedledger.application.EntryPinTarget
@@ -42,6 +44,9 @@ import com.unifiedledger.application.ImportSourceFacts
 import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.ManualLendingBehavior
+import com.unifiedledger.application.ManualLendingRequestIdentity
+import com.unifiedledger.application.ManualLendingRequestSnapshot
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.SaveBudgetConfiguration
 import com.unifiedledger.application.TransactionVoidFactIdSource
@@ -57,10 +62,26 @@ import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
 import com.unifiedledger.domain.CounterpartyId
 import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.DomainResult
+import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.LendingBehaviorCode
+import com.unifiedledger.domain.LendingPosition
+import com.unifiedledger.domain.LendingPositionHistoryEntry
+import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.Posting
+import com.unifiedledger.domain.PostingId
+import com.unifiedledger.domain.PostingSet
+import com.unifiedledger.domain.PostingSetId
+import com.unifiedledger.domain.Transaction
 import com.unifiedledger.domain.TransactionId
+import com.unifiedledger.domain.TransactionKind
+import com.unifiedledger.domain.TransactionTimes
+import com.unifiedledger.domain.TransactionVersion
+import com.unifiedledger.domain.TransactionVersionId
 import com.unifiedledger.domain.VoidReason
 import com.unifiedledger.domain.VoidReasonCode
+import com.unifiedledger.domain.createLendingPosition
 import kotlinx.datetime.YearMonth
 import java.io.File
 import java.nio.file.Files
@@ -88,7 +109,8 @@ import kotlin.time.Instant
  * 08.A owner table (the 11 tables D-218 §3 froze), the four `manual_*_request` annotation columns,
  * the receipt tables, the four 07.B budget tables, the six `catalog_*` owners, `posting_set`, the
  * P7-02 `entry_pin`/`counterparty` owners, the P7-05 void/restore audit owners, the P4 import
- * intake and duplicate-disposition owners, and the base formal transaction/version/posting rows.
+ * intake and duplicate-disposition owners, the P7-02 lending-position owners, and the base formal
+ * transaction/version/posting rows.
  * The budget leg supplies the "预算配置历史"
  * owner half of P706-A11 ("最终 schema 含预算配置历史及标签/商家注释历史…所有新增 owner 往返"); it
  * registers no vector PASS. Three legs:
@@ -217,6 +239,14 @@ class P708RestoreRoundtripEquivalenceTest {
         listOf("transaction_void_request", "transaction_void_fact", "transaction_void_receipt")
 
     /**
+     * The P7-02 lending-position owners (plan :181's "借贷/对手方" position half). `28.sqm`
+     * (v28 -> v29) creates both and no later edge touches them, so they are compared on every leg.
+     * One LEND command writes the position row and one history entry.
+     */
+    private val lendingPositionTables =
+        listOf("lending_position", "lending_position_history")
+
+    /**
      * The P4 import intake owners (plan :181's "来源/候选"). One accepted intake writes all of
      * them in a single transaction; neither `33.sqm` nor `34.sqm` touches them, so they are
      * compared on every leg.
@@ -254,7 +284,7 @@ class P708RestoreRoundtripEquivalenceTest {
     private val currentSchemaOwnerTables =
         preV34SurvivorTables + annotationOwnerTables + manualRequestTables + budgetOwnerTables +
             catalogOwnerTables + confirmedExpenseReceiptTables + preferenceAndCounterpartyTables + voidRestoreTables +
-            importIntakeTables + duplicateReviewTables
+            importIntakeTables + duplicateReviewTables + lendingPositionTables
 
     /**
      * The v34 and rollback owner set: everything in [currentSchemaOwnerTables] except the
@@ -266,7 +296,7 @@ class P708RestoreRoundtripEquivalenceTest {
     private val migratedOwnerTables =
         preV34SurvivorTables + annotationOwnerTables + budgetOwnerTables + catalogOwnerTables +
             confirmedExpenseReceiptTables + preferenceAndCounterpartyTables + voidRestoreTables + importIntakeTables +
-            duplicateReviewTables
+            duplicateReviewTables + lendingPositionTables
 
     /**
      * The v33 owner set. A Stage.V33 source has the 11 `08.A` annotation tables DROPPED
@@ -275,7 +305,8 @@ class P708RestoreRoundtripEquivalenceTest {
      */
     private val preAnnotationEdgeOwnerTables =
         preV34SurvivorTables + budgetOwnerTables + catalogOwnerTables + confirmedExpenseReceiptTables +
-            preferenceAndCounterpartyTables + voidRestoreTables + importIntakeTables + duplicateReviewTables
+            preferenceAndCounterpartyTables + voidRestoreTables + importIntakeTables + duplicateReviewTables +
+            lendingPositionTables
 
     /** The stable budget identity the seeded chain binds: two limit revisions then a CLOSED one. */
     private val budgetId = BudgetId("budget-roundtrip")
@@ -538,7 +569,8 @@ class P708RestoreRoundtripEquivalenceTest {
      * two-revision annotation history with its current pointer (at v34/v35 only), and — at EVERY
      * stage — the product catalog bootstrap, the catalog command and P7-02 preference/counterparty
      * chains, the P7-05 void/restore audit chain ([seedVoidRestoreChain]), one import intake
-     * plus its duplicate review ([seedImportIntakeChain]/[seedDuplicateReviewChain]) and two budget chains (a
+     * plus its duplicate review ([seedImportIntakeChain]/[seedDuplicateReviewChain]), one lending
+     * position ([seedLendingPositionChain]) and two budget chains (a
      * TOTAL chain of two limits and a CLOSED revision, and a CATEGORY chain of two limits) through
      * the real claim-first command port (see [seedBudgetChain]); `32.sqm` created the budget tables
      * on the v32 -> v33 edge.
@@ -680,6 +712,7 @@ class P708RestoreRoundtripEquivalenceTest {
             seedVoidRestoreChain(database, driver)
             seedImportIntakeChain(database, driver)
             seedDuplicateReviewChain(database, driver)
+            seedLendingPositionChain(database, driver)
             seedBudgetChain(database, driver)
         }
     }
@@ -839,6 +872,103 @@ class P708RestoreRoundtripEquivalenceTest {
                 ),
             ),
         )
+    }
+
+    /**
+     * Writes one LEND lending event through the real product port
+     * ([SqlDelightConfirmedManualLendingCommitPort.commitOnce]).
+     *
+     * This is the plan's `:181` "借贷/对手方" position half. The command persists the formal
+     * transaction, inserts the counterparty's `lending_position` row and appends the LEND entry to
+     * `lending_position_history`, so both owners hold product-path rows a file restore must carry.
+     *
+     * The counterparty comes from [seedEntryPreferenceAndCounterpartyChain], which also creates the
+     * hidden receivable `catalog_account` the position's FK names. The committed position's newest
+     * history entry is what the port persists, so the LEND event must be the only one on this
+     * counterparty.
+     */
+    private fun seedLendingPositionChain(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
+        val counterpartyId = CounterpartyId("counterparty-roundtrip")
+        val occurredAt = Instant.parse("2026-03-09T02:00:00Z")
+        val amount = Money.ofMinor(6_000L, CurrencyUnit("CNY", 2))
+        val identity = ManualLendingRequestIdentity(LedgerId(ledgerId), RequestId("lending-request-roundtrip"))
+        val snapshot =
+            ManualLendingRequestSnapshot(
+                ledgerId = LedgerId(ledgerId),
+                behavior = ManualLendingBehavior.LEND,
+                counterpartyId = counterpartyId,
+                principalAccountId = AccountId("asset-payment-local"),
+                amount = amount,
+                interest = Money.ofMinor(0L, CurrencyUnit("CNY", 2)),
+                fee = Money.ofMinor(0L, CurrencyUnit("CNY", 2)),
+                totalReceived = null,
+                interestCategoryId = null,
+                occurredAt = occurredAt,
+                note = "roundtrip lending",
+            )
+        assertIs<ConfirmedManualLendingResult.Created>(
+            SqlDelightConfirmedManualLendingCommitPort(database, driver)
+                .commitOnce(identity, snapshot, occurredAt) {
+                    DomainResult.Success(
+                        ConfirmedManualLendingCommit(
+                            confirmationId = ConfirmationId("lending-confirmation-roundtrip"),
+                            transaction = lendingFormalTransaction(counterpartyId, amount, occurredAt),
+                            position =
+                                assertIs<DomainResult.Success<LendingPosition>>(
+                                    createLendingPosition(
+                                        id = "position-$counterpartyId",
+                                        counterpartyId = counterpartyId.value,
+                                        receivableAccountId = AccountId("receivable-roundtrip"),
+                                        currency = amount.currency,
+                                        principalBalanceMinor = amount.minorUnits,
+                                        history =
+                                            listOf(
+                                                LendingPositionHistoryEntry(
+                                                    id = "lending-entry-roundtrip",
+                                                    behaviorCode = LendingBehaviorCode.LEND,
+                                                    amountMinor = amount.minorUnits,
+                                                    principalBalanceAfterMinor = amount.minorUnits,
+                                                    transactionId = TransactionId("tx-lending-roundtrip"),
+                                                    occurredAt = occurredAt,
+                                                ),
+                                            ),
+                                    ),
+                                ).value,
+                        ),
+                    )
+                },
+        )
+    }
+
+    /** The formal LEND transaction: receivable debit against the funding account. */
+    private fun lendingFormalTransaction(
+        counterpartyId: CounterpartyId,
+        amount: Money,
+        occurredAt: Instant,
+    ): FormalTransaction {
+        val transactionId = TransactionId("tx-lending-roundtrip")
+        val versionId = TransactionVersionId("tx-lending-roundtrip-v1")
+        val postingSetId = PostingSetId("tx-lending-roundtrip-set")
+        val postings =
+            assertIs<DomainResult.Success<PostingSet>>(
+                PostingSet.create(
+                    postingSetId,
+                    listOf(
+                        Posting(PostingId("tx-lending-roundtrip-recv"), AccountId("receivable-roundtrip"), amount),
+                        Posting(PostingId("tx-lending-roundtrip-fund"), AccountId("asset-payment-local"), Money.ofMinor(-amount.minorUnits, amount.currency)),
+                    ),
+                ),
+            ).value
+        return assertIs<DomainResult.Success<FormalTransaction>>(
+            FormalTransaction.create(
+                Transaction(transactionId, LedgerId(ledgerId), TransactionKind.LEND, versionId),
+                listOf(TransactionVersion(versionId, transactionId, 1, postingSetId, TransactionTimes.collapsed(occurredAt), "")),
+                listOf(postings),
+            ),
+        ).value
     }
 
     /**
@@ -1167,8 +1297,9 @@ class P708RestoreRoundtripEquivalenceTest {
 
     /**
      * Non-vacuity guard for the restored copy's seeded owner rows: every [catalogOwnerTables],
-     * [preferenceAndCounterpartyTables], [voidRestoreTables], [importIntakeTables] and
-     * [duplicateReviewTables] entry plus `confirmed_expense_receipt` must hold at least one row, so `assertValueIdentical` compares data rather than two empty results. Without this, a
+     * [preferenceAndCounterpartyTables], [voidRestoreTables], [importIntakeTables],
+     * [duplicateReviewTables] and [lendingPositionTables] entry plus `confirmed_expense_receipt` must
+     * hold at least one row, so `assertValueIdentical` compares data rather than two empty results. Without this, a
      * table the fixture never writes (for example the command tables, which bootstrap alone does not
      * populate) would "survive" the round-trip vacuously — the same trap
      * [aV33SnapshotMigratesThroughTheFullChainWithZeroBackfillAndSurvivingRows] rejects for the
@@ -1258,6 +1389,19 @@ class P708RestoreRoundtripEquivalenceTest {
             countOn(driver, "SELECT count(*) FROM import_duplicate_status_history WHERE ledger_id = '$ledgerId'"),
             "the duplicate keeps its intake status row and the review's transition row",
         )
+        // The lending-position owners are compared on every leg too. The seeded LEND event must
+        // leave exactly one history entry, which is what proves the position rebuild crossed.
+        lendingPositionTables.forEach { table ->
+            assertTrue(
+                countOn(driver, "SELECT count(*) FROM $table WHERE ledger_id = '$ledgerId'") > 0L,
+                "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
+            )
+        }
+        assertEquals(
+            1L,
+            countOn(driver, "SELECT count(*) FROM lending_position_history WHERE ledger_id = '$ledgerId'"),
+            "the seeded LEND event appends exactly one history entry",
+        )
         assertEquals(
             2L,
             countOn(driver, "SELECT count(*) FROM transaction_void_fact WHERE ledger_id = '$ledgerId'"),
@@ -1343,6 +1487,8 @@ class P708RestoreRoundtripEquivalenceTest {
             "import_duplicate_review_request" -> "ledger_id, request_id"
             "import_duplicate_review_snapshot" -> "ledger_id, request_id"
             "import_duplicate_review_receipt" -> "ledger_id, request_id"
+            "lending_position" -> "ledger_id, counterparty_id"
+            "lending_position_history" -> "ledger_id, counterparty_id, entry_id"
             else -> "rowid"
         }
 
