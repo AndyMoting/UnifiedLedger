@@ -221,6 +221,17 @@ class P708RestoreRoundtripEquivalenceTest {
      * them in a single transaction; neither `33.sqm` nor `34.sqm` touches them, so they are
      * compared on every leg.
      */
+    private val importIntakeTables =
+        listOf(
+            "import_request",
+            "import_source_record",
+            "import_evidence",
+            "import_candidate",
+            "import_candidate_requires_confirmation",
+            "import_candidate_status_history",
+            "import_receipt",
+        )
+
     /**
      * The P4 duplicate-disposition owners (plan :181's "重复处置"). A second intake whose business
      * tuple matches the first produces one duplicate candidate, and a review command appends the
@@ -234,17 +245,6 @@ class P708RestoreRoundtripEquivalenceTest {
             "import_duplicate_review_request",
             "import_duplicate_review_snapshot",
             "import_duplicate_review_receipt",
-        )
-
-    private val importIntakeTables =
-        listOf(
-            "import_request",
-            "import_source_record",
-            "import_evidence",
-            "import_candidate",
-            "import_candidate_requires_confirmation",
-            "import_candidate_status_history",
-            "import_receipt",
         )
 
     /**
@@ -751,8 +751,9 @@ class P708RestoreRoundtripEquivalenceTest {
      * [SqlDelightImportSpineStore.commitReviewOnce], which writes the review request claim, the
      * snapshot, the transition status-history row and the receipt.
      *
-     * `CONFIRMED_DISTINCT` is chosen because it is legal for an `EXACT_BUSINESS_TUPLE` candidate and
-     * needs no rule constraint beyond the directed target the candidate already carries. The
+     * `CONFIRMED_DISTINCT` is chosen because the store never gates it; only `CONFIRMED_DUPLICATE`
+     * carries a rule constraint (it is refused for a NULL-target `CLOSED_OR_FAILED_NO_FUNDS`
+     * candidate). The
      * comparison fingerprint is recomputed here with the same public projection the store uses, so
      * the review is not a stale-fingerprint rejection.
      */
