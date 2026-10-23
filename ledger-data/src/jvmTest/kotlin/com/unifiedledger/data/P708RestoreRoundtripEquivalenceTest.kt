@@ -49,7 +49,8 @@ import kotlin.time.Instant
  * with `VACUUM INTO`, read back
  * through the isolated-strict-migration path, and compared TABLE BY TABLE, VALUE BY VALUE — every
  * 08.A owner table (the 11 tables D-218 §3 froze), the four `manual_*_request` annotation columns,
- * the receipt tables and the four 07.B budget tables. The budget leg supplies the "预算配置历史"
+ * the receipt tables, the four 07.B budget tables, the six `catalog_*` owners and `posting_set`
+ * with the base formal transaction/version/posting rows. The budget leg supplies the "预算配置历史"
  * owner half of P706-A11 ("最终 schema 含预算配置历史及标签/商家注释历史…所有新增 owner 往返"); it
  * registers no vector PASS. Three legs:
  *
@@ -103,19 +104,26 @@ class P708RestoreRoundtripEquivalenceTest {
         )
 
     /**
-     * The tables the v33 fixture seeds; they exist below v34 and must survive the whole chain.
+     * The base ledger owners the fixture seeds at every stage ([seedCurrentLibrary]): the formal
+     * transaction, its version, its postings and its current-version pointer. Neither `33.sqm` nor
+     * `34.sqm` touches them, so every leg compares them rather than only the v33 chain.
      */
     private val preV34SurvivorTables =
         listOf("ledger_transaction", "transaction_version", "posting", "ledger_transaction_current_version")
 
     /**
-     * The catalog and posting-set owners the fixture already writes but the earlier comparisons
-     * never covered (plan :181 P706-A01: the round-trip must be equal "逐 owner/稳定 ID", not just
-     * for the annotation and budget families). The catalog tables are written by the real product
-     * bootstrap the fixture already runs ([restoreCatalogSeed] through
-     * `SqlDelightCatalogStore.bootstrap`), so these rows are product-path rows, not hand-built
-     * ones; `posting_set` is written alongside every transaction version by the P7-05 fixture
-     * writer. Each of them is a stable-id owner the restore has to carry value for value.
+     * The catalog and posting-set owners the fixture writes but the earlier comparisons never
+     * covered (plan :181 P706-A01: the round-trip must be equal "逐 owner/稳定 ID", not just for the
+     * annotation and budget families). Each of them is a stable-id owner the restore has to carry
+     * value for value.
+     *
+     * Where the rows come from: the six `catalog_*` tables are written by the real product paths
+     * the fixture already runs — [restoreCatalogSeed] through `SqlDelightCatalogStore.bootstrap`
+     * writes `catalog_account`, `catalog_category`, `catalog_name_history` and `catalog_version`,
+     * and [seedCatalogCommandChain] adds one accepted rename through the same claim-first port,
+     * which writes `catalog_command_request`, `catalog_command_receipt` and one more name-history
+     * revision. `posting_set` is hand-inserted once, next to the single seeded transaction version
+     * ([seedCurrentLibrary]).
      */
     private val catalogOwnerTables =
         listOf(
@@ -147,6 +155,24 @@ class P708RestoreRoundtripEquivalenceTest {
      * touches the table, so it is compared on every leg rather than only the fresh one.
      */
     private val confirmedExpenseReceiptTables = listOf("confirmed_expense_receipt")
+
+    /**
+     * Every owner table the fixture writes, compared with `SELECT *` on the leg whose source and
+     * snapshot are both at the current schema (v35). One list keeps the legs from drifting apart.
+     */
+    private val currentSchemaOwnerTables =
+        preV34SurvivorTables + annotationOwnerTables + manualRequestTables + budgetOwnerTables +
+            catalogOwnerTables + confirmedExpenseReceiptTables
+
+    /**
+     * The same owner set minus the `manual_*_request` tables. On the v34/v33/rollback legs the
+     * source lacks the two annotation columns `34.sqm` adds, so a `SELECT *` there would compare
+     * different column counts; those legs compare [manualRequestTables] separately on
+     * [commonManualExpenseColumns].
+     */
+    private val migratedOwnerTables =
+        preV34SurvivorTables + annotationOwnerTables + budgetOwnerTables + catalogOwnerTables +
+            confirmedExpenseReceiptTables
 
     /** The stable budget identity the seeded chain binds: two limit revisions then a CLOSED one. */
     private val budgetId = BudgetId("budget-roundtrip")
@@ -181,8 +207,7 @@ class P708RestoreRoundtripEquivalenceTest {
                 assertValueIdentical(
                     source.path,
                     snapshot.path,
-                    annotationOwnerTables + manualRequestTables + budgetOwnerTables + catalogOwnerTables +
-                        confirmedExpenseReceiptTables,
+                    currentSchemaOwnerTables,
                 )
                 // The 08.D read path returns the whole history off the restored snapshot.
                 val database = LedgerDatabase(snapshotDriver)
@@ -229,7 +254,7 @@ class P708RestoreRoundtripEquivalenceTest {
                 assertValueIdentical(
                     source.path,
                     snapshot.path,
-                    annotationOwnerTables + budgetOwnerTables + catalogOwnerTables + confirmedExpenseReceiptTables,
+                    migratedOwnerTables,
                 )
                 assertBothBudgetHistoriesReadBack(isolated)
                 assertCatalogOwnersReadBackNonVacuously(isolated)
@@ -293,7 +318,7 @@ class P708RestoreRoundtripEquivalenceTest {
                 // manual claim row projected onto its v33 columns — the edge added the two
                 // annotation columns). The budget chain was already present at v33 and must
                 // cross the untouched edges unchanged.
-                assertValueIdentical(source.path, snapshot.path, preV34SurvivorTables + budgetOwnerTables + catalogOwnerTables + confirmedExpenseReceiptTables)
+                assertValueIdentical(source.path, snapshot.path, migratedOwnerTables)
                 // The migrated copy also READS BACK both immutable chains through the real store.
                 assertBothBudgetHistoriesReadBack(isolated)
                 assertCatalogOwnersReadBackNonVacuously(isolated)
@@ -377,7 +402,7 @@ class P708RestoreRoundtripEquivalenceTest {
                 assertValueIdentical(
                     source.path,
                     snapshot.path,
-                    annotationOwnerTables + budgetOwnerTables + catalogOwnerTables + confirmedExpenseReceiptTables,
+                    migratedOwnerTables,
                 )
                 assertCatalogOwnersReadBackNonVacuously(reopened)
                 assertValueIdentical(source.path, snapshot.path, manualRequestTables) { table ->
@@ -552,13 +577,15 @@ class P708RestoreRoundtripEquivalenceTest {
      * ([ExecuteCatalogCommand] over [SqlDelightCatalogStore]), so `catalog_command_request` and
      * `catalog_command_receipt` hold product-path rows instead of nothing.
      *
-     * Bootstrap alone only inserts `catalog_version` (it never claims a command), and no other part
-     * of this fixture issues a catalog command, so without this seed those two tables would compare
+     * Bootstrap writes the catalog rows and `catalog_version`, but it never claims a command: it
+     * goes straight from the seed inserts to `insertCatalogVersion`. No other part of this fixture
+     * issued a catalog command either, so without this seed the two command tables would compare
      * empty-vs-empty — the vacuous "survival" claim the v33 budget leg below explicitly rejects.
      *
      * The command renames the seeded `asset-payment-local` account: a rename supersedes the current
      * name and appends a new `catalog_name_history` revision, so the seeded rows also exercise the
-     * version/history owners rather than only the two command tables.
+     * version/history owners rather than only the two command tables. A rename never mints entity
+     * ids, so the constructor's entity-id source is required but never called here.
      */
     private fun seedCatalogCommandChain(
         database: LedgerDatabase,
@@ -568,15 +595,8 @@ class P708RestoreRoundtripEquivalenceTest {
         val command =
             ExecuteCatalogCommand(
                 commitPort = store,
-                requestIdSource = CatalogManagementRequestIdSource { CatalogRequestId("catalog-request-account-rename") },
-                entityIdSource = CatalogEntityIdSource {
-                    CatalogEntityIds(
-                        manageableAccountId = AccountId("asset-managed-unused"),
-                        postingAccountId = AccountId("expense-account-unused"),
-                        parentCategoryId = CategoryId("expense-group-unused"),
-                        childCategoryId = CategoryId("expense-child-unused"),
-                    )
-                },
+                requestIdSource = catalogRenameRequestId(),
+                entityIdSource = unusedCatalogEntityIds(),
                 categoryReferenceProbe = store,
             )
         // The bootstrap left the catalog at version 1; the rename is the first command to claim one.
@@ -589,6 +609,22 @@ class P708RestoreRoundtripEquivalenceTest {
             ),
         )
     }
+
+    private fun catalogRenameRequestId(): CatalogManagementRequestIdSource = CatalogManagementRequestIdSource { CatalogRequestId("catalog-request-account-rename") }
+
+    /**
+     * [ExecuteCatalogCommand] requires an entity-id source, but only the create paths call it; the
+     * seeded rename mints nothing, so these ids are never persisted.
+     */
+    private fun unusedCatalogEntityIds(): CatalogEntityIdSource =
+        CatalogEntityIdSource {
+            CatalogEntityIds(
+                manageableAccountId = AccountId("asset-managed-unused"),
+                postingAccountId = AccountId("expense-account-unused"),
+                parentCategoryId = CategoryId("expense-group-unused"),
+                childCategoryId = CategoryId("expense-child-unused"),
+            )
+        }
 
     /**
      * The catalog the round-trip fixture needs. Bootstrap fails closed on any posting account or
@@ -777,6 +813,12 @@ class P708RestoreRoundtripEquivalenceTest {
             5L,
             countOn(driver, "SELECT count(*) FROM catalog_name_history"),
             "the rename must append a name-history revision on top of the bootstrap seeds",
+        )
+        // The receipt is compared on every leg too, so guard it against empty-vs-empty as well.
+        assertEquals(
+            1L,
+            countOn(driver, "SELECT count(*) FROM confirmed_expense_receipt"),
+            "the manual expense confirmation receipt must survive every leg",
         )
         // Bootstrap stamps version 1; the accepted rename advances it by one.
         assertEquals(
