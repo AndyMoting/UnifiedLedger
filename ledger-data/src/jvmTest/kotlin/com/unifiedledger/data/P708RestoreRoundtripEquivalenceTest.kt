@@ -165,8 +165,9 @@ class P708RestoreRoundtripEquivalenceTest {
      * The P7-02 entry-preference and counterparty owners. `entry_pin` is the plan's `:181` "置顶"
      * half; the counterparty pair is the `对手方` family the same "往返逐 owner/稳定 ID 等价"
      * requirement covers (the :181 row itself does not enumerate it). `28.sqm` (v28 → v29) creates
-     * all three and no later edge touches them, so they exist on every leg. Both are written through
-     * their real product ports ([seedEntryPreferenceAndCounterpartyChain]), not hand-built.
+     * all three and no later edge touches them, so they exist on every leg. Both families are
+     * written through their real product ports ([seedEntryPreferenceAndCounterpartyChain]), not
+     * hand-built.
      */
     private val preferenceAndCounterpartyTables =
         listOf("entry_pin", "counterparty", "counterparty_name_history")
