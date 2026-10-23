@@ -5137,3 +5137,32 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 7. **边界**：不改 D-237 对 A01/A02/A03/A05 的 PASS，不改 D-238 对 A01/A03/A04/A05/A06/A08 的 PASS，不改 D-236/D-239 的任何判决；不把 A08/A09 并入 PASS；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
 
 **关联决定：** D-237（P7-07 验收向量裁决，A08 在此前登记为缺证）、D-238（P7-08 验收向量裁决，A09 部分证据）、D-240（同一 §7.3 家族的 A04/A06/A07/A09 补测）、D-184/D-186（预算口径与读取接线）、D-230/D-234（`ACC-D-PERF-01`，不受本条影响）、阶段计划 §7.3/§8.3/§10.3。
+
+## D-242 P706-A01 恢复往返 owner 覆盖批：8 个点名族逐表逐值比较补齐（纯加测试，不判 PASS）
+
+**状态：** 已批准并登记（2026-10-23，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §6「切片与验收」的 P706-A01 + §10.1 逐项证据 + §10.4.5「报告逐项状态总数」）。**八批 tracked 变更（全部纯加测试）**：唯一改动文件 `ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/P708RestoreRoundtripEquivalenceTest.kt`。**零产品代码、零 schema、零迁移、零依赖、零 CI 配置改动**（schema 维持 v35 / 34 个 `.sqm`；`tools/ci/ledger-data-shards.txt` 维持 105 行、`ci.yml` 头注释维持 105 类——未新增测试类）。八次 squash merge：PR #115 `5269fb0`、#116 `d4c3f97`、#117 `10d89c1`、#118 `cd5cabb`、#119 `7fea405`、#121 `2e80e8b`、#122 `5901d85`、#123 `b260f45`。**本条不改变任何向量的 PASS/部分/缺证判决**，只登记覆盖面的补齐与随之产生的登记事实更正。
+
+**决定：**
+
+1. **覆盖缺口来源。** D-239 item 4 的 A01 缺口原文（`:5079`）逐字登记为：计划 A01 字面要求的**来源/候选、重复处置、匹配/对账、置顶、作废恢复历史、目录账户/分类**均无值级比较，上述表名在 `P708RestoreRoundtripEquivalenceTest` 中零命中。本条把这八个族逐一补齐，并保留该缺口的原始措辞作为变更依据。
+
+2. **逐族补齐内容（每族走真实产品端口 seed + 非空守卫 + 三条腿比较）。** 比较面由原 20 张表扩至 **60 张表**（`annotationOwnerTables` 11 + `manualRequestTables` 4 + `preV34SurvivorTables` 4 + `budgetOwnerTables` 4 + 其余按族分组），四条腿（v35 直读 / v34→v35 / v33→全链 / 失败迁移回滚）分别使用 `currentSchemaOwnerTables`、`migratedOwnerTables`、`preAnnotationEdgeOwnerTables` 三个清单（v33 源 DROP 了 11 张 08.A 表，故其清单单独列出）：
+   - **目录与正式版本/分录（拆片 1，PR #115）**：新增 `catalog_version`/`catalog_account`/`catalog_category`/`catalog_name_history`/`catalog_command_request`/`catalog_command_receipt`/`posting_set` 与 `confirmed_expense_receipt`；`ledger_transaction`/`transaction_version`/`posting`/`ledger_transaction_current_version` 由「只在 v33 腿比较」改为**每条腿都比较**。**关键修复**：`catalog_command_request`/`catalog_command_receipt` 此前无人写入（`SqlDelightCatalogStore.bootstrap` 只写 `catalog_version`），原拟比较会退化为空对空；已加 `seedCatalogCommandChain`（真实 `ExecuteCatalogCommand.renameAccount`）并配非空守卫。
+   - **置顶与对手方目录（拆片 2a，PR #116）**：`entry_pin`（计划 `:181` 的「置顶」）+ `counterparty`/`counterparty_name_history`，走 `SqlDelightEntryPreferenceStore.togglePin` 与 `SqlDelightCounterpartyStore.create`。
+   - **作废恢复历史（拆片 2b，PR #117）**：`transaction_void_request`/`transaction_void_fact`/`transaction_void_receipt`，走 `ExecuteVoidTransaction` 后 `ExecuteRestoreTransaction`（专用交易 `tx-void-target`），产生 void + restore **两条**事实。
+   - **来源/候选（拆片 2c 与 2g，PR #118 / #123）**：`import_request`/`import_source_record`/`import_evidence`/`import_candidate`/`import_candidate_requires_confirmation`/`import_candidate_status_history`/`import_receipt`（v1 普通收支 intake）+ `import_candidate_payment_profile`（v3 `MIXED_PAYMENT_SOURCE` intake），走 `SqlDelightImportSpineStore.commitIntake`。
+   - **重复处置（拆片 2d，PR #119）**：`import_duplicate_candidate`/`import_duplicate_status_history`/`import_duplicate_review_request`/`import_duplicate_review_snapshot`/`import_duplicate_review_receipt`；第二次 intake 复用同业务元组使 `selectDuplicateMatches` 恰返 1 条（在 `allocateIds` 处断言），再走 `commitReviewOnce` + `CONFIRMED_DISTINCT`。
+   - **匹配/对账（拆片 2e，PR #121）**：`evidence_projection`/`evidence_link`/`evidence_link_history`/`posting_reconciliation`/`posting_reconciliation_history`/`reconciliation_request`/`reconciliation_request_snapshot`/`reconciliation_receipt`，走 `SqlDelightP408ReconciliationStore.confirmLink`（v2 请求；v1 已按契约退役）。
+   - **回执（拆片 1 的 `confirmed_expense_receipt` + 拆片 2f，PR #122）**：`transaction_note_update_request`/`confirmed_transaction_note_update_receipt`，走 `ExecuteConfirmedTransactionNoteUpdate`。
+
+3. **本夹具结构不适用的三张回执表（登记，不记缺证）。** `confirmed_income_receipt`/`confirmed_transfer_receipt`/`confirmed_lending_receipt` 由收入/转账/借贷三个手工新建端口写，而这三个端口**无条件**调用 `updateManual…RequestAnnotation` 与 `appendManualCreateAnnotation`，写入 `34.sqm` 新增的两列注释列与 `33.sqm` 新建的 11 张表；本夹具的 v34/v33/回滚腿 DROP 这些列/表，故端口在三条腿**无法运行**（实测 `no such column: annotation_tag_ids`，4 测 3 红）。**首次尝试（PR #120，借贷族）即因此关闭未合并**（另：计划 `:181` 并未点名借贷族——「对手方」在该计划中出现 0 次）。这三表在 v33+ 均存在，但本夹具无法用真实端口写入，故**不纳入跨腿比较**；若要覆盖须另建仅 v35 的独立往返夹具（代价是失去跨腿证据）。**不得据此把 P706-A01 记为完整**。
+
+4. **同族剩余缺口（登记，不阻断）。** `import_confirmation` 与 `import_candidate_decision_snapshot` 属 `commitOnce` 的 confirm 路径，需 `ImportCandidateDecisionSnapshot` + catalog + `createFormalTransaction` 回调，成本高于本条各片，**未覆盖**。其余未比较表（190 张）绝大多数为 `rg*` 黄金筒仓表，由 golden 测试覆盖，**不属**产品恢复往返路径。
+
+5. **随之产生的登记事实更正（不改判决）。** D-239 `:5079`（A01 缺口）与 `:5087`（A11 预算腿缺失）的「零命中 / 不在任何往返比较中」措辞**自本条起对已补齐的族不再成立**；D-239 作为当时快照**保持原文不改**（决定记录 append-only），更正以本条为准。**`P706-A01` 在 §10.1 仍登记为「部分证据」，本条不把它并入 PASS**——把它改为 PASS 需按 §10.4 另行逐项回读证据并作出独立裁决。
+
+6. **审验与证据链。** 八批各经独立 reviewer 复核，均判 FIT TO PUSH；评审提出的 blocker 与本条自查发现的缺陷全部在合并前闭合，其中：拆片 1 的空对空退化（评审判定 blocker，已加真实 seed）、拆片 2b 的 v33 腿清单误含被 DROP 的 11 张表（评审 blocker，已单列清单）、拆片 2d 的相邻 KDoc 违规（ktlint_official 拒绝「KDoc 前有 KDoc」，CI 实测红）、拆片 2f 的版本数断言误写为 1（本地跑测抓到，实为 2：原版 + 副本）、拆片 2g 引入后三处旧注释失真（评审 minor，已改写并显式断言零重复需求）。**测试执行按当前路由归 CI**；拆片 2e/2f/2g 另在本地以 `:ledger-data:jvmTest --tests com.unifiedledger.data.P708RestoreRoundtripEquivalenceTest` 复跑（各 4 测 0 失败），用于在推送前捕获腿特异性缺陷。
+
+7. **边界。** 入：本条登记 + 四份正式状态文档的指针同步。出：零产品代码/测试/schema/迁移/依赖/清单/Golden 改动；**不改 D-236/D-237/D-238/D-239/D-240/D-241 的任何判决**（不把任何 A 项并入或移出 PASS）；不改 `ACC-D-PERF-01`/`ACC-D-20K-01`；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-239（P7-06 验收向量裁决，本条补齐其 A01/A04/A11 登记的缺口面）、D-238（P7-08 裁决，同一往返类的先例）、D-221/D-224（08.D 恢复白名单与往返腿的原始登记）、D-218（08.A 的 11 张 owner 表）、D-174/D-177（备份容器与导出，A01 的往返语义来源）、阶段计划 §6 与 §10.1/§10.4.5。
