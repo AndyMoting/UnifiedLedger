@@ -22,6 +22,14 @@ import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.ImportCandidateId
 import com.unifiedledger.application.ImportCompleteness
 import com.unifiedledger.application.ImportContentFingerprint
+import com.unifiedledger.application.ImportDuplicateCandidateId
+import com.unifiedledger.application.ImportDuplicateComparisonFingerprint
+import com.unifiedledger.application.ImportDuplicateComparisonSnapshot
+import com.unifiedledger.application.ImportDuplicateIntakeIds
+import com.unifiedledger.application.ImportDuplicateReviewId
+import com.unifiedledger.application.ImportDuplicateReviewRequest
+import com.unifiedledger.application.ImportDuplicateReviewResult
+import com.unifiedledger.application.ImportDuplicateStatus
 import com.unifiedledger.application.ImportEvidenceId
 import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportIntakeIds
@@ -80,7 +88,7 @@ import kotlin.time.Instant
  * 08.A owner table (the 11 tables D-218 §3 froze), the four `manual_*_request` annotation columns,
  * the receipt tables, the four 07.B budget tables, the six `catalog_*` owners, `posting_set`, the
  * P7-02 `entry_pin`/`counterparty` owners, the P7-05 void/restore audit owners, the P4 import
- * intake owners, and the base formal transaction/version/posting rows.
+ * intake and duplicate-disposition owners, and the base formal transaction/version/posting rows.
  * The budget leg supplies the "预算配置历史"
  * owner half of P706-A11 ("最终 schema 含预算配置历史及标签/商家注释历史…所有新增 owner 往返"); it
  * registers no vector PASS. Three legs:
@@ -213,6 +221,21 @@ class P708RestoreRoundtripEquivalenceTest {
      * them in a single transaction; neither `33.sqm` nor `34.sqm` touches them, so they are
      * compared on every leg.
      */
+    /**
+     * The P4 duplicate-disposition owners (plan :181's "重复处置"). A second intake whose business
+     * tuple matches the first produces one duplicate candidate, and a review command appends the
+     * decision; none of these tables is touched by `33.sqm`/`34.sqm`, so they are compared on every
+     * leg.
+     */
+    private val duplicateReviewTables =
+        listOf(
+            "import_duplicate_candidate",
+            "import_duplicate_status_history",
+            "import_duplicate_review_request",
+            "import_duplicate_review_snapshot",
+            "import_duplicate_review_receipt",
+        )
+
     private val importIntakeTables =
         listOf(
             "import_request",
@@ -231,7 +254,7 @@ class P708RestoreRoundtripEquivalenceTest {
     private val currentSchemaOwnerTables =
         preV34SurvivorTables + annotationOwnerTables + manualRequestTables + budgetOwnerTables +
             catalogOwnerTables + confirmedExpenseReceiptTables + preferenceAndCounterpartyTables + voidRestoreTables +
-            importIntakeTables
+            importIntakeTables + duplicateReviewTables
 
     /**
      * The v34 and rollback owner set: everything in [currentSchemaOwnerTables] except the
@@ -242,7 +265,8 @@ class P708RestoreRoundtripEquivalenceTest {
      */
     private val migratedOwnerTables =
         preV34SurvivorTables + annotationOwnerTables + budgetOwnerTables + catalogOwnerTables +
-            confirmedExpenseReceiptTables + preferenceAndCounterpartyTables + voidRestoreTables + importIntakeTables
+            confirmedExpenseReceiptTables + preferenceAndCounterpartyTables + voidRestoreTables + importIntakeTables +
+            duplicateReviewTables
 
     /**
      * The v33 owner set. A Stage.V33 source has the 11 `08.A` annotation tables DROPPED
@@ -251,7 +275,7 @@ class P708RestoreRoundtripEquivalenceTest {
      */
     private val preAnnotationEdgeOwnerTables =
         preV34SurvivorTables + budgetOwnerTables + catalogOwnerTables + confirmedExpenseReceiptTables +
-            preferenceAndCounterpartyTables + voidRestoreTables + importIntakeTables
+            preferenceAndCounterpartyTables + voidRestoreTables + importIntakeTables + duplicateReviewTables
 
     /** The stable budget identity the seeded chain binds: two limit revisions then a CLOSED one. */
     private val budgetId = BudgetId("budget-roundtrip")
@@ -514,7 +538,7 @@ class P708RestoreRoundtripEquivalenceTest {
      * two-revision annotation history with its current pointer (at v34/v35 only), and — at EVERY
      * stage — the product catalog bootstrap, the catalog command and P7-02 preference/counterparty
      * chains, the P7-05 void/restore audit chain ([seedVoidRestoreChain]), one import intake
-     * ([seedImportIntakeChain]) and two budget chains (a
+     * plus its duplicate review ([seedImportIntakeChain]/[seedDuplicateReviewChain]) and two budget chains (a
      * TOTAL chain of two limits and a CLOSED revision, and a CATEGORY chain of two limits) through
      * the real claim-first command port (see [seedBudgetChain]); `32.sqm` created the budget tables
      * on the v32 -> v33 edge.
@@ -655,6 +679,7 @@ class P708RestoreRoundtripEquivalenceTest {
             seedEntryPreferenceAndCounterpartyChain(database, driver)
             seedVoidRestoreChain(database, driver)
             seedImportIntakeChain(database, driver)
+            seedDuplicateReviewChain(database, driver)
             seedBudgetChain(database, driver)
         }
     }
@@ -713,6 +738,105 @@ class P708RestoreRoundtripEquivalenceTest {
                     statusHistoryId = ImportStatusHistoryId("import-status-roundtrip"),
                 )
             },
+        )
+    }
+
+    /**
+     * Runs a SECOND intake whose business tuple matches the first one, then reviews the duplicate
+     * candidate it produces. This is the plan's `:181` "重复处置" half.
+     *
+     * The second intake carries the same record kind, amount, currency, occurred-at, direction and
+     * status as [seedImportIntakeChain], so `selectDuplicateMatches` finds the first source and the
+     * store demands exactly one duplicate id. The review then appends a decision through
+     * [SqlDelightImportSpineStore.commitReviewOnce], which writes the review request claim, the
+     * snapshot, the transition status-history row and the receipt.
+     *
+     * `CONFIRMED_DISTINCT` is chosen because it is legal for an `EXACT_BUSINESS_TUPLE` candidate and
+     * needs no rule constraint beyond the directed target the candidate already carries. The
+     * comparison fingerprint is recomputed here with the same public projection the store uses, so
+     * the review is not a stale-fingerprint rejection.
+     */
+    private fun seedDuplicateReviewChain(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
+        val store = SqlDelightImportSpineStore(database, driver)
+        val identity = ImportRequestIdentity(LedgerId(ledgerId), ImportRequestId("import-request-duplicate"))
+        val facts =
+            ImportSourceFacts(
+                amountMinor = 4_200L,
+                currencyCode = "CNY",
+                currencyPrecision = 2,
+                occurredAt = "2026-03-07T02:00:00Z",
+                directionToken = "outflow",
+                statusToken = "settled",
+                fundingState = ImportFundingState.SETTLED,
+                fundingRuleId = "roundtrip-rule",
+                fundingRuleVersion = 1,
+            )
+        val subjectSourceId = ImportSourceId("import-source-duplicate")
+        val duplicateCandidateId = ImportDuplicateCandidateId("import-duplicate-candidate-roundtrip")
+        assertIs<ImportIntakeResult.Accepted>(
+            store.commitIntake(
+                identity,
+                ImportIntakeSnapshot(
+                    identity = identity,
+                    inputRef = "roundtrip-input-duplicate",
+                    recordOrdinal = 0,
+                    recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                    facts = facts,
+                    completeness = ImportCompleteness.VALID_COMPLETE,
+                    contentHash = ImportContentFingerprint().digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, facts),
+                    candidateGeneratedAt = "roundtrip-intake-v1",
+                ),
+            ) { requiredDuplicateIds ->
+                assertEquals(1, requiredDuplicateIds, "the second intake must match the first source")
+                ImportIntakeIds(
+                    sourceId = subjectSourceId,
+                    evidenceId = ImportEvidenceId("import-evidence-duplicate"),
+                    candidateId = ImportCandidateId("import-candidate-duplicate"),
+                    statusHistoryId = ImportStatusHistoryId("import-status-duplicate"),
+                    duplicateIds =
+                        listOf(
+                            ImportDuplicateIntakeIds(
+                                candidateId = duplicateCandidateId,
+                                statusHistoryId = ImportStatusHistoryId("import-duplicate-status-roundtrip"),
+                            ),
+                        ),
+                )
+            },
+        )
+        val expectedFingerprint =
+            ImportDuplicateComparisonFingerprint()
+                .digest(
+                    ImportDuplicateComparisonSnapshot(
+                        subjectSourceId = subjectSourceId,
+                        possibleExistingSourceId = ImportSourceId("import-source-roundtrip"),
+                        recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                        contractVersion = ImportRecordKind.ORDINARY_FLOW_SOURCE.contractVersion,
+                        amountMinor = facts.amountMinor,
+                        currencyCode = facts.currencyCode,
+                        currencyPrecision = facts.currencyPrecision,
+                        occurredAt = facts.occurredAt,
+                        directionToken = facts.directionToken,
+                        statusToken = facts.statusToken,
+                    ),
+                )
+        assertIs<ImportDuplicateReviewResult.Accepted>(
+            store.commitReviewOnce(
+                ImportDuplicateReviewRequest(
+                    identity = ImportRequestIdentity(LedgerId(ledgerId), ImportRequestId("import-review-roundtrip")),
+                    candidateId = duplicateCandidateId,
+                    expectedComparisonFingerprint = expectedFingerprint,
+                    decision = ImportDuplicateStatus.CONFIRMED_DISTINCT,
+                    reasonToken = "reviewed_by_hand",
+                    reviewedAt = "2026-03-08T02:00:00Z",
+                    reviewerReference = "roundtrip-reviewer",
+                    generatedAt = "2026-03-08T02:00:00Z",
+                    reviewId = ImportDuplicateReviewId("import-duplicate-review-roundtrip"),
+                    historyId = ImportStatusHistoryId("import-duplicate-review-history-roundtrip"),
+                ),
+            ),
         )
     }
 
@@ -1042,8 +1166,8 @@ class P708RestoreRoundtripEquivalenceTest {
 
     /**
      * Non-vacuity guard for the restored copy's seeded owner rows: every [catalogOwnerTables],
-     * [preferenceAndCounterpartyTables], [voidRestoreTables] and [importIntakeTables] entry plus
-     * `confirmed_expense_receipt` must hold at least one row, so `assertValueIdentical` compares data rather than two empty results. Without this, a
+     * [preferenceAndCounterpartyTables], [voidRestoreTables], [importIntakeTables] and
+     * [duplicateReviewTables] entry plus `confirmed_expense_receipt` must hold at least one row, so `assertValueIdentical` compares data rather than two empty results. Without this, a
      * table the fixture never writes (for example the command tables, which bootstrap alone does not
      * populate) would "survive" the round-trip vacuously — the same trap
      * [aV33SnapshotMigratesThroughTheFullChainWithZeroBackfillAndSurvivingRows] rejects for the
@@ -1119,6 +1243,20 @@ class P708RestoreRoundtripEquivalenceTest {
                 "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
             )
         }
+        // The duplicate-disposition owners are compared on every leg too. The seeded duplicate must
+        // keep BOTH its intake status row and the review's transition row, which is what proves the
+        // disposition history crossed rather than only the candidate row.
+        duplicateReviewTables.forEach { table ->
+            assertTrue(
+                countOn(driver, "SELECT count(*) FROM $table WHERE ledger_id = '$ledgerId'") > 0L,
+                "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
+            )
+        }
+        assertEquals(
+            2L,
+            countOn(driver, "SELECT count(*) FROM import_duplicate_status_history WHERE ledger_id = '$ledgerId'"),
+            "the duplicate keeps its intake status row and the review's transition row",
+        )
         assertEquals(
             2L,
             countOn(driver, "SELECT count(*) FROM transaction_void_fact WHERE ledger_id = '$ledgerId'"),
@@ -1199,6 +1337,11 @@ class P708RestoreRoundtripEquivalenceTest {
             "import_candidate_requires_confirmation" -> "ledger_id, candidate_id, requirement_index"
             "import_candidate_status_history" -> "ledger_id, candidate_id, sequence"
             "import_receipt" -> "ledger_id, request_id"
+            "import_duplicate_candidate" -> "ledger_id, candidate_id"
+            "import_duplicate_status_history" -> "ledger_id, candidate_id, sequence"
+            "import_duplicate_review_request" -> "ledger_id, request_id"
+            "import_duplicate_review_snapshot" -> "ledger_id, request_id"
+            "import_duplicate_review_receipt" -> "ledger_id, request_id"
             else -> "rowid"
         }
 
