@@ -40,6 +40,8 @@ import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportIntakeIds
 import com.unifiedledger.application.ImportIntakeResult
 import com.unifiedledger.application.ImportIntakeSnapshot
+import com.unifiedledger.application.ImportPaymentProfile
+import com.unifiedledger.application.ImportPaymentVariant
 import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportRequestId
 import com.unifiedledger.application.ImportRequestIdentity
@@ -264,9 +266,12 @@ class P708RestoreRoundtripEquivalenceTest {
         listOf("transaction_note_update_request", "confirmed_transaction_note_update_receipt")
 
     /**
-     * The P4 import intake owners (plan :181's "来源/候选"). One accepted intake writes all of
-     * them in a single transaction; neither `33.sqm` nor `34.sqm` touches them, so they are
-     * compared on every leg.
+     * The P4 import intake owners (plan :181's "来源/候选"). Neither `33.sqm` nor `34.sqm` touches
+     * them, so they are compared on every leg. The v1 ordinary intake ([seedImportIntakeChain])
+     * writes all but `import_candidate_payment_profile`, which only a v3 record writes
+     * ([seedPaymentProfileIntakeChain]); every entry is non-empty on every leg either way. The
+     * confirm-side owners (`import_confirmation`, `import_candidate_decision_snapshot`) belong to
+     * the confirm/reject paths this fixture does not run.
      */
     private val importIntakeTables =
         listOf(
@@ -275,6 +280,7 @@ class P708RestoreRoundtripEquivalenceTest {
             "import_evidence",
             "import_candidate",
             "import_candidate_requires_confirmation",
+            "import_candidate_payment_profile",
             "import_candidate_status_history",
             "import_receipt",
         )
@@ -732,6 +738,7 @@ class P708RestoreRoundtripEquivalenceTest {
             seedDuplicateReviewChain(database, driver)
             seedReconciliationChain(database, driver)
             seedNoteUpdateChain(database, driver)
+            seedPaymentProfileIntakeChain(database, driver)
             seedBudgetChain(database, driver)
         }
     }
@@ -744,9 +751,10 @@ class P708RestoreRoundtripEquivalenceTest {
      * candidate, the candidate's confirmation requirement, the first status-history row and the
      * receipt. All of those are stable-id owners a file restore must carry.
      *
-     * A v1 ordinary-flow snapshot carries no payment profile, so `import_candidate_payment_profile`
-     * stays empty and is deliberately NOT in the compared set; the decision snapshot belongs to the
-     * confirm/reject paths, which this fixture does not run.
+     * A v1 ordinary-flow snapshot carries no payment profile, so this seed writes no
+     * `import_candidate_payment_profile` row; [seedPaymentProfileIntakeChain] supplies that table
+     * from a v3 record. The decision snapshot and confirmation belong to the confirm/reject paths,
+     * which this fixture does not run.
      *
      * The inbound facts are an anonymous synthetic ordinary flow with no duplicate match, so
      * `allocateIds` is asked for zero duplicate ids. `commitIntake` is idempotent on the request
@@ -1025,6 +1033,67 @@ class P708RestoreRoundtripEquivalenceTest {
                     confirmation = ExplicitManualSave,
                 ),
             ),
+        )
+    }
+
+    /**
+     * Runs ONE v3 mixed-payment intake through the real product port
+     * ([SqlDelightImportSpineStore.commitIntake]).
+     *
+     * This closes the plan's `:181` "来源/候选" family for the v3 payment profile: a v3 record
+     * writes `import_candidate_payment_profile` in the same transaction as the source, evidence and
+     * candidate ("exactly one profile row per v3 candidate"). The profile is a mixed payment, so it
+     * carries both leg-kind tokens — the shape the frozen variant rule requires for that variant.
+     *
+     * The record kind is `MIXED_PAYMENT_SOURCE`, whose contract version is 3. The business tuple is
+     * distinct from the other seeded intakes, so the duplicate demand is zero.
+     */
+    private fun seedPaymentProfileIntakeChain(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
+        val store = SqlDelightImportSpineStore(database, driver)
+        val identity = ImportRequestIdentity(LedgerId(ledgerId), ImportRequestId("import-request-mixed-payment"))
+        val facts =
+            ImportSourceFacts(
+                amountMinor = 5_600L,
+                currencyCode = "CNY",
+                currencyPrecision = 2,
+                occurredAt = "2026-03-11T02:00:00Z",
+                directionToken = "outflow",
+                statusToken = "settled",
+                fundingState = ImportFundingState.SETTLED,
+                fundingRuleId = "roundtrip-rule",
+                fundingRuleVersion = 1,
+            )
+        assertIs<ImportIntakeResult.Accepted>(
+            store.commitIntake(
+                identity,
+                ImportIntakeSnapshot(
+                    identity = identity,
+                    inputRef = "roundtrip-input-mixed-payment",
+                    recordOrdinal = 0,
+                    recordKind = ImportRecordKind.MIXED_PAYMENT_SOURCE,
+                    facts = facts,
+                    completeness = ImportCompleteness.VALID_COMPLETE,
+                    contentHash = ImportContentFingerprint().digest(ImportRecordKind.MIXED_PAYMENT_SOURCE, facts),
+                    candidateGeneratedAt = "roundtrip-intake-v1",
+                    paymentProfile =
+                        ImportPaymentProfile(
+                            variant = ImportPaymentVariant.MIXED_PAYMENT,
+                            assetLegKindToken = "asset_leg",
+                            creditLegKindToken = "credit_leg",
+                        ),
+                ),
+            ) { requiredDuplicateIds ->
+                assertEquals(0, requiredDuplicateIds, "the v3 tuple must not match an earlier intake")
+                ImportIntakeIds(
+                    sourceId = ImportSourceId("import-source-mixed-payment"),
+                    evidenceId = ImportEvidenceId("import-evidence-mixed-payment"),
+                    candidateId = ImportCandidateId("import-candidate-mixed-payment"),
+                    statusHistoryId = ImportStatusHistoryId("import-status-mixed-payment"),
+                )
+            },
         )
     }
 
@@ -1423,15 +1492,20 @@ class P708RestoreRoundtripEquivalenceTest {
                 "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
             )
         }
-        // The import intake owners are compared on every leg too. The single accepted intake
-        // writes one row in each, so a non-empty check proves the intake lineage crossed rather
-        // than only the source row.
+        // The import intake owners are compared on every leg too. Between the two seeded intakes
+        // (v1 ordinary plus v3 mixed payment) each entry holds at least one row, so a non-empty
+        // check proves the intake lineage crossed rather than only the source row.
         importIntakeTables.forEach { table ->
             assertTrue(
                 countOn(driver, "SELECT count(*) FROM $table WHERE ledger_id = '$ledgerId'") > 0L,
                 "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
             )
         }
+        assertEquals(
+            1L,
+            countOn(driver, "SELECT count(*) FROM import_candidate_payment_profile WHERE ledger_id = '$ledgerId'"),
+            "the v3 intake writes exactly one payment profile for its candidate",
+        )
         // The duplicate-disposition owners are compared on every leg too. The seeded duplicate must
         // keep BOTH its intake status row and the review's transition row, which is what proves the
         // disposition history crossed rather than only the candidate row.
@@ -1551,6 +1625,7 @@ class P708RestoreRoundtripEquivalenceTest {
             "import_evidence" -> "ledger_id, evidence_id"
             "import_candidate" -> "ledger_id, candidate_id"
             "import_candidate_requires_confirmation" -> "ledger_id, candidate_id, requirement_index"
+            "import_candidate_payment_profile" -> "ledger_id, candidate_id"
             "import_candidate_status_history" -> "ledger_id, candidate_id, sequence"
             "import_receipt" -> "ledger_id, request_id"
             "import_duplicate_candidate" -> "ledger_id, candidate_id"
