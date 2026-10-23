@@ -266,9 +266,12 @@ class P708RestoreRoundtripEquivalenceTest {
         listOf("transaction_note_update_request", "confirmed_transaction_note_update_receipt")
 
     /**
-     * The P4 import intake owners (plan :181's "来源/候选"). One accepted intake writes all of
-     * them in a single transaction; neither `33.sqm` nor `34.sqm` touches them, so they are
-     * compared on every leg.
+     * The P4 import intake owners (plan :181's "来源/候选"). Neither `33.sqm` nor `34.sqm` touches
+     * them, so they are compared on every leg. The v1 ordinary intake ([seedImportIntakeChain])
+     * writes all but `import_candidate_payment_profile`, which only a v3 record writes
+     * ([seedPaymentProfileIntakeChain]); every entry is non-empty on every leg either way. The
+     * confirm-side owners (`import_confirmation`, `import_candidate_decision_snapshot`) belong to
+     * the confirm/reject paths this fixture does not run.
      */
     private val importIntakeTables =
         listOf(
@@ -748,9 +751,10 @@ class P708RestoreRoundtripEquivalenceTest {
      * candidate, the candidate's confirmation requirement, the first status-history row and the
      * receipt. All of those are stable-id owners a file restore must carry.
      *
-     * A v1 ordinary-flow snapshot carries no payment profile, so `import_candidate_payment_profile`
-     * stays empty and is deliberately NOT in the compared set; the decision snapshot belongs to the
-     * confirm/reject paths, which this fixture does not run.
+     * A v1 ordinary-flow snapshot carries no payment profile, so this seed writes no
+     * `import_candidate_payment_profile` row; [seedPaymentProfileIntakeChain] supplies that table
+     * from a v3 record. The decision snapshot and confirmation belong to the confirm/reject paths,
+     * which this fixture does not run.
      *
      * The inbound facts are an anonymous synthetic ordinary flow with no duplicate match, so
      * `allocateIds` is asked for zero duplicate ids. `commitIntake` is idempotent on the request
@@ -1081,7 +1085,8 @@ class P708RestoreRoundtripEquivalenceTest {
                             creditLegKindToken = "credit_leg",
                         ),
                 ),
-            ) {
+            ) { requiredDuplicateIds ->
+                assertEquals(0, requiredDuplicateIds, "the v3 tuple must not match an earlier intake")
                 ImportIntakeIds(
                     sourceId = ImportSourceId("import-source-mixed-payment"),
                     evidenceId = ImportEvidenceId("import-evidence-mixed-payment"),
@@ -1487,9 +1492,9 @@ class P708RestoreRoundtripEquivalenceTest {
                 "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
             )
         }
-        // The import intake owners are compared on every leg too. The single accepted intake
-        // writes one row in each, so a non-empty check proves the intake lineage crossed rather
-        // than only the source row.
+        // The import intake owners are compared on every leg too. Between the two seeded intakes
+        // (v1 ordinary plus v3 mixed payment) each entry holds at least one row, so a non-empty
+        // check proves the intake lineage crossed rather than only the source row.
         importIntakeTables.forEach { table ->
             assertTrue(
                 countOn(driver, "SELECT count(*) FROM $table WHERE ledger_id = '$ledgerId'") > 0L,
