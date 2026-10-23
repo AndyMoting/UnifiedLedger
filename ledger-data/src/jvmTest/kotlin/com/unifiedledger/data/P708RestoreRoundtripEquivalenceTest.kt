@@ -151,8 +151,9 @@ class P708RestoreRoundtripEquivalenceTest {
     /**
      * The base ledger owners the fixture seeds at every stage ([seedCurrentLibrary]): the formal
      * transactions, their versions, their postings and their current-version pointers. The fixture
-     * seeds two such chains (the annotated expense and the void/restore target). Neither `33.sqm`
-     * nor `34.sqm` touches these tables, so every leg compares them.
+     * seeds three such chains (the annotated expense, the void/restore target and the
+     * reconciliation source). Neither `33.sqm` nor `34.sqm` touches these tables, so every leg
+     * compares them.
      */
     private val preV34SurvivorTables =
         listOf("ledger_transaction", "transaction_version", "posting", "ledger_transaction_current_version")
@@ -223,10 +224,14 @@ class P708RestoreRoundtripEquivalenceTest {
         listOf("transaction_void_request", "transaction_void_fact", "transaction_void_receipt")
 
     /**
-     * The P4-08 matching/reconciliation owners (plan :181's "匹配/对账"). `22.sqm` creates them and
-     * no later edge touches them, so they are compared on every leg. One confirmed link writes the
-     * evidence link, the posting reconciliation, both histories, the request claim/snapshot and the
-     * receipt, plus the READY evidence projection it materializes.
+     * The P4-08 matching/reconciliation owners (plan :181's "匹配/对账"). `22.sqm` creates the
+     * link/reconciliation tables and `25.sqm` the evidence projection (which also rebuilds the link
+     * and request-snapshot tables); neither `33.sqm` nor `34.sqm` touches any of them, so they are
+     * compared on every leg. One confirmed link writes the evidence link, the posting reconciliation,
+     * both histories, the request claim/snapshot and the receipt, plus the READY evidence projection
+     * it materializes. This is the `confirmLink` write set; the family's
+     * `reconciliation_correction_snapshot` belongs to the correction path, which this fixture does
+     * not run.
      */
     private val reconciliationTables =
         listOf(
@@ -1374,7 +1379,7 @@ class P708RestoreRoundtripEquivalenceTest {
         assertEquals(
             2L,
             countOn(driver, "SELECT count(*) FROM posting_reconciliation_history WHERE ledger_id = '$ledgerId'"),
-            "the confirmed link appends the reconciliation's history entry",
+            "the confirmed link writes the PENDING and CHECKED reconciliation history rows",
         )
         assertEquals(
             2L,
