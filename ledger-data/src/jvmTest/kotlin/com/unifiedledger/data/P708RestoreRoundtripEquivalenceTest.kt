@@ -165,14 +165,23 @@ class P708RestoreRoundtripEquivalenceTest {
             catalogOwnerTables + confirmedExpenseReceiptTables
 
     /**
-     * The same owner set minus the `manual_*_request` tables. On the v34/v33/rollback legs the
-     * source lacks the two annotation columns `34.sqm` adds, so a `SELECT *` there would compare
-     * different column counts; those legs compare [manualRequestTables] separately on
-     * [commonManualExpenseColumns].
+     * The v34 and rollback owner set: everything in [currentSchemaOwnerTables] except the
+     * `manual_*_request` tables. On those legs the source lacks the two annotation columns `34.sqm`
+     * adds, so a `SELECT *` would compare different column counts; the legs compare
+     * [manualRequestTables] separately on [commonManualExpenseColumns]. The 11 annotation tables DO
+     * exist in a v34 source (`33.sqm` created them), so they stay in.
      */
     private val migratedOwnerTables =
         preV34SurvivorTables + annotationOwnerTables + budgetOwnerTables + catalogOwnerTables +
             confirmedExpenseReceiptTables
+
+    /**
+     * The v33 owner set. A Stage.V33 source has the 11 `08.A` annotation tables DROPPED
+     * ([seedCurrentLibrary]), so they cannot be read from it at all; the leg instead proves they
+     * land empty on the migrated copy and compares the remaining owners value-for-value.
+     */
+    private val preAnnotationEdgeOwnerTables =
+        preV34SurvivorTables + budgetOwnerTables + catalogOwnerTables + confirmedExpenseReceiptTables
 
     /** The stable budget identity the seeded chain binds: two limit revisions then a CLOSED one. */
     private val budgetId = BudgetId("budget-roundtrip")
@@ -317,8 +326,10 @@ class P708RestoreRoundtripEquivalenceTest {
                 // The pre-v34 owner rows survive value-for-value through the whole chain (the
                 // manual claim row projected onto its v33 columns — the edge added the two
                 // annotation columns). The budget chain was already present at v33 and must
-                // cross the untouched edges unchanged.
-                assertValueIdentical(source.path, snapshot.path, migratedOwnerTables)
+                // cross the untouched edges unchanged. The 11 annotation tables are deliberately
+                // NOT in this list: a v33 source does not have them (see
+                // [preAnnotationEdgeOwnerTables]).
+                assertValueIdentical(source.path, snapshot.path, preAnnotationEdgeOwnerTables)
                 // The migrated copy also READS BACK both immutable chains through the real store.
                 assertBothBudgetHistoriesReadBack(isolated)
                 assertCatalogOwnersReadBackNonVacuously(isolated)
@@ -577,8 +588,9 @@ class P708RestoreRoundtripEquivalenceTest {
      * ([ExecuteCatalogCommand] over [SqlDelightCatalogStore]), so `catalog_command_request` and
      * `catalog_command_receipt` hold product-path rows instead of nothing.
      *
-     * Bootstrap writes the catalog rows and `catalog_version`, but it never claims a command: it
-     * goes straight from the seed inserts to `insertCatalogVersion`. No other part of this fixture
+     * Bootstrap writes the catalog rows and `catalog_version`, but it never claims a command: after
+     * the seed inserts it only runs the fail-closed `unresolvedReferences` scan and
+     * `insertCatalogVersion`. No other part of this fixture
      * issued a catalog command either, so without this seed the two command tables would compare
      * empty-vs-empty — the vacuous "survival" claim the v33 budget leg below explicitly rejects.
      *
@@ -780,12 +792,13 @@ class P708RestoreRoundtripEquivalenceTest {
     }
 
     /**
-     * Non-vacuity guard for the [catalogOwnerTables] comparisons: every one of those tables must
-     * hold at least one row on the restored snapshot, so `assertValueIdentical` compares data rather
-     * than two empty results. Without this, a table the fixture never writes (for example the
-     * command tables, which bootstrap alone does not populate) would "survive" the round-trip
-     * vacuously — the same trap [aV33SnapshotMigratesThroughTheFullChainWithZeroBackfillAndSurvivingRows]
-     * rejects for the budget tables.
+     * Non-vacuity guard for the restored copy's seeded owner rows: every [catalogOwnerTables] entry
+     * and the `confirmed_expense_receipt` must hold at least one row, so `assertValueIdentical`
+     * compares data rather than two empty results. Without this, a table the fixture never writes
+     * (for example the command tables, which bootstrap alone does not populate) would "survive" the
+     * round-trip vacuously — the same trap
+     * [aV33SnapshotMigratesThroughTheFullChainWithZeroBackfillAndSurvivingRows] rejects for the
+     * budget tables.
      *
      * The seeded catalog command is a rename of `asset-payment-local`, which writes exactly one
      * claim and one receipt and appends one `catalog_name_history` revision per rename on top of
