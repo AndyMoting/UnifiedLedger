@@ -19,6 +19,20 @@ import com.unifiedledger.application.ExecuteCatalogCommand
 import com.unifiedledger.application.ExecuteRestoreTransaction
 import com.unifiedledger.application.ExecuteVoidTransaction
 import com.unifiedledger.application.ExplicitManualSave
+import com.unifiedledger.application.ImportCandidateId
+import com.unifiedledger.application.ImportCompleteness
+import com.unifiedledger.application.ImportContentFingerprint
+import com.unifiedledger.application.ImportEvidenceId
+import com.unifiedledger.application.ImportFundingState
+import com.unifiedledger.application.ImportIntakeIds
+import com.unifiedledger.application.ImportIntakeResult
+import com.unifiedledger.application.ImportIntakeSnapshot
+import com.unifiedledger.application.ImportRecordKind
+import com.unifiedledger.application.ImportRequestId
+import com.unifiedledger.application.ImportRequestIdentity
+import com.unifiedledger.application.ImportSourceFacts
+import com.unifiedledger.application.ImportSourceId
+import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.SaveBudgetConfiguration
@@ -65,8 +79,8 @@ import kotlin.time.Instant
  * through the isolated-strict-migration path, and compared TABLE BY TABLE, VALUE BY VALUE — every
  * 08.A owner table (the 11 tables D-218 §3 froze), the four `manual_*_request` annotation columns,
  * the receipt tables, the four 07.B budget tables, the six `catalog_*` owners, `posting_set`, the
- * P7-02 `entry_pin`/`counterparty` owners, the P7-05 void/restore audit owners, and the base formal
- * transaction/version/posting rows.
+ * P7-02 `entry_pin`/`counterparty` owners, the P7-05 void/restore audit owners, the P4 import
+ * intake owners, and the base formal transaction/version/posting rows.
  * The budget leg supplies the "预算配置历史"
  * owner half of P706-A11 ("最终 schema 含预算配置历史及标签/商家注释历史…所有新增 owner 往返"); it
  * registers no vector PASS. Three legs:
@@ -195,12 +209,29 @@ class P708RestoreRoundtripEquivalenceTest {
         listOf("transaction_void_request", "transaction_void_fact", "transaction_void_receipt")
 
     /**
+     * The P4 import intake owners (plan :181's "来源/候选"). One accepted intake writes all of
+     * them in a single transaction; neither `33.sqm` nor `34.sqm` touches them, so they are
+     * compared on every leg.
+     */
+    private val importIntakeTables =
+        listOf(
+            "import_request",
+            "import_source_record",
+            "import_evidence",
+            "import_candidate",
+            "import_candidate_requires_confirmation",
+            "import_candidate_status_history",
+            "import_receipt",
+        )
+
+    /**
      * Every owner table the fixture writes, compared with `SELECT *` on the leg whose source and
      * snapshot are both at the current schema (v35). One list keeps the legs from drifting apart.
      */
     private val currentSchemaOwnerTables =
         preV34SurvivorTables + annotationOwnerTables + manualRequestTables + budgetOwnerTables +
-            catalogOwnerTables + confirmedExpenseReceiptTables + preferenceAndCounterpartyTables + voidRestoreTables
+            catalogOwnerTables + confirmedExpenseReceiptTables + preferenceAndCounterpartyTables + voidRestoreTables +
+            importIntakeTables
 
     /**
      * The v34 and rollback owner set: everything in [currentSchemaOwnerTables] except the
@@ -211,7 +242,7 @@ class P708RestoreRoundtripEquivalenceTest {
      */
     private val migratedOwnerTables =
         preV34SurvivorTables + annotationOwnerTables + budgetOwnerTables + catalogOwnerTables +
-            confirmedExpenseReceiptTables + preferenceAndCounterpartyTables + voidRestoreTables
+            confirmedExpenseReceiptTables + preferenceAndCounterpartyTables + voidRestoreTables + importIntakeTables
 
     /**
      * The v33 owner set. A Stage.V33 source has the 11 `08.A` annotation tables DROPPED
@@ -220,7 +251,7 @@ class P708RestoreRoundtripEquivalenceTest {
      */
     private val preAnnotationEdgeOwnerTables =
         preV34SurvivorTables + budgetOwnerTables + catalogOwnerTables + confirmedExpenseReceiptTables +
-            preferenceAndCounterpartyTables + voidRestoreTables
+            preferenceAndCounterpartyTables + voidRestoreTables + importIntakeTables
 
     /** The stable budget identity the seeded chain binds: two limit revisions then a CLOSED one. */
     private val budgetId = BudgetId("budget-roundtrip")
@@ -482,7 +513,8 @@ class P708RestoreRoundtripEquivalenceTest {
      * (with the annotation columns at v35 only), the tag catalog with its command receipt plus a
      * two-revision annotation history with its current pointer (at v34/v35 only), and — at EVERY
      * stage — the product catalog bootstrap, the catalog command and P7-02 preference/counterparty
-     * chains, the P7-05 void/restore audit chain ([seedVoidRestoreChain]) and two budget chains (a
+     * chains, the P7-05 void/restore audit chain ([seedVoidRestoreChain]), one import intake
+     * ([seedImportIntakeChain]) and two budget chains (a
      * TOTAL chain of two limits and a CLOSED revision, and a CATEGORY chain of two limits) through
      * the real claim-first command port (see [seedBudgetChain]); `32.sqm` created the budget tables
      * on the v32 -> v33 edge.
@@ -622,8 +654,66 @@ class P708RestoreRoundtripEquivalenceTest {
             seedCatalogCommandChain(database, driver)
             seedEntryPreferenceAndCounterpartyChain(database, driver)
             seedVoidRestoreChain(database, driver)
+            seedImportIntakeChain(database, driver)
             seedBudgetChain(database, driver)
         }
+    }
+
+    /**
+     * Runs ONE import intake through the real product port ([SqlDelightImportSpineStore.commitIntake]).
+     *
+     * This is the plan's `:181` "来源/候选" half. A single accepted intake writes seven import-spine
+     * owner tables in one transaction: the request claim, the source record, its evidence, the
+     * candidate, the candidate's confirmation requirement, the first status-history row and the
+     * receipt. All of those are stable-id owners a file restore must carry.
+     *
+     * A v1 ordinary-flow snapshot carries no payment profile, so `import_candidate_payment_profile`
+     * stays empty and is deliberately NOT in the compared set; the decision snapshot belongs to the
+     * confirm/reject paths, which this fixture does not run.
+     *
+     * The inbound facts are an anonymous synthetic ordinary flow with no duplicate match, so
+     * `allocateIds` is asked for zero duplicate ids. `commitIntake` is idempotent on the request
+     * identity, so seeding it once per leg is deterministic.
+     */
+    private fun seedImportIntakeChain(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
+        val store = SqlDelightImportSpineStore(database, driver)
+        val identity = ImportRequestIdentity(LedgerId(ledgerId), ImportRequestId("import-request-roundtrip"))
+        val facts =
+            ImportSourceFacts(
+                amountMinor = 4_200L,
+                currencyCode = "CNY",
+                currencyPrecision = 2,
+                occurredAt = "2026-03-07T02:00:00Z",
+                directionToken = "outflow",
+                statusToken = "settled",
+                fundingState = ImportFundingState.SETTLED,
+                fundingRuleId = "roundtrip-rule",
+                fundingRuleVersion = 1,
+            )
+        val snapshot =
+            ImportIntakeSnapshot(
+                identity = identity,
+                inputRef = "roundtrip-input",
+                recordOrdinal = 0,
+                recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                facts = facts,
+                completeness = ImportCompleteness.VALID_COMPLETE,
+                contentHash = ImportContentFingerprint().digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, facts),
+                candidateGeneratedAt = "roundtrip-intake-v1",
+            )
+        assertIs<ImportIntakeResult.Accepted>(
+            store.commitIntake(identity, snapshot) {
+                ImportIntakeIds(
+                    sourceId = ImportSourceId("import-source-roundtrip"),
+                    evidenceId = ImportEvidenceId("import-evidence-roundtrip"),
+                    candidateId = ImportCandidateId("import-candidate-roundtrip"),
+                    statusHistoryId = ImportStatusHistoryId("import-status-roundtrip"),
+                )
+            },
+        )
     }
 
     /**
@@ -952,8 +1042,8 @@ class P708RestoreRoundtripEquivalenceTest {
 
     /**
      * Non-vacuity guard for the restored copy's seeded owner rows: every [catalogOwnerTables],
-     * [preferenceAndCounterpartyTables] and [voidRestoreTables] entry plus `confirmed_expense_receipt`
-     * must hold at least one row, so `assertValueIdentical` compares data rather than two empty results. Without this, a
+     * [preferenceAndCounterpartyTables], [voidRestoreTables] and [importIntakeTables] entry plus
+     * `confirmed_expense_receipt` must hold at least one row, so `assertValueIdentical` compares data rather than two empty results. Without this, a
      * table the fixture never writes (for example the command tables, which bootstrap alone does not
      * populate) would "survive" the round-trip vacuously — the same trap
      * [aV33SnapshotMigratesThroughTheFullChainWithZeroBackfillAndSurvivingRows] rejects for the
@@ -1017,6 +1107,15 @@ class P708RestoreRoundtripEquivalenceTest {
         voidRestoreTables.forEach { table ->
             assertTrue(
                 countOn(driver, "SELECT count(*) FROM $table") > 0L,
+                "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
+            )
+        }
+        // The import intake owners are compared on every leg too. The single accepted intake
+        // writes one row in each, so a non-empty check proves the intake lineage crossed rather
+        // than only the source row.
+        importIntakeTables.forEach { table ->
+            assertTrue(
+                countOn(driver, "SELECT count(*) FROM $table WHERE ledger_id = '$ledgerId'") > 0L,
                 "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
             )
         }
@@ -1093,6 +1192,13 @@ class P708RestoreRoundtripEquivalenceTest {
             "transaction_void_request" -> "ledger_id, request_id"
             "transaction_void_fact" -> "ledger_id, transaction_id, sequence"
             "transaction_void_receipt" -> "ledger_id, request_id"
+            "import_request" -> "ledger_id, request_id"
+            "import_source_record" -> "ledger_id, source_id"
+            "import_evidence" -> "ledger_id, evidence_id"
+            "import_candidate" -> "ledger_id, candidate_id"
+            "import_candidate_requires_confirmation" -> "ledger_id, candidate_id, requirement_index"
+            "import_candidate_status_history" -> "ledger_id, candidate_id, sequence"
+            "import_receipt" -> "ledger_id, request_id"
             else -> "rowid"
         }
 
