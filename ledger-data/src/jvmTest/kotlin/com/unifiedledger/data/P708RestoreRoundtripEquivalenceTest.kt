@@ -104,7 +104,7 @@ import kotlin.time.Instant
  * owners, and the base formal transaction/version/posting rows.
  * The budget leg supplies the "预算配置历史"
  * owner half of P706-A11 ("最终 schema 含预算配置历史及标签/商家注释历史…所有新增 owner 往返"); it
- * registers no vector PASS. Three legs:
+ * registers no vector PASS. Four legs (the fourth is the failed-migration rollback):
  *
  *  - (a) v35 direct: the snapshot's authoritative version equals the current schema
  *    (`needsMigration == false`) and the read-back is value-identical;
@@ -158,9 +158,9 @@ class P708RestoreRoundtripEquivalenceTest {
     /**
      * The base ledger owners the fixture seeds at every stage ([seedCurrentLibrary]): the formal
      * transactions, their versions, their postings and their current-version pointers. The fixture
-     * seeds three such chains (the annotated expense, the void/restore target and the
-     * reconciliation source). Neither `33.sqm` nor `34.sqm` touches these tables, so every leg
-     * compares them.
+     * seeds four such chains (the annotated expense, the void/restore target, the reconciliation
+     * source and the note-update target). Neither `33.sqm` nor `34.sqm` touches these tables, so
+     * every leg compares them.
      */
     private val preV34SurvivorTables =
         listOf("ledger_transaction", "transaction_version", "posting", "ledger_transaction_current_version")
@@ -253,9 +253,9 @@ class P708RestoreRoundtripEquivalenceTest {
         )
 
     /**
-     * The note-update receipt owners (plan :181's "回执" half). `transaction_note_update_request`
-     * exists from the v5 era and `confirmed_transaction_note_update_receipt` is created by `5.sqm`;
-     * neither `33.sqm` nor `34.sqm` touches them, so they are compared on every leg. One accepted
+     * The note-update receipt owners (plan :181's "回执" half). `2.sqm` creates both (v2 -> v3) and
+     * `5.sqm` rebuilds them; neither `33.sqm` nor `34.sqm` touches them, so they are compared on
+     * every leg. One accepted
      * note replacement writes one row in each. The sibling manual-create receipts (income, transfer,
      * lending) are NOT here: their ports write the annotation columns `34.sqm` adds, so they cannot
      * run below v35 in this fixture.
