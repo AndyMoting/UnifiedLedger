@@ -662,10 +662,14 @@ class P708RestoreRoundtripEquivalenceTest {
     /**
      * Runs ONE import intake through the real product port ([SqlDelightImportSpineStore.commitIntake]).
      *
-     * This is the plan's `:181` "来源/候选" half. A single accepted intake writes the whole import
-     * spine owner set in one transaction: the source record, its evidence, the candidate, the
-     * candidate's payment profile, its confirmation requirement, the first status-history row, the
-     * request claim and the receipt. All of those are stable-id owners a file restore must carry.
+     * This is the plan's `:181` "来源/候选" half. A single accepted intake writes seven import-spine
+     * owner tables in one transaction: the request claim, the source record, its evidence, the
+     * candidate, the candidate's confirmation requirement, the first status-history row and the
+     * receipt. All of those are stable-id owners a file restore must carry.
+     *
+     * A v1 ordinary-flow snapshot carries no payment profile, so `import_candidate_payment_profile`
+     * stays empty and is deliberately NOT in the compared set; the decision snapshot belongs to the
+     * confirm/reject paths, which this fixture does not run.
      *
      * The inbound facts are an anonymous synthetic ordinary flow with no duplicate match, so
      * `allocateIds` is asked for zero duplicate ids. `commitIntake` is idempotent on the request
