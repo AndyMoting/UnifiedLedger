@@ -42,6 +42,11 @@ import com.unifiedledger.application.ImportSourceFacts
 import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.P408ConfirmLinkRequest
+import com.unifiedledger.application.P408EvidenceProjectionPort
+import com.unifiedledger.application.P408EvidenceResponsibility
+import com.unifiedledger.application.P408Matcher
+import com.unifiedledger.application.P408ReconciliationResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.SaveBudgetConfiguration
 import com.unifiedledger.application.TransactionVoidFactIdSource
@@ -88,7 +93,8 @@ import kotlin.time.Instant
  * 08.A owner table (the 11 tables D-218 §3 froze), the four `manual_*_request` annotation columns,
  * the receipt tables, the four 07.B budget tables, the six `catalog_*` owners, `posting_set`, the
  * P7-02 `entry_pin`/`counterparty` owners, the P7-05 void/restore audit owners, the P4 import
- * intake and duplicate-disposition owners, and the base formal transaction/version/posting rows.
+ * intake, duplicate-disposition and matching/reconciliation owners, and the base formal
+ * transaction/version/posting rows.
  * The budget leg supplies the "预算配置历史"
  * owner half of P706-A11 ("最终 schema 含预算配置历史及标签/商家注释历史…所有新增 owner 往返"); it
  * registers no vector PASS. Three legs:
@@ -145,8 +151,9 @@ class P708RestoreRoundtripEquivalenceTest {
     /**
      * The base ledger owners the fixture seeds at every stage ([seedCurrentLibrary]): the formal
      * transactions, their versions, their postings and their current-version pointers. The fixture
-     * seeds two such chains (the annotated expense and the void/restore target). Neither `33.sqm`
-     * nor `34.sqm` touches these tables, so every leg compares them.
+     * seeds three such chains (the annotated expense, the void/restore target and the
+     * reconciliation source). Neither `33.sqm` nor `34.sqm` touches these tables, so every leg
+     * compares them.
      */
     private val preV34SurvivorTables =
         listOf("ledger_transaction", "transaction_version", "posting", "ledger_transaction_current_version")
@@ -217,6 +224,28 @@ class P708RestoreRoundtripEquivalenceTest {
         listOf("transaction_void_request", "transaction_void_fact", "transaction_void_receipt")
 
     /**
+     * The P4-08 matching/reconciliation owners (plan :181's "匹配/对账"). `22.sqm` creates the
+     * link/reconciliation tables and `25.sqm` the evidence projection (which also rebuilds the link
+     * and request-snapshot tables); neither `33.sqm` nor `34.sqm` touches any of them, so they are
+     * compared on every leg. One confirmed link writes the evidence link, the posting reconciliation,
+     * both histories, the request claim/snapshot and the receipt, plus the READY evidence projection
+     * it materializes. This is the `confirmLink` write set; the family's
+     * `reconciliation_correction_snapshot` belongs to the correction path, which this fixture does
+     * not run.
+     */
+    private val reconciliationTables =
+        listOf(
+            "evidence_projection",
+            "evidence_link",
+            "evidence_link_history",
+            "posting_reconciliation",
+            "posting_reconciliation_history",
+            "reconciliation_request",
+            "reconciliation_request_snapshot",
+            "reconciliation_receipt",
+        )
+
+    /**
      * The P4 import intake owners (plan :181's "来源/候选"). One accepted intake writes all of
      * them in a single transaction; neither `33.sqm` nor `34.sqm` touches them, so they are
      * compared on every leg.
@@ -254,7 +283,7 @@ class P708RestoreRoundtripEquivalenceTest {
     private val currentSchemaOwnerTables =
         preV34SurvivorTables + annotationOwnerTables + manualRequestTables + budgetOwnerTables +
             catalogOwnerTables + confirmedExpenseReceiptTables + preferenceAndCounterpartyTables + voidRestoreTables +
-            importIntakeTables + duplicateReviewTables
+            importIntakeTables + duplicateReviewTables + reconciliationTables
 
     /**
      * The v34 and rollback owner set: everything in [currentSchemaOwnerTables] except the
@@ -266,7 +295,7 @@ class P708RestoreRoundtripEquivalenceTest {
     private val migratedOwnerTables =
         preV34SurvivorTables + annotationOwnerTables + budgetOwnerTables + catalogOwnerTables +
             confirmedExpenseReceiptTables + preferenceAndCounterpartyTables + voidRestoreTables + importIntakeTables +
-            duplicateReviewTables
+            duplicateReviewTables + reconciliationTables
 
     /**
      * The v33 owner set. A Stage.V33 source has the 11 `08.A` annotation tables DROPPED
@@ -275,7 +304,8 @@ class P708RestoreRoundtripEquivalenceTest {
      */
     private val preAnnotationEdgeOwnerTables =
         preV34SurvivorTables + budgetOwnerTables + catalogOwnerTables + confirmedExpenseReceiptTables +
-            preferenceAndCounterpartyTables + voidRestoreTables + importIntakeTables + duplicateReviewTables
+            preferenceAndCounterpartyTables + voidRestoreTables + importIntakeTables + duplicateReviewTables +
+            reconciliationTables
 
     /** The stable budget identity the seeded chain binds: two limit revisions then a CLOSED one. */
     private val budgetId = BudgetId("budget-roundtrip")
@@ -538,7 +568,8 @@ class P708RestoreRoundtripEquivalenceTest {
      * two-revision annotation history with its current pointer (at v34/v35 only), and — at EVERY
      * stage — the product catalog bootstrap, the catalog command and P7-02 preference/counterparty
      * chains, the P7-05 void/restore audit chain ([seedVoidRestoreChain]), one import intake
-     * plus its duplicate review ([seedImportIntakeChain]/[seedDuplicateReviewChain]) and two budget chains (a
+     * plus its duplicate review ([seedImportIntakeChain]/[seedDuplicateReviewChain]), one confirmed
+     * reconciliation link ([seedReconciliationChain]) and two budget chains (a
      * TOTAL chain of two limits and a CLOSED revision, and a CATEGORY chain of two limits) through
      * the real claim-first command port (see [seedBudgetChain]); `32.sqm` created the budget tables
      * on the v32 -> v33 edge.
@@ -680,6 +711,7 @@ class P708RestoreRoundtripEquivalenceTest {
             seedVoidRestoreChain(database, driver)
             seedImportIntakeChain(database, driver)
             seedDuplicateReviewChain(database, driver)
+            seedReconciliationChain(database, driver)
             seedBudgetChain(database, driver)
         }
     }
@@ -839,6 +871,83 @@ class P708RestoreRoundtripEquivalenceTest {
                 ),
             ),
         )
+    }
+
+    /**
+     * Confirms ONE reconciliation link through the real product port
+     * ([SqlDelightP408ReconciliationStore.confirmLink]).
+     *
+     * This is the plan's `:181` "匹配/对账" half. The command writes the evidence link and its
+     * history, the posting reconciliation and its history, the request claim, the request snapshot
+     * and the receipt, plus the READY evidence projection it materializes. All of those are
+     * stable-id owners a file restore must carry.
+     *
+     * The command reads an import evidence row and its source facts, and matches them against a
+     * formal posting, so the fixture seeds one synthetic transfer pair first
+     * ([seedReconciliationSourceRows]). The request is a v2 payload, which is the shape the
+     * approved contract requires (a v1 claim is retired).
+     */
+    private fun seedReconciliationChain(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
+        seedReconciliationSourceRows(driver)
+        val request =
+            P408ConfirmLinkRequest(
+                ledgerId = ledgerId,
+                requestId = "reconciliation-request-roundtrip",
+                evidenceId = "reconciliation-evidence-roundtrip",
+                candidateId = "reconciliation-candidate-roundtrip",
+                postingId = "reconciliation-posting-roundtrip",
+                transactionId = "tx-reconciliation-roundtrip",
+                amountMinor = 1_000L,
+                currencyCode = "CNY",
+                currencyPrecision = 2,
+                direction = "out",
+                accountId = "reconciliation-account-roundtrip",
+                responsibility = P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
+                basisVersion = 2,
+                matchBasis = setOf("amount", "currency", "direction", "occurred_at_window", "account"),
+                windowDays = P408Matcher.DEFAULT_WINDOW_DAYS,
+                naturalDayDistance = 0,
+                sourceOccurredAt = "2026-08-10T12:00:00+08:00",
+                confirmedAt = "2026-08-10T13:00:00+08:00",
+                linkId = "reconciliation-link-roundtrip",
+                reconciliationId = "reconciliation-row-roundtrip",
+                createdAt = "2026-08-10T13:00:00+08:00",
+                projectionId = "proj-reconciliation-evidence-roundtrip",
+                projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
+                projectionRuleVersion = 1,
+                normalizedAmountMinor = 1_000L,
+                rawAmountMinor = 1_000L,
+                rawCurrencyPrecision = 2,
+            )
+        assertIs<P408ReconciliationResult.Accepted>(
+            SqlDelightP408ReconciliationStore(database, driver).confirmLink(request),
+        )
+    }
+
+    /**
+     * The minimal import + formal rows the reconciliation command reads: one import request with
+     * its source record and evidence, and one formal transfer transaction whose posting is the
+     * candidate the link confirms. Every value is anonymous and synthetic.
+     */
+    private fun seedReconciliationSourceRows(driver: JdbcSqliteDriver) {
+        val statements =
+            listOf(
+                "INSERT INTO import_request(ledger_id, request_id, operation) VALUES ('$ledgerId','reconciliation-import-roundtrip','intake')",
+                "INSERT INTO import_source_record(ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token, funding_state, funding_rule_id, funding_rule_version, candidate_generated_at) " +
+                    "VALUES ('$ledgerId','reconciliation-source-roundtrip','reconciliation-import-roundtrip','roundtrip-ref',0,'ordinary_flow_source','hash-roundtrip',1,'valid_complete',1000,'CNY',2,'2026-08-10T12:00:00+08:00','out','settled','SETTLED','roundtrip-rule',1,'2026-08-10T12:00:00+08:00')",
+                "INSERT INTO import_evidence(ledger_id, evidence_id, source_id, evidence_kind, observed_at) VALUES ('$ledgerId','reconciliation-evidence-roundtrip','reconciliation-source-roundtrip','source_observation','2026-08-10T12:00:01+08:00')",
+                "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('tx-reconciliation-roundtrip','$ledgerId','ACCOUNT_TRANSFER')",
+                "INSERT INTO posting_set(posting_set_id, ledger_id) VALUES ('reconciliation-posting-set-roundtrip','$ledgerId')",
+                "INSERT INTO transaction_version(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note) " +
+                    "VALUES ('reconciliation-version-roundtrip','tx-reconciliation-roundtrip','$ledgerId',1,'reconciliation-posting-set-roundtrip','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)",
+                "INSERT INTO ledger_transaction_current_version(transaction_id, ledger_id, current_version_id) VALUES ('tx-reconciliation-roundtrip','$ledgerId','reconciliation-version-roundtrip')",
+                "INSERT INTO posting(posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision) " +
+                    "VALUES ('reconciliation-posting-roundtrip','reconciliation-posting-set-roundtrip','$ledgerId',0,'reconciliation-account-roundtrip',-1000,'CNY',2)",
+            )
+        statements.forEach { driver.execute(null, it, 0) }
     }
 
     /**
@@ -1167,8 +1276,9 @@ class P708RestoreRoundtripEquivalenceTest {
 
     /**
      * Non-vacuity guard for the restored copy's seeded owner rows: every [catalogOwnerTables],
-     * [preferenceAndCounterpartyTables], [voidRestoreTables], [importIntakeTables] and
-     * [duplicateReviewTables] entry plus `confirmed_expense_receipt` must hold at least one row, so `assertValueIdentical` compares data rather than two empty results. Without this, a
+     * [preferenceAndCounterpartyTables], [voidRestoreTables], [importIntakeTables],
+     * [duplicateReviewTables] and [reconciliationTables] entry plus `confirmed_expense_receipt` must
+     * hold at least one row, so `assertValueIdentical` compares data rather than two empty results. Without this, a
      * table the fixture never writes (for example the command tables, which bootstrap alone does not
      * populate) would "survive" the round-trip vacuously — the same trap
      * [aV33SnapshotMigratesThroughTheFullChainWithZeroBackfillAndSurvivingRows] rejects for the
@@ -1258,6 +1368,19 @@ class P708RestoreRoundtripEquivalenceTest {
             countOn(driver, "SELECT count(*) FROM import_duplicate_status_history WHERE ledger_id = '$ledgerId'"),
             "the duplicate keeps its intake status row and the review's transition row",
         )
+        // The matching/reconciliation owners are compared on every leg too. The confirmed link
+        // must keep both histories, which is what proves the audit chain crossed.
+        reconciliationTables.forEach { table ->
+            assertTrue(
+                countOn(driver, "SELECT count(*) FROM $table WHERE ledger_id = '$ledgerId'") > 0L,
+                "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
+            )
+        }
+        assertEquals(
+            2L,
+            countOn(driver, "SELECT count(*) FROM posting_reconciliation_history WHERE ledger_id = '$ledgerId'"),
+            "the confirmed link writes the PENDING and CHECKED reconciliation history rows",
+        )
         assertEquals(
             2L,
             countOn(driver, "SELECT count(*) FROM transaction_void_fact WHERE ledger_id = '$ledgerId'"),
@@ -1343,6 +1466,14 @@ class P708RestoreRoundtripEquivalenceTest {
             "import_duplicate_review_request" -> "ledger_id, request_id"
             "import_duplicate_review_snapshot" -> "ledger_id, request_id"
             "import_duplicate_review_receipt" -> "ledger_id, request_id"
+            "evidence_projection" -> "ledger_id, projection_id"
+            "evidence_link" -> "ledger_id, link_id"
+            "evidence_link_history" -> "ledger_id, link_id, sequence"
+            "posting_reconciliation" -> "ledger_id, reconciliation_id"
+            "posting_reconciliation_history" -> "ledger_id, reconciliation_id, sequence"
+            "reconciliation_request" -> "ledger_id, request_id"
+            "reconciliation_request_snapshot" -> "ledger_id, request_id"
+            "reconciliation_receipt" -> "ledger_id, request_id"
             else -> "rowid"
         }
 
