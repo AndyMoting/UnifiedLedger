@@ -5188,3 +5188,24 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 6. **边界。** 入：本条登记 + checkpoint 的设备行与 AVD 路径更正。出：零产品代码/测试/schema/迁移/依赖/清单/Golden/CI 配置改动；**不改 D-169/D-171/D-175/D-230/D-231/D-234 的任何登记文本或开放状态**；不改 D-236~D-242 的任何判决；不把任何向量并入 PASS；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。**设备验收向量（P709 分享方 App、TalkBack、真杀进程、B6 组卡等）的处置不在本条内**，仍按 §10.1 各自登记。
 
 **关联决定：** D-157（§10.3 规模项原裁决，本条沿其原文口径）、D-169（61k 缺陷原始登记，其开放状态按本条第 2 条重新表述）、D-230（设计门 J2「不改阈值/不改口径/不并入 PASS」，本条遵循）、D-231/D-234（61k 设备读数，本条第 3 条引用其值）、D-239（P706-A01 的 A01 缺口，与 61k 无关的另一向量）、D-242（同日的 P706-A01 覆盖批登记）、阶段计划 §2 `:42` 与 §10.3 `:410`–`:414`、`docs/CONTRIBUTING.md`「本机与 CI 的验证分工」。
+## D-244 P706-A01 登记裁决：按 §10.4 逐项回读后维持「部分证据」，残余精确限定为确认路径两表与三张跨腿夹具不适用回执表
+
+**状态：** 已批准并登记（2026-10-24，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §6「切片与验收」的 P706-A01 + §10.1 状态表 PASS 行 + §10.4.3/§10.4.5 回读与汇总）。**零产品代码、零测试、零 schema/迁移、零依赖、零 CI 配置改动**（schema 维持 v35 / 34 个 `.sqm`）。本条是 D-242 item 5 预留的独立裁决（「把它改为 PASS 需按 §10.4 另行逐项回读证据并作出独立裁决」），裁决结果为**维持「部分证据」，不并入 PASS**。
+
+**决定：**
+
+1. **判据。** §10.1 PASS 行要求「该项所有适用源码/自动测试/设备/性能证据满足要求，且对当前候选有效」；§10.4.3 要求回读全部适用任务并从实际产品入口查权威回读，不能只看最后一个子批的成功报告。A01 原文要求「当前库含目录、正式版本/分录、来源/候选、重复处置、回执、匹配/对账、置顶、作废恢复历史；往返逐 owner/稳定 ID 等价」，证据列为「data 往返与权威投影，不只数交易行」。
+
+2. **回读取证（2026-10-24，`main` = `9396f9c`；同提交 CI run 与 Windows JVM tests 均 success，经 `gh run list --branch main` 核实）。** 对 `P708RestoreRoundtripEquivalenceTest.kt` 的机械核验：四条腿测试在位（v35 直读 / v34→v35 / v33→全链 / 失败迁移回滚，`@Test` 恰 4 个）；三个 owner 清单（`currentSchemaOwnerTables`/`migratedOwnerTables`/`preAnnotationEdgeOwnerTables`，`:307`/`:319`/`:329`）按 12 个族分组构成 D-242 登记的 60 张表比较面；`import_confirmation` 与 `import_candidate_decision_snapshot` 各仅 1 次命中且位于 KDoc（`:273`-`:274`，原文「The confirm-side owners ... belong to the confirm/reject paths this fixture does not run」），即**无任何值级比较**；`confirmed_income_receipt`/`confirmed_transfer_receipt`/`confirmed_lending_receipt` 命中为 0。PR #115-#123 八批均已 squash merge（D-242 登记）。
+
+3. **裁决：维持「部分证据」。** 理由：`import_confirmation` 与 `import_candidate_decision_snapshot` 属 A01 字面点名「来源/候选」族的确认路径 owner（D-242 item 4 认定为「同族剩余缺口」）——一个含已确认候选的库正是该向量前提「当前库含来源/候选」的真例，恢复往返必须逐值保留这两表；它们既无值级往返比较，也无范围裁决认定不适用，故 §10.1 PASS 的「所有适用证据满足」不成立。**本条不把这两表或三张回执表改判「不适用」**：三张回执表在跨腿夹具的结构不适用（D-242 item 3）是夹具事实而非向量范围裁决，其替代方案（仅 v35 夹具）会失去跨腿证据，属范围变更须另行裁决；确认路径两表则从未被任何裁决移出分母。
+
+4. **裁决后 A01 残余的封闭清单（「部分证据」自此收窄为以下三项，无其他已知缺口）。** (i) 确认路径两表 `import_confirmation`/`import_candidate_decision_snapshot`：需 confirm 路径 seed（`ImportCandidateDecisionSnapshot` + catalog + `createFormalTransaction` 回调），成本高于已交付各片；(ii) 三张手工新建回执表 `confirmed_income_receipt`/`confirmed_transfer_receipt`/`confirmed_lending_receipt`：跨腿夹具结构不适用（D-242 item 3 的端口写集冲突），覆盖须另建夹具并另行裁决；(iii) 其余约 190 张未比较表绝大多数为 `rg*` 黄金筒仓表，由 golden 测试覆盖、不属产品恢复往返路径，不计入 A01 分母（沿 D-239 item 4 已有口径）。
+
+5. **相邻向量边界。** 本裁决只针对 P706-A01。D-242 补齐的缺口面同时惠及 A04（「成功后所有 owner 仍完整」）与 A11（预算腿），但两者的 PASS 判定**不随本条改变**，各按 §10.4 自行回读裁决；D-239 的全部判决（A03/A05 PASS、A01/A04/A06/A07/A10/A11 部分证据、A02/A08/A09/A12 缺证）维持不变。
+
+6. **审验拓扑（如实登记，轻量相称）。** 本批为证据裁决 + 登记，沿 D-239 item 7 先例由主代理亲手执行；两条否定性结论（确认路径两表无值级比较、三张回执表零命中）与三条正面结论（四腿在位、三清单 12 族构成、KDoc 定位）均经 grep/Read 机械复核后采信；CI 证据取自 `gh run list`。未新增测试、未运行本机 Gradle。
+
+7. **边界。** 入：本条登记 + `docs/CURRENT_STATE.md` 指针同步（含修正 ：90 处 PR #125 遗留的重复句与滞后的 origin/main 指针）。出：零产品代码/测试/schema/迁移/依赖/清单/Golden/CI 配置改动；不改 D-236～D-243 的任何判决与登记文本；不把 A04/A11 并入 PASS；不缩减计划目标（确认路径两表仍为 A01 适用残余，不判「不适用」、不删除）；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-239（A01 缺口原始登记，本条第 4 项沿其 rg* 口径）、D-242（八族覆盖批，本条为其 item 5 预留的独立裁决）、D-238（P7-08 同类裁决先例）、阶段计划 §6「切片与验收」与 §10.1/§10.4.3/§10.4.5。
