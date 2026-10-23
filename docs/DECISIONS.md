@@ -5209,3 +5209,24 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 7. **边界。** 入：本条登记 + `docs/CURRENT_STATE.md` 指针同步（含修正 ：90 处 PR #125 遗留的重复句与滞后的 origin/main 指针）。出：零产品代码/测试/schema/迁移/依赖/清单/Golden/CI 配置改动；不改 D-236～D-243 的任何判决与登记文本；不把 A04/A11 并入 PASS；不缩减计划目标（确认路径两表仍为 A01 适用残余，不判「不适用」、不删除）；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
 
 **关联决定：** D-239（A01 缺口原始登记，本条第 4 项沿其 rg* 口径）、D-242（八族覆盖批，本条为其 item 5 预留的独立裁决）、D-238（P7-08 同类裁决先例）、阶段计划 §6「切片与验收」与 §10.1/§10.4.3/§10.4.5。
+## D-245 P7-08 残余登记裁决：R-218-1 维持现语义并加测试钉住、R-222-9 分离呈现判满足与独立历史页接受延期、R-223 系列登记为已知限制、§4.5 承接闭合确认
+
+**状态：** 已批准并交付（2026-10-24，D-238 item 7 保持 OPEN 的四组 P7-08 残余的集中裁决；计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §8.3 + §10.1 状态表）。**tracked 变更仅两个测试文件**：`ledger-domain/src/commonTest/kotlin/com/unifiedledger/domain/TagMerchantCatalogTest.kt` 新增 1 个聚焦域测试 + 类 KDoc 补一枚举项；`app-ui/src/commonTest/kotlin/com/unifiedledger/ui/P503TagMerchantFilterStateTest.kt` 1 个测试改名（断言零改动）。**零产品代码、零 schema/迁移、零依赖、零 CI 配置改动**（schema 维持 v35 / 34 个 `.sqm`；两文件分属既有测试类，无新增类，shards/类计数清单不变）。
+
+**决定：**
+
+1. **裁决对象与来源。** D-238 item 7：「不改 D-218/D-221/D-222/D-223/D-224 的任何裁决与开放项（R-218-1 tombstone 名称复用、R-222-9 注释历史页 UI 语义、R-223 系列、§4.5 导入前选择承接登记全部保持 OPEN）」——本条是该句预留的集中裁决；D-238 的九向量判决本身不变。
+
+2. **R-218-1（tombstone 名称复用，D-218 登记）→ 维持现语义，加测试钉住。** `catalogItemNameTaken`（`TagMerchant.kt:213`，调用点 `:126` create / `:150` rename）不排除 tombstoned 项，tombstoned 项的名称继续占用其命名空间，新建同名返回 `CatalogNameConflict`。**裁决理由**：tombstone 是审计删除——删除时已无任何引用（规格 §5.1 `:197`「tombstone 项……不可能命中任何筛选，只存在于审计面」），名称继续占用杜绝同名后继与 tombstoned 历史的混淆；且现管理面对 tombstoned 项为零改名/停用/删除入口的只读审计块（D-223 item 6 / 规格 §8 开放项 11），不存在依赖名称释放的产品路径。释放名称属产品语义变更（管理面显式复用/重命名功能），**另立需求——不排期、不自动立项，若将来立项须新决定**（沿 D-181 第 3 条 V-19 重启子句的先例措辞）。**证据缺口补齐**：create 路径的 tombstoned 命名冲突此前无任何测试覆盖（独立 grep 复核 `TagMerchantCatalogTest` 零命中），新增 `aTombstonedItemsNameKeepsOccupyingItsNamespace` 钉住该语义；改名/复用路径已被既有 `renameAppendsNameAndTombstonedItemsCannotBeRenamedOrReactivated` 的 `CatalogItemTombstoned` 断言覆盖。
+
+3. **R-222-9（注释历史页 UI 语义，规格 §8 开放项 7）→ 分离呈现判满足；独立历史页接受延期。** 规格 §3.5 的要求是「历史金融版本与注释历史**分开显示**……不在金融版本时间线上内嵌注释快照」，并把入口/粒度/与交易详情的关系留为开放项 7，期限「最迟随 P708-A03 取证闭合」。**裁决**：(a) **分离呈现与粒度已满足**——08.D 交付的交易详情只读历史块按 `annotation_revision` 逐条显示 revision/observedTransactionVersionId/tagIds/merchantId/requestId/createdAt（D-224 item 1），注释历史为自有块、不内嵌于金融版本时间线；(b) **入口语义就此冻结**：入口 = 交易详情内嵌只读历史块，不做独立历史页；(c) **独立历史页（跨交易聚合、检索等）接受延期**——单列披露、不计作原要求完成、不自动立项，若日后产品需要另立设计门。开放项 7 的期限条件已到（P708-A03 已在 D-238 判 PASS，JVM 维度），本条即其闭合裁决。
+
+4. **R-223-1..6（D-223 item 8 登记）→ 逐项登记为已知限制（接受），R-223-5 改名。** 共同特征：只读展示面、窗口窄、下次交互自愈、无经济效果风险；接受为已知限制并维持披露，不入任何 P708 向量的 PASS/FAIL 判据。逐项：R-223-1（token 门为状态内计数，跨状态实例重建不续代，两读同 token 同指纹可双落地）、R-223-2（条件切换窗口 `entryCatalog` 沿用旧快照短暂「没有命中」）、R-223-4（目录命令后月视图重请求对本目录族语义空转，tag/merchant 计数器独立）——三项维持现状、零行为改动；R-223-3 已由 08.D 升级为真实命令链闭合一侧，原计数器测试保留为「不可读 authority」腿的有意钉子（D-224 item 1），非缺口；R-223-6（verifier V5 的 EXPLAIN 注释字面命中）维持 D-223 的不阻断裁定；R-223-5 测试名 `aPageRequestIsAbsorbedWhileOneIsInFlight` 已成误称（事件被处理、token 仍推进，仅页字段被吸收）——本条改名为 `anAppendPageRequestWhileOneIsInFlightAdvancesOnlyTheToken`，断言零改动，D-223 登记中的旧名以本条为新名指针。
+
+5. **§4.5 导入切片承接登记（规格 §4.5 + 开放项 5，计划 §8.2 强制项）→ 承接闭合确认。** (i) 已确认导入交易的关联经 §4.4 注释编辑链显式建立——已交付（08.B-2/D-222 接线 + 08.D 历史块）；(ii) 计划 08.B 字面「导入原始商家仅作候选」在当前存储现实下不可实现（`import_source_record` 无商户/对方文本列，D-146 不留原文件）——开放项 5 的扩展导入留存**触碰 D-146 边界，维持不授权、保持关闭**；(iii) 导入前关联选择若做须另立设计并处理「候选来源」与「确认同事务」两个新问题——**本阶段范围外，另立需求，不排期**。计划 §8.2 的强制承接登记由规格 §4.5 本身满足（D-187 批准），本条为其决定链登记；不缩减计划目标（三项均为披露性的范围登记，非删除）。
+
+6. **测试执行。** 归 CI（`TagMerchantCatalogTest` 属 ledger-domain commonTest、`P503TagMerchantFilterStateTest` 属 app-ui commonTest，受影响 shard 覆盖）；本批零本机 Gradle。
+
+7. **边界。** 入：本条 + 上述两处测试改动 + `docs/CURRENT_STATE.md` 指针同步。出：零产品代码/schema/迁移/依赖/清单/Golden/CI 配置；不改 D-218/D-221/D-222/D-223/D-224/D-238 的任何向量判决（本条只裁决其预留的开放项）；接受延期项不改成 PASS、不从分母删除；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-218（R-218-1 原登记）、D-222（R-222-9 原登记、§4.4 编辑链交付）、D-223（R-223 系列原登记、开放项 11 只读审计块）、D-224（08.D 只读历史块与 R-223-3 真实命令链升级）、D-238（item 7 预留本裁决；九向量判决不变）、D-187（规格批准，§4.5 承接登记与 §8 开放项清单）、D-146（导入留存边界）、D-181（接受延期/另立需求的先例措辞）、阶段计划 §8.2/§8.3 与 §10.1。

@@ -249,13 +249,13 @@ class P503TagMerchantFilterStateTest {
     }
 
     @Test
-    fun aPageRequestIsAbsorbedWhileOneIsInFlight() {
+    fun anAppendPageRequestWhileOneIsInFlightAdvancesOnlyTheToken() {
         val loading = assertIs<P503AppState.TagMerchantFilter>(reducer.reduce(filterState(), P503UiEvent.RequestTagMerchantFilterPage(replace = true)))
         assertTrue(loading.pageLoading)
         val absorbed =
             assertIs<P503AppState.TagMerchantFilter>(reducer.reduce(loading, P503UiEvent.RequestTagMerchantFilterPage(replace = false)))
         // 一次一页: the absorbed append adds no page fields — but the request token STILL
-        // advances (fix round P3-1), so the duplicate read's landing can never double-append.
+        // advances, so the duplicate read's landing can never double-append.
         assertEquals(loading.loadedEntries, absorbed.loadedEntries)
         assertTrue(absorbed.pageLoading)
         assertEquals(loading.pageRequestToken + 1, absorbed.pageRequestToken)

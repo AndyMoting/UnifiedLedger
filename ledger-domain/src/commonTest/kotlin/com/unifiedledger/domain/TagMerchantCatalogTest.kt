@@ -9,8 +9,9 @@ import kotlin.test.assertTrue
  * P7-08 08.A pure domain evidence (D-187; spec sections 2.1-2.3).
  *
  * Covers independent tag/merchant namespaces, name normalization reuse (empty/control/too-long),
- * cross-namespace kind mismatch, tombstone unreachability, reference-gated tombstone, the
- * reversible active toggle, and the annotation cardinality/selectability rules.
+ * cross-namespace kind mismatch, tombstone unreachability, tombstoned-name retention,
+ * reference-gated tombstone, the reversible active toggle, and the annotation
+ * cardinality/selectability rules.
  */
 class TagMerchantCatalogTest {
     private val ledgerId = LedgerId("ledger-a")
@@ -53,6 +54,17 @@ class TagMerchantCatalogTest {
         // But a second tag with the same normalized name conflicts.
         assertIs<CatalogItemViolation.CatalogNameConflict>(
             failure(createCatalogItem(CatalogItemKind.TAG, tags, ledgerId, "tag-2", "Coffee")),
+        )
+    }
+
+    @Test
+    fun aTombstonedItemsNameKeepsOccupyingItsNamespace() {
+        val dead = listOf(tag("tag-1", "Coffee", tombstoned = true))
+        // Tombstoning releases the item's references but not its name: a later item reusing the
+        // name stays a typed conflict, so no same-named successor can be confused with the
+        // tombstoned history. Releasing the name would need an explicit product decision.
+        assertIs<CatalogItemViolation.CatalogNameConflict>(
+            failure(createCatalogItem(CatalogItemKind.TAG, dead, ledgerId, "tag-2", "Coffee")),
         )
     }
 
