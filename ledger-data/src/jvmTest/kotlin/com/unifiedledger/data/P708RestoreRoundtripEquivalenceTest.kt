@@ -79,8 +79,8 @@ import kotlin.time.Instant
  * through the isolated-strict-migration path, and compared TABLE BY TABLE, VALUE BY VALUE — every
  * 08.A owner table (the 11 tables D-218 §3 froze), the four `manual_*_request` annotation columns,
  * the receipt tables, the four 07.B budget tables, the six `catalog_*` owners, `posting_set`, the
- * P7-02 `entry_pin`/`counterparty` owners, the P7-05 void/restore audit owners, and the base formal
- * transaction/version/posting rows.
+ * P7-02 `entry_pin`/`counterparty` owners, the P7-05 void/restore audit owners, the P4 import
+ * intake owners, and the base formal transaction/version/posting rows.
  * The budget leg supplies the "预算配置历史"
  * owner half of P706-A11 ("最终 schema 含预算配置历史及标签/商家注释历史…所有新增 owner 往返"); it
  * registers no vector PASS. Three legs:
@@ -513,7 +513,8 @@ class P708RestoreRoundtripEquivalenceTest {
      * (with the annotation columns at v35 only), the tag catalog with its command receipt plus a
      * two-revision annotation history with its current pointer (at v34/v35 only), and — at EVERY
      * stage — the product catalog bootstrap, the catalog command and P7-02 preference/counterparty
-     * chains, the P7-05 void/restore audit chain ([seedVoidRestoreChain]) and two budget chains (a
+     * chains, the P7-05 void/restore audit chain ([seedVoidRestoreChain]), one import intake
+     * ([seedImportIntakeChain]) and two budget chains (a
      * TOTAL chain of two limits and a CLOSED revision, and a CATEGORY chain of two limits) through
      * the real claim-first command port (see [seedBudgetChain]); `32.sqm` created the budget tables
      * on the v32 -> v33 edge.
@@ -1037,8 +1038,8 @@ class P708RestoreRoundtripEquivalenceTest {
 
     /**
      * Non-vacuity guard for the restored copy's seeded owner rows: every [catalogOwnerTables],
-     * [preferenceAndCounterpartyTables] and [voidRestoreTables] entry plus `confirmed_expense_receipt`
-     * must hold at least one row, so `assertValueIdentical` compares data rather than two empty results. Without this, a
+     * [preferenceAndCounterpartyTables], [voidRestoreTables] and [importIntakeTables] entry plus
+     * `confirmed_expense_receipt` must hold at least one row, so `assertValueIdentical` compares data rather than two empty results. Without this, a
      * table the fixture never writes (for example the command tables, which bootstrap alone does not
      * populate) would "survive" the round-trip vacuously — the same trap
      * [aV33SnapshotMigratesThroughTheFullChainWithZeroBackfillAndSurvivingRows] rejects for the
