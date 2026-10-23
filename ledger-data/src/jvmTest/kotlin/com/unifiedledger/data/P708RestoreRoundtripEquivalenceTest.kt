@@ -11,6 +11,9 @@ import com.unifiedledger.application.CatalogEntityIdSource
 import com.unifiedledger.application.CatalogEntityIds
 import com.unifiedledger.application.CatalogManagementRequestIdSource
 import com.unifiedledger.application.CatalogRequestId
+import com.unifiedledger.application.CounterpartyCommandResult
+import com.unifiedledger.application.EntryPinResult
+import com.unifiedledger.application.EntryPinTarget
 import com.unifiedledger.application.ExecuteCatalogCommand
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.SaveBudgetConfiguration
@@ -21,6 +24,7 @@ import com.unifiedledger.domain.BudgetId
 import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
+import com.unifiedledger.domain.CounterpartyId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionId
@@ -49,8 +53,9 @@ import kotlin.time.Instant
  * with `VACUUM INTO`, read back
  * through the isolated-strict-migration path, and compared TABLE BY TABLE, VALUE BY VALUE — every
  * 08.A owner table (the 11 tables D-218 §3 froze), the four `manual_*_request` annotation columns,
- * the receipt tables, the four 07.B budget tables, the six `catalog_*` owners and `posting_set`
- * with the base formal transaction/version/posting rows. The budget leg supplies the "预算配置历史"
+ * the receipt tables, the four 07.B budget tables, the six `catalog_*` owners, `posting_set`, the
+ * P7-02 `entry_pin`/`counterparty` owners, and the base formal transaction/version/posting rows.
+ * The budget leg supplies the "预算配置历史"
  * owner half of P706-A11 ("最终 schema 含预算配置历史及标签/商家注释历史…所有新增 owner 往返"); it
  * registers no vector PASS. Three legs:
  *
@@ -157,12 +162,23 @@ class P708RestoreRoundtripEquivalenceTest {
     private val confirmedExpenseReceiptTables = listOf("confirmed_expense_receipt")
 
     /**
+     * The P7-02 entry-preference and counterparty owners. `entry_pin` is the plan's `:181` "置顶"
+     * half; the counterparty pair is the `对手方` family the same "往返逐 owner/稳定 ID 等价"
+     * requirement covers (the :181 row itself does not enumerate it). `28.sqm` (v28 → v29) creates
+     * all three and no later edge touches them, so they exist on every leg. Both families are
+     * written through their real product ports ([seedEntryPreferenceAndCounterpartyChain]), not
+     * hand-built.
+     */
+    private val preferenceAndCounterpartyTables =
+        listOf("entry_pin", "counterparty", "counterparty_name_history")
+
+    /**
      * Every owner table the fixture writes, compared with `SELECT *` on the leg whose source and
      * snapshot are both at the current schema (v35). One list keeps the legs from drifting apart.
      */
     private val currentSchemaOwnerTables =
         preV34SurvivorTables + annotationOwnerTables + manualRequestTables + budgetOwnerTables +
-            catalogOwnerTables + confirmedExpenseReceiptTables
+            catalogOwnerTables + confirmedExpenseReceiptTables + preferenceAndCounterpartyTables
 
     /**
      * The v34 and rollback owner set: everything in [currentSchemaOwnerTables] except the
@@ -173,7 +189,7 @@ class P708RestoreRoundtripEquivalenceTest {
      */
     private val migratedOwnerTables =
         preV34SurvivorTables + annotationOwnerTables + budgetOwnerTables + catalogOwnerTables +
-            confirmedExpenseReceiptTables
+            confirmedExpenseReceiptTables + preferenceAndCounterpartyTables
 
     /**
      * The v33 owner set. A Stage.V33 source has the 11 `08.A` annotation tables DROPPED
@@ -181,7 +197,8 @@ class P708RestoreRoundtripEquivalenceTest {
      * land empty on the migrated copy and compares the remaining owners value-for-value.
      */
     private val preAnnotationEdgeOwnerTables =
-        preV34SurvivorTables + budgetOwnerTables + catalogOwnerTables + confirmedExpenseReceiptTables
+        preV34SurvivorTables + budgetOwnerTables + catalogOwnerTables + confirmedExpenseReceiptTables +
+            preferenceAndCounterpartyTables
 
     /** The stable budget identity the seeded chain binds: two limit revisions then a CLOSED one. */
     private val budgetId = BudgetId("budget-roundtrip")
@@ -579,8 +596,44 @@ class P708RestoreRoundtripEquivalenceTest {
                 SqlDelightCatalogStore(database, driver).bootstrap(LedgerId(ledgerId), restoreCatalogSeed()),
             )
             seedCatalogCommandChain(database, driver)
+            seedEntryPreferenceAndCounterpartyChain(database, driver)
             seedBudgetChain(database, driver)
         }
+    }
+
+    /**
+     * Writes the P7-02 entry-preference and counterparty owners through their real product ports:
+     *
+     *  - [SqlDelightEntryPreferenceStore.togglePin] pins the seeded `asset-payment-local` account,
+     *    which writes one `entry_pin` row. Only the `account` target kind is seeded; `category` is a
+     *    legal kind per the table CHECK but this fixture does not exercise it.
+     *  - [SqlDelightCounterpartyStore.create] writes one `counterparty` row and its version-1
+     *    `counterparty_name_history` row, plus the hidden receivable `catalog_account` the port
+     *    derives.
+     *
+     * All three tables come from `28.sqm` (v28 -> v29) and no later edge touches them, so they are
+     * present on every stage; [seedCurrentLibrary] runs this on every leg, which is what makes the
+     * comparison data rather than empty-vs-empty.
+     */
+    private fun seedEntryPreferenceAndCounterpartyChain(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
+        assertIs<EntryPinResult.Toggled>(
+            SqlDelightEntryPreferenceStore(database).togglePin(
+                target = EntryPinTarget.AccountTarget(LedgerId(ledgerId), AccountId("asset-payment-local")),
+                pinnedAt = Instant.parse("2026-03-05T04:00:00Z"),
+            ),
+        )
+        assertIs<CounterpartyCommandResult.Created>(
+            SqlDelightCounterpartyStore(database, driver).create(
+                ledgerId = LedgerId(ledgerId),
+                counterpartyId = CounterpartyId("counterparty-roundtrip"),
+                name = "Roundtrip Counterparty",
+                receivableAccountId = AccountId("receivable-roundtrip"),
+                currency = CurrencyUnit("CNY", 2),
+            ),
+        )
     }
 
     /**
@@ -792,17 +845,17 @@ class P708RestoreRoundtripEquivalenceTest {
     }
 
     /**
-     * Non-vacuity guard for the restored copy's seeded owner rows: every [catalogOwnerTables] entry
-     * and the `confirmed_expense_receipt` must hold at least one row, so `assertValueIdentical`
-     * compares data rather than two empty results. Without this, a table the fixture never writes
-     * (for example the command tables, which bootstrap alone does not populate) would "survive" the
-     * round-trip vacuously — the same trap
+     * Non-vacuity guard for the restored copy's seeded owner rows: every [catalogOwnerTables] and
+     * [preferenceAndCounterpartyTables] entry plus `confirmed_expense_receipt` must hold at least one
+     * row, so `assertValueIdentical` compares data rather than two empty results. Without this, a
+     * table the fixture never writes (for example the command tables, which bootstrap alone does not
+     * populate) would "survive" the round-trip vacuously — the same trap
      * [aV33SnapshotMigratesThroughTheFullChainWithZeroBackfillAndSurvivingRows] rejects for the
      * budget tables.
      *
-     * The seeded catalog command is a rename of `asset-payment-local`, which writes exactly one
-     * claim and one receipt and appends one `catalog_name_history` revision per rename on top of
-     * the bootstrap's four seed revisions (two accounts + two categories).
+     * The expected `catalog_name_history` total is 6: four bootstrap seed revisions (two accounts,
+     * two categories), one appended by the catalog rename, and one for the hidden receivable account
+     * the counterparty port derives.
      */
     private fun assertCatalogOwnersReadBackNonVacuously(driver: SqlDriver) {
         catalogOwnerTables.forEach { table ->
@@ -821,11 +874,12 @@ class P708RestoreRoundtripEquivalenceTest {
             countOn(driver, "SELECT count(*) FROM catalog_command_receipt"),
             "the seeded catalog command writes exactly one receipt",
         )
-        // Four seed revisions (two accounts, two categories) plus the rename's appended revision.
+        // Four bootstrap seed revisions (two accounts, two categories), one appended by the
+        // catalog rename, and one for the hidden receivable account the counterparty port derives.
         assertEquals(
-            5L,
+            6L,
             countOn(driver, "SELECT count(*) FROM catalog_name_history"),
-            "the rename must append a name-history revision on top of the bootstrap seeds",
+            "every seeded catalog and counterparty owner must keep its name-history revision",
         )
         // The receipt is compared on every leg too, so guard it against empty-vs-empty as well.
         assertEquals(
@@ -838,6 +892,18 @@ class P708RestoreRoundtripEquivalenceTest {
             1L,
             countOn(driver, "SELECT count(*) FROM catalog_version WHERE version = 2"),
             "the accepted catalog command must advance the catalog version to 2",
+        )
+        // The P7-02 preference/counterparty owners are compared on every leg, so guard them too.
+        preferenceAndCounterpartyTables.forEach { table ->
+            assertTrue(
+                countOn(driver, "SELECT count(*) FROM $table") > 0L,
+                "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
+            )
+        }
+        assertEquals(
+            1L,
+            countOn(driver, "SELECT count(*) FROM counterparty_name_history"),
+            "the counterparty create writes exactly one version-1 name-history row",
         )
     }
 
@@ -896,6 +962,9 @@ class P708RestoreRoundtripEquivalenceTest {
             "catalog_command_request" -> "ledger_id, request_id"
             "catalog_command_receipt" -> "ledger_id, request_id"
             "posting_set" -> "posting_set_id"
+            "entry_pin" -> "ledger_id, target_kind, target_id"
+            "counterparty" -> "ledger_id, counterparty_id"
+            "counterparty_name_history" -> "ledger_id, counterparty_id, version_number"
             else -> "rowid"
         }
 
