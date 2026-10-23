@@ -53,8 +53,9 @@ import kotlin.time.Instant
  * with `VACUUM INTO`, read back
  * through the isolated-strict-migration path, and compared TABLE BY TABLE, VALUE BY VALUE — every
  * 08.A owner table (the 11 tables D-218 §3 froze), the four `manual_*_request` annotation columns,
- * the receipt tables, the four 07.B budget tables, the six `catalog_*` owners and `posting_set`
- * with the base formal transaction/version/posting rows. The budget leg supplies the "预算配置历史"
+ * the receipt tables, the four 07.B budget tables, the six `catalog_*` owners, `posting_set`, the
+ * P7-02 `entry_pin`/`counterparty` owners, and the base formal transaction/version/posting rows.
+ * The budget leg supplies the "预算配置历史"
  * owner half of P706-A11 ("最终 schema 含预算配置历史及标签/商家注释历史…所有新增 owner 往返"); it
  * registers no vector PASS. Three legs:
  *
@@ -161,10 +162,11 @@ class P708RestoreRoundtripEquivalenceTest {
     private val confirmedExpenseReceiptTables = listOf("confirmed_expense_receipt")
 
     /**
-     * The P7-02 entry-preference and counterparty owners (plan :181 P706-A01's "置顶" and
-     * "对手方" halves). `28.sqm` (v28 → v29) creates them and no later edge touches them, so they
-     * exist on every leg. Both are written through their real product ports
-     * ([seedEntryPreferenceAndCounterpartyChain]), not hand-built.
+     * The P7-02 entry-preference and counterparty owners. `entry_pin` is the plan's `:181` "置顶"
+     * half; the counterparty pair is the `对手方` family the same "往返逐 owner/稳定 ID 等价"
+     * requirement covers (the :181 row itself does not enumerate it). `28.sqm` (v28 → v29) creates
+     * all three and no later edge touches them, so they exist on every leg. Both are written through
+     * their real product ports ([seedEntryPreferenceAndCounterpartyChain]), not hand-built.
      */
     private val preferenceAndCounterpartyTables =
         listOf("entry_pin", "counterparty", "counterparty_name_history")
@@ -602,14 +604,15 @@ class P708RestoreRoundtripEquivalenceTest {
      * Writes the P7-02 entry-preference and counterparty owners through their real product ports:
      *
      *  - [SqlDelightEntryPreferenceStore.togglePin] pins the seeded `asset-payment-local` account,
-     *    which writes one `entry_pin` row (both legal target kinds are covered by the table's CHECK,
-     *    and the account kind is the one the catalog seed can resolve);
+     *    which writes one `entry_pin` row. Only the `account` target kind is seeded; `category` is a
+     *    legal kind per the table CHECK but this fixture does not exercise it.
      *  - [SqlDelightCounterpartyStore.create] writes one `counterparty` row and its version-1
      *    `counterparty_name_history` row, plus the hidden receivable `catalog_account` the port
      *    derives.
      *
-     * Both tables come from `28.sqm` (v28 -> v29) and no later edge touches them, so these rows
-     * exist on every leg; without this seed both families would compare empty-vs-empty.
+     * All three tables come from `28.sqm` (v28 -> v29) and no later edge touches them, so they are
+     * present on every stage; [seedCurrentLibrary] runs this on every leg, which is what makes the
+     * comparison data rather than empty-vs-empty.
      */
     private fun seedEntryPreferenceAndCounterpartyChain(
         database: LedgerDatabase,
@@ -841,17 +844,17 @@ class P708RestoreRoundtripEquivalenceTest {
     }
 
     /**
-     * Non-vacuity guard for the restored copy's seeded owner rows: every [catalogOwnerTables] entry
-     * and the `confirmed_expense_receipt` must hold at least one row, so `assertValueIdentical`
-     * compares data rather than two empty results. Without this, a table the fixture never writes
-     * (for example the command tables, which bootstrap alone does not populate) would "survive" the
-     * round-trip vacuously — the same trap
+     * Non-vacuity guard for the restored copy's seeded owner rows: every [catalogOwnerTables] and
+     * [preferenceAndCounterpartyTables] entry plus `confirmed_expense_receipt` must hold at least one
+     * row, so `assertValueIdentical` compares data rather than two empty results. Without this, a
+     * table the fixture never writes (for example the command tables, which bootstrap alone does not
+     * populate) would "survive" the round-trip vacuously — the same trap
      * [aV33SnapshotMigratesThroughTheFullChainWithZeroBackfillAndSurvivingRows] rejects for the
      * budget tables.
      *
-     * The seeded catalog command is a rename of `asset-payment-local`, which writes exactly one
-     * claim and one receipt and appends one `catalog_name_history` revision per rename on top of
-     * the bootstrap's four seed revisions (two accounts + two categories).
+     * The expected `catalog_name_history` total is 6: four bootstrap seed revisions (two accounts,
+     * two categories), one appended by the catalog rename, and one for the hidden receivable account
+     * the counterparty port derives.
      */
     private fun assertCatalogOwnersReadBackNonVacuously(driver: SqlDriver) {
         catalogOwnerTables.forEach { table ->
