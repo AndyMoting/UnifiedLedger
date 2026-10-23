@@ -13,9 +13,9 @@ import com.unifiedledger.application.CatalogManagementRequestIdSource
 import com.unifiedledger.application.CatalogRequestId
 import com.unifiedledger.application.ConfirmationId
 import com.unifiedledger.application.CounterpartyCommandResult
-import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.EntryPinResult
 import com.unifiedledger.application.EntryPinTarget
+import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.ExecuteCatalogCommand
 import com.unifiedledger.application.ExecuteRestoreTransaction
 import com.unifiedledger.application.ExecuteVoidTransaction
@@ -65,7 +65,8 @@ import kotlin.time.Instant
  * through the isolated-strict-migration path, and compared TABLE BY TABLE, VALUE BY VALUE — every
  * 08.A owner table (the 11 tables D-218 §3 froze), the four `manual_*_request` annotation columns,
  * the receipt tables, the four 07.B budget tables, the six `catalog_*` owners, `posting_set`, the
- * P7-02 `entry_pin`/`counterparty` owners, and the base formal transaction/version/posting rows.
+ * P7-02 `entry_pin`/`counterparty` owners, the P7-05 void/restore audit owners, and the base formal
+ * transaction/version/posting rows.
  * The budget leg supplies the "预算配置历史"
  * owner half of P706-A11 ("最终 schema 含预算配置历史及标签/商家注释历史…所有新增 owner 往返"); it
  * registers no vector PASS. Three legs:
@@ -121,8 +122,9 @@ class P708RestoreRoundtripEquivalenceTest {
 
     /**
      * The base ledger owners the fixture seeds at every stage ([seedCurrentLibrary]): the formal
-     * transaction, its version, its postings and its current-version pointer. Neither `33.sqm` nor
-     * `34.sqm` touches them, so every leg compares them rather than only the v33 chain.
+     * transactions, their versions, their postings and their current-version pointers. The fixture
+     * seeds two such chains (the annotated expense and the void/restore target). Neither `33.sqm`
+     * nor `34.sqm` touches these tables, so every leg compares them.
      */
     private val preV34SurvivorTables =
         listOf("ledger_transaction", "transaction_version", "posting", "ledger_transaction_current_version")
@@ -138,7 +140,7 @@ class P708RestoreRoundtripEquivalenceTest {
      * writes `catalog_account`, `catalog_category`, `catalog_name_history` and `catalog_version`,
      * and [seedCatalogCommandChain] adds one accepted rename through the same claim-first port,
      * which writes `catalog_command_request`, `catalog_command_receipt` and one more name-history
-     * revision. `posting_set` is hand-inserted once, next to the single seeded transaction version
+     * revision. `posting_set` rows are hand-inserted once per seeded transaction chain
      * ([seedCurrentLibrary]).
      */
     private val catalogOwnerTables =
@@ -479,9 +481,11 @@ class P708RestoreRoundtripEquivalenceTest {
      * Seeds one anonymous library at [stage]: a manual expense chain + its claim row and receipt
      * (with the annotation columns at v35 only), the tag catalog with its command receipt plus a
      * two-revision annotation history with its current pointer (at v34/v35 only), and — at EVERY
-     * stage — the product catalog bootstrap plus two budget chains (a TOTAL chain of two limits and
-     * a CLOSED revision, and a CATEGORY chain of two limits) through the real claim-first command
-     * port (see [seedBudgetChain]); `32.sqm` created the budget tables on the v32 -> v33 edge.
+     * stage — the product catalog bootstrap, the catalog command and P7-02 preference/counterparty
+     * chains, the P7-05 void/restore audit chain ([seedVoidRestoreChain]) and two budget chains (a
+     * TOTAL chain of two limits and a CLOSED revision, and a CATEGORY chain of two limits) through
+     * the real claim-first command port (see [seedBudgetChain]); `32.sqm` created the budget tables
+     * on the v32 -> v33 edge.
      */
     private fun seedCurrentLibrary(
         url: String,
@@ -660,6 +664,9 @@ class P708RestoreRoundtripEquivalenceTest {
         database.ledgerQueries.insertTransactionCurrentVersion("tx-void-target", ledgerId, "tx-void-target-version-1")
 
         val voidPort = SqlDelightTransactionVoidCommitPort(database, driver)
+        // Minted per command; the two ids must differ because the receipt table is UNIQUE on both
+        // confirmation_id and fact_id. Both commands below are accepted, so no sequence number is
+        // burned on a rejection.
         var sequence = 0
         val idSource =
             TransactionVoidFactIdSource {
@@ -944,9 +951,9 @@ class P708RestoreRoundtripEquivalenceTest {
     }
 
     /**
-     * Non-vacuity guard for the restored copy's seeded owner rows: every [catalogOwnerTables] and
-     * [preferenceAndCounterpartyTables] entry plus `confirmed_expense_receipt` must hold at least one
-     * row, so `assertValueIdentical` compares data rather than two empty results. Without this, a
+     * Non-vacuity guard for the restored copy's seeded owner rows: every [catalogOwnerTables],
+     * [preferenceAndCounterpartyTables] and [voidRestoreTables] entry plus `confirmed_expense_receipt`
+     * must hold at least one row, so `assertValueIdentical` compares data rather than two empty results. Without this, a
      * table the fixture never writes (for example the command tables, which bootstrap alone does not
      * populate) would "survive" the round-trip vacuously — the same trap
      * [aV33SnapshotMigratesThroughTheFullChainWithZeroBackfillAndSurvivingRows] rejects for the
@@ -1015,7 +1022,7 @@ class P708RestoreRoundtripEquivalenceTest {
         }
         assertEquals(
             2L,
-            countOn(driver, "SELECT count(*) FROM transaction_void_fact"),
+            countOn(driver, "SELECT count(*) FROM transaction_void_fact WHERE ledger_id = '$ledgerId'"),
             "the void and the restore must both survive as separate audit facts",
         )
         assertEquals(
