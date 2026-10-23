@@ -11,12 +11,21 @@ import com.unifiedledger.application.CatalogEntityIdSource
 import com.unifiedledger.application.CatalogEntityIds
 import com.unifiedledger.application.CatalogManagementRequestIdSource
 import com.unifiedledger.application.CatalogRequestId
+import com.unifiedledger.application.ConfirmationId
 import com.unifiedledger.application.CounterpartyCommandResult
 import com.unifiedledger.application.EntryPinResult
 import com.unifiedledger.application.EntryPinTarget
 import com.unifiedledger.application.ExecuteCatalogCommand
+import com.unifiedledger.application.ExecuteRestoreTransaction
+import com.unifiedledger.application.ExecuteVoidTransaction
+import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.SaveBudgetConfiguration
+import com.unifiedledger.application.TransactionVoidFactIdSource
+import com.unifiedledger.application.TransactionVoidFactIds
+import com.unifiedledger.application.VoidTransactionRequest
+import com.unifiedledger.application.VoidTransactionResult
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
@@ -28,6 +37,8 @@ import com.unifiedledger.domain.CounterpartyId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionId
+import com.unifiedledger.domain.VoidReason
+import com.unifiedledger.domain.VoidReasonCode
 import kotlinx.datetime.YearMonth
 import java.io.File
 import java.nio.file.Files
@@ -54,7 +65,8 @@ import kotlin.time.Instant
  * through the isolated-strict-migration path, and compared TABLE BY TABLE, VALUE BY VALUE — every
  * 08.A owner table (the 11 tables D-218 §3 froze), the four `manual_*_request` annotation columns,
  * the receipt tables, the four 07.B budget tables, the six `catalog_*` owners, `posting_set`, the
- * P7-02 `entry_pin`/`counterparty` owners, and the base formal transaction/version/posting rows.
+ * P7-02 `entry_pin`/`counterparty` owners, the P7-05 void/restore audit owners, and the base formal
+ * transaction/version/posting rows.
  * The budget leg supplies the "预算配置历史"
  * owner half of P706-A11 ("最终 schema 含预算配置历史及标签/商家注释历史…所有新增 owner 往返"); it
  * registers no vector PASS. Three legs:
@@ -110,8 +122,9 @@ class P708RestoreRoundtripEquivalenceTest {
 
     /**
      * The base ledger owners the fixture seeds at every stage ([seedCurrentLibrary]): the formal
-     * transaction, its version, its postings and its current-version pointer. Neither `33.sqm` nor
-     * `34.sqm` touches them, so every leg compares them rather than only the v33 chain.
+     * transactions, their versions, their postings and their current-version pointers. The fixture
+     * seeds two such chains (the annotated expense and the void/restore target). Neither `33.sqm`
+     * nor `34.sqm` touches these tables, so every leg compares them.
      */
     private val preV34SurvivorTables =
         listOf("ledger_transaction", "transaction_version", "posting", "ledger_transaction_current_version")
@@ -127,7 +140,7 @@ class P708RestoreRoundtripEquivalenceTest {
      * writes `catalog_account`, `catalog_category`, `catalog_name_history` and `catalog_version`,
      * and [seedCatalogCommandChain] adds one accepted rename through the same claim-first port,
      * which writes `catalog_command_request`, `catalog_command_receipt` and one more name-history
-     * revision. `posting_set` is hand-inserted once, next to the single seeded transaction version
+     * revision. `posting_set` rows are hand-inserted once per seeded transaction chain
      * ([seedCurrentLibrary]).
      */
     private val catalogOwnerTables =
@@ -173,12 +186,21 @@ class P708RestoreRoundtripEquivalenceTest {
         listOf("entry_pin", "counterparty", "counterparty_name_history")
 
     /**
+     * The P7-05 void/restore audit owners (plan :181's "作废恢复历史"). `30.sqm` (v30 -> v31) creates
+     * them and no later edge touches them, so they exist on every leg. The seeded chain appends a
+     * void fact and a restore fact through the real use cases, so the history is two rows rather
+     * than one current flag.
+     */
+    private val voidRestoreTables =
+        listOf("transaction_void_request", "transaction_void_fact", "transaction_void_receipt")
+
+    /**
      * Every owner table the fixture writes, compared with `SELECT *` on the leg whose source and
      * snapshot are both at the current schema (v35). One list keeps the legs from drifting apart.
      */
     private val currentSchemaOwnerTables =
         preV34SurvivorTables + annotationOwnerTables + manualRequestTables + budgetOwnerTables +
-            catalogOwnerTables + confirmedExpenseReceiptTables + preferenceAndCounterpartyTables
+            catalogOwnerTables + confirmedExpenseReceiptTables + preferenceAndCounterpartyTables + voidRestoreTables
 
     /**
      * The v34 and rollback owner set: everything in [currentSchemaOwnerTables] except the
@@ -189,7 +211,7 @@ class P708RestoreRoundtripEquivalenceTest {
      */
     private val migratedOwnerTables =
         preV34SurvivorTables + annotationOwnerTables + budgetOwnerTables + catalogOwnerTables +
-            confirmedExpenseReceiptTables + preferenceAndCounterpartyTables
+            confirmedExpenseReceiptTables + preferenceAndCounterpartyTables + voidRestoreTables
 
     /**
      * The v33 owner set. A Stage.V33 source has the 11 `08.A` annotation tables DROPPED
@@ -198,7 +220,7 @@ class P708RestoreRoundtripEquivalenceTest {
      */
     private val preAnnotationEdgeOwnerTables =
         preV34SurvivorTables + budgetOwnerTables + catalogOwnerTables + confirmedExpenseReceiptTables +
-            preferenceAndCounterpartyTables
+            preferenceAndCounterpartyTables + voidRestoreTables
 
     /** The stable budget identity the seeded chain binds: two limit revisions then a CLOSED one. */
     private val budgetId = BudgetId("budget-roundtrip")
@@ -459,9 +481,11 @@ class P708RestoreRoundtripEquivalenceTest {
      * Seeds one anonymous library at [stage]: a manual expense chain + its claim row and receipt
      * (with the annotation columns at v35 only), the tag catalog with its command receipt plus a
      * two-revision annotation history with its current pointer (at v34/v35 only), and — at EVERY
-     * stage — the product catalog bootstrap plus two budget chains (a TOTAL chain of two limits and
-     * a CLOSED revision, and a CATEGORY chain of two limits) through the real claim-first command
-     * port (see [seedBudgetChain]); `32.sqm` created the budget tables on the v32 -> v33 edge.
+     * stage — the product catalog bootstrap, the catalog command and P7-02 preference/counterparty
+     * chains, the P7-05 void/restore audit chain ([seedVoidRestoreChain]) and two budget chains (a
+     * TOTAL chain of two limits and a CLOSED revision, and a CATEGORY chain of two limits) through
+     * the real claim-first command port (see [seedBudgetChain]); `32.sqm` created the budget tables
+     * on the v32 -> v33 edge.
      */
     private fun seedCurrentLibrary(
         url: String,
@@ -597,8 +621,90 @@ class P708RestoreRoundtripEquivalenceTest {
             )
             seedCatalogCommandChain(database, driver)
             seedEntryPreferenceAndCounterpartyChain(database, driver)
+            seedVoidRestoreChain(database, driver)
             seedBudgetChain(database, driver)
         }
+    }
+
+    /**
+     * Writes a full void → restore cycle for one ordinary expense through the real product use
+     * cases ([ExecuteVoidTransaction] then [ExecuteRestoreTransaction] over
+     * [SqlDelightTransactionVoidCommitPort]).
+     *
+     * This is the plan's `:181` "作废恢复历史" half: the AUDIT chain, not merely the current
+     * voided/effective flag. The cycle appends two facts (a void and a restore), so
+     * `transaction_void_fact` holds two rows and the request/receipt tables hold one row per
+     * command — the immutable history a restore of the database file has to carry.
+     *
+     * The target is a dedicated transaction, not the annotation one: voiding is an audit fact about
+     * a specific transaction version, and keeping it separate stops this leg from coupling to the
+     * annotation assertions. Its postings name the same catalog owners the restore revalidation
+     * checks (`cat-local`'s posting account and the owned real asset account), so the restore is
+     * admitted rather than rejected as an inadmissible reference.
+     */
+    private fun seedVoidRestoreChain(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
+        database.ledgerQueries.insertTransaction("tx-void-target", ledgerId, "EXPENSE")
+        database.ledgerQueries.insertPostingSet("tx-void-target-posting-set-1", ledgerId)
+        database.ledgerQueries.insertTransactionVersion(
+            "tx-void-target-version-1",
+            "tx-void-target",
+            ledgerId,
+            1L,
+            "tx-void-target-posting-set-1",
+            "2026-03-06T02:00:00Z",
+            "2026-03-06T02:00:00Z",
+            "2026-03-06T02:00:00Z",
+            "refundable purchase",
+        )
+        database.ledgerQueries.insertPosting("tx-void-target-posting-0", "tx-void-target-posting-set-1", ledgerId, 0L, "expense-account-local", 1_200L, "CNY", 2L)
+        database.ledgerQueries.insertPosting("tx-void-target-posting-1", "tx-void-target-posting-set-1", ledgerId, 1L, "asset-payment-local", -1_200L, "CNY", 2L)
+        database.ledgerQueries.insertTransactionCurrentVersion("tx-void-target", ledgerId, "tx-void-target-version-1")
+
+        val voidPort = SqlDelightTransactionVoidCommitPort(database, driver)
+        // Minted per command; the two ids must differ because the receipt table is UNIQUE on both
+        // confirmation_id and fact_id. Both commands below are accepted, so no sequence number is
+        // burned on a rejection.
+        var sequence = 0
+        val idSource =
+            TransactionVoidFactIdSource {
+                sequence += 1
+                TransactionVoidFactIds(
+                    confirmationId = ConfirmationId("tx-void-target-confirmation-$sequence"),
+                    factId = "tx-void-target-fact-$sequence",
+                )
+            }
+        val admissionReader = SqlDelightCatalogStore(database, driver)
+        assertIs<VoidTransactionResult.Created>(
+            ExecuteVoidTransaction(voidPort, idSource, LedgerClock { Instant.parse("2026-03-06T03:00:00Z") })
+                .execute(
+                    VoidTransactionRequest(
+                        ledgerId = LedgerId(ledgerId),
+                        requestId = RequestId("void-request-1"),
+                        transactionId = TransactionId("tx-void-target"),
+                        reason = VoidReason(VoidReasonCode.MIS_ENTERED, "wrong amount"),
+                        confirmation = ExplicitManualSave,
+                    ),
+                ),
+        )
+        assertIs<VoidTransactionResult.Created>(
+            ExecuteRestoreTransaction(
+                voidPort,
+                idSource,
+                LedgerClock { Instant.parse("2026-03-06T04:00:00Z") },
+                admissionReader,
+            ).execute(
+                VoidTransactionRequest(
+                    ledgerId = LedgerId(ledgerId),
+                    requestId = RequestId("void-request-2"),
+                    transactionId = TransactionId("tx-void-target"),
+                    reason = VoidReason(VoidReasonCode.VOIDED_IN_ERROR, "voided by mistake"),
+                    confirmation = ExplicitManualSave,
+                ),
+            ),
+        )
     }
 
     /**
@@ -845,9 +951,9 @@ class P708RestoreRoundtripEquivalenceTest {
     }
 
     /**
-     * Non-vacuity guard for the restored copy's seeded owner rows: every [catalogOwnerTables] and
-     * [preferenceAndCounterpartyTables] entry plus `confirmed_expense_receipt` must hold at least one
-     * row, so `assertValueIdentical` compares data rather than two empty results. Without this, a
+     * Non-vacuity guard for the restored copy's seeded owner rows: every [catalogOwnerTables],
+     * [preferenceAndCounterpartyTables] and [voidRestoreTables] entry plus `confirmed_expense_receipt`
+     * must hold at least one row, so `assertValueIdentical` compares data rather than two empty results. Without this, a
      * table the fixture never writes (for example the command tables, which bootstrap alone does not
      * populate) would "survive" the round-trip vacuously — the same trap
      * [aV33SnapshotMigratesThroughTheFullChainWithZeroBackfillAndSurvivingRows] rejects for the
@@ -904,6 +1010,25 @@ class P708RestoreRoundtripEquivalenceTest {
             1L,
             countOn(driver, "SELECT count(*) FROM counterparty_name_history"),
             "the counterparty create writes exactly one version-1 name-history row",
+        )
+        // The void/restore audit owners are compared on every leg too; the seeded cycle appends
+        // one void fact then one restore fact, so the history itself must survive, not just the
+        // current effective flag.
+        voidRestoreTables.forEach { table ->
+            assertTrue(
+                countOn(driver, "SELECT count(*) FROM $table") > 0L,
+                "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
+            )
+        }
+        assertEquals(
+            2L,
+            countOn(driver, "SELECT count(*) FROM transaction_void_fact WHERE ledger_id = '$ledgerId'"),
+            "the void and the restore must both survive as separate audit facts",
+        )
+        assertEquals(
+            listOf("void", "restore"),
+            transactionVoidFactKinds(driver),
+            "the void/restore history must keep its fact order",
         )
     }
 
@@ -965,6 +1090,9 @@ class P708RestoreRoundtripEquivalenceTest {
             "entry_pin" -> "ledger_id, target_kind, target_id"
             "counterparty" -> "ledger_id, counterparty_id"
             "counterparty_name_history" -> "ledger_id, counterparty_id, version_number"
+            "transaction_void_request" -> "ledger_id, request_id"
+            "transaction_void_fact" -> "ledger_id, transaction_id, sequence"
+            "transaction_void_receipt" -> "ledger_id, request_id"
             else -> "rowid"
         }
 
@@ -994,6 +1122,25 @@ class P708RestoreRoundtripEquivalenceTest {
             driver.close()
         }
     }
+
+    /** The `fact_kind` values of the seeded void/restore facts, in append (sequence) order. */
+    private fun transactionVoidFactKinds(driver: SqlDriver): List<String> =
+        driver
+            .executeQuery(
+                null,
+                "SELECT fact_kind FROM transaction_void_fact WHERE ledger_id = '$ledgerId' ORDER BY sequence",
+                { cursor ->
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(
+                            buildList {
+                                while (cursor.next().value) {
+                                    add(requireNotNull(cursor.getString(0)))
+                                }
+                            },
+                        )
+                },
+                0,
+            ).value
 
     private fun countOn(
         driver: SqlDriver,
