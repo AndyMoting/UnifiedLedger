@@ -40,7 +40,7 @@ import kotlin.time.Instant
 class P707TimeProjectionMigrationV31ToV32Test {
     @Test
     fun versionThirtyTwoIsCurrent() {
-        assertEquals(35, LedgerDatabase.Schema.version)
+        assertEquals(36, LedgerDatabase.Schema.version)
     }
 
     @Test

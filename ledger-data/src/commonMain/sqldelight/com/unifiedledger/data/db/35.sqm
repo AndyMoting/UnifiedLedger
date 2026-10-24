@@ -1,0 +1,90 @@
+-- P7-05 transfer correction slice (D-228; spec
+-- docs/specs/2026-10-16-p7-05-transfer-correction-slice-design.md section 8.3): v35 -> v36.
+-- Purely structural, zero behavior change: transaction_correction_request is rebuilt so
+-- category_id is relaxed from NOT NULL to nullable and two tail columns are added
+-- (destination_account_id TEXT, fee_minor INTEGER NOT NULL DEFAULT 0). No fee_category_id column
+-- and no table-level CHECK: the request table has no kind column to discriminate ordinary from
+-- transfer rows, so the write-time invariant stays enforced by the port inside the commit
+-- transaction (ordinary rows keep a non-null category; transfer rows store the fee category here
+-- and only when the fee is positive). Zero backfill beyond the verbatim row copy: every pre-v36
+-- row is an ordinary correction, so destination_account_id copies as NULL and fee_minor copies
+-- as 0. Staged rebuild per the 21.sqm template (3.sqm discipline, FK kept ON): constraint-free
+-- stage copies, drop in child -> parent order, re-create in parent -> child order with
+-- fresh-Ledger.sq-identical text, explicit-column row copy, fail-closed count guard, drop stages.
+-- The receipt child is dropped and re-created with byte-identical shape, rows and constraints
+-- only so the parent can be replaced without breaking its ON DELETE CASCADE foreign key. The
+-- caller wraps Schema.migrate in one outer transaction (26.sqm discipline), so any guard failure
+-- rolls the whole migration back and the v35 file is left untouched.
+PRAGMA defer_foreign_keys = 1;
+
+-- Stage copies of the v35 rows; CREATE TABLE AS SELECT copies are constraint-free by design.
+CREATE TABLE transaction_correction_request_stage AS SELECT * FROM transaction_correction_request;
+CREATE TABLE transaction_correction_receipt_stage AS SELECT * FROM transaction_correction_receipt;
+
+-- Drop in child -> parent order so replacing the parent never cascades through the receipt
+-- foreign key.
+DROP TABLE transaction_correction_receipt;
+DROP TABLE transaction_correction_request;
+
+-- Re-create in parent -> child order. Both definitions below match the fresh Ledger.sq terminal
+-- definitions byte for byte, so fresh = migrated holds for this edge by construction.
+CREATE TABLE transaction_correction_request (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  transaction_id TEXT NOT NULL,
+  expected_current_version_id TEXT NOT NULL,
+  note TEXT,
+  statistics_at TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL,
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  category_id TEXT,
+  funding_account_id TEXT NOT NULL,
+  confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_save'),
+  destination_account_id TEXT,
+  fee_minor INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (transaction_id, ledger_id)
+    REFERENCES ledger_transaction(transaction_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO transaction_correction_request(
+  ledger_id, request_id, transaction_id, expected_current_version_id, note, statistics_at,
+  amount_minor, currency_code, currency_precision, category_id, funding_account_id,
+  confirmation_marker, destination_account_id, fee_minor
+)
+SELECT
+  ledger_id, request_id, transaction_id, expected_current_version_id, note, statistics_at,
+  amount_minor, currency_code, currency_precision, category_id, funding_account_id,
+  confirmation_marker, NULL, 0
+FROM transaction_correction_request_stage;
+
+CREATE TABLE transaction_correction_receipt (
+  ledger_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  confirmation_id TEXT NOT NULL UNIQUE,
+  transaction_id TEXT NOT NULL,
+  version_id TEXT NOT NULL UNIQUE,
+  expected_current_version_id TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, request_id),
+  FOREIGN KEY (ledger_id, request_id)
+    REFERENCES transaction_correction_request(ledger_id, request_id) ON DELETE CASCADE,
+  FOREIGN KEY (transaction_id, version_id, ledger_id)
+    REFERENCES transaction_version(transaction_id, version_id, ledger_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (transaction_id, expected_current_version_id, ledger_id)
+    REFERENCES transaction_version(transaction_id, version_id, ledger_id) DEFERRABLE INITIALLY DEFERRED
+);
+INSERT INTO transaction_correction_receipt SELECT * FROM transaction_correction_receipt_stage;
+
+-- Fail-closed count guard: the rebuild is value-preserving, any row loss aborts the migration.
+CREATE TABLE p705_rebuild_guard (
+  value INTEGER NOT NULL CHECK (value = 0)
+);
+INSERT INTO p705_rebuild_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM transaction_correction_request) != (SELECT count(*) FROM transaction_correction_request_stage);
+INSERT INTO p705_rebuild_guard(value)
+SELECT 1 WHERE (SELECT count(*) FROM transaction_correction_receipt) != (SELECT count(*) FROM transaction_correction_receipt_stage);
+DROP TABLE p705_rebuild_guard;
+
+-- Drop stage tables.
+DROP TABLE transaction_correction_request_stage;
+DROP TABLE transaction_correction_receipt_stage;

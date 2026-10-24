@@ -19,7 +19,7 @@ import kotlin.test.assertTrue
 class P7SequenceV28ToV29MigrationTest {
     @Test
     fun versionTwentyNineIsCurrent() {
-        assertEquals(35, LedgerDatabase.Schema.version)
+        assertEquals(36, LedgerDatabase.Schema.version)
     }
 
     @Test

@@ -55,6 +55,9 @@ data class TransactionCorrectionRequestSnapshot(
     val amount: Money,
     val categoryId: CategoryId,
     val fundingAccountId: AccountId,
+    /** Transfer-carrying columns (P7-05 transfer slice, spec section 8.3): ordinary corrections keep the defaults. */
+    val destinationAccountId: String? = null,
+    val feeMinor: Long = 0,
 )
 
 data class TransactionCorrectionReceipt(

@@ -465,7 +465,7 @@ class P708RestoreRoundtripEquivalenceTest {
                 runSnapshotIntoOn(sourceDriver, snapshot.path)
             }
             JdbcSqliteDriver("jdbc:sqlite:${snapshot.path}", foreignKeyProperties()).use { isolated ->
-                val migrated = assertIs<StrictMigrationResult.Migrated>(migrateIsolatedSnapshotStrictlyOn(isolated, 34, setOf(1L, 31L, 32L, 33L, 34L)))
+                val migrated = assertIs<StrictMigrationResult.Migrated>(migrateIsolatedSnapshotStrictlyOn(isolated, 34, setOf(1L, 31L, 32L, 33L, 34L, 35L)))
                 assertEquals(34L, migrated.fromVersion)
                 assertEquals(LedgerDatabase.Schema.version, migrated.targetVersion)
                 // Every owner row survives value-for-value; the manual_expense_request legacy
@@ -1998,7 +1998,7 @@ class P708RestoreRoundtripEquivalenceTest {
 
     private fun stageVersion(stage: Stage): Long =
         when (stage) {
-            Stage.V35 -> 35L
+            Stage.V35 -> LedgerDatabase.Schema.version.toLong()
             Stage.V34 -> 34L
             Stage.V33 -> 33L
         }
