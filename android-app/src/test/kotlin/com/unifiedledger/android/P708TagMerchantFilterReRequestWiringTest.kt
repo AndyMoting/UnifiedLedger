@@ -9,8 +9,9 @@ import kotlin.test.assertTrue
 /**
  * SOURCE-LEVEL PIN for the catalog-command -> loaded-filter re-request seam (D-238 vector A07,
  * spec section 5.5 row 1). This is NOT behavioural evidence: it proves the wiring exists and has
- * the expected shape — the re-request call sits inside the catalog-command refresh function body,
- * and that function is invoked only from the determinate-success (`Accepted || NoChange`) gate of a
+ * the expected shape — the re-request call and the month-view read-model refresh sit inside the
+ * catalog-command refresh function body, and that function is invoked only from the
+ * determinate-success (`Accepted || NoChange`) gate of a
  * tag/merchant catalog command. It does not execute the composable and therefore does not prove
  * that a rename re-requests the loaded filter page at runtime.
  *
@@ -40,6 +41,21 @@ class P708TagMerchantFilterReRequestWiringTest {
         assertTrue(
             body.any { it == FILTER_RE_REQUEST_CALL },
             "the loaded filter page must be re-requested with replace inside the refresh function body",
+        )
+    }
+
+    @Test
+    fun theMonthViewRefreshLivesInsideTheSameRefreshFunctionBody() {
+        val lines = trimmedProductionLines()
+        val definition = lines.indexOfFirst { it == REFRESH_FUNCTION_DEFINITION }
+        assertTrue(
+            definition >= 0,
+            "the catalog-command refresh function must still be declared in the composition root",
+        )
+        val body = functionBodySpan(lines, definition)
+        assertTrue(
+            body.any { it == MONTH_VIEW_REFRESH_CALL },
+            "the month-view read model must be refreshed inside the catalog-command refresh function body",
         )
     }
 
@@ -125,6 +141,8 @@ class P708TagMerchantFilterReRequestWiringTest {
         private const val REFRESH_FUNCTION_CALL = "refreshTagMerchantSurfacesAfterCommand()"
 
         private const val FILTER_RE_REQUEST_CALL = "requestTagMerchantFilterPage(current, replace = true, cursor = null)"
+
+        private const val MONTH_VIEW_REFRESH_CALL = "refreshCatalogSnapshot()"
 
         private val GATE_SEQUENCE = listOf(
             "if (result is TagMerchantCommandResult.Accepted ||",
