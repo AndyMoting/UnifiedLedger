@@ -5268,3 +5268,22 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 6. **边界。** 入：本条登记 + `docs/CURRENT_STATE.md` 指针同步 + checkpoint。出：零产品代码/测试/schema/迁移/依赖/清单/Golden/CI 配置改动；不改 D-236～D-246 的任何判决与登记文本（A11 的 PASS 为新增判决、非改写）；A04 残余以引用方式并入 D-244 item 4，不复制清单正文；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
 
 **关联决定：** D-239（A04/A11 部分证据的原始登记与判据边界）、D-242（owner 覆盖批，A04/A11 证据基础）、D-244（A01 裁决与其 item 4 封闭清单，A04 残余的引用来源）、D-185（v32 预算边与预算 owner 先例）、阶段计划 §6 `:184`/`:191` 与 §10.1/§10.4.5。
+## D-248 P706-A01 确认路径两表覆盖批登记 + 混合支付组表处置与 v35-only 回执夹具裁决
+
+**状态：** 已批准并登记（2026-10-24，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §6 `:181` P706-A01 + §10.1 状态表）。**tracked 变更**：`ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/P708RestoreRoundtripEquivalenceTest.kt` 单文件 +392/−60（冻结候选 `185d71e` + 主代理 `f45fed9` 闭合评审 2 条非阻断 nit）+ 本条 + `docs/CURRENT_STATE.md` 指针同步。**零产品代码、零 schema/迁移、零依赖、零 CI 配置改动**（schema 维持 v35 / 34 个 `.sqm`）。
+
+**决定：**
+
+1. **交付内容（PR #131 squash merge `ffecd96`）。** D-244 item 4 (i) 的确认路径两表缺口就此闭合：`import_confirmation` 与 `import_candidate_decision_snapshot`（基座 `Ledger.sq:8125`/`:8181` 创建；重建边 20/21/24.sqm 均早于 v33）加入全部三条 owner 清单（经 `importConfirmTables`），四条腿（v35 直读 / v34→v35 / v33→全链 / 失败迁移回滚）各断言恰 2 行 + 逐业务列值级比较（snapshot 13 列含 `Ledger.sq:8145-8174` CHECK 冻结 NULL 形状、confirmation 7 列）+ 非空守卫（`count>0` 且 `==2`，按 `ledger_id` 过滤）+ 显式排序键。seed 走真实 claim-first `SqlDelightImportSpineStore.commitOnce`（`:435`）+ 真实 `createFormalTransaction` 工厂回调（`OrdinaryFlowFormalFactory`/`MixedPaymentFlowFormalFactory`，混合双腿 3000+2600），零手写 INSERT。**写集核销**（KDoc 逐命名 SQL 登记，独立评审 S6 逐项实证）：claim/evidence projection/formal 事务/confirm 表各自单表 INSERT；33.sqm 11 张 annotation 表整链零写入（相关 trigger 均为 RAISE(ABORT) 守卫）、34.sqm 两注释列零触点。两处既有断言合法更新（评审 Q5 核实无更稳不改法）：`directionToken` `outflow`→`out`（普通流工厂真实分派令牌，`AlipayCsvParser.kt:168-172` 实证为解析器真实输出）、`catalog_name_history` 期望 6→7（混合 confirm 需 ASSET+LIABILITY 双腿，新增第三颗种子账户 `liability-credit-roundtrip`）。审验链：独立评审 FIT TO PUSH（0 blocker）+ distinct verifier PASS（含 `--rerun` 聚焦实跑 4 测全绿，JUnit XML 与 FINAL_VERDICT 存 `local/artifacts/p706-a01-confirm/`）。
+
+2. **混合支付组表处置。** 批 6 的混合 confirm 使 `mixed_payment_group`/`mixed_payment_group_leg`（24.sqm 创建，v33 源已存在；非 `rg*` 筒仓、不在 D-244 item 4 清单）现持真实种子行（1 头 + 2 腿）但在比较清单外。**裁决：纳入批 7 覆盖**（两表加入三条 owner 清单 + 守卫——种子行已在夹具中，为小改动）；批 7 交付前它们计入 A01 适用残余，交付后并入比较面。
+
+3. **v35-only 回执夹具裁决（D-244 item 4 (ii) 的「另行裁决」）。** `confirmed_income_receipt`/`confirmed_transfer_receipt`/`confirmed_lending_receipt` 三表的覆盖路径**批准为仅 v35 的补充往返夹具**（新测试类，真实端口 seed：`SqlDelightConfirmedManualIncomeCommitPort`/`SqlDelightConfirmedManualTransferCommitPort`/借贷对应端口 + 恢复往返 + 值级比较）。**如实登记边界**：三表的跨腿（v34/v33）维度在本跨腿夹具结构性不可得（端口无条件写 34.sqm 注释列，D-242 item 3 实测），v35-only 腿提供的是**当前 schema 往返**的值级证据——该维度缺口单列披露、不删除、不冒充跨腿证据；此为补强证据的加法裁决，非缩减计划目标。批 7 同时交付 (a)(b) 两项（纯加测试，autopilot）。
+
+4. **A01 状态。** 批 6 后 A01 的适用残余收窄为：三张回执表（批 7 (b) 覆盖中）+ 混合支付组两表（批 7 (a) 覆盖中）；D-244 item 4 (iii) 的 `rg*` 筒仓口径不变。**A01 维持「部分证据」**，最终 PASS 裁决待批 7 交付后按 §10.4 另行作出（沿 D-244 预留机制）。其余向量判决不变。
+
+5. **审验拓扑与证据。** 实施批走 autopilot 单 writer + 独立规格/质量评审（FIT TO PUSH，0 blocker，2 条注释精度 nit 由主代理追加提交闭合、delta 恰为评审指定修正）+ distinct verifier（PASS，含 `--rerun` 聚焦实跑）；PR #131 必需 13 检查全绿（非阻塞 Windows JVM nightly 不等）；合并后 CI 证据见 PROGRESS_LOG。登记/裁决部分主代理亲手执行。
+
+6. **边界。** 入：本条 + PR #131 已合并的测试改动 + `docs/CURRENT_STATE.md` 指针同步。出：零产品代码/schema/迁移/依赖/清单/Golden/CI 配置改动；不改 D-236～D-247 的任何判决（A01 残余清单按本条第 4 款动态收窄，属 D-244 item 4 预留机制的延续）；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-242（覆盖批先例与 item 3 结构不适用登记）、D-244（A01 裁决与 item 4 封闭清单，本条为其动态收窄）、D-247（A04 残余引用同一清单）、D-185/D-221/D-222（手工新建端口与注释列事实）、阶段计划 §6 `:181` 与 §10.1/§10.4。
