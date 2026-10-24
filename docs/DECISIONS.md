@@ -5230,3 +5230,22 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 7. **边界。** 入：本条 + 上述两处测试改动 + `docs/CURRENT_STATE.md` 指针同步。出：零产品代码/schema/迁移/依赖/清单/Golden/CI 配置；不改 D-218/D-221/D-222/D-223/D-224/D-238 的任何向量判决（本条只裁决其预留的开放项）；接受延期项不改成 PASS、不从分母删除；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
 
 **关联决定：** D-218（R-218-1 原登记）、D-222（R-222-9 原登记、§4.4 编辑链交付）、D-223（R-223 系列原登记、开放项 11 只读审计块）、D-224（08.D 只读历史块与 R-223-3 真实命令链升级）、D-238（item 7 预留本裁决；九向量判决不变）、D-187（规格批准，§4.5 承接登记与 §8 开放项清单）、D-146（导入留存边界）、D-181（接受延期/另立需求的先例措辞）、阶段计划 §8.2/§8.3 与 §10.1。
+## D-246 P706-A02/A06 验收取证设计门批准（规格 proposal 转 approved）+ D-239 现状漂移事实更正
+
+**状态：** 已批准并登记（2026-10-24，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §6 `:182`/`:186` + §10.1 状态表）。**tracked 变更**：`docs/specs/2026-10-24-p706-a02-a06-acceptance-design.md` frontmatter/Revision 状态翻转（`proposal` → `approved`，技术内容零改动）+ 本条 + `docs/CURRENT_STATE.md` 指针同步。**零产品代码、零测试、零 schema/迁移、零依赖、零 CI 配置改动**（schema 维持 v35 / 34 个 `.sqm`）。
+
+**决定：**
+
+1. **批准对象与审验链。** 规格 `docs/specs/2026-10-24-p706-a02-a06-acceptance-design.md`（基点 `de86aa4`；draft-1 `a5a6d8b`、draft-2 `29b2332` 由 autopilot 单 writer 于隔离 worktree 交付，主代理追加 `b33ffad` 闭合评审 2 项非阻断 low）。独立规格评审两轮 APPROVE-WITH-FINDINGS：draft-2 闭合 **2 项 medium（A06 边界枚举 15→19；A02 拓扑缺并发重叠取证护栏）+ 6 项 low**（kill 手段限定、同原语多点判别登记、`LedgerSwitchJournalTest` 用例数漂移登记、CI 登记面、转引措辞中性化），FIT TO PUSH 零阻断；distinct verifier V1-V6 全 PASS（冻结 SHA/措辞边界/project_docs/trace-scan/锚点实读）。PR #128 squash merge `c99238c`，PR head 10 checks 全绿。主代理对追加提交的 delta 自审确认恰为评审指定的两处修正（§3.3 `:743`/`:789` 归属标签对调、§6 项 5 补 2 个非边界调用点入判别序列）。
+
+2. **开放项裁决（规格 §6 项 1-4，沿其推荐答案；本条即项 6 的批准载体）。**
+   - **项 1（产品是否切换 `journal_mode=WAL`）：不切换。** 产品维持引擎默认（无任何产品代码设置 journal_mode，见第 3 款 (b)/(c) 复核）；A02 取证以测试拓扑 WAL 腿行使（JVM WAL 打开 + `VACUUM INTO` 期间并发写者 + §2.2 步骤 6 并发重叠取证护栏）。理由：现无产品路径依赖 WAL 并发读；切换改变库文件持久状态与 sidecar 生命周期、触动备份/恢复/稳定存储面，收益无当前需求。本裁决不授权任何产品改动；若将来需要另立产品裁决。
+   - **项 2（A06 真机腿环境）：批准受管 AVD + 两阶段 kill 协议为 b1（真杀进程）取证环境**（§3.3：边界驻停装饰器 + `Process.killProcess(Process.myPid())` 主手段、`am kill` 前置验证限定、run A/verify 成对执行）；**b2（真实掉电）登记 BLOCKED**（受管 AVD 无掉电实测手段），不得以进程死亡代理冒充掉电证据；日后若选代理验证，须分开登记两命题差异并另行裁决。
+   - **项 3（A02 Android 集成腿）：按推荐批准**——以 q13 门 CLI 证据（D-174）+ §2.2 JVM 腿承接；Android instrumented WAL 探针列为可选低成本补充（1-2 用例），非必需。
+   - **项 4（D-239 漂移更正）：批准，见第 3 款。** 项 5（测试实现细节）归后续实施规格。
+
+3. **D-239 现状漂移事实更正（append-only，D-239 原文不改；沿 D-242 item 5 先例）。** 五处字面自本条起按以下为准，更正不改变任何向量判决：(a) `AndroidStartupFailClosedInstrumentedTest` 当前 **4 用例**（`:46`/`:82`/`:103`/`:120`），D-239 `:5082`「三用例」为当时快照；(b) `AndroidLedgerDatabaseHandle.kt` 现无 `journal_mode` 字样，仅存 `:258` 的 `-wal/-shm` 伴生文件注释，D-239 `:5080` 所指注释锚点已漂移；「产品未启用 WAL、引擎默认 delete」结论不变（复核：产品源码零 journal_mode 设置）；(c) D-239 `:5080`「grep journal_mode 于全部测试文件零命中」字面失效——`AndroidScaleOracle.kt:232` 有一次只读诊断 rawQuery（D-213 面），A02 缺证结论本体不变；(d) `LedgerSwitchJournalTest` 当前 **9 用例**（D-239 `:5082` 记「七用例」，其列举句覆盖 7 个，`:67` 编码往返与 `:88` 半建代惰性两用例未被列举）；(e) 导出规格 `docs/specs/2026-09-24-p7-06-backup-export-design.md:71` 所引 `AndroidLedgerDatabaseHandle.kt:139-148` 现漂移至 `:242-251`。
+
+4. **效果与边界。** 规格转 approved——其冻结的取证方案设计面（A02 测试拓扑与断言不等式、A06 十九边界矩阵与两阶段 kill 协议、分母登记与状态承诺）自此为后续实施批的冻结依据；**P706-A02/A06 判决维持 D-239 不变（A02 缺证、A06 部分证据）**，取证不判 PASS；实施属后续独立实施批，未排期、不自动立项。出：零产品代码/测试/schema/依赖/CI 配置改动；不改 D-174/D-176/D-177/D-179/D-182/D-183 的任何冻结裁决（规格 `:22` 清单，D-178 仅作 B11 实证窗口证据引用）；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-239（A02/A06 判决与漂移来源）、D-174/D-176/D-177/D-179/D-182/D-183（规格承接的冻结裁决）、D-178（B11 实证窗口证据）、D-240（CI 登记面先例）、D-242（事实更正登记先例）、D-187（设计门批准体例先例）、阶段计划 §6 `:182`/`:186` 与 §10.1/§10.2/§10.3。
