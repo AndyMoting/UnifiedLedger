@@ -303,8 +303,9 @@ class P708RestoreRoundtripEquivalenceTest {
      * per-candidate confirmation row. Both are created by the base `Ledger.sq`
      * (`import_candidate_decision_snapshot` at Ledger.sq:8125, `import_confirmation` at
      * Ledger.sq:8181), and their only later edges are DROP-and-rebuild copies that predate v33:
-     * `21.sqm` rebuilds the snapshot with the from/to columns (21.sqm:147) and copies the
-     * confirmation unchanged (21.sqm:183), and `24.sqm` rebuilds the snapshot with the
+     * `20.sqm` and `21.sqm` rebuild the snapshot with the from/to columns (20.sqm:88,
+     * 21.sqm:147), `21.sqm` copies the confirmation unchanged (21.sqm:200), and `24.sqm`
+     * rebuilds the snapshot with the
      * credit/mixed columns (24.sqm:151). A v33 source therefore already carries both tables in
      * their current shape, so like the intake owners they are compared on EVERY leg rather than
      * only the fresh one.
