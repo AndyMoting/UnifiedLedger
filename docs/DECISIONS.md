@@ -5361,3 +5361,27 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 6. **审验拓扑与边界。** 两腿各经 autopilot 单 writer + 独立评审（批 10a 含 verifier FAIL 修复轮、批 10b 首轮 APPROVE）+ distinct verifier；本条为证据裁决 + 登记，主代理亲手执行（沿 D-239 item 7/D-244/D-247 先例），机械复核三腿测试在位与评审/verifier 结论。出：零产品代码/测试/schema/迁移/依赖/清单/Golden/CI 配置改动；不改 D-236～D-251 的任何判决（A07 PASS 为新增判决）；A06 取证实施属后续独立批（D-246 已批方案、未排期）；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
 
 **关联决定：** D-239（A07 缺口原始登记与判据边界）、D-251（腿一交付与后半句预留）、D-183（恢复确认状态机）、D-244/D-247/D-249/D-250（裁决方法先例）、阶段计划 §6 `:187` 与 §10.1/§10.4.5。
+
+## D-253 P708-A07 判 PASS（JVM/源码 pin 维度）：目录改名→筛选重请求 seam 与月视图腿闭合，PR #142 交付
+
+**状态：** 已批准并登记（2026-10-24）。交付 = PR #142（squash merge `ebb5706`，1 文件 `android-app/src/test/.../P708TagMerchantFilterReRequestWiringTest.kt` +155/−0），PR head `8b65729`（为满足 strict up-to-date 先 merge main；冻结候选 `5842636` 为其祖先），必过 checks 12/12 绿；合并后 main 全量 CI run `40118753759`（head `ebb5706`）success。**零产品代码、零 schema/迁移、零依赖、零 CI 配置改动**（schema 维持 v35、34 个 `.sqm`）。
+
+**决定：**
+
+1. **A07 改判 PASS（JVM 维度）**。D-238 为 A07 点名的唯一缺口（「目录改名→筛选重请求这一 seam 无测试」，`DECISIONS.md:5053`）由四个可判别源码 pin 闭合：重请求调用在 `refreshTagMerchantSurfacesAfterCommand` 函数体内（brace-balance span，非行号）、月视图读模型刷新在同一函数体内、该函数恰被两处目录命令 landing 调用（整行相等计数 2，避开声明行碰撞：裸子串计数 3）、每处调用处于 `Accepted || NoChange` 确定成功门内（3 行门邻域逐行相等）。判别性经独立 verifier 消融矩阵实跑证明（删/注释 `:3222` → RED，纯缩进重排 → GREEN 唯一合法对照，调用移出门 → RED，还原 → GREEN 且 md5 一致）。向量其余元素（晚到旧读丢弃 4 向量、arm 门 3 向量、再记一笔不带旧关联）沿 D-238 既有覆盖不变。
+
+2. **证据类别披露（不因 PASS 消失）**：本 seam 证据为**源码级 pin**——证明接线存在且门形状正确，**不**证明运行期真的重请求（测试类 KDoc 自身明写）。JVM 维度行为路由不可构造（`P503App` 局部 `@Composable` 函数；`app-ui/commonTest` 不能源码扫描的登记披露 `P503App.kt:4838-4844`）；运行期行为证据需仪器化 UI 腿，按 D-238 判据边界（共享模块设备腿缺失不构成缺陷）登记为**已知限制、不排期**。
+
+3. **F1 裁决（writer 偏差申报不成立）**：writer 自报「`--tests` 过滤在本机全仓不可用」——独立 verifier 在冻结态复跑任务书原样过滤命令与 writer 自举反例 `*AppShortcutsTest` 均 exit 0 且类真执行（tests=3/0/0 与 7/0/0）。定性为**无支撑的偏差申报**（其早期探针时刻的暂时性状态），无产品影响；不成立的申报不登记为 repo 条件、不立后续批。
+
+4. **F2 裁决（月视图半部在本批内闭合）**：规格 §5.5 行 1「已加载的筛选结果**与月视图**的重请求」的月视图腿（`refreshCatalogSnapshot()`，同函数体 `:3212`）由主会话 delta 提交 `a756b71` 增加第 4 pin 闭合——谓词机械验证：函数体 span 16 行含该调用、该字面量整行相等全文件恰 1 处（删 `:3212` 即翻 RED，构造性判别）。该 delta 不在冻结评审覆盖内，已在 PR #142 body 披露。
+
+5. **ktlint 与标题卫生登记**：冻结候选 `5842636` 本有 5 处 ktlint 违规（类体首空行、`functionBodySpan` 单行签名、`GATE_SEQUENCE` 换行；`git show 5842636` 可证，非 delta 引入）——`8fe785a` format-only 修复，不变量（`@Test` 计 4、常量计 5、pin 字面量字节不变）在 PR body 留证；冻结提交标题双前缀以 PR squash 标题（单前缀）解决，不改写冻结历史。F3（LOW）：门 3 行折 1 行的语义等价重排会假红——pin 韧性已知限制，与 `AndroidRestoreWiringTest` 先例同形，不改。
+
+6. **P7-08 状态汇总更新**：**PASS 7 / 部分 2（A02/A09）/ 缺证 0 / FAIL 0**。A02 的「两端各跑」Android 腿实施批已派发在途（`ledger-domain` 加 Android 目标 + CI 步，另批登记）；A09 的 50k 与量测缺口不变。**P7-08 整体仍不判通过**（沿 §10.4.5）。
+
+7. **审验拓扑（如实登记）**：实施由 autopilot 工作流完成（冻结候选经独立 verifier V1–V10 判 PASS、blocker 零；独立 reviewer 逐字节复算断言算法 + 消融矩阵判 APPROVE-WITH-FINDINGS，无 HIGH）；主会话亲手做 F1/F2 裁决、月视图 delta、ktlint 修复与最终验收合并。
+
+**边界：** 入：本条登记 + `docs/CURRENT_STATE.md` 最小指针同步（origin/main 指针 `be39007`→`ebb5706`、最高决定编号 D-253、唯一下一步改用户批准的 2→4→3→1 执行序）。出：不改 D-238 其余八向量判决与 D-245 残余裁决；不改产品源码/schema/迁移；不把 A02/A09 并入 PASS；worktree `UL-p708-a07` 与本地分支随后清理（远端分支已删，ls-remote 归零）。
+
+**关联决定：** D-238（A07「部分证据」与本条闭合的缺口原文）、D-187（P7-08 设计门与 §5.5 刷新挂点冻结）、D-245（P7-08 残余集中裁决，其 R-218-1/R-222-9/R-223 披露不受本条影响）、D-223（08.C 目录命令 landing 交付）、D-224（08.D 联动与恢复交付）、阶段计划 §8.3 P708-A07 行与 §10.1/§10.4.5。
