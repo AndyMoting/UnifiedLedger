@@ -12,6 +12,9 @@ import com.unifiedledger.application.CatalogEntityIds
 import com.unifiedledger.application.CatalogManagementRequestIdSource
 import com.unifiedledger.application.CatalogRequestId
 import com.unifiedledger.application.ConfirmationId
+import com.unifiedledger.application.ConfirmedExpenseReceipt
+import com.unifiedledger.application.ConfirmedManualExpenseCommit
+import com.unifiedledger.application.ConfirmedManualExpenseResult
 import com.unifiedledger.application.ConfirmedTransactionNoteUpdateIdSource
 import com.unifiedledger.application.ConfirmedTransactionNoteUpdateIds
 import com.unifiedledger.application.ConfirmedTransactionNoteUpdateResult
@@ -56,6 +59,8 @@ import com.unifiedledger.application.ImportSourceFacts
 import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.ManualExpenseRequestIdentity
+import com.unifiedledger.application.ManualExpenseRequestSnapshot
 import com.unifiedledger.application.MixedPaymentFlowFormalFactory
 import com.unifiedledger.application.OrdinaryFlowFormalFactory
 import com.unifiedledger.application.P408ConfirmLinkRequest
@@ -64,6 +69,7 @@ import com.unifiedledger.application.P408EvidenceResponsibility
 import com.unifiedledger.application.P408Matcher
 import com.unifiedledger.application.P408ReconciliationResult
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.SPINE_NO_CHANGE_REASON_CODE
 import com.unifiedledger.application.SaveBudgetConfiguration
 import com.unifiedledger.application.TransactionVoidFactIdSource
 import com.unifiedledger.application.TransactionVoidFactIds
@@ -78,11 +84,22 @@ import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
 import com.unifiedledger.domain.CounterpartyId
 import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.DomainResult
+import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.MerchantId
+import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.Posting
 import com.unifiedledger.domain.PostingId
+import com.unifiedledger.domain.PostingSet
 import com.unifiedledger.domain.PostingSetId
+import com.unifiedledger.domain.TagId
+import com.unifiedledger.domain.Transaction
 import com.unifiedledger.domain.TransactionId
+import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionNoteUpdateIds
+import com.unifiedledger.domain.TransactionTimes
+import com.unifiedledger.domain.TransactionVersion
 import com.unifiedledger.domain.TransactionVersionId
 import com.unifiedledger.domain.VoidReason
 import com.unifiedledger.domain.VoidReasonCode
@@ -614,6 +631,212 @@ class P708RestoreRoundtripEquivalenceTest {
                 assertConfirmPathOwnersReadBack(reopened)
                 assertValueIdentical(source.path, snapshot.path, manualRequestTables) { table ->
                     if (table == "manual_expense_request") commonManualExpenseColumns else null
+                }
+            }
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    /**
+     * P706-A08 restore-then-replay idempotency (plan :188 "恢复库已有提交回执，重放同请求" — a restored
+     * library already carries the committed receipts, so replaying the same request returns the
+     * original result and adds zero formal economic effect; D-239 item 4 registered this vector as
+     * missing evidence, and D-249 item 2 is the JVM-dimension adjudication precedent for the
+     * restore/round-trip family). Both real commit ports replay against ONE restored graph: the
+     * manual-expense port replays the seeded `req-annotated` request, and the import spine replays
+     * both seeded confirm requests ([seedConfirmPathChains], whose write surface spans the
+     * confirm-path owners and the mixed-payment group owners of D-248).
+     *
+     * Three replay propositions are deliberately NOT conflated here. Same-active-database replay
+     * is `ConfirmedManualExpenseIdempotencyTest`'s subject (ledger-application) and is not
+     * re-proven. The manual-expense port's restore leg (real commit → `VACUUM INTO` → replay on a
+     * new file identity) is already delivered by SqlDelightConfirmedManualExpenseCommitPortTest on
+     * a minimal expense-only fixture; what this test adds is the same replay on the FULL
+     * owner-surface fixture of this class — where the restored graph carries every other owner
+     * family alongside the receipt — plus the import-confirm leg, which that class never
+     * exercises. The replay itself is the receipt path, not re-creation: both ports resolve the
+     * existing request because the claim INSERT does not take effect, then compare the stored
+     * request state against the replayed snapshot (SqlDelightConfirmedManualExpenseCommitPort's
+     * `resolveExisting`; SqlDelightImportSpineStore's `resolveConfirm`).
+     */
+    @Test
+    fun aReplayOfTheRealCommitPortsAfterRestoreReturnsTheOriginalResultsWithZeroNewEffects() {
+        val dir = tempDir()
+        val source = File(dir, "source-replay.db")
+        try {
+            seedCurrentLibrary("jdbc:sqlite:${source.path}", Stage.V35)
+            val snapshot = File(dir, "snapshot-replay")
+            JdbcSqliteDriver("jdbc:sqlite:${source.path}").use { sourceDriver ->
+                runSnapshotIntoOn(sourceDriver, snapshot.path)
+            }
+            JdbcSqliteDriver("jdbc:sqlite:${snapshot.path}", foreignKeyProperties()).use { restored ->
+                val database = LedgerDatabase(restored)
+                // Non-vacuity baseline, read off the restored graph BEFORE any replay: the six
+                // replay-facing tables must already hold their seeded rows, and the five formal
+                // tables their seeded totals, so the post-replay comparison below compares real
+                // data rather than two empty graphs.
+                val formalCountTables =
+                    listOf(
+                        "ledger_transaction",
+                        "transaction_version",
+                        "posting_set",
+                        "posting",
+                        "ledger_transaction_current_version",
+                    )
+                val replayFacingCountTables =
+                    listOf(
+                        "manual_expense_request",
+                        "confirmed_expense_receipt",
+                        "import_confirmation",
+                        "import_candidate_decision_snapshot",
+                        "mixed_payment_group",
+                        "mixed_payment_group_leg",
+                    )
+
+                fun restoredCount(table: String): Long = countOn(restored, "SELECT count(*) FROM $table WHERE ledger_id = '$ledgerId'")
+
+                val seededCountTables = formalCountTables + replayFacingCountTables
+                val beforeReplay = seededCountTables.associateWith { table -> restoredCount(table) }
+                assertEquals(
+                    mapOf(
+                        "ledger_transaction" to 6L,
+                        "transaction_version" to 7L,
+                        "posting_set" to 6L,
+                        "posting" to 12L,
+                        "ledger_transaction_current_version" to 6L,
+                        "manual_expense_request" to 1L,
+                        "confirmed_expense_receipt" to 1L,
+                        "import_confirmation" to 2L,
+                        "import_candidate_decision_snapshot" to 2L,
+                        "mixed_payment_group" to 1L,
+                        "mixed_payment_group_leg" to 2L,
+                    ),
+                    beforeReplay,
+                    "the restored graph must carry exactly the seeded rows the replays answer from",
+                )
+
+                // Leg 1 — the manual-expense port replays the seeded request identity. The replay
+                // snapshot mirrors the hand-inserted `req-annotated` row value for value, including
+                // its seeded tag/merchant annotation in the canonical D-221 encoding the replay
+                // matcher compares; the creation callback below is the counter an equivalent
+                // replay must never invoke.
+                var creationCallbackCount = 0
+                val replayedManualExpense =
+                    SqlDelightConfirmedManualExpenseCommitPort(database, restored).commitOnce(
+                        ManualExpenseRequestIdentity(LedgerId(ledgerId), RequestId("req-annotated")),
+                        ManualExpenseRequestSnapshot(
+                            ledgerId = LedgerId(ledgerId),
+                            amount = Money.ofMinor(3_580, CurrencyUnit("CNY", 2)),
+                            categoryId = categoryLocal,
+                            paymentAccountId = AccountId("asset-payment-local"),
+                            occurredAt = Instant.parse("2026-03-05T02:00:00Z"),
+                            note = "lunch",
+                            tagIds = setOf(TagId("tag-a")),
+                            merchantId = MerchantId("merchant-1"),
+                        ),
+                        // The write-path annotation instant never participates in replay (D-221 R-4).
+                        Instant.parse("2026-03-05T03:00:00Z"),
+                    ) {
+                        creationCallbackCount += 1
+                        DomainResult.Success(replayedManualExpenseCommit())
+                    }
+                assertEquals(0, creationCallbackCount, "an equivalent replay must not re-run the creation callback")
+                assertEquals(
+                    ConfirmedManualExpenseResult.NoChange(
+                        ConfirmedExpenseReceipt(
+                            confirmationId = ConfirmationId("confirmation-tx-annotated"),
+                            transactionId = TransactionId("tx-annotated"),
+                        ),
+                    ),
+                    replayedManualExpense,
+                    "the manual-expense replay must answer from the seeded receipt",
+                )
+                assertEquals(
+                    listOf("tag-a", "merchant-1"),
+                    singleRowOn(
+                        restored,
+                        2,
+                        "SELECT annotation_tag_ids, annotation_merchant_id FROM manual_expense_request " +
+                            "WHERE ledger_id = '$ledgerId' AND request_id = 'req-annotated'",
+                    ),
+                    "the replayed claim must not rewrite the canonical annotation columns",
+                )
+
+                // Leg 2 — the import spine replays both seeded confirm requests on the restored
+                // graph. The replay snapshots mirror the seeded confirms value for value; the id
+                // allocation and formal-transaction callbacks are unreachable on the receipt path,
+                // so a replay that ever reaches them fails the test here instead of writing.
+                val catalog =
+                    requireNotNull(SqlDelightCatalogStore(database, restored).loadCurrent(LedgerId(ledgerId))) {
+                        "the restored catalog must load before the confirm replays run"
+                    }
+                val spine = SqlDelightImportSpineStore(database, restored)
+                val ordinaryReplay =
+                    spine.commitOnce(
+                        identity = ImportRequestIdentity(LedgerId(ledgerId), ImportRequestId("import-request-confirm-roundtrip")),
+                        snapshot =
+                            ImportCandidateDecisionSnapshot(
+                                candidateId = ImportCandidateId("import-candidate-roundtrip"),
+                                decision = ImportCandidateDecision.CONFIRM,
+                                expectedContentHash =
+                                    ImportContentFingerprint().digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, importRoundtripFacts),
+                                explicitConfirmedAt = "2026-03-07T03:00:00+08:00",
+                                confirmDecisionFields =
+                                    ImportConfirmDecisionFields.OrdinaryFlow(
+                                        categoryId = categoryLocal,
+                                        fundingAccountId = AccountId("asset-payment-local"),
+                                    ),
+                            ),
+                        allocateIds = { error("a replayed confirm must not allocate ids") },
+                        catalog = catalog,
+                        createFormalTransaction = { _, _ -> error("a replayed confirm must not create a formal transaction") },
+                    )
+                assertIs<ImportCandidateDecisionResult.NoChange>(ordinaryReplay)
+                assertEquals(SPINE_NO_CHANGE_REASON_CODE, ordinaryReplay.reasonCode, "the replay reason code is frozen")
+                assertEquals(
+                    "import-confirmation-roundtrip",
+                    ordinaryReplay.receipt.confirmationId?.value,
+                    "the ordinary replay must answer from its original confirmation",
+                )
+                val mixedReplay =
+                    spine.commitOnce(
+                        identity = ImportRequestIdentity(LedgerId(ledgerId), ImportRequestId("import-request-confirm-mixed-payment")),
+                        snapshot =
+                            ImportCandidateDecisionSnapshot(
+                                candidateId = ImportCandidateId("import-candidate-mixed-payment"),
+                                decision = ImportCandidateDecision.CONFIRM,
+                                expectedContentHash =
+                                    ImportContentFingerprint()
+                                        .digest(ImportRecordKind.MIXED_PAYMENT_SOURCE, importMixedPaymentFacts, importMixedPaymentProfile),
+                                explicitConfirmedAt = "2026-03-11T03:00:00+08:00",
+                                confirmDecisionFields =
+                                    ImportConfirmDecisionFields.MixedPaymentFlow(
+                                        categoryId = categoryLocal,
+                                        assetAccountId = AccountId("asset-payment-local"),
+                                        creditLiabilityAccountId = AccountId("liability-credit-roundtrip"),
+                                        assetLegMinor = 3_000L,
+                                        creditLegMinor = 2_600L,
+                                    ),
+                            ),
+                        allocateIds = { error("a replayed confirm must not allocate ids") },
+                        catalog = catalog,
+                        createFormalTransaction = { _, _ -> error("a replayed confirm must not create a formal transaction") },
+                    )
+                assertIs<ImportCandidateDecisionResult.NoChange>(mixedReplay)
+                assertEquals(SPINE_NO_CHANGE_REASON_CODE, mixedReplay.reasonCode, "the replay reason code is frozen")
+                assertEquals(
+                    "import-confirmation-mixed-payment",
+                    mixedReplay.receipt.confirmationId?.value,
+                    "the mixed-payment replay must answer from its original confirmation",
+                )
+
+                // Zero new economic effect from all three replays: every counted table still holds
+                // exactly its pre-replay (seeded) row count — no new transaction, version, posting
+                // set, posting, current-version pointer, request, receipt, confirmation, decision
+                // snapshot, mixed-payment group head or funding leg.
+                seededCountTables.forEach { table ->
+                    assertEquals(beforeReplay.getValue(table), restoredCount(table), "$table must gain no row from a replayed request")
                 }
             }
         } finally {
@@ -1931,6 +2154,51 @@ class P708RestoreRoundtripEquivalenceTest {
                     "FROM mixed_payment_group_leg WHERE ledger_id = '$ledgerId' AND leg_index = 2",
             ),
             "the liability leg must read back exactly its seeded split half",
+        )
+    }
+
+    /**
+     * The formal commit the manual-expense creation callback returns if a replay ever wrongly
+     * claims again. It mirrors the seeded `tx-annotated` chain id for id, so a re-created effect
+     * fails on the primary keys of the already-present rows instead of quietly adding a second
+     * economic effect; an equivalent replay never reaches it.
+     */
+    private fun replayedManualExpenseCommit(): ConfirmedManualExpenseCommit {
+        val postingSet =
+            assertIs<DomainResult.Success<PostingSet>>(
+                PostingSet.create(
+                    PostingSetId("tx-annotated-posting-set-1"),
+                    listOf(
+                        Posting(PostingId("tx-annotated-posting-0"), AccountId("expense-account-local"), Money.ofMinor(3_580, CurrencyUnit("CNY", 2))),
+                        Posting(PostingId("tx-annotated-posting-1"), AccountId("asset-payment-local"), Money.ofMinor(-3_580, CurrencyUnit("CNY", 2))),
+                    ),
+                ),
+            ).value
+        return ConfirmedManualExpenseCommit(
+            confirmationId = ConfirmationId("confirmation-tx-annotated"),
+            transaction =
+                assertIs<DomainResult.Success<FormalTransaction>>(
+                    FormalTransaction.create(
+                        transaction =
+                            Transaction(
+                                id = TransactionId("tx-annotated"),
+                                ledgerId = LedgerId(ledgerId),
+                                kind = TransactionKind.EXPENSE,
+                                currentVersionId = TransactionVersionId("tx-annotated-version-1"),
+                            ),
+                        versions =
+                            listOf(
+                                TransactionVersion(
+                                    id = TransactionVersionId("tx-annotated-version-1"),
+                                    transactionId = TransactionId("tx-annotated"),
+                                    versionNumber = 1,
+                                    postingSetId = PostingSetId("tx-annotated-posting-set-1"),
+                                    times = TransactionTimes.collapsed(Instant.parse("2026-03-05T02:00:00Z")),
+                                ),
+                            ),
+                        postingSets = listOf(postingSet),
+                    ),
+                ).value,
         )
     }
 
