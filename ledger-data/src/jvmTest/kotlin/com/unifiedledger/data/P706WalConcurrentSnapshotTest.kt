@@ -64,7 +64,10 @@ class P706WalConcurrentSnapshotTest {
      * Runs a PRAGMA that returns its result as a row (the journal-mode switch reports the mode it
      * actually applied) and reads the single returned value back.
      */
-    private fun readJournalMode(driver: SqlDriver, pragma: String): String? {
+    private fun readJournalMode(
+        driver: SqlDriver,
+        pragma: String,
+    ): String? {
         var mode: String? = null
         driver
             .executeQuery(
@@ -81,7 +84,11 @@ class P706WalConcurrentSnapshotTest {
     }
 
     /** Reads a single-row single-value integer query, asserting the row count is exactly one. */
-    private fun readSingleLong(driver: SqlDriver, sql: String, label: String): Long {
+    private fun readSingleLong(
+        driver: SqlDriver,
+        sql: String,
+        label: String,
+    ): Long {
         var value = 0L
         var rows = 0
         driver
@@ -112,7 +119,10 @@ class P706WalConcurrentSnapshotTest {
      * explicit iteration cap, whichever comes first. A failing transaction is rolled back by the
      * wrapper before the failure propagates.
      */
-    private fun runWriter(driver: SqlDriver, state: WriterState) {
+    private fun runWriter(
+        driver: SqlDriver,
+        state: WriterState,
+    ) {
         val transacter = object : TransacterImpl(driver) {}
         var version = 0L
         try {
@@ -188,11 +198,12 @@ class P706WalConcurrentSnapshotTest {
                 )
                 val earlyFailure = state.failure.get()
                 assertTrue(earlyFailure == null, "the writer failed before the snapshot window: $earlyFailure")
-                val versionBeforeVacuum = readSingleLong(
-                    mainDriver,
-                    "SELECT marker_value FROM version_marker",
-                    "the pre-snapshot version marker",
-                )
+                val versionBeforeVacuum =
+                    readSingleLong(
+                        mainDriver,
+                        "SELECT marker_value FROM version_marker",
+                        "the pre-snapshot version marker",
+                    )
 
                 // Step 3 (spec section 2.2): the subject action, taken while the writer runs.
                 runSnapshotIntoOn(mainDriver, snapshotFile.path)
@@ -206,11 +217,12 @@ class P706WalConcurrentSnapshotTest {
                 try {
                     val verification = verifySnapshotOn(verificationDriver)
                     assertTrue(verification.integrityOk, "the snapshot must pass the integrity check")
-                    val snapshotMarker = readSingleLong(
-                        verificationDriver,
-                        "SELECT marker_value FROM version_marker",
-                        "the snapshot version marker",
-                    )
+                    val snapshotMarker =
+                        readSingleLong(
+                            verificationDriver,
+                            "SELECT marker_value FROM version_marker",
+                            "the snapshot version marker",
+                        )
 
                     // Frozen overlap guard, second half: with the verification connection now open,
                     // require one more committed transaction and wait until it lands.
@@ -222,32 +234,36 @@ class P706WalConcurrentSnapshotTest {
 
                     // Self-consistency of the captured point in time (A02-a3): single marker
                     // value, an even pair count, a complete pair, no orphan row.
-                    val pairRowCount = readSingleLong(
-                        verificationDriver,
-                        "SELECT COUNT(*) FROM pair",
-                        "the snapshot pair row count",
-                    )
+                    val pairRowCount =
+                        readSingleLong(
+                            verificationDriver,
+                            "SELECT COUNT(*) FROM pair",
+                            "the snapshot pair row count",
+                        )
                     assertEquals(0L, pairRowCount % 2L, "the snapshot pair row count must be even, got $pairRowCount")
                     assertEquals(2L, pairRowCount, "the snapshot must hold exactly one complete pair, got $pairRowCount rows")
-                    val firstMembers = readSingleLong(
-                        verificationDriver,
-                        "SELECT COUNT(*) FROM pair WHERE pair_member = 0",
-                        "the snapshot first-member count",
-                    )
-                    val secondMembers = readSingleLong(
-                        verificationDriver,
-                        "SELECT COUNT(*) FROM pair WHERE pair_member = 1",
-                        "the snapshot second-member count",
-                    )
+                    val firstMembers =
+                        readSingleLong(
+                            verificationDriver,
+                            "SELECT COUNT(*) FROM pair WHERE pair_member = 0",
+                            "the snapshot first-member count",
+                        )
+                    val secondMembers =
+                        readSingleLong(
+                            verificationDriver,
+                            "SELECT COUNT(*) FROM pair WHERE pair_member = 1",
+                            "the snapshot second-member count",
+                        )
                     assertEquals(1L, firstMembers, "the snapshot pair must contain exactly one first member")
                     assertEquals(1L, secondMembers, "the snapshot pair must contain exactly one second member")
 
                     // No mixed versions (A02-a4): every row carries the snapshot marker's version.
-                    val mixedVersionRows = readSingleLong(
-                        verificationDriver,
-                        "SELECT COUNT(*) FROM pair WHERE version_stamp <> $snapshotMarker",
-                        "the mixed-version row count",
-                    )
+                    val mixedVersionRows =
+                        readSingleLong(
+                            verificationDriver,
+                            "SELECT COUNT(*) FROM pair WHERE version_stamp <> $snapshotMarker",
+                            "the mixed-version row count",
+                        )
                     assertEquals(0L, mixedVersionRows, "the snapshot must not mix versions, got $mixedVersionRows mismatched rows")
 
                     // Bounded shutdown: the writer stops on the cancel flag and is joined.
@@ -274,11 +290,12 @@ class P706WalConcurrentSnapshotTest {
                     // fully opens the snapshot file and reads it to the end.
                     val replayDriver = JdbcSqliteDriver("jdbc:sqlite:${snapshotFile.path}")
                     try {
-                        val replayMarker = readSingleLong(
-                            replayDriver,
-                            "SELECT marker_value FROM version_marker",
-                            "the replayed version marker",
-                        )
+                        val replayMarker =
+                            readSingleLong(
+                                replayDriver,
+                                "SELECT marker_value FROM version_marker",
+                                "the replayed version marker",
+                            )
                         assertEquals(snapshotMarker, replayMarker, "the replayed marker must match the snapshot marker")
                         var replayRows = 0L
                         replayDriver
