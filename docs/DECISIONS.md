@@ -5385,3 +5385,25 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 入：本条登记 + `docs/CURRENT_STATE.md` 最小指针同步（origin/main 指针 `be39007`→`ebb5706`、最高决定编号 D-253、唯一下一步改用户批准的 2→4→3→1 执行序）。出：不改 D-238 其余八向量判决与 D-245 残余裁决；不改产品源码/schema/迁移；不把 A02/A09 并入 PASS；worktree `UL-p708-a07` 与本地分支随后清理（远端分支已删，ls-remote 归零）。
 
 **关联决定：** D-238（A07「部分证据」与本条闭合的缺口原文）、D-187（P7-08 设计门与 §5.5 刷新挂点冻结）、D-245（P7-08 残余集中裁决，其 R-218-1/R-222-9/R-223 披露不受本条影响）、D-223（08.C 目录命令 landing 交付）、D-224（08.D 联动与恢复交付）、阶段计划 §8.3 P708-A07 行与 §10.1/§10.4.5。
+
+## D-254 P708-A02 判 PASS（JVM + Android host-test 维度）：缺口 (iii)「两端各跑」的 Android 腿闭合，PR #144 交付
+
+**状态：** 已批准并登记（2026-10-24）。交付 = PR #144（squash merge `20fb463`，4 文件 +31/−5：`ledger-domain/build.gradle.kts` 加 KMP Android 库目标（`com.android.kotlin.multiplatform.library` + `android { namespace/minSdk 34/compileSdk 37/withHostTest {} }`，镜像 `ledger-data` 先例）、`.github/workflows/ci.yml` Android job 追加 `:ledger-domain:testAndroidHostTest`、`docs/CONTRIBUTING.md` 同步、`CatalogNameNormalizationPropertyTest.kt` KDoc 指针更新）。PR head `ef13145b`（= 冻结候选），必过 checks 全绿；合并后 main 全量 CI run `40134471384`（head `20fb463`）success。**零产品源码、零 schema/迁移、零新依赖版本**。
+
+**决定：**
+
+1. **A02 改判 PASS（JVM + Android host-test 维度）**。D-238 为 A02 点名的三处缺口全部闭合：(i) 作废交易引用阻止删除——PR #109（JVM 维度）；(ii) 增补平面码点边界——PR #109；(iii)「两端各跑同一 commonTest 属性测试」——本体（固定种子、五类语料、参考模型、BMP/增补平面/U+3000/控制码点边界）PR #109 交付，**Android 端执行腿由本批闭合**：`ledger-domain` commonTest（31 类）现于 Android 编译面（`androidHostTest`）编译执行，CI 双执行点（Android job「Android app unit tests」步骤显式 + 「Kotlin tests core」聚合 `check` 自动纳入，verifier `check --dry-run` 实测任务图坐实）。
+
+2. **证据维度披露**：Android 腿为 **host test**（宿主 JVM 上的 Android 变体编译执行），非设备/instrumented 执行；按 D-238 判据边界（共享模块两端同源编译、设备腿缺失不构成缺陷）不设为缺口。runner 解析经 verifier 实证（`androidHostTestRuntimeClasspath` 解析树 kotlin-test → kotlin-test-junit → junit 4.13.2，无需 `ledger-data:59-63` 形防御性显式依赖）。
+
+3. **AGP 9 机制口径登记**：KMP library 插件默认禁用 Android host 单元测试、`withHostTest` 显式启用、旧 `androidUnitTest` 源集更名 `androidHostTest`——按三方佐证采用（仓内 `ledger-data` 先例注释 P5-04.5-FOUND-001 T-A、本机 dry-run 任务图、官方文档/博客检索）；官方页面直抓超时未取原文，如实登记为佐证口径。
+
+4. **变体切换观察（不构成缺陷）**：android 消费方（android-app → ledger-application `api(project(":ledger-domain"))`）此后解析 ledger-domain 的 Android target 变体而非既有 JVM 产物（模块源码 common-only、无源差异、双侧 toolchain 21、minSdk 34 与既有值一致）。
+
+5. **P7-08 状态汇总更新**：**PASS 8 / 部分 1（A09）/ 缺证 0 / FAIL 0**。A09 缺口（50k 规模、§10.3 量测、设备腿）不变。**P7-08 整体仍不判通过**（沿 §10.4.5）。
+
+6. **审验拓扑（如实登记）**：实施由 autopilot 完成（冻结候选 `ef13145b` 经独立 reviewer 双判纲 APPROVE 零 blocker、distinct verifier V0–V8 PASS 含 trace-scan 全史干净）；运行自带的 PR 正文预检拦下一处行为层失实（「仅 Android job 一步执行」vs dry-run 实测双执行点）后零写交回，主会话按实测改写正文出 PR——预检拦假如实登记为本批质量门生效的实例。
+
+**边界：** 入：本条登记 + `docs/CURRENT_STATE.md` 最小指针同步（origin/main `f336e6d`→`20fb463`、最高决定编号 D-254、P7-08 计数）。出：不改 D-238 其余向量判决与 D-253 裁决；不改产品源码/schema；不把 A09 并入 PASS；A02 worktree（`../UL-p708-a02-leg3-worktree`）与分支随后清理。
+
+**关联决定：** D-238（A02 三处缺口原文与本条闭合面）、D-187（P7-08 设计门 §2.3 计数一致要求）、D-253（P708-A07 PASS 与 P7-08 计数前值）、PR #109（缺口 (i)/(ii) 与属性测试本体）、D-2215（P5-04.5-FOUND-001，`withHostTest` 与 `testAndroidHostTest` 命名先例）、阶段计划 §8.3 P708-A02 行与 §10.1/§10.4.5。
