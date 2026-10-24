@@ -9,9 +9,10 @@ import kotlin.test.assertTrue
  * P7-08 08.A name-normalization property evidence (spec section 2.3; D-238 A02 gap (iii)).
  *
  * This is the anonymous property test of spec section 2.3, replacing a hand-written example set
- * with a generated corpus and a reference model. `ledger-domain` declares a single JVM target, so
- * the class runs in the module's `jvmTest` task; spec 2.3's "both ends run the same commonTest
- * property test" is therefore satisfied only on the JVM side, and the Android leg remains open.
+ * with a generated corpus and a reference model. `ledger-domain` declares a JVM target and an
+ * Android target with `withHostTest`, so the class runs in the module's `jvmTest` task and in
+ * `testAndroidHostTest` on the Android host-test compilation face; that Android leg is executed
+ * by CI (no device or instrumented leg is claimed by this class).
  *
  * It depends only on `kotlin.test` and the stdlib (no property-testing framework exists in this
  * repository) and is fully deterministic: the corpus comes from a fixed-seed [Random], never from
