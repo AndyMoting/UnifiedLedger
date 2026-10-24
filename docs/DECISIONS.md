@@ -5342,3 +5342,22 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 6. **审验拓扑与边界。** 两批各经 autopilot 单 writer + 独立评审 + distinct verifier（批 10a 含一轮 verifier FAIL 的修复轮——@Test 数门与禁用模式，如实登记）；主代理验收两批、亲手执笔本条。出：零产品代码/schema/迁移/依赖改动；不改 D-236～D-250 的任何判决（A08 PASS 为新增判决）；A06/A10 与 A09/A12 状态不变；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
 
 **关联决定：** D-239（A07/A08 缺口原始登记与判据边界）、D-246（A02 方案与本条登记方法先例）、D-248（确认路径夹具——批 9 前提）、D-249/D-250（A01/A04/A02 PASS 裁决先例）、D-183（恢复确认期语义）、阶段计划 §6 `:184`/`:187` 与 §10.1/§10.4.5。
+## D-252 P706-A07 最终裁决：判 PASS（JVM 维度，两腿闭合后按 §10.4 作出）
+
+**状态：** 已批准并登记（2026-10-25，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §6 `:187` + §10.1 状态表 + §10.4.5 汇总）。**零产品代码、零测试、零 schema/迁移、零依赖、零 CI 配置改动**（schema 维持 v35 / 34 个 `.sqm`；本批 tracked 变更仅本条 + `docs/CURRENT_STATE.md` 指针同步；两腿的测试交付已分别由 PR #138/`d601c76` 与 PR #140/`1982b97` 合并）。
+
+**决定：**
+
+1. **裁决对象与判据。** D-239 item 4 A07（`docs/DECISIONS.md:5083`）登记的缺口两句：(a)「租约为**通用占位**，没有测试以真实导入/记账/读作业类型并发压在确认期」；(b)「原 Unknown 可确定解析只在**重开**后证明（`P708UnknownReopenAnnotationReplayTest`），**未在恢复后证明**」。D-251 item 3 闭合同句 (a) 并预留 (b) 于批 10b；两句均已交付，本条即 §10.4 最终裁决。判据沿 D-239 item 1：恢复确认状态机与租约语义位于共享模块（app-ui commonMain），JVM 为适用证据维度。
+
+2. **腿 (a)——确认期真实作业并发（PR #138 `d601c76`，`P706RealJobLeaseConcurrencyTest`，app-ui commonTest，939 行，六个 @Test）。** 确认期（quiesce/drain）压入三类真实作业：真实导入提交链（`ConfirmImportCandidate.execute` 经 `ImportBatchDispatchLoop`，镜像组合根 `P503App.kt:2401-2430` 形态）、真实手工支出提交链（`ExecuteManualExpenseSubmission.submit` → `ExecuteManualExpenseSave` → `ExecuteConfirmedManualExpense`）、真实读作业（`QueryLedgerCurrentState.query()`）。断言：drain 等待真实作业完成、drain 期拒绝新租约（含 raw acquireLease 与 leased 探针双面）、QuiesceBlocked 不回归、真实作业 exactly-once 不中断无半提交、旧 generation 结果被丢弃且新图重跑等价（导入族与读族各一腿）。审验链：两轮评审（首轮 verifier FAIL——@Test 数门与禁用模式——修复 +40/−1）APPROVE 8/8 + verifier PASS（实跑 6 测 0 失败、ktlint 零违规、trace-scan clean）。**真实性边界（沿 D-251 item 2 维持）**：导入 spine 的 claim/幂等语义为测试内存 fake（app-ui commonTest 不可见 ledger-data），KDoc 明示；spine 语义的真实覆盖由批 6 确认路径往返腿（ledger-data）与 desktop jvmTest 端到端承接。
+
+3. **腿 (b)——恢复后原 Unknown 确定解析（PR #140 `1982b97`，`P708RestoreRoundtripEquivalenceTest` +240/−0）。** v35 直读腿上以真实 claim-first 手工支出端口构造 Unknown 状态（提交落库、调用方未及见结果）→ 真实 `VACUUM INTO` 快照/恢复 → 恢复后的新图上解析：`MatchingReceipt` 返回原回执逐值相等、两处注解差异按类型化 resolver（`ResolveManualExpenseCommitStatus`）判 `SnapshotConflict`、12 张 owner 表解析前后精确计数相等（零新增经济效果）、注释历史/revision/current 指针与重开先例同型一致。**迁移腿如实披露**：端口成功路径无条件写 34.sqm 注释列与 33.sqm 聚合表，Unknown 提交无法在 v34/v33 源行使——v35 直读腿为该命题的可得证据（33/34.sqm 全文实读判据），迁移腿由既有四个值等价测试承接；此为结构性不可得维度披露，非缩减。审验链：评审双维度 APPROVE（规格符合性 7 条 + 实现质量 7 条）+ verifier PASS（编译/ktlint/trace-scan；执行证据按教训 1g 归 CI——PR #140 的 ledger-data shard 实跑通过）。
+
+4. **A07 判 PASS（JVM 维度）。** 理由：两句缺口均已按真实端口/真实用例闭合且对当前候选有效（PR #140 合并提交 CI 全绿）；D-239 item 4 A07 登记的既有覆盖面（八向量、确认期阻塞四向量、晚到回调三向量等）与本批新增腿合成完整证据面。**沿 D-251 item 3 的归属划分，本条即预留的最终裁决。**
+
+5. **逐项状态汇总（§10.4.5）。** P706-A01..A12：**PASS 8 项**（A01/A02/A03/A04/A05/A07/A08/A11——A07 本条）、**部分证据 2 项**（A06——两阶段 kill 协议取证方案已批待实施；A10——满盘/SAF 中途写失败未由 OS 真实触发）、**缺证 2 项**（A09 跨端、A12 规模）。FAIL 0。D-239「PASS 2」→ D-247「3」→ D-249「5」→ D-250「6」→ D-251「7」→ 本条「8」。P7-06 整体仍不判通过（A06/A10/A09/A12 非 PASS）。
+
+6. **审验拓扑与边界。** 两腿各经 autopilot 单 writer + 独立评审（批 10a 含 verifier FAIL 修复轮、批 10b 首轮 APPROVE）+ distinct verifier；本条为证据裁决 + 登记，主代理亲手执行（沿 D-239 item 7/D-244/D-247 先例），机械复核三腿测试在位与评审/verifier 结论。出：零产品代码/测试/schema/迁移/依赖/清单/Golden/CI 配置改动；不改 D-236～D-251 的任何判决（A07 PASS 为新增判决）；A06 取证实施属后续独立批（D-246 已批方案、未排期）；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-239（A07 缺口原始登记与判据边界）、D-251（腿一交付与后半句预留）、D-183（恢复确认状态机）、D-244/D-247/D-249/D-250（裁决方法先例）、阶段计划 §6 `:187` 与 §10.1/§10.4.5。
