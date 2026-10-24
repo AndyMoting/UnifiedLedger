@@ -5249,3 +5249,22 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 4. **效果与边界。** 规格转 approved——其冻结的取证方案设计面（A02 测试拓扑与断言不等式、A06 十九边界矩阵与两阶段 kill 协议、分母登记与状态承诺）自此为后续实施批的冻结依据；**P706-A02/A06 判决维持 D-239 不变（A02 缺证、A06 部分证据）**，取证不判 PASS；实施属后续独立实施批，未排期、不自动立项。出：零产品代码/测试/schema/依赖/CI 配置改动；不改 D-174/D-176/D-177/D-179/D-182/D-183 的任何冻结裁决（规格 `:22` 清单，D-178 仅作 B11 实证窗口证据引用）；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
 
 **关联决定：** D-239（A02/A06 判决与漂移来源）、D-174/D-176/D-177/D-179/D-182/D-183（规格承接的冻结裁决）、D-178（B11 实证窗口证据）、D-240（CI 登记面先例）、D-242（事实更正登记先例）、D-187（设计门批准体例先例）、阶段计划 §6 `:182`/`:186` 与 §10.1/§10.2/§10.3。
+## D-247 P706 验收向量登记裁决批：A11 判 PASS（JVM 维度），A04 维持「部分证据」且残余并入 D-244 item 4 封闭清单
+
+**状态：** 已批准并登记（2026-10-24，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §6「切片与验收」的 P706-A04/`:184`、P706-A11/`:191` + §10.1 状态表 + §10.4.5 汇总）。**零产品代码、零测试、零 schema/迁移、零依赖、零 CI 配置改动**（schema 维持 v35 / 34 个 `.sqm`）。本条是 D-239 item 4 的 A04/A11 两项「部分证据」在 D-242 覆盖批与 PR #107 预算往返交付后的登记裁决，沿 D-244/D-246 的登记裁决批先例由主代理亲手执行。
+
+**决定：**
+
+1. **判据与回读取证（2026-10-24，`main` = `d9abf7c`，同提交 CI run `40050202498` success）。** A11 原文（计划 `:191`）：「最终 schema 含预算配置历史及标签/商家注释历史；**所有新增 owner 往返，旧测试继续成立**」。A04 原文（`:184`）：「支持集合内有账旧 schema 与迁移失败；**只改隔离副本；原库不变，成功后所有 owner 仍完整**」。对 `P708RestoreRoundtripEquivalenceTest.kt` 的机械核验：`budgetOwnerTables`（`:200`-`:206`）恰为 4 张（`budget_config`/`budget_command_request`/`budget_settings_history`/`budget_command_receipt`），且 `currentSchemaOwnerTables`（`:307`）/`migratedOwnerTables`（`:319`）/`preAnnotationEdgeOwnerTables`（`:329`）三条腿清单**均含** `budgetOwnerTables` + `annotationOwnerTables`（11 张）+ `manualRequestTables`（4 张）+ `preV34SurvivorTables`（4 张）；每条腿带 seeded budget chain 与非空守卫（`:119`/`:334`/`:410`/`:484`-`:493`，v32 预算边 value-for-value）。预算腿由 PR #107（merge `9bfceaf`，`P708RestoreRoundtripEquivalenceTest.kt` +186 行「compare the four budget owner tables in every restore roundtrip leg」）交付；注释族与手工请求族由 D-242 八批（PR #115-#123）交付。
+
+2. **A11 判 PASS（JVM 维度）。** 理由：A11 的「新增 owner」全集 = 预算族 4 张 + 标签/商家注释族 11 张 + 手工请求族 4 张，全部已在四条腿（v35 直读 / v34→v35 迁移 / v33→全链 / 失败迁移回滚）的逐表逐值比较中，含 v33 腿对 11 张被 DROP 的注释表的结构性「零回填 + 落地空」证明（源库无该表，值级比较在该腿结构性不适用，为可得的最强证据）；「旧测试继续成立」由每次合并的 CI（ledger-data shards）背书，当前候选 `d9abf7c` CI success。本向量是纯数据 owner 往返命题，无设备/性能维度；按 D-239 item 1 判据边界以 JVM 为适用证据维度。「完整」语义由 D-242 的非空守卫 + 逐值比较承接，非空表计数（不 数交易行）。
+
+3. **A04 维持「部分证据」，残余并入 D-244 item 4 的封闭清单。** 迁移腿自 D-239 起完整（支持版本迁移并盖章、v32 经预算边迁移、失败回滚版本不变、外键与领域校验、只改隔离副本——`RestoreIsolatedMigrationTest` 与往返测试的 v34/v33 腿），「成功后所有 owner 仍完整」的比较面经 D-242/PR #107 扩至 60 张表全集。**不并入 PASS 的理由**：owner 完整性主张与 A01 同受 D-244 item 4 残余约束——确认路径两表 `import_confirmation`/`import_candidate_decision_snapshot` 属适用 owner 而无值级往返比较（一个含已确认候选的旧 schema 库迁移后必须保持完整），三张 `confirmed_income/transfer/lending_receipt` 在跨腿夹具结构不适用（D-242 item 3，替代夹具另立裁决）。A04 的残余自此**收窄并等同** D-244 item 4 清单，无其他已知缺口；两表不判「不适用」、不删除。
+
+4. **逐项状态汇总（§10.4.5）。** P706-A01..A12：**PASS 3 项**（A03/A05 沿 D-239，A11 本条）、**部分证据 5 项**（A01/A04/A06/A07/A10）、**缺证 4 项**（A02/A08/A09/A12）、FAIL 0。D-239 的「PASS 2 / 部分 6」汇总由本条更新；其余向量判决不变。P7-06 整体仍不判通过。
+
+5. **审验拓扑（如实登记，轻量相称）。** 登记/裁决批，零 tracked 变更可供独立评审；主代理亲手执行（沿 D-239 item 7 / D-244 item 6 先例）。正面结论（三清单构成、四预算表、非空守卫、PR #107 交付）与否定性结论（无第 4 条之外的 A04 新缺口）均经 grep/Read 机械复核；CI 证据取自 `gh run list`。未新增测试、未运行本机 Gradle。
+
+6. **边界。** 入：本条登记 + `docs/CURRENT_STATE.md` 指针同步 + checkpoint。出：零产品代码/测试/schema/迁移/依赖/清单/Golden/CI 配置改动；不改 D-236～D-246 的任何判决与登记文本（A11 的 PASS 为新增判决、非改写）；A04 残余以引用方式并入 D-244 item 4，不复制清单正文；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-239（A04/A11 部分证据的原始登记与判据边界）、D-242（owner 覆盖批，A04/A11 证据基础）、D-244（A01 裁决与其 item 4 封闭清单，A04 残余的引用来源）、D-185（v32 预算边与预算 owner 先例）、阶段计划 §6 `:184`/`:191` 与 §10.1/§10.4.5。
