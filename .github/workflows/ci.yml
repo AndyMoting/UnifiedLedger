@@ -155,8 +155,10 @@ jobs:
         run: ./gradlew --no-daemon --max-workers=1 :ledger-data:compileAndroidMain --warning-mode all
       - name: Android app unit tests
         # P5-04.4 S2/S3: JVM unit tests for AndroidStartupController (no Robolectric). The
-        # task set must match docs/CONTRIBUTING.md verification commands.
-        run: ./gradlew --no-daemon --max-workers=1 :android-app:testDebugUnitTest --warning-mode all
+        # task set must match docs/CONTRIBUTING.md verification commands. The appended
+        # :ledger-domain:testAndroidHostTest task runs the shared commonTest suite on the
+        # Android host-test compilation face (D-238 A02 gap (iii), spec 2.3 both-ends clause).
+        run: ./gradlew --no-daemon --max-workers=1 :android-app:testDebugUnitTest :ledger-domain:testAndroidHostTest --warning-mode all
       - name: Android app instrumented test sources compile
         # P0 hotfix (defect 1) guard: compile the androidTest sources so the absolute-driver-path
         # regression guard cannot rot. Device execution belongs to the separate
