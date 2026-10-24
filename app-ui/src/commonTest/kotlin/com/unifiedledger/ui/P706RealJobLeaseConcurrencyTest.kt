@@ -420,6 +420,45 @@ class P706RealJobLeaseConcurrencyTest {
             assertEquals(2, landed.size, "current-generation results land through the same guard")
         }
 
+    @Test
+    fun aReadResultCapturedUnderAGenerationSupersededByTheSwitchReopenIsDiscardedAndTheNewGraphRereads() =
+        runBlocking {
+            val h = fixture()
+            val outcome = CompletableDeferred<LeaseOutcome<LedgerCurrentStateResult>>()
+            val job =
+                launch(Dispatchers.Default) {
+                    outcome.complete(
+                        h.scope.leased { facade, _ -> facade.queryCurrentState.query() },
+                    )
+                }
+            job.join()
+            val leaseOutcome = assertIs<LeaseOutcome.Completed<LedgerCurrentStateResult>>(outcome.await())
+            val capturedGeneration = leaseOutcome.generation
+            assertEquals(1, capturedGeneration)
+            assertIs<LedgerCurrentStateResult.Success>(leaseOutcome.value)
+
+            // The confirm switch's runtime sequence: quiesce -> close -> reopen advances the generation.
+            assertEquals(QuiesceResult.Quiesced, h.owner.quiesce())
+            assertEquals(CloseResult.Closed, h.owner.closeActiveGraph())
+            assertEquals(ReopenResult.Reopened(2), h.owner.reopen())
+
+            // The production landing guard: the superseded read result must NOT land.
+            val landed = mutableListOf<LedgerCurrentStateResult>()
+            if (h.scope.isCurrentGeneration(capturedGeneration)) landed += leaseOutcome.value
+            assertEquals(0, landed.size, "a read result captured under a superseded generation must be discarded")
+            assertTrue(shouldDiscardLandingResult(capturedGeneration, h.owner.activeGeneration))
+            assertFalse(h.scope.isCurrentGeneration(capturedGeneration))
+            assertTrue(h.scope.isCurrentGeneration(2))
+
+            // The new graph's own read lands through the same guard and observes the scoped rows.
+            val rerunOutcome = h.scope.leased { facade, _ -> facade.queryCurrentState.query() }
+            val rerun = assertIs<LeaseOutcome.Completed<LedgerCurrentStateResult>>(rerunOutcome)
+            val state = assertIs<LedgerCurrentStateResult.Success>(rerun.value).state
+            assertEquals(ledgerId, state.ledgerId)
+            if (h.scope.isCurrentGeneration(rerun.generation)) landed += rerun.value
+            assertEquals(1, landed.size, "the new generation's read result lands through the same guard")
+        }
+
     // ---------------------------------------------------------------- fixture
 
     /**
@@ -863,7 +902,7 @@ private class InMemoryImportCandidateCommitPort(
         identity: ImportRequestIdentity,
         snapshot: ImportCandidateDecisionSnapshot,
         allocateStatusId: () -> ImportStatusHistoryId,
-    ): ImportCandidateDecisionResult = error("the batch confirm path never rejects through this fake")
+    ): ImportCandidateDecisionResult = error("the confirm path never rejects through this fake")
 }
 
 /** Sequential id mint for the import confirm chain; counts every allocation. */
