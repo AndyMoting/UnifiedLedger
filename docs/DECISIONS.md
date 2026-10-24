@@ -5323,3 +5323,22 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 5. **边界。** 入：本条 + PR #135 已合并的测试改动 + `docs/CURRENT_STATE.md` 指针同步。出：零产品代码/schema/迁移/依赖改动；不改 D-236～D-249 的任何判决（A02 的 PASS 为新增判决）；A06 取证实施（设备门）与 A08/A09/A12 状态不变；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
 
 **关联决定：** D-246（A02 方案批准与本条的证据映射依据）、D-239（A02 缺证原始登记与判据边界）、D-249（A01/A04 PASS 先例与 §10.4 裁决方法）、D-177（快照/导出语义）、D-174（q13 门 CLI 证据）、阶段计划 §6 `:182` 与 §10.1/§10.4.5。
+## D-251 P706-A08 判 PASS（JVM 维度）+ A07 腿一交付登记（恢复确认期真实作业并发）+ D-239 两处字面更正
+
+**状态：** 已批准并登记（2026-10-24，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §6 `:184`/`:187` + §10.1 状态表 + §10.4.5 汇总）。**tracked 变更**：两个已合并测试批的产物（详见第 1/2 条）+ 本条 + `docs/CURRENT_STATE.md` 指针同步。**零产品代码、零 schema/迁移、零依赖改动**（schema 维持 v35 / 34 个 `.sqm`；测试类总数 106→108，登记面随各批同步）。
+
+**决定：**
+
+1. **批 9 交付（PR #137 squash merge `46a6e47`）与 A08 判 PASS（JVM 维度）。** `P708RestoreRoundtripEquivalenceTest` 新增恢复后重放幂等测试（+268/−0）：v35 直读腿恢复后的新图上重放两条真实提交链——手工支出端口（claim-first，同 request 身份，返回 `NoChange(原回执)`、创建回调 0、11 表计数 map 精确相等）与导入确认 `commitOnce`（普通流 + 混合流，identity/digest/决策字段逐值相同，返回 `NoChange` + 冻结 reasonCode `equivalent_replay` + 原确认号，正式交易/分录/回执零新增）。审验链：评审 APPROVE（0 blocker）+ verifier PASS（实跑 5 测 0 失败，ktlint 零违规——教训 1e 推送前预检生效；`local/artifacts/p706-a08/`）。**A08 判 PASS 理由**：D-239 item 4 A08 的命题「恢复库已有提交回执，重放同请求 → 返回原结果，正式经济效果不增加」已在完整 owner 面往返夹具上以真实端口行使，判据维度按 D-239 item 1 以 JVM 为适用证据；当前候选 CI 全绿。
+
+2. **批 10a 交付（PR #138 squash merge `d601c76`）——A07 腿一（真实作业并发压确认期）闭合。** 新测试类 `P706RealJobLeaseConcurrencyTest`（app-ui commonTest，939 行，六个 @Test）：把 D-239 item 4 A07 登记的「租约为通用占位」缺口闭合——确认期（quiesce/drain）压入三类真实作业（真实导入提交链经 `ConfirmImportCandidate.execute` + `ImportBatchDispatchLoop`、真实手工支出提交链经 `ExecuteManualExpenseSubmission.submit`、真实读作业经 `QueryLedgerCurrentState.query()`），断言 (a) 准入/等待语义与占位租约一致（drain 等待真实作业、drain 期拒绝、QuiesceBlocked 不回归）；(b) 真实作业 exactly-once、不中断、无半提交；(c) 旧 generation 结果被丢弃、新图重跑等价（导入族与读族各一腿）。审验链：两轮评审（首轮 verifier FAIL——@Test 数门与禁用模式——writer 修复 +40/−1 后二轮）APPROVE 8/8 + verifier PASS（实跑 6 测 0 失败、ktlint 零违规、trace-scan clean；`local/artifacts/p706-a07/`）。**真实性边界如实登记**：导入 spine 的 claim/幂等语义为测试内存 fake（app-ui commonTest 不可见 ledger-data，构建面改动未做），非真实 spine store——KDoc 明示，不冒充真实 spine 覆盖；spine 语义的真实覆盖由批 6 的 `SqlDelightImportSpineStore.commitOnce` 往返腿（ledger-data）与 desktop jvmTest 既有端到端承接。
+
+3. **A07 状态：维持「部分证据」，前半句缺口闭合、后半句待批 10b。** D-239 item 4 A07 的缺口两句：前半句（本条第 2 款）已闭合；后半句「原 Unknown 可确定解析未在恢复后证明」由后续批（批 10b）在往返夹具上闭合。两句齐后按 §10.4 作 A07 最终裁决；本条不判 A07。
+
+4. **D-239 两处字面更正（append-only，原文不改；沿 D-246 item 3 先例）。** (a) A08 段「无『恢复后重放』测试……从未在恢复后调用任何提交用例」在其登记时点（PR #106 先于 PR #108 合并）为真；PR #108（`590c480`，2026-10-21）已在 `SqlDelightConfirmedManualExpenseCommitPortTest` 交付手工支出端口的恢复后重放命题（恢复后新文件身份上重放、`NoChange(原回执)`、计数不变），批 9 再在完整 owner 面夹具上补齐——该字面自本条起按此为准。(b) 本批任务书前提「`import_receipt` 在仓内零命中」不实：该表真实存在（21.sqm `:203` 重建、20.sqm 同族；往返夹具 intake 清单含它），批 9 断言面合法使用了它（经端口返回的 `NoChange.receipt.confirmationId` 读回）——勘误随本条登记。两处更正不改变任何向量判决。
+
+5. **逐项状态汇总（§10.4.5）。** P706-A01..A12：**PASS 7 项**（A01/A02/A03/A04/A05/A08/A11——A08 本条）、**部分证据 3 项**（A06/A07/A10——A07 前半句已闭合、后半句批 10b 待做）、**缺证 2 项**（A09/A12）。FAIL 0。D-239「PASS 2」→ D-247「3」→ D-249「5」→ D-250「6」→ 本条「7」。P7-06 整体仍不判通过。
+
+6. **审验拓扑与边界。** 两批各经 autopilot 单 writer + 独立评审 + distinct verifier（批 10a 含一轮 verifier FAIL 的修复轮——@Test 数门与禁用模式，如实登记）；主代理验收两批、亲手执笔本条。出：零产品代码/schema/迁移/依赖改动；不改 D-236～D-250 的任何判决（A08 PASS 为新增判决）；A06/A10 与 A09/A12 状态不变；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-239（A07/A08 缺口原始登记与判据边界）、D-246（A02 方案与本条登记方法先例）、D-248（确认路径夹具——批 9 前提）、D-249/D-250（A01/A04/A02 PASS 裁决先例）、D-183（恢复确认期语义）、阶段计划 §6 `:184`/`:187` 与 §10.1/§10.4.5。
