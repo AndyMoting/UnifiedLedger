@@ -2522,6 +2522,104 @@ class LedgerDatabaseMigrationTest {
         }
     }
 
+    /** Seeds a terminal-v35 world holding one committed correction request + receipt pair. */
+    private fun seedV35CorrectionWorld(url: String) {
+        DriverManager.getConnection(url).use { connection ->
+            connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
+        }
+        JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+            LedgerDatabase.Schema.migrate(driver, 1, 35)
+            driver.execute(null, "PRAGMA user_version = 35", 0)
+            driver.execute(null, "INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-c36','ledger-c36','EXPENSE',NULL)", 0)
+            driver.execute(null, "INSERT INTO posting_set VALUES ('posting-set-c36-a','ledger-c36')", 0)
+            driver.execute(null, "INSERT INTO posting_set VALUES ('posting-set-c36-b','ledger-c36')", 0)
+            driver.execute(null, "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id, occurred_at, statistics_at, effective_at, note) VALUES ('version-c36-base','tx-c36','ledger-c36',1,'posting-set-c36-a','2026-10-20T09:00:00+08:00','2026-10-20T09:00:00+08:00','2026-10-20T09:00:00+08:00',NULL)", 0)
+            driver.execute(null, "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id, occurred_at, statistics_at, effective_at, note) VALUES ('version-c36-corrected','tx-c36','ledger-c36',2,'posting-set-c36-b','2026-10-20T09:00:00+08:00','2026-10-21T18:00:00+08:00','2026-10-20T09:00:00+08:00','corrected note')", 0)
+            driver.execute(null, "INSERT INTO transaction_correction_request(ledger_id, request_id, transaction_id, expected_current_version_id, note, statistics_at, amount_minor, currency_code, currency_precision, category_id, funding_account_id, confirmation_marker) VALUES ('ledger-c36','request-c36','tx-c36','version-c36-base',NULL,'2026-10-21T18:00:00+08:00',4567,'CNY',2,'category-c36','account-cash-c36','explicit_manual_save')", 0)
+            driver.execute(null, "INSERT INTO transaction_correction_receipt(ledger_id, request_id, confirmation_id, transaction_id, version_id, expected_current_version_id) VALUES ('ledger-c36','request-c36','confirmation-c36','tx-c36','version-c36-corrected','version-c36-base')", 0)
+        }
+    }
+
+    @Test
+    fun populatedV35ToV36CorrectionRebuildPreservesCommittedRowsValueForValue() {
+        val migratedPath = Files.createTempFile("ledger-data-migrated-v36-correction-", ".db")
+        val freshPath = Files.createTempFile("ledger-data-fresh-v36-correction-", ".db")
+        val migratedUrl = "jdbc:sqlite:${migratedPath.absolutePathString()}"
+        val freshUrl = "jdbc:sqlite:${freshPath.absolutePathString()}"
+        try {
+            seedV35CorrectionWorld(migratedUrl)
+            JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 35, 36) }
+                driver.execute(null, "PRAGMA user_version = 36", 0)
+            }
+            // Fresh equivalent construction at v36: the same committed pair, with the two
+            // transfer-carrying columns (D-228 spec section 8.3) at their ordinary-row
+            // values — destination_account_id NULL and fee_minor 0.
+            JdbcSqliteDriver(freshUrl, migrationSqliteProperties()).use { driver ->
+                LedgerDatabase.Schema.create(driver)
+                driver.execute(null, "INSERT INTO ledger_transaction(transaction_id,ledger_id,kind,canonical_kind) VALUES ('tx-c36','ledger-c36','EXPENSE',NULL)", 0)
+                driver.execute(null, "INSERT INTO posting_set VALUES ('posting-set-c36-a','ledger-c36')", 0)
+                driver.execute(null, "INSERT INTO posting_set VALUES ('posting-set-c36-b','ledger-c36')", 0)
+                driver.execute(null, "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id, occurred_at, statistics_at, effective_at, note) VALUES ('version-c36-base','tx-c36','ledger-c36',1,'posting-set-c36-a','2026-10-20T09:00:00+08:00','2026-10-20T09:00:00+08:00','2026-10-20T09:00:00+08:00',NULL)", 0)
+                driver.execute(null, "INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id, occurred_at, statistics_at, effective_at, note) VALUES ('version-c36-corrected','tx-c36','ledger-c36',2,'posting-set-c36-b','2026-10-20T09:00:00+08:00','2026-10-21T18:00:00+08:00','2026-10-20T09:00:00+08:00','corrected note')", 0)
+                driver.execute(null, "INSERT INTO transaction_correction_request(ledger_id, request_id, transaction_id, expected_current_version_id, note, statistics_at, amount_minor, currency_code, currency_precision, category_id, funding_account_id, confirmation_marker, destination_account_id, fee_minor) VALUES ('ledger-c36','request-c36','tx-c36','version-c36-base',NULL,'2026-10-21T18:00:00+08:00',4567,'CNY',2,'category-c36','account-cash-c36','explicit_manual_save',NULL,0)", 0)
+                driver.execute(null, "INSERT INTO transaction_correction_receipt(ledger_id, request_id, confirmation_id, transaction_id, version_id, expected_current_version_id) VALUES ('ledger-c36','request-c36','confirmation-c36','tx-c36','version-c36-corrected','version-c36-base')", 0)
+            }
+            JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
+                assertEquals(36, LedgerDatabase.Schema.version)
+                assertEquals(36L, queryCount(driver, "PRAGMA user_version"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM transaction_correction_request WHERE destination_account_id IS NULL AND fee_minor = 0"))
+            }
+            // The staged rebuild makes fresh = migrated hold byte for byte on both rebuilt
+            // tables, and the row copy is value-preserving column by column.
+            val rebuiltDdl = "SELECT sql FROM sqlite_master WHERE type='table' AND name IN ('transaction_correction_request','transaction_correction_receipt') ORDER BY name"
+            assertEquals(selectRaw(freshUrl, rebuiltDdl), selectRaw(migratedUrl, rebuiltDdl))
+            val tableSelects = listOf("transaction_correction_request", "transaction_correction_receipt")
+            val migratedRows = tableSelects.associateWith { selectRowsFlat(migratedUrl, it) }
+            val freshRows = tableSelects.associateWith { selectRowsFlat(freshUrl, it) }
+            tableSelects.forEach { table ->
+                assertEquals(freshRows.getValue(table), migratedRows.getValue(table), "row diff on $table")
+            }
+        } finally {
+            Files.deleteIfExists(migratedPath)
+            Files.deleteIfExists(freshPath)
+        }
+    }
+
+    @Test
+    fun lateV35ToV36FailureRollsBackCorrectionRebuildAndKeepsLegacyRows() {
+        val path = Files.createTempFile("ledger-data-v35-v36-rollback-", ".db")
+        val url = "jdbc:sqlite:${path.absolutePathString()}"
+        try {
+            seedV35CorrectionWorld(url)
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                // The count guard is created after the staged rebuild and the row copy, so
+                // both rebuilt tables already hold the copied rows when the migration
+                // aborts — full late-stage rollback is asserted below.
+                driver.execute(null, "CREATE TABLE p705_rebuild_guard(blocker TEXT)", 0)
+                assertFailsWith<SQLException> {
+                    LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 35, 36) }
+                }
+            }
+            JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
+                assertEquals(35L, queryCount(driver, "PRAGMA user_version"))
+                assertEquals(
+                    true,
+                    tableSql(driver, "transaction_correction_request").contains("category_id TEXT NOT NULL"),
+                )
+                assertEquals(
+                    listOf("ledger_id", "request_id", "transaction_id", "expected_current_version_id", "note", "statistics_at", "amount_minor", "currency_code", "currency_precision", "category_id", "funding_account_id", "confirmation_marker"),
+                    tableColumnNames(driver, "transaction_correction_request"),
+                )
+                assertEquals(0L, queryCount(driver, "SELECT count(*) FROM sqlite_master WHERE name IN ('transaction_correction_request_stage','transaction_correction_receipt_stage')"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM transaction_correction_request WHERE request_id='request-c36' AND category_id='category-c36' AND amount_minor=4567 AND note IS NULL"))
+                assertEquals(1L, queryCount(driver, "SELECT count(*) FROM transaction_correction_receipt WHERE request_id='request-c36' AND version_id='version-c36-corrected'"))
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
     @Test
     fun freshSchemaAndMigratedVersionOneHaveEquivalentSchemaMetadata() {
         val freshPath = Files.createTempFile("ledger-data-fresh-", ".db")
