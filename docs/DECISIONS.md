@@ -5306,3 +5306,20 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 6. **边界。** 入：本条 + `docs/CURRENT_STATE.md` 指针同步 + checkpoint。出：零产品代码/测试/schema/迁移/依赖/清单/Golden/CI 配置改动；不改 D-236～D-248 的任何判决与登记文本（A01/A04 的 PASS 为新增判决）；A06/A07/A10/A02/A08/A09/A12 的状态与既登记缺口不变；A02/A06 的取证实施属后续独立实施批（D-246 已批方案、未排期）；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
 
 **关联决定：** D-242（owner 覆盖批）、D-244（A01 裁决与 item 4 机制，本条为其预留的最终裁决）、D-247（A11 PASS 先例）、D-248（确认路径批登记、mixed 两表与 v35-only 夹具裁决）、D-239（判据边界与原始缺口登记）、D-174/D-176/D-177/D-179/D-182/D-183（往返语义与迁移链的来源决定）、阶段计划 §6 `:181`/`:184` 与 §10.1/§10.4.5。
+## D-250 P706-A02 取证实施批登记 + A02 判 PASS（JVM 维度，Android 探针按 D-246 为可选未实施）
+
+**状态：** 已批准并登记（2026-10-24，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §6 `:182` + §10.1 状态表 + §10.4.5 汇总）。**tracked 变更**：`ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/P706WalConcurrentSnapshotTest.kt`（新测试类，325 行）+ `tools/ci/ledger-data-shards.txt`（shard 3 新行）+ `.github/workflows/ci.yml:25`（`(106 classes)`→`(107 classes)`，D-240 先例）+ 本条 + `docs/CURRENT_STATE.md` 指针同步。**零产品代码、零 schema/迁移、零依赖改动**（schema 维持 v35 / 34 个 `.sqm`；shards/ci.yml 为 D-240 先例的测试登记面）。
+
+**决定：**
+
+1. **交付内容（PR #135 squash merge，冻结候选 `c09dd0da`）。** 按已批准规格（D-246）§2.1-§2.5 实现 A02 的 JVM 取证腿：(1) WAL 模式打开 + **PRAGMA 返回值读回断言**（官方语义：切换失败静默返旧值，必须确认 `wal`；另加写连接跟随持久 WAL 的读回）；(2) `VACUUM INTO`（经 `BackupSnapshotDriver.runSnapshotIntoOn`）期间独立连接并发写者持续提交带递增 version stamp 的同事务成对行（有界 100k + 取消位 + 全驱动 finally close + sidecar 清理）；(3) **§2.2 步骤 6 并发重叠取证护栏四条不等式逐条在场**（v_mid/v_end 夹逼快照窗口，合取证明写者跨越窗口且产物单一自洽时点、无半笔无混合版本）；(4) 自洽断言面（integrity_ok、marker 恰一行、成对完整、无混合版本计数 0、第三连接读尽等价）。审验链：独立评审 APPROVE-WITH-FINDINGS（0 blocker；2 nit 不要求修——写者上限与 await 的理论竞争为 fail-safe 方向、用例数与规格非约束性估算的登记差异，两项随本条登记备查）；distinct verifier PASS——宿主 native OOM 两次（Gradle daemon 遗留占内存为因之一，主会话 `./gradlew --stop` 后）第三次**实跑成功**（tests=1/failures=0/errors=0，JUnit XML 与三个 hs_err 日志存 `local/artifacts/p706-a02-wal/`）。
+
+2. **A02 判 PASS（JVM 维度）。** 理由：(a) A02 的命题「WAL 下持续写入时导出；还原只出现某个自洽时点，无半笔/混合版本」已在测试拓扑中被完整行使——WAL 前提由测试自建（D-246 item 2 裁决产品**不切换** WAL，测试内自建前提不触碰产品打开路径）；(b) 证据映射按 D-246 item 3 的批准裁决：JVM 腿（本批）+ q13 门 CLI 证据（D-174，Android driver 的 `VACUUM INTO` 可达性）承接两端，**Android instrumented WAL 探针为可选低成本补充、未实施**（D-246 已批的可选项，本条如实登记其未实施，不构成缺口——按 D-239 item 1 判据边界，容器/快照逻辑位于共享模块，Android 适配差异面有各自单元测试）；(c) 当前候选（PR #135 合并提交）CI 全绿使证据对当前候选有效。
+
+3. **逐项状态汇总（§10.4.5）。** P706-A01..A12：**PASS 6 项**（A01/A04 沿 D-249、A03/A05 沿 D-239、A11 沿 D-247、**A02 本条**）、**部分证据 3 项**（A06——真杀进程取证方案已批待实施；A07——租约为通用占位、恢复后原 Unknown 解析未证；A10——满盘/SAF 中途写失败未由 OS 真实触发）、**缺证 3 项**（A08/A09/A12）。FAIL 0。D-239 的「PASS 2」→ D-247「PASS 3」→ D-249「PASS 5」→ 本条「PASS 6」。P7-06 整体仍不判通过。
+
+4. **审验拓扑与证据。** 实施批 autopilot 单 writer + 独立评审（0 blocker）+ distinct verifier（PASS，含实跑）；主代理对宿主 OOM 事故的处置（`--stop` 释放 daemon + 授权最后一次有界重试）如实登记。登记/裁决部分主代理亲手执行。本机未运行全套/ktlint（归 CI）。
+
+5. **边界。** 入：本条 + PR #135 已合并的测试改动 + `docs/CURRENT_STATE.md` 指针同步。出：零产品代码/schema/迁移/依赖改动；不改 D-236～D-249 的任何判决（A02 的 PASS 为新增判决）；A06 取证实施（设备门）与 A08/A09/A12 状态不变；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-246（A02 方案批准与本条的证据映射依据）、D-239（A02 缺证原始登记与判据边界）、D-249（A01/A04 PASS 先例与 §10.4 裁决方法）、D-177（快照/导出语义）、D-174（q13 门 CLI 证据）、阶段计划 §6 `:182` 与 §10.1/§10.4.5。
