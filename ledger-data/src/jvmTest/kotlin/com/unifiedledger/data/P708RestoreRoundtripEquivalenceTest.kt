@@ -113,8 +113,8 @@ import kotlin.time.Instant
  * 08.A owner table (the 11 tables D-218 §3 froze), the four `manual_*_request` annotation columns,
  * the receipt tables, the four 07.B budget tables, the six `catalog_*` owners, `posting_set`, the
  * P7-02 `entry_pin`/`counterparty` owners, the P7-05 void/restore audit owners, the P4 import
- * intake, duplicate-disposition, confirm-path (decision snapshot + confirmation) and
- * matching/reconciliation owners, the note-update receipt
+ * intake, duplicate-disposition, confirm-path (decision snapshot + confirmation), mixed-payment
+ * group and matching/reconciliation owners, the note-update receipt
  * owners, and the base formal transaction/version/posting rows.
  * The budget leg supplies the "预算配置历史"
  * owner half of P706-A11 ("最终 schema 含预算配置历史及标签/商家注释历史…所有新增 owner 往返"); it
@@ -317,6 +317,17 @@ class P708RestoreRoundtripEquivalenceTest {
         listOf("import_confirmation", "import_candidate_decision_snapshot")
 
     /**
+     * The mixed-payment group owners the confirm path's v3 mixed leg writes: one group head and
+     * its two funding legs (the frozen one-asset + one-liability shape the `mixed_payment_group`
+     * guard trigger enforces). `24.sqm` creates both tables additively on the v24 -> v25 edge
+     * (24.sqm:28 and 24.sqm:38), so a v33 source already carries them, and neither `33.sqm` nor
+     * `34.sqm` touches them, so like [importConfirmTables] they are compared on EVERY leg. Rows
+     * come from the real mixed confirm in [seedConfirmPathChains]
+     * (SqlDelightImportSpineStore.kt:703/:712/:721) — no group or leg row is hand-inserted.
+     */
+    private val mixedPaymentGroupTables = listOf("mixed_payment_group", "mixed_payment_group_leg")
+
+    /**
      * The P4 duplicate-disposition owners (plan :181's "重复处置"). A second intake whose business
      * tuple matches the first produces one duplicate candidate, and a review command appends the
      * decision; none of these tables is touched by `33.sqm`/`34.sqm`, so they are compared on every
@@ -338,7 +349,8 @@ class P708RestoreRoundtripEquivalenceTest {
     private val currentSchemaOwnerTables =
         preV34SurvivorTables + annotationOwnerTables + manualRequestTables + budgetOwnerTables +
             catalogOwnerTables + confirmedExpenseReceiptTables + preferenceAndCounterpartyTables + voidRestoreTables +
-            importIntakeTables + importConfirmTables + duplicateReviewTables + reconciliationTables + noteUpdateReceiptTables
+            importIntakeTables + importConfirmTables + mixedPaymentGroupTables + duplicateReviewTables +
+            reconciliationTables + noteUpdateReceiptTables
 
     /**
      * The v34 and rollback owner set: everything in [currentSchemaOwnerTables] except the
@@ -350,7 +362,8 @@ class P708RestoreRoundtripEquivalenceTest {
     private val migratedOwnerTables =
         preV34SurvivorTables + annotationOwnerTables + budgetOwnerTables + catalogOwnerTables +
             confirmedExpenseReceiptTables + preferenceAndCounterpartyTables + voidRestoreTables + importIntakeTables +
-            importConfirmTables + duplicateReviewTables + reconciliationTables + noteUpdateReceiptTables
+            importConfirmTables + mixedPaymentGroupTables + duplicateReviewTables + reconciliationTables +
+            noteUpdateReceiptTables
 
     /**
      * The v33 owner set. A Stage.V33 source has the 11 `08.A` annotation tables DROPPED
@@ -360,7 +373,7 @@ class P708RestoreRoundtripEquivalenceTest {
     private val preAnnotationEdgeOwnerTables =
         preV34SurvivorTables + budgetOwnerTables + catalogOwnerTables + confirmedExpenseReceiptTables +
             preferenceAndCounterpartyTables + voidRestoreTables + importIntakeTables + importConfirmTables +
-            duplicateReviewTables + reconciliationTables + noteUpdateReceiptTables
+            mixedPaymentGroupTables + duplicateReviewTables + reconciliationTables + noteUpdateReceiptTables
 
     /** The stable budget identity the seeded chain binds: two limit revisions then a CLOSED one. */
     private val budgetId = BudgetId("budget-roundtrip")
@@ -1753,6 +1766,11 @@ class P708RestoreRoundtripEquivalenceTest {
      * amounts, the confirmation timestamps, and the confirmation row's full identity chain
      * (confirmation id, request, candidate, status row, formal transaction, operation class).
      * Every query filters on `ledger_id` like the other owner guards.
+     *
+     * The mixed-payment group owners ([mixedPaymentGroupTables]) the same mixed confirm writes are
+     * guarded here too: one head row and its two funding legs, read back FIELD BY FIELD against
+     * the seeded split (asset 3000 + liability 2600 = the 5600 source total) and the frozen
+     * provenance timestamp.
      */
     private fun assertConfirmPathOwnersReadBack(driver: SqlDriver) {
         importConfirmTables.forEach { table ->
@@ -1862,6 +1880,58 @@ class P708RestoreRoundtripEquivalenceTest {
             ),
             "the mixed-payment decision snapshot must keep both leg amounts and the liability attribution",
         )
+        // The mixed confirm's group owners (24.sqm created both tables before v33), guarded so
+        // the SELECT * comparison above carries data and read back field by field: the head row
+        // keeps the full identity chain and the normalized total, and each leg keeps its frozen
+        // class, account and split amount.
+        assertEquals(
+            1L,
+            countOn(driver, "SELECT count(*) FROM mixed_payment_group WHERE ledger_id = '$ledgerId'"),
+            "the mixed confirm writes exactly one payment group head",
+        )
+        assertEquals(
+            2L,
+            countOn(driver, "SELECT count(*) FROM mixed_payment_group_leg WHERE ledger_id = '$ledgerId'"),
+            "the mixed confirm writes exactly two funding legs",
+        )
+        assertEquals(
+            listOf(
+                ledgerId,
+                "group-tx-import-mixed-payment",
+                "import-candidate-mixed-payment",
+                "tx-import-mixed-payment",
+                "import-request-confirm-mixed-payment",
+                "5600",
+                "2026-03-11T03:00:00+08:00",
+            ),
+            singleRowOn(
+                driver,
+                7,
+                "SELECT ledger_id, group_id, candidate_id, transaction_id, request_id, total_minor, generated_at " +
+                    "FROM mixed_payment_group WHERE ledger_id = '$ledgerId'",
+            ),
+            "the mixed payment group head must read back exactly the seeded confirm inputs",
+        )
+        assertEquals(
+            listOf(ledgerId, "group-tx-import-mixed-payment", "1", "asset", "asset-payment-local", "3000"),
+            singleRowOn(
+                driver,
+                6,
+                "SELECT ledger_id, group_id, leg_index, leg_class, account_id, amount_minor " +
+                    "FROM mixed_payment_group_leg WHERE ledger_id = '$ledgerId' AND leg_index = 1",
+            ),
+            "the asset leg must read back exactly its seeded split half",
+        )
+        assertEquals(
+            listOf(ledgerId, "group-tx-import-mixed-payment", "2", "liability", "liability-credit-roundtrip", "2600"),
+            singleRowOn(
+                driver,
+                6,
+                "SELECT ledger_id, group_id, leg_index, leg_class, account_id, amount_minor " +
+                    "FROM mixed_payment_group_leg WHERE ledger_id = '$ledgerId' AND leg_index = 2",
+            ),
+            "the liability leg must read back exactly its seeded split half",
+        )
     }
 
     /**
@@ -1935,6 +2005,8 @@ class P708RestoreRoundtripEquivalenceTest {
             "import_confirmation" -> "ledger_id, confirmation_id"
             "import_candidate_decision_snapshot" -> "ledger_id, request_id"
             "import_receipt" -> "ledger_id, request_id"
+            "mixed_payment_group" -> "ledger_id, group_id"
+            "mixed_payment_group_leg" -> "ledger_id, group_id, leg_index"
             "import_duplicate_candidate" -> "ledger_id, candidate_id"
             "import_duplicate_status_history" -> "ledger_id, candidate_id, sequence"
             "import_duplicate_review_request" -> "ledger_id, request_id"
