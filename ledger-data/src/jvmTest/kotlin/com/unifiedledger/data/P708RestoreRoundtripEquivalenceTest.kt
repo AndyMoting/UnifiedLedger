@@ -59,6 +59,7 @@ import com.unifiedledger.application.ImportSourceFacts
 import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.ManualExpenseCommitResolution
 import com.unifiedledger.application.ManualExpenseRequestIdentity
 import com.unifiedledger.application.ManualExpenseRequestSnapshot
 import com.unifiedledger.application.MixedPaymentFlowFormalFactory
@@ -69,6 +70,7 @@ import com.unifiedledger.application.P408EvidenceResponsibility
 import com.unifiedledger.application.P408Matcher
 import com.unifiedledger.application.P408ReconciliationResult
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.SPINE_NO_CHANGE_REASON_CODE
 import com.unifiedledger.application.SaveBudgetConfiguration
 import com.unifiedledger.application.TransactionVoidFactIdSource
@@ -838,6 +840,200 @@ class P708RestoreRoundtripEquivalenceTest {
                 seededCountTables.forEach { table ->
                     assertEquals(beforeReplay.getValue(table), restoredCount(table), "$table must gain no row from a replayed request")
                 }
+            }
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    /**
+     * P706-A07's second half (plan :187 "…原 Unknown 可确定解析"; D-239 item 4 registered the gap:
+     * the proposition was proven only on the REOPEN path by
+     * [P708UnknownReopenAnnotationReplayTest], never on the restore path; the acceptance
+     * registration belongs to the main agent — nothing here records a vector PASS). The reopen-path
+     * resolution stays that class's subject and is NOT re-proven here. This test constructs the same
+     * Unknown state — a commit that has landed through the real claim-first port while the caller
+     * "crashes" before observing the outcome — on the seeded v35 source library, carries it through
+     * the real `VACUUM INTO` snapshot/restore into a new graph, and resolves it THERE:
+     *
+     *  - the typed resolver ([ResolveManualExpenseCommitStatus]) answers `MatchingReceipt` with the
+     *    ORIGINAL receipt, and a snapshot differing only in its annotation fields stays a typed
+     *    `SnapshotConflict` — the association participates in the resolution identity after a
+     *    restore exactly as after a reopen, because the read adapter decodes the
+     *    `manual_expense_request` annotation columns into the compared snapshot;
+     *  - a same-request replay through the real port returns `NoChange` with the original receipt
+     *    and never re-runs the creation callback;
+     *  - zero new economic effect: every owner table the resolution could touch keeps exactly its
+     *    restored row count;
+     *  - annotation consistency along the reopen precedent: the single revision the commit's
+     *    same-transaction annotation append wrote survives with `observed_transaction_version_id`
+     *    equal to the created version id, its tag association and current pointer intact.
+     *
+     * The manual-expense port is the representative kind (its resolver offers the typed resolution
+     * shape, and the four manual ports share the claim-first annotation append seam). The v35 direct
+     * leg ONLY: the manual commit ports write the `manual_*_request` annotation columns and the
+     * annotation aggregate unconditionally — even for an empty association — so a commit cannot run
+     * against a v34/v33 source in this fixture (`34.sqm` adds the columns, `33.sqm` creates the
+     * aggregate tables); the migration legs stay covered by the four value-equivalence tests above.
+     */
+    @Test
+    fun theUnknownManualExpenseCommitResolvesToTheOriginalReceiptOnTheRestoredGraph() {
+        val dir = tempDir()
+        val source = File(dir, "source-unknown.db")
+        try {
+            seedCurrentLibrary("jdbc:sqlite:${source.path}", Stage.V35)
+            // The Unknown state: the commit lands, the caller never observes the outcome.
+            val identity = ManualExpenseRequestIdentity(LedgerId(ledgerId), RequestId("req-unknown-restored"))
+            val unknownSnapshot =
+                ManualExpenseRequestSnapshot(
+                    ledgerId = LedgerId(ledgerId),
+                    amount = Money.ofMinor(4_200, CurrencyUnit("CNY", 2)),
+                    categoryId = categoryLocal,
+                    paymentAccountId = AccountId("asset-payment-local"),
+                    occurredAt = Instant.parse("2026-03-06T02:00:00Z"),
+                    note = "dinner",
+                    tagIds = setOf(TagId("tag-a")),
+                    merchantId = MerchantId("merchant-1"),
+                )
+            val createdReceipt: ConfirmedExpenseReceipt
+            JdbcSqliteDriver("jdbc:sqlite:${source.path}", foreignKeyProperties()).use { sourceDriver ->
+                val created =
+                    assertIs<ConfirmedManualExpenseResult.Created>(
+                        SqlDelightConfirmedManualExpenseCommitPort(LedgerDatabase(sourceDriver), sourceDriver).commitOnce(
+                            identity,
+                            unknownSnapshot,
+                            // The write-path annotation instant never participates in replay (D-221 R-4).
+                            Instant.parse("2026-03-06T03:00:00Z"),
+                        ) { DomainResult.Success(unknownManualExpenseCommit()) },
+                    )
+                createdReceipt = created.receipt
+            }
+            val snapshot = File(dir, "snapshot-unknown")
+            JdbcSqliteDriver("jdbc:sqlite:${source.path}").use { sourceDriver ->
+                runSnapshotIntoOn(sourceDriver, snapshot.path)
+            }
+            JdbcSqliteDriver("jdbc:sqlite:${snapshot.path}", foreignKeyProperties()).use { restored ->
+                assertEquals(LedgerDatabase.Schema.version, readAuthoritativeUserVersionOn(restored))
+                val database = LedgerDatabase(restored)
+
+                fun restoredCount(table: String): Long = countOn(restored, "SELECT count(*) FROM $table WHERE ledger_id = '$ledgerId'")
+
+                // Non-vacuity baseline, read off the restored graph BEFORE any resolution: the
+                // Unknown commit's rows must already BE on the restored graph (its formal chain,
+                // claim row, receipt and annotation aggregate), so the post-resolution comparison
+                // below compares real data rather than two empty graphs.
+                val resolutionFacingCountTables =
+                    listOf(
+                        "ledger_transaction",
+                        "transaction_version",
+                        "posting_set",
+                        "posting",
+                        "ledger_transaction_current_version",
+                        "manual_expense_request",
+                        "confirmed_expense_receipt",
+                        "transaction_annotation_revision",
+                        "transaction_annotation_tag",
+                        "transaction_annotation_current",
+                        "transaction_annotation_command_request",
+                        "transaction_annotation_command_receipt",
+                    )
+                val beforeResolution = resolutionFacingCountTables.associateWith { table -> restoredCount(table) }
+                assertEquals(
+                    mapOf(
+                        "ledger_transaction" to 7L,
+                        "transaction_version" to 8L,
+                        "posting_set" to 7L,
+                        "posting" to 14L,
+                        "ledger_transaction_current_version" to 7L,
+                        "manual_expense_request" to 2L,
+                        "confirmed_expense_receipt" to 2L,
+                        "transaction_annotation_revision" to 3L,
+                        "transaction_annotation_tag" to 2L,
+                        "transaction_annotation_current" to 2L,
+                        "transaction_annotation_command_request" to 1L,
+                        "transaction_annotation_command_receipt" to 1L,
+                    ),
+                    beforeResolution,
+                    "the restored graph must already carry the committed-but-unobserved Unknown request",
+                )
+
+                // Deterministic resolution: the persisted record matches the attempted snapshot
+                // field for field, so the resolver answers with the ORIGINAL receipt.
+                val resolver = ResolveManualExpenseCommitStatus(SqlDelightLedgerCurrentStateReadAdapter(database))
+                val matched =
+                    assertIs<ManualExpenseCommitResolution.MatchingReceipt>(
+                        resolver.resolve(LedgerId(ledgerId), identity.requestId, unknownSnapshot),
+                    )
+                assertEquals(createdReceipt, matched.receipt, "the restored resolution must answer with the original receipt")
+                // A snapshot differing ONLY in the annotation fields is a conflict, never a match:
+                // the annotation columns participate in the unknown-resolution identity after the
+                // restore exactly as after a reopen.
+                assertIs<ManualExpenseCommitResolution.SnapshotConflict>(
+                    resolver.resolve(LedgerId(ledgerId), identity.requestId, unknownSnapshot.copy(tagIds = emptySet())),
+                )
+                assertIs<ManualExpenseCommitResolution.SnapshotConflict>(
+                    resolver.resolve(LedgerId(ledgerId), identity.requestId, unknownSnapshot.copy(merchantId = null)),
+                )
+
+                // The only legal action for the recovered caller: replay the SAME request — the
+                // original receipt with zero new writes.
+                var creationCallbackCount = 0
+                val replayed =
+                    assertIs<ConfirmedManualExpenseResult.NoChange>(
+                        SqlDelightConfirmedManualExpenseCommitPort(database, restored).commitOnce(
+                            identity,
+                            unknownSnapshot,
+                            Instant.parse("2026-03-06T03:00:00Z"),
+                        ) {
+                            creationCallbackCount += 1
+                            error("a replayed Unknown request must not re-run the creation callback")
+                        },
+                    )
+                assertEquals(0, creationCallbackCount, "an equivalent replay must not re-run the creation callback")
+                assertEquals(createdReceipt, replayed.receipt, "the replay must answer from the restored receipt")
+
+                // Zero new economic effect from the whole post-restore resolution: every counted
+                // table still holds exactly its pre-resolution (restored) row count — no new
+                // transaction, version, posting set, posting, current-version pointer, request,
+                // receipt or annotation row.
+                resolutionFacingCountTables.forEach { table ->
+                    assertEquals(
+                        beforeResolution.getValue(table),
+                        restoredCount(table),
+                        "$table must gain no row from the post-restore Unknown resolution",
+                    )
+                }
+
+                // Annotation consistency along the reopen precedent: the single revision the same
+                // transaction created survives the restore with its observation pinned to the
+                // created version id, its tag association and its current pointer intact.
+                assertEquals(
+                    1L,
+                    countOn(
+                        restored,
+                        "SELECT count(*) FROM transaction_annotation_revision WHERE ledger_id = '$ledgerId' " +
+                            "AND observed_transaction_version_id = 'tx-unknown-version-1' AND merchant_id = 'merchant-1'",
+                    ),
+                    "the restored annotation revision must observe exactly the version the same commit created",
+                )
+                assertEquals(
+                    1L,
+                    countOn(
+                        restored,
+                        "SELECT count(*) FROM transaction_annotation_tag WHERE ledger_id = '$ledgerId' " +
+                            "AND transaction_id = 'tx-unknown' AND tag_id = 'tag-a'",
+                    ),
+                    "the restored tag association must stay bound to the committed revision",
+                )
+                assertEquals(
+                    1L,
+                    countOn(
+                        restored,
+                        "SELECT count(*) FROM transaction_annotation_current WHERE ledger_id = '$ledgerId' " +
+                            "AND transaction_id = 'tx-unknown' AND annotation_revision = 1",
+                    ),
+                    "the restored current pointer must name the commit's single annotation revision",
+                )
             }
         } finally {
             dir.deleteRecursively()
@@ -2194,6 +2390,50 @@ class P708RestoreRoundtripEquivalenceTest {
                                     versionNumber = 1,
                                     postingSetId = PostingSetId("tx-annotated-posting-set-1"),
                                     times = TransactionTimes.collapsed(Instant.parse("2026-03-05T02:00:00Z")),
+                                ),
+                            ),
+                        postingSets = listOf(postingSet),
+                    ),
+                ).value,
+        )
+    }
+
+    /**
+     * The formal commit the Unknown-state creation returns on the source library: a fresh
+     * `tx-unknown` chain with ids distinct from every seeded chain, so the committed-but-unobserved
+     * request's economic effect is exactly one countable transaction the restore has to carry.
+     */
+    private fun unknownManualExpenseCommit(): ConfirmedManualExpenseCommit {
+        val postingSet =
+            assertIs<DomainResult.Success<PostingSet>>(
+                PostingSet.create(
+                    PostingSetId("tx-unknown-posting-set-1"),
+                    listOf(
+                        Posting(PostingId("tx-unknown-posting-0"), AccountId("expense-account-local"), Money.ofMinor(4_200, CurrencyUnit("CNY", 2))),
+                        Posting(PostingId("tx-unknown-posting-1"), AccountId("asset-payment-local"), Money.ofMinor(-4_200, CurrencyUnit("CNY", 2))),
+                    ),
+                ),
+            ).value
+        return ConfirmedManualExpenseCommit(
+            confirmationId = ConfirmationId("confirmation-tx-unknown"),
+            transaction =
+                assertIs<DomainResult.Success<FormalTransaction>>(
+                    FormalTransaction.create(
+                        transaction =
+                            Transaction(
+                                id = TransactionId("tx-unknown"),
+                                ledgerId = LedgerId(ledgerId),
+                                kind = TransactionKind.EXPENSE,
+                                currentVersionId = TransactionVersionId("tx-unknown-version-1"),
+                            ),
+                        versions =
+                            listOf(
+                                TransactionVersion(
+                                    id = TransactionVersionId("tx-unknown-version-1"),
+                                    transactionId = TransactionId("tx-unknown"),
+                                    versionNumber = 1,
+                                    postingSetId = PostingSetId("tx-unknown-posting-set-1"),
+                                    times = TransactionTimes.collapsed(Instant.parse("2026-03-06T02:00:00Z")),
                                 ),
                             ),
                         postingSets = listOf(postingSet),
