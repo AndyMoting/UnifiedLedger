@@ -28,7 +28,6 @@ import kotlin.test.assertTrue
  * declaration line.
  */
 class P708TagMerchantFilterReRequestWiringTest {
-
     @Test
     fun theLoadedFilterReRequestLivesInsideTheRefreshFunctionBody() {
         val lines = trimmedProductionLines()
@@ -108,7 +107,10 @@ class P708TagMerchantFilterReRequestWiringTest {
      * balance (`{` adds one, `}` removes one) from the declaration line onward. A never-balancing
      * body is a hard error rather than a silently truncated span.
      */
-    private fun functionBodySpan(lines: List<String>, definitionIndex: Int): List<String> {
+    private fun functionBodySpan(
+        lines: List<String>,
+        definitionIndex: Int,
+    ): List<String> {
         var depth = 0
         var index = definitionIndex
         while (index < lines.size) {
@@ -144,10 +146,11 @@ class P708TagMerchantFilterReRequestWiringTest {
 
         private const val MONTH_VIEW_REFRESH_CALL = "refreshCatalogSnapshot()"
 
-        private val GATE_SEQUENCE = listOf(
-            "if (result is TagMerchantCommandResult.Accepted ||",
-            "result is TagMerchantCommandResult.NoChange",
-            ") {",
-        )
+        private val GATE_SEQUENCE =
+            listOf(
+                "if (result is TagMerchantCommandResult.Accepted ||",
+                "result is TagMerchantCommandResult.NoChange",
+                ") {",
+            )
     }
 }
