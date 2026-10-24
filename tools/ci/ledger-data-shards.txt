@@ -10,6 +10,8 @@
 1	com.unifiedledger.data.P409PhaseClosureFullStateOracleTest
 1	com.unifiedledger.data.P409SiloSpineCoexistenceTest
 1	com.unifiedledger.data.P705VoidCorrectionMigrationV30ToV31Test
+1	com.unifiedledger.data.P707BudgetCorrectionCrossTest
+1	com.unifiedledger.data.P707BudgetScaleTest
 1	com.unifiedledger.data.P707TimeProjectionWriteMaintenanceTest
 1	com.unifiedledger.data.P708CorrectionAnnotationInteractionTest
 1	com.unifiedledger.data.P708RestoreRoundtripEquivalenceTest
@@ -82,6 +84,8 @@
 3	com.unifiedledger.data.P705EffectivePredicateCostTest
 3	com.unifiedledger.data.P705EffectiveSurfaceTest
 3	com.unifiedledger.data.P705VoidRestoreCommitPortTest
+3	com.unifiedledger.data.P706ConfirmedReceiptsRoundtripTest
+3	com.unifiedledger.data.P706WalConcurrentSnapshotTest
 3	com.unifiedledger.data.P707TimeProjectionMigrationV31ToV32Test
 3	com.unifiedledger.data.RestoreIsolatedMigrationTest
 3	com.unifiedledger.data.Rg02RawJsonEndToEndTest

@@ -6,13 +6,105 @@ import com.unifiedledger.application.BudgetCommandResult
 import com.unifiedledger.application.BudgetIdSource
 import com.unifiedledger.application.BudgetRequestId
 import com.unifiedledger.application.BudgetRequestIdSource
+import com.unifiedledger.application.CatalogCommandResult
+import com.unifiedledger.application.CatalogEntityIdSource
+import com.unifiedledger.application.CatalogEntityIds
+import com.unifiedledger.application.CatalogManagementRequestIdSource
+import com.unifiedledger.application.CatalogRequestId
+import com.unifiedledger.application.ConfirmationId
+import com.unifiedledger.application.ConfirmedExpenseReceipt
+import com.unifiedledger.application.ConfirmedManualExpenseCommit
+import com.unifiedledger.application.ConfirmedManualExpenseResult
+import com.unifiedledger.application.ConfirmedTransactionNoteUpdateIdSource
+import com.unifiedledger.application.ConfirmedTransactionNoteUpdateIds
+import com.unifiedledger.application.ConfirmedTransactionNoteUpdateResult
+import com.unifiedledger.application.CounterpartyCommandResult
+import com.unifiedledger.application.EntryPinResult
+import com.unifiedledger.application.EntryPinTarget
+import com.unifiedledger.application.ExecuteCatalogCommand
+import com.unifiedledger.application.ExecuteConfirmedTransactionNoteUpdate
+import com.unifiedledger.application.ExecuteRestoreTransaction
+import com.unifiedledger.application.ExecuteVoidTransaction
+import com.unifiedledger.application.ExplicitManualSave
+import com.unifiedledger.application.ExplicitlyConfirmedTransactionNoteUpdate
+import com.unifiedledger.application.ImportCandidateDecision
+import com.unifiedledger.application.ImportCandidateDecisionResult
+import com.unifiedledger.application.ImportCandidateDecisionSnapshot
+import com.unifiedledger.application.ImportCandidateId
+import com.unifiedledger.application.ImportCommitIds
+import com.unifiedledger.application.ImportCompleteness
+import com.unifiedledger.application.ImportConfirmDecisionFields
+import com.unifiedledger.application.ImportConfirmationId
+import com.unifiedledger.application.ImportContentFingerprint
+import com.unifiedledger.application.ImportDuplicateCandidateId
+import com.unifiedledger.application.ImportDuplicateComparisonFingerprint
+import com.unifiedledger.application.ImportDuplicateComparisonSnapshot
+import com.unifiedledger.application.ImportDuplicateIntakeIds
+import com.unifiedledger.application.ImportDuplicateReviewId
+import com.unifiedledger.application.ImportDuplicateReviewRequest
+import com.unifiedledger.application.ImportDuplicateReviewResult
+import com.unifiedledger.application.ImportDuplicateStatus
+import com.unifiedledger.application.ImportEvidenceId
+import com.unifiedledger.application.ImportFormalIds
+import com.unifiedledger.application.ImportFundingState
+import com.unifiedledger.application.ImportIntakeIds
+import com.unifiedledger.application.ImportIntakeResult
+import com.unifiedledger.application.ImportIntakeSnapshot
+import com.unifiedledger.application.ImportPaymentProfile
+import com.unifiedledger.application.ImportPaymentVariant
+import com.unifiedledger.application.ImportRecordKind
+import com.unifiedledger.application.ImportRequestId
+import com.unifiedledger.application.ImportRequestIdentity
+import com.unifiedledger.application.ImportSourceFacts
+import com.unifiedledger.application.ImportSourceId
+import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.ManualExpenseCommitResolution
+import com.unifiedledger.application.ManualExpenseRequestIdentity
+import com.unifiedledger.application.ManualExpenseRequestSnapshot
+import com.unifiedledger.application.MixedPaymentFlowFormalFactory
+import com.unifiedledger.application.OrdinaryFlowFormalFactory
+import com.unifiedledger.application.P408ConfirmLinkRequest
+import com.unifiedledger.application.P408EvidenceProjectionPort
+import com.unifiedledger.application.P408EvidenceResponsibility
+import com.unifiedledger.application.P408Matcher
+import com.unifiedledger.application.P408ReconciliationResult
+import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.ResolveManualExpenseCommitStatus
+import com.unifiedledger.application.SPINE_NO_CHANGE_REASON_CODE
 import com.unifiedledger.application.SaveBudgetConfiguration
+import com.unifiedledger.application.TransactionVoidFactIdSource
+import com.unifiedledger.application.TransactionVoidFactIds
+import com.unifiedledger.application.VoidTransactionRequest
+import com.unifiedledger.application.VoidTransactionResult
 import com.unifiedledger.data.db.LedgerDatabase
+import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.BudgetId
 import com.unifiedledger.domain.BudgetScope
+import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CategoryKind
+import com.unifiedledger.domain.CounterpartyId
+import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.DomainResult
+import com.unifiedledger.domain.FormalTransaction
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.MerchantId
+import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.Posting
+import com.unifiedledger.domain.PostingId
+import com.unifiedledger.domain.PostingSet
+import com.unifiedledger.domain.PostingSetId
+import com.unifiedledger.domain.TagId
+import com.unifiedledger.domain.Transaction
 import com.unifiedledger.domain.TransactionId
+import com.unifiedledger.domain.TransactionKind
+import com.unifiedledger.domain.TransactionNoteUpdateIds
+import com.unifiedledger.domain.TransactionTimes
+import com.unifiedledger.domain.TransactionVersion
+import com.unifiedledger.domain.TransactionVersionId
+import com.unifiedledger.domain.VoidReason
+import com.unifiedledger.domain.VoidReasonCode
 import kotlinx.datetime.YearMonth
 import java.io.File
 import java.nio.file.Files
@@ -20,6 +112,7 @@ import kotlin.io.path.absolutePathString
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlin.time.Instant
 
 /**
@@ -37,9 +130,14 @@ import kotlin.time.Instant
  * with `VACUUM INTO`, read back
  * through the isolated-strict-migration path, and compared TABLE BY TABLE, VALUE BY VALUE — every
  * 08.A owner table (the 11 tables D-218 §3 froze), the four `manual_*_request` annotation columns,
- * the receipt tables and the four 07.B budget tables. The budget leg supplies the "预算配置历史"
+ * the receipt tables, the four 07.B budget tables, the six `catalog_*` owners, `posting_set`, the
+ * P7-02 `entry_pin`/`counterparty` owners, the P7-05 void/restore audit owners, the P4 import
+ * intake, duplicate-disposition, confirm-path (decision snapshot + confirmation), mixed-payment
+ * group and matching/reconciliation owners, the note-update receipt
+ * owners, and the base formal transaction/version/posting rows.
+ * The budget leg supplies the "预算配置历史"
  * owner half of P706-A11 ("最终 schema 含预算配置历史及标签/商家注释历史…所有新增 owner 往返"); it
- * registers no vector PASS. Three legs:
+ * registers no vector PASS. Four legs (the fourth is the failed-migration rollback):
  *
  *  - (a) v35 direct: the snapshot's authoritative version equals the current schema
  *    (`needsMigration == false`) and the read-back is value-identical;
@@ -50,11 +148,14 @@ import kotlin.time.Instant
  *
  * Budget tables exist from v33 onward (`32.sqm` is the v32 → v33 edge and neither `33.sqm` nor
  * `34.sqm` touches them), so every leg carries a seeded budget chain and compares it value-for-value.
- * Asserting them EMPTY on the v33 leg would be an "empty vs empty" vacuous claim, not evidence. The
- * seeded chain ends CLOSED so both legal `budget_settings_history` row shapes (MONITORED with a
- * non-null limit, CLOSED with NULL) are covered; a CATEGORY-scope budget is deliberately NOT seeded
- * because it needs a bootstrapped `catalog_category` FK target the v33 fixture does not have — that
- * remains a registered residual.
+ * Asserting them EMPTY on the v33 leg would be an "empty vs empty" vacuous claim, not evidence. Two
+ * chains are seeded through the real claim-first command port: a TOTAL chain whose three revisions
+ * end CLOSED (so both legal `budget_settings_history` row shapes — MONITORED with a non-null limit
+ * and CLOSED with NULL — are covered) and an independent CATEGORY chain on the `cat-local` expense
+ * leaf (two MONITORED revisions). The CATEGORY chain needs a bootstrapped `catalog_category` FK
+ * target, so every stage first runs the real product catalog bootstrap with [restoreCatalogSeed];
+ * that seed carries every id the fixture already references, because bootstrap fails closed on an
+ * unresolved posting/manual reference (`SqlDelightCatalogStore.unresolvedReferences`).
  *
  * Contract honesty (R-221-3 precedent): the v34/v33 fixtures are reverse-engineered from the fresh
  * schema (DROP COLUMN / DROP TABLE), so the legs prove the `columnInfo` contract and VALUE
@@ -87,9 +188,40 @@ class P708RestoreRoundtripEquivalenceTest {
             "manual_lending_request",
         )
 
-    /** The tables the v33 fixture seeds; they exist below v34 and must survive the whole chain. */
+    /**
+     * The base ledger owners the fixture seeds at every stage ([seedCurrentLibrary]): the formal
+     * transactions, their versions, their postings and their current-version pointers. The fixture
+     * seeds four such chains (the annotated expense, the void/restore target, the reconciliation
+     * source and the note-update target). Neither `33.sqm` nor `34.sqm` touches these tables, so
+     * every leg compares them.
+     */
     private val preV34SurvivorTables =
         listOf("ledger_transaction", "transaction_version", "posting", "ledger_transaction_current_version")
+
+    /**
+     * The catalog and posting-set owners the fixture writes but the earlier comparisons never
+     * covered (plan :181 P706-A01: the round-trip must be equal "逐 owner/稳定 ID", not just for the
+     * annotation and budget families). Each of them is a stable-id owner the restore has to carry
+     * value for value.
+     *
+     * Where the rows come from: the six `catalog_*` tables are written by the real product paths
+     * the fixture already runs — [restoreCatalogSeed] through `SqlDelightCatalogStore.bootstrap`
+     * writes `catalog_account`, `catalog_category`, `catalog_name_history` and `catalog_version`,
+     * and [seedCatalogCommandChain] adds one accepted rename through the same claim-first port,
+     * which writes `catalog_command_request`, `catalog_command_receipt` and one more name-history
+     * revision. `posting_set` rows are hand-inserted once per seeded transaction chain
+     * ([seedCurrentLibrary]).
+     */
+    private val catalogOwnerTables =
+        listOf(
+            "catalog_version",
+            "catalog_account",
+            "catalog_category",
+            "catalog_name_history",
+            "catalog_command_request",
+            "catalog_command_receipt",
+            "posting_set",
+        )
 
     /**
      * The 07.B budget owner tables (P706-A11's "预算配置历史" half). `32.sqm` creates them on the
@@ -104,8 +236,172 @@ class P708RestoreRoundtripEquivalenceTest {
             "budget_command_receipt",
         )
 
+    /**
+     * The manual-expense confirmation receipt. The fixture writes it on EVERY leg (it shares the
+     * `manual_expense_request` row, whose annotation columns `34.sqm` adds), and no later edge
+     * touches the table, so it is compared on every leg rather than only the fresh one.
+     */
+    private val confirmedExpenseReceiptTables = listOf("confirmed_expense_receipt")
+
+    /**
+     * The P7-02 entry-preference and counterparty owners. `entry_pin` is the plan's `:181` "置顶"
+     * half; the counterparty pair is the `对手方` family the same "往返逐 owner/稳定 ID 等价"
+     * requirement covers (the :181 row itself does not enumerate it). `28.sqm` (v28 → v29) creates
+     * all three and no later edge touches them, so they exist on every leg. Both families are
+     * written through their real product ports ([seedEntryPreferenceAndCounterpartyChain]), not
+     * hand-built.
+     */
+    private val preferenceAndCounterpartyTables =
+        listOf("entry_pin", "counterparty", "counterparty_name_history")
+
+    /**
+     * The P7-05 void/restore audit owners (plan :181's "作废恢复历史"). `30.sqm` (v30 -> v31) creates
+     * them and no later edge touches them, so they exist on every leg. The seeded chain appends a
+     * void fact and a restore fact through the real use cases, so the history is two rows rather
+     * than one current flag.
+     */
+    private val voidRestoreTables =
+        listOf("transaction_void_request", "transaction_void_fact", "transaction_void_receipt")
+
+    /**
+     * The P4-08 matching/reconciliation owners (plan :181's "匹配/对账"). `22.sqm` creates the
+     * link/reconciliation tables and `25.sqm` the evidence projection (which also rebuilds the link
+     * and request-snapshot tables); neither `33.sqm` nor `34.sqm` touches any of them, so they are
+     * compared on every leg. One confirmed link writes the evidence link, the posting reconciliation,
+     * both histories, the request claim/snapshot and the receipt, plus the READY evidence projection
+     * it materializes. This is the `confirmLink` write set; the family's
+     * `reconciliation_correction_snapshot` belongs to the correction path, which this fixture does
+     * not run.
+     */
+    private val reconciliationTables =
+        listOf(
+            "evidence_projection",
+            "evidence_link",
+            "evidence_link_history",
+            "posting_reconciliation",
+            "posting_reconciliation_history",
+            "reconciliation_request",
+            "reconciliation_request_snapshot",
+            "reconciliation_receipt",
+        )
+
+    /**
+     * The note-update receipt owners (plan :181's "回执" half). `2.sqm` creates both (v2 -> v3) and
+     * `5.sqm` rebuilds them; neither `33.sqm` nor `34.sqm` touches them, so they are compared on
+     * every leg. One accepted
+     * note replacement writes one row in each. The sibling manual-create receipts (income, transfer,
+     * lending) are NOT here: their ports write the annotation columns `34.sqm` adds, so they cannot
+     * run below v35 in this fixture.
+     */
+    private val noteUpdateReceiptTables =
+        listOf("transaction_note_update_request", "confirmed_transaction_note_update_receipt")
+
+    /**
+     * The P4 import intake owners (plan :181's "来源/候选"). Neither `33.sqm` nor `34.sqm` touches
+     * them, so they are compared on every leg. The v1 ordinary intake ([seedImportIntakeChain])
+     * writes all but `import_candidate_payment_profile`, which only a v3 record writes
+     * ([seedPaymentProfileIntakeChain]); every entry is non-empty on every leg either way. The
+     * confirm-side owners have their own family list ([importConfirmTables]):
+     * [seedConfirmPathChains] confirms the candidates of the v1 and v3 intakes through the real
+     * confirm port, so both rows exist on every leg too.
+     */
+    private val importIntakeTables =
+        listOf(
+            "import_request",
+            "import_source_record",
+            "import_evidence",
+            "import_candidate",
+            "import_candidate_requires_confirmation",
+            "import_candidate_payment_profile",
+            "import_candidate_status_history",
+            "import_receipt",
+        )
+
+    /**
+     * The confirm-path owners of the "来源/候选" family: the per-request decision snapshot and the
+     * per-candidate confirmation row. Both are created by the base `Ledger.sq`
+     * (`import_candidate_decision_snapshot` at Ledger.sq:8125, `import_confirmation` at
+     * Ledger.sq:8181), and their only later edges are DROP-and-rebuild copies that predate v33:
+     * `20.sqm` and `21.sqm` rebuild the snapshot with the from/to columns (20.sqm:88,
+     * 21.sqm:147), `21.sqm` copies the confirmation unchanged (21.sqm:200), and `24.sqm`
+     * rebuilds the snapshot with the
+     * credit/mixed columns (24.sqm:151). A v33 source therefore already carries both tables in
+     * their current shape, so like the intake owners they are compared on EVERY leg rather than
+     * only the fresh one.
+     *
+     * Rows come from [seedConfirmPathChains], which runs the real product confirm port
+     * ([SqlDelightImportSpineStore.commitOnce]) once per already-intaken candidate.
+     */
+    private val importConfirmTables =
+        listOf("import_confirmation", "import_candidate_decision_snapshot")
+
+    /**
+     * The mixed-payment group owners the confirm path's v3 mixed leg writes: one group head and
+     * its two funding legs (the frozen one-asset + one-liability shape the `mixed_payment_group`
+     * guard trigger enforces). `24.sqm` creates both tables additively on the v24 -> v25 edge
+     * (24.sqm:28 and 24.sqm:38), so a v33 source already carries them, and neither `33.sqm` nor
+     * `34.sqm` touches them, so like [importConfirmTables] they are compared on EVERY leg. Rows
+     * come from the real mixed confirm in [seedConfirmPathChains]
+     * (SqlDelightImportSpineStore.kt:703/:712/:721) — no group or leg row is hand-inserted.
+     */
+    private val mixedPaymentGroupTables = listOf("mixed_payment_group", "mixed_payment_group_leg")
+
+    /**
+     * The P4 duplicate-disposition owners (plan :181's "重复处置"). A second intake whose business
+     * tuple matches the first produces one duplicate candidate, and a review command appends the
+     * decision; none of these tables is touched by `33.sqm`/`34.sqm`, so they are compared on every
+     * leg.
+     */
+    private val duplicateReviewTables =
+        listOf(
+            "import_duplicate_candidate",
+            "import_duplicate_status_history",
+            "import_duplicate_review_request",
+            "import_duplicate_review_snapshot",
+            "import_duplicate_review_receipt",
+        )
+
+    /**
+     * Every owner table the fixture writes, compared with `SELECT *` on the leg whose source and
+     * snapshot are both at the current schema (v35). One list keeps the legs from drifting apart.
+     */
+    private val currentSchemaOwnerTables =
+        preV34SurvivorTables + annotationOwnerTables + manualRequestTables + budgetOwnerTables +
+            catalogOwnerTables + confirmedExpenseReceiptTables + preferenceAndCounterpartyTables + voidRestoreTables +
+            importIntakeTables + importConfirmTables + mixedPaymentGroupTables + duplicateReviewTables +
+            reconciliationTables + noteUpdateReceiptTables
+
+    /**
+     * The v34 and rollback owner set: everything in [currentSchemaOwnerTables] except the
+     * `manual_*_request` tables. On those legs the source lacks the two annotation columns `34.sqm`
+     * adds, so a `SELECT *` would compare different column counts; the legs compare
+     * [manualRequestTables] separately on [commonManualExpenseColumns]. The 11 annotation tables DO
+     * exist in a v34 source (`33.sqm` created them), so they stay in.
+     */
+    private val migratedOwnerTables =
+        preV34SurvivorTables + annotationOwnerTables + budgetOwnerTables + catalogOwnerTables +
+            confirmedExpenseReceiptTables + preferenceAndCounterpartyTables + voidRestoreTables + importIntakeTables +
+            importConfirmTables + mixedPaymentGroupTables + duplicateReviewTables + reconciliationTables +
+            noteUpdateReceiptTables
+
+    /**
+     * The v33 owner set. A Stage.V33 source has the 11 `08.A` annotation tables DROPPED
+     * ([seedCurrentLibrary]), so they cannot be read from it at all; the leg instead proves they
+     * land empty on the migrated copy and compares the remaining owners value-for-value.
+     */
+    private val preAnnotationEdgeOwnerTables =
+        preV34SurvivorTables + budgetOwnerTables + catalogOwnerTables + confirmedExpenseReceiptTables +
+            preferenceAndCounterpartyTables + voidRestoreTables + importIntakeTables + importConfirmTables +
+            mixedPaymentGroupTables + duplicateReviewTables + reconciliationTables + noteUpdateReceiptTables
+
     /** The stable budget identity the seeded chain binds: two limit revisions then a CLOSED one. */
     private val budgetId = BudgetId("budget-roundtrip")
+
+    /** The independent CATEGORY-scope chain: two MONITORED revisions on the `cat-local` leaf. */
+    private val categoryBudgetId = BudgetId("budget-roundtrip-category")
+
+    /** The stable expense leaf both the manual-expense row and the CATEGORY budget name. */
+    private val categoryLocal = CategoryId("cat-local")
 
     /**
      * The manual_*_request columns shared by v34 and v35 shapes: the value comparison across the
@@ -131,7 +427,7 @@ class P708RestoreRoundtripEquivalenceTest {
                 assertValueIdentical(
                     source.path,
                     snapshot.path,
-                    annotationOwnerTables + manualRequestTables + budgetOwnerTables + listOf("confirmed_expense_receipt"),
+                    currentSchemaOwnerTables,
                 )
                 // The 08.D read path returns the whole history off the restored snapshot.
                 val database = LedgerDatabase(snapshotDriver)
@@ -149,12 +445,9 @@ class P708RestoreRoundtripEquivalenceTest {
                 // what proves the history crossed the roundtrip. Both legal row shapes of
                 // budget_settings_history are covered (spec section 3.3: MONITORED carries a
                 // non-null limit, CLOSED carries NULL — close appends, it never deletes).
-                val settings =
-                    SqlDelightBudgetStore(database, snapshotDriver)
-                        .settingsHistory(LedgerId(ledgerId), budgetId)
-                assertEquals(listOf(1L, 2L, 3L), settings.map { it.revisionNumber })
-                assertEquals(listOf(false, false, true), settings.map { it.closed })
-                assertEquals(listOf(100_000L, 150_000L, null), settings.map { it.limitMinorUnits })
+                assertBothBudgetHistoriesReadBack(snapshotDriver)
+                assertCatalogOwnersReadBackNonVacuously(snapshotDriver)
+                assertConfirmPathOwnersReadBack(snapshotDriver)
             }
         } finally {
             dir.deleteRecursively()
@@ -179,7 +472,14 @@ class P708RestoreRoundtripEquivalenceTest {
                 // row's annotation columns are NULL == the frozen "no annotation" default
                 // (D-221 R2) and the three unseeded manual tables stay empty. `34.sqm` does not
                 // touch the budget tables, so the seeded chain crosses this edge value-for-value.
-                assertValueIdentical(source.path, snapshot.path, annotationOwnerTables + budgetOwnerTables)
+                assertValueIdentical(
+                    source.path,
+                    snapshot.path,
+                    migratedOwnerTables,
+                )
+                assertBothBudgetHistoriesReadBack(isolated)
+                assertCatalogOwnersReadBackNonVacuously(isolated)
+                assertConfirmPathOwnersReadBack(isolated)
                 assertValueIdentical(
                     source.path,
                     snapshot.path,
@@ -239,16 +539,24 @@ class P708RestoreRoundtripEquivalenceTest {
                 // The pre-v34 owner rows survive value-for-value through the whole chain (the
                 // manual claim row projected onto its v33 columns — the edge added the two
                 // annotation columns). The budget chain was already present at v33 and must
-                // cross the untouched edges unchanged.
-                assertValueIdentical(source.path, snapshot.path, preV34SurvivorTables + budgetOwnerTables)
-                // Non-vacuity guard for the budget leg: all three revisions really are on the
+                // cross the untouched edges unchanged. The 11 annotation tables are deliberately
+                // NOT in this list: a v33 source does not have them (see
+                // [preAnnotationEdgeOwnerTables]).
+                assertValueIdentical(source.path, snapshot.path, preAnnotationEdgeOwnerTables)
+                // The migrated copy also READS BACK both immutable chains through the real store.
+                assertBothBudgetHistoriesReadBack(isolated)
+                assertCatalogOwnersReadBackNonVacuously(isolated)
+                assertConfirmPathOwnersReadBack(isolated)
+                // Non-vacuity guard for the budget leg: every seeded revision really is on the
                 // migrated copy, so the comparison above compares data rather than two empty
-                // results. `commitOnce` writes exactly one receipt per ACCEPTED command — three
-                // here (two limit revisions plus the close) — so the receipt count is 3 too.
+                // results. Two chains: the TOTAL chain's three revisions (two limits plus the
+                // close) and the CATEGORY chain's two MONITORED revisions. `commitOnce` writes
+                // exactly one receipt and one request row per ACCEPTED command, so both tables
+                // hold 5 too, and exactly two stable identities exist.
                 assertEquals(
-                    3L,
+                    5L,
                     countOn(isolated, "SELECT count(*) FROM budget_settings_history"),
-                    "the seeded three-revision budget history must survive the chain",
+                    "both seeded budget chains must survive the chain",
                 )
                 assertEquals(
                     1L,
@@ -256,9 +564,36 @@ class P708RestoreRoundtripEquivalenceTest {
                     "the CLOSED NULL-limit row shape must survive the chain",
                 )
                 assertEquals(
-                    3L,
+                    5L,
                     countOn(isolated, "SELECT count(*) FROM budget_command_receipt"),
                     "the budget receipts must survive the chain",
+                )
+                assertEquals(
+                    5L,
+                    countOn(isolated, "SELECT count(*) FROM budget_command_request"),
+                    "the claim-first request rows must survive the chain",
+                )
+                assertEquals(
+                    2L,
+                    countOn(isolated, "SELECT count(*) FROM budget_config"),
+                    "each chain keeps exactly one stable budget identity",
+                )
+                // The CATEGORY-scope chain exists with its stable category attribution; without the
+                // catalog bootstrap and the seeded category the FK could not even be written.
+                assertEquals(
+                    2L,
+                    countOn(isolated, "SELECT count(*) FROM budget_settings_history WHERE scope_kind = 'CATEGORY'"),
+                    "the CATEGORY chain's two revisions must survive",
+                )
+                assertEquals(
+                    2L,
+                    countOn(isolated, "SELECT count(*) FROM budget_settings_history WHERE scope_category_id = 'cat-local'"),
+                    "the CATEGORY chain must stay bound to the stable category id",
+                )
+                assertEquals(
+                    1L,
+                    countOn(isolated, "SELECT count(*) FROM budget_config WHERE scope_kind = 'CATEGORY' AND scope_category_id = 'cat-local'"),
+                    "the CATEGORY config row must keep its FK target",
                 )
                 assertValueIdentical(source.path, snapshot.path, listOf("manual_expense_request")) { commonManualExpenseColumns }
             }
@@ -289,10 +624,416 @@ class P708RestoreRoundtripEquivalenceTest {
             // is NOT asserted: the sentinel tamper above is a deliberate write to this copy.
             JdbcSqliteDriver("jdbc:sqlite:${snapshot.path}").use { reopened ->
                 assertEquals(34L, readAuthoritativeUserVersionOn(reopened))
-                assertValueIdentical(source.path, snapshot.path, annotationOwnerTables + budgetOwnerTables)
+                assertValueIdentical(
+                    source.path,
+                    snapshot.path,
+                    migratedOwnerTables,
+                )
+                assertCatalogOwnersReadBackNonVacuously(reopened)
+                assertConfirmPathOwnersReadBack(reopened)
                 assertValueIdentical(source.path, snapshot.path, manualRequestTables) { table ->
                     if (table == "manual_expense_request") commonManualExpenseColumns else null
                 }
+            }
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    /**
+     * P706-A08 restore-then-replay idempotency (plan :188 "恢复库已有提交回执，重放同请求" — a restored
+     * library already carries the committed receipts, so replaying the same request returns the
+     * original result and adds zero formal economic effect; D-239 item 4 registered this vector as
+     * missing evidence, and D-249 item 2 is the JVM-dimension adjudication precedent for the
+     * restore/round-trip family). Both real commit ports replay against ONE restored graph: the
+     * manual-expense port replays the seeded `req-annotated` request, and the import spine replays
+     * both seeded confirm requests ([seedConfirmPathChains], whose write surface spans the
+     * confirm-path owners and the mixed-payment group owners of D-248).
+     *
+     * Three replay propositions are deliberately NOT conflated here. Same-active-database replay
+     * is `ConfirmedManualExpenseIdempotencyTest`'s subject (ledger-application) and is not
+     * re-proven. The manual-expense port's restore leg (real commit → `VACUUM INTO` → replay on a
+     * new file identity) is already delivered by SqlDelightConfirmedManualExpenseCommitPortTest on
+     * a minimal expense-only fixture; what this test adds is the same replay on the FULL
+     * owner-surface fixture of this class — where the restored graph carries every other owner
+     * family alongside the receipt — plus the import-confirm leg, which that class never
+     * exercises. The replay itself is the receipt path, not re-creation: both ports resolve the
+     * existing request because the claim INSERT does not take effect, then compare the stored
+     * request state against the replayed snapshot (SqlDelightConfirmedManualExpenseCommitPort's
+     * `resolveExisting`; SqlDelightImportSpineStore's `resolveConfirm`).
+     */
+    @Test
+    fun aReplayOfTheRealCommitPortsAfterRestoreReturnsTheOriginalResultsWithZeroNewEffects() {
+        val dir = tempDir()
+        val source = File(dir, "source-replay.db")
+        try {
+            seedCurrentLibrary("jdbc:sqlite:${source.path}", Stage.V35)
+            val snapshot = File(dir, "snapshot-replay")
+            JdbcSqliteDriver("jdbc:sqlite:${source.path}").use { sourceDriver ->
+                runSnapshotIntoOn(sourceDriver, snapshot.path)
+            }
+            JdbcSqliteDriver("jdbc:sqlite:${snapshot.path}", foreignKeyProperties()).use { restored ->
+                val database = LedgerDatabase(restored)
+                // Non-vacuity baseline, read off the restored graph BEFORE any replay: the six
+                // replay-facing tables must already hold their seeded rows, and the five formal
+                // tables their seeded totals, so the post-replay comparison below compares real
+                // data rather than two empty graphs.
+                val formalCountTables =
+                    listOf(
+                        "ledger_transaction",
+                        "transaction_version",
+                        "posting_set",
+                        "posting",
+                        "ledger_transaction_current_version",
+                    )
+                val replayFacingCountTables =
+                    listOf(
+                        "manual_expense_request",
+                        "confirmed_expense_receipt",
+                        "import_confirmation",
+                        "import_candidate_decision_snapshot",
+                        "mixed_payment_group",
+                        "mixed_payment_group_leg",
+                    )
+
+                fun restoredCount(table: String): Long = countOn(restored, "SELECT count(*) FROM $table WHERE ledger_id = '$ledgerId'")
+
+                val seededCountTables = formalCountTables + replayFacingCountTables
+                val beforeReplay = seededCountTables.associateWith { table -> restoredCount(table) }
+                assertEquals(
+                    mapOf(
+                        "ledger_transaction" to 6L,
+                        "transaction_version" to 7L,
+                        "posting_set" to 6L,
+                        "posting" to 12L,
+                        "ledger_transaction_current_version" to 6L,
+                        "manual_expense_request" to 1L,
+                        "confirmed_expense_receipt" to 1L,
+                        "import_confirmation" to 2L,
+                        "import_candidate_decision_snapshot" to 2L,
+                        "mixed_payment_group" to 1L,
+                        "mixed_payment_group_leg" to 2L,
+                    ),
+                    beforeReplay,
+                    "the restored graph must carry exactly the seeded rows the replays answer from",
+                )
+
+                // Leg 1 — the manual-expense port replays the seeded request identity. The replay
+                // snapshot mirrors the hand-inserted `req-annotated` row value for value, including
+                // its seeded tag/merchant annotation in the canonical D-221 encoding the replay
+                // matcher compares; the creation callback below is the counter an equivalent
+                // replay must never invoke.
+                var creationCallbackCount = 0
+                val replayedManualExpense =
+                    SqlDelightConfirmedManualExpenseCommitPort(database, restored).commitOnce(
+                        ManualExpenseRequestIdentity(LedgerId(ledgerId), RequestId("req-annotated")),
+                        ManualExpenseRequestSnapshot(
+                            ledgerId = LedgerId(ledgerId),
+                            amount = Money.ofMinor(3_580, CurrencyUnit("CNY", 2)),
+                            categoryId = categoryLocal,
+                            paymentAccountId = AccountId("asset-payment-local"),
+                            occurredAt = Instant.parse("2026-03-05T02:00:00Z"),
+                            note = "lunch",
+                            tagIds = setOf(TagId("tag-a")),
+                            merchantId = MerchantId("merchant-1"),
+                        ),
+                        // The write-path annotation instant never participates in replay (D-221 R-4).
+                        Instant.parse("2026-03-05T03:00:00Z"),
+                    ) {
+                        creationCallbackCount += 1
+                        DomainResult.Success(replayedManualExpenseCommit())
+                    }
+                assertEquals(0, creationCallbackCount, "an equivalent replay must not re-run the creation callback")
+                assertEquals(
+                    ConfirmedManualExpenseResult.NoChange(
+                        ConfirmedExpenseReceipt(
+                            confirmationId = ConfirmationId("confirmation-tx-annotated"),
+                            transactionId = TransactionId("tx-annotated"),
+                        ),
+                    ),
+                    replayedManualExpense,
+                    "the manual-expense replay must answer from the seeded receipt",
+                )
+                assertEquals(
+                    listOf("tag-a", "merchant-1"),
+                    singleRowOn(
+                        restored,
+                        2,
+                        "SELECT annotation_tag_ids, annotation_merchant_id FROM manual_expense_request " +
+                            "WHERE ledger_id = '$ledgerId' AND request_id = 'req-annotated'",
+                    ),
+                    "the replayed claim must not rewrite the canonical annotation columns",
+                )
+
+                // Leg 2 — the import spine replays both seeded confirm requests on the restored
+                // graph. The replay snapshots mirror the seeded confirms value for value; the id
+                // allocation and formal-transaction callbacks are unreachable on the receipt path,
+                // so a replay that ever reaches them fails the test here instead of writing.
+                val catalog =
+                    requireNotNull(SqlDelightCatalogStore(database, restored).loadCurrent(LedgerId(ledgerId))) {
+                        "the restored catalog must load before the confirm replays run"
+                    }
+                val spine = SqlDelightImportSpineStore(database, restored)
+                val ordinaryReplay =
+                    spine.commitOnce(
+                        identity = ImportRequestIdentity(LedgerId(ledgerId), ImportRequestId("import-request-confirm-roundtrip")),
+                        snapshot =
+                            ImportCandidateDecisionSnapshot(
+                                candidateId = ImportCandidateId("import-candidate-roundtrip"),
+                                decision = ImportCandidateDecision.CONFIRM,
+                                expectedContentHash =
+                                    ImportContentFingerprint().digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, importRoundtripFacts),
+                                explicitConfirmedAt = "2026-03-07T03:00:00+08:00",
+                                confirmDecisionFields =
+                                    ImportConfirmDecisionFields.OrdinaryFlow(
+                                        categoryId = categoryLocal,
+                                        fundingAccountId = AccountId("asset-payment-local"),
+                                    ),
+                            ),
+                        allocateIds = { error("a replayed confirm must not allocate ids") },
+                        catalog = catalog,
+                        createFormalTransaction = { _, _ -> error("a replayed confirm must not create a formal transaction") },
+                    )
+                assertIs<ImportCandidateDecisionResult.NoChange>(ordinaryReplay)
+                assertEquals(SPINE_NO_CHANGE_REASON_CODE, ordinaryReplay.reasonCode, "the replay reason code is frozen")
+                assertEquals(
+                    "import-confirmation-roundtrip",
+                    ordinaryReplay.receipt.confirmationId?.value,
+                    "the ordinary replay must answer from its original confirmation",
+                )
+                val mixedReplay =
+                    spine.commitOnce(
+                        identity = ImportRequestIdentity(LedgerId(ledgerId), ImportRequestId("import-request-confirm-mixed-payment")),
+                        snapshot =
+                            ImportCandidateDecisionSnapshot(
+                                candidateId = ImportCandidateId("import-candidate-mixed-payment"),
+                                decision = ImportCandidateDecision.CONFIRM,
+                                expectedContentHash =
+                                    ImportContentFingerprint()
+                                        .digest(ImportRecordKind.MIXED_PAYMENT_SOURCE, importMixedPaymentFacts, importMixedPaymentProfile),
+                                explicitConfirmedAt = "2026-03-11T03:00:00+08:00",
+                                confirmDecisionFields =
+                                    ImportConfirmDecisionFields.MixedPaymentFlow(
+                                        categoryId = categoryLocal,
+                                        assetAccountId = AccountId("asset-payment-local"),
+                                        creditLiabilityAccountId = AccountId("liability-credit-roundtrip"),
+                                        assetLegMinor = 3_000L,
+                                        creditLegMinor = 2_600L,
+                                    ),
+                            ),
+                        allocateIds = { error("a replayed confirm must not allocate ids") },
+                        catalog = catalog,
+                        createFormalTransaction = { _, _ -> error("a replayed confirm must not create a formal transaction") },
+                    )
+                assertIs<ImportCandidateDecisionResult.NoChange>(mixedReplay)
+                assertEquals(SPINE_NO_CHANGE_REASON_CODE, mixedReplay.reasonCode, "the replay reason code is frozen")
+                assertEquals(
+                    "import-confirmation-mixed-payment",
+                    mixedReplay.receipt.confirmationId?.value,
+                    "the mixed-payment replay must answer from its original confirmation",
+                )
+
+                // Zero new economic effect from all three replays: every counted table still holds
+                // exactly its pre-replay (seeded) row count — no new transaction, version, posting
+                // set, posting, current-version pointer, request, receipt, confirmation, decision
+                // snapshot, mixed-payment group head or funding leg.
+                seededCountTables.forEach { table ->
+                    assertEquals(beforeReplay.getValue(table), restoredCount(table), "$table must gain no row from a replayed request")
+                }
+            }
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    /**
+     * P706-A07's second half (plan :187 "…原 Unknown 可确定解析"; D-239 item 4 registered the gap:
+     * the proposition was proven only on the REOPEN path by
+     * [P708UnknownReopenAnnotationReplayTest], never on the restore path; the acceptance
+     * registration belongs to the main agent — nothing here records a vector PASS). The reopen-path
+     * resolution stays that class's subject and is NOT re-proven here. This test constructs the same
+     * Unknown state — a commit that has landed through the real claim-first port while the caller
+     * "crashes" before observing the outcome — on the seeded v35 source library, carries it through
+     * the real `VACUUM INTO` snapshot/restore into a new graph, and resolves it THERE:
+     *
+     *  - the typed resolver ([ResolveManualExpenseCommitStatus]) answers `MatchingReceipt` with the
+     *    ORIGINAL receipt, and a snapshot differing only in its annotation fields stays a typed
+     *    `SnapshotConflict` — the association participates in the resolution identity after a
+     *    restore exactly as after a reopen, because the read adapter decodes the
+     *    `manual_expense_request` annotation columns into the compared snapshot;
+     *  - a same-request replay through the real port returns `NoChange` with the original receipt
+     *    and never re-runs the creation callback;
+     *  - zero new economic effect: every owner table the resolution could touch keeps exactly its
+     *    restored row count;
+     *  - annotation consistency along the reopen precedent: the single revision the commit's
+     *    same-transaction annotation append wrote survives with `observed_transaction_version_id`
+     *    equal to the created version id, its tag association and current pointer intact.
+     *
+     * The manual-expense port is the representative kind (its resolver offers the typed resolution
+     * shape, and the four manual ports share the claim-first annotation append seam). The v35 direct
+     * leg ONLY: the manual commit ports write the `manual_*_request` annotation columns and the
+     * annotation aggregate unconditionally — even for an empty association — so a commit cannot run
+     * against a v34/v33 source in this fixture (`34.sqm` adds the columns, `33.sqm` creates the
+     * aggregate tables); the migration legs stay covered by the four value-equivalence tests above.
+     */
+    @Test
+    fun theUnknownManualExpenseCommitResolvesToTheOriginalReceiptOnTheRestoredGraph() {
+        val dir = tempDir()
+        val source = File(dir, "source-unknown.db")
+        try {
+            seedCurrentLibrary("jdbc:sqlite:${source.path}", Stage.V35)
+            // The Unknown state: the commit lands, the caller never observes the outcome.
+            val identity = ManualExpenseRequestIdentity(LedgerId(ledgerId), RequestId("req-unknown-restored"))
+            val unknownSnapshot =
+                ManualExpenseRequestSnapshot(
+                    ledgerId = LedgerId(ledgerId),
+                    amount = Money.ofMinor(4_200, CurrencyUnit("CNY", 2)),
+                    categoryId = categoryLocal,
+                    paymentAccountId = AccountId("asset-payment-local"),
+                    occurredAt = Instant.parse("2026-03-06T02:00:00Z"),
+                    note = "dinner",
+                    tagIds = setOf(TagId("tag-a")),
+                    merchantId = MerchantId("merchant-1"),
+                )
+            val createdReceipt: ConfirmedExpenseReceipt
+            JdbcSqliteDriver("jdbc:sqlite:${source.path}", foreignKeyProperties()).use { sourceDriver ->
+                val created =
+                    assertIs<ConfirmedManualExpenseResult.Created>(
+                        SqlDelightConfirmedManualExpenseCommitPort(LedgerDatabase(sourceDriver), sourceDriver).commitOnce(
+                            identity,
+                            unknownSnapshot,
+                            // The write-path annotation instant never participates in replay (D-221 R-4).
+                            Instant.parse("2026-03-06T03:00:00Z"),
+                        ) { DomainResult.Success(unknownManualExpenseCommit()) },
+                    )
+                createdReceipt = created.receipt
+            }
+            val snapshot = File(dir, "snapshot-unknown")
+            JdbcSqliteDriver("jdbc:sqlite:${source.path}").use { sourceDriver ->
+                runSnapshotIntoOn(sourceDriver, snapshot.path)
+            }
+            JdbcSqliteDriver("jdbc:sqlite:${snapshot.path}", foreignKeyProperties()).use { restored ->
+                assertEquals(LedgerDatabase.Schema.version, readAuthoritativeUserVersionOn(restored))
+                val database = LedgerDatabase(restored)
+
+                fun restoredCount(table: String): Long = countOn(restored, "SELECT count(*) FROM $table WHERE ledger_id = '$ledgerId'")
+
+                // Non-vacuity baseline, read off the restored graph BEFORE any resolution: the
+                // Unknown commit's rows must already BE on the restored graph (its formal chain,
+                // claim row, receipt and annotation aggregate), so the post-resolution comparison
+                // below compares real data rather than two empty graphs.
+                val resolutionFacingCountTables =
+                    listOf(
+                        "ledger_transaction",
+                        "transaction_version",
+                        "posting_set",
+                        "posting",
+                        "ledger_transaction_current_version",
+                        "manual_expense_request",
+                        "confirmed_expense_receipt",
+                        "transaction_annotation_revision",
+                        "transaction_annotation_tag",
+                        "transaction_annotation_current",
+                        "transaction_annotation_command_request",
+                        "transaction_annotation_command_receipt",
+                    )
+                val beforeResolution = resolutionFacingCountTables.associateWith { table -> restoredCount(table) }
+                assertEquals(
+                    mapOf(
+                        "ledger_transaction" to 7L,
+                        "transaction_version" to 8L,
+                        "posting_set" to 7L,
+                        "posting" to 14L,
+                        "ledger_transaction_current_version" to 7L,
+                        "manual_expense_request" to 2L,
+                        "confirmed_expense_receipt" to 2L,
+                        "transaction_annotation_revision" to 3L,
+                        "transaction_annotation_tag" to 2L,
+                        "transaction_annotation_current" to 2L,
+                        "transaction_annotation_command_request" to 1L,
+                        "transaction_annotation_command_receipt" to 1L,
+                    ),
+                    beforeResolution,
+                    "the restored graph must already carry the committed-but-unobserved Unknown request",
+                )
+
+                // Deterministic resolution: the persisted record matches the attempted snapshot
+                // field for field, so the resolver answers with the ORIGINAL receipt.
+                val resolver = ResolveManualExpenseCommitStatus(SqlDelightLedgerCurrentStateReadAdapter(database))
+                val matched =
+                    assertIs<ManualExpenseCommitResolution.MatchingReceipt>(
+                        resolver.resolve(LedgerId(ledgerId), identity.requestId, unknownSnapshot),
+                    )
+                assertEquals(createdReceipt, matched.receipt, "the restored resolution must answer with the original receipt")
+                // A snapshot differing ONLY in the annotation fields is a conflict, never a match:
+                // the annotation columns participate in the unknown-resolution identity after the
+                // restore exactly as after a reopen.
+                assertIs<ManualExpenseCommitResolution.SnapshotConflict>(
+                    resolver.resolve(LedgerId(ledgerId), identity.requestId, unknownSnapshot.copy(tagIds = emptySet())),
+                )
+                assertIs<ManualExpenseCommitResolution.SnapshotConflict>(
+                    resolver.resolve(LedgerId(ledgerId), identity.requestId, unknownSnapshot.copy(merchantId = null)),
+                )
+
+                // The only legal action for the recovered caller: replay the SAME request — the
+                // original receipt with zero new writes.
+                var creationCallbackCount = 0
+                val replayed =
+                    assertIs<ConfirmedManualExpenseResult.NoChange>(
+                        SqlDelightConfirmedManualExpenseCommitPort(database, restored).commitOnce(
+                            identity,
+                            unknownSnapshot,
+                            Instant.parse("2026-03-06T03:00:00Z"),
+                        ) {
+                            creationCallbackCount += 1
+                            error("a replayed Unknown request must not re-run the creation callback")
+                        },
+                    )
+                assertEquals(0, creationCallbackCount, "an equivalent replay must not re-run the creation callback")
+                assertEquals(createdReceipt, replayed.receipt, "the replay must answer from the restored receipt")
+
+                // Zero new economic effect from the whole post-restore resolution: every counted
+                // table still holds exactly its pre-resolution (restored) row count — no new
+                // transaction, version, posting set, posting, current-version pointer, request,
+                // receipt or annotation row.
+                resolutionFacingCountTables.forEach { table ->
+                    assertEquals(
+                        beforeResolution.getValue(table),
+                        restoredCount(table),
+                        "$table must gain no row from the post-restore Unknown resolution",
+                    )
+                }
+
+                // Annotation consistency along the reopen precedent: the single revision the same
+                // transaction created survives the restore with its observation pinned to the
+                // created version id, its tag association and its current pointer intact.
+                assertEquals(
+                    1L,
+                    countOn(
+                        restored,
+                        "SELECT count(*) FROM transaction_annotation_revision WHERE ledger_id = '$ledgerId' " +
+                            "AND observed_transaction_version_id = 'tx-unknown-version-1' AND merchant_id = 'merchant-1'",
+                    ),
+                    "the restored annotation revision must observe exactly the version the same commit created",
+                )
+                assertEquals(
+                    1L,
+                    countOn(
+                        restored,
+                        "SELECT count(*) FROM transaction_annotation_tag WHERE ledger_id = '$ledgerId' " +
+                            "AND transaction_id = 'tx-unknown' AND tag_id = 'tag-a'",
+                    ),
+                    "the restored tag association must stay bound to the committed revision",
+                )
+                assertEquals(
+                    1L,
+                    countOn(
+                        restored,
+                        "SELECT count(*) FROM transaction_annotation_current WHERE ledger_id = '$ledgerId' " +
+                            "AND transaction_id = 'tx-unknown' AND annotation_revision = 1",
+                    ),
+                    "the restored current pointer must name the commit's single annotation revision",
+                )
             }
         } finally {
             dir.deleteRecursively()
@@ -316,9 +1057,15 @@ class P708RestoreRoundtripEquivalenceTest {
      * Seeds one anonymous library at [stage]: a manual expense chain + its claim row and receipt
      * (with the annotation columns at v35 only), the tag catalog with its command receipt plus a
      * two-revision annotation history with its current pointer (at v34/v35 only), and — at EVERY
-     * stage — a three-revision budget chain (two limit revisions plus a CLOSED revision) through the
-     * real claim-first command port (see [seedBudgetChain]); `32.sqm` created the budget tables on
-     * the v32 -> v33 edge.
+     * stage — the product catalog bootstrap, the catalog command and P7-02 preference/counterparty
+     * chains, the P7-05 void/restore audit chain ([seedVoidRestoreChain]), one import intake
+     * plus its duplicate review ([seedImportIntakeChain]/[seedDuplicateReviewChain]), one confirmed
+     * reconciliation link ([seedReconciliationChain]), one note replacement ([seedNoteUpdateChain]),
+     * one confirm per already-intaken candidate ([seedConfirmPathChains])
+     * and two budget chains (a
+     * TOTAL chain of two limits and a CLOSED revision, and a CATEGORY chain of two limits) through
+     * the real claim-first command port (see [seedBudgetChain]); `32.sqm` created the budget tables
+     * on the v32 -> v33 edge.
      */
     private fun seedCurrentLibrary(
         url: String,
@@ -446,48 +1193,806 @@ class P708RestoreRoundtripEquivalenceTest {
             // stamped 33 (Stage.V33) already contains the four budget tables, and neither `33.sqm`
             // nor `34.sqm` touches them. Writing the chain here (rather than only at V35) is what
             // makes the v33/v34 comparisons evidence of survival instead of empty-vs-empty.
+            // The catalog comes FIRST because the CATEGORY chain's `budget_config` row carries a
+            // real FK to `catalog_category`, and bootstrap itself fails closed on any existing
+            // posting/manual reference the seed cannot resolve.
+            assertIs<CatalogBootstrapResult.Seeded>(
+                SqlDelightCatalogStore(database, driver).bootstrap(LedgerId(ledgerId), restoreCatalogSeed()),
+            )
+            seedCatalogCommandChain(database, driver)
+            seedEntryPreferenceAndCounterpartyChain(database, driver)
+            seedVoidRestoreChain(database, driver)
+            seedImportIntakeChain(database, driver)
+            seedDuplicateReviewChain(database, driver)
+            seedReconciliationChain(database, driver)
+            seedNoteUpdateChain(database, driver)
+            seedPaymentProfileIntakeChain(database, driver)
+            seedConfirmPathChains(database, driver)
             seedBudgetChain(database, driver)
         }
     }
 
     /**
-     * Writes one TOTAL budget through the REAL claim-first command chain ([SaveBudgetConfiguration]
+     * The inbound facts of the v1 ordinary intake ([seedImportIntakeChain]) and of its duplicate
+     * twin ([seedDuplicateReviewChain]). The direction token is the canonical "out" the ordinary
+     * confirm factory dispatches on (the import parsers emit "out"/"in"), so the candidate stays
+     * confirmable when [seedConfirmPathChains] runs.
+     */
+    private val importRoundtripFacts =
+        ImportSourceFacts(
+            amountMinor = 4_200L,
+            currencyCode = "CNY",
+            currencyPrecision = 2,
+            occurredAt = "2026-03-07T02:00:00Z",
+            directionToken = "out",
+            statusToken = "settled",
+            fundingState = ImportFundingState.SETTLED,
+            fundingRuleId = "roundtrip-rule",
+            fundingRuleVersion = 1,
+        )
+
+    /**
+     * The inbound facts of the v3 mixed-payment intake ([seedPaymentProfileIntakeChain]), whose
+     * candidate [seedConfirmPathChains] confirms with a two-leg funding split.
+     */
+    private val importMixedPaymentFacts =
+        ImportSourceFacts(
+            amountMinor = 5_600L,
+            currencyCode = "CNY",
+            currencyPrecision = 2,
+            occurredAt = "2026-03-11T02:00:00Z",
+            directionToken = "out",
+            statusToken = "settled",
+            fundingState = ImportFundingState.SETTLED,
+            fundingRuleId = "roundtrip-rule",
+            fundingRuleVersion = 1,
+        )
+
+    /** The frozen v3 payment profile of [importMixedPaymentFacts]: one mixed payment, two legs. */
+    private val importMixedPaymentProfile =
+        ImportPaymentProfile(
+            variant = ImportPaymentVariant.MIXED_PAYMENT,
+            assetLegKindToken = "asset_leg",
+            creditLegKindToken = "credit_leg",
+        )
+
+    /**
+     * Runs ONE import intake through the real product port ([SqlDelightImportSpineStore.commitIntake]).
+     *
+     * This is the plan's `:181` "来源/候选" half. A single accepted intake writes seven import-spine
+     * owner tables in one transaction: the request claim, the source record, its evidence, the
+     * candidate, the candidate's confirmation requirement, the first status-history row and the
+     * receipt. All of those are stable-id owners a file restore must carry.
+     *
+     * A v1 ordinary-flow snapshot carries no payment profile, so this seed writes no
+     * `import_candidate_payment_profile` row; [seedPaymentProfileIntakeChain] supplies that table
+     * from a v3 record. The candidate stays pending until [seedConfirmPathChains] confirms it,
+     * which writes the decision snapshot and the confirmation row.
+     *
+     * The inbound facts are an anonymous synthetic ordinary flow with no duplicate match, so
+     * `allocateIds` is asked for zero duplicate ids. `commitIntake` is idempotent on the request
+     * identity, so seeding it once per leg is deterministic.
+     */
+    private fun seedImportIntakeChain(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
+        val store = SqlDelightImportSpineStore(database, driver)
+        val identity = ImportRequestIdentity(LedgerId(ledgerId), ImportRequestId("import-request-roundtrip"))
+        val facts = importRoundtripFacts
+        val snapshot =
+            ImportIntakeSnapshot(
+                identity = identity,
+                inputRef = "roundtrip-input",
+                recordOrdinal = 0,
+                recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                facts = facts,
+                completeness = ImportCompleteness.VALID_COMPLETE,
+                contentHash = ImportContentFingerprint().digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, facts),
+                candidateGeneratedAt = "roundtrip-intake-v1",
+            )
+        assertIs<ImportIntakeResult.Accepted>(
+            store.commitIntake(identity, snapshot) {
+                ImportIntakeIds(
+                    sourceId = ImportSourceId("import-source-roundtrip"),
+                    evidenceId = ImportEvidenceId("import-evidence-roundtrip"),
+                    candidateId = ImportCandidateId("import-candidate-roundtrip"),
+                    statusHistoryId = ImportStatusHistoryId("import-status-roundtrip"),
+                )
+            },
+        )
+    }
+
+    /**
+     * Runs a SECOND intake whose business tuple matches the first one, then reviews the duplicate
+     * candidate it produces. This is the plan's `:181` "重复处置" half.
+     *
+     * The second intake carries the same record kind, amount, currency, occurred-at, direction and
+     * status as [seedImportIntakeChain], so `selectDuplicateMatches` finds the first source and the
+     * store demands exactly one duplicate id. The review then appends a decision through
+     * [SqlDelightImportSpineStore.commitReviewOnce], which writes the review request claim, the
+     * snapshot, the transition status-history row and the receipt.
+     *
+     * `CONFIRMED_DISTINCT` is chosen because the store never gates it; only `CONFIRMED_DUPLICATE`
+     * carries a rule constraint (it is refused for a NULL-target `CLOSED_OR_FAILED_NO_FUNDS`
+     * candidate). The
+     * comparison fingerprint is recomputed here with the same public projection the store uses, so
+     * the review is not a stale-fingerprint rejection.
+     */
+    private fun seedDuplicateReviewChain(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
+        val store = SqlDelightImportSpineStore(database, driver)
+        val identity = ImportRequestIdentity(LedgerId(ledgerId), ImportRequestId("import-request-duplicate"))
+        // The same business tuple as [importRoundtripFacts], so the duplicate demand is one.
+        val facts = importRoundtripFacts
+        val subjectSourceId = ImportSourceId("import-source-duplicate")
+        val duplicateCandidateId = ImportDuplicateCandidateId("import-duplicate-candidate-roundtrip")
+        assertIs<ImportIntakeResult.Accepted>(
+            store.commitIntake(
+                identity,
+                ImportIntakeSnapshot(
+                    identity = identity,
+                    inputRef = "roundtrip-input-duplicate",
+                    recordOrdinal = 0,
+                    recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                    facts = facts,
+                    completeness = ImportCompleteness.VALID_COMPLETE,
+                    contentHash = ImportContentFingerprint().digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, facts),
+                    candidateGeneratedAt = "roundtrip-intake-v1",
+                ),
+            ) { requiredDuplicateIds ->
+                assertEquals(1, requiredDuplicateIds, "the second intake must match the first source")
+                ImportIntakeIds(
+                    sourceId = subjectSourceId,
+                    evidenceId = ImportEvidenceId("import-evidence-duplicate"),
+                    candidateId = ImportCandidateId("import-candidate-duplicate"),
+                    statusHistoryId = ImportStatusHistoryId("import-status-duplicate"),
+                    duplicateIds =
+                        listOf(
+                            ImportDuplicateIntakeIds(
+                                candidateId = duplicateCandidateId,
+                                statusHistoryId = ImportStatusHistoryId("import-duplicate-status-roundtrip"),
+                            ),
+                        ),
+                )
+            },
+        )
+        val expectedFingerprint =
+            ImportDuplicateComparisonFingerprint()
+                .digest(
+                    ImportDuplicateComparisonSnapshot(
+                        subjectSourceId = subjectSourceId,
+                        possibleExistingSourceId = ImportSourceId("import-source-roundtrip"),
+                        recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE,
+                        contractVersion = ImportRecordKind.ORDINARY_FLOW_SOURCE.contractVersion,
+                        amountMinor = facts.amountMinor,
+                        currencyCode = facts.currencyCode,
+                        currencyPrecision = facts.currencyPrecision,
+                        occurredAt = facts.occurredAt,
+                        directionToken = facts.directionToken,
+                        statusToken = facts.statusToken,
+                    ),
+                )
+        assertIs<ImportDuplicateReviewResult.Accepted>(
+            store.commitReviewOnce(
+                ImportDuplicateReviewRequest(
+                    identity = ImportRequestIdentity(LedgerId(ledgerId), ImportRequestId("import-review-roundtrip")),
+                    candidateId = duplicateCandidateId,
+                    expectedComparisonFingerprint = expectedFingerprint,
+                    decision = ImportDuplicateStatus.CONFIRMED_DISTINCT,
+                    reasonToken = "reviewed_by_hand",
+                    reviewedAt = "2026-03-08T02:00:00Z",
+                    reviewerReference = "roundtrip-reviewer",
+                    generatedAt = "2026-03-08T02:00:00Z",
+                    reviewId = ImportDuplicateReviewId("import-duplicate-review-roundtrip"),
+                    historyId = ImportStatusHistoryId("import-duplicate-review-history-roundtrip"),
+                ),
+            ),
+        )
+    }
+
+    /**
+     * Confirms ONE reconciliation link through the real product port
+     * ([SqlDelightP408ReconciliationStore.confirmLink]).
+     *
+     * This is the plan's `:181` "匹配/对账" half. The command writes the evidence link and its
+     * history, the posting reconciliation and its history, the request claim, the request snapshot
+     * and the receipt, plus the READY evidence projection it materializes. All of those are
+     * stable-id owners a file restore must carry.
+     *
+     * The command reads an import evidence row and its source facts, and matches them against a
+     * formal posting, so the fixture seeds one synthetic transfer pair first
+     * ([seedReconciliationSourceRows]). The request is a v2 payload, which is the shape the
+     * approved contract requires (a v1 claim is retired).
+     */
+    private fun seedReconciliationChain(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
+        seedReconciliationSourceRows(driver)
+        val request =
+            P408ConfirmLinkRequest(
+                ledgerId = ledgerId,
+                requestId = "reconciliation-request-roundtrip",
+                evidenceId = "reconciliation-evidence-roundtrip",
+                candidateId = "reconciliation-candidate-roundtrip",
+                postingId = "reconciliation-posting-roundtrip",
+                transactionId = "tx-reconciliation-roundtrip",
+                amountMinor = 1_000L,
+                currencyCode = "CNY",
+                currencyPrecision = 2,
+                direction = "out",
+                accountId = "reconciliation-account-roundtrip",
+                responsibility = P408EvidenceResponsibility.REAL_ACCOUNT_POSTING,
+                basisVersion = 2,
+                matchBasis = setOf("amount", "currency", "direction", "occurred_at_window", "account"),
+                windowDays = P408Matcher.DEFAULT_WINDOW_DAYS,
+                naturalDayDistance = 0,
+                sourceOccurredAt = "2026-08-10T12:00:00+08:00",
+                confirmedAt = "2026-08-10T13:00:00+08:00",
+                linkId = "reconciliation-link-roundtrip",
+                reconciliationId = "reconciliation-row-roundtrip",
+                createdAt = "2026-08-10T13:00:00+08:00",
+                projectionId = "proj-reconciliation-evidence-roundtrip",
+                projectionRuleId = P408EvidenceProjectionPort.RULE_ID,
+                projectionRuleVersion = 1,
+                normalizedAmountMinor = 1_000L,
+                rawAmountMinor = 1_000L,
+                rawCurrencyPrecision = 2,
+            )
+        assertIs<P408ReconciliationResult.Accepted>(
+            SqlDelightP408ReconciliationStore(database, driver).confirmLink(request),
+        )
+    }
+
+    /**
+     * The minimal import + formal rows the reconciliation command reads: one import request with
+     * its source record and evidence, and one formal transfer transaction whose posting is the
+     * candidate the link confirms. Every value is anonymous and synthetic.
+     */
+    private fun seedReconciliationSourceRows(driver: JdbcSqliteDriver) {
+        val statements =
+            listOf(
+                "INSERT INTO import_request(ledger_id, request_id, operation) VALUES ('$ledgerId','reconciliation-import-roundtrip','intake')",
+                "INSERT INTO import_source_record(ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token, funding_state, funding_rule_id, funding_rule_version, candidate_generated_at) " +
+                    "VALUES ('$ledgerId','reconciliation-source-roundtrip','reconciliation-import-roundtrip','roundtrip-ref',0,'ordinary_flow_source','hash-roundtrip',1,'valid_complete',1000,'CNY',2,'2026-08-10T12:00:00+08:00','out','settled','SETTLED','roundtrip-rule',1,'2026-08-10T12:00:00+08:00')",
+                "INSERT INTO import_evidence(ledger_id, evidence_id, source_id, evidence_kind, observed_at) VALUES ('$ledgerId','reconciliation-evidence-roundtrip','reconciliation-source-roundtrip','source_observation','2026-08-10T12:00:01+08:00')",
+                "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('tx-reconciliation-roundtrip','$ledgerId','ACCOUNT_TRANSFER')",
+                "INSERT INTO posting_set(posting_set_id, ledger_id) VALUES ('reconciliation-posting-set-roundtrip','$ledgerId')",
+                "INSERT INTO transaction_version(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note) " +
+                    "VALUES ('reconciliation-version-roundtrip','tx-reconciliation-roundtrip','$ledgerId',1,'reconciliation-posting-set-roundtrip','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)",
+                "INSERT INTO ledger_transaction_current_version(transaction_id, ledger_id, current_version_id) VALUES ('tx-reconciliation-roundtrip','$ledgerId','reconciliation-version-roundtrip')",
+                "INSERT INTO posting(posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision) " +
+                    "VALUES ('reconciliation-posting-roundtrip','reconciliation-posting-set-roundtrip','$ledgerId',0,'reconciliation-account-roundtrip',-1000,'CNY',2)",
+            )
+        statements.forEach { driver.execute(null, it, 0) }
+    }
+
+    /**
+     * Replaces the note of a dedicated transaction through the real product use case
+     * ([ExecuteConfirmedTransactionNoteUpdate] over [SqlDelightConfirmedTransactionNoteUpdateCommitPort]).
+     *
+     * This closes the plan's `:181` "回执" half for the note-update receipt: the command claims
+     * `transaction_note_update_request`, copies the current version with the new note, moves the
+     * current-version pointer and writes `confirmed_transaction_note_update_receipt`.
+     *
+     * The target is its own transaction, not a seeded one, so the version copy cannot perturb the
+     * annotation chain's current-version pointer. The port writes no annotation table, so it runs on
+     * every stage including v33 (unlike the income/transfer/lending manual-create ports, which write
+     * the two annotation columns `34.sqm` adds and therefore cannot run below v35).
+     */
+    private fun seedNoteUpdateChain(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
+        database.ledgerQueries.insertTransaction("tx-note-update", ledgerId, "EXPENSE")
+        database.ledgerQueries.insertPostingSet("tx-note-update-posting-set-1", ledgerId)
+        database.ledgerQueries.insertTransactionVersion(
+            "tx-note-update-version-1",
+            "tx-note-update",
+            ledgerId,
+            1L,
+            "tx-note-update-posting-set-1",
+            "2026-03-10T02:00:00Z",
+            "2026-03-10T02:00:00Z",
+            "2026-03-10T02:00:00Z",
+            "original note",
+        )
+        database.ledgerQueries.insertPosting("tx-note-update-posting-0", "tx-note-update-posting-set-1", ledgerId, 0L, "expense-account-local", 800L, "CNY", 2L)
+        database.ledgerQueries.insertPosting("tx-note-update-posting-1", "tx-note-update-posting-set-1", ledgerId, 1L, "asset-payment-local", -800L, "CNY", 2L)
+        database.ledgerQueries.insertTransactionCurrentVersion("tx-note-update", ledgerId, "tx-note-update-version-1")
+
+        val command =
+            ExecuteConfirmedTransactionNoteUpdate(
+                SqlDelightConfirmedTransactionNoteUpdateCommitPort(database, driver),
+                ConfirmedTransactionNoteUpdateIdSource {
+                    ConfirmedTransactionNoteUpdateIds(
+                        confirmationId = ConfirmationId("tx-note-update-confirmation"),
+                        replacement = TransactionNoteUpdateIds(TransactionVersionId("tx-note-update-version-2")),
+                        expectedCurrentVersionId = TransactionVersionId("tx-note-update-version-1"),
+                    )
+                },
+            )
+        assertIs<ConfirmedTransactionNoteUpdateResult.Created>(
+            command.execute(
+                ExplicitlyConfirmedTransactionNoteUpdate(
+                    ledgerId = LedgerId(ledgerId),
+                    requestId = RequestId("note-update-request-roundtrip"),
+                    transactionId = TransactionId("tx-note-update"),
+                    note = "replaced note",
+                    confirmation = ExplicitManualSave,
+                ),
+            ),
+        )
+    }
+
+    /**
+     * Runs ONE v3 mixed-payment intake through the real product port
+     * ([SqlDelightImportSpineStore.commitIntake]).
+     *
+     * This closes the plan's `:181` "来源/候选" family for the v3 payment profile: a v3 record
+     * writes `import_candidate_payment_profile` in the same transaction as the source, evidence and
+     * candidate ("exactly one profile row per v3 candidate"). The profile is a mixed payment, so it
+     * carries both leg-kind tokens — the shape the frozen variant rule requires for that variant.
+     *
+     * The record kind is `MIXED_PAYMENT_SOURCE`, whose contract version is 3. The business tuple is
+     * distinct from the other seeded intakes, so the duplicate demand is zero.
+     */
+    private fun seedPaymentProfileIntakeChain(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
+        val store = SqlDelightImportSpineStore(database, driver)
+        val identity = ImportRequestIdentity(LedgerId(ledgerId), ImportRequestId("import-request-mixed-payment"))
+        val facts = importMixedPaymentFacts
+        assertIs<ImportIntakeResult.Accepted>(
+            store.commitIntake(
+                identity,
+                ImportIntakeSnapshot(
+                    identity = identity,
+                    inputRef = "roundtrip-input-mixed-payment",
+                    recordOrdinal = 0,
+                    recordKind = ImportRecordKind.MIXED_PAYMENT_SOURCE,
+                    facts = facts,
+                    completeness = ImportCompleteness.VALID_COMPLETE,
+                    contentHash = ImportContentFingerprint().digest(ImportRecordKind.MIXED_PAYMENT_SOURCE, facts),
+                    candidateGeneratedAt = "roundtrip-intake-v1",
+                    paymentProfile = importMixedPaymentProfile,
+                ),
+            ) { requiredDuplicateIds ->
+                assertEquals(0, requiredDuplicateIds, "the v3 tuple must not match an earlier intake")
+                ImportIntakeIds(
+                    sourceId = ImportSourceId("import-source-mixed-payment"),
+                    evidenceId = ImportEvidenceId("import-evidence-mixed-payment"),
+                    candidateId = ImportCandidateId("import-candidate-mixed-payment"),
+                    statusHistoryId = ImportStatusHistoryId("import-status-mixed-payment"),
+                )
+            },
+        )
+    }
+
+    /**
+     * Confirms the v1 ordinary candidate ([seedImportIntakeChain]) and the v3 mixed-payment
+     * candidate ([seedPaymentProfileIntakeChain]) through the real product confirm port
+     * ([SqlDelightImportSpineStore.commitOnce], the claim-first entry at
+     * SqlDelightImportSpineStore.kt:435 whose formal callback runs at :642). Each confirm carries
+     * an [ImportCandidateDecisionSnapshot] with the CONFIRM decision, the catalog loaded off the
+     * seeded `catalog_*` tables via [SqlDelightCatalogStore.loadCurrent], and a real
+     * `createFormalTransaction` callback delegating to the product shape factories
+     * ([OrdinaryFlowFormalFactory] for the v1 leg, [MixedPaymentFlowFormalFactory] for the v3
+     * leg, mirroring the ImportSpineAlipayEndToEndTest.kt confirm assembly). No confirm, decision
+     * snapshot or receipt row is ever hand-inserted.
+     *
+     * Write-set accounting (every named statement the confirm port can execute on this path, with
+     * its only touch surface — none of them reaches the 11 annotation tables of `33.sqm` or the
+     * two `manual_*_request` annotation columns of `34.sqm`, which is why this seed can run on
+     * every leg, unlike the manual income/transfer/lending create ports):
+     *
+     *  - `claimImportRequest` (Ledger.sq:8689) — `import_request` only;
+     *  - the evidence projection materialization (SqlDelightImportSpineStore.kt:982 into
+     *    SqlDelightEvidenceProjectionStore.kt:360, whose insert at :190 calls
+     *    `insertEvidenceProjection`, Ledger.sq:8956) — `evidence_projection` only;
+     *  - `persistFormal` (SqlDelightImportSpineStore.kt:1301): `insertPostingSet`
+     *    (Ledger.sq:2352), `insertTransaction` (Ledger.sq:2304), `insertTransactionVersion`
+     *    (Ledger.sq:2355), `insertTransactionCurrentVersion` (Ledger.sq:2345), `insertPosting`
+     *    (Ledger.sq:2398) — `posting_set`, `ledger_transaction`, `transaction_version`,
+     *    `ledger_transaction_current_version`, `posting` only;
+     *  - the mixed leg only: `insertMixedPaymentGroupLeg` (Ledger.sq:8759) and
+     *    `insertMixedPaymentGroup` (Ledger.sq:8755) — `mixed_payment_group_leg` and
+     *    `mixed_payment_group` only (both created additively by `24.sqm`);
+     *  - `insertImportDecisionSnapshot` (Ledger.sq:8771) — `import_candidate_decision_snapshot`;
+     *  - `insertImportStatusHistory` (Ledger.sq:8767) — `import_candidate_status_history`;
+     *  - `insertImportConfirmation` (Ledger.sq:8775) — `import_confirmation`;
+     *  - `insertImportReceipt` (Ledger.sq:8779) — `import_receipt`.
+     *
+     * Everything else in `commitOnce` is a read or a typed rollback. The two factories are pure
+     * domain assembly over the in-memory `LedgerCatalog` — no database access — and the catalog
+     * binding validation runs on the same in-memory objects. The v1 facts' direction token is the
+     * canonical "out" the ordinary factory dispatches on, and the mixed split 3000 + 2600 equals
+     * the 5600 source total, so both confirms are accepted domain shapes, not forced writes.
+     */
+    private fun seedConfirmPathChains(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
+        val store = SqlDelightImportSpineStore(database, driver)
+        val catalog =
+            requireNotNull(SqlDelightCatalogStore(database, driver).loadCurrent(LedgerId(ledgerId))) {
+                "the seeded catalog must load before the confirm path runs"
+            }
+        assertIs<ImportCandidateDecisionResult.Accepted>(
+            store.commitOnce(
+                identity = ImportRequestIdentity(LedgerId(ledgerId), ImportRequestId("import-request-confirm-roundtrip")),
+                snapshot =
+                    ImportCandidateDecisionSnapshot(
+                        candidateId = ImportCandidateId("import-candidate-roundtrip"),
+                        decision = ImportCandidateDecision.CONFIRM,
+                        expectedContentHash =
+                            ImportContentFingerprint().digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, importRoundtripFacts),
+                        explicitConfirmedAt = "2026-03-07T03:00:00+08:00",
+                        confirmDecisionFields =
+                            ImportConfirmDecisionFields.OrdinaryFlow(
+                                categoryId = categoryLocal,
+                                fundingAccountId = AccountId("asset-payment-local"),
+                            ),
+                    ),
+                allocateIds = {
+                    ImportCommitIds(
+                        confirmationId = ImportConfirmationId("import-confirmation-roundtrip"),
+                        statusHistoryId = ImportStatusHistoryId("import-status-confirm-roundtrip"),
+                        formalIds =
+                            ImportFormalIds(
+                                transactionId = TransactionId("tx-import-roundtrip"),
+                                versionId = TransactionVersionId("tx-import-roundtrip-version-1"),
+                                postingSetId = PostingSetId("tx-import-roundtrip-posting-set-1"),
+                                postingIds =
+                                    listOf(
+                                        PostingId("tx-import-roundtrip-posting-expense"),
+                                        PostingId("tx-import-roundtrip-posting-asset"),
+                                    ),
+                            ),
+                    )
+                },
+                catalog = catalog,
+                createFormalTransaction = { input, ids -> OrdinaryFlowFormalFactory(catalog).create(input, ids) },
+            ),
+        )
+        assertIs<ImportCandidateDecisionResult.Accepted>(
+            store.commitOnce(
+                identity = ImportRequestIdentity(LedgerId(ledgerId), ImportRequestId("import-request-confirm-mixed-payment")),
+                snapshot =
+                    ImportCandidateDecisionSnapshot(
+                        candidateId = ImportCandidateId("import-candidate-mixed-payment"),
+                        decision = ImportCandidateDecision.CONFIRM,
+                        expectedContentHash =
+                            ImportContentFingerprint()
+                                .digest(ImportRecordKind.MIXED_PAYMENT_SOURCE, importMixedPaymentFacts, importMixedPaymentProfile),
+                        explicitConfirmedAt = "2026-03-11T03:00:00+08:00",
+                        confirmDecisionFields =
+                            ImportConfirmDecisionFields.MixedPaymentFlow(
+                                categoryId = categoryLocal,
+                                assetAccountId = AccountId("asset-payment-local"),
+                                creditLiabilityAccountId = AccountId("liability-credit-roundtrip"),
+                                assetLegMinor = 3_000L,
+                                creditLegMinor = 2_600L,
+                            ),
+                    ),
+                allocateIds = {
+                    ImportCommitIds(
+                        confirmationId = ImportConfirmationId("import-confirmation-mixed-payment"),
+                        statusHistoryId = ImportStatusHistoryId("import-status-confirm-mixed-payment"),
+                        formalIds =
+                            ImportFormalIds(
+                                transactionId = TransactionId("tx-import-mixed-payment"),
+                                versionId = TransactionVersionId("tx-import-mixed-payment-version-1"),
+                                postingSetId = PostingSetId("tx-import-mixed-payment-posting-set-1"),
+                                postingIds =
+                                    listOf(
+                                        PostingId("tx-import-mixed-payment-posting-expense"),
+                                        PostingId("tx-import-mixed-payment-posting-asset-leg"),
+                                        PostingId("tx-import-mixed-payment-posting-credit-leg"),
+                                    ),
+                            ),
+                    )
+                },
+                catalog = catalog,
+                createFormalTransaction = { input, ids -> MixedPaymentFlowFormalFactory(catalog).create(input, ids) },
+            ),
+        )
+    }
+
+    /**
+     * Writes a full void → restore cycle for one ordinary expense through the real product use
+     * cases ([ExecuteVoidTransaction] then [ExecuteRestoreTransaction] over
+     * [SqlDelightTransactionVoidCommitPort]).
+     *
+     * This is the plan's `:181` "作废恢复历史" half: the AUDIT chain, not merely the current
+     * voided/effective flag. The cycle appends two facts (a void and a restore), so
+     * `transaction_void_fact` holds two rows and the request/receipt tables hold one row per
+     * command — the immutable history a restore of the database file has to carry.
+     *
+     * The target is a dedicated transaction, not the annotation one: voiding is an audit fact about
+     * a specific transaction version, and keeping it separate stops this leg from coupling to the
+     * annotation assertions. Its postings name the same catalog owners the restore revalidation
+     * checks (`cat-local`'s posting account and the owned real asset account), so the restore is
+     * admitted rather than rejected as an inadmissible reference.
+     */
+    private fun seedVoidRestoreChain(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
+        database.ledgerQueries.insertTransaction("tx-void-target", ledgerId, "EXPENSE")
+        database.ledgerQueries.insertPostingSet("tx-void-target-posting-set-1", ledgerId)
+        database.ledgerQueries.insertTransactionVersion(
+            "tx-void-target-version-1",
+            "tx-void-target",
+            ledgerId,
+            1L,
+            "tx-void-target-posting-set-1",
+            "2026-03-06T02:00:00Z",
+            "2026-03-06T02:00:00Z",
+            "2026-03-06T02:00:00Z",
+            "refundable purchase",
+        )
+        database.ledgerQueries.insertPosting("tx-void-target-posting-0", "tx-void-target-posting-set-1", ledgerId, 0L, "expense-account-local", 1_200L, "CNY", 2L)
+        database.ledgerQueries.insertPosting("tx-void-target-posting-1", "tx-void-target-posting-set-1", ledgerId, 1L, "asset-payment-local", -1_200L, "CNY", 2L)
+        database.ledgerQueries.insertTransactionCurrentVersion("tx-void-target", ledgerId, "tx-void-target-version-1")
+
+        val voidPort = SqlDelightTransactionVoidCommitPort(database, driver)
+        // Minted per command; the two ids must differ because the receipt table is UNIQUE on both
+        // confirmation_id and fact_id. Both commands below are accepted, so no sequence number is
+        // burned on a rejection.
+        var sequence = 0
+        val idSource =
+            TransactionVoidFactIdSource {
+                sequence += 1
+                TransactionVoidFactIds(
+                    confirmationId = ConfirmationId("tx-void-target-confirmation-$sequence"),
+                    factId = "tx-void-target-fact-$sequence",
+                )
+            }
+        val admissionReader = SqlDelightCatalogStore(database, driver)
+        assertIs<VoidTransactionResult.Created>(
+            ExecuteVoidTransaction(voidPort, idSource, LedgerClock { Instant.parse("2026-03-06T03:00:00Z") })
+                .execute(
+                    VoidTransactionRequest(
+                        ledgerId = LedgerId(ledgerId),
+                        requestId = RequestId("void-request-1"),
+                        transactionId = TransactionId("tx-void-target"),
+                        reason = VoidReason(VoidReasonCode.MIS_ENTERED, "wrong amount"),
+                        confirmation = ExplicitManualSave,
+                    ),
+                ),
+        )
+        assertIs<VoidTransactionResult.Created>(
+            ExecuteRestoreTransaction(
+                voidPort,
+                idSource,
+                LedgerClock { Instant.parse("2026-03-06T04:00:00Z") },
+                admissionReader,
+            ).execute(
+                VoidTransactionRequest(
+                    ledgerId = LedgerId(ledgerId),
+                    requestId = RequestId("void-request-2"),
+                    transactionId = TransactionId("tx-void-target"),
+                    reason = VoidReason(VoidReasonCode.VOIDED_IN_ERROR, "voided by mistake"),
+                    confirmation = ExplicitManualSave,
+                ),
+            ),
+        )
+    }
+
+    /**
+     * Writes the P7-02 entry-preference and counterparty owners through their real product ports:
+     *
+     *  - [SqlDelightEntryPreferenceStore.togglePin] pins the seeded `asset-payment-local` account,
+     *    which writes one `entry_pin` row. Only the `account` target kind is seeded; `category` is a
+     *    legal kind per the table CHECK but this fixture does not exercise it.
+     *  - [SqlDelightCounterpartyStore.create] writes one `counterparty` row and its version-1
+     *    `counterparty_name_history` row, plus the hidden receivable `catalog_account` the port
+     *    derives.
+     *
+     * All three tables come from `28.sqm` (v28 -> v29) and no later edge touches them, so they are
+     * present on every stage; [seedCurrentLibrary] runs this on every leg, which is what makes the
+     * comparison data rather than empty-vs-empty.
+     */
+    private fun seedEntryPreferenceAndCounterpartyChain(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
+        assertIs<EntryPinResult.Toggled>(
+            SqlDelightEntryPreferenceStore(database).togglePin(
+                target = EntryPinTarget.AccountTarget(LedgerId(ledgerId), AccountId("asset-payment-local")),
+                pinnedAt = Instant.parse("2026-03-05T04:00:00Z"),
+            ),
+        )
+        assertIs<CounterpartyCommandResult.Created>(
+            SqlDelightCounterpartyStore(database, driver).create(
+                ledgerId = LedgerId(ledgerId),
+                counterpartyId = CounterpartyId("counterparty-roundtrip"),
+                name = "Roundtrip Counterparty",
+                receivableAccountId = AccountId("receivable-roundtrip"),
+                currency = CurrencyUnit("CNY", 2),
+            ),
+        )
+    }
+
+    /**
+     * Writes ONE real catalog management command through the product claim-first port
+     * ([ExecuteCatalogCommand] over [SqlDelightCatalogStore]), so `catalog_command_request` and
+     * `catalog_command_receipt` hold product-path rows instead of nothing.
+     *
+     * Bootstrap writes the catalog rows and `catalog_version`, but it never claims a command: after
+     * the seed inserts it only runs the fail-closed `unresolvedReferences` scan and
+     * `insertCatalogVersion`. No other part of this fixture
+     * issued a catalog command either, so without this seed the two command tables would compare
+     * empty-vs-empty — the vacuous "survival" claim the v33 budget leg below explicitly rejects.
+     *
+     * The command renames the seeded `asset-payment-local` account: a rename supersedes the current
+     * name and appends a new `catalog_name_history` revision, so the seeded rows also exercise the
+     * version/history owners rather than only the two command tables. A rename never mints entity
+     * ids, so the constructor's entity-id source is required but never called here.
+     */
+    private fun seedCatalogCommandChain(
+        database: LedgerDatabase,
+        driver: JdbcSqliteDriver,
+    ) {
+        val store = SqlDelightCatalogStore(database, driver)
+        val command =
+            ExecuteCatalogCommand(
+                commitPort = store,
+                requestIdSource = catalogRenameRequestId(),
+                entityIdSource = unusedCatalogEntityIds(),
+                categoryReferenceProbe = store,
+            )
+        // The bootstrap left the catalog at version 1; the rename is the first command to claim one.
+        assertIs<CatalogCommandResult.Accepted>(
+            command.renameAccount(
+                ledgerId = LedgerId(ledgerId),
+                accountId = AccountId("asset-payment-local"),
+                newName = "本地支付改名",
+                expectedCatalogVersion = 1L,
+            ),
+        )
+    }
+
+    private fun catalogRenameRequestId(): CatalogManagementRequestIdSource = CatalogManagementRequestIdSource { CatalogRequestId("catalog-request-account-rename") }
+
+    /**
+     * [ExecuteCatalogCommand] requires an entity-id source, but only the create paths call it; the
+     * seeded rename mints nothing, so these ids are never persisted.
+     */
+    private fun unusedCatalogEntityIds(): CatalogEntityIdSource =
+        CatalogEntityIdSource {
+            CatalogEntityIds(
+                manageableAccountId = AccountId("asset-managed-unused"),
+                postingAccountId = AccountId("expense-account-unused"),
+                parentCategoryId = CategoryId("expense-group-unused"),
+                childCategoryId = CategoryId("expense-child-unused"),
+            )
+        }
+
+    /**
+     * The catalog the round-trip fixture needs. Bootstrap fails closed on any posting account or
+     * manual-request category it does not know (`unresolvedReferences` scans `posting.account_id`
+     * and `manual_expense_request.category_id`), so the three ids the seeded ledger rows already
+     * name must exist: the `cat-local` EXPENSE leaf, its hidden `expense-account-local` posting
+     * account, and the `asset-payment-local` funding account. The fourth account,
+     * `liability-credit-roundtrip`, is the owned real LIABILITY funding leg the mixed-payment
+     * confirm in [seedConfirmPathChains] requires (the mixed shape needs exactly one ASSET and one
+     * LIABILITY leg, and no other seed mints a liability account). `cat-local` is a level-2 leaf
+     * because the product catalog validation refuses a level-1 category that carries a posting
+     * account. Everything here is an anonymous synthetic value.
+     */
+    private fun restoreCatalogSeed(): CatalogSeed =
+        CatalogSeed(
+            accounts =
+                listOf(
+                    CatalogSeedAccount(
+                        accountId = AccountId("expense-account-local"),
+                        name = "本地支出",
+                        kind = AccountKind.EXPENSE,
+                        currency = CurrencyUnit("CNY", 2),
+                        ownedByUser = false,
+                        realAccount = false,
+                        hidden = true,
+                    ),
+                    CatalogSeedAccount(
+                        accountId = AccountId("asset-payment-local"),
+                        name = "本地支付",
+                        kind = AccountKind.ASSET,
+                        currency = CurrencyUnit("CNY", 2),
+                        ownedByUser = true,
+                        realAccount = true,
+                        hidden = false,
+                    ),
+                    CatalogSeedAccount(
+                        accountId = AccountId("liability-credit-roundtrip"),
+                        name = "信用支出",
+                        kind = AccountKind.LIABILITY,
+                        currency = CurrencyUnit("CNY", 2),
+                        ownedByUser = true,
+                        realAccount = true,
+                        hidden = false,
+                    ),
+                ),
+            categories =
+                listOf(
+                    CatalogSeedCategory(
+                        categoryId = CategoryId("cat-group-local"),
+                        name = "本地支出",
+                        kind = CategoryKind.EXPENSE,
+                        parentId = null,
+                        postingAccountId = null,
+                    ),
+                    CatalogSeedCategory(
+                        categoryId = categoryLocal,
+                        name = "本地餐饮",
+                        kind = CategoryKind.EXPENSE,
+                        parentId = CategoryId("cat-group-local"),
+                        postingAccountId = AccountId("expense-account-local"),
+                    ),
+                ),
+        )
+
+    /**
+     * Writes two budget chains through the REAL claim-first command chain ([SaveBudgetConfiguration]
      * over [SqlDelightBudgetStore]), so the request rows, the immutable settings history and the
      * receipts are all produced by the production guards rather than hand-inserted: a hand-written
-     * row could not prove the roundtrip carries a legal chain. Three revisions: two MONITORED
-     * limits then a CLOSED revision, so BOTH legal row shapes of `budget_settings_history`
-     * (MONITORED with a non-null limit, CLOSED with NULL) cross the snapshot.
+     * row could not prove the roundtrip carries a legal chain.
      *
-     * Three DIFFERENT request ids are used because the claim identity is `(ledgerId, requestId)`: a
-     * shared id makes the later command an identity conflict, not the next revision.
+     *  - TOTAL `budget-roundtrip`: three revisions — two MONITORED limits then a CLOSED revision, so
+     *    BOTH legal row shapes of `budget_settings_history` cross the snapshot.
+     *  - CATEGORY `budget-roundtrip-category` on `cat-local`: two MONITORED revisions, an
+     *    independent stable identity whose `budget_config` row carries the real `catalog_category`
+     *    FK and whose scope must survive the round-trip value-for-value.
+     *
+     * Every command uses its own request id: the claim identity is `(ledgerId, requestId)`, so a
+     * shared id would make the later command an identity conflict, not the next revision.
      */
     private fun seedBudgetChain(
         database: LedgerDatabase,
         driver: JdbcSqliteDriver,
     ) {
-        fun command(requestId: String): SaveBudgetConfiguration =
+        val catalogReader = SqlDelightCatalogStore(database, driver)
+
+        fun command(
+            requestId: String,
+            mintedBudgetId: BudgetId,
+        ): SaveBudgetConfiguration =
             SaveBudgetConfiguration(
                 commitPort = SqlDelightBudgetStore(database, driver),
                 requestIdSource = BudgetRequestIdSource { BudgetRequestId(requestId) },
-                budgetIdSource = BudgetIdSource { budgetId },
-                catalogReader = SqlDelightCatalogStore(database, driver),
+                budgetIdSource = BudgetIdSource { mintedBudgetId },
+                catalogReader = catalogReader,
                 clock = LedgerClock { Instant.parse("2026-03-05T02:00:00Z") },
             )
 
         val march = YearMonth(2026, 3)
         assertIs<BudgetCommandResult.Accepted>(
-            command("budget-request-1")
+            command("budget-request-1", budgetId)
                 .setLimit(LedgerId(ledgerId), march, BudgetScope.Total, 100_000L, expectedRevision = 0L),
         )
         assertIs<BudgetCommandResult.Accepted>(
-            command("budget-request-2")
+            command("budget-request-2", budgetId)
                 .setLimit(LedgerId(ledgerId), march, BudgetScope.Total, 150_000L, expectedRevision = 1L),
         )
         // Close appends a CLOSED NULL-limit revision and keeps the whole history (spec section 3.3);
         // without it the restore evidence would only ever see the MONITORED row shape.
         assertIs<BudgetCommandResult.Accepted>(
-            command("budget-request-3")
+            command("budget-request-3", budgetId)
                 .close(LedgerId(ledgerId), march, BudgetScope.Total, expectedRevision = 2L),
+        )
+        // The independent CATEGORY chain (two MONITORED revisions, no CLOSED row).
+        assertIs<BudgetCommandResult.Accepted>(
+            command("budget-request-category-1", categoryBudgetId)
+                .setLimit(LedgerId(ledgerId), march, BudgetScope.Category(categoryLocal), 80_000L, expectedRevision = 0L),
+        )
+        assertIs<BudgetCommandResult.Accepted>(
+            command("budget-request-category-2", categoryBudgetId)
+                .setLimit(LedgerId(ledgerId), march, BudgetScope.Category(categoryLocal), 90_000L, expectedRevision = 1L),
         )
     }
 
@@ -499,6 +2004,443 @@ class P708RestoreRoundtripEquivalenceTest {
         }
 
     // ------------------------------------------------------------------ equivalence probes
+
+    /**
+     * Reads BOTH seeded budget chains off a restored/migrated snapshot through the real store and
+     * asserts the full immutable revision history FIELD BY FIELD. Revision 1's superseded limit,
+     * the CLOSED revision's NULL limit and the independent CATEGORY chain are exactly the values a
+     * "current config row only" read would lose.
+     */
+    private fun assertBothBudgetHistoriesReadBack(driver: SqlDriver) {
+        val store = SqlDelightBudgetStore.forPlatformConfiguredDatabase(LedgerDatabase(driver))
+        val settings = store.settingsHistory(LedgerId(ledgerId), budgetId)
+        assertEquals(listOf(1L, 2L, 3L), settings.map { it.revisionNumber })
+        assertEquals(listOf(false, false, true), settings.map { it.closed })
+        assertEquals(listOf(100_000L, 150_000L, null), settings.map { it.limitMinorUnits })
+        assertEquals(
+            listOf("budget-request-1", "budget-request-2", "budget-request-3"),
+            settings.map { it.requestId.value },
+        )
+        assertEquals(
+            listOf("2026-03-05T02:00:00Z", "2026-03-05T02:00:00Z", "2026-03-05T02:00:00Z"),
+            settings.map { it.createdAt },
+        )
+        val categorySettings = store.settingsHistory(LedgerId(ledgerId), categoryBudgetId)
+        assertEquals(listOf(1L, 2L), categorySettings.map { it.revisionNumber })
+        assertEquals(listOf(false, false), categorySettings.map { it.closed })
+        assertEquals(listOf(80_000L, 90_000L), categorySettings.map { it.limitMinorUnits })
+        assertEquals(
+            listOf("budget-request-category-1", "budget-request-category-2"),
+            categorySettings.map { it.requestId.value },
+        )
+        assertEquals(
+            listOf("2026-03-05T02:00:00Z", "2026-03-05T02:00:00Z"),
+            categorySettings.map { it.createdAt },
+        )
+    }
+
+    /**
+     * Non-vacuity guard for the restored copy's seeded owner rows: every [catalogOwnerTables],
+     * [preferenceAndCounterpartyTables], [voidRestoreTables], [importIntakeTables],
+     * [duplicateReviewTables], [reconciliationTables] and [noteUpdateReceiptTables] entry plus
+     * `confirmed_expense_receipt` must hold at least one row, so `assertValueIdentical` compares data rather than two empty results. Without this, a
+     * table the fixture never writes (for example the command tables, which bootstrap alone does not
+     * populate) would "survive" the round-trip vacuously — the same trap
+     * [aV33SnapshotMigratesThroughTheFullChainWithZeroBackfillAndSurvivingRows] rejects for the
+     * budget tables.
+     *
+     * The expected `catalog_name_history` total is 7: five bootstrap seed revisions (three
+     * accounts, two categories), one appended by the catalog rename, and one for the hidden
+     * receivable account the counterparty port derives.
+     */
+    private fun assertCatalogOwnersReadBackNonVacuously(driver: SqlDriver) {
+        catalogOwnerTables.forEach { table ->
+            assertTrue(
+                countOn(driver, "SELECT count(*) FROM $table") > 0L,
+                "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
+            )
+        }
+        assertEquals(
+            1L,
+            countOn(driver, "SELECT count(*) FROM catalog_command_request"),
+            "the seeded catalog command claims exactly one request row",
+        )
+        assertEquals(
+            1L,
+            countOn(driver, "SELECT count(*) FROM catalog_command_receipt"),
+            "the seeded catalog command writes exactly one receipt",
+        )
+        // Five bootstrap seed revisions (three accounts, two categories), one appended by the
+        // catalog rename, and one for the hidden receivable account the counterparty port derives.
+        assertEquals(
+            7L,
+            countOn(driver, "SELECT count(*) FROM catalog_name_history"),
+            "every seeded catalog and counterparty owner must keep its name-history revision",
+        )
+        // The receipt is compared on every leg too, so guard it against empty-vs-empty as well.
+        assertEquals(
+            1L,
+            countOn(driver, "SELECT count(*) FROM confirmed_expense_receipt"),
+            "the manual expense confirmation receipt must survive every leg",
+        )
+        // Bootstrap stamps version 1; the accepted rename advances it by one.
+        assertEquals(
+            1L,
+            countOn(driver, "SELECT count(*) FROM catalog_version WHERE version = 2"),
+            "the accepted catalog command must advance the catalog version to 2",
+        )
+        // The P7-02 preference/counterparty owners are compared on every leg, so guard them too.
+        preferenceAndCounterpartyTables.forEach { table ->
+            assertTrue(
+                countOn(driver, "SELECT count(*) FROM $table") > 0L,
+                "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
+            )
+        }
+        assertEquals(
+            1L,
+            countOn(driver, "SELECT count(*) FROM counterparty_name_history"),
+            "the counterparty create writes exactly one version-1 name-history row",
+        )
+        // The void/restore audit owners are compared on every leg too; the seeded cycle appends
+        // one void fact then one restore fact, so the history itself must survive, not just the
+        // current effective flag.
+        voidRestoreTables.forEach { table ->
+            assertTrue(
+                countOn(driver, "SELECT count(*) FROM $table") > 0L,
+                "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
+            )
+        }
+        // The import intake owners are compared on every leg too. Between the two seeded intakes
+        // (v1 ordinary plus v3 mixed payment) each entry holds at least one row, so a non-empty
+        // check proves the intake lineage crossed rather than only the source row.
+        importIntakeTables.forEach { table ->
+            assertTrue(
+                countOn(driver, "SELECT count(*) FROM $table WHERE ledger_id = '$ledgerId'") > 0L,
+                "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
+            )
+        }
+        assertEquals(
+            1L,
+            countOn(driver, "SELECT count(*) FROM import_candidate_payment_profile WHERE ledger_id = '$ledgerId'"),
+            "the v3 intake writes exactly one payment profile for its candidate",
+        )
+        // The duplicate-disposition owners are compared on every leg too. The seeded duplicate must
+        // keep BOTH its intake status row and the review's transition row, which is what proves the
+        // disposition history crossed rather than only the candidate row.
+        duplicateReviewTables.forEach { table ->
+            assertTrue(
+                countOn(driver, "SELECT count(*) FROM $table WHERE ledger_id = '$ledgerId'") > 0L,
+                "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
+            )
+        }
+        assertEquals(
+            2L,
+            countOn(driver, "SELECT count(*) FROM import_duplicate_status_history WHERE ledger_id = '$ledgerId'"),
+            "the duplicate keeps its intake status row and the review's transition row",
+        )
+        // The matching/reconciliation owners are compared on every leg too. The confirmed link
+        // must keep both histories, which is what proves the audit chain crossed.
+        reconciliationTables.forEach { table ->
+            assertTrue(
+                countOn(driver, "SELECT count(*) FROM $table WHERE ledger_id = '$ledgerId'") > 0L,
+                "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
+            )
+        }
+        assertEquals(
+            2L,
+            countOn(driver, "SELECT count(*) FROM posting_reconciliation_history WHERE ledger_id = '$ledgerId'"),
+            "the confirmed link writes the PENDING and CHECKED reconciliation history rows",
+        )
+        // The note-update receipt owners are compared on every leg too.
+        noteUpdateReceiptTables.forEach { table ->
+            assertTrue(
+                countOn(driver, "SELECT count(*) FROM $table WHERE ledger_id = '$ledgerId'") > 0L,
+                "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
+            )
+        }
+        // The replacement copies the current version with version_number + 1, so the target keeps
+        // BOTH its original version and the copy; only the current-version pointer moves.
+        assertEquals(
+            2L,
+            countOn(driver, "SELECT count(*) FROM transaction_version WHERE ledger_id = '$ledgerId' AND transaction_id = 'tx-note-update'"),
+            "the note replacement must keep the original version and append the copy",
+        )
+        assertEquals(
+            2L,
+            countOn(driver, "SELECT count(*) FROM transaction_void_fact WHERE ledger_id = '$ledgerId'"),
+            "the void and the restore must both survive as separate audit facts",
+        )
+        assertEquals(
+            listOf("void", "restore"),
+            transactionVoidFactKinds(driver),
+            "the void/restore history must keep its fact order",
+        )
+    }
+
+    /**
+     * Non-vacuity and value guard for the confirm-path owners ([importConfirmTables]) on one leg:
+     * each table holds exactly the two seeded rows, and both rows read back FIELD BY FIELD the
+     * inputs [seedConfirmPathChains] confirmed with — decision, candidate, expected content hash,
+     * every decision-field column (NULL where the frozen CHECK shape demands NULL), both mixed leg
+     * amounts, the confirmation timestamps, and the confirmation row's full identity chain
+     * (confirmation id, request, candidate, status row, formal transaction, operation class).
+     * Every query filters on `ledger_id` like the other owner guards.
+     *
+     * The mixed-payment group owners ([mixedPaymentGroupTables]) the same mixed confirm writes are
+     * guarded here too: one head row and its two funding legs, read back FIELD BY FIELD against
+     * the seeded split (asset 3000 + liability 2600 = the 5600 source total) and the frozen
+     * provenance timestamp.
+     */
+    private fun assertConfirmPathOwnersReadBack(driver: SqlDriver) {
+        importConfirmTables.forEach { table ->
+            assertTrue(
+                countOn(driver, "SELECT count(*) FROM $table WHERE ledger_id = '$ledgerId'") > 0L,
+                "$table must hold seeded rows, otherwise its round-trip comparison is vacuous",
+            )
+        }
+        assertEquals(
+            2L,
+            countOn(driver, "SELECT count(*) FROM import_confirmation WHERE ledger_id = '$ledgerId'"),
+            "each confirmed candidate keeps exactly one confirmation row",
+        )
+        assertEquals(
+            2L,
+            countOn(driver, "SELECT count(*) FROM import_candidate_decision_snapshot WHERE ledger_id = '$ledgerId'"),
+            "each confirm request keeps exactly one decision snapshot row",
+        )
+        val ordinaryHash =
+            ImportContentFingerprint().digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, importRoundtripFacts)
+        val mixedHash =
+            ImportContentFingerprint()
+                .digest(ImportRecordKind.MIXED_PAYMENT_SOURCE, importMixedPaymentFacts, importMixedPaymentProfile)
+        assertEquals(
+            listOf(
+                "import-confirmation-roundtrip",
+                "import-request-confirm-roundtrip",
+                "import-candidate-roundtrip",
+                "import-status-confirm-roundtrip",
+                "tx-import-roundtrip",
+                "creation",
+                "2026-03-07T03:00:00+08:00",
+            ),
+            singleRowOn(
+                driver,
+                7,
+                "SELECT confirmation_id, request_id, candidate_id, status_id, transaction_id, operation_class, confirmed_at " +
+                    "FROM import_confirmation WHERE ledger_id = '$ledgerId' AND confirmation_id = 'import-confirmation-roundtrip'",
+            ),
+            "the ordinary confirmation row must read back exactly the seeded confirm inputs",
+        )
+        assertEquals(
+            listOf(
+                "import-confirmation-mixed-payment",
+                "import-request-confirm-mixed-payment",
+                "import-candidate-mixed-payment",
+                "import-status-confirm-mixed-payment",
+                "tx-import-mixed-payment",
+                "creation",
+                "2026-03-11T03:00:00+08:00",
+            ),
+            singleRowOn(
+                driver,
+                7,
+                "SELECT confirmation_id, request_id, candidate_id, status_id, transaction_id, operation_class, confirmed_at " +
+                    "FROM import_confirmation WHERE ledger_id = '$ledgerId' AND confirmation_id = 'import-confirmation-mixed-payment'",
+            ),
+            "the mixed-payment confirmation row must read back exactly the seeded confirm inputs",
+        )
+        assertEquals(
+            listOf(
+                "confirm",
+                "import-candidate-roundtrip",
+                ordinaryHash,
+                "cat-local",
+                "asset-payment-local",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "2026-03-07T03:00:00+08:00",
+            ),
+            singleRowOn(
+                driver,
+                13,
+                "SELECT decision, candidate_id, expected_content_hash, category_id, funding_account_id, from_account_id, to_account_id, " +
+                    "credit_liability_account_id, asset_account_id, original_transaction_id, asset_leg_minor, credit_leg_minor, explicit_confirmed_at " +
+                    "FROM import_candidate_decision_snapshot WHERE ledger_id = '$ledgerId' AND request_id = 'import-request-confirm-roundtrip'",
+            ),
+            "the ordinary decision snapshot must keep the frozen OrdinaryFlow column shape field by field",
+        )
+        assertEquals(
+            listOf(
+                "confirm",
+                "import-candidate-mixed-payment",
+                mixedHash,
+                "cat-local",
+                null,
+                null,
+                null,
+                "liability-credit-roundtrip",
+                "asset-payment-local",
+                null,
+                "3000",
+                "2600",
+                "2026-03-11T03:00:00+08:00",
+            ),
+            singleRowOn(
+                driver,
+                13,
+                "SELECT decision, candidate_id, expected_content_hash, category_id, funding_account_id, from_account_id, to_account_id, " +
+                    "credit_liability_account_id, asset_account_id, original_transaction_id, asset_leg_minor, credit_leg_minor, explicit_confirmed_at " +
+                    "FROM import_candidate_decision_snapshot WHERE ledger_id = '$ledgerId' AND request_id = 'import-request-confirm-mixed-payment'",
+            ),
+            "the mixed-payment decision snapshot must keep both leg amounts and the liability attribution",
+        )
+        // The mixed confirm's group owners (24.sqm created both tables before v33), guarded so
+        // the SELECT * comparison above carries data and read back field by field: the head row
+        // keeps the full identity chain and the normalized total, and each leg keeps its frozen
+        // class, account and split amount.
+        assertEquals(
+            1L,
+            countOn(driver, "SELECT count(*) FROM mixed_payment_group WHERE ledger_id = '$ledgerId'"),
+            "the mixed confirm writes exactly one payment group head",
+        )
+        assertEquals(
+            2L,
+            countOn(driver, "SELECT count(*) FROM mixed_payment_group_leg WHERE ledger_id = '$ledgerId'"),
+            "the mixed confirm writes exactly two funding legs",
+        )
+        assertEquals(
+            listOf(
+                ledgerId,
+                "group-tx-import-mixed-payment",
+                "import-candidate-mixed-payment",
+                "tx-import-mixed-payment",
+                "import-request-confirm-mixed-payment",
+                "5600",
+                "2026-03-11T03:00:00+08:00",
+            ),
+            singleRowOn(
+                driver,
+                7,
+                "SELECT ledger_id, group_id, candidate_id, transaction_id, request_id, total_minor, generated_at " +
+                    "FROM mixed_payment_group WHERE ledger_id = '$ledgerId'",
+            ),
+            "the mixed payment group head must read back exactly the seeded confirm inputs",
+        )
+        assertEquals(
+            listOf(ledgerId, "group-tx-import-mixed-payment", "1", "asset", "asset-payment-local", "3000"),
+            singleRowOn(
+                driver,
+                6,
+                "SELECT ledger_id, group_id, leg_index, leg_class, account_id, amount_minor " +
+                    "FROM mixed_payment_group_leg WHERE ledger_id = '$ledgerId' AND leg_index = 1",
+            ),
+            "the asset leg must read back exactly its seeded split half",
+        )
+        assertEquals(
+            listOf(ledgerId, "group-tx-import-mixed-payment", "2", "liability", "liability-credit-roundtrip", "2600"),
+            singleRowOn(
+                driver,
+                6,
+                "SELECT ledger_id, group_id, leg_index, leg_class, account_id, amount_minor " +
+                    "FROM mixed_payment_group_leg WHERE ledger_id = '$ledgerId' AND leg_index = 2",
+            ),
+            "the liability leg must read back exactly its seeded split half",
+        )
+    }
+
+    /**
+     * The formal commit the manual-expense creation callback returns if a replay ever wrongly
+     * claims again. It mirrors the seeded `tx-annotated` chain id for id, so a re-created effect
+     * fails on the primary keys of the already-present rows instead of quietly adding a second
+     * economic effect; an equivalent replay never reaches it.
+     */
+    private fun replayedManualExpenseCommit(): ConfirmedManualExpenseCommit {
+        val postingSet =
+            assertIs<DomainResult.Success<PostingSet>>(
+                PostingSet.create(
+                    PostingSetId("tx-annotated-posting-set-1"),
+                    listOf(
+                        Posting(PostingId("tx-annotated-posting-0"), AccountId("expense-account-local"), Money.ofMinor(3_580, CurrencyUnit("CNY", 2))),
+                        Posting(PostingId("tx-annotated-posting-1"), AccountId("asset-payment-local"), Money.ofMinor(-3_580, CurrencyUnit("CNY", 2))),
+                    ),
+                ),
+            ).value
+        return ConfirmedManualExpenseCommit(
+            confirmationId = ConfirmationId("confirmation-tx-annotated"),
+            transaction =
+                assertIs<DomainResult.Success<FormalTransaction>>(
+                    FormalTransaction.create(
+                        transaction =
+                            Transaction(
+                                id = TransactionId("tx-annotated"),
+                                ledgerId = LedgerId(ledgerId),
+                                kind = TransactionKind.EXPENSE,
+                                currentVersionId = TransactionVersionId("tx-annotated-version-1"),
+                            ),
+                        versions =
+                            listOf(
+                                TransactionVersion(
+                                    id = TransactionVersionId("tx-annotated-version-1"),
+                                    transactionId = TransactionId("tx-annotated"),
+                                    versionNumber = 1,
+                                    postingSetId = PostingSetId("tx-annotated-posting-set-1"),
+                                    times = TransactionTimes.collapsed(Instant.parse("2026-03-05T02:00:00Z")),
+                                ),
+                            ),
+                        postingSets = listOf(postingSet),
+                    ),
+                ).value,
+        )
+    }
+
+    /**
+     * The formal commit the Unknown-state creation returns on the source library: a fresh
+     * `tx-unknown` chain with ids distinct from every seeded chain, so the committed-but-unobserved
+     * request's economic effect is exactly one countable transaction the restore has to carry.
+     */
+    private fun unknownManualExpenseCommit(): ConfirmedManualExpenseCommit {
+        val postingSet =
+            assertIs<DomainResult.Success<PostingSet>>(
+                PostingSet.create(
+                    PostingSetId("tx-unknown-posting-set-1"),
+                    listOf(
+                        Posting(PostingId("tx-unknown-posting-0"), AccountId("expense-account-local"), Money.ofMinor(4_200, CurrencyUnit("CNY", 2))),
+                        Posting(PostingId("tx-unknown-posting-1"), AccountId("asset-payment-local"), Money.ofMinor(-4_200, CurrencyUnit("CNY", 2))),
+                    ),
+                ),
+            ).value
+        return ConfirmedManualExpenseCommit(
+            confirmationId = ConfirmationId("confirmation-tx-unknown"),
+            transaction =
+                assertIs<DomainResult.Success<FormalTransaction>>(
+                    FormalTransaction.create(
+                        transaction =
+                            Transaction(
+                                id = TransactionId("tx-unknown"),
+                                ledgerId = LedgerId(ledgerId),
+                                kind = TransactionKind.EXPENSE,
+                                currentVersionId = TransactionVersionId("tx-unknown-version-1"),
+                            ),
+                        versions =
+                            listOf(
+                                TransactionVersion(
+                                    id = TransactionVersionId("tx-unknown-version-1"),
+                                    transactionId = TransactionId("tx-unknown"),
+                                    versionNumber = 1,
+                                    postingSetId = PostingSetId("tx-unknown-posting-set-1"),
+                                    times = TransactionTimes.collapsed(Instant.parse("2026-03-06T02:00:00Z")),
+                                ),
+                            ),
+                        postingSets = listOf(postingSet),
+                    ),
+                ).value,
+        )
+    }
 
     /**
      * Reads EVERY row of [table] on both files and compares them as values ([projection] defaults to
@@ -545,6 +2487,49 @@ class P708RestoreRoundtripEquivalenceTest {
             "budget_command_request" -> "ledger_id, request_id"
             "budget_settings_history" -> "ledger_id, budget_id, revision_number"
             "budget_command_receipt" -> "ledger_id, request_id"
+            // The catalog and posting-set owners have declared primary keys, which — like the
+            // budget keys above — fully determine row order, unlike an implicit rowid that
+            // VACUUM may renumber.
+            "catalog_version" -> "ledger_id"
+            "catalog_account" -> "ledger_id, account_id"
+            "catalog_category" -> "ledger_id, category_id"
+            "catalog_name_history" -> "ledger_id, owner_kind, owner_id, version_number"
+            "catalog_command_request" -> "ledger_id, request_id"
+            "catalog_command_receipt" -> "ledger_id, request_id"
+            "posting_set" -> "posting_set_id"
+            "entry_pin" -> "ledger_id, target_kind, target_id"
+            "counterparty" -> "ledger_id, counterparty_id"
+            "counterparty_name_history" -> "ledger_id, counterparty_id, version_number"
+            "transaction_void_request" -> "ledger_id, request_id"
+            "transaction_void_fact" -> "ledger_id, transaction_id, sequence"
+            "transaction_void_receipt" -> "ledger_id, request_id"
+            "import_request" -> "ledger_id, request_id"
+            "import_source_record" -> "ledger_id, source_id"
+            "import_evidence" -> "ledger_id, evidence_id"
+            "import_candidate" -> "ledger_id, candidate_id"
+            "import_candidate_requires_confirmation" -> "ledger_id, candidate_id, requirement_index"
+            "import_candidate_payment_profile" -> "ledger_id, candidate_id"
+            "import_candidate_status_history" -> "ledger_id, candidate_id, sequence"
+            "import_confirmation" -> "ledger_id, confirmation_id"
+            "import_candidate_decision_snapshot" -> "ledger_id, request_id"
+            "import_receipt" -> "ledger_id, request_id"
+            "mixed_payment_group" -> "ledger_id, group_id"
+            "mixed_payment_group_leg" -> "ledger_id, group_id, leg_index"
+            "import_duplicate_candidate" -> "ledger_id, candidate_id"
+            "import_duplicate_status_history" -> "ledger_id, candidate_id, sequence"
+            "import_duplicate_review_request" -> "ledger_id, request_id"
+            "import_duplicate_review_snapshot" -> "ledger_id, request_id"
+            "import_duplicate_review_receipt" -> "ledger_id, request_id"
+            "evidence_projection" -> "ledger_id, projection_id"
+            "evidence_link" -> "ledger_id, link_id"
+            "evidence_link_history" -> "ledger_id, link_id, sequence"
+            "posting_reconciliation" -> "ledger_id, reconciliation_id"
+            "posting_reconciliation_history" -> "ledger_id, reconciliation_id, sequence"
+            "reconciliation_request" -> "ledger_id, request_id"
+            "reconciliation_request_snapshot" -> "ledger_id, request_id"
+            "reconciliation_receipt" -> "ledger_id, request_id"
+            "transaction_note_update_request" -> "ledger_id, request_id"
+            "confirmed_transaction_note_update_receipt" -> "ledger_id, request_id"
             else -> "rowid"
         }
 
@@ -574,6 +2559,51 @@ class P708RestoreRoundtripEquivalenceTest {
             driver.close()
         }
     }
+
+    /** The `fact_kind` values of the seeded void/restore facts, in append (sequence) order. */
+    private fun transactionVoidFactKinds(driver: SqlDriver): List<String> =
+        driver
+            .executeQuery(
+                null,
+                "SELECT fact_kind FROM transaction_void_fact WHERE ledger_id = '$ledgerId' ORDER BY sequence",
+                { cursor ->
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(
+                            buildList {
+                                while (cursor.next().value) {
+                                    add(requireNotNull(cursor.getString(0)))
+                                }
+                            },
+                        )
+                },
+                0,
+            ).value
+
+    /**
+     * The single row of a keyed owner query as stored values; NULL stays NULL. [columns] fixes the
+     * projection width so a schema drift shows up as an assertion failure rather than a silent
+     * truncation.
+     */
+    private fun singleRowOn(
+        driver: SqlDriver,
+        columns: Int,
+        sql: String,
+    ): List<String?> =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    check(cursor.next().value)
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(
+                            buildList {
+                                repeat(columns) { index -> add(cursor.getString(index)) }
+                            },
+                        )
+                },
+                0,
+            ).value
 
     private fun countOn(
         driver: SqlDriver,

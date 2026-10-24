@@ -22,7 +22,7 @@ env:
   CI_TEST_MAX_PARALLEL_FORKS: '4'
 
 jobs:
-  # :ledger-data:jvmTest (103 classes) is by far the longest task, so it is
+  # :ledger-data:jvmTest (107 classes) is by far the longest task, so it is
   # split across three runners. tools/ci/ledger-data-shards.txt says which classes each
   # runner takes; the two coverage guards below keep that list honest (the class count is
   # the only figure the guards verify; the base 98/722 header had already drifted from the
@@ -113,6 +113,9 @@ jobs:
       - name: Test timing report
         if: always()
         run: python3 tools/ci/test-timing-report.py --root . --summary "$GITHUB_STEP_SUMMARY" --top 0
+      - name: Recorded scale readings
+        if: always()
+        run: python3 tools/ci/scale-readings-report.py --root . --summary "$GITHUB_STEP_SUMMARY"
 
   kotlin-gate:
     # Owns the branch-protection context name "Kotlin tests". It must always run

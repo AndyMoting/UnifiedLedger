@@ -5096,3 +5096,268 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 8. **边界**：入：本条登记 + 四份正式状态文档的最小指针同步。出：零代码/测试/schema/迁移/依赖/清单/Golden；不改 D-176/D-177/D-179/D-181/D-183 的任何裁决与开放项（OS 自动备份/设备迁移排除归尚不存在的隐私规格、61k 大库峰值内存、06.B 取消控件延期全部保持开放）；不改 `ACC-D-PERF-01`、`ACC-D-20K-01` 状态；**不把 A01/A04/A06/A07/A10/A11 并入 PASS，不把 A02/A08/A09/A12 判 FAIL**（它们是未取证，不是已证伪）。
 
 **关联决定：** D-174（06.0/06.A 容器格式与 Q13 技术门）、D-176（06.1 稳定存储与 runtime owner）、D-177（06.2/06.B 备份导出）、D-179（06.3/06.C 恢复预检）、D-181（06.D 前置与 V-17 收口口径）、D-182（06.D 设计门规格）、D-183（06.D 恢复确认与切换实施登记，其 41/41 设备门为本条设备腿证据来源）、D-156（`transaction_effective_state` 有效谓词唯一 SQL 定义点）、阶段计划 §6「切片与验收」与 §10.1/§10.4.5/§10.3。
+
+## D-240 P7-07 验收向量补测批：A04/A06/A07/A09 判 PASS（JVM 维度），文件库预算 authority 读取缺陷 ACC-D-BUDGET-01 修复
+
+**状态：** 已批准并登记（2026-10-22，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §7.3 的 P707-A04/A06/A07/A09 + §10.1 逐项状态与 §10.4.5「报告逐项状态总数」+ `ACC-D-BUDGET-01` 修复登记）。**一批 tracked 变更**：产品修复 1 文件（`ledger-data/src/commonMain/kotlin/com/unifiedledger/data/SqlDelightBudgetStore.kt` 的 `loadAuthority`）+ 4 个既有测试文件 + 2 个新测试类 + `tools/ci/ledger-data-shards.txt` 1 行 + `.github/workflows/ci.yml` 头注释类数；PR #110 merge `5b93e1cdd32daf154c1dede21a70324129f6d554`（head `af2a135`）。schema 维持 v35（34 个 `.sqm`），零迁移/零依赖。
+
+**决定：**
+
+1. **产品缺陷 `ACC-D-BUDGET-01`（已修复）**：`SqlDelightBudgetStore.loadAuthority` 在 `selectBudgetConfigByScope` 的 row mapper 内调用 `currentLimit`（其自身再发一次 `selectBudgetSettingsHistory`）。SQLDelight 2.3.2 `ThreadedConnectionManager.closeConnection` 要求关闭的连接必须是线程本地连接；嵌套查询结束时已关闭并移除该连接，外层查询清理随即抛 `Connections must be closed on the thread that opened them`。内存库走 `StaticConnectionManager`（`closeConnection` 空实现），故既有 25 个内存用例从未暴露。桌面 `desktop-app/src/jvmMain/kotlin/com/unifiedledger/desktop/Main.kt:1012`（驱动在 `:1216`）以文件库 `JdbcSqliteDriver` 构造该 store，`ledger-application/src/commonMain/kotlin/com/unifiedledger/application/QueryBudgetMonth.kt:101-106` 把异常映射为 `Unavailable` → 任何已配置预算（revision>0）的桌面月视图不可用。修复：先 `executeAsOneOrNull()` 取配置行，再在 mapper 闭包外组装 `BudgetAuthority` 并调用 `currentLimit`；不改 SQL、schema、失败码、金额/舍入语义、协议或公开签名。覆盖调用点：`load`（`BudgetAuthorityReader`）与 `commitOnce` 内的 authority 读。Android 运行时未验证（`SqlDelightBudgetStore` 当前无 Android 组合点），影响陈述仅对桌面/JVM 确定。
+
+2. **判 PASS 四项（JVM 维度）**：
+   - **A04**：`P707BudgetCorrectionCrossTest` 五个用例（同月金额 `sameMonthAmountCorrectionCountsTheCurrentVersionOnce`、统计月 `statisticsMonthCorrectionMovesTheCurrentVersionAndLeavesNoOldVersionInEitherMonth`、分类 `categoryCorrectionMovesTheExpenseBetweenCategoryScopes`、void/restore `voidAndRestoreExcludeAndReturnTheCurrentVersionExactlyOnce`、预算零副作用 `budgetCommandsHaveZeroLedgerSideEffects`），全部驱动真实 `ExecuteCorrectTransactionVersion`/`ExecuteVoidTransaction`/`ExecuteRestoreTransaction` 与真实 `SqlDelightMonthlyContributionReadAdapter` + `SqlDelightBudgetStore` + `QueryBudgetMonth` 文件库；旧版本不双算、`occurred_at`/`effective_at` 逐字不变、对账/证据 owner 行数不变。
+   - **A06**：`SqlDelightBudgetStoreTest.aReplayedBudgetRequestAfterARealCloseAndReopenReturnsTheOriginalReceipt` 与 `aDifferentSnapshotForTheSameRequestIdAfterReopenIsAnIdentityConflict`（真实 `closePreservingFile` + 新连接重开；同请求重放返回原 receipt 且四张预算表零新写；同 requestId 异 snapshot 为 identity conflict 零写）。
+   - **A07**：`MonthlyBucketsTest.subsecondLeapAndNonLeapMonthBoundariesUseTheFrozenShanghaiMonth`（亚秒/闰年/非闰年/`monthStart`）；`MonthlyBucketsTimeZoneJvmTest`（三默认时区 + 子 JVM `-Duser.timezone=UTC` 首次初始化）；`SqlDelightMonthlyContributionReadAdapterTest.equivalentTextFormsProjectToTheSameEpochNanosAndTheSubsecondWindowStaysHalfOpen`（`Z`/`+08:00`/`-08:00` 等值投影、半开窗、闰年二月窗口）。
+   - **A09**：`SqlDelightBudgetStoreTest.aRealCloseAndReopenKeepsBudgetIdentityHistoryAndMonthRows` 与 `renamingAndDeactivatingTheCategoryKeepsStableAttributionAndZeroLedgerSideEffects`；`P708RestoreRoundtripEquivalenceTest` 三个 stage 的 CATEGORY-scope 预算链 + 四张预算表全值比较 + 两条链 `settingsHistory` 逐字段（含 `createdAt`）读回。
+   - **补充条款归属**：A04 的 note-update/RG-11/RG-12 追加版本条款与 A07「四语句 + 追加路径」条款由既有 `P707TimeProjectionWriteMaintenanceTest`、`SqlDelightRg11StoreTest`、`SqlDelightRg12StoreTest` 覆盖；本批未新增这些路径的证据，CI 全量执行时一并成立。
+
+3. **未判 PASS/保持开放**：**A08（缺证）**——20k/50k 规模、扫描/返回行、查询数、峰值内存、连接持有与端到端响应仍未测（D-237 item 4 / D-186）；**P7-07 整体仍不判通过**（A08 未闭合）。本条不改变 D-237 对 A01/A02/A03/A05 的 PASS。
+
+4. **证据**：PR head `af2a135` 的 CI run `39762818759` 全绿（`Kotlin tests`/`Android compile`/`Python tests`/`Trace scan`；`ledger-data shard 1/2/3` 全绿且 `verify-shard-coverage.py` 覆盖新增类 `com.unifiedledger.data.P707BudgetCorrectionCrossTest`，清单 104 行）；merge `5b93e1c` 的 merge tree guard run `39763887230` success（zero-action）。独立 verifier 在父提交 `4b7489a` 上以 `--rerun-tasks` 聚焦复跑：4 类 43 tests / 0 failures/errors/skips + 应用 2 类 9 tests / 0 failures。reviewer 结论 APPROVE-WITH-FINDINGS；3 条 P3 已在 `d022f4c` 修复（rgXX 对账探针、`createdAt` 读回、权威引用），delta 经独立 reviewer 复核为 APPROVE，其唯一非阻断备注（探针注释范围过宽）已在 `af2a135` 收窄。第一轮 CI 仅因两处 ktlint 违规失败，修复后重推（`13c5d39`）。
+
+5. **边界**：不改 D-237 的 A01/A02/A03/A05 PASS；不改 `ACC-D-PERF-01`/`ACC-D-20K-01`；不把 A08 并入 PASS；不改 P7-05/P7-06/P7-08/P7-09 的任何状态。已知残余：`P705Database` 的 `PRAGMA foreign_keys = ON` 在 `ThreadedConnectionManager` 上不跨语句保持（既有 harness 限制，无新断言依赖它）；预算规格行号漂移（`copyCurrentVersionWithNewNote` 实测在 `Ledger.sq:2520`，规格写 `:2112`）另行登记，不在本条改规格。
+
+6. **审验拓扑**：批次由 `autopilot` 编排（单 writer → 独立 reviewer → distinct verifier）；冻结候选 `4b7489a` 后主代理按评审 P3 追加两个测试/注释提交，并按要求取独立 delta 评审。测试执行按当前路由归 CI（PR head 的 required checks + merge tree guard），本地不再重复。
+
+**关联决定：** D-184（07.T 时间投影与预算口径冻结）、D-185（07.B 预算配置持久化，schema v32→v33）、D-186（07.D 预算读取与产品接线）、D-237（P7-07 验收向量裁决，A04/A06/A07/A09 在此前开放；本条闭合其中四项，A08 保持开放）、D-156（`transaction_effective_state` 有效谓词唯一 SQL 定义点）、D-230/D-234（`ACC-D-PERF-01` 与设备证据，不受本条影响）、阶段计划 §7.3 与 §10.1/§10.4.5。
+
+## D-241 P7-07/P7-08 规模量测补测批：P707-A08 与 P708-A09 的量测证据落盘，二者仍不判 PASS
+
+**状态：** 已批准并登记（2026-10-22，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §7.3 `:253` 的 P707-A08 与 §8.3 `:308` + §10.3 的 P708-A09；登记依据 D-237 item 4 与 D-238 item 4）。**一批 tracked 变更（纯加测试）**：新建 `ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/P707BudgetScaleTest.kt`、新建同目录 `ScaleMeasurementSupport.kt`（量测辅助）、既有 `TagMerchantFilterScaleTest.kt` +50k 腿、`tools/ci/ledger-data-shards.txt` +1 行（新类入 shard 1）、`.github/workflows/ci.yml` 头注释类数 104→105。PR #112 merge `e9bbae9fb9d1907c9329d9df532f5d80e6a8642f`（head `e07f348`）。**第二批 tracked 变更（CI 观测面）**：新建 `tools/ci/scale-readings-report.py` + `ci.yml` 一个 `Recorded scale readings` 步骤 + `docs/CONTRIBUTING.md` 同步一句；PR #113 merge `6f1a62338401fedd7981cef40b10e93d46712ace`。schema 维持 v35（34 个 `.sqm`），零产品代码、零迁移、零依赖、零 Gradle 配置改动。
+
+**决定：**
+
+1. **P707-A08 已有量测证据（JVM 维度），但不判 PASS。** 本批补齐 D-237 item 4 登记的量测项：20k/50k 正式交易、跨 3 个 Asia/Shanghai 统计月、约 1/3 交易保留同月 version-1 行（当前指针指向 v2）、每月含作废子集、父 + 两子分类预算 + 一个真正未映射的 EXPENSE 账户（无分类），预算经真实 `SaveBudgetConfiguration` 分两相写入（相 A 仅 TOTAL，相 B 增父子三 scope），读侧走真实 `SqlDelightMonthlyContributionReadAdapter` + `SqlDelightBudgetStore` + `QueryBudgetMonth.queryView`。**判别性**：去掉 current-version join 会让保留的 v1 双算、去掉有效谓词会算入作废交易、逐 scope 重读会抬高 read-port 调用数与 SQL 语句数——三者各使至少一条断言翻红。**实测**（CI run `39804753858` 的 `ledger-data shard 1`，Linux/OpenJDK 21.0.12/SQLite 3.51.3）：50k 探针面 66,668 行、`build-ms=4264`、每观测月窗口内 current-version 行 16,667（5 月 16,666）、返回 `LedgerEntryRow` 16,665（5 月 16,664）、**每次 view 7 条 SQL** 且相 A/相 B 相同、连接持有 137–207 ms、端到端 186–302 ms、峰值堆 111–186 MB（仅 JVM 堆）；20k 探针面 26,668 行、窗口 6,667、返回 6,665、SQL 7、连接 54–70 ms、端到端 64–80 ms、峰值堆 139–212 MB。**仍不判 PASS 的原因**：`ACC-D-20K-01` B6 组卡打开与 §10.3 的 ≥20k 组可达性未测，且计划 §10.3 的「完整计数」A/B 读法仍 `indeterminate`；本批只闭合「量测项已可复现落盘」，不闭合 A08 的整体判据。
+2. **P708-A09 已有 50k 量测证据，同样不判 PASS。** 既有 `TagMerchantFilterScaleTest` 保留原 20k 用例与全部断言不变，新增 50k 腿：5 万交易、40 标签、5 商家、页 500，沿用同一 annotation 密度与金额/时间公式；断言分页读与构造清单逐项等价、跨页无重复、重叠分组为全值不可相加、AND 语义、首末项稳定、商家累计精确。**实测**：扫描面 400,000 行、返回 2,500 行（5 页）、SQL 60、峰值堆 59.6 MB、build 3.7 s、分页读 184 ms。同样不判 PASS：D-238 item 4 的 61k 与设备/ANR 腿不在本批，§10.3 口径未闭合。
+3. **量测值只记录、不断言阈值。** 两个类都不设 wall-clock 或内存门限；峰值堆由 10 ms 轮询采样且明确标注 `jvm-heap-only`，不声称设备 ANR/OOM 行为。断言只用「构造清单推导的精确值」或结构性事实（SQL 数非零、窗口行数等于清单）。
+4. **`ACC-D-PERF-01` 与 `ACC-D-20K-01` 不受本批影响**：61k 仍 `NOT MET`（当前基线 27–30 s），B6 仍未测，本批未产生任何设备读数。
+5. **CI 观测面缺陷（已修复，第二批）**：规模测试把量测值以 `P707-A08 ` / `P708-A09 ` 前缀打印，但这些行此前只存在于运行结束即失效的 console 里——JUnit XML 既不进 summary 也不作 artifact。两处错误判断已按真实 Gradle 9.5 输出纠正：Gradle 把用例输出写在**套件级** `<system-out>`（本仓 `ImportReview61kReadAttributionTest` 的 `D169ATTR:` 行即在此），且 `reports.junitXml.outputPerTestCase` 在 Gradle 9.5 **不存在**（init 脚本编译报 `Unresolved reference`，该行已删）。`tools/ci/scale-readings-report.py` 现读套件级与用例级两处，并同时写 job summary 与 job log（log 是 actions API 唯一可回溯的形式），只报告、不改变任何检查结论。上列实测值即由该步骤从 run `39804753858` 的日志中取得。
+6. **审验与证据链**：停放 WIP（`028f9fe`，provider 断线中止、无任何测试执行证据）经 `wip-forensics` 式的静态复核后复用而非重建；独立 reviewer 首轮判 NOT FIT TO PUSH 并给出 3 条 high（`BudgetScope` 错包、缺 `BudgetMonth` 导入、50k 腿未 seed P7-01 目录）+ 3 条 low，全部修复后复评 FIT TO PUSH；修复量为 import 归位、50k 腿补 `bootstrap`、窗口行数改为实测、量测辅助类独立成文件、扫描面常量改为公式推导。CI 首轮 2 红均为本批自身缺陷：作废夹具误用 `insertRawVoidFact` 的全局序号（触发器要求每个交易的下一序号，实测 `SQLiteException`）→ 改用真实 `ExecuteVoidTransaction`；ktlint 3 条表达式体/导入序违规 → 按 `.editorconfig`（`max_line_length = off`）改为 ktlint 要求的形态。**测试执行按当前路由归 CI**，本地未跑 Gradle；`PYTHONPATH=tools/python python -m project_docs .` exit 0。
+7. **边界**：不改 D-237 对 A01/A02/A03/A05 的 PASS，不改 D-238 对 A01/A03/A04/A05/A06/A08 的 PASS，不改 D-236/D-239 的任何判决；不把 A08/A09 并入 PASS；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-237（P7-07 验收向量裁决，A08 在此前登记为缺证）、D-238（P7-08 验收向量裁决，A09 部分证据）、D-240（同一 §7.3 家族的 A04/A06/A07/A09 补测）、D-184/D-186（预算口径与读取接线）、D-230/D-234（`ACC-D-PERF-01`，不受本条影响）、阶段计划 §7.3/§8.3/§10.3。
+
+## D-242 P706-A01 恢复往返 owner 覆盖批：8 个点名族逐表逐值比较补齐（纯加测试，不判 PASS）
+
+**状态：** 已批准并登记（2026-10-23，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §6「切片与验收」的 P706-A01 + §10.1 逐项证据 + §10.4.5「报告逐项状态总数」）。**八批 tracked 变更（全部纯加测试）**：唯一改动文件 `ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/P708RestoreRoundtripEquivalenceTest.kt`。**零产品代码、零 schema、零迁移、零依赖、零 CI 配置改动**（schema 维持 v35 / 34 个 `.sqm`；`tools/ci/ledger-data-shards.txt` 维持 105 行、`ci.yml` 头注释维持 105 类——未新增测试类）。八次 squash merge：PR #115 `5269fb0`、#116 `d4c3f97`、#117 `10d89c1`、#118 `cd5cabb`、#119 `7fea405`、#121 `2e80e8b`、#122 `5901d85`、#123 `b260f45`。**本条不改变任何向量的 PASS/部分/缺证判决**，只登记覆盖面的补齐与随之产生的登记事实更正。
+
+**决定：**
+
+1. **覆盖缺口来源。** D-239 item 4 的 A01 缺口原文（`:5079`）逐字登记为：计划 A01 字面要求的**来源/候选、重复处置、匹配/对账、置顶、作废恢复历史、目录账户/分类**均无值级比较，上述表名在 `P708RestoreRoundtripEquivalenceTest` 中零命中。本条把这八个族逐一补齐，并保留该缺口的原始措辞作为变更依据。
+
+2. **逐族补齐内容（每族走真实产品端口 seed + 非空守卫 + 三条腿比较）。** 比较面由原 20 张表扩至 **60 张表**（`annotationOwnerTables` 11 + `manualRequestTables` 4 + `preV34SurvivorTables` 4 + `budgetOwnerTables` 4 + 其余按族分组），四条腿（v35 直读 / v34→v35 / v33→全链 / 失败迁移回滚）分别使用 `currentSchemaOwnerTables`、`migratedOwnerTables`、`preAnnotationEdgeOwnerTables` 三个清单（v33 源 DROP 了 11 张 08.A 表，故其清单单独列出）：
+   - **目录与正式版本/分录（拆片 1，PR #115）**：新增 `catalog_version`/`catalog_account`/`catalog_category`/`catalog_name_history`/`catalog_command_request`/`catalog_command_receipt`/`posting_set` 与 `confirmed_expense_receipt`；`ledger_transaction`/`transaction_version`/`posting`/`ledger_transaction_current_version` 由「只在 v33 腿比较」改为**每条腿都比较**。**关键修复**：`catalog_command_request`/`catalog_command_receipt` 此前无人写入（`SqlDelightCatalogStore.bootstrap` 只写 `catalog_version`），原拟比较会退化为空对空；已加 `seedCatalogCommandChain`（真实 `ExecuteCatalogCommand.renameAccount`）并配非空守卫。
+   - **置顶与对手方目录（拆片 2a，PR #116）**：`entry_pin`（计划 `:181` 的「置顶」）+ `counterparty`/`counterparty_name_history`，走 `SqlDelightEntryPreferenceStore.togglePin` 与 `SqlDelightCounterpartyStore.create`。
+   - **作废恢复历史（拆片 2b，PR #117）**：`transaction_void_request`/`transaction_void_fact`/`transaction_void_receipt`，走 `ExecuteVoidTransaction` 后 `ExecuteRestoreTransaction`（专用交易 `tx-void-target`），产生 void + restore **两条**事实。
+   - **来源/候选（拆片 2c 与 2g，PR #118 / #123）**：`import_request`/`import_source_record`/`import_evidence`/`import_candidate`/`import_candidate_requires_confirmation`/`import_candidate_status_history`/`import_receipt`（v1 普通收支 intake）+ `import_candidate_payment_profile`（v3 `MIXED_PAYMENT_SOURCE` intake），走 `SqlDelightImportSpineStore.commitIntake`。
+   - **重复处置（拆片 2d，PR #119）**：`import_duplicate_candidate`/`import_duplicate_status_history`/`import_duplicate_review_request`/`import_duplicate_review_snapshot`/`import_duplicate_review_receipt`；第二次 intake 复用同业务元组使 `selectDuplicateMatches` 恰返 1 条（在 `allocateIds` 处断言），再走 `commitReviewOnce` + `CONFIRMED_DISTINCT`。
+   - **匹配/对账（拆片 2e，PR #121）**：`evidence_projection`/`evidence_link`/`evidence_link_history`/`posting_reconciliation`/`posting_reconciliation_history`/`reconciliation_request`/`reconciliation_request_snapshot`/`reconciliation_receipt`，走 `SqlDelightP408ReconciliationStore.confirmLink`（v2 请求；v1 已按契约退役）。
+   - **回执（拆片 1 的 `confirmed_expense_receipt` + 拆片 2f，PR #122）**：`transaction_note_update_request`/`confirmed_transaction_note_update_receipt`，走 `ExecuteConfirmedTransactionNoteUpdate`。
+
+3. **本夹具结构不适用的三张回执表（登记，不记缺证）。** `confirmed_income_receipt`/`confirmed_transfer_receipt`/`confirmed_lending_receipt` 由收入/转账/借贷三个手工新建端口写，而这三个端口**无条件**调用 `updateManual…RequestAnnotation` 与 `appendManualCreateAnnotation`，写入 `34.sqm` 新增的两列注释列与 `33.sqm` 新建的 11 张表；本夹具的 v34/v33/回滚腿 DROP 这些列/表，故端口在三条腿**无法运行**（实测 `no such column: annotation_tag_ids`，4 测 3 红）。**首次尝试（PR #120，借贷族）即因此关闭未合并**（另：计划 `:181` 并未点名借贷族——「对手方」在该计划中出现 0 次）。这三表在 v33+ 均存在，但本夹具无法用真实端口写入，故**不纳入跨腿比较**；若要覆盖须另建仅 v35 的独立往返夹具（代价是失去跨腿证据）。**不得据此把 P706-A01 记为完整**。
+
+4. **同族剩余缺口（登记，不阻断）。** `import_confirmation` 与 `import_candidate_decision_snapshot` 属 `commitOnce` 的 confirm 路径，需 `ImportCandidateDecisionSnapshot` + catalog + `createFormalTransaction` 回调，成本高于本条各片，**未覆盖**。其余未比较表（190 张）绝大多数为 `rg*` 黄金筒仓表，由 golden 测试覆盖，**不属**产品恢复往返路径。
+
+5. **随之产生的登记事实更正（不改判决）。** D-239 `:5079`（A01 缺口）与 `:5087`（A11 预算腿缺失）的「零命中 / 不在任何往返比较中」措辞**自本条起对已补齐的族不再成立**；D-239 作为当时快照**保持原文不改**（决定记录 append-only），更正以本条为准。**`P706-A01` 在 §10.1 仍登记为「部分证据」，本条不把它并入 PASS**——把它改为 PASS 需按 §10.4 另行逐项回读证据并作出独立裁决。
+
+6. **审验与证据链。** 八批各经独立 reviewer 复核，均判 FIT TO PUSH；评审提出的 blocker 与本条自查发现的缺陷全部在合并前闭合，其中：拆片 1 的空对空退化（评审判定 blocker，已加真实 seed）、拆片 2b 的 v33 腿清单误含被 DROP 的 11 张表（评审 blocker，已单列清单）、拆片 2d 的相邻 KDoc 违规（ktlint_official 拒绝「KDoc 前有 KDoc」，CI 实测红）、拆片 2f 的版本数断言误写为 1（本地跑测抓到，实为 2：原版 + 副本）、拆片 2g 引入后三处旧注释失真（评审 minor，已改写并显式断言零重复需求）。**测试执行按当前路由归 CI**；拆片 2e/2f/2g 另在本地以 `:ledger-data:jvmTest --tests com.unifiedledger.data.P708RestoreRoundtripEquivalenceTest` 复跑（各 4 测 0 失败），用于在推送前捕获腿特异性缺陷。
+
+7. **边界。** 入：本条登记 + 四份正式状态文档的指针同步。出：零产品代码/测试/schema/迁移/依赖/清单/Golden 改动；**不改 D-236/D-237/D-238/D-239/D-240/D-241 的任何判决**（不把任何 A 项并入或移出 PASS）；不改 `ACC-D-PERF-01`/`ACC-D-20K-01`；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-239（P7-06 验收向量裁决，本条补齐其 A01/A04/A11 登记的缺口面）、D-238（P7-08 裁决，同一往返类的先例）、D-221/D-224（08.D 恢复白名单与往返腿的原始登记）、D-218（08.A 的 11 张 owner 表）、D-174/D-177（备份容器与导出，A01 的往返语义来源）、阶段计划 §6 与 §10.1/§10.4.5。
+
+## D-243 61k 规模口径裁决（`ACC-D-PERF-01` 重新表述）+ 设备侧事实更正（61k 库不存在、AVD home 迁移）
+
+**状态：** 已批准并登记（2026-10-24，用户裁决）。**零产品代码、零测试、零 schema/迁移/依赖/CI 配置改动**；本条为**裁决 + 事实更正 + 登记**。依据：计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §2 `:42`（A-PERF 原规划测量集）与 §10.3（`:410`–`:414`）；D-157 第 4 条（§10.3 规模项的原裁决）；D-169 第 5 条（61k 缺陷原始登记）；D-230 J2（「不改阈值、不改口径、不并入 PASS」）；D-234（机制 (b) 后的当前基线设备读数）。**本条不把任何向量并入 PASS。**
+
+**决定：**
+
+1. **61k 不属计划原定测量集（用户裁决，选项 (b)）。** 计划两处原文界定规模：§2 `:42`「A-PERF 原规划测量集：**空库、1k、10k、30k 候选，包含 20k 重复组**、无重复组及多次导入累积」；§10.3 `:414`「固定匿名数据至少覆盖**单次 10k 导入与多次累积 30k 候选、20k 重复组**」。D-157 第 4 条即按此原文裁决，并记录当时实测库为 **30,039 候选 / 30,010 重复候选**（B6 组开卡 2.61 s，位于 ≤3 s 门槛内）。`ACC-D-PERF-01` 所测的 **61,000 候选 / 158,000 重复**（D-234 基线）是**后续经产品 SAF 路径反复导入累积出的库**，规模约为原定口径的 2 倍，**不在原规划测量集内**。
+
+2. **`ACC-D-PERF-01` 重新表述（门槛与口径均不动）。** 该缺陷由「**NOT MET——未达 ≤3 s 门槛**」重新表述为「**超出计划原定规模的累积库观察项**」。理由：原定规模（30k/20k）的门槛判定不因此改变——B6 组开卡 2.61 s 在门槛内、B5 定向详情 0.056 s 达标、A-PERF 20k 达标；而 61k 既非原定测量集，其 ≤3 s 命题就不构成计划的必需门槛。**不改阈值、不改口径**（沿 D-230 J2），**不并入 PASS**，D-169/D-171/D-175/D-230/D-231/D-234 的任何既有登记文本与开放状态**均不改动**。
+
+3. **61k 观察值如实保留为已知限制。** 机制 (b) 后的当前基线（D-234，`c6526ad` 树 APK）：导入 Tab 冷进入中位 **23.71 s**、「刷新清单」中位 **21.22 s**，较 D-231 的 27–30 s 改善约 20%；`Dispatchers.Default` 约 26 s on-CPU 为主因（主线程约 1.5 s）；内存达标（Java+Native 峰值 ≈137 MB）、零 OOM/FATAL/ANR；J7 连接持有窗口约 40 s。**承接条件**：若日后要把 61k 纳入必需门槛，须先立设计门解决 off-thread 行物化成本，且**不得靠改「完整列表」语义**（`ACC-COUNT-01` 完整计数 / `ACC-SEL-01` 跨页勾选）提速。
+
+4. **设备侧事实更正（一）：61k 库不在 AVD 上，checkpoint 原记载有误。** 原 checkpoint 设备行写「设备端库 = 61,000 候选 / 158,000 重复 / v35（**保留在 AVD 数据盘可复用**）」。2026-10-24 实测（AVD `ul_p7_d01` 启动后 root 全盘检索）**该 AVD 上未安装本应用、不存在任何应用库**：包路径查询为空；全盘按库文件名与应用名检索均无命中（仅图形统计目录与一个语音模型的同名无关文件）。**结论**：该库**不存在**，原「可复用」记载不成立。成因推断（如实标注为推断）：归档文档记载 `ul_p7_d01` 曾「已不存在」并重建为 `ul_d217_v1`、后又重建回来，**重建会清空应用数据**。**影响**：已登记的设备读数为历史证据、不因此失效（其绑定的是当时的候选与 APK）；但**任何需要 61k 库的复测都必须先重新导入 61k**，不得假设存在现成库。**本条同时更正 checkpoint 设备行。**
+
+5. **设备侧事实更正（二）：AVD home 迁移与孤儿清理。** 用户指令下完成（2026-10-24）：
+   - **迁移**：`ul_p7_d01` 的 AVD home 由另一工具的项目目录（`<opencode-project>/config/.android/avd`）移至 Android SDK 根下的 `avd/` 子目录（`<ANDROID_HOME>/avd`），解除与该工具项目目录的意外耦合。`ul_p7_d01.ini` 的 `path` 及 `hardware-qemu.ini`、`snapshots/default_boot/hardware.ini` 中 8 处旧路径引用已全部修正，旧路径零残留；**实测启动验证通过**（启动完成标志为 1、AVD 归属核验为 `ul_p7_d01`、已正常关机）。**后续启动命令的 AVD home 环境变量应指向 `<ANDROID_HOME>/avd`**；本机具体路径记录在 `docs/PROJECT_STATE.local.md` 的设备行。
+   - **孤儿清理**：删除 5 个不活跃 AVD——`ul_p5_test`（7.6 G）、`ul_p6_api34`（4.4 G）、`ul_p6_api35`（4.3 G）、`ul_p6_api37`（6.5 G）、`ul_d217_v1`（4.7 G，归档长测线的临时替代，其工作已由 `ul_p7_d01` 承接）。均经只读盘点确认无进程持有（设备列表为空、锁文件为 0 字节陈旧残留），用官方 `avdmanager delete avd` 删除以清注册。**释放约 27.5 GB**（原两个 AVD home 目录分别由 31 G 降至 8.3 G、由 4.7 G 降至 16 K）。`ul_p7_d01` 保留完好。
+
+6. **边界。** 入：本条登记 + checkpoint 的设备行与 AVD 路径更正。出：零产品代码/测试/schema/迁移/依赖/清单/Golden/CI 配置改动；**不改 D-169/D-171/D-175/D-230/D-231/D-234 的任何登记文本或开放状态**；不改 D-236~D-242 的任何判决；不把任何向量并入 PASS；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。**设备验收向量（P709 分享方 App、TalkBack、真杀进程、B6 组卡等）的处置不在本条内**，仍按 §10.1 各自登记。
+
+**关联决定：** D-157（§10.3 规模项原裁决，本条沿其原文口径）、D-169（61k 缺陷原始登记，其开放状态按本条第 2 条重新表述）、D-230（设计门 J2「不改阈值/不改口径/不并入 PASS」，本条遵循）、D-231/D-234（61k 设备读数，本条第 3 条引用其值）、D-239（P706-A01 的 A01 缺口，与 61k 无关的另一向量）、D-242（同日的 P706-A01 覆盖批登记）、阶段计划 §2 `:42` 与 §10.3 `:410`–`:414`、`docs/CONTRIBUTING.md`「本机与 CI 的验证分工」。
+## D-244 P706-A01 登记裁决：按 §10.4 逐项回读后维持「部分证据」，残余精确限定为确认路径两表与三张跨腿夹具不适用回执表
+
+**状态：** 已批准并登记（2026-10-24，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §6「切片与验收」的 P706-A01 + §10.1 状态表 PASS 行 + §10.4.3/§10.4.5 回读与汇总）。**零产品代码、零测试、零 schema/迁移、零依赖、零 CI 配置改动**（schema 维持 v35 / 34 个 `.sqm`）。本条是 D-242 item 5 预留的独立裁决（「把它改为 PASS 需按 §10.4 另行逐项回读证据并作出独立裁决」），裁决结果为**维持「部分证据」，不并入 PASS**。
+
+**决定：**
+
+1. **判据。** §10.1 PASS 行要求「该项所有适用源码/自动测试/设备/性能证据满足要求，且对当前候选有效」；§10.4.3 要求回读全部适用任务并从实际产品入口查权威回读，不能只看最后一个子批的成功报告。A01 原文要求「当前库含目录、正式版本/分录、来源/候选、重复处置、回执、匹配/对账、置顶、作废恢复历史；往返逐 owner/稳定 ID 等价」，证据列为「data 往返与权威投影，不只数交易行」。
+
+2. **回读取证（2026-10-24，`main` = `9396f9c`；同提交 CI run 与 Windows JVM tests 均 success，经 `gh run list --branch main` 核实）。** 对 `P708RestoreRoundtripEquivalenceTest.kt` 的机械核验：四条腿测试在位（v35 直读 / v34→v35 / v33→全链 / 失败迁移回滚，`@Test` 恰 4 个）；三个 owner 清单（`currentSchemaOwnerTables`/`migratedOwnerTables`/`preAnnotationEdgeOwnerTables`，`:307`/`:319`/`:329`）按 12 个族分组构成 D-242 登记的 60 张表比较面；`import_confirmation` 与 `import_candidate_decision_snapshot` 各仅 1 次命中且位于 KDoc（`:273`-`:274`，原文「The confirm-side owners ... belong to the confirm/reject paths this fixture does not run」），即**无任何值级比较**；`confirmed_income_receipt`/`confirmed_transfer_receipt`/`confirmed_lending_receipt` 命中为 0。PR #115-#123 八批均已 squash merge（D-242 登记）。
+
+3. **裁决：维持「部分证据」。** 理由：`import_confirmation` 与 `import_candidate_decision_snapshot` 属 A01 字面点名「来源/候选」族的确认路径 owner（D-242 item 4 认定为「同族剩余缺口」）——一个含已确认候选的库正是该向量前提「当前库含来源/候选」的真例，恢复往返必须逐值保留这两表；它们既无值级往返比较，也无范围裁决认定不适用，故 §10.1 PASS 的「所有适用证据满足」不成立。**本条不把这两表或三张回执表改判「不适用」**：三张回执表在跨腿夹具的结构不适用（D-242 item 3）是夹具事实而非向量范围裁决，其替代方案（仅 v35 夹具）会失去跨腿证据，属范围变更须另行裁决；确认路径两表则从未被任何裁决移出分母。
+
+4. **裁决后 A01 残余的封闭清单（「部分证据」自此收窄为以下三项，无其他已知缺口）。** (i) 确认路径两表 `import_confirmation`/`import_candidate_decision_snapshot`：需 confirm 路径 seed（`ImportCandidateDecisionSnapshot` + catalog + `createFormalTransaction` 回调），成本高于已交付各片；(ii) 三张手工新建回执表 `confirmed_income_receipt`/`confirmed_transfer_receipt`/`confirmed_lending_receipt`：跨腿夹具结构不适用（D-242 item 3 的端口写集冲突），覆盖须另建夹具并另行裁决；(iii) 其余约 190 张未比较表绝大多数为 `rg*` 黄金筒仓表，由 golden 测试覆盖、不属产品恢复往返路径，不计入 A01 分母（沿 D-239 item 4 已有口径）。
+
+5. **相邻向量边界。** 本裁决只针对 P706-A01。D-242 补齐的缺口面同时惠及 A04（「成功后所有 owner 仍完整」）与 A11（预算腿），但两者的 PASS 判定**不随本条改变**，各按 §10.4 自行回读裁决；D-239 的全部判决（A03/A05 PASS、A01/A04/A06/A07/A10/A11 部分证据、A02/A08/A09/A12 缺证）维持不变。
+
+6. **审验拓扑（如实登记，轻量相称）。** 本批为证据裁决 + 登记，沿 D-239 item 7 先例由主代理亲手执行；两条否定性结论（确认路径两表无值级比较、三张回执表零命中）与三条正面结论（四腿在位、三清单 12 族构成、KDoc 定位）均经 grep/Read 机械复核后采信；CI 证据取自 `gh run list`。未新增测试、未运行本机 Gradle。
+
+7. **边界。** 入：本条登记 + `docs/CURRENT_STATE.md` 指针同步（含修正 ：90 处 PR #125 遗留的重复句与滞后的 origin/main 指针）。出：零产品代码/测试/schema/迁移/依赖/清单/Golden/CI 配置改动；不改 D-236～D-243 的任何判决与登记文本；不把 A04/A11 并入 PASS；不缩减计划目标（确认路径两表仍为 A01 适用残余，不判「不适用」、不删除）；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-239（A01 缺口原始登记，本条第 4 项沿其 rg* 口径）、D-242（八族覆盖批，本条为其 item 5 预留的独立裁决）、D-238（P7-08 同类裁决先例）、阶段计划 §6「切片与验收」与 §10.1/§10.4.3/§10.4.5。
+## D-245 P7-08 残余登记裁决：R-218-1 维持现语义并加测试钉住、R-222-9 分离呈现判满足与独立历史页接受延期、R-223 系列登记为已知限制、§4.5 承接闭合确认
+
+**状态：** 已批准并交付（2026-10-24，D-238 item 7 保持 OPEN 的四组 P7-08 残余的集中裁决；计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §8.3 + §10.1 状态表）。**tracked 变更仅两个测试文件**：`ledger-domain/src/commonTest/kotlin/com/unifiedledger/domain/TagMerchantCatalogTest.kt` 新增 1 个聚焦域测试 + 类 KDoc 补一枚举项；`app-ui/src/commonTest/kotlin/com/unifiedledger/ui/P503TagMerchantFilterStateTest.kt` 1 个测试改名（断言零改动）。**零产品代码、零 schema/迁移、零依赖、零 CI 配置改动**（schema 维持 v35 / 34 个 `.sqm`；两文件分属既有测试类，无新增类，shards/类计数清单不变）。
+
+**决定：**
+
+1. **裁决对象与来源。** D-238 item 7：「不改 D-218/D-221/D-222/D-223/D-224 的任何裁决与开放项（R-218-1 tombstone 名称复用、R-222-9 注释历史页 UI 语义、R-223 系列、§4.5 导入前选择承接登记全部保持 OPEN）」——本条是该句预留的集中裁决；D-238 的九向量判决本身不变。
+
+2. **R-218-1（tombstone 名称复用，D-218 登记）→ 维持现语义，加测试钉住。** `catalogItemNameTaken`（`TagMerchant.kt:213`，调用点 `:126` create / `:150` rename）不排除 tombstoned 项，tombstoned 项的名称继续占用其命名空间，新建同名返回 `CatalogNameConflict`。**裁决理由**：tombstone 是审计删除——删除时已无任何引用（规格 §5.1 `:197`「tombstone 项……不可能命中任何筛选，只存在于审计面」），名称继续占用杜绝同名后继与 tombstoned 历史的混淆；且现管理面对 tombstoned 项为零改名/停用/删除入口的只读审计块（D-223 item 6 / 规格 §8 开放项 11），不存在依赖名称释放的产品路径。释放名称属产品语义变更（管理面显式复用/重命名功能），**另立需求——不排期、不自动立项，若将来立项须新决定**（沿 D-181 第 3 条 V-19 重启子句的先例措辞）。**证据缺口补齐**：create 路径的 tombstoned 命名冲突此前无任何测试覆盖（独立 grep 复核 `TagMerchantCatalogTest` 零命中），新增 `aTombstonedItemsNameKeepsOccupyingItsNamespace` 钉住该语义；改名/复用路径已被既有 `renameAppendsNameAndTombstonedItemsCannotBeRenamedOrReactivated` 的 `CatalogItemTombstoned` 断言覆盖。
+
+3. **R-222-9（注释历史页 UI 语义，规格 §8 开放项 7）→ 分离呈现判满足；独立历史页接受延期。** 规格 §3.5 的要求是「历史金融版本与注释历史**分开显示**……不在金融版本时间线上内嵌注释快照」，并把入口/粒度/与交易详情的关系留为开放项 7，期限「最迟随 P708-A03 取证闭合」。**裁决**：(a) **分离呈现与粒度已满足**——08.D 交付的交易详情只读历史块按 `annotation_revision` 逐条显示 revision/observedTransactionVersionId/tagIds/merchantId/requestId/createdAt（D-224 item 1），注释历史为自有块、不内嵌于金融版本时间线；(b) **入口语义就此冻结**：入口 = 交易详情内嵌只读历史块，不做独立历史页；(c) **独立历史页（跨交易聚合、检索等）接受延期**——单列披露、不计作原要求完成、不自动立项，若日后产品需要另立设计门。开放项 7 的期限条件已到（P708-A03 已在 D-238 判 PASS，JVM 维度），本条即其闭合裁决。
+
+4. **R-223-1..6（D-223 item 8 登记）→ 逐项登记为已知限制（接受），R-223-5 改名。** 共同特征：只读展示面、窗口窄、下次交互自愈、无经济效果风险；接受为已知限制并维持披露，不入任何 P708 向量的 PASS/FAIL 判据。逐项：R-223-1（token 门为状态内计数，跨状态实例重建不续代，两读同 token 同指纹可双落地）、R-223-2（条件切换窗口 `entryCatalog` 沿用旧快照短暂「没有命中」）、R-223-4（目录命令后月视图重请求对本目录族语义空转，tag/merchant 计数器独立）——三项维持现状、零行为改动；R-223-3 已由 08.D 升级为真实命令链闭合一侧，原计数器测试保留为「不可读 authority」腿的有意钉子（D-224 item 1），非缺口；R-223-6（verifier V5 的 EXPLAIN 注释字面命中）维持 D-223 的不阻断裁定；R-223-5 测试名 `aPageRequestIsAbsorbedWhileOneIsInFlight` 已成误称（事件被处理、token 仍推进，仅页字段被吸收）——本条改名为 `anAppendPageRequestWhileOneIsInFlightAdvancesOnlyTheToken`，断言零改动，D-223 登记中的旧名以本条为新名指针。
+
+5. **§4.5 导入切片承接登记（规格 §4.5 + 开放项 5，计划 §8.2 强制项）→ 承接闭合确认。** (i) 已确认导入交易的关联经 §4.4 注释编辑链显式建立——已交付（08.B-2/D-222 接线 + 08.D 历史块）；(ii) 计划 08.B 字面「导入原始商家仅作候选」在当前存储现实下不可实现（`import_source_record` 无商户/对方文本列，D-146 不留原文件）——开放项 5 的扩展导入留存**触碰 D-146 边界，维持不授权、保持关闭**；(iii) 导入前关联选择若做须另立设计并处理「候选来源」与「确认同事务」两个新问题——**本阶段范围外，另立需求，不排期**。计划 §8.2 的强制承接登记由规格 §4.5 本身满足（D-187 批准），本条为其决定链登记；不缩减计划目标（三项均为披露性的范围登记，非删除）。
+
+6. **测试执行。** 归 CI（`TagMerchantCatalogTest` 属 ledger-domain commonTest、`P503TagMerchantFilterStateTest` 属 app-ui commonTest，受影响 shard 覆盖）；本批零本机 Gradle。
+
+7. **边界。** 入：本条 + 上述两处测试改动 + `docs/CURRENT_STATE.md` 指针同步。出：零产品代码/schema/迁移/依赖/清单/Golden/CI 配置；不改 D-218/D-221/D-222/D-223/D-224/D-238 的任何向量判决（本条只裁决其预留的开放项）；接受延期项不改成 PASS、不从分母删除；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-218（R-218-1 原登记）、D-222（R-222-9 原登记、§4.4 编辑链交付）、D-223（R-223 系列原登记、开放项 11 只读审计块）、D-224（08.D 只读历史块与 R-223-3 真实命令链升级）、D-238（item 7 预留本裁决；九向量判决不变）、D-187（规格批准，§4.5 承接登记与 §8 开放项清单）、D-146（导入留存边界）、D-181（接受延期/另立需求的先例措辞）、阶段计划 §8.2/§8.3 与 §10.1。
+## D-246 P706-A02/A06 验收取证设计门批准（规格 proposal 转 approved）+ D-239 现状漂移事实更正
+
+**状态：** 已批准并登记（2026-10-24，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §6 `:182`/`:186` + §10.1 状态表）。**tracked 变更**：`docs/specs/2026-10-24-p706-a02-a06-acceptance-design.md` frontmatter/Revision 状态翻转（`proposal` → `approved`，技术内容零改动）+ 本条 + `docs/CURRENT_STATE.md` 指针同步。**零产品代码、零测试、零 schema/迁移、零依赖、零 CI 配置改动**（schema 维持 v35 / 34 个 `.sqm`）。
+
+**决定：**
+
+1. **批准对象与审验链。** 规格 `docs/specs/2026-10-24-p706-a02-a06-acceptance-design.md`（基点 `de86aa4`；draft-1 `a5a6d8b`、draft-2 `29b2332` 由 autopilot 单 writer 于隔离 worktree 交付，主代理追加 `b33ffad` 闭合评审 2 项非阻断 low）。独立规格评审两轮 APPROVE-WITH-FINDINGS：draft-2 闭合 **2 项 medium（A06 边界枚举 15→19；A02 拓扑缺并发重叠取证护栏）+ 6 项 low**（kill 手段限定、同原语多点判别登记、`LedgerSwitchJournalTest` 用例数漂移登记、CI 登记面、转引措辞中性化），FIT TO PUSH 零阻断；distinct verifier V1-V6 全 PASS（冻结 SHA/措辞边界/project_docs/trace-scan/锚点实读）。PR #128 squash merge `c99238c`，PR head 10 checks 全绿。主代理对追加提交的 delta 自审确认恰为评审指定的两处修正（§3.3 `:743`/`:789` 归属标签对调、§6 项 5 补 2 个非边界调用点入判别序列）。
+
+2. **开放项裁决（规格 §6 项 1-4，沿其推荐答案；本条即项 6 的批准载体）。**
+   - **项 1（产品是否切换 `journal_mode=WAL`）：不切换。** 产品维持引擎默认（无任何产品代码设置 journal_mode，见第 3 款 (b)/(c) 复核）；A02 取证以测试拓扑 WAL 腿行使（JVM WAL 打开 + `VACUUM INTO` 期间并发写者 + §2.2 步骤 6 并发重叠取证护栏）。理由：现无产品路径依赖 WAL 并发读；切换改变库文件持久状态与 sidecar 生命周期、触动备份/恢复/稳定存储面，收益无当前需求。本裁决不授权任何产品改动；若将来需要另立产品裁决。
+   - **项 2（A06 真机腿环境）：批准受管 AVD + 两阶段 kill 协议为 b1（真杀进程）取证环境**（§3.3：边界驻停装饰器 + `Process.killProcess(Process.myPid())` 主手段、`am kill` 前置验证限定、run A/verify 成对执行）；**b2（真实掉电）登记 BLOCKED**（受管 AVD 无掉电实测手段），不得以进程死亡代理冒充掉电证据；日后若选代理验证，须分开登记两命题差异并另行裁决。
+   - **项 3（A02 Android 集成腿）：按推荐批准**——以 q13 门 CLI 证据（D-174）+ §2.2 JVM 腿承接；Android instrumented WAL 探针列为可选低成本补充（1-2 用例），非必需。
+   - **项 4（D-239 漂移更正）：批准，见第 3 款。** 项 5（测试实现细节）归后续实施规格。
+
+3. **D-239 现状漂移事实更正（append-only，D-239 原文不改；沿 D-242 item 5 先例）。** 五处字面自本条起按以下为准，更正不改变任何向量判决：(a) `AndroidStartupFailClosedInstrumentedTest` 当前 **4 用例**（`:46`/`:82`/`:103`/`:120`），D-239 `:5082`「三用例」为当时快照；(b) `AndroidLedgerDatabaseHandle.kt` 现无 `journal_mode` 字样，仅存 `:258` 的 `-wal/-shm` 伴生文件注释，D-239 `:5080` 所指注释锚点已漂移；「产品未启用 WAL、引擎默认 delete」结论不变（复核：产品源码零 journal_mode 设置）；(c) D-239 `:5080`「grep journal_mode 于全部测试文件零命中」字面失效——`AndroidScaleOracle.kt:232` 有一次只读诊断 rawQuery（D-213 面），A02 缺证结论本体不变；(d) `LedgerSwitchJournalTest` 当前 **9 用例**（D-239 `:5082` 记「七用例」，其列举句覆盖 7 个，`:67` 编码往返与 `:88` 半建代惰性两用例未被列举）；(e) 导出规格 `docs/specs/2026-09-24-p7-06-backup-export-design.md:71` 所引 `AndroidLedgerDatabaseHandle.kt:139-148` 现漂移至 `:242-251`。
+
+4. **效果与边界。** 规格转 approved——其冻结的取证方案设计面（A02 测试拓扑与断言不等式、A06 十九边界矩阵与两阶段 kill 协议、分母登记与状态承诺）自此为后续实施批的冻结依据；**P706-A02/A06 判决维持 D-239 不变（A02 缺证、A06 部分证据）**，取证不判 PASS；实施属后续独立实施批，未排期、不自动立项。出：零产品代码/测试/schema/依赖/CI 配置改动；不改 D-174/D-176/D-177/D-179/D-182/D-183 的任何冻结裁决（规格 `:22` 清单，D-178 仅作 B11 实证窗口证据引用）；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-239（A02/A06 判决与漂移来源）、D-174/D-176/D-177/D-179/D-182/D-183（规格承接的冻结裁决）、D-178（B11 实证窗口证据）、D-240（CI 登记面先例）、D-242（事实更正登记先例）、D-187（设计门批准体例先例）、阶段计划 §6 `:182`/`:186` 与 §10.1/§10.2/§10.3。
+## D-247 P706 验收向量登记裁决批：A11 判 PASS（JVM 维度），A04 维持「部分证据」且残余并入 D-244 item 4 封闭清单
+
+**状态：** 已批准并登记（2026-10-24，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §6「切片与验收」的 P706-A04/`:184`、P706-A11/`:191` + §10.1 状态表 + §10.4.5 汇总）。**零产品代码、零测试、零 schema/迁移、零依赖、零 CI 配置改动**（schema 维持 v35 / 34 个 `.sqm`）。本条是 D-239 item 4 的 A04/A11 两项「部分证据」在 D-242 覆盖批与 PR #107 预算往返交付后的登记裁决，沿 D-244/D-246 的登记裁决批先例由主代理亲手执行。
+
+**决定：**
+
+1. **判据与回读取证（2026-10-24，`main` = `d9abf7c`，同提交 CI run `40050202498` success）。** A11 原文（计划 `:191`）：「最终 schema 含预算配置历史及标签/商家注释历史；**所有新增 owner 往返，旧测试继续成立**」。A04 原文（`:184`）：「支持集合内有账旧 schema 与迁移失败；**只改隔离副本；原库不变，成功后所有 owner 仍完整**」。对 `P708RestoreRoundtripEquivalenceTest.kt` 的机械核验：`budgetOwnerTables`（`:200`-`:206`）恰为 4 张（`budget_config`/`budget_command_request`/`budget_settings_history`/`budget_command_receipt`），且 `currentSchemaOwnerTables`（`:307`）/`migratedOwnerTables`（`:319`）/`preAnnotationEdgeOwnerTables`（`:329`）三条腿清单**均含** `budgetOwnerTables` + `annotationOwnerTables`（11 张）+ `manualRequestTables`（4 张）+ `preV34SurvivorTables`（4 张）；每条腿带 seeded budget chain 与非空守卫（`:119`/`:334`/`:410`/`:484`-`:493`，v32 预算边 value-for-value）。预算腿由 PR #107（merge `9bfceaf`，`P708RestoreRoundtripEquivalenceTest.kt` +186 行「compare the four budget owner tables in every restore roundtrip leg」）交付；注释族与手工请求族由 D-242 八批（PR #115-#123）交付。
+
+2. **A11 判 PASS（JVM 维度）。** 理由：A11 的「新增 owner」全集 = 预算族 4 张 + 标签/商家注释族 11 张 + 手工请求族 4 张，全部已在四条腿（v35 直读 / v34→v35 迁移 / v33→全链 / 失败迁移回滚）的逐表逐值比较中，含 v33 腿对 11 张被 DROP 的注释表的结构性「零回填 + 落地空」证明（源库无该表，值级比较在该腿结构性不适用，为可得的最强证据）；「旧测试继续成立」由每次合并的 CI（ledger-data shards）背书，当前候选 `d9abf7c` CI success。本向量是纯数据 owner 往返命题，无设备/性能维度；按 D-239 item 1 判据边界以 JVM 为适用证据维度。「完整」语义由 D-242 的非空守卫 + 逐值比较承接，非空表计数（不 数交易行）。
+
+3. **A04 维持「部分证据」，残余并入 D-244 item 4 的封闭清单。** 迁移腿自 D-239 起完整（支持版本迁移并盖章、v32 经预算边迁移、失败回滚版本不变、外键与领域校验、只改隔离副本——`RestoreIsolatedMigrationTest` 与往返测试的 v34/v33 腿），「成功后所有 owner 仍完整」的比较面经 D-242/PR #107 扩至 60 张表全集。**不并入 PASS 的理由**：owner 完整性主张与 A01 同受 D-244 item 4 残余约束——确认路径两表 `import_confirmation`/`import_candidate_decision_snapshot` 属适用 owner 而无值级往返比较（一个含已确认候选的旧 schema 库迁移后必须保持完整），三张 `confirmed_income/transfer/lending_receipt` 在跨腿夹具结构不适用（D-242 item 3，替代夹具另立裁决）。A04 的残余自此**收窄并等同** D-244 item 4 清单，无其他已知缺口；两表不判「不适用」、不删除。
+
+4. **逐项状态汇总（§10.4.5）。** P706-A01..A12：**PASS 3 项**（A03/A05 沿 D-239，A11 本条）、**部分证据 5 项**（A01/A04/A06/A07/A10）、**缺证 4 项**（A02/A08/A09/A12）、FAIL 0。D-239 的「PASS 2 / 部分 6」汇总由本条更新；其余向量判决不变。P7-06 整体仍不判通过。
+
+5. **审验拓扑（如实登记，轻量相称）。** 登记/裁决批，零 tracked 变更可供独立评审；主代理亲手执行（沿 D-239 item 7 / D-244 item 6 先例）。正面结论（三清单构成、四预算表、非空守卫、PR #107 交付）与否定性结论（无第 4 条之外的 A04 新缺口）均经 grep/Read 机械复核；CI 证据取自 `gh run list`。未新增测试、未运行本机 Gradle。
+
+6. **边界。** 入：本条登记 + `docs/CURRENT_STATE.md` 指针同步 + checkpoint。出：零产品代码/测试/schema/迁移/依赖/清单/Golden/CI 配置改动；不改 D-236～D-246 的任何判决与登记文本（A11 的 PASS 为新增判决、非改写）；A04 残余以引用方式并入 D-244 item 4，不复制清单正文；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-239（A04/A11 部分证据的原始登记与判据边界）、D-242（owner 覆盖批，A04/A11 证据基础）、D-244（A01 裁决与其 item 4 封闭清单，A04 残余的引用来源）、D-185（v32 预算边与预算 owner 先例）、阶段计划 §6 `:184`/`:191` 与 §10.1/§10.4.5。
+## D-248 P706-A01 确认路径两表覆盖批登记 + 混合支付组表处置与 v35-only 回执夹具裁决
+
+**状态：** 已批准并登记（2026-10-24，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §6 `:181` P706-A01 + §10.1 状态表）。**tracked 变更**：`ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/P708RestoreRoundtripEquivalenceTest.kt` 单文件 +392/−60（冻结候选 `185d71e` + 主代理 `f45fed9` 闭合评审 2 条非阻断 nit）+ 本条 + `docs/CURRENT_STATE.md` 指针同步。**零产品代码、零 schema/迁移、零依赖、零 CI 配置改动**（schema 维持 v35 / 34 个 `.sqm`）。
+
+**决定：**
+
+1. **交付内容（PR #131 squash merge `ffecd96`）。** D-244 item 4 (i) 的确认路径两表缺口就此闭合：`import_confirmation` 与 `import_candidate_decision_snapshot`（基座 `Ledger.sq:8125`/`:8181` 创建；重建边 20/21/24.sqm 均早于 v33）加入全部三条 owner 清单（经 `importConfirmTables`），四条腿（v35 直读 / v34→v35 / v33→全链 / 失败迁移回滚）各断言恰 2 行 + 逐业务列值级比较（snapshot 13 列含 `Ledger.sq:8145-8174` CHECK 冻结 NULL 形状、confirmation 7 列）+ 非空守卫（`count>0` 且 `==2`，按 `ledger_id` 过滤）+ 显式排序键。seed 走真实 claim-first `SqlDelightImportSpineStore.commitOnce`（`:435`）+ 真实 `createFormalTransaction` 工厂回调（`OrdinaryFlowFormalFactory`/`MixedPaymentFlowFormalFactory`，混合双腿 3000+2600），零手写 INSERT。**写集核销**（KDoc 逐命名 SQL 登记，独立评审 S6 逐项实证）：claim/evidence projection/formal 事务/confirm 表各自单表 INSERT；33.sqm 11 张 annotation 表整链零写入（相关 trigger 均为 RAISE(ABORT) 守卫）、34.sqm 两注释列零触点。两处既有断言合法更新（评审 Q5 核实无更稳不改法）：`directionToken` `outflow`→`out`（普通流工厂真实分派令牌，`AlipayCsvParser.kt:168-172` 实证为解析器真实输出）、`catalog_name_history` 期望 6→7（混合 confirm 需 ASSET+LIABILITY 双腿，新增第三颗种子账户 `liability-credit-roundtrip`）。审验链：独立评审 FIT TO PUSH（0 blocker）+ distinct verifier PASS（含 `--rerun` 聚焦实跑 4 测全绿，JUnit XML 与 FINAL_VERDICT 存 `local/artifacts/p706-a01-confirm/`）。
+
+2. **混合支付组表处置。** 批 6 的混合 confirm 使 `mixed_payment_group`/`mixed_payment_group_leg`（24.sqm 创建，v33 源已存在；非 `rg*` 筒仓、不在 D-244 item 4 清单）现持真实种子行（1 头 + 2 腿）但在比较清单外。**裁决：纳入批 7 覆盖**（两表加入三条 owner 清单 + 守卫——种子行已在夹具中，为小改动）；批 7 交付前它们计入 A01 适用残余，交付后并入比较面。
+
+3. **v35-only 回执夹具裁决（D-244 item 4 (ii) 的「另行裁决」）。** `confirmed_income_receipt`/`confirmed_transfer_receipt`/`confirmed_lending_receipt` 三表的覆盖路径**批准为仅 v35 的补充往返夹具**（新测试类，真实端口 seed：`SqlDelightConfirmedManualIncomeCommitPort`/`SqlDelightConfirmedManualTransferCommitPort`/借贷对应端口 + 恢复往返 + 值级比较）。**如实登记边界**：三表的跨腿（v34/v33）维度在本跨腿夹具结构性不可得（端口无条件写 34.sqm 注释列，D-242 item 3 实测），v35-only 腿提供的是**当前 schema 往返**的值级证据——该维度缺口单列披露、不删除、不冒充跨腿证据；此为补强证据的加法裁决，非缩减计划目标。批 7 同时交付 (a)(b) 两项（纯加测试，autopilot）。
+
+4. **A01 状态。** 批 6 后 A01 的适用残余收窄为：三张回执表（批 7 (b) 覆盖中）+ 混合支付组两表（批 7 (a) 覆盖中）；D-244 item 4 (iii) 的 `rg*` 筒仓口径不变。**A01 维持「部分证据」**，最终 PASS 裁决待批 7 交付后按 §10.4 另行作出（沿 D-244 预留机制）。其余向量判决不变。
+
+5. **审验拓扑与证据。** 实施批走 autopilot 单 writer + 独立规格/质量评审（FIT TO PUSH，0 blocker，2 条注释精度 nit 由主代理追加提交闭合、delta 恰为评审指定修正）+ distinct verifier（PASS，含 `--rerun` 聚焦实跑）；PR #131 必需 13 检查全绿（非阻塞 Windows JVM nightly 不等）；合并后 CI 证据见 PROGRESS_LOG。登记/裁决部分主代理亲手执行。
+
+6. **边界。** 入：本条 + PR #131 已合并的测试改动 + `docs/CURRENT_STATE.md` 指针同步。出：零产品代码/schema/迁移/依赖/清单/Golden/CI 配置改动；不改 D-236～D-247 的任何判决（A01 残余清单按本条第 4 款动态收窄，属 D-244 item 4 预留机制的延续）；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-242（覆盖批先例与 item 3 结构不适用登记）、D-244（A01 裁决与 item 4 封闭清单，本条为其动态收窄）、D-247（A04 残余引用同一清单）、D-185/D-221/D-222（手工新建端口与注释列事实）、阶段计划 §6 `:181` 与 §10.1/§10.4。
+## D-249 P706 验收向量最终裁决批：A01 与 A04 判 PASS（JVM 维度，跨腿不可得维度按 D-248 单列披露）
+
+**状态：** 已批准并登记（2026-10-24，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §6 `:181`/`:184` + §10.1 状态表 + §10.4.5 汇总）。**零产品代码、零测试、零 schema/迁移、零依赖、零 CI 配置改动**（schema 维持 v35 / 34 个 `.sqm`；本批 tracked 变更仅本条 + `docs/CURRENT_STATE.md` 指针同步）。批 7 的测试交付已由 PR #133 合并（`b0b8b9d`），本条为 D-248 item 4 预留的 A01 最终裁决，并一并裁决 A04。
+
+**决定：**
+
+1. **判据与证据闭环回读（2026-10-24，`main` = `b0b8b9d`，同提交合并后 CI 见 PROGRESS_LOG 回填）。** A01 原文（计划 `:181`）：「当前库含目录、正式版本/分录、来源/候选、重复处置、回执、匹配/对账、置顶、作废恢复历史；往返逐 owner/稳定 ID 等价」，证据列「data 往返与权威投影，不只数交易行」。A04 原文（`:184`）：「支持集合内有账旧 schema 与迁移失败；只改隔离副本；原库不变，成功后所有 owner 仍完整」。逐族证据面（全部为真实端口 seed + 非空守卫 + 逐业务列值级比较）：目录族（含 `catalog_command` 链与对手方隐藏账户，批 1/2a）、正式版本/分录（每条腿，批 1）、置顶/对手方（批 2a）、作废恢复历史（批 2b）、来源/候选（intake 2c + v3 2g + **确认路径两表批 6**）、重复处置（批 2d）、匹配/对账（批 2e）、回执（expense 批 1 + 注释更新回执批 2f + **三张手工回执 v35-only 夹具批 7**）、预算族（PR #107）、注释族与手工请求族（批 3/D-242）、**混合支付组两表（批 7 (a)**，1 头 2 腿逐字段 + 三清单）。
+
+2. **A01 判 PASS（JVM 维度）。** 理由：(a) 计划 `:181` 点名的全部族及其 owner 表均已在恢复往返中逐 owner/逐稳定 ID/逐业务列值级比较（比较面 62 张表：D-242 的 60 表 + 确认路径 2 表 + 混合组 2 表，其中批 7 (b) 的三张回执表在 v35-only 夹具比较）；(b) 「不只数交易行」由每表的列级等价断言与非空守卫承接；(c) 判据维度按 D-239 item 1：本向量是纯数据 owner 往返命题，JVM 为适用证据维度；当前候选（PR #133 合并提交）的 CI 全绿使证据对当前候选有效。**披露（不删除、不冒充）**：三张手工回执表的跨腿（v34/v33）迁移维度结构性不可得（端口无条件写 34.sqm 注释列与 33.sqm annotation 表，D-242 item 3 实测、D-248 item 3 裁决）——该维度按 §10.1「某维度确实不适用时说明理由」登记为不可得证据维度，其当前 schema 往返值级证据已由 v35-only 夹具交付；`rg*` 黄金筒仓表不计入分母（D-239 item 4 沿用）。
+
+3. **A04 判 PASS（JVM 维度）。** D-239 item 4 登记的唯一缺口是「成功后所有 owner 仍完整」不覆盖最终 owner 全集——该面与 A01 同为 62 表比较，已随批 6/批 7 闭合；迁移腿自 D-239 起完整（支持版本迁移并盖章、v32 经预算边迁移、失败回滚且版本不变、外键与领域校验、只改隔离副本——`RestoreIsolatedMigrationTest` + 往返测试的 v34→v35 与 v33→全链腿）；「原库不变」由失败迁移腿与隔离副本断言承接。三张回执表的跨腿维度披露与第 2 款同一（v33/v34 源中表存在且随迁移保留，但其值级 seed 依赖的端口在该源结构性不可运行）。
+
+4. **逐项状态汇总（§10.4.5）。** P706-A01..A12：**PASS 5 项**（A01/A04 本条、A03/A05 沿 D-239、A11 沿 D-247）、**部分证据 3 项**（A06/A07/A10——A06 的取证方案已按 D-246 批准待实施、A07 租约为通用占位且「恢复后原 Unknown 解析」未证、A10 满盘/SAF 中途写失败未由 OS 真实触发）、**缺证 4 项**（A02——取证方案已按 D-246 批准待实施、A08/A09/A12）。FAIL 0。D-239 的「PASS 2/部分 6」、D-247 的「PASS 3/部分 5」由本条更新。P7-06 整体仍不判通过（§10.4.5：仍有必需项非 PASS）。
+
+5. **审验拓扑（如实登记，轻量相称）。** 登记/裁决批，主代理亲手执行（沿 D-239 item 7/D-244 item 6/D-247 item 5 先例）。批 7 交付经独立评审 APPROVE（0 blocker）+ distinct verifier PASS（本机实跑 5 测全绿、shard 覆盖 106=106、trace-scan clean）；本条的族覆盖结论以各批已登记的评审/verifier 证据与 PR #131/#133 的 CI 为据，未新增测试、未运行本机 Gradle。
+
+6. **边界。** 入：本条 + `docs/CURRENT_STATE.md` 指针同步 + checkpoint。出：零产品代码/测试/schema/迁移/依赖/清单/Golden/CI 配置改动；不改 D-236～D-248 的任何判决与登记文本（A01/A04 的 PASS 为新增判决）；A06/A07/A10/A02/A08/A09/A12 的状态与既登记缺口不变；A02/A06 的取证实施属后续独立实施批（D-246 已批方案、未排期）；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-242（owner 覆盖批）、D-244（A01 裁决与 item 4 机制，本条为其预留的最终裁决）、D-247（A11 PASS 先例）、D-248（确认路径批登记、mixed 两表与 v35-only 夹具裁决）、D-239（判据边界与原始缺口登记）、D-174/D-176/D-177/D-179/D-182/D-183（往返语义与迁移链的来源决定）、阶段计划 §6 `:181`/`:184` 与 §10.1/§10.4.5。
+## D-250 P706-A02 取证实施批登记 + A02 判 PASS（JVM 维度，Android 探针按 D-246 为可选未实施）
+
+**状态：** 已批准并登记（2026-10-24，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §6 `:182` + §10.1 状态表 + §10.4.5 汇总）。**tracked 变更**：`ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/P706WalConcurrentSnapshotTest.kt`（新测试类；冻结候选 `c09dd0da` 325 行，主代理 ktlint 格式化提交 `2afc036` 后 342 行——首轮 CI 的 `:ledger-data:ktlintJvmTestSourceSetCheck` 红（function-signature 10 + multiline-expression-wrapping 7，writer 静态自查与本地实跑均不覆盖 ktlint），主会话本地复现（红 CI 诊断属许可复现）后以 ktlint formatter 修复，断言计数 22→22 不变式核对确证纯格式重排，delta 自审 + 复跑绿）+ `tools/ci/ledger-data-shards.txt`（shard 3 新行）+ `.github/workflows/ci.yml:25`（`(106 classes)`→`(107 classes)`，D-240 先例）+ 本条 + `docs/CURRENT_STATE.md` 指针同步。**零产品代码、零 schema/迁移、零依赖改动**（schema 维持 v35 / 34 个 `.sqm`；shards/ci.yml 为 D-240 先例的测试登记面）。
+
+**决定：**
+
+1. **交付内容（PR #135 squash merge；writer 冻结候选 `c09dd0da` + 主代理格式化提交 `2afc036`）。** 按已批准规格（D-246）§2.1-§2.5 实现 A02 的 JVM 取证腿：(1) WAL 模式打开 + **PRAGMA 返回值读回断言**（官方语义：切换失败静默返旧值，必须确认 `wal`；另加写连接跟随持久 WAL 的读回）；(2) `VACUUM INTO`（经 `BackupSnapshotDriver.runSnapshotIntoOn`）期间独立连接并发写者持续提交带递增 version stamp 的同事务成对行（有界 100k + 取消位 + 全驱动 finally close + sidecar 清理）；(3) **§2.2 步骤 6 并发重叠取证护栏四条不等式逐条在场**（v_mid/v_end 夹逼快照窗口，合取证明写者跨越窗口且产物单一自洽时点、无半笔无混合版本）；(4) 自洽断言面（integrity_ok、marker 恰一行、成对完整、无混合版本计数 0、第三连接读尽等价）。审验链：独立评审 APPROVE-WITH-FINDINGS（0 blocker；2 nit 不要求修——写者上限与 await 的理论竞争为 fail-safe 方向、用例数与规格非约束性估算的登记差异，两项随本条登记备查）；distinct verifier PASS——宿主 native OOM 两次（Gradle daemon 遗留占内存为因之一，主会话 `./gradlew --stop` 后）第三次**实跑成功**（tests=1/failures=0/errors=0，JUnit XML 与三个 hs_err 日志存 `local/artifacts/p706-a02-wal/`）。
+
+2. **A02 判 PASS（JVM 维度）。** 理由：(a) A02 的命题「WAL 下持续写入时导出；还原只出现某个自洽时点，无半笔/混合版本」已在测试拓扑中被完整行使——WAL 前提由测试自建（D-246 item 2 裁决产品**不切换** WAL，测试内自建前提不触碰产品打开路径）；(b) 证据映射按 D-246 item 3 的批准裁决：JVM 腿（本批）+ q13 门 CLI 证据（D-174，Android driver 的 `VACUUM INTO` 可达性）承接两端，**Android instrumented WAL 探针为可选低成本补充、未实施**（D-246 已批的可选项，本条如实登记其未实施，不构成缺口——按 D-239 item 1 判据边界，容器/快照逻辑位于共享模块，Android 适配差异面有各自单元测试）；(c) 当前候选（PR #135 合并提交）CI 全绿使证据对当前候选有效。
+
+3. **逐项状态汇总（§10.4.5）。** P706-A01..A12：**PASS 6 项**（A01/A04 沿 D-249、A03/A05 沿 D-239、A11 沿 D-247、**A02 本条**）、**部分证据 3 项**（A06——真杀进程取证方案已批待实施；A07——租约为通用占位、恢复后原 Unknown 解析未证；A10——满盘/SAF 中途写失败未由 OS 真实触发）、**缺证 3 项**（A08/A09/A12）。FAIL 0。D-239 的「PASS 2」→ D-247「PASS 3」→ D-249「PASS 5」→ 本条「PASS 6」。P7-06 整体仍不判通过。
+
+4. **审验拓扑与证据。** 实施批 autopilot 单 writer + 独立评审（0 blocker）+ distinct verifier（PASS，含实跑）；主代理对宿主 OOM 事故的处置（`--stop` 释放 daemon + 授权最后一次有界重试）如实登记。登记/裁决部分主代理亲手执行。本机未运行全套/ktlint（归 CI）。
+
+5. **边界。** 入：本条 + PR #135 已合并的测试改动 + `docs/CURRENT_STATE.md` 指针同步。出：零产品代码/schema/迁移/依赖改动；不改 D-236～D-249 的任何判决（A02 的 PASS 为新增判决）；A06 取证实施（设备门）与 A08/A09/A12 状态不变；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-246（A02 方案批准与本条的证据映射依据）、D-239（A02 缺证原始登记与判据边界）、D-249（A01/A04 PASS 先例与 §10.4 裁决方法）、D-177（快照/导出语义）、D-174（q13 门 CLI 证据）、阶段计划 §6 `:182` 与 §10.1/§10.4.5。
+## D-251 P706-A08 判 PASS（JVM 维度）+ A07 腿一交付登记（恢复确认期真实作业并发）+ D-239 两处字面更正
+
+**状态：** 已批准并登记（2026-10-24，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §6 `:184`/`:187` + §10.1 状态表 + §10.4.5 汇总）。**tracked 变更**：两个已合并测试批的产物（详见第 1/2 条）+ 本条 + `docs/CURRENT_STATE.md` 指针同步。**零产品代码、零 schema/迁移、零依赖改动**（schema 维持 v35 / 34 个 `.sqm`；测试类总数 106→108，登记面随各批同步）。
+
+**决定：**
+
+1. **批 9 交付（PR #137 squash merge `46a6e47`）与 A08 判 PASS（JVM 维度）。** `P708RestoreRoundtripEquivalenceTest` 新增恢复后重放幂等测试（+268/−0）：v35 直读腿恢复后的新图上重放两条真实提交链——手工支出端口（claim-first，同 request 身份，返回 `NoChange(原回执)`、创建回调 0、11 表计数 map 精确相等）与导入确认 `commitOnce`（普通流 + 混合流，identity/digest/决策字段逐值相同，返回 `NoChange` + 冻结 reasonCode `equivalent_replay` + 原确认号，正式交易/分录/回执零新增）。审验链：评审 APPROVE（0 blocker）+ verifier PASS（实跑 5 测 0 失败，ktlint 零违规——教训 1e 推送前预检生效；`local/artifacts/p706-a08/`）。**A08 判 PASS 理由**：D-239 item 4 A08 的命题「恢复库已有提交回执，重放同请求 → 返回原结果，正式经济效果不增加」已在完整 owner 面往返夹具上以真实端口行使，判据维度按 D-239 item 1 以 JVM 为适用证据；当前候选 CI 全绿。
+
+2. **批 10a 交付（PR #138 squash merge `d601c76`）——A07 腿一（真实作业并发压确认期）闭合。** 新测试类 `P706RealJobLeaseConcurrencyTest`（app-ui commonTest，939 行，六个 @Test）：把 D-239 item 4 A07 登记的「租约为通用占位」缺口闭合——确认期（quiesce/drain）压入三类真实作业（真实导入提交链经 `ConfirmImportCandidate.execute` + `ImportBatchDispatchLoop`、真实手工支出提交链经 `ExecuteManualExpenseSubmission.submit`、真实读作业经 `QueryLedgerCurrentState.query()`），断言 (a) 准入/等待语义与占位租约一致（drain 等待真实作业、drain 期拒绝、QuiesceBlocked 不回归）；(b) 真实作业 exactly-once、不中断、无半提交；(c) 旧 generation 结果被丢弃、新图重跑等价（导入族与读族各一腿）。审验链：两轮评审（首轮 verifier FAIL——@Test 数门与禁用模式——writer 修复 +40/−1 后二轮）APPROVE 8/8 + verifier PASS（实跑 6 测 0 失败、ktlint 零违规、trace-scan clean；`local/artifacts/p706-a07/`）。**真实性边界如实登记**：导入 spine 的 claim/幂等语义为测试内存 fake（app-ui commonTest 不可见 ledger-data，构建面改动未做），非真实 spine store——KDoc 明示，不冒充真实 spine 覆盖；spine 语义的真实覆盖由批 6 的 `SqlDelightImportSpineStore.commitOnce` 往返腿（ledger-data）与 desktop jvmTest 既有端到端承接。
+
+3. **A07 状态：维持「部分证据」，前半句缺口闭合、后半句待批 10b。** D-239 item 4 A07 的缺口两句：前半句（本条第 2 款）已闭合；后半句「原 Unknown 可确定解析未在恢复后证明」由后续批（批 10b）在往返夹具上闭合。两句齐后按 §10.4 作 A07 最终裁决；本条不判 A07。
+
+4. **D-239 两处字面更正（append-only，原文不改；沿 D-246 item 3 先例）。** (a) A08 段「无『恢复后重放』测试……从未在恢复后调用任何提交用例」在其登记时点（PR #106 先于 PR #108 合并）为真；PR #108（`590c480`，2026-10-21）已在 `SqlDelightConfirmedManualExpenseCommitPortTest` 交付手工支出端口的恢复后重放命题（恢复后新文件身份上重放、`NoChange(原回执)`、计数不变），批 9 再在完整 owner 面夹具上补齐——该字面自本条起按此为准。(b) 本批任务书前提「`import_receipt` 在仓内零命中」不实：该表真实存在（21.sqm `:203` 重建、20.sqm 同族；往返夹具 intake 清单含它），批 9 断言面合法使用了它（经端口返回的 `NoChange.receipt.confirmationId` 读回）——勘误随本条登记。两处更正不改变任何向量判决。
+
+5. **逐项状态汇总（§10.4.5）。** P706-A01..A12：**PASS 7 项**（A01/A02/A03/A04/A05/A08/A11——A08 本条）、**部分证据 3 项**（A06/A07/A10——A07 前半句已闭合、后半句批 10b 待做）、**缺证 2 项**（A09/A12）。FAIL 0。D-239「PASS 2」→ D-247「3」→ D-249「5」→ D-250「6」→ 本条「7」。P7-06 整体仍不判通过。
+
+6. **审验拓扑与边界。** 两批各经 autopilot 单 writer + 独立评审 + distinct verifier（批 10a 含一轮 verifier FAIL 的修复轮——@Test 数门与禁用模式，如实登记）；主代理验收两批、亲手执笔本条。出：零产品代码/schema/迁移/依赖改动；不改 D-236～D-250 的任何判决（A08 PASS 为新增判决）；A06/A10 与 A09/A12 状态不变；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-239（A07/A08 缺口原始登记与判据边界）、D-246（A02 方案与本条登记方法先例）、D-248（确认路径夹具——批 9 前提）、D-249/D-250（A01/A04/A02 PASS 裁决先例）、D-183（恢复确认期语义）、阶段计划 §6 `:184`/`:187` 与 §10.1/§10.4.5。
+## D-252 P706-A07 最终裁决：判 PASS（JVM 维度，两腿闭合后按 §10.4 作出）
+
+**状态：** 已批准并登记（2026-10-25，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §6 `:187` + §10.1 状态表 + §10.4.5 汇总）。**零产品代码、零测试、零 schema/迁移、零依赖、零 CI 配置改动**（schema 维持 v35 / 34 个 `.sqm`；本批 tracked 变更仅本条 + `docs/CURRENT_STATE.md` 指针同步；两腿的测试交付已分别由 PR #138/`d601c76` 与 PR #140/`1982b97` 合并）。
+
+**决定：**
+
+1. **裁决对象与判据。** D-239 item 4 A07（`docs/DECISIONS.md:5083`）登记的缺口两句：(a)「租约为**通用占位**，没有测试以真实导入/记账/读作业类型并发压在确认期」；(b)「原 Unknown 可确定解析只在**重开**后证明（`P708UnknownReopenAnnotationReplayTest`），**未在恢复后证明**」。D-251 item 3 闭合同句 (a) 并预留 (b) 于批 10b；两句均已交付，本条即 §10.4 最终裁决。判据沿 D-239 item 1：恢复确认状态机与租约语义位于共享模块（app-ui commonMain），JVM 为适用证据维度。
+
+2. **腿 (a)——确认期真实作业并发（PR #138 `d601c76`，`P706RealJobLeaseConcurrencyTest`，app-ui commonTest，939 行，六个 @Test）。** 确认期（quiesce/drain）压入三类真实作业：真实导入提交链（`ConfirmImportCandidate.execute` 经 `ImportBatchDispatchLoop`，镜像组合根 `P503App.kt:2401-2430` 形态）、真实手工支出提交链（`ExecuteManualExpenseSubmission.submit` → `ExecuteManualExpenseSave` → `ExecuteConfirmedManualExpense`）、真实读作业（`QueryLedgerCurrentState.query()`）。断言：drain 等待真实作业完成、drain 期拒绝新租约（含 raw acquireLease 与 leased 探针双面）、QuiesceBlocked 不回归、真实作业 exactly-once 不中断无半提交、旧 generation 结果被丢弃且新图重跑等价（导入族与读族各一腿）。审验链：两轮评审（首轮 verifier FAIL——@Test 数门与禁用模式——修复 +40/−1）APPROVE 8/8 + verifier PASS（实跑 6 测 0 失败、ktlint 零违规、trace-scan clean）。**真实性边界（沿 D-251 item 2 维持）**：导入 spine 的 claim/幂等语义为测试内存 fake（app-ui commonTest 不可见 ledger-data），KDoc 明示；spine 语义的真实覆盖由批 6 确认路径往返腿（ledger-data）与 desktop jvmTest 端到端承接。
+
+3. **腿 (b)——恢复后原 Unknown 确定解析（PR #140 `1982b97`，`P708RestoreRoundtripEquivalenceTest` +240/−0）。** v35 直读腿上以真实 claim-first 手工支出端口构造 Unknown 状态（提交落库、调用方未及见结果）→ 真实 `VACUUM INTO` 快照/恢复 → 恢复后的新图上解析：`MatchingReceipt` 返回原回执逐值相等、两处注解差异按类型化 resolver（`ResolveManualExpenseCommitStatus`）判 `SnapshotConflict`、12 张 owner 表解析前后精确计数相等（零新增经济效果）、注释历史/revision/current 指针与重开先例同型一致。**迁移腿如实披露**：端口成功路径无条件写 34.sqm 注释列与 33.sqm 聚合表，Unknown 提交无法在 v34/v33 源行使——v35 直读腿为该命题的可得证据（33/34.sqm 全文实读判据），迁移腿由既有四个值等价测试承接；此为结构性不可得维度披露，非缩减。审验链：评审双维度 APPROVE（规格符合性 7 条 + 实现质量 7 条）+ verifier PASS（编译/ktlint/trace-scan；执行证据按教训 1g 归 CI——PR #140 的 ledger-data shard 实跑通过）。
+
+4. **A07 判 PASS（JVM 维度）。** 理由：两句缺口均已按真实端口/真实用例闭合且对当前候选有效（PR #140 合并提交 CI 全绿）；D-239 item 4 A07 登记的既有覆盖面（八向量、确认期阻塞四向量、晚到回调三向量等）与本批新增腿合成完整证据面。**沿 D-251 item 3 的归属划分，本条即预留的最终裁决。**
+
+5. **逐项状态汇总（§10.4.5）。** P706-A01..A12：**PASS 8 项**（A01/A02/A03/A04/A05/A07/A08/A11——A07 本条）、**部分证据 2 项**（A06——两阶段 kill 协议取证方案已批待实施；A10——满盘/SAF 中途写失败未由 OS 真实触发）、**缺证 2 项**（A09 跨端、A12 规模）。FAIL 0。D-239「PASS 2」→ D-247「3」→ D-249「5」→ D-250「6」→ D-251「7」→ 本条「8」。P7-06 整体仍不判通过（A06/A10/A09/A12 非 PASS）。
+
+6. **审验拓扑与边界。** 两腿各经 autopilot 单 writer + 独立评审（批 10a 含 verifier FAIL 修复轮、批 10b 首轮 APPROVE）+ distinct verifier；本条为证据裁决 + 登记，主代理亲手执行（沿 D-239 item 7/D-244/D-247 先例），机械复核三腿测试在位与评审/verifier 结论。出：零产品代码/测试/schema/迁移/依赖/清单/Golden/CI 配置改动；不改 D-236～D-251 的任何判决（A07 PASS 为新增判决）；A06 取证实施属后续独立批（D-246 已批方案、未排期）；不触碰 P708-A07 与 P7-05 转账实施批的暂停状态。
+
+**关联决定：** D-239（A07 缺口原始登记与判据边界）、D-251（腿一交付与后半句预留）、D-183（恢复确认状态机）、D-244/D-247/D-249/D-250（裁决方法先例）、阶段计划 §6 `:187` 与 §10.1/§10.4.5。
