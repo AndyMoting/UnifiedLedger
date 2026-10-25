@@ -89,10 +89,13 @@ class P705VoidCorrectionMigrationV30ToV31Test {
             JdbcSqliteDriver(freshUrl, migrationProperties()).use { driver -> LedgerDatabase.Schema.create(driver) }
             stageV30(migratedUrl)
             JdbcSqliteDriver(migratedUrl, migrationProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 30, 31)
+                // The full chain, not just this edge: the transfer slice's 35.sqm rebuilds
+                // transaction_correction_request, so the family only compares fresh-equal
+                // again once every later edge (including that rebuild) has run.
+                LedgerDatabase.Schema.migrate(driver, 30, LedgerDatabase.Schema.version)
             }
-            // The whole P7-05 object family compares equal between a fresh v31 database and a
-            // migrated v30 -> v31 one — tables, indexes, triggers and the view included.
+            // The whole P7-05 object family compares equal between a fresh database and a
+            // migrated one — tables, indexes, triggers and the view included.
             assertEquals(
                 schemaText(migratedUrl, "transaction\\_void%") + schemaText(migratedUrl, "transaction\\_correction%") + schemaText(migratedUrl, "transaction\\_effective%"),
                 schemaText(freshUrl, "transaction\\_void%") + schemaText(freshUrl, "transaction\\_correction%") + schemaText(freshUrl, "transaction\\_effective%"),
