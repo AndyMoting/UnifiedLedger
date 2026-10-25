@@ -100,7 +100,7 @@ jobs:
           script: |
             set -eu
             rc=0
-            ./gradlew --no-daemon --max-workers=1 -Pandroid.testInstrumentationRunnerArguments.notClass=com.unifiedledger.android.ImportScaleTraversalInstrumentedTest,com.unifiedledger.android.AndroidScaleLongInstrumentedTest,com.unifiedledger.android.AndroidScalePreflightInstrumentedTest :android-app:connectedDebugAndroidTest --warning-mode all || rc=$?
+            ./gradlew --no-daemon --max-workers=1 -Pandroid.testInstrumentationRunnerArguments.notClass=com.unifiedledger.android.ImportScaleTraversalInstrumentedTest,com.unifiedledger.android.AndroidScaleLongInstrumentedTest,com.unifiedledger.android.AndroidScalePreflightInstrumentedTest,com.unifiedledger.android.P706A06BoundaryKillInstrumentedTest,com.unifiedledger.android.P706A06BoundaryVerifyInstrumentedTest :android-app:connectedDebugAndroidTest --warning-mode all || rc=$?
             adb logcat -d > logcat.txt || true
             exit $rc
       - name: Require every expected device test actually passed
