@@ -225,8 +225,10 @@ class P705VoidRestoreCommitPortTest {
             // Transfer slice's new behavior (D-228 J1 candidate A): the shared kind gate admits
             // ACCOUNT_TRANSFER, so a manual transfer voids transaction-granularly through the
             // unchanged void port - one fact, the three legs leave the effective surface
-            // together. The transfer restore semantics stay slice 3 (the ordinary revalidation
-            // hardcode), so this vector voids but never restores the transfer.
+            // together. The transfer-aware restore revalidation is delivered (D-228 slice 3);
+            // its end-to-end evidence lives in P705TransferRestorePathTest, because this
+            // bare-kind fixture carries no postings and a restore here would only pin the
+            // malformed-shape backstop rather than the restore path.
             assertIs<VoidTransactionResult.Created>(void(harness, ids, ids.requestId(), transactionId = "tx-transfer"))
             assertEquals(
                 VoidTransactionResult.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED),
