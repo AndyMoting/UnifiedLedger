@@ -5429,3 +5429,31 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 入：本条登记 + CURRENT_STATE 最小指针同步。出：不改 D-228 冻结面与既有决定；不动规格；P7-06/P7-07/P7-08 判决不受本条影响；worktree `UL-p7-05t1a-worktree` 与分支随后清理（远端已删）。
 
 **关联决定：** D-228（转账切片设计门与 §8.3 冻结形状）、D-187/D-221（恢复准入「紧邻前版本保留」先例）、D-219（加列/重建纪律与第 8 条 A-DOC 承接）、D-160（A-DOC 先例）、D-253/D-254（同日 P7-08 收口）、P708RestoreRoundtripEquivalenceTest 所在批（D-238/D-242 夹具族）。
+
+## D-256 P7-05 转账切片 片1b/片2/片3 + P7-06 A06 实施批交付登记：四批合并，片3 的两处产品缺陷在 CI 暴露后由主会话定点修复
+
+**状态：** 已批准并登记（2026-10-26）。本批登记四个已合并交付：PR #149（片1b，squash `0917237`）、PR #150（片2，squash `919146e`）、PR #151（P7-06 A06 实施批，squash `a839a81`）、PR #152（片3，squash `fb03bb4`）。四者合并后 main 推送 CI 均 success（#149 `40174017043`、#150 `40181814189`、#151 `40192485596`、#152 `40213960284`）。**零 schema 变更、零新依赖**（片1a 已将 schema 推到 v36/35 个 `.sqm`，本四条沿其冻结形状）。
+
+**决定：**
+
+1. **片1b 交付面（PR #149）**：新建 `P705TransferSliceMigrationV35ToV36Test.kt`（+186）按 v35→v36 边的 `columnInfo` 契约钉住重建后的 correction-request 族形状，含 reopen no-op 腿；`tools/ci/ledger-data-shards.txt` 与 `.github/workflows/ci.yml` 各 +1 登记到分片。该批把片1a 的「读证」升级为「测试证据」，正是 D-255 第 5 条列为残余的承接项之一。
+
+2. **片2 交付面（PR #150）**：手工转账的修正与作废经**共享 P7-05 提交路径**接线——`CorrectTransactionVersion.kt`（+124/−5）加转账分支、`SqlDelightTransactionCorrectionCommitPort.kt`（+46/−11）加转账服务面、`TransactionCorrection.kt`（+21/−3）扩命令形状、`TransferCorrectionValidation.kt`（+210）承载转账修正的服务端校验、`P503CorrectionPresentation.kt`（+11/−1）扩呈现。新测试 `P705TransferCorrectionCommitPortTest.kt`（+443）与 `TransactionCorrectionTest.kt`（+143）。**此批只接线，不含 UI 入口**（UI 归片5）。
+
+3. **A06 实施批交付面（PR #151）**：按 D-246 冻结的十九边界矩阵与两阶段 kill 协议落地三个 androidTest 文件（`P706A06BoundaryHarness.kt` +1034 夹具与 marker 协议、`P706A06BoundaryKillInstrumentedTest.kt` +497 第一阶段、`P706A06BoundaryVerifyInstrumentedTest.kt` +540 第二阶段），并同步 `tools/python/android_scale/inventory.py`（EXCLUDED 两简单类名）与 `.github/workflows/android-instrumented.yml`（notClass 两 FQCN）使 kill 套件不进 CI instrumented 面（D-161 口径保持）。**该批只交付测试实施，不构成 A06 判决**：A06 维持 D-239/D-246 的「部分证据」，剩余 = 受管 AVD 两阶段 kill 实跑（设备门，D-246 协议、隔离 adb server 端口、主代理亲自）。
+
+4. **片3 交付面（PR #152）**：转账感知的恢复重校验 + DP-10 收窄——`OrdinaryVersionRevalidation.kt`（+29/−2）在恢复重校验时按 kind 分派到转账校验（替换 D-158 硬编码的普通版本拒绝）、`TransferCorrectionValidation.kt` 新增 `revalidateTransferVersionReferences`（存储形状校验与失效面重算）、`SqlDelightTransactionCorrectionCommitPort.kt`（+162/−30）把 DP-10 保守占位**收窄为实际变化的资金腿**（D-158 第 4 条具名残余，J3 候选 (a) 的落地）。测试 `P705TransferRestorePathTest.kt`（+248）、`OrdinaryVersionRevalidationTest.kt`（+356）、`P705TransferCorrectionCommitPortTest.kt`（+494/−9）。
+
+5. **片3 的 CI 暴露缺陷与修复（如实登记）**：该批在首轮 CI 暴露两处旧候选缺陷，均属**产品层实现缺口**而非夹具问题：
+   - **(a) 失效路径非全有或全无**（评审 F-1，MEDIUM）：拒绝路径残留部分失效 → 改 `RollbackSignal` 全有或全无，并加非空转测试钉死（修复提交 `01c0ff2`）。
+   - **(b) 存储形状平衡复检未实现**：KDoc 声称「按工厂平衡规则重新校验存储形状」，但 planner 派生 `sourceDebit` 恒平衡，从未与**存储的** source 金额比对——不平衡的存储形状被静默准入（CI 用例 `anUnbalancedStoredTransferShapeIsAFieldRejection[jvm]` 红）。修复：同币种下 `source != -(destination + fee)` → `P705_FIELD_NOT_SUPPORTED`；混合币种仍交工厂 `SameCurrency` 映射裁决（主会话定点提交 `521b9fc`，KDoc 同步落实）。
+   - **(c) 该修复的 ktlint 违例**（CI `:ledger-domain:ktlintCommonMainSourceSetCheck` 红，`TransferCorrectionValidation.kt:290`「A multiline expression should start on a new line」）：纯格式换行调整（`ad0c5d0`），条件与求值未变，以 CI 同名任务本地复跑确认后推送。
+   - 三点合起来说明**测试契约先行、实现后补**的批次里，KDoc 的不变量声明必须与实现同批坐实——否则断言只是把声明抄了一遍。
+
+6. **证据维度披露（如实）**：片1b/片2/片3 的测试证据均为 **JVM 维度**（ledger-domain/application/data jvmTest + commonTest）；片3 的转账恢复路径其设备/UI 腿尚未存在（UI 归片5）。A06 的 androidTest 文件在 CI 只作**编译验证**，kill 套件按 D-161 不执行。**本四条不判任何 P7-05 验收向量 PASS**：规格 §10 的 T-01..T-14/T-03b 仍归后续向量判决批。
+
+7. **P7-05 状态**：**片1a/片1b/片2/片3 已交付合并；转账切片整体保持 OPEN**。剩余片：**片4（测试深化）**与**片5（UI 开转账修正/作废入口）**，另 P7-05 借贷/导入关联/关联退款沿 D-156/D-228 保持 OPEN。
+
+**边界：** 入：本条登记 + `docs/CURRENT_STATE.md` 最小指针同步 + checkpoint 收口。出：不改 D-228 冻结面与 D-246 设计门裁决；不改 D-239 的 P7-06 五向量判决（A06 维持部分证据）；不把任何 P7-05 向量并入 PASS；不动规格。片4/片5 的派发与 A06 设备门属后续执行，不在本条范围内。
+
+**关联决定：** D-255（片1a 交付与版本字面量权威，本条承接其第 5 条残余中片1b 项）、D-228（转账切片设计门 §3/§8.3 与 J3 候选 (a)）、D-246（A06 十九边界矩阵与两阶段 kill 协议、b1 受管 AVD 裁决）、D-239（P7-06 五向量与 A06 部分证据基线）、D-158（DP-10 保守占位与恢复重校验硬编码两处残余的原始登记）、D-156（作废/恢复语义）、D-161（instrumented CI 排除口径）。
