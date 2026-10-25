@@ -46,7 +46,7 @@ class P708ManualCreateAnnotationV34ToV35MigrationTest {
 
     @Test
     fun versionThirtyFiveIsCurrent() {
-        assertEquals(35, LedgerDatabase.Schema.version)
+        assertEquals(36, LedgerDatabase.Schema.version)
     }
 
     @Test
@@ -57,10 +57,10 @@ class P708ManualCreateAnnotationV34ToV35MigrationTest {
             stageV34(url)
             JdbcSqliteDriver(url, migrationProperties()).use { driver ->
                 LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 34, 35) }
-                driver.execute(null, "PRAGMA user_version = 35", 0)
+                driver.execute(null, "PRAGMA user_version = 36", 0)
             }
             JdbcSqliteDriver(url, migrationProperties()).use { driver ->
-                assertEquals(35L, queryLong(driver, "PRAGMA user_version"))
+                assertEquals(36L, queryLong(driver, "PRAGMA user_version"))
                 requestTables.forEach { table ->
                     val columns = columnInfo(driver, table)
                     assertEquals(
@@ -240,11 +240,11 @@ class P708ManualCreateAnnotationV34ToV35MigrationTest {
         try {
             JdbcSqliteDriver(url, migrationProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
-                driver.execute(null, "PRAGMA user_version = 35", 0)
+                driver.execute(null, "PRAGMA user_version = 36", 0)
             }
             JdbcSqliteDriver(url, migrationProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 35, 35)
-                assertEquals(35L, queryLong(driver, "PRAGMA user_version"))
+                LedgerDatabase.Schema.migrate(driver, 36, 36)
+                assertEquals(36L, queryLong(driver, "PRAGMA user_version"))
                 requestTables.forEach { table ->
                     assertEquals(expectedTail, columnInfo(driver, table).takeLast(2), table)
                 }

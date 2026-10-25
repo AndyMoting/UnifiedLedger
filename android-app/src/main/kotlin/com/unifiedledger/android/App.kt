@@ -837,7 +837,7 @@ internal class AndroidRestoreUseCases(
  * migration 34 -> 35 plus validation is proven (`P708ManualCreateAnnotationV34ToV35MigrationTest`)
  * and its A04 round-trip-equivalence leg is delivered by the 08.D restore round-trip test
  * (`P708RestoreRoundtripEquivalenceTest`), with the final admission registration staying with the
- * main agent's acceptance. The current schema version (35 since the 08.B-1 annotation-column edge)
+ * main agent's acceptance. The current schema version (36 since the P7-05 transfer correction-request edge)
  * passes through WITHOUT consulting this set (`needsMigration == false`), so this set names only
  * old versions that must be migrated. The recovery validation set is deliberately DIFFERENT:
  * `{currentSchemaVersion()}` only (spec 5.3).
@@ -849,9 +849,11 @@ internal class AndroidRestoreUseCases(
  * it to `{1, 31, 32, 33}` (D-187) so the immediately preceding v33 backup keeps restoring through its
  * `33.sqm` migration, mirroring the v32 preservation the 07.B slice relied on; the 08.B-1 slice
  * extends it to `{1, 31, 32, 33, 34}` (D-221) on the same immediately-preceding-version
- * preservation. The set remains a spec-recognised EXPLICIT set, never automatically derived.
+ * preservation; the P7-05 transfer slice extends it to `{1, 31, 32, 33, 34, 35}` (D-228) on the
+ * same immediately-preceding-version preservation. The set remains a spec-recognised EXPLICIT set,
+ * never automatically derived.
  */
-internal val RESTORE_SUPPORTED_SOURCE_VERSIONS: Set<Long> = setOf(1L, 31L, 32L, 33L, 34L)
+internal val RESTORE_SUPPORTED_SOURCE_VERSIONS: Set<Long> = setOf(1L, 31L, 32L, 33L, 34L, 35L)
 
 /**
  * The product's fixed single-ledger identity. F-8: ONE constant, used both by [buildLedgerGraph]

@@ -200,7 +200,7 @@ class AndroidRestoreWiringTest {
         // conditionally admitted per D-221 until its A04 round-trip-equivalence leg is proven,
         // exactly like v1/v32/v33; the 08.D round-trip test delivers that leg's evidence).
         assertTrue(34L in wiring.supportedSourceVersions, "v34 must stay restorable after the v35 bump")
-        assertEquals(setOf(1L, 31L, 32L, 33L, 34L), wiring.supportedSourceVersions)
+        assertEquals(setOf(1L, 31L, 32L, 33L, 34L, 35L), wiring.supportedSourceVersions)
         assertTrue(33L in wiring.supportedSourceVersions, "v33 must stay restorable after the v34 bump")
         assertTrue(32L in wiring.supportedSourceVersions, "v32 must stay restorable after the v34 bump")
         assertTrue(31L in wiring.supportedSourceVersions, "v31 remains an admitted old version")

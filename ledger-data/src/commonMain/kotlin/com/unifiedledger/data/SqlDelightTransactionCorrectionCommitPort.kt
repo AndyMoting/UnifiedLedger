@@ -85,6 +85,8 @@ class SqlDelightTransactionCorrectionCommitPort private constructor(
                     category_id = requestSnapshot.categoryId.value,
                     funding_account_id = requestSnapshot.fundingAccountId.value,
                     confirmation_marker = EXPLICIT_MANUAL_SAVE_MARKER,
+                    destination_account_id = requestSnapshot.destinationAccountId,
+                    fee_minor = requestSnapshot.feeMinor,
                 )
                 if (database.ledgerQueries.lastStatementChangedRowCount().executeAsOne() != 1L) {
                     return@transactionWithResult resolveExisting(identity, requestSnapshot)
@@ -307,6 +309,8 @@ class SqlDelightTransactionCorrectionCommitPort private constructor(
                         categoryId,
                         fundingAccountId,
                         confirmationMarker,
+                        destinationAccountId,
+                        feeMinor,
                         confirmationId,
                         versionId,
                         ->
@@ -318,9 +322,18 @@ class SqlDelightTransactionCorrectionCommitPort private constructor(
                             amountMinor = amountMinor,
                             currencyCode = currencyCode,
                             currencyPrecision = currencyPrecision,
-                            categoryId = categoryId,
+                            // category_id is storage-nullable for transfer rows (fee == 0 stores
+                            // no category); an ordinary correction row is still always non-null —
+                            // the write boundary enforces this inside the commit transaction by
+                            // kind — so a NULL read here is an invariant breach, not a state.
+                            categoryId =
+                                requireNotNull(categoryId) {
+                                    "Ordinary correction rows always carry a category"
+                                },
                             fundingAccountId = fundingAccountId,
                             confirmationMarker = confirmationMarker,
+                            destinationAccountId = destinationAccountId,
+                            feeMinor = feeMinor,
                             confirmationId = confirmationId,
                             versionId = versionId,
                         )
@@ -354,6 +367,8 @@ private data class StoredCorrection(
     val categoryId: String,
     val fundingAccountId: String,
     val confirmationMarker: String,
+    val destinationAccountId: String?,
+    val feeMinor: Long,
     val confirmationId: String,
     val versionId: String,
 ) {
@@ -369,5 +384,7 @@ private data class StoredCorrection(
                 .toLong() &&
             categoryId == snapshot.categoryId.value &&
             fundingAccountId == snapshot.fundingAccountId.value &&
+            destinationAccountId == snapshot.destinationAccountId &&
+            feeMinor == snapshot.feeMinor &&
             confirmationMarker == EXPLICIT_MANUAL_SAVE_MARKER
 }

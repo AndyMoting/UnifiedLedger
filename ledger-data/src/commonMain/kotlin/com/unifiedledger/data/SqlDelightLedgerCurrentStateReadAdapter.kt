@@ -396,7 +396,11 @@ class SqlDelightLedgerCurrentStateReadAdapter(
                             note = note,
                             statisticsAt = Instant.parse(statisticsAt),
                             amount = Money.ofMinor(amountMinor, CurrencyUnit(currencyCode, currencyPrecision.toInt())),
-                            categoryId = CategoryId(categoryId),
+                            // category_id is storage-nullable for transfer rows (fee == 0 stores
+                            // no category); an ordinary correction row is still always non-null —
+                            // the write boundary enforces this inside the commit transaction by
+                            // kind — so a NULL read here is an invariant breach, not a state.
+                            categoryId = CategoryId(requireNotNull(categoryId) { "Ordinary correction rows always carry a category" }),
                             fundingAccountId = AccountId(fundingAccountId),
                         ),
                     receipt =

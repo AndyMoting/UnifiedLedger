@@ -24,7 +24,7 @@ class DesktopCatalogMigrationTest {
             assertEquals(27L, queryUserVersion(url))
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(35L, driver.userVersion())
+                assertEquals(36L, driver.userVersion())
                 val database = LedgerDatabase(driver)
                 assertEquals(0L, database.ledgerQueries.countCatalogAccounts("ledger-local-test").executeAsOne())
             }
@@ -43,10 +43,10 @@ class DesktopCatalogMigrationTest {
         try {
             // The production open path creates and stamps a fresh file at the current version.
             JdbcSqliteDriver(url).use { driver -> migrateToCurrentSchema(driver) }
-            assertEquals(35L, queryUserVersion(url))
+            assertEquals(36L, queryUserVersion(url))
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(35L, driver.userVersion())
+                assertEquals(36L, driver.userVersion())
             }
         } finally {
             Files.deleteIfExists(path)
@@ -91,7 +91,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(35L, driver.userVersion())
+                assertEquals(36L, driver.userVersion())
             }
             // The same file still open through the real path, and it still has its tables.
             val graph = openDesktopLedger(url)
@@ -147,7 +147,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(35L, driver.userVersion())
+                assertEquals(36L, driver.userVersion())
                 assertEquals(
                     1L,
                     queryLong(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'catalog_version'"),
@@ -179,7 +179,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(35L, driver.userVersion())
+                assertEquals(36L, driver.userVersion())
                 // No migration ran: the catalog tables were not created, and the v27 objects the
                 // guarded branch would have relied on are still absent.
                 assertEquals(
@@ -231,7 +231,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(35L, driver.userVersion())
+                assertEquals(36L, driver.userVersion())
                 // The v27-only objects were never created: the guards alone did not pass the gate.
                 assertEquals(
                     0L,
