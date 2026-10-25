@@ -141,11 +141,20 @@ class P705TransferRestorePathTest {
             val ids = P705Ids("p705-t-restore")
             assertIs<VoidTransactionResult.Created>(void(harness, ids, ids.requestId(), "tx-transfer-restore"))
             assertEquals(0, harness.readAdapter.loadLedgerEntryRows(ledgerId).size)
+            // T-06's recycle-bin face, stated explicitly rather than only implied by `single()`:
+            // the voided transfer IS listed in the bin, with its kind and the recorded reason.
+            // The other effective surfaces are asserted in P705TransferCorrectionCommitPortTest's
+            // voided-transfer vector, not here.
+            val binned = recycleBinRow(harness)
+            assertEquals(TransactionId("tx-transfer-restore"), binned.voided.transactionId)
+            assertEquals(TransactionKind.ACCOUNT_TRANSFER, binned.voided.kind)
+            assertEquals(VoidReasonCode.MIS_ENTERED, binned.voided.voidReason.code)
+            assertEquals(3, binned.voided.postings.size)
             // T-09's recycle-bin side, on the voided state the bin projects: the transfer-aware
             // revalidation admits the three legs (endpoints active, fee category active), so the
             // restore judgment is admissible - under the replaced EXPENSE/INCOME hardcode this
             // row carried P705_KIND_NOT_SUPPORTED.
-            assertEquals(null, recycleBinRow(harness).restoreRejectionCode)
+            assertEquals(null, binned.restoreRejectionCode)
 
             val restored = assertIs<VoidTransactionResult.Created>(restore(harness, ids, ids.requestId(), "tx-transfer-restore"))
             // The transfer is effective again with its original three legs byte for byte - no
