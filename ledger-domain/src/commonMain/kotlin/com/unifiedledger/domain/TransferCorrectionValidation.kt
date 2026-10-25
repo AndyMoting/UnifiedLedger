@@ -287,8 +287,9 @@ fun revalidateTransferVersionReferences(
     // exactly -(destination + fee) or the stored shape breaks the transfer balance invariant - a
     // field rejection (T-01), never an admission. Mixed-currency shapes stay with the factories'
     // same-currency admission (catalog-reference mapping).
-    val oneCurrency = source.amount.currency == destination.amount.currency &&
-        (feeLeg == null || feeLeg.amount.currency == destination.amount.currency)
+    val oneCurrency =
+        source.amount.currency == destination.amount.currency &&
+            (feeLeg == null || feeLeg.amount.currency == destination.amount.currency)
     if (oneCurrency && source.amount.minorUnits != -(destination.amount.minorUnits + fee.minorUnits)) {
         return P705FailureCode.P705_FIELD_NOT_SUPPORTED
     }
