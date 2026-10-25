@@ -26,13 +26,16 @@ import kotlin.time.Instant
  *
  * Affected funding legs (spec sections 3/8.1): the frozen [affectedFundingLegs] derivation
  * stays the single definition - for a transfer the real-account legs are the two principal
- * legs; the FEE posting-account leg is not a real account and never participates. This wiring
- * batch does not compose that derivation into any invalidation.
+ * legs; the FEE posting-account leg is not a real account and never participates. The P7-05
+ * slice-3 correction commit port composes that derivation (mirrored onto the old side) into
+ * the D-113 invalidation of replaced legs' active matches; this file defines only the pure
+ * derivations.
  *
- * Slice registration (this wiring batch): transfer restore revalidation stays on the
- * `OrdinaryVersionRevalidation` EXPENSE/INCOME hardcode (slice 3 owns the transfer-aware
- * replacement), and the DP-10 placeholder narrowing plus the D-113 combination are slice 3
- * and stay untouched. This batch wires and tests neither.
+ * Slice registration (delivered by slice 3, D-228): the transfer-aware restore revalidation
+ * lives in [revalidateTransferVersionReferences] below - it reverse-derives the stored
+ * version's transfer command from its bare postings and re-admits it through this file's
+ * factory delegation - and the DP-10 placeholder narrowing plus the D-113 combination are
+ * wired in the slice-3 correction commit port.
  *
  * The rejection vocabulary is the frozen [P705FailureCode] family (spec section 9); no new
  * token is introduced.
@@ -208,3 +211,114 @@ private fun transferCorrectionRejection(violation: DomainViolation): P705Failure
 
         else -> P705FailureCode.P705_CONSTRAINT_VIOLATION
     }
+
+/**
+ * P7-05 transfer restore revalidation (spec section 8.2, D-228 slice 3; DP-9 as clarified by
+ * D-156): re-admits a stored transfer version's references against the *current* authoritative
+ * catalog by reverse-deriving the transfer command the version's bare posting list represents
+ * and running it through [planTransferCorrectionPostings] - the same creation-factory
+ * delegation a correction uses, so restore admits exactly what a creation would admit at the
+ * same catalog state. A rename of an endpoint or the fee category keeps every check green
+ * (stable ids); a deactivated or otherwise inadmissible reference is the returned typed
+ * rejection and the transaction stays voided.
+ *
+ * Leg discrimination (frozen rule, pinned by `OrdinaryVersionRevalidationTest`): a stored
+ * transfer version is a bare `(id, accountId, amount)` posting list with no role markers, so
+ * the legs are told apart by account shape, not by `posting_index`:
+ *
+ * - the FEE leg is the posting whose account is *not* a real account - the fee category's
+ *   hidden posting account is the only non-real account a well-formed transfer touches, and
+ *   endpoint accounts are real by the creation admission. At most one posting may sit on a
+ *   non-real account; its fee category is identified as the ledger's category whose
+ *   `postingAccountId` equals that account (missing category -> catalog-reference rejection);
+ * - the two remaining legs are the principal legs: the negative one is the source
+ *   (`PRINCIPAL_OUT`), the positive one the destination (`PRINCIPAL_IN`), mirroring the
+ *   creation factories' signs (`sourceDebit` negated, `destinationCredit` and the fee kept
+ *   positive). `destinationCredit` is the destination leg's amount and the fee the FEE leg's
+ *   amount, so the planner re-derives `sourceDebit = destinationCredit + fee`; the stored source
+ *   amount is re-checked against that balance rule directly (same currency: `source =
+ *   -(destination + fee)`, otherwise a field rejection), because the factories cannot see the
+ *   stored amount.
+ *
+ * A posting list that cannot be a factory-shaped transfer (wrong leg count, two non-real
+ * accounts, principals without exactly one negative and one positive amount) is a stored-shape
+ * invariant violation and returns the constraint backstop, never a mis-shaped admission. The
+ * command's `statisticsAt` is a fixed placeholder: it feeds only the factories' discarded
+ * version output, which admission never reads.
+ */
+fun revalidateTransferVersionReferences(
+    catalog: LedgerCatalog,
+    ledgerId: LedgerId,
+    postings: List<Posting>,
+): P705FailureCode? {
+    val principalLegs = ArrayList<Posting>(postings.size)
+    val feeLegs = ArrayList<Posting>(1)
+    for (posting in postings) {
+        val account =
+            catalog.account(posting.accountId)
+                ?: return P705FailureCode.P705_CATALOG_REFERENCE_NOT_ADMISSIBLE
+        if (account.realAccount) {
+            principalLegs += posting
+        } else {
+            feeLegs += posting
+        }
+    }
+    if (feeLegs.size > 1 || principalLegs.size != 2) {
+        return P705FailureCode.P705_CONSTRAINT_VIOLATION
+    }
+    val source =
+        principalLegs.singleOrNull { it.amount.minorUnits < 0L }
+            ?: return P705FailureCode.P705_CONSTRAINT_VIOLATION
+    val destination =
+        principalLegs.singleOrNull { it.amount.minorUnits > 0L }
+            ?: return P705FailureCode.P705_CONSTRAINT_VIOLATION
+    val feeLeg = feeLegs.singleOrNull()
+    val feeCategoryId =
+        feeLeg?.let { leg ->
+            catalog.categories
+                .filter { it.ledgerId == ledgerId && it.postingAccountId == leg.accountId }
+                .minByOrNull { it.id.value }
+                ?.id
+                ?: return P705FailureCode.P705_CATALOG_REFERENCE_NOT_ADMISSIBLE
+        }
+    val fee = feeLeg?.amount ?: Money.ofMinor(0L, destination.amount.currency)
+    // Stored-shape balance re-check: the factories re-derive sourceDebit = destinationCredit + fee
+    // and can never see the stored source amount, so on one currency the stored source must equal
+    // exactly -(destination + fee) or the stored shape breaks the transfer balance invariant - a
+    // field rejection (T-01), never an admission. Mixed-currency shapes stay with the factories'
+    // same-currency admission (catalog-reference mapping).
+    val oneCurrency =
+        source.amount.currency == destination.amount.currency &&
+            (feeLeg == null || feeLeg.amount.currency == destination.amount.currency)
+    if (oneCurrency && source.amount.minorUnits != -(destination.amount.minorUnits + fee.minorUnits)) {
+        return P705FailureCode.P705_FIELD_NOT_SUPPORTED
+    }
+    return when (
+        val planned =
+            planTransferCorrectionPostings(
+                catalog = catalog,
+                command =
+                    TransferCorrectionCommand(
+                        ledgerId = ledgerId,
+                        sourceAccountId = source.accountId,
+                        destinationAccountId = destination.accountId,
+                        destinationCredit = destination.amount,
+                        fee = fee,
+                        feeCategoryId = feeCategoryId,
+                        statisticsAt = REVALIDATION_FACTORY_PLACEHOLDER_AT,
+                    ),
+                ids =
+                    TransferCorrectionPostingIds(
+                        sourcePostingId = source.id,
+                        destinationPostingId = destination.id,
+                        feePostingId = feeLeg?.id,
+                    ),
+            )
+    ) {
+        is TransferCorrectionPlan.Postings -> null
+        is TransferCorrectionPlan.Rejected -> planned.code
+    }
+}
+
+/** Feeds only the factories' discarded version output during restore revalidation; never persisted. */
+private val REVALIDATION_FACTORY_PLACEHOLDER_AT = Instant.fromEpochSeconds(0L)
