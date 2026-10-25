@@ -3,6 +3,7 @@ package com.unifiedledger.application
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.OrdinaryCorrectionCommand
@@ -15,7 +16,11 @@ import com.unifiedledger.domain.PostingSetId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionVersionId
+import com.unifiedledger.domain.TransferCorrectionCommand
+import com.unifiedledger.domain.TransferCorrectionPlan
+import com.unifiedledger.domain.TransferCorrectionPostingIds
 import com.unifiedledger.domain.planOrdinaryCorrectionPostings
+import com.unifiedledger.domain.planTransferCorrectionPostings
 import kotlin.time.Instant
 
 /**
@@ -34,9 +39,23 @@ data class ExplicitlyConfirmedTransactionCorrection(
     val expectedCurrentVersionId: TransactionVersionId,
     val note: String?,
     val statisticsAt: Instant,
+    /** The corrected amount, or the transfer slice's destination credit (spec section 8.3 reuse). */
     val amount: Money,
-    val categoryId: CategoryId,
+    /**
+     * The ordinary category of an `EXPENSE`/`INCOME` correction, or the transfer slice's fee
+     * category - `null` exactly when the target is a fee-less (`fee == 0`) transfer, whose row
+     * stores no category (transfer spec section 8.3). Ordinary rows keep the category
+     * mandatory: the commit transaction enforces non-null by kind.
+     */
+    val categoryId: CategoryId?,
     val fundingAccountId: AccountId,
+    /**
+     * The transfer slice's destination account - [fundingAccountId] is the transfer's source
+     * leg. Ordinary corrections keep the default `null`.
+     */
+    val destinationAccountId: AccountId? = null,
+    /** The transfer slice's fee in minor units of [amount]'s currency; ordinary corrections keep `0`. */
+    val feeMinor: Long = 0,
     val confirmation: ExplicitManualSave,
 )
 
@@ -45,7 +64,20 @@ data class TransactionCorrectionRequestIdentity(
     val requestId: RequestId,
 )
 
-/** The frozen snapshot column set (spec section 4.3); `confirmation_marker` is the constant. */
+/**
+ * The frozen snapshot column set (spec sections 4.3/8.3); `confirmation_marker` is the constant.
+ *
+ * `categoryId` is nullable per the transfer slice (spec section 8.3): a transfer row stores its
+ * fee category here and stores `NULL` exactly when `feeMinor == 0`; an ordinary row is still
+ * always non-null - the commit transaction enforces it by kind - and the equivalent-replay
+ * comparison compares the column exactly as stored.
+ *
+ * Intermediate state (registered, transfer wiring batch): the UI-side snapshot-aware resolver
+ * (`findTransactionCorrectionByRequest` in the read adapter) still reconstructs only
+ * ordinary-shaped snapshots (non-null category, no transfer columns); its transfer-aware
+ * extension belongs to the UI slice that opens the transfer entrance, which is also the first
+ * surface able to submit a transfer correction.
+ */
 data class TransactionCorrectionRequestSnapshot(
     val ledgerId: LedgerId,
     val transactionId: TransactionId,
@@ -53,7 +85,7 @@ data class TransactionCorrectionRequestSnapshot(
     val note: String?,
     val statisticsAt: Instant,
     val amount: Money,
-    val categoryId: CategoryId,
+    val categoryId: CategoryId?,
     val fundingAccountId: AccountId,
     /** Transfer-carrying columns (P7-05 transfer slice, spec section 8.3): ordinary corrections keep the defaults. */
     val destinationAccountId: String? = null,
@@ -67,13 +99,23 @@ data class TransactionCorrectionReceipt(
     val expectedCurrentVersionId: TransactionVersionId,
 )
 
-/** Fresh ids of one correction: the receipt identity plus the replacement posting set. */
+/**
+ * Fresh ids of one correction: the receipt identity plus the replacement posting set.
+ *
+ * [feePostingId] is the transfer slice's third fresh posting id (a fee-bearing transfer's FEE
+ * leg; the transfer reuses [categoryPostingId]/[fundingPostingId] as its destination/source
+ * legs). Nullable and defaulted: id sources that predate the transfer slice mint no fee-leg
+ * id, and a fee-bearing transfer correction through such a source is a fail-closed typed
+ * rejection, never a two-legged mis-shape. The UI slice that opens the transfer entrance must
+ * mint it.
+ */
 data class CorrectTransactionVersionIds(
     val confirmationId: ConfirmationId,
     val versionId: TransactionVersionId,
     val postingSetId: PostingSetId,
     val categoryPostingId: PostingId,
     val fundingPostingId: PostingId,
+    val feePostingId: PostingId? = null,
 )
 
 fun interface CorrectTransactionVersionIdSource {
@@ -198,6 +240,8 @@ class ExecuteCorrectTransactionVersion(
                 amount = request.amount,
                 categoryId = request.categoryId,
                 fundingAccountId = request.fundingAccountId,
+                destinationAccountId = request.destinationAccountId?.value,
+                feeMinor = request.feeMinor,
             )
         return commitPort.commitOnce(identity, snapshot) { target -> planCorrection(target, snapshot) }
     }
@@ -220,12 +264,35 @@ class ExecuteCorrectTransactionVersion(
         val catalog =
             admissionReader.loadCurrent(snapshot.ledgerId)
                 ?: return TransactionCorrectionPlan.Rejected(P705FailureCode.P705_CATALOG_REFERENCE_NOT_ADMISSIBLE)
+        return if (target.kind == TransactionKind.ACCOUNT_TRANSFER) {
+            planTransfer(target, snapshot, ids, receipt, catalog)
+        } else {
+            planOrdinary(target, snapshot, ids, receipt, catalog)
+        }
+    }
+
+    /**
+     * The ordinary branch, unchanged for `EXPENSE`/`INCOME`: the five frozen first-slice fields
+     * planned by the domain ordinary planner. The category is structurally non-null on the
+     * ordinary row - the commit transaction's kind check enforces it - and this guard keeps the
+     * public plan callback honest on its own.
+     */
+    private fun planOrdinary(
+        target: TransactionCorrectionTarget,
+        snapshot: TransactionCorrectionRequestSnapshot,
+        ids: CorrectTransactionVersionIds,
+        receipt: TransactionCorrectionReceipt,
+        catalog: LedgerCatalog,
+    ): TransactionCorrectionPlan {
+        val categoryId =
+            snapshot.categoryId
+                ?: return TransactionCorrectionPlan.Rejected(P705FailureCode.P705_FIELD_NOT_SUPPORTED)
         val command =
             OrdinaryCorrectionCommand(
                 ledgerId = snapshot.ledgerId,
                 kind = target.kind,
                 amount = snapshot.amount,
-                categoryId = snapshot.categoryId,
+                categoryId = categoryId,
                 fundingAccountId = snapshot.fundingAccountId,
             )
         return when (
@@ -242,6 +309,58 @@ class ExecuteCorrectTransactionVersion(
         ) {
             is OrdinaryCorrectionPlan.Rejected -> TransactionCorrectionPlan.Rejected(planned.code)
             is OrdinaryCorrectionPlan.Postings ->
+                TransactionCorrectionPlan.Commit(
+                    receipt = receipt,
+                    postingSetId = ids.postingSetId,
+                    postings = planned.postings,
+                    reuseCurrentPostingSet = reuseCurrentPostingSet(target.postings, planned.postings),
+                )
+        }
+    }
+
+    /**
+     * The transfer branch (transfer spec sections 3/8.1, 8.3 column mapping; D-228 J1):
+     * `amount` is the destination credit, `fundingAccountId` the source leg, `categoryId` the
+     * fee category (`null` exactly when the fee is zero) and `feeMinor` the fee in the amount's
+     * currency. The domain planner reuses the creation factories' admission and derives the
+     * target posting set (three legs with a categorised FEE leg when the fee is positive, two
+     * legs without a category when it is zero); the generic leg-multiset write-form decision
+     * picks the reuse/replace form exactly as for the ordinary kinds, so a note-only transfer
+     * correction keeps its posting set.
+     */
+    private fun planTransfer(
+        target: TransactionCorrectionTarget,
+        snapshot: TransactionCorrectionRequestSnapshot,
+        ids: CorrectTransactionVersionIds,
+        receipt: TransactionCorrectionReceipt,
+        catalog: LedgerCatalog,
+    ): TransactionCorrectionPlan {
+        val destinationAccountId =
+            snapshot.destinationAccountId
+                ?: return TransactionCorrectionPlan.Rejected(P705FailureCode.P705_FIELD_NOT_SUPPORTED)
+        val planned =
+            planTransferCorrectionPostings(
+                catalog = catalog,
+                command =
+                    TransferCorrectionCommand(
+                        ledgerId = snapshot.ledgerId,
+                        sourceAccountId = snapshot.fundingAccountId,
+                        destinationAccountId = AccountId(destinationAccountId),
+                        destinationCredit = snapshot.amount,
+                        fee = Money.ofMinor(snapshot.feeMinor, snapshot.amount.currency),
+                        feeCategoryId = snapshot.categoryId,
+                        statisticsAt = snapshot.statisticsAt,
+                    ),
+                ids =
+                    TransferCorrectionPostingIds(
+                        sourcePostingId = ids.fundingPostingId,
+                        destinationPostingId = ids.categoryPostingId,
+                        feePostingId = ids.feePostingId,
+                    ),
+            )
+        return when (planned) {
+            is TransferCorrectionPlan.Rejected -> TransactionCorrectionPlan.Rejected(planned.code)
+            is TransferCorrectionPlan.Postings ->
                 TransactionCorrectionPlan.Commit(
                     receipt = receipt,
                     postingSetId = ids.postingSetId,

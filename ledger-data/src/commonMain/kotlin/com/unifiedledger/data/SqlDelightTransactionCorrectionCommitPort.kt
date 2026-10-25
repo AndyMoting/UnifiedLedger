@@ -82,7 +82,7 @@ class SqlDelightTransactionCorrectionCommitPort private constructor(
                     currency_precision =
                         requestSnapshot.amount.currency.precision
                             .toLong(),
-                    category_id = requestSnapshot.categoryId.value,
+                    category_id = requestSnapshot.categoryId?.value,
                     funding_account_id = requestSnapshot.fundingAccountId.value,
                     confirmation_marker = EXPLICIT_MANUAL_SAVE_MARKER,
                     destination_account_id = requestSnapshot.destinationAccountId,
@@ -102,6 +102,16 @@ class SqlDelightTransactionCorrectionCommitPort private constructor(
                 val kind = TransactionKind.valueOf(target.kind)
                 if (!isP705CorrectionSupportedKind(kind)) {
                     return@transactionWithResult reject(identity, P705FailureCode.P705_KIND_NOT_SUPPORTED)
+                }
+                // Transfer slice (spec section 8.3) write-time row-shape invariants, fail-closed
+                // and enforced by kind inside this commit transaction: the request table has no
+                // kind column, so no table-level CHECK can express them. A transfer row requires
+                // a destination account, a non-negative fee and a category exactly when the fee
+                // is positive; an ordinary row requires no destination, a zero fee and always a
+                // category. The claim row is discarded with the typed rejection, so the identity
+                // stays retryable and nothing else is written.
+                requestRowShapeRejection(kind, requestSnapshot)?.let { shapeRejection ->
+                    return@transactionWithResult reject(identity, shapeRejection)
                 }
                 if (importCreationConfirmationCount(requestSnapshot) > 0L) {
                     return@transactionWithResult reject(identity, P705FailureCode.P705_CREATION_LINEAGE_NOT_SUPPORTED)
@@ -242,6 +252,33 @@ class SqlDelightTransactionCorrectionCommitPort private constructor(
                 requestSnapshot.transactionId.value,
             ).executeAsOne()
 
+    /**
+     * The spec section 8.3 write-time row-shape invariants by kind (fail-closed): a transfer row
+     * requires a non-null destination account, a non-negative fee and a category exactly when
+     * the fee is positive; an ordinary row requires no destination account, a zero fee and
+     * always a category. An inconsistent target state is reported through the frozen field code
+     * (spec section 9's reuse ruling); `null` means the row shape matches its kind.
+     */
+    private fun requestRowShapeRejection(
+        kind: TransactionKind,
+        snapshot: TransactionCorrectionRequestSnapshot,
+    ): P705FailureCode? =
+        if (kind == TransactionKind.ACCOUNT_TRANSFER) {
+            when {
+                snapshot.destinationAccountId == null -> P705FailureCode.P705_FIELD_NOT_SUPPORTED
+                snapshot.feeMinor < 0L -> P705FailureCode.P705_FIELD_NOT_SUPPORTED
+                (snapshot.feeMinor > 0L) != (snapshot.categoryId != null) -> P705FailureCode.P705_FIELD_NOT_SUPPORTED
+                else -> null
+            }
+        } else {
+            when {
+                snapshot.destinationAccountId != null -> P705FailureCode.P705_FIELD_NOT_SUPPORTED
+                snapshot.feeMinor != 0L -> P705FailureCode.P705_FIELD_NOT_SUPPORTED
+                snapshot.categoryId == null -> P705FailureCode.P705_FIELD_NOT_SUPPORTED
+                else -> null
+            }
+        }
+
     private fun matchedReconciliationCount(requestSnapshot: TransactionCorrectionRequestSnapshot): Long =
         database.ledgerQueries
             .matchedCurrentVersionReconciliationCount(
@@ -322,14 +359,12 @@ class SqlDelightTransactionCorrectionCommitPort private constructor(
                             amountMinor = amountMinor,
                             currencyCode = currencyCode,
                             currencyPrecision = currencyPrecision,
-                            // category_id is storage-nullable for transfer rows (fee == 0 stores
-                            // no category); an ordinary correction row is still always non-null —
-                            // the write boundary enforces this inside the commit transaction by
-                            // kind — so a NULL read here is an invariant breach, not a state.
-                            categoryId =
-                                requireNotNull(categoryId) {
-                                    "Ordinary correction rows always carry a category"
-                                },
+                            // category_id is storage-nullable for transfer rows (a fee == 0
+                            // transfer stores no category, spec section 8.3); the equivalent
+                            // replay comparison below compares the column exactly as stored, so
+                            // an ordinary row's non-null invariant is a property of the write
+                            // boundary above, not of this read.
+                            categoryId = categoryId,
                             fundingAccountId = fundingAccountId,
                             confirmationMarker = confirmationMarker,
                             destinationAccountId = destinationAccountId,
@@ -364,7 +399,7 @@ private data class StoredCorrection(
     val amountMinor: Long,
     val currencyCode: String,
     val currencyPrecision: Long,
-    val categoryId: String,
+    val categoryId: String?,
     val fundingAccountId: String,
     val confirmationMarker: String,
     val destinationAccountId: String?,
@@ -382,7 +417,7 @@ private data class StoredCorrection(
             currencyPrecision ==
             snapshot.amount.currency.precision
                 .toLong() &&
-            categoryId == snapshot.categoryId.value &&
+            categoryId == snapshot.categoryId?.value &&
             fundingAccountId == snapshot.fundingAccountId.value &&
             destinationAccountId == snapshot.destinationAccountId &&
             feeMinor == snapshot.feeMinor &&

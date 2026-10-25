@@ -495,7 +495,10 @@ class P705CorrectionCommitPortTest {
     @Test
     fun unsupportedKindsLineagesAndVoidedTargetsAreTypedRejections() {
         P705Database.create("p705-unsupported-").use { harness ->
-            // ACCOUNT_TRANSFER: a supported-by-nobody kind in this slice.
+            // ACCOUNT_TRANSFER: the transfer slice's new behavior - the kind gate admits the row,
+            // and this ordinary-shaped helper payload (no destination account) fails the transfer
+            // row's write-time invariant as a typed zero-write rejection. The claim-first
+            // transfer vectors live in P705TransferCorrectionCommitPortTest.
             harness.insertTransactionOfKind("tx-transfer", com.unifiedledger.domain.TransactionKind.ACCOUNT_TRANSFER)
             // The remaining later-slice matrix rows (D-158 section 4): REFUND_RECEIPT (DP-13),
             // CREDIT_REPAYMENT (product-reachable import lineage, DP-5) and a canonical-only kind
@@ -511,7 +514,7 @@ class P705CorrectionCommitPortTest {
 
             val ids = P705Ids("p705-unsupported")
             assertEquals(
-                CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED),
+                CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_FIELD_NOT_SUPPORTED),
                 correct(harness, ids, ids.requestId(), transactionId = "tx-transfer"),
             )
             assertEquals(

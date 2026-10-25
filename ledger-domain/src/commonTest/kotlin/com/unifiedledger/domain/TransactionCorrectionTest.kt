@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Instant
 
 /**
  * P7-05.B domain evidence (spec sections 3.2/4.1): the correction validation derives the
@@ -108,6 +109,12 @@ class TransactionCorrectionTest {
             ids = OrdinaryCorrectionPostingIds(PostingId("p1"), PostingId("p2")),
         )
 
+        // Transfer slice's new behavior (D-228 J1): ACCOUNT_TRANSFER now sits on the shared
+        // support-matrix gate and is planned by the transfer planner (its vectors live below and
+        // in the transfer commit-port suite); the ordinary planner itself stays ordinary-only,
+        // so a transfer kind reaching it directly is still a typed rejection - never a silently
+        // mis-planned INCOME shape.
+        assertTrue(isP705CorrectionSupportedKind(TransactionKind.ACCOUNT_TRANSFER))
         assertEquals(
             P705FailureCode.P705_KIND_NOT_SUPPORTED,
             assertIs<OrdinaryCorrectionPlan.Rejected>(plan(TransactionKind.ACCOUNT_TRANSFER)).code,
@@ -223,6 +230,142 @@ class TransactionCorrectionTest {
                 newPostings = listOf(Posting(PostingId("new-expense"), expenseAccountId, money(10_000)), Posting(PostingId("new-funding"), otherBankId, money(-10_000))),
                 realAccountIds = realAccounts,
             ).map { it.accountId },
+        )
+    }
+
+    // ---- transfer-slice planner (spec sections 3/8.1; D-228 J1) ----------------------------
+
+    private val transferStatisticsAt: Instant = Instant.parse("2026-03-05T02:00:00Z")
+
+    private fun transferPlan(
+        destinationCreditMinor: Long = 10_000L,
+        feeMinor: Long = 200L,
+        feeCategoryId: CategoryId? = categoryId,
+        source: AccountId = bankId,
+        destination: AccountId = otherBankId,
+        feePostingId: PostingId? = PostingId("p-fee"),
+        catalog: LedgerCatalog = catalog(),
+    ) = planTransferCorrectionPostings(
+        catalog = catalog,
+        command =
+            TransferCorrectionCommand(
+                ledgerId = ledgerId,
+                sourceAccountId = source,
+                destinationAccountId = destination,
+                destinationCredit = money(destinationCreditMinor),
+                fee = money(feeMinor),
+                feeCategoryId = feeCategoryId,
+                statisticsAt = transferStatisticsAt,
+            ),
+        ids =
+            TransferCorrectionPostingIds(
+                sourcePostingId = PostingId("p-out"),
+                destinationPostingId = PostingId("p-in"),
+                feePostingId = feePostingId,
+            ),
+    )
+
+    @Test
+    fun transferCorrectionPlansTheThreeLegShapeWhenTheFeeIsPositive() {
+        val postings = assertIs<TransferCorrectionPlan.Postings>(transferPlan()).postings
+        // The creation factory's frozen leg order: PRINCIPAL_OUT, PRINCIPAL_IN and the FEE leg
+        // on the fee category's posting account, with the derived source debit 10_000 + 200.
+        assertEquals(listOf(bankId, otherBankId, expenseAccountId), postings.map { it.accountId })
+        assertEquals(listOf(-10_200L, 10_000L, 200L), postings.map { it.amount.minorUnits })
+        assertIs<DomainResult.Success<PostingSet>>(
+            PostingSet.create(PostingSetId("posting-set-new"), postings),
+        )
+    }
+
+    @Test
+    fun transferCorrectionPlansTheTwoLegShapeWhenTheFeeIsZero() {
+        val postings =
+            assertIs<TransferCorrectionPlan.Postings>(transferPlan(feeMinor = 0L, feeCategoryId = null)).postings
+        // fee == 0: only the two principal legs, no category anywhere (the factory's T-4 rule).
+        assertEquals(listOf(bankId, otherBankId), postings.map { it.accountId })
+        assertEquals(listOf(-10_000L, 10_000L), postings.map { it.amount.minorUnits })
+    }
+
+    @Test
+    fun transferCorrectionFieldShapeViolationsAreTypedRejections() {
+        // A zero fee must not carry a category; a positive fee requires one; a negative fee and a
+        // non-positive destination credit are inadmissible values (spec section 9's reuse ruling).
+        assertEquals(P705FailureCode.P705_FIELD_NOT_SUPPORTED, assertIs<TransferCorrectionPlan.Rejected>(transferPlan(feeMinor = 0L, feeCategoryId = categoryId)).code)
+        assertEquals(P705FailureCode.P705_FIELD_NOT_SUPPORTED, assertIs<TransferCorrectionPlan.Rejected>(transferPlan(feeMinor = 200L, feeCategoryId = null)).code)
+        assertEquals(P705FailureCode.P705_FIELD_NOT_SUPPORTED, assertIs<TransferCorrectionPlan.Rejected>(transferPlan(feeMinor = -1L, feeCategoryId = null)).code)
+        assertEquals(P705FailureCode.P705_FIELD_NOT_SUPPORTED, assertIs<TransferCorrectionPlan.Rejected>(transferPlan(destinationCreditMinor = 0L, feeMinor = 0L, feeCategoryId = null)).code)
+        // The stored shape carries one currency triple, and the derived debit must be
+        // representable: a fee in another currency and an overflowing `credit + fee` sum are
+        // field rejections before any admission runs.
+        assertIs<TransferCorrectionPlan.Rejected>(
+            planTransferCorrectionPostings(
+                catalog = catalog(),
+                command =
+                    TransferCorrectionCommand(
+                        ledgerId = ledgerId,
+                        sourceAccountId = bankId,
+                        destinationAccountId = otherBankId,
+                        destinationCredit = money(10_000),
+                        fee = Money.ofMinor(200L, CurrencyUnit("USD", 2)),
+                        feeCategoryId = categoryId,
+                        statisticsAt = transferStatisticsAt,
+                    ),
+                ids = TransferCorrectionPostingIds(PostingId("p-out"), PostingId("p-in"), PostingId("p-fee")),
+            ),
+        ).let { assertEquals(P705FailureCode.P705_FIELD_NOT_SUPPORTED, it.code) }
+        assertEquals(
+            P705FailureCode.P705_FIELD_NOT_SUPPORTED,
+            assertIs<TransferCorrectionPlan.Rejected>(transferPlan(destinationCreditMinor = Long.MAX_VALUE, feeMinor = 300L)).code,
+        )
+        // A positive fee whose id source mints no fee-leg id fails closed on the wiring
+        // invariant, never planning a two-legged mis-shape.
+        assertEquals(
+            P705FailureCode.P705_CONSTRAINT_VIOLATION,
+            assertIs<TransferCorrectionPlan.Rejected>(transferPlan(feePostingId = null)).code,
+        )
+    }
+
+    @Test
+    fun transferCorrectionAdmissionFailuresReuseTheFactoryRules() {
+        // Same endpoint twice, an unknown endpoint and a non-real endpoint are the creation
+        // factories' own admission rejections mapped onto the catalog code (T-04).
+        assertEquals(
+            P705FailureCode.P705_CATALOG_REFERENCE_NOT_ADMISSIBLE,
+            assertIs<TransferCorrectionPlan.Rejected>(transferPlan(destination = bankId)).code,
+        )
+        assertEquals(
+            P705FailureCode.P705_CATALOG_REFERENCE_NOT_ADMISSIBLE,
+            assertIs<TransferCorrectionPlan.Rejected>(transferPlan(source = AccountId("asset-missing"))).code,
+        )
+        assertEquals(
+            P705FailureCode.P705_CATALOG_REFERENCE_NOT_ADMISSIBLE,
+            assertIs<TransferCorrectionPlan.Rejected>(transferPlan(source = expenseAccountId)).code,
+        )
+        // A deactivated fee category is the factory's fee-category admission failure (T-05);
+        // the transfer planner owns no second copy of that rule.
+        val inactive =
+            when (
+                val result =
+                    LedgerCatalog.create(
+                        accounts =
+                            listOf(
+                                Account(bankId, ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                                Account(otherBankId, ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                                Account(expenseAccountId, ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
+                            ),
+                        categories =
+                            listOf(
+                                Category(CategoryId("category-food-parent"), ledgerId, null, null, active = true),
+                                Category(categoryId, ledgerId, CategoryId("category-food-parent"), expenseAccountId, active = false),
+                            ),
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> error("fixture catalog must be valid")
+            }
+        assertEquals(
+            P705FailureCode.P705_CATALOG_REFERENCE_NOT_ADMISSIBLE,
+            assertIs<TransferCorrectionPlan.Rejected>(transferPlan(catalog = inactive)).code,
         )
     }
 }
