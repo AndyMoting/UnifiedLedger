@@ -222,10 +222,12 @@ class P705VoidRestoreCommitPortTest {
             harness.insertOrdinaryExpense("tx-imported", amountMinor = 10_000L)
             harness.insertImportCreationConfirmation("tx-imported")
             val ids = P705Ids("p705-void-unsupported")
-            assertEquals(
-                VoidTransactionResult.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED),
-                void(harness, ids, ids.requestId(), transactionId = "tx-transfer"),
-            )
+            // Transfer slice's new behavior (D-228 J1 candidate A): the shared kind gate admits
+            // ACCOUNT_TRANSFER, so a manual transfer voids transaction-granularly through the
+            // unchanged void port - one fact, the three legs leave the effective surface
+            // together. The transfer restore semantics stay slice 3 (the ordinary revalidation
+            // hardcode), so this vector voids but never restores the transfer.
+            assertIs<VoidTransactionResult.Created>(void(harness, ids, ids.requestId(), transactionId = "tx-transfer"))
             assertEquals(
                 VoidTransactionResult.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED),
                 void(harness, ids, ids.requestId(), transactionId = "tx-refund"),
@@ -256,8 +258,11 @@ class P705VoidRestoreCommitPortTest {
                 VoidTransactionResult.Rejected(P705FailureCode.P705_TRANSACTION_NOT_FOUND),
                 void(harness, ids, ids.requestId(), transactionId = "tx-missing"),
             )
-            assertEquals(0L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_fact"))
-            assertEquals(0L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_request"))
+            // Exactly the transfer's void fact/request/receipt triple was written; every typed
+            // rejection above stayed zero-write.
+            assertEquals(1L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_fact"))
+            assertEquals(1L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_request"))
+            assertEquals(1L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_receipt"))
             // The import candidate keeps its terminal status: the void never touched it.
             assertEquals(
                 1L,

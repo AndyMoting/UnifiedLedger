@@ -32,6 +32,16 @@ import kotlin.time.Instant
 // ------------------------------------------------------------------ detail-page entry gate
 
 /**
+ * The presentation's own ordinary-kind set for the correction/void entries. The shared domain
+ * matrix gate (`isP705CorrectionSupportedKind`) opened to `ACCOUNT_TRANSFER` with the transfer
+ * slice's commit wiring, but the UI transfer entrance opens with the UI slice (slice 5): until
+ * then the detail page keeps hiding the entries for transfers — the frozen slice-1b
+ * presentation vector asserts exactly that — so this gate stays on the ordinary pair instead of
+ * calling the now-wider shared kind gate.
+ */
+private val p705CorrectionEntryKinds: Set<TransactionKind> = setOf(TransactionKind.EXPENSE, TransactionKind.INCOME)
+
+/**
  * P7-05.B/C (D-156; DP-12; spec section 3.5): whether the read-only detail page offers the
  * correction and void entries. Both entries need the whole support-matrix row — the supported
  * kind AND the supported creation lineage — and an effective transaction: the detail read path
@@ -48,7 +58,7 @@ internal fun detailCorrectionAffordancesVisible(
     hasCorrectionOrigin: Boolean,
     hasVoidTarget: Boolean,
 ): DetailCorrectionAffordances {
-    val supported = com.unifiedledger.domain.isP705CorrectionSupportedKind(kind) && isP705CreationLineageSupported(creationEntry)
+    val supported = kind in p705CorrectionEntryKinds && isP705CreationLineageSupported(creationEntry)
     return DetailCorrectionAffordances(
         edit = supported && isEffective && hasCorrectionOrigin,
         void = supported && isEffective && hasVoidTarget,

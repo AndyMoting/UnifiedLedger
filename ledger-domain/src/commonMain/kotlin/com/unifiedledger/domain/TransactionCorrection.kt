@@ -42,8 +42,22 @@ data class OrdinaryCorrectionPostingIds(
     val fundingPostingId: PostingId,
 )
 
-/** The first-slice support matrix rows of `EXPENSE`/`INCOME` (spec section 3.1). */
-fun isP705CorrectionSupportedKind(kind: TransactionKind): Boolean = kind == TransactionKind.EXPENSE || kind == TransactionKind.INCOME
+/**
+ * The P7-05 correction support matrix: the first-slice `EXPENSE`/`INCOME` rows (spec section
+ * 3.1) plus the transfer slice's `ACCOUNT_TRANSFER` row (transfer spec section 2.1; D-228 J1).
+ * This is the single shared definition - both commit ports and the restore revalidation call
+ * it, and no port writes its own copy - so opening the transfer row here also opens the
+ * transfer void (the void plan carries no kind-specific validation of its own).
+ *
+ * Restore stays ordinary in the transfer wiring batch (intermediate state, registered): a
+ * transfer restore still runs the `OrdinaryVersionRevalidation` EXPENSE/INCOME hardcode, so it
+ * fails closed on the category lookup rather than restoring; the transfer-aware replacement,
+ * the DP-10 placeholder narrowing and the D-113 combination are slice 3 and untouched here.
+ */
+fun isP705CorrectionSupportedKind(kind: TransactionKind): Boolean =
+    kind == TransactionKind.EXPENSE ||
+        kind == TransactionKind.INCOME ||
+        kind == TransactionKind.ACCOUNT_TRANSFER
 
 /**
  * Derives and validates the replacement posting set of one correction against the current
@@ -56,7 +70,11 @@ fun planOrdinaryCorrectionPostings(
     command: OrdinaryCorrectionCommand,
     ids: OrdinaryCorrectionPostingIds,
 ): OrdinaryCorrectionPlan {
-    if (!isP705CorrectionSupportedKind(command.kind)) {
+    // The ordinary planner plans only the ordinary pair. The shared matrix gate above admits
+    // the transfer slice's ACCOUNT_TRANSFER row too, whose planner is
+    // planTransferCorrectionPostings (TransferCorrectionValidation.kt); reaching this one with
+    // a transfer kind must stay a typed rejection, never a silently mis-planned INCOME shape.
+    if (command.kind != TransactionKind.EXPENSE && command.kind != TransactionKind.INCOME) {
         return OrdinaryCorrectionPlan.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED)
     }
     if (command.amount.minorUnits <= 0L) {
