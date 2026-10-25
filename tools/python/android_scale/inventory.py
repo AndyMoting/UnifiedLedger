@@ -6,7 +6,15 @@ import re
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-EXCLUDED = {"ImportScaleTraversalInstrumentedTest", "AndroidScaleLongInstrumentedTest", "AndroidScalePreflightInstrumentedTest"}
+# D-246 device-gate-only classes: the run-A suite kills its own process mid-run, so these
+# must never execute under CI instrumentation and stay out of the inventory both ways.
+EXCLUDED = {
+    "ImportScaleTraversalInstrumentedTest",
+    "AndroidScaleLongInstrumentedTest",
+    "AndroidScalePreflightInstrumentedTest",
+    "P706A06BoundaryKillInstrumentedTest",
+    "P706A06BoundaryVerifyInstrumentedTest",
+}
 
 
 def source_inventory(source: Path) -> set[str]:
