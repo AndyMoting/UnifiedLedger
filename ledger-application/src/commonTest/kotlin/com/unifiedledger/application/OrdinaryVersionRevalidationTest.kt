@@ -238,6 +238,20 @@ class OrdinaryVersionRevalidationTest {
         )
     }
 
+    @Test
+    fun aSameEndpointTwoLegShapeIsACatalogRejection() {
+        // Both principal legs on one account: the reverse-derived command has
+        // source == destination, which the creation factories' distinct-accounts rule
+        // rejects - the catalog-reference code, not the constraint backstop.
+        assertEquals(
+            P705FailureCode.P705_CATALOG_REFERENCE_NOT_ADMISSIBLE,
+            revalidate(
+                TransactionKind.ACCOUNT_TRANSFER,
+                listOf(posting("p-out", bankA, -10_000L), posting("p-in", bankA, 10_000L)),
+            ),
+        )
+    }
+
     // ---------------------------------------------------------- ordinary branch
 
     @Test

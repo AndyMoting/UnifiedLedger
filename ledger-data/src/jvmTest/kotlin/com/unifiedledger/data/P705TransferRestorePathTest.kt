@@ -141,6 +141,11 @@ class P705TransferRestorePathTest {
             val ids = P705Ids("p705-t-restore")
             assertIs<VoidTransactionResult.Created>(void(harness, ids, ids.requestId(), "tx-transfer-restore"))
             assertEquals(0, harness.readAdapter.loadLedgerEntryRows(ledgerId).size)
+            // T-09's recycle-bin side, on the voided state the bin projects: the transfer-aware
+            // revalidation admits the three legs (endpoints active, fee category active), so the
+            // restore judgment is admissible - under the replaced EXPENSE/INCOME hardcode this
+            // row carried P705_KIND_NOT_SUPPORTED.
+            assertEquals(null, recycleBinRow(harness).restoreRejectionCode)
 
             val restored = assertIs<VoidTransactionResult.Created>(restore(harness, ids, ids.requestId(), "tx-transfer-restore"))
             // The transfer is effective again with its original three legs byte for byte - no
@@ -159,8 +164,12 @@ class P705TransferRestorePathTest {
                         factKind
                     }.executeAsList(),
             )
-            // T-09's recycle-bin side: with an admissible catalog the voided row was restorable.
-            assertEquals(null, recycleBinRow(harness).restoreRejectionCode)
+            // The restored transaction correctly leaves the voided-only projection: the bin has
+            // zero rows after a successful restore (it never lists effective transactions).
+            assertEquals(
+                emptyList<RecycleBinRow>(),
+                assertIs<RecycleBinResult.Success>(QueryRecycleBin(harness.readAdapter, ledgerId, catalog).query()).rows,
+            )
             assertEquals(TransactionVoidFactKind.RESTORE, restored.receipt.factKind)
         }
     }

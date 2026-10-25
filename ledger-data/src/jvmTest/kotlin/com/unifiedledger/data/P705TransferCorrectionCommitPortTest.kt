@@ -445,6 +445,39 @@ class P705TransferCorrectionCommitPortTest {
     }
 
     /**
+     * Seeds the `catalog_account` rows the narrowed DP-10 gate reads inside the port
+     * (`selectCatalogAccounts` -> the real-account set of `affectedFundingLegs`), mirroring
+     * [P705Fixture]'s injected catalog: the two real asset endpoints and the fee category's
+     * hidden non-real expense posting account. The harness deliberately injects the admission
+     * catalog in memory (P705Harness.kt KDoc), so without these rows the port's own catalog read
+     * sees an empty ledger and no leg can ever classify as a real funding leg.
+     */
+    private fun seedCatalogRows(harness: P705Database) {
+        fun account(
+            accountId: AccountId,
+            kind: String,
+            realAccount: Long,
+        ) {
+            harness.database.ledgerQueries.insertCatalogAccount(
+                ledger_id = ledgerId.value,
+                account_id = accountId.value,
+                name = "seed-${accountId.value}",
+                kind = kind,
+                currency_code = P705Fixture.cny.code,
+                currency_precision = P705Fixture.cny.precision.toLong(),
+                owned_by_user = 1L,
+                real_account = realAccount,
+                system_role = null,
+                hidden = if (realAccount == 1L) 0L else 1L,
+                active = 1L,
+            )
+        }
+        account(P705Fixture.bankA, "ASSET", 1L)
+        account(P705Fixture.bankB, "ASSET", 1L)
+        account(P705Fixture.expenseAccount, "EXPENSE", 0L)
+    }
+
+    /**
      * Seeds a PENDING placeholder reconciliation row (evidence_link_id NULL, the v23-seed shape
      * of spec section 1.6) on one posting, through the same named queries the P408 writers use.
      */
@@ -571,6 +604,7 @@ class P705TransferCorrectionCommitPortTest {
     fun noteOnlyCorrectionKeepsSeededReconciliationRowsAndLinksVerbatim() {
         P705Database.create("p705-t-j3-c-").use { harness ->
             insertManualTransfer(harness, "tx-transfer-j3c", destinationCreditMinor = 10_000L, feeMinor = 200L)
+            seedCatalogRows(harness)
             seedPendingPlaceholder(harness, "tx-transfer-j3c-posting-0", "reconciliation-j3c-src")
             seedActiveLink(harness, "tx-transfer-j3c", "tx-transfer-j3c-posting-1", "link-j3c-dst", "reconciliation-j3c-dst")
             val ids = TransferIds("p705-t-j3c")
@@ -616,6 +650,7 @@ class P705TransferCorrectionCommitPortTest {
     fun changedLegWithOnlyAPendingPlaceholderIsNeverRejectedAndKeepsTheRow() {
         P705Database.create("p705-t-j3-b-").use { harness ->
             insertManualTransfer(harness, "tx-transfer-j3b", destinationCreditMinor = 10_000L, feeMinor = 200L)
+            seedCatalogRows(harness)
             seedPendingPlaceholder(harness, "tx-transfer-j3b-posting-0", "reconciliation-j3b-src")
             val ids = TransferIds("p705-t-j3b")
 
@@ -654,6 +689,7 @@ class P705TransferCorrectionCommitPortTest {
     fun changedLegWithAnActiveMatchIsInvalidatedAndTheCorrectionSucceeds() {
         P705Database.create("p705-t-j3-a-").use { harness ->
             insertManualTransfer(harness, "tx-transfer-j3a", destinationCreditMinor = 10_000L, feeMinor = 200L)
+            seedCatalogRows(harness)
             seedActiveLink(harness, "tx-transfer-j3a", "tx-transfer-j3a-posting-0", "link-j3a-src", "reconciliation-j3a-src")
             seedActiveLink(harness, "tx-transfer-j3a", "tx-transfer-j3a-posting-1", "link-j3a-dst", "reconciliation-j3a-dst")
             seedPendingPlaceholder(harness, "tx-transfer-j3a-posting-2", "reconciliation-j3a-fee")
@@ -735,6 +771,7 @@ class P705TransferCorrectionCommitPortTest {
     fun aStaleCorrectionRollsBackItsInvalidationWrites() {
         P705Database.create("p705-t-j3-stale-").use { harness ->
             insertManualTransfer(harness, "tx-transfer-j3st", destinationCreditMinor = 10_000L, feeMinor = 200L)
+            seedCatalogRows(harness)
             seedActiveLink(harness, "tx-transfer-j3st", "tx-transfer-j3st-posting-0", "link-j3st-src", "reconciliation-j3st-src")
             val ids = TransferIds("p705-t-j3-stale")
 
@@ -766,13 +803,14 @@ class P705TransferCorrectionCommitPortTest {
                 ),
             )
             // No partial state: the match is still active, the reconciliation row still CHECKED,
-            // no derived D-113 request/receipt/snapshot survived, and the claim left no row.
+            // the derived D-113 request rolled back with the transaction (only the seed request
+            // survives), and the claim left no row.
             assertEquals(
                 listOf("active"),
                 harness.ledgerQueryTexts("SELECT state FROM evidence_link_history WHERE link_id = 'link-j3st-src' ORDER BY sequence"),
             )
             assertEquals("CHECKED", harness.ledgerQueryText("SELECT status FROM posting_reconciliation WHERE posting_id = 'tx-transfer-j3st-posting-0'"))
-            assertEquals(2L, harness.ledgerQueryCount("SELECT count(*) FROM reconciliation_request"))
+            assertEquals(1L, harness.ledgerQueryCount("SELECT count(*) FROM reconciliation_request"))
             assertEquals(0L, harness.ledgerQueryCount("SELECT count(*) FROM reconciliation_receipt"))
             assertEquals(0L, harness.ledgerQueryCount("SELECT count(*) FROM reconciliation_correction_snapshot"))
             assertEquals(2L, harness.versionCount("tx-transfer-j3st"))
@@ -790,6 +828,7 @@ class P705TransferCorrectionCommitPortTest {
     fun aPlatformConfiguredPortWithoutTheInvalidationStoreFailsClosedOnAnActiveMatch() {
         P705Database.create("p705-t-j3-platform-").use { harness ->
             insertManualTransfer(harness, "tx-transfer-j3p", destinationCreditMinor = 10_000L, feeMinor = 200L)
+            seedCatalogRows(harness)
             seedActiveLink(harness, "tx-transfer-j3p", "tx-transfer-j3p-posting-0", "link-j3p-src", "reconciliation-j3p-src")
             val ids = TransferIds("p705-t-j3-platform")
             val platformPort = SqlDelightTransactionCorrectionCommitPort.forPlatformConfiguredDatabase(harness.database)
@@ -820,6 +859,70 @@ class P705TransferCorrectionCommitPortTest {
             assertEquals(listOf("active"), harness.ledgerQueryTexts("SELECT state FROM evidence_link_history WHERE link_id = 'link-j3p-src' ORDER BY sequence"))
             assertEquals(0L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"))
             assertEquals(1L, harness.ledgerQueryCount("SELECT count(*) FROM reconciliation_request"))
+        }
+    }
+
+    /**
+     * All-or-nothing of the composition (review finding F-1): when a later leg's invalidation
+     * fails after an earlier leg's already succeeded, the rejection must roll the whole
+     * transaction back - the earlier leg's match stays active and no derived D-113 row survives.
+     * The deterministic mid-loop failure: both principal legs are affected (endpoint swap), and
+     * the SECOND derived request id is pre-seeded as a PENDING reconciliation_request with a
+     * foreign fingerprint, so the D-113 store resolves that claim as a snapshot mismatch and
+     * rejects only after the first invalidation has been applied.
+     */
+    @Test
+    fun aMidInvalidationFailureRollsBackEveryInvalidationWrite() {
+        P705Database.create("p705-t-j3-atomic-").use { harness ->
+            insertManualTransfer(harness, "tx-transfer-j3at", destinationCreditMinor = 10_000L, feeMinor = 200L)
+            seedCatalogRows(harness)
+            seedActiveLink(harness, "tx-transfer-j3at", "tx-transfer-j3at-posting-0", "link-j3at-src", "reconciliation-j3at-src")
+            seedActiveLink(harness, "tx-transfer-j3at", "tx-transfer-j3at-posting-1", "link-j3at-dst", "reconciliation-j3at-dst")
+            val ids = TransferIds("p705-t-j3-atomic")
+            val requestId = ids.requestId()
+            harness.database.ledgerQueries.claimP408ReconciliationRequest(
+                ledgerId.value,
+                "${requestId.value}:invalidate:link-j3at-dst",
+                "invalidate_link",
+                "deliberately-foreign-fingerprint",
+            )
+
+            // The endpoint swap changes both principal tuples, so both links enter the loop in
+            // posting_index order: the source leg's invalidation succeeds first, then the
+            // destination leg's store call resolves the blocked claim and rejects.
+            assertEquals(
+                CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_CONSTRAINT_VIOLATION),
+                correct(
+                    harness,
+                    ids,
+                    requestId,
+                    transactionId = "tx-transfer-j3at",
+                    destinationCreditMinor = 10_000L,
+                    feeMinor = 200L,
+                    feeCategoryId = P705Fixture.food,
+                    sourceAccountId = P705Fixture.bankB,
+                    destinationAccountId = P705Fixture.bankA,
+                ),
+            )
+            // All-or-nothing: the first link's invalidation rolled back with the transaction.
+            assertEquals(1L, harness.versionCount("tx-transfer-j3at"))
+            assertEquals(
+                listOf("active"),
+                harness.ledgerQueryTexts("SELECT state FROM evidence_link_history WHERE link_id = 'link-j3at-src' ORDER BY sequence"),
+            )
+            assertEquals(
+                listOf("active"),
+                harness.ledgerQueryTexts("SELECT state FROM evidence_link_history WHERE link_id = 'link-j3at-dst' ORDER BY sequence"),
+            )
+            assertEquals("CHECKED", harness.ledgerQueryText("SELECT status FROM posting_reconciliation WHERE posting_id = 'tx-transfer-j3at-posting-0'"))
+            assertEquals("CHECKED", harness.ledgerQueryText("SELECT status FROM posting_reconciliation WHERE posting_id = 'tx-transfer-j3at-posting-1'"))
+            // The derived request for the first leg rolled back too: only the two seed requests
+            // and the pre-seeded blocker remain, and neither a receipt nor a snapshot exists.
+            assertEquals(3L, harness.ledgerQueryCount("SELECT count(*) FROM reconciliation_request"))
+            assertEquals(0L, harness.ledgerQueryCount("SELECT count(*) FROM reconciliation_receipt"))
+            assertEquals(0L, harness.ledgerQueryCount("SELECT count(*) FROM reconciliation_correction_snapshot"))
+            // The rolled-back correction leaves no claim row behind: the identity is retryable.
+            assertEquals(0L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"))
         }
     }
 }
