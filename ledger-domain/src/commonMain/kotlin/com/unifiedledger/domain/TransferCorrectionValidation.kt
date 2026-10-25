@@ -235,8 +235,10 @@ private fun transferCorrectionRejection(violation: DomainViolation): P705Failure
  *   (`PRINCIPAL_OUT`), the positive one the destination (`PRINCIPAL_IN`), mirroring the
  *   creation factories' signs (`sourceDebit` negated, `destinationCredit` and the fee kept
  *   positive). `destinationCredit` is the destination leg's amount and the fee the FEE leg's
- *   amount, so the planner re-derives `sourceDebit = destinationCredit + fee` and re-checks
- *   the stored shape against the factories' balance rule.
+ *   amount, so the planner re-derives `sourceDebit = destinationCredit + fee`; the stored source
+ *   amount is re-checked against that balance rule directly (same currency: `source =
+ *   -(destination + fee)`, otherwise a field rejection), because the factories cannot see the
+ *   stored amount.
  *
  * A posting list that cannot be a factory-shaped transfer (wrong leg count, two non-real
  * accounts, principals without exactly one negative and one positive amount) is a stored-shape
@@ -280,6 +282,16 @@ fun revalidateTransferVersionReferences(
                 ?: return P705FailureCode.P705_CATALOG_REFERENCE_NOT_ADMISSIBLE
         }
     val fee = feeLeg?.amount ?: Money.ofMinor(0L, destination.amount.currency)
+    // Stored-shape balance re-check: the factories re-derive sourceDebit = destinationCredit + fee
+    // and can never see the stored source amount, so on one currency the stored source must equal
+    // exactly -(destination + fee) or the stored shape breaks the transfer balance invariant - a
+    // field rejection (T-01), never an admission. Mixed-currency shapes stay with the factories'
+    // same-currency admission (catalog-reference mapping).
+    val oneCurrency = source.amount.currency == destination.amount.currency &&
+        (feeLeg == null || feeLeg.amount.currency == destination.amount.currency)
+    if (oneCurrency && source.amount.minorUnits != -(destination.amount.minorUnits + fee.minorUnits)) {
+        return P705FailureCode.P705_FIELD_NOT_SUPPORTED
+    }
     return when (
         val planned =
             planTransferCorrectionPostings(
