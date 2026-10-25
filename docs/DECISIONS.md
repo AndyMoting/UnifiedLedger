@@ -5407,3 +5407,25 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 入：本条登记 + `docs/CURRENT_STATE.md` 最小指针同步（origin/main `f336e6d`→`20fb463`、最高决定编号 D-254、P7-08 计数）。出：不改 D-238 其余向量判决与 D-253 裁决；不改产品源码/schema；不把 A09 并入 PASS；A02 worktree（`../UL-p708-a02-leg3-worktree`）与分支随后清理。
 
 **关联决定：** D-238（A02 三处缺口原文与本条闭合面）、D-187（P7-08 设计门 §2.3 计数一致要求）、D-253（P708-A07 PASS 与 P7-08 计数前值）、PR #109（缺口 (i)/(ii) 与属性测试本体）、D-2215（P5-04.5-FOUND-001，`withHostTest` 与 `testAndroidHostTest` 命名先例）、阶段计划 §8.3 P708-A02 行与 §10.1/§10.4.5。
+
+## D-255 P7-05 转账切片 片1a 交付登记：迁移边 35.sqm（v35→v36）+ 冻结版本字面量清扫落地；切片保持 OPEN
+
+**状态：** 已批准并登记（2026-10-24；复起方案 (a) 为用户当日批准）。交付 = PR #146（squash merge `aee1d93`，**schema v35→v36、`.sqm` 计 35**）。冻结候选 `a864524`（`bf7a954` 主批 34 文件 + 修复轮 +98 行迁移边测试）经两轮独立 verifier PASS 与 reviewer 闭包 APPROVE-WITH-FINDINGS；分支上另有两轮 CI 红修复提交（`7b018d6`/`e62d006`，见第 4 条）随 squash 入库。合并后 main 全量 CI run `40164533197`。
+
+**决定：**
+
+1. **片1a 交付面（按冻结任务书 D1–D5）**：新建 `35.sqm` 按规格 §8.3 冻结形状重建 `transaction_correction_request`（category_id 可空化 + `destination_account_id` + `fee_minor`；child→parent 丢弃 / parent→child 重建；`p705_rebuild_guard` fail-closed 行数守卫；两张重建表 DDL 与 `Ledger.sq` 终态逐字节相等；子表 FK 保 `ON DELETE CASCADE`；无 `fee_category_id` 列、无表级 CHECK）；`Ledger.sq` 恰两处（claim INSERT 14 列 + replay SELECT/matches()）；snapshot 默认值字段（全仓 5 构造点零改动）+ 两处读路径 `requireNotNull` 不变量；**版本字面量清扫按冻结处置表 v3**（TO36 58 翻转零失误 43 组配对、KEEP 68 零改动、ADD35 7 处——双端恢复准入扩至 `{1,31,32,33,34,35}`，沿 D-187/D-221「紧邻前版本保留」先例）；`P708RestoreRoundtripEquivalenceTest` stageVersion 改派生式 `Schema.version.toLong()`。
+
+2. **主会话裁决（四项冷审建议全部采纳）**：表权威 = 盘上 `local/t7c_frozen_disposition_v3.txt`（命令实跑 126 == 表 126 集合相等）；任务书内嵌表为转录参考件（其 [KEEP] 段较盘上混入 6 条 3580 幻影行、漏真实 KEEP `:175`——**零写入面影响**，writer 严格按盘上表执行，`:175` 经三轮独立复核逐字未变）；删「表外 37 处」定量表述（实况：全仓 661，操作性「表外零改动」规则不变）；G5 计数更正 8=5+3、构造点更正 5 调用 + 1 声明。G2 组计数不变式**按意图判 PASS**（58 翻转零失误；两处字面偏离均为修复轮新增测试块的正确设计内容——`:2569` 新断言与 `:2531` 故意造 v35 世界的 seed）。
+
+3. **修复轮（批内）**：`LedgerDatabaseMigrationTest.kt` +98/−0 两条迁移边测试（populated rebuild 逐值保真 + late-failure 整体回滚哨兵），沿该类 v23→v24/v24→v25 每边先例，闭掉 reviewer Q-1「重建零数据腿」——把 35.sqm 的 fresh==migrated 与守卫回滚从读证升级为测试证据。
+
+4. **CI 红两轮修复（如实登记）**：`P705VoidCorrectionMigrationV30ToV31Test.freshSchemaEqualsMigratedSchemaForEveryP705Object` 因 35.sqm 按设计重建 correction-request 族而红（原探针比较「v30→v31 迁移产物 vs fresh 当前版」，历史成立仅因 v31 后无人触碰该族）。第一轮修复（全链 `migrate(30, current)`）触 `duplicate column statistics_at_epoch_nanos`——根因是 `stageV30` 为「create 当前版再降级」伪 v30 世界，32–34 边在其上不可运行。最终形态（`e62d006`）：探针只走**族相关边** `30→31` + `35→36`（32–34 从不触碰该族，本就是该探针绿着的旁证），本地聚焦验证 6/6 绿后推送，三轮 CI 后必过检查全绿。**教训登记：降级世界夹具（create-then-downgrade）上不可跑全链迁移；族形状探针应随族演化点同步维护。**
+
+5. **残余与承接（不阻断）**：Q-2（翻转瞬态错标中间态，断言成立，既有链命名惯例下的保真债）；Q-3（读侧快照未随加列扩展——本批不可达，归后续接线片）；三处断言旁陈旧注释 `{1,31,32,33,34}`（表外零改动纪律，归卫生片）；androidTest 5 翻转仅 CI 编译验证；**D-219 第 8 条 A-DOC 同步现为待办**（正式文档的 schema 版本/迁移链计数现陈旧——现实 v36/35 个 `.sqm`，涉及 CURRENT_STATE/ARCHITECTURE/README/ROADMAP，D-160 先例）。
+
+6. **P7-05 状态**：**片1a 交付并合并；转账切片整体保持 OPEN**（后续片：片1b columnInfo 专项迁移测试类 + shards/ci.yml 头注释 → 应用层接线（kind 门/重校验/端口行为）→ 测试行为翻转 → UI）。P7-05 借贷/导入关联/关联退款沿 D-156/D-228 保持 OPEN。
+
+**边界：** 入：本条登记 + CURRENT_STATE 最小指针同步。出：不改 D-228 冻结面与既有决定；不动规格；P7-06/P7-07/P7-08 判决不受本条影响；worktree `UL-p7-05t1a-worktree` 与分支随后清理（远端已删）。
+
+**关联决定：** D-228（转账切片设计门与 §8.3 冻结形状）、D-187/D-221（恢复准入「紧邻前版本保留」先例）、D-219（加列/重建纪律与第 8 条 A-DOC 承接）、D-160（A-DOC 先例）、D-253/D-254（同日 P7-08 收口）、P708RestoreRoundtripEquivalenceTest 所在批（D-238/D-242 夹具族）。
