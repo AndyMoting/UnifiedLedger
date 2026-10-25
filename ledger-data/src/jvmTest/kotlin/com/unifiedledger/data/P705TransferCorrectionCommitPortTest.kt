@@ -8,11 +8,19 @@ import com.unifiedledger.application.ExecuteCorrectTransactionVersion
 import com.unifiedledger.application.ExecuteVoidTransaction
 import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.ExplicitlyConfirmedTransactionCorrection
+import com.unifiedledger.application.LedgerCurrentState
+import com.unifiedledger.application.LedgerCurrentStateResult
+import com.unifiedledger.application.MonthlyActivity
+import com.unifiedledger.application.MonthlyActivityResult
+import com.unifiedledger.application.QueryLedgerCurrentState
+import com.unifiedledger.application.QueryMonthlyActivity
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.application.VoidTransactionRequest
 import com.unifiedledger.application.VoidTransactionResult
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.P705FailureCode
 import com.unifiedledger.domain.PostingId
@@ -22,10 +30,12 @@ import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionVersionId
 import com.unifiedledger.domain.VoidReason
 import com.unifiedledger.domain.VoidReasonCode
+import kotlinx.datetime.YearMonth
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Instant
 
 /**
@@ -44,6 +54,22 @@ import kotlin.time.Instant
  */
 class P705TransferCorrectionCommitPortTest {
     private val ledgerId = P705Fixture.ledgerId
+    private val catalog: LedgerCatalog = P705Fixture.catalog()
+
+    private fun state(harness: P705Database): LedgerCurrentState =
+        assertIs<LedgerCurrentStateResult.Success>(
+            QueryLedgerCurrentState(harness.readAdapter, ledgerId, catalog).query(),
+        ).state
+
+    private fun marchActivity(harness: P705Database): MonthlyActivity =
+        assertIs<MonthlyActivityResult.Success>(
+            QueryMonthlyActivity(
+                harness.readAdapter,
+                ledgerId,
+                catalog,
+                fixedClock(Instant.parse("2026-03-20T00:00:00Z")),
+            ).query(YearMonth(2026, 3)),
+        ).activity
 
     /** Self-sufficient id source: mints the transfer slice's third (FEE-leg) posting id too. */
     private class TransferIds(
@@ -415,7 +441,36 @@ class P705TransferCorrectionCommitPortTest {
     @Test
     fun voidedTransferLeavesTheEffectiveSurfaceAndCannotBeCorrected() {
         P705Database.create("p705-t-voided-").use { harness ->
+            // A second, unrelated ordinary expense keeps the ledger's activity currency and the
+            // monthly projection non-degenerate, so the post-void zero assertions below cannot
+            // pass merely because the whole read side collapsed to an empty ledger.
+            harness.insertOrdinaryExpense("tx-expense-bystander", amountMinor = 5_000L)
             insertManualTransfer(harness, "tx-transfer-voided", destinationCreditMinor = 10_000L, feeMinor = 200L)
+
+            // Baseline BEFORE the void (T-06 non-empty positive control): each surface the vector
+            // later asserts must be observably non-degenerate with the transfer present.
+            assertEquals(2, harness.readAdapter.loadLedgerEntryRows(ledgerId).size)
+            val beforeBalances = state(harness).balances.associate { it.accountId.value to it.ledgerSignedMinorUnits }
+            // The bystander expense also debits bankA (5_000) and credits the expense posting
+            // account (5_000), so each baseline carries both transactions' effects.
+            assertEquals(-15_200L, beforeBalances.getValue(P705Fixture.bankA.value))
+            assertEquals(10_000L, beforeBalances.getValue(P705Fixture.bankB.value))
+            assertEquals(5_200L, beforeBalances.getValue(P705Fixture.expenseAccount.value))
+            val beforeSummary = SummarizeLedgerActivity(catalog).summarize(state(harness))
+            assertEquals(2, beforeSummary.totalTransactionCount)
+            assertEquals(1, beforeSummary.countByKind.getValue(TransactionKind.ACCOUNT_TRANSFER))
+            val marchStart = requireNotNull(StatisticsAtProjection.project(Instant.parse("2026-03-01T00:00:00Z")))
+            val aprilStart = requireNotNull(StatisticsAtProjection.project(Instant.parse("2026-04-01T00:00:00Z")))
+            val projection = SqlDelightStatisticsAtProjectionReadPort(harness.database)
+            assertEquals(
+                listOf("tx-expense-bystander-version-1", "tx-transfer-voided-version-1").sorted(),
+                projection
+                    .projectedVersionsInWindow(ledgerId, marchStart, aprilStart)
+                    .map { it.versionId.value }
+                    .sorted(),
+            )
+            assertEquals(2, marchActivity(harness).currencies.single().transactionCount)
+
             val voidIds = P705Ids("p705-t-voided-v")
             assertIs<VoidTransactionResult.Created>(
                 ExecuteVoidTransaction(harness.voidPort, voidIds.voidSource, fixedClock(P705Fixture.voidedAt))
@@ -430,9 +485,54 @@ class P705TransferCorrectionCommitPortTest {
                     ),
             )
             // The transfer leaves the effective entry surface transaction-granularly (J1
-            // candidate A): the version rows stay, the effective read drops the whole chain.
+            // candidate A): the version rows stay while every surface asserted below drops the
+            // whole chain, and the bystander expense keeps the ledger itself non-degenerate.
+            // Faces N2-N5 (the monthly-contribution, widget, and tag/merchant adapters) are NOT
+            // asserted here - they need a bootstrapped catalog store and extra adapters - and
+            // remain open for T-06; this vector covers #1-#5, N1, N10 and the monthly use case.
             assertEquals(1L, harness.versionCount("tx-transfer-voided"))
-            assertEquals(0, harness.readAdapter.loadLedgerEntryRows(ledgerId).size)
+            // Faces #1-#3: the input row set.
+            assertEquals(listOf("tx-expense-bystander"), harness.readAdapter.loadLedgerEntryRows(ledgerId).map { it.transactionId.value })
+            // Face #4: HOME balances - both principal legs leave and the fee leg leaves ordinary
+            // expense, leaving only the bystander's effects (bankA -5_000, expense 5_000).
+            val afterBalances = state(harness).balances.associate { it.accountId.value to it.ledgerSignedMinorUnits }
+            assertEquals(-5_000L, afterBalances.getValue(P705Fixture.bankA.value))
+            assertNull(afterBalances[P705Fixture.bankB.value])
+            assertEquals(5_000L, afterBalances.getValue(P705Fixture.expenseAccount.value))
+            // Face #5: the activity summary drops the transfer and its kind count.
+            val afterSummary = SummarizeLedgerActivity(catalog).summarize(state(harness))
+            assertEquals(1, afterSummary.totalTransactionCount)
+            assertEquals(0, afterSummary.countByKind[TransactionKind.ACCOUNT_TRANSFER] ?: 0)
+            // Face N1: the statistics projection window drops the voided version. Sorted on both
+            // sides so the comparison never depends on the query's row order.
+            assertEquals(
+                listOf("tx-expense-bystander-version-1"),
+                projection
+                    .projectedVersionsInWindow(ledgerId, marchStart, aprilStart)
+                    .map { it.versionId.value }
+                    .sorted(),
+            )
+            // The monthly surface also drops the transfer (count and kind count) while keeping the
+            // bystander's currency row alive.
+            val afterActivity = marchActivity(harness)
+            val monthCurrency = afterActivity.currencies.single()
+            assertEquals(1, monthCurrency.transactionCount)
+            assertEquals(0, monthCurrency.countByKind[TransactionKind.ACCOUNT_TRANSFER] ?: 0)
+            // Face N10: the DP-13 refund probe is structurally insensitive to voiding a transfer
+            // (spec section 5.2, DP-T5): its effective predicate joins on the refund
+            // transaction's confirmation, while the filter is the voided original. The assertion
+            // records the frozen no-op invariant and is deliberately NOT counted as T-06
+            // red-able coverage; the liveness control below proves the probe is wired.
+            assertEquals(false, harness.readAdapter.hasEffectiveRefundLink(ledgerId, TransactionId("tx-transfer-voided")))
+            // Liveness positive control: the same probe DOES answer true for a real
+            // product-linked refund, so a broken join would red here.
+            harness.insertOrdinaryExpense("tx-expense-refunded", amountMinor = 1_000L)
+            harness.insertOrdinaryExpense("tx-refund-linked", amountMinor = 400L)
+            harness.insertProductLinkedRefund(
+                originalTransactionId = "tx-expense-refunded",
+                refundTransactionId = "tx-refund-linked",
+            )
+            assertEquals(true, harness.readAdapter.hasEffectiveRefundLink(ledgerId, TransactionId("tx-expense-refunded")))
             // A correction of the voided transfer is a typed zero-write rejection.
             val ids = TransferIds("p705-t-voided")
             assertEquals(
@@ -441,6 +541,162 @@ class P705TransferCorrectionCommitPortTest {
             )
             assertEquals(1L, harness.versionCount("tx-transfer-voided"))
             assertEquals(0L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"))
+        }
+    }
+
+    /**
+     * Transfer spec section 7.4, correction side, restricted to the owners the spec marks as
+     * unconditionally zero-write: the lending principal history (DP-4), the import owner (DP-5)
+     * and `evidence_projection`. This vector performs a note-only correction, so the posting set
+     * is reused and no funding leg changes.
+     *
+     * `evidence_projection` belongs to the spec's reconciliation-owner row, whose correction-side
+     * writes are "only the J3-decided surface", so asserting it unchanged needs its own
+     * justification rather than the blanket DP-4/DP-5 one. The port only ever composes D-113
+     * invalidation with `resultState = MISSING` - the CHECKED successor re-proof is a later
+     * slice - and the projection authority branch is reached only for CHECKED, so a transfer
+     * correction writes no projection even when a leg changes. `posting_reconciliation*` and
+     * `evidence_link*` stay out because invalidation legitimately touches them on a changed leg,
+     * and the DP-10 matrix vectors above pin that.
+     *
+     * This is NOT the spec's T-11 row either: T-11 is worded for the void/restore path. The
+     * transfer void/restore owner leg remains unasserted and stays OPEN.
+     */
+    @Test
+    fun aNoteOnlyTransferCorrectionWritesNoneOfTheLendingImportOrProjectionOwners() {
+        P705Database.create("p705-t-owner-").use { harness ->
+            insertManualTransfer(harness, "tx-transfer-owner", destinationCreditMinor = 10_000L, feeMinor = 200L)
+            seedCatalogRows(harness)
+            // Non-empty baselines: an all-zero start would make every comparison red-able only
+            // from zero to zero. The import spine here hangs off an unrelated bystander, never
+            // off the corrected transfer, so the creation-lineage gate is not what rejects us.
+            harness.insertOrdinaryExpense("tx-expense-owner-bystander", amountMinor = 5_000L)
+            harness.insertImportCreationConfirmation("tx-expense-owner-bystander")
+            // `lending_position` FKs both `counterparty` and `catalog_account`, so the
+            // counterparty row must exist too - seeding only the position would leave an
+            // FK-invalid row that lands solely because this harness does not enforce FKs.
+            harness.database.ledgerQueries.insertCounterparty(
+                ledgerId.value,
+                "counterparty-owner",
+                "counterparty-owner-name",
+                P705Fixture.bankA.value,
+                1L,
+            )
+            harness.database.ledgerQueries.insertLendingPosition(
+                ledger_id = ledgerId.value,
+                counterparty_id = "counterparty-owner",
+                receivable_account_id = P705Fixture.bankA.value,
+                currency_code = P705Fixture.cny.code,
+                currency_precision = P705Fixture.cny.precision.toLong(),
+                principal_balance_minor = 7_000L,
+            )
+            harness.database.ledgerQueries.insertLendingPositionHistory(
+                ledger_id = ledgerId.value,
+                counterparty_id = "counterparty-owner",
+                entry_id = "entry-owner",
+                behavior_code = "LEND",
+                amount_minor = 7_000L,
+                principal_balance_after_minor = 7_000L,
+                transaction_id = "tx-expense-owner-bystander",
+                occurred_at = P705Fixture.marchStatistics.toString(),
+            )
+            harness.database.ledgerQueries.insertEvidenceProjection(
+                ledger_id = ledgerId.value,
+                projection_id = "projection-owner",
+                evidence_id = "evidence-p705-expense-owner-bystander",
+                source_id = "source-p705-expense-owner-bystander",
+                source_hash = "content-hash-p705",
+                target_account_id = P705Fixture.bankA.value,
+                currency_code = P705Fixture.cny.code,
+                currency_precision = P705Fixture.cny.precision.toLong(),
+                raw_amount_minor = 5_000L,
+                raw_currency_precision = P705Fixture.cny.precision.toLong(),
+                normalized_amount_minor = 5_000L,
+                direction_token = "out",
+                state = "READY",
+                rejection_code = null,
+                rule_id = "rule-owner",
+                rule_version = 1L,
+                materialization_request_id = "materialization-owner",
+                materialized_at = P705Fixture.marchStatistics.toString(),
+            )
+            harness.database.ledgerQueries.insertImportReceipt(
+                ledgerId.value,
+                "request-p705-expense-owner-bystander",
+                "accepted",
+                "source-p705-expense-owner-bystander",
+                "evidence-p705-expense-owner-bystander",
+                "candidate-p705-expense-owner-bystander",
+                "confirmation-p705-expense-owner-bystander",
+                "tx-expense-owner-bystander",
+            )
+            val ownerTables =
+                listOf(
+                    "evidence_projection",
+                    "lending_position",
+                    "lending_position_history",
+                    "import_confirmation",
+                    "import_receipt",
+                    "import_candidate_status_history",
+                )
+            // The harness does not enforce foreign keys, so an FK-invalid seed would land
+            // silently and the zero-write comparison below would be built on a broken baseline.
+            // Assert the whole ledger's seed set is FK-valid before comparing.
+            assertEquals(
+                emptyList<String>(),
+                harness.ledgerQueryTexts("SELECT \"table\" FROM pragma_foreign_key_check"),
+            )
+            val before = ownerTables.associateWith { table -> ownerRowsOf(harness, table) }
+            // Non-degeneracy guard: every owner table really does hold rows, so the equality
+            // below compares content rather than two empty lists.
+            for (table in ownerTables) {
+                assertTrue(before.getValue(table).isNotEmpty(), "$table must be non-empty before the correction")
+            }
+
+            val ids = TransferIds("p705-t-owner")
+            assertIs<CorrectTransactionVersionResult.Created>(
+                correct(
+                    harness,
+                    ids,
+                    ids.requestId(),
+                    transactionId = "tx-transfer-owner",
+                    note = "renamed",
+                    destinationCreditMinor = 10_000L,
+                    feeMinor = 200L,
+                    feeCategoryId = P705Fixture.food,
+                ),
+            )
+            assertEquals(2L, harness.versionCount("tx-transfer-owner"))
+            // Row-for-row equality over every column of every row, read as stored text through a
+            // multi-column mapper. This detects added, removed and changed rows; it does not
+            // distinguish an INTEGER-to-TEXT storage-class change of an unchanged value, which a
+            // zero-write question does not need.
+            assertEquals(before, ownerTables.associateWith { table -> ownerRowsOf(harness, table) })
+        }
+    }
+
+    /**
+     * The complete column tuple of every row in [table], read through the same driver the
+     * claim-first port uses, with a multi-column mapper so NULLs keep their place instead of
+     * swallowing neighbouring values. Rows are ordered by all columns, which makes the
+     * comparison deterministic without assuming a particular primary key.
+     */
+    private fun ownerRowsOf(
+        harness: P705Database,
+        table: String,
+    ): List<List<String?>> {
+        val columns = harness.ledgerQueryTexts("SELECT name FROM pragma_table_info('$table') ORDER BY cid")
+        val projection = columns.joinToString(", ")
+        val order = columns.joinToString(", ")
+        return harness.driverQuery(
+            "SELECT $projection FROM $table WHERE ledger_id = ? ORDER BY $order",
+            ledgerId.value,
+        ) { cursor ->
+            buildList {
+                while (cursor.next().value) {
+                    add(columns.indices.map { index -> cursor.getString(index) })
+                }
+            }
         }
     }
 
