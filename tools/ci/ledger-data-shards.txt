@@ -84,6 +84,7 @@
 3	com.unifiedledger.data.P705EffectivePredicateCostTest
 3	com.unifiedledger.data.P705EffectiveSurfaceTest
 3	com.unifiedledger.data.P705TransferCorrectionCommitPortTest
+3	com.unifiedledger.data.P705TransferSliceMigrationV35ToV36Test
 3	com.unifiedledger.data.P705VoidRestoreCommitPortTest
 3	com.unifiedledger.data.P706ConfirmedReceiptsRoundtripTest
 3	com.unifiedledger.data.P706WalConcurrentSnapshotTest
