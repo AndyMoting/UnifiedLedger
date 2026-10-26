@@ -197,8 +197,10 @@ class P705TransferCorrectionCommitPortTest {
                 )
             assertEquals(2L, harness.versionCount("tx-transfer-note"))
             assertEquals(created.receipt.versionId.value, harness.currentVersionId("tx-transfer-note"))
-            // T-02: only the note changed, so the appended version keeps the current posting
-            // set - no posting identity is rebound and no posting row is added.
+            // Only the note changed, so the appended version keeps the current posting set - no
+            // posting identity is rebound and no posting row is added. (This seed is the
+            // three-leg fee>0 shape; the spec's T-02 row is the two-leg fee==0 case, pinned
+            // separately below.)
             assertEquals(
                 "tx-transfer-note-posting-set-1",
                 harness.ledgerQueryText("SELECT posting_set_id FROM transaction_version WHERE version_id = '${created.receipt.versionId.value}'"),
@@ -212,6 +214,114 @@ class P705TransferCorrectionCommitPortTest {
                 harness.currentPostings("tx-transfer-note"),
             )
             assertEquals(3L, harness.ledgerQueryCount("SELECT count(*) FROM posting"))
+        }
+    }
+
+    /**
+     * T-02 on its own terms (spec section 10): a two-leg transfer (fee == 0) whose note is
+     * corrected keeps the posting set, adds no cash flow and carries no fee category. The
+     * three-leg note vector above cannot show the last two parts, because a categorised fee leg
+     * is expected there.
+     */
+    @Test
+    fun aTwoLegNoteCorrectionKeepsThePostingSetAndAddsNoCashFlow() {
+        P705Database.create("p705-t-note-twoleg-").use { harness ->
+            insertManualTransfer(harness, "tx-transfer-note2", destinationCreditMinor = 10_000L, feeMinor = 0L)
+            val ids = TransferIds("p705-t-note2")
+            val requestId = ids.requestId()
+            // fee == 0 seeds exactly the two principal legs, so the before/after leg comparison
+            // below is over an already two-leg set.
+            val beforePostings = harness.currentPostings("tx-transfer-note2")
+            assertEquals(
+                listOf(P705Fixture.bankA.value to -10_000L, P705Fixture.bankB.value to 10_000L),
+                beforePostings,
+            )
+
+            val created =
+                assertIs<CorrectTransactionVersionResult.Created>(
+                    correct(
+                        harness,
+                        ids,
+                        requestId,
+                        transactionId = "tx-transfer-note2",
+                        note = "renamed two-leg transfer",
+                        destinationCreditMinor = 10_000L,
+                        feeMinor = 0L,
+                        feeCategoryId = null,
+                    ),
+                )
+            assertEquals(2L, harness.versionCount("tx-transfer-note2"))
+            // Only the note changed: the unchanged leg multiset reuses the current posting set
+            // (CorrectTransactionVersion.kt:165-168), so no posting identity is rebound.
+            assertEquals(
+                "tx-transfer-note2-posting-set-1",
+                harness.ledgerQueryText("SELECT posting_set_id FROM transaction_version WHERE version_id = '${created.receipt.versionId.value}'"),
+            )
+            assertEquals("renamed two-leg transfer", harness.ledgerQueryText("SELECT note FROM transaction_version WHERE version_id = '${created.receipt.versionId.value}'"))
+            assertEquals(beforePostings, harness.currentPostings("tx-transfer-note2"))
+            // No leg was added and none was moved.
+            assertEquals(2L, harness.ledgerQueryCount("SELECT count(*) FROM posting"))
+            // The committed request row must exist AND store no category. Both are needed:
+            // `ledgerQueryTextOrNull` answers null for a missing row exactly as it does for a
+            // NULL value (P705Harness.kt:235-246), so without the row-count step "the category
+            // was not carried" and "the row was never written" would be indistinguishable.
+            // The predicate interpolates `requestId.value`, never the `RequestId` itself, which
+            // would render as its data-class `toString()` and match no row.
+            assertEquals(
+                1L,
+                harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request WHERE request_id = '${requestId.value}'"),
+            )
+            assertNull(
+                harness.ledgerQueryTextOrNull(
+                    "SELECT category_id FROM transaction_correction_request WHERE request_id = '${requestId.value}'",
+                ),
+            )
+            // Zero new cash flow: a two-leg transfer posts no EXPENSE/INCOME leg, so the summary
+            // derives no currency row at all (SummarizeLedgerActivity.kt:84-95).
+            val summary = SummarizeLedgerActivity(catalog).summarize(state(harness))
+            assertEquals(1, summary.totalTransactionCount)
+            assertTrue(summary.totalsByCurrency.isEmpty())
+        }
+    }
+
+    /**
+     * The negative half of T-02's field set: a zero-fee transfer target that carries a fee
+     * category is a typed rejection with zero formal effect. ACCOUNTING_RULES.md:273 forbids a
+     * fee-less transfer from carrying a fee category, and spec section 9 rules that such a
+     * target state reuses the frozen field code (`:258`) and that an unsupported path is always
+     * a typed zero-write rejection, never a silent no-op (`:262`).
+     */
+    @Test
+    fun aZeroFeeTargetCarryingACategoryIsAFieldRejection() {
+        P705Database.create("p705-t-note2cat-").use { harness ->
+            insertManualTransfer(harness, "tx-transfer-note2-cat", destinationCreditMinor = 10_000L, feeMinor = 0L)
+            val ids = TransferIds("p705-t-note2cat")
+            val beforePostings = harness.currentPostings("tx-transfer-note2-cat")
+
+            // The commit transaction's row-shape gate rejects this target state before the plan
+            // callback runs (SqlDelightTransactionCorrectionCommitPort.kt:157-159 -> :400); the
+            // domain planner refuses the same shape with the same frozen code independently
+            // (TransferCorrectionValidation.kt:92-95), so neither layer would let it through.
+            assertEquals(
+                CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_FIELD_NOT_SUPPORTED),
+                correct(
+                    harness,
+                    ids,
+                    ids.requestId(),
+                    transactionId = "tx-transfer-note2-cat",
+                    destinationCreditMinor = 10_000L,
+                    feeMinor = 0L,
+                    feeCategoryId = P705Fixture.food,
+                ),
+            )
+            assertEquals(1L, harness.versionCount("tx-transfer-note2-cat"))
+            assertEquals(beforePostings, harness.currentPostings("tx-transfer-note2-cat"))
+            assertEquals(2L, harness.ledgerQueryCount("SELECT count(*) FROM posting"))
+            // The claim row is written first and then deleted by the rejection inside the same
+            // transaction (SqlDelightTransactionCorrectionCommitPort.kt:446-452 via
+            // Ledger.sq:10521-10523), so the committed journal holds zero rows - the identity
+            // stays retryable and nothing else was written.
+            assertEquals(0L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"))
         }
     }
 
@@ -405,12 +515,30 @@ class P705TransferCorrectionCommitPortTest {
                     correct(harness, ids, requestId, transactionId = "tx-transfer-replay", destinationCreditMinor = 8_000L, feeMinor = 200L, feeCategoryId = P705Fixture.food),
                 )
             // T-13: the same request id with the same snapshot replays onto the original
-            // receipt, zero new entities.
+            // receipt, zero new entities. The replay passes the superseded CAS token
+            // `tx-transfer-replay-version-1` explicitly, the same value the helper would default
+            // to; the successful correction above already advanced the current version past it.
+            // A CAS-first implementation would therefore answer `StaleCurrentVersion`; the
+            // observed `NoChange(created.receipt)` proves the replay judgment runs before any CAS
+            // evaluation (CorrectTransactionVersion.kt:205-211).
             assertEquals(
                 CorrectTransactionVersionResult.NoChange(created.receipt),
-                correct(harness, ids, requestId, transactionId = "tx-transfer-replay", destinationCreditMinor = 8_000L, feeMinor = 200L, feeCategoryId = P705Fixture.food),
+                correct(
+                    harness,
+                    ids,
+                    requestId,
+                    transactionId = "tx-transfer-replay",
+                    expectedVersionId = TransactionVersionId("tx-transfer-replay-version-1"),
+                    destinationCreditMinor = 8_000L,
+                    feeMinor = 200L,
+                    feeCategoryId = P705Fixture.food,
+                ),
             )
             assertEquals(2L, harness.versionCount("tx-transfer-replay"))
+            // The superseded token the replay carried really was superseded: the current-version
+            // pointer has advanced to the receipt's version, so the assertion above is not
+            // passing merely because the token was still current.
+            assertEquals(created.receipt.versionId.value, harness.currentVersionId("tx-transfer-replay"))
             // The same request id with a different snapshot is an identity conflict, zero writes.
             assertIs<CorrectTransactionVersionResult.RequestIdentityConflict>(
                 correct(harness, ids, requestId, transactionId = "tx-transfer-replay", note = "different", destinationCreditMinor = 8_000L, feeMinor = 200L, feeCategoryId = P705Fixture.food),
@@ -431,6 +559,9 @@ class P705TransferCorrectionCommitPortTest {
                 ),
             )
             assertEquals(2L, harness.versionCount("tx-transfer-replay"))
+            // Every rejected attempt above left the request journal at exactly one row: no
+            // rejection wrote a request.
+            assertEquals(1L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"))
             assertEquals(
                 listOf(P705Fixture.bankA.value to -8_200L, P705Fixture.bankB.value to 8_000L, P705Fixture.expenseAccount.value to 200L),
                 harness.currentPostings("tx-transfer-replay"),
