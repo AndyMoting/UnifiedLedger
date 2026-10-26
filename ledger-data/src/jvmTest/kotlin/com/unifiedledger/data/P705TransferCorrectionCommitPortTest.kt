@@ -4,7 +4,6 @@ import com.unifiedledger.application.ConfirmationId
 import com.unifiedledger.application.CorrectTransactionVersionIdSource
 import com.unifiedledger.application.CorrectTransactionVersionIds
 import com.unifiedledger.application.CorrectTransactionVersionResult
-import com.unifiedledger.application.CurrencyActivityTotal
 import com.unifiedledger.application.ExecuteCorrectTransactionVersion
 import com.unifiedledger.application.ExecuteVoidTransaction
 import com.unifiedledger.application.ExplicitManualSave
@@ -281,7 +280,7 @@ class P705TransferCorrectionCommitPortTest {
             // derives no currency row at all (SummarizeLedgerActivity.kt:84-95).
             val summary = SummarizeLedgerActivity(catalog).summarize(state(harness))
             assertEquals(1, summary.totalTransactionCount)
-            assertEquals(emptyList<CurrencyActivityTotal>(), summary.totalsByCurrency)
+            assertTrue(summary.totalsByCurrency.isEmpty())
         }
     }
 
@@ -516,14 +515,24 @@ class P705TransferCorrectionCommitPortTest {
                     correct(harness, ids, requestId, transactionId = "tx-transfer-replay", destinationCreditMinor = 8_000L, feeMinor = 200L, feeCategoryId = P705Fixture.food),
                 )
             // T-13: the same request id with the same snapshot replays onto the original
-            // receipt, zero new entities. The `correct` call supplies its default CAS token
-            // `tx-transfer-replay-version-1`, which the successful correction above already
-            // superseded. A CAS-first implementation would therefore answer
-            // `StaleCurrentVersion`; the observed `NoChange(created.receipt)` proves the replay
-            // judgment runs before any CAS evaluation (CorrectTransactionVersion.kt:205-211).
+            // receipt, zero new entities. The replay passes the superseded CAS token
+            // `tx-transfer-replay-version-1` explicitly, the same value the helper would default
+            // to; the successful correction above already advanced the current version past it.
+            // A CAS-first implementation would therefore answer `StaleCurrentVersion`; the
+            // observed `NoChange(created.receipt)` proves the replay judgment runs before any CAS
+            // evaluation (CorrectTransactionVersion.kt:205-211).
             assertEquals(
                 CorrectTransactionVersionResult.NoChange(created.receipt),
-                correct(harness, ids, requestId, transactionId = "tx-transfer-replay", destinationCreditMinor = 8_000L, feeMinor = 200L, feeCategoryId = P705Fixture.food),
+                correct(
+                    harness,
+                    ids,
+                    requestId,
+                    transactionId = "tx-transfer-replay",
+                    expectedVersionId = TransactionVersionId("tx-transfer-replay-version-1"),
+                    destinationCreditMinor = 8_000L,
+                    feeMinor = 200L,
+                    feeCategoryId = P705Fixture.food,
+                ),
             )
             assertEquals(2L, harness.versionCount("tx-transfer-replay"))
             // The superseded token the replay carried really was superseded: the current-version
