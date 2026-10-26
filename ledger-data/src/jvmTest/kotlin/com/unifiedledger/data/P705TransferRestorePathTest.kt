@@ -135,6 +135,47 @@ class P705TransferRestorePathTest {
     }
 
     @Test
+    fun aRestoredTransferCannotBeRestoredAgainNorRevoidedBeyondTheCycle() {
+        P705Database.create("p705-t-restore-cycle-").use { harness ->
+            insertManualTransfer(harness, "tx-transfer-cycle", destinationCreditMinor = 10_000L, feeMinor = 200L)
+            val ids = P705Ids("p705-t-restore-cycle")
+            assertIs<VoidTransactionResult.Created>(void(harness, ids, ids.requestId(), "tx-transfer-cycle"))
+            assertIs<VoidTransactionResult.Created>(restore(harness, ids, ids.requestId(), "tx-transfer-cycle"))
+
+            // T-08 on the transfer: restore happens exactly once. A second restore is a typed
+            // rejection with zero writes - the transaction is effective, not voided, so there is
+            // nothing to restore.
+            assertEquals(
+                VoidTransactionResult.Rejected(P705FailureCode.P705_TRANSACTION_NOT_VOIDED),
+                restore(harness, ids, ids.requestId(), "tx-transfer-cycle"),
+            )
+            assertEquals(1L, harness.versionCount("tx-transfer-cycle"))
+            assertEquals(2L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_fact"))
+            assertEquals(1, harness.readAdapter.loadLedgerEntryRows(ledgerId).size)
+
+            // T-10 on the transfer: the cycle is exhausted. After one void and one restore, a
+            // second void is a typed rejection rather than a third fact. T-10's other clause -
+            // a sequence gap, a repeated kind, an update or a delete aborting at the store - is
+            // storage-level and kind-independent, so it is covered once by
+            // `P705VoidRestoreCommitPortTest.databaseGuardsRejectSequenceGapsNonAlternatingFactsAndHistoryRewrites`
+            // (`P705VoidRestoreCommitPortTest.kt:461-495`) over the trigger definitions in
+            // `Ledger.sq:10253`, `:10258`, `:10270` and `:10272`; it is not repeated here.
+            assertEquals(
+                VoidTransactionResult.Rejected(P705FailureCode.P705_VOID_CYCLE_EXHAUSTED),
+                void(harness, ids, ids.requestId(), "tx-transfer-cycle"),
+            )
+            assertEquals(2L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_fact"))
+            assertEquals(1L, harness.versionCount("tx-transfer-cycle"))
+            // Still effective, still value-identical: the rejected attempts wrote nothing.
+            assertEquals(1, harness.readAdapter.loadLedgerEntryRows(ledgerId).size)
+            assertEquals(
+                listOf(P705Fixture.bankA.value to -10_200L, P705Fixture.bankB.value to 10_000L, P705Fixture.expenseAccount.value to 200L),
+                harness.currentPostings("tx-transfer-cycle"),
+            )
+        }
+    }
+
+    @Test
     fun aVoidedTransferRestoresValueIdentically() {
         P705Database.create("p705-t-restore-").use { harness ->
             insertManualTransfer(harness, "tx-transfer-restore", destinationCreditMinor = 10_000L, feeMinor = 200L)
