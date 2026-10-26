@@ -368,4 +368,113 @@ class TransactionCorrectionTest {
             assertIs<TransferCorrectionPlan.Rejected>(transferPlan(catalog = inactive)).code,
         )
     }
+
+    // ---- endpoint admission, condition by condition (T-04; spec section 10 `:272`) -----------
+
+    private val otherLedgerId = LedgerId("ledger-p705-other")
+    private val usd = CurrencyUnit("USD", 2)
+    private val otherLedgerBankId = AccountId("asset-other-ledger-bank")
+    private val usdBankId = AccountId("asset-bank-usd")
+    private val unownedBankId = AccountId("asset-bank-unowned")
+    private val liabilityAccountId = AccountId("liability-loan")
+
+    private fun realAssetBank(
+        id: AccountId,
+        ledger: LedgerId = ledgerId,
+        currency: CurrencyUnit = cny,
+        ownedByUser: Boolean = true,
+    ): Account = Account(id, ledger, AccountKind.ASSET, currency, ownedByUser = ownedByUser, realAccount = true)
+
+    /**
+     * The default source plus [destination]; every other reference (source, fee category, fee
+     * posting account, the two currencies of the default catalog) stays admissible, so a
+     * negative below differs from the positive baseline in exactly one attribute.
+     */
+    private fun admissionCatalog(destination: Account): LedgerCatalog =
+        when (
+            val result =
+                LedgerCatalog.create(
+                    accounts =
+                        listOf(
+                            Account(bankId, ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true),
+                            destination,
+                            Account(expenseAccountId, ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false),
+                        ),
+                    categories =
+                        listOf(
+                            Category(CategoryId("category-food-parent"), ledgerId, null, null, active = true),
+                            Category(categoryId, ledgerId, CategoryId("category-food-parent"), expenseAccountId, active = true),
+                        ),
+                )
+        ) {
+            is DomainResult.Success -> result.value
+            is DomainResult.Failure -> error("admission fixture catalog must be valid")
+        }
+
+    @Test
+    fun transferCorrectionEndpointAdmissionCoversAllSixConditions() {
+        // Baseline: the builder admits an admissible destination, so every rejection below is
+        // the one broken condition and never a broken fixture.
+        assertIs<TransferCorrectionPlan.Postings>(
+            transferPlan(destination = otherBankId, catalog = admissionCatalog(realAssetBank(otherBankId))),
+        )
+        // Same ledger (AccountTransfer.kt:173-175): a destination in another ledger is the
+        // factory's DomainViolation.InvalidCatalog, mapped onto the frozen catalog code.
+        assertEquals(
+            P705FailureCode.P705_CATALOG_REFERENCE_NOT_ADMISSIBLE,
+            assertIs<TransferCorrectionPlan.Rejected>(
+                transferPlan(
+                    destination = otherLedgerBankId,
+                    catalog = admissionCatalog(realAssetBank(otherLedgerBankId, ledger = otherLedgerId)),
+                ),
+            ).code,
+        )
+        // Same currency (AccountTransfer.kt:164-172): a USD destination against a CNY target.
+        assertEquals(
+            P705FailureCode.P705_CATALOG_REFERENCE_NOT_ADMISSIBLE,
+            assertIs<TransferCorrectionPlan.Rejected>(
+                transferPlan(
+                    destination = usdBankId,
+                    catalog = admissionCatalog(realAssetBank(usdBankId, currency = usd)),
+                ),
+            ).code,
+        )
+        // ownedByUser (AccountTransfer.kt:130-134): an unowned but otherwise admissible endpoint.
+        assertEquals(
+            P705FailureCode.P705_CATALOG_REFERENCE_NOT_ADMISSIBLE,
+            assertIs<TransferCorrectionPlan.Rejected>(
+                transferPlan(
+                    destination = unownedBankId,
+                    catalog = admissionCatalog(realAssetBank(unownedBankId, ownedByUser = false)),
+                ),
+            ).code,
+        )
+        // ASSET (AccountTransfer.kt:140-144): a liability destination on the same ledger.
+        assertEquals(
+            P705FailureCode.P705_CATALOG_REFERENCE_NOT_ADMISSIBLE,
+            assertIs<TransferCorrectionPlan.Rejected>(
+                transferPlan(
+                    destination = liabilityAccountId,
+                    catalog =
+                        admissionCatalog(
+                            Account(liabilityAccountId, ledgerId, AccountKind.LIABILITY, cny, ownedByUser = true, realAccount = true),
+                        ),
+                ),
+            ).code,
+        )
+        // Two-leg factory branch (OwnAssetPrincipalTransfer.kt:77-81): a fee == 0 target runs
+        // through the principal factory, whose combined owned/real/ASSET destination admission
+        // independently maps to the same frozen code.
+        assertEquals(
+            P705FailureCode.P705_CATALOG_REFERENCE_NOT_ADMISSIBLE,
+            assertIs<TransferCorrectionPlan.Rejected>(
+                transferPlan(
+                    feeMinor = 0L,
+                    feeCategoryId = null,
+                    destination = unownedBankId,
+                    catalog = admissionCatalog(realAssetBank(unownedBankId, ownedByUser = false)),
+                ),
+            ).code,
+        )
+    }
 }

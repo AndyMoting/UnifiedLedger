@@ -1,5 +1,6 @@
 package com.unifiedledger.data
 
+import com.unifiedledger.application.CatalogAdmissionReader
 import com.unifiedledger.application.ConfirmationId
 import com.unifiedledger.application.CorrectTransactionVersionIdSource
 import com.unifiedledger.application.CorrectTransactionVersionIds
@@ -18,9 +19,16 @@ import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.application.VoidTransactionRequest
 import com.unifiedledger.application.VoidTransactionResult
+import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.AccountKind
+import com.unifiedledger.domain.Category
 import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CategoryKind
+import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerCatalog
+import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.P705FailureCode
 import com.unifiedledger.domain.PostingId
@@ -157,8 +165,9 @@ class P705TransferCorrectionCommitPortTest {
         sourceAccountId: AccountId = P705Fixture.bankA,
         destinationAccountId: AccountId = P705Fixture.bankB,
         statisticsAt: Instant = P705Fixture.marchStatistics,
+        admissionReader: CatalogAdmissionReader = P705Fixture.admissionReader,
     ): CorrectTransactionVersionResult =
-        ExecuteCorrectTransactionVersion(harness.correctionPort, ids.correctSource, P705Fixture.admissionReader)
+        ExecuteCorrectTransactionVersion(harness.correctionPort, ids.correctSource, admissionReader)
             .execute(
                 ExplicitlyConfirmedTransactionCorrection(
                     ledgerId = ledgerId,
@@ -1475,6 +1484,307 @@ class P705TransferCorrectionCommitPortTest {
             assertEquals(0L, harness.ledgerQueryCount("SELECT count(*) FROM reconciliation_correction_snapshot"))
             // The rolled-back correction leaves no claim row behind: the identity is retryable.
             assertEquals(0L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"))
+        }
+    }
+
+    // ---- T-04 / T-05 admission negatives on the real commit port -----------------------------
+
+    private val otherLedgerId = LedgerId("ledger-p705-other")
+    private val usd = CurrencyUnit("USD", 2)
+    private val crossLedgerBankId = AccountId("asset-cross-ledger-bank")
+    private val usdBankId = AccountId("asset-bank-usd")
+    private val unownedBankId = AccountId("asset-bank-unowned")
+    private val threeLevelFeeCategoryId = CategoryId("category-food-three-level")
+    private val feeSubParentId = CategoryId("category-food-sub-parent")
+
+    private fun realAssetBank(
+        id: AccountId,
+        ledger: LedgerId = ledgerId,
+        currency: CurrencyUnit = P705Fixture.cny,
+        ownedByUser: Boolean = true,
+    ): Account = Account(id, ledger, AccountKind.ASSET, currency, ownedByUser = ownedByUser, realAccount = true)
+
+    /**
+     * The default source, [destination], the hidden EXPENSE posting account and one valid fee
+     * category - the same fixture [P705Fixture.catalog] injects, parameterised so that each
+     * negative below differs from the positive baseline in exactly one attribute and the
+     * rejection can only be attributed to that attribute.
+     */
+    private fun admissionCatalog(
+        destination: Account = realAssetBank(P705Fixture.bankB),
+        feeCategory: Category = Category(P705Fixture.food, ledgerId, P705Fixture.foodParent, P705Fixture.expenseAccount, active = true),
+        feeParent: Category = Category(P705Fixture.foodParent, ledgerId, null, null, active = true),
+    ): LedgerCatalog =
+        when (
+            val result =
+                LedgerCatalog.create(
+                    accounts =
+                        listOf(
+                            Account(P705Fixture.bankA, ledgerId, AccountKind.ASSET, P705Fixture.cny, ownedByUser = true, realAccount = true),
+                            destination,
+                            Account(P705Fixture.expenseAccount, ledgerId, AccountKind.EXPENSE, P705Fixture.cny, ownedByUser = false, realAccount = false),
+                        ),
+                    categories = listOf(feeParent, feeCategory),
+                )
+        ) {
+            is DomainResult.Success -> result.value
+            is DomainResult.Failure -> error("admission fixture catalog must be valid")
+        }
+
+    /**
+     * The three tables a rejected correction must leave unchanged, plus the CAS pointer the
+     * version chain must keep. A rejection that stopped writing before the plan would still
+     * change nothing, so the baseline assertions in [assertRejectedWithoutFormalWrites] prove
+     * the comparison is over non-empty facts.
+     */
+    private data class TransferJournalSnapshot(
+        val versionCount: Long,
+        val currentVersionId: String,
+        val postings: List<Pair<String, Long>>,
+        val postingCount: Long,
+        val requestCount: Long,
+    )
+
+    private fun journalSnapshot(
+        harness: P705Database,
+        transactionId: String,
+    ): TransferJournalSnapshot =
+        TransferJournalSnapshot(
+            versionCount = harness.versionCount(transactionId),
+            currentVersionId = harness.currentVersionId(transactionId),
+            postings = harness.currentPostings(transactionId),
+            postingCount = harness.ledgerQueryCount("SELECT count(*) FROM posting"),
+            requestCount = harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"),
+        )
+
+    private fun assertRejectedWithoutFormalWrites(
+        harness: P705Database,
+        transactionId: String,
+        before: TransferJournalSnapshot,
+        result: CorrectTransactionVersionResult,
+    ) {
+        assertEquals(
+            CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_CATALOG_REFERENCE_NOT_ADMISSIBLE),
+            result,
+        )
+        // Non-degenerate baseline: one seed version, its three legs and an empty claim journal.
+        // A zero-vs-zero comparison over an empty ledger would prove nothing.
+        assertEquals(1L, before.versionCount)
+        assertEquals("$transactionId-version-1", before.currentVersionId)
+        assertEquals(3L, before.postingCount)
+        assertEquals(0L, before.requestCount)
+        val after = journalSnapshot(harness, transactionId)
+        assertEquals(before.versionCount, after.versionCount)
+        assertEquals(before.currentVersionId, after.currentVersionId)
+        assertEquals(before.postings, after.postings)
+        assertEquals(before.postingCount, after.postingCount)
+        assertEquals(before.requestCount, after.requestCount)
+    }
+
+    /**
+     * T-04 (spec section 10 `:272`; acceptance list section 3): a destination account in another
+     * ledger is rejected by the reused creation admission (`AccountTransfer.kt:173-175`) with
+     * zero formal effect. Without that ledger branch the factory would return a posting set, the
+     * port would commit a new version and all three zero-write comparisons would red.
+     */
+    @Test
+    fun crossLedgerDestinationCorrectionIsACatalogRejectionWithZeroWrites() {
+        P705Database.create("p705-t-dest-ledger-").use { harness ->
+            insertManualTransfer(harness, "tx-transfer-dest-ledger", destinationCreditMinor = 10_000L, feeMinor = 200L)
+            val ids = TransferIds("p705-t-dest-ledger")
+            val before = journalSnapshot(harness, "tx-transfer-dest-ledger")
+
+            val result =
+                correct(
+                    harness,
+                    ids,
+                    ids.requestId(),
+                    transactionId = "tx-transfer-dest-ledger",
+                    destinationCreditMinor = 10_000L,
+                    feeMinor = 200L,
+                    feeCategoryId = P705Fixture.food,
+                    destinationAccountId = crossLedgerBankId,
+                    admissionReader = CatalogAdmissionReader { admissionCatalog(destination = realAssetBank(crossLedgerBankId, ledger = otherLedgerId)) },
+                )
+
+            assertRejectedWithoutFormalWrites(harness, "tx-transfer-dest-ledger", before, result)
+        }
+    }
+
+    /**
+     * T-04 (spec section 10 `:272`): a destination account in another currency against a CNY
+     * target is the factory's same-currency admission (`AccountTransfer.kt:164-172`), a typed
+     * catalog rejection with zero formal effect.
+     */
+    @Test
+    fun foreignCurrencyDestinationCorrectionIsACatalogRejectionWithZeroWrites() {
+        P705Database.create("p705-t-dest-currency-").use { harness ->
+            insertManualTransfer(harness, "tx-transfer-dest-currency", destinationCreditMinor = 10_000L, feeMinor = 200L)
+            val ids = TransferIds("p705-t-dest-currency")
+            val before = journalSnapshot(harness, "tx-transfer-dest-currency")
+
+            val result =
+                correct(
+                    harness,
+                    ids,
+                    ids.requestId(),
+                    transactionId = "tx-transfer-dest-currency",
+                    destinationCreditMinor = 10_000L,
+                    feeMinor = 200L,
+                    feeCategoryId = P705Fixture.food,
+                    destinationAccountId = usdBankId,
+                    admissionReader = CatalogAdmissionReader { admissionCatalog(destination = realAssetBank(usdBankId, currency = usd)) },
+                )
+
+            assertRejectedWithoutFormalWrites(harness, "tx-transfer-dest-currency", before, result)
+        }
+    }
+
+    /**
+     * T-05 (spec section 10 `:273`): a deactivated fee category is the factory's fee-category
+     * admission (`AccountTransfer.kt:274`), rejected with the same frozen code and zero formal
+     * effect. The endpoint pair and the fee row target stay admissible.
+     */
+    @Test
+    fun inactiveFeeCategoryCorrectionIsACatalogRejectionWithZeroWrites() {
+        P705Database.create("p705-t-fee-inactive-").use { harness ->
+            insertManualTransfer(harness, "tx-transfer-fee-inactive", destinationCreditMinor = 10_000L, feeMinor = 200L)
+            val ids = TransferIds("p705-t-fee-inactive")
+            val before = journalSnapshot(harness, "tx-transfer-fee-inactive")
+
+            val result =
+                correct(
+                    harness,
+                    ids,
+                    ids.requestId(),
+                    transactionId = "tx-transfer-fee-inactive",
+                    destinationCreditMinor = 10_000L,
+                    feeMinor = 200L,
+                    feeCategoryId = P705Fixture.food,
+                    admissionReader =
+                        CatalogAdmissionReader {
+                            admissionCatalog(
+                                feeCategory = Category(P705Fixture.food, ledgerId, P705Fixture.foodParent, P705Fixture.expenseAccount, active = false),
+                            )
+                        },
+                )
+
+            assertRejectedWithoutFormalWrites(harness, "tx-transfer-fee-inactive", before, result)
+        }
+    }
+
+    /**
+     * T-05 (spec section 10 `:273`): a fee category whose ledger is another ledger is rejected
+     * by `AccountTransfer.kt:272` while its parent and posting account stay fully admissible in
+     * the request ledger - a single-factor cross-ledger negative.
+     */
+    @Test
+    fun crossLedgerFeeCategoryCorrectionIsACatalogRejectionWithZeroWrites() {
+        P705Database.create("p705-t-fee-ledger-").use { harness ->
+            insertManualTransfer(harness, "tx-transfer-fee-ledger", destinationCreditMinor = 10_000L, feeMinor = 200L)
+            val ids = TransferIds("p705-t-fee-ledger")
+            val before = journalSnapshot(harness, "tx-transfer-fee-ledger")
+
+            val result =
+                correct(
+                    harness,
+                    ids,
+                    ids.requestId(),
+                    transactionId = "tx-transfer-fee-ledger",
+                    destinationCreditMinor = 10_000L,
+                    feeMinor = 200L,
+                    feeCategoryId = P705Fixture.food,
+                    admissionReader =
+                        CatalogAdmissionReader {
+                            admissionCatalog(
+                                feeCategory = Category(P705Fixture.food, otherLedgerId, P705Fixture.foodParent, P705Fixture.expenseAccount, active = true),
+                            )
+                        },
+                )
+
+            assertRejectedWithoutFormalWrites(harness, "tx-transfer-fee-ledger", before, result)
+        }
+    }
+
+    /**
+     * T-05 (spec section 10 `:273`): a fee category of the wrong kind is rejected by
+     * `AccountTransfer.kt:273`. The posting account stays a hidden EXPENSE account in the
+     * request ledger, so the kind of the category is the only broken condition.
+     */
+    @Test
+    fun incomeFeeCategoryCorrectionIsACatalogRejectionWithZeroWrites() {
+        P705Database.create("p705-t-fee-kind-").use { harness ->
+            insertManualTransfer(harness, "tx-transfer-fee-kind", destinationCreditMinor = 10_000L, feeMinor = 200L)
+            val ids = TransferIds("p705-t-fee-kind")
+            val before = journalSnapshot(harness, "tx-transfer-fee-kind")
+
+            val result =
+                correct(
+                    harness,
+                    ids,
+                    ids.requestId(),
+                    transactionId = "tx-transfer-fee-kind",
+                    destinationCreditMinor = 10_000L,
+                    feeMinor = 200L,
+                    feeCategoryId = P705Fixture.food,
+                    admissionReader =
+                        CatalogAdmissionReader {
+                            admissionCatalog(
+                                feeCategory =
+                                    Category(
+                                        P705Fixture.food,
+                                        ledgerId,
+                                        P705Fixture.foodParent,
+                                        P705Fixture.expenseAccount,
+                                        active = true,
+                                        kind = CategoryKind.INCOME,
+                                    ),
+                            )
+                        },
+                )
+
+            assertRejectedWithoutFormalWrites(harness, "tx-transfer-fee-kind", before, result)
+        }
+    }
+
+    /**
+     * T-05 (spec section 10 `:273`): a third-level fee category (fee category -> mid -> parent)
+     * is rejected by the leaf-only rule at `AccountTransfer.kt:276`. Everything else about the
+     * category - ledger, kind, active flag, posting account - is admissible.
+     */
+    @Test
+    fun deepFeeCategoryCorrectionIsACatalogRejectionWithZeroWrites() {
+        P705Database.create("p705-t-fee-leaf-").use { harness ->
+            insertManualTransfer(harness, "tx-transfer-fee-leaf", destinationCreditMinor = 10_000L, feeMinor = 200L)
+            val ids = TransferIds("p705-t-fee-leaf")
+            val before = journalSnapshot(harness, "tx-transfer-fee-leaf")
+
+            val result =
+                correct(
+                    harness,
+                    ids,
+                    ids.requestId(),
+                    transactionId = "tx-transfer-fee-leaf",
+                    destinationCreditMinor = 10_000L,
+                    feeMinor = 200L,
+                    feeCategoryId = threeLevelFeeCategoryId,
+                    admissionReader =
+                        CatalogAdmissionReader {
+                            admissionCatalog(
+                                feeCategory =
+                                    Category(
+                                        threeLevelFeeCategoryId,
+                                        ledgerId,
+                                        feeSubParentId,
+                                        P705Fixture.expenseAccount,
+                                        active = true,
+                                    ),
+                                feeParent = Category(feeSubParentId, ledgerId, P705Fixture.foodParent, null, active = true),
+                            )
+                        },
+                )
+
+            assertRejectedWithoutFormalWrites(harness, "tx-transfer-fee-leaf", before, result)
         }
     }
 }
