@@ -6,8 +6,8 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 /**
- * P7-05.B: the correction id source mints five UUIDv7 ids per call — the receipt identity plus
- * the replacement version/posting-set/posting identities.
+ * P7-05.B: the correction id source mints six UUIDv7 ids per call — the receipt identity plus
+ * the replacement version, posting-set and three posting identities.
  */
 class UuidV7TransactionCorrectionIdSourceTest {
     // Duplicates the file-private uuidV7 regex and generator(seed) of
@@ -21,7 +21,7 @@ class UuidV7TransactionCorrectionIdSourceTest {
     }
 
     @Test
-    fun correctionIdSourceMintsFiveDistinctUuidV7Ids() {
+    fun correctionIdSourceMintsSixDistinctUuidV7Ids() {
         val ids = UuidV7TransactionCorrectionIdSource(generator(1)).next()
         val all =
             listOf(
@@ -30,8 +30,9 @@ class UuidV7TransactionCorrectionIdSourceTest {
                 ids.postingSetId.value,
                 ids.categoryPostingId.value,
                 ids.fundingPostingId.value,
+                requireNotNull(ids.feePostingId) { "the product correction id source mints a fee posting id" }.value,
             )
-        assertEquals(5, all.toSet().size)
+        assertEquals(6, all.toSet().size)
         all.forEach { assertTrue(uuidV7.matches(it), "not a uuidv7: $it") }
     }
 
@@ -42,5 +43,6 @@ class UuidV7TransactionCorrectionIdSourceTest {
         val second = source.next()
         assertNotEquals(first.versionId, second.versionId)
         assertNotEquals(first.postingSetId, second.postingSetId)
+        assertNotEquals(first.feePostingId, second.feePostingId)
     }
 }

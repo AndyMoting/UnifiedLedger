@@ -8,9 +8,11 @@ import com.unifiedledger.domain.TransactionVersionId
  * P7-05.B product [CorrectTransactionVersionIdSource] backed by RFC 9562 UUIDv7, mirroring
  * [UuidV7ConfirmedManualExpenseIdSource].
  *
- * Every [next] call mints exactly five UUIDv7 identifiers: the correction receipt's
- * [ConfirmationId], the replacement [TransactionVersionId], the fresh [PostingSetId] and the two
- * posting ids of the derived posting set.
+ * Every [next] call mints exactly six UUIDv7 identifiers: the correction receipt's
+ * [ConfirmationId], the replacement [TransactionVersionId], the fresh [PostingSetId] and the
+ * three posting ids of the derived posting set — the category and funding legs of an ordinary
+ * correction, which a transfer rebinds as its destination and source legs, plus the transfer's
+ * fee leg.
  *
  * Lazy materialization is unchanged: [next] is invoked only inside the claim-winning callback of
  * the persistence `commitOnce` port, so exact replays and identity conflicts consume no ids. The
@@ -28,5 +30,6 @@ class UuidV7TransactionCorrectionIdSource(
             postingSetId = PostingSetId(generator.next()),
             categoryPostingId = PostingId(generator.next()),
             fundingPostingId = PostingId(generator.next()),
+            feePostingId = PostingId(generator.next()),
         )
 }
