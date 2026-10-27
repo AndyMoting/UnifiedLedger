@@ -24,7 +24,6 @@ import com.unifiedledger.application.VoidTransactionRequest
 import com.unifiedledger.application.VoidTransactionResult
 import com.unifiedledger.application.WidgetMonthlySnapshotStatus
 import com.unifiedledger.domain.Account
-import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CatalogItemKind
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerCatalog
@@ -56,51 +55,6 @@ import kotlin.time.Instant
 class P705TransferRestorePathTest {
     private val ledgerId = P705Fixture.ledgerId
     private val catalog = P705Fixture.catalog()
-
-    /** Seeds one manual ACCOUNT_TRANSFER chain in the creation factory's frozen leg order. */
-    private fun insertManualTransfer(
-        harness: P705Database,
-        transactionId: String,
-        sourceAccount: AccountId = P705Fixture.bankA,
-        destinationAccount: AccountId = P705Fixture.bankB,
-        destinationCreditMinor: Long,
-        feeMinor: Long,
-    ) {
-        val postingSetId = "$transactionId-posting-set-1"
-        val versionId = "$transactionId-version-1"
-        harness.database.ledgerQueries.insertTransaction(transactionId, ledgerId.value, TransactionKind.ACCOUNT_TRANSFER.name)
-        harness.database.ledgerQueries.insertPostingSet(postingSetId, ledgerId.value)
-        harness.database.ledgerQueries.insertTransactionVersion(
-            versionId,
-            transactionId,
-            ledgerId.value,
-            1L,
-            postingSetId,
-            P705Fixture.marchStatistics.toString(),
-            P705Fixture.marchStatistics.toString(),
-            P705Fixture.marchStatistics.toString(),
-            "rent",
-        )
-        val legs =
-            buildList {
-                add(sourceAccount to -(destinationCreditMinor + feeMinor))
-                add(destinationAccount to destinationCreditMinor)
-                if (feeMinor > 0L) add(P705Fixture.expenseAccount to feeMinor)
-            }
-        legs.forEachIndexed { index, (accountId, amount) ->
-            harness.database.ledgerQueries.insertPosting(
-                "$transactionId-posting-$index",
-                postingSetId,
-                ledgerId.value,
-                index.toLong(),
-                accountId.value,
-                amount,
-                P705Fixture.cny.code,
-                P705Fixture.cny.precision.toLong(),
-            )
-        }
-        harness.database.ledgerQueries.insertTransactionCurrentVersion(transactionId, ledgerId.value, versionId)
-    }
 
     private fun void(
         harness: P705Database,
@@ -156,7 +110,7 @@ class P705TransferRestorePathTest {
     @Test
     fun aRestoredTransferCannotBeRestoredAgainNorRevoidedBeyondTheCycle() {
         P705Database.create("p705-t-restore-cycle-").use { harness ->
-            insertManualTransfer(harness, "tx-transfer-cycle", destinationCreditMinor = 10_000L, feeMinor = 200L)
+            harness.insertManualTransfer("tx-transfer-cycle", destinationCreditMinor = 10_000L, feeMinor = 200L)
             val ids = P705Ids("p705-t-restore-cycle")
             assertIs<VoidTransactionResult.Created>(void(harness, ids, ids.requestId(), "tx-transfer-cycle"))
             assertIs<VoidTransactionResult.Created>(restore(harness, ids, ids.requestId(), "tx-transfer-cycle"))
@@ -197,7 +151,7 @@ class P705TransferRestorePathTest {
     @Test
     fun aVoidedTransferRestoresValueIdentically() {
         P705Database.create("p705-t-restore-").use { harness ->
-            insertManualTransfer(harness, "tx-transfer-restore", destinationCreditMinor = 10_000L, feeMinor = 200L)
+            harness.insertManualTransfer("tx-transfer-restore", destinationCreditMinor = 10_000L, feeMinor = 200L)
             val ids = P705Ids("p705-t-restore")
             assertIs<VoidTransactionResult.Created>(void(harness, ids, ids.requestId(), "tx-transfer-restore"))
             assertEquals(0, harness.readAdapter.loadLedgerEntryRows(ledgerId).size)
@@ -246,7 +200,7 @@ class P705TransferRestorePathTest {
     @Test
     fun renamedButActiveEndpointsRemainAdmissibleForARestore() {
         P705Database.create("p705-t-restore-rename-").use { harness ->
-            insertManualTransfer(harness, "tx-transfer-rename", destinationCreditMinor = 10_000L, feeMinor = 0L)
+            harness.insertManualTransfer("tx-transfer-rename", destinationCreditMinor = 10_000L, feeMinor = 0L)
             val ids = P705Ids("p705-t-restore-rename")
             assertIs<VoidTransactionResult.Created>(void(harness, ids, ids.requestId(), "tx-transfer-rename"))
 
@@ -265,7 +219,7 @@ class P705TransferRestorePathTest {
     @Test
     fun aDeactivatedEndpointBlocksTheRestoreAndTheTransactionStaysVoided() {
         P705Database.create("p705-t-restore-deactive-").use { harness ->
-            insertManualTransfer(harness, "tx-transfer-deactive", destinationCreditMinor = 10_000L, feeMinor = 0L)
+            harness.insertManualTransfer("tx-transfer-deactive", destinationCreditMinor = 10_000L, feeMinor = 0L)
             val ids = P705Ids("p705-t-restore-deactive")
             assertIs<VoidTransactionResult.Created>(void(harness, ids, ids.requestId(), "tx-transfer-deactive"))
 
@@ -294,7 +248,7 @@ class P705TransferRestorePathTest {
     @Test
     fun aDeactivatedFeeCategoryBlocksTheRestoreOfAThreeLegTransfer() {
         P705Database.create("p705-t-restore-fee-").use { harness ->
-            insertManualTransfer(harness, "tx-transfer-fee", destinationCreditMinor = 10_000L, feeMinor = 200L)
+            harness.insertManualTransfer("tx-transfer-fee", destinationCreditMinor = 10_000L, feeMinor = 200L)
             val ids = P705Ids("p705-t-restore-fee")
             assertIs<VoidTransactionResult.Created>(void(harness, ids, ids.requestId(), "tx-transfer-fee"))
 
@@ -500,10 +454,11 @@ class P705TransferVoidDerivedSurfaceTest {
         harness.database.ledgerQueries.insertTransactionAnnotationCurrent(ledgerId.value, transactionId, 1L)
     }
 
+    /** The three annotation counts of THIS ledger, so a second ledger could never be miscounted. */
     private fun annotationCounts(harness: P705Database): List<Long> =
         listOf(
-            "SELECT count(*) FROM transaction_annotation_revision",
-            "SELECT count(*) FROM transaction_annotation_tag",
-            "SELECT count(*) FROM transaction_annotation_current",
+            "SELECT count(*) FROM transaction_annotation_revision WHERE ledger_id = '${ledgerId.value}'",
+            "SELECT count(*) FROM transaction_annotation_tag WHERE ledger_id = '${ledgerId.value}'",
+            "SELECT count(*) FROM transaction_annotation_current WHERE ledger_id = '${ledgerId.value}'",
         ).map(harness::ledgerQueryCount)
 }

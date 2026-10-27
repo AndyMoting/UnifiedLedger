@@ -777,6 +777,12 @@ internal class P705Database private constructor(
      * `fee_category_id` is the EXPENSE category that owns leg 2's posting account. The claim
      * query carries `ON CONFLICT DO NOTHING`; the bare receipt insert is the real duplicate
      * defence, exactly as on the product path.
+     *
+     * Difference from the product path: the product claims, creates the chain and writes the
+     * receipt inside one `database.transactionWithResult` (`SqlDelightConfirmedManualTransferCommitPort.kt:50-98`).
+     * This helper seeds an already-existing chain on a fresh per-test single-threaded database, so
+     * the two writes are sequential and unwrapped; a failure between them would leave a request
+     * without its receipt, which is exactly what the per-test database discards.
      */
     fun insertManualTransferRequestAndReceipt(
         transactionId: String,
