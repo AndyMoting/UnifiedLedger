@@ -545,8 +545,18 @@ internal class P705Database private constructor(
     /**
      * Minimal import spine so an import-created transaction is recognisable: request, source,
      * evidence, candidate, the pending -> confirmed status pair and the creation confirmation.
+     *
+     * `import_source_record` has a `UNIQUE(ledger_id, input_ref, record_ordinal)` key
+     * (`Ledger.sq:8075`) and [insertImportSourceRecord] is a bare INSERT, so two seeds in one
+     * database must not share the default identity. Callers that seed more than one import chain
+     * pass an `inputRef` derived from the transaction id; the defaults keep the single-chain
+     * vectors byte-for-byte unchanged.
      */
-    fun insertImportCreationConfirmation(transactionId: String) {
+    fun insertImportCreationConfirmation(
+        transactionId: String,
+        inputRef: String = "input-ref-p705",
+        recordOrdinal: Long = 0L,
+    ) {
         val suffix = transactionId.removePrefix("tx-")
         val requestId = "request-p705-$suffix"
         val sourceId = "source-p705-$suffix"
@@ -555,8 +565,8 @@ internal class P705Database private constructor(
             P705Fixture.ledgerId.value,
             sourceId,
             requestId,
-            "input-ref-p705",
-            0L,
+            inputRef,
+            recordOrdinal,
             "ordinary_flow_source",
             "content-hash-p705",
             1L,
@@ -615,6 +625,64 @@ internal class P705Database private constructor(
             transactionId,
             "creation",
             P705Fixture.marchStatistics.toString(),
+        )
+    }
+
+    /**
+     * One import-created two-leg `ACCOUNT_TRANSFER` chain in the creation factory's principal-leg
+     * order (source debit, destination credit), plus the import creation lineage the P7-05 lineage
+     * gate reads (`importCreationConfirmationCountForTransaction`). The chain is version 1, a
+     * single posting set and the current-version pointer; the note is anonymous and the fixture
+     * statistics instant is [P705Fixture.marchStatistics]. The input identity is derived from the
+     * transaction id so a second seed in the same database cannot collide on
+     * `import_source_record`'s `UNIQUE(ledger_id, input_ref, record_ordinal)` key.
+     */
+    fun insertImportCreatedTransfer(
+        transactionId: String,
+        destinationCreditMinor: Long = 10_000L,
+    ) {
+        val postingSetId = "$transactionId-posting-set-1"
+        val versionId = "$transactionId-version-1"
+        database.ledgerQueries.insertTransaction(
+            transactionId,
+            P705Fixture.ledgerId.value,
+            TransactionKind.ACCOUNT_TRANSFER.name,
+        )
+        database.ledgerQueries.insertPostingSet(postingSetId, P705Fixture.ledgerId.value)
+        database.ledgerQueries.insertTransactionVersion(
+            versionId,
+            transactionId,
+            P705Fixture.ledgerId.value,
+            1L,
+            postingSetId,
+            P705Fixture.marchStatistics.toString(),
+            P705Fixture.marchStatistics.toString(),
+            P705Fixture.marchStatistics.toString(),
+            "imported transfer",
+        )
+        listOf(
+            P705Fixture.bankA to -destinationCreditMinor,
+            P705Fixture.bankB to destinationCreditMinor,
+        ).forEachIndexed { index, (accountId, amount) ->
+            database.ledgerQueries.insertPosting(
+                "$transactionId-posting-$index",
+                postingSetId,
+                P705Fixture.ledgerId.value,
+                index.toLong(),
+                accountId.value,
+                amount,
+                P705Fixture.cny.code,
+                P705Fixture.cny.precision.toLong(),
+            )
+        }
+        database.ledgerQueries.insertTransactionCurrentVersion(
+            transactionId,
+            P705Fixture.ledgerId.value,
+            versionId,
+        )
+        insertImportCreationConfirmation(
+            transactionId,
+            inputRef = "input-ref-p705-${transactionId.removePrefix("tx-")}",
         )
     }
 

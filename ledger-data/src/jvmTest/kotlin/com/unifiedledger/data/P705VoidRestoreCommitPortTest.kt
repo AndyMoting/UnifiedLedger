@@ -664,6 +664,57 @@ class P705VoidRestoreCommitPortTest {
         }
     }
 
+    /**
+     * T-14 (transfer spec section 10 `:282`; D-228 J2): an import-created two-leg
+     * `ACCOUNT_TRANSFER` keeps its creation lineage OPEN, so VOID is rejected by the lineage gate
+     * (the void port has no row-shape gate between the kind gate and this one) with zero writes.
+     * Without that gate the transaction-granular void would append one fact/request/receipt row
+     * each; the version count is a standing guard because the void port never writes a
+     * `transaction_version`.
+     */
+    @Test
+    fun anImportCreatedTransferVoidIsALineageRejectionWithZeroWrites() {
+        P705Database.create("p705-void-import-lineage-").use { harness ->
+            harness.insertImportCreatedTransfer("tx-import-transfer")
+            val ids = P705Ids("p705-void-import-lineage")
+            val factCountBefore = harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_fact")
+            val requestCountBefore = harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_request")
+            val receiptCountBefore = harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_receipt")
+            val versionCountBefore = harness.versionCount("tx-import-transfer")
+            // Non-degenerate baseline: the voidable transaction is a two-leg ACCOUNT_TRANSFER whose
+            // creation lineage and postings really exist.
+            assertEquals(
+                "ACCOUNT_TRANSFER",
+                harness.ledgerQueryText("SELECT kind FROM ledger_transaction WHERE transaction_id = 'tx-import-transfer'"),
+            )
+            assertEquals(
+                1L,
+                harness.ledgerQueryCount(
+                    "SELECT count(*) FROM import_confirmation " +
+                        "WHERE transaction_id = 'tx-import-transfer' AND operation_class = 'creation'",
+                ),
+            )
+            assertEquals(
+                2L,
+                harness.ledgerQueryCount("SELECT count(*) FROM posting WHERE posting_set_id = 'tx-import-transfer-posting-set-1'"),
+            )
+            assertEquals(1L, versionCountBefore)
+            assertEquals(0L, factCountBefore)
+            assertEquals(0L, requestCountBefore)
+            assertEquals(0L, receiptCountBefore)
+
+            assertEquals(
+                VoidTransactionResult.Rejected(P705FailureCode.P705_CREATION_LINEAGE_NOT_SUPPORTED),
+                void(harness, ids, ids.requestId(), transactionId = "tx-import-transfer"),
+            )
+
+            assertEquals(factCountBefore, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_fact"))
+            assertEquals(requestCountBefore, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_request"))
+            assertEquals(receiptCountBefore, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_receipt"))
+            assertEquals(versionCountBefore, harness.versionCount("tx-import-transfer"))
+        }
+    }
+
     private fun catalogWith(
         accounts: List<com.unifiedledger.domain.Account> = catalog.accounts,
         categories: List<com.unifiedledger.domain.Category> = catalog.categories,
