@@ -56,8 +56,10 @@ internal data class TransferCorrectionOrigin(
 )
 
 /**
- * The transfer correction form draft: the frozen seven fields as typed text plus the two resolved
- * references. Seeded from [TransferCorrectionOrigin] so a freshly opened form previews no difference.
+ * The transfer correction form draft: the frozen seven fields, four of them as typed text ([note],
+ * [statisticsAtText], [destinationCreditText], [feeText]) and three as resolved references
+ * ([sourceAccountId], [destinationAccountId], [feeCategoryId]). Seeded from [TransferCorrectionOrigin]
+ * so a freshly opened form previews no difference.
  *
  * [statisticsAtText] is display text only - [transferCorrectionRequest] never parses it (see its
  * contract). The remaining texts are read by the preview on every keystroke and by the builder only
@@ -110,7 +112,10 @@ internal data class TransferEditPreview(
     val fields: List<TransferEditDiffLine>,
 )
 
-/** The frozen display label of one transfer field (spec section 3 field set order). */
+/**
+ * The display label of one transfer field, in the spec section 3 field-set order. That section
+ * freezes the field set and its order; these label texts are this surface's own.
+ */
 internal fun transferEditFieldLabel(field: TransferEditField): String =
     when (field) {
         TransferEditField.NOTE -> "备注"
@@ -133,14 +138,26 @@ internal fun transferEditFieldLabel(field: TransferEditField): String =
  * slice - the shape rule here is the frozen one.
  *
  * Rules (frozen):
+ * - the two accepted shapes are the domain's own transfer postings:
+ *   `ledger-domain/src/commonMain/kotlin/com/unifiedledger/domain/AccountTransfer.kt:187-202` builds
+ *   PRINCIPAL_OUT, PRINCIPAL_IN and the FEE leg that carries the fee category, and
+ *   `ledger-domain/src/commonMain/kotlin/com/unifiedledger/domain/OwnAssetPrincipalTransfer.kt:94-104`
+ *   builds PRINCIPAL_OUT and PRINCIPAL_IN alone;
  * - the source leg is the single NEGATIVE leg whose account is a manageable `ASSET` account of the
  *   snapshot; the destination leg is the single POSITIVE one;
  * - only for a three-leg shape, the fee leg is the remaining POSITIVE leg whose account is the
  *   `postingAccountId` of EXACTLY ONE snapshot category - that category is the fee category; a
  *   two-leg transfer resolves `feeMinorUnits = 0` and `feeCategoryId = null`;
- * - the shape must be unambiguous: exactly two or exactly three legs with distinct posting ids,
- *   exactly one source and one destination, source and destination accounts differ, and every leg
- *   carries the destination leg's currency.
+ * - the shape must be unambiguous: exactly two or exactly three legs, and exactly two guards hold
+ *   source and destination apart - the posting ids are pairwise distinct, and the two accounts
+ *   differ. Every leg carries the destination leg's currency;
+ * - the lending wall and the hidden accounts are excluded by two account-membership tests only: the
+ *   leg's account must sit inside the `CatalogSnapshotView.manageableAccounts` projection
+ *   (`ledger-application/src/commonMain/kotlin/com/unifiedledger/application/CatalogProjection.kt:47-56`
+ *   keeps the `isManageableAccount` accounts - `ASSET` and `LIABILITY` alike,
+ *   `ledger-domain/src/commonMain/kotlin/com/unifiedledger/domain/CatalogManagement.kt:152-160` -
+ *   and drops the system-role, non-real and unowned ones), and then must be `ASSET` here, because a
+ *   transfer endpoint admits `ASSET` only (`AccountTransfer.kt:80`, `:135`, `:140`).
  *
  * Anything else resolves `null`, so the caller offers no edit entrance instead of guessing: no
  * `firstOrNull` winner, no silent pick among two candidates.
@@ -152,15 +169,19 @@ internal fun transferCorrectionOriginFromDetail(
     val legs = detail.legs
     if (legs.size != 2 && legs.size != 3) return null
     if (legs.map { it.postingId }.toSet().size != legs.size) return null
-    val assetAccountIds = snapshot.manageableAccounts.filter { it.kind == AccountKind.ASSET }.map { it.accountId }.toSet()
+    val assetAccountIds =
+        snapshot
+            .manageableAccounts
+            .filter { it.kind == AccountKind.ASSET }
+            .map { it.accountId }
+            .toSet()
     val assetLegs = legs.filter { it.accountId in assetAccountIds }
     val sourceLeg = assetLegs.singleOrNull { it.amount.minorUnits < 0L } ?: return null
     val destinationLeg = assetLegs.singleOrNull { it.amount.minorUnits > 0L } ?: return null
-    if (sourceLeg.postingId == destinationLeg.postingId) return null
     if (sourceLeg.accountId == destinationLeg.accountId) return null
     val currency = destinationLeg.amount.currency
     if (sourceLeg.amount.currency != currency) return null
-    val feeLeg = legs.firstOrNull { it.postingId != sourceLeg.postingId && it.postingId != destinationLeg.postingId }
+    val feeLeg = legs.singleOrNull { it.postingId != sourceLeg.postingId && it.postingId != destinationLeg.postingId }
     val feeCategoryId: CategoryId?
     val feeMinorUnits: Long
     if (feeLeg == null) {

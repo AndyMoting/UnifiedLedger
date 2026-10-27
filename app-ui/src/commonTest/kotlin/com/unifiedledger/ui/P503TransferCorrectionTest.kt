@@ -34,10 +34,11 @@ import kotlin.time.Instant
  * the leg-shape origin resolver, the seed draft, the seven-line difference preview, the target-side
  * fee-category derivation, and the request builder with its frozen five `null` branches.
  *
- * All data is anonymous synthetic: a synthetic ledger, three synthetic accounts (one hidden fee
- * posting account), two synthetic categories, one transaction and three legs. Assertions are single
- * lines and never compare a multi-line literal; the suite asserts on synthetic note literals in value
- * equality checks only and never passes a note as an assertion message.
+ * All data is anonymous synthetic: one ledger, three manageable `ASSET` accounts plus the one
+ * manageable `LIABILITY` account a single vector adds, two expense posting accounts (one of them the
+ * fee category's own posting account), two categories, one transaction and two to four legs.
+ * Assertions are single lines and never compare a multi-line literal; the suite asserts on synthetic
+ * note literals in value equality checks only and never passes a note as an assertion message.
  *
  * Not signed off by this suite: the 05.D product loop (transfer correction/void wiring and Android
  * manual acceptance) and the `CorrectTransactionVersion.kt:75-79` resolver residual, which stay with
@@ -55,6 +56,7 @@ class P503TransferCorrectionTest {
     private val walletId = AccountId("asset-wallet")
     private val bankId = AccountId("asset-bank")
     private val cashId = AccountId("asset-cash")
+    private val cardId = AccountId("liability-card")
     private val feePostingAccountId = AccountId("expense-fee")
     private val otherExpenseAccountId = AccountId("expense-other")
     private val feeCategoryId = CategoryId("category-fee")
@@ -82,17 +84,30 @@ class P503TransferCorrectionTest {
             ),
         )
 
-    private fun snapshot(categories: List<CategoryTreeView> = defaultCategories): CatalogSnapshotView =
+    private val defaultAssetAccounts =
+        listOf(
+            ManageableAccountView(walletId, "零钱", AccountKind.ASSET, cny, active = true, balanceMinorUnits = null),
+            ManageableAccountView(bankId, "储蓄", AccountKind.ASSET, cny, active = true, balanceMinorUnits = null),
+            ManageableAccountView(cashId, "现金", AccountKind.ASSET, cny, active = true, balanceMinorUnits = null),
+        )
+
+    /**
+     * The catalog snapshot under test: the three manageable `ASSET` accounts plus [extraAccounts], so a
+     * vector can hold the observable projection fixed and vary only what the resolver admits from it.
+     */
+    private fun snapshot(
+        categories: List<CategoryTreeView> = defaultCategories,
+        extraAccounts: List<ManageableAccountView> = emptyList(),
+    ): CatalogSnapshotView =
         CatalogSnapshotView(
             catalogVersion = 1L,
-            manageableAccounts =
-                listOf(
-                    ManageableAccountView(walletId, "零钱", AccountKind.ASSET, cny, active = true, balanceMinorUnits = null),
-                    ManageableAccountView(bankId, "储蓄", AccountKind.ASSET, cny, active = true, balanceMinorUnits = null),
-                    ManageableAccountView(cashId, "现金", AccountKind.ASSET, cny, active = true, balanceMinorUnits = null),
-                ),
+            manageableAccounts = defaultAssetAccounts + extraAccounts,
             categories = categories,
         )
+
+    /** A manageable `LIABILITY` account: `isManageableAccount` admits it, a transfer endpoint does not. */
+    private val liabilityAccount =
+        ManageableAccountView(cardId, "信用卡", AccountKind.LIABILITY, cny, active = true, balanceMinorUnits = null)
 
     private fun leg(
         postingId: String,
@@ -265,6 +280,113 @@ class P503TransferCorrectionTest {
         )
     }
 
+    /**
+     * The leg-count guard alone (`legs.size != 2 && legs.size != 3`). Case `(j)` above does not pin it:
+     * those four legs also hold two positive `ASSET` legs, so the destination-leg ambiguity rejects the
+     * row first. These four legs keep exactly one negative and one positive account inside the
+     * manageable `ASSET` projection - the other two accounts sit outside it - so the leg-count guard is
+     * the single reason this row resolves `null`.
+     */
+    @Test
+    fun originIsAbsentForAFourLegShapeWhoseExtraLegsAreOutsideTheAssetProjection() {
+        val detail =
+            transferDetail(
+                listOf(
+                    leg("posting-source", walletId, -10_400L),
+                    leg("posting-destination", bankId, 10_000L),
+                    leg("posting-fee", feePostingAccountId, 200L),
+                    leg("posting-other", otherExpenseAccountId, 200L),
+                ),
+            )
+        assertNull(transferCorrectionOriginFromDetail(detail, snapshot()))
+    }
+
+    /**
+     * The posting-id distinctness guard on its own: two legs share one posting id. The duplicate sits
+     * on a fee-posting account outside the manageable `ASSET` projection, so the source/destination
+     * reading alone would resolve this row and distinctness is the single reason it does not.
+     */
+    @Test
+    fun originIsAbsentWhenTwoLegsShareOnePostingId() {
+        assertNull(
+            transferCorrectionOriginFromDetail(
+                transferDetail(
+                    listOf(
+                        leg("posting-source", walletId, -10_200L),
+                        leg("posting-destination", bankId, 10_000L),
+                        leg("posting-destination", feePostingAccountId, 200L),
+                    ),
+                ),
+                snapshot(),
+            ),
+        )
+    }
+
+    /**
+     * A manageable `LIABILITY` account is not a transfer endpoint: `isManageableAccount` admits `ASSET`
+     * and `LIABILITY` alike (`CatalogManagement.kt:152-160`), while the transfer endpoints require
+     * `ASSET` (`AccountTransfer.kt:80`/`:135`/`:140`). A `LIABILITY` leg must therefore not resolve
+     * here either - on the source side and on the destination side - so neither leg may be read
+     * straight out of the manageable projection.
+     */
+    @Test
+    fun originIsAbsentWhenALegAccountIsAManageableLiability() {
+        val catalog = snapshot(extraAccounts = listOf(liabilityAccount))
+        assertNull(transferCorrectionOriginFromDetail(transferDetail(listOf(leg("posting-a", cardId, -10_000L), leg("posting-b", bankId, 10_000L))), catalog))
+        assertNull(transferCorrectionOriginFromDetail(transferDetail(listOf(leg("posting-a", walletId, -10_000L), leg("posting-b", cardId, 10_000L))), catalog))
+    }
+
+    /**
+     * The fee leg's own positive-amount guard. A zero-amount third leg would otherwise resolve a fee of
+     * `0` carrying the fee category, contradicting `feeCategoryId is null exactly when the fee is 0`.
+     */
+    @Test
+    fun originIsAbsentWhenTheFeeLegAmountIsZero() {
+        assertNull(
+            transferCorrectionOriginFromDetail(
+                transferDetail(
+                    listOf(
+                        leg("posting-source", walletId, -10_000L),
+                        leg("posting-destination", bankId, 10_000L),
+                        leg("posting-fee", feePostingAccountId, 0L),
+                    ),
+                ),
+                snapshot(),
+            ),
+        )
+    }
+
+    /** The same guard's negative branch: a negative third leg is not a fee either. */
+    @Test
+    fun originIsAbsentWhenTheFeeLegAmountIsNegative() {
+        assertNull(
+            transferCorrectionOriginFromDetail(
+                transferDetail(
+                    listOf(
+                        leg("posting-source", walletId, -8_000L),
+                        leg("posting-destination", bankId, 10_000L),
+                        leg("posting-fee", feePostingAccountId, -2_000L),
+                    ),
+                ),
+                snapshot(),
+            ),
+        )
+    }
+
+    /**
+     * The source-leg currency guard: every leg must carry the destination leg's currency, and a source
+     * leg in another currency is the live case the fee-leg currency vector does not reach.
+     */
+    @Test
+    fun originIsAbsentWhenTheSourceLegCurrencyDiffersFromTheDestinationLeg() {
+        assertNull(
+            transferCorrectionOriginFromDetail(
+                transferDetail(listOf(leg("posting-a", walletId, -10_000L, jpy), leg("posting-b", bankId, 10_000L))),
+                snapshot(),
+            ),
+        )
+    }
+
     // ---- T5-04..T5-06: seed draft and preview ----
 
     @Test
@@ -281,20 +403,30 @@ class P503TransferCorrectionTest {
         val preview = transferCorrectionPreview(origin, draft, emptyMap(), emptyMap())
         assertEquals(7, preview.fields.size)
         assertTrue(preview.fields.none { it.changed })
-        val noteRow = row(preview, TransferEditField.NOTE)
-        assertEquals(noteRow.oldText, noteRow.newText)
-        val statisticsRow = row(preview, TransferEditField.STATISTICS_AT)
-        assertEquals(statisticsRow.oldText, statisticsRow.newText)
-        val creditRow = row(preview, TransferEditField.DESTINATION_CREDIT)
-        assertEquals(creditRow.oldText, creditRow.newText)
-        val sourceRow = row(preview, TransferEditField.SOURCE_ACCOUNT)
-        assertEquals(sourceRow.oldText, sourceRow.newText)
-        val destinationRow = row(preview, TransferEditField.DESTINATION_ACCOUNT)
-        assertEquals(destinationRow.oldText, destinationRow.newText)
-        val feeRow = row(preview, TransferEditField.FEE)
-        assertEquals(feeRow.oldText, feeRow.newText)
-        val feeCategoryRow = row(preview, TransferEditField.FEE_CATEGORY)
-        assertEquals(feeCategoryRow.oldText, feeCategoryRow.newText)
+    }
+
+    /**
+     * The old side of a preview row is read from the origin, never from the draft. Each row below
+     * changes one draft field only, so a row whose old side echoed the draft would report the new text
+     * twice and lose the origin text asserted here. The seeded draft above cannot show this: there both
+     * sides are equal by construction.
+     */
+    @Test
+    fun previewOldSideStaysTheOriginWhenTheDraftChanges() {
+        val origin = resolvedOrigin()
+        val draft = seedDraft(origin)
+        val changedCredit = row(previewOf(origin, draft.copy(destinationCreditText = "80.00")), TransferEditField.DESTINATION_CREDIT)
+        assertEquals("+100.00 CNY", changedCredit.oldText)
+        assertEquals("+80.00 CNY", changedCredit.newText)
+        val changedFee = row(previewOf(origin, draft.copy(feeText = "3.00")), TransferEditField.FEE)
+        assertEquals("+2.00 CNY", changedFee.oldText)
+        assertEquals("+3.00 CNY", changedFee.newText)
+        val changedNote = row(previewOf(origin, draft.copy(note = "new note")), TransferEditField.NOTE)
+        assertEquals("old note", changedNote.oldText)
+        assertEquals("new note", changedNote.newText)
+        val changedStatisticsAt = row(previewOf(origin, draft.copy(statisticsAtText = "2026-04-01T00:00:00Z")), TransferEditField.STATISTICS_AT)
+        assertEquals(correctionTimeDisplayText(origin.statisticsAt.toString()), changedStatisticsAt.oldText)
+        assertEquals(correctionTimeDisplayText("2026-04-01T00:00:00Z"), changedStatisticsAt.newText)
     }
 
     @Test
@@ -440,6 +572,27 @@ class P503TransferCorrectionTest {
         assertEquals(10_000L, requested.amount.minorUnits)
         val restored = assertNotNull(request(origin, draft.copy(feeText = "2.00")))
         assertEquals(feeCategoryId, restored.categoryId)
+    }
+
+    /**
+     * The target-side fee category follows the parsed target fee, not the draft: an unparseable text
+     * yields no category (无), while a negative fee - which the builder rejects - keeps the category
+     * the draft carries, because the preview never hides a reference the user typed. Only an exact
+     * zero drops it.
+     */
+    @Test
+    fun previewFeeCategoryIsAbsentForAnUnparseableFeeAndKeptForANegativeFee() {
+        val origin = resolvedOrigin()
+        val draft = seedDraft(origin)
+        val names = mapOf(feeCategoryId to "手续费")
+        assertNull(transferPreviewFeeCategoryId("not-a-number", feeCategoryId, cny))
+        val unparseable = row(previewOf(origin, draft.copy(feeText = "not-a-number", feeCategoryId = feeCategoryId), names), TransferEditField.FEE_CATEGORY)
+        assertEquals("手续费", unparseable.oldText)
+        assertEquals("无", unparseable.newText)
+        assertEquals(feeCategoryId, transferPreviewFeeCategoryId("-0.01", feeCategoryId, cny))
+        val negative = row(previewOf(origin, draft.copy(feeText = "-0.01", feeCategoryId = feeCategoryId), names), TransferEditField.FEE_CATEGORY)
+        assertEquals("手续费", negative.oldText)
+        assertEquals("手续费", negative.newText)
     }
 
     /**
