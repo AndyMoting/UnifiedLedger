@@ -1,25 +1,44 @@
 package com.unifiedledger.data
 
 import com.unifiedledger.application.CatalogAdmissionReader
+import com.unifiedledger.application.CatalogItemIdSource
+import com.unifiedledger.application.CatalogItemReferenceProbe
 import com.unifiedledger.application.ExecuteRestoreTransaction
+import com.unifiedledger.application.ExecuteTagMerchantCommand
 import com.unifiedledger.application.ExecuteVoidTransaction
 import com.unifiedledger.application.ExplicitManualSave
+import com.unifiedledger.application.MerchantAccumulationReadResult
+import com.unifiedledger.application.MonthlyBuckets
+import com.unifiedledger.application.MonthlyContributionReadResult
 import com.unifiedledger.application.QueryRecycleBin
+import com.unifiedledger.application.QueryWidgetMonthlySnapshot
 import com.unifiedledger.application.RecycleBinResult
 import com.unifiedledger.application.RecycleBinRow
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.TagMerchantCommandResult
+import com.unifiedledger.application.TagMerchantFilterCondition
+import com.unifiedledger.application.TagMerchantFilterReadResult
+import com.unifiedledger.application.TagMerchantRequestId
+import com.unifiedledger.application.TagMerchantRequestIdSource
 import com.unifiedledger.application.VoidTransactionRequest
 import com.unifiedledger.application.VoidTransactionResult
+import com.unifiedledger.application.WidgetMonthlySnapshotStatus
 import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.CatalogItemKind
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerCatalog
+import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.P705FailureCode
+import com.unifiedledger.domain.TagId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionVoidFactKind
 import com.unifiedledger.domain.VoidReason
 import com.unifiedledger.domain.VoidReasonCode
+import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.YearMonth
+import kotlinx.datetime.plus
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -295,4 +314,196 @@ class P705TransferRestorePathTest {
             assertEquals(1L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_request"))
         }
     }
+}
+
+/**
+ * P7-05 T-06 transfer-void derived-read evidence (transfer spec section 7.2 `:182-202`, sections
+ * 7.3/10 `:274`; D-228 J1): a voided three-leg manual `ACCOUNT_TRANSFER` leaves the
+ * monthly-contribution read (N2), the shared monthly widget snapshot (N3), the tag/merchant
+ * filter page (N4) and the merchant accumulation rows (N5).
+ *
+ * Every read is driven through the real SQL adapters over the file-backed fixture, and each
+ * vector carries a non-degenerate baseline (the transaction is visible on the same read before
+ * the void), so an always-empty read can never pass. The seeds use the manual transfer chain
+ * [P705Database.insertManualTransfer], never the import-created chain: the void port rejects an
+ * import creation lineage with `P705_CREATION_LINEAGE_NOT_SUPPORTED`.
+ */
+class P705TransferVoidDerivedSurfaceTest {
+    private val ledgerId = P705Fixture.ledgerId
+    private val march = YearMonth(2026, 3)
+    private val marchStart = MonthlyBuckets.monthStart(march)
+    private val aprilStart = MonthlyBuckets.monthStart(march.plus(1, DateTimeUnit.MONTH))
+
+    /** The real void port over the seeded manual transfer (no import lineage, so no lineage gate). */
+    private fun voidTransfer(
+        harness: P705Database,
+        transactionId: String,
+    ): VoidTransactionResult {
+        val ids = P705Ids("p705-t06-void-$transactionId")
+        return ExecuteVoidTransaction(harness.voidPort, ids.voidSource, fixedClock(P705Fixture.voidedAt))
+            .execute(
+                VoidTransactionRequest(
+                    ledgerId = ledgerId,
+                    requestId = ids.requestId(),
+                    transactionId = TransactionId(transactionId),
+                    reason = VoidReason(VoidReasonCode.MIS_ENTERED, "wrong transfer"),
+                    confirmation = ExplicitManualSave,
+                ),
+            )
+    }
+
+    /**
+     * N2 and N3 (spec section 7.2 `:187`/`:189`): the bounded monthly-contribution port and the
+     * monthly widget snapshot. N3 is the SAME port reused: `QueryWidgetMonthlySnapshot` performs
+     * one `MonthlyContributionReadPort.readContributions` over the same `[monthStart,
+     * nextMonthStart)` window and one `MonthlyBuckets.aggregate`, and the repo exposes no
+     * independent widget read face — `widgetAmounts`/`isCatalogConsistent` are private
+     * (`WidgetMonthlySnapshot.kt:223-269`) — so N3 is asserted on the N2 port with this note
+     * rather than claimed as a separate derived surface.
+     */
+    @Test
+    fun voidingAManualTransferRemovesItFromTheMonthlyContributionAndWidgetFaces() {
+        P705Database.create("p705-t06-monthly-").use { harness ->
+            val transactionId = "tx-transfer-monthly"
+            harness.insertManualTransfer(transactionId)
+            val catalogStore = harness.transferCatalogStore()
+            val catalogVersion = harness.bootstrapTransferCatalog().catalogVersion
+            // The bootstrap's only public version write path seeds exactly 1; a different value
+            // would mean the fixture seeded a second catalog generation the read must gate on.
+            assertEquals(1L, catalogVersion)
+            val adapter = SqlDelightMonthlyContributionReadAdapter(harness.database, catalogStore)
+
+            fun monthTransactionIds(): List<String> =
+                assertIs<MonthlyContributionReadResult.Success>(
+                    adapter.readContributions(ledgerId, marchStart, aprilStart, catalogVersion),
+                ).rows.map { it.transactionId.value }
+
+            // Non-degenerate baseline: the FEE leg is an ordinary March expense and the transfer
+            // is visible on both the port and the widget before the void.
+            assertEquals(listOf(transactionId), monthTransactionIds())
+            val widget = QueryWidgetMonthlySnapshot(adapter, fixedClock(Instant.parse("2026-03-20T05:00:00Z")))
+            val before = widget.read(ledgerId, march, catalogVersion, generation = 1)
+            assertEquals(WidgetMonthlySnapshotStatus.AVAILABLE, before.status)
+            assertEquals(200L, requireNotNull(before.amounts).netExpenseMinorUnits)
+
+            assertIs<VoidTransactionResult.Created>(voidTransfer(harness, transactionId))
+
+            // N2: after the void the March window holds no effective row. The read still
+            // SUCCEEDS — an empty month is a real zero, never a failed read.
+            assertEquals(emptyList<String>(), monthTransactionIds())
+            // N3: the widget over the same port reports the same real zero, still AVAILABLE.
+            val after = widget.read(ledgerId, march, catalogVersion, generation = 1)
+            assertEquals(WidgetMonthlySnapshotStatus.AVAILABLE, after.status)
+            assertEquals(0L, requireNotNull(after.amounts).netExpenseMinorUnits)
+            assertEquals(0L, requireNotNull(after.amounts).ordinaryIncomeMinorUnits)
+        }
+    }
+
+    /**
+     * N4 and N5 (spec section 7.2 `:190`/`:191`): the bounded tag/merchant filter page and the
+     * merchant accumulation window. The tag and merchant are created through the REAL catalog
+     * command chain (two accepted commands, each advancing the dedicated `catalog_item_version`),
+     * and the generation the reads gate on is loaded AFTER both commands from the same store —
+     * never `+1`, never the pre-command value, never the account catalog's `catalog_version`.
+     *
+     * The three annotation counts are explicit GATE assertions, not per-row targets: a void never
+     * deletes the annotation aggregate (N6-N8 history faces), so no single-column ablation is
+     * expected to flip them; they prove the annotation was really seeded and survived the void.
+     * The load-bearing predicate is the effective filter inside the two reads: dropping
+     * `is_effective = 1` turns the post-void "empty" assertions red while these counts stay green.
+     */
+    @Test
+    fun voidingAManualTransferRemovesItFromTheTagMerchantFilterAndAccumulationFaces() {
+        P705Database.create("p705-t06-tag-merchant-").use { harness ->
+            val transactionId = "tx-transfer-tag-merchant"
+            val tagId = "tag-p705-void"
+            val merchantId = "merchant-p705-void"
+            harness.insertManualTransfer(transactionId)
+            val catalogStore = harness.transferCatalogStore()
+            harness.bootstrapTransferCatalog()
+            val tagMerchantStore = SqlDelightTagMerchantCatalogStore.forPlatformConfiguredDatabase(harness.database)
+            createCatalogItem(harness, CatalogItemKind.TAG, tagId)
+            createCatalogItem(harness, CatalogItemKind.MERCHANT, merchantId)
+            val expectedCatalogItemVersion = requireNotNull(tagMerchantStore.load(ledgerId)).catalogItemVersion
+            seedAnnotation(harness, transactionId, tagId, merchantId)
+            val adapter = SqlDelightTagMerchantFilterReadAdapter(harness.database, catalogStore, tagMerchantStore)
+
+            fun pageTransactionIds(): List<String> =
+                assertIs<TagMerchantFilterReadResult.Success>(
+                    adapter.readPage(
+                        ledgerId,
+                        TagMerchantFilterCondition(tagIds = setOf(TagId(tagId)), merchantId = MerchantId(merchantId)),
+                        expectedCatalogItemVersion,
+                        10,
+                        null,
+                    ),
+                ).page.entries.map { it.row.transactionId.value }
+
+            fun accumulationTransactionIds(): List<String> =
+                assertIs<MerchantAccumulationReadResult.Success>(
+                    adapter.readMerchantRows(
+                        ledgerId,
+                        MerchantId(merchantId),
+                        marchStart,
+                        aprilStart,
+                        expectedCatalogItemVersion,
+                    ),
+                ).rows.map { it.transactionId.value }
+
+            // Non-degenerate baseline: both reads really see the annotated transfer first.
+            assertEquals(listOf(transactionId), pageTransactionIds())
+            assertEquals(listOf(transactionId), accumulationTransactionIds())
+            assertEquals(listOf(1L, 1L, 1L), annotationCounts(harness))
+
+            assertIs<VoidTransactionResult.Created>(voidTransfer(harness, transactionId))
+
+            assertEquals(emptyList<String>(), pageTransactionIds())
+            assertEquals(emptyList<String>(), accumulationTransactionIds())
+            assertEquals(listOf(1L, 1L, 1L), annotationCounts(harness))
+        }
+    }
+
+    /** Creates one tag/merchant through the REAL catalog command chain (claim/receipt/counter). */
+    private fun createCatalogItem(
+        harness: P705Database,
+        kind: CatalogItemKind,
+        itemId: String,
+    ) {
+        val executor =
+            ExecuteTagMerchantCommand(
+                commitPort = SqlDelightTagMerchantCatalogStore.forPlatformConfiguredDatabase(harness.database),
+                requestIdSource = TagMerchantRequestIdSource { TagMerchantRequestId("catalog-$itemId") },
+                idSource = CatalogItemIdSource { itemId },
+                referenceProbe = CatalogItemReferenceProbe { _, _, _ -> false },
+            )
+        val name = if (kind == CatalogItemKind.TAG) "标签-$itemId" else "商家-$itemId"
+        assertIs<TagMerchantCommandResult.Accepted>(executor.createItem(ledgerId, kind, name, 0L))
+    }
+
+    /** Appends annotation revision 1 through the same three named queries the product seam uses. */
+    private fun seedAnnotation(
+        harness: P705Database,
+        transactionId: String,
+        tagId: String,
+        merchantId: String,
+    ) {
+        harness.database.ledgerQueries.insertTransactionAnnotationRevision(
+            ledger_id = ledgerId.value,
+            transaction_id = transactionId,
+            annotation_revision = 1L,
+            observed_transaction_version_id = "$transactionId-version-1",
+            merchant_id = merchantId,
+            request_id = "request-annot-$transactionId",
+            created_at = P705Fixture.marchStatistics.toString(),
+        )
+        harness.database.ledgerQueries.insertTransactionAnnotationTag(ledgerId.value, transactionId, 1L, tagId)
+        harness.database.ledgerQueries.insertTransactionAnnotationCurrent(ledgerId.value, transactionId, 1L)
+    }
+
+    private fun annotationCounts(harness: P705Database): List<Long> =
+        listOf(
+            "SELECT count(*) FROM transaction_annotation_revision",
+            "SELECT count(*) FROM transaction_annotation_tag",
+            "SELECT count(*) FROM transaction_annotation_current",
+        ).map(harness::ledgerQueryCount)
 }
