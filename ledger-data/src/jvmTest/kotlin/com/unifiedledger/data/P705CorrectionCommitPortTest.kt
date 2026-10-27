@@ -513,32 +513,88 @@ class P705CorrectionCommitPortTest {
             harness.insertOrdinaryExpense("tx-expense-100", amountMinor = 10_000L)
 
             val ids = P705Ids("p705-unsupported")
+            val transferVersionsBefore = harness.versionCount("tx-transfer")
+            val transferRequestsBefore = harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request")
+            assertEquals(1L, transferVersionsBefore)
             assertEquals(
                 CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_FIELD_NOT_SUPPORTED),
                 correct(harness, ids, ids.requestId(), transactionId = "tx-transfer"),
             )
+            assertEquals(transferVersionsBefore, harness.versionCount("tx-transfer"))
+            assertEquals(transferRequestsBefore, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"))
+            val refundVersionsBefore = harness.versionCount("tx-refund")
+            val refundRequestsBefore = harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request")
+            assertEquals(1L, refundVersionsBefore)
             assertEquals(
                 CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED),
                 correct(harness, ids, ids.requestId(), transactionId = "tx-refund"),
             )
+            assertEquals(refundVersionsBefore, harness.versionCount("tx-refund"))
+            assertEquals(refundRequestsBefore, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"))
+            val creditVersionsBefore = harness.versionCount("tx-credit")
+            val creditRequestsBefore = harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request")
+            assertEquals(1L, creditVersionsBefore)
             assertEquals(
                 CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED),
                 correct(harness, ids, ids.requestId(), transactionId = "tx-credit"),
             )
+            assertEquals(creditVersionsBefore, harness.versionCount("tx-credit"))
+            assertEquals(creditRequestsBefore, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"))
+            val lendVersionsBefore = harness.versionCount("tx-lend")
+            val lendRequestsBefore = harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request")
+            assertEquals(1L, lendVersionsBefore)
             assertEquals(
                 CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_KIND_NOT_SUPPORTED),
                 correct(harness, ids, ids.requestId(), transactionId = "tx-lend"),
             )
+            assertEquals(lendVersionsBefore, harness.versionCount("tx-lend"))
+            assertEquals(lendRequestsBefore, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"))
+            val importedVersionsBefore = harness.versionCount("tx-imported")
+            val importedRequestsBefore = harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request")
+            assertEquals(1L, importedVersionsBefore)
             assertEquals(
                 CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_CREATION_LINEAGE_NOT_SUPPORTED),
                 correct(harness, ids, ids.requestId(), transactionId = "tx-imported"),
             )
+            assertEquals(importedVersionsBefore, harness.versionCount("tx-imported"))
+            assertEquals(importedRequestsBefore, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"))
+            // Load-bearing zero-write assertion: the call above rides the helper default CAS token
+            // (tx-expense-100-version-1), so the claim's CAS copy would find zero rows and report
+            // StaleCurrentVersion even without the lineage gate. This second request carries the
+            // target's real current token, so the lineage gate is the only thing that can reject
+            // it: without the gate the correction would append version 2, a request and a receipt.
+            val importedCurrentVersionId = harness.currentVersionId("tx-imported")
+            val importedLoadBearingVersionsBefore = harness.versionCount("tx-imported")
+            val importedLoadBearingRequestsBefore = harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request")
+            assertEquals(
+                CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_CREATION_LINEAGE_NOT_SUPPORTED),
+                correct(
+                    harness,
+                    ids,
+                    ids.requestId(),
+                    transactionId = "tx-imported",
+                    amountMinor = 10_000L,
+                    expectedVersionId = TransactionVersionId(importedCurrentVersionId),
+                    categoryId = P705Fixture.food,
+                    fundingAccountId = P705Fixture.bankA,
+                ),
+            )
+            assertEquals(importedLoadBearingVersionsBefore, harness.versionCount("tx-imported"))
+            assertEquals(importedLoadBearingRequestsBefore, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"))
+            val missingVersionsBefore = harness.versionCount("tx-missing")
+            val missingRequestsBefore = harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request")
+            assertEquals(0L, missingVersionsBefore)
             assertEquals(
                 CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_TRANSACTION_NOT_FOUND),
                 correct(harness, ids, ids.requestId(), transactionId = "tx-missing"),
             )
+            assertEquals(missingVersionsBefore, harness.versionCount("tx-missing"))
+            assertEquals(missingRequestsBefore, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"))
             // A CAS token that is not the current version — including one that never existed
             // — is the stale variant, not a not-found: the transaction is in this ledger.
+            val staleVersionsBefore = harness.versionCount("tx-expense-100")
+            val staleRequestsBefore = harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request")
+            assertEquals(1L, staleVersionsBefore)
             assertEquals(
                 CorrectTransactionVersionResult.StaleCurrentVersion,
                 correct(
@@ -549,6 +605,8 @@ class P705CorrectionCommitPortTest {
                     expectedVersionId = TransactionVersionId("version-of-another-ledger"),
                 ),
             )
+            assertEquals(staleVersionsBefore, harness.versionCount("tx-expense-100"))
+            assertEquals(staleRequestsBefore, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"))
             assertEquals(1L, harness.versionCount("tx-expense-100"))
             // Void the target and prove a voided transaction cannot be corrected (DP-8).
             assertIs<com.unifiedledger.application.VoidTransactionResult.Created>(
@@ -567,10 +625,15 @@ class P705CorrectionCommitPortTest {
                         ),
                     ),
             )
+            val voidedVersionsBefore = harness.versionCount("tx-voided")
+            val voidedRequestsBefore = harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request")
+            assertEquals(1L, voidedVersionsBefore)
             assertEquals(
                 CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_TRANSACTION_VOIDED),
                 correct(harness, ids, ids.requestId(), transactionId = "tx-voided"),
             )
+            assertEquals(voidedVersionsBefore, harness.versionCount("tx-voided"))
+            assertEquals(voidedRequestsBefore, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"))
             assertEquals(1L, harness.versionCount("tx-voided"))
             assertEquals(1L, harness.versionCount("tx-expense-100"))
         }

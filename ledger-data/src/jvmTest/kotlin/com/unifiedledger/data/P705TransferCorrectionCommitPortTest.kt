@@ -1487,13 +1487,64 @@ class P705TransferCorrectionCommitPortTest {
         }
     }
 
+    /**
+     * T-14 (transfer spec section 10 `:282`; D-228 J2): an import-created two-leg
+     * `ACCOUNT_TRANSFER` keeps its creation lineage OPEN, so a row-shape-valid note-only
+     * correction (destination present, zero fee, no fee category, current CAS token) is rejected
+     * by the lineage gate with zero writes. Without that gate the claim would succeed, the
+     * row-shape gate would pass and the CAS copy would append version 2, a correction request and
+     * a receipt; the baseline liveness below proves the lineage really is what rejects it.
+     */
+    @Test
+    fun anImportCreatedTransferCorrectionIsALineageRejectionWithZeroWrites() {
+        P705Database.create("p705-t-import-lineage-").use { harness ->
+            harness.insertImportCreatedTransfer("tx-import-transfer")
+            val ids = TransferIds("p705-t-import-lineage")
+            val versionCountBefore = harness.versionCount("tx-import-transfer")
+            val currentVersionIdBefore = harness.currentVersionId("tx-import-transfer")
+            val requestCountBefore = harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request")
+            val receiptCountBefore = harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_receipt")
+            val postingCountBefore = harness.ledgerQueryCount("SELECT count(*) FROM posting")
+            // Non-degenerate baseline: a version-1 two-leg transfer whose creation lineage exists.
+            assertEquals(1L, versionCountBefore)
+            assertEquals(2L, postingCountBefore)
+            assertEquals(
+                1L,
+                harness.ledgerQueryCount(
+                    "SELECT count(*) FROM import_confirmation " +
+                        "WHERE transaction_id = 'tx-import-transfer' AND operation_class = 'creation'",
+                ),
+            )
+
+            assertEquals(
+                CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_CREATION_LINEAGE_NOT_SUPPORTED),
+                correct(
+                    harness,
+                    ids,
+                    ids.requestId(),
+                    transactionId = "tx-import-transfer",
+                    destinationCreditMinor = 10_000L,
+                    feeMinor = 0L,
+                    feeCategoryId = null,
+                ),
+            )
+
+            assertEquals(versionCountBefore, harness.versionCount("tx-import-transfer"))
+            assertEquals(currentVersionIdBefore, harness.currentVersionId("tx-import-transfer"))
+            assertEquals(0L, requestCountBefore)
+            assertEquals(requestCountBefore, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_request"))
+            assertEquals(0L, receiptCountBefore)
+            assertEquals(receiptCountBefore, harness.ledgerQueryCount("SELECT count(*) FROM transaction_correction_receipt"))
+            assertEquals(postingCountBefore, harness.ledgerQueryCount("SELECT count(*) FROM posting"))
+        }
+    }
+
     // ---- T-04 / T-05 admission negatives on the real commit port -----------------------------
 
-    private val otherLedgerId = LedgerId("ledger-p705-other")
+    /** This file's foreign-currency fixture; [P705Fixture] only carries CNY. */
     private val usd = CurrencyUnit("USD", 2)
     private val crossLedgerBankId = AccountId("asset-cross-ledger-bank")
     private val usdBankId = AccountId("asset-bank-usd")
-    private val unownedBankId = AccountId("asset-bank-unowned")
     private val threeLevelFeeCategoryId = CategoryId("category-food-three-level")
     private val feeSubParentId = CategoryId("category-food-sub-parent")
 
@@ -1604,7 +1655,7 @@ class P705TransferCorrectionCommitPortTest {
                     feeMinor = 200L,
                     feeCategoryId = P705Fixture.food,
                     destinationAccountId = crossLedgerBankId,
-                    admissionReader = CatalogAdmissionReader { admissionCatalog(destination = realAssetBank(crossLedgerBankId, ledger = otherLedgerId)) },
+                    admissionReader = CatalogAdmissionReader { admissionCatalog(destination = realAssetBank(crossLedgerBankId, ledger = P705Fixture.otherLedgerId)) },
                 )
 
             assertRejectedWithoutFormalWrites(harness, "tx-transfer-dest-ledger", before, result)
@@ -1697,7 +1748,7 @@ class P705TransferCorrectionCommitPortTest {
                     admissionReader =
                         CatalogAdmissionReader {
                             admissionCatalog(
-                                feeCategory = Category(P705Fixture.food, otherLedgerId, P705Fixture.foodParent, P705Fixture.expenseAccount, active = true),
+                                feeCategory = Category(P705Fixture.food, P705Fixture.otherLedgerId, P705Fixture.foodParent, P705Fixture.expenseAccount, active = true),
                             )
                         },
                 )
