@@ -52,7 +52,7 @@ data class OrdinaryCorrectionPostingIds(
  * Restore revalidation dispatches by kind: for a transfer version the domain's
  * `revalidateTransferVersionReferences` decides (endpoints, fee category and fee posting
  * account), while `EXPENSE`/`INCOME` keep the first slice's category checks. The DP-10
- * placeholder narrowing and the D-113 composition are implemented in the commit port.
+ * placeholder narrowing and the D-113 composition are implemented in the correction commit port.
  */
 fun isP705CorrectionSupportedKind(kind: TransactionKind): Boolean =
     kind == TransactionKind.EXPENSE ||

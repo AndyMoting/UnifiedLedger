@@ -356,7 +356,7 @@ Python 分片：`python-shards`（矩阵 1/2）按 `tools/ci/python-shards.txt`�
 - 所有 tracked 变更通过 Pull Request 合入 `main`：任务分支推送后创建 PR，说明包含目的、行为变化、验证结果和适用决定编号。
 - 分支保护要求 required checks（`Kotlin tests`、`Android compile`、`Python tests`、`Trace scan`）全部通过且分支为最新（strict up-to-date）；ci.yml job name 改名时必须同步更新分支保护配置。
 - 合并前同步最新 `main`，解决冲突；本机按「本机与 CI 的验证分工」执行快速反馈检查，聚合检查由 PR 的那一次 run 承担。
-- 合并后由守卫 workflow（`Merge tree guard`）自动执行同一节「合并树 == PR tip 树」的核对，不一致时自动重跑全量；手工 `git rev-parse` 命令保留为兜底与解释，确认等价后再继续后续工作。
+- 合并后由守卫 workflow（`Merge tree guard`）自动执行同一节「合并树 == PR tip 树」的核对：merge commit 按第二父比对，树不一致时重跑全量；squash 提交在 `main` 上没有第二父，判据直接走派发分支，于是每次合并都会执行一次全量 CI。手工 `git rev-parse` 命令保留为兜底与解释，确认等价后再继续后续工作。
 - 默认使用 squash merge（`gh pr merge --squash`），一个 PR 落成 `main` 上一个可独立理解的提交。
 - 只有确需保留分支内多个可独立理解的提交时才使用 merge commit（`gh pr merge --merge`）；不使用 rebase merge 合入 `main`。
 - 禁止强推或删除 `main`。
