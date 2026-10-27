@@ -38,9 +38,9 @@ $env:GRADLE_OPTS='-Xmx1024m'
 
 ## 本机与 CI 的验证分工
 
-默认工作流是 PR 门禁流：在短期任务分支上开发，推送后创建 Pull Request（`gh pr create`），required checks（`.github/workflows/ci.yml` 的 `Kotlin tests`、`Android compile`、`Python tests`、`Trace scan` 四个 job）全部通过后以 merge commit 合并（`gh pr merge --merge`）。job name 与分支保护规则强耦合，改名必须同步更新分支保护配置。`ci.yml` 只在 `pull_request` 上触发（另留 `workflow_dispatch` 供人工重跑），**合并动作本身不再产生第二遍全量运行**。
+默认工作流是 PR 门禁流：在短期任务分支上开发，推送后创建 Pull Request（`gh pr create`），required checks（`.github/workflows/ci.yml` 的 `Kotlin tests`、`Android compile`、`Python tests`、`Trace scan` 四个 job）全部通过后以 squash merge 合并（`gh pr merge --squash`）。job name 与分支保护规则强耦合，改名必须同步更新分支保护配置。`ci.yml` 只在 `pull_request` 上触发（另留 `workflow_dispatch` 供人工重跑）；合并推送 `main` 后由 `Merge tree guard` 兜底：它在每次 push 到 `main` 时运行，遇线性或 squash 提交时由它派发全量 CI，因此合并动作仍会带来一次全量运行。
 
-本机只保留快速反馈：受影响模块的聚焦定向测试、`project_docs`，以及可选的 `bash tools/ci/trace-scan.sh` 本地预检。完整 `check`、ktlint、Android/KMP 编译、Debug APK、完整 Python 测试、Desktop build、migration verifier 与 Windows JVM 测试由 CI 在资源更充足的 runner 上执行。PR run 检出并验证的是该 PR 的**预览合并树**（`Merge <head> into <base>`），因此发布证据是「合并树与该 PR tip 树逐字节相同」，合并后立即核对：
+本机只保留快速反馈：`project_docs`，以及可选的 `bash tools/ci/trace-scan.sh` 本地预检；受影响模块的聚焦定向测试归 CI。完整 `check`、ktlint、Android/KMP 编译、Debug APK、完整 Python 测试、Desktop build、migration verifier 与 Windows JVM 测试由 CI 在资源更充足的 runner 上执行。PR run 检出并验证的是该 PR 的**预览合并树**（`Merge <head> into <base>`），因此发布证据是「合并树与该 PR tip 树逐字节相同」，合并后立即核对：
 
 ```bash
 git rev-parse "<merge-sha>^{tree}" "<pr-tip-sha>^{tree}"
@@ -357,13 +357,13 @@ Python 分片：`python-shards`（矩阵 1/2）按 `tools/ci/python-shards.txt`�
 - 分支保护要求 required checks（`Kotlin tests`、`Android compile`、`Python tests`、`Trace scan`）全部通过且分支为最新（strict up-to-date）；ci.yml job name 改名时必须同步更新分支保护配置。
 - 合并前同步最新 `main`，解决冲突；本机按「本机与 CI 的验证分工」执行快速反馈检查，聚合检查由 PR 的那一次 run 承担。
 - 合并后由守卫 workflow（`Merge tree guard`）自动执行同一节「合并树 == PR tip 树」的核对，不一致时自动重跑全量；手工 `git rev-parse` 命令保留为兜底与解释，确认等价后再继续后续工作。
-- 默认使用 merge commit（`gh pr merge --merge`），保留可独立理解的提交和分支边界。
-- 只有提交确实琐碎且无法独立理解时才使用 squash merge；不使用 rebase merge 合入 `main`。
+- 默认使用 squash merge（`gh pr merge --squash`），一个 PR 落成 `main` 上一个可独立理解的提交。
+- 只有确需保留分支内多个可独立理解的提交时才使用 merge commit（`gh pr merge --merge`）；不使用 rebase merge 合入 `main`。
 - 禁止强推或删除 `main`。
 
 ## 提交前检查
 
-1. 运行受影响模块的聚焦测试（聚合检查、ktlint、迁移校验与 Windows JVM 测试由 CI 承担）。
+1. 本机不跑测试：受影响模块的聚焦测试、聚合检查、ktlint、迁移校验与 Windows JVM 测试全部由 CI 承担。
 2. 运行正式文档验证。
 3. 使用 `git diff --check` 检查空白错误，并复核暂存 diff 和工作树状态。
 4. 复核提交信息和跟踪文件没有个人数据、本机信息、外部实现、临时计划、会话内容或开发过程署名；可用 `bash tools/ci/trace-scan.sh` 做本地预检。
