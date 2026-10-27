@@ -3,6 +3,7 @@ package com.unifiedledger.data
 import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.CatalogAdmissionReader
+import com.unifiedledger.application.CatalogAuthority
 import com.unifiedledger.application.ConfirmationId
 import com.unifiedledger.application.CorrectTransactionVersionIdSource
 import com.unifiedledger.application.CorrectTransactionVersionIds
@@ -228,6 +229,33 @@ internal class P705Database private constructor(
                     val values = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
                     app.cash.sqldelight.db.QueryResult
                         .Value(values)
+                },
+                0,
+            ).value
+
+    /**
+     * A whole-row snapshot of an arbitrary query: every row is the list of its columns in the
+     * SELECT's own order, with SQL NULL preserved as `null`. The T-07 history vector compares
+     * every column value across a void, not merely row counts: a count-only check is blind to the
+     * same number of rows being rewritten in place.
+     */
+    fun ledgerQueryRows(
+        sql: String,
+        columnCount: Int,
+    ): List<List<String?>> =
+        driver
+            .executeQuery(
+                null,
+                sql,
+                { cursor ->
+                    val rows =
+                        buildList {
+                            while (cursor.next().value) {
+                                add((0 until columnCount).map { cursor.getString(it) })
+                            }
+                        }
+                    app.cash.sqldelight.db.QueryResult
+                        .Value(rows)
                 },
                 0,
             ).value
@@ -686,6 +714,131 @@ internal class P705Database private constructor(
         )
     }
 
+    /**
+     * One manual three-leg `ACCOUNT_TRANSFER` chain in the creation factory's frozen leg order
+     * (source debit, destination credit, fee on the fee category's EXPENSE posting account),
+     * version 1, one posting set and the current-version pointer. The version rides
+     * `insertTransactionVersion`, so the statistics projection is written by the same statement
+     * every product writer uses. No import creation lineage is written: the void port's lineage
+     * gate must not reject this seed.
+     */
+    fun insertManualTransfer(
+        transactionId: String,
+        sourceAccount: AccountId = P705Fixture.bankA,
+        destinationAccount: AccountId = P705Fixture.bankB,
+        destinationCreditMinor: Long = 10_000L,
+        feeMinor: Long = 200L,
+        note: String? = "rent",
+    ) {
+        val postingSetId = "$transactionId-posting-set-1"
+        val versionId = "$transactionId-version-1"
+        database.ledgerQueries.insertTransaction(transactionId, P705Fixture.ledgerId.value, TransactionKind.ACCOUNT_TRANSFER.name)
+        database.ledgerQueries.insertPostingSet(postingSetId, P705Fixture.ledgerId.value)
+        database.ledgerQueries.insertTransactionVersion(
+            versionId,
+            transactionId,
+            P705Fixture.ledgerId.value,
+            1L,
+            postingSetId,
+            P705Fixture.marchStatistics.toString(),
+            P705Fixture.marchStatistics.toString(),
+            P705Fixture.marchStatistics.toString(),
+            note,
+        )
+        val legs =
+            buildList {
+                add(sourceAccount to -(destinationCreditMinor + feeMinor))
+                add(destinationAccount to destinationCreditMinor)
+                if (feeMinor > 0L) add(P705Fixture.expenseAccount to feeMinor)
+            }
+        legs.forEachIndexed { index, (accountId, amount) ->
+            database.ledgerQueries.insertPosting(
+                "$transactionId-posting-$index",
+                postingSetId,
+                P705Fixture.ledgerId.value,
+                index.toLong(),
+                accountId.value,
+                amount,
+                P705Fixture.cny.code,
+                P705Fixture.cny.precision.toLong(),
+            )
+        }
+        database.ledgerQueries.insertTransactionCurrentVersion(
+            transactionId,
+            P705Fixture.ledgerId.value,
+            versionId,
+        )
+    }
+
+    /**
+     * The product claim-first request/receipt pair of one manual transfer, self-consistent with
+     * the chain [insertManualTransfer] seeds for the same transaction: source/destination align
+     * legs 0/1, `destination_credit_minor` aligns leg 1, `fee_minor` aligns leg 2 and
+     * `fee_category_id` is the EXPENSE category that owns leg 2's posting account. The claim
+     * query carries `ON CONFLICT DO NOTHING`; the bare receipt insert is the real duplicate
+     * defence, exactly as on the product path.
+     *
+     * Difference from the product path: the product claims, creates the chain and writes the
+     * receipt inside one `database.transactionWithResult` (`SqlDelightConfirmedManualTransferCommitPort.kt:50-98`).
+     * This helper seeds an already-existing chain on a fresh per-test single-threaded database, so
+     * the two writes are sequential and unwrapped; a failure between them would leave a request
+     * without its receipt, which is exactly what the per-test database discards.
+     */
+    fun insertManualTransferRequestAndReceipt(
+        transactionId: String,
+        requestId: String,
+        sourceAccount: AccountId = P705Fixture.bankA,
+        destinationAccount: AccountId = P705Fixture.bankB,
+        destinationCreditMinor: Long = 10_000L,
+        feeMinor: Long = 200L,
+        feeCategoryId: CategoryId? = P705Fixture.food,
+        occurredAt: Instant = P705Fixture.marchStatistics,
+        note: String = "rent",
+    ) {
+        database.ledgerQueries.claimManualTransferRequest(
+            ledger_id = P705Fixture.ledgerId.value,
+            request_id = requestId,
+            source_account_id = sourceAccount.value,
+            destination_account_id = destinationAccount.value,
+            destination_credit_minor = destinationCreditMinor,
+            currency_code = P705Fixture.cny.code,
+            currency_precision = P705Fixture.cny.precision.toLong(),
+            fee_minor = feeMinor,
+            fee_category_id = feeCategoryId?.value,
+            occurred_at = occurredAt.toString(),
+            note = note,
+            confirmation_marker = "explicit_manual_save",
+        )
+        database.ledgerQueries.insertConfirmedTransferReceipt(
+            P705Fixture.ledgerId.value,
+            requestId,
+            "$transactionId-creation-confirmation",
+            transactionId,
+        )
+    }
+
+    /**
+     * The platform-configured account-catalog store the read adapters consume as their
+     * `CatalogAuthorityReader` (the monthly read cannot take the tag/merchant store: its
+     * generation is the independent `catalog_item_version`, not `catalog_version`).
+     */
+    fun transferCatalogStore(): SqlDelightCatalogStore = SqlDelightCatalogStore.forPlatformConfiguredDatabase(database)
+
+    /**
+     * Bootstraps [transferCatalogSeed] and returns the seeded authority. Bootstrap inserts
+     * `catalog_version = 1` on the only public write path, and fails closed on any posting
+     * account the fixture references but the seed omits.
+     */
+    fun bootstrapTransferCatalog(): CatalogAuthority {
+        val store = transferCatalogStore()
+        return when (val result = store.bootstrap(P705Fixture.ledgerId, transferCatalogSeed())) {
+            is CatalogBootstrapResult.Seeded -> result.authority
+            is CatalogBootstrapResult.AlreadyInitialized -> result.authority
+            CatalogBootstrapResult.UnknownReference ->
+                error("the transfer catalog seed must resolve every posting account the fixture references")
+        }
+    }
+
     /** One manual `EXPENSE` chain: transaction, version 1, posting set, two postings, pointer. */
     fun insertOrdinaryExpense(
         transactionId: String,
@@ -845,3 +998,28 @@ internal class P705Database private constructor(
     /** The owned file path, so a test can open a second connection for a concurrency vector. */
     val filePath: Path get() = path
 }
+
+/**
+ * The transfer-shaped account/category catalog seed: the same four accounts and four categories
+ * as [P705Fixture.catalog], expressed as the product bootstrap seed so the read adapters load a
+ * real `catalog_version = 1` authority covering every posting account the three-leg transfer
+ * fixture references. The monthly read fails closed on a posting account absent from the catalog
+ * and on any unresolved product reference, so the seed must stay complete.
+ */
+internal fun transferCatalogSeed(): CatalogSeed =
+    CatalogSeed(
+        accounts =
+            listOf(
+                CatalogSeedAccount(P705Fixture.bankA, "银行A", AccountKind.ASSET, P705Fixture.cny, ownedByUser = true, realAccount = true, hidden = false),
+                CatalogSeedAccount(P705Fixture.bankB, "银行B", AccountKind.ASSET, P705Fixture.cny, ownedByUser = true, realAccount = true, hidden = false),
+                CatalogSeedAccount(P705Fixture.expenseAccount, "餐饮支出", AccountKind.EXPENSE, P705Fixture.cny, ownedByUser = false, realAccount = false, hidden = false),
+                CatalogSeedAccount(P705Fixture.incomeAccount, "收入", AccountKind.INCOME, P705Fixture.cny, ownedByUser = false, realAccount = false, hidden = false),
+            ),
+        categories =
+            listOf(
+                CatalogSeedCategory(P705Fixture.foodParent, "餐饮", CategoryKind.EXPENSE, parentId = null, postingAccountId = null),
+                CatalogSeedCategory(P705Fixture.food, "餐饮-午餐", CategoryKind.EXPENSE, parentId = P705Fixture.foodParent, postingAccountId = P705Fixture.expenseAccount),
+                CatalogSeedCategory(P705Fixture.salaryParent, "收入", CategoryKind.INCOME, parentId = null, postingAccountId = null),
+                CatalogSeedCategory(P705Fixture.salary, "收入-工资", CategoryKind.INCOME, parentId = P705Fixture.salaryParent, postingAccountId = P705Fixture.incomeAccount),
+            ),
+    )

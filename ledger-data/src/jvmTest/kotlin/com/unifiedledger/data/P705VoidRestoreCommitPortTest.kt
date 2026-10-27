@@ -715,6 +715,121 @@ class P705VoidRestoreCommitPortTest {
         }
     }
 
+    /**
+     * T-07 (transfer spec section 10 `:275`, sections 7.4/1.3; D-228 J1): voiding a three-leg
+     * manual `ACCOUNT_TRANSFER` removes it from the effective surfaces without rewriting a
+     * single historical row. The existing EXPENSE vector above reads back only
+     * `confirmed_expense_receipt`, so it cannot stand in for the transfer seed; this vector
+     * seeds the manual-transfer request/receipt pair and snapshots five tables as whole rows.
+     *
+     * The whole-row snapshots are the load-bearing assertion: any in-place column rewrite, row
+     * deletion or row replacement across `transaction_version`, `posting_set`, `posting`,
+     * `manual_transfer_request` or `confirmed_transfer_receipt` turns them red, which a count-only
+     * check would miss (the same number of rows can be rewritten in place).
+     *
+     * The version and posting counts (`1`/`1`/`3`) and `versionCount == 1` are explicit GATE
+     * assertions, not per-row targets: the void port never appends a version or a posting, so no
+     * single-column ablation is expected to flip them; they exist to prove the baseline is
+     * non-degenerate (the transfer really has its version, posting set and three legs).
+     */
+    @Test
+    fun voidingAManualTransferKeepsEveryHistoricalAndRequestRowValueIdentical() {
+        P705Database.create("p705-void-transfer-history-").use { harness ->
+            val transactionId = "tx-transfer-void-history"
+            val requestId = "request-transfer-void-history"
+            val versionId = "$transactionId-version-1"
+            harness.insertManualTransfer(transactionId)
+            harness.insertManualTransferRequestAndReceipt(transactionId, requestId)
+
+            val versionColumns =
+                "version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, " +
+                    "statistics_at, effective_at, note, confirmation_id, statistics_at_epoch_nanos"
+            val postingSetColumns = "posting_set_id, ledger_id"
+            val postingColumns =
+                "posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, " +
+                    "currency_code, currency_precision"
+            val requestColumns =
+                "ledger_id, request_id, source_account_id, destination_account_id, destination_credit_minor, " +
+                    "currency_code, currency_precision, fee_minor, fee_category_id, occurred_at, note, " +
+                    "confirmation_marker, annotation_tag_ids, annotation_merchant_id"
+            val receiptColumns = "ledger_id, request_id, confirmation_id, transaction_id"
+
+            fun versions(): List<List<String?>> = harness.ledgerQueryRows("SELECT $versionColumns FROM transaction_version ORDER BY version_id", 11)
+
+            fun postingSets(): List<List<String?>> = harness.ledgerQueryRows("SELECT $postingSetColumns FROM posting_set ORDER BY posting_set_id", 2)
+
+            fun postings(): List<List<String?>> = harness.ledgerQueryRows("SELECT $postingColumns FROM posting ORDER BY posting_id", 8)
+
+            fun requests(): List<List<String?>> = harness.ledgerQueryRows("SELECT $requestColumns FROM manual_transfer_request ORDER BY request_id", 14)
+
+            fun receipts(): List<List<String?>> = harness.ledgerQueryRows("SELECT $receiptColumns FROM confirmed_transfer_receipt ORDER BY request_id", 4)
+
+            // Non-degenerate baseline: one version on one posting set with three legs, plus the
+            // product request/receipt pair the manual transfer path wrote for the same chain.
+            assertEquals(1, versions().size, "baseline: the transfer owns exactly one transaction_version")
+            assertEquals(1, postingSets().size, "baseline: the transfer owns exactly one posting_set")
+            assertEquals(3, postings().size, "baseline: the three-leg transfer has exactly three postings")
+            assertEquals(1, requests().size, "baseline: exactly one manual_transfer_request")
+            assertEquals(1, receipts().size, "baseline: exactly one confirmed_transfer_receipt")
+            assertEquals(1L, harness.versionCount(transactionId))
+            assertEquals(versionId, harness.currentVersionId(transactionId))
+            // The request row is self-consistent with the seeded chain: source/destination align
+            // legs 0/1, the credit aligns leg 1, the fee aligns leg 2 and the fee category owns
+            // leg 2's EXPENSE posting account.
+            assertEquals(
+                listOf(
+                    P705Fixture.ledgerId.value,
+                    requestId,
+                    P705Fixture.bankA.value,
+                    P705Fixture.bankB.value,
+                    "10000",
+                    P705Fixture.cny.code,
+                    P705Fixture.cny.precision.toString(),
+                    "200",
+                    P705Fixture.food.value,
+                    P705Fixture.marchStatistics.toString(),
+                    "rent",
+                    "explicit_manual_save",
+                    null,
+                    null,
+                ),
+                requests().single(),
+            )
+            val recordBefore = requireNotNull(harness.readAdapter.findManualTransferByRequest(ledgerId, RequestId(requestId)))
+
+            val versionBefore = versions()
+            val postingSetBefore = postingSets()
+            val postingBefore = postings()
+            val requestBefore = requests()
+            val receiptBefore = receipts()
+
+            val ids = P705Ids("p705-void-transfer-history")
+            assertIs<VoidTransactionResult.Created>(void(harness, ids, ids.requestId(), transactionId = transactionId))
+
+            // T-07: every column of every historical/source row is value-identical after the void.
+            assertEquals(versionBefore, versions())
+            assertEquals(postingSetBefore, postingSets())
+            assertEquals(postingBefore, postings())
+            assertEquals(requestBefore, requests())
+            assertEquals(receiptBefore, receipts())
+            assertEquals(1L, harness.versionCount(transactionId))
+            assertEquals(versionId, harness.currentVersionId(transactionId))
+            assertEquals(
+                recordBefore,
+                requireNotNull(harness.readAdapter.findManualTransferByRequest(ledgerId, RequestId(requestId))),
+            )
+            // Exactly one void fact was appended, and only the derived effective state moved.
+            assertEquals(1L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_void_fact"))
+            assertEquals(
+                0L,
+                harness.ledgerQueryCount(
+                    "SELECT is_effective FROM transaction_effective_state " +
+                        "WHERE ledger_id = '${ledgerId.value}' AND transaction_id = '$transactionId'",
+                ),
+            )
+        }
+    }
+
     private fun catalogWith(
         accounts: List<com.unifiedledger.domain.Account> = catalog.accounts,
         categories: List<com.unifiedledger.domain.Category> = catalog.categories,
