@@ -49,10 +49,10 @@ data class OrdinaryCorrectionPostingIds(
  * it, and no port writes its own copy - so opening the transfer row here also opens the
  * transfer void (the void plan carries no kind-specific validation of its own).
  *
- * Restore stays ordinary in the transfer wiring batch (intermediate state, registered): a
- * transfer restore still runs the `OrdinaryVersionRevalidation` EXPENSE/INCOME hardcode, so it
- * fails closed on the category lookup rather than restoring; the transfer-aware replacement,
- * the DP-10 placeholder narrowing and the D-113 combination are slice 3 and untouched here.
+ * Restore revalidation dispatches by kind: for a transfer version the domain's
+ * `revalidateTransferVersionReferences` decides (endpoints, fee category and fee posting
+ * account), while `EXPENSE`/`INCOME` keep the first slice's category checks. The DP-10
+ * placeholder narrowing and the D-113 composition are implemented in the commit port.
  */
 fun isP705CorrectionSupportedKind(kind: TransactionKind): Boolean =
     kind == TransactionKind.EXPENSE ||

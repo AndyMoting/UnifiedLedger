@@ -793,8 +793,7 @@ class P705TransferCorrectionCommitPortTest {
             // candidate A): the version rows stay while every surface asserted below drops the
             // whole chain, and the bystander expense keeps the ledger itself non-degenerate.
             // Faces N2-N5 (the monthly-contribution, widget, and tag/merchant adapters) are NOT
-            // asserted here - they need a bootstrapped catalog store and extra adapters - and
-            // remain open for T-06; this vector covers #1-#5, N1, N10 and the monthly use case.
+            // asserted here; this vector covers #1-#5, N1, N10 and the monthly use case.
             assertEquals(1L, harness.versionCount("tx-transfer-voided"))
             // Faces #1-#3: the input row set.
             assertEquals(listOf("tx-expense-bystander"), harness.readAdapter.loadLedgerEntryRows(ledgerId).map { it.transactionId.value })
