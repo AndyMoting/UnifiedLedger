@@ -1,0 +1,513 @@
+package com.unifiedledger.ui
+
+import com.unifiedledger.application.CatalogSnapshotView
+import com.unifiedledger.application.CategoryTreeView
+import com.unifiedledger.application.CreationEntry
+import com.unifiedledger.application.ExplicitManualSave
+import com.unifiedledger.application.ExplicitlyConfirmedTransactionCorrection
+import com.unifiedledger.application.ManageableAccountView
+import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.TransactionDetail
+import com.unifiedledger.application.TransactionDetailLeg
+import com.unifiedledger.application.TransactionReconciliationProjection
+import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.AccountKind
+import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CategoryKind
+import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.Money
+import com.unifiedledger.domain.PostingId
+import com.unifiedledger.domain.TransactionId
+import com.unifiedledger.domain.TransactionKind
+import com.unifiedledger.domain.TransactionVersionId
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.time.Instant
+
+/**
+ * P7-05 transfer correction slice 5a1 vectors (D-156, D-228; spec sections 3 and 8.3). The surface
+ * itself is not wired in this slice, so the load-bearing decisions are the pure functions under test:
+ * the leg-shape origin resolver, the seed draft, the seven-line difference preview, the target-side
+ * fee-category derivation, and the request builder with its frozen five `null` branches.
+ *
+ * All data is anonymous synthetic: a synthetic ledger, three synthetic accounts (one hidden fee
+ * posting account), two synthetic categories, one transaction and three legs. Assertions are single
+ * lines and never compare a multi-line literal; the suite asserts on synthetic note literals in value
+ * equality checks only and never passes a note as an assertion message.
+ *
+ * Not signed off by this suite: the 05.D product loop (transfer correction/void wiring and Android
+ * manual acceptance) and the `CorrectTransactionVersion.kt:75-79` resolver residual, which stay with
+ * slices 5a2/5b.
+ */
+class P503TransferCorrectionTest {
+    private val ledgerId = LedgerId("ledger-local-test")
+    private val cny = CurrencyUnit("CNY", 2)
+    private val jpy = CurrencyUnit("JPY", 0)
+    private val requestId = RequestId("request-1")
+    private val transactionId = TransactionId("tx-1")
+    private val versionId = TransactionVersionId("version-1")
+    private val statisticsAt = Instant.parse("2026-03-15T02:00:00Z")
+
+    private val walletId = AccountId("asset-wallet")
+    private val bankId = AccountId("asset-bank")
+    private val cashId = AccountId("asset-cash")
+    private val feePostingAccountId = AccountId("expense-fee")
+    private val otherExpenseAccountId = AccountId("expense-other")
+    private val feeCategoryId = CategoryId("category-fee")
+    private val foodCategoryId = CategoryId("category-food")
+
+    // ---- fixtures ----
+
+    private val defaultCategories =
+        listOf(
+            CategoryTreeView(
+                categoryId = feeCategoryId,
+                parentId = null,
+                name = "手续费",
+                kind = CategoryKind.EXPENSE,
+                active = true,
+                postingAccountId = feePostingAccountId,
+            ),
+            CategoryTreeView(
+                categoryId = foodCategoryId,
+                parentId = null,
+                name = "餐饮",
+                kind = CategoryKind.EXPENSE,
+                active = true,
+                postingAccountId = null,
+            ),
+        )
+
+    private fun snapshot(categories: List<CategoryTreeView> = defaultCategories): CatalogSnapshotView =
+        CatalogSnapshotView(
+            catalogVersion = 1L,
+            manageableAccounts =
+                listOf(
+                    ManageableAccountView(walletId, "零钱", AccountKind.ASSET, cny, active = true, balanceMinorUnits = null),
+                    ManageableAccountView(bankId, "储蓄", AccountKind.ASSET, cny, active = true, balanceMinorUnits = null),
+                    ManageableAccountView(cashId, "现金", AccountKind.ASSET, cny, active = true, balanceMinorUnits = null),
+                ),
+            categories = categories,
+        )
+
+    private fun leg(
+        postingId: String,
+        accountId: AccountId,
+        amountMinorUnits: Long,
+        currency: CurrencyUnit = cny,
+    ): TransactionDetailLeg =
+        TransactionDetailLeg(
+            postingId = PostingId(postingId),
+            accountId = accountId,
+            accountName = accountId.value,
+            amount = Money.ofMinor(amountMinorUnits, currency),
+            categoryName = null,
+        )
+
+    private fun transferDetail(
+        legs: List<TransactionDetailLeg>,
+        kind: TransactionKind = TransactionKind.ACCOUNT_TRANSFER,
+        note: String? = "old note",
+    ): TransactionDetail =
+        TransactionDetail(
+            ledgerId = ledgerId,
+            transactionId = transactionId,
+            currentVersionId = versionId,
+            kind = kind,
+            occurredAt = statisticsAt,
+            statisticsAt = statisticsAt,
+            note = note,
+            legs = legs,
+            creationEntry = CreationEntry.MANUAL_CREATED,
+            reconciliation = TransactionReconciliationProjection(legs = emptyList(), rollup = null),
+        )
+
+    /** The canonical three-leg transfer: source −102.00, destination +100.00, fee +2.00. */
+    private fun feeBearingDetail(): TransactionDetail =
+        transferDetail(
+            listOf(
+                leg("posting-source", walletId, -10_200L),
+                leg("posting-destination", bankId, 10_000L),
+                leg("posting-fee", feePostingAccountId, 200L),
+            ),
+        )
+
+    /** The two-leg fee-less transfer: source −100.00, destination +100.00. */
+    private fun feeLessDetail(): TransactionDetail =
+        transferDetail(
+            listOf(
+                leg("posting-source", walletId, -10_000L),
+                leg("posting-destination", bankId, 10_000L),
+            ),
+        )
+
+    private fun resolvedOrigin(
+        detail: TransactionDetail = feeBearingDetail(),
+        catalog: CatalogSnapshotView = snapshot(),
+    ): TransferCorrectionOrigin = assertNotNull(transferCorrectionOriginFromDetail(detail, catalog))
+
+    private fun seedDraft(origin: TransferCorrectionOrigin): TransferCorrectionDraft = transferCorrectionDraftFromOrigin(origin)
+
+    private fun previewOf(
+        origin: TransferCorrectionOrigin,
+        draft: TransferCorrectionDraft,
+        categoryNames: Map<CategoryId, String> = emptyMap(),
+        accountNames: Map<AccountId, String> = emptyMap(),
+    ): TransferEditPreview = transferCorrectionPreview(origin, draft, categoryNames, accountNames)
+
+    private fun row(
+        preview: TransferEditPreview,
+        field: TransferEditField,
+    ): TransferEditDiffLine = preview.fields.first { it.field == field }
+
+    private fun request(
+        origin: TransferCorrectionOrigin,
+        draft: TransferCorrectionDraft,
+        statisticsAt: Instant = Instant.parse("2026-04-01T00:00:00Z"),
+    ): ExplicitlyConfirmedTransactionCorrection? = transferCorrectionRequest(ledgerId, requestId, origin, draft, statisticsAt)
+
+    // ---- T5-01..T5-03: origin resolution ----
+
+    @Test
+    fun originResolvesTheSourceDestinationAndFeeLegs() {
+        val origin = assertNotNull(transferCorrectionOriginFromDetail(feeBearingDetail(), snapshot()))
+        assertEquals(transactionId, origin.transactionId)
+        assertEquals(versionId, origin.currentVersionId)
+        assertEquals(statisticsAt, origin.statisticsAt)
+        assertEquals("old note", origin.note)
+        assertEquals(cny, origin.currency)
+        assertEquals(walletId, origin.sourceAccountId)
+        assertEquals(bankId, origin.destinationAccountId)
+        assertEquals(10_000L, origin.destinationCreditMinorUnits)
+        assertEquals(200L, origin.feeMinorUnits)
+        assertEquals(feeCategoryId, origin.feeCategoryId)
+    }
+
+    @Test
+    fun originResolvesAFeeLessTransferToZeroFeeAndNoCategory() {
+        val origin = assertNotNull(transferCorrectionOriginFromDetail(feeLessDetail(), snapshot()))
+        assertEquals(0L, origin.feeMinorUnits)
+        assertNull(origin.feeCategoryId)
+    }
+
+    @Test
+    fun originIsAbsentWhenTheLegShapeIsNotATransfer() {
+        // (a) both legs positive: no negative ASSET leg is a source.
+        assertNull(transferCorrectionOriginFromDetail(transferDetail(listOf(leg("posting-a", walletId, 10_000L), leg("posting-b", bankId, 10_000L))), snapshot()))
+        // (b) both legs negative: no positive ASSET leg is a destination.
+        assertNull(transferCorrectionOriginFromDetail(transferDetail(listOf(leg("posting-a", walletId, -10_000L), leg("posting-b", bankId, -10_000L))), snapshot()))
+        // (c) two negative ASSET legs plus one positive: the source leg is ambiguous.
+        assertNull(
+            transferCorrectionOriginFromDetail(
+                transferDetail(listOf(leg("posting-a", walletId, -10_000L), leg("posting-b", bankId, -10_000L), leg("posting-c", cashId, 10_000L))),
+                snapshot(),
+            ),
+        )
+        // (d) two positive ASSET legs and no fee leg: the destination leg is ambiguous.
+        assertNull(
+            transferCorrectionOriginFromDetail(
+                transferDetail(listOf(leg("posting-a", cashId, -10_000L), leg("posting-b", walletId, 9_000L), leg("posting-c", bankId, 1_000L))),
+                snapshot(),
+            ),
+        )
+        // (e) a third leg whose account is no category's posting account: unexplained positive leg.
+        assertNull(
+            transferCorrectionOriginFromDetail(
+                transferDetail(listOf(leg("posting-a", walletId, -10_200L), leg("posting-b", bankId, 10_000L), leg("posting-c", otherExpenseAccountId, 200L))),
+                snapshot(),
+            ),
+        )
+        // (f) the fee leg carries another currency than the destination leg.
+        assertNull(
+            transferCorrectionOriginFromDetail(
+                transferDetail(listOf(leg("posting-a", walletId, -10_200L), leg("posting-b", bankId, 10_000L), leg("posting-c", feePostingAccountId, 200L, jpy))),
+                snapshot(),
+            ),
+        )
+        // (g) source and destination are the same account.
+        assertNull(transferCorrectionOriginFromDetail(transferDetail(listOf(leg("posting-a", walletId, -10_200L), leg("posting-b", walletId, 10_000L))), snapshot()))
+        // (h) the fee account maps to two categories: the fee category is ambiguous.
+        assertNull(
+            transferCorrectionOriginFromDetail(
+                feeBearingDetail(),
+                snapshot(
+                    listOf(
+                        CategoryTreeView(feeCategoryId, parentId = null, name = "手续费", kind = CategoryKind.EXPENSE, active = true, postingAccountId = feePostingAccountId),
+                        CategoryTreeView(CategoryId("category-fee-2"), parentId = null, name = "手续费二", kind = CategoryKind.EXPENSE, active = true, postingAccountId = feePostingAccountId),
+                    ),
+                ),
+            ),
+        )
+        // (i) an ordinary EXPENSE detail: its negative leg is not a manageable ASSET account.
+        assertNull(
+            transferCorrectionOriginFromDetail(
+                transferDetail(listOf(leg("posting-a", feePostingAccountId, -10_000L), leg("posting-b", bankId, 10_000L)), kind = TransactionKind.EXPENSE),
+                snapshot(),
+            ),
+        )
+        // (j) four legs: the shape is neither two nor three legs.
+        assertNull(
+            transferCorrectionOriginFromDetail(
+                transferDetail(
+                    listOf(
+                        leg("posting-a", walletId, -10_400L),
+                        leg("posting-b", bankId, 10_000L),
+                        leg("posting-c", feePostingAccountId, 200L),
+                        leg("posting-d", cashId, 200L),
+                    ),
+                ),
+                snapshot(),
+            ),
+        )
+    }
+
+    // ---- T5-04..T5-06: seed draft and preview ----
+
+    @Test
+    fun draftFromOriginShowsNoDifference() {
+        val origin = resolvedOrigin()
+        val draft = transferCorrectionDraftFromOrigin(origin)
+        assertEquals("old note", draft.note)
+        assertEquals(statisticsAt.toString(), draft.statisticsAtText)
+        assertEquals("100.00", draft.destinationCreditText)
+        assertEquals(walletId, draft.sourceAccountId)
+        assertEquals(bankId, draft.destinationAccountId)
+        assertEquals("2.00", draft.feeText)
+        assertEquals(feeCategoryId, draft.feeCategoryId)
+        val preview = transferCorrectionPreview(origin, draft, emptyMap(), emptyMap())
+        assertEquals(7, preview.fields.size)
+        assertTrue(preview.fields.none { it.changed })
+        val noteRow = row(preview, TransferEditField.NOTE)
+        assertEquals(noteRow.oldText, noteRow.newText)
+        val statisticsRow = row(preview, TransferEditField.STATISTICS_AT)
+        assertEquals(statisticsRow.oldText, statisticsRow.newText)
+        val creditRow = row(preview, TransferEditField.DESTINATION_CREDIT)
+        assertEquals(creditRow.oldText, creditRow.newText)
+        val sourceRow = row(preview, TransferEditField.SOURCE_ACCOUNT)
+        assertEquals(sourceRow.oldText, sourceRow.newText)
+        val destinationRow = row(preview, TransferEditField.DESTINATION_ACCOUNT)
+        assertEquals(destinationRow.oldText, destinationRow.newText)
+        val feeRow = row(preview, TransferEditField.FEE)
+        assertEquals(feeRow.oldText, feeRow.newText)
+        val feeCategoryRow = row(preview, TransferEditField.FEE_CATEGORY)
+        assertEquals(feeCategoryRow.oldText, feeCategoryRow.newText)
+    }
+
+    @Test
+    fun previewListsSevenFieldsInDisplayOrderWithLabels() {
+        val origin = resolvedOrigin()
+        val preview = previewOf(origin, seedDraft(origin))
+        assertEquals(TransferEditField.entries.toList(), preview.fields.map { it.field })
+        assertEquals(listOf("备注", "统计时间", "到账金额", "源账户", "目标账户", "手续费", "手续费分类"), preview.fields.map { it.label })
+    }
+
+    @Test
+    fun previewResolvesCurrentNamesAndFallsBackToStableIds() {
+        val origin = resolvedOrigin()
+        val draft = seedDraft(origin)
+        val named = previewOf(origin, draft, mapOf(feeCategoryId to "手续费", foodCategoryId to "餐饮"), mapOf(walletId to "零钱", bankId to "储蓄"))
+        assertEquals("零钱", row(named, TransferEditField.SOURCE_ACCOUNT).newText)
+        assertEquals("零钱", row(named, TransferEditField.SOURCE_ACCOUNT).oldText)
+        assertEquals("储蓄", row(named, TransferEditField.DESTINATION_ACCOUNT).newText)
+        assertEquals("储蓄", row(named, TransferEditField.DESTINATION_ACCOUNT).oldText)
+        assertEquals("手续费", row(named, TransferEditField.FEE_CATEGORY).newText)
+        assertEquals("手续费", row(named, TransferEditField.FEE_CATEGORY).oldText)
+        val unnamed = previewOf(origin, draft)
+        assertEquals("asset-wallet", row(unnamed, TransferEditField.SOURCE_ACCOUNT).newText)
+        assertEquals("asset-wallet", row(unnamed, TransferEditField.SOURCE_ACCOUNT).oldText)
+        assertEquals("asset-bank", row(unnamed, TransferEditField.DESTINATION_ACCOUNT).newText)
+        assertEquals("asset-bank", row(unnamed, TransferEditField.DESTINATION_ACCOUNT).oldText)
+        assertEquals("category-fee", row(unnamed, TransferEditField.FEE_CATEGORY).newText)
+        assertEquals("category-fee", row(unnamed, TransferEditField.FEE_CATEGORY).oldText)
+        val feeLessOrigin = resolvedOrigin(feeLessDetail())
+        val feeLess = previewOf(feeLessOrigin, seedDraft(feeLessOrigin))
+        assertEquals("无", row(feeLess, TransferEditField.FEE_CATEGORY).oldText)
+        assertEquals("无", row(feeLess, TransferEditField.FEE_CATEGORY).newText)
+    }
+
+    // ---- T5-07..T5-12: the request builder ----
+
+    @Test
+    fun requestCarriesTheTransferColumnsAndTheGivenStatisticsInstant() {
+        val origin = resolvedOrigin()
+        val draft =
+            TransferCorrectionDraft(
+                note = "new note",
+                statisticsAtText = origin.statisticsAt.toString(),
+                destinationCreditText = "80.00",
+                sourceAccountId = walletId,
+                destinationAccountId = bankId,
+                feeText = "2.00",
+                feeCategoryId = feeCategoryId,
+            )
+        val requested = assertNotNull(request(origin, draft, Instant.parse("2026-04-01T00:00:00Z")))
+        assertEquals(ledgerId, requested.ledgerId)
+        assertEquals(requestId, requested.requestId)
+        assertEquals(transactionId, requested.transactionId)
+        assertEquals(versionId, requested.expectedCurrentVersionId)
+        assertEquals("new note", requested.note)
+        assertEquals(Instant.parse("2026-04-01T00:00:00Z"), requested.statisticsAt)
+        assertEquals(8_000L, requested.amount.minorUnits)
+        assertEquals(cny, requested.amount.currency)
+        assertEquals(walletId, requested.fundingAccountId)
+        assertEquals(bankId, requested.destinationAccountId)
+        assertEquals(200L, requested.feeMinor)
+        assertEquals(feeCategoryId, requested.categoryId)
+        assertEquals(ExplicitManualSave, requested.confirmation)
+        val emptiedNote = assertNotNull(request(origin, draft.copy(note = "")))
+        assertNull(emptiedNote.note)
+        val spacedNote = assertNotNull(request(origin, draft.copy(note = " ")))
+        assertEquals(" ", spacedNote.note)
+        val subSecondOrigin = origin.copy(statisticsAt = Instant.parse("2026-03-15T02:00:00.250Z"))
+        val untouched = assertNotNull(request(subSecondOrigin, draft.copy(statisticsAtText = subSecondOrigin.statisticsAt.toString()), subSecondOrigin.statisticsAt))
+        assertEquals(subSecondOrigin.statisticsAt, untouched.statisticsAt)
+    }
+
+    @Test
+    fun requestIsAbsentWithoutADestinationAccount() {
+        val origin = resolvedOrigin()
+        assertNull(request(origin, seedDraft(origin).copy(destinationAccountId = null)))
+    }
+
+    @Test
+    fun requestIsAbsentWithoutASourceAccount() {
+        val origin = resolvedOrigin()
+        assertNull(request(origin, seedDraft(origin).copy(sourceAccountId = null)))
+    }
+
+    @Test
+    fun requestIsAbsentWhenTheDestinationCreditIsNotAnExactPositiveAmount() {
+        val origin = resolvedOrigin()
+        val draft = seedDraft(origin)
+        assertNull(request(origin, draft.copy(destinationCreditText = "0.00")))
+        assertNull(request(origin, draft.copy(destinationCreditText = "-1.00")))
+        assertNull(request(origin, draft.copy(destinationCreditText = "+80.00")))
+        assertNull(request(origin, draft.copy(destinationCreditText = "not-a-number")))
+        assertNull(request(origin, draft.copy(destinationCreditText = "")))
+        assertNull(request(origin, draft.copy(destinationCreditText = "   ")))
+        assertNull(request(origin, draft.copy(destinationCreditText = "1.005")))
+        assertNull(request(origin, draft.copy(destinationCreditText = "80.005")))
+        val relaxed = assertNotNull(request(origin, draft.copy(destinationCreditText = "80")))
+        assertEquals(8_000L, relaxed.amount.minorUnits)
+    }
+
+    @Test
+    fun requestIsAbsentWhenTheFeeIsNotAnExactNonNegativeAmount() {
+        val origin = resolvedOrigin()
+        val draft = seedDraft(origin)
+        assertNull(request(origin, draft.copy(feeText = "-0.01")))
+        assertNull(request(origin, draft.copy(feeText = "not-a-number")))
+        assertNull(request(origin, draft.copy(feeText = "")))
+        assertNull(request(origin, draft.copy(feeText = "   ")))
+        assertNull(request(origin, draft.copy(feeText = "0.001")))
+        val relaxed = assertNotNull(request(origin, draft.copy(feeText = "2")))
+        assertEquals(200L, relaxed.feeMinor)
+    }
+
+    @Test
+    fun requestIsAbsentWhenAPositiveFeeCarriesNoFeeCategory() {
+        val origin = resolvedOrigin()
+        val draft = seedDraft(origin)
+        assertNull(request(origin, draft.copy(feeText = "2.00", feeCategoryId = null)))
+        val zeroFee = assertNotNull(request(origin, draft.copy(feeText = "0.00", feeCategoryId = null)))
+        assertEquals(0L, zeroFee.feeMinor)
+        assertNull(zeroFee.categoryId)
+    }
+
+    /**
+     * The frozen zero-fee requirement (spec sections 3/8.3; `ACCOUNTING_RULES.md:273`): driving the
+     * fee to `0.00` while the draft still carries a fee category must drop that category from BOTH the
+     * preview's target side and the request row, because the target-side category is derived from the
+     * target fee and never read straight off the draft. The reversal at the end shows the drop is
+     * specific to `fee == 0`, not a permanently lost category.
+     */
+    @Test
+    fun aZeroFeeDropsTheResidualFeeCategoryInBothPreviewAndRequest() {
+        val origin = resolvedOrigin()
+        val draft = seedDraft(origin).copy(feeText = "0.00", feeCategoryId = feeCategoryId)
+        assertNull(transferPreviewFeeCategoryId("0.00", feeCategoryId, cny))
+        val preview = previewOf(origin, draft, mapOf(feeCategoryId to "手续费", foodCategoryId to "餐饮"), mapOf(walletId to "零钱", bankId to "储蓄"))
+        assertEquals("无", row(preview, TransferEditField.FEE_CATEGORY).newText)
+        assertEquals("手续费", row(preview, TransferEditField.FEE_CATEGORY).oldText)
+        assertEquals("0.00 CNY", row(preview, TransferEditField.FEE).newText)
+        val requested = assertNotNull(request(origin, draft))
+        assertNull(requested.categoryId)
+        assertEquals(0L, requested.feeMinor)
+        assertEquals(10_000L, requested.amount.minorUnits)
+        val restored = assertNotNull(request(origin, draft.copy(feeText = "2.00")))
+        assertEquals(feeCategoryId, restored.categoryId)
+    }
+
+    /**
+     * Background (registered reason this vector replaced an earlier "preview implies admission" claim):
+     * `P503CorrectionPresentation.kt:162-174` formats `"0.00"`/`"-1.00"` into display text (`:172` adds
+     * a `+` only for a positive value), while the frozen builder rulings require those same values to
+     * return `null`. "The preview can format it" therefore says nothing about admission, and this test
+     * pins the two boundaries separately instead of coupling them:
+     *
+     * (i) echo boundary: a non-blank text the currency precision cannot parse is echoed verbatim AND
+     * the builder returns `null`; a parseable text is always formatted AND the builder never returns
+     * `null` for a parse failure;
+     * (ii) parseable but inadmissible: a formatted preview with a `null` builder (zero and negative
+     * amounts, a negative fee) - display is not an admission claim;
+     * (iii) blank: the preview shows 无 and the builder returns `null` (blank is unparseable, not
+     * "unchanged").
+     */
+    @Test
+    fun previewEchoIsExactlyTheParseBoundaryAndNeverAnAdmissionClaim() {
+        val origin = resolvedOrigin()
+        val draft = seedDraft(origin)
+        val unparseable = draft.copy(destinationCreditText = "not-a-number")
+        assertEquals("not-a-number", row(previewOf(origin, unparseable), TransferEditField.DESTINATION_CREDIT).newText)
+        assertNull(request(origin, unparseable))
+        val signed = draft.copy(destinationCreditText = "+80.00")
+        assertEquals("+80.00", row(previewOf(origin, signed), TransferEditField.DESTINATION_CREDIT).newText)
+        assertNull(request(origin, signed))
+        val accepted = draft.copy(destinationCreditText = "80.00")
+        assertEquals("+80.00 CNY", row(previewOf(origin, accepted), TransferEditField.DESTINATION_CREDIT).newText)
+        assertNotNull(request(origin, accepted))
+        val zero = draft.copy(destinationCreditText = "0.00")
+        assertEquals("0.00 CNY", row(previewOf(origin, zero), TransferEditField.DESTINATION_CREDIT).newText)
+        assertNull(request(origin, zero))
+        val negative = draft.copy(destinationCreditText = "-1.00")
+        assertEquals("-1.00 CNY", row(previewOf(origin, negative), TransferEditField.DESTINATION_CREDIT).newText)
+        assertNull(request(origin, negative))
+        val negativeFee = draft.copy(feeText = "-0.01", feeCategoryId = feeCategoryId)
+        assertEquals("-0.01 CNY", row(previewOf(origin, negativeFee), TransferEditField.FEE).newText)
+        assertNull(request(origin, negativeFee))
+        val blank = draft.copy(destinationCreditText = "")
+        assertEquals("无", row(previewOf(origin, blank), TransferEditField.DESTINATION_CREDIT).newText)
+        assertNull(request(origin, blank))
+    }
+
+    /**
+     * The frozen ruling that the builder has exactly five `null` branches: more admission rejection is
+     * the domain layer's typed rejection, so none of these target states may silently degrade into a
+     * sixth `null`. Each case still carries its column verbatim.
+     */
+    @Test
+    fun requestDoesNotAddAdmissionChecksBeyondTheFiveNullBranches() {
+        val origin = resolvedOrigin()
+        val draft = seedDraft(origin)
+        val sameAccount = assertNotNull(request(origin, draft.copy(sourceAccountId = bankId, destinationAccountId = bankId)))
+        assertEquals(bankId, sameAccount.fundingAccountId)
+        assertEquals(bankId, sameAccount.destinationAccountId)
+        val offCatalogSource = AccountId("not-in-catalog-source")
+        val offCatalogDestination = AccountId("not-in-catalog-destination")
+        val offCatalog = assertNotNull(request(origin, draft.copy(sourceAccountId = offCatalogSource, destinationAccountId = offCatalogDestination)))
+        assertEquals(offCatalogSource, offCatalog.fundingAccountId)
+        assertEquals(offCatalogDestination, offCatalog.destinationAccountId)
+        val unknownCategoryId = CategoryId("category-unknown")
+        val unknownCategory = assertNotNull(request(origin, draft.copy(feeText = "2.00", feeCategoryId = unknownCategoryId)))
+        assertEquals(unknownCategoryId, unknownCategory.categoryId)
+        val feeLessOrigin = resolvedOrigin(feeLessDetail())
+        val feeLessDraft = seedDraft(feeLessOrigin)
+        val residue = assertNotNull(request(feeLessOrigin, feeLessDraft.copy(feeCategoryId = feeCategoryId)))
+        assertNull(residue.categoryId)
+        assertEquals(0L, residue.feeMinor)
+    }
+}
