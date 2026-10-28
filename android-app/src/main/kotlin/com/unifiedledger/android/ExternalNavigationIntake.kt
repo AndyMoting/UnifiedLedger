@@ -71,7 +71,8 @@ enum class ShareIntakeRejection {
      * so it is kept (and mapped) only so the display mapping stays total; removing it would change an
      * implemented enum for no behaviour. Registered as a residual in the ACC-D-SHARE-02 batch.
      */
-    NOT_A_SHARE;
+    NOT_A_SHARE,
+    ;
 
     /**
      * P7-09 09.A (spec section 2.3; ACC-D-SHARE-02): the display-safe common identity of this refusal,
