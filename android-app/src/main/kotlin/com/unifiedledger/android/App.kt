@@ -264,6 +264,10 @@ fun app() {
                     // inbound-navigation channel, so the shared host subscribes and routes the
                     // neutral requests the Activity's share intake delivers.
                     externalNavigationChannel = holder?.externalNavigationChannel,
+                    // P7-09 09.A delivery order (spec section 2.2; ACC-D-SHARE-01): this Activity is
+                    // the host the channel may deliver to. A second instance in the same process
+                    // binds its own token, and the previous instance is refused until it resumes.
+                    inboundHostToken = activity,
                     // P7-09 09.C (spec section 6.4; D-225 Q20): the first refresh leg — a confirmed
                     // formal write/restore invalidates every widget. The composition reports the
                     // determinate landing through this platform-neutral observer and the

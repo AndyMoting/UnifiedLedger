@@ -261,6 +261,11 @@ fun P503App(
     // channel. Null (the desktop root and existing tests) keeps the surface absent and renders no
     // dead affordance; a wired root delivers neutral requests the host routes.
     externalNavigationChannel: ExternalNavigationChannel? = null,
+    // P7-09 09.A delivery order (spec section 2.2; ACC-D-SHARE-01): the platform host token this
+    // composition binds to the channel. The channel hands a request only to the host it knows is
+    // RESUMED, so the Android root passes its Activity; null (the desktop root and every existing
+    // test) binds nothing and keeps the surface absent.
+    inboundHostToken: Any? = null,
     // P7-09 09.C (spec section 6.4; D-225 Q20): the widget-invalidation seam of the FIRST refresh
     // leg ("已知正式写入成功/恢复成功的合并失效"). The Android root wires the process holder's
     // widget fan-out; the no-op default keeps the desktop root and every existing call site/tests
@@ -2649,9 +2654,12 @@ fun P503App(
     // it drains here on subscribe and is routed through [onExternalNavigationRequested]. The
     // channel rides the composition root's P503App argument rather than the lease scope, so the
     // shared lease surface (`LedgerLeaseScope`) is untouched by this batch.
-    DisposableEffect(ledger, externalNavigationChannel) {
-        externalNavigationChannel?.subscribe { request -> onExternalNavigationRequested(request) }
-        onDispose { externalNavigationChannel?.subscribe(null) }
+    DisposableEffect(ledger, externalNavigationChannel, inboundHostToken) {
+        // ACC-D-SHARE-01: the binding is keyed by the host token so the channel can refuse to hand a
+        // request to a host that is not the resumed one (a previous instance keeps its composition
+        // alive in a live process).
+        externalNavigationChannel?.subscribe(inboundHostToken) { request -> onExternalNavigationRequested(request) }
+        onDispose { externalNavigationChannel?.subscribe(inboundHostToken, null) }
     }
 
     // P7-09 09.B (D-226; spec section 2.1 `OpenImportTab`): load the EXISTING IMPORT surface when

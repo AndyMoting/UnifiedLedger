@@ -358,39 +358,65 @@ internal fun startupHeldFallbackAfterLanding(
  * a received Intent into a request and delivers it here; the shared host subscribes via
  * [subscribe] and forwards it to the routing gate.
  *
- * The channel BUFFERS one undelivered request: a cold-start share is received in
- * `Activity.onCreate`, before the composition has subscribed, and must not be lost (spec section
- * 2.2: no silent drop). The buffer is depth ONE — a second request arriving before a subscriber
- * exists replaces the first (the transport staging area drains into the reducer's authoritative
- * single pending slot, which is where the retain-or-replace decision lives). No unbounded queue
- * exists here either.
+ * The channel BUFFERS one undelivered request: a request received in `Activity.onCreate`, before
+ * the composition has subscribed, must not be lost (spec section 2.2: no silent drop). The buffer is
+ * depth ONE — a second request arriving while nothing can take it replaces the first (the transport
+ * staging area drains into the reducer's authoritative single pending slot, which is where the
+ * retain-or-replace decision lives). No unbounded queue exists here either.
+ *
+ * P7-09 09.A delivery-order rule (spec section 2.2; ACC-D-SHARE-01): a request is delivered only to
+ * the RESUMED host, identified by the host token the adapter binds at subscribe time. A subscription
+ * alone does not qualify. Device evidence (`local/artifacts/p709-share-delivery/`): a share delivered
+ * through the create path is accepted by the intake (`entry.inboundIntake kind=OpenImport`) yet
+ * renders nothing, because the PREVIOUS instance still owned the subscription while the new one was
+ * being created; bringing the previous instance forward showed the very same request. Buffering until
+ * the bound, resumed host can take it keeps the request on the staging slot this transport already
+ * owns and hands it to the host that is actually visible — exactly once.
  */
 class ExternalNavigationChannel {
-    private var forward: ((ExternalNavigationRequest) -> Unit)? = null
-    private var buffered: ExternalNavigationRequest? = null
+    private class Binding(val token: Any, val listener: (ExternalNavigationRequest) -> Unit)
 
-    /** Delivers one neutral request; buffered (depth one) until a subscriber arrives. */
+    private var binding: Binding? = null
+    private var buffered: ExternalNavigationRequest? = null
+    private var resumedToken: Any? = null
+
+    /** Delivers one neutral request to the resumed host bound to this channel, or buffers it. */
     fun deliver(request: ExternalNavigationRequest) {
-        val listener = forward
-        if (listener == null) {
+        val bound = binding
+        if (bound == null || resumedToken == null || bound.token !== resumedToken) {
             buffered = request
         } else {
-            listener(request)
+            bound.listener(request)
         }
     }
 
     /**
-     * The shared host's subscription point (last subscription wins, the pick-channel precedent).
-     * A buffered cold-start request drains exactly once on subscribe; unsubscribing (`null`)
-     * leaves the buffer empty.
+     * Binds one host token and its listener. A buffered request drains exactly once, and only when
+     * this token is the resumed one; `null` unbinds and leaves the buffer empty.
      */
-    fun subscribe(listener: ((ExternalNavigationRequest) -> Unit)?) {
-        forward = listener
-        if (listener != null) {
-            val pending = buffered ?: return
-            buffered = null
-            listener(pending)
-        }
+    fun subscribe(token: Any?, listener: ((ExternalNavigationRequest) -> Unit)?) {
+        binding = if (token != null && listener != null) Binding(token, listener) else null
+        if (binding != null) drainToResumedHost()
+    }
+
+    /** The Activity adapter reports that [token] is resumed; a waiting request drains here. */
+    fun onHostResumed(token: Any) {
+        resumedToken = token
+        drainToResumedHost()
+    }
+
+    /** The Activity adapter reports that [token] is paused; only the resumed host may take work. */
+    fun onHostPaused(token: Any) {
+        if (resumedToken != null && resumedToken === token) resumedToken = null
+    }
+
+    private fun drainToResumedHost() {
+        val bound = binding ?: return
+        val pending = buffered ?: return
+        val resumed = resumedToken ?: return
+        if (bound.token !== resumed) return
+        buffered = null
+        bound.listener(pending)
     }
 }
 

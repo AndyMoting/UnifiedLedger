@@ -352,33 +352,41 @@ class ExternalNavigationReducerTest {
     }
 
     @Test
-    fun theChannelBuffersOneColdStartRequestAndDrainsItOnSubscribe() {
+    fun theChannelBuffersOneColdStartRequestAndDrainsItIntoTheFirstResumedHost() {
         val channel = ExternalNavigationChannel()
+        val host = Any()
         // Delivered BEFORE any subscriber (a cold-start share): buffered, not lost.
         channel.deliver(shareImport)
         val received = mutableListOf<ExternalNavigationRequest>()
-        channel.subscribe { received += it }
+        channel.subscribe(host) { received += it }
+        // ACC-D-SHARE-01: a subscription alone is not enough; only a RESUMED host may take it.
+        assertEquals(emptyList<ExternalNavigationRequest>(), received)
+        channel.onHostResumed(host)
         assertEquals(listOf<ExternalNavigationRequest>(shareImport), received)
         // The buffer drains exactly once.
-        channel.subscribe(null as ((ExternalNavigationRequest) -> Unit)?)
-        channel.subscribe { received += it }
+        channel.subscribe(host, null)
+        channel.subscribe(host) { received += it }
+        channel.onHostResumed(host)
         assertEquals(1, received.size)
     }
 
     @Test
     fun theChannelDeliversDirectlyOnceSubscribedAndBuffersDepthOne() {
         val channel = ExternalNavigationChannel()
+        val host = Any()
         val received = mutableListOf<ExternalNavigationRequest>()
-        channel.subscribe { received += it }
+        channel.subscribe(host) { received += it }
+        channel.onHostResumed(host)
         channel.deliver(shareImport)
         channel.deliver(newExpense)
         assertEquals(listOf<ExternalNavigationRequest>(shareImport, newExpense), received)
-        // Depth one: a second pre-subscription request replaces the first (no unbounded queue).
-        channel.subscribe(null as ((ExternalNavigationRequest) -> Unit)?)
+        // Depth one: while the host is paused a second request replaces the first (no unbounded queue).
+        channel.onHostPaused(host)
         channel.deliver(shareImport)
         channel.deliver(newExpense)
         val drained = mutableListOf<ExternalNavigationRequest>()
-        channel.subscribe { drained += it }
+        channel.subscribe(host) { drained += it }
+        channel.onHostResumed(host)
         assertEquals(listOf<ExternalNavigationRequest>(newExpense), drained)
     }
 

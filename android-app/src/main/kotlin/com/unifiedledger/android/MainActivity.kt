@@ -72,6 +72,24 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
+     * P7-09 09.A delivery order (spec section 2.2; ACC-D-SHARE-01): the channel hands a request only
+     * to a RESUMED host, so this adapter must report its own lifecycle. Without it the process-scoped
+     * channel keeps pointing at a previous instance whose composition is still alive, and a share
+     * accepted on the create path renders nowhere (device evidence: `entry.inboundIntake
+     * kind=OpenImport` with an empty screen; the previous instance shows the same request once it is
+     * brought forward).
+     */
+    override fun onResume() {
+        super.onResume()
+        ledgerProcessHolderFor(this)?.externalNavigationChannel?.onHostResumed(this)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        ledgerProcessHolderFor(this)?.externalNavigationChannel?.onHostPaused(this)
+    }
+
+    /**
      * Validates one received Intent into a neutral request and delivers it to the process-scoped
      * channel. Zero formal effect on any rejection (spec section 2.3): the validator only reads the
      * Intent's own extras and never opens a stream or queries the provider, so a rejected share
