@@ -5457,3 +5457,27 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 入：本条登记 + `docs/CURRENT_STATE.md` 最小指针同步 + checkpoint 收口。出：不改 D-228 冻结面与 D-246 设计门裁决；不改 D-239 的 P7-06 五向量判决（A06 维持部分证据）；不把任何 P7-05 向量并入 PASS；不动规格。片4/片5 的派发与 A06 设备门属后续执行，不在本条范围内。
 
 **关联决定：** D-255（片1a 交付与版本字面量权威，本条承接其第 5 条残余中片1b 项）、D-228（转账切片设计门 §3/§8.3 与 J3 候选 (a)）、D-246（A06 十九边界矩阵与两阶段 kill 协议、b1 受管 AVD 裁决）、D-239（P7-06 五向量与 A06 部分证据基线）、D-158（DP-10 保守占位与恢复重校验硬编码两处残余的原始登记）、D-156（作废/恢复语义）、D-161（instrumented CI 排除口径）。
+
+## D-257 P7-05 转账切片产品面交付登记：修正地基、app-ui 修正面与作废入口三个 PR + 文档锚点同步
+
+**状态：** 已批准并登记（2026-10-28，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §5 的 05.B/05.C/05.D 行与 §10.1 逐项登记纪律）。本条登记三个已合并交付与随后的文档同步：PR #162 / squash `3035052`、PR #163 / squash `d58b68c`、PR #164 / squash `33a80c3`。三者合并后 `Merge tree guard` 均 success，squash 树与已验证候选树两侧逐字相同，四项 required checks 全绿。**零 schema 变更、零新依赖**（schema 维持 v36 / 35 个 `.sqm`）。
+
+**决定：**
+
+1. **修正地基（PR #162）**：产品修正 id 源铸第六个 id `feePostingId`（`UuidV7TransactionCorrectionIdSource`），`transactionCorrectionCommitByRequest` 投影补 `request.destination_account_id` 与 `request.fee_minor`，读适配器把 `category_id` 改为可空映射并原样带回两列，新增 `P705TransferCorrectionSnapshotReadTest` 两条真实 SQL 读回向量（无费 NULL 分类 / 带费费类目）。该批同时修掉两处相关缺口：读侧缺两列会让空白对空白、把任何同额请求都读成已提交（假匹配）；请求侧缺两列则让快照与存储行不一致（假冲突）。两侧现在都带列，`category_id` 也改为可空映射（否则 `fee == 0` 的转账行会在 `requireNotNull` 处抛出）。
+
+2. **app-ui 转账修正面（PR #163）**：七字段纯层补齐（`TransferCorrectionFieldUpdate`、`withUpdate`、统计时间 seam `transferCorrectionStatisticsAt`、手续费分类选项），新增 `P503AppState.TransferEdit`、`OpenTransferEdit`/`UpdateTransferCorrectionField` 两个事件与 `reduceTransferEdit`，新增转账修正屏（预览为渲染期纯读），入口按形状分流为纯 seam `transactionEditEntrance`（转账优先、`ACCOUNT_TRANSFER` 不回落到普通表单），组合根接线打开/确认/再核对，提交状态快照补两列（闭合 #162 评审登记的「提交状态快照缺两列」缺口）。15 文件 +1053/−49。
+
+3. **转账作废入口（PR #164）**：作废门改为委派领域矩阵谓词 `isP705CorrectionSupportedKind`（不再在呈现层重写一份 kind 集合），负例向量由 `TransactionKind.entries` 派生覆盖全部不受支持 kind；作废是交易粒度（D-228 J1），入口不需要形状解析。合并规模 4 文件 +46/−60（分支首提交 2 文件，评审修复轮落在这 4 个文件内，故两者不可相加）。
+
+4. **CI 暴露的一处主代理自写断言缺陷（如实登记）**：#163 首轮 CI 在 `715eca3` 上红于 `P503CorrectionReducerTest.newEventsAreAbsorbedOutsideTheirDesignedStates`——该断言仍要求新状态吸收 `ConfirmTransactionEdit`/`TransactionEditResult`，而转账面按设计复用这两个事件。修复提交 `c6935b6` 把排除集改对，并由收口轮独立复审确认该 hunk 的性质是 CI 修复而非评审闭合。首轮红是本批唯一一次执行证据不足后的补正。
+
+5. **审验拓扑（如实）**：#162 = 独立评审（`APPROVE-WITH-FINDINGS`，零阻断）+ distinct verifier（八项 PASS；该批的 verifier 曾两次被上游频率限制中断，重派后完成）；#163 = 全批复审 + 收口轮 delta 复审（均零阻断）+ distinct verifier（首次派发中途终止、原因未记录，重派后完成，八项 PASS；两处验证脚本本身的量具缺陷按「阈值不可满足 / 启发式误判」判定，候选无缺陷）；#164 = 独立评审（CLOSED，零阻断）+ distinct verifier（七项 PASS）。预检：#162 为 `:ledger-application:compileTestKotlinJvm` + `:ledger-data:compileTestKotlinJvm`（含 test source-set ktlint），#163/#164 为 `:app-ui:compileTestKotlinJvm` + `:app-ui:ktlintCheck`。**证据披露：**#162 的 reviewer 报告与 verifier 八项捕获落盘在 `local/artifacts/p705-s5a2a/`；#163/#164 的 reviewer 结论只有 checkpoint 记录、未落盘独立工件，其 verifier 捕获分别在 `local/artifacts/p705-s5a2/verifier/` 与 `local/artifacts/p705-s5a3/verifier/`。
+
+6. **随本条同步的文档（本批 tracked 变更：8 个 `.md`，全部为文档；精确行数与文件规模以本 PR 的 `git diff --stat` 为准，本条不复述会随修订变动的数字）**：`docs/CURRENT_STATE.md` 的 schema 声明由 v35 更正为 v36（三处）、两处 `origin/main` 指针改为「以 `git rev-parse origin/main` 为准 + 上次登记值」、两处「转账第二切片实施未启动」更正为已交付并补一条交付条目；`README.md`/`docs/ROADMAP.md`/`docs/PROJECT_MAP.md` 的同一陈旧短语一并更正（同一事实只保留 D-257 一处权威指向），同三处把 P709 的向量状态由「无一记 PASS」对齐到「仅 A09 记 PASS（JVM 维度）、A02 部分证据、其余七项无证据」（沿 D-236，不新增判决）；`docs/CONTRIBUTING.md:296` 的「类数/例数」与 `ci.yml` 已声明的「例数不再复述」收敛；第二切片规格补实施状态段、把三处漂移行号重锚（`TransactionCorrection.kt:46→:57`、`SqlDelightTransactionCorrectionCommitPort.kt:110-120→:53-55`/`:195`）、§2.1 表格的 `【开放项 J1】` 标记改为 `【J1 已裁决】`；第一切片规格 §3.3 的作废前置条件加一条指向第二切片 §2.1 的指针（不改其历史叙述）。
+
+7. **状态边界**：**本条不判任何 P7-05 验收向量 PASS**——规格 §10 的 T-01..T-14 与 T-03b 仍逐项待判；05.D 的剩余面是 Android 人工验收（设备门，受阻项 B）；借贷、导入创建关联与关联退款沿 D-156/D-228 保持 OPEN；P7-05 整体仍 OPEN。
+
+**边界：** 入：本条登记 + 上述 tracked 文档同步。出：不改 D-156/D-158/D-228 的任何裁决与冻结面；不改 D-239～D-256 的任何向量判决；不把任何向量并入 PASS；零产品代码、零测试、零 schema/迁移/依赖/CI 配置变更。
+
+**关联决定：** D-228（转账切片设计门 §3/§8.3 与 J1/J3 裁决）、D-156（P7-05 基底与 DP-10/DP-12）、D-158（片 1a 基底与两处具名残余）、D-255/D-256（片 1a/1b/2/3 与 P7-06 A06 实施批登记）、D-237/D-240（分片与 `ci.yml` 类数登记先例）、计划 §10.1/§10.4.5。

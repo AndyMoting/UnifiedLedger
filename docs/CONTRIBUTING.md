@@ -293,7 +293,7 @@ adb shell am start -n com.unifiedledger.android/.MainActivity
 
 6. **同步恢复白名单与组合根**：`RESTORE_SUPPORTED_SOURCE_VERSIONS` 在 `android-app/src/main/kotlin/com/unifiedledger/android/App.kt` 与 `desktop-app/src/jvmMain/kotlin/com/unifiedledger/desktop/Main.kt` 两处必须同步扩展；新版本沿 D-185 先例为有条件准入。
 
-7. **重生成 ledger-data 分片名单**：新增/重命名 ledger-data 测试类必须重生成 `tools/ci/ledger-data-shards.txt`（覆盖守卫逐类比对，漏登会让测试永不执行），并同步 `.github/workflows/ci.yml` 头注释的类数/例数。
+7. **重生成 ledger-data 分片名单**：新增/重命名 ledger-data 测试类必须重生成 `tools/ci/ledger-data-shards.txt`（覆盖守卫逐类比对，漏登会让测试永不执行），并同步 `.github/workflows/ci.yml` 头注释的类数（例数不再复述，原因见该处注释）。
 
 8. **登记正式状态文档残余**：`docs/CURRENT_STATE.md`、`docs/ARCHITECTURE.md`、`README.md`、`docs/ROADMAP.md` 中的 schema 版本与迁移链文件数属独立 A-DOC 同步批（D-160 先例），不在实施批内改，但必须登记残余。
 
