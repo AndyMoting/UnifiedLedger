@@ -5481,3 +5481,43 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 入：本条登记 + 上述 tracked 文档同步。出：不改 D-156/D-158/D-228 的任何裁决与冻结面；不改 D-239～D-256 的任何向量判决；不把任何向量并入 PASS；零产品代码、零测试、零 schema/迁移/依赖/CI 配置变更。
 
 **关联决定：** D-228（转账切片设计门 §3/§8.3 与 J1/J3 裁决）、D-156（P7-05 基底与 DP-10/DP-12）、D-158（片 1a 基底与两处具名残余）、D-255/D-256（片 1a/1b/2/3 与 P7-06 A06 实施批登记）、D-237/D-240（分片与 `ci.yml` 类数登记先例）、计划 §10.1/§10.4.5。
+## D-258 P7-05 验收向量逐项判决（T-01…T-14、T-03b）与四条设备门外裁决
+
+**状态：** 已批准并登记（2026-10-28，计划 `docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md` §10.1 的逐项登记要求）。本条**只登记判决与裁决，不改代码**：P7-05 的实现在 D-156/D-158/D-228 之后已由 PR #162/#163/#164 交付并合入 `main`（`3035052`/`d58b68c`/`33a80c3`），本条把规格 §10 的 15 条向量按现有 JVM 证据逐条判到状态，并把四条长期悬置项一次性定性。
+
+**决定：**
+
+1. **14 条判 PASS（JVM 维度）**，证据锚点全部在 `ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/` 与真实 SQLite 上执行（非 mock 存储）：
+
+| 向量 | 判决 | 证据（类.方法） |
+| --- | --- | --- |
+| T-01 三腿金额修正 | PASS | `P705TransferCorrectionCommitPortTest.destinationCreditCorrectionReshapesAllThreeLegs`（新版本三腿平衡、`sourceDebit = 8000+200`、旧 set 逐字节保留、`occurred_at`/`effective_at` 原样） |
+| T-02 两腿改备注 | PASS | 同类的 `aTwoLegNoteCorrectionKeepsThePostingSetAndAddsNoCashFlow`、`noteOnlyTransferCorrectionReusesThePostingSet`、`aZeroFeeTargetCarryingACategoryIsAFieldRejection` |
+| T-03 fee>0→0 | PASS | 同类的 `feeToZeroDropsTheFeeLegAndTheCategory` |
+| T-03b fee0→>0 | PASS | 同类的 `zeroFeeSeedGainsACategorisedFeeLeg`（两腿→三腿、新增 `FEE` 腿携 `feeCategoryId`、派生 `sourceDebit = 8000+150`） |
+| T-04 账户修正 | PASS | 同类的 `endpointSwapMovesBothPrincipalLegs`、`crossLedgerDestinationCorrectionIsACatalogRejectionWithZeroWrites`、`foreignCurrencyDestinationCorrectionIsACatalogRejectionWithZeroWrites` |
+| T-05 手续费分类不可准入 | PASS | 同类的 `inactiveFeeCategory…`/`crossLedgerFeeCategory…`/`incomeFeeCategory…`/`deepFeeCategory…` 四条 catalog 拒绝 |
+| T-06 作废三腿转账 | **PARTIAL** | 数据面：`P705TransferRestorePathTest.voidingAManualTransferRemovesItFromTheMonthlyContributionAndWidgetFaces`、`…TagMerchantFilterAndAccumulationFaces`、`P705TransferCorrectionCommitPortTest.voidedTransferLeavesTheEffectiveSurfaceAndCannotBeCorrected`。**未判 PASS 的原因**：向量含「原转账在回收站可见」，属 05.D Android 人工验收面，未做。 |
+| T-07 作废后历史保留 | PASS | `P705VoidRestoreCommitPortTest.voidKeepsEveryHistoricalRowAndTheCreationLineageReadable`、`voidingAManualTransferKeepsEveryHistoricalAndRequestRowValueIdentical` |
+| T-08 恢复恰好一次 | PASS | 同类的 `restoreHappensExactlyOnceAndASecondRestoreIsATypedRejection` |
+| T-09 恢复按当前目录重校验 | PASS | `P705TransferRestorePathTest.renamedButActiveEndpointsRemainAdmissibleForARestore`、`aDeactivatedEndpointBlocksTheRestoreAndTheTransactionStaysVoided`、`aDeactivatedFeeCategoryBlocksTheRestoreOfAThreeLegTransfer`、`P705VoidRestoreCommitPortTest.restoreRevalidatesTheCurrentCatalogAndKeepsTheTransactionVoidedOnRejection` |
+| T-10 深度与循环守卫 | PASS | `P705TransferRestorePathTest.aRestoredTransferCannotBeRestoredAgainNorRevoidedBeyondTheCycle`、`P705VoidRestoreCommitPortTest.databaseGuardsRejectSequenceGapsNonAlternatingFactsAndHistoryRewrites` |
+| T-11 对账 owner 零写入 | PASS | `P705VoidRestoreCommitPortTest.voidAndRestoreNeverWriteTheReconciliationEvidenceLendingOrImportOwners`、`P705TransferCorrectionCommitPortTest.aNoteOnlyTransferCorrectionWritesNoneOfTheLendingImportOrProjectionOwners`、`noteOnlyCorrectionKeepsSeededReconciliationRowsAndLinksVerbatim` |
+| T-12 DP-10 收窄 | PASS | `P705TransferCorrectionCommitPortTest.changedLegWithOnlyAPendingPlaceholderIsNeverRejectedAndKeepsTheRow`、`changedLegWithAnActiveMatchIsInvalidatedAndTheCorrectionSucceeds`、`noteOnlyTransferCorrectionReusesThePostingSet` |
+| T-13 幂等与求值顺序 | PASS | 同类的 `replayConflictsAndStaleCasBehaveLikeTheOrdinaryFamily`、`P705VoidRestoreCommitPortTest.equivalentVoidReplayReturnsTheOriginalReceiptAndChangedReplayConflicts`、`concurrentVoidsOfTheSameTransactionHaveExactlyOneWinner` |
+| T-14 支持矩阵强制 | PASS | `P705TransferCorrectionCommitPortTest.anImportCreatedTransferCorrectionIsALineageRejectionWithZeroWrites`、`ordinaryRowsRejectTheTransferColumnsAndAMissingCategory`、`P705VoidRestoreCommitPortTest.anImportCreatedTransferVoidIsALineageRejectionWithZeroWrites`、`unsupportedKindsAndLineagesAreTypedRejectionsWithZeroWrites` |
+
+2. **四条设备门外裁决（均不产生 PASS）**：
+   - **A-03 / A03-8b（会话内瞬态读失败）→ BLOCKED**。三条外部注入已实测失败：运行中 `chmod 000`、`ledger.db` 换同名目录（POSIX 已打开 inode）、`dd` 覆盖中段 16 KB（SQLite 页缓存）。条件：需要代码级故障注入 seam；未采纳，因为为一个已裁决 PARTIAL 的向量在 `P503LedgerFacade` 上开测试钩子不划算。原判据与承接条件保留。
+   - **A-05 / D01-9（权限撤回）→ PARTIAL 保留**。新增 `ImportFilePickGrantRevocationTest`（`SecurityException` 中途撤回 + 首块即抛，固定文案断言）作为等价链证据，但真实撤回仍需设备，未改判。
+   - **A-PERF / 61k 整链 → 维持 NOT MET**（D-243 的重述口径不变），本条不提供任何新量测，也不把 D-241 的 20k/50k 量测升格为 PASS。
+   - **A-VIS（窄屏可读性）→ 接受延期**：仓库无 UI 截图测试基建，单列披露，不删分母。
+
+3. **登记后的向量账（§10.1 口径）**：P7-05 由此从 0/15 变为 **14/15 PASS**（T-06 PARTIAL）；全计划 PASS 由 29/62 变为 **43/62（69.4%）**。其余 18 项（P706 4、P707 1、P708 1、P709 8、A-03、A-05、A-PERF、A-VIS）状态不变。
+
+4. **不声称的部分**：本条不含任何设备证据，不把 JVM 判决外推到 Android 人工验收；05.D（转账切片的 Android 人工走查）仍是独立未完成项；T-06 的回收站可见性仍缺证。
+
+**边界：** 入：本条的判决与裁决登记、规格 §10 的状态指回、checkpoint 同步。出：零代码、零测试、零 schema/迁移、零 CI 改动；不改 D-156/D-158/D-228/D-241/D-243 的任何结论；不把接受延期写成 PASS。
+
+**关联决定：** D-156（基座）、D-158（05 实施登记）、D-228（J1/J2/J3 裁决）、D-241（20k/50k 量测落盘）、D-243（61k 重述）、D-257（三批交付登记）、规格 `docs/specs/2026-10-16-p7-05-transfer-correction-slice-design.md` §10。
+
