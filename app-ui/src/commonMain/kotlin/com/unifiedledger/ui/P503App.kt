@@ -159,6 +159,9 @@ internal fun ExternalNavigationBusyStrip(
     // the EXISTING capability-matrix formats. Defaults keep every other call site compiling.
     formatChoices: List<ImportFormatEntry> = emptyList(),
     onSelectFormat: ((ImportFormatId) -> Unit)? = null,
+    // ACC-D-SHARE-02: a refusal strip has nothing to retain (there is no request), so its single
+    // button must not claim "保留当前".
+    dismissLabel: String = "保留当前",
 ) {
     Surface(
         color = MaterialTheme.colorScheme.secondaryContainer,
@@ -195,7 +198,7 @@ internal fun ExternalNavigationBusyStrip(
                 if (onDiscard != null) {
                     TextButton(onClick = onDiscard) { Text("放弃后切换") }
                 }
-                TextButton(onClick = onKeepCurrent) { Text("保留当前") }
+                TextButton(onClick = onKeepCurrent) { Text(dismissLabel) }
             }
         }
     }
@@ -205,8 +208,12 @@ internal fun ExternalNavigationBusyStrip(
  * P7-09 09.0 (spec section 3): the display copy of one Busy/待处理 strip. Pure and JVM-assertable
  * (the `importReviewNoticeText` precedent); the copy is static per reason and leaks no payload.
  */
-internal fun externalNavigationBusyText(busy: ExternalNavigationBusy): String =
-    when (busy.reason) {
+internal fun externalNavigationBusyText(busy: ExternalNavigationBusy): String {
+    // ACC-D-SHARE-02: a refused share says WHICH validation refused it (the precise vector wins over
+    // the carrier reason, which only exists so the strip has a slot to land on).
+    val rejection = busy.shareRejection
+    if (rejection != null) return shareRejectionText(rejection)
+    return when (busy.reason) {
         ExternalNavigationHoldReason.STARTUP_NOT_READY -> "正在打开本地账本，已暂存外部请求…"
         ExternalNavigationHoldReason.DRAFT_IN_PROGRESS -> "当前有未保存的草稿，外部请求已暂存。"
         ExternalNavigationHoldReason.CONFIRMATION_PENDING -> "当前有一笔待确认的录入，外部请求已暂存。"
@@ -216,7 +223,30 @@ internal fun externalNavigationBusyText(busy: ExternalNavigationBusy): String =
         ExternalNavigationHoldReason.RUNTIME_QUIESCED -> "本地账本正在切换，外部请求已暂缓。"
         ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED -> "已收到分享文件，请选择账单格式后导入。"
         ExternalNavigationHoldReason.IMPORT_SOURCE_UNAVAILABLE -> "分享的文件已无法读取（授权已过期或进程已重启），请重新分享后再导入。"
+        // ACC-D-SHARE-02: reached only when a refusal arrives WITHOUT its detailed vector (the carrier
+        // with no payload). The detailed copy is [shareRejectionText].
+        ExternalNavigationHoldReason.IMPORT_REJECTED -> "无法接收这次分享，未做任何改动。"
         ExternalNavigationHoldReason.UNROUTABLE_TARGET -> "外部请求暂无法打开，已暂存。"
+    }
+}
+
+/**
+ * P7-09 09.A (spec section 2.3; ACC-D-SHARE-02): the display copy of one REFUSED inbound share.
+ * Pure and JVM-assertable; every branch names only the validation that refused, never the inbound
+ * payload (no URI, file name, size of the actual file, or exception text). The copy states the
+ * zero-formal-effect fact so a refusal is never mistaken for a successful import.
+ */
+internal fun shareRejectionText(reason: ShareRejectionReason): String =
+    when (reason) {
+        ShareRejectionReason.UNSUPPORTED_ACTION -> "无法接收这次分享：请用“分享”发送单个文件。"
+        ShareRejectionReason.MISSING_STREAM -> "无法接收这次分享：没有附带文件，未做任何改动。"
+        ShareRejectionReason.MULTIPLE_STREAMS -> "无法接收这次分享：一次只能导入一个文件。"
+        ShareRejectionReason.CONFLICTING_STREAM -> "无法接收这次分享：文件信息不一致，请重新分享。"
+        ShareRejectionReason.NON_CONTENT_URI -> "无法接收这次分享：该来源不支持导入，请重新分享。"
+        ShareRejectionReason.STREAM_NOT_READABLE -> "无法接收这次分享：没有读取权限，请重新分享后再导入。"
+        ShareRejectionReason.MALFORMED_EXTRAS -> "无法接收这次分享：附件信息无法识别，请重新分享。"
+        ShareRejectionReason.DECLARED_SIZE_EXCEEDS_LIMIT -> "无法接收这次分享：文件超过 16 MiB 上限。"
+        ShareRejectionReason.NOT_A_SHARE -> "无法接收这次分享：没有可导入的内容。"
     }
 
 /**
@@ -2660,7 +2690,15 @@ fun P503App(
         // request to a host that is not the resumed one (a previous instance keeps its composition
         // alive in a live process).
         externalNavigationChannel?.subscribe(inboundHostToken) { request -> onExternalNavigationRequested(request) }
-        onDispose { externalNavigationChannel?.subscribe(inboundHostToken, null) }
+        // ACC-D-SHARE-02: a refused inbound share has no request to route, so it rides its own
+        // binding on the same channel and lands as the visible refusal strip.
+        externalNavigationChannel?.subscribeShareRejections(inboundHostToken) { reason ->
+            dispatch(P503UiEvent.ShareRejectionLanded(reason))
+        }
+        onDispose {
+            externalNavigationChannel?.subscribe(inboundHostToken, null)
+            externalNavigationChannel?.subscribeShareRejections(inboundHostToken, null)
+        }
     }
 
     // P7-09 09.B (D-226; spec section 2.1 `OpenImportTab`): load the EXISTING IMPORT surface when
@@ -3803,6 +3841,7 @@ fun P503App(
                     onRetain = null,
                     onReplace = null,
                     onDiscard = null,
+                    dismissLabel = if (busy.shareRejection != null) "知道了" else "保留当前",
                 )
             }
             Box(Modifier.weight(1f)) {

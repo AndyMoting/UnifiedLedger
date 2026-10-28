@@ -176,6 +176,16 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
+            // ACC-D-SHARE-02 (spec section 2.3): a share the validation face REFUSED must not leave the
+            // screen untouched — a silent no-op is indistinguishable from a broken app, and the frozen
+            // contract forbids an external entry's result falling into `-> Unit`. The refusal travels as
+            // its typed, display-safe vector to the process-scoped channel, which shows it on the RESUMED
+            // host only. Zero formal effect: nothing was opened, read or written. (Reached only when the
+            // snapshot was actually refused: an accepted repeat was re-held above.)
+            holder.inboundIntake.rejectionFor(snapshot)?.let { rejection ->
+                StartupTrace.emit("entry.inboundRejected kind=${rejection.name}")
+                holder.externalNavigationChannel.notifyShareRejection(rejection.toShareRejectionReason())
+            }
             return
         }
         // P7-09 09.A closed loop (spec sections 2.3/4; D-225; invariant 2): the accepted share's

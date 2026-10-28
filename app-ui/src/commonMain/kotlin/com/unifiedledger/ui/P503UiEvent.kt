@@ -1357,6 +1357,16 @@ sealed interface P503UiEvent {
     /** Dismisses the visible Busy strip (the user acknowledged it). */
     data object DismissExternalNavigationBusy : P503UiEvent
 
+    /**
+     * P7-09 09.A (spec section 2.3; ACC-D-SHARE-02): an inbound share was REFUSED by the validation
+     * face. There is no request to route and nothing was read, so this only lands the visible refusal
+     * strip with its typed reason — it never touches the pending slot, a draft, a requestId or a
+     * confirmation snapshot. Absorbed unchanged on a surface that carries no Busy field.
+     */
+    data class ShareRejectionLanded(
+        val reason: ShareRejectionReason,
+    ) : P503UiEvent
+
     // ---- P7-09 09.A share-import closed loop (spec sections 2.3/4; D-225) ----
     // The held share that validated into `OpenImport(deliveryId)` is consumed by the format
     // selection: the existing bounded read + intake pipeline runs, and this event clears the

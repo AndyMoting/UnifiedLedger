@@ -311,6 +311,17 @@ class P503ReducerImpl(
             // a refused second pick is visible wherever the user is (Editing/Submitting/... /Ready).
             P503UiEvent.ImportIntakeBusyLanded -> withExternalNavigationBusy(state, ExternalNavigationBusy(ExternalNavigationHoldReason.IMPORT_INTAKE_IN_FLIGHT))
             P503UiEvent.DismissExternalNavigationBusy -> withExternalNavigationBusy(state, null)
+            // ACC-D-SHARE-02 (spec section 2.3): a refused share lands the visible refusal strip with
+            // its typed vector. The carrier reason only exists so the strip has a slot; the copy comes
+            // from [ExternalNavigationBusy.shareRejection]. Zero formal effect and no slot change.
+            is P503UiEvent.ShareRejectionLanded ->
+                withExternalNavigationBusy(
+                    state,
+                    ExternalNavigationBusy(
+                        ExternalNavigationHoldReason.IMPORT_REJECTED,
+                        event.reason,
+                    ),
+                )
             // P7-09 09.A share-import closed loop (spec sections 2.3/4): the held share is consumed
             // by the format selection (the pipeline owns the result) or could not be read (typed
             // re-share). BOTH clear the awaiting-format share's slot; the re-share branch also lands

@@ -67,6 +67,28 @@ class ShareDeliveryHostWiringTest {
         )
     }
 
+    @Test
+    fun theActivitySurfacesARefusedShareInsteadOfReturningSilently() {
+        // ACC-D-SHARE-02: the refusal branch must actually report; a bare `return` here is the silent
+        // drop, and no other assertion would notice it (the whole suite stays green without this).
+        val activity =
+            repositoryFile("android-app/src/main/kotlin/com/unifiedledger/android/MainActivity.kt")
+                .toFile()
+                .readText()
+        assertTrue(
+            activity.contains("rejectionFor(snapshot)?.let { rejection ->"),
+            "the Activity must ask the intake for the typed refusal it just declined to deliver",
+        )
+        assertTrue(
+            activity.contains("notifyShareRejection(rejection.toShareRejectionReason())"),
+            "the refusal must reach the process-scoped channel, which shows it on the resumed host",
+        )
+        assertTrue(
+            activity.contains("entry.inboundRejected kind="),
+            "the refusal must be traceable in the startup trace",
+        )
+    }
+
     private fun repositoryFile(relative: String): Path {
         var candidate = Path.of(System.getProperty("user.dir"))
         repeat(8) {
