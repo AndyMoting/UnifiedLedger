@@ -32,24 +32,20 @@ import kotlin.time.Instant
 // ------------------------------------------------------------------ detail-page entry gate
 
 /**
- * The correction entry's kind set. The shared domain matrix gate
- * (`isP705CorrectionSupportedKind`) already covers the transfer kind, and the transfer surface now
- * exists, so the edit entry follows the domain gate's shape instead of the ordinary pair alone.
+ * The kind set of both detail-page entries: the same shape as the shared domain matrix gate
+ * (`isP705CorrectionSupportedKind`), because both surfaces exist for every supported kind now.
  *
- * The kind is only half the condition: the shape must also resolve, which
- * [detailCorrectionAffordancesVisible] receives through its `hasCorrectionOrigin` argument. That
- * argument comes from the host's shape decision ([transactionEditEntrance]), so a transfer whose
- * origin does not resolve renders no entry instead of a dead one.
+ * The kind is only half the CORRECTION entry's condition: the target's shape must also resolve,
+ * which [detailCorrectionAffordancesVisible] receives through its `hasCorrectionOrigin` argument.
+ * That argument comes from the host's shape decision ([transactionEditEntrance]), so a transfer
+ * whose origin does not resolve renders no entry instead of a dead one.
+ *
+ * The VOID entry needs no shape resolution: its use case takes only the transaction id, and a void
+ * is transaction-granular for every supported kind - a transfer's three legs move together
+ * (D-228 J1) - so the wired command alone decides it.
  */
-private val p705CorrectionEntryKinds: Set<TransactionKind> =
+private val p705EntryKinds: Set<TransactionKind> =
     setOf(TransactionKind.EXPENSE, TransactionKind.INCOME, TransactionKind.ACCOUNT_TRANSFER)
-
-/**
- * The VOID entry's kind set. The transfer void/restore surface is its own later slice, so the
- * merged void family keeps the ordinary pair: a transfer detail therefore offers the correction
- * entry without offering a void one.
- */
-private val p705VoidEntryKinds: Set<TransactionKind> = setOf(TransactionKind.EXPENSE, TransactionKind.INCOME)
 
 /**
  * P7-05.B/C (D-156; DP-12; spec section 3.5): whether the read-only detail page offers the
@@ -70,8 +66,8 @@ internal fun detailCorrectionAffordancesVisible(
 ): DetailCorrectionAffordances {
     val lineageSupported = isP705CreationLineageSupported(creationEntry)
     return DetailCorrectionAffordances(
-        edit = kind in p705CorrectionEntryKinds && lineageSupported && isEffective && hasCorrectionOrigin,
-        void = kind in p705VoidEntryKinds && lineageSupported && isEffective && hasVoidTarget,
+        edit = kind in p705EntryKinds && lineageSupported && isEffective && hasCorrectionOrigin,
+        void = kind in p705EntryKinds && lineageSupported && isEffective && hasVoidTarget,
     )
 }
 

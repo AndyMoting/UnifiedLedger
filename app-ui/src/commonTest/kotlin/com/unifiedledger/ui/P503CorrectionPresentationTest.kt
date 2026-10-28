@@ -71,16 +71,22 @@ class P503CorrectionPresentationTest {
 
     @Test
     fun detailEntriesHideForUnsupportedKindsOrVoidedOrUnresolved() {
-        // The transfer row joins the CORRECTION entry only: the transfer surface resolves its own
-        // origin shape, while its void/restore face is a separate later slice (D-228 J1), so the
-        // void entry stays hidden even when the host supplies a void target.
+        // The transfer row offers BOTH entries: the correction surface resolves its own origin
+        // shape, and voiding is transaction-granular for a transfer too (D-228 J1), so its three
+        // legs move together.
         assertEquals(
-            DetailCorrectionAffordances(edit = true, void = false),
+            DetailCorrectionAffordances(edit = true, void = true),
             detailCorrectionAffordancesVisible(TransactionKind.ACCOUNT_TRANSFER, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true),
         )
-        // The transfer edit entry still needs a host-resolved transfer origin: no dead button.
+        // The transfer CORRECTION entry still needs a host-resolved transfer origin: no dead
+        // button. The void entry does not depend on it - only on the wired use case.
+        assertEquals(
+            DetailCorrectionAffordances(edit = false, void = true),
+            detailCorrectionAffordancesVisible(TransactionKind.ACCOUNT_TRANSFER, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = false, hasVoidTarget = true),
+        )
+        // Nor does the void entry for an import-created transfer (DP-5 keeps that lineage out).
         assertFalse(
-            detailCorrectionAffordancesVisible(TransactionKind.ACCOUNT_TRANSFER, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = false, hasVoidTarget = true).any,
+            detailCorrectionAffordancesVisible(TransactionKind.ACCOUNT_TRANSFER, CreationEntry.IMPORT_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true).any,
         )
         // Lending and refund stay outside the support matrix (spec section 3.1).
         assertFalse(
