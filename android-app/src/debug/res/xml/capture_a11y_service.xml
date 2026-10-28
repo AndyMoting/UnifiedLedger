@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug-only accessibility service used to record what TalkBack focuses during a walkthrough. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeViewAccessibilityFocused|typeViewFocused|typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagIncludeNotImportantViews"
+    android:packageNames="com.unifiedledger.android"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/capture_a11y_description"
+    android:notificationTimeout="50" />

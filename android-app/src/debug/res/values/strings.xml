@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="capture_a11y_description">Records TalkBack focus order for the A-03 walkthrough (debug builds only)</string>
+</resources>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only capture surfaces. They exist so the P7-03 A-03 TalkBack walkthrough can be recorded
+  from the device instead of from a screenshot narrative; release builds never declare them.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <service
+            android:name=".CaptureA11yService"
+            android:exported="true"
+            android:label="UL TalkBack capture"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" >
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/capture_a11y_service" />
+        </service>
+    </application>
+
+</manifest>
