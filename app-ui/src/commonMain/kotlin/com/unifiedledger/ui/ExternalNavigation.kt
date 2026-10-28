@@ -152,7 +152,11 @@ enum class ShareRejectionReason {
     /** The sender's declared size already exceeded the frozen 16 MiB L0 bound. */
     DECLARED_SIZE_EXCEEDS_LIMIT,
 
-    /** The Intent carried no usable share surface at all. */
+    /**
+     * The Intent carried no usable share surface at all. **Reserved: unreachable today** (the platform
+     * validator rejects a stream-less share as [MISSING_STREAM] first), kept only so this display
+     * identity mirrors the platform enum one-to-one.
+     */
     NOT_A_SHARE,
 }
 

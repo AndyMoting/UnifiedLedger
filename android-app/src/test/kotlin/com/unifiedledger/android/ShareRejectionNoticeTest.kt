@@ -14,7 +14,12 @@ import kotlin.test.assertTrue
  * P7-09 09.A refused-share evidence (spec section 2.3; ACC-D-SHARE-02). The validator already returned
  * a typed [ShareIntakeRejection], but the request path only exposed `null`, so the Activity could not
  * tell a refusal from an ordinary launch and the screen stayed untouched. These assertions pin the
- * probe that makes the refusal observable: one typed code per vector, no id minted, nothing consumed.
+ * probe that makes the refusal observable: one typed code per reachable vector, no id minted, nothing
+ * consumed.
+ *
+ * [ShareIntakeRejection.NOT_A_SHARE] is deliberately absent: it has no producer in the validator
+ * today (a registered residual — it stays as the reserved member and is mapped, so the mapping stays
+ * total, but no Intent reaches it).
  */
 class ShareRejectionNoticeTest {
     private var minted = 0
@@ -46,7 +51,7 @@ class ShareRejectionNoticeTest {
     )
 
     @Test
-    fun everyRejectionVectorIsReportedWithItsOwnTypedCode() {
+    fun everyReachableRejectionVectorIsReportedWithItsOwnTypedCode() {
         val cases =
             listOf(
                 Triple("a non-SEND action", snapshot(action = "android.intent.action.VIEW"), ShareIntakeRejection.UNSUPPORTED_ACTION),
@@ -106,12 +111,23 @@ class ShareRejectionNoticeTest {
     @Test
     fun probingARefusalMintsNothingAndConsumesNothing() {
         val subject = intake()
-        assertEquals(
-            ShareIntakeRejection.NON_CONTENT_URI,
-            subject.rejectionFor(snapshot(streamUri = "file:///sdcard/bill.csv", streamScheme = "file")),
-        )
+        val refused = snapshot(streamUri = "file:///sdcard/bill.csv", streamScheme = "file")
+        assertEquals(ShareIntakeRejection.NON_CONTENT_URI, subject.rejectionFor(refused))
         assertEquals(0, minted, "the pure probe must never mint a delivery id")
+        // A probe that consumed an id (a `requestFor`-derived implementation) would report the refusal
+        // only once; the probe must be repeatable and side-effect free.
+        assertEquals(ShareIntakeRejection.NON_CONTENT_URI, subject.rejectionFor(refused))
         // The same share is still acceptable afterwards: the probe did not consume the identity.
+        val accepted = assertIs<ExternalNavigationRequest.OpenImport>(subject.hotReceiptRequest(snapshot()))
+        assertEquals("delivery-1", accepted.deliveryId)
+    }
+
+    @Test
+    fun probingAnAcceptedShareNeverConsumesIt() {
+        val subject = intake()
+        assertNull(subject.rejectionFor(snapshot()))
+        assertNull(subject.rejectionFor(snapshot()))
+        assertEquals(0, minted, "probing an accepted snapshot must not mint either")
         val accepted = assertIs<ExternalNavigationRequest.OpenImport>(subject.hotReceiptRequest(snapshot()))
         assertEquals("delivery-1", accepted.deliveryId)
     }
@@ -121,14 +137,6 @@ class ShareRejectionNoticeTest {
         val mapped = ShareIntakeRejection.values().map { it.toShareRejectionReason() }
         assertEquals(ShareIntakeRejection.values().size, mapped.toSet().size, "two platform codes must never collapse into one")
         assertEquals(ShareRejectionReason.values().toSet(), mapped.toSet(), "every display vector needs one platform code")
-    }
-
-    @Test
-    fun aReportedRefusalCarriesNoInboundPayloadInItsName() {
-        // The trace/copy identities are enum NAMES: neither a Uri nor a file name can travel through them.
-        ShareIntakeRejection.values().forEach { rejection ->
-            val reason = rejection.toShareRejectionReason()
-            assertTrue(reason.name.none { it == '/' || it == '.' } && !reason.name.contains("content"))
-        }
+        assertTrue(ShareIntakeRejection.NOT_A_SHARE.toShareRejectionReason() == ShareRejectionReason.NOT_A_SHARE)
     }
 }

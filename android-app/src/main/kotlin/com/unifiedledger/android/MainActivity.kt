@@ -92,9 +92,10 @@ class MainActivity : ComponentActivity() {
     /**
      * Validates one received Intent into a neutral request and delivers it to the process-scoped
      * channel. Zero formal effect on any rejection (spec section 2.3): the validator only reads the
-     * Intent's own extras and never opens a stream or queries the provider, so a rejected share
-     * leaves no trace and nothing blocks the main thread (P2-5 fix: the readability probe is a
-     * non-opening permission check, never an `openInputStream`).
+     * Intent's own extras and never opens a stream or queries the provider, so nothing is written
+     * and nothing blocks the main thread (P2-5 fix: the readability probe is a non-opening permission
+     * check, never an `openInputStream`). A rejection is NOT silent (ACC-D-SHARE-02): it is reported
+     * with its typed vector so the user sees why the share was refused.
      *
      * [coldLaunch] selects the receipt kind: a cold-launch receipt mints its deliveryId once per
      * FRESH launch and reuses it only for a recreation of the SAME Intent (P1-B: an Activity
@@ -180,8 +181,12 @@ class MainActivity : ComponentActivity() {
             // screen untouched — a silent no-op is indistinguishable from a broken app, and the frozen
             // contract forbids an external entry's result falling into `-> Unit`. The refusal travels as
             // its typed, display-safe vector to the process-scoped channel, which shows it on the RESUMED
-            // host only. Zero formal effect: nothing was opened, read or written. (Reached only when the
-            // snapshot was actually refused: an accepted repeat was re-held above.)
+            // host only. Zero formal effect: nothing was opened, read or written.
+            //
+            // No guard is needed to keep an ACCEPTED share out of this branch: an accepted repeat of the
+            // same launch Intent returns null above and is re-held there, and for the callers that do
+            // reach here the probe is a PURE re-validation of the same snapshot (it mints no id and
+            // consumes no receipt), so it returns null exactly when the snapshot is acceptable.
             holder.inboundIntake.rejectionFor(snapshot)?.let { rejection ->
                 StartupTrace.emit("entry.inboundRejected kind=${rejection.name}")
                 holder.externalNavigationChannel.notifyShareRejection(rejection.toShareRejectionReason())

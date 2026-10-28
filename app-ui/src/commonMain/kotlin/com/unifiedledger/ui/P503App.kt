@@ -564,6 +564,12 @@ fun P503App(
     // unrelated state-construction sites stay untouched; the request is surfaced (and rendered) from
     // the host instead. See [hostFallbackHeldNavigation].
     var hostHeldNavigation by remember { mutableStateOf<PendingExternalNavigation?>(null) }
+    // ACC-D-SHARE-02: the HOST-level refused-share notice. A refusal has no request and therefore no
+    // slot to land in, and it must be visible on EVERY surface — including the read-only detail, the
+    // recycle bin and the infrastructure-failure page, where the reducer cannot carry a Busy field
+    // (the same reason [hostHeldNavigation] exists). It is transient by design: it dies with the
+    // composition/process, and it carries only the display-safe vector.
+    var hostShareRejection by remember { mutableStateOf<ShareRejectionReason?>(null) }
     // P7-04.C: the decision-form validation over the shared parse facade (P503DraftValidation
     // pattern; the detail screen renders its one-shot errors).
     val importDecisionValidation = remember(ledger) { P503ImportDecisionValidation(ledger.parseAmount) }
@@ -2693,7 +2699,7 @@ fun P503App(
         // ACC-D-SHARE-02: a refused inbound share has no request to route, so it rides its own
         // binding on the same channel and lands as the visible refusal strip.
         externalNavigationChannel?.subscribeShareRejections(inboundHostToken) { reason ->
-            dispatch(P503UiEvent.ShareRejectionLanded(reason))
+            hostShareRejection = reason
         }
         onDispose {
             externalNavigationChannel?.subscribe(inboundHostToken, null)
@@ -3842,6 +3848,19 @@ fun P503App(
                     onReplace = null,
                     onDiscard = null,
                     dismissLabel = if (busy.shareRejection != null) "知道了" else "保留当前",
+                )
+            }
+            // ACC-D-SHARE-02 (spec section 2.3): the refused-share notice renders as a SIBLING of the
+            // surface content, so it is visible on every state — including the ones whose class carries
+            // no Busy field. Dismissing it drops the notice; nothing else is touched.
+            hostShareRejection?.let { reason ->
+                ExternalNavigationBusyStrip(
+                    busy = ExternalNavigationBusy(ExternalNavigationHoldReason.IMPORT_REJECTED, reason),
+                    onKeepCurrent = { hostShareRejection = null },
+                    onRetain = null,
+                    onReplace = null,
+                    onDiscard = null,
+                    dismissLabel = "知道了",
                 )
             }
             Box(Modifier.weight(1f)) {

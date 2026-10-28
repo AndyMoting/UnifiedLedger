@@ -61,9 +61,59 @@ class ShareDeliveryHostWiringTest {
             composition.any { it.startsWith("externalNavigationChannel?.subscribe(inboundHostToken) { request ->") },
             "the composition must bind the inbound host token it was given",
         )
+        // ACC-D-SHARE-02 turned the one-line onDispose into a block (it now unbinds BOTH the request
+        // and the refusal binding), so this pins the two statements rather than the old one-liner.
         assertTrue(
-            composition.any { it.startsWith("onDispose { externalNavigationChannel?.subscribe(inboundHostToken, null) }") },
-            "disposing the composition must unbind that same token",
+            composition.any { it == "externalNavigationChannel?.subscribe(inboundHostToken, null)" },
+            "disposing the composition must unbind the request binding of that same token",
+        )
+        assertTrue(
+            composition.any { it == "externalNavigationChannel?.subscribeShareRejections(inboundHostToken, null)" },
+            "disposing the composition must unbind the refusal binding too (otherwise a dead host keeps it)",
+        )
+    }
+
+    @Test
+    fun theCompositionRendersARefusalAsASiblingOfEverySurface() {
+        // ACC-D-SHARE-02: a refusal has no pending slot to land in, and the reducer's Busy field exists
+        // only on slot surfaces. Rendering it as a sibling of the surface content is what makes it
+        // visible on the read-only detail / recycle bin / failure pages too, so pin both the binding and
+        // the render seam's position.
+        val composition =
+            repositoryFile("app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503App.kt")
+                .toFile()
+                .readText()
+        assertTrue(
+            composition.contains("externalNavigationChannel?.subscribeShareRejections(inboundHostToken) { reason ->"),
+            "the composition must bind the refusal channel to the same host token",
+        )
+        assertTrue(composition.contains("hostShareRejection = reason"), "the refusal must land the host-level notice")
+        assertTrue(
+            composition.contains("hostShareRejection?.let { reason ->"),
+            "the notice must be rendered (a stored-but-never-shown value is the silent drop again)",
+        )
+        val noticeAt = composition.indexOf("hostShareRejection?.let { reason ->")
+        val contentAt = composition.indexOf("Box(Modifier.weight(1f))")
+        assertTrue(noticeAt in 0 until contentAt, "the notice must render ABOVE the surface content, not inside one state")
+    }
+
+    @Test
+    fun theRefusalBranchRunsInsideTheNullRequestBranch() {
+        // ACC-D-SHARE-02: a check that only greps for the notify call would still pass if the call had
+        // drifted BELOW the branch's `return` (dead code). Bound the searched region by the accepted
+        // path's `deliver(request)`, which comes after the branch.
+        val activity =
+            repositoryFile("android-app/src/main/kotlin/com/unifiedledger/android/MainActivity.kt")
+                .toFile()
+                .readText()
+        val branchStart = activity.indexOf("if (request == null) {")
+        val acceptedDeliver = activity.indexOf("holder.externalNavigationChannel.deliver(request)")
+        assertTrue(branchStart >= 0 && acceptedDeliver > branchStart, "the null branch and the accepted path must both exist")
+        val branch = activity.substring(branchStart, acceptedDeliver)
+        assertTrue(branch.contains("rejectionFor(snapshot)?.let { rejection ->"), "the refusal report must live inside the null branch")
+        assertTrue(
+            branch.contains("notifyShareRejection(rejection.toShareRejectionReason())"),
+            "the refusal report must actually notify (not merely probe)",
         )
     }
 

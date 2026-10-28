@@ -1,39 +1,28 @@
 package com.unifiedledger.ui
 
-import com.unifiedledger.application.LedgerCurrentState
-import com.unifiedledger.application.ParseManualExpenseAmount
-import com.unifiedledger.domain.CurrencyUnit
-import com.unifiedledger.domain.LedgerId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNull
-import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
  * P7-09 09.A refused-share evidence (spec section 2.3; ACC-D-SHARE-02). A share the validation face
  * refuses has NO request to route, so before this batch its typed code was discarded and the screen
- * simply stayed as it was — the `-> Unit` silent drop the frozen contract forbids. These assertions pin
- * the replacement: the refusal rides the channel on the same resumed-host discipline as a request,
- * lands the visible strip with its typed vector, and never touches the single pending slot.
+ * simply stayed as it was — the `-> Unit` silent drop the frozen contract forbids.
+ *
+ * These assertions cover the transport (the refusal rides the channel on the same resumed-host and
+ * identity discipline as a request, on its own depth-one slot) and the copy (one distinct,
+ * payload-free string per vector). The RENDERING is host-level by design — a refusal has no slot to
+ * land in and must show on surfaces whose state class carries no Busy field — so the render seam and
+ * its subscription are pinned on the source by `ShareDeliveryHostWiringTest` in `android-app`
+ * (the `theCompositionBindsAndUnbindsTheSameHostToken` precedent).
  */
 class ShareRejectionNoticeTest {
-    private val ledgerId = LedgerId("ledger-local-test")
-    private val cny = CurrencyUnit("CNY", 2)
-    private val reducer = P503ReducerImpl(ParseManualExpenseAmount(), cny)
-
-    private fun emptyState() = LedgerCurrentState(ledgerId, transactions = emptyList(), balances = emptyList())
-
-    private fun overview() = P503AppState.OverviewEmpty(emptyState())
-
-    /** A host token whose value equality is inherited from a data class: two instances are equal but
+    /** A host token whose value equality comes from a data class: two instances are equal but
      *  distinct, which is exactly the trap the channel's identity rule must survive (D-260 P709SD2-01). */
     private data class HostToken(
         val id: Int,
     )
-
-    // ---------------------------------------------------------------- channel transport
 
     @Test
     fun aRefusalParksUntilTheResumedHostCanShowIt() {
@@ -103,46 +92,6 @@ class ShareRejectionNoticeTest {
         channel.subscribeShareRejections(host) { seen += it }
         assertEquals(listOf(ShareRejectionReason.CONFLICTING_STREAM), seen, "the parked refusal drains into the next binding")
     }
-
-    // ---------------------------------------------------------------- reducer
-
-    @Test
-    fun aRefusalLandsTheVisibleStripWithoutTouchingThePendingSlot() {
-        val held =
-            PendingExternalNavigation(
-                ExternalNavigationRequest.OpenImport("delivery-1"),
-                ExternalNavigationHoldReason.DRAFT_IN_PROGRESS,
-            )
-        val state = P503AppState.OverviewEmpty(emptyState(), pendingExternalNavigation = held)
-        val landed = reducer.reduce(state, P503UiEvent.ShareRejectionLanded(ShareRejectionReason.CONFLICTING_STREAM))
-        assertEquals(ShareRejectionReason.CONFLICTING_STREAM, landed.externalNavigationBusyOrNull()?.shareRejection)
-        assertEquals(ExternalNavigationHoldReason.IMPORT_REJECTED, landed.externalNavigationBusyOrNull()?.reason)
-        assertSame(held, landed.pendingExternalNavigationSlot(), "a refusal must never rewrite the held request")
-        val dismissed = reducer.reduce(landed, P503UiEvent.DismissExternalNavigationBusy)
-        assertNull(dismissed.externalNavigationBusyOrNull())
-        assertSame(held, dismissed.pendingExternalNavigationSlot())
-    }
-
-    @Test
-    fun aRefusalIsVisibleOnEverySlotSurface() {
-        // The refusal must reach the user wherever they are: the strip's field exists on every surface
-        // class that carries a pending slot, and the reducer lands it on each of them.
-        val surfaces =
-            listOf(
-                overview(),
-                P503AppState.Ready(),
-            )
-        surfaces.forEach { surface ->
-            val landed = reducer.reduce(surface, P503UiEvent.ShareRejectionLanded(ShareRejectionReason.MISSING_STREAM))
-            assertEquals(
-                ShareRejectionReason.MISSING_STREAM,
-                landed.externalNavigationBusyOrNull()?.shareRejection,
-                "the refusal strip must render on ${surface::class.simpleName}",
-            )
-        }
-    }
-
-    // ---------------------------------------------------------------- copy
 
     @Test
     fun theRefusalCopyIsDistinctPerVectorAndCarriesNoInboundPayload() {

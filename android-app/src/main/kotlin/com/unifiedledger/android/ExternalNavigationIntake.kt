@@ -65,7 +65,12 @@ enum class ShareIntakeRejection {
     /** The declared size (a hint) already exceeds the frozen 16 MiB L0 bound. */
     DECLARED_SIZE_EXCEEDS_LIMIT,
 
-    /** The Intent carried no usable share surface at all. */
+    /**
+     * The Intent carried no usable share surface at all. **Reserved: no producer today** — the frozen
+     * validation table rejects a stream-less Intent as [MISSING_STREAM] before this code is reachable,
+     * so it is kept (and mapped) only so the display mapping stays total; removing it would change an
+     * implemented enum for no behaviour. Registered as a residual in the ACC-D-SHARE-02 batch.
+     */
     NOT_A_SHARE;
 
     /**
