@@ -5496,9 +5496,9 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 | T-02 两腿改备注 | PASS | `…aTwoLegNoteCorrectionKeepsThePostingSetAndAddsNoCashFlow`、`…noteOnlyTransferCorrectionReusesThePostingSet`、`…aZeroFeeTargetCarryingACategoryIsAFieldRejection` |
 | T-03 fee>0→0 | PASS | `…feeToZeroDropsTheFeeLegAndTheCategory` |
 | T-03b fee0→>0 | PASS | `…zeroFeeSeedGainsACategorisedFeeLeg`：两腿→三腿、绑定新 posting set、逐币种合计 0、`sourceDebit == destinationCredit + fee` |
-| T-04 账户修正与准入 | PASS | `…endpointSwapMovesBothPrincipalLegs`、`…crossLedgerDestinationCorrection…`、`…foreignCurrencyDestinationCorrection…`；`realAccount`/`ownedByUser`/ASSET/「互不相同」四个负例由域层 `AccountTransferTest`（`ledger-domain/src/commonTest/…/AccountTransferTest.kt:48-61`）覆盖，规格 §8.1 指明复用该矩阵 |
+| T-04 账户修正与准入 | PASS | `…endpointSwapMovesBothPrincipalLegs`、`…crossLedgerDestinationCorrection…`、`…foreignCurrencyDestinationCorrection…`；`realAccount`/`ownedByUser`/ASSET/「互不相同」四个负例由域层 `AccountTransferTest`（`ledger-domain/src/commonTest/…/AccountTransferTest.kt:48-61`，Distinct/OwnAccount/RealFinancialAccount/AssetAccount 逐条）覆盖；规格 §8.1 要求复用的是 `AccountTransfer.kt:70-93` 的准入规则，该测试只是覆盖证据 |
 | T-05 手续费分类不可准入 | PASS | `…inactiveFeeCategory…`/`…crossLedgerFeeCategory…`/`…incomeFeeCategory…`/`…deepFeeCategory…` 四条 catalog 拒绝 |
-| T-06 作废三腿转账 | PASS | 派生面：#1-#5 与 N1/N10 见 `P705TransferCorrectionCommitPortTest`（`voidedTransferLeavesTheEffectiveSurfaceAndCannotBeCorrected` 等），N2/N3/N4/N5 见 `P705TransferRestorePathTest`；**回收站面**由 `P705TransferRestorePathTest.kt:154-166` 直接断言（三腿种子作废后回收站行含 id、`ACCOUNT_TRANSFER`、原因、`postings.size == 3`），该用例注释即写明「T-06's recycle-bin face」 |
+| T-06 作废三腿转账 | PASS | 派生面：#1-#5 与 N1/N10 见 `P705TransferCorrectionCommitPortTest`（`voidedTransferLeavesTheEffectiveSurfaceAndCannotBeCorrected` 等），N2/N3/N4/N5 见 `P705TransferRestorePathTest`；N10 是该测试自述的冻结 no-op（「deliberately NOT counted as T-06 red-able coverage」），不计入覆盖；**回收站面**由 `P705TransferRestorePathTest.kt:154-166` 直接断言（三腿种子作废后回收站行含 id、`ACCOUNT_TRANSFER`、原因、`postings.size == 3`），该用例注释即写明「T-06's recycle-bin face」 |
 | T-07 作废后历史保留 | PASS | `P705VoidRestoreCommitPortTest.voidKeepsEveryHistoricalRowAndTheCreationLineageReadable`、`voidingAManualTransferKeepsEveryHistoricalAndRequestRowValueIdentical` |
 | T-08 恢复恰好一次 | PASS | 转账侧：`P705TransferRestorePathTest.aVoidedTransferRestoresValueIdentically`（三腿逐值还原）与 `…aRestoredTransferCannotBeRestoredAgainNorRevoidedBeyondTheCycle`（第二次恢复拒绝）；普通支出侧 `P705VoidRestoreCommitPortTest.restoreHappensExactlyOnceAndASecondRestoreIsATypedRejection` 为同族补充 |
 | T-09 恢复按当前目录重校验 | PASS | `P705TransferRestorePathTest.renamedButActiveEndpointsRemainAdmissibleForARestore`、`aDeactivatedEndpointBlocksTheRestoreAndTheTransactionStaysVoided`、`aDeactivatedFeeCategoryBlocksTheRestoreOfAThreeLegTransfer`、`P705VoidRestoreCommitPortTest.restoreRevalidatesTheCurrentCatalogAndKeepsTheTransactionVoidedOnRejection` |
@@ -5511,14 +5511,14 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 2. **披露（不影响上面的判决）**：15 条均为 JVM 维度，05.D 的 Android 人工走查（转账切片在真机上的修正/作废/回收站可见性与返回）仍未执行，属设备门；本条不把 JVM 判决外推为设备证据。
 
 3. **四条设备门外裁决（均不产生 PASS）**：
-   - **A-03 / A03-8b（会话内瞬态读失败）→ 缺证（BLOCKED）**。三次外部注入实测失败：运行中 `chmod 000`、`ledger.db` 换同名目录（POSIX 已打开 inode）、`dd` 覆盖中段 16 KB（SQLite 页缓存）；现场与读数见 `local/artifacts/p703-a03-talkback/STATUS.md` 与本条提交说明。**仍可推进的任务**：在 `P503LedgerFacade` 加一个默认为 null 的注入 seam（release 行为等价）后即可确定性触发；未采纳的理由是它会给正式 facade 引入测试钩子，属可复议的取舍而非外部阻碍。该向量此前登记为「缺证 + 承接见 CURRENT_STATE 未完成门槛」（D-243 前后同口径），本条不改其非 PASS 状态。
+   - **A-03 / A03-8b（会话内瞬态读失败）→ 缺证（BLOCKED）**。三次外部注入实测失败：运行中 `chmod 000`、`ledger.db` 换同名目录（POSIX 已打开 inode）、`dd` 覆盖中段 16 KB（SQLite 页缓存）；三次注入的原始读数见 `local/artifacts/p703-a03-talkback/TB-REPORT.md` 的「A03-8b 的三次读失败注入」小节。**仍可推进的任务**：在 `P503LedgerFacade` 加一个默认为 null 的注入 seam（release 行为等价）后即可确定性触发；未采纳的理由是它会给正式 facade 引入测试钩子，属可复议的取舍而非外部阻碍。该向量此前登记为「缺证 + 承接见 CURRENT_STATE 未完成门槛」（D-243 前后同口径），本条不改其非 PASS 状态。
    - **A-05 / D01-9（权限撤回）→ PARTIAL 保留**。新增 `app-ui/src/jvmTest/…/ImportFilePickGrantRevocationTest.kt`（中途撤回与首块即抛都落到 `STREAM_READ_FAILED`、源关闭、文案冻结）强化等价链，但真实撤回仍未观察，不据此改判。
    - **A-PERF / 61k → 沿 D-243 §2 的重新表述**：该项已由「未达 ≤3 s 门槛」改写为「超出计划原定规模的累积库观察项」，本条沿用 D-243 的口径，不使用已被取代的 NOT MET 标签，也不改 D-243 的任何结论。
-   - **A-VIS（窄屏可读性）→ 缺口收窄到 TalkBack 朗读腿**。窄屏排版证据已由 D-235 交付并设备取证（309dp、长行折叠后仍可访问、截图与 XML 落盘），本条不再声称「仓库无 UI 截图基建」；剩余缺口是该向量的 TalkBack 朗读面，承接任务与 A-03 同路（`local/artifacts/p703-a03-talkback/` 的采集面），不单列延期。
+   - **A-VIS（窄屏可读性）→ 两处缺口，均未闭合**。窄屏排版证据已由 D-235 交付并设备取证（309dp、长行折叠后仍可访问、截图与 XML 落盘），本条不再声称「仓库无 UI 截图基建」；仍缺的是 D-235 §9 列明的两项：**卡片头部批量开关在窄屏下的设备语义树仍未观测**，以及该向量的 **TalkBack 朗读面**。承接：带窗口 AVD 上人工走查该头部（可复用 `local/artifacts/p703-a03-talkback/` 的采集面记录节点文本），不依赖尚未采纳的 facade seam。该向量仍非 PASS。
 
-4. **向量账（§10.1 口径）**：P7-05 由 0/15 变为 **15/15 PASS（JVM）**；全计划由 29/62 变为 **44/62（71.0%）**。分母构成：第一部分 8（A-01/A-02/A-03/A-04/A-05/A-PERF/A-DOC/A-VIS）+ P7-05 15 + P7-06 12 + P7-07 9 + P7-08 9 + P7-09 9 = 62。基线 29 的来源：第一部分 4（A-01/A-02/A-04/A-DOC）+ P7-06 8 + P7-07 8 + P7-08 8 + P7-09 1；其中 A-DOC 计为 PASS 是**本条的口径假设**（此前只登记为交付批次，未登记为验收向量），如需严格化应另立决定把 A-DOC 纳入向量表。
+4. **向量账（§10.1 口径）**：P7-05 由 0/15 变为 **15/15 PASS（JVM）**；全计划由 29/62 变为 **44/62（71.0%）**。分母构成：第一部分 8（A-01/A-02/A-03/A-04/A-05/A-PERF/A-DOC/A-VIS）+ P7-05 15 + P7-06 12 + P7-07 9 + P7-08 9 + P7-09 9 = 62。基线 29 的来源：第一部分 4（A-01/A-02/A-04/A-DOC）+ P7-06 8 + P7-07 8 + P7-08 8 + P7-09 1；其中 A-DOC 计为 PASS 是**本条的口径假设**（此前只登记为交付批次，未登记为验收向量）；该假设同时决定分子（29 含它）与分母（第一部分按 8 项计），如需严格化应另立决定把 A-DOC 纳入向量表并重算两侧。
 
-5. **审验拓扑（如实）**：本条为文档判决批，经一轮独立评审（REQUEST-CHANGES：T-06 虚假残余、CURRENT_STATE 自相矛盾、A-VIS 与 D-235 冲突）后修复，再由 delta 复审确认闭合；未派 distinct verifier，因为判决对象是 JVM 测试锚点而非设备产物，评审已逐条实读断言。
+5. **审验拓扑（如实）**：本条为文档判决批，经独立评审两轮（首轮 REQUEST-CHANGES：T-06 虚假残余、CURRENT_STATE 自相矛盾、A-VIS 与 D-235 冲突；二轮再指出规格指回未同步、`dd` 注入缺落盘、A-VIS 收窄过头与拓扑超前），逐条修复后送第二轮 delta 复审。未派 distinct verifier：判决对象是 JVM 测试锚点而非设备产物，两轮评审均逐条实读断言；该取舍由主会话承担，若需更严可补一名 verifier 复核锚点。
 
 **边界：** 入：本条判决与裁决、规格 §10 状态指回、CURRENT_STATE 一句。出：零代码、零测试、零 schema/迁移、零 CI 改动；不改 D-156/D-158/D-228/D-235/D-243 的任何结论；不把披露、延期或缺证写成 PASS。
 
