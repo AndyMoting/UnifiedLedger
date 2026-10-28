@@ -69,7 +69,7 @@ enum class ShareIntakeRejection {
      * The Intent carried no usable share surface at all. **Reserved: no producer today** — the frozen
      * validation table rejects a stream-less Intent as [MISSING_STREAM] before this code is reachable,
      * so it is kept (and mapped) only so the display mapping stays total; removing it would change an
-     * implemented enum for no behaviour. Registered as a residual in the ACC-D-SHARE-02 batch.
+     * implemented enum for no behaviour. Registered as spec section 8 open item 16.
      */
     NOT_A_SHARE,
     ;

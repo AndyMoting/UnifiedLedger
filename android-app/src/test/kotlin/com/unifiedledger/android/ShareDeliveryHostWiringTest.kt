@@ -107,14 +107,15 @@ class ShareDeliveryHostWiringTest {
                 .toFile()
                 .readText()
         val branchStart = activity.indexOf("if (request == null) {")
-        val acceptedDeliver = activity.indexOf("holder.externalNavigationChannel.deliver(request)")
-        assertTrue(branchStart >= 0 && acceptedDeliver > branchStart, "the null branch and the accepted path must both exist")
-        val branch = activity.substring(branchStart, acceptedDeliver)
-        assertTrue(branch.contains("rejectionFor(snapshot)?.let { rejection ->"), "the refusal report must live inside the null branch")
-        assertTrue(
-            branch.contains("notifyShareRejection(rejection.toShareRejectionReason())"),
-            "the refusal report must actually notify (not merely probe)",
-        )
+        assertTrue(branchStart >= 0, "the null branch must exist")
+        // Bound at the branch's OWN `return` (a statement at this indentation), not at the accepted
+        // path further down: a notify moved BELOW that return is dead code and must fail here.
+        val branchReturn = activity.indexOf("            return", branchStart)
+        assertTrue(branchReturn > branchStart, "the null branch must end with an indented return")
+        val probeAt = activity.indexOf("rejectionFor(snapshot)?.let { rejection ->", branchStart)
+        val notifyAt = activity.indexOf("notifyShareRejection(rejection.toShareRejectionReason())", branchStart)
+        assertTrue(probeAt in (branchStart + 1) until branchReturn, "the refusal probe must run before the branch returns")
+        assertTrue(notifyAt in (branchStart + 1) until branchReturn, "the refusal must notify before the branch returns")
     }
 
     @Test

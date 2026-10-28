@@ -2695,7 +2695,12 @@ fun P503App(
         // ACC-D-SHARE-01: the binding is keyed by the host token so the channel can refuse to hand a
         // request to a host that is not the resumed one (a previous instance keeps its composition
         // alive in a live process).
-        externalNavigationChannel?.subscribe(inboundHostToken) { request -> onExternalNavigationRequested(request) }
+        externalNavigationChannel?.subscribe(inboundHostToken) { request ->
+            // ACC-D-SHARE-02: a NEW inbound result supersedes the previous refusal notice, so a stale
+            // "无法接收这次分享" can never sit above the freshly held share's own strip.
+            hostShareRejection = null
+            onExternalNavigationRequested(request)
+        }
         // ACC-D-SHARE-02: a refused inbound share has no request to route, so it rides its own
         // binding on the same channel and lands as the visible refusal strip.
         externalNavigationChannel?.subscribeShareRejections(inboundHostToken) { reason ->
@@ -3847,7 +3852,6 @@ fun P503App(
                     onRetain = null,
                     onReplace = null,
                     onDiscard = null,
-                    dismissLabel = if (busy.shareRejection != null) "知道了" else "保留当前",
                 )
             }
             // ACC-D-SHARE-02 (spec section 2.3): the refused-share notice renders as a SIBLING of the
