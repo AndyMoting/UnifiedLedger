@@ -41,6 +41,15 @@ class P503CorrectionPresentationTest {
     private val transactionId = TransactionId("tx-1")
     private val versionId = TransactionVersionId("version-1")
 
+    // ---- transfer preview labels (the surface renders the pure preview at render time) ----
+
+    @Test
+    fun theTransferPreviewLineLabelNamesBothValuesAndTheChangedFlag() {
+        val changed = TransferEditDiffLine(TransferEditField.DESTINATION_CREDIT, "到账金额", "100.00 CNY", "80.00 CNY")
+        assertEquals("到账金额，旧值 100.00 CNY，新值 80.00 CNY，已修改", transferEditDiffLineContentDescription(changed))
+        val unchanged = TransferEditDiffLine(TransferEditField.FEE, "手续费", "无", "无")
+        assertEquals("手续费，旧值 无，新值 无，未修改", transferEditDiffLineContentDescription(unchanged))
+    }
     // ---- detail-page entry gate (DP-12; spec section 3.5) ---------------------------------
 
     @Test
@@ -62,10 +71,18 @@ class P503CorrectionPresentationTest {
 
     @Test
     fun detailEntriesHideForUnsupportedKindsOrVoidedOrUnresolved() {
-        // Transfer/lending/refund are outside the first-slice support matrix (spec section 3.1).
-        assertFalse(
-            detailCorrectionAffordancesVisible(TransactionKind.ACCOUNT_TRANSFER, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true).any,
+        // The transfer row joins the CORRECTION entry only: the transfer surface resolves its own
+        // origin shape, while its void/restore face is a separate later slice (D-228 J1), so the
+        // void entry stays hidden even when the host supplies a void target.
+        assertEquals(
+            DetailCorrectionAffordances(edit = true, void = false),
+            detailCorrectionAffordancesVisible(TransactionKind.ACCOUNT_TRANSFER, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true),
         )
+        // The transfer edit entry still needs a host-resolved transfer origin: no dead button.
+        assertFalse(
+            detailCorrectionAffordancesVisible(TransactionKind.ACCOUNT_TRANSFER, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = false, hasVoidTarget = true).any,
+        )
+        // Lending and refund stay outside the support matrix (spec section 3.1).
         assertFalse(
             detailCorrectionAffordancesVisible(TransactionKind.LEND, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true).any,
         )

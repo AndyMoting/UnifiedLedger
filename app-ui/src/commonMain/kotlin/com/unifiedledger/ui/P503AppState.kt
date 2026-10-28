@@ -453,6 +453,38 @@ sealed interface P503AppState {
     ) : P503AppState
 
     /**
+     * P7-05 (D-228; spec sections 3/4.4 and 8.3): the transfer correction surface. Reached only from
+     * the read-only transaction detail (DP-12) when the target's posting shape is a transfer one, so
+     * it is the [TransactionEdit] sibling for a transfer-shaped transaction rather than a variant of
+     * it: the frozen field set differs (seven fields, two accounts and a fee leg instead of
+     * amount/category/funding) and the two faces must never share a draft.
+     *
+     * [origin] is the host-resolved old-value snapshot and carries the CAS token
+     * (`currentVersionId`); [draft] is the pure seven-field form; [requestId] is minted by the host on
+     * the explicit confirm (never by the reducer); [submitting] is the per-operation marker (提交中不重入)
+     * and the `UnknownCommit` discipline's surface - a lost commit leaves the marker set with no
+     * automatic retry, no requestId swap and no accepted leave. The overview is carried so every exit
+     * restores the exact tab, month cursor and monthly payload.
+     *
+     * There is deliberately no `preview` field: [com.unifiedledger.ui.transferCorrectionPreview]
+     * renders its seven lines in one pass, name tables included, and the surface calls it at render
+     * time. The ordinary surface splits that work instead (the reducer stores raw texts, the
+     * presentation injects names), so this is a deliberate fork: one implementation of the seven-field
+     * rendering, at the cost of the preview not being assertable at reducer level. Both readings obey
+     * the frozen rule that a preview is a display-only read and never commit permission.
+     */
+    data class TransferEdit(
+        val overview: OverviewEmpty,
+        val origin: TransferCorrectionOrigin,
+        val draft: TransferCorrectionDraft = TransferCorrectionDraft(),
+        val requestId: RequestId? = null,
+        val submitting: Boolean = false,
+        val notice: P705Notice? = null,
+        /** P7-05 (V-19; D-173): see [TransactionEdit.checkOutcome]. */
+        val checkOutcome: P705CommitCheckOutcome = P705CommitCheckOutcome.NONE,
+    ) : P503AppState
+
+    /**
      * P7-05.C (D-156; spec sections 3.3/4.4): the void confirmation page. Reached only from the
      * read-only transaction detail (DP-12). [reason] is the mandatory typed reason form (DP-11);
      * [requestId] is host-minted on the explicit confirm; [submitting] is the per-operation
@@ -778,11 +810,12 @@ sealed interface ExpressionPreview {
  * that hold a preserved [OverviewEmpty] and render no competing monthly region of their own.
  *
  * HONEST SUBSET (not "every surface that carries an OverviewEmpty"):
- * [ImportCandidateDetail], [ImportBatchConfirm], [ImportBatchSubmitting],
- * [TransactionEdit] and [VoidConfirm] also carry one, but a landing there is ABSORBED —
+ * [ImportCandidateDetail], [ImportBatchConfirm], [ImportBatchSubmitting], [TransactionEdit],
+ * [TransferEdit], [VoidConfirm], [TransactionAnnotationEdit] and [TagMerchantFilter] also carry
+ * one, but a landing there is ABSORBED —
  * their own event families own those surfaces, and the budget region never renders on
  * them. REGISTERED NARROW RACE: a budget landing dispatched while the user has navigated
- * INTO one of those five surfaces is silently dropped (the coordinator's guard already
+ * INTO one of those eight surfaces is silently dropped (the coordinator's guard already
  * stamped the request); the next budget trigger (effective-month change, SelectMonth,
  * config commit, a later P7-05/import arm) re-requests, and the region never renders there,
  * so no wrong amount is ever shown — only a possibly-stale payload on RETURN, which the

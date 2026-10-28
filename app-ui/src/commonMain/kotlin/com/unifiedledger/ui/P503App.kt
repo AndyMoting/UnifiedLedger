@@ -2967,18 +2967,27 @@ fun P503App(
     // which is why D-173 keeps V-19 at 已实现待验收 rather than PASS. This is the same
     // no-auto-retry/no-requestId-swap rule the reducer pins (V-19).
 
-    /** P7-05.B (DP-12: 仅详情入口): resolves the old-value snapshot and opens the correction surface. */
+    /**
+     * P7-05.B (DP-12: 仅详情入口): resolves the old-value snapshot and opens the correction surface.
+     * The shape decision and its rationale live in [transactionEditEntrance].
+     */
     fun openTransactionEdit(detail: TransactionDetail) {
         if (!ledger.surfaces.correction) return
         val snapshot = cachedCatalogSnapshot ?: return
-        val origin = transactionEditOriginFromDetail(detail, snapshot) ?: return
-        dispatch(P503UiEvent.OpenTransactionEdit(origin))
+        // The shape decision is the host's pure seam, so the split is JVM-assertable.
+        when (val entrance = transactionEditEntrance(detail, snapshot)) {
+            is TransactionEditEntrance.Transfer -> dispatch(P503UiEvent.OpenTransferEdit(entrance.origin))
+            is TransactionEditEntrance.Ordinary -> dispatch(P503UiEvent.OpenTransactionEdit(entrance.origin))
+            null -> return
+        }
     }
 
     /** P7-05.B: whether the detail page's edit entry can be resolved right now (facade + catalog + payload). */
     fun correctionOriginResolvable(detail: TransactionDetail): Boolean {
         val snapshot = cachedCatalogSnapshot ?: return false
-        return ledger.surfaces.correction && transactionEditOriginFromDetail(detail, snapshot) != null
+        // The probe IS the open path's decision, so the page never renders an entry whose click
+        // would do nothing.
+        return ledger.surfaces.correction && transactionEditEntrance(detail, snapshot) != null
     }
 
     /** P7-05.C (DP-12): opens the void confirmation page from the detail. */
@@ -3126,6 +3135,55 @@ fun P503App(
             request?.let { built ->
                 // V-19 (D-173): retain the committed snapshot for a later in-session manual
                 // re-check (the draft stays editable, so it must never be re-derived).
+                retainedP705Request = built.toRetainedRequest()
+                commitTransactionCorrection(built)
+            }
+        }
+    }
+
+    /**
+     * P7-05 (D-228): the explicit confirm of a transfer correction. The same shape as
+     * [confirmTransactionCorrection] - the parse guard runs BEFORE the submitting marker (an
+     * unreadable edited statistics time becomes the surface's existing typed field rejection,
+     * never a silent revert to the stored instant), the request id is minted for this one intent,
+     * and the retained snapshot feeds the in-session manual re-check. The commit itself is the
+     * shared correction path: the domain plans the transfer's posting set from the same request.
+     */
+    fun confirmTransferCorrection(current: P503AppState.TransferEdit) {
+        if (!ledger.surfaces.correction) return
+        var request: ExplicitlyConfirmedTransactionCorrection? = null
+        dispatchCurrentP503Action(
+            current,
+            latestState.value,
+            {
+                val requestId = ledger.requestIdSource.next()
+                val statisticsAt =
+                    transferCorrectionStatisticsInstant(
+                        origin = current.origin,
+                        draft = current.draft,
+                        parseOccurredAt = ledger.parseOccurredAt,
+                        ledgerClock = ledger.ledgerClock,
+                    )
+                val built =
+                    statisticsAt?.let { instant ->
+                        transferCorrectionRequest(
+                            ledgerId = ledger.ledgerId,
+                            requestId = requestId,
+                            origin = current.origin,
+                            draft = current.draft,
+                            statisticsAt = instant,
+                        )
+                    }
+                if (built == null) {
+                    P503UiEvent.TransactionEditResult(CORRECTION_FIELD_REJECTION)
+                } else {
+                    request = built
+                    P503UiEvent.ConfirmTransactionEdit(requestId)
+                }
+            },
+            ::dispatch,
+        ) {
+            request?.let { built ->
                 retainedP705Request = built.toRetainedRequest()
                 commitTransactionCorrection(built)
             }
@@ -4051,6 +4109,27 @@ fun P503App(
                                     null
                                 },
                         )
+                    // P7-05 (D-228; transfer spec section 3): the transfer correction surface. Its
+                    // preview is a render-time pure read over the catalog's display names (the reducer
+                    // holds no catalog), so the screen receives the same projections as the ordinary
+                    // one plus the fee-category options a positive fee requires.
+                    is P503AppState.TransferEdit ->
+                        P503TransferEditScreen(
+                            state = current,
+                            categoryNames = cachedCatalogSnapshot?.correctionCategoryNames() ?: emptyMap(),
+                            accountNames = cachedCatalogSnapshot?.correctionAccountNames() ?: emptyMap(),
+                            accountOptions = cachedCatalogSnapshot?.let { correctionAccountOptions(it) } ?: emptyList(),
+                            feeCategoryOptions = cachedCatalogSnapshot?.let { transferFeeCategoryOptions(it) } ?: emptyList(),
+                            onUpdateField = { update -> dispatch(P503UiEvent.UpdateTransferCorrectionField(update)) },
+                            onConfirm = { confirmTransferCorrection(current) },
+                            onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                            onRecheck =
+                                if (current.submitting && retainedP705Request is RetainedP705Request.Correction) {
+                                    { recheckCorrectionCommitStatus() }
+                                } else {
+                                    null
+                                },
+                        )
                     // P7-08 08.B-2 (spec section 4.4): the annotation-edit surface. The selectable options
                     // come from the facade's already-filtered projection. A null projection (not yet loaded,
                     // or an unwired root) is passed through as null so the screen presents an honest
@@ -4481,6 +4560,7 @@ private fun isBackEnabled(state: P503AppState): Boolean =
         // [P503AppState.Submitting] (the enabled handler swallows it while [isBackDispatchSafe]
         // keeps `Back` from ever reaching the reducer).
         is P503AppState.TransactionEdit -> true
+        is P503AppState.TransferEdit -> true
         is P503AppState.VoidConfirm -> true
         is P503AppState.RecycleBin -> true
         // P7-07 07.D (D-184): the budget config surface returns to its preserved overview; while
@@ -4523,6 +4603,7 @@ private fun isBackDispatchSafe(state: P503AppState): Boolean =
         // P7-05: a commit in flight keeps the surface (提交中不得离开); a non-submitting P7-05
         // surface dispatches `Back` (its reducer maps it to the preserved overview).
         !(state is P503AppState.TransactionEdit && state.submitting) &&
+        !(state is P503AppState.TransferEdit && state.submitting) &&
         // P7-08 08.B-2: the same rule for the annotation-edit surface.
         !(state is P503AppState.TransactionAnnotationEdit && state.submitting) &&
         !(state is P503AppState.VoidConfirm && state.submitting) &&

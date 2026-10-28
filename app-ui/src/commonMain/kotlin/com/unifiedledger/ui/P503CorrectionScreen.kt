@@ -167,6 +167,150 @@ internal fun P503TransactionEditScreen(
     }
 }
 
+/**
+ * P7-05 (D-228; transfer spec sections 3/4.4): the transfer correction surface. The same shape as
+ * [P503TransactionEditScreen] over the transfer's own seven frozen fields - the destination credit
+ * (the source debit is derived, never typed), the two real-asset accounts, the fee and its
+ * category - and its own seven-line difference preview.
+ *
+ * The preview renders on every frame instead of behind an explicit request: the transfer preview
+ * needs the current catalog's display names, so it is a render-time pure read
+ * ([transferCorrectionPreview]) rather than state the IO-free reducer could hold. It stays a
+ * display-only read - a preview is never commit permission (spec section 3).
+ *
+ * Every affordance takes a callback the composition root wires; a `null` confirm renders the
+ * disabled button instead of a dead one. While a commit is in flight the exits are absorbed by the
+ * caller's guards (提交中不得离开) and the confirm button disables (提交中不重入).
+ */
+@Composable
+internal fun P503TransferEditScreen(
+    state: P503AppState.TransferEdit,
+    categoryNames: Map<CategoryId, String>,
+    accountNames: Map<AccountId, String>,
+    accountOptions: List<Pair<AccountId, String>>,
+    feeCategoryOptions: List<Pair<CategoryId, String>>,
+    onUpdateField: (TransferCorrectionFieldUpdate) -> Unit,
+    onConfirm: (() -> Unit)?,
+    onCancel: (() -> Unit)?,
+    onRecheck: (() -> Unit)? = null,
+) {
+    val currency = state.origin.currency
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("修正转账", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            if (onCancel != null) {
+                OutlinedButton(onClick = onCancel) { Text("返回") }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        state.notice?.let { notice ->
+            Text(
+                p705NoticeText(notice),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.semantics { contentDescription = p705NoticeText(notice) },
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+        OutlinedTextField(
+            value = state.draft.note,
+            onValueChange = { onUpdateField(TransferCorrectionFieldUpdate.Note(it)) },
+            label = { Text("备注") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = state.draft.statisticsAtText,
+            onValueChange = { onUpdateField(TransferCorrectionFieldUpdate.StatisticsAt(it)) },
+            label = { Text("统计时间") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = state.draft.destinationCreditText,
+            onValueChange = { onUpdateField(TransferCorrectionFieldUpdate.DestinationCredit(it)) },
+            label = { Text("到账金额（${currency.code}）") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        Text("源账户", style = MaterialTheme.typography.titleSmall)
+        accountOptions.forEach { (accountId, label) ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(
+                    selected = state.draft.sourceAccountId == accountId,
+                    onClick = { onUpdateField(TransferCorrectionFieldUpdate.SourceAccount(accountId)) },
+                )
+                Text(label, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("目标账户", style = MaterialTheme.typography.titleSmall)
+        accountOptions.forEach { (accountId, label) ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(
+                    selected = state.draft.destinationAccountId == accountId,
+                    onClick = { onUpdateField(TransferCorrectionFieldUpdate.DestinationAccount(accountId)) },
+                )
+                Text(label, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = state.draft.feeText,
+            onValueChange = { onUpdateField(TransferCorrectionFieldUpdate.Fee(it)) },
+            label = { Text("手续费（${currency.code}）") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        Text("手续费分类", style = MaterialTheme.typography.titleSmall)
+        feeCategoryOptions.forEach { (categoryId, label) ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(
+                    selected = state.draft.feeCategoryId == categoryId,
+                    onClick = { onUpdateField(TransferCorrectionFieldUpdate.FeeCategory(categoryId)) },
+                )
+                Text(label, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        HorizontalDivider()
+        Spacer(Modifier.height(8.dp))
+        Text("差异预览（旧值 → 新值）", style = MaterialTheme.typography.titleMedium)
+        transferCorrectionPreview(state.origin, state.draft, categoryNames, accountNames).fields.forEach { line ->
+            Text(
+                "${line.label}：${line.oldText} → ${line.newText}${if (line.changed) "（已修改）" else ""}",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.semantics { contentDescription = transferEditDiffLineContentDescription(line) },
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(TRANSACTION_EDIT_CONFIRM_STATEMENT, style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.height(8.dp))
+        Row {
+            Button(onClick = { onConfirm?.invoke() }, enabled = onConfirm != null && !state.submitting) { Text("确认修正") }
+            if (onCancel != null) {
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton(onClick = onCancel, enabled = !state.submitting) { Text("取消") }
+            }
+        }
+        if (state.submitting) {
+            Spacer(Modifier.height(8.dp))
+            P705SubmittingRow(onRecheck = onRecheck, outcome = state.checkOutcome)
+        }
+    }
+}
+
 /** One preview line's TalkBack label: the field, its old value, its new value and whether it changed. */
 internal fun transactionEditDiffLineContentDescription(line: TransactionEditDiffLine): String = "${line.label}，旧值 ${line.oldText}，新值 ${line.newText}${if (line.changed) "，已修改" else "，未修改"}"
 

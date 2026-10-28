@@ -299,6 +299,20 @@ class P503RestoreReducerTest {
             fundingAccountId = com.unifiedledger.domain.AccountId("asset-payment-local"),
         )
 
+    private fun transferOrigin(): TransferCorrectionOrigin =
+        TransferCorrectionOrigin(
+            transactionId = com.unifiedledger.domain.TransactionId("tx-1"),
+            currentVersionId = com.unifiedledger.domain.TransactionVersionId("version-1"),
+            note = null,
+            statisticsAt = kotlin.time.Instant.parse("2026-03-15T02:00:00Z"),
+            currency = com.unifiedledger.domain.CurrencyUnit("CNY", 2),
+            sourceAccountId = com.unifiedledger.domain.AccountId("asset-payment-local"),
+            destinationAccountId = com.unifiedledger.domain.AccountId("asset-bank"),
+            destinationCreditMinorUnits = 10_000L,
+            feeMinorUnits = 0L,
+            feeCategoryId = null,
+        )
+
     private fun everyStateExcept(vararg excluded: P503AppState): List<P503AppState> = allStates().filterNot { it in excluded }
 
     private fun allStates(): List<P503AppState> {
@@ -324,6 +338,7 @@ class P503RestoreReducerTest {
             P503AppState.ImportBatchConfirm(overview()),
             P503AppState.ImportBatchSubmitting(overview(), "2026-09-14T08:00:00Z", emptyList()),
             P503AppState.TransactionEdit(overview = overview(), origin = editOrigin()),
+            P503AppState.TransferEdit(overview = overview(), origin = transferOrigin()),
             P503AppState.VoidConfirm(overview = overview(), transactionId = transactionId),
             P503AppState.RecycleBin(overview = overview(), rows = RecycleBinResult.Success(emptyList())),
             P503AppState.BackupExport(overview()),

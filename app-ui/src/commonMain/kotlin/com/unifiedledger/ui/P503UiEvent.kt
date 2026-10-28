@@ -726,6 +726,29 @@ sealed interface P503UiEvent {
         val result: com.unifiedledger.application.CorrectTransactionVersionResult,
     ) : P503UiEvent
 
+    /**
+     * Opens the transfer correction surface from the read-only detail (D-228; DP-12 keeps the detail
+     * the only entrance). [origin] is the host-resolved transfer-shaped old-value snapshot carrying
+     * the CAS token; the detail's overview is preserved as the back-target. A close relative of
+     * [OpenTransactionEdit], but its own event because the two surfaces carry different origin shapes
+     * and must never seed each other's draft. Effect only on TransactionDetail; absorbed everywhere
+     * else.
+     */
+    data class OpenTransferEdit(
+        val origin: TransferCorrectionOrigin,
+    ) : P503UiEvent
+
+    /**
+     * One typed write of the transfer correction form's seven frozen fields (pure draft). Its own
+     * event rather than a [TransactionCorrectionFieldUpdate] variant: the ordinary sealed payload has
+     * no representation for a destination account or a fee, and teaching it one would leave the
+     * ordinary surface holding a write it can never apply. Effect only on TransferEdit; absorbed
+     * everywhere else.
+     */
+    data class UpdateTransferCorrectionField(
+        val update: TransferCorrectionFieldUpdate,
+    ) : P503UiEvent
+
     // ---- P7-08 08.B-2 annotation-edit events (D-221 §8 open item R-221-1; spec section 4.4) ----
     // Same discipline as the P7-05 family above: each has its designed effect only in its designed
     // state, is absorbed in every other state and never throws (table 6.2a).

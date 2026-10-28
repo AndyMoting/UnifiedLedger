@@ -32,14 +32,24 @@ import kotlin.time.Instant
 // ------------------------------------------------------------------ detail-page entry gate
 
 /**
- * The presentation's own ordinary-kind set for the correction/void entries. The shared domain
- * matrix gate (`isP705CorrectionSupportedKind`) opened to `ACCOUNT_TRANSFER` with the transfer
- * slice's commit wiring, but the UI transfer entrance opens with the UI slice (slice 5): until
- * then the detail page keeps hiding the entries for transfers — the frozen slice-1b
- * presentation vector asserts exactly that — so this gate stays on the ordinary pair instead of
- * calling the now-wider shared kind gate.
+ * The correction entry's kind set. The shared domain matrix gate
+ * (`isP705CorrectionSupportedKind`) already covers the transfer kind, and the transfer surface now
+ * exists, so the edit entry follows the domain gate's shape instead of the ordinary pair alone.
+ *
+ * The kind is only half the condition: the shape must also resolve, which
+ * [detailCorrectionAffordancesVisible] receives through its `hasCorrectionOrigin` argument. That
+ * argument comes from the host's shape decision ([transactionEditEntrance]), so a transfer whose
+ * origin does not resolve renders no entry instead of a dead one.
  */
-private val p705CorrectionEntryKinds: Set<TransactionKind> = setOf(TransactionKind.EXPENSE, TransactionKind.INCOME)
+private val p705CorrectionEntryKinds: Set<TransactionKind> =
+    setOf(TransactionKind.EXPENSE, TransactionKind.INCOME, TransactionKind.ACCOUNT_TRANSFER)
+
+/**
+ * The VOID entry's kind set. The transfer void/restore surface is its own later slice, so the
+ * merged void family keeps the ordinary pair: a transfer detail therefore offers the correction
+ * entry without offering a void one.
+ */
+private val p705VoidEntryKinds: Set<TransactionKind> = setOf(TransactionKind.EXPENSE, TransactionKind.INCOME)
 
 /**
  * P7-05.B/C (D-156; DP-12; spec section 3.5): whether the read-only detail page offers the
@@ -58,10 +68,10 @@ internal fun detailCorrectionAffordancesVisible(
     hasCorrectionOrigin: Boolean,
     hasVoidTarget: Boolean,
 ): DetailCorrectionAffordances {
-    val supported = kind in p705CorrectionEntryKinds && isP705CreationLineageSupported(creationEntry)
+    val lineageSupported = isP705CreationLineageSupported(creationEntry)
     return DetailCorrectionAffordances(
-        edit = supported && isEffective && hasCorrectionOrigin,
-        void = supported && isEffective && hasVoidTarget,
+        edit = kind in p705CorrectionEntryKinds && lineageSupported && isEffective && hasCorrectionOrigin,
+        void = kind in p705VoidEntryKinds && lineageSupported && isEffective && hasVoidTarget,
     )
 }
 
@@ -393,6 +403,9 @@ internal fun correctionAccountOptions(snapshot: CatalogSnapshotView): List<Pair<
     snapshot.manageableAccounts
         .filter { it.kind == com.unifiedledger.domain.AccountKind.ASSET && it.active }
         .map { it.accountId to it.name }
+
+/** One transfer preview line's TalkBack label: the field, its old value, its new value and whether it changed. */
+internal fun transferEditDiffLineContentDescription(line: TransferEditDiffLine): String = "${line.label}，旧值 ${line.oldText}，新值 ${line.newText}${if (line.changed) "，已修改" else "，未修改"}"
 
 /** The catalog projection the correction screens render their current names from. */
 internal fun CatalogSnapshotView.correctionCategoryNames(): Map<CategoryId, String> = categories.associate { it.categoryId to it.name }

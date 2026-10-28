@@ -22,8 +22,10 @@ import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.P705FailureCode
+import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionVoidFactKind
 import com.unifiedledger.domain.VoidReason
+import kotlin.time.Instant
 
 // P7-05 slice 1b Piece 4 host wiring support (D-156; spec sections 3.2/3.3/3.5/4.2). These are the
 // pure, JVM-assertable decisions the composition-root call sites in P503App.kt delegate to: the
@@ -66,6 +68,42 @@ internal fun transactionEditOriginFromDetail(
         fundingAccountId = fundingAccountId,
         currency = currency,
     )
+}
+
+/**
+ * P7-05 (D-228; transfer spec sections 3/8.3): which correction surface a detail page's edit entry
+ * opens, and the origin that seeds it.
+ *
+ * The transfer shape is tested FIRST and wins, because a transfer's legs also satisfy the ordinary
+ * resolver (its positive leg is the destination credit, its fee leg's posting account maps to the
+ * fee category) while the ordinary origin has no representation for the second account or the fee.
+ * An ordinary target can never resolve as a transfer - its positive leg belongs to a posting
+ * account, not to a manageable asset - so the two shapes stay disjoint.
+ *
+ * A transfer-shaped transaction never falls back to the ordinary form: that draft cannot express the
+ * destination account or the fee, so a submitted request would be type-rejected after the user typed
+ * into a form that cannot describe the target. When the transfer shape does not resolve, the answer
+ * is `null` and the detail page renders no entry at all.
+ */
+internal sealed interface TransactionEditEntrance {
+    data class Transfer(
+        val origin: TransferCorrectionOrigin,
+    ) : TransactionEditEntrance
+
+    data class Ordinary(
+        val origin: TransactionEditOrigin,
+    ) : TransactionEditEntrance
+}
+
+/** The entrance decision of one detail page; `null` means the entry cannot be offered honestly. */
+internal fun transactionEditEntrance(
+    detail: TransactionDetail,
+    snapshot: CatalogSnapshotView,
+): TransactionEditEntrance? {
+    transferCorrectionOriginFromDetail(detail, snapshot)?.let { return TransactionEditEntrance.Transfer(it) }
+    if (detail.kind == TransactionKind.ACCOUNT_TRANSFER) return null
+    val ordinary = transactionEditOriginFromDetail(detail, snapshot) ?: return null
+    return TransactionEditEntrance.Ordinary(ordinary)
 }
 
 /**
@@ -115,7 +153,17 @@ internal fun transactionCorrectionRequest(
     )
 }
 
-/** P7-05.B (spec section 4.2): the request's frozen snapshot column set, for the resolver comparison. */
+/**
+ * P7-05.B (spec section 4.2): the request's frozen snapshot column set, for the resolver comparison.
+ *
+ * It carries the transfer slice's two columns as well: the resolver compares the whole snapshot
+ * column for column. Omitting them here makes the attempted snapshot disagree with the stored row
+ * (which carries the real destination account and fee), so a lost transfer commit is reported as
+ * `RequestIdentityConflict` - a false conflict. The read side's old omission failed the other way
+ * (both sides blank, so any two requests of the same amount compared equal: a false hit); both
+ * halves now carry the columns. An ordinary correction keeps `null`/`0`, exactly as its row stores
+ * them.
+ */
 internal fun ExplicitlyConfirmedTransactionCorrection.toRequestSnapshot(): TransactionCorrectionRequestSnapshot =
     TransactionCorrectionRequestSnapshot(
         ledgerId = ledgerId,
@@ -126,6 +174,8 @@ internal fun ExplicitlyConfirmedTransactionCorrection.toRequestSnapshot(): Trans
         amount = amount,
         categoryId = categoryId,
         fundingAccountId = fundingAccountId,
+        destinationAccountId = destinationAccountId?.value,
+        feeMinor = feeMinor,
     )
 
 /**
@@ -177,6 +227,25 @@ internal fun voidResultFromResolution(
         TransactionVoidCommitResolution.Absent,
         TransactionVoidCommitResolution.Unavailable,
         -> null
+    }
+
+/**
+ * P7-05 (D-228; transfer spec section 3): the transfer request's statistics instant, resolved through
+ * [transferCorrectionStatisticsAt] with the same lenient parser and clock the entry flow uses.
+ *
+ * `null` means the edited text is not a readable instant; the caller then dispatches the surface's
+ * existing typed field rejection instead of committing a request built from a silently reverted
+ * time. While the field is untouched this returns the stored instant verbatim (sub-second
+ * precision included).
+ */
+internal fun transferCorrectionStatisticsInstant(
+    origin: TransferCorrectionOrigin,
+    draft: TransferCorrectionDraft,
+    parseOccurredAt: ParseManualExpenseOccurredAt,
+    ledgerClock: LedgerClock,
+): Instant? =
+    transferCorrectionStatisticsAt(origin, draft) { text ->
+        (parseOccurredAt.parse(text, ledgerClock) as? ParseManualExpenseOccurredAt.Result.Valid)?.instant
     }
 
 /** P7-05.B (spec section 3.5): the typed field rejection of an inadmissible correction draft. */

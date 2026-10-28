@@ -48,6 +48,20 @@ class P503BackupExportReducerTest {
             fundingAccountId = AccountId("asset-payment-local"),
         )
 
+    private fun transferOrigin(): TransferCorrectionOrigin =
+        TransferCorrectionOrigin(
+            transactionId = com.unifiedledger.domain.TransactionId("tx-1"),
+            currentVersionId = com.unifiedledger.domain.TransactionVersionId("version-1"),
+            note = null,
+            statisticsAt = Instant.parse("2026-09-14T08:00:00Z"),
+            currency = cny,
+            sourceAccountId = AccountId("asset-payment-local"),
+            destinationAccountId = AccountId("asset-bank"),
+            destinationCreditMinorUnits = 10_000L,
+            feeMinorUnits = 0L,
+            feeCategoryId = null,
+        )
+
     private fun exportState(
         password: String = "",
         running: Boolean = false,
@@ -174,6 +188,21 @@ class P503BackupExportReducerTest {
                 P503UiEvent.PreviewTransactionEdit,
                 P503UiEvent.ConfirmTransactionEdit(RequestId("request-1")),
                 P503UiEvent.TransactionEditResult(CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_FIELD_NOT_SUPPORTED)),
+                P503UiEvent.OpenTransferEdit(
+                    TransferCorrectionOrigin(
+                        transactionId = com.unifiedledger.domain.TransactionId("tx-1"),
+                        currentVersionId = com.unifiedledger.domain.TransactionVersionId("version-1"),
+                        note = "old note",
+                        statisticsAt = Instant.parse("2026-09-14T08:00:00Z"),
+                        currency = cny,
+                        sourceAccountId = AccountId("asset-payment-local"),
+                        destinationAccountId = AccountId("asset-bank"),
+                        destinationCreditMinorUnits = 10_000L,
+                        feeMinorUnits = 0L,
+                        feeCategoryId = null,
+                    ),
+                ),
+                P503UiEvent.UpdateTransferCorrectionField(TransferCorrectionFieldUpdate.Note("x")),
                 P503UiEvent.OpenVoidConfirm(com.unifiedledger.domain.TransactionId("tx-1")),
                 P503UiEvent.UpdateVoidReasonField(VoidReasonFieldUpdate.Code(VoidReasonCode.MIS_ENTERED)),
                 P503UiEvent.ConfirmVoid(RequestId("request-2")),
@@ -240,6 +269,7 @@ class P503BackupExportReducerTest {
             P503AppState.ImportBatchConfirm(overview()),
             P503AppState.ImportBatchSubmitting(overview(), "2026-09-14T08:00:00Z", emptyList()),
             P503AppState.TransactionEdit(overview = overview(), origin = origin()),
+            P503AppState.TransferEdit(overview = overview(), origin = transferOrigin()),
             P503AppState.VoidConfirm(overview = overview(), transactionId = transactionId),
             P503AppState.RecycleBin(overview = overview(), rows = RecycleBinResult.Success(emptyList())),
             exportState(),
