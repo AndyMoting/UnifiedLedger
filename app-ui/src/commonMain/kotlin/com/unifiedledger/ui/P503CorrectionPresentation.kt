@@ -35,9 +35,11 @@ import kotlin.time.Instant
  * The correction entry's kind set. The shared domain matrix gate
  * (`isP705CorrectionSupportedKind`) already covers the transfer kind, and the transfer surface now
  * exists, so the edit entry follows the domain gate's shape instead of the ordinary pair alone.
- * The shape still has to be resolvable by the host: a transfer-shaped target needs a
- * host-resolved transfer origin, which [detailCorrectionAffordancesVisible] only sees as
- * [detailCorrectionAffordancesVisible]'s `hasCorrectionOrigin` argument.
+ *
+ * The kind is only half the condition: the shape must also resolve, which
+ * [detailCorrectionAffordancesVisible] receives through its `hasCorrectionOrigin` argument. That
+ * argument comes from the host's shape decision ([transactionEditEntrance]), so a transfer whose
+ * origin does not resolve renders no entry instead of a dead one.
  */
 private val p705CorrectionEntryKinds: Set<TransactionKind> =
     setOf(TransactionKind.EXPENSE, TransactionKind.INCOME, TransactionKind.ACCOUNT_TRANSFER)

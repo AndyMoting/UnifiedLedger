@@ -674,6 +674,11 @@ class P503CorrectionReducerTest {
         everyStateExcept(edit).forEach { state ->
             assertSame(state, reducer.reduce(state, P503UiEvent.UpdateTransactionCorrectionField(TransactionCorrectionFieldUpdate.Note("x"))))
             assertSame(state, reducer.reduce(state, P503UiEvent.PreviewTransactionEdit))
+        }
+        // The confirm and the result events are SHARED by both correction surfaces: the transfer
+        // surface reuses them by design (its own payload is the field write), so its state reacts
+        // instead of absorbing; every other state still absorbs.
+        everyStateExcept(edit, transfer).forEach { state ->
             assertSame(state, reducer.reduce(state, P503UiEvent.ConfirmTransactionEdit(RequestId("request-1"))))
             assertSame(state, reducer.reduce(state, P503UiEvent.TransactionEditResult(CorrectTransactionVersionResult.StaleCurrentVersion)))
         }

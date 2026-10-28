@@ -22,6 +22,7 @@ import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.P705FailureCode
+import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionVoidFactKind
 import com.unifiedledger.domain.VoidReason
 import kotlin.time.Instant
@@ -67,6 +68,42 @@ internal fun transactionEditOriginFromDetail(
         fundingAccountId = fundingAccountId,
         currency = currency,
     )
+}
+
+/**
+ * P7-05 (D-228; transfer spec sections 3/8.3): which correction surface a detail page's edit entry
+ * opens, and the origin that seeds it.
+ *
+ * The transfer shape is tested FIRST and wins, because a transfer's legs also satisfy the ordinary
+ * resolver (its positive leg is the destination credit, its fee leg's posting account maps to the
+ * fee category) while the ordinary origin has no representation for the second account or the fee.
+ * An ordinary target can never resolve as a transfer - its positive leg belongs to a posting
+ * account, not to a manageable asset - so the two shapes stay disjoint.
+ *
+ * A transfer-shaped transaction never falls back to the ordinary form: that draft cannot express the
+ * destination account or the fee, so a submitted request would be type-rejected after the user typed
+ * into a form that cannot describe the target. When the transfer shape does not resolve, the answer
+ * is `null` and the detail page renders no entry at all.
+ */
+internal sealed interface TransactionEditEntrance {
+    data class Transfer(
+        val origin: TransferCorrectionOrigin,
+    ) : TransactionEditEntrance
+
+    data class Ordinary(
+        val origin: TransactionEditOrigin,
+    ) : TransactionEditEntrance
+}
+
+/** The entrance decision of one detail page; `null` means the entry cannot be offered honestly. */
+internal fun transactionEditEntrance(
+    detail: TransactionDetail,
+    snapshot: CatalogSnapshotView,
+): TransactionEditEntrance? {
+    transferCorrectionOriginFromDetail(detail, snapshot)?.let { return TransactionEditEntrance.Transfer(it) }
+    if (detail.kind == TransactionKind.ACCOUNT_TRANSFER) return null
+    val ordinary = transactionEditOriginFromDetail(detail, snapshot) ?: return null
+    return TransactionEditEntrance.Ordinary(ordinary)
 }
 
 /**
@@ -119,10 +156,13 @@ internal fun transactionCorrectionRequest(
 /**
  * P7-05.B (spec section 4.2): the request's frozen snapshot column set, for the resolver comparison.
  *
- * It carries the transfer slice's two columns as well: the resolver compares the whole snapshot, so a
- * transfer correction whose destination account or fee is dropped here would compare equal to any
- * other request with the same amount and be reported as an already-committed hit - a FALSE identity
- * match on a lost commit. An ordinary correction keeps `null`/`0`, exactly as its row stores them.
+ * It carries the transfer slice's two columns as well: the resolver compares the whole snapshot
+ * column for column. Omitting them here makes the attempted snapshot disagree with the stored row
+ * (which carries the real destination account and fee), so a lost transfer commit is reported as
+ * `RequestIdentityConflict` - a false conflict. The read side's old omission failed the other way
+ * (both sides blank, so any two requests of the same amount compared equal: a false hit); both
+ * halves now carry the columns. An ordinary correction keeps `null`/`0`, exactly as its row stores
+ * them.
  */
 internal fun ExplicitlyConfirmedTransactionCorrection.toRequestSnapshot(): TransactionCorrectionRequestSnapshot =
     TransactionCorrectionRequestSnapshot(

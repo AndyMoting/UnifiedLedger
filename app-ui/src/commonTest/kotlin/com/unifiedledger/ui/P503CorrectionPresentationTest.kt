@@ -41,6 +41,15 @@ class P503CorrectionPresentationTest {
     private val transactionId = TransactionId("tx-1")
     private val versionId = TransactionVersionId("version-1")
 
+    // ---- transfer preview labels (the surface renders the pure preview at render time) ----
+
+    @Test
+    fun theTransferPreviewLineLabelNamesBothValuesAndTheChangedFlag() {
+        val changed = TransferEditDiffLine(TransferEditField.DESTINATION_CREDIT, "到账金额", "100.00 CNY", "80.00 CNY")
+        assertEquals("到账金额，旧值 100.00 CNY，新值 80.00 CNY，已修改", transferEditDiffLineContentDescription(changed))
+        val unchanged = TransferEditDiffLine(TransferEditField.FEE, "手续费", "无", "无")
+        assertEquals("手续费，旧值 无，新值 无，未修改", transferEditDiffLineContentDescription(unchanged))
+    }
     // ---- detail-page entry gate (DP-12; spec section 3.5) ---------------------------------
 
     @Test

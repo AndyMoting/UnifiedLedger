@@ -114,6 +114,66 @@ class P503CorrectionHostTest {
             reconciliation = TransactionReconciliationProjection(legs = emptyList(), rollup = null),
         )
 
+    // ---- the edit-entrance decision (transfer shape first, never a transfer fallback) ----
+
+    private fun transferSnapshot(): CatalogSnapshotView =
+        CatalogSnapshotView(
+            catalogVersion = 1L,
+            manageableAccounts =
+                listOf(
+                    ManageableAccountView(AccountId("asset-source"), "工资卡", AccountKind.ASSET, cny, active = true, balanceMinorUnits = null),
+                    ManageableAccountView(AccountId("asset-destination"), "储蓄卡", AccountKind.ASSET, cny, active = true, balanceMinorUnits = null),
+                ),
+            categories =
+                listOf(
+                    CategoryTreeView(CategoryId("category-food"), parentId = null, name = "餐饮", kind = CategoryKind.EXPENSE, active = true, postingAccountId = null),
+                    CategoryTreeView(
+                        CategoryId("category-food-leaf"),
+                        parentId = CategoryId("category-food"),
+                        name = "餐饮",
+                        kind = CategoryKind.EXPENSE,
+                        active = true,
+                        postingAccountId = AccountId("expense-fee"),
+                    ),
+                ),
+        )
+
+    private fun transferDetail(kind: TransactionKind = TransactionKind.ACCOUNT_TRANSFER): TransactionDetail =
+        TransactionDetail(
+            ledgerId = ledgerId,
+            transactionId = transactionId,
+            currentVersionId = versionId,
+            kind = kind,
+            occurredAt = statisticsAt,
+            statisticsAt = statisticsAt,
+            note = null,
+            legs =
+                listOf(
+                    TransactionDetailLeg(PostingId("posting-source"), AccountId("asset-source"), "工资卡", Money.ofMinor(-10_200L, cny), null),
+                    TransactionDetailLeg(PostingId("posting-destination"), AccountId("asset-destination"), "储蓄卡", Money.ofMinor(10_000L, cny), null),
+                    TransactionDetailLeg(PostingId("posting-fee"), AccountId("expense-fee"), "餐饮", Money.ofMinor(200L, cny), "餐饮"),
+                ),
+            creationEntry = CreationEntry.MANUAL_CREATED,
+            reconciliation = TransactionReconciliationProjection(legs = emptyList(), rollup = null),
+        )
+
+    @Test
+    fun theEditEntrancePrefersTheTransferShapeAndNeverFallsBackForATransfer() {
+        // A transfer-shaped detail opens the transfer surface.
+        assertIs<TransactionEditEntrance.Transfer>(transactionEditEntrance(transferDetail(), transferSnapshot()))
+        // An ordinary detail keeps the ordinary surface.
+        assertIs<TransactionEditEntrance.Ordinary>(transactionEditEntrance(detail(), snapshot()))
+        // A transfer whose shape does not resolve (its source leg is no longer a manageable asset)
+        // resolves to NOTHING rather than falling back to the ordinary form, which cannot express a
+        // destination account or a fee.
+        val unresolvable =
+            transferDetail().let { target ->
+                target.copy(legs = target.legs.map { leg -> if (leg.accountId == AccountId("asset-source")) leg.copy(accountId = AccountId("expense-fee")) else leg })
+            }
+        assertNull(transactionEditEntrance(unresolvable, transferSnapshot()))
+        // The same detail keeps opening the transfer surface only while its shape resolves.
+        assertNotNull(transactionEditEntrance(transferDetail(), transferSnapshot()))
+    }
     // ---- origin resolution (spec section 3.2; the Piece 3 residual) ----
 
     @Test
@@ -232,7 +292,7 @@ class P503CorrectionHostTest {
         assertEquals(request.amount, requestSnapshot.amount)
         assertEquals(request.categoryId, requestSnapshot.categoryId)
         assertEquals(request.fundingAccountId, requestSnapshot.fundingAccountId)
-        // F-01: an ordinary request keeps the ordinary shape of the two transfer columns - the
+        // An ordinary request keeps the ordinary shape of the two transfer columns - the
         // snapshot is compared column for column by the lost-commit resolver, so the shape has to
         // be explicit rather than merely defaulted.
         assertNull(requestSnapshot.destinationAccountId)

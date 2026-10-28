@@ -129,7 +129,6 @@ import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.P705FailureCode
 import com.unifiedledger.domain.TagId
 import com.unifiedledger.domain.TransactionId
-import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionVoidFactKind
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -2980,31 +2979,20 @@ fun P503App(
     fun openTransactionEdit(detail: TransactionDetail) {
         if (!ledger.surfaces.correction) return
         val snapshot = cachedCatalogSnapshot ?: return
-        val transferOrigin = transferCorrectionOriginFromDetail(detail, snapshot)
-        if (transferOrigin != null) {
-            dispatch(P503UiEvent.OpenTransferEdit(transferOrigin))
-            return
+        // The shape decision is the host's pure seam, so the split is JVM-assertable.
+        when (val entrance = transactionEditEntrance(detail, snapshot)) {
+            is TransactionEditEntrance.Transfer -> dispatch(P503UiEvent.OpenTransferEdit(entrance.origin))
+            is TransactionEditEntrance.Ordinary -> dispatch(P503UiEvent.OpenTransactionEdit(entrance.origin))
+            null -> return
         }
-        // A transfer never falls back to the ordinary form: the ordinary draft has no destination
-        // account or fee column, so a submitted request would be type-rejected after the user typed
-        // into a form that cannot express the target. An unresolvable transfer shape offers no entry.
-        if (detail.kind == TransactionKind.ACCOUNT_TRANSFER) return
-        val origin = transactionEditOriginFromDetail(detail, snapshot) ?: return
-        dispatch(P503UiEvent.OpenTransactionEdit(origin))
     }
 
     /** P7-05.B: whether the detail page's edit entry can be resolved right now (facade + catalog + payload). */
     fun correctionOriginResolvable(detail: TransactionDetail): Boolean {
         val snapshot = cachedCatalogSnapshot ?: return false
-        if (!ledger.surfaces.correction) return false
-        // The probe mirrors the open path exactly, so a detail page never renders an entry whose
-        // click would do nothing: a transfer needs its own origin shape, everything else the
-        // ordinary one.
-        return if (detail.kind == TransactionKind.ACCOUNT_TRANSFER) {
-            transferCorrectionOriginFromDetail(detail, snapshot) != null
-        } else {
-            transactionEditOriginFromDetail(detail, snapshot) != null
-        }
+        // The probe IS the open path's decision, so the page never renders an entry whose click
+        // would do nothing.
+        return ledger.surfaces.correction && transactionEditEntrance(detail, snapshot) != null
     }
 
     /** P7-05.C (DP-12): opens the void confirmation page from the detail. */

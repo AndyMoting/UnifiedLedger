@@ -466,11 +466,12 @@ sealed interface P503AppState {
      * automatic retry, no requestId swap and no accepted leave. The overview is carried so every exit
      * restores the exact tab, month cursor and monthly payload.
      *
-     * There is deliberately no `preview` field: the transfer difference preview needs the current
-     * catalog's display names ([com.unifiedledger.ui.transferCorrectionPreview] takes them as
-     * arguments), which the IO-free reducer does not own - the ordinary surface's raw-text preview is
-     * turned into display text by the presentation layer, and this surface renders its preview the
-     * same way, at render time.
+     * There is deliberately no `preview` field: [com.unifiedledger.ui.transferCorrectionPreview]
+     * renders its seven lines in one pass, name tables included, and the surface calls it at render
+     * time. The ordinary surface splits that work instead (the reducer stores raw texts, the
+     * presentation injects names), so this is a deliberate fork: one implementation of the seven-field
+     * rendering, at the cost of the preview not being assertable at reducer level. Both readings obey
+     * the frozen rule that a preview is a display-only read and never commit permission.
      */
     data class TransferEdit(
         val overview: OverviewEmpty,
@@ -805,15 +806,15 @@ sealed interface ExpressionPreview {
 /**
  * P1-2 fix round, review P3: THE single source of truth for the surfaces on which a budget
  * month landing ([P503UiEvent.BudgetMonthLanded], [P503UiEvent.MonthlyActivityResult]'s
- * carried-overview application) may be APPLIED — the live overview plus the five surfaces
+ * carried-overview application) may be APPLIED — the live overview plus the six surfaces
  * that hold a preserved [OverviewEmpty] and render no competing monthly region of their own.
  *
  * HONEST SUBSET (not "every surface that carries an OverviewEmpty"):
- * [ImportCandidateDetail], [ImportBatchConfirm], [ImportBatchSubmitting],
+ * [ImportCandidateDetail], [ImportBatchConfirm], [ImportBatchSubmitting], [TransferEdit],
  * [TransactionEdit] and [VoidConfirm] also carry one, but a landing there is ABSORBED —
  * their own event families own those surfaces, and the budget region never renders on
  * them. REGISTERED NARROW RACE: a budget landing dispatched while the user has navigated
- * INTO one of those five surfaces is silently dropped (the coordinator's guard already
+ * INTO one of those six surfaces is silently dropped (the coordinator's guard already
  * stamped the request); the next budget trigger (effective-month change, SelectMonth,
  * config commit, a later P7-05/import arm) re-requests, and the region never renders there,
  * so no wrong amount is ever shown — only a possibly-stale payload on RETURN, which the

@@ -41,9 +41,8 @@ import kotlin.time.Instant
  * Assertions are single lines and never compare a multi-line literal; the suite asserts on synthetic
  * note literals in value equality checks only and never passes a note as an assertion message.
  *
- * Not signed off by this suite: the 05.D product loop - the transfer surface's entrance and screen,
- * the transfer void surface, and the Android manual acceptance. The snapshot-aware resolver's
- * transfer columns are already reconstructed on the read side (the
+ * Not signed off by this suite: the transfer void/restore face and the Android manual acceptance.
+ * The snapshot-aware resolver's transfer columns are reconstructed on the read side (the
  * TransactionCorrectionRequestSnapshot contract), so no residual of that kind is carried here.
  */
 class P503TransferCorrectionTest {
@@ -692,6 +691,29 @@ class P503TransferCorrectionTest {
         val category = seeded.withUpdate(TransferCorrectionFieldUpdate.FeeCategory(foodCategoryId))
         assertEquals(foodCategoryId, category.feeCategoryId)
         assertEquals(seeded, category.copy(feeCategoryId = seeded.feeCategoryId))
+    }
+
+    @Test
+    fun theFeeCategoryOptionsAreTheActiveLevelTwoExpenseCategories() {
+        val parent = CategoryTreeView(CategoryId("category-parent"), parentId = null, name = "餐饮", kind = CategoryKind.EXPENSE, active = true, postingAccountId = null)
+        val activeLeaf =
+            CategoryTreeView(
+                CategoryId("category-leaf"),
+                parentId = CategoryId("category-parent"),
+                name = "早餐",
+                kind = CategoryKind.EXPENSE,
+                active = true,
+                postingAccountId = AccountId("expense-breakfast"),
+            )
+        val inactiveLeaf = activeLeaf.copy(categoryId = CategoryId("category-inactive"), name = "外卖", active = false)
+        val incomeLeaf = activeLeaf.copy(categoryId = CategoryId("category-income"), name = "工资", kind = CategoryKind.INCOME)
+        val options = transferFeeCategoryOptions(snapshot(categories = listOf(parent, activeLeaf, inactiveLeaf, incomeLeaf)))
+        // Only the active level-two EXPENSE category survives: a positive fee must pick a category
+        // the domain admits, and the top-level parent, the deactivated leaf and the income leaf are
+        // all inadmissible there.
+        assertEquals(listOf(CategoryId("category-leaf") to "早餐"), options)
+        // The default fixture holds only top-level categories, so no fee category is offerable.
+        assertEquals(emptyList<Pair<CategoryId, String>>(), transferFeeCategoryOptions(snapshot()))
     }
 
     @Test

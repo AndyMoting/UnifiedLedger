@@ -28,10 +28,10 @@ import kotlin.time.Instant
 // This file holds no Compose, no IO, no logging, no platform API and no coroutines. Amounts are Long
 // minor units end to end - never Double or Float.
 //
-// The pure layer is NOT the product loop: the transfer surface's entrance, its screen and the
-// Android manual acceptance are separate work, so nothing here signs off 05.D. The snapshot-aware
-// resolver on the read side already reconstructs both shapes column for column (the
-// TransactionCorrectionRequestSnapshot contract in CorrectTransactionVersion.kt).
+// The pure layer is NOT the whole slice: the transfer void/restore face and the Android manual
+// acceptance are still open, so nothing here signs off 05.D. The snapshot-aware resolver on the read
+// side already reconstructs both shapes column for column (the TransactionCorrectionRequestSnapshot
+// contract in CorrectTransactionVersion.kt).
 
 /**
  * P7-05 transfer slice (spec section 3): the host-resolved old-value snapshot of a manual transfer
@@ -441,8 +441,16 @@ internal fun transferCorrectionStatisticsAt(
 
 /**
  * The transfer form's fee-category options (spec section 3): the active level-2 `EXPENSE`
- * categories. A positive fee needs exactly one of those (its posting account is the hidden EXPENSE
- * account the domain validates); a zero fee carries no category at all.
+ * categories, which is exactly the admission the domain enforces for a positive fee (its posting
+ * account is the hidden EXPENSE account the domain validates); a zero fee carries no category at
+ * all.
+ *
+ * This list is narrower than what [transferCorrectionOriginFromDetail] accepts as a fee category:
+ * the resolver answers only `which category does this fee leg belong to` (any catalog entry whose
+ * posting account is the leg's account), while admission - level-2, active, EXPENSE - belongs to the
+ * domain and to this option list. Keeping them separate is deliberate: the resolver must still
+ * describe a legacy row whose fee category was deactivated afterwards, so the form can show what the
+ * row holds instead of hiding the target.
  */
 internal fun transferFeeCategoryOptions(snapshot: CatalogSnapshotView): List<Pair<CategoryId, String>> =
     snapshot.categories
