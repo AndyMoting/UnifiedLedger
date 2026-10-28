@@ -88,6 +88,17 @@ enum class ExternalNavigationHoldReason {
      */
     IMPORT_SOURCE_UNAVAILABLE,
 
+    /**
+     * P7-09 09.A (spec section 2.3; ACC-D-SHARE-02): the inbound share was REFUSED by the
+     * validation face — a non-`ACTION_SEND` action, a non-`content://` stream, several streams, a
+     * conflicting/unusable stream extra, no read grant, or a declared size over the frozen bound.
+     * Nothing was opened, read or written and NO request exists to route, so this strip is the only
+     * surface the refusal can appear on: leaving it out is the `-> Unit` silent drop the frozen
+     * contract forbids. The precise vector travels display-safely on
+     * [ExternalNavigationBusy.shareRejection].
+     */
+    IMPORT_REJECTED,
+
     /** The request's target is not routable from the current state in this slice. */
     UNROUTABLE_TARGET,
 }
@@ -101,7 +112,53 @@ enum class ExternalNavigationHoldReason {
  */
 data class ExternalNavigationBusy(
     val reason: ExternalNavigationHoldReason,
+    /**
+     * P7-09 09.A (spec section 2.3; ACC-D-SHARE-02): the precise refusal vector when [reason] is
+     * [ExternalNavigationHoldReason.IMPORT_REJECTED], otherwise null. Display-safe by construction:
+     * the strip's copy is chosen from this value alone and carries no URI, file name, amount or
+     * exception text.
+     */
+    val shareRejection: ShareRejectionReason? = null,
 )
+
+/**
+ * P7-09 09.A (spec section 2.3; ACC-D-SHARE-02): the display-safe identity of ONE refused inbound
+ * share. It mirrors the platform validator's typed codes (`ShareIntakeRejection` in
+ * `android-app`) without importing a platform type into common code, so the visible refusal can say
+ * WHY without carrying the inbound payload.
+ */
+enum class ShareRejectionReason {
+    /** The action was not exactly `ACTION_SEND` (e.g. `ACTION_SEND_MULTIPLE`). */
+    UNSUPPORTED_ACTION,
+
+    /** The Intent carried no stream extra and no ClipData item at all. */
+    MISSING_STREAM,
+
+    /** More than one stream (an `EXTRA_STREAM` list, or several ClipData items). */
+    MULTIPLE_STREAMS,
+
+    /** `EXTRA_STREAM` and `ClipData` disagreed about which stream is being shared. */
+    CONFLICTING_STREAM,
+
+    /** The stream was not a `content://` URI (`file://`, `http(s)://`, an opaque scheme). */
+    NON_CONTENT_URI,
+
+    /** The stream URI was not readable: no grant, or a grant withdrawn before the read. */
+    STREAM_NOT_READABLE,
+
+    /** The stream extra was present but unusable (wrong type, an unknown key, a null URI). */
+    MALFORMED_EXTRAS,
+
+    /** The sender's declared size already exceeded the frozen 16 MiB L0 bound. */
+    DECLARED_SIZE_EXCEEDS_LIMIT,
+
+    /**
+     * The Intent carried no usable share surface at all. **Reserved: unreachable today** (the platform
+     * validator rejects a stream-less share as [MISSING_STREAM] first), kept only so this display
+     * identity mirrors the platform enum one-to-one.
+     */
+    NOT_A_SHARE,
+}
 
 /**
  * P7-09 09.0 (spec section 2.2): THE single pending slot. At most one inbound request may be
@@ -385,8 +442,33 @@ class ExternalNavigationChannel {
         val listener: (ExternalNavigationRequest) -> Unit,
     )
 
+    // ACC-D-SHARE-02: the refusal notices ride the SAME identity/resume discipline as requests, but
+    // on their own bindings and their own depth-one slot — a refusal is not a request and must never
+    // occupy or displace the single pending request slot.
+    private val rejectionBindings = mutableListOf<RejectionBinding>()
+
+    private class RejectionBinding(
+        val token: Any,
+        val listener: (ShareRejectionReason) -> Unit,
+    )
+
+    private var bufferedRejection: ShareRejectionReason? = null
     private var buffered: ExternalNavigationRequest? = null
     private var resumedToken: Any? = null
+
+    // ACC-D-SHARE-02 (device finding): the two staging slots drain in a FIXED order (request, then
+    // refusal), so an OLDER parked refusal could surface next to a NEWER accepted request — the stale
+    // notice the delivery-time clear is meant to prevent. A monotonic sequence plus the newest
+    // delivered request's sequence lets a superseded refusal be dropped at drain time (and a refusal
+    // that arrives AFTER the request is kept, which is the case the clear must not swallow).
+    //
+    // THREAD CONTRACT: this whole class is main-thread confined (every caller is an Activity lifecycle
+    // callback, a receiver's onReceive, or a composition callback), so the counters below are plain
+    // Longs. A background caller would silently lose the ordering guarantee rather than fail loudly.
+    private var sequence: Long = 0
+    private var bufferedSequence: Long = 0
+    private var bufferedRejectionSequence: Long = 0
+    private var lastDeliveredRequestSequence: Long = 0
 
     /**
      * Delivers one neutral request to the RESUMED host's binding, or parks it (depth one).
@@ -397,12 +479,15 @@ class ExternalNavigationChannel {
      * is not visible can neither steal a delivery nor disarm another instance by disposing.
      */
     fun deliver(request: ExternalNavigationRequest) {
+        val issued = ++sequence
         val resumed = resumedToken
         val listener = if (resumed != null) listenerFor(resumed) else null
         if (listener == null) {
             buffered = request
+            bufferedSequence = issued
             StartupTrace.emit("channel.deliver parked")
         } else {
+            lastDeliveredRequestSequence = issued
             listener(request)
             StartupTrace.emit("channel.deliver direct")
         }
@@ -438,11 +523,81 @@ class ExternalNavigationChannel {
     fun onHostResumed(token: Any) {
         resumedToken = token
         drainToResumedHost()
+        drainRejectionToResumedHost()
     }
 
     /** The Activity adapter reports that [token] is paused; only the resumed host may take work. */
     fun onHostPaused(token: Any) {
         if (resumedToken != null && resumedToken === token) resumedToken = null
+    }
+
+    /**
+     * P7-09 09.A (spec section 2.3; ACC-D-SHARE-02): reports that an inbound share was REFUSED by the
+     * validation face. There is no request to route, so this never touches the request buffer or the
+     * single pending slot; the notice is parked (depth one) until the bound, RESUMED host can show it
+     * — a refusal parked on a non-visible instance would be the same silent drop in a new place.
+     */
+    fun notifyShareRejection(reason: ShareRejectionReason) {
+        // A refusal reported NOW is newer than anything already delivered, so it is never superseded at
+        // issue time — the drop only applies to a refusal that was PARKED before a request was delivered
+        // (see [drainRejectionToResumedHost]). No issue-time guard exists because none is reachable.
+        val issued = ++sequence
+        val resumed = resumedToken
+        val listener = if (resumed != null) rejectionListenerFor(resumed) else null
+        if (listener == null) {
+            bufferedRejection = reason
+            bufferedRejectionSequence = issued
+            StartupTrace.emit("channel.rejection parked")
+        } else {
+            listener(reason)
+            StartupTrace.emit("channel.rejection direct")
+        }
+    }
+
+    /**
+     * Binds (or, with `null`, unbinds) THIS token's refusal listener; another token's binding is
+     * untouched, a parked refusal drains exactly once, and only into the resumed host's binding.
+     * [token] obeys the same identity rule as [subscribe].
+     */
+    fun subscribeShareRejections(
+        token: Any?,
+        listener: ((ShareRejectionReason) -> Unit)?,
+    ) {
+        if (token == null) {
+            StartupTrace.emit("channel.subscribeRejections ignored reason=nullToken")
+            return
+        }
+        removeRejectionBinding(token)
+        if (listener != null) rejectionBindings += RejectionBinding(token, listener)
+        drainRejectionToResumedHost()
+    }
+
+    private fun rejectionListenerFor(token: Any): ((ShareRejectionReason) -> Unit)? = rejectionBindings.firstOrNull { it.token === token }?.listener
+
+    private fun removeRejectionBinding(token: Any) {
+        val iterator = rejectionBindings.iterator()
+        while (iterator.hasNext()) {
+            if (iterator.next().token === token) {
+                iterator.remove()
+                return
+            }
+        }
+    }
+
+    private fun drainRejectionToResumedHost() {
+        val parked = bufferedRejection ?: return
+        val resumed = resumedToken ?: return
+        val listener = rejectionListenerFor(resumed) ?: return
+        if (bufferedRejectionSequence < lastDeliveredRequestSequence) {
+            // The newer accepted request was drained first in this same resume: the parked refusal is
+            // older than it and must not reappear beside the fresh share face.
+            bufferedRejection = null
+            StartupTrace.emit("channel.rejection dropped reason=supersededAtDrain")
+            return
+        }
+        bufferedRejection = null
+        StartupTrace.emit("channel.rejection drained")
+        listener(parked)
     }
 
     private fun listenerFor(token: Any): ((ExternalNavigationRequest) -> Unit)? = bindings.firstOrNull { it.token === token }?.listener
@@ -461,6 +616,8 @@ class ExternalNavigationChannel {
         val resumed = resumedToken ?: return
         val pending = buffered ?: return
         val listener = listenerFor(resumed) ?: return
+        // Recorded BEFORE the listener runs: the host may dispatch another notification synchronously.
+        lastDeliveredRequestSequence = bufferedSequence
         buffered = null
         StartupTrace.emit("channel.drain delivered")
         listener(pending)

@@ -5,6 +5,7 @@ import android.net.Uri
 import com.unifiedledger.application.EntryType
 import com.unifiedledger.ui.ExternalNavigationRequest
 import com.unifiedledger.ui.IMPORT_FILE_PICK_MAX_READ_BYTES
+import com.unifiedledger.ui.ShareRejectionReason
 
 /**
  * P7-09 09.A (spec sections 2.1/2.3; D-225 Q19): the typed outcome of validating one platform
@@ -64,9 +65,40 @@ enum class ShareIntakeRejection {
     /** The declared size (a hint) already exceeds the frozen 16 MiB L0 bound. */
     DECLARED_SIZE_EXCEEDS_LIMIT,
 
-    /** The Intent carried no usable share surface at all. */
+    /**
+     * The Intent carried no usable share surface at all. **Reserved: no producer today** — the frozen
+     * validation table rejects a stream-less Intent as [MISSING_STREAM] before this code is reachable,
+     * so it is kept (and mapped) only so the display mapping stays total; removing it would change an
+     * implemented enum for no behaviour. Registered as spec section 8 open item 16.
+     */
     NOT_A_SHARE,
+    ;
+
+    /**
+     * P7-09 09.A (spec section 2.3; ACC-D-SHARE-02): the display-safe common identity of this refusal,
+     * so the shared refusal strip can say WHY without the platform type crossing into common code. The
+     * mapping is total by construction (one branch per member) and carries no payload.
+     */
+    fun toShareRejectionReason(): ShareRejectionReason =
+        when (this) {
+            UNSUPPORTED_ACTION -> ShareRejectionReason.UNSUPPORTED_ACTION
+            MISSING_STREAM -> ShareRejectionReason.MISSING_STREAM
+            MULTIPLE_STREAMS -> ShareRejectionReason.MULTIPLE_STREAMS
+            CONFLICTING_STREAM -> ShareRejectionReason.CONFLICTING_STREAM
+            NON_CONTENT_URI -> ShareRejectionReason.NON_CONTENT_URI
+            STREAM_NOT_READABLE -> ShareRejectionReason.STREAM_NOT_READABLE
+            MALFORMED_EXTRAS -> ShareRejectionReason.MALFORMED_EXTRAS
+            DECLARED_SIZE_EXCEEDS_LIMIT -> ShareRejectionReason.DECLARED_SIZE_EXCEEDS_LIMIT
+            NOT_A_SHARE -> ShareRejectionReason.NOT_A_SHARE
+        }
 }
+
+/**
+ * P7-09 09.A (spec section 2.3; ACC-D-SHARE-02): the placeholder identity the pure refusal probe hands
+ * to the validator. It is never delivered, never consumed and never persisted; an accepted snapshot
+ * simply discards the request built with it.
+ */
+private const val REJECTION_PROBE_DELIVERY_ID: String = "rejection-probe"
 
 /**
  * P7-09 09.B (D-226; spec sections 2.1/5): the launcher shortcut action family. These are this
@@ -419,6 +451,37 @@ internal class InboundNavigationIntake(
     fun alreadyConsumed(deliveryId: String): Boolean = delivered.contains(deliveryId)
 
     /**
+     * P7-09 09.A (spec section 2.3; ACC-D-SHARE-02): the TYPED refusal of one received Intent, or null
+     * when the Intent validates as an accepted share (or is not an inbound entry at all).
+     *
+     * Pure and side-effect free: it runs the SAME validator as [requestFor] with a probe deliveryId, but
+     * mints nothing and consumes nothing, so the caller can surface the refusal AFTER the request path
+     * declined to deliver anything. The probe id never leaves this method (an accepted snapshot's
+     * request is discarded here).
+     */
+    fun rejectionFor(snapshot: ShareIntentSnapshot): ShareIntakeRejection? {
+        if (snapshot.action == Intent.ACTION_MAIN) return null
+        // An entry is refused to the user's face only when it is an actual inbound ENTRY: a share action,
+        // or anything that carries a file. A plain activation (`am start -n package/.Activity`, i.e. a
+        // NULL action with no payload — found on device, it raised UNSUPPORTED_ACTION and showed
+        // "无法接收这次分享" on an ordinary launch) or an unrelated action with no file is not the share
+        // face's business and stays silent. Every genuine attempt keeps its typed refusal: a share
+        // action with no stream is still MISSING_STREAM, and a foreign action (e.g. VIEW) that DOES carry
+        // a readable stream is still UNSUPPORTED_ACTION.
+        val shareAction = snapshot.action == Intent.ACTION_SEND || snapshot.action == Intent.ACTION_SEND_MULTIPLE
+        val carriesFile =
+            snapshot.streamUri != null ||
+                snapshot.clipDataUris.isNotEmpty() ||
+                snapshot.hasUnexpectedStreamExtra ||
+                snapshot.streamExtraIsList
+        if (!shareAction && !carriesFile) return null
+        return when (val result = validateShareIntake(snapshot, REJECTION_PROBE_DELIVERY_ID)) {
+            is ExternalNavigationIntakeResult.Rejected -> result.code
+            else -> null
+        }
+    }
+
+    /**
      * P7-09 09.B (D-226; spec sections 2.1/5): the neutral request for one received SHORTCUT action,
      * or null when [action] is not a recognized shortcut action or its [deliveryId] was already
      * consumed.
@@ -527,6 +590,15 @@ internal class ProcessInboundNavigationIntake(
 
     /** Whether a repeated read of [deliveryId] is a refused (already-consumed) delivery. */
     fun isRefusedRepeat(deliveryId: String): Boolean = intake.alreadyConsumed(deliveryId)
+
+    /**
+     * P7-09 09.A (spec section 2.3; ACC-D-SHARE-02): the typed refusal of one snapshot, or null when
+     * there is nothing to refuse — the snapshot would be accepted, it is not an inbound entry
+     * (`ACTION_MAIN`), or it is neither a share action nor carries a file. Delegates to the
+     * process-scoped intake's pure probe: no id is minted and no receipt is touched, so a refusal can
+     * be shown without occupying the delivery identity.
+     */
+    fun rejectionFor(snapshot: ShareIntentSnapshot): ShareIntakeRejection? = intake.rejectionFor(snapshot)
 
     /**
      * P7-09 09.B (D-226; spec sections 2.2/5): the request for the process launch's cold-start
