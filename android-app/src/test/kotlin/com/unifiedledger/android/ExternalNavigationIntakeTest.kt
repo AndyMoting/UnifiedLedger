@@ -306,8 +306,22 @@ class ExternalNavigationIntakeTest {
         val first = assertIs<ExternalNavigationRequest.OpenImport>(intake.coldLaunchRequest(snapshot()))
         assertEquals("delivery-1", first.deliveryId)
         // The recreation re-reads the same launch Intent: refused, and no new id minted.
-        assertEquals(null, intake.coldLaunchRequest(snapshot()))
+        assertEquals(null, intake.coldLaunchRequest(snapshot(), recreated = true))
         assertEquals(1, minted)
+    }
+
+    @Test
+    fun aSecondShareInALiveProcessMintsANewDeliveryIdInsteadOfBeingRefusedAsARepeat() {
+        // Spec section 4: a NEW user share mints a new deliveryId even for an identical URI. The
+        // sender app sits on top of the ledger, so a second share recreates the Activity with a NULL
+        // savedInstanceState - the same code path as the first launch, not a config recreation.
+        var minted = 0
+        val intake = ProcessInboundNavigationIntake { "delivery-" + (++minted) }
+        val first = assertIs<ExternalNavigationRequest.OpenImport>(intake.coldLaunchRequest(snapshot()))
+        val second = assertIs<ExternalNavigationRequest.OpenImport>(intake.coldLaunchRequest(snapshot(), recreated = false))
+        assertEquals("delivery-1", first.deliveryId)
+        assertEquals("delivery-2", second.deliveryId)
+        assertEquals(2, minted)
     }
 
     @Test

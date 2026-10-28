@@ -40,7 +40,7 @@ class MainActivity : ComponentActivity() {
         // its explicit action is recognized here, resolved by the same process-scoped intake and
         // delivered into the same channel, so the shortcut goes through the SAME navigation gate as a
         // share and can never bypass the startup door or the confirmation chain.
-        handleInboundIntent(intent, coldLaunch = true)
+        handleInboundIntent(intent, coldLaunch = true, recreated = savedInstanceState != null)
         // P7-09 09.B (D-226; spec sections 5/5.1): publish the dynamic shortcuts at most once per
         // process (a re-composition / recreation re-run is a no-op). Publication touches no ledger
         // data and only describes generic routes; the device leg (launcher task stack, app upgrade,
@@ -81,10 +81,15 @@ class MainActivity : ComponentActivity() {
      * [coldLaunch] selects the receipt identity: a cold launch reuses ONE stable deliveryId for the
      * process launch (P1-B: an Activity recreation must not re-consume), while a hot `onNewIntent`
      * receipt mints a fresh id.
+     *
+     * [recreated] carries the `savedInstanceState != null` fact: a config recreation re-reads the
+     * SAME launch Intent and must reuse its id, while a FRESH launch inside a live process is a
+     * genuinely new user share and mints a new one (spec section 4).
      */
     private fun handleInboundIntent(
         intent: Intent?,
         coldLaunch: Boolean,
+        recreated: Boolean = false,
     ) {
         if (intent == null) return
         val holder = ledgerProcessHolderFor(this) ?: return
@@ -125,7 +130,7 @@ class MainActivity : ComponentActivity() {
             }
         val request =
             if (coldLaunch) {
-                holder.inboundIntake.coldLaunchRequest(snapshot)
+                holder.inboundIntake.coldLaunchRequest(snapshot, recreated = recreated)
             } else {
                 holder.inboundIntake.hotReceiptRequest(snapshot)
             }

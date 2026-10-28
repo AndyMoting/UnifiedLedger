@@ -477,8 +477,22 @@ internal class ProcessInboundNavigationIntake(
      * later call (an Activity recreation re-reading the same launch Intent) reuses it and, because
      * the id was already consumed, yields null — no second delivery, no new deliveryId.
      */
-    fun coldLaunchRequest(snapshot: ShareIntentSnapshot): ExternalNavigationRequest? {
+    fun coldLaunchRequest(
+        snapshot: ShareIntentSnapshot,
+        recreated: Boolean = false,
+    ): ExternalNavigationRequest? {
         if (snapshot.action == Intent.ACTION_MAIN) return null
+        if (!recreated) {
+            // A FRESH Activity launch is a genuinely new user share even inside a live process: the
+            // sender app sits on top of the ledger, so a second share recreates this Activity with a
+            // null savedInstanceState. Spec section 4: a new share mints a new deliveryId (identical
+            // URI included, subject to the human duplicate review).
+            val fresh = mintDeliveryId()
+            coldLaunchDeliveryId = fresh
+            return intake.requestFor(snapshot, fresh)
+        }
+        // A configuration recreation re-reads the SAME launch Intent: reuse the launch's id so the
+        // repeat delivery is refused and nothing is consumed twice.
         val deliveryId = coldLaunchDeliveryId ?: mintDeliveryId().also { coldLaunchDeliveryId = it }
         return intake.requestFor(snapshot, deliveryId)
     }
