@@ -358,39 +358,112 @@ internal fun startupHeldFallbackAfterLanding(
  * a received Intent into a request and delivers it here; the shared host subscribes via
  * [subscribe] and forwards it to the routing gate.
  *
- * The channel BUFFERS one undelivered request: a cold-start share is received in
- * `Activity.onCreate`, before the composition has subscribed, and must not be lost (spec section
- * 2.2: no silent drop). The buffer is depth ONE — a second request arriving before a subscriber
- * exists replaces the first (the transport staging area drains into the reducer's authoritative
- * single pending slot, which is where the retain-or-replace decision lives). No unbounded queue
- * exists here either.
+ * The channel BUFFERS one undelivered request: a request received in `Activity.onCreate`, before
+ * the composition has subscribed, must not be lost (spec section 2.2: no silent drop). The buffer is
+ * depth ONE — a second request arriving while nothing can take it replaces the first (the transport
+ * staging area drains into the reducer's authoritative single pending slot, which is where the
+ * retain-or-replace decision lives). No unbounded queue exists here either.
+ *
+ * P7-09 09.A delivery-order rule (spec section 2.2; ACC-D-SHARE-01): a request is delivered only to
+ * the RESUMED host, identified by the host token the adapter binds at subscribe time. A subscription
+ * alone does not qualify. Device evidence (`local/artifacts/p709-share-delivery/`): a share delivered
+ * through the create path is accepted by the intake (`entry.inboundIntake kind=OpenImport`) yet
+ * renders nothing, because the PREVIOUS instance still owned the subscription while the new one was
+ * being created; bringing the previous instance forward showed the very same request. Buffering until
+ * the bound, resumed host can take it keeps the request on the staging slot this transport already
+ * owns and hands it to the host that is actually visible — exactly once. Each host keeps its own
+ * binding, so a non-visible instance can neither take a delivery nor disarm another by disposing.
  */
 class ExternalNavigationChannel {
-    private var forward: ((ExternalNavigationRequest) -> Unit)? = null
-    private var buffered: ExternalNavigationRequest? = null
+    // Per-host bindings, compared by IDENTITY (`===`) on all three paths — write, lookup, removal.
+    // The adapter hands in a stable platform object (the Activity); two value-equal hosts must never
+    // share an entry. A map would key writes by `equals` while the other two paths compare identity.
+    private val bindings = mutableListOf<Binding>()
 
-    /** Delivers one neutral request; buffered (depth one) until a subscriber arrives. */
+    private class Binding(
+        val token: Any,
+        val listener: (ExternalNavigationRequest) -> Unit,
+    )
+
+    private var buffered: ExternalNavigationRequest? = null
+    private var resumedToken: Any? = null
+
+    /**
+     * Delivers one neutral request to the RESUMED host's binding, or parks it (depth one).
+     *
+     * A host that is bound but not resumed is never handed work; a host that is resumed but has no
+     * binding (a composition that has not subscribed yet, or one that was unbound) leaves the request
+     * parked until it binds — never dropped. Every bound host keeps its own entry, so an instance that
+     * is not visible can neither steal a delivery nor disarm another instance by disposing.
+     */
     fun deliver(request: ExternalNavigationRequest) {
-        val listener = forward
+        val resumed = resumedToken
+        val listener = if (resumed != null) listenerFor(resumed) else null
         if (listener == null) {
             buffered = request
+            StartupTrace.emit("channel.deliver parked")
         } else {
             listener(request)
+            StartupTrace.emit("channel.deliver direct")
         }
     }
 
     /**
-     * The shared host's subscription point (last subscription wins, the pick-channel precedent).
-     * A buffered cold-start request drains exactly once on subscribe; unsubscribing (`null`)
-     * leaves the buffer empty.
+     * Binds (or, with `null`, unbinds) THIS token's listener; another token's binding is untouched.
+     * A parked request drains exactly once, and only into the resumed host's binding.
+     *
+     * @param token the host this binding belongs to. It MUST be identity-unique and is matched with
+     *   `===` on every path (write, lookup, removal): pass the stable platform object (the Activity),
+     *   never a value-equal stand-in — such a token would not be recognised as the same host.
+     * @param listener receives the next request while `token` is the resumed host; `null` unbinds.
      */
-    fun subscribe(listener: ((ExternalNavigationRequest) -> Unit)?) {
-        forward = listener
-        if (listener != null) {
-            val pending = buffered ?: return
-            buffered = null
-            listener(pending)
+    fun subscribe(
+        token: Any?,
+        listener: ((ExternalNavigationRequest) -> Unit)?,
+    ) {
+        if (token == null) {
+            StartupTrace.emit("channel.subscribe ignored reason=nullToken")
+            return
         }
+        removeBinding(token)
+        if (listener != null) bindings += Binding(token, listener)
+        drainToResumedHost()
+    }
+
+    /**
+     * The Activity adapter reports that [token] is resumed. The token MUST be identity-unique (the
+     * Activity instance); the channel matches bindings by `===`, so a value-equal token would not be
+     * recognised.
+     */
+    fun onHostResumed(token: Any) {
+        resumedToken = token
+        drainToResumedHost()
+    }
+
+    /** The Activity adapter reports that [token] is paused; only the resumed host may take work. */
+    fun onHostPaused(token: Any) {
+        if (resumedToken != null && resumedToken === token) resumedToken = null
+    }
+
+    private fun listenerFor(token: Any): ((ExternalNavigationRequest) -> Unit)? = bindings.firstOrNull { it.token === token }?.listener
+
+    private fun removeBinding(token: Any) {
+        val iterator = bindings.iterator()
+        while (iterator.hasNext()) {
+            if (iterator.next().token === token) {
+                iterator.remove()
+                return
+            }
+        }
+    }
+
+    private fun drainToResumedHost() {
+        val resumed = resumedToken ?: return
+        val pending = buffered ?: return
+        val listener = listenerFor(resumed) ?: return
+        buffered = null
+        StartupTrace.emit("channel.drain delivered")
+        listener(pending)
     }
 }
 

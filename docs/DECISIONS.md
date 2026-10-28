@@ -5556,3 +5556,34 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 入：本条、checkpoint 的验收面表与停止位置/下一动作、PROGRESS_LOG 一条。出：零代码/测试/schema/迁移/依赖/CI 改动；不改 D-236…D-258 的任何判决与开放项；不把任何残留项并入 PASS；不改 A-DOC 的口径假设。
 
 **关联决定：** D-149/D-155/D-157（第一部分前三条 PASS 依据：A-04 与 A-01/A-02；A-DOC 见 D-258）、D-235（A-VIS 窄屏证据）、D-236（P7-09 取证与分享方限制）、D-237/D-240（P7-07）、D-238/D-253/D-254（P7-08）、D-239/D-247/D-249/D-250/D-251/D-252（P7-06）、D-241（规模量测落盘）、D-243（61k 重述）、D-258（向量账口径与 A-DOC 假设）、阶段计划 §10.1/§10.4.5/§10.4.7。
+## D-260 ACC-D-SHARE-01：create 路径的入站投递被不可见 host 吸收——设备取证、修复批与规格 §2.2 补条
+
+**状态：** 已批准并登记（2026-10-28）。缺陷由 P7-09-A01/A04 取证批次自建的**真实分享发送方**（自有 `FileProvider` + 真实 `ACTION_SEND` + 读授权；D-236 item 7 登记的最低成本路径）暴露。本条登记缺陷、修复批与规格补条。tracked 变更：`app-ui/src/commonMain/.../ExternalNavigation.kt`（通道按 host token 绑定并只交付给已 resume 的 host）、`app-ui/src/commonMain/.../P503App.kt`（新增可选 `inboundHostToken`）、`android-app/src/main/.../App.kt`（传 Activity）、`MainActivity.kt`（`onResume`/`onPause` 上报）、三份测试文件（两份新增、一份按新契约更新）、`docs/specs/2026-10-12-p7-09-system-entry-design.md` §2.2 一条；共 9 个 tracked 文件。设备证据与索引见 `local/artifacts/p709-share-delivery/EVIDENCE.md`。schema 维持 v36、零迁移、零依赖。
+
+**决定：**
+
+1. **缺陷（设备实测，非推断）。** 自建发送方在同一受管 AVD（`ul_p7_d01`、API 36、隔离 adb 5038、应用为 CI 构建 `4e7b9b7`，sha256 `A16A9FE7…`）上取到三种投递形态：
+   - **E1 冷启动（发送方带 `FLAG_ACTIVITY_NEW_TASK`）**：`entry.activityCreate` → `entry.inboundIntake kind=OpenImport` → 界面出现「已收到分享文件，请选择账单格式后导入。」与三格式；正确。
+   - **E2 热路径（同一 flag，应用在前台）**：`entry.onNewIntent` → `kind=OpenImport` → 出现「保留原请求／替换为当前请求」；符合 §2.2 的 retain-vs-replace。
+   - **E3 create 路径（发送方不带 `FLAG_ACTIVITY_NEW_TASK`，应用已有存活实例）**：`entry.activityCreate` → `entry.inboundIntake kind=OpenImport`（**已被接纳**）→ **新实例界面为空**（停在首页、无任何分享面）；按 BACK 退出该实例后，**先前实例**显示同一条「已收到分享文件…」与 retain/replace 提示。
+   即请求被**上一个已 pause 的实例**取走，当前可见界面什么也没有——违反 §2.2「禁止静默丢弃」。机型/平台事实：不带 `NEW_TASK` 的跨应用 `startActivity` 把接收方放在**发送方任务**里，因此每次投递都是新实例；带 `NEW_TASK` 时首次为 create、其后为 `onNewIntent`。
+
+2. **对既有登记的更正。** checkpoint 与 `PROGRESS_LOG` 续八记「真实分享方恒走 create 路径、`onNewIntent` 不由分享触发」。用带 `NEW_TASK` 的真实发送方（本批自建，等价于系统 chooser 的投递形态）实测为 `entry.onNewIntent`，故该结论**只对不带该 flag 的发送方成立**。P709-A04 的真实任务栈向量因此得到首条决定性读数：**分享投递路径取决于发送方的 flag，不取决于「是否真实分享方」**。本条不改 PR #168 的 `recreated` 语义，也不据 E2/E3 判 A01/A04 通过。
+
+3. **修复。** `ExternalNavigationChannel` 由「最后订阅者胜」改为**每个 host 各自绑定 + 只交付给已 resume 的 host**：`subscribe(token, listener)`、`onHostResumed(token)`、`onHostPaused(token)`；`deliver` 只在**已 resume 的那个 host 自己有绑定**时直接交付，否则进入**深度 1** 暂存槽，并在该 host 绑定成立或恢复时排空一次。绑定按**身份**（`===`）匹配并逐 host 保存，因此：非可见实例既不能取走交付，也不能在销毁时解绑掉别的实例（评审 P709SD-01/02 的整改）。`P503App` 新增可选 `inboundHostToken: Any? = null`（桌面端与既有调用点不变），Android 组合根传 `activity`，`MainActivity.onResume/onPause` 上报 `onHostResumed(this)`／`onHostPaused(this)`。
+
+4. **测试责任。** 运行期契约由 `app-ui` 纯测试钉住：新类 `ExternalNavigationChannelHostTest`（暂停 host 不得吸收、被替换实例解绑不得解除他人绑定、两个实例各自绑定且回到旧实例仍可接收、深度 1、冷启动等待首次 resume、解绑后请求仍等待下一个绑定 host、值相等但不同实例的 token 不得取走他人交付、旧实例的迟到 pause 不得解除当前 host、已 resume 的 host 重新订阅即排空暂存槽、恰好一次不重放（`aHostThatTookARequestIsNotGivenItAgainOnAResume`））与既有 `ExternalNavigationReducerTest` 两条通道用例按新契约更新（通道 API 变更即契约变更，改动理由写在用例注释）。Android 接线由源码 pin 测试 `ShareDeliveryHostWiringTest` 钉住（`AppShortcutsTest` 先例：执行该对需要真实 Activity）：`MainActivity` 的 `onResume`/`onPause` 上报、`App.kt` 的 `inboundHostToken = activity,`、以及 `P503App` 的 `subscribe(inboundHostToken)` 与解绑行。
+
+5. **残余（如实披露，不并入任何 PASS）。**
+   - **传输层暂存槽先于 reducer**：停在暂存槽的请求若被后来的请求替换，被替换者**不会**到达 reducer，因此不触发 §2.2 的 retain-vs-replace 提示。这是传输层的深度 1 语义（规格已注明）；若将来要求「每个被接纳的分享都必须可见」，需把替换路由到 reducer 决策——**未做**。
+   - **host token 契约**：`inboundHostToken` 必须**身份唯一**（通道按 `===` 匹配）；传入值相等但非同一对象时绑定不会被识别。已写入参数与 API 的 KDoc，未用类型系统强制。
+   - 「已 resume 但组合尚未订阅」窗口内的请求会暂存而非丢弃；由冷启动与「resumed host without a binding」两条用例覆盖语义，但**未**在设备上逐一计时。
+   - **修复的设备复验已完成**（2026-10-29，候选 `7275cc6` 的 CI 构建，sha256 `E5B67784…`；同一发送方、同一 AVD、同一进程 10111）：E1 冷启动、E2 热路径、E3 create 路径三个场景**都给出「请求落在可见实例」的读数**——E3 的新实例直接显示分享面（旧实例只保留它自己那条），与 `4e7b9b7` 的空屏读数构成修前/修后对照；`channel.deliver parked` 与 `channel.drain delivered` 分别对上 resume 与 subscribe 两条排空路径。记录 `local/artifacts/p709-share-delivery/FIX-VERIFICATION.md`。
+   - **widget / shortcut 路径**：`LedgerWidgetProvider` 在 `launchAppActivity` 之前投递 `OpenCurrentMonth`；新规则下没有已 resume 的 host 时改为**停放**、待 resume 排空。顺序与冷启动分享相同（`ExternalNavigationChannelHostTest.aColdStartRequestWaitsForTheVeryFirstResume` 的注释指明），但未上设备，且进程在停放与 resume 之间被杀即丢。
+   - **多窗口 / 分屏**：Android 10+ 同进程可有两个 RESUMED Activity，`resumedToken` 只持最后一个 resume 的 host，另一个可见实例的交付会停放到它自己 resume。
+   - **停放请求仅存内存**：`buffered` 不落盘，进程死亡即丢；启动以 `StartupError` 收尾时请求永久停放。
+   - 本条不改变 P709-A01/A03/A04 的判决，也不改变「同 URI 再分享」的身份判定（§4，仍按「先改规格再改代码」推进）。
+
+**边界：** 入：上述修复、规格 §2.2 一条、本条。出：不改 §4 身份判定与 PR #168 语义；不改 D-225/D-226/D-227 的任何裁决；零 schema/迁移/依赖；不触碰 widget/backup/budget 各 owner。
+
+**关联决定：** D-236（P7-09 取证与「am 无法传递 content grant」的工具边界、item 7 的自建发送方路径）、D-225（Q19 统一导航门与单 pending slot 裁决）、D-227（09.D 平台回归）、D-258/D-259（验收面口径）、阶段计划 §9.3 P709-A01/A03/A04 与 §10.2。
