@@ -71,35 +71,34 @@ class P503CorrectionPresentationTest {
 
     @Test
     fun detailEntriesHideForUnsupportedKindsOrVoidedOrUnresolved() {
-        // The transfer row joins the CORRECTION entry only: the transfer surface resolves its own
-        // origin shape, while its void/restore face is a separate later slice (D-228 J1), so the
-        // void entry stays hidden even when the host supplies a void target.
+        // The transfer row offers BOTH entries: the correction surface resolves its own origin
+        // shape, and voiding is transaction-granular for a transfer too (D-228 J1), so its three
+        // legs move together.
         assertEquals(
-            DetailCorrectionAffordances(edit = true, void = false),
+            DetailCorrectionAffordances(edit = true, void = true),
             detailCorrectionAffordancesVisible(TransactionKind.ACCOUNT_TRANSFER, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true),
         )
-        // The transfer edit entry still needs a host-resolved transfer origin: no dead button.
-        assertFalse(
-            detailCorrectionAffordancesVisible(TransactionKind.ACCOUNT_TRANSFER, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = false, hasVoidTarget = true).any,
+        // The transfer CORRECTION entry still needs a host-resolved transfer origin: no dead
+        // button. The void entry does not depend on it - only on the wired use case.
+        assertEquals(
+            DetailCorrectionAffordances(edit = false, void = true),
+            detailCorrectionAffordancesVisible(TransactionKind.ACCOUNT_TRANSFER, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = false, hasVoidTarget = true),
         )
-        // Lending and refund stay outside the support matrix (spec section 3.1).
+        // Nor does the void entry for an import-created transfer (DP-5 keeps that lineage out).
         assertFalse(
-            detailCorrectionAffordancesVisible(TransactionKind.LEND, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true).any,
+            detailCorrectionAffordancesVisible(TransactionKind.ACCOUNT_TRANSFER, CreationEntry.IMPORT_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true).any,
         )
-        // D-158 section 4: the remaining later-slice matrix rows hide the entries too.
-        listOf(
-            TransactionKind.REFUND_RECEIPT,
-            TransactionKind.CREDIT_REPAYMENT,
-            TransactionKind.COLLECT,
-            TransactionKind.OPENING_BALANCE,
-            TransactionKind.STORED_VALUE_RECHARGE,
-            TransactionKind.PREPAID_PURCHASE,
-        ).forEach { kind ->
-            assertFalse(
-                detailCorrectionAffordancesVisible(kind, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true).any,
-                "kind $kind must offer no correction entry",
-            )
-        }
+        // Every other kind stays outside the matrix. The list is derived from the enum, so a kind
+        // added later cannot slip into the entries unnoticed (D-158 section 4 lists the later-slice
+        // rows individually; the derivation now covers them and their future siblings alike).
+        TransactionKind.entries
+            .filterNot { it == TransactionKind.EXPENSE || it == TransactionKind.INCOME || it == TransactionKind.ACCOUNT_TRANSFER }
+            .forEach { kind ->
+                assertFalse(
+                    detailCorrectionAffordancesVisible(kind, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true).any,
+                    "kind $kind must offer no entry",
+                )
+            }
         // A voided transaction (defensive echo of the read invariant) offers nothing.
         assertFalse(
             detailCorrectionAffordancesVisible(TransactionKind.EXPENSE, CreationEntry.MANUAL_CREATED, isEffective = false, hasCorrectionOrigin = true, hasVoidTarget = true).any,
