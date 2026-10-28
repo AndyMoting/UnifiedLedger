@@ -38,7 +38,7 @@ $env:GRADLE_OPTS='-Xmx1024m'
 
 ## 本机与 CI 的验证分工
 
-默认工作流是 PR 门禁流：在短期任务分支上开发，推送后创建 Pull Request（`gh pr create`），required checks（`.github/workflows/ci.yml` 的 `Kotlin tests`、`Android compile`、`Python tests`、`Trace scan` 四个 job）全部通过后以 squash merge 合并（`gh pr merge --squash`）。job name 与分支保护规则强耦合，改名必须同步更新分支保护配置。`ci.yml` 只在 `pull_request` 上触发（另留 `workflow_dispatch` 供人工重跑）；合并推送 `main` 后由 `Merge tree guard` 兜底：它在每次 push 到 `main` 时运行，遇线性或 squash 提交时由它派发全量 CI，因此合并动作仍会带来一次全量运行。
+默认工作流是 PR 门禁流：在短期任务分支上开发，推送后创建 Pull Request（`gh pr create`），required checks（`.github/workflows/ci.yml` 的 `Kotlin tests`、`Android compile`、`Python tests`、`Trace scan` 四个 job）全部通过后以 squash merge 合并（消息显式给出，见「合并」节）。job name 与分支保护规则强耦合，改名必须同步更新分支保护配置。`ci.yml` 只在 `pull_request` 上触发（另留 `workflow_dispatch` 供人工重跑）；合并推送 `main` 后由 `Merge tree guard` 兜底：它在每次 push 到 `main` 时运行，遇线性或 squash 提交时由它派发全量 CI，因此合并动作仍会带来一次全量运行。
 
 本机只保留快速反馈：`project_docs`，以及可选的 `bash tools/ci/trace-scan.sh` 本地预检；受影响模块的聚焦定向测试归 CI。完整 `check`、ktlint、Android/KMP 编译、Debug APK、完整 Python 测试、Desktop build、migration verifier 与 Windows JVM 测试由 CI 在资源更充足的 runner 上执行。PR run 检出并验证的是该 PR 的**预览合并树**（`Merge <head> into <base>`），因此发布证据是「合并树与该 PR tip 树逐字节相同」，合并后立即核对：
 
