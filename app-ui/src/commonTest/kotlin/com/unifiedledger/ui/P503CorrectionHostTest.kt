@@ -227,12 +227,85 @@ class P503CorrectionHostTest {
                     fallbackCurrency = cny,
                 ),
             )
-        val snapshot = request.toRequestSnapshot()
-        assertEquals(request.expectedCurrentVersionId, snapshot.expectedCurrentVersionId)
-        assertEquals(request.amount, snapshot.amount)
-        assertEquals(request.categoryId, snapshot.categoryId)
-        assertEquals(request.fundingAccountId, snapshot.fundingAccountId)
+        val requestSnapshot = request.toRequestSnapshot()
+        assertEquals(request.expectedCurrentVersionId, requestSnapshot.expectedCurrentVersionId)
+        assertEquals(request.amount, requestSnapshot.amount)
+        assertEquals(request.categoryId, requestSnapshot.categoryId)
+        assertEquals(request.fundingAccountId, requestSnapshot.fundingAccountId)
+        // F-01: an ordinary request keeps the ordinary shape of the two transfer columns - the
+        // snapshot is compared column for column by the lost-commit resolver, so the shape has to
+        // be explicit rather than merely defaulted.
+        assertNull(requestSnapshot.destinationAccountId)
+        assertEquals(0L, requestSnapshot.feeMinor)
     }
+
+    @Test
+    fun theTransferRequestSnapshotCarriesBothTransferColumns() {
+        val origin = transferOrigin()
+        val request =
+            assertNotNull(
+                transferCorrectionRequest(
+                    ledgerId = ledgerId,
+                    requestId = RequestId("request-transfer"),
+                    origin = origin,
+                    draft = transferCorrectionDraftFromOrigin(origin),
+                    statisticsAt = origin.statisticsAt,
+                ),
+            )
+        val requestSnapshot = request.toRequestSnapshot()
+        // The two transfer columns round-trip verbatim: dropping either would let a lost transfer
+        // commit compare equal to another request and be reported as an already-committed hit.
+        assertEquals("asset-destination", requestSnapshot.destinationAccountId)
+        assertEquals(200L, requestSnapshot.feeMinor)
+        assertEquals(CategoryId("category-food-leaf"), requestSnapshot.categoryId)
+        assertEquals(AccountId("asset-source"), requestSnapshot.fundingAccountId)
+        // A fee-less transfer stores no category and a zero fee (transfer spec section 8.3).
+        val feeLess = origin.copy(feeMinorUnits = 0L, feeCategoryId = null)
+        val feeLessRequest =
+            assertNotNull(
+                transferCorrectionRequest(
+                    ledgerId = ledgerId,
+                    requestId = RequestId("request-transfer-2"),
+                    origin = feeLess,
+                    draft = transferCorrectionDraftFromOrigin(feeLess),
+                    statisticsAt = feeLess.statisticsAt,
+                ),
+            )
+        assertNull(feeLessRequest.toRequestSnapshot().categoryId)
+        assertEquals(0L, feeLessRequest.toRequestSnapshot().feeMinor)
+    }
+
+    @Test
+    fun theTransferStatisticsInstantKeepsTheStoredInstantUntilTheTextIsEdited() {
+        val origin = transferOrigin()
+        val seeded = transferCorrectionDraftFromOrigin(origin)
+        // Untouched text: the origin instant verbatim, so a stored sub-second precision survives.
+        assertEquals(origin.statisticsAt, transferCorrectionStatisticsInstant(origin, seeded, ParseManualExpenseOccurredAt(), clock))
+        // A readable edit is parsed by the entry flow's own parser and clock.
+        val edited = seeded.withUpdate(TransferCorrectionFieldUpdate.StatisticsAt("2026-04-01 08:30"))
+        assertEquals(
+            Instant.parse("2026-04-01T00:30:00Z"),
+            transferCorrectionStatisticsInstant(origin, edited, ParseManualExpenseOccurredAt(), clock),
+        )
+        // An unreadable edit is absent, so the caller dispatches the typed field rejection instead
+        // of committing a request whose time silently reverted to the stored instant.
+        val unreadable = seeded.withUpdate(TransferCorrectionFieldUpdate.StatisticsAt("not-a-time"))
+        assertNull(transferCorrectionStatisticsInstant(origin, unreadable, ParseManualExpenseOccurredAt(), clock))
+    }
+
+    private fun transferOrigin(): TransferCorrectionOrigin =
+        TransferCorrectionOrigin(
+            transactionId = transactionId,
+            currentVersionId = versionId,
+            note = null,
+            statisticsAt = statisticsAt,
+            currency = cny,
+            sourceAccountId = AccountId("asset-source"),
+            destinationAccountId = AccountId("asset-destination"),
+            destinationCreditMinorUnits = 10_000L,
+            feeMinorUnits = 200L,
+            feeCategoryId = CategoryId("category-food-leaf"),
+        )
 
     // ---- reason + void/restore request builder (DP-11) ----
 
@@ -472,12 +545,15 @@ class P503CorrectionHostTest {
         val origin = assertNotNull(transactionEditOriginFromDetail(detail(), snapshot()))
         // A surface submitting with no result keeps the snapshot (the lost-commit window).
         assertTrue(p705SurfaceHoldsLostCommit(P503AppState.TransactionEdit(overview, origin, submitting = true)))
+        assertTrue(p705SurfaceHoldsLostCommit(P503AppState.TransferEdit(overview, transferOrigin(), submitting = true)))
         assertTrue(p705SurfaceHoldsLostCommit(P503AppState.VoidConfirm(overview, transactionId, submitting = true)))
         assertTrue(p705SurfaceHoldsLostCommit(P503AppState.RecycleBin(overview, RecycleBinResult.Success(emptyList()), RestoreConfirm(transactionId, submitting = true))))
         assertSame(retained, retainedP705RequestAfterLanding(retained, P503AppState.TransactionEdit(overview, origin, submitting = true)))
+        assertSame(retained, retainedP705RequestAfterLanding(retained, P503AppState.TransferEdit(overview, transferOrigin(), submitting = true)))
         // Leaving, landing a result or any non-P7-05 state releases it.
         assertNull(retainedP705RequestAfterLanding(retained, overview))
         assertNull(retainedP705RequestAfterLanding(retained, P503AppState.TransactionEdit(overview, origin)))
+        assertNull(retainedP705RequestAfterLanding(retained, P503AppState.TransferEdit(overview, transferOrigin())))
         assertNull(retainedP705RequestAfterLanding(retained, P503AppState.VoidConfirm(overview, transactionId)))
         assertNull(retainedP705RequestAfterLanding(retained, P503AppState.RecycleBin(overview, RecycleBinResult.Success(emptyList()))))
         // A landing that a surface REFUSES (the reducer absorbs it, e.g. a second bin row tapped

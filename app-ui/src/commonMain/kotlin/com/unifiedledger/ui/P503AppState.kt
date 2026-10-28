@@ -453,6 +453,37 @@ sealed interface P503AppState {
     ) : P503AppState
 
     /**
+     * P7-05 (D-228; spec sections 3/4.4 and 8.3): the transfer correction surface. Reached only from
+     * the read-only transaction detail (DP-12) when the target's posting shape is a transfer one, so
+     * it is the [TransactionEdit] sibling for a transfer-shaped transaction rather than a variant of
+     * it: the frozen field set differs (seven fields, two accounts and a fee leg instead of
+     * amount/category/funding) and the two faces must never share a draft.
+     *
+     * [origin] is the host-resolved old-value snapshot and carries the CAS token
+     * (`currentVersionId`); [draft] is the pure seven-field form; [requestId] is minted by the host on
+     * the explicit confirm (never by the reducer); [submitting] is the per-operation marker (提交中不重入)
+     * and the `UnknownCommit` discipline's surface - a lost commit leaves the marker set with no
+     * automatic retry, no requestId swap and no accepted leave. The overview is carried so every exit
+     * restores the exact tab, month cursor and monthly payload.
+     *
+     * There is deliberately no `preview` field: the transfer difference preview needs the current
+     * catalog's display names ([com.unifiedledger.ui.transferCorrectionPreview] takes them as
+     * arguments), which the IO-free reducer does not own - the ordinary surface's raw-text preview is
+     * turned into display text by the presentation layer, and this surface renders its preview the
+     * same way, at render time.
+     */
+    data class TransferEdit(
+        val overview: OverviewEmpty,
+        val origin: TransferCorrectionOrigin,
+        val draft: TransferCorrectionDraft = TransferCorrectionDraft(),
+        val requestId: RequestId? = null,
+        val submitting: Boolean = false,
+        val notice: P705Notice? = null,
+        /** P7-05 (V-19; D-173): see [TransactionEdit.checkOutcome]. */
+        val checkOutcome: P705CommitCheckOutcome = P705CommitCheckOutcome.NONE,
+    ) : P503AppState
+
+    /**
      * P7-05.C (D-156; spec sections 3.3/4.4): the void confirmation page. Reached only from the
      * read-only transaction detail (DP-12). [reason] is the mandatory typed reason form (DP-11);
      * [requestId] is host-minted on the explicit confirm; [submitting] is the per-operation

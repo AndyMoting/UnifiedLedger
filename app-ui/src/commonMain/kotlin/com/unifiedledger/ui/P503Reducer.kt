@@ -98,6 +98,7 @@ class P503ReducerImpl(
             is P503AppState.ImportBatchConfirm -> reduceImportBatchConfirm(state, event)
             is P503AppState.ImportBatchSubmitting -> reduceImportBatchSubmitting(state, event)
             is P503AppState.TransactionEdit -> reduceTransactionEdit(state, event)
+            is P503AppState.TransferEdit -> reduceTransferEdit(state, event)
             is P503AppState.TransactionAnnotationEdit -> reduceTransactionAnnotationEdit(state, event)
             is P503AppState.VoidConfirm -> reduceVoidConfirm(state, event)
             is P503AppState.RecycleBin -> reduceRecycleBin(state, event)
@@ -803,6 +804,8 @@ class P503ReducerImpl(
             P503UiEvent.PreviewTransactionEdit,
             is P503UiEvent.ConfirmTransactionEdit,
             is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.UpdateTransferCorrectionField,
+            is P503UiEvent.OpenTransferEdit,
             is P503UiEvent.OpenVoidConfirm,
             is P503UiEvent.UpdateVoidReasonField,
             is P503UiEvent.ConfirmVoid,
@@ -1166,6 +1169,8 @@ class P503ReducerImpl(
             P503UiEvent.PreviewTransactionEdit,
             is P503UiEvent.ConfirmTransactionEdit,
             is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.UpdateTransferCorrectionField,
+            is P503UiEvent.OpenTransferEdit,
             is P503UiEvent.OpenVoidConfirm,
             is P503UiEvent.UpdateVoidReasonField,
             is P503UiEvent.ConfirmVoid,
@@ -1309,6 +1314,16 @@ class P503ReducerImpl(
                     origin = event.origin,
                     draft = transactionCorrectionDraftFromOrigin(event.origin),
                 )
+            // P7-05 (D-228; spec sections 3/8.3): the transfer-shaped sibling of the correction
+            // surface opens from the same read-only detail. Its origin carries the seven frozen
+            // fields plus the currency their texts are formatted at, so the reducer seeds the form
+            // without touching a catalog.
+            is P503UiEvent.OpenTransferEdit ->
+                P503AppState.TransferEdit(
+                    overview = state.overview,
+                    origin = event.origin,
+                    draft = transferCorrectionDraftFromOrigin(event.origin),
+                )
             // P7-08 08.B-2 (spec section 4.4): the annotation edit opens from the same read-only
             // detail as the correction surface. The host has already resolved the CAS tokens
             // (sentinel 0 == no current annotation) and the pending initial selection, so the
@@ -1332,6 +1347,7 @@ class P503ReducerImpl(
             P503UiEvent.PreviewTransactionEdit,
             is P503UiEvent.ConfirmTransactionEdit,
             is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.UpdateTransferCorrectionField,
             is P503UiEvent.UpdateVoidReasonField,
             is P503UiEvent.ConfirmVoid,
             is P503UiEvent.TransactionVoidResult,
@@ -1749,6 +1765,8 @@ class P503ReducerImpl(
             P503UiEvent.PreviewTransactionEdit,
             is P503UiEvent.ConfirmTransactionEdit,
             is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.UpdateTransferCorrectionField,
+            is P503UiEvent.OpenTransferEdit,
             is P503UiEvent.OpenVoidConfirm,
             is P503UiEvent.UpdateVoidReasonField,
             is P503UiEvent.ConfirmVoid,
@@ -1925,6 +1943,8 @@ class P503ReducerImpl(
             P503UiEvent.PreviewTransactionEdit,
             is P503UiEvent.ConfirmTransactionEdit,
             is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.UpdateTransferCorrectionField,
+            is P503UiEvent.OpenTransferEdit,
             is P503UiEvent.OpenVoidConfirm,
             is P503UiEvent.UpdateVoidReasonField,
             is P503UiEvent.ConfirmVoid,
@@ -2074,6 +2094,8 @@ class P503ReducerImpl(
             P503UiEvent.PreviewTransactionEdit,
             is P503UiEvent.ConfirmTransactionEdit,
             is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.UpdateTransferCorrectionField,
+            is P503UiEvent.OpenTransferEdit,
             is P503UiEvent.OpenVoidConfirm,
             is P503UiEvent.UpdateVoidReasonField,
             is P503UiEvent.ConfirmVoid,
@@ -2247,6 +2269,7 @@ class P503ReducerImpl(
             // A second OpenTransactionEdit while a surface is open stays on the open surface (the
             // UI affords no nested navigation).
             is P503UiEvent.OpenTransactionEdit,
+            is P503UiEvent.OpenTransferEdit,
             is P503UiEvent.OpenVoidConfirm,
             is P503UiEvent.UpdateVoidReasonField,
             is P503UiEvent.ConfirmVoid,
@@ -2298,6 +2321,8 @@ class P503ReducerImpl(
             P503UiEvent.PreviewTransactionEdit,
             is P503UiEvent.ConfirmTransactionEdit,
             is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.UpdateTransferCorrectionField,
+            is P503UiEvent.OpenTransferEdit,
             is P503UiEvent.OpenVoidConfirm,
             is P503UiEvent.UpdateVoidReasonField,
             is P503UiEvent.ConfirmVoid,
@@ -2322,6 +2347,66 @@ class P503ReducerImpl(
         when (result) {
             // Determinate success: leave to the preserved overview; the authoritative refresh
             // follows (the P5-04.4/P7-02 precedent, spec section 3.5).
+            is com.unifiedledger.application.CorrectTransactionVersionResult.Created,
+            is com.unifiedledger.application.CorrectTransactionVersionResult.NoChange,
+            -> state.overview
+            // The frozen stale surface is its own variant, never folded into Rejected.
+            com.unifiedledger.application.CorrectTransactionVersionResult.StaleCurrentVersion ->
+                state.copy(submitting = false, notice = P705Notice.StaleCurrentVersion)
+            is com.unifiedledger.application.CorrectTransactionVersionResult.RequestIdentityConflict ->
+                state.copy(submitting = false, notice = P705Notice.RequestIdentityConflict(result.identity.requestId))
+            is com.unifiedledger.application.CorrectTransactionVersionResult.Rejected ->
+                state.copy(submitting = false, notice = P705Notice.Rejected(result.code))
+        }
+
+    /**
+     * P7-05 (D-228; spec sections 3/4.4): the transfer correction surface. Only its own field write
+     * and the commit lifecycle react: the write is a pure draft write; the explicit confirm sets the
+     * per-operation submitting marker (提交中不重入 - a duplicate confirm while one is in flight is
+     * absorbed); the typed result leaves on a determinate success while a rejection / stale / identity
+     * conflict surfaces its own notice; a lost commit keeps the marker (the `UnknownCommit`
+     * discipline: no automatic retry, no requestId swap, no leave). Cancel/Back return to the exact
+     * preserved overview - a preview is never commit permission, so it blocks nothing.
+     *
+     * [P503UiEvent.PreviewTransactionEdit] is absorbed here on purpose: the transfer preview needs the
+     * current catalog's display names, which this IO-free reducer does not own, so the surface renders
+     * it at render time (see [P503AppState.TransferEdit]).
+     */
+    private fun reduceTransferEdit(
+        state: P503AppState.TransferEdit,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            is P503UiEvent.UpdateTransferCorrectionField -> state.copy(draft = state.draft.withUpdate(event.update))
+            is P503UiEvent.ConfirmTransactionEdit ->
+                // 提交中不重入: a second confirm while the first is in flight changes nothing.
+                if (state.submitting) state else state.copy(requestId = event.requestId, submitting = true, notice = null)
+            is P503UiEvent.TransactionEditResult -> reduceTransferEditResult(state, event.result)
+            // P7-05 (V-19; D-173): the manual re-check mirrors the ordinary surface - a REQUEST leaves
+            // the instance untouched (the host owns the single-flight read), and only the absence /
+            // unavailability landing records the re-checkable marker.
+            is P503UiEvent.RetryP705CommitStatusCheck ->
+                if (event.outcome == P705CommitCheckOutcome.NONE || !state.submitting) state else state.copy(checkOutcome = event.outcome)
+            // Cancel/Back return to the preserved overview; while a commit is in flight the surface
+            // must not leave (提交中不得离开), so the exit is absorbed and the host guards intercept
+            // the back gesture.
+            P503UiEvent.Cancel,
+            P503UiEvent.Back,
+            -> if (state.submitting) state else state.overview
+            // A second transfer open while a surface is open stays on the open surface (the UI affords
+            // no nested navigation).
+            is P503UiEvent.OpenTransferEdit,
+            -> state
+            else -> absorbPreExisting(state, event)
+        }
+
+    /** P7-05 (D-228): maps the shared correction result family onto the transfer surface. */
+    private fun reduceTransferEditResult(
+        state: P503AppState.TransferEdit,
+        result: com.unifiedledger.application.CorrectTransactionVersionResult,
+    ): P503AppState =
+        when (result) {
+            // Determinate success: leave to the preserved overview; the authoritative refresh follows.
             is com.unifiedledger.application.CorrectTransactionVersionResult.Created,
             is com.unifiedledger.application.CorrectTransactionVersionResult.NoChange,
             -> state.overview
@@ -2362,6 +2447,8 @@ class P503ReducerImpl(
             P503UiEvent.PreviewTransactionEdit,
             is P503UiEvent.ConfirmTransactionEdit,
             is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.UpdateTransferCorrectionField,
+            is P503UiEvent.OpenTransferEdit,
             is P503UiEvent.OpenVoidConfirm,
             is P503UiEvent.OpenRecycleBin,
             is P503UiEvent.RecycleBinResult,
@@ -2463,6 +2550,8 @@ class P503ReducerImpl(
             P503UiEvent.PreviewTransactionEdit,
             is P503UiEvent.ConfirmTransactionEdit,
             is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.UpdateTransferCorrectionField,
+            is P503UiEvent.OpenTransferEdit,
             is P503UiEvent.OpenVoidConfirm,
             is P503UiEvent.UpdateVoidReasonField,
             is P503UiEvent.ConfirmVoid,
@@ -2611,6 +2700,8 @@ class P503ReducerImpl(
             P503UiEvent.PreviewTransactionEdit,
             is P503UiEvent.ConfirmTransactionEdit,
             is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.UpdateTransferCorrectionField,
+            is P503UiEvent.OpenTransferEdit,
             is P503UiEvent.OpenVoidConfirm,
             is P503UiEvent.UpdateVoidReasonField,
             is P503UiEvent.ConfirmVoid,
@@ -2876,6 +2967,8 @@ class P503ReducerImpl(
             P503UiEvent.PreviewTransactionEdit,
             is P503UiEvent.ConfirmTransactionEdit,
             is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.UpdateTransferCorrectionField,
+            is P503UiEvent.OpenTransferEdit,
             is P503UiEvent.OpenVoidConfirm,
             is P503UiEvent.UpdateVoidReasonField,
             is P503UiEvent.ConfirmVoid,
@@ -3022,6 +3115,8 @@ class P503ReducerImpl(
             P503UiEvent.PreviewTransactionEdit,
             is P503UiEvent.ConfirmTransactionEdit,
             is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.UpdateTransferCorrectionField,
+            is P503UiEvent.OpenTransferEdit,
             is P503UiEvent.OpenVoidConfirm,
             is P503UiEvent.UpdateVoidReasonField,
             is P503UiEvent.ConfirmVoid,
@@ -3140,6 +3235,8 @@ class P503ReducerImpl(
             P503UiEvent.PreviewTransactionEdit,
             is P503UiEvent.ConfirmTransactionEdit,
             is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.UpdateTransferCorrectionField,
+            is P503UiEvent.OpenTransferEdit,
             is P503UiEvent.OpenVoidConfirm,
             is P503UiEvent.UpdateVoidReasonField,
             is P503UiEvent.ConfirmVoid,
@@ -3459,6 +3556,8 @@ class P503ReducerImpl(
             P503UiEvent.PreviewTransactionEdit,
             is P503UiEvent.ConfirmTransactionEdit,
             is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.UpdateTransferCorrectionField,
+            is P503UiEvent.OpenTransferEdit,
             is P503UiEvent.OpenVoidConfirm,
             is P503UiEvent.UpdateVoidReasonField,
             is P503UiEvent.ConfirmVoid,
@@ -3591,6 +3690,8 @@ class P503ReducerImpl(
             P503UiEvent.PreviewTransactionEdit,
             is P503UiEvent.ConfirmTransactionEdit,
             is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.UpdateTransferCorrectionField,
+            is P503UiEvent.OpenTransferEdit,
             is P503UiEvent.OpenVoidConfirm,
             is P503UiEvent.UpdateVoidReasonField,
             is P503UiEvent.ConfirmVoid,
@@ -3730,6 +3831,8 @@ class P503ReducerImpl(
             P503UiEvent.PreviewTransactionEdit,
             is P503UiEvent.ConfirmTransactionEdit,
             is P503UiEvent.TransactionEditResult,
+            is P503UiEvent.UpdateTransferCorrectionField,
+            is P503UiEvent.OpenTransferEdit,
             is P503UiEvent.OpenVoidConfirm,
             is P503UiEvent.UpdateVoidReasonField,
             is P503UiEvent.ConfirmVoid,
@@ -3843,6 +3946,8 @@ class P503ReducerImpl(
                     P503UiEvent.PreviewTransactionEdit,
                     is P503UiEvent.ConfirmTransactionEdit,
                     is P503UiEvent.TransactionEditResult,
+                    is P503UiEvent.UpdateTransferCorrectionField,
+                    is P503UiEvent.OpenTransferEdit,
                     is P503UiEvent.OpenVoidConfirm,
                     is P503UiEvent.UpdateVoidReasonField,
                     is P503UiEvent.ConfirmVoid,
@@ -3958,6 +4063,8 @@ class P503ReducerImpl(
                     P503UiEvent.PreviewTransactionEdit,
                     is P503UiEvent.ConfirmTransactionEdit,
                     is P503UiEvent.TransactionEditResult,
+                    is P503UiEvent.UpdateTransferCorrectionField,
+                    is P503UiEvent.OpenTransferEdit,
                     is P503UiEvent.OpenVoidConfirm,
                     is P503UiEvent.UpdateVoidReasonField,
                     is P503UiEvent.ConfirmVoid,

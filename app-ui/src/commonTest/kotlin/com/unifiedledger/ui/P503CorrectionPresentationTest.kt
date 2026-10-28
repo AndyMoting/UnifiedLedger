@@ -62,10 +62,18 @@ class P503CorrectionPresentationTest {
 
     @Test
     fun detailEntriesHideForUnsupportedKindsOrVoidedOrUnresolved() {
-        // Transfer/lending/refund are outside the first-slice support matrix (spec section 3.1).
-        assertFalse(
-            detailCorrectionAffordancesVisible(TransactionKind.ACCOUNT_TRANSFER, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true).any,
+        // The transfer row joins the CORRECTION entry only: the transfer surface resolves its own
+        // origin shape, while its void/restore face is a separate later slice (D-228 J1), so the
+        // void entry stays hidden even when the host supplies a void target.
+        assertEquals(
+            DetailCorrectionAffordances(edit = true, void = false),
+            detailCorrectionAffordancesVisible(TransactionKind.ACCOUNT_TRANSFER, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true),
         )
+        // The transfer edit entry still needs a host-resolved transfer origin: no dead button.
+        assertFalse(
+            detailCorrectionAffordancesVisible(TransactionKind.ACCOUNT_TRANSFER, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = false, hasVoidTarget = true).any,
+        )
+        // Lending and refund stay outside the support matrix (spec section 3.1).
         assertFalse(
             detailCorrectionAffordancesVisible(TransactionKind.LEND, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true).any,
         )

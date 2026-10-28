@@ -8,6 +8,7 @@ import com.unifiedledger.application.TransactionDetail
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CategoryKind
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Money
@@ -17,20 +18,20 @@ import com.unifiedledger.domain.parseExactDecimal
 import com.unifiedledger.domain.parseExactDecimalLenient
 import kotlin.time.Instant
 
-// P7-05 transfer correction slice 5a1 (D-156, D-228): the app-ui PURE layer of the transfer
-// correction surface. The frozen contract lives in
+// P7-05 transfer correction slice (D-156, D-228): the app-ui PURE layer of the transfer correction
+// surface. The frozen contract lives in
 // docs/specs/2026-10-16-p7-05-transfer-correction-slice-design.md - section 3 (field set, write
 // shape, validation) and section 8.3 (request row shape: the destination credit rides the amount
 // column, the source account rides funding_account_id, the fee category rides category_id and is
 // NULL exactly when the fee is 0).
 //
-// This file wires nothing: no Compose, no IO, no logging, no platform API, no coroutines. Amounts
-// are Long minor units end to end - never Double or Float.
+// This file holds no Compose, no IO, no logging, no platform API and no coroutines. Amounts are Long
+// minor units end to end - never Double or Float.
 //
-// 5a1 passing is NOT 05.D passing: no transfer correction/void product loop is signed off here and
-// no Android manual acceptance is performed. The registered residual of
-// CorrectTransactionVersion.kt:75-79 (the UI-side resolver still rebuilds only ordinary-shaped
-// snapshots) belongs to slices 5a2/5b.
+// The pure layer is NOT the product loop: the transfer surface's entrance, its screen and the
+// Android manual acceptance are separate work, so nothing here signs off 05.D. The snapshot-aware
+// resolver on the read side already reconstructs both shapes column for column (the
+// TransactionCorrectionRequestSnapshot contract in CorrectTransactionVersion.kt).
 
 /**
  * P7-05 transfer slice (spec section 3): the host-resolved old-value snapshot of a manual transfer
@@ -42,7 +43,7 @@ import kotlin.time.Instant
  * exactly when [feeMinorUnits] is `0` (spec section 8.3; `ACCOUNTING_RULES.md:273`). [currency] is
  * the transaction's own currency, resolved from the destination leg.
  */
-internal data class TransferCorrectionOrigin(
+data class TransferCorrectionOrigin(
     val transactionId: TransactionId,
     val currentVersionId: TransactionVersionId,
     val note: String?,
@@ -65,7 +66,7 @@ internal data class TransferCorrectionOrigin(
  * contract). The remaining texts are read by the preview on every keystroke and by the builder only
  * at confirmation.
  */
-internal data class TransferCorrectionDraft(
+data class TransferCorrectionDraft(
     val note: String = "",
     val statisticsAtText: String = "",
     val destinationCreditText: String = "",
@@ -74,6 +75,57 @@ internal data class TransferCorrectionDraft(
     val feeText: String = "",
     val feeCategoryId: CategoryId? = null,
 )
+
+/**
+ * The typed transfer-form field write (spec section 3): the frozen seven-field set, one field per
+ * write. The four text fields carry the raw text - the preview reads them on every keystroke and the
+ * request builder only at confirmation; the three reference fields carry already-resolved ids
+ * because the reducer is IO-free and never reads the catalog.
+ */
+sealed interface TransferCorrectionFieldUpdate {
+    data class Note(
+        val text: String,
+    ) : TransferCorrectionFieldUpdate
+
+    data class StatisticsAt(
+        val text: String,
+    ) : TransferCorrectionFieldUpdate
+
+    data class DestinationCredit(
+        val text: String,
+    ) : TransferCorrectionFieldUpdate
+
+    data class SourceAccount(
+        val accountId: AccountId,
+    ) : TransferCorrectionFieldUpdate
+
+    data class DestinationAccount(
+        val accountId: AccountId,
+    ) : TransferCorrectionFieldUpdate
+
+    data class Fee(
+        val text: String,
+    ) : TransferCorrectionFieldUpdate
+
+    data class FeeCategory(
+        val categoryId: CategoryId,
+    ) : TransferCorrectionFieldUpdate
+}
+
+/**
+ * Pure draft write over the seven frozen fields; preserves the concrete [TransferCorrectionDraft]
+ * shape (the [TransactionCorrectionDraft.withUpdate] precedent).
+ */
+internal fun TransferCorrectionDraft.withUpdate(update: TransferCorrectionFieldUpdate): TransferCorrectionDraft =
+    when (update) {
+        is TransferCorrectionFieldUpdate.Note -> copy(note = update.text)
+        is TransferCorrectionFieldUpdate.StatisticsAt -> copy(statisticsAtText = update.text)
+        is TransferCorrectionFieldUpdate.DestinationCredit -> copy(destinationCreditText = update.text)
+        is TransferCorrectionFieldUpdate.SourceAccount -> copy(sourceAccountId = update.accountId)
+        is TransferCorrectionFieldUpdate.DestinationAccount -> copy(destinationAccountId = update.accountId)
+        is TransferCorrectionFieldUpdate.Fee -> copy(feeText = update.text)
+        is TransferCorrectionFieldUpdate.FeeCategory -> copy(feeCategoryId = update.categoryId)
+    }
 
 /**
  * The transfer slice's own corrected-field set, in the preview's display order (frozen; spec section
@@ -327,10 +379,9 @@ internal fun transferPreviewFeeCategoryId(
  * [statisticsAt] is supplied by the caller. This builder does NOT parse
  * [TransferCorrectionDraft.statisticsAtText]: the frozen branch set contains no statistics-time parse
  * failure, and falling back to the origin instant on a failed parse would silently discard the user's
- * edit. Slice 5a2 parses the edited text at its own seam and routes a failure through the existing
- * typed rejection; while the field is untouched the caller passes
- * [TransferCorrectionOrigin.statisticsAt] verbatim, which keeps the stored instant's sub-second
- * precision.
+ * edit. [transferCorrectionStatisticsAt] is that seam - it returns the origin instant while the field
+ * is untouched (which keeps the stored instant's sub-second precision) and `null` for an edited text
+ * it cannot read, which the caller routes through the existing typed rejection.
  *
  * A non-null request is still not an admission claim: the commit's CAS plus the domain validation are
  * the only acceptance, and the preview's formatting of the same text decides nothing.
@@ -365,6 +416,38 @@ internal fun transferCorrectionRequest(
         confirmation = ExplicitManualSave,
     )
 }
+
+/**
+ * The statistics-time seam of the transfer surface (spec section 3): the instant a correction request
+ * carries.
+ *
+ * While the form still shows the origin's seeded text the ORIGIN instant comes back verbatim: the
+ * stored instant may carry sub-second precision the entry parser deliberately does not accept, and
+ * re-typing the seeded text must not lose it. Only a user-edited text reaches [parseStatisticsAt];
+ * `null` means that edit is not a readable instant, and the caller must route it through the
+ * surface's existing typed field rejection rather than fall back to the stored instant - a silent
+ * fallback would discard the user's edit without telling anyone.
+ */
+internal fun transferCorrectionStatisticsAt(
+    origin: TransferCorrectionOrigin,
+    draft: TransferCorrectionDraft,
+    parseStatisticsAt: (String) -> Instant?,
+): Instant? =
+    if (draft.statisticsAtText == origin.statisticsAt.toString()) {
+        origin.statisticsAt
+    } else {
+        parseStatisticsAt(draft.statisticsAtText)
+    }
+
+/**
+ * The transfer form's fee-category options (spec section 3): the active level-2 `EXPENSE`
+ * categories. A positive fee needs exactly one of those (its posting account is the hidden EXPENSE
+ * account the domain validates); a zero fee carries no category at all.
+ */
+internal fun transferFeeCategoryOptions(snapshot: CatalogSnapshotView): List<Pair<CategoryId, String>> =
+    snapshot.categories
+        .filter { it.parentId != null && it.active && it.kind == CategoryKind.EXPENSE }
+        .map { it.categoryId to it.name }
 
 /**
  * The transfer surface's amount reading: trim, treat blank as unparseable, then the strict parser and -

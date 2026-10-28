@@ -119,6 +119,37 @@ class P503CorrectionReducerTest {
         restore: RestoreConfirm? = null,
     ): P503AppState.RecycleBin = P503AppState.RecycleBin(overview = overview(), rows = rows, restore = restore)
 
+    private fun transferOrigin(): TransferCorrectionOrigin =
+        TransferCorrectionOrigin(
+            transactionId = transactionId,
+            currentVersionId = versionId,
+            note = "old transfer note",
+            statisticsAt = statisticsAt,
+            currency = cny,
+            sourceAccountId = AccountId("asset-payment-local"),
+            destinationAccountId = AccountId("asset-bank-b"),
+            destinationCreditMinorUnits = 10_000L,
+            feeMinorUnits = 200L,
+            feeCategoryId = CategoryId("category-food"),
+        )
+
+    private fun transferEdit(
+        draft: TransferCorrectionDraft = transferCorrectionDraftFromOrigin(transferOrigin()),
+        requestId: RequestId? = null,
+        submitting: Boolean = false,
+        notice: P705Notice? = null,
+        checkOutcome: P705CommitCheckOutcome = P705CommitCheckOutcome.NONE,
+    ): P503AppState.TransferEdit =
+        P503AppState.TransferEdit(
+            overview = overview(),
+            origin = transferOrigin(),
+            draft = draft,
+            requestId = requestId,
+            submitting = submitting,
+            notice = notice,
+            checkOutcome = checkOutcome,
+        )
+
     private fun correctionReceipt(): TransactionCorrectionReceipt =
         TransactionCorrectionReceipt(
             confirmationId = ConfirmationId("confirmation-1"),
@@ -504,11 +535,126 @@ class P503CorrectionReducerTest {
         assertSame(bare.overview, reducer.reduce(bare, P503UiEvent.Back))
     }
 
+    // ---- transfer correction surface (D-228; spec sections 3/8.3) ----
+
+    @Test
+    fun openTransferEditEntersOnlyFromTheDetailAndSeedsTheSevenFieldForm() {
+        val source = detail()
+        val opened = assertIs<P503AppState.TransferEdit>(reducer.reduce(source, P503UiEvent.OpenTransferEdit(transferOrigin())))
+        assertSame(source.overview, opened.overview)
+        assertEquals(versionId, opened.origin.currentVersionId)
+        // The form is seeded so an untouched surface previews no difference: the destination credit
+        // and the fee are formatted at the transaction's OWN currency precision.
+        assertEquals("100.00", opened.draft.destinationCreditText)
+        assertEquals("2.00", opened.draft.feeText)
+        assertEquals(AccountId("asset-bank-b"), opened.draft.destinationAccountId)
+        assertEquals(CategoryId("category-food"), opened.draft.feeCategoryId)
+        assertNull(opened.requestId)
+        assertEquals(false, opened.submitting)
+        // No other state affords the entrance: absorbed on the overview.
+        val overviewState = overview()
+        assertSame(overviewState, reducer.reduce(overviewState, P503UiEvent.OpenTransferEdit(transferOrigin())))
+    }
+
+    @Test
+    fun theTransferFieldWriteIsPureAndOnlyTouchesItsOwnField() {
+        val state = transferEdit()
+        val updated =
+            assertIs<P503AppState.TransferEdit>(
+                reducer.reduce(state, P503UiEvent.UpdateTransferCorrectionField(TransferCorrectionFieldUpdate.DestinationCredit("80.00"))),
+            )
+        assertEquals("80.00", updated.draft.destinationCreditText)
+        assertEquals(state.draft.feeText, updated.draft.feeText)
+        assertEquals(state.draft.sourceAccountId, updated.draft.sourceAccountId)
+        // A zero fee is written as its own text; the request builder, not the form, drops the
+        // residual category (spec section 8.3).
+        val zeroFee = assertIs<P503AppState.TransferEdit>(reducer.reduce(updated, P503UiEvent.UpdateTransferCorrectionField(TransferCorrectionFieldUpdate.Fee("0.00"))))
+        assertEquals("0.00", zeroFee.draft.feeText)
+        assertEquals(CategoryId("category-food"), zeroFee.draft.feeCategoryId)
+    }
+
+    @Test
+    fun theTransferPreviewIsNotStoredByTheReducer() {
+        // The transfer preview needs the catalog's display names, which the IO-free reducer does
+        // not own: the surface renders it at render time, so the preview event changes nothing.
+        val state = transferEdit()
+        assertSame(state, reducer.reduce(state, P503UiEvent.PreviewTransactionEdit))
+    }
+
+    @Test
+    fun theTransferConfirmMarksSubmittingAndAbsorbsADuplicate() {
+        val state = transferEdit()
+        val confirming = assertIs<P503AppState.TransferEdit>(reducer.reduce(state, P503UiEvent.ConfirmTransactionEdit(RequestId("request-transfer"))))
+        assertEquals(RequestId("request-transfer"), confirming.requestId)
+        assertEquals(true, confirming.submitting)
+        // 提交中不重入: a duplicate confirm changes nothing (no requestId swap, no second intent).
+        assertSame(confirming, reducer.reduce(confirming, P503UiEvent.ConfirmTransactionEdit(RequestId("request-transfer-2"))))
+    }
+
+    @Test
+    fun theTransferResultFamilyLandsOnItsOwnSurface() {
+        val submitting = transferEdit(requestId = RequestId("request-transfer"), submitting = true)
+        assertSame(
+            submitting.overview,
+            reducer.reduce(submitting, P503UiEvent.TransactionEditResult(CorrectTransactionVersionResult.Created(correctionReceipt()))),
+        )
+        assertSame(
+            submitting.overview,
+            reducer.reduce(submitting, P503UiEvent.TransactionEditResult(CorrectTransactionVersionResult.NoChange(correctionReceipt()))),
+        )
+        val stale =
+            assertIs<P503AppState.TransferEdit>(
+                reducer.reduce(submitting, P503UiEvent.TransactionEditResult(CorrectTransactionVersionResult.StaleCurrentVersion)),
+            )
+        assertEquals(P705Notice.StaleCurrentVersion, stale.notice)
+        assertEquals(false, stale.submitting)
+        val rejected =
+            assertIs<P503AppState.TransferEdit>(
+                reducer.reduce(submitting, P503UiEvent.TransactionEditResult(CorrectTransactionVersionResult.Rejected(P705FailureCode.P705_FIELD_NOT_SUPPORTED))),
+            )
+        assertEquals(P705Notice.Rejected(P705FailureCode.P705_FIELD_NOT_SUPPORTED), rejected.notice)
+        val conflict =
+            assertIs<P503AppState.TransferEdit>(
+                reducer.reduce(
+                    submitting,
+                    P503UiEvent.TransactionEditResult(
+                        CorrectTransactionVersionResult.RequestIdentityConflict(TransactionCorrectionRequestIdentity(ledgerId, RequestId("request-transfer"))),
+                    ),
+                ),
+            )
+        assertEquals(P705Notice.RequestIdentityConflict(RequestId("request-transfer")), conflict.notice)
+    }
+
+    @Test
+    fun aLostTransferCommitKeepsTheMarkerAndIsNeverLeft() {
+        // V-19: no automatic retry, no requestId swap, no accepted leave while the commit is
+        // unresolved. The manual re-check request itself changes nothing; an absence landing only
+        // records the re-checkable marker.
+        val lost = transferEdit(requestId = RequestId("request-transfer"), submitting = true)
+        assertSame(lost, reducer.reduce(lost, P503UiEvent.Back))
+        assertSame(lost, reducer.reduce(lost, P503UiEvent.Cancel))
+        assertSame(lost, reducer.reduce(lost, P503UiEvent.RetryP705CommitStatusCheck()))
+        val absent =
+            assertIs<P503AppState.TransferEdit>(
+                reducer.reduce(lost, P503UiEvent.RetryP705CommitStatusCheck(P705CommitCheckOutcome.ABSENT)),
+            )
+        assertEquals(P705CommitCheckOutcome.ABSENT, absent.checkOutcome)
+        assertEquals(true, absent.submitting)
+        assertEquals(RequestId("request-transfer"), absent.requestId)
+    }
+
+    @Test
+    fun leaveReturnsToTheExactPreservedOverviewAndNeverWrites() {
+        val idle = transferEdit()
+        assertSame(idle.overview, reducer.reduce(idle, P503UiEvent.Cancel))
+        assertSame(idle.overview, reducer.reduce(idle, P503UiEvent.Back))
+    }
     // ---- absorbed columns (table 6.2a: every new event absorbed outside its designed states) ----
 
     @Test
     fun newEventsAreAbsorbedOutsideTheirDesignedStates() {
         val edit = editing()
+        val transfer = transferEdit()
         val void = voidConfirm()
         // The exclusions must match the exact instances `allStates()` builds (structural equality).
         val bin = recycleBin()
@@ -530,6 +676,12 @@ class P503CorrectionReducerTest {
             assertSame(state, reducer.reduce(state, P503UiEvent.PreviewTransactionEdit))
             assertSame(state, reducer.reduce(state, P503UiEvent.ConfirmTransactionEdit(RequestId("request-1"))))
             assertSame(state, reducer.reduce(state, P503UiEvent.TransactionEditResult(CorrectTransactionVersionResult.StaleCurrentVersion)))
+        }
+        everyStateExcept(detailState).forEach { state ->
+            assertSame(state, reducer.reduce(state, P503UiEvent.OpenTransferEdit(transferOrigin())))
+        }
+        everyStateExcept(transfer).forEach { state ->
+            assertSame(state, reducer.reduce(state, P503UiEvent.UpdateTransferCorrectionField(TransferCorrectionFieldUpdate.Note("x"))))
         }
         everyStateExcept(void).forEach { state ->
             assertSame(state, reducer.reduce(state, P503UiEvent.UpdateVoidReasonField(VoidReasonFieldUpdate.Note("x"))))
@@ -556,7 +708,7 @@ class P503CorrectionReducerTest {
     }
 
     @Test
-    fun preExistingEventsAreAbsorbedOnAllThreeNewStates() {
+    fun preExistingEventsAreAbsorbedOnEveryP705Surface() {
         val events =
             listOf(
                 P503UiEvent.StartNewExpense,
@@ -572,7 +724,7 @@ class P503CorrectionReducerTest {
                 P503UiEvent.ImportGroupEnumerationCompleted,
                 P503UiEvent.SubmitImportDuplicateReview(ImportDuplicateReviewUiDecision.CONFIRMED_DUPLICATE, "user-reviewed"),
             )
-        for (state in listOf<P503AppState>(editing(), voidConfirm(), recycleBin())) {
+        for (state in listOf<P503AppState>(editing(), voidConfirm(), recycleBin(), transferEdit())) {
             for (event in events) {
                 assertSame(state, reducer.reduce(state, event))
             }
@@ -582,10 +734,11 @@ class P503CorrectionReducerTest {
     // ---- locked ISE behavior (G-B: unlisted combinations stay programming errors) ----
 
     @Test
-    fun exitStaysIllegalStateOnAllThreeNewStates() {
+    fun exitStaysIllegalStateOnEveryP705Surface() {
         assertFailsWith<IllegalStateException> { reducer.reduce(editing(), P503UiEvent.Exit) }
         assertFailsWith<IllegalStateException> { reducer.reduce(voidConfirm(), P503UiEvent.Exit) }
         assertFailsWith<IllegalStateException> { reducer.reduce(recycleBin(), P503UiEvent.Exit) }
+        assertFailsWith<IllegalStateException> { reducer.reduce(transferEdit(), P503UiEvent.Exit) }
     }
 
     @Test
@@ -619,6 +772,7 @@ class P503CorrectionReducerTest {
             editing(),
             voidConfirm(),
             recycleBin(),
+            transferEdit(),
             P503AppState.Editing(draft, requestId),
             P503AppState.AwaitingConfirmation(draft, requestId),
             P503AppState.Submitting(draft, requestId),

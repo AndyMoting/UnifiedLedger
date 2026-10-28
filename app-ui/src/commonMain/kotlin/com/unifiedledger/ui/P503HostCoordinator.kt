@@ -975,6 +975,7 @@ internal sealed interface HostAction {
 internal fun p705SurfaceHoldsLostCommit(landed: P503AppState): Boolean =
     when (landed) {
         is P503AppState.TransactionEdit -> landed.submitting
+        is P503AppState.TransferEdit -> landed.submitting
         is P503AppState.VoidConfirm -> landed.submitting
         is P503AppState.RecycleBin -> landed.restore?.submitting == true
         else -> false

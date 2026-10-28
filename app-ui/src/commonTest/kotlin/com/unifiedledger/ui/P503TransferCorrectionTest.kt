@@ -29,10 +29,11 @@ import kotlin.test.assertTrue
 import kotlin.time.Instant
 
 /**
- * P7-05 transfer correction slice 5a1 vectors (D-156, D-228; spec sections 3 and 8.3). The surface
- * itself is not wired in this slice, so the load-bearing decisions are the pure functions under test:
- * the leg-shape origin resolver, the seed draft, the seven-line difference preview, the target-side
- * fee-category derivation, and the request builder with its frozen five `null` branches.
+ * P7-05 transfer correction slice vectors (D-156, D-228; spec sections 3 and 8.3). The surface's
+ * screen and entrance are separate work, so the load-bearing decisions are the pure functions under
+ * test: the leg-shape origin resolver, the seed draft, the typed field write, the statistics-time
+ * seam, the seven-line difference preview, the target-side fee-category derivation, and the request
+ * builder with its frozen five `null` branches.
  *
  * All data is anonymous synthetic: one ledger, three manageable `ASSET` accounts plus the one
  * manageable `LIABILITY` account a single vector adds, two expense posting accounts (one of them the
@@ -40,9 +41,10 @@ import kotlin.time.Instant
  * Assertions are single lines and never compare a multi-line literal; the suite asserts on synthetic
  * note literals in value equality checks only and never passes a note as an assertion message.
  *
- * Not signed off by this suite: the 05.D product loop (transfer correction/void wiring and Android
- * manual acceptance) and the `CorrectTransactionVersion.kt:75-79` resolver residual, which stay with
- * slices 5a2/5b.
+ * Not signed off by this suite: the 05.D product loop - the transfer surface's entrance and screen,
+ * the transfer void surface, and the Android manual acceptance. The snapshot-aware resolver's
+ * transfer columns are already reconstructed on the read side (the
+ * TransactionCorrectionRequestSnapshot contract), so no residual of that kind is carried here.
  */
 class P503TransferCorrectionTest {
     private val ledgerId = LedgerId("ledger-local-test")
@@ -662,5 +664,59 @@ class P503TransferCorrectionTest {
         val residue = assertNotNull(request(feeLessOrigin, feeLessDraft.copy(feeCategoryId = feeCategoryId)))
         assertNull(residue.categoryId)
         assertEquals(0L, residue.feeMinor)
+    }
+
+    // ---- the app-ui form seam (D-228): the typed field write and the statistics-time reading ----
+
+    @Test
+    fun everyTransferFieldUpdateWritesExactlyItsOwnField() {
+        val seeded = seedDraft(resolvedOrigin())
+        val note = seeded.withUpdate(TransferCorrectionFieldUpdate.Note("note text"))
+        assertEquals("note text", note.note)
+        assertEquals(seeded, note.copy(note = seeded.note))
+        val statistics = seeded.withUpdate(TransferCorrectionFieldUpdate.StatisticsAt("2026-04-01T00:00:00Z"))
+        assertEquals("2026-04-01T00:00:00Z", statistics.statisticsAtText)
+        assertEquals(seeded, statistics.copy(statisticsAtText = seeded.statisticsAtText))
+        val credit = seeded.withUpdate(TransferCorrectionFieldUpdate.DestinationCredit("80.00"))
+        assertEquals("80.00", credit.destinationCreditText)
+        assertEquals(seeded, credit.copy(destinationCreditText = seeded.destinationCreditText))
+        val source = seeded.withUpdate(TransferCorrectionFieldUpdate.SourceAccount(cashId))
+        assertEquals(cashId, source.sourceAccountId)
+        assertEquals(seeded, source.copy(sourceAccountId = seeded.sourceAccountId))
+        val destination = seeded.withUpdate(TransferCorrectionFieldUpdate.DestinationAccount(cashId))
+        assertEquals(cashId, destination.destinationAccountId)
+        assertEquals(seeded, destination.copy(destinationAccountId = seeded.destinationAccountId))
+        val fee = seeded.withUpdate(TransferCorrectionFieldUpdate.Fee("0.00"))
+        assertEquals("0.00", fee.feeText)
+        assertEquals(seeded, fee.copy(feeText = seeded.feeText))
+        val category = seeded.withUpdate(TransferCorrectionFieldUpdate.FeeCategory(foodCategoryId))
+        assertEquals(foodCategoryId, category.feeCategoryId)
+        assertEquals(seeded, category.copy(feeCategoryId = seeded.feeCategoryId))
+    }
+
+    @Test
+    fun theStatisticsSeamKeepsTheStoredInstantUntilTheTextIsEditedThenFailsClosed() {
+        val origin = resolvedOrigin()
+        val seeded = seedDraft(origin)
+        // Untouched text: the ORIGIN instant verbatim, and the parser is never consulted - a stored
+        // instant's sub-second precision must survive a round trip through the display text.
+        var parseCalls = 0
+        val neverParses: (String) -> Instant? = {
+            parseCalls += 1
+            null
+        }
+        assertEquals(origin.statisticsAt, transferCorrectionStatisticsAt(origin, seeded, neverParses))
+        assertEquals(0, parseCalls)
+        // Edited text goes to the parser exactly once, with the text as typed.
+        val edited = seeded.withUpdate(TransferCorrectionFieldUpdate.StatisticsAt("2026-04-01T00:00:00Z"))
+        val seen = mutableListOf<String>()
+        val parses: (String) -> Instant? = {
+            seen += it
+            Instant.parse(it)
+        }
+        assertEquals(Instant.parse("2026-04-01T00:00:00Z"), transferCorrectionStatisticsAt(origin, edited, parses))
+        assertEquals(listOf("2026-04-01T00:00:00Z"), seen)
+        // An unreadable edit is null, never a silent fall back to the stored instant.
+        assertNull(transferCorrectionStatisticsAt(origin, edited) { null })
     }
 }
