@@ -403,7 +403,10 @@ class ExternalNavigationChannel {
      * Binds (or, with `null`, unbinds) THIS token's listener; another token's binding is untouched.
      * A parked request drains exactly once, and only into the resumed host's binding.
      */
-    fun subscribe(token: Any?, listener: ((ExternalNavigationRequest) -> Unit)?) {
+    fun subscribe(
+        token: Any?,
+        listener: ((ExternalNavigationRequest) -> Unit)?,
+    ) {
         if (token == null) return
         if (listener == null) removeBinding(token) else listeners[token] = listener
         drainToResumedHost()
@@ -424,8 +427,7 @@ class ExternalNavigationChannel {
         if (resumedToken != null && resumedToken === token) resumedToken = null
     }
 
-    private fun listenerFor(token: Any): ((ExternalNavigationRequest) -> Unit)? =
-        listeners.entries.firstOrNull { it.key === token }?.value
+    private fun listenerFor(token: Any): ((ExternalNavigationRequest) -> Unit)? = listeners.entries.firstOrNull { it.key === token }?.value
 
     private fun removeBinding(token: Any) {
         val iterator = listeners.entries.iterator()
