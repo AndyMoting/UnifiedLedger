@@ -303,7 +303,7 @@ class ExternalNavigationIntakeTest {
         // re-read yields nothing and mints NO second deliveryId.
         var minted = 0
         val intake = ProcessInboundNavigationIntake { "delivery-${++minted}" }
-        val first = assertIs<ExternalNavigationRequest.OpenImport>(intake.coldLaunchRequest(snapshot()))
+        val first = assertIs<ExternalNavigationRequest.OpenImport>(intake.coldLaunchRequest(snapshot(), recreated = false))
         assertEquals("delivery-1", first.deliveryId)
         // The recreation re-reads the same launch Intent: refused, and no new id minted.
         assertEquals(null, intake.coldLaunchRequest(snapshot(), recreated = true))
@@ -317,11 +317,15 @@ class ExternalNavigationIntakeTest {
         // savedInstanceState - the same code path as the first launch, not a config recreation.
         var minted = 0
         val intake = ProcessInboundNavigationIntake { "delivery-" + (++minted) }
-        val first = assertIs<ExternalNavigationRequest.OpenImport>(intake.coldLaunchRequest(snapshot()))
+        val first = assertIs<ExternalNavigationRequest.OpenImport>(intake.coldLaunchRequest(snapshot(), recreated = false))
         val second = assertIs<ExternalNavigationRequest.OpenImport>(intake.coldLaunchRequest(snapshot(), recreated = false))
         assertEquals("delivery-1", first.deliveryId)
         assertEquals("delivery-2", second.deliveryId)
         assertEquals(2, minted)
+        // The launch receipt follows the NEWEST accepted share, so a recreation of it reuses that id
+        // and stays refused (the re-hold path must never point at a superseded share).
+        assertEquals("delivery-2", intake.coldLaunchReceipt()?.deliveryId)
+        assertEquals(null, intake.coldLaunchRequest(snapshot(), recreated = true))
     }
 
     @Test
@@ -330,7 +334,7 @@ class ExternalNavigationIntakeTest {
         // even for an identical URI (a new import, subject to the human duplicate review).
         var minted = 0
         val intake = ProcessInboundNavigationIntake { "delivery-${++minted}" }
-        assertIs<ExternalNavigationRequest.OpenImport>(intake.coldLaunchRequest(snapshot()))
+        assertIs<ExternalNavigationRequest.OpenImport>(intake.coldLaunchRequest(snapshot(), recreated = false))
         val hot = assertIs<ExternalNavigationRequest.OpenImport>(intake.hotReceiptRequest(snapshot()))
         assertEquals("delivery-2", hot.deliveryId)
         assertEquals(2, minted)
@@ -339,7 +343,7 @@ class ExternalNavigationIntakeTest {
     @Test
     fun anOrdinaryMainLaunchIsNotAnInboundEntryForEitherReceiptKind() {
         val intake = ProcessInboundNavigationIntake { "delivery-1" }
-        assertEquals(null, intake.coldLaunchRequest(snapshot(action = Intent.ACTION_MAIN)))
+        assertEquals(null, intake.coldLaunchRequest(snapshot(action = Intent.ACTION_MAIN), recreated = false))
         assertEquals(null, intake.hotReceiptRequest(snapshot(action = Intent.ACTION_MAIN)))
     }
 
@@ -407,6 +411,6 @@ class ExternalNavigationIntakeTest {
         assertEquals(null, intake.coldLaunchShortcutRequest(Intent.ACTION_MAIN))
         assertEquals(null, intake.hotShortcutRequest(Intent.ACTION_SEND))
         // The share face still returns null for ACTION_MAIN (the red line: MAIN is not an entry).
-        assertEquals(null, intake.coldLaunchRequest(snapshot(action = Intent.ACTION_MAIN)))
+        assertEquals(null, intake.coldLaunchRequest(snapshot(action = Intent.ACTION_MAIN), recreated = false))
     }
 }

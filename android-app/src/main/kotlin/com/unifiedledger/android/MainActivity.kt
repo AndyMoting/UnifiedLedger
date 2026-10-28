@@ -68,7 +68,7 @@ class MainActivity : ComponentActivity() {
         StartupTrace.emit("entry.onNewIntent")
         // A hot receipt is a NEW user share (spec section 4), so it mints a FRESH deliveryId; the
         // process-scoped intake keeps the cold-launch id untouched.
-        handleInboundIntent(intent, coldLaunch = false)
+        handleInboundIntent(intent, coldLaunch = false, recreated = false)
     }
 
     /**
@@ -85,11 +85,12 @@ class MainActivity : ComponentActivity() {
      * [recreated] carries the `savedInstanceState != null` fact: a config recreation re-reads the
      * SAME launch Intent and must reuse its id, while a FRESH launch inside a live process is a
      * genuinely new user share and mints a new one (spec section 4).
+     * Which path a given sender takes on this device is P709-A01's to pin; both are handled here.
      */
     private fun handleInboundIntent(
         intent: Intent?,
         coldLaunch: Boolean,
-        recreated: Boolean = false,
+        recreated: Boolean,
     ) {
         if (intent == null) return
         val holder = ledgerProcessHolderFor(this) ?: return
