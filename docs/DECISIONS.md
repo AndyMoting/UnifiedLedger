@@ -5587,3 +5587,45 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **边界：** 入：上述修复、规格 §2.2 一条、本条。出：不改 §4 身份判定与 PR #168 语义；不改 D-225/D-226/D-227 的任何裁决；零 schema/迁移/依赖；不触碰 widget/backup/budget 各 owner。
 
 **关联决定：** D-236（P7-09 取证与「am 无法传递 content grant」的工具边界、item 7 的自建发送方路径）、D-225（Q19 统一导航门与单 pending slot 裁决）、D-227（09.D 平台回归）、D-258/D-259（验收面口径）、阶段计划 §9.3 P709-A01/A03/A04 与 §10.2。
+
+## D-261 P7-09 系统入口验收批（一）：ACC-D-SHARE-02「拒绝必须可见」缺陷与修复、P709-A01/A03 判 PASS
+
+**状态：** 已批准并登记（2026-10-29，计划 §9.3 的 P709-A01..A09 与 §10.1/§10.2 的逐项证据纪律）。本批 = 代码修复批 **PR #174**（缺陷 + 修复 + 规格 §2.3/§8 补条）+ 两轮设备取证（分享入口、月度小组件）+ 逐项判决。**零 schema / 零迁移 / 零依赖**（schema 维持 v36）。**本条取代 D-259 item 1 的向量账表格**（见第 5 条），D-259 其余登记保留。
+
+**决定：**
+
+1. **缺陷 ACC-D-SHARE-02（设备实测，非推断）**：入站分享的类型化拒绝在 UI 侧被**静默丢弃**——校验面已产出 `ShareIntakeRejection`，但 `InboundNavigationIntake.requestFor` 只把它折叠成 `null`，`MainActivity.handleInboundIntent` 随后裸 `return`：不写 trace、不投可见结果、无消费方可渲染。修前读数（候选树 `d5cacf2` 的 CI 工件，APK sha256 `02FB994F…`）：`file://` 与无 stream 两次投递（工件 `l4a-rejected-file-uri-*`、`l4b-rejected-no-stream-*`），`ULStartup` **零** `inbound`/拒绝 trace，界面停在首页。这违反 spec §1.7 与 §2.2「外部入口的结果不得落入 `-> Unit`」，也是 D-236 item 3 已列入 P709-A02 完整判据的「类型化拒绝**可见**」。缺陷编号独立登记，不挤占 P7-05..09 编号。
+
+2. **修复（PR #174，merge `478bbee`，合并树 `1dbb08e2`）**：拒绝以**显示安全**的形式（只传稳定枚举名，无 URI/文件名/尺寸/异常文本）走进程作用域通道的**独立**深度 1 槽位，遵守与请求相同的「只交付给已 resume 的 host、按身份 `===` 匹配」纪律，渲染为**宿主级**通知条（位于状态内容之上，故每个**非模态**表面可见，含 reducer 不承载 Busy 的只读详情、回收站、失败页）。三条设备发现的附加规则同批落地：① 新的入站结果清掉旧通知；② 比已投递请求更旧的拒绝在排空时丢弃（`rejection dropped reason=supersededAtDrain`）；③ 既非分享动作、也不携带文件的入口（组件级启动的 null action）不产生通知。**不变量**：不进 single pending slot、不改 requestId/确认快照/授权时间、不铸 deliveryId、不消费回执、零正式效果。规格 §2.3 新增「拒绝必须可见（非模态表面）」；§8 新增开放项 16（五项残余）。
+
+3. **设备复验（按构建分别绑定；§10.2 的差异说明见本条第末段）**：
+
+   | 构建（APK sha256） | 覆盖的读数 |
+   | --- | --- |
+   | 修前 `d5cacf2`（`02FB994F…`） | **对照**：`file://`/无 stream 两次投递零反馈；入站投递顺序与数据库读数（两批导入各 10 条源记录、`content_hash` 逐行相同、`import_confirmation` 0） |
+   | 候选 `cad7029`（`6DA07719…`） | 拒绝可见性：`file://` → 「该来源不支持导入」+ `entry.inboundRejected kind=NON_CONTENT_URI`；「知道了」清除；无 stream → `MISSING_STREAM`；**回收站上投 `file://`** → 回收站保持可见且出现拒绝条；真实 `content://` → 格式面、无拒绝条；四条投递后 `import_request/import_candidate/import_confirmation` 均 0（`v7-ledger.db`） |
+   | 候选 `102b30a`（`3AF6F9757F1B6596280F53EADC3AFFA95F37333ECF7BE6FCAEAB59C4643CA0A1`；已含宿主级通知与通道序列） | A01 六条腿复跑：冷启动；热 `onNewIntent`；旋转/回正共 3 次重建（跨两轮）均为 `reHeldRefusedRepeat` 且横幅恒 1；启动失败 Retry（`StartupError` 中 `deliver parked` → `state=Ready` → `drain delivered`）；同 URI 再分享 → `新增 10` 第二批。A03 三条决策复跑：编辑中草稿 12.34 与分享面、「放弃后切换／保留当前」并存；「保留当前」后草稿原样、通知消失；「放弃后切换」切到分享面且草稿消失 |
+   | 最终合并树 `1dbb08e2`（`B86163C9…`） | 拒绝可见性（`NON_CONTENT_URI`）与入口形状门控（组件级 null action **无**拒绝条、零 `inboundRejected` trace）；取代顺序（启动失败中先拒绝后接受请求 → Retry 后 `drain delivered` + `rejection dropped reason=supersededAtDrain`、旧条不重现）；接受路径未回归（Retry 后分享面）。**该构建没有库计数读数**（库读数为 `cad7029` 的 `v7-ledger.db`） |
+
+   **差异说明（§10.2）**：`git diff 102b30a..478bbee` 为 3 文件、+49/−4：`rejectionFor` 的入口形状门控、一条文案、以及 `ShareRejectionNoticeTest` 新增的 `anActivationThatIsNeitherAShareNorCarriesAFileIsNotRefusedToTheUser` 用例（其余为注释）；**不含**请求交付路径（宿主级通知与通道序列已在 `102b30a` 内）。故 A01/A03 在 `102b30a` 上的读数对最终树适用；最终树上的三条读数（J1/J2/K）用于确认拒绝面、入口门控与取代顺序本身。
+
+4. **逐项判决（§10.1 口径）**：
+   - **P709-A01 → PASS**。设备：冷启动 `entry.activityCreate → inboundIntake kind=OpenImport`；热 `entry.onNewIntent`；旋转/回正共 3 次重建（跨两轮）均 `reHeldRefusedRepeat` 且分享面横幅恒 1（**同一 `deliveryId` 不二次接治**：每次重建后仍只有一条待处理请求，接治只发生一次——数据库里两批各 10 条源记录，没有因重建产生的第三批）；启动失败 Retry 的停放/交付；同一 URI 再分享产生新导入（两批 `input_ref` 不同、`content_hash` 逐行相同）。状态机腿：`ExternalNavigationIntakeTest.aRepeatedDeliveryOfTheSameIdIsConsumedAtMostOnce`（:216）与 `aColdLaunchReceiptKeepsOneDeliveryIdAcrossAnActivityRecreationAndIsNotReConsumed`（:300）、`ShareImportSourceTest.aHotReceiptIsNeverARepeatedColdDelivery`（:216）、`ExternalNavigationChannelHostTest.aHostThatTookARequestIsNotGivenItAgainOnAResume`，以及路由表 `ExternalNavigationReducerTest`。
+   - **P709-A03 → PASS**。设备：编辑中保留/放弃（草稿 12.34 原样 vs 切走）、待确认请求在场时再投递 → 「保留原请求／替换为当前请求」、**Busy 可见**（设备上渲染的正是 `ExternalNavigationBusyStrip`）。JVM：`editingHoldsForTheDraftDecision`、`submittingAndUnknownCommitHoldAsCommitInFlight`、`importBatchSubmittingHoldsAsBatchInFlight`、`retainClearsTheDisplacedRequestAndKeepsTheOriginal`、`replaceSwapsInTheIncomingRequestOnlyAfterTheExplicitConfirmation`，以及 Busy 面 `theSecondPickBusyLandsAVisibleStripWithZeroFormalEffect`、`theSecondPickBusyIsVisibleOnEverySlotSurfaceNotOnlyTheOverview`、`dismissingTheBusyStripClearsIt`、`theAlreadyInFlightPickSeamYieldsTheVisibleBusyEventNeverUnit`（这几条同时钉住「旧 requestId/确认快照不变、不自动续批」）。
+   - **P709-A04 → 部分证据**：真实任务栈（create 路径任务读数）、应用升级（`install -r` 后数据保留且分享可用）、快捷方式 Intent 经同一导航门（草稿保留、`inboundShortcut kind=OpenNewEntry`）已做；未做 launcher 界面主动点按与固定快捷方式。
+   - **P709-A05 → 部分证据**：空月（widget 三笔 0.00 与月卡「该月无交易」一致）、失败不伪装零值（运行时未就绪时无金额/无 0.00/无旧时间）已做；未做跨月退款/转账费用/利息/修正/void/restore 的设备矩阵（其逻辑腿由 `LedgerWidgetSnapshotReaderTest` 覆盖，不构成设备证据）。
+   - **P709-A02 → 仍非 PASS**：设备只覆盖 `NON_CONTENT_URI`、`MISSING_STREAM`；`SEND_MULTIPLE`、无读权限、>16 MiB、>10k 候选仅自动测试；中途撤回授权（D01-9）未观察。
+   - **P709-A06 → 缺证**；**P709-A07 → 部分证据**（隐藏/显示/再隐藏 + (a) 文本、(b) contentDescription；TalkBack 与 (c)–(f) 仅源码/JVM）；**P709-A08 → 部分证据**（杀进程已做；时区/月界、清除数据、恢复备份未做）。
+
+5. **向量账（本条取代 D-259 item 1 的表格）**：第一部分 4/8、P7-05 15/15、P7-06 8/12、P7-07 8/9、P7-08 8/9、**P7-09 3/9**（A09 + A01 + A03）→ 全计划 **46/62**；分母 8+15+12+9+9+9=62 不变。残留由 D-259 的 **18 项降为 16 项**（P7-09 的残留由 8 降为 6：A02/A04/A05/A06/A07/A08）。
+
+6. **残余与一处措辞更正**：
+   - **D-260 §5 的措辞更正（不改变其结论）**：§5 记「启动以 `StartupError` 收尾时请求永久停放」。设备读数（`d5cacf2` 的 L5、`1dbb08e2` 的 K 腿）显示：`StartupError` 期间到达的请求确实**停放且不被消费**；若用户点「重试」且启动成功，则 `drain delivered` 交付。二者不互斥——「永久停放」指**以失败收尾、不再重试**的终态；本条补记成功重试后的交付路径。
+   - D-260 §5 其余项与规格 §8 开放项 16 ①–⑤（拒绝条仅存内存/深度 1、关闭不跨配置重建、`NOT_A_SHARE` 无生产者、模态表面遮挡、被更新的已接受请求取代时静默略过）全部保持开放。
+   - A04/A05/A06/A07/A08 与 A02 的未覆盖项见第 4 条。
+
+7. **审验拓扑（如实）**：代码 PR 经**七轮独立只读评审**（REQUEST-CHANGES ×4、APPROVE-WITH-FINDINGS ×3；逐轮 finding 全部关闭，末轮无 blocker）；本登记批另经**两轮独立只读评审**（首轮八条、闭包轮四条，均整改：跨构建证据绑定、差异说明不实、APK 身份落盘、Busy 锚点、D-260 §5 措辞、向量账两值、下一动作过窄、测试引用不存在、库读数错挂构建、差异枚举缺第三文件、重建次数不一致）。设备取证由主代理执行并落盘：`local/artifacts/p709-close/REPORT.md`（投递/旋转/Retry/再分享/编辑保留与放弃）、`A02-VERIFICATION.md`（拒绝可见性 V1–V6 + 最终树 J1/J2/K）、`local/artifacts/p709-widget/REPORT.md`（小组件）。
+
+8. **边界**：入：本条判决与登记、规格 §2.3/§8 补条（已随 #174 合入）、`CURRENT_STATE` 的完成条目与「唯一下一步」。出：不改 D-236/D-259 其余项/D-260 的判决（仅第 6 条一处措辞更正）；不把部分证据/缺证写成 PASS；不声称 P7-09 整体完成（3/9）；零代码/测试/schema/迁移/依赖改动（代码已在 #174 合入）。
+
+**关联决定：** D-225（设计门与 Q19/Q20）、D-226（第 4 类中立请求）、D-227（09.D 平台回归）、D-236（取证批与「类型化拒绝可见」未覆盖项）、D-259（向量账口径——本条取代其表格）、D-260（ACC-D-SHARE-01 与 §5 残余）、D-258（逐项判决先例）、阶段计划 §9.3 与 §10.1/§10.2。
