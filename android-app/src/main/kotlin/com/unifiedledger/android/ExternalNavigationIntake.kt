@@ -461,18 +461,20 @@ internal class InboundNavigationIntake(
      */
     fun rejectionFor(snapshot: ShareIntentSnapshot): ShareIntakeRejection? {
         if (snapshot.action == Intent.ACTION_MAIN) return null
-        // Only an entry that actually CARRIES a file can be refused to the user's face. A component-only
-        // start (a null action, e.g. `am start -n package/.Activity`), a plain launch or a stray intent
-        // with no stream is not the share face's business: showing "无法接收这次分享" for it would be a
-        // false positive on an ordinary entry (found on device: the failure-page launch raised
-        // UNSUPPORTED_ACTION). An intent with a stream but a foreign action (e.g. VIEW) is still a
-        // genuine inbound-file attempt and keeps its typed refusal.
+        // An entry is refused to the user's face only when it is an actual inbound ENTRY: a share action,
+        // or anything that carries a file. A plain activation (`am start -n package/.Activity`, i.e. a
+        // NULL action with no payload — found on device, it raised UNSUPPORTED_ACTION and showed
+        // "无法接收这次分享" on an ordinary launch) or an unrelated action with no file is not the share
+        // face's business and stays silent. Every genuine attempt keeps its typed refusal: a share
+        // action with no stream is still MISSING_STREAM, and a foreign action (e.g. VIEW) that DOES carry
+        // a readable stream is still UNSUPPORTED_ACTION.
+        val shareAction = snapshot.action == Intent.ACTION_SEND || snapshot.action == Intent.ACTION_SEND_MULTIPLE
         val carriesFile =
             snapshot.streamUri != null ||
                 snapshot.clipDataUris.isNotEmpty() ||
                 snapshot.hasUnexpectedStreamExtra ||
                 snapshot.streamExtraIsList
-        if (!carriesFile) return null
+        if (!shareAction && !carriesFile) return null
         return when (val result = validateShareIntake(snapshot, REJECTION_PROBE_DELIVERY_ID)) {
             is ExternalNavigationIntakeResult.Rejected -> result.code
             else -> null
