@@ -2,6 +2,7 @@
 
 状态：approved（2026-10-16 设计门闭环：主代理按常设授权、经独立规格评审 + 独立质量评审 + distinct verifier 后裁决 J1/J2/J3 并批准本文；批准依据 = `docs/DECISIONS.md` **D-228**（本批登记，含 J1/J2/J3 裁决回填）。本文只冻结**设计级**语义，**不**构成产品行为、迁移、技术选型或发布授权；实施属后续独立实施批。本文不写实现、不写迁移文件、**不分配 schema 版本号**。）
 
+**实施状态（2026-10-28 登记）：** 本规格的实施已交付并合入 `main`——跨模块地基（id 源第六个 id、修正请求回读两列与读适配器可空分类）PR #162 / squash `3035052`；app-ui 转账修正面（七字段纯层、`TransferEdit` 状态与 reducer、屏幕、入口按形状分流、组合根接线、提交状态快照补两列）PR #163 / squash `d58b68c`；转账**作废入口** PR #164 / squash `33a80c3`。§1 的「转账今天不可修正、不可作废」是设计时（2026-10-16）的事实快照，**不是当前状态**；§10 的 T-01..T-14 与 T-03b 仍未逐项判决，本规格不因此新增 PASS。
 **Revision:** draft-1（2026-10-16）。初稿。单一写者起草于隔离 worktree（分支 `UL-p7-05-transfer-design`，基点 = `cea2940d3167f988a1a7c48d89a4acdff14cc82f`）。tracked 行号为该基点实读行号，**引用时以符号为准重新定位**（行号会随提交漂移）。`docs/PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md`、`docs/PROJECT_STATE.local.md` 等 `.local.md` 为主 checkout 的本地只读文件，凡引用一律标注「计划」/「checkpoint」并以其主 checkout 实读行号为准。示例全部匿名合成；不复制大段产品代码；不写本机绝对路径、个人账务数据或工具轨迹。
 
 **标记约定：** 全文用【已验证事实】标注本次在基点实读代码/文档所得的现状；用【本次会话内推导】标注本会话内推导、非仓库冻结权威的结论（附可定位 file:line）；用【开放项】标注须主会话裁决、本文不自行裁决的项。**冻结项以「冻结」字样标注**（形状类另标「冻结形状」，要求类另标「冻结要求/冻结约束」等）；**未带任何「冻结」字样者一律为建议或待裁决项**。凡 J1/J2/J3 覆盖处，即使含「冻结」字样也只冻结**已由 D-156/D-158 批准或 substrate 事实**的部分，候选 A/B 的裁决本身不因该字样被视为已裁决（§11、边界断言）。
@@ -37,7 +38,7 @@
 
 ### 1.1 转账今天不可修正、不可作废（两道 kind 门 + 一处硬编码）
 
-- **修正 kind 门**：`ledger-domain/src/commonMain/kotlin/com/unifiedledger/domain/TransactionCorrection.kt:46` `isP705CorrectionSupportedKind` = `kind == TransactionKind.EXPENSE || kind == TransactionKind.INCOME`【已验证事实】；持久化端同款门 `ledger-data/src/commonMain/kotlin/com/unifiedledger/data/SqlDelightTransactionCorrectionCommitPort.kt:101-103`（`if (!isP705CorrectionSupportedKind(kind)) → P705_KIND_NOT_SUPPORTED`）【已验证事实】。
+- **修正 kind 门**：`ledger-domain/src/commonMain/kotlin/com/unifiedledger/domain/TransactionCorrection.kt`（设计时为 `:46`，现为 `:57`）`isP705CorrectionSupportedKind`【设计时事实：只含 `EXPENSE`/`INCOME`；实施后已按 §8.2 扩到含 `ACCOUNT_TRANSFER`】；持久化端同款门 `ledger-data/src/commonMain/kotlin/com/unifiedledger/data/SqlDelightTransactionCorrectionCommitPort.kt:101-103`（`if (!isP705CorrectionSupportedKind(kind)) → P705_KIND_NOT_SUPPORTED`）【已验证事实】。
 - **作废 kind 门**：`ledger-data/src/commonMain/kotlin/com/unifiedledger/data/SqlDelightTransactionVoidCommitPort.kt:91-93` 同款门【已验证事实】。
 - **恢复重校验硬编码**：`ledger-application/src/commonMain/kotlin/com/unifiedledger/application/OrdinaryVersionRevalidation.kt:31` 复用同一 kind 门，`:45-46` = `if (kind == TransactionKind.EXPENSE) CategoryKind.EXPENSE else CategoryKind.INCOME`【已验证事实】——**转账直接不可用**（`ACCOUNT_TRANSFER` 会在 `:31` 被拒；即便越过，`:45-46` 的二元硬编码也无法表达「两端真实资产账户 + 手续费分类」）。
 - **结论**：转账的修正/作废/恢复在**今天**是**类型化拒绝零写入**，非「无效果静默通过」。本切片必须扩展这三处（§8.2）。
@@ -98,7 +99,7 @@
 
 | kind | 备注 | `statisticsAt` | 金额 | 源账户 | 目标账户 | 手续费 | 手续费分类 | 作废/恢复 | 切片 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `ACCOUNT_TRANSFER`（手工创建） | 可改【开放项 J1】 | 可改【开放项 J1】 | 可改（`destinationCredit`，`sourceDebit = destinationCredit + fee` 派生）【开放项 J1】 | 可改【开放项 J1】 | 可改【开放项 J1】 | 可改【开放项 J1】 | 可改【开放项 J1】 | 建议候选 A：交易粒度（三腿同进退）【开放项 J1，待裁决】 | **本文切片** |
+| `ACCOUNT_TRANSFER`（手工创建） | 可改【J1 已裁决】 | 可改【J1 已裁决】 | 可改（`destinationCredit`，`sourceDebit = destinationCredit + fee` 派生）【J1 已裁决】 | 可改【J1 已裁决】 | 可改【J1 已裁决】 | 可改【J1 已裁决】 | 可改【J1 已裁决】 | 候选 A：交易粒度（三腿同进退）——J1 已由 D-228 §3 裁决 | **本文切片** |
 | `ACCOUNT_TRANSFER`（导入创建） | 见 §5.1（J2 开放项） | 同左 | 同左 | 同左 | 同左 | 同左 | 同左 | 同左 | **OPEN** |
 
 - **冻结（不因 J1/J2/J3 裁决而变）**：**永不修改 kind**（含 `canonical_kind`）；修正后的交易保持原 kind、原 `occurredAt`、原创建身份与来源关系；`occurredAt` 不在可改字段集内（DP-7 保持 OPEN）。
@@ -116,7 +117,7 @@
 - **写形（冻结形状 = 版本追加与 posting 覆盖机制；「金额/手续费是否属可改字段集」归 J1 待裁决，见 §11 DP-T3、§2.1）**：以当前版本为基追加 `version_number + 1`；**腿数不变时**（两腿→两腿、三腿→三腿）新 posting set 必须**逐币种平衡**且覆盖旧 set 每条 posting 恰好一次；**腿数减少时**（三腿→两腿，即 `fee > 0` → `fee == 0`）旧 `FEE` 腿**不是**必须覆盖项，新 set 只须覆盖旧本金两腿各一次并逐币种平衡（§8.1/§8.3、T-03）；**腿数增加时**（两腿→三腿，即 `fee == 0` → `fee > 0`）新 set 须覆盖旧本金两腿各一次、**新增**一条 `FEE` 腿并携带 `feeCategoryId`、逐币种平衡且 `sourceDebit == destinationCredit + fee`（T-03b）。三腿/两腿形状由**修正后的目标状态**决定（`fee > 0` → 三腿含手续费腿；`fee == 0` → 两腿且不得携带分类，沿 `ManualTransferTransactionFactory.kt:82`）。`occurred_at`/`effective_at` 逐字复制（`TransactionVersionAppend.kt:94-99` 的 `times` 构造只对 `StatisticsAt` 形态改 `statisticsAt`，其余形态 `else -> currentVersion.times` 原样复制）。
 - **校验（冻结）**：新版本的账户/分类引用必须在写入事务内按**当前权威目录**重校验——两端账户须同一账本、同币种、`realAccount`、`ownedByUser`、`AccountKind.ASSET`、互不相同（沿 `AccountTransfer.kt:70-93` 与 `:112-175`）；`fee > 0` 时手续费分类须 active 二级 EXPENSE 分类、其过账账户须同账本隐藏 EXPENSE 账户、同币种（沿 `:256-286`）；金额须为币种精度的精确十进制；手续费不得为负（沿 `ManualTransferTransactionFactory.kt:44`）。
 - **对账影响（J3 覆盖，【开放项】）**：受影响资金腿 = 新版本中真实资产分录且 `(accountId, amount, currency)` 相对旧版本变化者；未变化资金腿的对账行与证据链接零改动（沿 `ACCOUNTING_RULES.md:253`、D-048）。**是否在本切片组合 D-113 `P408CorrectionCommitPort` 见 §11 J3，本文不裁决。**
-- **DP-10 保守占位必须收窄（冻结要求，非裁决）**：`SqlDelightTransactionCorrectionCommitPort.kt:110-120` 现为「当前版本上存在**任何**对账行即拒绝」；其注释明写「the transfer slice that wires DP-10 must narrow it to legs that actually changed, or a note-only correction would be rejected for no reason」【已验证事实】。本切片实施时必须收窄为**实际变化的资金腿**，否则仅改备注的转账修正也会被无理由拒绝（D-158 第 4 条具名残余）。收窄后的语义归 J3 裁决。
+- **DP-10 保守占位必须收窄（冻结要求，非裁决）**：`SqlDelightTransactionCorrectionCommitPort.kt:110-120`（设计时行号；现为该端口 KDoc `:53-55` 与组合点 `:195`/`:300`）现为「当前版本上存在**任何**对账行即拒绝」；其注释明写「the transfer slice that wires DP-10 must narrow it to legs that actually changed, or a note-only correction would be rejected for no reason」【已验证事实】。本切片实施时必须收窄为**实际变化的资金腿**，否则仅改备注的转账修正也会被无理由拒绝（D-158 第 4 条具名残余）。收窄后的语义归 J3 裁决。
 - **无效/无变化/幂等（冻结，沿第一切片 §3.2/§3.3）**：同 requestId 同快照 replay → `NoChange` 返回原 receipt、零新增；同 requestId 不同快照 → `RequestIdentityConflict` 零写入；`expectedCurrentVersionId` 非当前 → `StaleCurrentVersion`（`P705_STALE_CURRENT_VERSION`）零写入；**replay 判定先于 CAS 求值**。
 
 ## 4. 作废与恢复契约（05.C 的转账实例）
@@ -229,7 +230,7 @@ D-156 §3.6（`:147-171`）枚举的 15 面（#1-#15）**全部存活、零消�
 
 ### 8.2 应用（`ledger-application`）
 
-- **kind 门扩展（冻结要求）**：`isP705CorrectionSupportedKind`（`TransactionCorrection.kt:46`）必须扩展为含 `ACCOUNT_TRANSFER`（或新增转账专用谓词并由同一处调用），**不得**在两个端口各写一份。
+- **kind 门扩展（冻结要求）**：`isP705CorrectionSupportedKind`（`TransactionCorrection.kt:57`，设计时 `:46`）必须扩展为含 `ACCOUNT_TRANSFER`（或新增转账专用谓词并由同一处调用），**不得**在两个端口各写一份。
 - **恢复重校验替换（冻结要求）**：`OrdinaryVersionRevalidation.kt:31`/`:45-46` 的 EXPENSE/INCOME 二元硬编码必须替换为转账感知规则：**两端账户 + 手续费分类 + 手续费过账账户**。规则语义沿 D-156 DP-9 澄清——**改名但 active 可准入；停用/不可准入类型化拒绝零写入、交易保持作废**；不盲目恢复旧状态、不静默替换引用、不改写历史版本。
 - **端口与用例（形状冻结，沿第一切片 §4.2）**：`CorrectTransactionVersion`/`VoidTransaction`/`RestoreTransaction`/`QueryRecycleBin` 复用同一结果族（`Created`/`NoChange`/`Rejected(code)`/`Conflict` + `StaleCurrentVersion`，`CorrectTransactionVersion.kt:140-155`）。
 - **快照感知 resolver**：提交后异常按完整快照/receipt 判定 success/conflict/unknown；Unknown 不自动重试、不换 requestId。
@@ -277,7 +278,7 @@ D-156 §3.6（`:147-171`）枚举的 15 面（#1-#15）**全部存活、零消�
 | T-09 | 恢复按当前目录重校验（转账） | 两端账户/手续费分类**停用**后恢复 → 类型化拒绝且交易保持作废；**改名但 active** 仍可准入 | §8.2、D-156 DP-9 |
 | T-10 | 深度与循环守卫 | 恢复后再次作废 → `P705_VOID_CYCLE_EXHAUSTED`；跳号/重复/update/delete → ABORT | §4.1、§1.5 |
 | T-11 | 对账 owner 零写入（作废/恢复） | `posting_reconciliation*`/`evidence_link*`/`evidence_projection`/`lending_position*`/`import_*` 行数与内容逐值不变 | §7.4 |
-| T-12 | DP-10 收窄 | 仅改备注的转账修正**不得**被 `P705_MATCHED_FUNDING_LEG_CHANGED` 拒绝；仅实际变化的资金腿才构成失效对象 | §3、`SqlDelightTransactionCorrectionCommitPort.kt:110-120` |
+| T-12 | DP-10 收窄 | 仅改备注的转账修正**不得**被 `P705_MATCHED_FUNDING_LEG_CHANGED` 拒绝；仅实际变化的资金腿才构成失效对象 | §3、`SqlDelightTransactionCorrectionCommitPort.kt:53-55`/`:195`（设计时 `:110-120`） |
 | T-13 | 幂等、身份冲突与求值顺序 | 同 requestId 同快照 replay → 原 receipt；不同快照 → 冲突零写入；replay 判定先于 CAS | §3 |
 | T-14 | 支持矩阵强制 | 导入创建转账（若 J2 判保持 OPEN）与借贷/退款/其余 kind → 类型化拒绝零写入 | §2.1、§5 |
 
@@ -303,7 +304,7 @@ D-156 §3.6（`:147-171`）枚举的 15 面（#1-#15）**全部存活、零消�
 2. 手工转账提交端口零写对账/证据（`SqlDelightConfirmedManualTransferCommitPort.kt:51-230`，11 条命名查询，含 replay 比对用的 `selectCommittedManualTransferRequest`）；导入 spine store 亦零写；全部触发器块零写（526 块扫描，0 命中）。
 3. 对账行**只**由 v22→v23 迁移种子与 fresh 种子为**当时的** ACCOUNT_TRANSFER posting 产生；空库 no-op。
 4. port 未接入两端组合根——`grep` 在 `android-app/src`、`desktop-app/src`、`app-ui/src` 对 `P408ReconciliationCommitPort`/`SqlDelightCorrectionStore`/`P408CorrectionCommitPort` **三处均零命中**。
-5. 无论选哪条候选，`SqlDelightTransactionCorrectionCommitPort.kt:110-120` 的保守占位**必须**收窄为实际变化的资金腿（D-158 第 4 条具名残余）。
+5. 无论选哪条候选，`SqlDelightTransactionCorrectionCommitPort.kt:110-120`（现 `:53-55`/`:195`）的保守占位**必须**收窄为实际变化的资金腿（D-158 第 4 条具名残余）。
 
 ## 12. 风险与披露
 
