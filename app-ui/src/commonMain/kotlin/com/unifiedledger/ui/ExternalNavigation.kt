@@ -461,6 +461,10 @@ class ExternalNavigationChannel {
     // notice the delivery-time clear is meant to prevent. A monotonic sequence plus the newest
     // delivered request's sequence lets a superseded refusal be dropped at drain time (and a refusal
     // that arrives AFTER the request is kept, which is the case the clear must not swallow).
+    //
+    // THREAD CONTRACT: this whole class is main-thread confined (every caller is an Activity lifecycle
+    // callback, a receiver's onReceive, or a composition callback), so the counters below are plain
+    // Longs. A background caller would silently lose the ordering guarantee rather than fail loudly.
     private var sequence: Long = 0
     private var bufferedSequence: Long = 0
     private var bufferedRejectionSequence: Long = 0
@@ -534,13 +538,10 @@ class ExternalNavigationChannel {
      * — a refusal parked on a non-visible instance would be the same silent drop in a new place.
      */
     fun notifyShareRejection(reason: ShareRejectionReason) {
+        // A refusal reported NOW is newer than anything already delivered, so it is never superseded at
+        // issue time — the drop only applies to a refusal that was PARKED before a request was delivered
+        // (see [drainRejectionToResumedHost]). No issue-time guard exists because none is reachable.
         val issued = ++sequence
-        if (issued < lastDeliveredRequestSequence) {
-            // An accepted request has been delivered since this refusal was raised: it is superseded, so
-            // never surface it (the host clears on delivery for the live case; this covers the staged one).
-            StartupTrace.emit("channel.rejection dropped reason=superseded")
-            return
-        }
         val resumed = resumedToken
         val listener = if (resumed != null) rejectionListenerFor(resumed) else null
         if (listener == null) {
