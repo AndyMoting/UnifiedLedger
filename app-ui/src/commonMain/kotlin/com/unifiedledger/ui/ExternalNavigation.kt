@@ -456,6 +456,16 @@ class ExternalNavigationChannel {
     private var buffered: ExternalNavigationRequest? = null
     private var resumedToken: Any? = null
 
+    // ACC-D-SHARE-02 (device finding): the two staging slots drain in a FIXED order (request, then
+    // refusal), so an OLDER parked refusal could surface next to a NEWER accepted request — the stale
+    // notice the delivery-time clear is meant to prevent. A monotonic sequence plus the newest
+    // delivered request's sequence lets a superseded refusal be dropped at drain time (and a refusal
+    // that arrives AFTER the request is kept, which is the case the clear must not swallow).
+    private var sequence: Long = 0
+    private var bufferedSequence: Long = 0
+    private var bufferedRejectionSequence: Long = 0
+    private var lastDeliveredRequestSequence: Long = 0
+
     /**
      * Delivers one neutral request to the RESUMED host's binding, or parks it (depth one).
      *
@@ -465,12 +475,15 @@ class ExternalNavigationChannel {
      * is not visible can neither steal a delivery nor disarm another instance by disposing.
      */
     fun deliver(request: ExternalNavigationRequest) {
+        val issued = ++sequence
         val resumed = resumedToken
         val listener = if (resumed != null) listenerFor(resumed) else null
         if (listener == null) {
             buffered = request
+            bufferedSequence = issued
             StartupTrace.emit("channel.deliver parked")
         } else {
+            lastDeliveredRequestSequence = issued
             listener(request)
             StartupTrace.emit("channel.deliver direct")
         }
@@ -521,10 +534,18 @@ class ExternalNavigationChannel {
      * — a refusal parked on a non-visible instance would be the same silent drop in a new place.
      */
     fun notifyShareRejection(reason: ShareRejectionReason) {
+        val issued = ++sequence
+        if (issued < lastDeliveredRequestSequence) {
+            // An accepted request has been delivered since this refusal was raised: it is superseded, so
+            // never surface it (the host clears on delivery for the live case; this covers the staged one).
+            StartupTrace.emit("channel.rejection dropped reason=superseded")
+            return
+        }
         val resumed = resumedToken
         val listener = if (resumed != null) rejectionListenerFor(resumed) else null
         if (listener == null) {
             bufferedRejection = reason
+            bufferedRejectionSequence = issued
             StartupTrace.emit("channel.rejection parked")
         } else {
             listener(reason)
@@ -566,6 +587,13 @@ class ExternalNavigationChannel {
         val parked = bufferedRejection ?: return
         val resumed = resumedToken ?: return
         val listener = rejectionListenerFor(resumed) ?: return
+        if (bufferedRejectionSequence < lastDeliveredRequestSequence) {
+            // The newer accepted request was drained first in this same resume: the parked refusal is
+            // older than it and must not reappear beside the fresh share face.
+            bufferedRejection = null
+            StartupTrace.emit("channel.rejection dropped reason=supersededAtDrain")
+            return
+        }
         bufferedRejection = null
         StartupTrace.emit("channel.rejection drained")
         listener(parked)
@@ -587,6 +615,8 @@ class ExternalNavigationChannel {
         val resumed = resumedToken ?: return
         val pending = buffered ?: return
         val listener = listenerFor(resumed) ?: return
+        // Recorded BEFORE the listener runs: the host may dispatch another notification synchronously.
+        lastDeliveredRequestSequence = bufferedSequence
         buffered = null
         StartupTrace.emit("channel.drain delivered")
         listener(pending)

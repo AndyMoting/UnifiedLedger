@@ -94,6 +94,41 @@ class ShareRejectionNoticeTest {
     }
 
     @Test
+    fun aRefusalOlderThanADeliveredRequestIsDroppedInsteadOfReappearingBesideIt() {
+        // Device finding: the two staging slots drain request-first, so an older parked refusal would
+        // otherwise surface together with the fresh share face (seen on ul_p7_d01 during the
+        // startup-failure retry leg).
+        val channel = ExternalNavigationChannel()
+        val host = HostToken(1)
+        val requests = mutableListOf<ExternalNavigationRequest>()
+        val refusals = mutableListOf<ShareRejectionReason>()
+        channel.notifyShareRejection(ShareRejectionReason.NON_CONTENT_URI) // older
+        channel.deliver(ExternalNavigationRequest.OpenImport("delivery-1")) // newer
+        channel.subscribe(host) { requests += it }
+        channel.subscribeShareRejections(host) { refusals += it }
+        channel.onHostResumed(host)
+        assertEquals(1, requests.size)
+        assertTrue(refusals.isEmpty(), "the older refusal must be dropped, not shown beside the accepted request")
+    }
+
+    @Test
+    fun aRefusalNewerThanTheDeliveredRequestIsStillShown() {
+        // The mirror case the clear-on-delivery must NOT swallow: a refusal that arrives after the
+        // request is the newest inbound result and belongs on screen.
+        val channel = ExternalNavigationChannel()
+        val host = HostToken(1)
+        val requests = mutableListOf<ExternalNavigationRequest>()
+        val refusals = mutableListOf<ShareRejectionReason>()
+        channel.subscribe(host) { requests += it }
+        channel.subscribeShareRejections(host) { refusals += it }
+        channel.onHostResumed(host)
+        channel.deliver(ExternalNavigationRequest.OpenImport("delivery-1"))
+        channel.notifyShareRejection(ShareRejectionReason.MISSING_STREAM)
+        assertEquals(1, requests.size)
+        assertEquals(listOf(ShareRejectionReason.MISSING_STREAM), refusals)
+    }
+
+    @Test
     fun theRefusalCopyIsDistinctPerVectorAndCarriesNoInboundPayload() {
         val copies = ShareRejectionReason.values().map { shareRejectionText(it) }
         assertEquals(ShareRejectionReason.values().size, copies.toSet().size, "each vector needs its own copy")
