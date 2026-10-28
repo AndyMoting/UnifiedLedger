@@ -337,6 +337,15 @@ class ExternalNavigationIntakeTest {
     }
 
     @Test
+    fun aRejectedRecreationWithNoReceiptDoesNotMintOne() {
+        // The recreation branch with no launch id (process death + task restore): a rejected share
+        // must leave no receipt behind, or a later read would re-hold a request never delivered.
+        val intake = ProcessInboundNavigationIntake { "delivery-1" }
+        assertEquals(null, intake.coldLaunchRequest(snapshot(action = Intent.ACTION_SEND_MULTIPLE), recreated = true))
+        assertEquals(null, intake.coldLaunchReceipt())
+    }
+
+    @Test
     fun aHotOnNewIntentReceiptMintsAFreshDeliveryIdForANewShare() {
         // Spec section 4: a hot receipt is a genuinely NEW user share, so it mints a new deliveryId
         // even for an identical URI (a new import, subject to the human duplicate review).
