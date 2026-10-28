@@ -9,6 +9,7 @@
 1	com.unifiedledger.data.P408ReconciliationStoreTest
 1	com.unifiedledger.data.P409PhaseClosureFullStateOracleTest
 1	com.unifiedledger.data.P409SiloSpineCoexistenceTest
+1	com.unifiedledger.data.P705TransferCorrectionSnapshotReadTest
 1	com.unifiedledger.data.P705VoidCorrectionMigrationV30ToV31Test
 1	com.unifiedledger.data.P707BudgetCorrectionCrossTest
 1	com.unifiedledger.data.P707BudgetScaleTest

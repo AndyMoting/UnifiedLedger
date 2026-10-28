@@ -72,11 +72,12 @@ data class TransactionCorrectionRequestIdentity(
  * always non-null - the commit transaction enforces it by kind - and the equivalent-replay
  * comparison compares the column exactly as stored.
  *
- * Intermediate state (registered, transfer wiring batch): the UI-side snapshot-aware resolver
- * (`findTransactionCorrectionByRequest` in the read adapter) still reconstructs only
- * ordinary-shaped snapshots (non-null category, no transfer columns); its transfer-aware
- * extension belongs to the UI slice that opens the transfer entrance, which is also the first
- * surface able to submit a transfer correction.
+ * The snapshot-aware resolver (`findTransactionCorrectionByRequest` in the read adapter)
+ * reconstructs both shapes column for column: an ordinary snapshot with its mandatory category,
+ * and a transfer snapshot whose `categoryId` carries the fee category - `null` exactly when
+ * `feeMinor == 0` - and whose `destinationAccountId`/`feeMinor` come back exactly as stored.
+ * The ordinary row's non-null `category_id` stays guaranteed inside the commit transaction by
+ * kind, not by this column read.
  */
 data class TransactionCorrectionRequestSnapshot(
     val ledgerId: LedgerId,
@@ -104,10 +105,10 @@ data class TransactionCorrectionReceipt(
  *
  * [feePostingId] is the transfer slice's third fresh posting id (a fee-bearing transfer's FEE
  * leg; the transfer reuses [categoryPostingId]/[fundingPostingId] as its destination/source
- * legs). Nullable and defaulted: id sources that predate the transfer slice mint no fee-leg
- * id, and a fee-bearing transfer correction through such a source is a fail-closed typed
- * rejection, never a two-legged mis-shape. The UI slice that opens the transfer entrance must
- * mint it.
+ * legs). The product id source ([UuidV7TransactionCorrectionIdSource]) mints it. The `null`
+ * default stays for id sources that predate the transfer slice: a fee-bearing transfer
+ * correction through such a source is a fail-closed typed rejection, never a two-legged
+ * mis-shape.
  */
 data class CorrectTransactionVersionIds(
     val confirmationId: ConfirmationId,

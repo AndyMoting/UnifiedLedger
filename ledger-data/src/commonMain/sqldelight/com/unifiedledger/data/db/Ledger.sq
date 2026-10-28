@@ -10704,7 +10704,9 @@ SELECT count(*) FROM transaction_correction_receipt;
 transactionCorrectionCommitByRequest:
 SELECT request.transaction_id, request.expected_current_version_id, request.note,
   request.statistics_at, request.amount_minor, request.currency_code, request.currency_precision,
-  request.category_id, request.funding_account_id, receipt.confirmation_id, receipt.version_id
+  request.category_id, request.funding_account_id,
+  request.destination_account_id, request.fee_minor,
+  receipt.confirmation_id, receipt.version_id
 FROM transaction_correction_request AS request
 JOIN transaction_correction_receipt AS receipt
   ON receipt.ledger_id = request.ledger_id AND receipt.request_id = request.request_id
