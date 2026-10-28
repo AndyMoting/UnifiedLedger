@@ -447,10 +447,9 @@ internal class InboundNavigationIntake(
  *
  * This ledger lives on the process-scoped [LedgerProcessHolder] (the spec section 6.3 process owner
  * holder), so:
- * - a COLD-LAUNCH receipt mints its deliveryId EXACTLY ONCE for the process launch and reuses it on
- *   every recreation; the repeated internal delivery of that same id is refused by the idempotent
- *   [InboundNavigationIntake], so the same launch Intent is never admitted a second time (the
- *   frozen 不重投/不重复接治 semantics of option (a));
+ * - a COLD-LAUNCH receipt mints its deliveryId once per FRESH launch of the Activity (a new user
+ *   share, spec section 4) and reuses it only when the SAME launch Intent is re-read by a
+ *   configuration recreation, which keeps the frozen 不重投/不重复接治 semantics;
  * - a HOT receipt (`onNewIntent`) is a genuinely new user share and mints a FRESH deliveryId (spec
  *   section 4: a new share is a new import, subject to the human suspected-duplicate review).
  *
@@ -473,14 +472,37 @@ internal class ProcessInboundNavigationIntake(
     private var coldLaunchDeliveryId: String? = null
 
     /**
-     * The request for the process launch's cold-start receipt. The FIRST call mints the id; every
-     * later call (an Activity recreation re-reading the same launch Intent) reuses it and, because
-     * the id was already consumed, yields null — no second delivery, no new deliveryId.
+     * Every FRESH launch (a null `savedInstanceState`) mints its own id, because a sender app
+     * that starts this Activity again is a new user share even when the URI is identical. A
+     * configuration recreation re-reads the SAME launch Intent and reuses the id, so the repeat
+     * delivery stays refused.
      */
-    fun coldLaunchRequest(snapshot: ShareIntentSnapshot): ExternalNavigationRequest? {
+    fun coldLaunchRequest(
+        snapshot: ShareIntentSnapshot,
+        recreated: Boolean,
+    ): ExternalNavigationRequest? {
         if (snapshot.action == Intent.ACTION_MAIN) return null
-        val deliveryId = coldLaunchDeliveryId ?: mintDeliveryId().also { coldLaunchDeliveryId = it }
-        return intake.requestFor(snapshot, deliveryId)
+        if (!recreated) {
+            // A FRESH Activity launch is a genuinely new user share even inside a live process. Whether a
+            // given sender reuses the top instance (singleTop) or starts a new one is the task-stack vector
+            // P709-A04 pins; both paths end up here, and this one mints.
+            val fresh = mintDeliveryId()
+            val request = intake.requestFor(snapshot, fresh)
+            // Only an ACCEPTED share becomes the launch receipt: a typed rejection must not occupy
+            // the identity, or a later recreation would re-hold a request that was never delivered.
+            if (request != null) coldLaunchDeliveryId = fresh
+            return request
+        }
+        // A configuration recreation re-reads the SAME launch Intent: reuse the launch's id so the
+        // repeat delivery is refused and nothing is consumed twice.
+        val existing = coldLaunchDeliveryId
+        if (existing != null) return intake.requestFor(snapshot, existing)
+        // A recreation whose process launch id is gone (process death + task restore) mints one,
+        // but only an ACCEPTED request may become the receipt.
+        val fresh = mintDeliveryId()
+        val request = intake.requestFor(snapshot, fresh)
+        if (request != null) coldLaunchDeliveryId = fresh
+        return request
     }
 
     /** The request for a HOT `onNewIntent` receipt: always a new share, so always a fresh id. */
