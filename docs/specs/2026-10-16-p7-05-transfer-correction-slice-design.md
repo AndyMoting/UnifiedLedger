@@ -112,6 +112,9 @@
 
 ## 3. 修正契约（05.B 的转账实例）
 
+**裁决状态：** 本节与 §4/§7/§8 中标注为【开放项】或「归 J1 待裁决」的措辞是设计当时用语；字段集与作废粒度已由 **D-228 §3** 裁决（回填见 §2.1 与 §11），实施按该裁决执行，本节不另设判据。
+
+
 - **流程（冻结，沿第一切片 §3.2）**：读当前有效版本 → 预览差异（纯读、零写入）→ 用户明确确认 → 分配新 requestId → claim-first 原子提交（`expectedCurrentVersionId` CAS）→ 权威回读。预览不得作为提交许可。
 - **字段集（J1 覆盖，【开放项】）**：`note` / `statisticsAt` / `destinationCredit`（及派生 `sourceDebit = destinationCredit + fee`）/ `sourceAccountId` / `destinationAccountId` / `fee` / `feeCategoryId`。`occurredAt`（DP-7 OPEN）与 `kind`（永不修改）不在内。
 - **写形（冻结形状 = 版本追加与 posting 覆盖机制；「金额/手续费是否属可改字段集」归 J1 待裁决，见 §11 DP-T3、§2.1）**：以当前版本为基追加 `version_number + 1`；**腿数不变时**（两腿→两腿、三腿→三腿）新 posting set 必须**逐币种平衡**且覆盖旧 set 每条 posting 恰好一次；**腿数减少时**（三腿→两腿，即 `fee > 0` → `fee == 0`）旧 `FEE` 腿**不是**必须覆盖项，新 set 只须覆盖旧本金两腿各一次并逐币种平衡（§8.1/§8.3、T-03）；**腿数增加时**（两腿→三腿，即 `fee == 0` → `fee > 0`）新 set 须覆盖旧本金两腿各一次、**新增**一条 `FEE` 腿并携带 `feeCategoryId`、逐币种平衡且 `sourceDebit == destinationCredit + fee`（T-03b）。三腿/两腿形状由**修正后的目标状态**决定（`fee > 0` → 三腿含手续费腿；`fee == 0` → 两腿且不得携带分类，沿 `ManualTransferTransactionFactory.kt:82`）。`occurred_at`/`effective_at` 逐字复制（`TransactionVersionAppend.kt:94-99` 的 `times` 构造只对 `StatisticsAt` 形态改 `statisticsAt`，其余形态 `else -> currentVersion.times` 原样复制）。
