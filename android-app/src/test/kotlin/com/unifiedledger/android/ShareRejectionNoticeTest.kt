@@ -109,6 +109,23 @@ class ShareRejectionNoticeTest {
     }
 
     @Test
+    fun anEntryThatCarriesNoFileIsNotRefusedToTheUser() {
+        // Device finding: a component-only start (`am start -n package/.Activity`, i.e. a null action)
+        // raised UNSUPPORTED_ACTION and showed "无法接收这次分享" on an ordinary entry. Only an entry
+        // that carries a file may be refused to the user's face.
+        assertNull(
+            intake().rejectionFor(
+                snapshot(action = null, streamUri = null, streamScheme = null, readableUris = emptyList()),
+            ),
+        )
+        // A foreign action that DOES carry a readable stream stays a genuine inbound-file attempt.
+        assertEquals(
+            ShareIntakeRejection.UNSUPPORTED_ACTION,
+            intake().rejectionFor(snapshot(action = "android.intent.action.VIEW")),
+        )
+    }
+
+    @Test
     fun probingARefusalMintsNothingAndConsumesNothing() {
         val subject = intake()
         val refused = snapshot(streamUri = "file:///sdcard/bill.csv", streamScheme = "file")

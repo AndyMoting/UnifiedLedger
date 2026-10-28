@@ -461,6 +461,18 @@ internal class InboundNavigationIntake(
      */
     fun rejectionFor(snapshot: ShareIntentSnapshot): ShareIntakeRejection? {
         if (snapshot.action == Intent.ACTION_MAIN) return null
+        // Only an entry that actually CARRIES a file can be refused to the user's face. A component-only
+        // start (a null action, e.g. `am start -n package/.Activity`), a plain launch or a stray intent
+        // with no stream is not the share face's business: showing "无法接收这次分享" for it would be a
+        // false positive on an ordinary entry (found on device: the failure-page launch raised
+        // UNSUPPORTED_ACTION). An intent with a stream but a foreign action (e.g. VIEW) is still a
+        // genuine inbound-file attempt and keeps its typed refusal.
+        val carriesFile =
+            snapshot.streamUri != null ||
+                snapshot.clipDataUris.isNotEmpty() ||
+                snapshot.hasUnexpectedStreamExtra ||
+                snapshot.streamExtraIsList
+        if (!carriesFile) return null
         return when (val result = validateShareIntake(snapshot, REJECTION_PROBE_DELIVERY_ID)) {
             is ExternalNavigationIntakeResult.Rejected -> result.code
             else -> null
