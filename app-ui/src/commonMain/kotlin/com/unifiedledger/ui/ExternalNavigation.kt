@@ -422,7 +422,7 @@ class ExternalNavigationChannel {
         listener: ((ExternalNavigationRequest) -> Unit)?,
     ) {
         if (token == null) {
-            StartupTrace.emit("channel.subscribe ignored token=null")
+            StartupTrace.emit("channel.subscribe ignored reason=nullToken")
             return
         }
         removeBinding(token)

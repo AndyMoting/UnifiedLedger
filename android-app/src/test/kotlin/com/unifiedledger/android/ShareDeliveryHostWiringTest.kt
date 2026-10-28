@@ -56,13 +56,13 @@ class ShareDeliveryHostWiringTest {
                 .toFile()
                 .readLines()
                 .map { it.trim() }
-                .filterNot { it.startsWith("//") }
+                .filterNot { it.startsWith("//") || it.startsWith("*") || it.startsWith("/*") }
         assertTrue(
-            composition.any { it.startsWith("externalNavigationChannel?.subscribe(inboundHostToken)") },
+            composition.any { it.startsWith("externalNavigationChannel?.subscribe(inboundHostToken) { request ->") },
             "the composition must bind the inbound host token it was given",
         )
         assertTrue(
-            composition.any { it.contains("subscribe(inboundHostToken, null)") },
+            composition.any { it.startsWith("onDispose { externalNavigationChannel?.subscribe(inboundHostToken, null) }") },
             "disposing the composition must unbind that same token",
         )
     }

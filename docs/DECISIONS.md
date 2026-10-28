@@ -5572,7 +5572,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 3. **修复。** `ExternalNavigationChannel` 由「最后订阅者胜」改为**每个 host 各自绑定 + 只交付给已 resume 的 host**：`subscribe(token, listener)`、`onHostResumed(token)`、`onHostPaused(token)`；`deliver` 只在**已 resume 的那个 host 自己有绑定**时直接交付，否则进入**深度 1** 暂存槽，并在该 host 绑定成立或恢复时排空一次。绑定按**身份**（`===`）匹配并逐 host 保存，因此：非可见实例既不能取走交付，也不能在销毁时解绑掉别的实例（评审 P709SD-01/02 的整改）。`P503App` 新增可选 `inboundHostToken: Any? = null`（桌面端与既有调用点不变），Android 组合根传 `activity`，`MainActivity.onResume/onPause` 上报 `onHostResumed(this)`／`onHostPaused(this)`。
 
-4. **测试责任。** 运行期契约由 `app-ui` 纯测试钉住：新类 `ExternalNavigationChannelHostTest`（暂停 host 不得吸收、被替换实例解绑不得解除他人绑定、两个实例各自绑定且回到旧实例仍可接收、深度 1、冷启动等待首次 resume、解绑后请求仍等待下一个绑定 host）与既有 `ExternalNavigationReducerTest` 两条通道用例按新契约更新（通道 API 变更即契约变更，改动理由写在用例注释）。Android 接线由源码 pin 测试 `ShareDeliveryHostWiringTest` 钉住（`AppShortcutsTest` 先例：执行该对需要真实 Activity）。
+4. **测试责任。** 运行期契约由 `app-ui` 纯测试钉住：新类 `ExternalNavigationChannelHostTest`（暂停 host 不得吸收、被替换实例解绑不得解除他人绑定、两个实例各自绑定且回到旧实例仍可接收、深度 1、冷启动等待首次 resume、解绑后请求仍等待下一个绑定 host、值相等但不同实例的 token 不得取走他人交付、旧实例的迟到 pause 不得解除当前 host、已 resume 的 host 重新订阅即排空暂存槽）与既有 `ExternalNavigationReducerTest` 两条通道用例按新契约更新（通道 API 变更即契约变更，改动理由写在用例注释）。Android 接线由源码 pin 测试 `ShareDeliveryHostWiringTest` 钉住（`AppShortcutsTest` 先例：执行该对需要真实 Activity）：`MainActivity` 的 `onResume`/`onPause` 上报、`App.kt` 的 `inboundHostToken = activity,`、以及 `P503App` 的 `subscribe(inboundHostToken)` 与解绑行。
 
 5. **残余（如实披露，不并入任何 PASS）。**
    - **传输层暂存槽先于 reducer**：停在暂存槽的请求若被后来的请求替换，被替换者**不会**到达 reducer，因此不触发 §2.2 的 retain-vs-replace 提示。这是传输层的深度 1 语义（规格已注明）；若将来要求「每个被接纳的分享都必须可见」，需把替换路由到 reducer 决策——**未做**。

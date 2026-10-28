@@ -157,13 +157,31 @@ class ExternalNavigationChannelHostTest {
     }
 
     @Test
+    fun aRebindOnTheAlreadyResumedHostDrainsTheParkedRequest() {
+        // P709SD3-04: the composition can mount after the Activity resumed (spec section 2.2 requires
+        // that this token's re-subscription drains the slot), so the subscribe path is load-bearing on
+        // its own — not only the resume path.
+        val channel = ExternalNavigationChannel()
+        val host = Any()
+        val received = mutableListOf<ExternalNavigationRequest>()
+        channel.subscribe(host) { received += it }
+        channel.onHostResumed(host)
+        channel.subscribe(host, null)
+        channel.deliver(share)
+        assertEquals(emptyList<ExternalNavigationRequest>(), received)
+        channel.subscribe(host) { received += it }
+        assertEquals(listOf<ExternalNavigationRequest>(share), received)
+    }
+
+    @Test
     fun aLatePauseFromASupersededHostCannotDisarmTheLiveOne() {
         // P709SD2-02: onHostPaused must ignore a token that is not the resumed one. An unconditional
         // reset would let the superseded instance's late pause disarm the visible host and revive the
-        // E3 defect by another route.
+        // E3 defect by another route. The two tokens are value-equal but distinct instances, so an
+        // `==` guard (which `Any()` would let through) is caught as well.
         val channel = ExternalNavigationChannel()
-        val superseded = Any()
-        val live = Any()
+        val superseded = listOf(1)
+        val live = listOf(1)
         val toLive = mutableListOf<ExternalNavigationRequest>()
         channel.subscribe(superseded) { }
         channel.subscribe(live) { toLive += it }
