@@ -5466,7 +5466,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 1. **修正地基（PR #162）**：产品修正 id 源铸第六个 id `feePostingId`（`UuidV7TransactionCorrectionIdSource`），`transactionCorrectionCommitByRequest` 投影补 `request.destination_account_id` 与 `request.fee_minor`，读适配器把 `category_id` 改为可空映射并原样带回两列，新增 `P705TransferCorrectionSnapshotReadTest` 两条真实 SQL 读回向量（无费 NULL 分类 / 带费费类目）。该批同时修掉两处相关缺口：读侧缺两列会让空白对空白、把任何同额请求都读成已提交（假匹配）；请求侧缺两列则让快照与存储行不一致（假冲突）。两侧现在都带列，`category_id` 也改为可空映射（否则 `fee == 0` 的转账行会在 `requireNotNull` 处抛出）。
 
-2. **app-ui 转账修正面（PR #163）**：七字段纯层补齐（`TransferCorrectionFieldUpdate`、`withUpdate`、统计时间 seam `transferCorrectionStatisticsAt`、手续费分类选项），新增 `P503AppState.TransferEdit`、`OpenTransferEdit`/`UpdateTransferCorrectionField` 两个事件与 `reduceTransferEdit`，新增转账修正屏（预览为渲染期纯读），入口按形状分流为纯 seam `transactionEditEntrance`（转账优先、`ACCOUNT_TRANSFER` 不回落到普通表单），组合根接线打开/确认/再核对，提交状态快照补两列（闭合 #162 评审登记的 F-01）。15 文件 +1053/−49。
+2. **app-ui 转账修正面（PR #163）**：七字段纯层补齐（`TransferCorrectionFieldUpdate`、`withUpdate`、统计时间 seam `transferCorrectionStatisticsAt`、手续费分类选项），新增 `P503AppState.TransferEdit`、`OpenTransferEdit`/`UpdateTransferCorrectionField` 两个事件与 `reduceTransferEdit`，新增转账修正屏（预览为渲染期纯读），入口按形状分流为纯 seam `transactionEditEntrance`（转账优先、`ACCOUNT_TRANSFER` 不回落到普通表单），组合根接线打开/确认/再核对，提交状态快照补两列（闭合 #162 评审登记的「提交状态快照缺两列」缺口）。15 文件 +1053/−49。
 
 3. **转账作废入口（PR #164）**：作废门改为委派领域矩阵谓词 `isP705CorrectionSupportedKind`（不再在呈现层重写一份 kind 集合），负例向量由 `TransactionKind.entries` 派生覆盖全部不受支持 kind；作废是交易粒度（D-228 J1），入口不需要形状解析。合并规模 4 文件 +46/−60（分支首提交 2 文件，评审修复轮落在这 4 个文件内，故两者不可相加）。
 
