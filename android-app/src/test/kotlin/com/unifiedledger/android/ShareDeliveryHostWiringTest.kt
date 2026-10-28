@@ -15,9 +15,10 @@ import kotlin.test.assertTrue
 class ShareDeliveryHostWiringTest {
     @Test
     fun theActivityReportsItsResumedStateToTheProcessScopedChannel() {
-        val activity = repositoryFile("android-app/src/main/kotlin/com/unifiedledger/android/MainActivity.kt")
-            .toFile()
-            .readText()
+        val activity =
+            repositoryFile("android-app/src/main/kotlin/com/unifiedledger/android/MainActivity.kt")
+                .toFile()
+                .readText()
         assertTrue(activity.contains("override fun onResume()"), "the host must report a resume")
         assertTrue(
             activity.contains("ledgerProcessHolderFor(this)?.externalNavigationChannel?.onHostResumed(this)"),
