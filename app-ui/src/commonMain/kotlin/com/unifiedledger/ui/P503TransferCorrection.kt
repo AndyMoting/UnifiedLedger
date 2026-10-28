@@ -441,9 +441,11 @@ internal fun transferCorrectionStatisticsAt(
 
 /**
  * The transfer form's fee-category options (spec section 3): the active level-2 `EXPENSE`
- * categories, which is exactly the admission the domain enforces for a positive fee (its posting
- * account is the hidden EXPENSE account the domain validates); a zero fee carries no category at
- * all.
+ * categories, the same shape the domain's fee-category admission starts from. The domain checks
+ * more than this list can (the parent is a level-1 EXPENSE category, the posting account is a
+ * non-real EXPENSE account of the ledger, same currency), so a listed category the domain refuses is
+ * rejected typed at confirmation - the list never grants admission. A zero fee carries no category
+ * at all.
  *
  * This list is narrower than what [transferCorrectionOriginFromDetail] accepts as a fee category:
  * the resolver answers only `which category does this fee leg belong to` (any catalog entry whose

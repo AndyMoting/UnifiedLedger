@@ -806,15 +806,16 @@ sealed interface ExpressionPreview {
 /**
  * P1-2 fix round, review P3: THE single source of truth for the surfaces on which a budget
  * month landing ([P503UiEvent.BudgetMonthLanded], [P503UiEvent.MonthlyActivityResult]'s
- * carried-overview application) may be APPLIED — the live overview plus the six surfaces
+ * carried-overview application) may be APPLIED — the live overview plus the five surfaces
  * that hold a preserved [OverviewEmpty] and render no competing monthly region of their own.
  *
  * HONEST SUBSET (not "every surface that carries an OverviewEmpty"):
- * [ImportCandidateDetail], [ImportBatchConfirm], [ImportBatchSubmitting], [TransferEdit],
- * [TransactionEdit] and [VoidConfirm] also carry one, but a landing there is ABSORBED —
+ * [ImportCandidateDetail], [ImportBatchConfirm], [ImportBatchSubmitting], [TransactionEdit],
+ * [TransferEdit], [VoidConfirm], [TransactionAnnotationEdit] and [TagMerchantFilter] also carry
+ * one, but a landing there is ABSORBED —
  * their own event families own those surfaces, and the budget region never renders on
  * them. REGISTERED NARROW RACE: a budget landing dispatched while the user has navigated
- * INTO one of those six surfaces is silently dropped (the coordinator's guard already
+ * INTO one of those eight surfaces is silently dropped (the coordinator's guard already
  * stamped the request); the next budget trigger (effective-month change, SelectMonth,
  * config commit, a later P7-05/import arm) re-requests, and the region never renders there,
  * so no wrong amount is ever shown — only a possibly-stale payload on RETURN, which the

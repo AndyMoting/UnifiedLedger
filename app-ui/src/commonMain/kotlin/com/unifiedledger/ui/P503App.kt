@@ -2969,12 +2969,7 @@ fun P503App(
 
     /**
      * P7-05.B (DP-12: 仅详情入口): resolves the old-value snapshot and opens the correction surface.
-     *
-     * The transfer shape is checked FIRST and wins: a transfer's legs also satisfy the ordinary
-     * origin resolver (its positive leg is the destination credit and its fee leg's posting account
-     * maps to the fee category), while the ordinary resolver has no representation for the second
-     * account or the fee. An ordinary target can never resolve as a transfer - its positive leg
-     * belongs to a posting account, not to a manageable asset - so the two entrances stay disjoint.
+     * The shape decision and its rationale live in [transactionEditEntrance].
      */
     fun openTransactionEdit(detail: TransactionDetail) {
         if (!ledger.surfaces.correction) return

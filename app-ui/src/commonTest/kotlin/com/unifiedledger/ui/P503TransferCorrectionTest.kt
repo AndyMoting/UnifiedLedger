@@ -29,11 +29,12 @@ import kotlin.test.assertTrue
 import kotlin.time.Instant
 
 /**
- * P7-05 transfer correction slice vectors (D-156, D-228; spec sections 3 and 8.3). The surface's
- * screen and entrance are separate work, so the load-bearing decisions are the pure functions under
- * test: the leg-shape origin resolver, the seed draft, the typed field write, the statistics-time
- * seam, the seven-line difference preview, the target-side fee-category derivation, and the request
- * builder with its frozen five `null` branches.
+ * P7-05 transfer correction slice vectors (D-156, D-228; spec sections 3 and 8.3). The screen and
+ * the entrance are delivered and asserted elsewhere (the host suite pins the entrance decision), so
+ * the load-bearing decisions here are the pure functions: the leg-shape origin resolver, the seed
+ * draft, the typed field write, the statistics-time seam, the seven-line difference preview, the
+ * target-side fee-category derivation, the option list, and the request builder with its frozen five
+ * `null` branches.
  *
  * All data is anonymous synthetic: one ledger, three manageable `ASSET` accounts plus the one
  * manageable `LIABILITY` account a single vector adds, two expense posting accounts (one of them the

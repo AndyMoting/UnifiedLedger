@@ -171,8 +171,12 @@ class P503CorrectionHostTest {
                 target.copy(legs = target.legs.map { leg -> if (leg.accountId == AccountId("asset-source")) leg.copy(accountId = AccountId("expense-fee")) else leg })
             }
         assertNull(transactionEditEntrance(unresolvable, transferSnapshot()))
-        // The same detail keeps opening the transfer surface only while its shape resolves.
-        assertNotNull(transactionEditEntrance(transferDetail(), transferSnapshot()))
+        // The resolved transfer origin carries the frozen transfer columns, so the entrance seeds a
+        // form that can actually express the target.
+        val resolved = assertIs<TransactionEditEntrance.Transfer>(transactionEditEntrance(transferDetail(), transferSnapshot()))
+        assertEquals(10_000L, resolved.origin.destinationCreditMinorUnits)
+        assertEquals(200L, resolved.origin.feeMinorUnits)
+        assertEquals(AccountId("asset-destination"), resolved.origin.destinationAccountId)
     }
     // ---- origin resolution (spec section 3.2; the Piece 3 residual) ----
 
