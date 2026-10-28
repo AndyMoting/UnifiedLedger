@@ -240,7 +240,9 @@ internal fun shareRejectionText(reason: ShareRejectionReason): String =
     when (reason) {
         ShareRejectionReason.UNSUPPORTED_ACTION -> "无法接收这次分享：请用“分享”发送单个文件。"
         ShareRejectionReason.MISSING_STREAM -> "无法接收这次分享：没有附带文件，未做任何改动。"
-        ShareRejectionReason.MULTIPLE_STREAMS -> "无法接收这次分享：一次只能导入一个文件。"
+        // The frozen validator's action-first order reports ACTION_SEND_MULTIPLE as MULTIPLE_STREAMS even
+        // when it carries no file, so the copy must read correctly for both (several files, none).
+        ShareRejectionReason.MULTIPLE_STREAMS -> "无法接收这次分享：请只分享一个文件（这一条包含多个文件或没有文件）。"
         ShareRejectionReason.CONFLICTING_STREAM -> "无法接收这次分享：文件信息不一致，请重新分享。"
         ShareRejectionReason.NON_CONTENT_URI -> "无法接收这次分享：该来源不支持导入，请重新分享。"
         ShareRejectionReason.STREAM_NOT_READABLE -> "无法接收这次分享：没有读取权限，请重新分享后再导入。"

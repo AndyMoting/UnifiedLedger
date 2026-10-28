@@ -592,9 +592,11 @@ internal class ProcessInboundNavigationIntake(
     fun isRefusedRepeat(deliveryId: String): Boolean = intake.alreadyConsumed(deliveryId)
 
     /**
-     * P7-09 09.A (spec section 2.3; ACC-D-SHARE-02): the typed refusal of one snapshot, or null when it
-     * would be accepted. Delegates to the process-scoped intake's pure probe: no id is minted and no
-     * receipt is touched, so a refusal can be shown without occupying the delivery identity.
+     * P7-09 09.A (spec section 2.3; ACC-D-SHARE-02): the typed refusal of one snapshot, or null when
+     * there is nothing to refuse — the snapshot would be accepted, it is not an inbound entry
+     * (`ACTION_MAIN`), or it is neither a share action nor carries a file. Delegates to the
+     * process-scoped intake's pure probe: no id is minted and no receipt is touched, so a refusal can
+     * be shown without occupying the delivery identity.
      */
     fun rejectionFor(snapshot: ShareIntentSnapshot): ShareIntakeRejection? = intake.rejectionFor(snapshot)
 
