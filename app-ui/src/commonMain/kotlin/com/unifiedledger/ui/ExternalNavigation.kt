@@ -375,9 +375,16 @@ internal fun startupHeldFallbackAfterLanding(
  * binding, so a non-visible instance can neither take a delivery nor disarm another by disposing.
  */
 class ExternalNavigationChannel {
-    // Per-host bindings keyed by IDENTITY (`===`), never by equality: the adapter hands in a stable
-    // platform object (the Activity) and the channel must not confuse two value-equal hosts.
-    private val listeners = mutableMapOf<Any, (ExternalNavigationRequest) -> Unit>()
+    // Per-host bindings, compared by IDENTITY (`===`) on all three paths — write, lookup, removal.
+    // The adapter hands in a stable platform object (the Activity); two value-equal hosts must never
+    // share an entry. A map would key writes by `equals` while the other two paths compare identity.
+    private val bindings = mutableListOf<Binding>()
+
+    private class Binding(
+        val token: Any,
+        val listener: (ExternalNavigationRequest) -> Unit,
+    )
+
     private var buffered: ExternalNavigationRequest? = null
     private var resumedToken: Any? = null
 
@@ -394,21 +401,32 @@ class ExternalNavigationChannel {
         val listener = if (resumed != null) listenerFor(resumed) else null
         if (listener == null) {
             buffered = request
+            StartupTrace.emit("channel.deliver parked")
         } else {
             listener(request)
+            StartupTrace.emit("channel.deliver direct")
         }
     }
 
     /**
      * Binds (or, with `null`, unbinds) THIS token's listener; another token's binding is untouched.
      * A parked request drains exactly once, and only into the resumed host's binding.
+     *
+     * @param token the host this binding belongs to. It MUST be identity-unique and is matched with
+     *   `===` on every path (write, lookup, removal): pass the stable platform object (the Activity),
+     *   never a value-equal stand-in — such a token would not be recognised as the same host.
+     * @param listener receives the next request while `token` is the resumed host; `null` unbinds.
      */
     fun subscribe(
         token: Any?,
         listener: ((ExternalNavigationRequest) -> Unit)?,
     ) {
-        if (token == null) return
-        if (listener == null) removeBinding(token) else listeners[token] = listener
+        if (token == null) {
+            StartupTrace.emit("channel.subscribe ignored token=null")
+            return
+        }
+        removeBinding(token)
+        if (listener != null) bindings += Binding(token, listener)
         drainToResumedHost()
     }
 
@@ -427,12 +445,12 @@ class ExternalNavigationChannel {
         if (resumedToken != null && resumedToken === token) resumedToken = null
     }
 
-    private fun listenerFor(token: Any): ((ExternalNavigationRequest) -> Unit)? = listeners.entries.firstOrNull { it.key === token }?.value
+    private fun listenerFor(token: Any): ((ExternalNavigationRequest) -> Unit)? = bindings.firstOrNull { it.token === token }?.listener
 
     private fun removeBinding(token: Any) {
-        val iterator = listeners.entries.iterator()
+        val iterator = bindings.iterator()
         while (iterator.hasNext()) {
-            if (iterator.next().key === token) {
+            if (iterator.next().token === token) {
                 iterator.remove()
                 return
             }
@@ -444,6 +462,7 @@ class ExternalNavigationChannel {
         val pending = buffered ?: return
         val listener = listenerFor(resumed) ?: return
         buffered = null
+        StartupTrace.emit("channel.drain delivered")
         listener(pending)
     }
 }

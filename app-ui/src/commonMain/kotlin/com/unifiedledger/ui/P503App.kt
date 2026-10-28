@@ -263,8 +263,9 @@ fun P503App(
     externalNavigationChannel: ExternalNavigationChannel? = null,
     // P7-09 09.A delivery order (spec section 2.2; ACC-D-SHARE-01): the platform host token this
     // composition binds to the channel. The channel hands a request only to the host it knows is
-    // RESUMED, so the Android root passes its Activity; null (the desktop root and every existing
-    // test) binds nothing and keeps the surface absent.
+    // RESUMED and matches that host by IDENTITY (`===`), so the Android root passes its Activity
+    // instance itself, never a value-equal stand-in; null (the desktop root and every existing test)
+    // binds nothing and keeps the surface absent.
     inboundHostToken: Any? = null,
     // P7-09 09.C (spec section 6.4; D-225 Q20): the widget-invalidation seam of the FIRST refresh
     // leg ("已知正式写入成功/恢复成功的合并失效"). The Android root wires the process holder's

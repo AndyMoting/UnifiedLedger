@@ -102,6 +102,8 @@ class ExternalNavigationChannelHostTest {
 
     @Test
     fun aColdStartRequestWaitsForTheVeryFirstResume() {
+        // Also the widget/shortcut sequence: LedgerWidgetProvider delivers before it brings the task
+        // forward, so the request is parked with no resumed host and drains on the first resume.
         val channel = ExternalNavigationChannel()
         channel.deliver(share)
         val host = Any()
@@ -133,5 +135,41 @@ class ExternalNavigationChannelHostTest {
         assertEquals(emptyList<ExternalNavigationRequest>(), landed, "a resumed host without a binding cannot take it")
         channel.onHostResumed(nextHost)
         assertEquals(listOf<ExternalNavigationRequest>(share), landed)
+    }
+
+    @Test
+    fun aValueEqualButDistinctTokenCannotTakeAnotherHostsBinding() {
+        // P709SD2-01: the binding table compares identity on all three paths. A map would key the write
+        // by equality and let this value-equal pair share one entry, so `first` would receive `second`'s
+        // listener and `second`'s unbind would remove nothing.
+        val channel = ExternalNavigationChannel()
+        val first = listOf(1)
+        val second = listOf(1)
+        val toFirst = mutableListOf<ExternalNavigationRequest>()
+        val toSecond = mutableListOf<ExternalNavigationRequest>()
+        channel.subscribe(first) { toFirst += it }
+        channel.subscribe(second) { toSecond += it }
+        channel.subscribe(second, null)
+        channel.onHostResumed(first)
+        channel.deliver(share)
+        assertEquals(listOf<ExternalNavigationRequest>(share), toFirst)
+        assertEquals(emptyList<ExternalNavigationRequest>(), toSecond, "a value-equal host must not take another host's delivery")
+    }
+
+    @Test
+    fun aLatePauseFromASupersededHostCannotDisarmTheLiveOne() {
+        // P709SD2-02: onHostPaused must ignore a token that is not the resumed one. An unconditional
+        // reset would let the superseded instance's late pause disarm the visible host and revive the
+        // E3 defect by another route.
+        val channel = ExternalNavigationChannel()
+        val superseded = Any()
+        val live = Any()
+        val toLive = mutableListOf<ExternalNavigationRequest>()
+        channel.subscribe(superseded) { }
+        channel.subscribe(live) { toLive += it }
+        channel.onHostResumed(live)
+        channel.onHostPaused(superseded)
+        channel.deliver(share)
+        assertEquals(listOf<ExternalNavigationRequest>(share), toLive)
     }
 }

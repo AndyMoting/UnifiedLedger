@@ -5578,6 +5578,10 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
    - **传输层暂存槽先于 reducer**：停在暂存槽的请求若被后来的请求替换，被替换者**不会**到达 reducer，因此不触发 §2.2 的 retain-vs-replace 提示。这是传输层的深度 1 语义（规格已注明）；若将来要求「每个被接纳的分享都必须可见」，需把替换路由到 reducer 决策——**未做**。
    - **host token 契约**：`inboundHostToken` 必须**身份唯一**（通道按 `===` 匹配）；传入值相等但非同一对象时绑定不会被识别。已写入参数与 API 的 KDoc，未用类型系统强制。
    - 「已 resume 但组合尚未订阅」窗口内的请求会暂存而非丢弃；由冷启动与「resumed host without a binding」两条用例覆盖语义，但**未**在设备上逐一计时。
+   - **修复的设备复验待补**：本条登记的是缺陷取证（`local/artifacts/p709-share-delivery/EVIDENCE.md`），修复行为本身尚无设备读数；索引里的复验行按「待补」表述，待合并后的 CI 构建上复验 E1/E2/E3 并落 `FIX-VERIFICATION.md`。复验时以 `ULStartup` 的 `channel.deliver parked` / `channel.deliver direct` / `channel.drain delivered` 为读数。
+   - **widget / shortcut 路径**：`LedgerWidgetProvider` 在 `launchAppActivity` 之前投递 `OpenCurrentMonth`；新规则下没有已 resume 的 host 时改为**停放**、待 resume 排空。顺序与冷启动分享相同（`ExternalNavigationChannelHostTest.aColdStartRequestWaitsForTheVeryFirstResume` 的注释指明），但未上设备，且进程在停放与 resume 之间被杀即丢。
+   - **多窗口 / 分屏**：Android 10+ 同进程可有两个 RESUMED Activity，`resumedToken` 只持最后一个 resume 的 host，另一个可见实例的交付会停放到它自己 resume。
+   - **停放请求仅存内存**：`buffered` 不落盘，进程死亡即丢；启动以 `StartupError` 收尾时请求永久停放。
    - 本条不改变 P709-A01/A03/A04 的判决，也不改变「同 URI 再分享」的身份判定（§4，仍按「先改规格再改代码」推进）。
 
 **边界：** 入：上述修复、规格 §2.2 一条、本条。出：不改 §4 身份判定与 PR #168 语义；不改 D-225/D-226/D-227 的任何裁决；零 schema/迁移/依赖；不触碰 widget/backup/budget 各 owner。

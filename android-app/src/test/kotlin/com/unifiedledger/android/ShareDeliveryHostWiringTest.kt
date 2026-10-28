@@ -47,6 +47,26 @@ class ShareDeliveryHostWiringTest {
         )
     }
 
+    @Test
+    fun theCompositionBindsAndUnbindsTheSameHostToken() {
+        // P709SD2-06: the actual bind point is the composition, one level below App.kt. Passing a null
+        // token there would park every delivery silently while the rest of the suite stayed green.
+        val composition =
+            repositoryFile("app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503App.kt")
+                .toFile()
+                .readLines()
+                .map { it.trim() }
+                .filterNot { it.startsWith("//") }
+        assertTrue(
+            composition.any { it.startsWith("externalNavigationChannel?.subscribe(inboundHostToken)") },
+            "the composition must bind the inbound host token it was given",
+        )
+        assertTrue(
+            composition.any { it.contains("subscribe(inboundHostToken, null)") },
+            "disposing the composition must unbind that same token",
+        )
+    }
+
     private fun repositoryFile(relative: String): Path {
         var candidate = Path.of(System.getProperty("user.dir"))
         repeat(8) {
