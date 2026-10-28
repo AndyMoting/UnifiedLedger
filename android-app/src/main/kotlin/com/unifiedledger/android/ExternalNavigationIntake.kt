@@ -479,13 +479,13 @@ internal class ProcessInboundNavigationIntake(
      */
     fun coldLaunchRequest(
         snapshot: ShareIntentSnapshot,
-        recreated: Boolean,
+        reuseHeldReceipt: Boolean,
     ): ExternalNavigationRequest? {
         if (snapshot.action == Intent.ACTION_MAIN) return null
-        if (!recreated) {
-            // A FRESH Activity launch is a genuinely new user share even inside a live process. Whether a
-            // given sender reuses the top instance (singleTop) or starts a new one is the task-stack vector
-            // P709-A04 pins; both paths end up here, and this one mints.
+        if (!reuseHeldReceipt) {
+            // No live held receipt: whatever started this Activity is a new user share. On this platform
+            // a real share always arrives on the create path (P709-A04), so the ONLY evidence that it is
+            // a re-read of the same delivery is that the previous one is still held (retained source).
             val fresh = mintDeliveryId()
             val request = intake.requestFor(snapshot, fresh)
             // Only an ACCEPTED share becomes the launch receipt: a typed rejection must not occupy
@@ -493,8 +493,9 @@ internal class ProcessInboundNavigationIntake(
             if (request != null) coldLaunchDeliveryId = fresh
             return request
         }
-        // A configuration recreation re-reads the SAME launch Intent: reuse the launch's id so the
-        // repeat delivery is refused and nothing is consumed twice.
+        // The previous delivery is still held: this is that same share re-read (a configuration
+        // recreation, or the platform restoring the instance). Reuse its id so the repeat stays
+        // refused and nothing is consumed twice.
         val existing = coldLaunchDeliveryId
         if (existing != null) return intake.requestFor(snapshot, existing)
         // A recreation whose process launch id is gone (process death + task restore) mints one,

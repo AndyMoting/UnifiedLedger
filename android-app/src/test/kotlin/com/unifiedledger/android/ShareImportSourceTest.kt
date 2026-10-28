@@ -200,13 +200,13 @@ class ShareImportSourceTest {
         // repeat is REFUSED (no re-consume) but is recognizable by its stable id, so the Activity can
         // re-hold it (non-silent) while its retained source is present.
         val intake = ProcessInboundNavigationIntake { "cold-delivery" }
-        val first = assertIs<ExternalNavigationRequest.OpenImport>(intake.coldLaunchRequest(snapshot(), recreated = false))
+        val first = assertIs<ExternalNavigationRequest.OpenImport>(intake.coldLaunchRequest(snapshot(), reuseHeldReceipt = false))
         assertEquals("cold-delivery", first.deliveryId)
         val receipt = intake.coldLaunchReceipt()
         assertEquals("cold-delivery", receipt?.deliveryId)
         assertTrue(intake.isRefusedRepeat("cold-delivery"))
         // The repeated request is refused (already consumed) — but the id is stable for the re-hold.
-        assertNull(intake.coldLaunchRequest(snapshot(), recreated = true))
+        assertNull(intake.coldLaunchRequest(snapshot(), reuseHeldReceipt = true))
         assertEquals("cold-delivery", intake.coldLaunchReceipt()?.deliveryId)
         // No cold receipt exists before any cold share.
         assertEquals(false, ProcessInboundNavigationIntake { "x" }.coldLaunchReceipt() != null)
@@ -217,7 +217,7 @@ class ShareImportSourceTest {
         // B3: only the cold-launch receipt is re-holdable; a hot onNewIntent share mints a FRESH id
         // distinct from the cold id, and a repeat of the cold Intent is still recognized (unchanged).
         val intake = ProcessInboundNavigationIntake { "id-${mintCounter++}" }
-        assertIs<ExternalNavigationRequest.OpenImport>(intake.coldLaunchRequest(snapshot(), recreated = false))
+        assertIs<ExternalNavigationRequest.OpenImport>(intake.coldLaunchRequest(snapshot(), reuseHeldReceipt = false))
         val hot = assertIs<ExternalNavigationRequest.OpenImport>(intake.hotReceiptRequest(snapshot()))
         assertEquals("id-1", hot.deliveryId)
         assertEquals("id-0", intake.coldLaunchReceipt()?.deliveryId)

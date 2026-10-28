@@ -40,7 +40,7 @@ class MainActivity : ComponentActivity() {
         // its explicit action is recognized here, resolved by the same process-scoped intake and
         // delivered into the same channel, so the shortcut goes through the SAME navigation gate as a
         // share and can never bypass the startup door or the confirmation chain.
-        handleInboundIntent(intent, coldLaunch = true, recreated = savedInstanceState != null)
+        handleInboundIntent(intent, coldLaunch = true)
         // P7-09 09.B (D-226; spec sections 5/5.1): publish the dynamic shortcuts at most once per
         // process (a re-composition / recreation re-run is a no-op). Publication touches no ledger
         // data and only describes generic routes; the device leg (launcher task stack, app upgrade,
@@ -68,7 +68,7 @@ class MainActivity : ComponentActivity() {
         StartupTrace.emit("entry.onNewIntent")
         // A hot receipt is a NEW user share (spec section 4), so it mints a FRESH deliveryId; the
         // process-scoped intake keeps the cold-launch id untouched.
-        handleInboundIntent(intent, coldLaunch = false, recreated = false)
+        handleInboundIntent(intent, coldLaunch = false)
     }
 
     /**
@@ -82,15 +82,15 @@ class MainActivity : ComponentActivity() {
      * FRESH launch and reuses it only for a recreation of the SAME Intent (P1-B: an Activity
      * recreation must not re-consume), while a hot `onNewIntent` receipt mints a fresh id.
      *
-     * [recreated] carries the `savedInstanceState != null` fact: a config recreation re-reads the
-     * SAME launch Intent and must reuse its id, while a FRESH launch inside a live process is a
-     * genuinely new user share and mints a new one (spec section 4).
+     * Whether this launch is a NEW share or a re-read of the one already delivered is decided from
+     * product state, not from the lifecycle: a real share always arrives on the CREATE path here and a
+     * recreated instance reports the same Intent (P709-A04), so [handleInboundIntent] reuses the
+     * previous delivery only while its retained source is still held (see the block below).
      * Which path a given sender takes on this device is P709-A04's to pin; both are handled here.
      */
     private fun handleInboundIntent(
         intent: Intent?,
         coldLaunch: Boolean,
-        recreated: Boolean,
     ) {
         if (intent == null) return
         val holder = ledgerProcessHolderFor(this) ?: return
@@ -129,9 +129,19 @@ class MainActivity : ComponentActivity() {
                     permissionGranted = android.content.pm.PackageManager.PERMISSION_GRANTED,
                 )
             }
+        // P709-A04: on this platform a real share always arrives on the CREATE path, and a recreated
+        // instance still reports the same Intent, so neither the action nor `savedInstanceState` tells a
+        // new share from a re-read. The product state does: only a delivery we are STILL holding (its
+        // retained source is present and unconsumed) can be the same share arriving twice.
+        val heldReceipt = holder.inboundIntake.coldLaunchReceipt()
+        val sameHeldShare =
+            heldReceipt != null &&
+                holder.inboundIntake.isRefusedRepeat(heldReceipt.deliveryId) &&
+                holder.shareImportRegistry.contains(heldReceipt.deliveryId) &&
+                retainedShareUri(intent) != null
         val request =
             if (coldLaunch) {
-                holder.inboundIntake.coldLaunchRequest(snapshot, recreated = recreated)
+                holder.inboundIntake.coldLaunchRequest(snapshot, reuseHeldReceipt = sameHeldShare)
             } else {
                 holder.inboundIntake.hotReceiptRequest(snapshot)
             }
