@@ -2697,7 +2697,7 @@ fun P503App(
         // alive in a live process).
         externalNavigationChannel?.subscribe(inboundHostToken) { request ->
             // ACC-D-SHARE-02: a NEW inbound result supersedes the previous refusal notice, so a stale
-            // "无法接收这次分享" can never sit above the freshly held share's own strip.
+            // "无法接收这次分享" can never stay on screen together with the freshly held share's strip.
             hostShareRejection = null
             onExternalNavigationRequested(request)
         }

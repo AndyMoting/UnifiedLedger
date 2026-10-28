@@ -100,8 +100,10 @@ class ShareDeliveryHostWiringTest {
     @Test
     fun theRefusalBranchRunsInsideTheNullRequestBranch() {
         // ACC-D-SHARE-02: a check that only greps for the notify call would still pass if the call had
-        // drifted BELOW the branch's `return` (dead code). Bound the searched region by the accepted
-        // path's `deliver(request)`, which comes after the branch.
+        // drifted BELOW the branch's `return` (dead code). So bound the region at the branch's own
+        // `return` and require both the probe and the notify inside it. This proves SOURCE ORDER inside
+        // the null branch, not reachability: a probe+notify pair moved together into a nested branch
+        // would still pass.
         val activity =
             repositoryFile("android-app/src/main/kotlin/com/unifiedledger/android/MainActivity.kt")
                 .toFile()
