@@ -28,10 +28,10 @@ import kotlin.time.Instant
 // This file holds no Compose, no IO, no logging, no platform API and no coroutines. Amounts are Long
 // minor units end to end - never Double or Float.
 //
-// The pure layer is NOT the whole slice: the transfer void/restore face and the Android manual
-// acceptance are still open, so nothing here signs off 05.D. The snapshot-aware resolver on the read
-// side already reconstructs both shapes column for column (the TransactionCorrectionRequestSnapshot
-// contract in CorrectTransactionVersion.kt).
+// The pure layer is NOT the whole slice: the Android manual acceptance is still open, so nothing
+// here signs off 05.D. The snapshot-aware resolver on the read side already reconstructs both
+// shapes column for column (the TransactionCorrectionRequestSnapshot contract in
+// CorrectTransactionVersion.kt).
 
 /**
  * P7-05 transfer slice (spec section 3): the host-resolved old-value snapshot of a manual transfer

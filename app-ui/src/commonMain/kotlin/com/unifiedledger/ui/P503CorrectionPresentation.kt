@@ -12,6 +12,7 @@ import com.unifiedledger.domain.P705FailureCode
 import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.VoidReason
 import com.unifiedledger.domain.VoidReasonCode
+import com.unifiedledger.domain.isP705CorrectionSupportedKind
 import com.unifiedledger.domain.parseExactDecimal
 import com.unifiedledger.domain.parseExactDecimalLenient
 import kotlinx.datetime.toLocalDateTime
@@ -32,30 +33,20 @@ import kotlin.time.Instant
 // ------------------------------------------------------------------ detail-page entry gate
 
 /**
- * The kind set of both detail-page entries: the same shape as the shared domain matrix gate
- * (`isP705CorrectionSupportedKind`), because both surfaces exist for every supported kind now.
+ * Whether the detail page offers the correction and void entries, and which half.
+ *
+ * Both entries follow the domain's own support matrix ([isP705CorrectionSupportedKind]) rather
+ * than restating its kinds here: the presentation is the last place that could disagree with the
+ * commit ports, and a restated set would offer a dead entrance the port then rejects.
  *
  * The kind is only half the CORRECTION entry's condition: the target's shape must also resolve,
- * which [detailCorrectionAffordancesVisible] receives through its `hasCorrectionOrigin` argument.
- * That argument comes from the host's shape decision ([transactionEditEntrance]), so a transfer
- * whose origin does not resolve renders no entry instead of a dead one.
+ * which the gate receives through its `hasCorrectionOrigin` argument. That argument comes from the
+ * host's shape decision ([transactionEditEntrance]), so a transfer whose origin does not resolve
+ * renders no entry instead of a dead one.
  *
  * The VOID entry needs no shape resolution: its use case takes only the transaction id, and a void
  * is transaction-granular for every supported kind - a transfer's three legs move together
  * (D-228 J1) - so the wired command alone decides it.
- */
-private val p705EntryKinds: Set<TransactionKind> =
-    setOf(TransactionKind.EXPENSE, TransactionKind.INCOME, TransactionKind.ACCOUNT_TRANSFER)
-
-/**
- * P7-05.B/C (D-156; DP-12; spec section 3.5): whether the read-only detail page offers the
- * correction and void entries. Both entries need the whole support-matrix row — the supported
- * kind AND the supported creation lineage — and an effective transaction: the detail read path
- * already filters voided transactions (spec section 3.6 #3), so [isEffective] is a defensive echo
- * of that invariant, never a second source of truth. [hasCorrectionOrigin] and [hasVoidTarget] are
- * the host-supplied affordances (the correction entry needs the host-resolved old-value snapshot,
- * which the screen cannot derive from the detail legs alone): a missing one renders no dead button
- * (the retained-read-failure F1 precedent).
  */
 internal fun detailCorrectionAffordancesVisible(
     kind: TransactionKind,
@@ -64,10 +55,10 @@ internal fun detailCorrectionAffordancesVisible(
     hasCorrectionOrigin: Boolean,
     hasVoidTarget: Boolean,
 ): DetailCorrectionAffordances {
-    val lineageSupported = isP705CreationLineageSupported(creationEntry)
+    val supported = isP705CorrectionSupportedKind(kind) && isP705CreationLineageSupported(creationEntry) && isEffective
     return DetailCorrectionAffordances(
-        edit = kind in p705EntryKinds && lineageSupported && isEffective && hasCorrectionOrigin,
-        void = kind in p705EntryKinds && lineageSupported && isEffective && hasVoidTarget,
+        edit = supported && hasCorrectionOrigin,
+        void = supported && hasVoidTarget,
     )
 }
 

@@ -42,9 +42,9 @@ import kotlin.time.Instant
  * Assertions are single lines and never compare a multi-line literal; the suite asserts on synthetic
  * note literals in value equality checks only and never passes a note as an assertion message.
  *
- * Not signed off by this suite: the transfer void/restore face and the Android manual acceptance.
- * The snapshot-aware resolver's transfer columns are reconstructed on the read side (the
- * TransactionCorrectionRequestSnapshot contract), so no residual of that kind is carried here.
+ * Not signed off by this suite: the Android manual acceptance. The snapshot-aware resolver's
+ * transfer columns are reconstructed on the read side (the TransactionCorrectionRequestSnapshot
+ * contract), so no residual of that kind is carried here.
  */
 class P503TransferCorrectionTest {
     private val ledgerId = LedgerId("ledger-local-test")

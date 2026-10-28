@@ -88,24 +88,17 @@ class P503CorrectionPresentationTest {
         assertFalse(
             detailCorrectionAffordancesVisible(TransactionKind.ACCOUNT_TRANSFER, CreationEntry.IMPORT_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true).any,
         )
-        // Lending and refund stay outside the support matrix (spec section 3.1).
-        assertFalse(
-            detailCorrectionAffordancesVisible(TransactionKind.LEND, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true).any,
-        )
-        // D-158 section 4: the remaining later-slice matrix rows hide the entries too.
-        listOf(
-            TransactionKind.REFUND_RECEIPT,
-            TransactionKind.CREDIT_REPAYMENT,
-            TransactionKind.COLLECT,
-            TransactionKind.OPENING_BALANCE,
-            TransactionKind.STORED_VALUE_RECHARGE,
-            TransactionKind.PREPAID_PURCHASE,
-        ).forEach { kind ->
-            assertFalse(
-                detailCorrectionAffordancesVisible(kind, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true).any,
-                "kind $kind must offer no correction entry",
-            )
-        }
+        // Every other kind stays outside the matrix. The list is derived from the enum, so a kind
+        // added later cannot slip into the entries unnoticed (D-158 section 4 lists the later-slice
+        // rows individually; the derivation now covers them and their future siblings alike).
+        TransactionKind.entries
+            .filterNot { it == TransactionKind.EXPENSE || it == TransactionKind.INCOME || it == TransactionKind.ACCOUNT_TRANSFER }
+            .forEach { kind ->
+                assertFalse(
+                    detailCorrectionAffordancesVisible(kind, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true).any,
+                    "kind $kind must offer no entry",
+                )
+            }
         // A voided transaction (defensive echo of the read invariant) offers nothing.
         assertFalse(
             detailCorrectionAffordancesVisible(TransactionKind.EXPENSE, CreationEntry.MANUAL_CREATED, isEffective = false, hasCorrectionOrigin = true, hasVoidTarget = true).any,
