@@ -79,9 +79,9 @@ class MainActivity : ComponentActivity() {
      * non-opening permission check, never an `openInputStream`).
      *
      * [coldLaunch] selects the receipt identity: a cold launch reuses ONE stable deliveryId for the
-     * process launch (P1-B: an Activity recreation must not re-consume), while a hot `onNewIntent`
-     * receipt mints a fresh id.
-     *
+     * [coldLaunch] selects the receipt kind: a cold-launch receipt mints its deliveryId once per
+     * FRESH launch and reuses it only for a recreation of the SAME Intent (P1-B: an Activity
+     * recreation must not re-consume), while a hot `onNewIntent` receipt mints a fresh id.
      * [recreated] carries the `savedInstanceState != null` fact: a config recreation re-reads the
      * SAME launch Intent and must reuse its id, while a FRESH launch inside a live process is a
      * genuinely new user share and mints a new one (spec section 4).

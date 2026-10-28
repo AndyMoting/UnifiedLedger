@@ -483,10 +483,9 @@ internal class ProcessInboundNavigationIntake(
     ): ExternalNavigationRequest? {
         if (snapshot.action == Intent.ACTION_MAIN) return null
         if (!recreated) {
-            // A FRESH Activity launch is a genuinely new user share even inside a live process: the
-            // sender app sits on top of the ledger, so a second share recreates this Activity with a
-            // null savedInstanceState. Spec section 4: a new share mints a new deliveryId (identical
-            // URI included, subject to the human duplicate review).
+            // A FRESH Activity launch is a genuinely new user share even inside a live process. Whether a
+            // given sender reuses the top instance (singleTop) or starts a new one is the task-stack vector
+            // P709-A04 pins; both paths end up here, and this one mints.
             val fresh = mintDeliveryId()
             val request = intake.requestFor(snapshot, fresh)
             // Only an ACCEPTED share becomes the launch receipt: a typed rejection must not occupy
@@ -496,8 +495,14 @@ internal class ProcessInboundNavigationIntake(
         }
         // A configuration recreation re-reads the SAME launch Intent: reuse the launch's id so the
         // repeat delivery is refused and nothing is consumed twice.
-        val deliveryId = coldLaunchDeliveryId ?: mintDeliveryId().also { coldLaunchDeliveryId = it }
-        return intake.requestFor(snapshot, deliveryId)
+        val existing = coldLaunchDeliveryId
+        if (existing != null) return intake.requestFor(snapshot, existing)
+        // A recreation whose process launch id is gone (process death + task restore) mints one,
+        // but only an ACCEPTED request may become the receipt.
+        val fresh = mintDeliveryId()
+        val request = intake.requestFor(snapshot, fresh)
+        if (request != null) coldLaunchDeliveryId = fresh
+        return request
     }
 
     /** The request for a HOT `onNewIntent` receipt: always a new share, so always a fresh id. */

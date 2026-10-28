@@ -312,9 +312,8 @@ class ExternalNavigationIntakeTest {
 
     @Test
     fun aSecondShareInALiveProcessMintsANewDeliveryIdInsteadOfBeingRefusedAsARepeat() {
-        // Spec section 4: a NEW user share mints a new deliveryId even for an identical URI. The
-        // sender app sits on top of the ledger, so a second share recreates the Activity with a NULL
-        // savedInstanceState - the same code path as the first launch, not a config recreation.
+        // Spec section 4: a NEW user share mints a new deliveryId even for an identical URI, whichever
+        // path the platform takes (top-instance reuse or a fresh instance - P709-A04 pins which).
         var minted = 0
         val intake = ProcessInboundNavigationIntake { "delivery-" + (++minted) }
         val first = assertIs<ExternalNavigationRequest.OpenImport>(intake.coldLaunchRequest(snapshot(), recreated = false))
@@ -326,6 +325,15 @@ class ExternalNavigationIntakeTest {
         // and stays refused (the re-hold path must never point at a superseded share).
         assertEquals("delivery-2", intake.coldLaunchReceipt()?.deliveryId)
         assertEquals(null, intake.coldLaunchRequest(snapshot(), recreated = true))
+    }
+
+    @Test
+    fun aRejectedColdLaunchDoesNotOccupyTheLaunchReceipt() {
+        // A typed rejection must not consume the launch identity: a later recreation of the SAME
+        // Intent would otherwise re-hold a request that was never delivered.
+        val intake = ProcessInboundNavigationIntake { "delivery-1" }
+        assertEquals(null, intake.coldLaunchRequest(snapshot(action = Intent.ACTION_SEND_MULTIPLE), recreated = false))
+        assertEquals(null, intake.coldLaunchReceipt())
     }
 
     @Test
