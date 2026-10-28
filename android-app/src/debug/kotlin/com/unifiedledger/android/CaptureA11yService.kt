@@ -5,6 +5,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
+import android.os.Process
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -17,10 +19,11 @@ import java.util.Locale
  * Debug-only recorder for the A-03 TalkBack walkthrough.
  *
  * TalkBack speaks the node it moves accessibility focus to, so recording each
- * TYPE_VIEW_ACCESSIBILITY_FOCUSED event in order captures the walkthrough's focus order and the
- * exact text source TalkBack reads (a Compose node is announced from its text and
- * contentDescription). Both apps can hold an accessibility service at once, so this runs beside
- * TalkBack without changing what TalkBack does.
+ * TYPE_VIEW_ACCESSIBILITY_FOCUSED event in order captures the walkthrough's focus order, plus the
+ * node's own text and contentDescription - the base of what TalkBack reads. Framework-derived
+ * decoration (role words, "4 of 4", state suffixes) is NOT in these fields; the synthesiser log is
+ * the authority for the spoken sentence. Both apps can hold an accessibility service at once, so
+ * this runs beside TalkBack without changing what TalkBack does.
  *
  * The capture is the focus stream, not the synthesiser: TalkBack's own decorations ("按钮",
  * "可双击激活") and the rendered audio are outside what an accessibility service can observe.
@@ -59,7 +62,22 @@ class CaptureA11yService : AccessibilityService() {
                 context: Context,
                 intent: Intent,
             ) {
-                val query = intent.getStringExtra(EXTRA_QUERY).orEmpty()
+                // The evidence file is the point of this service, so only the shell (adb broadcast)
+                // and this app may drive it, and the query must stay a single printable token.
+                val sender = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) sentFromUid else null
+                if (sender != null && sender != Process.SHELL_UID && sender != Process.myUid()) {
+                    write("focus-request | rejected-sender | uid=" + sender)
+                    return
+                }
+                val query = intent.getStringExtra(EXTRA_QUERY).orEmpty().trim()
+                if (query.any { it.code < 0x20 || it == '|' }) {
+                    write("focus-request | rejected-query")
+                    return
+                }
+                if (query.isBlank()) {
+                    write("focus-request | <blank> | not-found")
+                    return
+                }
                 val root = rootInActiveWindow
                 if (root == null) {
                     write("focus-request | $query | no-window")
@@ -71,8 +89,8 @@ class CaptureA11yService : AccessibilityService() {
                     return
                 }
                 // A plain text node can refuse the action; walk up the parents and take the first
-                // ancestor that accepts it, so the read-aloud reachability of the content is still
-                // observable.
+                // ancestor that accepts it. level > 0 means an ancestor took the focus, so what gets
+                // announced is that ancestor's merged text, not necessarily this node's own text.
                 var candidate: AccessibilityNodeInfo? = target
                 var ok = false
                 var level = 0
@@ -90,13 +108,15 @@ class CaptureA11yService : AccessibilityService() {
     private fun findFirst(
         node: AccessibilityNodeInfo,
         query: String,
+        depth: Int = 0,
     ): AccessibilityNodeInfo? {
+        if (depth > MAX_WALK_DEPTH) return null
         val text = node.text?.toString().orEmpty()
         val description = node.contentDescription?.toString().orEmpty()
         if (text.contains(query) || description.contains(query)) return node
         for (index in 0 until node.childCount) {
             val child = node.getChild(index) ?: continue
-            val found = findFirst(child, query)
+            val found = findFirst(child, query, depth + 1)
             if (found != null) return found
         }
         return null
@@ -104,11 +124,16 @@ class CaptureA11yService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        runCatching {
-            @Suppress("UnspecifiedRegisterReceiverFlag")
-            registerReceiver(focusReceiver, IntentFilter(ACTION_FOCUS_REQUEST), Context.RECEIVER_EXPORTED)
-        }
-        write("service-connected")
+        val registered =
+            runCatching {
+                val filter = IntentFilter(ACTION_FOCUS_REQUEST)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    registerReceiver(focusReceiver, filter, Context.RECEIVER_EXPORTED)
+                } else {
+                    registerReceiver(focusReceiver, filter)
+                }
+            }.isSuccess
+        write("service-connected focus-hook=" + if (registered) "ready" else "unavailable")
     }
 
     override fun onDestroy() {
@@ -125,12 +150,15 @@ class CaptureA11yService : AccessibilityService() {
         }
     }
 
-    private fun stamp(): String = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
+    private val stampFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+
+    private fun stamp(): String = stampFormat.format(Date())
 
     private companion object {
         const val TAG = "UL_A11Y_CAPTURE"
         const val FILE_NAME = "a11y-capture.log"
         const val ACTION_FOCUS_REQUEST = "com.unifiedledger.android.FOCUS_REQUEST"
         const val EXTRA_QUERY = "query"
+        const val MAX_WALK_DEPTH = 60
     }
 }

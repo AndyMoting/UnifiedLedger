@@ -3,7 +3,8 @@
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeViewAccessibilityFocused|typeViewFocused|typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagIncludeNotImportantViews|flagReportViewIds"
+    android:accessibilityFlags="flagIncludeNotImportantViews"
+    android:packageNames="com.unifiedledger.android"
     android:canRetrieveWindowContent="true"
     android:description="@string/capture_a11y_description"
     android:notificationTimeout="50" />
