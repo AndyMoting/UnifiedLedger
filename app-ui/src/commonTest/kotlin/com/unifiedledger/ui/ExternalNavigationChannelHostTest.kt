@@ -5,9 +5,9 @@ import kotlin.test.assertEquals
 
 /**
  * P7-09 09.A delivery-order contract (spec section 2.2; ACC-D-SHARE-01): a neutral inbound request
- * reaches only the RESUMED host, matched by the host token the adapter binds. A subscribed-but-paused
- * host must never absorb one — that is exactly how an accepted share became invisible on the create
- * path (device evidence `local/artifacts/p709-share-delivery/`: `entry.inboundIntake
+ * reaches only the RESUMED host, matched by IDENTITY against each host's own binding. A
+ * subscribed-but-paused host must never absorb one — that is how an accepted share became invisible on
+ * the create path (device evidence `local/artifacts/p709-share-delivery/`: `entry.inboundIntake
  * kind=OpenImport` with an empty screen, while the previous instance showed the same request once it
  * was brought forward).
  */
@@ -25,7 +25,7 @@ class ExternalNavigationChannelHostTest {
         channel.onHostPaused(previous)
 
         // The create path: the next instance has not bound yet, so the previous (paused) instance is
-        // still the channel's binding when the request arrives.
+        // the only binding when the request arrives.
         channel.deliver(share)
         assertEquals(emptyList<ExternalNavigationRequest>(), gathered, "a paused host must never absorb a delivery")
 
@@ -40,23 +40,38 @@ class ExternalNavigationChannelHostTest {
     }
 
     @Test
-    fun aBindingForANonResumedHostNeverStealsTheResumedHostsDelivery() {
+    fun aSupersededInstancesUnbindLeavesTheLiveHostsBindingIntact() {
+        // P709SD-01: dispose of a non-visible instance must not disarm the visible one.
         val channel = ExternalNavigationChannel()
-        val paused = Any()
-        val resumed = Any()
-        val toPaused = mutableListOf<ExternalNavigationRequest>()
-        val toResumed = mutableListOf<ExternalNavigationRequest>()
-        channel.subscribe(resumed) { toResumed += it }
-        channel.onHostResumed(resumed)
-        // A second (superseded) instance binds afterwards; the resumed host must still win.
-        channel.subscribe(paused) { toPaused += it }
+        val stale = Any()
+        val live = Any()
+        val toLive = mutableListOf<ExternalNavigationRequest>()
+        channel.subscribe(stale) { }
+        channel.subscribe(live) { toLive += it }
+        channel.onHostResumed(live)
+        channel.subscribe(stale, null)
         channel.deliver(share)
-        assertEquals(emptyList<ExternalNavigationRequest>(), toPaused)
-        assertEquals(emptyList<ExternalNavigationRequest>(), toResumed, "the newest binding is not the resumed one")
-        // The request waits for the resumed host to bind again, then lands exactly there.
-        channel.subscribe(resumed) { toResumed += it }
-        assertEquals(listOf<ExternalNavigationRequest>(share), toResumed)
-        assertEquals(emptyList<ExternalNavigationRequest>(), toPaused)
+        assertEquals(listOf<ExternalNavigationRequest>(share), toLive)
+    }
+
+    @Test
+    fun everyBoundHostKeepsItsOwnEntrySoReturningToAnOlderInstanceStillReceives() {
+        // P709SD-02: more than one instance may be bound; returning to the older one must work.
+        val channel = ExternalNavigationChannel()
+        val first = Any()
+        val second = Any()
+        val toFirst = mutableListOf<ExternalNavigationRequest>()
+        val toSecond = mutableListOf<ExternalNavigationRequest>()
+        channel.subscribe(first) { toFirst += it }
+        channel.subscribe(second) { toSecond += it }
+        channel.onHostResumed(second)
+        channel.deliver(share)
+        assertEquals(listOf<ExternalNavigationRequest>(share), toSecond)
+        channel.onHostPaused(second)
+        channel.onHostResumed(first)
+        channel.deliver(other)
+        assertEquals(listOf<ExternalNavigationRequest>(other), toFirst)
+        assertEquals(listOf<ExternalNavigationRequest>(share), toSecond)
     }
 
     @Test
@@ -101,7 +116,7 @@ class ExternalNavigationChannelHostTest {
     }
 
     @Test
-    fun anUnbindLeavesNoListenerAndDropsNothingThatWasNeverTaken() {
+    fun anUnbindKeepsTheRequestParkedForTheNextBoundAndResumedHost() {
         val channel = ExternalNavigationChannel()
         val host = Any()
         val received = mutableListOf<ExternalNavigationRequest>()
@@ -110,11 +125,13 @@ class ExternalNavigationChannelHostTest {
         channel.subscribe(host, null)
         channel.deliver(share)
         assertEquals(emptyList<ExternalNavigationRequest>(), received)
-        // The request stayed on the staging slot and drains to the host that binds next.
-        val other2 = Any()
+        // The resumed host has no binding yet, so the request stays parked; the next bound+resumed
+        // host drains it exactly once.
+        val nextHost = Any()
         val landed = mutableListOf<ExternalNavigationRequest>()
-        channel.subscribe(other2) { landed += it }
-        channel.onHostResumed(other2)
+        channel.subscribe(nextHost) { landed += it }
+        assertEquals(emptyList<ExternalNavigationRequest>(), landed, "a resumed host without a binding cannot take it")
+        channel.onHostResumed(nextHost)
         assertEquals(listOf<ExternalNavigationRequest>(share), landed)
     }
 }

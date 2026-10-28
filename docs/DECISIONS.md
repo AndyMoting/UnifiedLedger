@@ -5526,7 +5526,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 ## D-260 ACC-D-SHARE-01：create 路径的入站投递被不可见 host 吸收——设备取证、修复批与规格 §2.2 补条
 
-**状态：** 已批准并登记（2026-10-28）。缺陷由 P7-09-A01/A04 取证批次自建的**真实分享发送方**（自有 `FileProvider` + 真实 `ACTION_SEND` + 读授权；D-236 item 7 登记的最低成本路径）暴露。本条登记缺陷、修复批与规格补条。tracked 变更：`app-ui/src/commonMain/.../ExternalNavigation.kt`（通道按 host token 绑定并只交付给已 resume 的 host）、`app-ui/src/commonMain/.../P503App.kt`（新增可选 `inboundHostToken`）、`android-app/src/main/.../App.kt`（传 Activity）、`MainActivity.kt`（`onResume`/`onPause` 上报）、两份测试文件 + 一份新测试类、`docs/specs/2026-10-12-p7-09-system-entry-design.md` §2.2 一条。schema 维持 v36、零迁移、零依赖。
+**状态：** 已批准并登记（2026-10-28）。缺陷由 P7-09-A01/A04 取证批次自建的**真实分享发送方**（自有 `FileProvider` + 真实 `ACTION_SEND` + 读授权；D-236 item 7 登记的最低成本路径）暴露。本条登记缺陷、修复批与规格补条。tracked 变更：`app-ui/src/commonMain/.../ExternalNavigation.kt`（通道按 host token 绑定并只交付给已 resume 的 host）、`app-ui/src/commonMain/.../P503App.kt`（新增可选 `inboundHostToken`）、`android-app/src/main/.../App.kt`（传 Activity）、`MainActivity.kt`（`onResume`/`onPause` 上报）、三份测试文件（两份新增、一份按新契约更新）、`docs/specs/2026-10-12-p7-09-system-entry-design.md` §2.2 一条；共 9 个 tracked 文件。设备证据与索引见 `local/artifacts/p709-share-delivery/EVIDENCE.md`。schema 维持 v36、零迁移、零依赖。
 
 **决定：**
 
@@ -5538,13 +5538,14 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 2. **对既有登记的更正。** checkpoint 与 `PROGRESS_LOG` 续八记「真实分享方恒走 create 路径、`onNewIntent` 不由分享触发」。用带 `NEW_TASK` 的真实发送方（本批自建，等价于系统 chooser 的投递形态）实测为 `entry.onNewIntent`，故该结论**只对不带该 flag 的发送方成立**。P709-A04 的真实任务栈向量因此得到首条决定性读数：**分享投递路径取决于发送方的 flag，不取决于「是否真实分享方」**。本条不改 PR #168 的 `recreated` 语义，也不据 E2/E3 判 A01/A04 通过。
 
-3. **修复。** `ExternalNavigationChannel` 由「最后订阅者胜」改为**按 host token 绑定 + 只交付给已 resume 的 host**：`subscribe(token, listener)`、`onHostResumed(token)`、`onHostPaused(token)`；`deliver` 仅在「绑定 token == 已 resume token」时直接交付，否则进入**深度 1** 暂存槽，并在该 token 恢复（resume，或重新订阅且已 resume）时排空一次。`P503App` 新增可选 `inboundHostToken: Any? = null`（桌面端与既有调用点不变），Android 组合根传 `activity`，`MainActivity.onResume/onPause` 上报 `onHostResumed(this)`／`onHostPaused(this)`。
+3. **修复。** `ExternalNavigationChannel` 由「最后订阅者胜」改为**每个 host 各自绑定 + 只交付给已 resume 的 host**：`subscribe(token, listener)`、`onHostResumed(token)`、`onHostPaused(token)`；`deliver` 只在**已 resume 的那个 host 自己有绑定**时直接交付，否则进入**深度 1** 暂存槽，并在该 host 绑定成立或恢复时排空一次。绑定按**身份**（`===`）匹配并逐 host 保存，因此：非可见实例既不能取走交付，也不能在销毁时解绑掉别的实例（评审 P709SD-01/02 的整改）。`P503App` 新增可选 `inboundHostToken: Any? = null`（桌面端与既有调用点不变），Android 组合根传 `activity`，`MainActivity.onResume/onPause` 上报 `onHostResumed(this)`／`onHostPaused(this)`。
 
-4. **测试责任。** 运行期契约由 `app-ui` 纯测试钉住：新类 `ExternalNavigationChannelHostTest`（暂停 host 不得吸收、非 resume 的绑定不得截走、深度 1、冷启动等待首次 resume、解绑不吞请求）与既有 `ExternalNavigationReducerTest` 两条通道用例按新契约更新（通道 API 变更即契约变更，改动理由写在用例注释）。Android 接线由源码 pin 测试 `ShareDeliveryHostWiringTest` 钉住（`AppShortcutsTest` 先例：执行该对需要真实 Activity）。
+4. **测试责任。** 运行期契约由 `app-ui` 纯测试钉住：新类 `ExternalNavigationChannelHostTest`（暂停 host 不得吸收、被替换实例解绑不得解除他人绑定、两个实例各自绑定且回到旧实例仍可接收、深度 1、冷启动等待首次 resume、解绑后请求仍等待下一个绑定 host）与既有 `ExternalNavigationReducerTest` 两条通道用例按新契约更新（通道 API 变更即契约变更，改动理由写在用例注释）。Android 接线由源码 pin 测试 `ShareDeliveryHostWiringTest` 钉住（`AppShortcutsTest` 先例：执行该对需要真实 Activity）。
 
 5. **残余（如实披露，不并入任何 PASS）。**
-   - 同一进程内存在多个实例时，回到旧实例后其绑定是否恢复，取决于该实例是否重新订阅（当前 `DisposableEffect` 只在组合重建时执行）——**未测**，留作 P709-A04 的后续设备腿。
-   - 「已 resume 但组合尚未订阅」窗口内的请求会暂存而非丢弃；冷启动用例覆盖该窗口的语义，但**未**在设备上逐一计时。
+   - **传输层暂存槽先于 reducer**：停在暂存槽的请求若被后来的请求替换，被替换者**不会**到达 reducer，因此不触发 §2.2 的 retain-vs-replace 提示。这是传输层的深度 1 语义（规格已注明）；若将来要求「每个被接纳的分享都必须可见」，需把替换路由到 reducer 决策——**未做**。
+   - **host token 契约**：`inboundHostToken` 必须**身份唯一**（通道按 `===` 匹配）；传入值相等但非同一对象时绑定不会被识别。已写入参数与 API 的 KDoc，未用类型系统强制。
+   - 「已 resume 但组合尚未订阅」窗口内的请求会暂存而非丢弃；由冷启动与「resumed host without a binding」两条用例覆盖语义，但**未**在设备上逐一计时。
    - 本条不改变 P709-A01/A03/A04 的判决，也不改变「同 URI 再分享」的身份判定（§4，仍按「先改规格再改代码」推进）。
 
 **边界：** 入：上述修复、规格 §2.2 一条、本条。出：不改 §4 身份判定与 PR #168 语义；不改 D-225/D-226/D-227 的任何裁决；零 schema/迁移/依赖；不触碰 widget/backup/budget 各 owner。

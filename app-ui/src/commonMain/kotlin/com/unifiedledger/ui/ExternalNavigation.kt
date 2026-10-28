@@ -371,35 +371,49 @@ internal fun startupHeldFallbackAfterLanding(
  * renders nothing, because the PREVIOUS instance still owned the subscription while the new one was
  * being created; bringing the previous instance forward showed the very same request. Buffering until
  * the bound, resumed host can take it keeps the request on the staging slot this transport already
- * owns and hands it to the host that is actually visible — exactly once.
+ * owns and hands it to the host that is actually visible — exactly once. Each host keeps its own
+ * binding, so a non-visible instance can neither take a delivery nor disarm another by disposing.
  */
 class ExternalNavigationChannel {
-    private class Binding(val token: Any, val listener: (ExternalNavigationRequest) -> Unit)
-
-    private var binding: Binding? = null
+    // Per-host bindings keyed by IDENTITY (`===`), never by equality: the adapter hands in a stable
+    // platform object (the Activity) and the channel must not confuse two value-equal hosts.
+    private val listeners = mutableMapOf<Any, (ExternalNavigationRequest) -> Unit>()
     private var buffered: ExternalNavigationRequest? = null
     private var resumedToken: Any? = null
 
-    /** Delivers one neutral request to the resumed host bound to this channel, or buffers it. */
+    /**
+     * Delivers one neutral request to the RESUMED host's binding, or parks it (depth one).
+     *
+     * A host that is bound but not resumed is never handed work; a host that is resumed but has no
+     * binding (a composition that has not subscribed yet, or one that was unbound) leaves the request
+     * parked until it binds — never dropped. Every bound host keeps its own entry, so an instance that
+     * is not visible can neither steal a delivery nor disarm another instance by disposing.
+     */
     fun deliver(request: ExternalNavigationRequest) {
-        val bound = binding
-        if (bound == null || resumedToken == null || bound.token !== resumedToken) {
+        val resumed = resumedToken
+        val listener = if (resumed != null) listenerFor(resumed) else null
+        if (listener == null) {
             buffered = request
         } else {
-            bound.listener(request)
+            listener(request)
         }
     }
 
     /**
-     * Binds one host token and its listener. A buffered request drains exactly once, and only when
-     * this token is the resumed one; `null` unbinds and leaves the buffer empty.
+     * Binds (or, with `null`, unbinds) THIS token's listener; another token's binding is untouched.
+     * A parked request drains exactly once, and only into the resumed host's binding.
      */
     fun subscribe(token: Any?, listener: ((ExternalNavigationRequest) -> Unit)?) {
-        binding = if (token != null && listener != null) Binding(token, listener) else null
-        if (binding != null) drainToResumedHost()
+        if (token == null) return
+        if (listener == null) removeBinding(token) else listeners[token] = listener
+        drainToResumedHost()
     }
 
-    /** The Activity adapter reports that [token] is resumed; a waiting request drains here. */
+    /**
+     * The Activity adapter reports that [token] is resumed. The token MUST be identity-unique (the
+     * Activity instance); the channel matches bindings by `===`, so a value-equal token would not be
+     * recognised.
+     */
     fun onHostResumed(token: Any) {
         resumedToken = token
         drainToResumedHost()
@@ -410,13 +424,25 @@ class ExternalNavigationChannel {
         if (resumedToken != null && resumedToken === token) resumedToken = null
     }
 
+    private fun listenerFor(token: Any): ((ExternalNavigationRequest) -> Unit)? =
+        listeners.entries.firstOrNull { it.key === token }?.value
+
+    private fun removeBinding(token: Any) {
+        val iterator = listeners.entries.iterator()
+        while (iterator.hasNext()) {
+            if (iterator.next().key === token) {
+                iterator.remove()
+                return
+            }
+        }
+    }
+
     private fun drainToResumedHost() {
-        val bound = binding ?: return
-        val pending = buffered ?: return
         val resumed = resumedToken ?: return
-        if (bound.token !== resumed) return
+        val pending = buffered ?: return
+        val listener = listenerFor(resumed) ?: return
         buffered = null
-        bound.listener(pending)
+        listener(pending)
     }
 }
 

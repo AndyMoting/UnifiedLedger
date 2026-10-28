@@ -31,6 +31,22 @@ class ShareDeliveryHostWiringTest {
         )
     }
 
+    @Test
+    fun theCompositionRootBindsTheActivityAsTheInboundHostToken() {
+        // P709SD-05: without this line the channel can never match a resumed token, every delivery
+        // parks, and the whole suite would stay green — so pin the wiring itself.
+        val root =
+            repositoryFile("android-app/src/main/kotlin/com/unifiedledger/android/App.kt")
+                .toFile()
+                .readLines()
+                .map { it.trim() }
+                .filterNot { it.startsWith("//") }
+        assertTrue(
+            root.any { it == "inboundHostToken = activity," },
+            "the Android composition root must bind the Activity as the inbound host token",
+        )
+    }
+
     private fun repositoryFile(relative: String): Path {
         var candidate = Path.of(System.getProperty("user.dir"))
         repeat(8) {
