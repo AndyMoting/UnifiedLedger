@@ -5,7 +5,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.os.Build
 import android.os.Process
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
@@ -64,8 +63,8 @@ class CaptureA11yService : AccessibilityService() {
             ) {
                 // The evidence file is the point of this service, so only the shell (adb broadcast)
                 // and this app may drive it, and the query must stay a single printable token.
-                val sender = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) sentFromUid else null
-                if (sender != null && sender != Process.SHELL_UID && sender != Process.myUid()) {
+                val sender = sentFromUid
+                if (sender != Process.SHELL_UID && sender != Process.myUid()) {
                     write("focus-request | rejected-sender | uid=" + sender)
                     return
                 }
@@ -126,12 +125,7 @@ class CaptureA11yService : AccessibilityService() {
         super.onServiceConnected()
         val registered =
             runCatching {
-                val filter = IntentFilter(ACTION_FOCUS_REQUEST)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    registerReceiver(focusReceiver, filter, Context.RECEIVER_EXPORTED)
-                } else {
-                    registerReceiver(focusReceiver, filter)
-                }
+                registerReceiver(focusReceiver, IntentFilter(ACTION_FOCUS_REQUEST), Context.RECEIVER_EXPORTED)
             }.isSuccess
         write("service-connected focus-hook=" + if (registered) "ready" else "unavailable")
     }
