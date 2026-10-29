@@ -5751,18 +5751,18 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **决定：**
 
-1. **绑定（§10.2）**：AVD `ul_p7_d01`（`emulator-5680`，API 36 / Android 16，隔离 adb `5038`；设备身份与 `emu avd name`、`dalvik.vm.heapgrowthlimit=192m` 的捕获见 `local/artifacts/p709-a06/device-id-a06.txt`），收工 `emu kill`。应用与 D-265 同一 CI 工件（sha256 见 D-265 第 1 条，`B86163C9…DEF7AC6`）；**可复用依据**：`git diff --name-only 1dbb08e2 289dfe3` 只有 `docs/CURRENT_STATE.md` 与 `docs/DECISIONS.md`，属 §10.2:408 的「仅无关文档变化」。
+1. **绑定（§10.2）**：AVD `ul_p7_d01`（`emulator-5680`，API 36 / Android 16，隔离 adb `5038`；设备身份与 `emu avd name`、`dalvik.vm.heapgrowthlimit=192m` 的捕获见 `local/artifacts/p709-a06/device-id-a06.txt`），收工 `emu kill`。应用与 D-265 同一 CI 工件（sha256 见 D-265 第 1 条，`B86163C9…DEF7AC6`）；**可复用依据**：`git diff --name-only 1dbb08e2 289dfe3`（`1dbb08e2` 是合并树对象）只有 `docs/CURRENT_STATE.md` 与 `docs/DECISIONS.md`，属 §10.2:408 的「仅无关文档变化」。
 
-2. **数据面（来源分层；§10.2 差异说明）**：候选层取既有 `local/artifacts/p709-accept/ul20k-group.db`（v30，20,000 候选 + 10,000 重复关系），**由应用首启自行迁移到 v36**（`user_version 36`、`integrity_check ok`、候选与重复计数不变）——该步是产品行为。交易层由 `local/artifacts/p709-a06/build_transactions.py` 追加（**非产品入口**）：形状为**纯 `EXPENSE`**、单一 `CNY`、两个固定账户（`expense-account-local` / `asset-payment-local`）、每笔 2 条 posting + 1 条 `transaction_version`/`current_version` + 一个 `posting_set`、无分类/标签/商家/作废/修正，统计时间自 2026-10-01 起**每 7 分钟一笔**（跨 5 个统计月）；`subset.py` 再按 `transaction_id` 删行派生 2k/5k/10k 三档子集。每档库均 `integrity_check ok`、`foreign_key_check` 空、已 `ANALYZE`。**结论只覆盖「规模下的行为」**，不覆盖分类/标签/商家/作废/修正等面。
+2. **数据面（来源分层；§10.2 差异说明）**：候选层取既有 `local/artifacts/p709-accept/ul20k-group.db`（v30，20,000 候选 + 10,000 重复关系），**由应用首启自行迁移到 v36**（`user_version 36`、`integrity_check ok`、候选与重复计数不变）——该步是产品行为。交易层由 `local/artifacts/p709-a06/build_transactions.py` 追加（**非产品入口**）：形状为**纯 `EXPENSE`**、单一 `CNY`、两个固定账户（`expense-account-local` / `asset-payment-local`）、每笔 2 条 posting + 1 条 `transaction_version`/`current_version` + 一个 `posting_set`、无分类/标签/商家/作废/修正，统计时间自 2026-10-01 起**每 7 分钟一笔**（合成层跨 2026-10 至 2027-01 四个统计月；库内另 2 笔来自迁移模板、在 2026-08，故 20,002 = 模板 2 + 合成 20,000）；`subset.py` 再按 `transaction_id` 删行派生 2k/5k/10k 三档子集。每档库均 `integrity_check ok`、`foreign_key_check` 空、已 `ANALYZE`。**结论只覆盖「规模下的行为」**，不覆盖分类/标签/商家/作废/修正等面。
 
 3. **读数（同一 AVD、同一 APK，只换库）**：
 
    | 正式交易 | 结果 | 决定性证据 |
    | --- | --- | --- |
-   | 2,000 | **通过**：`read.currentState end kind=success`、`read.monthlyPayload end kind=ready`，首页可操作；单次快照 Java Heap PSS 62.3 MB、Dalvik Heap Alloc 91.9 MiB | `logcat-2k.txt`、`meminfo-2k.txt`、`ui-2k.xml` |
-   | 5,000 | **OOM，进程死亡**（`am start` 起约 32 s）；栈落**放置阶段** `RectList.resizeStorage` ← `RectManager.recalculateRectIfDirty` ← `MeasurePassDelegate.markNodeAndSubtreeAsPlaced`；越限前两次读均已成功（`currentState` 10:51:38.934、`monthlyPayload ready` 10:51:52.573）；总进程 PSS 峰值 343,919 KB | `logcat-5k.txt`、`meminfo-5k.txt` |
+   | 2,000 | **通过**：`read.currentState end kind=success`、`read.monthlyPayload end kind=ready`，首页可操作；单次快照 `Java Heap` PSS 62.3 MB、Dalvik `Alloc` 52.9 MiB（总 `Heap Alloc` 94.1 MB 含 native 39.0 MB） | `logcat-2k.txt`、`meminfo-2k.txt`、`ui-2k.xml` |
+   | 5,000 | **OOM，进程死亡**（进程起动 `Start proc` → FATAL 约 32 s）；栈落**放置阶段** `RectList.resizeStorage` ← `RectManager.recalculateRectIfDirty` ← `MeasurePassDelegate.markNodeAndSubtreeAsPlaced`；越限前两次读均已成功（`currentState` 10:51:38.934、`monthlyPayload ready` 10:51:52.573）；总进程 PSS 峰值 343,919 KB | `logcat-5k.txt`、`meminfo-5k.txt` |
    | 10,000 | **OOM 抛出**，栈落**月度读** `CursorWindow.getString` ← `ledgerEntryRowsForLedger` ← `QueryMonthlyActivity.loadRows` | `oom-stack-10k.txt` |
-   | 20,002 | **OOM，进程死亡**（`am start` 起约 19 s）；栈落**节点插入** `InsertNodeFixup` → `LayoutNode.<init>`（**无应用帧**）；时序上 `currentState` 成功（10:52:28.658）后**未进入** `monthlyPayload` 即崩；总进程 PSS 峰值 287,401 KB | `logcat-20k.txt`、`oom-stack-20k.txt`、`meminfo-20k.txt` |
+   | 20,002 | **OOM，进程死亡**（进程起动 `Start proc` → FATAL 约 19 s）；栈落**节点插入** `InsertNodeFixup` → `LayoutNode.<init>`（**无应用帧**）；时序上 `currentState` 成功（10:52:28.658）后**未进入** `monthlyPayload` 即崩；总进程 PSS 峰值 287,401 KB | `logcat-20k.txt`、`oom-stack-20k.txt`、`meminfo-20k.txt` |
 
    堆上限 192 MB（`growth limit 201326592`，与 `dalvik.vm.heapgrowthlimit=192m` 一致）。**两个缺陷在同一堆上叠加**：10k 档死在月度读、20k 档死在界面组合，故修复后 20k 与 50k 两档都必须复测，不能只测一档。
 
@@ -5770,14 +5770,14 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 5. **两个独立规模缺陷（登记；不占 P709 编号）**：
 
-   - **DEF-A（月度读 O(整账)）**：`QueryMonthlyActivity.query/trend/selectableMonths` 全部经 `loadRows()` → `readPort.loadLedgerEntryRows(ledgerId)`，适配器用 `executeAsList()` 全量物化（`SqlDelightLedgerCurrentStateReadAdapter.kt:203-204`），SQL 无月份谓词、无 `LIMIT`。影响面：首页月卡、趋势、可选月份，**以及首页一次刷新里的第 4 次全账读**（`QueryLedgerEntryRows.query()` → `loadLedgerEntryRows`，`QueryLedgerEntryRows.kt:16`，接线 `P503App.kt:975/976/977/979`）。**不含小组件**：小组件走 `QueryWidgetMonthlySnapshot(MonthlyContributionReadPort)` 的有界月读（`monthlyContributionRowsInWindow(ledgerId, startNanos, endNanos)`，`SqlDelightMonthlyContributionReadAdapter.kt:37/118`），spec §6.2 冻结其「不得走整账读」。
-     **修复指引（分三条，不可一概下推）**：`query` 加月份窗口谓词 + 上限（可复用有界月读的形状）；`trend` 加 12 月窗口谓词；`selectableMonths` 要的是全账最早统计月，只能改用 `MIN(statistics_at)` 聚合读，谓词下推在结构上解决不了它。
-   - **DEF-B（首页流水不虚拟化）**：首页流水在 `P503OverviewScreen.kt:82`（`Column + verticalScroll`）逐行组合，行源在 `:123-133`（`flowRows.forEach` / `state.transactions.forEach`）；行数据来自上述无上限的 `loadLedgerEntryRows`。**更正一处易误指**：`P503LedgerView.kt:369-370` 属 `P503TransactionDetailScreen`（单笔详情），**不是**本缺陷位置。
+   - **DEF-A（月度读 O(整账)）**：`QueryMonthlyActivity.query/trend/selectableMonths` 全部经 `loadRows()` → `readPort.loadLedgerEntryRows(ledgerId)`，适配器用 `executeAsList()` 全量物化（`SqlDelightLedgerCurrentStateReadAdapter.kt:203-204`），SQL 无月份谓词、无 `LIMIT`。影响面：首页月卡、趋势、可选月份，**以及首页一次加载里的另两次全账读**：`QueryLedgerCurrentState.query()` → `loadCurrentRows`（适配器 `executeAsList`，`SqlDelightLedgerCurrentStateReadAdapter.kt:59-60`；SQL 无 `LIMIT`、无窗口谓词；接线 `P503App.kt:1672`）与 `QueryLedgerEntryRows.query()` → `loadLedgerEntryRows`（`QueryLedgerEntryRows.kt:16`；接线 `P503App.kt:975/976/977/979`）——合计**一次首页加载触发 5 次全账读**。**不含小组件**：小组件走 `QueryWidgetMonthlySnapshot(MonthlyContributionReadPort)` 的有界月读（`monthlyContributionRowsInWindow(ledgerId, startNanos, endNanos)`，`SqlDelightMonthlyContributionReadAdapter.kt:37/118`），`MonthlyContributionReadPort.kt:14-15` 明文禁止该路走整账读（规格 §6.2 冻结的是「复用有界月读」）。
+     **修复指引（分三条，不可一概下推）**：`query` 加月份窗口谓词 + 上限（可复用有界月读的形状）；`trend` 加 12 月窗口谓词；`selectableMonths` 要的是全账最早统计月，只能改用 `MIN(statistics_at)` 聚合读（须沿用同一 effective/current-version 谓词，否则被作废的最早一笔会把可选月份域前移），谓词下推在结构上解决不了它。
+   - **DEF-B（首页流水不虚拟化）**：首页流水在 `P503OverviewScreen.kt:82`（`Column + verticalScroll`）逐行组合，行源在 `:123-133`：`state.transactions` 分支来自无上限的 `loadCurrentRows`（**20k 档走的正是这一支**——`flowRowsForDisplay` 在月读未就绪时返回 `null`，该档 `monthlyPayload` 从未开始），`flowRows` 分支来自无上限的 `loadLedgerEntryRows`；两支都必须有界。**更正一处易误指**：`P503LedgerView.kt:369-370` 属 `P503TransactionDetailScreen`（单笔详情），**不是**本缺陷位置。
 
 6. **A6-5（缺失/损坏库无新空库）两半均已取证**：
 
    - **缺失指针**：删 `active-generation` 冷启动 → `storage.resolve end outcome=pointerMissing`（两次）→ `owner.startup end kind=Failed causeClass=LedgerStorageRejectedException`；`ledger-generations/` 仍只有 `gen-1`（**未新建空库**）；小组件只显示「打开应用以查看本月收支」；恢复指针后 `plannedGeneration` → `state=Ready`（`a6-5-missing.txt`、`a6-5-missing-after.txt`、`a6-5-missing-widget.xml`、`a6-5-restored.txt`）。
-   - **损坏库**：在指针完好时把 `gen-1/ledger.db` 头部 8 KiB 覆零 → `storage.resolve end outcome=activeGenerationUnusable` → `startupController.state state=StartupError`（fail-closed）；仍只有 `gen-1`；小组件显示不可用；换回好库后 `state=Ready`、`read.currentState end kind=success`、`read.monthlyPayload end kind=ready`（`a6-5-corrupt.txt`、`a6-5-corrupt-after.txt`、`a6-5-corrupt-widget.xml`、`a6-5-recovered.txt`）。
+   - **损坏库**：在指针完好时把 `gen-1/ledger.db` 头部 8 KiB 覆零 → `storage.resolve end outcome=activeGenerationUnusable` → `startupController.state state=StartupError`（fail-closed）；仍只有 `gen-1`；小组件显示不可用；换回好库后 `state=Ready`、`read.currentState end kind=success`、`read.monthlyPayload end kind=ready`（`a6-5-corrupt.txt`、`a6-5-corrupt-after.txt`、`a6-5-corrupt-widget.xml`、`a6-5-recovered.txt`；两态的 widget dump 逐字节相同属预期——同一不可用文案）。
 
    **未做**：A6-2/3/4（后台刷新 × 恢复竞争、旧读晚到、租约超时）被 OOM 阻断；2k 档的结构性读数不足以代表 20k/50k。**50k 档未构建、未运行**——20k 已 FAIL，50k 不改变结论。
 
