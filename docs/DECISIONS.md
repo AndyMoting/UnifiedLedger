@@ -5784,3 +5784,28 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 7. **边界与承接**：修复属**独立规模缺陷批**（tracked 代码，高风险路由）。DEF-A 按第 5 条的三条指引分别处理，且**不得**把小组件改到整账读上；DEF-B 需虚拟化或分页，分页会改变「首页显示什么」的产品语义，须先冻结方案。修完后 A06 按「2k 对照 + 20k + 50k」三档重跑并补 A6-2/3/4。本条不改 D-261/D-262/D-263/D-264/D-265 的其它判决；不声称 P7-09 或 A06 完成。
 
 **关联决定：** D-265（A05 修正格）、D-264、D-263、D-261、D-259（向量账口径）、D-243（61k **候选**规模口径，与本条的正式交易轴互不影响）、D-236（P7-09 取证批）、阶段计划 §9.3、§10.2、§10.3:416。
+
+## D-267 P709-A06 修复批的 DEF-C：有界月读把月度投影的币种轴收窄为窗口币种（判窗口语义回归，修代码并补 CI 机械门）
+
+**状态：** 已批准并登记（2026-10-30，计划 §10.1/§10.2 与 D-266 第 5 条的缺陷登记；实施 = PR #181 的 `98a7b94` 与 `0261182`，零 schema / 零迁移 / 零依赖，schema 维持 v36）。
+
+**决定：**
+
+1. **缺陷与根因（DEF-C）**：DEF-A（`81e63d8`）把 `QueryMonthlyActivity.query/trend` 的行读换成 `loadLedgerEntryRowsInWindow`，而 `MonthlyBuckets.aggregate` 的币种轴由传入行推导。窗口外的币种因此从输出消失：跨月修正前的 4 月窗口没有任何行 → `MonthlyActivity.currencies` 为空 → `P705CorrectionCommitPortTest.crossMonthCorrectionMovesOnlyTheStatisticsMonthThroughTheMonthlyProjection` 在 `:206` 的 `currencies.single()` 抛 `NoSuchElementException`；同一形状另使 `QueryMonthlyActivityTest.emptyMonthRendersExplicitZerosAndEmptyLedgerYieldsNoCurrencies`（`:369`）为红。判**窗口语义回归**（非夹具缺投影）：`MonthlyActivity.currencies` 的冻结契约是「每账本活动币种一行」（`MonthlyBuckets.kt` 的 data class 契约），R-Q07-1 要求空月显式零值；该测试自 `33988b9`（D-156）起存在，DEF-A 之前在 `main` 绿。
+
+2. **修复（不恢复整账读）**：账本级币种轴保留为独立的有界投影。
+   - 新读端口方法 `LedgerCurrentStateReadPort.loadLedgerActivityCurrencies`：默认实现 = `MonthlyBuckets.activityCurrenciesOf(loadLedgerEntryRows(...))`，即前 D-266 语义，既有端口 fake 源码兼容且等价；该默认**不中性**——未实现 `loadLedgerEntryRows` 的端口按 G6 抛异常，由用例映射 `Unavailable`。SQL 适配器以一条 `SELECT DISTINCT`（`ledgerActivityCurrencies`）覆盖，join 链与有效谓词同 `ledgerEntryRowsForLedger`，不物化任何行。
+   - `MonthlyBuckets.aggregate` 的发轴 = **传入轴 ∪ 行币种**（派生式收敛到 `activityCurrenciesOf`）。金额从不依赖轴：撕裂读只会多出一行零值，绝不丢某币种当月金额（F10：分类区始终与月卡对账）。
+   - `QueryMonthlyActivity.query/trend` 读序 = 窗行 → 行目录一致性 → 轴 → 轴目录一致性 → 折叠；轴读失败 → `Unavailable`；轴币种在本账本目录中无账户 → `InvalidState`（轴来自窗口外，行级门看不到它，属同一不一致族）。
+   - 其余 `aggregate` 调用方（`BudgetMonth`、`TagMerchantFiltering`、`QueryWidgetMonthlySnapshot`）保持各自的行集合币种规则（小组件 O-CUR：空月按配置币种零值），本批不改。
+
+3. **CI 机械门（同批，非 DEF-C 本身）**：`Kotlin tests core` 在跑任何测试前死于 ktlint（`function-expression-body`、`multiline-expression-wrapping`、`chain-method-continuation`、`parameter-list-wrapping`、游离空行），已按 `ktlint_official` 格式化，语义中性。`DefABoundedReadsEquivalenceTest` 未登记 `tools/ci/ledger-data-shards.txt`，在分片执行下**从未被 CI 执行**，而其符号断言与夹具方向相反（夹具 expense 腿 +amount、asset 腿 −amount，断言写成 asset +Σ）：已登记 shard 2（112 → 113 类，37/37/39）并改为 ledger-signed 期望。**该类在 `98a7b94` 之前未被 CI 执行**属事实披露，不是改判据。
+
+4. **证据**：修复批 = PR #181（`98a7b94` 首轮 + `0261182` 评审闭包轮）。首轮 CI（`0ac2bfa`）红因两条独立问题：`ledger-data shard 2` 的 `P705CorrectionCommitPortTest` 抛 `NoSuchElementException`，以及 `Kotlin tests core` 的 ktlint 4 处违规；修复后该 PR 的 required check 全绿（Kotlin tests / Android compile / Python tests / Trace scan），`ledger-data shard 2` 与 `Kotlin tests core` 均 SUCCESS，分片覆盖守卫打印 `expected 113, actual 113`。评审拓扑：独立规格评审 + 独立质量评审（均 APPROVE-WITH-FINDINGS，无 P1）→ 写者闭包 → distinct verifier；具体 run URL、finding 编号与逐条闭合证据见检查点与 PR 讨论。
+
+5. **边界与残余（不得合并签收）**：
+   - 行级一致性校验只覆盖读取窗口；轴币种另做目录校验，但「账户缺失而同币种另有账户」仍检不出——登记为有界读的残余边界，不判 FAIL。
+   - 首页一次加载新增两趟整账 `SELECT DISTINCT`（`query()` 与 `trend()` 各一趟；不物化、内存有界，20k→40k / 50k→100k 驱动行/趟）；CPU/IO 成本由 A06 的 2k/20k/50k 重跑单列度量，超标时最小改动是「一次刷新共享一次轴」。
+   - 本条**不改** D-266 的 A06 = FAIL 判决与向量账（62 = PASS 46 + 残留 15 + 修订范围完成 1）；A06 仍须按「2k 对照 + 20k + 50k + A6-2/3/4」重跑后才可能改变判决。
+
+**关联决定：** D-266（A06 首跑与 DEF-A/DEF-B；本条闭合其修复批的 CI 红）、D-259/D-261/D-263（向量账口径与三分关系）、D-184 第 4 条（数值时间投影与有界月读）、D-156（P7-05 冻结锚与其覆盖债）、D-145（P7-03 读边界）、阶段计划 §10.1/§10.2/§10.4.5。
