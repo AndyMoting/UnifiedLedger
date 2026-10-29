@@ -5787,7 +5787,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 ## D-267 P709-A06 修复批的 DEF-C：有界月读把月度投影的币种轴收窄为窗口币种（判窗口语义回归，修代码并补 CI 机械门）
 
-**状态：** 已批准并登记（2026-10-30，计划 §10.1/§10.2 与 D-266 第 5 条的缺陷登记；实施 = PR #181 的 `98a7b94` 与 `0261182`，零 schema / 零迁移 / 零依赖，schema 维持 v36）。
+**状态：** 已批准并登记（2026-10-30，计划 §10.1/§10.2 与 D-266 第 5 条的缺陷登记；实施 = PR #181 的 `98a7b94`（修复主体）、`0261182`（评审闭包）、`08c5c90`（本登记）、`ee797e4`（测试假件重构与契约措辞）与后续记录收敛批（见 PR #181 提交列表），零 schema / 零迁移 / 零依赖，schema 维持 v36）。
 
 **决定：**
 
@@ -5801,7 +5801,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 3. **CI 机械门（同批，非 DEF-C 本身）**：`Kotlin tests core` 在跑任何测试前死于 ktlint（`function-expression-body`、`multiline-expression-wrapping`、`chain-method-continuation`、`parameter-list-wrapping`、游离空行），已按 `ktlint_official` 格式化，语义中性。`DefABoundedReadsEquivalenceTest` 未登记 `tools/ci/ledger-data-shards.txt`，在分片执行下**从未被 CI 执行**，而其符号断言与夹具方向相反（夹具 expense 腿 +amount、asset 腿 −amount，断言写成 asset +Σ）：已登记 shard 2（112 → 113 类，37/37/39）并改为 ledger-signed 期望。**该类在 `98a7b94` 之前未被 CI 执行**属事实披露，不是改判据。
 
-4. **证据**：修复批 = PR #181（`98a7b94` 首轮 + `0261182`/`08c5c90` 评审闭包轮）。**首个可编译提交** `0ac2bfa` 的 CI（run 40899579857）红因两条独立问题：`ledger-data shard 2` 的 `P705CorrectionCommitPortTest` 抛 `NoSuchElementException`（279 tests / 1 failed），`Kotlin tests core` 死于 ktlint（该 PR 更早的 `81e63d8`/`4aad126`/`6fc8c50` 属编译期修复，非本判据）。`98a7b94` 的 run 40922453589 **四 required check 全绿**（Kotlin tests / Android compile / Python tests / Trace scan），`ledger-data shard 2` 与 `Kotlin tests core` 均 SUCCESS，覆盖守卫打印 `expected 113, actual 113` 与 shard 2 `expected 37, actual 37`，timing report 记录该类实测 18.7 s。闭包轮的 `0261182` run（40925793560 等）被后继推送取消，`08c5c90` 的 run 40926094462 在评审时为 in_progress；**合并门 = 最终 head 的四 required check 全绿**，不引用旧 head 的绿，终态记入检查点。评审拓扑：独立规格评审 + 独立质量评审（首轮各 APPROVE-WITH-FINDINGS、无 P1；闭包轮 7 项 CLOSED + 2 项记录面留待 micro-delta，本次提交闭合）→ 写者闭包 → distinct verifier；finding 编号与逐条闭合证据见检查点与 PR #181。
+4. **证据**：修复批 = PR #181（`98a7b94` 首轮 + `0261182`/`08c5c90` 评审闭包轮 + `ee797e4` 记录与默认覆盖补齐 + 后续措辞收敛批）。**首个可编译提交** `0ac2bfa` 的 CI（run 40899579857）红因两条独立问题：`ledger-data shard 2` 的 `P705CorrectionCommitPortTest` 抛 `NoSuchElementException`（279 tests / 1 failed），`Kotlin tests core` 死于 ktlint（该 PR 更早的 `81e63d8`/`4aad126`/`6fc8c50` 属编译期修复，非本判据）。`98a7b94` 的 run 40922453589 **四 required check 全绿**（Kotlin tests / Android compile / Python tests / Trace scan），`ledger-data shard 2` 与 `Kotlin tests core` 均 SUCCESS，覆盖守卫打印 `expected 113, actual 113` 与 shard 2 `expected 37, actual 37`，timing report 记录该类实测 18.7 s。闭包轮的 `0261182` run（40925793560 等）被后继推送取消，`08c5c90` 的 run 40926094462 在评审时为 in_progress；**合并门 = 最终 head 的四 required check 全绿**，不引用旧 head 的绿，终态记入检查点。评审拓扑：独立规格评审 + 独立质量评审（首轮各 APPROVE-WITH-FINDINGS、无 P1；闭包轮 7 项 CLOSED + 2 项记录面留待 micro-delta，本次提交闭合）→ 写者闭包 → distinct verifier；finding 编号与逐条闭合证据见检查点与 PR #181。
 
 5. **边界与残余（不得合并签收）**：
    - 行级一致性校验只覆盖读取窗口；轴币种另做目录校验，但「账户缺失而同币种另有账户」仍检不出——登记为有界读的残余边界，不判 FAIL。该门在 DEF-A 之前覆盖整账，本条登记其随有界读收窄为「窗口行 + 轴币种」两段（规格 §4.3 的措辞本身不带范围限定）。
