@@ -414,7 +414,7 @@ class QueryMonthlyActivityTest {
             )
         val useCase =
             QueryMonthlyActivity(
-                readPort = EntryRowsPort(rows, axis = { throw IllegalStateException("axis unavailable") }),
+                readPort = AxisPort(rows, axis = { throw IllegalStateException("axis unavailable") }),
                 ledgerId = ledgerId,
                 catalog = catalog(),
                 clock = FixedLedgerClock(Instant.parse("2026-03-20T02:00:00Z")),
@@ -437,7 +437,7 @@ class QueryMonthlyActivityTest {
             )
         val useCase =
             QueryMonthlyActivity(
-                readPort = EntryRowsPort(rows, axis = { listOf(cny, CurrencyUnit("JPY", 0)) }),
+                readPort = AxisPort(rows, axis = { listOf(cny, CurrencyUnit("JPY", 0)) }),
                 ledgerId = ledgerId,
                 catalog = catalog(),
                 clock = FixedLedgerClock(Instant.parse("2026-03-20T02:00:00Z")),
@@ -461,7 +461,7 @@ class QueryMonthlyActivityTest {
         val activity =
             assertIs<MonthlyActivityResult.Success>(
                 QueryMonthlyActivity(
-                    readPort = EntryRowsPort(rows, axis = { listOf(cny) }),
+                    readPort = AxisPort(rows, axis = { listOf(cny) }),
                     ledgerId = ledgerId,
                     catalog = catalog(),
                     clock = FixedLedgerClock(Instant.parse("2026-03-20T02:00:00Z")),
@@ -470,6 +470,25 @@ class QueryMonthlyActivityTest {
         assertEquals(listOf(cny, usd), activity.currencies.map { it.currency })
         assertEquals(0L, activity.currencies[0].netExpenseMinorUnits)
         assertEquals(250L, activity.currencies[1].netExpenseMinorUnits)
+    }
+
+    @Test
+    fun thePortDefaultDerivesTheAxisFromTheUnboundedEntryRead() {
+        // DEF-C (D-267): the port default IS the pre-D-266 derivation and the equivalence anchor
+        // for every existing fake. EntryRowsPort inherits it on purpose, so this test keeps the
+        // default's success leg executed instead of shadowed by an override.
+        val rows =
+            listOf(
+                row("tx-cny", TransactionKind.EXPENSE, "2026-01-05T02:00:00Z") {
+                    posting("posting-cny", expenseId, 1_000L)
+                    posting("posting-cny-payment", assetId, -1_000L)
+                },
+                row("tx-usd", TransactionKind.EXPENSE, "2026-02-05T02:00:00Z") {
+                    posting("posting-usd", usdExpenseId, 250L, usd)
+                    posting("posting-usd-payment", usdAssetId, -250L, usd)
+                },
+            )
+        assertEquals(listOf(cny, usd), EntryRowsPort(rows).loadLedgerActivityCurrencies(ledgerId))
     }
 
     @Test
@@ -769,13 +788,11 @@ private class ThrowingLedgerClock : LedgerClock {
 }
 
 /**
- * Read-port fake that only serves the P7-03 entry-row surface. [axis] is the ledger-level
- * currency axis the fake reports; its default is the real one, so a test that exercises the
- * failure or inconsistency leg supplies its own.
+ * Read-port fake that serves the P7-03 entry-row surface and INHERITS the real axis default, so
+ * the default's success leg keeps running instead of being shadowed by every fake.
  */
-private class EntryRowsPort(
+private open class EntryRowsPort(
     private val rows: List<LedgerEntryRow>,
-    private val axis: (LedgerId) -> List<CurrencyUnit> = { MonthlyBuckets.activityCurrenciesOf(rows) },
 ) : LedgerCurrentStateReadPort {
     override fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow> = emptyList()
 
@@ -810,7 +827,16 @@ private class EntryRowsPort(
     ): ManualTransferCommitRecord? = null
 
     override fun loadLedgerEntryRows(ledgerId: LedgerId): List<LedgerEntryRow> = rows
+}
 
+/**
+ * The same fake with a caller-supplied axis, for the failure and inconsistency legs — an axis the
+ * default could not derive from these rows.
+ */
+private class AxisPort(
+    rows: List<LedgerEntryRow>,
+    private val axis: (LedgerId) -> List<CurrencyUnit>,
+) : EntryRowsPort(rows) {
     override fun loadLedgerActivityCurrencies(ledgerId: LedgerId): List<CurrencyUnit> = axis(ledgerId)
 }
 

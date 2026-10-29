@@ -386,7 +386,12 @@ object OrdinaryFlowClassification {
 data class MonthlyActivity(
     val ledgerId: LedgerId,
     val month: YearMonth,
-    /** One row per activity currency of the ledger (sorted by code, then precision). */
+    /**
+     * One row per AXIS currency (sorted by code, then precision). The axis is the ledger's for
+     * [QueryMonthlyActivity], whose home card and trend need R-Q07-1's explicit zero rows; a
+     * projection that is defined per row set keeps the row-derived axis. Folded amounts never
+     * depend on the axis, so a torn axis adds a zero row and never loses a movement (DEF-C, D-267).
+     */
     val currencies: List<MonthlyCurrencyActivity>,
     /** Level-1 expense category totals; each level-1 total equals the sum of its level-2 children. */
     val expenseCategories: List<MonthlyCategoryTotal>,
