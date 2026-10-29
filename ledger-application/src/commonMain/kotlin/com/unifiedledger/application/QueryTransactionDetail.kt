@@ -33,13 +33,13 @@ class QueryTransactionDetail(
             .associateBy { requireNotNull(it.postingAccountId) }
 
     fun query(transactionId: TransactionId): TransactionDetailResult {
-        val rows =
+        // DEF-A (D-266): a keyed single-row read; the detail surface never materialises the ledger.
+        val row =
             try {
-                readPort.loadLedgerEntryRows(ledgerId)
+                readPort.loadLedgerEntryRow(ledgerId, transactionId)
             } catch (failure: Exception) {
                 return TransactionDetailResult.Unavailable
-            }
-        val row = rows.firstOrNull { it.transactionId == transactionId } ?: return TransactionDetailResult.NotFound
+            } ?: return TransactionDetailResult.NotFound
 
         for (posting in row.postings) {
             val account = accountsById[posting.accountId] ?: return TransactionDetailResult.InvalidState

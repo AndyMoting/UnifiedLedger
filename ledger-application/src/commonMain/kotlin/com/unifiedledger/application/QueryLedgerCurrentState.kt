@@ -6,14 +6,14 @@ import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
-import com.unifiedledger.domain.Posting
 
 /**
  * P5-03 current-state projection (D-119 section 4; plan section 3.2.3-4).
  *
  * Only current-version transactions are projected. Every account of every posting is
- * validated against the injected catalog (same ledger, same currency as the posting) and
- * balances are grouped per account and currency without any cross-currency summation.
+ * validated against the injected catalog (same ledger, same currency as the posting);
+ * balances arrive as one exact per-account/currency SUM from the read port (D-266) and are
+ * never summed across currencies.
  * [AccountCurrencyBalance.ledgerSignedMinorUnits] is passed through unchanged from the data
  * layer; [AccountCurrencyBalance.displayMinorUnits] is derived from the account's
  * normal-balance direction per `docs/ACCOUNTING_RULES.md`: ASSET/EXPENSE display the ledger
@@ -68,14 +68,15 @@ class QueryLedgerCurrentState(
                 return LedgerCurrentStateResult.Unavailable
             }
 
-        val postings = rows.flatMap { it.postings }
-        for (posting in postings) {
-            if (!isCatalogConsistent(posting)) {
-                return LedgerCurrentStateResult.InvalidState
+        // DEF-A (D-266): balances are a SQL aggregate, not an in-memory sum over every posting.
+        val sums =
+            try {
+                readPort.accountBalanceSums(ledgerId)
+            } catch (failure: Exception) {
+                return LedgerCurrentStateResult.Unavailable
             }
-        }
 
-        val balances = buildBalances(postings) ?: return LedgerCurrentStateResult.InvalidState
+        val balances = buildBalances(sums) ?: return LedgerCurrentStateResult.InvalidState
         return LedgerCurrentStateResult.Success(
             LedgerCurrentState(
                 ledgerId = ledgerId,
@@ -91,32 +92,30 @@ class QueryLedgerCurrentState(
         )
     }
 
-    private fun isCatalogConsistent(posting: Posting): Boolean {
-        val account = accountsById[posting.accountId] ?: return false
-        if (account.ledgerId != ledgerId) return false
-        if (account.currency != posting.amount.currency) return false
-        return true
-    }
-
-    private fun buildBalances(postings: List<Posting>): List<AccountCurrencyBalance>? {
-        val totals = mutableMapOf<AccountCurrencyKey, Long>()
-        for (posting in postings) {
-            val key = AccountCurrencyKey(posting.accountId, posting.amount.currency)
-            val previous = totals[key] ?: 0L
-            val next = checkedAdd(previous, posting.amount.minorUnits) ?: return null
-            totals[key] = next
-        }
-        return totals
-            .map { (key, ledgerSigned) ->
-                val account = checkNotNull(accountsById[key.accountId])
-                val displayMinorUnits = displayMinorUnits(account.kind, ledgerSigned) ?: return null
+    /**
+     * DEF-A (D-266): validates one aggregate row against the injected catalog, then projects the
+     * display sign. The aggregate itself is an exact integer SUM in SQL; an unknown account, a
+     * foreign-ledger account or a currency mismatch still fails the whole projection (R-Q06-4).
+     */
+    private fun buildBalances(
+        sums: List<LedgerCurrentStateReadPort.AccountBalanceSum>,
+    ): List<AccountCurrencyBalance>? {
+        val balances = ArrayList<AccountCurrencyBalance>(sums.size)
+        for (sum in sums) {
+            val account = accountsById[sum.accountId] ?: return null
+            if (account.ledgerId != ledgerId) return null
+            if (account.currency != sum.currency) return null
+            val displayMinorUnits = displayMinorUnits(account.kind, sum.ledgerSignedMinorUnits) ?: return null
+            balances.add(
                 AccountCurrencyBalance(
-                    accountId = key.accountId,
-                    currency = key.currency,
-                    ledgerSignedMinorUnits = ledgerSigned,
+                    accountId = sum.accountId,
+                    currency = sum.currency,
+                    ledgerSignedMinorUnits = sum.ledgerSignedMinorUnits,
                     displayMinorUnits = displayMinorUnits,
-                )
-            }.sortedWith(compareBy({ it.accountId.value }, { it.currency.code }, { it.currency.precision }))
+                ),
+            )
+        }
+        return balances.sortedWith(compareBy({ it.accountId.value }, { it.currency.code }, { it.currency.precision }))
     }
 
     private fun displayMinorUnits(
@@ -133,19 +132,7 @@ class QueryLedgerCurrentState(
             -> checkedNegate(ledgerSignedMinorUnits)
         }
 
-    private data class AccountCurrencyKey(
-        val accountId: AccountId,
-        val currency: CurrencyUnit,
-    )
 }
 
-private fun checkedAdd(
-    left: Long,
-    right: Long,
-): Long? {
-    if (right > 0 && left > Long.MAX_VALUE - right) return null
-    if (right < 0 && left < Long.MIN_VALUE - right) return null
-    return left + right
-}
 
 private fun checkedNegate(value: Long): Long? = if (value == Long.MIN_VALUE) null else -value

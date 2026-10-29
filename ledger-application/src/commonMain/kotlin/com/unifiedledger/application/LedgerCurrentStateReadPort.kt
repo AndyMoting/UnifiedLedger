@@ -1,5 +1,7 @@
 package com.unifiedledger.application
 
+import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Posting
 import com.unifiedledger.domain.TransactionId
@@ -129,6 +131,69 @@ interface LedgerCurrentStateReadPort {
             "loadLedgerEntryRows is not implemented by this read port; a missing P7-03 ledger-entry " +
                 "read must surface as a typed read failure, never as an empty ledger (R-Q06-4)",
         )
+
+    /**
+     * DEF-A (D-266): entry rows whose statistics instant lies in `[startEpochNanosInclusive,
+     * endEpochNanosExclusive)`. The default keeps the exact pre-D-266 semantics by filtering the
+     * unbounded read, so every existing port fake stays source-compatible and equivalent; the
+     * SQL adapter overrides it with a range scan so a monthly projection never materialises the
+     * whole ledger.
+     */
+    fun loadLedgerEntryRowsInWindow(
+        ledgerId: LedgerId,
+        startEpochNanosInclusive: Long,
+        endEpochNanosExclusive: Long,
+    ): List<LedgerEntryRow> =
+        loadLedgerEntryRows(ledgerId).filter { row ->
+            val nanos = row.statisticsAt.toEpochMilliseconds() * 1_000_000L
+            nanos >= startEpochNanosInclusive && nanos < endEpochNanosExclusive
+        }
+
+    /**
+     * DEF-A: the earliest effective statistics instant (the SelectMonth lower bound), or `null`
+     * for an empty ledger. The default filters nothing extra; the SQL adapter projects one number.
+     */
+    fun earliestEffectiveStatisticsAt(ledgerId: LedgerId): Instant? =
+        loadLedgerEntryRows(ledgerId).minOfOrNull { it.statisticsAt }
+
+    /**
+     * DEF-A: one transaction's entry row, or `null` when it is absent (or not effective). The
+     * default keeps pre-D-266 semantics over the unbounded read; the adapter reads by key.
+     */
+    fun loadLedgerEntryRow(
+        ledgerId: LedgerId,
+        transactionId: TransactionId,
+    ): LedgerEntryRow? = loadLedgerEntryRows(ledgerId).firstOrNull { it.transactionId == transactionId }
+
+    /**
+     * DEF-A: per-account balance sums in exact ledger-signed minor units. The default reproduces
+     * the in-memory grouping of [loadCurrentRows]; the SQL adapter aggregates in SQL so the HOME
+     * projection does not materialise postings for a read-only sum.
+     */
+    fun accountBalanceSums(ledgerId: LedgerId): List<AccountBalanceSum> {
+        val totals = mutableMapOf<Pair<AccountId, CurrencyUnit>, Long>()
+        for (row in loadCurrentRows(ledgerId)) {
+            for (posting in row.postings) {
+                val key = posting.accountId to posting.amount.currency
+                val previous = totals[key] ?: 0L
+                totals[key] = previous + posting.amount.minorUnits
+            }
+        }
+        return totals.map { (key, total) ->
+            AccountBalanceSum(
+                accountId = key.first,
+                currency = key.second,
+                ledgerSignedMinorUnits = total,
+            )
+        }
+    }
+
+    /** DEF-A: one account/currency balance row as the read port projects it. */
+    data class AccountBalanceSum(
+        val accountId: AccountId,
+        val currency: CurrencyUnit,
+        val ledgerSignedMinorUnits: Long,
+    )
 
     /**
      * P7-03.A: reverse creation lineage — the import confirmation that created the

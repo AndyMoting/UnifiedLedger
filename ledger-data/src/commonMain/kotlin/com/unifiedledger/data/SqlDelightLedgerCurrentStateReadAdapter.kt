@@ -231,6 +231,145 @@ class SqlDelightLedgerCurrentStateReadAdapter(
             }
     }
 
+    /**
+     * DEF-A (D-266): the bounded month/window entry read. Same projection as
+     * [loadLedgerEntryRows], restricted by the numeric statistics range so a monthly projection
+     * never materialises the whole ledger (range rides the statistics-at range index).
+     */
+    override fun loadLedgerEntryRowsInWindow(
+        ledgerId: LedgerId,
+        startEpochNanosInclusive: Long,
+        endEpochNanosExclusive: Long,
+    ): List<LedgerEntryRow> =
+        database.ledgerQueries
+            .ledgerEntryRowsInWindow(
+                ledgerId.value,
+                startEpochNanosInclusive,
+                endEpochNanosExclusive,
+                Instant.fromEpochMilliseconds(startEpochNanosInclusive / 1_000_000L).toString(),
+                Instant.fromEpochMilliseconds(endEpochNanosExclusive / 1_000_000L).toString(),
+            )
+            .executeAsList()
+            .map { row ->
+                RawEntryRow(
+                    transactionId = row.transaction_id,
+                    currentVersionId = row.current_version_id,
+                    kind = row.kind,
+                    occurredAt = row.occurred_at,
+                    statisticsAt = row.statistics_at,
+                    note = row.note,
+                    postingId = row.posting_id,
+                    postingIndex = row.posting_index,
+                    accountId = row.account_id,
+                    amountMinor = row.amount_minor,
+                    currencyCode = row.currency_code,
+                    currencyPrecision = row.currency_precision,
+                )
+            }.toEntryRows()
+
+    /** DEF-A: one transaction's entry row by key (the detail surface). */
+    override fun loadLedgerEntryRow(
+        ledgerId: LedgerId,
+        transactionId: TransactionId,
+    ): LedgerEntryRow? =
+        database.ledgerQueries
+            .ledgerEntryRowByTransaction(ledgerId.value, transactionId.value)
+            .executeAsList()
+            .map { row ->
+                RawEntryRow(
+                    transactionId = row.transaction_id,
+                    currentVersionId = row.current_version_id,
+                    kind = row.kind,
+                    occurredAt = row.occurred_at,
+                    statisticsAt = row.statistics_at,
+                    note = row.note,
+                    postingId = row.posting_id,
+                    postingIndex = row.posting_index,
+                    accountId = row.account_id,
+                    amountMinor = row.amount_minor,
+                    currencyCode = row.currency_code,
+                    currencyPrecision = row.currency_precision,
+                )
+            }.toEntryRows()
+            .firstOrNull()
+
+    /** DEF-A: the earliest effective statistics instant, projected as one number. */
+    override fun earliestEffectiveStatisticsAt(ledgerId: LedgerId): Instant? =
+        database.ledgerQueries
+            .earliestEffectiveStatisticsAtNanos(ledgerId.value)
+            .executeAsOneOrNull()
+            ?.let { row ->
+                // Rows written since v32 carry the numeric projection; a pre-v32 fixture row
+                // contributes through its exact-format text projection instead (second
+                // precision, UTC `Z`), so neither can silently leave the SelectMonth domain.
+                val byNanos = row.earliest_nanos?.let { Instant.fromEpochMilliseconds(it / 1_000_000L) }
+                val byText = row.earliest_text?.let { Instant.parse(it) }
+                when {
+                    byNanos == null -> byText
+                    byText == null -> byNanos
+                    byNanos <= byText -> byNanos
+                    else -> byText
+                }
+            }
+
+    /** DEF-A: per-account balance sums in exact integer minor units, aggregated in SQL. */
+    override fun accountBalanceSums(ledgerId: LedgerId): List<AccountBalanceSum> =
+        database.ledgerQueries
+            .currentAccountBalanceSums(ledgerId.value)
+            .executeAsList()
+            .map { row ->
+                AccountBalanceSum(
+                    accountId = AccountId(row.account_id),
+                    currency = CurrencyUnit(row.currency_code, row.currency_precision.toInt()),
+                    ledgerSignedMinorUnits = row.total_minor ?: 0L,
+                )
+            }
+
+    /** Row shape shared by the bounded and keyed entry reads (identical projections). */
+    private data class RawEntryRow(
+        val transactionId: String,
+        val currentVersionId: String,
+        val kind: String,
+        val occurredAt: String,
+        val statisticsAt: String,
+        val note: String?,
+        val postingId: String,
+        val postingIndex: Long,
+        val accountId: String,
+        val amountMinor: Long,
+        val currencyCode: String,
+        val currencyPrecision: Long,
+    )
+
+    /** Groups posting rows into one [LedgerEntryRow] per transaction, posting order preserved. */
+    private fun List<RawEntryRow>.toEntryRows(): List<LedgerEntryRow> =
+        groupBy { it.transactionId }
+            .map { (_, groupedRows) ->
+                val first = groupedRows.first()
+                LedgerEntryRow(
+                    transactionId = TransactionId(first.transactionId),
+                    currentVersionId = TransactionVersionId(first.currentVersionId),
+                    kind = TransactionKind.valueOf(first.kind),
+                    occurredAt = Instant.parse(first.occurredAt),
+                    statisticsAt = Instant.parse(first.statisticsAt),
+                    note = first.note,
+                    postings =
+                        groupedRows
+                            .sortedBy { it.postingIndex }
+                            .map { row ->
+                                Posting(
+                                    id = PostingId(row.postingId),
+                                    accountId = AccountId(row.accountId),
+                                    amount =
+                                        Money.ofMinor(
+                                            row.amountMinor,
+                                            CurrencyUnit(row.currencyCode, row.currencyPrecision.toInt()),
+                                        ),
+                                )
+                            },
+                )
+            }
+
     /** P7-03.A: reverse creation lineage into `import_confirmation` (`operation_class='creation'`). */
     override fun findImportCreationConfirmation(
         ledgerId: LedgerId,

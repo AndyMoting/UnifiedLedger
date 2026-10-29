@@ -2,7 +2,9 @@ package com.unifiedledger.application
 
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
+import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.YearMonth
+import kotlin.time.Instant
 
 /**
  * P7-03.B unified monthly projection use case (spec section 4.2.1). One result feeds the
@@ -28,7 +30,12 @@ class QueryMonthlyActivity(
      * is bounded by [selectableMonths] (P703SPEC-10).
      */
     fun query(month: YearMonth): MonthlyActivityResult {
-        val rows = loadRows() ?: return MonthlyActivityResult.Unavailable
+        // DEF-A (D-266): the projection never reads beyond the requested month's instant bounds.
+        val rows =
+            loadRows(
+                MonthlyBuckets.monthStart(month),
+                MonthlyBuckets.monthStart(month.plus(1, DateTimeUnit.MONTH)),
+            ) ?: return MonthlyActivityResult.Unavailable
         if (!isCatalogConsistent(rows)) return MonthlyActivityResult.InvalidState
         val activity =
             try {
@@ -45,15 +52,20 @@ class QueryMonthlyActivity(
      * (spec section 6.2 residual boundary (c)).
      */
     fun trend(): MonthlyTrendResult {
-        val rows = loadRows() ?: return MonthlyTrendResult.Unavailable
         val currentMonth =
             try {
                 MonthlyBuckets.currentMonth(clock)
             } catch (failure: Exception) {
                 return MonthlyTrendResult.Unavailable
             }
-        if (!isCatalogConsistent(rows)) return MonthlyTrendResult.InvalidState
         val window = MonthlyBuckets.monthWindow(currentMonth)
+        // DEF-A (D-266): only the twelve-month window is read, never the whole ledger.
+        val rows =
+            loadRows(
+                MonthlyBuckets.monthStart(window.first()),
+                MonthlyBuckets.monthStart(window.last().plus(1, DateTimeUnit.MONTH)),
+            ) ?: return MonthlyTrendResult.Unavailable
+        if (!isCatalogConsistent(rows)) return MonthlyTrendResult.InvalidState
         val byMonth =
             try {
                 MonthlyBuckets.aggregate(rows, ledgerId, catalog, window)
@@ -76,20 +88,35 @@ class QueryMonthlyActivity(
      * month. Clock failures yield [SelectableMonthsResult.Unavailable].
      */
     fun selectableMonths(): SelectableMonthsResult {
-        val rows = loadRows() ?: return SelectableMonthsResult.Unavailable
+        // DEF-A (D-266): the lower bound is one MIN projection, not a whole-flow materialisation.
+        val earliest =
+            try {
+                readPort.earliestEffectiveStatisticsAt(ledgerId)
+            } catch (failure: Exception) {
+                return SelectableMonthsResult.Unavailable
+            }
         val currentMonth =
             try {
                 MonthlyBuckets.currentMonth(clock)
             } catch (failure: Exception) {
                 return SelectableMonthsResult.Unavailable
             }
-        val range = MonthlyBuckets.selectableMonthRange(rows, currentMonth)
+        val range = earliest?.let { MonthlyBuckets.bucketKey(it) }?.let { first ->
+            if (first > currentMonth) null else first..currentMonth
+        }
         return SelectableMonthsResult.Success(months = range?.let(MonthlyBuckets::monthsInRange) ?: emptyList())
     }
 
-    private fun loadRows(): List<LedgerEntryRow>? =
+    private fun loadRows(
+        startInclusive: Instant,
+        endExclusive: Instant,
+    ): List<LedgerEntryRow>? =
         try {
-            readPort.loadLedgerEntryRows(ledgerId)
+            readPort.loadLedgerEntryRowsInWindow(
+                ledgerId = ledgerId,
+                startEpochNanosInclusive = startInclusive.toEpochMilliseconds() * 1_000_000L,
+                endEpochNanosExclusive = endExclusive.toEpochMilliseconds() * 1_000_000L,
+            )
         } catch (failure: Exception) {
             null
         }

@@ -9206,6 +9206,142 @@ JOIN transaction_effective_state AS effective
 WHERE tx.ledger_id = ?
 ORDER BY tx.transaction_id, posting.posting_index;
 
+-- DEF-A (D-266, 2026-10-29): bounded month/window reads. Same projection and effective
+-- predicate as ledgerEntryRowsForLedger, restricted by the numeric statistics-time range so a
+-- monthly projection never materialises the whole ledger; the range rides
+-- transaction_version_statistics_at_range_idx (ledger_id, statistics_at_epoch_nanos,
+-- transaction_id). The epoch column is nullable, so a row without a numeric projection stays
+-- out of a bounded window instead of being guessed from text (`:44`).
+ledgerEntryRowsInWindow:
+SELECT
+  tx.transaction_id,
+  current_version.current_version_id,
+  COALESCE(tx.canonical_kind, tx.kind) AS kind,
+  version.occurred_at,
+  version.statistics_at,
+  version.note,
+  posting.posting_id,
+  posting.posting_index,
+  posting.account_id,
+  posting.amount_minor,
+  posting.currency_code,
+  posting.currency_precision
+FROM ledger_transaction AS tx
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = tx.ledger_id
+ AND version.transaction_id = tx.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN posting_set AS posting_set
+  ON posting_set.ledger_id = version.ledger_id
+ AND posting_set.posting_set_id = version.posting_set_id
+JOIN posting AS posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+WHERE tx.ledger_id = ?
+  AND (
+    (
+      version.statistics_at_epoch_nanos IS NOT NULL
+      AND version.statistics_at_epoch_nanos >= ?
+      AND version.statistics_at_epoch_nanos < ?
+    )
+    OR (
+      version.statistics_at_epoch_nanos IS NULL
+      AND version.statistics_at >= ?
+      AND version.statistics_at < ?
+    )
+  )
+ORDER BY tx.transaction_id, posting.posting_index;
+
+-- DEF-A: single-transaction entry read, so the detail surface never materialises the ledger.
+ledgerEntryRowByTransaction:
+SELECT
+  tx.transaction_id,
+  current_version.current_version_id,
+  COALESCE(tx.canonical_kind, tx.kind) AS kind,
+  version.occurred_at,
+  version.statistics_at,
+  version.note,
+  posting.posting_id,
+  posting.posting_index,
+  posting.account_id,
+  posting.amount_minor,
+  posting.currency_code,
+  posting.currency_precision
+FROM ledger_transaction AS tx
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = tx.ledger_id
+ AND version.transaction_id = tx.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN posting_set AS posting_set
+  ON posting_set.ledger_id = version.ledger_id
+ AND posting_set.posting_set_id = version.posting_set_id
+JOIN posting AS posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+WHERE tx.ledger_id = ? AND tx.transaction_id = ?
+ORDER BY posting.posting_index;
+
+-- DEF-A: earliest effective statistics instant (the SelectMonth lower bound), projected as
+-- one number instead of the whole flow.
+earliestEffectiveStatisticsAtNanos:
+SELECT MIN(version.statistics_at_epoch_nanos) AS earliest_nanos,
+  MIN(version.statistics_at) AS earliest_text
+FROM ledger_transaction AS tx
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = tx.ledger_id
+ AND version.transaction_id = tx.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+WHERE tx.ledger_id = ?;
+
+-- DEF-A: per-account balance sums in exact integer minor units (same effective predicate and
+-- catalog validation as the in-memory buildBalances it replaces).
+currentAccountBalanceSums:
+SELECT
+  posting.account_id,
+  posting.currency_code,
+  posting.currency_precision,
+  SUM(posting.amount_minor) AS total_minor
+FROM ledger_transaction AS tx
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = tx.ledger_id
+ AND version.transaction_id = tx.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN posting_set AS posting_set
+  ON posting_set.ledger_id = version.ledger_id
+ AND posting_set.posting_set_id = version.posting_set_id
+JOIN posting AS posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+WHERE tx.ledger_id = ?
+GROUP BY posting.account_id, posting.currency_code, posting.currency_precision;
 importCreationConfirmationByTransaction:
 -- Reverse creation lineage: transaction -> import_confirmation. operation_class is
 -- CHECK-constrained to 'creation' (:7774); the predicate restates it per Appendix A.
