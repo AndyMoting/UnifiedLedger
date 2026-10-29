@@ -2,7 +2,6 @@ package com.unifiedledger.application
 
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
-import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.YearMonth
 import kotlin.time.Instant
 
@@ -34,7 +33,7 @@ class QueryMonthlyActivity(
         val rows =
             loadRows(
                 MonthlyBuckets.monthStart(month),
-                MonthlyBuckets.monthStart(month.plus(1, DateTimeUnit.MONTH)),
+                MonthlyBuckets.monthEndExclusive(month),
             ) ?: return MonthlyActivityResult.Unavailable
         if (!isCatalogConsistent(rows)) return MonthlyActivityResult.InvalidState
         val activity =
@@ -63,7 +62,7 @@ class QueryMonthlyActivity(
         val rows =
             loadRows(
                 MonthlyBuckets.monthStart(window.first()),
-                MonthlyBuckets.monthStart(window.last().plus(1, DateTimeUnit.MONTH)),
+                MonthlyBuckets.monthEndExclusive(window.last()),
             ) ?: return MonthlyTrendResult.Unavailable
         if (!isCatalogConsistent(rows)) return MonthlyTrendResult.InvalidState
         val byMonth =

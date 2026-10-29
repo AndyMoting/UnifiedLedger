@@ -98,6 +98,9 @@ object MonthlyBuckets {
      */
     fun monthStart(statisticsMonth: YearMonth): Instant = statisticsMonth.firstDay.atStartOfDayIn(REPORT_TIME_ZONE)
 
+    /** Exclusive end of a month in the frozen zone: the next month's start. */
+    fun monthEndExclusive(statisticsMonth: YearMonth): Instant = monthStart(statisticsMonth.nextMonth())
+
     fun YearMonth.nextMonth(): YearMonth = plus(1, DateTimeUnit.MONTH)
 
     fun YearMonth.previousMonth(): YearMonth = minus(1, DateTimeUnit.MONTH)
