@@ -5636,11 +5636,11 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **决定：**
 
-1. **P709-A04 仍非 PASS——记为部分证据。** 本批补到的是 launcher **动态**快捷方式与真实任务栈的全套设备读数（窗口 3：`local/artifacts/p709-a04/REPORT.md`，含三次点按的原始 logcat 与 `dumpsys activity`）：
+1. **P709-A04 仍非 PASS——记为部分证据。** 本批补到的是 launcher **动态**快捷方式与真实任务栈的全套设备读数（窗口 3：`local/artifacts/p709-a04/REPORT.md`，含三条腿的原始 logcat、其中两条的 `dumpsys activity` 与各腿 UI dump）：
    - 三条动态快捷方式（记一笔支出／记一笔收入／打开导入）从 launcher 图标长按面板触发，触发时应用在**后台**；
    - 全部经 `entry.onNewIntent` → `entry.inboundShortcut kind=OpenNewEntry|OpenImportTab` → `channel.deliver parked → drain delivered`：**同一任务、`sz=1`、无 `CLEAR_TASK`、无重建**（任务号随进程重启在 `#60`/`#61`/`#62` 间变化，不变量是「单一任务 + `onNewIntent` 交付」）；
    - 编辑器草稿 `12.34` 在「保留当前」路径下原样保留；编辑器在场时投「打开导入」落到 Editing 行的「保留原请求／替换为当前请求」，未静默丢弃；
-   - 应用升级在**本候选树**上重跑：`install -r` 后数据目录仍在且 `state=Ready`。
+   - 应用升级在**本候选树**上重跑：`install -r` 成功，随后 `entry.activityCreate` → `state=Ready`（以 `a04-e4-upgrade-logcat.txt` 为据）。该次**未**单独落盘安装输出与数据目录清单，故只声称「升级后重新启动到 Ready」，不声称数据保留。
    **但** A04 的验收行（计划 §9.3:362）还包含「**固定**快捷方式」，而本产品**未交付**该形态（源码无 `requestPinShortcut`、manifest 无静态 `shortcuts`）。按 §10.1 的词汇表，这是「产品路径缺失或功能尚未交付 → **待实现**」，**不是**「不适用」：`固定（pinned）` 与 `静态（manifest）` 是两件事——D-226 item 2 只裁定了「首版用动态实现、不新增静态 xml」，而 D-226 O-6(i) 与 D-236 item 5 都仍把「launcher 动态/**固定**快捷方式」列为 A04 欠账，spec §8 开放项 3 也仍把「动态 vs 静态/trampoline 的最终选择」标为 OPEN。故 A04 维持部分证据。
 
 2. **撤回本批初稿（如实登记）**：初稿曾把「固定/静态」记作「不适用」并据此判 A04 PASS。独立评审指出：依据错引（唯一相关裁决是 D-226 item 2，且它只覆盖静态形态）、把 pinned 与 static 混为一谈、以及在未记录范围授权的情况下缩小适用面（违反 §10.1:395/398、§10.4.1:422、§10.4.5:426）。该草案已撤回；**本条不含任何 PASS**。
@@ -5651,6 +5651,6 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 5. **证据边界**：多窗口/分屏下的双 `RESUMED` 未测（沿 D-260 §5）；任务号与 launcher 布局跨会话会变，取证一律按当次 dump 的实际坐标与任务号记录；本窗口首次投「打开导入」时编辑器仍在场，落到了 Editing 行（`f1-popup.xml`、`f2-import.xml`），空闲态重做后才得到导入面（`g5-import.xml`）。
 
-6. **审验拓扑（如实）**：设备取证由主代理执行并按 §10.2 落盘（原始 logcat、`dumpsys activity`、UI dump 均在 `local/artifacts/p709-a04/`）；本登记批经**一次独立只读评审**，其五条 finding（依据错引、instrument 错、证据清单夸大、升级腿构建漂移、陈旧计数与指针）已在本条与 `CURRENT_STATE` 中逐条整改。
+6. **审验拓扑（如实）**：设备取证由主代理执行并按 §10.2 落盘（原始 logcat、`dumpsys activity`、UI dump 均在 `local/artifacts/p709-a04/`）；本登记批经**独立只读评审**；本条与 `CURRENT_STATE` 按其 finding 修订（依据错引、instrument 错、证据清单、升级腿构建漂移、陈旧计数与指针）。
 
 **关联决定：** D-225（Q19/Q20；O-3 仍列「动态 vs 静态/trampoline」为 OPEN）、D-226（09.B 动态发布、不新增静态 xml；O-6(i) 仍列固定快捷方式为欠账）、D-227（09.D 平台回归）、D-236（P7-09 取证批 item 5）、D-259（向量账口径）、D-260（§5 残余）、D-261（A01/A03 与拒绝可见）、阶段计划 §9.3 与 §10.1/§10.2/§10.4.1。
