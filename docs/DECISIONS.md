@@ -5744,3 +5744,35 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
    - 不改 D-261/D-262/D-263/D-264 的其它判决；不声称 P7-09 或 A05 完成；设备数据与工件在 ignored 的 `local/artifacts/p709-a05-w5/`。
 
 **关联决定：** D-264（A05 前三格；其第 3、4 条部分被本条取代）、D-263（A04 修订范围完成）、D-261（A01/A03 与拒绝可见）、D-259（向量账口径）、D-236（P7-09 取证批）、阶段计划 §9.3、§10.1 与 §10.2。
+
+## D-266 P709-A06 首次执行：20k/50k 正式交易账本冷启动 OOM，判 FAIL 并登记两个独立规模缺陷
+
+**状态：** 已批准并登记（2026-10-29，计划 §9.3 的 P709-A06、§10.2、§10.3:414-418）。**纯文档批**：零代码 / 零测试 / 零 schema / 零迁移 / 零依赖。
+
+**决定：**
+
+1. **绑定（§10.2）**：AVD `ul_p7_d01`（`emulator-5680`，API 36 / Android 16，隔离 adb `5038`，本会话自启并经 `emu avd name` 核实，收工 `emu kill`）；应用与 D-265 同一 CI 工件（sha256 `B86163C9…DEF7AC6`）。堆上限 192 MB（OOM 文本自带 `growth limit 201326592`）。
+
+2. **数据面（来源分层；§10.2 差异说明）**：候选层取既有 `local/artifacts/p709-accept/ul20k-group.db`（v30，20,000 候选 + 10,000 重复关系），**由应用首启自行迁移到 v36**（`user_version 36`、`integrity_check ok`、候选与重复计数不变）——该步是产品行为；交易层以迁移后的真库为模板、由本地脚本追加合成正式交易（每笔 2 条 posting、1 条 `transaction_version` 与 `current_version`、一个 `posting_set`；`integrity_check ok`、`foreign_key_check` 空、已 `ANALYZE`）。**交易层非产品入口产生**；本条只据此断言「规模下的行为」，不断言导入路径。
+
+3. **读数（同一 AVD、同一 APK，只换库）**：
+
+   | 正式交易 | 结果 | 决定性证据 |
+   | --- | --- | --- |
+   | 2,000 | **通过**：`read.currentState end kind=success`、`read.monthlyPayload end kind=ready`，Java Heap 63–94 MB | `logcat-2k.txt`、`meminfo-2k.txt` |
+   | 5,000 | **OOM，进程死亡**（约 19 s，PSS 峰值 344 MB），栈落 Compose `LayoutNode` 构造 | `logcat-5k.txt`、`meminfo-5k.txt` |
+   | 10,000 | **OOM，进程死亡**，栈落 `QueryMonthlyActivity.loadRows` → `loadLedgerEntryRows` → `CursorWindow.getString` | `oom-stack-10k.txt` |
+   | 20,002 | **OOM，进程死亡**（约 11 s，PSS 峰值 287 MB），栈落 Compose 逐行构造 | `logcat-20k.txt`、`oom-stack-20k.txt` |
+
+4. **判决**：**P709-A06 = FAIL**。判据「无 ANR/OOM」在合法规模下不成立（§10.3:416「合法规模下 ANR/OOM 为未通过」）；这是**已取证的失败，不是缺证**。A06 维持非 PASS，向量账不变（62 = PASS 46 + 残留 15 + 修订范围完成 1；P7-09 = 3/9 PASS + 1 项修订范围完成）。
+
+5. **两个独立规模缺陷（登记；不占 P709 编号）**：
+
+   - **DEF-A（月度读 O(整账)）**：`QueryMonthlyActivity.query/trend/selectableMonths` 全部经 `loadRows()` → `readPort.loadLedgerEntryRows(ledgerId)`，SQL 无月份谓词、无上限（`ledger-application/src/commonMain/kotlin/com/unifiedledger/application/QueryMonthlyActivity.kt:90-95`）；月卡、趋势、可选月份与**小组件月卡**同路。10,000 档在 `CursorWindow.getString` 处 OOM。
+   - **DEF-B（首页流水不虚拟化）**：`app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503LedgerView.kt:370` 以 `Column + verticalScroll` 逐行组合全部 `LedgerCurrentState.transactions`，而该读取本身无上限（`QueryLedgerCurrentState.query()` → `loadCurrentRows(ledgerId)`，`QueryLedgerCurrentState.kt:63-66`）；5,000 档在 Compose `LayoutNode` 构造处 OOM。
+
+6. **A06 其余腿**：**A6-5（缺失/损坏库无新空库）行为正确**——删 `active-generation` 冷启动 → `storage.resolve outcome=pointerMissing` → `PointerRecovery` fail-closed、小组件只显示「打开应用以查看本月收支」、**未新建 `gen-2`**；恢复指针后 `plannedGeneration` → `Ready`、两读成功且无 OOM。**A6-2/3/4（后台刷新 × 恢复竞争、旧读晚到、租约超时）未做**——被 OOM 阻断；2k 档的结构性读数不足以代表 20k/50k。**50k 档未跑**（20k 已 FAIL，无新增信息量）。
+
+7. **边界与承接**：修复属**独立规模缺陷批**（tracked 代码，高风险路由）——DEF-A 需把月份/窗口谓词与上限下推到 SQL 且不改变月度账务结果；DEF-B 需虚拟化或分页，其中分页会改变「首页显示什么」的产品语义，须先冻结方案再实施。修完后 A06 必须按「2k 对照 + 20k/50k 两档」重跑，并补 A6-2/3/4 三条并发腿。本条不改 D-261/D-262/D-263/D-264/D-265 的其它判决；不声称 P7-09 或 A06 完成。
+
+**关联决定：** D-265（A05 修正格）、D-264（A05 前三格）、D-263（A04 修订范围完成）、D-261（A01/A03 与拒绝可见）、D-259（向量账口径）、D-236（P7-09 取证批）、D-243（61k 规模口径与已知限制）、阶段计划 §9.3、§10.2、§10.3。
