@@ -9314,6 +9314,35 @@ JOIN transaction_effective_state AS effective
  AND effective.is_effective = 1
 WHERE tx.ledger_id = ?;
 
+-- DEF-A/DEF-C (D-266): the ledger's activity currency axis for the monthly projection. A month
+-- window cannot supply it — an empty month would lose every explicit zero row (R-Q07-1) — so
+-- this projects the DISTINCT currencies of the SAME effective current-version posting set
+-- ledgerEntryRowsForLedger reads, without materialising a row.
+ledgerActivityCurrencies:
+SELECT DISTINCT
+  posting.currency_code,
+  posting.currency_precision
+FROM ledger_transaction AS tx
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = tx.ledger_id
+ AND version.transaction_id = tx.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN posting_set AS posting_set
+  ON posting_set.ledger_id = version.ledger_id
+ AND posting_set.posting_set_id = version.posting_set_id
+JOIN posting AS posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+WHERE tx.ledger_id = ?
+ORDER BY posting.currency_code, posting.currency_precision;
+
 -- DEF-A: per-account balance sums in exact integer minor units (same effective predicate and
 -- catalog validation as the in-memory buildBalances it replaces).
 currentAccountBalanceSums:

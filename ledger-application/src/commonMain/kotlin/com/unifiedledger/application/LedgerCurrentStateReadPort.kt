@@ -150,11 +150,29 @@ interface LedgerCurrentStateReadPort {
         }
 
     /**
+     * DEF-A/DEF-C (D-266): the ledger's activity currency axis — every currency carried by an
+     * effective posting of this ledger, never restricted to a read window.
+     *
+     * [MonthlyActivity.currencies] is defined per activity currency OF THE LEDGER (R-Q07-1's
+     * explicit zero rows depend on it), so a bounded month window cannot supply it: an empty
+     * month, or a month whose rows all sit in another currency, would otherwise collapse to an
+     * empty axis and render no zero row at all. The default keeps the exact pre-D-266 semantics
+     * by projecting the currencies of the unbounded read, so every existing port fake stays
+     * source-compatible and equivalent; the SQL adapter overrides it with one DISTINCT aggregate
+     * that returns the axis without materialising any entry row. Both report the axis in
+     * `(code, precision)` order.
+     */
+    fun loadLedgerActivityCurrencies(ledgerId: LedgerId): List<CurrencyUnit> =
+        loadLedgerEntryRows(ledgerId)
+            .flatMap { row -> row.postings.map { it.amount.currency } }
+            .distinct()
+            .sortedWith(compareBy({ it.code }, { it.precision }))
+
+    /**
      * DEF-A: the earliest effective statistics instant (the SelectMonth lower bound), or `null`
      * for an empty ledger. The default filters nothing extra; the SQL adapter projects one number.
      */
-    fun earliestEffectiveStatisticsAt(ledgerId: LedgerId): Instant? =
-        loadLedgerEntryRows(ledgerId).minOfOrNull { it.statisticsAt }
+    fun earliestEffectiveStatisticsAt(ledgerId: LedgerId): Instant? = loadLedgerEntryRows(ledgerId).minOfOrNull { it.statisticsAt }
 
     /**
      * DEF-A: one transaction's entry row, or `null` when it is absent (or not effective). The

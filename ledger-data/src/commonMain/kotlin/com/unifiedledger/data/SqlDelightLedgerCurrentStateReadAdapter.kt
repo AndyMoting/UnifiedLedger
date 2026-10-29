@@ -249,8 +249,7 @@ class SqlDelightLedgerCurrentStateReadAdapter(
                 endEpochNanosExclusive,
                 Instant.fromEpochMilliseconds(startEpochNanosInclusive / 1_000_000L).toString(),
                 Instant.fromEpochMilliseconds(endEpochNanosExclusive / 1_000_000L).toString(),
-            )
-            .executeAsList()
+            ).executeAsList()
             .map { row ->
                 RawEntryRow(
                     transactionId = row.transaction_id,
@@ -312,6 +311,18 @@ class SqlDelightLedgerCurrentStateReadAdapter(
                     else -> byText
                 }
             }
+
+    /**
+     * DEF-A/DEF-C (D-266): the ledger's activity currency axis as one DISTINCT projection. The
+     * monthly projection renders every requested month, including months whose own window carries
+     * no row, so the axis cannot come from [loadLedgerEntryRowsInWindow] and must not materialise
+     * an entry row either.
+     */
+    override fun loadLedgerActivityCurrencies(ledgerId: LedgerId): List<CurrencyUnit> =
+        database.ledgerQueries
+            .ledgerActivityCurrencies(ledgerId.value)
+            .executeAsList()
+            .map { row -> CurrencyUnit(row.currency_code, row.currency_precision.toInt()) }
 
     /** DEF-A: per-account balance sums in exact integer minor units, aggregated in SQL. */
     override fun accountBalanceSums(ledgerId: LedgerId): List<AccountBalanceSum> =

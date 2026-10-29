@@ -112,12 +112,19 @@ object MonthlyBuckets {
      * accumulated with checked Long arithmetic. Overflow fails with [ArithmeticException]
      * and a posting account missing from the injected catalog fails with
      * [IllegalStateException]; the use case boundary maps both to typed failures (R-Q06-4).
+     *
+     * [ledgerActivityCurrencies] is the ledger's activity currency axis ([QueryMonthlyActivity]
+     * passes [LedgerCurrentStateReadPort.loadLedgerActivityCurrencies]). `null` derives it from
+     * [rows], exactly the pre-D-266 behaviour for a caller whose rows already span the whole
+     * ledger; a caller holding only a bounded window must pass it, or a month without rows loses
+     * the explicit zero row R-Q07-1 requires.
      */
     fun aggregate(
         rows: List<LedgerEntryRow>,
         ledgerId: LedgerId,
         catalog: LedgerCatalog,
         months: Collection<YearMonth>,
+        ledgerActivityCurrencies: List<CurrencyUnit>? = null,
     ): Map<YearMonth, MonthlyActivity> {
         val accountsById = catalog.accounts.associateBy { it.id }
         val categoriesById = catalog.categories.associateBy { it.id }
@@ -127,8 +134,7 @@ object MonthlyBuckets {
                 .sortedBy { it.id.value }
                 .associateBy { requireNotNull(it.postingAccountId) }
         val activityCurrencies =
-            rows
-                .flatMap { row -> row.postings.map { it.amount.currency } }
+            (ledgerActivityCurrencies ?: rows.flatMap { row -> row.postings.map { it.amount.currency } })
                 .distinct()
                 .sortedWith(compareBy({ it.code }, { it.precision }))
 

@@ -131,8 +131,6 @@ class QueryLedgerCurrentState(
             AccountKind.EQUITY,
             -> checkedNegate(ledgerSignedMinorUnits)
         }
-
 }
-
 
 private fun checkedNegate(value: Long): Long? = if (value == Long.MIN_VALUE) null else -value

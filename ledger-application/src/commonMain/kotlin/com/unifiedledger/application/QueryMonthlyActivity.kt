@@ -1,5 +1,6 @@
 package com.unifiedledger.application
 
+import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
 import kotlinx.datetime.YearMonth
@@ -35,10 +36,13 @@ class QueryMonthlyActivity(
                 MonthlyBuckets.monthStart(month),
                 MonthlyBuckets.monthEndExclusive(month),
             ) ?: return MonthlyActivityResult.Unavailable
+        // DEF-C (D-266): the currency axis is a property of the LEDGER, so it keeps its own
+        // bounded projection; the month window alone would drop an empty month's zero rows.
+        val currencies = loadActivityCurrencies() ?: return MonthlyActivityResult.Unavailable
         if (!isCatalogConsistent(rows)) return MonthlyActivityResult.InvalidState
         val activity =
             try {
-                MonthlyBuckets.aggregate(rows, ledgerId, catalog, listOf(month)).getValue(month)
+                MonthlyBuckets.aggregate(rows, ledgerId, catalog, listOf(month), currencies).getValue(month)
             } catch (failure: ArithmeticException) {
                 return MonthlyActivityResult.InvalidState
             }
@@ -64,10 +68,11 @@ class QueryMonthlyActivity(
                 MonthlyBuckets.monthStart(window.first()),
                 MonthlyBuckets.monthEndExclusive(window.last()),
             ) ?: return MonthlyTrendResult.Unavailable
+        val currencies = loadActivityCurrencies() ?: return MonthlyTrendResult.Unavailable
         if (!isCatalogConsistent(rows)) return MonthlyTrendResult.InvalidState
         val byMonth =
             try {
-                MonthlyBuckets.aggregate(rows, ledgerId, catalog, window)
+                MonthlyBuckets.aggregate(rows, ledgerId, catalog, window, currencies)
             } catch (failure: ArithmeticException) {
                 return MonthlyTrendResult.InvalidState
             }
@@ -100,9 +105,10 @@ class QueryMonthlyActivity(
             } catch (failure: Exception) {
                 return SelectableMonthsResult.Unavailable
             }
-        val range = earliest?.let { MonthlyBuckets.bucketKey(it) }?.let { first ->
-            if (first > currentMonth) null else first..currentMonth
-        }
+        val range =
+            earliest?.let { MonthlyBuckets.bucketKey(it) }?.let { first ->
+                if (first > currentMonth) null else first..currentMonth
+            }
         return SelectableMonthsResult.Success(months = range?.let(MonthlyBuckets::monthsInRange) ?: emptyList())
     }
 
@@ -116,6 +122,17 @@ class QueryMonthlyActivity(
                 startEpochNanosInclusive = startInclusive.toEpochMilliseconds() * 1_000_000L,
                 endEpochNanosExclusive = endExclusive.toEpochMilliseconds() * 1_000_000L,
             )
+        } catch (failure: Exception) {
+            null
+        }
+
+    /**
+     * DEF-C (D-266): the ledger-level currency axis, read from its own bounded projection. A
+     * failure here is a typed read failure, never a silently narrower axis (R-Q06-4).
+     */
+    private fun loadActivityCurrencies(): List<CurrencyUnit>? =
+        try {
+            readPort.loadLedgerActivityCurrencies(ledgerId)
         } catch (failure: Exception) {
             null
         }

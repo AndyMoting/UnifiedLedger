@@ -379,6 +379,29 @@ class QueryMonthlyActivityTest {
     }
 
     @Test
+    fun emptyWindowKeepsTheLedgerCurrencyAxisAndItsExplicitZeroRow() {
+        // DEF-C (D-266): the March window carries no row here, yet the activity currency axis is
+        // a property of the LEDGER (the port's own projection), so R-Q07-1's explicit zero row
+        // survives a bounded window instead of collapsing to "no currencies at all".
+        val rows =
+            listOf(
+                row("tx-jan", TransactionKind.EXPENSE, "2026-01-10T02:00:00Z") {
+                    posting("posting-jan", expenseId, 3_000L)
+                    posting("posting-jan-payment", assetId, -3_000L)
+                },
+            )
+        val activity =
+            assertIs<MonthlyActivityResult.Success>(
+                query(rows, clockAt = "2026-03-20T02:00:00Z").query(YearMonth(2026, 3)),
+            ).activity
+        assertEquals(listOf(cny), activity.currencies.map { it.currency })
+        assertEquals(0, activity.currencies.single().transactionCount)
+        assertEquals(0L, activity.currencies.single().netExpenseMinorUnits)
+        assertEquals(0L, activity.currencies.single().balanceMinorUnits)
+        assertTrue(activity.expenseCategories.isEmpty())
+    }
+
+    @Test
     fun categoryTotalsRollUpLevel1ToLevel2WithCurrentNamesAndAbsentCategoryStaysAbsent() {
         val rows =
             listOf(

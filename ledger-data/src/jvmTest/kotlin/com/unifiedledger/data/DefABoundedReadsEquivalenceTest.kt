@@ -25,6 +25,7 @@ class DefABoundedReadsEquivalenceTest {
     private val ledgerId = LedgerId("ledger-def-a-test")
     private val otherLedgerId = LedgerId("ledger-def-a-other")
     private val cny = CurrencyUnit("CNY", 2)
+    private val usd = CurrencyUnit("USD", 2)
     private val assetAccount = AccountId("asset-def-a")
     private val expenseAccount = AccountId("expense-def-a")
 
@@ -36,13 +37,16 @@ class DefABoundedReadsEquivalenceTest {
             LedgerDatabase.Schema.create(driver)
             // March in the frozen zone is [2026-02-28T16:00Z, 2026-03-31T16:00Z).
             insertTransaction(driver, "tx-jan", atLocal("2026-01-15T02:00:00Z"), 1_000L)
+            // A second ledger currency that appears ONLY outside the March/April windows: the
+            // activity currency axis must still report it (DEF-C, D-266).
+            insertTransaction(driver, "tx-jan-usd", atLocal("2026-01-20T02:00:00Z"), 500L, usd)
             insertTransaction(driver, "tx-mar-a", atLocal("2026-02-28T16:00:00Z"), 2_000L)
             insertTransaction(driver, "tx-mar-b", atLocal("2026-03-31T15:59:59Z"), 3_000L)
             insertTransaction(driver, "tx-apr", atLocal("2026-03-31T16:00:00Z"), 4_000L)
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(LedgerDatabase(driver))
 
             val all = adapter.loadLedgerEntryRows(ledgerId)
-            assertEquals(listOf("tx-apr", "tx-jan", "tx-mar-a", "tx-mar-b"), all.map { it.transactionId.value }.sorted())
+            assertEquals(listOf("tx-apr", "tx-jan", "tx-jan-usd", "tx-mar-a", "tx-mar-b"), all.map { it.transactionId.value }.sorted())
 
             // March in the frozen reporting zone (Asia/Shanghai): [2026-03-01T00:00+08, 2026-04-01T00:00+08).
             val marchStart = Instant.parse("2026-02-28T16:00:00Z")
@@ -68,6 +72,19 @@ class DefABoundedReadsEquivalenceTest {
             assertNull(adapter.loadLedgerEntryRow(ledgerId, TransactionId("tx-absent")))
             assertNull(adapter.loadLedgerEntryRow(otherLedgerId, TransactionId("tx-mar-b")))
 
+            // DEF-C (D-266): the activity currency axis is the DISTINCT currencies of the SAME
+            // effective set, deliberately NOT restricted to a window — a monthly projection needs
+            // the axis for months whose own window carries no row at all (R-Q07-1 zero rows).
+            val expectedAxis =
+                all
+                    .flatMap { it.postings }
+                    .map { it.amount.currency }
+                    .distinct()
+                    .sortedWith(compareBy({ it.code }, { it.precision }))
+            assertEquals(expectedAxis, adapter.loadLedgerActivityCurrencies(ledgerId))
+            assertEquals(listOf(cny, usd), adapter.loadLedgerActivityCurrencies(ledgerId))
+            assertEquals(emptyList<CurrencyUnit>(), adapter.loadLedgerActivityCurrencies(otherLedgerId))
+
             // The lower bound is the earliest effective statistics instant.
             assertEquals(Instant.parse("2026-01-15T02:00:00Z"), adapter.earliestEffectiveStatisticsAt(ledgerId))
             assertNull(adapter.earliestEffectiveStatisticsAt(otherLedgerId))
@@ -90,15 +107,19 @@ class DefABoundedReadsEquivalenceTest {
 
             val rows = adapter.loadCurrentRows(ledgerId)
             val inMemory =
-                rows.flatMap { it.postings }
+                rows
+                    .flatMap { it.postings }
                     .groupBy { it.accountId to it.amount.currency }
                     .mapValues { (_, postings) -> postings.sumOf { it.amount.minorUnits } }
             val sums =
-                adapter.accountBalanceSums(ledgerId)
+                adapter
+                    .accountBalanceSums(ledgerId)
                     .associate { (it.accountId to it.currency) to it.ledgerSignedMinorUnits }
             assertEquals(inMemory, sums)
-            assertEquals(1_234L + 7_766L + 5L, sums[assetAccount to cny])
-            assertEquals(-(1_234L + 7_766L + 5L), sums[expenseAccount to cny])
+            // Ledger-signed, exactly as posted: the fixture's expense leg carries +amount and its
+            // asset leg -amount (display sign is applied later, never here).
+            assertEquals(-(1_234L + 7_766L + 5L), sums[assetAccount to cny])
+            assertEquals(1_234L + 7_766L + 5L, sums[expenseAccount to cny])
         } finally {
             driver.close()
         }
@@ -112,6 +133,7 @@ class DefABoundedReadsEquivalenceTest {
         transactionId: String,
         statisticsAt: Instant,
         amountMinor: Long,
+        currency: CurrencyUnit = cny,
     ) {
         val stamp = statisticsAt.toString()
         val nanos = statisticsAt.toEpochMilliseconds() * 1_000_000L
@@ -125,12 +147,12 @@ class DefABoundedReadsEquivalenceTest {
         exec(
             driver,
             "INSERT INTO posting (posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision) " +
-                "VALUES ('p0-$transactionId', 'ps-$transactionId', '${ledgerId.value}', 0, '${expenseAccount.value}', $amountMinor, 'CNY', 2)",
+                "VALUES ('p0-$transactionId', 'ps-$transactionId', '${ledgerId.value}', 0, '${expenseAccount.value}', $amountMinor, '${currency.code}', ${currency.precision})",
         )
         exec(
             driver,
             "INSERT INTO posting (posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision) " +
-                "VALUES ('p1-$transactionId', 'ps-$transactionId', '${ledgerId.value}', 1, '${assetAccount.value}', ${-amountMinor}, 'CNY', 2)",
+                "VALUES ('p1-$transactionId', 'ps-$transactionId', '${ledgerId.value}', 1, '${assetAccount.value}', ${-amountMinor}, '${currency.code}', ${currency.precision})",
         )
         exec(
             driver,
@@ -138,7 +160,10 @@ class DefABoundedReadsEquivalenceTest {
         )
     }
 
-    private fun exec(driver: SqlDriver, sql: String) {
+    private fun exec(
+        driver: SqlDriver,
+        sql: String,
+    ) {
         driver.execute(null, sql, 0)
     }
 
