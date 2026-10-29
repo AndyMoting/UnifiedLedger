@@ -5759,10 +5759,10 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
    | 正式交易 | 结果 | 决定性证据 |
    | --- | --- | --- |
-   | 2,000 | **通过**：`read.currentState end kind=success`、`read.monthlyPayload end kind=ready`，首页可操作；单次快照 `Java Heap` PSS 62.3 MB、Dalvik `Alloc` 52.9 MiB（总 `Heap Alloc` 94.1 MB 含 native 39.0 MB） | `logcat-2k.txt`、`meminfo-2k.txt`、`ui-2k.xml` |
+   | 2,000 | **通过**：`read.currentState end kind=success`、`read.monthlyPayload end kind=ready`，首页可操作；单次快照 `Java Heap` PSS 62.3 MB、Dalvik `Alloc` 52.9 MiB（总 `Heap Alloc` 91.9 MiB（含 native 39.0 MiB）） | `logcat-2k.txt`、`meminfo-2k.txt`、`ui-2k.xml` |
    | 5,000 | **OOM，进程死亡**（进程起动 `Start proc` → FATAL 约 32 s）；栈落**放置阶段** `RectList.resizeStorage` ← `RectManager.recalculateRectIfDirty` ← `MeasurePassDelegate.markNodeAndSubtreeAsPlaced`；越限前两次读均已成功（`currentState` 10:51:38.934、`monthlyPayload ready` 10:51:52.573）；总进程 PSS 峰值 343,919 KB | `logcat-5k.txt`、`meminfo-5k.txt` |
-   | 10,000 | **OOM 抛出**，栈落**月度读** `CursorWindow.getString` ← `ledgerEntryRowsForLedger` ← `QueryMonthlyActivity.loadRows` | `oom-stack-10k.txt` |
-   | 20,002 | **OOM，进程死亡**（进程起动 `Start proc` → FATAL 约 19 s）；栈落**节点插入** `InsertNodeFixup` → `LayoutNode.<init>`（**无应用帧**）；时序上 `currentState` 成功（10:52:28.658）后**未进入** `monthlyPayload` 即崩；总进程 PSS 峰值 287,401 KB | `logcat-20k.txt`、`oom-stack-20k.txt`、`meminfo-20k.txt` |
+   | 10,000 | **OOM，进程死亡**（`FATAL EXCEPTION: main`），栈落**月度读** `CursorWindow.getString` ← `ledgerEntryRowsForLedger` ← `QueryMonthlyActivity.loadRows` | `oom-stack-10k.txt` |
+   | 20,002 | **OOM，进程死亡**（进程起动 `Start proc` → FATAL 约 19 s）；栈落**节点插入** `InsertNodeFixup` → `LayoutNode.<init>`（**无应用帧**，归属据规模与分支判定）；时序上 `currentState` 成功（10:52:28.658）后**未进入** `monthlyPayload` 即崩；总进程 PSS 峰值 287,401 KB | `logcat-20k.txt`、`oom-stack-20k.txt`、`meminfo-20k.txt` |
 
    堆上限 192 MB（`growth limit 201326592`，与 `dalvik.vm.heapgrowthlimit=192m` 一致）。**两个缺陷在同一堆上叠加**：10k 档死在月度读、20k 档死在界面组合，故修复后 20k 与 50k 两档都必须复测，不能只测一档。
 
@@ -5770,8 +5770,8 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 5. **两个独立规模缺陷（登记；不占 P709 编号）**：
 
-   - **DEF-A（月度读 O(整账)）**：`QueryMonthlyActivity.query/trend/selectableMonths` 全部经 `loadRows()` → `readPort.loadLedgerEntryRows(ledgerId)`，适配器用 `executeAsList()` 全量物化（`SqlDelightLedgerCurrentStateReadAdapter.kt:203-204`），SQL 无月份谓词、无 `LIMIT`。影响面：首页月卡、趋势、可选月份，**以及首页一次加载里的另两次全账读**：`QueryLedgerCurrentState.query()` → `loadCurrentRows`（适配器 `executeAsList`，`SqlDelightLedgerCurrentStateReadAdapter.kt:59-60`；SQL 无 `LIMIT`、无窗口谓词；接线 `P503App.kt:1672`）与 `QueryLedgerEntryRows.query()` → `loadLedgerEntryRows`（`QueryLedgerEntryRows.kt:16`；接线 `P503App.kt:975/976/977/979`）——合计**一次首页加载触发 5 次全账读**。**不含小组件**：小组件走 `QueryWidgetMonthlySnapshot(MonthlyContributionReadPort)` 的有界月读（`monthlyContributionRowsInWindow(ledgerId, startNanos, endNanos)`，`SqlDelightMonthlyContributionReadAdapter.kt:37/118`），`MonthlyContributionReadPort.kt:14-15` 明文禁止该路走整账读（规格 §6.2 冻结的是「复用有界月读」）。
-     **修复指引（分三条，不可一概下推）**：`query` 加月份窗口谓词 + 上限（可复用有界月读的形状）；`trend` 加 12 月窗口谓词；`selectableMonths` 要的是全账最早统计月，只能改用 `MIN(statistics_at)` 聚合读（须沿用同一 effective/current-version 谓词，否则被作废的最早一笔会把可选月份域前移），谓词下推在结构上解决不了它。
+   - **DEF-A（月度读 O(整账)）**：`QueryMonthlyActivity.query/trend/selectableMonths` 全部经 `loadRows()` → `readPort.loadLedgerEntryRows(ledgerId)`，适配器用 `executeAsList()` 全量物化（`SqlDelightLedgerCurrentStateReadAdapter.kt:203-204`），SQL 无月份谓词、无 `LIMIT`。影响面：首页月卡、趋势、可选月份，**以及首页一次加载里的另两次全账读**：`QueryLedgerCurrentState.query()` → `loadCurrentRows`（适配器 `executeAsList`，`SqlDelightLedgerCurrentStateReadAdapter.kt:59-60`；SQL 无 `LIMIT`、无窗口谓词；接线 `P503App.kt:1672`）与 `QueryLedgerEntryRows.query()` → `loadLedgerEntryRows`（`QueryLedgerEntryRows.kt:16`；接线 `P503App.kt:975/976/977/979`）——合计**一次首页加载触发 5 次全账读**；此外还有一处独立的全账读：`QueryTransactionDetail`（`QueryTransactionDetail.kt:36-42`）先 `loadLedgerEntryRows` 全量物化、再 `firstOrNull` 取单笔（产品接线 `P503App.kt:1194`），修复批须一并改为单笔键值读。**不含小组件**：小组件走 `QueryWidgetMonthlySnapshot(MonthlyContributionReadPort)` 的有界月读（`monthlyContributionRowsInWindow(ledgerId, startNanos, endNanos)`，`SqlDelightMonthlyContributionReadAdapter.kt:37/118`），`MonthlyContributionReadPort.kt:14-15` 明文禁止该路走整账读（规格 §6.2 冻结的是「复用有界月读」）。
+     **修复指引（分三条，不可一概下推）**：`query` 加月份窗口谓词 + 上限（可复用有界月读的形状）；`trend` 加 12 月窗口谓词；`selectableMonths` 要的是全账最早统计月，只能改用 `MIN(statistics_at)` 聚合读（须沿用同一 effective/current-version 谓词，否则被作废的最早一笔会把可选月份域前移），谓词下推在结构上解决不了它；`QueryTransactionDetail` 改为按 id 的单笔读。
    - **DEF-B（首页流水不虚拟化）**：首页流水在 `P503OverviewScreen.kt:82`（`Column + verticalScroll`）逐行组合，行源在 `:123-133`：`state.transactions` 分支来自无上限的 `loadCurrentRows`（**20k 档走的正是这一支**——`flowRowsForDisplay` 在月读未就绪时返回 `null`，该档 `monthlyPayload` 从未开始），`flowRows` 分支来自无上限的 `loadLedgerEntryRows`；两支都必须有界。**更正一处易误指**：`P503LedgerView.kt:369-370` 属 `P503TransactionDetailScreen`（单笔详情），**不是**本缺陷位置。
 
 6. **A6-5（缺失/损坏库无新空库）两半均已取证**：
