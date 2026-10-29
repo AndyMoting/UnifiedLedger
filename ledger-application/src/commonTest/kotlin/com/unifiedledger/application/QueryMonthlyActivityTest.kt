@@ -379,6 +379,119 @@ class QueryMonthlyActivityTest {
     }
 
     @Test
+    fun emptyWindowKeepsTheLedgerCurrencyAxisAndItsExplicitZeroRow() {
+        // DEF-C (D-267): the March window carries no row here, yet the activity currency axis is
+        // a property of the LEDGER (the port's own projection), so R-Q07-1's explicit zero row
+        // survives a bounded window instead of collapsing to "no currencies at all".
+        val rows =
+            listOf(
+                row("tx-jan", TransactionKind.EXPENSE, "2026-01-10T02:00:00Z") {
+                    posting("posting-jan", expenseId, 3_000L)
+                    posting("posting-jan-payment", assetId, -3_000L)
+                },
+            )
+        val activity =
+            assertIs<MonthlyActivityResult.Success>(
+                query(rows, clockAt = "2026-03-20T02:00:00Z").query(YearMonth(2026, 3)),
+            ).activity
+        assertEquals(listOf(cny), activity.currencies.map { it.currency })
+        assertEquals(0, activity.currencies.single().transactionCount)
+        assertEquals(0L, activity.currencies.single().netExpenseMinorUnits)
+        assertEquals(0L, activity.currencies.single().balanceMinorUnits)
+        assertTrue(activity.expenseCategories.isEmpty())
+    }
+
+    @Test
+    fun anAxisReadFailureYieldsUnavailableNeverANarrowerAxis() {
+        // DEF-C (D-267): the axis is its own bounded read, so it has its own failure leg. A
+        // failure must surface as Unavailable — never as the row-derived axis that caused DEF-C.
+        val rows =
+            listOf(
+                row("tx-mar", TransactionKind.EXPENSE, "2026-03-05T02:00:00Z") {
+                    posting("posting-mar", expenseId, 3_000L)
+                    posting("posting-mar-payment", assetId, -3_000L)
+                },
+            )
+        val useCase =
+            QueryMonthlyActivity(
+                readPort = AxisPort(rows, axis = { throw IllegalStateException("axis unavailable") }),
+                ledgerId = ledgerId,
+                catalog = catalog(),
+                clock = FixedLedgerClock(Instant.parse("2026-03-20T02:00:00Z")),
+            )
+        assertIs<MonthlyActivityResult.Unavailable>(useCase.query(YearMonth(2026, 3)))
+        assertIs<MonthlyTrendResult.Unavailable>(useCase.trend())
+    }
+
+    @Test
+    fun anAxisCurrencyWithoutACatalogAccountIsInvalidState() {
+        // DEF-C (D-267): the axis is read outside the requested window, so the row-level catalog
+        // gate never sees it; a currency with no catalog account of this ledger is that same
+        // inconsistency family and fails closed instead of rendering an unmodelled zero row.
+        val rows =
+            listOf(
+                row("tx-mar", TransactionKind.EXPENSE, "2026-03-05T02:00:00Z") {
+                    posting("posting-mar", expenseId, 3_000L)
+                    posting("posting-mar-payment", assetId, -3_000L)
+                },
+            )
+        val useCase =
+            QueryMonthlyActivity(
+                readPort = AxisPort(rows, axis = { listOf(cny, CurrencyUnit("JPY", 0)) }),
+                ledgerId = ledgerId,
+                catalog = catalog(),
+                clock = FixedLedgerClock(Instant.parse("2026-03-20T02:00:00Z")),
+            )
+        assertIs<MonthlyActivityResult.InvalidState>(useCase.query(YearMonth(2026, 3)))
+        assertIs<MonthlyTrendResult.InvalidState>(useCase.trend())
+    }
+
+    @Test
+    fun aTornAxisStillEmitsTheRowCurrencyWithItsAmount() {
+        // DEF-C (D-267): amounts never depend on the axis. An axis that omits a currency the
+        // folded rows carry (a torn read) still emits that currency WITH its amount, so a torn
+        // axis can only add a row and never loses money (F10: categories reconcile with the card).
+        val rows =
+            listOf(
+                row("tx-usd", TransactionKind.EXPENSE, "2026-03-05T02:00:00Z") {
+                    posting("posting-usd", usdExpenseId, 250L, usd)
+                    posting("posting-usd-payment", usdAssetId, -250L, usd)
+                },
+            )
+        val activity =
+            assertIs<MonthlyActivityResult.Success>(
+                QueryMonthlyActivity(
+                    readPort = AxisPort(rows, axis = { listOf(cny) }),
+                    ledgerId = ledgerId,
+                    catalog = catalog(),
+                    clock = FixedLedgerClock(Instant.parse("2026-03-20T02:00:00Z")),
+                ).query(YearMonth(2026, 3)),
+            ).activity
+        assertEquals(listOf(cny, usd), activity.currencies.map { it.currency })
+        assertEquals(0L, activity.currencies[0].netExpenseMinorUnits)
+        assertEquals(250L, activity.currencies[1].netExpenseMinorUnits)
+    }
+
+    @Test
+    fun thePortDefaultDerivesTheAxisFromTheUnboundedEntryRead() {
+        // DEF-C (D-267): the port default IS the pre-D-266 derivation and the equivalence anchor
+        // for every existing fake. EntryRowsPort inherits it on purpose, so this test keeps the
+        // default's success leg executed instead of shadowed by an override.
+        val rows =
+            listOf(
+                row("tx-cny", TransactionKind.EXPENSE, "2026-01-05T02:00:00Z") {
+                    posting("posting-cny", expenseId, 1_000L)
+                    posting("posting-cny-payment", assetId, -1_000L)
+                },
+                row("tx-usd", TransactionKind.EXPENSE, "2026-02-05T02:00:00Z") {
+                    posting("posting-usd", usdExpenseId, 250L, usd)
+                    posting("posting-usd-payment", usdAssetId, -250L, usd)
+                },
+            )
+        assertEquals(listOf(cny, usd), EntryRowsPort(rows).loadLedgerActivityCurrencies(ledgerId))
+    }
+
+    @Test
     fun categoryTotalsRollUpLevel1ToLevel2WithCurrentNamesAndAbsentCategoryStaysAbsent() {
         val rows =
             listOf(
@@ -674,8 +787,11 @@ private class ThrowingLedgerClock : LedgerClock {
     override fun now(): Instant = throw IllegalStateException("clock unavailable")
 }
 
-/** Read-port fake that only serves the P7-03 entry-row surface. */
-private class EntryRowsPort(
+/**
+ * Read-port fake that serves the P7-03 entry-row surface and INHERITS the real axis default, so
+ * the default's success leg keeps running instead of being shadowed by every fake.
+ */
+private open class EntryRowsPort(
     private val rows: List<LedgerEntryRow>,
 ) : LedgerCurrentStateReadPort {
     override fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow> = emptyList()
@@ -711,6 +827,17 @@ private class EntryRowsPort(
     ): ManualTransferCommitRecord? = null
 
     override fun loadLedgerEntryRows(ledgerId: LedgerId): List<LedgerEntryRow> = rows
+}
+
+/**
+ * The same fake with a caller-supplied axis, for the failure and inconsistency legs — an axis the
+ * default could not derive from these rows.
+ */
+private class AxisPort(
+    rows: List<LedgerEntryRow>,
+    private val axis: (LedgerId) -> List<CurrencyUnit>,
+) : EntryRowsPort(rows) {
+    override fun loadLedgerActivityCurrencies(ledgerId: LedgerId): List<CurrencyUnit> = axis(ledgerId)
 }
 
 /**

@@ -35,6 +35,7 @@
 1	com.unifiedledger.data.SqlDelightRg12StoreTest
 1	com.unifiedledger.data.SqlDelightTagMerchantCatalogStoreTest
 1	com.unifiedledger.data.TagMerchantFilterScaleTest
+2	com.unifiedledger.data.DefABoundedReadsEquivalenceTest
 2	com.unifiedledger.data.ImportReview61kReadAttributionTest
 2	com.unifiedledger.data.ImportSpineAlipayEndToEndTest
 2	com.unifiedledger.data.ImportSpineLifecycleEndToEndTest

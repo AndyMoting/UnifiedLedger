@@ -98,9 +98,23 @@ object MonthlyBuckets {
      */
     fun monthStart(statisticsMonth: YearMonth): Instant = statisticsMonth.firstDay.atStartOfDayIn(REPORT_TIME_ZONE)
 
+    /** Exclusive end of a month in the frozen zone: the next month's start. */
+    fun monthEndExclusive(statisticsMonth: YearMonth): Instant = monthStart(statisticsMonth.nextMonth())
+
     fun YearMonth.nextMonth(): YearMonth = plus(1, DateTimeUnit.MONTH)
 
     fun YearMonth.previousMonth(): YearMonth = minus(1, DateTimeUnit.MONTH)
+
+    /**
+     * The currencies carried by [rows]' postings, in `(code, precision)` order: the per-row-set
+     * axis a window projection derives, and the fallback [aggregate] takes when a caller supplies
+     * no ledger-level axis. Single source for that projection (DEF-C, D-267).
+     */
+    fun activityCurrenciesOf(rows: List<LedgerEntryRow>): List<CurrencyUnit> =
+        rows
+            .flatMap { row -> row.postings.map { it.amount.currency } }
+            .distinct()
+            .sortedWith(compareBy({ it.code }, { it.precision }))
 
     /**
      * Unified monthly aggregation over the given months (plan section 5.1: the home card,
@@ -109,12 +123,21 @@ object MonthlyBuckets {
      * accumulated with checked Long arithmetic. Overflow fails with [ArithmeticException]
      * and a posting account missing from the injected catalog fails with
      * [IllegalStateException]; the use case boundary maps both to typed failures (R-Q06-4).
+     *
+     * [ledgerActivityCurrencies] is the ledger-level axis the home month card and the trend need
+     * for R-Q07-1's explicit zero rows ([QueryMonthlyActivity] passes
+     * [LedgerCurrentStateReadPort.loadLedgerActivityCurrencies]). The fold still covers every
+     * posting, so the emitted axis is that axis UNION [activityCurrenciesOf] of [rows]: a window
+     * projection that passes nothing keeps its per-row-set axis, and a torn read can only add a
+     * row — zero when only the axis carries the currency, carrying the window's amounts when only
+     * the rows do — and never drop a movement (F10).
      */
     fun aggregate(
         rows: List<LedgerEntryRow>,
         ledgerId: LedgerId,
         catalog: LedgerCatalog,
         months: Collection<YearMonth>,
+        ledgerActivityCurrencies: List<CurrencyUnit>? = null,
     ): Map<YearMonth, MonthlyActivity> {
         val accountsById = catalog.accounts.associateBy { it.id }
         val categoriesById = catalog.categories.associateBy { it.id }
@@ -124,8 +147,7 @@ object MonthlyBuckets {
                 .sortedBy { it.id.value }
                 .associateBy { requireNotNull(it.postingAccountId) }
         val activityCurrencies =
-            rows
-                .flatMap { row -> row.postings.map { it.amount.currency } }
+            (ledgerActivityCurrencies.orEmpty() + activityCurrenciesOf(rows))
                 .distinct()
                 .sortedWith(compareBy({ it.code }, { it.precision }))
 
@@ -364,7 +386,13 @@ object OrdinaryFlowClassification {
 data class MonthlyActivity(
     val ledgerId: LedgerId,
     val month: YearMonth,
-    /** One row per activity currency of the ledger (sorted by code, then precision). */
+    /**
+     * One row per AXIS currency (sorted by code, then precision). The axis is the ledger's for
+     * [QueryMonthlyActivity], whose home card and trend need R-Q07-1's explicit zero rows; a
+     * projection that is defined per row set keeps the row-derived axis. Folded amounts never
+     * depend on the axis, so a torn axis adds at most one row (zero when only the axis carries the
+     * currency) and never loses a movement (DEF-C, D-267).
+     */
     val currencies: List<MonthlyCurrencyActivity>,
     /** Level-1 expense category totals; each level-1 total equals the sum of its level-2 children. */
     val expenseCategories: List<MonthlyCategoryTotal>,

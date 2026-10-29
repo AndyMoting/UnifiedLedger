@@ -1,8 +1,10 @@
 package com.unifiedledger.application
 
+import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
 import kotlinx.datetime.YearMonth
+import kotlin.time.Instant
 
 /**
  * P7-03.B unified monthly projection use case (spec section 4.2.1). One result feeds the
@@ -28,11 +30,20 @@ class QueryMonthlyActivity(
      * is bounded by [selectableMonths] (P703SPEC-10).
      */
     fun query(month: YearMonth): MonthlyActivityResult {
-        val rows = loadRows() ?: return MonthlyActivityResult.Unavailable
+        // DEF-A (D-266): the projection never reads beyond the requested month's instant bounds.
+        val rows =
+            loadRows(
+                MonthlyBuckets.monthStart(month),
+                MonthlyBuckets.monthEndExclusive(month),
+            ) ?: return MonthlyActivityResult.Unavailable
         if (!isCatalogConsistent(rows)) return MonthlyActivityResult.InvalidState
+        // DEF-C (D-267): the currency axis is a property of the LEDGER, so it keeps its own
+        // bounded projection; the month window alone would drop an empty month's zero rows.
+        val currencies = loadActivityCurrencies() ?: return MonthlyActivityResult.Unavailable
+        if (!isAxisCatalogConsistent(currencies)) return MonthlyActivityResult.InvalidState
         val activity =
             try {
-                MonthlyBuckets.aggregate(rows, ledgerId, catalog, listOf(month)).getValue(month)
+                MonthlyBuckets.aggregate(rows, ledgerId, catalog, listOf(month), currencies).getValue(month)
             } catch (failure: ArithmeticException) {
                 return MonthlyActivityResult.InvalidState
             }
@@ -45,18 +56,25 @@ class QueryMonthlyActivity(
      * (spec section 6.2 residual boundary (c)).
      */
     fun trend(): MonthlyTrendResult {
-        val rows = loadRows() ?: return MonthlyTrendResult.Unavailable
         val currentMonth =
             try {
                 MonthlyBuckets.currentMonth(clock)
             } catch (failure: Exception) {
                 return MonthlyTrendResult.Unavailable
             }
-        if (!isCatalogConsistent(rows)) return MonthlyTrendResult.InvalidState
         val window = MonthlyBuckets.monthWindow(currentMonth)
+        // DEF-A (D-266): only the twelve-month window is read, never the whole ledger.
+        val rows =
+            loadRows(
+                MonthlyBuckets.monthStart(window.first()),
+                MonthlyBuckets.monthEndExclusive(window.last()),
+            ) ?: return MonthlyTrendResult.Unavailable
+        if (!isCatalogConsistent(rows)) return MonthlyTrendResult.InvalidState
+        val currencies = loadActivityCurrencies() ?: return MonthlyTrendResult.Unavailable
+        if (!isAxisCatalogConsistent(currencies)) return MonthlyTrendResult.InvalidState
         val byMonth =
             try {
-                MonthlyBuckets.aggregate(rows, ledgerId, catalog, window)
+                MonthlyBuckets.aggregate(rows, ledgerId, catalog, window, currencies)
             } catch (failure: ArithmeticException) {
                 return MonthlyTrendResult.InvalidState
             }
@@ -76,23 +94,58 @@ class QueryMonthlyActivity(
      * month. Clock failures yield [SelectableMonthsResult.Unavailable].
      */
     fun selectableMonths(): SelectableMonthsResult {
-        val rows = loadRows() ?: return SelectableMonthsResult.Unavailable
+        // DEF-A (D-266): the lower bound is one MIN projection, not a whole-flow materialisation.
+        val earliest =
+            try {
+                readPort.earliestEffectiveStatisticsAt(ledgerId)
+            } catch (failure: Exception) {
+                return SelectableMonthsResult.Unavailable
+            }
         val currentMonth =
             try {
                 MonthlyBuckets.currentMonth(clock)
             } catch (failure: Exception) {
                 return SelectableMonthsResult.Unavailable
             }
-        val range = MonthlyBuckets.selectableMonthRange(rows, currentMonth)
+        val range =
+            earliest?.let { MonthlyBuckets.bucketKey(it) }?.let { first ->
+                if (first > currentMonth) null else first..currentMonth
+            }
         return SelectableMonthsResult.Success(months = range?.let(MonthlyBuckets::monthsInRange) ?: emptyList())
     }
 
-    private fun loadRows(): List<LedgerEntryRow>? =
+    private fun loadRows(
+        startInclusive: Instant,
+        endExclusive: Instant,
+    ): List<LedgerEntryRow>? =
         try {
-            readPort.loadLedgerEntryRows(ledgerId)
+            readPort.loadLedgerEntryRowsInWindow(
+                ledgerId = ledgerId,
+                startEpochNanosInclusive = startInclusive.toEpochMilliseconds() * 1_000_000L,
+                endEpochNanosExclusive = endExclusive.toEpochMilliseconds() * 1_000_000L,
+            )
         } catch (failure: Exception) {
             null
         }
+
+    /**
+     * DEF-C (D-267): the ledger-level currency axis, read from its own bounded projection. A
+     * failure here is a typed read failure, never a silently narrower axis (R-Q06-4).
+     */
+    private fun loadActivityCurrencies(): List<CurrencyUnit>? =
+        try {
+            readPort.loadLedgerActivityCurrencies(ledgerId)
+        } catch (failure: Exception) {
+            null
+        }
+
+    /**
+     * DEF-C (D-267): the axis comes from effective rows OUTSIDE the requested window, which the
+     * row-level catalog gate above never sees, so every axis currency must still name a catalog
+     * account of this ledger. A currency without one is the same inconsistency family as a
+     * posting account missing from the catalog (InvalidState), never an unmodelled zero row.
+     */
+    private fun isAxisCatalogConsistent(axis: List<CurrencyUnit>): Boolean = axis.all { currency -> catalog.accounts.any { it.ledgerId == ledgerId && it.currency == currency } }
 
     private fun isCatalogConsistent(rows: List<LedgerEntryRow>): Boolean =
         rows.all { row ->
