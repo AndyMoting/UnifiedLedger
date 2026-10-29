@@ -128,9 +128,9 @@ object MonthlyBuckets {
      * for R-Q07-1's explicit zero rows ([QueryMonthlyActivity] passes
      * [LedgerCurrentStateReadPort.loadLedgerActivityCurrencies]). The fold still covers every
      * posting, so the emitted axis is that axis UNION [activityCurrenciesOf] of [rows]: a window
-     * projection that passes nothing keeps its per-row-set axis, and a torn read (a currency
-     * leaving the ledger between the two statements) can only add a zero row — never drop the
-     * month's amounts (F10).
+     * projection that passes nothing keeps its per-row-set axis, and a torn read can only add a
+     * row — zero when only the axis carries the currency, carrying the window's amounts when only
+     * the rows do — and never drop a movement (F10).
      */
     fun aggregate(
         rows: List<LedgerEntryRow>,
@@ -390,7 +390,8 @@ data class MonthlyActivity(
      * One row per AXIS currency (sorted by code, then precision). The axis is the ledger's for
      * [QueryMonthlyActivity], whose home card and trend need R-Q07-1's explicit zero rows; a
      * projection that is defined per row set keeps the row-derived axis. Folded amounts never
-     * depend on the axis, so a torn axis adds a zero row and never loses a movement (DEF-C, D-267).
+     * depend on the axis, so a torn axis adds at most one row (zero when only the axis carries the
+     * currency) and never loses a movement (DEF-C, D-267).
      */
     val currencies: List<MonthlyCurrencyActivity>,
     /** Level-1 expense category totals; each level-1 total equals the sum of its level-2 children. */

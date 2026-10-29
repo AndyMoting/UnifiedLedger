@@ -449,8 +449,8 @@ class QueryMonthlyActivityTest {
     @Test
     fun aTornAxisStillEmitsTheRowCurrencyWithItsAmount() {
         // DEF-C (D-267): amounts never depend on the axis. An axis that omits a currency the
-        // folded rows carry (a torn read) still emits that currency with its amount, so a month
-        // can lose a zero row but never money (F10: categories reconcile with the month card).
+        // folded rows carry (a torn read) still emits that currency WITH its amount, so a torn
+        // axis can only add a row and never loses money (F10: categories reconcile with the card).
         val rows =
             listOf(
                 row("tx-usd", TransactionKind.EXPENSE, "2026-03-05T02:00:00Z") {
