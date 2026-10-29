@@ -313,7 +313,7 @@ class SqlDelightLedgerCurrentStateReadAdapter(
             }
 
     /**
-     * DEF-A/DEF-C (D-266): the ledger's activity currency axis as one DISTINCT projection. The
+     * DEF-A/DEF-C (D-267): the ledger's activity currency axis as one DISTINCT projection. The
      * monthly projection renders every requested month, including months whose own window carries
      * no row, so the axis cannot come from [loadLedgerEntryRowsInWindow] and must not materialise
      * an entry row either.

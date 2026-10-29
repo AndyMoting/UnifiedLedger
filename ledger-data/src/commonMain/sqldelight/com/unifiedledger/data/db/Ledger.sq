@@ -9314,7 +9314,7 @@ JOIN transaction_effective_state AS effective
  AND effective.is_effective = 1
 WHERE tx.ledger_id = ?;
 
--- DEF-A/DEF-C (D-266): the ledger's activity currency axis for the monthly projection. A month
+-- DEF-A/DEF-C (D-267): the ledger's activity currency axis for the monthly projection. A month
 -- window cannot supply it — an empty month would lose every explicit zero row (R-Q07-1) — so
 -- this projects the DISTINCT currencies of the SAME effective current-version posting set
 -- ledgerEntryRowsForLedger reads, without materialising a row.

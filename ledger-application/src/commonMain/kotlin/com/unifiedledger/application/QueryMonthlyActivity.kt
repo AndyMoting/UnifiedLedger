@@ -36,10 +36,11 @@ class QueryMonthlyActivity(
                 MonthlyBuckets.monthStart(month),
                 MonthlyBuckets.monthEndExclusive(month),
             ) ?: return MonthlyActivityResult.Unavailable
-        // DEF-C (D-266): the currency axis is a property of the LEDGER, so it keeps its own
+        if (!isCatalogConsistent(rows)) return MonthlyActivityResult.InvalidState
+        // DEF-C (D-267): the currency axis is a property of the LEDGER, so it keeps its own
         // bounded projection; the month window alone would drop an empty month's zero rows.
         val currencies = loadActivityCurrencies() ?: return MonthlyActivityResult.Unavailable
-        if (!isCatalogConsistent(rows)) return MonthlyActivityResult.InvalidState
+        if (!isAxisCatalogConsistent(currencies)) return MonthlyActivityResult.InvalidState
         val activity =
             try {
                 MonthlyBuckets.aggregate(rows, ledgerId, catalog, listOf(month), currencies).getValue(month)
@@ -68,8 +69,9 @@ class QueryMonthlyActivity(
                 MonthlyBuckets.monthStart(window.first()),
                 MonthlyBuckets.monthEndExclusive(window.last()),
             ) ?: return MonthlyTrendResult.Unavailable
-        val currencies = loadActivityCurrencies() ?: return MonthlyTrendResult.Unavailable
         if (!isCatalogConsistent(rows)) return MonthlyTrendResult.InvalidState
+        val currencies = loadActivityCurrencies() ?: return MonthlyTrendResult.Unavailable
+        if (!isAxisCatalogConsistent(currencies)) return MonthlyTrendResult.InvalidState
         val byMonth =
             try {
                 MonthlyBuckets.aggregate(rows, ledgerId, catalog, window, currencies)
@@ -127,7 +129,7 @@ class QueryMonthlyActivity(
         }
 
     /**
-     * DEF-C (D-266): the ledger-level currency axis, read from its own bounded projection. A
+     * DEF-C (D-267): the ledger-level currency axis, read from its own bounded projection. A
      * failure here is a typed read failure, never a silently narrower axis (R-Q06-4).
      */
     private fun loadActivityCurrencies(): List<CurrencyUnit>? =
@@ -136,6 +138,14 @@ class QueryMonthlyActivity(
         } catch (failure: Exception) {
             null
         }
+
+    /**
+     * DEF-C (D-267): the axis comes from effective rows OUTSIDE the requested window, which the
+     * row-level catalog gate above never sees, so every axis currency must still name a catalog
+     * account of this ledger. A currency without one is the same inconsistency family as a
+     * posting account missing from the catalog (InvalidState), never an unmodelled zero row.
+     */
+    private fun isAxisCatalogConsistent(axis: List<CurrencyUnit>): Boolean = axis.all { currency -> catalog.accounts.any { it.ledgerId == ledgerId && it.currency == currency } }
 
     private fun isCatalogConsistent(rows: List<LedgerEntryRow>): Boolean =
         rows.all { row ->

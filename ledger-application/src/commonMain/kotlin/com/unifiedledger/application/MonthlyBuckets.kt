@@ -106,6 +106,17 @@ object MonthlyBuckets {
     fun YearMonth.previousMonth(): YearMonth = minus(1, DateTimeUnit.MONTH)
 
     /**
+     * The currencies carried by [rows]' postings, in `(code, precision)` order: the per-row-set
+     * axis a window projection derives, and the fallback [aggregate] takes when a caller supplies
+     * no ledger-level axis. Single source for that projection (DEF-C, D-267).
+     */
+    fun activityCurrenciesOf(rows: List<LedgerEntryRow>): List<CurrencyUnit> =
+        rows
+            .flatMap { row -> row.postings.map { it.amount.currency } }
+            .distinct()
+            .sortedWith(compareBy({ it.code }, { it.precision }))
+
+    /**
      * Unified monthly aggregation over the given months (plan section 5.1: the home card,
      * the category totals and the trend share one result). Pure projection: rows are
      * bucketed by their statistics time, classified per the frozen section 3.1.1 table and
@@ -113,11 +124,13 @@ object MonthlyBuckets {
      * and a posting account missing from the injected catalog fails with
      * [IllegalStateException]; the use case boundary maps both to typed failures (R-Q06-4).
      *
-     * [ledgerActivityCurrencies] is the ledger's activity currency axis ([QueryMonthlyActivity]
-     * passes [LedgerCurrentStateReadPort.loadLedgerActivityCurrencies]). `null` derives it from
-     * [rows], exactly the pre-D-266 behaviour for a caller whose rows already span the whole
-     * ledger; a caller holding only a bounded window must pass it, or a month without rows loses
-     * the explicit zero row R-Q07-1 requires.
+     * [ledgerActivityCurrencies] is the ledger-level axis the home month card and the trend need
+     * for R-Q07-1's explicit zero rows ([QueryMonthlyActivity] passes
+     * [LedgerCurrentStateReadPort.loadLedgerActivityCurrencies]). The fold still covers every
+     * posting, so the emitted axis is that axis UNION [activityCurrenciesOf] of [rows]: a window
+     * projection that passes nothing keeps its per-row-set axis, and a torn read (a currency
+     * leaving the ledger between the two statements) can only add a zero row — never drop the
+     * month's amounts (F10).
      */
     fun aggregate(
         rows: List<LedgerEntryRow>,
@@ -134,7 +147,7 @@ object MonthlyBuckets {
                 .sortedBy { it.id.value }
                 .associateBy { requireNotNull(it.postingAccountId) }
         val activityCurrencies =
-            (ledgerActivityCurrencies ?: rows.flatMap { row -> row.postings.map { it.amount.currency } })
+            (ledgerActivityCurrencies.orEmpty() + activityCurrenciesOf(rows))
                 .distinct()
                 .sortedWith(compareBy({ it.code }, { it.precision }))
 

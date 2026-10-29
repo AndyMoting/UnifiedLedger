@@ -150,7 +150,7 @@ interface LedgerCurrentStateReadPort {
         }
 
     /**
-     * DEF-A/DEF-C (D-266): the ledger's activity currency axis — every currency carried by an
+     * DEF-A/DEF-C (D-267): the ledger's activity currency axis — every currency carried by an
      * effective posting of this ledger, never restricted to a read window.
      *
      * [MonthlyActivity.currencies] is defined per activity currency OF THE LEDGER (R-Q07-1's
@@ -161,12 +161,12 @@ interface LedgerCurrentStateReadPort {
      * source-compatible and equivalent; the SQL adapter overrides it with one DISTINCT aggregate
      * that returns the axis without materialising any entry row. Both report the axis in
      * `(code, precision)` order.
+     *
+     * The default is deliberately NOT neutral: it delegates to [loadLedgerEntryRows], whose own
+     * default throws when a port never implemented the P7-03 surface (G6), so such a port fails
+     * loudly into the caller's Unavailable instead of reporting an empty axis.
      */
-    fun loadLedgerActivityCurrencies(ledgerId: LedgerId): List<CurrencyUnit> =
-        loadLedgerEntryRows(ledgerId)
-            .flatMap { row -> row.postings.map { it.amount.currency } }
-            .distinct()
-            .sortedWith(compareBy({ it.code }, { it.precision }))
+    fun loadLedgerActivityCurrencies(ledgerId: LedgerId): List<CurrencyUnit> = MonthlyBuckets.activityCurrenciesOf(loadLedgerEntryRows(ledgerId))
 
     /**
      * DEF-A: the earliest effective statistics instant (the SelectMonth lower bound), or `null`

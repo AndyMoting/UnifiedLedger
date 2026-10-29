@@ -38,7 +38,7 @@ class DefABoundedReadsEquivalenceTest {
             // March in the frozen zone is [2026-02-28T16:00Z, 2026-03-31T16:00Z).
             insertTransaction(driver, "tx-jan", atLocal("2026-01-15T02:00:00Z"), 1_000L)
             // A second ledger currency that appears ONLY outside the March/April windows: the
-            // activity currency axis must still report it (DEF-C, D-266).
+            // activity currency axis must still report it (DEF-C, D-267).
             insertTransaction(driver, "tx-jan-usd", atLocal("2026-01-20T02:00:00Z"), 500L, usd)
             insertTransaction(driver, "tx-mar-a", atLocal("2026-02-28T16:00:00Z"), 2_000L)
             insertTransaction(driver, "tx-mar-b", atLocal("2026-03-31T15:59:59Z"), 3_000L)
@@ -72,7 +72,7 @@ class DefABoundedReadsEquivalenceTest {
             assertNull(adapter.loadLedgerEntryRow(ledgerId, TransactionId("tx-absent")))
             assertNull(adapter.loadLedgerEntryRow(otherLedgerId, TransactionId("tx-mar-b")))
 
-            // DEF-C (D-266): the activity currency axis is the DISTINCT currencies of the SAME
+            // DEF-C (D-267): the activity currency axis is the DISTINCT currencies of the SAME
             // effective set, deliberately NOT restricted to a window — a monthly projection needs
             // the axis for months whose own window carries no row at all (R-Q07-1 zero rows).
             val expectedAxis =
