@@ -8,6 +8,7 @@ import com.unifiedledger.application.ConfirmedTransferReceipt
 import com.unifiedledger.application.CurrentVersionRow
 import com.unifiedledger.application.ImportCreationConfirmationRow
 import com.unifiedledger.application.LedgerCurrentStateReadPort
+import com.unifiedledger.application.LedgerCurrentStateReadPort.AccountBalanceSum
 import com.unifiedledger.application.LedgerEntryRow
 import com.unifiedledger.application.ManualCreationChain
 import com.unifiedledger.application.ManualCreationReceiptRow
