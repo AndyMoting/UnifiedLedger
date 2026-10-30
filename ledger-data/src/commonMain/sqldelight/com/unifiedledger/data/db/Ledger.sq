@@ -11399,6 +11399,20 @@ GROUP BY tx.kind;
 -- (UUIDv7 transaction_id DESC), LIMIT bounds the read. The Analysis tab never uses this — it
 -- reads the SQL aggregates.
 recentCurrentVersionRowsForLedger:
+WITH recent AS (
+  SELECT tx.transaction_id AS transaction_id
+  FROM ledger_transaction AS tx
+  JOIN ledger_transaction_current_version AS current_version
+    ON current_version.ledger_id = tx.ledger_id
+   AND current_version.transaction_id = tx.transaction_id
+  JOIN transaction_effective_state AS effective
+    ON effective.ledger_id = tx.ledger_id
+   AND effective.transaction_id = tx.transaction_id
+   AND effective.is_effective = 1
+  WHERE tx.ledger_id = :ledger_id
+  ORDER BY tx.transaction_id DESC
+  LIMIT :limit
+)
 SELECT
   tx.transaction_id,
   current_version.current_version_id,
@@ -11411,6 +11425,8 @@ SELECT
   posting.currency_code,
   posting.currency_precision
 FROM ledger_transaction AS tx
+JOIN recent AS recent
+  ON recent.transaction_id = tx.transaction_id
 JOIN ledger_transaction_current_version AS current_version
   ON current_version.ledger_id = tx.ledger_id
  AND current_version.transaction_id = tx.transaction_id
@@ -11429,5 +11445,4 @@ JOIN transaction_effective_state AS effective
  AND effective.transaction_id = tx.transaction_id
  AND effective.is_effective = 1
 WHERE tx.ledger_id = :ledger_id
-ORDER BY tx.transaction_id DESC, posting.posting_index
-LIMIT :limit;
+ORDER BY tx.transaction_id DESC, posting.posting_index;

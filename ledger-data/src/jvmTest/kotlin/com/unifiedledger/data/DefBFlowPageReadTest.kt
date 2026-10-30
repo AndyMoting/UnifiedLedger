@@ -86,9 +86,10 @@ class DefBFlowPageReadTest {
             } while (cursor != null)
 
             // P703SPEC-03 ties on statistics then occurred DESC, then id ASC — the tie group's
-            // id order is the REVERSE of the cursor order, which is why the pages re-sort.
+            // id order is the REVERSE of the cursor order (tx-05, tx-04, tx-03), which is why the
+            // accumulated pages must be re-sorted before display.
             assertEquals(
-                listOf("tx-01", "tx-03", "tx-04", "tx-05"),
+                listOf("tx-03", "tx-04", "tx-05", "tx-01"),
                 sortLedgerEntryRowsForDisplay(accumulated).map { it.transactionId.value },
             )
         } finally {
