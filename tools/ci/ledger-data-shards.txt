@@ -1,5 +1,6 @@
 1	com.unifiedledger.data.AndroidSnapshotOpenCorruptionPolicyTest
 1	com.unifiedledger.data.BackupSnapshotDriverTest
+1	com.unifiedledger.data.DefBFlowPageReadTest
 1	com.unifiedledger.data.ImportSpineAlipayYuebaoTransferEndToEndTest
 1	com.unifiedledger.data.ImportSpineTransferEndToEndTest
 1	com.unifiedledger.data.ImportSpineWechatEndToEndTest

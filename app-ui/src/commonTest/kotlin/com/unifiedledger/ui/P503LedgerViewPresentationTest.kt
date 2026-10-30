@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.LedgerCurrentStateReadPort.LedgerFlowCursor
 import com.unifiedledger.application.LedgerEntryRow
 import com.unifiedledger.application.MonthlyActivity
 import com.unifiedledger.application.MonthlyActivityResult
@@ -131,9 +132,21 @@ class P503LedgerViewPresentationTest {
     fun flowRowsFallBackToTheFreshCurrentStateAfterARetryRecovery() {
         // G1 (R-Q06-4): the stale display-ordered rows must not be presented as the current list.
         val rows = listOf(ledgerRow())
-        assertSame(rows, flowRowsForDisplay(rows, reloadRequired = false))
-        assertNull(flowRowsForDisplay(rows, reloadRequired = true))
+        val page = FlowRowsView(rows = rows, total = rows.size)
+        assertSame(page, flowRowsForDisplay(page, reloadRequired = false))
+        assertNull(flowRowsForDisplay(page, reloadRequired = true))
         assertNull(flowRowsForDisplay(null, reloadRequired = false))
+    }
+
+    @Test
+    fun flowFooterDistinguishesLoadingRetryFetchMoreAndEnd() {
+        // DEF-B (D-268): the footer is the scroll-end latch; a failed page keeps the rows and
+        // offers retry, a null cursor is the end, and a landed page with a cursor asks for more.
+        val cursor = LedgerFlowCursor(1L, "tx-1")
+        assertEquals(FlowFooterState.LOADING, flowFooterState(FlowRowsView(loadingMore = true, nextCursor = cursor)))
+        assertEquals(FlowFooterState.RETRY, flowFooterState(FlowRowsView(loadFailed = true, nextCursor = cursor)))
+        assertEquals(FlowFooterState.FETCH_MORE, flowFooterState(FlowRowsView(nextCursor = cursor)))
+        assertEquals(FlowFooterState.END, flowFooterState(FlowRowsView()))
     }
 
     @Test

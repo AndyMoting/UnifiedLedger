@@ -4,6 +4,8 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.CreationEntry
 import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.LedgerCurrentStateResult
+import com.unifiedledger.application.LedgerFlowPageResult
+import com.unifiedledger.application.LedgerFlowTotalResult
 import com.unifiedledger.application.ManualExpenseSaveInput
 import com.unifiedledger.application.ManualExpenseSaveResult
 import com.unifiedledger.application.ManualExpenseSubmissionResult
@@ -72,6 +74,31 @@ class DesktopLedgerViewCompositionRootTest {
             assertTrue(graph.facade.queryLedgerEntryRows != null)
             assertTrue(graph.facade.queryMonthlyActivity != null)
             assertTrue(graph.facade.queryTransactionDetail != null)
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun facadeExposesTheBoundedFlowPageReadAndWalksIt() {
+        // DEF-B (D-268): the desktop root wires the SAME bounded page use case as Android, so the
+        // shared composable virtualizes and pages identically on both platforms.
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            val graph = buildLedgerGraph(driver, createSchema = true)
+            submitExpense(graph, "request-flow-page-1", 1_000L)
+            submitExpense(graph, "request-flow-page-2", 2_000L)
+            submitExpense(graph, "request-flow-page-3", 3_000L)
+
+            val pages = graph.facade.queryLedgerFlowPage
+            assertTrue(pages != null)
+            val first = assertIs<LedgerFlowPageResult.Success>(pages!!.firstPage(pageSize = 2)).page
+            assertEquals(2, first.rows.size)
+            assertTrue(first.nextCursor != null)
+            assertEquals(3, assertIs<LedgerFlowTotalResult.Success>(pages.total()).total)
+            val second = assertIs<LedgerFlowPageResult.Success>(pages.pageAfter(first.nextCursor!!, pageSize = 2)).page
+            assertEquals(1, second.rows.size)
+            assertNull(second.nextCursor)
         } finally {
             driver.close()
         }

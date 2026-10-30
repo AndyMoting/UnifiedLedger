@@ -11296,3 +11296,153 @@ SELECT annotation_revision, tag_id
 FROM transaction_annotation_tag
 WHERE ledger_id = ? AND transaction_id = ?
 ORDER BY annotation_revision, tag_id;
+
+-- DEF-B (D-268): one HOME flow page. The page key is the frozen keyset cursor
+-- (statistics_at_epoch_nanos DESC, transaction_id DESC), the same shape as tagMerchantFilterRows
+-- (:11113-11209) and NOT the display order (P703SPEC-03): the application re-sorts the
+-- accumulated pages with sortLedgerEntryRowsForDisplay. The LIMIT binds on page_ids (one row per
+-- transaction) so postings cannot straddle a page, and the numeric projection rides
+-- transaction_version_statistics_at_range_idx (:60-61). A NULL projection row can never satisfy
+-- the predicate, so the adapter runs statisticsAtProjectionMissingForLedger (:10531) first and
+-- fails loudly instead of silently dropping it.
+ledgerFlowPage:
+WITH page_ids AS (
+  SELECT version.transaction_id AS page_transaction_id,
+         version.statistics_at_epoch_nanos AS page_nanos
+  FROM transaction_version AS version
+  JOIN ledger_transaction AS tx
+    ON tx.ledger_id = version.ledger_id
+   AND tx.transaction_id = version.transaction_id
+  JOIN ledger_transaction_current_version AS current_version
+    ON current_version.ledger_id = tx.ledger_id
+   AND current_version.transaction_id = tx.transaction_id
+   AND current_version.current_version_id = version.version_id
+  JOIN transaction_effective_state AS effective
+    ON effective.ledger_id = tx.ledger_id
+   AND effective.transaction_id = tx.transaction_id
+   AND effective.is_effective = 1
+  WHERE version.ledger_id = :ledger_id
+    AND (
+      :cursor_nanos IS NULL
+      OR version.statistics_at_epoch_nanos < :cursor_nanos
+      OR (
+        version.statistics_at_epoch_nanos = :cursor_nanos
+        AND version.transaction_id < :cursor_transaction_id
+      )
+    )
+  ORDER BY version.statistics_at_epoch_nanos DESC, version.transaction_id DESC
+  LIMIT :page_size
+)
+SELECT
+  tx.transaction_id,
+  current_version.current_version_id,
+  COALESCE(tx.canonical_kind, tx.kind) AS kind,
+  version.occurred_at,
+  version.statistics_at,
+  version.note,
+  posting.posting_id,
+  posting.posting_index,
+  posting.account_id,
+  posting.amount_minor,
+  posting.currency_code,
+  posting.currency_precision,
+  page_ids.page_nanos AS statistics_at_epoch_nanos
+FROM page_ids
+JOIN transaction_version AS version
+  ON version.ledger_id = :ledger_id
+ AND version.transaction_id = page_ids.page_transaction_id
+JOIN ledger_transaction AS tx
+  ON tx.ledger_id = version.ledger_id
+ AND tx.transaction_id = version.transaction_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+ AND current_version.current_version_id = version.version_id
+JOIN posting_set AS posting_set
+  ON posting_set.ledger_id = version.ledger_id
+ AND posting_set.posting_set_id = version.posting_set_id
+JOIN posting AS posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+ORDER BY page_ids.page_nanos DESC, page_ids.page_transaction_id DESC, posting.posting_index;
+
+-- DEF-B: the exact "共 N 笔" total. Same effective/current-version predicate as the page and the
+-- current-state read; no posting join, so it counts transactions, not rows.
+effectiveTransactionCount:
+SELECT count(*) AS total
+FROM ledger_transaction AS tx
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+WHERE tx.ledger_id = :ledger_id;
+
+-- DEF-B (D-268): exact per-kind counts for the Analysis tab. `tx.kind`, NOT the entry-row
+-- COALESCE(canonical_kind, kind): the summary keeps its pre-D-268 semantics.
+activityKindCounts:
+SELECT tx.kind AS kind, count(*) AS total
+FROM ledger_transaction AS tx
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+WHERE tx.ledger_id = :ledger_id
+GROUP BY tx.kind;
+
+-- DEF-B: the bounded fallback list for a not-loaded monthly cycle: newest by CREATION order
+-- (UUIDv7 transaction_id DESC), LIMIT bounds the read. The Analysis tab never uses this — it
+-- reads the SQL aggregates.
+recentCurrentVersionRowsForLedger:
+WITH recent AS (
+  SELECT tx.transaction_id AS transaction_id
+  FROM ledger_transaction AS tx
+  JOIN ledger_transaction_current_version AS current_version
+    ON current_version.ledger_id = tx.ledger_id
+   AND current_version.transaction_id = tx.transaction_id
+  JOIN transaction_effective_state AS effective
+    ON effective.ledger_id = tx.ledger_id
+   AND effective.transaction_id = tx.transaction_id
+   AND effective.is_effective = 1
+  WHERE tx.ledger_id = :ledger_id
+  ORDER BY tx.transaction_id DESC
+  LIMIT :limit
+)
+SELECT
+  tx.transaction_id,
+  current_version.current_version_id,
+  tx.kind,
+  version.occurred_at,
+  posting.posting_id,
+  posting.posting_index,
+  posting.account_id,
+  posting.amount_minor,
+  posting.currency_code,
+  posting.currency_precision
+FROM ledger_transaction AS tx
+JOIN recent AS recent
+  ON recent.transaction_id = tx.transaction_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = tx.ledger_id
+ AND version.transaction_id = tx.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN posting_set AS posting_set
+  ON posting_set.ledger_id = version.ledger_id
+ AND posting_set.posting_set_id = version.posting_set_id
+JOIN posting AS posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+WHERE tx.ledger_id = :ledger_id
+ORDER BY tx.transaction_id DESC, posting.posting_index;

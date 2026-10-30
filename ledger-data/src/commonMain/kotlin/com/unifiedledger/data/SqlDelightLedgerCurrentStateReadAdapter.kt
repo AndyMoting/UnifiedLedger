@@ -1,5 +1,6 @@
 package com.unifiedledger.data
 
+import com.unifiedledger.application.ActivityKindCount
 import com.unifiedledger.application.ConfirmationId
 import com.unifiedledger.application.ConfirmedExpenseReceipt
 import com.unifiedledger.application.ConfirmedIncomeReceipt
@@ -57,33 +58,125 @@ import kotlin.time.Instant
 class SqlDelightLedgerCurrentStateReadAdapter(
     private val database: LedgerDatabase,
 ) : LedgerCurrentStateReadPort {
-    override fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow> {
-        val rows = database.ledgerQueries.currentVersionRowsForLedger(ledgerId.value).executeAsList()
-        return rows
-            .groupBy { it.transaction_id }
-            .map { (_, groupedRows) ->
-                val first = groupedRows.first()
-                CurrentVersionRow(
-                    transactionId = TransactionId(first.transaction_id),
-                    currentVersionId = TransactionVersionId(first.current_version_id),
-                    kind = TransactionKind.valueOf(first.kind),
-                    occurredAt = Instant.parse(first.occurred_at),
-                    postings =
-                        groupedRows
-                            .sortedBy { it.posting_index }
-                            .map { row ->
-                                Posting(
-                                    id = PostingId(row.posting_id),
-                                    accountId = AccountId(row.account_id),
-                                    amount =
-                                        Money.ofMinor(
-                                            row.amount_minor,
-                                            CurrencyUnit(row.currency_code, row.currency_precision.toInt()),
-                                        ),
-                                )
-                            },
+    override fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow> =
+        database.ledgerQueries
+            .currentVersionRowsForLedger(ledgerId.value)
+            .executeAsList()
+            .map { row ->
+                RawCurrentRow(
+                    transactionId = row.transaction_id,
+                    currentVersionId = row.current_version_id,
+                    kind = row.kind,
+                    occurredAt = row.occurred_at,
+                    postingId = row.posting_id,
+                    postingIndex = row.posting_index,
+                    accountId = row.account_id,
+                    amountMinor = row.amount_minor,
+                    currencyCode = row.currency_code,
+                    currencyPrecision = row.currency_precision,
                 )
+            }.toCurrentVersionRows()
+
+    /**
+     * DEF-B (D-268): the bounded fallback page for a not-loaded monthly cycle — newest by
+     * CREATION order (UUIDv7 transaction id), LIMIT bound in SQL so the read never materialises
+     * the ledger. The Analysis tab reads the SQL aggregates instead (D-268 R-268-2).
+     */
+    override fun loadRecentCurrentRows(
+        ledgerId: LedgerId,
+        limit: Int,
+    ): List<CurrentVersionRow> =
+        database.ledgerQueries
+            .recentCurrentVersionRowsForLedger(ledger_id = ledgerId.value, limit = limit.toLong())
+            .executeAsList()
+            .map { row ->
+                RawCurrentRow(
+                    transactionId = row.transaction_id,
+                    currentVersionId = row.current_version_id,
+                    kind = row.kind,
+                    occurredAt = row.occurred_at,
+                    postingId = row.posting_id,
+                    postingIndex = row.posting_index,
+                    accountId = row.account_id,
+                    amountMinor = row.amount_minor,
+                    currencyCode = row.currency_code,
+                    currencyPrecision = row.currency_precision,
+                )
+            }.toCurrentVersionRows()
+
+    /** DEF-B (D-268): the exact "共 N 笔" total, projected as one SQL count. */
+    override fun effectiveTransactionCount(ledgerId: LedgerId): Int =
+        database.ledgerQueries
+            .effectiveTransactionCount(ledger_id = ledgerId.value)
+            .executeAsOne()
+            .toInt()
+
+    /** DEF-B (D-268): exact per-kind counts for the Analysis tab, one GROUP BY in SQL. */
+    override fun loadActivityKindCounts(ledgerId: LedgerId): List<ActivityKindCount> =
+        database.ledgerQueries
+            .activityKindCounts(ledger_id = ledgerId.value)
+            .executeAsList()
+            .map { row -> ActivityKindCount(TransactionKind.valueOf(row.kind), row.total.toInt()) }
+            .sortedBy { it.kind.name }
+
+    /**
+     * DEF-B (D-268): one keyset page of the HOME flow list. The fail-loud projection probe runs
+     * first (a NULL `statistics_at_epoch_nanos` row can never satisfy the page predicate and would
+     * otherwise vanish silently); the page then reads `page_size + 1` transactions so it can
+     * report whether another page exists without a second query.
+     */
+    override fun loadLedgerFlowPage(
+        ledgerId: LedgerId,
+        after: LedgerCurrentStateReadPort.LedgerFlowCursor?,
+        pageSize: Int,
+    ): LedgerCurrentStateReadPort.LedgerFlowPage {
+        require(pageSize > 0) { "page size must be positive" }
+        val missingProjection =
+            database.ledgerQueries.statisticsAtProjectionMissingForLedger(ledgerId.value).executeAsOne()
+        check(missingProjection == 0L) {
+            "statisticsAtProjectionMissing: $missingProjection transaction_version row(s) without the numeric projection"
+        }
+        val raw =
+            database.ledgerQueries
+                .ledgerFlowPage(
+                    ledger_id = ledgerId.value,
+                    cursor_nanos = after?.statisticsAtEpochNanos,
+                    cursor_transaction_id = after?.transactionId ?: "",
+                    page_size = pageSize.toLong() + 1L,
+                ).executeAsList()
+        val grouped = raw.groupBy { it.transaction_id }
+        val pageGroups = grouped.entries.take(pageSize)
+        val nextCursor =
+            if (grouped.size > pageSize) {
+                pageGroups.lastOrNull()?.value?.lastOrNull()?.let { row ->
+                    LedgerCurrentStateReadPort.LedgerFlowCursor(
+                        checkNotNull(row.statistics_at_epoch_nanos) { "page row without the numeric projection" },
+                        row.transaction_id,
+                    )
+                }
+            } else {
+                null
             }
+        val rows =
+            pageGroups
+                .flatMap { it.value }
+                .map { row ->
+                    RawEntryRow(
+                        transactionId = row.transaction_id,
+                        currentVersionId = row.current_version_id,
+                        kind = row.kind,
+                        occurredAt = row.occurred_at,
+                        statisticsAt = row.statistics_at,
+                        note = row.note,
+                        postingId = row.posting_id,
+                        postingIndex = row.posting_index,
+                        accountId = row.account_id,
+                        amountMinor = row.amount_minor,
+                        currencyCode = row.currency_code,
+                        currencyPrecision = row.currency_precision,
+                    )
+                }.toEntryRows()
+        return LedgerCurrentStateReadPort.LedgerFlowPage(rows, nextCursor)
     }
 
     override fun findManualExpenseByRequest(
@@ -365,6 +458,47 @@ class SqlDelightLedgerCurrentStateReadAdapter(
                     occurredAt = Instant.parse(first.occurredAt),
                     statisticsAt = Instant.parse(first.statisticsAt),
                     note = first.note,
+                    postings =
+                        groupedRows
+                            .sortedBy { it.postingIndex }
+                            .map { row ->
+                                Posting(
+                                    id = PostingId(row.postingId),
+                                    accountId = AccountId(row.accountId),
+                                    amount =
+                                        Money.ofMinor(
+                                            row.amountMinor,
+                                            CurrencyUnit(row.currencyCode, row.currencyPrecision.toInt()),
+                                        ),
+                                )
+                            },
+                )
+            }
+
+    /** Row shape shared by the unbounded and bounded current-version reads. */
+    private data class RawCurrentRow(
+        val transactionId: String,
+        val currentVersionId: String,
+        val kind: String,
+        val occurredAt: String,
+        val postingId: String,
+        val postingIndex: Long,
+        val accountId: String,
+        val amountMinor: Long,
+        val currencyCode: String,
+        val currencyPrecision: Long,
+    )
+
+    /** Groups posting rows into one [CurrentVersionRow] per transaction, posting order preserved. */
+    private fun List<RawCurrentRow>.toCurrentVersionRows(): List<CurrentVersionRow> =
+        groupBy { it.transactionId }
+            .map { (_, groupedRows) ->
+                val first = groupedRows.first()
+                CurrentVersionRow(
+                    transactionId = TransactionId(first.transactionId),
+                    currentVersionId = TransactionVersionId(first.currentVersionId),
+                    kind = TransactionKind.valueOf(first.kind),
+                    occurredAt = Instant.parse(first.occurredAt),
                     postings =
                         groupedRows
                             .sortedBy { it.postingIndex }

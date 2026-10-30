@@ -79,6 +79,10 @@ class CatalogConsumerSession(
     var queryLedgerEntryRows: QueryLedgerEntryRows = QueryLedgerEntryRows(readPort, ledgerId)
         private set
 
+    /** DEF-B (D-268): the bounded keyset page source for the HOME flow list. */
+    var queryLedgerFlowPage: QueryLedgerFlowPage = QueryLedgerFlowPage(readPort, ledgerId)
+        private set
+
     /** P7-03.C/D: the read-only transaction detail projection on the same catalog version. */
     var queryTransactionDetail: QueryTransactionDetail = QueryTransactionDetail(readPort, ledgerId, authority.catalog)
         private set

@@ -7,13 +7,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -66,7 +67,13 @@ fun P503OverviewScreen(
     selectableMonths: List<YearMonth> = emptyList(),
     monthlyActivity: MonthlyActivity? = null,
     monthlyReloadRequired: Boolean = false,
-    entryRows: List<LedgerEntryRow>? = null,
+    /**
+     * DEF-B (D-268): the bounded page state of the HOME flow list. `null` renders the bounded
+     * current-state fallback (the same branch a not-loaded monthly cycle uses, G1).
+     */
+    flowRows: FlowRowsView? = null,
+    onLoadMore: () -> Unit = {},
+    onRetryLoadMore: () -> Unit = {},
     onSelectTransaction: (TransactionId) -> Unit = {},
     onSelectMonth: (YearMonth) -> Unit = {},
     interactionsEnabled: Boolean = true,
@@ -77,73 +84,118 @@ fun P503OverviewScreen(
 ) {
     // G1 (R-Q06-4): a not-loaded monthly cycle must not present the previous cycle's flow rows as
     // the current list, so the fresh authoritative current-state projection is rendered instead.
-    val flowRows = flowRowsForDisplay(entryRows, monthlyReloadRequired)
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+    val flow = flowRowsForDisplay(flowRows, monthlyReloadRequired)
+    // DEF-B (D-268): virtualization is the DEF-B fix — only visible rows compose. The header
+    // (identity, entries, month card), the flow rows, the page footer and the balances tail are
+    // items of one LazyColumn, so a ledger of any size never materialises its rows as layout nodes.
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
     ) {
-        Text("账本：${state.ledgerId.value}", style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(8.dp))
-        // P7-05.C: the ledger-wide recycle-bin entry, offered only when the host wires it.
-        if (onOpenRecycleBin != null) {
-            TextButton(onClick = onOpenRecycleBin) { Text("回收站") }
-            Spacer(Modifier.height(4.dp))
-        }
-        // P7-06 06.B (D-177): the ledger-wide backup-export entry, offered only when the host
-        // wires it (an unwired composition renders no affordance).
-        if (onOpenBackupExport != null) {
-            TextButton(onClick = onOpenBackupExport) { Text("导出备份") }
-            Spacer(Modifier.height(4.dp))
-        }
-        // P7-06 06.D (D-182): the ledger-wide restore entry, offered only when the host wires the
-        // restore use cases (an unwired composition renders no affordance).
-        if (onOpenBackupRestore != null) {
-            TextButton(onClick = onOpenBackupRestore) { Text("恢复备份") }
-            Spacer(Modifier.height(4.dp))
+        item {
+            Text("账本：${state.ledgerId.value}", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(8.dp))
+            // P7-05.C: the ledger-wide recycle-bin entry, offered only when the host wires it.
+            if (onOpenRecycleBin != null) {
+                TextButton(onClick = onOpenRecycleBin) { Text("回收站") }
+                Spacer(Modifier.height(4.dp))
+            }
+            // P7-06 06.B (D-177): the ledger-wide backup-export entry, offered only when the host
+            // wires it (an unwired composition renders no affordance).
+            if (onOpenBackupExport != null) {
+                TextButton(onClick = onOpenBackupExport) { Text("导出备份") }
+                Spacer(Modifier.height(4.dp))
+            }
+            // P7-06 06.D (D-182): the ledger-wide restore entry, offered only when the host wires
+            // the restore use cases (an unwired composition renders no affordance).
+            if (onOpenBackupRestore != null) {
+                TextButton(onClick = onOpenBackupRestore) { Text("恢复备份") }
+                Spacer(Modifier.height(4.dp))
+            }
         }
         if (showMonthlyRegion) {
-            P503MonthCard(
-                activity = monthlyActivity,
-                reloadRequired = monthlyReloadRequired,
-                // F2: the explicit re-select action dispatches SelectMonth for the effective
-                // month (trigger (b), which always re-requests).
-                onReloadMonth =
-                    if (monthlyReloadRequired) {
-                        (selectedMonth ?: resolvedCurrentMonth)?.let { month -> { onSelectMonth(month) } }
-                    } else {
-                        null
-                    },
-            )
-            Spacer(Modifier.height(4.dp))
-            P503MonthSelector(selectedMonth, resolvedCurrentMonth, selectableMonths, onSelectMonth)
-            Spacer(Modifier.height(8.dp))
-        }
-        if (state.transactions.isEmpty() && flowRows.isNullOrEmpty()) {
-            Text("账本为空，还没有任何交易。", style = MaterialTheme.typography.bodyLarge)
-        } else {
-            if (flowRows != null) {
-                Text("流水", style = MaterialTheme.typography.titleMedium)
-                flowRows.forEach { row ->
-                    LedgerEntryFlowRow(row, state.accountNames, onSelectTransaction, interactionsEnabled)
-                    HorizontalDivider()
-                }
-            } else {
-                Text("当前交易", style = MaterialTheme.typography.titleMedium)
-                state.transactions.forEach { row ->
-                    CurrentTransactionRow(row, state.accountNames)
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(8.dp))
-            Text("账户余额", style = MaterialTheme.typography.titleMedium)
-            state.balances.forEach { balance ->
-                Text(
-                    "${state.accountNames[balance.accountId] ?: balance.accountId.value}（${balance.currency.code}）：" +
-                        formatMinorUnits(balance.displayMinorUnits, balance.currency.precision),
-                    style = MaterialTheme.typography.bodyMedium,
+            item {
+                P503MonthCard(
+                    activity = monthlyActivity,
+                    reloadRequired = monthlyReloadRequired,
+                    // F2: the explicit re-select action dispatches SelectMonth for the effective
+                    // month (trigger (b), which always re-requests).
+                    onReloadMonth =
+                        if (monthlyReloadRequired) {
+                            (selectedMonth ?: resolvedCurrentMonth)?.let { month -> { onSelectMonth(month) } }
+                        } else {
+                            null
+                        },
                 )
+                Spacer(Modifier.height(4.dp))
+                P503MonthSelector(selectedMonth, resolvedCurrentMonth, selectableMonths, onSelectMonth)
+                Spacer(Modifier.height(8.dp))
             }
         }
+        if (state.transactions.isEmpty() && flow == null) {
+            item {
+                Text("账本为空，还没有任何交易。", style = MaterialTheme.typography.bodyLarge)
+            }
+        } else if (flow != null) {
+            item {
+                Text("流水 · 共 ${flow.total} 笔", style = MaterialTheme.typography.titleMedium)
+            }
+            items(flow.rows, key = { it.transactionId.value }) { row ->
+                LedgerEntryFlowRow(row, state.accountNames, onSelectTransaction, interactionsEnabled)
+                HorizontalDivider()
+            }
+            item(key = "flow-footer") {
+                FlowFooter(flow, onLoadMore, onRetryLoadMore)
+                OverviewBalances(state)
+            }
+        } else {
+            item {
+                Text("当前交易（最近 ${state.transactions.size} 笔，共 ${state.transactionTotal} 笔）", style = MaterialTheme.typography.titleMedium)
+            }
+            items(state.transactions, key = { it.transactionId.value }) { row ->
+                CurrentTransactionRow(row, state.accountNames)
+            }
+            item {
+                OverviewBalances(state)
+            }
+        }
+    }
+}
+
+/** The balances tail shared by both list branches (DEF-B keeps it an item, never a header). */
+@Composable
+private fun OverviewBalances(state: LedgerCurrentState) {
+    Spacer(Modifier.height(8.dp))
+    HorizontalDivider()
+    Spacer(Modifier.height(8.dp))
+    Text("账户余额", style = MaterialTheme.typography.titleMedium)
+    state.balances.forEach { balance ->
+        Text(
+            "${state.accountNames[balance.accountId] ?: balance.accountId.value}（${balance.currency.code}）：" +
+                formatMinorUnits(balance.displayMinorUnits, balance.currency.precision),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
+/**
+ * DEF-B (D-268): the page footer. It composes only when the user reaches the end of the loaded
+ * rows, so [onLoadMore] is a scroll-end trigger; the host keeps the single-flight guard. A failed
+ * page keeps the loaded rows and offers an explicit retry (R-Q06-4: never an empty list).
+ */
+@Composable
+private fun FlowFooter(
+    view: FlowRowsView,
+    onLoadMore: () -> Unit,
+    onRetryLoadMore: () -> Unit,
+) {
+    when (flowFooterState(view)) {
+        FlowFooterState.LOADING -> Text("正在加载更多…", style = MaterialTheme.typography.bodySmall)
+        FlowFooterState.RETRY -> TextButton(onClick = onRetryLoadMore) { Text("加载失败，点击重试") }
+        FlowFooterState.FETCH_MORE -> {
+            LaunchedEffect(view.rows.size, view.nextCursor) { onLoadMore() }
+            Text("正在加载更多…", style = MaterialTheme.typography.bodySmall)
+        }
+        FlowFooterState.END -> Text("已到末页", style = MaterialTheme.typography.bodySmall)
     }
 }
 

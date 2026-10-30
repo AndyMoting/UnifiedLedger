@@ -39,6 +39,18 @@ data class LedgerCurrentState(
      * ids and amounts are unchanged.
      */
     val accountNames: Map<AccountId, String> = emptyMap(),
+    /**
+     * DEF-B (D-268): the exact number of effective transactions in the ledger. [transactions] is
+     * the bounded fallback page (newest by creation order), so this total is the authoritative
+     * count every surface displays; never infer it from `transactions.size`.
+     */
+    val transactionTotal: Int = transactions.size,
+    /**
+     * DEF-B (D-268): the exact per-kind transaction counts over the same effective set. The
+     * Analysis tab summarizes these (plus [balances] and [transactionTotal]) so a bounded
+     * [transactions] projection can never under-report the ledger.
+     */
+    val activityKindCounts: List<ActivityKindCount> = emptyList(),
 )
 
 sealed interface LedgerCurrentStateResult {
@@ -61,9 +73,17 @@ class QueryLedgerCurrentState(
     private val accountsById: Map<AccountId, Account> = catalog.accounts.associateBy { it.id }
 
     fun query(): LedgerCurrentStateResult {
+        // DEF-B (D-268): the HOME fallback list is bounded (newest by creation order) and the
+        // exact total travels beside it; the Analysis tab no longer reads this list.
         val rows =
             try {
-                readPort.loadCurrentRows(ledgerId)
+                readPort.loadRecentCurrentRows(ledgerId, HOME_FALLBACK_ROW_LIMIT)
+            } catch (failure: Exception) {
+                return LedgerCurrentStateResult.Unavailable
+            }
+        val total =
+            try {
+                readPort.effectiveTransactionCount(ledgerId)
             } catch (failure: Exception) {
                 return LedgerCurrentStateResult.Unavailable
             }
@@ -76,12 +96,22 @@ class QueryLedgerCurrentState(
                 return LedgerCurrentStateResult.Unavailable
             }
 
+        // DEF-B (D-268): the Analysis tab reads exact per-kind counts, never the bounded list.
+        val kindCounts =
+            try {
+                readPort.loadActivityKindCounts(ledgerId)
+            } catch (failure: Exception) {
+                return LedgerCurrentStateResult.Unavailable
+            }
+
         val balances = buildBalances(sums) ?: return LedgerCurrentStateResult.InvalidState
         return LedgerCurrentStateResult.Success(
             LedgerCurrentState(
                 ledgerId = ledgerId,
                 transactions = rows,
                 balances = balances,
+                transactionTotal = total,
+                activityKindCounts = kindCounts,
                 accountNames =
                     buildMap {
                         accountsById.values

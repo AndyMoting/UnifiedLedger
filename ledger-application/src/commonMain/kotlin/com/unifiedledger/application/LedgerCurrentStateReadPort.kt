@@ -169,6 +169,81 @@ interface LedgerCurrentStateReadPort {
     fun loadLedgerActivityCurrencies(ledgerId: LedgerId): List<CurrencyUnit> = MonthlyBuckets.activityCurrenciesOf(loadLedgerEntryRows(ledgerId))
 
     /**
+     * DEF-B (D-268): the flow-list page key — one row per transaction, `(nanos, transaction id)`.
+     * This is the CURSOR order, not the display order: it only decides where a page ends.
+     */
+    data class LedgerFlowCursor(
+        val statisticsAtEpochNanos: Long,
+        val transactionId: String,
+    )
+
+    /** DEF-B (D-268): one flow page plus the cursor of the following page (`null` = last page). */
+    data class LedgerFlowPage(
+        val rows: List<LedgerEntryRow>,
+        val nextCursor: LedgerFlowCursor?,
+    )
+
+    /**
+     * DEF-B (D-268): one page of the HOME flow list in the page-key order
+     * `(statistics_at_epoch_nanos DESC, transaction_id DESC)` — the same shape as the keyset
+     * precedent in `tagMerchantFilterRows`. The key is a stable cursor, NOT the display order:
+     * the application re-sorts the accumulated pages with [sortLedgerEntryRowsForDisplay], so
+     * P703SPEC-03 stays frozen and no schema or index change is needed. The default reproduces the
+     * same order and next-cursor rule over the unbounded read at full Instant precision (never the
+     * millisecond truncation of [loadLedgerEntryRowsInWindow]); the SQL adapter overrides it with
+     * keyset pages so one page never materialises the ledger.
+     */
+    fun loadLedgerFlowPage(
+        ledgerId: LedgerId,
+        after: LedgerFlowCursor?,
+        pageSize: Int,
+    ): LedgerFlowPage {
+        require(pageSize > 0) { "page size must be positive" }
+        val sorted =
+            loadLedgerEntryRows(ledgerId)
+                .map { row -> row to row.statisticsAt.toEpochNanos() }
+                .sortedWith(
+                    compareByDescending<Pair<LedgerEntryRow, Long>> { it.second }
+                        .thenByDescending { it.first.transactionId.value },
+                )
+        val remaining =
+            sorted.filter { (row, nanos) ->
+                after == null ||
+                    nanos < after.statisticsAtEpochNanos ||
+                    (nanos == after.statisticsAtEpochNanos && row.transactionId.value < after.transactionId)
+            }
+        val rows = remaining.take(pageSize)
+        val nextCursor =
+            if (remaining.size > rows.size) {
+                rows.lastOrNull()?.let { (row, nanos) -> LedgerFlowCursor(nanos, row.transactionId.value) }
+            } else {
+                null
+            }
+        return LedgerFlowPage(rows.map { it.first }, nextCursor)
+    }
+
+    /**
+     * DEF-B (D-268): the exact number of effective transactions ("共 N 笔"). Both entry rows and
+     * current-version rows are the same effective set, so the default projects the current-version
+     * read every port already implements; the SQL adapter answers with one count query.
+     */
+    fun effectiveTransactionCount(ledgerId: LedgerId): Int = loadCurrentRows(ledgerId).size
+
+    /**
+     * DEF-B (D-268): the bounded fallback list for a not-loaded monthly cycle — newest by
+     * CREATION order (the UUIDv7 transaction id), never by statistics time. The default sorts the
+     * unbounded read by id descending; the SQL adapter binds `ORDER BY tx.transaction_id DESC
+     * LIMIT`, so the list stays bounded.
+     */
+    fun loadRecentCurrentRows(
+        ledgerId: LedgerId,
+        limit: Int,
+    ): List<CurrentVersionRow> {
+        require(limit > 0) { "limit must be positive" }
+        return loadCurrentRows(ledgerId).sortedByDescending { it.transactionId.value }.take(limit)
+    }
+
+    /**
      * DEF-A: the earliest effective statistics instant (the SelectMonth lower bound), or `null`
      * for an empty ledger. The default filters nothing extra; the SQL adapter projects one number.
      */
@@ -182,6 +257,18 @@ interface LedgerCurrentStateReadPort {
         ledgerId: LedgerId,
         transactionId: TransactionId,
     ): LedgerEntryRow? = loadLedgerEntryRows(ledgerId).firstOrNull { it.transactionId == transactionId }
+
+    /**
+     * DEF-B (D-268): the exact per-kind transaction counts behind the Analysis tab. The default
+     * groups the current-version read (the same effective set); the SQL adapter answers with one
+     * GROUP BY so the tab never materialises the ledger.
+     */
+    fun loadActivityKindCounts(ledgerId: LedgerId): List<ActivityKindCount> =
+        loadCurrentRows(ledgerId)
+            .groupingBy { it.kind }
+            .eachCount()
+            .map { (kind, count) -> ActivityKindCount(kind, count) }
+            .sortedBy { it.kind.name }
 
     /**
      * DEF-A: per-account balance sums in exact ledger-signed minor units. The default reproduces
@@ -327,3 +414,6 @@ interface LedgerCurrentStateReadPort {
                 "read must surface as a typed read failure, never as 'never committed' (R-Q06-4)",
         )
 }
+
+/** DEF-B (D-268): full-precision epoch nanoseconds — the projection column's unit, never milliseconds. */
+private fun Instant.toEpochNanos(): Long = epochSeconds * 1_000_000_000L + nanosecondsOfSecond.toLong()
