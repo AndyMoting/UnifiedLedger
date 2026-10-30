@@ -259,6 +259,18 @@ interface LedgerCurrentStateReadPort {
     ): LedgerEntryRow? = loadLedgerEntryRows(ledgerId).firstOrNull { it.transactionId == transactionId }
 
     /**
+     * DEF-B (D-268): the exact per-kind transaction counts behind the Analysis tab. The default
+     * groups the current-version read (the same effective set); the SQL adapter answers with one
+     * GROUP BY so the tab never materialises the ledger.
+     */
+    fun loadActivityKindCounts(ledgerId: LedgerId): List<ActivityKindCount> =
+        loadCurrentRows(ledgerId)
+            .groupingBy { it.kind }
+            .eachCount()
+            .map { (kind, count) -> ActivityKindCount(kind, count) }
+            .sortedBy { it.kind.name }
+
+    /**
      * DEF-A: per-account balance sums in exact ledger-signed minor units. The default reproduces
      * the in-memory grouping of [loadCurrentRows]; the SQL adapter aggregates in SQL so the HOME
      * projection does not materialise postings for a read-only sum.

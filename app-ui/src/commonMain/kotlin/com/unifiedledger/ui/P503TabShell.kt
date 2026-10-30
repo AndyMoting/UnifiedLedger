@@ -173,7 +173,9 @@ fun P503AnalysisScreen(
     // pre-P7-07 call site compiling.
     budgetRegion: (@Composable () -> Unit)? = null,
 ) {
-    val summary = remember(state, summarizeActivity) { summarizeActivity.summarize(state) }
+    // DEF-B (D-268): the Analysis tab summarizes the exact SQL aggregates carried by [state];
+    // the bounded `state.transactions` projection is never summarized as if it were the ledger.
+    val summary = remember(state, summarizeActivity) { summarizeActivity.summarizeAggregate(state) }
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
     ) {

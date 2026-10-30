@@ -11380,6 +11380,21 @@ JOIN transaction_effective_state AS effective
  AND effective.is_effective = 1
 WHERE tx.ledger_id = :ledger_id;
 
+-- DEF-B (D-268): exact per-kind counts for the Analysis tab. `tx.kind`, NOT the entry-row
+-- COALESCE(canonical_kind, kind): the summary keeps its pre-D-268 semantics.
+activityKindCounts:
+SELECT tx.kind AS kind, count(*) AS total
+FROM ledger_transaction AS tx
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+WHERE tx.ledger_id = :ledger_id
+GROUP BY tx.kind;
+
 -- DEF-B: the bounded fallback list for a not-loaded monthly cycle: newest by CREATION order
 -- (UUIDv7 transaction_id DESC), LIMIT bounds the read. The Analysis tab never uses this — it
 -- reads the SQL aggregates.

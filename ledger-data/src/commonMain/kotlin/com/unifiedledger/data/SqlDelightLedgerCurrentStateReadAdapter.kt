@@ -1,5 +1,6 @@
 package com.unifiedledger.data
 
+import com.unifiedledger.application.ActivityKindCount
 import com.unifiedledger.application.ConfirmationId
 import com.unifiedledger.application.ConfirmedExpenseReceipt
 import com.unifiedledger.application.ConfirmedIncomeReceipt
@@ -109,6 +110,14 @@ class SqlDelightLedgerCurrentStateReadAdapter(
             .effectiveTransactionCount(ledger_id = ledgerId.value)
             .executeAsOne()
             .toInt()
+
+    /** DEF-B (D-268): exact per-kind counts for the Analysis tab, one GROUP BY in SQL. */
+    override fun loadActivityKindCounts(ledgerId: LedgerId): List<ActivityKindCount> =
+        database.ledgerQueries
+            .activityKindCounts(ledger_id = ledgerId.value)
+            .executeAsList()
+            .map { row -> ActivityKindCount(TransactionKind.valueOf(row.kind), row.total.toInt()) }
+            .sortedBy { it.kind.name }
 
     /**
      * DEF-B (D-268): one keyset page of the HOME flow list. The fail-loud projection probe runs

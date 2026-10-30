@@ -8,6 +8,15 @@ import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.TransactionKind
 
 /**
+ * DEF-B (D-268): one transaction kind's exact count over the effective current-version set. The
+ * kind is `tx.kind` (the pre-D-268 summary semantics), not the entry-row canonical kind.
+ */
+data class ActivityKindCount(
+    val kind: TransactionKind,
+    val count: Int,
+)
+
+/**
  * One currency's activity totals (D-122). Amounts are ledger-exact minor units under the
  * normal-balance direction of the contributing accounts: expenses keep the ledger sign of
  * EXPENSE-account postings, income keeps the negated sign of INCOME-account postings.
@@ -46,39 +55,82 @@ class SummarizeLedgerActivity(
     private val accountsById: Map<AccountId, Account> = catalog.accounts.associateBy { it.id }
 
     fun summarize(currentState: LedgerCurrentState): LedgerActivitySummary {
-        val countsByKind = mutableMapOf<TransactionKind, Int>()
+        // DEF-B (D-268): the totals must cover the whole ledger. A bounded projection is refused
+        // loudly instead of under-reporting; the Analysis tab uses [summarizeAggregate].
+        check(currentState.transactionTotal == currentState.transactions.size) {
+            "summarize() needs the complete current-version set; use summarizeAggregate() for a bounded projection"
+        }
+        val accountSums =
+            currentState.transactions
+                .flatMap { row -> row.postings }
+                .groupBy { posting -> posting.accountId to posting.amount.currency }
+                .map { (key, postings) ->
+                    AccountSum(
+                        accountId = key.first,
+                        currency = key.second,
+                        ledgerSignedMinorUnits =
+                            postings.fold(0L) { total, posting ->
+                                checkedAdd(total, posting.amount.minorUnits)
+                                    ?: throw ArithmeticException("account sum overflow for ${key.second.code}")
+                            },
+                    )
+                }
+        val kindCounts =
+            currentState.transactions
+                .groupingBy { it.kind }
+                .eachCount()
+                .map { (kind, count) -> ActivityKindCount(kind, count) }
+        return summarizeAggregate(accountSums, kindCounts, currentState.transactionTotal)
+    }
+
+    /**
+     * DEF-B (D-268): the Analysis tab's projection over the exact aggregates the current state
+     * carries — per-(account, currency) sums and per-kind counts read in SQL — so the tab never
+     * reads or materialises the ledger's rows.
+     */
+    fun summarizeAggregate(currentState: LedgerCurrentState): LedgerActivitySummary =
+        summarizeAggregate(
+            accountSums =
+                currentState.balances.map { balance ->
+                    AccountSum(balance.accountId, balance.currency, balance.ledgerSignedMinorUnits)
+                },
+            kindCounts = currentState.activityKindCounts,
+            totalTransactionCount = currentState.transactionTotal,
+        )
+
+    private fun summarizeAggregate(
+        accountSums: List<AccountSum>,
+        kindCounts: List<ActivityKindCount>,
+        totalTransactionCount: Int,
+    ): LedgerActivitySummary {
         val expenseTotals = mutableMapOf<CurrencyUnit, Long>()
         val incomeTotals = mutableMapOf<CurrencyUnit, Long>()
-        for (row in currentState.transactions) {
-            countsByKind[row.kind] = (countsByKind[row.kind] ?: 0) + 1
-            for (posting in row.postings) {
-                val account =
-                    accountsById[posting.accountId]
-                        ?: throw IllegalStateException(
-                            "Posting account ${posting.accountId.value} is not in the catalog",
-                        )
-                val currency = posting.amount.currency
-                when (account.kind) {
-                    AccountKind.EXPENSE -> {
-                        val total =
-                            checkedAdd(expenseTotals[currency] ?: 0L, posting.amount.minorUnits)
-                                ?: throw ArithmeticException("expense total overflow for ${currency.code}")
-                        expenseTotals[currency] = total
-                    }
-                    AccountKind.INCOME -> {
-                        val income =
-                            checkedNegate(posting.amount.minorUnits)
-                                ?: throw ArithmeticException("income posting negation overflow for ${currency.code}")
-                        val total =
-                            checkedAdd(incomeTotals[currency] ?: 0L, income)
-                                ?: throw ArithmeticException("income total overflow for ${currency.code}")
-                        incomeTotals[currency] = total
-                    }
-                    AccountKind.ASSET,
-                    AccountKind.LIABILITY,
-                    AccountKind.EQUITY,
-                    -> Unit
+        for (sum in accountSums) {
+            val account =
+                accountsById[sum.accountId]
+                    ?: throw IllegalStateException(
+                        "Posting account ${sum.accountId.value} is not in the catalog",
+                    )
+            when (account.kind) {
+                AccountKind.EXPENSE -> {
+                    val total =
+                        checkedAdd(expenseTotals[sum.currency] ?: 0L, sum.ledgerSignedMinorUnits)
+                            ?: throw ArithmeticException("expense total overflow for ${sum.currency.code}")
+                    expenseTotals[sum.currency] = total
                 }
+                AccountKind.INCOME -> {
+                    val income =
+                        checkedNegate(sum.ledgerSignedMinorUnits)
+                            ?: throw ArithmeticException("income sum negation overflow for ${sum.currency.code}")
+                    val total =
+                        checkedAdd(incomeTotals[sum.currency] ?: 0L, income)
+                            ?: throw ArithmeticException("income total overflow for ${sum.currency.code}")
+                    incomeTotals[sum.currency] = total
+                }
+                AccountKind.ASSET,
+                AccountKind.LIABILITY,
+                AccountKind.EQUITY,
+                -> Unit
             }
         }
         val totalsByCurrency =
@@ -93,11 +145,17 @@ class SummarizeLedgerActivity(
                     )
                 }
         return LedgerActivitySummary(
-            totalTransactionCount = currentState.transactions.size,
-            countByKind = countsByKind,
+            totalTransactionCount = totalTransactionCount,
+            countByKind = kindCounts.associate { it.kind to it.count },
             totalsByCurrency = totalsByCurrency,
         )
     }
+
+    private data class AccountSum(
+        val accountId: AccountId,
+        val currency: CurrencyUnit,
+        val ledgerSignedMinorUnits: Long,
+    )
 }
 
 private fun checkedAdd(

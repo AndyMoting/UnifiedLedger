@@ -199,6 +199,97 @@ class SummarizeLedgerActivityTest {
         }
     }
 
+    @Test
+    fun summarizeRefusesABoundedProjection() {
+        // DEF-B (D-268): a bounded projection (transactions < transactionTotal) must never be
+        // summarized as if it were the whole ledger.
+        val row =
+            CurrentVersionRow(
+                transactionId = TransactionId("tx-1"),
+                currentVersionId = TransactionVersionId("version-1"),
+                kind = TransactionKind.EXPENSE,
+                occurredAt = occurredAt,
+                postings = listOf(Posting(PostingId("posting-1"), expenseId, Money.ofMinor(100L, cny))),
+            )
+        val bounded =
+            LedgerCurrentState(
+                ledgerId,
+                transactions = listOf(row),
+                balances = emptyList(),
+                transactionTotal = 5,
+            )
+        assertFailsWith<IllegalStateException> { summarize.summarize(bounded) }
+    }
+
+    @Test
+    fun theAggregatePathMatchesTheRowPathOnACompleteState() {
+        val rows =
+            listOf(
+                CurrentVersionRow(
+                    transactionId = TransactionId("tx-expense"),
+                    currentVersionId = TransactionVersionId("version-1"),
+                    kind = TransactionKind.EXPENSE,
+                    occurredAt = occurredAt,
+                    postings = listOf(Posting(PostingId("posting-1"), expenseId, Money.ofMinor(3_580L, cny))),
+                ),
+                CurrentVersionRow(
+                    transactionId = TransactionId("tx-income"),
+                    currentVersionId = TransactionVersionId("version-2"),
+                    kind = TransactionKind.INCOME,
+                    occurredAt = occurredAt,
+                    postings = listOf(Posting(PostingId("posting-2"), incomeId, Money.ofMinor(-2_000L, cny))),
+                ),
+            )
+        val state =
+            LedgerCurrentState(
+                ledgerId,
+                transactions = rows,
+                balances = balancesOf(rows),
+                transactionTotal = rows.size,
+                activityKindCounts =
+                    rows
+                        .groupingBy { it.kind }
+                        .eachCount()
+                        .map { (kind, count) -> ActivityKindCount(kind, count) },
+            )
+
+        assertEquals(summarize.summarize(state), summarize.summarizeAggregate(state))
+    }
+
+    @Test
+    fun theAggregatePathFailsClosedOnAPostingAccountOutsideTheCatalog() {
+        val state =
+            LedgerCurrentState(
+                ledgerId,
+                transactions = emptyList(),
+                balances =
+                    listOf(
+                        AccountCurrencyBalance(
+                            accountId = AccountId("account-unknown"),
+                            currency = cny,
+                            ledgerSignedMinorUnits = 1L,
+                            displayMinorUnits = 1L,
+                        ),
+                    ),
+                transactionTotal = 1,
+            )
+        assertFailsWith<IllegalStateException> { summarize.summarizeAggregate(state) }
+    }
+
+    private fun balancesOf(rows: List<CurrentVersionRow>): List<AccountCurrencyBalance> =
+        rows
+            .flatMap { it.postings }
+            .groupBy { posting -> posting.accountId to posting.amount.currency }
+            .map { (key, postings) ->
+                val sum = postings.sumOf { it.amount.minorUnits }
+                AccountCurrencyBalance(
+                    accountId = key.first,
+                    currency = key.second,
+                    ledgerSignedMinorUnits = sum,
+                    displayMinorUnits = sum,
+                )
+            }
+
     private fun stateOf(
         vararg rows: CurrentVersionRow,
     ): LedgerCurrentState = LedgerCurrentState(ledgerId, transactions = rows.toList(), balances = emptyList())

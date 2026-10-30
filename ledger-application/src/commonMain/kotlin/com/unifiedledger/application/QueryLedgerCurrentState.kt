@@ -45,6 +45,12 @@ data class LedgerCurrentState(
      * count every surface displays; never infer it from `transactions.size`.
      */
     val transactionTotal: Int = transactions.size,
+    /**
+     * DEF-B (D-268): the exact per-kind transaction counts over the same effective set. The
+     * Analysis tab summarizes these (plus [balances] and [transactionTotal]) so a bounded
+     * [transactions] projection can never under-report the ledger.
+     */
+    val activityKindCounts: List<ActivityKindCount> = emptyList(),
 )
 
 sealed interface LedgerCurrentStateResult {
@@ -90,6 +96,14 @@ class QueryLedgerCurrentState(
                 return LedgerCurrentStateResult.Unavailable
             }
 
+        // DEF-B (D-268): the Analysis tab reads exact per-kind counts, never the bounded list.
+        val kindCounts =
+            try {
+                readPort.loadActivityKindCounts(ledgerId)
+            } catch (failure: Exception) {
+                return LedgerCurrentStateResult.Unavailable
+            }
+
         val balances = buildBalances(sums) ?: return LedgerCurrentStateResult.InvalidState
         return LedgerCurrentStateResult.Success(
             LedgerCurrentState(
@@ -97,6 +111,7 @@ class QueryLedgerCurrentState(
                 transactions = rows,
                 balances = balances,
                 transactionTotal = total,
+                activityKindCounts = kindCounts,
                 accountNames =
                     buildMap {
                         accountsById.values
