@@ -131,9 +131,48 @@ internal fun categoryRegionPlaceholderText(reloadRequired: Boolean): String? = i
  * are used when the host provides them.
  */
 internal fun flowRowsForDisplay(
-    entryRows: List<LedgerEntryRow>?,
+    flowRows: FlowRowsView?,
     reloadRequired: Boolean,
-): List<LedgerEntryRow>? = if (reloadRequired) null else entryRows
+): FlowRowsView? = if (reloadRequired) null else flowRows
+
+/** DEF-B (D-268): what the flow-list footer renders for the current page state. */
+enum class FlowFooterState {
+    LOADING,
+    RETRY,
+    FETCH_MORE,
+    END,
+}
+
+/**
+ * DEF-B (D-268): the footer decision, kept pure so the scroll-end trigger and the retry copy are
+ * testable without a Compose runtime. [FlowFooterState.FETCH_MORE] is the scroll-end latch: the
+ * footer composes only when the user reaches the end of the loaded rows.
+ */
+internal fun flowFooterState(view: FlowRowsView): FlowFooterState =
+    when {
+        view.loadingMore -> FlowFooterState.LOADING
+        view.loadFailed -> FlowFooterState.RETRY
+        view.nextCursor != null -> FlowFooterState.FETCH_MORE
+        else -> FlowFooterState.END
+    }
+
+/**
+ * DEF-B (D-268): the HOME flow list's page state.
+ *
+ * `null` at the screen means the monthly cycle is not loaded, so the bounded
+ * [com.unifiedledger.application.LedgerCurrentState.transactions] fallback renders instead (G1).
+ * A non-null value always carries the accumulated pages in page-key order, the exact total, the
+ * next cursor, and the single-flight/failure markers; the screen re-sorts the accumulated pages
+ * with `sortLedgerEntryRowsForDisplay`, so P703SPEC-03's display order stays frozen.
+ */
+data class FlowRowsView(
+    val rows: List<LedgerEntryRow> = emptyList(),
+    val total: Int = 0,
+    val nextCursor: com.unifiedledger.application.LedgerCurrentStateReadPort.LedgerFlowCursor? = null,
+    val loadingMore: Boolean = false,
+    val loadFailed: Boolean = false,
+    val generation: Int = 0,
+)
 
 /**
  * G3: whether one `AnalysisMonthShift` evaluation actually moved the shared cursor, i.e. whether

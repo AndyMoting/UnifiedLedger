@@ -39,6 +39,7 @@ import com.unifiedledger.application.QueryImportDuplicateReviewsForSession
 import com.unifiedledger.application.QueryImportReviewRows
 import com.unifiedledger.application.QueryLedgerCurrentState
 import com.unifiedledger.application.QueryLedgerEntryRows
+import com.unifiedledger.application.QueryLedgerFlowPage
 import com.unifiedledger.application.QueryMerchantMonthlyAccumulation
 import com.unifiedledger.application.QueryMonthlyActivity
 import com.unifiedledger.application.QueryRecycleBin
@@ -136,6 +137,8 @@ class P503LedgerFacade(
     // (no month card, no flow list, no detail). The product roots wire the session-built models,
     // so every query follows refreshCatalog onto the same authoritative catalog version.
     baseQueryLedgerEntryRows: QueryLedgerEntryRows? = null,
+    // DEF-B (D-268): the bounded page source for the HOME flow list.
+    baseQueryLedgerFlowPage: QueryLedgerFlowPage? = null,
     baseQueryMonthlyActivity: QueryMonthlyActivity? = null,
     baseQueryTransactionDetail: QueryTransactionDetail? = null,
     catalogSession: CatalogConsumerSession? = null,
@@ -266,6 +269,7 @@ class P503LedgerFacade(
     private val fallbackQueryCurrentState = baseQueryCurrentState
     private val fallbackSummarizeActivity = baseSummarizeActivity
     private val fallbackQueryLedgerEntryRows = baseQueryLedgerEntryRows
+    private val fallbackQueryLedgerFlowPage = baseQueryLedgerFlowPage
     private val fallbackQueryMonthlyActivity = baseQueryMonthlyActivity
     private val fallbackQueryTransactionDetail = baseQueryTransactionDetail
     private val fallbackQueryRecycleBin = baseQueryRecycleBin
@@ -311,6 +315,13 @@ class P503LedgerFacade(
      */
     val queryLedgerEntryRows: QueryLedgerEntryRows?
         get() = session?.queryLedgerEntryRows ?: fallbackQueryLedgerEntryRows
+
+    /**
+     * DEF-B (D-268): the bounded keyset page source for the HOME flow list; follows
+     * [refreshCatalog] when a session is injected, so page reads stay on the same catalog version.
+     */
+    val queryLedgerFlowPage: QueryLedgerFlowPage?
+        get() = session?.queryLedgerFlowPage ?: fallbackQueryLedgerFlowPage
 
     /** P7-03.B/C: the unified monthly projection; follows [refreshCatalog] when a session is injected. */
     val queryMonthlyActivity: QueryMonthlyActivity?

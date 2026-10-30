@@ -1094,6 +1094,7 @@ internal fun buildLedgerGraph(
             refreshCatalog = { session.refresh() },
             // P7-03.C/D: the ledger-view read surface on the same authoritative session.
             baseQueryLedgerEntryRows = session.queryLedgerEntryRows,
+            baseQueryLedgerFlowPage = session.queryLedgerFlowPage,
             baseQueryMonthlyActivity = session.queryMonthlyActivity,
             baseQueryTransactionDetail = session.queryTransactionDetail,
             catalogSession = session,

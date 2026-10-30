@@ -59,7 +59,8 @@ import com.unifiedledger.application.ImportRequestIdentity
 import com.unifiedledger.application.ImportReviewRowsResult
 import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerCurrentStateResult
-import com.unifiedledger.application.LedgerEntryRow
+import com.unifiedledger.application.LedgerFlowPageResult
+import com.unifiedledger.application.LedgerFlowTotalResult
 import com.unifiedledger.application.LendDraft
 import com.unifiedledger.application.ManualCollectInputField
 import com.unifiedledger.application.ManualCollectSaveInput
@@ -533,7 +534,10 @@ fun P503App(
     // flow rows are presentation data refreshed with the unified monthly cycle (frozen trigger
     // set, spec 6.2); the month payload and the SelectMonth domain live in the reducer state.
     var monthlyTrend by remember { mutableStateOf<MonthlyTrend?>(null) }
-    var ledgerEntryRows by remember { mutableStateOf<List<LedgerEntryRow>?>(null) }
+    // DEF-B (D-268): the HOME flow page state. Kept host-local (not in the reducer) so it survives
+    // Back within one host instance; `null` renders the bounded current-state fallback (G1).
+    var flowRows by remember { mutableStateOf<FlowRowsView?>(null) }
+    var flowGeneration by remember { mutableStateOf(0) }
     var resolvedCurrentMonth by remember { mutableStateOf<YearMonth?>(null) }
     val ledgerViewWired = ledger.surfaces.ledgerView
     // P7-07 07.D (D-184; spec section 5): the budget surface wiring probe and the current-name
@@ -976,8 +980,9 @@ fun P503App(
                             selectableMonthsResult = monthlyQuery.selectableMonths(),
                             trendResult = monthlyQuery.trend(),
                         )
-                    val rows = if (cycle is MonthlyCycleOutcome.Ready) facade.queryLedgerEntryRows?.query() else null
-                    cycle to rows
+                    val page = if (cycle is MonthlyCycleOutcome.Ready) facade.queryLedgerFlowPage?.firstPage() else null
+                    val total = if (page is LedgerFlowPageResult.Success) facade.queryLedgerFlowPage?.total() else null
+                    Triple(cycle, page, total)
                 } ?: run {
                     // D-203 startup trace: the runtime was not Ready for the monthly read.
                     StartupTrace.emit("read.monthlyPayload end kind=notReady")
@@ -988,7 +993,22 @@ fun P503App(
                     // D-203 startup trace: the monthly read completed ready.
                     StartupTrace.emit("read.monthlyPayload end kind=ready")
                     monthlyTrend = cycle.trend
-                    ledgerEntryRows = outcome.second
+                    // DEF-B (D-268): the first page replaces any previous cycle's pages. A failed
+                    // first page falls back to the bounded current-state list (the same branch a
+                    // not-loaded monthly cycle uses) instead of rendering a silently empty flow.
+                    val page = outcome.second
+                    flowRows =
+                        if (page is LedgerFlowPageResult.Success) {
+                            flowGeneration += 1
+                            FlowRowsView(
+                                rows = page.page.rows,
+                                total = (outcome.third as? LedgerFlowTotalResult.Success)?.total ?: page.page.rows.size,
+                                nextCursor = page.page.nextCursor,
+                                generation = flowGeneration,
+                            )
+                        } else {
+                            null
+                        }
                     dispatch(P503UiEvent.MonthlyActivityResult(ApplicationMonthlyActivityResult.Success(cycle.activity), cycle.selectableMonths))
                 }
                 is MonthlyCycleOutcome.Failed -> {
@@ -1002,6 +1022,39 @@ fun P503App(
             StartupTrace.emit("read.monthlyPayload end kind=error causeClass=${failure::class.simpleName}")
             dispatch(P503UiEvent.MonthlyActivityResult(ApplicationMonthlyActivityResult.Unavailable, emptyList()))
         }
+    }
+
+    /**
+     * DEF-B (D-268): one more HOME flow page. Single-flight through [FlowRowsView.loadingMore];
+     * a landing only applies when its generation still matches, so a monthly reload (which
+     * replaces the whole list) discards an older page. A failed page keeps the loaded rows and
+     * sets the footer's retry state; it never clears the list (R-Q06-4).
+     */
+    fun requestNextFlowPage() {
+        val current = flowRows ?: return
+        val cursor = current.nextCursor ?: return
+        if (current.loadingMore) return
+        val generation = current.generation
+        flowRows = current.copy(loadingMore = true, loadFailed = false)
+        val result =
+            try {
+                ledger.probe { facade -> facade.queryLedgerFlowPage?.pageAfter(cursor) }
+            } catch (failure: Exception) {
+                null
+            }
+        val latest = flowRows
+        if (latest == null || latest.generation != generation) return
+        flowRows =
+            when (result) {
+                is LedgerFlowPageResult.Success ->
+                    latest.copy(
+                        rows = (latest.rows + result.page.rows).distinctBy { it.transactionId },
+                        nextCursor = result.page.nextCursor,
+                        loadingMore = false,
+                        loadFailed = false,
+                    )
+                else -> latest.copy(loadingMore = false, loadFailed = true)
+            }
     }
 
     // ---------------------------------------------------------------- P7-07 07.D budget host surface
@@ -3908,7 +3961,9 @@ fun P503App(
                                         selectableMonths = current.selectableMonths,
                                         monthlyActivity = current.monthlyActivity,
                                         monthlyReloadRequired = current.monthlyReloadRequired,
-                                        entryRows = ledgerEntryRows,
+                                        flowRows = flowRows,
+                                        onLoadMore = ::requestNextFlowPage,
+                                        onRetryLoadMore = ::requestNextFlowPage,
                                         onSelectTransaction = ::selectTransaction,
                                         onSelectMonth = ::selectMonth,
                                         // P7-05.C (D-156; slice 1b Piece 4): the ledger-wide recycle-bin
@@ -4579,7 +4634,7 @@ fun P503App(
                                         showMonthlyRegion = ledgerViewWired,
                                         resolvedCurrentMonth = resolvedCurrentMonth,
                                         monthlyTrend = monthlyTrend,
-                                        entryRows = ledgerEntryRows,
+                                        flowRows = flowRows,
                                         summarizeActivity = ledger.summarizeActivity,
                                         onRetryRefresh = retryRefresh,
                                     )
@@ -4866,7 +4921,7 @@ private fun P503RetainedOverviewFailureScreen(
     showMonthlyRegion: Boolean,
     resolvedCurrentMonth: YearMonth?,
     monthlyTrend: MonthlyTrend?,
-    entryRows: List<LedgerEntryRow>?,
+    flowRows: FlowRowsView?,
     summarizeActivity: SummarizeLedgerActivity,
     onRetryRefresh: () -> Unit,
 ) {
@@ -4898,7 +4953,7 @@ private fun P503RetainedOverviewFailureScreen(
                     // Empty domain: the steppers stay disabled (SelectMonth is absorbed here).
                     selectableMonths = emptyList(),
                     monthlyActivity = overview.monthlyActivity,
-                    entryRows = entryRows,
+                    flowRows = flowRows,
                     onSelectTransaction = {},
                     onSelectMonth = {},
                     interactionsEnabled = false,
