@@ -2826,11 +2826,14 @@ class ImportScaleTraversalInstrumentedTest {
      * [target] and to log progress every [progressEvery] actions (action count, elapsed time, rate
      * and the visible window). Two guards stop a traversal that no longer advances: the stall guard
      * ([stallChecks] consecutive progress checks with an unchanged last visible row) and the
-     * consecutive-refusal guard ([CONSECUTIVE_FAILURE_LIMIT], whose first refusal is logged with the
-     * action id and the node). A container that cannot be re-found at all is retried
+     * consecutive-refusal guard ([CONSECUTIVE_FAILURE_LIMIT], counted in refused dispatches and whose
+     * first refused dispatch of a streak is logged with the action id and the node). A container that cannot be re-found at all is retried
      * [CONTAINER_REFETCH_RETRIES] times by [refetchScrollableContainer] before the traversal gives up
-     * on it, so a frame that has not caught up with the list does not end the traversal. Returns the
-     * number of forward actions performed.
+     * on it, so a frame that has not caught up with the list does not end the traversal. A refused
+     * action is retried once on a freshly located container (Fix E, a compensation for the still-open
+     * D-162 residual 2) and both the fresh and the original node are logged; the retry consumes the
+     * same budget, so "forward actions" always counts dispatches issued, never loop iterations.
+     * Returns the number of forward actions performed.
      */
     private fun forwardUntilTarget(
         target: String,
@@ -2863,9 +2866,40 @@ class ImportScaleTraversalInstrumentedTest {
             }
             val accepted = node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
             performed += 1
-            consecutiveFailures = if (accepted) 0 else consecutiveFailures + 1
-            if (!accepted && consecutiveFailures == 1) {
-                logRefusal(log, node)
+            var refusedDispatches = if (accepted) 0 else 1
+            if (accepted) {
+                consecutiveFailures = 0
+            } else {
+                // Fix E (B6 probe; D-162 residual 2 is still OPEN - this is a compensation, not the
+                // registered fix): a refusal can come from a container handle that went stale at a
+                // section boundary (the 2026-11-01 20k run refused 200 times in a row exactly where
+                // the pending section ends, after the loop had already re-fetched every 50 actions).
+                // Re-locate the scrollable node and retry ONCE; both exits log the fresh and the
+                // original node so a later run can tell "stale handle" from "genuinely at the end".
+                val retriedContainer = chooseScrollableContainer(scrollableNodes(appRoot()))
+                var retried = false
+                if (retriedContainer != null) {
+                    // A retry is a real dispatch, so it consumes the same budget as the first attempt
+                    // and counts as its own refusal; a null container dispatches nothing and costs
+                    // neither, keeping `performed` == "dispatches issued" in every path.
+                    retried = retriedContainer.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                    performed += 1
+                    if (!retried) refusedDispatches += 1
+                }
+                log(
+                    "refusal retry after $performed forward actions fresh=${describeNodeOrNone(retriedContainer)} " +
+                        "original=${describeNodeOrNone(node)} accepted=$retried " +
+                        describeVisibleWindow(visibleWindow(appRoot())),
+                )
+                if (retried) {
+                    container = retriedContainer
+                    consecutiveFailures = 0
+                } else {
+                    consecutiveFailures += refusedDispatches
+                    if (consecutiveFailures == refusedDispatches) {
+                        logRefusal(log, node)
+                    }
+                }
             }
             sleepQuietly(settleMillis.toLong())
             var fresh: AccessibilityNodeInfo? = null
