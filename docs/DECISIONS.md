@@ -5840,3 +5840,16 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 8. **边界与残余（不得并入 PASS）**：① 50k 档恢复竞争腿未做（被第 7 条阻断，随导出修复批补）；② A6-4 的 5 s 超时显式读数未取（静默成功路径无 trace，归 instrumented 腿）；③ D-267 第 5 条轴读成本：`monthlyPayload` 设备耗时 2k→50k = 0.27 s→2.0 s→2.9 s（含两趟整账 `SELECT DISTINCT`），量级可接受、登记为观测值，阈值不另设；④ DEF-EXPORT-OOM 本体（第 7 条）。本条不改 D-266/D-267/D-268 的其它判决；不声称 P7-09 或整体完成。
 
 **关联决定：** D-266（A06 首跑 FAIL 与 DEF-A/DEF-B 登记）、D-268（DEF-B 设计门与 Q1–Q7）、D-267（DEF-C）、D-265（A05）、D-259（向量账口径）、D-243（61k 候选口径，与正式交易轴互不影响）、阶段计划 §9.3:364、§10.2:402-408、§10.3:414-418、§6.3:192（P706-A12）。
+
+## D-270 P709-A07 判 PASS（部分残余单列）：TalkBack 设备巡检——隐藏态朗读/载荷零金额、显示切换 revision 生效、旧异步不回写；多 widget 设备腿未做
+
+**状态：** 已批准并登记（2026-10-31，计划 §9.3:365 判据与 §10.2:405 朗读巡检义务；D-236/D-261 对 A07 的「缺证」状态的闭环条目）。**纯文档批**：零代码 / 零测试 / 零 schema / 零迁移。证据入口 = `local/artifacts/p709-a07/REPORT.md`（ignored）。
+
+**决定：**
+
+1. **绑定与取证方法**：AVD `ul_p7_d01`（隔离 adb 5038，收工 `emu kill`）；APK = 合并后 main `61115717`（同 D-269 绑定的 sha256）。TalkBack 16.0.0.738667889 经 secure settings 启用（`dumpsys accessibility` Bound services 含 FEEDBACK_SPOKEN），TTS = `com.google.android.tts`（logcat `Synthesis request` 行佐证朗读活动）。**朗读文本捕获配方（本批打通，登记入设备配方）**：TalkBack Developer settings → Display speech output 开启（TalkBack 拦截下用「单击聚焦行 + 设备 shell 内 <300ms 双 tap」激活）；朗读以 TYPE_ACCESSIBILITY_OVERLAY 字幕条呈现，`uiautomator dump` 不含该 overlay，以 `screencap` 截图读取；焦点导航用键盘 `TAB`/`SHIFT+TAB`（`input tap` 会被解释为激活 widget 的 click PendingIntent，不可靠）。
+2. **判决：P709-A07 = PASS，残余单列**。依据（§9.3:365 的四个子命题）：① 初始隐藏——节点级 `widget_body` 的 `text` == `content-desc`（provider 显式同值，spec 6.5(b)）为零金额三行（`2026-10 | 打开应用以查看本月收支 | …`），TalkBack 聚焦 widget 的字幕轮播只出现容器 label `UnifiedLedger` 与通用提示条，**无任何金额被朗读**；② 主动显示再隐藏——「显示金额」单 tap 切换（**配方：双击 = 两次物理 click = 两次 toggle**，RemoteViews 不合并双击）后金额三行出现且节点级含金额（用户主动显示属预期），切回隐藏后载荷恢复无金额三行；③ 隐藏后旧异步不重新泄露——隐藏后立即与 6 秒后两时点 dump 均无金额行且 `更新于` 前进到隐藏后渲染时刻，与机制一致（toggle 每次必进 config revision，landing 三元校验丢弃在途带金额渲染，`LedgerWidgetProvider.kt:195-207`）；④ TalkBack——真实服务 + 真实 TTS 朗读活动，朗读面零金额（headless ANR 限制的 A-03 延期理由不适用于本向量：单点聚焦朗读无需规模巡检）。
+3. **残余（不并入 PASS）**：多 widget 设备腿未做（本轮单实例 id=4；per-widgetId 独立 revision 的机制面由 `LedgerWidgetConfigStore` + JVM 覆盖；设备「两实例一显一隐」待补）。另登记两条过程事实：launcher 重启曾丢 widget RemoteViews，经 app 打开触发的 `reRenderAllWidgets`（合并失效路径）恢复——正常工作证据；TalkBack 容器朗读只读 label，子按钮不在朗读序列，其无障碍面由 RemoteViews text 承担。
+4. **向量账更新：62 = PASS 48 + 残留 13 + 修订范围完成 1（≈77.4%）；P7-09 = 5/9 PASS + 1 项修订范围完成**（A01/A03/A06/A07/A09 PASS；A02 部分证据、A04 修订范围完成、A05 部分证据 4/6、A08 缺证）。本条不改 D-269 的 A06 判决与其它条目。
+
+**关联决定：** D-269（A06 改判与本批同日执行链）、D-265（widget↔月卡一致读数的对照基线）、D-236（A07 前判缺证）、D-181（TalkBack 捕获协议来源）、阶段计划 §9.3:365、§10.2:405。
