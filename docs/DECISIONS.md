@@ -5882,3 +5882,42 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 5. **边界**：本条不改 D-264/D-265 的已取证向量读数；不声称 A05 或 P7-09 完成；退款入口新任务与利息取证均在 P7-09 收口前必须闭环（或再次经用户裁决扩大缩减）。
 
 **关联决定：** D-263（范围缩减先例与五项记录格式）、D-264/D-265（A05 已取证向量）、D-243（候选口径）、阶段计划 §9.3:363、§10.4.1。
+
+## D-273 批A 设备取证登记：A05 利息向量 PASS（A05 记修订范围完成）、P709-A02 设备维度补强（仍部分证据）、D01-9 新增发送方 revoke 维度（维持 PARTIAL）、A-VIS 缺口① 维持未闭合
+
+**状态：** 已批准并登记（2026-11-01，计划 §9.3:360（P709-A02）、§9.3:363（P709-A05 六向量）、§10.1/§10.2/§10.4.5）。**纯文档批**：零代码 / 零测试 / 零 schema / 零迁移 / 零依赖；设备证据由主代理在本会话自启的受管 AVD 上采集，原始工件在**主检出根**的 ignored 目录 `local/artifacts/p709-a05-interest/`、`local/artifacts/p709-a02-device/`（worktree 内 `local/` 为独立 ignored 目录，复核须到主检出取件；各目录 REPORT.md 为证据索引，`teardown.txt` 与 `ci-run.txt` 为收工与工件来源记录）。
+
+**决定：**
+
+1. **绑定（§10.2）**：AVD `ul_p7_d01`（`emulator-5680`，API 36 / Android 16，隔离 adb `5038`，**本会话自启**并经 `emu avd name` = `ul_p7_d01` 核实；收工 `emu kill` 回显 `OK: killing emulator, bye bye`、随后 `adb devices` 空，见 `teardown.txt`）。APK = CI run `41204079795`（head `2098bdfa`，`conclusion=success`，见 `ci-run.txt`）的 `android-debug-apk-2098bdfa…` 工件，sha256 `DFB968DD958657FE4F29622F24CC5DB4221F12369BA10A7477D18AB0826ED0C7`；设备安装态 `base.apk` 提取 sha256 `7205006E3A17A2CD66923EDB94E2F2895773BAD2212EC8EA8FC4763F40EF0D8C`（安装后重签排布差异，同源 `2098bdfa`，如实披露）。数据面 = 全新安装（前装残留因签名不匹配已卸载），账本 `ledger-local-test`，gen-1，`user_version=36`，`quick_check=ok`。发送方底座 = `local/tools/share-sender`（`com.ul.sender`，D-260 交付；真实应用进程投递真实 `content://` grant——shell 直投 content grant 被平台拒绝的边界见 D-236 item 4）。
+
+2. **判决：A05 的利息向量 = PASS（设备维度）；A05 整体记「修订范围完成」（不是 PASS）。** 产品路径：账户页收入分类「新建一级分类」建 Interest / 二级 Sub（INCOME 二级叶子，产品校验通过，回执「已保存」）→ 手工「借出」100.00 CNY（**出资账户 = 默认支付，往来对象 = CP1**，`2026-11-01T02:30:00Z`）→ 手工「收回」实收 120.00 = 本金 100.00 + 利息 20.00、利息分类 Sub（`02:33:00Z`）→ 首页月卡「`2026-11 · 交易 2 笔`；`CNY：普通收入 20.00，净支出 0.00，结余 20.00`」、流水 `CP1（CNY）：0.00`（借贷归零）、`Sub（CNY）：20.00` ↔ launcher 3×1 月度小组件显式金额态「`收入 20.00 CNY / 净支出 0.00 CNY / 结余 20.00 CNY`」逐值一致（更新时刻 `2026-10-31T16:40:34Z`）。权威 DB 逐 posting（CNY minor units）：LEND 两腿 `CP1 +10000 / 默认支付账户 −10000`；COLLECT 三腿 `默认支付账户 +12000 / CP1 −10000 / Sub −2000`，即 `totalReceived = principal + interest` 约束（`ManualLending.kt:284-286`）与 INCOME 利息入账在产品路径成立。A05 由此为 **5/6 向量 PASS + 1 项范围缩减**（跨月退款，D-272 用户批准），按 D-263 先例记 **「修订范围完成」**；第六向量未交付，不声称 A05 整体 PASS。
+
+3. **判决：P709-A02 仍为「部分证据」——本批补强设备维度，不判 PASS。** 判据集以计划 §9.3:360 与 spec §2.3 的枚举为准（缺格式、假 MIME、多流、无 grant/中途撤回、known/unknown size 超 16 MiB、超过 10k 候选），并含 D-236 §3 的「流关闭」。逐判据覆盖状态：
+
+   | 判据 | 本批设备观测 | 其余维度 |
+   | --- | --- | --- |
+   | 非 `content://` | D-261 已观测（`NON_CONTENT_URI` 文案） | — |
+   | 无 stream | D-261 已观测（`MISSING_STREAM` 文案） | — |
+   | `ACTION_SEND_MULTIPLE` 投递 | **本批新增**：命中 `MULTIPLE_STREAMS`（**同一 reason code 的 action-shape 生产者**，`ExternalNavigationIntake.kt:205-206`；`UNSUPPORTED_ACTION` 是同函数 `:208` 的 else 支），可见文案「无法接收这次分享：请只分享一个文件（这一条包含多个文件或没有文件）。」（`P503App.kt:246` 逐字同，`v1e.xml`） | 同 reason code 的另两个生产者（list-extra `:218`、多 ClipData `:227`）与 `CONFLICTING_STREAM` **仍仅 JVM** |
+   | 无读授权 | **本批新增**：「无法接收这次分享：没有读取权限，请重新分享后再导入。」 | — |
+   | known size > 16 MiB | **本批新增**：17,825,792 B 经 L0 有界读取拒绝——「文件超过读取上限（16 MiB），实际 17825792 字节；本次未解析、未接治。」（分享面先接受、选格式后拒绝；`declared-size` 检查只读 Intent hint 不查 provider，见 `ExternalNavigationIntake.kt` 的 `SHARE_DECLARED_SIZE_HINT_EXTRA`） | — |
+   | unknown size | **本批新增（接受路径）**：provider `SIZE` 为 null 时分享面接受并进入格式选择（「已收到分享文件，请选择账单格式后导入。」），未被误判为超限 | — |
+   | 超过 10k 候选 | **本批新增**：10,050 条有效行 → 「单次导入最多 10,000 条已接受记录，本次 10050 条；已中止，未写入任何记录。」 | — |
+   | 缺格式 / 假 MIME / 异常 extras / 流关闭 | **设备未观测** | 仅 JVM（`ExternalNavigationIntakeTest`、`ShareRejectionNoticeTest`）；D-236 §3 已将「流关闭」列入完整判据 |
+
+   全程零正式效果（每向量前后 `import_candidate` / `import_request` / `import_source_record` 均为 0，`ledger_transaction` 恒 2）。**结论：本批新增 4 类拒绝观测 + 1 类接受路径；仍缺 4 类设备证据（缺格式、假 MIME、异常 extras、流关闭）与 `MULTIPLE_STREAMS` 的另两个生产者 / `CONFLICTING_STREAM`；A02 维持部分证据、不判 PASS。** 口径澄清（更正上稿）：`ACTION_SEND_MULTIPLE` 的拒绝**就是** `MULTIPLE_STREAMS` 这个 reason code，差别只在**生产者路径**——本批取证的是 action-shape 生产者（`:205-206`），该 code 的 list-extra（`:218`）与多 ClipData（`:227`）两个生产者仍只有 JVM 证据；`CONFLICTING_STREAM` 是**另一个** reason code，设备未取证。本批设备观测计数统一为「**4 类拒绝（`MULTIPLE_STREAMS`[action-shape]、`STREAM_NOT_READABLE`、L0 超限、>10k 接洽上限）+ 1 类接受路径（unknown size）**」，另加既有 `NON_CONTENT_URI`/`MISSING_STREAM`。
+
+4. **判决：D01-9 维持 PARTIAL；新增「发送方 revoke 维度」读数，不改变状态。** 设备实验：分享被接受后，发送方进程内 `revokeUriPermission` 撤回读授权（`logcat ULSEND_REVOKED content://com.ul.sender.files/sample.csv`），随后选格式触发读取 → 宿主条「分享的文件已无法读取（授权已过期或进程已重启），请重新分享后再导入。」+「文件读取失败（无法打开文件流，可能权限已撤销）。」+ 零写入。该读数证明**同一 `checkUriPermission` 失效路径**在真实进程间授权撤回下的类型化行为，但计划 §2 的 A-05 行明文要求「权限撤回**原 PARTIAL 保留**，补可控平台测试」，§10.1:400 的校准例亦写「D01 权限撤回仍为 PARTIAL」，且 D-155/D-157 两处承接的触发点是「平台或环境提供确定性注入点」（D-259 仅把 D01-9 列为残留、D-261 仅记「未观察」，均无触发点表述）——发送方自撤不属于该触发点。故本条**只登记维度读数**，状态维持 PARTIAL；如需转 PASS，须用户裁决或对计划 §2 A-05 行作修订登记（本条不作该修订）。
+
+5. **判决：A-VIS 缺口① 维持未闭合；本批另登记一项不同控件的语义树观测（不用于闭合该缺口）。** D-235 登记的缺口① 控件是**整组确认页卡片头部**的批量折叠/展开开关（`ImportReviewRenderItem.GroupDispositionCardHeader` 的 `TextButton`，文案「收起全部比较信息（共 N 条）」/「展开全部比较信息（共 N 条）」，`P503ImportReview.kt:534/549-561`、`P503ImportReviewPresentation.kt:731/737`），并要求含「批量折叠/展开的实际效果」——本轮**未观测**该控件，缺口① 维持未闭合。本批实际观测的是**导入清单组头**的另一控件 `ImportReviewRenderItem.GroupDispositionButton`（文案「整组标记为重复」）：其设备语义树为可聚焦可点击容器 `android.view.View`（`[42,1928][423,2054]`，`clickable=true`）内嵌 `content-desc="整组标记为重复"` 的后代节点与同文本 `TextView`，即该控件带有可合并朗读的 `contentDescription`（**实际朗读未观测**，不作为 TalkBack 证据）；本轮未点按（组处置不可逆，checked 翻转由既有 JVM 测试覆盖）。缺口②（TalkBack 实际朗读）沿 A-03/D-181 接受延期口径不变。A-VIS 整体仍非 PASS。**附带登记（HIST-01 承接）**：D-235 的缺口描述未点名控件文案与所在屏，建议后续在 A-VIS 残余台账钉死「整组确认页 / 收起全部比较信息（共 N 条）」，本条已按该标识记录，不改 D-235 原文。
+
+6. **向量账（§10.1 三分，分母 62 不变）**：本条前（D-272 后）= PASS **49** + 残留 **12** + 修订范围完成 **1（P709-A04）**；本条后 = **PASS 49 + 残留 11 + 修订范围完成 2（P709-A04、P709-A05）**，即 **49/62 ≈ 79.0%**。唯一变化项：`P709-A05` 由残留转修订范围完成（利息向量 PASS 后，其唯一未交付项为 D-272 已批准缩减的跨月退款）。区块读数：**P7-09 = 6/9 PASS**（A01/A03/A06/A07/A08/A09）+ **2 项修订范围完成**（A04、A05）；**第一部分维持 4/8**；P7-05 = 15/15、P7-06 = 8/12、P7-07 = 8/9、P7-08 = 8/9 均不变。残留 11 = 第一部分 4（A-03〔A03-8b 与 TalkBack 延期〕、A-05〔§10.3 规模项〕、A-PERF、A-VIS）+ P7-06 4（A06 掉电腿、A09、A10、A12）+ P7-07 1（A08）+ P7-08 1（A09）+ P7-09 1（A02）。**P709-A02 未转 PASS 是本节与初稿的唯一数字差异**（初稿误按 PASS 计 50），以本节为准。
+
+7. **过程披露（不并入判决）**：① fresh-bounds 纪律再次被证实——Compose 对话框在文本输入后整体上移、软键盘覆盖底部按钮，沿用旧坐标会点到键盘（本轮金额字段两次被「9」键污染，以 `MOVE_END` + 7×`DEL` 清除重输；对话框点空即关闭），每次动作前重 dump 取 bounds 是唯一可靠配方；② `adb push` 在 MSYS 下需 `MSYS_NO_PATHCONV=1`；③ >10k 夹具三次失败（GBK 编码 / 缺 BOM-引号-tab-CRLF 冻结形状）属**测试夹具工程问题**，产品解析器以 `INPUT_DECODE_FAILED`/`STRUCTURE_MISMATCH` 类型化拒绝且零写入，行为正确；追溯应指 `cmb-big.csv`（10,051 行 = 表头 + 10,050 数据行）；④ force-stop 后立即重投递偶发 BAL 未把应用推到前台，以 `am start` 兜底拉起，停放请求按 A01 语义恢复，不影响向量读数；⑤ 「最近导入」在 >16 MiB 拒绝后显示同文案（原文只证同文案，未证独立持久化写入，本条按该口径表述）；⑥ 观察项 `OBS-SHARE-INTAKE-COMMENT-01`（低，OPEN，非本批范围）：`ExternalNavigationIntake.kt:44-45` 的 `UNSUPPORTED_ACTION` 注释仍写「includes ACTION_SEND_MULTIPLE」，与 `:205-206` 的实际分支相反——源码注释漂移，产品行为不受影响，建议后续补注时一并改正。
+
+8. **审验拓扑（如实）**：首稿由主代理在会话内撰写并经一次独立只读评审（REQUEST-CHANGES：2 阻断 + 2 重大，全部整改）与一次 distinct 验证（NOT-VERIFIED：1 项字符串核验失败，已整改）；本修订稿为整改后重冻版，再由同一评审人做闭合复核、同一验证人按点名主张重跑。整改项：A-VIS 控件错配→缺口① 改回未闭合并单列不同控件观测；D01-9 越权转判→维持 PARTIAL 只登记维度；A02「五类」不实→改为逐判据覆盖表并维持部分证据；`CURRENT_STATE` 自相矛盾→同步改写；一处不可核的字符串断言→删除；TalkBack/最近导入/收工工件/下一动作等表述按 findings 修正。
+
+9. **边界**：入 = 本条登记、`CURRENT_STATE` 两节的本批同步（含 `:83`/`:98` 的 D01-9 表述与「当前阶段」段）；出 = 不改 D-236/D-261/D-263/D-264/D-265/D-272 的已判读数与判决正文，不改 D-155 的 PARTIAL 状态与承接触发点，不改 D-235 的缺口描述原文，不声称 P7-09 或第一阶段完成，不提出新范围；本地检查点 `PROJECT_STATE.local.md` 不在本批 diff 内（主检出自更）。
+
+**关联决定：** D-272（A05 余下两向量裁决）、D-263（范围缩减与「修订范围完成」先例）、D-264/D-265（A05 已取证向量）、D-261（A01/A03 与拒绝可见）、D-236（P709 取证批、A02 判据集与 shell 直投 grant 边界）、D-235（A-VIS 批与批开关缺口）、D-155（D01-9 PARTIAL 与承接触发点）、D-181（TalkBack 接受延期）、D-266～D-271（P7-09 其余向量）、阶段计划 §9.3:360/363、§10.1/§10.2/§10.4.5。
