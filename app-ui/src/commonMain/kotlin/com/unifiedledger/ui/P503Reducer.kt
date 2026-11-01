@@ -1403,13 +1403,18 @@ class P503ReducerImpl(
 
     /**
      * P7-04.C: applies one pick pipeline result on the overview (table 6.2a). The session summary
-     * always replaces the previous one; a successful intake replaces the candidate rows while a
-     * typed failure keeps the previous list and surfaces the explicit failure banner (失败条 +
-     * 保留上一清单); a successful intake whose list re-read failed keeps the previous rows and
-     * surfaces the typed read-failure banner (F1). ANY intake result landing also closes an open
-     * group disposition page (P704C-SPEC-08: the page's session handle is superseded by the new
-     * pick even on a failed pipeline — the old handle's page must not coexist with the new
-     * session summary).
+     * always replaces the previous one. The re-read rows are adopted WHENEVER the event carries
+     * them, INCLUDING a typed failure: a batch that fails part-way keeps every record it already
+     * committed, so dropping the fresh rows would leave the failure copy "已成功的记录保留" with
+     * no rows behind it (DEF-IMPORT-ENOSPC-CRASH-01, D-276 item 2; the failure family's
+     * mid-batch member is `StorageUnavailable`). Adopting fresh rows also drops every selection
+     * whose row is gone, so a superseded checklist can never survive as an invisible selection.
+     * A failure event whose re-read ALSO failed keeps the previous list (F1 保留旧载荷) and shows
+     * the failure banner; a successful intake whose re-read failed keeps the previous rows and
+     * shows the typed read-failure banner. ANY intake result landing also closes an open group
+     * disposition page (P704C-SPEC-08: the page's session handle is superseded by the new pick
+     * even on a failed pipeline — the old handle's page must not coexist with the new session
+     * summary).
      */
     private fun reduceImportFileIntakeResult(
         state: P503AppState.OverviewEmpty,
@@ -1420,22 +1425,30 @@ class P503ReducerImpl(
         val success =
             outcome is ImportIntakePipelineOutcome.Intaken &&
                 outcome.outcome !is com.unifiedledger.application.ImportFileIntakeOutcome.Rejected
+        val rowsResult = event.rows
         val nextRows =
-            if (success && event.rows is com.unifiedledger.application.ImportReviewRowsResult.Rows) {
-                event.rows.rows
+            when (rowsResult) {
+                is com.unifiedledger.application.ImportReviewRowsResult.Rows -> rowsResult.rows
+                com.unifiedledger.application.ImportReviewRowsResult.Unavailable -> view.rows
+            }
+        val retainedSelection =
+            if (rowsResult is com.unifiedledger.application.ImportReviewRowsResult.Rows) {
+                val present = nextRows.map { it.candidateId }.toSet()
+                view.selectedCandidateIds.filter { candidateId -> candidateId in present }.toSet()
             } else {
-                view.rows
+                view.selectedCandidateIds
             }
         val notice =
             when {
                 !success -> ImportReviewNotice.IntakeFailed(event.session.outcome)
-                event.rows is com.unifiedledger.application.ImportReviewRowsResult.Unavailable -> ImportReviewNotice.ReviewReadFailed
+                rowsResult is com.unifiedledger.application.ImportReviewRowsResult.Unavailable -> ImportReviewNotice.ReviewReadFailed
                 else -> null
             }
         return state.copy(
             importReview =
                 view.copy(
                     rows = nextRows,
+                    selectedCandidateIds = retainedSelection,
                     lastIntakeSession = event.session,
                     notice = notice,
                     groupDisposition = null,

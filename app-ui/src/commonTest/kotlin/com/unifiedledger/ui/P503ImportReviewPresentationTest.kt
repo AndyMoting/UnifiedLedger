@@ -717,6 +717,25 @@ class P503ImportReviewPresentationTest {
         assertTrue(parserRejected.contains("WECHAT_UNSUPPORTED_INPUT"))
     }
 
+    /**
+     * DEF-IMPORT-ENOSPC-CRASH-01 (D-276 item 2): the mid-batch storage failure owns exactly one
+     * fixed copy. Ruling B allows a committed prefix, so the sentence is "已成功的记录保留" — true
+     * for every prefix including the empty one — and it must never fall back to the zero-write
+     * claim the batch-gate members make. It carries no exception text, path, or URI (D06).
+     */
+    @Test
+    fun storageUnavailableCarriesItsFixedScopedCopy() {
+        val fixed = "导入已中止；已成功的记录保留。"
+        val text = importIntakeFailureText(ImportIntakeBatchFailure.StorageUnavailable)
+        assertEquals(fixed, text)
+        // The frozen over-claim other family members may make and this one may not.
+        assertFalse(text.contains("未写入任何记录"))
+        assertTrue(text.contains("已成功的记录保留"), "the copy must scope the claim to the successful prefix: $text")
+        val intaken = ImportIntakePipelineOutcome.Intaken(ImportFileIntakeOutcome.Rejected(ImportIntakeBatchFailure.StorageUnavailable))
+        assertTrue(importIntakeSessionLines(ImportIntakeSessionSummary("synthetic-bill.csv", "pick-handle-1", intaken)).contains(fixed))
+        assertTrue(importReviewNoticeText(ImportReviewNotice.IntakeFailed(intaken)).contains(fixed))
+    }
+
     @Test
     fun l0FailuresAndNoticesHaveDistinctTypedCopy() {
         val exceeds = importIntakeSessionLines(ImportIntakeSessionSummary("big.bin", "pick-handle-1", ImportIntakePipelineOutcome.ReadExceedsLimit(17_000_000)))
