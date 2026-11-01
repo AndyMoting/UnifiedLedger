@@ -15,6 +15,7 @@ import com.unifiedledger.application.ImportDuplicateStatus
 import com.unifiedledger.application.ImportFileIntakeOutcome
 import com.unifiedledger.application.ImportFormatId
 import com.unifiedledger.application.ImportFundingState
+import com.unifiedledger.application.ImportIntakeBatchFailure
 import com.unifiedledger.application.ImportIntakeRecordDisposition
 import com.unifiedledger.application.ImportIntakeRecordSummary
 import com.unifiedledger.application.ImportRequestId
@@ -168,6 +169,20 @@ class P503ImportReviewReducerTest {
                 historyId = ImportStatusHistoryId("history-1"),
                 outcome = ImportDuplicateStatus.CONFIRMED_DUPLICATE,
             ),
+        )
+
+    /**
+     * The mid-batch storage failure of DEF-IMPORT-ENOSPC-CRASH-01 (D-276 item 2, ruling B): the
+     * pipeline reports a typed failure, NOT a zero-write batch.
+     */
+    private fun storageUnavailableSession(inputRef: String = "pick-handle-3"): ImportIntakeSessionSummary =
+        ImportIntakeSessionSummary(
+            displayName = "synthetic-bill.csv",
+            inputRef = inputRef,
+            outcome =
+                ImportIntakePipelineOutcome.Intaken(
+                    ImportFileIntakeOutcome.Rejected(ImportIntakeBatchFailure.StorageUnavailable),
+                ),
         )
 
     private fun acceptedSession(inputRef: String = "pick-handle-1"): ImportIntakeSessionSummary =
@@ -431,7 +446,7 @@ class P503ImportReviewReducerTest {
     }
 
     @Test
-    fun typedIntakeFailureKeepsThePreviousListAndSurfacesTheBanner() {
+    fun typedIntakeFailureWithAFailedRereadKeepsThePreviousListAndSurfacesTheBanner() {
         val stalePage =
             ImportDuplicateGroupDispositionPage(
                 "pick-handle-old",
@@ -462,12 +477,44 @@ class P503ImportReviewReducerTest {
                 reducer.reduce(source, P503UiEvent.ImportFileIntakeResult(failedSession, ImportReviewRowsResult.Unavailable)),
             )
         val view = updated.importReview
-        // 失败条 + 保留上一清单: the session is recorded, the previous rows stay, the banner shows.
+        // 失败条 + 保留上一清单 — for THIS case only: the re-read itself came back Unavailable, so
+        // there are no fresh rows to adopt; the previous list stays and the banner shows. (A failed
+        // intake whose re-read DID answer replaces the list — see the test above.)
         assertSame(source.importReview?.rows, view?.rows)
         assertEquals("pick-handle-2", view?.lastIntakeSession?.inputRef)
         assertIs<ImportReviewNotice.IntakeFailed>(view?.notice)
         // P704C-SPEC-08: ANY intake result landing closes the open group page — the old handle's
         // page must not coexist with the new session summary even on a failed pipeline.
+        assertNull(view?.groupDisposition)
+    }
+
+    /**
+     * DEF-IMPORT-ENOSPC-CRASH-01 (D-276 item 2, ruling B): a mid-batch failure is NOT a zero-write
+     * batch. The event's re-read rows carry every record the batch already committed, so they must
+     * land even though the operation failed — otherwise the failure copy 「已成功的记录保留」 would
+     * have no rows behind it. A selection whose row is gone is dropped with that row.
+     */
+    @Test
+    fun aFailedIntakeStillAdoptsTheRereadRowsAndDropsOnlyTheVanishedSelection() {
+        val source =
+            overview(
+                rows = listOf(pendingRow, retainableRow),
+                selection = setOf(pendingRow.candidateId, retainableRow.candidateId),
+            )
+        // The abort's re-read list is the committed prefix: pendingRow survived, retainableRow is gone.
+        val reread = ImportReviewRowsResult.Rows(listOf(pendingRow))
+        val updated =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(source, P503UiEvent.ImportFileIntakeResult(storageUnavailableSession(), reread)),
+            )
+        val view = updated.importReview
+        assertEquals(listOf(pendingRow), view?.rows, "the committed prefix must be visible on a failed intake")
+        assertIs<ImportReviewNotice.IntakeFailed>(view?.notice)
+        assertEquals(
+            setOf(pendingRow.candidateId),
+            view?.selectedCandidateIds,
+            "a vanished row's selection must not survive the row",
+        )
         assertNull(view?.groupDisposition)
     }
 
