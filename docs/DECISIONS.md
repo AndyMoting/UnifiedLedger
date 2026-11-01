@@ -5986,3 +5986,58 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 7. **边界**：入 = 本条登记与 `CURRENT_STATE` 的对应状态句（`:83` 加「原要求、已被 D-275 取代」标注；`:86` 加「当时」+ 取代句；`:100` 将 D01-9 移出「不得合并签收」的现状断言并改写为 PASS + 披露；`:102` 加终态标注；`:106` 改为「下一动作 = 构造『重复组置首屏』20k 夹具并补测 B6」）；出 = 不改 D-155/D-273/D-274/D-162/D-165/D-148 的判决正文与读数、不改任何冻结阈值、不把「负读数」或「已知限制」写成 PASS、不声称第一部分或 P7-09 完成；`PROJECT_STATE.local.md` 不在本批 diff 内（主检出自更）。
 
 **关联决定：** D-273（D01-9 维度读数、A-VIS 控件钉死、转判需用户裁决）、D-274（A-VIS 缺口① 闭合）、D-155（D01-9 原 PARTIAL 与被取代表述）、D-181（TalkBack 延期）、D-162/D-165（组可达性与四阶段 PASS、组卡页脚推算）、D-148/D-170（B6 既有读数与「未测量」冲突，承接批裁决）、D-243（61k 观察项，仅作同类披露参照、**根据不同**）、PR #189（`7db423e9` 致动器重试修复，test-only）、阶段计划 §2 `:42`/A-05/A-VIS 行、§10.1/§10.2/§10.3/§10.4.1/§10.4.5。
+
+## D-276 批C 登记：`OBS-SHARE-FACE-INPUT-01` 按「会话读数不可信」撤销（对 chip 行为弃权）；新缺陷 `DEF-IMPORT-ENOSPC-CRASH-01`（导入接洽满盘 FATAL，**不属 P706-A10**）与测试侧 `DEF-SCALE-PROBE-DBPATH-01`（四处 DB 读取共用过期路径）；导入接治吞吐与 D-165 读数**不可比**，登记待复测
+
+**状态：** 已登记（2026-11-01）。**文档批**：零代码 / 零测试 / 零 schema / 零迁移。本批**未采集新的设备读数**，登记的是本会话已完成的设备观测；设备面为受管 AVD `ul_p7_d01` @ `emulator-5680`、API 36、隔离 adb `5038`（本会话自启并以 `emu avd name` 核实，收工 `emu kill`）。**工件位置**：对应原始工件在主检出根的 ignored 目录 `local/artifacts/p706-scale-b6/`（worktree 内无 `local/`，复核须到主检出取件）。**APK 绑定缺口**：本会话设备跑的 APK 为 PR #191 的 CI 工件，其 sha256 未留存，故下述读数**未满足计划 §10.2 的 APK 绑定要求**，复测须补。
+
+**决定：**
+
+1. **`OBS-SHARE-FACE-INPUT-01` 撤销：按「该会话读数不可信」结案，并对 chip 行为弃权（既不断言坏、也不断言好）。**
+   - **原观察**（`local/artifacts/p706-scale-b6/FIXTURE-NOTES.md` 17:20–17:45 节）：分享面格式 chip 在无障碍树中可见且可点击，`input tap` 与 `UiAutomation ACTION_CLICK` 两条通道均未触发接治；**此前**两次 `screencap`（`c2.png` 07:20、`c5.png` 07:22）拍到 launcher 桌面，而同刻 `mCurrentFocus` 与 `uiautomator dump` 指向应用。
+   - **对照实验**：应用冷启后点「导入」Tab——**重启前完全不生效**（界面仍停首页）；同刻 `mWakefulness=Awake`、`mScreenState=ON`、`screen_off_timeout=2147483647`（排除休眠/熄屏/超时熄屏）；执行 `adb reboot` 后**同坐标点击立即生效**（导入屏出现「选择账单文件」「微信账单（XLSX）」）。→ 足以判定**该会话的点击类读数不可用**。
+   - **明示不主张的部分**：① 重启后**未单独复测 chip**（工件只记录了「导入」Tab 的坐标点击）；② 重启后确有两次导入被派发（一次在 2,265 候选处触发 ENOSPC、一次观测到 `import_candidate` 619→1,704），但**入口路径未记录**，故**不主张**「chip → 接治 回调链已在重启后复测」；③ 「输入通道退化」是**推断**——本会话没有 `adb logcat`、没有同刻 `dumpsys window` 全量、没有并排截图，因此本条只支撑「该会话读数作废」，**不支撑「根因已定位」**；④ `uiautomator dump`「服务旧树」同为推断，同批 `d1–d3.xml`(17:34–17:39)、`f1.xml`(17:47) 均稳定读到分享面文案，与该读法不互证。
+   - **`ACTION_CLICK` 一侧的失败不可归因于产品**（三重叠加）：① 该模式的计数探针打不开数据库（第 6 条），两次运行的计数读数无效；② 该模式要求宿主在其窗口内投递 `ACTION_SEND`（日志 `ACTION REQUIRED ON HOST …`），窗口内未投递则必然 `share face appeared=false`；③ 同会话该应用窗口的可见性与输入通道本身不可信（见上）。故 `appeared=false` **不能**读作「chip 回调未接线」。
+   - **处置**：观察项撤销，状态 `WITHDRAWN / 会话读数不可信`；**不开产品缺陷**。若后续复现，先按第 6 条修好探针、并按该模式的运行协议在窗口内投递 `ACTION_SEND`，再以「Tab 对照 + 唤醒态读数 + `adb reboot`」三项前置重开。
+
+2. **新缺陷 `DEF-IMPORT-ENOSPC-CRASH-01`：导入接洽在满盘时以 `SQLiteFullException` FATAL 崩溃，未转为类型化失败。**
+   - **触发与读数**：`/data` 使用率 100%（Avail 1.5 MB）→ 导入 10,000 行冻结夹具（产品路径接治）→ **在 2,265 候选处进程死亡**：`FATAL EXCEPTION: DefaultDispatcher-worker-3` / `android.database.sqlite.SQLiteFullException: database or disk is full (code 13 SQLITE_FULL)`；栈 `SqlDelightImportSpineStore.commitIntake`（实现 `ledger-data/src/commonMain/kotlin/com/unifiedledger/data/SqlDelightImportSpineStore.kt:120`）← `ExecuteImportIntake.execute` ← `JvmImportFileIntake.intake` ← `P503App.runImportIntakePipeline`（`app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503App.kt:1899`；栈内 `:1927` = `ledger.leased {`、`:1932` = `facade.importFileIntake!!.intake(...)`）。
+   - **判为缺陷的依据**：ENOSPC 属**可预期运行期故障**，而接治面已有一族类型化拒绝语义（`MULTIPLE_STREAMS`/`STREAM_NOT_READABLE`/`MISSING_STREAM`/`NON_CONTENT_URI`、L0 超限、超 10k 接洽上限，见 D-273 第 3 条的逐判据覆盖表）。提交事务上的 ENOSPC **未接入该族** → 进程死亡、界面无回执、导入中断（**已写入行是否留存未核验**）；且崩溃点在写入事务内，**旧库是否完好未证**。
+   - **期望行为（修复验收口径）**：类型化失败 + 原库不变（导入不产生半成品候选，FOUND-001 保留旧库语义）+ 无进程崩溃 + 故障工件按策略处置；修复批须以可 re-trigger ENOSPC 的仪器化用例钉住，并核对崩溃后 `quick_check`、活动代指针与代际集。
+   - **归属**：**导入接洽面（P7-04 导入脊线的 `commitIntake` 提交路径）**，入口属 P7-09 A02 的接治链。**不归 P706-A10**——A10 的「满盘」缺口在**导出/备份侧**（D-239 原文：「导出侧失败处理完整……缺口：「满盘」只是尺寸预检算术与注入的 writer 抛异常，**未由 OS/SAF 真实 ENOSPC 触发**」），代码路径与故障面均不同。与 `DEF-EXPORT-OOM`（D-269 第 7 条）共享「资源耗尽下未类型化」的**登记体例**，但**不同轴、不合并批**。**修复批在计划侧的批位须另行登记**（参照 `DEF-EXPORT-OOM` → P7-06 06.B 的先例）；本条只给归属面与代码路径，**不预设批号**。
+   - **覆盖缺口**（观察项，标识见第 5 条，不新增计划向量）：本阶段验收向量集（62 项）中**没有向量**覆盖「导入接洽写入期的 ENOSPC」——A10 覆盖导出侧满盘、A02 覆盖接收入的类型化拒绝，均不含接治提交期的磁盘满（62 的分母构成为第一部分 8 + P7-05 15 + P7-06 12 + P7-07 9 + P7-08 9 + P7-09 9，见 D-259，**不含 P7-04**，故本条不对 P7-04 的既有向量作断言）。新增向量属**计划修订**，须用户裁决，本批不提出。
+   - **证据质量披露（按数字逐项点名）**：第 1、2、4 条引用的全部设备读数——`/data` 100%（Avail 1.5 MB）、`/data` 回到 36%、崩溃发生于 2,265 候选处、`import_candidate` 619 与 1,704、约 9 分钟窗口——**均无原始工件**；崩溃栈与异常文案以逐字引文形式保存于 `local/artifacts/p706-scale-b6/FIXTURE-NOTES.md` 第 2 节，其余数字仅由该文件的自撰叙述承载（**主代理自撰记录，非原始工件**）。**该文件的 §1/§3 结论已被本条取代或降级**（§1 的「输入通道退化」结论降为本条第 1 款 ③ 的推断；§3 的「与 D-165 相差 4–5 倍」与「3×10k 不可行」按本条第 4 款重述），后续引用须以本条为准。修复批开工前须重新触发 ENOSPC 并保存 verbatim `adb logcat`；本批不做，不以自撰摘要充当原始证据。
+
+3. **P706-A10 判决与证据基础：不变，且本条不构成 A10 证据。**
+   - 本条**不取代** D-239 的 A10 表述，也**不取代** `CURRENT_STATE.md:33` 的 A10 句；该句「未由真实 ENOSPC 触发」指的是**导出侧**尺寸预检与注入 writer 异常，本条的真实 ENOSPC 发生在**导入接洽**，两者不可互相抵扣。
+   - 计数不变：P706 维持 **PASS 8 / 部分 2 / 缺证 2**（与 D-252 一致），A10 留在「部分证据」组；其缺口即 D-239 已列项（导出侧真实 OS/SAF ENOSPC、设备侧 SAF 中途写失败等），本批**一项都未闭合**。
+   - **显式登记本条的理由（防误记）**：后续批次若把第 2 条的崩溃当作 A10 读数销账，会以错误的子系统证据关闭导出侧缺口；故在此排除。
+
+4. **导入接治吞吐：本条读数与 D-165 第 4 条**不可比**，本批不裁定、不写跨批倍率、不据此废弃产品导入路线。**
+   - **本条读数**：清理 `/data/local/tmp`（60 MB 夹具库 + 17 MB CSV）并 `pm clear`（`/data` 回到 36%）后，同一 10,000 行夹具（`b6-10k.csv`）接洽过程中观测到 `import_candidate` = **619** 与 **1,704**，其间约 **9 分钟**。两口径都登记：起点为 `pm clear` 后的 0 → **≈3.2 行/秒**；把 9 分钟读作「619 → 1,704 两点间隔」的时长 → **≈2.0 行/秒**。取样时间戳未落盘，**该次导入是否跑完亦未记录**。
+   - **D-165 第 4 条登记的是时间，不是速率**（`DECISIONS.md:3176`）：「单次 10k 导入的接治耗时」窗口 = `generated_at` → 结果 dump 落盘 ≈ **11.2 min**（30 s 轮询粒度，轮询日志未入工件），以及「同一 200 行导入在 50,600 候选库上约 111 s」，并自述**非门**、「不构成门槛判定，也不据此判定缺陷」，同时明写该耗时随库规模增长。本条**不把这两点折算成「行/秒」再挂到 D-165 名下**；仅作内部换算参考时二者约为 14.9 与 1.8 行/秒，**相差 8×**，说明 200 行那一轮被固定开销主导，**两点互不可比**，不得择一充当 D-165 的「速率读数」。
+   - **两类速率不可混用**：D-162 第 3(i)（`DECISIONS.md:3089`）的 ≈4.3 动作/s、≈48 **行**/s 是 `ACTION_SCROLL_FORWARD` 的**遍历**速率，与接治耗时不同量纲；本条与之不对账。
+   - **不可比，成因未定（本条不选边）**：本条取自空库、以两次计数与约 9 分钟窗口推算；D-165 的两点是时间窗口读数、自标非门、且样本/口径均不同。**因此不能据此断言「空库比 50k 库慢」、也不能据本条否定 D-165 的规模观察**——只登记「两套读数不可比，待复测」。
+   - **结论降级**：`3×10k ≈ 2.6–4.2 h 不可行`**只在采用本条读数时成立**（30,000 ÷ 3.2 = 2.6 h，÷ 2.0 = 4.2 h）；若按 D-165 的时间读数线性外推，3×10k ≈ 34 min 而属可行，但该外推**同样未经复测**。故**产品导入路线不因本条废弃**，只记「**复测前不据此排期**」。
+   - **B6 夹具路线（改判依据是可重复性，不是吞吐）**：优先 `seedFixture` 夹具装载（instrumented，test-only），理由是**本会话 UI 自动化不可信**（第 1 条）+ 需要两种夹具形状（「20k 全重复组」「10k 重复 + 空待确认」）+ DB 手术路线被守卫触发器阻断（`import_duplicate_status_history` 上的 `import_duplicate_history_guard_delete`，`RAISE(ABORT,'cannot delete duplicate history')`，`ledger-data/src/commonMain/sqldelight/com/unifiedledger/data/db/23.sqm:70`）；**不以「产品导入不可行」为依据**。该夹具仍属 D-275 第 4 款界定的**测量基础设施**（不是产品变更、不扩大范围）。
+   - **两个模式的可用性须分开写**：`b6CardOpen` **不读库、无计数探针**，其判读走 `openGroupCard` 的 in-process 括取，PR #191 合并后**现在即可用**（B6 正靠它）；需要先修探针的是 **chain 模式在接治等待中对 `import_candidate` 的轮询**（`awaitCountProbeIntake`，`ImportScaleTraversalInstrumentedTest.kt:1711`，调用点 `:718`/`:1366`）与第 6 条的四处 DB 读取。
+   - **`seedFixture` 必须满足的开盘前置（否则 fail-closed）**：不能只替换 `databases/ledger-generations/gen-1/ledger.db`；还须 ① 写入 `databases/active-generation`（内容 `gen-1`）——**无指针即 `POINTER_MISSING` fail-closed**；② 清 `-wal`/`-shm` 残留；③ 清 `switch-journal`——注意**可识别**的 journal 走 rollback 后继续（`LedgerStableStorage.kt:26-38`），**不可识别**才 `JOURNAL_PRESENT` fail-closed，故清除是对的、理由不是「否则一律 fail-closed」；④ 对夹具自检 `quick_check` 与 `import_duplicate_candidate ↔ import_candidate` 关联校验。常量见 `app-ui/src/commonMain/kotlin/com/unifiedledger/ui/LedgerStableStorage.kt:20/23/40/43`（`LEDGER_GENERATIONS_DIRECTORY`/`LEDGER_ACTIVE_POINTER_FILE`/`LEDGER_SWITCH_JOURNAL_FILE`/`LEDGER_MAIN_FILE_NAME`），先例见 `AndroidStableStorageTest.aPreSeededActiveGenerationReachesTheOpenCallbackWithoutCreateOnOpen`（`:128`，`:152` 断言 `POINTER_MISSING`，`:156` 写入 `gen-1`）。**既有 `ul20k-measure.db` 不可用作「20k 全重复组」夹具**（其 10,000 条重复行的 `candidate_id` 全不在候选表）；该判定**只针对这一夹具用途**，不改动 D-170 在该库上取得的 B2/B3 读数与其判决。
+   - **本批不新增 B6 读数**：B6 维持「因可达性不可测」；D-148（2.61 s）与 D-170（未测量）的冲突仍由承接批先裁决（D-275 第 4 款末项，不变）。
+
+5. **覆盖缺口观察项登记：`OBS-IMPORT-INTAKE-ENOSPC-COVERAGE-01`（`OPEN`）。** 指第 2 条判定的「本阶段 62 项向量集中无导入接治 ENOSPC 覆盖」；按仓库既有 `OBS-*` 体例命名以便 grep，本条正文**只在本节出现该标识**（第 2 条以「见第 5 条」引用）。承接 = 计划修订（新增向量，须用户裁决）；本批不排期、不新增向量。
+
+6. **测试侧缺陷 `DEF-SCALE-PROBE-DBPATH-01`（新登记；test-only，不属产品缺陷、不进任何向量）。**
+   - **缺陷**：`ImportScaleTraversalInstrumentedTest` 以 `DB_FILE_NAME = "ledger.db"`（`:151`，**旧版路径**）经 `context.getDatabasePath(...)` 取库，而当前布局是 `databases/ledger-generations/gen-N/ledger.db`，故查询抛 `SQLiteCantOpenDatabaseException: ... databases/ledger.db doesn't exist`（工件 `instr-shareimport1.log` / `instr-shareimport1b.log`）。
+   - **爆炸半径（四处共用同一过期路径，不止一处）**：`countImportCandidates`（`:2025`，取库 `:2028`）、`readLedgerSnapshot`（`:2675`，`:2680`；`dbBaseline`/`delta intake` 的来源）、`countTableRows`（`:2725`，`:2731`；`dbCandidates`/`dbPostImport` 的来源）、`readAuxiliaryCounts`（`:2752`，`:2757`）。四处都会落进 `unavailable`，**只改一个函数不会修好**。
+   - **后果**：① 上述计数与快照读数**全部无效**；② `shareImportDrive` 两次运行的 `share face appeared=false` 不能据此判读分享面是否出现、是否派发，**凡以它为据的产品结论不成立**；③ 与「该模式要求宿主在窗口内投递 `ACTION_SEND`」的运行协议叠加，进一步降低该次运行的可判读性。
+   - **生效窗口（本轮已核，供后续批省去复核）**：探针随 D-161/D-164 引入；D-176 的代际布局切换（`34336eb6`）之后失效。D-166（`3795825`）与 D-169（`1398e72`）均**早于**该切换，故**无既有登记读数受此缺陷影响**。
+   - **修复要求**：① 收敛为**一处**代际路径解析，先例为 `androidStableStoragePaths(...)`（`android-app/src/main/kotlin/com/unifiedledger/android/AndroidLedgerFileSystem.kt:183-188`），同一 androidTest 源集已在用（`AndroidScaleOracle.kt:63`）；② 失败语义**分层**——**基线读失败 = 硬失败**（以非零结论中止），**轮询期瞬时失败保持既有容忍**（记日志后继续轮询，与 `:2020-2023` 的既有契约一致，接治提交期本就与写锁竞争）；③ 不得记 `unavailable` 后继续给出 `appeared=false` 一类断言。
+   - **影响面**：仅 androidTest 测量基础设施；不改产品代码、不改判据。
+
+7. **向量账（不变）**：62 = **PASS 49 + 残留 11 + 修订范围完成 2（P709-A04、P709-A05）≈ 79.0%**；第一部分 4/8；P7-09 = 6/9 PASS + 2 修订。本条**不加分、不减分**：`OBS-SHARE-FACE-INPUT-01` 从未计入分母；两条 `DEF-*` 是缺陷登记不是判决；A10 与 B6 判决均未动。
+
+8. **授权范围（可独立重建）**：依据 = **D-275 第 4 款**「构造『重复组置首屏』20k 夹具（无待确认段）并复测 B6」的承接范围；在 `seedFixture` 与「产品导入」之间做**方法选择**属本批的技术判断（D-275 第 4 款已把该夹具定位为测量基础设施），**不新增用户授权面**；两条缺陷登记与批位登记不改变任何冻结判据与阈值。D-275 第 4 款**没有**点名「3 次产品导入」路线——该路线只出现在 `FIXTURE-NOTES.md` 的候选路线清单里，本批按「复测前不据此排期」处理。
+
+9. **边界**：入 = 本条正文 + `CURRENT_STATE.md` 第 106 行（`main` 指针、「当前」段下一动作链、本批结果句，以及该行尾部遗留的「本批（D-274）结果」改标为「历史（D-274）结果」）+ 主检出根 ignored 工件 `local/artifacts/p706-scale-b6/FIXTURE-NOTES.md` 的取代/降级注记（工件不在本批 diff 内，由主代理就地更新）；出 = 不改 D-162/D-165/D-239/D-259/D-261/D-269/D-273/D-275 的判决正文与读数、**不改 `CURRENT_STATE.md:33` 的 A10 句**、不改 A10/B6 判据与任何冻结阈值、不改 `PHASE7_REMAINING_IMPLEMENTATION_PLAN.local.md`、不声称任何 PASS、不修代码、不重跑设备、`PROJECT_STATE.local.md` 不在本批 diff 内（主检出自更）。
+
+**关联决定：** D-275（B6 承接与 §10.4.1 口径变更、D-148/D-170 冲突待裁）、D-273（A02 逐判据拒绝族、观察项体例）、D-239（**A10 的导出侧满盘缺口，本条显式不动**）、D-269 第 7 条（`DEF-EXPORT-OOM` 登记体例与批位先例）、D-165 第 4 条与 D-162 第 3(i)（时间读数 vs 遍历速率，两类不可混用）、D-170（`ul20k-measure.db` 上的 B2/B3 读数，本条不改）、D-259（62 的分母构成，无 P7-04）、D-176（代际布局切换，探针失效的窗口起点）、PR #191（`2fb64106`，instrumented `shareImportDrive`/`b6CardOpen`，含第 6 条的探针缺陷）、计划 §10.2（设备证据绑定）。
