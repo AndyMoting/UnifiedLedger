@@ -1527,5 +1527,651 @@ class OrdinaryInventory(unittest.TestCase):
         with self.assertRaises(ValueError): check_inventory(self.root, self.manifest)
 
 
+_A06_MATRIX = None
+
+
+def a06_matrix():
+    """The P706-A06 matrix driver, loaded by path because its file name is hyphenated."""
+    global _A06_MATRIX
+    if _A06_MATRIX is None:
+        import importlib.util
+
+        path = Path(__file__).resolve().parents[2] / "tools" / "ci" / "android-a06-cloud.py"
+        spec = importlib.util.spec_from_file_location("android_a06_cloud", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _A06_MATRIX = module
+    return _A06_MATRIX
+
+
+A06_SHA = "2fd1a67b" + "0" * 32
+
+
+def a06_status_block(test_class, test_method, code, *, numtests="1"):
+    return "\n".join([
+        f"INSTRUMENTATION_STATUS: class={test_class}",
+        "INSTRUMENTATION_STATUS: current=1",
+        "INSTRUMENTATION_STATUS: id=AndroidJUnitRunner",
+        f"INSTRUMENTATION_STATUS: numtests={numtests}",
+        "INSTRUMENTATION_STATUS: stream=",
+        f"INSTRUMENTATION_STATUS: test={test_method}",
+        f"INSTRUMENTATION_STATUS_CODE: {code}",
+    ]) + "\n"
+
+
+def a06_kill_transcript(row, *, codes=(1,), test_class=None, test_method=None, numtests="1"):
+    matrix = a06_matrix()
+    return "".join(
+        a06_status_block(test_class or matrix.KILL_CLASS, test_method or row.kill_method, code, numtests=numtests)
+        for code in codes
+    )
+
+
+def a06_parked_call():
+    """The decorated call the park line names; the verdict file must repeat it verbatim."""
+    return f"delete /data/user/0/{a06_matrix().PACKAGE}/cache/root/gen-2/ledger.db"
+
+
+def a06_kill_logcat(row, *, extra=""):
+    return ("11-02 01:00:00.000  1234  1250 I P706A06Boundary: parked at "
+            f"{row.boundary} on {a06_parked_call()}\n"
+            f"11-02 01:00:00.100  1234  1250 I P706A06Boundary: "
+            f"run A marker written for {row.boundary}; killing the process\n" + extra)
+
+
+def a06_marker(row, *, boundary=None, convergence="OPENS_OLD_GENERATION"):
+    return "\n".join([
+        "p706a06-boundary-marker-v1",
+        f"boundary={boundary or row.boundary}",
+        f"convergence={convergence}",
+        "authoritativePayload=p706a06-confirm-old-generation",
+        "legacyPayload=-",
+        "legacySha256=-",
+        "authoritativeSha256=" + "a" * 64,
+    ]) + "\n"
+
+
+def a06_run_a_log(row):
+    return (f"boundary={row.boundary}\nphase=CONFIRM_SWITCH\nconvergence=OPENS_OLD_GENERATION\n"
+            f"parkedOn={a06_parked_call()}\n")
+
+
+def a06_verify_transcript(row, *, codes=(1, 0), test_method=None, numtests="1", tail=None):
+    matrix = a06_matrix()
+    body = "".join(
+        a06_status_block(matrix.VERIFY_CLASS, test_method or row.verify_method, code, numtests=numtests)
+        for code in codes
+    )
+    closing = tail if tail is not None else ("INSTRUMENTATION_RESULT: stream=\n", "Time: 1.2\n",
+                                             "OK (1 test)\n", "INSTRUMENTATION_CODE: -1\n")
+    return body + "".join(closing)
+
+
+def a06_shell_blocks(text):
+    """Every `run:`/`script:` shell body in a workflow file, one string each."""
+    blocks = []
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        key = ("run:" if stripped.startswith("run:")
+               else "script:" if stripped.startswith("script:") else None)
+        if key is None:
+            index += 1
+            continue
+        indent = len(line) - len(line.lstrip())
+        body = [stripped[len(key):].strip()]
+        index += 1
+        while index < len(lines):
+            child = lines[index]
+            if child.strip() and (len(child) - len(child.lstrip())) <= indent:
+                break
+            body.append(child)
+            index += 1
+        blocks.append("\n".join(body))
+    return blocks
+
+
+class FakeA06Device:
+    """A scripted device: only what one boundary pair needs, with its call log kept."""
+
+    def __init__(self, matrix, row, *, surviving_marker=False, verify_transcript=None):
+        self.matrix, self.row = matrix, row
+        self.surviving_marker = surviving_marker
+        self.verify_transcript = verify_transcript
+        self.calls: list[tuple[str, ...]] = []
+        self.instruments: list[str] = []
+        self.marker_reads = 0
+
+    def text(self, *args, timeout=120, best_effort=False):
+        self.calls.append(args)
+        return a06_kill_logcat(self.row) if args[0] == "logcat" else ""
+
+    def instrument(self, target, timeout):
+        self.instruments.append(target)
+        if target == self.row.kill_target:
+            return 137, a06_kill_transcript(self.row)
+        return 0, self.verify_transcript or a06_verify_transcript(self.row)
+
+    def read_private(self, relative):
+        if relative.endswith("p706a06-boundary-marker"):
+            self.marker_reads += 1
+            if self.marker_reads == 1:
+                return a06_marker(self.row)
+            return a06_marker(self.row) if self.surviving_marker else None
+        if relative.endswith("p706a06-run-a.log"):
+            return a06_run_a_log(self.row)
+        return None
+
+
+class P706A06Matrix(unittest.TestCase):
+    """Offline proofs for the nineteen-boundary process-kill matrix driver.
+
+    The driver's verdict is what turns a deliberate process death into evidence, so
+    every rejection path is exercised here without a device, an APK or Gradle: the
+    boundary plan against the real Kotlin sources, the three kill-leg signals, the
+    strict verify leg, the paired driver, and the gate over four shards.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.matrix = a06_matrix()
+        self.row = self.matrix.BY_BOUNDARY["B1"]
+
+    def kill(self, row=None, **kwargs):
+        row = row or self.row
+        return self.matrix.validate_kill_leg(
+            row=row,
+            transcript=kwargs.get("transcript", a06_kill_transcript(row)),
+            logcat=kwargs.get("logcat", a06_kill_logcat(row)),
+            marker=kwargs.get("marker", a06_marker(row)),
+            run_a_log=kwargs.get("run_a_log", a06_run_a_log(row)),
+        )
+
+    # ------------------------------------------------------------------ plan and file
+
+    def test_plan_covers_nineteen_boundaries_once_across_four_disjoint_shards(self):
+        names = [row.boundary for row in self.matrix.BOUNDARIES]
+        self.assertEqual(names, [f"B{index}" for index in range(1, 20)])
+        shards = {shard: [row.boundary for row in self.matrix.shard_boundaries(shard)] for shard in "1234"}
+        self.assertEqual(shards, {"1": ["B1", "B2", "B3", "B4", "B5"],
+                                  "2": ["B6", "B7", "B8", "B9", "B10"],
+                                  "3": ["B11", "B12", "B13", "B14", "B15"],
+                                  "4": ["B16", "B17", "B18", "B19"]})
+        flattened = [name for chunk in shards.values() for name in chunk]
+        self.assertEqual(len(flattened), len(set(flattened)))
+        self.assertEqual(set(flattened), set(names))
+        self.assertEqual([entry["boundary"] for entry in self.matrix.plan("4")], shards["4"])
+        self.assertEqual(self.matrix.plan("1")[0]["kill"],
+                         self.matrix.KILL_CLASS + "#b01PreStageDeleteKillsMidDeletion")
+
+    def test_plan_matches_the_instrumented_sources(self):
+        android_test = (Path(__file__).resolve().parents[2] /
+                        "android-app/src/androidTest/kotlin/com/unifiedledger/android")
+        kill_source = (android_test / "P706A06BoundaryKillInstrumentedTest.kt").read_text(encoding="utf-8")
+        verify_source = (android_test / "P706A06BoundaryVerifyInstrumentedTest.kt").read_text(encoding="utf-8")
+        harness = (android_test / "P706A06BoundaryHarness.kt").read_text(encoding="utf-8")
+        self.assertIn("package com.unifiedledger.android\n", kill_source)
+        self.assertIn("class P706A06BoundaryKillInstrumentedTest {", kill_source)
+        self.assertIn("class P706A06BoundaryVerifyInstrumentedTest {", verify_source)
+        self.assertEqual(re.findall(r"fun (b\d\d[A-Za-z0-9]+)\(\)", kill_source),
+                         [row.kill_method for row in self.matrix.BOUNDARIES])
+        self.assertEqual(re.findall(r"fun (v\d\d[A-Za-z0-9]+)\(\)", verify_source),
+                         [row.verify_method for row in self.matrix.BOUNDARIES])
+        self.assertEqual(self.matrix.KILL_CLASS, "com.unifiedledger.android.P706A06BoundaryKillInstrumentedTest")
+        self.assertEqual(self.matrix.VERIFY_CLASS,
+                         "com.unifiedledger.android.P706A06BoundaryVerifyInstrumentedTest")
+        # The device constants the driver reads back by path must stay in sync too.
+        self.assertIn('STABLE_ROOT_DIRECTORY_NAME = "p706a06-boundary-root"', harness)
+        self.assertIn('FILE_NAME = "p706a06-boundary-marker"', harness)
+        self.assertIn('RUN_A_LOG_NAME = "p706a06-run-a.log"', kill_source)
+
+    def test_plan_rejects_an_unknown_shard(self):
+        with self.assertRaises(self.matrix.A06Error):
+            self.matrix.shard_boundaries("5")
+        with self.assertRaises(self.matrix.A06Error):
+            self.matrix.check_shard(self.root, "0", A06_SHA)
+
+    def test_workflow_uses_one_avd_per_shard_and_never_builds_apks(self):
+        text = (Path(__file__).resolve().parents[2] /
+                ".github/workflows/android-p706-a06.yml").read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch:", text)
+        self.assertIn("\n        required: true\n", text)
+        self.assertIn("  actions: read\n", text)
+        self.assertIn("shard: ['1', '2', '3', '4']\n", text)
+        self.assertEqual(text.count("avd-name:"), 1)
+        self.assertIn("avd-name: ul-a06-s${{ matrix.shard }}", text)
+        self.assertIn("python3 tools/ci/android-apks.py reuse --directory reused-apks", text)
+        self.assertNotIn("gradlew", text)
+        self.assertIn("if: steps.reuse.outputs.hit != 'true'", text)
+        self.assertIn("python3 tools/ci/android-a06-cloud.py check-shard", text)
+        self.assertIn("python3 tools/ci/android-a06-cloud.py gate", text)
+        self.assertIn("merge-multiple: true", text)
+        # The scope statement must survive editing: process kill only, never an A06 pass.
+        self.assertIn("process kill only", text)
+        self.assertIn("not an A06 pass", text)
+        # The bundle/commit binding is settled in the APK job, before any emulator exists.
+        self.assertIn('check-bundle --directory reused-apks --sha "${EXPECTED_SHA}"', text)
+        self.assertLess(text.index("check-bundle --directory reused-apks"),
+                        text.index("name: P706-A06 shard"))
+
+    # ------------------------------------------------------------------------ kill leg
+
+    def test_kill_leg_accepts_the_expected_process_death(self):
+        record = self.kill()
+        self.assertEqual(record["status"], "PASS")
+        self.assertEqual(record["method"], self.matrix.KILL_CLASS + "#b01PreStageDeleteKillsMidDeletion")
+        self.assertIn("delete", record["parkedOn"])
+
+    def test_kill_leg_rejects_a_missing_marker(self):
+        with self.assertRaises(self.matrix.A06Error):
+            self.kill(marker=None)
+        with self.assertRaises(self.matrix.A06Error):
+            self.kill(run_a_log=None)
+
+    def test_kill_leg_rejects_a_foreign_or_duplicated_marker(self):
+        with self.assertRaises(self.matrix.A06Error):
+            self.kill(marker=a06_marker(self.row, boundary="B7"))
+        with self.assertRaises(self.matrix.A06Error):
+            self.kill(marker=a06_marker(self.row) + "boundary=B9\n")
+        with self.assertRaises(self.matrix.A06Error):
+            self.kill(marker=a06_marker(self.row).replace("p706a06-boundary-marker-v1", "wrong-header"))
+        with self.assertRaises(self.matrix.A06Error):
+            self.kill(marker=a06_marker(self.row, convergence="SOMETHING_ELSE"))
+
+    def test_kill_leg_rejects_an_assertion_failure_before_the_kill(self):
+        with self.assertRaises(self.matrix.A06Error):
+            self.kill(transcript=a06_kill_transcript(self.row, codes=(1, -2)))
+        failed = a06_kill_logcat(self.row) + "junit.framework.AssertionFailedError: boundary never parked\n"
+        with self.assertRaises(self.matrix.A06Error):
+            self.kill(logcat=failed)
+
+    def test_kill_leg_rejects_a_crash_instead_of_the_deliberate_kill(self):
+        for signature in ("E AndroidRuntime: FATAL EXCEPTION: p706a06-flow-B1\n",
+                          "F Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR)\n",
+                          "E AndroidRuntime: java.lang.OutOfMemoryError: failed to allocate\n"):
+            with self.subTest(signature=signature):
+                with self.assertRaises(self.matrix.A06Error):
+                    self.kill(logcat=a06_kill_logcat(self.row, extra=signature))
+
+    def test_kill_leg_rejects_a_missing_kill_or_park_logcat_line(self):
+        with self.assertRaises(self.matrix.A06Error):
+            self.kill(logcat=a06_kill_logcat(self.row).replace("; killing the process", ""))
+        only_kill = ("11-02 01:00:00.100  1234  1250 I P706A06Boundary: "
+                     f"run A marker written for {self.row.boundary}; killing the process\n")
+        with self.assertRaises(self.matrix.A06Error):
+            self.kill(logcat=only_kill)
+
+    def test_kill_leg_rejects_the_wrong_case_or_more_than_one_test(self):
+        with self.assertRaises(self.matrix.A06Error):
+            self.kill(transcript=a06_kill_transcript(self.row, test_method="b02MainFileCopyKillsAfterTheCopy"))
+        with self.assertRaises(self.matrix.A06Error):
+            self.kill(transcript=a06_kill_transcript(self.row, codes=(1, 1)))
+        with self.assertRaises(self.matrix.A06Error):
+            self.kill(transcript=a06_kill_transcript(self.row, numtests="2"))
+        with self.assertRaises(self.matrix.A06Error):
+            self.kill(transcript="")
+
+    # ---------------------------------------------------------------------- verify leg
+
+    def test_verify_leg_accepts_a_clean_single_test(self):
+        record = self.matrix.validate_verify_leg(row=self.row, transcript=a06_verify_transcript(self.row),
+                                                 marker=None)
+        self.assertEqual(record["status"], "PASS")
+        self.assertEqual(record["method"],
+                         self.matrix.VERIFY_CLASS + "#v01PreStageDeleteMidKillConvergesToTheOldGeneration")
+
+    def test_verify_leg_rejects_a_surviving_marker(self):
+        with self.assertRaises(self.matrix.A06Error):
+            self.matrix.validate_verify_leg(row=self.row, transcript=a06_verify_transcript(self.row),
+                                            marker=a06_marker(self.row))
+
+    def test_verify_leg_rejects_a_missing_or_extra_case(self):
+        for transcript in (a06_verify_transcript(self.row, codes=(1, 0, 1, 0)),
+                           a06_verify_transcript(self.row, tail=("INSTRUMENTATION_CODE: -1\n",)),
+                           a06_verify_transcript(
+                               self.row, test_method="v02MainFileCopyMidKillLeavesTheStagedGenerationInert"),
+                           a06_verify_transcript(self.row, numtests="2"),
+                           a06_verify_transcript(self.row, codes=(1, -2))):
+            with self.subTest(tail=transcript[-60:]):
+                with self.assertRaises(ValueError):
+                    self.matrix.validate_verify_leg(row=self.row, transcript=transcript, marker=None)
+
+    # --------------------------------------------------------------------------- driver
+
+    def test_run_boundary_starts_one_instrumentation_per_leg_and_cleans_first(self):
+        device = FakeA06Device(self.matrix, self.row)
+        record = self.matrix.run_boundary(device, self.row, self.root / "B1")
+        self.assertEqual(device.instruments, [self.row.kill_target, self.row.verify_target])
+        self.assertEqual([call[0] for call in device.calls][:3], ["shell", "shell", "logcat"])
+        self.assertIn(("shell", "am", "force-stop", self.matrix.PACKAGE), device.calls)
+        self.assertIn(("shell", "run-as", self.matrix.PACKAGE, "rm", "-rf", self.matrix.STABLE_ROOT), device.calls)
+        self.assertEqual(record["kill"]["status"], "PASS")
+        self.assertEqual(record["verify"]["status"], "PASS")
+        for name in ("kill-transcript.txt", "kill-logcat.txt", "marker.txt", "run-a.log",
+                     "verify-transcript.txt", "verify-logcat.txt", "result.json"):
+            self.assertTrue((self.root / "B1" / name).is_file(), name)
+
+    def test_run_boundary_fails_when_the_verify_leg_leaves_the_marker(self):
+        device = FakeA06Device(self.matrix, self.row, surviving_marker=True)
+        with self.assertRaises(self.matrix.A06Error):
+            self.matrix.run_boundary(device, self.row, self.root / "B1")
+        self.assertFalse((self.root / "B1" / "result.json").exists())
+
+    def test_run_boundary_rejects_a_verify_leg_that_reports_a_shell_failure(self):
+        class FailingVerify(FakeA06Device):
+            def instrument(inner, target, timeout):
+                if target == inner.row.kill_target:
+                    return super().instrument(target, timeout)
+                inner.instruments.append(target)
+                return 1, a06_verify_transcript(inner.row)
+
+        with self.assertRaises(self.matrix.A06Error):
+            self.matrix.run_boundary(FailingVerify(self.matrix, self.row), self.row, self.root / "B1")
+
+    def test_driver_refuses_to_run_outside_a_hosted_runner(self):
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(self.matrix.A06Error):
+                self.matrix.drive_shard("1", self.root / "app.apk", self.root / "test.apk", self.root, A06_SHA,
+                                        "ul-a06-s1", self.matrix.Deadline(60))
+        self.assertFalse((self.root / "shard-1").exists())
+        self.matrix.require_hosted_runner({"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted",
+                                           "RUNNER_OS": "Linux"})
+
+    def test_avd_name_probe_accepts_the_console_terminator(self):
+        # `emu avd name` answers with the name and its own OK line; a doubled CR from
+        # text-mode translation must not turn into a phantom empty line.
+        for raw in ("ul-a06-s2\nOK\n", "ul-a06-s2\r\nOK\r\n", "ul-a06-s2\r\r\nOK\r\r\n", "ul-a06-s2\n"):
+            with self.subTest(raw=raw):
+                self.assertEqual(self.matrix.parse_avd_name(raw), "ul-a06-s2")
+        # Anything else is refused rather than guessed, so the caller reports the raw text.
+        for raw in ("", "OK\n", "ul-a06-s2\nOK\nextra\n", "OK\nul-a06-s2\n", "ul-a06-s2\nul-a06-s3\n"):
+            with self.subTest(raw=raw):
+                self.assertEqual(self.matrix.parse_avd_name(raw), "")
+
+    def test_one_runner_never_hosts_two_emulators(self):
+        self.assertEqual(self.matrix.owned_serial("List of devices attached\nemulator-5680\tdevice\n"),
+                         "emulator-5680")
+        for devices in ("List of devices attached\nemulator-5680\tdevice\nemulator-5682\tdevice\n",
+                        "List of devices attached\nemulator-5680\toffline\n",
+                        "List of devices attached\n"):
+            with self.subTest(devices=devices):
+                with self.assertRaises(self.matrix.A06Error):
+                    self.matrix.owned_serial(devices)
+
+    def test_install_rejects_a_runner_for_another_package(self):
+        app = self.root / "app.apk"
+        app.write_bytes(b"app")
+        test = self.root / "test.apk"
+        test.write_bytes(b"test")
+
+        class InstallDevice:
+            def __init__(self, listing):
+                self.listing = listing
+
+            def text(self, *args, timeout=120, best_effort=False):
+                if args[0] == "install":
+                    return "Success\n"
+                if args[:3] == ("shell", "pm", "list"):
+                    return self.listing
+                return "package:/data/app/base.apk\n"
+
+        good = f"instrumentation:{self.matrix.TEST_RUNNER} (target={self.matrix.PACKAGE})\n"
+        hashes = self.matrix.install_apks(InstallDevice(good), app, test)
+        self.assertEqual(set(hashes), {"app", "test"})
+        with self.assertRaises(self.matrix.A06Error):
+            self.matrix.install_apks(
+                InstallDevice(f"instrumentation:{self.matrix.TEST_RUNNER} (target=other)\n"), app, test)
+
+    def test_deadline_bounds_each_step_and_refuses_an_exhausted_budget(self):
+        deadline = self.matrix.Deadline(600, clock=lambda: 1000.0, epoch_clock=lambda: 500.0)
+        self.assertEqual(deadline.remaining(), 100)
+        self.assertEqual(deadline.bound(30), 30)
+        expired = self.matrix.Deadline(-5, clock=lambda: 1000.0, epoch_clock=lambda: 500.0)
+        with self.assertRaises(self.matrix.A06DeadlineError):
+            expired.bound(30)
+
+    # ----------------------------------------------------------------------------- gate
+
+    def new_root(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        return Path(temp.name)
+
+    def write_shard(self, shard, root=None, *, boundaries=None, failed=None, verify_failed=None):
+        matrix = self.matrix
+        root = self.root if root is None else root
+        rows = matrix.shard_boundaries(shard)
+        listed = [row.boundary for row in rows] if boundaries is None else boundaries
+        directory = root / f"shard-{shard}"
+        directory.mkdir(parents=True, exist_ok=True)
+        for row in rows:
+            if row.boundary == failed:
+                continue
+            folder = directory / row.boundary
+            folder.mkdir()
+            status = "FAIL" if row.boundary == verify_failed else "PASS"
+            (folder / "kill-transcript.txt").write_text(a06_kill_transcript(row), encoding="utf-8")
+            (folder / "kill-logcat.txt").write_text(a06_kill_logcat(row), encoding="utf-8")
+            (folder / "marker.txt").write_text(a06_marker(row), encoding="utf-8")
+            (folder / "run-a.log").write_text(a06_run_a_log(row), encoding="utf-8")
+            (folder / "verify-transcript.txt").write_text(a06_verify_transcript(row), encoding="utf-8")
+            (folder / "verify-logcat.txt").write_text(
+                "11-02 01:00:02.000  1234  1250 I ActivityManager: Start proc for instrumentation\n",
+                encoding="utf-8")
+            (folder / "result.json").write_text(json.dumps({
+                "schema": 1,
+                "boundary": row.boundary,
+                "kill": {"status": status, "method": row.kill_target,
+                         "convergence": "OPENS_OLD_GENERATION", "parkedOn": a06_parked_call(),
+                         "instrumentationStatus": 137},
+                "verify": {"status": status, "method": row.verify_target},
+            }), encoding="utf-8")
+        (directory / "shard.json").write_text(json.dumps({
+            "schema": 1,
+            "shard": shard,
+            "sha": A06_SHA,
+            "avd": f"ul-a06-s{shard}",
+            "serial": "emulator-5680",
+            "boundaries": listed,
+            "completed": listed,
+            "apk_sha256": {"app": "a" * 64, "test": "b" * 64},
+            "elapsed_seconds": 12.5,
+            "scope": matrix.PROCESS_KILL_SCOPE,
+        }), encoding="utf-8")
+
+    def write_all_shards(self, root=None, **kwargs):
+        root = self.root if root is None else root
+        for shard in "1234":
+            self.write_shard(shard, root, **kwargs)
+        return root
+
+    def write_apks(self, *, source_sha=A06_SHA, root=None):
+        root = self.root if root is None else root
+        directory = root / "apks"
+        directory.mkdir()
+        (directory / "provenance.json").write_text(json.dumps({
+            "schema": 1, "repository": "example/ledger", "source_sha": source_sha, "tree": "b" * 40,
+            "run_id": 123, "run_attempt": 1, "workflow": ".github/workflows/ci.yml",
+            "sha256": {"app": "a" * 64, "test": "b" * 64},
+        }), encoding="utf-8")
+        return directory
+
+    def rebuild(self):
+        """A fresh, complete four-shard evidence tree in its own directory."""
+        return self.write_all_shards(root=self.new_root())
+
+    def corrupt(self, root, shard, boundary, name, content):
+        (root / f"shard-{shard}" / boundary / name).write_text(content, encoding="utf-8")
+        return root
+
+    def remove(self, root, shard, boundary, name):
+        (root / f"shard-{shard}" / boundary / name).unlink()
+        return root
+
+    def test_gate_accepts_all_nineteen_pairs(self):
+        report = self.matrix.validate_gate(self.write_all_shards(), A06_SHA)
+        self.assertEqual(report["boundary_count"], 19)
+        self.assertEqual(report["boundaries_executed"], [row.boundary for row in self.matrix.BOUNDARIES])
+        self.assertEqual([entry["shard"] for entry in report["shards"]], ["1", "2", "3", "4"])
+        self.assertIsNone(report["apk"])
+
+    def test_gate_rejects_a_missing_shard(self):
+        for shard in "124":
+            self.write_shard(shard)
+        with self.assertRaises(self.matrix.A06Error):
+            self.matrix.validate_gate(self.root, A06_SHA)
+
+    def test_gate_rejects_an_incomplete_or_foreign_boundary_list(self):
+        for shard in "1234":
+            self.write_shard(shard, boundaries=(["B1", "B2", "B3", "B4"] if shard == "1" else
+                                                [row.boundary for row in self.matrix.shard_boundaries(shard)]))
+        with self.assertRaises(self.matrix.A06Error):
+            self.matrix.validate_gate(self.root, A06_SHA)
+
+    def test_gate_rejects_a_failed_leg(self):
+        for shard in "1234":
+            self.write_shard(shard, verify_failed="B7")
+        with self.assertRaises(self.matrix.A06Error):
+            self.matrix.validate_gate(self.root, A06_SHA)
+
+    def test_gate_rejects_absent_boundary_evidence(self):
+        for shard in "1234":
+            self.write_shard(shard, failed="B12")
+        with self.assertRaises(OSError):
+            self.matrix.validate_gate(self.root, A06_SHA)
+
+    def test_gate_rejects_an_apk_bundle_from_another_commit(self):
+        self.write_all_shards()
+        apks_dir = self.write_apks(source_sha="c" * 40)
+        with self.assertRaises(self.matrix.A06Error):
+            self.matrix.validate_gate(self.root, A06_SHA, apks_dir)
+        (apks_dir / "provenance.json").unlink()
+        with self.assertRaises(self.matrix.A06Error):
+            self.matrix.validate_gate(self.root, A06_SHA, apks_dir)
+
+    def test_gate_states_the_process_kill_scope_and_never_an_a06_pass(self):
+        report = self.matrix.validate_gate(self.write_all_shards(), A06_SHA, self.write_apks())
+        self.assertEqual(report["scope"]["covers"], "process-kill-only")
+        self.assertEqual(report["scope"]["power_loss"], "not-covered")
+        self.assertEqual(report["scope"]["a06_verdict"], "not-passed")
+        self.assertIn("non-PASS", report["scope"]["statement"])
+        self.assertEqual(report["apk"]["producer"], ".github/workflows/ci.yml")
+        self.assertTrue(report["apk"]["attested"])
+        self.assertEqual(report["apk"]["source_sha"], A06_SHA)
+
+    def test_gate_rejects_a_wrong_sha(self):
+        self.write_all_shards()
+        with self.assertRaises(self.matrix.A06Error):
+            self.matrix.validate_gate(self.root, "c" * 40)
+        with self.assertRaises(self.matrix.A06Error):
+            self.matrix.validate_gate(self.root, "2FD1A67B" + "0" * 32)
+
+    # ------------------------------------------------ raw evidence, not the verdict file
+
+    def test_gate_rereads_the_marker_instead_of_trusting_the_verdict(self):
+        root = self.rebuild()
+        # result.json still says PASS; only the marker on disk now names another row.
+        self.corrupt(root, "2", "B7", "marker.txt", a06_marker(self.matrix.BY_BOUNDARY["B9"]))
+        with self.assertRaisesRegex(self.matrix.A06Error, "foreign or stale marker"):
+            self.matrix.validate_gate(root, A06_SHA)
+
+    def test_check_shard_rejects_a_lost_marker(self):
+        root = self.remove(self.rebuild(), "2", "B7", "marker.txt")
+        with self.assertRaisesRegex(self.matrix.A06Error, "no marker"):
+            self.matrix.check_shard(root, "2", A06_SHA)
+
+    def test_check_shard_rejects_a_lost_run_a_log(self):
+        root = self.remove(self.rebuild(), "3", "B13", "run-a.log")
+        with self.assertRaisesRegex(self.matrix.A06Error, "no run A log"):
+            self.matrix.check_shard(root, "3", A06_SHA)
+
+    def test_check_shard_rejects_a_kill_transcript_that_failed(self):
+        row = self.matrix.BY_BOUNDARY["B4"]
+        root = self.corrupt(self.rebuild(), "1", "B4", "kill-transcript.txt",
+                            a06_kill_transcript(row, codes=(1, -2)))
+        with self.assertRaisesRegex(self.matrix.A06Error, "non-start status"):
+            self.matrix.check_shard(root, "1", A06_SHA)
+
+    def test_check_shard_rejects_a_kill_logcat_without_the_kill_line(self):
+        row = self.matrix.BY_BOUNDARY["B9"]
+        stripped = a06_kill_logcat(row).replace("; killing the process", "")
+        root = self.corrupt(self.rebuild(), "2", "B9", "kill-logcat.txt", stripped)
+        with self.assertRaisesRegex(self.matrix.A06Error, "no kill line"):
+            self.matrix.check_shard(root, "2", A06_SHA)
+
+    def test_check_shard_rejects_a_verify_transcript_without_the_clean_completion(self):
+        row = self.matrix.BY_BOUNDARY["B17"]
+        root = self.corrupt(self.rebuild(), "4", "B17", "verify-transcript.txt",
+                            a06_verify_transcript(row, tail=("INSTRUMENTATION_CODE: -1\n",)))
+        with self.assertRaisesRegex(ValueError, "JUnit completion"):
+            self.matrix.check_shard(root, "4", A06_SHA)
+
+    def test_check_shard_rejects_a_verdict_that_disagrees_with_the_marker(self):
+        root = self.rebuild()
+        record_path = root / "shard-1" / "B2" / "result.json"
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        record["kill"]["convergence"] = "OPENS_NEW_GENERATION"
+        record_path.write_text(json.dumps(record), encoding="utf-8")
+        with self.assertRaisesRegex(self.matrix.A06Error, "convergence"):
+            self.matrix.check_shard(root, "1", A06_SHA)
+
+    def test_check_shard_rejects_an_avd_from_another_shard(self):
+        root = self.rebuild()
+        record_path = root / "shard-3" / "shard.json"
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        record["avd"] = "ul-a06-s4"
+        record_path.write_text(json.dumps(record), encoding="utf-8")
+        with self.assertRaisesRegex(self.matrix.A06Error, "owns exactly one AVD"):
+            self.matrix.check_shard(root, "3", A06_SHA)
+
+    def test_driver_refuses_a_shard_on_another_shard_avd(self):
+        with patch.dict(os.environ, GITHUB_ACTIONS="true", RUNNER_ENVIRONMENT="github-hosted",
+                        RUNNER_OS="Linux"):
+            with self.assertRaisesRegex(self.matrix.A06Error, "own AVD"):
+                self.matrix.drive_shard("2", self.root / "app.apk", self.root / "test.apk", self.root,
+                                        A06_SHA, "ul-a06-s3", self.matrix.Deadline(60))
+
+    # ------------------------------------------------ the bundle must attest this commit
+
+    def test_bundle_check_requires_the_exact_source_commit(self):
+        root = self.new_root()
+        bundle = self.write_apks(root=root)
+        manifest = self.matrix.require_producer_bundle(bundle, A06_SHA)
+        self.assertEqual(manifest["source_sha"], A06_SHA)
+        self.assertTrue(manifest["attested"])
+        # Same tree, different commit: `reuse` accepts it, the matrix must refuse it.
+        (bundle / "provenance.json").write_text(json.dumps({
+            "schema": 1, "repository": "example/ledger", "source_sha": "c" * 40, "tree": "b" * 40,
+            "run_id": 123, "run_attempt": 1, "workflow": ".github/workflows/ci.yml",
+            "sha256": {"app": "a" * 64, "test": "b" * 64},
+        }), encoding="utf-8")
+        with self.assertRaisesRegex(self.matrix.A06Error, "same tree"):
+            self.matrix.require_producer_bundle(bundle, A06_SHA)
+        # A manifest without a usable tree/source binding is not provenance either.
+        (bundle / "provenance.json").write_text(json.dumps({
+            "schema": 1, "source_sha": A06_SHA, "tree": "not-a-tree",
+            "sha256": {"app": "a" * 64, "test": "b" * 64},
+        }), encoding="utf-8")
+        with self.assertRaisesRegex(self.matrix.A06Error, "invalid tree"):
+            self.matrix.require_producer_bundle(bundle, A06_SHA)
+        (bundle / "provenance.json").unlink()
+        with self.assertRaises(self.matrix.A06Error):
+            self.matrix.require_producer_bundle(bundle, A06_SHA)
+
+    def test_shell_blocks_take_values_from_the_environment(self):
+        text = (Path(__file__).resolve().parents[2] /
+                ".github/workflows/android-p706-a06.yml").read_text(encoding="utf-8")
+        blocks = a06_shell_blocks(text)
+        self.assertGreaterEqual(len(blocks), 6)
+        self.assertEqual([block for block in blocks if "${{" in block], [])
+        joined = "\n".join(blocks)
+        for expected in ('"${EXPECTED_SHA}"', '"${SHA}"', '"$SHARD"', '"$EXPECTED_SHA"'):
+            self.assertIn(expected, joined)
+
+
 if __name__ == "__main__":
     unittest.main()
