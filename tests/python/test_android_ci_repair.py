@@ -9,6 +9,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -1446,6 +1447,43 @@ class ApkProvenance(unittest.TestCase):
             with self.subTest(code=code), patch.object(apks.subprocess, "check_output", side_effect=error), self.assertRaises(exception):
                 apks.api("repos/example/ledger/actions/artifacts/1/zip", binary=True)
 
+    def test_source_sha_filter_requires_the_exact_producer_head(self):
+        # A dispatch producer's `head_sha` is the tested commit itself; that is
+        # the identity a pinned caller must see. (A pull-request producer
+        # records its preview merge commit instead, so the pin is only exact
+        # for dispatch runs -- which is what the A06 matrix uses.)
+        self.run.update(event="workflow_dispatch", head_sha=SHA)
+        self.manifest.pop("pull_request", None)
+        with patch.object(apks, "api", side_effect=self.api):
+            self.assertTrue(apks.reuse(self.repo, self.tree, self.root / "pinned", SHA))
+        # The same tree from another commit must not satisfy a pinned request:
+        # its verdict would describe a different commit. No download may happen.
+        self.run["head_sha"] = "e" * 40
+        with patch.object(apks, "api", side_effect=self.api) as api:
+            self.assertFalse(apks.reuse(self.repo, self.tree, self.root / "miss", SHA))
+        self.assertFalse((self.root / "miss").exists())
+        self.assertFalse(any(call.kwargs.get("binary") for call in api.call_args_list))
+
+    def test_source_sha_filter_rejects_a_noncanonical_value(self):
+        for value in ("A" * 40, "a" * 39, ""):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                apks.reuse(self.repo, self.tree, self.root / "invalid", value)
+
+    def test_a06_reuse_step_pins_the_requested_commit(self):
+        workflow = (Path(__file__).resolve().parents[2] /
+                    ".github/workflows/android-p706-a06.yml").read_text(encoding="utf-8")
+        step = workflow.split("- name: Discover and verify an earlier whole-tree APK bundle", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("EXPECTED_SHA: ${{ inputs.expected_sha }}", step)
+        self.assertIn('--source-sha "$EXPECTED_SHA"', step)
+
+    def test_source_sha_flag_is_rejected_for_other_actions(self):
+        result = subprocess.run([sys.executable, "tools/ci/android-apks.py", "verify",
+                                 "--directory", "unused", "--source-sha", SHA],
+                                cwd=Path(__file__).resolve().parents[2],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--source-sha is only valid with the reuse action", result.stdout)
+
 
 class TrustedWorkflowBoundary(unittest.TestCase):
     def test_actual_conditions_allow_same_repo_and_manual_but_skip_fork(self):
@@ -2171,6 +2209,26 @@ class P706A06Matrix(unittest.TestCase):
         joined = "\n".join(blocks)
         for expected in ('"${EXPECTED_SHA}"', '"${SHA}"', '"$SHARD"', '"$EXPECTED_SHA"'):
             self.assertIn(expected, joined)
+
+
+class TrustedProducerSet(unittest.TestCase):
+    """The trust boundary in apks.py is an exact set, not an open registry."""
+
+    def test_only_bundle_packing_workflows_are_trusted(self):
+        # Each entry must be a workflow whose producer job calls
+        # `android-apks.py pack`; a consumer-only workflow (for example the
+        # P706-A06 kill/verify chain) must never be added: it would widen what
+        # `reuse` and `check_source` accept without ever producing a bundle.
+        self.assertEqual(apks.PRODUCERS, {
+            ".github/workflows/ci.yml": "Android compile",
+            ".github/workflows/android-scale.yml": "Android scale APKs",
+            ".github/workflows/android-preflight.yml": "Android preflight APKs",
+            ".github/workflows/android-instrumented.yml": "Android instrumented APKs",
+        })
+        root = Path(__file__).resolve().parents[2]
+        for workflow, job in apks.PRODUCERS.items():
+            text = (root / workflow).read_text(encoding="utf-8")
+            self.assertIn(f"    name: {job}\n", text, workflow)
 
 
 if __name__ == "__main__":

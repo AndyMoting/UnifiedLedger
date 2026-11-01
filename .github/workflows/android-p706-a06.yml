@@ -96,7 +96,11 @@ jobs:
         id: reuse
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 tools/ci/android-apks.py reuse --directory reused-apks
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        # Pin the producer run to this exact commit: another commit can share
+        # the same whole tree, and this chain must attest the requested SHA.
+        # Passed through the environment and quoted, never interpolated inline.
+        run: python3 tools/ci/android-apks.py reuse --directory reused-apks --source-sha "$EXPECTED_SHA"
       - name: Refuse to build APKs here
         # The bundle must already be producer-attested for this exact tree. Building a
         # pair inside this workflow would produce unattested bytes and would let a
