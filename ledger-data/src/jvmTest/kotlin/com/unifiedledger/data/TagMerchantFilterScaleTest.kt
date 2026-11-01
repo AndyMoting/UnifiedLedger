@@ -21,22 +21,33 @@ import kotlin.test.assertTrue
 import kotlin.time.Instant
 
 /**
- * P7-08 08.C scale legs (P708-A09; plan sections 8.3 and 10.3): 20,000 and 50,000 ordinary
- * two-leg transactions (the P705 bulk fixture), multi-tag high annotation density (two distinct
- * tags per annotated transaction over a 40-tag catalog) and a five-merchant catalog. The bounded
- * paged read and the month accumulation read must be equivalent, entry for entry and group for
- * group, to the construction manifest's expectations — with stable first/last items, exact
- * totals and no deduplication of the many duplicate amounts (the amount formula repeats every 97
- * transactions). The 50k leg additionally runs on a counting connection and records its SQL row
- * surface and statement count.
+ * P7-08 08.C scale legs (P708-A09; plan §8.3:308 names the 20,000 and 50,000 sizes): ordinary
+ * two-leg transactions (the P705 bulk fixture) with multi-tag high annotation density (two
+ * distinct tags per annotated transaction over a 40-tag catalog) and a five-merchant catalog. The
+ * bounded paged read and the month accumulation read must be equivalent, entry for entry and
+ * group for group, to the construction manifest's expectations — with stable first/last items,
+ * exact totals and no deduplication of the many duplicate amounts (the amount formula repeats
+ * every 97 transactions). The 50k and 61k legs additionally run on a counting connection and
+ * record their SQL row surface, statement count and per-page statement set.
  *
- * Recorded, never threshold-asserted: every timing figure (printed under the stable `P708-A09 `
- * prefix and retained in the JUnit XML's system-out) and the environment identity lines (the
- * D-158 section 5 convention). The 50k leg's row-surface count and non-zero statement count are
- * also pinned structurally so the measurement cannot silently report an empty surface. Deliberately
- * not asserted: any `EXPLAIN QUERY PLAN` text (the P7-05 design froze plan assertions out; plan
- * text is fragile across SQLite versions) and any wall-clock threshold. No device/ANR/OOM claim is
- * made, and 61k is not measured by this class.
+ * The 61,000 leg is the follow-up JVM leg that D-241 item 2 and D-238 item 4 list for this
+ * residual. D-243 item 1 rules that 61k is NOT part of the plan's original measurement set
+ * (§2:42 and §10.3:414 name single 10k imports, 30k accumulated candidates and 20k duplicate
+ * groups), so this leg extends the required 20k/50k sizes and satisfies no plan-mandated one.
+ *
+ * Recorded rather than thresholded (D-241 item 3): every timing figure (printed under the stable
+ * `P708-A09 ` prefix and retained in the JUnit XML's system-out), the environment identity lines
+ * (the D-158 section 5 convention) and the peak heap. What IS pinned is structural and derived
+ * from the fixture: the row surface equals the fixture's own table counts, the paged read costs a
+ * constant statement set per page, and the page shape is the one the manifest implies. Read those
+ * pins narrowly — constant per-page statements prove that the statement set does not grow with the
+ * page's row count or with the page position; they do NOT prove that no statement scans the whole
+ * ledger, because nothing here measures rows examined inside a statement. The peak heap is sampled
+ * every 10 ms and only ever checked for being non-empty, which is evidence that the sampler ran
+ * and never a memory bound. Deliberately not asserted: any `EXPLAIN QUERY PLAN` text (the P7-05
+ * design froze plan assertions out; plan text is fragile across SQLite versions), any wall-clock
+ * or memory threshold, and any device claim — 61k is measured here as the JVM leg only, so the
+ * device/ANR legs of D-241 stay open.
  */
 class TagMerchantFilterScaleTest {
     @Test
@@ -190,24 +201,91 @@ class TagMerchantFilterScaleTest {
     /**
      * The 50k leg: the same fixture shape and the same manifest-equivalence assertions as the
      * 20k leg, read through the real bounded filter adapter over a counting second connection.
-     * All figures printed under `P708-A09 ` are recorded only; nothing is asserted about time or
-     * memory.
+     * Every figure printed under `P708-A09 ` is recorded; this leg compares no timing or memory
+     * figure to a limit.
      */
     @Test
     fun boundedReadsAreEquivalentToTheConstructionManifestOnFiftyThousandTransactions() {
-        P705Database.create("p708-a09-50k-").use { harness ->
+        runMeasuredLeg("p708-a09-50k-", FIFTY_THOUSAND_TRANSACTIONS)
+    }
+
+    /**
+     * The 61k leg: the follow-up JVM size that D-241 item 2 and D-238 item 4 list for the
+     * P708-A09 residual. D-243 item 1 rules 61k outside the plan's original measurement set
+     * (§2:42 and §10.3:414 name single 10k imports, 30k accumulated candidates and 20k duplicate
+     * groups), so this leg satisfies no plan-mandated size and revises no such ruling. It shares
+     * the 50k leg's whole manifest equivalence through [runMeasuredLeg] and adds the structural
+     * facts that size the bounded read at this volume: the page count and the page fullness the
+     * manifest implies, and a statement set that stays constant per page.
+     */
+    @Test
+    fun boundedReadsAreEquivalentToTheConstructionManifestOnSixtyOneThousandTransactions() {
+        val reading = runMeasuredLeg("p708-a09-61k-", SIXTY_ONE_THOUSAND_TRANSACTIONS)
+
+        // The manifest decides the page shape: ceil(matched / page size) pages, every page full
+        // but the last, and every manifest row returned exactly once. The fullness bound caps the
+        // rows a page HANDS BACK to its caller; it says nothing about what one statement examines.
+        assertEquals(
+            (reading.matchedCount + PAGE_SIZE - 1) / PAGE_SIZE,
+            reading.pages,
+            "the page count is the manifest's ceil(matched / page size)",
+        )
+        assertEquals(reading.matchedCount, reading.returnedRows, "every matched transaction must come back exactly once")
+        assertEquals(
+            scanSurfaceRows(SIXTY_ONE_THOUSAND_TRANSACTIONS),
+            reading.scannedRows,
+            "the recorded row surface is the 61k fixture's table counts",
+        )
+        reading.pageSizes.dropLast(1).forEach { assertEquals(PAGE_SIZE, it, "every page but the last must be full") }
+        assertEquals(
+            reading.matchedCount - (reading.pages - 1) * PAGE_SIZE,
+            reading.pageSizes.last(),
+            "the last page carries exactly the manifest's remaining rows",
+        )
+
+        // Constant per-page statement cost: one page costs `pageStatements`, so the whole read must
+        // cost that set times the page count. This pins the statement COUNT only — a statement
+        // issued per returned row, or a per-page catalog re-read that grows with the page count,
+        // breaks the equality. It bounds nothing inside a single statement, so it is not evidence
+        // that no statement reads the whole ledger.
+        assertTrue(reading.pageStatements > 0, "a filter page must issue SQL statements")
+        assertEquals(
+            reading.pages * reading.pageStatements,
+            reading.sqlQueries,
+            "the paged read costs a constant statement set per page (no N+1)",
+        )
+
+        // D-241 item 3 keeps memory recorded, never thresholded: this checks only that the sampler
+        // observed a non-empty peak, i.e. that the measurement ran. It bounds no memory figure, and
+        // this leg makes no device/ANR/OOM claim.
+        assertTrue(reading.peakHeapBytes > 0, "the heap sampler must observe a non-empty peak")
+    }
+
+    /**
+     * The measured leg shared by the 50k and 61k cases: [transactionCount] ordinary two-leg
+     * transactions built from the same formula, read page by page through the real bounded filter
+     * adapter over a counting second connection. Its assertions are the 50k leg's own set (D-241
+     * item 2), expressed over the parameterised count. Nothing here compares a timing or a memory
+     * figure to a limit; the recorded figures travel back in [MeasuredLeg] and are printed under
+     * the `P708-A09 ` prefix for the record.
+     */
+    private fun runMeasuredLeg(
+        filePrefix: String,
+        transactionCount: Int,
+    ): MeasuredLeg =
+        P705Database.create(filePrefix).use { harness ->
             val buildStart = System.nanoTime()
-            val annotated = buildFixture(harness, FIFTY_THOUSAND_TRANSACTIONS)
+            val annotated = buildFixture(harness, transactionCount)
             val buildNanos = System.nanoTime() - buildStart
 
-            assertEquals(FIFTY_THOUSAND_TRANSACTIONS.toLong(), harness.ledgerQueryCount("SELECT count(*) FROM ledger_transaction"))
+            assertEquals(transactionCount.toLong(), harness.ledgerQueryCount("SELECT count(*) FROM ledger_transaction"))
             assertEquals(
-                (FIFTY_THOUSAND_TRANSACTIONS / 2).toLong(),
+                (transactionCount / 2).toLong(),
                 harness.ledgerQueryCount("SELECT count(*) FROM transaction_annotation_current"),
             )
             assertEquals(0L, harness.ledgerQueryCount("SELECT count(*) FROM transaction_version WHERE statistics_at_epoch_nanos IS NULL"))
             assertEquals(
-                (FIFTY_THOUSAND_TRANSACTIONS * 2).toLong(),
+                (transactionCount * 2).toLong(),
                 harness.ledgerQueryCount("SELECT count(*) FROM posting"),
             )
 
@@ -238,7 +316,7 @@ class TagMerchantFilterScaleTest {
                         queryLong(countingDriver, "SELECT count(*) FROM $table WHERE ledger_id = '${ledgerId.value}'")
                     }
                 countingDriver.resetCounts()
-                assertEquals(FIFTY_THOUSAND_SCAN_SURFACE_ROWS, scannedRows, "the recorded row surface is the fixture's table counts")
+                assertEquals(scanSurfaceRows(transactionCount), scannedRows, "the recorded row surface is the fixture's table counts")
 
                 // ---- construction manifest (the OR condition over tags 00 and 01) ----
                 val orCondition =
@@ -253,11 +331,31 @@ class TagMerchantFilterScaleTest {
                         .sortedWith(compareByDescending<Int> { index -> statisticsInstant(index) }.thenByDescending { index -> transactionIdOf(index) })
                         .map(::transactionIdOf)
 
+                // The per-page statement set, measured on a warm head page before the timed
+                // window: the first read absorbs any one-time connection work and is then re-read
+                // to record what one page costs. Neither read is part of `paged-read-ms` or
+                // `sql-queries`; the head page is the manifest's first page either way.
+                val warmHeadPage =
+                    (adapter.readPage(ledgerId, orCondition, GENERATION, PAGE_SIZE, null) as TagMerchantFilterReadResult.Success)
+                        .page.entries
+                        .map { it.row.transactionId.value }
+                countingDriver.resetCounts()
+                val probeFirstItem =
+                    (adapter.readPage(ledgerId, orCondition, GENERATION, PAGE_SIZE, null) as TagMerchantFilterReadResult.Success)
+                        .page.entries
+                        .first()
+                        .row.transactionId.value
+                val pageStatements = countingDriver.queryCount
+                countingDriver.resetCounts()
+                assertEquals(expectedOrOrder.take(PAGE_SIZE), warmHeadPage, "the head page is the manifest's first page")
+                assertEquals(expectedOrOrder.first(), probeFirstItem, "a repeated head read starts at the same first item")
+
                 // ---- measured bounded paged read ----
                 val sampler = JvmHeapPeakSampler.startSampling()
                 val readStart = System.nanoTime()
                 val visited = mutableListOf<String>()
                 val entries = mutableListOf<TagMerchantFilterEntry>()
+                val pageSizes = mutableListOf<Int>()
                 var pages = 0
                 var cursor: TagMerchantFilterCursor? = null
                 var readNanos = 0L
@@ -267,6 +365,7 @@ class TagMerchantFilterScaleTest {
                         val page =
                             (adapter.readPage(ledgerId, orCondition, GENERATION, PAGE_SIZE, cursor) as TagMerchantFilterReadResult.Success).page
                         pages += 1
+                        pageSizes += page.entries.size
                         visited += page.entries.map { it.row.transactionId.value }
                         entries += page.entries
                         cursor = page.nextCursor
@@ -360,18 +459,28 @@ class TagMerchantFilterScaleTest {
 
                 // Recorded only: timings, the row surface and environment identity (no threshold).
                 println(
-                    "P708-A09 fixture transactions=$FIFTY_THOUSAND_TRANSACTIONS annotated=${annotated.size} " +
+                    "P708-A09 fixture transactions=$transactionCount annotated=${annotated.size} " +
                         "pages=$pages page-size=$PAGE_SIZE scanned-rows=$scannedRows returned-rows=${visited.size} " +
-                        "sql-queries=$sqlQueries peak-heap-bytes=$peakHeapBytes (jvm-heap-only) " +
+                        "sql-queries=$sqlQueries page-statements=$pageStatements peak-heap-bytes=$peakHeapBytes (jvm-heap-only) " +
                         "build-ms=${millis(buildNanos)} paged-read-ms=${millis(readNanos)}",
                 )
                 harness.environmentIdentity().forEach { println("P708-A09 environment $it") }
+
+                MeasuredLeg(
+                    matchedCount = expectedMatched.size,
+                    returnedRows = visited.size,
+                    pages = pages,
+                    pageSizes = pageSizes,
+                    pageStatements = pageStatements,
+                    sqlQueries = sqlQueries,
+                    scannedRows = scannedRows,
+                    peakHeapBytes = peakHeapBytes,
+                )
             } finally {
                 rawDriver.getConnection().close()
                 rawDriver.close()
             }
         }
-    }
 
     // ------------------------------------------------------------------ fixture
 
@@ -486,23 +595,41 @@ class TagMerchantFilterScaleTest {
 
     private fun statisticsInstant(index: Int): Instant = if (index % 3 == 0) P705Fixture.aprilStatistics else P705Fixture.marchStatistics
 
+    /**
+     * What a measured leg hands back to its caller: the manifest-derived structural facts the
+     * caller may assert on, plus the recorded figures (returned rows, row surface, statement
+     * counts, page sizes, peak heap). No timing is ever asserted. The peak heap is recorded only;
+     * the 61k case checks nothing beyond its sampler having observed a non-empty peak (D-241
+     * item 3).
+     */
+    private data class MeasuredLeg(
+        val matchedCount: Int,
+        val returnedRows: Int,
+        val pages: Int,
+        val pageSizes: List<Int>,
+        val pageStatements: Int,
+        val sqlQueries: Int,
+        val scannedRows: Long,
+        val peakHeapBytes: Long,
+    )
+
     private companion object {
         /** The fixed catalog generation the scale fixture's tag/merchant catalog sits at. */
         const val GENERATION = 1L
         const val TRANSACTION_COUNT = 20_000
         const val FIFTY_THOUSAND_TRANSACTIONS = 50_000
+        const val SIXTY_ONE_THOUSAND_TRANSACTIONS = 61_000
 
         /**
-         * The exact per-ledger total of [SCAN_SURFACE_TABLES] for the 50k fixture: one
-         * transaction, version and current-version pointer row per transaction, one posting set
-         * per transaction, two postings per transaction, and — for the annotated half — one
-         * annotation revision, one current pointer and two tag rows. Derived from the fixture
-         * formulas rather than typed as a literal, so a change to those formulas cannot leave a
-         * stale constant passing.
+         * The exact per-ledger total of [SCAN_SURFACE_TABLES] for a fixture of [count]
+         * transactions: one transaction, version and current-version pointer row per transaction,
+         * one posting set per transaction, two postings per transaction, and — for the annotated
+         * half — one annotation revision, one current pointer and two tag rows. Derived from the
+         * fixture formulas rather than typed as a literal, so a change to those formulas cannot
+         * leave a stale constant passing.
          */
-        val FIFTY_THOUSAND_SCAN_SURFACE_ROWS =
-            FIFTY_THOUSAND_TRANSACTIONS.toLong() * 6L +
-                (FIFTY_THOUSAND_TRANSACTIONS / 2).toLong() * 4L
+        fun scanSurfaceRows(count: Int): Long = count.toLong() * 6L + (count / 2).toLong() * 4L
+
         const val TAG_COUNT = 40
         const val MERCHANT_COUNT = 5
         const val PAGE_SIZE = 500
