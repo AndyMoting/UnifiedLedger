@@ -385,7 +385,7 @@ private fun validateDatabase(database: SQLiteDatabase): String? {
     }?.let { return it }
     // The 20,000 pre-existing sources are real tuple matches: same ledger, the frozen
     // EXACT_BUSINESS_TUPLE business metadata, distinct source ids and ordinals.
-    val ordinaryContractVersion = ImportRecordKind.ORDINARY_FLOW_SOURCE.contractVersion.toLong().toString()
+    val ordinaryContractVersion = ImportRecordKind.ORDINARY_FLOW_SOURCE.contractVersion
     expect(
         scalarLong(
             database,
@@ -396,7 +396,7 @@ private fun validateDatabase(database: SQLiteDatabase): String? {
             SCALE_FIXTURE_LEDGER_ID,
             "$SCALE_FIXTURE_HISTORY_SOURCE_PREFIX%",
             ImportRecordKind.ORDINARY_FLOW_SOURCE.storageValue,
-            ordinaryContractVersion,
+            ordinaryContractVersion.toString(),
             SCALE_FIXTURE_COMPLETENESS_TOKEN,
             SCALE_FIXTURE_GROUP_AMOUNT_MINOR.toString(),
             SCALE_FIXTURE_CURRENCY_CODE,
