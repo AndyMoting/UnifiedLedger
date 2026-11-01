@@ -46,6 +46,13 @@
 #   artifact name android-apks-<git-tree>-<run-id>-<attempt>, and `verify`
 #   re-checks the producer run, the GitHub commit/tree binding and both digests
 #   against the producer manifest.
+# - The bundle is bound to this exact commit, not merely to an identical tree:
+#   one tree can be produced by several commits (a PR preview merge and the
+#   squash-merge landing share a tree but not a SHA), so `reuse --source-sha
+#   "${EXPECTED_SHA}"` refuses an artifact built from any other producer commit.
+#   That is what makes the downloaded bytes the evidence for THIS dispatch, and
+#   it fails closed: a same-tree bundle from another commit is a miss, which this
+#   workflow turns red instead of silently testing someone else's build.
 name: Android ENOSPC device rig
 
 on:
@@ -95,10 +102,14 @@ jobs:
           ref: ${{ inputs.expected_sha }}
           fetch-depth: 1
       - name: Discover the trusted whole-tree APK bundle
+        # --source-sha pins reuse to the producer commit of THIS dispatch: a
+        # same-tree artifact from another commit (PR preview merge vs squash
+        # landing) is a miss, never a silent substitute.
         id: reuse
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 tools/ci/android-apks.py reuse --directory enospc-apks
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: python3 tools/ci/android-apks.py reuse --directory enospc-apks --source-sha "${EXPECTED_SHA}"
       - name: Require a pre-built trusted bundle for this exact tree
         # A miss is a red run, not a rebuild: this rig never produces APKs and
         # never writes its own provenance, so a bundle that does not already exist
