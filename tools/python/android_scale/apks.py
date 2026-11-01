@@ -19,9 +19,17 @@ from pathlib import Path
 from .result import strict_json
 
 FILES = {"app": "android-app-debug.apk", "test": "android-app-debug-androidTest.apk"}
+# Trusted producers, keyed by workflow path; each value is the exact job name
+# that must have succeeded in the producing run. Adding an entry here widens
+# what `reuse`/`check_source` accept, so it is a deliberate trust decision: the
+# job must only upload a bundle it packed itself (`android-apks.py pack`).
+# A workflow that only consumes bundles (for example the P706-A06 kill/verify
+# chain) must not be listed: it never calls `pack`, so an entry would be a dead
+# contract and would misstate which runs may produce trusted APKs.
 PRODUCERS = {".github/workflows/ci.yml": "Android compile",
              ".github/workflows/android-scale.yml": "Android scale APKs",
-             ".github/workflows/android-preflight.yml": "Android preflight APKs"}
+             ".github/workflows/android-preflight.yml": "Android preflight APKs",
+             ".github/workflows/android-instrumented.yml": "Android instrumented APKs"}
 
 
 class ArtifactUnavailable(RuntimeError):

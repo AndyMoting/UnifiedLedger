@@ -1527,5 +1527,25 @@ class OrdinaryInventory(unittest.TestCase):
         with self.assertRaises(ValueError): check_inventory(self.root, self.manifest)
 
 
+class TrustedProducerSet(unittest.TestCase):
+    """The trust boundary in apks.py is an exact set, not an open registry."""
+
+    def test_only_bundle_packing_workflows_are_trusted(self):
+        # Each entry must be a workflow whose producer job calls
+        # `android-apks.py pack`; a consumer-only workflow (for example the
+        # P706-A06 kill/verify chain) must never be added: it would widen what
+        # `reuse` and `check_source` accept without ever producing a bundle.
+        self.assertEqual(apks.PRODUCERS, {
+            ".github/workflows/ci.yml": "Android compile",
+            ".github/workflows/android-scale.yml": "Android scale APKs",
+            ".github/workflows/android-preflight.yml": "Android preflight APKs",
+            ".github/workflows/android-instrumented.yml": "Android instrumented APKs",
+        })
+        root = Path(__file__).resolve().parents[2]
+        for workflow, job in apks.PRODUCERS.items():
+            text = (root / workflow).read_text(encoding="utf-8")
+            self.assertIn(f"    name: {job}\n", text, workflow)
+
+
 if __name__ == "__main__":
     unittest.main()
