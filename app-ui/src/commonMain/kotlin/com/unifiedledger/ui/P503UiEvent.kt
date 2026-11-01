@@ -450,9 +450,11 @@ sealed interface P503UiEvent {
     ) : P503UiEvent
 
     /**
-     * The pick pipeline's result (OverviewEmpty effect: the session summary replaces the previous
-     * one; a successful intake replaces the candidate list, a typed failure keeps the previous
-     * list and surfaces the explicit failure banner). Absorbed everywhere else.
+     * The pick pipeline's result (OverviewEmpty effect: the session summary always replaces the
+     * previous one; the re-read rows land whenever [rows] carries `ImportReviewRowsResult.Rows` —
+     * INCLUDING a typed failure, whose committed prefix must stay visible — while an
+     * `ImportReviewRowsResult.Unavailable` re-read keeps the previous list; a typed failure also
+     * surfaces the explicit failure banner). Absorbed everywhere else.
      */
     data class ImportFileIntakeResult(
         val session: ImportIntakeSessionSummary,

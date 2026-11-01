@@ -250,6 +250,13 @@ internal fun importIntakeFailureText(failure: ImportIntakeBatchFailure): String 
             "单次导入最多 10,000 条已接受记录，本次 ${failure.actualAcceptedRecords} 条；已中止，未写入任何记录。"
         is ImportIntakeBatchFailure.ParserRejected ->
             "文件解析失败（诊断码 ${failure.diagnostic.code}），本次导入已中止。"
+        // DEF-IMPORT-ENOSPC-CRASH-01 (D-276 item 2): a mid-batch storage failure is scoped to the
+        // aborted record. "已成功的记录保留" is literally true for every prefix, including a
+        // first-record failure (the kept prefix is then empty, so the sentence claims nothing
+        // false); the copy never says the file wrote nothing and carries no exception text,
+        // path, or URI (D06).
+        is ImportIntakeBatchFailure.StorageUnavailable ->
+            "导入已中止；已成功的记录保留。"
     }
 
 /** The typed L0 stream-failure copy (no raw exception text, path, or URI; D06). */
