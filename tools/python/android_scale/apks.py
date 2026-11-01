@@ -157,7 +157,17 @@ def unpack(payload: bytes, output: Path) -> None:
                 shutil.copyfileobj(source, target)
 
 
-def reuse(repository: str, tree: str, output: Path) -> bool:
+def reuse(repository: str, tree: str, output: Path, source_sha: str | None = None) -> bool:
+    """Find a trusted whole-tree bundle, optionally pinned to one producer head.
+
+    `source_sha` narrows the search to runs whose `head_sha` matches exactly.
+    A different commit can share the same tree, so a caller that must attest one
+    specific commit (the P706-A06 kill/verify chain) pins it here; without the
+    pin the newest same-tree bundle wins and the evidence would describe another
+    commit. No exact match is a miss, never a same-tree guess.
+    """
+    if source_sha is not None and not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        raise ValueError("invalid source SHA filter")
     prefix = f"android-apks-{tree}-"
     for artifact in pages(f"repos/{repository}/actions/artifacts", "artifacts"):
         if not artifact.get("name", "").startswith(prefix) or artifact.get("expired"):
@@ -166,6 +176,11 @@ def reuse(repository: str, tree: str, output: Path) -> bool:
         if type(source_run) is not int:
             raise ValueError("artifact lacks run identity")
         run = api(f"repos/{repository}/actions/runs/{source_run}")
+        # Filter before any download or unpack: `head_sha` is the commit the
+        # producer checked out, which is exactly the identity a pinned caller
+        # must attest.
+        if source_sha is not None and run.get("head_sha") != source_sha:
+            continue
         # An in-flight producer cannot yet attest success. Other trusted runs
         # may still provide the same whole-tree bundle.
         if run.get("path", "").split("@", 1)[0] not in PRODUCERS:
@@ -247,10 +262,15 @@ def main() -> int:
     parser.add_argument("--app", type=Path)
     parser.add_argument("--test", type=Path)
     parser.add_argument("--reused-from", type=Path)
+    # Only `reuse` consumes this: it pins the producer run to one exact head
+    # commit, because a different commit can share the same whole tree.
+    parser.add_argument("--source-sha")
     args = parser.parse_args()
+    if args.source_sha is not None and args.action != "reuse":
+        parser.error("--source-sha is only valid with the reuse action")
     tree = git("rev-parse", "HEAD^{tree}")
     if args.action == "reuse":
-        hit = reuse(os.environ["GITHUB_REPOSITORY"], tree, args.directory)
+        hit = reuse(os.environ["GITHUB_REPOSITORY"], tree, args.directory, args.source_sha)
         emit(hit=str(hit).lower(), tree=tree)
     elif args.action == "pack":
         manifest = pack(args.directory, args.app, args.test, args.reused_from)
