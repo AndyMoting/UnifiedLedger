@@ -13,6 +13,9 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.unifiedledger.ui.ledgerStorageLayout
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -53,6 +56,23 @@ private const val TAB_BAR_WAIT_MILLIS = 60_000
 private const val CANDIDATE_CHECKBOX_DESC = "勾选候选"
 private const val CURRENCY_SUFFIX = "CNY"
 private const val LAST_ITEM_ROW_INDEX = 1_000_000
+
+// ---- seedFixture mode: first-screen labels and the real fail-closed faces ----
+//
+// The ledger surface prints "账本：<alias>"; the import screen's class groups print
+// "<label>（<rowCount>）" and an EMPTY group is omitted (P503ImportReviewPresentation
+// importCandidateClassGroups), so a group header is itself the proof that the class has rows.
+private const val LEDGER_READY_PREFIX = "账本："
+private const val DUPLICATE_GROUP_HEADER_PREFIX = "疑似重复——待审核（"
+private const val PENDING_DECISION_HEADER_PREFIX = "待确认——缺用户决策（"
+private const val SEED_FIXTURE_START_SCREEN_WAIT_MILLIS = 180_000
+private const val SEED_FIXTURE_IMPORT_SCREEN_WAIT_MILLIS = 180_000
+
+// P503StartupScreen.kt has exactly two fail-closed faces: StartupError (:79,
+// "无法打开本地账本（本地数据库不可用）") and PointerRecovery (:97, "无法打开本地账本：缺少活动代指针，但磁盘上
+// 存在候选代目录。"). Both begin with the same prefix, and the recovery face's copy continues with the
+// reason, so the match is a PREFIX: an exact label would miss the recovery face entirely.
+private val STARTUP_FAILURE_PREFIXES = listOf("无法打开本地账本")
 
 // ---- the import-review-screen predicate (the HOME-screen false positive fix) ----
 //
@@ -149,6 +169,17 @@ private const val PICKER_CLICK_PARENT_DEPTH = 10
 // Bounded scroll used by countProbe to force a LazyColumn layout pass before re-reading CollectionInfo.
 private const val COUNT_PROBE_SCROLL_ACTIONS = 60
 private const val DB_FILE_NAME = "ledger.db"
+private const val ARG_SEED_FIXTURE = "seedFixture"
+private const val SEED_ACTIVATION_CSV =
+    "\uFEFF\"招商银行交易明细\"\r\n" +
+        "\"导出时间:2026-01-02 03:04:06\"\r\n" +
+        "\"账号:SYNTHETIC-SCALE\"\r\n" +
+        "\"币种:人民币\"\r\n" +
+        "\"起始日期:20260101\"\r\n" +
+        "\"结束日期:20260102\"\r\n" +
+        "\"\"\r\n" +
+        "\"交易日期\",\"交易时间\",\"收入\",\"支出\",\"余额\",\"交易类型\",\"交易备注\"\r\n" +
+        "\"\t20260102\",\"\t03:04:05\",\"\",\"1.23\",\"1.23\",\"网联协议支付\",\"\tscale-session\"\r\n"
 
 // ---- b5Detail (A-PERF B5 endpoint: single-candidate detail key-content latency) ----
 
@@ -306,8 +337,26 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  *   `import_candidate` to stabilization. Args `formatLabel` (default 招商银行账单（CSV）),
  *   `waitShareMillis` (default 180000), `intakeTimeoutMillis` (default 1800000). The host must send
  *   the share Intent during the wait window; a refused chip click skips the wait with a FINDING.
- * - `b6CardOpen`: B6 (A-PERF 20k 组开卡). Traverses to `target` like `scrollToEnd`, then opens the
- *   group card via `openGroupCard` (in-process bracket click → card visible) and never confirms it.
+ * - `seedFixture`: fresh-process mode. Seeds and publishes the deterministic duplicate-first library
+ *   BEFORE any Activity in this process opens the ledger (the support's guard fails the mode if a
+ *   ledger handle is already open, because replacing the file would leave the product on the old
+ *   inode). It then asserts the START screen's health ("账本：" present, no fail-closed face) BEFORE
+ *   the tab switch, and only after [reachImportReview] asserts the import screen's duplicate group
+ *   header (the two screens carry different text, so they are two separate assertions). Its 20,000
+ *   relations are the real output of ONE product intake: 20,000 pre-existing settled
+ *   `import_source_record` rows carry the group's business tuple, so the store's own
+ *   `selectDuplicateMatches` count (not the fixture's intent) sets the demand and only that intake
+ *   writes the relations. The new pending subject is the single subject source; a separately rejected
+ *   baseline candidate keeps the ordinary 待确认 list empty. Sources/relations/history/candidates/
+ *   quick_check and the observed group header go to the evidence. This differs from D-148's
+ *   30,039-candidate accumulated library.
+ * - `b6CardOpen`: B6 (A-PERF 20k 组开卡). With opt-in `seedFixture=true` it is ACTIVATION-ONLY: the
+ *   fixture must already be published (host sequence: `seedFixture` → force-stop the app → fresh
+ *   process → this mode) and this path never rebuilds it. It arms lastIntakeSession by selecting a
+ *   one-row CMB file through the real product picker, asserts the product-written activation totals
+ *   (20,001 relations on the new subject, 2 subjects, 3 candidates), traverses to `target` like
+ *   `scrollToEnd`, opens the group card via `openGroupCard` and never confirms it. The default
+ *   remains the old traversal without fixture loading.
  * - `b5Detail`: the A-PERF B5 endpoint (frozen spec section 6: 单候选详情 = 点击首行候选 → 详情屏关键
  *   内容（金额/状态行）可见, gate ≤1s, three runs, the maximum is the reading) measured IN-PROCESS,
  *   because the host `uiautomator dump` floor (~2.29 s per dump) is far coarser than the 1 s gate and
@@ -559,8 +608,9 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  * These readings are measurement and acceptance evidence, not a product capability claim, and they
  * do not change the plan section 10.3 verdict (D-161 decision 4). A target node that is absent
  * after a completed traversal is reported as a logged finding so the host still gets the evidence.
- * The same holds for the database reads: a database that cannot be opened (or a query that fails)
- * is logged as a finding and the mode continues - no mode ever fails on a reading.
+ * Direct probes share one generation-aware path resolver. A baseline read failure aborts its
+ * mode; only a transient failure during a poll is logged and retried, never an appeared=false or
+ * before/after conclusion derived from an unavailable baseline.
  */
 @RunWith(AndroidJUnit4::class)
 class ImportScaleTraversalInstrumentedTest {
@@ -661,6 +711,16 @@ class ImportScaleTraversalInstrumentedTest {
     }
 
     @Test
+    fun seedFixture() {
+        val evidence = mutableListOf<String>()
+        try {
+            runSeedFixture(evidence)
+        } finally {
+            appendEvidence(evidence)
+        }
+    }
+
+    @Test
     fun b6CardOpen() {
         val evidence = mutableListOf<String>()
         try {
@@ -677,9 +737,9 @@ class ImportScaleTraversalInstrumentedTest {
      * `input tap`: the 2026-11-01 20k session could not dispatch the chip through synthetic taps
      * (and its `screencap` disagreed with the accessibility tree about the foreground window), so
      * this mode clicks the chip with `ACTION_CLICK` and polls the authoritative
-     * `import_candidate` count until it stabilizes. It never asserts: the host decides whether a
-     * run produced an import, and the baseline count is logged so three back-to-back runs are
-     * comparable.
+     * `import_candidate` count until it stabilizes. Its baseline/final reads are hard preconditions:
+     * an unavailable count cannot become an appeared=false or intake conclusion. The host decides
+     * whether a run produced an import, and the baseline count is logged for comparable runs.
      */
     private fun runShareImportDrive(evidence: MutableList<String>) {
         val log = evidenceLog(evidence)
@@ -693,7 +753,7 @@ class ImportScaleTraversalInstrumentedTest {
         // shell `am start`/share while the automation connection is live can be swallowed.
         bringUpForShareFace(log)
         prepareAutomation()
-        val baseline = countImportCandidates(log)
+        val baseline = requireNotNull(countImportCandidates(log)) { "shareImportDrive baseline import_candidate read failed; aborting instead of judging appearance" }
         log("shareImportDrive baseline import_candidate=${countText(baseline)}")
         val faceAppeared = waitFor({ hasShareFace(appRoot()) }, waitShareMillis, POLL_MILLIS)
         log("shareImportDrive share face appeared=$faceAppeared")
@@ -716,16 +776,217 @@ class ImportScaleTraversalInstrumentedTest {
             return
         }
         val reading = awaitCountProbeIntake(baseline, intakeTimeoutMillis, log)
-        val finalCount = countImportCandidates(log)
+        val finalCount = requireNotNull(countImportCandidates(log)) { "shareImportDrive final import_candidate read failed; no count conclusion is available" }
         log("shareImportDrive detected=${reading.detected} stabilized=${reading.stabilized} import_candidate=${countText(finalCount)}")
         evidence += "== shareImportDrive end"
     }
 
     /**
-     * B6 (A-PERF): traverses to the group affordance and measures the group-card open through the
-     * existing `openGroupCard` in-process bracket (click → card marker visible).
-     * It never confirms the group, so the run mutates nothing but view state.
+     * The `seedFixture` mode (fresh process only): seed → the real START screen's health → the import
+     * screen's duplicate group. The seed runs before any Activity exists —
+     * [ImportScaleDuplicateFixtureSupport] proves that by checking this process holds no open ledger
+     * handle, because replacing the file under a live handle would leave the product writing to the
+     * old inode. Tab resolution is [reachImportReview]'s (the import tab is the 4th bottom-band
+     * candidate), so this mode never re-implements tab geometry.
      */
+    private fun runSeedFixture(evidence: MutableList<String>) {
+        val log = evidenceLog(evidence)
+        evidence += "== seedFixture start epochMillis=${System.currentTimeMillis()}"
+        val fixture =
+            ImportScaleDuplicateFixtureSupport().seed(
+                InstrumentationRegistry.getInstrumentation().targetContext,
+                log,
+            )
+        evidence +=
+            "fixture generation=${fixture.generation} inputRef=${fixture.inputRef} candidates=${fixture.candidateCount} " +
+                "sources=${fixture.sourceCount} requests=${fixture.requestCount} historySources=${fixture.historySourceCount} " +
+                "relations=${fixture.duplicateRelationCount} subjectRelations=${fixture.subjectRelationCount} " +
+                "duplicateHistory=${fixture.duplicateHistoryCount} subjectSourceId=${fixture.subjectSourceId} " +
+                "subjectSources=${fixture.subjectSourceIdCount}"
+        // Two screens, two assertions. The startup face prints "账本：" and the import screen does not,
+        // so the startup health check runs BEFORE the tab switch; folding it into the post-tab
+        // assertion would make it impossible by construction.
+        reachHealthyLedgerStart(log)
+        reachImportReview(log)
+        assertSeedFixtureImportScreen(fixture, log)
+        evidence += "== seedFixture end"
+    }
+
+    /**
+     * Startup health on the FIRST screen, before any tab switch: the real ledger surface ("账本：")
+     * must appear and no fail-closed startup face may. This is the mode's startup-health check; it
+     * launches the app the same way [reachImportReview] would, so the later tab resolution still takes
+     * its existing-app-root branch.
+     */
+    private fun reachHealthyLedgerStart(log: (String) -> Unit) {
+        if (!awaitAppRoot(APP_ROOT_WAIT_MILLIS, "seedFixture-start", log)) {
+            log("launching: $LAUNCH_COMMAND")
+            shell(LAUNCH_COMMAND)
+            assertTrue(
+                "MainActivity window did not become reachable within $POST_LAUNCH_ROOT_WAIT_MILLIS ms; observed: ${observedState()}",
+                awaitAppRoot(POST_LAUNCH_ROOT_WAIT_MILLIS, "seedFixture-post-launch", log),
+            )
+        }
+        var failureLine: String? = null
+        waitFor(
+            {
+                val texts = visibleScreenTexts()
+                failureLine = texts.firstOrNull { text -> STARTUP_FAILURE_PREFIXES.any { prefix -> text.startsWith(prefix) } }
+                failureLine != null || texts.any { text -> text.startsWith(LEDGER_READY_PREFIX) }
+            },
+            SEED_FIXTURE_START_SCREEN_WAIT_MILLIS,
+            POLL_MILLIS,
+        )
+        val texts = visibleScreenTexts()
+        val readyLine = texts.firstOrNull { text -> text.startsWith(LEDGER_READY_PREFIX) }
+        log(
+            "seed fixture start screen ready=${readyLine != null} ledgerLine=${readyLine ?: "absent"} " +
+                "labels=${texts.joinToString(separator = " | ")}",
+        )
+        assertNull("seed fixture start screen reached a fail-closed face '${failureLine ?: ""}': $texts", failureLine)
+        assertNotNull("the ledger surface never became ready (no '账本：' line) on the start screen: $texts", readyLine)
+    }
+
+    /**
+     * The import screen after the tab switch (D-275: 列表首屏即见重复组), kept inside the Activity. The
+     * group header carries its row count and empty groups are never rendered, so seeing it proves a
+     * real candidate row in the 疑似重复——待审核 class rendered beside a real list (not the
+     * unloaded/empty state). The ordinary 待确认——缺用户决策 group must stay empty: the only pending
+     * candidate is the duplicate subject. The observed header line goes into the evidence.
+     */
+    private fun assertSeedFixtureImportScreen(fixture: ScaleDuplicateFixture, log: (String) -> Unit) {
+        var failureLine: String? = null
+        waitFor(
+            {
+                val texts = visibleScreenTexts()
+                failureLine = texts.firstOrNull { text -> STARTUP_FAILURE_PREFIXES.any { prefix -> text.startsWith(prefix) } }
+                failureLine != null || texts.any { text -> text.startsWith(DUPLICATE_GROUP_HEADER_PREFIX) }
+            },
+            SEED_FIXTURE_IMPORT_SCREEN_WAIT_MILLIS,
+            POLL_MILLIS,
+        )
+        val texts = visibleScreenTexts()
+        val duplicateHeader = texts.firstOrNull { text -> text.startsWith(DUPLICATE_GROUP_HEADER_PREFIX) }
+        val pendingHeader = texts.firstOrNull { text -> text.startsWith(PENDING_DECISION_HEADER_PREFIX) }
+        log(
+            "seed fixture import screen duplicateHeader=${duplicateHeader ?: "absent"} " +
+                "pendingDecisionHeader=${pendingHeader ?: "absent"} labels=${texts.joinToString(separator = " | ")}",
+        )
+        assertNull("seed fixture import screen reached a fail-closed face '${failureLine ?: ""}': $texts", failureLine)
+        assertNotNull("the duplicate group header must be on the first import screen: $texts", duplicateHeader)
+        assertNull(
+            "待确认——缺用户决策 must stay empty in this fixture (the only pending candidate is the " +
+                "duplicate subject): $texts",
+            pendingHeader,
+        )
+        log("seed fixture duplicate header=$duplicateHeader subjectCandidate=${fixture.candidateId}")
+    }
+
+    private fun visibleScreenTexts(): List<String> =
+        collectNodes(appRoot()) { node -> node.isVisibleToUser && nodeText(node).isNotEmpty() }.map { node -> nodeText(node) }
+
+    private data class DuplicateTotals(
+        val relations: Long?,
+        val subjects: Long?,
+        val candidates: Long?,
+    )
+
+    /**
+     * The duplicate totals through the same generation-aware resolver as every other direct probe,
+     * with the resolver inside the failure boundary (a poll-time resolve failure is a logged null
+     * reading; the caller hard-stops with [requireComplete] when it needs a verdict).
+     */
+    private fun readDuplicateTotals(label: String, log: (String) -> Unit): DuplicateTotals =
+        runCatching {
+            val path = activeGenerationDatabasePath()
+            SQLiteDatabase.openDatabase(path.absolutePath, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+                DuplicateTotals(
+                    relations = countRows(db, "import_duplicate_candidate", label, log),
+                    subjects = scalarQuery(db, "SELECT COUNT(DISTINCT subject_source_id) FROM import_duplicate_candidate"),
+                    candidates = countRows(db, "import_candidate", label, log),
+                )
+            }
+        }.getOrElse { error ->
+            log("FINDING: db $label duplicate totals failed ${describeError(error)}")
+            DuplicateTotals(null, null, null)
+        }
+
+    private fun scalarQuery(db: SQLiteDatabase, sql: String): Long? =
+        runCatching {
+            db.rawQuery(sql, null).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else null }
+        }.getOrElse { null }
+
+    private fun DuplicateTotals.requireComplete(label: String): DuplicateTotals {
+        check(relations != null && subjects != null && candidates != null) {
+            "$label duplicate totals are unavailable; aborting instead of asserting an unavailable count"
+        }
+        return this
+    }
+
+    /**
+     * Activation-only: turns the ALREADY PUBLISHED fixture into the UI's current import session
+     * through the real product picker. It never rebuilds the fixture
+     * ([ImportScaleDuplicateFixtureSupport.requirePublished]) because this process has already opened
+     * the published database; replacing the file would leave the product writing to the old inode.
+     *
+     * Host sequence: run `seedFixture` in a fresh process → force-stop the app → start this mode in a
+     * new process. The activation row carries the fixture's business tuple, so the product's own
+     * intake matches the 20,000 history sources PLUS the fixture's pending subject and writes 20,001
+     * relations itself; the totals below are asserted, not assumed.
+     */
+    private fun activatePublishedDuplicateGroupThroughProduct(fixture: ScaleDuplicateFixture, log: (String) -> Unit) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val baseline = requireNotNull(countImportCandidates(log)) { "the published fixture is unreadable: no pre-activation import_candidate count" }
+        val fixtureName = "scale-duplicate-session.csv"
+        val downloads = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, fixtureName)
+            put(android.provider.MediaStore.Downloads.MIME_TYPE, "text/csv")
+            put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val uri = checkNotNull(context.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, downloads))
+        try {
+            checkNotNull(context.contentResolver.openOutputStream(uri, "w")).use { it.write(SEED_ACTIVATION_CSV.toByteArray(Charsets.UTF_8)) }
+            check(context.contentResolver.update(uri, android.content.ContentValues().apply { put(android.provider.MediaStore.Downloads.IS_PENDING, 0) }, null, null) == 1)
+            prepareAutomation()
+            reachImportReview(log)
+            val formatNode = findByText(appRoot(), DEFAULT_SHARE_FORMAT_LABEL)
+            val choices = collectNodes(appRoot()) { node -> nodeText(node) == DEFAULT_PICK_LABEL }
+            check(formatNode != null && choices.isNotEmpty()) { "the real CMB file-pick row is unavailable" }
+            val centerY = boundsOf(formatNode).centerY()
+            val choice = choices.minByOrNull { abs(boundsOf(it).centerY() - centerY) }
+            check(choice != null && clickNode(choice)) { "the real CMB file pick was refused" }
+            val picker = awaitPickerTarget(fixtureName, log)
+            checkNotNull(picker) { "the fixture row did not appear in the real system picker" }
+            val pickerClick = clickPickerRow(picker.node, log)
+            log("b6 activation picker accepted=${pickerClick.accepted} coordinateTapIssued=${pickerClick.coordinateTapIssued}")
+            val intake = awaitCountProbeIntake(baseline, DEFAULT_COUNT_PROBE_INTAKE_TIMEOUT_MILLIS, log)
+            check(intake.detected && intake.stabilized) { "the real fixture intake did not stabilize: $intake" }
+            // The activation verdict is a count, not a hope: one new subject, 20,001 relations of its
+            // own on top of the fixture's 20,000, and exactly one new candidate.
+            val totals = readDuplicateTotals("activationAfter", log).requireComplete("activationAfter")
+            check(totals.relations == SCALE_DUPLICATE_ACTIVATION_TOTAL_RELATIONS.toLong()) {
+                "after activation import_duplicate_candidate=${totals.relations}, expected " +
+                    "$SCALE_DUPLICATE_ACTIVATION_TOTAL_RELATIONS ($SCALE_DUPLICATE_FIXTURE_RELATIONS fixture + " +
+                    "$SCALE_DUPLICATE_ACTIVATION_RELATIONS activation); the activation row must carry the fixture's " +
+                    "business tuple (${SCALE_FIXTURE_CURRENCY_CODE}/$SCALE_FIXTURE_CURRENCY_PRECISION/" +
+                    "$SCALE_FIXTURE_OCCURRED_AT/$SCALE_FIXTURE_DIRECTION_TOKEN/$SCALE_FIXTURE_STATUS_TOKEN)"
+            }
+            check(totals.subjects == 2L) {
+                "after activation the duplicate relations span ${totals.subjects} subject sources, expected 2 " +
+                    "(fixture subject ${fixture.subjectSourceId} plus the activation subject)"
+            }
+            check(totals.candidates == 3L) { "after activation import_candidate=${totals.candidates}, expected 3" }
+            log("b6 activation totals relations=${totals.relations} subjects=${totals.subjects} candidates=${totals.candidates}")
+            val refresh = findByText(appRoot(), DEFAULT_REFRESH_LABEL)
+            check(refresh != null && clickNode(refresh)) { "the real post-intake refresh was refused" }
+            check(waitFor({ findByContentDescription(appRoot(), DEFAULT_TARGET) != null }, GROUP_CARD_WAIT_MILLIS, POLL_MILLIS)) {
+                "the product session did not expose the duplicate-group entry"
+            }
+        } finally {
+            context.contentResolver.delete(uri, null, null)
+        }
+    }
+
     private fun runB6CardOpen(evidence: MutableList<String>) {
         val log = evidenceLog(evidence)
         val target = stringArg(ARG_TARGET, DEFAULT_TARGET)
@@ -733,7 +994,22 @@ class ImportScaleTraversalInstrumentedTest {
         val settleMillis = intArg(ARG_SETTLE_MILLIS, DEFAULT_SETTLE_MILLIS)
         val stallChecks = intArg(ARG_STALL_CHECKS, DEFAULT_STALL_CHECKS)
         evidence += "== b6CardOpen start epochMillis=${System.currentTimeMillis()}"
-        evidence += "args target=$target maxForwardActions=$maxForwardActions settleMillis=$settleMillis stallChecks=$stallChecks"
+        val seedFixture = booleanArg(ARG_SEED_FIXTURE, false)
+        evidence += "args target=$target maxForwardActions=$maxForwardActions settleMillis=$settleMillis stallChecks=$stallChecks seedFixture=$seedFixture"
+        if (seedFixture) {
+            // Activation-only: the fixture must already be published by a previous `seedFixture` run
+            // (host: seed → force-stop → fresh process → this mode). This path never rebuilds it.
+            val fixture =
+                ImportScaleDuplicateFixtureSupport().requirePublished(
+                    InstrumentationRegistry.getInstrumentation().targetContext,
+                    log,
+                )
+            evidence +=
+                "b6 fixture reuse: generation=${fixture.generation} relations=${fixture.duplicateRelationCount} " +
+                    "historySources=${fixture.historySourceCount} subject=${fixture.subjectSourceId} (no rebuild)"
+            activatePublishedDuplicateGroupThroughProduct(fixture, log)
+            evidence += "b6 fixture ready: real product intake armed the duplicate-group session"
+        }
         prepareAutomation()
         reachImportReview(log)
         val container = selectScrollableContainer(log)
@@ -925,6 +1201,7 @@ class ImportScaleTraversalInstrumentedTest {
         // intake's own writes stay out of that delta; without an intake phase it is the plain
         // before-traversal read this mode has always logged.
         val baseline = readLedgerSnapshot(if (preIntake == null) "before" else "postIntake", log)
+            .requireComplete(if (preIntake == null) "before" else "postIntake")
         if (preIntake != null) {
             logIntakeDelta(preIntake, baseline, log)
         }
@@ -1142,6 +1419,7 @@ class ImportScaleTraversalInstrumentedTest {
         prepareAutomation()
         reachImportReview(log)
         val baseline = readLedgerSnapshot(if (preIntake == null) "before" else "postIntake", log)
+            .requireComplete(if (preIntake == null) "before" else "postIntake")
         if (preIntake != null) {
             logIntakeDelta(preIntake, baseline, log)
         }
@@ -1291,7 +1569,7 @@ class ImportScaleTraversalInstrumentedTest {
         }
         // Step 1: the baseline, taken before anything is imported in this session.
         val baselineRowCount = collectionRowCount(container)
-        val dbBaseline = countTableRows(IMPORT_CANDIDATE_TABLE, "countProbeBaseline", log)
+        val dbBaseline = requireNotNull(countTableRows(IMPORT_CANDIDATE_TABLE, "countProbeBaseline", log)) { "countProbe baseline DB read failed" }
         log(
             "baseline rowCount=${countText(baselineRowCount)} dbCandidates=${countText(dbBaseline)} " +
                 "listCandidates=${countText(baselineRowCount)} listCandidatesNote=rowCountMinusNonCandidateItemCountUnknown",
@@ -1884,7 +2162,7 @@ class ImportScaleTraversalInstrumentedTest {
             return BatchCommitReading(committed = false, before = null, after = null, elapsedMs = elapsedMillis(startNanos))
         }
         log("authorize node ${describeNode(authorizeNode)} label=${nodeLabel(authorizeNode)}")
-        val preBatch = countTableRows(LEDGER_TRANSACTION_TABLE, "preBatch", log)
+        val preBatch = requireNotNull(countTableRows(LEDGER_TRANSACTION_TABLE, "preBatch", log)) { "batch baseline DB read failed" }
         log("batch commit baseline $LEDGER_TRANSACTION_TABLE=${countText(preBatch)}")
         log("authorize click accepted=${clickNode(authorizeNode)}")
         return awaitBatchCommit(preBatch, log)
@@ -1910,7 +2188,7 @@ class ImportScaleTraversalInstrumentedTest {
         log: (String) -> Unit,
     ): LedgerSnapshot {
         log("intake phase start epochMillis=${System.currentTimeMillis()} waitForIntakeMillis=$waitForIntakeMillis")
-        val baseline = readLedgerSnapshot("preIntake", log)
+        val baseline = readLedgerSnapshot("preIntake", log).requireComplete("preIntake")
         launchAppWithoutAutomation(log)
         sleepQuietly(INTAKE_RENDER_MILLIS.toLong())
         val startNanos = System.nanoTime()
@@ -2023,9 +2301,11 @@ class ImportScaleTraversalInstrumentedTest {
      * and its progress lines report `unavailable` until the read recovers.
      */
     private fun countImportCandidates(log: (String) -> Unit): Long? =
+        // The resolver runs inside the boundary on purpose: this is the intake poll, so a
+        // pointer/journal/main-file failure while the generation is switching is a logged
+        // `unavailable` reading the wait retries, never an exception that kills the mode.
         runCatching {
-            val context = InstrumentationRegistry.getInstrumentation().targetContext
-            val path = context.getDatabasePath(DB_FILE_NAME)
+            val path = activeGenerationDatabasePath()
             SQLiteDatabase.openDatabase(path.absolutePath, null, SQLiteDatabase.OPEN_READONLY).use { db ->
                 db.rawQuery("SELECT COUNT(*) FROM import_candidate", null).use { cursor ->
                     if (cursor.moveToFirst()) cursor.getLong(0) else null
@@ -2667,17 +2947,22 @@ class ImportScaleTraversalInstrumentedTest {
     /**
      * Reads the app database read-only through the platform `SQLiteDatabase` - the authoritative
      * evidence for "how many candidates exist" and "which duplicate statuses were actually written",
-     * as opposed to UI copy. The database file is the app's own `ledger.db`
-     * (`InstrumentationRegistry.getInstrumentation().targetContext.getDatabasePath`), the same file
-     * the product's driver opens. A database that cannot be opened, or a query that fails, is logged
-     * as a finding and reported as a null reading - this never fails the test.
+     * as opposed to UI copy. [activeGenerationDatabasePath] resolves the active generation through
+     * the same `androidStableStoragePaths` host as production. A failed snapshot read is logged and
+     * reported as null; a caller that uses it as a baseline requires a complete snapshot instead.
      */
     private fun readLedgerSnapshot(
         label: String,
         log: (String) -> Unit,
     ): LedgerSnapshot {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val path = context.getDatabasePath(DB_FILE_NAME)
+        // The resolver is part of THIS read's failure boundary: a poll-time pointer/journal/main-file
+        // failure is a logged unavailable snapshot, never an exception escaping into the mode.
+        val path =
+            runCatching { activeGenerationDatabasePath() }
+                .getOrElse { error ->
+                    log("FINDING: db $label active-generation path resolution failed ${describeError(error)}; snapshot unavailable, continuing")
+                    return LedgerSnapshot(null, null, null, null, null, emptyList())
+                }
         val sizeBytes = if (path.exists()) path.length() else -1L
         log("db $label file=${path.name} exists=${path.exists()} sizeBytes=$sizeBytes")
         val database =
@@ -2726,18 +3011,18 @@ class ImportScaleTraversalInstrumentedTest {
         table: String,
         label: String,
         log: (String) -> Unit,
-    ): Long? {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val path = context.getDatabasePath(DB_FILE_NAME)
-        return runCatching {
+    ): Long? =
+        // Path resolution shares the open's failure boundary: a poll-time resolve failure is the
+        // same logged null reading as a failed open, so the poll keeps retrying.
+        runCatching {
+            val path = activeGenerationDatabasePath()
             SQLiteDatabase.openDatabase(path.absolutePath, null, SQLiteDatabase.OPEN_READONLY).use { db ->
                 countRows(db, table, label, log)
             }
         }.getOrElse { error ->
-            log("FINDING: db $label open failed for count($table) ${describeError(error)}")
+            log("FINDING: db $label path/open failed for count($table) ${describeError(error)}")
             null
         }
-    }
 
     /**
      * The formal-effect counts a phase summary needs beyond [LedgerSnapshot]: [IMPORT_CONFIRMATION_TABLE]
@@ -2749,12 +3034,41 @@ class ImportScaleTraversalInstrumentedTest {
         val postings: Long?,
     )
 
+    /**
+     * The one generation-aware path resolution for every direct SQLite probe in this class.
+     * Re-resolves the pointer for every read so an active-generation switch cannot leave a probe
+     * reading a stale file. Bad pointers/journals, escapes, and missing main files fail closed;
+     * they are never substituted with the legacy databases/ledger.db path.
+     */
+    private fun activeGenerationDatabasePath(): File {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val layout = ledgerStorageLayout(AndroidLedgerFileSystem(), androidStableStoragePaths(context.getDatabasePath(DB_FILE_NAME)).first)
+        val pointer = File(layout.activePointerFile)
+        check(pointer.isFile && pointer.length() in 5..32) { "active generation pointer is missing or invalid" }
+        val name = pointer.readText()
+        check(Regex("gen-[1-9][0-9]*").matches(name)) { "invalid active generation name" }
+        check(!File(layout.switchJournalFile).exists()) { "switch journal requires recovery before a probe read" }
+        val generation = name.removePrefix("gen-").toInt()
+        val base = File(layout.generationsDirectory).canonicalFile.toPath()
+        val directory = File(layout.generationDirectory(generation)).canonicalFile
+        check(directory.toPath().startsWith(base) && directory.toPath() != base) { "active generation escapes its parent" }
+        val main = File(layout.mainFile(directory.path)).canonicalFile
+        check(main.parentFile == directory && main.isFile && main.length() > 0L) { "active generation database is missing or empty" }
+        return main
+    }
+
     private fun readAuxiliaryCounts(
         label: String,
         log: (String) -> Unit,
     ): AuxiliaryCounts {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val path = context.getDatabasePath(DB_FILE_NAME)
+        // Same failure boundary as every other direct probe: the resolver runs inside it, so a
+        // transient pointer/journal failure during a phase read stays a logged unavailable pair.
+        val path =
+            runCatching { activeGenerationDatabasePath() }
+                .getOrElse { error ->
+                    log("FINDING: db $label active-generation path resolution failed ${describeError(error)}; auxiliary counts unavailable, continuing")
+                    return AuxiliaryCounts(null, null)
+                }
         val database =
             runCatching { SQLiteDatabase.openDatabase(path.absolutePath, null, SQLiteDatabase.OPEN_READONLY) }
                 .getOrElse { error ->
@@ -2794,6 +3108,17 @@ class ImportScaleTraversalInstrumentedTest {
             log("FINDING: db $label duplicate status histogram failed ${describeError(error)}")
             emptyList()
         }
+    }
+
+    private fun LedgerSnapshot.requireComplete(label: String): LedgerSnapshot {
+        check(
+            importCandidates != null &&
+                importSourceRecords != null &&
+                ledgerTransactions != null &&
+                duplicatePairs != null &&
+                duplicateHistoryRows != null,
+        ) { "$label baseline snapshot is incomplete; aborting rather than comparing unavailable counts" }
+        return this
     }
 
     private fun describeSnapshot(snapshot: LedgerSnapshot): String {
@@ -4064,4 +4389,15 @@ class ImportScaleTraversalInstrumentedTest {
         val raw = InstrumentationRegistry.getArguments().get(name)?.toString() ?: return fallback
         return raw.trim().toIntOrNull() ?: fallback
     }
+
+    private fun booleanArg(
+        name: String,
+        fallback: Boolean,
+    ): Boolean =
+        when (InstrumentationRegistry.getArguments().getString(name)?.trim()?.lowercase(Locale.ROOT)) {
+            null -> fallback
+            "true", "1", "yes" -> true
+            "false", "0", "no" -> false
+            else -> fallback
+        }
 }
