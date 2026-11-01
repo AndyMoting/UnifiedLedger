@@ -1,0 +1,200 @@
+# Dedicated ENOSPC device rig (manual, non-blocking, one AVD).
+#
+# What this workflow is
+# ---------------------
+# One manually dispatched job that runs exactly one instrumented case —
+# com.unifiedledger.android.ImportEnospcInstrumentedTest — on one hardware
+# accelerated GitHub-hosted emulator. The case is the device rig D-276 item 2
+# asks the DEF-IMPORT-ENOSPC-CRASH-01 fix to be pinned by: it fills /data until
+# the filesystem refuses a write, drives the real import-intake commit against
+# the full disk, and asserts a typed StorageUnavailable result plus an intact
+# ledger (quick_check ok, active pointer and generation set unchanged, no
+# half-written candidate).
+#
+# What this workflow is not
+# -------------------------
+# - Not the ordinary device regression of android-instrumented.yml (which
+#   excludes this class in both of its exclusion lists) and not a required PR
+#   check.
+# - Not a general-regression signal and not a P7 vector: a PASS here adds no
+#   vector and does not change the PASS table. The always-on gate summary repeats
+#   that in one sentence, identical to ENOSPC_SCOPE in the driver.
+# - Not a producer: it never builds or repacks APKs. It consumes the trusted
+#   whole-tree bundle for the exact Git tree and goes red — telling the operator
+#   to dispatch ci.yml for this SHA first — when no such bundle exists. Building
+#   here would create a second, unbound provenance chain for the same tree.
+#
+# Facts this file depends on
+# --------------------------
+# - api-level 36 / google_apis / x86_64 / 2 cores / 2048M / pixel_6 mirror the
+#   managed device profile the other Android chains use.
+# - The data partition is pinned small (-partition-size 5120). The case SKIPS —
+#   never passes — when it cannot exhaust /data inside its own 16 GiB fill cap
+#   and 15-minute fill deadline, and a skip is red here. A 5 GiB partition keeps
+#   the fill to a few gibibytes, which the case exhausts quickly; the driver
+#   re-reads the real free space before running and fails with an explicit
+#   message if the request was ignored, instead of paying for a skip.
+# - While the fill is held /data is genuinely full and every write on the device
+#   can fail: the AVD is disposable and must never carry real data. The case
+#   releases the fill inside its own body and removes both of its directories in
+#   `finally`; the driver's host-side fallback is limited to exact
+#   cache/enospc-fill-<digits> names and never touches files/, the ledger, or
+#   another package.
+# - The action runs `script` with /usr/bin/sh (dash): no `set -o pipefail`, no
+#   backslash continuations, one command per line.
+# - APKs are downloaded, never built: `android-apks.py reuse` matches the
+#   artifact name android-apks-<git-tree>-<run-id>-<attempt>, and `verify`
+#   re-checks the producer run, the GitHub commit/tree binding and both digests
+#   against the producer manifest.
+name: Android ENOSPC device rig
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact 40-character commit SHA to test
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+# A dispatch is a deliberate, paid-for run whose evidence is bound to the SHA the
+# operator asked for, so nothing cancels it: each run owns an isolated runner and
+# its own exclusive `ul-enospc` emulator, and parallel dispatches of one SHA stay
+# tellable apart by run id.
+concurrency:
+  group: android-enospc-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  enospc:
+    name: Android ENOSPC device rig
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      TZ: Asia/Shanghai
+    steps:
+      - name: Check selected ref and exact SHA
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          # `[[ ... =~ ... ]]` is required here: the POSIX `test`/`[` builtin has
+          # no `=~` operator and would abort this step before any other check.
+          # Lowercase only, matching the driver's and the reducer's [0-9a-f]{40}.
+          [[ "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          # Query the remote URL directly: this step runs BEFORE actions/checkout,
+          # so there is no local repository and no configured `origin` to ask yet.
+          selected_ref="${GITHUB_REF#refs/heads/}"
+          selected_sha="$(git ls-remote "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" "refs/heads/${selected_ref}" | awk '{print $1}')"
+          test -n "${selected_sha}" && test "${selected_sha}" = "${EXPECTED_SHA}"
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 1
+      - name: Discover the trusted whole-tree APK bundle
+        id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/android-apks.py reuse --directory enospc-apks
+      - name: Require a pre-built trusted bundle for this exact tree
+        # A miss is a red run, not a rebuild: this rig never produces APKs and
+        # never writes its own provenance, so a bundle that does not already exist
+        # cannot be manufactured here without inventing a second byte source for
+        # the same tree.
+        if: steps.reuse.outputs.hit != 'true'
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          TREE: ${{ steps.reuse.outputs.tree }}
+        run: |
+          echo "::error::No trusted APK bundle for tree ${TREE} of ${EXPECTED_SHA}. Dispatch ci.yml for this SHA on main, wait for its 'Android compile' job to succeed (it uploads android-apks-<tree>-<run>-<attempt>), then dispatch this workflow again."
+          exit 1
+      - name: Re-verify the downloaded bundle against its producer run
+        # Independent of the reuse step: the producer run/attempt, workflow, the
+        # GitHub commit/tree binding and both APK digests are re-checked before a
+        # single device byte is written.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/android-apks.py verify --directory enospc-apks
+      - uses: actions/setup-java@v5
+        # No Gradle build runs here, but the emulator's `avdmanager`/`sdkmanager`
+        # are Java tools: the JDK is pinned explicitly, exactly as the other
+        # Android workflows do, instead of trusting the runner image default.
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Record outer deadline before emulator boot
+        # The boot consumes the same budget as the rig; the driver converts this
+        # to a monotonic deadline, keeps diagnostic time plus a report/cleanup
+        # reserve inside it, and stops before the step is killed.
+        run: echo "ANDROID_CI_OUTER_DEADLINE_EPOCH=$(( $(date +%s) + 2100 ))" >> "$GITHUB_ENV"
+      - name: Run the ENOSPC rig on the pinned emulator
+        timeout-minutes: 40
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          avd-name: ul-enospc
+          profile: pixel_6
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          cores: 2
+          ram-size: 2048M
+          emulator-boot-timeout: 300
+          disable-animations: true
+          # -partition-size is the documented system/data partition size in MBs.
+          # 5 GiB leaves the guest several gibibytes to fill, which the rig can
+          # exhaust well inside its 16 GiB cap and 15-minute fill deadline.
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -partition-size 5120
+          script: |
+            set -u
+            python3 tools/ci/android-enospc-cloud.py run --app enospc-apks/android-app-debug.apk --test enospc-apks/android-app-debug-androidTest.apk --evidence enospc-evidence --sha "${EXPECTED_SHA}" --outer-deadline-epoch "$ANDROID_CI_OUTER_DEADLINE_EPOCH" --avd-name ul-enospc
+      - name: Independently re-validate the evidence
+        # The job must not be green on a relayed exit code alone. This step runs
+        # even when the emulator step failed: it re-parses the transcript with the
+        # strict reducer, re-checks the logcat collector contract, and binds the
+        # installed digests to the producer manifest copied into the evidence. A
+        # missing or internally inconsistent evidence set can never leave the job
+        # green.
+        if: always()
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: python3 tools/ci/android-enospc-cloud.py validate --evidence enospc-evidence --sha "${EXPECTED_SHA}"
+      - name: Gate summary
+        # Always runs, and always states the scope: an evidence-bearing run gets
+        # the driver's summary (whose first paragraph is the same sentence), and a
+        # run that stopped before the device still says what this rig is and that
+        # nothing about its behaviour was observed.
+        if: always()
+        run: |
+          {
+            if [ -f enospc-evidence/summary.md ]; then
+              cat enospc-evidence/summary.md
+            else
+              echo "## ENOSPC device rig — no evidence"
+              echo
+              echo "This is the dedicated real-out-of-space rig for DEF-IMPORT-ENOSPC-CRASH-01 (D-276 item 2). It is not the ordinary device regression, it is not a required check, and it carries no general-regression signal; a PASS here adds no P7 vector and does not change the PASS table."
+              echo
+              echo "No evidence was produced: the run stopped before the device step. The failed step above is the cause; nothing about the rig's behaviour was observed."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the rig evidence
+        # Partial evidence still uploads (the driver creates the directory before
+        # the first device command), so a failed run keeps its transcript, logcat
+        # and cleanup record. A run that never reached the device has nothing to
+        # upload; its red comes from the step that stopped it.
+        if: always() && hashFiles('enospc-evidence/**') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-enospc-${{ inputs.expected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: enospc-evidence/**
+          if-no-files-found: error
+          retention-days: 7

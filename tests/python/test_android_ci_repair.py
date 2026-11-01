@@ -1527,5 +1527,411 @@ class OrdinaryInventory(unittest.TestCase):
         with self.assertRaises(ValueError): check_inventory(self.root, self.manifest)
 
 
+# ---------------------------------------------------------------------------
+# Dedicated ENOSPC cloud rig (D-276 item 2)
+#
+# The rig is a manual workflow (one AVD, one opted-in case) plus its driver
+# tools/ci/android-enospc-cloud.py. Everything below is static or pure: no
+# device, no network, no Gradle, no build. The device-side claim itself belongs
+# to a dispatched run; these tests pin the boundaries that make such a claim
+# mean something — the workflow cannot quietly become a producer or a
+# regression gate, an assumption skip can never read as a pass, and the host
+# cleanup can only touch exact cache/enospc-fill-<digits> names.
+# ---------------------------------------------------------------------------
+
+import importlib.util
+
+ENOSPC_ROOT = Path(__file__).resolve().parents[2]
+ENOSPC_CASE = "com.unifiedledger.android.ImportEnospcInstrumentedTest"
+ENOSPC_METHOD = "aRealEnospcOnTheIntakeCommitIsTypedAndLeavesTheLedgerIntact"
+
+
+def enospc_driver():
+    """Load tools/ci/android-enospc-cloud.py by path: its file name carries a hyphen."""
+    path = ENOSPC_ROOT / "tools" / "ci" / "android-enospc-cloud.py"
+    spec = importlib.util.spec_from_file_location("android_enospc_cloud", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def enospc_workflow() -> str:
+    return (ENOSPC_ROOT / ".github" / "workflows" / "android-enospc.yml").read_text(encoding="utf-8")
+
+
+def enospc_transcript(*, codes=(1, 0), completion="-1", junit="OK (1 test)",
+                      test_name: str = ENOSPC_METHOD, numtests: str = "1", banner: str = "") -> str:
+    """One raw `am instrument -w -r` transcript in the runner's own shape."""
+    lines = []
+    for code in codes:
+        lines += [
+            "INSTRUMENTATION_STATUS: class=" + ENOSPC_CASE,
+            "INSTRUMENTATION_STATUS: test=" + test_name,
+            "INSTRUMENTATION_STATUS: numtests=" + numtests,
+            "INSTRUMENTATION_STATUS_CODE: " + str(code),
+        ]
+    if completion is not None:
+        lines.append("INSTRUMENTATION_CODE: " + completion)
+    if banner:
+        lines.append(banner)
+    if junit:
+        lines.append(junit)
+    return "\n".join(lines) + "\n"
+
+
+def report_document(sha: str = SHA, digests: dict | None = None) -> dict:
+    """The driver's result.json shape for a clean PASS."""
+    return {
+        "schema": 1, "mode": "enospc", "rig": "import-intake-enospc",
+        "sha": sha, "status": "PASS", "timed_out": False, "crashed": False, "setup_complete": True,
+        "instrumented_test": {"class": ENOSPC_CASE, "method": ENOSPC_METHOD, "opt_in": "ul.enospc=1",
+                              "numtests": 1, "skipped": False},
+        "apk_sha256": dict(digests if digests is not None else {"app": "b" * 64, "test": "c" * 64}),
+        "apk_producer": {"repository": "example/ledger", "run_id": 123, "run_attempt": 1,
+                         "source_sha": sha, "workflow": ".github/workflows/ci.yml"},
+        "disk": {}, "cleanup": {"removed": [], "failed": [], "skipped": "nothing to remove"},
+        "config": {}, "elapsed_seconds": 95.0,
+    }
+
+
+def enospc_evidence(directory: Path, *, sha: str = SHA,
+                    transcript: str | None = None, logcat: str | None = None) -> dict:
+    """Write a complete, clean evidence set that validate_evidence accepts."""
+    directory.mkdir(parents=True, exist_ok=True)
+    digests = {"app": "b" * 64, "test": "c" * 64}
+    (directory / "instrumentation-enospc.txt").write_text(
+        enospc_transcript() if transcript is None else transcript, encoding="utf-8")
+    (directory / "logcat.txt").write_text(
+        logcat if logcat is not None
+        else "10-31 10:00:00.000  1234  1234 I ActivityManager: Start proc " + PACKAGE + "\n",
+        encoding="utf-8")
+    (directory / "logcat-collection.json").write_text(json.dumps(
+        {"started": True, "stream_bytes": 128, "stopped": True, "gaps": []}), encoding="utf-8")
+    (directory / "disk.json").write_text(json.dumps({
+        "before": {"filesystem": "/dev/block/dm-52", "total_kib": 5242880, "used_kib": 1290000,
+                   "available_kib": 3952880, "use_percent": 24, "mount": "/data"},
+        "samples": [{"elapsed_seconds": 42.0, "available_kib": 12}],
+        "gaps": [],
+        "min_available_kib": 12,
+        "after": {"available_kib": 3940000},
+    }), encoding="utf-8")
+    (directory / "apk-provenance.json").write_text(json.dumps({
+        "schema": 1, "repository": "example/ledger", "source_sha": sha, "tree": "d" * 40,
+        "run_id": 123, "run_attempt": 1, "workflow": ".github/workflows/ci.yml", "sha256": digests,
+    }), encoding="utf-8")
+    document = report_document(sha, digests)
+    (directory / "result.json").write_text(json.dumps(document), encoding="utf-8")
+    return document
+
+
+class EnospcCloudWorkflow(unittest.TestCase):
+    """The manual single-AVD workflow: consumer only, never a producer."""
+
+    def test_manual_dispatch_only_with_one_job_and_no_matrix(self):
+        text = enospc_workflow()
+        self.assertIn("workflow_dispatch:", text)
+        for forbidden in ("pull_request:", "pull_request_target:", "schedule:", "\n  push:"):
+            self.assertNotIn(forbidden, text)
+        jobs = text.split("\njobs:\n", 1)[1]
+        self.assertEqual(["enospc"], re.findall(r"(?m)^  ([a-z][a-z0-9-]*):$", jobs))
+        self.assertNotIn("needs:", jobs)
+        self.assertNotIn("strategy:", jobs)
+
+    def test_exact_sha_input_is_checked_against_the_selected_ref(self):
+        text = enospc_workflow()
+        self.assertIn("expected_sha:", text)
+        self.assertIn("required: true", text.split("expected_sha:", 1)[1].split("type:", 1)[0])
+        self.assertIn("type: string", text)
+        guard = text.split("name: Check selected ref and exact SHA", 1)[1].split("- uses:", 1)[0]
+        self.assertIn("[[ \"${EXPECTED_SHA}\" =~ ^[0-9a-f]{40}$ ]]", guard)
+        self.assertIn("git ls-remote", guard)
+        self.assertIn("refs/heads/", guard)
+        self.assertIn("test \"${selected_sha}\" = \"${EXPECTED_SHA}\"", guard)
+        self.assertIn("ref: ${{ inputs.expected_sha }}", text)
+
+    def test_bundle_is_reused_and_never_built_or_repacked(self):
+        text = enospc_workflow()
+        self.assertIn("python3 tools/ci/android-apks.py reuse --directory enospc-apks", text)
+        self.assertIn("python3 tools/ci/android-apks.py verify --directory enospc-apks", text)
+        self.assertNotIn("android-apks.py pack", text)
+        self.assertNotIn("./gradlew", text)
+        self.assertNotIn("assembleDebug", text)
+        miss = text.split("name: Require a pre-built trusted bundle for this exact tree", 1)[1].split("- name:", 1)[0]
+        self.assertIn("if: steps.reuse.outputs.hit != 'true'", miss)
+        self.assertIn("TREE: ${{ steps.reuse.outputs.tree }}", miss)
+        self.assertIn("Dispatch ci.yml for this SHA on main", miss)
+        self.assertIn("exit 1", miss)
+
+    def test_one_pinned_avd_with_the_managed_profile(self):
+        text = enospc_workflow()
+        self.assertEqual(1, text.count("uses: reactivecircus/android-emulator-runner@v2"))
+        for option in ("avd-name: ul-enospc", "profile: pixel_6", "api-level: 36",
+                       "target: google_apis", "arch: x86_64", "cores: 2", "ram-size: 2048M",
+                       "emulator-boot-timeout: 300", "-partition-size 5120"):
+            self.assertIn(option, text)
+
+    def test_driver_is_invoked_for_the_one_opted_in_class(self):
+        text = enospc_workflow()
+        self.assertIn("python3 tools/ci/android-enospc-cloud.py run", text)
+        self.assertIn("--app enospc-apks/android-app-debug.apk", text)
+        self.assertIn("--test enospc-apks/android-app-debug-androidTest.apk", text)
+        self.assertIn('--sha "${EXPECTED_SHA}"', text)
+        self.assertIn('--outer-deadline-epoch "$ANDROID_CI_OUTER_DEADLINE_EPOCH"', text)
+        argv = enospc_driver().instrument_argv("emulator-5680")
+        self.assertEqual(
+            ["adb", "-s", "emulator-5680", "shell", "am", "instrument", "-w", "-r",
+             "-e", "ul.enospc", "1", "-e", "class", ENOSPC_CASE,
+             "com.unifiedledger.android.test/androidx.test.runner.AndroidJUnitRunner"],
+            argv,
+        )
+
+    def test_validation_gate_summary_and_artifact_always_run(self):
+        text = enospc_workflow()
+        validate = text.split("name: Independently re-validate the evidence", 1)[1].split("- name:", 1)[0]
+        self.assertIn("if: always()", validate)
+        self.assertIn("python3 tools/ci/android-enospc-cloud.py validate --evidence enospc-evidence", validate)
+        summary = text.split("name: Gate summary", 1)[1].split("- name:", 1)[0]
+        self.assertIn("if: always()", summary)
+        self.assertIn(enospc_driver().ENOSPC_SCOPE, summary)
+        self.assertIn("GITHUB_STEP_SUMMARY", summary)
+        self.assertIn(
+            "name: android-enospc-${{ inputs.expected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}", text)
+        self.assertIn("retention-days: 7", text)
+        self.assertIn("group: android-enospc-${{ github.run_id }}", text)
+        self.assertIn("cancel-in-progress: false", text)
+
+    def test_ordinary_regression_and_required_checks_are_untouched(self):
+        # The new rig must stay a separate, non-blocking file: the required-check
+        # workflow keeps naming only its own jobs, and the ordinary inventory keeps
+        # excluding this class in both of its exclusion lists.
+        ci = (ENOSPC_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertNotIn("android-enospc", ci)
+        instrumented = (ENOSPC_ROOT / ".github" / "workflows" / "android-instrumented.yml").read_text(encoding="utf-8")
+        self.assertIn("notClass=", instrumented)
+        self.assertIn(ENOSPC_CASE, instrumented.split("notClass=", 1)[1].split("\n", 1)[0])
+        self.assertIn('"ImportEnospcInstrumentedTest"',
+                      (ENOSPC_ROOT / "tools" / "python" / "android_scale" / "inventory.py").read_text(encoding="utf-8"))
+        manifest = (ENOSPC_ROOT / "tools" / "ci" / "android-instrumented-inventory.txt").read_text(encoding="utf-8")
+        self.assertNotIn("Enospc", manifest)
+        self.assertTrue([line for line in manifest.splitlines() if line.strip()])
+
+
+class EnospcCloudRig(unittest.TestCase):
+    """The driver's pure contracts: case identity, verdict strictness, cleanup scope."""
+
+    def test_case_identity_and_fill_cap_match_the_kotlin_rig(self):
+        source = (ENOSPC_ROOT / "android-app" / "src" / "androidTest" / "kotlin" / "com" / "unifiedledger"
+                  / "android" / "ImportEnospcInstrumentedTest.kt").read_text(encoding="utf-8")
+        self.assertIn("class ImportEnospcInstrumentedTest", source)
+        self.assertIn("fun " + ENOSPC_METHOD + "(", source)
+        module = enospc_driver()
+        self.assertEqual(ENOSPC_CASE, module.TEST_CLASS)
+        self.assertEqual(ENOSPC_METHOD, module.TEST_METHOD)
+        self.assertIn('const val OPT_IN_ARGUMENT = "ul.enospc"', source)
+        self.assertEqual("ul.enospc", module.OPT_IN_ARGUMENT)
+        bound = re.search(r"const val MAX_FILL_BYTES = (\d+)L \* 1024 \* 1024 \* 1024", source)
+        self.assertIsNotNone(bound, "the rig's fill cap declaration moved; update the driver's mirror explicitly")
+        self.assertEqual(int(bound[1]) * 1024 ** 3, module.MAX_FILL_BYTES)
+
+    def test_only_a_single_clean_executed_case_is_a_pass(self):
+        module = enospc_driver()
+        module.instrumentation_pass(enospc_transcript(), module.TEST_CLASS, module.TEST_METHOD)
+        red = {
+            "assumption-skip": enospc_transcript(codes=(1, -4), junit="OK (0 tests)"),
+            "ignored": enospc_transcript(codes=(1, -3)),
+            "failed": enospc_transcript(codes=(1, -2), junit="Tests run: 1,  Failures: 1"),
+            "no-completion": enospc_transcript(completion=None),
+            "wrong-completion": enospc_transcript(completion="0"),
+            "failure-banner": enospc_transcript(banner="FAILURES!!!"),
+            "duplicate-record": enospc_transcript(codes=(1, 0, 0)),
+            "unknown-status-code": enospc_transcript(codes=(1, 2)),
+            "wrong-case": enospc_transcript(test_name="someOtherCase"),
+            "two-tests": enospc_transcript(numtests="2"),
+            "summary-only": "OK (1 test)\n",
+            "empty": "",
+        }
+        for label, transcript in red.items():
+            with self.subTest(label=label), self.assertRaises(ValueError):
+                module.instrumentation_pass(transcript, module.TEST_CLASS, module.TEST_METHOD)
+
+    def test_df_rows_are_read_from_the_last_exact_mount(self):
+        module = enospc_driver()
+        text = ("Filesystem      1K-blocks     Used Available Use% Mounted on\n"
+                "tmpfs             1943576      688   1942888   1% /dev\n"
+                "/dev/block/dm-52   5242880  1290000   3952880  24% /data\n"
+                "/data/user/0      5242880  1290000   3952880  24% /data/user/0\n")
+        self.assertEqual(3952880, module.parse_df(text)["available_kib"])
+        self.assertEqual(5242880, module.parse_df(text)["total_kib"])
+        self.assertEqual("/data/user/0", module.parse_df(text, "/data/user/0")["mount"])
+        with self.assertRaises(ValueError):
+            module.parse_df("Filesystem 1K-blocks Used Available Use% Mounted on\n")
+        with self.assertRaises(ValueError):
+            module.parse_df("")
+
+    def test_residual_cleanup_touches_only_exact_rig_cache_names(self):
+        module = enospc_driver()
+        listing = ("enospc-fill-1730000000001\n"
+                   "enospc-fill-12\n"
+                   "enospc-fill-abc\n"
+                   "enospc-fill--17\n"
+                   "enospc-rig-1730000000002\n"
+                   "databases\n"
+                   "..\n"
+                   "enospc-fill-9/extra\n")
+        self.assertEqual(["enospc-fill-12", "enospc-fill-1730000000001"],
+                         module.residual_fill_names(listing))
+        commands = module.cleanup_commands(["enospc-fill-12"])
+        self.assertEqual([["shell", "run-as", "com.unifiedledger.android", "rm", "-rf", "cache/enospc-fill-12"]],
+                         commands)
+        for argv in commands:
+            self.assertNotIn("*", " ".join(argv))
+            self.assertFalse(any("files/" in argument or ".." in argument for argument in argv))
+        with self.assertRaises(ValueError):
+            module.cleanup_commands(["enospc-rig-1"])
+        with self.assertRaises(ValueError):
+            module.cleanup_commands(["cache/enospc-fill-1"])
+        text = (ENOSPC_ROOT / "tools" / "ci" / "android-enospc-cloud.py").read_text(encoding="utf-8")
+        # The host must never widen cleanup to the whole app data set, the ledger
+        # directory, or another package: the case itself owns teardown.
+        for forbidden in ("pm clear", "rm -rf /data", "rm -rf files", "shutil.rmtree"):
+            self.assertNotIn(forbidden, text)
+
+    def test_driver_refuses_a_non_ci_host_and_a_missing_outer_deadline(self):
+        module = enospc_driver()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch.dict(os.environ, {"GITHUB_ACTIONS": "", "RUNNER_ENVIRONMENT": "self-hosted", "RUNNER_OS": "Windows"}):
+                with self.assertRaises(ValueError):
+                    module.EnospcRig(root / "app.apk", root / "test.apk", root / "evidence", SHA,
+                                     outer_deadline_epoch=1.0)
+            with patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted",
+                                         "RUNNER_OS": "Linux"}):
+                with self.assertRaises(ValueError):
+                    module.EnospcRig(root / "app.apk", root / "test.apk", root / "evidence", "not-a-sha",
+                                     outer_deadline_epoch=1.0)
+                with self.assertRaises(ValueError):
+                    module.EnospcRig(root / "app.apk", root / "test.apk", root / "evidence", SHA,
+                                     outer_deadline_epoch=None)
+            self.assertFalse((root / "evidence").exists())
+
+    def test_summary_carries_the_scope_sentence_and_the_verdict(self):
+        module = enospc_driver()
+        summary = module.build_summary({"status": "PASS", "sha": SHA,
+                                        "apk_sha256": {"app": "b" * 64, "test": "c" * 64},
+                                        "disk": {"before": {"total_kib": 5242880, "available_kib": 3952880},
+                                                 "min_available_kib": 12, "after": {"available_kib": 3940000}},
+                                        "cleanup": {"removed": [], "skipped": "nothing to remove"}})
+        self.assertIn("ENOSPC device rig — PASS", summary)
+        self.assertIn(module.ENOSPC_SCOPE, summary)
+        self.assertIn(SHA, summary)
+        failure = module.build_summary({"status": "ERROR", "sha": SHA, "errorType": "RigError",
+                                        "errorMessage": "the case skipped", "timed_out": True})
+        self.assertIn("ENOSPC device rig — ERROR", failure)
+        self.assertIn("the case skipped", failure)
+        self.assertIn("timeout is not a product verdict", failure)
+        self.assertIn(module.ENOSPC_SCOPE, failure)
+
+
+class EnospcCloudEvidence(unittest.TestCase):
+    """The frozen evidence reducer: every decisive claim re-derived from a file."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.module = enospc_driver()
+
+    def test_complete_clean_evidence_passes(self):
+        enospc_evidence(self.root)
+        report = self.module.validate_evidence(self.root, SHA)
+        self.assertEqual("PASS", report["status"])
+        self.assertEqual(ENOSPC_CASE, report["instrumented_test"]["class"])
+
+    def test_report_fields_must_all_agree(self):
+        faults = {
+            "status": lambda document: document.update(status="FAIL"),
+            "sha": lambda document: document.update(sha="b" * 40),
+            "timed-out": lambda document: document.update(timed_out=True),
+            "crashed": lambda document: document.update(crashed=True),
+            "mode": lambda document: document.update(mode="maximum"),
+            "missing-case": lambda document: document.update(instrumented_test=None),
+            "wrong-method": lambda document: document["instrumented_test"].update(method="other"),
+            "numtests": lambda document: document["instrumented_test"].update(numtests=2),
+            "skipped": lambda document: document["instrumented_test"].update(skipped=True),
+            "numtests-bool": lambda document: document["instrumented_test"].update(numtests=True),
+            "digest-shape": lambda document: document["apk_sha256"].update(app="not-a-digest"),
+            "missing-digest": lambda document: document["apk_sha256"].pop("test"),
+        }
+        for label, fault in faults.items():
+            with self.subTest(label=label):
+                document = enospc_evidence(self.root)
+                fault(document)
+                (self.root / "result.json").write_text(json.dumps(document), encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    self.module.validate_evidence(self.root, SHA)
+
+    def test_transcript_and_logcat_are_rechecked_not_trusted(self):
+        cases = {
+            "assumption-skip": {"transcript": enospc_transcript(codes=(1, -4))},
+            "failed": {"transcript": enospc_transcript(codes=(1, -2))},
+            "no-completion": {"transcript": enospc_transcript(completion=None)},
+            "crash-in-logcat": {"logcat": "FATAL EXCEPTION: main\nProcess: " + PACKAGE + ", PID: 4321\n"},
+            "empty-logcat": {"logcat": ""},
+        }
+        for label, changes in cases.items():
+            with self.subTest(label=label):
+                enospc_evidence(self.root, **changes)
+                with self.assertRaises(ValueError):
+                    self.module.validate_evidence(self.root, SHA)
+
+    def test_collector_disk_and_producer_contract(self):
+        def break_collector():
+            (self.root / "logcat-collection.json").write_text(json.dumps(
+                {"started": False, "stream_bytes": 0, "stopped": True, "gaps": []}), encoding="utf-8")
+
+        def break_disk():
+            (self.root / "disk.json").write_text(json.dumps(
+                {"before": {"available_kib": 16 * 1024 * 1024 * 1024 // 1024}}), encoding="utf-8")
+
+        def break_producer_digest():
+            document = json.loads((self.root / "apk-provenance.json").read_text(encoding="utf-8"))
+            document["sha256"]["app"] = "e" * 64
+            (self.root / "apk-provenance.json").write_text(json.dumps(document), encoding="utf-8")
+
+        def break_producer_workflow():
+            document = json.loads((self.root / "apk-provenance.json").read_text(encoding="utf-8"))
+            document["workflow"] = ".github/workflows/untrusted.yml"
+            (self.root / "apk-provenance.json").write_text(json.dumps(document), encoding="utf-8")
+
+        def break_producer_tree():
+            document = json.loads((self.root / "apk-provenance.json").read_text(encoding="utf-8"))
+            document["tree"] = "not-a-tree"
+            (self.root / "apk-provenance.json").write_text(json.dumps(document), encoding="utf-8")
+
+        def remove_transcript():
+            (self.root / "instrumentation-enospc.txt").unlink()
+
+        cases = {
+            "collector-never-started": (break_collector, ValueError),
+            "device-had-space-to-skip": (break_disk, ValueError),
+            "producer-digest": (break_producer_digest, ValueError),
+            "producer-workflow": (break_producer_workflow, ValueError),
+            "producer-tree": (break_producer_tree, ValueError),
+            "missing-transcript": (remove_transcript, OSError),
+        }
+        for label, (fault, expected) in cases.items():
+            with self.subTest(label=label):
+                enospc_evidence(self.root)
+                fault()
+                with self.assertRaises(expected):
+                    self.module.validate_evidence(self.root, SHA)
+
+    def test_sha_must_be_full_and_lowercase(self):
+        enospc_evidence(self.root)
+        for bad in (SHA.upper(), SHA[:39], SHA + "a", ""):
+            with self.subTest(sha=bad), self.assertRaises(ValueError):
+                self.module.validate_evidence(self.root, bad)
+
+
 if __name__ == "__main__":
     unittest.main()
