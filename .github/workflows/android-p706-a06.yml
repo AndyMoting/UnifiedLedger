@@ -1,0 +1,315 @@
+# P706-A06 nineteen-boundary process-kill matrix (manual, non-blocking).
+#
+# WHAT THIS PROVES, AND WHAT IT DOES NOT
+# --------------------------------------
+# This workflow executes the two-phase, boundary-parked protocol of spec
+# `docs/specs/2026-10-24-p706-a02-a06-acceptance-design.md` sections 3.3/3.4 on
+# managed cloud AVDs: for each of the nineteen persistent-state boundary rows the
+# kill leg (`P706A06BoundaryKillInstrumentedTest#bNN...`) drives the real production
+# flow until the boundary parks and then kills its own process, and the verify leg
+# (`P706A06BoundaryVerifyInstrumentedTest#vNN...`) drives the real production
+# startup over the disk that kill left behind.
+#
+# A green run is evidence for A06-b1 (process kill) at nineteen boundaries, and for
+# nothing else. Process death preserves the page cache and the platform has no
+# directory fsync, so this chain neither exercises nor implies real power loss
+# (A06-b2, spec section 3.2/3.6). It does NOT make P706-A06 PASS: the gate report
+# stamps `covers: process-kill-only` and `a06_verdict: not-passed`, and the spec
+# still requires a separate ruling for the power-loss proposition.
+#
+# Facts this file depends on:
+# - `tools/ci/android-a06-cloud.py` owns every device interaction (AVD ownership
+#   check, install, force-stop and private-root cleanup, one `am instrument` per
+#   leg, per-boundary logcat, marker read-back, summary). The workflow must not
+#   duplicate any of it, and the helper refuses to run outside a GitHub-hosted
+#   Linux runner so a local or user device can never be touched.
+# - One boundary per instrumentation start, one AVD per runner. The tests kill
+#   their own process inside every method, so a class-wide run would execute exactly
+#   one boundary; a runner that somehow presents two emulators is refused. The four
+#   5/5/5/4 shard ranges are this batch's own layout for four parallel runners: spec
+#   section 3.4 defines the nineteen rows, not a shard split.
+# - This workflow never builds APKs. It reuses a producer-attested whole-tree bundle
+#   for the exact SHA through `tools/ci/android-apks.py reuse` and fails with the
+#   dispatch instruction when none exists. Only the three producer workflows listed
+#   in `tools/python/android_scale/apks.py` can attest a bundle, and this file is
+#   deliberately not one of them - a locally built pair would be unattested evidence.
+# - The kill leg's shell status is not the verdict. `Process.killProcess` ends the
+#   instrumented process, so `am instrument` terminates abnormally by design; the
+#   acceptance signals are the transcript identity, the marker file, the tag lines
+#   in logcat, and the absence of a crash signature. The post-emulator `check-shard`
+#   step re-derives all of that from disk, so the job cannot go green on the
+#   third-party action's exit code alone.
+# - The action runs `script` with /usr/bin/sh (dash): no `set -o pipefail` and no
+#   backslash line continuations there. Each command stays on one line.
+# - `-no-snapshot` keeps every shard on a cold boot, so the stable redirected root
+#   the two legs exchange is always the one this run created.
+name: Android P706-A06 process-kill boundaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact 40-character commit SHA to test
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+# A manual acceptance round must never be cancelled by a later push: its evidence is
+# tied to the SHA the operator asked for. Each dispatch owns its own runners and its
+# own AVD names, so parallel rounds of one SHA stay tellable apart and never collide.
+concurrency:
+  group: android-p706-a06-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  apks:
+    name: P706-A06 APKs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      artifact: ${{ steps.bundle.outputs.artifact }}
+    env:
+      TZ: Asia/Shanghai
+      LANG: zh_CN.UTF-8
+    steps:
+      - name: Check selected ref and exact SHA
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          # `[[ ... =~ ... ]]` is required: the POSIX `test` builtin has no `=~` and
+          # would abort here. Lowercase only, matching the helper's [0-9a-f]{40}.
+          [[ "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          # Query the remote URL directly: this runs BEFORE actions/checkout, so there
+          # is no local repository and no configured `origin` to ask yet.
+          selected_ref="${GITHUB_REF#refs/heads/}"
+          selected_sha="$(git ls-remote "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" "refs/heads/${selected_ref}" | awk '{print $1}')"
+          test -n "${selected_sha}" && test "${selected_sha}" = "${EXPECTED_SHA}"
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 1
+      - name: Discover and verify an earlier whole-tree APK bundle
+        id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/android-apks.py reuse --directory reused-apks
+      - name: Refuse to build APKs here
+        # The bundle must already be producer-attested for this exact tree. Building a
+        # pair inside this workflow would produce unattested bytes and would let a
+        # device run consume an APK no trusted producer ever checked, so a miss is a
+        # hard stop with the dispatch instruction instead of a silent rebuild.
+        if: steps.reuse.outputs.hit != 'true'
+        run: |
+          set -euo pipefail
+          echo "::error::no reusable producer-attested APK bundle exists for the tree of ${EXPECTED_SHA}."
+          echo "::error::Dispatch the required 'Android compile' producer (.github/workflows/ci.yml) for this exact SHA, then dispatch this matrix again."
+          echo "::error::This workflow never builds APKs: an unattested pair is not admissible evidence."
+          exit 1
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+      - name: Check the reused bundle attests this exact commit
+        # `reuse` matched the whole tree, which a different commit can share, while a
+        # bundle is bound to the commit that produced it. Failing here costs a minute;
+        # discovering the mismatch in the final gate would cost four finished shards.
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: python3 tools/ci/android-a06-cloud.py check-bundle --directory reused-apks --sha "${EXPECTED_SHA}"
+      - name: Name this run's own bundle artifact
+        id: bundle
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          echo "artifact=p706-a06-apks-${EXPECTED_SHA}-${RUN_ID}-${RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - name: Upload the verified bundle under this run's own name
+        # `provenance.json` travels inside the directory and is re-verified in every
+        # device job, so the artifact carries its own provenance rather than a claim.
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.bundle.outputs.artifact }}
+          path: reused-apks
+          if-no-files-found: error
+          retention-days: 7
+
+  shard:
+    name: P706-A06 shard ${{ matrix.shard }}
+    needs: apks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      # A failing shard must not hide the other three: the gate needs every shard's
+      # evidence to say which boundary is red.
+      fail-fast: false
+      matrix:
+        shard: ['1', '2', '3', '4']
+    env:
+      TZ: Asia/Shanghai
+      LANG: zh_CN.UTF-8
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.expected_sha }}
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: temurin
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.apks.outputs.artifact }}
+          path: p706-apks
+      - name: Verify the downloaded bundle is this exact commit's bytes
+        # Independent of the producer's own run: re-checks the provenance manifest
+        # against GitHub (trusted producer workflow, successful job, commit/tree
+        # binding) and both APK digests.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/android-apks.py verify --directory p706-apks
+      - name: Create this shard's evidence directory
+        # Created before the emulator boots so a boot failure still uploads a folder
+        # (and the gate then fails on the missing shard.json instead of on a missing
+        # artifact). Nothing here is ever treated as evidence.
+        env:
+          SHARD: ${{ matrix.shard }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "p706-evidence/shard-${SHARD}"
+          printf '{"shard": "%s", "sha": "%s", "step": "dispatch-start"}\n' "${SHARD}" "${EXPECTED_SHA}" \
+            > "p706-evidence/shard-${SHARD}/dispatch-start.json"
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Record outer deadline before emulator boot
+        # Boot and action setup consume the same budget as the boundary pairs, and the
+        # helper converts this absolute deadline to one monotonic budget on entry.
+        run: echo "ANDROID_CI_OUTER_DEADLINE_EPOCH=$(( $(date +%s) + 3300 ))" >> "$GITHUB_ENV"
+      - name: Run this shard's boundary pairs on one pinned emulator
+        timeout-minutes: 60
+        uses: reactivecircus/android-emulator-runner@v2
+        # The script body reads both values from the environment, never from an
+        # expression spliced into shell text. `avd-name` is a `with:` input, so it can
+        # only come from the matrix, and the driver re-checks it against the shard.
+        env:
+          SHARD: ${{ matrix.shard }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        with:
+          # One AVD per runner, named for its shard: two emulators on one runner are
+          # refused by the helper, and the names keep parallel rounds distinguishable.
+          avd-name: ul-a06-s${{ matrix.shard }}
+          # `pixel_6` is 1080x2400 at density 420 - the fixed device the project's
+          # Android evidence uses. The boundary assertions do not depend on geometry;
+          # the profile only keeps the device configuration stable across rounds.
+          profile: pixel_6
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          cores: 2
+          ram-size: 2048M
+          emulator-boot-timeout: 300
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            set -u
+            python3 tools/ci/android-a06-cloud.py run --shard "$SHARD" --app p706-apks/android-app-debug.apk --test p706-apks/android-app-debug-androidTest.apk --evidence p706-evidence --sha "$EXPECTED_SHA" --avd-name "ul-a06-s$SHARD" --outer-deadline-epoch "$ANDROID_CI_OUTER_DEADLINE_EPOCH"
+      - name: Re-derive this shard's verdict from disk
+        # The job must not rely on the driver's status relayed through the emulator
+        # action. This re-reads every boundary's marker, run A log, transcript, logcat
+        # and verdict from disk and re-runs the strict validators, so a red or partial
+        # evidence set can never leave the job green.
+        if: always()
+        env:
+          SHARD: ${{ matrix.shard }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: python3 tools/ci/android-a06-cloud.py check-shard --evidence p706-evidence --shard "${SHARD}" --sha "${EXPECTED_SHA}"
+      - name: Upload this shard's evidence
+        # Partial evidence uploads by design; the gate below is the verdict.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p706-a06-evidence-${{ inputs.expected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}-shard-${{ matrix.shard }}
+          path: p706-evidence
+          if-no-files-found: error
+          retention-days: 7
+
+  gate:
+    name: P706-A06 gate
+    needs: [apks, shard]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      TZ: Asia/Shanghai
+      LANG: zh_CN.UTF-8
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.expected_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: p706-a06-evidence-${{ inputs.expected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}-shard-*
+          path: p706-evidence
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        if: needs.apks.result == 'success'
+        with:
+          name: ${{ needs.apks.outputs.artifact }}
+          path: p706-apks
+      - name: Normalise the merged evidence layout
+        # Each shard artifact is rooted at its own `shard-<N>/` directory. Depending on
+        # how the action roots the upload, the merged tree can arrive one level deep;
+        # flattening that here keeps the gate's expected layout unambiguous instead of
+        # letting a nesting difference look like missing evidence.
+        run: |
+          set -euo pipefail
+          if [ -d p706-evidence/p706-evidence ]; then
+            mv p706-evidence/p706-evidence/* p706-evidence/
+            rmdir p706-evidence/p706-evidence
+          fi
+          ls -1 p706-evidence
+      - name: Gate all nineteen boundaries
+        # Fails on any missing shard, missing/duplicate boundary, failed leg, absent
+        # log, or a bundle built from a different commit. It prints the nineteen rows
+        # it accepted and never reports an A06 pass.
+        env:
+          SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          args=(--evidence p706-evidence --sha "${SHA}")
+          if [ -d p706-apks ]; then args+=(--apks p706-apks); fi
+          python3 tools/ci/android-a06-cloud.py gate "${args[@]}" | tee gate-output.txt
+      - name: State the evidence scope in the run summary
+        if: always()
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## P706-A06 process-kill matrix"
+            echo
+            echo "- SHA: ${EXPECTED_SHA}"
+            echo "- Covers: nineteen persistent-state boundary rows, **process kill only**"
+            echo "- Not covered: real power loss. An AVD preserves the page cache and the platform"
+            echo "  has no directory fsync, so this run neither exercises nor implies it"
+            echo "  (A06-b2 stays an open, separately ruled proposition)."
+            echo "- Verdict this run can support: A06-b1 evidence. It is **not an A06 pass**,"
+            echo "  and no vector is flipped by it."
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -f gate-output.txt ]; then
+            { echo; echo '```'; cat gate-output.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload the gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p706-a06-gate-${{ inputs.expected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p706-evidence/gate.json
+          if-no-files-found: warn
+          retention-days: 7
