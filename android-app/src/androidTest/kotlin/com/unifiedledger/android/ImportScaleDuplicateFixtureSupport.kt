@@ -139,7 +139,10 @@ internal class ImportScaleDuplicateFixtureSupport {
      * proves no ledger handle is open here, because replacing the file under a live handle would
      * leave the product writing to the old inode.
      */
-    fun seed(context: Context, log: (String) -> Unit): ScaleDuplicateFixture {
+    fun seed(
+        context: Context,
+        log: (String) -> Unit,
+    ): ScaleDuplicateFixture {
         val layout = scaleFixtureLayout(context)
         requireNoOpenLedgerHandle(layout, log)
         val cacheDirectory = File(context.cacheDir, "scale-fixture-source")
@@ -196,7 +199,10 @@ internal class ImportScaleDuplicateFixtureSupport {
      * fixture and returns its readings WITHOUT rebuilding anything, so the b6 mode can never replace
      * the database under a process that already opened it.
      */
-    fun requirePublished(context: Context, log: (String) -> Unit): ScaleDuplicateFixture {
+    fun requirePublished(
+        context: Context,
+        log: (String) -> Unit,
+    ): ScaleDuplicateFixture {
         val layout = scaleFixtureLayout(context)
         requireNoOpenLedgerHandle(layout, log)
         val pointerText = "gen-$SCALE_FIXTURE_GENERATION"
@@ -229,12 +235,19 @@ internal class ImportScaleDuplicateFixtureSupport {
      * `(deleted)` path under the generations directory. Nothing else in the mode can prove that, so
      * the check fails loudly instead of replacing a live database file.
      */
-    private fun requireNoOpenLedgerHandle(layout: LedgerStorageLayout, log: (String) -> Unit) {
+    private fun requireNoOpenLedgerHandle(
+        layout: LedgerStorageLayout,
+        log: (String) -> Unit,
+    ) {
         val hostPrefix = File(layout.hostDirectory).canonicalPath + File.separator
         val open =
-            File("/proc/self/fd").listFiles().orEmpty()
+            File("/proc/self/fd")
+                .listFiles()
+                .orEmpty()
                 .mapNotNull { fd -> runCatching { fd.canonicalPath }.getOrNull() }
-                .filter { path -> path.startsWith(hostPrefix) && (path.contains("ledger.db") || path.contains("ledger-generations")) }
+                .filter { path ->
+                    path.startsWith(hostPrefix) && (path.contains("ledger.db") || path.contains("ledger-generations"))
+                }
         check(open.isEmpty()) {
             "this process already holds the ledger database open ($open); replacing it would leave the product writing to the old inode. " +
                 "Force-stop the app and run seedFixture in a fresh process."
@@ -292,8 +305,10 @@ internal class ImportScaleDuplicateFixtureSupport {
         }
 }
 
-internal fun scaleFixtureLayout(context: Context) =
-    ledgerStorageLayout(AndroidLedgerFileSystem(), androidStableStoragePaths(context.getDatabasePath("ledger.db")).first)
+internal fun scaleFixtureLayout(context: Context): LedgerStorageLayout {
+    val (hostDirectory, _) = androidStableStoragePaths(context.getDatabasePath("ledger.db"))
+    return ledgerStorageLayout(AndroidLedgerFileSystem(), hostDirectory)
+}
 
 /**
  * Validates one database file and returns the FIRST failure as a readable reason (null = valid). The
@@ -311,7 +326,10 @@ internal fun scaleDuplicateFixtureValidation(databaseFile: File): String? {
 
 @Suppress("LongMethod")
 private fun validateDatabase(database: SQLiteDatabase): String? {
-    fun expect(valid: Boolean, reason: () -> String): String? = if (valid) null else reason()
+    fun expect(
+        valid: Boolean,
+        reason: () -> String,
+    ): String? = if (valid) null else reason()
 
     expect(database.rawQuery("PRAGMA quick_check", null).use { cursor -> cursor.moveToFirst() && cursor.getString(0) == "ok" }) {
         "PRAGMA quick_check did not return ok"
@@ -367,6 +385,7 @@ private fun validateDatabase(database: SQLiteDatabase): String? {
     }?.let { return it }
     // The 20,000 pre-existing sources are real tuple matches: same ledger, the frozen
     // EXACT_BUSINESS_TUPLE business metadata, distinct source ids and ordinals.
+    val ordinaryContractVersion = ImportRecordKind.ORDINARY_FLOW_SOURCE.contractVersion.toLong().toString()
     expect(
         scalarLong(
             database,
@@ -377,7 +396,7 @@ private fun validateDatabase(database: SQLiteDatabase): String? {
             SCALE_FIXTURE_LEDGER_ID,
             "$SCALE_FIXTURE_HISTORY_SOURCE_PREFIX%",
             ImportRecordKind.ORDINARY_FLOW_SOURCE.storageValue,
-            ImportRecordKind.ORDINARY_FLOW_SOURCE.contractVersion.toLong().toString(),
+            ordinaryContractVersion,
             SCALE_FIXTURE_COMPLETENESS_TOKEN,
             SCALE_FIXTURE_GROUP_AMOUNT_MINOR.toString(),
             SCALE_FIXTURE_CURRENCY_CODE,
@@ -536,7 +555,11 @@ private fun historySourceId(index: Int): String = SCALE_FIXTURE_HISTORY_SOURCE_P
 
 private fun historyRequestId(index: Int): String = SCALE_FIXTURE_HISTORY_REQUEST_PREFIX + index.toString().padStart(5, '0')
 
-private fun buildScaleDuplicateFixture(context: Context, databaseFile: File, log: (String) -> Unit) {
+private fun buildScaleDuplicateFixture(
+    context: Context,
+    databaseFile: File,
+    log: (String) -> Unit,
+) {
     deleteFixtureFile(databaseFile)
     createAndroidLedgerDatabase(context, databaseFile.path).use { handle ->
         val ledgerId = LedgerId(SCALE_FIXTURE_LEDGER_ID)
@@ -546,13 +569,14 @@ private fun buildScaleDuplicateFixture(context: Context, databaseFile: File, log
         // `selectDuplicateMatches` count — not this fixture's intent — determines the relation count.
         seedHistoricalSettledSources(handle)
         log("SEED_FIXTURE build historySources=$SCALE_DUPLICATE_FIXTURE_RELATIONS")
-        val baselineIds = fixtureIdSource(
-            sourceId = SCALE_FIXTURE_BASELINE_SOURCE_ID,
-            evidenceId = SCALE_FIXTURE_BASELINE_EVIDENCE_ID,
-            candidateId = SCALE_FIXTURE_BASELINE_CANDIDATE_ID,
-            statusHistoryId = SCALE_FIXTURE_BASELINE_STATUS_ID,
-            expectedDuplicateIds = 0,
-        )
+        val baselineIds =
+            fixtureIdSource(
+                sourceId = SCALE_FIXTURE_BASELINE_SOURCE_ID,
+                evidenceId = SCALE_FIXTURE_BASELINE_EVIDENCE_ID,
+                candidateId = SCALE_FIXTURE_BASELINE_CANDIDATE_ID,
+                statusHistoryId = SCALE_FIXTURE_BASELINE_STATUS_ID,
+                expectedDuplicateIds = 0,
+            )
         val baseline =
             acceptedIntake(
                 ExecuteImportIntake(handle.importSpineStore, baselineIds, ImportContentFingerprint()),
@@ -582,13 +606,14 @@ private fun buildScaleDuplicateFixture(context: Context, databaseFile: File, log
                     ),
                 )
         check(rejected is ImportCandidateDecisionResult.Accepted) { "baseline candidate was not rejected: $rejected" }
-        val groupIds = fixtureIdSource(
-            sourceId = SCALE_FIXTURE_RELATION_SOURCE_ID,
-            evidenceId = SCALE_FIXTURE_RELATION_EVIDENCE_ID,
-            candidateId = SCALE_FIXTURE_RELATION_CANDIDATE_ID,
-            statusHistoryId = SCALE_FIXTURE_RELATION_STATUS_ID,
-            expectedDuplicateIds = SCALE_DUPLICATE_FIXTURE_RELATIONS,
-        )
+        val groupIds =
+            fixtureIdSource(
+                sourceId = SCALE_FIXTURE_RELATION_SOURCE_ID,
+                evidenceId = SCALE_FIXTURE_RELATION_EVIDENCE_ID,
+                candidateId = SCALE_FIXTURE_RELATION_CANDIDATE_ID,
+                statusHistoryId = SCALE_FIXTURE_RELATION_STATUS_ID,
+                expectedDuplicateIds = SCALE_DUPLICATE_FIXTURE_RELATIONS,
+            )
         // The real intake: its transaction-internal match count is the demand handed to the id
         // source, so the 20,000 relations below are the store's own output.
         acceptedIntake(
@@ -735,7 +760,11 @@ private class ScaleFixtureIdSource(
     }
 }
 
-private fun scalarLong(database: SQLiteDatabase, sql: String, vararg args: String): Long =
+private fun scalarLong(
+    database: SQLiteDatabase,
+    sql: String,
+    vararg args: String,
+): Long =
     database.rawQuery(sql, args.toList().toTypedArray()).use { cursor ->
         check(cursor.moveToFirst()) { "no scalar result for $sql" }
         cursor.getLong(0)

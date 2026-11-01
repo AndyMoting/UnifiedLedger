@@ -799,10 +799,10 @@ class ImportScaleTraversalInstrumentedTest {
             )
         evidence +=
             "fixture generation=${fixture.generation} inputRef=${fixture.inputRef} candidates=${fixture.candidateCount} " +
-                "sources=${fixture.sourceCount} requests=${fixture.requestCount} historySources=${fixture.historySourceCount} " +
-                "relations=${fixture.duplicateRelationCount} subjectRelations=${fixture.subjectRelationCount} " +
-                "duplicateHistory=${fixture.duplicateHistoryCount} subjectSourceId=${fixture.subjectSourceId} " +
-                "subjectSources=${fixture.subjectSourceIdCount}"
+            "sources=${fixture.sourceCount} requests=${fixture.requestCount} historySources=${fixture.historySourceCount} " +
+            "relations=${fixture.duplicateRelationCount} subjectRelations=${fixture.subjectRelationCount} " +
+            "duplicateHistory=${fixture.duplicateHistoryCount} subjectSourceId=${fixture.subjectSourceId} " +
+            "subjectSources=${fixture.subjectSourceIdCount}"
         // Two screens, two assertions. The startup face prints "账本：" and the import screen does not,
         // so the startup health check runs BEFORE the tab switch; folding it into the post-tab
         // assertion would make it impossible by construction.
@@ -854,7 +854,10 @@ class ImportScaleTraversalInstrumentedTest {
      * unloaded/empty state). The ordinary 待确认——缺用户决策 group must stay empty: the only pending
      * candidate is the duplicate subject. The observed header line goes into the evidence.
      */
-    private fun assertSeedFixtureImportScreen(fixture: ScaleDuplicateFixture, log: (String) -> Unit) {
+    private fun assertSeedFixtureImportScreen(
+        fixture: ScaleDuplicateFixture,
+        log: (String) -> Unit,
+    ) {
         var failureLine: String? = null
         waitFor(
             {
@@ -882,8 +885,10 @@ class ImportScaleTraversalInstrumentedTest {
         log("seed fixture duplicate header=$duplicateHeader subjectCandidate=${fixture.candidateId}")
     }
 
-    private fun visibleScreenTexts(): List<String> =
-        collectNodes(appRoot()) { node -> node.isVisibleToUser && nodeText(node).isNotEmpty() }.map { node -> nodeText(node) }
+    private fun visibleScreenTexts(): List<String> {
+        val root = appRoot()
+        return collectNodes(root) { node -> node.isVisibleToUser && nodeText(node).isNotEmpty() }.map { node -> nodeText(node) }
+    }
 
     private data class DuplicateTotals(
         val relations: Long?,
@@ -896,7 +901,10 @@ class ImportScaleTraversalInstrumentedTest {
      * with the resolver inside the failure boundary (a poll-time resolve failure is a logged null
      * reading; the caller hard-stops with [requireComplete] when it needs a verdict).
      */
-    private fun readDuplicateTotals(label: String, log: (String) -> Unit): DuplicateTotals =
+    private fun readDuplicateTotals(
+        label: String,
+        log: (String) -> Unit,
+    ): DuplicateTotals =
         runCatching {
             val path = activeGenerationDatabasePath()
             SQLiteDatabase.openDatabase(path.absolutePath, null, SQLiteDatabase.OPEN_READONLY).use { db ->
@@ -911,7 +919,10 @@ class ImportScaleTraversalInstrumentedTest {
             DuplicateTotals(null, null, null)
         }
 
-    private fun scalarQuery(db: SQLiteDatabase, sql: String): Long? =
+    private fun scalarQuery(
+        db: SQLiteDatabase,
+        sql: String,
+    ): Long? =
         runCatching {
             db.rawQuery(sql, null).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else null }
         }.getOrElse { null }
@@ -934,15 +945,19 @@ class ImportScaleTraversalInstrumentedTest {
      * intake matches the 20,000 history sources PLUS the fixture's pending subject and writes 20,001
      * relations itself; the totals below are asserted, not assumed.
      */
-    private fun activatePublishedDuplicateGroupThroughProduct(fixture: ScaleDuplicateFixture, log: (String) -> Unit) {
+    private fun activatePublishedDuplicateGroupThroughProduct(
+        fixture: ScaleDuplicateFixture,
+        log: (String) -> Unit,
+    ) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val baseline = requireNotNull(countImportCandidates(log)) { "the published fixture is unreadable: no pre-activation import_candidate count" }
         val fixtureName = "scale-duplicate-session.csv"
-        val downloads = android.content.ContentValues().apply {
-            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, fixtureName)
-            put(android.provider.MediaStore.Downloads.MIME_TYPE, "text/csv")
-            put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
-        }
+        val downloads =
+            android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Downloads.DISPLAY_NAME, fixtureName)
+                put(android.provider.MediaStore.Downloads.MIME_TYPE, "text/csv")
+                put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
+            }
         val uri = checkNotNull(context.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, downloads))
         try {
             checkNotNull(context.contentResolver.openOutputStream(uri, "w")).use { it.write(SEED_ACTIVATION_CSV.toByteArray(Charsets.UTF_8)) }
@@ -1006,7 +1021,7 @@ class ImportScaleTraversalInstrumentedTest {
                 )
             evidence +=
                 "b6 fixture reuse: generation=${fixture.generation} relations=${fixture.duplicateRelationCount} " +
-                    "historySources=${fixture.historySourceCount} subject=${fixture.subjectSourceId} (no rebuild)"
+                "historySources=${fixture.historySourceCount} subject=${fixture.subjectSourceId} (no rebuild)"
             activatePublishedDuplicateGroupThroughProduct(fixture, log)
             evidence += "b6 fixture ready: real product intake armed the duplicate-group session"
         }
@@ -1200,8 +1215,9 @@ class ImportScaleTraversalInstrumentedTest {
         // The post-intake read is the baseline the group confirmation is measured against, so the
         // intake's own writes stay out of that delta; without an intake phase it is the plain
         // before-traversal read this mode has always logged.
-        val baseline = readLedgerSnapshot(if (preIntake == null) "before" else "postIntake", log)
-            .requireComplete(if (preIntake == null) "before" else "postIntake")
+        val baseline =
+            readLedgerSnapshot(if (preIntake == null) "before" else "postIntake", log)
+                .requireComplete(if (preIntake == null) "before" else "postIntake")
         if (preIntake != null) {
             logIntakeDelta(preIntake, baseline, log)
         }
@@ -1418,8 +1434,9 @@ class ImportScaleTraversalInstrumentedTest {
         // Phase 2: the list.
         prepareAutomation()
         reachImportReview(log)
-        val baseline = readLedgerSnapshot(if (preIntake == null) "before" else "postIntake", log)
-            .requireComplete(if (preIntake == null) "before" else "postIntake")
+        val baseline =
+            readLedgerSnapshot(if (preIntake == null) "before" else "postIntake", log)
+                .requireComplete(if (preIntake == null) "before" else "postIntake")
         if (preIntake != null) {
             logIntakeDelta(preIntake, baseline, log)
         }
@@ -4393,11 +4410,14 @@ class ImportScaleTraversalInstrumentedTest {
     private fun booleanArg(
         name: String,
         fallback: Boolean,
-    ): Boolean =
-        when (InstrumentationRegistry.getArguments().getString(name)?.trim()?.lowercase(Locale.ROOT)) {
+    ): Boolean {
+        val raw = InstrumentationRegistry.getArguments().getString(name)
+        val normalized = raw?.trim()?.lowercase(Locale.ROOT)
+        return when (normalized) {
             null -> fallback
             "true", "1", "yes" -> true
             "false", "0", "no" -> false
             else -> fallback
         }
+    }
 }
