@@ -98,6 +98,22 @@ sealed interface ImportIntakeBatchFailure {
     data class ParserRejected(
         val diagnostic: ImportBatchParserDiagnostic,
     ) : ImportIntakeBatchFailure
+
+    /**
+     * The record's intake execution raised instead of returning a verdict
+     * (DEF-IMPORT-ENOSPC-CRASH-01, D-276 item 2 — the observed cause was a full disk), so the
+     * record was not written. The boundary does not classify the underlying failure, by type
+     * or by text: any exception raised while executing a record lands here, and no message,
+     * cause, or exception class is carried (D06). Callers must not read it as a parser or gate
+     * verdict.
+     *
+     * This is the one member of the family that can arrive mid-batch: records dispatched
+     * before it keep their own committed outcomes and are never rolled back by it, while
+     * every record after it is never dispatched. So this failure means "the aborted record
+     * was not written", never "this file wrote nothing"; copy built on it must say the same,
+     * must stay generic about the cause, and must not promise that a retry will succeed.
+     */
+    data object StorageUnavailable : ImportIntakeBatchFailure
 }
 
 /** Per-record outcome kinds of one intake dispatch (spine results plus parser row rejections). */
@@ -154,7 +170,13 @@ sealed interface ImportFileIntakeOutcome {
         val records: List<ImportIntakeRecordSummary>,
     ) : ImportFileIntakeOutcome
 
-    /** Typed batch failure; zero intake writes happened for this call. */
+    /**
+     * Typed batch failure. The gate and parser members of
+     * [ImportIntakeBatchFailure] are decided before any dispatch, so they carry zero intake
+     * writes for the call; [ImportIntakeBatchFailure.StorageUnavailable] is the mid-batch
+     * case — the aborted record is unwritten while records committed before it keep their
+     * outcomes, so this outcome never implies an empty ledger.
+     */
     data class Rejected(
         val failure: ImportIntakeBatchFailure,
     ) : ImportFileIntakeOutcome

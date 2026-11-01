@@ -39,6 +39,7 @@ import com.unifiedledger.application.import.wechat.WechatDiagnostic
 import com.unifiedledger.application.import.wechat.WechatRowResult
 import com.unifiedledger.domain.LedgerId
 import java.nio.charset.Charset
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * P7-04.B jvmMain intake orchestration (D-146, spec section 4.2.3, frozen flow (a)-(g)).
@@ -57,8 +58,11 @@ import java.nio.charset.Charset
  * count — zero intake writes, zero truncation. (e)/(f) per accepted record one
  * [ImportIntakeRequest] with the session's shared opaque handle and the session-stable
  * per-record requestId, dispatched through [ExecuteImportIntake]; a retry within the session
- * reuses the same identities, so it rides the spine's request-level idempotency. (g)
- * aggregation per the frozen fold.
+ * reuses the same identities, so it rides the spine's request-level idempotency. A record
+ * whose execution raises (DEF-IMPORT-ENOSPC-CRASH-01) stops the dispatch: the remaining
+ * records never reach the spine, the call returns the typed
+ * [ImportIntakeBatchFailure.StorageUnavailable], and records already committed keep their
+ * outcomes. (g) aggregation per the frozen fold.
  *
  * Per-row parser rejections are carried in the summaries as safe-location digests only
  * (code/severity/scope/ordinal/field role — D-097/D06); raw row content, file names and
@@ -156,7 +160,27 @@ class JvmImportFileIntake(
                             candidateGeneratedAt = generatedAt,
                             paymentProfile = record.paymentProfile,
                         )
-                    when (val result = executeIntake.execute(request)) {
+                    // DEF-IMPORT-ENOSPC-CRASH-01 (D-276 item 2): the catch wraps this dispatch
+                    // call only — never the parser above, never the aggregation below. An
+                    // exception raised while executing one record means the attempt produced no
+                    // verdict, so the dispatch stops here (the remaining records never reach the
+                    // spine) and the whole call returns the typed batch failure. The failure is
+                    // deliberately NOT classified against the underlying exception — no message,
+                    // cause, or class is carried (D06) — and records committed before it keep
+                    // their outcomes, so the outcome never claims a zero-write batch.
+                    // Two things are NOT storage verdicts and stay untouched: a fatal `Error`
+                    // (never caught — `Exception` only) and coroutine cancellation (rethrown
+                    // immediately, so a cancelled dispatch can never surface as a retryable
+                    // "import aborted").
+                    val result =
+                        try {
+                            executeIntake.execute(request)
+                        } catch (cancellation: CancellationException) {
+                            throw cancellation
+                        } catch (_: Exception) {
+                            return ImportFileIntakeOutcome.Rejected(ImportIntakeBatchFailure.StorageUnavailable)
+                        }
+                    when (result) {
                         is ImportIntakeResult.Accepted -> {
                             summaries +=
                                 ImportIntakeRecordSummary(
