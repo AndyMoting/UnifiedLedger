@@ -274,8 +274,7 @@ class ImportEnospcInstrumentedTest {
         check(root.isDirectory) { "the rig root must exist: $root" }
         val wrapper =
             object : ContextWrapper(targetContext) {
-                override fun getDatabasePath(name: String): File =
-                    if (File(name).isAbsolute) File(name) else File(root, name)
+                override fun getDatabasePath(name: String): File = if (File(name).isAbsolute) File(name) else File(root, name)
             }
         val effective = wrapper.getDatabasePath(DATABASE_NAME).absolutePath
         val production = targetContext.getDatabasePath(DATABASE_NAME).absolutePath
@@ -311,8 +310,11 @@ class ImportEnospcInstrumentedTest {
 
     private fun readActivePointer(layout: LedgerStorageLayout): String = File(layout.activePointerFile).readText().trim()
 
-    private fun generationNames(layout: LedgerStorageLayout): List<String> =
-        File(layout.generationsDirectory).listFiles().orEmpty().filter { it.isDirectory }.map { it.name }.sorted()
+    private fun generationNames(layout: LedgerStorageLayout): List<String> {
+        val files = File(layout.generationsDirectory).listFiles().orEmpty()
+        val directories = files.filter { it.isDirectory }
+        return directories.map { it.name }.sorted()
+    }
 
     private fun mainFileOf(
         layout: LedgerStorageLayout,
