@@ -79,6 +79,11 @@ private const val ARG_MAX_FORWARD_ACTIONS = "maxForwardActions"
 private const val ARG_SETTLE_MILLIS = "settleMillis"
 private const val ARG_N = "n"
 private const val DEFAULT_TARGET = "整组标记为重复"
+private const val DEFAULT_SHARE_FORMAT_LABEL = "招商银行账单（CSV）"
+private const val ARG_WAIT_SHARE_MILLIS = "waitShareMillis"
+private const val DEFAULT_WAIT_SHARE_MILLIS = 180_000
+private const val DEFAULT_SHARE_INTAKE_TIMEOUT_MILLIS = 1_800_000
+private const val SHARE_FACE_MARKER = "已收到分享文件"
 private const val DEFAULT_MAX_FORWARD_ACTIONS = 6000
 private const val DEFAULT_SETTLE_MILLIS = 120
 private const val DEFAULT_FORWARD_PROBE_ACTIONS = 200
@@ -297,6 +302,12 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  *   forced by the lifecycle: `am instrument` force-stops the app process when the run ends, so any
  *   UI state a run reaches is gone by the time the next run starts - the remaining flow cannot be
  *   split across the smaller modes, and the group entry is itself session-scoped (below).
+ * - `shareImportDrive`: clicks the share face's format chip with `ACTION_CLICK` and polls
+ *   `import_candidate` to stabilization. Args `formatLabel` (default 招商银行账单（CSV）),
+ *   `waitShareMillis` (default 180000), `intakeTimeoutMillis` (default 1800000). The host must send
+ *   the share Intent during the wait window; a refused chip click skips the wait with a FINDING.
+ * - `b6CardOpen`: B6 (A-PERF 20k 组开卡). Traverses to `target` like `scrollToEnd`, then opens the
+ *   group card via `openGroupCard` (in-process bracket click → card visible) and never confirms it.
  * - `b5Detail`: the A-PERF B5 endpoint (frozen spec section 6: 单候选详情 = 点击首行候选 → 详情屏关键
  *   内容（金额/状态行）可见, gate ≤1s, three runs, the maximum is the reading) measured IN-PROCESS,
  *   because the host `uiautomator dump` floor (~2.29 s per dump) is far coarser than the 1 s gate and
@@ -639,7 +650,110 @@ class ImportScaleTraversalInstrumentedTest {
         }
     }
 
+    @Test
+    fun shareImportDrive() {
+        val evidence = mutableListOf<String>()
+        try {
+            runShareImportDrive(evidence)
+        } finally {
+            appendEvidence(evidence)
+        }
+    }
+
+    @Test
+    fun b6CardOpen() {
+        val evidence = mutableListOf<String>()
+        try {
+            runB6CardOpen(evidence)
+        } finally {
+            appendEvidence(evidence)
+        }
+    }
+
     // ---- mode bodies ----
+
+    /**
+     * Drives ONE share import from the format chip to a stabilized intake, without any host
+     * `input tap`: the 2026-11-01 20k session could not dispatch the chip through synthetic taps
+     * (and its `screencap` disagreed with the accessibility tree about the foreground window), so
+     * this mode clicks the chip with `ACTION_CLICK` and polls the authoritative
+     * `import_candidate` count until it stabilizes. It never asserts: the host decides whether a
+     * run produced an import, and the baseline count is logged so three back-to-back runs are
+     * comparable.
+     */
+    private fun runShareImportDrive(evidence: MutableList<String>) {
+        val log = evidenceLog(evidence)
+        val formatLabel = stringArg(ARG_FORMAT_LABEL, DEFAULT_SHARE_FORMAT_LABEL)
+        val waitShareMillis = intArg(ARG_WAIT_SHARE_MILLIS, DEFAULT_WAIT_SHARE_MILLIS)
+        val intakeTimeoutMillis = intArg(ARG_INTAKE_TIMEOUT_MILLIS, DEFAULT_SHARE_INTAKE_TIMEOUT_MILLIS)
+        evidence += "== shareImportDrive start epochMillis=${System.currentTimeMillis()}"
+        evidence += "args formatLabel=$formatLabel waitShareMillis=$waitShareMillis intakeTimeoutMillis=$intakeTimeoutMillis"
+        // The share Intent is delivered from outside this process, so the mode brings the app up
+        // WITHOUT holding an automation connection first (the same order the intake phase uses): a
+        // shell `am start`/share while the automation connection is live can be swallowed.
+        bringUpForShareFace(log)
+        prepareAutomation()
+        val baseline = countImportCandidates(log)
+        log("shareImportDrive baseline import_candidate=${countText(baseline)}")
+        val faceAppeared = waitFor({ hasShareFace(appRoot()) }, waitShareMillis, POLL_MILLIS)
+        log("shareImportDrive share face appeared=$faceAppeared")
+        if (!faceAppeared) {
+            evidence += "FINDING: no share face within $waitShareMillis ms; nothing imported by this run"
+            evidence += "== shareImportDrive end"
+            return
+        }
+        val chip = findByText(appRoot(), formatLabel)
+        if (chip == null) {
+            evidence += "FINDING: format chip '$formatLabel' not present on the share face; nothing imported"
+            evidence += "== shareImportDrive end"
+            return
+        }
+        val clicked = clickNode(chip)
+        log("shareImportDrive chip '$formatLabel' click accepted=$clicked node=${describeNode(chip)}")
+        if (!clicked) {
+            evidence += "FINDING: the format chip refused ACTION_CLICK; no import was requested, so the intake wait is skipped"
+            evidence += "== shareImportDrive end"
+            return
+        }
+        val reading = awaitCountProbeIntake(baseline, intakeTimeoutMillis, log)
+        val finalCount = countImportCandidates(log)
+        log("shareImportDrive detected=${reading.detected} stabilized=${reading.stabilized} import_candidate=${countText(finalCount)}")
+        evidence += "== shareImportDrive end"
+    }
+
+    /**
+     * B6 (A-PERF): traverses to the group affordance and measures the group-card open through the
+     * existing `openGroupCard` in-process bracket (click → card marker visible).
+     * It never confirms the group, so the run mutates nothing but view state.
+     */
+    private fun runB6CardOpen(evidence: MutableList<String>) {
+        val log = evidenceLog(evidence)
+        val target = stringArg(ARG_TARGET, DEFAULT_TARGET)
+        val maxForwardActions = intArg(ARG_MAX_FORWARD_ACTIONS, DEFAULT_MAX_FORWARD_ACTIONS)
+        val settleMillis = intArg(ARG_SETTLE_MILLIS, DEFAULT_SETTLE_MILLIS)
+        val stallChecks = intArg(ARG_STALL_CHECKS, DEFAULT_STALL_CHECKS)
+        evidence += "== b6CardOpen start epochMillis=${System.currentTimeMillis()}"
+        evidence += "args target=$target maxForwardActions=$maxForwardActions settleMillis=$settleMillis stallChecks=$stallChecks"
+        prepareAutomation()
+        reachImportReview(log)
+        val container = selectScrollableContainer(log)
+        if (container == null) {
+            evidence += "FINDING: no scrollable node; B6 not attempted"
+            evidence += "== b6CardOpen end"
+            return
+        }
+        val traversal = traverseToTarget(container, target, maxForwardActions, settleMillis, stallChecks, REFETCH_EVERY, PROGRESS_EVERY, log)
+        val targetNode = findByContentDescription(appRoot(), target)
+        evidence += "traversal result forwardActions=${traversal.forwardActions} elapsedMs=${traversal.elapsedMs} targetFound=${targetNode != null}"
+        if (targetNode == null) {
+            evidence += "FINDING: group affordance not reachable; B6 not measured"
+            evidence += "== b6CardOpen end"
+            return
+        }
+        val open = openGroupCard(targetNode, log)
+        evidence += "b6 result cardOpen=$open cardWaitBoundMillis=$GROUP_CARD_WAIT_MILLIS"
+        evidence += "== b6CardOpen end"
+    }
 
     private fun runProbe(evidence: MutableList<String>) {
         val log = evidenceLog(evidence)
@@ -1857,6 +1971,23 @@ class ImportScaleTraversalInstrumentedTest {
             log("intake phase done elapsedMs=$elapsedMs detected=false stabilized=false import_candidate=${latest ?: "unavailable"}")
         }
         return baseline
+    }
+
+    /**
+     * Brings the app up for an inbound share WITHOUT touching UiAutomation, and tells the host to
+     * send the ACTION_SEND intent during the mode's wait window. Deliberately separate from
+     * [launchAppWithoutAutomation], whose host instructions describe the SAF import flow (tap the
+     * 导入 tab, pick a file) and would displace the share strip this mode waits for.
+     */
+    private fun bringUpForShareFace(log: (String) -> Unit) {
+        val launched =
+            attempt("intent launch of $MAIN_ACTIVITY_CLASS") {
+                val context = InstrumentationRegistry.getInstrumentation().targetContext
+                val intent = Intent().setClassName(TARGET_PACKAGE, MAIN_ACTIVITY_CLASS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+            }
+        log("shareImportDrive: app bring-up $launched (no UiAutomation yet)")
+        log("shareImportDrive: ACTION REQUIRED ON HOST: send the ACTION_SEND intent (one content:// stream) now; the mode waits up to its waitShareMillis for the share face")
     }
 
     /**
@@ -3664,6 +3795,9 @@ class ImportScaleTraversalInstrumentedTest {
         val matches = collectNodes(root) { node -> node.contentDescription?.toString() == description }
         return matches.firstOrNull { node -> node.isClickable } ?: matches.firstOrNull()
     }
+
+    /** Whether the tree currently shows the inbound share strip (its header text is the marker). */
+    private fun hasShareFace(root: AccessibilityNodeInfo?): Boolean = collectNodes(root) { node -> nodeText(node).contains(SHARE_FACE_MARKER) }.isNotEmpty()
 
     /** The node whose visible text is exactly [text], preferring the clickable one (a Button's merged node). */
     private fun findByText(
