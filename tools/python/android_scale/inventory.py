@@ -14,6 +14,7 @@ EXCLUDED = {
     "AndroidScalePreflightInstrumentedTest",
     "P706A06BoundaryKillInstrumentedTest",
     "P706A06BoundaryVerifyInstrumentedTest",
+    "ImportEnospcInstrumentedTest",
 }
 
 
