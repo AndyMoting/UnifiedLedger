@@ -1745,8 +1745,10 @@ class EnospcCloudWorkflow(unittest.TestCase):
         ci = (ENOSPC_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         self.assertNotIn("android-enospc", ci)
         instrumented = (ENOSPC_ROOT / ".github" / "workflows" / "android-instrumented.yml").read_text(encoding="utf-8")
-        self.assertIn("notClass=", instrumented)
-        self.assertIn(ENOSPC_CASE, instrumented.split("notClass=", 1)[1].split("\n", 1)[0])
+        self.assertIn("android-instrumented-shards.txt", instrumented)
+        self.assertIn("android-instrumented-cloud.py run", instrumented)
+        shards = (ENOSPC_ROOT / "tools" / "ci" / "android-instrumented-shards.txt").read_text(encoding="utf-8")
+        self.assertNotIn(ENOSPC_CASE, shards)
         self.assertIn('"ImportEnospcInstrumentedTest"',
                       (ENOSPC_ROOT / "tools" / "python" / "android_scale" / "inventory.py").read_text(encoding="utf-8"))
         manifest = (ENOSPC_ROOT / "tools" / "ci" / "android-instrumented-inventory.txt").read_text(encoding="utf-8")
