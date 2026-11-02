@@ -271,10 +271,7 @@ private const val TALK_BACK_FOCUS_NODE_WAIT_MILLIS = 20_000
 private const val TALK_BACK_FOCUS_SPEECH_SETTLE_MILLIS = 1_500L
 private const val ARG_OPEN_DETAIL = "openDetail"
 private const val DETAIL_SCREEN_TITLE = "交易详情"
-private const val DETAIL_OPEN_TAP_X = 200
-private const val DETAIL_OPEN_TAP_Y = 1_100
-private const val DETAIL_OPEN_TAP_COMMAND = "input tap $DETAIL_OPEN_TAP_X $DETAIL_OPEN_TAP_Y"
-private const val DETAIL_OPEN_TAP_GAP_MILLIS = 150L
+private const val DETAIL_ROW_TEXT_PREFIX = "COLLECT"
 private const val FOREGROUND_MAX_ATTEMPTS = 20
 private const val FOREGROUND_RETRY_MILLIS = 300L
 private const val TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS = 15_000
@@ -443,9 +440,9 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  * - `talkBackFocusProbe`: TalkBack inspection ONLY. Arg `query` (required: the exact node text of the
  *   target, or, failing that, its exact contentDescription); optional arg `openDetail` (default false)
  *   first forces the app to the foreground ([ensureActiveApp], up to 20 relaunch attempts) and THEN
- *   injects the test-navigation tap PAIR at (200, 1100) - TalkBack's first tap only focuses the row, so
- *   the second one activates it - and requires the 交易详情 screen within 15 s (that pair is navigation,
- *   not part of the speech assertion). It resolves the app window through
+ *   clicks the ledger row whose text starts with `COLLECT` ([findByTextPrefix] plus the class's
+ *   `ACTION_CLICK` helper [clickNode]) and requires the 交易详情 screen within 15 s (that row click is
+ *   navigation, not part of the speech assertion). It resolves the app window through
  *   [appRoot], matches with [findByText] and then [findByContentDescription], performs exactly ONE
  *   `AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS` and, once that is accepted, the hover
  *   enter+move pair at the node's centre ([injectHoverAt]): TalkBack speaks what its TouchExplorer
@@ -1125,12 +1122,12 @@ class ImportScaleTraversalInstrumentedTest {
      * [TALK_BACK_FOCUS_SPEECH_SETTLE_MILLIS] so the speech lands before the run ends.
      *
      * Optional `openDetail` (default false) first forces the app to the foreground ([ensureActiveApp]) -
-     * a coordinate pair explores whatever window is on top - and then injects the test-navigation tap
-     * PAIR at ([DETAIL_OPEN_TAP_X], [DETAIL_OPEN_TAP_Y]): the home screen's first row, one tap to put
-     * TalkBack's focus on the row and a second, [DETAIL_OPEN_TAP_GAP_MILLIS] later, to activate it. It
-     * requires the 交易详情 screen within [TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS] before the focus is
-     * requested. That pair is navigation, not a speech assertion: it exists because the host cannot
-     * drive the app while this connection holds the automation.
+     * a gesture lands in whatever window is on top - and then opens the detail through the
+     * accessibility tree: [findByTextPrefix] finds the ledger row whose text starts with
+     * [DETAIL_ROW_TEXT_PREFIX] and the class's [clickNode] clicks it with `ACTION_CLICK`, never a
+     * synthetic gesture. It requires the 交易详情 screen within [TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS]
+     * before the focus is requested. That click is navigation, not a speech assertion: it exists
+     * because the host cannot drive the app while this connection holds the automation.
      */
     private fun runTalkBackFocusProbe(evidence: MutableList<String>) {
         val log = evidenceLog(evidence)
@@ -1163,17 +1160,15 @@ class ImportScaleTraversalInstrumentedTest {
         } else {
             log("$TALK_BACK_FOCUS_PREFIX launch path=existing-app-root (app root reachable; launch skipped)")
         }
-        // Optional test navigation to the transaction-detail screen, sent as ONE tap PAIR: a single tap
-        // only moves TalkBack's focus onto the row (TB5 logged a focused row and no navigation), so the
-        // second tap 150 ms later is what activates it. The pair is the only pointer input this mode
-        // sends; it exists because the host cannot drive the app while this connection holds the
-        // automation, and the detail screen's OWN title is required before the focus is asked for, so a
-        // probe never reports a focus on the screen it was supposed to reach.
+        // Optional test navigation to the transaction-detail screen, driven through the accessibility
+        // tree: the coordinate tap pair kept the row FOCUSED without activating it, so the row is
+        // clicked with ACTION_CLICK instead. That click is the mode's only navigation; the detail
+        // screen's OWN title is required before the focus is asked for, so a probe never reports a
+        // focus on the screen it was supposed to reach.
         val openDetail = booleanArg(ARG_OPEN_DETAIL, false)
         if (openDetail) {
-            // A coordinate pair means nothing while another window is on top (launcher, a leftover
-            // dialog, a previous run's share sheet): the app is forced to the foreground first, or the
-            // navigation does not run at all.
+            // A click lands in whatever window is on top (launcher, a leftover dialog, a previous run's
+            // share sheet): the app is forced to the foreground first, or the navigation does not run.
             if (!ensureActiveApp(log)) {
                 val state = observedState()
                 fail(
@@ -1182,13 +1177,21 @@ class ImportScaleTraversalInstrumentedTest {
                 )
                 return
             }
+            val row = findByTextPrefix(appRoot(), DETAIL_ROW_TEXT_PREFIX)
+            if (row == null) {
+                val state = observedState()
+                log("$TALK_BACK_FOCUS_PREFIX FINDING: no node whose text starts with $DETAIL_ROW_TEXT_PREFIX state $state")
+                fail(
+                    "$TALK_BACK_FOCUS_PREFIX no node whose text starts with `$DETAIL_ROW_TEXT_PREFIX` was in the tree; " +
+                        "the detail navigation was not attempted: state $state",
+                )
+                return
+            }
+            val rowClickAccepted = clickNode(row)
             log(
-                "$TALK_BACK_FOCUS_PREFIX openDetail tapPair=($DETAIL_OPEN_TAP_X, $DETAIL_OPEN_TAP_Y) " +
-                    "gapMillis=$DETAIL_OPEN_TAP_GAP_MILLIS command=$DETAIL_OPEN_TAP_COMMAND",
+                "$TALK_BACK_FOCUS_PREFIX openDetail rowClick accepted=$rowClickAccepted " +
+                    "node=${nodeLabel(row)} class=${row.className} bounds=${boundsOf(row)}",
             )
-            shell(DETAIL_OPEN_TAP_COMMAND)
-            sleepQuietly(DETAIL_OPEN_TAP_GAP_MILLIS)
-            shell(DETAIL_OPEN_TAP_COMMAND)
             val entered =
                 waitFor(
                     predicate = { findByText(appRoot(), DETAIL_SCREEN_TITLE) != null },
@@ -1204,8 +1207,8 @@ class ImportScaleTraversalInstrumentedTest {
                 log("$TALK_BACK_FOCUS_PREFIX FINDING: the detail screen was not entered state $state")
                 fail(
                     "$TALK_BACK_FOCUS_PREFIX `$DETAIL_SCREEN_TITLE` did not appear within " +
-                        "$TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS ms after the test-navigation tap pair at " +
-                        "($DETAIL_OPEN_TAP_X, $DETAIL_OPEN_TAP_Y): state $state",
+                        "$TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS ms after the ACTION_CLICK on the " +
+                        "$DETAIL_ROW_TEXT_PREFIX row (accepted=$rowClickAccepted): state $state",
                 )
                 return
             }
@@ -4505,6 +4508,20 @@ class ImportScaleTraversalInstrumentedTest {
         text: String,
     ): AccessibilityNodeInfo? {
         val matches = collectNodes(root) { node -> nodeText(node) == text }
+        return matches.firstOrNull { node -> node.isClickable } ?: matches.firstOrNull()
+    }
+
+    /**
+     * The node whose visible text STARTS WITH [prefix], preferring the clickable one. A ledger row's
+     * text carries the row's own payload after its stable marker (the TB5 fixture rows all start with
+     * [DETAIL_ROW_TEXT_PREFIX]), so an exact match cannot name one row, and the clickable preference
+     * picks the row's merged node over a bare label child.
+     */
+    private fun findByTextPrefix(
+        root: AccessibilityNodeInfo?,
+        prefix: String,
+    ): AccessibilityNodeInfo? {
+        val matches = collectNodes(root) { node -> nodeText(node).startsWith(prefix) }
         return matches.firstOrNull { node -> node.isClickable } ?: matches.firstOrNull()
     }
 
