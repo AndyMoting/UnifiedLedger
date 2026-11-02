@@ -224,6 +224,10 @@ internal fun externalNavigationBusyText(busy: ExternalNavigationBusy): String {
         ExternalNavigationHoldReason.RUNTIME_QUIESCED -> "本地账本正在切换，外部请求已暂缓。"
         ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED -> "已收到分享文件，请选择账单格式后导入。"
         ExternalNavigationHoldReason.IMPORT_SOURCE_UNAVAILABLE -> "分享的文件已无法读取（授权已过期或进程已重启），请重新分享后再导入。"
+        // P709-A02 error mapping: the source was readable but over the frozen 16 MiB bound, so the
+        // strip states the bound and the zero formal effect — never "授权已过期" for a readable file,
+        // and never a re-share instruction that could not succeed.
+        ExternalNavigationHoldReason.IMPORT_SOURCE_TOO_LARGE -> "分享文件超过 16 MiB 上限，未导入任何内容。"
         // ACC-D-SHARE-02: reached only when a refusal arrives WITHOUT its detailed vector (the carrier
         // with no payload). The detailed copy is [shareRejectionText].
         ExternalNavigationHoldReason.IMPORT_REJECTED -> "无法接收这次分享，未做任何改动。"
@@ -1898,9 +1902,10 @@ fun P503App(
      */
     fun runImportIntakePipeline(
         file: PickedImportFile,
-        // P7-09 09.A (spec section 4; invariant 5): true when this run came from the SHARE closed
-        // loop. A read-failure/over-limit outcome then ALSO surfaces the typed re-share prompt (the
-        // source's short-lived grant is gone; the user must re-share, never a silent drop). The SAF
+        // P7-09 09.A (spec section 4; invariant 5; P709-A02 error mapping): true when this run came
+        // from the SHARE closed loop. An unreadable source then ALSO surfaces the typed re-share
+        // prompt (the short-lived grant is gone; the user must re-share), while a readable-but-
+        // oversize source surfaces its own too-large prompt. Either way never a silent drop. The SAF
         // pick path leaves it `false` and keeps its existing typed banner only.
         sharePath: Boolean = false,
     ) {
@@ -1965,12 +1970,11 @@ fun P503App(
                     )
                     return@launch
                 }
-                // P7-09 09.A: on the share path a read failure (expired/revoked grant, mid-read
-                // failure, over-16 MiB) additionally lands the typed re-share prompt — zero formal
-                // effect, never a silent drop.
-                if (sharePath && shareImportReShareRequired(outcome.value.first)) {
-                    dispatch(P503UiEvent.ShareImportReShareLanded)
-                }
+                // P7-09 09.A (spec section 4; invariant 5) + P709-A02 error mapping: on the share path
+                // an unreadable source lands the typed re-share prompt, while an over-16 MiB source
+                // lands its OWN too-large prompt (the source was readable; re-sharing could not help).
+                // Zero formal effect either way — never a silent drop.
+                if (sharePath) shareImportReadOutcomeEvent(outcome.value.first)?.let(::dispatch)
                 dispatch(
                     P503UiEvent.ImportFileIntakeResult(
                         ImportIntakeSessionSummary(
@@ -1995,9 +1999,10 @@ fun P503App(
      */
     fun handleImportPickResult(
         result: ImportFilePickResult,
-        // P7-09 09.A (spec section 4; invariant 5): true when the pick came from the SHARE closed
-        // loop, so a read failure/over-limit additionally surfaces the typed re-share prompt. The
-        // SAF pick channel passes `false` (its default) and keeps its existing typed banner only.
+        // P7-09 09.A (spec section 4; invariant 5; P709-A02 error mapping): true when the pick came
+        // from the SHARE closed loop, so an unreadable source additionally surfaces the typed
+        // re-share prompt and a readable-but-oversize one its own too-large prompt. The SAF pick
+        // channel passes `false` (its default) and keeps its existing typed banner only.
         sharePath: Boolean = false,
     ) {
         when (result) {
