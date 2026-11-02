@@ -4050,7 +4050,16 @@ class ImportScaleTraversalInstrumentedTest {
 
     private var automationPrepared = false
 
-    private fun uiAutomation(): UiAutomation = InstrumentationRegistry.getInstrumentation().uiAutomation
+    /**
+     * The process's single [UiAutomation], created with
+     * [UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES]. That flag is a CONNECTION flag - an
+     * argument of `getUiAutomation(flags)`, not a service-info constant - and without it the
+     * connection suppresses every other accessibility service: a live TalkBack session goes off (the
+     * device run logged `TalkBack off`) and `ACTION_ACCESSIBILITY_FOCUS` returns false. The first
+     * call in the process creates the instance, so every later caller receives these same flags.
+     */
+    private fun uiAutomation(): UiAutomation =
+        InstrumentationRegistry.getInstrumentation().getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
 
     /**
      * Sets `FLAG_RETRIEVE_INTERACTIVE_WINDOWS` on the instrumentation's own `UiAutomation` once per
@@ -4058,9 +4067,10 @@ class ImportScaleTraversalInstrumentedTest {
      * leaves `UiAutomation.windows` empty and `rootInActiveWindow` unable to see the app window even
      * while the activity is displayed; the flag is the documented prerequisite for both. Called at
      * the start of every mode; `appRoot` calls it too, so a tree read can never precede it.
-     * `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES` joins it so a live TalkBack session survives this
-     * connection: without it the connection suppresses the other accessibility services (the device
-     * run logged `TalkBack off`) and `ACTION_ACCESSIBILITY_FOCUS` returns false.
+     * This is the ONLY flag set on the service info: TalkBack coexistence is a connection flag,
+     * passed where the connection is created ([uiAutomation] and its
+     * `getUiAutomation(FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)`), and the service info carries no
+     * such constant of its own.
      */
     private fun prepareAutomation(): UiAutomation {
         val automation = uiAutomation()
@@ -4068,9 +4078,7 @@ class ImportScaleTraversalInstrumentedTest {
             return automation
         }
         val info = automation.serviceInfo ?: return automation
-        info.flags =
-            info.flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
-                AccessibilityServiceInfo.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES
+        info.flags = info.flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         automation.serviceInfo = info
         automationPrepared = true
         return automation
