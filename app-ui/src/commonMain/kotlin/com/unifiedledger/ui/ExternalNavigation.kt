@@ -81,12 +81,23 @@ enum class ExternalNavigationHoldReason {
 
     /**
      * P7-09 09.A closed loop (spec section 4; invariant 5): the retained share source could not be
-     * read — the temporary content grant expired/was revoked before the read, a read failed, the
-     * file exceeded the 16 MiB bound, or the process died and the source is gone. This is the
-     * typed re-share prompt's reason: the pending slot is cleared, zero formal effect, and the user
-     * is told to share the file again (never a silent drop).
+     * read — the temporary content grant expired/was revoked before the read, a read failed, or the
+     * process died and the source is gone. This is the typed re-share prompt's reason: the pending
+     * slot is cleared, zero formal effect, and the user is told to share the file again (never a
+     * silent drop). An over-16-MiB source is NOT this reason — see [IMPORT_SOURCE_TOO_LARGE].
      */
     IMPORT_SOURCE_UNAVAILABLE,
+
+    /**
+     * P7-09 09.A closed loop (spec section 2.3 line 128; section 4; invariant 5), P709-A02 error
+     * mapping: the retained share source was READABLE but the bounded read refused it for exceeding
+     * the frozen 16 MiB bound, so nothing was parsed and the whole import had zero formal effect.
+     * This is its own reason rather than [IMPORT_SOURCE_UNAVAILABLE] because the grant is intact:
+     * telling the user the source is gone (and to re-share it) misstates the cause, and re-sharing
+     * the same oversize file could never succeed. The pending slot is cleared and the strip states
+     * the bound plus the zero effect.
+     */
+    IMPORT_SOURCE_TOO_LARGE,
 
     /**
      * P7-09 09.A (spec section 2.3; ACC-D-SHARE-02): the inbound share was REFUSED by the

@@ -19,9 +19,10 @@ import kotlin.test.assertTrue
 /**
  * P7-09 09.A share-import CLOSED LOOP (spec sections 2.2/2.3/4; D-225; the batch that closes the
  * "held share has no consumer" gap). These are the pure reducer/host seams of the loop:
- * format-from-the-matrix → take the retained source → the EXISTING intake pipeline, and the typed
- * re-share case on a missing source or a read failure — with ZERO formal effect and the pending slot
- * always cleared (never a silent drop).
+ * format-from-the-matrix → take the retained source → the EXISTING intake pipeline, the typed
+ * re-share case on a missing or unreadable source, and the too-large prompt on a readable-but-
+ * oversize source — with ZERO formal effect and the pending slot always cleared (never a silent
+ * drop).
  */
 class ShareImportClosedLoopTest {
     private val ledgerId = LedgerId("ledger-local-test")
@@ -125,15 +126,15 @@ class ShareImportClosedLoopTest {
     // ---------------------------------------------------------------- read-failure re-share vectors
 
     @Test
-    fun aReadFailureOrAnOverLimitSourceOnTheSharePathRequiresReShareButAnIntakeDoesNot() {
-        // The four frozen read-failure vectors: grant expiry/revocation before the read, a mid-read
-        // failure, an over-16 MiB source (the missing-source vector is the null take above).
-        assertTrue(shareImportReShareRequired(ImportIntakePipelineOutcome.ReadFailed(ImportPickReadFailure.STREAM_OPEN_FAILED)))
-        assertTrue(shareImportReShareRequired(ImportIntakePipelineOutcome.ReadFailed(ImportPickReadFailure.STREAM_READ_FAILED)))
-        assertTrue(shareImportReShareRequired(ImportIntakePipelineOutcome.ReadExceedsLimit(actualBytes = 17_000_000L)))
-        // A completed intake (accepted / no-change / typed format rejection) is NOT a re-share case.
-        assertFalse(
-            shareImportReShareRequired(
+    fun aReadFailureOnTheSharePathStillLandsTheGenericReShareAndAnIntakeLandsNothing() {
+        // The UNREADABLE-source vectors: grant expiry/revocation before the read and a mid-read
+        // failure (the missing-source vector is the null take above; an over-16 MiB source has its
+        // OWN prompt below). These keep the original IMPORT_SOURCE_UNAVAILABLE path.
+        assertEquals(P503UiEvent.ShareImportReShareLanded, shareImportReadOutcomeEvent(ImportIntakePipelineOutcome.ReadFailed(ImportPickReadFailure.STREAM_OPEN_FAILED)))
+        assertEquals(P503UiEvent.ShareImportReShareLanded, shareImportReadOutcomeEvent(ImportIntakePipelineOutcome.ReadFailed(ImportPickReadFailure.STREAM_READ_FAILED)))
+        // A completed intake (accepted / no-change / typed format rejection) is NOT a source failure.
+        assertNull(
+            shareImportReadOutcomeEvent(
                 ImportIntakePipelineOutcome.Intaken(
                     ImportFileIntakeOutcome.Accepted(
                         records =
@@ -148,7 +149,39 @@ class ShareImportClosedLoopTest {
                 ),
             ),
         )
-        assertFalse(shareImportReShareRequired(ImportIntakePipelineOutcome.Intaken(ImportFileIntakeOutcome.NoChangeAll(emptyList()))))
+        assertNull(shareImportReadOutcomeEvent(ImportIntakePipelineOutcome.Intaken(ImportFileIntakeOutcome.NoChangeAll(emptyList()))))
+    }
+
+    @Test
+    fun anOverLimitSourceLandsItsOwnTooLargePromptInsteadOfTheGenericReShare() {
+        // P709-A02 error mapping: the source WAS readable and the bounded read refused it for
+        // exceeding the frozen 16 MiB bound, so the generic re-share copy ("授权已过期…请重新分享")
+        // states a cause that is false and an action that could never succeed.
+        assertEquals(
+            P503UiEvent.ShareImportTooLargeLanded,
+            shareImportReadOutcomeEvent(ImportIntakePipelineOutcome.ReadExceedsLimit(actualBytes = 17_000_000L)),
+        )
+
+        // Reducer: the awaiting-format slot is cleared, the too-large reason lands, zero formal effect.
+        val landed = assertIs<P503AppState.OverviewEmpty>(reduce(heldShare(), P503UiEvent.ShareImportTooLargeLanded))
+        assertNull(landed.pendingExternalNavigation)
+        assertEquals(ExternalNavigationHoldReason.IMPORT_SOURCE_TOO_LARGE, landed.externalNavigationBusy?.reason)
+        assertNull(landed.importReview)
+        // The strip is dismissible (保留当前), never a stuck modal.
+        assertNull(reduce(landed, P503UiEvent.DismissExternalNavigationBusy).externalNavigationBusyOrNull())
+
+        // The copy states the frozen bound plus the zero formal effect, and misstates nothing.
+        val copy = externalNavigationBusyText(landed.externalNavigationBusy!!)
+        assertEquals("分享文件超过 16 MiB 上限，未导入任何内容。", copy)
+        assertFalse(copy.contains("重新分享"), "a readable-but-oversize source must not ask for a re-share: $copy")
+        assertFalse(copy.contains("授权"), "the cause is the size bound, not an expired grant: $copy")
+        assertFalse(copy.contains("delivery-1"), "the strip must not echo a deliveryId: $copy")
+
+        // The retained source leaves the slot, so the host releases it exactly like a re-share...
+        val held = PendingExternalNavigation(shareImport, ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED)
+        assertEquals(setOf("delivery-1"), releasedShareDeliveryIds(held, landed.pendingExternalNavigationSlot()))
+        // ...and the event drops the host fallback too (the B2 no-silent-discard seam).
+        assertTrue(clearsExternalNavigation(P503UiEvent.ShareImportTooLargeLanded))
     }
 
     // ---------------------------------------------------------------- the source port contract
@@ -186,6 +219,7 @@ class ShareImportClosedLoopTest {
             )
         assertSame(detail, reduce(detail, P503UiEvent.ShareImportConsumed))
         assertSame(detail, reduce(detail, P503UiEvent.ShareImportReShareLanded))
+        assertSame(detail, reduce(detail, P503UiEvent.ShareImportTooLargeLanded))
     }
 
     // ---------------------------------------------------------------- fix round B1: release on abandon
