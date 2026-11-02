@@ -4058,6 +4058,9 @@ class ImportScaleTraversalInstrumentedTest {
      * leaves `UiAutomation.windows` empty and `rootInActiveWindow` unable to see the app window even
      * while the activity is displayed; the flag is the documented prerequisite for both. Called at
      * the start of every mode; `appRoot` calls it too, so a tree read can never precede it.
+     * `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES` joins it so a live TalkBack session survives this
+     * connection: without it the connection suppresses the other accessibility services (the device
+     * run logged `TalkBack off`) and `ACTION_ACCESSIBILITY_FOCUS` returns false.
      */
     private fun prepareAutomation(): UiAutomation {
         val automation = uiAutomation()
@@ -4065,7 +4068,9 @@ class ImportScaleTraversalInstrumentedTest {
             return automation
         }
         val info = automation.serviceInfo ?: return automation
-        info.flags = info.flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        info.flags =
+            info.flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                AccessibilityServiceInfo.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES
         automation.serviceInfo = info
         automationPrepared = true
         return automation
