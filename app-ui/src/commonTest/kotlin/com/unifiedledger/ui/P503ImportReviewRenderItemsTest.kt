@@ -308,10 +308,12 @@ class P503ImportReviewRenderItemsTest {
                 rows = listOf(row("dup-a", duplicateStatus = ImportDuplicateStatus.DEFERRED, sourceInputRef = "pick-handle-1")),
                 lastIntakeSession = acceptedSession(recordCount = 1),
             )
-        assertTrue(
-            importReviewRenderItems(inSession, ImportPlatformKind.ANDROID)
-                .any { it is ImportReviewRenderItem.GroupDispositionButton },
-        )
+        val inSessionItems = importReviewRenderItems(inSession, ImportPlatformKind.ANDROID)
+        val buttonIndex = inSessionItems.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionButton }
+        val firstCandidateIndex = inSessionItems.indexOfFirst { it is ImportReviewRenderItem.CandidateItem }
+        assertTrue(buttonIndex >= 0)
+        // The 20k-row group must not bury its only action below the candidate list.
+        assertTrue(firstCandidateIndex > buttonIndex)
         val otherSession =
             ImportReviewView(
                 rows = listOf(row("dup-b", duplicateStatus = ImportDuplicateStatus.DEFERRED, sourceInputRef = "pick-handle-2")),
@@ -548,7 +550,8 @@ class P503ImportReviewRenderItemsTest {
         )
         assertEquals(20_017, items.size)
         // Order: the card header sits right after the affordance button; the 10,000 flat items
-        // follow in page order; the footer is the last item of the whole list.
+        // follow in page order; the footer is immediately before the first candidate row (the
+        // affordance/card deliberately precede the 20k candidate list).
         val buttonIndex = items.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionButton }
         val headerIndex = items.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionCardHeader }
         assertEquals(buttonIndex + 1, headerIndex)
@@ -560,8 +563,11 @@ class P503ImportReviewRenderItemsTest {
             (0 until 10_000).map { "group-disposition-item:dup-" + it.toString().padStart(5, '0') },
             groupItems.map { it.stableKey },
         )
-        assertIs<ImportReviewRenderItem.GroupDispositionCardFooter>(items.last())
-        assertEquals(10_000, (items.last() as ImportReviewRenderItem.GroupDispositionCardFooter).itemCount)
+        val footerIndex = items.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionCardFooter }
+        val firstCandidateIndex = items.indexOfFirst { it is ImportReviewRenderItem.CandidateItem }
+        // The card footer precedes the candidate list; the class GroupHeader sits between them.
+        assertTrue(footerIndex >= 0 && footerIndex < firstCandidateIndex)
+        assertEquals(10_000, (items[footerIndex] as ImportReviewRenderItem.GroupDispositionCardFooter).itemCount)
         // Every key stays pairwise distinct across the whole 20,017-item list.
         val keys = items.map { it.stableKey }
         assertEquals(keys.size, keys.toSet().size)
