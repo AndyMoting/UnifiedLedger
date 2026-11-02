@@ -4058,8 +4058,7 @@ class ImportScaleTraversalInstrumentedTest {
      * device run logged `TalkBack off`) and `ACTION_ACCESSIBILITY_FOCUS` returns false. The first
      * call in the process creates the instance, so every later caller receives these same flags.
      */
-    private fun uiAutomation(): UiAutomation =
-        InstrumentationRegistry.getInstrumentation().getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+    private fun uiAutomation(): UiAutomation = InstrumentationRegistry.getInstrumentation().getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
 
     /**
      * Sets `FLAG_RETRIEVE_INTERACTIVE_WINDOWS` on the instrumentation's own `UiAutomation` once per
