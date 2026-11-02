@@ -17,6 +17,7 @@ import com.unifiedledger.ui.ledgerStorageLayout
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -255,6 +256,19 @@ private const val COUNT_PROBE_PICKER_WAIT_MILLIS = 30_000
 private const val COUNT_PROBE_REFRESH_WAIT_MILLIS = 30_000
 private const val COUNT_PROBE_REFRESH_SETTLE_MILLIS = 2_000
 
+// ---- talkBackFocusProbe (TalkBack inspection only: request ONE node's accessibility focus) ----
+//
+// A TB vector reads the app's own accessibility focus speech from a live TalkBack session, and that
+// capture is only attributable when the focus was aimed at one known node beforehand. This mode does
+// exactly that and nothing else: one ACTION_ACCESSIBILITY_FOCUS on the node matched by `query`, plus
+// the reading of that node. It never clicks, confirms, scrolls, types or writes, so a probe can be
+// re-run against any screen without moving product state.
+private const val ARG_QUERY = "query"
+private const val TALK_BACK_FOCUS_PREFIX = "talkBackFocus:"
+private const val TALK_BACK_FOCUS_NODE_WAIT_MILLIS = 20_000
+private const val TALK_BACK_FOCUS_MATCH_TEXT = "text"
+private const val TALK_BACK_FOCUS_MATCH_DESCRIPTION = "contentDescription"
+
 /**
  * The duplicate-status histogram SQL. `import_duplicate_status_history` is append-only with
  * `PRIMARY KEY (ledger_id, candidate_id, sequence)`, so the row with the greatest `sequence` per
@@ -414,6 +428,15 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  *   list rendered, a scrollable container, the format label and the `选择文件` nodes); every other
  *   outcome, including an intake that never stabilizes and a picker that never appears, is a logged
  *   FINDING. Every line carries the `countProbe:` prefix.
+ * - `talkBackFocusProbe`: TalkBack inspection ONLY. Arg `query` (required: the exact node text of the
+ *   target, or, failing that, its exact contentDescription). It resolves the app window through
+ *   [appRoot], matches with [findByText] and then [findByContentDescription], performs exactly ONE
+ *   `AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS`, and logs the node's text, contentDescription,
+ *   class and bounds plus the action's accepted flag under the `talkBackFocus:` prefix. It never
+ *   clicks, confirms, scrolls, types or writes, so a probe run cannot move product state and no other
+ *   mode's path changes. Both halves are hard preconditions: a target absent from the tree, or an
+ *   action the node refuses, FAILS the test, because a run that focused nothing must not be read
+ *   downstream as "TalkBack had nothing to say here".
  *
  * CHAIN-ORDER RATIONALE (why the candidate detail comes BEFORE the deep traversal): the detail screen
  * carries its OWN checkbox and its OWN 进入批量确认 entry (device dump: one `勾选候选` CheckBox, and one
@@ -725,6 +748,16 @@ class ImportScaleTraversalInstrumentedTest {
         val evidence = mutableListOf<String>()
         try {
             runB6CardOpen(evidence)
+        } finally {
+            appendEvidence(evidence)
+        }
+    }
+
+    @Test
+    fun talkBackFocusProbe() {
+        val evidence = mutableListOf<String>()
+        try {
+            runTalkBackFocusProbe(evidence)
         } finally {
             appendEvidence(evidence)
         }
@@ -1044,6 +1077,109 @@ class ImportScaleTraversalInstrumentedTest {
         val open = openGroupCard(targetNode, log)
         evidence += "b6 result cardOpen=$open cardWaitBoundMillis=$GROUP_CARD_WAIT_MILLIS"
         evidence += "== b6CardOpen end"
+    }
+
+    /**
+     * Runs [talkBackFocusProbe] (class doc, mode list). TalkBack inspection ONLY: the single side
+     * effect is the request for accessibility focus on one node - nothing here clicks, confirms,
+     * scrolls, types or writes, so a probe run cannot move product state.
+     *
+     * Both halves are hard. A `query` that matches no node within
+     * [TALK_BACK_FOCUS_NODE_WAIT_MILLIS], or an `ACTION_ACCESSIBILITY_FOCUS` the node refuses, fails
+     * the test: once only the evidence file is read, a silent no-focus run is indistinguishable from
+     * "TalkBack was silent here", and the TB vector would be recorded against a focus that never
+     * existed. [observedState] rides on the missing-target failure so the half that was absent is
+     * named.
+     */
+    private fun runTalkBackFocusProbe(evidence: MutableList<String>) {
+        val log = evidenceLog(evidence)
+        val startedNanos = System.nanoTime()
+        val query = stringArg(ARG_QUERY, "")
+        log("$TALK_BACK_FOCUS_PREFIX start epochMillis=${System.currentTimeMillis()} query=<$query>")
+        if (query.isEmpty()) {
+            log("$TALK_BACK_FOCUS_PREFIX FINDING: no target text; pass -e $ARG_QUERY=<exact text or contentDescription>")
+            fail("$TALK_BACK_FOCUS_PREFIX the `$ARG_QUERY` instrumentation argument is required: pass -e $ARG_QUERY=<the exact node text or contentDescription to focus>")
+            return
+        }
+        // One tree read per poll: a probe starts right after the host brings the app up, so the first
+        // frames legitimately have no app window at all.
+        waitFor(
+            predicate = { appRoot()?.let { node -> findByTextOrDescription(node, query) } != null },
+            timeoutMs = TALK_BACK_FOCUS_NODE_WAIT_MILLIS,
+            pollMs = POLL_MILLIS,
+        )
+        val root = appRoot()
+        val match = root?.let { node -> findByTextOrDescription(node, query) }
+        if (match == null) {
+            val rootState = if (root == null) "absent" else describeRoot(root)
+            val state = observedState()
+            log(
+                "$TALK_BACK_FOCUS_PREFIX FINDING: target not found query=<$query> " +
+                    "waitedMillis=${elapsedMillis(startedNanos)} root=$rootState state $state",
+            )
+            fail(
+                "$TALK_BACK_FOCUS_PREFIX no node carries the text or contentDescription <$query> after " +
+                    "$TALK_BACK_FOCUS_NODE_WAIT_MILLIS ms: root=$rootState state $state",
+            )
+            return
+        }
+        val node = match.first
+        val text = nodeText(node)
+        val description = node.contentDescription?.toString().orEmpty()
+        val bounds = boundsOf(node)
+        log(
+            "$TALK_BACK_FOCUS_PREFIX node matchedOn=${match.second} text=<$text> contentDescription=<$description> " +
+                "class=${node.className} bounds=$bounds visible=${node.isVisibleToUser} enabled=${node.isEnabled}",
+        )
+        val accepted = node.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
+        log(
+            "$TALK_BACK_FOCUS_PREFIX action=ACTION_ACCESSIBILITY_FOCUS accepted=$accepted " +
+                "focusHoldersAfterAction=${accessibilityFocusSummary()}",
+        )
+        if (!accepted) {
+            fail(
+                "$TALK_BACK_FOCUS_PREFIX ACTION_ACCESSIBILITY_FOCUS was refused: matchedOn=${match.second} " +
+                    "text=<$text> contentDescription=<$description> class=${node.className} bounds=$bounds enabled=${node.isEnabled}",
+            )
+            return
+        }
+        log("$TALK_BACK_FOCUS_PREFIX done requested=true actionAccepted=true elapsedMillis=${elapsedMillis(startedNanos)}")
+    }
+
+    /**
+     * The node whose visible text is exactly [query], or, failing that, the node whose
+     * contentDescription is exactly it, paired with the field that matched
+     * ([TALK_BACK_FOCUS_MATCH_TEXT] / [TALK_BACK_FOCUS_MATCH_DESCRIPTION]). [findByText] is tried
+     * first because Compose merges a Button's label into one node whose text is that label, while a
+     * bare label or a row's checkbox (e.g. 勾选候选) carries only the description.
+     */
+    private fun findByTextOrDescription(
+        root: AccessibilityNodeInfo?,
+        query: String,
+    ): Pair<AccessibilityNodeInfo, String>? {
+        findByText(root, query)?.let { node -> return node to TALK_BACK_FOCUS_MATCH_TEXT }
+        findByContentDescription(root, query)?.let { node -> return node to TALK_BACK_FOCUS_MATCH_DESCRIPTION }
+        return null
+    }
+
+    /**
+     * The nodes that a FRESH tree read reports as accessibility-focused, as one evidence line (`none`
+     * when no node holds it). The post-action reading walks the tree again instead of re-reading the
+     * action's own node handle, because [AccessibilityNodeInfo] is a snapshot: that handle still
+     * carries the value from before the action. Nothing here asserts - the action's own result is the
+     * probe's contract, and this line only states which node the platform reports as focused
+     * afterwards.
+     */
+    private fun accessibilityFocusSummary(): String {
+        val holders = collectNodes(appRoot()) { node -> node.isAccessibilityFocused }
+        if (holders.isEmpty()) {
+            return "none"
+        }
+        val parts =
+            holders.map { node ->
+                "text=<${nodeText(node)}> contentDescription=<${node.contentDescription?.toString().orEmpty()}> class=${node.className} bounds=${boundsOf(node)}"
+            }
+        return "count=${holders.size} [${parts.joinToString(separator = "; ")}]"
     }
 
     private fun runProbe(evidence: MutableList<String>) {
