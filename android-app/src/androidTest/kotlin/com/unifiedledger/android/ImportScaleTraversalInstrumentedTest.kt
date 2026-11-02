@@ -434,9 +434,11 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  *   `AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS`, and logs the node's text, contentDescription,
  *   class and bounds plus the action's accepted flag under the `talkBackFocus:` prefix. It never
  *   clicks, confirms, scrolls, types or writes, so a probe run cannot move product state and no other
- *   mode's path changes. Both halves are hard preconditions: a target absent from the tree, or an
- *   action the node refuses, FAILS the test, because a run that focused nothing must not be read
- *   downstream as "TalkBack had nothing to say here".
+ *   mode's path changes. A cold-start run with no app window is brought up by the class's own launch
+ *   path and waited to [POST_LAUNCH_ROOT_WAIT_MILLIS] before the target is looked for. Both halves are
+ *   hard preconditions: a target absent from the tree, or an action the node refuses, FAILS the test,
+ *   because a run that focused nothing must not be read downstream as "TalkBack had nothing to say
+ *   here".
  *
  * CHAIN-ORDER RATIONALE (why the candidate detail comes BEFORE the deep traversal): the detail screen
  * carries its OWN checkbox and its OWN 进入批量确认 entry (device dump: one `勾选候选` CheckBox, and one
@@ -1090,6 +1092,11 @@ class ImportScaleTraversalInstrumentedTest {
      * "TalkBack was silent here", and the TB vector would be recorded against a focus that never
      * existed. [observedState] rides on the missing-target failure so the half that was absent is
      * named.
+     *
+     * A cold-start run has no app window yet (`am instrument` starts a fresh process), so the mode
+     * brings the app up through the class's own launch path and waits
+     * [POST_LAUNCH_ROOT_WAIT_MILLIS] for the root; without that, the node wait would spend its whole
+     * bound on a window nobody launched.
      */
     private fun runTalkBackFocusProbe(evidence: MutableList<String>) {
         val log = evidenceLog(evidence)
@@ -1101,8 +1108,29 @@ class ImportScaleTraversalInstrumentedTest {
             fail("$TALK_BACK_FOCUS_PREFIX the `$ARG_QUERY` instrumentation argument is required: pass -e $ARG_QUERY=<the exact node text or contentDescription to focus>")
             return
         }
-        // One tree read per poll: a probe starts right after the host brings the app up, so the first
-        // frames legitimately have no app window at all.
+        // Cold start: `am instrument` runs in a FRESH process, so the app window may not exist yet, and
+        // the node wait below would otherwise spend its whole bound on a window nobody launched. The
+        // bring-up is the class's own path ([LAUNCH_COMMAND] then [awaitAppRoot], the pair
+        // [reachImportReview] uses) and it runs only while the root is absent, so an app the host has
+        // already brought up keeps its screen and its session state.
+        if (appRoot() == null) {
+            log("$TALK_BACK_FOCUS_PREFIX launch path=launch (no app root) command=$LAUNCH_COMMAND")
+            shell(LAUNCH_COMMAND)
+            val reachable = awaitAppRoot(POST_LAUNCH_ROOT_WAIT_MILLIS, "talkBackFocus-post-launch", log)
+            if (!reachable) {
+                val state = observedState()
+                log("$TALK_BACK_FOCUS_PREFIX FINDING: app root not reachable after launch state $state")
+                fail(
+                    "$TALK_BACK_FOCUS_PREFIX the app window did not become reachable within " +
+                        "$POST_LAUNCH_ROOT_WAIT_MILLIS ms after `$LAUNCH_COMMAND`: state $state",
+                )
+                return
+            }
+        } else {
+            log("$TALK_BACK_FOCUS_PREFIX launch path=existing-app-root (app root reachable; launch skipped)")
+        }
+        // One tree read per poll: the root is reachable now, but the target node can still be composing
+        // (the app root appearing is not the screen being drawn).
         waitFor(
             predicate = { appRoot()?.let { node -> findByTextOrDescription(node, query) } != null },
             timeoutMs = TALK_BACK_FOCUS_NODE_WAIT_MILLIS,
@@ -1134,7 +1162,7 @@ class ImportScaleTraversalInstrumentedTest {
         val accepted = node.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
         log(
             "$TALK_BACK_FOCUS_PREFIX action=ACTION_ACCESSIBILITY_FOCUS accepted=$accepted " +
-                "focusHoldersAfterAction=${accessibilityFocusSummary()}",
+                "matchedOn=${match.second} bounds=$bounds focusHoldersAfterAction=${accessibilityFocusSummary()}",
         )
         if (!accepted) {
             fail(
@@ -1143,7 +1171,10 @@ class ImportScaleTraversalInstrumentedTest {
             )
             return
         }
-        log("$TALK_BACK_FOCUS_PREFIX done requested=true actionAccepted=true elapsedMillis=${elapsedMillis(startedNanos)}")
+        log(
+            "$TALK_BACK_FOCUS_PREFIX done requested=true actionAccepted=true matchedOn=${match.second} " +
+                "bounds=$bounds elapsedMillis=${elapsedMillis(startedNanos)}",
+        )
     }
 
     /**
