@@ -3640,17 +3640,22 @@ class ImportScaleTraversalInstrumentedTest {
         val startNanos = System.nanoTime()
         val offersScrollToPosition = container.actionList.any { action -> action.id == scrollToPositionActionId }
         var forwardActions = 0
-        var targetNode: AccessibilityNodeInfo? = null
-        if (offersScrollToPosition) {
-            val arguments = Bundle()
-            arguments.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_ROW_INT, LAST_ITEM_ROW_INDEX)
-            val accepted = container.performAction(scrollToPositionActionId, arguments)
-            sleepQuietly(settleMillis.toLong())
-            targetNode = findByContentDescription(appRoot(), target)
-            log("ACTION_SCROLL_TO_POSITION row=$LAST_ITEM_ROW_INDEX accepted=$accepted")
-            log("after scrollToPosition elapsedMs=${elapsedMillis(startNanos)} targetFound=${targetNode != null}")
-        } else {
-            log("FINDING: node does not offer ACTION_SCROLL_TO_POSITION; ACTION_SCROLL_FORWARD fallback follows")
+        var targetNode: AccessibilityNodeInfo? = findByContentDescription(appRoot(), target)
+        if (targetNode != null) {
+            log("target found before scrolling; traversal skipped")
+        }
+        if (targetNode == null) {
+            if (offersScrollToPosition) {
+                val arguments = Bundle()
+                arguments.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_ROW_INT, LAST_ITEM_ROW_INDEX)
+                val accepted = container.performAction(scrollToPositionActionId, arguments)
+                sleepQuietly(settleMillis.toLong())
+                targetNode = findByContentDescription(appRoot(), target)
+                log("ACTION_SCROLL_TO_POSITION row=$LAST_ITEM_ROW_INDEX accepted=$accepted")
+                log("after scrollToPosition elapsedMs=${elapsedMillis(startNanos)} targetFound=${targetNode != null}")
+            } else {
+                log("FINDING: node does not offer ACTION_SCROLL_TO_POSITION; ACTION_SCROLL_FORWARD fallback follows")
+            }
         }
         if (targetNode == null) {
             forwardActions = forwardUntilTarget(target, maxForwardActions, settleMillis, stallChecks, refetchEvery, progressEvery, log)
