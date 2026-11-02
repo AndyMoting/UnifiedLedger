@@ -274,6 +274,7 @@ private const val DETAIL_SCREEN_TITLE = "交易详情"
 private const val DETAIL_OPEN_TAP_X = 200
 private const val DETAIL_OPEN_TAP_Y = 1_100
 private const val DETAIL_OPEN_TAP_COMMAND = "input tap $DETAIL_OPEN_TAP_X $DETAIL_OPEN_TAP_Y"
+private const val DETAIL_OPEN_TAP_GAP_MILLIS = 150L
 private const val TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS = 15_000
 private const val TALK_BACK_FOCUS_MATCH_TEXT = "text"
 private const val TALK_BACK_FOCUS_MATCH_DESCRIPTION = "contentDescription"
@@ -439,8 +440,9 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  *   FINDING. Every line carries the `countProbe:` prefix.
  * - `talkBackFocusProbe`: TalkBack inspection ONLY. Arg `query` (required: the exact node text of the
  *   target, or, failing that, its exact contentDescription); optional arg `openDetail` (default false)
- *   first injects ONE test-navigation tap at (200, 1100) and requires the 交易详情 screen within 15 s
- *   (that tap is navigation, not part of the speech assertion). It resolves the app window through
+ *   first injects the test-navigation tap PAIR at (200, 1100) - TalkBack's first tap only focuses the
+ *   row, so the second one activates it - and requires the 交易详情 screen within 15 s (that pair is
+ *   navigation, not part of the speech assertion). It resolves the app window through
  *   [appRoot], matches with [findByText] and then [findByContentDescription], performs exactly ONE
  *   `AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS` and, once that is accepted, the hover
  *   enter+move pair at the node's centre ([injectHoverAt]): TalkBack speaks what its TouchExplorer
@@ -1119,11 +1121,12 @@ class ImportScaleTraversalInstrumentedTest {
      * events to assign the focus and speak it. The injections click nothing. The mode then holds
      * [TALK_BACK_FOCUS_SPEECH_SETTLE_MILLIS] so the speech lands before the run ends.
      *
-     * Optional `openDetail` (default false) injects ONE test-navigation tap at
-     * ([DETAIL_OPEN_TAP_X], [DETAIL_OPEN_TAP_Y]) - the home screen's first row - and requires the
-     * 交易详情 screen within [TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS] before the focus is requested. That
-     * tap is navigation, not a speech assertion: it exists because the host cannot drive the app while
-     * this connection holds the automation.
+     * Optional `openDetail` (default false) injects the test-navigation tap PAIR at
+     * ([DETAIL_OPEN_TAP_X], [DETAIL_OPEN_TAP_Y]) - the home screen's first row, one tap to put
+     * TalkBack's focus on the row and a second, [DETAIL_OPEN_TAP_GAP_MILLIS] later, to activate it -
+     * and requires the 交易详情 screen within [TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS] before the focus is
+     * requested. That pair is navigation, not a speech assertion: it exists because the host cannot
+     * drive the app while this connection holds the automation.
      */
     private fun runTalkBackFocusProbe(evidence: MutableList<String>) {
         val log = evidenceLog(evidence)
@@ -1156,14 +1159,20 @@ class ImportScaleTraversalInstrumentedTest {
         } else {
             log("$TALK_BACK_FOCUS_PREFIX launch path=existing-app-root (app root reachable; launch skipped)")
         }
-        // Optional test navigation to the transaction-detail screen. The tap is the only pointer event
-        // this mode sends and it exists because the host cannot drive the app while this connection
-        // holds the automation: one coordinate tap on the home screen's first row, then the detail
-        // screen's OWN title is required before the focus is asked for, so a probe never reports a
-        // focus on the screen it was supposed to reach.
+        // Optional test navigation to the transaction-detail screen, sent as ONE tap PAIR: a single tap
+        // only moves TalkBack's focus onto the row (TB5 logged a focused row and no navigation), so the
+        // second tap 150 ms later is what activates it. The pair is the only pointer input this mode
+        // sends; it exists because the host cannot drive the app while this connection holds the
+        // automation, and the detail screen's OWN title is required before the focus is asked for, so a
+        // probe never reports a focus on the screen it was supposed to reach.
         val openDetail = booleanArg(ARG_OPEN_DETAIL, false)
         if (openDetail) {
-            log("$TALK_BACK_FOCUS_PREFIX openDetail tap=($DETAIL_OPEN_TAP_X, $DETAIL_OPEN_TAP_Y) command=$DETAIL_OPEN_TAP_COMMAND")
+            log(
+                "$TALK_BACK_FOCUS_PREFIX openDetail tapPair=($DETAIL_OPEN_TAP_X, $DETAIL_OPEN_TAP_Y) " +
+                    "gapMillis=$DETAIL_OPEN_TAP_GAP_MILLIS command=$DETAIL_OPEN_TAP_COMMAND",
+            )
+            shell(DETAIL_OPEN_TAP_COMMAND)
+            sleepQuietly(DETAIL_OPEN_TAP_GAP_MILLIS)
             shell(DETAIL_OPEN_TAP_COMMAND)
             val entered =
                 waitFor(
@@ -1180,7 +1189,7 @@ class ImportScaleTraversalInstrumentedTest {
                 log("$TALK_BACK_FOCUS_PREFIX FINDING: the detail screen was not entered state $state")
                 fail(
                     "$TALK_BACK_FOCUS_PREFIX `$DETAIL_SCREEN_TITLE` did not appear within " +
-                        "$TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS ms after the test-navigation tap at " +
+                        "$TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS ms after the test-navigation tap pair at " +
                         "($DETAIL_OPEN_TAP_X, $DETAIL_OPEN_TAP_Y): state $state",
                 )
                 return
