@@ -214,9 +214,11 @@ internal enum class P706A06Boundary(
      * B14, the fresh-install generation creation and pointer publish.
      * `LedgerRuntimeOwner.kt:1029-1032` (createDirectories, create-on-open driver open, publish).
      * Parks BEFORE delegating the pointer's atomic write: a real driver-created `gen-1` database
-     * exists, no pointer, and no legacy original - so the discard branch is typed-unavailable
-     * (`BackupRestoreRecovery.kt:213-218`) and run B must converge through adoption, never a
-     * silent rebuild (D-176's prohibition).
+     * exists, no pointer, and no legacy original. The complete-and-current `gen-1` verifies
+     * Adoptable, so the discard-and-re-upgrade branch refuses with the typed
+     * `AdoptableCandidatePresent` (`BackupRestoreRecovery.kt:206-218`) - nothing deleted, no
+     * automatic adoption - and run B converges through the explicit `adopt()`, never a silent
+     * rebuild (D-176's prohibition).
      */
     B14(P706A06BoundaryPhase.FRESH_INSTALL, parkBeforeDelegate = true),
 
@@ -273,7 +275,11 @@ internal enum class P706A06MarkerConvergence {
     /** Startup fails closed POINTER_MISSING; the user-confirmed adoption then converges. */
     POINTER_MISSING_THEN_ADOPT,
 
-    /** B14: fail-closed, the discard branch is typed-unavailable, the adoption converges. */
+    /**
+     * B14: fail-closed; the adoptable candidate makes the discard branch refuse with the typed
+     * `AdoptableCandidatePresent` (nothing deleted, no automatic adoption), and the explicit
+     * adoption converges.
+     */
     POINTER_MISSING_THEN_ADOPT_FRESH,
 
     /** B16: fail-closed, the user-confirmed discard-and-re-upgrade converges from the legacy set. */

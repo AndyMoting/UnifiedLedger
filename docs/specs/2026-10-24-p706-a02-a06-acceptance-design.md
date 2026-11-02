@@ -150,7 +150,7 @@ A06 原要求「每个持久状态边界」按当前代码实读枚举为 **19**
 - **B11 升级指针发布前窗口（崩溃窗口行）**：复制+fsync 已完成（`LedgerRuntimeOwner.kt:1043`）与指针发布（`:1051`）之间的进程死亡——留下「有代目录、无指针」形态，下次启动 `POINTER_MISSING` fail-closed（`LedgerStableStorage.kt:449`），恢复归 06.D 的用户确认采纳/废弃重跑（D-178 `:3492` 设备实证的 ANR 部分复制 + 无指针代目录、`:3508` 残余 (a)「`POINTER_MISSING` 砖化窗口…承接至 06.D」；D-182 裁决 C `:3603` 的设计级承接面）。该窗口是 D-178 实测真实砖化用户的窗口，A06-b1 kill 腿矩阵必须有对应行。
 - **B12 升级指针发布**：`LedgerRuntimeOwner.kt:1051` 调用 `publishActivePointer`（原语 `LedgerStableStorage.kt:562-570`，升级路径与切换/恢复共用同一冻结原语）。
 - **B13 removeLegacyFiles 旧文件删除**：`LedgerRuntimeOwner.kt:1052` 调用；主文件 + 可删除 sidecar 超集（`LedgerStableStorage.kt:578-591`）。
-- **B14 全新安装建代与发布指针**：`LedgerRuntimeOwner.kt:1029` `createDirectories` → `:1030` create-on-open 打开 → `:1032` `publishActivePointer(…, 1)`（注释 `:1026-1028`：唯一允许 create-on-open 的路径，指针在权威读回后才发布）。发布前 kill 留下无指针 `gen-1` 且**无 legacy 原件**，废弃重跑分支不可用（`BackupRestoreRecovery.kt:213-218` 的类型化 `LegacyOriginalMissing`）——该向量同时钉住 D-176 静默空库禁令在全新安装半途崩溃下的行为。
+- **B14 全新安装建代与发布指针**：`LedgerRuntimeOwner.kt:1029` `createDirectories` → `:1030` create-on-open 打开 → `:1032` `publishActivePointer(…, 1)`（注释 `:1026-1028`：唯一允许 create-on-open 的路径，指针在权威读回后才发布）。发布前 kill 留下无指针 `gen-1` 且**无 legacy 原件**；该 `gen-1` 由真实驱动创建、完整且为当前 schema 版本，故验证为 Adoptable，废弃重跑分支在 legacy 守卫**之前**返回类型化 `AdoptableCandidatePresent`（`BackupRestoreRecovery.kt:206-218`）——拒绝态：不删除候选、不自动采纳，随后用户显式 `adopt()` 成功收敛。该向量同时钉住 D-176 静默空库禁令在全新安装半途崩溃下的行为。
 
 **POINTER_MISSING 恢复（用户确认动作，`BackupRestoreRecovery.kt`）**
 
@@ -208,7 +208,7 @@ A06 原要求「每个持久状态边界」按当前代码实读枚举为 **19**
 | B11 升级指针发布前窗口（窗口行） | `LedgerRuntimeOwner.kt:1043` 完成 → `:1051` 前（无新落盘，磁盘为「有代目录、无指针」） | JVM：`LedgerStableStorageTest:37`（无指针既有代 fail-closed）；`BackupRestoreRecoveryTest` 采纳/废弃分支恢复语义；真机预设腿 `AndroidRestoreRecoveryInstrumentedTest:81`（无指针 fail-closed + 确认采纳打开） | run A/B：升级复制完成、指针未发布时 kill → `POINTER_MISSING` fail-closed → 经采纳（B15）或废弃重跑（B16）收敛；绝不静默空库（D-178 `:3492`/`:3508` 实证窗口、D-182 裁决 C 承接面） |
 | B12 升级指针发布 | `LedgerRuntimeOwner.kt:1051` → `LedgerStableStorage.kt:562-570` | JVM：`LedgerStableStorageTest:343,:357` | run A/B：指针已发布、legacy 未删时 kill → 下次启动选新代、legacy 惰性 |
 | B13 removeLegacyFiles | `LedgerRuntimeOwner.kt:1052` → `LedgerStableStorage.kt:578-591` | JVM：`LedgerStableStorageTest:303,:321` | run A/B：legacy 半删时 kill → 新代权威、无双重有效图 |
-| B14 全新安装建代+发布 | `LedgerRuntimeOwner.kt:1029-1032` | JVM：`LedgerStableStorageTest:28,:343` | run A/B：发布前 kill → 无指针 `gen-1` fail-closed、绝不静默空库（D-176 禁令；无 legacy 原件时废弃分支类型化不可用，`BackupRestoreRecovery.kt:213-218`） |
+| B14 全新安装建代+发布 | `LedgerRuntimeOwner.kt:1029-1032` | JVM：`LedgerStableStorageTest:28,:343` | run A/B：发布前 kill → 无指针 `gen-1` fail-closed、绝不静默空库（D-176 禁令；可采纳候选使废弃分支先返回类型化 `AdoptableCandidatePresent`——不删除、不自动采纳，随后显式采纳收敛，`BackupRestoreRecovery.kt:206-218`） |
 | B15 采纳发布 | `BackupRestoreRecovery.kt:174-185` | JVM：`BackupRestoreRecoveryTest` 采纳链（`:102,:122,:139,:162`）；真机预设腿 `AndroidRestoreRecoveryInstrumentedTest:81`（采纳腿，无 kill） | run A/B：采纳发布中 kill → 保持无指针 fail-closed 或指针完整发布，无中间态被消费（发布是唯一 mutation，`:190-193`） |
 | B16 废弃重跑候选删除 | `BackupRestoreRecovery.kt:196-240` | JVM：`BackupRestoreRecoveryTest` 废弃链（`:175,:197,:214,:229,:240`）；真机预设腿 | run A/B：候选删除中 kill → `POINTER_MISSING` 保持 fail-closed、无半删代被启动选中 |
 | B17 恢复重发布旧指针 | `LedgerStableStorage.kt:780-805` | JVM：`LedgerSwitchJournalTest:107,:125,:145,:189`；真机预设腿 `AndroidRestoreRecoveryInstrumentedTest:156` | run A/B：恢复重发布中 kill → 再次重启仍收敛旧代（恢复的恢复幂等） |
