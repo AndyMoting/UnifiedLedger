@@ -312,12 +312,19 @@ class P503ReducerImpl(
             P503UiEvent.ImportIntakeBusyLanded -> withExternalNavigationBusy(state, ExternalNavigationBusy(ExternalNavigationHoldReason.IMPORT_INTAKE_IN_FLIGHT))
             P503UiEvent.DismissExternalNavigationBusy -> withExternalNavigationBusy(state, null)
             // P7-09 09.A share-import closed loop (spec sections 2.3/4): the held share is consumed
-            // by the format selection (the pipeline owns the result) or could not be read (typed
-            // re-share). BOTH clear the awaiting-format share's slot; the re-share branch also lands
-            // the visible prompt. Neither touches an unrelated held request (no cross-request clear).
+            // by the format selection (the pipeline owns the result) or its source could not be
+            // imported (typed re-share for an unreadable source, its own too-large prompt for a
+            // readable-but-oversize one). ALL of them clear the awaiting-format share's slot; the
+            // two source-failure branches also land their visible prompt. Neither touches an
+            // unrelated held request (no cross-request clear).
             P503UiEvent.ShareImportConsumed -> clearShareImportPendingSlot(state)
             P503UiEvent.ShareImportReShareLanded ->
                 withExternalNavigationBusy(clearShareImportPendingSlot(state), ExternalNavigationBusy(ExternalNavigationHoldReason.IMPORT_SOURCE_UNAVAILABLE))
+            // P709-A02 error mapping: the share-path read refused a READABLE source for exceeding the
+            // frozen 16 MiB bound. Same slot clear and the same zero formal effect, but its OWN prompt
+            // — the grant is intact, so the re-share copy would misstate the cause.
+            P503UiEvent.ShareImportTooLargeLanded ->
+                withExternalNavigationBusy(clearShareImportPendingSlot(state), ExternalNavigationBusy(ExternalNavigationHoldReason.IMPORT_SOURCE_TOO_LARGE))
             else -> null
         }
 

@@ -1379,6 +1379,16 @@ sealed interface P503UiEvent {
      * .IMPORT_SOURCE_UNAVAILABLE]) as a visible strip — never a silent drop, zero formal effect.
      */
     data object ShareImportReShareLanded : P503UiEvent
+
+    /**
+     * P7-09 09.A (spec section 2.3 line 128; section 4; invariant 5), P709-A02 error mapping: the
+     * share-path bounded read refused the retained source for exceeding the frozen 16 MiB bound.
+     * Clears the pending slot AND lands its own typed prompt ([ExternalNavigationHoldReason
+     * .IMPORT_SOURCE_TOO_LARGE]) — never the re-share prompt of [ShareImportReShareLanded], whose
+     * "the source is gone, share it again" cause is false here: the source was readable and
+     * re-sharing the same oversize file cannot help. Zero formal effect, never a silent drop.
+     */
+    data object ShareImportTooLargeLanded : P503UiEvent
 }
 
 /**
