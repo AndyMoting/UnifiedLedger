@@ -24,6 +24,7 @@
 1	tests.python.test_rg11_golden_v2
 1	tests.python.test_rg11_v2_expected
 2	tests.python.test_core_primitives
+2	tests.python.test_android_instrumented_shards
 2	tests.python.test_golden_cases
 2	tests.python.test_golden_v2_mappings
 2	tests.python.test_golden_v2_rg01_expected

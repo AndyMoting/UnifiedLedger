@@ -1,0 +1,23 @@
+# Ordinary Android device regression: which test class runs on which parallel AVD.
+#
+# Format: <shard><TAB><fully-qualified test class>   (same shape as
+# tools/ci/ledger-data-shards.txt and tools/ci/python-shards.txt)
+#
+# Case authority stays tools/ci/android-instrumented-inventory.txt: this file
+# only splits its 9 classes across 2 shards, union 41 cases, no duplicates.
+# `tools/ci/android-instrumented-cloud.py check` proves that partition; any
+# class added to, removed from, or renamed in the inventory must be reflected
+# here or the producer job fails before a device boots.
+#
+# Placement follows the case count per class (8/7/6 vs 5/4/4/3/3/1) so both
+# shards stay near 20 cases.
+
+1	com.unifiedledger.android.AndroidRestoreDocumentSizeInstrumentedTest
+1	com.unifiedledger.android.AndroidRestoreRecoveryInstrumentedTest
+1	com.unifiedledger.android.CcbBillParserAndroidInstrumentedTest
+2	com.unifiedledger.android.AndroidAbsoluteDatabasePathInstrumentedTest
+2	com.unifiedledger.android.AndroidBackupSnapshotVerificationInstrumentedTest
+2	com.unifiedledger.android.AndroidFrameworkSqlDriverInstrumentedTest
+2	com.unifiedledger.android.AndroidRestoreConfirmSwitchInstrumentedTest
+2	com.unifiedledger.android.AndroidRestoreSourcePortInstrumentedTest
+2	com.unifiedledger.android.AndroidStartupFailClosedInstrumentedTest
