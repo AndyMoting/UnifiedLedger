@@ -1165,11 +1165,12 @@ class ImportScaleTraversalInstrumentedTest {
         if (openDetail) {
             log("$TALK_BACK_FOCUS_PREFIX openDetail tap=($DETAIL_OPEN_TAP_X, $DETAIL_OPEN_TAP_Y) command=$DETAIL_OPEN_TAP_COMMAND")
             shell(DETAIL_OPEN_TAP_COMMAND)
-            val entered = waitFor(
-                predicate = { findByText(appRoot(), DETAIL_SCREEN_TITLE) != null },
-                timeoutMs = TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS,
-                pollMs = POLL_MILLIS,
-            )
+            val entered =
+                waitFor(
+                    predicate = { findByText(appRoot(), DETAIL_SCREEN_TITLE) != null },
+                    timeoutMs = TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS,
+                    pollMs = POLL_MILLIS,
+                )
             log(
                 "$TALK_BACK_FOCUS_PREFIX openDetail entered=$entered title=$DETAIL_SCREEN_TITLE " +
                     "timeoutMillis=$TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS elapsedMillis=${elapsedMillis(startedNanos)}",
