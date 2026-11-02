@@ -268,6 +268,7 @@ private const val COUNT_PROBE_REFRESH_SETTLE_MILLIS = 2_000
 private const val ARG_QUERY = "query"
 private const val TALK_BACK_FOCUS_PREFIX = "talkBackFocus:"
 private const val TALK_BACK_FOCUS_NODE_WAIT_MILLIS = 20_000
+private const val TALK_BACK_FOCUS_SPEECH_SETTLE_MILLIS = 1_500L
 private const val TALK_BACK_FOCUS_MATCH_TEXT = "text"
 private const val TALK_BACK_FOCUS_MATCH_DESCRIPTION = "contentDescription"
 
@@ -433,11 +434,13 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  * - `talkBackFocusProbe`: TalkBack inspection ONLY. Arg `query` (required: the exact node text of the
  *   target, or, failing that, its exact contentDescription). It resolves the app window through
  *   [appRoot], matches with [findByText] and then [findByContentDescription], performs exactly ONE
- *   `AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS` and, once that is accepted, ONE hover move at
- *   the node's centre ([injectHoverAt]): TalkBack speaks what its TouchExplorer assigns and does not
- *   speak an app-set focus, so the hover is what makes the run speakable. It logs the node's text,
- *   contentDescription, class and bounds plus the action's accepted and the hover's injected flags
- *   under the `talkBackFocus:` prefix. It never clicks, confirms, scrolls, types or writes (a hover
+ *   `AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS` and, once that is accepted, the hover
+ *   enter+move pair at the node's centre ([injectHoverAt]): TalkBack speaks what its TouchExplorer
+ *   assigns and does not speak an app-set focus, and its TouchExplorer needs the enter+move PAIR, so
+ *   that pair is what makes the run speakable. It then holds
+ *   [TALK_BACK_FOCUS_SPEECH_SETTLE_MILLIS] for the speech, and logs the node's text, contentDescription,
+ *   class and bounds plus the action's accepted and the pair's two injected flags under the
+ *   `talkBackFocus:` prefix. It never clicks, confirms, scrolls, types or writes (a hover
  *   carries no click), so a probe run cannot move product state and no other
  *   mode's path changes. A cold-start run with no app window is brought up by the class's own launch
  *   path and waited to [POST_LAUNCH_ROOT_WAIT_MILLIS] before the target is looked for. Both halves are
@@ -1103,9 +1106,10 @@ class ImportScaleTraversalInstrumentedTest {
      * [POST_LAUNCH_ROOT_WAIT_MILLIS] for the root; without that, the node wait would spend its whole
      * bound on a window nobody launched.
      *
-     * After an accepted focus the mode injects ONE hover move at the node's centre
-     * ([injectHoverAt]): TalkBack does not speak an app-set focus, so the hover is what lets its
-     * TouchExplorer assign the focus and speak it. The injection clicks nothing.
+     * After an accepted focus the mode injects the hover enter+move pair at the node's centre
+     * ([injectHoverAt]): TalkBack does not speak an app-set focus, and its TouchExplorer needs both
+     * events to assign the focus and speak it. The injections click nothing. The mode then holds
+     * [TALK_BACK_FOCUS_SPEECH_SETTLE_MILLIS] so the speech lands before the run ends.
      */
     private fun runTalkBackFocusProbe(evidence: MutableList<String>) {
         val log = evidenceLog(evidence)
@@ -1182,19 +1186,26 @@ class ImportScaleTraversalInstrumentedTest {
         }
         // TalkBack does not speak an app-set accessibility focus ("Accessibility focus is not assigned
         // by TalkBack" in its own log): its TouchExplorer assigns the focus itself from the exploration
-        // pointer, so ONE hover move at the node's centre is what makes the probe speakable. A hover is
-        // not a click, and nothing else is injected.
-        val hoverInjected = injectHoverAt(bounds.centerX(), bounds.centerY())
+        // pointer and needs the ENTER+MOVE pair, so that pair at the node's centre is what makes the
+        // probe speakable. Neither event is a click, and nothing else is injected.
+        val hover = injectHoverAt(bounds.centerX(), bounds.centerY())
         log(
-            "$TALK_BACK_FOCUS_PREFIX hover hoverInjected=$hoverInjected action=ACTION_HOVER_MOVE " +
-                "center=(${bounds.centerX()}, ${bounds.centerY()}) matchedOn=${match.second} bounds=$bounds",
+            "$TALK_BACK_FOCUS_PREFIX hover hoverEnter=${hover.enter} hoverMove=${hover.move} " +
+                "action=ACTION_HOVER_ENTER+ACTION_HOVER_MOVE center=(${bounds.centerX()}, ${bounds.centerY()}) " +
+                "matchedOn=${match.second} bounds=$bounds",
         )
-        if (!hoverInjected) {
-            log("$TALK_BACK_FOCUS_PREFIX FINDING: the hover injection was refused; TalkBack has no exploration point to focus")
+        if (!hover.accepted) {
+            log(
+                "$TALK_BACK_FOCUS_PREFIX FINDING: the hover pair was refused " +
+                    "(hoverEnter=${hover.enter} hoverMove=${hover.move}); TalkBack has no exploration point to focus",
+            )
         }
+        // The TouchExplorer assigns and speaks asynchronously: hold the process long enough for the
+        // focus event and the speech to land before `am instrument` force-stops the app.
+        sleepQuietly(TALK_BACK_FOCUS_SPEECH_SETTLE_MILLIS)
         log(
-            "$TALK_BACK_FOCUS_PREFIX done requested=true actionAccepted=true hoverInjected=$hoverInjected " +
-                "matchedOn=${match.second} bounds=$bounds elapsedMillis=${elapsedMillis(startedNanos)}",
+            "$TALK_BACK_FOCUS_PREFIX done requested=true actionAccepted=true hoverEnter=${hover.enter} " +
+                "hoverMove=${hover.move} matchedOn=${match.second} bounds=$bounds elapsedMillis=${elapsedMillis(startedNanos)}",
         )
     }
 
@@ -1235,21 +1246,51 @@ class ImportScaleTraversalInstrumentedTest {
     }
 
     /**
-     * Injects ONE `ACTION_HOVER_MOVE` at (x, y) with source [InputDevice.SOURCE_TOUCHSCREEN] through
-     * [uiAutomation]: the exploration pointer a TalkBack TouchExplorer reads its focus target from.
-     * This is the read-only half the probe needs after its own focus request - TalkBack does not speak
-     * an app-set accessibility focus, it speaks what TouchExplorer focuses - and a hover carries no
-     * click, so product state cannot change. Returns whether the platform accepted the injection; the
-     * caller logs a refused hover as a FINDING rather than failing the run.
+     * The hover pair's two results, kept separate so the evidence cannot read the move as landed
+     * because the enter was accepted: TB1 logged an accepted hover MOVE with no `Speaking fragment`,
+     * and the TouchExplorer needs BOTH events. [accepted] is the pair's own verdict.
+     */
+    private data class HoverInjection(
+        val enter: Boolean,
+        val move: Boolean,
+    ) {
+        val accepted: Boolean get() = enter && move
+    }
+
+    /**
+     * Injects the exploration pair a TalkBack TouchExplorer reads its focus target from -
+     * `ACTION_HOVER_ENTER` then `ACTION_HOVER_MOVE` at the same (x, y), both with source
+     * [InputDevice.SOURCE_TOUCHSCREEN] and both synchronous - through [uiAutomation]. This is the
+     * read-only half the probe needs after its own focus request: TalkBack does not speak an app-set
+     * accessibility focus, it speaks what TouchExplorer focuses, and it needs the pair to do it.
+     * Neither event clicks, so product state cannot change. The caller logs both results and reports a
+     * refused pair as a FINDING rather than failing the run.
      */
     private fun injectHoverAt(
         x: Int,
         y: Int,
+    ): HoverInjection {
+        val automation = uiAutomation()
+        return HoverInjection(
+            enter = injectHoverEvent(automation, MotionEvent.ACTION_HOVER_ENTER, x, y),
+            move = injectHoverEvent(automation, MotionEvent.ACTION_HOVER_MOVE, x, y),
+        )
+    }
+
+    /**
+     * One hover event at (x, y) for [action], with source [InputDevice.SOURCE_TOUCHSCREEN] and a
+     * synchronous injection, so each half of [injectHoverAt]'s pair reports its own result.
+     */
+    private fun injectHoverEvent(
+        automation: UiAutomation,
+        action: Int,
+        x: Int,
+        y: Int,
     ): Boolean {
         val now = SystemClock.uptimeMillis()
-        val event = MotionEvent.obtain(now, now, MotionEvent.ACTION_HOVER_MOVE, x.toFloat(), y.toFloat(), 0)
+        val event = MotionEvent.obtain(now, now, action, x.toFloat(), y.toFloat(), 0)
         event.source = InputDevice.SOURCE_TOUCHSCREEN
-        return uiAutomation().injectInputEvent(event, true)
+        return automation.injectInputEvent(event, true)
     }
 
     private fun runProbe(evidence: MutableList<String>) {
