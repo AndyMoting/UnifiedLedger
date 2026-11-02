@@ -274,6 +274,7 @@ private const val DETAIL_SCREEN_TITLE = "交易详情"
 private const val DETAIL_ROW_TEXT_PREFIX = "COLLECT"
 private const val FOREGROUND_MAX_ATTEMPTS = 20
 private const val FOREGROUND_RETRY_MILLIS = 300L
+private const val HOME_READY_WAIT_MILLIS = 30_000
 private const val TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS = 15_000
 private const val TALK_BACK_FOCUS_MATCH_TEXT = "text"
 private const val TALK_BACK_FOCUS_MATCH_DESCRIPTION = "contentDescription"
@@ -439,8 +440,9 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  *   FINDING. Every line carries the `countProbe:` prefix.
  * - `talkBackFocusProbe`: TalkBack inspection ONLY. Arg `query` (required: the exact node text of the
  *   target, or, failing that, its exact contentDescription); optional arg `openDetail` (default false)
- *   first forces the app to the foreground ([ensureActiveApp], up to 20 relaunch attempts) and THEN
- *   clicks the ledger row whose text starts with `COLLECT` ([findByTextPrefix] plus the class's
+ *   first forces the app to the foreground ([ensureActiveApp], up to 20 relaunch attempts), waits for
+ *   the home screen's `导入` tab ([HOME_READY_WAIT_MILLIS]) and THEN clicks the ledger row whose text
+ *   starts with `COLLECT` ([findByTextPrefix] plus the class's
  *   `ACTION_CLICK` helper [clickNode]) and requires the 交易详情 screen within 15 s (that row click is
  *   navigation, not part of the speech assertion). It resolves the app window through
  *   [appRoot], matches with [findByText] and then [findByContentDescription], performs exactly ONE
@@ -1122,12 +1124,13 @@ class ImportScaleTraversalInstrumentedTest {
      * [TALK_BACK_FOCUS_SPEECH_SETTLE_MILLIS] so the speech lands before the run ends.
      *
      * Optional `openDetail` (default false) first forces the app to the foreground ([ensureActiveApp]) -
-     * a gesture lands in whatever window is on top - and then opens the detail through the
-     * accessibility tree: [findByTextPrefix] finds the ledger row whose text starts with
-     * [DETAIL_ROW_TEXT_PREFIX] and the class's [clickNode] clicks it with `ACTION_CLICK`, never a
-     * synthetic gesture. It requires the 交易详情 screen within [TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS]
-     * before the focus is requested. That click is navigation, not a speech assertion: it exists
-     * because the host cannot drive the app while this connection holds the automation.
+     * a gesture lands in whatever window is on top - then waits for the home screen's `导入` tab
+     * ([HOME_READY_WAIT_MILLIS]), and only then opens the detail through the accessibility tree:
+     * [findByTextPrefix] finds the ledger row whose text starts with [DETAIL_ROW_TEXT_PREFIX] and the
+     * class's [clickNode] clicks it with `ACTION_CLICK`, never a synthetic gesture. It requires the
+     * 交易详情 screen within [TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS] before the focus is requested. That
+     * click is navigation, not a speech assertion: it exists because the host cannot drive the app while
+     * this connection holds the automation.
      */
     private fun runTalkBackFocusProbe(evidence: MutableList<String>) {
         val log = evidenceLog(evidence)
@@ -1174,6 +1177,28 @@ class ImportScaleTraversalInstrumentedTest {
                 fail(
                     "$TALK_BACK_FOCUS_PREFIX the app never became the foreground window within " +
                         "$FOREGROUND_MAX_ATTEMPTS relaunch attempts; the detail navigation was not attempted: state $state",
+                )
+                return
+            }
+            // The COLLECT prefix names a HOME-screen ledger row, so the row lookup only means something
+            // once that screen is drawn: the ledger surface prints its import tab label, and that exact
+            // text is the proof (a foregrounded app can still be on the start screen).
+            val homeReady =
+                waitFor(
+                    predicate = { findByText(appRoot(), IMPORT_TAB_LABEL) != null },
+                    timeoutMs = HOME_READY_WAIT_MILLIS,
+                    pollMs = POLL_MILLIS,
+                )
+            log(
+                "$TALK_BACK_FOCUS_PREFIX homeReady=$homeReady timeoutMillis=$HOME_READY_WAIT_MILLIS " +
+                    "elapsedMillis=${elapsedMillis(startedNanos)}",
+            )
+            if (!homeReady) {
+                val state = observedState()
+                log("$TALK_BACK_FOCUS_PREFIX FINDING: the home screen never showed the $IMPORT_TAB_LABEL tab state $state")
+                fail(
+                    "$TALK_BACK_FOCUS_PREFIX the home screen never showed the `$IMPORT_TAB_LABEL` tab within " +
+                        "$HOME_READY_WAIT_MILLIS ms; the $DETAIL_ROW_TEXT_PREFIX row was not looked for: state $state",
                 )
                 return
             }
