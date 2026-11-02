@@ -275,6 +275,8 @@ private const val DETAIL_OPEN_TAP_X = 200
 private const val DETAIL_OPEN_TAP_Y = 1_100
 private const val DETAIL_OPEN_TAP_COMMAND = "input tap $DETAIL_OPEN_TAP_X $DETAIL_OPEN_TAP_Y"
 private const val DETAIL_OPEN_TAP_GAP_MILLIS = 150L
+private const val FOREGROUND_MAX_ATTEMPTS = 20
+private const val FOREGROUND_RETRY_MILLIS = 300L
 private const val TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS = 15_000
 private const val TALK_BACK_FOCUS_MATCH_TEXT = "text"
 private const val TALK_BACK_FOCUS_MATCH_DESCRIPTION = "contentDescription"
@@ -440,9 +442,10 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  *   FINDING. Every line carries the `countProbe:` prefix.
  * - `talkBackFocusProbe`: TalkBack inspection ONLY. Arg `query` (required: the exact node text of the
  *   target, or, failing that, its exact contentDescription); optional arg `openDetail` (default false)
- *   first injects the test-navigation tap PAIR at (200, 1100) - TalkBack's first tap only focuses the
- *   row, so the second one activates it - and requires the 交易详情 screen within 15 s (that pair is
- *   navigation, not part of the speech assertion). It resolves the app window through
+ *   first forces the app to the foreground ([ensureActiveApp], up to 20 relaunch attempts) and THEN
+ *   injects the test-navigation tap PAIR at (200, 1100) - TalkBack's first tap only focuses the row, so
+ *   the second one activates it - and requires the 交易详情 screen within 15 s (that pair is navigation,
+ *   not part of the speech assertion). It resolves the app window through
  *   [appRoot], matches with [findByText] and then [findByContentDescription], performs exactly ONE
  *   `AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS` and, once that is accepted, the hover
  *   enter+move pair at the node's centre ([injectHoverAt]): TalkBack speaks what its TouchExplorer
@@ -1121,10 +1124,11 @@ class ImportScaleTraversalInstrumentedTest {
      * events to assign the focus and speak it. The injections click nothing. The mode then holds
      * [TALK_BACK_FOCUS_SPEECH_SETTLE_MILLIS] so the speech lands before the run ends.
      *
-     * Optional `openDetail` (default false) injects the test-navigation tap PAIR at
-     * ([DETAIL_OPEN_TAP_X], [DETAIL_OPEN_TAP_Y]) - the home screen's first row, one tap to put
-     * TalkBack's focus on the row and a second, [DETAIL_OPEN_TAP_GAP_MILLIS] later, to activate it -
-     * and requires the 交易详情 screen within [TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS] before the focus is
+     * Optional `openDetail` (default false) first forces the app to the foreground ([ensureActiveApp]) -
+     * a coordinate pair explores whatever window is on top - and then injects the test-navigation tap
+     * PAIR at ([DETAIL_OPEN_TAP_X], [DETAIL_OPEN_TAP_Y]): the home screen's first row, one tap to put
+     * TalkBack's focus on the row and a second, [DETAIL_OPEN_TAP_GAP_MILLIS] later, to activate it. It
+     * requires the 交易详情 screen within [TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS] before the focus is
      * requested. That pair is navigation, not a speech assertion: it exists because the host cannot
      * drive the app while this connection holds the automation.
      */
@@ -1167,6 +1171,17 @@ class ImportScaleTraversalInstrumentedTest {
         // probe never reports a focus on the screen it was supposed to reach.
         val openDetail = booleanArg(ARG_OPEN_DETAIL, false)
         if (openDetail) {
+            // A coordinate pair means nothing while another window is on top (launcher, a leftover
+            // dialog, a previous run's share sheet): the app is forced to the foreground first, or the
+            // navigation does not run at all.
+            if (!ensureActiveApp(log)) {
+                val state = observedState()
+                fail(
+                    "$TALK_BACK_FOCUS_PREFIX the app never became the foreground window within " +
+                        "$FOREGROUND_MAX_ATTEMPTS relaunch attempts; the detail navigation was not attempted: state $state",
+                )
+                return
+            }
             log(
                 "$TALK_BACK_FOCUS_PREFIX openDetail tapPair=($DETAIL_OPEN_TAP_X, $DETAIL_OPEN_TAP_Y) " +
                     "gapMillis=$DETAIL_OPEN_TAP_GAP_MILLIS command=$DETAIL_OPEN_TAP_COMMAND",
@@ -1347,6 +1362,36 @@ class ImportScaleTraversalInstrumentedTest {
         event.source = InputDevice.SOURCE_TOUCHSCREEN
         return automation.injectInputEvent(event, true)
     }
+
+    /**
+     * Guarantees the app owns the FOREGROUND window before the test-navigation tap pair: a pair of
+     * screen coordinates is meaningless while a launcher, a leftover dialog or a previous run's share
+     * sheet is on top, and the mode would then fail on the detail wait for the wrong reason. Polls the
+     * active window's package; on a miss it relaunches the activity and waits
+     * [FOREGROUND_RETRY_MILLIS], up to [FOREGROUND_MAX_ATTEMPTS] times, and logs one
+     * `foreground=<bool> attempts=<n>` line. A false return is the caller's cue to fail with
+     * [observedState]; this helper itself never throws.
+     */
+    private fun ensureActiveApp(log: (String) -> Unit): Boolean {
+        val startNanos = System.nanoTime()
+        var attempts = 0
+        repeat(FOREGROUND_MAX_ATTEMPTS) {
+            if (activeWindowPackage() == TARGET_PACKAGE) {
+                log("$TALK_BACK_FOCUS_PREFIX foreground=true attempts=$attempts elapsedMillis=${elapsedMillis(startNanos)}")
+                return true
+            }
+            shell(LAUNCH_COMMAND)
+            sleepQuietly(FOREGROUND_RETRY_MILLIS)
+            attempts += 1
+        }
+        val foreground = activeWindowPackage() == TARGET_PACKAGE
+        log("$TALK_BACK_FOCUS_PREFIX foreground=$foreground attempts=$attempts elapsedMillis=${elapsedMillis(startNanos)}")
+        return foreground
+    }
+
+    /** The package `rootInActiveWindow` reports, or null when the read itself fails. */
+    private fun activeWindowPackage(): String? =
+        runCatching { uiAutomation().rootInActiveWindow?.packageName?.toString() }.getOrNull()
 
     private fun runProbe(evidence: MutableList<String>) {
         val log = evidenceLog(evidence)
