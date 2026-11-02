@@ -1390,8 +1390,7 @@ class ImportScaleTraversalInstrumentedTest {
     }
 
     /** The package `rootInActiveWindow` reports, or null when the read itself fails. */
-    private fun activeWindowPackage(): String? =
-        runCatching { uiAutomation().rootInActiveWindow?.packageName?.toString() }.getOrNull()
+    private fun activeWindowPackage(): String? = runCatching { uiAutomation().rootInActiveWindow?.packageName?.toString() }.getOrNull()
 
     private fun runProbe(evidence: MutableList<String>) {
         val log = evidenceLog(evidence)
