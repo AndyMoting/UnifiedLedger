@@ -1019,14 +1019,10 @@ internal fun importReviewRenderItems(
         items += ImportReviewRenderItem.NoCandidatesEmptyState
     }
     if (view != null) {
-        importCandidateClassGroups(view.rows).forEach { group ->
-            items += ImportReviewRenderItem.GroupHeader(group.classToken, group.rows.size)
-            group.rows.forEach { row ->
-                items += ImportReviewRenderItem.CandidateItem(row, selected = row.candidateId in view.selectedCandidateIds)
-            }
-        }
         // P704SPEC-12: the affordance covers only the current pick session's suspected-duplicate
         // group (同次选择句柄 + EXACT_BUSINESS_TUPLE + DEFERRED via the folded row projection).
+        // It sits BEFORE the candidate rows: several-hundred/thousand-row groups otherwise bury the
+        // only group action below a 20k-row list that the accessibility traversal cannot reach.
         val sessionInputRef = view.lastIntakeSession?.inputRef
         if (sessionInputRef != null && importDuplicateGroupRows(view.rows, sessionInputRef).isNotEmpty()) {
             items += ImportReviewRenderItem.GroupDispositionButton
@@ -1040,10 +1036,17 @@ internal fun importReviewRenderItems(
         // Option A windowing: the open 整组确认页 card expands flat as one header + one item per
         // group member + one footer, so the LazyColumn windows the card's per-item rows exactly
         // like the candidate list (no eager per-item composition inside a single card item).
+        // Like the affordance, the open card stays before the candidate rows.
         view.groupDisposition?.let { page ->
             items += ImportReviewRenderItem.GroupDispositionCardHeader(page.inputRef, page.items.size)
             page.items.forEach { items += ImportReviewRenderItem.GroupDispositionItem(it) }
             items += ImportReviewRenderItem.GroupDispositionCardFooter(page.items.size)
+        }
+        importCandidateClassGroups(view.rows).forEach { group ->
+            items += ImportReviewRenderItem.GroupHeader(group.classToken, group.rows.size)
+            group.rows.forEach { row ->
+                items += ImportReviewRenderItem.CandidateItem(row, selected = row.candidateId in view.selectedCandidateIds)
+            }
         }
         // P7-04.D: the batch confirmation entry is reached only with a non-empty selection.
         if (view.selectedCandidateIds.isNotEmpty()) {
