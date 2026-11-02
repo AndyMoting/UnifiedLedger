@@ -45,9 +45,10 @@ enum class ImportFilePickFailure {
 /**
  * One picked file (spec 4.1.1). [displayName] is display/diagnostic metadata only (D06:
  * never an identity, never persisted); [sizeBytes] is the picker/filesystem size metadata
- * when the platform reports one; [readBoundedBytes] is the lazy L0 bounded-read closure
- * implemented by the composition root and executed on the dispatch thread (non-UI, spec
- * 4.1.2).
+ * when the platform reports one, and the bounded read enforces it — a stream that ends short
+ * of a reported size is a typed read failure (null declares nothing to verify);
+ * [readBoundedBytes] is the lazy L0 bounded-read closure implemented by the composition root
+ * and executed on the dispatch thread (non-UI, spec 4.1.2).
  */
 class PickedImportFile(
     val displayName: String,
@@ -58,10 +59,15 @@ class PickedImportFile(
 /**
  * The L0 bounded-read outcome (R-Q08-2, spec 4.1.1/4.6): the bytes, or a typed over-limit
  * failure carrying the actual received count, or a typed read failure. Never a silent
- * truncation: an over-limit file is reported, not clipped.
+ * truncation: an over-limit file is reported, not clipped, and a stream that ends before its
+ * provider-declared size is the typed short read, never a prefix of bytes.
  */
 sealed interface BoundedFileRead {
-    /** The file content read within the 16 MiB bound; exactly the received bytes. */
+    /**
+     * The complete file content within the 16 MiB bound, exactly the received bytes: reached
+     * only when the stream ended and — for a provider-declared size — the received count was not
+     * short of it. A short read is [ReadFailed], never this class.
+     */
     class Bytes(
         val bytes: ByteArray,
     ) : BoundedFileRead
@@ -85,7 +91,10 @@ enum class ImportPickReadFailure {
     /** Opening or closing the raw stream failed (lifecycle; includes revoked URI permission). */
     STREAM_OPEN_FAILED,
 
-    /** Reading the raw stream failed mid-way. */
+    /**
+     * Reading the raw stream failed mid-way, or the stream ended before the size its provider
+     * declared — a short read, whose collected prefix is not the file (P709-A02 S1).
+     */
     STREAM_READ_FAILED,
 }
 
@@ -134,7 +143,12 @@ class ImportPickRawRead(
  * 2. otherwise at most limit+1 bytes are read; receiving the full limit+1 means the file is
  *    over the bound, so the read stops and [BoundedFileRead.ExceedsLimit] carries the
  *    received count — never a silent truncation;
- * 3. first failure wins (AB-CLI-QUAL-01): a mid-read failure is typed
+ * 3. a provider-declared size is a contract with the source: a stream that ends before it — EOF
+ *    with fewer received bytes — is a short read, typed
+ *    [ImportPickReadFailure.STREAM_READ_FAILED], never [BoundedFileRead.Bytes] built from the
+ *    collected prefix (P709-A02 S1: a truncated file must not reach the importer looking whole);
+ *    an unknown size (null) declares nothing to verify and keeps reading to EOF;
+ * 4. first failure wins (AB-CLI-QUAL-01): a mid-read failure is typed
  *    [ImportPickReadFailure.STREAM_READ_FAILED] and survives a close failure of the same
  *    source; an open failure — or a close failure after the read already completed
  *    determinately ([BoundedFileRead.Bytes] or [BoundedFileRead.ExceedsLimit], where the
@@ -168,7 +182,7 @@ fun readImportPickBounded(
             // The read loop maps its own failures internally; this net keeps any unexpected
             // read-path throw on the read side of the first-failure-wins order below.
             try {
-                readImportPickChunks(raw.read)
+                readImportPickChunks(raw.read, sizeBytes)
             } catch (failure: Exception) {
                 BoundedFileRead.ReadFailed(ImportPickReadFailure.STREAM_READ_FAILED)
             }
@@ -191,8 +205,15 @@ fun readImportPickBounded(
     }
 }
 
-/** The chunked read loop: collects at most limit+1 bytes, then reports the typed outcome. */
-private fun readImportPickChunks(readChunk: (ByteArray) -> Int): BoundedFileRead {
+/**
+ * The chunked read loop: collects at most limit+1 bytes, then reports the typed outcome.
+ * [expectedBytes] is the non-null provider-declared size, enforced as a contract: an EOF short
+ * of it is a typed read failure, so a truncated file never passes as [BoundedFileRead.Bytes].
+ */
+private fun readImportPickChunks(
+    readChunk: (ByteArray) -> Int,
+    expectedBytes: Long?,
+): BoundedFileRead {
     val maxTotal = (IMPORT_FILE_PICK_MAX_READ_BYTES + 1L).toInt()
     var collected = ByteArray(minOf(IMPORT_PICK_READ_CHUNK_BYTES, maxTotal))
     var total = 0
@@ -201,6 +222,12 @@ private fun readImportPickChunks(readChunk: (ByteArray) -> Int): BoundedFileRead
             val chunk = ByteArray(minOf(IMPORT_PICK_READ_CHUNK_BYTES, maxTotal - total))
             val read = readChunk(chunk)
             if (read <= 0) {
+                // A declared size the stream never delivered is a short read: the collected prefix
+                // is not the file, so it must not be reported as a complete read (P709-A02 S1).
+                // An unknown size declared nothing to verify and keeps the plain EOF completion.
+                if (expectedBytes != null && total.toLong() < expectedBytes) {
+                    return BoundedFileRead.ReadFailed(ImportPickReadFailure.STREAM_READ_FAILED)
+                }
                 return BoundedFileRead.Bytes(collected.copyOf(total))
             }
             if (read > chunk.size) {

@@ -71,15 +71,28 @@ internal fun shareImportTakeDecision(file: PickedImportFile?): ShareImportTakeDe
 internal fun shareImportRelayAllowed(intakeBusy: Boolean): Boolean = !intakeBusy
 
 /**
- * P7-09 09.A (spec section 2.3 line 128; section 4; invariant 5): whether an intake-pipeline outcome
- * on the SHARE path must additionally present the typed re-share prompt. The four frozen vectors are
- * grant expiry/revocation before the read, a mid-read failure, an over-16 MiB source and a missing
- * source; the last is the `null` take handled by [shareImportTakeDecision], so this predicate covers
- * the pipeline's own read outcomes ([ImportIntakePipelineOutcome.ReadFailed] /
- * [ImportIntakePipelineOutcome.ReadExceedsLimit]). A successful/typed-intake outcome re-shared
- * nothing — a format rejection is not a re-share case.
+ * P7-09 09.A (spec section 2.3 line 128; section 4; invariant 5), P709-A02 error mapping: the ONE
+ * mapping from a SHARE-path intake-pipeline outcome to the visible prompt it lands (`null` when it
+ * lands none). The four frozen vectors are grant expiry/revocation before the read, a mid-read
+ * failure, an over-16 MiB source and a missing source; the last is the `null` take handled by
+ * [shareImportTakeDecision], so this covers the pipeline's own read outcomes:
+ *
+ * - [ImportIntakePipelineOutcome.ReadFailed] — the source could not be read at all (grant gone,
+ *   mid-read failure), so the typed re-share prompt ([P503UiEvent.ShareImportReShareLanded]) is the
+ *   honest one;
+ * - [ImportIntakePipelineOutcome.ReadExceedsLimit] — the source WAS readable and the bounded read
+ *   refused it for exceeding the frozen 16 MiB bound, so it lands its OWN
+ *   [P503UiEvent.ShareImportTooLargeLanded]: the grant is intact and re-sharing the same oversize
+ *   file could never succeed, which makes the re-share copy a misstated cause (P709-A02);
+ * - [ImportIntakePipelineOutcome.Intaken] — a successful/typed-intake outcome re-shared nothing: a
+ *   format rejection is not a source failure.
  */
-internal fun shareImportReShareRequired(outcome: ImportIntakePipelineOutcome): Boolean = outcome is ImportIntakePipelineOutcome.ReadFailed || outcome is ImportIntakePipelineOutcome.ReadExceedsLimit
+internal fun shareImportReadOutcomeEvent(outcome: ImportIntakePipelineOutcome): P503UiEvent? =
+    when (outcome) {
+        is ImportIntakePipelineOutcome.ReadFailed -> P503UiEvent.ShareImportReShareLanded
+        is ImportIntakePipelineOutcome.ReadExceedsLimit -> P503UiEvent.ShareImportTooLargeLanded
+        is ImportIntakePipelineOutcome.Intaken -> null
+    }
 
 /**
  * P7-09 09.A (spec sections 2.2/2.3): whether the single pending slot currently holds a share import
@@ -175,4 +188,7 @@ internal fun clearsExternalNavigation(event: P503UiEvent): Boolean =
     event === P503UiEvent.ExternalNavigationKeptCurrent ||
         event === P503UiEvent.ExternalNavigationDiscarded ||
         event === P503UiEvent.ShareImportConsumed ||
-        event === P503UiEvent.ShareImportReShareLanded
+        event === P503UiEvent.ShareImportReShareLanded ||
+        // P709-A02 error mapping: the too-large prompt clears the same awaiting-format slot, so the
+        // host fallback must be dropped and the retained source released exactly like a re-share.
+        event === P503UiEvent.ShareImportTooLargeLanded
