@@ -269,6 +269,12 @@ private const val ARG_QUERY = "query"
 private const val TALK_BACK_FOCUS_PREFIX = "talkBackFocus:"
 private const val TALK_BACK_FOCUS_NODE_WAIT_MILLIS = 20_000
 private const val TALK_BACK_FOCUS_SPEECH_SETTLE_MILLIS = 1_500L
+private const val ARG_OPEN_DETAIL = "openDetail"
+private const val DETAIL_SCREEN_TITLE = "交易详情"
+private const val DETAIL_OPEN_TAP_X = 200
+private const val DETAIL_OPEN_TAP_Y = 1_100
+private const val DETAIL_OPEN_TAP_COMMAND = "input tap $DETAIL_OPEN_TAP_X $DETAIL_OPEN_TAP_Y"
+private const val TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS = 15_000
 private const val TALK_BACK_FOCUS_MATCH_TEXT = "text"
 private const val TALK_BACK_FOCUS_MATCH_DESCRIPTION = "contentDescription"
 
@@ -432,7 +438,9 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  *   outcome, including an intake that never stabilizes and a picker that never appears, is a logged
  *   FINDING. Every line carries the `countProbe:` prefix.
  * - `talkBackFocusProbe`: TalkBack inspection ONLY. Arg `query` (required: the exact node text of the
- *   target, or, failing that, its exact contentDescription). It resolves the app window through
+ *   target, or, failing that, its exact contentDescription); optional arg `openDetail` (default false)
+ *   first injects ONE test-navigation tap at (200, 1100) and requires the 交易详情 screen within 15 s
+ *   (that tap is navigation, not part of the speech assertion). It resolves the app window through
  *   [appRoot], matches with [findByText] and then [findByContentDescription], performs exactly ONE
  *   `AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS` and, once that is accepted, the hover
  *   enter+move pair at the node's centre ([injectHoverAt]): TalkBack speaks what its TouchExplorer
@@ -1110,6 +1118,12 @@ class ImportScaleTraversalInstrumentedTest {
      * ([injectHoverAt]): TalkBack does not speak an app-set focus, and its TouchExplorer needs both
      * events to assign the focus and speak it. The injections click nothing. The mode then holds
      * [TALK_BACK_FOCUS_SPEECH_SETTLE_MILLIS] so the speech lands before the run ends.
+     *
+     * Optional `openDetail` (default false) injects ONE test-navigation tap at
+     * ([DETAIL_OPEN_TAP_X], [DETAIL_OPEN_TAP_Y]) - the home screen's first row - and requires the
+     * 交易详情 screen within [TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS] before the focus is requested. That
+     * tap is navigation, not a speech assertion: it exists because the host cannot drive the app while
+     * this connection holds the automation.
      */
     private fun runTalkBackFocusProbe(evidence: MutableList<String>) {
         val log = evidenceLog(evidence)
@@ -1141,6 +1155,37 @@ class ImportScaleTraversalInstrumentedTest {
             }
         } else {
             log("$TALK_BACK_FOCUS_PREFIX launch path=existing-app-root (app root reachable; launch skipped)")
+        }
+        // Optional test navigation to the transaction-detail screen. The tap is the only pointer event
+        // this mode sends and it exists because the host cannot drive the app while this connection
+        // holds the automation: one coordinate tap on the home screen's first row, then the detail
+        // screen's OWN title is required before the focus is asked for, so a probe never reports a
+        // focus on the screen it was supposed to reach.
+        val openDetail = booleanArg(ARG_OPEN_DETAIL, false)
+        if (openDetail) {
+            log("$TALK_BACK_FOCUS_PREFIX openDetail tap=($DETAIL_OPEN_TAP_X, $DETAIL_OPEN_TAP_Y) command=$DETAIL_OPEN_TAP_COMMAND")
+            shell(DETAIL_OPEN_TAP_COMMAND)
+            val entered = waitFor(
+                predicate = { findByText(appRoot(), DETAIL_SCREEN_TITLE) != null },
+                timeoutMs = TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS,
+                pollMs = POLL_MILLIS,
+            )
+            log(
+                "$TALK_BACK_FOCUS_PREFIX openDetail entered=$entered title=$DETAIL_SCREEN_TITLE " +
+                    "timeoutMillis=$TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS elapsedMillis=${elapsedMillis(startedNanos)}",
+            )
+            if (!entered) {
+                val state = observedState()
+                log("$TALK_BACK_FOCUS_PREFIX FINDING: the detail screen was not entered state $state")
+                fail(
+                    "$TALK_BACK_FOCUS_PREFIX `$DETAIL_SCREEN_TITLE` did not appear within " +
+                        "$TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS ms after the test-navigation tap at " +
+                        "($DETAIL_OPEN_TAP_X, $DETAIL_OPEN_TAP_Y): state $state",
+                )
+                return
+            }
+        } else {
+            log("$TALK_BACK_FOCUS_PREFIX openDetail skipped (openDetail=false)")
         }
         // One tree read per poll: the root is reachable now, but the target node can still be composing
         // (the app root appearing is not the screen being drawn).
