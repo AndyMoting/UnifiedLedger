@@ -15,8 +15,9 @@ import kotlin.test.assertTrue
  * Pins the frozen L0 semantics against injected closures only (commonMain has no java.io
  * surface): the 16 MiB byte bound, the size-metadata short circuit (zero read), the
  * read-at-most-limit+1 loop with the typed over-limit failure carrying the actual received
- * count, exact content preservation (never a silent truncation), and the typed
- * open/read/close failure mapping that never leaks the underlying exception text.
+ * count, exact content preservation (never a silent truncation), the typed short read when a
+ * provider-declared size is never delivered, and the typed open/read/close failure mapping that
+ * never leaks the underlying exception text.
  */
 class ImportFilePickBoundedReadTest {
     /** Raw source double over anonymous synthetic bytes; platform streams adapt the same shape. */
@@ -94,6 +95,66 @@ class ImportFilePickBoundedReadTest {
         val source = FakeSource(ByteArray(0))
 
         val outcome = readImportPickBounded(sizeBytes = null) { source.raw }
+
+        val bytes = assertIs<BoundedFileRead.Bytes>(outcome)
+        assertEquals(0, bytes.bytes.size)
+    }
+
+    /**
+     * P709-A02 S1 (spec 4.1.1/4.6): the provider declares a size and the stream ends short of it.
+     * The collected prefix is not the file, so the driver reports the typed short read — never
+     * [BoundedFileRead.Bytes] holding a truncated prefix — and still closes the source.
+     */
+    @Test
+    fun knownSizeShortReadIsTheTypedReadFailureNotCompleteBytes() {
+        val payload = synthetic(1_000)
+        val source = FakeSource(payload)
+
+        val outcome = readImportPickBounded(sizeBytes = payload.size.toLong() + 1) { source.raw }
+
+        val failed = assertIs<BoundedFileRead.ReadFailed>(outcome)
+        assertEquals(ImportPickReadFailure.STREAM_READ_FAILED, failed.reason)
+        assertEquals(true, source.closed)
+    }
+
+    /**
+     * The same short-read contract reached across many chunk reads: the comparison happens at the
+     * EOF the loop actually sees, so a multi-chunk source cannot slip a truncated prefix through as
+     * [BoundedFileRead.Bytes].
+     */
+    @Test
+    fun knownSizeShortReadAcrossChunksIsStillTheTypedReadFailure() {
+        val payload = synthetic(150_000)
+        val source = FakeSource(payload, maxPerRead = 64)
+
+        val outcome = readImportPickBounded(sizeBytes = payload.size.toLong() + 64L * 1024L) { source.raw }
+
+        val failed = assertIs<BoundedFileRead.ReadFailed>(outcome)
+        assertEquals(ImportPickReadFailure.STREAM_READ_FAILED, failed.reason)
+        assertEquals(true, source.closed)
+    }
+
+    /**
+     * The unchanged normal path: a declared size the stream delivers exactly stays the complete
+     * [BoundedFileRead.Bytes], so the short-read guard cannot fire at the satisfied boundary.
+     */
+    @Test
+    fun knownSizeEqualToReceivedBytesIsStillTheCompleteBytes() {
+        val payload = synthetic(1_000)
+
+        val outcome = readImportPickBounded(sizeBytes = payload.size.toLong()) { FakeSource(payload).raw }
+
+        val bytes = assertIs<BoundedFileRead.Bytes>(outcome)
+        assertContentEquals(payload, bytes.bytes)
+    }
+
+    /**
+     * A declared zero size over an empty stream is a satisfied contract (0 received, 0 declared),
+     * so the empty file stays [BoundedFileRead.Bytes] rather than a short read.
+     */
+    @Test
+    fun knownZeroSizeWithAnEmptyStreamIsStillEmptyBytes() {
+        val outcome = readImportPickBounded(sizeBytes = 0L) { FakeSource(ByteArray(0)).raw }
 
         val bytes = assertIs<BoundedFileRead.Bytes>(outcome)
         assertEquals(0, bytes.bytes.size)
