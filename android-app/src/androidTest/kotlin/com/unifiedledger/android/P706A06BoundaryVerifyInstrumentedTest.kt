@@ -296,10 +296,15 @@ class P706A06BoundaryVerifyInstrumentedTest {
         realFileSystem: AndroidLedgerFileSystem,
     ) {
         assertStartupFailsClosedPointerMissing(context, fixtures, layout, realFileSystem, expectedGenerations = listOf("gen-1"))
-        // No legacy original exists, so the discard branch is typed-unavailable (guard 1) - the
-        // silent-empty-database prohibition keeps its full strength on a half-built fresh install.
+        // The driver-created gen-1 is complete-and-current, so it verifies Adoptable and the discard
+        // branch refuses BEFORE its no-legacy-original guard: AdoptableCandidatePresent is a typed
+        // refusal - nothing deleted, no automatic adoption, zero mutation (the byte-identical
+        // fingerprint below proves the candidate survived and the pointer stays absent). The
+        // silent-empty-database prohibition keeps its full strength on a half-built fresh install,
+        // and the explicit adopt() below is the user's decision: it must still succeed.
         assertEquals(
-            PointerRecoveryDiscardResult.LegacyOriginalMissing,
+            "an adoptable candidate must never be discarded or silently adopted",
+            PointerRecoveryDiscardResult.AdoptableCandidatePresent,
             pointerMissingRecoveryUseCase(fixtures, layout).discardUnvalidatableAndReUpgrade(),
         )
         assertShaMatches(fixtures, File(fixtures.generationMainFile(1)), marker.authoritativeSha256, "the driver-created generation")
