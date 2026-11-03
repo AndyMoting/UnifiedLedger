@@ -9,6 +9,7 @@ import com.unifiedledger.application.ImportCompleteness
 import com.unifiedledger.application.ImportContentFingerprint
 import com.unifiedledger.application.ImportDuplicateCandidateId
 import com.unifiedledger.application.ImportDuplicateIntakeIds
+import com.unifiedledger.application.ImportDuplicateReviewId
 import com.unifiedledger.application.ImportDuplicateStatus
 import com.unifiedledger.application.ImportEvidenceId
 import com.unifiedledger.application.ImportFundingState
@@ -272,7 +273,7 @@ class B6PagedSessionReadEquivalenceTest {
                         reviewedAt = "2026-11-04T00:00:00Z",
                         reviewerReference = "b6-page-test",
                         generatedAt = "2026-11-04T00:00:00Z",
-                        reviewId = ImportStatusHistoryId("review-b6p-b-1"),
+                        reviewId = ImportDuplicateReviewId("review-b6p-b-1"),
                         historyId = ImportStatusHistoryId("history-b6p-b-1"),
                     ),
                 )
