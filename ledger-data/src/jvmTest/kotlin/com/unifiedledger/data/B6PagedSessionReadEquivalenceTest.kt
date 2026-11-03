@@ -307,7 +307,7 @@ class B6PagedSessionReadEquivalenceTest {
             // scan with a TEMP B-TREE for the right-most sort at most. (Spec §5 EXPLAIN pin;
             // static here because CI owns execution, but the plan shape is deterministic.)
             val plan =
-                database.ledgerQueries.driver
+                driver
                     .executeQuery(
                         0,
                         "EXPLAIN QUERY PLAN " +
