@@ -6091,3 +6091,31 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残余：** ① 3.6 s 的成因未定位，分阶段计时未做；② 组卡打开后 `group card confirm affordance=none`，确认入口不在当前渲染树（按源码设计可能位于视口下方、由 `scrollToConfirmAffordance` 带出），本模式按设计不确认，故**不据此断言确认入口缺失**；③ 首轮 6,195 ms 的冷态归因为推断（未做同 APK 重启后对照）；④ 夹具发布一次只能用一次（激活后 `import_candidate` 由 2 变 3，重跑前必须重新播种），复跑须按 `run-b6-cycle.sh` 的时序；⑤ 本批读数为单设备单会话 3 轮，不主张跨设备可复现性。
 
 **关联决定：** D-275（B6 口径变更授权、两个成因待区分、D-148/D-170 冲突待裁，本批完成其第 4 条的三项承接）、D-276 第 6 条（`DEF-SCALE-PROBE-DBPATH-01` 的修复要求，已随 `ca5dee92` 满足）、D-148（B6 2.61 s 原始读数与 dump 地板方法）、D-170（「B6 未测量」的原始表述）、D-162 第 3(i) 条（不同形态下的组卡可达 PASS，本批不改）、D-241（规模量测落盘体例）、`ca5dee92`（夹具与探针修复提交）、PR #204（当前 `main`）。
+
+## D-279 B6 归因批（读侧排除 + 分段）：设备端会话查询 132–191 ms，点击→枚举进度 148–246 ms，枚举→卡片 3,501–4,970 ms，根因仍未定位
+
+**状态：** 已批准并登记（2026-11-04；用户授权「自主推进、决定一律批准」。**纯文档批**：零代码 / 零测试 / 零 schema / 零迁移——被登记的测试载体已随 PR #207、#208 合入）。设备面为本会话自建并自启的受管 AVD `ul_p7_d01`（`system-images;android-36;google_apis;x86_64` + `pixel_6`），隔离 adb `ANDROID_ADB_SERVER_PORT=5038`、端口 5680，`emu avd name` 回 `ul_p7_d01` + `OK`，`dalvik.vm.heapgrowthlimit=192m`；每轮收工 `emu kill`。
+
+**背景：** D-278 第 7 条把 B6 的 3.6 s 记为未归因，并列出待分段的三个分量（会话级批量查询 / `enumerateImportDuplicateGroupItems` 的 O(n) 装配 / 首次组合）。本批用两个 test-only 载体把第一个分量量到底、并给第二个分量加了中间标记。
+
+**载体（已合入）：**
+- PR #207（merge `4644e5cd`）`ledger-data/src/jvmTest/.../B6GroupOpenReadAttributionTest.kt`：读 `UL_D278_FIXTURE_DB`，**自行发现**承载最多重复关系的 pick session，分别计时原始查询与适配器读；无夹具时 skip 保持绿；已登记 `tools/ci/ledger-data-shards.txt`（shard 2）。
+- PR #208（merge `2ea4470f`）`ImportScaleTraversalInstrumentedTest` 的 `openGroupCard`：以应用自渲染的枚举行 `正在整理重复组……` 作为中段标记，两个标记取自**同一** 50 ms 轮询快照循环（分开等会在枚举极快时白等满 120 s 卡片窗口）；打印 `D278STAGE` 行，原 `elapsedMs` 行不变。
+
+**决定：**
+
+1. **读侧排除（设备侧，决定性）。** 在设备自带 `/system/bin/sqlite3`（`.timer on`，D-172 先例）上对同一份产品夹具 `b6.db`（schema v36、2 候选、20,002 来源、会话 `scale-duplicate-group-v1` 20,000 条重复关系、20,000 条状态历史）跑整条会话查询（16 列含 `comparison_snapshot`）：**132 / 191 / 135 ms**，三轮均返回 20,000 行。即读取约占 3.6 s 的 **4–5%**。
+2. **读侧排除（宿主侧，佐证）。** 同一夹具经 xerial JDBC：原始查询 **295.5–499.6 ms**，适配器读（查询 + 映射）**303.2–803.6 ms**（两次独立三轮，区间差异判为宿主负载而非夹具差异）。宿主慢于设备是驱动与行对象物化开销，不改变结论方向。
+3. **缺索引解释同样排除。** `EXPLAIN QUERY PLAN` 显示每个 join 与两个相关子查询都走主键索引；`import_duplicate_status_history` 的 `(ledger_id, candidate_id, sequence)` 以谓词前缀命中 `max(sequence)`。
+4. **分段读数（三轮，`D278STAGE`）。** 点击→枚举进度 **148 / 208 / 246 ms**；枚举进度→卡片 **3,501 / 4,970 / 4,301 ms**；合计 **3,649 / 5,178 / 4,547 ms**。结论：点击与状态翻转是廉价段（~0.15–0.25 s），**成本几乎全部落在「枚举开始 → 卡片可见」**。
+5. **归因边界（本批不指名根因）。** 「枚举开始 → 卡片可见」这一段仍捆绑三件事：枚举的**租约等待**、20,001 项 `ImportDuplicateGroupItemState` 装配、以及 20,002 项 `LazyColumn` 的首次组合/measure。本批不放任何一件出局，也不主张已定位。CPU-vs-wait 判别（采样应用进程 `utime+stime`）**启动后被用户叫停，未取得读数**，不得视为已测。
+6. **两轮差异登记。** 同一夹具三轮读数跨 3,649–5,178 ms（≈1.5 s），故单轮读数只能当区间看；D-278 已记首轮 6,195 ms 为开机首跑冷态，该解释仍属推断。
+7. **向量账与阈值不变。** 62 = PASS 49 + 残留 11 + 修订范围完成 2 ≈ 79.0%；A-PERF 与 P707-A08 仍非 PASS；≤3 s 门槛与任何 PASS 判据不动。
+
+**边界：** 入 = 本决定条目、`docs/CURRENT_STATE.md` 的 `:106` 状态句与主检出 SHA 锚点。出 = 不改 D-278 / D-275 / D-171 / D-172 / D-234 的判决正文与读数，不改产品代码、schema、迁移与测试源码，不改冻结阈值与向量账；`docs/PROJECT_STATE.local.md`、`docs/PHASE7_ACCEPTANCE_SPLIT.local.md` 与 `local/artifacts/` 下的证据文件（主检出自更）。
+
+**验收：** 离线——`python -m project_docs .` exit 0；`git diff --check` 干净。载体证据：PR #207 的 `:ledger-data:jvmTest --tests B6GroupOpenReadAttributionTest` 与 `:ledger-data:ktlintCheck` 均成功、`verify-shard-coverage.py` 报 115/115；PR #208 的 `:android-app:compileDebugAndroidTestKotlin` 与 `:android-app:ktlintCheck` 均成功、设备两轮 `seedFixture` + `b6CardOpen` 各 `OK (1 test)`；两个 PR 的 required checks 全绿后 squash 合并，合并提交 `CI` 均 success。
+
+**残余：** ① 根因未定位（见决定 5 的三件候选）；② CPU-vs-wait 判别未取得读数；③ 三轮跨 1.5 s，冷态归因未做同 APK 重启后对照；④ 单设备单会话，不主张跨设备可复现；⑤ 组卡确认入口仍不在当前渲染树（D-278 残余②不变）。
+
+**关联决定：** D-278（B6 口径登记与本归因批的边界）、D-275（B6 口径变更授权）、D-171（宿主侧归因测试体例，side A/B 的两文件分工与 side B 的 61k 渲染模型读数——**不同形态，不构成 B6 装配腿的证据**）、D-172（设备侧 `sqlite3 .timer on` 的计时先例）、D-234（同一读路径的连接持有窗口读数，租约等待候选的来源）、D-241（规模量测落盘体例）、PR #207 / PR #208（本批注册的两个载体）。
