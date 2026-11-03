@@ -8709,11 +8709,16 @@ insertDuplicateStatus:
 INSERT INTO import_duplicate_status_history(ledger_id, candidate_id, sequence, history_id, status, request_id, operation_class)
 VALUES (?, ?, 1, ?, 'DEFERRED', ?, 'creation') ON CONFLICT DO NOTHING;
 selectDuplicateMatches:
+-- P7 duplicate representative: a candidate keeps one determinate representative per match, so
+-- this read returns at most one row — the minimum source_id among the rows the frozen exact
+-- business tuple selects. ORDER BY ... LIMIT 1 is MIN(source_id) while keeping the plain column
+-- (rather than MIN(source_id)) so the generated type stays a non-null String: a zero-match read
+-- is an empty list, never a null row.
 SELECT source_id FROM import_source_record WHERE ledger_id = ? AND source_id != ? AND record_kind = ? AND contract_version = ?
  AND amount_minor = ? AND currency_code = ? AND currency_precision = ? AND occurred_at = ? AND direction_token = ?
  AND (status_token = ? OR (status_token IS NULL AND ? = 1))
  AND funding_state = 'SETTLED'
- AND completeness = 'valid_complete' AND (status_token IS NULL OR status_token != 'unresolved') ORDER BY source_id;
+ AND completeness = 'valid_complete' AND (status_token IS NULL OR status_token != 'unresolved') ORDER BY source_id LIMIT 1;
 selectDuplicateReviewRequest:
 SELECT input_fingerprint, outcome FROM import_duplicate_review_request WHERE ledger_id = ? AND request_id = ?;
 claimDuplicateReviewRequest:
@@ -9434,16 +9439,22 @@ ORDER BY p.posting_index, active_link_id;
 
 duplicateMatchCountForIntake:
 -- R-Q09-2 intake demand count: SELECT-only, ledger-scoped, predicate identical to
--- selectDuplicateMatches (:8296-8301) with no source_id self-exclusion parameter. The count
--- runs inside the winning claim transaction before the new source row is inserted, so every
--- counted row is an existing source (transaction-isolated; no race, no pre-guess).
+-- selectDuplicateMatches with no source_id self-exclusion parameter. The duplicate
+-- representative rule caps the demand at one: count(*) over a LIMIT 1 subquery reports 1 when
+-- the frozen exact business tuple selects any existing row and 0 when it selects none, and it
+-- keeps the column a non-null Long for the Int-taking id port. The count runs inside the
+-- winning claim transaction before the new source row is inserted, so every counted row is an
+-- existing source (transaction-isolated; no race, no pre-guess).
 SELECT count(*) AS match_count
-FROM import_source_record
-WHERE ledger_id = ? AND record_kind = ? AND contract_version = ?
- AND amount_minor = ? AND currency_code = ? AND currency_precision = ? AND occurred_at = ? AND direction_token = ?
- AND (status_token = ? OR (status_token IS NULL AND ? = 1))
- AND funding_state = 'SETTLED'
- AND completeness = 'valid_complete' AND (status_token IS NULL OR status_token != 'unresolved');
+FROM (
+  SELECT 1 FROM import_source_record
+  WHERE ledger_id = ? AND record_kind = ? AND contract_version = ?
+   AND amount_minor = ? AND currency_code = ? AND currency_precision = ? AND occurred_at = ? AND direction_token = ?
+   AND (status_token = ? OR (status_token IS NULL AND ? = 1))
+   AND funding_state = 'SETTLED'
+   AND completeness = 'valid_complete' AND (status_token IS NULL OR status_token != 'unresolved')
+  LIMIT 1
+);
 
 importReviewRowsForLedger:
 -- Ledger-scoped candidate review list (spec 4.5.2). One row per (candidate, duplicate

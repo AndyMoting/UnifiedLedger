@@ -22,12 +22,15 @@ import com.unifiedledger.domain.LedgerId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 /**
- * P7-04.B D-146 "implementation-batch obligation (2)": the intake demand count
- * `duplicateMatchCountForIntake` and the existing match read `selectDuplicateMatches`
- * (`Ledger.sq:8296-8301`) must agree point by point on the 0 / 1 / multiple match fixtures
- * and on the `statusToken`-null variant of the predicate.
+ * P7-04.B D-146 "implementation-batch obligation (2)" under the duplicate-representative rule:
+ * the intake demand count `duplicateMatchCountForIntake` reports 0 or 1, and the match read
+ * `selectDuplicateMatches` returns at most one row — the minimum `source_id` among the rows the
+ * frozen exact business tuple selects. The two must agree point by point on the 0 / 1 / many
+ * match fixtures and on the `statusToken`-null variant of the predicate: no match gives count 0
+ * and an empty read, one or more matches gives count 1 and a single representative.
  *
  * The count query deliberately has no `source_id` self-exclusion parameter because it runs
  * inside the winning claim transaction *before* the new source row is inserted; this test
@@ -38,7 +41,8 @@ import kotlin.test.assertIs
  *
  * The store-side companion below (AB-BE-SPEC-02/AB-BE-QUAL-03) drives the real
  * [SqlDelightImportSpineStore.commitIntake] with a recording allocateIds lambda and pins
- * that the demand the store passes equals the in-transaction match count on 0/1/N fixtures.
+ * that the demand the store passes equals the in-transaction match count, saturated at one,
+ * on 0/1/N fixtures.
  */
 class DuplicateMatchCountEquivalenceDataTest {
     private val ledgerId = LedgerId("ledger-p704-count")
@@ -61,7 +65,7 @@ class DuplicateMatchCountEquivalenceDataTest {
             requestRow(driver, ledgerId, "req-count-seed")
 
             // --- 0 matches: an empty ledger agrees (count 0 == read empty).
-            assertEquivalent(driver, "ledger empty")
+            assertEquivalent(driver, "ledger empty", expectedRepresentative = null)
 
             // A non-settled row and a different-amount row are near-misses: the predicates
             // must agree they are misses, not just agree on empty inputs.
@@ -101,7 +105,7 @@ class DuplicateMatchCountEquivalenceDataTest {
                 fundingState = "SETTLED",
                 completeness = "valid_complete",
             )
-            assertEquivalent(driver, "near misses only")
+            assertEquivalent(driver, "near misses only", expectedRepresentative = null)
 
             // --- 1 match.
             insertSource(
@@ -113,9 +117,10 @@ class DuplicateMatchCountEquivalenceDataTest {
                 fundingState = "SETTLED",
                 completeness = "valid_complete",
             )
-            assertEquivalent(driver, "single match")
+            assertEquivalent(driver, "single match", expectedRepresentative = "source-hit-1")
 
-            // --- multiple matches (the D05 concurrent-match case: the count is the demand).
+            // --- many matches: one determinate representative (the minimum source_id) and a
+            // demand that stays 1, so the pre-representative N expectation is void.
             insertSource(
                 driver,
                 sourceId = "source-hit-2",
@@ -134,7 +139,20 @@ class DuplicateMatchCountEquivalenceDataTest {
                 fundingState = "SETTLED",
                 completeness = "valid_complete",
             )
-            assertEquivalent(driver, "three matches")
+            assertEquivalent(driver, "three matches", expectedRepresentative = "source-hit-1")
+
+            // The representative is the minimum source_id, not the first or the latest insert:
+            // a later row that sorts lower takes over.
+            insertSource(
+                driver,
+                sourceId = "source-hit-0",
+                amount = amountMinor,
+                direction = directionToken,
+                status = statusToken,
+                fundingState = "SETTLED",
+                completeness = "valid_complete",
+            )
+            assertEquivalent(driver, "lower source id takes over", expectedRepresentative = "source-hit-0")
 
             // Rows on another ledger must never be counted (ledger-scoped, no cross-ledger leak).
             requestRow(driver, otherLedgerId, "req-count-other")
@@ -148,7 +166,7 @@ class DuplicateMatchCountEquivalenceDataTest {
                 completeness = "valid_complete",
                 ledger = otherLedgerId,
             )
-            assertEquivalent(driver, "other-ledger rows excluded")
+            assertEquivalent(driver, "other-ledger rows excluded", expectedRepresentative = "source-hit-0")
         } finally {
             driver.close()
         }
@@ -191,17 +209,32 @@ class DuplicateMatchCountEquivalenceDataTest {
             )
 
             // statusToken = null with the frozen nullFlag = 1: the predicate's null branch.
-            // Both queries must agree (the settled rows carry a non-null status token).
+            // Both queries must agree (the settled rows carry a non-null status token, so the
+            // null branch matches nothing).
             assertEquivalent(
                 driver,
                 "statusToken-null variant",
+                expectedRepresentative = null,
                 queryStatusToken = null,
                 nullFlag = 1L,
             )
-            // statusToken = "settled" with nullFlag = 0: the concrete-token branch.
-            assertEquivalent(driver, "statusToken concrete", queryStatusToken = statusToken, nullFlag = 0L)
+            // statusToken = "settled" with nullFlag = 0: the concrete-token branch, whose
+            // representative is the lower of the two settled source ids.
+            assertEquivalent(
+                driver,
+                "statusToken concrete",
+                expectedRepresentative = "source-settled-1",
+                queryStatusToken = statusToken,
+                nullFlag = 0L,
+            )
             // The frozen 'unresolved' exclusion applies identically on both sides.
-            assertEquivalent(driver, "statusToken unresolved", queryStatusToken = "unresolved", nullFlag = 0L)
+            assertEquivalent(
+                driver,
+                "statusToken unresolved",
+                expectedRepresentative = null,
+                queryStatusToken = "unresolved",
+                nullFlag = 0L,
+            )
         } finally {
             driver.close()
         }
@@ -211,11 +244,11 @@ class DuplicateMatchCountEquivalenceDataTest {
      * AB-BE-SPEC-02/AB-BE-QUAL-03 (store side, R-Q09-2): the demand [SqlDelightImportSpineStore]
      * passes to the allocation callback is the winning claim transaction's own fact. Driving
      * the real store with a recording allocateIds lambda over four sequential same-tuple
-     * intakes, the recorded demand must equal the `selectDuplicateMatches` count the
-     * transaction sees (0/1/N fixtures: 0 -> 1 -> 2 -> 3) — a constant-demand regression or a
-     * count/read divergence fails here, and the store's in-transaction size re-check
-     * additionally cross-validates every minted duplicate id group. No spine oracle
-     * expectation is touched.
+     * intakes, the recorded demand must equal the `selectDuplicateMatches` row count the
+     * transaction sees under the representative rule (0/1/N fixtures: 0 -> 1 -> 1 -> 1) — a
+     * constant-zero demand or a count/read divergence fails here, and the store's
+     * in-transaction size re-check additionally cross-validates every minted duplicate id
+     * group. No spine oracle expectation is touched.
      */
     @Test
     fun storeIntakeDemandEqualsTheInTransactionMatchCount() {
@@ -279,7 +312,7 @@ class DuplicateMatchCountEquivalenceDataTest {
                     }
 
                 // The winning intake must commit, and the store's demand must equal the
-                // transaction-internal match count.
+                // transaction-internal representative read.
                 assertIs<ImportIntakeResult.Accepted>(result)
                 assertEquals(
                     expectedMatches,
@@ -287,7 +320,30 @@ class DuplicateMatchCountEquivalenceDataTest {
                     "intake $index: the store's demand must equal the in-transaction selectDuplicateMatches count",
                 )
             }
-            assertEquals(listOf(0, 1, 2, 3), demands)
+            // The demand saturates at one: the fourth intake sees three matches and still asks
+            // for a single representative id.
+            assertEquals(listOf(0, 1, 1, 1), demands, "the duplicate demand is the representative count, not the match count")
+            // Each later intake stored exactly one relation, and every relation points at the
+            // same determinate representative: the minimum existing source id.
+            val relations =
+                driver
+                    .executeQuery(
+                        null,
+                        "SELECT possible_existing_source_id FROM import_duplicate_candidate ORDER BY candidate_id",
+                        { cursor ->
+                            app.cash.sqldelight.db.QueryResult.Value(
+                                buildList {
+                                    while (cursor.next().value) add(cursor.getString(0))
+                                },
+                            )
+                        },
+                        0,
+                    ).value
+            assertEquals(
+                listOf("source-demand-0", "source-demand-0", "source-demand-0"),
+                relations,
+                "every later intake must store one relation to the minimum existing source id",
+            )
         } finally {
             driver.close()
         }
@@ -296,6 +352,7 @@ class DuplicateMatchCountEquivalenceDataTest {
     private fun assertEquivalent(
         driver: JdbcSqliteDriver,
         label: String,
+        expectedRepresentative: String?,
         queryStatusToken: String? = statusToken,
         nullFlag: Long = 0L,
     ) {
@@ -329,6 +386,19 @@ class DuplicateMatchCountEquivalenceDataTest {
                     queryStatusToken,
                     nullFlag,
                 ).executeAsList()
+        // The demand is the representative count: 0 without a match, 1 with one.
+        assertEquals(
+            if (expectedRepresentative == null) 0L else 1L,
+            count,
+            "$label: the intake demand is 0 with no match and 1 with a match",
+        )
+        // The read yields the single minimum source_id, never one row per match.
+        assertEquals(
+            listOfNotNull(expectedRepresentative),
+            matches,
+            "$label: selectDuplicateMatches returns the minimum source_id as its single representative",
+        )
+        assertTrue(matches.size <= 1, "$label: the representative read never returns more than one row")
         assertEquals(
             matches.size.toLong(),
             count,
