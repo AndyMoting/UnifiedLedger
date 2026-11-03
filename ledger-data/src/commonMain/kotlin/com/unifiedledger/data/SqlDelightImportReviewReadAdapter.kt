@@ -5,6 +5,7 @@ import com.unifiedledger.application.ImportCandidateId
 import com.unifiedledger.application.ImportCompleteness
 import com.unifiedledger.application.ImportDuplicateCandidateId
 import com.unifiedledger.application.ImportDuplicatePossibleExistingSourceFacts
+import com.unifiedledger.application.ImportDuplicateReviewsForSessionPage
 import com.unifiedledger.application.ImportDuplicateReviewRow
 import com.unifiedledger.application.ImportDuplicateReviewsForSessionRow
 import com.unifiedledger.application.ImportDuplicateStatus
@@ -28,6 +29,16 @@ import com.unifiedledger.domain.LedgerId
  * the frozen default is pinned by a test instead of being silently editable.
  */
 internal const val IMPORT_REVIEW_ROWS_PAGE_SIZE = 10_000L
+
+/**
+ * B6 group-card paging batch (D-280, spec `docs/specs/2026-11-04-b6-group-card-paged-
+ * enumeration-design.md` §3.1): the group card's keyset page size, fixed at 200 (the D-268
+ * Q5 page-size precedent). `Long` because SQLDelight types a LIMIT bind as INTEGER=Long.
+ * Injectable through the constructor so tests can exercise the multi-page path with a tiny
+ * value; `internal` so the frozen default is pinned by a test (the D-168/`pageSize`
+ * mutation-testing precedent).
+ */
+internal const val IMPORT_DUPLICATE_GROUP_PAGE_SIZE = 200L
 
 /**
  * P7-04.B import review read adapter (D-146; implementation spec section 4.5, Appendix A).
@@ -65,6 +76,10 @@ class SqlDelightImportReviewReadAdapter(
     // constructed equivalence check, silently changing the batch count (and therefore the
     // BEGIN IMMEDIATE hold window that D-230 J7 governs).
     internal val pageSize: Long = IMPORT_REVIEW_ROWS_PAGE_SIZE,
+    // B6 group-card paging batch (D-280): the group card's keyset page size, injectable so
+    // tests can force the multi-page path with a tiny value (same mutation-testing pin as
+    // `pageSize` above).
+    internal val groupPageSize: Long = IMPORT_DUPLICATE_GROUP_PAGE_SIZE,
 ) : ImportReviewReadPort {
     override fun loadImportReviewRows(ledgerId: LedgerId): List<ImportReviewRow> {
         // pageSize <= 0 is rejected up front. 0 would make `batch.size < pageSize` false on an
@@ -239,6 +254,79 @@ class SqlDelightImportReviewReadAdapter(
         }
         return rows.map { row -> row.toSessionReviewRow() }
     }
+
+    /**
+     * B6 group-card paging batch (D-280): one keyset page of
+     * [loadImportDuplicateReviewsForSession]. The named query adds only the keyset bound
+     * `duplicate.candidate_id > :after` and LIMIT to the whole-session query (byte-identical
+     * join shapes, latest-review semantics and ORDER BY), so concatenating pages in id order
+     * reproduces the whole-session list exactly (JVM equivalence pin). The first page passes
+     * [ImportDuplicateCandidateId]("") — the candidate ids are non-empty UUIDv7 text, so
+     * `> ''` admits every real row; an empty-string duplicate id would be a spine-contract
+     * violation, and the fail-loud probe below refuses to page past one silently (the
+     * whole-list keyset precedent at `loadImportReviewRows` refuses the same shape for
+     * candidate ids). An absent session (no candidate of this session) is null; a present
+     * session whose page predicate matches nothing is an empty page with the cursor passed
+     * in (exhausted keyset).
+     */
+    override fun loadImportDuplicateReviewsForSessionPage(
+        ledgerId: LedgerId,
+        sessionInputRef: String,
+        afterCandidateId: ImportDuplicateCandidateId,
+    ): ImportDuplicateReviewsForSessionPage? {
+        require(groupPageSize >= 1) { "import duplicate group page size must be >= 1, was $groupPageSize" }
+        val rows =
+            database.ledgerQueries
+                .importDuplicateReviewsForSessionPage(
+                    ledgerId.value,
+                    sessionInputRef,
+                    afterCandidateId.value,
+                    groupPageSize,
+                )
+                .executeAsList()
+        // Absent session (no candidate of this session at all) vs exhausted keyset (the page
+        // predicate simply matched nothing): the same one-shot existence probe as the
+        // whole-session read decides — never per page.
+        if (rows.isEmpty()) {
+            val sessionHasCandidate =
+                database.ledgerQueries
+                    .importCandidateExistsByInputRef(ledgerId.value, sessionInputRef)
+                    .executeAsList()
+                    .isNotEmpty()
+            return if (sessionHasCandidate) {
+                ImportDuplicateReviewsForSessionPage(emptyList(), afterCandidateId)
+            } else {
+                null
+            }
+        }
+        // Fail-loud keyset probe: a page must never contain an empty duplicate id (it would
+        // corrupt the resume cursor), and the cursor is the LAST row's id (the query is
+        // ORDER BY duplicate.candidate_id ASC).
+        rows.forEach { row ->
+            check(row.candidate_id.isNotEmpty()) {
+                "duplicate candidate id must be non-empty for keyset paging (B6 group card, D-280)"
+            }
+        }
+        val cursor = rows.last().candidate_id
+        return ImportDuplicateReviewsForSessionPage(
+            rows = rows.map { row -> row.toSessionReviewRowPage() },
+            nextAfterCandidateId = ImportDuplicateCandidateId(cursor),
+        )
+    }
+
+    /**
+     * B6 group-card paging batch (D-280): the whole-group duplicate-candidate count of one
+     * pick session. The predicate is byte-identical to the paged read minus the keyset bound
+     * and LIMIT, and the dropped joins are all LEFT JOINs on the duplicate's own key (1:1,
+     * no row multiplicity change), so count == the concatenated page row total (JVM pin).
+     */
+    override fun countImportDuplicateCandidatesForSession(
+        ledgerId: LedgerId,
+        sessionInputRef: String,
+    ): Long =
+        database.ledgerQueries
+            .importDuplicateCandidateCountForSession(ledgerId.value, sessionInputRef)
+            .executeAsOne()
 }
 
 /**
@@ -280,6 +368,45 @@ private fun com.unifiedledger.data.db.ImportDuplicateReviewsForSource.toReviewRo
  * exactly like the per-candidate row; only the subject-candidate wrap is new.
  */
 private fun com.unifiedledger.data.db.ImportDuplicateReviewsForSession.toSessionReviewRow(): ImportDuplicateReviewsForSessionRow =
+    ImportDuplicateReviewsForSessionRow(
+        subjectCandidateId = ImportCandidateId(subject_candidate_id),
+        review =
+            ImportDuplicateReviewRow(
+                duplicateCandidateId = ImportDuplicateCandidateId(candidate_id),
+                kind = kind,
+                comparisonFingerprint = comparison_fingerprint,
+                comparisonSnapshot = comparison_snapshot,
+                latestStatus =
+                    ImportDuplicateStatus.valueOf(
+                        requireNotNull(latest_status) { "duplicate candidate has no status row" },
+                    ),
+                reviewDecision = review_decision,
+                reviewReasonToken = review_reason_token,
+                reviewedAt = reviewed_at,
+                possibleExistingSource =
+                    existing_source_id?.let { existingSourceId ->
+                        ImportDuplicatePossibleExistingSourceFacts(
+                            sourceId = ImportSourceId(existingSourceId),
+                            amountMinor = existing_amount_minor,
+                            currencyCode = existing_currency_code,
+                            currencyPrecision = existing_currency_precision?.toInt(),
+                            occurredAt = existing_occurred_at,
+                            directionToken = existing_direction_token,
+                            statusToken = existing_status_token,
+                        )
+                    },
+            ),
+    )
+
+/**
+ * B6 group-card paging batch (D-280): the generated row of the paged session query
+ * (`importDuplicateReviewsForSessionPage`) has the same column list as the whole-session
+ * row, so this mapper is a per-column copy of [toSessionReviewRow] over the page row type
+ * (SQLDelight generates one row type per query; a shared mapper cannot serve both
+ * receivers). A field drift between the two queries would surface as a compile error here,
+ * which is exactly the drift-detection the byte-identical column contract wants.
+ */
+private fun com.unifiedledger.data.db.ImportDuplicateReviewsForSessionPage.toSessionReviewRowPage(): ImportDuplicateReviewsForSessionRow =
     ImportDuplicateReviewsForSessionRow(
         subjectCandidateId = ImportCandidateId(subject_candidate_id),
         review =

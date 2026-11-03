@@ -550,14 +550,17 @@ sealed interface P503UiEvent {
 
     /**
      * P704SPEC-12 registered mechanism: opens the 整组确认页 for the current pick session's
-     * suspected-duplicate group. The host resolved the per-item enumeration (each item one
-     * duplicate candidate with its privacy-safe comparison snapshot); the page's confirm action
-     * authorizes the per-item sequential core review loop (逐项独立 requestId/reviewId、可见部分
+     * suspected-duplicate group. The host resolved the FIRST PAGE of the per-item enumeration
+     * (B6 group-card paging batch, D-280: [totalCount] is the WHOLE-group total from the
+     * count query — never the landed count; the remaining pages land through
+     * [ImportGroupEnumerationPageLanded]); the page's confirm action authorizes the per-item
+     * sequential core review loop over the WHOLE group (逐项独立 requestId/reviewId、可见部分
      * 成功、已成功项经组重算幂等不重复处置). Effect only on OverviewEmpty; absorbed everywhere else.
      */
     data class StartImportDuplicateGroupDisposition(
         val inputRef: String,
         val items: List<ImportDuplicateGroupDispositionItem>,
+        val totalCount: Int,
     ) : P503UiEvent
 
     /**
@@ -590,6 +593,24 @@ sealed interface P503UiEvent {
      * everywhere else. The host dispatches it in the enumeration's final main-dispatcher hop.
      */
     data object ImportGroupEnumerationCompleted : P503UiEvent
+
+    /**
+     * B6 group-card paging batch (D-280): ONE keyset page of the 整组确认页 enumeration
+     * landed. Effect only on OverviewEmpty while the group card is open for this inputRef
+     * (appends the page's items to the landed prefix with their whole-group ordinals; a page
+     * landing with no open page, a different inputRef, or a stale generation is absorbed);
+     * absorbed everywhere else. The host dispatches one event per landed page inside the
+     * single enumeration lease, in keyset order, and follows the last page with
+     * [ImportGroupEnumerationCompleted]. Any typed page-read failure skips straight to the
+     * whole-enumeration failure path (the card never opens or closes wholesale) — the event
+     * is never dispatched with failure semantics.
+     */
+    data class ImportGroupEnumerationPageLanded(
+        val inputRef: String,
+        val items: List<ImportDuplicateGroupDispositionItem>,
+        /** The first item's 1-based ordinal in the WHOLE group (the page is a keyset prefix slice). */
+        val firstOrdinal: Int,
+    ) : P503UiEvent
 
     // ---- P7-04.D batch confirmation events (D-146; spec sections 3.2.3/3.3.2/6.2 table 6.2a) ----
     // Discipline: every event is absorbed in every state outside its designed effect and never

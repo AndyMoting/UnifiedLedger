@@ -100,6 +100,21 @@ data class ImportDuplicateReviewsForSessionRow(
 )
 
 /**
+ * B6 group-card paging batch (D-280, spec `docs/specs/2026-11-04-b6-group-card-paged-
+ * enumeration-design.md`): one page of the session-level duplicate-review read plus the
+ * cursor the next page resumes from. The page rows are the same
+ * [ImportDuplicateReviewsForSessionRow] shape as the whole-session read, restricted to
+ * `duplicate.candidate_id > afterCandidateId` in ascending keyset order (the same ORDER BY
+ * the whole-session query carries), so concatenating the pages reproduces the whole-session
+ * list byte-identically. [nextAfterCandidateId] is the largest `duplicate.candidate_id` on
+ * the page (the keyset cursor); a shorter-than-requested page means the keyset is exhausted.
+ */
+data class ImportDuplicateReviewsForSessionPage(
+    val rows: List<ImportDuplicateReviewsForSessionRow>,
+    val nextAfterCandidateId: ImportDuplicateCandidateId,
+)
+
+/**
  * Import review read port. The port expresses lookups by candidateId; the duplicate-review
  * granularity is the subject source, and implementations resolve candidate -> source via
  * `import_candidate.source_id` (UNIQUE `(ledger_id, source_id)`, Appendix A join note).
@@ -158,6 +173,46 @@ interface ImportReviewReadPort {
             "loadImportDuplicateReviewsForSession is not implemented by this read port; a missing " +
                 "session duplicate-review read must surface as a typed read failure, never as an " +
                 "empty comparison set (D-146, G6)",
+        )
+
+    /**
+     * B6 group-card paging batch (D-280): one keyset page of [loadImportDuplicateReviewsForSession].
+     * [afterCandidateId] is the previous page's [ImportDuplicateReviewsForSessionPage.
+     * nextAfterCandidateId] (pass the zero id value for the first page — the caller uses the
+     * port's smallest possible id, not an empty string, so the keyset can never skip rows).
+     * Returns null when the session has no candidate row on this ledger (the same explicit
+     * absent verdict as the whole-session read); a present session whose page predicate
+     * matches nothing returns an empty page (exhausted keyset), never null. The page size is
+     * fixed by the implementation (spec §3.1: 200); the count companion
+     * [countImportDuplicateCandidatesForSession] feeds the group card's 共 N 条 header with
+     * the WHOLE-group total, never the landed-page count.
+     */
+    fun loadImportDuplicateReviewsForSessionPage(
+        ledgerId: LedgerId,
+        sessionInputRef: String,
+        afterCandidateId: ImportDuplicateCandidateId,
+    ): ImportDuplicateReviewsForSessionPage? =
+        throw UnsupportedOperationException(
+            "loadImportDuplicateReviewsForSessionPage is not implemented by this read port; a " +
+                "missing paged session duplicate-review read must surface as a typed read " +
+                "failure, never as a silently partial group (D-280)",
+        )
+
+    /**
+     * B6 group-card paging batch (D-280): the WHOLE-group duplicate-candidate count of one
+     * pick session, with the same session predicate as
+     * [loadImportDuplicateReviewsForSession] — the header's 共 N 条 and the eventual
+     * per-item confirm loop both bind to this total, so it must count the same rows the
+     * paged reads enumerate (JVM pin: count == the final concatenated page row count).
+     */
+    fun countImportDuplicateCandidatesForSession(
+        ledgerId: LedgerId,
+        sessionInputRef: String,
+    ): Long =
+        throw UnsupportedOperationException(
+            "countImportDuplicateCandidatesForSession is not implemented by this read port; a " +
+                "missing group total must surface as a typed read failure, never as a zero " +
+                "header (D-280)",
         )
 }
 
@@ -307,5 +362,81 @@ class QueryImportDuplicateReviewsForSession(
             }
         } catch (failure: Exception) {
             ImportDuplicateReviewsForSessionResult.Unavailable
+        }
+}
+
+/**
+ * Frozen result family of the paged session-level duplicate-review query (D-280). `Page`
+ * carries the keyset page rows AND the resume cursor in one read (the caller never re-reads
+ * a page to learn its cursor); `Absent` keeps the whole-session read's explicit absent
+ * verdict; `Unavailable` is the typed read failure (G6 — never an empty page).
+ */
+sealed interface ImportDuplicateReviewsForSessionPageResult {
+    data class Page(
+        val page: ImportDuplicateReviewsForSessionPage,
+    ) : ImportDuplicateReviewsForSessionPageResult
+
+    /** The session handle matches no candidate's subject source on this ledger. */
+    data object Absent : ImportDuplicateReviewsForSessionPageResult
+
+    data object Unavailable : ImportDuplicateReviewsForSessionPageResult
+}
+
+/**
+ * B6 group-card paging batch (D-280): the paged session-level duplicate-review query use
+ * case. One read returns one keyset page of the whole-session batch — the rows plus the
+ * resume cursor in the same result, so driving the pages costs exactly one query per page.
+ * The caller drives the pages inside ONE lease so the whole paging round shares the
+ * snapshot-consistency window of the unpaginated read (spec §2.5). Read-port exceptions map
+ * to [ImportDuplicateReviewsForSessionPageResult.Unavailable] — never to an empty page, so
+ * a failing page read can never present a silently partial group (G6, the same discipline
+ * as [QueryImportDuplicateReviewsForSession]).
+ */
+class QueryImportDuplicateReviewsForSessionPage(
+    private val readPort: ImportReviewReadPort,
+) {
+    /**
+     * The next keyset page of the session's duplicate-review rows ([afterCandidateId] =
+     * the previous page's [ImportDuplicateReviewsForSessionPage.nextAfterCandidateId]; the
+     * FIRST page passes the smallest possible [ImportDuplicateCandidateId] value). An absent
+     * session is [ImportDuplicateReviewsForSessionPageResult.Absent]; a page whose predicate
+     * matches nothing is a `Page` with empty rows (the caller's exhaustion signal), never a
+     * typed failure.
+     */
+    fun query(
+        ledgerId: LedgerId,
+        sessionInputRef: String,
+        afterCandidateId: ImportDuplicateCandidateId,
+    ): ImportDuplicateReviewsForSessionPageResult =
+        try {
+            val page = readPort.loadImportDuplicateReviewsForSessionPage(ledgerId, sessionInputRef, afterCandidateId)
+            if (page == null) {
+                ImportDuplicateReviewsForSessionPageResult.Absent
+            } else {
+                ImportDuplicateReviewsForSessionPageResult.Page(page)
+            }
+        } catch (failure: Exception) {
+            ImportDuplicateReviewsForSessionPageResult.Unavailable
+        }
+}
+
+/**
+ * B6 group-card paging batch (D-280): the whole-group duplicate-candidate count of one pick
+ * session. The 整组确认页 header's 共 N 条 binds to this total (never the landed-page
+ * count), and the confirm loop's completion gate compares the landed rows against it.
+ * Read-port exceptions map to null (the caller surfaces the typed read failure) — a failing
+ * count must never read as a zero-item group.
+ */
+class CountImportDuplicateCandidatesForSession(
+    private val readPort: ImportReviewReadPort,
+) {
+    fun query(
+        ledgerId: LedgerId,
+        sessionInputRef: String,
+    ): Long? =
+        try {
+            readPort.countImportDuplicateCandidatesForSession(ledgerId, sessionInputRef)
+        } catch (failure: Exception) {
+            null
         }
 }

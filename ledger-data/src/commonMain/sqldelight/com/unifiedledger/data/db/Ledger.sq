@@ -11446,3 +11446,76 @@ JOIN transaction_effective_state AS effective
  AND effective.is_effective = 1
 WHERE tx.ledger_id = :ledger_id
 ORDER BY tx.transaction_id DESC, posting.posting_index;
+
+importDuplicateReviewsForSessionPage:
+-- B6 group-card paging batch (D-280, spec docs/specs/2026-11-04-b6-group-card-paged-
+-- enumeration-design.md): the keyset-paged variant of importDuplicateReviewsForSession
+-- (:9676). The join shapes, the latest-review semantics (the same correlated subqueries),
+-- the WHERE predicate, the column set and the ORDER BY are byte-identical to the
+-- whole-session query; the only additions are the keyset bound
+-- duplicate.candidate_id > :after_candidate_id and LIMIT :page_size. Concatenating the
+-- pages in ascending duplicate.candidate_id order reproduces the whole-session list
+-- exactly (JVM equivalence test pins this). The leading subject_candidate_id column and
+-- its candidate-side joins match :9687-9709 verbatim; the v30 covering index
+-- import_duplicate_candidate_subject_idx(ledger_id, subject_source_id) resolves the
+-- subject join, and duplicate.candidate_id (PRIMARY KEY) drives the keyset bound.
+SELECT
+  candidate.candidate_id AS subject_candidate_id,
+  duplicate.candidate_id,
+  duplicate.kind,
+  duplicate.comparison_fingerprint,
+  duplicate.comparison_snapshot,
+  latest_status.status AS latest_status,
+  review.decision AS review_decision,
+  review.reason_token AS review_reason_token,
+  review.reviewed_at AS reviewed_at,
+  existing.source_id AS existing_source_id,
+  existing.amount_minor AS existing_amount_minor,
+  existing.currency_code AS existing_currency_code,
+  existing.currency_precision AS existing_currency_precision,
+  existing.occurred_at AS existing_occurred_at,
+  existing.direction_token AS existing_direction_token,
+  existing.status_token AS existing_status_token
+FROM import_candidate AS candidate
+JOIN import_source_record AS subject
+  ON subject.ledger_id = candidate.ledger_id AND subject.source_id = candidate.source_id
+JOIN import_duplicate_candidate AS duplicate
+  ON duplicate.ledger_id = candidate.ledger_id
+ AND duplicate.subject_source_id = candidate.source_id
+LEFT JOIN import_duplicate_status_history AS latest_status
+  ON latest_status.ledger_id = duplicate.ledger_id
+ AND latest_status.candidate_id = duplicate.candidate_id
+ AND latest_status.sequence = (SELECT max(s2.sequence) FROM import_duplicate_status_history AS s2
+       WHERE s2.ledger_id = duplicate.ledger_id AND s2.candidate_id = duplicate.candidate_id)
+LEFT JOIN import_duplicate_review_receipt AS receipt
+  ON receipt.ledger_id = duplicate.ledger_id
+ AND receipt.candidate_id = duplicate.candidate_id
+ AND receipt.history_id = (SELECT status.history_id FROM import_duplicate_status_history AS status
+       WHERE status.ledger_id = duplicate.ledger_id AND status.candidate_id = duplicate.candidate_id
+       ORDER BY status.sequence DESC LIMIT 1)
+LEFT JOIN import_duplicate_review_snapshot AS review
+  ON review.ledger_id = receipt.ledger_id AND review.review_id = receipt.review_id
+LEFT JOIN import_source_record AS existing
+  ON existing.ledger_id = duplicate.ledger_id AND existing.source_id = duplicate.possible_existing_source_id
+WHERE duplicate.ledger_id = :ledger_id AND subject.input_ref = :session_input_ref
+  AND duplicate.candidate_id > :after_candidate_id
+ORDER BY duplicate.candidate_id
+LIMIT :page_size;
+
+importDuplicateCandidateCountForSession:
+-- B6 group-card paging batch (D-280): the whole-group duplicate-candidate count of one pick
+-- session. The WHERE predicate is byte-identical to importDuplicateReviewsForSessionPage
+-- minus the keyset bound and LIMIT (and without the ORDER BY, which a count does not
+-- need), so the header total and the concatenated page rows always agree (JVM pin). The
+-- joins to latest_status/receipt/review/existing are dropped: they are LEFT JOINs, which
+-- cannot change the candidate-row multiplicity (the duplicate-side joins are 1:1 on
+-- duplicate.candidate_id), so the count equals the paged reads' row total. The v30
+-- covering index resolves the subject join in one range scan.
+SELECT COUNT(*)
+FROM import_candidate AS candidate
+JOIN import_source_record AS subject
+  ON subject.ledger_id = candidate.ledger_id AND subject.source_id = candidate.source_id
+JOIN import_duplicate_candidate AS duplicate
+  ON duplicate.ledger_id = candidate.ledger_id
+ AND duplicate.subject_source_id = candidate.source_id
+WHERE duplicate.ledger_id = :ledger_id AND subject.input_ref = :session_input_ref;

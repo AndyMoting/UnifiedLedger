@@ -49,6 +49,8 @@ import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.ExplicitlyConfirmedTransactionCorrection
 import com.unifiedledger.application.ImportCandidateId
 import com.unifiedledger.application.ImportDuplicateReviewRequest
+import com.unifiedledger.application.ImportDuplicateCandidateId
+import com.unifiedledger.application.ImportDuplicateReviewsForSessionPageResult
 import com.unifiedledger.application.ImportDuplicateReviewsForSessionResult
 import com.unifiedledger.application.ImportDuplicateReviewsResult
 import com.unifiedledger.application.ImportDuplicateStatus
@@ -2236,17 +2238,34 @@ fun P503App(
      *
      * P7-05 enumeration performance batch: when the composition provides the session-level
      * batch query ([P503LedgerFacade.queryImportDuplicateReviewsForSession]) the whole group
-     * reads in ONE query (the new v30 covering index), the result is folded per candidate
-     * client-side, and the folded map feeds the unchanged pure function — the N+1
-     * per-candidate read loop (plus its full-list existence probe) is gone while the pure
-     * function's signature and its JVM pins stay untouched. Legacy compositions without the
-     * batch query keep the per-candidate path. The in-flight window renders the explicit
-     * 正在整理重复组…… progress line (Started/Completed events around the single-flight run).
+     * reads in ONE query (the v30 covering index), folded per candidate client-side. Legacy
+     * compositions without the batch query keep the per-candidate path.
+     *
+     * B6 group-card paging batch (D-280, spec `docs/specs/2026-11-04-b6-group-card-paged-
+     * enumeration-design.md`): the batch path is now PAGED — the group card opens on the
+     * FIRST keyset page (spec §3.3: the card marker = header + batch switch + first window,
+     * which is the measured 用户可见组卡首响应), and the remaining pages land through
+     * [P503UiEvent.ImportGroupEnumerationPageLanded] while the explicit progress line stays
+     * up ([ImportGroupEnumerationCompleted] moves to the LAST page). All pages run inside ONE
+     * [ledger.leased] window (spec §2.5: the whole paging round shares the unpaginated read's
+     * snapshot-consistency semantics and connection-hold shape), each page feeds the UNCHANGED
+     * pure function (its typed abort applies per page: any [ImportDuplicateReviewsResult.
+     * Unavailable] — the mapped session-read failure — aborts the WHOLE enumeration before
+     * the first landing, so the card never opens on a partial group). The header's 共 N 条
+     * binds to the count query ([P503LedgerFacade.countImportDuplicateCandidatesForSession]),
+     * the WHOLE-group total. The confirm action still authorizes the whole group: it waits
+     * for the remaining pages (the single-flight slot is held until the paging round ends).
      */
     fun startImportDuplicateGroupDisposition() {
         val overviewState = latestState.value as? P503AppState.OverviewEmpty ?: return
         val view = overviewState.importReview ?: return
         val sessionInputRef = view.lastIntakeSession?.inputRef ?: return
+        // B6 group-card paging batch (D-280): the adapter's fixed keyset page size, mirrored for
+        // the exhaustion check (`pageRows.size < pageSize` ends the loop). The adapter owns the
+        // real value (IMPORT_DUPLICATE_GROUP_PAGE_SIZE is ledger-data-internal); the two stay
+        // pinned together by the JVM equivalence test, which constructs the adapter with a tiny
+        // page size and asserts the host loop still consumes every row.
+        val pageQueryPageSize = 200L
         // P704C-SPEC-01/QUAL-02: the enumeration is single-flight — a double tap must not
         // interleave two enumerations (two Start events would race the page state).
         coordinator.startImportDuplicateGroupDispositionOnce {
@@ -2257,71 +2276,111 @@ fun P503App(
                 // P704D-SPEC-03 (C-batch leak-pattern prevention): the guarded body keeps the
                 // enumeration's single-flight slot always releasable — the finally hop releases
                 // it and dispatches the typed outcome on the main dispatcher regardless of how
-                // the run ended. An unexpected throw in the enumeration phase maps to the same
-                // typed list-failure path as a duplicate-review read failure (never a silently
-                // partial group, never a stranded slot).
-                var enumeration: ImportDuplicateGroupEnumeration = ImportDuplicateGroupEnumeration.ReadFailed
+                // the run ended.
+                // B6 paging (D-280): firstOrdinal tracks the whole-group position of the next
+                // page across the loop; a typed failure at ANY page aborts the whole
+                // enumeration (the flag), discards every landed page, and surfaces the typed
+                // list-failure banner — the card never opens on a partial group (spec §2.3).
+                var enumerationFailed = false
+                var firstPage: ImportDuplicateGroupEnumeration.Ready? = null
+                var totalCount = 0
                 // P7-06 06.1 (D-176; spec 4.3/4.4): the enumeration reads run under one lease; the
                 // captured generation gates the landing below.
                 var enumerationGeneration: Generation? = null
                 try {
-                    // P704C-SPEC-05: the pure, JVM-tested enumeration owns the abort decision —
-                    // any typed duplicate-review read failure aborts wholesale (never a silent
-                    // partial group) and the typed list-failure banner is surfaced instead.
-                    // P704D-SPEC-03: the inner guard keeps an unexpected throw out of the outer
-                    // coroutine — it maps to the same typed list-failure path as a read failure
-                    // (never a silently partial group, never a stranded single-flight slot).
-                    enumeration =
-                        try {
-                            when (
-                                val leased =
-                                    ledger.leased { facade, generation ->
-                                        enumerationGeneration = generation
-                                        val sessionQuery = facade.queryImportDuplicateReviewsForSession
-                                        if (sessionQuery != null) {
-                                            // P7-05 batch path: one session-level query replaces the
-                                            // per-candidate loop. Each row carries its subject candidate, so
-                                            // the batch folds per subject client-side and feeds the
-                                            // unchanged pure function through its load callback (Reviews for
-                                            // a folded member, an empty Reviews for a session candidate the
-                                            // batch did not return — the batch join only yields rows whose
-                                            // subject has a duplicate candidate).
-                                            val sessionResult = sessionQuery.query(ledger.ledgerId, sessionInputRef)
-                                            val sessionRows =
-                                                (sessionResult as? ImportDuplicateReviewsForSessionResult.Reviews)?.reviews
-                                            val reviewsByCandidate =
-                                                sessionRows.orEmpty().groupBy({ it.subjectCandidateId }) { it.review }
-                                            enumerateImportDuplicateGroupItems(sessionInputRef, view.rows) { candidateId ->
-                                                when {
-                                                    // A session-level read failure is the same wholesale
-                                                    // abort as a per-candidate one (the pure function turns
-                                                    // it into ReadFailed; never a partial group).
-                                                    sessionResult is ImportDuplicateReviewsForSessionResult.Unavailable ->
-                                                        ImportDuplicateReviewsResult.Unavailable
-                                                    else ->
-                                                        ImportDuplicateReviewsResult.Reviews(
-                                                            reviewsByCandidate[candidateId] ?: emptyList(),
-                                                        )
-                                                }
-                                            }
-                                        } else {
-                                            val reviewQuery = facade.queryImportDuplicateReviews
-                                            if (reviewQuery == null) {
-                                                ImportDuplicateGroupEnumeration.ReadFailed
-                                            } else {
+                    val leased =
+                        ledger.leased { facade, generation ->
+                            enumerationGeneration = generation
+                            val sessionQuery = facade.queryImportDuplicateReviewsForSession
+                            val countQuery = facade.countImportDuplicateCandidatesForSession
+                            val pageQuery = facade.queryImportDuplicateReviewsForSessionPage
+                            if (sessionQuery != null && countQuery != null && pageQuery != null) {
+                                // B6 paging batch path: one count + a keyset page loop, all inside
+                                // this one lease. Each page folds per subject client-side and feeds
+                                // the unchanged pure function through its load callback.
+                                val count = countQuery.query(ledger.ledgerId, sessionInputRef)
+                                if (count == null) {
+                                    enumerationFailed = true
+                                    return@leased
+                                }
+                                totalCount = count.toInt()
+                                var after = ImportDuplicateCandidateId("")
+                                var firstOrdinal = 1
+                                while (true) {
+                                    when (val page = pageQuery.query(ledger.ledgerId, sessionInputRef, after)) {
+                                        ImportDuplicateReviewsForSessionPageResult.Unavailable -> {
+                                            enumerationFailed = true
+                                            return@leased
+                                        }
+                                        ImportDuplicateReviewsForSessionPageResult.Absent -> {
+                                            // The count query counted a group, so an absent session here
+                                            // is a contract violation between the two reads (spec §6
+                                            // risk 3: they must agree). Fail loud rather than present
+                                            // an empty card for a counted group.
+                                            enumerationFailed = true
+                                            return@leased
+                                        }
+                                        is ImportDuplicateReviewsForSessionPageResult.Page -> {
+                                            val pageRows = page.page.rows
+                                            if (pageRows.isEmpty()) break
+                                            val enumeration =
                                                 enumerateImportDuplicateGroupItems(sessionInputRef, view.rows) { candidateId ->
-                                                    reviewQuery.query(ledger.ledgerId, candidateId)
+                                                    ImportDuplicateReviewsResult.Reviews(
+                                                        pageRows.filter { it.subjectCandidateId == candidateId }.map { it.review },
+                                                    )
+                                                }
+                                            when (enumeration) {
+                                                ImportDuplicateGroupEnumeration.ReadFailed -> {
+                                                    enumerationFailed = true
+                                                    return@leased
+                                                }
+                                                is ImportDuplicateGroupEnumeration.Ready -> {
+                                                    if (firstPage == null) {
+                                                        firstPage = enumeration
+                                                    } else {
+                                                        dispatch(
+                                                            P503UiEvent.ImportGroupEnumerationPageLanded(
+                                                                sessionInputRef,
+                                                                enumeration.items,
+                                                                firstOrdinal,
+                                                            ),
+                                                        )
+                                                    }
+                                                    firstOrdinal += enumeration.items.size
                                                 }
                                             }
+                                            after = page.page.nextAfterCandidateId
+                                            // Exhausted keyset: a short page ends the loop.
+                                            if (pageRows.size < pageQueryPageSize) break
                                         }
                                     }
-                            ) {
-                                is LeaseOutcome.Completed -> leased.value
-                                LeaseOutcome.NotReady -> ImportDuplicateGroupEnumeration.ReadFailed
+                                }
+                            } else {
+                                // Legacy path (P7-05): the whole-session batch read when the paging
+                                // surface is not wired; the per-candidate fallback lives below it.
+                                val reviewQuery = facade.queryImportDuplicateReviews
+                                if (reviewQuery == null) {
+                                    enumerationFailed = true
+                                } else {
+                                    val enumeration =
+                                        enumerateImportDuplicateGroupItems(sessionInputRef, view.rows) { candidateId ->
+                                            reviewQuery.query(ledger.ledgerId, candidateId)
+                                        }
+                                    when (enumeration) {
+                                        ImportDuplicateGroupEnumeration.ReadFailed -> enumerationFailed = true
+                                        is ImportDuplicateGroupEnumeration.Ready -> {
+                                            firstPage = enumeration
+                                            totalCount = enumeration.items.size
+                                        }
+                                    }
+                                }
                             }
-                        } catch (failure: Exception) {
-                            ImportDuplicateGroupEnumeration.ReadFailed
                         }
+                    if (leased is LeaseOutcome.NotReady) {
+                        enumerationFailed = true
+                    }
+                } catch (failure: Exception) {
+                    enumerationFailed = true
                 } finally {
                     // Back on the main dispatcher: release the slot and dispatch serially.
                     scope.launch {
@@ -2331,21 +2390,24 @@ fun P503App(
                             // Stale generation: discard the enumeration payload entirely.
                             return@launch
                         }
-                        when (enumeration) {
-                            ImportDuplicateGroupEnumeration.ReadFailed ->
+                        val ready = firstPage
+                        when {
+                            enumerationFailed || ready == null ->
                                 dispatch(P503UiEvent.ImportReviewResult(ImportReviewRowsResult.Unavailable))
-                            is ImportDuplicateGroupEnumeration.Ready ->
-                                // An empty Ready is the defensive no-op path (the affordance only
-                                // appears for a non-empty row-level group).
-                                if (enumeration.items.isNotEmpty()) {
-                                    dispatch(P503UiEvent.StartImportDuplicateGroupDisposition(sessionInputRef, enumeration.items))
-                                }
+                            // An empty Ready is the defensive no-op path (the affordance only
+                            // appears for a non-empty row-level group).
+                            ready.items.isEmpty() -> Unit
+                            else ->
+                                dispatch(
+                                    P503UiEvent.StartImportDuplicateGroupDisposition(sessionInputRef, ready.items, totalCount),
+                                )
                         }
                     }
                 }
             }
         }
     }
+
 
     /**
      * P7-04.C (P704SPEC-12, spec section 3.3.1): the batch disposition loop — one independent core
@@ -2365,6 +2427,16 @@ fun P503App(
                 ?.importReview
                 ?.groupDisposition ?: return
         if (!ledger.surfaces.importDuplicateReview) return
+        // B6 group-card paging batch (D-280, spec §3.4): the confirm action authorizes the
+        // WHOLE group. With the paging enumeration still landing pages, the card shows only
+        // the landed prefix — the two single-flight gates (enumeration and confirm loop)
+        // serialize the two intents: if the enumeration's single-flight slot is still held,
+        // the confirm is refused (the tap while pages are landing waits for the round to
+        // finish; the progress line stays visible so the state is explicit). Once the loop
+        // runs, `page.items` already IS the whole group: the enumeration dispatches Completed
+        // only after its last page, so a confirm observed after that point sees every item.
+        // The 确认整组标记 footer is thus never a landed-prefix-only confirm.
+        if (coordinator.isImportGroupEnumerationRunning()) return
         coordinator.confirmImportDuplicateGroupDispositionOnce {
             scope.launch(Dispatchers.Default) {
                 // P704D-SPEC-03 (C-batch leak-pattern prevention): the guarded body keeps the
