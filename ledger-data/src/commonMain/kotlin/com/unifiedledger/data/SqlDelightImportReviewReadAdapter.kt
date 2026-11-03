@@ -327,6 +327,8 @@ class SqlDelightImportReviewReadAdapter(
         database.ledgerQueries
             .importDuplicateCandidateCountForSession(ledgerId.value, sessionInputRef)
             .executeAsOne()
+
+    override fun importDuplicateGroupPageSize(): Long = groupPageSize
 }
 
 /**

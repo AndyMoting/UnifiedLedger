@@ -11503,14 +11503,18 @@ ORDER BY duplicate.candidate_id
 LIMIT :page_size;
 
 importDuplicateCandidateCountForSession:
--- B6 group-card paging batch (D-280): the whole-group duplicate-candidate count of one pick
--- session. The WHERE predicate is byte-identical to importDuplicateReviewsForSessionPage
--- minus the keyset bound and LIMIT (and without the ORDER BY, which a count does not
--- need), so the header total and the concatenated page rows always agree (JVM pin). The
--- joins to latest_status/receipt/review/existing are dropped: they are LEFT JOINs, which
--- cannot change the candidate-row multiplicity (the duplicate-side joins are 1:1 on
--- duplicate.candidate_id), so the count equals the paged reads' row total. The v30
--- covering index resolves the subject join in one range scan.
+-- B6 group-card paging batch (D-280): the WHOLE-GROUP MEMBER count of one pick session —
+-- the same rows the 整组确认页 enumerates. The predicate is the paged query's
+-- (importDuplicateReviewsForSessionPage) MINUS the keyset bound and LIMIT, PLUS the member
+-- qualifier: kind = 'EXACT_BUSINESS_TUPLE' and latest status = 'DEFERRED' (the
+-- P704SPEC-12 group boundary, P503ImportReviewPresentation.isImportDuplicateBatchGroupMember).
+-- The latest_status join is REQUIRED here (not a multiplicity-preserving drop like
+-- receipt/review/existing): the member verdict depends on it, and a duplicate disposed
+-- through the detail path (CONFIRMED_DUPLICATE) must drop out of both the card and the
+-- header, or 共 N 条 overcounts and the confirm set disagrees with the header (D-280
+-- review finding R2-6). With the join it is still 1:1 on duplicate.candidate_id (the PK
+-- (ledger_id, candidate_id, sequence) max subquery returns at most one row per duplicate),
+-- so COUNT(*) stays the member-row total. The v30 covering index resolves the subject join.
 SELECT COUNT(*)
 FROM import_candidate AS candidate
 JOIN import_source_record AS subject
@@ -11518,4 +11522,11 @@ JOIN import_source_record AS subject
 JOIN import_duplicate_candidate AS duplicate
   ON duplicate.ledger_id = candidate.ledger_id
  AND duplicate.subject_source_id = candidate.source_id
-WHERE duplicate.ledger_id = :ledger_id AND subject.input_ref = :session_input_ref;
+LEFT JOIN import_duplicate_status_history AS latest_status
+  ON latest_status.ledger_id = duplicate.ledger_id
+ AND latest_status.candidate_id = duplicate.candidate_id
+ AND latest_status.sequence = (SELECT max(s2.sequence) FROM import_duplicate_status_history AS s2
+       WHERE s2.ledger_id = duplicate.ledger_id AND s2.candidate_id = duplicate.candidate_id)
+WHERE duplicate.ledger_id = :ledger_id AND subject.input_ref = :session_input_ref
+  AND duplicate.kind = 'EXACT_BUSINESS_TUPLE'
+  AND latest_status.status = 'DEFERRED';

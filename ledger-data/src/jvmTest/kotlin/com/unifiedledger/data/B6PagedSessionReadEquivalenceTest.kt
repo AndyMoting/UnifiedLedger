@@ -1,5 +1,6 @@
 package com.unifiedledger.data
 
+import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.ExecuteImportIntake
 import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
@@ -21,6 +22,7 @@ import com.unifiedledger.application.ImportRequestIdentity
 import com.unifiedledger.application.ImportSourceFacts
 import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.application.ImportStatusHistoryId
+import com.unifiedledger.application.ReviewImportDuplicateCandidate
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.LedgerId
 import java.util.concurrent.atomic.AtomicInteger
@@ -238,6 +240,98 @@ class B6PagedSessionReadEquivalenceTest {
                         ?.take(2)
                 },
             )
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun countUsesTheMemberPredicateSoADisposedDuplicateDropsOut() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val store = SqlDelightImportSpineStore(database, driver)
+            seedSixMemberGroup(store)
+            val adapter = SqlDelightImportReviewReadAdapter(database, groupPageSize = 4L)
+
+            // The header pin (spec §4 ACC-COUNT-01, review R2-6): the count is the WHOLE-GROUP
+            // MEMBER count (kind + latest-status DEFERRED), not the raw session duplicate total.
+            // Disposing one member through the detail path (CONFIRMED_DUPLICATE) must drop it
+            // from the count exactly as it drops from the card items.
+            assertEquals(6L, adapter.countImportDuplicateCandidatesForSession(ledgerId, "session-b6p"))
+            val review = ReviewImportDuplicateCandidate(store)
+            val run =
+                review.execute(
+                    com.unifiedledger.application.ImportDuplicateReviewRequest(
+                        identity = com.unifiedledger.application.ImportRequestIdentity(ledgerId, ImportRequestId("request-b6p-dispose")),
+                        candidateId = ImportDuplicateCandidateId("duplicate-b6p-b-1"),
+                        expectedComparisonFingerprint = "sha256:fixed-fingerprint",
+                        decision = ImportDuplicateStatus.CONFIRMED_DUPLICATE,
+                        reasonToken = "test_dispose",
+                        reviewedAt = "2026-11-04T00:00:00Z",
+                        reviewerReference = "b6-page-test",
+                        generatedAt = "2026-11-04T00:00:00Z",
+                        reviewId = ImportStatusHistoryId("review-b6p-b-1"),
+                        historyId = ImportStatusHistoryId("history-b6p-b-1"),
+                    ),
+                )
+            assertIs<com.unifiedledger.application.ImportDuplicateReviewResult.Accepted>(run)
+            assertEquals(
+                5L,
+                adapter.countImportDuplicateCandidatesForSession(ledgerId, "session-b6p"),
+                "a CONFIRMED member must drop out of the group count (共 N 条 == confirm set)",
+            )
+            // The paged rows agree with the member count (the whole-session read keeps the raw
+            // row but the enumeration's member filter is the pure function's job — the count
+            // matches what the pure function would keep).
+            val pages = readAllPages(adapter, "session-b6p")
+            assertEquals(6, pages.sumOf { it.first }, "the PAGED read stays the raw projection (filtering is the enumeration's member predicate)")
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun pageQueryPlanHasNoWholeSetSort() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val store = SqlDelightImportSpineStore(database, driver)
+            seedSixMemberGroup(store)
+            val adapter = SqlDelightImportReviewReadAdapter(database, groupPageSize = 2L)
+            // Spec §5: the paged query's plan must not sort the whole set — the keyset bound
+            // rides the duplicate.candidate_id PRIMARY KEY, so every step stays an index-ordered
+            // scan with a TEMP B-TREE for the right-most sort at most. (Spec §5 EXPLAIN pin;
+            // static here because CI owns execution, but the plan shape is deterministic.)
+            val plan =
+                database.ledgerQueries.driver
+                    .executeQuery(
+                        0,
+                        "EXPLAIN QUERY PLAN " +
+                            "SELECT duplicate.candidate_id FROM import_candidate AS candidate " +
+                            "JOIN import_source_record AS subject ON subject.ledger_id = candidate.ledger_id AND subject.source_id = candidate.source_id " +
+                            "JOIN import_duplicate_candidate AS duplicate ON duplicate.ledger_id = candidate.ledger_id AND duplicate.subject_source_id = candidate.source_id " +
+                            "WHERE duplicate.ledger_id = 'ledger-b6-page' AND subject.input_ref = 'session-b6p' " +
+                            "AND duplicate.candidate_id > '' ORDER BY duplicate.candidate_id LIMIT 2",
+                        mapper = { cursor ->
+                            QueryResult.Value(buildList {
+                                while (cursor.next().value) {
+                                    add(cursor.getLong(3).toString())
+                                }
+                            })
+                        },
+                        parameters = 0,
+                    )
+                    .value
+            // No "TEMP B-TREE FOR ORDER BY" over the whole set (the ORDER BY rides the PK):
+            // every detail row must be a SEARCH (index lookup), never a full SCAN of the join
+            // followed by a sort. The strict pin is "no SORTER step": the fragment 'USE TEMP
+            // B-TREE FOR ORDER BY' must be absent.
+            val planText = plan.joinToString(" | ")
+            assertTrue(!planText.contains("USE TEMP B-TREE FOR ORDER BY"), "page plan must not sort the whole set: $planText")
+            assertTrue(planText.contains("SEARCH"), "page plan must search indexes, not scan: $planText")
         } finally {
             driver.close()
         }

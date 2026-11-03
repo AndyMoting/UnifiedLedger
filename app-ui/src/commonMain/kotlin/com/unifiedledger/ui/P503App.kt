@@ -2260,12 +2260,11 @@ fun P503App(
         val overviewState = latestState.value as? P503AppState.OverviewEmpty ?: return
         val view = overviewState.importReview ?: return
         val sessionInputRef = view.lastIntakeSession?.inputRef ?: return
-        // B6 group-card paging batch (D-280): the adapter's fixed keyset page size, mirrored for
-        // the exhaustion check (`pageRows.size < pageSize` ends the loop). The adapter owns the
-        // real value (IMPORT_DUPLICATE_GROUP_PAGE_SIZE is ledger-data-internal); the two stay
-        // pinned together by the JVM equivalence test, which constructs the adapter with a tiny
-        // page size and asserts the host loop still consumes every row.
-        val pageQueryPageSize = 200L
+        // B6 group-card paging batch (D-280, review R2-7): the exhaustion bound reads the SAME
+        // value the pages are cut with — captured from the implementation through the leased
+        // facade below (the raw facade is lease-gated by design). The constant is only the
+        // defensive fallback for a wired-but-unbounded legacy surface.
+        var pageQueryPageSize = 200L
         // P704C-SPEC-01/QUAL-02: the enumeration is single-flight — a double tap must not
         // interleave two enumerations (two Start events would race the page state).
         coordinator.startImportDuplicateGroupDispositionOnce {
@@ -2284,6 +2283,9 @@ fun P503App(
                 var enumerationFailed = false
                 var firstPage: ImportDuplicateGroupEnumeration.Ready? = null
                 var totalCount = 0
+                // B6 paging (D-280 review R2-5): pages >= 2 land through this buffer, drained by
+                // the final main-dispatcher hop in keyset order - never dispatched mid-round.
+                val landedPages = mutableListOf<P503UiEvent.ImportGroupEnumerationPageLanded>()
                 // P7-06 06.1 (D-176; spec 4.3/4.4): the enumeration reads run under one lease; the
                 // captured generation gates the landing below.
                 var enumerationGeneration: Generation? = null
@@ -2294,6 +2296,9 @@ fun P503App(
                             val sessionQuery = facade.queryImportDuplicateReviewsForSession
                             val countQuery = facade.countImportDuplicateCandidatesForSession
                             val pageQuery = facade.queryImportDuplicateReviewsForSessionPage
+                            // The real page bound (R2-7): exhaustion is judged against the value
+                            // the pages are actually cut with, never a host-side mirror.
+                            pageQuery?.pageSize()?.let { pageQueryPageSize = it }
                             if (sessionQuery != null && countQuery != null && pageQuery != null) {
                                 // B6 paging batch path: one count + a keyset page loop, all inside
                                 // this one lease. Each page folds per subject client-side and feeds
@@ -2338,13 +2343,17 @@ fun P503App(
                                                     if (firstPage == null) {
                                                         firstPage = enumeration
                                                     } else {
-                                                        dispatch(
+                                                        // Collected, not dispatched: the landings leave the
+                                                        // lease through the FINAL main-dispatcher hop in
+                                                        // keyset order (D-280 review R2-5 — a mid-round
+                                                        // dispatch from this worker would reduce
+                                                        // concurrently with main-thread user events).
+                                                        landedPages +=
                                                             P503UiEvent.ImportGroupEnumerationPageLanded(
                                                                 sessionInputRef,
                                                                 enumeration.items,
                                                                 firstOrdinal,
-                                                            ),
-                                                        )
+                                                            )
                                                     }
                                                     firstOrdinal += enumeration.items.size
                                                 }
@@ -2382,7 +2391,8 @@ fun P503App(
                 } catch (failure: Exception) {
                     enumerationFailed = true
                 } finally {
-                    // Back on the main dispatcher: release the slot and dispatch serially.
+                    // Back on the main dispatcher: release the slot and dispatch serially - the
+                    // page landings drain here in keyset order (R2-5), after the round outcome.
                     scope.launch {
                         coordinator.importGroupEnumerationCompleted()
                         dispatch(P503UiEvent.ImportGroupEnumerationCompleted)
@@ -2392,15 +2402,37 @@ fun P503App(
                         }
                         val ready = firstPage
                         when {
-                            enumerationFailed || ready == null ->
+                            enumerationFailed || ready == null -> {
+                                // B6 paging (D-280 review R2-1): a mid-round failure AFTER the card
+                                // opened must not leave the landed prefix armed with the whole-group
+                                // confirm gate - close the card so the typed banner is the only
+                                // surface (spec section 2.3: a failed page never degrades to a
+                                // smaller group).
+                                dispatch(P503UiEvent.CloseImportDuplicateGroupDisposition)
                                 dispatch(P503UiEvent.ImportReviewResult(ImportReviewRowsResult.Unavailable))
+                            }
                             // An empty Ready is the defensive no-op path (the affordance only
                             // appears for a non-empty row-level group).
                             ready.items.isEmpty() -> Unit
-                            else ->
-                                dispatch(
-                                    P503UiEvent.StartImportDuplicateGroupDisposition(sessionInputRef, ready.items, totalCount),
-                                )
+                            else -> {
+                                // B6 paging (D-280 review R2-2): a user close mid-round absorbs the
+                                // later pages (the reducer's same-inputRef gate); the round's own
+                                // outcome must NOT resurrect the closed card - re-open only when
+                                // the card is still open for this session.
+                                val cardStillOpen =
+                                    (latestState.value as? P503AppState.OverviewEmpty)
+                                        ?.importReview
+                                        ?.groupDisposition
+                                        ?.inputRef == sessionInputRef
+                                if (cardStillOpen) {
+                                    for (landing in landedPages) {
+                                        dispatch(landing)
+                                    }
+                                    dispatch(
+                                        P503UiEvent.StartImportDuplicateGroupDisposition(sessionInputRef, ready.items, totalCount),
+                                    )
+                                }
+                            }
                         }
                     }
                 }

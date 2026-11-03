@@ -593,7 +593,7 @@ class P503ImportReviewReducerTest {
         val item = ImportDuplicateGroupDispositionItem(ImportCandidateId("candidate-suspected"), ImportDuplicateCandidateId("duplicate-1"), "{\"amount_minor\":3580}", "sha256:fixed-fingerprint-duplicate-1")
         val opened =
             assertIs<P503AppState.OverviewEmpty>(
-                reducer.reduce(source, P503UiEvent.StartImportDuplicateGroupDisposition("pick-handle-1", listOf(item))),
+                reducer.reduce(source, P503UiEvent.StartImportDuplicateGroupDisposition("pick-handle-1", listOf(item), totalCount = 1)),
             )
         val page = opened.importReview?.groupDisposition
         assertEquals("pick-handle-1", page?.inputRef)
@@ -617,7 +617,7 @@ class P503ImportReviewReducerTest {
     @Test
     fun groupDispositionEventsWithoutAProjectionOrPageAreAbsorbed() {
         val bare = P503AppState.OverviewEmpty(emptyState)
-        assertSame(bare, reducer.reduce(bare, P503UiEvent.StartImportDuplicateGroupDisposition("pick-handle-1", emptyList())))
+        assertSame(bare, reducer.reduce(bare, P503UiEvent.StartImportDuplicateGroupDisposition("pick-handle-1", emptyList(), totalCount = 0)))
         assertSame(bare, reducer.reduce(bare, P503UiEvent.CloseImportDuplicateGroupDisposition))
         // P7-05: the enumeration progress events are absorbed without a projection (a bare
         // overview must not materialize one for a progress marker).
@@ -676,7 +676,7 @@ class P503ImportReviewReducerTest {
         val itemTwo = itemOne.copy(duplicateCandidateId = ImportDuplicateCandidateId("duplicate-2"), expectedComparisonFingerprint = "sha256:fixed-fingerprint-duplicate-2")
         val opened =
             assertIs<P503AppState.OverviewEmpty>(
-                reducer.reduce(source, P503UiEvent.StartImportDuplicateGroupDisposition("pick-handle-1", listOf(itemOne, itemTwo))),
+                reducer.reduce(source, P503UiEvent.StartImportDuplicateGroupDisposition("pick-handle-1", listOf(itemOne, itemTwo), totalCount = 2)),
             )
         // First run: duplicate-1 reviewed, duplicate-2 typed-rejected.
         val first =
@@ -772,7 +772,7 @@ class P503ImportReviewReducerTest {
         val item = ImportDuplicateGroupDispositionItem(ImportCandidateId("candidate-suspected"), ImportDuplicateCandidateId("duplicate-1"), "snapshot", "sha256:fixed-fingerprint-duplicate-1")
         val states = everyStateExcept(overview())
         states.forEach { state ->
-            assertSame(state, reducer.reduce(state, P503UiEvent.StartImportDuplicateGroupDisposition("pick-handle-1", listOf(item))))
+            assertSame(state, reducer.reduce(state, P503UiEvent.StartImportDuplicateGroupDisposition("pick-handle-1", listOf(item), totalCount = 1)))
             assertSame(state, reducer.reduce(state, P503UiEvent.ImportDuplicateGroupDispositionResult(emptyList(), ImportReviewRowsResult.Unavailable)))
             assertSame(state, reducer.reduce(state, P503UiEvent.CloseImportDuplicateGroupDisposition))
         }

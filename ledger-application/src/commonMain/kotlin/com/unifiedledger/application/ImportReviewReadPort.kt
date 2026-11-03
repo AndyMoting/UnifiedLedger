@@ -178,8 +178,9 @@ interface ImportReviewReadPort {
     /**
      * B6 group-card paging batch (D-280): one keyset page of [loadImportDuplicateReviewsForSession].
      * [afterCandidateId] is the previous page's [ImportDuplicateReviewsForSessionPage.
-     * nextAfterCandidateId] (pass the zero id value for the first page — the caller uses the
-     * port's smallest possible id, not an empty string, so the keyset can never skip rows).
+     * nextAfterCandidateId] (the FIRST page passes [ImportDuplicateCandidateId]("") — the
+     * empty string is the frozen sentinel: real duplicate ids are non-empty UUIDv7 text, and
+     * the implementation fails loud on any empty id row, so the keyset can never skip rows).
      * Returns null when the session has no candidate row on this ledger (the same explicit
      * absent verdict as the whole-session read); a present session whose page predicate
      * matches nothing returns an empty page (exhausted keyset), never null. The page size is
@@ -199,11 +200,15 @@ interface ImportReviewReadPort {
         )
 
     /**
-     * B6 group-card paging batch (D-280): the WHOLE-group duplicate-candidate count of one
-     * pick session, with the same session predicate as
-     * [loadImportDuplicateReviewsForSession] — the header's 共 N 条 and the eventual
-     * per-item confirm loop both bind to this total, so it must count the same rows the
-     * paged reads enumerate (JVM pin: count == the final concatenated page row count).
+     * B6 group-card paging batch (D-280): the WHOLE-GROUP member count of one pick session —
+     * the rows the 整组确认页 enumerates (the P704SPEC-12 member predicate: the session's
+     * EXACT_BUSINESS_TUPLE duplicates whose LATEST status is DEFERRED), NOT the session's raw
+     * duplicate-candidate total (a duplicate disposed through the detail path is CONFIRMED
+     * and must drop out of both the card and the header, or 共 N 条 overcounts and the
+     * confirm set disagrees with the header). The header's 共 N 条 and the eventual per-item
+     * confirm loop both bind to this total, so it must equal the concatenated page rows that
+     * survive the pure function's member filter (JVM pin: count == the final landed
+     * items.size).
      */
     fun countImportDuplicateCandidatesForSession(
         ledgerId: LedgerId,
@@ -213,6 +218,18 @@ interface ImportReviewReadPort {
             "countImportDuplicateCandidatesForSession is not implemented by this read port; a " +
                 "missing group total must surface as a typed read failure, never as a zero " +
                 "header (D-280)",
+        )
+
+    /**
+     * B6 group-card paging batch (D-280): the implementation's fixed keyset page size (spec
+     * §3.1: 200), so the HOST's exhaustion check (`pageRows.size < pageSize`) reads the SAME
+     * value the pages are cut with instead of mirroring a constant (D-280 review R2-7 — a
+     * smaller injected page size would otherwise break the host loop after page one).
+     */
+    fun importDuplicateGroupPageSize(): Long =
+        throw UnsupportedOperationException(
+            "importDuplicateGroupPageSize is not implemented by this read port; the host loop " +
+                "needs the real page bound to detect keyset exhaustion (D-280)",
         )
 }
 
@@ -417,6 +434,14 @@ class QueryImportDuplicateReviewsForSessionPage(
             }
         } catch (failure: Exception) {
             ImportDuplicateReviewsForSessionPageResult.Unavailable
+        }
+
+    /** The implementation's fixed keyset page bound, for the host's exhaustion check (R2-7). */
+    fun pageSize(): Long? =
+        try {
+            readPort.importDuplicateGroupPageSize()
+        } catch (failure: UnsupportedOperationException) {
+            null
         }
 }
 

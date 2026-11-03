@@ -383,6 +383,15 @@ class P503LedgerFacade(
         get() = fallbackCountImportDuplicateCandidatesForSession
 
     /**
+     * B6 group-card paging batch (D-280, review R2-7): the implementation's fixed keyset page
+     * bound, read through the paged query so the host's exhaustion check uses the SAME value
+     * the pages are cut with (a smaller injected page size must not break the host loop after
+     * page one). Null when the paging surface is unwired (legacy path needs no bound).
+     */
+    val importDuplicateGroupPageSize: Long?
+        get() = fallbackQueryImportDuplicateReviewsForSessionPage?.pageSize()
+
+    /**
      * P7-08 08.B-2 (R-222-1; spec section 4.1): the current authoritative tag/merchant selection
      * options for this ledger, ALREADY FILTERED to selectable rows (`active && !tombstoned`).
      *
