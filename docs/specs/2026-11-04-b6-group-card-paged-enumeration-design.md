@@ -31,7 +31,7 @@
 | --- | --- | --- | --- |
 | A 渲染瘦身 | main 的 diff/重建份额 ≤1 s | ~6.2 s | 不达标 |
 | B 装配并轮 | 去一层轻包装 ~0.3–0.5 s；游标物化（worker 大头）动不了 | ~5.5–6 s | 不达标 |
-| **C 分页枚举（本设计）** | worker 物化降到页大小、main 组合降到页大小 | **首窗 ~0.5–1.5 s** | **达标路径唯一** |
+| **C 分页枚举（本设计）** | worker 物化降到页大小、main 组合降到页大小 | **首轮开卡 ~1.5–2.5 s（证据原值，`fix-rethink-C.md:14`）** | **达标路径唯一** |
 
 A+B 买不来 ≤3 s 却要付 P704C-SPEC-05 与 A-VIS 渲染模型两个 pin 的迁移成本 → **否**；C 的纯函数签名零改动、schema 零改动。
 
@@ -96,7 +96,7 @@ importDuplicateReviewsForSessionPage:
 
 - `ImportDuplicateGroupDispositionPage` 增 `totalCount: Int`（count 查询值）与 `items` 语义改为「已落盘前缀」；头部披露 `groupDispositionCardHeaderDisclosure(totalCount)`——呈现纯函数签名不变，传参从 `items.size` 改为 `totalCount`（调用点改动）。
 - 首窗事件落盘后立即开卡（卡片 marker = 头部三行 + 批量开关 + 首窗条目）；「正在整理重复组……」进度行在**续页期间**由 `groupEnumerationInProgress` 继续承载（首窗落盘时翻 false 的现状时序改为**全部落盘**时翻 false——该时序变化在 reducer 测试钉住）。
-- **ordinal 预计算**（执行 D-239 已登记残余）：`ImportDuplicateGroupItemState` 增 `ordinal: Int`（落盘时按全组序赋值，keyset 前缀序保证稳定），`P503ImportReview.kt` 的 `indexOf` 改读该字段——O(visible×n) 归零。
+- **ordinal 预计算**（执行 D-235 已登记残余，`docs/DECISIONS.md:4966`「`itemOrdinal` …登记归 A-PERF」）：`ImportDuplicateGroupItemState` 增 `ordinal: Int`（落盘时按全组序赋值，keyset 前缀序保证稳定），`P503ImportReview.kt` 的 `indexOf` 改读该字段——O(visible×n) 归零。
 
 ### 3.4 确认授权恒为全组（本设计的核心语义裁定）
 
@@ -121,7 +121,7 @@ importDuplicateReviewsForSessionPage:
 | `P704GP-ACC-COUNT-01` | 头部 N = 全组总数 | count 查询 == 最终 items.size；头部文案逐字断言（含 20k 量级 JVM 用例） |
 | `P704GP-ACC-CONFIRM-01` | 确认恒全组 | 续页未完时确认 → 补齐后逐条生效；幂等重跑不重复提交 |
 | `P704GP-ACC-KEY-01` | 列表身份不变 | `stableKey`/`contentType` 逐条不变；ordinal 与落盘序一致 |
-| `P704GP-D-PERF-01` | B6 ≤3 s | 设备三轮**中位** ≤3 s（`run-cpu-probe-v4.sh` 同法）；窗口 CPU 总量对比基线 7,100 ms；`itemCount=20001` 与 key texts 逐字不变；`forwardActions=0` 组入口可达不变 |
+| `P704GP-D-PERF-01` | B6 ≤3 s | 设备三轮**取最大值** ≤3 s（A-PERF approved 规格冻结的「3 次取最大值适用于修复后验收全部场景」纪律，`docs/specs/2026-09-17-p7-04-a-perf-import-read-governance-design.md:104/:116`——不放宽统计口径；`run-cpu-probe-v4.sh` 同法）；窗口 CPU 总量对比基线 7,100 ms；`itemCount=20001` 与 key texts 逐字不变；`forwardActions=0` 组入口可达不变 |
 | `P704GP-D-SCALE-01` | 小组无回归 | 现有小夹具（D-274 的 3 条组）三轮读数不劣化；语义树三态开关不变 |
 
 **口径披露（`P704GP-D-PERF-01`）**：D-278 的「卡片可见」= 全量装配后的卡片 marker；分页下同一 marker（卡片头部 + 首窗条目）出现更早。**该口径变化是本设计的登记行为**：门槛数值（≤3 s）不变，测得的是「用户可见组卡首响应」，与现状「全量装配完成」的旧口径不可直接比较——两者都在证据里并列登记（D-280 与本表），旧口径读数（3,635–7,236 ms）保留为「全量装配完成时间」参照。计划 `:44` 的整链口径纪律（不排除映射/等待时间）逐字适用。
@@ -138,7 +138,7 @@ importDuplicateReviewsForSessionPage:
 2. **批量开关文案与已落盘数不一致的瞬态**：开关 `contentDescription` 含「共 N 条」（全组数），作用集是已落盘——续页完成后两者自然一致；登记为瞬态，不为它改文案契约。
 3. **count 与 items 最终不一致**：只可能由续页期间的状态翻转引起（本应用单写者 + 单飞 + 同租约快照下被 §2.5 排除）；JVM 等价测试钉住「count == 最终 size」。
 4. **keyset TEXT 序**：`candidate_id` 为 UUIDv7 文本（BMP 内 ASCII），SQLite BINARY 序 == Kotlin UTF-16 序（D-230 §4 第 2 项同款前提）；空串探针 fail-loud 防跳过。
-5. **首窗大小与首响应的权衡**：200 条首窗 ≈ 首响应亚秒级；若设备复测首响应仍慢，调页大小属实施内调整（D-168 §6 第 1 项先例），不改契约。
+5. **首窗大小与首响应的权衡**：200 条首窗 ≈ 首响应亚秒级；若设备复测首响应仍慢，调页大小属实施内调整（OOM 修复规格 §6 第 1 项先例，`docs/specs/2026-09-21-p7-04-import-review-list-oom-fix-design.md` §6，经 D-168 批准），不改契约。
 6. **逐页多租约的短持有变体**：可缩短 ACC-TX-01 持有窗口，但引入跨页快照一致性问题；登记为残余，不与本批混做。
 7. **与 PR #205 的关系**：代表行口径若日后重启并合入，组员集合口径变化会使本设计的等价测试基线随之更新——届时按其自身 Decision 承接，本批不预改。
 
