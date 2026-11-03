@@ -160,6 +160,15 @@ private const val OUTCOME_FAILED_PREFIX = "失败"
 private const val CONFIRMED_DUPLICATE_STATUS = "CONFIRMED_DUPLICATE"
 private const val GROUP_CARD_WAIT_MILLIS = 120_000
 private const val GROUP_POLL_MILLIS = 2_000
+
+/**
+ * D-278 staging poll: tight enough to resolve the click -> enumeration-progress mark that the
+ * 500 ms card poll cannot see, while each snapshot read costs only ~4 ms.
+ */
+private const val STAGE_POLL_MILLIS = 50
+
+/** The product's own user-visible enumeration line, read as the middle staging mark. */
+private const val GROUP_ENUMERATION_PROGRESS_TEXT = "正在整理重复组……"
 private const val GROUP_PROGRESS_LOG_MILLIS = 30_000
 private const val GROUP_STABLE_CHECKS = 5
 private const val GROUP_FALLBACK_TIMEOUT_DIVISOR = 2
@@ -2732,8 +2741,51 @@ class ImportScaleTraversalInstrumentedTest {
         val startNanos = System.nanoTime()
         val clicked = clickNode(targetNode)
         log("group affordance click accepted=$clicked")
-        val open = waitFor({ findGroupCardMarker(appRoot()) != null }, GROUP_CARD_WAIT_MILLIS, POLL_MILLIS)
+        // D-278 staging (test-only, zero product change): the product already renders its own
+        // user-visible enumeration line between the click and the open card, so the two marks come
+        // from reading that line and the card marker out of the same snapshot loop. Polling for the
+        // progress line on its own would burn the whole card wait whenever the enumeration finishes
+        // inside one poll and the line is never sampled; one loop takes whichever mark appears.
+        //
+        // RECORDED (2026-11-03, ul_p7_d01 / API 36, fixture = the 20k duplicate-first seed, two
+        // cycles): click -> progress 148 / 208 ms, progress -> card 3,501 / 4,970 ms, click -> card
+        // 3,649 / 5,178 ms. So the click itself and the state flip are cheap (~0.15-0.2 s) and
+        // essentially the whole cost sits between the enumeration starting and the card being
+        // visible. The device's own sqlite3 answers the session query in 132-191 ms, so the read is
+        // NOT that gap either; what remains is the enumeration's lease wait plus the 20,002-item
+        // assembly/composition, which these marks still bundle. Cycle 2 is slower than cycle 1 by
+        // ~1.5 s, so treat single-cycle readings as a spread, not a constant.
+        var progressNanos: Long? = null
+        var cardNanos: Long? = null
+        val deadlineNanos = startNanos + GROUP_CARD_WAIT_MILLIS.toLong() * 1_000_000L
+        while (System.nanoTime() < deadlineNanos) {
+            val snapshot = appRoot()
+            if (progressNanos == null && findByText(snapshot, GROUP_ENUMERATION_PROGRESS_TEXT) != null) {
+                progressNanos = System.nanoTime()
+            }
+            if (findGroupCardMarker(snapshot) != null) {
+                cardNanos = System.nanoTime()
+                break
+            }
+            sleepQuietly(STAGE_POLL_MILLIS.toLong())
+        }
+        // Snapshot the two mutable marks into vals: a captured `var` never smart-casts, and the
+        // subtraction below needs both non-null to be a measured bracket rather than a guess.
+        val progressMark = progressNanos
+        val cardMark = cardNanos
+        val open = cardMark != null
         val root = appRoot()
+
+        fun sinceStart(mark: Long): Long = (mark - startNanos) / 1_000_000L
+
+        val progressToCardMs =
+            if (progressMark != null && cardMark != null) sinceStart(cardMark) - sinceStart(progressMark) else null
+        log(
+            "D278STAGE: progress-seen=${progressMark != null} " +
+                "click-to-progress-ms=${progressMark?.let(::sinceStart)} " +
+                "progress-to-card-ms=$progressToCardMs click-to-card-ms=${cardMark?.let(::sinceStart)} " +
+                "poll-ms=$STAGE_POLL_MILLIS",
+        )
         log("group card open=$open elapsedMs=${elapsedMillis(startNanos)}")
         log("group card key texts: ${keyTexts(root)}")
         val itemCountText = groupCardItemCountText(root)
