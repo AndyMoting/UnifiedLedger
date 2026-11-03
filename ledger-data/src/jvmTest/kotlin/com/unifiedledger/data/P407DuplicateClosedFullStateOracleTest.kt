@@ -859,8 +859,9 @@ class P407DuplicateClosedFullStateOracleTest {
             val store = SqlDelightImportSpineStore(database, driver)
             val expected = Expected()
 
-            // S1, S2, S3 share tuple X: S3 gets one directed candidate per existing
-            // source (no winner, both s1 and s2 stay listed as possible existing).
+            // S1, S2, S3 share tuple X: each settled intake stores one representative relation,
+            // the minimum matching existing source id — S3 points at S1 only, so no S2 relation
+            // and no "winner" disambiguation exist.
             val intakeIds =
                 BatchIntakeIdSource(
                     listOf(
@@ -869,7 +870,7 @@ class P407DuplicateClosedFullStateOracleTest {
                         intakeIds(
                             "s3",
                             "status-s3-1",
-                            duplicates = listOf("duplicate-s3-s1" to "duplicate-status-s3-s1", "duplicate-s3-s2" to "duplicate-status-s3-s2"),
+                            duplicates = listOf("duplicate-s3-s1" to "duplicate-status-s3-s1"),
                         ),
                     ),
                 )
@@ -898,11 +899,7 @@ class P407DuplicateClosedFullStateOracleTest {
                 ImportCompleteness.VALID_COMPLETE,
                 "s3",
                 generatedAt,
-                duplicates =
-                    listOf(
-                        Triple("duplicate-s3-s1", "duplicate-status-s3-s1", "source-s1"),
-                        Triple("duplicate-s3-s2", "duplicate-status-s3-s2", "source-s2"),
-                    ),
+                duplicates = listOf(Triple("duplicate-s3-s1", "duplicate-status-s3-s1", "source-s1")),
             )
             var state = expected.state(accounts)
             assertFullState(state, captureFullState(driver, accounts), "3b three sources, no winner")
@@ -923,8 +920,8 @@ class P407DuplicateClosedFullStateOracleTest {
             state = expected.state(accounts)
             assertFullState(state, captureFullState(driver, accounts), "3b both sources formalized")
 
-            // DISMISSED_LOOKALIKE on one of s3's candidates: s3 still formalizes even
-            // though its second candidate remains open (only CONFIRMED_DUPLICATE blocks).
+            // DISMISSED_LOOKALIKE on s3's single representative candidate: the dismissal never
+            // blocks, so s3 formalizes (only CONFIRMED_DUPLICATE blocks).
             val dismissed = reviewRequest("review-dismiss", "duplicate-s3-s1", tupleComparisonDigest("source-s3", "source-s1"), ImportDuplicateStatus.DISMISSED_LOOKALIKE, "manual-dismissal")
             assertIs<ImportDuplicateReviewResult.Accepted>(ReviewImportDuplicateCandidate(store).execute(dismissed))
             expected.review(ledgerId.value, dismissed, reviewFingerprint(dismissed))

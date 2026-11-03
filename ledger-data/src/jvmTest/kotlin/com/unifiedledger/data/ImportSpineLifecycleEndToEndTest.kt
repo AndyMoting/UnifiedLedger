@@ -1337,6 +1337,8 @@ class ImportSpineLifecycleEndToEndTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
+            // Representative rule: every settled intake stores ONE relation, the minimum matching
+            // existing source id, so b -> a and c -> a; the older c -> b relation no longer exists.
             val ids =
                 BatchIntakeIdSource(
                     listOf(
@@ -1354,7 +1356,6 @@ class ImportSpineLifecycleEndToEndTest {
                             duplicateIds =
                                 listOf(
                                     com.unifiedledger.application.ImportDuplicateIntakeIds(com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-c-a"), ImportStatusHistoryId("duplicate-status-p407-c-a")),
-                                    com.unifiedledger.application.ImportDuplicateIntakeIds(com.unifiedledger.application.ImportDuplicateCandidateId("duplicate-p407-c-b"), ImportStatusHistoryId("duplicate-status-p407-c-b")),
                                 ),
                         ),
                     ),
@@ -1398,7 +1399,7 @@ class ImportSpineLifecycleEndToEndTest {
                         0,
                     ).value
             assertEquals(
-                3L,
+                2L,
                 driver
                     .executeQuery(null, "SELECT count(*) FROM import_duplicate_candidate", { c ->
                         c.next()
@@ -1408,7 +1409,7 @@ class ImportSpineLifecycleEndToEndTest {
                     .value,
             )
             assertEquals(
-                3L,
+                2L,
                 driver
                     .executeQuery(null, "SELECT count(*) FROM import_duplicate_status_history", { c ->
                         c.next()
@@ -1421,7 +1422,6 @@ class ImportSpineLifecycleEndToEndTest {
                 listOf(
                     listOf("duplicate-p407-b-a", "source-p407-b", "source-p407-a", "EXACT_BUSINESS_TUPLE", "duplicate-status-p407-b-a", "DEFERRED"),
                     listOf("duplicate-p407-c-a", "source-p407-c", "source-p407-a", "EXACT_BUSINESS_TUPLE", "duplicate-status-p407-c-a", "DEFERRED"),
-                    listOf("duplicate-p407-c-b", "source-p407-c", "source-p407-b", "EXACT_BUSINESS_TUPLE", "duplicate-status-p407-c-b", "DEFERRED"),
                 ),
                 candidates,
             )

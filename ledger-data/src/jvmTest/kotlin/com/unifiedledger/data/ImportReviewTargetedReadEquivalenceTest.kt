@@ -51,9 +51,11 @@ import kotlin.test.assertTrue
  * Fixture note (the spine's duplicate semantics, ImportSpineLifecycleEndToEndTest p407 vectors):
  * every intake's record needs a distinct raw identity `(inputRef, recordOrdinal)` — records of
  * ONE pick session share the inputRef and differ by ordinal, records of different sessions use
- * different inputRefs. Duplicate candidates attach to the NEWLY intaken source as their subject
- * (one duplicate per EARLIER business-tuple-matching source), so the k-th same-tuple intake
- * requires exactly k-1 pre-allocated duplicate ids (the store's fail-loud size check).
+ * different inputRefs. A duplicate candidate attaches to the NEWLY intaken source as its subject
+ * and stores ONE determinate representative (the minimum earlier matching source id), so every
+ * same-tuple intake demands exactly one duplicate id. The read-side fold over SEVERAL relations
+ * is therefore built by appending one more relation directly
+ * ([insertSecondDuplicateRelation]); no product write path produces such a row.
  */
 class ImportReviewTargetedReadEquivalenceTest {
     private val ledgerId = LedgerId("ledger-aperf")
@@ -106,6 +108,48 @@ class ImportReviewTargetedReadEquivalenceTest {
         candidateId: ImportCandidateId,
     ): ImportReviewRow? = adapter.loadImportReviewRows(ledgerId).firstOrNull { it.candidateId == candidateId }
 
+    /**
+     * Fixture-only second relation for a subject candidate. The representative rule lets the
+     * spine write exactly one relation per settled intake (the minimum matching source id), so a
+     * read-side fold over several relations can only be built by appending this row directly. It
+     * keeps the schema's own shape: an `EXACT_BUSINESS_TUPLE` candidate owned by the subject
+     * intake's request, plus its `DEFERRED` creation history row, so every append-only guard and
+     * the history-sequence trigger see the same shape the store writes.
+     */
+    private fun insertSecondDuplicateRelation(
+        driver: JdbcSqliteDriver,
+        subjectSourceId: String,
+        possibleExistingSourceId: String,
+        duplicateCandidateId: String,
+        duplicateStatusHistoryId: String,
+        ownerRequestId: String,
+    ) {
+        driver.execute(
+            null,
+            """
+            INSERT INTO import_duplicate_candidate(
+              ledger_id, candidate_id, subject_source_id, possible_existing_source_id, kind,
+              comparison_fingerprint, comparison_snapshot, provenance, confidence, rule_id,
+              rule_version, generated_at, creation_request_id
+            ) VALUES (
+              '${ledgerId.value}', '$duplicateCandidateId', '$subjectSourceId', '$possibleExistingSourceId',
+              'EXACT_BUSINESS_TUPLE', 'sha256:fixture-$duplicateCandidateId', '{}',
+              'source_declared + mechanical_decode + p407_exact_business_tuple_v1', 'exact',
+              'p407_exact_business_tuple_v1', 1, '2026-09-17T08:00:00Z', '$ownerRequestId'
+            )
+            """.trimIndent(),
+            0,
+        )
+        driver.execute(
+            null,
+            """
+            INSERT INTO import_duplicate_status_history(ledger_id, candidate_id, sequence, history_id, status, request_id, operation_class)
+            VALUES ('${ledgerId.value}', '$duplicateCandidateId', 1, '$duplicateStatusHistoryId', 'DEFERRED', '$ownerRequestId', 'creation')
+            """.trimIndent(),
+            0,
+        )
+    }
+
     @Test
     fun detailTargetedReadEqualsTheWholeLedgerFilterFoldPerRow() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
@@ -113,9 +157,9 @@ class ImportReviewTargetedReadEquivalenceTest {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
             val store = SqlDelightImportSpineStore(database, driver)
-            // Three same-business rows from three distinct pick sessions -> the second intake
-            // mints one duplicate candidate (against the first source), the third two (against
-            // the first AND the second) — the multi-row fold input per candidate.
+            // Three same-business rows from three distinct pick sessions -> each settled intake
+            // stores its single representative relation (b -> a, c -> a). Candidate-c's second
+            // relation (c -> b) is appended as a fixture: no intake can write two rows any more.
             val ids =
                 BatchIntakeIdSource(
                     listOf(
@@ -128,10 +172,7 @@ class ImportReviewTargetedReadEquivalenceTest {
                         intakeIds(
                             "aperf-c",
                             "status-aperf-c",
-                            listOf(
-                                ImportDuplicateIntakeIds(ImportDuplicateCandidateId("duplicate-aperf-c-a"), ImportStatusHistoryId("duplicate-status-aperf-c-a")),
-                                ImportDuplicateIntakeIds(ImportDuplicateCandidateId("duplicate-aperf-c-b"), ImportStatusHistoryId("duplicate-status-aperf-c-b")),
-                            ),
+                            listOf(ImportDuplicateIntakeIds(ImportDuplicateCandidateId("duplicate-aperf-c-a"), ImportStatusHistoryId("duplicate-status-aperf-c-a"))),
                         ),
                     ),
                 )
@@ -139,6 +180,14 @@ class ImportReviewTargetedReadEquivalenceTest {
             assertIs<ImportIntakeResult.Accepted>(intake.execute(settledRow("request-aperf-a", "batch-aperf-a", 0, 12_00L)))
             assertIs<ImportIntakeResult.Accepted>(intake.execute(settledRow("request-aperf-b", "batch-aperf-b", 0, 12_00L)))
             assertIs<ImportIntakeResult.Accepted>(intake.execute(settledRow("request-aperf-c", "batch-aperf-c", 0, 12_00L)))
+            insertSecondDuplicateRelation(
+                driver = driver,
+                subjectSourceId = "source-aperf-c",
+                possibleExistingSourceId = "source-aperf-b",
+                duplicateCandidateId = "duplicate-aperf-c-b",
+                duplicateStatusHistoryId = "duplicate-status-aperf-c-b",
+                ownerRequestId = "request-aperf-c",
+            )
             val adapter = SqlDelightImportReviewReadAdapter(database)
 
             // Every candidate's targeted detail row equals the whole-ledger baseline row
@@ -184,10 +233,7 @@ class ImportReviewTargetedReadEquivalenceTest {
                         intakeIds(
                             "aperf-f",
                             "status-aperf-f",
-                            listOf(
-                                ImportDuplicateIntakeIds(ImportDuplicateCandidateId("duplicate-aperf-f-a"), ImportStatusHistoryId("duplicate-status-aperf-f-a")),
-                                ImportDuplicateIntakeIds(ImportDuplicateCandidateId("duplicate-aperf-f-b"), ImportStatusHistoryId("duplicate-status-aperf-f-b")),
-                            ),
+                            listOf(ImportDuplicateIntakeIds(ImportDuplicateCandidateId("duplicate-aperf-f-a"), ImportStatusHistoryId("duplicate-status-aperf-f-a"))),
                         ),
                     ),
                 )
@@ -195,6 +241,16 @@ class ImportReviewTargetedReadEquivalenceTest {
             assertIs<ImportIntakeResult.Accepted>(intake.execute(settledRow("request-aperf-d", "batch-aperf-d", 0, 5_500L)))
             assertIs<ImportIntakeResult.Accepted>(intake.execute(settledRow("request-aperf-e", "batch-aperf-e", 0, 5_500L)))
             assertIs<ImportIntakeResult.Accepted>(intake.execute(settledRow("request-aperf-f", "batch-aperf-f", 0, 5_500L)))
+            // Candidate-f's second relation (f -> e), fixture-only: the intake writes one
+            // representative row (f -> d, the minimum matching source id).
+            insertSecondDuplicateRelation(
+                driver = driver,
+                subjectSourceId = "source-aperf-f",
+                possibleExistingSourceId = "source-aperf-e",
+                duplicateCandidateId = "duplicate-aperf-f-b",
+                duplicateStatusHistoryId = "duplicate-status-aperf-f-b",
+                ownerRequestId = "request-aperf-f",
+            )
             val adapter = SqlDelightImportReviewReadAdapter(database)
 
             // The subject candidate of two DEFERRED duplicates: the fold reads DEFERRED on BOTH

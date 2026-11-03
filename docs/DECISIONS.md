@@ -2709,7 +2709,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **Q09 身份、生产 ID 与批次（裁决全文）：**
 
 1. **身份（主代理治理翻转裁决，2026-09-14；取代原推荐方案）**：inputRef = **每次文件选择生成全新不透明 UUIDv7 句柄**（沿仓内 UUIDv7 id source 既有先例；不含 URI、文件名、内容或任何个人标识）；raw identity = `(inputRef, record ordinal)` 组合（D-098 领域 1.1 不变）；`ImportContentFingerprint` 仍按既有角色在 intake 计算（内容诊断哈希，只作交叉校验，不构成身份、不参与去重）。同一请求（同 inputRef）的重试沿 spine 既有 intake 幂等（内容等价 → NoChange 零新写入；不等价 → 身份碰撞 hard reject）——请求级重试安全不变。重选同一文件/改名 = 新 inputRef → 新候选；spine 既有 duplicateIds/`EXACT_BUSINESS_TUPLE` 匹配（`SqlDelightImportSpineStore.kt:208-257`）自动呈现为疑似重复 → 审核界面人工处置（`CONFIRMED_DUPLICATE` 阻断正式化，沿 P4-07）；**不产生第二次余额/报表影响经由此审核阻断达成**（同来源 replay = 请求幂等 NoChange；同文件重选 = 新候选 + 疑似重复审核阻断）。**零新增表（无 29.sqm）**：恢复完全依赖 v29 既有 request/candidate/snapshot/receipt/confirmation 持久化 + 新增只读查询。〔翻转依据：D-098 领域 1 第 2 条明文「规范化内容哈希……只作诊断、不构成身份、不参与去重」（`docs/DECISIONS.md:1486`）、领域 2 第 1 条「任何以该哈希参与 dedup、折叠或身份的行为继续禁止（dedup 留 P4-07）」（`docs/DECISIONS.md:1493`）；计划 §6.2 亦冻结「内容诊断哈希也不能被悄然升级为身份或自动去重键」（`docs/PHASE7_IMPLEMENTATION_PLAN.local.md:154`）。原推荐方案（inputRef 由内容指纹派生，收益为同文件重选零审核幂等）登记为**已否决替代案**，不复活；其登记过的「跨文件 NoChange 去重效应」「同 ordinal 不同内容身份碰撞」后果在随机方案下不存在。〕
-2. **生产 ID 端口修订（E12 缺口闭合）**：`ImportIntakeIdSource.next()` 修订为 `next(requiredDuplicateIds: Int)`，由 store 在获胜 claim 事务内、按分支与实际匹配数（`SqlDelightImportSpineStore.kt:208-257` 语义）确定需求后调用；UI 严禁预查数量预分配（竞态禁止）。所有类型化早拒绝先于 ID 分配（沿 E13 不变量扩展到全部早拒绝路径）；拒绝/重试不消耗不应分配的正式 ID。接口默认 fail-loud（沿 P7-03 G6 纪律）。仓内实现方与测试 double 随批更新（现 14 处：ledger-data jvmTest 13 个测试文件 + ledger-application jvmTest `ImportSpineUseCaseJvmTest`；全部 oracle 期望不变）；**rgXX_/golden 竖井零改动**（golden 回放不经该接口，已核验）。〔注册解读：匹配计数查询在事务内、插入新 source 之前执行（SQLite 事务隔离内无竞态）；计数经**新增只读命名查询 `duplicateMatchCountForIntake`**（SELECT-only、按 ledger 限定、无 sourceId 自排除参数——计数先于 ID 分配与新 source 插入，被计数行全部为既有 source），零 DDL；端口形态 = 普通 interface（非 fun interface）+ 单方法默认抛 `UnsupportedOperationException`（沿 D-145 G6 先例）；写入行集与分支语义逐字节等价，既有 `size != existing.size` fail-loud 复核保留为防御性不变量。〕
+2. **生产 ID 端口修订（E12 缺口闭合）**：`ImportIntakeIdSource.next()` 修订为 `next(requiredDuplicateIds: Int)`，由 store 在获胜 claim 事务内、按分支与代表数（0/1；`SqlDelightImportSpineStore.kt:208-257` 语义）确定需求后调用；UI 严禁预查数量预分配（竞态禁止）。所有类型化早拒绝先于 ID 分配（沿 E13 不变量扩展到全部早拒绝路径）；拒绝/重试不消耗不应分配的正式 ID。接口默认 fail-loud（沿 P7-03 G6 纪律）。仓内实现方与测试 double 随批更新（现 14 处：ledger-data jvmTest 13 个测试文件 + ledger-application jvmTest `ImportSpineUseCaseJvmTest`；全部 oracle 期望不变）；**rgXX_/golden 竖井零改动**（golden 回放不经该接口，已核验）。〔注册解读：匹配计数查询在事务内、插入新 source 之前执行（SQLite 事务隔离内无竞态）；计数经**新增只读命名查询 `duplicateMatchCountForIntake`**（SELECT-only、按 ledger 限定、无 sourceId 自排除参数——计数先于 ID 分配与新 source 插入，被计数行全部为既有 source），零 DDL；端口形态 = 普通 interface（非 fun interface）+ 单方法默认抛 `UnsupportedOperationException`（沿 D-145 G6 先例）；写入行集与分支语义逐字节等价，既有 `size != existing.size` fail-loud 复核保留为防御性不变量。〕
 3. **批次概念**：批次 = UI 会话内对勾选快照的一次明确授权；**逐项原子提交、可见部分成功**（不承诺整批事务）；无批次表——重开恢复 = 从持久化的逐候选 status/decision_snapshot/receipt 重建待确认清单（ledger-scoped，可跨文件）。〔注册解读：每勾选项 = 一次独立 spine confirm 请求（新 requestId UUIDv7/项，沿 P7-02「每个新意图分配新 requestId」）；因每项为单事务，进程重启后无歧义项——恢复清单读即权威；「未知」仅存在于会话内。〕
 4. 确认时间 = 用户确认动作时间（注入 LedgerClock），来源记录时间不由处理 Clock 填补（沿 D-043 与既有 spine 语义）。〔注册解读：授权动作以 LedgerClock 取样一次、经 `explicitConfirmedAt` 通道随本授权全部逐项派发复用（同一用户动作）；mixed 候选必填（E13 门），其余类型同值传入（显式 provenance）。〕
 
@@ -2726,7 +2726,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 **实施批义务（实施批必须逐项闭合并在实施登记中报告；规格 §9 只引用不重复）：**
 1. P704SPEC-12 分组键照裁决落法 + D03 组边界测试（同次选择入组；异次选择/异 kind/非 DEFERRED 出组）+ 整组确认页逐项枚举呈现比较快照。
-2. `duplicateMatchCountForIntake` 与 `selectDuplicateMatches` 的 D05 族等价回归（0/1/多匹配与 statusToken-null 变体逐点相等）。
+2. `duplicateMatchCountForIntake` 与 `selectDuplicateMatches` 的 D05 族等价回归（代表制：0 匹配 = 需求量 0 且读为空，1 匹配以上 = 需求量 1 且读为单条 MIN(source_id)；statusToken-null 变体逐点相等）。
 3. `AbandonImportBatch` 不引入隐藏中间 UI 态（授权快照解散，剩余项即普通待确认清单项，`docs/PRODUCT_REQUIREMENTS.md` 措辞为权威读法）。
 4. R-14 接治耗时（10,000 接治上限对应最多 10,000 次独立 spine intake 事务）在 D01 Android 门内实测量化并披露（不预设阈值）。
 
@@ -2751,7 +2751,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 3. **实施批义务逐项闭合**：
    - 义务①（P704SPEC-12 分组键落法 + D03 组边界测试 + 整组确认页逐项枚举呈现比较快照）：**闭合于 C 批**——组键三分量 `isImportDuplicateBatchGroupMember`；D03 族测试（同句柄入组/异句柄/异 kind/非 DEFERRED 全值域出组）；整组确认页为 `ImportReviewView.groupDisposition` reducer 子态，逐项枚举 `comparisonSnapshot` 原样呈现。
-   - 义务②（duplicateMatchCountForIntake 与 selectDuplicateMatches 的 D05 族等价回归）：**闭合于 A/B 后端**——`DuplicateMatchCountEquivalenceDataTest`（0/1/多匹配 + statusToken-null 变体逐点相等 + store 级记录型 allocateIds 需求量断言 0/1/2/3）。
+   - 义务②（duplicateMatchCountForIntake 与 selectDuplicateMatches 的 D05 族等价回归）：**闭合于 A/B 后端**——`DuplicateMatchCountEquivalenceDataTest`（代表制 0/1/多匹配 + statusToken-null 变体逐点相等 + store 级记录型 allocateIds 需求量断言 0/1/1/1，需求量饱和为 1、代表 = MIN(source_id)）。
    - 义务③（AbandonImportBatch 不引入隐藏中间 UI 态）：**闭合于 D 批**——单步解散转换 + 测试逐句对应 PRODUCT_REQUIREMENTS 权威措辞 + 桌面重开持久侧测试。
    - 义务④（R-14 接治耗时实测量化披露）：**未闭合——归 D01 Android 运行证据门（外部阻塞待办）**，本登记如实保留。
 

@@ -24,7 +24,7 @@
 - **格式能力诚实呈现**（R-Q08-1..3）：UI 只显示格式能力矩阵声明可用的格式；建行 XLS 在 Android 上标记「待设备运行验证」、不显示为可用；GB18030 以运行时探测为界。
 - **有界限额，绝不静默截断**（R-Q08-2）：读取字节上限 16 MiB、单文件接治候选行上限 10,000，超限 = 类型化批量失败（携带实收值）。
 - **生产 XLSX 读取去 POI 化**（R-Q08-3）：微信 XLSX 生产读取改用新「有界最小 XLSX 读取器」（`java.util.zip` + `javax.xml.parsers` SAX 流式）；POI XSSF 退出生产读取路径、仅保留 jvmTest 造数。
-- **生产 ID 端口修订**（R-Q09-2，E12 缺口闭合）：`ImportIntakeIdSource.next()` 修订为 `next(requiredDuplicateIds: Int)`，由 store 在获胜 claim 事务内按分支与实际匹配数确定需求后调用；UI 严禁预查数量预分配。
+- **生产 ID 端口修订**（R-Q09-2，E12 缺口闭合）：`ImportIntakeIdSource.next()` 修订为 `next(requiredDuplicateIds: Int)`，由 store 在获胜 claim 事务内按分支与代表数（0/1）确定需求后调用；UI 严禁预查数量预分配。
 - **随机句柄身份与审核阻断**（R-Q09-1，治理翻转后方案）：inputRef = 每次文件选择生成的不透明 UUIDv7 句柄；同请求重试沿 spine 既有 intake 幂等；同文件重选/改名 = 新候选 + 疑似重复人工审核阻断（不产生第二次余额/报表影响经审核阻断达成）；零新增表（无 `29.sqm`）。
 - **批次逐项原子 + 可见部分成功**（R-Q09-3）：一次明确授权、逐项原子提交、不承诺整批事务；重开恢复从既有持久化重建待确认清单（ledger-scoped、可跨文件）。
 - **疑似重复先审后勾**（R-Q10-1）、**Unknown 暂停核对**（R-Q10-2）、**来源事实不完整不可确认且说明缺什么**（R-Q10-3）、**镜像与确认新交易在呈现上分离**（R-Q10-4）。
@@ -123,7 +123,7 @@
 ### 3.2 Q09 身份、生产 ID 与批次（P7-04.B/D）
 
 - **R-Q09-1 身份（主代理治理翻转裁决，2026-09-14，取代原推荐方案）**：inputRef = **每次文件选择生成全新不透明 UUIDv7 句柄**（沿仓内 UUIDv7 id source 既有先例；不含 URI、文件名、内容或任何个人标识）。同一请求（同 inputRef）的重试沿 spine 既有 intake 幂等（内容等价 → NoChange 零新写入；不等价 → 身份碰撞 hard reject）——请求级重试安全不变。重选同一文件/改名文件 = 新 inputRef → 新候选；spine 既有 duplicateIds/`EXACT_BUSINESS_TUPLE` 匹配（`SqlDelightImportSpineStore.kt:208-257`）自动将其呈现为疑似重复 → P7-04.C 审核界面人工处置（`CONFIRMED_DUPLICATE` 阻断正式化，沿 P4-07）；**不产生第二次余额/报表影响经由此审核阻断达成**。`ImportContentFingerprint` 仍按既有角色在 intake 计算（内容诊断哈希，只作交叉校验，不构成身份、不参与去重）。**零新增表（无 `29.sqm`）**：恢复完全依赖 v29 既有 request/candidate/snapshot/receipt/confirmation 持久化 + 新增只读查询。
-- **R-Q09-2 生产 ID 端口修订（E12 缺口闭合）**：`ImportIntakeIdSource.next()` 修订为 `next(requiredDuplicateIds: Int)`，由 store 在获胜 claim 事务内、按分支与实际匹配数（`:208-257` 语义）确定需求后调用；UI 严禁预查数量预分配（竞态禁止）。所有类型化早拒绝先于 ID 分配（沿 E13 不变量扩展到全部早拒绝路径）；拒绝/重试不消耗不应分配的正式 ID。接口默认 fail-loud（沿 P7-03 G6 纪律）。仓内实现方与测试 double 随批更新；**rgXX_/golden 竖井零改动**。
+- **R-Q09-2 生产 ID 端口修订（E12 缺口闭合）**：`ImportIntakeIdSource.next()` 修订为 `next(requiredDuplicateIds: Int)`，由 store 在获胜 claim 事务内、按分支与代表数（0/1，`:208-257` 语义）确定需求后调用；UI 严禁预查数量预分配（竞态禁止）。所有类型化早拒绝先于 ID 分配（沿 E13 不变量扩展到全部早拒绝路径）；拒绝/重试不消耗不应分配的正式 ID。接口默认 fail-loud（沿 P7-03 G6 纪律）。仓内实现方与测试 double 随批更新；**rgXX_/golden 竖井零改动**。
 - **R-Q09-3 批次概念**：批次 = UI 会话内对勾选快照的一次明确授权；**逐项原子提交、可见部分成功**（不承诺整批事务）；无批次表——重开恢复 = 从持久化的逐候选 status/decision_snapshot/receipt 重建待确认清单（ledger-scoped，可跨文件）。
 - **R-Q09-4 确认时间**：确认时间 = 用户确认动作时间（注入 `LedgerClock`），来源记录时间不由处理 Clock 填补（沿 D-043 与既有 spine 语义）。
 
@@ -141,7 +141,7 @@
 #### 3.2.2 生产 ID 端口修订（R-Q09-2 冻结实现）
 
 - **端口签名（拟议）**：`ImportIntakeIdSource` 修订为**普通 interface（非 fun interface）**，单方法 `fun next(requiredDuplicateIds: Int): ImportIntakeIds`，接口默认抛 `UnsupportedOperationException`（沿 `LedgerCurrentStateReadPort.kt:109-157` G6 先例；`fun interface` 无法为唯一抽象方法提供默认实现体，fail-loud 默认因此要求普通 interface——无中性默认，杜绝「空组数假装成功」）（`ImportSpine.kt:483-485` 修订）。
-- **调用契约**：store 在获胜 claim 事务内、于全部类型化早拒绝（结构校验、replay/碰撞判定、E13 mixed 门等）之后调用，恰好一次；`requiredDuplicateIds` 按分支确定——`VALID_COMPLETE + SETTLED` = 事务内 `duplicateMatchCountForIntake` 计数（**新增只读命名查询**，Appendix A：SELECT-only、按 `:ledger_id` 限定、谓词 = `selectDuplicateMatches`（`Ledger.sq:8296-8301`）的匹配条件、**无 sourceId 自排除参数**——计数在插入新 source 前执行，被计数行全部为既有 source；事务隔离内无竞态；零 DDL）；`NO_FUNDS` = 恰好 1；其余分支 = 0。既有 `size != existing.size` fail-loud 不变量（`:224-226`）保留为防御性复核。写入行集与分支语义逐字节等价（§5.4 等价性约束）。
+- **调用契约**：store 在获胜 claim 事务内、于全部类型化早拒绝（结构校验、replay/碰撞判定、E13 mixed 门等）之后调用，恰好一次；`requiredDuplicateIds` 按分支确定——`VALID_COMPLETE + SETTLED` = 事务内 `duplicateMatchCountForIntake` 代表计数（0 或 1；**新增只读命名查询**，Appendix A：SELECT-only、按 `:ledger_id` 限定、谓词 = `selectDuplicateMatches` 的匹配条件、**无 sourceId 自排除参数**——计数在插入新 source 前执行，被计数行全部为既有 source；代表制下代表 = MIN(source_id)、需求饱和为 0/1；事务隔离内无竞态；零 DDL）；`NO_FUNDS` = 恰好 1；其余分支 = 0。既有 `size != existing.size` fail-loud 不变量（`:224-226`）保留为防御性复核。写入行集与分支语义逐字节等价（§5.4 等价性约束）。
 - **生产实现（P7-04.B 接线）**：组合根注入 UUIDv7（RFC 9562，沿 P5-02 产品 ID 纪律）实现；`ImportIdSource`（confirm，`ImportSpine.kt:501-503`）与 `ImportStatusIdSource`（`:506-508`）签名不变、同批接线；重复审核 id（`ImportDuplicateReviewRequest.reviewId/historyId`，`:182-193`）沿既有请求形状（调用方生成、claim-gated 持久化，replay/冲突路径不持久即不消耗）。
 - **竞态禁止**：任何 UI/编排层不得先查匹配数再预分配（预猜即竞态）；需求量判定唯一归属 store 事务内。
 - **早拒绝零 ID 不变量**：intake 与 confirm 两路径的全部类型化早拒绝先于 `next()`/`allocateIds()` 调用；拒绝与重试路径 id 源调用次数为 0（`CountingIntakeIdSource` 模式断言扩展，D05）。
@@ -209,7 +209,7 @@ UI 对每个候选按持久化字段（candidate_kind、completeness、funding_s
 
 ### 4.4 生产 ID 端口修订（commonMain + data，R-Q09-2）
 
-§3.2.2 冻结内容的落位：`ImportSpine.kt:483-485` 签名修订（普通 interface + 单方法默认抛，§3.2.2）；`SqlDelightImportSpineStore` intake 路径重构为「早拒绝 → 分支判定 → 事务内 `duplicateMatchCountForIntake` 计数 → `next(requiredDuplicateIds)` → 插入 → 防御性 size 复核」；`ImportSpineUseCaseJvmTest` 与 §2.1 第 12 条 14 个测试文件 double 随批更新签名、期望不变。`ExecuteImportIntake` 用例语义不变（T-26 族断言扩展 requiredDuplicateIds 传递）。
+§3.2.2 冻结内容的落位：`ImportSpine.kt:483-485` 签名修订（普通 interface + 单方法默认抛，§3.2.2）；`SqlDelightImportSpineStore` intake 路径重构为「早拒绝 → 分支判定 → 事务内 `duplicateMatchCountForIntake` 代表计数（0/1） → `next(requiredDuplicateIds)` → 插入 → 防御性 size 复核」；`ImportSpineUseCaseJvmTest` 与 §2.1 第 12 条 14 个测试文件 double 随批更新签名、期望不变。`ExecuteImportIntake` 用例语义不变（T-26 族断言扩展 requiredDuplicateIds 传递）。
 
 ### 4.5 导入读取端口（commonMain，fail-loud 默认）
 
@@ -303,7 +303,7 @@ UI 对每个候选按持久化字段（candidate_kind、completeness、funding_s
 | D02 | 解析 → 生成候选 → 勾选预览全程；缺分类、缺转账腿、混合腿不全、来源未解、关闭/失败无资金候选尝试批量确认 | 全程零正式交易产生；缺用户决策项经表单补决策后可确认；来源事实不完整项（incomplete）不可勾选且呈现缺什么来源事实；任何路径不得借批量确认绕过 | R-Q10-3；§3.3.1；候选/正式分离 |
 | D03 | 同文件重复选择/改名/重启后再选；同请求重试（同 inputRef replay）；不同 raw identity 的合法相似记录；重复候选各处置（含批量处置与组边界） | 同文件重选/改名/重启后再选 = 新句柄 → 新候选 + `EXACT_BUSINESS_TUPLE` 疑似重复，经 `CONFIRMED_DUPLICATE` 人工处置阻断正式化 → **零第二次余额/报表效果**（经审核阻断达成，绝不自动去重）；同请求重试 = spine 既有请求幂等 `NoChange` 零新写入（原 receipt 重放）；合法相似记录可明确保留为多笔独立交易（`CONFIRMED_DISTINCT`/`DISMISSED_LOOKALIKE`）；同次文件选择句柄 + `EXACT_BUSINESS_TUPLE` + `DEFERRED` 组可整组批量标记 `CONFIRMED_DUPLICATE`（组键 §3.3.1/P704SPEC-12；逐项独立 requestId/reviewId、claim-gated、可见部分成功，整组确认页逐项枚举比较快照供核验；**组边界测试钉死**：同次选择入组，异次选择/异 kind/非 `DEFERRED` 出组）；镜像证据只追加到既有交易、零第二笔（P4-08 既有语义，本批无镜像操作入口） | R-Q09-1；§3.2.1/§3.3.1；R-Q10-1/R-Q10-4 |
 | D04 | 多条勾选一次授权：混合 成功/领域拒绝/提交未知/进程中断；Unknown 核对后继续或放弃 | 逐项原子、可见部分成功（不误报整批成功/失败）；已成功项恰好一次（重启后清单读回 confirmed）；Unknown 暂停后续派发、等价 replay 核对（原 receipt 判成功/冲突判冲突）、不自动重试、不换 ID；暂停后 `ResumeImportBatchDispatch` 复用同次 `LedgerClock` 取样与既有 requestId 继续未派发项，`AbandonImportBatch` 置回会话待派发并保留结果摘要（未派发项持久状态保持 `pending_confirmation`，可再授权）；半提交不被误报 | R-Q09-3；R-Q10-2；§3.2.3/§3.3.2 |
-| D05 | duplicateIds 并发匹配数、`NO_FUNDS` 恰好 1 组/其余 0 组分支、重复审核、stale 快照、身份碰撞、事务回滚、重开读取；拒绝与重试路径 | 修订后端口：需求量 = 事务内实际匹配数（并发下不预猜）；分支语义逐字节等价（锚点期望零修改）；拒绝/重试路径 id 源调用次数 = 0（不消耗不应分配的正式 ID）；全部既有 spine 语义保持 | R-Q09-2；§3.2.2/§4.4 |
+| D05 | duplicateIds 并发匹配数、`NO_FUNDS` 恰好 1 组/其余 0 组分支、重复审核、stale 快照、身份碰撞、事务回滚、重开读取；拒绝与重试路径 | 修订后端口：需求量 = 事务内代表数（0 或 1，代表 = MIN(source_id)；并发下不预猜）；分支语义逐字节等价（锚点期望零修改）；拒绝/重试路径 id 源调用次数 = 0（不消耗不应分配的正式 ID）；全部既有 spine 语义保持 | R-Q09-2；§3.2.2/§4.4 |
 | D06 | 确认后经 P7-03 详情/月汇总查询与数据库核对；诊断内容巡检 | 确认后交易在 P7-03 详情显示「导入创建」（反向血缘）且月度数据一致；脱敏诊断不泄露原文件名（会话显示除外）、URI、整行、个人标识或底层异常；display name 不落库；E13 mixed 时间/精度拒绝回归保持通过 | R-Q09-1；§6.4；D06 计划边界 |
 
 ## 8. 风险与披露
@@ -369,7 +369,8 @@ importCandidateDetailByCandidate  -- 单候选详情：清单行全部字段 + �
 importDuplicateReviewsForSource   -- 候选 source 的重复候选集：kind/comparison_snapshot（P4-07 冻结隐私安全投影）
                                    -- /最新重复状态/审核处置与理由 token + possible_existing_source 的事实投影
 duplicateMatchCountForIntake      -- intake 需求量计数（R-Q09-2）：SELECT-only、按 :ledger_id 限定；谓词 =
-                                   -- selectDuplicateMatches(:8296-8301) 的匹配条件；无 sourceId 自排除参数——
+                                   -- selectDuplicateMatches 的匹配条件（无 sourceId 自排除参数）；伴随代表制，
+                                   -- 需求恒为 0（无匹配）或 1（有匹配，代表 = MIN(source_id)）；
                                    -- 计数在插入新 source 前执行，被计数行全部为既有 source
 -- 粒度注记：读端口与 importDuplicateReviewsForSource 以 candidateId 表达、重复表按 subject source 键
 -- （import_duplicate_candidate.subject_source_id）；查询以 import_candidate.source_id 做 candidate→source join
