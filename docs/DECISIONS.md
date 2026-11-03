@@ -6066,3 +6066,28 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残余（登记）**：① direct `am instrument` 的托管 runner 首跑未发生；`-e class` 逗号列表与 `#method` 依据 `AndroidJUnitRunner` 的 `RunnerArgs`（`CLASS_SEPARATOR=","`、`METHOD_SEPARATOR='#'`），转录解析沿用本仓生产 `instrumentation_pass` 的形状，若首跑暴露形状差异按失败处理、不静默放宽；② fork fallback 与主链共用同一校验器，但单 runner 串行执行，耗时高于两片并行；③ 设备配置回读含 `/proc/meminfo` 区间与 CPU 数断言，托管镜像改变报告口径时会响亮失败（按设计）；④ `docs/PROJECT_STATE.local.md` 与正式状态文档的同步不在本批 diff 内。
 
 **关联决定：** D-197（本决定取代其第 3、6、7 条中的旧口径：`connectedDebugAndroidTest` 加 `notClass` 的 41 例执行方式、`android-instrumented-<sha>` 单工件、以及以「反斜杠被当作 Gradle 任务名」解释 dash 约束的表述；dash 约束本身保留，但模拟器会话内已无 Gradle 调用）、D-198 第 7 条（`notClass` 排除长测套件的口径改由 inventory 白名单承担）、D-200/D-201（APK 工件来源绑定与生产者信任边界，本决定沿用）、D-188（PR 门禁流与非阻塞设备信号口径）、D-204（并行运行与工件名可辨）、D-276（当前批位，本决定为其后的实施登记）。
+
+## D-278 B6 口径登记：重复组置首屏 20k 夹具上可测且未达标（6,195 / 3,693 / 3,635 ms），D-148 的 2.61 s 区间不可比，向量账不变
+
+**状态：** 已批准并登记（2026-11-03；用户当次授权「自主推进、决定一律批准」。**纯文档批**：零代码 / 零测试 / 零 schema / 零迁移）。设备面为本会话自建并自启的受管 AVD `ul_p7_d01`（`system-images;android-36;google_apis;x86_64` + `pixel_6`），隔离 adb `ANDROID_ADB_SERVER_PORT=5038`、端口 5680，`adb -s emulator-5680 emu avd name` 回 `ul_p7_d01` + `OK`，`dalvik.vm.heapgrowthlimit=192m`；收工 `emu kill`。
+
+**背景：** D-275 第 4 条把 B6 记为「因可达性不可测」，并按 §10.4.1 授权构造「重复组置首屏」20k 夹具后补测，同时要求承接批①先区分「可见段末尾饱和」与「组卡不在渲染树」两个成因，②先裁决 D-148（2.61 s 达标）与 D-170（未测量）的读数冲突。夹具已由 `ca5dee92`（2026-11-02）落地，`DEF-SCALE-PROBE-DBPATH-01` 在同一提交按 D-276 第 6 条三条要求修复（单一 `activeGenerationDatabasePath()`、基线 `requireComplete` 硬失败、轮询期容忍）。本批在其上取得设备读数并完成上述两项裁决。
+
+**决定：**
+
+1. **B6 状态由「因可达性不可测」改为「可测未达标」。** 三轮完整复现（每轮：清数据 → 新进程 `seedFixture` → `force-stop` → 新进程 `b6CardOpen -e seedFixture true`），组卡打开读数 **6,195 / 3,693 / 3,635 ms**，冻结门槛 ≤3 s。后两轮一致（≈3.6 s，超 1.21×），首轮 6,195 ms 判为开机首跑冷态；**三轮全部超标**。
+2. **三个从属判据成立。** 组入口可达——`target found before scrolling`、`forwardActions=0`、`targetFound=true`（与 D-275 的 1,949 次动作后 `found=false` 形成直接对照，置首屏夹具已破局）；组规模——组卡自报 `共 20001 条`、`itemCount=20001`，满足计划 §10.3 的 20k 组要求。稳定性——首轮运行 `logcat`（跨度 12:36:47–12:40:59，即本地 20:36–20:40）内 `ANR in` / `FATAL EXCEPTION` / `OutOfMemoryError` 命中 **0**；后两轮未留存 logcat，其 `OK (1 test)` 只作轻证据。
+3. **夹具与激活读数（供复算）。** 播种 `generation=1 candidates=2 sources=20002 requests=20003 historySources=20000 relations=20000 subjectRelations=20000 duplicateHistory=20000 subjectSources=1 quickCheck=ok`；夹具组 + 一次真实产品 SAF 激活后 `relations=40001 subjects=2 candidates=3`。20,000 条关系是一次真实接治的产物（`selectDuplicateMatches` 定需求量），非手插。
+4. **测量分辨率不适用「dump 地板校准」。** 同一证据日志内 `app root wait (pre-decision) elapsedMs=4/5`、`traversal done elapsedMs=3`，即进程内 `getRootInActiveWindow` 读树约 4–5 ms；`group card open` 的括号为「`System.nanoTime()` → `clickNode` → `waitFor(findGroupCardMarker)`」，但该 `waitFor` 的轮询间隔是 `POLL_MILLIS = 500`，故括号量化 **≤500 ms**（单次读树 4–5 ms 与轮询间隔不是同一件事）；最坏扣除 500 ms 后 3,635 − 500 = **3,135 ms**，仍超 3,000 ms。故 3.6 s 是端到端实读数，**不是** `uiautomator dump` 地板的产物。
+5. **D-148 的 2.61 s 保留但标注区间不可比。** 该读数的方法为 `uiautomator dump` 轮询，地板实测 ≈2.29 s/次，覆盖原始值 88%；D-148 自身另记「≤~1 s 校准」，本条的 **0.32–2.61 s** 是对其原始值的保守重推（不采用其校准值），反推真实开卡耗时只能确定落在该宽区间内，**不能与 3.6 s 比较**，既不能用来抵消本轮，也不因本轮作废。D-170 的「未测量」重新定性为「在该夹具形态下未测量」，不是对 D-148 的否定。
+6. **两个成因的裁决：成因 (b) 得支持，成因 (a) 被削弱。** 拒绝期末 200 次重试的窗口逐字冻结（`first=100.91 CNY last=1.70 CNY amountRows=11 children=13`）说明容器已到内容末端；`checkboxes=0` 说明该窗口不在待确认段尾部，与「待确认段末尾饱和」的字面描述不符；`fresh=` 与 `original=` 逐字段相同，排除句柄过期（D-162 residual 2 同向）。限定：`found=false` 是对整段 1,949 次遍历的合取结果，本批只主张「该夹具形态下组入口在首屏可达」，**不主张**成因已被机理级证明。
+7. **归因边界（本批不预设根因）。** 组处置点击路径为「一次会话级批量查询（`loadImportDuplicateReviewsForSession`，Android 组合根已接线）+ `enumerateImportDuplicateGroupItems` 的 O(n) 纯函数装配」；逐候选查询的 N+1 回退分支仍存在，但在本设备运行中未走该分支。故 3.6 s 的成因**未定位**，须由后续性能批以分阶段计时（查询、装配、首次组合分离）取得证据，届时另立决定。
+8. **向量账不变。** 62 = PASS 49 + 残留 11 + 修订范围完成 2 ≈ 79.0%；A-PERF 与 P707-A08 **仍非 PASS**（其残腿由「B6 不可测」变为「B6 未达标」）；不改任何冻结阈值与口径，不把本读数并入任何 PASS。
+
+**边界：** 入 = 本决定条目、`docs/CURRENT_STATE.md` 的 `:106` 状态句与主检出 SHA 锚点。出 = 不改 D-148 / D-162 / D-170 / D-275 / D-276 的判决正文与读数，不改任何 PASS 判据或冻结向量账，不改产品代码与测试源码，`docs/PROJECT_STATE.local.md` 与 `docs/PHASE7_ACCEPTANCE_SPLIT.local.md`（本地文件，主检出自更）。
+
+**验收：** 离线——`python -m project_docs .` exit 0；`git diff --check` 干净。设备证据（gitignored，主检出）——`local/artifacts/p7-closeout/b6-retest-REPORT.md`、`local/artifacts/p7-closeout/b6-retest/`（三轮 `cycle*-evidence.log`、`logcat-full.log`、两个模式日志）；APK 绑定 product `0fcce5003a911a513fa1ec031854c108c691f4169fa75c35f63960a8bc3c7d6b`、androidTest `37b45938ba0efacfa1590988fb17271024820d6a0768258d24686c7a916d384e`，均由 `fc676a2c` 树于 2026-11-03 20:29 本机构建。三条模式运行各 `OK (1 test)`。
+
+**残余：** ① 3.6 s 的成因未定位，分阶段计时未做；② 组卡打开后 `group card confirm affordance=none`，确认入口不在当前渲染树（按源码设计可能位于视口下方、由 `scrollToConfirmAffordance` 带出），本模式按设计不确认，故**不据此断言确认入口缺失**；③ 首轮 6,195 ms 的冷态归因为推断（未做同 APK 重启后对照）；④ 夹具发布一次只能用一次（激活后 `import_candidate` 由 2 变 3，重跑前必须重新播种），复跑须按 `run-b6-cycle.sh` 的时序；⑤ 本批读数为单设备单会话 3 轮，不主张跨设备可复现性。
+
+**关联决定：** D-275（B6 口径变更授权、两个成因待区分、D-148/D-170 冲突待裁，本批完成其第 4 条的三项承接）、D-276 第 6 条（`DEF-SCALE-PROBE-DBPATH-01` 的修复要求，已随 `ca5dee92` 满足）、D-148（B6 2.61 s 原始读数与 dump 地板方法）、D-170（「B6 未测量」的原始表述）、D-162 第 3(i) 条（不同形态下的组卡可达 PASS，本批不改）、D-241（规模量测落盘体例）、`ca5dee92`（夹具与探针修复提交）、PR #204（当前 `main`）。
