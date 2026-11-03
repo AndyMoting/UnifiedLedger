@@ -2261,10 +2261,19 @@ fun P503App(
         val view = overviewState.importReview ?: return
         val sessionInputRef = view.lastIntakeSession?.inputRef ?: return
         // B6 group-card paging batch (D-280, review R2-7): the exhaustion bound reads the SAME
-        // value the pages are cut with — captured from the implementation through the leased
+        // value the pages are cut with - captured from the implementation through the leased
         // facade below (the raw facade is lease-gated by design). The constant is only the
         // defensive fallback for a wired-but-unbounded legacy surface.
         var pageQueryPageSize = 200L
+        // B6 group-card paging batch (D-280, review R2-12): the card state AT ROUND START. The
+        // final hop must distinguish "fresh round (the card was never open - opening it is the
+        // round's JOB)" from "the user closed the card mid-round (the round must NOT resurrect
+        // it)". Both read null at final-hop time, so the start state is the discriminator.
+        val cardWasOpenAtRoundStart =
+            (latestState.value as? P503AppState.OverviewEmpty)
+                ?.importReview
+                ?.groupDisposition
+                ?.inputRef == sessionInputRef
         // P704C-SPEC-01/QUAL-02: the enumeration is single-flight — a double tap must not
         // interleave two enumerations (two Start events would race the page state).
         coordinator.startImportDuplicateGroupDispositionOnce {
@@ -2286,6 +2295,11 @@ fun P503App(
                 // B6 paging (D-280 review R2-5): pages >= 2 land through this buffer, drained by
                 // the final main-dispatcher hop in keyset order - never dispatched mid-round.
                 val landedPages = mutableListOf<P503UiEvent.ImportGroupEnumerationPageLanded>()
+                fun cardStillOpen(): Boolean =
+                    (latestState.value as? P503AppState.OverviewEmpty)
+                        ?.importReview
+                        ?.groupDisposition
+                        ?.inputRef == sessionInputRef
                 // P7-06 06.1 (D-176; spec 4.3/4.4): the enumeration reads run under one lease; the
                 // captured generation gates the landing below.
                 var enumerationGeneration: Generation? = null
@@ -2415,22 +2429,24 @@ fun P503App(
                             // appears for a non-empty row-level group).
                             ready.items.isEmpty() -> Unit
                             else -> {
-                                // B6 paging (D-280 review R2-2): a user close mid-round absorbs the
-                                // later pages (the reducer's same-inputRef gate); the round's own
-                                // outcome must NOT resurrect the closed card - re-open only when
-                                // the card is still open for this session.
-                                val cardStillOpen =
-                                    (latestState.value as? P503AppState.OverviewEmpty)
-                                        ?.importReview
-                                        ?.groupDisposition
-                                        ?.inputRef == sessionInputRef
-                                if (cardStillOpen) {
-                                    for (landing in landedPages) {
-                                        dispatch(landing)
-                                    }
+                                // B6 paging (D-280 review R2-12/R2-13): the round outcome dispatches
+                                // unless the user closed a card that WAS open at round start (that
+                                // close is a user decision the round must not undo). A fresh round
+                                // (card never open) MUST dispatch - opening the card is the round's
+                                // job; at final-hop time both states read null, so the round-start
+                                // capture above is the discriminator. Order: Start FIRST (it
+                                // creates or REPLACES the card with page 1 plus the whole-group
+                                // total), THEN the landings drain (their absolute firstOrdinals
+                                // append onto the fresh card) - the reverse order would let the
+                                // Start replacement wipe the drained pages.
+                                val userClosedMidRound = cardWasOpenAtRoundStart && !cardStillOpen()
+                                if (!userClosedMidRound) {
                                     dispatch(
                                         P503UiEvent.StartImportDuplicateGroupDisposition(sessionInputRef, ready.items, totalCount),
                                     )
+                                    for (landing in landedPages) {
+                                        dispatch(landing)
+                                    }
                                 }
                             }
                         }
