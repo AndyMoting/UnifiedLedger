@@ -128,9 +128,10 @@ class ImportReviewPagedReadEquivalenceTest {
 
     /**
      * Intakes one settled record per descriptor `(candidateId, amountMinor)`. Records sharing an
-     * amount share their business tuple, so the k-th record of a tuple group mints k-1 duplicate
-     * candidates (the spine's exact-tuple match) — this yields the mixed multi-candidate /
-     * multi-duplicate / no-duplicate library the paging tests need.
+     * amount share their business tuple; the spine's representative rule makes each of them store
+     * ONE relation (the minimum matching source id), so [appendExtraDuplicateRelations] completes
+     * the fixture's historic k-1 shape — the mixed multi-candidate / multi-duplicate /
+     * no-duplicate library the paging tests need.
      */
     private fun intake(
         database: LedgerDatabase,
@@ -146,6 +147,72 @@ class ImportReviewPagedReadEquivalenceTest {
                 "intake of $candidateId must be accepted",
             )
         }
+        appendExtraDuplicateRelations(driver, descriptors)
+    }
+
+    /**
+     * Completes a tuple group's duplicate multiplicity. The spine writes one representative
+     * relation per settled intake (the minimum matching source id, so relation index 0), and the
+     * remaining relations of the group's last candidate — the ones the multi-row fold fixtures
+     * need — are appended here. Each appended row keeps the schema's own shape: an
+     * `EXACT_BUSINESS_TUPLE` candidate owned by the subject intake's request, plus its `DEFERRED`
+     * creation history row, so the append-only guards and the history-sequence trigger accept it.
+     */
+    private fun appendExtraDuplicateRelations(
+        driver: JdbcSqliteDriver,
+        descriptors: List<Pair<String, Long>>,
+    ) {
+        val groups = descriptors.groupBy { it.second }
+        for (group in groups.values) {
+            if (group.size < 3) continue
+            val subject = group.last().first
+            // The intake already wrote index 0 against the group's first (minimum) source id.
+            group.dropLast(1).drop(1).forEachIndexed { offset, earlier ->
+                insertDuplicateRelation(
+                    driver = driver,
+                    subjectSourceId = "source-$subject",
+                    possibleExistingSourceId = "source-${earlier.first}",
+                    duplicateCandidateId = "duplicate-$subject-${offset + 1}",
+                    duplicateStatusHistoryId = "duplicate-status-$subject-${offset + 1}",
+                    ownerRequestId = "request-$subject",
+                )
+            }
+        }
+    }
+
+    /** One direct `EXACT_BUSINESS_TUPLE` relation plus its `DEFERRED` creation history row. */
+    private fun insertDuplicateRelation(
+        driver: JdbcSqliteDriver,
+        subjectSourceId: String,
+        possibleExistingSourceId: String,
+        duplicateCandidateId: String,
+        duplicateStatusHistoryId: String,
+        ownerRequestId: String,
+    ) {
+        driver.execute(
+            null,
+            """
+            INSERT INTO import_duplicate_candidate(
+              ledger_id, candidate_id, subject_source_id, possible_existing_source_id, kind,
+              comparison_fingerprint, comparison_snapshot, provenance, confidence, rule_id,
+              rule_version, generated_at, creation_request_id
+            ) VALUES (
+              '${ledgerId.value}', '$duplicateCandidateId', '$subjectSourceId', '$possibleExistingSourceId',
+              'EXACT_BUSINESS_TUPLE', 'sha256:fixture-$duplicateCandidateId', '{}',
+              'source_declared + mechanical_decode + p407_exact_business_tuple_v1', 'exact',
+              'p407_exact_business_tuple_v1', 1, '2026-09-22T08:00:00Z', '$ownerRequestId'
+            )
+            """.trimIndent(),
+            0,
+        )
+        driver.execute(
+            null,
+            """
+            INSERT INTO import_duplicate_status_history(ledger_id, candidate_id, sequence, history_id, status, request_id, operation_class)
+            VALUES ('${ledgerId.value}', '$duplicateCandidateId', 1, '$duplicateStatusHistoryId', 'DEFERRED', '$ownerRequestId', 'creation')
+            """.trimIndent(),
+            0,
+        )
     }
 
     /**
