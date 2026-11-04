@@ -381,7 +381,14 @@ class AndroidScaleLongInstrumentedTest {
         check(evidence.getJSONObject("stages").getJSONObject("preparation").getString("status") == "PASS")
         stage("coldstart") {
             coldstartLaunch()
-            check(ui.has("账本为空，还没有任何交易。"))
+            // Entry-point claim, not a copy pin: the HOME tab paints the flow header whenever the
+            // monthly flow projection is present, and 共 0 笔 is the empty-ledger reading. The
+            // assertion used to read 账本为空，还没有任何交易。 — the ANALYSIS tab's copy
+            // (P503TabShell.kt:183), which the overview only paints on its legacy no-flow branch
+            // (P503OverviewScreen.kt:133). Since the flow projection landed, an empty ledger
+            // reaches the `flow != null` branch instead, so that string matched nothing and this
+            // stage failed on a healthy, empty ledger.
+            check(ui.has("流水 · 共 0 笔"))
             // D-217: the only in-chain oracle read. The ledger is empty here —
             // no writer exists, so the read cannot hit the D-212 write fence —
             // and the empty snapshot anchors the generation for later phases.
