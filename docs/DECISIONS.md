@@ -6169,3 +6169,44 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残余：** ① 云端首跑未发生（见上）；② `P704GP-D-SCALE-01` 无覆盖，需另一份小组夹具与另一次运行；③ 基线 A/B 需要临时分支钉住 `2b3ad727`，dispatch 后须删除该临时分支（main 受保护，不得直推）；④ 本机停用前的读数仍是唯一 pre-fix 全量装配证据，本条不重跑、不追认；⑤ 云端 runner 单核性能与托管镜像版本未测量，跨日跨镜像可比性未建立。
 
 **关联决定：** D-278（B6 口径与本机未达标读数）、D-279（归因分段）、D-280（修法裁决与分页口径，第 6 条并列登记纪律）、A-PERF approved 规格（3 次取最大值统计纪律 `:104/:116`）、D-277（APK producer 白名单口径，本条不新增生产者）、D-197/D-200/D-201（云端设备链与工件来源绑定先例）、`docs/specs/2026-11-04-b6-group-card-paged-enumeration-design.md` §4（`P704GP-*` 判据冻结）、D-204（并行验收轮与工件名可辨）。
+
+## D-282 B6 云端同制 A/B 判决：`P704GP-D-PERF-01` 成立（1,770 / 1,644 / 1,564 ms，最差 1,770 ≤ 3,000）；向量账不变，六项残余登记
+
+**状态：** 已批准并登记（2026-11-04；用户常设授权「自主推进、决定一律批准」，本会话明确不再逐项询问；goal 先例同 D-278/D-279/D-280/D-281 状态节）。**文档批**：零产品代码 / 零测试 / 零 schema / 零迁移 / 零依赖。
+
+**背景：** D-281 第 6 条把 `P704GP-D-PERF-01` 的判决挂在同制 A/B 上——同一 workflow、同一 job 类，pre-fix 基线轮在前、实施批合并后的修后轮在后，同制差值才是判别证据；基线侧自身若已 ≤3000 ms，则该环境不具判别力、不得宣布 PASS。基线段先落地（run `41758573398`，产品树 `2b3ad727`，`gate.json` verdict FAIL）；修后段首跑 run `41758567734` 在模拟器 action 的 SDK 镜像下载阶段失败（基础设施抖动，`host.json` 未产出，不含产品结论），重派 run `41768710390` 取到三轮完整读数。本条据该 A/B 判读，并把实施批与开卡门遗留的六项残余首次登记进决定文件。
+
+**决定：**
+
+1. **`P704GP-D-PERF-01` 成立。** run `41768710390`，`main` @ `4f04b60ebc5461a4bf01bc395e580bce0dd4e6f1`，measure / gate / upload 三步全 `success`；`gate` 步只读磁盘上的轮次日志重算判据（不读驱动器自报数字），得 `verdict: PASS`、`reasons: []`、`limit_ms: 3000`、`max_click_to_card_ms: 1770`：
+
+| round | click_to_card_ms | click_to_progress_ms | progress_to_card_ms | item_count | fixture_relations |
+|---|---|---|---|---|---|
+| 1 | 1770 | 168 | 1602 | 20001 | 20000 |
+| 2 | 1644 | 141 | 1503 | 20001 | 20000 |
+| 3 | 1564 | 133 | 1431 | 20001 | 20000 |
+
+最差轮 1770 ms ≤ 3000 ms（余量 1230 ms），三轮同向（单轮离散 206 ms），判读不依赖择优轮。**A/B 有效**：同一托管环境的基线侧三轮 **3,263 / 3,869 / 3,129 ms** 全部超线（最差 3,869，超 869 ms，每轮 `click_to_progress_ms` 245/353/227、`progress_to_card_ms` 3,018/3,516/2,902、`itemCount=20001`），故 D-281 第 6 条「基线自身已 ≤3000 → 环境不具判别力」的分支不成立，该环境对 ≤3000 ms 门有判别力。成本结构随设计预期的方向移动：`progress_to_card_ms` 由基线 2,902–3,516 降到 1,431–1,602，`click_to_progress_ms` 由 227–353 降到 133–168，即分页把「枚举开始→卡片可见」压到基线的 41–55%。
+
+2. **口径：本条只判分页口径下的「用户可见组卡首响应」。** 测量口径仍是 D-280 第 6 条冻结的分页 marker（卡片头部 + 首窗条目落盘即开），统计量仍是 A-PERF approved 规格冻结的「3 次取最大值」（`docs/specs/2026-09-17-p7-04-a-perf-import-read-governance-design.md:104/:116`），阈值 3,000 ms 不变。D-278/D-279/D-280 的全量装配读数（3,635–7,236 ms）继续并列登记为「全量装配完成时间」，两组互不抵消、互不替代；本条不与历史 3.6 s 直接比较，只与同一分页口径的修后轮比较。
+
+3. **向量账不变。** B6 需要 `P704GP-D-PERF-01` 与 `P704GP-D-SCALE-01` 同时成立才翻 PASS；本条只交付前者，SCALE-01 仍无任何读数，故 **B6 不翻 PASS**，账仍为 **62 = PASS 49 + 残留 11 + 修订范围完成 2 ≈ 79.0%**。一处 PASS 读数不构成向量变动，也不把 A-PERF 或 P707-A08 并入 PASS。
+
+4. **六项残余首次登记（此前只随进度日志携带，未进入决定文件）。** 每项给出现址与处置：
+
+   - **R2-9（app-ui reducer/时序套件未随 #212 交付）** —— 现址：app-ui 层缺覆盖落地语义 / 整组总数 / 序数 / 吸收 / 单飞的 reducer 与时序套件。现状：test-only 批已在分支 `UL-r2-9-appui-paging-tests`（`b42a25bb`，3 文件 `+299/−1`，11 用例）覆盖上述五项，**独立评审中、未合并**；评审已指出四条规格行中两条在 app-ui 层只部分闭合、一条（确认完结）需要生产侧接缝。处置：登记为 **in review on a separate branch**，维持开放。
+   - **R2-14（EXPLAIN 钉用手抄 SQL）** —— 现址：`ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/B6PagedSessionReadEquivalenceTest.kt:326`，计划断言用逐字手抄的简化 SQL，不是产品真实语句文本，语句漂移时该钉不红。处置：维持开放。
+   - **R2-15（facade 页大小访问器无消费者）** —— 现址：`app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503LedgerFacade.kt:391` 的 `importDuplicateGroupPageSize` 全树无读取点。处置：维持开放。
+   - **R-280-7（P3，重复引用）** —— 现址：D-280 的 `**关联决定：**` 行两次引用 D-235。处置：登记为 P3 文档瑕疵，随下一次触碰 D-280 的批次合并修正，判决正文不回改。
+   - **`P704GP-D-SCALE-01`（小组不回归）无读数、无夹具** —— 现址：20k 硬编码在三层——`tools/python/android_b6_card.py:51`（`FIXTURE_RELATIONS = 20_000`）、gate 的 `relations < FIXTURE_RELATIONS` 下界与 20k 文案（`:175`/`:177`）、`android-app/src/androidTest/kotlin/com/unifiedledger/android/ImportScaleDuplicateFixtureSupport.kt:39`（`SCALE_DUPLICATE_FIXTURE_RELATIONS = 20_000`）及其 `checkFixture` 断言。跑 D-274 的 3 条组需要夹具规模参数 + 场景参数贯穿 driver/gate；workflow 头注释已自述该项「needs its own fixture and its own run」（`.github/workflows/android-b6-card.yml:15`）。处置：维持开放，参数化另立实施批。
+   - **`P704GP-ACC-CONFIRM-01`（确认恒全组）无单元级接缝** —— 现址：门内嵌在 `@Composable fun P503App`，判据在 `app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503App.kt:2478-2490`（读 `coordinator.isImportGroupEnumerationRunning()`），轮次本体在 `:2403-2452`。闭合需要把轮次/确认门提取为可注入类。处置：登记为残余，本批不提议实施。
+
+5. **云端链是 B6 的唯一起量路径；重跑是一次 `workflow_dispatch`。** 本机模拟器链自 D-281 关闭（adb 面交还用户 MuMu），B6 的新读数只能来自 `android-b6-card.yml`：重测某树即 `gh workflow run android-b6-card.yml --ref <branch> -f expected_sha=<该树完整40位SHA>`，`expected_sha` 绑定被重测树（job 在 `git rev-parse HEAD` 断言处不等即失败、不产出读数）；`rounds`/`limit_ms` 走默认值以保持与本次读数同制。
+
+**边界：** 入 = 本条、`docs/CURRENT_STATE.md` 状态句。出 = 不改 D-278/D-279/D-280/D-281 判决正文与读数、不改规格本体、不改任何代码/测试/工具/阈值、`docs/PROJECT_STATE.local.md` 由主检出自更。
+
+**验收（离线，主代理执行）：** `python -m project_docs .` exit 0；`git diff --check` 干净；`bash tools/ci/trace-scan.sh` 通过。读数来源（主检出、gitignored）——修后 run `41768710390`（`main` @ `4f04b60e`，三步 success）的 `gate.json` 与 `host.json` 在 `local/artifacts/p7-closeout/b6-cloud/fixed-final/android-b6-card-4f04b60ebc5461a4bf01bc395e580bce0dd4e6f1-41768710390-1/`；基线 run `41758573398` 的 `gate.json`（verdict FAIL）在 `local/artifacts/p7-closeout/b6-cloud/baseline-3rounds/android-b6-card-1773fec50d8cd63ff59c1ea3110b78a04c6a6ea2-41758573398-1/`（该 dispatch SHA 为钉住 `2b3ad727` 的临时分支，产品树与 `2b3ad727` 相同，只多 B6 门工具链）；修后首跑 run `41758567734` 无 `host.json`。资产身份（两侧同 AVD `ul-b6-card`）——修后 app APK sha256 `6b033f96f5b972fdc11df496554d388ece070364b204d8bead57f8609446a22b`、test APK sha256 `e9771a483b4a75c56bc9ae7f23192ef79853754e54414cc1ac372a3e891745b4`；基线 app APK sha256 `80aadfcb5d047eceb2c498fb4d0d12125ced7d52edaa23bc220d445c11816462`、test APK sha256 `4c542709d55ff7e6220b873a8a0fd53001c22b0813916dfe731b2717895c0be1`。
+
+**残余：** ① **R2-9** 评审中的分支 `UL-r2-9-appui-paging-tests`（`b42a25bb`）未合入，两条规格行在 app-ui 层部分闭合、确认完结缺生产接缝——闭合条件 = 该分支合入且接缝裁决完成；② **R2-14** 计划钉仍绑手抄 SQL——闭合条件 = 改为真实语句文本；③ **R2-15** facade 访问器无消费者——闭合条件 = 接线或移除；④ **R-280-7（P3）** D-280 关联决定重复引用 D-235——闭合条件 = 下次触碰该条时合并修正；⑤ **`P704GP-D-SCALE-01`** 无读数、无夹具，20k 硬编码于 driver/gate/fixture 三层——闭合条件 = 夹具规模与场景参数贯穿后跑通 D-274 的 3 条组；⑥ **`P704GP-ACC-CONFIRM-01`** 无单元级接缝——闭合条件 = 轮次/确认门提取为可注入类；⑦ 读数为单托管 runner 镜像、单日、一次三轮（12 个测量点），跨镜像与跨日可比性未建立；⑧ `local/artifacts/p7-closeout/b6-cloud/fixed-final/` 为 gitignored，证据只在本机。
+
+**关联决定：** D-278（B6 口径与未达标读数）、D-279（归因分段）、D-280（修法裁决、分页口径第 6 条、D-235 残余并入）、D-281（云端环境改判与同制 A/B 预登记，本条关闭其第 6 条的判决分支）、A-PERF approved 规格（3 次取最大值纪律 `:104/:116`）、PR #212/#213/#214（分页实施 / 云端门改判 / 每轮重建夹具）。
