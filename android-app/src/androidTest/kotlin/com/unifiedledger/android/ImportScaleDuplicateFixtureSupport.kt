@@ -34,20 +34,51 @@ import com.unifiedledger.ui.LedgerStorageLayout
 import com.unifiedledger.ui.ledgerStorageLayout
 import java.io.File
 
-/** The deterministic 20k-record group for the dedicated scale instrumented modes. */
+/** The deterministic group input for the dedicated scale instrumented modes. */
 internal const val SCALE_DUPLICATE_FIXTURE_INPUT_REF = "scale-duplicate-group-v1"
+
+/**
+ * The DEFAULT group scale: the 20k `P704GP-D-PERF-01` fixture. Every entry point also takes a
+ * `relations` argument, so the same fixture can publish a small group for `P704GP-D-SCALE-01`; this
+ * constant is only that default, never a bound the builder or the validator re-reads.
+ */
 internal const val SCALE_DUPLICATE_FIXTURE_RELATIONS = 20_000
 
 /**
- * The activation intake's own relation count: the CMB activation row carries the same business
- * tuple, so the product matches it against the 20,000 history sources AND the fixture's pending
- * subject (`CmbBillParser.kt:257-302` emits CNY/2/`+08:00`/`out`/`settled`/SETTLED facts).
+ * The activation intake's extra relation on its own new subject, independent of the group scale: the
+ * CMB activation row carries the same business tuple as the fixture group (`CmbBillParser.kt:257-302`
+ * emits CNY/2/`+08:00`/`out`/`settled`/SETTLED facts), so the product matches it against every history
+ * source AND the fixture's pending subject.
  */
-internal const val SCALE_DUPLICATE_ACTIVATION_RELATIONS = SCALE_DUPLICATE_FIXTURE_RELATIONS + 1
+private const val SCALE_DUPLICATE_ACTIVATION_EXTRA_RELATIONS = 1
 
-/** The published total after activation: the fixture group plus the activation subject's group. */
+/**
+ * The activation relation count at the DEFAULT scale (`relations + 1`), kept because it is the
+ * 20k reading the pre-scale evidence lines were written against;
+ * [ImportScaleTraversalInstrumentedTest] asserts it still equals [activationRelations] at the
+ * default so this pair cannot drift.
+ */
+internal const val SCALE_DUPLICATE_ACTIVATION_RELATIONS =
+    SCALE_DUPLICATE_FIXTURE_RELATIONS + SCALE_DUPLICATE_ACTIVATION_EXTRA_RELATIONS
+
+/**
+ * The published total at the DEFAULT scale, kept for the same reason as
+ * [SCALE_DUPLICATE_ACTIVATION_RELATIONS]; the live arithmetic is [activationTotalRelations].
+ */
 internal const val SCALE_DUPLICATE_ACTIVATION_TOTAL_RELATIONS =
     SCALE_DUPLICATE_FIXTURE_RELATIONS + SCALE_DUPLICATE_ACTIVATION_RELATIONS
+
+/**
+ * [SCALE_DUPLICATE_ACTIVATION_RELATIONS] at a requested group scale: one activation subject
+ * matching `relations` history sources yields `relations + 1` relations of its own.
+ */
+internal fun activationRelations(relations: Int): Int = relations + SCALE_DUPLICATE_ACTIVATION_EXTRA_RELATIONS
+
+/**
+ * [SCALE_DUPLICATE_ACTIVATION_TOTAL_RELATIONS] at a requested group scale: the fixture group plus
+ * the activation subject's own group.
+ */
+internal fun activationTotalRelations(relations: Int): Int = relations + activationRelations(relations)
 
 /**
  * The frozen EXACT_BUSINESS_TUPLE business facts every seeded source must carry. The direction and
@@ -89,8 +120,8 @@ private const val SCALE_FIXTURE_STAGING_NAME = "ledger.db.scale-fixture-staging"
 
 /**
  * The fixture's read-back proof. Every count is read from the published file, never assumed from
- * what the builder intended to write; [subjectSourceIdCount] is the direct check that all 20,000
- * relations fold back to ONE subject source.
+ * what the builder intended to write; [subjectSourceIdCount] is the direct check that every
+ * requested relation folds back to ONE subject source.
  */
 internal data class ScaleDuplicateFixture(
     val generation: Int,
@@ -114,15 +145,15 @@ internal data class ScaleDuplicateFixture(
  * inventory already excludes by class. A test-free builder means the runner can never discover a
  * second, differently-configured seed path.
  *
- * The published library holds exactly three candidate rows: one rejected baseline candidate (its own
- * business tuple, so it never joins the group), 20,000 historical settled source records that are NOT
- * candidates, and one new pending candidate whose single real intake produced 20,000 duplicate
- * relations.
+ * The published library holds exactly three candidate rows at any `relations` scale: one rejected
+ * baseline candidate (its own business tuple, so it never joins the group), `relations` historical
+ * settled source records that are NOT candidates, and one new pending candidate whose single real
+ * intake produced `relations` duplicate relations.
  *
- * Why the 20,000 historical sources exist: [com.unifiedledger.data.SqlDelightImportSpineStore]
+ * Why the historical sources exist: [com.unifiedledger.data.SqlDelightImportSpineStore]
  * refuses an intake whose allocated duplicate-id group count differs from the transaction's own
- * `selectDuplicateMatches` result (`SqlDelightImportSpineStore.kt:255-272`). A faked 20,000-relation
- * library cannot come out of one real intake unless 20,000 real, tuple-matching
+ * `selectDuplicateMatches` result (`SqlDelightImportSpineStore.kt:255-272`). A faked duplicate
+ * library cannot come out of one real intake unless that many real, tuple-matching
  * `import_source_record` rows already exist. Those rows are written with the schema's own INSERT
  * columns (one owning `import_request` each, because `UNIQUE (ledger_id, owner_request_id)` binds one
  * source per request) and are identical in shape to what the product's intake writes; no status
@@ -130,7 +161,7 @@ internal data class ScaleDuplicateFixture(
  *
  * Every candidate, duplicate relation, duplicate status row, evidence row, receipt, and both
  * candidate status histories are created by the real [ExecuteImportIntake]/[RejectImportCandidate]
- * paths — the 20,000 relations are the intake's own output, never inserted by hand.
+ * paths — the relations are the intake's own output, never inserted by hand.
  */
 internal class ImportScaleDuplicateFixtureSupport {
     /**
@@ -138,11 +169,16 @@ internal class ImportScaleDuplicateFixtureSupport {
      * file. Call it in a process that has not opened the ledger yet: [requireNoOpenLedgerHandle]
      * proves no ledger handle is open here, because replacing the file under a live handle would
      * leave the product writing to the old inode.
+     *
+     * [relations] is the group scale: its default is the 20k `P704GP-D-PERF-01` fixture, and a small
+     * value publishes the `P704GP-D-SCALE-01` group through the same real intake path.
      */
     fun seed(
         context: Context,
         log: (String) -> Unit,
+        relations: Int = SCALE_DUPLICATE_FIXTURE_RELATIONS,
     ): ScaleDuplicateFixture {
+        check(relations > 0) { "the fixture scale must be at least one relation, requested $relations" }
         val layout = scaleFixtureLayout(context)
         requireNoOpenLedgerHandle(layout, log)
         val cacheDirectory = File(context.cacheDir, "scale-fixture-source")
@@ -150,8 +186,8 @@ internal class ImportScaleDuplicateFixtureSupport {
         val source = File(cacheDirectory, "duplicate-group.db")
         // Rebuild from the deterministic input every time: a structurally valid but stale or
         // partially-created cache must never silently become this run's measurement fixture.
-        buildScaleDuplicateFixture(context, source, log)
-        scaleDuplicateFixtureValidation(source)?.let { reason -> error("newly built scale fixture failed validation: $reason") }
+        buildScaleDuplicateFixture(context, source, log, relations)
+        scaleDuplicateFixtureValidation(source, relations)?.let { reason -> error("newly built scale fixture failed validation: $reason") }
         val fileSystem = AndroidLedgerFileSystem()
         val generationDirectory = File(layout.generationDirectory(SCALE_FIXTURE_GENERATION))
         check(generationDirectory.isDirectory || generationDirectory.mkdirs()) { "cannot create generation directory" }
@@ -178,18 +214,19 @@ internal class ImportScaleDuplicateFixtureSupport {
             }
             val publishedPointer = File(layout.activePointerFile).readText().trim()
             check(publishedPointer == pointerText) { "the active pointer published as '$publishedPointer', not $pointerText" }
-            scaleDuplicateFixtureValidation(main)?.let { reason -> error("published scale fixture failed validation: $reason") }
+            scaleDuplicateFixtureValidation(main, relations)?.let { reason -> error("published scale fixture failed validation: $reason") }
         } catch (failure: Throwable) {
             deleteFixtureFile(staging)
             throw failure
         }
         val fixture = readFixture(main)
-        checkFixture(fixture)
+        checkFixture(fixture, relations)
         log(
             "SEED_FIXTURE READINGS generation=${fixture.generation} pointer=$pointerText candidates=${fixture.candidateCount} " +
                 "sources=${fixture.sourceCount} requests=${fixture.requestCount} historySources=${fixture.historySourceCount} " +
                 "relations=${fixture.duplicateRelationCount} subjectRelations=${fixture.subjectRelationCount} " +
-                "duplicateHistory=${fixture.duplicateHistoryCount} subjectSources=${fixture.subjectSourceIdCount} quickCheck=ok",
+                "duplicateHistory=${fixture.duplicateHistoryCount} subjectSources=${fixture.subjectSourceIdCount} " +
+                "fixtureRelations=$relations quickCheck=ok",
         )
         return fixture
     }
@@ -198,11 +235,16 @@ internal class ImportScaleDuplicateFixtureSupport {
      * Activation-only path: verifies that an earlier `seedFixture` run left a complete published
      * fixture and returns its readings WITHOUT rebuilding anything, so the b6 mode can never replace
      * the database under a process that already opened it.
+     *
+     * [relations] must be the scale the seeding run declared: validating a small group against the
+     * 20k shape would reject a correct fixture, and the reverse would accept a thin one.
      */
     fun requirePublished(
         context: Context,
         log: (String) -> Unit,
+        relations: Int = SCALE_DUPLICATE_FIXTURE_RELATIONS,
     ): ScaleDuplicateFixture {
+        check(relations > 0) { "the fixture scale must be at least one relation, requested $relations" }
         val layout = scaleFixtureLayout(context)
         requireNoOpenLedgerHandle(layout, log)
         val pointerText = "gen-$SCALE_FIXTURE_GENERATION"
@@ -216,14 +258,15 @@ internal class ImportScaleDuplicateFixtureSupport {
         }
         check(!File(layout.switchJournalFile).exists()) { "a switch journal is present; refusing to read a mid-switch fixture" }
         val main = File(layout.mainFile(layout.generationDirectory(SCALE_FIXTURE_GENERATION)))
-        scaleDuplicateFixtureValidation(main)?.let { reason ->
+        scaleDuplicateFixtureValidation(main, relations)?.let { reason ->
             error("the published fixture is invalid ($reason): re-run the seedFixture mode in a fresh process")
         }
         val fixture = readFixture(main)
-        checkFixture(fixture)
+        checkFixture(fixture, relations)
         log(
             "SEED_FIXTURE REUSED generation=${fixture.generation} candidates=${fixture.candidateCount} sources=${fixture.sourceCount} " +
-                "historySources=${fixture.historySourceCount} relations=${fixture.duplicateRelationCount} quickCheck=ok",
+                "historySources=${fixture.historySourceCount} relations=${fixture.duplicateRelationCount} " +
+                "fixtureRelations=$relations quickCheck=ok",
         )
         return fixture
     }
@@ -255,15 +298,18 @@ internal class ImportScaleDuplicateFixtureSupport {
         log("SEED_FIXTURE GUARD openLedgerHandles=0")
     }
 
-    private fun checkFixture(fixture: ScaleDuplicateFixture) {
-        check(fixture.duplicateRelationCount == SCALE_DUPLICATE_FIXTURE_RELATIONS) {
-            "published fixture holds ${fixture.duplicateRelationCount} duplicate relations, not $SCALE_DUPLICATE_FIXTURE_RELATIONS"
+    private fun checkFixture(
+        fixture: ScaleDuplicateFixture,
+        relations: Int,
+    ) {
+        check(fixture.duplicateRelationCount == relations) {
+            "published fixture holds ${fixture.duplicateRelationCount} duplicate relations, not $relations"
         }
-        check(fixture.subjectRelationCount == SCALE_DUPLICATE_FIXTURE_RELATIONS) { "subject relation count mismatch" }
+        check(fixture.subjectRelationCount == relations) { "subject relation count is ${fixture.subjectRelationCount}, not $relations" }
         check(fixture.subjectSourceIdCount == 1) { "duplicate relations span ${fixture.subjectSourceIdCount} subject sources" }
-        check(fixture.historySourceCount == SCALE_DUPLICATE_FIXTURE_RELATIONS) { "history source count mismatch" }
+        check(fixture.historySourceCount == relations) { "history source count is ${fixture.historySourceCount}, not $relations" }
         check(fixture.candidateCount == 2) { "the fixture must publish exactly 2 candidates, found ${fixture.candidateCount}" }
-        check(fixture.duplicateHistoryCount == SCALE_DUPLICATE_FIXTURE_RELATIONS) { "duplicate history count mismatch" }
+        check(fixture.duplicateHistoryCount == relations) { "duplicate history count is ${fixture.duplicateHistoryCount}, not $relations" }
     }
 
     private fun readFixture(main: File): ScaleDuplicateFixture =
@@ -314,18 +360,27 @@ internal fun scaleFixtureLayout(context: Context): LedgerStorageLayout {
  * Validates one database file and returns the FIRST failure as a readable reason (null = valid). The
  * reason is carried into the mode's evidence, so a rejected fixture says why instead of only that it
  * failed.
+ *
+ * [relations] is the group scale the caller built or expects; it defaults to the 20k
+ * `P704GP-D-PERF-01` fixture, so an existing caller keeps the original shape.
  */
-internal fun scaleDuplicateFixtureValidation(databaseFile: File): String? {
+internal fun scaleDuplicateFixtureValidation(
+    databaseFile: File,
+    relations: Int = SCALE_DUPLICATE_FIXTURE_RELATIONS,
+): String? {
     if (!databaseFile.isFile) return "${databaseFile.name} is not a readable file"
     return runCatching {
         SQLiteDatabase.openDatabase(databaseFile.path, null, SQLiteDatabase.OPEN_READONLY).use { database ->
-            validateDatabase(database)
+            validateDatabase(database, relations)
         }
     }.getOrElse { failure -> "${failure::class.simpleName}: ${failure.message}" }
 }
 
 @Suppress("LongMethod")
-private fun validateDatabase(database: SQLiteDatabase): String? {
+private fun validateDatabase(
+    database: SQLiteDatabase,
+    relations: Int,
+): String? {
     fun expect(
         valid: Boolean,
         reason: () -> String,
@@ -362,14 +417,14 @@ private fun validateDatabase(database: SQLiteDatabase): String? {
     }?.let { return it }
     expect(
         scalarLong(database, "SELECT COUNT(*) FROM import_source_record WHERE ledger_id=?", SCALE_FIXTURE_LEDGER_ID) ==
-            (SCALE_DUPLICATE_FIXTURE_RELATIONS + 2).toLong(),
-    ) { "import_source_record count is not ${SCALE_DUPLICATE_FIXTURE_RELATIONS + 2}" }?.let { return it }
+            (relations + 2).toLong(),
+    ) { "import_source_record count is not ${relations + 2}" }?.let { return it }
     expect(
         scalarLong(database, "SELECT COUNT(*) FROM import_request WHERE ledger_id=?", SCALE_FIXTURE_LEDGER_ID) ==
-            (SCALE_DUPLICATE_FIXTURE_RELATIONS + SCALE_FIXTURE_REAL_REQUEST_COUNT).toLong(),
-    ) { "import_request count is not ${SCALE_DUPLICATE_FIXTURE_RELATIONS + SCALE_FIXTURE_REAL_REQUEST_COUNT}" }?.let { return it }
-    // Receipts exist only for the three real requests; the 20,000 history requests are fabricated
-    // rows and must never carry a fake intake receipt.
+            (relations + SCALE_FIXTURE_REAL_REQUEST_COUNT).toLong(),
+    ) { "import_request count is not ${relations + SCALE_FIXTURE_REAL_REQUEST_COUNT}" }?.let { return it }
+    // Receipts exist only for the three real requests; the fabricated history requests must never
+    // carry a fake intake receipt.
     expect(
         scalarLong(database, "SELECT COUNT(*) FROM import_receipt WHERE ledger_id=?", SCALE_FIXTURE_LEDGER_ID) ==
             SCALE_FIXTURE_REAL_RECEIPT_COUNT.toLong(),
@@ -383,7 +438,7 @@ private fun validateDatabase(database: SQLiteDatabase): String? {
     expect(scalarLong(database, "SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl='import_duplicate_candidate'") > 0L) {
         "no sqlite_stat1 row for import_duplicate_candidate (ANALYZE did not run)"
     }?.let { return it }
-    // The 20,000 pre-existing sources are real tuple matches: same ledger, the frozen
+    // The pre-existing sources are real tuple matches: same ledger, the frozen
     // EXACT_BUSINESS_TUPLE business metadata, distinct source ids and ordinals.
     val ordinaryContractVersion = ImportRecordKind.ORDINARY_FLOW_SOURCE.contractVersion
     expect(
@@ -405,7 +460,7 @@ private fun validateDatabase(database: SQLiteDatabase): String? {
             SCALE_FIXTURE_DIRECTION_TOKEN,
             SCALE_FIXTURE_STATUS_TOKEN,
             ImportFundingState.SETTLED.name,
-        ) == SCALE_DUPLICATE_FIXTURE_RELATIONS.toLong(),
+        ) == relations.toLong(),
     ) { "the history sources do not carry the frozen business tuple" }?.let { return it }
     expect(
         scalarLong(
@@ -413,24 +468,24 @@ private fun validateDatabase(database: SQLiteDatabase): String? {
             "SELECT COUNT(DISTINCT source_id) FROM import_source_record WHERE ledger_id=? AND source_id LIKE ?",
             SCALE_FIXTURE_LEDGER_ID,
             "$SCALE_FIXTURE_HISTORY_SOURCE_PREFIX%",
-        ) == SCALE_DUPLICATE_FIXTURE_RELATIONS.toLong(),
+        ) == relations.toLong(),
     ) { "the history source ids are not distinct" }?.let { return it }
-    // The 20,000 duplicate relations: one subject (the new pending candidate's source), 20,000
-    // distinct EXACT_BUSINESS_TUPLE targets inside the history set, zero targets outside it.
+    // The duplicate relations: one subject (the new pending candidate's source), one
+    // distinct EXACT_BUSINESS_TUPLE target per history source, zero targets outside the history set.
     expect(
         scalarLong(
             database,
             "SELECT COUNT(*) FROM import_duplicate_candidate WHERE ledger_id=? AND kind='EXACT_BUSINESS_TUPLE'",
             SCALE_FIXTURE_LEDGER_ID,
-        ) == SCALE_DUPLICATE_FIXTURE_RELATIONS.toLong(),
-    ) { "EXACT_BUSINESS_TUPLE relation count is not $SCALE_DUPLICATE_FIXTURE_RELATIONS" }?.let { return it }
+        ) == relations.toLong(),
+    ) { "EXACT_BUSINESS_TUPLE relation count is not $relations" }?.let { return it }
     expect(
         scalarLong(
             database,
             "SELECT COUNT(*) FROM import_duplicate_candidate WHERE ledger_id=? AND subject_source_id=?",
             SCALE_FIXTURE_LEDGER_ID,
             SCALE_FIXTURE_RELATION_SOURCE_ID,
-        ) == SCALE_DUPLICATE_FIXTURE_RELATIONS.toLong(),
+        ) == relations.toLong(),
     ) { "not every duplicate relation belongs to the fixture subject" }?.let { return it }
     expect(
         scalarLong(
@@ -445,21 +500,21 @@ private fun validateDatabase(database: SQLiteDatabase): String? {
             "SELECT COUNT(*) FROM import_duplicate_candidate WHERE ledger_id=? AND possible_existing_source_id LIKE ?",
             SCALE_FIXTURE_LEDGER_ID,
             "$SCALE_FIXTURE_HISTORY_SOURCE_PREFIX%",
-        ) == SCALE_DUPLICATE_FIXTURE_RELATIONS.toLong(),
+        ) == relations.toLong(),
     ) { "the duplicate relations do not all target history sources" }?.let { return it }
     expect(
         scalarLong(
             database,
             "SELECT COUNT(DISTINCT possible_existing_source_id) FROM import_duplicate_candidate WHERE ledger_id=?",
             SCALE_FIXTURE_LEDGER_ID,
-        ) == SCALE_DUPLICATE_FIXTURE_RELATIONS.toLong(),
+        ) == relations.toLong(),
     ) { "the duplicate relation targets are not distinct" }?.let { return it }
     expect(
         scalarLong(
             database,
             "SELECT COUNT(DISTINCT comparison_snapshot) FROM import_duplicate_candidate WHERE ledger_id=?",
             SCALE_FIXTURE_LEDGER_ID,
-        ) == SCALE_DUPLICATE_FIXTURE_RELATIONS.toLong(),
+        ) == relations.toLong(),
     ) { "the duplicate comparison snapshots are not per-relation" }?.let { return it }
     val sampleComparison =
         ImportDuplicateComparisonSnapshot(
@@ -478,8 +533,8 @@ private fun validateDatabase(database: SQLiteDatabase): String? {
     val expectedFingerprint = ImportDuplicateComparisonFingerprint().digest(sampleComparison)
     // The product fingerprint is the frozen BUSINESS-TUPLE digest only
     // (`ImportContentFingerprint.kt:67-81` hashes amount/contract-version/currency/precision/direction/
-    // occurred-at/record-kind/status — no subject id, no possible-existing id), so the 20,000 relations
-    // of one tuple necessarily carry ONE fingerprint. The fingerprint is therefore NOT the relation
+    // occurred-at/record-kind/status — no subject id, no possible-existing id), so every relation
+    // of one tuple necessarily carries ONE fingerprint. The fingerprint is therefore NOT the relation
     // identity: identity is the `(ledger, subject, possible_existing, kind, fingerprint)` unique index
     // plus the per-relation `comparison_snapshot`, which the distinct-snapshot assertion above and the
     // exact sample row below prove. A per-relation fingerprint would be a digest the product never
@@ -490,8 +545,8 @@ private fun validateDatabase(database: SQLiteDatabase): String? {
             "SELECT COUNT(*) FROM import_duplicate_candidate WHERE ledger_id=? AND comparison_fingerprint=?",
             SCALE_FIXTURE_LEDGER_ID,
             expectedFingerprint,
-        ) == SCALE_DUPLICATE_FIXTURE_RELATIONS.toLong(),
-    ) { "the 20,000 relations do not all carry the one frozen business-tuple fingerprint" }?.let { return it }
+        ) == relations.toLong(),
+    ) { "the $relations relations do not all carry the one frozen business-tuple fingerprint" }?.let { return it }
     expect(
         scalarLong(
             database,
@@ -514,8 +569,8 @@ private fun validateDatabase(database: SQLiteDatabase): String? {
     ) { "the duplicate projection does not match the product's own frozen comparison" }?.let { return it }
     expect(
         scalarLong(database, "SELECT COUNT(*) FROM import_duplicate_status_history WHERE ledger_id=?", SCALE_FIXTURE_LEDGER_ID) ==
-            SCALE_DUPLICATE_FIXTURE_RELATIONS.toLong(),
-    ) { "import_duplicate_status_history count is not $SCALE_DUPLICATE_FIXTURE_RELATIONS" }?.let { return it }
+            relations.toLong(),
+    ) { "import_duplicate_status_history count is not $relations" }?.let { return it }
     expect(
         scalarLong(
             database,
@@ -546,7 +601,7 @@ private fun validateDatabase(database: SQLiteDatabase): String? {
                 "ON s.ledger_id=d.ledger_id AND s.source_id=d.subject_source_id " +
                 "WHERE s.input_ref=? AND d.kind='EXACT_BUSINESS_TUPLE'",
             SCALE_DUPLICATE_FIXTURE_INPUT_REF,
-        ) == SCALE_DUPLICATE_FIXTURE_RELATIONS.toLong(),
+        ) == relations.toLong(),
     ) { "the fixture subject's input_ref does not carry all relations" }?.let { return it }
     return null
 }
@@ -559,16 +614,17 @@ private fun buildScaleDuplicateFixture(
     context: Context,
     databaseFile: File,
     log: (String) -> Unit,
+    relations: Int,
 ) {
     deleteFixtureFile(databaseFile)
     createAndroidLedgerDatabase(context, databaseFile.path).use { handle ->
         val ledgerId = LedgerId(SCALE_FIXTURE_LEDGER_ID)
         check(handle.catalogStore.bootstrap(ledgerId, defaultCatalogSeed()) !is CatalogBootstrapResult.UnknownReference)
-        // The library artifact: 20,000 settled sources with the frozen business tuple, each with its
-        // own owning request. Written before the group intake so that intake's own
+        // The library artifact: `relations` settled sources with the frozen business tuple, each with
+        // its own owning request. Written before the group intake so that intake's own
         // `selectDuplicateMatches` count — not this fixture's intent — determines the relation count.
-        seedHistoricalSettledSources(handle)
-        log("SEED_FIXTURE build historySources=$SCALE_DUPLICATE_FIXTURE_RELATIONS")
+        seedHistoricalSettledSources(handle, relations)
+        log("SEED_FIXTURE build fixtureRelations=$relations historySources=$relations")
         val baselineIds =
             fixtureIdSource(
                 sourceId = SCALE_FIXTURE_BASELINE_SOURCE_ID,
@@ -612,10 +668,10 @@ private fun buildScaleDuplicateFixture(
                 evidenceId = SCALE_FIXTURE_RELATION_EVIDENCE_ID,
                 candidateId = SCALE_FIXTURE_RELATION_CANDIDATE_ID,
                 statusHistoryId = SCALE_FIXTURE_RELATION_STATUS_ID,
-                expectedDuplicateIds = SCALE_DUPLICATE_FIXTURE_RELATIONS,
+                expectedDuplicateIds = relations,
             )
         // The real intake: its transaction-internal match count is the demand handed to the id
-        // source, so the 20,000 relations below are the store's own output.
+        // source, so the relations below are the store's own output.
         acceptedIntake(
             ExecuteImportIntake(handle.importSpineStore, groupIds, ImportContentFingerprint()),
             request =
@@ -633,8 +689,8 @@ private fun buildScaleDuplicateFixture(
         check(baselineIds.requiredDuplicateIds == 0) {
             "the rejected baseline matched ${baselineIds.requiredDuplicateIds} existing sources; it must stay outside the group"
         }
-        check(groupIds.requiredDuplicateIds == SCALE_DUPLICATE_FIXTURE_RELATIONS) {
-            "the group intake matched ${groupIds.requiredDuplicateIds} existing sources, not $SCALE_DUPLICATE_FIXTURE_RELATIONS"
+        check(groupIds.requiredDuplicateIds == relations) {
+            "the group intake matched ${groupIds.requiredDuplicateIds} existing sources, not $relations"
         }
         // The production handle's intake-completion statistics step; no fixture-owned DDL/index.
         handle.runFullAnalyze()
@@ -642,17 +698,20 @@ private fun buildScaleDuplicateFixture(
 }
 
 /**
- * Writes the 20,000 pre-existing settled sources through the handle's own generated statements, in
+ * Writes the pre-existing settled sources through the handle's own generated statements, in
  * one transaction. Only `import_request` + `import_source_record` are written here — the same two
  * tables, the same columns, and the same token vocabulary the product's intake uses — so every row
  * passes the schema's FK, uniqueness, and business-tuple CHECKs. No candidate, status history,
  * receipt, or duplicate row is fabricated; those all come from the real intake.
  */
-private fun seedHistoricalSettledSources(handle: AndroidLedgerDatabaseHandle) {
+private fun seedHistoricalSettledSources(
+    handle: AndroidLedgerDatabaseHandle,
+    relations: Int,
+) {
     val facts = scaleFixtureFacts(amountMinor = SCALE_FIXTURE_GROUP_AMOUNT_MINOR)
     val contentHash = ImportContentFingerprint().digest(ImportRecordKind.ORDINARY_FLOW_SOURCE, facts)
     handle.database.transaction {
-        repeat(SCALE_DUPLICATE_FIXTURE_RELATIONS) { index ->
+        repeat(relations) { index ->
             val requestId = historyRequestId(index)
             handle.database.ledgerQueries.claimImportRequest(
                 SCALE_FIXTURE_LEDGER_ID,

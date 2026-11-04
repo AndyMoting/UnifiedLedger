@@ -9,10 +9,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from android_b6_card import (
+    ARG_FIXTURE_RELATIONS,
     DEFAULT_AVD,
     FIXTURE_RELATIONS,
     TEST_CLASS,
     B6Error,
+    format_verdict,
     judge,
     gate_evidence,
     owned_serial,
@@ -118,6 +120,24 @@ class Judging(unittest.TestCase):
         verdict = judge(self.rounds(400, 500), 3, 3000)
         self.assertEqual("FAIL", verdict["verdict"])
         self.assertIn("2 round log(s)", " ".join(verdict["reasons"]))
+
+    def test_the_default_scale_stays_the_20k_fixture(self) -> None:
+        self.assertEqual(20_000, FIXTURE_RELATIONS)
+        verdict = judge(self.rounds(400, 400, 400, relations=FIXTURE_RELATIONS), 3, 3000)
+        self.assertEqual("PASS", verdict["verdict"])
+        verdict = judge(self.rounds(400, 400, 400, relations=FIXTURE_RELATIONS - 1), 3, 3000)
+        self.assertEqual("FAIL", verdict["verdict"])
+
+    def test_a_round_below_the_requested_scale_fails_and_names_it(self) -> None:
+        verdict = judge(self.rounds(400, relations=1500), 1, 3000, 4000)
+        self.assertEqual("FAIL", verdict["verdict"])
+        self.assertTrue(any("4000-relation" in reason for reason in verdict["reasons"]))
+        self.assertNotIn("20000-relation", " ".join(verdict["reasons"]))
+
+    def test_a_three_relation_round_passes_at_the_small_scale(self) -> None:
+        # The SCALE-01 shape: the same gate must accept the D-274 three-relation group.
+        verdict = judge(self.rounds(400, relations=3), 1, 3000, 3)
+        self.assertEqual("PASS", verdict["verdict"])
 
 
 class Ownership(unittest.TestCase):
@@ -268,6 +288,27 @@ class Session(unittest.TestCase):
             run_session(self.app, self.test, self.evidence, SHA, device_factory=lambda _budget: device)
         self.assertIn("the published fixture is invalid", str(caught.exception))
 
+    def test_the_scale_reaches_both_instrumentation_modes(self) -> None:
+        # The driver is the only place the scale is declared; the device side reads it back from
+        # the `-e fixtureRelations` argument, so a driver that forgot it would silently measure
+        # the default group.
+        device = FakeDevice()
+        payload = run_session(self.app, self.test, self.evidence, SHA, rounds=1, fixture_relations=3, device_factory=lambda _budget: device)
+        extras = {call[1]: call[2] for call in device.calls if call[0] == "instrument"}
+        for target, rendered in extras.items():
+            self.assertIn(ARG_FIXTURE_RELATIONS, rendered, target)
+            self.assertIn("'3'", rendered, target)
+        self.assertEqual(3, payload["fixture_relations"])
+        self.assertEqual(3, json.loads((self.evidence / "host.json").read_text())["fixture_relations"])
+
+    def test_the_default_session_declares_the_20k_scale(self) -> None:
+        device = FakeDevice()
+        payload = run_session(self.app, self.test, self.evidence, SHA, rounds=1, device_factory=lambda _budget: device)
+        extras = {call[1]: call[2] for call in device.calls if call[0] == "instrument"}
+        for target, rendered in extras.items():
+            self.assertIn(f"'{FIXTURE_RELATIONS}'", rendered, target)
+        self.assertEqual(FIXTURE_RELATIONS, payload["fixture_relations"])
+
 
 class Gating(unittest.TestCase):
     def setUp(self) -> None:
@@ -275,10 +316,11 @@ class Gating(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.evidence = Path(self.temp.name)
 
-    def write(self, *blocks: str, sha: str = SHA, rounds: dict | None = None) -> None:
+    def write(self, *blocks: str, sha: str = SHA, rounds: dict | None = None, fixture_relations: int = FIXTURE_RELATIONS) -> None:
         payload = {
             "apk_sha256": {"app": "a" * 64, "test": "b" * 64},
             "avd": DEFAULT_AVD,
+            "fixture_relations": fixture_relations,
             "rounds": rounds if rounds is not None else [],
             "serial": "emulator-9999",
             "sha": sha,
@@ -304,9 +346,92 @@ class Gating(unittest.TestCase):
         with self.assertRaises(B6Error):
             gate_evidence(self.evidence, SHA, 3, 3000)
 
+    def test_the_default_scale_prints_the_pre_scale_verdict_shape(self) -> None:
+        # The 20k chain must stay reproducible from the same command, so a default-scale verdict
+        # prints what it printed before the scale existed; the scale still lands in gate.json.
+        self.write(block(640), block(700), block(810))
+        verdict = gate_evidence(self.evidence, SHA, 3, 3000)
+        self.assertIn("limit=3000 ms\n", format_verdict(verdict))
+        self.assertNotIn("scale=", format_verdict(verdict))
+        self.assertEqual(FIXTURE_RELATIONS, json.loads((self.evidence / "gate.json").read_text())["fixture_relations"])
+
+    def test_a_non_default_scale_is_named_in_the_verdict(self) -> None:
+        self.write(block(640, relations=3), fixture_relations=3)
+        verdict = gate_evidence(self.evidence, SHA, 1, 3000, 3)
+        self.assertIn("scale=3 relations", format_verdict(verdict))
+
     def test_an_empty_evidence_directory_is_refused(self) -> None:
         with self.assertRaises(B6Error):
             gate_evidence(self.evidence, SHA, 3, 3000)
+
+    def test_a_small_scale_evidence_passes_when_judged_at_that_scale(self) -> None:
+        self.write(block(640, relations=3), fixture_relations=3)
+        verdict = gate_evidence(self.evidence, SHA, 1, 3000, 3)
+        self.assertEqual("PASS", verdict["verdict"])
+
+    def test_the_gate_refuses_evidence_produced_at_another_scale(self) -> None:
+        self.write(block(640, relations=3), fixture_relations=3)
+        with self.assertRaises(B6Error) as caught:
+            gate_evidence(self.evidence, SHA, 1, 3000, FIXTURE_RELATIONS)
+        self.assertIn("3", str(caught.exception))
+        self.assertIn("20000", str(caught.exception))
+
+    def test_a_pre_parameter_host_json_re_gates_from_its_round_relations(self) -> None:
+        # The D-282 record (runs 41768710390 / 41758573398) was written before the scale existed:
+        # its host.json carries exactly apk_sha256/avd/rounds/serial/sha. That evidence must keep
+        # re-deriving its original verdict, so an absent scale key defers to the round logs, which
+        # report `relations=20000` in the `b6 fixture reuse:` line.
+        self.write(block(1770), block(1644), block(1563))
+        payload = json.loads((self.evidence / "host.json").read_text())
+        del payload["fixture_relations"]
+        (self.evidence / "host.json").write_text(json.dumps(payload))
+        verdict = gate_evidence(self.evidence, SHA, 3, 3000)
+        self.assertEqual("PASS", verdict["verdict"])
+        self.assertEqual(1770, verdict["max_click_to_card_ms"])
+
+    def test_a_scale_less_host_json_still_fails_a_small_group_judged_at_20k(self) -> None:
+        # The fallback must not become a hole: with no declared scale the round logs decide, so a
+        # 3-relation evidence set judged at the default still fails on the relations bound.
+        self.write(block(640, relations=3))
+        payload = json.loads((self.evidence / "host.json").read_text())
+        del payload["fixture_relations"]
+        (self.evidence / "host.json").write_text(json.dumps(payload))
+        verdict = gate_evidence(self.evidence, SHA, 1, 3000, FIXTURE_RELATIONS)
+        self.assertEqual("FAIL", verdict["verdict"])
+        self.assertTrue(any("20000-relation" in reason for reason in verdict["reasons"]))
+
+    def test_a_declared_scale_that_disagrees_with_the_judging_scale_is_refused(self) -> None:
+        # A PRESENT key is the anti-mismatch discipline: the session declared a scale, so judging it
+        # at another is refused rather than silently re-derived.
+        self.write(block(640), fixture_relations=FIXTURE_RELATIONS)
+        with self.assertRaises(B6Error) as caught:
+            gate_evidence(self.evidence, SHA, 1, 3000, 3)
+        self.assertIn("20000", str(caught.exception))
+        self.assertIn("not 3", str(caught.exception))
+
+    def test_the_archived_pre_parameter_host_shape_stays_judgeable(self) -> None:
+        # The literal shape of the D-282 fixed-final evidence directory: five host keys, no scale,
+        # and a round whose reuse line reports 20000. Pinned as literals so this shape stays
+        # re-gateable for as long as the record is cited.
+        archived_host = {
+            "apk_sha256": {"app": "a" * 64, "test": "b" * 64},
+            "avd": "ul-b6-card",
+            "rounds": [],
+            "serial": "emulator-5554",
+            "sha": "4f04b60e" + "0" * 32,
+        }
+        self.assertEqual(
+            ["apk_sha256", "avd", "rounds", "serial", "sha"],
+            sorted(archived_host),
+        )
+        (self.evidence / "host.json").write_text(json.dumps(archived_host))
+        for index, value in enumerate((1770, 1644, 1563), start=1):
+            (self.evidence / f"round-{index}.log").write_text(block(value))
+        verdict = gate_evidence(self.evidence, archived_host["sha"], 3, 3000)
+        self.assertEqual("PASS", verdict["verdict"])
+        self.assertEqual(3000, verdict["limit_ms"])
+        self.assertEqual(FIXTURE_RELATIONS, verdict["fixture_relations"])
+        self.assertEqual(1770, verdict["max_click_to_card_ms"])
 
 
 class Workflow(unittest.TestCase):

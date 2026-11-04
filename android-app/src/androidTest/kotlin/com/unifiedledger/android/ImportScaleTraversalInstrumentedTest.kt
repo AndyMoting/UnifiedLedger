@@ -182,6 +182,11 @@ private const val PICKER_CLICK_PARENT_DEPTH = 10
 private const val COUNT_PROBE_SCROLL_ACTIONS = 60
 private const val DB_FILE_NAME = "ledger.db"
 private const val ARG_SEED_FIXTURE = "seedFixture"
+
+// The duplicate-group scale both fixture modes read back. The host driver declares it with
+// `-e fixtureRelations <n>`, so a small group (P704GP-D-SCALE-01) and the 20k group
+// (P704GP-D-PERF-01) run through this one chain instead of two differently-shaped fixtures.
+private const val ARG_FIXTURE_RELATIONS = "fixtureRelations"
 private const val SEED_ACTIVATION_CSV =
     "\uFEFF\"招商银行交易明细\"\r\n" +
         "\"导出时间:2026-01-02 03:04:06\"\r\n" +
@@ -375,21 +380,22 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  *   ledger handle is already open, because replacing the file would leave the product on the old
  *   inode). It then asserts the START screen's health ("账本：" present, no fail-closed face) BEFORE
  *   the tab switch, and only after [reachImportReview] asserts the import screen's duplicate group
- *   header (the two screens carry different text, so they are two separate assertions). Its 20,000
- *   relations are the real output of ONE product intake: 20,000 pre-existing settled
- *   `import_source_record` rows carry the group's business tuple, so the store's own
- *   `selectDuplicateMatches` count (not the fixture's intent) sets the demand and only that intake
- *   writes the relations. The new pending subject is the single subject source; a separately rejected
- *   baseline candidate keeps the ordinary 待确认 list empty. Sources/relations/history/candidates/
- *   quick_check and the observed group header go to the evidence. This differs from D-148's
- *   30,039-candidate accumulated library.
- * - `b6CardOpen`: B6 (A-PERF 20k 组开卡). With opt-in `seedFixture=true` it is ACTIVATION-ONLY: the
+ *   header (the two screens carry different text, so they are two separate assertions). Arg
+ *   `fixtureRelations` (default 20000) declares the group scale. Its relations are the real output of
+ *   ONE product intake: that many pre-existing settled `import_source_record` rows carry the group's
+ *   business tuple, so the store's own `selectDuplicateMatches` count (not the fixture's intent) sets
+ *   the demand and only that intake writes the relations. The new pending subject is the single
+ *   subject source; a separately rejected baseline candidate keeps the ordinary 待确认 list empty.
+ *   Sources/relations/history/candidates/quick_check and the observed group header go to the
+ *   evidence. This differs from D-148's 30,039-candidate accumulated library.
+ * - `b6CardOpen`: B6 (A-PERF 组开卡). With opt-in `seedFixture=true` it is ACTIVATION-ONLY: the
  *   fixture must already be published (host sequence: `seedFixture` → force-stop the app → fresh
- *   process → this mode) and this path never rebuilds it. It arms lastIntakeSession by selecting a
- *   one-row CMB file through the real product picker, asserts the product-written activation totals
- *   (20,001 relations on the new subject, 2 subjects, 3 candidates), traverses to `target` like
- *   `scrollToEnd`, opens the group card via `openGroupCard` and never confirms it. The default
- *   remains the old traversal without fixture loading.
+ *   process → this mode) and this path never rebuilds it. Arg `fixtureRelations` (default 20000) is
+ *   the scale the published fixture must match. It arms lastIntakeSession by selecting a one-row CMB
+ *   file through the real product picker, asserts the product-written activation totals
+ *   (`fixtureRelations + 1` relations on the new subject, 2 subjects, 3 candidates), traverses to
+ *   `target` like `scrollToEnd`, opens the group card via `openGroupCard` and never confirms it. The
+ *   default remains the old traversal without fixture loading.
  * - `b5Detail`: the A-PERF B5 endpoint (frozen spec section 6: 单候选详情 = 点击首行候选 → 详情屏关键
  *   内容（金额/状态行）可见, gate ≤1s, three runs, the maximum is the reading) measured IN-PROCESS,
  *   because the host `uiautomator dump` floor (~2.29 s per dump) is far coarser than the 1 s gate and
@@ -855,18 +861,21 @@ class ImportScaleTraversalInstrumentedTest {
      */
     private fun runSeedFixture(evidence: MutableList<String>) {
         val log = evidenceLog(evidence)
+        val fixtureRelations = intArg(ARG_FIXTURE_RELATIONS, SCALE_DUPLICATE_FIXTURE_RELATIONS)
         evidence += "== seedFixture start epochMillis=${System.currentTimeMillis()}"
+        evidence += "args fixtureRelations=$fixtureRelations"
         val fixture =
             ImportScaleDuplicateFixtureSupport().seed(
                 InstrumentationRegistry.getInstrumentation().targetContext,
                 log,
+                fixtureRelations,
             )
         evidence +=
             "fixture generation=${fixture.generation} inputRef=${fixture.inputRef} candidates=${fixture.candidateCount} " +
             "sources=${fixture.sourceCount} requests=${fixture.requestCount} historySources=${fixture.historySourceCount} " +
             "relations=${fixture.duplicateRelationCount} subjectRelations=${fixture.subjectRelationCount} " +
             "duplicateHistory=${fixture.duplicateHistoryCount} subjectSourceId=${fixture.subjectSourceId} " +
-            "subjectSources=${fixture.subjectSourceIdCount}"
+            "subjectSources=${fixture.subjectSourceIdCount} fixtureRelations=$fixtureRelations"
         // Two screens, two assertions. The startup face prints "账本：" and the import screen does not,
         // so the startup health check runs BEFORE the tab switch; folding it into the post-tab
         // assertion would make it impossible by construction.
@@ -1006,14 +1015,29 @@ class ImportScaleTraversalInstrumentedTest {
      *
      * Host sequence: run `seedFixture` in a fresh process → force-stop the app → start this mode in a
      * new process. The activation row carries the fixture's business tuple, so the product's own
-     * intake matches the 20,000 history sources PLUS the fixture's pending subject and writes 20,001
-     * relations itself; the totals below are asserted, not assumed.
+     * intake matches the fixture's `fixtureRelations` history sources PLUS the fixture's pending
+     * subject and writes `fixtureRelations + 1` relations itself; the totals below are asserted, not
+     * assumed.
+     *
+     * `subjects == 2` and `candidates == 3` are scale-INVARIANT, verified against the builder rather
+     * than assumed: `buildScaleDuplicateFixture` creates exactly one rejected baseline candidate and
+     * one group candidate, so the activation's single real intake adds the third; and it seeds
+     * exactly two duplicate subjects — the fixture subject and (after activation) the activation
+     * subject. Only the relation counts follow `fixtureRelations`.
      */
     private fun activatePublishedDuplicateGroupThroughProduct(
         fixture: ScaleDuplicateFixture,
+        fixtureRelations: Int,
         log: (String) -> Unit,
     ) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        // Parameterizing the scale must not move the 20k arithmetic: the frozen constants are what
+        // the pre-scale evidence lines and D-280/D-282 report, so drift would make the two
+        // readings incomparable. Both are constants, so this is a build-time check, not a device one.
+        check(activationTotalRelations(SCALE_DUPLICATE_FIXTURE_RELATIONS) == SCALE_DUPLICATE_ACTIVATION_TOTAL_RELATIONS) {
+            "the activation arithmetic drifted from the frozen $SCALE_DUPLICATE_ACTIVATION_TOTAL_RELATIONS reading at " +
+                "$SCALE_DUPLICATE_FIXTURE_RELATIONS fixture relations"
+        }
         val baseline = requireNotNull(countImportCandidates(log)) { "the published fixture is unreadable: no pre-activation import_candidate count" }
         val fixtureName = "scale-duplicate-session.csv"
         val downloads =
@@ -1040,22 +1064,28 @@ class ImportScaleTraversalInstrumentedTest {
             log("b6 activation picker accepted=${pickerClick.accepted} coordinateTapIssued=${pickerClick.coordinateTapIssued}")
             val intake = awaitCountProbeIntake(baseline, DEFAULT_COUNT_PROBE_INTAKE_TIMEOUT_MILLIS, log)
             check(intake.detected && intake.stabilized) { "the real fixture intake did not stabilize: $intake" }
-            // The activation verdict is a count, not a hope: one new subject, 20,001 relations of its
-            // own on top of the fixture's 20,000, and exactly one new candidate.
+            // The activation verdict is a count, not a hope: one new subject, `fixtureRelations + 1`
+            // relations of its own on top of the fixture's `fixtureRelations`, and exactly one new
+            // candidate.
             val totals = readDuplicateTotals("activationAfter", log).requireComplete("activationAfter")
-            check(totals.relations == SCALE_DUPLICATE_ACTIVATION_TOTAL_RELATIONS.toLong()) {
+            val expectedActivation = activationRelations(fixtureRelations)
+            val expectedTotal = activationTotalRelations(fixtureRelations)
+            check(totals.relations == expectedTotal.toLong()) {
                 "after activation import_duplicate_candidate=${totals.relations}, expected " +
-                    "$SCALE_DUPLICATE_ACTIVATION_TOTAL_RELATIONS ($SCALE_DUPLICATE_FIXTURE_RELATIONS fixture + " +
-                    "$SCALE_DUPLICATE_ACTIVATION_RELATIONS activation); the activation row must carry the fixture's " +
-                    "business tuple (${SCALE_FIXTURE_CURRENCY_CODE}/$SCALE_FIXTURE_CURRENCY_PRECISION/" +
-                    "$SCALE_FIXTURE_OCCURRED_AT/$SCALE_FIXTURE_DIRECTION_TOKEN/$SCALE_FIXTURE_STATUS_TOKEN)"
+                    "$expectedTotal ($fixtureRelations fixture + $expectedActivation activation); the activation row " +
+                    "must carry the fixture's business tuple (${SCALE_FIXTURE_CURRENCY_CODE}/" +
+                    "${SCALE_FIXTURE_CURRENCY_PRECISION}/$SCALE_FIXTURE_OCCURRED_AT/$SCALE_FIXTURE_DIRECTION_TOKEN/" +
+                    "$SCALE_FIXTURE_STATUS_TOKEN)"
             }
             check(totals.subjects == 2L) {
                 "after activation the duplicate relations span ${totals.subjects} subject sources, expected 2 " +
                     "(fixture subject ${fixture.subjectSourceId} plus the activation subject)"
             }
             check(totals.candidates == 3L) { "after activation import_candidate=${totals.candidates}, expected 3" }
-            log("b6 activation totals relations=${totals.relations} subjects=${totals.subjects} candidates=${totals.candidates}")
+            log(
+                "b6 activation totals relations=${totals.relations} subjects=${totals.subjects} " +
+                    "candidates=${totals.candidates} fixtureRelations=$fixtureRelations",
+            )
             val refresh = findByText(appRoot(), DEFAULT_REFRESH_LABEL)
             check(refresh != null && clickNode(refresh)) { "the real post-intake refresh was refused" }
             check(waitFor({ findByContentDescription(appRoot(), DEFAULT_TARGET) != null }, GROUP_CARD_WAIT_MILLIS, POLL_MILLIS)) {
@@ -1072,21 +1102,27 @@ class ImportScaleTraversalInstrumentedTest {
         val maxForwardActions = intArg(ARG_MAX_FORWARD_ACTIONS, DEFAULT_MAX_FORWARD_ACTIONS)
         val settleMillis = intArg(ARG_SETTLE_MILLIS, DEFAULT_SETTLE_MILLIS)
         val stallChecks = intArg(ARG_STALL_CHECKS, DEFAULT_STALL_CHECKS)
+        val fixtureRelations = intArg(ARG_FIXTURE_RELATIONS, SCALE_DUPLICATE_FIXTURE_RELATIONS)
         evidence += "== b6CardOpen start epochMillis=${System.currentTimeMillis()}"
         val seedFixture = booleanArg(ARG_SEED_FIXTURE, false)
-        evidence += "args target=$target maxForwardActions=$maxForwardActions settleMillis=$settleMillis stallChecks=$stallChecks seedFixture=$seedFixture"
+        evidence +=
+            "args target=$target maxForwardActions=$maxForwardActions settleMillis=$settleMillis stallChecks=$stallChecks " +
+                "seedFixture=$seedFixture fixtureRelations=$fixtureRelations"
         if (seedFixture) {
             // Activation-only: the fixture must already be published by a previous `seedFixture` run
-            // (host: seed → force-stop → fresh process → this mode). This path never rebuilds it.
+            // (host: seed → force-stop → fresh process → this mode). This path never rebuilds it, and
+            // it validates the published file against the SAME scale that seed declared.
             val fixture =
                 ImportScaleDuplicateFixtureSupport().requirePublished(
                     InstrumentationRegistry.getInstrumentation().targetContext,
                     log,
+                    fixtureRelations,
                 )
             evidence +=
                 "b6 fixture reuse: generation=${fixture.generation} relations=${fixture.duplicateRelationCount} " +
-                "historySources=${fixture.historySourceCount} subject=${fixture.subjectSourceId} (no rebuild)"
-            activatePublishedDuplicateGroupThroughProduct(fixture, log)
+                "historySources=${fixture.historySourceCount} subject=${fixture.subjectSourceId} " +
+                "fixtureRelations=$fixtureRelations (no rebuild)"
+            activatePublishedDuplicateGroupThroughProduct(fixture, fixtureRelations, log)
             evidence += "b6 fixture ready: real product intake armed the duplicate-group session"
         }
         prepareAutomation()
