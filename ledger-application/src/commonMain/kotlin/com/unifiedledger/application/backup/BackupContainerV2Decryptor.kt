@@ -86,7 +86,15 @@ fun decryptBackupContainerV2(
         // shape, as in the v1 path).
         val chunkWireLength = chunkPlaintextLength + header.tagLength
         while (consumed < chunkWireLength) {
-            val read = cipherSource.read(buffer)
+            // Read EXACTLY the remaining chunk window (the writer pass-2 pattern, spec section
+            // 4.11.3): an unclamped whole-buffer read would overshoot a short window — on chunk 0
+            // (wire 1 MiB + 16 = 16 x 64 KiB + 16) it swallows the next chunk's `ciphertext || tag`
+            // wire into THIS chunk's decryptor, failing chunk 0's tag on a VALID container and
+            // desynchronizing every later chunk. The product cipher source is a plain stream read
+            // and relies on the walk to slice the windows.
+            val want = minOf(buffer.size.toLong(), chunkWireLength - consumed).toInt()
+            val target = if (want == buffer.size) buffer else ByteArray(want)
+            val read = cipherSource.read(target)
             if (read <= 0) {
                 // The size equation catches a truncated container pre-auth; a short CIPHER stream
                 // here (a post-header tamper the equation cannot see) is structural, so it is NOT
@@ -94,7 +102,7 @@ fun decryptBackupContainerV2(
                 throw ShortChunkStreamException()
             }
             consumed += read.toLong()
-            val plaintext = decryptor.update(buffer, 0, read)
+            val plaintext = decryptor.update(target, 0, read)
             if (plaintext.isNotEmpty()) {
                 plaintextSink.write(plaintext, 0, plaintext.size)
                 produced += plaintext.size.toLong()
