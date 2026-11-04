@@ -5,8 +5,8 @@ import com.unifiedledger.application.ImportCandidateId
 import com.unifiedledger.application.ImportCompleteness
 import com.unifiedledger.application.ImportDuplicateCandidateId
 import com.unifiedledger.application.ImportDuplicatePossibleExistingSourceFacts
-import com.unifiedledger.application.ImportDuplicateReviewsForSessionPage
 import com.unifiedledger.application.ImportDuplicateReviewRow
+import com.unifiedledger.application.ImportDuplicateReviewsForSessionPage
 import com.unifiedledger.application.ImportDuplicateReviewsForSessionRow
 import com.unifiedledger.application.ImportDuplicateStatus
 import com.unifiedledger.application.ImportFundingState
@@ -282,8 +282,7 @@ class SqlDelightImportReviewReadAdapter(
                     sessionInputRef,
                     afterCandidateId.value,
                     groupPageSize,
-                )
-                .executeAsList()
+                ).executeAsList()
         // Absent session (no candidate of this session at all) vs exhausted keyset (the page
         // predicate simply matched nothing): the same one-shot existence probe as the
         // whole-session read decides — never per page.
