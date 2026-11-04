@@ -10,10 +10,17 @@
 # from the accessibility tree by `ImportScaleTraversalInstrumentedTest#b6CardOpen`, so it is
 # the UI-observable click -> card-visible interval and not an internal timer.
 #
-# WHAT IT DOES NOT PROVE
-# ----------------------
-# `P704GP-D-SCALE-01` (a small group must not regress) needs its own fixture and its own
-# run. Nothing here speaks about any layer the product does not paint on screen.
+# WHICH CRITERION A RUN PROVES
+# ----------------------------
+# `fixture_relations` selects the scale, and with it the criterion:
+# - the default 20,000 proves `P704GP-D-PERF-01` (the 20k group opens within `limit_ms`);
+# - a small value proves `P704GP-D-SCALE-01` (a small group must not regress) — the same
+#   chain, the same statistic, the same fixture generator at another scale. The D-274
+#   three-relation group is `fixture_relations: 3`.
+# A run proves exactly one of them: the gate re-derives the verdict at the scale the run
+# declared (`host.json`), and refuses evidence produced at any other scale, so a 20k run can
+# never be read as a small-group reading or the reverse. Nothing here speaks about any layer
+# the product does not paint on screen.
 #
 # WHY CLOUD
 # ---------
@@ -57,6 +64,11 @@ on:
         description: Click-to-card bound in milliseconds
         required: false
         default: '3000'
+        type: string
+      fixture_relations:
+        description: 'Duplicate relations in the fixture; 20000 proves P704GP-D-PERF-01, 3 proves P704GP-D-SCALE-01'
+        required: false
+        default: '20000'
         type: string
 
 permissions:
@@ -118,6 +130,7 @@ jobs:
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           ROUNDS: ${{ inputs.rounds }}
+          FIXTURE_RELATIONS: ${{ inputs.fixture_relations }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
           avd-name: ul-b6-card
@@ -132,16 +145,17 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
             set -u
-            python3 tools/ci/android-b6-card.py run --app android-app/build/outputs/apk/debug/android-app-debug.apk --test android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk --evidence b6-evidence --sha "${EXPECTED_SHA}" --avd-name ul-b6-card --rounds "${ROUNDS}" --outer-deadline-epoch "$ANDROID_CI_OUTER_DEADLINE_EPOCH"
+            python3 tools/ci/android-b6-card.py run --app android-app/build/outputs/apk/debug/android-app-debug.apk --test android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk --evidence b6-evidence --sha "${EXPECTED_SHA}" --avd-name ul-b6-card --rounds "${ROUNDS}" --fixture-relations "${FIXTURE_RELATIONS}" --outer-deadline-epoch "$ANDROID_CI_OUTER_DEADLINE_EPOCH"
       - name: Re-derive the gate from the evidence on disk
         if: always()
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           ROUNDS: ${{ inputs.rounds }}
           LIMIT_MS: ${{ inputs.limit_ms }}
+          FIXTURE_RELATIONS: ${{ inputs.fixture_relations }}
         run: |
           set -euo pipefail
-          python3 tools/ci/android-b6-card.py gate --evidence b6-evidence --sha "${EXPECTED_SHA}" --rounds "${ROUNDS}" --limit-ms "${LIMIT_MS}"
+          python3 tools/ci/android-b6-card.py gate --evidence b6-evidence --sha "${EXPECTED_SHA}" --rounds "${ROUNDS}" --limit-ms "${LIMIT_MS}" --fixture-relations "${FIXTURE_RELATIONS}"
       - name: Upload the measurement evidence
         # Partial evidence still uploads by design: the gate step above is the verdict, and
         # a red run is worth reading.
