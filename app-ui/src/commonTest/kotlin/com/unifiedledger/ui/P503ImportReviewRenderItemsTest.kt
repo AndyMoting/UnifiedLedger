@@ -465,14 +465,26 @@ class P503ImportReviewRenderItemsTest {
     }
 
     /**
-     * B6 group-card paging batch (D-280, P704GP-ACC-KEY-01 ordinal pin): a card item carries the
-     * whole-group `ordinal` assigned at landing — the render layer reads that field rather than
-     * recomputing a position from the landed list index, so a page landing into the middle of the
-     * sequence keeps every item's true group position.
+     * B6 group-card paging batch (D-280, P704GP-ACC-KEY-01, render-item half): each card item keeps
+     * the whole-group `ordinal` its landing assigned, and its identity (`stableKey`/`contentType`)
+     * is derived from the duplicate candidate id alone — never from a position.
+     *
+     * The assertions target this layer's contract, [ImportReviewRenderItem.GroupDispositionItem],
+     * not the composable that consumes it. Each is a regression pin:
+     * - `state.ordinal` must survive the flattening. Regression caught: the render model rebuilding
+     *   the state from the landed list index (`forEachIndexed { i, s -> ... s.copy(ordinal = i + 1) }`
+     *   in `importReviewRenderItems`) — the fixture's ordinals 7 and 3 differ from the indices 0/1.
+     * - `stableKey` must be `group-disposition-item:<duplicateCandidateId>` verbatim. Regression
+     *   caught: a key built from the ordinal, or from the subject candidate id (both members here
+     *   share `candidate-dup-1`, so a subject-id key would collide and crash the LazyColumn).
+     * - `contentType` must stay the fixed reuse token. Regression caught: a content type that
+     *   varied per item, which would kill the LazyColumn's item reuse.
+     * The expected keys are independent literals, never read back off the produced items.
      */
     @Test
-    fun theCardItemCarriesItsLandedOrdinalNotItsListIndex() {
+    fun theCardItemCarriesItsLandedOrdinalAndAnOrdinalIndependentIdentity() {
         // Deliberately NOT 1..n: an item whose ordinal differs from its index in the landed list.
+        // Both members also share one subject candidate, so the id in the key must be the duplicate.
         val page =
             ImportDuplicateGroupDispositionPage(
                 inputRef = "pick-handle-1",
@@ -507,29 +519,37 @@ class P503ImportReviewRenderItemsTest {
                 ImportPlatformKind.ANDROID,
             )
         val groupItems = items.filterIsInstance<ImportReviewRenderItem.GroupDispositionItem>()
+        assertEquals(2, groupItems.size)
+        // The landed ordinals reach this layer intact and in landing order.
         assertEquals(listOf(7, 3), groupItems.map { it.state.ordinal })
-        // The rendered per-item description follows the landed ordinal. The list index would say
-        // 第 1 条 / 第 2 条 here, so the two are distinguishable: a regression back to indexOf/index
-        // changes the copy.
+        // Identity per item, pinned with independent literals.
+        assertEquals(
+            listOf("group-disposition-item:dup-b", "group-disposition-item:dup-a"),
+            groupItems.map { it.stableKey },
+        )
+        assertEquals(listOf("groupDispositionItem", "groupDispositionItem"), groupItems.map { it.contentType })
+        // The literal keys above already forbid both a positional component (which would read
+        // `group-disposition-item:7` / `group-disposition-item:3`) and a subject-candidate
+        // component (`candidate-dup-1` is shared by both members, so that key would collide).
+        // The description formatter renders the ordinal it is handed (J4 copy); this pins the copy
+        // contract only — the ordinal it receives is wired by the composable (P503ImportReview.kt
+        // `val itemOrdinal = item.state.ordinal`), which no unit test here reaches.
         assertEquals(
             "收起候选 candidate-dup-1 的第 7 条比较信息",
             groupDispositionItemComparisonToggleDescription(
                 expanded = true,
-                candidateId = groupItems[0].state.item.candidateId,
-                itemOrdinal = groupItems[0].state.ordinal,
+                candidateId = ImportCandidateId("candidate-dup-1"),
+                itemOrdinal = 7,
             ),
         )
         assertEquals(
-            "收起候选 candidate-dup-1 的第 3 条比较信息",
+            "展开候选 candidate-dup-1 的第 3 条比较信息",
             groupDispositionItemComparisonToggleDescription(
-                expanded = true,
-                candidateId = groupItems[1].state.item.candidateId,
-                itemOrdinal = groupItems[1].state.ordinal,
+                expanded = false,
+                candidateId = ImportCandidateId("candidate-dup-1"),
+                itemOrdinal = 3,
             ),
         )
-        // The landed ordinals are distinguishable from list-index positions (1, 2), so the two
-        // assertions above can only pass by reading the field.
-        assertTrue(groupItems.map { it.state.ordinal } != listOf(1, 2))
     }
 
     // ---- batch confirmation entry gate (勾选集非空才可达) ----

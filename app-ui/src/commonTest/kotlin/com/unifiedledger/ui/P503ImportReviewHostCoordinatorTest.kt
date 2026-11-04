@@ -108,13 +108,16 @@ class P503ImportReviewHostCoordinatorTest {
     }
 
     /**
-     * B6 group-card paging batch (D-280, spec section 3.4): the paging round holds the SAME
-     * single-flight slot across every page landing — only the round's end re-arms it. The confirm
-     * action's whole-group gate reads the same flag ([P503HostCoordinator.isImportGroupEnumerationRunning]),
-     * so a page landing in between must not make the partial prefix look confirmable.
+     * B6 group-card paging batch (D-280, spec section 3.4): the enumeration's single-flight slot and
+     * the accessor the whole-group confirm gate reads ([P503HostCoordinator.isImportGroupEnumerationRunning])
+     * are the SAME flag, and only the round's end clears it. This pins the slot's lifetime, not a
+     * page landing: nothing in this test lands a page (the coordinator has no page event). Pages
+     * land inside the round by construction — they are dispatched from the round's final hop — so
+     * while the round runs, the confirm action's gate at `P503App.kt:2486` refuses a tap on a
+     * partial prefix.
      */
     @Test
-    fun groupEnumerationSingleFlightStaysHeldAcrossPageLandings() {
+    fun theEnumerationRunningAccessorMirrorsTheSingleFlightSlotUntilTheRoundEnds() {
         var enumerations = 0
         val coordinator =
             P503HostCoordinator(
@@ -125,8 +128,8 @@ class P503ImportReviewHostCoordinatorTest {
 
         assertFalse(coordinator.isImportGroupEnumerationRunning())
         assertTrue(coordinator.startImportDuplicateGroupDispositionOnce { enumerations += 1 })
-        // Pages keep landing inside the round: the slot and the whole-group confirm gate both
-        // stay held (a landing is not a completion).
+        // The accessor and the single-flight slot agree while the round runs: a second start is
+        // refused exactly when the accessor reports running.
         assertTrue(coordinator.isImportGroupEnumerationRunning())
         assertFalse(coordinator.startImportDuplicateGroupDispositionOnce { enumerations += 1 })
         assertTrue(coordinator.isImportGroupEnumerationRunning())
