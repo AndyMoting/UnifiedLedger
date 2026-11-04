@@ -417,6 +417,141 @@ class P503ImportReviewRenderItemsTest {
         assertTrue(closed.none { it is ImportReviewRenderItem.GroupDispositionCardFooter })
     }
 
+    /**
+     * B6 group-card paging batch (D-280, P704GP-ACC-COUNT-01): while the card shows only the landed
+     * keyset prefix, the header and footer still disclose the WHOLE-group total from the count
+     * query (page.totalCount), never the landed count the card happens to list.
+     */
+    @Test
+    fun thePagedGroupCardDisclosesTheWholeGroupTotalWhileListingOnlyTheLandedPrefix() {
+        val landed =
+            ImportDuplicateGroupDispositionPage(
+                inputRef = "pick-handle-1",
+                items =
+                    (1..2).map { ordinal ->
+                        ImportDuplicateGroupItemState(
+                            item =
+                                ImportDuplicateGroupDispositionItem(
+                                    candidateId = ImportCandidateId("candidate-dup-1"),
+                                    duplicateCandidateId = ImportDuplicateCandidateId("dup-$ordinal"),
+                                    comparisonSnapshot = "{\"amount_minor\":3580}",
+                                    expectedComparisonFingerprint = "sha256:fixed-fingerprint",
+                                ),
+                            ordinal = ordinal,
+                        )
+                    },
+                totalCount = 20_001,
+            )
+        val items =
+            importReviewRenderItems(
+                ImportReviewView(rows = listOf(row("dup-a", duplicateStatus = ImportDuplicateStatus.DEFERRED)), groupDisposition = landed),
+                ImportPlatformKind.ANDROID,
+            )
+        val header = items.filterIsInstance<ImportReviewRenderItem.GroupDispositionCardHeader>().single()
+        assertEquals(20_001, header.itemCount)
+        // The rendered header copy says 共 20001 条 even though two items are listed.
+        assertTrue(groupDispositionCardHeaderDisclosure(header.itemCount).endsWith("共 20001 条。"))
+        // The batch switch's description carries the same whole-group count.
+        assertEquals(
+            "收起全部比较信息（共 20001 条）",
+            groupDispositionComparisonBatchToggleDescription(collapsedAll = false, itemCount = header.itemCount),
+        )
+        val footer = items.filterIsInstance<ImportReviewRenderItem.GroupDispositionCardFooter>().single()
+        assertEquals(20_001, footer.itemCount)
+        // The card itself lists only the landed prefix (the page's items, in order).
+        val groupItems = items.filterIsInstance<ImportReviewRenderItem.GroupDispositionItem>()
+        assertEquals(landed.items, groupItems.map { it.state })
+        assertEquals(2, groupItems.size)
+    }
+
+    /**
+     * B6 group-card paging batch (D-280, P704GP-ACC-KEY-01, render-item half): each card item keeps
+     * the whole-group `ordinal` its landing assigned, and its identity (`stableKey`/`contentType`)
+     * is derived from the duplicate candidate id alone — never from a position.
+     *
+     * The assertions target this layer's contract, [ImportReviewRenderItem.GroupDispositionItem],
+     * not the composable that consumes it. Each is a regression pin:
+     * - `state.ordinal` must survive the flattening. Regression caught: the render model rebuilding
+     *   the state from the landed list index (`forEachIndexed { i, s -> ... s.copy(ordinal = i + 1) }`
+     *   in `importReviewRenderItems`) — the fixture's ordinals 7 and 3 differ from the indices 0/1.
+     * - `stableKey` must be `group-disposition-item:<duplicateCandidateId>` verbatim. Regression
+     *   caught: a key built from the ordinal, or from the subject candidate id (both members here
+     *   share `candidate-dup-1`, so a subject-id key would collide and crash the LazyColumn).
+     * - `contentType` must stay the fixed reuse token. Regression caught: a content type that
+     *   varied per item, which would kill the LazyColumn's item reuse.
+     * The expected keys are independent literals, never read back off the produced items.
+     */
+    @Test
+    fun theCardItemCarriesItsLandedOrdinalAndAnOrdinalIndependentIdentity() {
+        // Deliberately NOT 1..n: an item whose ordinal differs from its index in the landed list.
+        // Both members also share one subject candidate, so the id in the key must be the duplicate.
+        val page =
+            ImportDuplicateGroupDispositionPage(
+                inputRef = "pick-handle-1",
+                items =
+                    listOf(
+                        ImportDuplicateGroupItemState(
+                            item =
+                                ImportDuplicateGroupDispositionItem(
+                                    candidateId = ImportCandidateId("candidate-dup-1"),
+                                    duplicateCandidateId = ImportDuplicateCandidateId("dup-b"),
+                                    comparisonSnapshot = "{\"amount_minor\":3580}",
+                                    expectedComparisonFingerprint = "sha256:fixed-fingerprint",
+                                ),
+                            ordinal = 7,
+                        ),
+                        ImportDuplicateGroupItemState(
+                            item =
+                                ImportDuplicateGroupDispositionItem(
+                                    candidateId = ImportCandidateId("candidate-dup-1"),
+                                    duplicateCandidateId = ImportDuplicateCandidateId("dup-a"),
+                                    comparisonSnapshot = "{\"amount_minor\":3580}",
+                                    expectedComparisonFingerprint = "sha256:fixed-fingerprint",
+                                ),
+                            ordinal = 3,
+                        ),
+                    ),
+                totalCount = 20_001,
+            )
+        val items =
+            importReviewRenderItems(
+                ImportReviewView(rows = listOf(row("dup-a", duplicateStatus = ImportDuplicateStatus.DEFERRED)), groupDisposition = page),
+                ImportPlatformKind.ANDROID,
+            )
+        val groupItems = items.filterIsInstance<ImportReviewRenderItem.GroupDispositionItem>()
+        assertEquals(2, groupItems.size)
+        // The landed ordinals reach this layer intact and in landing order.
+        assertEquals(listOf(7, 3), groupItems.map { it.state.ordinal })
+        // Identity per item, pinned with independent literals.
+        assertEquals(
+            listOf("group-disposition-item:dup-b", "group-disposition-item:dup-a"),
+            groupItems.map { it.stableKey },
+        )
+        assertEquals(listOf("groupDispositionItem", "groupDispositionItem"), groupItems.map { it.contentType })
+        // The literal keys above already forbid both a positional component (which would read
+        // `group-disposition-item:7` / `group-disposition-item:3`) and a subject-candidate
+        // component (`candidate-dup-1` is shared by both members, so that key would collide).
+        // The description formatter renders the ordinal it is handed (J4 copy); this pins the copy
+        // contract only — the ordinal it receives is wired by the composable (P503ImportReview.kt
+        // `val itemOrdinal = item.state.ordinal`), which no unit test here reaches.
+        assertEquals(
+            "收起候选 candidate-dup-1 的第 7 条比较信息",
+            groupDispositionItemComparisonToggleDescription(
+                expanded = true,
+                candidateId = ImportCandidateId("candidate-dup-1"),
+                itemOrdinal = 7,
+            ),
+        )
+        assertEquals(
+            "展开候选 candidate-dup-1 的第 3 条比较信息",
+            groupDispositionItemComparisonToggleDescription(
+                expanded = false,
+                candidateId = ImportCandidateId("candidate-dup-1"),
+                itemOrdinal = 3,
+            ),
+        )
+    }
+
     // ---- batch confirmation entry gate (勾选集非空才可达) ----
 
     @Test

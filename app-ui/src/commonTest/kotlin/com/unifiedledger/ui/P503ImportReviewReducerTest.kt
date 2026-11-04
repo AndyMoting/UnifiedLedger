@@ -185,6 +185,42 @@ class P503ImportReviewReducerTest {
                 ),
         )
 
+    /** One enumerated group item (B6 paging fixtures; the snapshot/fingerprint pair is synthetic). */
+    private fun groupItem(duplicateId: String): ImportDuplicateGroupDispositionItem =
+        ImportDuplicateGroupDispositionItem(
+            candidateId = ImportCandidateId("candidate-suspected"),
+            duplicateCandidateId = ImportDuplicateCandidateId(duplicateId),
+            comparisonSnapshot = "{\"amount_minor\":3580}",
+            expectedComparisonFingerprint = "sha256:fixed-fingerprint-$duplicateId",
+        )
+
+    /** One ALREADY-LANDED card item carrying its whole-group ordinal (B6 paging, D-280). */
+    private fun landedItem(
+        duplicateId: String,
+        ordinal: Int,
+    ): ImportDuplicateGroupItemState = ImportDuplicateGroupItemState(item = groupItem(duplicateId), ordinal = ordinal)
+
+    /**
+     * The overview with an open group card on the given landed prefix (the host's post-window
+     * shape). `totalCount` is required: it is the count query's WHOLE-group total, which the
+     * page model defaults to `items.size`. Leaving the default in place would build a card whose
+     * header claims the landed prefix IS the whole group — masking exactly the distinction the
+     * paging tests exist to pin.
+     */
+    private fun overviewWithOpenGroup(
+        items: List<ImportDuplicateGroupItemState>,
+        totalCount: Int,
+        inputRef: String = "pick-handle-1",
+    ): P503AppState.OverviewEmpty {
+        val base = overview(session = acceptedSession(inputRef))
+        return base.copy(
+            importReview =
+                base.importReview?.copy(
+                    groupDisposition = ImportDuplicateGroupDispositionPage(inputRef, items, totalCount),
+                ),
+        )
+    }
+
     private fun acceptedSession(inputRef: String = "pick-handle-1"): ImportIntakeSessionSummary =
         ImportIntakeSessionSummary(
             displayName = "synthetic-bill.csv",
@@ -627,6 +663,232 @@ class P503ImportReviewReducerTest {
         assertSame(withoutPage, reducer.reduce(withoutPage, P503UiEvent.ImportDuplicateGroupDispositionResult(emptyList(), ImportReviewRowsResult.Unavailable)))
     }
 
+    // ---- B6 group-card paging: ImportGroupEnumerationPageLanded append semantics (D-280) ----
+
+    @Test
+    fun theFirstWindowLandsWithSequentialOrdinalsAndTheWholeGroupTotal() {
+        val source = overview(session = acceptedSession())
+        val firstWindow = listOf(groupItem("duplicate-1"), groupItem("duplicate-2"), groupItem("duplicate-3"))
+        val opened =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(source, P503UiEvent.StartImportDuplicateGroupDisposition("pick-handle-1", firstWindow, totalCount = 20_001)),
+            )
+        val page = opened.importReview?.groupDisposition
+        assertEquals("pick-handle-1", page?.inputRef)
+        assertEquals(listOf(1, 2, 3), page?.items?.map { it.ordinal })
+        assertEquals(firstWindow, page?.items?.map { it.item })
+        // The header count is the count query's whole-group total — never the landed window size
+        // (P704GP-ACC-COUNT-01 at the reducer level): 20,001 stored data rows vs 3 landed items.
+        assertEquals(20_001, page?.totalCount)
+        assertEquals(3, page?.items?.size)
+    }
+
+    @Test
+    fun aContinuationPageAppendsToThePrefixAndKeepsTheWholeGroupTotal() {
+        // The host's first window of a 20,001-item group, then one continuation page.
+        val source = overview(session = acceptedSession())
+        val opened =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(source, P503UiEvent.StartImportDuplicateGroupDisposition("pick-handle-1", listOf(groupItem("duplicate-1"), groupItem("duplicate-2"), groupItem("duplicate-3")), totalCount = 20_001)),
+            )
+        val appended =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(opened, P503UiEvent.ImportGroupEnumerationPageLanded("pick-handle-1", listOf(groupItem("duplicate-4"), groupItem("duplicate-5")), firstOrdinal = 4)),
+            )
+        val page = appended.importReview?.groupDisposition
+        // Same session handle, prefix preserved, the page appended after it.
+        assertEquals("pick-handle-1", page?.inputRef)
+        assertEquals(listOf("duplicate-1", "duplicate-2", "duplicate-3", "duplicate-4", "duplicate-5"), page?.items?.map { it.item.duplicateCandidateId.value })
+        // The whole-group ordinals continue 1..5 across the window boundary.
+        assertEquals(listOf(1, 2, 3, 4, 5), page?.items?.map { it.ordinal })
+        // The total is NOT recomputed from the landed items (the count query owns it).
+        assertEquals(20_001, page?.totalCount)
+    }
+
+    /**
+     * P704GP-ACC-COUNT-01 (the header N = the whole-group total, head and tail alike): through a
+     * whole round of page landings the total stays the count query's value — strictly larger than
+     * the landed prefix while pages are still in flight — and only equals `items.size` once the
+     * last page has landed. A reducer that wrote `totalCount = page.items.size` at the start or at
+     * any landing turns the intermediate `(size, totalCount)` pairs red (2/5, then 4/5); one that
+     * dropped or duplicated a landed item turns the final equality red.
+     */
+    @Test
+    fun theWholeGroupTotalOvershootsTheLandedPrefixUntilTheLastPageLands() {
+        val source = overview(session = acceptedSession())
+        val firstWindow = listOf(groupItem("duplicate-1"), groupItem("duplicate-2"))
+        val opened =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(source, P503UiEvent.StartImportDuplicateGroupDisposition("pick-handle-1", firstWindow, totalCount = 5)),
+            )
+        // Intermediate: the card is open on a 2-item prefix of a 5-item group — the prefix is
+        // still short of the total, which the count query alone supplies.
+        val head = opened.importReview?.groupDisposition
+        assertEquals(2, head?.items?.size)
+        assertEquals(5, head?.totalCount)
+
+        val second =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(opened, P503UiEvent.ImportGroupEnumerationPageLanded("pick-handle-1", listOf(groupItem("duplicate-3"), groupItem("duplicate-4")), firstOrdinal = 3)),
+            )
+        // Still intermediate: 4 landed, the total untouched.
+        val middle = second.importReview?.groupDisposition
+        assertEquals(4, middle?.items?.size)
+        assertEquals(5, middle?.totalCount)
+
+        val last =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(second, P503UiEvent.ImportGroupEnumerationPageLanded("pick-handle-1", listOf(groupItem("duplicate-5")), firstOrdinal = 5)),
+            )
+        // Tail: the count and the landed list agree exactly (the spec's COUNT-01 criterion).
+        val page = last.importReview?.groupDisposition
+        assertEquals(5, page?.items?.size)
+        assertEquals(page?.items?.size, page?.totalCount)
+        assertEquals(listOf(1, 2, 3, 4, 5), page?.items?.map { it.ordinal })
+    }
+
+    /**
+     * P704GP-ACC-COUNT-01 at the registered 20k magnitude (`P704GP-D-PERF-01` uses
+     * `itemCount=20001`): landing the whole group as 101 keyset pages of 200 (the last page holds
+     * the remaining 1) keeps the total and the ordinal bookkeeping exact end to end. The fixture is
+     * built by a range comprehension, not literal lines, and every assertion is a computed invariant
+     * rather than a re-statement:
+     * - the total stays the count query's 20,001 through every intermediate page (a reducer writing
+     *   `totalCount = items.size` per landing fails at the first page, where 200 != 20,001);
+     * - the final landed list is exactly 20,001 items in landing order (a dropped, duplicated or
+     *   reordered append fails the id sequence);
+     * - the ordinals are exactly 1..20,001 (a per-landing ordinal restart, or an ordinal derived
+     *   from a page-local index instead of `firstOrdinal`, fails);
+     * - `totalCount == items.size` only at the tail — that is COUNT-01's criterion.
+     * The reduce count is O(pages), but each append re-copies the grown prefix (`page.items +
+     * landed`), so the run is O(pages²·pageSize) reference copies (~1 M here, well under a second):
+     * a scale correctness pin, not a timing benchmark.
+     */
+    @Test
+    fun landingOneHundredAndOnePagesKeepsTheTotalAndOrdinalsExactAtTwentyThousandItems() {
+        val pageSize = 200
+        val total = 20_001
+        val pageCount = (total + pageSize - 1) / pageSize
+
+        fun duplicateId(index: Int): String = "dup-" + index.toString().padStart(5, '0')
+
+        fun pageItems(page: Int): List<ImportDuplicateGroupDispositionItem> {
+            val first = page * pageSize
+            val last = minOf(first + pageSize, total)
+            return (first until last).map { index -> groupItem(duplicateId(index)) }
+        }
+
+        var state: P503AppState.OverviewEmpty =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(overview(session = acceptedSession()), P503UiEvent.StartImportDuplicateGroupDisposition("pick-handle-1", pageItems(0), totalCount = total)),
+            )
+        val firstPage = state.importReview?.groupDisposition
+        assertEquals(pageSize, firstPage?.items?.size)
+        assertEquals(total, firstPage?.totalCount)
+
+        for (page in 1 until pageCount) {
+            val landed = pageItems(page)
+            state =
+                assertIs<P503AppState.OverviewEmpty>(
+                    reducer.reduce(state, P503UiEvent.ImportGroupEnumerationPageLanded("pick-handle-1", landed, firstOrdinal = page * pageSize + 1)),
+                )
+            val landedSoFar = state.importReview?.groupDisposition
+            // Intermediate invariant: the total never moves, and the prefix grows by exactly one
+            // page (short of the total until the final page) — an exact pair, so a recomputed
+            // total or a lost/duplicated append fails here and not only at the tail.
+            assertEquals(total, landedSoFar?.totalCount)
+            assertEquals(minOf((page + 1) * pageSize, total), landedSoFar?.items?.size)
+        }
+
+        val page = state.importReview?.groupDisposition
+        // COUNT-01's tail criterion, verbatim: the disclosed count equals the final landed
+        // `items.size`. The size check below is the independent half — it fails on item loss.
+        assertEquals(page?.items?.size, page?.totalCount)
+        assertEquals(total, page?.items?.size)
+        // The whole-group ordinals are exactly 1..20,001 — no restart, no page-local offset.
+        assertEquals((1..total).toList(), page?.items?.map { it.ordinal })
+        // Landing order preserved across all 101 page boundaries; the distinct id list also proves
+        // no item was dropped or duplicated by the append.
+        assertEquals(
+            (0 until total).map { duplicateId(it) },
+            page?.items?.map { it.item.duplicateCandidateId.value },
+        )
+    }
+
+    @Test
+    fun aLandedPageKeepsItsLandingOrderAfterTheExistingPrefix() {
+        // P704GP-ACC-ORDER-01 at the reducer level: the landed page's items appear after the
+        // existing prefix in landing order — keyset order is never re-sorted or interleaved.
+        // The fixture is deliberately NOT lexicographically ascending: the landed prefix runs
+        // duplicate-d, duplicate-c and the continuation page lands duplicate-b, duplicate-a. A
+        // regression that sorts the accumulated list (`.sortedBy { it.duplicateCandidateId }`) or
+        // re-orders by list index would produce a, b, c, d and fail the literal below; with an
+        // already-ascending fixture that regression would be invisible.
+        val opened =
+            overviewWithOpenGroup(
+                items = listOf(landedItem("duplicate-d", 1), landedItem("duplicate-c", 2)),
+                totalCount = 4,
+            )
+        val appended =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(opened, P503UiEvent.ImportGroupEnumerationPageLanded("pick-handle-1", listOf(groupItem("duplicate-b"), groupItem("duplicate-a")), firstOrdinal = 3)),
+            )
+        val landed = appended.importReview?.groupDisposition
+        assertEquals(
+            listOf("duplicate-d", "duplicate-c", "duplicate-b", "duplicate-a"),
+            landed?.items?.map { it.item.duplicateCandidateId.value },
+        )
+        // The whole-group ordinals follow the same landing order 1..4 — an ordinal re-derived
+        // from a re-sorted position would disagree with the ids above.
+        assertEquals(listOf(1, 2, 3, 4), landed?.items?.map { it.ordinal })
+    }
+
+    @Test
+    fun aPageLandedForADifferentInputRefIsAbsorbed() {
+        val opened = overviewWithOpenGroup(items = listOf(landedItem("duplicate-1", 1), landedItem("duplicate-2", 2)), totalCount = 3)
+        // The same-inputRef gate: another session's page must not leak into the open card.
+        assertSame(
+            opened,
+            reducer.reduce(opened, P503UiEvent.ImportGroupEnumerationPageLanded("pick-handle-other", listOf(groupItem("duplicate-9")), firstOrdinal = 3)),
+        )
+    }
+
+    @Test
+    fun aPageLandedAfterTheCardClosedIsAbsorbedAndDoesNotReopenIt() {
+        val opened = overviewWithOpenGroup(items = listOf(landedItem("duplicate-1", 1)), totalCount = 2)
+        val closed = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(opened, P503UiEvent.CloseImportDuplicateGroupDisposition))
+        assertNull(closed.importReview?.groupDisposition)
+        // A late landing for the closed card's own inputRef is still absorbed (stale-landing
+        // discipline: the generation gate closes the round host-side, mirrored here) — the
+        // assertSame already proves the card was not reopened.
+        assertSame(
+            closed,
+            reducer.reduce(closed, P503UiEvent.ImportGroupEnumerationPageLanded("pick-handle-1", listOf(groupItem("duplicate-2")), firstOrdinal = 2)),
+        )
+    }
+
+    @Test
+    fun aPageLandedWithoutAProjectionOrAnOpenCardIsAbsorbed() {
+        val bare = P503AppState.OverviewEmpty(emptyState)
+        assertSame(bare, reducer.reduce(bare, P503UiEvent.ImportGroupEnumerationPageLanded("pick-handle-1", listOf(groupItem("duplicate-1")), firstOrdinal = 1)))
+        // A projection without an open card must not materialize one for a landing page.
+        val withoutPage = overview(session = acceptedSession())
+        assertSame(withoutPage, reducer.reduce(withoutPage, P503UiEvent.ImportGroupEnumerationPageLanded("pick-handle-1", listOf(groupItem("duplicate-1")), firstOrdinal = 1)))
+    }
+
+    @Test
+    fun landingPagesAssignTheEventsWholeGroupOrdinalsRatherThanTheListIndex() {
+        val opened = overviewWithOpenGroup(items = listOf(landedItem("duplicate-1", 1), landedItem("duplicate-2", 2)), totalCount = 1_003)
+        // firstOrdinal is deliberately far from the landed prefix size (2): the reducer must
+        // take the event's whole-group position, never re-derive it from the list index.
+        val appended =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(opened, P503UiEvent.ImportGroupEnumerationPageLanded("pick-handle-1", listOf(groupItem("duplicate-3"), groupItem("duplicate-4")), firstOrdinal = 1_001)),
+            )
+        val page = appended.importReview?.groupDisposition
+        assertEquals(listOf(1, 2, 1_001, 1_002), page?.items?.map { it.ordinal })
+    }
+
     // ---- P7-05 enumeration progress events (session-level batch read in-flight marker) ----
 
     @Test
@@ -775,11 +1037,34 @@ class P503ImportReviewReducerTest {
             assertSame(state, reducer.reduce(state, P503UiEvent.StartImportDuplicateGroupDisposition("pick-handle-1", listOf(item), totalCount = 1)))
             assertSame(state, reducer.reduce(state, P503UiEvent.ImportDuplicateGroupDispositionResult(emptyList(), ImportReviewRowsResult.Unavailable)))
             assertSame(state, reducer.reduce(state, P503UiEvent.CloseImportDuplicateGroupDisposition))
+            assertSame(state, reducer.reduce(state, P503UiEvent.ImportGroupEnumerationPageLanded("pick-handle-1", listOf(item), 1)))
+        }
+    }
+
+    /**
+     * The paged-enumeration landing is absorbed on every state this fixture enumerates outside the
+     * overview: the reducer returns the SAME instance, so a landing can neither switch the machine
+     * nor reopen a card. (The bare OverviewEmpty and the no-open-card overview absorb it too —
+     * `aPageLandedWithoutAProjectionOrAnOpenCardIsAbsorbed`.)
+     *
+     * Scope note: `allStates()` enumerates a representative set, not the full sealed hierarchy. The
+     * un-enumerated surfaces are absorbed structurally — each `P503Reducer` arm for this event
+     * falls through to its own `else ->`/absorb arm, which returns the receiver unchanged — but
+     * this test does not claim to cover them. It proves state-machine absorption; it does NOT test
+     * P704GP-ACC-FAIL-01 (a typed page failure must abort the whole round with zero landing), which
+     * lives host-side.
+     */
+    @Test
+    fun groupEnumerationPageLandedIsAbsorbedOutsideTheOverviewForEveryStateThisFixtureEnumerates() {
+        allStates().filterNot { it is P503AppState.OverviewEmpty }.forEach { state ->
+            assertSame(
+                state,
+                reducer.reduce(state, P503UiEvent.ImportGroupEnumerationPageLanded("pick-handle-1", listOf(groupItem("duplicate-1")), firstOrdinal = 1)),
+            )
         }
     }
 
     // ---- pre-existing events on the new state: absorbed except Exit (§6.2/6.3) ----
-
     @Test
     fun preExistingEventsAreAbsorbedOnTheImportDetail() {
         val state = detail()

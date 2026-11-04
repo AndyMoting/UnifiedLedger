@@ -108,6 +108,41 @@ class P503ImportReviewHostCoordinatorTest {
     }
 
     /**
+     * B6 group-card paging batch (D-280, spec section 3.4): the enumeration's single-flight slot and
+     * the accessor the whole-group confirm gate reads ([P503HostCoordinator.isImportGroupEnumerationRunning])
+     * are the SAME flag, and only the round's end clears it. This pins the slot's lifetime, not a
+     * page landing: nothing in this test lands a page (the coordinator has no page event). Pages
+     * land inside the round by construction — they are dispatched from the round's final hop — so
+     * while the round runs, the confirm action's gate at `P503App.kt:2486` refuses a tap on a
+     * partial prefix.
+     */
+    @Test
+    fun theEnumerationRunningAccessorMirrorsTheSingleFlightSlotUntilTheRoundEnds() {
+        var enumerations = 0
+        val coordinator =
+            P503HostCoordinator(
+                onRefresh = { error("unused") },
+                onSubmit = { _, _ -> error("unused") },
+                onCheck = { _, _ -> error("unused") },
+            )
+
+        assertFalse(coordinator.isImportGroupEnumerationRunning())
+        assertTrue(coordinator.startImportDuplicateGroupDispositionOnce { enumerations += 1 })
+        // The accessor and the single-flight slot agree while the round runs: a second start is
+        // refused exactly when the accessor reports running.
+        assertTrue(coordinator.isImportGroupEnumerationRunning())
+        assertFalse(coordinator.startImportDuplicateGroupDispositionOnce { enumerations += 1 })
+        assertTrue(coordinator.isImportGroupEnumerationRunning())
+        assertEquals(1, enumerations)
+
+        // Only the round's end clears the marker — and with it the whole-group confirm gate.
+        coordinator.importGroupEnumerationCompleted()
+        assertFalse(coordinator.isImportGroupEnumerationRunning())
+        assertTrue(coordinator.startImportDuplicateGroupDispositionOnce { enumerations += 1 })
+        assertEquals(2, enumerations)
+    }
+
+    /**
      * P704C-SPEC-01/QUAL-02: the group-disposition per-item review loop is single-flight — a
      * double tap must not interleave two core review loops; the slot re-arms once the loop result
      * has been dispatched.
