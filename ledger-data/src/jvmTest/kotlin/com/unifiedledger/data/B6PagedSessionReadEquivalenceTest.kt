@@ -330,15 +330,14 @@ class B6PagedSessionReadEquivalenceTest {
                             "WHERE duplicate.ledger_id = 'ledger-b6-page' AND subject.input_ref = 'session-b6p' " +
                             "AND duplicate.candidate_id > '' ORDER BY duplicate.candidate_id LIMIT 2",
                         mapper = { cursor ->
-                            QueryResult.Value(buildList {
-                                while (cursor.next().value) {
-                                    add(cursor.getString(3) ?: "")
-                                }
-                            })
+                            val detail = mutableListOf<String>()
+                            while (cursor.next().value) {
+                                detail += cursor.getString(3) ?: ""
+                            }
+                            QueryResult.Value(detail)
                         },
                         parameters = 0,
-                    )
-                    .value
+                    ).value
             // No "TEMP B-TREE FOR ORDER BY" over the whole set (the ORDER BY rides the PK):
             // every detail row must be a SEARCH (index lookup), never a full SCAN of the join
             // followed by a sort. The strict pin is "no SORTER step": the fragment 'USE TEMP
