@@ -63,29 +63,36 @@ class BackupContainerV2CryptoJvmTest {
             }
         }
 
-    private fun deterministicCrypto(saltSeed: Byte = 0, ivSeed: Byte = 16) =
-        JvmBackupCryptoPrimitives { count ->
-            when (count) {
-                BACKUP_SALT_LENGTH -> ByteArray(16) { (it + saltSeed).toByte() }
-                else -> ByteArray(12) { (it + ivSeed).toByte() }
-            }
+    private fun deterministicCrypto(
+        saltSeed: Byte = 0,
+        ivSeed: Byte = 16,
+    ) = JvmBackupCryptoPrimitives { count ->
+        when (count) {
+            BACKUP_SALT_LENGTH -> ByteArray(16) { (it + saltSeed).toByte() }
+            else -> ByteArray(12) { (it + ivSeed).toByte() }
         }
+    }
 
-    private fun writeV2(payload: ByteArray, crypto: JvmBackupCryptoPrimitives = deterministicCrypto()): ByteArray {
+    private fun writeV2(
+        payload: ByteArray,
+        crypto: JvmBackupCryptoPrimitives = deterministicCrypto(),
+    ): ByteArray {
         val sink = CollectingSink()
         writeBackupContainerV2(source(payload), sink, password, 31, payload.size.toLong(), crypto)
         return sink.bytes.toByteArray()
     }
 
-    private fun parsedHeaderOf(container: ByteArray): BackupContainerHeader =
-        assertIs<BackupHeaderParseResult.Parsed>(parseBackupContainerHeader(container.copyOf(BACKUP_FIXED_HEADER_LENGTH))).header
+    private fun parsedHeaderOf(container: ByteArray): BackupContainerHeader = assertIs<BackupHeaderParseResult.Parsed>(parseBackupContainerHeader(container.copyOf(BACKUP_FIXED_HEADER_LENGTH))).header
 
     /**
      * Decrypts a produced v2 container through the chunked walk with real JCE, the way the
      * preflight dispatches it (key derived ONCE from the header's salt/iterations, then handed to
      * the walk; cleared after use).
      */
-    private fun decryptV2(container: ByteArray, password: String): ByteArray {
+    private fun decryptV2(
+        container: ByteArray,
+        password: String,
+    ): ByteArray {
         val header = parsedHeaderOf(container)
         require(header.containerFormatVersion == BACKUP_CONTAINER_FORMAT_VERSION_V2) { "not a v2 container" }
         val salt = container.copyOfRange(BACKUP_FIXED_HEADER_LENGTH, BACKUP_FIXED_HEADER_LENGTH + header.saltLength)
@@ -162,8 +169,9 @@ class BackupContainerV2CryptoJvmTest {
         // Swap the two chunks' wires (ciphertext || tag each) wholesale.
         val reordered = container.copyOf()
         val chunk0 = container.copyOfRange(payloadStart, payloadStart + chunkLength)
-        container.copyOfRange(payloadStart + chunkLength, container.size).copyInto(reordered, payloadStart)
-        chunk0.copyInto(reordered, payloadStart + chunkLength)
+        val chunk1 = container.copyOfRange(payloadStart + chunkLength, container.size)
+        chunk1.copyInto(reordered, payloadStart)
+        chunk0.copyInto(reordered, payloadStart + chunk1.size)
 
         val failure = runCatching { decryptV2(reordered, password) }.exceptionOrNull()
         assertTrue(failure is BackupV2AuthenticationException, "a reordered chunk must fail its tag, got $failure")

@@ -18,7 +18,9 @@ package com.unifiedledger.application.backup
  */
 
 /** The platform AEAD tag verification of one v2 chunk failed (the uniform cryptographic failure). */
-class BackupV2AuthenticationException(cause: Throwable) : RuntimeException("v2 chunk tag verification failed", cause)
+class BackupV2AuthenticationException(
+    cause: Throwable,
+) : RuntimeException("v2 chunk tag verification failed", cause)
 
 /** The v2 cipher stream ended inside a chunk window (structurally short, NOT a crypto failure). */
 class ShortChunkStreamException : RuntimeException("v2 cipher stream ended inside a chunk window")

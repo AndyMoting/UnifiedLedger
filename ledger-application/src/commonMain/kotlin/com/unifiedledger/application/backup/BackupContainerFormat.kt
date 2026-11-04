@@ -209,8 +209,7 @@ fun backupContainerV2ChunkIv(
  * a ZERO-length plaintext has ZERO chunks (spec section 4.11.4) — the same rejection path as the
  * v1 zero-length payload.
  */
-fun backupContainerV2ChunkCount(plaintextLength: Long): Long =
-    if (plaintextLength <= 0L) 0L else (plaintextLength + BACKUP_V2_CHUNK_SIZE - 1) / BACKUP_V2_CHUNK_SIZE
+fun backupContainerV2ChunkCount(plaintextLength: Long): Long = if (plaintextLength <= 0L) 0L else (plaintextLength + BACKUP_V2_CHUNK_SIZE - 1) / BACKUP_V2_CHUNK_SIZE
 
 /**
  * The plaintext length of the chunk at [chunkIndex] (container-format spec section 4.11.2): every

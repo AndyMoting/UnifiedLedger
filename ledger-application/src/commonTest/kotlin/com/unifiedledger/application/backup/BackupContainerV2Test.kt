@@ -208,8 +208,20 @@ class BackupContainerV2Test {
         val baseIv = crypto.randomBytes(BACKUP_IV_LENGTH)
         // The derived chunk IV replaces the base IV's LAST 4 BYTES wholesale: bytes 8..11 become
         // the BE u32 chunk index (00 00 00 00 for chunk 0, 00 00 00 01 for chunk 1).
-        val chunk0Iv = baseIv.copyOf().also { it[8] = 0; it[9] = 0; it[10] = 0; it[11] = 0 }
-        val chunk1Iv = baseIv.copyOf().also { it[8] = 0; it[9] = 0; it[10] = 0; it[11] = 1 }
+        val chunk0Iv =
+            baseIv.copyOf().also {
+                it[8] = 0
+                it[9] = 0
+                it[10] = 0
+                it[11] = 0
+            }
+        val chunk1Iv =
+            baseIv.copyOf().also {
+                it[8] = 0
+                it[9] = 0
+                it[10] = 0
+                it[11] = 1
+            }
         assertTrue(inits[0].endsWith("iv=${chunk0Iv.toHex()}:aadLen=${BACKUP_FIXED_HEADER_LENGTH + BACKUP_SALT_LENGTH + 4}"), inits[0])
         assertTrue(inits[1].endsWith("iv=${chunk1Iv.toHex()}:aadLen=${BACKUP_FIXED_HEADER_LENGTH + BACKUP_SALT_LENGTH + 4}"), inits[1])
 
@@ -386,14 +398,29 @@ class BackupContainerV2Test {
         assertTrue(
             decryptInits[0].endsWith(
                 "iv=" +
-                    baseIvAgain.copyOf().also { it[8] = 0; it[9] = 0; it[10] = 0; it[11] = 0 }.toHex() +
+                    baseIvAgain
+                        .copyOf()
+                        .also {
+                            it[8] = 0
+                            it[9] = 0
+                            it[10] = 0
+                            it[11] = 0
+                        }.toHex() +
                     ":aadLen=${BACKUP_FIXED_HEADER_LENGTH + BACKUP_SALT_LENGTH + 4}",
             ),
             decryptInits[0],
         )
         assertTrue(
             decryptInits[1].endsWith(
-                "iv=" + baseIvAgain.copyOf().also { it[8] = 0; it[9] = 0; it[10] = 0; it[11] = 1 }.toHex() +
+                "iv=" +
+                    baseIvAgain
+                        .copyOf()
+                        .also {
+                            it[8] = 0
+                            it[9] = 0
+                            it[10] = 0
+                            it[11] = 1
+                        }.toHex() +
                     ":aadLen=${BACKUP_FIXED_HEADER_LENGTH + BACKUP_SALT_LENGTH + 4}",
             ),
             decryptInits[1],
@@ -445,8 +472,7 @@ class BackupContainerV2Test {
 
     // ------------------------------------------------------------------ helpers
 
-    private fun parsedHeaderOf(container: ByteArray): BackupContainerHeader =
-        assertIs<BackupHeaderParseResult.Parsed>(parseBackupContainerHeader(container.copyOf(BACKUP_FIXED_HEADER_LENGTH))).header
+    private fun parsedHeaderOf(container: ByteArray): BackupContainerHeader = assertIs<BackupHeaderParseResult.Parsed>(parseBackupContainerHeader(container.copyOf(BACKUP_FIXED_HEADER_LENGTH))).header
 
     private fun headerWith(
         version: Int,
@@ -458,15 +484,17 @@ class BackupContainerV2Test {
         header[7] = aead.toByte()
         return header
     }
+}
 
-    private fun ByteArray.toHex(): String {
-        val digits = "0123456789abcdef"
-        val builder = StringBuilder(size * 2)
-        for (byte in this) {
-            val value = byte.toInt() and 0xFF
-            builder.append(digits[value ushr 4])
-            builder.append(digits[value and 0x0F])
-        }
-        return builder.toString()
+/** Hex-encodes the bytes for the recording fakes' event strings (a file-level extension: the
+ * nested `RecordingCrypto` class cannot use an outer-class member extension as a receiver). */
+private fun ByteArray.toHex(): String {
+    val digits = "0123456789abcdef"
+    val builder = StringBuilder(size * 2)
+    for (byte in this) {
+        val value = byte.toInt() and 0xFF
+        builder.append(digits[value ushr 4])
+        builder.append(digits[value and 0x0F])
     }
+    return builder.toString()
 }

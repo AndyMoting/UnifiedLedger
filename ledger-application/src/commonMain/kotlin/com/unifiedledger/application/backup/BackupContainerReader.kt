@@ -179,8 +179,8 @@ fun parseBackupContainerHeader(bytes: ByteArray): BackupHeaderParseResult {
     // (including (2, 1), which the v1 regression set pins to P706_CONTAINER_VERSION_UNSUPPORTED
     // and section 4.11.5 freezes as the old-reader behavior), except the single new pair (2, 2).
     // Version 1 with a foreign AEAD id fails on the AEAD row, exactly as v1 did.
-    if (formatVersion != BACKUP_CONTAINER_FORMAT_VERSION &&
-        !(formatVersion == BACKUP_CONTAINER_FORMAT_VERSION_V2 && aeadId == BACKUP_AEAD_ID_CHUNKED)
+    if (formatVersion != BACKUP_CONTAINER_FORMAT_VERSION.toLong() &&
+        !(formatVersion == BACKUP_CONTAINER_FORMAT_VERSION_V2.toLong() && aeadId == BACKUP_AEAD_ID_CHUNKED)
     ) {
         return BackupHeaderParseResult.Rejected(BackupPreflightRejection.P706_CONTAINER_VERSION_UNSUPPORTED)
     }
@@ -188,7 +188,7 @@ fun parseBackupContainerHeader(bytes: ByteArray): BackupHeaderParseResult {
     if (kdfId != BACKUP_KDF_ID) {
         return BackupHeaderParseResult.Rejected(BackupPreflightRejection.P706_KDF_UNSUPPORTED)
     }
-    if (formatVersion == BACKUP_CONTAINER_FORMAT_VERSION && aeadId != BACKUP_AEAD_ID) {
+    if (formatVersion == BACKUP_CONTAINER_FORMAT_VERSION.toLong() && aeadId != BACKUP_AEAD_ID) {
         return BackupHeaderParseResult.Rejected(BackupPreflightRejection.P706_AEAD_UNSUPPORTED)
     }
     val iterations = readU32(bytes, 8)
