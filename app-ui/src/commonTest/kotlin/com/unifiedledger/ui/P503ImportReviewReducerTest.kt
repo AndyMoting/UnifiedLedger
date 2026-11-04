@@ -749,9 +749,10 @@ class P503ImportReviewReducerTest {
 
     /**
      * P704GP-ACC-COUNT-01 at the registered 20k magnitude (`P704GP-D-PERF-01` uses
-     * `itemCount=20001`): landing the whole group as 101 keyset pages of 200 keeps the total and
-     * the ordinal bookkeeping exact end to end. The fixture is built by a range comprehension, not
-     * literal lines, and every assertion is a computed invariant rather than a re-statement:
+     * `itemCount=20001`): landing the whole group as 101 keyset pages of 200 (the last page holds
+     * the remaining 1) keeps the total and the ordinal bookkeeping exact end to end. The fixture is
+     * built by a range comprehension, not literal lines, and every assertion is a computed invariant
+     * rather than a re-statement:
      * - the total stays the count query's 20,001 through every intermediate page (a reducer writing
      *   `totalCount = items.size` per landing fails at the first page, where 200 != 20,001);
      * - the final landed list is exactly 20,001 items in landing order (a dropped, duplicated or
@@ -759,8 +760,9 @@ class P503ImportReviewReducerTest {
      * - the ordinals are exactly 1..20,001 (a per-landing ordinal restart, or an ordinal derived
      *   from a page-local index instead of `firstOrdinal`, fails);
      * - `totalCount == items.size` only at the tail — that is COUNT-01's criterion.
-     * The run cost is O(pages) reduce calls over one growing prefix, so it is a scale correctness
-     * pin, not a timing benchmark.
+     * The reduce count is O(pages), but each append re-copies the grown prefix (`page.items +
+     * landed`), so the run is O(pages²·pageSize) reference copies (~1 M here, well under a second):
+     * a scale correctness pin, not a timing benchmark.
      */
     @Test
     fun landingOneHundredAndOnePagesKeepsTheTotalAndOrdinalsExactAtTwentyThousandItems() {
