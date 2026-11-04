@@ -177,10 +177,16 @@ def slice_last_round(text: str) -> str:
 def judge(rounds: list[dict], expected_rounds: int, limit_ms: int, fixture_relations: int = FIXTURE_RELATIONS) -> dict:
     """Apply every bound to the parsed rounds and return the verdict, never raising.
 
-    `fixture_relations` is the scale the run declared: a round whose reuse line reports a smaller
-    group did not measure the fixture this verdict is about, whatever its timing.
+    `fixture_relations` is the scale this verdict is about, and the round's own reuse line must
+    report EXACTLY that many relations. Equality, not a lower bound: a 20k reading judged at three
+    relations would otherwise be relabelled a small-group reading, and a thin group judged at 20k
+    would pass on a bound it never met. A non-positive scale cannot be a real group, so it is a
+    FAIL reason rather than a silent disabled bound — this function's contract is that it never
+    raises, and a scale of 0 must never read as PASS.
     """
     reasons: list[str] = []
+    if fixture_relations < 1:
+        reasons.append(f"fixture_relations={fixture_relations} is not a group scale; at least one relation is required")
     if len(rounds) != expected_rounds:
         reasons.append(f"{len(rounds)} round log(s) are on disk, {expected_rounds} were requested")
     for index, item in enumerate(rounds, start=1):
@@ -189,10 +195,10 @@ def judge(rounds: list[dict], expected_rounds: int, limit_ms: int, fixture_relat
         if item["click_to_card_ms"] is None:
             reasons.append(f"round {index}: no click-to-card mark was staged")
         relations = item["fixture_relations"]
-        if relations is None or relations < fixture_relations:
+        if relations != fixture_relations:
             reasons.append(
-                f"round {index}: the {fixture_relations}-relation duplicate-group fixture was not "
-                f"reused (relations={relations})"
+                f"round {index}: the duplicate-group fixture reused {relations} relations, not the requested "
+                f"{fixture_relations}"
             )
     values = [item["click_to_card_ms"] for item in rounds if item["click_to_card_ms"] is not None]
     worst = max(values) if values else None
@@ -347,16 +353,21 @@ def gate_evidence(
 ) -> dict:
     """Re-derive the verdict from the round logs on disk; `host.json` only identifies the run.
 
-    The scale check is the same anti-mismatch discipline as the `sha` check: evidence produced for
-    one group must never be judged against another group's bound.
+    The scale check is symmetric, and this tool therefore refuses cross-scale evidence in BOTH
+    directions: `judge` requires every round's reuse line to report exactly `fixture_relations`, so
+    20k evidence judged at three relations fails instead of being relabelled, and a three-relation
+    group judged at 20k fails on the same bound. A non-positive scale is a refusal here, never a
+    disabled bound.
 
     Evidence written before the scale parameter existed carries no `fixture_relations` key. That is
     the pre-parameter record, not suspect evidence, and its scale is still knowable from the round
     logs (`parse_round` reads the `relations=` value out of each `b6 fixture reuse:` line), so an
-    absent key defers to `judge`'s own lower bound instead of refusing. Only a key that is PRESENT
-    and different is a real mismatch: it says the session declared one scale and is being judged at
-    another.
+    absent key defers to that equality check instead of refusing. Only a key that is PRESENT and
+    different is a host-level mismatch, and it is refused because it makes the record self-
+    contradictory.
     """
+    if fixture_relations < 1:
+        raise B6Error(f"fixture_relations={fixture_relations} is not a group scale; at least one relation is required")
     host_path = evidence / "host.json"
     if not host_path.is_file():
         raise B6Error("the session wrote no host.json; nothing to gate")

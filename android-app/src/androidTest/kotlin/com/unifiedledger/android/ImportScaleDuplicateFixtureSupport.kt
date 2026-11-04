@@ -145,10 +145,12 @@ internal data class ScaleDuplicateFixture(
  * inventory already excludes by class. A test-free builder means the runner can never discover a
  * second, differently-configured seed path.
  *
- * The published library holds exactly three candidate rows at any `relations` scale: one rejected
- * baseline candidate (its own business tuple, so it never joins the group), `relations` historical
- * settled source records that are NOT candidates, and one new pending candidate whose single real
- * intake produced `relations` duplicate relations.
+ * The published library holds exactly TWO candidate rows at any `relations` scale: one rejected
+ * baseline candidate (its own business tuple, so it never joins the group) and one new pending
+ * candidate whose single real intake produced `relations` duplicate relations. It also holds
+ * `relations` historical settled source records that are NOT candidates. The activation intake adds
+ * the third candidate at run time, which is why the post-activation total is 3 and the fixture's own
+ * count is 2.
  *
  * Why the historical sources exist: [com.unifiedledger.data.SqlDelightImportSpineStore]
  * refuses an intake whose allocated duplicate-id group count differs from the transaction's own

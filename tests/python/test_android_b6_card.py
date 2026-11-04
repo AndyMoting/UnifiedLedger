@@ -5,6 +5,8 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +19,7 @@ from android_b6_card import (
     format_verdict,
     judge,
     gate_evidence,
+    main,
     owned_serial,
     parse_avd_name,
     parse_round,
@@ -128,16 +131,46 @@ class Judging(unittest.TestCase):
         verdict = judge(self.rounds(400, 400, 400, relations=FIXTURE_RELATIONS - 1), 3, 3000)
         self.assertEqual("FAIL", verdict["verdict"])
 
-    def test_a_round_below_the_requested_scale_fails_and_names_it(self) -> None:
+    def test_a_round_above_the_requested_scale_fails_and_names_both_values(self) -> None:
+        # Equality, not a lower bound: 20k evidence must never be relabelled a 4k reading.
+        verdict = judge(self.rounds(400, relations=20_000), 1, 3000, 4000)
+        self.assertEqual("FAIL", verdict["verdict"])
+        joined = " ".join(verdict["reasons"])
+        self.assertIn("20000 relations", joined)
+        self.assertIn("requested 4000", joined)
+
+    def test_a_round_below_the_requested_scale_fails_and_names_both_values(self) -> None:
         verdict = judge(self.rounds(400, relations=1500), 1, 3000, 4000)
         self.assertEqual("FAIL", verdict["verdict"])
-        self.assertTrue(any("4000-relation" in reason for reason in verdict["reasons"]))
-        self.assertNotIn("20000-relation", " ".join(verdict["reasons"]))
+        joined = " ".join(verdict["reasons"])
+        self.assertIn("1500 relations", joined)
+        self.assertIn("requested 4000", joined)
 
     def test_a_three_relation_round_passes_at_the_small_scale(self) -> None:
-        # The SCALE-01 shape: the same gate must accept the D-274 three-relation group.
+        # The SCALE-01 shape: the same gate must accept the D-274 three-relation group, and equality
+        # is exactly the test for it (three relations in, three declared).
         verdict = judge(self.rounds(400, relations=3), 1, 3000, 3)
         self.assertEqual("PASS", verdict["verdict"])
+
+    def test_a_three_relation_round_fails_when_judged_at_20k(self) -> None:
+        verdict = judge(self.rounds(400, relations=3), 1, 3000, FIXTURE_RELATIONS)
+        self.assertEqual("FAIL", verdict["verdict"])
+        self.assertIn("3 relations", " ".join(verdict["reasons"]))
+
+    def test_a_zero_scale_can_never_read_as_pass(self) -> None:
+        # judge "never raises", so the refusal is a FAIL reason instead of an exception; what it
+        # must never be is a silent PASS with the bound disabled.
+        verdict = judge(self.rounds(400, relations=20_000), 1, 3000, 0)
+        self.assertEqual("FAIL", verdict["verdict"])
+        self.assertTrue(verdict["reasons"])
+        self.assertIn("is not a group scale", " ".join(verdict["reasons"]))
+
+    def test_a_negative_scale_can_never_read_as_pass(self) -> None:
+        # The equality bound would also reject a negative scale, but for the wrong reason and with a
+        # misleading message; the positivity reason is what says the scale itself is invalid.
+        verdict = judge(self.rounds(400, relations=1_000), 1, 3000, -1)
+        self.assertEqual("FAIL", verdict["verdict"])
+        self.assertIn("is not a group scale", " ".join(verdict["reasons"]))
 
 
 class Ownership(unittest.TestCase):
@@ -398,7 +431,41 @@ class Gating(unittest.TestCase):
         (self.evidence / "host.json").write_text(json.dumps(payload))
         verdict = gate_evidence(self.evidence, SHA, 1, 3000, FIXTURE_RELATIONS)
         self.assertEqual("FAIL", verdict["verdict"])
-        self.assertTrue(any("20000-relation" in reason for reason in verdict["reasons"]))
+        self.assertIn("reused 3 relations", " ".join(verdict["reasons"]))
+
+    def test_a_scale_less_20k_record_judged_as_small_fails_instead_of_relabelling(self) -> None:
+        # SCALE-1: the pre-parameter 20k record must never be re-gated as a small-group PASS. With
+        # no host key the round logs decide, and equality rejects 20000 against 3.
+        self.write(block(1770), block(1644), block(1563))
+        payload = json.loads((self.evidence / "host.json").read_text())
+        del payload["fixture_relations"]
+        (self.evidence / "host.json").write_text(json.dumps(payload))
+        verdict = gate_evidence(self.evidence, SHA, 3, 3000, 3)
+        self.assertEqual("FAIL", verdict["verdict"])
+        joined = " ".join(verdict["reasons"])
+        self.assertIn("reused 20000 relations", joined)
+        self.assertIn("requested 3", joined)
+
+    def test_a_declared_20k_record_judged_as_small_fails_on_the_relations_bound(self) -> None:
+        # The same closure through the host key path: a declared 20000 read at 3 fails on the
+        # round's relations, and the host-level mismatch is a separate refusal.
+        self.write(block(640, relations=FIXTURE_RELATIONS), fixture_relations=FIXTURE_RELATIONS)
+        with self.assertRaises(B6Error):
+            gate_evidence(self.evidence, SHA, 1, 3000, 3)
+
+    def test_a_zero_scale_is_refused_by_the_gate(self) -> None:
+        self.write(block(640))
+        with self.assertRaises(B6Error) as caught:
+            gate_evidence(self.evidence, SHA, 1, 3000, 0)
+        self.assertIn("not a group scale", str(caught.exception))
+        self.assertFalse((self.evidence / "gate.json").exists())
+
+    def test_a_negative_scale_is_refused_by_the_gate(self) -> None:
+        self.write(block(640))
+        with self.assertRaises(B6Error) as caught:
+            gate_evidence(self.evidence, SHA, 1, 3000, -5)
+        self.assertIn("not a group scale", str(caught.exception))
+        self.assertFalse((self.evidence / "gate.json").exists())
 
     def test_a_declared_scale_that_disagrees_with_the_judging_scale_is_refused(self) -> None:
         # A PRESENT key is the anti-mismatch discipline: the session declared a scale, so judging it
@@ -432,6 +499,66 @@ class Gating(unittest.TestCase):
         self.assertEqual(3000, verdict["limit_ms"])
         self.assertEqual(FIXTURE_RELATIONS, verdict["fixture_relations"])
         self.assertEqual(1770, verdict["max_click_to_card_ms"])
+
+
+class Cli(unittest.TestCase):
+    """`main` end to end: the flag must be parsed, honoured and reported, or CI cannot see it."""
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.evidence = Path(self.temp.name) / "evidence"
+        self.evidence.mkdir()
+
+    def write(self, *blocks: str, sha: str = SHA, fixture_relations: int = FIXTURE_RELATIONS) -> None:
+        payload = {
+            "apk_sha256": {"app": "a" * 64, "test": "b" * 64},
+            "avd": DEFAULT_AVD,
+            "fixture_relations": fixture_relations,
+            "rounds": [],
+            "serial": "emulator-9999",
+            "sha": sha,
+        }
+        (self.evidence / "host.json").write_text(json.dumps(payload))
+        for index, text in enumerate(blocks, start=1):
+            (self.evidence / f"round-{index}.log").write_text(text)
+
+    def gate(self, *extra: str) -> tuple[int, str]:
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = main(["gate", "--evidence", str(self.evidence), "--sha", SHA, *extra])
+        return code, buffer.getvalue()
+
+    def test_the_cli_honours_the_scale_and_exits_zero_on_pass(self) -> None:
+        self.write(block(640, relations=3), fixture_relations=3)
+        code, out = self.gate("--rounds", "1", "--limit-ms", "3000", "--fixture-relations", "3")
+        self.assertEqual(0, code)
+        self.assertIn("PASS", out)
+        self.assertIn("scale=3 relations", out)
+
+    def test_the_cli_fails_a_20k_record_judged_as_small_and_exits_one(self) -> None:
+        # The SCALE-1 shape through the real entry point: a FAIL must exit 1 so CI sees it, and the
+        # printed verdict must keep naming the requested scale.
+        self.write(block(640, relations=FIXTURE_RELATIONS))
+        payload = json.loads((self.evidence / "host.json").read_text())
+        del payload["fixture_relations"]
+        (self.evidence / "host.json").write_text(json.dumps(payload))
+        code, out = self.gate("--rounds", "1", "--limit-ms", "3000", "--fixture-relations", "3")
+        self.assertEqual(1, code)
+        self.assertIn("FAIL", out)
+        self.assertIn("scale=3 relations", out)
+
+    def test_the_cli_defaults_to_the_20k_scale(self) -> None:
+        self.write(block(640))
+        code, out = self.gate("--rounds", "1", "--limit-ms", "3000")
+        self.assertEqual(0, code)
+        self.assertNotIn("scale=", out)
+
+    def test_the_cli_refuses_a_non_positive_scale_with_exit_two(self) -> None:
+        self.write(block(640))
+        for value in ("0", "-5"):
+            code, _ = self.gate("--rounds", "1", "--limit-ms", "3000", "--fixture-relations", value)
+            self.assertEqual(2, code, value)
 
 
 class Workflow(unittest.TestCase):
