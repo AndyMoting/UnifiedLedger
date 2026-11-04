@@ -6144,3 +6144,28 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残余：** ① 实施批（页读/计数/编排/reducer/ordinal/等价测试）未开始——规格 §5 为其测试责任清单；② 设备复测（`P704GP-D-PERF-01`/`P704GP-D-SCALE-01`）待实施批合入后执行；③ 逐页多租约短持有变体（可缩短 ACC-TX-01 窗口）登记为残余，不在本批；④ 判别读数为单设备单会话两轮，不主张跨设备可复现；⑤ PR #205 代表行口径若重启合入，等价测试基线按其 Decision 承接更新。
 
 **关联决定：** D-278（B6 口径与未达标读数）、D-279（归因分段与三件候选，本条关闭其候选③）、D-275（B6 口径变更授权与夹具先例）、D-230（J1 不分页裁决的对象面澄清与 J9 累计性检查纪律；§4 不变量与 §3.3 列表身份纪律的继承）、D-268（DEF-B 分页先例：页键/计数/单飞/失败保留/冻结文档修订体例与五项治理门落点形）、D-235（`itemOrdinal` 残余登记 `:4966`，本条批准其并入实施批；其 A-VIS 契约本设计不触碰）、A-PERF approved 规格（3 次取最大值的修复后验收统计纪律，本批沿用不放宽）、D-234（连接持有窗口读数——候选③的来源，出局依据）、D-171/D-175（61k 家族归因同形佐证）、D-168（`page_size` Long 绑定先例与实施内调参先例）、D-235/D-274（A-VIS 全展开与语义树契约，本设计不触碰）、PR #205（关闭未合并的代表行口径，等价测试基线的联动残余）。
+
+## D-281 B6 组卡开卡门的执行环境改判云端托管 AVD（本机模拟器链关闭）；判据统计与口径不变，附基线与修后同制 A/B 预登记
+
+**状态：** 已批准并登记（2026-11-04；用户常设授权「自主推进、决定一律批准」，goal 先例同 D-278/D-279/D-280 状态节）。**工具/CI 批**：零产品代码 / 零 schema / 零迁移 / 零依赖 / 零冻结阈值变更；实施批 PR #212（`UL-b6-paged-enumeration-impl`）不受本条影响。环境改判的用户依据为 2026-11-04 当次口述「后面我要用 mumu 模拟器做日常，你跑云」。
+
+**背景：** D-278/D-279/D-280 的 B6 读数全部取自本会话自建受管 AVD `ul_p7_d01`（隔离 adb 5038、端口 5680）。用户需要把本机 adb / 模拟器面交还其 MuMu 日常实例，因此本机不再启动任何 agent 侧模拟器；`P704GP-D-PERF-01`（规格 §4，分页口径 ≤3 s / 3 次取最大值）与 `P704GP-D-SCALE-01` 尚未取得任何读数，若不同时给出云端执行环境，该向量将永久停在「无设备可测」。仓库已有三条云端设备链先例（`android-instrumented.yml` 普通回归、`android-scale.yml` 最大规模长测、`android-p706-a06.yml` 进程击杀矩阵），本条按同一体例新增第四条。
+
+**决定：**
+
+1. **B6 组卡开卡门改判云端托管 AVD，本机模拟器链关闭。** 唯一入口 `.github/workflows/android-b6-card.yml`：仅 `workflow_dispatch`，必填 `expected_sha`（完整 40 位，必须等于所选 ref 的头），可选 `rounds`（默认 3）与 `limit_ms`（默认 3000）；不进 required checks、不设定时触发、不因后续推送取消正在执行的手动运行。设备固定 `ul-b6-card` / API 36 `google_apis` x86_64 / `profile: pixel_6`（1080×2400、420）/ 2 核 / 2048M / 保留平台动画（`disable-animations: false`）/ `-no-snapshot`。
+2. **判据、统计量与口径三项均不变。** 阈值 ≤3000 ms 不变；统计量沿用 A-PERF approved 规格冻结的「3 次取最大值」（`docs/specs/2026-09-17-p7-04-a-perf-import-read-governance-design.md:104/:116`），不因环境改判改用中位数或单轮；「卡片可见」口径仍为 D-280 第 6 条的分页口径（头部 + 首窗条目），D-278/D-279 的全量装配读数继续并列保留为「全量装配完成时间」，两者互不抵消、也不互相替代。
+3. **测量驱动沿用未改的 test-only 模式。** `ImportScaleTraversalInstrumentedTest#seedFixture`（一次播种 20k 重复组夹具）→ 每轮 `force-stop` → `#b6CardOpen -e seedFixture true`；数值由该模式从无障碍树读出的 click→card-visible 区间给出，不是内部计时器。测试源码本批零改动。
+4. **判据由独立一步从磁盘重算。** `tools/ci/android-b6-card.py run` 独占设备交互（单设备所有权断言 `emu avd name` 必须答 `ul-b6-card`、两个 APK 安装并计 SHA-256、一次 seed、每轮全新进程、traversal 日志切片、`host.json`）；模拟器会话后另设 `if: always()` 的 `gate` 步，只读磁盘上的 `round-N.log` 重算全部边界（轮数一致、每轮 `card_open=true`、每轮 `click_to_card_ms` 有读数、每轮 `relations ≥ 20000`、最差轮 ≤ `limit_ms`），不读驱动器自报数字——驱动器解析错误无法让 job 变绿。
+5. **来源绑定不引入新的工件信任面。** 两个 APK 由本次 checkout 在模拟器会话之外构建，配合 `git rev-parse HEAD` 等于 `expected_sha` 的断言，故不生产也不消费 APK 工件；`tools/python/android_scale/apks.py` 的 `PRODUCERS` 白名单不变（只复用不打包的链不得列入，沿用 D-277 第 1 条口径）。
+6. **基线与修后必须同制对比（预登记，未取得读数前不判）。** 云端 runner 与本机模拟器不是同一台机器，D-278 的 6,195 / 3,693 / 3,635 ms 与 D-280 的 7,100 ms CPU 基线**不得**直接与云端读数相比。验收程序为：同一 workflow、同一 job 类，先对停用前 `main` 头 `2b3ad727`（预分页代码，以临时分支钉住该提交后 dispatch）取基线轮，再对实施批合并后的 SHA 取修后轮，两者同制差值才是本门的判别证据。**若云端基线段自身已 ≤3000 ms，则本门在该环境上不具判别力**：此时不得宣布 `P704GP-D-PERF-01` PASS，只能记为「环境不具判别力」，并把修法证据回落到 (a) JVM 等价/计划测试与 (b) 本机全量装配读数，候补另行裁决。
+7. **历史环境记录不改写。** D-278/D-279/D-280 的「本会话自建受管 AVD `ul_p7_d01`」表述保留为历史事实；本条只规定此后新读数一律云端产生。本机 `ANDROID_ADB_SERVER_PORT=5038` 隔离面与「绝不操作 MuMu 设备」的既有协议不变。
+8. **向量账不变。** 62 = PASS 49 + 残留 11 + 修订范围完成 2 ≈ 79.0%；本条不加分、不减分。云端一轮绿只构成 `P704GP-D-PERF-01` 的必要证据，向量翻 PASS 还需 `P704GP-D-SCALE-01`（小组不回归）单独取得读数——本链不覆盖该项，不得以本链的绿替代。
+
+**边界：** 入 = `.github/workflows/android-b6-card.yml`、`tools/python/android_b6_card.py`、`tools/ci/android-b6-card.py`、`tests/python/test_android_b6_card.py`、`tools/ci/python-shards.txt` 一行、`docs/CONTRIBUTING.md` 对应小节、本条、`docs/CURRENT_STATE.md` 状态句同步。出 = 产品代码、测试源码（尤其 `ImportScaleTraversalInstrumentedTest`）、schema/迁移/依赖、`apks.py` 的 `PRODUCERS`、`ci.yml` 与四个 required check 名称、任何冻结阈值与 D-278/D-279/D-280 判决正文、`docs/specs/2026-11-04-b6-group-card-paged-enumeration-design.md` 本体（已 approved，环境改判登记在本条而非改写规格）、`docs/PROJECT_STATE.local.md` 与本地 gitignored 证据（主检出自更）。
+
+**验收（离线，本批实际执行）：** `python -m unittest tests.python.test_android_b6_card` 28 项通过；`python -m project_docs .` exit 0；`python tools/ci/verify-shard-coverage.py --python-manifest tools/ci/python-shards.txt --tests-dir tests/python` 覆盖通过（51/51）；`git diff --check` 干净。**云端首跑尚未发生**：托管 runner 上的模拟器所有权回读、traversal 日志落盘时机、`am instrument` 转录形状均须由首个手动运行确认；在此之前不宣布该链已实跑通过。
+
+**残余：** ① 云端首跑未发生（见上）；② `P704GP-D-SCALE-01` 无覆盖，需另一份小组夹具与另一次运行；③ 基线 A/B 需要临时分支钉住 `2b3ad727`，dispatch 后须删除该临时分支（main 受保护，不得直推）；④ 本机停用前的读数仍是唯一 pre-fix 全量装配证据，本条不重跑、不追认；⑤ 云端 runner 单核性能与托管镜像版本未测量，跨日跨镜像可比性未建立。
+
+**关联决定：** D-278（B6 口径与本机未达标读数）、D-279（归因分段）、D-280（修法裁决与分页口径，第 6 条并列登记纪律）、A-PERF approved 规格（3 次取最大值统计纪律 `:104/:116`）、D-277（APK producer 白名单口径，本条不新增生产者）、D-197/D-200/D-201（云端设备链与工件来源绑定先例）、`docs/specs/2026-11-04-b6-group-card-paged-enumeration-design.md` §4（`P704GP-*` 判据冻结）、D-204（并行验收轮与工件名可辨）。

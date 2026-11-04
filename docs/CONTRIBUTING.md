@@ -114,6 +114,22 @@ gh workflow run android-scale.yml --ref <branch> -f expected_sha=<完整40位SHA
 
 旧的 `ImportScaleTraversalInstrumentedTest` 保留为人工取证工具，语义不变；普通设备回归改用清单白名单执行（`tools/ci/android-instrumented-inventory.txt` 加 `tools/ci/android-instrumented-shards.txt`），`ImportScaleTraversalInstrumentedTest`、`AndroidScaleLongInstrumentedTest` 与专用预检套件都不在清单内，长测入口不会被普通 PR 带入。CI 上该链仍不随 PR 执行；本机执行只经下方 D-216 本地诊断通道（显式 opt-in，非验收）。
 
+### Android B6 组卡开卡门（P704GP-D-PERF-01）
+
+`.github/workflows/android-b6-card.yml` 是**手动触发、非阻塞**的单门入口：只提供 `workflow_dispatch`，必填 `expected_sha`（完整 40 位 SHA，必须等于所选 ref 的头），可选 `rounds`（默认 3）与 `limit_ms`（默认 3000）；不加入 required checks，不设定时触发，也不因后续推送取消正在执行的手动运行。
+
+该门回答一个问题：在**参考设备 profile** 上，产品自己的 20k 重复组夹具发布后，点击组入口到组卡可见是否在 `limit_ms` 以内——判据取 N 轮中的**最差一轮**（max-of-N，不是中位数：单轮慢正是该门要抓的失败）。数值由 `ImportScaleTraversalInstrumentedTest#b6CardOpen` 从无障碍树读出，是产品 UI 可观察的 click→card-visible 区间，不是内部计时器。设备 profile 与历史本机读数相同：`pixel_6`（1080×2400 / 420）、2 核、2048M、保留平台动画。
+
+`tools/ci/android-b6-card.py run` 独占设备交互（单设备所有权断言 `emu avd name` 必须答 `ul-b6-card`、两个 APK 安装并计哈希、一次 `seedFixture`、每轮一个全新进程、traversal 日志切片、`host.json`）；模拟器会话之后另设独立 `gate` 步（`if: always()`），只从磁盘上的轮次日志重算判据，不读驱动器自己的数字，因此驱动器自解析错误无法让 job 变绿。两个 APK 在**模拟器会话之外**由本次 checkout 构建，配合 `git rev-parse HEAD` 断言，无需 APK 工件链。工件 `android-b6-card-<sha>-<run-id>-<attempt>` 含 `host-apks.txt`、`seed.txt`、每轮 `round-N.log` / `round-N.stdout.txt`、`host.json`、`gate.json`，保留 7 天。
+
+触发命令（仅在该提交已落到目标分支后）：
+
+```bash
+gh workflow run android-b6-card.yml --ref <branch> -f expected_sha=<完整40位SHA>
+```
+
+**已知边界**：本门不覆盖 `P704GP-D-SCALE-01`（小组不回归需要另一份夹具与另一轮运行），也不对任何未画在屏幕上的层作结论。开发机不再为该门启动模拟器——本机 adb 面归用户的 MuMu 使用，云端托管 runner 是唯一执行环境（显式本地诊断通道不适用于本门）。
+
 ### 本地诊断通道（D-216，仅诊断，不是验收）
 
 云端 `maximum` 长测仍是唯一验收权威，但每次失败要等 20–40 分钟的云往返。D-216 开放一条**显式 opt-in** 的本地诊断通道：默认关闭，关闭时 host 驱动器行为与今日逐字节相同（非托管 runner 环境仍直接报 `this driver is CI-only; local devices are forbidden`）；只有显式传 `--local-diagnostic` 才跳过托管 runner 环境三元组检查。该通道**不**替代验收，本地证据不得作为验收证据。
