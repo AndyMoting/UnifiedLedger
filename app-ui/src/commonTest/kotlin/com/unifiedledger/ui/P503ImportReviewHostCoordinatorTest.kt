@@ -108,6 +108,38 @@ class P503ImportReviewHostCoordinatorTest {
     }
 
     /**
+     * B6 group-card paging batch (D-280, spec section 3.4): the paging round holds the SAME
+     * single-flight slot across every page landing — only the round's end re-arms it. The confirm
+     * action's whole-group gate reads the same flag ([P503HostCoordinator.isImportGroupEnumerationRunning]),
+     * so a page landing in between must not make the partial prefix look confirmable.
+     */
+    @Test
+    fun groupEnumerationSingleFlightStaysHeldAcrossPageLandings() {
+        var enumerations = 0
+        val coordinator =
+            P503HostCoordinator(
+                onRefresh = { error("unused") },
+                onSubmit = { _, _ -> error("unused") },
+                onCheck = { _, _ -> error("unused") },
+            )
+
+        assertFalse(coordinator.isImportGroupEnumerationRunning())
+        assertTrue(coordinator.startImportDuplicateGroupDispositionOnce { enumerations += 1 })
+        // Pages keep landing inside the round: the slot and the whole-group confirm gate both
+        // stay held (a landing is not a completion).
+        assertTrue(coordinator.isImportGroupEnumerationRunning())
+        assertFalse(coordinator.startImportDuplicateGroupDispositionOnce { enumerations += 1 })
+        assertTrue(coordinator.isImportGroupEnumerationRunning())
+        assertEquals(1, enumerations)
+
+        // Only the round's end clears the marker — and with it the whole-group confirm gate.
+        coordinator.importGroupEnumerationCompleted()
+        assertFalse(coordinator.isImportGroupEnumerationRunning())
+        assertTrue(coordinator.startImportDuplicateGroupDispositionOnce { enumerations += 1 })
+        assertEquals(2, enumerations)
+    }
+
+    /**
      * P704C-SPEC-01/QUAL-02: the group-disposition per-item review loop is single-flight — a
      * double tap must not interleave two core review loops; the slot re-arms once the loop result
      * has been dispatched.

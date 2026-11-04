@@ -417,6 +417,121 @@ class P503ImportReviewRenderItemsTest {
         assertTrue(closed.none { it is ImportReviewRenderItem.GroupDispositionCardFooter })
     }
 
+    /**
+     * B6 group-card paging batch (D-280, P704GP-ACC-COUNT-01): while the card shows only the landed
+     * keyset prefix, the header and footer still disclose the WHOLE-group total from the count
+     * query (page.totalCount), never the landed count the card happens to list.
+     */
+    @Test
+    fun thePagedGroupCardDisclosesTheWholeGroupTotalWhileListingOnlyTheLandedPrefix() {
+        val landed =
+            ImportDuplicateGroupDispositionPage(
+                inputRef = "pick-handle-1",
+                items =
+                    (1..2).map { ordinal ->
+                        ImportDuplicateGroupItemState(
+                            item =
+                                ImportDuplicateGroupDispositionItem(
+                                    candidateId = ImportCandidateId("candidate-dup-1"),
+                                    duplicateCandidateId = ImportDuplicateCandidateId("dup-$ordinal"),
+                                    comparisonSnapshot = "{\"amount_minor\":3580}",
+                                    expectedComparisonFingerprint = "sha256:fixed-fingerprint",
+                                ),
+                            ordinal = ordinal,
+                        )
+                    },
+                totalCount = 20_001,
+            )
+        val items =
+            importReviewRenderItems(
+                ImportReviewView(rows = listOf(row("dup-a", duplicateStatus = ImportDuplicateStatus.DEFERRED)), groupDisposition = landed),
+                ImportPlatformKind.ANDROID,
+            )
+        val header = items.filterIsInstance<ImportReviewRenderItem.GroupDispositionCardHeader>().single()
+        assertEquals(20_001, header.itemCount)
+        // The rendered header copy says 共 20001 条 even though two items are listed.
+        assertTrue(groupDispositionCardHeaderDisclosure(header.itemCount).endsWith("共 20001 条。"))
+        // The batch switch's description carries the same whole-group count.
+        assertEquals(
+            "收起全部比较信息（共 20001 条）",
+            groupDispositionComparisonBatchToggleDescription(collapsedAll = false, itemCount = header.itemCount),
+        )
+        val footer = items.filterIsInstance<ImportReviewRenderItem.GroupDispositionCardFooter>().single()
+        assertEquals(20_001, footer.itemCount)
+        // The card itself lists only the landed prefix (the page's items, in order).
+        val groupItems = items.filterIsInstance<ImportReviewRenderItem.GroupDispositionItem>()
+        assertEquals(landed.items, groupItems.map { it.state })
+        assertEquals(2, groupItems.size)
+    }
+
+    /**
+     * B6 group-card paging batch (D-280, P704GP-ACC-KEY-01 ordinal pin): a card item carries the
+     * whole-group `ordinal` assigned at landing — the render layer reads that field rather than
+     * recomputing a position from the landed list index, so a page landing into the middle of the
+     * sequence keeps every item's true group position.
+     */
+    @Test
+    fun theCardItemCarriesItsLandedOrdinalNotItsListIndex() {
+        // Deliberately NOT 1..n: an item whose ordinal differs from its index in the landed list.
+        val page =
+            ImportDuplicateGroupDispositionPage(
+                inputRef = "pick-handle-1",
+                items =
+                    listOf(
+                        ImportDuplicateGroupItemState(
+                            item =
+                                ImportDuplicateGroupDispositionItem(
+                                    candidateId = ImportCandidateId("candidate-dup-1"),
+                                    duplicateCandidateId = ImportDuplicateCandidateId("dup-b"),
+                                    comparisonSnapshot = "{\"amount_minor\":3580}",
+                                    expectedComparisonFingerprint = "sha256:fixed-fingerprint",
+                                ),
+                            ordinal = 7,
+                        ),
+                        ImportDuplicateGroupItemState(
+                            item =
+                                ImportDuplicateGroupDispositionItem(
+                                    candidateId = ImportCandidateId("candidate-dup-1"),
+                                    duplicateCandidateId = ImportDuplicateCandidateId("dup-a"),
+                                    comparisonSnapshot = "{\"amount_minor\":3580}",
+                                    expectedComparisonFingerprint = "sha256:fixed-fingerprint",
+                                ),
+                            ordinal = 3,
+                        ),
+                    ),
+                totalCount = 20_001,
+            )
+        val items =
+            importReviewRenderItems(
+                ImportReviewView(rows = listOf(row("dup-a", duplicateStatus = ImportDuplicateStatus.DEFERRED)), groupDisposition = page),
+                ImportPlatformKind.ANDROID,
+            )
+        val groupItems = items.filterIsInstance<ImportReviewRenderItem.GroupDispositionItem>()
+        assertEquals(listOf(7, 3), groupItems.map { it.state.ordinal })
+        // The rendered per-item description follows the landed ordinal. The list index would say
+        // 第 1 条 / 第 2 条 here, so the two are distinguishable: a regression back to indexOf/index
+        // changes the copy.
+        assertEquals(
+            "收起候选 candidate-dup-1 的第 7 条比较信息",
+            groupDispositionItemComparisonToggleDescription(
+                expanded = true,
+                candidateId = groupItems[0].state.item.candidateId,
+                itemOrdinal = groupItems[0].state.ordinal,
+            ),
+        )
+        assertEquals(
+            "收起候选 candidate-dup-1 的第 3 条比较信息",
+            groupDispositionItemComparisonToggleDescription(
+                expanded = true,
+                candidateId = groupItems[1].state.item.candidateId,
+                itemOrdinal = groupItems[1].state.ordinal,
+            ),
+        )
+        // The landed ordinals are distinguishable from list-index positions (1, 2), so the two
+        // assertions above can only pass by reading the field.
+        assertTrue(groupItems.map { it.state.ordinal } != listOf(1, 2))
+    }
+
     // ---- batch confirmation entry gate (勾选集非空才可达) ----
 
     @Test
