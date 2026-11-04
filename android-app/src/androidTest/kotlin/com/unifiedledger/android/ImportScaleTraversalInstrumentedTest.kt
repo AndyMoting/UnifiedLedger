@@ -154,6 +154,17 @@ private const val GROUP_CARD_TITLE = "整组标记为重复（逐条核对）"
 private const val GROUP_CARD_CONFIRM_LABEL = "确认整组标记"
 private const val GROUP_ITEM_COUNT_PREFIX = "共 "
 private const val GROUP_ITEM_COUNT_SUFFIX = " 条。"
+
+/**
+ * The card header's batch comparison toggle (D-274 gap 1). Its `contentDescription` is
+ * `groupDispositionComparisonBatchToggleDescription`, which names the WHOLE-group count too, so the
+ * two labels are matched by prefix and the full description is logged verbatim. `P704GP-D-SCALE-01`
+ * freezes this toggle's three-state closure (收起全部 ↔ 展开全部, and back), so the run records
+ * whichever node is present instead of assuming the default face.
+ */
+private const val GROUP_COMPARISON_TOGGLE_TEXT_EXPANDED_ALL = "收起全部比较信息"
+private const val GROUP_COMPARISON_TOGGLE_TEXT_COLLAPSED_ALL = "展开全部比较信息"
+
 private const val OUTCOME_PENDING_TEXT = "待处置"
 private const val OUTCOME_MARKED_PREFIX = "已标记"
 private const val OUTCOME_FAILED_PREFIX = "失败"
@@ -2827,6 +2838,13 @@ class ImportScaleTraversalInstrumentedTest {
         val itemCountText = groupCardItemCountText(root)
         log("group card itemCount=${groupCardItemCount(root) ?: "unavailable"} itemCountText=${itemCountText ?: "none"}")
         log("group card confirm affordance=${describeNodeOrNone(findByText(root, GROUP_CARD_CONFIRM_LABEL))}")
+        // The batch comparison toggle's disclosure state (D-274 gap 1). `P704GP-D-SCALE-01`
+        // requires "语义树三态开关不变", and the toggle is the node that carries it: its
+        // contentDescription names 收起全部比较信息 / 展开全部比较信息 plus the whole-group count,
+        // and tapping flips between them (the third state is the restored one). Record the
+        // description TEXT verbatim — `describeNode` omits contentDescription, and that string is
+        // the evidence this criterion is about — so the run's own log carries that half of it.
+        log("group card batch toggleDescription=${groupCardBatchToggleDescription(root) ?: "none"}")
         return open
     }
 
@@ -3403,6 +3421,22 @@ class ImportScaleTraversalInstrumentedTest {
         collectNodes(root) { node -> nodeText(node).contains(GROUP_ITEM_COUNT_PREFIX) && nodeText(node).endsWith(GROUP_ITEM_COUNT_SUFFIX) }
             .firstOrNull()
             ?.let { node -> nodeText(node) }
+
+    /**
+     * The batch comparison toggle's `contentDescription` as it currently reads (D-274 gap 1), or
+     * null when the card shows no such toggle. It carries the whole-group count (共 N 条), so it is
+     * matched by prefix — an exact lookup would only ever find one fixture's scale.
+     */
+    private fun groupCardBatchToggleDescription(root: AccessibilityNodeInfo?): String? =
+        collectNodes(root) { node ->
+            val description = node.contentDescription?.toString().orEmpty()
+            description.startsWith(GROUP_COMPARISON_TOGGLE_TEXT_EXPANDED_ALL) ||
+                description.startsWith(GROUP_COMPARISON_TOGGLE_TEXT_COLLAPSED_ALL)
+        }
+            .map { node -> node.contentDescription?.toString().orEmpty() }
+            .distinct()
+            .firstOrNull()
+            ?.takeIf { description -> description.isNotEmpty() }
 
     private fun groupCardItemCount(root: AccessibilityNodeInfo?): Long? {
         val text = groupCardItemCountText(root) ?: return null
