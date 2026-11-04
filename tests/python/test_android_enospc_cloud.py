@@ -379,6 +379,21 @@ class OrdinaryRegressionUntouched(unittest.TestCase):
 class FreeSpaceParsing(unittest.TestCase):
     """`df -k /data` must resolve on the images the rig actually boots."""
 
+    def test_a_parse_failure_carries_the_device_transcript(self):
+        # Cloud runs failed with a bare "df output carries no /data row" twice,
+        # and nothing in the evidence said what the device actually printed.
+        # The failure now carries the transcript, so one dispatch identifies a
+        # wrong mount versus a command that failed on a half-booted emulator.
+        module = driver()
+        rig = module.EnospcRig.__new__(module.EnospcRig)
+        rig.adb = lambda *args, **kwargs: "Filesystem 1K-blocks Used Available Use% Mounted on\nnot a row\n"
+        with self.assertRaises(module.RigError) as caught:
+            rig.disk()
+        message = str(caught.exception)
+        self.assertIn("df output carries no /data row", message)
+        self.assertIn("device said:", message)
+        self.assertIn("not a row", message)
+
     def test_the_emulated_projection_of_userdata_is_accepted(self):
         # Observed on API 36 google_apis (both the hosted runner and the local
         # managed AVD): `df -k /data` answers with the pass-through mount and no

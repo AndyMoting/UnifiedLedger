@@ -556,7 +556,14 @@ class EnospcRig:
                 raise RigError(f"installed package is not available: {package}")
 
     def disk(self, deadline: float | None = None) -> dict:
-        return parse_df(self.adb("shell", "df", "-k", "/data", deadline=deadline))
+        text = self.adb("shell", "df", "-k", "/data", deadline=deadline)
+        try:
+            return parse_df(text)
+        except ValueError as error:
+            # The device's own transcript is the only way to tell a wrong mount
+            # apart from a command that failed on a half-booted emulator; carry
+            # it in the failure so one dispatch is enough to see which.
+            raise RigError(f"{error}; device said: {text.strip()[:400]!r}") from error
 
     def preflight(self) -> None:
         """Refuse a device the rig cannot exhaust, before minutes of filling."""
