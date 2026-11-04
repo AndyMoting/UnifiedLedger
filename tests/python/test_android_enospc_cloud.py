@@ -411,6 +411,20 @@ class FreeSpaceParsing(unittest.TestCase):
         # The recorded mount stays the path the caller asked about.
         self.assertEqual("/data", parsed["mount"])
 
+    def test_the_per_user_projection_is_accepted_too(self):
+        # Second observed shape on the hosted runner (run 41897617235): the
+        # FUSE pass-through mount is absent and `df -k /data` answers with the
+        # per-user bind projection of the same userdata volume instead.
+        module = driver()
+        text = (
+            "Filesystem       1K-blocks   Used Available Use% Mounted on\n"
+            "/dev/block/dm-55   6082144 837832   5102100  15% /data/user/0\n"
+        )
+        parsed = module.parse_df(text)
+        self.assertEqual("/dev/block/dm-55", parsed["filesystem"])
+        self.assertEqual(5102100, parsed["available_kib"])
+        self.assertEqual("/data", parsed["mount"])
+
     def test_an_exact_mount_row_still_wins_over_the_projection(self):
         # Precedence is unchanged where the image does answer with `/data`.
         module = driver()
