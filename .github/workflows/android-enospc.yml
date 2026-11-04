@@ -2,23 +2,34 @@
 #
 # What this workflow is
 # ---------------------
-# One manually dispatched job that runs exactly one instrumented case —
-# com.unifiedledger.android.ImportEnospcInstrumentedTest — on one hardware
-# accelerated GitHub-hosted emulator. The case is the device rig D-276 item 2
-# asks the DEF-IMPORT-ENOSPC-CRASH-01 fix to be pinned by: it fills /data until
-# the filesystem refuses a write, drives the real import-intake commit against
-# the full disk, and asserts a typed StorageUnavailable result plus an intact
-# ledger (quick_check ok, active pointer and generation set unchanged, no
-# half-written candidate).
+# One manually dispatched job that runs exactly one opted-in instrumented case on
+# one hardware accelerated GitHub-hosted emulator. The `case` input selects which
+# rig:
+#
+#   import (default)
+#     com.unifiedledger.android.ImportEnospcInstrumentedTest. The case is the
+#     device rig D-276 item 2 asks the DEF-IMPORT-ENOSPC-CRASH-01 fix to be
+#     pinned by: it fills /data until the filesystem refuses a write, drives the
+#     real import-intake commit against the full disk, and asserts a typed
+#     StorageUnavailable result plus an intact ledger (quick_check ok, active
+#     pointer and generation set unchanged, no half-written candidate).
+#   export
+#     com.unifiedledger.android.BackupExportEnospcInstrumentedTest. The case runs
+#     the real backup export and exhausts /data from the injected user-target
+#     port, after the snapshot and the private container are staged and before
+#     the first container chunk reaches the target, so the kernel refuses that
+#     write with a genuine ENOSPC. It asserts the typed
+#     BackupExportFailure.TARGET_WRITE_FAILED, an unpublished target, no private
+#     staging residue, and an intact ledger. This is the export half of D-239
+#     item 4's P706-A10 residual.
 #
 # What this workflow is not
 # -------------------------
 # - Not the ordinary device regression of android-instrumented.yml (which
-#   excludes this class in both of its exclusion lists) and not a required PR
-#   check.
+#   excludes both cases from the 41-case inventory) and not a required PR check.
 # - Not a general-regression signal and not a P7 vector: a PASS here adds no
 #   vector and does not change the PASS table. The always-on gate summary repeats
-#   that in one sentence, identical to ENOSPC_SCOPE in the driver.
+#   that in one sentence, identical to ENOSPC_SCOPE / EXPORT_SCOPE in the driver.
 # - Not a producer: it never builds or repacks APKs. It consumes the trusted
 #   whole-tree bundle for the exact Git tree and goes red — telling the operator
 #   to dispatch ci.yml for this SHA first — when no such bundle exists. Building
@@ -62,6 +73,14 @@ on:
         description: Exact 40-character commit SHA to test
         required: true
         type: string
+      case:
+        description: 'Which ENOSPC rig to run: import (default) or export'
+        required: false
+        default: import
+        type: choice
+        options:
+          - import
+          - export
 
 permissions:
   contents: read
@@ -150,6 +169,7 @@ jobs:
         timeout-minutes: 40
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
+          CASE: ${{ inputs.case }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
           avd-name: ul-enospc
@@ -167,18 +187,20 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -partition-size 5120
           script: |
             set -u
-            python3 tools/ci/android-enospc-cloud.py run --app enospc-apks/android-app-debug.apk --test enospc-apks/android-app-debug-androidTest.apk --evidence enospc-evidence --sha "${EXPECTED_SHA}" --outer-deadline-epoch "$ANDROID_CI_OUTER_DEADLINE_EPOCH" --avd-name ul-enospc
+            python3 tools/ci/android-enospc-cloud.py run --app enospc-apks/android-app-debug.apk --test enospc-apks/android-app-debug-androidTest.apk --evidence enospc-evidence --sha "${EXPECTED_SHA}" --outer-deadline-epoch "$ANDROID_CI_OUTER_DEADLINE_EPOCH" --avd-name ul-enospc --case "${CASE}"
       - name: Independently re-validate the evidence
         # The job must not be green on a relayed exit code alone. This step runs
         # even when the emulator step failed: it re-parses the transcript with the
         # strict reducer, re-checks the logcat collector contract, and binds the
         # installed digests to the producer manifest copied into the evidence. A
         # missing or internally inconsistent evidence set can never leave the job
-        # green.
+        # green. The case is passed explicitly so the validator checks the rig the
+        # operator asked for, not merely the one the report claims.
         if: always()
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
-        run: python3 tools/ci/android-enospc-cloud.py validate --evidence enospc-evidence --sha "${EXPECTED_SHA}"
+          CASE: ${{ inputs.case }}
+        run: python3 tools/ci/android-enospc-cloud.py validate --evidence enospc-evidence --sha "${EXPECTED_SHA}" --case "${CASE}"
       - name: Gate summary
         # Always runs, and always states the scope: an evidence-bearing run gets
         # the driver's summary (whose first paragraph is the same sentence), and a
@@ -192,7 +214,11 @@ jobs:
             else
               echo "## ENOSPC device rig — no evidence"
               echo
-              echo "This is the dedicated real-out-of-space rig for DEF-IMPORT-ENOSPC-CRASH-01 (D-276 item 2). It is not the ordinary device regression, it is not a required check, and it carries no general-regression signal; a PASS here adds no P7 vector and does not change the PASS table."
+              if [ "${CASE}" = "export" ]; then
+                echo "This is the dedicated real-out-of-space rig for the backup-export target write (P706-A10 residual registered by D-239 item 4). It is not the ordinary device regression, it is not a required check, and it carries no general-regression signal; a PASS here adds no P7 vector and does not change the PASS table."
+              else
+                echo "This is the dedicated real-out-of-space rig for DEF-IMPORT-ENOSPC-CRASH-01 (D-276 item 2). It is not the ordinary device regression, it is not a required check, and it carries no general-regression signal; a PASS here adds no P7 vector and does not change the PASS table."
+              fi
               echo
               echo "No evidence was produced: the run stopped before the device step. The failed step above is the cause; nothing about the rig's behaviour was observed."
             fi

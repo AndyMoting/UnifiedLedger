@@ -1,24 +1,45 @@
 #!/usr/bin/env python3
-"""One-AVD cloud run of the import-intake ENOSPC rig (D-276 item 2).
+"""One-AVD cloud run of a real-out-of-space device rig.
 
 What this drives
 ----------------
-Exactly one instrumented case — ``ImportEnospcInstrumentedTest``, which the
-ordinary device regression excludes in both of its exclusion lists — on one
-GitHub-hosted emulator, against the trusted whole-tree APK bundle of the exact
-commit under test. The case fills the device's ``/data`` until the filesystem
-refuses a write, runs the real import-intake commit against the full disk, and
-asserts a typed ``ImportIntakeBatchFailure.StorageUnavailable`` plus an intact
-ledger (``PRAGMA quick_check`` ok, active pointer and generation set unchanged,
-no half-written candidate).
+Exactly one instrumented case on one GitHub-hosted emulator, against the
+trusted whole-tree APK bundle of the exact commit under test. Two cases exist,
+selected by ``--case``:
+
+``import`` (default)
+    ``ImportEnospcInstrumentedTest``. The case fills the device's ``/data``
+    until the filesystem refuses a write, runs the real import-intake commit
+    against the full disk, and asserts a typed
+    ``ImportIntakeBatchFailure.StorageUnavailable`` plus an intact ledger
+    (``PRAGMA quick_check`` ok, active pointer and generation set unchanged,
+    no half-written candidate). This is D-276 item 2's device evidence.
+
+``export``
+    ``BackupExportEnospcInstrumentedTest``. The case runs the real backup
+    export, and the injected user-target port exhausts the filesystem after
+    the snapshot and the private container are staged but before the first
+    container chunk reaches the target. The kernel refuses that write with
+    ``ENOSPC``, and the case asserts the typed
+    ``BackupExportFailure.TARGET_WRITE_FAILED``, an unpublished target, no
+    private staging residue, and an intact ledger. This is the export half of
+    D-239's ``P706-A10`` residual: the export side previously had only
+    arithmetic size pre-checks and injected writer exceptions, never a real
+    OS-level ``ENOSPC``.
+
+Both cases are excluded from the ordinary device regression, so each runs
+alone. The default case reproduces the import invocation byte for byte; adding
+``--case export`` changes only which case is named, never the AVD, the
+pinning, or the verdict rule.
 
 What this is not
 ----------------
 Not the ordinary device regression, not a required PR check, not acceptance for
-any P7 vector. A PASS here is the device evidence D-276 item 2 asks the fix
-batch to pin; it does not add a vector and does not change the PASS table. The
-distinction lives in one sentence, :data:`ENOSPC_SCOPE`, shared by this report
-and the workflow's job summary.
+any P7 vector. A PASS here is the device evidence the named defect/vector asks
+its fix batch to pin; it does not add a vector and does not change the PASS
+table. The distinction lives in one sentence, :data:`ENOSPC_SCOPE` (its export
+counterpart is :data:`EXPORT_SCOPE`), shared by this report and the workflow's
+job summary.
 
 Why a dedicated rig instead of the ordinary regression
 ------------------------------------------------------
@@ -36,8 +57,8 @@ runner's completion code, and the JUnit completion line. An assumption failure
 
 Host cleanup boundary
 ---------------------
-The case removes both of its own directories in ``finally``. The host-side
-fallback is limited to the rig's own cache fill directories
+Each case removes its own directories in ``finally``. The host-side fallback is
+limited to the rig's own cache fill directories
 (``cache/enospc-fill-<digits>``): exact names, re-validated before deletion, no
 wildcard, nothing under ``files/``, no other package, and only when the device is
 still critically low on space. A failed run additionally stops this exact app
@@ -76,12 +97,78 @@ from android_scale.runner import (  # noqa: E402
     remaining_seconds,
 )
 
+
+class CaseSpec:
+    """One opted-in ENOSPC case: the class/method identity the transcript is reduced against."""
+
+    def __init__(self, name: str, test_class: str, test_method: str, rig: str, scope: str):
+        self.name = name
+        self.test_class = test_class
+        self.test_method = test_method
+        self.rig = rig
+        self.scope = scope
+
+    @property
+    def transcript_name(self) -> str:
+        return "instrumentation-enospc.txt"
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostics only
+        return f"CaseSpec({self.name!r})"
+
+
+# The one sentence that keeps each rig from being read as a regression run. The
+# workflow's always-on summary step carries the identical IMPORT text, and the
+# unit test binds the two copies so they cannot drift apart.
+ENOSPC_SCOPE = (
+    "This is the dedicated real-out-of-space rig for DEF-IMPORT-ENOSPC-CRASH-01 "
+    "(D-276 item 2). It is not the ordinary device regression, it is not a "
+    "required check, and it carries no general-regression signal; a PASS here "
+    "adds no P7 vector and does not change the PASS table."
+)
+
+EXPORT_SCOPE = (
+    "This is the dedicated real-out-of-space rig for the backup-export target write "
+    "(P706-A10 residual registered by D-239 item 4). It is not the ordinary device "
+    "regression, it is not a required check, and it carries no general-regression "
+    "signal; a PASS here adds no P7 vector and does not change the PASS table."
+)
+
 TEST_CLASS = PACKAGE + ".ImportEnospcInstrumentedTest"
 TEST_METHOD = "aRealEnospcOnTheIntakeCommitIsTypedAndLeavesTheLedgerIntact"
 OPT_IN_ARGUMENT = "ul.enospc"
 DEFAULT_AVD = "ul-enospc"
 EXPECTED_API = "36"
 EXPECTED_ABI = "x86_64"
+
+DEFAULT_CASE = "import"
+
+CASES = {
+    "import": CaseSpec(
+        name="import",
+        test_class=TEST_CLASS,
+        test_method=TEST_METHOD,
+        rig="import-intake-enospc",
+        scope=ENOSPC_SCOPE,
+    ),
+    "export": CaseSpec(
+        name="export",
+        test_class=PACKAGE + ".BackupExportEnospcInstrumentedTest",
+        test_method="aRealEnospcOnTheBackupTargetDeliveryIsTypedAndLeavesTheLedgerIntact",
+        rig="backup-export-enospc",
+        scope=EXPORT_SCOPE,
+    ),
+}
+
+
+def case_spec(name: str = DEFAULT_CASE) -> CaseSpec:
+    """The selected case; an unknown name is a caller error, never a silent default."""
+    try:
+        return CASES[name]
+    except KeyError:
+        raise ValueError(
+            f"unknown ENOSPC case {name!r}: expected one of {sorted(CASES)}"
+        ) from None
+
 
 # Mirror of ImportEnospcInstrumentedTest.MAX_FILL_BYTES (16 GiB). The rig skips —
 # never passes — when its fill loop reaches this cap without a refused write, so a
@@ -110,16 +197,6 @@ RESIDUAL_FILL_FREE_BYTES = 256 * 1024 * 1024
 
 CACHE_FILL_NAME = re.compile(r"enospc-fill-[0-9]+")
 DF_ROW = re.compile(r"^\s*(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)%\s+(\S+)\s*$")
-
-# The one sentence that keeps this rig from being read as a regression run.
-# The workflow's always-on summary step carries the identical text, and the unit
-# test binds the two copies so they cannot drift apart.
-ENOSPC_SCOPE = (
-    "This is the dedicated real-out-of-space rig for DEF-IMPORT-ENOSPC-CRASH-01 "
-    "(D-276 item 2). It is not the ordinary device regression, it is not a "
-    "required check, and it carries no general-regression signal; a PASS here "
-    "adds no P7 vector and does not change the PASS table."
-)
 
 
 class RigError(RuntimeError):
@@ -173,25 +250,29 @@ def cleanup_commands(names: list[str]) -> list[list[str]]:
     return commands
 
 
-def instrument_argv(serial: str) -> list[str]:
+def instrument_argv(serial: str, case: str = DEFAULT_CASE) -> list[str]:
     """The exact documented invocation: one class, opted in, raw and waiting.
 
     ``-e class`` names the class, not a method, so the runner reports
     ``numtests=1`` for the single ``@Test``; the opt-in argument is the same one
     the case's ``@Before`` requires, and without it the case would be an
     assumption skip — which is a red run here.
+
+    The import case (the default) produces the same argument list it always did;
+    ``--case export`` changes only the class name.
     """
     return [
         "adb", "-s", serial, "shell", "am", "instrument", "-w", "-r",
-        "-e", OPT_IN_ARGUMENT, "1", "-e", "class", TEST_CLASS, RUNNER,
+        "-e", OPT_IN_ARGUMENT, "1", "-e", "class", case_spec(case).test_class, RUNNER,
     ]
 
 
 def build_summary(report: dict) -> str:
     """The human gate summary: verdict, scope boundary, and the measured facts."""
     status = report.get("status", "ERROR")
-    lines = [f"## ENOSPC device rig — {status}", "", ENOSPC_SCOPE, ""]
-    lines.append(f"- case: `{TEST_CLASS}#{TEST_METHOD}` (single case, `{OPT_IN_ARGUMENT}=1`)")
+    selected = case_spec(report.get("case") or DEFAULT_CASE)
+    lines = [f"## ENOSPC device rig — {status}", "", selected.scope, ""]
+    lines.append(f"- case: `{selected.test_class}#{selected.test_method}` (single case, `{OPT_IN_ARGUMENT}=1`)")
     lines.append(f"- SHA under test: `{report.get('sha', '')}`")
     producer = report.get("apk_producer") or {}
     if producer:
@@ -242,13 +323,18 @@ def build_summary(report: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def validate_evidence(directory: Path, sha: str) -> dict:
+def validate_evidence(directory: Path, sha: str, case: str | None = None) -> dict:
     """Re-check a frozen evidence directory without a device.
 
     Every decisive claim is re-derived from an artifact rather than trusted from
     the report: the transcript is parsed again, the logcat collector contract is
     re-validated, and the installed digests are bound to the producer manifest
     copied into the evidence. A directory that cannot support a PASS raises.
+
+    ``case`` selects the expected case identity. When it is omitted the report's
+    own ``case`` field decides (defaulting to ``import``), and the identity check
+    below still runs against the report's stated class/method, so a relabelled
+    report cannot borrow another case's PASS.
     """
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError("evidence SHA must be exact full lowercase SHA")
@@ -264,15 +350,16 @@ def validate_evidence(directory: Path, sha: str) -> dict:
     if report.get("crashed") is not False:
         raise ValueError("crash attributed to the app in logcat")
     instrumented = report.get("instrumented_test") or {}
-    if instrumented.get("class") != TEST_CLASS or instrumented.get("method") != TEST_METHOD:
+    expected = case_spec(case if case is not None else (report.get("case") or DEFAULT_CASE))
+    if instrumented.get("class") != expected.test_class or instrumented.get("method") != expected.test_method:
         raise ValueError("report names a different instrumented case")
     if instrumented.get("skipped") is not False or (
             type(instrumented.get("numtests")) is not int) or instrumented["numtests"] != 1:
         raise ValueError("report does not claim exactly one executed case")
     instrumentation_pass(
         (directory / "instrumentation-enospc.txt").read_text(encoding="utf-8", errors="replace"),
-        TEST_CLASS,
-        TEST_METHOD,
+        expected.test_class,
+        expected.test_method,
     )
     validate_log_collection(directory)
     logcat = directory / "logcat.txt"
@@ -306,7 +393,7 @@ class EnospcRig:
 
     def __init__(self, app: Path, test: Path, evidence: Path, sha: str, *,
                  outer_deadline_epoch: float | None = None, avd_name: str = DEFAULT_AVD,
-                 sample_interval: float = SAMPLE_INTERVAL_SECONDS):
+                 sample_interval: float = SAMPLE_INTERVAL_SECONDS, case: str = DEFAULT_CASE):
         # Same CI-only guard as the scale chain: this rig never drives a device
         # the operator did not boot on a hosted runner, so the host adb surface
         # that the user's MuMu/ALas automation shares is never touched. There is
@@ -316,6 +403,7 @@ class EnospcRig:
             raise ValueError("this rig is CI-only; local devices are forbidden")
         if not re.fullmatch(r"[0-9a-f]{40}", sha):
             raise ValueError("full lowercase SHA required")
+        self.spec = case_spec(case)
         self.app, self.test, self.evidence, self.sha = app, test, evidence, sha
         self.avd_name = avd_name
         self.sample_interval = sample_interval
@@ -332,16 +420,17 @@ class EnospcRig:
         self.report = {
             "schema": 1,
             "mode": "enospc",
-            "rig": "import-intake-enospc",
-            "scope": ENOSPC_SCOPE,
+            "case": self.spec.name,
+            "rig": self.spec.rig,
+            "scope": self.spec.scope,
             "sha": sha,
             "status": "ERROR",
             "timed_out": False,
             "crashed": False,
             "setup_complete": False,
             "instrumented_test": {
-                "class": TEST_CLASS,
-                "method": TEST_METHOD,
+                "class": self.spec.test_class,
+                "method": self.spec.test_method,
                 "opt_in": f"{OPT_IN_ARGUMENT}=1",
                 "numtests": None,
                 "skipped": None,
@@ -528,7 +617,8 @@ class EnospcRig:
         transcript = self.evidence / "instrumentation-enospc.txt"
         started = time.monotonic()
         with transcript.open("wb") as output:
-            process = subprocess.Popen(instrument_argv(self.serial), stdout=output, stderr=subprocess.STDOUT)
+            process = subprocess.Popen(
+                instrument_argv(self.serial, self.spec.name), stdout=output, stderr=subprocess.STDOUT)
             try:
                 while process.poll() is None:
                     time.sleep(1.0)
@@ -541,7 +631,7 @@ class EnospcRig:
         if process.returncode:
             raise RigError(f"`am instrument` shell exited {process.returncode}; see instrumentation-enospc.txt")
         text = transcript.read_text(encoding="utf-8", errors="replace")
-        instrumentation_pass(text, TEST_CLASS, TEST_METHOD)
+        instrumentation_pass(text, self.spec.test_class, self.spec.test_method)
         self.report["instrumented_test"].update({"numtests": 1, "skipped": False})
 
     def cleanup(self, *, failure: bool) -> None:
@@ -656,21 +746,25 @@ def main(argv: list[str] | None = None) -> int:
     runner.add_argument("--sha", required=True)
     runner.add_argument("--outer-deadline-epoch", type=float, required=True)
     runner.add_argument("--avd-name", default=DEFAULT_AVD)
+    runner.add_argument("--case", default=DEFAULT_CASE, choices=sorted(CASES))
     validator = subparsers.add_parser("validate", help="re-check frozen evidence without a device")
     validator.add_argument("--evidence", type=Path, required=True)
     validator.add_argument("--sha", required=True)
+    # Omitted, the validator follows the report's own `case` field, so the default
+    # invocation keeps validating import evidence exactly as before.
+    validator.add_argument("--case", default=None, choices=sorted(CASES))
     arguments = parser.parse_args(argv)
     if arguments.action == "run":
         try:
             rig = EnospcRig(arguments.app, arguments.test, arguments.evidence, arguments.sha,
                             outer_deadline_epoch=arguments.outer_deadline_epoch,
-                            avd_name=arguments.avd_name)
+                            avd_name=arguments.avd_name, case=arguments.case)
         except (ValueError, OSError) as error:
             print(f"FAIL ENOSPC rig could not start: {error}", file=sys.stderr)
             return 1
         return rig.run()
     try:
-        report = validate_evidence(arguments.evidence, arguments.sha)
+        report = validate_evidence(arguments.evidence, arguments.sha, arguments.case)
     except (ValueError, OSError, KeyError) as error:
         print(f"FAIL ENOSPC evidence: {error}", file=sys.stderr)
         return 1

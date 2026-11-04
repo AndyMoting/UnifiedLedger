@@ -15,6 +15,9 @@ EXCLUDED = {
     "P706A06BoundaryKillInstrumentedTest",
     "P706A06BoundaryVerifyInstrumentedTest",
     "ImportEnospcInstrumentedTest",
+    # P706-A10 export half (D-239 item 4): fills /data until the kernel refuses a
+    # target write, so it is opt-in and runs alone on its own dedicated rig.
+    "BackupExportEnospcInstrumentedTest",
 }
 
 
