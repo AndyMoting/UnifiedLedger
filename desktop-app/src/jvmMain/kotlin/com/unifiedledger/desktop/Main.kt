@@ -29,6 +29,7 @@ import com.unifiedledger.application.ConfirmedLendingTransactionFactory
 import com.unifiedledger.application.ConfirmedManualExpenseCommit
 import com.unifiedledger.application.ConfirmedManualIncomeCommit
 import com.unifiedledger.application.ConfirmedTransferTransactionFactory
+import com.unifiedledger.application.CountImportDuplicateCandidatesForSession
 import com.unifiedledger.application.CounterpartyCommands
 import com.unifiedledger.application.CreditFlowFormalFactory
 import com.unifiedledger.application.DEFAULT_EXPENSE_LEAF_ID
@@ -74,6 +75,7 @@ import com.unifiedledger.application.QueryCatalogSnapshot
 import com.unifiedledger.application.QueryImportCandidateDetail
 import com.unifiedledger.application.QueryImportDuplicateReviews
 import com.unifiedledger.application.QueryImportDuplicateReviewsForSession
+import com.unifiedledger.application.QueryImportDuplicateReviewsForSessionPage
 import com.unifiedledger.application.QueryImportReviewRows
 import com.unifiedledger.application.QueryMerchantMonthlyAccumulation
 import com.unifiedledger.application.QueryTagMerchantFilterPage
@@ -1112,6 +1114,10 @@ internal fun buildLedgerGraph(
             baseQueryImportDuplicateReviews = QueryImportDuplicateReviews(importReviewReadAdapter),
             // P7-05: the session-level batch read behind the 整组确认页 enumeration.
             baseQueryImportDuplicateReviewsForSession = QueryImportDuplicateReviewsForSession(importReviewReadAdapter),
+            // B6 group-card paging batch (D-280): the keyset-paged read + whole-group count
+            // behind the paged 整组确认页 enumeration (the host's batch branch requires all three).
+            baseQueryImportDuplicateReviewsForSessionPage = QueryImportDuplicateReviewsForSessionPage(importReviewReadAdapter),
+            baseCountImportDuplicateCandidatesForSession = CountImportDuplicateCandidatesForSession(importReviewReadAdapter),
             importDuplicateReview = importDuplicateReview,
             importDuplicateReviewIds = {
                 ImportDuplicateReviewIds(

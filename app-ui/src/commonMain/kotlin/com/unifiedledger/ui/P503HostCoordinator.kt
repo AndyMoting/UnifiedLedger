@@ -624,6 +624,15 @@ internal class P503HostCoordinator(
     }
 
     /**
+     * B6 group-card paging batch (D-280, spec §3.4): whether the paging enumeration round is
+     * still in flight. The confirm action reads it as its whole-group gate — with pages still
+     * landing, the card shows only the landed prefix, so the confirm tap is refused and the
+     * whole-group authorization happens only once [importGroupEnumerationCompleted] has
+     * cleared the marker (at which point the landed prefix IS the whole group).
+     */
+    internal fun isImportGroupEnumerationRunning(): Boolean = importGroupEnumerationInFlight
+
+    /**
      * P7-04.C (P704C-SPEC-01/QUAL-02): the group-disposition per-item review loop single flight
      * — the sequential core review loop runs at most once at a time; a duplicate evaluation
      * (double tap) is dropped until [importGroupDispositionCompleted] clears the marker. Returns

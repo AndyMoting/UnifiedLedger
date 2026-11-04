@@ -4,6 +4,7 @@ import com.unifiedledger.application.AnnotationRequestIdSource
 import com.unifiedledger.application.BudgetAuthorityReader
 import com.unifiedledger.application.CatalogConsumerSession
 import com.unifiedledger.application.CatalogSnapshotView
+import com.unifiedledger.application.CountImportDuplicateCandidatesForSession
 import com.unifiedledger.application.CounterpartyCommands
 import com.unifiedledger.application.EntryPreferenceStore
 import com.unifiedledger.application.ExecuteCatalogCommand
@@ -36,6 +37,7 @@ import com.unifiedledger.application.QueryBudgetMonth
 import com.unifiedledger.application.QueryImportCandidateDetail
 import com.unifiedledger.application.QueryImportDuplicateReviews
 import com.unifiedledger.application.QueryImportDuplicateReviewsForSession
+import com.unifiedledger.application.QueryImportDuplicateReviewsForSessionPage
 import com.unifiedledger.application.QueryImportReviewRows
 import com.unifiedledger.application.QueryLedgerCurrentState
 import com.unifiedledger.application.QueryLedgerEntryRows
@@ -174,6 +176,11 @@ class P503LedgerFacade(
     // nullable with a default so legacy constructions (startup tests) keep compiling; like the
     // rest of the import surface there is no catalog-session following.
     baseQueryImportDuplicateReviewsForSession: QueryImportDuplicateReviewsForSession? = null,
+    // B6 group-card paging batch (D-280): the paged variant of the session-level read plus the
+    // whole-group count. Null keeps legacy constructions on the whole-session read path (the
+    // host's batch branch requires all three).
+    baseQueryImportDuplicateReviewsForSessionPage: QueryImportDuplicateReviewsForSessionPage? = null,
+    baseCountImportDuplicateCandidatesForSession: CountImportDuplicateCandidatesForSession? = null,
     val importDuplicateReview: ReviewImportDuplicateCandidate? = null,
     val importDuplicateReviewIds: () -> ImportDuplicateReviewIds? = { null },
     val importPickResultChannel: ImportFilePickResultChannel? = null,
@@ -277,6 +284,8 @@ class P503LedgerFacade(
     private val fallbackQueryImportCandidateDetail = baseQueryImportCandidateDetail
     private val fallbackQueryImportDuplicateReviews = baseQueryImportDuplicateReviews
     private val fallbackQueryImportDuplicateReviewsForSession = baseQueryImportDuplicateReviewsForSession
+    private val fallbackQueryImportDuplicateReviewsForSessionPage = baseQueryImportDuplicateReviewsForSessionPage
+    private val fallbackCountImportDuplicateCandidatesForSession = baseCountImportDuplicateCandidatesForSession
     private val fallbackIncomeOptionsProvider =
         baseIncomeOptionsProvider ?: ManualIncomeOptionsProvider { ManualIncomeOptions(emptyList(), emptyList()) }
     private val fallbackTransferOptionsProvider =
@@ -359,6 +368,28 @@ class P503LedgerFacade(
      */
     val queryImportDuplicateReviewsForSession: QueryImportDuplicateReviewsForSession?
         get() = fallbackQueryImportDuplicateReviewsForSession
+
+    /**
+     * B6 group-card paging batch (D-280): the keyset-paged session-level duplicate-review
+     * projection (plain nullable, no session following). Consumed by the 整组确认页 enumeration
+     * together with [countImportDuplicateCandidatesForSession]; null (with the count null)
+     * keeps legacy constructions on the whole-session read path.
+     */
+    val queryImportDuplicateReviewsForSessionPage: QueryImportDuplicateReviewsForSessionPage?
+        get() = fallbackQueryImportDuplicateReviewsForSessionPage
+
+    /** B6 group-card paging batch (D-280): the whole-group duplicate-candidate count (共 N 条). */
+    val countImportDuplicateCandidatesForSession: CountImportDuplicateCandidatesForSession?
+        get() = fallbackCountImportDuplicateCandidatesForSession
+
+    /**
+     * B6 group-card paging batch (D-280, review R2-7): the implementation's fixed keyset page
+     * bound, read through the paged query so the host's exhaustion check uses the SAME value
+     * the pages are cut with (a smaller injected page size must not break the host loop after
+     * page one). Null when the paging surface is unwired (legacy path needs no bound).
+     */
+    val importDuplicateGroupPageSize: Long?
+        get() = fallbackQueryImportDuplicateReviewsForSessionPage?.pageSize()
 
     /**
      * P7-08 08.B-2 (R-222-1; spec section 4.1): the current authoritative tag/merchant selection

@@ -1038,9 +1038,14 @@ internal fun importReviewRenderItems(
         // like the candidate list (no eager per-item composition inside a single card item).
         // Like the affordance, the open card stays before the candidate rows.
         view.groupDisposition?.let { page ->
-            items += ImportReviewRenderItem.GroupDispositionCardHeader(page.inputRef, page.items.size)
+            // B6 group-card paging batch (D-280): the header/footer counts bind to the
+            // WHOLE-group total (page.totalCount, the count query's value) — never the landed
+            // prefix size, so 共 N 条 stays the group's size while pages are still landing.
+            // The per-item rows are the landed prefix (keyset order); the footer's confirm
+            // still authorizes the whole group (the host completes the pages first, §3.4).
+            items += ImportReviewRenderItem.GroupDispositionCardHeader(page.inputRef, page.totalCount)
             page.items.forEach { items += ImportReviewRenderItem.GroupDispositionItem(it) }
-            items += ImportReviewRenderItem.GroupDispositionCardFooter(page.items.size)
+            items += ImportReviewRenderItem.GroupDispositionCardFooter(page.totalCount)
         }
         importCandidateClassGroups(view.rows).forEach { group ->
             items += ImportReviewRenderItem.GroupHeader(group.classToken, group.rows.size)

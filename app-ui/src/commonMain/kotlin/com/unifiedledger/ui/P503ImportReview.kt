@@ -157,6 +157,13 @@ data class ImportDuplicateGroupItemState(
     val item: ImportDuplicateGroupDispositionItem,
     /** `null` = 待处置； a recorded outcome after the loop reported back. */
     val outcome: ImportDuplicateGroupItemResult? = null,
+    /**
+     * B6 group-card paging batch (D-280): the item's 1-based position in the WHOLE group,
+     * assigned when its page lands (keyset prefix order keeps it stable). Replaces the
+     * per-visible-row `groupDuplicateCandidateIds.indexOf(...) + 1` scan — the D-235
+     * registered residual (`itemOrdinal` O(visible×n), DECISIONS :4966) — with an O(1) read.
+     */
+    val ordinal: Int = 0,
 )
 
 /**
@@ -169,6 +176,15 @@ data class ImportDuplicateGroupItemState(
 data class ImportDuplicateGroupDispositionPage(
     val inputRef: String,
     val items: List<ImportDuplicateGroupItemState>,
+    /**
+     * B6 group-card paging batch (D-280): the WHOLE-group item total for the header's 共 N 条
+     * disclosure — never the landed count. `items` is the landed keyset prefix; the confirm
+     * action still authorizes the whole group (it waits for the remaining pages to land,
+     * spec §3.4). Defaults to `items.size`, so an unpaged construction (a fully landed card,
+     * the pre-paging tests) stays self-consistent; the paged path passes the count query's
+     * whole-group total explicitly.
+     */
+    val totalCount: Int = items.size,
 )
 
 /**
@@ -566,7 +582,10 @@ private fun ImportReviewOverviewItem(
             // A-VIS (J3): candidate identity and the 待处置/已标记/失败 outcome are unconditional —
             // only the comparison payload discloses.
             val expanded = comparisonExpansion.isExpanded(item.state.item.duplicateCandidateId)
-            val itemOrdinal = groupDuplicateCandidateIds.indexOf(item.state.item.duplicateCandidateId) + 1
+            // B6 group-card paging batch (D-280): the ordinal is assigned when the item's page
+            // lands (whole-group 1-based, keyset prefix order) — the O(visible×n) indexOf scan
+            // over the landed id list is gone (the D-235 registered residual, DECISIONS :4966).
+            val itemOrdinal = item.state.ordinal
             Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                 Text(
                     groupDispositionItemCandidateText(item.state),

@@ -680,6 +680,7 @@ class P503ReducerImpl(
             P503UiEvent.CloseImportDuplicateGroupDisposition,
             P503UiEvent.ImportGroupEnumerationStarted,
             P503UiEvent.ImportGroupEnumerationCompleted,
+            is P503UiEvent.ImportGroupEnumerationPageLanded,
             P503UiEvent.RequestImportBatchConfirm,
             P503UiEvent.CancelImportBatchConfirm,
             is P503UiEvent.AuthorizeImportBatch,
@@ -794,6 +795,7 @@ class P503ReducerImpl(
             // (table 6.2a).
             P503UiEvent.ImportGroupEnumerationStarted,
             P503UiEvent.ImportGroupEnumerationCompleted,
+            is P503UiEvent.ImportGroupEnumerationPageLanded,
             // P7-04.D: the batch confirmation events are absorbed before the overview exists
             // (table 6.2a).
             P503UiEvent.RequestImportBatchConfirm,
@@ -1095,10 +1097,40 @@ class P503ReducerImpl(
                                 groupDisposition =
                                     ImportDuplicateGroupDispositionPage(
                                         inputRef = event.inputRef,
-                                        items = event.items.map { ImportDuplicateGroupItemState(it) },
+                                        // The first page's items carry their whole-group ordinals
+                                        // 1..n (B6 group-card paging, D-280); the remaining pages
+                                        // continue the sequence as they land.
+                                        items =
+                                            event.items.mapIndexed { index, item ->
+                                                ImportDuplicateGroupItemState(item = item, ordinal = index + 1)
+                                            },
+                                        totalCount = event.totalCount,
                                     ),
                             ),
                     )
+                } ?: state
+            is P503UiEvent.ImportGroupEnumerationPageLanded ->
+                // B6 group-card paging batch (D-280): append one keyset page to the landed
+                // prefix, only while the card is open for the SAME inputRef (a page landing
+                // after a close, or for another session, is absorbed — the stale-landing
+                // discipline the generation gate enforces host-side, mirrored here).
+                state.importReview?.let { view ->
+                    val page = view.groupDisposition
+                    if (page == null || page.inputRef != event.inputRef) {
+                        state
+                    } else {
+                        val base = page.items.size
+                        val landed =
+                            event.items.mapIndexed { index, item ->
+                                ImportDuplicateGroupItemState(item = item, ordinal = event.firstOrdinal + index)
+                            }
+                        state.copy(
+                            importReview =
+                                view.copy(
+                                    groupDisposition = page.copy(items = page.items + landed),
+                                ),
+                        )
+                    }
                 } ?: state
             is P503UiEvent.ImportDuplicateGroupDispositionResult -> reduceImportGroupDispositionResult(state, event)
             P503UiEvent.CloseImportDuplicateGroupDisposition ->
@@ -1301,6 +1333,7 @@ class P503ReducerImpl(
             // P7-05: the enumeration progress events are absorbed too (table 6.2a).
             P503UiEvent.ImportGroupEnumerationStarted,
             P503UiEvent.ImportGroupEnumerationCompleted,
+            is P503UiEvent.ImportGroupEnumerationPageLanded,
             // P7-04.D: the batch confirmation events are absorbed here too (table 6.2a).
             P503UiEvent.RequestImportBatchConfirm,
             P503UiEvent.CancelImportBatchConfirm,
@@ -1691,6 +1724,7 @@ class P503ReducerImpl(
             // P7-05: the enumeration progress events are absorbed inside the detail (table 6.2a).
             P503UiEvent.ImportGroupEnumerationStarted,
             P503UiEvent.ImportGroupEnumerationCompleted,
+            is P503UiEvent.ImportGroupEnumerationPageLanded,
             // P7-04.D: the remaining batch events are absorbed inside the detail (table 6.2a; the
             // batch states own their effects).
             P503UiEvent.CancelImportBatchConfirm,
@@ -1883,6 +1917,7 @@ class P503ReducerImpl(
             // P7-05: the enumeration progress events are absorbed too (table 6.2a).
             P503UiEvent.ImportGroupEnumerationStarted,
             P503UiEvent.ImportGroupEnumerationCompleted,
+            is P503UiEvent.ImportGroupEnumerationPageLanded,
             // P7-02: the entry-foundation events are absorbed (§6.2a).
             is P503UiEvent.SelectEntryType,
             is P503UiEvent.UpdateNote,
@@ -2039,6 +2074,7 @@ class P503ReducerImpl(
             // P7-05: the enumeration progress events are absorbed too (table 6.2a).
             P503UiEvent.ImportGroupEnumerationStarted,
             P503UiEvent.ImportGroupEnumerationCompleted,
+            is P503UiEvent.ImportGroupEnumerationPageLanded,
             is P503UiEvent.SelectEntryType,
             is P503UiEvent.UpdateNote,
             is P503UiEvent.UpdateTagSelection,
@@ -2804,6 +2840,7 @@ class P503ReducerImpl(
             P503UiEvent.CloseImportDuplicateGroupDisposition,
             P503UiEvent.ImportGroupEnumerationStarted,
             P503UiEvent.ImportGroupEnumerationCompleted,
+            is P503UiEvent.ImportGroupEnumerationPageLanded,
             P503UiEvent.RequestImportBatchConfirm,
             P503UiEvent.CancelImportBatchConfirm,
             is P503UiEvent.AuthorizeImportBatch,
@@ -2971,6 +3008,7 @@ class P503ReducerImpl(
             // P7-05: the enumeration progress events are absorbed too (table 6.2a).
             P503UiEvent.ImportGroupEnumerationStarted,
             P503UiEvent.ImportGroupEnumerationCompleted,
+            is P503UiEvent.ImportGroupEnumerationPageLanded,
             // P7-04.D: the batch confirmation events are absorbed here too (table 6.2a).
             P503UiEvent.RequestImportBatchConfirm,
             P503UiEvent.CancelImportBatchConfirm,
@@ -3119,6 +3157,7 @@ class P503ReducerImpl(
             // P7-05: the enumeration progress events are absorbed too (table 6.2a).
             P503UiEvent.ImportGroupEnumerationStarted,
             P503UiEvent.ImportGroupEnumerationCompleted,
+            is P503UiEvent.ImportGroupEnumerationPageLanded,
             // P7-04.D: the batch confirmation events are absorbed here too (table 6.2a).
             P503UiEvent.RequestImportBatchConfirm,
             P503UiEvent.CancelImportBatchConfirm,
@@ -3239,6 +3278,7 @@ class P503ReducerImpl(
             // P7-05: the enumeration progress events are absorbed too (table 6.2a).
             P503UiEvent.ImportGroupEnumerationStarted,
             P503UiEvent.ImportGroupEnumerationCompleted,
+            is P503UiEvent.ImportGroupEnumerationPageLanded,
             // P7-04.D: the batch confirmation events are absorbed here too (table 6.2a).
             P503UiEvent.RequestImportBatchConfirm,
             P503UiEvent.CancelImportBatchConfirm,
@@ -3560,6 +3600,7 @@ class P503ReducerImpl(
             // P7-05: the enumeration progress events are absorbed in every transient state (table 6.2a).
             P503UiEvent.ImportGroupEnumerationStarted,
             P503UiEvent.ImportGroupEnumerationCompleted,
+            is P503UiEvent.ImportGroupEnumerationPageLanded,
             // P7-04.D: the batch confirmation events are absorbed in every transient state (table 6.2a).
             P503UiEvent.RequestImportBatchConfirm,
             P503UiEvent.CancelImportBatchConfirm,
@@ -3694,6 +3735,7 @@ class P503ReducerImpl(
             // P7-05: the enumeration progress events are absorbed too (table 6.2a).
             P503UiEvent.ImportGroupEnumerationStarted,
             P503UiEvent.ImportGroupEnumerationCompleted,
+            is P503UiEvent.ImportGroupEnumerationPageLanded,
             // P7-04.D: the batch confirmation events are absorbed here too (table 6.2a).
             P503UiEvent.RequestImportBatchConfirm,
             P503UiEvent.CancelImportBatchConfirm,
@@ -3835,6 +3877,7 @@ class P503ReducerImpl(
             // P7-05: the enumeration progress events are absorbed too (table 6.2a).
             P503UiEvent.ImportGroupEnumerationStarted,
             P503UiEvent.ImportGroupEnumerationCompleted,
+            is P503UiEvent.ImportGroupEnumerationPageLanded,
             // P7-04.D: the batch confirmation events are absorbed here too (table 6.2a).
             P503UiEvent.RequestImportBatchConfirm,
             P503UiEvent.CancelImportBatchConfirm,
@@ -3950,6 +3993,7 @@ class P503ReducerImpl(
                     // P7-05: the enumeration progress events are absorbed here too (table 6.2a).
                     P503UiEvent.ImportGroupEnumerationStarted,
                     P503UiEvent.ImportGroupEnumerationCompleted,
+                    is P503UiEvent.ImportGroupEnumerationPageLanded,
                     // P7-04.D: the batch confirmation events are absorbed here too (table 6.2a).
                     P503UiEvent.RequestImportBatchConfirm,
                     P503UiEvent.CancelImportBatchConfirm,
@@ -4067,6 +4111,7 @@ class P503ReducerImpl(
                     // P7-05: the enumeration progress events are absorbed here too (table 6.2a).
                     P503UiEvent.ImportGroupEnumerationStarted,
                     P503UiEvent.ImportGroupEnumerationCompleted,
+                    is P503UiEvent.ImportGroupEnumerationPageLanded,
                     // P7-04.D: the batch confirmation events are absorbed here too (table 6.2a).
                     P503UiEvent.RequestImportBatchConfirm,
                     P503UiEvent.CancelImportBatchConfirm,
