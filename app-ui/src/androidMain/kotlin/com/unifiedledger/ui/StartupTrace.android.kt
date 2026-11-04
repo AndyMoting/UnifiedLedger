@@ -12,4 +12,18 @@ internal actual object StartupTrace {
             Log.i(TAG, "${SystemClock.elapsedRealtime()} $event")
         }
     }
+
+    /**
+     * D-269 item 7 (DEF-EXPORT-OOM): the trace-carrying variant. `Log.w(tag, msg, throwable)`
+     * appends the full stack, which is what makes an OOM raised inside a `catch (Throwable)` block
+     * attributable after the fact. Logging stays best effort and never throws.
+     */
+    actual fun emitFailure(
+        event: String,
+        failure: Throwable,
+    ) {
+        runCatching {
+            Log.w(TAG, "${SystemClock.elapsedRealtime()} $event", failure)
+        }
+    }
 }

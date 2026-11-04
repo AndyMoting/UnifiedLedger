@@ -289,6 +289,13 @@ class BackupExportUseCase(
             } catch (failure: BackupCancelledException) {
                 return BackupExportResult.Cancelled
             } catch (failure: Throwable) {
+                // D-269 item 7 (DEF-EXPORT-OOM): the typed result is what the user sees, but the
+                // Throwable carries the allocating Java frames — for an OutOfMemoryError that is the
+                // ONLY record of which allocation failed, and this catch site was discarding it. The
+                // event names the step and the cause class only (never payload, paths or secrets);
+                // the trace itself supplies class/method/file/line. Diagnostics only: the typed
+                // result below is unchanged and the export's success contract is untouched.
+                StartupTrace.emitFailure("backup.export containerWrite failed causeClass=${failure::class.simpleName}", failure)
                 return BackupExportResult.Failed(BackupExportFailure.CONTAINER_WRITE_FAILED)
             }
 

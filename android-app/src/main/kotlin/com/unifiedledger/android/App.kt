@@ -1596,7 +1596,7 @@ internal fun buildAndroidStartupController(
     val mainThreadPoster = mainThreadPoster()
     val databasePath = context.getDatabasePath(LEGACY_ANDROID_DATABASE_NAME)
     val (hostDirectory, _) = androidStableStoragePaths(databasePath)
-    val fileSystem = AndroidLedgerFileSystem()
+    val fileSystem = AndroidLedgerFileSystem(backupHeapCaptureHook(context))
     val layout = ledgerStorageLayout(fileSystem, hostDirectory)
     val backupTargetPort =
         AndroidBackupTargetPort<Uri>(
@@ -1660,3 +1660,20 @@ internal fun dispatchToMainThread(
         post(block)
     }
 }
+
+/**
+ * DEF-EXPORT-OOM (D-269 item 7): the opt-in ART heap-dump hook handed to the production
+ * [AndroidLedgerFileSystem]. The gates live in [heapCaptureEnabled] (debuggable build AND an
+ * operator-created sentinel, resolved once here) and [heapCaptureDue] (heap above 49% of the limit,
+ * evaluated per chunk), so a release build — where `FLAG_DEBUGGABLE` is clear — never captures, and
+ * the hook itself never throws. Returns null for a null context or an un-opted-in build, leaving the
+ * adapter with no hook at all.
+ *
+ * SCOPE (deliberate): this instance is the one the composition root also passes to
+ * `AndroidRestoreWiring`, so a sentinel build samples EVERY bounded read — the export's snapshot
+ * passes AND the restore preflight's container/digest/migration passes. The broader sampling is
+ * wanted: the same fixed request also fails on the restore leg (the 60,456,988-byte OOM in the A06
+ * run), so an export-only hook would miss half the evidence. No product read is altered; the hook
+ * only decides whether to dump.
+ */
+internal fun backupHeapCaptureHook(context: android.content.Context?): (() -> Unit)? = BackupHeapCapture.resolveHook(context)
