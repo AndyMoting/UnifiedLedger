@@ -1,0 +1,153 @@
+# B6 group-card open gate on a hosted cloud AVD (manual, non-blocking).
+#
+# WHAT ONE GREEN RUN PROVES
+# -------------------------
+# `P704GP-D-PERF-01` of spec
+# `docs/specs/2026-11-04-b6-group-card-paged-enumeration-design.md` section 4, on the
+# reference device profile: with the product's own 20k duplicate-group fixture published,
+# clicking the group affordance makes the group card visible within `limit_ms` in every
+# measured round and in the worst of them (max-of-N, never the median). The number is read
+# from the accessibility tree by `ImportScaleTraversalInstrumentedTest#b6CardOpen`, so it is
+# the UI-observable click -> card-visible interval and not an internal timer.
+#
+# WHAT IT DOES NOT PROVE
+# ----------------------
+# `P704GP-D-SCALE-01` (a small group must not regress) needs its own fixture and its own
+# run. Nothing here speaks about any layer the product does not paint on screen.
+#
+# WHY CLOUD
+# ---------
+# The development host's adb surface belongs to the user's MuMu instance, so this chain
+# must never boot a local emulator. `tools/ci/android-b6-card.py` refuses to run outside a
+# GitHub-hosted Linux runner, and the first two steps below bind the run to one exact
+# commit, so no APK bundle is needed: the pair this job builds is the pair it installs.
+#
+# Facts this file depends on:
+# - `tools/ci/android-b6-card.py run` owns every device interaction: single-owner AVD
+#   assertion (`emu avd name` must answer `ul-b6-card`), APK install and hashing, one
+#   `seedFixture` run, one fresh process per measured round, traversal-log slicing, and
+#   `host.json`. The workflow must not duplicate any of it.
+# - The `gate` step re-derives the verdict from the round logs on disk and never reads the
+#   driver's own numbers, so a driver that mis-parsed its output cannot make the job green.
+#   It runs with `always()`: a red measurement must not be able to leave the job green.
+# - Builds stay outside the emulator session: the action kills the emulator when `script`
+#   ends, so compilation cannot sit inside it.
+# - `profile: pixel_6` pins 1080x2400 at density 420 and `cores: 2` mirrors the managed AVD
+#   the historical local baseline was read on, so the geometry the test hardcodes holds.
+# - Animations stay enabled (`disable-animations: false`): the baseline this gate is compared
+#   against was read with platform animations on.
+# - The action runs `script` with /usr/bin/sh (dash): no `set -o pipefail` and no backslash
+#   line continuations there. The measurement command therefore stays one line.
+name: Android B6 group-card open gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact 40-character commit SHA to measure
+        required: true
+        type: string
+      rounds:
+        description: Measured rounds; the statistic is the worst of them
+        required: false
+        default: '3'
+        type: string
+      limit_ms:
+        description: Click-to-card bound in milliseconds
+        required: false
+        default: '3000'
+        type: string
+
+permissions:
+  contents: read
+
+# One manual round per run: a later push never cancels evidence tied to a chosen SHA, and
+# two dispatches of the same SHA (D-204 parallel acceptance rounds) stay tellable apart
+# because each owns its own runner and its own exclusive `ul-b6-card` emulator.
+concurrency:
+  group: android-b6-card-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  b6-card:
+    name: B6 group-card open
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      TZ: Asia/Shanghai
+      LANG: zh_CN.UTF-8
+      GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx3g -Dkotlin.daemon.jvmargs=-Xmx2g
+    steps:
+      - name: Check the requested SHA is the selected ref's head
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          # `[[ ... =~ ... ]]` is required: the POSIX test builtin has no `=~` operator.
+          [[ "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          selected_ref="${GITHUB_REF#refs/heads/}"
+          selected_sha="$(git ls-remote "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" "refs/heads/${selected_ref}" | awk '{print $1}')"
+          test -n "${selected_sha}" && test "${selected_sha}" = "${EXPECTED_SHA}"
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 1
+      - name: Assert the checkout is the requested commit
+        run: test "$(git rev-parse HEAD)" = "${{ inputs.expected_sha }}"
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: temurin
+      - name: Build both APKs outside the emulator session
+        run: ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebug :android-app:assembleDebugAndroidTest --warning-mode all
+      - name: Record the APK hashes this run installs
+        run: |
+          set -euo pipefail
+          mkdir -p b6-evidence
+          sha256sum android-app/build/outputs/apk/debug/android-app-debug.apk android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk | tee b6-evidence/host-apks.txt
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Record outer deadline before emulator boot
+        run: echo "ANDROID_CI_OUTER_DEADLINE_EPOCH=$(( $(date +%s) + 7200 ))" >> "$GITHUB_ENV"
+      - name: Measure the group-card open on the pinned emulator
+        timeout-minutes: 90
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          ROUNDS: ${{ inputs.rounds }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          avd-name: ul-b6-card
+          profile: pixel_6
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          cores: 2
+          ram-size: 2048M
+          emulator-boot-timeout: 300
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            set -u
+            python3 tools/ci/android-b6-card.py run --app android-app/build/outputs/apk/debug/android-app-debug.apk --test android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk --evidence b6-evidence --sha "${EXPECTED_SHA}" --avd-name ul-b6-card --rounds "${ROUNDS}" --outer-deadline-epoch "$ANDROID_CI_OUTER_DEADLINE_EPOCH"
+      - name: Re-derive the gate from the evidence on disk
+        if: always()
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          ROUNDS: ${{ inputs.rounds }}
+          LIMIT_MS: ${{ inputs.limit_ms }}
+        run: |
+          set -euo pipefail
+          python3 tools/ci/android-b6-card.py gate --evidence b6-evidence --sha "${EXPECTED_SHA}" --rounds "${ROUNDS}" --limit-ms "${LIMIT_MS}"
+      - name: Upload the measurement evidence
+        # Partial evidence still uploads by design: the gate step above is the verdict, and
+        # a red run is worth reading.
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-b6-card-${{ inputs.expected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: b6-evidence/**
+          if-no-files-found: error
+          retention-days: 7

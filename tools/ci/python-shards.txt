@@ -48,3 +48,4 @@
 2	tests.python.test_rg12_golden_v2
 2	tests.python.test_rg12_publication
 2	tests.python.test_rg12_v2_expected
+1	tests.python.test_android_b6_card
