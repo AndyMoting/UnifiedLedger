@@ -204,6 +204,10 @@ RESIDUAL_FILL_FREE_BYTES = 256 * 1024 * 1024
 
 CACHE_FILL_NAME = re.compile(r"enospc-fill-[0-9]+")
 DF_ROW = re.compile(r"^\s*(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)%\s+(\S+)\s*$")
+# API 34+ google_apis images answer `df -k /data` with the pass-through
+# projection of the same userdata volume instead of a `/data` mount point.
+EMULATED_DATA_MOUNT = re.compile(r"/mnt/pass_through/[0-9]+/emulated")
+
 
 
 class RigError(RuntimeError):
@@ -216,19 +220,39 @@ def parse_df(text: str, mount: str = "/data") -> dict:
     Reversed scan with an exact mount match: the header row, ``tmpfs``/``/dev``
     rows and a wrapped long device name can all appear above the row that
     matters, and the last exact match is the authoritative one.
+
+    When no row carries ``mount`` verbatim, the emulated pass-through projection
+    of the same volume is accepted (`/mnt/pass_through/<user>/emulated`, which is
+    what API 34+ google_apis images answer for `/data`). The recorded ``mount``
+    stays the path the caller asked about; the resolved device and numbers come
+    from the accepted row, so both readings remain tellable apart in evidence.
     """
-    for line in reversed(text.splitlines()):
-        row = DF_ROW.match(line)
-        if row is not None and row.group(6) == mount:
-            return {
-                "filesystem": row.group(1),
-                "total_kib": int(row.group(2)),
-                "used_kib": int(row.group(3)),
-                "available_kib": int(row.group(4)),
-                "use_percent": int(row.group(5)),
-                "mount": mount,
-            }
-    raise ValueError("df output carries no " + mount + " row")
+
+    def rows():
+        for line in reversed(text.splitlines()):
+            row = DF_ROW.match(line)
+            if row is not None:
+                yield row
+
+    exact = None
+    projected = None
+    for row in rows():
+        if row.group(6) == mount:
+            exact = row
+            break
+        if projected is None and EMULATED_DATA_MOUNT.fullmatch(row.group(6)):
+            projected = row
+    row = exact if exact is not None else projected
+    if row is None:
+        raise ValueError("df output carries no " + mount + " row")
+    return {
+        "filesystem": row.group(1),
+        "total_kib": int(row.group(2)),
+        "used_kib": int(row.group(3)),
+        "available_kib": int(row.group(4)),
+        "use_percent": int(row.group(5)),
+        "mount": mount,
+    }
 
 
 def residual_fill_names(listing: str) -> list[str]:
