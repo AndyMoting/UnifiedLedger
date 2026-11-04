@@ -6210,3 +6210,51 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 **残余：** ① **R2-9** 评审中的分支 `UL-r2-9-appui-paging-tests`（`b42a25bb`）未合入，两条规格行在 app-ui 层部分闭合、确认完结缺生产接缝——闭合条件 = 该分支合入且接缝裁决完成；② **R2-14** 计划钉仍绑手抄 SQL——闭合条件 = 改为真实语句文本；③ **R2-15** facade 访问器无消费者——闭合条件 = 接线或移除；④ **R-280-7（P3）** D-280 关联决定重复引用 D-235——闭合条件 = 下次触碰该条时合并修正；⑤ **`P704GP-D-SCALE-01`** 无读数、无夹具，20k 硬编码于 driver/gate/fixture 三层——闭合条件 = 夹具规模与场景参数贯穿后跑通 D-274 的 3 条组；⑥ **`P704GP-ACC-CONFIRM-01`** 无单元级接缝——闭合条件 = 轮次/确认门提取为可注入类；⑦ 读数为单托管 runner 镜像、单日、一次三轮（12 个测量点），跨镜像与跨日可比性未建立；⑧ `local/artifacts/p7-closeout/b6-cloud/fixed-final/` 为 gitignored，证据只在本机。
 
 **关联决定：** D-278（B6 口径与未达标读数）、D-279（归因分段）、D-280（修法裁决、分页口径第 6 条、D-235 残余并入）、D-281（云端环境改判与同制 A/B 预登记，本条关闭其第 6 条的判决分支）、A-PERF approved 规格（3 次取最大值纪律 `:104/:116`）、PR #212/#213/#214（分页实施 / 云端门改判 / 每轮重建夹具）。
+
+## D-283 `P704GP-D-SCALE-01` 成立（3 条组 293 / 224 / 244 ms，三态开关不变）；`P704GP-D-PERF-01` 三项判据覆盖、窗口 CPU 总量云端未测，B6 维持非 PASS
+
+**状态：** 已批准并登记（2026-11-04；用户常设授权「自主推进、决定一律批准」，本会话明确不再逐项询问；goal 先例同 D-278～D-282 状态节）。**文档批**：零产品代码 / 零测试 / 零 schema / 零迁移 / 零依赖；读数由用户云端取得后交本条登记，本批不派发、不重跑。
+
+**背景：** D-281 把 B6 的执行环境改判云端并把 `P704GP-D-SCALE-01` 登记为「无覆盖」；D-282 判读 `P704GP-D-PERF-01` 的云端同制 A/B 并把「SCALE-01 无读数、无夹具，20k 硬编码于 driver/gate/fixture 三层」登记为其残余 ⑤。该残余的闭合条件原写为「夹具规模与场景参数贯穿后跑通 D-274 的 3 条组」。规模参数化与 workflow 输入已由 **#217（`19e9c1df`）** 交付（`--fixture-relations` 贯穿 `run`/`gate`/`judge`/`host.json`，设备侧以 `-e fixtureRelations` 回读，gate 按等值校验收敛跨规模证据）；本条只登记其后两次派发的读数与裁决。
+
+**决定：**
+
+1. **`P704GP-D-SCALE-01` 成立。** 判据见规格 §4 该行（`docs/specs/2026-11-04-b6-group-card-paged-enumeration-design.md:125`），两半各自有证据：
+
+   | 派发 run | 树 | `fixture_relations` | 三轮 click→card (ms) | 最差 | `item_count` | gate 裁决 |
+   |---|---|---|---|---|---|---|
+   | `41811285083` | `19e9c1df` | 3 | 180 / 155 / 249 | 249 | 4 | PASS |
+   | `41813084464` | `19e9c1df` | 2 | 293 / 224 / 244 | 293 | 3 | PASS |
+
+   两轮同树、同 AVD 配置、gate 只读磁盘轮次日志重算（`reasons: []`，`limit_ms: 3000`）。
+
+   - **「三轮读数不劣化」**：3 条组最差 293 ms，同环境 20k 修后读数为 1,770 / 1,644 / 1,564 ms（D-282 第 1 条）。小组远优于 20k，无回归。判据不设绝对门槛，故此处只作同环境对照，不引入新阈值。
+   - **「语义树三态开关不变」**：`relations=2` 轮的日志逐字含 `group card batch toggleDescription=收起全部比较信息（共 3 条）`，与 D-274 第 3 条记录的默认态 `contentDescription` 同形（`收起全部比较信息（共 3 条）`）；同一行的 `group card key texts` 亦含该 `contentDescription` 与「共 3 条」披露行。D-274 的收起 → 展开 → 收起三态点按序列本身不在本链覆盖内，本链只观测默认展开态与计数；这一点如实登记，不以「三态可复现」外推。
+
+2. **3 条组与 4 条组的分工：`fixture_relations=2` 是对齐 D-274 的正确形态。** 规格 §4 的 `P704GP-D-SCALE-01` 行指名「D-274 的 3 条组」。夹具 `fixture_relations=N` 只生成 N 条历史源，产品激活再补 1 条，故 **`fixture_relations=2` → 3 条**（`relations=2`，`item_count=3`），**`fixture_relations=3` → 4 条**（`relations=3`，`item_count=4`）。选 2 是因为它精确复现 D-274 的 3 条组；3 那一次作为同一夹具的邻档保留为规模敏感性旁证（4 条组同样 PASS，最差 249 ms），不作判据。
+
+3. **`P704GP-D-PERF-01` 的判据覆盖披露：四项判据中三项覆盖、一项未测。** 判据行见规格 `:124`，逐条对账（证据取 run `41768710390` 的归档轮次日志）：
+
+   | 判据 | 状态 | 证据位置 |
+   |---|---|---|
+   | 设备三轮**取最大值** ≤3 s | 覆盖 | 1,770 / 1,644 / 1,564 ms，最差 1,770 ≤ 3,000，gate `verdict: PASS` |
+   | `itemCount=20001` 与 key texts 逐字不变 | 覆盖 | `group card itemCount=20001`、`group card key texts: ... 共 20001 条。` |
+   | `forwardActions=0` 组入口可达不变 | 覆盖 | `traversal result forwardActions=0 ... targetFound=true` |
+   | **窗口 CPU 总量对比基线 7,100 ms** | **未测** | 云端链不采 CPU：`tools/python/android_b6_card.py` 与 `.github/workflows/android-b6-card.yml` 对 `cpu` 均 0 命中，gate 解析的四类轮次行（`D278STAGE` / `group card open` / `b6 fixture reuse` / `itemCount`）不含 CPU 样本 |
+
+   第 4 项**不以时延通过替代**：D-281 第 6 条明文预登记「D-278 的 6,195 / 3,693 / 3,635 ms 与 D-280 的 7,100 ms CPU 基线**不得**直接与云端读数相比」，且该条把云端基线段 ≤3000 ms 的情形判为「环境不具判别力」的独立分支——同一纪律下，本机 CPU 基线不能与云端读数混用，该项在本环境无读数。D-282 第 1 条以「`P704GP-D-PERF-01` 成立」为该行标题，当时的判据对账只涉及时延、A/B 有效性与成本结构，未逐条列四项；本条不改写 D-282 判决正文，但把该向量的覆盖状态如实补齐——**时延判据成立，整行不因之完全成立**。
+
+4. **向量账维持 49/62 ≈ 79.0%，B6 不翻 PASS。** B6 是 `P707-A08` 这一个向量，只有 `P704GP-D-PERF-01` 与 `P704GP-D-SCALE-01` **两项同批成立**才翻 PASS（D-281 第 8 条、D-282 第 3 条）。现在 SCALE-01 成立，而 PERF-01 的第四项判据无读数，故 **62 = PASS 49 + 残留 11 + 修订范围完成 2 ≈ 79.0%** 不变，`P707-A08` 仍记非 PASS。**待裁决的歧义（本批不自行判）**：规格 `:124` 的四项判据之间用的是分号，未声明哪几项是必要条件、哪几项是旁证。两种读法各自结论如下——
+   - 读法 A（四项皆为必要条件）：窗口 CPU 判据必须在某环境取得读数，PERF-01 才成立；云端链当前不采 CPU，需先给该链加 CPU 采样或另立测量路径，B6 才有翻 PASS 的可能。
+   - 读法 B（窗口 CPU 总量为分页判据的旁证，只作成本结构佐证）：时延、`itemCount`/key texts、`forwardActions` 三项已覆盖即可判成立，则 PERF-01 与 SCALE-01 同批成立、B6 翻 PASS、向量账 49→50（≈80.6%）。
+   两种读法的差别就是 1 个向量与 1.6 个百分点；本条把选择权留给用户裁决，在裁决前按较严的读法 A 记非 PASS。
+
+5. **本条的边界与后续。** 不改 D-278/D-279/D-280/D-281/D-282 判决正文（`P704GP-D-PERF-01` 的标题措辞按第 3 条由本条披露覆盖状态，不改原文），不改规格本体，不改代码。`fixture_relations` 参数化与 workflow 输入归 #217（`19e9c1df`），本条不重复其内容。
+
+**边界：** 入 = 本条、`docs/CURRENT_STATE.md` 的状态句与向量账同步。出 = 产品代码、测试源码、schema/迁移/依赖、`.github/workflows/`、`apks.py` 的 `PRODUCERS`、`ci.yml` 与四个 required check 名称、任何冻结阈值与统计口径、D-278～D-282 判决正文、`docs/specs/2026-11-04-b6-group-card-paged-enumeration-design.md` 本体、`docs/PROJECT_STATE.local.md` 与本地 gitignored 证据（主检出自更）。
+
+**验收（离线，本批实际执行）：** 凭据来自主检出的归档证据（gitignored）——`local/artifacts/p7-closeout/b6-cloud/scale-2-final/android-b6-card-19e9c1df47d44f55219a17860079027d6687eeaf-41813084464-1/`（`host.json` 六键、`fixture_relations: 2`；`gate.json` verdict PASS、`max_click_to_card_ms: 293`）、`.../scale-3-final/...-41811285083-1/`（`fixture_relations: 3`、max 249）、以及 `.../fixed-final/...-41768710390-1/`（五键 pre-parameter `host.json`、`fixture_relations: 20000`、max 1770）。轮次日志逐字核对了 `itemCount`、`key texts`、`batch toggleDescription`、`forwardActions`、`targetFound`、`b6 fixture reuse` 与 `D278STAGE` 七类行。`python -m project_docs .` exit 0；`git diff --check` 干净。
+
+**残余：** ① **`P704GP-D-PERF-01` 的窗口 CPU 总量判据无云端读数**——闭合条件 = 云端链加 CPU 采样并取得与 20k 树对应的样本，或用户按第 4 条读法 B 裁决该判据为旁证；② 规格 `:124` 四项判据的必要性未声明——闭合条件 = 用户裁决（第 4 条）并把读法写入规格；③ **B6 未翻 PASS**，`P707-A08` 维持非 PASS，向量账 49/62 ≈ 79.0%；④ 本链不观测 D-274 的收起 → 展开 → 收起点按序列，只观测默认展开态与计数（第 1 条已披露）；⑤ `P704GP-D-SCALE-01` 的读数来自同一托管 runner 镜像、单日、两次三轮（6 个测量点），跨镜像与跨日可比性未建立；⑥ `local/artifacts/p7-closeout/b6-cloud/` 为 gitignored，证据只在本机；⑦ 规模参数化的 workflow 输入面（`fixture_relations` 的 `workflow_dispatch` 输入）由 #217 交付，其云端首跑的设施形状未在本条复述。
+
+**关联决定：** D-281（云端环境改判、第 6 条不得跨环境混用 CPU 基线、第 8 条「两项同时成立才翻 PASS」）、D-282（PERF-01 云端同制 A/B 读数与残余 ⑤ 的闭合条件）、D-274（A-VIS 缺口① 的 3 条组与批量开关 `contentDescription` 基线）、D-280（分页口径与 `P704GP-*` 判据冻结）、#217（`19e9c1df`：`fixture_relations` 参数化、`-e` 回读体例与 `workflow_dispatch` 输入的实际交付）、D-277（APK 来源口径，本条不新增生产者）、D-197/D-200/D-201（云端设备链与工件来源绑定先例）、规格 `docs/specs/2026-11-04-b6-group-card-paged-enumeration-design.md` §4（`:124`/`:125`）、PR #212/#213/#214（分页实施 / 云端门改判 / 每轮重建夹具）。
