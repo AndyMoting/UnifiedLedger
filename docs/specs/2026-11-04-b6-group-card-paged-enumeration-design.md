@@ -121,7 +121,7 @@ importDuplicateReviewsForSessionPage:
 | `P704GP-ACC-COUNT-01` | 头部 N = 全组总数 | count 查询 == 最终 items.size；头部文案逐字断言（含 20k 量级 JVM 用例） |
 | `P704GP-ACC-CONFIRM-01` | 确认恒全组 | 续页未完时确认 → 补齐后逐条生效；幂等重跑不重复提交 |
 | `P704GP-ACC-KEY-01` | 列表身份不变 | `stableKey`/`contentType` 逐条不变；ordinal 与落盘序一致 |
-| `P704GP-D-PERF-01` | B6 ≤3 s | 设备三轮**取最大值** ≤3 s（A-PERF approved 规格冻结的「3 次取最大值适用于修复后验收全部场景」纪律，`docs/specs/2026-09-17-p7-04-a-perf-import-read-governance-design.md:104/:116`——不放宽统计口径；`run-cpu-probe-v4.sh` 同法）；窗口 CPU 总量对比基线 7,100 ms；`itemCount=20001` 与 key texts 逐字不变；`forwardActions=0` 组入口可达不变 |
+| `P704GP-D-PERF-01` | B6 ≤3 s | 设备三轮**取最大值** ≤3 s（A-PERF approved 规格冻结的「3 次取最大值适用于修复后验收全部场景」纪律，`docs/specs/2026-09-17-p7-04-a-perf-import-read-governance-design.md:104/:116`——不放宽统计口径；`run-cpu-probe-v4.sh` 同法）；窗口 CPU 总量对比基线 7,100 ms——**旁证（D-284 裁决）**：其基线属本机全量装配口径，分页与云端环境改判（D-280/D-281）后无跨环境可比基线，不作为翻 PASS 的必要条件；`itemCount=20001` 与 key texts 逐字不变；`forwardActions=0` 组入口可达不变 |
 | `P704GP-D-SCALE-01` | 小组无回归 | 现有小夹具（D-274 的 3 条组）三轮读数不劣化；语义树三态开关不变 |
 
 **口径披露（`P704GP-D-PERF-01`）**：D-278 的「卡片可见」= 全量装配后的卡片 marker；分页下同一 marker（卡片头部 + 首窗条目）出现更早。**该口径变化是本设计的登记行为**：门槛数值（≤3 s）不变，测得的是「用户可见组卡首响应」，与现状「全量装配完成」的旧口径不可直接比较——两者都在证据里并列登记（D-280 与本表），旧口径读数（3,635–7,236 ms）保留为「全量装配完成时间」参照。计划 `:44` 的整链口径纪律（不排除映射/等待时间）逐字适用。
