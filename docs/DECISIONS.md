@@ -6286,7 +6286,7 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 
 ## D-285 `DEF-EXPORT-OOM` 归因闭合与修复裁决：分块 AEAD 容器 v2（每块独立 GCM、序号绑 AAD），v1 保持可读；实现批另立
 
-**状态：** 已批准并登记（2026-11-05；用户 goal 授权「批准 0～9，自主推进，有阻碍自己想办法，都批准决定」——本条为该 goal 下第 2 批的裁决）。**文档批**：零产品代码 / 零测试 / 零 schema / 零迁移 / 零依赖 / 零 CI 改动；改容器格式规格（追加 §4.10）与本条、`docs/CURRENT_STATE.md` 状态句。
+**状态：** 已批准并登记（2026-11-05；用户 goal 授权「批准 0～9，自主推进，有阻碍自己想办法，都批准决定」——本条为该 goal 下第 2 批的裁决）。**文档批**：零产品代码 / 零测试 / 零 schema / 零迁移 / 零依赖 / 零 CI 改动；改容器格式规格（追加 §4.11）与本条、`docs/CURRENT_STATE.md` 状态句。
 
 **背景：** D-269 第 7 条登记 `DEF-EXPORT-OOM`（备份导出 ≥10k 库失败，`OOM 134086668 byte allocation` 大小跨档不变），当时结论是「静态读证明应用侧无可疑分配，归因需 ART heap dump」。本会话在受管 AVD 上用 254 MB / 50,600 候选账本走真实产品导出，取得逐字栈（证据 `local/artifacts/device-a10-2026-11-05/OOM-ATTRIBUTION.md`）：
 
@@ -6302,15 +6302,15 @@ java.lang.OutOfMemoryError: Failed to allocate a 134086672 byte allocation
 **决定：**
 
 1. **归因更正。** 分配点不在应用代码：`BackupContainerWriter` 以 `BACKUP_STREAM_CHUNK_BYTES = 64 KiB` 循环喂块（`BackupContainerFormat.kt:49`），sink 直写暂存文件；128 MiB 的分配发生在平台 AEAD 内部——Android 的 `AES/GCM/NoPadding` 实现把整条消息缓冲到 `doFinal` 才输出（`Cipher.update` 对 GCM 不产出中间密文的已知行为；`Cipher` 文档亦规定 AEAD 的标签在 `doFinal` 才可得）。因此「流式喂块」对 GCM **不构成**流式内存；D-269 的「应用侧无可疑分配」成立但结论方向错了——**格式本身强制整段一次性 seal**。
-2. **修复裁决：容器格式 v2 = 分块 AEAD（追加规格 §4.10）。** 头部 59 字节布局不变，`container_format_version = 2`、`aead_id = 2`（分块 AES-256-GCM）。payload 切成 `chunk_size = 1 MiB` 的块（最后一块可短），每块独立 seal：`iv` 由 59 字节头后的 12 字节基 IV 派生（末 4 字节写块序号 BE），`AAD = 固定头(59B) ‖ salt ‖ 块序号(BE u32)`。块序号进 AAD 使**重排/截断/拼接**都认证失败。恢复端按 `plaintext_len` 校验块数与末块长度。
+2. **修复裁决：容器格式 v2 = 分块 AEAD（追加规格 §4.11）。** 头部 59 字节布局不变，`container_format_version = 2`、`aead_id = 2`（分块 AES-256-GCM）。payload 切成 `chunk_size = 1 MiB` 的块（最后一块可短），每块独立 seal：`iv` 由 59 字节头后的 12 字节基 IV 派生（末 4 字节写块序号 BE），`AAD = 固定头(59B) ‖ salt ‖ 块序号(BE u32)`。块序号进 AAD 使**重排/截断/拼接**都认证失败。恢复端按 `plaintext_len` 校验块数与末块长度。
 3. **兼容矩阵。** v1 容器保持可读（恢复端保留 v1 单段路径，不改 D-174 冻结的字节布局）；v2 为导出默认。旧版应用遇到 `container_format_version = 2` 必须走既有「不支持的格式版本」类型化拒绝（§4.3.1 已有该类拒绝码，不新增语义）。跨版本恢复不要求：备份由本应用自己的旧版恢复属退化场景，拒绝即可。
 4. **边界与批次拆分。** 本条只做归因与格式裁决；**实现批另立**（容器 v2 的写者、恢复端、JVM + Android 跨端向量、v1 回归集），按高风险拓扑交付：一个 writer、一名 spec reviewer、一名 quality reviewer、一名 distinct verifier，主代理终审并重跑关键证明。块大小 1 MiB 与吞吐的权衡读数在实现批登记；若实测吞吐不可接受，改块大小的决定须另立（块大小写进规格常量，不写进头部）。
 5. **`P706-A12` 的处境。** 该向量在实现批合入前不可能通过（254 MB 账本导出必 OOM）；本条不改变其非 PASS 状态，只把「为什么不可能通过」从推测变成已定位缺陷 + 已批准修法。
 
-**边界：** 入 = 本条、`docs/specs/2026-09-24-p7-06-backup-container-format-design.md` 追加 §4.10、`docs/CURRENT_STATE.md` 状态句。出 = 产品代码、测试源码、schema/迁移/依赖、D-174 判决正文与既有冻结字节布局（§4.3 的 59 字节头、§4.4 的 KDF 参数、§4.5 的 v1 单段语义均不动）、任何阈值。
+**边界：** 入 = 本条、`docs/specs/2026-09-24-p7-06-backup-container-format-design.md` 追加 §4.11、`docs/CURRENT_STATE.md` 状态句。出 = 产品代码、测试源码、schema/迁移/依赖、D-174 判决正文与既有冻结字节布局（§4.3 的 59 字节头、§4.4 的 KDF 参数、§4.5 的 v1 单段语义均不动）、任何阈值。
 
 **验收（离线，本批实际执行）：** `PYTHONPATH=tools/python python -m project_docs .` exit 0；`git diff --check` 干净；规格新增小节只追加、不改既有行（`git diff` 对既有小节无删除行）。
 
 **残余：** ① 实现批未开始——容器 v2 的写者/恢复端/向量全部待做；② 分块 AEAD 的跨端向量（桌面 `SunJCE` vs Android `AndroidOpenSSL`）须在实现批取证，规格 §6 的既有 OPEN 项不因本条关闭；③ 1 MiB 块大小的吞吐读数未取；④ v1 容器的回归集须在实现批保持绿。
 
-**关联决定：** D-269（缺陷首次登记与「静态读」结论，由本条更正归因）、D-174（容器格式规格 approved 的依据；本条只追加 §4.10，不改其判决）、D-179（解密器 `update`/`doFinal` 体例）、D-183（恢复确认与切换）、#221（`catch (Throwable)` 记录改造——正是它让本条拿到栈）。
+**关联决定：** D-269（缺陷首次登记与「静态读」结论，由本条更正归因）、D-174（容器格式规格 approved 的依据；本条只追加 §4.11，不改其判决）、D-179（解密器 `update`/`doFinal` 体例）、D-183（恢复确认与切换）、#221（`catch (Throwable)` 记录改造——正是它让本条拿到栈）。
