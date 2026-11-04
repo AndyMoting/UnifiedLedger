@@ -204,9 +204,11 @@ RESIDUAL_FILL_FREE_BYTES = 256 * 1024 * 1024
 
 CACHE_FILL_NAME = re.compile(r"enospc-fill-[0-9]+")
 DF_ROW = re.compile(r"^\s*(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)%\s+(\S+)\s*$")
-# API 34+ google_apis images answer `df -k /data` with the pass-through
-# projection of the same userdata volume instead of a `/data` mount point.
-EMULATED_DATA_MOUNT = re.compile(r"/mnt/pass_through/[0-9]+/emulated")
+# API 34+ google_apis images answer `df -k /data` with a projection of the same
+# userdata volume instead of a `/data` mount point. Two shapes have now been
+# observed on the hosted runners: the FUSE pass-through mount and the per-user
+# bind projection of the same volume. Both carry the same device's numbers.
+PROJECTED_DATA_MOUNT = re.compile(r"/mnt/pass_through/[0-9]+/emulated|/data/user/[0-9]+")
 
 
 
@@ -221,11 +223,13 @@ def parse_df(text: str, mount: str = "/data") -> dict:
     rows and a wrapped long device name can all appear above the row that
     matters, and the last exact match is the authoritative one.
 
-    When no row carries ``mount`` verbatim, the emulated pass-through projection
-    of the same volume is accepted (`/mnt/pass_through/<user>/emulated`, which is
-    what API 34+ google_apis images answer for `/data`). The recorded ``mount``
-    stays the path the caller asked about; the resolved device and numbers come
-    from the accepted row, so both readings remain tellable apart in evidence.
+    When no row carries ``mount`` verbatim, a projection of the same userdata
+    volume is accepted: the FUSE pass-through mount
+    (`/mnt/pass_through/<user>/emulated`) or the per-user bind projection
+    (`/data/user/<user>`) — the two shapes API 34+ google_apis images have been
+    observed to answer with. The recorded ``mount`` stays the path the caller
+    asked about; the resolved device and numbers come from the accepted row, so
+    both readings remain tellable apart in evidence.
     """
 
     def rows():
@@ -240,7 +244,7 @@ def parse_df(text: str, mount: str = "/data") -> dict:
         if row.group(6) == mount:
             exact = row
             break
-        if projected is None and EMULATED_DATA_MOUNT.fullmatch(row.group(6)):
+        if projected is None and PROJECTED_DATA_MOUNT.fullmatch(row.group(6)):
             projected = row
     row = exact if exact is not None else projected
     if row is None:
