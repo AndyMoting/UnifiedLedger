@@ -769,19 +769,22 @@ class P503ImportReviewReducerTest {
         val pageSize = 200
         val total = 20_001
         val pageCount = (total + pageSize - 1) / pageSize
+
+        fun duplicateId(index: Int): String = "dup-" + index.toString().padStart(5, '0')
+
         fun pageItems(page: Int): List<ImportDuplicateGroupDispositionItem> {
             val first = page * pageSize
             val last = minOf(first + pageSize, total)
-            return (first until last).map { index -> groupItem("dup-" + index.toString().padStart(5, '0')) }
+            return (first until last).map { index -> groupItem(duplicateId(index)) }
         }
-        fun duplicateId(index: Int): String = "dup-" + index.toString().padStart(5, '0')
 
         var state: P503AppState.OverviewEmpty =
             assertIs<P503AppState.OverviewEmpty>(
                 reducer.reduce(overview(session = acceptedSession()), P503UiEvent.StartImportDuplicateGroupDisposition("pick-handle-1", pageItems(0), totalCount = total)),
             )
-        assertEquals(pageSize, state.importReview?.groupDisposition?.items?.size)
-        assertEquals(total, state.importReview?.groupDisposition?.totalCount)
+        val firstPage = state.importReview?.groupDisposition
+        assertEquals(pageSize, firstPage?.items?.size)
+        assertEquals(total, firstPage?.totalCount)
 
         for (page in 1 until pageCount) {
             val landed = pageItems(page)
@@ -882,7 +885,8 @@ class P503ImportReviewReducerTest {
             assertIs<P503AppState.OverviewEmpty>(
                 reducer.reduce(opened, P503UiEvent.ImportGroupEnumerationPageLanded("pick-handle-1", listOf(groupItem("duplicate-3"), groupItem("duplicate-4")), firstOrdinal = 1_001)),
             )
-        assertEquals(listOf(1, 2, 1_001, 1_002), appended.importReview?.groupDisposition?.items?.map { it.ordinal })
+        val page = appended.importReview?.groupDisposition
+        assertEquals(listOf(1, 2, 1_001, 1_002), page?.items?.map { it.ordinal })
     }
 
     // ---- P7-05 enumeration progress events (session-level batch read in-flight marker) ----
