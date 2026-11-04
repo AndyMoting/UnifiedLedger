@@ -6,6 +6,8 @@ import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import android.os.StatFs
 import android.os.SystemClock
+import android.system.ErrnoException
+import android.system.OsConstants
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.unifiedledger.application.backup.JvmBackupCryptoPrimitives
@@ -269,7 +271,14 @@ class BackupExportEnospcInstrumentedTest {
             )
 
             // 6. The skip decision: a host that could not reach ENOSPC can never be reported as a
-            // pass.
+            // pass. A refusal for any OTHER reason also skips, but names the errno (A10-2), because
+            // the rig may not claim an out-of-space condition from a different failure.
+            Assume.assumeTrue(
+                "the rig was refused for a reason that is NOT ENOSPC " +
+                    "(fill=${delivery.fillNonEnospcFailure}, target=${delivery.nonEnospcFailure}); " +
+                    "only errno ENOSPC proves the condition under test",
+                delivery.nonEnospcFailure == null && delivery.fillNonEnospcFailure == null,
+            )
             Assume.assumeTrue(
                 "the rig needs a REAL ENOSPC on the target write and this host did not reach one: " +
                     "wrote=${delivery.fillBytes} bytes, writeFailed=${delivery.fillWriteFailed}, " +
@@ -398,6 +407,7 @@ class BackupExportEnospcInstrumentedTest {
         val fill = fillUntilEnospc(fillRoot)
         delivery.fillWriteFailed = fill.writeFailed
         delivery.fillBytes = fill.bytes
+        delivery.fillNonEnospcFailure = fill.nonEnospcFailure
         return RecordingFullDiskStream(base, targetFile, delivery)
     }
 
@@ -427,7 +437,14 @@ class BackupExportEnospcInstrumentedTest {
                 stream.write(b, off, len)
                 delivery.successfulWrites += 1
             } catch (failure: IOException) {
-                if (delivery.successfulWrites == 0) delivery.firstWriteFailed = true
+                // A10-2: only a genuine ENOSPC may count as "the target refused the write".
+                // EIO/EDQUOT/EFBIG/EINTR arrive as IOException too and prove nothing about a
+                // full disk, so the rig records the non-ENOSPC reason and the case SKIPS.
+                if (isRealEnospc(failure)) {
+                    delivery.firstWriteFailed = true
+                } else {
+                    delivery.nonEnospcFailure = describeIoFailure(failure)
+                }
                 throw failure
             }
         }
@@ -450,10 +467,38 @@ class BackupExportEnospcInstrumentedTest {
         var containerLengthAtDelivery: Long = 0L
         var fillWriteFailed: Boolean = false
         var fillBytes: Long = 0L
+        var fillNonEnospcFailure: String? = null
         var successfulWrites: Int = 0
         var firstWriteFailed: Boolean = false
+        var nonEnospcFailure: String? = null
         var committed: Boolean = false
         var targetLength: Long = 0L
+    }
+
+    // ------------------------------------------------------------------ the ENOSPC classifier
+
+    /**
+     * A10-2: a refused write is ENOSPC only when the OS says so. A bare `IOException` is NOT
+     * evidence of a full disk — `EIO`, `EDQUOT` (quota exceeded), `EFBIG` and `EINTR` all arrive as
+     * the same type, and treating any of them as "the disk is full" would let the rig report a real
+     * ENOSPC it never produced.
+     *
+     * The authoritative check is the errno of an [ErrnoException] (`ENOSPC` = errno 28), because
+     * Android's file I/O raises exactly that subtype for a refused write. The message check is the
+     * fallback for a wrapper that rethrows a plain `IOException` while preserving the cause text.
+     */
+    private fun isRealEnospc(failure: Throwable): Boolean {
+        val errno = (failure as? ErrnoException)?.errno
+        if (errno != null) return errno == OsConstants.ENOSPC
+        if (failure.message?.contains(ENOSPC_MESSAGE, ignoreCase = true) == true) return true
+        return failure.cause?.let { cause -> cause !== failure && isRealEnospc(cause) } ?: false
+    }
+
+    /** The operator-facing description of a refusal that was NOT ENOSPC. */
+    private fun describeIoFailure(failure: Throwable): String {
+        val errno = (failure as? ErrnoException)?.errno
+        val kind = failure.javaClass.simpleName
+        return if (errno != null) "$kind(errno=$errno)" else "$kind: ${failure.message ?: "no message"}"
     }
 
     // ------------------------------------------------------------------ context / layout helpers
@@ -487,7 +532,16 @@ class BackupExportEnospcInstrumentedTest {
         parent: File,
         prefix: String,
     ): File {
-        val root = File(parent, "$prefix-${System.nanoTime()}")
+        // A10-10: currentTimeMillis, not nanoTime — nanoTime's origin is arbitrary and may be
+        // negative, and a leading dash produces "enospc-fill--123", which the driver's host-side
+        // cleanup regex (`enospc-fill-[0-9]+`) deliberately refuses to delete.
+        //
+        // A10-9 (delayed allocation, NOT fixed here): ext4/f2fs can accept a write into page cache
+        // and only fail at flush/writeback. That is why the fill and the target stream both call
+        // flush/sync before declaring success, but a device whose writeback lags can still let a
+        // short write through and turn an expected refusal into a failed assertion later. The
+        // symptom to recognise is a fill that reports writeFailed=false while /data reads ~0 free.
+        val root = File(parent, "$prefix-${System.currentTimeMillis()}")
         check(root.mkdirs()) { "the rig must create its own directory: $root" }
         createdRoots += root
         return root
@@ -528,12 +582,29 @@ class BackupExportEnospcInstrumentedTest {
         }
 
     private fun assertNoDanglingForeignKeys(mainFile: File) {
+        // A10-11: this check is only meaningful once the ledger HAS rows. A fresh install carries
+        // the bootstrapped catalog (2 accounts / 2 categories) and no transactions, so the check
+        // asserts the catalog's own referential closure rather than "zero rows, zero violations".
+        // The precondition is asserted, so an empty database fails here instead of passing silently.
         withLedgerDatabase(mainFile) { database ->
+            assertTrue(
+                "the fresh install must carry the bootstrapped catalog, or the foreign-key check is vacuous",
+                rowCount(database, "catalog_account") > 0L && rowCount(database, "catalog_category") > 0L,
+            )
             database.rawQuery("PRAGMA foreign_key_check", null).use { cursor ->
                 assertFalse("no foreign key may dangle after the refused target write", cursor.moveToFirst())
             }
         }
     }
+
+    private fun rowCount(
+        database: SQLiteDatabase,
+        table: String,
+    ): Long =
+        database.rawQuery("SELECT count(*) FROM $table", null).use { cursor ->
+            assertTrue("count(*) on $table must return a row", cursor.moveToFirst())
+            cursor.getLong(0)
+        }
 
     /** No staging entry may still name this export's token. */
     private fun assertNoStagingResidue(
@@ -594,9 +665,15 @@ class BackupExportEnospcInstrumentedTest {
                     stream.fd.sync()
                 }
             } catch (failure: IOException) {
-                // A refused write is the signal we came for; shrinking keeps consuming the last
-                // blocks, and only the smallest chunk size is accepted as "the disk is really full".
+                // A10-2: a refused write only counts when the OS reported ENOSPC. A different
+                // errno (quota, I/O error, signal interruption) is recorded verbatim and the case
+                // SKIPS, because it did not produce the condition under test.
                 file.delete()
+                if (!isRealEnospc(failure)) {
+                    return FillOutcome(writeFailed = false, bytes = written, nonEnospcFailure = describeIoFailure(failure))
+                }
+                // Shrinking keeps consuming the last blocks, and only the smallest chunk size is
+                // accepted as "the disk is really full".
                 if (chunkSize > FINAL_CHUNK_BYTES) {
                     chunkSize /= 8
                     continue
@@ -619,6 +696,8 @@ class BackupExportEnospcInstrumentedTest {
     private data class FillOutcome(
         val writeFailed: Boolean,
         val bytes: Long,
+        /** Set when a write was refused for a reason that is NOT ENOSPC (A10-2). */
+        val nonEnospcFailure: String? = null,
     )
 
     private companion object {
@@ -630,6 +709,13 @@ class BackupExportEnospcInstrumentedTest {
 
         /** `PRAGMA quick_check`'s only accepted answer. */
         const val QUICK_CHECK_OK = "ok"
+
+        /**
+         * A10-2: the kernel's ENOSPC text (`strerror(ENOSPC)`), used only as the fallback when a
+         * layer rethrows a plain `IOException` instead of an `ErrnoException`. The errno check in
+         * [isRealEnospc] is authoritative.
+         */
+        const val ENOSPC_MESSAGE = "No space left on device"
 
         /**
          * The opaque export token this case pins, so the private staging paths are known exactly and

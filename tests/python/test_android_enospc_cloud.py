@@ -53,6 +53,16 @@ def kotlin_source(class_file: str) -> str:
     return ROOT.joinpath(*KOTLIN_DIR, class_file).read_text(encoding="utf-8")
 
 
+def strip_comments(text: str) -> str:
+    """Drop Kotlin block and line comments.
+
+    A claim must not be satisfiable by prose: A10-3 and A10-4 both failed on
+    free-text matches, so every structural assertion below reads code only.
+    """
+    without_blocks = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    return re.sub(r"//[^\n]*", "", without_blocks)
+
+
 def transcript(test_class: str, test_method: str) -> str:
     """One raw `am instrument -w -r` transcript in the runner's own shape."""
     return "\n".join([
@@ -196,34 +206,53 @@ class CaseIdentityMatchesTheKotlinRig(unittest.TestCase):
         self.assertEqual(int(bound[1]) * 1024 ** 3, module.MAX_FILL_BYTES)
 
     def test_the_export_rig_proves_a_real_enospc_not_an_injected_exception(self):
-        # Turns red if the rig is weakened into an injected-throw fake: the D-239
-        # gap is specifically that only synthetic writer exceptions existed, so the
-        # real filler and the real target stream must both be present.
+        # Turns red if the rig is weakened into an injected-throw fake. The D-239 gap
+        # is specifically that only synthetic writer exceptions existed, so this test
+        # argues about CONSTRUCTIONS and CALL STRUCTURE, not vocabulary:
+        #  - the class may never CONSTRUCT an IOException/Exception (a helper that
+        #    builds and throws one cannot be hidden behind wording);
+        #  - the filler must be invoked from inside the target-opening path, so the
+        #    ENOSPC really happens while the export is delivering;
+        #  - the refusal must be classified, not assumed (A10-2).
         source = kotlin_source("BackupExportEnospcInstrumentedTest.kt")
-        self.assertIn("fillUntilEnospc", source)
-        self.assertIn("FileOutputStream", source)
-        self.assertIn("ENOSPC", source)
-        self.assertIn("TARGET_WRITE_FAILED", source)
-        # No hand-thrown IOException may stand in for the OS refusal.
-        self.assertNotIn("throw IOException", source)
-        self.assertNotIn("error(\"ENOSPC\")", source)
+        code = strip_comments(source)
+        for construction in ("IOException(", "Exception(", "RuntimeException("):
+            with self.subTest(construction=construction):
+                self.assertNotIn(construction, code)
+        opener = code.split("private fun openTargetOnAFullFilesystem(", 1)[1].split(
+            "private class RecordingFullDiskStream(", 1)[0]
+        self.assertIn("fillUntilEnospc(", opener)
+        self.assertIn("FileOutputStream(", opener)
+        self.assertIn("isRealEnospc(", code)
+        self.assertIn("OsConstants.ENOSPC", code)
+        self.assertIn("TARGET_WRITE_FAILED", code)
 
     def test_the_export_rig_asserts_the_staging_cleanup_and_the_ledger(self):
-        # Turns red if an assertion the D-239 residual asks for is deleted: the
-        # typed reason, the no-publish claim, the staging cleanup, and the
-        # quick_check/pointer/generation integrity reads.
+        # Turns red if an assertion the D-239 residual asks for is deleted, weakened
+        # into a tautology, or reduced to a comment. A10-4: two things make this real —
+        # the block is scoped BETWEEN the export call and the teardown, so KDoc and
+        # pre-export checks cannot satisfy it; and each claim is pinned as an
+        # ASSERTION SHAPE (the call plus the value it reads), so replacing
+        # `(... as Failed).reason` with a repeated constant fails instead of
+        # leaving the literal in place.
         source = kotlin_source("BackupExportEnospcInstrumentedTest.kt")
-        for required in (
-            "BackupExportFailure.TARGET_WRITE_FAILED",
-            "snapshotFile.exists()",
-            "containerFile.exists()",
-            "PRAGMA quick_check",
-            "PRAGMA foreign_key_check",
-            "readActivePointer",
-            "generationNames",
-        ):
-            with self.subTest(required=required):
-                self.assertIn(required, source)
+        after_export = source.split("val result = exportUseCase.export(request)", 1)[1]
+        block = strip_comments(after_export.split("// 13. Teardown inside the happy path.", 1)[0])
+        claims = {
+            "typed reason is read from the result": r"BackupExportResult\.Failed\)\.reason",
+            "the failure type is asserted": r"result is BackupExportResult\.Failed",
+            "snapshot staging removal": r"assertFalse\([^)]*snapshotFile\.exists\(\)",
+            "container staging removal": r"assertFalse\([^)]*containerFile\.exists\(\)",
+            "no staging residue sweep": r"assertNoStagingResidue\(layout, TARGET_TOKEN\)",
+            "quick_check": r"quickCheck\(mainFile\)",
+            "active pointer": r"readActivePointer\(layout\)",
+            "generation set": r"generationNames\(layout\)",
+            "target never published": r"delivery\.committed",
+            "no successful write": r"delivery\.successfulWrites",
+        }
+        for claim, pattern in claims.items():
+            with self.subTest(claim=claim):
+                self.assertRegex(block, pattern)
 
 
 class CaseScopedEvidence(unittest.TestCase):
@@ -264,18 +293,32 @@ class CaseScopedEvidence(unittest.TestCase):
         # identity test, a ValueError here is the GATE firing; the correct explicit
         # case instead falls through to the missing collector log.
         directory = evidence(self.root, case="export", test_class=EXPORT_CLASS, test_method=EXPORT_METHOD)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError) as caught:
             self.module.validate_evidence(directory, SHA, "import")
+        # A10-6: the message must localise the defect to the identity gate, not to
+        # some downstream check that happened to fail first.
+        self.assertIn("different instrumented case", str(caught.exception))
         with self.assertRaises(OSError):
             self.module.validate_evidence(directory, SHA, "export")
 
     def test_a_well_formed_report_seeds_the_expected_identity(self):
-        # Turns red if the report dictionary stops carrying the case identity, in
-        # which case the summary and the validator would disagree about the rig.
+        # Turns red if the report stops carrying the case identity, in which case the
+        # summary and the validator would disagree about the rig. A10-7: the report is
+        # built by the rig itself, so its `case` stamp is pinned here directly.
         module = self.module
         self.assertEqual("import-intake-enospc", module.case_spec("import").rig)
         self.assertEqual("backup-export-enospc", module.case_spec("export").rig)
         self.assertNotEqual(module.case_spec("import").scope, module.case_spec("export").scope)
+        for name in ("import", "export"):
+            with self.subTest(case=name):
+                spec = module.case_spec(name)
+                self.assertEqual(name, spec.name)
+                self.assertEqual(module.CASES[name], spec)
+        # A10-8: the transcript name lives in one place and every site reads it.
+        source = ROOT.joinpath(*DRIVER_PATH).read_text(encoding="utf-8")
+        self.assertEqual(1, source.count('"instrumentation-enospc.txt"'))
+        self.assertIn("self.spec.transcript_name", source)
+        self.assertIn("expected.transcript_name", source)
 
 
 class ScopeSentence(unittest.TestCase):

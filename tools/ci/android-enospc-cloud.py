@@ -110,6 +110,13 @@ class CaseSpec:
 
     @property
     def transcript_name(self) -> str:
+        """The raw ``am instrument`` transcript file for this case.
+
+        One name for both rigs: each dispatch owns its own evidence directory, so
+        the two never share a file, and keeping the historical name leaves the
+        import evidence set byte-identical to what D-276 recorded (A10-8 uses this
+        property at every site instead of restating the literal).
+        """
         return "instrumentation-enospc.txt"
 
     def __repr__(self) -> str:  # pragma: no cover - diagnostics only
@@ -357,7 +364,7 @@ def validate_evidence(directory: Path, sha: str, case: str | None = None) -> dic
             type(instrumented.get("numtests")) is not int) or instrumented["numtests"] != 1:
         raise ValueError("report does not claim exactly one executed case")
     instrumentation_pass(
-        (directory / "instrumentation-enospc.txt").read_text(encoding="utf-8", errors="replace"),
+        (directory / expected.transcript_name).read_text(encoding="utf-8", errors="replace"),
         expected.test_class,
         expected.test_method,
     )
@@ -614,7 +621,7 @@ class EnospcRig:
 
     def instrument(self) -> None:
         self.adb("shell", "am", "force-stop", PACKAGE)
-        transcript = self.evidence / "instrumentation-enospc.txt"
+        transcript = self.evidence / self.spec.transcript_name
         started = time.monotonic()
         with transcript.open("wb") as output:
             process = subprocess.Popen(
@@ -629,7 +636,7 @@ class EnospcRig:
                     process.wait(timeout=10)
         self.report["instrumented_seconds"] = round(time.monotonic() - started, 3)
         if process.returncode:
-            raise RigError(f"`am instrument` shell exited {process.returncode}; see instrumentation-enospc.txt")
+            raise RigError(f"`am instrument` shell exited {process.returncode}; see {self.spec.transcript_name}")
         text = transcript.read_text(encoding="utf-8", errors="replace")
         instrumentation_pass(text, self.spec.test_class, self.spec.test_method)
         self.report["instrumented_test"].update({"numtests": 1, "skipped": False})

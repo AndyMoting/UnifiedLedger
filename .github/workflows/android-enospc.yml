@@ -205,8 +205,12 @@ jobs:
         # Always runs, and always states the scope: an evidence-bearing run gets
         # the driver's summary (whose first paragraph is the same sentence), and a
         # run that stopped before the device still says what this rig is and that
-        # nothing about its behaviour was observed.
+        # nothing about its behaviour was observed. CASE is the declared input, not
+        # an inherited env var, so a dispatch with no evidence still names the right
+        # rig instead of falling back to the import sentence.
         if: always()
+        env:
+          CASE: ${{ inputs.case }}
         run: |
           {
             if [ -f enospc-evidence/summary.md ]; then
