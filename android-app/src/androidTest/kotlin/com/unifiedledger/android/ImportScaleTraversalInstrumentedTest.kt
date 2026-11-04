@@ -1118,7 +1118,7 @@ class ImportScaleTraversalInstrumentedTest {
         val seedFixture = booleanArg(ARG_SEED_FIXTURE, false)
         evidence +=
             "args target=$target maxForwardActions=$maxForwardActions settleMillis=$settleMillis stallChecks=$stallChecks " +
-                "seedFixture=$seedFixture fixtureRelations=$fixtureRelations"
+            "seedFixture=$seedFixture fixtureRelations=$fixtureRelations"
         if (seedFixture) {
             // Activation-only: the fixture must already be published by a previous `seedFixture` run
             // (host: seed → force-stop → fresh process → this mode). This path never rebuilds it, and
@@ -3427,16 +3427,15 @@ class ImportScaleTraversalInstrumentedTest {
      * null when the card shows no such toggle. It carries the whole-group count (共 N 条), so it is
      * matched by prefix — an exact lookup would only ever find one fixture's scale.
      */
-    private fun groupCardBatchToggleDescription(root: AccessibilityNodeInfo?): String? =
-        collectNodes(root) { node ->
-            val description = node.contentDescription?.toString().orEmpty()
-            description.startsWith(GROUP_COMPARISON_TOGGLE_TEXT_EXPANDED_ALL) ||
-                description.startsWith(GROUP_COMPARISON_TOGGLE_TEXT_COLLAPSED_ALL)
-        }
-            .map { node -> node.contentDescription?.toString().orEmpty() }
-            .distinct()
-            .firstOrNull()
-            ?.takeIf { description -> description.isNotEmpty() }
+    private fun groupCardBatchToggleDescription(root: AccessibilityNodeInfo?): String? {
+        val descriptions =
+            collectNodes(root) { node ->
+                val description = node.contentDescription?.toString().orEmpty()
+                description.startsWith(GROUP_COMPARISON_TOGGLE_TEXT_EXPANDED_ALL) ||
+                    description.startsWith(GROUP_COMPARISON_TOGGLE_TEXT_COLLAPSED_ALL)
+            }.map { node -> node.contentDescription?.toString().orEmpty() }
+        return descriptions.firstOrNull { description -> description.isNotEmpty() }
+    }
 
     private fun groupCardItemCount(root: AccessibilityNodeInfo?): Long? {
         val text = groupCardItemCountText(root) ?: return null
