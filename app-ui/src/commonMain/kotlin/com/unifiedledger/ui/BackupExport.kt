@@ -8,8 +8,8 @@ import com.unifiedledger.application.backup.BackupContainerSink
 import com.unifiedledger.application.backup.BackupCryptoPrimitives
 import com.unifiedledger.application.backup.BackupPlaintextReader
 import com.unifiedledger.application.backup.BackupPlaintextSource
-import com.unifiedledger.application.backup.backupContainerOverheadBytes
-import com.unifiedledger.application.backup.writeBackupContainer
+import com.unifiedledger.application.backup.backupContainerV2OverheadBytes
+import com.unifiedledger.application.backup.writeBackupContainerV2
 
 /*
  * P7-06 06.B (D-177; spec `docs/specs/2026-09-24-p7-06-backup-export-design.md`): the shared,
@@ -60,13 +60,13 @@ sealed interface BackupExportResult {
     /**
      * The authenticated tail was written and the delivery stream closed cleanly.
      *
-     * P3-O note (06.B review): [containerBytes] is the COMPUTED container size
-     * (`backupContainerOverheadBytes() + plaintextLength`), not a post-write `stat` of the delivered
-     * file. It is display/diagnostic copy only (the outcome banner), carries no accounting or
-     * integrity meaning, and the export never reports success on a short write (the writer commits
-     * only after the authenticated tail is written and the stream closes cleanly). Low impact;
-     * registered rather than measured to avoid an extra platform `length()` call on the delivery
-     * path.
+     * P3-O note (06.B review): [containerBytes] is the COMPUTED container size (the v2 overhead
+     * `backupContainerV2OverheadBytes(plaintextLength)` + plaintextLength since D-285), not a
+     * post-write `stat` of the delivered file. It is display/diagnostic copy only (the outcome
+     * banner), carries no accounting or integrity meaning, and the export never reports success on
+     * a short write (the writer commits only after the authenticated tail is written and the stream
+     * closes cleanly). Low impact; registered rather than measured to avoid an extra platform
+     * `length()` call on the delivery path.
      */
     data class Succeeded(
         val containerBytes: Long,
@@ -236,7 +236,10 @@ class BackupExportUseCase(
         // BackupExportFailure enum and its copy, so the precheck is skipped instead. The known-space
         // branch below is the mandated hard precheck.
         val plaintextSize = fileSystem.length(request.activeMainFile)
-        val containerSize = plaintextSize + backupContainerOverheadBytes()
+        // D-285: export writes the CHUNKED v2 container (spec section 4.11.5 "write: export
+        // defaults to v2"), whose overhead adds one 16-byte tag per 1 MiB chunk — a few KiB at the
+        // 1 GiB plaintext bound, covered by the same 64 MiB headroom margin.
+        val containerSize = plaintextSize + backupContainerV2OverheadBytes(plaintextSize)
         val required = containerSize + plaintextSize + BACKUP_DISK_HEADROOM_BYTES
         val available = fileSystem.usableSpace(layout.hostDirectory)
         if (available != null && available < required) {
@@ -330,7 +333,7 @@ class BackupExportUseCase(
                 }
             val sink = BackupContainerSink { bytes, offset, length -> writeStream.write(bytes, offset, length) }
             val result =
-                writeBackupContainer(
+                writeBackupContainerV2(
                     plaintext = source,
                     sink = sink,
                     password = password,

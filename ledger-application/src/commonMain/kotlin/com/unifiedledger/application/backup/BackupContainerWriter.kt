@@ -120,3 +120,103 @@ fun writeBackupContainer(
         key.fill(0)
     }
 }
+
+/**
+ * Writes one authenticated container in the CHUNKED v2 format (container-format spec section 4.11,
+ * D-285) to [sink]. The v1 [writeBackupContainer] above is untouched: v1 stays writable for the
+ * compatibility proof, and both writers share the frozen widening, the two-pass hash-then-encrypt
+ * order and the bounded 64 KiB streaming buffer.
+ *
+ * The two-pass order is LOAD-BEARING exactly as in v1: `payload_sha256` sits in the fixed header
+ * and the header is inside every chunk's AAD, so pass 1 must complete the digest before the header
+ * exists. Pass 2 seals one AES-256-GCM chunk per [BACKUP_V2_CHUNK_SIZE] bytes of plaintext with the
+ * per-chunk IV ([backupContainerV2ChunkIv]) and per-chunk AAD ([backupContainerV2ChunkAad]) — the
+ * per-chunk independent seal is what bounds the platform AEAD buffer (D-285: Android's GCM buffers
+ * the whole message until `doFinal`, so with v2 the message it buffers is at most one chunk).
+ */
+fun writeBackupContainerV2(
+    plaintext: BackupPlaintextSource,
+    sink: BackupContainerSink,
+    password: String,
+    schemaVersion: Long,
+    plaintextLength: Long,
+    crypto: BackupCryptoPrimitives,
+): BackupContainerWriteResult {
+    val salt = crypto.randomBytes(BACKUP_SALT_LENGTH)
+    val baseIv = crypto.randomBytes(BACKUP_IV_LENGTH)
+    val widened = widenBackupPassword(password)
+    val key = crypto.deriveKey(widened, salt, BACKUP_KDF_ITERATIONS, BACKUP_KEY_LENGTH_BITS)
+    try {
+        // Pass 1: bounded streaming read that COMPLETES payload_sha256 before the header exists.
+        val digest = crypto.sha256Digest()
+        val buffer = ByteArray(BACKUP_STREAM_CHUNK_BYTES)
+        var hashed = 0L
+        plaintext.open().use { reader ->
+            while (true) {
+                val read = reader.read(buffer)
+                if (read <= 0) break
+                digest.update(buffer, 0, read)
+                hashed += read.toLong()
+            }
+        }
+        require(hashed == plaintextLength) {
+            "snapshot length changed between sizing and hashing: expected $plaintextLength, read $hashed"
+        }
+        val payloadSha256 = digest.digest()
+
+        // The header (offset 27 carries payload_sha256) must be complete before encryption: it is
+        // inside every chunk's AAD, so it can only be written after pass 1 finished.
+        val header = backupContainerHeaderV2(schemaVersion, plaintextLength, payloadSha256)
+        sink.write(header, 0, header.size)
+        sink.write(salt, 0, salt.size)
+        sink.write(baseIv, 0, baseIv.size)
+
+        // Pass 2: a second bounded streaming read; every chunk is an independent seal whose AAD
+        // and IV bind the chunk index, so reordering/truncation/splicing fails authentication.
+        // The reader is opened ONCE for the whole pass: the chunk windows are sequential slices of
+        // the same stream, exactly like the v1 single-seal loop.
+        var encrypted = 0L
+        var chunkIndex = 0L
+        plaintext.open().use { reader ->
+            while (encrypted < plaintextLength) {
+                val chunkPlaintextLength = backupContainerV2ChunkPlaintextLength(plaintextLength, chunkIndex)
+                val encryptor =
+                    crypto.gcmEncryptor(
+                        key,
+                        backupContainerV2ChunkIv(baseIv, chunkIndex),
+                        backupContainerV2ChunkAad(header, salt, chunkIndex),
+                    )
+                var sealed = 0L
+                while (sealed < chunkPlaintextLength) {
+                    // Read EXACTLY the remaining chunk window: a whole-buffer read could overshoot
+                    // a short final window, so the target is sized to the window remainder (only
+                    // the last sub-64-KiB read allocates).
+                    val want = minOf(buffer.size.toLong(), chunkPlaintextLength - sealed).toInt()
+                    val target = if (want == buffer.size) buffer else ByteArray(want)
+                    val read = reader.read(target)
+                    require(read > 0) {
+                        "snapshot length changed between the hash pass and the encrypt pass: " +
+                            "expected $plaintextLength, read $encrypted"
+                    }
+                    sealed += read.toLong()
+                    encrypted += read.toLong()
+                    val produced = encryptor.update(target, 0, read)
+                    if (produced.isNotEmpty()) sink.write(produced, 0, produced.size)
+                }
+                val tail = encryptor.doFinal()
+                if (tail.isNotEmpty()) sink.write(tail, 0, tail.size)
+                chunkIndex += 1L
+            }
+        }
+
+        return BackupContainerWriteResult(
+            plaintextLength = plaintextLength,
+            containerLength = backupContainerV2OverheadBytes(plaintextLength) + plaintextLength,
+            payloadSha256 = payloadSha256,
+        )
+    } finally {
+        // Container-format spec section 4.10: clear the password characters and derived key.
+        widened.fill('\u0000')
+        key.fill(0)
+    }
+}
