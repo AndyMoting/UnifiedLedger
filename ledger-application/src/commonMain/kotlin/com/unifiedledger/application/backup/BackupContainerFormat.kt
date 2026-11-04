@@ -60,6 +60,22 @@ const val BACKUP_DISK_HEADROOM_BYTES: Long = 64L * 1024L * 1024L
 /** The v1 minimum password length in Unicode code points (container-format spec section 4.10). */
 const val BACKUP_MIN_PASSWORD_CODE_POINTS: Int = 8
 
+// ---------------------------------------------------------------------------------------------
+// Container format v2: chunked AEAD (container-format spec section 4.11, D-285). The v1 values
+// above are FROZEN and unchanged; v2 only re-points two header fields and adds the chunking
+// parameters below. The chunk size is a SPEC CONSTANT, deliberately not a header field: writing it
+// into the header would make every chunk size a compatibility surface (spec section 4.11.2).
+// ---------------------------------------------------------------------------------------------
+
+/** `container_format_version` v2 (container-format spec section 4.11.2, offset 4); D-285. */
+const val BACKUP_CONTAINER_FORMAT_VERSION_V2: Int = 2
+
+/** `aead_id` = chunked AES-256-GCM, one independent seal per chunk (spec section 4.11.2, offset 7). */
+const val BACKUP_AEAD_ID_CHUNKED: Int = 2
+
+/** The v2 chunk size (spec section 4.11.2): 1 MiB; the last chunk may be 1..chunk_size bytes. */
+const val BACKUP_V2_CHUNK_SIZE: Long = 1_048_576L
+
 /**
  * The container overhead over the plaintext: fixed header (59) + salt (16) + IV (12) + tag (16)
  * = 103 bytes. The 06.B spec section 5 derives `container_size = plaintext_len + 103` from this;
@@ -119,6 +135,122 @@ fun backupContainerAad(
     header.copyInto(aad, 0)
     salt.copyInto(aad, header.size)
     return aad
+}
+
+/**
+ * Assembles the 59-byte fixed header for container format v2 (container-format spec section
+ * 4.11.2, D-285): byte-identical to [backupContainerHeader] except `container_format_version = 2`
+ * (offset 4) and `aead_id = 2` (offset 7). The salt/IV lengths, KDF parameters, schema hint,
+ * plaintext length and `payload_sha256` semantics are all unchanged from v1.
+ */
+fun backupContainerHeaderV2(
+    schemaVersion: Long,
+    plaintextLength: Long,
+    payloadSha256: ByteArray,
+): ByteArray {
+    require(payloadSha256.size == 32) { "payload_sha256 must be 32 bytes" }
+    val header = ByteArray(BACKUP_FIXED_HEADER_LENGTH)
+    header[0] = 0x55
+    header[1] = 0x4C
+    header[2] = 0x42
+    header[3] = 0x4B
+    writeU16(header, 4, BACKUP_CONTAINER_FORMAT_VERSION_V2.toLong())
+    header[6] = BACKUP_KDF_ID.toByte()
+    header[7] = BACKUP_AEAD_ID_CHUNKED.toByte()
+    writeU32(header, 8, BACKUP_KDF_ITERATIONS.toLong())
+    header[12] = BACKUP_SALT_LENGTH.toByte()
+    header[13] = BACKUP_IV_LENGTH.toByte()
+    header[14] = BACKUP_TAG_LENGTH.toByte()
+    writeU32(header, 15, schemaVersion)
+    writeU64(header, 19, plaintextLength)
+    payloadSha256.copyInto(header, 27)
+    return header
+}
+
+/**
+ * The v2 per-chunk AAD (container-format spec section 4.11.3): `fixed header (59B) || salt ||
+ * chunk index (BE u32, from 0)`. The chunk index inside the AAD is what makes chunk REORDERING,
+ * chunk TRUNCATION and CROSS-CONTAINER SPLICING all fail tag verification (spec section 4.11.3);
+ * it also makes the AAD unambiguously parseable, which the v1 `header || salt` composition already
+ * guarantees because the fixed header carries `salt_len` (spec section 4.6).
+ */
+fun backupContainerV2ChunkAad(
+    header: ByteArray,
+    salt: ByteArray,
+    chunkIndex: Long,
+): ByteArray {
+    require(chunkIndex in 0L..BACKUP_V2_CHUNK_INDEX_MAX) { "chunk index out of the u32 range: $chunkIndex" }
+    val aad = ByteArray(header.size + salt.size + BACKUP_V2_CHUNK_AAD_INDEX_BYTES)
+    header.copyInto(aad, 0)
+    salt.copyInto(aad, header.size)
+    writeChunkIndex(aad, header.size + salt.size, chunkIndex)
+    return aad
+}
+
+/**
+ * The v2 per-chunk IV (container-format spec section 4.11.3): the 12-byte base IV from the header
+ * with its LAST 4 BYTES replaced by the chunk index (BE u32, from 0). The other 8 bytes stay fixed,
+ * so the IVs of the chunks of one container are pairwise distinct and no IV is ever reused under
+ * the per-container derived key (spec section 4.11.3).
+ */
+fun backupContainerV2ChunkIv(
+    baseIv: ByteArray,
+    chunkIndex: Long,
+): ByteArray {
+    require(baseIv.size == BACKUP_IV_LENGTH) { "the v2 base IV must be ${BACKUP_IV_LENGTH} bytes" }
+    require(chunkIndex in 0L..BACKUP_V2_CHUNK_INDEX_MAX) { "chunk index out of the u32 range: $chunkIndex" }
+    val iv = baseIv.copyOf()
+    writeChunkIndex(iv, BACKUP_IV_LENGTH - BACKUP_V2_CHUNK_AAD_INDEX_BYTES, chunkIndex)
+    return iv
+}
+
+/**
+ * The v2 chunk count (container-format spec section 4.11.2): `ceil(plaintext_len / chunk_size)`;
+ * a ZERO-length plaintext has ZERO chunks (spec section 4.11.4) — the same rejection path as the
+ * v1 zero-length payload.
+ */
+fun backupContainerV2ChunkCount(plaintextLength: Long): Long = if (plaintextLength <= 0L) 0L else (plaintextLength + BACKUP_V2_CHUNK_SIZE - 1) / BACKUP_V2_CHUNK_SIZE
+
+/**
+ * The plaintext length of the chunk at [chunkIndex] (container-format spec section 4.11.2): every
+ * chunk is [BACKUP_V2_CHUNK_SIZE] bytes except the last, which is `1..chunk_size` for a non-empty
+ * payload. A zero-length payload has no chunks and returns 0.
+ */
+fun backupContainerV2ChunkPlaintextLength(
+    plaintextLength: Long,
+    chunkIndex: Long,
+): Long {
+    require(chunkIndex in 0L until backupContainerV2ChunkCount(plaintextLength)) {
+        "chunk index $chunkIndex out of range for plaintext length $plaintextLength"
+    }
+    val fullChunks = plaintextLength / BACKUP_V2_CHUNK_SIZE
+    return if (chunkIndex < fullChunks) BACKUP_V2_CHUNK_SIZE else plaintextLength - fullChunks * BACKUP_V2_CHUNK_SIZE
+}
+
+/**
+ * The v2 container overhead over the plaintext (container-format spec section 4.11.4): fixed
+ * header (59) + salt (16) + IV (12) + one 16-byte tag PER CHUNK. For a zero-length payload this
+ * equals the v1 overhead minus the v1 tag (87 bytes) — a v2 empty container carries no tag at all.
+ */
+fun backupContainerV2OverheadBytes(plaintextLength: Long): Long =
+    (BACKUP_FIXED_HEADER_LENGTH + BACKUP_SALT_LENGTH + BACKUP_IV_LENGTH).toLong() +
+        backupContainerV2ChunkCount(plaintextLength) * BACKUP_TAG_LENGTH
+
+/** The v2 chunk index is a BE u32 (spec section 4.11.3): 4 bytes inside the AAD and the IV. */
+private const val BACKUP_V2_CHUNK_AAD_INDEX_BYTES: Int = 4
+
+/** The u32 ceiling for the v2 chunk index (spec section 4.11.3). */
+private const val BACKUP_V2_CHUNK_INDEX_MAX: Long = 0xFFFFFFFFL
+
+/** Writes a chunk index as a BE u32 at [offset]; shared by the AAD and the derived IV. */
+private fun writeChunkIndex(
+    target: ByteArray,
+    offset: Int,
+    chunkIndex: Long,
+) {
+    for (index in 0 until BACKUP_V2_CHUNK_AAD_INDEX_BYTES) {
+        target[offset + index] = ((chunkIndex ushr ((3 - index) * 8)) and 0xFF).toByte()
+    }
 }
 
 private fun writeU16(

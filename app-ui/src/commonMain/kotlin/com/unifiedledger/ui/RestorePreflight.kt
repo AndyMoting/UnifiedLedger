@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.backup.BACKUP_CONTAINER_FORMAT_VERSION_V2
 import com.unifiedledger.application.backup.BACKUP_DISK_HEADROOM_BYTES
 import com.unifiedledger.application.backup.BACKUP_FIXED_HEADER_LENGTH
 import com.unifiedledger.application.backup.BACKUP_KEY_LENGTH_BITS
@@ -9,9 +10,13 @@ import com.unifiedledger.application.backup.BackupContainerHeader
 import com.unifiedledger.application.backup.BackupCryptoPrimitives
 import com.unifiedledger.application.backup.BackupHeaderParseResult
 import com.unifiedledger.application.backup.BackupPreflightRejection
+import com.unifiedledger.application.backup.BackupV2AuthenticationException
+import com.unifiedledger.application.backup.ShortChunkStreamException
 import com.unifiedledger.application.backup.backupContainerAad
 import com.unifiedledger.application.backup.backupContainerSelfConsistent
+import com.unifiedledger.application.backup.backupContainerV2SelfConsistent
 import com.unifiedledger.application.backup.backupContainerWithinSizeBound
+import com.unifiedledger.application.backup.decryptBackupContainerV2
 import com.unifiedledger.application.backup.parseBackupContainerHeader
 import com.unifiedledger.application.backup.widenBackupPassword
 
@@ -399,8 +404,16 @@ class RestorePreflightUseCase(
                 is HeaderRead.Parsed -> parsed.header
             }
         // The self-consistency equation needs the exact container size (spec section 4.1/4.8); the
-        // shared pure helper owns the comparison so it cannot drift (P3-13).
-        if (!backupContainerSelfConsistent(header, stagedContainerSize)) {
+        // shared pure helper owns the comparison so it cannot drift (P3-13). V2 containers (spec
+        // section 4.11.4, D-285) carry one tag per chunk, so the equation is version-dispatched on
+        // the same pre-authentication class-1 timing.
+        val sizeConsistent =
+            if (header.containerFormatVersion == BACKUP_CONTAINER_FORMAT_VERSION_V2) {
+                backupContainerV2SelfConsistent(header, stagedContainerSize)
+            } else {
+                backupContainerSelfConsistent(header, stagedContainerSize)
+            }
+        if (!sizeConsistent) {
             return RestorePreflightResult.Rejected(BackupPreflightRejection.P706_CONTAINER_SIZE_MISMATCH)
         }
 
@@ -792,6 +805,57 @@ class RestorePreflightUseCase(
                 readFully(stream, iv)
                 val derived = crypto.deriveKey(widened, salt, header.kdfIterations.toInt(), BACKUP_KEY_LENGTH_BITS)
                 key = derived
+                // D-285: v1 containers keep the single-seal decryptor bound to `header || salt`;
+                // v2 containers dispatch to the per-chunk walk (spec section 4.11.4) on the
+                // ALREADY-derived key, with the same uniform authentication failure and the same
+                // staging lifecycle. A staging write failure inside the walk is a typed
+                // StagingWriteException, never a password failure (P2-1).
+                if (header.containerFormatVersion == BACKUP_CONTAINER_FORMAT_VERSION_V2) {
+                    val produced =
+                        try {
+                            decryptBackupContainerV2(
+                                cipherSource = { buffer ->
+                                    if (cancellation.isCancelled()) throw RestorePreflightCancelledException()
+                                    stream.read(buffer)
+                                },
+                                plaintextSink = { bytes, offset, length ->
+                                    writeStaging(writeStream, bytes.copyOfRange(offset, offset + length))
+                                },
+                                header = header,
+                                salt = salt,
+                                baseIv = iv,
+                                key = derived,
+                                crypto = crypto,
+                            )
+                        } catch (failure: Error) {
+                            throw failure
+                        } catch (failure: RestorePreflightCancelledException) {
+                            throw failure
+                        } catch (failure: StagingWriteException) {
+                            // A staging write INSIDE the walk keeps its own typed code: it is a
+                            // disk problem, never a password failure (P2-1).
+                            throw failure
+                        } catch (failure: BackupV2AuthenticationException) {
+                            throw AuthenticationFailureException()
+                        } catch (failure: ShortChunkStreamException) {
+                            throw ContainerReadException()
+                        } catch (failure: Throwable) {
+                            // The walk's own I/O goes through the caller's ports, whose failures
+                            // are already typed; anything else from the walk itself is a read
+                            // failure, NOT a password failure (P2-1).
+                            throw ContainerReadException()
+                        }
+                    try {
+                        writeStream.flushAndSync()
+                        writeStream.commit()
+                    } catch (failure: Error) {
+                        throw failure
+                    } catch (failure: Throwable) {
+                        throw StagingWriteException()
+                    }
+                    committed = true
+                    return produced
+                }
                 val decryptor = crypto.gcmDecryptor(derived, iv, backupContainerAad(headerBytes, salt))
                 val buffer = ByteArray(BACKUP_STREAM_CHUNK_BYTES)
                 var remaining = header.plaintextLength + header.tagLength.toLong()

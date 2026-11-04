@@ -18,6 +18,14 @@ package com.unifiedledger.application.backup
  * `P706_PAYLOAD_INTEGRITY_FAILED`), section 4.3.2/5.4 (`P706_SCHEMA_VERSION_UNSUPPORTED`) are reused
  * verbatim. The remaining names are PROPOSED by the 06.C design spec section 10 item 3 and are NOT
  * frozen; they are marked as such in [BackupPreflightRejection] and must not be presented as frozen.
+ *
+ * P7-06 container v2 (spec section 4.11, D-285): the parser accepts the (version, aead) pair
+ * `(1, 1)` — unchanged v1 semantics — and `(2, 2)` — the chunked AEAD format — and rejects every
+ * other combination on the SAME v1 rejection rows: a non-v1 version stays on the frozen VERSION
+ * row (including `(2, 1)`, which is exactly how an old reader sees a v2 container, section
+ * 4.11.5), and version 1 with a foreign AEAD id stays on the AEAD row. The parse result carries
+ * the version and the AEAD id, so the preflight can dispatch the size equation and the decrypt
+ * path per version.
  */
 
 /**
@@ -98,11 +106,17 @@ enum class BackupPreflightRejection {
 
 /** The parsed fixed header (offsets 0..58; container-format spec section 4.3, big-endian unsigned). */
 class BackupContainerHeader(
-    /** `container_format_version` (offset 4); must be [BACKUP_CONTAINER_FORMAT_VERSION]. */
+    /**
+     * `container_format_version` (offset 4); [BACKUP_CONTAINER_FORMAT_VERSION] (v1) or
+     * [BACKUP_CONTAINER_FORMAT_VERSION_V2] (chunked AEAD v2, spec section 4.11, D-285).
+     */
     val containerFormatVersion: Int,
     /** `kdf_id` (offset 6); must be [BACKUP_KDF_ID]. */
     val kdfId: Int,
-    /** `aead_id` (offset 7); must be [BACKUP_AEAD_ID]. */
+    /**
+     * `aead_id` (offset 7); [BACKUP_AEAD_ID] (v1 single-seal) or [BACKUP_AEAD_ID_CHUNKED] (v2), the
+     * value always matching [containerFormatVersion].
+     */
     val aeadId: Int,
     /** `kdf_iterations` (offset 8); the header value, validated into `[600000, 10000000]`. */
     val kdfIterations: Long,
@@ -147,7 +161,8 @@ sealed interface BackupHeaderParseResult {
  * be widened to cover it).
  *
  * The container-size self-consistency equation needs the actual container size and is therefore NOT
- * decided here; call [backupContainerSelfConsistent].
+ * decided here; call [backupContainerSelfConsistent] for a v1 header and
+ * [backupContainerV2SelfConsistent] for a v2 one (spec section 4.11.4).
  */
 fun parseBackupContainerHeader(bytes: ByteArray): BackupHeaderParseResult {
     if (bytes.size < BACKUP_FIXED_HEADER_LENGTH) {
@@ -157,15 +172,23 @@ fun parseBackupContainerHeader(bytes: ByteArray): BackupHeaderParseResult {
         return BackupHeaderParseResult.Rejected(BackupPreflightRejection.P706_CONTAINER_FORMAT_UNSUPPORTED)
     }
     val formatVersion = readU16(bytes, 4)
-    if (formatVersion != BACKUP_CONTAINER_FORMAT_VERSION.toLong()) {
+    val aeadId = bytes[7].toInt() and 0xFF
+    // Container-format spec section 4.11 (D-285): exactly two accepted pairs — (1, 1) is the
+    // unchanged v1 layout, (2, 2) is the chunked AEAD v2. The version row runs FIRST and keeps
+    // the frozen v1 semantics for every v1-reachable input: any version other than 1 fails here
+    // (including (2, 1), which the v1 regression set pins to P706_CONTAINER_VERSION_UNSUPPORTED
+    // and section 4.11.5 freezes as the old-reader behavior), except the single new pair (2, 2).
+    // Version 1 with a foreign AEAD id fails on the AEAD row, exactly as v1 did.
+    if (formatVersion != BACKUP_CONTAINER_FORMAT_VERSION.toLong() &&
+        !(formatVersion == BACKUP_CONTAINER_FORMAT_VERSION_V2.toLong() && aeadId == BACKUP_AEAD_ID_CHUNKED)
+    ) {
         return BackupHeaderParseResult.Rejected(BackupPreflightRejection.P706_CONTAINER_VERSION_UNSUPPORTED)
     }
     val kdfId = bytes[6].toInt() and 0xFF
     if (kdfId != BACKUP_KDF_ID) {
         return BackupHeaderParseResult.Rejected(BackupPreflightRejection.P706_KDF_UNSUPPORTED)
     }
-    val aeadId = bytes[7].toInt() and 0xFF
-    if (aeadId != BACKUP_AEAD_ID) {
+    if (formatVersion == BACKUP_CONTAINER_FORMAT_VERSION.toLong() && aeadId != BACKUP_AEAD_ID) {
         return BackupHeaderParseResult.Rejected(BackupPreflightRejection.P706_AEAD_UNSUPPORTED)
     }
     val iterations = readU32(bytes, 8)
@@ -216,13 +239,38 @@ fun backupContainerExpectedSize(header: BackupContainerHeader): Long =
  * is a pre-authentication check (section 4.7 class 1). A mismatch is
  * [BackupPreflightRejection.P706_CONTAINER_SIZE_MISMATCH] (PROPOSED name).
  *
- * This is the single implementation of the equation: the restore preflight calls it rather than
- * re-deriving the comparison inline, so the rule cannot drift between the two.
+ * V2 containers (spec section 4.11.4, D-285) follow the per-chunk-tag equation instead; the
+ * preflight must call [backupContainerV2SelfConsistent] for them. This function stays the exact v1
+ * equation so the v1 path cannot drift.
  */
 fun backupContainerSelfConsistent(
     header: BackupContainerHeader,
     containerSize: Long,
 ): Boolean = backupContainerExpectedSize(header) == containerSize
+
+/**
+ * The exact v2 container size a parsed v2 header describes (container-format spec section 4.11.4):
+ * `59 + salt_len + iv_len + plaintext_len + chunk_count * tag_len`, with
+ * `chunk_count = ceil(plaintext_len / chunk_size)` and the chunk size the spec constant
+ * [BACKUP_V2_CHUNK_SIZE] (deliberately not a header field).
+ */
+fun backupContainerV2ExpectedSize(header: BackupContainerHeader): Long =
+    header.plaintextLength +
+        BACKUP_FIXED_HEADER_LENGTH.toLong() +
+        header.saltLength.toLong() +
+        header.ivLength.toLong() +
+        backupContainerV2ChunkCount(header.plaintextLength) * header.tagLength
+
+/**
+ * Container-format spec section 4.11.4 self-consistency for v2: the file length must equal
+ * [backupContainerV2ExpectedSize]. Decidable from the fixed header plus the actual container size,
+ * so it is a pre-authentication check (section 4.7 class 1): it catches a truncated or extended
+ * chunk sequence BEFORE any chunk is decrypted, without leaking password information.
+ */
+fun backupContainerV2SelfConsistent(
+    header: BackupContainerHeader,
+    containerSize: Long,
+): Boolean = backupContainerV2ExpectedSize(header) == containerSize
 
 /**
  * The container size bound check (container-format spec section 4.8, frozen code) against the frozen

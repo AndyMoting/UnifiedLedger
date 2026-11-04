@@ -6,12 +6,15 @@ import com.unifiedledger.application.backup.BACKUP_MAX_CONTAINER_BYTES
 import com.unifiedledger.application.backup.BACKUP_SALT_LENGTH
 import com.unifiedledger.application.backup.BACKUP_STREAM_CHUNK_BYTES
 import com.unifiedledger.application.backup.BACKUP_TAG_LENGTH
+import com.unifiedledger.application.backup.BACKUP_V2_CHUNK_SIZE
 import com.unifiedledger.application.backup.BackupCryptoPrimitives
 import com.unifiedledger.application.backup.BackupGcmDecryptor
 import com.unifiedledger.application.backup.BackupGcmEncryptor
+import com.unifiedledger.application.backup.BackupPlaintextReader
 import com.unifiedledger.application.backup.BackupPreflightRejection
 import com.unifiedledger.application.backup.BackupSha256Digest
 import com.unifiedledger.application.backup.backupContainerHeader
+import com.unifiedledger.application.backup.writeBackupContainerV2
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -34,6 +37,7 @@ import kotlin.test.assertTrue
  * - a hash-read failure on the migrated copy is a typed read failure, not a domain verdict (N5);
  * - a tag failure is the uniform `P706_CONTAINER_AUTHENTICATION_FAILED` and its unauthenticated
  *   staging plaintext is deleted (P2-4);
+ * - a valid CHUNKED v2 container round-trips through the v2 dispatch and restores (MAJOR-1, D-285);
  * - the class-3 identity check rejects an empty payload and any foreign id in a secondary owner,
  *   and never fabricates a target match (P1-1);
  * - success binds the captured generation, the target ledger and the authenticated digest into the
@@ -288,6 +292,103 @@ class RestorePreflightUseCaseTest {
         assertTrue(fileSystem.hasFile(snapshotFile))
         assertTrue(!fileSystem.hasFile(containerFile))
         // The lease is released.
+        assertEquals(0, owner.inFlightLeaseCount)
+    }
+
+    @Test
+    fun aValidV2ContainerRestoresThroughTheChunkedDispatch() {
+        // MAJOR-1 (D-285 review): every use-case vector above is v1; this one pins the v2 dispatch
+        // (container-format spec section 4.11.4) end to end at the wiring layer. The container is
+        // PRODUCED by the real v2 writer over the XOR stand-ins (not hand-assembled) and its
+        // payload spans TWO v2 chunks (the 1 MiB chunk size): through the fake crypto a
+        // single-chunk v2 container is byte-indistinguishable from the v1 single-seal path, so
+        // only a multi-chunk vector proves the dispatch ran (the per-chunk decryptor count below).
+        val payload = ByteArray((BACKUP_V2_CHUNK_SIZE + 2048L).toInt()) { (it * 5 % 251).toByte() }
+        // The encrypt-side mirror of the class fake: the XOR "ciphertext" rides `update` and each
+        // chunk's `doFinal` emits the stand-in 16-byte tag, so `writeBackupContainerV2` produces
+        // exactly the bytes the class fake's decryptor reverses (one tag per chunk on the wire).
+        val writeCrypto =
+            object : BackupCryptoPrimitives by FakeCrypto() {
+                override fun gcmEncryptor(
+                    key: ByteArray,
+                    iv: ByteArray,
+                    aad: ByteArray,
+                ): BackupGcmEncryptor =
+                    object : BackupGcmEncryptor {
+                        override fun update(
+                            bytes: ByteArray,
+                            offset: Int,
+                            length: Int,
+                        ): ByteArray {
+                            val out = ByteArray(length)
+                            for (index in 0 until length) {
+                                out[index] = bytes[offset + index].toInt().xor(0x5A).toByte()
+                            }
+                            return out
+                        }
+
+                        override fun doFinal(): ByteArray = ByteArray(BACKUP_TAG_LENGTH)
+                    }
+            }
+        val pieces = mutableListOf<ByteArray>()
+        val written =
+            writeBackupContainerV2(
+                plaintext = {
+                    object : BackupPlaintextReader {
+                        var position = 0
+
+                        override fun read(buffer: ByteArray): Int {
+                            if (position >= payload.size) return -1
+                            val count = minOf(buffer.size, payload.size - position)
+                            payload.copyInto(buffer, 0, position, position + count)
+                            position += count
+                            return count
+                        }
+
+                        override fun close() {}
+                    }
+                },
+                sink = { bytes, offset, length -> pieces += bytes.copyOfRange(offset, offset + length) },
+                password = "password123",
+                schemaVersion = 31,
+                plaintextLength = payload.size.toLong(),
+                crypto = writeCrypto,
+            )
+        val container = pieces.reduce { joined, piece -> joined + piece }
+        assertEquals(written.containerLength, container.size.toLong())
+
+        var chunkDecryptors = 0
+        val readBase = FakeCrypto()
+        val readCrypto =
+            object : BackupCryptoPrimitives by readBase {
+                override fun gcmDecryptor(
+                    key: ByteArray,
+                    iv: ByteArray,
+                    aad: ByteArray,
+                ): BackupGcmDecryptor {
+                    chunkDecryptors += 1
+                    return readBase.gcmDecryptor(key, iv, aad)
+                }
+            }
+        val fileSystem = LedgerFileSystemFake()
+        val owner = readyOwner()
+        val isolated = FakeIsolatedDatabase(userVersion = 31, identities = listOf("ledger-local-test"))
+        val source = FakeSource(container, reportedSize = null)
+        val result = useCase(fileSystem, owner, source, isolated, crypto = readCrypto).preflight(request())
+
+        val ready = assertIs<RestorePreflightResult.PreviewReady>(result)
+        assertEquals(31L, ready.summary.sourceSchemaVersion)
+        assertEquals(31L, ready.summary.migratedSchemaVersion)
+        assertEquals("ledger-local-test", ready.summary.targetLedgerId)
+        assertEquals(0, isolated.migrateCalls.size)
+        assertEquals(1, isolated.validateCalls)
+        // The dispatch proof: the walk builds one fresh decryptor PER CHUNK (2 for this payload);
+        // the single-seal v1 path would have built exactly 1. Ablating the version dispatch at
+        // `decryptToStaging` turns this red.
+        assertEquals(2, chunkDecryptors)
+        // Success keeps the authenticated plaintext snapshot and drops the staging container copy.
+        assertTrue(fileSystem.hasFile(snapshotFile))
+        assertTrue(!fileSystem.hasFile(containerFile))
         assertEquals(0, owner.inFlightLeaseCount)
     }
 
