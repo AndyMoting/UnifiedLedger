@@ -10,7 +10,7 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 
 /**
- * P7-06 06.1 (D-176; spec section 3.2): the Android implementation of the shared
+ * P7-06 06.B (D-177; spec section 3.2): the Android implementation of the shared
  * [LedgerFileSystem] port over the application-private data directory.
  *
  * - The host directory is resolved at runtime from the platform API (the parent of
@@ -21,8 +21,15 @@ import java.io.FileOutputStream
  * - File content is fsynced through the file descriptor. Android offers no directory fsync
  *   primitive, so [fsyncDirectory] is best effort (documented; the spec section 3.2 durability
  *   requirement is carried by the file fsyncs, which are real here).
+ *
+ * [heapCapture] is the DEF-EXPORT-OOM (D-269 item 7) opt-in instrumentation hook, invoked once per
+ * bounded read chunk. It defaults to null, so the composition root's production adapter has no
+ * diagnostic path at all; [BackupHeapCapture.resolveHook] returns a hook only for a debuggable build
+ * whose operator created the opt-in sentinel.
  */
-internal class AndroidLedgerFileSystem : LedgerFileSystem {
+internal class AndroidLedgerFileSystem(
+    private val heapCapture: (() -> Unit)? = null,
+) : LedgerFileSystem {
     override fun join(
         parent: String,
         child: String,
@@ -108,7 +115,7 @@ internal class AndroidLedgerFileSystem : LedgerFileSystem {
             StatFs(target.absolutePath).availableBytes
         }.getOrNull()
 
-    override fun openRead(path: String): LedgerReadStream = AndroidReadStream(FileInputStream(path))
+    override fun openRead(path: String): LedgerReadStream = AndroidReadStream(FileInputStream(path), heapCapture)
 
     override fun openWrite(path: String): LedgerWriteStream = AndroidWriteStream(File(path))
 
@@ -127,8 +134,13 @@ internal class AndroidLedgerFileSystem : LedgerFileSystem {
 /** A bounded chunked read stream over an Android file (P7-06 06.B). */
 private class AndroidReadStream(
     private val stream: FileInputStream,
+    /** DEF-EXPORT-OOM (D-269 item 7) opt-in progress hook; null in production. */
+    private val onRead: (() -> Unit)? = null,
 ) : LedgerReadStream {
-    override fun read(buffer: ByteArray): Int = stream.read(buffer)
+    override fun read(buffer: ByteArray): Int {
+        onRead?.invoke()
+        return stream.read(buffer)
+    }
 
     override fun close() {
         stream.close()

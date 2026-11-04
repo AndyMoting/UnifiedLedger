@@ -1596,7 +1596,7 @@ internal fun buildAndroidStartupController(
     val mainThreadPoster = mainThreadPoster()
     val databasePath = context.getDatabasePath(LEGACY_ANDROID_DATABASE_NAME)
     val (hostDirectory, _) = androidStableStoragePaths(databasePath)
-    val fileSystem = AndroidLedgerFileSystem()
+    val fileSystem = AndroidLedgerFileSystem(backupHeapCaptureHook(context))
     val layout = ledgerStorageLayout(fileSystem, hostDirectory)
     val backupTargetPort =
         AndroidBackupTargetPort<Uri>(
@@ -1660,3 +1660,13 @@ internal fun dispatchToMainThread(
         post(block)
     }
 }
+
+/**
+ * DEF-EXPORT-OOM (D-269 item 7): the opt-in ART heap-dump hook handed to the production
+ * [AndroidLedgerFileSystem] so the export's bounded reads can trigger the capture. The gate lives in
+ * [shouldCaptureHeapDump] (debuggable build AND an operator-created sentinel AND heap above two
+ * fifths of the limit), so a release build — where `FLAG_DEBUGGABLE` is clear — never captures, and
+ * the hook itself never throws. Returns null for a null context, leaving the production adapter
+ * with no diagnostic path at all.
+ */
+internal fun backupHeapCaptureHook(context: android.content.Context?): (() -> Unit)? = BackupHeapCapture.resolveHook(context)
