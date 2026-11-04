@@ -116,7 +116,7 @@ fun decryptBackupContainerV2(
             } catch (failure: Error) {
                 throw failure
             } catch (failure: Throwable) {
-                throw BackupV2AuthenticationException()
+                throw BackupV2AuthenticationException(failure)
             }
         if (tail.isNotEmpty()) {
             plaintextSink.write(tail, 0, tail.size)
