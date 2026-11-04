@@ -475,24 +475,6 @@ class BackupExportEnospcInstrumentedTest {
         var targetLength: Long = 0L
     }
 
-    // ------------------------------------------------------------------ the ENOSPC classifier
-
-    /**
-     * A10-2: a refused write is ENOSPC only when the OS says so. A bare `IOException` is NOT
-     * evidence of a full disk — `EIO`, `EDQUOT` (quota exceeded), `EFBIG` and `EINTR` all arrive as
-     * the same type, and treating any of them as "the disk is full" would let the rig report a real
-     * ENOSPC it never produced.
-     *
-     * File-scope rather than a member, because [RecordingFullDiskStream] is a nested (not `inner`)
-     * class: it has no outer receiver, so it cannot call a member of the test class. A top-level
-     * function is callable from both the rig and the stream, and neither body needs instance state.
-     *
-     * The authoritative check is the errno of an [ErrnoException] (`ENOSPC` = errno 28), because
-     * Android's file I/O raises exactly that subtype for a refused write. The message check is the
-     * fallback for a wrapper that rethrows a plain `IOException` while preserving the cause text.
-     */
-    // ------------------------------------------------------------------ context / layout helpers
-
     /**
      * Every relative database name resolves inside [root]; ABSOLUTE names pass through unchanged,
      * because that is exactly what the production startup hands to the driver.
@@ -748,6 +730,20 @@ class BackupExportEnospcInstrumentedTest {
  */
 private const val ENOSPC_MESSAGE = "No space left on device"
 
+/**
+ * A10-2: a refused write is ENOSPC only when the OS says so. A bare `IOException` is NOT evidence
+ * of a full disk — `EIO`, `EDQUOT` (quota exceeded), `EFBIG` and `EINTR` all arrive as the same
+ * type, and treating any of them as "the disk is full" would let the rig report a real ENOSPC it
+ * never produced.
+ *
+ * File-scope rather than a member, because [RecordingFullDiskStream] is a nested (not `inner`)
+ * class: it has no outer receiver, so it cannot call a member of the test class. A top-level
+ * function is callable from both the rig and the stream, and neither body needs instance state.
+ *
+ * The authoritative check is the errno of an [ErrnoException] (`ENOSPC` = errno 28), because
+ * Android's file I/O raises exactly that subtype for a refused write. The message check is the
+ * fallback for a wrapper that rethrows a plain `IOException` while preserving the cause text.
+ */
 private fun isRealEnospc(failure: Throwable): Boolean {
     val errno = (failure as? ErrnoException)?.errno
     if (errno != null) return errno == OsConstants.ENOSPC
