@@ -29,6 +29,7 @@ import com.unifiedledger.application.ConfirmedLendingTransactionFactory
 import com.unifiedledger.application.ConfirmedManualExpenseCommit
 import com.unifiedledger.application.ConfirmedManualIncomeCommit
 import com.unifiedledger.application.ConfirmedTransferTransactionFactory
+import com.unifiedledger.application.CountImportDuplicateCandidatesForSession
 import com.unifiedledger.application.CounterpartyCommands
 import com.unifiedledger.application.CreditFlowFormalFactory
 import com.unifiedledger.application.DEFAULT_EXPENSE_LEAF_ID
