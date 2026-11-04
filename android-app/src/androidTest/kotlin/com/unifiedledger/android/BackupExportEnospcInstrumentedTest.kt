@@ -483,24 +483,14 @@ class BackupExportEnospcInstrumentedTest {
      * the same type, and treating any of them as "the disk is full" would let the rig report a real
      * ENOSPC it never produced.
      *
+     * File-scope rather than a member, because [RecordingFullDiskStream] is a nested (not `inner`)
+     * class: it has no outer receiver, so it cannot call a member of the test class. A top-level
+     * function is callable from both the rig and the stream, and neither body needs instance state.
+     *
      * The authoritative check is the errno of an [ErrnoException] (`ENOSPC` = errno 28), because
      * Android's file I/O raises exactly that subtype for a refused write. The message check is the
      * fallback for a wrapper that rethrows a plain `IOException` while preserving the cause text.
      */
-    private fun isRealEnospc(failure: Throwable): Boolean {
-        val errno = (failure as? ErrnoException)?.errno
-        if (errno != null) return errno == OsConstants.ENOSPC
-        if (failure.message?.contains(ENOSPC_MESSAGE, ignoreCase = true) == true) return true
-        return failure.cause?.let { cause -> cause !== failure && isRealEnospc(cause) } ?: false
-    }
-
-    /** The operator-facing description of a refusal that was NOT ENOSPC. */
-    private fun describeIoFailure(failure: Throwable): String {
-        val errno = (failure as? ErrnoException)?.errno
-        val kind = failure.javaClass.simpleName
-        return if (errno != null) "$kind(errno=$errno)" else "$kind: ${failure.message ?: "no message"}"
-    }
-
     // ------------------------------------------------------------------ context / layout helpers
 
     /**
@@ -711,13 +701,6 @@ class BackupExportEnospcInstrumentedTest {
         const val QUICK_CHECK_OK = "ok"
 
         /**
-         * A10-2: the kernel's ENOSPC text (`strerror(ENOSPC)`), used only as the fallback when a
-         * layer rethrows a plain `IOException` instead of an `ErrnoException`. The errno check in
-         * [isRealEnospc] is authoritative.
-         */
-        const val ENOSPC_MESSAGE = "No space left on device"
-
-        /**
          * The opaque export token this case pins, so the private staging paths are known exactly and
          * the "no residue" assertion can name them.
          */
@@ -756,4 +739,25 @@ class BackupExportEnospcInstrumentedTest {
         /** Fill wall-clock bound (the case is opt-in and must never hang a session). */
         const val FILL_DEADLINE_MS = 15 * 60 * 1000L
     }
+}
+
+/**
+ * A10-2: the kernel's ENOSPC text (`strerror(ENOSPC)`), used only as the fallback when a layer
+ * rethrows a plain `IOException` instead of an `ErrnoException`. The errno check in [isRealEnospc]
+ * is authoritative. File scope because [isRealEnospc] is file scope.
+ */
+private const val ENOSPC_MESSAGE = "No space left on device"
+
+private fun isRealEnospc(failure: Throwable): Boolean {
+    val errno = (failure as? ErrnoException)?.errno
+    if (errno != null) return errno == OsConstants.ENOSPC
+    if (failure.message?.contains(ENOSPC_MESSAGE, ignoreCase = true) == true) return true
+    return failure.cause?.let { cause -> cause !== failure && isRealEnospc(cause) } ?: false
+}
+
+/** The operator-facing description of a refusal that was NOT ENOSPC. */
+private fun describeIoFailure(failure: Throwable): String {
+    val errno = (failure as? ErrnoException)?.errno
+    val kind = failure.javaClass.simpleName
+    return if (errno != null) "$kind(errno=$errno)" else "$kind: ${failure.message ?: "no message"}"
 }
