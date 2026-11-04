@@ -446,12 +446,14 @@ class Gating(unittest.TestCase):
         self.assertIn("reused 20000 relations", joined)
         self.assertIn("requested 3", joined)
 
-    def test_a_declared_20k_record_judged_as_small_fails_on_the_relations_bound(self) -> None:
-        # The same closure through the host key path: a declared 20000 read at 3 fails on the
-        # round's relations, and the host-level mismatch is a separate refusal.
-        self.write(block(640, relations=FIXTURE_RELATIONS), fixture_relations=FIXTURE_RELATIONS)
-        with self.assertRaises(B6Error):
-            gate_evidence(self.evidence, SHA, 1, 3000, 3)
+    def test_a_declared_scale_that_agrees_with_the_judge_still_fails_a_round_at_another_scale(self) -> None:
+        # The host key and the judge agree, so the host-level mismatch refusal does not fire and
+        # `judge` actually runs. What disagrees is the ROUND: its reuse line reports 20000 while the
+        # declared scale is 3, so the equality bound is the mechanism that fails this verdict.
+        self.write(block(640, relations=FIXTURE_RELATIONS), fixture_relations=3)
+        verdict = gate_evidence(self.evidence, SHA, 1, 3000, 3)
+        self.assertEqual("FAIL", verdict["verdict"])
+        self.assertIn("reused 20000 relations", " ".join(verdict["reasons"]))
 
     def test_a_zero_scale_is_refused_by_the_gate(self) -> None:
         self.write(block(640))
