@@ -376,5 +376,44 @@ class OrdinaryRegressionUntouched(unittest.TestCase):
         self.assertNotIn("BackupExportEnospcInstrumentedTest", shards)
 
 
+class FreeSpaceParsing(unittest.TestCase):
+    """`df -k /data` must resolve on the images the rig actually boots."""
+
+    def test_the_emulated_projection_of_userdata_is_accepted(self):
+        # Observed on API 36 google_apis (both the hosted runner and the local
+        # managed AVD): `df -k /data` answers with the pass-through mount and no
+        # `/data` row at all. An exact-match-only parser aborted the whole rig
+        # with "df output carries no /data row" before the case ever started.
+        module = driver()
+        text = (
+            "Filesystem       1K-blocks    Used Available Use% Mounted on\n"
+            "/dev/block/dm-55   6082144 2343188   3738956  39% /mnt/pass_through/0/emulated\n"
+        )
+        parsed = module.parse_df(text)
+        self.assertEqual("/dev/block/dm-55", parsed["filesystem"])
+        self.assertEqual(6082144, parsed["total_kib"])
+        self.assertEqual(3738956, parsed["available_kib"])
+        # The recorded mount stays the path the caller asked about.
+        self.assertEqual("/data", parsed["mount"])
+
+    def test_an_exact_mount_row_still_wins_over_the_projection(self):
+        # Precedence is unchanged where the image does answer with `/data`.
+        module = driver()
+        text = (
+            "Filesystem     1K-blocks    Used Available Use% Mounted on\n"
+            "/dev/block/dm-55 6082144 2343188  3738956  39% /mnt/pass_through/0/emulated\n"
+            "/dev/block/dm-9   900000   10000   890000   2% /data\n"
+        )
+        parsed = module.parse_df(text)
+        self.assertEqual("/dev/block/dm-9", parsed["filesystem"])
+        self.assertEqual(890000, parsed["available_kib"])
+
+    def test_a_transcript_without_either_row_still_fails(self):
+        # Widening the match must not make a missing volume acceptable.
+        module = driver()
+        with self.assertRaises(ValueError):
+            module.parse_df("Filesystem 1K-blocks Used Available Use% Mounted on\n/dev/x 1 1 1 1% /system\n")
+
+
 if __name__ == "__main__":
     unittest.main()
