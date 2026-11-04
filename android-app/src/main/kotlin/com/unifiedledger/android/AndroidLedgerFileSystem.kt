@@ -10,7 +10,7 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 
 /**
- * P7-06 06.B (D-177; spec section 3.2): the Android implementation of the shared
+ * P7-06 06.1 (D-176; spec section `3.2`): the Android implementation of the shared
  * [LedgerFileSystem] port over the application-private data directory.
  *
  * - The host directory is resolved at runtime from the platform API (the parent of
@@ -22,10 +22,14 @@ import java.io.FileOutputStream
  *   primitive, so [fsyncDirectory] is best effort (documented; the spec section 3.2 durability
  *   requirement is carried by the file fsyncs, which are real here).
  *
+ * The 06.B members added later in this file (`openRead`/`openWrite`/`usableSpace`/`listDirectory`
+ * and the stream classes) keep their own 06.B (D-177) attribution below.
+ *
  * [heapCapture] is the DEF-EXPORT-OOM (D-269 item 7) opt-in instrumentation hook, invoked once per
- * bounded read chunk. It defaults to null, so the composition root's production adapter has no
- * diagnostic path at all; [BackupHeapCapture.resolveHook] returns a hook only for a debuggable build
- * whose operator created the opt-in sentinel.
+ * bounded read. It defaults to null, so an adapter built without it carries no diagnostic path;
+ * [BackupHeapCapture.resolveHook] returns a hook only for a debuggable build whose operator created
+ * the opt-in sentinel. Because the composition root installs it on the one `LedgerFileSystem`
+ * instance that restore also uses, a sentinel build samples restore reads too — not export only.
  */
 internal class AndroidLedgerFileSystem(
     private val heapCapture: (() -> Unit)? = null,

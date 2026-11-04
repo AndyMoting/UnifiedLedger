@@ -7,27 +7,52 @@ import android.util.Log
 import java.io.File
 
 /**
- * DEF-EXPORT-OOM (D-269 item 7) instrumentation seam: an opt-in ART java heap dump taken from the
- * export's bounded-read progress hook, so the next device run produces the artifact D-269 asks for.
+ * DEF-EXPORT-OOM (D-269 item 7) instrumentation seam: an opt-in ART java heap dump taken from a
+ * bounded-read progress hook.
  *
- * WHY A PROGRESS HOOK AND NOT A FAILURE HOOK: the fixed ~128 MiB request fails INSIDE
- * `BackupExportUseCase.writeContainer`, which catches `Throwable` and maps it to the typed
- * `CONTAINER_WRITE_FAILED` (`BackupExport.kt:291-292`). No Android-side frame sees that failure and
- * the process survives (no FATAL, hence no framework stack trace). The dump therefore has to be
- * taken while the export is still running and heap use is high: the export reads the snapshot
- * through `AndroidLedgerFileSystem.openRead`, so sampling there lands the dump on the export thread
- * with the requesting frames live.
+ * COMPLEMENTARY, NOT PRIMARY: D-269's original plan was this dump. The FIRST attribution path is
+ * now `BackupExportUseCase.writeContainer`'s catch block, which reports the swallowed Throwable
+ * (`BackupExport.kt`), so the allocating Java frames reach logcat with no hook, no gate, no dump and
+ * no second device round trip. The dump still adds what a stack trace cannot: the live heap's owning
+ * classes and retained sizes, which is what distinguishes "the platform asked for 128 MiB" from
+ * "some retained structure made it necessary".
  *
- * TWO INDEPENDENT GATES (never production), decided by [heapCaptureEnabled] and [heapCaptureDue]:
- * 1. the running app must be debuggable (`FLAG_DEBUGGABLE` is clear in every release build) AND the
- *    operator must have created the sentinel in the app-private `files/` directory:
- *        adb shell run-as com.unifiedledger.android touch files/def-export-oom.optin
- * 2. heap use must be above two fifths of the runtime limit.
+ * WHY A PROGRESS HOOK AND NOT A FAILURE HOOK: the request fails INSIDE `writeContainer`, which maps
+ * it to the typed `CONTAINER_WRITE_FAILED`. No Android-side frame sees that failure, so a dump can
+ * only be taken while the export is still running and heap use is high.
  *
- * Gate 1 is resolved ONCE by [resolveHook], so a build that does not opt in wires no hook at all and
- * pays nothing per chunk. The dump lands beside the sentinel as `files/def-export-oom.hprof` and is
- * retrieved with `run-as ... cat` (no root, no external storage, nothing leaves the app-private
- * directory on its own). This object never throws and dumps at most once per process.
+ * WHAT IS SAMPLED (explicitly broader than export): the hook is installed on the `LedgerFileSystem`
+ * instance that the composition root also hands to `AndroidRestoreWiring`, so it samples EVERY
+ * bounded read on that instance — the restore preflight's container reads and its digest/migration
+ * passes included, not just the export. That is the intended behaviour (see [backupHeapCaptureHook],
+ * which is wired once at the composition root); it is stated here so a reader never assumes the
+ * sampling is export-only.
+ *
+ * STORAGE: both the sentinel and the dump live in [Context.getNoBackupFilesDir], NOT `filesDir`.
+ * The manifest declares no `android:allowBackup="false"` and no `dataExtractionRules`, so Android's
+ * Auto Backup default is ON and `filesDir` is eligible for cloud and device-to-device transfer. A
+ * whole-heap dump contains ledger rows, restore-path container plaintext and derived key material —
+ * exactly what AGENTS.md's Non-Negotiable Boundaries forbid moving off the device. `noBackupFilesDir`
+ * is excluded from both Auto Backup and D2D transfer by the platform.
+ *
+ * OPERATOR RECIPE (`no_backup` is the platform's directory name for `getNoBackupFilesDir`):
+ *
+ *     adb shell run-as com.unifiedledger.android touch no_backup/def-export-oom.optin
+ *     adb exec-out run-as com.unifiedledger.android cat no_backup/def-export-oom.hprof > dump.hprof
+ *
+ * Run the >= 10k export between the two commands. `exec-out` is required: a plain `adb shell cat`
+ * goes through a pty that translates CRLF and corrupts a binary dump. Remove the sentinel to disarm.
+ *
+ * Two gates, neither of which resolves "all at wiring time": [heapCaptureEnabled] is resolved once
+ * by [resolveHook] (a build that does not opt in wires no hook at all); [heapCaptureDue] is
+ * evaluated per chunk on the hook that exists, against a heap bar AND a minimum chunk count so the
+ * dump lands inside pass 1 rather than on its first read. Per chunk the cost is one increment, one
+ * hook dispatch and one `Runtime` sample; wiring costs one flags read and one `File.exists()`. The
+ * code itself ships in the release APK (this is `src/main`, not a debug-only source set — the
+ * repo's debug-only precedent is `android-app/src/debug/`), so what is zero in release is the
+ * CAPTURE, not the bytecode. [resolveHook] returns null there, so the adapter holds no hook.
+ *
+ * This object never throws.
  */
 internal object BackupHeapCapture {
     private const val TAG = "ULBackupHeap"
@@ -35,23 +60,30 @@ internal object BackupHeapCapture {
     /** Operator opt-in sentinel; its presence in a debuggable build enables the capture. */
     private const val OPT_IN_FILE = "def-export-oom.optin"
 
-    /** The dump target, beside the sentinel in the app-private `files/` directory. */
+    /** The dump target, beside the sentinel in the no-backup directory. */
     private const val DUMP_FILE = "def-export-oom.hprof"
+
+    /**
+     * How many times a FAILED dump is retried. A single failure would otherwise be retried on every
+     * subsequent chunk of a long export; three attempts covers a transient OOM while keeping the
+     * worst case bounded and reported.
+     */
+    private const val MAX_ATTEMPTS: Int = 3
 
     @Volatile
     private var captured = false
 
-    /** Diagnostics only: the last emitted sentence, so a device run can be confirmed from logcat. */
+    /** Dump attempts so far, bounding the retry a failed dump may incur on later chunks. */
     @Volatile
-    var lastStatus: String? = null
-        private set
+    private var attempts = 0
 
-    /** True once this process actually wrote a dump (the device-run assertion). */
-    val didCapture: Boolean get() = captured
+    /** Bounded reads observed so far; drives [HEAP_CAPTURE_MIN_CHUNKS]. */
+    @Volatile
+    private var chunksObserved: Long = 0L
 
     /**
      * Gate 1 at wiring time: returns the per-chunk hook only when this build/operator opted in, and
-     * null otherwise so the adapter carries no diagnostic path in production.
+     * null otherwise so a build that did not opt in carries no hook at all.
      */
     fun resolveHook(context: Context?): (() -> Unit)? {
         val resolved = context ?: return null
@@ -59,27 +91,42 @@ internal object BackupHeapCapture {
             runCatching {
                 heapCaptureEnabled(
                     debuggable = (resolved.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0,
-                    optedIn = File(resolved.filesDir, OPT_IN_FILE).exists(),
+                    optedIn = File(resolved.noBackupFilesDir, OPT_IN_FILE).exists(),
                 )
             }.getOrDefault(false)
         if (!enabled) return null
         return { onBoundedRead(resolved) }
     }
 
-    /** Gate 2, per chunk: dump once when heap use is high enough. Never throws. */
+    /** Gate 2, per chunk: dump once when heap use and stream progress both justify it. Never throws. */
     private fun onBoundedRead(context: Context) {
-        if (captured) return
+        if (captured || attempts >= MAX_ATTEMPTS) return
         runCatching {
+            // Count BEFORE the gate: the count is what defers the dump past pass 1's first read.
+            chunksObserved += 1L
             val runtime = Runtime.getRuntime()
             val limit = runtime.maxMemory()
             val used = runtime.totalMemory() - runtime.freeMemory()
-            if (!heapCaptureDue(usedBytes = used, limitBytes = limit)) return
-            captured = true
-            val target = File(context.filesDir, DUMP_FILE)
-            Debug.dumpHprofData(target.absolutePath)
-            // Name, byte count and the sampled figures only: never a path, never payload.
-            lastStatus = "heap dump captured $DUMP_FILE bytes=${target.length()} used=$used limit=$limit"
-            Log.i(TAG, lastStatus ?: DUMP_FILE)
+            if (!heapCaptureDue(usedBytes = used, limitBytes = limit, chunksObserved = chunksObserved)) return
+            val target = File(context.noBackupFilesDir, DUMP_FILE)
+            // The FAILURE branch is logged too: without it a failed dump is indistinguishable from
+            // "never armed" on the device. No payload, path or secret in either sentence.
+            attempts += 1
+            val attempt = attempts
+            val outcome = runCatching { Debug.dumpHprofData(target.absolutePath) }
+            outcome.onSuccess {
+                // Set only AFTER the dump landed, so a failed dump is retried on a later chunk
+                // (an OOM at high water is the expected failure, and it may clear).
+                captured = true
+                Log.i(TAG, "heap dump captured $DUMP_FILE bytes=${target.length()} chunks=$chunksObserved used=$used limit=$limit")
+            }
+            outcome.onFailure { failure ->
+                Log.w(
+                    TAG,
+                    "heap dump failed $DUMP_FILE attempt=$attempt/${MAX_ATTEMPTS} " +
+                        "causeClass=${failure::class.simpleName} chunks=$chunksObserved used=$used limit=$limit",
+                )
+            }
         }
     }
 }

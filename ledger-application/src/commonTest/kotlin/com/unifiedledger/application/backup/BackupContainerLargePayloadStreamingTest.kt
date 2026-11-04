@@ -6,29 +6,33 @@ import kotlin.test.assertTrue
 
 /**
  * DEF-EXPORT-OOM (D-269 item 7) regression guard: the shared container writer must complete a
- * backup export whose plaintext is at or above the recorded failing library size WITHOUT ever
- * asking for a whole-payload buffer.
+ * backup export over a plaintext in the failing size regime WITHOUT ever asking for a whole-payload
+ * buffer.
  *
- * The device failure is a fixed `134086668` byte request (127.87 MiB) raised during the
- * snapshot-verify/container-entry phase, on libraries of 87.8 MB (10k) and 93.2 MB (20k) alike. The
- * measurement below uses the real 10k-tier VACUUM snapshot size (73,003,008 bytes, measured from
- * `a06-10000.db`) as the plaintext, so the size regime that fails on device is the size regime this
- * test drives through the product writer. On the JVM the platform allocation does NOT exist, so this
- * test cannot reproduce the device error; what it does pin is the application-side invariant the
- * defect attribution depends on — that the export's own allocation request stays bounded by the
- * frozen 64 KiB chunk at any payload size.
+ * The device failure is a fixed `134086656`-element request (127.87 MiB, reported as a 134086668-byte
+ * allocation under a 12-byte ART array header) raised during the container-entry phase, on libraries
+ * of 87.8 MB (10k) and 93.2 MB (20k) alike. This test drives the real product writer with a
+ * plaintext of that order, so the size regime that fails on device is the regime exercised here.
+ *
+ * WHAT THIS TEST CANNOT CLAIM: the JVM has no such platform allocation, so this test does NOT
+ * reproduce the device error and does NOT prove the request is platform-side. The static code read
+ * (every production symbol on the export path) is what rules out an application array; the request
+ * is in fact a clean `64 KiB x 2046`, so the arithmetic alone does NOT exclude an application array.
+ * What is pinned here is one application-side invariant the attribution depends on: the writer's own
+ * buffer request stays at the frozen 64 KiB chunk at any payload size.
  *
  * The plaintext source is GENERATED, never materialized: the test asserts a property of the writer's
- * buffer usage, so allocating the payload would defeat the point (and a 73 MB fixture would be
- * needless CI cost). Nothing here changes the frozen bytes; `BackupContainerWriterTest` and
- * `BackupContainerCryptoJvmTest` stay the byte-exactness authorities.
+ * buffer usage, so allocating the payload would defeat the point, and [ESTIMATED_FAILING_TIER_BYTES]
+ * would be a needless CI cost. Nothing here changes the frozen bytes; `BackupContainerWriterTest`
+ * and `BackupContainerCryptoJvmTest` stay the byte-exactness authorities.
  */
 class BackupContainerLargePayloadStreamingTest {
-    /** The measured 10k-tier VACUUM snapshot size: inside the failing regime (>= 10k library). */
-    private val failingTierSnapshotBytes: Long = 73_003_008L
-
-    /** The recorded device failure's allocation request, for the arithmetic assertion below. */
-    private val recordedDeviceRequestBytes: Long = 134_086_668L
+    /**
+     * ESTIMATED plaintext size for the failing tier — not a measurement. It sits above the 20k-tier
+     * VACUUM snapshot (88,621,056 bytes, recorded in D-269) so the plaintext is unambiguously in the
+     * failing regime. No artifact records a 10k-tier snapshot size.
+     */
+    private val failingTierPlaintextBytes: Long = ESTIMATED_FAILING_TIER_BYTES
 
     /** A counting crypto fake: it never copies the payload, so the test measures the WRITER. */
     private class CountingCrypto : BackupCryptoPrimitives {
@@ -129,9 +133,9 @@ class BackupContainerLargePayloadStreamingTest {
     }
 
     @Test
-    fun anExportAtTheFailingLibrarySizeStreamsInBoundedChunksAndNeverBuffersThePayload() {
+    fun anExportInTheFailingSizeRegimeStreamsInBoundedChunksAndNeverBuffersThePayload() {
         val crypto = CountingCrypto()
-        val plaintext = GeneratedPlaintext(failingTierSnapshotBytes)
+        val plaintext = GeneratedPlaintext(failingTierPlaintextBytes)
         val sink = RecordingSink()
 
         val result =
@@ -140,16 +144,16 @@ class BackupContainerLargePayloadStreamingTest {
                 sink = sink,
                 password = "password123",
                 schemaVersion = 36L,
-                plaintextLength = failingTierSnapshotBytes,
+                plaintextLength = failingTierPlaintextBytes,
                 crypto = crypto,
             )
 
         // The export must complete (no allocation failure, no length mismatch).
-        assertEquals(failingTierSnapshotBytes, result.plaintextLength)
-        assertEquals(failingTierSnapshotBytes + backupContainerOverheadBytes(), result.containerLength)
+        assertEquals(failingTierPlaintextBytes, result.plaintextLength)
+        assertEquals(failingTierPlaintextBytes + backupContainerOverheadBytes(), result.containerLength)
 
         // The application-side allocation request never exceeds the frozen 64 KiB chunk, at a
-        // payload 1000x that chunk. This is the invariant the device attribution rests on.
+        // payload over a thousand times that chunk.
         assertEquals(BACKUP_STREAM_CHUNK_BYTES, plaintext.maxRequestedBuffer)
         assertTrue(
             crypto.maxUpdateLength <= BACKUP_STREAM_CHUNK_BYTES,
@@ -157,23 +161,21 @@ class BackupContainerLargePayloadStreamingTest {
         )
 
         // Both passes covered the whole payload exactly once each.
-        assertEquals(failingTierSnapshotBytes, crypto.totalHashed)
-        assertEquals(failingTierSnapshotBytes, crypto.totalEncrypted)
+        assertEquals(failingTierPlaintextBytes, crypto.totalHashed)
+        assertEquals(failingTierPlaintextBytes, crypto.totalEncrypted)
 
         // The sink was fed in chunk-sized pieces, never one whole-container write.
         assertTrue(sink.writes > 1, "the container must be written in multiple pieces, got ${sink.writes}")
         assertTrue(sink.maxWrite <= BACKUP_STREAM_CHUNK_BYTES, "no sink write may exceed one chunk, got ${sink.maxWrite}")
         assertEquals(result.containerLength, sink.total, "the sink must receive exactly the reported container length")
     }
-
-    @Test
-    fun theRecordedDeviceRequestIsNotAMultipleOfAnyPlaintextOrContainerSize() {
-        // DEF-EXPORT-OOM attribution guard (D-269 item 7): the failing request is a FIXED size that
-        // is 4 bytes offset from a clean 128 KiB multiple (134086656 = 128 KiB * 1023), and it is
-        // identical across the 10k and 20k tiers. A future regression that made the export's own
-        // allocation proportional to the payload would break this relationship, so pin it here.
-        assertEquals(134_086_656L, 128L * 1024L * 1023L)
-        assertEquals(12L, recordedDeviceRequestBytes - 134_086_656L, "the ART array header offset")
-        assertEquals(0L, 134_086_656L % (64L * 1024L), "the element count is chunk aligned")
-    }
 }
+
+/**
+ * ESTIMATED plaintext size for the failing tier (see the class KDoc): above the recorded 20k-tier
+ * VACUUM snapshot of 88,621,056 bytes, so the plaintext is unambiguously in the failing regime. It
+ * is NOT a measurement — no artifact records a 10k-tier snapshot size, and the recorded 10k library
+ * file is 87,797,760 bytes. The exact device plaintext is irrelevant to what this test asserts (the
+ * writer's buffer bound does not depend on the payload size); only the size regime matters.
+ */
+private const val ESTIMATED_FAILING_TIER_BYTES: Long = 90_000_000L

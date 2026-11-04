@@ -1663,10 +1663,17 @@ internal fun dispatchToMainThread(
 
 /**
  * DEF-EXPORT-OOM (D-269 item 7): the opt-in ART heap-dump hook handed to the production
- * [AndroidLedgerFileSystem] so the export's bounded reads can trigger the capture. The gate lives in
- * [shouldCaptureHeapDump] (debuggable build AND an operator-created sentinel AND heap above two
- * fifths of the limit), so a release build — where `FLAG_DEBUGGABLE` is clear — never captures, and
- * the hook itself never throws. Returns null for a null context, leaving the production adapter
- * with no diagnostic path at all.
+ * [AndroidLedgerFileSystem]. The gates live in [heapCaptureEnabled] (debuggable build AND an
+ * operator-created sentinel, resolved once here) and [heapCaptureDue] (heap above 49% of the limit,
+ * evaluated per chunk), so a release build — where `FLAG_DEBUGGABLE` is clear — never captures, and
+ * the hook itself never throws. Returns null for a null context or an un-opted-in build, leaving the
+ * adapter with no hook at all.
+ *
+ * SCOPE (deliberate): this instance is the one the composition root also passes to
+ * `AndroidRestoreWiring`, so a sentinel build samples EVERY bounded read — the export's snapshot
+ * passes AND the restore preflight's container/digest/migration passes. The broader sampling is
+ * wanted: the same fixed request also fails on the restore leg (the 60,456,988-byte OOM in the A06
+ * run), so an export-only hook would miss half the evidence. No product read is altered; the hook
+ * only decides whether to dump.
  */
 internal fun backupHeapCaptureHook(context: android.content.Context?): (() -> Unit)? = BackupHeapCapture.resolveHook(context)
