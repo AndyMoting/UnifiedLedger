@@ -156,6 +156,7 @@ class FakeDevice:
         self.blocks = list(blocks or [block(640), block(700), block(810)])
         self.seeded = 0
         self.force_stops = 0
+        self.clears = 0
 
     def text(self, *args: str, timeout: float = 120.0) -> str:
         self.calls.append(args)
@@ -169,6 +170,7 @@ class FakeDevice:
             self.force_stops += 1
             return ""
         if args[:3] == ("shell", "pm", "clear"):
+            self.clears += 1
             return "Success\n"
         return ""
 
@@ -197,18 +199,22 @@ class Session(unittest.TestCase):
         self.test.write_bytes(b"test")
         self.evidence = self.root / "evidence"
 
-    def test_seed_then_three_fresh_processes(self) -> None:
+    def test_every_round_is_a_clear_seed_measure_cycle(self) -> None:
         device = FakeDevice()
         payload = run_session(self.app, self.test, self.evidence, SHA, device_factory=lambda _budget: device)
-        self.assertEqual(1, device.seeded)
-        # one force-stop before the seed plus one before each of the three rounds
-        self.assertEqual(4, device.force_stops)
+        # The published fixture is only reusable until the product's activation intake adds a
+        # candidate, so each round rebuilds it: three seeds, three clears, and a force-stop on
+        # both sides of every seed.
+        self.assertEqual(3, device.seeded)
+        self.assertEqual(3, device.clears)
+        self.assertEqual(6, device.force_stops)
         self.assertEqual([640, 700, 810], [item["click_to_card_ms"] for item in payload["rounds"]])
         self.assertEqual(SHA, payload["sha"])
         self.assertEqual(DEFAULT_AVD, payload["avd"])
         self.assertTrue((self.evidence / "host.json").is_file())
         for index in (1, 2, 3):
             self.assertTrue((self.evidence / f"round-{index}.log").is_file())
+            self.assertTrue((self.evidence / f"seed-{index}.txt").is_file())
         self.assertEqual(
             f"{TEST_CLASS}#b6CardOpen",
             [call for call in device.calls if call[0] == "instrument"][1][1],
@@ -225,6 +231,42 @@ class Session(unittest.TestCase):
         device.instrument = lambda target, timeout, extra=(): (0, "FAILURES!!!\n")  # type: ignore[method-assign]
         with self.assertRaises(B6Error):
             run_session(self.app, self.test, self.evidence, SHA, device_factory=lambda _budget: device)
+
+    def test_a_later_round_seed_failure_stops_the_session(self) -> None:
+        device = FakeDevice()
+        original = device.instrument
+        seeds = {"count": 0}
+
+        def flaky(target: str, timeout: float, extra=()) -> tuple[int, str]:
+            if target.endswith("#seedFixture"):
+                seeds["count"] += 1
+                if seeds["count"] == 2:
+                    return 0, "FAILURES!!!\n"
+            return original(target, timeout, extra)
+
+        device.instrument = flaky  # type: ignore[method-assign]
+        with self.assertRaises(B6Error):
+            run_session(self.app, self.test, self.evidence, SHA, device_factory=lambda _budget: device)
+        self.assertEqual(2, seeds["count"])
+
+    def test_a_failed_measuring_process_names_its_cause(self) -> None:
+        device = FakeDevice()
+        original = device.instrument
+
+        def failing_measure(target: str, timeout: float, extra=()) -> tuple[int, str]:
+            if target.endswith("#b6CardOpen"):
+                return 0, (
+                    "There was 1 failure:\n"
+                    "1) b6CardOpen\n"
+                    "java.lang.IllegalStateException: the published fixture is invalid\n"
+                    "FAILURES!!!\n"
+                )
+            return original(target, timeout, extra)
+
+        device.instrument = failing_measure  # type: ignore[method-assign]
+        with self.assertRaises(B6Error) as caught:
+            run_session(self.app, self.test, self.evidence, SHA, device_factory=lambda _budget: device)
+        self.assertIn("the published fixture is invalid", str(caught.exception))
 
 
 class Gating(unittest.TestCase):

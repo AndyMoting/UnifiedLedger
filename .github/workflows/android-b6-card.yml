@@ -25,7 +25,8 @@
 # Facts this file depends on:
 # - `tools/ci/android-b6-card.py run` owns every device interaction: single-owner AVD
 #   assertion (`emu avd name` must answer `ul-b6-card`), APK install and hashing, one
-#   `seedFixture` run, one fresh process per measured round, traversal-log slicing, and
+#   `seedFixture` cycle per round (clear -> seed -> measure), one fresh measuring process,
+#   traversal-log slicing, and
 #   `host.json`. The workflow must not duplicate any of it.
 # - The `gate` step re-derives the verdict from the round logs on disk and never reads the
 #   driver's own numbers, so a driver that mis-parsed its output cannot make the job green.
