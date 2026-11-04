@@ -1100,9 +1100,10 @@ class P503ReducerImpl(
                                         // The first page's items carry their whole-group ordinals
                                         // 1..n (B6 group-card paging, D-280); the remaining pages
                                         // continue the sequence as they land.
-                                        items = event.items.mapIndexed { index, item ->
-                                            ImportDuplicateGroupItemState(item = item, ordinal = index + 1)
-                                        },
+                                        items =
+                                            event.items.mapIndexed { index, item ->
+                                                ImportDuplicateGroupItemState(item = item, ordinal = index + 1)
+                                            },
                                         totalCount = event.totalCount,
                                     ),
                             ),

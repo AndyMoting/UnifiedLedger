@@ -48,8 +48,8 @@ import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.ExplicitlyConfirmedTransactionCorrection
 import com.unifiedledger.application.ImportCandidateId
-import com.unifiedledger.application.ImportDuplicateReviewRequest
 import com.unifiedledger.application.ImportDuplicateCandidateId
+import com.unifiedledger.application.ImportDuplicateReviewRequest
 import com.unifiedledger.application.ImportDuplicateReviewsForSessionPageResult
 import com.unifiedledger.application.ImportDuplicateReviewsForSessionResult
 import com.unifiedledger.application.ImportDuplicateReviewsResult
@@ -2295,6 +2295,7 @@ fun P503App(
                 // B6 paging (D-280 review R2-5): pages >= 2 land through this buffer, drained by
                 // the final main-dispatcher hop in keyset order - never dispatched mid-round.
                 val landedPages = mutableListOf<P503UiEvent.ImportGroupEnumerationPageLanded>()
+
                 fun cardStillOpen(): Boolean =
                     (latestState.value as? P503AppState.OverviewEmpty)
                         ?.importReview
@@ -2455,7 +2456,6 @@ fun P503App(
             }
         }
     }
-
 
     /**
      * P7-04.C (P704SPEC-12, spec section 3.3.1): the batch disposition loop — one independent core

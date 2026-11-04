@@ -262,12 +262,25 @@ class B6PagedSessionReadEquivalenceTest {
             // from the count exactly as it drops from the card items.
             assertEquals(6L, adapter.countImportDuplicateCandidatesForSession(ledgerId, "session-b6p"))
             val review = ReviewImportDuplicateCandidate(store)
+            // The expected fingerprint must be the row's REAL one (the spine rejects a stale
+            // fingerprint as staleFingerprint → Rejected, never Accepted).
+            val fingerprint =
+                driver
+                    .executeQuery(
+                        null,
+                        "SELECT comparison_fingerprint FROM import_duplicate_candidate WHERE candidate_id='duplicate-b6p-b-1'",
+                        { c ->
+                            c.next()
+                            QueryResult.Value(c.getString(0)!!)
+                        },
+                        0,
+                    ).value
             val run =
                 review.execute(
                     com.unifiedledger.application.ImportDuplicateReviewRequest(
                         identity = com.unifiedledger.application.ImportRequestIdentity(ledgerId, ImportRequestId("request-b6p-dispose")),
                         candidateId = ImportDuplicateCandidateId("duplicate-b6p-b-1"),
-                        expectedComparisonFingerprint = "sha256:fixed-fingerprint",
+                        expectedComparisonFingerprint = fingerprint,
                         decision = ImportDuplicateStatus.CONFIRMED_DUPLICATE,
                         reasonToken = "test_dispose",
                         reviewedAt = "2026-11-04T00:00:00Z",
@@ -319,7 +332,7 @@ class B6PagedSessionReadEquivalenceTest {
                         mapper = { cursor ->
                             QueryResult.Value(buildList {
                                 while (cursor.next().value) {
-                                    add(cursor.getLong(3).toString())
+                                    add(cursor.getString(3) ?: "")
                                 }
                             })
                         },

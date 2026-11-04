@@ -4,6 +4,7 @@ import com.unifiedledger.application.AnnotationRequestIdSource
 import com.unifiedledger.application.BudgetAuthorityReader
 import com.unifiedledger.application.CatalogConsumerSession
 import com.unifiedledger.application.CatalogSnapshotView
+import com.unifiedledger.application.CountImportDuplicateCandidatesForSession
 import com.unifiedledger.application.CounterpartyCommands
 import com.unifiedledger.application.EntryPreferenceStore
 import com.unifiedledger.application.ExecuteCatalogCommand
@@ -35,7 +36,6 @@ import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.QueryBudgetMonth
 import com.unifiedledger.application.QueryImportCandidateDetail
 import com.unifiedledger.application.QueryImportDuplicateReviews
-import com.unifiedledger.application.CountImportDuplicateCandidatesForSession
 import com.unifiedledger.application.QueryImportDuplicateReviewsForSession
 import com.unifiedledger.application.QueryImportDuplicateReviewsForSessionPage
 import com.unifiedledger.application.QueryImportReviewRows
