@@ -180,9 +180,11 @@ data class ImportDuplicateGroupDispositionPage(
      * B6 group-card paging batch (D-280): the WHOLE-group item total for the header's 共 N 条
      * disclosure — never the landed count. `items` is the landed keyset prefix; the confirm
      * action still authorizes the whole group (it waits for the remaining pages to land,
-     * spec §3.4).
+     * spec §3.4). Defaults to `items.size`, so an unpaged construction (a fully landed card,
+     * the pre-paging tests) stays self-consistent; the paged path passes the count query's
+     * whole-group total explicitly.
      */
-    val totalCount: Int = 0,
+    val totalCount: Int = items.size,
 )
 
 /**
