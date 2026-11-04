@@ -120,7 +120,7 @@ gh workflow run android-scale.yml --ref <branch> -f expected_sha=<完整40位SHA
 
 该门回答一个问题：在**参考设备 profile** 上，产品自己的 20k 重复组夹具发布后，点击组入口到组卡可见是否在 `limit_ms` 以内——判据取 N 轮中的**最差一轮**（max-of-N，不是中位数：单轮慢正是该门要抓的失败）。数值由 `ImportScaleTraversalInstrumentedTest#b6CardOpen` 从无障碍树读出，是产品 UI 可观察的 click→card-visible 区间，不是内部计时器。设备 profile 与历史本机读数相同：`pixel_6`（1080×2400 / 420）、2 核、2048M、保留平台动画。
 
-`tools/ci/android-b6-card.py run` 独占设备交互（单设备所有权断言 `emu avd name` 必须答 `ul-b6-card`、两个 APK 安装并计哈希、一次 `seedFixture`、每轮一个全新进程、traversal 日志切片、`host.json`）；模拟器会话之后另设独立 `gate` 步（`if: always()`），只从磁盘上的轮次日志重算判据，不读驱动器自己的数字，因此驱动器自解析错误无法让 job 变绿。两个 APK 在**模拟器会话之外**由本次 checkout 构建，配合 `git rev-parse HEAD` 断言，无需 APK 工件链。工件 `android-b6-card-<sha>-<run-id>-<attempt>` 含 `host-apks.txt`、`seed.txt`、每轮 `round-N.log` / `round-N.stdout.txt`、`host.json`、`gate.json`，保留 7 天。
+`tools/ci/android-b6-card.py run` 独占设备交互（单设备所有权断言 `emu avd name` 必须答 `ul-b6-card`、两个 APK 安装并计哈希、**每轮一次完整循环：清数据 → `seedFixture` → 测量**（已发布的夹具只可用到产品激活新增候选为止，故第 2 轮起必须重建）、traversal 日志切片、`host.json`）；模拟器会话之后另设独立 `gate` 步（`if: always()`），只从磁盘上的轮次日志重算判据，不读驱动器自己的数字，因此驱动器自解析错误无法让 job 变绿。两个 APK 在**模拟器会话之外**由本次 checkout 构建，配合 `git rev-parse HEAD` 断言，无需 APK 工件链。工件 `android-b6-card-<sha>-<run-id>-<attempt>` 含 `host-apks.txt`、`seed.txt`、每轮 `round-N.log` / `round-N.stdout.txt`、`host.json`、`gate.json`，保留 7 天。
 
 触发命令（仅在该提交已落到目标分支后）：
 

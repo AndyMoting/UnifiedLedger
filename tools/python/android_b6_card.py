@@ -118,6 +118,15 @@ def _optional_int(value: str) -> int | None:
     return None if value == "null" else int(value)
 
 
+def _first_failure(output: str) -> str:
+    """The most telling line of a failed `am instrument` transcript, short enough for a log."""
+    for line in output.splitlines():
+        if "Exception" in line or "Error:" in line:
+            return line.strip()[:300]
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    return (lines[-1] if lines else "no output")[:300]
+
+
 def parse_round(text: str) -> dict:
     """The staged marks of one `b6CardOpen` round; a missing mark line is a refusal."""
     stage = STAGE_PATTERN.search(text)
@@ -251,7 +260,7 @@ def run_session(
     deadline: Deadline | None = None,
     device_factory=None,
 ) -> dict:
-    """Seed once, then measure `rounds` fresh processes; returns the `host.json` payload."""
+    """One clear+seed cycle per round, then one fresh measuring process; returns `host.json`."""
     if rounds < 1:
         raise B6Error("at least one round must be requested")
     budget = Deadline(None) if deadline is None else deadline
@@ -266,19 +275,26 @@ def run_session(
     if name != avd_name:
         raise B6Error(f"this runner owns {name or 'an unnamed emulator'}, not {avd_name}")
     hashes = install_apks(device, app, test)
-    device.text("shell", "am", "force-stop", PACKAGE)
-    device.text("shell", "pm", "clear", PACKAGE)
-    _, seed_output = device.instrument(f"{TEST_CLASS}#seedFixture", SEED_TIMEOUT)
-    (evidence / "seed.txt").write_text(seed_output)
-    if "OK (1 test)" not in seed_output:
-        raise B6Error("the duplicate-group fixture seed did not pass")
     measured: list[dict] = []
     for index in range(1, rounds + 1):
+        # One full cycle per round: clear -> seed -> measure. The published fixture is only
+        # reusable until the product's own activation intake adds a candidate, and
+        # `requirePublished` insists on the freshly seeded shape (`import_candidate count is
+        # not 2` otherwise), so round 2 onward must rebuild it. This is also the D-278
+        # protocol: every round starts from a cleared app.
+        device.text("shell", "am", "force-stop", PACKAGE)
+        device.text("shell", "pm", "clear", PACKAGE)
+        _, seed_output = device.instrument(f"{TEST_CLASS}#seedFixture", SEED_TIMEOUT)
+        (evidence / f"seed-{index}.txt").write_text(seed_output)
+        if "OK (1 test)" not in seed_output:
+            raise B6Error(f"round {index}: the duplicate-group fixture seed did not pass")
         device.text("shell", "am", "force-stop", PACKAGE)
         _, output = device.instrument(
             f"{TEST_CLASS}#b6CardOpen", ROUND_TIMEOUT, extra=(("seedFixture", "true"),)
         )
         (evidence / f"round-{index}.stdout.txt").write_text(output)
+        if "FAILURES!!!" in output:
+            raise B6Error(f"round {index}: the measuring process failed: {_first_failure(output)}")
         raw = device.read_private(TRAVERSAL_LOG) or ""
         block = slice_last_round(raw)
         (evidence / f"round-{index}.log").write_text(block)
