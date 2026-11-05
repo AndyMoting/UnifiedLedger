@@ -6314,3 +6314,42 @@ java.lang.OutOfMemoryError: Failed to allocate a 134086672 byte allocation
 **残余：** ① 实现批未开始——容器 v2 的写者/恢复端/向量全部待做；② 分块 AEAD 的跨端向量（桌面 `SunJCE` vs Android `AndroidOpenSSL`）须在实现批取证，规格 §6 的既有 OPEN 项不因本条关闭；③ 1 MiB 块大小的吞吐读数未取；④ v1 容器的回归集须在实现批保持绿。
 
 **关联决定：** D-269（缺陷首次登记与「静态读」结论，由本条更正归因）、D-174（容器格式规格 approved 的依据；本条只追加 §4.11，不改其判决）、D-179（解密器 `update`/`doFinal` 体例）、D-183（恢复确认与切换）、#221（`catch (Throwable)` 记录改造——正是它让本条拿到栈）。
+
+## D-286 `P706-A12` 判 PASS（20k/50k 正式交易与历史的 v2 导出+恢复设备读数，零 OOM/ANR）；`P706-A10` 前半句证据就位；`DEF-EXPORT-OOM` 闭合；向量账 51/62 ≈ 82.3%
+
+**状态：** 已批准并登记（2026-11-05；用户 goal 授权「批准 0～9，自主推进，有阻碍自己想办法，都批准决定」）。**文档批**：零产品代码 / 零测试 / 零 schema / 零迁移 / 零依赖 / 零 CI；只改本条与 `docs/CURRENT_STATE.md` 状态句，并同步 `docs/PHASE7_ACCEPTANCE_SPLIT.local.md`（gitignored）。
+
+**背景：** D-239 第 4 条把 `P706-A12` 登记为「缺证：**无任何备份/恢复规模测试**」，其验收语义为「20k/50k 正式交易与历史的备份恢复规模、**零 OOM/ANR**」；同条把 `P706-A10` 的缺口精确登记为「『满盘』只是尺寸预检算术与注入的 writer 抛异常，**未由 OS/SAF 真实 ENOSPC 触发**；无设备侧 SAF 中途写失败」。D-269 第 7 条随后登记 `DEF-EXPORT-OOM`（导出 ≥10k 库 OOM），D-285 归因于平台 AEAD 一次性 seal 并裁决容器 v2（分块 AEAD，规格 §4.11），实现批已合入（PR #227，`main@983acb48`）。本条登记修复后的设备面读数并据此改判。
+
+**证据（全部设备/云端实跑，逐字读数在 gitignored 目录）**
+
+1. **云端真满盘 rig（`P706-A10` 前半句）**：`android-enospc.yml --case export`，`main@a4140961`，run `41901826353` → **PASS**（`result.json status=PASS`、transcript 一启一清 `OK (1 test)`、`INSTRUMENTATION_CODE: -1`、无 assumption skip）。设备 `/data` 6,082,144 KiB，rig 前 5,104,692 KiB 可用、运行中最低 **151,356 KiB**（≈148 MiB），结束 4,901,032 KiB；用例 53.8 s；APK 为同 SHA 可信工件 run `41900268326`（安装摘要与 manifest 一致）。判定语义：填满真实分区 → 产品 `AndroidBackupTargetPort`（生产 SAF 端口）打开目标 → 真实 `FileOutputStream` 写入 → 以 `ErrnoException.errno == ENOSPC`（**非消息匹配**）判定 → 导出返回类型化 `TARGET_WRITE_FAILED`、暂存清理、账本 `quick_check` ok。证据 `local/artifacts/enospc-cloud/a4140961-export/`（含 `VERDICT.md`）。
+2. **容器 v2 导出（设备）**：本地受管 AVD `ul_p7_d01`（API 36，隔离 adb 5038，`emu avd name` 核实），APK 为 `main@983acb48` 同树可信工件（`android-apks.py verify` → `verified=true`）。三档账本的**真实产品导出**（首页→导出备份→密码→SAF Downloads→SAVE）全部成功、**零 OOM/FATAL**：
+   | 账本 | 正式交易 | 容器字节 | v2 方程核对 |
+   |---|---:|---:|---|
+   | `ledger-50600-v31-backup.db`（50,600 候选） | 1 | 254,648,199 | 87+243×16+254,644,224 ✓ |
+   | `a06-20k.db` | **20,002** | 88,622,503 | 87+85×16+88,621,056 ✓ |
+   | `a06-50k.db` | **50,002** | 135,698,551 | 87+130×16+135,696,384 ✓ |
+   峰值 Java Heap ≈ **23.9 MB**（首档导出后 `dumpsys meminfo`）；对照 D-285 的 v1 死点：`OutOfMemoryError: 134086672 byte allocation`（128 MiB 单分配，192 MiB 堆上限）。
+3. **容器 v2 恢复（设备）**：同一 APK 的**真实恢复端**（首页→恢复备份→密码→SAF 选容器→预检→确认替换）三档全部成功，**零 OOM/FATAL**：
+   - 50,600 候选档：预检逐字「容器格式：版本 2（254648199 字节）」、`36 → 36`、身份一致、完整性/外键/领域三项通过、`将替换为：3 个账户、4 个分类、1 笔交易` → 确认后 `ledger_transaction=1`、`import_candidate=50,600`、`user_version=36`，重启持久。
+   - **20,002 交易档**：预检「版本 2（88622503 字节）」、`将替换为：2 个账户、2 个分类、20002 笔交易` → 恢复后 `ledger_transaction=20,002`、`user_version=36`，重启持久。
+   - **50,002 交易档**：预检「版本 2（135698551 字节）」、`将替换为：2 个账户、2 个分类、50002 笔交易` → 恢复后 `ledger_transaction=50,002`、`transaction_version=50,002`（交易历史逐笔在位）、`posting=100,004`、`pragma quick_check=ok`，重启持久（活动代 gen-4）。
+   - **ANR/OOM 全程零**：`dumpsys dropbox` 的 `data_app_anr` 中本应用条目 **0**，logcat `ANR in com.unifiedledger` / `Application Not Responding` **0**，`OutOfMemory`/`FATAL` **0**。
+   证据 `local/artifacts/device-v2-2026-11-05/`（`VERDICT.md`、`RESTORE-VERDICT.md`、`post-save*.xml`、`restore*preflight*.xml`、`v2-*.log`、`restore*.log`）。
+
+**决定：**
+
+1. **`P706-A12` 判 PASS。** 逐条对 D-239 第 4 条的 A12 缺口：①「无任何备份/恢复规模测试」→ 现为三档真实产品路径的导出+恢复读数；②「20k/50k 正式交易与历史」→ **20,002 与 50,002 笔正式交易**，且恢复后 `transaction_version` 与交易数相等（历史逐笔在位）；③「零 OOM/ANR」→ OOM 0、FATAL 0、ANR 0（dropbox + logcat 双查）；④规模腿的容器方程在三种规模上逐字节自洽（87+块数×16+明文长度 = 文件长度）。**P7-06 由 8/12 升为 9/12。**
+2. **`P706-A10` 前半句证据就位**：云端真满盘 rig 在 `main@a4140961` 上 PASS，缺口原文的前半句（「未由 OS/SAF 真实 ENOSPC 触发」）由真实 ENOSPC + errno 判定 + 类型化拒绝 + 暂存清理闭合。**后半句「SAF 中途写失败」仍缺**，故 `P706-A10` 维持「部分证据」，但其缺口由两项收窄为一项。
+3. **`DEF-EXPORT-OOM` 闭合（CLOSED）**：D-285 归因（平台 AEAD 一次性 seal）+ 容器 v2 修复（PR #227，规格 §4.11）+ 本条设备面零 OOM 读数三件齐备。D-269 第 7 条的「归因需 ART heap dump」由实测栈替代，缺陷不再开放。
+4. **向量账 50/62 → 51/62 ≈ 82.3%**。62 = PASS **51** + 残留 **9** + 修订范围完成 2（P709-A04、P709-A05）。区块：第一部分 4/8、P7-05 15/15、**P7-06 9/12**、P7-07 9/9、P7-08 8/9、P7-09 6/9 + 2。残留 9 = 第一部分 4（A-03、A-05、A-PERF、A-VIS）+ P7-06 3（A06 掉电腿、A09、A10）+ P7-08 1（A09）+ P7-09 1（A02）。算术：4+15+9+9+8+6 = 51 ✓；51+9+2 = 62 ✓。
+5. **口径限定（不写成 PASS 之外的东西）**：单设备（本地受管 AVD）、每档单次运行、同一密码；无跨日/跨镜像可比性声明（沿 D-283 残余⑤纪律）；`local/artifacts/` 为 gitignored，证据只在本机。
+
+**边界：** 入 = 本条、`docs/CURRENT_STATE.md` 状态句与向量账同步、`docs/PHASE7_ACCEPTANCE_SPLIT.local.md`（主检出自更）。出 = 产品代码、测试源码、schema/迁移/依赖、CI 与 required check、任何阈值、D-239/D-269/D-285 判决正文（只更新其残余状态）。
+
+**验收（离线，本批实际执行）：** `PYTHONPATH=tools/python python -m project_docs .` exit 0；`git diff --check` 干净；算术 4+15+9+9+8+6=51、51+9+2=62 双验。
+
+**残余：** ① `P706-A10` 后半句（SAF 中途写失败）仍缺——闭合条件 = 一条设备侧中途失败向量；② D-285 残余②（跨端 SunJCE/AndroidOpenSSL 向量）③（1 MiB 块吞吐读数）保持 OPEN；③ 本轮设备读数均为单次运行，跨运行/跨镜像可复现性未建立；④ `P706-A06` 真实掉电腿与 A03-8b 状态不变（物理限制 / 终态裁决）。
+
+**关联决定：** D-285（容器 v2 裁决与归因）、D-284（B6 判据读法与 50/62 基线）、D-239（A10/A12 缺口原文，本条逐条对其闭合）、D-269（`DEF-EXPORT-OOM` 首登，本条闭合）、D-281（设备读数纪律）、PR #227（v2 实现批）、云端 run `41901826353`、设备读数 `local/artifacts/device-v2-2026-11-05/`。
