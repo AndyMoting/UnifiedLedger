@@ -87,7 +87,7 @@ ledger-data --------------------------------------+
 | 本地入口 | 用途 | 加载规则 |
 | --- | --- | --- |
 | `docs/PROJECT_STATE.local.md` | 当前目标、Git 现实、停止位置和唯一下一步 | 存在时作为恢复 checkpoint 读取，并与仓库现实核对 |
-| `docs/WORK_PLAN.local.md` | 当前任务的详细本地计划 | 只有 checkpoint 明确点名时读取；存档计划不得执行 |
+| `docs/WORK_PLAN.local.md` | 阶段 7 的归档执行计划（历史依据，非当前任务） | 只有 checkpoint 明确点名时读取；存档计划不得执行 |
 | `docs/SOURCE_REFERENCES.md` | 本地外部参考树的用途和只读边界 | 只有外部证据门禁触发时读取 |
 | 其他 `docs/*.local.md` | 任务研究、历史基线或 Harness 存档 | 只读取 checkpoint 点名的精确文件；禁止扫描后全部加载 |
 
