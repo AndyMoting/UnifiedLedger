@@ -4434,6 +4434,8 @@ RG-06 candidate confirmation 的 `confirmed_at` 是明确的 provenance 字段�
 5. **混杂因素如实登记**：本地无头模拟器在负载下严重退化——system_server 高频 churn（freezer 反复切换 ~3k 行、startProcess slow-op 数百次）、模拟器时钟跳变（36 分钟运行的日志时间戳横跨 4.5 小时墙钟）。本地时序测量只能作定性用。
 6. **云/本地症状差异的解释**：云端 BUSY 异常是同一围栏机制的另一表现（重试路径显式抛出），本地单次尝试把等待全部吞进 busy_timeout 内核层。
 
+**2026-11-05 证据可用性更正（清理批核对）：** 上文引用的 run 目录 `local/artifacts/d217-medium-run/` **不存在**——`find local/artifacts -maxdepth 1` 无该目录，`d217-impl-run`、`d217-device-run`、`d217-cloud-run1` 及其他 `d217-*` 报告目录内也搜不到 `local-medium` 档位或 prepare 258s 的原始记录。故本条正文的读数**失去原始工件支撑**，只作已登记结论引用；若要复核，按 D-246 的两阶段协议在受管 AVD 上重跑 `local-medium` 档位（2000/100/20）重新取证。本条决定与设计结论不受影响。
+
 **决定（路线一设计，实施批交付）：**
 
 1. **链内活动阶段零 oracle 读**：`chain()` 的七个 stage 全部只做 UI 观察（spec 派生的期望文案/计数），删除全部 `oracle.snapshot`/`oracle.read` 活动调用（coldstart 的空库快照保留——空库无写者、且是 generation 锚点）。
