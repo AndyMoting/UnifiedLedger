@@ -88,7 +88,7 @@ fork PR 的 fallback 与同仓两片使用同一 AVD 固定配置，并以同一
 
 触发条件：`pull_request` 覆盖 `android-app/**`、`app-ui/**`、`ledger-data/**`、`ledger-application/**`、`ledger-domain/**`、根 Gradle 构建/settings/properties、wrapper 脚本与 `gradle/**`，以及本 workflow、普通测试清单、分片清单、APK 来源校验工具及其测试；另支持手动触发，不设定时运行。无关文档变动不启动设备。
 
-`tools/ci/android-instrumented-inventory.txt` 是显式用例清单（当前 41 例 / 9 类），`tools/ci/android-instrumented-shards.txt` 是权威分片清单（每行 `shard<TAB>完整类名`；两片并集等于清单、互不重叠）。producer 在构建前核对源码中的类/方法集合与清单一致，并静态证明分片划分；每片跑完后 `tools/ci/android-instrumented-cloud.py validate` 重新解析原始 `am instrument` 转录、该片 JUnit XML、设备配置与导出的 logcat，要求实际执行的 `class#method` 集合精确等于该片清单子集，且无 failure/error/skip/缺失。缺报告、零执行、重复、遗漏、多余用例、失败或跳过均失败；新增、删除或改名用例必须同步清单与分片文件。普通回归排除 `ImportScaleTraversalInstrumentedTest`、`AndroidScaleLongInstrumentedTest` 与专用 `AndroidScalePreflightInstrumentedTest`。
+`tools/ci/android-instrumented-inventory.txt` 是显式用例清单（当前 42 例 / 10 类），`tools/ci/android-instrumented-shards.txt` 是权威分片清单（每行 `shard<TAB>完整类名`；两片并集等于清单、互不重叠）。producer 在构建前核对源码中的类/方法集合与清单一致，并静态证明分片划分；每片跑完后 `tools/ci/android-instrumented-cloud.py validate` 重新解析原始 `am instrument` 转录、该片 JUnit XML、设备配置与导出的 logcat，要求实际执行的 `class#method` 集合精确等于该片清单子集，且无 failure/error/skip/缺失。缺报告、零执行、重复、遗漏、多余用例、失败或跳过均失败；新增、删除或改名用例必须同步清单与分片文件。普通回归排除 `ImportScaleTraversalInstrumentedTest`、`AndroidScaleLongInstrumentedTest` 与专用 `AndroidScalePreflightInstrumentedTest`。
 
 实测成本（2026-10-01 一次性探针，同一提交三次，拆分前为单 job）：整条 job 407–417 秒，其中构建两个 APK 212–225 秒、模拟器启动 44.6–52.5 秒、7 个 P0 守卫的安装加执行约 122 秒；3/3 全绿。拆分后构建归 producer、两片并行；每片证据工件名为 `android-instrumented-<sha>-shard-<n>`，含 `shard.json`、原始转录、JUnit XML 与 `logcat.txt`。
 
