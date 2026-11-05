@@ -6353,3 +6353,45 @@ java.lang.OutOfMemoryError: Failed to allocate a 134086672 byte allocation
 **残余：** ① `P706-A10` 后半句（SAF 中途写失败）仍缺——闭合条件 = 一条设备侧中途失败向量；② D-285 残余②（跨端 SunJCE/AndroidOpenSSL 向量）③（1 MiB 块吞吐读数）保持 OPEN；③ 本轮设备读数均为单次运行，跨运行/跨镜像可复现性未建立；④ `P706-A06` 真实掉电腿与 A03-8b 状态不变（物理限制 / 终态裁决）。
 
 **关联决定：** D-285（容器 v2 裁决与归因）、D-284（B6 判据读法与 50/62 基线）、D-239（A10/A12 缺口原文，本条逐条对其闭合）、D-269（`DEF-EXPORT-OOM` 首登，本条闭合）、D-281（设备读数纪律）、PR #227（v2 实现批）、云端 run `41901826353`、设备读数 `local/artifacts/device-v2-2026-11-05/`。
+
+## D-287 两个标签/商家目录缺陷的修复登记（`DEF-CATALOG-LOAD-STUCK-01` 空目录自举、`OBS-CATALOG-OPTIONS-STALE-01` 选择项陈旧）与 `P708-A09` 设备腿读数；向量账不变
+
+**状态：** 已批准并登记（2026-11-05；用户 goal 授权「批准 0～9，自主推进，有阻碍自己想办法，都批准决定」）。**文档批**：零产品代码（两条修复已分别随 PR #229/#230 合入并各自通过 16 检查），本条只登记缺陷、修复、设备验证与读数。
+
+**背景：** 为 `P708-A09` 设备腿取证时，设备上暴露两个此前无登记的目录缺陷，且修复均已合入：
+
+1. **`DEF-CATALOG-LOAD-STUCK-01`（已修，#229 `4981fd13`）**：`SqlDelightTagMerchantCatalogStore.loadAuthority` 在「账本无 `catalog_item_version` 行」时 `return null`，而 UI 把 null 当「正在载入」且不渲染新建入口（`P503CatalogManagementScreen.kt:359-366`、`P503App.kt:438-441`）→ **空目录账本无法通过 UI 创建第一个标签/商家**（自举死锁）。写路径 `commitOnce` 早已把同一状态当作 revision 0，读写语义不一致才是缺陷。修复：读端空态返回空 authority（version 0），端口契约同步（`null` 只留「目录读不出来」）。
+2. **`OBS-CATALOG-OPTIONS-STALE-01`（已修，#230 `af70a36a`）**：编辑器可选投影 `cachedTagMerchantSelection` 与权威 `cachedTagMerchantAuthority` 是两个缓存；目录命令后的 `refreshTagMerchantSurfacesAfterCommand` 只刷后者 → 同进程内新建的标签对交易详情编辑器不可见，**重启才出现**。修复：命令后在同一 lease + generation guard 下重读 `tagMerchantSelectionOptions()`，位置在筛选页 early return 之前。
+
+**设备验证（受管 AVD `ul_p7_d01`，隔离 adb 5038，两个缺陷各自用对应合并提交的同树可信工件，`android-apks.py verify` → `verified=true`）：**
+
+| 缺陷 | 修复前 | 修复后 |
+|---|---|---|
+| 空目录自举 | 空账本 35 s、恢复的 50k 库 28 s 恒「目录载入中」，无入口 | 两档均出现「新建标签」；50k 库上实测创建 `tag-alpha`/`shop-beta`，`catalog_tag=1`、`catalog_merchant=1`、`catalog_item_version=2`（自 0 两次前进） |
+| 选择项陈旧 | 建标签后**同进程**打开详情编辑器：`当前没有可选的标签`；重启后正常 | 建 `tag-gamma` 后**不重启**打开编辑器即见 `tag-gamma` |
+
+**`P708-A09` 设备腿读数（50k 交易库，`main@af70a36a`，两笔已打标交易，`local/artifacts/device-p708-leg-2026-11-05/` 与 `device-p708-leg2-2026-11-05/`）：**
+
+| 场景 | 读数 |
+|---|---|
+| 单标签 | `「tag-gamma」· 2 笔 · CNY 11.97`（含 tag-delta 的 tx2），`已加载 2 笔` |
+| OR（任一）两标签 | 分组 `「tag-gamma」2 笔 11.97`、`「tag-delta」1 笔 5.98`；并集 `已加载 2 笔` |
+| AND（全部）两标签 | 两组均 `1 笔 5.98`；交集 `已加载 1 笔` |
+| 停用标签 | 停用 `tag-delta`（`active=0`）后筛选页仍列 `tag-delta（已停用）`，选中仍命中历史 `1 笔 5.98`（规格 §5.1） |
+| 商家累计 | 选中 `shop-beta` 后 `2027-06 普通净支出：CNY 5.99（1 笔）`；空月 `2026-11 无该商家的普通净支出。`（fail-closed） |
+| 空标签条件 | 进入筛选即 `未选择标签条件：显示全部交易的命中结果。已加载 50 笔` |
+| ANR / FATAL | 全流程 **0 / 0** |
+
+**决定：**
+
+1. 两个缺陷按上述修复状态登记为**已修并设备验证**；`DEF-CATALOG-LOAD-STUCK-01` 关档，`OBS-CATALOG-OPTIONS-STALE-01` 关档。
+2. **向量账不变（51/62 ≈ 82.3%）**：`P708-A09` 仍非 PASS——其口径含 `§10.3` 整链，本批只补了设备筛选语义腿；`P706-A10` 后半句（SAF 中途写失败）仍未取证。本条**不改判任何向量**。
+3. 桌面端（`Main.kt` 的 facade 走同一个 `P503App` 宿主）**未验证**：两个修复对桌面同时生效的推论成立，但无桌面证据，登记为残余。
+
+**边界：** 入 = 本条、`docs/CURRENT_STATE.md` 状态句同步（缺陷关档）。出 = 产品代码/测试/schema/迁移/依赖/CI（修复已在 #229/#230 合入）、任何向量状态。
+
+**验收（离线，本批实际执行）：** `PYTHONPATH=tools/python python -m project_docs .` exit 0；`git diff --check` 干净。
+
+**残余：** ① 桌面端两缺陷未验证；② `P708-A09` 的 §10.3 整链与 61k 设备分页仍未做；③ `P706-A10` 后半句按方案 A（可失败 `DocumentsProvider`）待实现；④ 本轮设备读数单次运行、单商家两标签，多商家/墓碑条目设备面未验。
+
+**关联决定：** D-286（A12 判 PASS 与本轮取证环境）、D-223/D-224（P7-08 08.C 目录管理的交付依据）、PR #229（空目录自举修复）、PR #230（选择项刷新修复）、规格 `docs/specs/2026-09-30-p7-08-tag-merchant-design.md` §5.1（筛选选项规则）。
