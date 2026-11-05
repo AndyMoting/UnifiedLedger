@@ -6464,3 +6464,30 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **验收（离线，本批实际执行）：** `PYTHONPATH=tools/python python -m project_docs .` exit 0；`git diff --check` 干净。
 
 **关联决定：** D-238（P7-08 验收裁决，A09 登记为部分证据）、D-241（JVM 规模量测与「不判 PASS」的三条理由）、D-287（两个目录缺陷及设备验证）、D-288（同日的 A10 判定）。
+
+## D-290 `P709-A02` 判 PASS（分享导入 11 设备向量齐，S1/S2 各自有修复合并与零正式效果读数）；向量账 53→54/62 ≈ 87.1%，P7-09 6/9→7/9
+
+**状态：** 已批准并登记（2026-11-05；用户 goal 授权「批准 0～9，自主推进，有阻碍自己想办法，都批准决定」）。**文档批**：零产品代码，零新测试。判据是机器本地证据 `local/artifacts/p709-a02-completion/`（**158 个文件**：31 个 XML dump、截图、logcat、`counts.tsv`、`REPORT-2026-11-02.md`），其中两个向量的修复各自已经合并进 `main`。
+
+**矩阵与读数（AVD `ul_p7_d01`，API 36，隔离 adb 5038，APK 来自 CI run `41459869007` 树 `bd86da62` 合并 `dfa1c539`）：**
+
+| 向量 | 读数 | 判定 |
+|---|---|---|
+| 缺格式 / 假 MIME / 异常 extras / 无 grant / 多流 / 冲突流 等 9 条 | 各自 XML + 截图 + logcat + `counts.tsv`（前后计数）| 类型化拒绝、零正式效果 |
+| **S1 声明大小 ≠ 实际短流** | 发送方 `truncated` 模式（声明 770,276 B，实投 2,048 B）：UI「分享的文件已无法读取（授权已过期或进程已重启），请重新分享后再导入。」；计数 `candidate/request/source_record 0→0`、`ledger_transaction 2→2` | 类型化 re-share 面 + 零正式效果；修复 PR #202（合并 `dfa1c539`，`readImportPickBounded`） |
+| **S2 未知大小 > 16 MiB** | 发送方 `unknown_size` 18 MiB：发送端 `ULSEND_PIPE_BROKEN written=16842752 EPIPE`；UI「分享文件超过 16 MiB 上限，未导入任何内容。」；计数 0→0，账本 2→2 | 类型化 `IMPORT_SOURCE_TOO_LARGE`；修复 PR #201（合并 `f540ea26`） |
+
+两个修复提交 `f540ea26` 与 `dfa1c539` 均已核实为 `main` 的祖先。
+
+**决定：**
+
+1. `P709-A02` **判 PASS**。理由：11 个设备向量各自有可视面 + 结构化计数 + logcat 三件证据；S1/S2 两个此前缺失的向量都在修复后重测，且**负向对照**也已登记（S1 修复前 `truncate_bytes=2048` 产生 candidate=23/request=23/source_record=23 且无错误——该次运行明确不算验收证据，D-… 记录在案）。
+2. 向量账 53 → **54 / 62 ≈ 87.1%**；P7-09 6/9 → **7/9**。
+3. **证据来源如实标注**：发送方 APK 是**本机重建的 `share-sender`**（`truncated` 模式按真实声明大小 + 短流投递），不是商店或第三方应用；`REPORT-2026-11-02.md` 已写明。这与「真实发送方授权」的字面要求存在已知差距——授权路径本身（`content://` URI grant 生命周期）由无 grant / 中途撤回向量覆盖，但**未**再叠加一个第三方应用做端到端复验，登记为残余。
+4. **残余（登记，不改判）**：① 第三方发送方未接入（上条）；② 报告与证据是 2026-11-02 的构建（`dfa1c539`），此后 `main` 前进到 `cb616fcd`，导入路径无改动但未在最新树重跑；③ 证据全部在 `local/artifacts/**`（Git 忽略、机器本地），换机需重建。
+
+**边界：** 入 = 本条、`docs/CURRENT_STATE.md` 状态句。出 = 产品代码/测试/schema/迁移/CI、其他向量。
+
+**验收（离线，本批实际执行）：** `PYTHONPATH=tools/python python -m project_docs .` exit 0；`git diff --check` 干净；两条修复提交的祖先关系已用 `git merge-base --is-ancestor` 核实。
+
+**关联决定：** D-239（P709-A02 的缺证登记来源）、D-…（分享导入实施批与 PR #201/#202）、D-289（同日的 P708-A09 判定）。
