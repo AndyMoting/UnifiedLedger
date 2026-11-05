@@ -203,10 +203,10 @@ class BackupExportSafMidWriteInstrumentedTest {
     }
 
     /** The provider's own view of how many bytes it accepted, read across the process boundary. */
-    private fun drainedBytes(): Long =
-        targetContext.contentResolver.call(FAILING_TARGET_URI, "drainedBytes", null, null)
-            ?.getLong("drainedBytes")
-            ?: -1L
+    private fun drainedBytes(): Long {
+        val answer = targetContext.contentResolver.call(FAILING_TARGET_URI, "drainedBytes", null, null)
+        return answer?.getLong("drainedBytes") ?: -1L
+    }
 
     // ------------------------------------------------------------------ rig helpers (copied)
 
