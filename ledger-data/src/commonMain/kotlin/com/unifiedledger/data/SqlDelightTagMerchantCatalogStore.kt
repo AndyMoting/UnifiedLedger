@@ -243,7 +243,12 @@ class SqlDelightTagMerchantCatalogStore private constructor(
 
     private fun loadAuthority(ledgerId: LedgerId): TagMerchantAuthority? {
         val ledger = ledgerId.value
-        val version = database.ledgerQueries.selectCatalogItemVersion(ledger).executeAsOneOrNull() ?: return null
+        // No `catalog_item_version` row means "this ledger has no catalog items yet", not "the
+        // catalog is unknown": the command path already treats it as revision 0
+        // (`?: TagMerchantAuthority(..., 0L)` in commitOnce), so the read path must agree.
+        // Returning null here made the management section render "载入中" forever and hid the
+        // create affordance, so a fresh ledger could never receive its first tag or merchant.
+        val version = database.ledgerQueries.selectCatalogItemVersion(ledger).executeAsOneOrNull() ?: 0L
         val tagNames = currentNames(ledger, "tag")
         val merchantNames = currentNames(ledger, "merchant")
         val tags =

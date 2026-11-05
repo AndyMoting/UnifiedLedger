@@ -16,6 +16,7 @@ import java.util.Properties
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -101,6 +102,25 @@ class SqlDelightTagMerchantCatalogStoreTest {
             assertIs<TagMerchantCommandResult.Accepted>(executor("e").setItemActive(ledgerId, CatalogItemKind.MERCHANT, "merchant-1", true, expectedRevision = 2L))
             assertEquals(1L, queryLong(driver, "SELECT count(*) FROM catalog_merchant WHERE merchant_id = 'merchant-1' AND active = 1"))
             assertEquals(1L, queryLong(driver, "SELECT count(*) FROM catalog_item_name_history WHERE owner_id = 'merchant-1'"))
+        }
+    }
+
+    @Test
+    fun anEmptyCatalogLoadsAsAnEmptyAuthorityInsteadOfNull() {
+        // The management surface renders its create affordance only when the read port answers;
+        // returning null for "no items yet" left a fresh ledger stuck on "载入中" with no way to
+        // create the first tag (device finding 2026-11-05, DEF-CATALOG-LOAD-STUCK-01).
+        withStore { harness, executor, _ ->
+            val empty = assertNotNull(harness.store.load(ledgerId))
+            assertEquals(0L, empty.catalogItemVersion)
+            assertTrue(empty.tags.isEmpty())
+            assertTrue(empty.merchants.isEmpty())
+
+            // The very first create must then be observable through the same read port.
+            assertIs<TagMerchantCommandResult.Accepted>(executor("first").createItem(ledgerId, CatalogItemKind.TAG, "咖啡", expectedRevision = 0L))
+            val afterCreate = assertNotNull(harness.store.load(ledgerId))
+            assertEquals(1L, afterCreate.catalogItemVersion)
+            assertEquals(listOf("咖啡"), afterCreate.tags.map { it.name })
         }
     }
 
