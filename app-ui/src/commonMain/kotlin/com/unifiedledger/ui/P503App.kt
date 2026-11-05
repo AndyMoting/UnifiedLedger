@@ -3508,10 +3508,20 @@ fun P503App(
         scope.launch(Dispatchers.Default) {
             val outcome =
                 ledger.leased { facade, _ -> runCatching { facade.tagMerchantCatalogReader?.invoke()?.load(facade.ledgerId) }.getOrNull() }
+            // The editor's selectable projection is its own cache (`cachedTagMerchantSelection`),
+            // loaded by the catalog-snapshot pass. A catalog command must refresh it in the same
+            // post-command pass, otherwise a tag created now stays invisible to the annotation
+            // editor until the app restarts (device finding 2026-11-05,
+            // OBS-CATALOG-OPTIONS-STALE-01). Same lease + generation guard as the authority.
+            val selectionOutcome =
+                ledger.leased { facade, _ -> runCatching { facade.tagMerchantSelectionOptions() }.getOrNull() }
             scope.launch {
                 (outcome as? LeaseOutcome.Completed)
                     ?.takeIf { ledger.isCurrentGeneration(it.generation) }
                     ?.let { if (it.value != null) cachedTagMerchantAuthority = it.value }
+                (selectionOutcome as? LeaseOutcome.Completed)
+                    ?.takeIf { ledger.isCurrentGeneration(it.generation) }
+                    ?.let { if (it.value != null) cachedTagMerchantSelection = it.value }
                 val current = latestState.value as? P503AppState.TagMerchantFilter ?: return@launch
                 if (current.loadedEntries.isEmpty() && current.accumulation == null) return@launch
                 requestTagMerchantFilterPage(current, replace = true, cursor = null)
