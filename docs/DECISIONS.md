@@ -6491,3 +6491,28 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **验收（离线，本批实际执行）：** `PYTHONPATH=tools/python python -m project_docs .` exit 0；`git diff --check` 干净；两条修复提交的祖先关系已用 `git merge-base --is-ancestor` 核实。
 
 **关联决定：** D-239（P709-A02 的缺证登记来源）、D-…（分享导入实施批与 PR #201/#202）、D-289（同日的 P708-A09 判定）。
+
+## D-291 `P706-A09` 判 PASS（Android 真实导出 → 桌面真实组装根恢复，50,002 笔 / 60 标签 / `quick_check` ok）；向量账 54→55/62 ≈ 88.7%，P7-06 10/12→11/12
+
+**状态：** 已批准并登记（2026-11-05；用户 goal 授权「批准 0～9，自主推进，有阻碍自己想办法，都批准决定」）。**一批 tracked 变更（纯加测试）**：新增 `desktop-app/src/jvmTest/kotlin/com/unifiedledger/desktop/DesktopCrossDeviceRestoreTest.kt`（PR #236，合并 `1b863d22`，required checks 全绿）。
+
+**两半证据：**
+
+| 半 | 读数 |
+|---|---|
+| **设备半**（真实产品导出路径） | 受管 AVD `ul_p7_d01`（无头、隔离 adb 5038、`emu avd name` 核实）；账本 = 50,002 交易 + 60 标签 / 20 商家 / 50,002 标签关联行的规模夹具；导出备份 → 密码 → 开始导出 → 系统文件选择器保存 → UI「备份已保存」；产物 `unifiedledger-backup (7).ulbk` = **154,179,991 B**，魔数 `ULBK\0\x02\x01\x02`（容器 v2） |
+| **桌面半**（真实组装根） | 同一容器在 Windows JVM 上经 `DesktopStartupController`（生产 opener + `openExplicitDesktopLedger`）+ `DesktopRestoreWiring`（真实 `DesktopBackupSourcePort`，仅把文件选择器换成夹具路径；真实 `DesktopRestoreIsolatedDatabasePort`；真实 `JvmBackupCryptoPrimitives`）跑真实 `RestorePreflightUseCase` 与 `ConfirmBackupRestoreUseCase`：预检 `PreviewReady` → 确认 `Committed` → 发布代内 `ledger_transaction` = **50,002**、`catalog_tag` = **60**、`PRAGMA quick_check` = **ok**；本机 `BUILD SUCCESSFUL` 连续两次 |
+
+**决定：**
+
+1. `P706-A09` **判 PASS**。理由：跨端向量的两个方向都有真实读数——设备用产品导出路径写出 v2 容器，桌面用生产组装根读出并落地，内容逐项核对（交易数、目录规模、结构完整性）。测试已入 `main` 且 required checks 绿。
+2. 向量账 54 → **55 / 62 ≈ 88.7%**；P7-06 10/12 → **11/12**。
+3. **夹具纪律**：容器是机器本地证据（`local/artifacts/p706-a09-crossdevice/`，Git 忽略），用例以 `UL_CROSSDEVICE_CONTAINER` 或 `-Dul.crossdevice.container` 提供路径，缺省 `Assume` **skip**——已实测两种情况：有夹具绿、无夹具 `BUILD SUCCESSFUL` 且用例跳过，**不会假绿**。
+4. **调试中确认并写进用例 KDoc 的两条产品约束**（下一个人不该再踩）：① 确认步骤必须 wire `openExplicitGeneration`，否则第 8 步 reopen 走指针路径会消费流程自己的 `switched` journal 并回滚（实测先 `AbortedBeforePublish(ActivePointerUnreadable)`、补指针后 `RolledBack`、wire 上 opener 才 `Committed`）；② `openDatabase` 每次必须返回**新图**，复用实例同样回滚。
+5. **残余**：① 反向（桌面导出 → Android 恢复）未用桌面产出的容器复验，只由 D-286 的 20k/50k 设备读数覆盖同一条容器路径；② 用例在 CI 中因缺夹具而 skip，所以 CI 绿不构成跨端证据——证据是本机的两次 `BUILD SUCCESSFUL` 与 `local/artifacts/` 下的容器，换机需重做。
+
+**边界：** 入 = 本条、`docs/CURRENT_STATE.md` 状态句、`docs/PHASE7_ACCEPTANCE_SPLIT.local.md` 的 A09 行。出 = 产品代码/其他测试/schema/迁移/CI。
+
+**验收（离线，本批实际执行）：** `PYTHONPATH=tools/python python -m project_docs .` exit 0；`git diff --check` 干净；用例本机跑通两次；`ktlintJvmTestSourceSetCheck` 绿。
+
+**关联决定：** D-286（20k/50k 设备导出+恢复读数）、D-239（A09 的缺证登记）、D-288（同日的 A10 判定）、PR #236（跨端用例）。
