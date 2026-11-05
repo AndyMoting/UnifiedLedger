@@ -216,6 +216,13 @@ data class ImportReviewView(
      * Default `false` keeps every pre-P7-05 constructor site compiling.
      */
     val groupEnumerationInProgress: Boolean = false,
+    /**
+     * A-PERF (D-293): the keyset cursor for the NEXT page of the review list, or null when the list
+     * is complete. The list is read page by page so the first screen no longer materializes 61k
+     * candidates; `null` here is the host's "nothing more to load" signal, so a failed read must
+     * never land as null-with-no-rows (see ImportReviewRowsPageResult.Unavailable).
+     */
+    val nextAfterCandidateId: String? = null,
 )
 
 /** The host's post-review re-read payload of [P503UiEvent.ImportDuplicateReviewResult]. */
@@ -384,6 +391,7 @@ internal fun P503ImportScreen(
     view: ImportReviewView?,
     platform: com.unifiedledger.application.ImportPlatformKind?,
     onRefresh: () -> Unit,
+    onLoadMore: () -> Unit,
     onStartFilePick: (ImportFormatId) -> Unit,
     onSelectCandidate: (ImportCandidateId) -> Unit,
     onToggleSelection: (ImportCandidateId) -> Unit,
@@ -423,6 +431,7 @@ internal fun P503ImportScreen(
                 onToggleItemComparison = { duplicateCandidateId -> comparisonExpansion = comparisonExpansion.toggle(duplicateCandidateId) },
                 onToggleAllComparisons = { comparisonExpansion = comparisonExpansion.batchToggle(groupDuplicateCandidateIds) },
                 onRefresh = onRefresh,
+                onLoadMore = onLoadMore,
                 onStartFilePick = onStartFilePick,
                 onSelectCandidate = onSelectCandidate,
                 onToggleSelection = onToggleSelection,
@@ -452,6 +461,7 @@ private fun ImportReviewOverviewItem(
     onToggleItemComparison: (ImportDuplicateCandidateId) -> Unit,
     onToggleAllComparisons: () -> Unit,
     onRefresh: () -> Unit,
+    onLoadMore: () -> Unit,
     onStartFilePick: (ImportFormatId) -> Unit,
     onSelectCandidate: (ImportCandidateId) -> Unit,
     onToggleSelection: (ImportCandidateId) -> Unit,
@@ -539,6 +549,12 @@ private fun ImportReviewOverviewItem(
                 onToggleSelection = onToggleSelection,
                 onSelectCandidate = onSelectCandidate,
             )
+        ImportReviewRenderItem.LoadMore -> {
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = onLoadMore, modifier = Modifier.semantics { contentDescription = "加载更多导入候选" }) {
+                Text("加载更多")
+            }
+        }
         ImportReviewRenderItem.GroupDispositionButton -> {
             Spacer(Modifier.height(8.dp))
             Button(onClick = onGroupDisposition, modifier = Modifier.semantics { contentDescription = "整组标记为重复" }) {
