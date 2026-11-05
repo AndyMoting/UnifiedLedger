@@ -6594,3 +6594,44 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **验收（离线，本批实际执行）：** `PYTHONPATH=tools/python python -m project_docs .` exit 0；`git diff --check` 干净。
 
 **关联决定：** D-169/D-239（`ACC-D-PERF-01` 与 A-PERF 的缺证登记）、D-…（层0 统计刷新落地，DECISIONS `:2839`）、`docs/specs/2026-09-17-p7-04-a-perf-import-read-governance-design.md`、`docs/specs/2026-09-21-p7-04-import-review-list-oom-fix-design.md`。
+
+## D-294 `A-PERF` 判 PASS：61k 导入首屏 **≤ 0.6 s**（阈值 ≤3 s），`ACC-D-PERF-01` 由 NOT MET 翻 MET；向量账 57→58/62 ≈ 93.5%
+
+**状态：** 已批准并登记（2026-11-05；用户 goal 授权「批准 0～9，自主推进，有阻碍自己想办法，都批准决定」）。**判据批**：零代码（实现已在前三批合并：#242 分页读端口/适配器、#243 应用层分页用例、#244 UI 逐页渲染）；本条只登记读数与判定。
+
+**改造链（已合并）：**
+
+| 批 | 内容 |
+|---|---|
+| #242 `da7f69f7` | `loadImportReviewPage` keyset 分页读；整表读保留为兼容入口；两者共用同一 run-fold |
+| #243 `a01a5308` | `QueryImportReviewRows.queryPage`，**失败映射成 `Unavailable` 而不是空页**（空页对宿主等于「已读完」，会静默截断） |
+| #244 `bddda338` | UI 逐页渲染：`nextAfterCandidateId` 游标 + `AppendImportReviewPage` + `LoadMore` 项；追加失败保留已读行与游标 |
+
+**设备读数（受管 AVD `ul_p7_d01`，无头，隔离 adb 5038；构建为本机 `:android-app:assembleDebug` @ `bddda338`；夹具 `ledger-61000-v31-backup.db` = 61,000 候选）：**
+
+| 探针 | 结果 |
+|---|---|
+| 点击「导入」→ sleep 0.6 s → dump | **首屏可见**（两次） |
+| 点击「导入」→ sleep 1.2 s → dump | 首屏可见（对照） |
+| ANR / FATAL | **0 / 0** |
+
+**方法说明（为什么这次的数字可信）：** `uiautomator dump` 在**启动时**抓屏、之后才返回，因此「点击 → sleep D → dump → 看内容」回答的是**「第 D 秒时首屏是否已经可见」**，分辨率就是 D。轮询法每轮都要付一次 dump（实测 ≈2.5 s）的成本，这正是旧基线 13 s 里不可分离的那部分；有界探针把它移出了测量回路。
+
+**决定：**
+
+1. **`A-PERF` 判 PASS**；`ACC-D-PERF-01`（61k 列表读 ≤3 s）由 **NOT MET 翻 MET**：读数 **≤0.6 s**（上界），对照旧基线 13 s（同夹具，轮询法，去 dump 开销后 11.0–11.7 s）。
+2. 向量账 57 → **58 / 62 ≈ 93.5%**。
+3. **JVM 侧同夹具读数**（`ImportReview61kReadAttributionTest`）：整表读 2143–2179 ms vs 首页（50 候选）12.7–14.2 ms —— 与设备 ≤0.6 s 量级一致（设备多出启动与渲染），两条独立路径互相印证。
+
+**残余（登记，不改判）：**
+
+1. **0.6 s 是上界**，不是精确延迟；更细分辨率需要 instrumented 端口计时（本批未做）。
+2. 只验**首屏**；`加载更多` 在设备 61k 上未逐页跑过，分页等价性由 JVM 测试（`ImportReviewPagedReadEquivalenceTest`）钉住。
+3. 单机单镜像单次会话；换镜像需重跑同探针。
+4. 三批合并后的 `Android scale preflight`（非 required）在 CI 上偶发失败（缺 `preflight-evidence/ready-ui.xml`），与本改造无关，但会遮住设备信号的可见性。
+
+**边界：** 入 = 本条、`docs/CURRENT_STATE.md` 状态句、`docs/PHASE7_ACCEPTANCE_SPLIT.local.md` 的 A-PERF 行。出 = 产品代码/测试/schema/迁移/CI、其他向量。
+
+**验收（离线，本批实际执行）：** `PYTHONPATH=tools/python python -m project_docs .` exit 0；`git diff --check` 干净。
+
+**关联决定：** D-293（分页读规格与「为什么层0 不够」）、D-169（`ACC-D-PERF-01` 的 NOT MET 登记与 11–13 s 基线）、PR #242/#243/#244。
