@@ -357,7 +357,7 @@ class ScopeSentence(unittest.TestCase):
 
 
 class OrdinaryRegressionUntouched(unittest.TestCase):
-    """The export rig must stay opt-in and outside the 41-case inventory."""
+    """The export rig must stay opt-in and outside the 42-case inventory."""
 
     def test_the_export_class_is_excluded_from_the_ordinary_inventory(self):
         # Turns red if the exclusion is dropped from inventory.py: the CI step
