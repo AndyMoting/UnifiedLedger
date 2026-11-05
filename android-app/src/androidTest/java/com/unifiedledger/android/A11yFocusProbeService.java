@@ -1,6 +1,9 @@
 package com.unifiedledger.android;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.GestureDescription;
+import android.graphics.Path;
+import android.graphics.Rect;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
@@ -73,6 +76,14 @@ public final class A11yFocusProbeService extends AccessibilityService {
 
     private static final String SETTING_LIMIT = "ul_a11y_limit";
 
+    /**
+     * Host-driven CLICK target: {@code adb shell settings put global ul_a11y_click <prefix>} makes
+     * the pass click the first node whose text starts with that prefix instead of focusing one.
+     * Needed because TalkBack changes touch semantics — a plain tap only selects an element, so the
+     * host cannot drive the app with {@code input tap} while the screen reader is on.
+     */
+    private static final String SETTING_CLICK = "ul_a11y_click";
+
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
@@ -137,16 +148,49 @@ public final class A11yFocusProbeService extends AccessibilityService {
                             + " screenReaderFocusable="
                             + node.isScreenReaderFocusable());
         }
+        String clickTarget = setting(SETTING_CLICK, "");
+        if (!clickTarget.isEmpty()) {
+            for (AccessibilityNodeInfo node : nodes) {
+                CharSequence text = node.getText();
+                if (text == null || !text.toString().startsWith(clickTarget)) {
+                    continue;
+                }
+                // The text node is usually a label inside a clickable container: click the nearest
+                // clickable ancestor instead of the label itself (a label answers false).
+                AccessibilityNodeInfo clickable = node;
+                for (int up = 0; up < 6 && clickable != null && !clickable.isClickable(); up++) {
+                    clickable = clickable.getParent();
+                }
+                boolean clicked =
+                        clickable != null && clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                if (!clicked) {
+                    // Compose buttons often answer no ACTION_CLICK to a service; a dispatched tap at
+                    // the node's own bounds is the reliable activation under TalkBack.
+                    clicked = tapNode(node);
+                }
+                Log.i(
+                        TAG,
+                        "click text=\"" + trim(text) + "\" target=" + (clickable == null ? "null" : clickable.getClassName())
+                                + " accepted=" + clicked);
+                return;
+            }
+            Log.i(TAG, "click target=\"" + clickTarget + "\" not-found");
+            return;
+        }
         String onlyPrefix = setting(SETTING_PREFIX, FOCUS_ONLY_PREFIX);
         int limit = Integer.parseInt(setting(SETTING_LIMIT, String.valueOf(MAX_FOCUSED_PER_PASS)));
         Log.i(TAG, "pass filter prefix=\"" + onlyPrefix + "\" limit=" + limit);
         int focused = 0;
         for (AccessibilityNodeInfo node : nodes) {
             CharSequence text = node.getText();
-            if (text == null || !matches(text.toString())) {
+            if (text == null) {
                 continue;
             }
-            if (!onlyPrefix.isEmpty() && !text.toString().startsWith(onlyPrefix)) {
+            // The host's prefix REPLACES the built-in target list: a screen under test names its
+            // own node ("EXPENSE", "月份：", …) and must not also satisfy the default list.
+            boolean selected =
+                    onlyPrefix.isEmpty() ? matches(text.toString()) : text.toString().startsWith(onlyPrefix);
+            if (!selected) {
                 continue;
             }
             if (focused >= limit) {
@@ -180,6 +224,26 @@ public final class A11yFocusProbeService extends AccessibilityService {
             }
         }
         return nodes;
+    }
+
+    /** Dispatches a single tap at [node]'s centre; the fallback when ACTION_CLICK is refused. */
+    private boolean tapNode(AccessibilityNodeInfo node) {
+        Rect bounds = new Rect();
+        node.getBoundsInScreen(bounds);
+        if (bounds.width() <= 0 || bounds.height() <= 0) {
+            return false;
+        }
+        Path path = new Path();
+        path.moveTo(bounds.centerX(), bounds.centerY());
+        // A DOUBLE tap: with TalkBack enabled a single injected tap only explores/selects, and the
+        // screen reader's activation gesture is the double tap. Two strokes at the same point, the
+        // second starting after the first ends.
+        GestureDescription gesture =
+                new GestureDescription.Builder()
+                        .addStroke(new GestureDescription.StrokeDescription(path, 0, 45))
+                        .addStroke(new GestureDescription.StrokeDescription(path, 130, 45))
+                        .build();
+        return dispatchGesture(gesture, null, null);
     }
 
     /** A Settings.Global value the host can change without reinstalling this fixture. */
