@@ -4,6 +4,7 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.ImportDuplicateStatus
 import com.unifiedledger.application.ImportReviewRow
+import com.unifiedledger.application.ImportReviewRowsPage
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.LedgerId
 import java.nio.file.Files
@@ -102,6 +103,24 @@ class ImportReview61kReadAttributionTest {
                     println("D169ATTR: side=A round=${index + 1} read-ms=${format(nanos)}")
                 }
                 println("D169ATTR: side=A read-min-ms=${format(readTimes.min())} read-max-ms=${format(readTimes.max())}")
+
+                // A-PERF (D-293): the PAGED first page on the same fixture — the number the paged
+                // list would actually pay before rendering. Warmup discarded, then ROUNDS reads.
+                adapter.loadImportReviewPage(ledgerId, pageSize = 50, afterCandidateId = null)
+                val pageTimes = mutableListOf<Long>()
+                var firstPage: ImportReviewRowsPage? = null
+                repeat(ROUNDS) {
+                    val started = System.nanoTime()
+                    firstPage = adapter.loadImportReviewPage(ledgerId, pageSize = 50, afterCandidateId = null)
+                    pageTimes += System.nanoTime() - started
+                }
+                val page = requireNotNull(firstPage)
+                println("D169ATTR: side=B component=first-page fixture=prebuilt-copy page-size=50")
+                println("D169ATTR: side=B page-rows=${page.rows.size} next=${page.nextAfterCandidateId}")
+                pageTimes.forEachIndexed { index, nanos ->
+                    println("D169ATTR: side=B round=${index + 1} page-ms=${format(nanos)}")
+                }
+                println("D169ATTR: side=B page-min-ms=${format(pageTimes.min())} page-max-ms=${format(pageTimes.max())}")
             } finally {
                 driver.close()
             }

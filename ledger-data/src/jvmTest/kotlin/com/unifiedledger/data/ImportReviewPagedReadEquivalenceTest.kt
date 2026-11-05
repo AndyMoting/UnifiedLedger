@@ -312,6 +312,34 @@ class ImportReviewPagedReadEquivalenceTest {
     }
 
     @Test
+    fun thePublicPagedReadReproducesTheWholeListPageByPage() {
+        // A-PERF (D-293): the PUBLIC page API must be a delivery change, not a semantics change.
+        // Walking it at pageSize = 2 (the multi-batch path) has to reproduce the whole-list read
+        // row for row, in the same order, and report exhaustion exactly once.
+        withMixedLibrary { database ->
+            val reference = wholeLedgerReference(database)
+            assertEquals(6, reference.size, "fixture must yield one folded row per candidate")
+            val reader = SqlDelightImportReviewReadAdapter(database, pageSize = 2)
+
+            val collected = mutableListOf<ImportReviewRow>()
+            var cursor: String? = null
+            var pages = 0
+            while (true) {
+                val page = reader.loadImportReviewPage(ledgerId, pageSize = 2, afterCandidateId = cursor)
+                pages++
+                collected += page.rows
+                cursor = page.nextAfterCandidateId ?: break
+                assertTrue(pages < 20, "the cursor must advance; an endless loop means a stuck cursor")
+            }
+            assertEquals(reference, collected, "page-by-page concatenation must equal the whole-list read")
+            // 6 candidates at pageSize 2: three full pages, then ONE empty page that reports
+            // exhaustion. A keyset cursor cannot know it reached the end without the read that
+            // finds nothing, so the empty terminal page is the contract, not an anomaly.
+            assertEquals(4, pages, "three full pages plus the terminal empty page")
+        }
+    }
+
+    @Test
     fun multiDuplicateGroupFoldsAcrossEveryPageBoundary() {
         // P704OOM-T-BATCH-01a (sub-item of BATCH-01): a duplicate-heavy library — six records of
         // ONE business tuple, so the last candidate carries five duplicate rows — read at
