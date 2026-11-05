@@ -173,6 +173,22 @@ class ReducerRejectsPartialEvidence(unittest.TestCase):
         build_valid(self.directory)
         self.assertEqual(validate_evidence(self.directory, SHA)["status"], "PASS")
 
+
+    def test_missing_ready_proof_names_the_producer_instead_of_a_bare_filenotfound(self):
+        # The workflow validates with `if: always()`, so a failed EXERCISE step lands here with no
+        # evidence at all. The reader must be pointed at the producer step, not left guessing why a
+        # validator reports FileNotFoundError.
+        build_valid(self.directory)
+        (self.directory / "ready-ui.xml").unlink()
+
+        with self.assertRaises(ValueError) as raised:
+            validate_evidence(self.directory, SHA)
+
+        message = str(raised.exception)
+        self.assertIn("ready-ui.xml", message)
+        self.assertIn("Exercise real scale setup", message)
+        self.assertIn("host.json", message, "the message must list what the evidence directory DOES hold")
+
     def test_maximum_requires_true_ready_and_matching_visible_xml(self):
         for fault in ("missing", "false", "numeric", "hash", "xml", "package", "invisible", "error"):
             with self.subTest(fault=fault):

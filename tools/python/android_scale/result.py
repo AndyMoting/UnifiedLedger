@@ -74,7 +74,20 @@ def app_ui_state(xml: str) -> str:
 
 
 def validate_app_ready(directory: Path, report: dict) -> None:
-    xml = (directory / "ready-ui.xml").read_bytes()
+    ready = directory / "ready-ui.xml"
+    if not ready.is_file():
+        # The producer writes this file only when the app reaches Ready. A validation run
+        # (`if: always()` in the workflow) therefore lands here when the EXERCISE step failed
+        # before that point, and a bare FileNotFoundError sends the reader looking for a
+        # validator bug instead of the producer's failure. Name both sides and show what the
+        # evidence directory actually holds.
+        present = sorted(path.name for path in directory.glob("*")) if directory.is_dir() else []
+        raise ValueError(
+            "app Ready proof is missing: the exercise step never wrote "
+            f"'{ready.name}' into {directory} (the runner writes it only once the app reports Ready). "
+            f"Check the 'Exercise real scale setup' step's failure above. Evidence present: {present or 'none'}",
+        )
+    xml = ready.read_bytes()
     expected = {"state": "Ready", "package": PACKAGE, "marker": READY_MARKER, "fresh_dump": True,
                 "xml_sha256": hashlib.sha256(xml).hexdigest()}
     proof = report.get("app_ready")
