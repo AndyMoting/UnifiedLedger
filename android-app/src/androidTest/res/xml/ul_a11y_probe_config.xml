@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  P7-09 A-03 / A-VIS device probe (test-only): the configuration for A11yFocusProbeService.
+  canRetrieveWindowContent is the single capability the probe needs; no feedback type is
+  meaningful because the fixture never speaks (TalkBack does).
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:canRetrieveWindowContent="true"
+    android:notificationTimeout="100" />
