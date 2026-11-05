@@ -338,6 +338,33 @@ class QueryImportReviewRows(
         } catch (failure: Exception) {
             ImportReviewRowsResult.Unavailable
         }
+
+    /**
+     * A-PERF (D-293): one page of the review list. Same fail-loud mapping as [query] — a failing or
+     * unimplemented paged read is [ImportReviewRowsResult.Unavailable], never an empty page (an empty
+     * page means "exhausted" and would silently truncate the list).
+     */
+    fun queryPage(
+        ledgerId: LedgerId,
+        pageSize: Long,
+        afterCandidateId: String?,
+    ): ImportReviewRowsPageResult =
+        try {
+            val page = readPort.loadImportReviewPage(ledgerId, pageSize, afterCandidateId)
+            ImportReviewRowsPageResult.Page(page.rows, page.nextAfterCandidateId)
+        } catch (failure: Exception) {
+            ImportReviewRowsPageResult.Unavailable
+        }
+}
+
+/** Typed outcome of [QueryImportReviewRows.queryPage] (P7-03 typed-read-failure precedent). */
+sealed interface ImportReviewRowsPageResult {
+    data class Page(
+        val rows: List<ImportReviewRow>,
+        val nextAfterCandidateId: String?,
+    ) : ImportReviewRowsPageResult
+
+    data object Unavailable : ImportReviewRowsPageResult
 }
 
 class QueryImportCandidateDetail(
