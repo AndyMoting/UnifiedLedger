@@ -57,6 +57,7 @@ import com.unifiedledger.application.ImportFileIntakeInput
 import com.unifiedledger.application.ImportFormatCapabilities
 import com.unifiedledger.application.ImportFormatId
 import com.unifiedledger.application.ImportRequestIdentity
+import com.unifiedledger.application.ImportReviewRowsPageResult
 import com.unifiedledger.application.ImportReviewRowsResult
 import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerCurrentStateResult
@@ -2119,11 +2120,49 @@ fun P503App(
         scope.launch(Dispatchers.Default) {
             // P7-06 06.1 (D-176; spec 4.3/4.4): the read runs under a lease; the landing hop
             // discards a result captured under a superseded generation.
-            val outcome = ledger.leased { facade, _ -> facade.queryImportReviewRows?.query(ledger.ledgerId) }
+            // A-PERF (D-293): the FIRST screen reads ONE page. The whole-list read is what
+            // materialized 61k candidates (13 s on device); the paged read keeps the first screen
+            // bounded and the cursor drives 加载更多.
+            val outcome =
+                ledger.leased { facade, _ ->
+                    facade.queryImportReviewRows?.queryPage(ledger.ledgerId, IMPORT_REVIEW_PAGE_SIZE, null)
+                }
             scope.launch {
                 if (outcome is LeaseOutcome.Completed && !ledger.isCurrentGeneration(outcome.generation)) return@launch
-                val result = (outcome as? LeaseOutcome.Completed)?.value ?: ImportReviewRowsResult.Unavailable
-                dispatch(P503UiEvent.ImportReviewResult(result))
+                val page = (outcome as? LeaseOutcome.Completed)?.value ?: ImportReviewRowsPageResult.Unavailable
+                dispatch(
+                    when (page) {
+                        is ImportReviewRowsPageResult.Page ->
+                            P503UiEvent.ImportReviewResult(
+                                ImportReviewRowsResult.Rows(page.rows),
+                                nextAfterCandidateId = page.nextAfterCandidateId,
+                            )
+                        ImportReviewRowsPageResult.Unavailable ->
+                            P503UiEvent.ImportReviewResult(ImportReviewRowsResult.Unavailable)
+                    },
+                )
+            }
+        }
+    }
+
+    /**
+     * A-PERF (D-293): reads the NEXT page of the review list and appends it. Guarded by the cursor
+     * the last landing left behind: null means the list is complete, so the request is a no-op
+     * rather than a re-read of the tail.
+     */
+    fun requestMoreImportReview() {
+        if (!ledger.surfaces.importReviewRows) return
+        val overview = latestState.value as? P503AppState.OverviewEmpty ?: return
+        val cursor = overview.importReview?.nextAfterCandidateId ?: return
+        scope.launch(Dispatchers.Default) {
+            val outcome =
+                ledger.leased { facade, _ ->
+                    facade.queryImportReviewRows?.queryPage(ledger.ledgerId, IMPORT_REVIEW_PAGE_SIZE, cursor)
+                }
+            scope.launch {
+                if (outcome is LeaseOutcome.Completed && !ledger.isCurrentGeneration(outcome.generation)) return@launch
+                val page = (outcome as? LeaseOutcome.Completed)?.value ?: ImportReviewRowsPageResult.Unavailable
+                dispatch(P503UiEvent.AppendImportReviewPage(page))
             }
         }
     }
@@ -4212,6 +4251,9 @@ fun P503App(
                                         view = current.importReview,
                                         platform = ledger.importPlatformKind,
                                         onRefresh = ::requestImportReview,
+                                        // A-PERF (D-293): the next-page read; a no-op once the
+                                        // cursor is null (the list is complete).
+                                        onLoadMore = ::requestMoreImportReview,
                                         onStartFilePick = { format -> startImportFilePick(format) },
                                         onSelectCandidate = ::selectImportCandidate,
                                         onToggleSelection = { candidateId ->
@@ -4851,6 +4893,13 @@ private fun isBackEnabled(state: P503AppState): Boolean =
 
 /** P7-08 08.C: the frozen filter page size (the bounded read's UI-facing bound). */
 private const val TAG_MERCHANT_FILTER_PAGE_SIZE = 50
+
+/**
+ * A-PERF (D-293): review-list page size in CANDIDATES. Matches the tag/merchant filter list's page
+ * size so the two paged surfaces present the same rhythm; the read cost is linear in this number,
+ * which is why it is small enough to keep the first screen bounded.
+ */
+private const val IMPORT_REVIEW_PAGE_SIZE = 50L
 
 /**
  * P5-04.3: dispatching Back is only legal from the Back-able states; Submitting swallows the

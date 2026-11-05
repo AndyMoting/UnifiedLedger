@@ -475,6 +475,21 @@ sealed interface P503UiEvent {
      */
     data class ImportReviewResult(
         val result: com.unifiedledger.application.ImportReviewRowsResult,
+        /**
+         * A-PERF (D-293): the cursor for the next page when this landing came from the PAGED read.
+         * The default null means "this landing is the complete list" (the whole-list read and every
+         * pre-D-293 dispatch site), which keeps those call sites compiling unchanged.
+         */
+        val nextAfterCandidateId: String? = null,
+    ) : P503UiEvent
+
+    /**
+     * A-PERF (D-293): one more page landed for the already-rendered review list. Appends to the
+     * existing rows and advances the cursor; a typed failure keeps the rows that are already on
+     * screen and surfaces the same banner a first-page failure uses (never truncates the list).
+     */
+    data class AppendImportReviewPage(
+        val result: com.unifiedledger.application.ImportReviewRowsPageResult,
     ) : P503UiEvent
 
     /**

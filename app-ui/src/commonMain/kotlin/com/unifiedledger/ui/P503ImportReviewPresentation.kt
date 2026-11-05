@@ -925,6 +925,15 @@ internal sealed interface ImportReviewRenderItem {
         override val contentType: String = "groupDispositionCardFooter"
     }
 
+    /**
+     * A-PERF (D-293): the 加载更多 affordance. Present only while the host still holds a cursor, so
+     * its presence IS the "more pages exist" signal — a complete list renders no such item.
+     */
+    data object LoadMore : ImportReviewRenderItem {
+        override val stableKey: String = "load-more"
+        override val contentType: String = "loadMore"
+    }
+
     /** 「进入批量确认（N 项）」 entry (P7-04.D; only for a non-empty selection). */
     data class BatchConfirmButton(
         val selectionCount: Int,
@@ -1052,6 +1061,11 @@ internal fun importReviewRenderItems(
             group.rows.forEach { row ->
                 items += ImportReviewRenderItem.CandidateItem(row, selected = row.candidateId in view.selectedCandidateIds)
             }
+        }
+        // A-PERF (D-293): the next-page affordance sits after the landed rows and before the batch
+        // entries, so a user who wants more does not have to scroll past the confirmation button.
+        if (view.nextAfterCandidateId != null) {
+            items += ImportReviewRenderItem.LoadMore
         }
         // P7-04.D: the batch confirmation entry is reached only with a non-empty selection.
         if (view.selectedCandidateIds.isNotEmpty()) {

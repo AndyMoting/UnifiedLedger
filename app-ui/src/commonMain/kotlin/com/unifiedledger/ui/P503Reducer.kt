@@ -1070,6 +1070,7 @@ class P503ReducerImpl(
             -> state
             is P503UiEvent.ImportFileIntakeResult -> reduceImportFileIntakeResult(state, event)
             is P503UiEvent.ImportReviewResult -> reduceImportReviewResult(state, event)
+            is P503UiEvent.AppendImportReviewPage -> reduceAppendImportReviewPage(state, event)
             is P503UiEvent.SelectImportCandidate ->
                 // Effect (the UI affords it only on IMPORT rows): enter the detail with the exact
                 // overview preserved as the back-target payload and the same candidate's in-session
@@ -1510,8 +1511,36 @@ class P503ReducerImpl(
         val view = state.importReview ?: ImportReviewView()
         return when (val result = event.result) {
             is com.unifiedledger.application.ImportReviewRowsResult.Rows ->
-                state.copy(importReview = view.copy(rows = result.rows, notice = null))
+                state.copy(
+                    importReview =
+                        view.copy(rows = result.rows, notice = null, nextAfterCandidateId = event.nextAfterCandidateId),
+                )
             com.unifiedledger.application.ImportReviewRowsResult.Unavailable ->
+                state.copy(importReview = view.copy(notice = ImportReviewNotice.ReviewReadFailed))
+        }
+    }
+
+    /**
+     * A-PERF (D-293): append one more page. A page that cannot be read keeps every row already on
+     * screen and raises the SAME failure banner as a first-page failure — an append failure must
+     * never look like "the list ends here".
+     */
+    private fun reduceAppendImportReviewPage(
+        state: P503AppState.OverviewEmpty,
+        event: P503UiEvent.AppendImportReviewPage,
+    ): P503AppState {
+        val view = state.importReview ?: ImportReviewView()
+        return when (val result = event.result) {
+            is com.unifiedledger.application.ImportReviewRowsPageResult.Page ->
+                state.copy(
+                    importReview =
+                        view.copy(
+                            rows = view.rows + result.rows,
+                            notice = null,
+                            nextAfterCandidateId = result.nextAfterCandidateId,
+                        ),
+                )
+            com.unifiedledger.application.ImportReviewRowsPageResult.Unavailable ->
                 state.copy(importReview = view.copy(notice = ImportReviewNotice.ReviewReadFailed))
         }
     }

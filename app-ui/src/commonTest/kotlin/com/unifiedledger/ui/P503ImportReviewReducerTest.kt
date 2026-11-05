@@ -20,6 +20,7 @@ import com.unifiedledger.application.ImportIntakeRecordDisposition
 import com.unifiedledger.application.ImportIntakeRecordSummary
 import com.unifiedledger.application.ImportRequestId
 import com.unifiedledger.application.ImportReviewRow
+import com.unifiedledger.application.ImportReviewRowsPageResult
 import com.unifiedledger.application.ImportReviewRowsResult
 import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.LedgerCurrentState
@@ -270,6 +271,60 @@ class P503ImportReviewReducerTest {
     private fun everyStateExcept(vararg excluded: P503AppState): List<P503AppState> = allStates().filterNot { it in excluded }
 
     // ---- SelectImportCandidate / Close / Back (table 6.2a rows 6/5 + SPEC:281/283) ----
+
+    @Test
+    fun anAppendedPageExtendsTheListAndAdvancesTheCursor() {
+        // A-PERF (D-293): appending must EXTEND, never replace — the whole point is that the user
+        // keeps the rows already read while the next page lands.
+        val firstPage =
+            reducer.reduce(
+                overview(),
+                P503UiEvent.ImportReviewResult(
+                    ImportReviewRowsResult.Rows(listOf(pendingRow, suspectedRow)),
+                    nextAfterCandidateId = "cursor-1",
+                ),
+            ) as P503AppState.OverviewEmpty
+        assertEquals("cursor-1", firstPage.importReview?.nextAfterCandidateId)
+
+        val appended =
+            reducer.reduce(
+                firstPage,
+                P503UiEvent.AppendImportReviewPage(
+                    ImportReviewRowsPageResult.Page(listOf(retainableRow), nextAfterCandidateId = null),
+                ),
+            ) as P503AppState.OverviewEmpty
+
+        assertEquals(
+            listOf(pendingRow, suspectedRow, retainableRow),
+            appended.importReview?.rows,
+            "the appended page must extend the rows already on screen",
+        )
+        assertNull(appended.importReview?.nextAfterCandidateId, "a null cursor means the list is complete")
+    }
+
+    @Test
+    fun aFailedAppendKeepsTheRowsAndRaisesTheSameBanner() {
+        // An append failure must never look like "the list ends here": the rows stay and the SAME
+        // failure banner a first-page failure uses is raised.
+        val firstPage =
+            reducer.reduce(
+                overview(),
+                P503UiEvent.ImportReviewResult(
+                    ImportReviewRowsResult.Rows(listOf(pendingRow)),
+                    nextAfterCandidateId = "cursor-1",
+                ),
+            ) as P503AppState.OverviewEmpty
+
+        val failed =
+            reducer.reduce(
+                firstPage,
+                P503UiEvent.AppendImportReviewPage(ImportReviewRowsPageResult.Unavailable),
+            ) as P503AppState.OverviewEmpty
+
+        assertEquals(listOf(pendingRow), failed.importReview?.rows, "a failed append keeps every row already read")
+        assertEquals(ImportReviewNotice.ReviewReadFailed, failed.importReview?.notice)
+        assertEquals("cursor-1", failed.importReview?.nextAfterCandidateId, "the cursor must survive so a retry is possible")
+    }
 
     @Test
     fun selectImportCandidateEntersTheDetailWithThePreservedOverviewAndARestoredDraft() {
