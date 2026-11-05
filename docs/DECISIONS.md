@@ -6395,3 +6395,38 @@ java.lang.OutOfMemoryError: Failed to allocate a 134086672 byte allocation
 **残余：** ① 桌面端两缺陷未验证；② `P708-A09` 的 §10.3 整链与 61k 设备分页仍未做；③ `P706-A10` 后半句按方案 A（可失败 `DocumentsProvider`）待实现；④ 本轮设备读数单次运行、单商家两标签，多商家/墓碑条目设备面未验。
 
 **关联决定：** D-286（A12 判 PASS 与本轮取证环境）、D-223/D-224（P7-08 08.C 目录管理的交付依据）、PR #229（空目录自举修复）、PR #230（选择项刷新修复）、规格 `docs/specs/2026-09-30-p7-08-tag-merchant-design.md` §5.1（筛选选项规则）。
+
+## D-288 `P706-A10` 判 PASS（云端真 ENOSPC + 设备 SAF 中途写失败两半齐）；向量账 51→52/62 ≈ 83.9%，P7-06 9/12→10/12
+
+**状态：** 已批准并登记（2026-11-05；用户 goal 授权「批准 0～9，自主推进，有阻碍自己想办法，都批准决定」）。**文档批**：零产品代码——两半证据分别来自云端 rig run `41901826353`（D-286 登记）与 PR #232 的设备用例（已合并 `dcaf9b87`）。
+
+**`P706-A10` 的口径与两半证据：**
+
+D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
+
+| 半 | 要求 | 证据 |
+|---|---|---|
+| 一 | 目标盘**真实**耗尽（OS 给出的 ENOSPC，非算术预检） | 云端 rig run `41901826353` PASS：`ErrnoException.errno == ENOSPC`、`/data` 最低 151,356 KiB、类型化 `TARGET_WRITE_FAILED`、账本 `quick_check` ok（D-286） |
+| 二 | 写入**已开始并成功若干字节之后**才失败（`BackupTargetPort` 的交付中途失败） | 设备用例 `com.unifiedledger.android.BackupExportSafMidWriteInstrumentedTest#aTargetThatStopsAcceptingBytesMidWriteIsTypedAndLeavesTheLedgerIntact`，在**普通设备回归**（42 用例清单、shard 1）中执行并通过：`Android instrumented tests` run **`41969765422`**（树 `da299739`，PR #232 合并为 `dcaf9b87`） |
+
+**第二半为什么算数（不是注入桩）：**
+
+- 目标写入走**真实的** `ContentResolver.openOutputStream`——只替换了 SAF 选择器 UI（同步 poster + 立即回调），与 ENOSPC rig 同构；产品侧零桩。
+- 失败由**传输层**产生：androidTest 专用 provider `FailAfterBytesBackupTargetProvider`（Java，因该 provider 在**测试包自己的进程**里被加载，那条路径看不到 Kotlin 运行时）返回管道写端，后台线程排空读端，收满 1 MiB 后关闭读端 → 产品下一次写得 `EPIPE`。
+- **mid-write 的证据是跨进程读回的数字**：用例通过 `ContentProvider.call("drainedBytes")` 读回夹具已接受的字节数并要求**恰好等于 1 MiB**；打开就失败的向量给不出这个数。
+- 失败后的约束逐条断言：`Failed(TARGET_WRITE_FAILED)`（不崩、不成功）；私有暂存（快照 + 容器）无残留；账本 `PRAGMA quick_check = ok`、活动指针与代集合不变、一次真实生产启动仍解析 `gen-1`。
+
+**判定：** `P706-A10` **判 PASS**。向量账 51 → **52 / 62 ≈ 83.9%**；P7-06 残余 9 → 10/12 段（P7-06 现 10/12）。
+
+**残余（登机不改判）：**
+
+1. 该用例依赖 provider 的**进程模型**：Java 夹具在测试包进程加载。CI 绿（API 36 托管镜像）已证，但换 API 级别/镜像未复验；若某镜像把 provider 加载进 instrumentation 进程，用例会因 Kotlin 运行时可解析而仍然通过（不影响结论），反之若加载失败会停在断言 1 之前，属可诊断失败。
+2. ENOSPC rig 仍是 **opt-in**（`-e ul.enospc 1`，不进普通回归）；这是刻意的（会填满 `/data`），不因 A10 判 PASS 而改变。
+3. 桌面端的导出目标路径（`desktop-app` 自己的目标端口）**不在本向量范围内**：A10 的口径是设备 SAF 交付，桌面路径由桌面端自身的门覆盖。
+4. 第二半的用例已进入普通设备清单（41→42 用例、9→10 类），清单/分片/文档计数随之更新；任何后续删除该用例的改动都会让 A10 的证据链失效，必须在决定里重述。
+
+**边界：** 入 = 本条、`docs/CURRENT_STATE.md` 状态句。出 = 产品代码/测试/schema/迁移/CI、任何其他向量。
+
+**验收（离线，本批实际执行）：** `PYTHONPATH=tools/python python -m project_docs .` exit 0；`git diff --check` 干净。
+
+**关联决定：** D-239（A10 两半的登记来源）、D-286（第一半判据与读数）、PR #232（第二半用例）、D-287（同批次的目录缺陷登记）。
