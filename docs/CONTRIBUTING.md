@@ -261,6 +261,7 @@ gh run download --repo <owner>/UnifiedLedger --name "android-debug-apk-<sha>" --
 安装并核对（首次启动、创建/打开应用私有当前 schema 数据库、退出后同版本重开）：
 
 ```powershell
+$env:ANDROID_ADB_SERVER_PORT = "5038"   # 隔离 adb：MuMu 占用 5554/5555，本会话只操作自己启动的设备
 adb install -r apk-download\android-app-debug.apk
 adb shell am start -n com.unifiedledger.android/.MainActivity
 # 核对启动状态与空态；退出进程后再次启动核对同版本重开恢复正式结果

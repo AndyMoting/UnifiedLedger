@@ -41,7 +41,7 @@ Kotlin 构建需要 JDK 21。验证采用 PR 门禁流：本机只做快速反�
 
 ### 本机（快速反馈）
 
-- 受影响模块的聚焦定向测试，例如 `.\gradlew.bat :app-ui:jvmTest --tests "..."`；仅在变更范围或失败诊断需要时才在本机重复资源密集型命令。
+- 聚焦定向测试归 CI（`Kotlin tests` / `Android compile` / `Python tests` / `Trace scan`）；本机只在诊断红 CI 时按需重跑，命令见 [贡献指南](docs/CONTRIBUTING.md)。
 - 正式文档校验（必须 exit 0）：
 
 ```powershell
