@@ -6559,3 +6559,38 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **验收（离线，本批实际执行）：** `PYTHONPATH=tools/python python -m project_docs .` exit 0；`git diff --check` 干净；`assembleDebugAndroidTest` 本机绿。
 
 **关联决定：** D-274（A-VIS 缺口① 的关闭）、D-239（A-03 缺证登记来源）、PR #238（探针夹具）、D-291（同日的跨端判定）。
+
+## D-293 `A-PERF` 残余的修复裁决：导入复核列表改 keyset 分页读（规格 approved），实施另立批；`ACC-D-PERF-01` 在实现前仍 NOT MET
+
+**状态：** 已批准并登记（2026-11-05；用户 goal 授权「批准 0～9，自主推进，有阻碍自己想办法，都批准决定」）。**设计批**：新增 `docs/specs/2026-11-05-p7-04-import-review-paged-read-design.md`（approved）+ `docs/CURRENT_STATE.md` 状态句。零产品代码、零测试改动——实施批另立。
+
+**为什么现在做这个裁决：** 本轮把 `ACC-D-PERF-01` 的归因做到了可以「定方案」的程度（`local/artifacts/a-perf-61k-2026-11-05/VERDICT.md`）：
+
+| 事实 | 读数 |
+|---|---|
+| 设备 61k：冷启动 → 导入 → 首屏可见 | **13 / 13 / 13 s**（含 dump 轮询 2–4 s 开销，去开销后与 D-169 的 11.0–11.7 s 一致） |
+| 同夹具本机 JVM：读 + 折叠 | **2,937 / 2,993 / 3,041 ms**（61,000 候选，158,000 重复行折成 61,000 行） |
+| 13 s 窗口 CPU | 进程 **100–119%**，累计 CPU +11 s / 9 s 墙钟 → **CPU 受限** |
+
+三条合起来说明：**已批准并落地的层0 统计修复（`PRAGMA optimize`）不足以达标**，门槛在「桌面级 CPU、不渲染、不启动」时就已经用尽；现在绑定的是 `ImportReviewRowsResult.Rows(rows: List<…>)` 的**全量物化**。
+
+**决定：**
+
+1. **批准规格** `2026-11-05-p7-04-import-review-paged-read-design.md`：导入复核列表改 **keyset 分页读**（页大小默认 50，游标 `(statisticsAtNanos DESC, candidateId ASC)`），UI 首屏只读第 1 页、滚动追加；`Rows(rows)` 整表读**保留**为兼容入口（非 UI 路径仍可用），折叠规则、排序键、状态优先级、文案与「所有待确认候选可达」的产品语义**全部不变**。
+2. **实施暂不并入本批**：这是改动 P7-04 已冻结读契约（端口形状 + 宿主状态字段）的产品变更，按仓库的风险路由走独立实施批（预计牵动 `ImportReviewReadPort`、`SqlDelightImportReviewReadAdapter`、`P503AppState.ImportReview`、`P503App` 及既有 reducer/adapter 测试）。
+3. **`A-PERF` 状态不变**：本条**不判** A-PERF PASS；`ACC-D-PERF-01` 仍 **NOT MET**，直到实施批在设备 61k 上给出 **≤3 s** 读数。
+4. **同时否掉三条看似可行的旁路**（写进规格，避免重复讨论）：调大 keyset 批（CPU 受限下无收益）、只做 UI 虚拟化（读侧仍全量）、加缓存（首次冷启动无缓存，门槛量的正是首次）。
+5. **保留一次低成本改进**：分页落地后，可再评估「降低每行构建成本」作为第二轮常数优化——但它救不了线性项，不作为达标前提。
+
+**残余（登记，不改判）：**
+
+1. 实施批必须在**同一夹具、同一测量方法**下与 13 s 对比，否则读数不可比；
+2. 首屏「共 N 条」为单独计数查询，与列表首屏可能不严格同一快照（与标签筛选列表的既有取舍一致）；
+3. 分页等价性需要新测试（按页拼接 == 整表读，逐项含顺序）；
+4. 本机 JVM 读数来自非 CI 环境（桌面级 CPU），只作归因与基线记录，不作门限。
+
+**边界：** 入 = 本条、新规格、`docs/CURRENT_STATE.md` 状态句。出 = 产品代码/测试/schema/迁移/CI、任何向量状态改判。
+
+**验收（离线，本批实际执行）：** `PYTHONPATH=tools/python python -m project_docs .` exit 0；`git diff --check` 干净。
+
+**关联决定：** D-169/D-239（`ACC-D-PERF-01` 与 A-PERF 的缺证登记）、D-…（层0 统计刷新落地，DECISIONS `:2839`）、`docs/specs/2026-09-17-p7-04-a-perf-import-read-governance-design.md`、`docs/specs/2026-09-21-p7-04-import-review-list-oom-fix-design.md`。
