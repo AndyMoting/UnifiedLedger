@@ -12,6 +12,7 @@ import com.unifiedledger.application.ImportDuplicateStatus
 import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportReviewReadPort
 import com.unifiedledger.application.ImportReviewRow
+import com.unifiedledger.application.ImportReviewRowsPage
 import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.LedgerId
@@ -135,17 +136,7 @@ class SqlDelightImportReviewReadAdapter(
                 // structure is the current run (one candidate's rows: its base row plus one
                 // projection per duplicate), released when the run closes; the per-batch projection list and
                 // the groupBy map no longer coexist with the accumulated result.
-                var index = 0
-                while (index < batch.size) {
-                    val candidateId = batch[index].candidate_id
-                    val run = mutableListOf(batch[index].toColumns())
-                    index++
-                    while (index < batch.size && batch[index].candidate_id == candidateId) {
-                        run += batch[index].toColumns()
-                        index++
-                    }
-                    result += run.first().toImportReviewRow(run)
-                }
+                result += foldCandidateRuns(batch)
                 if (batch.size.toLong() < pageSize) break
                 // Kept as `maxOf` (Kotlin UTF-16 order), NOT `last()` (SQLite BINARY order): the
                 // two disagree on supplementary-plane ids and the divergence is pinned by
@@ -154,6 +145,74 @@ class SqlDelightImportReviewReadAdapter(
             }
             result
         }
+    }
+
+    /**
+     * A-PERF (D-293): one page of the review list, cut on the SAME keyset the whole-list read walks
+     * (`candidate_id > after`), so paging through this method reproduces [loadImportReviewRows]
+     * row for row while each call materializes at most one batch of candidates.
+     *
+     * `pageSize` counts candidates; the run fold never splits a candidate, so a page's candidate
+     * count is exactly `pageSize` until the list ends.
+     */
+    override fun loadImportReviewPage(
+        ledgerId: LedgerId,
+        pageSize: Long,
+        afterCandidateId: String?,
+    ): ImportReviewRowsPage {
+        require(pageSize >= 1) { "import review page size must be >= 1, was $pageSize" }
+        return database.transactionWithResult(noEnclosing = true) {
+            // Same empty-id contract as the whole-list read (ACC-T-EMPTYID-01): a candidate whose id
+            // is "" can never be reached by `candidate_id > after`, so it fails loud here too.
+            if (
+                afterCandidateId == null &&
+                database.ledgerQueries
+                    .importCandidateExistsByCandidateId(ledgerId.value, "")
+                    .executeAsList()
+                    .isNotEmpty()
+            ) {
+                throw IllegalStateException(
+                    "import review list cannot page a candidate whose id is the empty string (ledger ${ledgerId.value})",
+                )
+            }
+            val batch =
+                database.ledgerQueries
+                    .importReviewRowsForLedgerPage(
+                        ledgerId.value,
+                        ledgerId.value,
+                        afterCandidateId ?: "",
+                        pageSize,
+                    ).executeAsList()
+            val rows = foldCandidateRuns(batch)
+            ImportReviewRowsPage(
+                rows = rows,
+                // `maxOf` (Kotlin UTF-16 order) mirrors the whole-list read's cursor choice, NOT
+                // `last()` (SQLite BINARY order): the two disagree on supplementary-plane ids.
+                nextAfterCandidateId = if (batch.size.toLong() < pageSize) null else batch.maxOf { it.candidate_id },
+            )
+        }
+    }
+
+    /**
+     * D-230 J1 mechanism (b): fold one contiguous candidate run at a time — the generated rows of a
+     * candidate are adjacent (the query orders by candidate_id and the boundary subquery admits
+     * candidates whole), so one walk yields exactly the runs `groupBy { it.candidate_id }` produced,
+     * in the same key order, with the same first-row choice.
+     */
+    private fun foldCandidateRuns(batch: List<com.unifiedledger.data.db.ImportReviewRowsForLedgerPage>): List<ImportReviewRow> {
+        val result = mutableListOf<ImportReviewRow>()
+        var index = 0
+        while (index < batch.size) {
+            val candidateId = batch[index].candidate_id
+            val run = mutableListOf(batch[index].toColumns())
+            index++
+            while (index < batch.size && batch[index].candidate_id == candidateId) {
+                run += batch[index].toColumns()
+                index++
+            }
+            result += run.first().toImportReviewRow(run)
+        }
+        return result
     }
 
     /**

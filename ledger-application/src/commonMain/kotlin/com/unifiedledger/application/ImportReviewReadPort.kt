@@ -115,11 +115,42 @@ data class ImportDuplicateReviewsForSessionPage(
 )
 
 /**
+ * A-PERF (D-293): one page of the ledger-scoped review list plus the cursor for the next page.
+ *
+ * [nextAfterCandidateId] is the LAST candidate id of this page (`null` when this page exhausted the
+ * list). It is a keyset cursor, not an offset: the whole-list read already walks candidates by
+ * `candidate_id > after`, so a page cut with the same key reproduces the same order and cannot skip
+ * or duplicate a candidate while writes land between pages.
+ */
+data class ImportReviewRowsPage(
+    val rows: List<ImportReviewRow>,
+    val nextAfterCandidateId: String?,
+)
+
+/**
  * Import review read port. The port expresses lookups by candidateId; the duplicate-review
  * granularity is the subject source, and implementations resolve candidate -> source via
  * `import_candidate.source_id` (UNIQUE `(ledger_id, source_id)`, Appendix A join note).
  */
 interface ImportReviewReadPort {
+    /**
+     * A-PERF (D-293): reads ONE page of the review list. `pageSize` counts CANDIDATES, not rows —
+     * one candidate contributes its base row plus one row per duplicate, so the returned [rows]
+     * may exceed `pageSize` while never splitting a candidate's run.
+     *
+     * The default throws: a read port that cannot page must fail loud rather than silently fall
+     * back to the whole-ledger read this change exists to avoid.
+     */
+    fun loadImportReviewPage(
+        ledgerId: LedgerId,
+        pageSize: Long,
+        afterCandidateId: String?,
+    ): ImportReviewRowsPage =
+        throw UnsupportedOperationException(
+            "loadImportReviewPage is not implemented by this read port; the paged list must fail " +
+                "loud rather than fall back to a whole-ledger read (D-293)",
+        )
+
     fun loadImportReviewRows(ledgerId: LedgerId): List<ImportReviewRow> =
         throw UnsupportedOperationException(
             "loadImportReviewRows is not implemented by this read port; a missing import-review " +
