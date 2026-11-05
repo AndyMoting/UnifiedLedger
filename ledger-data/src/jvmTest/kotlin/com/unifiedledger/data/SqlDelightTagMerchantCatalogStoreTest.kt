@@ -250,8 +250,13 @@ class SqlDelightTagMerchantCatalogStoreTest {
     @Test
     fun loadReturnsTheAuthorityWithThePerLedgerItemVersion() {
         withStore { harness, executor, driver ->
-            val before = harness.store.load(ledgerId)
-            assertEquals(null, before)
+            // An item-less ledger is a KNOWN empty state, not an unknown one: the management
+            // surface needs a non-null authority to offer the first create
+            // (DEF-CATALOG-LOAD-STUCK-01). Version 0 is the same revision the command path uses.
+            val before = requireNotNull(harness.store.load(ledgerId))
+            assertEquals(0L, before.catalogItemVersion)
+            assertTrue(before.tags.isEmpty())
+            assertTrue(before.merchants.isEmpty())
             assertIs<TagMerchantCommandResult.Accepted>(executor("c").createItem(ledgerId, CatalogItemKind.TAG, "咖啡", 0L))
             val authority = requireNotNull(harness.store.load(ledgerId))
             assertEquals(1L, authority.catalogItemVersion)

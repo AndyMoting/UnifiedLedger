@@ -2,6 +2,7 @@ package com.unifiedledger.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.MerchantAccumulationReadResult
+import com.unifiedledger.application.TagMerchantCatalogReader
 import com.unifiedledger.application.TagMerchantFilterCondition
 import com.unifiedledger.application.TagMerchantFilterCursor
 import com.unifiedledger.application.TagMerchantFilterFailureCode
@@ -210,7 +211,7 @@ class TagMerchantFilterReadTest {
 
     @Test
     fun a04AStaleCatalogGenerationIsTheTypedMismatchAndAnUnreadableAuthorityIsBadCatalog() {
-        withDatabase { database, driver, adapter, _, generation ->
+        withDatabase { database, driver, adapter, catalogStore, generation ->
             seedTag(database, "tag-a", "标签甲")
             seedExpense(database, "tx-inside", "2026-03-01T02:00:00Z")
             annotate(database, "tx-inside", "version-tx-inside-1", tagIds = listOf("tag-a"))
@@ -221,9 +222,16 @@ class TagMerchantFilterReadTest {
             val stale = adapter.readPage(ledgerId, TagMerchantFilterCondition(tagIds = setOf(tagA)), generation, 10, null)
             assertEquals(TagMerchantFilterFailureCode.FILTER_CATALOG_GENERATION_MISMATCH, assertIs<TagMerchantFilterReadResult.Failed>(stale).failureCode)
 
-            // An unreadable authority (no catalog_item_version row at all) is fail-closed too.
-            driver.execute(null, "DELETE FROM catalog_item_version WHERE ledger_id = '${ledgerId.value}'", 0)
-            val unreadable = adapter.readPage(ledgerId, TagMerchantFilterCondition(tagIds = setOf(tagA)), generation, 10, null)
+            // An unreadable authority stays fail-closed. Since DEF-CATALOG-LOAD-STUCK-01 a
+            // missing version row means "empty catalog at revision 0", NOT "unreadable", so the
+            // unreadable case is simulated with a reader that really answers null.
+            val unreadableAdapter =
+                SqlDelightTagMerchantFilterReadAdapter(
+                    database = database,
+                    accountCatalogReader = catalogStore,
+                    tagMerchantCatalogReader = TagMerchantCatalogReader { null },
+                )
+            val unreadable = unreadableAdapter.readPage(ledgerId, TagMerchantFilterCondition(tagIds = setOf(tagA)), generation, 10, null)
             assertEquals(TagMerchantFilterFailureCode.FILTER_BAD_CATALOG, assertIs<TagMerchantFilterReadResult.Failed>(unreadable).failureCode)
         }
     }

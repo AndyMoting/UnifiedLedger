@@ -190,7 +190,13 @@ fun interface CatalogItemReferenceProbe {
     ): Boolean
 }
 
-/** Read port for the current authoritative tag/merchant catalog (spec section 2.2). */
+/**
+ * Read port for the current authoritative tag/merchant catalog (spec section 2.2).
+ *
+ * A ledger with no catalog items yet loads as an EMPTY authority with `catalogItemVersion == 0`:
+ * "no items" is a known state, and the management surface needs it to offer the first create.
+ * `null` is reserved for a ledger whose catalog cannot be read at all.
+ */
 fun interface TagMerchantCatalogReader {
     fun load(ledgerId: LedgerId): TagMerchantAuthority?
 }
