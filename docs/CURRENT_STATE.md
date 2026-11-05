@@ -85,6 +85,10 @@
 
 - **批A 设备取证（2026-11-01，D-273）**：`P709-A05` 利息向量 **PASS**（Interest/Sub 收入二级分类 → 借出 100.00（出资账户默认支付、往来 CP1）→ 收回 120.00 = 本金 100.00 + 利息 20.00 → 月卡「普通收入 20.00，净支出 0.00，结余 20.00」↔ 小组件同值三金额；posting 级权威核对，`quick_check` ok / v36）——A05 由此为 **5/6 + 1 项范围缩减**，记**修订范围完成**（D-263 先例）。`P709-A02` **设备维度补强、仍为部分证据**：新增 **4 类拒绝观测**（`MULTIPLE_STREAMS` 的 action-shape 生产者、无读授权 `STREAM_NOT_READABLE`、known size >16 MiB（17,825,792 B）L0 拒绝、>10k 候选（10,050 条）接洽上限拒绝）**与 1 类接受路径**（unknown size），仍缺「缺格式 / 假 MIME / 异常 extras / 流关闭」设备证据与 `MULTIPLE_STREAMS`/`CONFLICTING_STREAM` 两个独立判据（仅 JVM）。`D01-9` **当时维持 PARTIAL**：新增发送方 `revokeUriPermission` 维度读数（类型化失败可见 + 零写入），计划 §2 A-05 行「原 PARTIAL 保留」与承接触发点未变。**（2026-11-01 用户裁决后，D-275 第 1 条已将其转 PASS（发送方 revoke 维度）；本句为 D-273 时点表述。）**`A-VIS` **缺口① 当时维持未闭合**（D-235 的控件是整组确认页卡片头部「收起全部比较信息（共 N 条）」TextButton，批A 未观测）；批A 另登记导入清单组头「整组标记为重复」Button 的语义树观测（不同控件，不用于闭合缺口）。**缺口① 已由 D-274 以设备三态证据闭合。** **向量账：62 = PASS 49 + 残留 11 + 修订范围完成 2（P709-A04、P709-A05）≈ 79.0%**；P7-09 = **6/9 PASS + 2 项修订范围完成**；第一部分 4/8 不变。绑定：AVD `ul_p7_d01` @ `emulator-5680`（API 36，隔离 adb 5038，本会话自启 + `emu avd name` 核实，收工 `emu kill` 见 `teardown.txt`）；APK = CI run `41204079795`（head `2098bdfa`）工件 sha256 `DFB968DD…D0C7`。证据：`local/artifacts/p709-a05-interest/`、`local/artifacts/p709-a02-device/`（含 `A-VIS-REPORT.md`、`teardown.txt`、`ci-run.txt`）。
 
+**阶段 7 已收口（2026-11-05，D-296）**：完成条件「离线完成支出、收入、转账、借贷、草稿确认和账目查询的日常闭环」四要素各有 PASS 向量与设备读数（草稿确认由 D-295 的整链给出，账目查询由 D-289/D-294 的 50k/61k 读数给出）。向量账 59/62 ≈ 95.2%，其余 3 项 = 修订范围完成 2 + **`P706-A06` 真实掉电腿（需真机的验收例外，保持 BLOCKED/SIMULATED，不转 PASS）**。
+
+**阶段 8（Desktop 批量工作台）入口已核对满足**：Desktop 本机 `:desktop-app:jvmTest` 20 suites / 82 tests / 0 failures（1 skip 为缺夹具的跨端 rig）、编译绿、跨端恢复 rig 绿（D-291）；导入与对账侧的批量能力已有批量确认、重复组卡分页与导入批次 summary。阶段 8 的启动顺序建议见 D-296 第 5 条（入口规格 → 密集审核 → 差异处理），**正式实施范围另立决定**。
+
 ## 未完成门槛
 
 - `D-075` 只批准 RG-05 expected，不授权 adapter 实现或 fixture 迁移；RG-05 的 v2 发布由 `D-086` 另行授权。
