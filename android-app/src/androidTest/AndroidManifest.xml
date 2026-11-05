@@ -25,5 +25,17 @@
             android:name="com.unifiedledger.android.OpenableColumnsSizeFixtureProvider"
             android:authorities="com.unifiedledger.android.p706d.documentsize"
             android:exported="true" />
+
+        <!--
+          P706-A10 second half (D-239 item 4) androidTest-only provider for
+          BackupExportSafMidWriteInstrumentedTest: accepts 1 MiB of a backup export and then closes
+          its read end so every later write fails with EPIPE — a SAF-shaped failure that happens
+          MID-STREAM. Exported only so the instrumentation target (a different package from this
+          test APK) can resolve it; holds no product data and never ships in the product build.
+        -->
+        <provider
+            android:name="com.unifiedledger.android.FailAfterBytesBackupTargetProvider"
+            android:authorities="com.unifiedledger.android.p706a10.failtarget"
+            android:exported="true" />
     </application>
 </manifest>

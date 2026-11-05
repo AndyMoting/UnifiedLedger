@@ -42,7 +42,7 @@
 #   and every other command stays on one line.
 # - ImportScaleTraversalInstrumentedTest is excluded: it hardcodes 1080x2400
 #   tab-bar geometry and fallback coordinates, so it is coupled to one device
-#   profile. The ordinary inventory (41 cases over 9 classes) is the explicit
+#   profile. The ordinary inventory (42 cases over 10 classes) is the explicit
 #   allowlist the shards execute.
 # - A trusted APK bundle records the producing repository and run, and
 #   `android-apks.py verify` rejects any run whose `head_repository` is a fork.

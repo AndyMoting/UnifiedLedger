@@ -76,7 +76,7 @@ bash tools/ci/trace-scan.sh
 
 ## Android instrumented tests
 
-`.github/workflows/android-instrumented.yml` 在 `ubuntu-latest` 上以硬件加速的模拟器（KVM；GitHub 自 2024-04-02 起对 2 vCPU 的托管 Linux runner 开放）执行设备专属的普通 instrumented 回归：**41 个用例、9 个测试类**，由 `tools/ci/android-instrumented-inventory.txt` 显式列出（`ImportScaleTraversalInstrumentedTest` 不在清单内——它硬编码 1080×2400 的 tab-bar 几何与回退坐标，与单一设备 profile 耦合）。该 workflow 不进入 required checks，属于非阻塞设备信号（D-197）；`ci.yml` 的 job 列表与四个必过检查名不受影响，因为它是独立文件。
+`.github/workflows/android-instrumented.yml` 在 `ubuntu-latest` 上以硬件加速的模拟器（KVM；GitHub 自 2024-04-02 起对 2 vCPU 的托管 Linux runner 开放）执行设备专属的普通 instrumented 回归：**42 个用例、10 个测试类**，由 `tools/ci/android-instrumented-inventory.txt` 显式列出（`ImportScaleTraversalInstrumentedTest` 不在清单内——它硬编码 1080×2400 的 tab-bar 几何与回退坐标，与单一设备 profile 耦合）。该 workflow 不进入 required checks，属于非阻塞设备信号（D-197）；`ci.yml` 的 job 列表与四个必过检查名不受影响，因为它是独立文件。
 
 作业分两条设备路径，收口 job 都叫 `Android instrumented tests`。同仓 PR 与手动触发走可信路径：producer job `Android instrumented APKs` 先用 `tools/ci/android-apks.py reuse` 查找并校验同树（完整 Git tree 相同）的历史双 APK 工件，命中即复用、未命中才构建，随后 `pack` 出本 run 的 `android-apks-<tree>-<run>-<attempt>` 工件并在设备结果之外上传；两个 `Android instrumented shard 1/2` 各自下载并用 `android-apks.py verify` 复核该工件，各自启动一个 AVD，直接 `adb install` 两个 APK 后以 `am instrument -w -r -e class <class#method,...>` 执行 `tools/ci/android-instrumented-shards.txt` 分给该片的用例（模拟器会话内不运行任何 Gradle）。收口 job 等待适用路径全部结束，任一部分失败、跳过或缺证据即红。
 
