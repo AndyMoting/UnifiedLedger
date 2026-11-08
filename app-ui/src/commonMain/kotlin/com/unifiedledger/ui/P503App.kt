@@ -11,14 +11,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -133,6 +134,10 @@ import com.unifiedledger.domain.P705FailureCode
 import com.unifiedledger.domain.TagId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVoidFactKind
+import com.unifiedledger.ui.theme.LocalP8Palette
+import com.unifiedledger.ui.theme.p8DarkPalette
+import com.unifiedledger.ui.theme.p8LightPalette
+import com.unifiedledger.ui.theme.remapMaterialScheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -266,17 +271,26 @@ internal fun shareRejectionText(reason: ShareRejectionReason): String =
  * root may wrap its whole content with this composable (MainActivity pre-Ready path) —
  * nesting is harmless, while a bare inner MaterialTheme would reset to the default light
  * scheme.
+ *
+ * P8-00 shell (D-301): the same dark/light switch now also selects the P8 palette (spec
+ * section 3) and applies its M3 remap, so the existing M3 components consume the frozen
+ * token values while `LocalP8Palette` exposes the full palette to the shell and the
+ * reskinned screens. The D-134 structure (dual scheme + background paint) is unchanged.
  */
 @Composable
 fun P503Theme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme(),
-    ) {
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = MaterialTheme.colorScheme.background,
+    val dark = isSystemInDarkTheme()
+    val palette = if (dark) p8DarkPalette() else p8LightPalette()
+    CompositionLocalProvider(LocalP8Palette provides palette) {
+        MaterialTheme(
+            colorScheme = remapMaterialScheme(dark, palette),
         ) {
-            content()
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background,
+            ) {
+                content()
+            }
         }
     }
 }
@@ -2930,18 +2944,19 @@ fun P503App(
         }
     }
 
-    // P7-09 09.B (D-226; spec section 2.1 `OpenImportTab`): load the EXISTING IMPORT surface when
-    // the overview sits on the IMPORT tab with no projection yet. An inbound `OpenImportTab` request
-    // (and the shortcut leg generally) does NOT pass through the tab bar's `onSelectTab` lambda that
-    // owns the first-load request, so the load is driven from the LANDED state here instead — the
-    // same trigger the tab tap uses (`requestImportReview` on `importReview == null`), and the same
-    // shape as the existing state-keyed effect below (`LaunchedEffect(state)`). A wired/unwired
-    // surface is handled inside [requestImportReview] (it returns early and dispatches nothing when
-    // the import-review rows surface is absent), so an unwired composition renders no dead load.
+    // P7-09 09.B (D-226) / P8-00 shell (D-301): load the EXISTING import surface when the overview
+    // carries the state-internal importSurface route with no projection yet. An inbound
+    // `OpenImportTab` request (and the drawer's 导入账单 entry) does NOT pass through the tab bar's
+    // `onSelectTab` lambda that owns the first-load request, so the load is driven from the LANDED
+    // state here instead — the same trigger the tab tap uses (`requestImportReview` on
+    // `importReview == null`), and the same shape as the existing state-keyed effect below
+    // (`LaunchedEffect(state)`). A wired/unwired surface is handled inside [requestImportReview]
+    // (it returns early and dispatches nothing when the import-review rows surface is absent), so
+    // an unwired composition renders no dead load.
     // The read itself is leased and generation-gated; this effect only starts it.
     LaunchedEffect(state) {
         val overview = state as? P503AppState.OverviewEmpty ?: return@LaunchedEffect
-        if (overview.selectedTab == P503Tab.IMPORT && overview.importReview == null) {
+        if (overview.importSurface && overview.importReview == null) {
             requestImportReview()
         }
     }
@@ -4040,6 +4055,13 @@ fun P503App(
     }
 
     P503Theme {
+        // P8-00 shell (D-301; spec section 2.5): the left ☰ drawer over the overview scaffold. The
+        // pure presentation state never enters the reducer — the drawer is a navigation affordance
+        // only; every row routes through the existing events/callbacks (V-2: 导入账单 opens the
+        // state-internal import surface via OpenImportSurface).
+        val drawerState = rememberDrawerState(DrawerValue.Closed)
+        val drawerOpen: () -> Unit = { scope.launch { drawerState.open() } }
+        val drawerClose: () -> Unit = { scope.launch { drawerState.close() } }
         // P7-09 09.0 (spec sections 2.2/3; D-225 Q19): the visible Busy/待处理 strip for a held
         // inbound request and for a blocked host operation. It renders ABOVE the whole surface
         // stack (not only the overview), so a request held while the user is Editing / Awaiting
@@ -4098,18 +4120,41 @@ fun P503App(
             Box(Modifier.weight(1f)) {
                 when (val current = state) {
                     is P503AppState.Ready -> P503StartupScreen(P503StartupState.Starting, onRetry = {}, onExit = onExit)
-                    is P503AppState.OverviewEmpty ->
+                    is P503AppState.OverviewEmpty -> {
+                        // P8-00 shell (D-301; spec sections 1.3/2.5): the shell wires the drawer and
+                        // the HOME header (the ☰ affordance plus the ledger picker title that routes
+                        // to the existing ACCOUNTS management surface — the minimal target-page
+                        // choice, the standalone picker page belongs to the ledger program batch).
+                        val homeTopBar: (@Composable () -> Unit)? =
+                            if (current.importSurface) {
+                                null
+                            } else {
+                                {
+                                    P8HomeTopBar(
+                                        ledgerName = current.state.ledgerId.value,
+                                        onOpenDrawer = drawerOpen,
+                                        onOpenLedgerPicker = {
+                                            drawerClose()
+                                            dispatch(P503UiEvent.SelectTab(P503Tab.ACCOUNTS, pinnedCatalogSnapshot()))
+                                        },
+                                    )
+                                }
+                            }
                         P503TabShell(
-                            selectedTab = current.selectedTab,
+                            selectedTab = if (current.importSurface) null else current.selectedTab,
                             onSelectTab = { tab ->
                                 if (tab == P503Tab.ACCOUNTS) {
                                     dispatch(P503UiEvent.SelectTab(tab, pinnedCatalogSnapshot()))
                                 } else {
                                     dispatch(P503UiEvent.SelectTab(tab))
                                 }
-                                // P7-04.C: the first IMPORT entry requests the review list (the
+                                // P7-04.C: the first import-surface entry requests the review list (the
                                 // projection starts null; the refresh button re-requests later loads).
-                                if (tab == P503Tab.IMPORT && (latestState.value as? P503AppState.OverviewEmpty)?.importReview == null) {
+                                // P8-00 shell: the surface state lands through OpenImportSurface, so
+                                // this side effect keys on the CURRENT landed importSurface flag.
+                                if ((latestState.value as? P503AppState.OverviewEmpty)?.importSurface == true &&
+                                    (latestState.value as? P503AppState.OverviewEmpty)?.importReview == null
+                                ) {
                                     requestImportReview()
                                 }
                             },
@@ -4118,155 +4163,185 @@ fun P503App(
                             // page; the revalidation view is snapshotted from the current authoritative
                             // options at click time.
                             onSaveAndRecordAgain =
-                                if (current.selectedTab == P503Tab.HOME && current.retainedIntent != null) {
+                                if (current.selectedTab == P503Tab.HOME && current.retainedIntent != null && !current.importSurface) {
                                     { dispatch(P503UiEvent.SaveAndRecordAgain(retainedIntentRevalidation())) }
                                 } else {
                                     null
                                 },
+                            topBar = homeTopBar,
+                            drawerState = drawerState,
+                            drawerContent = {
+                                P8LedgerDataDrawer(
+                                    ledgerTitle = "当前账本 · ${current.state.ledgerId.value}",
+                                    onOpenLedgerManagement = {
+                                        drawerClose()
+                                        dispatch(P503UiEvent.SelectTab(P503Tab.ACCOUNTS, pinnedCatalogSnapshot()))
+                                    },
+                                    ledgerManagementWired = true,
+                                    onOpenNewLedger = null,
+                                    onOpenBackupRestore = {
+                                        drawerClose()
+                                        dispatch(P503UiEvent.OpenBackupExport)
+                                    },
+                                    backupRestoreWired = backupExportEntryVisible(ledger.surfaces.backupExport),
+                                    onOpenRecycleBin = {
+                                        drawerClose()
+                                        requestRecycleBin()
+                                    },
+                                    recycleBinWired = ledger.surfaces.recycleBin,
+                                    onOpenImportBills = {
+                                        drawerClose()
+                                        dispatch(P503UiEvent.OpenImportSurface)
+                                    },
+                                    onClose = drawerClose,
+                                )
+                            },
                         ) {
-                            when (current.selectedTab) {
-                                P503Tab.HOME ->
-                                    P503OverviewScreen(
-                                        state = current.state,
-                                        showMonthlyRegion = ledgerViewWired,
-                                        selectedMonth = current.selectedMonth,
-                                        resolvedCurrentMonth = resolvedCurrentMonth,
-                                        selectableMonths = current.selectableMonths,
-                                        monthlyActivity = current.monthlyActivity,
-                                        monthlyReloadRequired = current.monthlyReloadRequired,
-                                        flowRows = flowRows,
-                                        onLoadMore = ::requestNextFlowPage,
-                                        onRetryLoadMore = ::requestNextFlowPage,
-                                        onSelectTransaction = ::selectTransaction,
-                                        onSelectMonth = ::selectMonth,
-                                        // P7-05.C (D-156; slice 1b Piece 4): the ledger-wide recycle-bin
-                                        // entry, offered only when the read surface is wired (an unwired
-                                        // facade renders no dead button). Opening always reads the bin
-                                        // fresh off the UI thread; the read dispatches OpenRecycleBin (a
-                                        // re-open in place refreshes the projection instead).
-                                        onOpenRecycleBin = if (ledger.surfaces.recycleBin) ::requestRecycleBin else null,
-                                        // P7-06 06.B (D-177; spec section 3): the ledger-wide backup-export
-                                        // entry, offered only when the composition root wired the export
-                                        // use case (an unwired composition renders no dead button). The
-                                        // open performs no IO and no secret handling; the password is
-                                        // entered on the surface and stays in memory.
-                                        onOpenBackupExport = if (backupExportEntryVisible(ledger.surfaces.backupExport)) ({ dispatch(P503UiEvent.OpenBackupExport) }) else null,
-                                        // P7-06 06.D (D-182): the restore entry, offered only when the
-                                        // restore use cases are wired (no dead affordance).
-                                        onOpenBackupRestore =
-                                            if (backupRestoreEntryVisible(ledger.surfaces.backupRestore)) {
-                                                ({ dispatch(P503UiEvent.OpenBackupRestore) })
-                                            } else {
-                                                null
+                            // P8-00 shell (D-301; spec section 1.2): the import surface renders the
+                            // existing import projection in place of the tab content; the tab cursor
+                            // stays where it was, so a bottom-bar tap returns to it (V-1/V-2).
+                            if (current.importSurface) {
+                                P503ImportScreen(
+                                    view = current.importReview,
+                                    platform = ledger.importPlatformKind,
+                                    onRefresh = ::requestImportReview,
+                                    // A-PERF (D-293): the next-page read; a no-op once the
+                                    // cursor is null (the list is complete).
+                                    onLoadMore = ::requestMoreImportReview,
+                                    onStartFilePick = { format -> startImportFilePick(format) },
+                                    onSelectCandidate = ::selectImportCandidate,
+                                    onToggleSelection = { candidateId ->
+                                        dispatch(P503UiEvent.ToggleImportCandidateSelection(candidateId))
+                                    },
+                                    onGroupDisposition = ::startImportDuplicateGroupDisposition,
+                                    onGroupConfirm = ::confirmImportDuplicateGroupDisposition,
+                                    onGroupClose = { dispatch(P503UiEvent.CloseImportDuplicateGroupDisposition) },
+                                    onRequestBatchConfirm = ::requestImportBatchConfirm,
+                                    onCheckUnknownItem = ::checkImportUnknownItem,
+                                )
+                            } else {
+                                when (current.selectedTab) {
+                                    P503Tab.HOME ->
+                                        P503OverviewScreen(
+                                            state = current.state,
+                                            showMonthlyRegion = ledgerViewWired,
+                                            selectedMonth = current.selectedMonth,
+                                            resolvedCurrentMonth = resolvedCurrentMonth,
+                                            selectableMonths = current.selectableMonths,
+                                            monthlyActivity = current.monthlyActivity,
+                                            monthlyReloadRequired = current.monthlyReloadRequired,
+                                            flowRows = flowRows,
+                                            onLoadMore = ::requestNextFlowPage,
+                                            onRetryLoadMore = ::requestNextFlowPage,
+                                            onSelectTransaction = ::selectTransaction,
+                                            onSelectMonth = ::selectMonth,
+                                            // P7-05.C (D-156; slice 1b Piece 4): the ledger-wide recycle-bin
+                                            // entry, offered only when the read surface is wired (an unwired
+                                            // facade renders no dead button). Opening always reads the bin
+                                            // fresh off the UI thread; the read dispatches OpenRecycleBin (a
+                                            // re-open in place refreshes the projection instead).
+                                            onOpenRecycleBin = if (ledger.surfaces.recycleBin) ::requestRecycleBin else null,
+                                            // P7-06 06.B (D-177; spec section 3): the ledger-wide backup-export
+                                            // entry, offered only when the composition root wired the export
+                                            // use case (an unwired composition renders no dead button). The
+                                            // open performs no IO and no secret handling; the password is
+                                            // entered on the surface and stays in memory.
+                                            onOpenBackupExport = if (backupExportEntryVisible(ledger.surfaces.backupExport)) ({ dispatch(P503UiEvent.OpenBackupExport) }) else null,
+                                            // P7-06 06.D (D-182): the restore entry, offered only when the
+                                            // restore use cases are wired (no dead affordance).
+                                            onOpenBackupRestore =
+                                                if (backupRestoreEntryVisible(ledger.surfaces.backupRestore)) {
+                                                    ({ dispatch(P503UiEvent.OpenBackupRestore) })
+                                                } else {
+                                                    null
+                                                },
+                                        )
+                                    P503Tab.ACCOUNTS ->
+                                        P503CatalogManagementScreen(
+                                            state = current,
+                                            // P7-08 08.C: the same cached authority feeds the two new
+                                            // sections (null = loading/unwired: honest 载入中 placeholder).
+                                            tagMerchantAuthority = cachedTagMerchantAuthority,
+                                            onEvent = { event ->
+                                                when (event) {
+                                                    is P503UiEvent.ManageAccountActive,
+                                                    is P503UiEvent.ManageCategoryActive,
+                                                    is P503UiEvent.EnableCategoryGroup,
+                                                    -> runCatalogToggle(event)
+                                                    // P7-08 08.C: the tag/merchant toggles are host-handled
+                                                    // too (command + authority reload + filter re-request).
+                                                    is P503UiEvent.ManageTagActive ->
+                                                        runTagMerchantToggle(com.unifiedledger.domain.CatalogItemKind.TAG, event.itemId, event.active)
+                                                    is P503UiEvent.ManageMerchantActive ->
+                                                        runTagMerchantToggle(com.unifiedledger.domain.CatalogItemKind.MERCHANT, event.itemId, event.active)
+                                                    // P7-02.D E-4: persist the toggle first, then dispatch.
+                                                    is P503UiEvent.TogglePin -> runPinToggle(event.target)
+                                                    else -> dispatch(event)
+                                                }
                                             },
-                                    )
-                                P503Tab.ACCOUNTS ->
-                                    P503CatalogManagementScreen(
-                                        state = current,
-                                        // P7-08 08.C: the same cached authority feeds the two new
-                                        // sections (null = loading/unwired: honest 载入中 placeholder).
-                                        tagMerchantAuthority = cachedTagMerchantAuthority,
-                                        onEvent = { event ->
-                                            when (event) {
-                                                is P503UiEvent.ManageAccountActive,
-                                                is P503UiEvent.ManageCategoryActive,
-                                                is P503UiEvent.EnableCategoryGroup,
-                                                -> runCatalogToggle(event)
-                                                // P7-08 08.C: the tag/merchant toggles are host-handled
-                                                // too (command + authority reload + filter re-request).
-                                                is P503UiEvent.ManageTagActive ->
-                                                    runTagMerchantToggle(com.unifiedledger.domain.CatalogItemKind.TAG, event.itemId, event.active)
-                                                is P503UiEvent.ManageMerchantActive ->
-                                                    runTagMerchantToggle(com.unifiedledger.domain.CatalogItemKind.MERCHANT, event.itemId, event.active)
-                                                // P7-02.D E-4: persist the toggle first, then dispatch.
-                                                is P503UiEvent.TogglePin -> runPinToggle(event.target)
-                                                else -> dispatch(event)
-                                            }
-                                        },
-                                        onSubmit = { dialog ->
-                                            when (dialog) {
-                                                is CatalogDialog.CreateTagItem,
-                                                is CatalogDialog.RenameTagItem,
-                                                is CatalogDialog.ConfirmTagItemDelete,
-                                                is CatalogDialog.CreateMerchantItem,
-                                                is CatalogDialog.RenameMerchantItem,
-                                                is CatalogDialog.ConfirmMerchantItemDelete,
-                                                -> runTagMerchantForm(dialog)
-                                                else -> runCatalogForm(dialog)
-                                            }
-                                        },
-                                        onRefresh = { refreshCatalogSnapshot() },
-                                    )
-                                P503Tab.ANALYSIS -> {
-                                    // P7-07 07.D: the budget region slot — non-null exactly when the
-                                    // budget surface is wired (no dead region). It owns its own loading/
-                                    // failure copy and its config affordances; the retained read-failure
-                                    // render below deliberately passes none (read-only, the F1 rule).
-                                    // P7-08 08.C: the filter entry rides the analysis tab's existing
-                                    // composable-slot seam (the budget region slot) — the entry button
-                                    // precedes the budget region inside the slot, and the slot is
-                                    // non-null when EITHER surface is wired (no dead affordance).
-                                    val budgetRegionSlot: (@Composable () -> Unit)? =
-                                        if (budgetWired || tagMerchantFilterWired) {
-                                            {
-                                                if (tagMerchantFilterWired) {
-                                                    TextButton(onClick = ::openTagMerchantFilter) {
-                                                        Text("标签与商家筛选")
+                                            onSubmit = { dialog ->
+                                                when (dialog) {
+                                                    is CatalogDialog.CreateTagItem,
+                                                    is CatalogDialog.RenameTagItem,
+                                                    is CatalogDialog.ConfirmTagItemDelete,
+                                                    is CatalogDialog.CreateMerchantItem,
+                                                    is CatalogDialog.RenameMerchantItem,
+                                                    is CatalogDialog.ConfirmMerchantItemDelete,
+                                                    -> runTagMerchantForm(dialog)
+                                                    else -> runCatalogForm(dialog)
+                                                }
+                                            },
+                                            onRefresh = { refreshCatalogSnapshot() },
+                                        )
+                                    P503Tab.ANALYSIS -> {
+                                        // P7-07 07.D: the budget region slot — non-null exactly when the
+                                        // budget surface is wired (no dead region). It owns its own loading/
+                                        // failure copy and its config affordances; the retained read-failure
+                                        // render below deliberately passes none (read-only, the F1 rule).
+                                        // P7-08 08.C: the filter entry rides the analysis tab's existing
+                                        // composable-slot seam (the budget region slot) — the entry button
+                                        // precedes the budget region inside the slot, and the slot is
+                                        // non-null when EITHER surface is wired (no dead affordance).
+                                        val budgetRegionSlot: (@Composable () -> Unit)? =
+                                            if (budgetWired || tagMerchantFilterWired) {
+                                                {
+                                                    if (tagMerchantFilterWired) {
+                                                        TextButton(onClick = ::openTagMerchantFilter) {
+                                                            Text("标签与商家筛选")
+                                                        }
+                                                    }
+                                                    if (budgetWired) {
+                                                        P503BudgetRegion(
+                                                            view = current.budgetView,
+                                                            categoryName = { id -> budgetCategoryNames[id] },
+                                                            parentIdOf = { id -> budgetCategoryParents[id] },
+                                                            pickerCategories = budgetPickerChoices,
+                                                            onOpenBudgetConfig = ::openBudgetConfig,
+                                                        )
                                                     }
                                                 }
-                                                if (budgetWired) {
-                                                    P503BudgetRegion(
-                                                        view = current.budgetView,
-                                                        categoryName = { id -> budgetCategoryNames[id] },
-                                                        parentIdOf = { id -> budgetCategoryParents[id] },
-                                                        pickerCategories = budgetPickerChoices,
-                                                        onOpenBudgetConfig = ::openBudgetConfig,
-                                                    )
-                                                }
+                                            } else {
+                                                null
                                             }
-                                        } else {
-                                            null
-                                        }
-                                    P503AnalysisScreen(
-                                        state = current.state,
-                                        summarizeActivity = ledger.summarizeActivity,
-                                        showMonthlyRegion = ledgerViewWired,
-                                        selectedMonth = current.selectedMonth,
-                                        resolvedCurrentMonth = resolvedCurrentMonth,
-                                        selectableMonths = current.selectableMonths,
-                                        monthlyActivity = current.monthlyActivity,
-                                        monthlyReloadRequired = current.monthlyReloadRequired,
-                                        trend = monthlyTrend,
-                                        onSelectMonth = ::selectMonth,
-                                        onAnalysisMonthShift = ::analysisMonthShift,
-                                        budgetRegion = budgetRegionSlot,
-                                    )
+                                        P503AnalysisScreen(
+                                            state = current.state,
+                                            summarizeActivity = ledger.summarizeActivity,
+                                            showMonthlyRegion = ledgerViewWired,
+                                            selectedMonth = current.selectedMonth,
+                                            resolvedCurrentMonth = resolvedCurrentMonth,
+                                            selectableMonths = current.selectableMonths,
+                                            monthlyActivity = current.monthlyActivity,
+                                            monthlyReloadRequired = current.monthlyReloadRequired,
+                                            trend = monthlyTrend,
+                                            onSelectMonth = ::selectMonth,
+                                            onAnalysisMonthShift = ::analysisMonthShift,
+                                            budgetRegion = budgetRegionSlot,
+                                        )
+                                    }
                                 }
-                                // P7-04.C: the IMPORT tab content — the review projection, the matrix
-                                // format entries, the session summary and the group disposition surface.
-                                // P7-04.D: the batch confirmation entry and the retained result summary
-                                // (with the Unknown items' check entries) render on the same projection.
-                                P503Tab.IMPORT ->
-                                    P503ImportScreen(
-                                        view = current.importReview,
-                                        platform = ledger.importPlatformKind,
-                                        onRefresh = ::requestImportReview,
-                                        // A-PERF (D-293): the next-page read; a no-op once the
-                                        // cursor is null (the list is complete).
-                                        onLoadMore = ::requestMoreImportReview,
-                                        onStartFilePick = { format -> startImportFilePick(format) },
-                                        onSelectCandidate = ::selectImportCandidate,
-                                        onToggleSelection = { candidateId ->
-                                            dispatch(P503UiEvent.ToggleImportCandidateSelection(candidateId))
-                                        },
-                                        onGroupDisposition = ::startImportDuplicateGroupDisposition,
-                                        onGroupConfirm = ::confirmImportDuplicateGroupDisposition,
-                                        onGroupClose = { dispatch(P503UiEvent.CloseImportDuplicateGroupDisposition) },
-                                        onRequestBatchConfirm = ::requestImportBatchConfirm,
-                                        onCheckUnknownItem = ::checkImportUnknownItem,
-                                    )
                             }
                         }
+                    }
                     is P503AppState.TransactionDetail -> {
                         val detail = current.detail
                         P503TransactionDetailScreen(
@@ -4845,7 +4920,8 @@ fun P503App(
 private fun isBackEnabled(state: P503AppState): Boolean =
     when (state) {
         // P7-01.D: on the ACCOUNTS tab back closes an open catalog dialog, or leaves for HOME.
-        is P503AppState.OverviewEmpty -> state.selectedTab == P503Tab.ACCOUNTS
+        // P8-00 shell (D-301): the drawer-only import surface returns to the tab cursor first.
+        is P503AppState.OverviewEmpty -> state.importSurface || state.selectedTab == P503Tab.ACCOUNTS
         // P7-03.C: the read-only detail returns to the preserved overview (C03).
         is P503AppState.TransactionDetail -> true
         // P7-04.C (SPEC:281): the import candidate detail returns to the preserved IMPORT
@@ -5126,6 +5202,13 @@ private fun P503RetainedOverviewFailureScreen(
             Text("重试")
         }
         Spacer(Modifier.height(8.dp))
+        // P8-00 shell (D-301): the import surface is the drawer-only route; the honest note
+        // replaces a dead review form while the READ failure stands (the retained list would
+        // read as current even though interactions are absorbed). The HOME row renders it
+        // below the overview so the drawer entry stays reachable in spirit while failed.
+        if (overview.importSurface) {
+            Text("导入审核需在读取恢复后使用。", style = MaterialTheme.typography.bodyMedium)
+        }
         when (overview.selectedTab) {
             P503Tab.HOME ->
                 P503OverviewScreen(
@@ -5159,11 +5242,6 @@ private fun P503RetainedOverviewFailureScreen(
             // failure stands; keep an honest note instead of a dead management form.
             P503Tab.ACCOUNTS ->
                 Text("账户管理需在读取恢复后使用。", style = MaterialTheme.typography.bodyMedium)
-            // P7-04.C: the import surface is read-driven the same way; the honest note replaces a
-            // dead review form while the READ failure stands (the retained list would read as
-            // current even though interactions are absorbed).
-            P503Tab.IMPORT ->
-                Text("导入审核需在读取恢复后使用。", style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
