@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -79,7 +80,29 @@ fun P503OverviewScreen(
     interactionsEnabled: Boolean = true,
     onOpenRecycleBin: (() -> Unit)? = null,
     onOpenBackupExport: (() -> Unit)? = null,
+    // P8-00 b3 (V-5 返回保滚动位): the position to restore (the state's sampled capture, consumed
+    // by the reducer once applied) and the sampling callback the rows pass at click time. Null
+    // restore / null sampler keep every pre-b3 call site compiling (no capture, no restore).
+    restoreScrollTo: ListScrollPosition? = null,
+    onScrollRestored: () -> Unit = {},
+    onSampleScroll: (() -> ListScrollPosition?)? = null,
+    // P8-00 b3: registers this screen's live LazyListState with the host (the sampler's source).
+    // Null keeps every pre-b3 call site compiling (the host samples nothing).
+    onRegisterListState: ((androidx.compose.foundation.lazy.LazyListState) -> Unit)? = null,
 ) {
+    // P8-00 b3 (V-5 返回保滚动位): the list state is HOISTED to the screen so the sampled
+    // position and the restored one refer to the same state object. The restore fires once per
+    // arriving position and immediately consumes it (the one-shot consume — a later unrelated
+    // re-entry never replays a stale position).
+    val listState = rememberLazyListState()
+    LaunchedEffect(onRegisterListState) { onRegisterListState?.invoke(listState) }
+    val pendingRestore = restoreScrollTo
+    LaunchedEffect(pendingRestore) {
+        if (pendingRestore != null) {
+            runCatching { listState.scrollToItem(pendingRestore.firstVisibleItemIndex, pendingRestore.firstVisibleItemScrollOffset) }
+            onScrollRestored()
+        }
+    }
     // G1 (R-Q06-4): a not-loaded monthly cycle must not present the previous cycle's flow rows as
     // the current list, so the fresh authoritative current-state projection is rendered instead.
     val flow = flowRowsForDisplay(flowRows, monthlyReloadRequired)
@@ -87,6 +110,7 @@ fun P503OverviewScreen(
     // (identity, entries, month card), the flow rows, the page footer and the balances tail are
     // items of one LazyColumn, so a ledger of any size never materialises its rows as layout nodes.
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize().padding(16.dp),
     ) {
         item {
@@ -135,7 +159,7 @@ fun P503OverviewScreen(
                 Text("流水 · 共 ${flow.total} 笔", style = MaterialTheme.typography.titleMedium)
             }
             items(flow.rows, key = { it.transactionId.value }) { row ->
-                LedgerEntryFlowRow(row, state.accountNames, onSelectTransaction, interactionsEnabled)
+                LedgerEntryFlowRow(row, state.accountNames, onSelectTransaction, interactionsEnabled, onSampleScroll)
                 HorizontalDivider()
             }
             item(key = "flow-footer") {
@@ -208,12 +232,18 @@ private fun LedgerEntryFlowRow(
     accountNames: Map<AccountId, String>,
     onSelectTransaction: (TransactionId) -> Unit,
     interactionsEnabled: Boolean,
+    onSampleScroll: (() -> ListScrollPosition?)? = null,
 ) {
     Column(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .clickable(enabled = interactionsEnabled, onClickLabel = "查看交易详情") { onSelectTransaction(row.transactionId) }
+                .clickable(enabled = interactionsEnabled, onClickLabel = "查看交易详情") {
+                    // P8-00 b3 (V-5): the HOME list position is sampled synchronously at click
+                    // time and rides the open-detail event; no async write-back hop exists.
+                    onSampleScroll?.invoke()
+                    onSelectTransaction(row.transactionId)
+                }
                 // C04 (spec 6.4): the flow row announces as one node carrying the effective
                 // kind, the statistics time and every exact posting value with sign, account
                 // name and currency code — the ordered list's values stay TalkBack-reachable.

@@ -63,10 +63,35 @@ fun P503CatalogManagementScreen(
     // render. `null` = not yet loaded / unwired: the sections present the honest 载入中
     // placeholder instead of an authoritative-looking empty catalog (the S2-2 discipline).
     tagMerchantAuthority: TagMerchantAuthority? = null,
+    // P8-00 b3 (V-5): the account-flow entry seam — the host wires the open callback only when
+    // the flow page source exists; the scroll registration/sampling pair rides the same seam
+    // (the 返回保滚动位 mechanism). Nulls keep every pre-b3 call site compiling (read-only rows,
+    // no capture — the b2 shape).
+    onOpenAccountFlow: ((com.unifiedledger.domain.AccountId) -> Unit)? = null,
+    registerListScroll: ((androidx.compose.foundation.ScrollState) -> Unit)? = null,
+    sampleListScroll: (() -> ListScrollPosition?)? = null,
+    // P8-00 b3: the position to restore (the state's sampled capture, consumed by the reducer
+    // once applied) and its one-shot consume callback. Null keeps every pre-b3 call site compiling.
+    restoreScrollTo: ListScrollPosition? = null,
+    onScrollRestored: () -> Unit = {},
 ) {
     val snapshot = state.catalogSnapshot
+    // P8-00 b3 (V-5 返回保滚动位): the surface's scroll state is HOISTED here so the sampled
+    // position, the host sampler and the restore all refer to the same state object. The restore
+    // fires once per arriving position and immediately consumes it (the one-shot consume — a
+    // later unrelated re-entry never replays a stale position). Null register/restore keep every
+    // pre-b3 call site compiling (no capture, no restore — the b2 shape).
+    val listScrollState = androidx.compose.foundation.rememberScrollState()
+    androidx.compose.runtime.LaunchedEffect(registerListScroll) { registerListScroll?.invoke(listScrollState) }
+    val pendingRestore = restoreScrollTo
+    androidx.compose.runtime.LaunchedEffect(pendingRestore) {
+        if (pendingRestore != null) {
+            runCatching { listScrollState.scrollTo(pendingRestore.firstVisibleItemScrollOffset) }
+            onScrollRestored()
+        }
+    }
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+        modifier = Modifier.fillMaxSize().verticalScroll(listScrollState),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -114,11 +139,12 @@ fun P503CatalogManagementScreen(
             )
             return@Column
         }
-        // P8-00 b2 (D-301; spec sections 2.2/4, V-4): the asset screen's summary region rides
+        // P8-00 b3 (D-301; spec sections 2.2/4, V-4): the asset screen's summary region rides
         // above the management sections — the per-currency net-worth blocks, the lending card
         // pair and the grouped account lists. Purely additive presentation over the same
         // authoritative snapshot × balances the account rows below read; zero semantics change.
-        P503AssetSummaryRegion(state)
+        // P8-00 b3 (V-5): the account rows become the account-flow entry when the host wires it.
+        P503AssetSummaryRegion(state, onOpenAccountFlow, sampleListScroll)
         AccountsSection(
             accounts = snapshot.manageableAccounts,
             balances = state.state.balances.associateBy { it.accountId },

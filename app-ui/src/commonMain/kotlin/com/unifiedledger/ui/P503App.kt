@@ -125,6 +125,7 @@ import com.unifiedledger.application.backup.BackupPreflightRejection
 import com.unifiedledger.application.budgetMonthKey
 import com.unifiedledger.application.budgetScopeKey
 import com.unifiedledger.application.tagMerchantFilterConditionFingerprint
+import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CatalogItemKind
 import com.unifiedledger.domain.CurrencyUnit
@@ -559,6 +560,19 @@ fun P503App(
     var flowRows by remember { mutableStateOf<FlowRowsView?>(null) }
     var flowGeneration by remember { mutableStateOf(0) }
     var resolvedCurrentMonth by remember { mutableStateOf<YearMonth?>(null) }
+    // P8-00 b3 (V-5 返回保滚动位): the LIVE list positions of the two secondary-entry lists, held
+    // by the screen seam so the sampler is a plain read at click time. The capture itself rides
+    // the entry event (synchronous — no async write-back hop exists); the restore is applied by
+    // the screen and consumed through ListScrollRestored. A `null` means the list has not
+    // composed yet (no position to sample).
+    var homeFlowListState by remember { mutableStateOf<androidx.compose.foundation.lazy.LazyListState?>(null) }
+    var accountsListState by remember { mutableStateOf<androidx.compose.foundation.ScrollState?>(null) }
+    val homeFlowScrollSampler: () -> ListScrollPosition? = {
+        homeFlowListState?.let { list -> ListScrollPosition(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset) }
+    }
+    val accountsScrollSampler: () -> ListScrollPosition? = {
+        accountsListState?.let { scroll -> ListScrollPosition(0, scroll.value) }
+    }
     val ledgerViewWired = ledger.surfaces.ledgerView
     // P7-07 07.D (D-184; spec section 5): the budget surface wiring probe and the current-name
     // derivations the budget region needs (from the CACHED authoritative snapshot; an unloaded
@@ -1256,21 +1270,101 @@ fun P503App(
         }
     }
 
-    /** P7-03.C: opens the read-only detail with the host-resolved typed payload (C03). */
-    fun selectTransaction(transactionId: TransactionId) {
+    /**
+     * P7-03.C: opens the read-only detail with the host-resolved typed payload (C03).
+     * P8-00 b3 (V-5 返回保滚动位): [homeFlowScroll] is the HOME list position the screen sampled
+     * synchronously at click time — it rides the event, so no async write-back hop exists and a
+     * late/stale write-back is impossible by construction. P8-00 b3 (V-6): the SAME lease reads
+     * the financial version history (the annotation-history twin; a null read renders no block,
+     * never a fabricated chain).
+     */
+    fun selectTransaction(
+        transactionId: TransactionId,
+        homeFlowScroll: ListScrollPosition? = null,
+    ) {
         // P7-06 06.1 (spec 4.3(b)): the synchronous detail read runs under an operation lease.
         // P7-08 08.D (spec section 3.5): the SAME lease reads the annotation history (the R-222-8
         // read-discipline — no facade read outside a lease); a null (unwired/unreadable) renders no
         // history block, an empty list is the honest "never annotated".
         val read =
             ledger.probe { facade ->
-                facade.queryTransactionDetail?.query(transactionId)?.let { detail -> detail to facade.transactionAnnotationHistory(transactionId) }
+                facade.queryTransactionDetail?.query(transactionId)?.let { detail ->
+                    Triple(
+                        detail,
+                        facade.transactionAnnotationHistory(transactionId),
+                        facade.queryTransactionVersionHistory?.query(transactionId),
+                    )
+                }
             } ?: return
-        val (detail, history) = read
-        dispatch(P503UiEvent.SelectTransaction(transactionId, detail))
-        if (detail is TransactionDetailResult.Success && history != null) {
-            dispatch(P503UiEvent.TransactionAnnotationHistoryLanded(transactionId, history))
+        val (detail, history, versions) = read
+        dispatch(P503UiEvent.SelectTransaction(transactionId, detail, homeFlowScroll))
+        if (detail is TransactionDetailResult.Success) {
+            history?.let { history -> dispatch(P503UiEvent.TransactionAnnotationHistoryLanded(transactionId, history)) }
+            versions?.let { versions -> dispatch(P503UiEvent.TransactionVersionHistoryLanded(transactionId, versions)) }
         }
+    }
+
+    // ---------------------------------------------------------------- P8-00 b3 account-flow host surface (V-5)
+
+    /**
+     * P8-00 b3 (V-5): opens the read-only account-flow page from an asset-screen account row. The
+     * host reads the FIRST whole-ledger flow page (and resolves the header's exact display
+     * balance + 副行) BEFORE dispatching — the SelectTransaction host-resolved-payload precedent;
+     * the reducer performs zero IO. The sampled [originListScroll] rides the event (the
+     * scroll-restoration mechanism). The typed Unavailable page lands too: the surface renders
+     * the honest failure copy, never an empty account (R-Q06-4).
+     */
+    fun selectAccountFlow(
+        accountId: AccountId,
+        originListScroll: ListScrollPosition? = null,
+    ) {
+        val overview = latestState.value as? P503AppState.OverviewEmpty ?: return
+        val accountName = overview.state.accountNames[accountId] ?: accountId.value
+        val balance = overview.state.balances.firstOrNull { balance -> balance.accountId == accountId }
+        val balanceCurrency = balance?.currency ?: return
+        val balanceMinorUnits = balance.displayMinorUnits
+        val kindText =
+            overview.catalogSnapshot
+                ?.manageableAccounts
+                ?.firstOrNull { account -> account.accountId == accountId }
+                ?.let { account -> accountKindText(account.kind) }
+        // 副行 (canvas 06 「招商储蓄卡 · 资产 · CNY」): name · type · currency. A type-less
+        // account (a balance row outside the manageable projection) degrades honestly to
+        // name · currency.
+        val balanceLine =
+            listOfNotNull(accountName, kindText, balanceCurrency.code).joinToString(" · ")
+        val firstPage =
+            ledger.probe { facade -> facade.queryLedgerFlowPage?.firstPage() }
+                ?: com.unifiedledger.application.LedgerFlowPageResult.Unavailable
+        dispatch(
+            P503UiEvent.SelectAccountFlow(
+                accountId = accountId,
+                balanceLine = balanceLine,
+                balanceMinorUnits = balanceMinorUnits,
+                balanceCurrency = balanceCurrency,
+                firstPage = firstPage,
+                originListScroll = originListScroll,
+            ),
+        )
+    }
+
+    /**
+     * P8-00 b3 (V-5): one more whole-ledger flow page behind the open account-flow surface. The
+     * reducer's request event assigned the request token synchronously (a landing whose token is
+     * no longer current can never append — the TagMerchantFilter P3-1 discipline); the read runs
+     * under a lease and lands typed. A cursor-less surface (the whole-ledger walk ended) requests
+     * nothing.
+     */
+    fun requestAccountFlowMorePage() {
+        val current = latestState.value as? P503AppState.AccountFlow ?: return
+        val cursor = current.nextWholeLedgerCursor ?: return
+        if (current.rowsLoading) return
+        dispatch(P503UiEvent.RequestAccountFlowMorePage)
+        val requestToken = (latestState.value as? P503AppState.AccountFlow)?.pageRequestToken ?: return
+        val result =
+            ledger.probe { facade -> facade.queryLedgerFlowPage?.pageAfter(cursor) }
+                ?: com.unifiedledger.application.LedgerFlowPageResult.Unavailable
+        dispatch(P503UiEvent.AccountFlowMorePageLanded(requestToken, result))
     }
 
     // P5-04.3: shared input construction for the submission and the unknown-commit status
@@ -4237,7 +4331,16 @@ fun P503App(
                                             flowRows = flowRows,
                                             onLoadMore = ::requestNextFlowPage,
                                             onRetryLoadMore = ::requestNextFlowPage,
-                                            onSelectTransaction = ::selectTransaction,
+                                            // P8-00 b3 (V-5 返回保滚动位): the click samples the live
+                                            // position, the open-detail event carries it, and a return
+                                            // restores + consumes it (the one-shot consume).
+                                            onSelectTransaction = { transactionId ->
+                                                selectTransaction(transactionId, homeFlowScrollSampler())
+                                            },
+                                            restoreScrollTo = (current as? P503AppState.OverviewEmpty)?.originListScroll,
+                                            onScrollRestored = { dispatch(P503UiEvent.ListScrollRestored) },
+                                            onSampleScroll = homeFlowScrollSampler,
+                                            onRegisterListState = { homeFlowListState = it },
                                             onSelectMonth = ::selectMonth,
                                             // P7-05.C (D-156; slice 1b Piece 4): the ledger-wide recycle-bin
                                             // entry, offered only when the read surface is wired (an unwired
@@ -4263,6 +4366,20 @@ fun P503App(
                                             // P7-08 08.C: the same cached authority feeds the two new
                                             // sections (null = loading/unwired: honest 载入中 placeholder).
                                             tagMerchantAuthority = cachedTagMerchantAuthority,
+                                            // P8-00 b3 (V-5): the account-flow entry — the open reads the
+                                            // first page and dispatches (the host-resolved-payload
+                                            // precedent); the scroll pair rides the seam (返回保滚动位).
+                                            onOpenAccountFlow =
+                                                if (ledger.surfaces.ledgerView) {
+                                                    { accountId -> selectAccountFlow(accountId, accountsScrollSampler()) }
+                                                } else {
+                                                    null
+                                                },
+                                            registerListScroll = { accountsListState = it },
+                                            sampleListScroll = accountsScrollSampler,
+                                            // P8-00 b3 (V-5 返回保滚动位): the restore + one-shot consume.
+                                            restoreScrollTo = (current as? P503AppState.OverviewEmpty)?.originListScroll,
+                                            onScrollRestored = { dispatch(P503UiEvent.ListScrollRestored) },
                                             onEvent = { event ->
                                                 when (event) {
                                                     is P503UiEvent.ManageAccountActive,
@@ -4380,8 +4497,22 @@ fun P503App(
                             tagNameOf = { id ->
                                 cachedTagMerchantAuthority?.tags?.firstOrNull { it.id == id }?.name ?: id
                             },
+                            // P8-00 b3 (V-6): the read-only version history read under the same lease
+                            // (the annotation-history twin); null renders no block.
+                            versionHistory = current.versionHistory,
                         )
                     }
+                    // P8-00 b3 (V-5): the read-only account-flow secondary surface (the asset row
+                    // route). Zero write entries; the exits are the 返回 button and the footer's
+                    // read-only page reads.
+                    is P503AppState.AccountFlow ->
+                        P503AccountFlowScreen(
+                            state = current,
+                            accountNames = current.overview.state.accountNames,
+                            onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                            onLoadMore = ::requestAccountFlowMorePage,
+                            onRetryLoadMore = ::requestAccountFlowMorePage,
+                        )
                     // P7-04.C: the import candidate detail (spec sections 6.1/6.2). The catalog options
                     // are the same authoritative projections the entry flow consumes (D-143 同源).
                     is P503AppState.ImportCandidateDetail ->
@@ -4933,6 +5064,9 @@ private fun isBackEnabled(state: P503AppState): Boolean =
         is P503AppState.OverviewEmpty -> state.importSurface || state.selectedTab == P503Tab.ACCOUNTS
         // P7-03.C: the read-only detail returns to the preserved overview (C03).
         is P503AppState.TransactionDetail -> true
+        // P8-00 b3 (V-5): the account-flow surface returns to the preserved overview (the C03
+        // semantics; the sampled origin-list position rides the close).
+        is P503AppState.AccountFlow -> true
         // P7-04.C (SPEC:281): the import candidate detail returns to the preserved IMPORT
         // overview (清单/勾选集保留； the draft is written back by the reducer on close).
         is P503AppState.ImportCandidateDetail -> true
