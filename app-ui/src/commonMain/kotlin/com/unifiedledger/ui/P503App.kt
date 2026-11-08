@@ -2947,12 +2947,13 @@ fun P503App(
     // P7-09 09.B (D-226) / P8-00 shell (D-301): load the EXISTING import surface when the overview
     // carries the state-internal importSurface route with no projection yet. An inbound
     // `OpenImportTab` request (and the drawer's 导入账单 entry) does NOT pass through the tab bar's
-    // `onSelectTab` lambda that owns the first-load request, so the load is driven from the LANDED
-    // state here instead — the same trigger the tab tap uses (`requestImportReview` on
-    // `importReview == null`), and the same shape as the existing state-keyed effect below
-    // (`LaunchedEffect(state)`). A wired/unwired surface is handled inside [requestImportReview]
-    // (it returns early and dispatches nothing when the import-review rows surface is absent), so
-    // an unwired composition renders no dead load.
+    // `onSelectTab` lambda — F-Q1 fix round: that lambda's former first-load block was dead (dispatch
+    // lands synchronously and the SelectTab reducer always clears importSurface, so its importSurface
+    // condition could never be true) and was removed — so the load is driven from the LANDED state
+    // here. This state-keyed effect is the ONE first-load trigger (`requestImportReview` on
+    // `importReview == null`; the surface's refresh button re-requests later loads). A wired/unwired
+    // surface is handled inside [requestImportReview] (it returns early and dispatches nothing when
+    // the import-review rows surface is absent), so an unwired composition renders no dead load.
     // The read itself is leased and generation-gated; this effect only starts it.
     LaunchedEffect(state) {
         val overview = state as? P503AppState.OverviewEmpty ?: return@LaunchedEffect
@@ -4148,15 +4149,9 @@ fun P503App(
                                 } else {
                                     dispatch(P503UiEvent.SelectTab(tab))
                                 }
-                                // P7-04.C: the first import-surface entry requests the review list (the
-                                // projection starts null; the refresh button re-requests later loads).
-                                // P8-00 shell: the surface state lands through OpenImportSurface, so
-                                // this side effect keys on the CURRENT landed importSurface flag.
-                                if ((latestState.value as? P503AppState.OverviewEmpty)?.importSurface == true &&
-                                    (latestState.value as? P503AppState.OverviewEmpty)?.importReview == null
-                                ) {
-                                    requestImportReview()
-                                }
+                                // F-Q1 fix round: the former first-load block here was dead (never
+                                // fired) and was removed; the first load is driven by the
+                                // import-surface LaunchedEffect above only.
                             },
                             onStartNewExpense = { dispatch(P503UiEvent.StartNewExpense) },
                             // P7-02.D E-2: the "record again" affordance is available on the success home

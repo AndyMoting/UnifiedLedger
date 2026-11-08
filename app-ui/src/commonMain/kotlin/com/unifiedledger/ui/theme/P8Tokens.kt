@@ -11,14 +11,14 @@ import androidx.compose.ui.unit.dp
 /**
  * P8-00 shell token palette (D-301; spec `docs/specs/2026-11-08-p8-00-visual-nav-baseline-design.md`
  * section 3). The thirteen frozen values land here verbatim for the dark instance; the light
- * instance applies the measured mapping of `local/p8-00-design/light-token-map.json` plus the two
- * follow-up corrections recorded in `local/p8-00-design/UI-skill审查报告.md` (section 7: the light
- * faint value no longer exists on its own — every placeholder text consumes the variant value at
- * 5.2:1; section 8: the light page darkens one step to #ECECF1 so the white cards separate, the
- * dock/card separation rides shadows, and the small-control stroke is #E8E8EE).
+ * instance applies the measured light-token mapping plus the two follow-up corrections from the
+ * local design adjudication material (section 7: the light faint value no longer exists on its
+ * own — every placeholder text consumes the variant value at 5.2:1; section 8: the light page
+ * darkens one step to #ECECF1 so the white cards separate, the dock/card separation rides
+ * shadows, and the small-control stroke is #E8E8EE).
  *
- * Contrast evidence: `UI-skill审查报告.md` section 2 (dark, post-fix 0 FAIL) and sections 7/8
- * (light, post-fix 0 FAIL below AA-large). The category glyph color #1A1A1C is shared by both
+ * Contrast evidence: the local design adjudication material (dark: post-fix 0 FAIL; light:
+ * post-fix 0 FAIL below AA-large). The category glyph color #1A1A1C is shared by both
  * themes (the report's fix list item 1) — the colored circle tints stay identical across themes
  * (light-token-map identity rows).
  *
@@ -36,7 +36,7 @@ data class P8Palette(
     /** 底栏胶囊与独立＋的底色与圆角（画布 29–32 区间，取中值 30）. */
     val dock: Color,
     val dockRadius: Dp,
-    /** dock 系描边（浅色下仅小控件使用，报告 section 8）. */
+    /** dock 系描边；浅色下同时是小控件描边（#E8E8EE，报告 section 8）. */
     val stroke: Color,
     /** 组内分隔线. */
     val divider: Color,
@@ -135,7 +135,8 @@ internal fun remapMaterialScheme(
     if (dark) {
         darkColorScheme(
             primary = palette.accent,
-            // 6.6:1 on the accent (the report's contrast bar); the light instance uses white.
+            // page-on-accent contrast 6.66:1 (computed; the report's contrast bar); the light
+            // instance uses white.
             onPrimary = palette.page,
             background = palette.page,
             onBackground = palette.onSurface,

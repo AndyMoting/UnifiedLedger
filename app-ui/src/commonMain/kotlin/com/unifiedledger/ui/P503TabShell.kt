@@ -89,6 +89,8 @@ fun P503TabShell(
                         backdrop = glassBackdrop,
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(palette.dockRadius),
+                        fallbackColor = palette.dock,
+                        border = BorderStroke(1.dp, palette.stroke),
                     ) {
                         NavigationBar(
                             containerColor = Color.Transparent,
@@ -100,8 +102,11 @@ fun P503TabShell(
                         }
                     }
                     Spacer(Modifier.width(12.dp))
-                    // The independent record-plus: dock fill + stroke, white cross; the blend with
-                    // the dock is deliberate (spec section 3 — no accent upgrade, no iCost blue).
+                    // The independent record-plus: dock fill + stroke, white cross; never the accent
+                    // color (spec section 3 — the deliberate blend with the dock covers the iCost
+                    // blue-plus scheme). F-Q2 fix round: the capsule beside this button consumes the
+                    // same dock/stroke tokens (the stroke on both render paths, the dock fill on the
+                    // glass-fallback path), so the family blend holds token-wise on either path.
                     Surface(
                         onClick = onStartNewExpense,
                         shape = RoundedCornerShape(percent = 50),
@@ -309,7 +314,10 @@ internal fun P8LedgerDataDrawer(
             Spacer(Modifier.height(12.dp))
             P8DrawerGroupHeader("账本")
             P8DrawerRow("账本管理", enabled = ledgerManagementWired, onClick = onOpenLedgerManagement)
-            P8DrawerRow("新建账本", enabled = false, suffix = "专项另行设计", onClick = onOpenNewLedger ?: onClose)
+            // F-Q7 fix round: the disabled placeholder row can never receive a click, so its onClick
+            // is a no-op instead of the dead onClose wiring; the callback param stays for the ledger
+            // batch that will wire 新建账本 (enabled = true + the real callback).
+            P8DrawerRow("新建账本", enabled = false, suffix = "专项另行设计", onClick = {})
             P8DrawerGroupHeader("数据")
             P8DrawerRow("备份与恢复", enabled = backupRestoreWired, suffix = if (backupRestoreWired) null else "暂未开放", onClick = onOpenBackupRestore)
             P8DrawerRow("回收站", enabled = recycleBinWired, suffix = if (recycleBinWired) null else "暂未开放", onClick = onOpenRecycleBin)

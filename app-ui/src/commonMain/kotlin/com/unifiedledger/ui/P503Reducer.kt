@@ -1069,7 +1069,8 @@ class P503ReducerImpl(
             // Request-intent events: the effect is the host action (launching the platform picker /
             // re-reading the list); the reducer keeps the state (不切态), so the reducer-observable
             // transition equals the absorbed columns — the coordinator tests pin the host action.
-            P503UiEvent.OpenImportSurface,
+            // (OpenImportSurface is NOT an absorb-list member here: its designed effect at the top
+            // of this when consumes it first, so a label in this list would be a dead branch.)
             is P503UiEvent.StartImportFilePick,
             P503UiEvent.RefreshImportReview,
             -> state

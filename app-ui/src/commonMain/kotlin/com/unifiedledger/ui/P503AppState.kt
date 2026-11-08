@@ -381,12 +381,13 @@ sealed interface P503AppState {
 
     /**
      * P7-04.C (D-146; spec sections 6.1/6.2): the import candidate detail state. Reached only
-     * from an IMPORT list row (仅 IMPORT 清单行可达). Carries the overview to return to (so
-     * CloseImportCandidateDetail/Back restore the exact IMPORT tab with its list payload,
-     * selection set and — written back on close — the same candidate's decision draft, spec
-     * section 6.2 表单字段保留), the requested candidate id, the host-resolved typed detail and
-     * duplicate-comparison payloads, the pure decision-form draft, the in-flight duplicate-review
-     * marker (期间禁重复提交) and the typed notice banner.
+     * from an import-review list row (仅导入清单行可达 — P8-00: the review rides the
+     * state-internal importSurface route, no IMPORT tab). Carries the overview to return to (so
+     * CloseImportCandidateDetail/Back restore the exact overview — list payload, importSurface
+     * route, selection set and — written back on close — the same candidate's decision draft,
+     * spec section 6.2 表单字段保留), the requested candidate id, the host-resolved typed detail
+     * and duplicate-comparison payloads, the pure decision-form draft, the in-flight
+     * duplicate-review marker (期间禁重复提交) and the typed notice banner.
      */
     data class ImportCandidateDetail(
         val overview: OverviewEmpty,

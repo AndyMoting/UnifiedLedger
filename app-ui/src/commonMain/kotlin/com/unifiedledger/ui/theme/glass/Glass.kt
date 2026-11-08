@@ -1,11 +1,14 @@
 package com.unifiedledger.ui.theme.glass
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.backdrops.LayerBackdrop
@@ -87,12 +90,23 @@ internal fun GlassBackdropSource(
  * Box clipped to [shape] (D2IMPL-Q-001 fix, fallback/glass content-clipping parity). The
  * fallback path is value-identical to the plain Material3 surface this replaces
  * (tonalElevation 3.dp, shadowElevation 6.dp).
+ *
+ * P8-00 fix round (F-Q2): the optional [fallbackColor]/[border] pair lets the dock wiring
+ * point put the frozen dock/stroke tokens on both paths. [border] draws over the glass
+ * sampling and on the fallback surface alike; [fallbackColor] replaces the fallback's tonal
+ * color with the verbatim token fill (an explicit token value under the tonal elevation
+ * overlay would no longer render the frozen token, so the override drops the tonal elevation
+ * and keeps the shadow parity — the default call without it keeps the plain tonal surface).
+ * The glass path keeps the frozen backdrop sampling as its fill: a token fill inside the
+ * glass content would cover the sampled backdrop and defeat the frozen effect.
  */
 @Composable
 internal fun GlassSurface(
     backdrop: GlassBackdrop,
     modifier: Modifier = Modifier,
     shape: Shape,
+    fallbackColor: Color? = null,
+    border: BorderStroke? = null,
     content: @Composable () -> Unit,
 ) {
     if (GLASS_ENABLED) {
@@ -108,17 +122,28 @@ internal fun GlassSurface(
                             blur(2.dp.toPx())
                             lens(12.dp.toPx(), 24.dp.toPx())
                         },
-                    ),
+                    ).then(if (border != null) Modifier.border(border, shape) else Modifier),
         ) {
             Box(modifier = Modifier.clip(shape)) {
                 content()
             }
         }
-    } else {
+    } else if (fallbackColor == null) {
         Surface(
             modifier = modifier,
             shape = shape,
             tonalElevation = 3.dp,
+            shadowElevation = 6.dp,
+            border = border,
+        ) {
+            content()
+        }
+    } else {
+        Surface(
+            modifier = modifier,
+            shape = shape,
+            color = fallbackColor,
+            border = border,
             shadowElevation = 6.dp,
         ) {
             content()
