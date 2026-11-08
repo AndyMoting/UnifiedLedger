@@ -22,6 +22,31 @@ package com.unifiedledger.ui
  */
 internal fun backupExportEntryVisible(exportWired: Boolean): Boolean = exportWired
 
+// ------------------------------------------------------------------ restore entry (P8-00 b2)
+
+/**
+ * P8-00 b2 fix round (2026-11-08 user ruling; review F-Q1): whether the EXPORT face offers the
+ * restore affordance — the drawer carrier's restore leg. The restore surface stays reachable from
+ * the drawer's 备份与恢复 carrier row: the row opens the export face, and this affordance issues
+ * [P503UiEvent.OpenBackupRestore] on it. The host passes [restoreWired] = whether the composition
+ * root bound the restore use cases (the same null-callback convention as the export entry): a
+ * wired composition renders the clickable 恢复备份 affordance; an unwired one renders the honest
+ * disabled affordance with its 暂未开放 suffix (the shell batch's disabled-row precedent) — never
+ * a dead button and never a silently absent leg. A running export disables it too (提交中不重入,
+ * the submitting discipline this surface already applies to its confirm).
+ */
+internal fun backupExportRestoreEntryEnabled(
+    restoreWired: Boolean,
+    running: Boolean,
+): Boolean = restoreWired && !running
+
+/**
+ * The frozen two-shape label of the carrier's restore affordance: the wired shape names the restore
+ * leg plainly; the unwired shape carries the honest 暂未开放 suffix (the shell batch's disabled-row
+ * precedent wording). A pure function so the test pins exactly what the renderer shows.
+ */
+internal fun backupExportRestoreEntryLabel(restoreWired: Boolean): String = if (restoreWired) "恢复备份" else "恢复备份（暂未开放）"
+
 // ------------------------------------------------------------------ password gate
 
 /**

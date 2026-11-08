@@ -85,6 +85,39 @@ class P503RestoreReducerTest {
         assertNull(opened.token)
     }
 
+    // ---- the P8-00 b2 drawer-carrier route (2026-11-08 user ruling) ----
+
+    @Test
+    fun theDrawerCarrierRouteOpensTheSurfaceOffTheExportFaceCarryingItsOverview() {
+        // The 备份与恢复 drawer row opens the export face; the restore event issued on it opens
+        // the restore surface carrying the export face's overview — which IS the live overview,
+        // so every restore exit restores it exactly. The restore flow itself is untouched.
+        val overview = overview()
+        val carrier = P503AppState.BackupExport(overview)
+        val opened = assertIs<P503AppState.BackupRestore>(reducer.reduce(carrier, P503UiEvent.OpenBackupRestore))
+        assertSame(overview, opened.overview)
+        assertEquals("", opened.password)
+        assertNull(opened.preview)
+        assertNull(opened.token)
+    }
+
+    @Test
+    fun theCarrierRouteIsOneDirectionalAndTheExportEventsKeepTheirShapes() {
+        val carrier = restoreCarrier()
+        // OpenBackupExport ON the export surface stays absorbed (the family guard's first clause).
+        assertSame(carrier, reducer.reduce(carrier, P503UiEvent.OpenBackupExport))
+        // The export surface's own events keep their exact shapes on the carrier: the password
+        // draft updates, and ConfirmBackupExport STARTS the export (running=true) exactly as on the
+        // direct face — the carrier hosts the export flow, it does not absorb it.
+        val typed = assertIs<P503AppState.BackupExport>(reducer.reduce(carrier, P503UiEvent.UpdateBackupPassword("x")))
+        assertEquals("x", typed.password)
+        val started = assertIs<P503AppState.BackupExport>(reducer.reduce(carrier, P503UiEvent.ConfirmBackupExport))
+        assertTrue(started.running)
+        assertSame(carrier.overview, started.overview)
+    }
+
+    private fun restoreCarrier(): P503AppState.BackupExport = P503AppState.BackupExport(overview())
+
     // ---- the preflight phase ----
 
     @Test
@@ -238,9 +271,14 @@ class P503RestoreReducerTest {
     }
 
     @Test
-    fun openBackupRestoreIsAbsorbedOutsideTheOverview() {
+    fun openBackupRestoreIsAbsorbedOutsideItsTwoDesignedStates() {
+        // P8-00 b2 (2026-11-08 user ruling): the event's designed states are OverviewEmpty AND
+        // the BackupExport drawer carrier (the 备份与恢复 row's restore leg); every other state
+        // absorbs it. The carrier route itself is pinned by
+        // theDrawerCarrierRouteOpensTheSurfaceOffTheExportFaceCarryingItsOverview above in THIS file.
         val overview = overview()
-        everyStateExcept(overview).forEach { state ->
+        val carrier = P503AppState.BackupExport(overview)
+        everyStateExcept(overview, carrier).forEach { state ->
             assertSame(state, reducer.reduce(state, P503UiEvent.OpenBackupRestore))
         }
     }

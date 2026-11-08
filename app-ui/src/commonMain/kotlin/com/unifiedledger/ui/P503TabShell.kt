@@ -284,12 +284,21 @@ internal fun P8HomeTopBar(
  * P8-00 shell (D-301; spec section 2.5): the left drawer's 「账本与数据」 sheet — the 「账本」
  * group (账本管理 → the existing ACCOUNTS management surface; 新建账本 as the frozen placeholder
  * entry whose behavior belongs to the ledger program) and the 「数据」 group (备份与恢复 → the
- * existing export surface when wired; 回收站 → the existing bin when wired; 导入账单 → the
- * state-internal import surface, V-2). Unwired optional surfaces render the honest disabled row
+ * existing backup/restore surfaces when wired; 回收站 → the existing bin when wired; 导入账单 →
+ * the state-internal import surface, V-2). Unwired optional surfaces render the honest disabled row
  * with the 暂未开放 suffix (the D-146 entry 12 disabled-trigger precedent) instead of a dead
  * button. Rows are plain text rows (no icon glyphs — no emoji, no bitmap; the Material Symbols
  * artifact is not among the current dependencies, registered in the batch report). [onClose]
  * runs the sheet-close action (the ✕ row / the header close button's host channel).
+ *
+ * P8-00 b2 (2026-11-08 user ruling): the 备份与恢复 row is the restore entry's CARRIER — its
+ * target surface is the existing backup/export face whose restore affordance issues
+ * [P503UiEvent.OpenBackupRestore], the route the reducer also accepts. [restoreWired] gates the
+ * restore leg; when it is wired the row carries the 导出 · 恢复备份 suffix (the ruling's行尾标注)
+ * and the click opens the carrier face; when unwired the row renders the 暂未开放 disabled shape —
+ * or, with a wired carrier but an unwired restore, degrades to the plain 导出 suffix. The restore
+ * flow itself (preflight/confirm switch) is untouched — this is a pure entry
+ * migration off the HOME overview.
  */
 @Composable
 internal fun P8LedgerDataDrawer(
@@ -299,6 +308,7 @@ internal fun P8LedgerDataDrawer(
     onOpenNewLedger: (() -> Unit)?,
     onOpenBackupRestore: () -> Unit,
     backupRestoreWired: Boolean,
+    restoreWired: Boolean = false,
     onOpenRecycleBin: () -> Unit,
     recycleBinWired: Boolean,
     onOpenImportBills: () -> Unit,
@@ -319,7 +329,22 @@ internal fun P8LedgerDataDrawer(
             // batch that will wire 新建账本 (enabled = true + the real callback).
             P8DrawerRow("新建账本", enabled = false, suffix = "专项另行设计", onClick = {})
             P8DrawerGroupHeader("数据")
-            P8DrawerRow("备份与恢复", enabled = backupRestoreWired, suffix = if (backupRestoreWired) null else "暂未开放", onClick = onOpenBackupRestore)
+            // P8-00 b2: the carrier row. Wired = clickable, suffix 导出 · 恢复备份 (the ruling's
+            // end-of-row annotation); wired carrier + unwired restore degrades to 导出 (the carrier
+            // face's own restore affordance then renders the honest disabled 暂未开放 shape);
+            // unwired carrier = the honest disabled 暂未开放 shape (the shell batch precedent).
+            // The suffix rides the disabledFaint/variant colors of the row.
+            P8DrawerRow(
+                "备份与恢复",
+                enabled = backupRestoreWired,
+                suffix =
+                    when {
+                        backupRestoreWired && restoreWired -> "导出 · 恢复备份"
+                        backupRestoreWired -> "导出"
+                        else -> "暂未开放"
+                    },
+                onClick = onOpenBackupRestore,
+            )
             P8DrawerRow("回收站", enabled = recycleBinWired, suffix = if (recycleBinWired) null else "暂未开放", onClick = onOpenRecycleBin)
             P8DrawerRow("导入账单", enabled = true, onClick = onOpenImportBills)
             Spacer(Modifier.height(16.dp))
