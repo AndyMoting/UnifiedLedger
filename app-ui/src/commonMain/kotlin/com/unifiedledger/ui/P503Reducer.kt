@@ -417,13 +417,13 @@ class P503ReducerImpl(
             // keeps it held rather than dropping it.
             is ExternalNavigationRequest.OpenImport ->
                 overview.copy(pendingExternalNavigation = PendingExternalNavigation(request, ExternalNavigationHoldReason.IMPORT_FORMAT_REQUIRED))
-            // P7-09 09.B (D-226; spec section 2.1 `OpenImportTab`): the launcher shortcut's 导入 leg
-            // opens the EXISTING IMPORT surface. This is the `SelectTab(P503Tab.IMPORT)` navigation
-            // semantic (the same tab switch `P503UiEvent.SelectTab` performs, P503Reducer.kt
-            // `reduceOverviewEmpty`) with the slot consumed and ZERO formal-ledger write: no new
-            // import flow is started and no file is carried. The IMPORT projection itself is loaded
-            // by the host's state-driven effect, not from here (a pure reducer never reads).
-            ExternalNavigationRequest.OpenImportTab -> overview.copy(selectedTab = P503Tab.IMPORT, pendingExternalNavigation = null)
+            // P8-00 shell (D-301; spec section 1.1): the launcher shortcut's 导入 leg opens the
+            // EXISTING import surface. This is the [P503UiEvent.OpenImportSurface] route (the same
+            // state-internal surface the drawer's 导入账单 entry opens) with the slot consumed and
+            // ZERO formal-ledger write: no new import flow is started and no file is carried. The
+            // IMPORT projection itself is loaded by the host's state-driven effect, not from here
+            // (a pure reducer never reads).
+            ExternalNavigationRequest.OpenImportTab -> overview.copy(importSurface = true, pendingExternalNavigation = null)
         }
     }
 
@@ -663,6 +663,7 @@ class P503ReducerImpl(
             // absorbed and the surface is kept; the full disposition table lives in the fix
             // round report. The import family is absorbed as a whole (its user intents are
             // unreachable here; its async results have no BudgetConfig effect).
+            P503UiEvent.OpenImportSurface,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
             is P503UiEvent.ImportFilePickFailed,
@@ -775,6 +776,7 @@ class P503ReducerImpl(
             is P503UiEvent.AnalysisMonthShift,
             is P503UiEvent.MonthlyActivityResult,
             // P7-04.C: the import review events are absorbed before the overview exists (table 6.2a).
+            P503UiEvent.OpenImportSurface,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -840,14 +842,22 @@ class P503ReducerImpl(
             // Tab switching keeps the same authoritative LedgerCurrentState reference; no
             // data is re-fetched and the selection survives only within the overview. P7-01.D:
             // leaving a management tab drops any open dialog/notice; entering ACCOUNTS replaces
-            // the projection with the host-read authoritative snapshot.
+            // the projection with the host-read authoritative snapshot. P8-00 shell (D-301): a
+            // bottom-bar tap also LEAVES the state-internal import surface (a drawer-only route,
+            // never a tab) — the tap's tab becomes the render target.
             is P503UiEvent.SelectTab ->
                 state.copy(
                     selectedTab = event.tab,
                     catalogSnapshot = event.catalogSnapshot ?: state.catalogSnapshot,
                     catalogDialog = CatalogDialog.None,
                     catalogNotice = null,
+                    importSurface = false,
                 )
+            // P8-00 shell (D-301; spec section 1.2): the drawer's 导入账单 entry (and the shortcut's
+            // OpenImportTab route) opens the state-internal import surface. The tab cursor is
+            // untouched, so the bottom bar keeps showing the origin tab and a later tap returns to
+            // it; the projection load stays the host's state-driven effect (zero formal write).
+            P503UiEvent.OpenImportSurface -> state.copy(importSurface = true)
             // R1 (spec 6.2/7.3): the host re-queries the authoritative read model after a
             // successful catalog command and after an explicit management refresh, so this
             // transition replaces the overview's read state while staying on the current tab
@@ -1059,6 +1069,7 @@ class P503ReducerImpl(
             // Request-intent events: the effect is the host action (launching the platform picker /
             // re-reading the list); the reducer keeps the state (不切态), so the reducer-observable
             // transition equals the absorbed columns — the coordinator tests pin the host action.
+            P503UiEvent.OpenImportSurface,
             is P503UiEvent.StartImportFilePick,
             P503UiEvent.RefreshImportReview,
             -> state
@@ -1253,11 +1264,13 @@ class P503ReducerImpl(
             P503UiEvent.ApplyExpressionResult,
             is P503UiEvent.EvaluateEntryExpression,
             -> state
-            // Explicit Back during management closes the open dialog first; with no dialog it
-            // leaves the ACCOUNTS tab for HOME (the overview root stays the back floor).
+            // Explicit Back during management closes the open dialog first; on the drawer-only
+            // import surface it returns to the tab cursor (P8-00 shell, D-301); on the ACCOUNTS
+            // tab it leaves for HOME (the overview root stays the back floor).
             P503UiEvent.Back ->
                 when {
                     state.catalogDialog != CatalogDialog.None -> state.copy(catalogDialog = CatalogDialog.None)
+                    state.importSurface -> state.copy(importSurface = false)
                     state.selectedTab == P503Tab.ACCOUNTS -> state.copy(selectedTab = P503Tab.HOME)
                     else -> unhandled(state, event)
                 }
@@ -1315,6 +1328,7 @@ class P503ReducerImpl(
             P503UiEvent.RefreshFailed,
             // P7-04.C: the import review events are absorbed inside the read-only detail (table
             // 6.2a; the detail has no import affordances).
+            P503UiEvent.OpenImportSurface,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -1740,6 +1754,7 @@ class P503ReducerImpl(
                     ?: state
             // The host-channel pick events, the pick pipeline result and the list refresh events
             // are absorbed here (table 6.2a; 清单经详情关闭后刷新).
+            P503UiEvent.OpenImportSurface,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -1927,6 +1942,7 @@ class P503ReducerImpl(
             is P503UiEvent.ImportUnknownItemCheckResult,
             // The host-channel pick events and the P7-04.C review surface are absorbed (the
             // confirm page owns no list affordances).
+            P503UiEvent.OpenImportSurface,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -2084,6 +2100,7 @@ class P503ReducerImpl(
             P503UiEvent.RequestImportBatchConfirm,
             P503UiEvent.CancelImportBatchConfirm,
             is P503UiEvent.ImportUnknownItemCheck,
+            P503UiEvent.OpenImportSurface,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -2851,6 +2868,7 @@ class P503ReducerImpl(
             is P503UiEvent.SelectMonth,
             is P503UiEvent.AnalysisMonthShift,
             is P503UiEvent.MonthlyActivityResult,
+            P503UiEvent.OpenImportSurface,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -3018,6 +3036,7 @@ class P503ReducerImpl(
             is P503UiEvent.AnalysisMonthShift,
             is P503UiEvent.MonthlyActivityResult,
             // P7-04.C: the import review events are absorbed here too (table 6.2a).
+            P503UiEvent.OpenImportSurface,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -3167,6 +3186,7 @@ class P503ReducerImpl(
             is P503UiEvent.AnalysisMonthShift,
             is P503UiEvent.MonthlyActivityResult,
             // P7-04.C: the import review events are absorbed here too (table 6.2a).
+            P503UiEvent.OpenImportSurface,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -3288,6 +3308,7 @@ class P503ReducerImpl(
             is P503UiEvent.AnalysisMonthShift,
             is P503UiEvent.MonthlyActivityResult,
             // P7-04.C: the import review events are absorbed here too (table 6.2a).
+            P503UiEvent.OpenImportSurface,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -3610,6 +3631,7 @@ class P503ReducerImpl(
             is P503UiEvent.AnalysisMonthShift,
             is P503UiEvent.MonthlyActivityResult,
             // P7-04.C: the import review events are absorbed in every transient state (table 6.2a).
+            P503UiEvent.OpenImportSurface,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -3745,6 +3767,7 @@ class P503ReducerImpl(
             is P503UiEvent.AnalysisMonthShift,
             is P503UiEvent.MonthlyActivityResult,
             // P7-04.C: the import review events are absorbed here too (table 6.2a).
+            P503UiEvent.OpenImportSurface,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -3887,6 +3910,7 @@ class P503ReducerImpl(
             is P503UiEvent.AnalysisMonthShift,
             is P503UiEvent.MonthlyActivityResult,
             // P7-04.C: the import review events are absorbed here too (table 6.2a).
+            P503UiEvent.OpenImportSurface,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -4003,6 +4027,7 @@ class P503ReducerImpl(
                     is P503UiEvent.AnalysisMonthShift,
                     is P503UiEvent.MonthlyActivityResult,
                     // P7-04.C: the import review events are absorbed here too (table 6.2a).
+                    P503UiEvent.OpenImportSurface,
                     is P503UiEvent.StartImportFilePick,
                     is P503UiEvent.ImportFilePicked,
                     P503UiEvent.ImportFilePickCancelled,
@@ -4121,6 +4146,7 @@ class P503ReducerImpl(
                     is P503UiEvent.AnalysisMonthShift,
                     is P503UiEvent.MonthlyActivityResult,
                     // P7-04.C: the import review events are absorbed here too (table 6.2a).
+                    P503UiEvent.OpenImportSurface,
                     is P503UiEvent.StartImportFilePick,
                     is P503UiEvent.ImportFilePicked,
                     P503UiEvent.ImportFilePickCancelled,

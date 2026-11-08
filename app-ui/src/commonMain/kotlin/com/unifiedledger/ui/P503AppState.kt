@@ -180,6 +180,16 @@ sealed interface P503AppState {
          * zero formal effect.
          */
         val externalNavigationBusy: ExternalNavigationBusy? = null,
+        /**
+         * P8-00 shell (D-301; spec section 1.1): the state-internal import-surface route. When
+         * true the overview renders the existing import projection ([importReview]) instead of
+         * the selected tab's content — the route the drawer's 导入账单 entry and the launcher
+         * shortcut's `OpenImportTab` leg both take ([P503UiEvent.OpenImportSurface]); a bottom
+         * bar tap (`SelectTab`) leaves the surface and returns to the chosen tab. The import
+         * events and projection semantics are unchanged (V-2). Additive with a `false` default,
+         * so every pre-P8 constructor and copy site keeps compiling.
+         */
+        val importSurface: Boolean = false,
     ) : P503AppState
 
     data class Editing(
@@ -714,14 +724,18 @@ sealed interface P503AppState {
  * P5-04.1 overview tabs. Tab selection is part of the shared reducer state, so an
  * authoritative refresh can always return the overview to the home tab.
  *
- * P7-04.C (D-146, R-13): the frozen three-tab contract (D-122) is extended by [IMPORT] as the
- * fourth tab; the bottom-bar layout semantics are unchanged, only the tab item is added.
+ * P8-00 shell (D-301; spec section 1.1): the D-146 four-tab contract collapses back to three
+ * tabs (HOME/ACCOUNTS/ANALYSIS) and [IMPORT] leaves the bottom-bar enum. The import surface
+ * remains reachable as a state-internal overview route: [OverviewEmpty.importSurface] renders
+ * the existing import projection instead of the tab content, entered by
+ * [P503UiEvent.OpenImportSurface] (the drawer's 导入账单 entry and the launcher shortcut's
+ * `OpenImportTab` leg) and left by [P503UiEvent.SelectTab] (a bottom-bar tap returns to the
+ * chosen tab) — the import projection, its events and its semantics are unchanged (V-2).
  */
 enum class P503Tab {
     HOME,
     ACCOUNTS,
     ANALYSIS,
-    IMPORT,
 }
 
 enum class InfrastructureFailureContext {

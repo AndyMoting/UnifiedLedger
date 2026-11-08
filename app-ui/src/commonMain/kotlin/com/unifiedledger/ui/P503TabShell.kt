@@ -1,7 +1,12 @@
 package com.unifiedledger.ui
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -9,122 +14,354 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.DrawerState
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.SummarizeLedgerActivity
+import com.unifiedledger.ui.theme.LocalP8Palette
 import com.unifiedledger.ui.theme.glass.GlassBackdropSource
 import com.unifiedledger.ui.theme.glass.GlassSurface
 import com.unifiedledger.ui.theme.glass.rememberGlassBackdrop
 
 /**
- * P5-04.1 overview shell (D-122, bottom-bar layout deltas D-123/D-124): a material3 scaffold
- * whose bottom bar is a single row with the three overview tabs in a floating capsule-shaped
- * surface on the left and the new-expense entry point as a circular floating action button on
- * the right, vertically centered with the tab bar. System navigation bar insets are applied
- * once around the whole row, so the FAB center and the tab bar center stay on the same
- * horizontal line. Tab selection lives in the shared reducer state
- * ([P503AppState.OverviewEmpty.selectedTab]); the shell only renders the selected tab and
- * keeps the FAB visible in every tab. P7-02.D E-2: when the host passes
- * [onSaveAndRecordAgain] (HOME tab with a retained determinate-success intent) a "record
- * again" button joins the row.
+ * P8-00 shell (D-301; spec sections 1.1/2.1/3): the overview scaffold whose bottom bar is the
+ * canvas's capsule dock with THREE tab items (HOME/ACCOUNTS/ANALYSIS — the D-146 fourth IMPORT
+ * tab left the bottom bar; the import surface is the state-internal
+ * [P503AppState.OverviewEmpty.importSurface] route) plus the independent circular record-plus
+ * button to the right of the dock. The plus button shares the dock color family (dock fill +
+ * stroke outline, white cross) and never upgrades to the accent color — the blend with the dock
+ * is the frozen deliberate choice that covers the iCost blue-plus scheme. Selection lives in the
+ * shared reducer state ([P503AppState.OverviewEmpty.selectedTab]); [selectedTab] is `null` while
+ * the import surface renders (no bottom-bar item claims selection). P7-02.D E-2: when the host
+ * passes [onSaveAndRecordAgain] (HOME tab with a retained determinate-success intent) a "record
+ * again" button joins the row. P8-00: the optional [drawerState]/[drawerContent] pair wraps the
+ * scaffold in the left ☰ drawer (spec section 2.5) and the optional [topBar] slot hosts the
+ * screen header (the ☰ affordance and the HOME ledger picker).
  */
 @Composable
 fun P503TabShell(
-    selectedTab: P503Tab,
+    selectedTab: P503Tab?,
     onSelectTab: (P503Tab) -> Unit,
     onStartNewExpense: () -> Unit,
     onSaveAndRecordAgain: (() -> Unit)? = null,
+    topBar: (@Composable () -> Unit)? = null,
+    drawerState: DrawerState? = null,
+    drawerContent: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     val glassBackdrop = rememberGlassBackdrop()
-    Scaffold(
-        bottomBar = {
-            Row(
-                modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 12.dp, end = 24.dp, bottom = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
+    val palette = LocalP8Palette.current
+    val scaffold: @Composable () -> Unit = {
+        Scaffold(
+            containerColor = palette.page,
+            topBar = { topBar?.invoke() },
+            bottomBar = {
+                Row(
+                    modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    GlassSurface(
+                        backdrop = glassBackdrop,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(palette.dockRadius),
+                    ) {
+                        NavigationBar(
+                            containerColor = Color.Transparent,
+                            windowInsets = WindowInsets(0.dp),
+                        ) {
+                            P8TabItem(selectedTab, P503Tab.HOME, "首", "首页", onSelectTab)
+                            P8TabItem(selectedTab, P503Tab.ACCOUNTS, "账", "账户", onSelectTab)
+                            P8TabItem(selectedTab, P503Tab.ANALYSIS, "析", "分析", onSelectTab)
+                        }
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    // The independent record-plus: dock fill + stroke, white cross; the blend with
+                    // the dock is deliberate (spec section 3 — no accent upgrade, no iCost blue).
+                    Surface(
+                        onClick = onStartNewExpense,
+                        shape = RoundedCornerShape(percent = 50),
+                        color = palette.dock,
+                        border = BorderStroke(1.dp, palette.stroke),
+                        shadowElevation = 4.dp,
+                        modifier =
+                            Modifier
+                                .size(56.dp)
+                                .semantics { contentDescription = "新增支出" },
+                    ) {
+                        Box(Modifier.fillMaxSize()) {
+                            Canvas(Modifier.size(20.dp).align(Alignment.Center)) {
+                                val stroke = 2.dp.toPx()
+                                val half = size.minDimension / 2
+                                drawLine(
+                                    color = palette.onSurface,
+                                    start = Offset(half, stroke),
+                                    end = Offset(half, size.height - stroke),
+                                    strokeWidth = stroke,
+                                    cap = StrokeCap.Round,
+                                )
+                                drawLine(
+                                    color = palette.onSurface,
+                                    start = Offset(stroke, half),
+                                    end = Offset(size.width - stroke, half),
+                                    strokeWidth = stroke,
+                                    cap = StrokeCap.Round,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+        ) { innerPadding ->
+            GlassBackdropSource(
+                backdrop = glassBackdrop,
+                modifier = Modifier.fillMaxSize().padding(innerPadding),
             ) {
-                GlassSurface(
-                    backdrop = glassBackdrop,
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(percent = 50),
-                ) {
-                    NavigationBar(
-                        containerColor = Color.Transparent,
-                        windowInsets = WindowInsets(0.dp),
-                    ) {
-                        NavigationBarItem(
-                            selected = selectedTab == P503Tab.HOME,
-                            onClick = { onSelectTab(P503Tab.HOME) },
-                            icon = { Text("首") },
-                            label = { Text("首页") },
-                        )
-                        NavigationBarItem(
-                            selected = selectedTab == P503Tab.ACCOUNTS,
-                            onClick = { onSelectTab(P503Tab.ACCOUNTS) },
-                            icon = { Text("账") },
-                            label = { Text("账户") },
-                        )
-                        NavigationBarItem(
-                            selected = selectedTab == P503Tab.ANALYSIS,
-                            onClick = { onSelectTab(P503Tab.ANALYSIS) },
-                            icon = { Text("析") },
-                            label = { Text("分析") },
-                        )
-                        // P7-04.C (D-146, R-13): the fourth IMPORT tab item — the D-122 bottom-bar
-                        // layout semantics are unchanged, only the item is added.
-                        NavigationBarItem(
-                            selected = selectedTab == P503Tab.IMPORT,
-                            onClick = { onSelectTab(P503Tab.IMPORT) },
-                            icon = { Text("导") },
-                            label = { Text("导入") },
-                        )
-                    }
-                }
-                Spacer(Modifier.width(16.dp))
-                if (onSaveAndRecordAgain != null) {
-                    Button(
-                        onClick = onSaveAndRecordAgain,
-                        modifier = Modifier.semantics { contentDescription = "保存后再记一笔" },
-                    ) {
-                        Text("再记一笔")
-                    }
-                    Spacer(Modifier.width(16.dp))
-                }
-                FloatingActionButton(
-                    onClick = onStartNewExpense,
-                    modifier = Modifier.semantics { contentDescription = "新增支出" },
-                ) {
-                    Text("+", color = MaterialTheme.colorScheme.error)
-                }
+                content()
             }
-        },
-    ) { innerPadding ->
-        GlassBackdropSource(
-            backdrop = glassBackdrop,
-            modifier = Modifier.fillMaxSize().padding(innerPadding),
-        ) {
-            content()
         }
     }
+    if (drawerState != null && drawerContent != null) {
+        ModalNavigationDrawer(drawerState = drawerState, drawerContent = drawerContent) {
+            scaffold()
+        }
+    } else {
+        scaffold()
+    }
+}
+
+/** One dock tab item: the frozen character-glyph icon family with the canvas selection pill. */
+@Composable
+private fun RowScope.P8TabItem(
+    selectedTab: P503Tab?,
+    tab: P503Tab,
+    glyph: String,
+    label: String,
+    onSelectTab: (P503Tab) -> Unit,
+) {
+    val palette = LocalP8Palette.current
+    val selected = selectedTab == tab
+    NavigationBarItem(
+        selected = selected,
+        onClick = { onSelectTab(tab) },
+        icon = { Text(glyph) },
+        label = { Text(label) },
+        colors =
+            NavigationBarItemDefaults.colors(
+                selectedIconColor = palette.accent,
+                selectedTextColor = palette.accent,
+                unselectedIconColor = palette.onSurfaceVariant,
+                unselectedTextColor = palette.onSurfaceVariant,
+                indicatorColor = palette.accentSelectedBackground,
+            ),
+    )
+}
+
+/**
+ * P8-00 shell (D-301; spec sections 1.3/2.1): the HOME header — the left ☰ drawer affordance and
+ * the frozen ledger-picker form: the current ledger name with the ⌄ indicator as ONE clickable
+ * title that routes to the target page. No in-place DropdownMenu is rendered anywhere (the frozen
+ * V-3 shape: 顶栏账本名＋⌄点击进独立选择页，原地无下拉). The minimal target the shell batch wires is
+ * the existing ACCOUNTS management surface (registered in the batch report; the standalone picker
+ * page belongs to the ledger program). The ☰ and ⌄ marks are Canvas vectors — no emoji, no bitmap.
+ */
+@Composable
+internal fun P8HomeTopBar(
+    ledgerName: String,
+    onOpenDrawer: () -> Unit,
+    onOpenLedgerPicker: () -> Unit,
+) {
+    val palette = LocalP8Palette.current
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Surface(
+            onClick = onOpenDrawer,
+            color = Color.Transparent,
+            shape = RoundedCornerShape(percent = 50),
+            modifier = Modifier.size(48.dp).semantics { contentDescription = "打开菜单" },
+        ) {
+            Box(Modifier.fillMaxSize()) {
+                Canvas(Modifier.size(20.dp).align(Alignment.Center)) {
+                    val stroke = 2.dp.toPx()
+                    val rows = listOf(0.5f, 1.5f, 2.5f)
+                    rows.forEach { row ->
+                        val y = stroke + (size.height - 2 * stroke) * (row / 3f)
+                        drawLine(
+                            color = palette.onSurface,
+                            start = Offset(stroke, y),
+                            end = Offset(size.width - stroke, y),
+                            strokeWidth = stroke,
+                            cap = StrokeCap.Round,
+                        )
+                    }
+                }
+            }
+        }
+        Surface(
+            onClick = onOpenLedgerPicker,
+            color = Color.Transparent,
+            shape = RoundedCornerShape(percent = 50),
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .semantics { contentDescription = "当前账本 $ledgerName，点按切换" },
+        ) {
+            Row(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    ledgerName,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = palette.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Canvas(Modifier.size(width = 12.dp, height = 6.dp).padding(start = 4.dp)) {
+                    val stroke = 1.5.dp.toPx()
+                    drawLine(
+                        color = palette.onSurfaceVariant,
+                        start = Offset(stroke, stroke),
+                        end = Offset(size.width - stroke, stroke),
+                        strokeWidth = stroke,
+                        cap = StrokeCap.Round,
+                    )
+                    drawLine(
+                        color = palette.onSurfaceVariant,
+                        start = Offset(stroke, stroke),
+                        end = Offset(size.width / 2, size.height - stroke),
+                        strokeWidth = stroke,
+                        cap = StrokeCap.Round,
+                    )
+                    drawLine(
+                        color = palette.onSurfaceVariant,
+                        start = Offset(size.width / 2, size.height - stroke),
+                        end = Offset(size.width - stroke, stroke),
+                        strokeWidth = stroke,
+                        cap = StrokeCap.Round,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.width(48.dp))
+    }
+}
+
+/**
+ * P8-00 shell (D-301; spec section 2.5): the left drawer's 「账本与数据」 sheet — the 「账本」
+ * group (账本管理 → the existing ACCOUNTS management surface; 新建账本 as the frozen placeholder
+ * entry whose behavior belongs to the ledger program) and the 「数据」 group (备份与恢复 → the
+ * existing export surface when wired; 回收站 → the existing bin when wired; 导入账单 → the
+ * state-internal import surface, V-2). Unwired optional surfaces render the honest disabled row
+ * with the 暂未开放 suffix (the D-146 entry 12 disabled-trigger precedent) instead of a dead
+ * button. Rows are plain text rows (no icon glyphs — no emoji, no bitmap; the Material Symbols
+ * artifact is not among the current dependencies, registered in the batch report). [onClose]
+ * runs the sheet-close action (the ✕ row / the header close button's host channel).
+ */
+@Composable
+internal fun P8LedgerDataDrawer(
+    ledgerTitle: String,
+    onOpenLedgerManagement: () -> Unit,
+    ledgerManagementWired: Boolean,
+    onOpenNewLedger: (() -> Unit)?,
+    onOpenBackupRestore: () -> Unit,
+    backupRestoreWired: Boolean,
+    onOpenRecycleBin: () -> Unit,
+    recycleBinWired: Boolean,
+    onOpenImportBills: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val palette = LocalP8Palette.current
+    ModalDrawerSheet(drawerContainerColor = palette.card) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+            Spacer(Modifier.height(16.dp))
+            Text("账本与数据", style = MaterialTheme.typography.titleLarge, color = palette.onSurface)
+            Spacer(Modifier.height(4.dp))
+            Text(ledgerTitle, style = MaterialTheme.typography.bodySmall, color = palette.onSurfaceVariant)
+            Spacer(Modifier.height(12.dp))
+            P8DrawerGroupHeader("账本")
+            P8DrawerRow("账本管理", enabled = ledgerManagementWired, onClick = onOpenLedgerManagement)
+            P8DrawerRow("新建账本", enabled = false, suffix = "专项另行设计", onClick = onOpenNewLedger ?: onClose)
+            P8DrawerGroupHeader("数据")
+            P8DrawerRow("备份与恢复", enabled = backupRestoreWired, suffix = if (backupRestoreWired) null else "暂未开放", onClick = onOpenBackupRestore)
+            P8DrawerRow("回收站", enabled = recycleBinWired, suffix = if (recycleBinWired) null else "暂未开放", onClick = onOpenRecycleBin)
+            P8DrawerRow("导入账单", enabled = true, onClick = onOpenImportBills)
+            Spacer(Modifier.height(16.dp))
+            P8DrawerRow("关闭菜单", enabled = true, onClick = onClose)
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/** A drawer group heading. */
+@Composable
+private fun P8DrawerGroupHeader(title: String) {
+    Text(
+        title,
+        style = MaterialTheme.typography.labelLarge,
+        color = LocalP8Palette.current.onSurfaceVariant,
+        modifier = Modifier.padding(vertical = 8.dp),
+    )
+}
+
+/**
+ * One drawer row: a 48dp+ touch target (the minimumInteractiveComponentSize semantics via the
+ * height floor), the frozen label, and the honest disabled state with its suffix.
+ */
+@Composable
+private fun P8DrawerRow(
+    label: String,
+    enabled: Boolean,
+    suffix: String? = null,
+    onClick: () -> Unit,
+) {
+    val palette = LocalP8Palette.current
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        color = Color.Transparent,
+        modifier = Modifier.fillMaxWidth().height(48.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(label, style = MaterialTheme.typography.bodyLarge, color = if (enabled) palette.onSurface else palette.disabledFaint)
+            suffix?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = palette.onSurfaceVariant)
+            }
+        }
+    }
+    HorizontalDivider(color = LocalP8Palette.current.divider)
 }
 
 /**

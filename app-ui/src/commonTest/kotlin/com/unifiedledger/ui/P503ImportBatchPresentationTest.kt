@@ -497,7 +497,9 @@ class P503ImportBatchPresentationTest {
         val overview =
             P503AppState.OverviewEmpty(
                 com.unifiedledger.application.LedgerCurrentState(ledgerId, emptyList(), emptyList()),
-                P503Tab.IMPORT,
+                // P8-00 shell (D-301): the import surface rides importSurface, not a tab.
+                P503Tab.HOME,
+                importSurface = true,
                 importReview = ImportReviewView(batchResult = summary),
             )
         val (summaryItem, summarySample) = resolveImportUnknownCheckTarget(overview, ImportCandidateId("c-1"))!!
@@ -541,7 +543,8 @@ class P503ImportBatchPresentationTest {
         paused: Boolean = false,
     ): P503AppState.ImportBatchSubmitting =
         P503AppState.ImportBatchSubmitting(
-            overview = P503AppState.OverviewEmpty(com.unifiedledger.application.LedgerCurrentState(ledgerId, emptyList(), emptyList()), P503Tab.IMPORT),
+            // P8-00 shell (D-301): the import surface rides importSurface, not a tab.
+            overview = P503AppState.OverviewEmpty(com.unifiedledger.application.LedgerCurrentState(ledgerId, emptyList(), emptyList()), P503Tab.HOME, importSurface = true),
             confirmedAt = confirmedAt,
             items = items,
             dispatchPaused = paused,

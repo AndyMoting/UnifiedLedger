@@ -117,7 +117,11 @@ class P503ImportReviewReducerTest {
     ): P503AppState.OverviewEmpty =
         P503AppState.OverviewEmpty(
             state = emptyState,
-            selectedTab = P503Tab.IMPORT,
+            // P8-00 shell (D-301): the import surface is the state-internal importSurface route,
+            // no longer the IMPORT tab (removed from the bottom-bar enum); the HOME tab cursor
+            // stays underneath so a bottom-bar tap returns to it.
+            selectedTab = P503Tab.HOME,
+            importSurface = true,
             importReview =
                 ImportReviewView(
                     rows = rows,
@@ -354,7 +358,10 @@ class P503ImportReviewReducerTest {
             )
         val closed = reducer.reduce(edited, P503UiEvent.CloseImportCandidateDetail)
         val returned = assertIs<P503AppState.OverviewEmpty>(closed)
-        assertEquals(P503Tab.IMPORT, returned.selectedTab)
+        // P8-00 shell (D-301): the import surface returns with its route flag intact (the tab
+        // cursor underneath stays HOME).
+        assertTrue(returned.importSurface)
+        assertEquals(P503Tab.HOME, returned.selectedTab)
         // The selection set and rows are preserved; the edited draft is written back (SPEC:283).
         assertSame(source.state, returned.state)
         val stored = returned.importReview!!.decisionDrafts[ImportCandidateId("candidate-suspected")]
@@ -369,9 +376,10 @@ class P503ImportReviewReducerTest {
         val source = overview(selection = setOf(ImportCandidateId("candidate-retainable")))
         val entered = assertIs<P503AppState.ImportCandidateDetail>(reducer.reduce(source, P503UiEvent.SelectImportCandidate(ImportCandidateId("candidate-suspected"), detailResult(suspectedRow), ImportDuplicateReviewsResult.Reviews(listOf(deferredReview("duplicate-1"))))))
         val closed = reducer.reduce(entered, P503UiEvent.Back)
-        // SPEC:281: 返回 OverviewEmpty(IMPORT) 保留清单/勾选集.
+        // SPEC:281: 返回 OverviewEmpty(导入面) 保留清单/勾选集. P8-00 shell (D-301): the surface
+        // route rides importSurface, not a tab.
         val returned = assertIs<P503AppState.OverviewEmpty>(closed)
-        assertEquals(P503Tab.IMPORT, returned.selectedTab)
+        assertTrue(returned.importSurface)
         assertEquals(setOf(ImportCandidateId("candidate-retainable")), returned.importReview?.selectedCandidateIds)
     }
 
@@ -1153,10 +1161,13 @@ class P503ImportReviewReducerTest {
     }
 
     @Test
-    fun backOnTheImportTabStaysTheExistingUnhandledIllegalState() {
-        // The overview root stays the back floor: Back leaves only the ACCOUNTS tab for HOME;
-        // the IMPORT tab joins HOME/ANALYSIS in the unhandled branch (no ISE reversal anywhere).
-        assertFailsWith<IllegalStateException> { reducer.reduce(overview(), P503UiEvent.Back) }
+    fun backOnTheImportSurfaceFollowsTheShellRouteAndTheFloorStaysIllegal() {
+        // P8-00 shell (D-301): Back on the import surface closes the surface (the new designed
+        // effect, table 6.2a); the overview ROOT floor stays the unhandled ISE — Back on
+        // HOME/ANALYSIS without a surface is still unlisted (no ISE reversal anywhere).
+        val closed = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(overview(), P503UiEvent.Back))
+        assertFalse(closed.importSurface)
+        assertFailsWith<IllegalStateException> { reducer.reduce(closed, P503UiEvent.Back) }
         // The pre-existing locked path is untouched.
         assertFailsWith<IllegalStateException> { reducer.reduce(overview(), P503UiEvent.RetryRefresh) }
     }

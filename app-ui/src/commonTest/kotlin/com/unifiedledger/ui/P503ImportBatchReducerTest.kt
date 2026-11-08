@@ -17,6 +17,7 @@ import com.unifiedledger.domain.TransactionId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -98,7 +99,10 @@ class P503ImportBatchReducerTest {
     ): P503AppState.OverviewEmpty =
         P503AppState.OverviewEmpty(
             state = emptyState,
-            selectedTab = P503Tab.IMPORT,
+            // P8-00 shell (D-301): the import surface is the state-internal importSurface route,
+            // no longer the IMPORT tab (removed from the bottom-bar enum).
+            selectedTab = P503Tab.HOME,
+            importSurface = true,
             importReview =
                 ImportReviewView(
                     rows = rows,
@@ -249,7 +253,8 @@ class P503ImportBatchReducerTest {
             )
         val second = reducer.reduce(first, P503UiEvent.ImportItemResult(batchItem("candidate-retainable", "request-batch-2"), ImportBatchItemOutcome.Rejected("SPINE_DUPLICATE_NOT_CONFIRMABLE")))
         val left = assertIs<P503AppState.OverviewEmpty>(second)
-        assertEquals(P503Tab.IMPORT, left.selectedTab)
+        // P8-00 shell (D-301): the batch returns to the import surface (importSurface route).
+        assertTrue(left.importSurface)
         assertSame(state.overview.state, left.state)
         val summary = left.importReview?.batchResult
         assertEquals(confirmedAt, summary?.confirmedAt)
@@ -405,7 +410,8 @@ class P503ImportBatchReducerTest {
         // 义务③ (PRODUCT_REQUIREMENTS 措辞): 放弃后已完成各项的结果保留显示， 未提交各项留在
         // 待确认清单 — ONE transition straight to the overview; no hidden intermediate UI state.
         val left = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(state, P503UiEvent.AbandonImportBatch))
-        assertEquals(P503Tab.IMPORT, left.selectedTab)
+        // P8-00 shell (D-301): the batch returns to the import surface (importSurface route).
+        assertTrue(left.importSurface)
         val summary = left.importReview?.batchResult
         assertEquals(confirmedAt, summary?.confirmedAt)
         // The completed items (含未知项的核对入口) stay; the never-dispatched item is NOT in the
@@ -611,8 +617,12 @@ class P503ImportBatchReducerTest {
 
     @Test
     fun theExistingOverviewBackFloorStaysTheUnhandledIllegalState() {
-        // No ISE reversal anywhere: Back on the IMPORT overview root stays unlisted.
-        assertFailsWith<IllegalStateException> { reducer.reduce(overview(), P503UiEvent.Back) }
+        // No ISE reversal anywhere: P8-00 shell (D-301) gives Back on the import surface its
+        // designed close-the-surface effect; the overview ROOT floor (surface closed) stays
+        // unlisted, so the frozen ISE behavior survives.
+        val closed = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(overview(), P503UiEvent.Back))
+        assertFalse(closed.importSurface)
+        assertFailsWith<IllegalStateException> { reducer.reduce(closed, P503UiEvent.Back) }
         assertFailsWith<IllegalStateException> { reducer.reduce(overview(), P503UiEvent.RetryRefresh) }
     }
 
