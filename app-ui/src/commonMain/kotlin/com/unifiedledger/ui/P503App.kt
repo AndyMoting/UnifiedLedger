@@ -1352,18 +1352,30 @@ fun P503App(
      * P8-00 b3 (V-5): one more whole-ledger flow page behind the open account-flow surface. The
      * reducer's request event assigned the request token synchronously (a landing whose token is
      * no longer current can never append — the TagMerchantFilter P3-1 discipline); the read runs
-     * under a lease and lands typed. A cursor-less surface (the whole-ledger walk ended) requests
-     * nothing.
+     * under a lease and lands typed. A cursor-less surface whose walk ENDED requests nothing.
+     *
+     * P8-00 b3 fix round (F-Q2): a cursor-less surface carrying the FIRST-read failure
+     * ([P503AppState.AccountFlow.rowsLoadFailed], zero rows) retries the FIRST page —
+     * [com.unifiedledger.application.QueryLedgerFlowPage.firstPage], since the initial read never
+     * landed. Without this branch the retry used to return silently at the cursor gate.
      */
     fun requestAccountFlowMorePage() {
         val current = latestState.value as? P503AppState.AccountFlow ?: return
-        val cursor = current.nextWholeLedgerCursor ?: return
         if (current.rowsLoading) return
+        val cursor = current.nextWholeLedgerCursor
+        // The walk ended and nothing failed: nothing more to request (the reducer absorbs the
+        // event too; skipping the dispatch keeps the read off).
+        if (cursor == null && !current.rowsLoadFailed) return
         dispatch(P503UiEvent.RequestAccountFlowMorePage)
         val requestToken = (latestState.value as? P503AppState.AccountFlow)?.pageRequestToken ?: return
         val result =
-            ledger.probe { facade -> facade.queryLedgerFlowPage?.pageAfter(cursor) }
-                ?: com.unifiedledger.application.LedgerFlowPageResult.Unavailable
+            ledger.probe { facade ->
+                facade.queryLedgerFlowPage?.let { query ->
+                    // Retry-the-first-page (F-Q2) when no cursor exists to continue from; the
+                    // ordinary 加载更多 continues the walk at the cursor.
+                    if (cursor != null) query.pageAfter(cursor) else query.firstPage()
+                }
+            } ?: com.unifiedledger.application.LedgerFlowPageResult.Unavailable
         dispatch(P503UiEvent.AccountFlowMorePageLanded(requestToken, result))
     }
 

@@ -1287,6 +1287,10 @@ class P503ReducerImpl(
                     balanceCurrency = event.balanceCurrency,
                     loadedRows = accountFlowFilteredRows(event.firstPage, event.accountId),
                     nextWholeLedgerCursor = (event.firstPage as? com.unifiedledger.application.LedgerFlowPageResult.Success)?.page?.nextCursor,
+                    // F-Q1 fix round: a typed Unavailable FIRST page rides the state as the
+                    // failure marker (rowsLoadFailed) — the surface renders the Unavailable copy
+                    // (never the empty-account copy) and the retry re-runs the first page.
+                    rowsLoadFailed = event.firstPage !is com.unifiedledger.application.LedgerFlowPageResult.Success,
                 )
             // P8-00 b3 (V-5 返回保滚动位): the screen applied the restored position; the one-shot
             // consume clears it so a later unrelated re-entry never replays a stale position.
@@ -1550,12 +1554,16 @@ class P503ReducerImpl(
                     // 一次一页: a request while one page read is in flight is absorbed (the token
                     // does not advance — the in-flight read's landing stays appliable).
                     state.rowsLoading -> state
-                    // The whole-ledger walk ended; nothing more to request.
-                    !state.hasMoreWholeLedgerPages -> state
+                    // The whole-ledger walk ended and nothing failed; nothing more to request. A
+                    // FIRST-read failure also holds no cursor, but its retry must re-run the first
+                    // page (F-Q2 fix round) — only a failureless ended walk absorbs here.
+                    !state.hasMoreWholeLedgerPages && !state.rowsLoadFailed -> state
                     else ->
                         state.copy(
                             rowsLoading = true,
-                            rowsLoadFailed = false,
+                            // The failure marker is the LANDING's to clear or re-set (the fix
+                            // round): clearing it here would flash the empty copy over a
+                            // first-page retry in flight (zero rows, no cursor, no failure).
                             pageRequestToken = state.pageRequestToken + 1,
                         )
                 }

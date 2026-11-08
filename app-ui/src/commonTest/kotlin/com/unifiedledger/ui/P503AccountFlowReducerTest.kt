@@ -2,6 +2,7 @@ package com.unifiedledger.ui
 
 import com.unifiedledger.application.LedgerCurrentStateReadPort
 import com.unifiedledger.application.LedgerFlowPageResult
+import com.unifiedledger.application.RecycleBinResult
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
@@ -73,13 +74,16 @@ class P503AccountFlowReducerTest {
 
     private fun otherLeg(amountMinor: Long = 3_580L): Posting = Posting(PostingId("posting-other"), otherAccountId, Money.ofMinor(amountMinor, cny))
 
-    private fun selectEvent(cursor: LedgerCurrentStateReadPort.LedgerFlowCursor? = defaultCursor()): P503UiEvent.SelectAccountFlow =
+    private fun selectEvent(
+        cursor: LedgerCurrentStateReadPort.LedgerFlowCursor? = defaultCursor(),
+        firstPage: LedgerFlowPageResult = page(flowRow("tx-1", paymentLeg(), otherLeg()), flowRow("tx-2", otherLeg()), cursor = cursor),
+    ): P503UiEvent.SelectAccountFlow =
         P503UiEvent.SelectAccountFlow(
             accountId = paymentAccountId,
             balanceLine = "默认支付账户 · 资产 · CNY",
             balanceMinorUnits = -3_580L,
             balanceCurrency = cny,
-            firstPage = page(flowRow("tx-1", paymentLeg(), otherLeg()), flowRow("tx-2", otherLeg()), cursor = cursor),
+            firstPage = firstPage,
             originListScroll = ListScrollPosition(3, 24),
         )
 
@@ -114,6 +118,25 @@ class P503AccountFlowReducerTest {
         everyNonOverviewState { state ->
             assertSame(state, reducer.reduce(state, selectEvent()))
         }
+        // The guard absorbs a re-entry dispatch on the flow surface itself too (only
+        // OverviewEmpty opens it).
+        val entered = enterAccountFlow()
+        assertSame(entered, reducer.reduce(entered, selectEvent()))
+    }
+
+    @Test
+    fun anUnavailableFirstPageLandsAsTheFailureMarkerNeverAsAnEmptyAccount() {
+        // F-Q1 fix round: the typed Unavailable FIRST page rides the state as rowsLoadFailed —
+        // the surface renders the Unavailable face (with its retry), never 「该账户暂无流水」.
+        val entered =
+            assertIs<P503AppState.AccountFlow>(
+                reducer.reduce(overview(), selectEvent(firstPage = LedgerFlowPageResult.Unavailable)),
+            )
+        assertEquals(emptyList(), entered.loadedRows)
+        assertEquals(0, entered.loadedCount)
+        assertTrue(entered.rowsLoadFailed)
+        assertTrue(!entered.hasMoreWholeLedgerPages)
+        assertTrue(!entered.rowsLoading)
     }
 
     // ---- CloseAccountFlow/Back (effect on AccountFlow, absorbed everywhere else) ----
@@ -171,9 +194,18 @@ class P503AccountFlowReducerTest {
 
     @Test
     fun requestMorePageIsAbsorbedWithoutAnOpenCursor() {
-        // cursor = null → the whole-ledger walk ended; the request is absorbed with zero change.
-        val entered = enterAccountFlow(event = selectEvent(cursor = null))
-        assertSame(entered, reducer.reduce(entered, P503UiEvent.RequestAccountFlowMorePage))
+        // cursor = null, nothing failed → the whole-ledger walk ended; the request is absorbed
+        // with zero change.
+        val ended = enterAccountFlow(event = selectEvent(cursor = null))
+        assertSame(ended, reducer.reduce(ended, P503UiEvent.RequestAccountFlowMorePage))
+        // A failed FIRST read also holds no cursor, but its request is NOT absorbed — the retry
+        // re-runs the first page (F-Q2 fix round): the token advances and the in-flight marker
+        // sets (the failure marker is the landing's to clear or re-set).
+        val failed = enterAccountFlow(event = selectEvent(firstPage = LedgerFlowPageResult.Unavailable))
+        val retrying = assertIs<P503AppState.AccountFlow>(reducer.reduce(failed, P503UiEvent.RequestAccountFlowMorePage))
+        assertTrue(retrying.rowsLoading)
+        assertTrue(retrying.rowsLoadFailed)
+        assertEquals(1, retrying.pageRequestToken)
     }
 
     @Test
@@ -246,6 +278,41 @@ class P503AccountFlowReducerTest {
     }
 
     @Test
+    fun aFailedFirstPageRetryLandingReplacesTheFailureMarker() {
+        // F-Q2 fix round end-to-end at reducer level: the first-read failure's retry advances the
+        // token; a SUCCESS landing applies the (now present) first page, clears the failure
+        // marker and opens the walk; a second Unavailable landing re-sets the marker instead of
+        // clearing it into an empty ended claim.
+        val failed = enterAccountFlow(event = selectEvent(firstPage = LedgerFlowPageResult.Unavailable))
+        val retrying = assertIs<P503AppState.AccountFlow>(reducer.reduce(failed, P503UiEvent.RequestAccountFlowMorePage))
+        assertTrue(retrying.rowsLoading)
+        assertTrue(retrying.rowsLoadFailed)
+        val landed =
+            assertIs<P503AppState.AccountFlow>(
+                reducer.reduce(
+                    retrying,
+                    P503UiEvent.AccountFlowMorePageLanded(requestToken = 1, result = page(flowRow("tx-1", paymentLeg()), cursor = defaultCursor())),
+                ),
+            )
+        assertEquals(listOf("tx-1"), landed.loadedRows.map { it.transactionId.value })
+        assertTrue(!landed.rowsLoadFailed)
+        assertTrue(!landed.rowsLoading)
+        assertTrue(landed.hasMoreWholeLedgerPages)
+        // A retry that fails again re-sets the marker (never a silent success shape): a fresh
+        // request advances the token to 2, then the Unavailable landing applies against it.
+        val requestingAgain = assertIs<P503AppState.AccountFlow>(reducer.reduce(landed, P503UiEvent.RequestAccountFlowMorePage))
+        val failedAgain =
+            assertIs<P503AppState.AccountFlow>(
+                reducer.reduce(
+                    requestingAgain,
+                    P503UiEvent.AccountFlowMorePageLanded(requestToken = 2, result = LedgerFlowPageResult.Unavailable),
+                ),
+            )
+        assertTrue(failedAgain.rowsLoadFailed)
+        assertEquals(listOf("tx-1"), failedAgain.loadedRows.map { it.transactionId.value })
+    }
+
+    @Test
     fun requestAndLandedAreAbsorbedInEveryOtherState() {
         everyNonOverviewState { state ->
             assertSame(state, reducer.reduce(state, P503UiEvent.RequestAccountFlowMorePage))
@@ -315,13 +382,74 @@ class P503AccountFlowReducerTest {
 
     // ---- helpers ----
 
-    /** Runs the block against every state other than OverviewEmpty/AccountFlow (matrix column 3). */
+    /**
+     * Runs the block against every state other than OverviewEmpty/AccountFlow — the FULL
+     * `allStates()` enumeration (the F-Q4 fix round; the BackupExport P3-I precedent: an omitted
+     * state's absorption is asserted by nobody). The flow surfaces themselves are covered by the
+     * per-test re-entry assertions above (the guard absorbs a re-entry dispatch there too).
+     */
     private fun everyNonOverviewState(block: (P503AppState) -> Unit) {
         val draft = com.unifiedledger.application.ExpenseDraft(paymentAccountId, null, "35.80", occurredAt)
         val requestId = com.unifiedledger.application.RequestId("request-1")
+        val transactionId = TransactionId("tx-1")
         val states =
             listOf<P503AppState>(
+                // P503AppState subtypes, the allStates() shape (F-Q4 fix round: the helper
+                // enumerates every non-family subtype — the state family's 27 subtypes minus its
+                // own OverviewEmpty/AccountFlow = 25 subtypes; TransactionDetail and
+                // InfrastructureFailure appear in two field-shape variants each, 27 entries).
                 P503AppState.Ready(),
+                P503AppState.TransactionDetail(
+                    overview = overview(),
+                    originTab = P503Tab.HOME,
+                    transactionId = transactionId,
+                    detail = com.unifiedledger.application.TransactionDetailResult.NotFound,
+                ),
+                P503AppState.TransactionDetail(
+                    overview = overview(),
+                    originTab = P503Tab.HOME,
+                    transactionId = transactionId,
+                    detail = com.unifiedledger.application.TransactionDetailResult.NotFound,
+                    annotationHistory = emptyList(),
+                    versionHistory = com.unifiedledger.application.TransactionVersionHistoryResult.Unavailable,
+                ),
+                P503AppState.ImportCandidateDetail(
+                    overview = overview(),
+                    candidateId = com.unifiedledger.application.ImportCandidateId("candidate-1"),
+                    detail = com.unifiedledger.application.ImportCandidateDetailResult.Absent,
+                    duplicates = com.unifiedledger.application.ImportDuplicateReviewsResult.NoDuplicates,
+                    form = ImportDecisionDraft(),
+                ),
+                P503AppState.ImportBatchConfirm(overview()),
+                P503AppState.ImportBatchSubmitting(overview(), "2026-09-14T08:00:00Z", emptyList()),
+                P503AppState.TransactionEdit(overview = overview(), origin = origin()),
+                P503AppState.TransferEdit(overview = overview(), origin = transferOrigin()),
+                P503AppState.VoidConfirm(overview = overview(), transactionId = transactionId),
+                P503AppState.RecycleBin(
+                    overview = overview(),
+                    rows = RecycleBinResult.Success(emptyList()),
+                ),
+                P503AppState.TransactionAnnotationEdit(
+                    overview = overview(),
+                    intent =
+                        TransactionAnnotationEditIntent(
+                            transactionId = transactionId,
+                            expectedAnnotationRevision = 0L,
+                            expectedCurrentVersionId = TransactionVersionId("version-1"),
+                        ),
+                ),
+                P503AppState.BackupExport(overview = overview()),
+                P503AppState.BackupRestore(overview = overview()),
+                P503AppState.RestoreSessionTerminal(BackupRestoreRecoveryCause.RollbackReopenFailed),
+                P503AppState.BudgetConfig(
+                    overview = overview(),
+                    scope = com.unifiedledger.domain.BudgetScope.Total,
+                    month = kotlinx.datetime.YearMonth(2026, 3),
+                    revision = 0L,
+                    closed = false,
+                    limitMinorUnits = null,
+                ),
+                P503AppState.TagMerchantFilter(overview(), kotlinx.datetime.YearMonth(2026, 1)),
                 P503AppState.Editing(draft, requestId),
                 P503AppState.AwaitingConfirmation(draft, requestId),
                 P503AppState.Submitting(draft, requestId),
@@ -333,14 +461,33 @@ class P503AccountFlowReducerTest {
                 P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, draft, requestId),
                 P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ),
                 P503AppState.UnknownCommit(draft, requestId),
-                P503AppState.TransactionDetail(
-                    overview = overview(),
-                    originTab = P503Tab.HOME,
-                    transactionId = TransactionId("tx-1"),
-                    detail = com.unifiedledger.application.TransactionDetailResult.NotFound,
-                ),
-                P503AppState.BackupExport(overview = overview()),
             )
         states.forEach(block)
     }
+
+    // The TransactionEdit-origin fixture (the BackupExport test's shape, inlined).
+    private fun origin(): TransactionEditOrigin =
+        TransactionEditOrigin(
+            transactionId = TransactionId("tx-1"),
+            currentVersionId = TransactionVersionId("version-1"),
+            note = "old note",
+            statisticsAt = occurredAt,
+            amountText = "100.00",
+            categoryId = com.unifiedledger.domain.CategoryId("category-food"),
+            fundingAccountId = paymentAccountId,
+        )
+
+    private fun transferOrigin(): TransferCorrectionOrigin =
+        TransferCorrectionOrigin(
+            transactionId = TransactionId("tx-1"),
+            currentVersionId = TransactionVersionId("version-1"),
+            note = null,
+            statisticsAt = occurredAt,
+            currency = cny,
+            sourceAccountId = paymentAccountId,
+            destinationAccountId = AccountId("asset-bank"),
+            destinationCreditMinorUnits = 10_000L,
+            feeMinorUnits = 0L,
+            feeCategoryId = null,
+        )
 }

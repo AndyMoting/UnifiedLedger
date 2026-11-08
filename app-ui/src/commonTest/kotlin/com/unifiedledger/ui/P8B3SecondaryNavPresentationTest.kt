@@ -29,9 +29,10 @@ import kotlin.time.Instant
  * P8-00 b3 (V-6/V-5) presentation decisions: the canvas-04 headline amount never fabricates a
  * net for a multi-leg transfer, the sub-line always renders, the version-history line carries
  * version number + both times + note (可空 → 无) + the current-version marker, and the
- * account-flow surface's filter/footer/empty copy decisions are honest (a not-loaded state never
- * reads as empty; no total is ever claimed beyond the loaded count). Pure functions — no Compose
- * runtime.
+ * account-flow surface's filter/footer/empty/failure-face decisions are honest (a not-loaded
+ * state never reads as empty; a typed Unavailable first read renders the failure face with its
+ * retry — never the empty copy, the F-Q1 fix round; no total is ever claimed beyond the loaded
+ * count; the row labels announce account names, F-Q5). Pure functions — no Compose runtime.
  */
 class P8B3SecondaryNavPresentationTest {
     private val cny = CurrencyUnit("CNY", 2)
@@ -145,6 +146,38 @@ class P8B3SecondaryNavPresentationTest {
     }
 
     @Test
+    fun theRowAccessibilityLabelAnnouncesAccountNamesNeverBareIds() {
+        // F-Q5 fix round: the flow-row label joins the flowRowContentDescription family (the
+        // P503LedgerViewPresentation.kt:412 shape) — legs announce the account NAME when known,
+        // falling back to the bare id only when the name table lacks the account.
+        val row =
+            LedgerEntryRow(
+                transactionId = TransactionId("tx-1"),
+                currentVersionId = TransactionVersionId("version-1"),
+                kind = TransactionKind.EXPENSE,
+                occurredAt = occurredAt,
+                statisticsAt = occurredAt,
+                note = "工作午餐",
+                postings =
+                    listOf(
+                        com.unifiedledger.domain.Posting(PostingId("posting-a"), expenseId, Money.ofMinor(-3_200L, cny)),
+                        com.unifiedledger.domain.Posting(PostingId("posting-b"), assetId, Money.ofMinor(3_200L, cny)),
+                    ),
+            )
+        val names = mapOf(expenseId to "餐费账户", assetId to "默认支付账户")
+        val label = accountFlowRowContentDescription(row, names)
+        assertTrue(label.startsWith("EXPENSE，统计时间 $occurredAt，备注 工作午餐；"))
+        assertTrue(label.contains("餐费账户 -32.00 CNY"))
+        assertTrue(label.contains("默认支付账户 32.00 CNY"))
+        assertFalse(label.contains("account-expense"))
+        assertFalse(label.contains("account-asset"))
+        // The unknown-name fallback stays the bare id (the family's degradation, honest).
+        val fallback = accountFlowRowContentDescription(row, emptyMap())
+        assertTrue(fallback.contains("account-expense -32.00 CNY"))
+        assertTrue(fallback.contains("account-asset 32.00 CNY"))
+    }
+
+    @Test
     fun theFooterFollowsTheWalkAndTheFailureMarkers() {
         val base =
             P503AppState.AccountFlow(
@@ -209,11 +242,11 @@ class P8B3SecondaryNavPresentationTest {
     }
 
     @Test
-    fun anUnavailableFirstPageLeavesTheHonestEmptyDecisionToTheScreenBranchOrder() {
-        // An Unavailable first page lands cursor-null with zero rows; the screen's branch order
-        // (failure copy → empty-with-open-cursor → empty-ended) is what keeps the typed failure
-        // from ever rendering as 暂无流水. This pins the data invariant the order relies on:
-        // an Unavailable page never contributes rows or a cursor.
+    fun anUnavailableFirstPageRendersTheUnavailableFaceNeverTheEmptyCopy() {
+        // F-Q1 fix round: an Unavailable first page lands as the failure marker (rowsLoadFailed),
+        // and the body-face decision renders the UNAVAILABLE face — the failure copy with its
+        // retry affordance, NEVER the 「该账户暂无流水」 empty copy (the former test pinned the
+        // degradation; the contract is the opposite).
         val surface =
             P503AppState.AccountFlow(
                 overview = P503AppState.OverviewEmpty(LedgerCurrentState(LedgerId("ledger-p8b3"), transactions = emptyList(), balances = emptyList())),
@@ -223,9 +256,34 @@ class P8B3SecondaryNavPresentationTest {
                 balanceCurrency = cny,
                 loadedRows = emptyList(),
                 nextWholeLedgerCursor = null,
+                rowsLoadFailed = true,
             )
         assertEquals(0, surface.loadedCount)
         assertFalse(surface.hasMoreWholeLedgerPages)
-        assertEquals("该账户暂无流水。", accountFlowEmptyText(surface))
+        assertEquals(AccountFlowBodyFace.UNAVAILABLE, accountFlowBodyFace(surface))
+        // The face decision never consults the empty copy on the failure path: the empty text
+        // still maps the END walk to 暂无流水, but the face routing keeps that copy UNREACHABLE
+        // while rowsLoadFailed holds.
+        assertEquals("该账户暂无流水。", accountFlowEmptyText(surface.copy(rowsLoadFailed = false)))
+        assertEquals(AccountFlowBodyFace.EMPTY_ENDED, accountFlowBodyFace(surface.copy(rowsLoadFailed = false)))
+        // The other faces hold their shapes. A more-page failure with zero rows BUT an open
+        // cursor (first page landed 0 account rows, then the more page failed — reachable) is
+        // still the UNAVAILABLE face: the failure outranks, and the retry continues at the
+        // cursor. A failureless open walk with zero rows stays LIST (已加载 0 笔 + 加载更多,
+        // never an empty claim); a failureless ended walk is the honest empty.
+        assertEquals(
+            AccountFlowBodyFace.UNAVAILABLE,
+            accountFlowBodyFace(surface.copy(nextWholeLedgerCursor = LedgerCurrentStateReadPort.LedgerFlowCursor(0L, "tx-0"))),
+        )
+        assertEquals(
+            AccountFlowBodyFace.LIST,
+            accountFlowBodyFace(
+                surface.copy(
+                    rowsLoadFailed = false,
+                    nextWholeLedgerCursor = LedgerCurrentStateReadPort.LedgerFlowCursor(0L, "tx-0"),
+                ),
+            ),
+        )
+        assertEquals(AccountFlowBodyFace.EMPTY_ENDED, accountFlowBodyFace(surface.copy(rowsLoadFailed = false, nextWholeLedgerCursor = null)))
     }
 }

@@ -437,11 +437,20 @@ sealed interface P503AppState {
         val balanceCurrency: com.unifiedledger.domain.CurrencyUnit,
         /** Filtered rows accumulated so far, in display order (the host's frozen sort). */
         val loadedRows: List<com.unifiedledger.application.LedgerEntryRow>,
-        /** The whole-ledger walk's continuation cursor (`null` = the whole-ledger walk ended). */
+        /**
+         * The whole-ledger walk's continuation cursor (`null` = the whole-ledger walk ended; with
+         * [rowsLoadFailed] also true, `null` = the FIRST read failed and its retry re-runs the
+         * first page — the F-Q1/F-Q2 fix round).
+         */
         val nextWholeLedgerCursor: com.unifiedledger.application.LedgerCurrentStateReadPort.LedgerFlowCursor?,
         /** True while a more-page read is in flight (a duplicate request is absorbed, 一次一页). */
         val rowsLoading: Boolean = false,
-        /** The last more-page failure (fail-closed: the loaded rows stay visible beside the retry). */
+        /**
+         * The last flow-read failure, fail-closed: a more-page failure keeps the loaded rows
+         * visible beside the retry, and the FIRST page's typed Unavailable lands here too
+         * (P8-00 b3 fix round F-Q1) — an unavailable first read must never degrade into the
+         * 「该账户暂无流水」 empty copy (R-Q06-4).
+         */
         val rowsLoadFailed: Boolean = false,
         /** The monotonic request identity of the more-page read (see the state KDoc). */
         val pageRequestToken: Long = 0L,
