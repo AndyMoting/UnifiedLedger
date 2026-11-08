@@ -180,6 +180,16 @@ sealed interface P503AppState {
          * zero formal effect.
          */
         val externalNavigationBusy: ExternalNavigationBusy? = null,
+        /**
+         * P8-00 shell (D-301; spec section 1.1): the state-internal import-surface route. When
+         * true the overview renders the existing import projection ([importReview]) instead of
+         * the selected tab's content — the route the drawer's 导入账单 entry and the launcher
+         * shortcut's `OpenImportTab` leg both take ([P503UiEvent.OpenImportSurface]); a bottom
+         * bar tap (`SelectTab`) leaves the surface and returns to the chosen tab. The import
+         * events and projection semantics are unchanged (V-2). Additive with a `false` default,
+         * so every pre-P8 constructor and copy site keeps compiling.
+         */
+        val importSurface: Boolean = false,
     ) : P503AppState
 
     data class Editing(
@@ -371,12 +381,13 @@ sealed interface P503AppState {
 
     /**
      * P7-04.C (D-146; spec sections 6.1/6.2): the import candidate detail state. Reached only
-     * from an IMPORT list row (仅 IMPORT 清单行可达). Carries the overview to return to (so
-     * CloseImportCandidateDetail/Back restore the exact IMPORT tab with its list payload,
-     * selection set and — written back on close — the same candidate's decision draft, spec
-     * section 6.2 表单字段保留), the requested candidate id, the host-resolved typed detail and
-     * duplicate-comparison payloads, the pure decision-form draft, the in-flight duplicate-review
-     * marker (期间禁重复提交) and the typed notice banner.
+     * from an import-review list row (仅导入清单行可达 — P8-00: the review rides the
+     * state-internal importSurface route, no IMPORT tab). Carries the overview to return to (so
+     * CloseImportCandidateDetail/Back restore the exact overview — list payload, importSurface
+     * route, selection set and — written back on close — the same candidate's decision draft,
+     * spec section 6.2 表单字段保留), the requested candidate id, the host-resolved typed detail
+     * and duplicate-comparison payloads, the pure decision-form draft, the in-flight
+     * duplicate-review marker (期间禁重复提交) and the typed notice banner.
      */
     data class ImportCandidateDetail(
         val overview: OverviewEmpty,
@@ -714,14 +725,18 @@ sealed interface P503AppState {
  * P5-04.1 overview tabs. Tab selection is part of the shared reducer state, so an
  * authoritative refresh can always return the overview to the home tab.
  *
- * P7-04.C (D-146, R-13): the frozen three-tab contract (D-122) is extended by [IMPORT] as the
- * fourth tab; the bottom-bar layout semantics are unchanged, only the tab item is added.
+ * P8-00 shell (D-301; spec section 1.1): the D-146 four-tab contract collapses back to three
+ * tabs (HOME/ACCOUNTS/ANALYSIS) and [IMPORT] leaves the bottom-bar enum. The import surface
+ * remains reachable as a state-internal overview route: [OverviewEmpty.importSurface] renders
+ * the existing import projection instead of the tab content, entered by
+ * [P503UiEvent.OpenImportSurface] (the drawer's 导入账单 entry and the launcher shortcut's
+ * `OpenImportTab` leg) and left by [P503UiEvent.SelectTab] (a bottom-bar tap returns to the
+ * chosen tab) — the import projection, its events and its semantics are unchanged (V-2).
  */
 enum class P503Tab {
     HOME,
     ACCOUNTS,
     ANALYSIS,
-    IMPORT,
 }
 
 enum class InfrastructureFailureContext {

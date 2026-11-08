@@ -553,14 +553,15 @@ class ExternalNavigationReducerTest {
 
     @Test
     fun anIdleOpenImportTabRoutesToTheExistingImportSurfaceWithZeroFormalWrite() {
-        // D-226: 打开既有 IMPORT 面 is the `SelectTab(P503Tab.IMPORT)` navigation semantic with the
-        // slot consumed. Zero formal-ledger write: the overview's read state is untouched.
+        // D-226 / P8-00 shell (D-301): 打开既有导入面 is the `OpenImportSurface` route — the
+        // state-internal importSurface flag with the slot consumed. Zero formal-ledger write:
+        // the overview's read state is untouched, and the tab cursor stays where it was.
         val decision = decideExternalNavigation(overview(), importTab, runtimeReady = true, runtimeQuiesced = false, existingPending = null)
         assertEquals(importTab, assertIs<ExternalNavigationDecision.Routed>(decision).request)
 
         val landed = reduce(overview(), P503UiEvent.ExternalNavigationDecisionLanded(ExternalNavigationDecision.Routed(importTab)))
         val routed = assertIs<P503AppState.OverviewEmpty>(landed)
-        assertEquals(P503Tab.IMPORT, routed.selectedTab)
+        assertTrue(routed.importSurface)
         assertNull(routed.pendingExternalNavigation, "the routed request is consumed, not left held")
         // The projection is NOT fabricated by the pure reducer (the host's state effect loads it).
         assertNull(routed.importReview)
@@ -620,12 +621,13 @@ class ExternalNavigationReducerTest {
 
     @Test
     fun aCarriedStartupHeldImportTabReEntersTheGateAndOpensImport() {
-        // T11 leg 2: the cold-start 导入 shortcut ends on the SAME surface the hot path reaches.
+        // T11 leg 2: the cold-start 导入 shortcut ends on the SAME surface the hot path reaches
+        // (P8-00 shell D-301: the importSurface route, not a bottom-bar tab).
         val carried = overview().copy(pendingExternalNavigation = startupHeld(importTab))
         val decision = startupHeldReRoutingDecision(carried, ExternalNavigationRuntimeFacts(ready = true, quiesced = false), carried.pendingExternalNavigation)
         assertIs<ExternalNavigationDecision.Routed>(decision)
         val landed = reduce(carried, P503UiEvent.ExternalNavigationDecisionLanded(decision!!))
-        assertEquals(P503Tab.IMPORT, assertIs<P503AppState.OverviewEmpty>(landed).selectedTab)
+        assertTrue(assertIs<P503AppState.OverviewEmpty>(landed).importSurface)
     }
 
     @Test

@@ -425,6 +425,17 @@ sealed interface P503UiEvent {
     // never throws anywhere (table 6.2a); every pre-existing unlisted combination stays ISE (G-B).
 
     /**
+     * P8-00 shell (D-301; spec section 1.2): opens the import surface on the overview — the
+     * drawer's 导入账单 entry and the routing target of the launcher shortcut's `OpenImportTab`
+     * leg. Effect only on OverviewEmpty (sets [P503AppState.OverviewEmpty.importSurface] and
+     * leaves the tab cursor untouched, so the bottom bar shows the origin tab while the import
+     * projection renders); absorbed everywhere else. The projection load itself stays the
+     * host's state-driven effect (the D-226 shape: an inbound request never passes through
+     * `onSelectTab`); no import flow is started and no file is carried — zero formal write.
+     */
+    data object OpenImportSurface : P503UiEvent
+
+    /**
      * Starts one platform file pick for the matrix format. Effect on OverviewEmpty is the host's
      * pick launch (经宿主发起平台选择器；不切态 — the reducer state itself is unchanged, the
      * coordinator/testable host action owns the effect); absorbed everywhere else.
