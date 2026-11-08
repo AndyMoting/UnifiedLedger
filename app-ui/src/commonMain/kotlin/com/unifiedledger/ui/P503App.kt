@@ -4181,10 +4181,12 @@ fun P503App(
                                     backupRestoreWired = backupExportEntryVisible(ledger.surfaces.backupExport),
                                     // P8-00 b2 (2026-11-08 user ruling): the restore entry rides the
                                     // 备份与恢复 carrier row — wired restore renders the 导出 · 恢复备份
-                                    // suffix and the carrier route opens the export face whose
+                                    // suffix and the carrier face offers the 恢复备份 affordance whose
                                     // OpenBackupRestore route opens the restore surface. An unwired
-                                    // restore keeps the row clickable for export only (the suffix degrades
-                                    // to 导出); an unwired carrier stays the disabled 暂未开放 shape.
+                                    // restore keeps the row clickable for export only (the suffix
+                                    // degrades to 导出) and the carrier face's restore affordance
+                                    // renders its disabled 暂未开放 shape; an unwired carrier stays the
+                                    // disabled 暂未开放 shape.
                                     restoreWired = backupRestoreEntryVisible(ledger.surfaces.backupRestore),
                                     onOpenRecycleBin = {
                                         drawerClose()
@@ -4623,6 +4625,14 @@ fun P503App(
                             // The host export call site is passed only when the use case is wired; an
                             // unwired composition renders the disabled confirm, never a dead button.
                             onConfirm = if (ledger.surfaces.backupExport) ({ confirmBackupExport(current) }) else null,
+                            // P8-00 b2 fix round (review F-Q1): the face IS the drawer's restore
+                            // CARRIER, so the restore leg is wired here — passed only when the
+                            // composition root bound the restore use cases; an unwired one renders
+                            // the honest disabled 恢复备份（暂未开放） affordance. The click issues
+                            // the typed OpenBackupRestore on the carrier (the reducer's designed
+                            // route opens the restore surface carrying this face's overview); the
+                            // restore flow semantics are untouched.
+                            onOpenRestore = if (ledger.surfaces.backupRestore) ({ dispatch(P503UiEvent.OpenBackupRestore) }) else null,
                             onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.CloseBackupExport) },
                         )
                     is P503AppState.BackupRestore ->

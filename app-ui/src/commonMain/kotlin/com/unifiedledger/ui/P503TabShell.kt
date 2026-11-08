@@ -292,11 +292,12 @@ internal fun P8HomeTopBar(
  * runs the sheet-close action (the ✕ row / the header close button's host channel).
  *
  * P8-00 b2 (2026-11-08 user ruling): the 备份与恢复 row is the restore entry's CARRIER — its
- * target surface is the existing backup/export face whose state-internal restore route
- * ([P503UiEvent.OpenBackupRestore]) the reducer also accepts. [restoreWired] gates the restore
- * leg; when it is wired the row carries the 导出 · 恢复备份 suffix (the ruling's行尾标注) and
- * the click opens the carrier face; when unwired the row renders the 暂未开放 disabled shape.
- * The restore flow itself (preflight/confirm switch) is untouched — this is a pure entry
+ * target surface is the existing backup/export face whose restore affordance issues
+ * [P503UiEvent.OpenBackupRestore], the route the reducer also accepts. [restoreWired] gates the
+ * restore leg; when it is wired the row carries the 导出 · 恢复备份 suffix (the ruling's行尾标注)
+ * and the click opens the carrier face; when unwired the row renders the 暂未开放 disabled shape —
+ * or, with a wired carrier but an unwired restore, degrades to the plain 导出 suffix. The restore
+ * flow itself (preflight/confirm switch) is untouched — this is a pure entry
  * migration off the HOME overview.
  */
 @Composable
@@ -329,8 +330,10 @@ internal fun P8LedgerDataDrawer(
             P8DrawerRow("新建账本", enabled = false, suffix = "专项另行设计", onClick = {})
             P8DrawerGroupHeader("数据")
             // P8-00 b2: the carrier row. Wired = clickable, suffix 导出 · 恢复备份 (the ruling's
-            // end-of-row annotation); unwired = the honest disabled 暂未开放 shape (the shell
-            // batch precedent). The suffix rides the disabledFaint/variant colors of the row.
+            // end-of-row annotation); wired carrier + unwired restore degrades to 导出 (the carrier
+            // face's own restore affordance then renders the honest disabled 暂未开放 shape);
+            // unwired carrier = the honest disabled 暂未开放 shape (the shell batch precedent).
+            // The suffix rides the disabledFaint/variant colors of the row.
             P8DrawerRow(
                 "备份与恢复",
                 enabled = backupRestoreWired,

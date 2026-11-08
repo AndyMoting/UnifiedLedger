@@ -576,8 +576,12 @@ sealed interface P503AppState {
 
     /**
      * P7-06 06.D (D-182; spec sections 3/5.1/5.5/6): the restore CONFIRM & SWITCH surface. Reached
-     * from the HOME overview entry affordance when the composition root wired the restore use
-     * cases. [overview] is carried so every exit restores the exact tab/month/payload (the export
+     * through the side drawer's 备份与恢复 carrier row — the row opens the backup/export carrier
+     * face (P8-00 b2, 2026-11-08 user ruling), whose restore affordance issues
+     * [P503UiEvent.OpenBackupRestore] to land here — when the composition root wired the restore
+     * use cases; the direct-from-overview route on [OverviewEmpty] is kept for the family shape.
+     * The former HOME overview entry affordance was removed in P8-00 b2 (the pure entry migration).
+     * [overview] is carried so every exit restores the exact tab/month/payload (the export
      * surface's preserved-overview discipline). The password lives only in this in-memory draft —
      * NEVER persisted, logged or placed in a diagnostic; [toString] redacts it (and the token's
      * content) exactly like [BackupExport].

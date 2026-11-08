@@ -270,7 +270,8 @@ class P503RestoreReducerTest {
     fun openBackupRestoreIsAbsorbedOutsideItsTwoDesignedStates() {
         // P8-00 b2 (2026-11-08 user ruling): the event's designed states are OverviewEmpty AND
         // the BackupExport drawer carrier (the 备份与恢复 row's restore leg); every other state
-        // absorbs it. The carrier route itself is pinned by P8AssetScreenAggregationTest.
+        // absorbs it. The carrier route itself is pinned by
+        // theDrawerCarrierRouteOpensTheSurfaceOffTheExportFaceCarryingItsOverview above in THIS file.
         val overview = overview()
         val carrier = P503AppState.BackupExport(overview)
         everyStateExcept(overview, carrier).forEach { state ->

@@ -40,9 +40,11 @@ import com.unifiedledger.ui.theme.LocalP8Palette
  *    (D-143: the hidden counterparty receivable accounts) are excluded — they would double-count
  *    against the LEND funding leg and they never enter the A-2 management surface.
  * 2. the 总借入/总借出 card pair with the canvas layout. The values are an honest placeholder
- *    (—), never a fabricated zero: no composition root exposes a UI-path read of the per-counterparty
- *    lending positions, and the product lending chain (P7-02.C) has LEND/COLLECT behaviors only —
- *    a 借入 position source does not exist at all. Wiring exact values (总借出 over
+ *    (—), never a fabricated zero: no composable consumes the wired `lendingPositions` port
+ *    (both composition roots pass it into the facade — desktop `Main.kt`, android `App.kt` —
+ *    but nothing reads it), the per-counterparty/per-currency aggregation口径 is unruled, and
+ *    the product lending chain (P7-02.C) has LEND/COLLECT behaviors only — a 借入 position
+ *    source does not exist at all. Wiring exact values (总借出 over
  *    `LendingPositionReadPort`, 借入 pending a product source) belongs to a later batch.
  * 3. the grouped account lists 「资产 · N 个账户」/「负债 · N 个账户」 with rows = name + kind +
  *    balance. The data口径 is exactly the现行 [P503CatalogManagementScreen] account rows: the
