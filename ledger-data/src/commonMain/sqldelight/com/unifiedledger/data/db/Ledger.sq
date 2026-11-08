@@ -9371,6 +9371,19 @@ JOIN transaction_effective_state AS effective
  AND effective.is_effective = 1
 WHERE tx.ledger_id = ?
 GROUP BY posting.account_id, posting.currency_code, posting.currency_precision;
+
+-- P8-00 b3 (V-6; D-301 spec section 2.4): one transaction's FULL financial version chain —
+-- every transaction_version row of the (ledger, transaction) key in ascending version_number
+-- order. Read-only named query only: no DDL, no index, no schema change (the UNIQUE
+-- (transaction_id, version_number) constraint already serves the ORDER BY). The caller gates
+-- the read on the effective predicate first (ledgerEntryRowByTransaction), so the chain here
+-- is projected as-is: a version chain is an audit surface, the effective filter stays the
+-- caller's decision.
+transactionVersionsByTransaction:
+SELECT version_id, transaction_id, version_number, posting_set_id,
+  occurred_at, statistics_at, effective_at, note
+FROM transaction_version WHERE ledger_id = ? AND transaction_id = ? ORDER BY version_number;
+
 importCreationConfirmationByTransaction:
 -- Reverse creation lineage: transaction -> import_confirmation. operation_class is
 -- CHECK-constrained to 'creation' (:7774); the predicate restates it per Appendix A.

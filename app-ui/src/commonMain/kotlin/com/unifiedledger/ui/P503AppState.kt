@@ -190,6 +190,21 @@ sealed interface P503AppState {
          * so every pre-P8 constructor and copy site keeps compiling.
          */
         val importSurface: Boolean = false,
+        /**
+         * P8-00 b3 (V-5 返回保滚动位 mechanism): the ORIGIN list's scroll position captured when
+         * the user left the overview for a secondary surface (HOME flow list → transaction
+         * detail; ACCOUNTS account list → account flow), restored when the exact overview comes
+         * back. The mechanism is state-internal (reducer-carried, the import-surface pattern):
+         * the entry event (`SelectTransaction`/`SelectAccountFlow`) samples the position the
+         * screen passes in, and the close transitions (`CloseTransactionDetail`/
+         * `CloseAccountFlow`/`Back`) return it with the preserved overview. There is deliberately
+         * NO async write-back hop — the reducer never carries a pending-scroll slot — so a
+         * late/stale scroll write-back cannot exist; the one-shot consume
+         * ([P503UiEvent.ListScrollRestored]) clears the field after the screen applied it, so a
+         * later unrelated re-entry never replays a stale position. `null` = no position captured
+         * (every pre-b3 path, no restore).
+         */
+        val originListScroll: ListScrollPosition? = null,
     ) : P503AppState
 
     data class Editing(
@@ -377,7 +392,75 @@ sealed interface P503AppState {
         // unreadable) and the detail renders no history block; an EMPTY list is the honest
         // "never annotated". Read-only display only — zero edit entries ride this field.
         val annotationHistory: List<com.unifiedledger.application.TransactionAnnotationHistoryEntry>? = null,
+        /**
+         * P8-00 b3 (V-6): the read-only financial version history the host read under the SAME
+         * lease as the detail (the annotationHistory twin). `null` = the read is unavailable
+         * (unwired port, unreadable, or the surface was never opened after the landing) and the
+         * detail renders no version-history block; a Success carries the full chain. Read-only
+         * display only — zero action entries ride this field (the D-223 precedent).
+         */
+        val versionHistory: com.unifiedledger.application.TransactionVersionHistoryResult? = null,
     ) : P503AppState
+
+    /**
+     * P8-00 b3 (V-5; D-301 spec sections 1.3/2.6): the read-only account-flow secondary surface,
+     * reached only from an asset-screen account row (仅资产行可达). [overview] is carried so every
+     * exit restores the exact tab/month/payload (the preserved-overview discipline, C03).
+     *
+     * The flow rows come from the EXISTING whole-ledger keyset page source
+     * ([com.unifiedledger.application.QueryLedgerFlowPage]); the host filters each page by the
+     * account's postings in memory (当前 200 行/页约定内， no data-layer change) and lands typed
+     * pages through [P503UiEvent.AccountFlowMorePageLanded]. [loadedRows] accumulates the
+     * filtered rows; [hasMoreWholeLedgerPages] mirrors the whole-ledger cursor (`null` = the
+     * whole-ledger walk ended — the honest end, never a fabricated total). No transaction-count
+     * claim is ever displayed (no per-account total exists); the loaded count renders as-is
+     * (「已加载 N 笔」). [rowsLoading]/[rowsLoadFailed]/[pageRequestToken] are the single-flight,
+     * fail-closed and late-write-guard triple, the [TagMerchantFilter] page-token precedent.
+     *
+     * [pageRequestToken] is the monotonic request identity of the more-page read: every
+     * RequestAccountFlowMorePage dispatch advances it, the host presents it back on the landing,
+     * and the reducer applies a landing only when its token is still current — a read superseded
+     * by a newer request (or duplicated) can never append. Pure bookkeeping, never rendered.
+     *
+     * The surface's own scroll position is deliberately NOT carried: closing destroys it (the
+     * registered batch trade-off); the ACCOUNTS list's scroll restoration rides the carried
+     * overview (see [OverviewEmpty.originListScroll]) and this surface never writes it back late
+     * — the only write is the reducer's synchronous close transition.
+     */
+    data class AccountFlow(
+        val overview: OverviewEmpty,
+        val accountId: AccountId,
+        /** The header副行 the host resolved at open time (「名称 · 类型 · 币种」). */
+        val balanceLine: String,
+        /** The account's exact display balance (minor units + currency) for the header大字. */
+        val balanceMinorUnits: Long,
+        val balanceCurrency: com.unifiedledger.domain.CurrencyUnit,
+        /** Filtered rows accumulated so far, in display order (the host's frozen sort). */
+        val loadedRows: List<com.unifiedledger.application.LedgerEntryRow>,
+        /**
+         * The whole-ledger walk's continuation cursor (`null` = the whole-ledger walk ended; with
+         * [rowsLoadFailed] also true, `null` = the FIRST read failed and its retry re-runs the
+         * first page — the F-Q1/F-Q2 fix round).
+         */
+        val nextWholeLedgerCursor: com.unifiedledger.application.LedgerCurrentStateReadPort.LedgerFlowCursor?,
+        /** True while a more-page read is in flight (a duplicate request is absorbed, 一次一页). */
+        val rowsLoading: Boolean = false,
+        /**
+         * The last flow-read failure, fail-closed: a more-page failure keeps the loaded rows
+         * visible beside the retry, and the FIRST page's typed Unavailable lands here too
+         * (P8-00 b3 fix round F-Q1) — an unavailable first read must never degrade into the
+         * 「该账户暂无流水」 empty copy (R-Q06-4).
+         */
+        val rowsLoadFailed: Boolean = false,
+        /** The monotonic request identity of the more-page read (see the state KDoc). */
+        val pageRequestToken: Long = 0L,
+    ) : P503AppState {
+        /** The honest loaded count: exactly the rows on screen, never a ledger-wide total. */
+        val loadedCount: Int get() = loadedRows.size
+
+        /** Whether more whole-ledger pages may still carry rows for this account. */
+        val hasMoreWholeLedgerPages: Boolean get() = nextWholeLedgerCursor != null
+    }
 
     /**
      * P7-04.C (D-146; spec sections 6.1/6.2): the import candidate detail state. Reached only
@@ -724,6 +807,20 @@ sealed interface P503AppState {
 
     data object Recovered : P503AppState
 }
+
+/**
+ * P8-00 b3 (V-5 返回保滚动位): one screen list's scroll position, sampled synchronously by the
+ * screen at the moment the user leaves for a secondary surface and carried by the reducer state
+ * (the import-surface state-internal pattern). [firstVisibleItemIndex] +
+ * [firstVisibleItemScrollOffset] are the [androidx.compose.foundation.lazy.LazyListState] pair
+ * exactly; a plain `verticalScroll` screen maps its [androidx.compose.foundation.ScrollState]
+ * value onto (index = 0, offset = value) and restores with `scrollTo(offset)`. Pure value: no
+ * state object, no coroutine — testable at reducer level without a Compose runtime.
+ */
+data class ListScrollPosition(
+    val firstVisibleItemIndex: Int,
+    val firstVisibleItemScrollOffset: Int,
+)
 
 /**
  * P5-04.1 overview tabs. Tab selection is part of the shared reducer state, so an

@@ -87,6 +87,15 @@ class CatalogConsumerSession(
     var queryTransactionDetail: QueryTransactionDetail = QueryTransactionDetail(readPort, ledgerId, authority.catalog)
         private set
 
+    /**
+     * P8-00 b3 (V-6): the read-only financial version chain of one transaction. No catalog
+     * dependency (the chain is an audit projection of the version table), so — like
+     * [queryLedgerEntryRows] — it is constructed once from the read port and deliberately not
+     * rebuilt by [refresh].
+     */
+    var queryTransactionVersionHistory: QueryTransactionVersionHistory = QueryTransactionVersionHistory(readPort, ledgerId)
+        private set
+
     /** P7-03.B/C: the unified monthly projection; `null` without an injected reporting clock. */
     var queryMonthlyActivity: QueryMonthlyActivity? = clock?.let { QueryMonthlyActivity(readPort, ledgerId, authority.catalog, it) }
         private set

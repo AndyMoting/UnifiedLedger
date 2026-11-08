@@ -1425,6 +1425,7 @@ private fun buildLedgerGraph(
             baseQueryLedgerFlowPage = session.queryLedgerFlowPage,
             baseQueryMonthlyActivity = session.queryMonthlyActivity,
             baseQueryTransactionDetail = session.queryTransactionDetail,
+            baseQueryTransactionVersionHistory = session.queryTransactionVersionHistory,
             catalogSession = session,
             // P7-04.A/B (D-146): the import surface — the SAF pick port and the jvmMain
             // intake orchestration on the same ledger; the P7-04.C host consumes both

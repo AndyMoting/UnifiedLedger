@@ -251,6 +251,78 @@ class SqlDelightLedgerEntryReadAdapterTest {
     }
 
     @Test
+    fun versionChainProjectsEveryVersionRowInAscendingOrderAcrossLedgers() {
+        // P8-00 b3 (V-6): the read-only version-chain projection — every transaction_version row
+        // of the (ledger, transaction) key in ascending version_number order, notes and posting
+        // sets verbatim; other ledgers' rows and other transactions' rows never leak.
+        val path = newDatabaseFile("p8-b3-version-chain-")
+        try {
+            val harness = EntryReadHarness(path)
+            // A corrected transaction: v1 created, v2 appended (statistics moved), pointer moved
+            // to v2. The chain must read BOTH versions in order.
+            harness.insertTransaction(
+                transactionId = TransactionId("tx-versioned"),
+                kind = TransactionKind.EXPENSE,
+                versions =
+                    listOf(
+                        EntryVersion(
+                            versionId = TransactionVersionId("version-a1"),
+                            occurredAt = "2026-03-05T02:00:00Z",
+                            statisticsAt = "2026-03-05T02:00:00Z",
+                            note = "creation note",
+                        ),
+                    ),
+                postings = emptyList(),
+            )
+            harness.database.ledgerQueries.insertTransactionVersion(
+                "version-a2",
+                "tx-versioned",
+                ledgerId.value,
+                2L,
+                "posting-set-version-a1",
+                "2026-03-05T02:00:00Z",
+                "2026-04-05T02:00:00Z",
+                "2026-03-05T02:00:00Z",
+                null,
+            )
+            // A second transaction in the same ledger (its chain must not leak into tx-versioned's).
+            harness.insertTransaction(
+                transactionId = TransactionId("tx-sibling"),
+                kind = TransactionKind.EXPENSE,
+                versions =
+                    listOf(
+                        EntryVersion(
+                            versionId = TransactionVersionId("version-b1"),
+                            occurredAt = "2026-03-06T02:00:00Z",
+                            statisticsAt = "2026-03-06T02:00:00Z",
+                            note = "sibling note",
+                        ),
+                    ),
+                postings = emptyList(),
+            )
+
+            val chain = harness.adapter.loadTransactionVersions(ledgerId, TransactionId("tx-versioned"))
+            assertEquals(listOf(1, 2), chain.map { it.versionNumber })
+            assertEquals(listOf("version-a1", "version-a2"), chain.map { it.id.value })
+            assertEquals(listOf("posting-set-version-a1", "posting-set-version-a1"), chain.map { it.postingSetId.value })
+            assertEquals(listOf("creation note", null), chain.map { it.note })
+            assertEquals(Instant.parse("2026-03-05T02:00:00Z"), chain[0].times.occurredAt)
+            assertEquals(Instant.parse("2026-04-05T02:00:00Z"), chain[1].times.statisticsAt)
+
+            // An unknown transaction in the same ledger reads an empty chain (the caller's
+            // effective-predicate gate decides NotFound; the adapter projects what exists).
+            assertTrue(harness.adapter.loadTransactionVersions(ledgerId, TransactionId("tx-unknown")).isEmpty())
+
+            // A foreign-ledger key never leaks rows.
+            assertTrue(harness.adapter.loadTransactionVersions(otherLedgerId, TransactionId("tx-versioned")).isEmpty())
+
+            harness.close()
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
     fun importCreationConfirmationReverseLookupResolvesOnlyImportedTransactions() {
         val path = newDatabaseFile("p7-03-entry-import-")
         try {

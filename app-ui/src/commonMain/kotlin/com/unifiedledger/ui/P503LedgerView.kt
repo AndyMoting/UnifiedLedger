@@ -11,10 +11,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -37,6 +39,7 @@ import com.unifiedledger.application.TransactionDetail
 import com.unifiedledger.application.TransactionDetailResult
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.ui.theme.LocalP8Palette
 import kotlinx.datetime.YearMonth
 
 // P7-03.C/D shared ledger-view presentations (D-145; spec sections 4.2/6.4). All amounts go
@@ -332,19 +335,23 @@ internal fun P503MonthlyTrendRegion(
 }
 
 /**
- * P7-03.C read-only transaction detail (spec sections 4.2.2/6.1): both times shown separately
- * (R-Q06-1), amount legs with account names, exact signed amounts, currencies and category
- * current names (absent mapping = 无分类， never a failure, P703SPEC-09), the creation entry
- * (导入创建/手工创建/来源未标注， never guessed) and the read-only multi-leg reconciliation
- * projection with the frozen rollup (R-Q07-4; ineligible legs show 无对账资格). The back
- * affordance rides the shared back channel.
+ * P7-03.C read-only transaction detail (spec sections 4.2.2/6.1), P8-00 b3 (V-6) re-rendered to
+ * the canvas-04 structure as the P8 token card layout (the b2 [P503AssetSummaryRegion] pattern):
+ * the direction pill row (旗帜行), the amount headline + 「币种 · 发生 …」 sub-line, the 账目信息
+ * card (both times, note, the exact legs and the read-only reconciliation projection with the
+ * frozen rollup), the 来源 read-only card (creation entry semantics unchanged) and the
+ * collapsed-by-default version history block (件 1's data). The canvas is the visual REFERENCE,
+ * not a pixel contract; the deviations are registered in the batch registration draft.
  *
- * P7-05.B/C (D-156; spec section 3.5): the page gains 编辑 and 作废 entries, rendered ONLY for a
- * supported, effective transaction ([detailCorrectionAffordancesVisible]). The entries are new
- * nullable parameters: the host passes [onEditTransaction] with the host-resolved old-value
- * snapshot and [onVoidTransaction] with the target's current version, and an absent callback (or
- * a supported kind the host did not resolve) renders no affordance at all. The rest of the page
- * stays read-only.
+ * P7-05.B/C (D-156; spec section 3.5): the page keeps 编辑 and 作废 entries, rendered ONLY for a
+ * supported, effective transaction ([detailCorrectionAffordancesVisible]). P7-08 08.B-2 keeps the
+ * 标签与商家 entry, 08.D keeps the annotation history block, and the four typed failure renders
+ * and the C04 TalkBack per-leg labels are preserved verbatim — a pure presentation re-render with
+ * ZERO affordance removed and zero behavior change.
+ *
+ * The version-history collapse is LOCAL UI STATE (default collapsed): it never enters the
+ * reducer and is never persisted. The block itself is read-only with ZERO action entries (the
+ * D-223 tombstone audit-block precedent).
  */
 @Composable
 internal fun P503TransactionDetailScreen(
@@ -365,7 +372,13 @@ internal fun P503TransactionDetailScreen(
     // null falls back to the raw id, never a fabricated name.
     annotationHistory: List<com.unifiedledger.application.TransactionAnnotationHistoryEntry>? = null,
     tagNameOf: ((String) -> String)? = null,
+    // P8-00 b3 (V-6): the read-only financial version history (件 1's typed result), read under
+    // the same lease as the detail. `null` renders no block (unwired port / unavailable read —
+    // never a fabricated chain); a Success carries the full chain; the typed failures render
+    // their honest lines. Display-only, zero action entries.
+    versionHistory: com.unifiedledger.application.TransactionVersionHistoryResult? = null,
 ) {
+    val palette = LocalP8Palette.current
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
     ) {
@@ -379,17 +392,35 @@ internal fun P503TransactionDetailScreen(
         when (detail) {
             is TransactionDetailResult.Success -> {
                 val data = detail.detail
-                Text("类型：${data.kind}", style = MaterialTheme.typography.bodyMedium)
-                Text("发生时间：${data.occurredAt}", style = MaterialTheme.typography.bodyMedium)
-                Text("统计时间：${data.statisticsAt}", style = MaterialTheme.typography.bodyMedium)
-                Text("备注：${data.note ?: "无"}", style = MaterialTheme.typography.bodyMedium)
-                Text("创建入口：${data.creationEntry.label}", style = MaterialTheme.typography.bodyMedium)
-                // P7-05: the correction/void entries. The detail read path only returns effective
+                // 旗帜行 (canvas 04): the direction/status pill. The kind is the transaction's
+                // effective business kind — one honest pill, no fabricated direction split.
+                Text(
+                    data.kind.name,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = palette.onSurfaceVariant,
+                )
+                // 金额副行 (canvas 04): the amount headline when the posting shape carries one
+                // unambiguous signed amount (a single-leg posting, or two legs that net to one
+                // value — expense/income), else no headline (a transfer's two legs are shown
+                // below; no fabricated net is ever displayed). The 「币种 · 发生 …」 sub-line
+                // always renders (R-Q06-1's 统计时间 keeps its own 账目信息 row).
+                transactionDetailHeadlineAmount(data)?.let { headline ->
+                    Text(
+                        headline,
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = if (headline.startsWith("-")) palette.expense else palette.income,
+                    )
+                }
+                Text(
+                    transactionDetailHeadlineSubLine(data),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = palette.onSurfaceVariant,
+                )
+                // The P7-05 correction/void entries. The detail read path only returns effective
                 // transactions (spec section 3.6 #3), so `isEffective = true` is the read
                 // invariant echoed here; the support matrix — kind AND the payload's authoritative
                 // creation lineage (import-created is a later slice, DP-5) — and the host callbacks
-                // gate the rest. The lineage line is rendered just above, so the gate consumes the
-                // same value the user sees rather than re-deriving it.
+                // gate the rest.
                 val affordances =
                     detailCorrectionAffordancesVisible(
                         kind = data.kind,
@@ -420,7 +451,7 @@ internal fun P503TransactionDetailScreen(
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(onClick = { onEditAnnotation.invoke(data) }) { Text("标签与商家") }
                 }
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
                 // P7-08 08.D (spec section 3.5; plan :280 历史金融版本与注释历史分开显示): the
                 // read-only annotation history block. One line per revision — 何时 (the stored audit
                 // instant), 所见版本, 谁请求 (the stored annotation request id; the aggregate records
@@ -438,40 +469,147 @@ internal fun P503TransactionDetailScreen(
                             )
                         }
                     }
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(10.dp))
                 }
-                Text("金额明细", style = MaterialTheme.typography.titleMedium)
-                data.legs.forEach { leg ->
-                    Text(
-                        transactionDetailLegContentDescription(leg),
-                        style = MaterialTheme.typography.bodySmall,
-                        // C04: the leg's exact signed amount, currency and category stay reachable
-                        // as one explicit TalkBack label.
-                        modifier = Modifier.semantics { contentDescription = transactionDetailLegContentDescription(leg) },
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-                Text("资金腿对账", style = MaterialTheme.typography.titleMedium)
-                data.reconciliation.legs.forEach { leg ->
-                    val statusText =
-                        if (leg.eligible) {
-                            leg.status?.label ?: P408ReconciliationStatus.PENDING.label
-                        } else {
-                            "—（无对账资格）"
+                // 账目信息卡 (canvas 04): the card body carries both persisted times (R-Q06-1),
+                // the note and 类型， then the exact legs (分类 per posting — the absent-mapping
+                // 无分类 disclosure of P703SPEC-09 stays in the TalkBack label) and the read-only
+                // reconciliation projection with the frozen rollup (R-Q07-4; ineligible legs show
+                // 无对账资格). C04's per-leg TalkBack labels are preserved verbatim.
+                Surface(
+                    color = palette.card,
+                    shape = RoundedCornerShape(palette.cardRadius),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
+                        Text("账目信息", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(6.dp))
+                        Text("发生时间：${data.occurredAt}", style = MaterialTheme.typography.bodyMedium)
+                        Text("统计时间：${data.statisticsAt}", style = MaterialTheme.typography.bodyMedium)
+                        Text("备注：${data.note ?: "无"}", style = MaterialTheme.typography.bodyMedium)
+                        Text("类型：${data.kind}", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.height(8.dp))
+                        Text("金额明细", style = MaterialTheme.typography.titleMedium)
+                        data.legs.forEach { leg ->
+                            Text(
+                                transactionDetailLegContentDescription(leg),
+                                style = MaterialTheme.typography.bodySmall,
+                                // C04: the leg's exact signed amount, currency and category stay reachable
+                                // as one explicit TalkBack label.
+                                modifier = Modifier.semantics { contentDescription = transactionDetailLegContentDescription(leg) },
+                            )
                         }
-                    Text(
-                        "${leg.leg.accountName}：$statusText",
-                        style = MaterialTheme.typography.bodySmall,
-                        // C04: the reconciliation row announces the leg's exact amount with its
-                        // currency code alongside the status (the visible line carries the name
-                        // and status only).
-                        modifier = Modifier.semantics { contentDescription = reconciliationLegContentDescription(leg) },
-                    )
+                        Spacer(Modifier.height(8.dp))
+                        Text("资金腿对账", style = MaterialTheme.typography.titleMedium)
+                        data.reconciliation.legs.forEach { leg ->
+                            val statusText =
+                                if (leg.eligible) {
+                                    leg.status?.label ?: P408ReconciliationStatus.PENDING.label
+                                } else {
+                                    "—（无对账资格）"
+                                }
+                            Text(
+                                "${leg.leg.accountName}：$statusText",
+                                style = MaterialTheme.typography.bodySmall,
+                                // C04: the reconciliation row announces the leg's exact amount with its
+                                // currency code alongside the status (the visible line carries the name
+                                // and status only).
+                                modifier = Modifier.semantics { contentDescription = reconciliationLegContentDescription(leg) },
+                            )
+                        }
+                        Text(
+                            "对账汇总：${data.reconciliation.rollup?.label ?: "无对账资格"}",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
                 }
-                Text(
-                    "对账汇总：${data.reconciliation.rollup?.label ?: "无对账资格"}",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                Spacer(Modifier.height(10.dp))
+                // 来源卡 (canvas 04): the read-only creation-entry declaration. 既有语义不变 —
+                // the same 导入创建/手工创建/来源未标注 labels, never guessed (R-9).
+                Surface(
+                    color = palette.card,
+                    shape = RoundedCornerShape(palette.cardRadius),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
+                        Text("来源", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(4.dp))
+                        Text("创建入口：${data.creationEntry.label}", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "来源事实只读",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = palette.disabledFaint,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                // 版本历史折叠块 (canvas 04, 件 1's data): collapsed by default, LOCAL UI STATE
+                // only (never the reducer, never persisted). Read-only, zero action entries (the
+                // D-223 precedent); `null` renders no block, typed failures render their honest
+                // lines. The displayed count is the chain's own length — the exact number of read
+                // versions, never an estimate.
+                if (versionHistory != null) {
+                    var versionHistoryExpanded by remember(data.transactionId) { mutableStateOf(false) }
+                    Surface(
+                        color = palette.card,
+                        shape = RoundedCornerShape(palette.cardRadius),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.fillMaxWidth()) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable(onClickLabel = if (versionHistoryExpanded) "收起版本历史" else "展开版本历史") {
+                                            versionHistoryExpanded = !versionHistoryExpanded
+                                        }.padding(horizontal = 16.dp, vertical = 14.dp),
+                            ) {
+                                Text("版本历史（只读）", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                                if (versionHistory is com.unifiedledger.application.TransactionVersionHistoryResult.Success) {
+                                    Text(
+                                        "${versionHistory.history.versions.size} 个版本",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = palette.onSurfaceVariant,
+                                    )
+                                }
+                                Text(if (versionHistoryExpanded) "▾" else "▸", style = MaterialTheme.typography.bodyMedium)
+                            }
+                            when (versionHistory) {
+                                is com.unifiedledger.application.TransactionVersionHistoryResult.Success -> {
+                                    if (versionHistoryExpanded) {
+                                        Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 14.dp)) {
+                                            versionHistory.history.versions.forEach { version ->
+                                                Text(
+                                                    transactionVersionHistoryLine(version, versionHistory.history.currentVersionId),
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                com.unifiedledger.application.TransactionVersionHistoryResult.NotFound ->
+                                    Text(
+                                        "版本历史不可用：交易不存在或不在当前账本。",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp),
+                                    )
+                                com.unifiedledger.application.TransactionVersionHistoryResult.InvalidState ->
+                                    Text(
+                                        "版本历史不可用：交易数据不一致。",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp),
+                                    )
+                                com.unifiedledger.application.TransactionVersionHistoryResult.Unavailable ->
+                                    Text(
+                                        "无法读取版本历史（本地数据库不可用）。",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp),
+                                    )
+                            }
+                        }
+                    }
+                }
             }
             TransactionDetailResult.NotFound ->
                 Text("交易不存在或不在当前账本。", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error)
@@ -483,6 +621,70 @@ internal fun P503TransactionDetailScreen(
         Spacer(Modifier.height(8.dp))
         HorizontalDivider()
     }
+}
+
+/**
+ * P8-00 b3 (V-6): the amount headline of the canvas-04 金额副行, or `null` when the posting shape
+ * carries no single unambiguous signed amount (a transfer's two legs are exact per leg below; no
+ * fabricated net is ever displayed). One posting → its exact ledger-signed amount. Two exact
+ * negations (the expense/income shape) → the shared magnitude signed by the KIND (canvas 04's
+ * 「支出 -32.00」: EXPENSE renders negative, INCOME positive; the direction lives in the kind pill
+ * and the exact legs below, so no information is hidden). Any other shape → no headline. Long
+ * minor units through [formatMinorUnits], never floating point. (登记取舍 §4.3.)
+ */
+internal fun transactionDetailHeadlineAmount(data: TransactionDetail): String? {
+    val legs = data.legs
+    return when {
+        legs.size == 1 -> formatMinorUnits(legs[0].amount.minorUnits, legs[0].amount.currency.precision) + " " + legs[0].amount.currency.code
+        legs.size == 2 &&
+            legs[0].amount.currency == legs[1].amount.currency &&
+            legs[0].amount.minorUnits == -legs[1].amount.minorUnits &&
+            legs[0].amount.minorUnits != 0L ->
+            when (data.kind) {
+                com.unifiedledger.domain.TransactionKind.EXPENSE ->
+                    "-" + formatMinorUnits(kotlin.math.abs(legs[0].amount.minorUnits), legs[0].amount.currency.precision) + " " + legs[0].amount.currency.code
+                com.unifiedledger.domain.TransactionKind.INCOME ->
+                    formatMinorUnits(kotlin.math.abs(legs[0].amount.minorUnits), legs[0].amount.currency.precision) + " " + legs[0].amount.currency.code
+                else -> null
+            }
+        else -> null
+    }
+}
+
+/**
+ * P8-00 b3 (V-6): the canvas-04 「币种 · 发生 …」 sub-line. The currency of the headline amount
+ * when one exists (else the first leg's currency — an honest projection of the payload, never a
+ * guess across currencies), plus the persisted occurred time (R-Q06-1).
+ */
+internal fun transactionDetailHeadlineSubLine(data: TransactionDetail): String {
+    val currency =
+        transactionDetailHeadlineAmount(data)
+            ?.let { headline ->
+                data.legs
+                    .firstOrNull { leg -> headline.endsWith(leg.amount.currency.code) }
+                    ?.amount
+                    ?.currency
+            }
+            ?: data.legs
+                .firstOrNull()
+                ?.amount
+                ?.currency
+    val currencyPrefix = currency?.let { code -> "${code.code} · " } ?: ""
+    return currencyPrefix + "发生 " + data.occurredAt
+}
+
+/**
+ * P8-00 b3 (V-6): one read-only version-history line — version number, both persisted times
+ * (R-Q06-1 semantics: the version row's own occurred/statistics pair), the note (可空 → 「无」)
+ * and the current-version marker. Zero actions ride the line.
+ */
+internal fun transactionVersionHistoryLine(
+    version: com.unifiedledger.domain.TransactionVersion,
+    currentVersionId: com.unifiedledger.domain.TransactionVersionId,
+): String {
+    val marker = if (version.id == currentVersionId) "（当前版本）" else ""
+    val note = version.note ?: "无"
+    return "版本 ${version.versionNumber}$marker · 发生 ${version.times.occurredAt} · 统计 ${version.times.statisticsAt} · 备注：$note"
 }
 
 /**

@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -146,9 +147,20 @@ internal fun assetAccountGroups(
  * The region renderer. An empty manageable projection renders nothing (the management surface's
  * 还没有可管理的账户 copy below stays the single empty voice); a ledger whose accounts have no
  * balance rows yet renders the card pair and the grouped lists without a net-worth card.
+ *
+ * P8-00 b3 (V-5): the account rows become the account-flow surface's entry (the only new
+ * affordance this batch adds to the region). The open is host-wired via [onOpenAccountFlow];
+ * an unwired host renders the same read-only rows b2 shipped (no dead click). The scroll SAMPLER
+ * rides the same seam (the 返回保滚动位 mechanism — the ACCOUNTS list position is sampled
+ * synchronously at click time and restored on return; the scroll state itself is owned by the
+ * management surface's hoisted Column, not by this region).
  */
 @Composable
-internal fun P503AssetSummaryRegion(state: P503AppState.OverviewEmpty) {
+internal fun P503AssetSummaryRegion(
+    state: P503AppState.OverviewEmpty,
+    onOpenAccountFlow: ((AccountId) -> Unit)? = null,
+    sampleListScroll: (() -> ListScrollPosition?)? = null,
+) {
     val snapshot = state.catalogSnapshot ?: return
     if (snapshot.manageableAccounts.isEmpty()) return
     val palette = LocalP8Palette.current
@@ -202,8 +214,8 @@ internal fun P503AssetSummaryRegion(state: P503AppState.OverviewEmpty) {
             P8LendingSummaryCard("总借入", Modifier.weight(1f))
             P8LendingSummaryCard("总借出", Modifier.weight(1f))
         }
-        P8AssetGroupSection("资产", groups.assetRows)
-        P8AssetGroupSection("负债", groups.liabilityRows)
+        P8AssetGroupSection("资产", groups.assetRows, onOpenAccountFlow, sampleListScroll)
+        P8AssetGroupSection("负债", groups.liabilityRows, onOpenAccountFlow, sampleListScroll)
     }
 }
 
@@ -229,13 +241,16 @@ private fun P8LendingSummaryCard(
 
 /**
  * One grouped list: the 「资产 · N 个账户」-style heading outside the card, then the account rows
- * separated by in-card dividers. Rows are read-only this batch (the account-row navigation is the
- * V-5 secondary-navigation batch).
+ * separated by in-card dividers. P8-00 b3 (V-5): rows become the account-flow entry when the host
+ * wires [onOpenAccountFlow] (the click samples the live scroll position synchronously — the
+ * 返回保滚动位 mechanism); an unwired host keeps the b2 read-only rows.
  */
 @Composable
 private fun P8AssetGroupSection(
     title: String,
     rows: List<P8AssetAccountRow>,
+    onOpenAccountFlow: ((AccountId) -> Unit)? = null,
+    sampleListScroll: (() -> ListScrollPosition?)? = null,
 ) {
     if (rows.isEmpty()) return
     val palette = LocalP8Palette.current
@@ -257,19 +272,41 @@ private fun P8AssetGroupSection(
                     if (index > 0) {
                         HorizontalDivider(color = palette.divider, modifier = Modifier.padding(start = 16.dp))
                     }
-                    P8AssetAccountLine(row)
+                    P8AssetAccountLine(row, onOpenAccountFlow, sampleListScroll)
                 }
             }
         }
     }
 }
 
-/** One account row: name (已停用 disclosed like the现行 rows) + kind + exact balance. */
+/**
+ * One account row: name (已停用 disclosed like the现行 rows) + kind + exact balance. P8-00 b3
+ * (V-5): when the host wires [onOpenAccountFlow] the row becomes the account-flow entry — the
+ * click samples the ACCOUNTS list position BEFORE the open event (no async write-back hop), and
+ * TalkBack announces the affordance through the click label while the row values stay reachable.
+ */
 @Composable
-private fun P8AssetAccountLine(row: P8AssetAccountRow) {
+private fun P8AssetAccountLine(
+    row: P8AssetAccountRow,
+    onOpenAccountFlow: ((AccountId) -> Unit)? = null,
+    sampleListScroll: (() -> ListScrollPosition?)? = null,
+) {
     val palette = LocalP8Palette.current
     Row(
-        modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 16.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .then(
+                    if (onOpenAccountFlow != null) {
+                        Modifier.clickable(onClickLabel = "查看账户流水") {
+                            sampleListScroll?.invoke()
+                            onOpenAccountFlow(row.account.accountId)
+                        }
+                    } else {
+                        Modifier
+                    },
+                ).padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
