@@ -37,8 +37,11 @@ import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.Posting
 import com.unifiedledger.domain.PostingId
+import com.unifiedledger.domain.PostingSetId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
+import com.unifiedledger.domain.TransactionTimes
+import com.unifiedledger.domain.TransactionVersion
 import com.unifiedledger.domain.TransactionVersionId
 import com.unifiedledger.domain.TransactionVoidFactKind
 import com.unifiedledger.domain.VoidReason
@@ -588,6 +591,36 @@ class SqlDelightLedgerCurrentStateReadAdapter(
                 )
             }.sortedBy { it.postingIndex }
     }
+
+    /**
+     * P8-00 b3 (V-6): one transaction's full version chain (every `transaction_version` row of
+     * the key, ascending version_number order) as the domain rows the read-only history block
+     * projects. Read-only; exceptions propagate to the use-case boundary, which maps them to
+     * `Unavailable`. The caller applies the effective predicate first, so this projection never
+     * guesses whether a transaction is visible.
+     */
+    override fun loadTransactionVersions(
+        ledgerId: LedgerId,
+        transactionId: TransactionId,
+    ): List<TransactionVersion> =
+        database.ledgerQueries
+            .transactionVersionsByTransaction(ledgerId.value, transactionId.value)
+            .executeAsList()
+            .map { row ->
+                TransactionVersion(
+                    id = TransactionVersionId(row.version_id),
+                    transactionId = TransactionId(row.transaction_id),
+                    versionNumber = row.version_number.toInt(),
+                    postingSetId = PostingSetId(row.posting_set_id),
+                    times =
+                        TransactionTimes(
+                            occurredAt = Instant.parse(row.occurred_at),
+                            statisticsAt = Instant.parse(row.statistics_at),
+                            effectiveAt = Instant.parse(row.effective_at),
+                        ),
+                    note = row.note,
+                )
+            }
 
     /**
      * P7-05.C (D-156, DP-1): the voided complement of [loadLedgerEntryRows]. Same table group,

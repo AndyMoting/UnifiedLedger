@@ -6,6 +6,7 @@ import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Posting
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
+import com.unifiedledger.domain.TransactionVersion
 import com.unifiedledger.domain.TransactionVersionId
 import kotlin.time.Instant
 
@@ -349,6 +350,28 @@ interface LedgerCurrentStateReadPort {
         throw UnsupportedOperationException(
             "loadTransactionReconciliationLegs is not implemented by this read port; a missing reconciliation " +
                 "projection must surface as a typed read failure, never as an all-ineligible verdict (R-Q06-4)",
+        )
+
+    /**
+     * P8-00 b3 (V-6): one transaction's FULL financial version chain (every
+     * `transaction_version` row of the (ledger, transaction) key, ascending version-number
+     * order), projected as the domain [TransactionVersion] rows behind the read-only version
+     * history block of the detail surface.
+     *
+     * G6: no neutral default. An empty list from an unimplemented port would render a
+     * definitive "1 个版本" for a chain that was never read — a fabricated audit claim; the
+     * caller maps the thrown exception to its typed Unavailable surface. A transaction with
+     * genuinely no version rows cannot exist behind an effective transaction (the creation
+     * version is always present), so the caller treats an empty chain as InvalidState, never
+     * as an empty history.
+     */
+    fun loadTransactionVersions(
+        ledgerId: LedgerId,
+        transactionId: TransactionId,
+    ): List<TransactionVersion> =
+        throw UnsupportedOperationException(
+            "loadTransactionVersions is not implemented by this read port; a missing version-chain read " +
+                "must surface as a typed read failure, never as a fabricated version count (R-Q06-4)",
         )
 
     /**

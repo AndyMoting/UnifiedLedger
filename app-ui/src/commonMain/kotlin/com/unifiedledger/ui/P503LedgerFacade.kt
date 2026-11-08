@@ -47,6 +47,7 @@ import com.unifiedledger.application.QueryMonthlyActivity
 import com.unifiedledger.application.QueryRecycleBin
 import com.unifiedledger.application.QueryTagMerchantFilterPage
 import com.unifiedledger.application.QueryTransactionDetail
+import com.unifiedledger.application.QueryTransactionVersionHistory
 import com.unifiedledger.application.QueryWidgetMonthlySnapshot
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.ResolveManualIncomeCommitStatus
@@ -143,6 +144,9 @@ class P503LedgerFacade(
     baseQueryLedgerFlowPage: QueryLedgerFlowPage? = null,
     baseQueryMonthlyActivity: QueryMonthlyActivity? = null,
     baseQueryTransactionDetail: QueryTransactionDetail? = null,
+    // P8-00 b3 (V-6): the read-only version-chain projection for the detail's history block;
+    // null keeps legacy constructions valid (no history block).
+    baseQueryTransactionVersionHistory: QueryTransactionVersionHistory? = null,
     catalogSession: CatalogConsumerSession? = null,
     // P7-04.A/B import surface (D-146; spec sections 4.1/4.2); null defaults keep legacy
     // constructions valid (startup tests). The product roots inject the platform pick port,
@@ -279,6 +283,7 @@ class P503LedgerFacade(
     private val fallbackQueryLedgerFlowPage = baseQueryLedgerFlowPage
     private val fallbackQueryMonthlyActivity = baseQueryMonthlyActivity
     private val fallbackQueryTransactionDetail = baseQueryTransactionDetail
+    private val fallbackQueryTransactionVersionHistory = baseQueryTransactionVersionHistory
     private val fallbackQueryRecycleBin = baseQueryRecycleBin
     private val fallbackQueryImportReviewRows = baseQueryImportReviewRows
     private val fallbackQueryImportCandidateDetail = baseQueryImportCandidateDetail
@@ -339,6 +344,14 @@ class P503LedgerFacade(
     /** P7-03.C/D: the read-only transaction detail projection; follows [refreshCatalog] when a session is injected. */
     val queryTransactionDetail: QueryTransactionDetail?
         get() = session?.queryTransactionDetail ?: fallbackQueryTransactionDetail
+
+    /**
+     * P8-00 b3 (V-6): the read-only financial version chain of one transaction; follows
+     * [refreshCatalog] when a session is injected (no catalog dependency, so the session
+     * rebuild is a no-op for it). `null` renders no history block (legacy facades).
+     */
+    val queryTransactionVersionHistory: QueryTransactionVersionHistory?
+        get() = session?.queryTransactionVersionHistory ?: fallbackQueryTransactionVersionHistory
 
     /**
      * P7-05.C (D-156/D-158 slice 1b): the read-only recycle-bin projection; follows
