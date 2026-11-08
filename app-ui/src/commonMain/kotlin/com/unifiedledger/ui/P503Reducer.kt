@@ -142,17 +142,20 @@ class P503ReducerImpl(
     /**
      * P7-06 06.D (D-182): whether the restore event must be absorbed in [state] because it belongs
      * to another state's surface (the export family's absorb discipline, same shape). The restore
-     * family's only designed effects are the one OverviewEmpty transition and the BackupRestore
-     * surface; everywhere else (including RestoreSessionTerminal, whose only exit is `Exit`) every
-     * restore event is absorbed, so a late/stale dispatch can never reach `unhandled` and turn
-     * into an ISE.
+     * family's designed effects are the one OverviewEmpty transition, the one BackupRestore
+     * surface AND — P8-00 b2 (2026-11-08 user ruling) — the drawer-carrier route from BackupExport
+     * (the 备份与恢复 drawer row opens the export face, whose restore route opens the restore
+     * surface); everywhere else (including RestoreSessionTerminal, whose only exit is `Exit`)
+     * every restore event is absorbed, so a late/stale dispatch can never reach `unhandled` and
+     * turn into an ISE.
      */
     private fun backupRestoreEventAbsorbed(
         state: P503AppState,
         event: P503UiEvent,
     ): Boolean =
         when (event) {
-            P503UiEvent.OpenBackupRestore -> state !is P503AppState.OverviewEmpty
+            P503UiEvent.OpenBackupRestore ->
+                state !is P503AppState.OverviewEmpty && state !is P503AppState.BackupExport
             is P503UiEvent.UpdateRestorePassword,
             P503UiEvent.ConfirmRestorePreflight,
             is P503UiEvent.RestorePreflightLanded,
@@ -2668,19 +2671,34 @@ class P503ReducerImpl(
         }
 
     /**
-     * P7-06 06.B (D-177; spec sections 3/6): the backup-export surface. [OpenBackupExport] and
-     * every non-surface event are absorbed by [backupExportEventAbsorbed] before reaching here, so
-     * this reducer only sees its own four events. A password write stays in memory; Confirm sets
-     * the `running` marker (a duplicate confirm is absorbed, 提交中不重入) and clears any previous
-     * outcome; a landed result clears the marker and records the typed outcome; Close returns to
-     * the preserved overview only when no export is running (提交中不得离开, the P7-05 Submitting
-     * discipline). Every pre-existing event is absorbed; `Exit` stays unlisted (ISE).
+     * P7-06 06.B (D-177; spec sections 3/6): the backup-export surface — and, P8-00 b2 (the
+     * 2026-11-08 user ruling), the drawer's restore CARRIER. [OpenBackupExport] and every
+     * non-surface event are absorbed by [backupExportEventAbsorbed] before reaching here, so
+     * this reducer sees its own four events plus the one carrier route. A password write stays
+     * in memory; Confirm sets the `running` marker (a duplicate confirm is absorbed, 提交中不重入)
+     * and clears any previous outcome; a landed result clears the marker and records the typed
+     * outcome; Close returns to the preserved overview only when no export is running (提交中
+     * 不得离开, the P7-05 Submitting discipline). Every pre-existing event is absorbed; `Exit`
+     * stays unlisted (ISE).
+     *
+     * P8-00 b2: [P503UiEvent.OpenBackupRestore] has its drawer-carrier route HERE. The side
+     * drawer's 备份与恢复 row opens this export face; the same event issued on it opens the
+     * restore surface directly, carrying the export face's overview — which IS the live overview
+     * ([P503AppState.BackupExport.overview]), so every restore exit restores it exactly. The
+     * restore flow itself (preflight/confirm switch) is untouched: a pure entry migration off
+     * the HOME overview, whose entry affordance this batch removes. The family guard amendment
+     * admits the event only here and on OverviewEmpty; `OpenBackupExport` arriving ON this
+     * surface stays absorbed — the carrier route is one-directional.
      */
     private fun reduceBackupExport(
         state: P503AppState.BackupExport,
         event: P503UiEvent,
     ): P503AppState =
         when (event) {
+            // The drawer carrier route: the restore surface opens off the export face, carrying
+            // the preserved (live) overview. The restore family guard admits this event here and
+            // on OverviewEmpty only; the export surface's own events keep their exact shapes.
+            P503UiEvent.OpenBackupRestore -> P503AppState.BackupRestore(overview = state.overview)
             is P503UiEvent.UpdateBackupPassword -> state.copy(password = event.password)
             P503UiEvent.ConfirmBackupExport ->
                 if (state.running) state else state.copy(running = true, outcome = null)

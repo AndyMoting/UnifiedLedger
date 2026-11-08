@@ -43,6 +43,10 @@ import com.unifiedledger.domain.CategoryKind
  * the host runs the command and the authoritative refresh. Hidden/system accounts never appear
  * (A-2, projection-guaranteed).
  *
+ * P8-00 b2 (D-301; spec sections 2.2/4, V-4): the asset summary region ([P503AssetSummaryRegion])
+ * rides above the management sections, turning the ACCOUNTS tab into the spec's 资产 screen. The
+ * management surface itself is unchanged.
+ *
  * Ledger-identity short patch (D-146 entry 12, DECISIONS.md:2805): the header discloses the
  * active ledger read-only (same 账本： copy family as the home tab) and carries an honest
  * disabled 切换账本 trigger — this batch has no ledger-list data source (no picker port / use
@@ -110,6 +114,11 @@ fun P503CatalogManagementScreen(
             )
             return@Column
         }
+        // P8-00 b2 (D-301; spec sections 2.2/4, V-4): the asset screen's summary region rides
+        // above the management sections — the per-currency net-worth blocks, the lending card
+        // pair and the grouped account lists. Purely additive presentation over the same
+        // authoritative snapshot × balances the account rows below read; zero semantics change.
+        P503AssetSummaryRegion(state)
         AccountsSection(
             accounts = snapshot.manageableAccounts,
             balances = state.state.balances.associateBy { it.accountId },

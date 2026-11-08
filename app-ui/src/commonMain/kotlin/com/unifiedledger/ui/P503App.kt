@@ -4179,6 +4179,13 @@ fun P503App(
                                         dispatch(P503UiEvent.OpenBackupExport)
                                     },
                                     backupRestoreWired = backupExportEntryVisible(ledger.surfaces.backupExport),
+                                    // P8-00 b2 (2026-11-08 user ruling): the restore entry rides the
+                                    // 备份与恢复 carrier row — wired restore renders the 导出 · 恢复备份
+                                    // suffix and the carrier route opens the export face whose
+                                    // OpenBackupRestore route opens the restore surface. An unwired
+                                    // restore keeps the row clickable for export only (the suffix degrades
+                                    // to 导出); an unwired carrier stays the disabled 暂未开放 shape.
+                                    restoreWired = backupRestoreEntryVisible(ledger.surfaces.backupRestore),
                                     onOpenRecycleBin = {
                                         drawerClose()
                                         requestRecycleBin()
@@ -4242,14 +4249,11 @@ fun P503App(
                                             // open performs no IO and no secret handling; the password is
                                             // entered on the surface and stays in memory.
                                             onOpenBackupExport = if (backupExportEntryVisible(ledger.surfaces.backupExport)) ({ dispatch(P503UiEvent.OpenBackupExport) }) else null,
-                                            // P7-06 06.D (D-182): the restore entry, offered only when the
-                                            // restore use cases are wired (no dead affordance).
-                                            onOpenBackupRestore =
-                                                if (backupRestoreEntryVisible(ledger.surfaces.backupRestore)) {
-                                                    ({ dispatch(P503UiEvent.OpenBackupRestore) })
-                                                } else {
-                                                    null
-                                                },
+                                            // P8-00 b2 (2026-11-08 user ruling): the HOME restore entry is
+                                            // REMOVED — the side drawer's 备份与恢复 carrier row is the
+                                            // restore affordance now (its wired/disabled shape matches the
+                                            // restore wiring). The event and the restore flow semantics are
+                                            // unchanged; no event was removed, only the affordance.
                                         )
                                     P503Tab.ACCOUNTS ->
                                         P503CatalogManagementScreen(

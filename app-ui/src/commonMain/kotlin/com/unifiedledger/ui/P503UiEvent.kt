@@ -1071,9 +1071,14 @@ sealed interface P503UiEvent {
     // ---- P7-06 06.D restore confirm & switch events (D-182; spec sections 3/5.5/6) ----
 
     /**
-     * Opens the restore surface from the HOME overview entry affordance. Effect only on
-     * OverviewEmpty; absorbed everywhere else. The host offers the affordance only when the
-     * restore use cases are wired, so this event never renders a dead button.
+     * Opens the restore surface. P8-00 b2 (2026-11-08 user ruling; entry migration off the HOME
+     * overview): the designed states are OverviewEmpty (the drawer row route, kept so the family
+     * shape stays stable) AND BackupExport — the drawer's 备份与恢复 row opens the export face as
+     * the restore CARRIER, and this event issued on it opens the restore surface directly
+     * (carrying the export face's overview, which is the live overview). Absorbed everywhere
+     * else. The host offers the affordance only when the restore use cases are wired, so this
+     * event never renders a dead button. The restore flow itself (preflight/confirm switch) is
+     * untouched — a pure entry migration.
      */
     data object OpenBackupRestore : P503UiEvent
 
