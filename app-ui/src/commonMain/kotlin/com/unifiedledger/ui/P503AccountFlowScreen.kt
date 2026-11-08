@@ -119,9 +119,11 @@ internal fun P503AccountFlowScreen(
  * 暂无流水, R-Q06-4). A more-page failure WITH loaded rows keeps the LIST face — the loaded rows
  * stay visible beside the footer's retry (the fail-closed 失败保行 discipline, unchanged); the
  * zero-rows open-walk shape stays the LIST face (已加载 0 笔 + 加载更多, never an empty claim),
- * and the walk-ended zero-rows shape is [accountFlowEmptyText]'s honest empty copy. Every
- * previously reachable shape renders exactly as before the fix round; only the first-read
- * failure — which used to degrade into the empty copy — gained its own face.
+ * and the walk-ended zero-rows shape is [accountFlowEmptyText]'s honest empty copy. Every other
+ * previously reachable shape renders exactly as before the fix round; the first-read failure —
+ * which used to degrade into the empty copy — gained its own face, and the zero-rows more-page
+ * failure with an open cursor moved from the dead copy into the UNAVAILABLE face (FD-1, strictly
+ * more honest).
  *
  * [UNAVAILABLE] is the read-failed-with-zero-rows face (its real retry affordance, F-Q2);
  * [EMPTY_ENDED] is the walk-ended zero-rows honest empty copy; [LIST] is the list face (count +
