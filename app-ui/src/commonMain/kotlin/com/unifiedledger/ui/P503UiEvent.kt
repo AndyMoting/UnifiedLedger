@@ -368,10 +368,16 @@ sealed interface P503UiEvent {
      * [com.unifiedledger.application.QueryTransactionDetail] before dispatching (Success or the
      * typed NotFound/InvalidState/Unavailable failure — the page renders all four). Absorbed in
      * every state other than OverviewEmpty (table 6.2a).
+     *
+     * P8-00 b3 (V-5 返回保滚动位): [homeFlowScroll] is the HOME list scroll position the screen
+     * sampled synchronously at click time; the reducer stores it as the overview's
+     * [ListScrollPosition] and the close transition returns it with the overview. No async
+     * write-back hop exists — the position cannot arrive late or stale.
      */
     data class SelectTransaction(
         val transactionId: TransactionId,
         val result: com.unifiedledger.application.TransactionDetailResult,
+        val homeFlowScroll: ListScrollPosition? = null,
     ) : P503UiEvent
 
     /**
@@ -405,6 +411,78 @@ sealed interface P503UiEvent {
      */
     data class AnalysisMonthShift(
         val offset: Int,
+    ) : P503UiEvent
+
+    /**
+     * P8-00 b3 (V-6): the read-only financial version history the host read under the SAME lease
+     * as the detail, landing on the matching open detail (the TransactionAnnotationHistoryLanded
+     * precedent). A mismatched transaction id is a stale landing and is absorbed whole. Absorbed
+     * in every state other than the matching TransactionDetail (the central-guard discipline —
+     * a late/stale dispatch can never reach `unhandled`). The block is read-only with ZERO
+     * action entries (the D-223 tombstone audit-block precedent).
+     */
+    data class TransactionVersionHistoryLanded(
+        val transactionId: TransactionId,
+        val result: com.unifiedledger.application.TransactionVersionHistoryResult,
+    ) : P503UiEvent
+
+    // ---- P8-00 b3 account-flow secondary surface (V-5; zero accounting effect) ----
+
+    /**
+     * P8-00 b3 (V-5 返回保滚动位, the one-shot consume leg): the screen has applied the restored
+     * scroll position, so the overview's [com.unifiedledger.ui.P503AppState.OverviewEmpty.originListScroll]
+     * clears. Effect only on OverviewEmpty; absorbed everywhere else (a late dispatch after the
+     * overview left is absorbed whole — the value cannot pollute any other surface). Without this
+     * consume the position would replay on the next unrelated re-entry.
+     */
+    data object ListScrollRestored : P503UiEvent
+
+    /**
+     * Opens the read-only account-flow page from an asset-screen account row (仅资产行可达， the
+     * SelectTransaction precedent — the reducer effect is unconditional, the UI affordance
+     * restricts). [accountId] names the target account; [balanceLine] is the host-projected
+     * header副行 (「名称 · 类型 · 币种」 display text resolved from the same authoritative
+     * snapshot × balances the row rendered, so the reducer never re-derives names); [firstPage]
+     * is the typed first flow page the host read BEFORE dispatching (the host reads the first
+     * batch, the SelectTransaction host-resolved-payload precedent); [originListScroll] is the
+     * ACCOUNTS list position sampled at click time (the scroll-restoration mechanism). Absorbed
+     * in every state other than OverviewEmpty (table 6.2a).
+     */
+    data class SelectAccountFlow(
+        val accountId: AccountId,
+        val balanceLine: String,
+        val balanceMinorUnits: Long,
+        val balanceCurrency: com.unifiedledger.domain.CurrencyUnit,
+        val firstPage: com.unifiedledger.application.LedgerFlowPageResult,
+        val originListScroll: ListScrollPosition? = null,
+    ) : P503UiEvent
+
+    /**
+     * Closes the account-flow page back to the exact preserved overview (tab, month cursor and
+     * monthly payload kept — the CloseTransactionDetail C03 semantics). Effect only on
+     * AccountFlow; absorbed everywhere else.
+     */
+    data object CloseAccountFlow : P503UiEvent
+
+    /**
+     * Requests one more flow page for the open account-flow surface (the 加载更多 intent; the
+     * host runs the paged read and lands [AccountFlowMorePageLanded]). Effect on AccountFlow is
+     * the request-token advance + the single-flight marker (不切态 — the host action owns the
+     * read; the TagMerchantFilter RequestTagMerchantFilterPage precedent). Absorbed everywhere
+     * else.
+     */
+    data object RequestAccountFlowMorePage : P503UiEvent
+
+    /**
+     * One more filtered flow page landed for the open account-flow surface. Applies only when
+     * the landing's request token is still the surface's current one (a read superseded by a
+     * newer request can never append — the TagMerchantFilter token gate); a typed failure keeps
+     * the loaded rows and surfaces the retry state (fail-closed, never a silent truncation).
+     * Absorbed in every state other than AccountFlow.
+     */
+    data class AccountFlowMorePageLanded(
+        val requestToken: Long,
+        val result: com.unifiedledger.application.LedgerFlowPageResult,
     ) : P503UiEvent
 
     /**

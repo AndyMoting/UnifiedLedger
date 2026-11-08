@@ -89,11 +89,15 @@ class P503ReducerImpl(
         if (annotationEditEventAbsorbed(state, event)) return state
         if (tagMerchantEventAbsorbed(state, event)) return state
         if (annotationHistoryEventAbsorbed(state, event)) return state
+        if (versionHistoryEventAbsorbed(state, event)) return state
+        if (accountFlowEventAbsorbed(state, event)) return state
+        if (listScrollRestoredEventAbsorbed(state, event)) return state
         externalNavigationTransition(state, event)?.let { return it }
         return when (state) {
             is P503AppState.Ready -> reduceReady(state, event)
             is P503AppState.OverviewEmpty -> reduceOverviewEmpty(state, event)
             is P503AppState.TransactionDetail -> reduceTransactionDetail(state, event)
+            is P503AppState.AccountFlow -> reduceAccountFlow(state, event)
             is P503AppState.ImportCandidateDetail -> reduceImportCandidateDetail(state, event)
             is P503AppState.ImportBatchConfirm -> reduceImportBatchConfirm(state, event)
             is P503AppState.ImportBatchSubmitting -> reduceImportBatchSubmitting(state, event)
@@ -278,6 +282,59 @@ class P503ReducerImpl(
             }
             else -> false
         }
+
+    /**
+     * P8-00 b3 (V-6): the version-history landing is state-preserving everywhere except the
+     * matching read-only detail (the annotationHistoryEventAbsorbed twin: ONE designed effect —
+     * the history block's typed payload). A landing for a different transaction, a non-Success
+     * detail payload, or any other state is absorbed here, so a late/stale dispatch can never
+     * reach `unhandled`.
+     */
+    private fun versionHistoryEventAbsorbed(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): Boolean =
+        when (event) {
+            is P503UiEvent.TransactionVersionHistoryLanded -> {
+                val detail = (state as? P503AppState.TransactionDetail)?.detail
+                detail !is com.unifiedledger.application.TransactionDetailResult.Success ||
+                    detail.detail.transactionId != event.transactionId
+            }
+            else -> false
+        }
+
+    /**
+     * P8-00 b3 (V-5): the account-flow event family is state-preserving outside its designed
+     * states (the backup-export family's central-guard shape). `SelectAccountFlow` has its one
+     * effect on OverviewEmpty; `CloseAccountFlow`/`RequestAccountFlowMorePage`/
+     * `AccountFlowMorePageLanded` act only on AccountFlow. Everywhere else (including Ready
+     * before the overview exists) every family event is absorbed, so a late/stale dispatch can
+     * never reach `unhandled` and turn into an ISE (table 6.2a: 新事件在非设计态全部吸收).
+     */
+    private fun accountFlowEventAbsorbed(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): Boolean =
+        when (event) {
+            is P503UiEvent.SelectAccountFlow -> state !is P503AppState.OverviewEmpty
+            P503UiEvent.CloseAccountFlow,
+            P503UiEvent.RequestAccountFlowMorePage,
+            is P503UiEvent.AccountFlowMorePageLanded,
+            -> state !is P503AppState.AccountFlow
+            else -> false
+        }
+
+    /**
+     * P8-00 b3 (V-5 返回保滚动位, the consume leg): the scroll-restore consume is
+     * state-preserving everywhere except the overview — its ONE effect is clearing the overview's
+     * [P503AppState.OverviewEmpty.originListScroll] after the screen applied it. Everywhere else
+     * (a surface that left before the consume landed) it is absorbed whole, so the value can
+     * never pollute any other surface and a late dispatch can never reach `unhandled`.
+     */
+    private fun listScrollRestoredEventAbsorbed(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): Boolean = event is P503UiEvent.ListScrollRestored && state !is P503AppState.OverviewEmpty
 
     /**
      * P7-09 09.0 (spec sections 2/3; D-225 Q19): the inbound-navigation family's ONE transition
@@ -1032,9 +1089,17 @@ class P503ReducerImpl(
             // ---- P7-03.C/D ledger-view read-only transitions (table 6.2a) ----
             is P503UiEvent.SelectTransaction ->
                 // Effect (the UI affords it only on HOME rows): enter the read-only detail with
-                // the exact overview preserved as the back-target payload (C03).
+                // the exact overview preserved as the back-target payload (C03). P8-00 b3 (V-5):
+                // a sampled HOME scroll position rides the overview, restored on close — and the
+                // overview instance is kept REFERENCE-IDENTICAL when nothing was sampled (the
+                // pre-b3 path; every existing same-instance assertion stays true).
                 P503AppState.TransactionDetail(
-                    overview = state,
+                    overview =
+                        if (event.homeFlowScroll == null) {
+                            state
+                        } else {
+                            state.copy(originListScroll = event.homeFlowScroll)
+                        },
                     originTab = state.selectedTab,
                     transactionId = event.transactionId,
                     detail = event.result,
@@ -1203,6 +1268,31 @@ class P503ReducerImpl(
             // The host wires this affordance only when the restore use cases exist.
             P503UiEvent.OpenBackupRestore ->
                 P503AppState.BackupRestore(overview = state)
+            // P8-00 b3 (V-5): the asset-screen account row opens the read-only account-flow
+            // surface, the SelectTransaction shape (the host resolved the first page and the
+            // header line before dispatching; the reducer performs zero IO). The exact overview
+            // is preserved as the back-target with the sampled ACCOUNTS list position (the
+            // scroll-restoration mechanism; reference-identical when nothing was sampled).
+            is P503UiEvent.SelectAccountFlow ->
+                P503AppState.AccountFlow(
+                    overview =
+                        if (event.originListScroll == null) {
+                            state
+                        } else {
+                            state.copy(originListScroll = event.originListScroll)
+                        },
+                    accountId = event.accountId,
+                    balanceLine = event.balanceLine,
+                    balanceMinorUnits = event.balanceMinorUnits,
+                    balanceCurrency = event.balanceCurrency,
+                    loadedRows = accountFlowFilteredRows(event.firstPage, event.accountId),
+                    nextWholeLedgerCursor = (event.firstPage as? com.unifiedledger.application.LedgerFlowPageResult.Success)?.page?.nextCursor,
+                )
+            // P8-00 b3 (V-5 返回保滚动位): the screen applied the restored position; the one-shot
+            // consume clears it so a later unrelated re-entry never replays a stale position.
+            // Nothing captured → the same instance returns (no churn).
+            P503UiEvent.ListScrollRestored ->
+                if (state.originListScroll == null) state else state.copy(originListScroll = null)
             // ---- P7-07 07.D budget transitions (D-184; table 6.2a discipline) ----
             // The landed budget-month read replaces the region's payload (a typed failure lands
             // as-is — the region renders the explicit failure copy, never a zero); the month
@@ -1284,8 +1374,9 @@ class P503ReducerImpl(
     /**
      * P7-03.C read-only detail state (spec section 6.1/6.2). Only its designed events react:
      * CloseTransactionDetail/Back return to the exact preserved overview (tab, month and
-     * monthly payload kept, C03), MonthlyActivityResult applies the 详情态同语义 payload update
-     * on the stored overview, the other new read-only events are absorbed, and every
+     * monthly payload kept, C03 — and P8-00 b3: the sampled HOME scroll position returns with
+     * it, the 返回保滚动位 mechanism), MonthlyActivityResult applies the 详情态同语义 payload
+     * update on the stored overview, the other new read-only events are absorbed, and every
      * pre-existing event stays unlisted (ISE, G-B). The page has zero edit entries.
      */
     private fun reduceTransactionDetail(
@@ -1300,6 +1391,9 @@ class P503ReducerImpl(
             // guard has already matched the transaction id, so this applies whole; the block is
             // display-only and no other field of the detail changes.
             is P503UiEvent.TransactionAnnotationHistoryLanded -> state.copy(annotationHistory = event.entries)
+            // P8-00 b3 (V-6): the read-only version history block's typed payload (the
+            // annotation-history twin; the central guard matched the transaction id).
+            is P503UiEvent.TransactionVersionHistoryLanded -> state.copy(versionHistory = event.result)
             is P503UiEvent.MonthlyActivityResult ->
                 when (val result = event.result) {
                     is com.unifiedledger.application.MonthlyActivityResult.Success ->
@@ -1319,6 +1413,11 @@ class P503ReducerImpl(
             // APPLIED to the preserved overview (never absorbed, never ISE), so returning to
             // the overview shows the fresh payload.
             is P503UiEvent.BudgetMonthLanded -> state.copy(overview = state.overview.copy(budgetView = event.result))
+            // NOTE: the account-flow family (SelectAccountFlow/CloseAccountFlow/
+            // RequestAccountFlowMorePage/AccountFlowMorePageLanded), the version-history landing
+            // and ListScrollRestored have no labels here — their central guards absorb them
+            // everywhere outside their designed states BEFORE dispatch (a label would be a dead
+            // branch, the OpenImportSurface precedent).
             is P503UiEvent.SelectTransaction,
             is P503UiEvent.SelectMonth,
             is P503UiEvent.AnalysisMonthShift,
@@ -1425,6 +1524,114 @@ class P503ReducerImpl(
             is P503UiEvent.UpdateMerchant,
             -> state
             else -> unhandled(state, event)
+        }
+
+    /**
+     * P8-00 b3 (V-5): the read-only account-flow state (D-301 spec sections 1.3/2.6). Only its
+     * designed events react: CloseAccountFlow/Back return to the exact preserved overview (tab,
+     * month and monthly payload kept — the C03 semantics, with the sampled ACCOUNTS scroll
+     * position riding it), RequestAccountFlowMorePage advances the single-flight marker and the
+     * request token, AccountFlowMorePageLanded applies a page only when its token is still
+     * current (the TagMerchantFilter late-write discipline), and MonthlyActivityResult follows
+     * the read-only detail's 详情态同语义 precedent. Every other new event is absorbed (the
+     * central guards already keep the family non-throwing in every other state); every
+     * pre-existing event stays unlisted (ISE, G-B). The page has zero write entries.
+     */
+    private fun reduceAccountFlow(
+        state: P503AppState.AccountFlow,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            P503UiEvent.CloseAccountFlow -> state.overview
+            // System back = CloseAccountFlow semantics (the CloseTransactionDetail back bullet).
+            P503UiEvent.Back -> state.overview
+            P503UiEvent.RequestAccountFlowMorePage ->
+                when {
+                    // 一次一页: a request while one page read is in flight is absorbed (the token
+                    // does not advance — the in-flight read's landing stays appliable).
+                    state.rowsLoading -> state
+                    // The whole-ledger walk ended; nothing more to request.
+                    !state.hasMoreWholeLedgerPages -> state
+                    else ->
+                        state.copy(
+                            rowsLoading = true,
+                            rowsLoadFailed = false,
+                            pageRequestToken = state.pageRequestToken + 1,
+                        )
+                }
+            is P503UiEvent.AccountFlowMorePageLanded -> {
+                // Late-write guard: a landing whose read was superseded by a newer request (or
+                // duplicated) can never append — the token gate is the TagMerchantFilter P3-1
+                // precedent. A landing for an absent marker is also dropped (fail-closed).
+                if (!state.rowsLoading || event.requestToken != state.pageRequestToken) {
+                    state
+                } else {
+                    when (val result = event.result) {
+                        is com.unifiedledger.application.LedgerFlowPageResult.Success -> {
+                            val filtered = accountFlowFilteredRows(result, state.accountId)
+                            state.copy(
+                                rowsLoading = false,
+                                rowsLoadFailed = false,
+                                loadedRows = state.loadedRows + filtered,
+                                nextWholeLedgerCursor = result.page.nextCursor,
+                            )
+                        }
+                        // Fail-closed: the loaded rows stay visible beside the retry state; the
+                        // cursor is kept so the retry re-requests the same page.
+                        com.unifiedledger.application.LedgerFlowPageResult.Unavailable ->
+                            state.copy(rowsLoading = false, rowsLoadFailed = true)
+                    }
+                }
+            }
+            // 详情态同语义 (the read-only detail precedent): the monthly cycle landing updates the
+            // stored overview in place; a typed failure leaves into the READ failure with this
+            // overview preserved as the monthlyOverview.
+            is P503UiEvent.MonthlyActivityResult ->
+                when (val result = event.result) {
+                    is com.unifiedledger.application.MonthlyActivityResult.Success ->
+                        state.copy(
+                            overview =
+                                state.overview.copy(
+                                    monthlyActivity = result.activity,
+                                    selectableMonths = event.selectableMonths,
+                                    monthlyReloadRequired = false,
+                                ),
+                        )
+                    com.unifiedledger.application.MonthlyActivityResult.InvalidState,
+                    com.unifiedledger.application.MonthlyActivityResult.Unavailable,
+                    -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ, monthlyOverview = state.overview)
+                }
+            // A budget read completing behind this carried-overview surface is APPLIED to the
+            // preserved overview (the P1-2 read-only-detail precedent).
+            is P503UiEvent.BudgetMonthLanded -> state.copy(overview = state.overview.copy(budgetView = event.result))
+            // The refresh family keeps the surface and its preserved overview as it was when the
+            // surface opened (the read-only detail's absorb precedent; the fresh current state
+            // lands when the user closes back to the overview). NOTE: SelectAccountFlow and
+            // ListScrollRestored have no labels — their central guards absorb them outside the
+            // overview BEFORE dispatch (a label would be a dead branch, the OpenImportSurface
+            // precedent).
+            is P503UiEvent.InitialLoadResult,
+            P503UiEvent.InitialLoadFailed,
+            is P503UiEvent.RefreshResult,
+            P503UiEvent.RefreshFailed,
+            -> state
+            else -> unhandled(state, event)
+        }
+
+    /**
+     * P8-00 b3 (V-5): the account-filtered view of one whole-ledger flow page — the rows whose
+     * postings include [accountId], page-key order preserved (the display sort is applied by the
+     * host over the accumulated rows). The current 200-rows/page convention bounds the in-memory
+     * filter; no data-layer change exists behind it (the registered batch trade-off).
+     */
+    private fun accountFlowFilteredRows(
+        page: com.unifiedledger.application.LedgerFlowPageResult,
+        accountId: com.unifiedledger.domain.AccountId,
+    ): List<com.unifiedledger.application.LedgerEntryRow> =
+        when (page) {
+            is com.unifiedledger.application.LedgerFlowPageResult.Success ->
+                page.page.rows.filter { row -> row.postings.any { posting -> posting.accountId == accountId } }
+            com.unifiedledger.application.LedgerFlowPageResult.Unavailable -> emptyList()
         }
 
     /**
