@@ -106,10 +106,14 @@ class P503RestoreReducerTest {
         val carrier = restoreCarrier()
         // OpenBackupExport ON the export surface stays absorbed (the family guard's first clause).
         assertSame(carrier, reducer.reduce(carrier, P503UiEvent.OpenBackupExport))
-        // The export surface's own events keep their exact shapes on the carrier.
+        // The export surface's own events keep their exact shapes on the carrier: the password
+        // draft updates, and ConfirmBackupExport STARTS the export (running=true) exactly as on the
+        // direct face — the carrier hosts the export flow, it does not absorb it.
         val typed = assertIs<P503AppState.BackupExport>(reducer.reduce(carrier, P503UiEvent.UpdateBackupPassword("x")))
         assertEquals("x", typed.password)
-        assertSame(carrier, reducer.reduce(carrier, P503UiEvent.ConfirmBackupExport))
+        val started = assertIs<P503AppState.BackupExport>(reducer.reduce(carrier, P503UiEvent.ConfirmBackupExport))
+        assertTrue(started.running)
+        assertSame(carrier.overview, started.overview)
     }
 
     private fun restoreCarrier(): P503AppState.BackupExport = P503AppState.BackupExport(overview())
