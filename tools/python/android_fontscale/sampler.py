@@ -220,6 +220,15 @@ class Sampler:
         self.dumps.append(f"{stem}.xml")
         return (self.evidence / f"{stem}.xml").read_text(encoding="utf-8")
 
+    def save_tree(self, stem: str, tree: str) -> None:
+        """Write the frame the sample was taken from under the screen's own name.
+
+        `wait_for` reuses one remote name, so without this the artifact would carry only
+        `wait.xml` and the gate would have nothing per-screen to re-check.
+        """
+        (self.evidence / f"{stem}.xml").write_text(tree, encoding="utf-8")
+        self.dumps.append(f"{stem}.xml")
+
     def tap_label(self, label: str) -> None:
         center = find_center(self.dump("tap-probe"), label)
         if center is None:
@@ -267,6 +276,7 @@ def run(args: argparse.Namespace) -> int:
         # Wait for the screen to be the one we are about to photograph, then photograph it.
         tree = sampler.wait_for(copy)
         previous = tree
+        sampler.save_tree(stem, tree)
         sampler.screenshot(stem)
         visible = dump_contains(tree, copy)
         observations[stem] = {"label": label, "copy": copy, "copy_visible": visible}
