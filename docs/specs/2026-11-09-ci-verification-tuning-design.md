@@ -141,3 +141,17 @@
 ## 8. 回退
 
 每批一个 PR，回退即 revert 对应 PR；无数据、无不可逆步骤。T2 的回退触发条件是出现绕过「`main` 每个落地提交至少扫描一次」的直推；T3 的回退触发条件是出现任何一次「零动作但有红」的落地。
+## 9. 实施记录与实测验收（2026-11-09）
+
+批次落地提交（全部 squash 进 `main`）：登记 `f70c7d91`、卫生 `a9a4b332`、文档快路径 `d417ab85`、trace 范围 `dfa2bb3d`、设备路由 `1eaf405c`、合并后去重 `7ea8397b`。
+
+| 判据 | 实测 | 证据 |
+| --- | --- | --- |
+| G-1 代码 PR 执行面 | 11 job（新增 `changes`），重活 job 一个不少；四必过全绿 | 各批 PR 的 required checks |
+| G-2 纯文档 PR | PENDING：本 PR 只碰 `docs/**/*.md`，合并前以本次 checks 记录 | 本 PR 的 checks 列表 |
+| G-3 合并后去重 | 零动作、未派发全量；守卫步骤 1.5 秒 | run 42581062153：`squash evidence complete` → 落地提交扫描 → `zero action`，无 CI 派发 |
+| G-4 设备信号后移 | PR 上不再出现 preflight；合并后 push 触发并成功 | run 42578401565（push, `1eaf405c`, success）|
+| G-5 Windows 取消空跑 | PR checks 列表无 `Windows JVM tests` | 各 PR 的 checks |
+| G-6 必过 context | 每个 PR 四项齐备 | 各 PR `gh pr checks --required` |
+
+残余（登记接受）：commit→PR 关联请求未分页（30 条上限，超出即按证据不全派发，fail-closed）；守卫的 `gh` 调用任何失败都退回派发全量；`docs/` 下非 Markdown 文件判 `code`，故 golden 夹具改动仍跑全量。
