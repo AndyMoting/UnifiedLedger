@@ -19,16 +19,18 @@ Squash evidence (D-302, T3): a squash merge has one parent, so the criterion
 above cannot see it. `--squash-evidence` judges such a commit from records that
 cannot drift - the pull request GitHub merged into it:
 
-    the landed subject carries " (#<number>)"
+    the landed subject ends with " (#<number>)", or GitHub's
+    commit-to-pull-request association names exactly one merged pull request
+    whose merge_commit_sha is this commit
     that pull request's mergeCommit.oid == the landed commit
     that pull request is MERGED
     tree(pull request head) == tree(landed commit)
     every required check on that pull request is green (SUCCESS or SKIPPED,
     which is how a job-level skip reports and what branch protection accepts)
 
-Every other outcome - unparsable subject, unreadable PR or commit, missing
-required check, differing tree - returns 1, so the caller keeps dispatching the
-full run. Nothing here trusts a caller-supplied SHA.
+Every other outcome - no unambiguous pull request, unreadable API or commit,
+missing required check, differing tree - returns 1, so the caller keeps
+dispatching the full run. Nothing here trusts a caller-supplied SHA.
 
 Exit codes:
     0  zero action: the merge criterion holds, or the squash evidence is complete
@@ -103,6 +105,44 @@ def run_gh(*args: str) -> tuple[int, str, str]:
     return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
 
 
+def pull_request_number(landed: str, slug: str, subject: str) -> tuple[int, str]:
+    """Resolve the pull request a landed squash commit came from.
+
+    `gh pr merge --subject` writes the given subject verbatim, so the usual
+    "subject ends with (#N)" suffix only exists when the message was generated
+    by GitHub. The fallback is GitHub's own commit-to-pull-request association,
+    accepted only when exactly one merged pull request points at this commit.
+    """
+    match = re.search(r"\(#(\d+)\)\s*$", subject)
+    if match:
+        return int(match.group(1)), ""
+
+    code, out, err = run_gh("api", f"repos/{slug}/commits/{landed}/pulls")
+    if code != 0:
+        return 0, f"cannot read the commit-to-pull-request association: {err or code}"
+    try:
+        associated = json.loads(out)
+    except (ValueError, TypeError):
+        return 0, "unreadable commit-to-pull-request association"
+    if not isinstance(associated, list):
+        return 0, "unreadable commit-to-pull-request association"
+    merged = [
+        pull for pull in associated
+        if isinstance(pull, dict)
+        and (pull.get("merge_commit_sha") or "") == landed
+        and pull.get("merged_at")
+    ]
+    if len(merged) != 1:
+        return 0, (
+            "the landed commit is associated with "
+            f"{len(merged)} merged pull requests"
+        )
+    number = merged[0].get("number")
+    if type(number) is not int or number <= 0:
+        return 0, "the associated pull request has no usable number"
+    return number, ""
+
+
 def squash_evidence(landed: str) -> tuple[int, str]:
     """Judge a one-parent landing from the pull request GitHub merged into it."""
     actual = parents_of(landed)
@@ -114,20 +154,17 @@ def squash_evidence(landed: str) -> tuple[int, str]:
             "applies to a one-parent landing only"
         )
 
-    code, subject, err = run_git("log", "-1", "--format=%s", landed)
-    if code != 0:
-        return 1, f"needs-dispatch: cannot read the subject of {landed}: {err}"
-    match = re.search(r"\(#(\d+)\)\s*$", subject)
-    if not match:
-        return 1, (
-            f"needs-dispatch: subject of {landed} carries no pull request number: "
-            f"{subject!r}"
-        )
-    number = int(match.group(1))
-
     slug = os.environ.get("GITHUB_REPOSITORY", "").strip()
     if not slug:
         return 1, "needs-dispatch: GITHUB_REPOSITORY is not set"
+
+    code, subject, err = run_git("log", "-1", "--format=%s", landed)
+    if code != 0:
+        return 1, f"needs-dispatch: cannot read the subject of {landed}: {err}"
+
+    number, problem = pull_request_number(landed, slug, subject)
+    if not number:
+        return 1, f"needs-dispatch: {problem}"
 
     code, out, err = run_gh(
         "pr", "view", str(number), "--repo", slug,
