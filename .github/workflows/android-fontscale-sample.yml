@@ -1,0 +1,117 @@
+# P8-00 V-8 font-scale sample (manual, non-blocking, never a PR gate).
+#
+# WHAT ONE GREEN RUN PRODUCES
+# ---------------------------
+# V-8 of `docs/specs/2026-11-08-p8-00-visual-nav-baseline-design.md` section 5 asks for the
+# empty-state samples and for "1.3x font scale must not overflow". The empty-state canvases
+# live in `local/p8-00-design/`; the scale leg is device-observable, so this rig boots a
+# hosted AVD, sets `system font_scale`, and captures the three screens on a **fresh empty
+# install** (an empty ledger is exactly the state V-8 samples, so no fixture is generated).
+#
+# The artifact is the evidence a human reads: `home.png` / `asset.png` / `analysis.png` plus
+# each screen's accessibility dump at that scale. The `gate` step re-derives only what is
+# mechanically decidable — the scale took effect, every screenshot is a real image, and each
+# screen's empty-state copy is still in the accessibility tree (a clipped row loses its text
+# node; an overflowing one pushes it out of the window). "No visual overflow" stays a human
+# judgement on the artifact.
+#
+# WHY CLOUD
+# ---------
+# The development host's adb surface belongs to the user's own emulator (D-281), so this
+# chain never boots a local emulator: `tools/ci/android-fontscale.py` refuses to run outside
+# a GitHub-hosted Linux runner, and the first steps below bind the run to one exact commit so
+# the APK it installs is the tree it claims.
+name: Android font-scale sample
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact 40-character commit SHA to sample
+        required: true
+        type: string
+      font_scale:
+        description: Font scale to apply (V-8 asks for 1.3)
+        required: false
+        default: '1.3'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # One manual round per run: a later dispatch of the same SHA must stay tellable apart and
+  # must never cancel evidence already tied to a chosen commit.
+  group: android-fontscale-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  font-scale-sample:
+    name: Font-scale sample
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      TZ: Asia/Shanghai
+      LANG: zh_CN.UTF-8
+      GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx3g -Dkotlin.daemon.jvmargs=-Xmx2g
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 1
+      - name: Assert the checkout is the requested commit
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          [[ "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: temurin
+      - name: Build the debug APK outside the emulator session
+        run: ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebug --warning-mode all
+      - name: Record the APK hash this run installs
+        run: |
+          set -euo pipefail
+          mkdir -p fontscale-evidence
+          sha256sum android-app/build/outputs/apk/debug/android-app-debug.apk | tee fontscale-evidence/host-apk.txt
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Capture the three screens at the requested scale
+        timeout-minutes: 45
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          FONT_SCALE: ${{ inputs.font_scale }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          avd-name: ul-fontscale
+          profile: pixel_6
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          cores: 2
+          ram-size: 2048M
+          emulator-boot-timeout: 300
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            set -u
+            python3 tools/ci/android-fontscale.py run --evidence fontscale-evidence --sha "${EXPECTED_SHA}" --font-scale "${FONT_SCALE}" --avd-name ul-fontscale
+      - name: Re-derive the gate from the evidence on disk
+        if: always()
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          FONT_SCALE: ${{ inputs.font_scale }}
+        run: python3 tools/ci/android-fontscale.py gate --evidence fontscale-evidence --sha "${EXPECTED_SHA}" --font-scale "${FONT_SCALE}"
+      - name: Upload the sample evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fontscale-sample-${{ inputs.expected_sha }}
+          path: fontscale-evidence
+          retention-days: 30
