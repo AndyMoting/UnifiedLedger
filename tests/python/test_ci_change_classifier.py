@@ -168,7 +168,7 @@ class WorkflowWiring(unittest.TestCase):
         self.assertIn("tools/ci/classify-changes.py", joined)
 
     def test_heavy_jobs_run_only_for_code(self):
-        for job in ("kotlin-core", "ledger-data-shards", "android"):
+        for job in ("kotlin-core", "ledger-data-shards", "kotlin-migration-verify", "android"):
             block = "\n".join(self.job_block(job))
             self.assertIn("needs: [changes]", block, job)
             self.assertIn(SKIP_IF, block, job)
@@ -184,6 +184,15 @@ class WorkflowWiring(unittest.TestCase):
         self.assertIn(
             "needs: [changes, kotlin-core, ledger-data-shards, kotlin-migration-verify]", block
         )
+        self.assertIn("tools/ci/classify-changes.py", block)
+        self.assertIn("CHANGES_RESULT", block)
+        self.assertIn("DECLARED_KIND", block)
+        # The disagreement check and both judgement branches must be present, not
+        # just the variable names, or the gate could pass a misclassified change.
+        self.assertIn('if [ "$kind" != "$DECLARED_KIND" ]', block)
+        self.assertIn('if [ "$kind" = "docs" ]', block)
+        self.assertIn("A docs-only change ran the Kotlin jobs", block)
+        self.assertIn("Kotlin verification did not fully succeed", block)
         # D-303 batch E: the extracted migration job is judged like the other two.
         self.assertIn('MIGRATION_RESULT" != "skipped"', block)
         self.assertIn('MIGRATION_RESULT" != "success"', block)

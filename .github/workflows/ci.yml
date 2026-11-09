@@ -87,7 +87,7 @@ jobs:
           path: ~/.gradle/caches/build-cache-1
           key: gradle-build-cache-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index }}-${{ github.run_id }}
           restore-keys: gradle-build-cache-${{ runner.os }}-
-      - name: Gradle check (every module except the sharded ledger-data test task)
+      - name: Gradle check (every module except the sharded test and migration tasks)
         run: ./gradlew --no-daemon --max-workers=5 --parallel --build-cache --profile --init-script tools/ci/ci-parallel.init.gradle.kts check -x :ledger-data:jvmTest :ledger-data:jvmTestClasses -x :ledger-data:verifyCommonMainLedgerDatabaseMigration --warning-mode all
       - name: Ktlint check
         run: ./gradlew --no-daemon --max-workers=5 --build-cache --init-script tools/ci/ci-parallel.init.gradle.kts ktlintCheck --warning-mode all
