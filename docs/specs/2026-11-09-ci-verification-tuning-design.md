@@ -16,8 +16,8 @@
 
 | # | 判据 | 现状基线 | 目标 |
 | --- | --- | --- | --- |
-| G-1 | 代码 PR 执行面 | 10 job，wall clock ≈9.0 min | 不减少、不变慢（持续）|
-| G-2 | 纯文档 PR | 10 job（Kotlin 4 + Android 1 + Python 2 + Trace 1 + 2 gate），≈9.0 min | PR 2 后：Kotlin 4 job 为 0、Android 构建步骤跳过（job 保留）、新增 `changes` 1，总 10 → 7 job；PR 3 后：wall clock ≤5.0 min（由 Python shard 1 的 4.5 min 主导）|
+| G-1 | 代码 PR 执行面 | 10 job，wall clock ≈9.0 min | 11 job（新增 `changes` 1，串行 ≤0.5 min 计为固定成本）；重活 job 一个不少、不更慢（持续）|
+| G-2 | 纯文档 PR | 10 job（Kotlin 4 + Android 1 + Python 2 + Trace 1 + 2 gate），≈9.0 min | PR 2 后：Kotlin 4 job 为 0、Android 构建步骤跳过（job 保留）、新增 `changes` 1，总 10 → 7 job；PR 3 后：wall clock ≤5.5 min（Python shard 1 4.5 min + 串行开销）|
 | G-3 | 每次 squash 合并的 CI 全量次数 | 2（PR run + 守卫派发）| 1（PR 4 后）|
 | G-4 | scale preflight 假红进入 PR | 22% | 0（PR 5 后）|
 | G-5 | Windows 取消空跑占比 | 82% | 0（PR 1 后）|
@@ -70,7 +70,7 @@
 
 **理由**：squash + strict up-to-date 下落地树与 PR 验证树同树，派发是重复执行；当前占 CI 全部 run 的 41%。
 
-**兜底**：fail-closed（任一环节不可读、解析不到或树不等即派发，等价现状）；合成仓库测试覆盖「四条件齐备 → 零动作且 trace 执行」「树不等 → 派发」「API 不可读 → 派发」三态。PR 4 落地后，零动作合并不再自动产生该 SHA 的整树 APK bundle；手动 rig 需要时按 `docs/CONTRIBUTING.md`「本机与 CI 的验证分工」给出的 `gh workflow run ci.yml --ref main` 手动派发一次，作为该 SHA 的 bundle 生产者路径。
+**兜底**：fail-closed（任一环节不可读、解析不到或树不等即派发，等价现状）；合成仓库测试覆盖「四条件齐备 → 零动作且 trace 执行」「树不等 → 派发」「API 不可读 → 派发」三态。PR 4 落地后，零动作合并不再自动产生该 SHA 的整树 APK bundle；手动 rig 需要时按 `docs/CONTRIBUTING.md`「本机与 CI 的验证分工」给出的 `gh workflow run ci.yml --ref main` 手动派发一次，作为该 SHA 的 bundle 生产者路径（该命令作用于 `main` 的当前 tip，只在该 SHA 仍是 tip 时产出对应 bundle）。
 
 ### T4 scale preflight 的设备半边外移
 
@@ -78,7 +78,7 @@
 
 **理由**：22% 红全部是模拟器启动失败，历史零真代码问题；它在 PR 上的信号价值低于其红噪音与 30 min 机会成本。
 
-**取代与修订关系**：本项取代 D-200 第 2 条「相关 PR 自动运行非 required 的设施预检」；并修订该条第 4 条——其要求预检覆盖驱动、校验与 workflow 改动的**覆盖内容保留**，运行位置改为合并后；同一条第 4 句「不新增定时任务」由本项解除，新增的夜间运行即本项的信号落地位置。
+**取代与修订关系**：本项取代 D-200 第 2 条「相关 PR 自动运行非 required 的设施预检」；并修订该条第 4 条——其要求预检覆盖驱动、校验与 workflow 改动的**覆盖内容保留**，运行位置改为合并后；该条末句「不新增定时任务或 API 矩阵」中「定时任务」由本项解除（新增的夜间运行即本项的信号落地位置），「API 矩阵」仍有效。
 
 **兜底**：设备信号保留在合并后与夜间，不消失；每次手动 rig 仍绑定精确 SHA 与 bundle 来源。
 
@@ -105,7 +105,7 @@
 1. 四个必过 context 名不变，分支保护配置零改动。
 2. 大 job 的跳过只允许出现在分类为 `docs` 且 gate 独立重算一致时；其余情形一律执行。
 3. 隐私门不弱化：`main` 每个落地提交都被 trace 扫描——要么在守卫派发的全量 run 内，要么在守卫的零动作路径内；PR 侧覆盖全树内容与本 PR 新增提交。
-4. 代码改动 PR 的执行面不减少：`code` 分类下与现状逐 job 一致。
+4. 代码改动 PR 的执行面不减少：`code` 分类下与现状逐 job 一致，另加一个 `changes` 分类 job（串行 ≤0.5 min，不是验证面）。
 5. 零产品代码、零账务语义、零 schema、零迁移改动。
 
 ## 5. 落地批次
@@ -126,7 +126,7 @@
 - 每批：四项必过全绿，且该批自身 PR run 显示新配置按预期执行（改动 `ci.yml` 的 PR 必为 `code` 分类）。
 - PR 1 后：`Windows JVM tests` 不再出现在 PR 的 checks 列表；四个手动 rig 文件头出现 historical 标注。
 - PR 2 后：第一个纯文档 PR 的 Kotlin 4 个 job 为 0、Android 构建步骤跳过（job 保留）、新增 `changes` job、总 7 job；同一分支追加代码文件后变为全量。
-- PR 3 后：PR 侧 `Trace scan` ≤2.0 min；纯文档 PR wall clock ≤5.0 min；合成测试证明旧提交中的禁止串在该模式外仍会被捕获。
+- PR 3 后：PR 侧 `Trace scan` ≤2.0 min；纯文档 PR wall clock ≤5.5 min；合成测试证明旧提交中的禁止串在该模式外仍会被捕获。
 - PR 4 后：一次真实 squash 合并守卫零动作且落地提交扫描通过；合成测试三态齐备；手动 rig 的生产者指令（`gh workflow run ci.yml --ref main`）在文档中可达。
 - PR 5 后：连续 20 个 PR 无模拟器红。
 
