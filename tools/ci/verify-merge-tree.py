@@ -99,9 +99,12 @@ def tree_of(commit: str) -> str | None:
 
 def run_gh(*args: str) -> tuple[int, str, str]:
     """Single seam for every `gh` call; the tests patch this function."""
-    completed = subprocess.run(
-        ["gh", *args], capture_output=True, text=True, encoding="utf-8"
-    )
+    try:
+        completed = subprocess.run(
+            ["gh", *args], capture_output=True, text=True, encoding="utf-8"
+        )
+    except OSError as error:  # gh missing or not executable: fail closed
+        return 1, "", str(error)
     return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
 
 
@@ -145,6 +148,11 @@ def pull_request_number(landed: str, slug: str, subject: str) -> tuple[int, str]
 
 def squash_evidence(landed: str) -> tuple[int, str]:
     """Judge a one-parent landing from the pull request GitHub merged into it."""
+    code, resolved, err = run_git("rev-parse", "--verify", f"{landed}^{{commit}}")
+    if code != 0 or not re.fullmatch(r"[0-9a-f]{40}", resolved or ""):
+        return 1, f"needs-dispatch: cannot resolve {landed!r} to a commit: {err}"
+    landed = resolved
+
     actual = parents_of(landed)
     if actual is None:
         return 1, f"needs-dispatch: cannot read commit {landed}"
@@ -206,15 +214,24 @@ def squash_evidence(landed: str) -> tuple[int, str]:
             f"head tree is {head_tree}"
         )
 
-    conclusions = {}
+    conclusions: dict[str, list[str]] = {}
     for entry in pull.get("statusCheckRollup") or []:
         if not isinstance(entry, dict):
             continue
-        name = entry.get("name") or entry.get("context") or ""
-        conclusions[str(name)] = str(entry.get("conclusion") or "").upper()
-    missing = [name for name in REQUIRED_CHECKS if conclusions.get(name) not in PASSING_CONCLUSIONS]
+        name = str(entry.get("name") or entry.get("context") or "")
+        conclusions.setdefault(name, []).append(str(entry.get("conclusion") or "").upper())
+    # Every entry for a required name must pass: a duplicate name must not be
+    # able to shadow a failing conclusion behind a later successful one.
+    missing = [
+        name for name in REQUIRED_CHECKS
+        if not conclusions.get(name)
+        or any(value not in PASSING_CONCLUSIONS for value in conclusions[name])
+    ]
     if missing:
-        detail = ", ".join(f"{name}={conclusions.get(name) or 'absent'}" for name in missing)
+        detail = ", ".join(
+            f"{name}={'/'.join(conclusions[name]) if conclusions.get(name) else 'absent'}"
+            for name in missing
+        )
         return 1, f"needs-dispatch: required checks are not green on #{number}: {detail}"
 
     return 0, (
