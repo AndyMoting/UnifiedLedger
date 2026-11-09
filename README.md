@@ -2,30 +2,6 @@
 
 UnifiedLedger 是一个 Android-first、local-first 的个人财务应用，将日常记账、账单导入和对账审计建立在同一份正式账本之上。
 
-## 当前阶段
-
-阶段 4“导入与对账闭环”已于 2026-08-23 收口；阶段 6（Android 视觉与平台适配）已于 2026-09-11 按 D-142 收口，交付项为：compileSdk/targetSdk 已升至 37（minSdk 34），FOUND-001 损坏数据库 fail-closed 已按 D-132 闭环，D1 工具链批（D-133）、D2 主题与组件批（D-134）、D3 平台回归批（D-135）、玻璃启用批（D-136）与对话框 Esc 修复批（D-137，缺陷 D131DESKESC-001 关闭）均已交付并推送；D-138 发生时间手输宽容解析批、D-139/D-140 键入保留缺陷修复批、技术栈升级批（D-141：CMP 1.12.0 / backdrop 2.0.1 / Kotlin 2.4.20 / AGP 9.3.1 / targetSdk 37 / kotlinx-datetime 0.8.0）均已交付并推送。阶段 7（Android 日常工作流）第一组 P7-01（账户与分类目录管理）、P7-02（录入基础）、P7-03（看账）与 P7-04（导入与草稿确认）已按 D-143/D-144/D-145/D-146 交付并合入本地 `main`（merge `4eb41ee`/`b56913d`/`b490bea`/`12e3057`），已推送 `origin/main`（push `a710c6c..12e3057`，head `12e3057` 同提交 CI run `34924060988` 三 job 全绿并上传 APK 工件）；其后 D-147 开卡枚举性能批（schema v30 覆盖索引、会话级批量查询与进度面）、A-PERF 导入读治理批（merge `e61b9a0`）与 A-04 CCB 网银 XLS 的 Android 验证与能力翻转（merge `b66bdf3`/`c93e18a`，微信 XLSX、支付宝 CSV、招行 CSV 与 CCB 网银 XLS 四个导入来源在双平台全部可用）已交付并推送，其后 D-150～D-154（A-DOC 正式状态同步与 CCB fixture 隐私清理、P7-02 A-02 置顶与确认页缺陷修复、P7-02 提交后刷新链缺陷修复、P7-03 导入批量确认完成触发刷新、P7-04 导入决策面按方向渲染分类源）亦已交付并推送，其后 P7-05 设计门（D-156）、A-05 收口裁决（D-157）、P7-05 首切片（片 1a 基底层，D-158，schema v31）、ktlint 修复与 §10.3 规模项承接复核（D-159）、A-DOC 批正式状态同步（D-160，schema v31）、§10.3 程序化滚动致动器与四阶段规模证据（D-161/D-162）、B5 测量方法复核（D-163）、单次会话全链实测（D-164）、§10.3 数据条件实测（D-165）与 postScroll 决定性取证及 61k 规模 OOM 缺陷登记（D-166）亦已登记并推送；P7-05 修错与回收站（D-156）的片 1b（产品接线）已全量交付并合入 `main`（Piece 1–6，`6f74ee4`/`02af67a`/`cfe0722`/`f814f7a`/`b4d6200`/`5ea7f67`），V-17 Android 人工验收已执行并按 D-181 收口（四项用户可观察期望与 V-16 设备部分 PASS；TalkBack 朗读巡检与再核对入口设备观察两项缺证经用户 2026-09-26 裁决接受延期/替代证据，V-17 判 PASS 含披露；V-19 以会话内人工再核对为满足口径判 PASS，片 1b 验收就此收口）；**P7-05 转账第二切片设计门已按 D-228 批准**（规格 `docs/specs/2026-10-16-p7-05-transfer-correction-slice-design.md`，零 schema；实施已于 2026-10-28 交付：PR #162/#163/#164，见 D-257）；P7-06（整体备份与恢复）五个设计门已批准（06.0/06.A 容器格式 D-174、06.1 稳定存储与 runtime owner D-176、06.2/06.B 备份导出 D-177、06.3/06.C 恢复预检 D-179、06.4/06.D 恢复确认与切换 D-182（设计门）与 D-183（实施批），规格 `docs/specs/2026-09-26-p7-06-restore-confirm-switch-design.md`），其中 06.1 已实施并合入 `main`（`d6cffb6`），但其 Android 启动路径经设备实证存在两项 P0 缺陷（相对库名含路径分隔符致 `StartupError`；主线程阻塞打开致 ANR 并留下 `POINTER_MISSING` 无指针代际）并已修复合入（`0c0b319`，登记 D-178；残余崩溃窗口归 06.D，06.1 仍非完整 P706-A06 通过）；P7-06 06.B（备份导出）已实施并合入 `main`（`6c3c415`，跟进修复合并 `a18738f`/`aed0920`；面向用户的取消控件延期，规格 §9 开放项与未并入 PASS 的验收向量见 `CURRENT_STATE.md`）；**06.C（预检）已按 D-179 规格实施并合入 `main`（merge `3d99b48`，登记 D-180）**；**06.4/06.D（恢复确认与切换）已按 D-182 规格实施、评审、验证并合入 `main`（merge `b9249ad`，登记 D-183；组合根接线由 06.D 交付）**；P7-07 07.T 时间投影技术门已按 D-184 实施并合入 `main`（`4b889a0`，schema v31→v32），P7-07 07.B 预算配置持久化已实施、双独立评审、distinct verifier、受影响全套 + 迁移校验全绿并合入 `main`（merge `e45e2f7`/`bf38b5e`，schema v32→v33，登记 D-185）；07.D 已按 **D-186** 实施、评审、验证并合入 `main`（merge `8f76b2a`，同提交 CI run `36607124109` success；零 schema 变更），**P7-07 由此全部收口**；**P7-08 设计门已批准（D-187**，规格 `docs/specs/2026-09-30-p7-08-tag-merchant-design.md`，merge `3a70e88`），08.A 已按 D-218 实施并合入 `main`（PR #72，merge `8b7c6ae`，schema v33→v34），08.B-1（手工新建原子贯通）已按 D-221 实施、评审、验证并合入 `main`（PR #76，merge `71a4c1b`，schema v34→v35）、08.B-2 已按 D-222 实施、评审、验证并合入 `main`（PR #78，merge `f32bf41`，零 schema 变更）；08.C（多标签筛选、商家月累计与目录管理 UI）已按 D-223 实施、评审、验证并合入 `main`（PR #81，merge `fd165aa401eadccca596cf34f4355f1d11de9601`，零 schema 变更），08.D（联动与恢复）已按 D-224 实施、评审、验证并合入 `main`（PR #83，merge `6ef0d6c476f2faf0efd8f664d9fd7df9f440f594`，零 schema 变更）；**P7-09 系统入口已交付**：设计门批准（**D-225**，规格 `docs/specs/2026-10-12-p7-09-system-entry-design.md`，零 schema 变更）；四个实施切片全部合入 `main`——`09.0` 导航门 + `09.A` 单文件分享导入（PR #87，merge `da0929e`）、`09.C` 月度小组件（PR #88，merge `f24d136`）、`09.B` 图标快捷方式（PR #89，merge `9a0dfe2`，登记 **D-226**：新增第 4 类中立请求 `OpenImportTab`），`09.D` 平台回归设备取证已完成（41/41 仪器化、冷/热启动目标一致、`exported=false` 可接收系统 `APPWIDGET_UPDATE`、桌面回归；证据 `local/artifacts/p7-09d/`）；**P709-A01..A09 仅 A09 记 PASS（JVM 维度）、A02 部分证据、其余七项无证据**（设备/平台腿完整本尚缺，见残余）；当前 `origin/main` 以 `git rev-parse origin/main` 为准（最近登记为 `33a80c3`，2026-10-28）（PR 门禁流：四个 required checks `Kotlin tests`/`Android compile`/`Python tests`/`Trace scan`）；其后 **P7-04 导入审核 61k 可操作性缺陷 `ACC-D-PERF-01`** 的设计门已按 **D-230** 批准（规格 `docs/specs/2026-10-18-p7-04-import-review-61k-operability-design.md`，J1–J9 裁决，零 schema 变更），当前基线的**设备重测与仪器化归因**已按 **D-231** 登记（61,000 候选库上点导入 Tab 或刷新清单→列表内容可见约 **27–30 s**，劣于 D-169 登记的约 11 s；28 s 窗口内 `Dispatchers.Default` 24.38 s on-CPU、GC 2.13 s、主线程 1.69 s，主线程不是瓶颈；内存仍达标、零 OOM/FATAL/ANR），D-230 J1 机制 (b) 的**实施**已按 **D-232** 交付并合入 `main`（PR #97 `14088ed`：逐批折叠改为按候选连续段单遍折叠，消除整批列投影列表 + `groupBy` map 与累积结果的瞬时共存，3 文件 +288/−7，零 schema 变更，输出逐字节等价；批大小保持 10,000 故 J7/J8 未触发、顺延设备证据批；**该批不声称速度改善**）；**其机制 (b) 后的设备复测已按 **D-234** 登记**——同一 61k 库、`c6526ad` 树 APK（sha256 `3f2bd16b…`）、AVD `ul_p7_d01`/API 36：列表内容可见 **Tab 入口 9 轮中位 23.71 s、刷新入口 6 轮中位 21.22 s**（较 D-231 的 27–30 s 改善约 20%，距 ≤3 s 仍差 ≈7.9×）；**冻结 B2 首帧 0.039–0.059 s 再次被证为骨架帧**（截图实证 12 s 仍「清单尚未加载」、22.6 s 才出现候选行）；**J7 连接持有窗口首个仪器化读数约 40 s**（列表可见后仍继续约 14 s）；`DefaultDispatch` 仍约 26 s CPU、主线程约 1.5 s；内存 ≈137 MB 达标、零 OOM/FATAL/ANR；批大小未调故 J8 未触发；**`ACC-D-PERF-01` 在 61k 仍为 NOT MET**；此后 **P7-07 验收向量裁决批已按 D-237 登记**：JVM 取证 3 类 43 tests / 0 failures，**P707-A01/A02/A03/A05 判 PASS（JVM 维度）**；A06/A09 部分证据、A04/A07/A08 缺证；**P7-07 整体不判通过**（历史「已收口」仅指实施交付）；此后 **P7-09 验收取证批已按 D-236 登记**：**`P709-A09` 判 PASS**（桌面组合根 JVM 回归 9 类 32 tests / 0 failures，证明 Android 新接口未破坏 common/desktop 装配）；**`P709-A02` 部分证据**（`file://`、无 stream、`SEND_MULTIPLE` 三向量设备侧零写入）；**分享接受路径受 `am` 工具链限制**（系统在 WM lock 下判 permission denied，`adb root` 不改变），A01/A03 需真实分享方 App 才能观测，**不据此判产品缺陷、不记 PASS**；P709 九向量中**仅 A09 记 PASS**；此后 **A-VIS 重复比较快照窄屏可读性批已按 D-235 交付**（PR #101 `82c6886`，3 文件 +419/−8，零 schema/零依赖）：整组确认页**默认全展开**（`PRODUCT_REQUIREMENTS.md:79`/`spec:181`/D-146 义务① 的「执行前逐条列出」义务），卡片级开关初始为「收起全部比较信息」；候选详情页**默认折叠**（无逐条枚举义务），309dp 下比较信息由 ≈14 行降为 **2 行**；展开态逐字原样、折叠态披露精确隐藏长度；两类控件均有 `contentDescription`；三值按钮 `Row`→`FlowRow` 窄屏换行而非竖排；此后 **P7-08 验收向量裁决批已按 D-238 登记**：证据取 CI run `39304086444`（该提交树与 `main` 逐字节相同，merge tree guard zero-action），**P708-A01/A03/A04/A05/A06/A08 判 PASS（JVM 维度）**；A02 部分证据（缺作废交易引用向量与增补平面码点边界）、A07 部分证据（缺目录改名→筛选重请求 seam）、A09 部分证据（缺 50k 与 §10.3 量测）；**P7-08 整体不判通过**（历史「已收口」仅指实施交付）；此后 **P7-06 验收向量裁决批已按 D-239 登记**：**P706-A03/A05 判 PASS**；A01/A04/A06/A07/A10/A11 部分证据（缺来源/候选/对账/置顶/作废面往返、真实掉电、真实 ENOSPC、预算表往返）；A02/A08/A09/A12 缺证（无 WAL 并发快照、无恢复后重放、无跨端传递、无备份规模量测）；**P7-06 整体不判通过**（历史「五切片已收口」仅指实施交付）；**P7-07 补测批已按 D-240 登记**：**P707-A04/A06/A07/A09 判 PASS（JVM 维度）**（修正/作废/恢复/分类修正 × 预算读交叉、Unknown 后真实重开重放、上海月界亚秒/闰年/时区/新旧投影一致、重开与 CATEGORY-scope 备份恢复往返），并修复文件库预算 authority 读取缺陷 `ACC-D-BUDGET-01`（桌面已配置预算月视图曾显示不可用）；**P707-A08（20k/50k 规模量测）仍缺证，P7-07 整体仍不判通过**（PR #110 merge `5b93e1c`，CI run `39762818759`）；剩余 A-03 未竟项（TalkBack 朗读巡检接受延期、A03-8b 缺证）与 A-05 收口项仍在推进。P4-01 acceptance contract、P4-02 shared import spine、P4-03 微信 XLSX 普通收支、P4-04 transfer formalization、P4-05 支付宝普通收支及 RL-04 余额宝转账路由均已闭环；P4-08 matcher 与 reconciliation persistence 已按 D-103、P4-07 duplicate candidate/closed-records 已按 D-104/D-105 于 2026-08-22 合入 `main`；此后 P4-08 第二批 normalized evidence projection 已按 D-112 完成并合入 `main`（merge `b8755dd`，schema v26，2026-08-27 推送）。此后 P4-08 correction / successor invalidation 已按 D-113 完成并合入 `main`（merge `a3d11bb`，schema v27）——激活预留的失效事件/后继链接与 MISSING/DIFFERENCE 对账结果态，并解除 D-103 登记的该项延期。此后 BP-01 银行 parser 门承接批已按 D-116 于 2026-08-29 交付并推送（CMB 网银 CSV + CCB 网银 XLS 解析器、余额镜像 `note` 诊断与 RL-07 镜像代表路径；银行 parser 门 D-109 O-8 就此关闭，零 schema 变更；PDF/其他银行/信用卡属 D-116 边界外待样本）。
-
-Python 继续作为迁移、规则验证和黄金结果基线。仓库包含 `ledger-domain`、`ledger-application`、`ledger-data` 与 `app-ui` 四个可构建的 Kotlin Multiplatform 共享库模块，SQLDelight schema 当前为 v36（v1→v36 共 35 个迁移文件）。RG-01 至 RG-12 的 runtime 均已进入共享库（RG-01/02 完整 state/delta/status 比较已实现，D-087）：RG-04 全 26 项完整比较已合入（`Rg04FullStateOracleTest`，`88c9bfa`，17 roots/26 ops/43 states），RG-05 expected 已根据 `D-075` 批准，RG-06 已根据 `D-081` 完成 41-operation full-state replay 并发布 v2 工件，RG-07 expected 已根据 `D-079` 批准，完整状态 oracle 也已完成，RG-09 runtime/persistence 按 `D-082` 批准范围实现，mapping gate 已 approved，严格 9-root/50-operation/59-state runtime oracle 比较发布工件（merge `07986b0`），RG-10 runtime/oracle/persistence 按 `D-083` 批准范围实现并已合入 main（`22f3141`），RG-11/12 direct-v2 runtime 按 `D-085` 实现，RG-08 完整 lending runtime 按 `D-084` 实现。这不表示所有黄金场景或正式账务核心已经完成：RG-01/02 完整比较已实现且 v2 publication 已按 `D-089` A 批完成（`D-090` LF 验收已闭合），RG-08 的 v2 expected 工件与 publication 已按 `D-089` B 批完成；阶段 5 已交付双端最小外壳与 P5-03 演示面 B：`desktop-app` 与 `android-app` 两个组合根应用模块可构建，`app-ui` 提供共享启动、总览和手工支出流程，桌面端可经 `.\gradlew.bat :desktop-app:run` 启动，Android 调试 APK 经 `.\gradlew.bat :android-app:assembleDebug` 构建并由 CI artifact 完成人工门。
-
-阶段 3 的规则场景实现范围如下：
-
-| 场景 | Kotlin runtime 与比较状态 | v2 发布状态 |
-| --- | --- | --- |
-| `RG-01` | 11 个 operation 级 runtime（manual_expense 10 + note_update 1）已实现，覆盖 replay、request identity conflict 与 stale CAS 零写入；完整 state/report/reconciliation/delta 比较已实现（`Rg01FullStateOracleTest`，8 roots/11 ops/19 states，D-087；`Rg01RawJsonEndToEndTest` 保留） | 已发布：`golden/rules-v2/rg-01.json`（D-089 A 批；8 roots/11 ops/19 states） |
-| `RG-02` | 12/13 个 operation 级 runtime（`D-071` 批准的 manual-income 最小 slice：create、retry、2 个变体和 8 个拒绝）；`category_rename` 已按 `D-087` 实现最小闭环（append-only name history，schema v18 的 17.sqm）；完整 state/report/reconciliation/delta 比较已实现（`Rg02FullStateOracleTest`，11 roots/13 ops/24 states） | 已发布：`golden/rules-v2/rg-02.json`（D-089 A 批；11 roots/13 ops/24 states） |
-| `RG-03` | 13 roots、20 operations 全量比较完成（`Rg03FullStateOracleTest`）；mapping gate 已 approved | 已发布：`golden/rules-v2/rg-03.json`（`dec854e`，D-086；13 roots/20 ops/33 states） |
-| `RG-04` | raw v1 的 26 operations 均有 runtime；全 26 项完整 state/report/reconciliation/delta 比较已合入（`Rg04FullStateOracleTest`，`88c9bfa`，17 roots/26 ops/43 states） | 已发布 |
-| `RG-05` | 领域、应用与持久化 runtime 已进入共享库；`D-075` 已批准 17 roots、25 operations、42 complete states 的 expected。共享 `GoldenV2Oracle` 与 `Rg05FullStateOracleTest` 对全部 25 operations 比较完整 state、deltas 和 status changes | 已发布：`golden/rules-v2/rg-05.json`（`dec854e`，D-086；17 roots/25 ops/42 states） |
-| `RG-06` | Golden Schema v2 契约与语义校验、领域 aggregate、catalog-free validated rehydration、八 action 应用契约，以及 schema v9/SQLDelight 原子持久化 runtime 已完成；41 operations 已比较完整 state、deltas、status changes；仅剩 clean release 验证门（`rg-06-gate-checklist.md` RG06-G06） | 已发布：`golden/rules-v2/rg-06.json` |
-| `RG-07` | contract、expected、adapter、fixture replay、schema v10、migration 与 Kotlin runtime 已完成；49 个 operation 比较完整 state、deltas、status changes | 已发布：`golden/rules-v2/rg-07.json` |
-| `RG-08` | 有冻结 v1、Python 测试与 mapping（4969 路径、2964 requires_contract_amendment）；`D-084` 已关闭 4 个 gap（`RG08-GAP-01..04`）并完成完整 lending runtime、44-op oracle 与 schema v15 持久化，mapping gate 已 approved（`rg-08-closure-proposal.md`） | 已发布：`golden/rules-v2/rg-08.json`（D-089 B 批；44 ops，accepted 6/no_change 13/rejected 25，18 roots/62 states） |
-| `RG-09` | runtime/persistence、50-operation v1 比较、严格 9-root/50-operation/59-state v2 oracle、D-065 proof、schema v14 派生 adjustment projection migration 与 closure overlay 已完成；历史 gaps 已 closed，mapping gate 已 approved | 已发布：`golden/rules-v2/rg-09.json` |
-| `RG-10` | 13 actions 的领域、应用与持久化 runtime 已进入共享库；`Rg10FullStateOracleTest` 对全部 44 operations 比较完整 state、deltas 与 status changes；schema v13 SQLDelight persistence 与 migration 已完成；mapping gate 已 approved，closure proposal 已登记（`rg-10-closure-proposal.md`） | 已发布：`golden/rules-v2/rg-10.json`（`7cf419a`；44 ops，accepted 12/no_change 10/rejected 22，14 roots/58 states） |
-| `RG-11`、`RG-12` | direct-v2（无 mapping/adapter；expected = 冻结契约字节副本，契约批准于 `efbb13a`）：`D-085` 已完成 Kotlin runtime、oracle 与 schema v16/v17 持久化；closure gate 已 approved（`rg-11-closure-proposal.md` 与 `rg-12-closure-proposal.md` review disposition） | 已发布：`golden/rules-v2/rg-11.json`（22 ops/3 roots/25 states）、`golden/rules-v2/rg-12.json`（12 ops/3 roots/15 states）（`dec854e`，D-086） |
-
-这些结果不等于全部黄金场景或正式账务核心已经完成。已发布集合为 RG-01 至 RG-12（12 个 case，`golden/rules-v2` 工件 + manifest 登记）：RG-03/05/11/12 于 `dec854e` 按 `D-086` 发布，RG-10 于 `7cf419a` 发布（expected 由冻结 v1 契约与 runtime-input 确定性生成，`validate_golden_case_v2` 同步扩展支持 RG-10 事务类型）；RG-01/02 于 A 批按 `D-089` 发布（A 批工件与 manifest 登记经 `D-090` LF 验收闭合），RG-08 于 B 批按 `D-089` 发布（44 ops，accepted 6/no_change 13/rejected 25，18 roots/62 states，expected SHA-256 `b3434dfc…`）；RG-04 全 26 项完整比较已合入（`Rg04FullStateOracleTest`，`88c9bfa`），manifest discovery 已登记为 26-operation full comparison；RG-06 仅剩 clean release 验证门（`rg-06-gate-checklist.md` RG06-G06）；RG-07 的空壳测试类 `Rg07FixtureReplayTest` 非门禁；RG-09 的三个历史 mapping gaps 已由 closure overlay 标记 closed，mapping gate 已 approved。RG-11/12 为 direct-v2：expected 是冻结契约 `golden/rules/rg-11.json`/`rg-12.json` 的字节副本，manifest `source_sha256 == expected_byte_sha256`，closure gate 已 approved（`rg-11-closure-proposal.md` 与 `rg-12-closure-proposal.md` review disposition）。`D-075` 只批准 RG-05 expected；`D-079` 批准 RG-07 expected、adapter、fixture replay、schema v10 migration 与 runtime，`D-080` 记录了 RG-07 的明确 publication target；`D-081` 批准 RG-06 closure、adapter/replay、fixture rewrite 和 publication；`D-082` 批准 RG-09 contract closure、完整 oracle、schema v12 persistence 与 migration；RG-09 后续 schema v14 移除 current adjustment duplicate projections，发布则由独立 publication gate 完成；`D-083` 批准 RG-10 contract closure（13 actions runtime、44-op 完整 oracle、schema v13 persistence 与 migration、4 个新 `TransactionKind`），不授权 publication；RG-10 mapping gate 已 approved，closure proposal 已登记，D-083 “50-operation” 的 44-op 处置与 W3 delta（reconciliation 值域塌缩、disabled balance、publication-side expiry event、3 个 rejected field_path 对齐 Kotlin 权威）说明见 `docs/migrations/golden-v2/rg-10-closure-proposal.md`；`D-084` 关闭 RG-08 的 4 个 mapping gap 并批准完整 lending runtime（`rg-08-closure-proposal.md`）；`D-085` 批准 RG-11/12 direct-v2 runtime、oracle 与 schema v16/v17 持久化，closure gate 已 approved（`rg-11-closure-proposal.md` 与 `rg-12-closure-proposal.md`）；`D-086` 统一授权 RG-03/05/10/11/12 的 v2 发布；`D-087` 授权 RG-01/02 完整比较执行边界并批准 `category_rename` 最小闭环（schema v18 的 17.sqm）；`D-088` 登记异源审查缺陷修复批次（schema v19 的 18.sqm = RG-12 guard、发布工具恢复语义、CONTRACT-001、RG08-001 与文档卫生）；`D-089` 授权 RG-01/02（A 批）与 RG-08（B 批）的 golden v2 publication；`D-090` 订立 publication LF integrity 契约（raw-byte hash 以 UTF-8+LF 为规范域、`.gitattributes` 3 条、共享 pre-publish integrity gate、11 case raw-hash metadata 重算）。报表仍未建立（通用导入与对账链路已随阶段 4 的 shared import spine 与 P4-08 对账持久化进入共享库）；当前持久化选择也不预先决定同步或更广泛查询方案。
-
 ## 核心原则
 
 - 正式账本采用 `Account -> Transaction -> Posting` 模型。
@@ -35,59 +11,65 @@ Python 继续作为迁移、规则验证和黄金结果基线。仓库包含 `le
 - 本地账本是事实来源；网络、同步和 AI 默认不是核心功能的前置条件。
 - 修正保留历史版本，退款和真实冲回作为独立经济事件记录。
 
+## 当前阶段
+
+阶段 1～7 已收口（阶段 7 于 2026-11-05 按 `D-296` 收口，验收向量 59/62 ≈ 95.2%）。当前在**阶段 8「Android 功能与界面深化」**：`P8-00` 界面与导航基线已按 `D-301` 批准，验收向量进行中。
+
+- 阶段划分、进入与完成条件：[路线图](docs/ROADMAP.md)
+- 正式交付事实、剩余门槛与唯一下一步：[当前状态](docs/CURRENT_STATE.md)
+- 已裁决事项与依据：[决定记录](docs/DECISIONS.md)
+
+## 仓库结构
+
+| 模块 | 职责 |
+| --- | --- |
+| `ledger-domain` | 账务领域模型、规则与不变量；不依赖 Android、网络或 AI |
+| `ledger-application` | 用例、端口、读模型与导入/对账编排 |
+| `ledger-data` | SQLDelight schema v36（v1→v36 共 35 个迁移边）与持久化适配 |
+| `app-ui` | 共享 Compose Multiplatform 界面与纯状态机 |
+| `android-app`、`desktop-app` | 两端组合根 |
+| `tools/python` | 迁移、规则验证与黄金结果基线 |
+
+## 黄金契约
+
+`golden/rules-v2/` 已发布 `RG-01`～`RG-12` 共 12 个 case：每个 case 有冻结 expected 工件，并有对 operation outcome、完整 state、deltas 与 status changes 的比较 oracle。逐 case 的对象计数与覆盖状态见[黄金 v2 清单](docs/GOLDEN_V2_INVENTORY.md)，测试入口与失败矩阵见[黄金测试](docs/GOLDEN_TESTS.md)。
+
+已发布的 case 集合不表示所有黄金场景或正式账务核心已完成；未完成的验收向量按 [当前状态](docs/CURRENT_STATE.md) 的「未完成门槛」逐条保留。
+
 ## 验证
 
-Kotlin 构建需要 JDK 21。验证采用 PR 门禁流：本机只做快速反馈，聚合门禁由 CI 在资源更充足的 runner 上执行。完整分工、分支、提交、合并和隐私要求见[开发规范](docs/CONTRIBUTING.md)的「本机与 CI 的验证分工」。
+Kotlin 构建需要 JDK 21。验证采用 PR 门禁流：本机只做快速反馈，聚合门禁由 CI 在资源更充足的 runner 上执行；分支、提交、合并与隐私要求见[开发规范](docs/CONTRIBUTING.md)。
 
 ### 本机（快速反馈）
 
-- 聚焦定向测试归 CI（`Kotlin tests` / `Android compile` / `Python tests` / `Trace scan`）；本机只在诊断红 CI 时按需重跑，命令见 [贡献指南](docs/CONTRIBUTING.md)。
-- 正式文档校验（必须 exit 0）：
+正式文档校验，必须 exit 0：
 
 ```powershell
 $env:PYTHONPATH="tools\python"
 python -m project_docs .
 ```
 
-- trace 本地预检（可选，推送前）：`bash tools/ci/trace-scan.sh`。
-
-需要在本机复现受影响模块时，沿用如下形态；这些命令不再是默认的推送前门禁：
-
-```powershell
-.\gradlew.bat :ledger-domain:jvmTest --stacktrace --rerun-tasks --warning-mode all
-```
-
-```powershell
-.\gradlew.bat :ledger-application:jvmTest --stacktrace --rerun-tasks --warning-mode all
-```
-
-```powershell
-.\gradlew.bat :app-ui:jvmTest --stacktrace --rerun-tasks --warning-mode all
-```
-
-```powershell
-.\gradlew.bat :ledger-data:jvmTest --stacktrace --rerun-tasks --warning-mode all
-```
+推送前可选的 trace 预检：`bash tools/ci/trace-scan.sh`。Kotlin 测试与编译归 CI，本机只在诊断红 CI 时按需复跑，命令见[贡献指南](docs/CONTRIBUTING.md)。
 
 ### 聚合门禁（CI）
 
-- `.github/workflows/ci.yml` 的四个 required checks：`Kotlin tests`、`Android compile`、`Python tests`、`Trace scan`。
-- `.github/workflows/windows.yml`：Windows JVM 测试，夜跑 + 手动，非阻塞平台信号。
-- 完整 `check`、ktlint、Android/KMP 编译、Debug APK、完整 Python 测试、Desktop build、migration verifier 与 Windows JVM 测试均由 CI 承担。发布证据 = 该 PR 运行上的四个必过检查 + 合并守卫对「落地树 == 被测树」的核对；证据齐备时合并后不再重跑，机制见[开发规范](docs/CONTRIBUTING.md)的「合并」。
+`.github/workflows/ci.yml` 的四个 required checks：`Kotlin tests`、`Android compile`、`Python tests`、`Trace scan`。完整 `check`、ktlint、Android/KMP 编译、Debug APK、完整 Python 测试、Desktop build、migration verifier 与 Windows JVM 测试（夜跑，非阻塞）均由 CI 承担。
 
-### 本机执行约束（需要本地复现时）
+发布证据 = 该 PR 运行上的四个必过检查 + 合并守卫对「落地树 == 被测树」的核对；证据齐备时合并后不再重跑，机制见[开发规范](docs/CONTRIBUTING.md)的「合并」章节。
 
-当前 16 GB Windows 主机上 Gradle/Kotlin 验证必须串行运行，使用单 worker 和 1 GB heap，并在每次运行结束后停止 Gradle daemon；具体命令见[开发规范](docs/CONTRIBUTING.md)。
+### 本机执行约束
+
+需要本地复现时，Gradle/Kotlin 验证必须串行运行，使用单 worker 和 1 GB heap，并在每次运行结束后停止 Gradle daemon。具体命令见[开发规范](docs/CONTRIBUTING.md)的「PowerShell 执行规范」。
 
 ### 构建与运行（人工验收）
 
-四个共享库模块都是 library；`desktop-app` 与 `android-app` 为组合根应用模块。桌面端运行共享演示面 B（P5-03 只读总览与手工支出流程）：
+`desktop-app` 运行共享演示面：
 
 ```powershell
 .\gradlew.bat :desktop-app:run
 ```
 
-构建 Android 调试 APK（P5-03 构建门；CI artifact 用于 Android 安装、启动与人工验收）：
+`android-app` 构建调试 APK（CI artifact 用于 Android 安装与人工验收）：
 
 ```powershell
 .\gradlew.bat :android-app:assembleDebug --stacktrace --rerun-tasks --warning-mode all
@@ -105,6 +87,4 @@ python -m project_docs .
 - [当前状态](docs/CURRENT_STATE.md)
 - [黄金测试](docs/GOLDEN_TESTS.md)
 - [开发规范](docs/CONTRIBUTING.md)
-- [领域模块](docs/modules/ledger-domain.md)
-- [应用模块](docs/modules/ledger-application.md)
-- [数据模块](docs/modules/ledger-data.md)
+- [领域模块](docs/modules/ledger-domain.md)、[应用模块](docs/modules/ledger-application.md)、[数据模块](docs/modules/ledger-data.md)
