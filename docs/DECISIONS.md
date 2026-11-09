@@ -6874,3 +6874,22 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **边界：** 分支保护配置与四个 required context 名零改动；零产品代码、零账务语义、零 schema、零迁移；每项一个批次，revert 即回退。
 
 **关联决定：** D-190（单遍 CI 与合并树守卫）、D-197（Android instrumented 设备信号）、D-200/D-201（scale preflight 与 APK 来源）、D-216（本地诊断通道）。
+
+## D-303 CI 墙钟调优：五分片按实测耗时装箱、拆迁移大测试、Android 就地提速
+
+**状态：** 已批准并登记（2026-11-09；用户批准「1+2+3」墙钟调优计划，规格 `docs/specs/2026-11-09-ci-verification-tuning-design.md` §10 随本条登记，状态 approved）。分批实施，每批一个 PR、可独立回退。
+
+**背景：** D-302 落地后的实测：代码 PR ≈9.0 min；最慢分片 8.4 min（p90 9.4），而分片墙钟与类秒和不相关（969 s→488 s，1037 s→409 s）——单个 `LedgerDatabaseMigrationTest` 占 251.5 s / 48 例，落到哪个分片就拖慢哪个。`Android compile` 6.4 min，四条 gradle 命令全是 `--max-workers=1` 且无 `--build-cache`；`Kotlin tests core` 5.9 min 中单条 `check` 占 5.8 min。
+
+**决定：**
+
+1. **分片 3 → 5，按实测类秒装箱**（贪心 LPT，`make-ledger-data-shards.py --shards 5`）；`test-timing-report.py` 增 `--tsv`，各分片与 `kotlin-core` 上传 `timing-*.tsv` 工件（7 天），重排不再依赖日志抓取。五片各 556 类秒，实测类秒从不均匀的 775–1037 s 变为均衡。
+2. **拆 `LedgerDatabaseMigrationTest`（48 例 / 251.5 s）为三个类**（V1–V11、V12–V19、V20–V25），共享助手移入 `MigrationTestSupport` 基类；断言与测试名逐字不动，测试集合不变，只是类边界改变。
+3. **Android 就地提速，不拆 job**：`android` 的四条 gradle 命令加 `--build-cache`，`--max-workers` 1 → 4。拆成两个 job 会让两边各自 `compileAndroidMain`，实测估算只省 ≈0.8 min，故不做。
+4. **`kotlin-core` 并行度**：该 job 的 `CI_TEST_MAX_PARALLEL_FORKS` 4 → 6，并上传 `--profile` 报告工件；若提升 <0.5 min，再用 profile 数据另批按子项目拆分 `check`。
+
+**判据：** 最慢分片 p50 ≤5.5 / p90 ≤6.5；`Android compile` p50 ≤5.0；代码 PR 墙钟 p50 ≤5.5（基线 9.0）。合并后取 5 个 PR 采样核对。
+
+**边界：** 四个必过 context 名与分支保护零改动；APK producer 契约（`PRODUCERS` 与 job 名 `Android compile`）不变；零产品代码、零账务语义、零 schema/迁移；每批独立可回退。
+
+**关联决定：** D-302（上一轮 CI 验证调参）、D-190（单遍 CI 与合并树守卫）、D-200/D-201（APK 来源与预检）。

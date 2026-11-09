@@ -155,3 +155,28 @@
 | G-6 必过 context | 每个 PR 四项齐备 | 各 PR `gh pr checks --required` |
 
 残余（登记接受）：commit→PR 关联请求未分页（30 条上限，超出即按证据不全派发，fail-closed）；守卫的 `gh` 调用任何失败都退回派发全量；`docs/` 下非 Markdown 文件判 `code`，故 golden 夹具改动仍跑全量。
+
+## 10. 墙钟调优（D-303）
+
+目标：代码 PR 的 CI 墙钟 p50 从 ≈9.0 min 降到 ≈5.0–5.5 min，验证面不变。判据：
+
+| # | 判据 | 基线 | 目标 |
+| --- | --- | --- | --- |
+| W-1 | 最慢 `ledger-data` 分片 | p50 8.4 / p90 9.4 min | p50 ≤5.5 / p90 ≤6.5 min |
+| W-2 | 分片覆盖 | 3 片，按类数接近、按耗时不均（775–1037 类秒）| 5 片，各 ≈556 类秒；每片精确执行清单份额 |
+| W-3 | `Android compile` | p50 6.4 min（`--max-workers=1`，无构建缓存）| p50 ≤5.0 min |
+| W-4 | 代码 PR 墙钟 | p50 ≈9.0 min | p50 ≤5.5 min |
+
+瓶颈证据（2026-11-09，近 30 run）：分片墙钟与类秒总和不成正比（969 s→488 s、1037 s→409 s、775 s→362 s），而 `LedgerDatabaseMigrationTest` 单类 251.5 s / 48 例独占一个 fork；`Android compile` 内部 6.4 min 全串行；`Kotlin tests core` 的 5.9 min 里单条 `check` 占 5.8 min。
+
+批次：
+
+| 批次 | 范围 | 预期 |
+| --- | --- | --- |
+| A | 5 片按实测类秒重排 + `--tsv` 计时工件 | 最慢分片 8.4 → ≈5.0–5.5 |
+| B | 拆 `LedgerDatabaseMigrationTest` 为三类（`MigrationTestSupport` 基类）| 分片再降 ≈0.5–1.0 |
+| C | `android` 加 `--build-cache`/`--max-workers=4`；`kotlin-core` forks 4→6 + profile 工件 | Android 6.4 → ≤5.0；分片后关键路径落到 core |
+
+不变量：四个必过 context 名与分支保护零改动；gradle 任务集合与测试集合不变（B 只改类边界）；APK producer 契约不变（不拆 `Android compile`）；每批一个 PR、独立回退。
+
+范围外：merge queue、按子项目拆分 `check`（待 C 批 profile 数据）、instrumented 挪位、文档 PR 的 Python 再收窄。
