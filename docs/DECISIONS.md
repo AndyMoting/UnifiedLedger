@@ -6852,3 +6852,23 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **阶段边界：** 零账务语义变化、零写入路径变化、零 schema 变更预期（读模型投影若不足在落地批内处理并登记）。Desktop 不逐屏验收，共享代码编译回归由 CI 保证。规格中 V-1…V-8 是本基线的验收向量；实施批走 writer→独立评审→distinct verifier→CI 路由。
 
 **关联决定：** D-300（阶段 8 方向）、D-122/D-146（被本条修订的 Tab 契约）、D-117/D-134/D-136（主题与玻璃层，暗色 token 与 Material3 回退共存）、D-143（目录管理余额投影先例）。
+
+## D-302 CI 验证调参：文档快路径、trace PR 范围、合并后去重、设备抖动外移
+
+**状态：** 已批准并登记（2026-11-09；用户批准「CI 调参立项」计划，规格 `docs/specs/2026-11-09-ci-verification-tuning-design.md` 随本条登记，状态 approved）。实施分批进行，每批一个 PR、可独立回退；本条不授权任何产品代码、账务语义、schema 或迁移改动。
+
+**背景：** 近 300 次运行实测：CI 131 次（其中 54 次是合并后派发，占 41%）、scale preflight 22% 红且全为模拟器启动失败、Windows 82% 被取消且零真红、42% 的提交只碰文档却跑满同一组 job。骨架（PR 四项必过检查 + 长尾夜跑）正确，需要的是调参而非重设计。
+
+**决定：**
+
+1. **文档快路径**：只碰 `docs/**` 与仓库根 `*.md` 的 PR 判为 `docs`，跳过 Kotlin 验证与 Android 构建步骤；其余路径判为 `code`，执行全量。分类器在无法判定时默认 `code`。四个必过 context 名不变——重活 job 保留在场上或由 gate 放行，gate 独立重算分类，不一致即红。
+2. **Trace scan 范围**：PR 侧 = 当前树全部 tracked 文件 + 本 PR 新增提交；`main` 侧始终全历史四类扫描。`TRACE_PATTERN` 与 agent 路径正则保持与 harness 逐字一致。
+3. **合并后去重**：合并树守卫增加零动作路径——线性/squash 提交若 `tree(head) == tree(落地提交)` 且四项 check-run 在该 PR head SHA 全绿，则不再派发全量；任一环节不可判定即维持派发。
+4. **scale preflight 设备半边**：不再由 PR 触发，改合并后 + 夜间 + 手动；PR 侧确定性部分由 `Android compile` 已产出的整树 APK bundle 承担。
+5. **Windows JVM tests**：删除 `pull_request` 触发，保留夜间与手动。
+6. **手工设备 rig**：B6 / ENOSPC / P706-A06 / maximum-scale long 四个手动 rig 与 evidence 绑定逻辑保留，仅标注为历史验收工具；删除需单独裁决。
+7. **Merge queue**：只评估，不实施。
+
+**边界：** 分支保护配置与四个 required context 名零改动；零产品代码、零账务语义、零 schema、零迁移；每项一个批次，revert 即回退。
+
+**关联决定：** D-190（单遍 CI 与合并树守卫）、D-197（Android instrumented 设备信号）、D-200/D-201（scale preflight 与 APK 来源）、D-216（本地诊断通道）。
