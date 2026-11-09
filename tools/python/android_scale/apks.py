@@ -134,6 +134,13 @@ def check_source(manifest: dict, repository: str, artifact_run: int) -> None:
     elif run.get("event") == "workflow_dispatch":
         if source != run.get("head_sha"):
             raise ValueError("manual producer checkout mismatch")
+    elif run.get("event") == "push":
+        # A merge-time producer (D-302, T4) verifies like a dispatch producer:
+        # the run must sit on the default branch and on the exact commit whose
+        # APK bytes the manifest describes. A push to any other branch stays
+        # untrusted.
+        if run.get("head_branch") != "main" or source != run.get("head_sha"):
+            raise ValueError("default-branch producer checkout mismatch")
     else:
         raise ValueError("untrusted producer event")
     jobs = list(pages(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}/jobs", "jobs"))
