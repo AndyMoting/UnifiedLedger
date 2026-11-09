@@ -196,12 +196,20 @@ class Sampler:
         # `uiautomator dump` answers exit 0 while writing nothing when the window will not settle
         # ("could not get idle state"), so the file's presence is the only proof it worked.
         for _attempt in range(4):
-            self.adb("shell", "uiautomator", "dump", remote, best_effort=True)
-            if "ok" in self.adb("shell", "sh", "-c", f"test -s {remote} && echo ok", best_effort=True):
+            dump_output = self.adb("shell", "uiautomator", "dump", remote, best_effort=True)
+            # The probe is a plain `ls`: adb hands the arguments to the device shell and drops the
+            # quoting, so a `sh -c "test -s … && echo ok"` probe answers for the wrong command.
+            listing = self.adb("shell", "ls", "-l", remote, best_effort=True)
+            if remote.rsplit("/", 1)[-1] in listing:
+                (self.evidence / f"uiautomator-{stem}.txt").write_text(
+                    dump_output, encoding="utf-8"
+                )
                 break
             time.sleep(2)
         else:
-            raise SampleError(f"uiautomator produced no {stem}.xml after 4 attempts")
+            raise SampleError(
+                f"uiautomator produced no {stem}.xml after 4 attempts; last answer: {dump_output.strip()[:200]!r}"
+            )
         self.adb("pull", remote, str(self.evidence / f"{stem}.xml"))
         self.dumps.append(f"{stem}.xml")
         return (self.evidence / f"{stem}.xml").read_text(encoding="utf-8")
