@@ -1,4 +1,4 @@
-"""Decide whether a landed merge on main needs a full CI re-run (D-196).
+"""Decide whether a landed merge on main needs a full CI re-run (D-196, D-302).
 
 Single-pass CI (D-190) verifies the pull-request preview merge tree, so the
 release evidence is "merge tree == PR tip tree, byte for byte". This script is
@@ -15,10 +15,25 @@ dispatches `ci.yml --ref main` in that case. The comparison baseline is always
 the merge commit's own recorded second parent, never an externally supplied
 "PR head" tree, which can drift after the merge and misfire.
 
+Squash evidence (D-302, T3): a squash merge has one parent, so the criterion
+above cannot see it. `--squash-evidence` judges such a commit from records that
+cannot drift - the pull request GitHub merged into it:
+
+    the landed subject carries " (#<number>)"
+    that pull request's mergeCommit.oid == the landed commit
+    that pull request is MERGED
+    tree(pull request head) == tree(landed commit)
+    every required check on that pull request is green (SUCCESS or SKIPPED,
+    which is how a job-level skip reports and what branch protection accepts)
+
+Every other outcome - unparsable subject, unreadable PR or commit, missing
+required check, differing tree - returns 1, so the caller keeps dispatching the
+full run. Nothing here trusts a caller-supplied SHA.
+
 Exit codes:
-    0  zero action: merge commit whose tree equals its second parent's tree
-    1  needs dispatch: linear commit, differing trees, or an object that cannot
-       be read (conservative fail-closed; the workflow runs the full suite)
+    0  zero action: the merge criterion holds, or the squash evidence is complete
+    1  needs dispatch: linear commit, differing trees, incomplete squash
+       evidence, or an object that cannot be read (conservative fail-closed)
     2  input error: bad arguments, or an explicit parent triple that
        contradicts the commit object
     3  execution error: git itself failed (not a repository, git missing, ...)
@@ -27,16 +42,27 @@ Usage:
     python tools/ci/verify-merge-tree.py <merge-sha>
     python tools/ci/verify-merge-tree.py $(git rev-list --parents -n 1 HEAD)
     python tools/ci/verify-merge-tree.py --head <merge-sha> --base <p1> --tip <p2>
+    python tools/ci/verify-merge-tree.py --squash-evidence [--landed <sha>]
 
 The first form derives the parents from the commit object. The second passes
 the raw `git rev-list --parents` output (one head SHA plus one or two parent
 SHAs); the parents are cross-checked against the commit object. The third form
-is the explicit triple, cross-checked the same way.
+is the explicit triple, cross-checked the same way. The fourth form needs `gh`
+and `GITHUB_REPOSITORY`; it never touches the network from the tests, which
+patch `run_gh`.
 """
 
 import argparse
+import json
+import os
+import re
 import subprocess
 import sys
+
+REQUIRED_CHECKS = ("Kotlin tests", "Android compile", "Python tests", "Trace scan")
+# Branch protection accepts a skipped job as a satisfied required check, and a
+# docs-only pull request legitimately skips the heavy ones.
+PASSING_CONCLUSIONS = {"SUCCESS", "SKIPPED"}
 
 
 def run_git(*args: str) -> tuple[int, str, str]:
@@ -67,6 +93,98 @@ def tree_of(commit: str) -> str | None:
     if code != 0:
         return None
     return out or None
+
+
+def run_gh(*args: str) -> tuple[int, str, str]:
+    """Single seam for every `gh` call; the tests patch this function."""
+    completed = subprocess.run(
+        ["gh", *args], capture_output=True, text=True, encoding="utf-8"
+    )
+    return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
+
+
+def squash_evidence(landed: str) -> tuple[int, str]:
+    """Judge a one-parent landing from the pull request GitHub merged into it."""
+    actual = parents_of(landed)
+    if actual is None:
+        return 1, f"needs-dispatch: cannot read commit {landed}"
+    if len(actual) != 1:
+        return 1, (
+            f"needs-dispatch: {landed} has {len(actual)} parents; squash evidence "
+            "applies to a one-parent landing only"
+        )
+
+    code, subject, err = run_git("log", "-1", "--format=%s", landed)
+    if code != 0:
+        return 1, f"needs-dispatch: cannot read the subject of {landed}: {err}"
+    match = re.search(r"\(#(\d+)\)\s*$", subject)
+    if not match:
+        return 1, (
+            f"needs-dispatch: subject of {landed} carries no pull request number: "
+            f"{subject!r}"
+        )
+    number = int(match.group(1))
+
+    slug = os.environ.get("GITHUB_REPOSITORY", "").strip()
+    if not slug:
+        return 1, "needs-dispatch: GITHUB_REPOSITORY is not set"
+
+    code, out, err = run_gh(
+        "pr", "view", str(number), "--repo", slug,
+        "--json", "mergeCommit,headRefOid,state,statusCheckRollup",
+    )
+    if code != 0:
+        return 1, f"needs-dispatch: cannot read pull request #{number}: {err or code}"
+    try:
+        pull = json.loads(out)
+    except (ValueError, TypeError):
+        return 1, f"needs-dispatch: unreadable pull request payload for #{number}"
+
+    merged_oid = (pull.get("mergeCommit") or {}).get("oid", "")
+    if merged_oid != landed:
+        return 1, (
+            f"needs-dispatch: pull request #{number} merged as {merged_oid or 'none'}, "
+            f"not as the landed commit {landed}"
+        )
+    if pull.get("state") != "MERGED":
+        return 1, f"needs-dispatch: pull request #{number} is {pull.get('state')!r}"
+
+    head_oid = pull.get("headRefOid", "")
+    if not re.fullmatch(r"[0-9a-f]{40}", head_oid):
+        return 1, f"needs-dispatch: pull request #{number} has no usable head commit"
+
+    code, out, err = run_gh("api", f"repos/{slug}/git/commits/{head_oid}", "--jq", ".tree.sha")
+    head_tree = out.strip() if code == 0 else ""
+    if not re.fullmatch(r"[0-9a-f]{40}", head_tree):
+        return 1, (
+            f"needs-dispatch: cannot read the tree of pull request #{number} head "
+            f"{head_oid}: {err or code}"
+        )
+    landed_tree = tree_of(landed)
+    if landed_tree is None:
+        return 1, f"needs-dispatch: cannot read the tree of {landed}"
+    if head_tree != landed_tree:
+        return 1, (
+            f"needs-dispatch: tree({landed}) == {landed_tree} but the pull request "
+            f"head tree is {head_tree}"
+        )
+
+    conclusions = {}
+    for entry in pull.get("statusCheckRollup") or []:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name") or entry.get("context") or ""
+        conclusions[str(name)] = str(entry.get("conclusion") or "").upper()
+    missing = [name for name in REQUIRED_CHECKS if conclusions.get(name) not in PASSING_CONCLUSIONS]
+    if missing:
+        detail = ", ".join(f"{name}={conclusions.get(name) or 'absent'}" for name in missing)
+        return 1, f"needs-dispatch: required checks are not green on #{number}: {detail}"
+
+    return 0, (
+        f"zero-action: squash #{number} landed as {landed} with "
+        f"tree == verified pull-request head tree {head_tree} and all required "
+        "checks green"
+    )
 
 
 def classify(head: str, claimed_parents: tuple[str, ...] | None) -> tuple[int, str]:
@@ -128,7 +246,24 @@ def main() -> int:
     parser.add_argument("--head", default="", help="candidate merge commit")
     parser.add_argument("--base", default="", help="expected first parent")
     parser.add_argument("--tip", default="", help="expected second parent")
+    parser.add_argument(
+        "--squash-evidence",
+        action="store_true",
+        help="judge a one-parent landing from the pull request GitHub merged into it",
+    )
+    parser.add_argument(
+        "--landed",
+        default="HEAD",
+        help="landed commit for --squash-evidence (default: HEAD)",
+    )
     args = parser.parse_args()
+
+    if args.squash_evidence:
+        if args.commits or args.head or args.base or args.tip:
+            parser.error("--squash-evidence takes no merge arguments")
+        code, verdict = squash_evidence(args.landed)
+        print(verdict)
+        return code
 
     if args.commits and (args.head or args.base or args.tip):
         parser.error("pass either positional commits or --head/--base/--tip, not both")

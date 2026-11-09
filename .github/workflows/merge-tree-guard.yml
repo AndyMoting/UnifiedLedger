@@ -6,6 +6,15 @@
 # introduced nothing beyond the verified pull-request tip is zero action;
 # anything else (or an unreadable check) dispatches a full run of ci.yml on
 # main, the same manual path documented in docs/CONTRIBUTING.md.
+#
+# Squash landings (D-302, T3): a squash commit has one parent, so the criterion
+# above cannot see it and the guard would dispatch on every merge. The same step
+# therefore asks `verify-merge-tree.py --squash-evidence`, which judges the
+# commit from records that cannot drift (the merged pull request's mergeCommit
+# identity, its head tree, and its required checks). Zero action is taken only
+# when that evidence is complete, and only after scanning the landed commit for
+# traces, because a squash message is written at merge time and no pull-request
+# run ever saw it.
 name: Merge tree guard
 
 on:
@@ -17,6 +26,9 @@ on:
 permissions:
   contents: read
   actions: write
+  pull-requests: read
+  checks: read
+  statuses: read
 
 # No concurrency block on purpose. The guard costs seconds, and cancelling an
 # in-progress guard could swallow exactly the dispatch this workflow exists for
@@ -47,8 +59,22 @@ jobs:
               echo "landed tree matches the verified pull-request tree: zero action"
               ;;
             1)
-              echo "landed tree was not verified by a pull-request run: dispatching full CI on main"
-              gh workflow run ci.yml --ref main
+              echo "the merge criterion does not apply; checking the squash evidence"
+              set +e
+              python3 tools/ci/verify-merge-tree.py --squash-evidence --landed HEAD
+              squash=$?
+              set -e
+              if [ "$squash" -eq 0 ]; then
+                # A squash message is written at merge time and never scanned by
+                # a pull-request run, so the zero-action path scans the landed
+                # commit itself before deciding anything.
+                echo "squash evidence complete: scanning the landed commit"
+                TRACE_BASE_SHA="$(git rev-parse HEAD^)" bash tools/ci/trace-scan.sh
+                echo "zero action: landed tree, checks and trace are all accounted for"
+              else
+                echo "squash evidence incomplete: dispatching full CI on main"
+                gh workflow run ci.yml --ref main
+              fi
               ;;
             *)
               echo "merge tree guard failed to judge (exit $status): treating as blocking"
