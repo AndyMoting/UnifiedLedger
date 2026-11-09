@@ -17,7 +17,7 @@
 | # | 判据 | 现状基线 | 目标 |
 | --- | --- | --- | --- |
 | G-1 | 代码 PR 执行面 | 10 job，wall clock ≈9.0 min | 不减少、不变慢（持续）|
-| G-2 | 纯文档 PR | 10 job（Kotlin 4 + Android 1 + Python 2 + Trace 1 + 2 gate），≈9.0 min | PR 2 后：Kotlin 与 Android 构建 job 为 0，总 6 job；PR 3 后：wall clock ≤3.0 min |
+| G-2 | 纯文档 PR | 10 job（Kotlin 4 + Android 1 + Python 2 + Trace 1 + 2 gate），≈9.0 min | PR 2 后：Kotlin 4 job 为 0、Android 构建步骤跳过（job 保留）、新增 `changes` 1，总 10 → 7 job；PR 3 后：wall clock ≤5.0 min（由 Python shard 1 的 4.5 min 主导）|
 | G-3 | 每次 squash 合并的 CI 全量次数 | 2（PR run + 守卫派发）| 1（PR 4 后）|
 | G-4 | scale preflight 假红进入 PR | 22% | 0（PR 5 后）|
 | G-5 | Windows 取消空跑占比 | 82% | 0（PR 1 后）|
@@ -44,7 +44,7 @@
 2. `ci.yml` 无 paths 过滤，文档改动与代码改动执行同一组 job。
 3. squash 提交在 `main` 上没有第二父，合并树守卫按设计对每次合并派发一次全量 CI，故每次合并消耗两次全量。
 4. `kotlin-core`、`android`、`trace` 与两个 gate job 无 `timeout-minutes`；`ledger-data-shards` 60、`python-shards` 30。
-5. 提交面：近 150 提交中 64 条（43%）只碰 `docs/**` 与仓库根 `*.md`；600 提交窗口按同一口径为 28.5%；`feat` 占 8.0%。`local/` 是 gitignored 路径，任何提交都不会碰它。
+5. 提交面：近 150 提交中约 43%（64/150）只碰 `docs/**` 与仓库根 `*.md`；600 提交窗口按同一口径为 28.5%；`feat` 占 8.0%。`local/` 是 gitignored 路径，任何提交都不会碰它。
 
 ## 3. 裁决（T1–T7）
 
@@ -70,7 +70,7 @@
 
 **理由**：squash + strict up-to-date 下落地树与 PR 验证树同树，派发是重复执行；当前占 CI 全部 run 的 41%。
 
-**兜底**：fail-closed（任一环节不可读、解析不到或树不等即派发，等价现状）；合成仓库测试覆盖「四条件齐备 → 零动作且 trace 执行」「树不等 → 派发」「API 不可读 → 派发」三态。PR 4 落地后，零动作合并不再自动产生该 SHA 的整树 APK bundle；手动 rig 需要时按它们报错文案执行 `gh workflow run ci.yml --ref main` 作为生产者路径。
+**兜底**：fail-closed（任一环节不可读、解析不到或树不等即派发，等价现状）；合成仓库测试覆盖「四条件齐备 → 零动作且 trace 执行」「树不等 → 派发」「API 不可读 → 派发」三态。PR 4 落地后，零动作合并不再自动产生该 SHA 的整树 APK bundle；手动 rig 需要时按 `docs/CONTRIBUTING.md`「本机与 CI 的验证分工」给出的 `gh workflow run ci.yml --ref main` 手动派发一次，作为该 SHA 的 bundle 生产者路径。
 
 ### T4 scale preflight 的设备半边外移
 
@@ -78,7 +78,7 @@
 
 **理由**：22% 红全部是模拟器启动失败，历史零真代码问题；它在 PR 上的信号价值低于其红噪音与 30 min 机会成本。
 
-**取代关系**：本项取代 D-200 第 4 条的 PR 侧覆盖；该信号改由合并后运行与夜间运行承担，覆盖内容不变（驱动、校验器、workflow 改动的设备侧验证仍在合并后跑）。
+**取代与修订关系**：本项取代 D-200 第 2 条「相关 PR 自动运行非 required 的设施预检」；并修订该条第 4 条——其要求预检覆盖驱动、校验与 workflow 改动的**覆盖内容保留**，运行位置改为合并后；同一条第 4 句「不新增定时任务」由本项解除，新增的夜间运行即本项的信号落地位置。
 
 **兜底**：设备信号保留在合并后与夜间，不消失；每次手动 rig 仍绑定精确 SHA 与 bundle 来源。
 
@@ -125,8 +125,8 @@
 
 - 每批：四项必过全绿，且该批自身 PR run 显示新配置按预期执行（改动 `ci.yml` 的 PR 必为 `code` 分类）。
 - PR 1 后：`Windows JVM tests` 不再出现在 PR 的 checks 列表；四个手动 rig 文件头出现 historical 标注。
-- PR 2 后：第一个纯文档 PR 的 Kotlin/Android 构建 job 为 0、总 job 数 6；同一分支追加代码文件后变为全量。
-- PR 3 后：PR 侧 `Trace scan` ≤2.0 min；纯文档 PR wall clock ≤3.0 min；合成测试证明旧提交中的禁止串在该模式外仍会被捕获。
+- PR 2 后：第一个纯文档 PR 的 Kotlin 4 个 job 为 0、Android 构建步骤跳过（job 保留）、新增 `changes` job、总 7 job；同一分支追加代码文件后变为全量。
+- PR 3 后：PR 侧 `Trace scan` ≤2.0 min；纯文档 PR wall clock ≤5.0 min；合成测试证明旧提交中的禁止串在该模式外仍会被捕获。
 - PR 4 后：一次真实 squash 合并守卫零动作且落地提交扫描通过；合成测试三态齐备；手动 rig 的生产者指令（`gh workflow run ci.yml --ref main`）在文档中可达。
 - PR 5 后：连续 20 个 PR 无模拟器红。
 
@@ -134,7 +134,7 @@
 
 ## 7. 范围外
 
-产品代码与 UI、账务语义、schema 与迁移、四处手工 rig 的删除、merge queue 实施（评估结论：当前同时只有少数 PR 在飞，队列带来的收益不足以抵消新 workflow 面与合入流程改写，暂不实施）、分片数量与并行度的重新装箱（现有机制已具备，仅在实测漂移时另行立项）。
+产品代码与 UI、账务语义、schema 与迁移、四处手工 rig 的删除、merge queue 实施（评估结论：当前同时只有少数 PR 在飞，队列带来的收益不足以抵消新 workflow 面与合入流程改写，暂不实施）、Python 分片的按路径裁剪（会缩小文档改动对 Python 测试的覆盖面，另行立项）、分片数量与并行度的重新装箱（现有机制已具备，仅在实测漂移时另行立项）。
 
 ## 8. 回退
 
