@@ -6892,6 +6892,8 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 
 **批 B 落地（同日）：** 分片清单按 run `42592454869` 的 `timing-shard-*` 工件重新装箱（三个新类的实测类秒为 124.9 / 154.9 / 26.8，取代按三等分的估算）；`LedgerDatabaseMigrationTest` 的 48 个 `@Test` 拆成 `LedgerMigrationV1ToV11Test`（12）/`LedgerMigrationV11ToV19Test`（21）/`LedgerMigrationV20ToV36Test`（15），共享助手与原文件级工具移入 `MigrationTestSupport.kt`（基类 + 同包 `internal` 顶层函数）；断言与测试名逐字未动，已用脚本比对拆前拆后测试文本字节相等。新增 `tests/python/test_migration_split_inventory.py` 作为 D-195 残余条要求的**用例数守卫**：48 个测试名逐字各一次、三类份额 12/21/15、原类必须不存在、三个新类各在分片清单登记一次。
 
+**批 C 落地（同日）：** `android` 的四条 gradle 命令改为 `--max-workers=4 --build-cache`（此前全为 `--max-workers=1`、无构建缓存）；`Kotlin tests core` 单独设 `CI_TEST_MAX_PARALLEL_FORKS=6`，`check` 加 `--profile` 并上传 `gradle-profile-core` 工件（只作测量输入）。实测在合并后按 5 个 PR 采样记录。
+
 **边界：** 四个必过 context 名与分支保护零改动；APK producer 契约（`PRODUCERS` 与 job 名 `Android compile`）不变；零产品代码、零账务语义、零 schema/迁移；每批独立可回退。
 
 **关联决定：** D-302（上一轮 CI 验证调参）、D-190（单遍 CI 与合并树守卫）、D-200/D-201（APK 来源与预检）。

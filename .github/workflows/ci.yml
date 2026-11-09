@@ -58,11 +58,16 @@ jobs:
   # the only figure the guards verify; the base 98/722 header had already drifted from the
   # manifest, so the unverifiable test count is no longer restated here).
   kotlin-core:
+    # Six forks for this job only (D-303): the aggregated check task held 5.8 of
+    # the 5.9 minutes at four forks. The profile artifact is a measurement input,
+    # not a check.
     name: Kotlin tests core
     needs: [changes]
     if: needs.changes.outputs.kind == 'code'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      CI_TEST_MAX_PARALLEL_FORKS: '6'
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
@@ -84,7 +89,7 @@ jobs:
           key: gradle-build-cache-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index }}-${{ github.run_id }}
           restore-keys: gradle-build-cache-${{ runner.os }}-
       - name: Gradle check (every module except the sharded ledger-data test task)
-        run: ./gradlew --no-daemon --max-workers=5 --parallel --build-cache --init-script tools/ci/ci-parallel.init.gradle.kts check -x :ledger-data:jvmTest :ledger-data:jvmTestClasses --warning-mode all
+        run: ./gradlew --no-daemon --max-workers=5 --parallel --build-cache --profile --init-script tools/ci/ci-parallel.init.gradle.kts check -x :ledger-data:jvmTest :ledger-data:jvmTestClasses --warning-mode all
       - name: Ktlint check
         run: ./gradlew --no-daemon --max-workers=5 --build-cache --init-script tools/ci/ci-parallel.init.gradle.kts ktlintCheck --warning-mode all
       - name: Shared UI tests
@@ -107,6 +112,14 @@ jobs:
         with:
           name: timing-core
           path: timing-core.tsv
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload the Gradle profile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-profile-core
+          path: build/reports/profile/*.html
           if-no-files-found: warn
           retention-days: 7
 
@@ -220,6 +233,9 @@ jobs:
           fi
 
   android:
+    # Four workers and the build cache mirror the Kotlin jobs (D-303): serial
+    # @1 worker made this job the critical path at 6.4 min. Memory stays at the
+    # global 3 g heap.
     name: Android compile
     needs: [changes]
     if: needs.changes.outputs.kind == 'code'
@@ -239,20 +255,20 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: ${{ runner.os }}-gradle-
       - name: Compile Android
-        run: ./gradlew --no-daemon --max-workers=1 :ledger-data:compileAndroidMain --warning-mode all
+        run: ./gradlew --no-daemon --max-workers=4 --build-cache :ledger-data:compileAndroidMain --warning-mode all
       - name: Android app unit tests
         # P5-04.4 S2/S3: JVM unit tests for AndroidStartupController (no Robolectric). The
         # task set must match docs/CONTRIBUTING.md verification commands. The appended
         # :ledger-domain:testAndroidHostTest task runs the shared commonTest suite on the
         # Android host-test compilation face (D-238 A02 gap (iii), spec 2.3 both-ends clause).
-        run: ./gradlew --no-daemon --max-workers=1 :android-app:testDebugUnitTest :ledger-domain:testAndroidHostTest --warning-mode all
+        run: ./gradlew --no-daemon --max-workers=4 --build-cache :android-app:testDebugUnitTest :ledger-domain:testAndroidHostTest --warning-mode all
       - name: Android app instrumented test sources compile
         # P0 hotfix (defect 1) guard: compile the androidTest sources so the absolute-driver-path
         # regression guard cannot rot. Device execution belongs to the separate
         # ordinary regression and scale preflight workflows.
-        run: ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebugAndroidTest --warning-mode all
+        run: ./gradlew --no-daemon --max-workers=4 --build-cache :android-app:assembleDebugAndroidTest --warning-mode all
       - name: Android app assemble debug
-        run: ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebug --warning-mode all
+        run: ./gradlew --no-daemon --max-workers=4 --build-cache :android-app:assembleDebug --warning-mode all
       - name: Upload debug APK
         uses: actions/upload-artifact@v7
         with:
