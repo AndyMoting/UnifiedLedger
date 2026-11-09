@@ -94,7 +94,7 @@ jobs:
       - name: SQLDelight migration
         run: ./gradlew --no-daemon --max-workers=5 --build-cache --init-script tools/ci/ci-parallel.init.gradle.kts :ledger-data:verifyCommonMainLedgerDatabaseMigration --warning-mode all
       - name: Every compiled test class is listed in the shard manifest
-        run: python3 tools/ci/verify-shard-coverage.py --manifest tools/ci/ledger-data-shards.txt --classes ledger-data/build/classes/kotlin/jvm/test
+        run: python3 tools/ci/verify-shard-coverage.py --manifest tools/ci/ledger-data-shards.txt --classes ledger-data/build/classes/kotlin/jvm/test --shards 5
       - name: Test timing report
         # Report-only: aggregates per-class JUnit XML timings into the job summary
         # and into timing-core.tsv, the measured input for repacking the shard

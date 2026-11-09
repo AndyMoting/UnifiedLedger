@@ -100,6 +100,12 @@ def main() -> int:
     parser.add_argument("--classes", default="")
     parser.add_argument("--results", default="")
     parser.add_argument("--shard", type=int, default=0)
+    parser.add_argument(
+        "--shards",
+        type=int,
+        default=0,
+        help="require every manifest shard id to fall in 1..N (the workflow matrix size)",
+    )
     parser.add_argument("--python-manifest", default="")
     parser.add_argument("--tests-dir", default="tests/python")
     args = parser.parse_args()
@@ -110,6 +116,13 @@ def main() -> int:
         if not manifest:
             print(f"empty manifest: {args.manifest}", file=sys.stderr)
             return 2
+        if args.shards:
+            used = sorted(set(manifest.values()))
+            misplaced = [shard for shard in used if shard < 1 or shard > args.shards]
+            print(f"manifest shard ids: {used} (matrix 1..{args.shards})")
+            if misplaced:
+                print(f"  ids outside the matrix ({len(misplaced)}): {misplaced}")
+                ok = False
         if args.classes:
             expected = set(manifest)
             ok &= report("compiled classes vs manifest",

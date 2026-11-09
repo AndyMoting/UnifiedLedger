@@ -16,7 +16,7 @@
 
 | # | 判据 | 现状基线 | 目标 |
 | --- | --- | --- | --- |
-| G-1 | 代码 PR 执行面 | 10 job，wall clock ≈9.0 min | 11 job（新增 `changes` 1，串行 ≤0.5 min 计为固定成本）；重活 job 一个不少、不更慢（持续）|
+| G-1 | 代码 PR 执行面 | 10 job，wall clock ≈9.0 min | 11 job（新增 `changes` 1，串行 ≤0.5 min 计为固定成本）；重活 job 一个不少、不更慢（持续）。§10 把分片 3→5 后为 13 个执行 job，Kotlin 侧 6 个 |
 | G-2 | 纯文档 PR | 10 job（Kotlin 4 + Android 1 + Python 2 + Trace 1 + 2 gate），≈9.0 min | PR 2 后：Kotlin 4 job 与 `Android compile` 都以 job 级跳过执行，执行面 = `changes` + Python 两片 + `Trace scan` + 两个 gate（6 个），其余为 skipped 条目；PR 3 后：wall clock ≤5.5 min（Python shard 1 约 4.2 min + 串行开销）|
 | G-3 | 每次 squash 合并的 CI 全量次数 | 2（PR run + 守卫派发）| 1（PR 4 后）|
 | G-4 | scale preflight 假红进入 PR | 22% | 0（PR 5 后）|
