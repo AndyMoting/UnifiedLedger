@@ -20,7 +20,7 @@
 | G-2 | 纯文档 PR | 10 job（Kotlin 4 + Android 1 + Python 2 + Trace 1 + 2 gate），≈9.0 min | PR 2 后：Kotlin 4 job 为 0、Android 构建步骤跳过（job 保留）、新增 `changes` 1，总 10 → 7 job；PR 3 后：wall clock ≤5.5 min（Python shard 1 4.5 min + 串行开销）|
 | G-3 | 每次 squash 合并的 CI 全量次数 | 2（PR run + 守卫派发）| 1（PR 4 后）|
 | G-4 | scale preflight 假红进入 PR | 22% | 0（PR 5 后）|
-| G-5 | Windows 取消空跑占比 | 82% | 0（PR 1 后）|
+| G-5 | Windows 取消空跑占比 | 82%（本次采样；全历史 105 次 PR 触发中 75 次取消 = 71%）| 0（PR 1 后）|
 | G-6 | 四个必过 context 缺席次数 | 0 | 0（持续）|
 
 ## 2. 实测基线
@@ -37,6 +37,8 @@
 | 手工 rig（B6 8 / ENOSPC 6 / scale long 1）| 15 | 11 | 0 |
 
 单次代码 PR（10 job，总 ≈9.0 min），最长五项：`ledger-data shard 2` 8.9 min、`Kotlin tests core` 8.1、`Trace scan` 6.2、`Android compile` 6.1、`Python shard 1` 4.5。
+
+表内是一次采样，窗口随后续运行漂移（同一窗口重算时 Windows 行为 15/12/0）；判据按量级使用，不按精确值。
 
 结构性事实：
 
@@ -86,7 +88,7 @@
 
 **决定**：删除 `pull_request` 触发，保留夜间定时与手动 dispatch。
 
-**理由**：17 run 中 14 次被后续推送取消、0 真红、非必过；PR 上的完成率不足两成。
+**理由**：本次采样 17 run 中 14 次被后续推送取消（82%）；全历史 105 次 PR 触发中 75 次取消（71%），7 次真红集中在历史批次。该信号非必过，PR 上的完成率不足两成，故 PR 触发不承担门禁价值。
 
 **兜底**：Windows 特有风险面仍在 24 小时内被夜间运行覆盖；需要即时信号时手动 dispatch。
 
