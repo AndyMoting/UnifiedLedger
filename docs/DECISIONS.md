@@ -6869,6 +6869,8 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 6. **手工设备 rig**：B6 / ENOSPC / P706-A06 / maximum-scale long 四个手动 rig 与 evidence 绑定逻辑保留，仅标注为历史验收工具；删除需单独裁决。
 7. **Merge queue**：只评估，不实施。
 
+**修订（2026-11-09，实施批 PR 4）：** 第 3 条的 PR 解析由「标题含 PR 号」放宽为「标题末尾 `(#N)`，或 GitHub 的 commit→PR 关联恰好一个已合并 PR 且其 `merge_commit_sha` 等于该提交」。原因是本仓库合并使用 `gh pr merge --subject` 显式给出消息，GitHub 不追加编号（实测 `d417ab85`、`dfa2bb3d` 均无编号），标题解析在本仓库永不命中。该关联是 GitHub 按落地提交建立的服务端记录，不是 D-196 所拒绝的「外部提供的 PR head 树」——树比较仍只取落地提交与该 PR head 两个对象自身的 tree。
+
 **边界：** 分支保护配置与四个 required context 名零改动；零产品代码、零账务语义、零 schema、零迁移；每项一个批次，revert 即回退。
 
 **关联决定：** D-190（单遍 CI 与合并树守卫）、D-197（Android instrumented 设备信号）、D-200/D-201（scale preflight 与 APK 来源）、D-216（本地诊断通道）。
