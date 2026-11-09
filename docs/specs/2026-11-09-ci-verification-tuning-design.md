@@ -163,7 +163,7 @@
 | # | 判据 | 基线 | 目标 |
 | --- | --- | --- | --- |
 | W-1 | 最慢 `ledger-data` 分片 | p50 8.4 / p90 9.4 min | p50 ≤5.5 / p90 ≤6.5 min |
-| W-2 | 分片覆盖 | 3 片，按类数接近、按耗时不均（775–1037 类秒）| 5 片，各 ≈556 类秒；每片精确执行清单份额 |
+| W-2 | 分片覆盖 | 3 片，按类数接近、按耗时不均（775–1037 类秒）| 5 片，ids 1..5、每类恰好一次，每片精确执行清单份额（实测类秒 631/568/681/505/575）|
 | W-3 | `Android compile` | p50 6.4 min（`--max-workers=1`，无构建缓存）| p50 ≤5.0 min |
 | W-4 | 代码 PR 墙钟 | p50 ≈9.0 min | p50 ≤5.5 min |
 
@@ -177,7 +177,7 @@
 | B | 拆 `LedgerDatabaseMigrationTest` 为三类（`MigrationTestSupport` 基类）| 分片再降 ≈0.5–1.0 |
 | C | `android` 加 `--build-cache`/`--max-workers=4`；`kotlin-core` forks 4→6 + profile 工件 | Android 6.4 → ≤5.0；分片后关键路径落到 core |
 
-批 A 实测（run 42587329475，本批自身 PR）：五个分片 5m45 / 5m10 / 5m00 / 3m14 / 5m24（基线最慢 8.4 min），`Kotlin tests core` 5m25，`Android compile` 5m45–6m59（仍为关键路径），Python 4m43 / 2m41，Trace 6 s。
+批 A 实测（三次 run）：最慢分片 5.75 / 6.60 / 6.27 min（p50 6.27，基线 8.77–9.07），run 墙钟 7.14 / 7.15 / 6.60 min。W-1 尚未达成——剩余瓶颈是迁移大测试（278.5 s 仍独占一个 fork，归批 B）与 `Android compile`（5m04–6m59，归批 C）。
 
 不变量：四个必过 context 名与分支保护零改动；gradle 任务集合与测试集合不变（B 只改类边界）；APK producer 契约不变（不拆 `Android compile`）；每批一个 PR、独立回退。
 

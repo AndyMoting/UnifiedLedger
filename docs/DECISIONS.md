@@ -6888,7 +6888,7 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 3. **Android 就地提速，不拆 job**：`android` 的四条 gradle 命令加 `--build-cache`，`--max-workers` 1 → 4。拆成两个 job 会让两边各自 `compileAndroidMain`，实测估算只省 ≈0.8 min，故不做。
 4. **`kotlin-core` 并行度**：该 job 的 `CI_TEST_MAX_PARALLEL_FORKS` 4 → 6，并上传 `--profile` 报告工件；若提升 <0.5 min，再用 profile 数据另批按子项目拆分 `check`。
 
-**判据：** 最慢分片 p50 ≤5.5 / p90 ≤6.5；`Android compile` p50 ≤5.0；代码 PR 墙钟 p50 ≤5.5（基线 9.0）。合并后取 5 个 PR 采样核对。
+**判据与批 A 实测：** 目标最慢分片 p50 ≤5.5 / p90 ≤6.5、`Android compile` p50 ≤5.0、代码 PR 墙钟 p50 ≤5.5。批 A 三次 run 的最慢分片为 5.75 / 6.60 / 6.27 min（p50 6.27，基线 8.77–9.07），**W-1 尚未达成**；剩迁移大测试（278.5 s 独占一个 fork）与 `Android compile`（5m04–6m59），分别归批 B、批 C。合并后取 5 个 PR 采样核对。
 
 **边界：** 四个必过 context 名与分支保护零改动；APK producer 契约（`PRODUCERS` 与 job 名 `Android compile`）不变；零产品代码、零账务语义、零 schema/迁移；每批独立可回退。
 
