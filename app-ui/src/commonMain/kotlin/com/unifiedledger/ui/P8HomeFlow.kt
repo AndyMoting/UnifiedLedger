@@ -83,14 +83,16 @@ internal fun p8SummaryLines(
 internal fun p8SummaryPageDescription(
     page: P8SummaryPage,
     lines: List<P8SummaryLine>,
-): String =
+): String {
     if (lines.isEmpty()) {
-        "${page.label}：暂无月度数据"
-    } else {
-        page.label + "：" + lines.joinToString("；") { line ->
+        return "${page.label}：暂无月度数据"
+    }
+    val values =
+        lines.joinToString("；") { line ->
             "${line.currencyCode} ${formatMinorUnits(line.amountMinorUnits, line.precision)}"
         }
-    }
+    return page.label + "：" + values
+}
 
 /** Per-currency day totals under the same sign rules as the month card. */
 internal data class P8DayCurrencyTotal(
@@ -136,14 +138,16 @@ internal fun p8GroupByDay(
             if (ledgerId == null || catalog == null) {
                 emptyList()
             } else {
-                val activity =
+                val monthly =
                     MonthlyBuckets.aggregate(
                         rows = dayRows,
                         ledgerId = ledgerId,
                         catalog = catalog,
                         months = listOf(MonthlyBuckets.bucketKey(dayRows.first().statisticsAt)),
-                    ).values.firstOrNull()
-                activity?.currencies
+                    )
+                val activity = monthly.values.firstOrNull()
+                activity
+                    ?.currencies
                     ?.map { row ->
                         P8DayCurrencyTotal(
                             currencyCode = row.currency.code,
