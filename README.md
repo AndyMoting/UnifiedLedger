@@ -13,7 +13,7 @@ UnifiedLedger 是一个 Android-first、local-first 的个人财务应用，将�
 
 ## 当前阶段
 
-阶段 1～7 已收口（阶段 7 于 2026-11-05 按 `D-296` 收口，验收向量 59/62 ≈ 95.2%）。当前在**阶段 8「Android 功能与界面深化」**：`P8-00` 界面与导航基线已按 `D-301` 批准，验收向量进行中。
+阶段 1～3 的交付物（正式文档、黄金测试冻结、共享核心验证）已成文；阶段 4～7 已依次收口（阶段 7 于 2026-11-05 按 `D-296` 收口，验收向量 59/62 ≈ 95.2%，余 3 项 = 修订范围完成 2 + 需真机的掉电腿 1）。当前在**阶段 8「Android 功能与界面深化」**：`P8-00` 界面与导航基线已按 `D-301` 批准，验收向量进行中。
 
 - 阶段划分、进入与完成条件：[路线图](docs/ROADMAP.md)
 - 正式交付事实、剩余门槛与唯一下一步：[当前状态](docs/CURRENT_STATE.md)
@@ -21,18 +21,13 @@ UnifiedLedger 是一个 Android-first、local-first 的个人财务应用，将�
 
 ## 仓库结构
 
-| 模块 | 职责 |
-| --- | --- |
-| `ledger-domain` | 账务领域模型、规则与不变量；不依赖 Android、网络或 AI |
-| `ledger-application` | 用例、端口、读模型与导入/对账编排 |
-| `ledger-data` | SQLDelight schema v36（v1→v36 共 35 个迁移边）与持久化适配 |
-| `app-ui` | 共享 Compose Multiplatform 界面与纯状态机 |
-| `android-app`、`desktop-app` | 两端组合根 |
-| `tools/python` | 迁移、规则验证与黄金结果基线 |
+四个共享库 `ledger-domain`、`ledger-application`、`ledger-data`、`app-ui` 承载账务核心、持久化与界面；`android-app` 与 `desktop-app` 是只做平台装配的组合根；`tools/python` 保留迁移、规则验证与黄金结果基线。schema 当前为 SQLDelight v36（v1→v36 共 35 个迁移边）。
+
+模块职责与依赖方向见[项目地图](docs/PROJECT_MAP.md)与[系统架构](docs/ARCHITECTURE.md)；三个共享库另有模块文档（见「正式文档」）。
 
 ## 黄金契约
 
-`golden/rules-v2/` 已发布 `RG-01`～`RG-12` 共 12 个 case：每个 case 有冻结 expected 工件，并有对 operation outcome、完整 state、deltas 与 status changes 的比较 oracle。逐 case 的对象计数与覆盖状态见[黄金 v2 清单](docs/GOLDEN_V2_INVENTORY.md)，测试入口与失败矩阵见[黄金测试](docs/GOLDEN_TESTS.md)。
+`golden/rules-v2/` 已发布 `RG-01`～`RG-12` 共 12 个 case：每个 case 有冻结 expected 工件，并有对 operation outcome、完整 state、deltas 与 status changes 的比较 oracle。逐 case 的对象计数与覆盖状态见[黄金 v2 清单](docs/GOLDEN_V2_INVENTORY.md)，契约与通过标准见[黄金测试](docs/GOLDEN_TESTS.md)。
 
 已发布的 case 集合不表示所有黄金场景或正式账务核心已完成；未完成的验收向量按 [当前状态](docs/CURRENT_STATE.md) 的「未完成门槛」逐条保留。
 
@@ -59,7 +54,7 @@ python -m project_docs .
 
 ### 本机执行约束
 
-需要本地复现时，Gradle/Kotlin 验证必须串行运行，使用单 worker 和 1 GB heap，并在每次运行结束后停止 Gradle daemon。具体命令见[开发规范](docs/CONTRIBUTING.md)的「PowerShell 执行规范」。
+需要本地复现时，Gradle/Kotlin 验证必须串行运行，使用单 worker 和 1 GB heap，并在每次运行结束后停止 Gradle daemon。具体命令见[开发规范](docs/CONTRIBUTING.md)的「本机 Gradle 资源限制」。
 
 ### 构建与运行（人工验收）
 
