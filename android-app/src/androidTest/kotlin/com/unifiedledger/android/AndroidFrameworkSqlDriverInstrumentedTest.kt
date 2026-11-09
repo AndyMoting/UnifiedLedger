@@ -45,7 +45,7 @@ import java.io.File
  * - the fail-closed non-create guarantee: opening a nonexistent path fails and creates no file.
  *
  * Stated gap (fixture fidelity, not faked): the v1 fixture below is a LOCAL reproduction of the
- * frozen `VERSION_ONE_STATEMENTS` seed (ledger-data jvmTest `LedgerDatabaseMigrationTest`), kept
+ * frozen `VERSION_ONE_STATEMENTS` seed (ledger-data jvmTest `MigrationTestSupport`), kept
  * local for the same reason as the desktop port test's copy — that fixture is not on this module's
  * androidTest classpath. The local reproduction is statement-for-statement identical to the desktop
  * port test's copy (desktop-app jvmTest `DesktopRestorePreflightPortsTest`), and it diverges from
@@ -289,7 +289,7 @@ class AndroidFrameworkSqlDriverInstrumentedTest {
         /**
          * The v1 base surface for the strict-migrate case: the formal core tables plus one balanced
          * transaction, with the same FOREIGN KEY constraints as the frozen `VERSION_ONE_STATEMENTS`
-         * (ledger-data jvmTest `LedgerDatabaseMigrationTest`). Kept local because that fixture is
+         * (ledger-data jvmTest `MigrationTestSupport`). Kept local because that fixture is
          * not on this module's androidTest classpath (the desktop port test keeps the same local
          * reproduction).
          */
