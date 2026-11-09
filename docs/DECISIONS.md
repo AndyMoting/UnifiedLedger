@@ -6890,6 +6890,8 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 
 **判据与批 A 实测：** 目标最慢分片 p50 ≤5.5 / p90 ≤6.5、`Android compile` p50 ≤5.0、代码 PR 墙钟 p50 ≤5.5。批 A 三次 run 的最慢分片为 5.75 / 6.60 / 6.27 min（p50 6.27，基线 8.77–9.07），**W-1 尚未达成**；剩迁移大测试（278.5 s 独占一个 fork）与 `Android compile`（5m04–6m59），分别归批 B、批 C。合并后取 5 个 PR 采样核对。
 
+**批 B 落地（同日）：** `LedgerDatabaseMigrationTest` 的 48 个 `@Test` 拆成 `LedgerMigrationV1ToV11Test`（12）/`LedgerMigrationV11ToV19Test`（21）/`LedgerMigrationV20ToV36Test`（15），共享助手与原文件级工具移入 `MigrationTestSupport.kt`（基类 + 同包 `internal` 顶层函数）；断言与测试名逐字未动，已用脚本比对拆前拆后测试文本字节相等。新增 `tests/python/test_migration_split_inventory.py` 作为 D-195 残余条要求的**用例数守卫**：48 个测试名逐字各一次、三类份额 12/21/15、原类必须不存在、三个新类各在分片清单登记一次。
+
 **边界：** 四个必过 context 名与分支保护零改动；APK producer 契约（`PRODUCERS` 与 job 名 `Android compile`）不变；零产品代码、零账务语义、零 schema/迁移；每批独立可回退。
 
 **关联决定：** D-302（上一轮 CI 验证调参）、D-190（单遍 CI 与合并树守卫）、D-200/D-201（APK 来源与预检）。
