@@ -1,6 +1,7 @@
-"""P8-00 V-8 font-scale sample rig: the parts that are decidable without a device."""
+"""Offline proofs for the P8-00 V-8 font-scale sample rig (cloud AVD chain)."""
+from __future__ import annotations
 
-import pytest
+import unittest
 
 from android_fontscale.sampler import (
     SampleError,
@@ -21,39 +22,41 @@ _DUMP = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
-def test_screen_center_is_the_middle_of_the_bounds() -> None:
-    assert screen_center("[360,2180][720,2400]") == (540, 2290)
+class ScreenGeometry(unittest.TestCase):
+    def test_screen_center_is_the_middle_of_the_bounds(self) -> None:
+        self.assertEqual((540, 2290), screen_center("[360,2180][720,2400]"))
+
+    def test_screen_center_rejects_unparsable_bounds(self) -> None:
+        with self.assertRaises(SampleError):
+            screen_center("0,0,1080,2400")
 
 
-def test_screen_center_rejects_unparsable_bounds() -> None:
-    with pytest.raises(SampleError):
-        screen_center("0,0,1080,2400")
+class LabelLookup(unittest.TestCase):
+    def test_find_center_matches_text_and_content_description(self) -> None:
+        self.assertEqual((540, 2290), find_center(_DUMP, "账户"))
+        self.assertEqual((540, 2290), find_center(_DUMP, "账户，2 个账户"))
+
+    def test_find_center_returns_none_when_the_label_is_absent(self) -> None:
+        self.assertIsNone(find_center(_DUMP, "分析"))
+
+    def test_dump_contains_searches_text_and_description(self) -> None:
+        self.assertTrue(dump_contains(_DUMP, "账本为空"))
+        self.assertTrue(dump_contains(_DUMP, "2 个账户"))
+        self.assertFalse(dump_contains(_DUMP, "还没有可管理的账户"))
+
+    def test_dump_contains_rejects_a_broken_dump(self) -> None:
+        with self.assertRaises(SampleError):
+            dump_contains("<hierarchy", "账本为空")
 
 
-def test_find_center_matches_text_and_content_description() -> None:
-    assert find_center(_DUMP, "账户") == (540, 2290)
-    assert find_center(_DUMP, "账户，2 个账户") == (540, 2290)
+class FontScaleReading(unittest.TestCase):
+    def test_parse_font_scale_reads_the_platform_answer(self) -> None:
+        self.assertAlmostEqual(1.3, parse_font_scale("1.3\n"), places=6)
+
+    def test_parse_font_scale_fails_loudly_on_a_non_number(self) -> None:
+        with self.assertRaises(SampleError):
+            parse_font_scale("null")
 
 
-def test_find_center_returns_none_when_the_label_is_absent() -> None:
-    assert find_center(_DUMP, "分析") is None
-
-
-def test_dump_contains_searches_text_and_description() -> None:
-    assert dump_contains(_DUMP, "账本为空")
-    assert dump_contains(_DUMP, "2 个账户")
-    assert not dump_contains(_DUMP, "还没有可管理的账户")
-
-
-def test_dump_contains_rejects_a_broken_dump() -> None:
-    with pytest.raises(SampleError):
-        dump_contains("<hierarchy", "账本为空")
-
-
-def test_parse_font_scale_reads_the_platform_answer() -> None:
-    assert parse_font_scale("1.3\n") == pytest.approx(1.3)
-
-
-def test_parse_font_scale_fails_loudly_on_a_non_number() -> None:
-    with pytest.raises(SampleError):
-        parse_font_scale("null")
+if __name__ == "__main__":
+    unittest.main()
