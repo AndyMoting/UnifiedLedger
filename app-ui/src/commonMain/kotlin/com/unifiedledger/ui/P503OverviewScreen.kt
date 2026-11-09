@@ -119,8 +119,9 @@ fun P503OverviewScreen(
         remember(flow, catalog, state.ledgerId) {
             flow?.let { p8GroupByDay(it.rows, state.ledgerId, catalog) }.orEmpty()
         }
-    // Collapse state is a per-day view preference, not ledger state: absent = expanded.
-    val collapsedDays = remember { mutableStateMapOf<kotlinx.datetime.LocalDate, Boolean>() }
+    // Collapse state is a per-day view preference, not ledger state: absent = expanded. Keyed on the
+    // ledger so a day collapsed in one ledger never arrives collapsed in another.
+    val collapsedDays = remember(state.ledgerId) { mutableStateMapOf<kotlinx.datetime.LocalDate, Boolean>() }
     // DEF-B (D-268): virtualization is the DEF-B fix — only visible rows compose. The header
     // (search, summary card, month row), the day groups, the page footer and the balances tail are
     // items of one LazyColumn, so a ledger of any size never materialises its rows as layout nodes.
