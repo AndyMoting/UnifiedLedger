@@ -17,7 +17,7 @@
 | # | 判据 | 现状基线 | 目标 |
 | --- | --- | --- | --- |
 | G-1 | 代码 PR 执行面 | 10 job，wall clock ≈9.0 min | 11 job（新增 `changes` 1，串行 ≤0.5 min 计为固定成本）；重活 job 一个不少、不更慢（持续）|
-| G-2 | 纯文档 PR | 10 job（Kotlin 4 + Android 1 + Python 2 + Trace 1 + 2 gate），≈9.0 min | PR 2 后：Kotlin 4 job 为 0、Android 构建步骤跳过（job 保留）、新增 `changes` 1，总 10 → 7 job；PR 3 后：wall clock ≤5.5 min（Python shard 1 4.5 min + 串行开销）|
+| G-2 | 纯文档 PR | 10 job（Kotlin 4 + Android 1 + Python 2 + Trace 1 + 2 gate），≈9.0 min | PR 2 后：Kotlin 4 job 与 `Android compile` 都以 job 级跳过执行，执行面 = `changes` + Python 两片 + `Trace scan` + 两个 gate（6 个），其余为 skipped 条目；PR 3 后：wall clock ≤5.5 min（Python shard 1 约 4.2 min + 串行开销）|
 | G-3 | 每次 squash 合并的 CI 全量次数 | 2（PR run + 守卫派发）| 1（PR 4 后）|
 | G-4 | scale preflight 假红进入 PR | 22% | 0（PR 5 后）|
 | G-5 | Windows 取消空跑占比 | 82%（本次采样；全历史 105 次 PR 触发中 75 次取消 = 71%）| 0（PR 1 后）|
@@ -52,7 +52,7 @@
 
 ### T1 文档快路径
 
-**决定**：改动只落在 `docs/**/*.md` 与仓库根 `*.md` 的 PR 判为 `docs`：Kotlin 验证 job 与 Android 构建步骤不执行，Python 两片与 `Trace scan` 照常执行（文档由 `project_docs` 校验）。`docs/` 下的非 Markdown 文件判 `code`——`docs/migrations/golden-v2/` 与 `docs/examples/` 里的 golden 夹具由 Kotlin 与 Python 测试读取，T1 的「与构建无因果关系」对它们不成立。任何其他路径（含 `.github/**`、`tools/**`、各模块目录）判为 `code`，执行全量。分类器默认 `code`，即无法判断或输入为空时按代码处理。
+**决定**：改动只落在 `docs/**/*.md` 与仓库根 `*.md` 的 PR 判为 `docs`：Kotlin 验证 job 与 `Android compile` job 不执行（job 级跳过，GitHub 记为 success），Python 两片与 `Trace scan` 照常执行（文档由 `project_docs` 校验）。`docs/` 下的非 Markdown 文件判 `code`——`docs/migrations/golden-v2/` 与 `docs/examples/` 里的 golden 夹具由 Kotlin 与 Python 测试读取，T1 的「与构建无因果关系」对它们不成立。任何其他路径（含 `.github/**`、`tools/**`、各模块目录）判为 `code`，执行全量。分类器默认 `code`，即无法判断或输入为空时按代码处理。
 
 **理由**：这类提交占相当比例（见 §2 事实 5），与 Kotlin/Android 构建无因果关系。
 
@@ -127,7 +127,7 @@
 
 - 每批：四项必过全绿，且该批自身 PR run 显示新配置按预期执行（改动 `ci.yml` 的 PR 必为 `code` 分类）。
 - PR 1 后：`Windows JVM tests` 不再出现在 PR 的 checks 列表；四个手动 rig 文件头出现 historical 标注。
-- PR 2 后：第一个纯文档 PR 的 Kotlin 4 个 job 为 0、Android 构建步骤跳过（job 保留）、新增 `changes` job、总 7 job；同一分支追加代码文件后变为全量。
+- PR 2 后：第一个纯文档 PR 上 Kotlin 4 个 job 与 `Android compile` 均为 skipped，执行面为 6 个 job；同一分支追加代码文件后变为全量。
 - PR 3 后：PR 侧 `Trace scan` ≤2.0 min；纯文档 PR wall clock ≤5.5 min；合成测试证明旧提交中的禁止串在该模式外仍会被捕获。
 - PR 4 后：一次真实 squash 合并守卫零动作且落地提交扫描通过；合成测试三态齐备；手动 rig 的生产者指令（`gh workflow run ci.yml --ref main`）在文档中可达。
 - PR 5 后：连续 20 个 PR 无模拟器红。
@@ -141,3 +141,17 @@
 ## 8. 回退
 
 每批一个 PR，回退即 revert 对应 PR；无数据、无不可逆步骤。T2 的回退触发条件是出现绕过「`main` 每个落地提交至少扫描一次」的直推；T3 的回退触发条件是出现任何一次「零动作但有红」的落地。
+## 9. 实施记录与实测验收（2026-11-09）
+
+批次落地提交（全部 squash 进 `main`）：登记 `f70c7d91`、卫生 `a9a4b332`、文档快路径 `d417ab85`、trace 范围 `dfa2bb3d`、设备路由 `1eaf405c`、合并后去重 `7ea8397b`。
+
+| 判据 | 实测 | 证据 |
+| --- | --- | --- |
+| G-1 代码 PR 执行面 | 11 job（新增 `changes`），重活 job 一个不少；四必过全绿 | 各批 PR 的 required checks |
+| G-2 纯文档 PR | 执行 6 个 job，Kotlin 4 个与 `Android compile` 为 skipped；wall clock 4m10s；四必过全绿且分支保护判 CLEAN | run 42581428709（本 PR #270）|
+| G-3 合并后去重 | 零动作、未派发全量；守卫步骤 1.5 秒 | run 42581062153：`squash evidence complete` → 落地提交扫描 → `zero action`，无 CI 派发 |
+| G-4 设备信号后移 | PR 上不再出现 preflight；合并后 push 触发并成功 | run 42578401565（push, `1eaf405c`, success）|
+| G-5 Windows 取消空跑 | PR checks 列表无 `Windows JVM tests` | 各 PR 的 checks |
+| G-6 必过 context | 每个 PR 四项齐备 | 各 PR `gh pr checks --required` |
+
+残余（登记接受）：commit→PR 关联请求未分页（30 条上限，超出即按证据不全派发，fail-closed）；守卫的 `gh` 调用任何失败都退回派发全量；`docs/` 下非 Markdown 文件判 `code`，故 golden 夹具改动仍跑全量。
