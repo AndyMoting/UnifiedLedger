@@ -6894,7 +6894,7 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 
 **批 C 落地（同日，含两处修正）：** `android` 的构建步骤改为 `--max-workers=4 --build-cache`（此前全为 `--max-workers=1`、无缓存），但**单元测试步骤显式不带 `--build-cache`**——评审指出缓存恢复可让 Test 任务 FROM-CACHE，使必过检查在测试未执行时变绿（D-192 先例），故只对编译/装配步骤启用缓存。`Kotlin tests core` 只加 `--profile` 并上传 `gradle-profile-core`；六 fork 试验因四 vCPU 超订、首轮实测 7.3 min（基线 5.9）而**撤回**，保留四 fork，由 profile 数据决定是否另批按子项目拆分。W-3/W-4 采样取每个 PR 的**首次推送（冷缓存）**，0.5 min 判据读自带 profile 的步骤。
 
-**批 D 落地（同日）：** ① 装箱加 `--spread-heavy 5`：先把最慢的 5 个类各放一个分片，再对余下类做 LPT——按总秒平衡仍会让某分片仅因一个 155–182 s 的类拖长，重类必须分散；清单按 run `42599161481` 的 timing 工件重排（V20ToV36 182.3 / V11ToV19 114.7 / V1ToV11 32.1 类秒）。② `android` 的两条装配命令合并为一条 gradle 调用（少一次 JVM 启动与配置，任务集不变）。③ `--spread-heavy` 由 `tests/python/test_shard_packing.py` 覆盖：最慢 N 类必须落在 N 个不同分片、输出确定、N 大于分片数时退化。
+**批 D 落地（同日）：** ① 分片清单按 run `42599161481` 的 timing 工件重排（118 类；最重五类 V20ToV36 182.3 / P705TransferCorrectionCommitPortTest 177.1 / SqlDelightRg06StoreTest 156.5 / V11ToV19 114.7 / P705VoidRestoreCommitPortTest 101.4 s，分别落 1–5 片）。按同一批数字，旧清单最重片预测 690.3 s，新清单 633.3 s。**试过 `--spread-heavy`（先把最慢 N 类各放一片再 LPT）但评审证明它是 no-op**——LPT 从空箱开始，本来就先给最慢 N 类各一个空片；该参数未保留，改由 `tests/python/test_shard_packing.py` 守住装箱不变量（每类恰好一次、id 连续、确定性、均衡度、最重类不共片、空输入报错）。② `android` 的两条装配命令合并为一条 gradle 调用（4 → 3 次调用，任务集与产出不变）。③ 实测（run `42603993644`）：Android 4m46s、core 5.7 min、分片 4.8–6.6 min（最慢 shard 1 6.6）、run 墙钟 **7.0 min**。
 
 **边界：** 四个必过 context 名与分支保护零改动；APK producer 契约（`PRODUCERS` 与 job 名 `Android compile`）不变；零产品代码、零账务语义、零 schema/迁移；每批独立可回退。
 

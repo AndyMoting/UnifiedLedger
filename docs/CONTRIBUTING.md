@@ -242,7 +242,7 @@ python tools/ci/android-instrumented-cloud.py check --inventory tools/ci/android
 .\gradlew.bat :ledger-domain:testAndroidHostTest --stacktrace --rerun-tasks --warning-mode all
 ```
 
-编译 `android-app` 的 androidTest 源（P0 hotfix 缺陷 1 回归守卫：编译 `AndroidAbsoluteDatabasePathInstrumentedTest`，使驱动绝对路径守卫不会在 CI 中腐化；该步骤只编译、不执行，设备侧的回归执行由非阻塞 workflow `Android instrumented tests` 承担（见同名小节，D-197），人工 emulator 门保留用于探索、UI/无障碍与性能向量；与 CI 的 Android app instrumented test sources compile 步骤一致）：
+编译 `android-app` 的 androidTest 源（P0 hotfix 缺陷 1 回归守卫：编译 `AndroidAbsoluteDatabasePathInstrumentedTest`，使驱动绝对路径守卫不会在 CI 中腐化；该步骤只编译、不执行，设备侧的回归执行由非阻塞 workflow `Android instrumented tests` 承担（见同名小节，D-197），人工 emulator 门保留用于探索、UI/无障碍与性能向量；与 CI 的 Android app test sources and debug APK 步骤一致，D-303 批 D 起该步骤同时装配 debug APK）：
 
 ```powershell
 .\gradlew.bat :android-app:assembleDebugAndroidTest --stacktrace --rerun-tasks --warning-mode all
