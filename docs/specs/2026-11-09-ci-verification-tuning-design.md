@@ -68,7 +68,7 @@
 
 ### T3 合并后去重
 
-**决定**：合并树守卫增加零动作路径。判定链：`main` 新提交标题含 PR 号 → 该 PR 的 `mergeCommit` 等于落地提交 → `tree(PR head) == tree(落地提交)` → 该 PR 的 required checks 结论全为 success。四条全成立时不再派发全量 CI，否则维持现有派发行为。零动作路径内，守卫**仍执行落地提交的 trace 扫描**（该提交自身：消息、路径、树），因为 squash 消息在合并时生成，PR 侧从未扫过。
+**决定**：合并树守卫增加零动作路径。判定链：`main` 新提交能唯一解析出 PR（标题末尾 `(#N)`，或 GitHub 的 commit→PR 关联恰好一个已合并 PR 且其 `merge_commit_sha` 等于该提交；显式 `gh pr merge --subject` 不追加编号，故关联回退是主路径）→ 该 PR 的 `mergeCommit` 等于落地提交 → `tree(PR head) == tree(落地提交)` → 该 PR 的 required checks 结论全为 success。四条全成立时不再派发全量 CI，否则维持现有派发行为。零动作路径内，守卫**仍执行落地提交的 trace 扫描**（该提交自身：消息、路径、树），因为 squash 消息在合并时生成，PR 侧从未扫过。
 
 **理由**：squash + strict up-to-date 下落地树与 PR 验证树同树，派发是重复执行；当前占 CI 全部 run 的 41%。
 

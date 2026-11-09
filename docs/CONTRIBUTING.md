@@ -386,7 +386,7 @@ Python 分片：`python-shards`（矩阵 1/2）按 `tools/ci/python-shards.txt`�
 - 所有 tracked 变更通过 Pull Request 合入 `main`：任务分支推送后创建 PR，说明包含目的、行为变化、验证结果和适用决定编号。
 - 分支保护要求 required checks（`Kotlin tests`、`Android compile`、`Python tests`、`Trace scan`）全部通过且分支为最新（strict up-to-date）；ci.yml job name 改名时必须同步更新分支保护配置。
 - 合并前同步最新 `main`，解决冲突；本机按「本机与 CI 的验证分工」执行快速反馈检查，聚合检查由 PR 的那一次 run 承担。
-- 合并后由守卫 workflow（`Merge tree guard`）自动执行「合并树 == PR tip 树」的核对：merge commit 按第二父比对；squash 提交在 `main` 上没有第二父，守卫改为核对 **squash 证据**——该 PR 的 `mergeCommit` 就是落地提交、落地树与 PR head 树相同、四个必过检查在该 PR 上全绿（job 级跳过按 success 计，与分支保护口径一致）。证据齐备时零动作，并在同一 run 内扫描落地提交（squash 消息在合并时生成，PR 侧从未扫过）；证据不完整、树不等或任何一项不可读时照旧派发全量 CI。手工 `git rev-parse` 命令保留为兜底与解释。
+- 合并后由守卫 workflow（`Merge tree guard`）自动执行「合并树 == PR tip 树」的核对：merge commit 按第二父比对；squash 提交在 `main` 上没有第二父，守卫改为核对 **squash 证据**——从提交唯一解析出该 PR（标题末尾 `(#N)`，或 GitHub 的 commit→PR 关联恰好一个已合并 PR），该 PR 的 `mergeCommit` 就是落地提交、落地树与 PR head 树相同、四个必过检查在该 PR 上全绿（job 级跳过按 success 计，与分支保护口径一致）。证据齐备时零动作，并在同一 run 内扫描落地提交（squash 消息在合并时生成，PR 侧从未扫过）；证据不完整、树不等或任何一项不可读时照旧派发全量 CI。手工 `git rev-parse` 命令保留为兜底与解释。
 - 默认使用 squash merge，一个 PR 落成 `main` 上一个可独立理解的提交：`gh pr merge <n> --squash --subject "<conventional subject>" --body "<正文>"`。
 - 消息必须显式给出：分支提交作者与合并者不同时，GitHub 会在自动生成的消息末尾追加一行协作者署名，而该行落在 `Trace scan` 的禁止串里（见 `tools/ci/trace-scan.sh` 的 `TRACE_PATTERN`）；显式给出的 `--subject`/`--body` 原样落库。合并后用 `git log -1 --format=%B <merge-sha>` 复核：不含分隔线与协作者署名行。
 - 分支上的提交使用与本仓库既有提交一致的身份（`AndyMoting <147218659+AndyMoting@users.noreply.github.com>`），不用工具或会话身份；用 `git log -1 --format='%an <%ae>'` 复核。

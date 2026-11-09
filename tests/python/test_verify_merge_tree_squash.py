@@ -81,13 +81,15 @@ class SquashEvidence(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def fake_gh(self, *, merged: bool = True, tree: str | None = None, checks=None, fail: bool = False):
+    def fake_gh(self, *, merged: bool = True, tree: str | None = None, checks=None,
+                fail: bool = False, associated=None):
         payload = {
             "mergeCommit": {"oid": self.landed if merged else "9" * 40},
             "headRefOid": HEAD,
             "state": "MERGED",
             "statusCheckRollup": rollup() if checks is None else checks,
         }
+        association = [] if associated is None else associated
 
         def run(*args: str):
             self.messages.append(" ".join(args))
@@ -95,6 +97,8 @@ class SquashEvidence(unittest.TestCase):
                 return 1, "", "boom"
             if args[:2] == ("api", f"repos/example/ledger/git/commits/{HEAD}"):
                 return 0, self.tree if tree is None else tree, ""
+            if args[:2] == ("api", f"repos/example/ledger/commits/{self.landed}/pulls"):
+                return 0, json.dumps(association), ""
             return 0, json.dumps(payload), ""
 
         return run
@@ -147,12 +151,34 @@ class SquashEvidence(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("cannot read pull request", verdict)
 
-    def test_subject_without_a_pull_request_number_dispatches(self):
+    def test_subject_without_a_number_falls_back_to_the_association(self):
         git(self.repo, "commit", "--allow-empty", "-m", "chore: no number here")
         self.landed = git(self.repo, "rev-parse", "HEAD")
-        code, verdict = self.decide()
+        association = [{"number": 77, "merge_commit_sha": self.landed,
+                        "merged_at": "2026-11-09T00:00:00Z"}]
+        code, verdict = self.decide(associated=association)
+        self.assertEqual(code, 0, verdict)
+        self.assertIn("#77", verdict)
+
+    def test_ambiguous_association_dispatches(self):
+        git(self.repo, "commit", "--allow-empty", "-m", "chore: no number here")
+        self.landed = git(self.repo, "rev-parse", "HEAD")
+        association = [
+            {"number": 77, "merge_commit_sha": self.landed, "merged_at": "2026-11-09T00:00:00Z"},
+            {"number": 78, "merge_commit_sha": self.landed, "merged_at": "2026-11-09T00:00:00Z"},
+        ]
+        code, verdict = self.decide(associated=association)
         self.assertEqual(code, 1)
-        self.assertIn("no pull request number", verdict)
+        self.assertIn("2 merged pull requests", verdict)
+
+    def test_association_pointing_elsewhere_dispatches(self):
+        git(self.repo, "commit", "--allow-empty", "-m", "chore: no number here")
+        self.landed = git(self.repo, "rev-parse", "HEAD")
+        association = [{"number": 77, "merge_commit_sha": "9" * 40,
+                        "merged_at": "2026-11-09T00:00:00Z"}]
+        code, verdict = self.decide(associated=association)
+        self.assertEqual(code, 1)
+        self.assertIn("0 merged pull requests", verdict)
 
     def test_two_parent_commit_is_not_squash_evidence(self):
         git(self.repo, "checkout", "-q", "-b", "side")
