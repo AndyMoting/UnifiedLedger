@@ -317,4 +317,10 @@ jobs:
         with:
           fetch-depth: 0
       - name: Trace scan
+        # A pull-request run scans only the commits it adds plus the whole
+        # tracked tree; main and manual dispatches leave the variable unset and
+        # keep the full-history scans, which is what proves every landed commit
+        # was scanned at least once (D-302, T2).
+        env:
+          TRACE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: bash tools/ci/trace-scan.sh

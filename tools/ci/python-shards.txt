@@ -51,3 +51,4 @@
 2	tests.python.test_rg12_v2_expected
 1	tests.python.test_android_b6_card
 1	tests.python.test_ci_change_classifier
+2	tests.python.test_trace_scan_scope
