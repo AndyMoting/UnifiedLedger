@@ -10,12 +10,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -51,13 +54,9 @@ import kotlinx.datetime.YearMonth
  * to the fresh [LedgerCurrentState.transactions] projection instead of presenting the previous
  * cycle's [entryRows] as the current list (R-Q06-4).
  *
- * P7-05.C (D-156; spec sections 3.4/4.4): the recycle bin is a ledger-scoped surface, so its entry
- * affordance lives on the HOME overview — the natural existing home for ledger-wide navigation.
- * This is the deliberate entry-point choice: the bin is ledger-wide (it lists every voided
- * transaction, not one row's context), and DP-12 restricts only the correction/void/restore entries
- * to the detail page (列表行保持只导航), never the bin. [onOpenRecycleBin] is optional: when the
- * composition root passes it the overview offers the 回收站 entry, and when it is absent (this piece
- * does not wire the host) no affordance is rendered.
+ * P7-05.C (D-156; spec sections 3.4/4.4): the recycle bin stayed ledger-scoped, so its entry is the
+ * side drawer's 回收站 row (P8-00 b4b moved it there with 导出备份 under the 2026-11-06 hierarchy
+ * ruling); this content no longer owns either affordance, and the flows behind them are unchanged.
  */
 @Composable
 fun P503OverviewScreen(
@@ -78,8 +77,10 @@ fun P503OverviewScreen(
     onSelectTransaction: (TransactionId) -> Unit = {},
     onSelectMonth: (YearMonth) -> Unit = {},
     interactionsEnabled: Boolean = true,
-    onOpenRecycleBin: (() -> Unit)? = null,
-    onOpenBackupExport: (() -> Unit)? = null,
+    // P8-00 b4b: search behaviour belongs to P8-02 and the calendar page to a later slice, so both
+    // affordances render only when the host wires a destination (no dead region).
+    onOpenSearch: (() -> Unit)? = null,
+    onOpenCalendar: (() -> Unit)? = null,
     // P8-00 b3 (V-5 返回保滚动位): the position to restore (the state's sampled capture, consumed
     // by the reducer once applied) and the sampling callback the rows pass at click time. Null
     // restore / null sampler keep every pre-b3 call site compiling (no capture, no restore).
@@ -106,38 +107,41 @@ fun P503OverviewScreen(
     // G1 (R-Q06-4): a not-loaded monthly cycle must not present the previous cycle's flow rows as
     // the current list, so the fresh authoritative current-state projection is rendered instead.
     val flow = flowRowsForDisplay(flowRows, monthlyReloadRequired)
+    // P8-00 b4b: the flow is presented per reporting day (spec section 2 首页). Grouping preserves
+    // the port's display order. The header states the day's count only: the money fold needs the
+    // ledger catalog on the presentation state, which it does not carry yet (registered residual).
+    val dayGroups =
+        remember(flow) {
+            flow
+                ?.let { p8GroupByDay(it.rows) }
+                .orEmpty()
+        }
+    // Collapse state is a per-day view preference, not ledger state: absent = expanded. Keyed on the
+    // ledger so a day collapsed in one ledger never arrives collapsed in another.
+    val collapsedDays = remember(state.ledgerId) { mutableStateMapOf<kotlinx.datetime.LocalDate, Boolean>() }
+    // Hoisted so the summary card keeps its page when it scrolls out of the lazy list and back.
+    val summaryPagerState = rememberPagerState { P8SummaryPage.entries.size }
     // DEF-B (D-268): virtualization is the DEF-B fix — only visible rows compose. The header
-    // (identity, entries, month card), the flow rows, the page footer and the balances tail are
+    // (search, summary card, month row), the day groups, the page footer and the balances tail are
     // items of one LazyColumn, so a ledger of any size never materialises its rows as layout nodes.
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize().padding(16.dp),
     ) {
         item {
-            Text("账本：${state.ledgerId.value}", style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(8.dp))
-            // P7-05.C: the ledger-wide recycle-bin entry, offered only when the host wires it.
-            if (onOpenRecycleBin != null) {
-                TextButton(onClick = onOpenRecycleBin) { Text("回收站") }
-                Spacer(Modifier.height(4.dp))
-            }
-            // P7-06 06.B (D-177): the ledger-wide backup-export entry, offered only when the host
-            // wires it (an unwired composition renders no affordance). P8-00 b2 (2026-11-08 user
-            // ruling): the restore entry LEFT this screen — its affordance is the side drawer's
-            // 备份与恢复 carrier row (the shell batch's drawer), and the restore flow semantics are
-            // unchanged.
-            if (onOpenBackupExport != null) {
-                TextButton(onClick = onOpenBackupExport) { Text("导出备份") }
-                Spacer(Modifier.height(4.dp))
+            // P8-00 b4b (2026-11-06 hierarchy ruling): the ledger id and the low-frequency
+            // 回收站/导出备份 entries LEFT this surface — the side drawer's 数据 group carries them.
+            onOpenSearch?.let { open ->
+                P8SearchCapsule(onClick = open)
+                Spacer(Modifier.height(8.dp))
             }
         }
         if (showMonthlyRegion) {
             item {
-                P503MonthCard(
+                P8SummaryCard(
                     activity = monthlyActivity,
                     reloadRequired = monthlyReloadRequired,
-                    // F2: the explicit re-select action dispatches SelectMonth for the effective
-                    // month (trigger (b), which always re-requests).
+                    pagerState = summaryPagerState,
                     onReloadMonth =
                         if (monthlyReloadRequired) {
                             (selectedMonth ?: resolvedCurrentMonth)?.let { month -> { onSelectMonth(month) } }
@@ -145,10 +149,20 @@ fun P503OverviewScreen(
                             null
                         },
                 )
-                Spacer(Modifier.height(4.dp))
-                P503MonthSelector(selectedMonth, resolvedCurrentMonth, selectableMonths, onSelectMonth)
                 Spacer(Modifier.height(8.dp))
             }
+        }
+        // The month row owns the steps whether or not the monthly payload loaded: the steppers
+        // follow the frozen SelectMonth domain edges (empty domain = both disabled).
+        item {
+            val edges = monthStepEdges(selectedMonth, resolvedCurrentMonth, selectableMonths)
+            P8HomeMonthRow(
+                monthLabel = (selectedMonth ?: resolvedCurrentMonth)?.toString() ?: "本月",
+                onPrevious = edges.previous?.let { month -> { onSelectMonth(month) } }?.takeIf { interactionsEnabled },
+                onNext = edges.next?.let { month -> { onSelectMonth(month) } }?.takeIf { interactionsEnabled },
+                onOpenCalendar = onOpenCalendar?.takeIf { interactionsEnabled },
+            )
+            Spacer(Modifier.height(4.dp))
         }
         if (state.transactions.isEmpty() && flow == null) {
             item {
@@ -158,9 +172,25 @@ fun P503OverviewScreen(
             item {
                 Text("流水 · 共 ${flow.total} 笔", style = MaterialTheme.typography.titleMedium)
             }
-            items(flow.rows, key = { it.transactionId.value }) { row ->
-                LedgerEntryFlowRow(row, state.accountNames, onSelectTransaction, interactionsEnabled, onSampleScroll)
-                HorizontalDivider()
+            dayGroups.forEach { group ->
+                item(key = "day-${group.date}") {
+                    P8DayGroupHeader(
+                        group = group,
+                        expanded = collapsedDays[group.date] != true,
+                        interactionsEnabled = interactionsEnabled,
+                        onToggle = {
+                            if (interactionsEnabled) {
+                                collapsedDays[group.date] = collapsedDays[group.date] != true
+                            }
+                        },
+                    )
+                }
+                if (collapsedDays[group.date] != true) {
+                    items(group.rows, key = { it.transactionId.value }) { row ->
+                        LedgerEntryFlowRow(row, state.accountNames, onSelectTransaction, interactionsEnabled, onSampleScroll)
+                        HorizontalDivider()
+                    }
+                }
             }
             item(key = "flow-footer") {
                 FlowFooter(flow, onLoadMore, onRetryLoadMore)

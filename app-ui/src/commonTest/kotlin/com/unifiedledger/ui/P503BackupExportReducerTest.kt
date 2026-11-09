@@ -173,10 +173,11 @@ class P503BackupExportReducerTest {
     @Test
     fun theFullP705EventFamilyIsAbsorbedOnTheExportState() {
         // P1-A fix (06.B review): the P7-05 correction/void/recycle-bin family must be absorbed on
-        // the BackupExport state. It is reachable: the HOME overview renders 回收站 and 导出备份
-        // together, so a recycle-bin read dispatched before the export entry opened lands on the
-        // export state. Before the fix these reached `unhandled` -> IllegalStateException. Each
-        // case asserts the SAME state instance is returned (absorbed, not mutated).
+        // the BackupExport state. Both entries stay reachable from the side drawer's 数据 group
+        // (P8-00 b4b moved them off the home body; the dispatch is unchanged), so a recycle-bin read
+        // dispatched before the export entry opened still lands on the export state. Before the fix
+        // these reached `unhandled` -> IllegalStateException. Each case asserts the SAME state
+        // instance is returned (absorbed, not mutated).
         val export = exportState()
         val p705Events =
             listOf(
