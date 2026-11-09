@@ -157,7 +157,8 @@ jobs:
     name: Android instrumented shard ${{ matrix.shard }}
     needs: apks
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Two attempts at 20 minutes each plus the always-on validator (D-304).
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -203,6 +204,11 @@ jobs:
             --test instrumented-apks/android-app-debug-androidTest.apk
             --evidence instrumented-evidence/shard-${{ matrix.shard }}
             --sha "${{ github.sha }}"
+      - name: Clear the failed attempt's evidence and note the retry
+        if: steps.shard-attempt-1.outcome == 'failure'
+        run: |
+          rm -rf instrumented-evidence/shard-${{ matrix.shard }}
+          echo "First emulator attempt for this shard failed; its evidence was cleared and the shard was retried once (D-304)." >> "$GITHUB_STEP_SUMMARY"
       - name: Run this shard's instrumented cases on one emulator (retry)
         id: shard-attempt-2
         if: steps.shard-attempt-1.outcome == 'failure'
@@ -229,9 +235,6 @@ jobs:
             --test instrumented-apks/android-app-debug-androidTest.apk
             --evidence instrumented-evidence/shard-${{ matrix.shard }}
             --sha "${{ github.sha }}"
-      - name: Note the first emulator attempt
-        if: steps.shard-attempt-1.outcome == 'failure'
-        run: echo "First emulator attempt for this shard failed; the shard was retried once (D-304)." >> "$GITHUB_STEP_SUMMARY"
       - name: Require exactly this shard's cases to have passed
         # The job must not rely on the driver's own exit code relayed through a
         # third-party action. This gate re-parses the raw `am instrument`
@@ -259,7 +262,8 @@ jobs:
     name: Android instrumented fork fallback
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Two attempts at 20 minutes each plus the validator (D-304).
+    timeout-minutes: 60
     env:
       GRADLE_OPTS: >-
         -Dorg.gradle.jvmargs=-Xmx3g
@@ -310,6 +314,11 @@ jobs:
             --test android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
             --evidence instrumented-evidence/fork
             --sha "${{ github.sha }}"
+      - name: Clear the failed attempt's evidence and note the retry
+        if: steps.fork-attempt-1.outcome == 'failure'
+        run: |
+          rm -rf instrumented-evidence/fork
+          echo "First emulator attempt failed; its evidence was cleared and the fork fallback was retried once (D-304)." >> "$GITHUB_STEP_SUMMARY"
       - name: Run all ordinary cases on one emulator (retry)
         id: fork-attempt-2
         if: steps.fork-attempt-1.outcome == 'failure'
@@ -334,9 +343,6 @@ jobs:
             --test android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
             --evidence instrumented-evidence/fork
             --sha "${{ github.sha }}"
-      - name: Note the first emulator attempt
-        if: steps.fork-attempt-1.outcome == 'failure'
-        run: echo "First emulator attempt failed; the fork fallback was retried once (D-304)." >> "$GITHUB_STEP_SUMMARY"
       - name: Require all ordinary cases to have passed
         if: always()
         run: python3 tools/ci/android-instrumented-cloud.py validate-fork --inventory tools/ci/android-instrumented-inventory.txt --evidence instrumented-evidence/fork --sha "${{ github.sha }}"

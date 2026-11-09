@@ -90,7 +90,8 @@ jobs:
     name: Android scale preflight
     needs: apks
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Two attempts at 15 minutes each plus the always-on validator (D-304).
+    timeout-minutes: 45
     env:
       TZ: Asia/Shanghai
       LANG: zh_CN.UTF-8
@@ -131,7 +132,12 @@ jobs:
           emulator-boot-timeout: 300
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: ANDROID_CI_OUTER_DEADLINE_EPOCH=$(( $(date +%s) + 900 )) python3 tools/ci/android-scale-run.py --mode preflight --fixture preflight-fixture --evidence preflight-evidence --app preflight-apks/android-app-debug.apk --test preflight-apks/android-app-debug-androidTest.apk --sha "${{ github.sha }}" --outer-deadline-epoch "$ANDROID_CI_OUTER_DEADLINE_EPOCH"
+          script: python3 tools/ci/android-scale-run.py --mode preflight --fixture preflight-fixture --evidence preflight-evidence --app preflight-apks/android-app-debug.apk --test preflight-apks/android-app-debug-androidTest.apk --sha "${{ github.sha }}" --outer-deadline-epoch "$(( $(date +%s) + 900 ))"
+      - name: Clear the failed attempt's evidence and note the retry
+        if: steps.scale-attempt-1.outcome == 'failure'
+        run: |
+          rm -rf preflight-evidence
+          echo "First emulator attempt failed; its evidence was cleared and the exercise was retried once (D-304)." >> "$GITHUB_STEP_SUMMARY"
       - name: Exercise real scale setup and named instrumentation (retry)
         id: scale-attempt-2
         if: steps.scale-attempt-1.outcome == 'failure'
@@ -148,10 +154,7 @@ jobs:
           emulator-boot-timeout: 300
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: ANDROID_CI_OUTER_DEADLINE_EPOCH=$(( $(date +%s) + 900 )) python3 tools/ci/android-scale-run.py --mode preflight --fixture preflight-fixture --evidence preflight-evidence --app preflight-apks/android-app-debug.apk --test preflight-apks/android-app-debug-androidTest.apk --sha "${{ github.sha }}" --outer-deadline-epoch "$ANDROID_CI_OUTER_DEADLINE_EPOCH"
-      - name: Note the first emulator attempt
-        if: steps.scale-attempt-1.outcome == 'failure'
-        run: echo "First emulator attempt failed; the exercise was retried once (D-304)." >> "$GITHUB_STEP_SUMMARY"
+          script: python3 tools/ci/android-scale-run.py --mode preflight --fixture preflight-fixture --evidence preflight-evidence --app preflight-apks/android-app-debug.apk --test preflight-apks/android-app-debug-androidTest.apk --sha "${{ github.sha }}" --outer-deadline-epoch "$(( $(date +%s) + 900 ))"
       - name: Independently validate preflight evidence
         if: always()
         run: python3 tools/ci/android-scale-validate.py --mode preflight --fixture preflight-fixture --evidence preflight-evidence --sha "${{ github.sha }}"
