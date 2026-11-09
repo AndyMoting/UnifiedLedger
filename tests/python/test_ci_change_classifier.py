@@ -181,7 +181,12 @@ class WorkflowWiring(unittest.TestCase):
 
     def test_kotlin_gate_recomputes_and_judges_the_declared_kind(self):
         block = "\n".join(self.job_block("kotlin-gate"))
-        self.assertIn("needs: [changes, kotlin-core, ledger-data-shards]", block)
+        self.assertIn(
+            "needs: [changes, kotlin-core, ledger-data-shards, kotlin-migration-verify]", block
+        )
+        # D-303 batch E: the extracted migration job is judged like the other two.
+        self.assertIn('MIGRATION_RESULT" != "skipped"', block)
+        self.assertIn('MIGRATION_RESULT" != "success"', block)
         self.assertIn("tools/ci/classify-changes.py", block)
         self.assertIn("CHANGES_RESULT", block)
         self.assertIn("DECLARED_KIND", block)

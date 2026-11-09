@@ -88,7 +88,7 @@ jobs:
           key: gradle-build-cache-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index }}-${{ github.run_id }}
           restore-keys: gradle-build-cache-${{ runner.os }}-
       - name: Gradle check (every module except the sharded ledger-data test task)
-        run: ./gradlew --no-daemon --max-workers=5 --parallel --build-cache --profile --init-script tools/ci/ci-parallel.init.gradle.kts check -x :ledger-data:jvmTest :ledger-data:jvmTestClasses --warning-mode all
+        run: ./gradlew --no-daemon --max-workers=5 --parallel --build-cache --profile --init-script tools/ci/ci-parallel.init.gradle.kts check -x :ledger-data:jvmTest :ledger-data:jvmTestClasses -x :ledger-data:verifyCommonMainLedgerDatabaseMigration --warning-mode all
       - name: Ktlint check
         run: ./gradlew --no-daemon --max-workers=5 --build-cache --init-script tools/ci/ci-parallel.init.gradle.kts ktlintCheck --warning-mode all
       - name: Shared UI tests
@@ -121,6 +121,38 @@ jobs:
           path: build/reports/profile/*.html
           if-no-files-found: warn
           retention-days: 7
+
+  # The SQLDelight migration verification is a 3m27s single task that ran inside
+  # `Kotlin tests core` and was the core job's longest item (D-303, batch E). It is
+  # independent of the test tasks, so it gets its own parallel job instead of
+  # stretching the aggregated run. It has no fork-bearing Test task, so the
+  # parallelism init script is irrelevant here.
+  kotlin-migration-verify:
+    name: Kotlin migration verify
+    needs: [changes]
+    if: needs.changes.outputs.kind == 'code'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
+      - uses: actions/cache@v5
+        with:
+          path: ~/.gradle/caches/build-cache-1
+          key: gradle-build-cache-${{ runner.os }}-migration-verify-${{ github.run_id }}
+          restore-keys: gradle-build-cache-${{ runner.os }}-migration-verify-
+      - name: Verify the SQLDelight migrations
+        run: ./gradlew --no-daemon --max-workers=4 --build-cache :ledger-data:verifyCommonMainLedgerDatabaseMigration --warning-mode all
 
   ledger-data-shards:
     name: ledger-data shard ${{ matrix.shard }}
@@ -191,7 +223,7 @@ jobs:
     # success - which is exactly why the docs-only path needs this gate instead of
     # a workflow-level filter (D-302, T1).
     name: Kotlin tests
-    needs: [changes, kotlin-core, ledger-data-shards]
+    needs: [changes, kotlin-core, ledger-data-shards, kotlin-migration-verify]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -209,9 +241,10 @@ jobs:
           DECLARED_KIND: ${{ needs.changes.outputs.kind }}
           CORE_RESULT: ${{ needs.kotlin-core.result }}
           SHARDS_RESULT: ${{ needs.ledger-data-shards.result }}
+          MIGRATION_RESULT: ${{ needs.kotlin-migration-verify.result }}
         run: |
           set -euo pipefail
-          echo "changes=$CHANGES_RESULT declared=$DECLARED_KIND core=$CORE_RESULT shards=$SHARDS_RESULT"
+          echo "changes=$CHANGES_RESULT declared=$DECLARED_KIND core=$CORE_RESULT shards=$SHARDS_RESULT migration=$MIGRATION_RESULT"
           if [ "$CHANGES_RESULT" != "success" ]; then
             echo "::error::Change classification did not succeed"
             exit 1
@@ -222,11 +255,11 @@ jobs:
             exit 1
           fi
           if [ "$kind" = "docs" ]; then
-            if [ "$CORE_RESULT" != "skipped" ] || [ "$SHARDS_RESULT" != "skipped" ]; then
+            if [ "$CORE_RESULT" != "skipped" ] || [ "$SHARDS_RESULT" != "skipped" ] || [ "$MIGRATION_RESULT" != "skipped" ]; then
               echo "::error::A docs-only change ran the Kotlin jobs"
               exit 1
             fi
-          elif [ "$CORE_RESULT" != "success" ] || [ "$SHARDS_RESULT" != "success" ]; then
+          elif [ "$CORE_RESULT" != "success" ] || [ "$SHARDS_RESULT" != "success" ] || [ "$MIGRATION_RESULT" != "success" ]; then
             echo "::error::Kotlin verification did not fully succeed"
             exit 1
           fi

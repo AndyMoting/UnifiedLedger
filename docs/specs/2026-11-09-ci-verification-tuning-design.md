@@ -176,7 +176,8 @@
 | A | 5 片按实测类秒重排 + `--tsv` 计时工件 | 最慢分片 8.4 → ≈5.0–5.5 |
 | B | 拆 `LedgerDatabaseMigrationTest` 为三类（`MigrationTestSupport` 基类），并以 `test_migration_split_inventory` 守住 48 例；清单按拆后首个 run 的 timing 工件重排 | 分片再降 ≈0.5–1.0；清单 116 → 118 类；三类实测类秒 124.9 / 154.9 / 26.8 |
 | C | `android` 构建步骤改 `--max-workers=4 --build-cache`，单元测试步骤不带缓存（必过检查必须真跑测试）；`kotlin-core` 只加 `--profile` 并上传 `gradle-profile-core`（六 fork 试验超订四 vCPU，已撤回）| Android 6.4 → ≤5.0（取每个 PR 首次推送、冷缓存采样）；聚合任务提升 <0.5 min 时按 profile 另批拆分 |
-| D | 按最新 timing 工件重排清单（最重五类分散）；`android` 两条装配命令合并为一条 gradle 调用；`test_shard_packing.py` 守住装箱不变量 | 旧清单最重片预测 690.3 → 633.3 s；实测分片 4.8–6.6 min、run 墙钟 7.0 min |
+| D | 按最新 timing 工件重排清单（最重五类分散）；`android` 两条装配命令合并为一条 gradle 调用；`test_shard_packing.py` 守住装箱不变量 | 旧清单最重片预测 690.3 → 633.3 s；实测分片 3.8–5.5 min、run 墙钟 7.0–7.5 min |
+| E | 迁移校验 `verifyCommonMainLedgerDatabaseMigration`（profile 单任务 3m27s）拆成独立并行 job，core 用 `-x` 排除；收口 job 纳入该依赖 | core 预期 7.0 → 5.5–6.3 min；整轮预期 7.5 → 6.2–6.8 min（上限受最慢分片 5.5 约束）|
 
 批 A 实测（三次 run）：最慢分片 5.75 / 6.60 / 6.27 min（p50 6.27，基线 8.77–9.07），run 墙钟 7.14 / 7.15 / 6.60 min。W-1 尚未达成——剩余瓶颈是迁移大测试（278.5 s 仍独占一个 fork，归批 B）与 `Android compile`（5m04–6m59，归批 C）。
 
