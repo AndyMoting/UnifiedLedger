@@ -81,12 +81,12 @@ class SquashEvidence(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def fake_gh(self, *, merged: bool = True, tree: str | None = None, checks=None,
+    def fake_gh(self, *, merged: bool = True, tree: str | None = None, checks=None, state: str = "MERGED",
                 fail: bool = False, associated=None):
         payload = {
             "mergeCommit": {"oid": self.landed if merged else "9" * 40},
             "headRefOid": HEAD,
-            "state": "MERGED",
+            "state": state,
             "statusCheckRollup": rollup() if checks is None else checks,
         }
         association = [] if associated is None else associated
@@ -119,6 +119,32 @@ class SquashEvidence(unittest.TestCase):
         code, verdict = self.decide()
         self.assertEqual(code, 0, verdict)
         self.assertIn("zero-action", verdict)
+
+    def test_head_reference_is_resolved_before_any_comparison(self):
+        # The guard invokes the script with `--landed HEAD`; the comparison must
+        # see a commit object, not the literal string.
+        with patch.object(self.module, "run_gh", side_effect=self.fake_gh()), \
+                patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/ledger"}), \
+                patch.object(self.module, "run_git", side_effect=self._git_at_repo):
+            code, verdict = self.module.squash_evidence("HEAD")
+        self.assertEqual(code, 0, verdict)
+
+    def test_unresolvable_landed_reference_dispatches(self):
+        with patch.object(self.module, "run_git", side_effect=self._git_at_repo):
+            code, verdict = self.module.squash_evidence("no-such-rev")
+        self.assertEqual(code, 1)
+        self.assertIn("cannot resolve", verdict)
+
+    def test_unmerged_pull_request_dispatches(self):
+        code, verdict = self.decide(state="OPEN")
+        self.assertEqual(code, 1)
+        self.assertIn("is 'OPEN'", verdict)
+
+    def test_duplicate_check_name_with_a_failing_entry_dispatches(self):
+        checks = rollup() + [{"name": "Trace scan", "conclusion": "FAILURE"}]
+        code, verdict = self.decide(checks=checks)
+        self.assertEqual(code, 1)
+        self.assertIn("Trace scan=SUCCESS/FAILURE", verdict)
 
     def test_skipped_required_check_still_counts(self):
         code, verdict = self.decide(checks=rollup(**{"Android compile": "SKIPPED"}))
@@ -230,6 +256,14 @@ class GuardWiring(unittest.TestCase):
         block = self.text.split("TRACE_BASE_SHA=", 1)
         self.assertEqual(len(block), 2, "the zero-action path must scan the landed commit")
         self.assertIn("trace-scan.sh", block[1])
+
+    def test_the_landed_scan_happens_before_the_zero_action_message(self):
+        # Moving the scan into the dispatch branch would still satisfy the
+        # presence check above, so the order is asserted too.
+        self.assertLess(
+            self.text.index("TRACE_BASE_SHA="),
+            self.text.index("zero action: landed tree, checks and trace"),
+        )
 
     def test_guard_can_read_pull_requests_and_checks(self):
         for scope in ("pull-requests: read", "checks: read", "statuses: read"):
