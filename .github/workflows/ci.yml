@@ -58,16 +58,15 @@ jobs:
   # the only figure the guards verify; the base 98/722 header had already drifted from the
   # manifest, so the unverifiable test count is no longer restated here).
   kotlin-core:
-    # Six forks for this job only (D-303): the aggregated check task held 5.8 of
-    # the 5.9 minutes at four forks. The profile artifact is a measurement input,
-    # not a check.
+    # The profile artifact is a measurement input, not a verdict (D-303): a
+    # six-fork trial oversubscribed the four-vCPU runner and is not kept, so the
+    # profile of the standard four-fork run decides whether splitting the
+    # aggregated task by subproject is worth a later batch.
     name: Kotlin tests core
     needs: [changes]
     if: needs.changes.outputs.kind == 'code'
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      CI_TEST_MAX_PARALLEL_FORKS: '6'
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
@@ -233,9 +232,10 @@ jobs:
           fi
 
   android:
-    # Four workers and the build cache mirror the Kotlin jobs (D-303): serial
-    # @1 worker made this job the critical path at 6.4 min. Memory stays at the
-    # global 3 g heap.
+    # Four workers mirror the shard jobs (D-303): serial @1 worker made this job
+    # the critical path at 6.4 min. Build caching stays off the unit-test step so
+    # a required check always executes the tests instead of restoring them from
+    # cache; memory stays at the global 3 g heap.
     name: Android compile
     needs: [changes]
     if: needs.changes.outputs.kind == 'code'
@@ -261,7 +261,7 @@ jobs:
         # task set must match docs/CONTRIBUTING.md verification commands. The appended
         # :ledger-domain:testAndroidHostTest task runs the shared commonTest suite on the
         # Android host-test compilation face (D-238 A02 gap (iii), spec 2.3 both-ends clause).
-        run: ./gradlew --no-daemon --max-workers=4 --build-cache :android-app:testDebugUnitTest :ledger-domain:testAndroidHostTest --warning-mode all
+        run: ./gradlew --no-daemon --max-workers=4 :android-app:testDebugUnitTest :ledger-domain:testAndroidHostTest --warning-mode all
       - name: Android app instrumented test sources compile
         # P0 hotfix (defect 1) guard: compile the androidTest sources so the absolute-driver-path
         # regression guard cannot rot. Device execution belongs to the separate
