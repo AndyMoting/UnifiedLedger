@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -142,7 +143,7 @@ internal fun P8SummaryCard(
     onReloadMonth: (() -> Unit)? = null,
     // Hoisted by the caller: a pager state created inside the lazy item would reset to 支出 every
     // time the card scrolls out of view and back.
-    pagerState: androidx.compose.foundation.pager.PagerState = rememberPagerState { P8SummaryPage.entries.size },
+    pagerState: PagerState = rememberPagerState { P8SummaryPage.entries.size },
 ) {
     val palette = LocalP8Palette.current
     val pages = P8SummaryPage.entries

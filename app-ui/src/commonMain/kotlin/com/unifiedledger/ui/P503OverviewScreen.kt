@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -119,7 +120,7 @@ fun P503OverviewScreen(
     // ledger so a day collapsed in one ledger never arrives collapsed in another.
     val collapsedDays = remember(state.ledgerId) { mutableStateMapOf<kotlinx.datetime.LocalDate, Boolean>() }
     // Hoisted so the summary card keeps its page when it scrolls out of the lazy list and back.
-    val summaryPagerState = androidx.compose.foundation.pager.rememberPagerState { P8SummaryPage.entries.size }
+    val summaryPagerState = rememberPagerState { P8SummaryPage.entries.size }
     // DEF-B (D-268): virtualization is the DEF-B fix — only visible rows compose. The header
     // (search, summary card, month row), the day groups, the page footer and the balances tail are
     // items of one LazyColumn, so a ledger of any size never materialises its rows as layout nodes.
