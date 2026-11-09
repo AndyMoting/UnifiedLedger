@@ -53,13 +53,9 @@ import kotlinx.datetime.YearMonth
  * to the fresh [LedgerCurrentState.transactions] projection instead of presenting the previous
  * cycle's [entryRows] as the current list (R-Q06-4).
  *
- * P7-05.C (D-156; spec sections 3.4/4.4): the recycle bin is a ledger-scoped surface, so its entry
- * affordance lives on the HOME overview — the natural existing home for ledger-wide navigation.
- * This is the deliberate entry-point choice: the bin is ledger-wide (it lists every voided
- * transaction, not one row's context), and DP-12 restricts only the correction/void/restore entries
- * to the detail page (列表行保持只导航), never the bin. [onOpenRecycleBin] is optional: when the
- * composition root passes it the overview offers the 回收站 entry, and when it is absent (this piece
- * does not wire the host) no affordance is rendered.
+ * P7-05.C (D-156; spec sections 3.4/4.4): the recycle bin stayed ledger-scoped, so its entry is the
+ * side drawer's 回收站 row (P8-00 b4b moved it there with 导出备份 under the 2026-11-06 hierarchy
+ * ruling); this content no longer owns either affordance, and the flows behind them are unchanged.
  */
 @Composable
 fun P503OverviewScreen(
@@ -80,9 +76,6 @@ fun P503OverviewScreen(
     onSelectTransaction: (TransactionId) -> Unit = {},
     onSelectMonth: (YearMonth) -> Unit = {},
     interactionsEnabled: Boolean = true,
-    // P8-00 b4b: the catalog the per-day totals fold over. Null (or an unwired monthly region)
-    // degrades the day headers to a count-only line instead of inventing a sum.
-    catalog: com.unifiedledger.domain.LedgerCatalog? = null,
     // P8-00 b4b: search behaviour belongs to P8-02 and the calendar page to a later slice, so both
     // affordances render only when the host wires a destination (no dead region).
     onOpenSearch: (() -> Unit)? = null,
@@ -114,14 +107,14 @@ fun P503OverviewScreen(
     // the current list, so the fresh authoritative current-state projection is rendered instead.
     val flow = flowRowsForDisplay(flowRows, monthlyReloadRequired)
     // P8-00 b4b: the flow is presented per reporting day (spec section 2 首页). Grouping preserves
-    // the port's display order; the day totals are the month card's own fold, applied per day.
-    val dayGroups =
-        remember(flow, catalog, state.ledgerId) {
-            flow?.let { p8GroupByDay(it.rows, state.ledgerId, catalog) }.orEmpty()
-        }
+    // the port's display order. The header states the day's count only: the money fold needs the
+    // ledger catalog on the presentation state, which it does not carry yet (registered residual).
+    val dayGroups = remember(flow) { flow?.let { p8GroupByDay(it.rows) }.orEmpty() }
     // Collapse state is a per-day view preference, not ledger state: absent = expanded. Keyed on the
     // ledger so a day collapsed in one ledger never arrives collapsed in another.
     val collapsedDays = remember(state.ledgerId) { mutableStateMapOf<kotlinx.datetime.LocalDate, Boolean>() }
+    // Hoisted so the summary card keeps its page when it scrolls out of the lazy list and back.
+    val summaryPagerState = androidx.compose.foundation.pager.rememberPagerState { P8SummaryPage.entries.size }
     // DEF-B (D-268): virtualization is the DEF-B fix — only visible rows compose. The header
     // (search, summary card, month row), the day groups, the page footer and the balances tail are
     // items of one LazyColumn, so a ledger of any size never materialises its rows as layout nodes.
@@ -142,6 +135,7 @@ fun P503OverviewScreen(
                 P8SummaryCard(
                     activity = monthlyActivity,
                     reloadRequired = monthlyReloadRequired,
+                    pagerState = summaryPagerState,
                     onReloadMonth =
                         if (monthlyReloadRequired) {
                             (selectedMonth ?: resolvedCurrentMonth)?.let { month -> { onSelectMonth(month) } }
@@ -177,6 +171,7 @@ fun P503OverviewScreen(
                     P8DayGroupHeader(
                         group = group,
                         expanded = collapsedDays[group.date] != true,
+                        interactionsEnabled = interactionsEnabled,
                         onToggle = {
                             if (interactionsEnabled) {
                                 collapsedDays[group.date] = collapsedDays[group.date] != true

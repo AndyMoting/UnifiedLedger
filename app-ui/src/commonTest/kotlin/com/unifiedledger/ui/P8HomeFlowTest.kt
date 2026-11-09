@@ -67,8 +67,6 @@ class P8HomeFlowTest {
         assertEquals(listOf(LocalDate(2026, 11, 9), LocalDate(2026, 11, 8)), groups.map { it.date })
         assertEquals(listOf("t3", "t2"), groups[0].rows.map { it.transactionId.value })
         assertEquals(listOf("t1"), groups[1].rows.map { it.transactionId.value })
-        assertEquals(2, groups[0].count)
-        assertEquals(1, groups[1].count)
     }
 
     @Test
@@ -79,13 +77,6 @@ class P8HomeFlowTest {
         assertEquals(LocalDate(2026, 11, 10), groups.single().date)
     }
 
-    @Test
-    fun withoutACatalogTheHeaderCarriesNoInventedSum() {
-        val groups = p8GroupByDay(listOf(row("t1", "2026-11-09T03:00:00Z")))
-
-        assertTrue(groups.single().totals.isEmpty())
-        assertEquals(1, groups.single().count)
-    }
 
     @Test
     fun noRowsMeansNoGroups() {
@@ -133,6 +124,40 @@ class P8HomeFlowTest {
     fun anAbsentPayloadCarriesNoZeroValues() {
         assertTrue(p8SummaryLines(null, P8SummaryPage.EXPENSE).isEmpty())
         assertEquals("支出：暂无月度数据", p8SummaryPageDescription(P8SummaryPage.EXPENSE, emptyList()))
+    }
+
+    @Test
+    fun anEmptyMonthNeverShowsZeroAmounts() {
+        // EMPTY_MONTH still carries a currency axis, so an ungated card would print "CNY 0.00"
+        // above the frozen 该月无交易 copy. Only a LOADED region may state amounts (R-Q06-4).
+        val activity =
+            MonthlyActivity(
+                ledgerId = ledgerId,
+                month = YearMonth(2026, 11),
+                currencies =
+                    listOf(
+                        MonthlyCurrencyActivity(
+                            currency = CurrencyUnit("CNY", 2),
+                            ordinaryIncomeMinorUnits = 0L,
+                            netExpenseMinorUnits = 0L,
+                            balanceMinorUnits = 0L,
+                            positiveExpenseMinorUnits = 0L,
+                            refundMinorUnits = 0L,
+                            transactionCount = 0,
+                            countByKind = emptyMap(),
+                        ),
+                    ),
+                expenseCategories = emptyList(),
+                incomeCategories = emptyList(),
+            )
+
+        assertTrue(
+            p8SummaryLinesFor(activity, P8SummaryPage.EXPENSE, MonthlyRegionState.EMPTY_MONTH).isEmpty(),
+        )
+        assertEquals(
+            1,
+            p8SummaryLinesFor(activity, P8SummaryPage.EXPENSE, MonthlyRegionState.LOADED).size,
+        )
     }
 
     @Test

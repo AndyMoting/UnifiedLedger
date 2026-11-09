@@ -30,8 +30,6 @@ import androidx.compose.ui.unit.dp
 import com.unifiedledger.application.LedgerEntryRow
 import com.unifiedledger.application.MonthlyActivity
 import com.unifiedledger.application.MonthlyBuckets
-import com.unifiedledger.domain.LedgerCatalog
-import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.ui.theme.LocalP8Palette
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.toLocalDateTime
@@ -39,8 +37,8 @@ import kotlin.time.Instant
 
 // P8-00 b4b: the home tab's content organisation (spec section 2, 首页). Everything below the
 // composables is a pure fold over data the screen already receives, so the summary card and the
-// day headers can never disagree with the month card or the analysis regions — the day totals are
-// the very same MonthlyBuckets.aggregate fold, applied per day.
+// day headers can never disagree with the month card or the analysis regions about the month they
+// describe: both read the same projection and the same frozen region state.
 
 /** The three summary pages the card pages through (spec section 2: 支出/收入/结余). */
 internal enum class P8SummaryPage(
@@ -79,6 +77,17 @@ internal fun p8SummaryLines(
     }
 }
 
+/**
+ * The page's values, gated on the month's own region state (R-Q06-4 / F2): only a LOADED month may
+ * state amounts. An empty month, an absent payload and the post-retry absence return no lines, so
+ * the card shows a dash plus the frozen copy instead of a zero the ledger never stated.
+ */
+internal fun p8SummaryLinesFor(
+    activity: MonthlyActivity?,
+    page: P8SummaryPage,
+    region: MonthlyRegionState,
+): List<P8SummaryLine> = if (region == MonthlyRegionState.LOADED) p8SummaryLines(activity, page) else emptyList()
+
 /** The TalkBack sentence of one summary page: every exact value with its currency code. */
 internal fun p8SummaryPageDescription(
     page: P8SummaryPage,
@@ -94,24 +103,18 @@ internal fun p8SummaryPageDescription(
     return page.label + "：" + values
 }
 
-/** Per-currency day totals under the same sign rules as the month card. */
-internal data class P8DayCurrencyTotal(
-    val currencyCode: String,
-    val precision: Int,
-    val incomeMinorUnits: Long,
-    val netExpenseMinorUnits: Long,
-)
+/** Per-currency day totals land with the catalog axis (registered residual). */
 
 /**
  * One reporting day of the home flow. [rows] keep the port's display order
  * (statistics_at DESC -> occurred_at DESC -> transaction_id ASC), so grouping never reorders.
- * [totals] is empty when the caller supplied no catalog: the header then states the count only
- * rather than inventing a sum.
+ * The header states this day's count only: the money fold needs the ledger catalog on the
+ * presentation state, which it does not carry yet (registered residual — the header never invents
+ * a sum, and never folds a partially paged list into one).
  */
 internal data class P8DayGroup(
     val date: LocalDate,
     val rows: List<LedgerEntryRow>,
-    val totals: List<P8DayCurrencyTotal>,
 ) {
     val count: Int get() = rows.size
 }
@@ -119,46 +122,14 @@ internal data class P8DayGroup(
 /** The reporting-zone calendar day of a statistics instant (R-Q06-2 frozen zone). */
 internal fun p8ReportingDay(statisticsAt: Instant): LocalDate = statisticsAt.toLocalDateTime(MonthlyBuckets.REPORT_TIME_ZONE).date
 
-/**
- * Groups the flow rows by reporting day, preserving the incoming order. Day totals reuse
- * [MonthlyBuckets.aggregate], so one month's days sum exactly to that month's card.
- */
-internal fun p8GroupByDay(
-    rows: List<LedgerEntryRow>,
-    ledgerId: LedgerId? = null,
-    catalog: LedgerCatalog? = null,
-): List<P8DayGroup> {
+/** Groups the flow rows by reporting day, preserving the incoming order. */
+internal fun p8GroupByDay(rows: List<LedgerEntryRow>): List<P8DayGroup> {
     if (rows.isEmpty()) return emptyList()
     val buckets = LinkedHashMap<LocalDate, MutableList<LedgerEntryRow>>()
     for (row in rows) {
         buckets.getOrPut(p8ReportingDay(row.statisticsAt)) { ArrayList() }.add(row)
     }
-    return buckets.map { (day, dayRows) ->
-        val totals =
-            if (ledgerId == null || catalog == null) {
-                emptyList()
-            } else {
-                val monthly =
-                    MonthlyBuckets.aggregate(
-                        rows = dayRows,
-                        ledgerId = ledgerId,
-                        catalog = catalog,
-                        months = listOf(MonthlyBuckets.bucketKey(dayRows.first().statisticsAt)),
-                    )
-                val activity = monthly.values.firstOrNull()
-                activity
-                    ?.currencies
-                    ?.map { row ->
-                        P8DayCurrencyTotal(
-                            currencyCode = row.currency.code,
-                            precision = row.currency.precision,
-                            incomeMinorUnits = row.ordinaryIncomeMinorUnits,
-                            netExpenseMinorUnits = row.netExpenseMinorUnits,
-                        )
-                    }.orEmpty()
-            }
-        P8DayGroup(date = day, rows = dayRows, totals = totals)
-    }
+    return buckets.map { (day, dayRows) -> P8DayGroup(date = day, rows = dayRows) }
 }
 
 /**
@@ -171,10 +142,13 @@ internal fun P8SummaryCard(
     activity: MonthlyActivity?,
     reloadRequired: Boolean = false,
     onReloadMonth: (() -> Unit)? = null,
+    // Hoisted by the caller: a pager state created inside the lazy item would reset to 支出 every
+    // time the card scrolls out of view and back.
+    pagerState: androidx.compose.foundation.pager.PagerState = rememberPagerState { P8SummaryPage.entries.size },
 ) {
     val palette = LocalP8Palette.current
     val pages = P8SummaryPage.entries
-    val pagerState = rememberPagerState { pages.size }
+    val region = monthlyRegionState(activity, reloadRequired)
     Surface(
         color = palette.card,
         shape = RoundedCornerShape(palette.cardRadius),
@@ -183,7 +157,10 @@ internal fun P8SummaryCard(
         Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp)) {
             HorizontalPager(state = pagerState, modifier = Modifier.fillMaxWidth()) { pageIndex ->
                 val page = pages[pageIndex]
-                val lines = p8SummaryLines(activity, page)
+                // R-Q06-4 / F2: only a LOADED month may show amounts. An empty month, an absent
+                // payload and the post-retry absence all keep the frozen copy and a dash — a zero
+                // here would read as a real amount the ledger never stated.
+                val lines = p8SummaryLinesFor(activity, page, region)
                 Column(
                     Modifier
                         .fillMaxWidth()
@@ -197,11 +174,18 @@ internal fun P8SummaryCard(
                         style = MaterialTheme.typography.headlineLarge,
                         color = if (page == P8SummaryPage.EXPENSE && (head?.amountMinorUnits ?: 0L) > 0L) palette.expense else palette.onSurface,
                     )
-                    // R-Q06-4 / F2: an absent payload never reads as a real zero. The month card's
-                    // own frozen copy decides between 该月无交易, 暂无月度数据 and the post-retry
-                    // absence, so the card and this summary cannot describe the same state twice
-                    // differently.
-                    val region = monthlyRegionState(activity, reloadRequired)
+                    // D-120 forbids cross-currency summation, so every other currency keeps its own
+                    // visible line instead of surviving only in the TalkBack sentence.
+                    lines.drop(1).forEach { line ->
+                        Text(
+                            "${line.currencyCode} ${formatMinorUnits(line.amountMinorUnits, line.precision)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = palette.onSurfaceVariant,
+                        )
+                    }
+                    // The month card's own frozen copy decides between 该月无交易, 暂无月度数据 and
+                    // the post-retry absence, so the card and this summary cannot describe the same
+                    // state twice differently.
                     if (region != MonthlyRegionState.LOADED) {
                         Spacer(Modifier.height(4.dp))
                         Text(
@@ -312,11 +296,16 @@ internal fun P8SearchCapsule(onClick: () -> Unit) {
     }
 }
 
-/** One day's header: the date, the transaction count and — when the catalog was available — the exact day totals. */
+/**
+ * One day's header: the date and this day's transaction count. [interactionsEnabled] mirrors the
+ * flow rows — on the retained read-failure surface the header keeps its disclosure but offers no
+ * click, so a toggle that the reducer would absorb is not presented as live.
+ */
 @Composable
 internal fun P8DayGroupHeader(
     group: P8DayGroup,
     expanded: Boolean,
+    interactionsEnabled: Boolean = true,
     onToggle: () -> Unit,
 ) {
     val palette = LocalP8Palette.current
@@ -325,7 +314,10 @@ internal fun P8DayGroupHeader(
             Modifier
                 .fillMaxWidth()
                 .heightIn(min = 40.dp)
-                .clickable(onClickLabel = if (expanded) "折叠当天的流水" else "展开当天的流水") { onToggle() }
+                .clickable(
+                    enabled = interactionsEnabled,
+                    onClickLabel = if (expanded) "折叠当天的流水" else "展开当天的流水",
+                ) { onToggle() }
                 .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -335,13 +327,6 @@ internal fun P8DayGroupHeader(
             style = MaterialTheme.typography.bodySmall,
             color = palette.onSurfaceVariant,
         )
-        group.totals.forEach { total ->
-            Text(
-                "${total.currencyCode} ${formatMinorUnits(total.netExpenseMinorUnits, total.precision)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = palette.onSurfaceVariant,
-            )
-        }
     }
     HorizontalDivider(color = palette.divider)
 }
