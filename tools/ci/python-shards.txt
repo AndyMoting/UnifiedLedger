@@ -52,3 +52,4 @@
 1	tests.python.test_android_b6_card
 1	tests.python.test_ci_change_classifier
 2	tests.python.test_trace_scan_scope
+1	tests.python.test_verify_merge_tree_squash

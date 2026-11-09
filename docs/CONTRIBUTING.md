@@ -38,7 +38,7 @@ $env:GRADLE_OPTS='-Xmx1024m'
 
 ## 本机与 CI 的验证分工
 
-默认工作流是 PR 门禁流：在短期任务分支上开发，推送后创建 Pull Request（`gh pr create`），required checks（`.github/workflows/ci.yml` 的 `Kotlin tests`、`Android compile`、`Python tests`、`Trace scan` 四个 job）全部通过后以 squash merge 合并（消息显式给出，见「合并」节）。job name 与分支保护规则强耦合，改名必须同步更新分支保护配置。`ci.yml` 只在 `pull_request` 上触发（另留 `workflow_dispatch` 供人工重跑）；合并推送 `main` 后由 `Merge tree guard` 兜底：它在每次 push 到 `main` 时运行，遇线性或 squash 提交时由它派发全量 CI，因此合并动作仍会带来一次全量运行。
+默认工作流是 PR 门禁流：在短期任务分支上开发，推送后创建 Pull Request（`gh pr create`），required checks（`.github/workflows/ci.yml` 的 `Kotlin tests`、`Android compile`、`Python tests`、`Trace scan` 四个 job）全部通过后以 squash merge 合并（消息显式给出，见「合并」节）。job name 与分支保护规则强耦合，改名必须同步更新分支保护配置。`ci.yml` 只在 `pull_request` 上触发（另留 `workflow_dispatch` 供人工重跑）；合并推送 `main` 后由 `Merge tree guard` 兜底：它在每次 push 到 `main` 时运行——merge commit 走树判据、squash 提交走「合并」节的 squash 证据；证据完整即零动作（只扫描落地提交），无法判定或证据不全时派发一次全量 CI。
 
 本机只保留快速反馈：`project_docs`，以及可选的 `bash tools/ci/trace-scan.sh` 本地预检；受影响模块的聚焦定向测试归 CI。完整 `check`、ktlint、Android/KMP 编译、Debug APK、完整 Python 测试、Desktop build、migration verifier 与 Windows JVM 测试由 CI 在资源更充足的 runner 上执行。PR run 检出并验证的是该 PR 的**预览合并树**（`Merge <head> into <base>`），因此发布证据是「合并树与该 PR tip 树逐字节相同」，合并后立即核对：
 
@@ -52,7 +52,7 @@ git rev-parse "<merge-sha>^{tree}" "<pr-tip-sha>^{tree}"
 gh workflow run ci.yml --ref main
 ```
 
-该核对由守卫 workflow 自动执行：`Merge tree guard`（`.github/workflows/merge-tree-guard.yml`）在每次 push 到 `main` 时运行，用判据脚本 `tools/ci/verify-merge-tree.py` 比较合并树与合并提交自身记录的第二父树（即合并那一刻被并入的 PR tip），相同即零动作；树不等、线性提交或无法判定时自动执行上面的 `gh workflow run ci.yml --ref main` 重跑全量。上面的手工 `git rev-parse` 命令保留为兜底与解释。
+该核对由守卫 workflow 自动执行：`Merge tree guard`（`.github/workflows/merge-tree-guard.yml`）在每次 push 到 `main` 时运行，用判据脚本 `tools/ci/verify-merge-tree.py` 比较合并树与合并提交自身记录的第二父树（即合并那一刻被并入的 PR tip），相同即零动作；树不等、线性提交或无法判定时，再核对 squash 证据（见「合并」节），证据不全才自动执行上面的 `gh workflow run ci.yml --ref main` 重跑全量。零动作路径仍扫描落地提交，因此「每个落地提交至少被扫描一次」成立。该命令只作用于 `main` 当前 tip；需要某个历史 SHA 的整树 APK bundle 时先确认它仍是 tip。手工 `git rev-parse` 命令保留为兜底与解释。
 
 只有在变更范围或失败诊断需要时，才在本机重复相应的资源密集型命令。
 
@@ -386,7 +386,7 @@ Python 分片：`python-shards`（矩阵 1/2）按 `tools/ci/python-shards.txt`�
 - 所有 tracked 变更通过 Pull Request 合入 `main`：任务分支推送后创建 PR，说明包含目的、行为变化、验证结果和适用决定编号。
 - 分支保护要求 required checks（`Kotlin tests`、`Android compile`、`Python tests`、`Trace scan`）全部通过且分支为最新（strict up-to-date）；ci.yml job name 改名时必须同步更新分支保护配置。
 - 合并前同步最新 `main`，解决冲突；本机按「本机与 CI 的验证分工」执行快速反馈检查，聚合检查由 PR 的那一次 run 承担。
-- 合并后由守卫 workflow（`Merge tree guard`）自动执行同一节「合并树 == PR tip 树」的核对：merge commit 按第二父比对，树不一致时重跑全量；squash 提交在 `main` 上没有第二父，判据直接走派发分支，于是每次合并都会执行一次全量 CI。手工 `git rev-parse` 命令保留为兜底与解释，确认等价后再继续后续工作。
+- 合并后由守卫 workflow（`Merge tree guard`）自动执行「合并树 == PR tip 树」的核对：merge commit 按第二父比对；squash 提交在 `main` 上没有第二父，守卫改为核对 **squash 证据**——从提交唯一解析出该 PR（标题末尾 `(#N)`，或 GitHub 的 commit→PR 关联恰好一个已合并 PR），该 PR 的 `mergeCommit` 就是落地提交、落地树与 PR head 树相同、四个必过检查在该 PR 上全绿（job 级跳过按 success 计，与分支保护口径一致）。证据齐备时零动作，并在同一 run 内扫描落地提交（squash 消息在合并时生成，PR 侧从未扫过）；证据不完整、树不等或任何一项不可读时照旧派发全量 CI。手工 `git rev-parse` 命令保留为兜底与解释。
 - 默认使用 squash merge，一个 PR 落成 `main` 上一个可独立理解的提交：`gh pr merge <n> --squash --subject "<conventional subject>" --body "<正文>"`。
 - 消息必须显式给出：分支提交作者与合并者不同时，GitHub 会在自动生成的消息末尾追加一行协作者署名，而该行落在 `Trace scan` 的禁止串里（见 `tools/ci/trace-scan.sh` 的 `TRACE_PATTERN`）；显式给出的 `--subject`/`--body` 原样落库。合并后用 `git log -1 --format=%B <merge-sha>` 复核：不含分隔线与协作者署名行。
 - 分支上的提交使用与本仓库既有提交一致的身份（`AndyMoting <147218659+AndyMoting@users.noreply.github.com>`），不用工具或会话身份；用 `git log -1 --format='%an <%ae>'` 复核。
