@@ -174,7 +174,7 @@
 | 批次 | 范围 | 预期 |
 | --- | --- | --- |
 | A | 5 片按实测类秒重排 + `--tsv` 计时工件 | 最慢分片 8.4 → ≈5.0–5.5 |
-| B | 拆 `LedgerDatabaseMigrationTest` 为三类（`MigrationTestSupport` 基类）| 分片再降 ≈0.5–1.0 |
+| B | 拆 `LedgerDatabaseMigrationTest` 为三类（`MigrationTestSupport` 基类），并以 `test_migration_split_inventory` 守住 48 例；清单按拆后首个 run 的 timing 工件重排 | 分片再降 ≈0.5–1.0；清单 116 → 118 类；三类实测类秒 124.9 / 154.9 / 26.8 |
 | C | `android` 加 `--build-cache`/`--max-workers=4`；`kotlin-core` forks 4→6 + profile 工件 | Android 6.4 → ≤5.0；分片后关键路径落到 core |
 
 批 A 实测（三次 run）：最慢分片 5.75 / 6.60 / 6.27 min（p50 6.27，基线 8.77–9.07），run 墙钟 7.14 / 7.15 / 6.60 min。W-1 尚未达成——剩余瓶颈是迁移大测试（278.5 s 仍独占一个 fork，归批 B）与 `Android compile`（5m04–6m59，归批 C）。

@@ -944,7 +944,7 @@ class SqlDelightRg12StoreTest {
                 // 3. PENDING fact first, then a match, then a MATCHED history entry: the
                 // match insert is rejected first by the rebuilt match guard's
                 // fact-preclusion branch. The rg12_match_history_fact_consistency
-                // backstop (asserted structurally in LedgerDatabaseMigrationTest) would
+                // backstop (asserted structurally in the migration tests) would
                 // catch the history insert if a future migration ever relaxed that branch.
                 driver.execute(
                     null,

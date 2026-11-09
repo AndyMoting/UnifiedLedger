@@ -372,7 +372,7 @@ class AndroidRestoreWiringTest {
 
     /**
      * Resolves a path relative to the repository root by walking up from the test working directory
-     * to the settings file (the `LedgerDatabaseMigrationTest` precedent, ledger-data jvmTest).
+     * to the settings file (the `MigrationTestSupport` precedent, ledger-data jvmTest).
      */
     private fun repositoryFile(relative: String): Path {
         var candidate = Path.of(System.getProperty("user.dir"))

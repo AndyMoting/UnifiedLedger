@@ -47,7 +47,7 @@ def class_name(element: ET.Element, fallback: str) -> str:
     """The fully qualified class name of a suite.
 
     Gradle names a KMP test task's suite with the SHORT class name plus a task
-    suffix (e.g. "LedgerDatabaseMigrationTest[jvm]"); the testcase elements carry
+    suffix (e.g. "LedgerMigrationV20ToV36Test[jvm]"); the testcase elements carry
     the qualified name, which is what the shard manifest and the rebalance tool
     use. Suites that already report a qualified name are kept as they are.
     """

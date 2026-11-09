@@ -313,7 +313,7 @@ adb shell am start -n com.unifiedledger.android/.MainActivity
 
 3. **加列批次沿 `columnInfo` 契约验证**：`ALTER TABLE ADD COLUMN` 无法与 fresh 一行一列 DDL 逐字节相等（SQLite 把新列定义拼在末列同一物理行）；仓库冻结的契约是比较 `columnInfo`（列名/类型/非空/主键：`name|type|notnull|pk`，按声明行序；新列位于表尾），说明与用法见 `ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/P707TimeProjectionMigrationV31ToV32Test.kt:300-312`，禁止要求 `sqlite_master` 文本逐字节一致。
 
-4. **同步改写位置式 INSERT**：`INSERT INTO <table> VALUES (…)` 不给列名时，加列后 SQLite 报 `has N columns but M values were supplied`（值个数校验先于缺省填充，新列加 `DEFAULT NULL` 也救不了）；以 `manual_expense_request` 与 `manual_income_request` 两表为例共 6 处须随加列批改写为显式列清单：`ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/LedgerDatabaseMigrationTest.kt:174`、`SqlDelightCatalogStoreTest.kt:290/539/544`、`SqlDelightRg06StoreTest.kt:1593/1603`。加列批必须以受影响表为范围在批时重新 grep 盘点位置式 INSERT 落点，不得复用本清单的数字；写范围必须覆盖盘点结果。
+4. **同步改写位置式 INSERT**：`INSERT INTO <table> VALUES (…)` 不给列名时，加列后 SQLite 报 `has N columns but M values were supplied`（值个数校验先于缺省填充，新列加 `DEFAULT NULL` 也救不了）；以 `manual_expense_request` 与 `manual_income_request` 两表为例共 6 处须随加列批改写为显式列清单：`ledger-data/src/jvmTest/kotlin/com/unifiedledger/data/LedgerMigrationV1ToV11Test.kt:167`、`SqlDelightCatalogStoreTest.kt:290/539/544`、`SqlDelightRg06StoreTest.kt:1593/1603`。加列批必须以受影响表为范围在批时重新 grep 盘点位置式 INSERT 落点，不得复用本清单的数字；写范围必须覆盖盘点结果。
 
 5. **给被广泛构造的类型加必填字段会打断所有构造点**：SQLDelight 生成函数不给可空参数 Kotlin 默认值，快照/SaveInput 等类型同理；新字段一律带 Kotlin 默认值，或把全部构造点纳入写范围（生产代码与测试都要数；示例构造点：`ledger-application/src/commonMain/kotlin/com/unifiedledger/application/GoldenManualExpenseAdapter.kt`、`Rg02ManualIncomeAdapter.kt`，及多个 `desktop-app/src/jvmTest/kotlin/com/unifiedledger/desktop/*CompositionRootTest.kt`）。
 

@@ -107,7 +107,7 @@ class DesktopRestorePreflightPortsTest {
 /**
  * The v1 base surface for these port tests: the formal core tables plus one balanced transaction,
  * with the same FOREIGN KEY constraints as the frozen `VERSION_ONE_STATEMENTS`
- * (`ledger-data` jvmTest `LedgerDatabaseMigrationTest`) that the migration chain expects. It is kept
+ * (`ledger-data` jvmTest `MigrationTestSupport`) that the migration chain expects. It is kept
  * local because that fixture is not on the desktop test classpath; the constraints are reproduced so
  * the FK-enforced migration path exercises the same schema shape (P3-7).
  */
