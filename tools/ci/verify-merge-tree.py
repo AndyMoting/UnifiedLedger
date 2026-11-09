@@ -68,9 +68,12 @@ PASSING_CONCLUSIONS = {"SUCCESS", "SKIPPED"}
 
 
 def run_git(*args: str) -> tuple[int, str, str]:
-    completed = subprocess.run(
-        ["git", *args], capture_output=True, text=True, encoding="utf-8"
-    )
+    try:
+        completed = subprocess.run(
+            ["git", *args], capture_output=True, text=True, encoding="utf-8"
+        )
+    except OSError as error:  # git missing or not executable: fail closed
+        return 1, "", str(error)
     return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
 
 

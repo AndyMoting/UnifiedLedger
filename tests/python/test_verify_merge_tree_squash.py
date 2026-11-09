@@ -141,10 +141,11 @@ class SquashEvidence(unittest.TestCase):
         self.assertIn("is 'OPEN'", verdict)
 
     def test_duplicate_check_name_with_a_failing_entry_dispatches(self):
-        checks = rollup() + [{"name": "Trace scan", "conclusion": "FAILURE"}]
+        # Failing entry first: a last-wins map would hide it.
+        checks = [{"name": "Trace scan", "conclusion": "FAILURE"}] + rollup()
         code, verdict = self.decide(checks=checks)
         self.assertEqual(code, 1)
-        self.assertIn("Trace scan=SUCCESS/FAILURE", verdict)
+        self.assertIn("Trace scan=FAILURE/SUCCESS", verdict)
 
     def test_skipped_required_check_still_counts(self):
         code, verdict = self.decide(checks=rollup(**{"Android compile": "SKIPPED"}))
@@ -256,6 +257,8 @@ class GuardWiring(unittest.TestCase):
         block = self.text.split("TRACE_BASE_SHA=", 1)
         self.assertEqual(len(block), 2, "the zero-action path must scan the landed commit")
         self.assertIn("trace-scan.sh", block[1])
+        # Both zero-action branches (merge tree, squash evidence) must call it.
+        self.assertEqual(self.text.count('zero_action "'), 2)
 
     def test_the_landed_scan_happens_before_the_zero_action_message(self):
         # Moving the scan into the dispatch branch would still satisfy the
