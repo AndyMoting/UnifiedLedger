@@ -109,7 +109,12 @@ fun P503OverviewScreen(
     // P8-00 b4b: the flow is presented per reporting day (spec section 2 首页). Grouping preserves
     // the port's display order. The header states the day's count only: the money fold needs the
     // ledger catalog on the presentation state, which it does not carry yet (registered residual).
-    val dayGroups = remember(flow) { flow?.let { p8GroupByDay(it.rows) }.orEmpty() }
+    val dayGroups =
+        remember(flow) {
+            flow
+                ?.let { p8GroupByDay(it.rows) }
+                .orEmpty()
+        }
     // Collapse state is a per-day view preference, not ledger state: absent = expanded. Keyed on the
     // ledger so a day collapsed in one ledger never arrives collapsed in another.
     val collapsedDays = remember(state.ledgerId) { mutableStateMapOf<kotlinx.datetime.LocalDate, Boolean>() }

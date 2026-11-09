@@ -103,8 +103,6 @@ internal fun p8SummaryPageDescription(
     return page.label + "：" + values
 }
 
-/** Per-currency day totals land with the catalog axis (registered residual). */
-
 /**
  * One reporting day of the home flow. [rows] keep the port's display order
  * (statistics_at DESC -> occurred_at DESC -> transaction_id ASC), so grouping never reorders.
