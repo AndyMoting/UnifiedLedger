@@ -41,7 +41,12 @@ MAIN_ACTIVITY = f"{APP_PACKAGE}/.MainActivity"
 
 # (artifact stem, dock label, empty-state copy the accessibility tree must contain)
 SCREENS: tuple[tuple[str, str | None, str], ...] = (
-    ("home", None, "账本为空"),
+    # The needles are what a FRESH empty ledger actually paints, read off run 42701070511's dump:
+    # the home tab keeps the month card and the flow region (该月无交易 + 流水 · 共 0 笔) because a
+    # wired flow surface is never null, so its `账本为空，还没有任何交易。` branch is unreachable in
+    # the product configuration. Registered as a canvas-versus-runtime mismatch in
+    # `local/p8-00-design/V8-samples.md`; the rig must sample what the device shows.
+    ("home", None, "流水 · 共 0 笔"),
     ("asset", "账户", "还没有可管理的账户"),
     ("analysis", "分析", "账本为空"),
 )
