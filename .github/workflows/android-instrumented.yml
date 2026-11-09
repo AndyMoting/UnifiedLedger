@@ -178,6 +178,8 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Run this shard's instrumented cases on one emulator
+        id: shard-attempt-1
+        continue-on-error: true
         timeout-minutes: 20
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -201,6 +203,35 @@ jobs:
             --test instrumented-apks/android-app-debug-androidTest.apk
             --evidence instrumented-evidence/shard-${{ matrix.shard }}
             --sha "${{ github.sha }}"
+      - name: Run this shard's instrumented cases on one emulator (retry)
+        id: shard-attempt-2
+        if: steps.shard-attempt-1.outcome == 'failure'
+        timeout-minutes: 20
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          avd-name: ul-instrumented-${{ matrix.shard }}
+          profile: pixel_6
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          cores: 2
+          ram-size: 2048M
+          emulator-boot-timeout: 300
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: >-
+            python3 tools/ci/android-instrumented-cloud.py run
+            --shard ${{ matrix.shard }}
+            --avd ul-instrumented-${{ matrix.shard }}
+            --inventory tools/ci/android-instrumented-inventory.txt
+            --shards tools/ci/android-instrumented-shards.txt
+            --app instrumented-apks/android-app-debug.apk
+            --test instrumented-apks/android-app-debug-androidTest.apk
+            --evidence instrumented-evidence/shard-${{ matrix.shard }}
+            --sha "${{ github.sha }}"
+      - name: Note the first emulator attempt
+        if: steps.shard-attempt-1.outcome == 'failure'
+        run: echo "First emulator attempt for this shard failed; the shard was retried once (D-304)." >> "$GITHUB_STEP_SUMMARY"
       - name: Require exactly this shard's cases to have passed
         # The job must not rely on the driver's own exit code relayed through a
         # third-party action. This gate re-parses the raw `am instrument`
@@ -256,6 +287,8 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Run all ordinary cases on one emulator
+        id: fork-attempt-1
+        continue-on-error: true
         timeout-minutes: 20
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -277,6 +310,33 @@ jobs:
             --test android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
             --evidence instrumented-evidence/fork
             --sha "${{ github.sha }}"
+      - name: Run all ordinary cases on one emulator (retry)
+        id: fork-attempt-2
+        if: steps.fork-attempt-1.outcome == 'failure'
+        timeout-minutes: 20
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          avd-name: ul-instrumented-fork
+          profile: pixel_6
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          cores: 2
+          ram-size: 2048M
+          emulator-boot-timeout: 300
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: >-
+            python3 tools/ci/android-instrumented-cloud.py run-fork
+            --avd ul-instrumented-fork
+            --inventory tools/ci/android-instrumented-inventory.txt
+            --app android-app/build/outputs/apk/debug/android-app-debug.apk
+            --test android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
+            --evidence instrumented-evidence/fork
+            --sha "${{ github.sha }}"
+      - name: Note the first emulator attempt
+        if: steps.fork-attempt-1.outcome == 'failure'
+        run: echo "First emulator attempt failed; the fork fallback was retried once (D-304)." >> "$GITHUB_STEP_SUMMARY"
       - name: Require all ordinary cases to have passed
         if: always()
         run: python3 tools/ci/android-instrumented-cloud.py validate-fork --inventory tools/ci/android-instrumented-inventory.txt --evidence instrumented-evidence/fork --sha "${{ github.sha }}"

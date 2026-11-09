@@ -55,6 +55,13 @@ jobs:
         with:
           java-version: '21'
           distribution: temurin
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
       - name: Discover and verify an earlier whole-tree APK bundle
         id: reuse
         env:
@@ -108,9 +115,9 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Record outer deadline before emulator boot
-        run: echo "ANDROID_CI_OUTER_DEADLINE_EPOCH=$(( $(date +%s) + 900 ))" >> "$GITHUB_ENV"
       - name: Exercise real scale setup and named instrumentation
+        id: scale-attempt-1
+        continue-on-error: true
         timeout-minutes: 15
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -124,7 +131,27 @@ jobs:
           emulator-boot-timeout: 300
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: python3 tools/ci/android-scale-run.py --mode preflight --fixture preflight-fixture --evidence preflight-evidence --app preflight-apks/android-app-debug.apk --test preflight-apks/android-app-debug-androidTest.apk --sha "${{ github.sha }}" --outer-deadline-epoch "$ANDROID_CI_OUTER_DEADLINE_EPOCH"
+          script: ANDROID_CI_OUTER_DEADLINE_EPOCH=$(( $(date +%s) + 900 )) python3 tools/ci/android-scale-run.py --mode preflight --fixture preflight-fixture --evidence preflight-evidence --app preflight-apks/android-app-debug.apk --test preflight-apks/android-app-debug-androidTest.apk --sha "${{ github.sha }}" --outer-deadline-epoch "$ANDROID_CI_OUTER_DEADLINE_EPOCH"
+      - name: Exercise real scale setup and named instrumentation (retry)
+        id: scale-attempt-2
+        if: steps.scale-attempt-1.outcome == 'failure'
+        timeout-minutes: 15
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          avd-name: ul-scale
+          profile: pixel_6
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          cores: 2
+          ram-size: 2048M
+          emulator-boot-timeout: 300
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: ANDROID_CI_OUTER_DEADLINE_EPOCH=$(( $(date +%s) + 900 )) python3 tools/ci/android-scale-run.py --mode preflight --fixture preflight-fixture --evidence preflight-evidence --app preflight-apks/android-app-debug.apk --test preflight-apks/android-app-debug-androidTest.apk --sha "${{ github.sha }}" --outer-deadline-epoch "$ANDROID_CI_OUTER_DEADLINE_EPOCH"
+      - name: Note the first emulator attempt
+        if: steps.scale-attempt-1.outcome == 'failure'
+        run: echo "First emulator attempt failed; the exercise was retried once (D-304)." >> "$GITHUB_STEP_SUMMARY"
       - name: Independently validate preflight evidence
         if: always()
         run: python3 tools/ci/android-scale-validate.py --mode preflight --fixture preflight-fixture --evidence preflight-evidence --sha "${{ github.sha }}"
