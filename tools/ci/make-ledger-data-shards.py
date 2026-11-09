@@ -2,17 +2,17 @@
 
 The manifest is the single source of truth for which ledger-data jvmTest classes
 each runner executes. Balanced greedily (longest first) from measured per-class
-seconds, so the three runners finish at roughly the same time.
+seconds, so the runners finish at roughly the same time (D-303: five shards).
 
 Usage (local run, the JUnit XML written by the Gradle test task):
     python tools/ci/make-ledger-data-shards.py \
         --results ledger-data/build/test-results/jvmTest \
-        --out tools/ci/ledger-data-shards.txt --shards 3
+        --out tools/ci/ledger-data-shards.txt --shards 5
 
 Usage (the seconds the hosted runners actually produce, read from the CI report):
     python tools/ci/make-ledger-data-shards.py \
         --times ci-class-seconds.tsv \
-        --out tools/ci/ledger-data-shards.txt --shards 3
+        --out tools/ci/ledger-data-shards.txt --shards 5
 
 The TSV has one row per class: seconds<TAB>fully.qualified.ClassName.
 
@@ -59,7 +59,7 @@ def main() -> int:
     parser.add_argument("--results", default="", help="directory of JUnit TEST-*.xml files")
     parser.add_argument("--times", default="", help="TSV of seconds<TAB>fqcn, e.g. from the CI report")
     parser.add_argument("--out", required=True)
-    parser.add_argument("--shards", type=int, default=3)
+    parser.add_argument("--shards", type=int, default=5)
     args = parser.parse_args()
 
     if bool(args.results) == bool(args.times):

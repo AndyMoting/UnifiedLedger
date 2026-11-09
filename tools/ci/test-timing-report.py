@@ -85,6 +85,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=".")
     parser.add_argument("--summary", default="")
+    parser.add_argument(
+        "--tsv",
+        default="",
+        help="also write seconds<TAB>class rows here, for tools/ci/make-ledger-data-shards.py --times",
+    )
     parser.add_argument("--top", type=int, default=15, help="0 lists every class")
     args = parser.parse_args()
 
@@ -136,6 +141,10 @@ def main() -> int:
     if args.summary:
         with open(args.summary, "a", encoding="utf-8") as handle:
             handle.write(text)
+    if args.tsv:
+        with open(args.tsv, "w", encoding="utf-8", newline="\n") as handle:
+            for seconds, _tests, name, _key in rows:
+                handle.write(f"{seconds:.3f}\t{name}\n")
     return 0
 
 

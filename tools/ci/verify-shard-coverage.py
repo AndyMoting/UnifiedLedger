@@ -100,6 +100,12 @@ def main() -> int:
     parser.add_argument("--classes", default="")
     parser.add_argument("--results", default="")
     parser.add_argument("--shard", type=int, default=0)
+    parser.add_argument(
+        "--shards",
+        type=int,
+        default=0,
+        help="require every manifest shard id to fall in 1..N (the workflow matrix size)",
+    )
     parser.add_argument("--python-manifest", default="")
     parser.add_argument("--tests-dir", default="tests/python")
     args = parser.parse_args()
@@ -110,6 +116,26 @@ def main() -> int:
         if not manifest:
             print(f"empty manifest: {args.manifest}", file=sys.stderr)
             return 2
+        if args.shards:
+            rows = manifest_lines(args.manifest)
+            names = [name for _shard, name in rows]
+            duplicates = sorted({name for name in names if names.count(name) > 1})
+            used = sorted(set(manifest.values()))
+            expected_ids = set(range(1, args.shards + 1))
+            print(f"manifest shard ids: {used} (matrix 1..{args.shards})")
+            missing_ids = sorted(expected_ids - set(used))
+            extra_ids = sorted(set(used) - expected_ids)
+            if missing_ids or extra_ids:
+                print(
+                    "  shard ids do not match the matrix: "
+                    f"missing {missing_ids}, unexpected {extra_ids}"
+                )
+                ok = False
+            if duplicates:
+                print(f"  listed more than once ({len(duplicates)}):")
+                for name in duplicates[:20]:
+                    print("   =", name)
+                ok = False
         if args.classes:
             expected = set(manifest)
             ok &= report("compiled classes vs manifest",

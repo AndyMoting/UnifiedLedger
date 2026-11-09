@@ -53,7 +53,7 @@ jobs:
           echo "kind=$kind" >> "$GITHUB_OUTPUT"
 
   # :ledger-data:jvmTest (116 classes) is by far the longest task, so it is
-  # split across three runners. tools/ci/ledger-data-shards.txt says which classes each
+  # split across five runners. tools/ci/ledger-data-shards.txt says which classes each
   # runner takes; the two coverage guards below keep that list honest (the class count is
   # the only figure the guards verify; the base 98/722 header had already drifted from the
   # manifest, so the unverifiable test count is no longer restated here).
@@ -94,12 +94,21 @@ jobs:
       - name: SQLDelight migration
         run: ./gradlew --no-daemon --max-workers=5 --build-cache --init-script tools/ci/ci-parallel.init.gradle.kts :ledger-data:verifyCommonMainLedgerDatabaseMigration --warning-mode all
       - name: Every compiled test class is listed in the shard manifest
-        run: python3 tools/ci/verify-shard-coverage.py --manifest tools/ci/ledger-data-shards.txt --classes ledger-data/build/classes/kotlin/jvm/test
+        run: python3 tools/ci/verify-shard-coverage.py --manifest tools/ci/ledger-data-shards.txt --classes ledger-data/build/classes/kotlin/jvm/test --shards 5
       - name: Test timing report
-        # Report-only: aggregates per-class JUnit XML timings into the job summary so
-        # later tuning uses measured CI data. Never changes the check conclusion.
+        # Report-only: aggregates per-class JUnit XML timings into the job summary
+        # and into timing-core.tsv, the measured input for repacking the shard
+        # manifests. Never changes the check conclusion.
         if: always()
-        run: python3 tools/ci/test-timing-report.py --root . --summary "$GITHUB_STEP_SUMMARY" --top 0
+        run: python3 tools/ci/test-timing-report.py --root . --summary "$GITHUB_STEP_SUMMARY" --top 0 --tsv timing-core.tsv
+      - name: Upload per-class timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: timing-core
+          path: timing-core.tsv
+          if-no-files-found: warn
+          retention-days: 7
 
   ledger-data-shards:
     name: ledger-data shard ${{ matrix.shard }}
@@ -110,7 +119,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        # Repacked by measured class seconds, not by class count (D-303): a single
+        # 251 s class used to dominate whichever shard received it.
+        shard: [1, 2, 3, 4, 5]
     env:
       CI_TEST_MAX_PARALLEL_FORKS: '4'
     steps:
@@ -147,7 +158,15 @@ jobs:
         run: python3 tools/ci/verify-shard-coverage.py --manifest tools/ci/ledger-data-shards.txt --shard ${{ matrix.shard }} --results ledger-data/build/test-results/jvmTest
       - name: Test timing report
         if: always()
-        run: python3 tools/ci/test-timing-report.py --root . --summary "$GITHUB_STEP_SUMMARY" --top 0
+        run: python3 tools/ci/test-timing-report.py --root . --summary "$GITHUB_STEP_SUMMARY" --top 0 --tsv timing-shard-${{ matrix.shard }}.tsv
+      - name: Upload per-class timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: timing-shard-${{ matrix.shard }}
+          path: timing-shard-${{ matrix.shard }}.tsv
+          if-no-files-found: warn
+          retention-days: 7
       - name: Recorded scale readings
         if: always()
         run: python3 tools/ci/scale-readings-report.py --root . --summary "$GITHUB_STEP_SUMMARY"
