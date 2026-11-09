@@ -343,6 +343,8 @@ python -m project_docs .
 
 每个 job 落一条 `timeout-minutes`：`ledger-data` 分片 60、Python 分片 30、`kotlin-core` 45、`android` 30、`trace` 20、两个收口 gate 5。失控的运行在 5 到 60 分钟内被截断，而不占用 runner 的 6 小时默认上限。
 
+**文档快路径（D-302）**：PR 的改动全部落在 `docs/**` 与仓库根 `*.md` 时，`changes` job 判为 `docs`，`Kotlin tests core`、`ledger-data shard N`、`Android compile` 三个 job 不执行（job 级 `if:`；job 级跳过在 GitHub 记为 success，四个必过检查名因此仍被满足）；Python 两片、`Trace scan` 与两个收口 gate 照常执行。分类器是 `tools/ci/classify-changes.py`，无法判定（空 diff、取不到 base、git 报错）一律判 `code`。收口 job **`Kotlin tests` 会用同一提交独立重算分类**，与 `changes` 声明不一致即红；改动分类器、工作流或任何非文档路径的 PR 因此天然判 `code` 并跑全量。
+
 非阻塞的设备回归在独立文件 `.github/workflows/android-instrumented.yml`（见「Android instrumented tests」小节，D-197）；`ci.yml` 的 job 列表与四个必过检查名不因它改变。
 
 CI 专属并行与分片：`.github/workflows/ci.yml` 把 Kotlin 验证拆成四个 job——`Kotlin tests core` 承担除 `:ledger-data:jvmTest` 之外的全部检查，`ledger-data shard 1/2/3` 各自承担该任务三分之一的测试类（每台 4 个 fork），收口 job **`Kotlin tests`** 等前两者全部结束（`if: always()`）后按结果放行。分支保护要求 `Kotlin tests` 这个名字，因此**收口 job 不得改名、不得被跳过**（被跳过会让该检查永远停留在等待状态）。分片名单见 `tools/ci/ledger-data-shards.txt`（每行 `shard<TAB>完整类名`，按实测耗时装箱）。重新生成有两种输入：本机用 `python tools/ci/make-ledger-data-shards.py --results ledger-data/build/test-results/jvmTest --out tools/ci/ledger-data-shards.txt`；**按托管 runner 的实测数字重排**时，从 `ledger-data shard N` 的 `Test timing report`（该步骤以 `--top 0` 列出全部类、并输出完整类名）抄出 `秒数<TAB>完整类名` 存成 TSV，再 `python tools/ci/make-ledger-data-shards.py --times <tsv> --out tools/ci/ledger-data-shards.txt`。两种输入都要按 3 片装箱；测试类增删或改名的批次必须重新生成。两道覆盖守卫保证名单不脱节：主 job 以 `--classes` 核对「编译出的测试类 == 名单」，每个分片以 `--shard/--results` 核对「实际执行出结果的类 == 该片名单」（脚本 `tools/ci/verify-shard-coverage.py`，任一不符即失败）。

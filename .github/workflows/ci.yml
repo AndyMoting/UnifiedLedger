@@ -22,6 +22,34 @@ env:
   CI_TEST_MAX_PARALLEL_FORKS: '4'
 
 jobs:
+  # Classifies the change as `docs` (only docs/** and root *.md) or `code` (every
+  # other path, and anything unreadable). The heavy jobs below are skipped only
+  # for `docs`; a skipped job reports success, so the four required check names
+  # stay satisfied. The Kotlin gate recomputes this classification from the same
+  # commits and fails when the two disagree, so a misclassification cannot
+  # silently shrink the verification set (D-302, T1).
+  changes:
+    name: Change classification
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      kind: ${{ steps.classify.outputs.kind }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Fetch the pull request base commit
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git fetch --no-tags --depth=1 origin "$BASE_SHA" || echo "base commit unavailable; the classifier falls back to code"
+      - name: Classify the change
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          kind=$(python3 tools/ci/classify-changes.py --base "$BASE_SHA" --head HEAD)
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+
   # :ledger-data:jvmTest (116 classes) is by far the longest task, so it is
   # split across three runners. tools/ci/ledger-data-shards.txt says which classes each
   # runner takes; the two coverage guards below keep that list honest (the class count is
@@ -29,6 +57,8 @@ jobs:
   # manifest, so the unverifiable test count is no longer restated here).
   kotlin-core:
     name: Kotlin tests core
+    needs: [changes]
+    if: needs.changes.outputs.kind == 'code'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -71,6 +101,8 @@ jobs:
 
   ledger-data-shards:
     name: ledger-data shard ${{ matrix.shard }}
+    needs: [changes]
+    if: needs.changes.outputs.kind == 'code'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -119,26 +151,57 @@ jobs:
         run: python3 tools/ci/scale-readings-report.py --root . --summary "$GITHUB_STEP_SUMMARY"
 
   kotlin-gate:
-    # Owns the branch-protection context name "Kotlin tests". It must always run
-    # (a skipped job would leave the required check pending forever) and it fails
-    # whenever any Kotlin verification job failed.
+    # Owns the branch-protection context name "Kotlin tests" and must always run:
+    # a failed or unexpectedly skipped dependency has to become a red required
+    # check. It recomputes the change classification independently of the
+    # `changes` job and fails on disagreement, because a skipped job reports
+    # success - which is exactly why the docs-only path needs this gate instead of
+    # a workflow-level filter (D-302, T1).
     name: Kotlin tests
-    needs: [kotlin-core, ledger-data-shards]
+    needs: [changes, kotlin-core, ledger-data-shards]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require every Kotlin verification job to succeed
+      - uses: actions/checkout@v5
+      - name: Fetch the pull request base commit
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git fetch --no-tags --depth=1 origin "$BASE_SHA" || echo "base commit unavailable; the classifier falls back to code"
+      - name: Require the Kotlin jobs that the classification demands
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          DECLARED_KIND: ${{ needs.changes.outputs.kind }}
+          CORE_RESULT: ${{ needs.kotlin-core.result }}
+          SHARDS_RESULT: ${{ needs.ledger-data-shards.result }}
         run: |
-          echo "kotlin-core=${{ needs.kotlin-core.result }}"
-          echo "ledger-data-shards=${{ needs.ledger-data-shards.result }}"
-          if [ "${{ needs.kotlin-core.result }}" != "success" ] || [ "${{ needs.ledger-data-shards.result }}" != "success" ]; then
+          set -euo pipefail
+          echo "changes=$CHANGES_RESULT declared=$DECLARED_KIND core=$CORE_RESULT shards=$SHARDS_RESULT"
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "::error::Change classification did not succeed"
+            exit 1
+          fi
+          kind=$(python3 tools/ci/classify-changes.py --base "$BASE_SHA" --head HEAD)
+          if [ "$kind" != "$DECLARED_KIND" ]; then
+            echo "::error::Classification disagreement: changes job said $DECLARED_KIND, gate recomputed $kind"
+            exit 1
+          fi
+          if [ "$kind" = "docs" ]; then
+            if [ "$CORE_RESULT" != "skipped" ] || [ "$SHARDS_RESULT" != "skipped" ]; then
+              echo "::error::A docs-only change ran the Kotlin jobs"
+              exit 1
+            fi
+          elif [ "$CORE_RESULT" != "success" ] || [ "$SHARDS_RESULT" != "success" ]; then
             echo "::error::Kotlin verification did not fully succeed"
             exit 1
           fi
 
   android:
     name: Android compile
+    needs: [changes]
+    if: needs.changes.outputs.kind == 'code'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
