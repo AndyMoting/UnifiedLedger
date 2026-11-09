@@ -34,6 +34,7 @@ import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import ClassVar
 
 APP_PACKAGE = "com.unifiedledger.android"
 MAIN_ACTIVITY = f"{APP_PACKAGE}/.MainActivity"
@@ -100,6 +101,10 @@ def parse_font_scale(raw: str) -> float:
 class Sampler:
     """Owns every device interaction; the workflow must not duplicate any of it."""
 
+    # /data/local/tmp is the one path the shell user always owns; scoped storage made /sdcard
+    # unreliable for `uiautomator dump` on API 36.
+    DUMP_DIR: ClassVar[str] = "/data/local/tmp/ul-fontscale"
+
     adb_serial: str | None
     evidence: Path
     font_scale: float
@@ -107,7 +112,7 @@ class Sampler:
     screenshots: list[str] = field(default_factory=list)
     dumps: list[str] = field(default_factory=list)
 
-    def adb(self, *args: str, timeout: int = DEFAULT_TIMEOUT) -> str:
+    def adb(self, *args: str, timeout: int = DEFAULT_TIMEOUT, best_effort: bool = False) -> str:
         command = ["adb"]
         if self.adb_serial:
             command += ["-s", self.adb_serial]
@@ -115,7 +120,7 @@ class Sampler:
         completed = subprocess.run(
             command, capture_output=True, text=True, timeout=timeout, check=False
         )
-        if completed.returncode != 0:
+        if completed.returncode != 0 and not best_effort:
             raise SampleError(
                 f"{' '.join(command)} failed ({completed.returncode}): "
                 f"{(completed.stderr or completed.stdout).strip()[:400]}"
@@ -187,10 +192,17 @@ class Sampler:
         return target
 
     def dump(self, stem: str) -> str:
-        remote = f"/sdcard/{stem}.xml"
-        self.adb("shell", "uiautomator", "dump", remote)
+        remote = f"{self.DUMP_DIR}/{stem}.xml"
+        # `uiautomator dump` answers exit 0 while writing nothing when the window will not settle
+        # ("could not get idle state"), so the file's presence is the only proof it worked.
+        for _attempt in range(4):
+            self.adb("shell", "uiautomator", "dump", remote, best_effort=True)
+            if "ok" in self.adb("shell", "sh", "-c", f"test -s {remote} && echo ok", best_effort=True):
+                break
+            time.sleep(2)
+        else:
+            raise SampleError(f"uiautomator produced no {stem}.xml after 4 attempts")
         self.adb("pull", remote, str(self.evidence / f"{stem}.xml"))
-        self.adb("shell", "rm", "-f", remote)
         self.dumps.append(f"{stem}.xml")
         return (self.evidence / f"{stem}.xml").read_text(encoding="utf-8")
 
@@ -227,6 +239,7 @@ def run(args: argparse.Namespace) -> int:
         avd_name=args.avd_name,
     )
     sampler.require_owned_avd()
+    sampler.adb("shell", "mkdir", "-p", Sampler.DUMP_DIR, best_effort=True)
     applied = sampler.apply_font_scale()
     sampler.adb("install", "-r", args.apk, timeout=180)
     sampler.launch()
