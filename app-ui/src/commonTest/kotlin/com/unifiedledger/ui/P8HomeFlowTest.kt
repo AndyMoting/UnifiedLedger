@@ -77,7 +77,6 @@ class P8HomeFlowTest {
         assertEquals(LocalDate(2026, 11, 10), groups.single().date)
     }
 
-
     @Test
     fun noRowsMeansNoGroups() {
         assertTrue(p8GroupByDay(emptyList()).isEmpty())
