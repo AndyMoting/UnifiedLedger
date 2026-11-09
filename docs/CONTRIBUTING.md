@@ -341,7 +341,7 @@ python -m project_docs .
 
 以上验证命令与 `.github/workflows/ci.yml` 的 CI 步骤保持一致。修改本地验证步骤时需同步更新 CI 配置；修改 CI 步骤时需同步更新本文档。
 
-每个 job 落一条 `timeout-minutes`：`ledger-data` 分片 60、Python 分片 30、`kotlin-core` 45、`android` 30、`trace` 20、两个收口 gate 5。失控的运行在 5 到 60 分钟内被截断，而不占用 runner 的 6 小时默认上限。
+每个 job 落一条 `timeout-minutes`：`ledger-data` 分片 60、Python 分片 30、`kotlin-core` 45、`android` 30、`trace` 20、`changes` 5、两个收口 gate 5。失控的运行在 5 到 60 分钟内被截断，而不占用 runner 的 6 小时默认上限。
 
 **文档快路径（D-302）**：PR 的改动全部落在 `docs/**` 与仓库根 `*.md` 时，`changes` job 判为 `docs`，`Kotlin tests core`、`ledger-data shard N`、`Android compile` 三个 job 不执行（job 级 `if:`；job 级跳过在 GitHub 记为 success，四个必过检查名因此仍被满足）；Python 两片、`Trace scan` 与两个收口 gate 照常执行。分类器是 `tools/ci/classify-changes.py`，无法判定（空 diff、取不到 base、git 报错）一律判 `code`。收口 job **`Kotlin tests` 会用同一提交独立重算分类**，与 `changes` 声明不一致即红；改动分类器、工作流或任何非文档路径的 PR 因此天然判 `code` 并跑全量。
 
