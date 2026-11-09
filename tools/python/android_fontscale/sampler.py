@@ -143,7 +143,37 @@ class Sampler:
 
     def launch(self) -> None:
         self.adb("shell", "am", "start", "-W", "-n", MAIN_ACTIVITY, timeout=120)
-        time.sleep(3)
+
+    def wait_for(self, needle: str, timeout_s: int = 180) -> str:
+        """Poll the accessibility tree until `needle` appears.
+
+        A cold cloud AVD spends several seconds on the startup screen (正在打开本地账本…), so a
+        fixed sleep would capture the loading frame and call it a sample. The last dump stays on
+        disk as `wait.xml` when the wait fails, so a red run still shows what the device held.
+        """
+        deadline = time.monotonic() + timeout_s
+        last = ""
+        while time.monotonic() < deadline:
+            last = self.dump("wait")
+            if dump_contains(last, needle):
+                return last
+            time.sleep(3)
+        raise SampleError(f"timed out after {timeout_s}s waiting for {needle!r}; see wait.xml")
+
+    def wait_for_change(self, previous: str, timeout_s: int = 60) -> str:
+        """Poll until the tree differs from `previous` — proof that the tap landed.
+
+        首页 and 分析 both render 账本为空, so the copy alone cannot prove the tab changed; the
+        frame that follows the tap has to be a different frame.
+        """
+        deadline = time.monotonic() + timeout_s
+        last = previous
+        while time.monotonic() < deadline:
+            last = self.dump("wait")
+            if last != previous:
+                return last
+            time.sleep(2)
+        raise SampleError(f"the screen did not change within {timeout_s}s after the tap; see wait.xml")
 
     def screenshot(self, stem: str) -> Path:
         target = self.evidence / f"{stem}.png"
@@ -202,11 +232,15 @@ def run(args: argparse.Namespace) -> int:
     sampler.launch()
 
     observations: dict[str, dict[str, object]] = {}
+    previous: str | None = None
     for stem, label, copy in SCREENS:
         if label is not None:
             sampler.tap_label(label)
+            previous = sampler.wait_for_change(previous or "")
+        # Wait for the screen to be the one we are about to photograph, then photograph it.
+        tree = sampler.wait_for(copy)
+        previous = tree
         sampler.screenshot(stem)
-        tree = sampler.dump(stem)
         visible = dump_contains(tree, copy)
         observations[stem] = {"label": label, "copy": copy, "copy_visible": visible}
         if not visible:
