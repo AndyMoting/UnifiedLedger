@@ -96,6 +96,8 @@ fork PR 的 fallback 与同仓两片使用同一 AVD 固定配置，并以同一
 
 **脚本约束**：action 用 `/usr/bin/sh`（dash）执行 `script`，因此该段内不能用 bash 专有的 `set -o pipefail`，也不能用反斜杠续行（反斜杠会被当作 Gradle 任务名并报 `Task '\' not found`）；每条命令写在一行。`run:` 步骤走 bash，不受此限。
 
+模拟器步骤失败会自动重试一次（首尝试 `continue-on-error`，重试发生时在 job summary 留痕；判定仍由独立校验器在 `always()` 下做，真实失败重试后仍是红；D-304）。Gradle wrapper 下载带 `retries=3`，且 `apks` job 缓存 Gradle 依赖与 wrapper 分发。
+
 人工 emulator 门仍然保留：探索式设备工作（坐标矩阵、dump 分析、像素采样）、UI/无障碍与性能向量由人工执行；本 workflow 只承担设备专属的**回归**执行。
 
 ### Android maximum-scale long test

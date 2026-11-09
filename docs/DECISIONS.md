@@ -6903,3 +6903,22 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **边界：** 四个必过 context 名与分支保护零改动；APK producer 契约（`PRODUCERS` 与 job 名 `Android compile`）不变；零产品代码、零账务语义、零 schema/迁移；每批独立可回退。
 
 **关联决定：** D-302（上一轮 CI 验证调参）、D-190（单遍 CI 与合并树守卫）、D-200/D-201（APK 来源与预检）。
+
+## D-304 模拟器失败重试一次，并把 Gradle 发行包下载做成可重试
+
+**状态：** 已批准（2026-11-09，用户要求「给模拟器失败加一次自动重试和 pin/缓存 Gradle 发行包」）。
+
+**背景（采样 2026-11-09）：** `Android instrumented tests` 最近 20 次为 **18 成功 + 2 取消 + 0 产品失败**，`APKs` 中位 4.4 min（3.0–4.8），两片 2.6 / 2.8 min。`Android scale preflight` 最近 10 次为 **5 红（50%）**，逐条分类：4 次环境（`42600390790` app 未报 Ready、`42575086196` Android 调试桥退出 1 导致 Ready 缺失、`42573737434` emulator 5554 端口 connection refused、`42571382696` gradle 发行包 HTTP 504）与 1 次真实编译失败（`42572411767` 的 `:ledger-domain:compileKotlinJvm`，被 preflight 的 APK job 抓到）。即**多数红是基础设施噪声**，重试一次即可吸收绝大多数环境性失败。
+
+**决定：**
+
+1. **模拟器步骤失败自动重试一次**：`android-preflight.yml` 的规模演练、`android-instrumented.yml` 的每个分片与 fork fallback，首尝试 `continue-on-error: true` 并带 `id`，第二次尝试 `if: steps.<名>-attempt-1.outcome == 'failure'`（`<名>` ∈ {`scale`, `shard`, `fork`}，attempt-1 的 id 本身就以 `-attempt-1` 结尾），同一 AVD 配置；两次尝试之间先 `rm -rf` 掉失败尝试的证据目录（驱动用 `mkdir(exist_ok=False)`，不清会直接 FileExistsError），再向 job summary 写一条说明，**不静默**。job 的 `timeout-minutes` 相应放大到「两次尝试 + 校验器」。
+2. **判定标准不变**：独立的 `validate` / `validate-fork` / `android-scale-validate.py` 校验器仍在 `always()` 下运行，重试只改变「跑几次」，不改变「算什么通过」；真实失败重试后仍然红。
+3. **preflight 每次尝试各自计时**：原来的截止时间由独立步骤算一次，重试会继承已耗尽的截止时间；改为在 `--outer-deadline-epoch` 参数里直接写 `"$(( $(date +%s) + 900 ))"`（不能写成 `VAR=… cmd "$VAR"`——POSIX 在套用前缀赋值之前就展开参数，会传空串）。
+4. **Gradle 发行包可重试 + 缓存**：`gradle-wrapper.properties` 的 `retries` 0 → 3、`retryBackOffMs` 500 → 2000（`distributionSha256Sum` 已 pin，校验不放松）；`android-preflight.yml` 的 `apks` job 增加 Gradle 依赖缓存与 wrapper 缓存，与 instrumented 的 apks job 同口径。
+
+**预期与边界：** 第 1、3 条只影响设备类 workflow；第 4 条的 wrapper 重试是**全局**的（`ci.yml`、`windows.yml` 与所有必过构建都走同一个 wrapper），但它只增加下载失败时的重试次数、不改变任何构建内容；`distributionSha256Sum` 保持 pin，校验强度不变。不新增或删除任何必过 context、不改用例清单与判定阈值、不把模拟器拉进 PR 必过。本条同时修订 D-200「设备 action 启动前记录绝对截止」的实现方式：截止时间改为每次尝试在参数里现算，语义不变。重试的代价是环境性失败多花一次模拟器启动（约 1 分钟），真实失败多花一次完整演练（≤15 min，且仍会红）。
+
+**残余（登记）：** 重试会掩盖「偶发一次即过」的不稳定信号，因此 summary 必须留痕；若同一失败连续两次复现，仍然是红。真失败被重试后通过的情况，只能靠重试留痕与后续采样发现。
+
+**关联决定：** D-303（CI 墙钟调优与模拟器层定位）、D-197（设备侧回归与预检拆分）、D-200/D-201（APK 来源与预检）。
