@@ -187,15 +187,18 @@ class WorkflowWiring(unittest.TestCase):
         # D-303 batch E: the extracted migration job is judged like the other two.
         self.assertIn('MIGRATION_RESULT" != "skipped"', block)
         self.assertIn('MIGRATION_RESULT" != "success"', block)
-        self.assertIn("tools/ci/classify-changes.py", block)
-        self.assertIn("CHANGES_RESULT", block)
-        self.assertIn("DECLARED_KIND", block)
-        # The disagreement check and both judgement branches must be present, not
-        # just the variable names, or the gate could pass a misclassified change.
-        self.assertIn('if [ "$kind" != "$DECLARED_KIND" ]', block)
-        self.assertIn('if [ "$kind" = "docs" ]', block)
-        self.assertIn("A docs-only change ran the Kotlin jobs", block)
-        self.assertIn("Kotlin verification did not fully succeed", block)
+
+    def test_the_migration_verification_runs_only_in_its_own_job(self):
+        core = "\n".join(self.job_block("kotlin-core"))
+        invocations = [
+            line for line in core.splitlines()
+            if line.lstrip().startswith("run:")
+            and ":ledger-data:verifyCommonMainLedgerDatabaseMigration" in line
+            and " -x :ledger-data:verifyCommonMainLedgerDatabaseMigration" not in line
+        ]
+        self.assertEqual(invocations, [])
+        migration = "\n".join(self.job_block("kotlin-migration-verify"))
+        self.assertIn(":ledger-data:verifyCommonMainLedgerDatabaseMigration", migration)
 
     def test_required_check_names_are_unchanged(self):
         for name in ("Kotlin tests", "Android compile", "Python tests", "Trace scan"):

@@ -95,8 +95,6 @@ jobs:
         run: ./gradlew --no-daemon --max-workers=5 --build-cache --init-script tools/ci/ci-parallel.init.gradle.kts :app-ui:jvmTest --warning-mode all
       - name: Desktop app build
         run: ./gradlew --no-daemon --max-workers=5 --build-cache --init-script tools/ci/ci-parallel.init.gradle.kts :desktop-app:build --warning-mode all
-      - name: SQLDelight migration
-        run: ./gradlew --no-daemon --max-workers=5 --build-cache --init-script tools/ci/ci-parallel.init.gradle.kts :ledger-data:verifyCommonMainLedgerDatabaseMigration --warning-mode all
       - name: Every compiled test class is listed in the shard manifest
         run: python3 tools/ci/verify-shard-coverage.py --manifest tools/ci/ledger-data-shards.txt --classes ledger-data/build/classes/kotlin/jvm/test --shards 5
       - name: Test timing report
