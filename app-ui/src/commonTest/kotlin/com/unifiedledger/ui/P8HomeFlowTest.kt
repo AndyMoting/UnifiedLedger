@@ -59,7 +59,7 @@ class P8HomeFlowTest {
             listOf(
                 row("t3", "2026-11-09T12:00:00Z"),
                 row("t2", "2026-11-09T03:00:00Z"),
-                row("t1", "2026-11-08T23:00:00Z"),
+                row("t1", "2026-11-08T12:00:00Z"),
             )
 
         val groups = p8GroupByDay(rows)
