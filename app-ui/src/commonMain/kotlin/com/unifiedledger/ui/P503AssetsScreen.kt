@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
@@ -296,7 +297,9 @@ private fun P8AssetAccountLine(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .height(56.dp)
+                // V-8 (1.3x font): the row keeps 56 dp as a floor and grows with the scaled text,
+                // so the single-line name never clips against a fixed band.
+                .heightIn(min = 56.dp)
                 .then(
                     if (onOpenAccountFlow != null) {
                         Modifier.clickable(onClickLabel = "查看账户流水") {
@@ -306,7 +309,7 @@ private fun P8AssetAccountLine(
                     } else {
                         Modifier
                     },
-                ).padding(horizontal = 16.dp),
+                ).padding(horizontal = 16.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
