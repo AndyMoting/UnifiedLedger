@@ -541,7 +541,7 @@ class P409SingleChainMigrationTest {
         }
     }
 
-    // ---------- local helper copies (LedgerDatabaseMigrationTest.kt :2711/:2757/:2839) ----------
+    // ---------- local helper copies (MigrationTestSupport.kt) ----------
 
     private fun queryCount(
         driver: JdbcSqliteDriver,

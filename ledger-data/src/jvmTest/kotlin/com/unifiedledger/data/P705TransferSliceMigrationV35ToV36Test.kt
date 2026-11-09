@@ -25,8 +25,8 @@ import kotlin.test.assertEquals
  * transient inside the migration and exists in neither terminal state, so it is out of scope.
  *
  * Populated-row value preservation and whole-migration rollback for this edge are owned by
- * `LedgerDatabaseMigrationTest.populatedV35ToV36CorrectionRebuildPreservesCommittedRowsValueForValue`
- * and `LedgerDatabaseMigrationTest.lateV35ToV36FailureRollsBackCorrectionRebuildAndKeepsLegacyRows`;
+ * `LedgerMigrationV20ToV36Test.populatedV35ToV36CorrectionRebuildPreservesCommittedRowsValueForValue`
+ * and `LedgerMigrationV20ToV36Test.lateV35ToV36FailureRollsBackCorrectionRebuildAndKeepsLegacyRows`;
  * this class does not repeat that evidence.
  */
 class P705TransferSliceMigrationV35ToV36Test {
