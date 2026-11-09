@@ -46,13 +46,13 @@
 2. `ci.yml` 无 paths 过滤，文档改动与代码改动执行同一组 job。
 3. squash 提交在 `main` 上没有第二父，合并树守卫按设计对每次合并派发一次全量 CI，故每次合并消耗两次全量。
 4. `kotlin-core`、`android`、`trace` 与两个 gate job 无 `timeout-minutes`；`ledger-data-shards` 60、`python-shards` 30。
-5. 提交面：近 150 提交中约 43%（64/150）只碰 `docs/**` 与仓库根 `*.md`；600 提交窗口按同一口径为 28.5%；`feat` 占 8.0%。`local/` 是 gitignored 路径，任何提交都不会碰它。
+5. 提交面：近 150 提交中约 43%（64/150）只碰 `docs/` 与仓库根 `*.md`；600 提交窗口按同一口径为 28.5%；`feat` 占 8.0%。按本规格收紧后的 `.md` 口径略低于该值。`local/` 是 gitignored 路径，任何提交都不会碰它。
 
 ## 3. 裁决（T1–T7）
 
 ### T1 文档快路径
 
-**决定**：改动只落在 `docs/**` 与仓库根 `*.md` 的 PR 判为 `docs`：Kotlin 验证 job 与 Android 构建步骤不执行，Python 两片与 `Trace scan` 照常执行（文档由 `project_docs` 校验）。任何其他路径（含 `.github/**`、`tools/**`、各模块目录）判为 `code`，执行全量。分类器默认 `code`，即无法判断或输入为空时按代码处理。
+**决定**：改动只落在 `docs/**/*.md` 与仓库根 `*.md` 的 PR 判为 `docs`：Kotlin 验证 job 与 Android 构建步骤不执行，Python 两片与 `Trace scan` 照常执行（文档由 `project_docs` 校验）。`docs/` 下的非 Markdown 文件判 `code`——`docs/migrations/golden-v2/` 与 `docs/examples/` 里的 golden 夹具由 Kotlin 与 Python 测试读取，T1 的「与构建无因果关系」对它们不成立。任何其他路径（含 `.github/**`、`tools/**`、各模块目录）判为 `code`，执行全量。分类器默认 `code`，即无法判断或输入为空时按代码处理。
 
 **理由**：这类提交占相当比例（见 §2 事实 5），与 Kotlin/Android 构建无因果关系。
 

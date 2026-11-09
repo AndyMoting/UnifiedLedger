@@ -6861,7 +6861,7 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 
 **决定：**
 
-1. **文档快路径**：只碰 `docs/**` 与仓库根 `*.md` 的 PR 判为 `docs`，跳过 Kotlin 验证与 Android 构建步骤；Python 两片与 `Trace scan` 照常执行。其余路径判为 `code`，执行全量。分类器在无法判定时默认 `code`。四个必过 context 名不变——重活 job 保留在场上或由 gate 放行，gate 独立重算分类，不一致即红。
+1. **文档快路径**：只碰 `docs/**/*.md` 与仓库根 `*.md` 的 PR 判为 `docs`，跳过 Kotlin 验证与 Android 构建步骤；Python 两片与 `Trace scan` 照常执行。`docs/` 下的非 Markdown 文件（golden 夹具等测试输入）判 `code`。其余路径判为 `code`，执行全量。分类器在无法判定时默认 `code`。四个必过 context 名不变——重活 job 保留在场上或由 gate 放行，gate 独立重算分类，不一致即红。
 2. **Trace scan 范围**：PR 侧 = 当前树全部 tracked 文件 + 本 PR 新增提交；`main` 侧保证每个落地提交都被扫描——守卫派发全量时覆盖全历史，零动作路径内由守卫扫描落地提交。`TRACE_PATTERN` 与 agent 路径正则保持与 harness 逐字一致。
 3. **合并后去重**：合并树守卫增加零动作路径——提交标题含 PR 号、该 PR 的 `mergeCommit` 等于落地提交、`tree(PR head) == tree(落地提交)`、该 PR 的 required checks 全绿，四条齐备则不派发全量，并在同一 run 内扫描落地提交；任一环节不可读或不等即维持派发。
 4. **scale preflight 设备半边**：不再由 PR 触发，改合并后 + 夜间 + 手动，并改写其 `apks` job 条件使新触发下仍产出或复用整树 APK bundle；本项取代 D-200 第 2 条的 PR 自动触发，并修订第 4 条——驱动、校验与 workflow 改动的覆盖内容保留、改在合并后运行，同条「不新增定时任务」的约束由本项解除。
