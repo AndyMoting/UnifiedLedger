@@ -1526,8 +1526,9 @@ class TrustedWorkflowBoundary(unittest.TestCase):
             conditions.append(re.search(r"(?m)^        if: (.+)$", block)[1])
         # Required compilation and the existing human-install APK stay available
         # for fork PRs; only the two trusted-bundle steps may gain conditions.
-        for name in ("Compile Android", "Android app unit tests", "Android app instrumented test sources compile",
-                     "Android app assemble debug", "Upload debug APK"):
+        # D-303 batch D merges the two build steps into one gradle invocation.
+        for name in ("Compile Android", "Android app unit tests", "Android app test sources and debug APK",
+                     "Upload debug APK"):
             block = next(block for block in blocks if block.startswith("name: " + name + "\n"))
             self.assertIsNone(re.search(r"(?m)^        if:", block), name)
         preflight = (root / ".github/workflows/android-preflight.yml").read_text(encoding="utf-8")

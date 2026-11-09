@@ -12,7 +12,11 @@ Usage (local run, the JUnit XML written by the Gradle test task):
 Usage (the seconds the hosted runners actually produce, read from the CI report):
     python tools/ci/make-ledger-data-shards.py \
         --times ci-class-seconds.tsv \
-        --out tools/ci/ledger-data-shards.txt --shards 5
+        --out tools/ci/ledger-data-shards.txt --shards 5 --spread-heavy 5
+
+`--spread-heavy N` assigns the N slowest classes to N distinct shards before the
+greedy packing. Sum-balanced packing still leaves one fork waiting on a single
+multi-minute class, so the heaviest classes must not share a shard (D-303, batch D).
 
 The TSV has one row per class: seconds<TAB>fully.qualified.ClassName.
 
@@ -60,6 +64,12 @@ def main() -> int:
     parser.add_argument("--times", default="", help="TSV of seconds<TAB>fqcn, e.g. from the CI report")
     parser.add_argument("--out", required=True)
     parser.add_argument("--shards", type=int, default=5)
+    parser.add_argument(
+        "--spread-heavy",
+        type=int,
+        default=0,
+        help="assign the N slowest classes to N distinct shards first",
+    )
     args = parser.parse_args()
 
     if bool(args.results) == bool(args.times):
@@ -72,7 +82,12 @@ def main() -> int:
 
     bins: list[list[str]] = [[] for _ in range(args.shards)]
     loads = [0.0] * args.shards
-    for seconds, fqcn in rows:
+    heavy = args.spread_heavy if 0 < args.spread_heavy <= args.shards else 0
+    for seconds, fqcn in rows[:heavy]:
+        index = loads.index(min(loads))
+        bins[index].append(fqcn)
+        loads[index] += seconds
+    for seconds, fqcn in rows[heavy:]:
         index = loads.index(min(loads))
         bins[index].append(fqcn)
         loads[index] += seconds

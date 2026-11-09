@@ -262,13 +262,13 @@ jobs:
         # :ledger-domain:testAndroidHostTest task runs the shared commonTest suite on the
         # Android host-test compilation face (D-238 A02 gap (iii), spec 2.3 both-ends clause).
         run: ./gradlew --no-daemon --max-workers=4 :android-app:testDebugUnitTest :ledger-domain:testAndroidHostTest --warning-mode all
-      - name: Android app instrumented test sources compile
+      - name: Android app test sources and debug APK
         # P0 hotfix (defect 1) guard: compile the androidTest sources so the absolute-driver-path
         # regression guard cannot rot. Device execution belongs to the separate
-        # ordinary regression and scale preflight workflows.
-        run: ./gradlew --no-daemon --max-workers=4 --build-cache :android-app:assembleDebugAndroidTest --warning-mode all
-      - name: Android app assemble debug
-        run: ./gradlew --no-daemon --max-workers=4 --build-cache :android-app:assembleDebug --warning-mode all
+        # ordinary regression and scale preflight workflows. One invocation for both build
+        # tasks (D-303 batch D): a second gradle run pays another JVM start and configuration
+        # for the same inputs.
+        run: ./gradlew --no-daemon --max-workers=4 --build-cache :android-app:assembleDebugAndroidTest :android-app:assembleDebug --warning-mode all
       - name: Upload debug APK
         uses: actions/upload-artifact@v7
         with:

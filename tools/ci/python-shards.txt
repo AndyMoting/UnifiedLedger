@@ -54,3 +54,4 @@
 2	tests.python.test_trace_scan_scope
 1	tests.python.test_verify_merge_tree_squash
 1	tests.python.test_migration_split_inventory
+1	tests.python.test_shard_packing

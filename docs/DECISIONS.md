@@ -6886,13 +6886,15 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 1. **分片 3 → 5，按实测类秒装箱**（贪心 LPT，`make-ledger-data-shards.py --shards 5`）；`test-timing-report.py` 增 `--tsv`，各分片与 `kotlin-core` 上传 `timing-*.tsv` 工件（7 天），重排不再依赖日志抓取。装箱输入是 run `42578589867` 的 `Test timing report` 类耗时；批 A 自身 run `42587329475` 的 `timing-shard-*` 工件复算为 631/568/681/505/575 类秒，墙钟 5m45/5m10/5m00/3m14/5m24（D-302 后最慢分片中位 8.4 min）。
 2. **拆 `LedgerDatabaseMigrationTest`（48 例 / 251.5 s）为三个类**（V1–V11、V11–V19、V20–V36，落地类名 `LedgerMigrationV1ToV11Test`/`LedgerMigrationV11ToV19Test`/`LedgerMigrationV20ToV36Test`），共享助手移入 `MigrationTestSupport` 基类；断言与测试名逐字不动，测试集合不变，只是类边界改变。
 3. **Android 就地提速，不拆 job**：`android` 的四条 gradle 命令加 `--build-cache`，`--max-workers` 1 → 4。拆成两个 job 会让两边各自 `compileAndroidMain`，实测估算只省 ≈0.8 min，故不做。
-4. **`kotlin-core` 并行度**：该 job 的 `CI_TEST_MAX_PARALLEL_FORKS` 4 → 6，并上传 `--profile` 报告工件；若提升 <0.5 min，再用 profile 数据另批按子项目拆分 `check`。
+4. **`kotlin-core` 并行度**：上传 `--profile` 报告工件；若提升 <0.5 min，再用 profile 数据另批按子项目拆分 `check`。（**原定的 4 → 6 已撤回**：六 fork 在四 vCPU 上超订，首轮实测 7.3 min 对基线 5.9，见批 C 落地段。）
 
 **判据与批 A 实测：** 目标最慢分片 p50 ≤5.5 / p90 ≤6.5、`Android compile` p50 ≤5.0、代码 PR 墙钟 p50 ≤5.5。批 A 三次 run 的最慢分片为 5.75 / 6.60 / 6.27 min（p50 6.27，基线 8.77–9.07），**W-1 尚未达成**；剩迁移大测试（278.5 s 独占一个 fork）与 `Android compile`（5m04–6m59），分别归批 B、批 C。合并后取 5 个 PR 采样核对。
 
 **批 B 落地（同日）：** 分片清单按 run `42592454869` 的 `timing-shard-*` 工件重新装箱（三个新类的实测类秒为 124.9 / 154.9 / 26.8，取代按三等分的估算）；`LedgerDatabaseMigrationTest` 的 48 个 `@Test` 拆成 `LedgerMigrationV1ToV11Test`（12）/`LedgerMigrationV11ToV19Test`（21）/`LedgerMigrationV20ToV36Test`（15），共享助手与原文件级工具移入 `MigrationTestSupport.kt`（基类 + 同包 `internal` 顶层函数）；断言与测试名逐字未动，已用脚本比对拆前拆后测试文本字节相等。新增 `tests/python/test_migration_split_inventory.py` 作为 D-195 残余条要求的**用例数守卫**：48 个测试名逐字各一次、三类份额 12/21/15、原类必须不存在、三个新类各在分片清单登记一次。
 
 **批 C 落地（同日，含两处修正）：** `android` 的构建步骤改为 `--max-workers=4 --build-cache`（此前全为 `--max-workers=1`、无缓存），但**单元测试步骤显式不带 `--build-cache`**——评审指出缓存恢复可让 Test 任务 FROM-CACHE，使必过检查在测试未执行时变绿（D-192 先例），故只对编译/装配步骤启用缓存。`Kotlin tests core` 只加 `--profile` 并上传 `gradle-profile-core`；六 fork 试验因四 vCPU 超订、首轮实测 7.3 min（基线 5.9）而**撤回**，保留四 fork，由 profile 数据决定是否另批按子项目拆分。W-3/W-4 采样取每个 PR 的**首次推送（冷缓存）**，0.5 min 判据读自带 profile 的步骤。
+
+**批 D 落地（同日）：** ① 装箱加 `--spread-heavy 5`：先把最慢的 5 个类各放一个分片，再对余下类做 LPT——按总秒平衡仍会让某分片仅因一个 155–182 s 的类拖长，重类必须分散；清单按 run `42599161481` 的 timing 工件重排（V20ToV36 182.3 / V11ToV19 114.7 / V1ToV11 32.1 类秒）。② `android` 的两条装配命令合并为一条 gradle 调用（少一次 JVM 启动与配置，任务集不变）。③ `--spread-heavy` 由 `tests/python/test_shard_packing.py` 覆盖：最慢 N 类必须落在 N 个不同分片、输出确定、N 大于分片数时退化。
 
 **边界：** 四个必过 context 名与分支保护零改动；APK producer 契约（`PRODUCERS` 与 job 名 `Android compile`）不变；零产品代码、零账务语义、零 schema/迁移；每批独立可回退。
 
