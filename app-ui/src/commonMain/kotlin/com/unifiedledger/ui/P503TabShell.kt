@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -235,11 +236,13 @@ internal fun P8HomeTopBar(
             modifier =
                 Modifier
                     .weight(1f)
-                    .height(48.dp)
+                    // V-8 (1.3x font): a minimum height, never a fixed one, so the chip grows with
+                    // the scaled title instead of clipping it.
+                    .heightIn(min = 48.dp)
                     .semantics { contentDescription = "当前账本 $ledgerName，点按切换" },
         ) {
             Row(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center,
             ) {
@@ -381,14 +384,21 @@ private fun P8DrawerRow(
         onClick = onClick,
         enabled = enabled,
         color = Color.Transparent,
-        modifier = Modifier.fillMaxWidth().height(48.dp),
+        // V-8 (1.3x font): minimum height so a wrapped drawer label grows the row instead of
+        // clipping inside a fixed 48 dp band.
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
     ) {
         Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text(label, style = MaterialTheme.typography.bodyLarge, color = if (enabled) palette.onSurface else palette.disabledFaint)
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (enabled) palette.onSurface else palette.disabledFaint,
+                modifier = Modifier.weight(1f),
+            )
             suffix?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = palette.onSurfaceVariant)
             }
