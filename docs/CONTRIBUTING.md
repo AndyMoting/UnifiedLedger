@@ -72,7 +72,7 @@ bash tools/ci/trace-scan.sh
 
 `.github/workflows/windows.yml` 在 `windows-latest` 上运行全部 JVM 测试任务（`:ledger-data:jvmTest`、`:desktop-app:jvmTest`、`:app-ui:jvmTest`、`:ledger-application:jvmTest`、`:ledger-domain:jvmTest`、`:android-app:testDebugUnitTest`）。该 workflow 不进入 required checks，属于非阻塞平台信号。
 
-触发条件：`pull_request`（仅当改动涉及 `ledger-data/**`、`desktop-app/**`、`build.gradle.kts`、`settings.gradle.kts`、`gradle/**`，对应 r32 类平台缺陷的历史波及路径）、每日 UTC 18:00（北京时间 02:00）对默认分支的定时运行，以及手动触发。运行全部 JVM 测试而非 `check` 的理由：ktlint、打包与 migration 校验平台中立且 ubuntu CI 已覆盖；Windows 特有风险面是 xerial 文件锁、临时目录删除与 `ATOMIC_MOVE` 语义，分布在 `ledger-data`（94 类）与 `desktop-app`（14 类）中。
+触发条件：每日 UTC 18:00（北京时间 02:00）对默认分支的定时运行，以及手动触发。PR 不再触发（D-302）：该信号非阻塞，且截至 2026-11-09 的 105 次 PR 触发里 75 次被后续推送取消（71%）；r32 类平台风险面由每夜对默认分支的运行覆盖。运行全部 JVM 测试而非 `check` 的理由：ktlint、打包与 migration 校验平台中立且 ubuntu CI 已覆盖；Windows 特有风险面是 xerial 文件锁、临时目录删除与 `ATOMIC_MOVE` 语义，分布在 `ledger-data`（94 类）与 `desktop-app`（14 类）中。
 
 ## Android instrumented tests
 
@@ -340,6 +340,8 @@ python -m project_docs .
 ## CI 配置
 
 以上验证命令与 `.github/workflows/ci.yml` 的 CI 步骤保持一致。修改本地验证步骤时需同步更新 CI 配置；修改 CI 步骤时需同步更新本文档。
+
+每个 job 落一条 `timeout-minutes`：`ledger-data` 分片 60、Python 分片 30、`kotlin-core` 45、`android` 30、`trace` 20、两个收口 gate 5。失控的运行在 5 到 60 分钟内被截断，而不占用 runner 的 6 小时默认上限。
 
 非阻塞的设备回归在独立文件 `.github/workflows/android-instrumented.yml`（见「Android instrumented tests」小节，D-197）；`ci.yml` 的 job 列表与四个必过检查名不因它改变。
 

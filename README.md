@@ -72,7 +72,7 @@ python -m project_docs .
 ### 聚合门禁（CI）
 
 - `.github/workflows/ci.yml` 的四个 required checks：`Kotlin tests`、`Android compile`、`Python tests`、`Trace scan`。
-- `.github/workflows/windows.yml`：Windows JVM 测试，路径过滤 + 夜跑，非阻塞平台信号。
+- `.github/workflows/windows.yml`：Windows JVM 测试，夜跑 + 手动，非阻塞平台信号。
 - 完整 `check`、ktlint、Android/KMP 编译、Debug APK、完整 Python 测试、Desktop build、migration verifier 与 Windows JVM 测试均由 CI 承担；同一提交的 CI 成功结果是聚合门禁的发布证据。
 
 ### 本机执行约束（需要本地复现时）

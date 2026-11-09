@@ -9,33 +9,20 @@
 #   locking, temp-directory cleanup and ATOMIC_MOVE semantics, distributed
 #   across ledger-data (94 classes) and desktop-app (14 classes), which maps
 #   exactly to the JVM test tasks below.
-# - Triggers: pull_request against main with a paths filter covering the
-#   r32-class historical defect paths, a nightly schedule (UTC 18:00 =
-#   Beijing 02:00, which runs the default branch), and workflow_dispatch.
+# - Triggers: a nightly schedule (UTC 18:00 = Beijing 02:00, which runs the
+#   default branch) and workflow_dispatch. Pull requests are deliberately not a
+#   trigger (D-302): the signal is non-blocking, and most pull-request runs were
+#   cancelled by a superseded push (75 of 105 as of 2026-11-09). The r32-class
+#   defect surface stays covered by the nightly default-branch run.
 # - Resource discipline: 1024m heap limits mirror the local Windows Gradle
 #   limits in docs/CONTRIBUTING.md, not the ubuntu CI 3g defaults.
 name: Windows JVM tests
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'ledger-data/**'
-      - 'desktop-app/**'
-      - 'build.gradle.kts'
-      - 'settings.gradle.kts'
-      - 'gradle/**'
   schedule:
     # UTC 18:00 = Beijing 02:00. Schedule events run the default branch.
     - cron: '0 18 * * *'
   workflow_dispatch:
-
-# Cancel superseded PR runs, but let schedule and manual runs finish:
-# for those events github.ref is the default branch and a stale cancel would
-# discard the only platform signal of the day.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   windows-jvm-tests:

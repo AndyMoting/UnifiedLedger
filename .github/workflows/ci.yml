@@ -30,6 +30,7 @@ jobs:
   kotlin-core:
     name: Kotlin tests core
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
@@ -125,6 +126,7 @@ jobs:
     needs: [kotlin-core, ledger-data-shards]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Require every Kotlin verification job to succeed
         run: |
@@ -138,6 +140,7 @@ jobs:
   android:
     name: Android compile
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
@@ -227,6 +230,7 @@ jobs:
     needs: [python-shards]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Require every Python verification job to succeed
         run: |
@@ -239,6 +243,7 @@ jobs:
   trace:
     name: Trace scan
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
         # The history scans (messages, paths, trees) must see the full
