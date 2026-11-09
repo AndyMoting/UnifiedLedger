@@ -113,6 +113,8 @@
 
 原支出 `120.00 CNY` 从资产账户 A 支付，之后 `30.00 CNY` 部分退款实际进入不同的资产账户 B。申请、批准和处理中状态均不改变余额；明确确认到账后创建资产 B `+30.00 CNY` 与原二级费用账户 `-30.00 CNY` 的独立平衡退款交易。原期间消费和现金流出仍为 `120.00 CNY`，到账期消费为 `-30.00 CNY`、退款现金流入为 `30.00 CNY`、普通收入为零，累计消费成为 `90.00 CNY`。
 
+该 case 的 v2 门禁入口是 `Rg07ExpectedReplayTest`（对 published 工件断言 49 operations、23 roots、72 states）与 `Rg07RuntimeReplayTest`；`ledger-application` commonTest 中的 `Rg07FixtureReplayTest` 是不含任何用例的空壳类，不参与门禁。
+
 ### RG-08 借贷与结算
 
 **级别：** `core_required`
