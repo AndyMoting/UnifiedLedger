@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Classify a pull request change as `docs` or `code` for CI job skipping (D-302).
 
-`docs` means every changed path is under `docs/` or is a Markdown file at the
-repository root. Everything else - a single other path, an empty diff, a missing
-base, or an unreadable diff - is `code`, so an unclassifiable change always runs
-the full verification set.
+`docs` means every changed path is a Markdown file under `docs/` or at the
+repository root. A non-Markdown file under `docs/` is `code`, because golden
+fixtures and other test inputs live there and are read by Kotlin and Python
+tests. Everything else - a single other path, an empty diff, a missing base, or
+an unreadable diff - is also `code`, so an unclassifiable change always runs the
+full verification set.
 
 Usage:
     python3 tools/ci/classify-changes.py --base <sha> [--head <rev>]
@@ -23,9 +25,9 @@ def is_docs_path(path: str) -> bool:
     cleaned = path.strip().replace("\\", "/")
     while cleaned.startswith("./"):
         cleaned = cleaned[2:]
-    if cleaned.startswith("docs/"):
-        return True
-    return "/" not in cleaned and cleaned.endswith(".md")
+    if "/" not in cleaned:
+        return cleaned.endswith(".md")
+    return cleaned.startswith("docs/") and cleaned.endswith(".md")
 
 
 def changed_paths(base: str, head: str) -> list[str]:

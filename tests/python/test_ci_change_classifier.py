@@ -59,7 +59,7 @@ class PathRules(unittest.TestCase):
         self.classify_changes = load_classifier()
 
     def test_docs_tree_is_docs(self):
-        for path in ("docs/a.md", "docs/sub/b.yml", "docs/specs/c.json", "./docs/d.txt"):
+        for path in ("docs/a.md", "docs/sub/b.md", "docs/specs/c.md", "./docs/d.md"):
             self.assertTrue(self.classify_changes.is_docs_path(path), path)
 
     def test_root_markdown_is_docs(self):
@@ -76,6 +76,10 @@ class PathRules(unittest.TestCase):
             ".github/workflows/ci.yml",
             "tools/ci/classify-changes.py",
             "android-app/src/main/AndroidManifest.xml",
+            # Non-Markdown files under docs/ are test inputs, not documentation.
+            "docs/migrations/golden-v2/rg-01-expected.json",
+            "docs/examples/golden-schema-v2/state.json",
+            "docs/sub/spec.yml",
         ):
             self.assertFalse(self.classify_changes.is_docs_path(path), path)
 
@@ -83,6 +87,7 @@ class PathRules(unittest.TestCase):
         classify = self.classify_changes.classify
         self.assertEqual(classify(["docs/a.md", "README.md"]), "docs")
         self.assertEqual(classify(["docs/a.md", "app-ui/src/Foo.kt"]), "code")
+        self.assertEqual(classify(["docs/migrations/golden-v2/rg-01-expected.json"]), "code")
         self.assertEqual(classify([]), "code")
         self.assertEqual(classify([".github/workflows/ci.yml"]), "code")
 
@@ -121,6 +126,18 @@ class RealRepository(unittest.TestCase):
         (self.repo / "build.gradle.kts").write_text("// build\n", encoding="utf-8")
         commit_all(self.repo, "code")
         self.assertEqual(self.run_classifier(self.base), "code")
+
+    def test_rename_out_of_docs_is_code(self):
+        (self.repo / "docs" / "moved.md").write_text("moved\n", encoding="utf-8")
+        base = commit_all(self.repo, "seed the moved file")
+        # A pure documentation commit is still docs.
+        self.assertEqual(self.run_classifier(self.base), "docs")
+        (self.repo / "src").mkdir()
+        git(self.repo, "mv", "docs/moved.md", "src/moved.md")
+        commit_all(self.repo, "move the file out of docs")
+        # --no-renames decomposes this into a delete plus a code add, so the
+        # change can never hide behind the deleted documentation path.
+        self.assertEqual(self.run_classifier(base), "code")
 
     def test_empty_diff_is_code(self):
         head = git(self.repo, "rev-parse", "HEAD")
@@ -168,6 +185,12 @@ class WorkflowWiring(unittest.TestCase):
         self.assertIn("tools/ci/classify-changes.py", block)
         self.assertIn("CHANGES_RESULT", block)
         self.assertIn("DECLARED_KIND", block)
+        # The disagreement check and both judgement branches must be present, not
+        # just the variable names, or the gate could pass a misclassified change.
+        self.assertIn('if [ "$kind" != "$DECLARED_KIND" ]', block)
+        self.assertIn('if [ "$kind" = "docs" ]', block)
+        self.assertIn("A docs-only change ran the Kotlin jobs", block)
+        self.assertIn("Kotlin verification did not fully succeed", block)
 
     def test_required_check_names_are_unchanged(self):
         for name in ("Kotlin tests", "Android compile", "Python tests", "Trace scan"):

@@ -22,12 +22,14 @@ env:
   CI_TEST_MAX_PARALLEL_FORKS: '4'
 
 jobs:
-  # Classifies the change as `docs` (only docs/** and root *.md) or `code` (every
-  # other path, and anything unreadable). The heavy jobs below are skipped only
-  # for `docs`; a skipped job reports success, so the four required check names
-  # stay satisfied. The Kotlin gate recomputes this classification from the same
-  # commits and fails when the two disagree, so a misclassification cannot
-  # silently shrink the verification set (D-302, T1).
+  # Classifies the change as `docs` (only Markdown under docs/** and root *.md)
+  # or `code` (every other path, and anything unreadable). The heavy jobs below
+  # are skipped only for `docs`; a skipped job reports success, so the four
+  # required check names stay satisfied. The Kotlin gate recomputes this
+  # classification from the same commits and fails when the two disagree, which
+  # catches wiring or state divergence; a bug in the rules themselves is caught
+  # by the classifier's own unit test, which runs in the always-on Python shards
+  # (D-302, T1).
   changes:
     name: Change classification
     runs-on: ubuntu-latest
@@ -40,7 +42,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: git fetch --no-tags --depth=1 origin "$BASE_SHA" || echo "base commit unavailable; the classifier falls back to code"
+        run: git fetch --no-tags --depth=1 origin "$BASE_SHA" || echo "::warning::base commit unavailable; the classifier falls back to code"
       - name: Classify the change
         id: classify
         env:
@@ -168,7 +170,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: git fetch --no-tags --depth=1 origin "$BASE_SHA" || echo "base commit unavailable; the classifier falls back to code"
+        run: git fetch --no-tags --depth=1 origin "$BASE_SHA" || echo "::warning::base commit unavailable; the classifier falls back to code"
       - name: Require the Kotlin jobs that the classification demands
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -252,8 +254,8 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # The Python suite (46 modules / 809 tests, about 7 minutes) is split across two
-  # runners; tools/ci/python-shards.txt says which modules each runner takes.
+  # The Python suite is split across two runners; tools/ci/python-shards.txt
+  # says which modules each runner takes.
   python-shards:
     name: Python shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
