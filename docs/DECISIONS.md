@@ -6857,14 +6857,14 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 
 **状态：** 已批准并登记（2026-11-09；用户批准「CI 调参立项」计划，规格 `docs/specs/2026-11-09-ci-verification-tuning-design.md` 随本条登记，状态 approved）。实施分批进行，每批一个 PR、可独立回退；本条不授权任何产品代码、账务语义、schema 或迁移改动。
 
-**背景：** 近 300 次运行实测：CI 131 次（其中 54 次是合并后派发，占 41%）、scale preflight 22% 红且全为模拟器启动失败、Windows 82% 被取消且零真红、42% 的提交只碰文档却跑满同一组 job。骨架（PR 四项必过检查 + 长尾夜跑）正确，需要的是调参而非重设计。
+**背景：** 近 300 次运行实测：CI 131 次（其中 54 次是合并后派发，占 41%）、scale preflight 22% 红且全为模拟器启动失败、Windows 82% 被取消且零真红、近 150 提交中 43% 只碰 `docs/**` 与根 `*.md`（600 提交窗口按同一口径 28.5%）却跑满同一组 job。骨架（PR 四项必过检查 + 长尾夜跑）正确，需要的是调参而非重设计。
 
 **决定：**
 
 1. **文档快路径**：只碰 `docs/**` 与仓库根 `*.md` 的 PR 判为 `docs`，跳过 Kotlin 验证与 Android 构建步骤；其余路径判为 `code`，执行全量。分类器在无法判定时默认 `code`。四个必过 context 名不变——重活 job 保留在场上或由 gate 放行，gate 独立重算分类，不一致即红。
-2. **Trace scan 范围**：PR 侧 = 当前树全部 tracked 文件 + 本 PR 新增提交；`main` 侧始终全历史四类扫描。`TRACE_PATTERN` 与 agent 路径正则保持与 harness 逐字一致。
-3. **合并后去重**：合并树守卫增加零动作路径——线性/squash 提交若 `tree(head) == tree(落地提交)` 且四项 check-run 在该 PR head SHA 全绿，则不再派发全量；任一环节不可判定即维持派发。
-4. **scale preflight 设备半边**：不再由 PR 触发，改合并后 + 夜间 + 手动；PR 侧确定性部分由 `Android compile` 已产出的整树 APK bundle 承担。
+2. **Trace scan 范围**：PR 侧 = 当前树全部 tracked 文件 + 本 PR 新增提交；`main` 侧保证每个落地提交都被扫描——守卫派发全量时覆盖全历史，零动作路径内由守卫扫描落地提交。`TRACE_PATTERN` 与 agent 路径正则保持与 harness 逐字一致。
+3. **合并后去重**：合并树守卫增加零动作路径——提交标题含 PR 号、该 PR 的 `mergeCommit` 等于落地提交、`tree(PR head) == tree(落地提交)`、该 PR 的 required checks 全绿，四条齐备则不派发全量，并在同一 run 内扫描落地提交；任一环节不可读或不等即维持派发。
+4. **scale preflight 设备半边**：不再由 PR 触发，改合并后 + 夜间 + 手动，并改写其 `apks` job 条件使新触发下仍产出或复用整树 APK bundle；本项取代 D-200 第 4 条的 PR 侧覆盖，该信号改由合并后与夜间运行承担。
 5. **Windows JVM tests**：删除 `pull_request` 触发，保留夜间与手动。
 6. **手工设备 rig**：B6 / ENOSPC / P706-A06 / maximum-scale long 四个手动 rig 与 evidence 绑定逻辑保留，仅标注为历史验收工具；删除需单独裁决。
 7. **Merge queue**：只评估，不实施。
