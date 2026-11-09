@@ -155,9 +155,9 @@ gh workflow run android-b6-card.yml --ref <branch> -f expected_sha=<完整40位S
 
 ### Android scale preflight 与 APK 来源（D-200 / D-201）
 
-可信双 APK 工件与专用预检支持同仓库 PR 和手动运行；fork PR 跳过这两项，其既有 `Android compile` 编译、单测、APK 构建及普通单 APK 上传照常执行。预检 producer 被跳过时，其依赖的设备 job 同步跳过。
+可信双 APK 工件由主 CI 的 `Android compile` 在 PR 上产出；专用预检的模拟器链路不再跑 PR，改在合并后（`push:main`）、每夜与手动 dispatch 上运行（D-302，取代 D-200 第 2 条的 PR 自动触发；该条要求覆盖驱动、校验与 workflow 改动的范围不变，只是运行位置后移）。fork PR 不产出可信工件，其既有 `Android compile` 编译、单测、APK 构建及普通单 APK 上传照常执行。预检 producer 被跳过时，其依赖的设备 job 同步跳过。
 
-`.github/workflows/android-preflight.yml` 对相关 PR 自动运行非 required 的设施预检，另支持手动运行。触发路径覆盖 Android 全部传递模块、构建入口、`tools/python/android_scale/**`、`tools/ci/android-*`、相关 Python 测试及 CI/Android workflow。预检复用长测驱动器的设备配置、安装、启动与应用私有目录传输路径；`--mode preflight` 准备含提交 SHA 的匿名小探针并执行 `AndroidScalePreflightInstrumentedTest.privateFixtureRoundTrip`，设备读回、重新写入并上报探针哈希。该用例先以只读 oracle 确认已有有效活动指针、代目录及账本，再调用正式 `openAndroidStableStorageLedger`、权威读回、关闭并重开；开前、首次打开和重开均须是同一账本/代，正式交易与 posting 均为零。必须先观察已有存储，不能让生产 opener 的 FreshInstall 补建掩盖首启失败。每个 job 最多 30 分钟，设备步骤 15 分钟，驱动执行 600 秒，失败诊断最多另用 120 秒。两个 APK 在独立 producer job 准备，模拟器会话内不构建。
+`.github/workflows/android-preflight.yml` 在合并后（`push:main`，`paths` 限 Android 相关路径）、每夜与手动 dispatch 上运行非 required 的设施预检；PR 不再触发（D-302）。触发路径覆盖 Android 全部传递模块、构建入口、`tools/python/android_scale/**`、`tools/ci/android-*`、相关 Python 测试及 CI/Android workflow。预检复用长测驱动器的设备配置、安装、启动与应用私有目录传输路径；`--mode preflight` 准备含提交 SHA 的匿名小探针并执行 `AndroidScalePreflightInstrumentedTest.privateFixtureRoundTrip`，设备读回、重新写入并上报探针哈希。该用例先以只读 oracle 确认已有有效活动指针、代目录及账本，再调用正式 `openAndroidStableStorageLedger`、权威读回、关闭并重开；开前、首次打开和重开均须是同一账本/代，正式交易与 posting 均为零。必须先观察已有存储，不能让生产 opener 的 FreshInstall 补建掩盖首启失败。每个 job 最多 30 分钟，设备步骤 15 分钟，驱动执行 600 秒，失败诊断最多另用 120 秒。两个 APK 在独立 producer job 准备，模拟器会话内不构建。
 
 默认 `--mode maximum` 保持五阶段、十一业务步骤及 61,000 候选 / 150,000 关系判据。预检报告明确标 `mode=preflight`，工件 `android-preflight-<sha>-<attempt>` 独立保存；最大规模 reducer 要求 `mode=maximum`，不能接受预检报告。D-201 加固候选必须新跑两次同候选的独立加强预检，再进行最大规模验收；旧版仅探针往返成功不满足新门。只重跑设备 job 可复用已经成功的 producer 产物。
 

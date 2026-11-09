@@ -1464,6 +1464,35 @@ class ApkProvenance(unittest.TestCase):
         self.assertFalse((self.root / "miss").exists())
         self.assertFalse(any(call.kwargs.get("binary") for call in api.call_args_list))
 
+    def test_default_branch_push_is_a_trusted_producer_event(self):
+        # D-302, T4: the preflight chain runs on the merge, so a push producer on
+        # the default branch must verify exactly like a dispatch producer.
+        self.run.update(event="push", head_branch="main", head_sha=SHA)
+        self.manifest.pop("pull_request", None)
+        with patch.object(apks, "api", side_effect=self.api):
+            apks.check_source(self.manifest, self.repo, 123)
+
+    def test_nightly_schedule_on_the_default_branch_is_a_trusted_producer_event(self):
+        # The nightly run reports event "schedule" on the default branch; without
+        # this branch the preflight would fail its own provenance check every
+        # night before the emulator even starts.
+        self.run.update(event="schedule", head_branch="main", head_sha=SHA)
+        self.manifest.pop("pull_request", None)
+        with patch.object(apks, "api", side_effect=self.api):
+            apks.check_source(self.manifest, self.repo, 123)
+
+    def test_push_producer_outside_the_default_branch_is_rejected(self):
+        self.run.update(event="push", head_branch="feature/x", head_sha=SHA)
+        self.manifest.pop("pull_request", None)
+        with patch.object(apks, "api", side_effect=self.api), self.assertRaises(ValueError):
+            apks.check_source(self.manifest, self.repo, 123)
+
+    def test_push_producer_head_must_match_the_source_commit(self):
+        self.run.update(event="push", head_branch="main", head_sha="e" * 40)
+        self.manifest.pop("pull_request", None)
+        with patch.object(apks, "api", side_effect=self.api), self.assertRaises(ValueError):
+            apks.check_source(self.manifest, self.repo, 123)
+
     def test_source_sha_filter_rejects_a_noncanonical_value(self):
         for value in ("A" * 40, "a" * 39, ""):
             with self.subTest(value=value), self.assertRaises(ValueError):
@@ -1502,8 +1531,14 @@ class TrustedWorkflowBoundary(unittest.TestCase):
             block = next(block for block in blocks if block.startswith("name: " + name + "\n"))
             self.assertIsNone(re.search(r"(?m)^        if:", block), name)
         preflight = (root / ".github/workflows/android-preflight.yml").read_text(encoding="utf-8")
+        # The device half no longer runs on a pull request (D-302, T4), so its
+        # producer needs no fork condition at all; the triggers are the
+        # default-branch push, the nightly run and manual dispatch.
+        self.assertNotIn("pull_request:", preflight.split("permissions:", 1)[0])
+        self.assertIn("  push:\n    branches: [main]\n", preflight)
+        self.assertIn("  schedule:\n", preflight)
         producer = preflight.split("  apks:\n", 1)[1].split("    steps:\n", 1)[0]
-        conditions.append(re.search(r"(?m)^    if: (.+)$", producer)[1])
+        self.assertIsNone(re.search(r"(?m)^    if:", producer))
         consumer = preflight.split("  preflight:\n", 1)[1].split("    steps:\n", 1)[0]
         self.assertIn("    needs: apks\n", consumer)
         self.assertIsNone(re.search(r"(?m)^    if:", consumer))

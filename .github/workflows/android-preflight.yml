@@ -1,7 +1,12 @@
 name: Android scale preflight
 
+# The device half runs after the merge, not on the pull request (D-302, T4): the
+# pull-request signal was 22% red over the 2026-11-09 sample and every failure
+# was an emulator or runner start-up, never a product defect. Merges that touch
+# Android-relevant paths still get it, the nightly run covers merges that do not,
+# and the deterministic APK producer half keeps its whole-tree provenance rules.
 on:
-  pull_request:
+  push:
     branches: [main]
     paths:
       - 'android-app/**'
@@ -20,6 +25,9 @@ on:
       - 'tests/python/test_android_*'
       - '.github/workflows/ci.yml'
       - '.github/workflows/android-*.yml'
+  schedule:
+    # UTC 19:30 = Beijing 03:30, after the nightly Windows run.
+    - cron: '30 19 * * *'
   workflow_dispatch:
 
 permissions:
@@ -28,12 +36,13 @@ permissions:
 
 concurrency:
   group: android-preflight-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # No pull request reaches this workflow any more; a queued nightly must not
+  # be lost to a newer queued merge run, so nothing is cancelled.
+  cancel-in-progress: false
 
 jobs:
   apks:
     name: Android preflight APKs
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
