@@ -1,5 +1,8 @@
 # Android maximum-scale long test (manual, non-blocking).
 #
+# Historical acceptance rig (D-302): kept so already-closed acceptance vectors
+# can be re-run on demand; it is never part of a PR gate.
+#
 # This workflow is NOT part of the required PR checks and is never triggered by
 # a pull request: it runs only through workflow_dispatch, after the change has
 # been merged, against the exact merge SHA. It is the cloud replacement for the

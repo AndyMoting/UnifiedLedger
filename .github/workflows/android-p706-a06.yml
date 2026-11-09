@@ -1,5 +1,8 @@
 # P706-A06 nineteen-boundary process-kill matrix (manual, non-blocking).
 #
+# Historical acceptance rig (D-302): kept so already-closed acceptance vectors
+# can be re-run on demand; it is never part of a PR gate.
+#
 # WHAT THIS PROVES, AND WHAT IT DOES NOT
 # --------------------------------------
 # This workflow executes the two-phase, boundary-parked protocol of spec

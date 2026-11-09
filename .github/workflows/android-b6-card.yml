@@ -1,5 +1,8 @@
 # B6 group-card open gate on a hosted cloud AVD (manual, non-blocking).
 #
+# Historical acceptance rig (D-302): kept so already-closed acceptance vectors
+# can be re-run on demand; it is never part of a PR gate.
+#
 # WHAT ONE GREEN RUN PROVES
 # -------------------------
 # `P704GP-D-PERF-01` of spec

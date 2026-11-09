@@ -1,5 +1,8 @@
 # Dedicated ENOSPC device rig (manual, non-blocking, one AVD).
 #
+# Historical acceptance rig (D-302): kept so already-closed acceptance vectors
+# can be re-run on demand; it is never part of a PR gate.
+#
 # What this workflow is
 # ---------------------
 # One manually dispatched job that runs exactly one opted-in instrumented case on
