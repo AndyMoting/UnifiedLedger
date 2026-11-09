@@ -15,6 +15,14 @@
 #          cover the whole tree. Git Bash on Windows behaves identically.
 #          The script is invoked through `bash`, so no executable bit or
 #          chmod is required.
+#   Optional: set TRACE_BASE_SHA to scope the three history scans to
+#          `<base>..HEAD` for a pull-request run (D-302, T2). The tracked-file
+#          scan always covers the whole tree. An unresolvable base aborts with
+#          exit code 2 rather than falling back to the full scan: a privacy gate
+#          must go red, never quietly widen or narrow what it covers. `main`
+#          runs and manual dispatches leave the variable unset, which keeps the
+#          full-history default and is what proves every landed commit was
+#          scanned at least once.
 #   Optional: set ALLOWED_TRACE_PATH to a colon- or newline-separated list of
 #          exact repository-relative paths to exempt from the path-based
 #          scans (default: empty). CI runs with the default empty allowlist.
@@ -54,6 +62,10 @@ TRACE_PATTERN='Codex|Codex Cloud|Claude|Claude Code|ChatGPT|OpenAI|Copilot|Gemin
 AGENT_PATH_PATTERN='^(AGENTS?\.md|CLAUDE[^/]*\.md|GEMINI\.md|QWEN\.md)$|^(\.cursorrules|\.cursorignore|\.cursorindexingignore|\.windsurfrules|\.clineignore|\.rooignore|\.roomodes|\.roorules[^/]*|\.augment-guidelines|\.geminiignore|\.aiexclude|\.mcp\.json|opencode\.jsonc?|\.aider[^/]*)$|^(\.worktrees|\.agents|\.agent|\.codex|\.claude|\.gemini|\.qwen|\.copilot|\.cursor|\.windsurf|\.devin|\.cline|\.clinerules|\.roo|\.continue|\.kiro|\.opencode|\.trae|\.qoder|\.augment|\.junie|\.amazonq)/|(^|/)(prompt|transcript|conversation)([-_.][^/]*)?\.(md|txt|jsonl?|ya?ml)$|(^|/)session([-_.](notes?|log|transcript|context|handoff))?\.(md|txt|jsonl?|ya?ml)$|^\.github/(copilot-instructions\.md$|(instructions|prompts|agents|skills)/)|^\.vscode/mcp\.json$|^docs/(SOURCE_REFERENCES\.md|WORK_PLAN\.local\.md|[^/]+\.local\.md)$'
 
 BATCH_SIZE=200
+
+# Revision selector for the three history scans. `--all` is the full-history
+# default; select_history_revision narrows it for a pull-request run.
+HISTORY_REV="--all"
 
 fatal() {
     echo "trace-scan: $1" >&2
@@ -129,6 +141,20 @@ add_self_exemption() {
     ALLOWED_SET="${ALLOWED_SET:+$ALLOWED_SET:}$(normalize_path "$self_rel")"
 }
 
+# Narrow the history scans to the commits of one pull request when
+# TRACE_BASE_SHA is set. An unset or empty value keeps the full-history default.
+# An unresolvable base is fatal, so a broken scope can never read as clean.
+select_history_revision() {
+    local base="${TRACE_BASE_SHA:-}"
+    HISTORY_REV="--all"
+    [ -n "$base" ] || return 0
+    if ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
+        fatal "TRACE_BASE_SHA does not resolve to a commit: $base"
+    fi
+    HISTORY_REV="${base}..HEAD"
+    echo "trace-scan: history scans limited to $HISTORY_REV" >&2
+}
+
 # Shared runner for a git command whose {0,1} exit codes both mean "the scan
 # ran" (0 = matches found, 1 = no matches); anything else is an unexpected
 # failure. The git command's stdout is captured in $TMP_OUT.
@@ -166,9 +192,11 @@ scan_tracked_files() {
 }
 
 scan_history_messages() {
-    # The allowlist does not apply to commit messages.
+    # The allowlist does not apply to commit messages. $HISTORY_REV is
+    # intentionally unquoted: it is either `--all` or `<sha>..HEAD`, both of
+    # which must reach git as one argument and neither contains whitespace.
     run_git_scan "Git history message scan" \
-        git log --all --format='%H%x09%s%x09%b'
+        git log $HISTORY_REV --format='%H%x09%s%x09%b'
     grep -i -I -E "$TRACE_PATTERN" "$TMP_OUT" > "$TMP_HITS"
     case $? in
         0) report_hits "Git history messages" ;;
@@ -179,7 +207,7 @@ scan_history_messages() {
 
 scan_history_paths() {
     run_git_scan "Git history path scan" \
-        git log --all --name-only --pretty=format:
+        git log $HISTORY_REV --name-only --pretty=format:
     # Drop blank lines, drop allowlisted paths, match the agent path pattern.
     awk 'NF' "$TMP_OUT" > "$TMP_ERR" ||
         fatal "Awk failed during Git history path scan."
@@ -203,7 +231,7 @@ scan_history_paths() {
 
 scan_history_trees() {
     local shas rc
-    shas="$(git rev-list --all)"
+    shas="$(git rev-list $HISTORY_REV)"
     rc=$?
     if [ "$rc" -ne 0 ]; then
         fatal "Git commit enumeration failed."
@@ -262,6 +290,7 @@ main() {
     trap 'rm -f "$TMP_OUT" "$TMP_ERR" "$TMP_HITS"' EXIT
     load_allowlist
     add_self_exemption
+    select_history_revision
     scan_tracked_files
     scan_history_messages
     scan_history_paths
