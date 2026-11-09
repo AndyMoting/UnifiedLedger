@@ -96,12 +96,14 @@ class SplitInventory(unittest.TestCase):
 
     def test_manifest_lists_every_split_class_once(self):
         rows = [line.split("\t") for line in MANIFEST.read_text(encoding="utf-8").splitlines() if line.strip()]
-        by_name = {row[1].strip(): row[0] for row in rows}
+        names = [row[1].strip() for row in rows]
         for name in CLASSES:
             qualified = "com.unifiedledger.data." + name
-            self.assertIn(qualified, by_name, qualified)
-            self.assertIn(by_name[qualified], {"1", "2", "3", "4", "5"}, name)
-        self.assertNotIn("com.unifiedledger.data.LedgerDatabaseMigrationTest", by_name)
+            listed = [row[0] for row in rows if row[1].strip() == qualified]
+            self.assertEqual(len(listed), 1, "manifest must list " + qualified + " exactly once")
+            self.assertIn(listed[0], {"1", "2", "3", "4", "5"}, name)
+        self.assertNotIn("com.unifiedledger.data.LedgerDatabaseMigrationTest", names)
+        self.assertEqual(len(names), len(set(names)), "the manifest must not list any class twice")
 
 if __name__ == "__main__":
     unittest.main()
