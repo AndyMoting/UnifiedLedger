@@ -68,7 +68,7 @@ bash tools/ci/trace-scan.sh
 
 同步义务：脚本内的 `TRACE_PATTERN` 与 agent 路径正则必须与 harness 技能的 `verify-project.ps1` trace scope 逐字一致；任一侧修改必须在同一变更中同步另一侧。豁免路径通过 `ALLOWED_TRACE_PATH` 环境变量注入（冒号或换行分隔的仓库相对路径），CI 默认为空；脚本会自动豁免其自身路径（其内容逐字嵌入 pattern 常量，必然命中内容扫描），提交消息命中不接受任何豁免。
 
-PR 范围（D-302, T2）：PR 上设置 `TRACE_BASE_SHA`，三类历史扫描收窄到 `<base>..HEAD`，tracked 文件内容扫描仍然覆盖全树；`main` 侧与手动 dispatch 不设该变量，保持全历史四类扫描。base 无法解析时脚本以退出码 2 失败，而不是退回全量或静默通过——隐私门只允许红，不允许自行改变覆盖面。
+PR 范围（D-302, T2）：PR 上设置 `TRACE_BASE_SHA`，三类历史扫描收窄到 `<base>..HEAD`，tracked 文件内容扫描仍然覆盖全树；`main` 侧与手动 dispatch 下该变量未设置或为空，保持全历史四类扫描。base 无法解析时脚本以退出码 2 失败，而不是退回全量或静默通过——隐私门只允许红，不允许自行改变覆盖面。
 
 ## Windows JVM tests
 
