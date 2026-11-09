@@ -4354,23 +4354,15 @@ fun P503App(
                                             onSampleScroll = homeFlowScrollSampler,
                                             onRegisterListState = { homeFlowListState = it },
                                             onSelectMonth = ::selectMonth,
-                                            // P7-05.C (D-156; slice 1b Piece 4): the ledger-wide recycle-bin
-                                            // entry, offered only when the read surface is wired (an unwired
-                                            // facade renders no dead button). Opening always reads the bin
-                                            // fresh off the UI thread; the read dispatches OpenRecycleBin (a
-                                            // re-open in place refreshes the projection instead).
-                                            onOpenRecycleBin = if (ledger.surfaces.recycleBin) ::requestRecycleBin else null,
-                                            // P7-06 06.B (D-177; spec section 3): the ledger-wide backup-export
-                                            // entry, offered only when the composition root wired the export
-                                            // use case (an unwired composition renders no dead button). The
-                                            // open performs no IO and no secret handling; the password is
-                                            // entered on the surface and stays in memory.
-                                            onOpenBackupExport = if (backupExportEntryVisible(ledger.surfaces.backupExport)) ({ dispatch(P503UiEvent.OpenBackupExport) }) else null,
-                                            // P8-00 b2 (2026-11-08 user ruling): the HOME restore entry is
-                                            // REMOVED — the side drawer's 备份与恢复 carrier row is the
-                                            // restore affordance now (its wired/disabled shape matches the
-                                            // restore wiring). The event and the restore flow semantics are
-                                            // unchanged; no event was removed, only the affordance.
+                                            // P8-00 b4b (2026-11-06 hierarchy ruling): the ledger-wide
+                                            // 回收站 and 导出备份 entries LEFT the home body — the side
+                                            // drawer's 数据 group carries both (b1/b2), so no affordance
+                                            // was removed from the product, only from this surface.
+                                            // Search (P8-02) and 收支日历 (later slice) stay unwired here,
+                                            // so the home renders neither capsule rather than a dead one.
+                                            // The per-day totals need a LedgerCatalog on the presentation
+                                            // state, which does not exist yet: day headers state the count
+                                            // only (registered residual, never an invented sum).
                                         )
                                     P503Tab.ACCOUNTS ->
                                         P503CatalogManagementScreen(
