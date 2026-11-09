@@ -32,19 +32,20 @@ import com.unifiedledger.application.MonthlyActivity
 import com.unifiedledger.application.MonthlyBuckets
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.ui.theme.LocalP8Palette
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Instant
 
-/**
- * P8-00 b4b: the home tab's content organisation (spec section 2, 首页). Everything below the
- * composables is a pure fold over data the screen already receives, so the summary card and the
- * day headers can never disagree with the month card or the analysis regions — the day totals are
- * the very same [MonthlyBuckets.aggregate] fold, applied per day.
- */
+// P8-00 b4b: the home tab's content organisation (spec section 2, 首页). Everything below the
+// composables is a pure fold over data the screen already receives, so the summary card and the
+// day headers can never disagree with the month card or the analysis regions — the day totals are
+// the very same MonthlyBuckets.aggregate fold, applied per day.
 
 /** The three summary pages the card pages through (spec section 2: 支出/收入/结余). */
-internal enum class P8SummaryPage(val label: String) {
+internal enum class P8SummaryPage(
+    val label: String,
+) {
     EXPENSE("支出"),
     INCOME("收入"),
     BALANCE("结余"),
@@ -82,12 +83,14 @@ internal fun p8SummaryLines(
 internal fun p8SummaryPageDescription(
     page: P8SummaryPage,
     lines: List<P8SummaryLine>,
-): String {
-    if (lines.isEmpty()) return "${page.label}：暂无月度数据"
-    return page.label + "：" + lines.joinToString("；") { line ->
-        "${line.currencyCode} ${formatMinorUnits(line.amountMinorUnits, line.precision)}"
+): String =
+    if (lines.isEmpty()) {
+        "${page.label}：暂无月度数据"
+    } else {
+        page.label + "：" + lines.joinToString("；") { line ->
+            "${line.currencyCode} ${formatMinorUnits(line.amountMinorUnits, line.precision)}"
+        }
     }
-}
 
 /** Per-currency day totals under the same sign rules as the month card. */
 internal data class P8DayCurrencyTotal(
@@ -112,8 +115,7 @@ internal data class P8DayGroup(
 }
 
 /** The reporting-zone calendar day of a statistics instant (R-Q06-2 frozen zone). */
-internal fun p8ReportingDay(statisticsAt: Instant): LocalDate =
-    statisticsAt.toLocalDateTime(MonthlyBuckets.REPORT_TIME_ZONE).date
+internal fun p8ReportingDay(statisticsAt: Instant): LocalDate = statisticsAt.toLocalDateTime(MonthlyBuckets.REPORT_TIME_ZONE).date
 
 /**
  * Groups the flow rows by reporting day, preserving the incoming order. Day totals reuse
@@ -134,19 +136,22 @@ internal fun p8GroupByDay(
             if (ledgerId == null || catalog == null) {
                 emptyList()
             } else {
-                MonthlyBuckets.aggregate(
-                    rows = dayRows,
-                    ledgerId = ledgerId,
-                    catalog = catalog,
-                    months = listOf(MonthlyBuckets.bucketKey(dayRows.first().statisticsAt)),
-                ).values.firstOrNull()?.currencies?.map { row ->
-                    P8DayCurrencyTotal(
-                        currencyCode = row.currency.code,
-                        precision = row.currency.precision,
-                        incomeMinorUnits = row.ordinaryIncomeMinorUnits,
-                        netExpenseMinorUnits = row.netExpenseMinorUnits,
-                    )
-                }.orEmpty()
+                val activity =
+                    MonthlyBuckets.aggregate(
+                        rows = dayRows,
+                        ledgerId = ledgerId,
+                        catalog = catalog,
+                        months = listOf(MonthlyBuckets.bucketKey(dayRows.first().statisticsAt)),
+                    ).values.firstOrNull()
+                activity?.currencies
+                    ?.map { row ->
+                        P8DayCurrencyTotal(
+                            currencyCode = row.currency.code,
+                            precision = row.currency.precision,
+                            incomeMinorUnits = row.ordinaryIncomeMinorUnits,
+                            netExpenseMinorUnits = row.netExpenseMinorUnits,
+                        )
+                    }.orEmpty()
             }
         P8DayGroup(date = day, rows = dayRows, totals = totals)
     }
@@ -218,14 +223,15 @@ internal fun P8SummaryCard(
                     pages.forEachIndexed { index, page ->
                         val active = index == pagerState.currentPage
                         Box(
-                            modifier = Modifier
-                                .padding(horizontal = 4.dp)
-                                .size(if (active) 8.dp else 6.dp)
-                                .clearAndSetSemantics {
-                                    contentDescription =
-                                        "第 ${index + 1} 页，共 ${pages.size} 页，${page.label}" +
+                            modifier =
+                                Modifier
+                                    .padding(horizontal = 4.dp)
+                                    .size(if (active) 8.dp else 6.dp)
+                                    .clearAndSetSemantics {
+                                        contentDescription =
+                                            "第 ${index + 1} 页，共 ${pages.size} 页，${page.label}" +
                                             if (active) "（当前）" else ""
-                                },
+                                    },
                         ) {
                             Surface(
                                 color = if (active) palette.onSurface else palette.disabledFaint,

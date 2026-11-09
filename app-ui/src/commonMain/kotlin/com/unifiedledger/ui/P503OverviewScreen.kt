@@ -115,9 +115,10 @@ fun P503OverviewScreen(
     val flow = flowRowsForDisplay(flowRows, monthlyReloadRequired)
     // P8-00 b4b: the flow is presented per reporting day (spec section 2 首页). Grouping preserves
     // the port's display order; the day totals are the month card's own fold, applied per day.
-    val dayGroups = remember(flow, catalog, state.ledgerId) {
-        flow?.let { p8GroupByDay(it.rows, state.ledgerId, catalog) }.orEmpty()
-    }
+    val dayGroups =
+        remember(flow, catalog, state.ledgerId) {
+            flow?.let { p8GroupByDay(it.rows, state.ledgerId, catalog) }.orEmpty()
+        }
     // Collapse state is a per-day view preference, not ledger state: absent = expanded.
     val collapsedDays = remember { mutableStateMapOf<kotlinx.datetime.LocalDate, Boolean>() }
     // DEF-B (D-268): virtualization is the DEF-B fix — only visible rows compose. The header
