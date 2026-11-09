@@ -36,7 +36,9 @@ permissions:
 
 concurrency:
   group: android-preflight-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # No pull request reaches this workflow any more; a queued nightly must not
+  # be lost to a newer queued merge run, so nothing is cancelled.
+  cancel-in-progress: false
 
 jobs:
   apks:

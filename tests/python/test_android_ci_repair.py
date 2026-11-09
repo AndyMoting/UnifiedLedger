@@ -1472,6 +1472,15 @@ class ApkProvenance(unittest.TestCase):
         with patch.object(apks, "api", side_effect=self.api):
             apks.check_source(self.manifest, self.repo, 123)
 
+    def test_nightly_schedule_on_the_default_branch_is_a_trusted_producer_event(self):
+        # The nightly run reports event "schedule" on the default branch; without
+        # this branch the preflight would fail its own provenance check every
+        # night before the emulator even starts.
+        self.run.update(event="schedule", head_branch="main", head_sha=SHA)
+        self.manifest.pop("pull_request", None)
+        with patch.object(apks, "api", side_effect=self.api):
+            apks.check_source(self.manifest, self.repo, 123)
+
     def test_push_producer_outside_the_default_branch_is_rejected(self):
         self.run.update(event="push", head_branch="feature/x", head_sha=SHA)
         self.manifest.pop("pull_request", None)
