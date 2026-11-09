@@ -6883,7 +6883,7 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 
 **决定：**
 
-1. **分片 3 → 5，按实测类秒装箱**（贪心 LPT，`make-ledger-data-shards.py --shards 5`）；`test-timing-report.py` 增 `--tsv`，各分片与 `kotlin-core` 上传 `timing-*.tsv` 工件（7 天），重排不再依赖日志抓取。五片各 556 类秒，实测类秒从不均匀的 775–1037 s 变为均衡。
+1. **分片 3 → 5，按实测类秒装箱**（贪心 LPT，`make-ledger-data-shards.py --shards 5`）；`test-timing-report.py` 增 `--tsv`，各分片与 `kotlin-core` 上传 `timing-*.tsv` 工件（7 天），重排不再依赖日志抓取。装箱输入是 run `42578589867` 的 `Test timing report` 类耗时；批 A 自身 run `42587329475` 的 `timing-shard-*` 工件复算为 631/568/681/505/575 类秒，墙钟 5m45/5m10/5m00/3m14/5m24（D-302 后最慢分片中位 8.4 min）。
 2. **拆 `LedgerDatabaseMigrationTest`（48 例 / 251.5 s）为三个类**（V1–V11、V12–V19、V20–V25），共享助手移入 `MigrationTestSupport` 基类；断言与测试名逐字不动，测试集合不变，只是类边界改变。
 3. **Android 就地提速，不拆 job**：`android` 的四条 gradle 命令加 `--build-cache`，`--max-workers` 1 → 4。拆成两个 job 会让两边各自 `compileAndroidMain`，实测估算只省 ≈0.8 min，故不做。
 4. **`kotlin-core` 并行度**：该 job 的 `CI_TEST_MAX_PARALLEL_FORKS` 4 → 6，并上传 `--profile` 报告工件；若提升 <0.5 min，再用 profile 数据另批按子项目拆分 `check`。

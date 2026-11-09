@@ -177,6 +177,8 @@
 | B | 拆 `LedgerDatabaseMigrationTest` 为三类（`MigrationTestSupport` 基类）| 分片再降 ≈0.5–1.0 |
 | C | `android` 加 `--build-cache`/`--max-workers=4`；`kotlin-core` forks 4→6 + profile 工件 | Android 6.4 → ≤5.0；分片后关键路径落到 core |
 
+批 A 实测（run 42587329475，本批自身 PR）：五个分片 5m45 / 5m10 / 5m00 / 3m14 / 5m24（基线最慢 8.4 min），`Kotlin tests core` 5m25，`Android compile` 5m45–6m59（仍为关键路径），Python 4m43 / 2m41，Trace 6 s。
+
 不变量：四个必过 context 名与分支保护零改动；gradle 任务集合与测试集合不变（B 只改类边界）；APK producer 契约不变（不拆 `Android compile`）；每批一个 PR、独立回退。
 
 范围外：merge queue、按子项目拆分 `check`（待 C 批 profile 数据）、instrumented 挪位、文档 PR 的 Python 再收窄。

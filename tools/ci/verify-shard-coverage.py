@@ -117,11 +117,24 @@ def main() -> int:
             print(f"empty manifest: {args.manifest}", file=sys.stderr)
             return 2
         if args.shards:
+            rows = manifest_lines(args.manifest)
+            names = [name for _shard, name in rows]
+            duplicates = sorted({name for name in names if names.count(name) > 1})
             used = sorted(set(manifest.values()))
-            misplaced = [shard for shard in used if shard < 1 or shard > args.shards]
+            expected_ids = set(range(1, args.shards + 1))
             print(f"manifest shard ids: {used} (matrix 1..{args.shards})")
-            if misplaced:
-                print(f"  ids outside the matrix ({len(misplaced)}): {misplaced}")
+            missing_ids = sorted(expected_ids - set(used))
+            extra_ids = sorted(set(used) - expected_ids)
+            if missing_ids or extra_ids:
+                print(
+                    "  shard ids do not match the matrix: "
+                    f"missing {missing_ids}, unexpected {extra_ids}"
+                )
+                ok = False
+            if duplicates:
+                print(f"  listed more than once ({len(duplicates)}):")
+                for name in duplicates[:20]:
+                    print("   =", name)
                 ok = False
         if args.classes:
             expected = set(manifest)
