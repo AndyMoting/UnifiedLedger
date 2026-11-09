@@ -6888,7 +6888,7 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 3. **Android 就地提速，不拆 job**：`android` 的四条 gradle 命令加 `--build-cache`，`--max-workers` 1 → 4。拆成两个 job 会让两边各自 `compileAndroidMain`，实测估算只省 ≈0.8 min，故不做。
 4. **`kotlin-core` 并行度**：上传 `--profile` 报告工件；若提升 <0.5 min，再用 profile 数据另批按子项目拆分 `check`。（**原定的 4 → 6 已撤回**：六 fork 在四 vCPU 上超订，首轮实测 7.3 min 对基线 5.9，见批 C 落地段。）
 
-**判据与批 A 实测：** 目标最慢分片 p50 ≤5.5 / p90 ≤6.5、`Android compile` p50 ≤5.0、代码 PR 墙钟 p50 ≤5.5。批 A 三次 run 的最慢分片为 5.75 / 6.60 / 6.27 min（p50 6.27，基线 8.77–9.07），**W-1 尚未达成**；剩迁移大测试（278.5 s 独占一个 fork）与 `Android compile`（5m04–6m59），分别归批 B、批 C。合并后取 5 个 PR 采样核对。
+**判据（批 F 按 5 次采样修正）与批 A 实测：** 目标改为最慢分片 **p50 ≤6.0 / p90 ≤7.0**、`Android compile` p50 ≤5.0（达成）、代码 PR 墙钟 **p50 ≤6.5**。修正理由：整轮墙钟的理论下限 = 最慢分片 p50 5.7 + 队列 ≈0.3 + 收口 ≈0.1 ≈ 6.1 min，原定的「墙钟 ≤5.5」要求分片比自身实测更快，不成立；W-1 的 5.5 与实测 p50 5.7 只差 0.2 min，落在同名分片跨 run 4.2–8.2 min 的波动内。原目标保留在本段作历史对照。批 A 三次 run 的最慢分片为 5.75 / 6.60 / 6.27 min（p50 6.27，基线 8.77–9.07），**W-1 尚未达成**；剩迁移大测试（278.5 s 独占一个 fork）与 `Android compile`（5m04–6m59），分别归批 B、批 C。合并后取 5 个 PR 采样核对。
 
 **批 B 落地（同日）：** 分片清单按 run `42592454869` 的 `timing-shard-*` 工件重新装箱（三个新类的实测类秒为 124.9 / 154.9 / 26.8，取代按三等分的估算）；`LedgerDatabaseMigrationTest` 的 48 个 `@Test` 拆成 `LedgerMigrationV1ToV11Test`（12）/`LedgerMigrationV11ToV19Test`（21）/`LedgerMigrationV20ToV36Test`（15），共享助手与原文件级工具移入 `MigrationTestSupport.kt`（基类 + 同包 `internal` 顶层函数）；断言与测试名逐字未动，已用脚本比对拆前拆后测试文本字节相等。新增 `tests/python/test_migration_split_inventory.py` 作为 D-195 残余条要求的**用例数守卫**：48 个测试名逐字各一次、三类份额 12/21/15、原类必须不存在、三个新类各在分片清单登记一次。
 
@@ -6897,6 +6897,8 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **批 D 落地（同日）：** ① 分片清单按 run `42599161481` 的 timing 工件重排（118 类；最重五类 V20ToV36 182.3 / P705TransferCorrectionCommitPortTest 177.1 / SqlDelightRg06StoreTest 156.5 / V11ToV19 114.7 / P705VoidRestoreCommitPortTest 101.4 s，分别落 1–5 片）。按同一批数字，旧清单最重片预测 690.3 s，新清单 633.3 s。**试过 `--spread-heavy`（先把最慢 N 类各放一片再 LPT）但评审证明它是 no-op**——LPT 从空箱开始，本来就先给最慢 N 类各一个空片；该参数未保留，改由 `tests/python/test_shard_packing.py` 守住装箱不变量（每类恰好一次、id 连续、确定性、均衡度、最重类不共片、空输入报错）。② `android` 的两条装配命令合并为一条 gradle 调用（4 → 3 次调用，任务集与产出不变）。③ 实测：run `42603993644`（首版 head）Android 4m46s、core 5.7、分片 4.8–6.6、墙钟 7.0；落地 head `1454796a` 的 run `42605582452` 为 Android **3m54s**、分片 **3.8–5.5**（最慢 5.5，首次触线）、core **7.05**、墙钟 7.5——core 的抖动说明它已是新的关键路径。
 
 **批 E 落地（同日）：** profile 显示 `:ledger-data:verifyCommonMainLedgerDatabaseMigration` 单任务 **3m27s**，是 core 最长项且与测试任务无关；将其拆为独立并行 job `Kotlin migration verify`（`--max-workers=4 --build-cache`，无 Test 任务），core 的聚合任务用 `-x` 排除它，并删除 core 里原有的同任务显式步骤（正是这一步的删除让「只执行一次」成立——评审在批 E 首版抓到两处重复执行）。profile 证据：`gradle-profile-core` 工件（run `42605582452`，`profile-2026-11-09-11-01-53.html`）的 Task Execution 表列出该任务 3m27s。收口 job `Kotlin tests` 的 `needs` 增加该 job：docs 路径要求它 skipped、代码路径要求 success，四个必过 context 名不变。基准任务集不变（该任务仍执行一次，只是并行）。
+
+**批 F 采样与判据修正（同日）：** 取 D 批之后 5 个 run 的实测——W-1 最慢分片 6.6 / 5.5 / 6.4 / 5.7 / 5.5（p50 5.7、p90 6.6）；W-3 `Android compile` 4.8 / 3.9 / 4.1 / 4.8 / 6.1（p50 4.8，**达成**）；W-4 墙钟 7.4 / 7.0 / 7.8 / 6.7 / 6.3（p50 7.0）；core 5.7 / 7.0 / 7.4 / 5.8 / 2.3（方差最大）。据此把 W-1 放宽到 p50 ≤6.0 / p90 ≤7.0、W-4 放宽到 p50 ≤6.5；W-3 不动。这是**修改已批准判据**，用户明示授权（「两个都放宽」）。
 
 **边界：** 四个必过 context 名与分支保护零改动；APK producer 契约（`PRODUCERS` 与 job 名 `Android compile`）不变；零产品代码、零账务语义、零 schema/迁移；每批独立可回退。
 
