@@ -3,12 +3,12 @@ package com.unifiedledger.ui
 import com.unifiedledger.application.LedgerEntryRow
 import com.unifiedledger.application.MonthlyActivity
 import com.unifiedledger.application.MonthlyCurrencyActivity
+import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.Posting
 import com.unifiedledger.domain.PostingId
-import com.unifiedledger.domain.Money
-import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionVersionId
