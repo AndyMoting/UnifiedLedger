@@ -73,7 +73,7 @@ python -m project_docs .
 
 - `.github/workflows/ci.yml` 的四个 required checks：`Kotlin tests`、`Android compile`、`Python tests`、`Trace scan`。
 - `.github/workflows/windows.yml`：Windows JVM 测试，夜跑 + 手动，非阻塞平台信号。
-- 完整 `check`、ktlint、Android/KMP 编译、Debug APK、完整 Python 测试、Desktop build、migration verifier 与 Windows JVM 测试均由 CI 承担；同一提交的 CI 成功结果是聚合门禁的发布证据。
+- 完整 `check`、ktlint、Android/KMP 编译、Debug APK、完整 Python 测试、Desktop build、migration verifier 与 Windows JVM 测试均由 CI 承担。发布证据 = 该 PR 运行上的四个必过检查 + 合并守卫对「落地树 == 被测树」的核对（squash 落地走 squash 证据，合并后不再重跑；机制见[开发规范](docs/CONTRIBUTING.md)的「CI 配置」）。
 
 ### 本机执行约束（需要本地复现时）
 
