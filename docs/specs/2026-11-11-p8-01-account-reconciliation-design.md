@@ -22,15 +22,24 @@
 
 ### 2.1 资格派生（修订 `D-145` §3.2.1 的读面）
 
-读面资格改为：**rg03 语义行的标记优先（`false` 胜出，费用腿继续排除）；没有 rg03 行时，凭分录所属账户的复合标记判定**：
+读面资格改为（**只增不减**：今天已合格的腿不会因本派生变不合格）：
+
+```
+rg03 行存在 → 该行标记为真即合格、为假即不合格（费用腿照旧排除）
+无 rg03 行   → 满足下方复合标记 或 已有活动证据链接/已有对账行（既有条款 (b) 原样保留）即合格
+```
+
+复合标记：
 
 ```
 owned_by_user = 1 AND real_account = 1 AND kind IN ('ASSET','LIABILITY')
 ```
 
-先例 `Rg07StateProjector.kt:223`（同一复合口径）；`active` 不参与（停用不改历史呈现，`ACCOUNTING_RULES.md:259`）；零币种、外部账户与系统隐藏账户均不满足。满足该复合标记且没有对账行时，读作 `PENDING`（待对账）。
+三列复合的先例见 `Rg07StateProjector.kt:223`；该行另含「排除储值账户」的**场景专属**条件（RG-07 黄金夹具口径），**产品资格不采用该排除**——`ACCOUNTING_RULES.md:188` 明写商户余额与批次证据核验储值资产分录，储值资产腿必须可对账。`active` 不参与（停用不改历史呈现，`ACCOUNTING_RULES.md:259`）；系统与外部账户由 `owned_by_user = 0` 排除，隐藏过账账户由 `kind` 排除（`ACCOUNTING_RULES.md:261`：隐藏过账账户随所属叶子分类，属费用/收入账户）。
 
-这条只改**呈现派生**，不改写入：历史分录、金额、余额、版本、报表零变化。不满足标志的分录仍为「无对账资格」，`null` 仍表示「不显示任何对账状态」。
+满足资格且没有对账行时，读作 `PENDING`（待对账）。
+
+这条只改**呈现派生**，不改写入：历史分录、金额、余额、版本、报表零变化。既无复合标记也无条款 (b) 的分录仍为「无对账资格」，`null` 仍表示「不显示任何对账状态」。
 
 写面资格本片不动——`confirmLink` 继续只接受 `ACCOUNT_TRANSFER` 腿。**状态与动作分开呈现**：一条腿可以如实是「待对账」而在当前版本里「暂不支持在应用内核对」。
 
@@ -53,13 +62,13 @@ owned_by_user = 1 AND real_account = 1 AND kind IN ('ASSET','LIABILITY')
 
 候选证据必须是 `READY` 投影行。未投影的导入证据进入队列前要先完成一次**绑定**：用户明确「这条导入行属于此账户」，应用层据该决定调用 `P408EvidenceProjectionPort.materialize(...)`（目标账户 = 该腿账户，币种与精度取该账户目录值）。
 
-- 绑定是**不可逆终态行**（`P408EvidenceProjectionPort.kt:3-12`）：界面必须在动作前写明「绑定后不可更改账户」，不得默认替用户绑定，也不得在浏览时静默物化。
+- 投影内容不可变，当前权威行只能由既有修正路径取代（`supersedeP408EvidenceProjection`），应用内不提供改绑或解绑入口（`P408EvidenceProjectionPort.kt:3-12`）。界面必须在动作前写明「绑定后不能在应用内改绑」，不得默认替用户绑定，也不得在浏览时静默物化。
 - 绑定是**登记的派生写**：只写 `evidence_projection`，零账务效果（不建交易、不建分录、不改余额、不改报表）。同参数重放命中 `NoChange`，零新行；`P408ProjectionState.REJECTED` 的证据进不了候选，界面如实说明拒绝码。
 - 绑定可用后，应用层以冻结的 matcher 计算候选：`match(evidence, [该账户在当前版本内、±2 自然日窗内的可对账分录])`，只取该腿出现在候选集内的结果。matcher 未被修改，也不在此处重新实现匹配。
 
 呈现规则：
 
-- 同腿多条可用证据按 `(occurred_at ASC, evidence_id ASC)` 逐条呈现，各自给出处置与自然日距离。
+- 同腿多条可用证据按**解析后的瞬时**升序呈现（来源时间取 `import_source_record.occurred_at`，解析后比较），不可解析者置末，同值以 `evidence_id` 升序；每条各自给出处置与自然日距离。不按原始文本排序——原始时间串可带偏移量，`TEXT` 升序不是时间序。
 - `PROPOSED_MATCH` → 展示唯一候选，可直接确认（可确认职责由该腿方向唯一确定，见 §2.5）。
 - `AMBIGUOUS` → 列出全部候选与各自距离，要求用户**明确选择**其中一条；用户选择即是 O-3 的人工决定。
 - `UNRESOLVED` → 呈现成因（`no_unique_funding_candidate` / `source_time_unresolved` / `funding_facts_unresolved` 原样转述），该腿保持待对账，**零写入**。
@@ -115,7 +124,7 @@ owned_by_user = 1 AND real_account = 1 AND kind IN ('ASSET','LIABILITY')
 | V-3 | 另一腿仍待对账 | 同一交易只核对一条腿 → 该腿已核对、另一腿待对账、交易级 rollup 为待对账（不是已核对） |
 | V-4 | 冲突 | 同一证据换新 requestId 再确认 → `P408_EVIDENCE_ALREADY_LINKED`，零写入；同一腿同职责另链一条证据 → `P408_POSTING_RESPONSIBILITY_ALREADY_LINKED`，零写入 |
 | V-5 | 重放 | 同 requestId 同指纹再提交 → `NoChange` 且回执不变；此前已回滚的同 requestId 重试 → 重新执行并给出等价结果；两种情况链接行数都不增加 |
-| V-6 | 歧义、不可比与多证据 | 同窗两候选 → `AMBIGUOUS` 且要求选择；来源时间不可比 → `UNRESOLVED` 并给出成因；同腿两条可用证据各出 `PROPOSED_MATCH` 时按 `(occurred_at, evidence_id)` 呈现，确认一条后另一条呈现为不可确认 |
+| V-6 | 歧义、不可比与多证据 | 同窗两候选 → `AMBIGUOUS` 且要求选择；来源时间不可比 → `UNRESOLVED` 并给出成因；同腿两条可用证据各出 `PROPOSED_MATCH` 时按解析后瞬时升序呈现（不可解析者置末、同值按 `evidence_id`），确认一条后另一条呈现为不可确认 |
 | V-7 | 资格 | 费用腿与收入腿无状态可显示（「无对账资格」）；满足 §2.1 复合标记且无对账行的腿读作「待对账」；`null` 只能呈现为「—（无对账资格）」，不得回退成五态任一文案（尤其 `PENDING`） |
 | V-8 | 双记账 | 证据已链接后确认同一导入候选 → `IMPORT_EVIDENCE_ALREADY_RECONCILED`；正式交易数、分录数、余额零变化，`import_candidate` 状态行与 `import_candidate_status_history` 零增；候选行显示「已用于核对既有分录」 |
 | V-9 | 空态与读失败 | 无未核对腿时照常显示已计算的合计（可为 `0.00`）；聚合**读失败**不得以 `0.00` 或空白掩盖，且已加载行保留 |
@@ -134,4 +143,4 @@ owned_by_user = 1 AND real_account = 1 AND kind IN ('ASSET','LIABILITY')
 
 本片交付走任务分支 + PR：`Kotlin tests` / `Android compile` / `Python tests` / `Trace scan` 四门全绿后 squash 合并；读面派生属可观察行为变化，合并前以 `Android font-scale sample` 同口径设备读数复验详情屏与队列文案。
 
-**登记残余**：`PARTIAL` 无写入者；`DIFFERENCE`/`MISSING` 仅修正路径可写；绑定不可逆且无解绑；竞品侧无可吸收的对账实现（`UL_ABSORB_2026-11-03.md:106` E2 已否定「余额 − 明细合计」口径）。
+**登记残余**：`PARTIAL` 无写入者；`DIFFERENCE`/`MISSING` 仅修正路径可写；绑定在应用内没有改绑或解绑入口（库层可由既有修正路径取代当前权威行）；竞品侧无可吸收的对账实现（`UL_ABSORB_2026-11-03.md:106` E2 已否定「余额 − 明细合计」口径）。
