@@ -31,6 +31,7 @@ import com.unifiedledger.application.TransactionVoidRequestSnapshot
 import com.unifiedledger.application.VoidedTransactionRow
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
@@ -568,6 +569,10 @@ class SqlDelightLedgerCurrentStateReadAdapter(
      * narrowed to the transaction; a posting with several active evidence links yields
      * several rows, which are folded into one projection row per posting. Existing rows
      * are only read — no reconciliation, evidence, or rg03 row is ever written here.
+     *
+     * P8-01a (spec section 2.1; D-308 item 9): the account's `owned_by_user`, `real_account` and
+     * `kind` columns ride the same read as a LEFT join, so an account without a catalog row maps
+     * to three `null`s and the composite mark stays false — never a dropped leg.
      */
     override fun loadTransactionReconciliationLegs(
         ledgerId: LedgerId,
@@ -588,6 +593,9 @@ class SqlDelightLedgerCurrentStateReadAdapter(
                     hasReconciliationRow = first.reconciliation_id != null,
                     hasActiveEvidenceLink = groupedRows.any { it.active_link_id != null },
                     rg03ReconciliationEligible = first.reconciliation_eligible?.let { it != 0L },
+                    accountOwnedByUser = first.owned_by_user?.let { it != 0L },
+                    accountRealAccount = first.real_account?.let { it != 0L },
+                    accountKind = first.account_kind?.let { AccountKind.valueOf(it) },
                 )
             }.sortedBy { it.postingIndex }
     }

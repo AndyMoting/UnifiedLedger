@@ -87,6 +87,7 @@
 4	com.unifiedledger.data.Rg07ExpectedReplayTest
 4	com.unifiedledger.data.Rg09V2RuntimeOracleTest
 4	com.unifiedledger.data.SqlDelightCatalogStoreTest
+4	com.unifiedledger.data.SqlDelightP801AccountReconciliationReadAdapterTest
 4	com.unifiedledger.data.SqlDelightRg04StoreTest
 4	com.unifiedledger.data.SqlDelightRg07IdentityTest
 4	com.unifiedledger.data.SqlDelightRg09StoreTest

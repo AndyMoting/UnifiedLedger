@@ -68,6 +68,7 @@ import com.unifiedledger.application.ManualLendingTransactionFactory
 import com.unifiedledger.application.ManualTransferTransactionFactory
 import com.unifiedledger.application.MixedPaymentFlowFormalFactory
 import com.unifiedledger.application.OrdinaryFlowFormalFactory
+import com.unifiedledger.application.P801AccountReconciliationReadPort
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.QueryBudgetMonth
@@ -126,6 +127,7 @@ import com.unifiedledger.data.SqlDelightImportReviewReadAdapter
 import com.unifiedledger.data.SqlDelightImportSpineStore
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
 import com.unifiedledger.data.SqlDelightMonthlyContributionReadAdapter
+import com.unifiedledger.data.SqlDelightP801AccountReconciliationReadAdapter
 import com.unifiedledger.data.SqlDelightTagMerchantCatalogStore
 import com.unifiedledger.data.SqlDelightTagMerchantFilterReadAdapter
 import com.unifiedledger.data.SqlDelightTransactionAnnotationStore
@@ -682,6 +684,9 @@ internal data class CloseableLedgerGraph(
     // P7-06 06.B (D-177; spec sections 3.3/3.4): the controlled snapshot surface over this
     // graph's private JDBC driver. Null when the composition root wired none.
     val snapshotPort: BackupSnapshotPort? = null,
+    // P8-01a (D-308 items 6/8; spec section 2.3): the account-scoped reconciliation read face over
+    // this graph's database, read-only and null when a graph wired none (tests, legacy graphs).
+    val accountReconciliationRead: P801AccountReconciliationReadPort? = null,
 )
 
 internal data class DesktopLedgerGraph(
@@ -707,6 +712,9 @@ internal data class DesktopLedgerGraph(
     // P7-06 06.B (D-177; spec sections 3.3/3.4): the controlled snapshot surface over this
     // graph's private JDBC driver. Null when the composition root wired none.
     val snapshotPort: BackupSnapshotPort? = null,
+    // P8-01a (D-308 items 6/8; spec section 2.3): the account-scoped reconciliation read face over
+    // this graph's database, read-only and null when a graph wired none (tests, legacy graphs).
+    val accountReconciliationRead: P801AccountReconciliationReadPort? = null,
 )
 
 /**
@@ -742,6 +750,10 @@ internal fun buildLedgerGraph(
     // completion the spec pins (Main.kt bootstrapAuthority call site). Zero DDL.
     runQueryStatisticsOptimizeOn(driver)
     val readAdapter = SqlDelightLedgerCurrentStateReadAdapter(database)
+    // P8-01a (D-308 items 6/8): the account reconciliation queue/summary read face. Read-only and
+    // wired beside the current-state adapter; no use case consumes it in this batch (i1 is the
+    // read face only, no UI and no write path), so it is exposed on the graph for the next slice.
+    val accountReconciliationRead = SqlDelightP801AccountReconciliationReadAdapter(database)
     val counterpartyStore = SqlDelightCounterpartyStore(database, driver)
     val entryPreferenceStore = SqlDelightEntryPreferenceStore(database)
     // P7-03.C/D: the reporting clock is injected into the session so the unified monthly
@@ -1191,6 +1203,7 @@ internal fun buildLedgerGraph(
         runFullAnalyze = { runFullAnalyzeOn(driver) },
         // P7-06 06.B (D-177): the controlled snapshot surface over this graph's driver.
         snapshotPort = DesktopBackupSnapshotPort(driver),
+        accountReconciliationRead = accountReconciliationRead,
     )
 }
 
@@ -1235,6 +1248,7 @@ internal fun openDesktopLedger(databaseUrl: String): CloseableLedgerGraph {
             graph.runQueryStatisticsOptimize,
             graph.runFullAnalyze,
             snapshotPort = graph.snapshotPort,
+            accountReconciliationRead = graph.accountReconciliationRead,
         )
     } catch (failure: Exception) {
         // A failure mid-open (schema create/open/migrate/bootstrap) must not leak the

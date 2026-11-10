@@ -9411,11 +9411,20 @@ transactionReconciliationLegs:
 -- row semantics along selectP408ReconciliationReport :8658-8685): COALESCE status
 -- default, active evidence-link existence, and the existing rg03 eligibility column
 -- read as-is (no new semantics, no writes; spec section 3.2.1).
+--
+-- P8-01a (spec section 2.1; D-308 item 9): the three source columns of the composite mark
+-- (owned_by_user, real_account, kind) ride the same read as a LEFT join on catalog_account
+-- (:340-353), so a posting whose account has no catalog row yields NULLs and keeps every
+-- pre-P8-01a eligibility outcome. The filter and the ordering are unchanged; the row set can
+-- only grow by duplicate links, exactly as before.
 SELECT p.posting_id, p.posting_index, p.account_id, p.amount_minor, p.currency_code, p.currency_precision,
   COALESCE(reconciliation.status, 'PENDING') AS status,
   reconciliation.reconciliation_id AS reconciliation_id,
   link.link_id AS active_link_id,
-  semantic.reconciliation_eligible AS reconciliation_eligible
+  semantic.reconciliation_eligible AS reconciliation_eligible,
+  account.owned_by_user AS owned_by_user,
+  account.real_account AS real_account,
+  account.kind AS account_kind
 FROM posting AS p
 JOIN transaction_version AS v
   ON v.ledger_id = p.ledger_id AND v.posting_set_id = p.posting_set_id
@@ -9436,6 +9445,8 @@ LEFT JOIN evidence_link AS link
  )
 LEFT JOIN rg03_transfer_posting_semantic AS semantic
   ON semantic.ledger_id = p.ledger_id AND semantic.posting_id = p.posting_id
+LEFT JOIN catalog_account AS account
+  ON account.ledger_id = p.ledger_id AND account.account_id = p.account_id
 WHERE p.ledger_id = ? AND v.transaction_id = ?
 ORDER BY p.posting_index, active_link_id;
 
@@ -11543,3 +11554,130 @@ LEFT JOIN import_duplicate_status_history AS latest_status
 WHERE duplicate.ledger_id = :ledger_id AND subject.input_ref = :session_input_ref
   AND duplicate.kind = 'EXACT_BUSINESS_TUPLE'
   AND latest_status.status = 'DEFERRED';
+
+-- P8-01a account reconciliation queue (D-308 items 8/9; spec sections 2.1/2.3). Read-only named
+-- query, zero DDL: not one table, column, index or trigger is added.
+--
+-- MEMBERSHIP is exactly the spec section 2.1 composite mark over catalog_account
+-- (:340-353): owned_by_user = 1 AND real_account = 1 AND kind IN ('ASSET','LIABILITY'). `active`
+-- deliberately does not participate (a deactivated account keeps its history); system/external
+-- accounts drop out through owned_by_user and the hidden posting accounts through kind. Legs on
+-- accounts without a catalog row are therefore not queue members, which is the same fail-closed
+-- direction the composite mark takes in the Kotlin pure function.
+--
+-- SCOPE is the ledger, the requested account, the CURRENT version only, and the single effective
+-- definition point `transaction_effective_state` (:10507) — no second state rule is written here.
+--
+-- ORDER is the frozen `occurred_at DESC, posting_id ASC` (D-308 item 8). `occurred_at` is a TEXT
+-- column with the same mixed-shape hazard the statistics_at note records (:40-45): the canonical
+-- product writers store Instant.toString() text, so text order equals time order except where
+-- sub-second digit counts differ. A numeric occurred_at projection would be a DDL change this
+-- batch forbids, so the frozen order is applied to the persisted text and the keyset predicate
+-- compares that same text — the page sequence is then a self-consistent total order.
+--
+-- The page key binds LIMIT directly on posting rows, so no keyset CTE is needed: unlike
+-- ledgerFlowPage (:11332), one page never has to bound a parent whose children could straddle it.
+p801AccountReconciliationLegPage:
+SELECT
+  p.posting_id,
+  version.transaction_id,
+  version.occurred_at,
+  version.note,
+  p.account_id,
+  p.amount_minor,
+  p.currency_code,
+  p.currency_precision,
+  COALESCE(reconciliation.status, 'PENDING') AS status,
+  COALESCE(
+    (SELECT count(*)
+     FROM evidence_link AS link
+     WHERE link.ledger_id = p.ledger_id
+       AND link.posting_id = p.posting_id
+       AND EXISTS (
+         SELECT 1 FROM evidence_link_history AS link_history
+         WHERE link_history.ledger_id = link.ledger_id AND link_history.link_id = link.link_id
+           AND link_history.sequence = (SELECT max(h2.sequence) FROM evidence_link_history h2
+             WHERE h2.ledger_id = link.ledger_id AND h2.link_id = link.link_id)
+           AND link_history.state = 'active'
+       )),
+    0
+  ) AS active_link_count,
+  COALESCE(tx.canonical_kind, tx.kind) AS kind
+FROM posting AS p
+JOIN transaction_version AS version
+  ON version.ledger_id = p.ledger_id
+ AND version.posting_set_id = p.posting_set_id
+JOIN ledger_transaction AS tx
+  ON tx.ledger_id = version.ledger_id
+ AND tx.transaction_id = version.transaction_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = version.ledger_id
+ AND current_version.transaction_id = version.transaction_id
+ AND current_version.current_version_id = version.version_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = version.ledger_id
+ AND effective.transaction_id = version.transaction_id
+ AND effective.is_effective = 1
+JOIN catalog_account AS account
+  ON account.ledger_id = p.ledger_id
+ AND account.account_id = p.account_id
+LEFT JOIN posting_reconciliation AS reconciliation
+  ON reconciliation.ledger_id = p.ledger_id AND reconciliation.posting_id = p.posting_id
+WHERE p.ledger_id = :ledger_id
+  AND p.account_id = :account_id
+  AND account.owned_by_user = 1
+  AND account.real_account = 1
+  AND account.kind IN ('ASSET', 'LIABILITY')
+  AND (
+    :cursor_occurred_at IS NULL
+    OR version.occurred_at < :cursor_occurred_at
+    OR (
+      version.occurred_at = :cursor_occurred_at
+      AND p.posting_id > :cursor_posting_id
+    )
+  )
+ORDER BY version.occurred_at DESC, p.posting_id ASC
+LIMIT :page_size;
+
+-- P8-01a account reconciliation summary (D-308 item 6; spec section 2.3). The queue's exact
+-- table group and membership rule folded per (currency, status): the integer-minor-unit sum and
+-- the row count. Reusing the same joins means the page and the totals can never disagree about
+-- which legs exist, and no second effective/current-version rule is introduced.
+--
+-- MONEY STAYS INTEGER: sum() over INTEGER minor units returns an INTEGER (SQLite raises an
+-- 'integer overflow' error rather than switching to float), and total() is never used. The
+-- adapter maps a failed or overflowing read to its typed failure, never to a zero.
+--
+-- A (currency, status) group exists only if it has at least one row: an absent group is absent,
+-- never emitted as a zero row (D-089/R-Q06-4).
+p801AccountReconciliationStatusTotals:
+SELECT
+  p.currency_code,
+  p.currency_precision,
+  COALESCE(reconciliation.status, 'PENDING') AS status,
+  sum(p.amount_minor) AS total_minor,
+  count(*) AS row_count
+FROM posting AS p
+JOIN transaction_version AS version
+  ON version.ledger_id = p.ledger_id
+ AND version.posting_set_id = p.posting_set_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = version.ledger_id
+ AND current_version.transaction_id = version.transaction_id
+ AND current_version.current_version_id = version.version_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = version.ledger_id
+ AND effective.transaction_id = version.transaction_id
+ AND effective.is_effective = 1
+JOIN catalog_account AS account
+  ON account.ledger_id = p.ledger_id
+ AND account.account_id = p.account_id
+LEFT JOIN posting_reconciliation AS reconciliation
+  ON reconciliation.ledger_id = p.ledger_id AND reconciliation.posting_id = p.posting_id
+WHERE p.ledger_id = :ledger_id
+  AND p.account_id = :account_id
+  AND account.owned_by_user = 1
+  AND account.real_account = 1
+  AND account.kind IN ('ASSET', 'LIABILITY')
+GROUP BY p.currency_code, p.currency_precision, COALESCE(reconciliation.status, 'PENDING')
+ORDER BY p.currency_code, p.currency_precision, COALESCE(reconciliation.status, 'PENDING');

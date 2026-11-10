@@ -243,6 +243,65 @@ class QueryTransactionDetailTest {
         assertEquals(true, isReconciliationEligible(legRow("p4", hasReconciliationRow = true)))
         // Plain manual leg: no artifacts, no eligibility.
         assertEquals(false, isReconciliationEligible(legRow("p5")))
+        // P8-01a section 2.1: with no rg03 row the composite mark joins the two clause-(b) terms.
+        assertEquals(true, isReconciliationEligible(legRow("p6", ownedByUser = true, realAccount = true, accountKind = AccountKind.ASSET)))
+        assertEquals(true, isReconciliationEligible(legRow("p7", ownedByUser = true, realAccount = true, accountKind = AccountKind.LIABILITY)))
+        // rg03 `false` still wins over the composite mark (the fee leg never becomes eligible).
+        assertEquals(
+            false,
+            isReconciliationEligible(
+                legRow("p8", ownedByUser = true, realAccount = true, accountKind = AccountKind.ASSET, rg03Eligible = false),
+            ),
+        )
+    }
+
+    @Test
+    fun compositeMarkIsExactAndTheEligibilityDerivationStaysAdditiveOnly() {
+        // The mark is exactly owned_by_user AND real_account AND kind IN (ASSET, LIABILITY).
+        assertTrue(hasReconciliationCompositeMark(legRow("m1", ownedByUser = true, realAccount = true, accountKind = AccountKind.ASSET)))
+        assertTrue(hasReconciliationCompositeMark(legRow("m2", ownedByUser = true, realAccount = true, accountKind = AccountKind.LIABILITY)))
+        // The hidden posting accounts follow their leaf expense/income category, so the other three
+        // kinds never mark; `active` is not an input at all (a deactivated account keeps its history).
+        for (kind in listOf(AccountKind.EXPENSE, AccountKind.INCOME, AccountKind.EQUITY)) {
+            assertEquals(false, hasReconciliationCompositeMark(legRow("m-$kind", ownedByUser = true, realAccount = true, accountKind = kind)))
+        }
+        // System/external accounts are excluded by owned_by_user, non-real accounts by real_account.
+        assertEquals(false, hasReconciliationCompositeMark(legRow("m4", ownedByUser = false, realAccount = true, accountKind = AccountKind.ASSET)))
+        assertEquals(false, hasReconciliationCompositeMark(legRow("m5", ownedByUser = true, realAccount = false, accountKind = AccountKind.ASSET)))
+        // A leg whose account has no catalog row marks nothing: its pre-P8-01a outcome is preserved.
+        assertEquals(false, hasReconciliationCompositeMark(legRow("m6")))
+
+        // ADDITIVE-ONLY: every leg that was eligible before P8-01a is still eligible ...
+        assertTrue(isReconciliationEligible(legRow("a1", rg03Eligible = true)))
+        assertTrue(isReconciliationEligible(legRow("a2", hasActiveEvidenceLink = true)))
+        assertTrue(isReconciliationEligible(legRow("a3", hasReconciliationRow = true)))
+        assertEquals(false, isReconciliationEligible(legRow("a4", rg03Eligible = false)))
+        // ... and the mark only ADDS eligibility to the same leg that is otherwise unqualified.
+        assertTrue(isReconciliationEligible(legRow("a5", ownedByUser = true, realAccount = true, accountKind = AccountKind.ASSET)))
+        assertEquals(false, isReconciliationEligible(legRow("a5")))
+    }
+
+    @Test
+    fun anEligibleLegWithoutAReconciliationRowReadsPendingAndAnIneligibleOneStaysNull() {
+        // V-7: the composite-marked leg has no `posting_reconciliation` row, so the projection reads
+        // the SQL COALESCE default PENDING (待对账); the unmarked expense leg keeps `null`
+        // (「—（无对账资格）」) and never falls back to a five-state label — least of all PENDING.
+        val legs =
+            listOf(
+                legRow("posting-payment", ownedByUser = true, realAccount = true, accountKind = AccountKind.ASSET),
+                legRow("posting-expense", accountKind = AccountKind.EXPENSE),
+            )
+        val detail =
+            assertIs<TransactionDetailResult.Success>(
+                QueryTransactionDetail(EntryDetailPort(rows = listOf(expenseRow()), legs = legs), ledgerId, catalog())
+                    .query(TransactionId("tx-expense")),
+            ).detail
+        assertEquals(false, detail.reconciliation.legs[0].eligible)
+        assertNull(detail.reconciliation.legs[0].status)
+        assertEquals(true, detail.reconciliation.legs[1].eligible)
+        assertEquals(P408ReconciliationStatus.PENDING, detail.reconciliation.legs[1].status)
+        // The rollup still folds eligible legs only, so the single eligible PENDING leg decides it.
+        assertEquals(P408ReconciliationStatus.PENDING, detail.reconciliation.rollup)
     }
 
     @Test
@@ -336,6 +395,9 @@ class QueryTransactionDetailTest {
         hasReconciliationRow: Boolean = false,
         hasActiveEvidenceLink: Boolean = false,
         rg03Eligible: Boolean? = null,
+        ownedByUser: Boolean? = null,
+        realAccount: Boolean? = null,
+        accountKind: AccountKind? = null,
     ) = TransactionReconciliationLegRow(
         postingId = PostingId(postingId),
         postingIndex = 0,
@@ -346,6 +408,9 @@ class QueryTransactionDetailTest {
         hasReconciliationRow = hasReconciliationRow,
         hasActiveEvidenceLink = hasActiveEvidenceLink,
         rg03ReconciliationEligible = rg03Eligible,
+        accountOwnedByUser = ownedByUser,
+        accountRealAccount = realAccount,
+        accountKind = accountKind,
     )
 
     private fun query(
