@@ -165,4 +165,16 @@ class P8HomeFlowTest {
 
         assertEquals("支出：CNY 35.50；JPY 100", p8SummaryPageDescription(P8SummaryPage.EXPENSE, lines))
     }
+
+    @Test
+    fun anEmptyLedgerShowsTheLedgerWideEmptyVoice() {
+        // A wired flow surface is never null, so the previous condition could never fire (D-307).
+        assertTrue(p8ShowsEmptyLedger(transactionTotal = 0))
+    }
+
+    @Test
+    fun anEmptyMonthInsideAPopulatedLedgerKeepsTheFlowScaffolding() {
+        // 0 rows in the selected month, but the ledger has transactions: not an empty ledger.
+        assertTrue(!p8ShowsEmptyLedger(transactionTotal = 12))
+    }
 }

@@ -121,6 +121,17 @@ internal data class P8DayGroup(
 /** The reporting-zone calendar day of a statistics instant (R-Q06-2 frozen zone). */
 internal fun p8ReportingDay(statisticsAt: Instant): LocalDate = statisticsAt.toLocalDateTime(MonthlyBuckets.REPORT_TIME_ZONE).date
 
+/**
+ * Whether the home tab presents the ledger-wide empty voice.
+ *
+ * Keyed on the LEDGER's transaction total, never on the loaded flow page: a wired flow surface is
+ * never null, so keying on it made the empty branch unreachable and a brand-new ledger presented the
+ * month card plus 流水 · 共 0 笔 instead of the empty state the baseline canvas documents (D-307). An
+ * empty MONTH inside a populated ledger keeps the month row and the flow scaffolding — that is a
+ * different state and must not claim an empty ledger.
+ */
+internal fun p8ShowsEmptyLedger(transactionTotal: Int): Boolean = transactionTotal <= 0
+
 /** Groups the flow rows by reporting day, preserving the incoming order. */
 internal fun p8GroupByDay(rows: List<LedgerEntryRow>): List<P8DayGroup> {
     if (rows.isEmpty()) return emptyList()

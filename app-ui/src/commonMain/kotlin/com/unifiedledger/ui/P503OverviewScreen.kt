@@ -121,6 +121,11 @@ fun P503OverviewScreen(
     val collapsedDays = remember(state.ledgerId) { mutableStateMapOf<kotlinx.datetime.LocalDate, Boolean>() }
     // Hoisted so the summary card keeps its page when it scrolls out of the lazy list and back.
     val summaryPagerState = rememberPagerState { P8SummaryPage.entries.size }
+    // P8-00 b4f (D-307): the ledger-wide empty voice is keyed on the LEDGER transaction total,
+    // not on the loaded flow page — a wired flow surface is never null, so keying on it made the
+    // empty branch unreachable and a brand-new ledger showed the month card plus 流水 · 共 0 笔
+    // instead of the empty state the baseline canvas documents.
+    val emptyLedger = p8ShowsEmptyLedger(state.transactionTotal)
     // DEF-B (D-268): virtualization is the DEF-B fix — only visible rows compose. The header
     // (search, summary card, month row), the day groups, the page footer and the balances tail are
     // items of one LazyColumn, so a ledger of any size never materialises its rows as layout nodes.
@@ -164,9 +169,11 @@ fun P503OverviewScreen(
             )
             Spacer(Modifier.height(4.dp))
         }
-        if (state.transactions.isEmpty() && flow == null) {
+        if (emptyLedger) {
             item {
                 Text("账本为空，还没有任何交易。", style = MaterialTheme.typography.bodyLarge)
+                Spacer(Modifier.height(4.dp))
+                Text("点右下角 ＋ 记第一笔", style = MaterialTheme.typography.bodySmall)
             }
         } else if (flow != null) {
             item {
