@@ -99,6 +99,14 @@ internal fun GlassBackdropSource(
  * and keeps the shadow parity — the default call without it keeps the plain tonal surface).
  * The glass path keeps the frozen backdrop sampling as its fill: a token fill inside the
  * glass content would cover the sampled backdrop and defeat the frozen effect.
+ *
+ * **Self-sampling hazard (`OBS-P8-DOCK-GHOST-01`, D-306):** the backdrop this surface samples is
+ * the layer registered by [GlassBackdropSource] around the page content, and the sample can include
+ * the surface's OWN content — the bottom dock reproduced its label row as soft ghost strips at both
+ * font scales. That went unnoticed for two batches. Before wiring a new glass surface, run it once
+ * against a hostile case (text-dense content inside the glass, both font scales) and confirm the
+ * background never echoes the surface's own text; over flat page regions prefer the plain token
+ * fill, which is what the dock now does.
  */
 @Composable
 internal fun GlassSurface(

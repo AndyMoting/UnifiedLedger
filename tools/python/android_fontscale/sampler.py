@@ -43,11 +43,10 @@ MAIN_ACTIVITY = f"{APP_PACKAGE}/.MainActivity"
 SCREENS: tuple[tuple[str, str | None, str], ...] = (
     # The markers are structural, read off runs 42701070511 and 42705178348: a fresh install
     # bootstraps one default account, so the accounts tab is never empty and 资产 samples the
-    # 有户无余额 state the E2s canvas documents; the home tab keeps its month card and flow
-    # region because a wired flow surface is never null, which leaves its 账本为空 branch
-    # unreachable in the product configuration (registered in local/p8-00-design/V8-samples.md).
-    # The rig samples what the device shows, not what a canvas wishes it showed.
-    ("home", None, "流水 · 共 0 笔"),
+    # 有户无余额 state the E2s canvas documents. Since D-307 the home tab paints 账本为空 for a
+    # ledger with no transactions at all — before that the branch was unreachable and the screen
+    # showed 流水 · 共 0 笔 instead. The rig samples what the device shows.
+    ("home", None, "账本为空"),
     ("asset", "账户", "总借入"),
     ("analysis", "分析", "账本为空"),
 )
