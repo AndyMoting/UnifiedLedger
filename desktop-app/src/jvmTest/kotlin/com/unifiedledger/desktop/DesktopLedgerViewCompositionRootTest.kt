@@ -11,6 +11,7 @@ import com.unifiedledger.application.ManualExpenseSaveResult
 import com.unifiedledger.application.ManualExpenseSubmissionResult
 import com.unifiedledger.application.MonthlyActivityResult
 import com.unifiedledger.application.MonthlyTrendResult
+import com.unifiedledger.application.P408ReconciliationStatus
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TransactionDetailResult
@@ -36,7 +37,8 @@ import kotlin.time.Instant
  * P7-03.C/D composition-root wiring (D-145 batches C/D; spec sections 4.2/6.1/7): the ledger
  * view read surface (entry rows, unified monthly projection, read-only detail) is reachable
  * through the wired facade, the monthly card values come from the product write chain, a
- * manual expense resolves as 手工创建 with 无对账资格 legs (C03, spec 3.2.1) and an absent
+ * manual expense resolves as 手工创建 whose real asset leg is 待对账 and whose hidden expense leg
+ * stays 无对账资格 (C03; P8-01a spec 2.1, D-308 item 9) with an absent
  * category on the real-account leg (P703SPEC-09), unknown detail requests fail typed (C04),
  * and the reducer preserves the selected month across detail open/close and tab switches.
  */
@@ -152,7 +154,7 @@ class DesktopLedgerViewCompositionRootTest {
     }
 
     @Test
-    fun detailResolvesCreationEntryLegsAndTheIneligibleRollup() {
+    fun detailResolvesCreationEntryLegsAndThePendingPaymentLegRollup() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             val graph = buildLedgerGraph(driver, createSchema = true)
@@ -172,11 +174,19 @@ class DesktopLedgerViewCompositionRootTest {
             assertEquals(CreationEntry.MANUAL_CREATED, detail.creationEntry)
             assertEquals(2, detail.legs.size)
 
-            // A manual P7-02 chain writes no rg03 row, no evidence link and no reconciliation
-            // row: every leg is ineligible and the rollup is 无对账资格 (null, spec 3.2.1).
-            assertTrue(detail.reconciliation.legs.all { !it.eligible })
-            assertTrue(detail.reconciliation.legs.all { it.status == null })
-            assertNull(detail.reconciliation.rollup)
+            // P8-01a spec 2.1 (D-308 item 9), V-7 end-to-end over the real detail query: a manual
+            // P7-02 chain writes no rg03 row, no evidence link and no reconciliation row, but the
+            // payment leg sits on the seeded user-owned real ASSET account, so it is eligible and
+            // reads PENDING (待对账) from the SQL COALESCE default. The hidden expense leg satisfies
+            // none of the three mark columns and stays 无对账资格 (null). The rollup folds eligible
+            // legs only, so the single PENDING leg decides it.
+            val paymentLeg = detail.reconciliation.legs.single { it.leg.accountId == graph.paymentAccountId }
+            assertEquals(true, paymentLeg.eligible)
+            assertEquals(P408ReconciliationStatus.PENDING, paymentLeg.status)
+            val expenseLeg = detail.reconciliation.legs.single { it.leg.accountId != graph.paymentAccountId }
+            assertEquals(false, expenseLeg.eligible)
+            assertNull(expenseLeg.status)
+            assertEquals(P408ReconciliationStatus.PENDING, detail.reconciliation.rollup)
         } finally {
             driver.close()
         }

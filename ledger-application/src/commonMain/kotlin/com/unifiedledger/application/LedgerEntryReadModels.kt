@@ -1,6 +1,7 @@
 package com.unifiedledger.application
 
 import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.Posting
 import com.unifiedledger.domain.PostingId
@@ -79,6 +80,11 @@ enum class CreationEntry(
  * `hasActiveEvidenceLink` an active latest-history evidence link, and
  * `rg03ReconciliationEligible` reads the existing `rg03_transfer_posting_semantic`
  * column as-is (`null` = no rg03 row).
+ *
+ * P8-01a (spec section 2.1; D-308 item 9): the three source columns of the composite mark ride
+ * the same query as a LEFT join on `catalog_account`, so a posting whose account has no catalog
+ * row keeps every pre-P8-01a eligibility outcome (all three are `null`) and
+ * [hasReconciliationCompositeMark] is false — the derivation is additive-only.
  */
 data class TransactionReconciliationLegRow(
     val postingId: PostingId,
@@ -90,20 +96,45 @@ data class TransactionReconciliationLegRow(
     val hasReconciliationRow: Boolean,
     val hasActiveEvidenceLink: Boolean,
     val rg03ReconciliationEligible: Boolean?,
+    /** `catalog_account.owned_by_user`; `null` when the account has no catalog row. */
+    val accountOwnedByUser: Boolean?,
+    /** `catalog_account.real_account`; `null` when the account has no catalog row. */
+    val accountRealAccount: Boolean?,
+    /** `catalog_account.kind`; `null` when the account has no catalog row. */
+    val accountKind: AccountKind?,
 )
 
 /**
- * Reconciliation eligibility per the frozen registered interpretation (spec section 3.2.1):
- * eligible iff an rg03 semantic row marks the posting eligible (a), or — when no rg03 row
- * exists — the posting has an active evidence link or a reconciliation status row (b).
- * An rg03 row with `reconciliation_eligible = 0` (fee leg) is explicitly excluded and
- * takes precedence over (b). Read-only: no reconciliation state is created or changed.
+ * P8-01a spec section 2.1 composite mark (D-308 item 9): a leg's account must be
+ * `owned_by_user = 1 AND real_account = 1 AND kind IN ('ASSET','LIABILITY')`. `active`
+ * deliberately does not participate (deactivating an account does not rewrite its history,
+ * `ACCOUNTING_RULES.md:259`), system/external accounts are excluded by `owned_by_user`, and the
+ * hidden posting accounts fall outside the two real kinds because they follow their leaf expense
+ * or income category (`ACCOUNTING_RULES.md:261`). The RG-07 golden fixture's stored-value
+ * exclusion is a scenario rule and is NOT adopted here: stored-value asset legs must stay
+ * reconcilable (`ACCOUNTING_RULES.md:188`). A missing catalog row marks nothing.
+ */
+fun hasReconciliationCompositeMark(row: TransactionReconciliationLegRow): Boolean =
+    row.accountOwnedByUser == true &&
+        row.accountRealAccount == true &&
+        (row.accountKind == AccountKind.ASSET || row.accountKind == AccountKind.LIABILITY)
+
+/**
+ * Reconciliation eligibility per the frozen registered interpretation (spec section 3.2.1 as
+ * revised by the P8-01a spec section 2.1 and D-308 item 9). An rg03 semantic row always wins: it
+ * marks the leg eligible, or explicitly excludes it (the fee leg), and it takes precedence over
+ * every later clause. With no rg03 row the leg is eligible when it satisfies the section 2.1
+ * composite mark ([hasReconciliationCompositeMark]), has an active evidence link, or has a
+ * reconciliation status row — the two pre-P8-01a clauses kept verbatim.
+ *
+ * ADDITIVE-ONLY: the composite mark is an added `OR` term and never a replacement, so no leg
+ * can become ineligible because of it. Read-only: no reconciliation state is created or changed.
  */
 fun isReconciliationEligible(row: TransactionReconciliationLegRow): Boolean =
     when (row.rg03ReconciliationEligible) {
         false -> false
         true -> true
-        null -> row.hasActiveEvidenceLink || row.hasReconciliationRow
+        null -> hasReconciliationCompositeMark(row) || row.hasActiveEvidenceLink || row.hasReconciliationRow
     }
 
 /**
