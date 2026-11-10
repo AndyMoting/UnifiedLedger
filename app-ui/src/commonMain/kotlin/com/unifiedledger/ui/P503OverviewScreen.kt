@@ -141,7 +141,11 @@ fun P503OverviewScreen(
                 Spacer(Modifier.height(8.dp))
             }
         }
-        if (showMonthlyRegion) {
+        // P8-00 b4g (D-307 follow-up): an empty ledger has nothing to summarise, so the summary card
+        // is absent — the ledger-wide empty voice below is the only voice. This is what the E1s/01a#E1s
+        // canvases draw; before it the device stacked "支出 — / 该月无交易" above
+        // "账本为空，还没有任何交易。" and two screens' worth of nothing-to-report.
+        if (showMonthlyRegion && !emptyLedger) {
             item {
                 P8SummaryCard(
                     activity = monthlyActivity,
