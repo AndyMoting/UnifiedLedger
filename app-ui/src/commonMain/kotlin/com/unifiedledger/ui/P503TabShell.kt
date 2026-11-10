@@ -2,13 +2,13 @@ package com.unifiedledger.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -25,9 +25,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -93,9 +90,15 @@ fun P503TabShell(
                         fallbackColor = palette.dock,
                         border = BorderStroke(1.dp, palette.stroke),
                     ) {
-                        NavigationBar(
-                            containerColor = Color.Transparent,
-                            windowInsets = WindowInsets(0.dp),
+                        // P8-00 b4d (V-8): Material3's NavigationBar pins a fixed 80 dp container,
+                        // so at 1.3x font scale the glyph and its label were squeezed into the same
+                        // band and overlapped (run 42711693486). The dock is therefore a plain row
+                        // of minimum-height items: it keeps the glyph-above-label shape but grows
+                        // with the scaled text instead of clipping it.
+                        Row(
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceEvenly,
                         ) {
                             P8TabItem(selectedTab, P503Tab.HOME, "首", "首页", onSelectTab)
                             P8TabItem(selectedTab, P503Tab.ACCOUNTS, "账", "账户", onSelectTab)
@@ -171,20 +174,37 @@ private fun RowScope.P8TabItem(
 ) {
     val palette = LocalP8Palette.current
     val selected = selectedTab == tab
-    NavigationBarItem(
-        selected = selected,
-        onClick = { onSelectTab(tab) },
-        icon = { Text(glyph) },
-        label = { Text(label) },
-        colors =
-            NavigationBarItemDefaults.colors(
-                selectedIconColor = palette.accent,
-                selectedTextColor = palette.accent,
-                unselectedIconColor = palette.onSurfaceVariant,
-                unselectedTextColor = palette.onSurfaceVariant,
-                indicatorColor = palette.accentSelectedBackground,
-            ),
-    )
+    Column(
+        modifier =
+            Modifier
+                .weight(1f)
+                .heightIn(min = 56.dp)
+                .clickable(onClickLabel = label) { onSelectTab(tab) }
+                .padding(vertical = 6.dp)
+                .semantics { contentDescription = label },
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Surface(
+            color = if (selected) palette.accentSelectedBackground else Color.Transparent,
+            shape = RoundedCornerShape(percent = 50),
+            modifier = Modifier.size(width = 40.dp, height = 28.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(
+                    glyph,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (selected) palette.accent else palette.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (selected) palette.accent else palette.onSurfaceVariant,
+        )
+    }
 }
 
 /**
