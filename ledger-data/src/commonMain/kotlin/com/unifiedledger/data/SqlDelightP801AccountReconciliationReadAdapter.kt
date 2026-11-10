@@ -37,10 +37,17 @@ import kotlin.time.Instant
  * empty totals list or an amount of zero — an absent group is absent, a corrupt row is never
  * silently dropped, and a real zero is only ever the sum of real rows.
  *
- * The keyset order is the frozen `occurred_at DESC, posting_id ASC`. `occurred_at` is compared as
- * the persisted TEXT the page key is defined on, and the next cursor hands that same text back,
- * so page boundaries stay exact; the SQL comment records why no numeric projection is used (that
- * would be a DDL change this batch forbids).
+ * The keyset order is the frozen `occurred_at DESC, posting_id ASC`, applied to the epoch-nanosecond
+ * projection the query computes inline from `occurred_at` (no DDL, no added column). `occurred_at`
+ * is TEXT in mixed shapes, so text order is not time order; the query applies the frozen
+ * `statistics_at` parser to the row text AND to the cursor text the next page hands back, so a page
+ * boundary is an instant boundary and the cursor stays exact. An unparseable text projects to the
+ * epoch sentinel, keeping the order total (see the query comment).
+ *
+ * REGISTERED RESIDUAL (D-308 item 9 scope): the queue ignores an rg03
+ * `reconciliation_eligible = 0` override, so such a leg would render 待对账 while the detail face
+ * derives it ineligible and renders `null`. Unreachable today: the schema ties that value to the
+ * fee leg, which posts to an EXPENSE account and so fails the section 2.1 composite mark too.
  */
 class SqlDelightP801AccountReconciliationReadAdapter(
     private val database: LedgerDatabase,

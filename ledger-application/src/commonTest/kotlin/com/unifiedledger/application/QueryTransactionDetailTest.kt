@@ -206,16 +206,30 @@ class QueryTransactionDetailTest {
     }
 
     @Test
-    fun legsWithoutAnyEligibilityPresentNoRollup() {
-        // Pure manual ledger: no rg03 rows, no evidence chain, no reconciliation rows —
-        // every leg shows 无对账资格 and no transaction rollup exists (spec section 3.2.1).
+    fun plainManualLedgerLegsAreEligibleViaTheCompositeMarkAndReadPending() {
+        // P8-01a spec section 2.1 (D-308 item 9): a plain manual ledger writes no rg03 row, no
+        // evidence chain and no reconciliation row, but `catalog()` maps both lending legs to
+        // user-owned real ASSET accounts, so the composite mark makes both eligible and each reads
+        // its storage value — the SQL default PENDING (待对账) — instead of 无对账资格. The rollup
+        // therefore folds two PENDING legs and is PENDING, not null.
         val detail =
             assertIs<TransactionDetailResult.Success>(
-                QueryTransactionDetail(EntryDetailPort(rows = listOf(lendRow()), legs = listOf(legRow("posting-lend-out"), legRow("posting-lend-in"))), ledgerId, catalog())
-                    .query(TransactionId("tx-lend")),
+                QueryTransactionDetail(
+                    EntryDetailPort(
+                        rows = listOf(lendRow()),
+                        legs =
+                            listOf(
+                                legRow("posting-lend-out", ownedByUser = true, realAccount = true, accountKind = AccountKind.ASSET),
+                                legRow("posting-lend-in", ownedByUser = true, realAccount = true, accountKind = AccountKind.ASSET),
+                            ),
+                    ),
+                    ledgerId,
+                    catalog(),
+                ).query(TransactionId("tx-lend")),
             ).detail
-        assertTrue(detail.reconciliation.legs.all { !it.eligible })
-        assertNull(detail.reconciliation.rollup)
+        assertTrue(detail.reconciliation.legs.all { it.eligible })
+        assertTrue(detail.reconciliation.legs.all { it.status == P408ReconciliationStatus.PENDING })
+        assertEquals(P408ReconciliationStatus.PENDING, detail.reconciliation.rollup)
     }
 
     @Test
@@ -283,9 +297,13 @@ class QueryTransactionDetailTest {
 
     @Test
     fun anEligibleLegWithoutAReconciliationRowReadsPendingAndAnIneligibleOneStaysNull() {
-        // V-7: the composite-marked leg has no `posting_reconciliation` row, so the projection reads
-        // the SQL COALESCE default PENDING (待对账); the unmarked expense leg keeps `null`
-        // (「—（无对账资格）」) and never falls back to a five-state label — least of all PENDING.
+        // V-7: the eligible composite-marked leg carries the storage value the ledger-data query
+        // projects for a leg with NO `posting_reconciliation` row — its SQL COALESCE default
+        // PENDING (待对账) — and this test pins the derivation from that value: eligible -> status
+        // shown, ineligible -> null (「—（无对账资格）」), never a five-state fallback, least of all
+        // PENDING. The SQL default itself is produced by hand here, so the real query/fixture chain
+        // is pinned separately: SqlDelightLedgerEntryReadAdapterTest over the database, and
+        // DesktopLedgerViewCompositionRootTest end-to-end through the wired detail use case.
         val legs =
             listOf(
                 legRow("posting-payment", ownedByUser = true, realAccount = true, accountKind = AccountKind.ASSET),

@@ -37,10 +37,11 @@ const val P801_ACCOUNT_RECONCILIATION_PAGE_SIZE: Int = 100
  *
  * [occurredAtStorageValue] is the PERSISTED `occurred_at` text of the last row of the previous
  * page (the same `*StorageValue` shape [TransactionReconciliationLegRow.statusStorageValue] uses),
- * never a re-serialised `Instant`: `occurred_at` is a TEXT column and the keyset predicate
- * compares that column, so passing back a re-serialised instant could skip or repeat a row at a
- * page boundary. The value is opaque to the application layer — take it from the page and hand it
- * back unchanged.
+ * never a re-serialised `Instant`: `occurred_at` is TEXT in mixed shapes (`...Z` and `...+08:00`),
+ * so the implementation parses this text with the same epoch-nanosecond projection it parses the
+ * column with, and passing back a re-serialised instant could skip or repeat a row at a page
+ * boundary. The value is opaque to the application layer — take it from the page and hand it back
+ * unchanged.
  */
 data class P801AccountReconciliationCursor(
     val occurredAtStorageValue: String,

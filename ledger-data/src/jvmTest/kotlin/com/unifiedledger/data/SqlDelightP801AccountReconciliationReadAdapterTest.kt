@@ -25,19 +25,32 @@ import kotlin.time.Instant
 
 /**
  * P8-01a account reconciliation read adapter evidence (D-308 items 6/8; spec section 2.3). Drives
- * the real SQL over a real in-memory SQLite database, so removing the composite-mark join, the
- * current-version/effective joins, the keyset bound or the integer `sum()` turns a specific
- * assertion red:
+ * the real SQL over a real in-memory SQLite database, so every guard below is load-bearing: the
+ * named fixture that fails when the guard is deleted is listed with it.
  *
- *  - the frozen `occurred_at DESC, posting_id ASC` order holds, including the posting-id tie-break
- *    inside one instant, and a keyset cursor continues the page exactly once (no skip, no repeat);
- *  - a leg on a non-real account (the fee/income leg of the very same transfer) and a leg of the
- *    same ledger on another account never enter the requested account's queue;
- *  - a queue leg without a `posting_reconciliation` row reads `PENDING`, a stored status is read
- *    as-is, and only an ACTIVE latest evidence-link history sets `hasActiveEvidenceLink`;
- *  - the summary folds exact integer minor units per (currency, status) with its row count;
+ *  - the frozen queue order is a TIME order, not a text order: `occurred_at` is projected inline to
+ *    epoch nanoseconds and the same parser is applied to the cursor text (a `+08:00` leg whose text
+ *    sorts above an older `Z` leg must follow it, and the second page must still find it);
+ *  - the CURRENT version only: a transaction with two versions admits only version 2's posting, and
+ *    version 1's posting id never appears (page or summary);
+ *  - EFFECTIVE transactions only: a voided transaction's leg appears in neither read;
+ *  - the section 2.1 composite mark is column-wise: an ASSET account failing `owned_by_user` alone,
+ *    one failing `real_account` alone, and an owned/real EXPENSE account are each excluded on their
+ *    own, while the same-shaped owned/real ASSET one appears;
+ *  - the posting-id tie-break inside one instant, and a keyset cursor continuing the page exactly
+ *    once (no skip, no repeat);
+ *  - a leg on another real account of the same ledger never enters the requested account's queue;
+ *  - a queue leg without a `posting_reconciliation` row reads `PENDING` (the SQL COALESCE default),
+ *    a stored status is read as-is, and only an ACTIVE latest evidence-link history sets
+ *    `hasActiveEvidenceLink`;
+ *  - the summary folds exact integer minor units per (currency, status) with its row count over the
+ *    SAME leg set as the page (it excludes the superseded and the voided legs too);
  *  - an absent group is absent and never a zero row, while a real zero amount is a real group with
  *    one row (the D-089 distinction both ways).
+ *
+ * The storage text is round-tripped through [Instant.parse] by the adapter, which is also the only
+ * user-visible failure for an unparseable `occurred_at`; the SQL's epoch sentinel for such a text is
+ * documented in the query, not asserted here (no writer shape in this fixture produces one).
  *
  * All data synthetic and anonymous, with fixed instants.
  */
@@ -94,6 +107,120 @@ class SqlDelightP801AccountReconciliationReadAdapterTest {
                 ).page
             assertEquals(listOf("posting-z", "posting-old"), second.rows.map { it.postingId.value })
             assertNull(second.nextCursor)
+        }
+    }
+
+    @Test
+    fun queueOrdersByInstantNotByTextAndTheCursorParsesTheSameWay() {
+        withDatabase { _, driver, adapter ->
+            // The two persisted shapes disagree with time order: "2026-01-15T00:30:00+08:00" is
+            // 16:30Z, EARLIER than "2026-01-14T20:00:00Z", while its TEXT sorts LATER — so TEXT DESC
+            // would render the offset leg first and a text-compared cursor would then drop the other.
+            seedTransaction(driver, "tx-offset", "2026-01-15T00:30:00+08:00", legs = listOf(SeededLeg("posting-offset", assetAccountId.value, -100L)))
+            seedTransaction(driver, "tx-z", "2026-01-14T20:00:00Z", legs = listOf(SeededLeg("posting-z", assetAccountId.value, -200L)))
+
+            val first =
+                assertIs<P801AccountReconciliationPageResult.Success>(
+                    adapter.loadAccountReconciliationPage(ledgerId, assetAccountId, after = null, pageSize = 1),
+                ).page
+            assertEquals(listOf("posting-z"), first.rows.map { it.postingId.value })
+            assertEquals(Instant.parse("2026-01-14T20:00:00Z"), first.rows.single().occurredAt)
+            assertEquals(
+                P801AccountReconciliationCursor(occurredAtStorageValue = "2026-01-14T20:00:00Z", postingId = PostingId("posting-z")),
+                first.nextCursor,
+            )
+
+            val second =
+                assertIs<P801AccountReconciliationPageResult.Success>(
+                    adapter.loadAccountReconciliationPage(ledgerId, assetAccountId, after = first.nextCursor, pageSize = 1),
+                ).page
+            assertEquals(listOf("posting-offset"), second.rows.map { it.postingId.value })
+            assertEquals(Instant.parse("2026-01-15T00:30:00+08:00"), second.rows.single().occurredAt)
+            assertNull(second.nextCursor)
+        }
+    }
+
+    @Test
+    fun onlyTheCurrentVersionsPostingsEnterTheQueueAndTheSummary() {
+        withDatabase { _, driver, adapter ->
+            seedSupersededTransaction(
+                driver,
+                transactionId = "tx-replaced",
+                firstOccurredAt = "2026-03-01T02:00:00Z",
+                firstLegs = listOf(SeededLeg("posting-replaced", assetAccountId.value, -1_000L)),
+                secondOccurredAt = "2026-03-02T02:00:00Z",
+                secondLegs = listOf(SeededLeg("posting-current", assetAccountId.value, -2_000L)),
+            )
+
+            val rows =
+                assertIs<P801AccountReconciliationPageResult.Success>(
+                    adapter.loadAccountReconciliationPage(ledgerId, assetAccountId, after = null),
+                ).page.rows
+            assertEquals(listOf("posting-current"), rows.map { it.postingId.value })
+            assertEquals(Instant.parse("2026-03-02T02:00:00Z"), rows.single().occurredAt)
+            // The summary reads the same leg set: one current leg, not one per version.
+            assertEquals(
+                listOf(P801AccountReconciliationStatusTotal(CurrencyUnit("CNY", 2), P408ReconciliationStatus.PENDING, -2_000L, 1)),
+                assertIs<P801AccountReconciliationSummaryResult.Success>(
+                    adapter.loadAccountReconciliationSummary(ledgerId, assetAccountId),
+                ).totals,
+            )
+        }
+    }
+
+    @Test
+    fun aVoidedTransactionsLegEntersNeitherTheQueueNorTheSummary() {
+        withDatabase { _, driver, adapter ->
+            seedTransaction(driver, "tx-lived", "2026-03-01T02:00:00Z", legs = listOf(SeededLeg("posting-lived", assetAccountId.value, -100L)))
+            seedVoidedTransaction(driver, "tx-voided", "2026-03-02T02:00:00Z", legs = listOf(SeededLeg("posting-voided", assetAccountId.value, -7_000L)))
+
+            val rows =
+                assertIs<P801AccountReconciliationPageResult.Success>(
+                    adapter.loadAccountReconciliationPage(ledgerId, assetAccountId, after = null),
+                ).page.rows
+            assertEquals(listOf("posting-lived"), rows.map { it.postingId.value })
+            assertEquals(
+                listOf(P801AccountReconciliationStatusTotal(CurrencyUnit("CNY", 2), P408ReconciliationStatus.PENDING, -100L, 1)),
+                assertIs<P801AccountReconciliationSummaryResult.Success>(
+                    adapter.loadAccountReconciliationSummary(ledgerId, assetAccountId),
+                ).totals,
+            )
+        }
+    }
+
+    @Test
+    fun eachCompositeMarkColumnExcludesOnItsOwn() {
+        withDatabase { _, driver, adapter ->
+            // Same-shape ASSET accounts, each failing exactly one mark column, plus one that passes.
+            seedCatalogAccount(driver, "asset-not-owned", kind = "ASSET", ownedByUser = false, realAccount = true)
+            seedCatalogAccount(driver, "asset-not-real", kind = "ASSET", ownedByUser = true, realAccount = false)
+            seedCatalogAccount(driver, "expense-marked-like", kind = "EXPENSE", ownedByUser = true, realAccount = true)
+            seedCatalogAccount(driver, "asset-marked", kind = "ASSET", ownedByUser = true, realAccount = true)
+            seedTransaction(driver, "tx-not-owned", "2026-03-01T02:00:00Z", legs = listOf(SeededLeg("posting-not-owned", "asset-not-owned", -1L)))
+            seedTransaction(driver, "tx-not-real", "2026-03-02T02:00:00Z", legs = listOf(SeededLeg("posting-not-real", "asset-not-real", -2L)))
+            seedTransaction(driver, "tx-wrong-kind", "2026-03-03T02:00:00Z", legs = listOf(SeededLeg("posting-wrong-kind", "expense-marked-like", -3L)))
+            seedTransaction(driver, "tx-marked", "2026-03-04T02:00:00Z", legs = listOf(SeededLeg("posting-marked", "asset-marked", -4L)))
+
+            // The passing account proves the three failing ones differ only by their own mark column.
+            assertEquals(
+                listOf("posting-marked"),
+                assertIs<P801AccountReconciliationPageResult.Success>(
+                    adapter.loadAccountReconciliationPage(ledgerId, AccountId("asset-marked"), after = null),
+                ).page.rows.map { it.postingId.value },
+            )
+            for (excluded in listOf("asset-not-owned", "asset-not-real", "expense-marked-like")) {
+                val page =
+                    assertIs<P801AccountReconciliationPageResult.Success>(
+                        adapter.loadAccountReconciliationPage(ledgerId, AccountId(excluded), after = null),
+                    ).page
+                assertTrue(page.rows.isEmpty(), "account $excluded must not be a queue member")
+                assertTrue(
+                    assertIs<P801AccountReconciliationSummaryResult.Success>(
+                        adapter.loadAccountReconciliationSummary(ledgerId, AccountId(excluded)),
+                    ).totals.isEmpty(),
+                    "account $excluded must not contribute a summary group",
+                )
+            }
         }
     }
 
@@ -255,18 +382,79 @@ class SqlDelightP801AccountReconciliationReadAdapterTest {
         kind: String = "ACCOUNT_TRANSFER",
         legs: List<SeededLeg>,
     ) {
-        val versionId = "$transactionId-version-1"
-        val postingSetId = "$versionId-posting-set"
+        seedTransactionRow(driver, transactionId, kind)
+        seedVersion(driver, transactionId, versionNumber = 1, occurredAt = occurredAt, note = note, legs = legs)
+        pointCurrentVersion(driver, transactionId, versionNumber = 1)
+    }
+
+    /**
+     * One transaction with two versions where `current_version` names version 2: version 1's posting
+     * set still carries its own postings, so only the current-version join can keep them out.
+     */
+    private fun seedSupersededTransaction(
+        driver: JdbcSqliteDriver,
+        transactionId: String,
+        firstOccurredAt: String,
+        firstLegs: List<SeededLeg>,
+        secondOccurredAt: String,
+        secondLegs: List<SeededLeg>,
+    ) {
+        seedTransactionRow(driver, transactionId, kind = "ACCOUNT_TRANSFER")
+        seedVersion(driver, transactionId, versionNumber = 1, occurredAt = firstOccurredAt, note = null, legs = firstLegs)
+        seedVersion(driver, transactionId, versionNumber = 2, occurredAt = secondOccurredAt, note = null, legs = secondLegs)
+        pointCurrentVersion(driver, transactionId, versionNumber = 2)
+    }
+
+    /** The same transaction, then the void fact the schema requires to make it non-effective. */
+    private fun seedVoidedTransaction(
+        driver: JdbcSqliteDriver,
+        transactionId: String,
+        occurredAt: String,
+        legs: List<SeededLeg>,
+    ) {
+        seedTransaction(driver, transactionId, occurredAt, legs = legs)
+        driver.execute(
+            null,
+            "INSERT INTO transaction_void_request(ledger_id, request_id, transaction_id, fact_kind, reason_code, reason_note, confirmation_marker) " +
+                "VALUES ('${ledgerId.value}','void-request-$transactionId','$transactionId','void','mis_entered',NULL,'explicit_manual_save')",
+            0,
+        )
+        driver.execute(
+            null,
+            "INSERT INTO transaction_void_fact(ledger_id, transaction_id, sequence, fact_id, fact_kind, reason_code, reason_note, request_id, confirmation_id, created_at) " +
+                "VALUES ('${ledgerId.value}','$transactionId',1,'void-fact-$transactionId','void','mis_entered',NULL," +
+                "'void-request-$transactionId','void-confirmation-$transactionId','$occurredAt')",
+            0,
+        )
+    }
+
+    private fun seedTransactionRow(
+        driver: JdbcSqliteDriver,
+        transactionId: String,
+        kind: String,
+    ) {
         driver.execute(
             null,
             "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind) VALUES ('$transactionId','${ledgerId.value}','$kind')",
             0,
         )
+    }
+
+    private fun seedVersion(
+        driver: JdbcSqliteDriver,
+        transactionId: String,
+        versionNumber: Int,
+        occurredAt: String,
+        note: String?,
+        legs: List<SeededLeg>,
+    ) {
+        val versionId = "$transactionId-version-$versionNumber"
+        val postingSetId = "$versionId-posting-set"
         driver.execute(null, "INSERT INTO posting_set(posting_set_id, ledger_id) VALUES ('$postingSetId','${ledgerId.value}')", 0)
         driver.execute(
             null,
             "INSERT INTO transaction_version(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note) " +
-                "VALUES ('$versionId','$transactionId','${ledgerId.value}',1,'$postingSetId','$occurredAt','$occurredAt','$occurredAt',${note?.let { "'$it'" } ?: "NULL"})",
+                "VALUES ('$versionId','$transactionId','${ledgerId.value}',$versionNumber,'$postingSetId','$occurredAt','$occurredAt','$occurredAt',${note?.let { "'${it.replace("'", "''")}'" } ?: "NULL"})",
             0,
         )
         legs.forEachIndexed { index, leg ->
@@ -277,9 +465,17 @@ class SqlDelightP801AccountReconciliationReadAdapterTest {
                 0,
             )
         }
+    }
+
+    private fun pointCurrentVersion(
+        driver: JdbcSqliteDriver,
+        transactionId: String,
+        versionNumber: Int,
+    ) {
         driver.execute(
             null,
-            "INSERT INTO ledger_transaction_current_version(transaction_id, ledger_id, current_version_id) VALUES ('$transactionId','${ledgerId.value}','$versionId')",
+            "INSERT INTO ledger_transaction_current_version(transaction_id, ledger_id, current_version_id) " +
+                "VALUES ('$transactionId','${ledgerId.value}','$transactionId-version-$versionNumber')",
             0,
         )
     }
