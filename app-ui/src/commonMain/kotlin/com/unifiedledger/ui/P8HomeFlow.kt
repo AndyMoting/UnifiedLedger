@@ -133,7 +133,6 @@ internal fun p8ReportingDay(statisticsAt: Instant): LocalDate = statisticsAt.toL
 internal fun p8ShowsEmptyLedger(transactionTotal: Int): Boolean = transactionTotal <= 0
 
 /** Groups the flow rows by reporting day, preserving the incoming order. */
-// (inserted predicate lands above this line)
 internal fun p8GroupByDay(rows: List<LedgerEntryRow>): List<P8DayGroup> {
     if (rows.isEmpty()) return emptyList()
     val buckets = LinkedHashMap<LocalDate, MutableList<LedgerEntryRow>>()
