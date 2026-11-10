@@ -43,7 +43,6 @@ import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.ui.theme.LocalP8Palette
 import com.unifiedledger.ui.theme.glass.GlassBackdropSource
-import com.unifiedledger.ui.theme.glass.GlassSurface
 import com.unifiedledger.ui.theme.glass.rememberGlassBackdrop
 
 /**
@@ -83,12 +82,20 @@ fun P503TabShell(
                     modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    GlassSurface(
-                        backdrop = glassBackdrop,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(palette.dockRadius),
-                        fallbackColor = palette.dock,
+                    // P8-00 b4e (OBS-P8-DOCK-GHOST-01): the dock paints the frozen dock/stroke
+                    // tokens instead of sampling the glass backdrop. The backdrop layer is
+                    // registered by GlassBackdropSource around the page CONTENT, yet the dock's
+                    // sampling reproduced its own label row as a soft ghost strip at both font
+                    // scales (runs 42796718536 and 42798902158, ~1 px + ~35 px light bands exactly
+                    // at the label baseline). The dock sits over a flat page region, so the blur
+                    // contributed nothing but that ghost; this is the F-Q2 fallback shape, which
+                    // already carried the identical token fill, border and shadow parity.
+                    Surface(
+                        color = palette.dock,
                         border = BorderStroke(1.dp, palette.stroke),
+                        shadowElevation = 6.dp,
+                        shape = RoundedCornerShape(palette.dockRadius),
+                        modifier = Modifier.weight(1f),
                     ) {
                         // P8-00 b4d (V-8): Material3's NavigationBar pins a fixed 80 dp container,
                         // so at 1.3x font scale the glyph and its label were squeezed into the same
