@@ -584,6 +584,24 @@ class SqlDelightImportSpineStore private constructor(
                     )
                 }
                 val projectionEvidenceId = evidenceForProjection
+                // P8-01a spec section 2.7 double-booking guard (D-308 item 4): an evidence already
+                // used to reconcile an existing posting must never also create a formal transaction,
+                // so the confirmation is refused in the same precondition chain as the duplicate
+                // gate — before any id is allocated, before the factory runs, and before any
+                // candidate status row is appended. The claim rolls back with it.
+                if (database.ledgerQueries
+                        .selectP408ActiveLinksForEvidence(
+                            identity.ledgerId.value,
+                            projectionEvidenceId,
+                        ).executeAsList()
+                        .isNotEmpty()
+                ) {
+                    abortImportSpine(
+                        ImportCandidateDecisionResult.Rejected(
+                            SpineDiagnostics.evidenceAlreadyReconciled(snapshot.candidateId),
+                        ),
+                    )
+                }
                 // P4-06 slice 2 (D-108 section 4.2): leg amounts are decision data; a null
                 // leg is insufficient decision data (not a candidate state) — reject with
                 // zero writes, the claim rolls back and stays retryable.

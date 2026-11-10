@@ -12,9 +12,10 @@ import kotlin.time.Instant
  * P8-01a account-scoped reconciliation read face (D-308 items 6/8; spec section 2.3).
  *
  * This port is the READ side only: it creates no reconciliation row, writes no evidence link and
- * changes no balance or report. It answers the two questions the account queue needs — one keyset
- * page of the account's reconcilable legs, and the per-(currency, status) totals over exactly the
- * same legs.
+ * changes no balance or report. It answers what the account queue needs — one keyset page of the
+ * account's reconcilable legs, the per-(currency, status) totals over exactly the same legs, and
+ * (P8-01a i2) the two facts the frozen matcher consumes: the candidate evidence around a leg and
+ * the posting facts of the legs themselves.
  *
  * WHAT MAKES A LEG A QUEUE MEMBER. Exactly the spec section 2.1 composite mark
  * (`owned_by_user = 1 AND real_account = 1 AND kind IN ('ASSET','LIABILITY')`) on the leg's own
@@ -108,6 +109,63 @@ sealed interface P801AccountReconciliationReadFailure {
     data object Unavailable : P801AccountReconciliationReadFailure
 }
 
+/**
+ * One import evidence row that can be proposed for, or bound to, one account (spec sections
+ * 2.4/3; D-308 item 10).
+ *
+ * RAW FACTS STAY RAW (D-111/D-112): [rawAmountMinor], [rawCurrencyCode], [rawCurrencyPrecision]
+ * and [rawDirectionToken] are the `import_source_record` values verbatim — `null` when the source
+ * row genuinely has none, never a zero or a default — and [occurredAt] carries the persisted
+ * `occurred_at` text with its temporal shape. Of the matcher's five-field funding identity, four
+ * (amount, currency, direction, account) come from [projection] only, and only when that row is
+ * `READY`; the fifth (`occurred_at_window`) is decided by the matcher from the raw [occurredAt]
+ * text. Nothing on this type is normalized.
+ *
+ * [projection] is the one CURRENT `evidence_projection` row (`null` when the evidence has none).
+ * A `REJECTED` row keeps its [P408EvidenceProjection.rejectionCode] so the reason can be shown
+ * as-is. [hasActiveEvidenceLink] is the same active-last-history test the queue uses: an evidence
+ * already linked keeps being listed so the caller can present it as no longer confirmable
+ * (spec section 2.4), rather than having it disappear.
+ */
+data class P801ReconciliationCandidateEvidence(
+    val evidenceId: String,
+    val sourceId: String,
+    /** The importing candidate that owns this evidence's source; `null` when the source has none. */
+    val candidateId: String?,
+    val contentHash: String,
+    val rawAmountMinor: Long?,
+    val rawCurrencyCode: String?,
+    val rawCurrencyPrecision: Int?,
+    val rawDirectionToken: String?,
+    val occurredAt: P408TemporalEvidence,
+    val projection: P408EvidenceProjection?,
+    val hasActiveEvidenceLink: Boolean,
+)
+
+/** The result of one candidate-evidence read; an empty [P801CandidateEvidenceResult.Success] row
+ * list is a genuine "no such evidence in this window", never a failure (D-089). */
+sealed interface P801CandidateEvidenceResult {
+    data class Success(
+        val rows: List<P801ReconciliationCandidateEvidence>,
+    ) : P801CandidateEvidenceResult
+
+    data class Failed(
+        val failure: P801AccountReconciliationReadFailure,
+    ) : P801CandidateEvidenceResult
+}
+
+/** The result of one posting-facts read; an empty [P801AccountPostingFactsResult.Success] fact
+ * list is a genuine "no leg of this account in this window", never a zero-filled stand-in (D-089). */
+sealed interface P801AccountPostingFactsResult {
+    data class Success(
+        val facts: List<P408PostingFacts>,
+    ) : P801AccountPostingFactsResult
+
+    data class Failed(
+        val failure: P801AccountReconciliationReadFailure,
+    ) : P801AccountPostingFactsResult
+}
+
 /** The result of one queue page read. */
 sealed interface P801AccountReconciliationPageResult {
     data class Success(
@@ -135,9 +193,16 @@ sealed interface P801AccountReconciliationSummaryResult {
  *
  * Implementations MUST:
  *
- * - restrict every read to the ledger AND the requested account, to the CURRENT version of each
- *   EFFECTIVE transaction through the single effective-predicate definition point
- *   (`transaction_effective_state`), and to accounts satisfying the section 2.1 composite mark;
+ * - restrict every read to the ledger, to the CURRENT version of each EFFECTIVE transaction
+ *   through the single effective-predicate definition point (`transaction_effective_state`), and
+ *   to the requested account. The ACCOUNT SCOPE itself differs by read and is stated on each
+ *   method: the queue/summary fold the section 2.1 composite mark over `catalog_account`, the
+ *   windowed candidate read narrows through the CURRENT projection (an unprojected evidence has no
+ *   account relation yet and stays) while the by-identity read is scoped by the ledger alone, and
+ *   [loadAccountPostingFacts] reports every `ACCOUNT_TRANSFER` leg of the account in the window with
+ *   `current` / `eligible_real_account` flags so the matcher excludes non-current or non-mark legs by
+ *   rule rather than the read hiding them (non-transfer legs are not reported at all: the confirm
+ *   write path refuses them, spec section 2.1);
  * - page by the frozen key `(occurred_at DESC, posting_id ASC)` with the caller's
  *   [P801_ACCOUNT_RECONCILIATION_PAGE_SIZE] default, so concatenating the pages reproduces the
  *   whole queue exactly once;
@@ -167,4 +232,53 @@ interface P801AccountReconciliationReadPort {
         ledgerId: LedgerId,
         accountId: AccountId,
     ): P801AccountReconciliationSummaryResult
+
+    /**
+     * P8-01a entry A candidate evidence (spec sections 2.4/3; D-308 item 10): every `import_evidence`
+     * row of [ledgerId] whose source time belongs to `[occurredFrom, occurredTo]`, plus EVERY row
+     * whose source time the frozen matcher cannot place in any window at all — an offset-free
+     * `local_datetime`, an offset-shaped but unparseable text, a NULL time. Those are reported as
+     * `source_time_unresolved` by the matcher, so they must stay reachable; the window predicate
+     * only applies to texts the matcher can actually compare (an explicit `Z`/`±hh:mm` suffix plus
+     * the frozen `YYYY-MM-DDTHH:MM:SS` prefix), and everything else is kept unconditionally (D-089:
+     * no silent absence).
+     *
+     * The account narrows the read through the CURRENT projection only: a row already projected to
+     * a DIFFERENT account can neither be bound nor matched for [accountId] (projection content is
+     * immutable), so it is excluded; an unprojected row has no account relation yet and stays
+     * (binding is what creates one).
+     */
+    fun loadCandidateEvidence(
+        ledgerId: LedgerId,
+        accountId: AccountId,
+        occurredFrom: Instant,
+        occurredTo: Instant,
+    ): P801CandidateEvidenceResult
+
+    /**
+     * P8-01a entry B candidate evidence (spec section 2.2): the same row by identity, with no window
+     * and no account constraint — the evidence-centric entry anchors on one candidate's evidence
+     * before either is known. Absent evidence is an empty [P801CandidateEvidenceResult.Success].
+     */
+    fun loadCandidateEvidenceById(
+        ledgerId: LedgerId,
+        evidenceId: String,
+    ): P801CandidateEvidenceResult
+
+    /**
+     * P8-01a matcher posting facts (spec section 2.4): every `ACCOUNT_TRANSFER` leg of [accountId]
+     * in `[occurredFrom, occurredTo]` as the frozen matcher's [P408PostingFacts], including legs
+     * that are not `current` or not on a section 2.1 real account — those carry `false` so the
+     * matcher excludes them by rule instead of the read hiding them.
+     *
+     * Non-transfer legs are NOT offered: the confirm write path accepts `ACCOUNT_TRANSFER` only
+     * (spec section 2.1 / D-308 item 3), so a LEND/credit/ordinary leg must never be proposed as a
+     * candidate that `confirmLink` would then refuse with `P408_POSTING_NOT_ELIGIBLE`.
+     */
+    fun loadAccountPostingFacts(
+        ledgerId: LedgerId,
+        accountId: AccountId,
+        occurredFrom: Instant,
+        occurredTo: Instant,
+    ): P801AccountPostingFactsResult
 }

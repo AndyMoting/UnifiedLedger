@@ -11,6 +11,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import com.unifiedledger.application.BindReconciliationEvidence
 import com.unifiedledger.application.BudgetMonthConfigReader
 import com.unifiedledger.application.CATALOG_MANAGED_CURRENCY
 import com.unifiedledger.application.CatalogAdmissionExpenseTransactionFactory
@@ -23,6 +24,7 @@ import com.unifiedledger.application.CommitOnceInvocationTrackerIncome
 import com.unifiedledger.application.CommitOnceInvocationTrackerLending
 import com.unifiedledger.application.CommitOnceInvocationTrackerTransfer
 import com.unifiedledger.application.ConfirmImportCandidate
+import com.unifiedledger.application.ConfirmReconciliationLink
 import com.unifiedledger.application.ConfirmedExpenseTransactionFactory
 import com.unifiedledger.application.ConfirmedIncomeTransactionFactory
 import com.unifiedledger.application.ConfirmedLendingTransactionFactory
@@ -68,9 +70,11 @@ import com.unifiedledger.application.ManualLendingTransactionFactory
 import com.unifiedledger.application.ManualTransferTransactionFactory
 import com.unifiedledger.application.MixedPaymentFlowFormalFactory
 import com.unifiedledger.application.OrdinaryFlowFormalFactory
+import com.unifiedledger.application.P408EvidenceProjectionPort
 import com.unifiedledger.application.P801AccountReconciliationReadPort
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
+import com.unifiedledger.application.ProposeReconciliationCandidates
 import com.unifiedledger.application.QueryBudgetMonth
 import com.unifiedledger.application.QueryCatalogSnapshot
 import com.unifiedledger.application.QueryImportCandidateDetail
@@ -107,6 +111,7 @@ import com.unifiedledger.application.UuidV7ManualExpenseRequestIdSource
 import com.unifiedledger.application.UuidV7ManualIncomeRequestIdSource
 import com.unifiedledger.application.UuidV7ManualLendingRequestIdSource
 import com.unifiedledger.application.UuidV7ManualTransferRequestIdSource
+import com.unifiedledger.application.UuidV7P801ReconciliationIdSource
 import com.unifiedledger.application.UuidV7TagMerchantRequestIdSource
 import com.unifiedledger.application.UuidV7TransactionCorrectionIdSource
 import com.unifiedledger.application.UuidV7TransactionVoidFactIdSource
@@ -123,10 +128,12 @@ import com.unifiedledger.data.SqlDelightConfirmedManualLendingCommitPort
 import com.unifiedledger.data.SqlDelightConfirmedManualTransferCommitPort
 import com.unifiedledger.data.SqlDelightCounterpartyStore
 import com.unifiedledger.data.SqlDelightEntryPreferenceStore
+import com.unifiedledger.data.SqlDelightEvidenceProjectionStore
 import com.unifiedledger.data.SqlDelightImportReviewReadAdapter
 import com.unifiedledger.data.SqlDelightImportSpineStore
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
 import com.unifiedledger.data.SqlDelightMonthlyContributionReadAdapter
+import com.unifiedledger.data.SqlDelightP408ReconciliationStore
 import com.unifiedledger.data.SqlDelightP801AccountReconciliationReadAdapter
 import com.unifiedledger.data.SqlDelightTagMerchantCatalogStore
 import com.unifiedledger.data.SqlDelightTagMerchantFilterReadAdapter
@@ -687,6 +694,11 @@ internal data class CloseableLedgerGraph(
     // P8-01a (D-308 items 6/8; spec section 2.3): the account-scoped reconciliation read face over
     // this graph's database, read-only and null when a graph wired none (tests, legacy graphs).
     val accountReconciliationRead: P801AccountReconciliationReadPort? = null,
+    // P8-01a i2 (D-308 items 2/3/10; spec sections 2.2/2.4/2.5): the candidate, bind and confirm use
+    // cases over that same read face and the two existing P408 ports. Null when a graph wired none.
+    val proposeReconciliationCandidates: ProposeReconciliationCandidates? = null,
+    val bindReconciliationEvidence: BindReconciliationEvidence? = null,
+    val confirmReconciliationLink: ConfirmReconciliationLink? = null,
 )
 
 internal data class DesktopLedgerGraph(
@@ -715,6 +727,11 @@ internal data class DesktopLedgerGraph(
     // P8-01a (D-308 items 6/8; spec section 2.3): the account-scoped reconciliation read face over
     // this graph's database, read-only and null when a graph wired none (tests, legacy graphs).
     val accountReconciliationRead: P801AccountReconciliationReadPort? = null,
+    // P8-01a i2 (D-308 items 2/3/10; spec sections 2.2/2.4/2.5): the candidate, bind and confirm use
+    // cases over that same read face and the two existing P408 ports. Null when a graph wired none.
+    val proposeReconciliationCandidates: ProposeReconciliationCandidates? = null,
+    val bindReconciliationEvidence: BindReconciliationEvidence? = null,
+    val confirmReconciliationLink: ConfirmReconciliationLink? = null,
 )
 
 /**
@@ -751,14 +768,28 @@ internal fun buildLedgerGraph(
     runQueryStatisticsOptimizeOn(driver)
     val readAdapter = SqlDelightLedgerCurrentStateReadAdapter(database)
     // P8-01a (D-308 items 6/8): the account reconciliation queue/summary read face. Read-only and
-    // wired beside the current-state adapter; no use case consumes it in this batch (i1 is the
-    // read face only, no UI and no write path), so it is exposed on the graph for the next slice.
-    val accountReconciliationRead = SqlDelightP801AccountReconciliationReadAdapter(database)
+    // wired beside the current-state adapter. The candidate reads attach the current projection
+    // row through the projection authority port (D-112) instead of re-deriving it.
+    val evidenceProjection: P408EvidenceProjectionPort = SqlDelightEvidenceProjectionStore.forCompositionRoot(database)
+    val accountReconciliationRead = SqlDelightP801AccountReconciliationReadAdapter(database, evidenceProjection)
     val counterpartyStore = SqlDelightCounterpartyStore(database, driver)
     val entryPreferenceStore = SqlDelightEntryPreferenceStore(database)
     // P7-03.C/D: the reporting clock is injected into the session so the unified monthly
     // projection resolves 本月 (R-Q06-2) on the same authoritative catalog version.
     val ledgerClock = LedgerClock { Clock.System.now() }
+    // P8-01a i2 (D-308 items 2/3/10; spec sections 2.4/2.5): the headless bind/candidate/confirm
+    // path. Both writes are the existing P408 ports; the ids come from this ledger's own generator.
+    val reconciliationIds = UuidV7P801ReconciliationIdSource(UuidV7Generator(::secureRandomBytes))
+    val proposeReconciliationCandidates = ProposeReconciliationCandidates(accountReconciliationRead)
+    val bindReconciliationEvidence =
+        BindReconciliationEvidence(accountReconciliationRead, evidenceProjection, store, reconciliationIds)
+    val confirmReconciliationLink =
+        ConfirmReconciliationLink(
+            evidenceProjection,
+            SqlDelightP408ReconciliationStore.forCompositionRoot(database),
+            ledgerClock,
+            reconciliationIds,
+        )
     val session =
         CatalogConsumerSession(
             reader = store,
@@ -1204,6 +1235,9 @@ internal fun buildLedgerGraph(
         // P7-06 06.B (D-177): the controlled snapshot surface over this graph's driver.
         snapshotPort = DesktopBackupSnapshotPort(driver),
         accountReconciliationRead = accountReconciliationRead,
+        proposeReconciliationCandidates = proposeReconciliationCandidates,
+        bindReconciliationEvidence = bindReconciliationEvidence,
+        confirmReconciliationLink = confirmReconciliationLink,
     )
 }
 
@@ -1249,6 +1283,9 @@ internal fun openDesktopLedger(databaseUrl: String): CloseableLedgerGraph {
             graph.runFullAnalyze,
             snapshotPort = graph.snapshotPort,
             accountReconciliationRead = graph.accountReconciliationRead,
+            proposeReconciliationCandidates = graph.proposeReconciliationCandidates,
+            bindReconciliationEvidence = graph.bindReconciliationEvidence,
+            confirmReconciliationLink = graph.confirmReconciliationLink,
         )
     } catch (failure: Exception) {
         // A failure mid-open (schema create/open/migrate/bootstrap) must not leak the

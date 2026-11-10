@@ -47,6 +47,22 @@ class SqlDelightEvidenceProjectionStore private constructor(
             .executeAsOneOrNull()
             ?.toModel()
 
+    /**
+     * Batch form of [readProjection]: ONE query for the whole batch, using the same CURRENT-row
+     * predicate (`superseded_by_projection_id IS NULL`) and the same [toModel] mapper as the
+     * single-row read, so the authority rule is stated once in SQL and once in Kotlin.
+     */
+    override fun readProjections(
+        ledgerId: String,
+        evidenceIds: Collection<String>,
+    ): Map<String, P408EvidenceProjection> {
+        if (evidenceIds.isEmpty()) return emptyMap()
+        return database.ledgerQueries
+            .selectP408EvidenceProjectionsByIds(ledgerId, evidenceIds)
+            .executeAsList()
+            .associate { row -> row.evidence_id to row.toModel() }
+    }
+
     /** Standalone/explicit-target entry point; owns its transaction. */
     override fun materialize(request: P408MaterializationRequest): P408MaterializeResult =
         try {
@@ -320,7 +336,20 @@ class SqlDelightEvidenceProjectionStore private constructor(
 
     /** Deterministic projection identity derived from the unique evidence key. */
     companion object {
-        /** Same-module factory for sibling stores sharing one open database. */
+        /**
+         * Composition-root factory returning ONLY [P408EvidenceProjectionPort], so an app module
+         * cannot reach [ensureReadyWithinTransaction], [ensureCurrentForCorrection] or any other
+         * concrete member — notably the supersede+insert correction write path (D-113), which is
+         * approved-out for app callers. Construction without a driver is safe because the
+         * composition root never opens its own database: it receives the one `LedgerDatabase` from
+         * its owning handle (or from the first store built with that handle's driver), and that
+         * handle already ran `configureSqliteConnection` on the single shared connection. This
+         * factory therefore configures nothing and only constructs the port over the same
+         * connection.
+         */
+        fun forCompositionRoot(database: LedgerDatabase): P408EvidenceProjectionPort = SqlDelightEvidenceProjectionStore(database)
+
+        /** Internal concrete factory for the in-module transaction-sharing callers. */
         internal fun createShared(database: LedgerDatabase): SqlDelightEvidenceProjectionStore = SqlDelightEvidenceProjectionStore(database)
 
         const val CODE_CURRENCY_MISMATCH = "P408_PROJECTION_CURRENCY_MISMATCH"
@@ -357,7 +386,7 @@ class SqlDelightEvidenceProjectionStore private constructor(
      * any non-READY outcome (E: zero writes beyond claims/links/reconciliation —
      * and none of those happen either, because the caller aborts on NotReady).
      */
-    fun ensureReadyWithinTransaction(request: P408MaterializationRequest): EnsureReadyResult =
+    internal fun ensureReadyWithinTransaction(request: P408MaterializationRequest): EnsureReadyResult =
         when (val resolution = resolutionFor(request)) {
             is Resolution.Existing -> {
                 val model = resolution.row.toModel()
@@ -397,7 +426,7 @@ class SqlDelightEvidenceProjectionStore private constructor(
      *   current rows for one evidence (concurrent losers abort via the trigger
      *   or the partial unique index instead of creating two authorities).
      */
-    fun ensureCurrentForCorrection(request: P408MaterializationRequest): EnsureReadyResult =
+    internal fun ensureCurrentForCorrection(request: P408MaterializationRequest): EnsureReadyResult =
         when (val resolution = resolutionFor(request)) {
             is Resolution.Fresh ->
                 when {
