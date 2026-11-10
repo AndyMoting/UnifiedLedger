@@ -419,6 +419,20 @@ object SpineDiagnostics {
             "candidate",
             ImportDiagnosticLocation(null, null, null, candidateId),
         )
+
+    /**
+     * P8-01a spec section 2.7 double-booking guard: the candidate's evidence is already linked to an
+     * existing posting, so confirming the candidate would book the same economic event twice. The
+     * code is the one the spec names; the candidate state does not move (zero formal writes, zero
+     * `import_candidate_status_history` rows).
+     */
+    fun evidenceAlreadyReconciled(candidateId: ImportCandidateId): ImportDiagnostic =
+        ImportDiagnosticRecord(
+            "IMPORT_EVIDENCE_ALREADY_RECONCILED",
+            "invalid",
+            "candidate",
+            ImportDiagnosticLocation(null, null, null, candidateId),
+        )
 }
 
 enum class ImportReturnedIdKind { SOURCE, EVIDENCE, CANDIDATE, CONFIRMATION, TRANSACTION }

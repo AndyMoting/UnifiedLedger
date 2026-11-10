@@ -87,6 +87,18 @@ interface P408EvidenceProjectionPort {
         evidenceId: String,
     ): P408EvidenceProjection?
 
+    /**
+     * The CURRENT projection of each of [evidenceIds], keyed by evidence id (an evidence without
+     * a current row is simply absent). A default exists so every existing port keeps working; a
+     * store that can answer it in one query overrides it, because a per-row [readProjection] loop
+     * turns one candidate read into one round-trip per evidence row. The default is therefore
+     * correct but not the intended production path.
+     */
+    fun readProjections(
+        ledgerId: String,
+        evidenceIds: Collection<String>,
+    ): Map<String, P408EvidenceProjection> = evidenceIds.mapNotNull { evidenceId -> readProjection(ledgerId, evidenceId)?.let { evidenceId to it } }.toMap()
+
     fun materialize(request: P408MaterializationRequest): P408MaterializeResult
 
     companion object {

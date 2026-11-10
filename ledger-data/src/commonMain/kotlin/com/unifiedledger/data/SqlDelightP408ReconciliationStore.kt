@@ -26,6 +26,21 @@ class SqlDelightP408ReconciliationStore private constructor(
         configureSqliteConnection(driver)
     }
 
+    companion object {
+        /**
+         * Composition-root factory returning ONLY [P408ReconciliationCommitPort]: the confirm use
+         * case is the only thing an app module may hold, so the concrete store and its
+         * transaction-sharing helpers stay out of app reach. Construction without a driver is safe
+         * because the root's `LedgerDatabase` comes from the owning handle / first store, which
+         * already ran `configureSqliteConnection` on the single shared connection; this factory
+         * configures nothing.
+         */
+        fun forCompositionRoot(database: LedgerDatabase): P408ReconciliationCommitPort = SqlDelightP408ReconciliationStore(database)
+
+        /** Internal concrete factory for in-module callers that need the read/commit pair. */
+        internal fun createShared(database: LedgerDatabase): SqlDelightP408ReconciliationStore = SqlDelightP408ReconciliationStore(database)
+    }
+
     /** Projection authority used by the READY gate; shares this store's database. */
     private val projections = SqlDelightEvidenceProjectionStore.createShared(database)
 

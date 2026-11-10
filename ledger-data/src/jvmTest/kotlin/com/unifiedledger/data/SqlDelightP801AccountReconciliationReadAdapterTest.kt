@@ -363,7 +363,7 @@ class SqlDelightP801AccountReconciliationReadAdapterTest {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
             SqlDelightCatalogStore(database, driver).bootstrap(ledgerId, defaultCatalogSeed())
-            block(database, driver, SqlDelightP801AccountReconciliationReadAdapter(database))
+            block(database, driver, SqlDelightP801AccountReconciliationReadAdapter(database, SqlDelightEvidenceProjectionStore(database, driver)))
         } finally {
             driver.close()
         }

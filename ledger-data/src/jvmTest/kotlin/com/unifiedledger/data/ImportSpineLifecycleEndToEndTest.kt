@@ -1545,6 +1545,73 @@ class ImportSpineLifecycleEndToEndTest {
         }
     }
 
+    /**
+     * P8-01a spec section 2.7 double-booking guard: an evidence already used to reconcile an
+     * existing posting must never also create a formal transaction. The unlinked candidate in the
+     * same ledger still confirms exactly as before, and the blocked confirmation consumes no commit
+     * id (the single batch is already spent, so an allocation attempt would throw), writes no formal
+     * row, appends no candidate status history, and records no confirmation.
+     */
+    @Test
+    fun p801LinkedEvidenceBlocksImportConfirmationWithZeroWrites() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val intakeIds =
+                BatchIntakeIdSource(
+                    listOf(
+                        intakeIds("p801-guard-a", "status-p801-guard-a"),
+                        intakeIds("p801-guard-b", "status-p801-guard-b"),
+                    ),
+                )
+            val commitIds =
+                BatchCommitIdSource(
+                    listOf(
+                        commitIds("confirmation-p801-a", "status-p801-guard-a-2", "tx-p801-a", "version-p801-a", "posting-set-p801-a", listOf("posting-p801-expense", "posting-p801-asset")),
+                    ),
+                )
+            val executor = Executor(database, driver, catalog(), intakeIds, commitIds, BatchStatusIdSource(emptyList()))
+            assertIs<ImportIntakeResult.Accepted>(executor.intake(r1("request-p801-guard-a")))
+            // A different amount keeps B out of A's exact-duplicate tuple, and B stays pending.
+            assertIs<ImportIntakeResult.Accepted>(executor.intake(r1Prime("request-p801-guard-b").copy(inputRef = "batch-p801-guard-b")))
+            val hashB =
+                database.ledgerQueries
+                    .selectImportSourceByOwnerRequest(ledgerId.value, "request-p801-guard-b")
+                    .executeAsOne()
+                    .content_hash
+
+            val confirmed = executor.confirm(confirmRequest("req-p801-confirm-a", candidate = "candidate-p801-guard-a", hash = hashR1))
+            assertIs<ImportCandidateDecisionResult.Accepted>(confirmed)
+            assertEquals(listOf(1L, 1L, 2L), formalCounts(database))
+
+            // Candidate B's evidence now reconciles the posting A created (the P8-01a link row).
+            fun execute(sql: String) = driver.execute(null, sql, 0)
+            execute("INSERT INTO reconciliation_request(ledger_id, request_id, operation, input_fingerprint, outcome) VALUES ('${ledgerId.value}','reconciliation-request-p801','confirm_link','fingerprint-p801','ACCEPTED')")
+            execute(
+                "INSERT INTO evidence_link(ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at) " +
+                    "VALUES ('${ledgerId.value}','link-p801','evidence-p801-guard-b','posting-p801-asset','tx-p801-a','real_account_posting',2," +
+                    "'amount,currency,direction,account,occurred_at_window','candidate-p801-guard-b','reconciliation-request-p801','2026-08-07T10:00:00+08:00')",
+            )
+            execute(
+                "INSERT INTO evidence_link_history(ledger_id, link_id, sequence, state, reason, request_id, occurred_at) " +
+                    "VALUES ('${ledgerId.value}','link-p801',1,'active','confirmed','reconciliation-request-p801','2026-08-07T10:00:00+08:00')",
+            )
+
+            val formalBefore = formalCounts(database)
+            val confirmationsBefore = database.ledgerQueries.countImportConfirmations().executeAsOne()
+            val statusHistoryBefore = database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne()
+            val blocked = executor.confirm(confirmRequest("req-p801-confirm-b", candidate = "candidate-p801-guard-b", hash = hashB))
+            assertIs<ImportCandidateDecisionResult.Rejected>(blocked)
+            assertEquals("IMPORT_EVIDENCE_ALREADY_RECONCILED", blocked.diagnostic.code)
+            assertEquals(formalBefore, formalCounts(database))
+            assertEquals(confirmationsBefore, database.ledgerQueries.countImportConfirmations().executeAsOne())
+            assertEquals(statusHistoryBefore, database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne())
+        } finally {
+            driver.close()
+        }
+    }
+
     @Test
     fun p407NoFundsCreatesOnlyIncompleteSourceCandidateAndClosedDuplicate() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
