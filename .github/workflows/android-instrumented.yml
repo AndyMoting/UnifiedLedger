@@ -20,7 +20,7 @@
 #               the producer's job, and the action kills the emulator when
 #               `script` ends.
 #   fork path - fork pull request only:
-#     fork-fallback - one runner builds both APKs and runs all 41 ordinary
+#     fork-fallback - one runner builds both APKs and runs all 46 ordinary
 #               cases on one emulator with the same direct-instrumentation
 #               driver. It shares no artifact with the trusted path, because a
 #               fork run can neither produce nor consume a verified bundle.
@@ -42,7 +42,7 @@
 #   and every other command stays on one line.
 # - ImportScaleTraversalInstrumentedTest is excluded: it hardcodes 1080x2400
 #   tab-bar geometry and fallback coordinates, so it is coupled to one device
-#   profile. The ordinary inventory (42 cases over 10 classes) is the explicit
+#   profile. The ordinary inventory (46 cases over 11 classes) is the explicit
 #   allowlist the shards execute.
 # - A trusted APK bundle records the producing repository and run, and
 #   `android-apks.py verify` rejects any run whose `head_repository` is a fork.
@@ -256,7 +256,7 @@ jobs:
     # Fork pull requests cannot produce or consume a trusted APK bundle: the
     # bundle records the producing repository and run, and `android-apks.py
     # verify` rejects a fork run. This job keeps the ordinary device coverage
-    # they had before the split: one runner builds both APKs and runs all 41
+    # they had before the split: one runner builds both APKs and runs all 46
     # ordinary cases on one emulator with the same direct-instrumentation
     # driver. It shares no artifact with the trusted shard path.
     name: Android instrumented fork fallback
