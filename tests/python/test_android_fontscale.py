@@ -115,20 +115,30 @@ class Profiles(unittest.TestCase):
         # The empty leg declares no negative markers: its screens, paths and markers stay frozen.
         self.assertEqual([(), (), ()], [screen.absent for screen in profile.screens])
 
-    def test_seeded_profile_captures_detail_then_the_queue(self) -> None:
+    def test_seeded_profile_captures_search_then_detail_then_the_queue(self) -> None:
         profile = profile_by_name("seeded")
         self.assertTrue(profile.seeded)
         self.assertEqual("流水 · 共 1 笔", profile.launch_marker)
-        self.assertEqual(["detail", "reconciliation"], [screen.stem for screen in profile.screens])
-        # The markers are success-only content, never the screen titles (交易详情 is also in the
-        # failure copy; 账户对账 is also the account-flow entry button).
+        # D7-10: the V-9 search leg leads the profile; the detail screen backs out of the result
+        # face first, and the queue is unchanged from i3b.
         self.assertEqual(
-            ["备注：对账样本转账", "未核对 1 条"],
+            ["search-guide", "search-results", "detail", "reconciliation"],
+            [screen.stem for screen in profile.screens],
+        )
+        # The markers are success-only content, never the screen titles (交易详情 is also in the
+        # failure copy; 账户对账 is also the account-flow entry button), and never a count form
+        # (…… · N 笔 and 共 1 笔 already ride the seeded home screen).
+        self.assertEqual(
+            ["输入条件后开始搜索", "搜索结果 ·", "备注：对账样本转账", "未核对 1 条"],
             [screen.marker for screen in profile.screens],
         )
+        # The capsule's rendered text is longer than its content-description, so the tap is a
+        # substring; the submit button is reached by its D7-8 semantics name alone.
+        self.assertEqual((TapStep("搜索账目", contains=True),), profile.screens[0].steps)
+        self.assertEqual((TapStep("提交搜索"),), profile.screens[1].steps)
         self.assertEqual(
-            (TapStep("对账样本转账", contains=True),),
-            profile.screens[0].steps,
+            (BACK, TapStep("对账样本转账", contains=True)),
+            profile.screens[2].steps,
         )
         self.assertEqual(
             (
@@ -137,12 +147,16 @@ class Profiles(unittest.TestCase):
                 TapStep("对账样本账户", contains=True),
                 TapStep("账户对账"),
             ),
-            profile.screens[1].steps,
+            profile.screens[3].steps,
         )
-        self.assertEqual(BackStep(), profile.screens[1].steps[0])
-        # The queue sits behind the account-flow screen; its header string must be gone.
-        self.assertEqual((), profile.screens[0].absent)
-        self.assertEqual(("账户流水",), profile.screens[1].absent)
+        self.assertEqual(BackStep(), profile.screens[3].steps[0])
+        # The search screens must not still show the home header (the launch marker), the result
+        # face must not still show the guide copy; the queue sits behind the account-flow screen,
+        # whose header string must be gone.
+        self.assertEqual(("流水 · 共 1 笔",), profile.screens[0].absent)
+        self.assertEqual(("输入条件后开始搜索", "流水 · 共 1 笔"), profile.screens[1].absent)
+        self.assertEqual((), profile.screens[2].absent)
+        self.assertEqual(("账户流水",), profile.screens[3].absent)
 
     def test_unknown_profile_fails_loudly(self) -> None:
         with self.assertRaises(SampleError):
@@ -158,7 +172,10 @@ class GateProfileConsistency(unittest.TestCase):
     # Literal host payloads, not a re-derivation from PROFILES: a production change to the profile
     # table must fail this test, which a payload built from that same table could never do.
     EMPTY_HOST: dict[str, object] = {"profile": "empty", "screens": ["home", "asset", "analysis"]}
-    SEEDED_HOST: dict[str, object] = {"profile": "seeded", "screens": ["detail", "reconciliation"]}
+    SEEDED_HOST: dict[str, object] = {
+        "profile": "seeded",
+        "screens": ["search-guide", "search-results", "detail", "reconciliation"],
+    }
 
     def test_a_matching_host_has_no_profile_problem(self) -> None:
         self.assertEqual([], gate_profile_problems(self.EMPTY_HOST, "empty"))

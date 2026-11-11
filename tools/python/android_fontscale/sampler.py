@@ -11,9 +11,11 @@ sample; the device legs run here against a hosted AVD at the requested `system f
 
 - `profile=empty` (the P8-00 leg): the three empty-ledger screens on a **fresh empty install** —
   an empty ledger is exactly the state V-8 samples, so no fixture is needed;
-- `profile=seeded` (the P8-01a leg): one prepared v36 database is pushed into the app's stable
-  storage before launch, so the read-only 交易详情 screen and the 账户对账 queue are sampled on a
-  ledger that actually holds one transfer.
+- `profile=seeded` (the P8-01a i3b / P8-02 V-9 leg): one prepared v36 database is pushed into the
+  app's stable storage before launch, so the search guide face, the search result face, the
+  read-only 交易详情 screen and the 账户对账 queue are sampled on a ledger that actually holds one
+  transfer. The seeded instant is clock-relative (D7-9), so the database bytes — and the recorded
+  seed sha256 — differ per dispatch; the database itself is never uploaded.
 
 This rig is NOT a PR gate and never runs on a pull request: dispatch it against a commit that is
 already on a branch, and read the artifact.
@@ -91,6 +93,19 @@ SEEDED_QUEUE_MARKER = "未核对 1 条"
 # The queue sits one navigation step behind the account-flow screen, whose header renders 账户流水;
 # its absence from the queue dump proves the 账户对账 tap actually left that screen.
 ACCOUNT_FLOW_HEADER = "账户流水"
+
+# P8-02 i2b-1 (V-9, spec section 5; D7-10) markers for the two search faces the 1.3x sample now
+# captures first. Both are strings only the face that follows a successful step renders:
+# - the guide copy exists ONLY before the first submit (P503SearchPresentation.searchFace's
+#   `!readIssued` branch), so it cannot be satisfied by the home screen the capsule leaves;
+# - the result header is `搜索结果 · 共 N 笔`, and the empty-result face's copy (没有找到匹配的交易。)
+#   shares none of it, so a failed read cannot pass as a result list.
+# Neither marker is a count form (…… · N 笔, 共 1 笔): those already ride the seeded home screen.
+SEARCH_GUIDE_MARKER = "输入条件后开始搜索"
+SEARCH_RESULTS_MARKER = "搜索结果 ·"
+# The seeded home's count header. It is the launch marker AND the string the search screens must not
+# show, so "the capsule tap left the home tab" is one literal with one source.
+SEEDED_HOME_COUNT = "流水 · 共 1 笔"
 
 MIN_SCREENSHOT_BYTES = 20_000
 DEFAULT_TIMEOUT = 60
@@ -236,13 +251,33 @@ EMPTY_SCREENS: tuple[Screen, ...] = (
     Screen("analysis", (TapStep("分析"),), "账本为空"),
 )
 
-# The P8-01a i3b screens (spec section 6): the transaction detail screen and the reconciliation
-# queue. Both markers are content ONLY a successful read renders, never the screen title (see
-# SEEDED_DETAIL_MARKER / SEEDED_QUEUE_MARKER above); the queue capture also asserts the previous
-# account-flow header is gone. The launch marker proves the seeded transaction is in the ledger
-# before any tap runs (首页 renders 流水 · 共 1 笔).
+# The seeded profile's screens: the P8-02 V-9 search leg (D7-10) leads, then the P8-01a i3b detail
+# screen and the reconciliation queue. The search leg starts from the home tab through the search
+# capsule (P8HomeFlow.kt: content-description 搜索账目, visible text 搜索账目、金额、备注 — the longer
+# rendered text is why the tap is a substring match) and submits an EMPTY keyword (D7-6 allows it),
+# which lands the one seeded transaction in the default 近 90 天 window. The detail screen therefore
+# backs out of the result face first; every other marker and absent string is unchanged from i3b.
+#
+# Fold margin: both search markers are the LAST LazyColumn slot on their screen, and the seeded
+# catalog holds no tags and no merchants (SqlDelightCatalogStore seeds accounts and categories
+# only). Adding a tag or a merchant to the seed grows the condition area and can push a marker
+# below the fold, which surfaces as a 180 s wait_for timeout — loud, never a false green.
 SEEDED_SCREENS: tuple[Screen, ...] = (
-    Screen("detail", (TapStep(SEEDED_TRANSFER_NOTE, contains=True),), SEEDED_DETAIL_MARKER),
+    Screen(
+        "search-guide",
+        (TapStep("搜索账目", contains=True),),
+        SEARCH_GUIDE_MARKER,
+        absent=(SEEDED_HOME_COUNT,),
+    ),
+    # D7-8: the submit button is tapped by its unique semantics name — its visible text 搜索 is also
+    # the screen title, and `find_center` returns the first node in document order.
+    Screen(
+        "search-results",
+        (TapStep("提交搜索"),),
+        SEARCH_RESULTS_MARKER,
+        absent=(SEARCH_GUIDE_MARKER, SEEDED_HOME_COUNT),
+    ),
+    Screen("detail", (BACK, TapStep(SEEDED_TRANSFER_NOTE, contains=True)), SEEDED_DETAIL_MARKER),
     Screen(
         "reconciliation",
         (
@@ -258,7 +293,7 @@ SEEDED_SCREENS: tuple[Screen, ...] = (
 
 PROFILES: dict[str, Profile] = {
     "empty": Profile("empty", "账本为空", EMPTY_SCREENS),
-    "seeded": Profile("seeded", "流水 · 共 1 笔", SEEDED_SCREENS, seeded=True),
+    "seeded": Profile("seeded", SEEDED_HOME_COUNT, SEEDED_SCREENS, seeded=True),
 }
 
 

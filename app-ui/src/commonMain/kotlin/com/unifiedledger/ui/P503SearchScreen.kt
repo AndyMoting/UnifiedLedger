@@ -183,7 +183,13 @@ internal fun P503SearchScreen(
         }
         item {
             // 关键词可空 (D7-6): an empty keyword degrades to the window + tag/merchant filter.
-            Button(onClick = onSubmit, enabled = searchSubmitEnabled(state)) { Text(P8_SEARCH_SUBMIT_LABEL) }
+            // D7-8: a semantics name only this button carries. Its visible text repeats the screen
+            // title (搜索), and a by-text tap resolves to the FIRST node in document order — the title.
+            Button(
+                onClick = onSubmit,
+                modifier = Modifier.semantics { contentDescription = "提交搜索" },
+                enabled = searchSubmitEnabled(state),
+            ) { Text(P8_SEARCH_SUBMIT_LABEL) }
             Spacer(Modifier.height(12.dp))
         }
         // ---- condition: tags (multi-select, disabled included / tombstoned excluded) ----
