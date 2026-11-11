@@ -10,6 +10,7 @@ import ast
 import copy
 import json
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -70,12 +71,12 @@ class ShardManifest(unittest.TestCase):
     def test_repository_split_partitions_the_ordinary_inventory(self):
         cases = instrumented.read_cases(INVENTORY)
         plan = instrumented.check_partition(INVENTORY, SHARDS)
-        self.assertEqual(len(cases), 46)
+        self.assertEqual(len(cases), 47)
         self.assertEqual(sorted(plan), [1, 2])
-        self.assertEqual(sum(len(entries) for entries in plan.values()), 46)
-        self.assertEqual(len({case for entries in plan.values() for case in entries}), 46)
+        self.assertEqual(sum(len(entries) for entries in plan.values()), 47)
+        self.assertEqual(len({case for entries in plan.values() for case in entries}), 47)
         self.assertEqual(sorted(case for entries in plan.values() for case in entries), sorted(cases))
-        self.assertEqual(len({case.split("#")[0] for case in cases}), 11)
+        self.assertEqual(len({case.split("#")[0] for case in cases}), 12)
         self.assertTrue(all(plan[shard] for shard in plan))
 
     def test_fixture_split_resolves_each_shard_subset(self):
@@ -462,6 +463,57 @@ class WorkflowTopology(unittest.TestCase):
         self.assertIn('if [ "${EVENT}" = "pull_request" ] && [ "${HEAD_REPO}" != "${BASE_REPO}" ]; then', gate)
         self.assertIn('if [ "${FORK}" != "success" ]; then', gate)
         self.assertIn('if [ "${APKS}" != "success" ] || [ "${SHARDS}" != "success" ]; then', gate)
+
+
+class OnDemandInstrumentationArguments(unittest.TestCase):
+    """D7-13: the manual dispatch channel reaches `am instrument` and costs nothing when absent."""
+
+    CASES = ("com.example.A#one", "com.example.A#two")
+
+    def test_the_fixed_command_is_unchanged_without_extra_arguments(self):
+        # The load-bearing half of the decision: every automatic run must build the
+        # exact command it built before the channel existed.
+        self.assertEqual(
+            "am instrument -w -r -e class " + shlex.quote(",".join(self.CASES)) + " " + instrumented.RUNNER,
+            instrumented.instrument_command(self.CASES),
+        )
+
+    def test_a_dispatch_argument_reaches_the_command_as_one_e_pair(self):
+        command = instrumented.instrument_command(
+            self.CASES, instrumented.read_extra_args(("ul.p802.timing=1",)))
+        self.assertIn("-e ul.p802.timing 1", command)
+        # `am instrument -e` takes a KEY and a VALUE, never one `KEY=VALUE` token.
+        self.assertNotIn("ul.p802.timing=1", command)
+        self.assertTrue(command.endswith(" -e class " + shlex.quote(",".join(self.CASES)) + " " + instrumented.RUNNER),
+                        command)
+
+    def test_malformed_arguments_are_refused_before_a_device_is_claimed(self):
+        for value in ("ul.p802.timing", "=1", "ul.p802.timing=1 2", "ul p802=1"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    instrumented.read_extra_args((value,))
+
+    def test_the_run_subcommand_exposes_the_repeatable_flag(self):
+        result = subprocess.run([sys.executable, "tools/ci/android-instrumented-cloud.py", "run", "--help"],
+                                cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("--extra-arg", result.stdout)
+
+    def test_the_workflow_dispatch_input_is_threaded_into_both_shard_commands(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        dispatch = text.split("  workflow_dispatch:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertIn("instrumentation_extra_args:", dispatch)
+        self.assertIn("default: ''", dispatch)
+        # The input must never be interpolated into the shell script itself: it reaches
+        # the script through an env var and an expansion, so a padded or quoted value
+        # cannot word-split into the argument list or leave a dangling quote.
+        env_line = "EXTRA_INSTRUMENTATION_ARGS: ${{ github.event.inputs.instrumentation_extra_args }}"
+        self.assertEqual(3, text.count(env_line))  # two emulator steps and the reading guard
+        self.assertEqual(2, text.count("${EXTRA_INSTRUMENTATION_ARGS:+--extra-arg $EXTRA_INSTRUMENTATION_ARGS}"))
+        self.assertNotIn("format('--extra-arg", text)
+        # A dispatch that asks for a reading must leave one or the shard goes red.
+        self.assertIn("Require the on-demand reading when one was requested", text)
+        self.assertIn("P802-V8DEV fixture=", text)
 
 
 if __name__ == "__main__":

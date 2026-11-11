@@ -20,7 +20,7 @@
 #               the producer's job, and the action kills the emulator when
 #               `script` ends.
 #   fork path - fork pull request only:
-#     fork-fallback - one runner builds both APKs and runs all 46 ordinary
+#     fork-fallback - one runner builds both APKs and runs all 47 ordinary
 #               cases on one emulator with the same direct-instrumentation
 #               driver. It shares no artifact with the trusted path, because a
 #               fork run can neither produce nor consume a verified bundle.
@@ -42,7 +42,7 @@
 #   and every other command stays on one line.
 # - ImportScaleTraversalInstrumentedTest is excluded: it hardcodes 1080x2400
 #   tab-bar geometry and fallback coordinates, so it is coupled to one device
-#   profile. The ordinary inventory (46 cases over 11 classes) is the explicit
+#   profile. The ordinary inventory (47 cases over 12 classes) is the explicit
 #   allowlist the shards execute.
 # - A trusted APK bundle records the producing repository and run, and
 #   `android-apks.py verify` rejects any run whose `head_repository` is a fork.
@@ -81,6 +81,16 @@ on:
       - 'tests/python/test_android_ci_repair.py'
       - 'tests/python/test_android_instrumented_shards.py'
   workflow_dispatch:
+    # D7-13 on-demand device reading: an ordinary manual run passes nothing and is
+    # byte-identical to a pull-request run. The one argument the P8-02 V-8 timing
+    # case accepts is `ul.p802.timing=1`; it reaches `am instrument` as one
+    # `-e KEY VALUE` pair (see tools/python/android_scale/instrumented.py).
+    inputs:
+      instrumentation_extra_args:
+        description: 'One KEY=VALUE instrumentation argument, e.g. ul.p802.timing=1 (leave empty for an ordinary run)'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -180,6 +190,8 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Run this shard's instrumented cases on one emulator
         id: shard-attempt-1
+        env:
+          EXTRA_INSTRUMENTATION_ARGS: ${{ github.event.inputs.instrumentation_extra_args }}
         continue-on-error: true
         timeout-minutes: 20
         uses: reactivecircus/android-emulator-runner@v2
@@ -202,6 +214,7 @@ jobs:
             --shards tools/ci/android-instrumented-shards.txt
             --app instrumented-apks/android-app-debug.apk
             --test instrumented-apks/android-app-debug-androidTest.apk
+            ${EXTRA_INSTRUMENTATION_ARGS:+--extra-arg $EXTRA_INSTRUMENTATION_ARGS}
             --evidence instrumented-evidence/shard-${{ matrix.shard }}
             --sha "${{ github.sha }}"
       - name: Clear the failed attempt's evidence and note the retry
@@ -211,6 +224,8 @@ jobs:
           echo "First emulator attempt for this shard failed; its evidence was cleared and the shard was retried once (D-304)." >> "$GITHUB_STEP_SUMMARY"
       - name: Run this shard's instrumented cases on one emulator (retry)
         id: shard-attempt-2
+        env:
+          EXTRA_INSTRUMENTATION_ARGS: ${{ github.event.inputs.instrumentation_extra_args }}
         if: steps.shard-attempt-1.outcome == 'failure'
         timeout-minutes: 20
         uses: reactivecircus/android-emulator-runner@v2
@@ -233,6 +248,7 @@ jobs:
             --shards tools/ci/android-instrumented-shards.txt
             --app instrumented-apks/android-app-debug.apk
             --test instrumented-apks/android-app-debug-androidTest.apk
+            ${EXTRA_INSTRUMENTATION_ARGS:+--extra-arg $EXTRA_INSTRUMENTATION_ARGS}
             --evidence instrumented-evidence/shard-${{ matrix.shard }}
             --sha "${{ github.sha }}"
       - name: Require exactly this shard's cases to have passed
@@ -243,6 +259,23 @@ jobs:
         # red run can never leave the shard green.
         if: always()
         run: python3 tools/ci/android-instrumented-cloud.py validate --shard ${{ matrix.shard }} --inventory tools/ci/android-instrumented-inventory.txt --shards tools/ci/android-instrumented-shards.txt --evidence instrumented-evidence/shard-${{ matrix.shard }} --sha "${{ github.sha }}"
+      - name: Require the on-demand reading when one was requested
+        # D7-13: a dispatch that passes instrumentation arguments must leave a
+        # reading, not just a green shard. The timing case lives in exactly one
+        # shard, so only that shard can require the line.
+        if: github.event.inputs.instrumentation_extra_args != ''
+        env:
+          EXTRA_INSTRUMENTATION_ARGS: ${{ github.event.inputs.instrumentation_extra_args }}
+        run: |
+          host_shard=$(grep -F 'P802SearchDeviceTimingInstrumentedTest' tools/ci/android-instrumented-shards.txt | cut -f1)
+          if [ "$host_shard" != "${{ matrix.shard }}" ]; then
+            echo "shard ${{ matrix.shard }} does not host the timing case (shard $host_shard does)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if ! grep -q 'P802-V8DEV fixture=' "instrumented-evidence/shard-${{ matrix.shard }}/logcat.txt"; then
+            echo "::error::this dispatch asked for $EXTRA_INSTRUMENTATION_ARGS but no P802-V8DEV reading was recorded"
+            exit 1
+          fi
       - name: Upload shard evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -256,7 +289,7 @@ jobs:
     # Fork pull requests cannot produce or consume a trusted APK bundle: the
     # bundle records the producing repository and run, and `android-apks.py
     # verify` rejects a fork run. This job keeps the ordinary device coverage
-    # they had before the split: one runner builds both APKs and runs all 46
+    # they had before the split: one runner builds both APKs and runs all 47
     # ordinary cases on one emulator with the same direct-instrumentation
     # driver. It shares no artifact with the trusted shard path.
     name: Android instrumented fork fallback

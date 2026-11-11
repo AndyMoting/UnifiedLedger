@@ -1,7 +1,7 @@
 """Two-shard execution of the ordinary Android device regression.
 
-Case authority is ``tools/ci/android-instrumented-inventory.txt`` (41
-``class#method`` entries over 9 classes). Shard authority is
+Case authority is ``tools/ci/android-instrumented-inventory.txt`` (47
+``class#method`` entries over 12 classes). Shard authority is
 ``tools/ci/android-instrumented-shards.txt`` (one ``shard<TAB>class`` line per
 test class).
 
@@ -56,6 +56,9 @@ MEM_TOTAL_BAND_KB = (1_500_000, 2_600_000)
 
 CASE = re.compile(r"[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*#[A-Za-z_$][\w$]*")
 SHARD_LINE = re.compile(r"([0-9]+)\t([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)")
+# An on-demand instrumentation argument arrives as one `KEY=VALUE` word (the workflow
+# input), and the key half must be safe to hand to `am instrument` as its own token.
+EXTRA_ARG = re.compile(r"[A-Za-z0-9_.]+")
 
 STATUS_FIELD = "INSTRUMENTATION_STATUS: "
 STATUS_CODE = "INSTRUMENTATION_STATUS_CODE: "
@@ -394,10 +397,44 @@ def _check_installed(serial: str) -> None:
             raise RuntimeError(f"installed package is not available: {package}")
 
 
-def _instrument(serial: str, expected: tuple[str, ...], raw: Path, timeout: float) -> int:
+def read_extra_args(values: tuple[str, ...] | list[str]) -> tuple[tuple[str, str], ...]:
+    """Split the dispatch ``KEY=VALUE`` words and refuse anything `am` cannot carry.
+
+    Validation happens before a device is claimed, so a malformed manual dispatch
+    fails as one typed argument error instead of as a shell-mangled run.
+    """
+    pairs: list[tuple[str, str]] = []
+    for value in values:
+        key, separator, text = value.partition("=")
+        if not separator or not EXTRA_ARG.fullmatch(key) or re.search(r"\s", text):
+            raise ValueError("invalid instrumentation extra argument: " + value)
+        pairs.append((key, text))
+    return tuple(pairs)
+
+
+def instrument_command(expected: tuple[str, ...], extra: tuple[tuple[str, str], ...] = ()) -> str:
+    """The one ``am instrument`` command line this driver runs.
+
+    ``-e`` consumes TWO tokens (AOSP ``Am.runInstrument``: key = nextArgRequired(),
+    value = nextArgRequired()), so a pair is emitted as ``-e KEY VALUE``. Writing
+    ``-e KEY=VALUE`` would make the whole ``KEY=VALUE`` the KEY and swallow the next
+    flag as its value, so the on-demand argument would never reach the runner. With
+    no extra pair the command is byte-identical to the fixed call it always was.
+    """
+    pairs = "".join(f" -e {shlex.quote(key)} {shlex.quote(value)}" for key, value in extra)
     # `#` is literal inside a shell word, but the class list is quoted anyway so
     # the device shell sees one argument regardless of its parser.
-    command = f"am instrument -w -r -e class {shlex.quote(','.join(expected))} {RUNNER}"
+    return f"am instrument -w -r{pairs} -e class {shlex.quote(','.join(expected))} {RUNNER}"
+
+
+def _instrument(
+    serial: str,
+    expected: tuple[str, ...],
+    raw: Path,
+    timeout: float,
+    extra: tuple[tuple[str, str], ...] = (),
+) -> int:
+    command = instrument_command(expected, extra)
     with raw.open("wb") as output:
         process = subprocess.Popen(["adb", "-s", serial, "shell", command],
                                    stdout=output, stderr=subprocess.STDOUT)
@@ -417,7 +454,8 @@ def _dump_logcat(serial: str, path: Path) -> None:
 
 
 def _execute(*, mode: str, shard: int | None, expected: tuple[str, ...], evidence: Path, app: Path,
-             test: Path, sha: str, avd: str, timeout: float) -> int:
+             test: Path, sha: str, avd: str, timeout: float,
+             extra: tuple[tuple[str, str], ...] = ()) -> int:
     """Run `expected` on one owned emulator and write its evidence."""
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError("full lowercase SHA required")
@@ -442,7 +480,7 @@ def _execute(*, mode: str, shard: int | None, expected: tuple[str, ...], evidenc
             _install(serial, role, apk)
         _check_installed(serial)
         _adb("logcat", "-c", serial=serial, best_effort=True)
-        report["instrumentation_exit"] = _instrument(serial, expected, raw_path, timeout)
+        report["instrumentation_exit"] = _instrument(serial, expected, raw_path, timeout, extra)
     except Exception as failure:  # noqa: BLE001 - every device failure is evidence, not a crash
         error = f"{type(failure).__name__}: {failure}"
     finally:
@@ -477,13 +515,20 @@ def _execute(*, mode: str, shard: int | None, expected: tuple[str, ...], evidenc
 
 
 def execute(*, shard: int, evidence: Path, inventory: Path, shards: Path, app: Path, test: Path,
-            sha: str, avd: str, timeout: float = 900) -> int:
-    """Run one shard's cases on one owned emulator and write its evidence."""
+            sha: str, avd: str, timeout: float = 900,
+            extra_args: tuple[str, ...] = ()) -> int:
+    """Run one shard's cases on one owned emulator and write its evidence.
+
+    ``extra_args`` is the on-demand channel (D7-13): each ``KEY=VALUE`` word becomes
+    one ``-e KEY VALUE`` pair on the command line, and an empty tuple leaves the
+    command exactly as the fixed call always was.
+    """
+    extra = read_extra_args(extra_args)
     expected = check_partition(inventory, shards)[shard]
     if avd != avd_name(shard):
         raise ValueError("AVD name does not match the shard")
     return _execute(mode=MODE_SHARD, shard=shard, expected=expected, evidence=evidence,
-                    app=app, test=test, sha=sha, avd=avd, timeout=timeout)
+                    app=app, test=test, sha=sha, avd=avd, timeout=timeout, extra=extra)
 
 
 def execute_fork(*, evidence: Path, inventory: Path, app: Path, test: Path, sha: str,
