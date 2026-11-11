@@ -357,17 +357,17 @@ class ScopeSentence(unittest.TestCase):
 
 
 class OrdinaryRegressionUntouched(unittest.TestCase):
-    """The export rig must stay opt-in and outside the 42-case inventory."""
+    """The export rig must stay opt-in and outside the 46-case inventory."""
 
     def test_the_export_class_is_excluded_from_the_ordinary_inventory(self):
         # Turns red if the exclusion is dropped from inventory.py: the CI step
-        # "Check ordinary device source inventory" would then count 43 cases and
-        # the 42-case manifest would mismatch.
+        # "Check ordinary device source inventory" would then count 47 cases and
+        # the 46-case manifest would mismatch.
         inventory = ROOT.joinpath("tools", "python", "android_scale", "inventory.py").read_text(encoding="utf-8")
         self.assertIn('"BackupExportEnospcInstrumentedTest"', inventory)
         manifest = ROOT.joinpath("tools", "ci", "android-instrumented-inventory.txt").read_text(encoding="utf-8")
         self.assertNotIn("Enospc", manifest)
-        self.assertEqual(42, len([line for line in manifest.splitlines() if line.strip()]))
+        self.assertEqual(46, len([line for line in manifest.splitlines() if line.strip()]))
 
     def test_the_export_case_is_not_in_the_shard_plan(self):
         # Turns red if the class is added to the ordinary shard split, which would
