@@ -7004,3 +7004,24 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **边界：** 本条批准的是 P8-01a 的设计，不授权 P8-01b 的迁移、不改变任何既有账务语义、不动 `worktree` 之外的实现拓扑；实施仍需单一 writer、独立规格与质量评审、distinct verifier、主代理最终检查与完整受影响套件（`HIGH_RISK_OPERATIONS` 高风险拓扑）。P8-01 的其余切片、阶段 7 的 59/62 与 `P706-A06` 例外均不变。
 
 **关联决定：** `D-103`（O-1…O-6 matcher 契约）、`D-045`/`D-015`/`D-048`（分录级对账、部分对账、修正后重匹配）、`D-145`（本条第 9 项修订其 §3.2.1 读面派生）、`D-156`（有效交易谓词唯一 SQL 定义点）、`D-089`（R-Q06-4 缺失载荷不得呈现为真零）、`D-301`（账户流水屏预留对账位）、`D-305`（P8-00 收口）。
+
+## D-309 P8-01b 对账写面扩面：D-308 三处修订与 D1–D5 裁决
+
+**状态：** 已批准并登记（2026-11-11，用户以「全选 A」批准 D1–D5 五项待决决定；据规格 `docs/specs/2026-11-11-p8-01b-widened-reconciliation-design.md` 实施）。
+
+**背景：** `D-308` 把 `P8-01b` 登记为「v36→v37 回填 + `selectP408PostingIntegrity` 放宽 + 证据职责裁定」，设计门取证后三项都不成立。回填不需要：读面无行即 `PENDING`（队列 `Ledger.sq:11673`、汇总 `:11810`、报告 `:9088`），详情有派生（`LedgerEntryReadModels.kt:133-138`），`confirmLink` 自建行并在 history 空时自补 `PENDING` seq1（`SqlDelightP408ReconciliationStore.kt:267-312`）；且它与金标契约相反——`GOLDEN_SCHEMA.md:466-468` 冻结「不合格腿没有对账记录，`not_applicable` 是派生显示值」，而 v23 种子已无账户过滤地为所有转账分录播种（`22.sqm:143-152`、`Ledger.sq:9125-9134`）。放宽共享查询会同时放宽修正面（kind）并收紧修正面（有效交易门，今天修正可作用于作废腿）。另有两个既有 P1 缺陷随本片修：带新 id 的请求永远确认不了已有行（`SqlDelightP408ReconciliationStore.kt:277-279`），写面谓词没有有效交易门（`Ledger.sq:9040-9052`）。
+
+**裁决：**
+
+1. **修订 `D-308`（一次修订请求，三项）。** ①取消 v36→v37 回填（规格 §1.5）；②把「放宽 `selectP408PostingIntegrity`」改为「新具名查询供对账写面 + 原查询冻结给修正面」（规格 §2.6；修正面消费者 `SqlDelightCorrectionStore.kt:135/178`）；③把「届时对读面的统一」收窄为「队列/汇总统一、报告登记 oracle-only」（规格 §2.8；`selectP408ReconciliationReport` 零生产消费者），并**反转 `D-308` 第 3 条的「确认面仅转账腿」**——写面腿集改为队列成员规则：当前版本 + `transaction_effective_state` + 复合标记 `owned_by_user = 1 AND real_account = 1 AND kind IN ('ASSET','LIABILITY')`（规格 §2.1/§2.3，`Ledger.sq:340-353`）。
+2. **D1=A 职责呈现不变。** 两个持久 token 的释义：`real_account_posting` = 付款侧，`destination_asset_posting` = 到账侧；审计行仍原样印 storage token（`P503ReconciliationPresentation.kt:158`），零文案改动。**登记近似**：负债两向（信用消费是欠款增加而非付款、还款本金是欠款减少而非到账）与非资金流分录（期初、余额调整、储值预激活调整，`FormalLedger.kt:41-58`）的命名是近似；方向规则唯一实现仍是 `P408Reconciliation.kt:22-27`，两个 token 被三处 `CHECK` 锁死两值（`Ledger.sq:8409/8449/8568`）。
+3. **D3=A 接受歧义增加（用户可见回退）。** 扩面后同账户同额同日的一条支出腿与一条转账腿互为候选，原本唯一命中的转账腿变为 `AMBIGUOUS`（今天 `SqlDelightP801ReconciliationCandidatesTest.kt:274-293` 钉的正是「只提议转账腿」）：从「自动唯一」变成「要求明确选择」，`AMBIGUOUS` 零写入。
+4. **D4=A 证据分工。** 本片只给 JVM 证据（V-12…V-20），设备侧由 V-10 的 instrumented 链路承担（扩面后重跑同一用例），字号机静态屏与种子不动（`P801FontscaleSeedWriterTest.kt:183/202/227/243` 依赖「恰一笔转账、恰一条未核对腿」）。
+5. **D5=A 退役枚举成员。** 删 `P801CandidateProposalFailure.LEG_NOT_TRANSFER_CONFIRMABLE` 与其测试期望；文案 `RECONCILIATION_NOT_CONFIRMABLE_TEXT`（`P503ReconciliationPresentation.kt:330`）保留，因为它同时是 `P408_POSTING_NOT_ELIGIBLE` 的标签，而该码在有效交易门下继续可达（规格 §2.5/V-14）。
+6. **零 DDL、零迁移。** schema 停留 v36：无 `36.sqm`、无版本字面量变动、无索引、无 DB 级唯一约束；唯一写动作仍是既有 `materialize` 与 `confirmLink`；报告查询不重写，`P408Matcher` 与对账状态机不动。
+
+**证据：** 规格 `docs/specs/2026-11-11-p8-01b-widened-reconciliation-design.md`（§1 现状与两个 P1 缺陷、§2 冻结机制、§4 读写契约、§5 验收向量 V-12…V-20、§6 范围边界）。现状锚点：写面谓词 `Ledger.sq:9040-9052`（`ACCOUNT_TRANSFER` 在 `:9051`）、事实读只删 `:12020`、rg03 覆盖只进读面且落在 page CTE 内（§2.7）、报告 `:9086-9113` 继续只认转账。
+
+**边界：** 本条批准的是 `P8-01b` 的机制与五项裁决，不改变任何既有账务语义、不改 UI 版式/文案、不动 `P8-01a` 已交付的读面契约（除第 1 项③的登记收窄）。**实施仍走高风险管理拓扑**：单一 writer、独立规格与质量评审、distinct verifier、主代理最终检查与完整受影响套件；不据本条直接改 `main`。登记残余见规格 §7（负债与非资金流职责命名近似、报告 oracle-only、`posting(ledger_id, account_id)` 无索引、v23 种子为不合格腿写入对账事实的既有偏差、写面可确认 `rg03=false` 而读面不可见）。
+
+**关联决定：** `D-308`（本条第 1 项修订其第 1、3 条并取消回填）、`D-145`（读面派生，已由 `D-308` 第 9 项修订）、`D-103`（matcher 五字段契约）、`D-112`/`D-113`（投影与投影权威）、`D-156`（有效交易谓词唯一 SQL 定义点）、`D-089`（缺失载荷不得呈现为真零）、`D-301`（账户流水屏预留对账位）。

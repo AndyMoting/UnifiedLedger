@@ -204,6 +204,13 @@ class P409SiloSpineCoexistenceTest {
             JdbcSqliteDriver(url, sqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
+                // P8-01b: the reconciliation write face requires the section 2.1 composite mark. Seeded
+                // BEFORE the all-table snapshot baseline below, because that snapshot covers every table.
+                driver.execute(
+                    null,
+                    "INSERT INTO catalog_account VALUES ('ledger-p409-coexist','coexist-asset-a','coexist a','ASSET','CNY',2,1,1,NULL,0,1)",
+                    0,
+                )
 
                 // ---------- phase 1: the 12 silos, one accepted op + replay each ----------
 

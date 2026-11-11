@@ -74,6 +74,14 @@ class P408ProjectionSixKindMaterializationTest {
         val d = JdbcSqliteDriver("jdbc:sqlite:${p.absolutePathString()}", projectionSqliteProperties())
         driver = d
         LedgerDatabase.Schema.create(d)
+        // P8-01b: the reconciliation write face requires the section 2.1 composite mark, so the accounts
+        // these fixtures confirm against need catalog rows — this class's catalog() is a domain object
+        // and writes nothing.
+        listOf(
+            "('ledger-k','account-asset-a','asset a','ASSET','CNY',2,1,1,NULL,0,1)",
+            "('ledger-k','account-bank-b','bank b','ASSET','CNY',2,1,1,NULL,0,1)",
+            "('ledger-k','account-credit-lia','credit lia','LIABILITY','CNY',2,1,1,NULL,0,1)",
+        ).forEach { values -> d.execute(null, "INSERT INTO catalog_account VALUES $values", 0) }
         return Triple(LedgerDatabase(d), d, catalog())
     }
 

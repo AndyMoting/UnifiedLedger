@@ -65,16 +65,19 @@ import kotlin.time.Instant
  * `p801ReconciliationCandidateEvidenceById`) and the leg facts themselves
  * (`p801AccountReconciliationPostingFacts`). Raw import facts stay raw there (D-111); the
  * projection row is read through the existing authority port (D-112) in ONE batch per candidate
- * read, and the leg-facts query only offers `ACCOUNT_TRANSFER` legs because the confirm write path
- * accepts nothing else (spec section 2.1), so neither read normalizes anything on its own.
+ * read, and the leg-facts query offers EVERY kind (P8-01b: the widened confirm write face accepts
+ * any composite-marked real-account leg, spec section 2.2), so neither read normalizes anything on
+ * its own.
  *
- * REGISTERED RESIDUAL (D-308 item 9 scope): the queue ignores an rg03
- * `reconciliation_eligible = 0` override, so such a leg would render 待对账 while the detail face
- * derives it ineligible and renders `null`. Unreachable today: the schema ties that value to the
- * fee leg, which posts to an EXPENSE account and so fails the section 2.1 composite mark too.
- * The i2 candidate reads and the posting-facts read ignore rg03 as well — they are scoped by the
- * projection / the account mark and never read the rg03 row; a future eligibility unification
- * (P8-01b) must cover all five reads, not only the queue.
+ * RG03 OVERRIDE (P8-01b, spec section 2.7): the queue and the totals consume
+ * `rg03_transfer_posting_semantic.reconciliation_eligible = 0` as a false override inside the page
+ * CTE, so such a leg is neither listed nor summed. The candidate reads and the posting-facts read
+ * deliberately do not consume it — the facts read is flags-not-filters and the matcher owns that
+ * decision — and `selectP408ReconciliationReport` is registered oracle-only (spec section 2.8), so
+ * the five reads are NOT unified. Registered asymmetry: the write face does not consume the override
+ * either, so a `reconciliation_eligible = 0` leg can be confirmed while the queue hides it. That is
+ * unreachable today: the override's CHECK only admits a TRANSFER_FEE leg carrying a category, and a
+ * fee leg posts to an EXPENSE account, which already fails the section 2.1 composite mark.
  */
 class SqlDelightP801AccountReconciliationReadAdapter(
     private val database: LedgerDatabase,

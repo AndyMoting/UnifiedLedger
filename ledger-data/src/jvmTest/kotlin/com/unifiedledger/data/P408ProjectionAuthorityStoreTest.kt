@@ -88,6 +88,8 @@ class P408ProjectionAuthorityStoreTest {
                     "'2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)",
                 "INSERT INTO ledger_transaction_current_version VALUES ('tx-a','ledger-a','version-a')",
                 "INSERT INTO posting VALUES ('$postingId','posting-set-a','ledger-a',0,'account-bank-a',$amountMinor,'CNY',2)",
+                // P8-01b: the reconciliation write face requires the section 2.1 composite mark.
+                "INSERT INTO catalog_account VALUES ('ledger-a','account-bank-a','bank a','ASSET','CNY',2,1,1,NULL,0,1)",
             ).forEach { statement -> driver.execute(null, statement, 0) }
         }
     }

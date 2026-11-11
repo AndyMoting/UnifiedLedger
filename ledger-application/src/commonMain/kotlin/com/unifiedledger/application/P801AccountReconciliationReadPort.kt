@@ -304,13 +304,12 @@ sealed interface P801ReconciledLegAuditResult {
  * - restrict every read to the ledger, to the CURRENT version of each EFFECTIVE transaction
  *   through the single effective-predicate definition point (`transaction_effective_state`), and
  *   to the requested account. The ACCOUNT SCOPE itself differs by read and is stated on each
- *   method: the queue/summary fold the section 2.1 composite mark over `catalog_account`, the
- *   windowed candidate read narrows through the CURRENT projection (an unprojected evidence has no
- *   account relation yet and stays) while the by-identity read is scoped by the ledger alone, and
- *   [loadAccountPostingFacts] reports every `ACCOUNT_TRANSFER` leg of the account in the window with
- *   `current` / `eligible_real_account` flags so the matcher excludes non-current or non-mark legs by
- *   rule rather than the read hiding them (non-transfer legs are not reported at all: the confirm
- *   write path refuses them, spec section 2.1);
+ *   method: the queue/summary fold the section 2.1 composite mark over `catalog_account` and apply
+ *   the rg03 false override (P8-01b, spec section 2.7), the windowed candidate read narrows through
+ *   the CURRENT projection (an unprojected evidence has no account relation yet and stays) while the
+ *   by-identity read is scoped by the ledger alone, and [loadAccountPostingFacts] reports every leg
+ *   of the account in the window with `current` / `eligible_real_account` flags so the matcher
+ *   excludes non-current or non-mark legs by rule rather than the read hiding them;
  * - page by the frozen key `(occurred_at DESC, posting_id ASC)` with the caller's
  *   [P801_ACCOUNT_RECONCILIATION_PAGE_SIZE] default, so concatenating the pages reproduces the
  *   whole queue exactly once;
@@ -374,14 +373,16 @@ interface P801AccountReconciliationReadPort {
     ): P801CandidateEvidenceResult
 
     /**
-     * P8-01a matcher posting facts (spec section 2.4): every `ACCOUNT_TRANSFER` leg of [accountId]
-     * in `[occurredFrom, occurredTo]` as the frozen matcher's [P408PostingFacts], including legs
-     * that are not `current` or not on a section 2.1 real account — those carry `false` so the
-     * matcher excludes them by rule instead of the read hiding them.
+     * P8-01a matcher posting facts (spec section 2.4): every leg of [accountId] in
+     * `[occurredFrom, occurredTo]`, of every kind (P8-01b, spec section 2.2), as the frozen
+     * matcher's [P408PostingFacts], including legs that are not `current` or not on a section 2.1
+     * real account — those carry `false` so the matcher excludes them by rule instead of the read
+     * hiding them.
      *
-     * Non-transfer legs are NOT offered: the confirm write path accepts `ACCOUNT_TRANSFER` only
-     * (spec section 2.1 / D-308 item 3), so a LEND/credit/ordinary leg must never be proposed as a
-     * candidate that `confirmLink` would then refuse with `P408_POSTING_NOT_ELIGIBLE`.
+     * Every kind IS offered: the widened confirm write face accepts any composite-marked
+     * real-account leg (spec section 2.1), so a kind filter here would hide exactly the legs it can
+     * link. A leg it still refuses (voided, or on a non-mark account) is refused there with
+     * `P408_POSTING_NOT_ELIGIBLE`.
      */
     fun loadAccountPostingFacts(
         ledgerId: LedgerId,

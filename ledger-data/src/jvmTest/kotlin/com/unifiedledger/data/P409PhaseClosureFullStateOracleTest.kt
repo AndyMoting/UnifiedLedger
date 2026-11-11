@@ -1404,6 +1404,8 @@ class P409PhaseClosureFullStateOracleTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
+            // P8-01b: the reconciliation write face requires the section 2.1 composite mark.
+            driver.execute(null, "INSERT INTO catalog_account VALUES ('ledger-p409-oracle','account-asset-a','asset a','ASSET','CNY',2,1,1,NULL,0,1)", 0)
             val expected = Expected()
             val hashComplete = hashOf(ImportRecordKind.TRANSFER_FLOW_SOURCE, rl03CompleteFacts, null)
             val hashMissing = hashOf(ImportRecordKind.TRANSFER_FLOW_SOURCE_MISSING_LEG, rl03MissingFacts, null)
@@ -1501,6 +1503,8 @@ class P409PhaseClosureFullStateOracleTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
+            // P8-01b: the reconciliation write face requires the section 2.1 composite mark.
+            driver.execute(null, "INSERT INTO catalog_account VALUES ('ledger-p409-oracle','account-asset-b','asset b','ASSET','CNY',2,1,1,NULL,0,1)", 0)
             val expected = Expected()
             val hashComplete = hashOf(ImportRecordKind.TRANSFER_FLOW_SOURCE, rl04CompleteFacts, null)
             val hashIncomplete = hashOf(ImportRecordKind.TRANSFER_FLOW_SOURCE, rl04IncompleteFacts, null)
@@ -1716,6 +1720,10 @@ class P409PhaseClosureFullStateOracleTest {
             JdbcSqliteDriver(url).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
+                // P8-01b: the reconciliation write face requires the section 2.1 composite mark; the
+                // vector's confirmed legs post to one of these two asset accounts.
+                driver.execute(null, "INSERT INTO catalog_account VALUES ('ledger-p409-oracle','account-asset-a','asset a','ASSET','CNY',2,1,1,NULL,0,1)", 0)
+                driver.execute(null, "INSERT INTO catalog_account VALUES ('ledger-p409-oracle','account-asset-b','asset b','ASSET','CNY',2,1,1,NULL,0,1)", 0)
                 val expected = Expected()
                 val hashRl03 = hashOf(ImportRecordKind.TRANSFER_FLOW_SOURCE, rl03CompleteFacts, null)
                 val hashRl04 = hashOf(ImportRecordKind.TRANSFER_FLOW_SOURCE, rl04CompleteFacts, null)
@@ -2131,6 +2139,9 @@ class P409PhaseClosureFullStateOracleTest {
             JdbcSqliteDriver(url).use { driver ->
                 LedgerDatabase.Schema.create(driver)
                 val database = LedgerDatabase(driver)
+                // P8-01b: the reconciliation write face requires the section 2.1 composite mark.
+                driver.execute(null, "INSERT INTO catalog_account VALUES ('ledger-p409-oracle','account-asset-a','asset a','ASSET','CNY',2,1,1,NULL,0,1)", 0)
+                driver.execute(null, "INSERT INTO catalog_account VALUES ('ledger-p409-oracle','account-asset-b','asset b','ASSET','CNY',2,1,1,NULL,0,1)", 0)
                 val expected = Expected()
                 val hashRl01 = hashOf(ImportRecordKind.ORDINARY_FLOW_SOURCE, rl01Facts, null)
                 val hashRl03 = hashOf(ImportRecordKind.TRANSFER_FLOW_SOURCE, rl03CompleteFacts, null)

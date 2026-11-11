@@ -393,9 +393,10 @@ internal fun reconciliationBindRefusalText(reason: P801BindEvidenceRefusal): Str
     }
 
 /**
- * Why the proposal read produced no disposition list at all (spec sections 2.1/2.4). The
- * non-confirmable leg case reuses the spec's own sentence instead of a generic failure; a REJECTED
- * projection appends its stored code (F2) through [reconciliationProjectionRejectionText].
+ * Why the proposal read produced no disposition list at all (spec sections 2.1/2.4). There is no
+ * "non-confirmable leg" branch any more (P8-01b, D-309 D5=A): every kind is proposed, and a leg the
+ * write face refuses answers `P408_POSTING_NOT_ELIGIBLE` through [reconciliationFailureLabel]. A
+ * REJECTED projection appends its stored code (F2) through [reconciliationProjectionRejectionText].
  */
 internal fun reconciliationProposalFailureText(
     failure: P801CandidateProposalFailure,
@@ -405,7 +406,6 @@ internal fun reconciliationProposalFailureText(
         P801CandidateProposalFailure.CANDIDATE_EVIDENCE_UNAVAILABLE -> "导入行读取失败。"
         P801CandidateProposalFailure.POSTING_FACTS_UNAVAILABLE -> "分录事实读取失败。"
         P801CandidateProposalFailure.LEG_NOT_IN_QUEUE -> "该分录不在该账户的对账队列中。"
-        P801CandidateProposalFailure.LEG_NOT_TRANSFER_CONFIRMABLE -> RECONCILIATION_NOT_CONFIRMABLE_TEXT
         P801CandidateProposalFailure.EVIDENCE_NOT_FOUND -> "导入行不存在或不在当前账本。"
         P801CandidateProposalFailure.EVIDENCE_NOT_PROJECTED -> "该导入行尚未绑定账户，需先绑定。"
         P801CandidateProposalFailure.EVIDENCE_PROJECTION_REJECTED -> reconciliationProjectionRejectionText(projection)

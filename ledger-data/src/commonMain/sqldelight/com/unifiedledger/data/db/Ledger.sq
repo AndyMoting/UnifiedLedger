@@ -9051,6 +9051,36 @@ JOIN ledger_transaction AS tx
  AND COALESCE(tx.canonical_kind, tx.kind) = 'ACCOUNT_TRANSFER'
 WHERE p.ledger_id = ? AND p.posting_id = ?;
 
+-- P8-01b reconciliation write-face eligibility (spec sections 2.1/2.6). LEGS = the current version of
+-- an EFFECTIVE transaction whose posting account carries the section 2.1 composite mark
+-- (`owned_by_user = 1 AND real_account = 1 AND kind IN ('ASSET','LIABILITY')`), which is the queue's
+-- own membership rule. Deliberately a SECOND named query rather than a widening of
+-- selectP408PostingIntegrity: that one stays byte-identical for the correction face, which must be
+-- neither widened (kind) nor tightened (the effective gate — correction may act on a voided
+-- transaction's leg today).
+--
+-- The `ledger_transaction` join goes with the kind predicate it existed for. No account predicate
+-- (the write face is addressed by posting_id; account equality is checked by the caller), no time
+-- window, no LIMIT, no active-link fold, no catalog `active` filter.
+selectP801ReconciliationWriteIntegrity:
+SELECT DISTINCT p.posting_id, p.ledger_id, p.amount_minor, p.currency_code, p.currency_precision,
+  p.account_id, v.transaction_id, cv.current_version_id, v.occurred_at
+FROM posting AS p
+JOIN transaction_version AS v
+  ON v.ledger_id = p.ledger_id AND v.posting_set_id = p.posting_set_id
+JOIN ledger_transaction_current_version AS cv
+  ON cv.ledger_id = v.ledger_id AND cv.transaction_id = v.transaction_id
+ AND cv.current_version_id = v.version_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = v.ledger_id AND effective.transaction_id = v.transaction_id
+ AND effective.is_effective = 1
+JOIN catalog_account AS account
+  ON account.ledger_id = p.ledger_id AND account.account_id = p.account_id
+WHERE p.ledger_id = ? AND p.posting_id = ?
+  AND account.owned_by_user = 1
+  AND account.real_account = 1
+  AND account.kind IN ('ASSET', 'LIABILITY');
+
 selectP408ActiveLinksForEvidence:
 SELECT link.link_id, link.posting_id, link.transaction_id, link.responsibility,
   link.candidate_id, link.request_id
@@ -11659,6 +11689,18 @@ WHERE duplicate.ledger_id = :ledger_id AND subject.input_ref = :session_input_re
 --
 -- The page key binds LIMIT directly on posting rows, so the bound needs no keyset CTE: unlike
 -- ledgerFlowPage (:11332), one page never has to bound a parent whose children could straddle it.
+-- RG03 OVERRIDE (P8-01b, spec section 2.7). The queue consumes
+-- `rg03_transfer_posting_semantic.reconciliation_eligible = 0` as a false override: such a leg is NOT a
+-- queue member even though it satisfies the composite mark. The join is 1:1 on the primary key
+-- `(ledger_id, posting_id)` so it cannot duplicate a row, and it sits inside this page CTE — before the
+-- keyset predicate and the LIMIT — because a join applied after the page bound would truncate the page
+-- and break the cursor's total order.
+--
+-- The write face deliberately does NOT consume the override (spec section 2.7 registers the asymmetry):
+-- a leg that the queue and the totals hide can still be confirmed by posting id, and the posting-facts
+-- read still returns it because that read is flags-not-filters. Unreachable today — the override's CHECK
+-- only admits a TRANSFER_FEE leg carrying a category, and a fee leg posts to an EXPENSE account, which
+-- already fails the composite mark.
 p801AccountReconciliationLegPage:
 WITH page AS (
   SELECT
@@ -11731,11 +11773,14 @@ WITH page AS (
    AND account.account_id = p.account_id
   LEFT JOIN posting_reconciliation AS reconciliation
     ON reconciliation.ledger_id = p.ledger_id AND reconciliation.posting_id = p.posting_id
+  LEFT JOIN rg03_transfer_posting_semantic AS semantic
+    ON semantic.ledger_id = p.ledger_id AND semantic.posting_id = p.posting_id
   WHERE p.ledger_id = :ledger_id
     AND p.account_id = :account_id
     AND account.owned_by_user = 1
     AND account.real_account = 1
     AND account.kind IN ('ASSET', 'LIABILITY')
+    AND COALESCE(semantic.reconciliation_eligible, 1) = 1
 ),
 cursor_text AS (
   SELECT CAST(:cursor_occurred_at AS TEXT) AS text
@@ -11803,6 +11848,10 @@ LIMIT :page_size;
 --
 -- A (currency, status) group exists only if it has at least one row: an absent group is absent,
 -- never emitted as a zero row (D-089/R-Q06-4).
+--
+-- P8-01b (spec section 2.7) adds the rg03 false-override LEFT JOIN exactly as the page carries it, so
+-- the totals and the page can never disagree about membership. It is 1:1 on the primary key, so the
+-- `sum()`/`count(*)` are not inflated.
 p801AccountReconciliationStatusTotals:
 SELECT
   p.currency_code,
@@ -11830,11 +11879,14 @@ JOIN catalog_account AS account
  AND account.account_id = p.account_id
 LEFT JOIN posting_reconciliation AS reconciliation
   ON reconciliation.ledger_id = p.ledger_id AND reconciliation.posting_id = p.posting_id
+LEFT JOIN rg03_transfer_posting_semantic AS semantic
+  ON semantic.ledger_id = p.ledger_id AND semantic.posting_id = p.posting_id
 WHERE p.ledger_id = :ledger_id
   AND p.account_id = :account_id
   AND account.owned_by_user = 1
   AND account.real_account = 1
   AND account.kind IN ('ASSET', 'LIABILITY')
+  AND COALESCE(semantic.reconciliation_eligible, 1) = 1
 GROUP BY p.currency_code, p.currency_precision, COALESCE(reconciliation.status, 'PENDING')
 ORDER BY p.currency_code, p.currency_precision, COALESCE(reconciliation.status, 'PENDING');
 
@@ -11962,10 +12014,12 @@ WHERE evidence.ledger_id = :ledger_id AND evidence.evidence_id = :evidence_id;
 -- minor units (the direction token is derived by the adapter from that sign, never from a second
 -- column), the current version's `occurred_at` text, and two membership flags.
 --
--- CONFIRM-SCOPE. Only `ACCOUNT_TRANSFER` transactions are returned (`COALESCE(tx.canonical_kind,
--- tx.kind)`, the same expression the confirm write path tests in `selectP408PostingIntegrity`): a LEND/credit/ordinary
--- leg can never be confirmed, so offering it here would only manufacture candidates that
--- `confirmLink` refuses with `P408_POSTING_NOT_ELIGIBLE` (spec section 2.1: 状态与动作分开).
+-- KIND IS NOT A FILTER (P8-01b, spec section 2.2). Every kind is returned: the confirm write face now
+-- accepts any composite-marked real-account leg (spec section 2.1), so a kind predicate here would
+-- hide exactly the legs the widened face can link and would keep V-12/V-15 unreachable.
+--
+-- The `ledger_transaction` join went with that predicate: it filtered nothing else and projected
+-- nothing, and `transaction_version` already carries the foreign key to it.
 --
 -- FLAGS, NOT FILTERS. `transaction_effective_state` (the view defined above) is the single effective definition
 -- point and stays a join, so a voided transaction never appears. `current` and `eligible_real_account`
@@ -12001,9 +12055,6 @@ FROM posting AS p
 JOIN transaction_version AS version
   ON version.ledger_id = p.ledger_id
  AND version.posting_set_id = p.posting_set_id
-JOIN ledger_transaction AS tx
-  ON tx.ledger_id = version.ledger_id
- AND tx.transaction_id = version.transaction_id
 LEFT JOIN ledger_transaction_current_version AS current_version
   ON current_version.ledger_id = version.ledger_id
  AND current_version.transaction_id = version.transaction_id
@@ -12017,7 +12068,6 @@ LEFT JOIN catalog_account AS account
  AND account.account_id = p.account_id
 WHERE p.ledger_id = :ledger_id
   AND p.account_id = :account_id
-  AND COALESCE(tx.canonical_kind, tx.kind) = 'ACCOUNT_TRANSFER'
   AND CAST(strftime('%s', version.occurred_at) AS INTEGER) BETWEEN :window_from_epoch_seconds AND :window_to_epoch_seconds
 ORDER BY p.posting_id;
 

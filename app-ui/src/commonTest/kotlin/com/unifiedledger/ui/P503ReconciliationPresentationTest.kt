@@ -263,7 +263,6 @@ class P503ReconciliationPresentationTest {
         P801CandidateProposalFailure.entries.forEach { failure ->
             assertTrue(reconciliationProposalFailureText(failure).isNotBlank(), "every proposal failure needs copy: $failure")
         }
-        assertEquals(RECONCILIATION_NOT_CONFIRMABLE_TEXT, reconciliationProposalFailureText(P801CandidateProposalFailure.LEG_NOT_TRANSFER_CONFIRMABLE))
         // Distinct refusals must not collapse into one string.
         val distinct = P801ConfirmLinkRefusal.entries.map { reason -> reconciliationRefusalText(reason) }.distinct()
         assertEquals(P801ConfirmLinkRefusal.entries.size, distinct.size)
@@ -391,6 +390,14 @@ class P503ReconciliationPresentationTest {
         assertEquals(6, lines.size)
         assertTrue(lines.any { line -> line.startsWith(RECONCILIATION_ELEMENT_EXTERNAL_EVIDENCE) })
         assertTrue(lines.any { line -> line.startsWith(RECONCILIATION_ELEMENT_RESPONSIBILITY) && line.contains("real_account_posting") })
+        // V-20 (D1=A): the SECOND persisted duty token prints verbatim too — the audit face keeps the
+        // storage token for both responsibilities, so neither is translated into a new copy string.
+        val destinationLines = reconciliationAuditDecisionLines(link(P408EvidenceResponsibility.DESTINATION_ASSET_POSTING))
+        assertTrue(
+            destinationLines.any { line ->
+                line.startsWith(RECONCILIATION_ELEMENT_RESPONSIBILITY) && line.contains("destination_asset_posting")
+            },
+        )
         assertTrue(lines.any { line -> line.startsWith(RECONCILIATION_ELEMENT_MATCH_BASIS) })
         // F12d: the persisted basis version and window are rendered, not kept as unread fields.
         assertTrue(lines.any { line -> line.contains("v2") && line.contains("窗口 2 天") })

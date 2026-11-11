@@ -211,6 +211,12 @@ class P708RestoreRoundtripEquivalenceTest {
      * which writes `catalog_command_request`, `catalog_command_receipt` and one more name-history
      * revision. `posting_set` rows are hand-inserted once per seeded transaction chain
      * ([seedCurrentLibrary]).
+     *
+     * ONE exception, and it is a reconciliation-only row: [seedReconciliationSourceRows] hand-inserts
+     * the single `catalog_account` row the widened reconciliation write face needs (P8-01b: the
+     * section 2.1 composite mark). It carries no name history because the product path only creates
+     * one for an account the user creates; the row exists to make that leg confirmable, and no
+     * assertion in this class counts catalog name history for it.
      */
     private val catalogOwnerTables =
         listOf(
@@ -1466,6 +1472,10 @@ class P708RestoreRoundtripEquivalenceTest {
                 "INSERT INTO ledger_transaction_current_version(transaction_id, ledger_id, current_version_id) VALUES ('tx-reconciliation-roundtrip','$ledgerId','reconciliation-version-roundtrip')",
                 "INSERT INTO posting(posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision) " +
                     "VALUES ('reconciliation-posting-roundtrip','reconciliation-posting-set-roundtrip','$ledgerId',0,'reconciliation-account-roundtrip',-1000,'CNY',2)",
+                // P8-01b: the reconciliation write face requires the section 2.1 composite mark, so the
+                // account this leg posts to needs a catalog row.
+                "INSERT INTO catalog_account(ledger_id, account_id, name, kind, currency_code, currency_precision, owned_by_user, real_account, system_role, hidden, active) " +
+                    "VALUES ('$ledgerId','reconciliation-account-roundtrip','roundtrip account','ASSET','CNY',2,1,1,NULL,0,1)",
             )
         statements.forEach { driver.execute(null, it, 0) }
     }

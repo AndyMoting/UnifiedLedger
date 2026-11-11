@@ -110,6 +110,7 @@
 5	com.unifiedledger.data.P705VoidRestoreCommitPortTest
 5	com.unifiedledger.data.P706WalConcurrentSnapshotTest
 5	com.unifiedledger.data.P707TimeProjectionWriteMaintenanceTest
+5	com.unifiedledger.data.P801WidenedReconciliationTest
 5	com.unifiedledger.data.Rg04SchemaV6Test
 5	com.unifiedledger.data.Rg05SchemaV8Test
 5	com.unifiedledger.data.Rg06SchemaV9Test
