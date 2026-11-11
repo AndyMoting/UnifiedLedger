@@ -151,7 +151,7 @@
 
 ## 9. i2b 设备腿登记（2026-11-12）
 
-**V-8 现状 = 缺证。** 本片交付的是**测读装置**（61k 交易的设备夹具 + 按需计时用例 + 派发通道），**不是读数**。合并后由主代理派发 `gh workflow run android-instrumented.yml --ref main -f instrumentation_extra_args="ul.p802.timing=1"`，从 `android-instrumented-<sha>-shard-*` 工件的 `logcat.txt` 取 `P802-V8DEV fixture=61000 …` 一行，登记为基线；在那之前 V-8 **不记覆盖**。
+**V-8 首轮基线（2026-11-12 已登记）**：派发 `gh workflow run android-instrumented.yml --ref main -f instrumentation_extra_args="ul.p802.timing=1"`，run `43075174195`（`015be2a1`、`ul-instrumented-2`、API 36、shard 2 `PASS` 21/21，用例 `P802SearchDeviceTimingInstrumentedTest#thePortFirstPageReadingIsRecordedOnTheDevice`）从 `android-instrumented-015be2a1…-shard-2` 工件的 `logcat.txt` 取到：`P802-V8DEV fixture=61000 windowStart=2026-10-13T18:13:51Z windowEnd=2026-11-11T18:13:52Z condition=fixed-note+tag+merchant0 portFirstPageMs=448.2 renderFirstPageMs=unmeasurable-no-compose-harness pageRows=50 totalCount=436 schema=36`。即 61,000 笔、默认 90 天窗、固定四项条件组下**端口返回首屏页 448.2 ms**、首屏 50 行、`totalCount` 436、schema 36。JVM 同夹具对照 232.1 ms（`4d011372`，见 §8）——两者**不可相减**，理由见下四条差异。**不预设门槛**（D2=A），此读数即基线；V-8 的最终判定在 P8-02 收口时给，本条只登记读数。
 
 **终点收窄（必须与读数一起读）**：设备腿只取「端口返回首屏页」一个终点。「首屏渲染完成」本轮**未取得**——本 rig 上两条设备观测通道都绑不住 Compose 首帧：`uiautomator dump` 只返回可见节点（另有约 2.29 s 的 dump 地板），`gfxinfo framestats` 在 `swiftshader_indirect` 上返回不可换算值（`DECISIONS.md:6462`），且本仓不引入 Compose UI 测试框架（`P503SearchPresentation.kt:15`）。这是「本 rig 上未取得」，不是普适的「不可测」；未来路径是既有 `tools/python/android_scale` 的 B2 framestats 机制。
 
