@@ -126,8 +126,11 @@ class P801WidenedReconciliationTest {
             }
 
             val expectedTotals =
-                rows.groupBy { it.status }
-                    .map { (status, group) -> P801AccountReconciliationStatusTotal(fixture.cny, status, group.sumOf { it.amountMinor }, group.size) }
+                rows
+                    .groupBy { row -> row.status }
+                    .map { (status, group) ->
+                        P801AccountReconciliationStatusTotal(fixture.cny, status, group.sumOf { row -> row.amountMinor }, group.size)
+                    }
                     .sortedBy { total -> total.status.name }
             assertEquals(expectedTotals, summaryTotals(fixture).sortedBy { total -> total.status.name })
 
@@ -200,7 +203,8 @@ class P801WidenedReconciliationTest {
                     fixture.propose.proposeForEvidence(fixture.ledgerId, evidence.evidenceId),
                 ).proposals.single()
             assertEquals(P408MatchDisposition.PROPOSED_MATCH, proposal.match.disposition)
-            assertEquals("posting-hidden", proposal.match.candidates.single().posting.postingId)
+            val confirmedCandidate = proposal.match.candidates.single()
+            assertEquals("posting-hidden", confirmedCandidate.posting.postingId)
             assertIs<P801ConfirmLinkResult.Linked>(fixture.confirm.confirm(input(fixture, proposal)))
             assertEquals("CHECKED", fixture.reconciliationStatusOf("posting-hidden"))
         }
@@ -214,12 +218,24 @@ class P801WidenedReconciliationTest {
 
             // The correction face keeps the OLD query verbatim (spec section 2.6), so it still refuses a
             // non-transfer leg — the widening did not reach it...
-            assertNull(fixture.database.ledgerQueries.selectP408PostingIntegrity(LEDGER, "posting-expense").executeAsOneOrNull())
+            assertNull(
+                fixture.database.ledgerQueries
+                    .selectP408PostingIntegrity(LEDGER, "posting-expense")
+                    .executeAsOneOrNull(),
+            )
             fixture.voidTransaction("tx-transfer")
             // ...and it still resolves a voided transfer leg, exactly as before: the effective gate was
             // added to the reconciliation face only, never to the correction face.
-            assertNotNull(fixture.database.ledgerQueries.selectP408PostingIntegrity(LEDGER, "posting-out").executeAsOneOrNull())
-            assertNull(fixture.database.ledgerQueries.selectP801ReconciliationWriteIntegrity(LEDGER, "posting-out").executeAsOneOrNull())
+            assertNotNull(
+                fixture.database.ledgerQueries
+                    .selectP408PostingIntegrity(LEDGER, "posting-out")
+                    .executeAsOneOrNull(),
+            )
+            assertNull(
+                fixture.database.ledgerQueries
+                    .selectP801ReconciliationWriteIntegrity(LEDGER, "posting-out")
+                    .executeAsOneOrNull(),
+            )
         }
     }
 
