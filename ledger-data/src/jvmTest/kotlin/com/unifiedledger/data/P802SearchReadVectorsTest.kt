@@ -321,28 +321,11 @@ class P802SearchReadVectorsTest {
                 "an unrepresentable window bound is refused as the caller's input",
             )
 
-            // One version row loses its projection: a fresh read must fail loudly, never drop the row.
-            harness.driverExecute(
-                "UPDATE transaction_version SET statistics_at_epoch_nanos = NULL " +
-                    "WHERE ledger_id = '${P705Fixture.ledgerId.value}' AND transaction_id = 'tx-p802-0001'",
-            )
-            val missingProjection = adapter.readPage(P705Fixture.ledgerId, resolved, P802_SEARCH_PAGE_SIZE, null)
-            assertEquals(
-                SearchFailureCode.SEARCH_MISSING_PROJECTION,
-                assertIs<SearchReadResult.Failed>(missingProjection).failureCode,
-                "a NULL statistics projection is a typed failure, never a quiet omission",
-            )
-
-            harness.closePreservingFile()
-            val failed = adapter.readPage(P705Fixture.ledgerId, resolved, P802_SEARCH_PAGE_SIZE, null)
-            assertEquals(
-                SearchFailureCode.SEARCH_UNAVAILABLE,
-                assertIs<SearchReadResult.Failed>(failed).failureCode,
-                "a closed connection is a typed failure, never Success(empty page)",
-            )
-
             // The use case maps its own boundaries the same way: an unreadable catalog authority
-            // and a throwing port are typed failures, and neither becomes an empty page.
+            // and a throwing port are typed failures, and neither becomes an empty page. Both run
+            // on the STILL-OPEN harness, because their catalog readers really read it: only then is
+            // the throwing-port case provably the port throwing rather than a read on a closed
+            // handle (both surface as SEARCH_UNAVAILABLE).
             val badCatalog =
                 QuerySearchPage(
                     readPort = adapter,
@@ -382,6 +365,31 @@ class P802SearchReadVectorsTest {
                     SearchCondition(window = SearchTimeWindow.Custom(AFTER_ALL, BEFORE_ALL)),
                 )
             assertEquals(SearchFailureCode.SEARCH_INVALID_WINDOW, assertIs<SearchReadResult.Failed>(invalidWindow).failureCode)
+
+            // One version row loses its projection: a fresh read must fail loudly, never drop the row.
+            harness.driverExecute(
+                "UPDATE transaction_version SET statistics_at_epoch_nanos = NULL " +
+                    "WHERE ledger_id = '${P705Fixture.ledgerId.value}' AND transaction_id = 'tx-p802-0001'",
+            )
+            val missingProjection = adapter.readPage(P705Fixture.ledgerId, resolved, P802_SEARCH_PAGE_SIZE, null)
+            assertEquals(
+                SearchFailureCode.SEARCH_MISSING_PROJECTION,
+                assertIs<SearchReadResult.Failed>(missingProjection).failureCode,
+                "a NULL statistics projection is a typed failure, never a quiet omission",
+            )
+
+            // Closing the connection comes LAST: the first read on a closed handle fails, but its
+            // cleanup clears the driver's thread-local, so a second read silently reconnects on a
+            // fresh connection (P705Database.closePreservingFile). Leaving that to the end keeps
+            // this the only read after the close, and leaves no open handle for the owner's file
+            // deletion in the finally block.
+            harness.closePreservingFile()
+            val failed = adapter.readPage(P705Fixture.ledgerId, resolved, P802_SEARCH_PAGE_SIZE, null)
+            assertEquals(
+                SearchFailureCode.SEARCH_UNAVAILABLE,
+                assertIs<SearchReadResult.Failed>(failed).failureCode,
+                "a closed connection is a typed failure, never Success(empty page)",
+            )
         } finally {
             harness.close()
         }

@@ -41,8 +41,9 @@ import kotlin.time.Instant
  * Recorded (never asserted against a bound): the port's first-page duration for the fixed condition
  * group on the default 90-day window, that page's row count, the fixture build duration, and the
  * fixture's transaction count. The last one IS asserted, because it is a fact of the sample rather
- * than a reading. A second first-page duration is recorded for a keyword that resolves a category
- * name, because the fixed group's keyword switches the seven-table category arm off.
+ * than a reading. A second first-page duration is recorded for the default window plus a category
+ * keyword only — labelled `category-arm-window-only`, NOT the fixed group — because the fixed
+ * group's keyword switches the seven-table category arm off.
  * Device/instrumented timing stays with the i2 device leg (D-289 residual 1).
  */
 class P802SearchScaleTest {
@@ -104,20 +105,34 @@ class P802SearchScaleTest {
                 assertEquals(expectedOrder(merchantMatches), merchantIds, "the merchant name arm's matched set is the manifest")
 
                 // ---- category name arm: one row per semantic table
+                val categoryMatches = SEMANTIC_INDEXES.values.toList()
                 val categoryIds = traverse(search, SearchCondition(keyword = CATEGORY_NAME))
-                assertEquals(expectedOrder(SEMANTIC_INDEXES.values.toList()), categoryIds, "all seven semantic-table rows are reachable")
+                assertEquals(expectedOrder(categoryMatches), categoryIds, "all seven semantic-table rows are reachable")
 
-                // The category-arm reading: this keyword resolves a real category name, so
-                // `categoryArm` is 1 and the seven-table union is actually paid. The first-page
-                // reading above uses the note marker, whose keyword resolves no category name, so it
-                // measures the read with that registered cost switched off. Recorded, never bounded.
+                // The category-arm reading: this condition is the default window plus this keyword
+                // ONLY — three of its four items differ from the fixed group timed above — so the
+                // two numbers measure different selectivity and are labelled apart. The keyword
+                // resolves a real category name, so `categoryArm` is 1 and the seven-table union is
+                // actually paid; the fixed group's note keyword resolves no category name, so that
+                // reading has the cost switched off. Recorded, never bounded, and pinned to the
+                // manifest below so the printed number cannot drift from what the fixture holds.
                 val categoryPageStart = System.nanoTime()
                 val categoryPage = assertIs<SearchReadResult.Success>(search.query(P705Fixture.ledgerId, SearchCondition(keyword = CATEGORY_NAME))).page
                 val categoryPageNanos = System.nanoTime() - categoryPageStart
+                assertEquals(
+                    categoryMatches.size.toLong(),
+                    categoryPage.totalCount,
+                    "the category page's total is the seven-row semantic manifest",
+                )
+                assertEquals(
+                    expectedOrder(categoryMatches),
+                    categoryPage.entries.map { it.transactionId.value },
+                    "the whole seven-row matched set fits on one page under the frozen page size",
+                )
                 println(
-                    "P802-V8 category-first-page-ms=${millis(categoryPageNanos)} " +
-                        "category-first-page-rows=${categoryPage.entries.size} " +
-                        "category-first-page-total=${categoryPage.totalCount}",
+                    "P802-V8 category-arm-window-only-first-page-ms=${millis(categoryPageNanos)} " +
+                        "category-arm-window-only-first-page-rows=${categoryPage.entries.size} " +
+                        "category-arm-window-only-first-page-total=${categoryPage.totalCount}",
                 )
 
                 // Recorded only: no timing or statement threshold is asserted (D2=A).
