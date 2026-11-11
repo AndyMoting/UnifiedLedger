@@ -12,6 +12,7 @@ import com.unifiedledger.application.P801AccountReconciliationReadPort
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.ProposeReconciliationCandidates
+import com.unifiedledger.application.QuerySearchPage
 import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.application.WidgetMonthlySnapshot
 import com.unifiedledger.domain.CurrencyUnit
@@ -732,6 +733,19 @@ class LedgerLeaseScope(
     var confirmReconciliationLink: ConfirmReconciliationLink? = null
 
     /**
+     * P8-02 i2a (D7-7; spec sections 2.1/2.3): the search result surface's bounded read use case,
+     * bound by the composition root. Null when the surface is absent (tests, legacy graphs), so the
+     * host renders no dead search capsule.
+     *
+     * LEASE CONTRACT (F7 — the reconciliation ports' rule): this accessor takes NO lease and
+     * [QuerySearchPage] takes none either. The host runs EVERY call through
+     * [LedgerLeaseScope.leased], so a read is refused with the typed `LeaseOutcome.NotReady` while
+     * the runtime is not Ready instead of touching a closed graph. Exposing the use case here adds
+     * no second lease; it does not remove the caller's obligation to take one.
+     */
+    var querySearchPage: QuerySearchPage? = null
+
+    /**
      * P7-06 06.D (spec sections 3.1/6): the preflight request resolved for the CURRENT active
      * generation — the target identity is the facade's ledger id, the whitelist and current schema
      * version come from the injected wiring. Null when the surface is absent or the owner has no
@@ -829,6 +843,11 @@ class LedgerLeaseScope(
                 accountReconciliationPropose = proposeReconciliationCandidates != null,
                 accountReconciliationBind = bindReconciliationEvidence != null,
                 accountReconciliationConfirm = confirmReconciliationLink != null,
+                // P8-02 i2a (D7-7; spec section 2.4): the search read use case is bound to this
+                // scope by the composition root. A pure field read of THIS scope's own binding
+                // (not a facade field), never an invocation, so the HOME capsule renders only when
+                // the surface can actually be read (no dead affordance).
+                search = querySearchPage != null,
             )
         }
 
@@ -966,6 +985,10 @@ data class LedgerSurfaces(
     val accountReconciliationPropose: Boolean = false,
     val accountReconciliationBind: Boolean = false,
     val accountReconciliationConfirm: Boolean = false,
+    // P8-02 i2a (D7-7; spec section 2.4): the composition root bound the search read use case to the
+    // lease scope. A pure field probe, never an invocation, so the HOME capsule is rendered only
+    // when the surface exists (the same "no dead affordance" convention as the fields above).
+    val search: Boolean = false,
 ) {
     /** The queue surface (entry A) is reachable: the read face is wired. */
     val accountReconciliationQueue: Boolean

@@ -7,20 +7,19 @@ import com.unifiedledger.application.EntryPinTarget
 import com.unifiedledger.application.EntryType
 import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.LedgerCurrentState
-import com.unifiedledger.application.MerchantMonthlyAccumulationResult
+import com.unifiedledger.application.LedgerEntryRow
 import com.unifiedledger.application.RequestId
-import com.unifiedledger.application.TagMerchantFilterCondition
+import com.unifiedledger.application.SearchFailureCode
 import com.unifiedledger.application.TagMerchantFilterCursor
-import com.unifiedledger.application.TagMerchantFilterEntry
-import com.unifiedledger.application.TagMerchantFilterFailureCode
+import com.unifiedledger.application.TagMerchantTagMatchMode
 import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CounterpartyId
-import com.unifiedledger.domain.LedgerCatalog
+import com.unifiedledger.domain.MerchantId
+import com.unifiedledger.domain.TagId
 import com.unifiedledger.domain.TransactionId
-import kotlinx.datetime.YearMonth
 import kotlin.time.Instant
 
 /**
@@ -415,7 +414,7 @@ sealed interface P503AppState {
      * whole-ledger walk ended — the honest end, never a fabricated total). No transaction-count
      * claim is ever displayed (no per-account total exists); the loaded count renders as-is
      * (「已加载 N 笔」). [rowsLoading]/[rowsLoadFailed]/[pageRequestToken] are the single-flight,
-     * fail-closed and late-write-guard triple, the [TagMerchantFilter] page-token precedent.
+     * fail-closed and late-write-guard triple, the [Search] page-token precedent.
      *
      * [pageRequestToken] is the monotonic request identity of the more-page read: every
      * RequestAccountFlowMorePage dispatch advances it, the host presents it back on the landing,
@@ -930,48 +929,60 @@ sealed interface P503AppState {
     ) : P503AppState
 
     /**
-     * P7-08 08.C (spec sections 5.1-5.5): the tag/merchant filter surface. Reached only from
-     * the analysis tab's explicit entry. [overview] is carried so every exit restores the exact
-     * tab/month/payload (the preserved-overview discipline). [condition] is the pure filter
-     * condition (tags OR/AND + optional merchant); [accumulationMonth] is the merchant
-     * accumulation's month (the analysis month it was opened from, shiftable).
+     * P8-02 i2a (D7-1..D7-7; spec sections 2.1/2.4/2.5): the independent search result surface —
+     * the ledger-wide read reached from the HOME search capsule, not an in-place filter of the home
+     * list. [overview] is carried so every exit restores the exact tab/month/payload (the
+     * preserved-overview discipline) with the position sampled at open time riding its
+     * [OverviewEmpty.originListScroll] slot.
      *
-     * [loadedEntries] accumulates the landed keyset pages and is re-sorted by the frozen
-     * display order on every landing; [hasMore] gates the 加载更多 affordance; [pageFailure] is
-     * the last landed typed read failure (fail-closed — never an empty page rendered as "no
-     * matches", spec section 5.3). [accumulation] is the last landed merchant accumulation for
-     * [accumulationMonth]. The loading markers absorb duplicate request events (一次一页).
+     * THE CONDITION GROUP IS THE SHARED CONTRACT. [window], [keyword], [tagIds]/[tagMatch] and
+     * [merchantId] assemble into `SearchCondition` (see `toSearchCondition`), so no private filter
+     * semantics exist here: the P7-08 tag/merchant condition the analysis page used to own is
+     * reached by the SAME fields (V-10). [keywordDraft] is what the text field holds; [keyword] is
+     * the value the last submit committed, so editing the field after a result page does not
+     * relabel the rows that are on screen.
      *
-     * A landing applies only when its condition fingerprint (and, for the accumulation, its
-     * month) still matches this surface's live values AND its request token is still the
-     * surface's current one — an old-condition or old-generation return can never overwrite the
-     * page (spec section 5.3; the host gates the lease generation, the reducer gates the
-     * fingerprint and the fix round's request token).
+     * [customStartText]/[customEndText] are the CUSTOM window's drafts; an unresolvable pair
+     * disables submit (`searchSubmitEnabled`) instead of producing a typed window failure.
+     *
+     * [entries] accumulates the landed keyset pages in the port's frozen display order
+     * (`statistics_at DESC`, then transaction id DESC), so appending a page never needs a re-sort;
+     * [hasMore]/[nextCursor] gate the 加载更多 affordance and carry its continuation; [totalCount]
+     * is the "共 N 笔" count the port returns per page (D7-2: recomputed every page, contract
+     * unchanged). [pageFailure] is the last landed typed read failure — fail-closed, never an empty
+     * page rendered as "没有找到" (V-7 / D-089).
+     *
+     * [requestToken] is the monotonic request identity of the page read: every SUBMIT and every
+     * load-more dispatch advances it, the host presents the value it read back on the landing, and
+     * the reducer applies a landing only while that token is still current. A condition change
+     * clears the rows and the in-flight marker, so a read issued under the previous condition is
+     * dropped whole either way. [readIssued] says whether a read was ever dispatched for the
+     * current condition: the two dispatch transitions set it and every page reset clears it,
+     * because the retained token cannot say it (the token must keep advancing for the landing
+     * gate, so zeroing it would accept superseded landings). The body face uses it to show the
+     * guide, not the empty-result claim, after a condition edit lands no read.
      */
-    data class TagMerchantFilter(
+    data class Search(
         val overview: OverviewEmpty,
-        val accumulationMonth: YearMonth,
-        val condition: TagMerchantFilterCondition = TagMerchantFilterCondition(),
-        val loadedEntries: List<TagMerchantFilterEntry> = emptyList(),
+        val window: SearchWindowChoice = SearchWindowChoice.LAST_NINETY_DAYS,
+        val keywordDraft: String = "",
+        val keyword: String = "",
+        val customStartText: String = "",
+        val customEndText: String = "",
+        val tagIds: Set<TagId> = emptySet(),
+        val tagMatch: TagMerchantTagMatchMode = TagMerchantTagMatchMode.Any,
+        val merchantId: MerchantId? = null,
+        val entries: List<LedgerEntryRow> = emptyList(),
         val hasMore: Boolean = false,
-        /** The last landed page's continuation cursor (null = no further page). */
         val nextCursor: TagMerchantFilterCursor? = null,
-        val pageFailure: TagMerchantFilterFailureCode? = null,
+        val totalCount: Long = 0L,
+        val pageFailure: SearchFailureCode? = null,
         val pageLoading: Boolean = false,
-        /**
-         * Fix round (P3-1): the monotonic request identity of the page read. EVERY page-request
-         * dispatch advances it (absorbed 一次一页 appends included), the host presents it back on
-         * the landing, and the reducer applies a landing only when its token is still current — a
-         * duplicate same-condition read or a read superseded by a newer request can never append
-         * or merge. Pure bookkeeping: never rendered.
-         */
-        val pageRequestToken: Long = 0L,
-        val accumulation: MerchantMonthlyAccumulationResult? = null,
-        val accumulationLoading: Boolean = false,
-        /** [pageRequestToken]'s accumulation twin (see [P503UiEvent.MerchantAccumulationLanded]). */
-        val accumulationRequestToken: Long = 0L,
-        /** The latest landed page's account catalog snapshot (the group fold's kind dispatch). */
-        val entryCatalog: LedgerCatalog? = null,
+        /** R1: a read was dispatched for the current condition; cleared by every page reset. */
+        val readIssued: Boolean = false,
+        val requestToken: Long = 0L,
+        /** Registered for the future detail route; never filled today (no secondary surface opens from search). */
+        val listScroll: ListScrollPosition? = null,
     ) : P503AppState
 
     /**
@@ -1145,7 +1156,7 @@ sealed interface ExpressionPreview {
  *
  * HONEST SUBSET (not "every surface that carries an OverviewEmpty"):
  * [ImportCandidateDetail], [ImportBatchConfirm], [ImportBatchSubmitting], [TransactionEdit],
- * [TransferEdit], [VoidConfirm], [TransactionAnnotationEdit] and [TagMerchantFilter] also carry
+ * [TransferEdit], [VoidConfirm], [TransactionAnnotationEdit] and [Search] also carry
  * one, but a landing there is ABSORBED —
  * their own event families own those surfaces, and the budget region never renders on
  * them. REGISTERED NARROW RACE: a budget landing dispatched while the user has navigated

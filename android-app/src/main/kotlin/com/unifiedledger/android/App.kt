@@ -89,6 +89,7 @@ import com.unifiedledger.application.QueryImportDuplicateReviewsForSession
 import com.unifiedledger.application.QueryImportDuplicateReviewsForSessionPage
 import com.unifiedledger.application.QueryImportReviewRows
 import com.unifiedledger.application.QueryMerchantMonthlyAccumulation
+import com.unifiedledger.application.QuerySearchPage
 import com.unifiedledger.application.QueryTagMerchantFilterPage
 import com.unifiedledger.application.QueryWidgetMonthlySnapshot
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
@@ -134,6 +135,7 @@ import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
 import com.unifiedledger.data.SqlDelightMonthlyContributionReadAdapter
 import com.unifiedledger.data.SqlDelightP408ReconciliationStore
 import com.unifiedledger.data.SqlDelightP801AccountReconciliationReadAdapter
+import com.unifiedledger.data.SqlDelightSearchReadAdapter
 import com.unifiedledger.data.SqlDelightTagMerchantFilterReadAdapter
 import com.unifiedledger.data.createAndroidLedgerDatabase
 import com.unifiedledger.data.currentSupportedSchemaVersion
@@ -412,16 +414,17 @@ internal class AndroidStartupController(
         }
 
     /**
-     * P8-01a i3a (D-308; spec section 2.2): binds the four reconciliation ports of the graph that
-     * just opened onto the lease scope the product reads them from. They live on the graph (they are
-     * built over its database), so they are re-bound on EVERY open — a 06.D reopen must not keep the
-     * previous graph's handles.
+     * P8-01a i3a (D-308; spec section 2.2) / P8-02 i2a (D7-7; spec section 2.4): binds the read ports
+     * of the graph that just opened onto the lease scope the product reads them from. They live on
+     * the graph (they are built over its database), so they are re-bound on EVERY open — a 06.D
+     * reopen must not keep the previous graph's handles.
      */
     private fun bindReconciliationPorts(graph: CloseableLedgerGraph) {
         leaseScope.accountReconciliationRead = graph.accountReconciliationRead
         leaseScope.proposeReconciliationCandidates = graph.proposeReconciliationCandidates
         leaseScope.bindReconciliationEvidence = graph.bindReconciliationEvidence
         leaseScope.confirmReconciliationLink = graph.confirmReconciliationLink
+        leaseScope.querySearchPage = graph.querySearchPage
     }
 
     /**
@@ -784,6 +787,9 @@ internal data class CloseableLedgerGraph(
     val proposeReconciliationCandidates: ProposeReconciliationCandidates? = null,
     val bindReconciliationEvidence: BindReconciliationEvidence? = null,
     val confirmReconciliationLink: ConfirmReconciliationLink? = null,
+    // P8-02 i2a (D7-7; spec section 2.4): the search result surface's bounded read use case. Null
+    // when a graph wired none (tests, legacy graphs).
+    val querySearchPage: QuerySearchPage? = null,
 )
 
 private const val LOG_TAG = "UnifiedLedger"
@@ -1437,6 +1443,17 @@ private fun buildLedgerGraph(
         )
     val queryTagMerchantFilterPage = QueryTagMerchantFilterPage(tagMerchantFilterReadAdapter)
     val queryMerchantAccumulation = QueryMerchantMonthlyAccumulation(tagMerchantFilterReadAdapter)
+    // P8-02 i2a (D7-7; spec sections 2.1/2.3): the search read surface — one bounded keyset page
+    // plus the same condition group's "共 N 笔" count per read, on the handle's platform-configured
+    // stores. The keyword's two name arms resolve through the catalog readers above and the
+    // mandatory window through the injected clock, so no new read port is invented here.
+    val querySearchPage =
+        QuerySearchPage(
+            readPort = SqlDelightSearchReadAdapter(database),
+            catalogReader = store,
+            tagMerchantCatalogReader = handle.tagMerchantCatalogStore,
+            clock = ledgerClock,
+        )
     val executeTagMerchantCommand =
         ExecuteTagMerchantCommand(
             commitPort = handle.tagMerchantCatalogStore,
@@ -1597,6 +1614,7 @@ private fun buildLedgerGraph(
         proposeReconciliationCandidates = proposeReconciliationCandidates,
         bindReconciliationEvidence = bindReconciliationEvidence,
         confirmReconciliationLink = confirmReconciliationLink,
+        querySearchPage = querySearchPage,
     )
 }
 

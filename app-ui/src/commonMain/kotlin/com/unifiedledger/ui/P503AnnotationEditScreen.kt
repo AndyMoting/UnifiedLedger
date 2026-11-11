@@ -207,7 +207,7 @@ internal fun annotationEditOutcomeText(outcome: TransactionAnnotationEditOutcome
     }
 
 /**
- * P7-08 08.D (spec section 2.2 停用保留; the 08.C filter-screen 文案先例 P503TagMerchantFilterScreen.kt:89):
+ * P7-08 08.D (spec section 2.2 停用保留; the 08.C filter-screen 文案先例, retired in P8-02 i2a):
  * the inactive retained tags of the current association, as renderable (id, label) rows. A retained
  * id that the selectable options already carry is NOT returned (it renders as a normal toggle);
  * an id without an authority label falls back to the raw stable id — an honest row, never a

@@ -29,11 +29,9 @@ import com.unifiedledger.application.ManualTransferSaveResult
 import com.unifiedledger.application.ManualTransferSubmissionResult
 import com.unifiedledger.application.MonthlyBuckets
 import com.unifiedledger.application.ParseManualExpenseAmount
-import com.unifiedledger.application.TagMerchantFilterReadResult
+import com.unifiedledger.application.SearchReadResult
 import com.unifiedledger.application.TransferDraft
 import com.unifiedledger.application.TypedEntryDraft
-import com.unifiedledger.application.sortTagMerchantFilterEntriesForDisplay
-import com.unifiedledger.application.tagMerchantFilterConditionFingerprint
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.CategoryId
@@ -88,6 +86,7 @@ class P503ReducerImpl(
         if (budgetEventAbsorbed(state, event)) return state
         if (annotationEditEventAbsorbed(state, event)) return state
         if (tagMerchantEventAbsorbed(state, event)) return state
+        if (searchEventAbsorbed(state, event)) return state
         if (annotationHistoryEventAbsorbed(state, event)) return state
         if (versionHistoryEventAbsorbed(state, event)) return state
         if (accountFlowEventAbsorbed(state, event)) return state
@@ -112,7 +111,7 @@ class P503ReducerImpl(
             is P503AppState.BackupExport -> reduceBackupExport(state, event)
             is P503AppState.BackupRestore -> reduceBackupRestore(state, event)
             is P503AppState.BudgetConfig -> reduceBudgetConfig(state, event)
-            is P503AppState.TagMerchantFilter -> reduceTagMerchantFilter(state, event)
+            is P503AppState.Search -> reduceSearch(state, event)
             is P503AppState.RestoreSessionTerminal -> reduceRestoreSessionTerminal(state, event)
             is P503AppState.Editing -> reduceEditing(state, event)
             is P503AppState.AwaitingConfirmation -> reduceAwaitingConfirmation(state, event)
@@ -232,27 +231,16 @@ class P503ReducerImpl(
         }
 
     /**
-     * P7-08 08.C: the tag/merchant filter + catalog-management event family is state-preserving
-     * outside its own surfaces (the annotation-edit family's absorb discipline). The open events
-     * have their one effect on OverviewEmpty; the filter events act only on TagMerchantFilter.
-     * Everywhere else they are absorbed here so a late/stale dispatch can never reach
-     * `unhandled` (the "new events never ISE" discipline).
+     * P7-08 08.C: the tag/merchant catalog-management event family is state-preserving outside the
+     * overview (the annotation-edit family's absorb discipline): every one of its designed effects
+     * lives on OverviewEmpty, so everywhere else they are absorbed here and a late/stale dispatch can
+     * never reach `unhandled` (the "new events never ISE" discipline).
      */
     private fun tagMerchantEventAbsorbed(
         state: P503AppState,
         event: P503UiEvent,
     ): Boolean =
         when (event) {
-            is P503UiEvent.OpenTagMerchantFilter -> state !is P503AppState.OverviewEmpty
-            is P503UiEvent.ToggleFilterTag,
-            is P503UiEvent.SetFilterTagMatch,
-            is P503UiEvent.SetFilterMerchant,
-            is P503UiEvent.SetFilterAccumulationMonth,
-            is P503UiEvent.RequestTagMerchantFilterPage,
-            is P503UiEvent.TagMerchantFilterPageLanded,
-            P503UiEvent.RequestMerchantAccumulation,
-            is P503UiEvent.MerchantAccumulationLanded,
-            -> state !is P503AppState.TagMerchantFilter
             P503UiEvent.OpenTagCreateDialog,
             P503UiEvent.OpenMerchantCreateDialog,
             is P503UiEvent.OpenTagRenameDialog,
@@ -263,6 +251,34 @@ class P503ReducerImpl(
             is P503UiEvent.ManageMerchantActive,
             is P503UiEvent.TagMerchantCommandLanded,
             -> state !is P503AppState.OverviewEmpty
+            else -> false
+        }
+
+    /**
+     * P8-02 i2a (D7-1..D7-7; spec sections 2.1/2.4/2.5): the search event family is
+     * state-preserving outside its own surface (the reconciliation family's central-guard shape).
+     * `OpenSearch` has its one effect on the overview it is opened from (the HOME capsule); every
+     * other family event acts only on [P503AppState.Search]. Everywhere else — including `Ready`
+     * before the overview exists — every family event is absorbed, so a late or stale dispatch can
+     * never reach `unhandled` and turn into an ISE.
+     */
+    private fun searchEventAbsorbed(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): Boolean =
+        when (event) {
+            is P503UiEvent.OpenSearch -> state !is P503AppState.OverviewEmpty
+            is P503UiEvent.UpdateSearchKeyword,
+            is P503UiEvent.SelectSearchWindow,
+            is P503UiEvent.UpdateSearchCustomStart,
+            is P503UiEvent.UpdateSearchCustomEnd,
+            is P503UiEvent.ToggleSearchTag,
+            is P503UiEvent.SetSearchTagMatch,
+            is P503UiEvent.SelectSearchMerchant,
+            P503UiEvent.SubmitSearch,
+            P503UiEvent.RequestSearchPage,
+            is P503UiEvent.SearchPageLanded,
+            -> state !is P503AppState.Search
             else -> false
         }
 
@@ -361,13 +377,15 @@ class P503ReducerImpl(
 
     /**
      * P8-00 b3 (V-5 返回保滚动位, the consume leg): the scroll-restore consume is
-     * state-preserving everywhere except the three surfaces that own a restore slot — the overview
+     * state-preserving everywhere except the four surfaces that own a restore slot — the overview
      * ([P503AppState.OverviewEmpty.originListScroll]), the account flow (P8-01a i3a F6: the position
-     * sampled when its reconciliation queue opened) and the reconciliation queue
-     * ([P503AppState.ReconciliationQueue.listScroll]) — where its ONE effect is clearing the slot
-     * after the screen applied it (the same event, the same mechanism, one slot per surface). Every
-     * other surface is absorbed whole, so the value can never pollute a surface it does not belong
-     * to and a late dispatch can never reach `unhandled`.
+     * sampled when its reconciliation queue opened), the reconciliation queue
+     * ([P503AppState.ReconciliationQueue.listScroll]) and the P8-02 i2a search surface
+     * ([P503AppState.Search.listScroll]; registered for a future secondary surface and never
+     * filled today) — where its ONE effect is clearing the slot after the screen applied it (the
+     * same event, the same mechanism, one slot per surface). Every other surface is absorbed
+     * whole, so the value can never pollute a surface it does not belong to and a late dispatch
+     * can never reach `unhandled`.
      */
     private fun listScrollRestoredEventAbsorbed(
         state: P503AppState,
@@ -376,7 +394,8 @@ class P503ReducerImpl(
         event is P503UiEvent.ListScrollRestored &&
             state !is P503AppState.OverviewEmpty &&
             state !is P503AppState.AccountFlow &&
-            state !is P503AppState.ReconciliationQueue
+            state !is P503AppState.ReconciliationQueue &&
+            state !is P503AppState.Search
 
     /**
      * P7-09 09.0 (spec sections 2/3; D-225 Q19): the inbound-navigation family's ONE transition
@@ -598,114 +617,124 @@ class P503ReducerImpl(
         }
 
     /**
-     * P7-08 08.C: the filter surface's transitions. Every landing is gated against the LIVE
-     * condition fingerprint (and, for the accumulation, its month) AND the surface's current
-     * request token: an old-condition return is dropped whole (spec section 5.3), never merged
-     * into the page, and a landing whose read was superseded or duplicated is dropped whole too
-     * (fix round P3-1). A condition change resets the accumulated pages (results of the old
-     * condition must not render under the new one); a merchant or month change drops the
-     * accumulation. All other events are absorbed.
+     * P8-02 i2a (D7-1..D7-7; spec sections 2.1/2.4/2.5): the search result surface's transitions.
+     *
+     * A CONDITION CHANGE IS A GENERATION CHANGE: the window, the custom window's two texts, the
+     * tags and the merchant all reset the landed pages and clear the in-flight marker
+     * ([resetSearchPages]), so the rows of the old condition never render under the new one and a
+     * read still in flight is superseded. The custom texts belong here because the condition is
+     * assembled from the drafts at dispatch time (R2): keeping a landed cursor across a text edit
+     * would send the old cursor with the new window. The request token carries the same claim for
+     * the reads that DO land: a landing applies only while its token is the surface's current one
+     * AND a read is still marked in flight, so a superseded, duplicated or post-reset landing is
+     * dropped whole. [P503AppState.Search.readIssued] records whether a read was ever dispatched
+     * for the current condition, so the body face can tell "unread after an edit" from "read
+     * succeeded with zero rows" (R1). The keyword draft is a draft; only
+     * [P503UiEvent.SubmitSearch] commits it, and a submit whose window does not resolve is refused
+     * whole (R3) — the same decision the screen's submit gate and the host's early return make —
+     * never a stranded 正在搜索… with no read. A typed failure lands as the explicit failure (V-7),
+     * never as an empty page, and the rows already loaded stay visible beside it. A re-tap of the
+     * already-selected window/tag-match/merchant is a no-op: the screen dispatches those events on
+     * every tap, so an unchanged condition must never wipe the landed page. Back restores the
+     * exact preserved overview.
      */
-    private fun reduceTagMerchantFilter(
-        state: P503AppState.TagMerchantFilter,
+    private fun reduceSearch(
+        state: P503AppState.Search,
         event: P503UiEvent,
     ): P503AppState =
         when (event) {
             // Back = close semantics: the exact preserved overview (tab/month/payload, C03).
             P503UiEvent.Back -> state.overview
-            is P503UiEvent.ToggleFilterTag -> {
-                val next = state.condition.tagIds.toMutableSet()
+            // The surface's own restore slot is consumed exactly once (the originListScroll shape).
+            P503UiEvent.ListScrollRestored -> if (state.listScroll == null) state else state.copy(listScroll = null)
+            is P503UiEvent.UpdateSearchKeyword -> state.copy(keywordDraft = event.text)
+            is P503UiEvent.SelectSearchWindow ->
+                if (state.window == event.choice) state else state.resetSearchPages().copy(window = event.choice)
+            // R2: the condition is assembled from these drafts, so editing them is a generation
+            // change like the window itself.
+            is P503UiEvent.UpdateSearchCustomStart -> state.resetSearchPages().copy(customStartText = event.text)
+            is P503UiEvent.UpdateSearchCustomEnd -> state.resetSearchPages().copy(customEndText = event.text)
+            is P503UiEvent.ToggleSearchTag -> {
+                val next = state.tagIds.toMutableSet()
                 if (!next.add(event.tagId)) next.remove(event.tagId)
-                state.copy(
-                    condition = state.condition.copy(tagIds = next.toSet()),
-                    loadedEntries = emptyList(),
-                    hasMore = false,
-                    pageFailure = null,
-                    pageLoading = false,
-                )
+                state.resetSearchPages().copy(tagIds = next.toSet())
             }
-            is P503UiEvent.SetFilterTagMatch ->
-                state.copy(
-                    condition = state.condition.copy(tagMatch = event.mode),
-                    loadedEntries = emptyList(),
-                    hasMore = false,
-                    pageFailure = null,
-                    pageLoading = false,
-                )
-            is P503UiEvent.SetFilterMerchant ->
-                // The accumulation observes the condition's merchant: a merchant change drops it.
-                state.copy(
-                    condition = state.condition.copy(merchantId = event.merchantId),
-                    loadedEntries = emptyList(),
-                    hasMore = false,
-                    pageFailure = null,
-                    pageLoading = false,
-                    accumulation = null,
-                    accumulationLoading = false,
-                )
-            is P503UiEvent.SetFilterAccumulationMonth ->
-                state.copy(accumulationMonth = event.month, accumulation = null, accumulationLoading = false)
-            is P503UiEvent.RequestTagMerchantFilterPage -> {
-                // Fix round (P3-1): the page token is the request identity. EVERY dispatch
-                // advances it — including an append absorbed under 一次一页 (its fields below
-                // add nothing) — so the host's landing for THIS dispatch presents a token only
-                // it can carry, and a read superseded by a newer request (a replace) or
-                // duplicated by a same-frame re-tap can never have its landing applied.
-                // A replace is a generation change: it supersedes whatever read is in flight
-                // and clears the accumulated rows it would have merged into.
-                state.copy(
-                    pageRequestToken = state.pageRequestToken + 1,
-                    pageLoading = true,
-                    pageFailure = null,
-                    loadedEntries = if (event.replace) emptyList() else state.loadedEntries,
-                    hasMore = if (event.replace) false else state.hasMore,
-                )
-            }
-            is P503UiEvent.TagMerchantFilterPageLanded -> {
-                val liveFingerprint = tagMerchantFilterConditionFingerprint(state.overview.state.ledgerId, state.condition)
-                if (event.conditionFingerprint != liveFingerprint || event.pageRequestToken != state.pageRequestToken) {
-                    // An old-condition return, or a landing whose read is no longer this
-                    // surface's current page request (a superseded generation or a duplicate
-                    // read): dropped whole (spec section 5.3 + the fix round's token gate).
+            is P503UiEvent.SetSearchTagMatch ->
+                if (state.tagMatch == event.mode) state else state.resetSearchPages().copy(tagMatch = event.mode)
+            is P503UiEvent.SelectSearchMerchant ->
+                if (state.merchantId == event.merchantId) state else state.resetSearchPages().copy(merchantId = event.merchantId)
+            P503UiEvent.SubmitSearch ->
+                // R3: an unresolvable window is refused whole (same decision as the screen's submit
+                // gate), so the host's early return cannot strand a 正在搜索… marker with no read.
+                if (state.toSearchCondition() == null) {
+                    state
+                } else {
+                    // The keyword becomes the committed one; the pages of the previous condition go.
+                    state.resetSearchPages().copy(
+                        keyword = state.keywordDraft,
+                        pageLoading = true,
+                        readIssued = true,
+                        requestToken = state.requestToken + 1,
+                    )
+                }
+            P503UiEvent.RequestSearchPage ->
+                when {
+                    // 一次一页: an in-flight read absorbs the duplicate dispatch and the token stays,
+                    // so the in-flight read's landing is still appliable.
+                    state.pageLoading -> state
+                    // The keyset is exhausted and nothing failed: nothing more to request. A FAILED
+                    // read holds no cursor for the first page and its retry must re-run.
+                    state.nextCursor == null && state.pageFailure == null -> state
+                    else ->
+                        state.copy(
+                            pageLoading = true,
+                            pageFailure = null,
+                            readIssued = true,
+                            requestToken = state.requestToken + 1,
+                        )
+                }
+            is P503UiEvent.SearchPageLanded ->
+                if (!state.pageLoading || event.requestToken != state.requestToken) {
                     state
                 } else {
                     when (val result = event.result) {
-                        is TagMerchantFilterReadResult.Success ->
+                        is SearchReadResult.Success ->
+                            // The port's own keyset order, so appending a page never re-sorts; the
+                            // count is the whole condition group's (D7-2: recomputed every page).
                             state.copy(
                                 pageLoading = false,
-                                loadedEntries =
-                                    sortTagMerchantFilterEntriesForDisplay(state.loadedEntries + result.page.entries),
+                                pageFailure = null,
+                                entries = state.entries + result.page.entries,
                                 hasMore = result.page.hasMore,
                                 nextCursor = result.page.nextCursor,
-                                pageFailure = null,
-                                entryCatalog = result.page.catalog,
+                                totalCount = result.page.totalCount,
                             )
-                        is TagMerchantFilterReadResult.Failed ->
-                            // Fail-closed: the explicit failure copy replaces nothing silently —
-                            // the already-loaded pages stay visible next to the banner.
+                        is SearchReadResult.Failed ->
+                            // Fail-closed (D-089 / R-Q06-4): the typed copy, never "没有找到"; the
+                            // rows already loaded stay visible beside it (V-7).
                             state.copy(pageLoading = false, pageFailure = result.failureCode)
                     }
                 }
-            }
-            P503UiEvent.RequestMerchantAccumulation ->
-                // Fix round (P3-1): the accumulation's request twin — every dispatch advances
-                // the token, so a landing from a read superseded by a newer request (a month/
-                // merchant change or a refresh re-request) can never overwrite the result.
-                state.copy(accumulationRequestToken = state.accumulationRequestToken + 1, accumulationLoading = true)
-            is P503UiEvent.MerchantAccumulationLanded -> {
-                val liveFingerprint = tagMerchantFilterConditionFingerprint(state.overview.state.ledgerId, state.condition)
-                if (
-                    event.conditionFingerprint != liveFingerprint ||
-                    event.month != state.accumulationMonth ||
-                    event.requestToken != state.accumulationRequestToken
-                ) {
-                    state
-                } else {
-                    state.copy(accumulationLoading = false, accumulation = event.result)
-                }
-            }
             else -> state
         }
+
+    /**
+     * Clears the landed pages, the in-flight marker and the read-issued flag: a condition change is
+     * a new generation, so the previous condition's rows must not render under the new one, a read
+     * still in flight is superseded (its landing is dropped by the in-flight gate above), and the
+     * body face shows the guide instead of the empty-result claim (R1). The request token is
+     * deliberately KEPT: it is the landing gate, and zeroing it would accept a superseded landing.
+     */
+    private fun P503AppState.Search.resetSearchPages(): P503AppState.Search =
+        copy(
+            entries = emptyList(),
+            hasMore = false,
+            nextCursor = null,
+            totalCount = 0L,
+            pageFailure = null,
+            pageLoading = false,
+            readIssued = false,
+        )
 
     private fun reduceBudgetConfig(
         state: P503AppState.BudgetConfig,
@@ -1094,9 +1123,6 @@ class P503ReducerImpl(
                 state.copy(catalogDialog = CatalogDialog.None)
             P503UiEvent.DismissCatalogNotice ->
                 state.copy(catalogNotice = null)
-            // ---- P7-08 08.C the filter surface's entry (from the analysis tab) ----
-            is P503UiEvent.OpenTagMerchantFilter ->
-                P503AppState.TagMerchantFilter(overview = state, accumulationMonth = event.accumulationMonth)
             // ---- P7-08 08.C tag/merchant catalog management (R-222-11; open item 11) ----
             P503UiEvent.OpenTagCreateDialog ->
                 state.copy(catalogDialog = CatalogDialog.CreateTagItem(), catalogNotice = null)
@@ -1310,6 +1336,20 @@ class P503ReducerImpl(
             // The host wires this affordance only when the restore use cases exist.
             P503UiEvent.OpenBackupRestore ->
                 P503AppState.BackupRestore(overview = state)
+            // P8-02 i2a (D7-4/D7-6; spec section 2.4): the HOME search capsule opens the
+            // independent result surface, carrying this exact overview as its back target with the
+            // position sampled at the click (返回保滚动位). NO read is dispatched here: the surface
+            // opens on its guide face and the first read belongs to the explicit submit, so
+            // opening search never costs a ledger read.
+            is P503UiEvent.OpenSearch ->
+                P503AppState.Search(
+                    overview =
+                        if (event.originScroll == null) {
+                            state
+                        } else {
+                            state.copy(originListScroll = event.originScroll)
+                        },
+                )
             // P8-00 b3 (V-5): the asset-screen account row opens the read-only account-flow
             // surface, the SelectTransaction shape (the host resolved the first page and the
             // header line before dispatching; the reducer performs zero IO). The exact overview
@@ -1598,7 +1638,7 @@ class P503ReducerImpl(
      * month and monthly payload kept — the C03 semantics, with the sampled ACCOUNTS scroll
      * position riding it), RequestAccountFlowMorePage advances the single-flight marker and the
      * request token, AccountFlowMorePageLanded applies a page only when its token is still
-     * current (the TagMerchantFilter late-write discipline), and MonthlyActivityResult follows
+     * current (the search surface's late-write discipline), and MonthlyActivityResult follows
      * the read-only detail's 详情态同语义 precedent. Every other new event is absorbed (the
      * central guards already keep the family non-throwing in every other state); every
      * pre-existing event stays unlisted (ISE, G-B). The page has zero write entries.
@@ -1651,7 +1691,7 @@ class P503ReducerImpl(
                 }
             is P503UiEvent.AccountFlowMorePageLanded -> {
                 // Late-write guard: a landing whose read was superseded by a newer request (or
-                // duplicated) can never append — the token gate is the TagMerchantFilter P3-1
+                // duplicated) can never append — the token gate is the search surface's P8-02
                 // precedent. A landing for an absent marker is also dropped (fail-closed).
                 if (!state.rowsLoading || event.requestToken != state.pageRequestToken) {
                     state

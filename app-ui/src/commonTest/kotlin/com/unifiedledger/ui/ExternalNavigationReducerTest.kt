@@ -298,7 +298,7 @@ class ExternalNavigationReducerTest {
                 P503AppState.Ready(),
                 P503AppState.Created,
                 P503AppState.TransactionDetail(overview(), P503Tab.HOME, TransactionId("tx-1"), com.unifiedledger.application.TransactionDetailResult.Unavailable),
-                P503AppState.TagMerchantFilter(overview(), kotlinx.datetime.YearMonth(2026, 1)),
+                P503AppState.Search(overview()),
                 P503AppState.RestoreSessionTerminal(BackupRestoreRecoveryCause.RollbackReopenFailed),
             )
         for (state in states) {
