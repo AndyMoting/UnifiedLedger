@@ -292,8 +292,10 @@ class P801FontscaleSeedWriterTest {
 
             // (e) D7-9: the search result face reads the default 近 90 天 window through the SAME
             // function the use case calls, and the row's statistics instant is what that window
-            // filters on. A seed instant outside it renders the guide/empty face while every capture
-            // marker still passes — the silent degradation this assertion exists to prevent.
+            // filters on. A seed instant outside it renders the guide face instead of the result
+            // face, which fails the result screen's marker after a 180 s wait — loud on the device,
+            // but 180 s that this offline assertion saves. The inner bound below makes a reversion
+            // to a fixed date redden now rather than on the day that date ages out.
             val searchWindow =
                 assertNotNull(
                     resolveSearchTimeWindow(
@@ -304,6 +306,10 @@ class P801FontscaleSeedWriterTest {
             assertTrue(
                 flowRow.statisticsAt >= searchWindow.first && flowRow.statisticsAt < searchWindow.second,
                 "the seeded statistics instant ${flowRow.statisticsAt} is outside the search default window",
+            )
+            assertTrue(
+                SEED_TRANSFER_INSTANT > Clock.System.now() - 7.days,
+                "the seeded instant must stay recent, or the sample rots once it leaves the rolling window",
             )
         }
     }

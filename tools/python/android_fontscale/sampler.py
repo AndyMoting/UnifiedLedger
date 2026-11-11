@@ -11,9 +11,11 @@ sample; the device legs run here against a hosted AVD at the requested `system f
 
 - `profile=empty` (the P8-00 leg): the three empty-ledger screens on a **fresh empty install** —
   an empty ledger is exactly the state V-8 samples, so no fixture is needed;
-- `profile=seeded` (the P8-01a leg): one prepared v36 database is pushed into the app's stable
-  storage before launch, so the read-only 交易详情 screen and the 账户对账 queue are sampled on a
-  ledger that actually holds one transfer.
+- `profile=seeded` (the P8-01a i3b / P8-02 V-9 leg): one prepared v36 database is pushed into the
+  app's stable storage before launch, so the search guide face, the search result face, the
+  read-only 交易详情 screen and the 账户对账 queue are sampled on a ledger that actually holds one
+  transfer. The seeded instant is clock-relative (D7-9), so the database bytes — and the recorded
+  seed sha256 — differ per dispatch; the database itself is never uploaded.
 
 This rig is NOT a PR gate and never runs on a pull request: dispatch it against a commit that is
 already on a branch, and read the artifact.
@@ -255,6 +257,11 @@ EMPTY_SCREENS: tuple[Screen, ...] = (
 # rendered text is why the tap is a substring match) and submits an EMPTY keyword (D7-6 allows it),
 # which lands the one seeded transaction in the default 近 90 天 window. The detail screen therefore
 # backs out of the result face first; every other marker and absent string is unchanged from i3b.
+#
+# Fold margin: both search markers are the LAST LazyColumn slot on their screen, and the seeded
+# catalog holds no tags and no merchants (SqlDelightCatalogStore seeds accounts and categories
+# only). Adding a tag or a merchant to the seed grows the condition area and can push a marker
+# below the fold, which surfaces as a 180 s wait_for timeout — loud, never a false green.
 SEEDED_SCREENS: tuple[Screen, ...] = (
     Screen(
         "search-guide",
