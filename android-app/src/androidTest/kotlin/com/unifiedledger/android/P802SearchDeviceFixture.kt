@@ -401,8 +401,7 @@ internal class P802SearchDeviceFixture(
     // ------------------------------------------------------------------ construction manifests
 
     /** Every transaction carrying an annotation (the merchant arm's denominator), ascending. */
-    private fun annotatedIndexes(): List<Int> =
-        (0 until P802SearchDeviceFacts.TRANSACTION_COUNT).filter { it % P802SearchDeviceFacts.ANNOTATION_STRIDE == 0 }
+    private fun annotatedIndexes(): List<Int> = (0 until P802SearchDeviceFacts.TRANSACTION_COUNT).filter { it % P802SearchDeviceFacts.ANNOTATION_STRIDE == 0 }
 
     /** The sample's read order: `(statistics_at_epoch_nanos DESC, transaction_id DESC)`. */
     private fun keysetOrder(indices: List<Int>): List<String> =
@@ -425,8 +424,7 @@ internal class P802SearchDeviceFixture(
     ): String = "${transactionId(index)}-posting-$leg"
 
     /** The note arm's marker placement: every 7th transaction, NULL everywhere else. */
-    private fun noteOf(index: Int): String? =
-        if (index % P802SearchDeviceFacts.NOTE_STRIDE == 0) P802SearchDeviceFacts.NOTE_MARKER else null
+    private fun noteOf(index: Int): String? = if (index % P802SearchDeviceFacts.NOTE_STRIDE == 0) P802SearchDeviceFacts.NOTE_MARKER else null
 
     /** Whole-second instants project exactly, so the numeric column and the text agree. */
     private fun projectionNanos(instant: Instant): Long = instant.toEpochMilliseconds() * 1_000_000L

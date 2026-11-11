@@ -10,14 +10,14 @@ import com.unifiedledger.application.SearchReadResult
 import com.unifiedledger.application.SearchTimeWindow
 import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.TagId
-import java.util.Locale
-import kotlin.time.Duration.Companion.days
-import kotlin.time.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.Locale
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Instant
 
 /**
  * P8-02 i2b-2 V-8 device-timing case (spec section 5 V-8; rulings D7-12/D7-13).
