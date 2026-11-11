@@ -618,13 +618,20 @@ class P503ReducerImpl(
     /**
      * P8-02 i2a (D7-1..D7-7; spec sections 2.1/2.4/2.5): the search result surface's transitions.
      *
-     * A CONDITION CHANGE IS A GENERATION CHANGE: the window, the tags and the merchant all reset
-     * the landed pages and clear the in-flight marker ([resetSearchPages]), so the rows of the old
-     * condition never render under the new one and a read still in flight is superseded. The
-     * request token carries the same claim for the reads that DO land: a landing applies only while
-     * its token is the surface's current one AND a read is still marked in flight, so a superseded,
-     * duplicated or post-reset landing is dropped whole. The keyword draft is a draft; only
-     * [P503UiEvent.SubmitSearch] commits it. A typed failure lands as the explicit failure (V-7),
+     * A CONDITION CHANGE IS A GENERATION CHANGE: the window, the custom window's two texts, the
+     * tags and the merchant all reset the landed pages and clear the in-flight marker
+     * ([resetSearchPages]), so the rows of the old condition never render under the new one and a
+     * read still in flight is superseded. The custom texts belong here because the condition is
+     * assembled from the drafts at dispatch time (R2): keeping a landed cursor across a text edit
+     * would send the old cursor with the new window. The request token carries the same claim for
+     * the reads that DO land: a landing applies only while its token is the surface's current one
+     * AND a read is still marked in flight, so a superseded, duplicated or post-reset landing is
+     * dropped whole. [P503AppState.Search.readIssued] records whether a read was ever dispatched
+     * for the current condition, so the body face can tell "unread after an edit" from "read
+     * succeeded with zero rows" (R1). The keyword draft is a draft; only
+     * [P503UiEvent.SubmitSearch] commits it, and a submit whose window does not resolve is refused
+     * whole (R3) — the same decision the screen's submit gate and the host's early return make —
+     * never a stranded 正在搜索… with no read. A typed failure lands as the explicit failure (V-7),
      * never as an empty page, and the rows already loaded stay visible beside it. Back restores the
      * exact preserved overview.
      */
@@ -639,8 +646,10 @@ class P503ReducerImpl(
             P503UiEvent.ListScrollRestored -> if (state.listScroll == null) state else state.copy(listScroll = null)
             is P503UiEvent.UpdateSearchKeyword -> state.copy(keywordDraft = event.text)
             is P503UiEvent.SelectSearchWindow -> state.resetSearchPages().copy(window = event.choice)
-            is P503UiEvent.UpdateSearchCustomStart -> state.copy(customStartText = event.text)
-            is P503UiEvent.UpdateSearchCustomEnd -> state.copy(customEndText = event.text)
+            // R2: the condition is assembled from these drafts, so editing them is a generation
+            // change like the window itself.
+            is P503UiEvent.UpdateSearchCustomStart -> state.resetSearchPages().copy(customStartText = event.text)
+            is P503UiEvent.UpdateSearchCustomEnd -> state.resetSearchPages().copy(customEndText = event.text)
             is P503UiEvent.ToggleSearchTag -> {
                 val next = state.tagIds.toMutableSet()
                 if (!next.add(event.tagId)) next.remove(event.tagId)
@@ -649,12 +658,19 @@ class P503ReducerImpl(
             is P503UiEvent.SetSearchTagMatch -> state.resetSearchPages().copy(tagMatch = event.mode)
             is P503UiEvent.SelectSearchMerchant -> state.resetSearchPages().copy(merchantId = event.merchantId)
             P503UiEvent.SubmitSearch ->
-                // The keyword becomes the committed one; the pages of the previous condition go.
-                state.resetSearchPages().copy(
-                    keyword = state.keywordDraft,
-                    pageLoading = true,
-                    requestToken = state.requestToken + 1,
-                )
+                // R3: an unresolvable window is refused whole (same decision as the screen's submit
+                // gate), so the host's early return cannot strand a 正在搜索… marker with no read.
+                if (state.toSearchCondition() == null) {
+                    state
+                } else {
+                    // The keyword becomes the committed one; the pages of the previous condition go.
+                    state.resetSearchPages().copy(
+                        keyword = state.keywordDraft,
+                        pageLoading = true,
+                        readIssued = true,
+                        requestToken = state.requestToken + 1,
+                    )
+                }
             P503UiEvent.RequestSearchPage ->
                 when {
                     // 一次一页: an in-flight read absorbs the duplicate dispatch and the token stays,
@@ -663,7 +679,13 @@ class P503ReducerImpl(
                     // The keyset is exhausted and nothing failed: nothing more to request. A FAILED
                     // read holds no cursor for the first page and its retry must re-run.
                     state.nextCursor == null && state.pageFailure == null -> state
-                    else -> state.copy(pageLoading = true, pageFailure = null, requestToken = state.requestToken + 1)
+                    else ->
+                        state.copy(
+                            pageLoading = true,
+                            pageFailure = null,
+                            readIssued = true,
+                            requestToken = state.requestToken + 1,
+                        )
                 }
             is P503UiEvent.SearchPageLanded ->
                 if (!state.pageLoading || event.requestToken != state.requestToken) {
@@ -691,9 +713,11 @@ class P503ReducerImpl(
         }
 
     /**
-     * Clears the landed pages and the in-flight marker: a condition change is a new generation, so
-     * the previous condition's rows must not render under the new one and a read still in flight is
-     * superseded (its landing is dropped by the in-flight gate above).
+     * Clears the landed pages, the in-flight marker and the read-issued flag: a condition change is
+     * a new generation, so the previous condition's rows must not render under the new one, a read
+     * still in flight is superseded (its landing is dropped by the in-flight gate above), and the
+     * body face shows the guide instead of the empty-result claim (R1). The request token is
+     * deliberately KEPT: it is the landing gate, and zeroing it would accept a superseded landing.
      */
     private fun P503AppState.Search.resetSearchPages(): P503AppState.Search =
         copy(
@@ -703,6 +727,7 @@ class P503ReducerImpl(
             totalCount = 0L,
             pageFailure = null,
             pageLoading = false,
+            readIssued = false,
         )
 
     private fun reduceBudgetConfig(

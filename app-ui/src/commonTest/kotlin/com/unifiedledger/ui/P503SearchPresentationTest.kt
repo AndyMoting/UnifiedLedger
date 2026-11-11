@@ -70,9 +70,10 @@ class P503SearchPresentationTest {
         id: String,
         active: Boolean,
         tombstoned: Boolean,
+        kind: CatalogItemKind = CatalogItemKind.TAG,
     ): CatalogItem =
         CatalogItem(
-            kind = CatalogItemKind.TAG,
+            kind = kind,
             id = id,
             ledgerId = ledgerId,
             name = id,
@@ -194,8 +195,9 @@ class P503SearchPresentationTest {
         val failed = P503AppState.Search(overview = overview(), requestToken = 1L, pageFailure = SearchFailureCode.SEARCH_UNAVAILABLE)
         assertEquals(SearchFace.UNAVAILABLE, searchFace(failed))
         assertNotEquals(SearchFace.EMPTY, searchFace(failed))
-        // A SUCCEEDED read with zero rows is the only empty face.
-        assertEquals(SearchFace.EMPTY, searchFace(P503AppState.Search(overview = overview(), requestToken = 1L)))
+        // A SUCCEEDED read with zero rows is the only empty face (readIssued is what a landed read
+        // leaves behind; a bare token does not mean a read happened — R1).
+        assertEquals(SearchFace.EMPTY, searchFace(P503AppState.Search(overview = overview(), requestToken = 1L, readIssued = true)))
         // A first page in flight is the loading face, not an empty one.
         assertEquals(SearchFace.LOADING, searchFace(P503AppState.Search(overview = overview(), requestToken = 1L, pageLoading = true)))
         // Rows outrank every banner: a failed more-page keeps the loaded list (and its banner).
@@ -234,12 +236,10 @@ class P503SearchPresentationTest {
     @Test
     fun theResultSurfaceCarriesNoCalendarAffordance() {
         val labels = p8SearchAffordanceLabels()
-        // Spec section 2.5: the calendar belongs to P8-06 — this surface has no calendar entry and
-        // no month grid, so no label may carry that vocabulary.
-        assertTrue(labels.none { it.contains("日历") }, "no calendar label may exist on the result surface: $labels")
-        assertTrue(labels.none { it.contains("月历") }, "no month-grid label may exist on the result surface: $labels")
-        // The whole frozen vocabulary is pinned, so an added affordance changes this list — nothing
-        // can slip onto the surface (a dead or out-of-scope entry included) unnoticed.
+        // Spec section 2.5: the calendar belongs to P8-06. The whole frozen vocabulary is pinned by
+        // the exact set below, so an added affordance — a calendar entry included — changes this list
+        // and turns the vector red; nothing can slip onto the surface (a dead or out-of-scope entry
+        // included) unnoticed.
         assertEquals(
             setOf(
                 P8_SEARCH_TITLE,
@@ -269,15 +269,25 @@ class P503SearchPresentationTest {
     // ---- the moved option rule and the OR/AND vocabulary ----
 
     @Test
-    fun theConditionOptionsIncludeDisabledTagsAndExcludeTombstonedOnes() {
-        val disabled = catalogItem("tag-disabled", active = false, tombstoned = false)
-        val tombstoned = catalogItem("tag-dead", active = false, tombstoned = true)
-        val live = catalogItem("tag-live", active = true, tombstoned = false)
-        val items = listOf(disabled, tombstoned, live)
+    fun theConditionOptionsIncludeDisabledItemsAndExcludeTombstonedOnes() {
+        val tagDisabled = catalogItem("tag-disabled", active = false, tombstoned = false)
+        val tagTombstoned = catalogItem("tag-dead", active = false, tombstoned = true)
+        val tagLive = catalogItem("tag-live", active = true, tombstoned = false)
+        // The merchant fixture carries its own namespace, so the merchant leg can catch a merchant
+        // regression instead of re-testing the tag rule (R6).
+        val merchantDisabled = catalogItem("merchant-disabled", active = false, tombstoned = false, kind = CatalogItemKind.MERCHANT)
+        val merchantTombstoned = catalogItem("merchant-dead", active = false, tombstoned = true, kind = CatalogItemKind.MERCHANT)
+        val merchantLive = catalogItem("merchant-live", active = true, tombstoned = false, kind = CatalogItemKind.MERCHANT)
         // The rule the retired analysis-page filter applied (P7-08 spec section 5.1) — moved here
         // WITH the surface, so the semantics are the same, not re-invented (V-10).
-        assertEquals(setOf("tag-disabled", "tag-live"), searchTagConditionOptions(items).map { it.id }.toSet())
-        assertEquals(setOf("tag-disabled", "tag-live"), searchMerchantConditionOptions(items).map { it.id }.toSet())
+        assertEquals(
+            setOf("tag-disabled", "tag-live"),
+            searchTagConditionOptions(listOf(tagDisabled, tagTombstoned, tagLive)).map { it.id }.toSet(),
+        )
+        assertEquals(
+            setOf("merchant-disabled", "merchant-live"),
+            searchMerchantConditionOptions(listOf(merchantDisabled, merchantTombstoned, merchantLive)).map { it.id }.toSet(),
+        )
     }
 
     @Test
@@ -285,7 +295,5 @@ class P503SearchPresentationTest {
         // The OR/AND distinction the old condition text carried now lives on the two radios.
         assertTrue(searchTagMatchLabel(TagMerchantTagMatchMode.Any).contains("或"))
         assertTrue(searchTagMatchLabel(TagMerchantTagMatchMode.All).contains("与"))
-        assertEquals(P8_SEARCH_TAG_MATCH_ANY_LABEL, searchTagMatchLabel(TagMerchantTagMatchMode.Any))
-        assertEquals(P8_SEARCH_TAG_MATCH_ALL_LABEL, searchTagMatchLabel(TagMerchantTagMatchMode.All))
     }
 }

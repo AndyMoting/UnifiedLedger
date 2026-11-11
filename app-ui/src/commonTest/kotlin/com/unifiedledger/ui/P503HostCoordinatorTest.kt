@@ -336,22 +336,23 @@ class P503HostCoordinatorTest {
         assertEquals(3, started)
     }
 
-    // ------------------------------------------------------------------ P7-08 08.D (A07) arm 触发向量
+    // ------------------------------------------------------------------ P7-08 08.D (A07) refresh 触发向量
 
     /**
-     * P7-08 08.D (P708-A07; spec section 5.5 row 2): the filter re-request arm rides EVERY
-     * determinate formal-surface landing and NO typed failure. The production `P503App` call sites
-     * delegate to the four seams below (the D-156 "JVM-assertable seam" precedent — the
+     * P7-08 08.D (P708-A07; spec section 5.5 row 2): EVERY determinate formal-surface landing fires
+     * the authoritative refresh exactly once and NO typed failure fires it. The production `P503App`
+     * call sites delegate to the four seams below (the D-156 "JVM-assertable seam" precedent — the
      * composable hop itself stays uncovered, no Compose harness exists); each seam's branch is
      * pinned here so a changed trigger matrix turns a vector red.
+     *
+     * P8-02 i2a retired the filter re-request callback these seams used to carry (D7-3), so the
+     * seams no longer arm anything; these vectors assert only the refresh branch that remains.
      */
-    private class ArmProbe {
+    private class RefreshProbe {
         var refreshes = 0
-        var batchConfirmed = 0
-        var arms = 0
     }
 
-    private fun armCoordinator(probe: ArmProbe): P503HostCoordinator =
+    private fun refreshProbeCoordinator(probe: RefreshProbe): P503HostCoordinator =
         P503HostCoordinator(
             onRefresh = { probe.refreshes += 1 },
             onSubmit = { _, _ -> },
@@ -379,41 +380,35 @@ class P503HostCoordinatorTest {
         )
 
     @Test
-    fun a07ACorrectionLandingArmsTheFilterReRequestOnlyOnADeterminateSuccess() {
-        val probe = ArmProbe()
-        val coordinator = armCoordinator(probe)
-        refreshAndArmAfterP705CommitLanding(correctionCreated(), coordinator) { probe.arms += 1 }
+    fun a07ACorrectionLandingRefreshesOnlyOnADeterminateSuccess() {
+        val probe = RefreshProbe()
+        val coordinator = refreshProbeCoordinator(probe)
+        refreshAndArmAfterP705CommitLanding(correctionCreated(), coordinator)
         assertEquals(1, probe.refreshes)
-        assertEquals(1, probe.arms)
-        // A typed rejection writes nothing: no refresh, no arm.
-        refreshAndArmAfterP705CommitLanding(CorrectTransactionVersionResult.StaleCurrentVersion, coordinator) { probe.arms += 1 }
+        // A typed rejection writes nothing: no refresh.
+        refreshAndArmAfterP705CommitLanding(CorrectTransactionVersionResult.StaleCurrentVersion, coordinator)
         assertEquals(1, probe.refreshes)
-        assertEquals(1, probe.arms)
     }
 
     @Test
-    fun a07VoidAndRestoreLandingsShareTheSameArmGate() {
-        val probe = ArmProbe()
-        val coordinator = armCoordinator(probe)
-        refreshAndArmAfterVoidRestoreCommit(voidCreated(), coordinator) { probe.arms += 1 }
+    fun a07VoidAndRestoreLandingsShareTheSameRefreshGate() {
+        val probe = RefreshProbe()
+        val coordinator = refreshProbeCoordinator(probe)
+        refreshAndArmAfterVoidRestoreCommit(voidCreated(), coordinator)
         assertEquals(1, probe.refreshes)
-        assertEquals(1, probe.arms)
-        refreshAndArmAfterVoidRestoreCommit(VoidTransactionResult.Rejected(com.unifiedledger.domain.P705FailureCode.P705_TRANSACTION_VOIDED), coordinator) { probe.arms += 1 }
+        refreshAndArmAfterVoidRestoreCommit(VoidTransactionResult.Rejected(com.unifiedledger.domain.P705FailureCode.P705_TRANSACTION_VOIDED), coordinator)
         assertEquals(1, probe.refreshes)
-        assertEquals(1, probe.arms)
     }
 
     @Test
-    fun a07AnAnnotationEditLandingArmsTheFilterReRequestAndRejectsArmNothing() {
-        val probe = ArmProbe()
-        val coordinator = armCoordinator(probe)
-        refreshAndArmAfterAnnotationEdit(TransactionAnnotationEditOutcome.Accepted(2L), coordinator) { probe.arms += 1 }
+    fun a07AnAnnotationEditLandingRefreshesAndARejectionDoesNot() {
+        val probe = RefreshProbe()
+        val coordinator = refreshProbeCoordinator(probe)
+        refreshAndArmAfterAnnotationEdit(TransactionAnnotationEditOutcome.Accepted(2L), coordinator)
         // onP705EffectiveSurfaceChanged fires the authoritative refresh exactly once.
         assertEquals(1, probe.refreshes)
-        assertEquals(1, probe.arms)
-        refreshAndArmAfterAnnotationEdit(TransactionAnnotationEditOutcome.Rejected("AnnotationRevisionConflict"), coordinator) { probe.arms += 1 }
+        refreshAndArmAfterAnnotationEdit(TransactionAnnotationEditOutcome.Rejected("AnnotationRevisionConflict"), coordinator)
         assertEquals(1, probe.refreshes)
-        assertEquals(1, probe.arms)
     }
 
     /**
@@ -436,18 +431,18 @@ class P503HostCoordinatorTest {
                 onCheck = { _, _ -> },
                 widgetInvalidation = WidgetInvalidationObserver { invalidations += 1 },
             )
-        refreshAndArmAfterAnnotationEdit(TransactionAnnotationEditOutcome.Accepted(3L), coordinator) { }
+        refreshAndArmAfterAnnotationEdit(TransactionAnnotationEditOutcome.Accepted(3L), coordinator)
         assertEquals(1, invalidations)
-        refreshAndArmAfterAnnotationEdit(TransactionAnnotationEditOutcome.NoChange(3L), coordinator) { }
+        refreshAndArmAfterAnnotationEdit(TransactionAnnotationEditOutcome.NoChange(3L), coordinator)
         assertEquals(2, invalidations)
-        refreshAndArmAfterAnnotationEdit(TransactionAnnotationEditOutcome.Rejected("AnnotationRevisionConflict"), coordinator) { }
+        refreshAndArmAfterAnnotationEdit(TransactionAnnotationEditOutcome.Rejected("AnnotationRevisionConflict"), coordinator)
         assertEquals(2, invalidations)
     }
 
     @Test
-    fun a07AnAllTerminalImportBatchLandingArmsTheFilterReRequestExactlyOnce() {
-        val probe = ArmProbe()
-        val coordinator = armCoordinator(probe)
+    fun a07AnAllTerminalImportBatchLandingRefreshesExactlyOnce() {
+        val probe = RefreshProbe()
+        val coordinator = refreshProbeCoordinator(probe)
         val confirmedItem =
             com.unifiedledger.application.ImportReceipt(
                 requestId = com.unifiedledger.application.ImportRequestId("req-a07"),
@@ -477,14 +472,12 @@ class P503HostCoordinatorTest {
                             ),
                     ),
             )
-        armAfterImportBatchConfirmation(allTerminal, coordinator) { probe.arms += 1 }
+        armAfterImportBatchConfirmation(allTerminal, coordinator)
         // onImportBatchConfirmed fired the authoritative refresh exactly once.
         assertEquals(1, probe.refreshes)
-        assertEquals(1, probe.arms)
-        // A landing without the all-terminal state arms nothing (the mid-batch discipline).
-        armAfterImportBatchConfirmation(P503AppState.Created, coordinator) { probe.arms += 1 }
+        // A landing without the all-terminal state refreshes nothing (the mid-batch discipline).
+        armAfterImportBatchConfirmation(P503AppState.Created, coordinator)
         assertEquals(1, probe.refreshes)
-        assertEquals(1, probe.arms)
     }
 
     // ---------------------------------------------------------- P7-09 09.C widget invalidation leg
@@ -532,8 +525,8 @@ class P503HostCoordinatorTest {
     /**
      * P7-09 09.C (spec section 6.4; D-225 Q20): the invalidation leg must NEVER fire on a non-effect —
      * a typed rejection, a stale CAS, an identity conflict, an absorbed (non-all-terminal) batch, or a
-     * pure parse candidate / idle overview. The `onRefresh`/`arm` callbacks are wired to `error(...)`
-     * so any accidental call is a hard failure, and the widget counter must stay at zero.
+     * pure parse candidate / idle overview. The `onRefresh` callback is wired to `error(...)` so any
+     * accidental call is a hard failure, and the widget counter must stay at zero.
      *
      * ABLATION (承重): move the `widgetInvalidation.invalidateAllWidgets()` call OUTSIDE its success
      * branch (e.g. into the `else` of [P503HostCoordinator.decide]) and this test goes RED.
@@ -550,18 +543,18 @@ class P503HostCoordinatorTest {
             )
 
         // The shared success gate rejects every non-effect: nothing refreshes and nothing invalidates.
-        refreshAndArmAfterP705CommitLanding(CorrectTransactionVersionResult.StaleCurrentVersion, coordinator) { error("no arm") }
+        refreshAndArmAfterP705CommitLanding(CorrectTransactionVersionResult.StaleCurrentVersion, coordinator)
         refreshAndArmAfterP705CommitLanding(
             CorrectTransactionVersionResult.Rejected(com.unifiedledger.domain.P705FailureCode.P705_TRANSACTION_VOIDED),
             coordinator,
-        ) { error("no arm") }
+        )
         refreshAndArmAfterVoidRestoreCommit(
             VoidTransactionResult.Rejected(com.unifiedledger.domain.P705FailureCode.P705_TRANSACTION_VOIDED),
             coordinator,
-        ) { error("no arm") }
-        refreshAndArmAfterAnnotationEdit(TransactionAnnotationEditOutcome.Rejected("AnnotationRevisionConflict"), coordinator) { error("no arm") }
-        // A landing without the all-terminal batch state arms (and invalidates) nothing.
-        armAfterImportBatchConfirmation(P503AppState.Created, coordinator) { error("no arm") }
+        )
+        refreshAndArmAfterAnnotationEdit(TransactionAnnotationEditOutcome.Rejected("AnnotationRevisionConflict"), coordinator)
+        // A landing without the all-terminal batch state refreshes (and invalidates) nothing.
+        armAfterImportBatchConfirmation(P503AppState.Created, coordinator)
         // A pure parse candidate / idle overview is not a trigger state at all.
         assertNull(
             coordinator.decide(

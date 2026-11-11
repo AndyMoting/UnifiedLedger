@@ -38,8 +38,9 @@ import kotlin.time.Instant
  *   (D7-6: the guide face until the user submits) and its whole event family is ABSORBED in every
  *   other state — never an ISE (`unhandled`), the "new events never throw" discipline;
  * - the keyword draft is a draft: only `SubmitSearch` commits it and opens the first page;
- * - a condition change is a generation change: it clears the rows, the count and the in-flight
- *   marker, so a read issued under the previous condition can never paint rows under the new one;
+ * - a condition change is a generation change: it clears the rows, the count, the in-flight marker
+ *   and the read-issued flag, so a read issued under the previous condition can never paint rows
+ *   under the new one and an unread condition falls back to the guide, never the empty claim;
  * - a landing applies only while its request token is current AND a read is still in flight: a
  *   superseded or duplicated read is dropped whole (the queue's late-write gate);
  * - a typed read failure is carried explicitly and keeps the loaded rows beside it (V-7), and a
@@ -176,7 +177,24 @@ class P503SearchReducerTest {
         assertEquals("咖啡", state.keyword)
         assertEquals("咖啡", state.keywordDraft)
         assertEquals(1L, state.requestToken)
+        assertTrue(state.readIssued)
         assertTrue(state.pageLoading)
+    }
+
+    @Test
+    fun anUnresolvableWindowRefusesTheSubmitWhole() {
+        val draft =
+            searchState().copy(
+                window = SearchWindowChoice.CUSTOM,
+                customStartText = "2026-11-30T00:00:00Z",
+                customEndText = "2026-11-01T00:00:00Z",
+            )
+        // R3: the reducer refuses the same draft the screen's submit gate disables, so the host's
+        // early return can never strand a 正在搜索… marker with no read behind it.
+        assertSame(draft, reducer.reduce(draft, P503UiEvent.SubmitSearch))
+        assertTrue(!draft.pageLoading)
+        assertTrue(!draft.readIssued)
+        assertEquals(0L, draft.requestToken)
     }
 
     // ---- condition change = generation change ----
@@ -212,6 +230,42 @@ class P503SearchReducerTest {
         val windowSet = assertIs<P503AppState.Search>(reducer.reduce(withRows, P503UiEvent.SelectSearchWindow(SearchWindowChoice.CURRENT_MONTH)))
         assertEquals(SearchWindowChoice.CURRENT_MONTH, windowSet.window)
         assertTrue(windowSet.entries.isEmpty())
+    }
+
+    @Test
+    fun editingTheCustomWindowResetsTheLandedPages() {
+        val custom: P503AppState.Search =
+            searchState().copy(
+                window = SearchWindowChoice.CUSTOM,
+                customStartText = "2026-11-01T00:00:00Z",
+                customEndText = "2026-11-30T00:00:00Z",
+            )
+        val landed =
+            assertIs<P503AppState.Search>(
+                reducer.reduce(
+                    reducer.reduce(custom, P503UiEvent.SubmitSearch),
+                    P503UiEvent.SearchPageLanded(
+                        1L,
+                        successPage(entry("tx-1", "2026-11-01T00:00:00Z"), hasMore = true, totalCount = 9L),
+                    ),
+                ),
+            )
+        assertTrue(landed.hasMore)
+        // R2: the condition is assembled from these drafts at dispatch time, so a text edit is a
+        // generation change: the old cursor must never continue the old window's keyset under the
+        // new window.
+        val editedStart =
+            assertIs<P503AppState.Search>(reducer.reduce(landed, P503UiEvent.UpdateSearchCustomStart("2026-11-02T00:00:00Z")))
+        assertEquals("2026-11-02T00:00:00Z", editedStart.customStartText)
+        assertTrue(editedStart.entries.isEmpty())
+        assertTrue(!editedStart.hasMore)
+        assertNull(editedStart.nextCursor)
+        assertEquals(0L, editedStart.totalCount)
+        val editedEnd =
+            assertIs<P503AppState.Search>(reducer.reduce(landed, P503UiEvent.UpdateSearchCustomEnd("2026-11-29T00:00:00Z")))
+        assertTrue(editedEnd.entries.isEmpty())
+        assertTrue(!editedEnd.hasMore)
+        assertNull(editedEnd.nextCursor)
     }
 
     @Test
@@ -275,7 +329,6 @@ class P503SearchReducerTest {
         // 一次一页: the duplicate adds no page fields and does NOT advance the token, so the
         // in-flight read's landing stays appliable and no second read can double-append.
         assertSame(loading, absorbed)
-        assertEquals(loading.requestToken, absorbed.requestToken)
     }
 
     @Test
@@ -352,6 +405,22 @@ class P503SearchReducerTest {
         assertTrue(retried.pageLoading)
         assertNull(retried.pageFailure)
         assertEquals(2L, retried.requestToken)
+    }
+
+    @Test
+    fun aConditionEditedAfterAFailedReadIsUnreadAndShowsTheGuide() {
+        var state: P503AppState.Search = searchState()
+        state = assertIs(reducer.reduce(state, P503UiEvent.SubmitSearch))
+        state =
+            assertIs(
+                reducer.reduce(state, P503UiEvent.SearchPageLanded(1L, SearchReadResult.Failed(SearchFailureCode.SEARCH_UNAVAILABLE))),
+            )
+        assertEquals(SearchFace.UNAVAILABLE, searchFace(state))
+        val edited = assertIs<P503AppState.Search>(reducer.reduce(state, P503UiEvent.ToggleSearchTag(tagA)))
+        // R1: the token is deliberately kept (it is the landing gate), but no read was issued for
+        // the new condition, so the face is the guide — never the empty-result claim.
+        assertEquals(1L, edited.requestToken)
+        assertEquals(SearchFace.GUIDE, searchFace(edited))
     }
 
     @Test

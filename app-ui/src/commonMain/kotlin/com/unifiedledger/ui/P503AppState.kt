@@ -956,7 +956,11 @@ sealed interface P503AppState {
      * load-more dispatch advances it, the host presents the value it read back on the landing, and
      * the reducer applies a landing only while that token is still current. A condition change
      * clears the rows and the in-flight marker, so a read issued under the previous condition is
-     * dropped whole either way. [listScroll] is this surface's own restore slot.
+     * dropped whole either way. [readIssued] says whether a read was ever dispatched for the
+     * current condition: the two dispatch transitions set it and every page reset clears it,
+     * because the retained token cannot say it (the token must keep advancing for the landing
+     * gate, so zeroing it would accept superseded landings). The body face uses it to show the
+     * guide, not the empty-result claim, after a condition edit lands no read.
      */
     data class Search(
         val overview: OverviewEmpty,
@@ -974,7 +978,10 @@ sealed interface P503AppState {
         val totalCount: Long = 0L,
         val pageFailure: SearchFailureCode? = null,
         val pageLoading: Boolean = false,
+        /** R1: a read was dispatched for the current condition; cleared by every page reset. */
+        val readIssued: Boolean = false,
         val requestToken: Long = 0L,
+        /** Registered for the future detail route; never filled today (no secondary surface opens from search). */
         val listScroll: ListScrollPosition? = null,
     ) : P503AppState
 

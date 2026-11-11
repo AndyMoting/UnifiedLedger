@@ -156,13 +156,17 @@ internal enum class SearchFace {
 /**
  * The body decision. Rows outrank every banner (a failed more-page read keeps the loaded rows and
  * renders its banner above them); without rows the order is loading, then the typed failure, then
- * the never-requested guide, then the genuine empty.
+ * the no-read-issued guide, then the genuine empty. [P503AppState.Search.readIssued] is checked
+ * first: a page reset keeps the request token (it is the landing gate) but clears this flag, so a
+ * condition edited after a landed read is unread again and must show the guide, never the
+ * empty-result claim.
  */
 internal fun searchFace(state: P503AppState.Search): SearchFace =
     when {
         state.entries.isNotEmpty() -> SearchFace.LIST
         state.pageLoading -> SearchFace.LOADING
         state.pageFailure != null -> SearchFace.UNAVAILABLE
+        !state.readIssued -> SearchFace.GUIDE
         state.requestToken == 0L -> SearchFace.GUIDE
         else -> SearchFace.EMPTY
     }

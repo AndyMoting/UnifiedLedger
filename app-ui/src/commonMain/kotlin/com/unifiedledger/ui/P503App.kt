@@ -559,7 +559,9 @@ fun P503App(
     var reconciliationQueueListState by remember { mutableStateOf<androidx.compose.foundation.ScrollState?>(null) }
     var accountFlowListState by remember { mutableStateOf<androidx.compose.foundation.ScrollState?>(null) }
     // P8-02 i2a (D7-5): the search result surface is a LazyColumn like the home list, so its sampled
-    // position is the LazyListState pair (not the plain-scroll mapping the queue/flow use).
+    // position is the LazyListState pair (not the plain-scroll mapping the queue/flow use). The screen
+    // registers it for the FUTURE detail route and nothing samples it today: no secondary surface
+    // opens from search, so the state's restore slot stays unfilled (the next slice consumes it).
     var searchListState by remember { mutableStateOf<androidx.compose.foundation.lazy.LazyListState?>(null) }
     val homeFlowScrollSampler: () -> ListScrollPosition? = {
         homeFlowListState?.let { list -> ListScrollPosition(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset) }
@@ -5737,7 +5739,7 @@ private data class BudgetCommitPlan(
 )
 
 // -------------------------------------------------------------------------------------------
-// P7-08 08.D (P708-A07): the JVM-assertable seams of the filter re-request arm call sites. The
+// P7-08 08.D (P708-A07): the JVM-assertable seams of the formal-write landing hops. The
 // `@Composable` `P503App` cannot be exercised by a plain JVM test (the P7-03/P7-04/D-156
 // precedent), so each production landing hop delegates to one of these functions and the
 // coordinator tests pin the branch directly. The P503App -> seam hop itself remains uncovered:
@@ -5745,22 +5747,21 @@ private data class BudgetCommitPlan(
 // cannot source-scan it (the same registered disclosure as `refreshAfterP705Commit`).
 //
 // P8-02 i2a retired the ONE production arm these hooks carried (the tag/merchant filter re-request
-// that followed a formal-surface change, D7-3), so [arm] now defaults to the no-op and the seams
-// stay as the tested extension points for the next surface that needs the same landing hop.
+// that followed a formal-surface change, D7-3). The `arm` callback is GONE, not defaulted, so a
+// test can no longer keep a callback the product never supplies green; only the authoritative
+// refresh branch remains. The historical `...AndArm...` names are kept as the seam identities.
 // -------------------------------------------------------------------------------------------
 
 /**
  * The correction commit's landing: a determinate success ([CorrectTransactionVersionResult.Created]/
- * [CorrectTransactionVersionResult.NoChange]) fires the authoritative refresh AND arms the loaded
- * filter re-request (spec section 5.5 row 2); every other outcome refreshes and arms nothing.
+ * [CorrectTransactionVersionResult.NoChange]) fires the authoritative refresh exactly once; every
+ * other outcome refreshes nothing.
  */
 internal fun refreshAndArmAfterP705CommitLanding(
     result: CorrectTransactionVersionResult,
     coordinator: P503HostCoordinator,
-    arm: () -> Unit = {},
 ) {
     refreshAfterP705Commit(result, coordinator)
-    if (shouldRefreshAfterP705Commit(result)) arm()
 }
 
 /**
@@ -5770,39 +5771,33 @@ internal fun refreshAndArmAfterP705CommitLanding(
 internal fun refreshAndArmAfterVoidRestoreCommit(
     result: VoidTransactionResult,
     coordinator: P503HostCoordinator,
-    arm: () -> Unit = {},
 ) {
     refreshAfterP705Commit(result, coordinator)
-    if (shouldRefreshAfterP705Commit(result)) arm()
 }
 
 /**
  * The annotation edit's landing: accepted/no-change record the new revision through the effective
- * refresh and arm the filter re-request; a rejection/stale/conflict refreshes and arms nothing.
+ * refresh; a rejection/stale/conflict refreshes nothing.
  */
 internal fun refreshAndArmAfterAnnotationEdit(
     outcome: TransactionAnnotationEditOutcome,
     coordinator: P503HostCoordinator,
-    arm: () -> Unit = {},
 ) {
     if (outcome is TransactionAnnotationEditOutcome.Accepted || outcome is TransactionAnnotationEditOutcome.NoChange) {
         coordinator.onP705EffectiveSurfaceChanged()
-        arm()
     }
 }
 
 /**
- * The completed import batch confirmation's arm: the SAME all-terminal gate
- * ([shouldArmImportBatchConfirmed]) fires the coordinator's batch-confirmed hook AND the filter
- * arm exactly once per run; a landing without the all-terminal state does neither.
+ * The completed import batch confirmation's landing: the SAME all-terminal gate
+ * ([shouldArmImportBatchConfirmed]) fires the coordinator's batch-confirmed hook exactly once per
+ * run; a landing without the all-terminal state does nothing.
  */
 internal fun armAfterImportBatchConfirmation(
     landedState: P503AppState,
     coordinator: P503HostCoordinator,
-    arm: () -> Unit = {},
 ) {
     if (shouldArmImportBatchConfirmed(landedState)) {
         coordinator.onImportBatchConfirmed()
-        arm()
     }
 }
