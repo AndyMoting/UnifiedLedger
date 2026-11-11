@@ -160,3 +160,26 @@
 **跳过与读数分前缀**：`P802-V8DEV-SKIPPED …` 只表示「没带参数」；读数行为 `P802-V8DEV fixture=61000 …`。派发时新增的守卫步骤要求 host shard 的 logcat 里出现 `P802-V8DEV fixture=`，缺席即该 shard 红——「绿」不再能等于「没取到读数」。
 
 **两处实现期接受的偏离**：`-e` 走**两个 token**（AOSP `Am.java` 的 `-e` 分支连读两次 `nextArgRequired()`；仓库内先例 `ImportEnospcInstrumentedTest.kt:96`），任务书的 `KEY=VALUE` 字面写法作废；`--extra-arg` 落在 `tools/ci/android-instrumented-cloud.py` 而不是 `instrumented.py`（后者没有 argparse），该文件在批次任务书可写清单外，由主代理接受。
+
+## 10. 验收判定（2026-11-12，主代理）
+
+判据逐条取自 §5；每条写明证据类型（JVM 真库测试 / 纯 reducer·呈现测试 / 全仓 grep / 设备工件 / 人工读图）。**12/12 PASS，全部带披露**；披露项不是遗留缺陷，是本片范围外或本 rig 取不到的东西，均已登记在 §7/§8/§9。
+
+| # | 判据 | 证据 | 判定 |
+| --- | --- | --- | --- |
+| V-1 | 入口可达 + 引导空态 | `P503SearchReducerTest.openEntersTheResultSurfaceFromTheOverviewAndReadsNothing`、`P503SearchPresentationTest.theHomeCapsuleRendersOnlyWhenWiredAndInteractive`（四行真值表）、`theGuideFaceIsTheNeverRequestedSurface`；**设备**：run `43060066555` 的 `search-guide.png` 正是从首页胶囊点进来的引导态 | **PASS** |
+| V-2 | 关键词命中备注（中文/大小写、窗内命中窗外不命中） | `v2KeywordMatchesTheNoteInWindowAndNeverOutsideIt`（含半开窗边界、`%`/`_`/`\` 转义） | **PASS** |
+| V-3 | 商家名当前名命中、改名旧名不命中 | `v3KeywordMatchesTheCurrentMerchantNameAndNotTheSupersededOne`（当前注解版本命中；superseded 版本的名字解析不到商家；旧名 0 命中且是空 Success 非失败） | **PASS** |
+| V-4 | 分类名在 7 张语义表各至少一条夹具、逐表可命中 | `v4KeywordMatchesTheCategoryNameInEveryOneOfTheSevenSemanticTables`（七行 keyset 序 + 逐表断言） | **PASS** |
+| V-5 | 三臂 OR 互不吞并；标签 OR/AND 与商家按 AND 组合 | `v5KeywordArmsDoNotSwallowEachOtherAndTheTagMerchantFilterStaysEquivalent`（三臂单测 + 并集计数 + 与 P7-08 `tagMerchantFilterRows` 逐条比对） | **PASS** |
+| V-6 | 键集分页不跳不重、末页游标 null、计数与穷举一致 | `v6KeysetPagesDoNotSkipOrRepeatAndTheTotalEqualsTheExhaustiveWalk`（3/3/1 页、末页游标 null、每页计数=穷举） | **PASS** |
+| V-7 | 失败不呈现为空 | `v7AFailedReadIsTypedAndNeverAnEmptyPage`（关闭连接 / 坏目录 / 抛异常 / 反向窗 / 零长窗 / 不可表示窗 / 投影缺失七路）+ 逐失败码文案测试（禁「没有找到」与空结果句） | **PASS** |
+| V-8 | 性能首次标定 | JVM `232.1 ms`（`4d011372`，§8）+ **设备 `448.2 ms`**（run `43075174195`，§9）；不预设门槛（D2=A） | **PASS**（披露：两个终点只取得「端口返回首屏页」；夹具四条差异见 §9；两数不可相减） |
+| V-9 | 1.3× 下条件区与结果行不截断、不重叠；TalkBack 与首页行同口径 | run `43060066555` 四屏 marker 齐全；**人工读图** `search-guide.png` / `search-results.png` 确认条件区十一项与结果行完整、无重叠；「TalkBack 同口径」由结果行复用同一 `LedgerEntryFlowRow`（含同一 `flowRowContentDescription`）保证 | **PASS**（披露：机械 gate 只证 marker 存活，裁切/重叠的结论来自人读图；两处可读性瑕疵已登记；**朗读巡检未做**，沿 `A-03`/`D-181` 需真机） |
+| V-10 | 入口退役不丢功能 | 全仓「标签与商家筛选」**0 命中**；`theConditionAreaBuildsTheEquivalentSearchCondition` / `anEmptyKeywordDegradesToTheWindowAndTagMerchantFilter` / `theConditionOptionsIncludeDisabledTagsAndExcludeTombstonedOnes`；谓词等价由读层 V-5（`fa4e3262`）承载 | **PASS**（披露：结果面默认近 90 天窗，行集与退役面「全部交易」不同，§7 已登记） |
+| V-11 | 结果面无日历入口、`onOpenCalendar` 保持未接 | `theResultSurfaceCarriesNoCalendarAffordance`（标签精确集）+ 全仓 `onOpenCalendar` 无非空调用点 | **PASS** |
+| V-12 | 「账户」「金额区间」两 chip 可见且不可激活、不静默隐藏 | `theDisabledDimensionChipsAreVisibleAndNotClickable` + 屏内 `enabled = P8_SEARCH_DISABLED_CHIP_ENABLED`；**设备图**两个 chip 灰显可见 | **PASS** |
+
+**判定不覆盖的东西（如实登记）**：①V-8 的「首屏渲染完成」终点在本 rig 上未取得（§9 写明原因与未来路径）；②V-9 的朗读巡检需要真机（沿 `A-03`/`D-181` 口径，与 `P8-00` 的同类披露合并管理）；③结果行不可点（开详情需第三回程目标，退役面本来也不可点）；④商家月度累积块随入口退役（D7-3）；⑤`DECISIONS.md` 两处历史条目仍把已删测试类记为 CI 证据（文档后续）。
+
+**范围**：本条只判定 `P8-02`，不判定 `P8-03`～`P8-07`。
