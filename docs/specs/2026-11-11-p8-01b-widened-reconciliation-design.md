@@ -79,7 +79,7 @@
 
 删掉 `SqlDelightP408ReconciliationStore.kt:277-279` 的 id 比对。既有行的 `reconciliation_id` 是权威，请求携带的 id 只在**新建**时使用；回执、状态历史与审计今天已经一律用行的 id（`:287-311`、`:324`、`:332`，审计 `Ledger.sq:12104`），指纹不含 `reconciliationId`（`P408Reconciliation.kt:112-143`），重放按 `request_id` + 指纹（`:362-388`）。最小 diff 就是删这三行；**不加**额外防御断言（同一事务内同键插后读的断言恒真）。
 
-**测试反转（点名）**：`P408ReconciliationStoreTest.kt:250-280` 的契约由「拒绝」改为「既有行权威 → `Linked`」；`LedgerMigrationV20ToV36Test.kt:167-177` 的**断言**不变，但夹具须补一行 `catalog_account`：该测试从 v20 迁到 v36，而 `catalog_account` 自 `27.sqm` 才存在，行必须在迁移到 ≥27 之后插入，否则新谓词的复合标记内连会把种子腿判成不合格。同一原因波及 P408/P409 夹具族 11 个类（§7 残余）。
+**测试反转（点名）**：`P408ReconciliationStoreTest.kt:250-280` 的契约由「拒绝」改为「既有行权威 → `Linked`」；`LedgerMigrationV20ToV36Test.kt:167-177` 的**断言**不变，但夹具须补一行 `catalog_account`：该测试从 v20 迁到 v36，而 `catalog_account` 自 `27.sqm` 才存在，行必须在迁移到 ≥27 之后插入，否则新谓词的复合标记内连会把种子腿判成不合格（实施勘察补记：该测试的确认段实际跑在 v28 上，而新写面读取的 `transaction_effective_state` 由 `30.sqm` 创建，故确认前必须把链推到 v36；断言不变，覆盖口径由「v28 上可确认」变为「终端 schema 上可确认」，该口径变化不是本谓词引入的新语义——产品从不在 v30 以下运行）。同一原因波及 P408/P409 夹具族 11 个类（§7 残余）。
 
 ### 2.5 缺陷 B 的修法：补有效交易门
 

@@ -122,11 +122,13 @@ class LedgerMigrationV20ToV36Test : MigrationTestSupport() {
                 seed.forEach { driver.execute(null, it, 0) }
             }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
-                // Seed at the v23 generation, then complete the chain to the current
-                // terminal so the modern store (which owns the projection authority)
-                // operates on its own schema (D-112 second batch).
+                // Seed at the v23 generation, then complete the chain to the current terminal so the
+                // modern store (which owns the projection authority) operates on its own schema
+                // (D-112 second batch). The terminal matters for the widened write face too: it reads
+                // `transaction_effective_state`, which `30.sqm` creates, so a confirm on a pre-v30
+                // schema would fail on a missing view.
                 LedgerDatabase(driver).transaction {
-                    LedgerDatabase.Schema.migrate(driver, 22, 28)
+                    LedgerDatabase.Schema.migrate(driver, 22, 36)
                 }
                 val database = LedgerDatabase(driver)
                 val store = SqlDelightP408ReconciliationStore(database, driver)

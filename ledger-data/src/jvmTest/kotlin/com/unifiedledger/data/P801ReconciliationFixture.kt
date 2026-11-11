@@ -324,6 +324,14 @@ internal class P801ReconciliationFixture : AutoCloseable {
         reconciliationId: String,
         status: String = "PENDING",
     ) {
+        // The history row's request_id is a foreign key on reconciliation_request and this fixture runs
+        // with foreign_keys=ON, so the seeding request has to exist first.
+        driver.execute(
+            null,
+            "INSERT INTO reconciliation_request(ledger_id, request_id, operation, input_fingerprint, outcome) " +
+                "VALUES ('${ledgerId.value}','seed-$reconciliationId','confirm_link','seed-$reconciliationId','ACCEPTED')",
+            0,
+        )
         driver.execute(
             null,
             "INSERT INTO posting_reconciliation(ledger_id, reconciliation_id, posting_id, status, latest_sequence) " +
@@ -333,7 +341,7 @@ internal class P801ReconciliationFixture : AutoCloseable {
         driver.execute(
             null,
             "INSERT INTO posting_reconciliation_history(ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at) " +
-                "VALUES ('${ledgerId.value}','$reconciliationId',1,'$status',NULL,'seed','$P801_FIXED_NOW')",
+                "VALUES ('${ledgerId.value}','$reconciliationId',1,'$status',NULL,'seed-$reconciliationId','$P801_FIXED_NOW')",
             0,
         )
     }
