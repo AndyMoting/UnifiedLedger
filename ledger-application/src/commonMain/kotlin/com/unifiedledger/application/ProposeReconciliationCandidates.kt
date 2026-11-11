@@ -2,7 +2,6 @@ package com.unifiedledger.application
 
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.LedgerId
-import com.unifiedledger.domain.TransactionKind
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Instant
 
@@ -42,19 +41,14 @@ class ProposeReconciliationCandidates(
      * `UNRESOLVED` result (no candidate, or an unusable source time) is kept because the spec's
      * three causes must be presented for the leg being reconciled (spec section 2.4 / V-6).
      *
-     * WRITE-SIDE ELIGIBILITY (spec sections 2.1/2.4; D-308 item 3): the confirm write path accepts
-     * `ACCOUNT_TRANSFER` legs only, so a non-transfer anchor is refused BEFORE either window read
-     * with [P801CandidateProposalFailure.LEG_NOT_TRANSFER_CONFIRMABLE] — the state-accurate
-     * 「暂不支持在应用内核对」 answer, never [P801CandidateProposalFailure.LEG_NOT_IN_QUEUE]. Such a
-     * leg still appears in the i1 queue (its status is presented; only the action is unavailable).
+     * NO KIND GATE (P8-01b, spec section 2.3; D-309 D5=A): the confirm write face accepts any
+     * composite-marked real-account leg, so every kind is proposed. A leg the write face still refuses
+     * is refused there, with `P408_POSTING_NOT_ELIGIBLE`, rather than by a second rule here.
      */
     fun proposeForAccountLeg(
         ledgerId: LedgerId,
         leg: P801AccountReconciliationQueueRow,
     ): P801CandidateProposalResult {
-        if (leg.transactionKind != TransactionKind.ACCOUNT_TRANSFER) {
-            return P801CandidateProposalResult.Failed(P801CandidateProposalFailure.LEG_NOT_TRANSFER_CONFIRMABLE)
-        }
         val evidenceWindow = windowAround(leg.occurredAt)
         val postingWindow = candidateSpanAround(leg.occurredAt)
         val postings =
@@ -271,12 +265,6 @@ enum class P801CandidateProposalFailure {
 
     /** The anchor posting is not a current effective leg of that account. */
     LEG_NOT_IN_QUEUE,
-
-    /**
-     * The anchor leg's transaction is not an `ACCOUNT_TRANSFER`, so the confirm write path cannot
-     * accept it (spec section 2.1 / D-308 item 3): 暂不支持在应用内核对. Refused before any read.
-     */
-    LEG_NOT_TRANSFER_CONFIRMABLE,
 
     /** Entry B: no such evidence in this ledger. */
     EVIDENCE_NOT_FOUND,

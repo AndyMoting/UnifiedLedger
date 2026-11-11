@@ -286,6 +286,16 @@ class P409SingleChainMigrationTest {
                     assertDataLevelEqual(freshDriver, driver)
                 }
 
+                // P8-01b: catalog_account first exists at v27, so the composite-mark row the widened
+                // write face requires can only be seeded here — after the chain reached the terminal
+                // version, and after the fresh/migrated comparison (whose table projection does not
+                // include this table).
+                driver.execute(
+                    null,
+                    "INSERT INTO catalog_account VALUES ('ledger-p409-mig','account-mig-a','mig a','ASSET','CNY',2,1,1,NULL,0,1)",
+                    0,
+                )
+
                 // Store segment (migrated side only): the seeded PENDING row advances to
                 // CHECKED through SqlDelightP408ReconciliationStore.confirmLink.
                 val store = SqlDelightP408ReconciliationStore(database, driver)

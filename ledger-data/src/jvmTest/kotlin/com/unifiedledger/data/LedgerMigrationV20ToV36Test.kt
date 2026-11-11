@@ -130,6 +130,13 @@ class LedgerMigrationV20ToV36Test : MigrationTestSupport() {
                 }
                 val database = LedgerDatabase(driver)
                 val store = SqlDelightP408ReconciliationStore(database, driver)
+                // P8-01b: catalog_account first exists at v27, so the composite-mark row the widened
+                // write face requires can only be seeded after the chain passed 27.
+                driver.execute(
+                    null,
+                    "INSERT INTO catalog_account VALUES ('ledger-a','account-bank-a','bank a','ASSET','CNY',2,1,1,NULL,0,1)",
+                    0,
+                )
 
                 val seeded = database.ledgerQueries.selectP408PostingReconciliation("ledger-a", "posting-transfer-out").executeAsOne()
                 assertEquals("PENDING", seeded.status)

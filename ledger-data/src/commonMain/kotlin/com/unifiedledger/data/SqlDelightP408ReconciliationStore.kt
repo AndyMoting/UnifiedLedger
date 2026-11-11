@@ -168,7 +168,7 @@ class SqlDelightP408ReconciliationStore private constructor(
 
                     val posting =
                         database.ledgerQueries
-                            .selectP408PostingIntegrity(request.ledgerId, request.postingId)
+                            .selectP801ReconciliationWriteIntegrity(request.ledgerId, request.postingId)
                             .executeAsOneOrNull()
                             ?: abortP408(P408ReconciliationResult.Rejected("P408_POSTING_NOT_ELIGIBLE"))
                     if (posting.ledger_id != request.ledgerId ||
@@ -274,9 +274,10 @@ class SqlDelightP408ReconciliationStore private constructor(
                             .selectP408PostingReconciliation(request.ledgerId, request.postingId)
                             .executeAsOneOrNull()
                             ?: abortP408(P408ReconciliationResult.Rejected("P408_RECONCILIATION_MISSING"))
-                    if (request.reconciliationId != reconciliation.reconciliation_id) {
-                        abortP408(P408ReconciliationResult.Rejected("P408_RECONCILIATION_ID_MISMATCH"))
-                    }
+                    // An EXISTING row is authoritative (P8-01b, spec section 2.4): the insert above is
+                    // ON CONFLICT DO NOTHING, so a seeded or previously created row keeps its own
+                    // reconciliation_id and the request's id is used only when the row is new. Every
+                    // later use of the identity — history, receipt, audit — already reads this row.
                     if (database.ledgerQueries
                             .selectP408PostingReconciliationHistory(
                                 request.ledgerId,

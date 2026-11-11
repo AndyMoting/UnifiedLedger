@@ -248,7 +248,7 @@ class P408ReconciliationStoreTest {
     }
 
     @Test
-    fun wrongReconciliationIdOnPendingRowRejectsWithZeroWrites() {
+    fun anExistingReconciliationRowIsAuthoritativeAndTheNewRequestStillLinks() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             LedgerDatabase.Schema.create(driver)
@@ -266,14 +266,24 @@ class P408ReconciliationStoreTest {
             )
             val store = SqlDelightP408ReconciliationStore(database, driver)
 
-            val rejected =
-                assertIs<P408ReconciliationResult.Rejected>(
-                    store.confirmLink(request(reconciliationId = "reconciliation-wrong")),
+            val accepted =
+                assertIs<P408ReconciliationResult.Accepted>(
+                    store.confirmLink(request(reconciliationId = "reconciliation-request-identity")),
                 )
-            assertEquals("P408_RECONCILIATION_ID_MISMATCH", rejected.code)
-            assertEquals(0L, count(driver, "SELECT count(*) FROM evidence_link"))
-            assertEquals(0L, count(driver, "SELECT count(*) FROM reconciliation_request"))
+            // An EXISTING row is authoritative: the request's freshly minted identity is used only when
+            // the row is new, and the history continues from the row's own sequence.
+            assertEquals("reconciliation-seeded", accepted.receipt.reconciliationId)
+            assertEquals(2L, accepted.receipt.historySequence)
             assertEquals(1L, count(driver, "SELECT count(*) FROM posting_reconciliation"))
+            assertEquals(1L, count(driver, "SELECT count(*) FROM evidence_link"))
+            val row = database.ledgerQueries.selectP408PostingReconciliation("ledger-a", "posting-a").executeAsOne()
+            assertEquals("reconciliation-seeded", row.reconciliation_id)
+            assertEquals("CHECKED", row.status)
+            assertEquals(2L, row.latest_sequence)
+            assertEquals(
+                1L,
+                count(driver, "SELECT count(*) FROM posting_reconciliation_history WHERE reconciliation_id = 'reconciliation-seeded' AND sequence = 2"),
+            )
         } finally {
             driver.close()
         }
@@ -668,6 +678,14 @@ class P408ReconciliationStoreTest {
                 add("INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-expense','tx-expense','ledger-a',1,'posting-set-expense','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)")
                 add("INSERT INTO ledger_transaction_current_version VALUES ('tx-expense','ledger-a','version-expense')")
                 add("INSERT INTO posting VALUES ('posting-expense','posting-set-expense','ledger-a',0,'expense-account',1000,'CNY',2)")
+                // The widened write predicate inner-joins catalog_account on the section 2.1 composite
+                // mark, so every account a confirmable leg posts to needs a catalog row. The expense
+                // account is seeded as a NON-mark account on purpose: the ineligible-posting assertion
+                // must not pass vacuously because the row is missing.
+                add("INSERT INTO catalog_account VALUES ('ledger-a','account-bank-a','bank a','ASSET','CNY',2,1,1,NULL,0,1)")
+                add("INSERT INTO catalog_account VALUES ('ledger-a','account-platform-b','platform b','ASSET','CNY',2,1,1,NULL,0,1)")
+                add("INSERT INTO catalog_account VALUES ('ledger-a','account-bank-other','bank other','ASSET','CNY',2,1,1,NULL,0,1)")
+                add("INSERT INTO catalog_account VALUES ('ledger-a','expense-account','expense','EXPENSE','CNY',2,1,0,NULL,0,1)")
             }
         statements.forEach { driver.execute(null, it, 0) }
     }

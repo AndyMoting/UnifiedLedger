@@ -1287,6 +1287,10 @@ class P408CorrectionStoreTest {
                 add("INSERT INTO transaction_version(version_id,transaction_id,ledger_id,version_number,posting_set_id,occurred_at,statistics_at,effective_at,note) VALUES ('version-expense','tx-expense','ledger-a',1,'posting-set-expense','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00','2026-08-10T12:00:00+08:00',NULL)")
                 add("INSERT INTO ledger_transaction_current_version VALUES ('tx-expense','ledger-a','version-expense')")
                 add("INSERT INTO posting VALUES ('posting-expense','posting-set-expense','ledger-a',0,'expense-account',1000,'CNY',2)")
+                // P8-01b: the reconciliation write face now requires the section 2.1 composite mark, so
+                // the account its confirmable leg posts to needs a catalog row. The correction face keeps
+                // the old query, so the expense leg needs nothing here.
+                add("INSERT INTO catalog_account VALUES ('ledger-a','account-bank-a','bank a','ASSET','CNY',2,1,1,NULL,0,1)")
             }
         statements.forEach { driver.execute(null, it, 0) }
     }

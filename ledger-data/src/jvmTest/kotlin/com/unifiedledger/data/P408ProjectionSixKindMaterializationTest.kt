@@ -782,6 +782,12 @@ class P408ProjectionSixKindMaterializationTest {
                 "INSERT INTO posting VALUES ('posting-99','posting-set-99','ledger-k',0,'account-asset-a',$amountMinor,'CNY',2)",
                 0,
             )
+            // P8-01b: the reconciliation write face requires the section 2.1 composite mark.
+            driver!!.execute(
+                null,
+                "INSERT INTO catalog_account VALUES ('ledger-k','account-asset-a','asset a','ASSET','CNY',2,1,1,NULL,0,1)",
+                0,
+            )
         }
     }
 

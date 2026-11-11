@@ -257,38 +257,41 @@ class SqlDelightP801ReconciliationCandidatesTest {
     }
 
     @Test
-    fun aNonTransferAnchorIsRefusedAsUnsupportedWhileTheQueueStillListsIt() {
+    fun aNonTransferAnchorIsProposedLikeAnyOtherLeg() {
         P801ReconciliationFixture().use { fixture ->
             fixture.seedTransaction("tx-income", "2026-03-01T02:00:00Z", kind = "INCOME", legs = listOf(P801Leg("posting-income", fixture.assetAccountId.value, -5_000L)))
+            val evidence = fixture.seedEvidence("one", amountMinor = 5_000L, direction = "out", occurredAt = "2026-03-01T02:00:00Z")
+            fixture.materialize(evidence.evidenceId)
             val leg = fixture.queueRow(fixture.assetAccountId, "posting-income")
-            // The i1 queue lists the leg and reports its state (D-308 item 3); only the ACTION is
-            // unavailable, and the refusal is its own typed reason — never LEG_NOT_IN_QUEUE.
             assertEquals(TransactionKind.INCOME, leg.transactionKind)
-            assertEquals(
-                P801CandidateProposalFailure.LEG_NOT_TRANSFER_CONFIRMABLE,
-                failure(fixture.propose.proposeForAccountLeg(fixture.ledgerId, leg)),
-            )
+            // P8-01b removed the kind gate: the widened write face accepts any composite-marked
+            // real-account leg, so this anchor is proposed instead of being refused before the read.
+            val proposal = success(fixture.propose.proposeForAccountLeg(fixture.ledgerId, leg)).single()
+            assertEquals(P408MatchDisposition.PROPOSED_MATCH, proposal.match.disposition)
+            assertEquals(listOf("posting-income"), proposal.match.candidates.map { it.posting.postingId })
         }
     }
 
     @Test
-    fun aMixedWindowProposesOnlyTheTransferLeg() {
+    fun aMixedWindowWithATransferAndAnOrdinaryLegIsAmbiguous() {
         P801ReconciliationFixture().use { fixture ->
             fixture.seedTransaction("tx-transfer", "2026-03-01T02:00:00Z", legs = listOf(P801Leg("posting-out", fixture.assetAccountId.value, -5_000L)))
-            // Same account, same amount and shape, but not an ACCOUNT_TRANSFER: confirmLink would
-            // refuse it, so the posting-facts read must not offer it as a matcher candidate.
+            // Same account, same amount and shape, but an ordinary income: both legs are confirmable
+            // after the widening, so the frozen matcher must answer AMBIGUOUS rather than a single
+            // PROPOSED_MATCH that would hide one of them.
             fixture.seedTransaction("tx-ordinary", "2026-03-01T02:00:00Z", kind = "INCOME", legs = listOf(P801Leg("posting-ordinary", fixture.assetAccountId.value, -5_000L)))
             val evidence = fixture.seedEvidence("one", amountMinor = 5_000L, direction = "out", occurredAt = "2026-03-01T02:00:00Z")
             fixture.materialize(evidence.evidenceId)
 
             val proposal = success(fixture.propose.proposeForAccountLeg(fixture.ledgerId, fixture.queueRow(fixture.assetAccountId, "posting-out"))).single()
-            assertEquals(P408MatchDisposition.PROPOSED_MATCH, proposal.match.disposition)
-            assertEquals(listOf("posting-out"), proposal.match.candidates.map { it.posting.postingId })
+            assertEquals(P408MatchDisposition.AMBIGUOUS, proposal.match.disposition)
+            assertEquals("ambiguous_multiple_candidates", proposal.match.reason)
+            assertEquals(listOf("posting-ordinary", "posting-out"), proposal.match.candidates.map { it.posting.postingId })
             val facts =
                 assertIs<P801AccountPostingFactsResult.Success>(
                     fixture.read.loadAccountPostingFacts(fixture.ledgerId, fixture.assetAccountId, WINDOW_FROM, WINDOW_TO),
                 ).facts
-            assertEquals(listOf("posting-out"), facts.map { it.postingId })
+            assertEquals(listOf("posting-ordinary", "posting-out"), facts.map { it.postingId })
         }
     }
 

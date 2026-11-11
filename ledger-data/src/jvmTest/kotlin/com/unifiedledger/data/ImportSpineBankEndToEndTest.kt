@@ -838,6 +838,12 @@ class ImportSpineBankEndToEndTest {
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
+            // P8-01b: the reconciliation write face requires the section 2.1 composite mark.
+            driver.execute(
+                null,
+                "INSERT INTO catalog_account VALUES ('ledger-bp01-mirror','account-asset-bank','asset bank','ASSET','CNY',2,1,1,NULL,0,1)",
+                0,
+            )
             val cat = catalog(mirrorLedgerId)
             // Wallet side (P4-04 wallet perspective, R-01): 零钱提现 out 10.00
             // @ 2026-08-24T09:00:00+08:00 -> wallet is the FROM leg, bank the TO leg.

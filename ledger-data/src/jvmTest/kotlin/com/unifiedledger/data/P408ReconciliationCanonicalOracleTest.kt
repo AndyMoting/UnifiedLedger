@@ -265,6 +265,8 @@ class P408ReconciliationCanonicalOracleTest {
                     add("INSERT INTO import_evidence VALUES ('ledger-a','evidence-b','source-b','source_observation','2026-08-10T12:00:01+08:00')")
                     add("INSERT INTO posting VALUES ('posting-b','posting-set-a','ledger-a',1,'account-platform-b',1000,'CNY',2)")
                 }
+                // P8-01b: the reconciliation write face requires the section 2.1 composite mark.
+                add("INSERT INTO catalog_account VALUES ('ledger-a','account-bank-a','bank a','ASSET','CNY',2,1,1,NULL,0,1)")
             }
         statements.forEach { driver.execute(null, it, 0) }
     }

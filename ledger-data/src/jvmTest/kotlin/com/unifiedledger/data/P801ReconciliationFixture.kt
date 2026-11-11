@@ -86,6 +86,7 @@ internal class P801ReconciliationFixture : AutoCloseable {
     val projections: SqlDelightEvidenceProjectionStore
     val reconciliation: SqlDelightP408ReconciliationStore
     val read: SqlDelightP801AccountReconciliationReadAdapter
+    val detailRead: SqlDelightLedgerCurrentStateReadAdapter
     val propose: ProposeReconciliationCandidates
     val bind: BindReconciliationEvidence
     val confirm: ConfirmReconciliationLink
@@ -98,6 +99,7 @@ internal class P801ReconciliationFixture : AutoCloseable {
         projections = SqlDelightEvidenceProjectionStore(database, driver)
         reconciliation = SqlDelightP408ReconciliationStore(database, driver)
         read = SqlDelightP801AccountReconciliationReadAdapter(database, projections)
+        detailRead = SqlDelightLedgerCurrentStateReadAdapter(database)
         propose = ProposeReconciliationCandidates(read)
         bind = BindReconciliationEvidence(read, projections, catalogStore, ids)
         confirm = ConfirmReconciliationLink(projections, reconciliation, clock, ids)
@@ -309,6 +311,74 @@ internal class P801ReconciliationFixture : AutoCloseable {
                 "VALUES ('${ledgerId.value}','link-$key',1,'active','confirmed','reconciliation-request-$key','${P801_FIXED_NOW}')",
             0,
         )
+    }
+
+    // ------------------------------------------------------------------ P8-01b write-face fixtures
+
+    /**
+     * A `PENDING` reconciliation row with its own history, exactly as the v23 migration seed leaves
+     * one behind: the row's identity is what a later confirmation must keep (P8-01b, spec section 2.4).
+     */
+    fun seedPendingReconciliation(
+        postingId: String,
+        reconciliationId: String,
+        status: String = "PENDING",
+    ) {
+        driver.execute(
+            null,
+            "INSERT INTO posting_reconciliation(ledger_id, reconciliation_id, posting_id, status, latest_sequence) " +
+                "VALUES ('${ledgerId.value}','$reconciliationId','$postingId','$status',1)",
+            0,
+        )
+        driver.execute(
+            null,
+            "INSERT INTO posting_reconciliation_history(ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at) " +
+                "VALUES ('${ledgerId.value}','$reconciliationId',1,'$status',NULL,'seed','$P801_FIXED_NOW')",
+            0,
+        )
+    }
+
+    /**
+     * The product void facts for one transaction (request + fact), so `transaction_effective_state`
+     * answers `is_effective = 0` and the widened write predicate must refuse every one of its legs.
+     */
+    fun voidTransaction(transactionId: String) {
+        driver.execute(
+            null,
+            "INSERT INTO transaction_void_request(ledger_id, request_id, transaction_id, fact_kind, reason_code, reason_note, confirmation_marker) " +
+                "VALUES ('${ledgerId.value}','void-request-$transactionId','$transactionId','void','other',NULL,'explicit_manual_save')",
+            0,
+        )
+        driver.execute(
+            null,
+            "INSERT INTO transaction_void_fact(ledger_id, transaction_id, sequence, fact_id, fact_kind, reason_code, reason_note, request_id, confirmation_id, created_at) " +
+                "VALUES ('${ledgerId.value}','$transactionId',1,'void-fact-$transactionId','void','other',NULL,'void-request-$transactionId','void-confirmation','$P801_FIXED_NOW')",
+            0,
+        )
+    }
+
+    /**
+     * The rg03 false override on ONE leg (`reconciliation_eligible = 0`). The schema CHECK only admits
+     * it for a fee-role leg carrying a category, so the fixture names one; the leg's account is not
+     * constrained by that CHECK, which is what lets the override sit on a composite-marked leg.
+     */
+    fun seedRg03FalseOverride(postingId: String) {
+        driver.execute(
+            null,
+            "INSERT INTO rg03_transfer_posting_semantic(ledger_id, posting_id, role, category_id, reconciliation_eligible) " +
+                "VALUES ('${ledgerId.value}','$postingId','TRANSFER_FEE','category-fee-override',0)",
+            0,
+        )
+    }
+
+    /** The persisted reconciliation status of one leg, or `null` when the leg has no row at all. */
+    fun reconciliationStatusOf(postingId: String): String? {
+        val rows =
+            scalarLong(
+                "SELECT count(*) FROM posting_reconciliation WHERE ledger_id = '${ledgerId.value}' AND posting_id = '$postingId'",
+            )
+        if (rows == 0L) return null
+        return scalarText("SELECT status FROM posting_reconciliation WHERE ledger_id = '${ledgerId.value}' AND posting_id = '$postingId'")
     }
 
     // ------------------------------------------------------------------ reads and assertions
