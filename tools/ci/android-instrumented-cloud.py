@@ -61,6 +61,10 @@ def main() -> int:
     run.add_argument("--shards", type=Path, required=True)
     run.add_argument("--sha", required=True)
     run.add_argument("--timeout", type=float, default=900)
+    # D7-13 on-demand channel: absent from every automatic invocation, so the fixed
+    # command is unchanged; a manual dispatch passes one `KEY=VALUE` word per flag.
+    run.add_argument("--extra-arg", action="append", default=[], metavar="KEY=VALUE",
+                     help="instrumentation argument appended as `-e KEY VALUE` (repeatable)")
 
     validate = actions.add_parser("validate", help="independent post-run gate for one shard")
     validate.add_argument("--shard", type=int, required=True)
@@ -93,7 +97,8 @@ def main() -> int:
         if args.action == "run":
             return instrumented.execute(shard=args.shard, evidence=args.evidence, inventory=args.inventory,
                                         shards=args.shards, app=args.app, test=args.test,
-                                        sha=args.sha, avd=args.avd, timeout=args.timeout)
+                                        sha=args.sha, avd=args.avd, timeout=args.timeout,
+                                        extra_args=tuple(args.extra_arg))
         if args.action == "validate":
             instrumented.validate(shard=args.shard, evidence=args.evidence, inventory=args.inventory,
                                   shards=args.shards, sha=args.sha)
