@@ -23,10 +23,10 @@ import org.junit.runner.RunWith
  * P8-02 i2b-2 V-8 device-timing case (spec section 5 V-8; rulings D7-12/D7-13).
  *
  * WHAT THIS CASE IS: one RECORDED READING of the search read port over the 61,000-TRANSACTION
- * device sample (`P802SearchDeviceFixture`), on the default 90-day window and the fixed
- * four-item condition group the JVM leg uses, so the two legs of V-8 measure the same thing:
- * keyword "咖啡标记" (the note arm; it resolves no catalog name, so the seven-table category arm
- * is switched off exactly as in the JVM reading) AND tag-00 AND merchant-0. A keyword that
+ * four-item condition group the JVM leg uses, so both legs measure the same read. The sample is
+ * RE-CREATED, not byte-identical (thirty rolling instants instead of two, the product's default
+ * catalog), so the two numbers are comparable in shape and must never be subtracted. The timed
+ * keyword is "咖啡标记" (the note arm; it resolves no catalog name, so the seven-table category
  * resolved a category name would be a different selectivity and is deliberately NOT the timed
  * condition.
  *
@@ -60,7 +60,7 @@ class P802SearchDeviceTimingInstrumentedTest {
     fun thePortFirstPageReadingIsRecordedOnTheDevice() {
         val arguments = InstrumentationRegistry.getArguments()
         if (arguments.getString(TIMING_ARGUMENT) != TIMING_ENABLED) {
-            Log.i(TAG, "$PREFIX skipped reason=$TIMING_ARGUMENT-not-$TIMING_ENABLED")
+            Log.i(TAG, "$PREFIX-SKIPPED reason=$TIMING_ARGUMENT-not-$TIMING_ENABLED")
             return
         }
 

@@ -148,3 +148,15 @@
 6. **真正的漂移风险是重复的 union CTE，不是谓词行**：`keyword_category_postings` 的七分支在分页查询与计数查询里各写一遍；将来加第八张语义表只改一处，计数就会与分页静默分叉。今日这条由 V-4 的 `assertEquals(7L, result.totalCount)` 与 V-5/V-6 的计数断言兜住——加表时必须让它们变红。两条谓词块本身逐行相同（缩进除外）。
 7. **反斜杠只到单元测试为止**：`escapeSearchLikeKeyword` 的 `\` 转义有单测（含转义顺序），但夹具里没有含字面反斜杠的备注，`ESCAPE '\'` 的端到端路径只由 `%`/`_` 覆盖。
 8. **游标取自精确 nanos 列这件事没有断言钉住**：夹具的统计瞬时全是整秒，所以「解析 `statistics_at` 文本」与「读 `statistics_at_epoch_nanos` 列」在当前夹具上给出逐字节相同的游标，V-6 的遍历对两者都绿。代码取的是精确列，但要钉住它需要一个亚秒级夹具交易。
+
+## 9. i2b 设备腿登记（2026-11-12）
+
+**V-8 现状 = 缺证。** 本片交付的是**测读装置**（61k 交易的设备夹具 + 按需计时用例 + 派发通道），**不是读数**。合并后由主代理派发 `gh workflow run android-instrumented.yml --ref main -f instrumentation_extra_args="ul.p802.timing=1"`，从 `android-instrumented-<sha>-shard-*` 工件的 `logcat.txt` 取 `P802-V8DEV fixture=61000 …` 一行，登记为基线；在那之前 V-8 **不记覆盖**。
+
+**终点收窄（必须与读数一起读）**：设备腿只取「端口返回首屏页」一个终点。「首屏渲染完成」本轮**未取得**——本 rig 上两条设备观测通道都绑不住 Compose 首帧：`uiautomator dump` 只返回可见节点（另有约 2.29 s 的 dump 地板），`gfxinfo framestats` 在 `swiftshader_indirect` 上返回不可换算值（`DECISIONS.md:6462`），且本仓不引入 Compose UI 测试框架（`P503SearchPresentation.kt:15`）。这是「本 rig 上未取得」，不是普适的「不可测」；未来路径是既有 `tools/python/android_scale` 的 B2 framestats 机制。
+
+**四条样本差异**（与 JVM 腿对照时必须一起读，两个数**不可相减**）：①腿类型——设备夹具全 `EXPENSE` 两腿（默认种子无隐藏收入账户），JVM 交替支出/收入，读面谓词不看 kind/account；②统计瞬时——设备 30 个滚动瞬时（相对设备时钟），JVM 两个固定瞬时，两者都是高频并列键集且 tie-break 相同；③分类臂——设备用产品默认叶分类「早餐」，JVM 用合成分类，两臂都只解析一个 id、命中七行；④时钟与连接——设备走产品图与真实时钟，JVM 用固定 `CLOCK_NOW` 与第二条 JDBC 连接，这恰是设备腿存在的理由，但两个数不可相减。
+
+**跳过与读数分前缀**：`P802-V8DEV-SKIPPED …` 只表示「没带参数」；读数行为 `P802-V8DEV fixture=61000 …`。派发时新增的守卫步骤要求 host shard 的 logcat 里出现 `P802-V8DEV fixture=`，缺席即该 shard 红——「绿」不再能等于「没取到读数」。
+
+**两处实现期接受的偏离**：`-e` 走**两个 token**（AOSP `Am.java` 的 `-e` 分支连读两次 `nextArgRequired()`；仓库内先例 `ImportEnospcInstrumentedTest.kt:96`），任务书的 `KEY=VALUE` 字面写法作废；`--extra-arg` 落在 `tools/ci/android-instrumented-cloud.py` 而不是 `instrumented.py`（后者没有 argparse），该文件在批次任务书可写清单外，由主代理接受。

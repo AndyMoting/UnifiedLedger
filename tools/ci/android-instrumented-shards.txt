@@ -8,9 +8,9 @@
 # `tools/ci/android-instrumented-cloud.py check` proves that partition; any
 # class added to, removed from, or renamed in the inventory must be reflected
 # here or the producer job fails before a device boots.
-#
-# Placement follows the case count per class (8/7/6/1/4 vs 5/4/4/3/3/1) so both
-# shards stay near 23 cases. The P8-02 V-8 timing case rides shard 2 and costs
+# Placement follows the case count per class (shard 1: 8/7/6/4/1 = 26 cases;
+# shard 2: 5/4/4/3/3/1/1 = 21 cases). The P8-02 V-8 timing case rides shard 2
+# and costs nothing there unless the dispatch passes ul.p802.timing=1.
 # nothing there unless the dispatch passes ul.p802.timing=1.
 
 1	com.unifiedledger.android.AndroidRestoreDocumentSizeInstrumentedTest
