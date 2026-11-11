@@ -12164,3 +12164,273 @@ LEFT JOIN posting_reconciliation_history AS history
  AND history.reconciliation_id = reconciliation.reconciliation_id
 WHERE reconciliation.ledger_id = :ledger_id AND reconciliation.posting_id = :posting_id
 ORDER BY history.sequence;
+
+-- P8-02 i1 (D-310; spec docs/specs/2026-11-11-p8-02-search-filter-design.md sections 2.2/2.3):
+-- the read-only search page. Step one is the `page_ids` CTE: the page's TRANSACTIONS on the frozen
+-- keyset (statistics_at_epoch_nanos DESC, transaction_id DESC) with the LIMIT bound on the CTE, the
+-- same total order and the same page unit as `tagMerchantFilterRows` and `ledgerFlowPage`; step two
+-- joins the page's postings back on, so a posting can never straddle a page boundary.
+--
+-- The condition group is the spec's four items ANDed: the MANDATORY half-open time window on the
+-- projection's range index (transaction_version_statistics_at_range_idx), the keyword (below), the
+-- tag condition in the frozen `min_tag_hits` encoding (0 = none, 1 = OR, selected count = AND), and
+-- the merchant filter condition.
+--
+-- THE KEYWORD IS ONE THREE-ARM OR (note / category name / merchant name), never three ANDed arms:
+-- a row qualifies when its note contains the keyword OR its current annotation names a matched
+-- merchant OR one of its postings carries a matched category. The empty keyword makes that whole
+-- group true, which is the spec's "关键词为空时三臂全不生效" — the condition group then degrades to
+-- the window plus the tag/merchant conditions.
+--
+-- Names never enter this statement. The application layer resolves the keyword against the two
+-- CURRENT name tables (`selectCatalogCurrentNamesByKind`, `selectCatalogItemCurrentNamesByKind`)
+-- and passes one id set per name arm plus one arm switch each (spec section 2.2: a ledger holds tens
+-- to hundreds of catalog rows, so the resolution is noise). An empty id set binds a one-element
+-- sentinel with its switch at 0, so the SQL text is constant, no `IN ()` is ever built, and the arm
+-- is skipped at run time by its `= 1` guard.
+--
+-- `:keyword` is the CALLER-ESCAPED LIKE argument (the caller backslash-escapes `\`, `%` and `_`), so
+-- searching for "50%" cannot widen into a prefix match.
+--
+-- The category arm is the registered cost (spec sections 2.2/7 "分类臂跨 7 表逐行判定"): a posting
+-- level category is only ever stored in the seven rgXX_posting_semantic tables, so the arm is one
+-- seven-way scan of their union — LEDGER-WIDE and indexed nowhere: the CTE filters on `ledger_id`
+-- and the searched category ids only, so the window below bounds the page scan over
+-- transaction_version, NOT this union. The union is built only while `:category_arm = 1`, yields
+-- the posting ids that carry a searched category, and the per-row judgement then probes that set
+-- instead of re-scanning seven tables per transaction.
+--
+-- A version row whose projection is NULL can never satisfy the window predicate, so the adapter runs
+-- statisticsAtProjectionMissingForLedger first and fails loudly rather than silently dropping it
+-- (the projection discipline at :10654).
+p802SearchPage:
+WITH keyword_category_postings AS (
+  SELECT semantic.posting_id AS posting_id
+  FROM (
+    SELECT posting_id, category_id FROM rg03_transfer_posting_semantic WHERE ledger_id = :ledger_id
+    UNION ALL SELECT posting_id, category_id FROM rg04_posting_semantic WHERE ledger_id = :ledger_id
+    UNION ALL SELECT posting_id, category_id FROM rg05_posting_semantic WHERE ledger_id = :ledger_id
+    UNION ALL SELECT posting_id, category_id FROM rg06_posting_semantic WHERE ledger_id = :ledger_id
+    UNION ALL SELECT posting_id, category_id FROM rg07_posting_semantic WHERE ledger_id = :ledger_id
+    UNION ALL SELECT posting_id, category_id FROM rg11_posting_semantic WHERE ledger_id = :ledger_id
+    UNION ALL SELECT posting_id, category_id FROM rg12_posting_semantic WHERE ledger_id = :ledger_id
+  ) AS semantic
+  WHERE semantic.category_id IN :keyword_category_ids
+),
+page_ids AS (
+  SELECT version.transaction_id AS page_transaction_id,
+         version.statistics_at_epoch_nanos AS page_nanos
+  FROM transaction_version AS version
+  JOIN ledger_transaction AS tx
+    ON tx.ledger_id = version.ledger_id
+   AND tx.transaction_id = version.transaction_id
+  JOIN ledger_transaction_current_version AS current_version
+    ON current_version.ledger_id = tx.ledger_id
+   AND current_version.transaction_id = tx.transaction_id
+   AND current_version.current_version_id = version.version_id
+  JOIN transaction_effective_state AS effective
+    ON effective.ledger_id = tx.ledger_id
+   AND effective.transaction_id = tx.transaction_id
+   AND effective.is_effective = 1
+  WHERE version.ledger_id = :ledger_id
+    AND version.statistics_at_epoch_nanos >= :window_start_nanos
+    AND version.statistics_at_epoch_nanos < :window_end_nanos
+    AND (
+      :keyword = ''
+      OR version.note LIKE '%' || :keyword || '%' ESCAPE '\'
+      OR (
+        :category_arm = 1
+        AND EXISTS (
+          SELECT 1
+          FROM posting AS keyword_category_posting
+          JOIN keyword_category_postings AS keyword_category_hit
+            ON keyword_category_hit.posting_id = keyword_category_posting.posting_id
+          WHERE keyword_category_posting.ledger_id = version.ledger_id
+            AND keyword_category_posting.posting_set_id = version.posting_set_id
+        )
+      )
+      OR (
+        :merchant_arm = 1
+        AND EXISTS (
+          SELECT 1
+          FROM transaction_annotation_current AS keyword_merchant_annotation
+          JOIN transaction_annotation_revision AS keyword_merchant_revision
+            ON keyword_merchant_revision.ledger_id = keyword_merchant_annotation.ledger_id
+           AND keyword_merchant_revision.transaction_id = keyword_merchant_annotation.transaction_id
+           AND keyword_merchant_revision.annotation_revision = keyword_merchant_annotation.annotation_revision
+          WHERE keyword_merchant_annotation.ledger_id = version.ledger_id
+            AND keyword_merchant_annotation.transaction_id = tx.transaction_id
+            AND keyword_merchant_revision.merchant_id IN :keyword_merchant_ids
+        )
+      )
+    )
+    AND (
+      :min_tag_hits = 0
+      OR EXISTS (
+        SELECT 1
+        FROM transaction_annotation_current AS tag_annotation
+        JOIN transaction_annotation_tag AS annotation_tag
+          ON annotation_tag.ledger_id = tag_annotation.ledger_id
+         AND annotation_tag.transaction_id = tag_annotation.transaction_id
+         AND annotation_tag.annotation_revision = tag_annotation.annotation_revision
+        WHERE tag_annotation.ledger_id = version.ledger_id
+          AND tag_annotation.transaction_id = tx.transaction_id
+          AND annotation_tag.tag_id IN :tags
+        GROUP BY tag_annotation.transaction_id
+        HAVING count(DISTINCT annotation_tag.tag_id) >= :min_tag_hits
+      )
+    )
+    AND (
+      :merchant_id IS NULL
+      OR EXISTS (
+        SELECT 1
+        FROM transaction_annotation_current AS merchant_annotation
+        JOIN transaction_annotation_revision AS merchant_revision
+          ON merchant_revision.ledger_id = merchant_annotation.ledger_id
+         AND merchant_revision.transaction_id = merchant_annotation.transaction_id
+         AND merchant_revision.annotation_revision = merchant_annotation.annotation_revision
+        WHERE merchant_annotation.ledger_id = version.ledger_id
+          AND merchant_annotation.transaction_id = tx.transaction_id
+          AND merchant_revision.merchant_id = :merchant_id
+      )
+    )
+    AND (
+      :cursor_nanos IS NULL
+      OR version.statistics_at_epoch_nanos < :cursor_nanos
+      OR (
+        version.statistics_at_epoch_nanos = :cursor_nanos
+        AND version.transaction_id < :cursor_transaction_id
+      )
+    )
+  ORDER BY version.statistics_at_epoch_nanos DESC, version.transaction_id DESC
+  LIMIT :page_size
+)
+SELECT
+  tx.transaction_id,
+  current_version.current_version_id,
+  COALESCE(tx.canonical_kind, tx.kind) AS kind,
+  version.occurred_at,
+  version.statistics_at,
+  version.note,
+  posting.posting_id,
+  posting.posting_index,
+  posting.account_id,
+  posting.amount_minor,
+  posting.currency_code,
+  posting.currency_precision,
+  page_ids.page_nanos AS statistics_at_epoch_nanos
+FROM page_ids
+JOIN transaction_version AS version
+  ON version.ledger_id = :ledger_id
+ AND version.transaction_id = page_ids.page_transaction_id
+JOIN ledger_transaction AS tx
+  ON tx.ledger_id = version.ledger_id
+ AND tx.transaction_id = version.transaction_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+ AND current_version.current_version_id = version.version_id
+JOIN posting_set AS posting_set
+  ON posting_set.ledger_id = version.ledger_id
+ AND posting_set.posting_set_id = version.posting_set_id
+JOIN posting AS posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+ORDER BY page_ids.page_nanos DESC, page_ids.page_transaction_id DESC, posting.posting_index;
+
+-- The "共 N 笔" of the same condition group: the page's predicate WITHOUT the keyset and the page
+-- bound, at the transaction grain, so it counts transactions and never posting rows (the
+-- `effectiveTransactionCount` shape, and the spec's own "计交易数不计分录行"). The predicate is the
+-- definition above duplicated on purpose: one definition point per statement is this file's rule,
+-- so the count can never drift into a second search semantics. Registered trade-off (spec section
+-- 2.3): the count and the first page may come from different snapshots when a caller reads them
+-- apart; the adapter issues both inside ONE read transaction, so one page read sees one snapshot.
+p802SearchCount:
+WITH keyword_category_postings AS (
+  SELECT semantic.posting_id AS posting_id
+  FROM (
+    SELECT posting_id, category_id FROM rg03_transfer_posting_semantic WHERE ledger_id = :ledger_id
+    UNION ALL SELECT posting_id, category_id FROM rg04_posting_semantic WHERE ledger_id = :ledger_id
+    UNION ALL SELECT posting_id, category_id FROM rg05_posting_semantic WHERE ledger_id = :ledger_id
+    UNION ALL SELECT posting_id, category_id FROM rg06_posting_semantic WHERE ledger_id = :ledger_id
+    UNION ALL SELECT posting_id, category_id FROM rg07_posting_semantic WHERE ledger_id = :ledger_id
+    UNION ALL SELECT posting_id, category_id FROM rg11_posting_semantic WHERE ledger_id = :ledger_id
+    UNION ALL SELECT posting_id, category_id FROM rg12_posting_semantic WHERE ledger_id = :ledger_id
+  ) AS semantic
+  WHERE semantic.category_id IN :keyword_category_ids
+)
+SELECT count(*) AS total
+FROM transaction_version AS version
+JOIN ledger_transaction AS tx
+  ON tx.ledger_id = version.ledger_id
+ AND tx.transaction_id = version.transaction_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+ AND current_version.current_version_id = version.version_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+WHERE version.ledger_id = :ledger_id
+  AND version.statistics_at_epoch_nanos >= :window_start_nanos
+  AND version.statistics_at_epoch_nanos < :window_end_nanos
+  AND (
+    :keyword = ''
+    OR version.note LIKE '%' || :keyword || '%' ESCAPE '\'
+    OR (
+      :category_arm = 1
+      AND EXISTS (
+        SELECT 1
+        FROM posting AS keyword_category_posting
+        JOIN keyword_category_postings AS keyword_category_hit
+          ON keyword_category_hit.posting_id = keyword_category_posting.posting_id
+        WHERE keyword_category_posting.ledger_id = version.ledger_id
+          AND keyword_category_posting.posting_set_id = version.posting_set_id
+      )
+    )
+    OR (
+      :merchant_arm = 1
+      AND EXISTS (
+        SELECT 1
+        FROM transaction_annotation_current AS keyword_merchant_annotation
+        JOIN transaction_annotation_revision AS keyword_merchant_revision
+          ON keyword_merchant_revision.ledger_id = keyword_merchant_annotation.ledger_id
+         AND keyword_merchant_revision.transaction_id = keyword_merchant_annotation.transaction_id
+         AND keyword_merchant_revision.annotation_revision = keyword_merchant_annotation.annotation_revision
+        WHERE keyword_merchant_annotation.ledger_id = version.ledger_id
+          AND keyword_merchant_annotation.transaction_id = tx.transaction_id
+          AND keyword_merchant_revision.merchant_id IN :keyword_merchant_ids
+      )
+    )
+  )
+  AND (
+    :min_tag_hits = 0
+    OR EXISTS (
+      SELECT 1
+      FROM transaction_annotation_current AS tag_annotation
+      JOIN transaction_annotation_tag AS annotation_tag
+        ON annotation_tag.ledger_id = tag_annotation.ledger_id
+       AND annotation_tag.transaction_id = tag_annotation.transaction_id
+       AND annotation_tag.annotation_revision = tag_annotation.annotation_revision
+      WHERE tag_annotation.ledger_id = version.ledger_id
+        AND tag_annotation.transaction_id = tx.transaction_id
+        AND annotation_tag.tag_id IN :tags
+      GROUP BY tag_annotation.transaction_id
+      HAVING count(DISTINCT annotation_tag.tag_id) >= :min_tag_hits
+    )
+  )
+  AND (
+    :merchant_id IS NULL
+    OR EXISTS (
+      SELECT 1
+      FROM transaction_annotation_current AS merchant_annotation
+      JOIN transaction_annotation_revision AS merchant_revision
+        ON merchant_revision.ledger_id = merchant_annotation.ledger_id
+       AND merchant_revision.transaction_id = merchant_annotation.transaction_id
+       AND merchant_revision.annotation_revision = merchant_annotation.annotation_revision
+      WHERE merchant_annotation.ledger_id = version.ledger_id
+        AND merchant_annotation.transaction_id = tx.transaction_id
+        AND merchant_revision.merchant_id = :merchant_id
+    )
+  );

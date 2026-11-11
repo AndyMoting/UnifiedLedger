@@ -55,6 +55,8 @@
 3	com.unifiedledger.data.P708CorrectionAnnotationInteractionTest
 3	com.unifiedledger.data.P708ManualCreateAnnotationAtomicityTest
 3	com.unifiedledger.data.P7SequenceV28ToV29MigrationTest
+3	com.unifiedledger.data.P802SearchReadVectorsTest
+3	com.unifiedledger.data.P802SearchScaleTest
 3	com.unifiedledger.data.RestoreIsolatedMigrationTest
 3	com.unifiedledger.data.Rg02RawJsonEndToEndTest
 3	com.unifiedledger.data.Rg05RawJsonEndToEndTest
