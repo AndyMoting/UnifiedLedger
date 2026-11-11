@@ -504,7 +504,16 @@ class OnDemandInstrumentationArguments(unittest.TestCase):
         dispatch = text.split("  workflow_dispatch:\n", 1)[1].split("\npermissions:", 1)[0]
         self.assertIn("instrumentation_extra_args:", dispatch)
         self.assertIn("default: ''", dispatch)
-        self.assertEqual(2, text.count("format('--extra-arg {0}', github.event.inputs.instrumentation_extra_args)"))
+        # The input must never be interpolated into the shell script itself: it reaches
+        # the script through an env var and an expansion, so a padded or quoted value
+        # cannot word-split into the argument list or leave a dangling quote.
+        env_line = "EXTRA_INSTRUMENTATION_ARGS: ${{ github.event.inputs.instrumentation_extra_args }}"
+        self.assertEqual(2, text.count(env_line))
+        self.assertEqual(2, text.count("${EXTRA_INSTRUMENTATION_ARGS:+--extra-arg $EXTRA_INSTRUMENTATION_ARGS}"))
+        self.assertNotIn("format('--extra-arg", text)
+        # A dispatch that asks for a reading must leave one or the shard goes red.
+        self.assertIn("Require the on-demand reading when one was requested", text)
+        self.assertIn("P802-V8DEV fixture=", text)
 
 
 if __name__ == "__main__":
