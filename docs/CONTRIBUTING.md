@@ -134,6 +134,19 @@ gh workflow run android-b6-card.yml --ref <branch> -f expected_sha=<完整40位S
 
 **已知边界**：本门不覆盖 `P704GP-D-SCALE-01`（小组不回归需要另一份夹具与另一轮运行），也不对任何未画在屏幕上的层作结论。开发机不再为该门启动模拟器——本机 adb 面归用户的 MuMu 使用，云端托管 runner 是唯一执行环境（显式本地诊断通道不适用于本门）。
 
+### Android font-scale sample（P8-00 V-8 / P8-01a i3b）
+
+`.github/workflows/android-fontscale-sample.yml` 是**手动触发、非阻塞**的设备读数入口：只提供 `workflow_dispatch`，必填 `expected_sha`（完整 40 位 SHA，必须等于 checkout 的 HEAD），可选 `profile`（`empty` 默认 / `seeded`）与 `font_scale`（默认 `1.3`）；不加入 required checks，不设定时触发。
+
+触发命令（仅在该提交已落到目标分支后）：
+
+```bash
+gh workflow run android-fontscale-sample.yml --ref <branch> -f expected_sha=<完整40位SHA> -f profile=empty
+gh workflow run android-fontscale-sample.yml --ref <branch> -f expected_sha=<完整40位SHA> -f profile=seeded
+```
+
+`profile=empty` 在全新空安装上产出 `home.png` / `asset.png` / `analysis.png`；`profile=seeded` 先在模拟器会话之外以 `:ledger-data:jvmTest --tests 'com.unifiedledger.data.P801FontscaleSeedWriterTest' -Dul.fontscale.seed=<path>` 生成 v36 种子库，再产出 `detail.png`（交易详情）与 `reconciliation.png`（账户对账队列）。两档各带自己的 uiautomator dump 与 `host.json`；`gate` 用同一个 `--profile`（`seeded` 档另带 `--seed`）重算判据：profile、屏幕集合、屏幕成功态标记（含上一屏字符串缺席）或种子 sha256 与实际文件不一致即红。工件 `fontscale-sample-<sha>-<profile>` 保留 30 天。
+
 ### 本地诊断通道（D-216，仅诊断，不是验收）
 
 云端 `maximum` 长测仍是唯一验收权威，但每次失败要等 20–40 分钟的云往返。D-216 开放一条**显式 opt-in** 的本地诊断通道：默认关闭，关闭时 host 驱动器行为与今日逐字节相同（非托管 runner 环境仍直接报 `this driver is CI-only; local devices are forbidden`）；只有显式传 `--local-diagnostic` 才跳过托管 runner 环境三元组检查。该通道**不**替代验收，本地证据不得作为验收证据。

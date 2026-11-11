@@ -40,3 +40,6 @@ desktop.ini
 *.bak
 *~
 *.journal.json
+
+# Local font-scale seed output (the workflow's SEED_DB, and local -Dul.fontscale.seed runs)
+fontscale-seed/
