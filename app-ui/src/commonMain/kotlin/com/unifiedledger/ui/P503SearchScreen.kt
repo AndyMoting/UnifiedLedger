@@ -92,6 +92,7 @@ internal fun P503SearchScreen(
     val palette = LocalP8Palette.current
     // 返回保滚动位: the list state is HOISTED to the screen so the sampled position and the restored
     // one address the same object (the home list's mechanism, reused as-is for D7-5's LazyColumn).
+    // The restore slot is registered for a future secondary surface and is never filled today.
     val listState = rememberLazyListState()
     LaunchedEffect(registerListState) { registerListState?.invoke(listState) }
     val pendingRestore = restoreScrollTo
@@ -167,8 +168,9 @@ internal fun P503SearchScreen(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                // An unresolvable range disables submit instead of producing a typed window failure.
-                if (window == null) {
+                // An unresolvable range disables submit instead of producing a typed window failure;
+                // the warning waits until at least one custom field is non-blank (no pre-typing alarm).
+                if (window == null && (state.customStartText.isNotBlank() || state.customEndText.isNotBlank())) {
                     Spacer(Modifier.height(4.dp))
                     Text(
                         P8_SEARCH_CUSTOM_INVALID_TEXT,

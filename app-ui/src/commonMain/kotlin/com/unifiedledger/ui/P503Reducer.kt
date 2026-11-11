@@ -381,10 +381,11 @@ class P503ReducerImpl(
      * ([P503AppState.OverviewEmpty.originListScroll]), the account flow (P8-01a i3a F6: the position
      * sampled when its reconciliation queue opened), the reconciliation queue
      * ([P503AppState.ReconciliationQueue.listScroll]) and the P8-02 i2a search surface
-     * ([P503AppState.Search.listScroll]) — where its ONE effect is clearing the slot after the
-     * screen applied it (the same event, the same mechanism, one slot per surface). Every other
-     * surface is absorbed whole, so the value can never pollute a surface it does not belong to and
-     * a late dispatch can never reach `unhandled`.
+     * ([P503AppState.Search.listScroll]; registered for a future secondary surface and never
+     * filled today) — where its ONE effect is clearing the slot after the screen applied it (the
+     * same event, the same mechanism, one slot per surface). Every other surface is absorbed
+     * whole, so the value can never pollute a surface it does not belong to and a late dispatch
+     * can never reach `unhandled`.
      */
     private fun listScrollRestoredEventAbsorbed(
         state: P503AppState,
@@ -632,7 +633,9 @@ class P503ReducerImpl(
      * [P503UiEvent.SubmitSearch] commits it, and a submit whose window does not resolve is refused
      * whole (R3) — the same decision the screen's submit gate and the host's early return make —
      * never a stranded 正在搜索… with no read. A typed failure lands as the explicit failure (V-7),
-     * never as an empty page, and the rows already loaded stay visible beside it. Back restores the
+     * never as an empty page, and the rows already loaded stay visible beside it. A re-tap of the
+     * already-selected window/tag-match/merchant is a no-op: the screen dispatches those events on
+     * every tap, so an unchanged condition must never wipe the landed page. Back restores the
      * exact preserved overview.
      */
     private fun reduceSearch(
@@ -645,7 +648,8 @@ class P503ReducerImpl(
             // The surface's own restore slot is consumed exactly once (the originListScroll shape).
             P503UiEvent.ListScrollRestored -> if (state.listScroll == null) state else state.copy(listScroll = null)
             is P503UiEvent.UpdateSearchKeyword -> state.copy(keywordDraft = event.text)
-            is P503UiEvent.SelectSearchWindow -> state.resetSearchPages().copy(window = event.choice)
+            is P503UiEvent.SelectSearchWindow ->
+                if (state.window == event.choice) state else state.resetSearchPages().copy(window = event.choice)
             // R2: the condition is assembled from these drafts, so editing them is a generation
             // change like the window itself.
             is P503UiEvent.UpdateSearchCustomStart -> state.resetSearchPages().copy(customStartText = event.text)
@@ -655,8 +659,10 @@ class P503ReducerImpl(
                 if (!next.add(event.tagId)) next.remove(event.tagId)
                 state.resetSearchPages().copy(tagIds = next.toSet())
             }
-            is P503UiEvent.SetSearchTagMatch -> state.resetSearchPages().copy(tagMatch = event.mode)
-            is P503UiEvent.SelectSearchMerchant -> state.resetSearchPages().copy(merchantId = event.merchantId)
+            is P503UiEvent.SetSearchTagMatch ->
+                if (state.tagMatch == event.mode) state else state.resetSearchPages().copy(tagMatch = event.mode)
+            is P503UiEvent.SelectSearchMerchant ->
+                if (state.merchantId == event.merchantId) state else state.resetSearchPages().copy(merchantId = event.merchantId)
             P503UiEvent.SubmitSearch ->
                 // R3: an unresolvable window is refused whole (same decision as the screen's submit
                 // gate), so the host's early return cannot strand a 正在搜索… marker with no read.

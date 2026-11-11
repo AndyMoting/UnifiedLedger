@@ -21,7 +21,6 @@ import com.unifiedledger.domain.TransactionVersionId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -194,7 +193,6 @@ class P503SearchPresentationTest {
     fun aFailedReadNeverRendersAsAnEmptyResult() {
         val failed = P503AppState.Search(overview = overview(), requestToken = 1L, pageFailure = SearchFailureCode.SEARCH_UNAVAILABLE)
         assertEquals(SearchFace.UNAVAILABLE, searchFace(failed))
-        assertNotEquals(SearchFace.EMPTY, searchFace(failed))
         // A SUCCEEDED read with zero rows is the only empty face (readIssued is what a landed read
         // leaves behind; a bare token does not mean a read happened — R1).
         assertEquals(SearchFace.EMPTY, searchFace(P503AppState.Search(overview = overview(), requestToken = 1L, readIssued = true)))
@@ -227,7 +225,6 @@ class P503SearchPresentationTest {
         // Spec section 2.4 / V-12: 账户 and 金额区间 are drawn and never activatable — the chip list
         // is non-empty (visible) and the enabled state is false (not clickable, never silently gone).
         assertEquals(listOf("账户", "金额区间"), P8_SEARCH_DISABLED_CHIPS)
-        assertTrue(P8_SEARCH_DISABLED_CHIPS.isNotEmpty())
         assertFalse(P8_SEARCH_DISABLED_CHIP_ENABLED)
     }
 

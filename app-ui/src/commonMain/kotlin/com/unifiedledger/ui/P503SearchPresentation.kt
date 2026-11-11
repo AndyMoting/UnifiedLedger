@@ -68,7 +68,7 @@ internal const val P8_SEARCH_DISABLED_CHIP_ENABLED: Boolean = false
  * The three window choices of spec section 2.1 (本月 / 近 90 天 / 自定义起止). The enum's declaration
  * order IS the render order, so the condition area cannot reorder them.
  */
-internal enum class SearchWindowChoice {
+enum class SearchWindowChoice {
     CURRENT_MONTH,
     LAST_NINETY_DAYS,
     CUSTOM,
@@ -111,7 +111,8 @@ private fun parseSearchInstant(text: String): Instant? = runCatching { Instant.p
  * the window + tag/merchant filter (D7-6 / spec section 2.2 item 4).
  */
 internal fun searchSubmitEnabled(state: P503AppState.Search): Boolean =
-    !state.pageLoading && searchWindowOf(state.window, state.customStartText, state.customEndText) != null
+    !state.pageLoading &&
+        searchWindowOf(state.window, state.customStartText, state.customEndText) != null
 
 /**
  * The four-item condition group this surface submits (spec section 2.1). `null` only when the draft
@@ -157,9 +158,8 @@ internal enum class SearchFace {
  * The body decision. Rows outrank every banner (a failed more-page read keeps the loaded rows and
  * renders its banner above them); without rows the order is loading, then the typed failure, then
  * the no-read-issued guide, then the genuine empty. [P503AppState.Search.readIssued] is checked
- * first: a page reset keeps the request token (it is the landing gate) but clears this flag, so a
- * condition edited after a landed read is unread again and must show the guide, never the
- * empty-result claim.
+ * first: a page reset clears this flag, so a condition edited after a landed read is unread again
+ * and must show the guide, never the empty-result claim.
  */
 internal fun searchFace(state: P503AppState.Search): SearchFace =
     when {
@@ -167,7 +167,6 @@ internal fun searchFace(state: P503AppState.Search): SearchFace =
         state.pageLoading -> SearchFace.LOADING
         state.pageFailure != null -> SearchFace.UNAVAILABLE
         !state.readIssued -> SearchFace.GUIDE
-        state.requestToken == 0L -> SearchFace.GUIDE
         else -> SearchFace.EMPTY
     }
 
@@ -215,7 +214,7 @@ internal fun searchTagMatchLabel(mode: TagMerchantTagMatchMode): String =
     }
 
 /**
- * V-11's carrier without a Compose harness: every label the result surface can draw. The surface
+ * V-11's carrier without a Compose harness: every frozen condition-area label. The surface
  * offers no calendar entry and no month grid (spec section 2.5 — the calendar belongs to P8-06), so
  * this list holds no calendar vocabulary; adding an affordance changes the list, and the test pins
  * the whole set so nothing can be added silently.

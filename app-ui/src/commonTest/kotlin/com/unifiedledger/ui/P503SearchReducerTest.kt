@@ -192,9 +192,6 @@ class P503SearchReducerTest {
         // R3: the reducer refuses the same draft the screen's submit gate disables, so the host's
         // early return can never strand a 正在搜索… marker with no read behind it.
         assertSame(draft, reducer.reduce(draft, P503UiEvent.SubmitSearch))
-        assertTrue(!draft.pageLoading)
-        assertTrue(!draft.readIssued)
-        assertEquals(0L, draft.requestToken)
     }
 
     // ---- condition change = generation change ----
@@ -230,6 +227,22 @@ class P503SearchReducerTest {
         val windowSet = assertIs<P503AppState.Search>(reducer.reduce(withRows, P503UiEvent.SelectSearchWindow(SearchWindowChoice.CURRENT_MONTH)))
         assertEquals(SearchWindowChoice.CURRENT_MONTH, windowSet.window)
         assertTrue(windowSet.entries.isEmpty())
+    }
+
+    @Test
+    fun reTappingAnAlreadySelectedConditionKeepsTheLandedPage() {
+        // The screen dispatches these select events on every tap, so a tap of the already-selected
+        // chip/radio is a no-op — an unchanged condition must not wipe the page it already shows.
+        val landed =
+            assertIs<P503AppState.Search>(
+                reducer.reduce(
+                    reducer.reduce(searchState(), P503UiEvent.SubmitSearch),
+                    P503UiEvent.SearchPageLanded(1L, successPage(entry("tx-1", "2026-11-01T00:00:00Z"), totalCount = 1L)),
+                ),
+            )
+        assertSame(landed, reducer.reduce(landed, P503UiEvent.SelectSearchWindow(SearchWindowChoice.LAST_NINETY_DAYS)))
+        assertSame(landed, reducer.reduce(landed, P503UiEvent.SetSearchTagMatch(TagMerchantTagMatchMode.Any)))
+        assertSame(landed, reducer.reduce(landed, P503UiEvent.SelectSearchMerchant(null)))
     }
 
     @Test

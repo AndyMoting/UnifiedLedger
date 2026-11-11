@@ -3884,8 +3884,8 @@ fun P503App(
     /**
      * T5 (spec section 5.5 row 1): a catalog command changed the tag/merchant surface with ZERO
      * transaction effect — the authoritative session refresh (options/reads follow one catalog
-     * version), the tag/merchant authority reload, and the loaded filter/accumulation
-     * re-request all follow.
+     * version), the tag/merchant authority reload and the editor's option cache all follow. The
+     * loaded-filter re-request was retired with the analysis entry in i2a.
      */
     fun refreshTagMerchantSurfacesAfterCommand() {
         refreshCatalogSnapshot()
@@ -5380,7 +5380,8 @@ private fun isBackEnabled(state: P503AppState): Boolean =
         is P503AppState.BudgetConfig -> true
         // P8-02 i2a (D7-4; spec section 2.4): the search result surface returns to its preserved
         // overview (a read-only surface — its in-flight page read is absorbable, so there is no
-        // submitting marker to intercept; the one-shot restore slot is consumed by the screen).
+        // submitting marker to intercept; the one-shot restore slot is registered for a future
+        // secondary surface and is never filled today).
         is P503AppState.Search -> true
         // P7-06 06.B (D-177): the export surface returns to its preserved overview; while an export
         // is running it keeps its marker and must not leave (提交中不得离开), so the back channel is
