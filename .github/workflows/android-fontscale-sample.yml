@@ -1,26 +1,34 @@
-# P8-00 V-8 font-scale sample (manual, non-blocking, never a PR gate).
+# P8-00 V-8 / P8-01a i3b font-scale sample (manual, non-blocking, never a PR gate).
 #
 # WHAT ONE GREEN RUN PRODUCES
 # ---------------------------
 # V-8 of `docs/specs/2026-11-08-p8-00-visual-nav-baseline-design.md` section 5 asks for the
-# empty-state samples and for "1.3x font scale must not overflow". The empty-state canvases
-# live in `local/p8-00-design/`; the scale leg is device-observable, so this rig boots a
-# hosted AVD, sets `system font_scale`, and captures the three screens on a **fresh empty
-# install** (an empty ledger is exactly the state V-8 samples, so no fixture is generated).
+# empty-state samples and for "1.3x font scale must not overflow"; P8-01a's
+# `docs/specs/2026-11-11-p8-01-account-reconciliation-design.md` section 6 additionally requires a
+# pre-merge device read of the detail screen and the queue copy. Both legs run here at the
+# requested `system font_scale`:
 #
-# The artifact is the evidence a human reads: `home.png` / `asset.png` / `analysis.png` plus
-# each screen's accessibility dump at that scale. The `gate` step re-derives only what is
-# mechanically decidable — the scale took effect, every screenshot is a real image, and each
-# screen's empty-state copy is still in the accessibility tree (a clipped row loses its text
-# node; an overflowing one pushes it out of the window). "No visual overflow" stays a human
-# judgement on the artifact.
+# - `profile=empty` (default): the three empty-ledger screens on a **fresh empty install**
+#   (`home.png` / `asset.png` / `analysis.png`); an empty ledger is exactly the state V-8 samples,
+#   so no fixture is generated.
+# - `profile=seeded`: the same APK over one prepared v36 database pushed into the app's stable
+#   storage before launch, capturing `detail.png` (the 交易详情 screen) and
+#   `reconciliation.png` (the 账户对账 queue) — the read-only surfaces P8-01a adds.
+#
+# The artifact is the evidence a human reads: each screen's screenshot plus its accessibility dump
+# at that scale. The `gate` step re-derives only what is mechanically decidable — the scale took
+# effect, the recorded profile matches the one asked for, every screenshot is a real image, and
+# each screen's marker text is still in the accessibility tree (a clipped row loses its text node;
+# an overflowing one pushes it out of the window). "No visual overflow" stays a human judgement on
+# the artifact.
 #
 # WHY CLOUD
 # ---------
-# The development host's adb surface belongs to the user's own emulator (D-281), so this
-# chain never boots a local emulator: `tools/ci/android-fontscale.py` refuses to run outside
-# a GitHub-hosted Linux runner, and the first steps below bind the run to one exact commit so
-# the APK it installs is the tree it claims.
+# The development host's adb surface belongs to the user's own emulator (D-281), so this chain
+# never boots a local emulator: `tools/ci/android-fontscale.py` refuses to run outside a
+# GitHub-hosted Linux runner, and the first steps below bind the run to one exact commit so the
+# APK it installs is the tree it claims. The seeded profile's database is produced by the same
+# checkout, before the emulator session, through `:ledger-data:jvmTest` (the seed writer test).
 name: Android font-scale sample
 
 on:
@@ -30,6 +38,14 @@ on:
         description: Exact 40-character commit SHA to sample
         required: true
         type: string
+      profile:
+        description: 'empty = the three empty-ledger screens; seeded = 交易详情 + 账户对账 queue'
+        required: false
+        default: 'empty'
+        type: choice
+        options:
+          - empty
+          - seeded
       font_scale:
         description: Font scale to apply (V-8 asks for 1.3)
         required: false
@@ -54,6 +70,10 @@ jobs:
       TZ: Asia/Shanghai
       LANG: zh_CN.UTF-8
       GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx3g -Dkotlin.daemon.jvmargs=-Xmx2g
+      PROFILE: ${{ inputs.profile }}
+      # The seed database stays OUTSIDE the evidence directory: evidence artifacts never carry a
+      # database (the android-scale convention); only its hash is uploaded.
+      SEED_DB: fontscale-seed/ledger.db
     steps:
       - uses: actions/checkout@v5
         with:
@@ -77,12 +97,23 @@ jobs:
           set -euo pipefail
           mkdir -p fontscale-evidence
           sha256sum android-app/build/outputs/apk/debug/android-app-debug.apk | tee fontscale-evidence/host-apk.txt
+      - name: Write the seeded ledger database (seeded profile only)
+        if: github.event.inputs.profile == 'seeded'
+        # The writer is a jvmTest no-op unless this property names its output; the build script
+        # forwards the property to the test JVM (Gradle does not pass -D through by itself).
+        run: |
+          set -euo pipefail
+          mkdir -p fontscale-evidence fontscale-seed
+          ./gradlew --no-daemon --max-workers=1 :ledger-data:jvmTest \
+            --tests 'com.unifiedledger.data.P801FontscaleSeedWriterTest' \
+            "-Dul.fontscale.seed=${PWD}/${SEED_DB}"
+          sha256sum "${SEED_DB}" | tee fontscale-evidence/host-seed.txt
       - name: Enable KVM group perms
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Capture the three screens at the requested scale
+      - name: Capture the requested profile's screens at the requested scale
         timeout-minutes: 45
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
@@ -101,17 +132,17 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
             set -u
-            python3 tools/ci/android-fontscale.py run --evidence fontscale-evidence --sha "${EXPECTED_SHA}" --font-scale "${FONT_SCALE}" --avd-name ul-fontscale
+            python3 tools/ci/android-fontscale.py run --evidence fontscale-evidence --sha "${EXPECTED_SHA}" --profile "${PROFILE}" --seed "${SEED_DB}" --font-scale "${FONT_SCALE}" --avd-name ul-fontscale
       - name: Re-derive the gate from the evidence on disk
         if: always()
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           FONT_SCALE: ${{ inputs.font_scale }}
-        run: python3 tools/ci/android-fontscale.py gate --evidence fontscale-evidence --sha "${EXPECTED_SHA}" --font-scale "${FONT_SCALE}"
+        run: python3 tools/ci/android-fontscale.py gate --evidence fontscale-evidence --sha "${EXPECTED_SHA}" --profile "${PROFILE}" --font-scale "${FONT_SCALE}"
       - name: Upload the sample evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fontscale-sample-${{ inputs.expected_sha }}
+          name: fontscale-sample-${{ inputs.expected_sha }}-${{ inputs.profile }}
           path: fontscale-evidence
           retention-days: 30

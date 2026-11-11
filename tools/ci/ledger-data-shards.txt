@@ -45,6 +45,7 @@
 2	com.unifiedledger.data.SqlDelightManualIncomeReadAdapterTest
 2	com.unifiedledger.data.SqlDelightTagMerchantCatalogStoreTest
 2	com.unifiedledger.data.TagMerchantFilterScaleTest
+2	com.unifiedledger.data.P801FontscaleSeedWriterTest
 3	com.unifiedledger.data.AndroidSnapshotOpenCorruptionPolicyTest
 3	com.unifiedledger.data.BackupSnapshotDriverTest
 3	com.unifiedledger.data.ImportSpineAlipayEndToEndTest
