@@ -13,13 +13,20 @@ import com.unifiedledger.application.ConfirmedManualTransferCommitIds
 import com.unifiedledger.application.ConfirmedManualTransferResult
 import com.unifiedledger.application.DEFAULT_MANAGEABLE_ACCOUNT_ID
 import com.unifiedledger.application.ExecuteCatalogCommand
+import com.unifiedledger.application.LedgerCurrentStateResult
+import com.unifiedledger.application.LedgerFlowPageResult
 import com.unifiedledger.application.ManualTransferRequestIdentity
 import com.unifiedledger.application.ManualTransferRequestSnapshot
 import com.unifiedledger.application.ManualTransferTransactionFactory
 import com.unifiedledger.application.P408ReconciliationStatus
 import com.unifiedledger.application.P801AccountReconciliationPageResult
 import com.unifiedledger.application.P801AccountReconciliationSummaryResult
+import com.unifiedledger.application.QueryCatalogSnapshot
+import com.unifiedledger.application.QueryLedgerCurrentState
+import com.unifiedledger.application.QueryLedgerFlowPage
+import com.unifiedledger.application.QueryTransactionDetail
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.TransactionDetailResult
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
@@ -38,6 +45,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import kotlin.time.Instant
 
 /**
@@ -72,8 +80,10 @@ import kotlin.time.Instant
  * and the app would run the whole migration chain over an already-current schema.
  *
  * The post-write read-back reopens the FILE through a second connection and drives the REAL
- * reconciliation read adapter, so the queue the device will render is proven here rather than
- * assumed: one PENDING leg per account, both from the same transaction, no active link.
+ * read adapters, so what the device will render is proven here rather than assumed: the
+ * reconciliation queue (one PENDING leg per account, both from the same transaction, no active
+ * link) AND the four reads the seeded tap path depends on — the home flow row's note, the
+ * account-flow balance row, the manageable/asset projection, and the transaction detail read.
  */
 class P801FontscaleSeedWriterTest {
     private val ledgerId = LedgerId(LEDGER_ID)
@@ -165,7 +175,7 @@ class P801FontscaleSeedWriterTest {
         }
     }
 
-    /** Reopens the produced FILE and proves the exact queue the device sample will render. */
+    /** Reopens the produced FILE and proves the exact queue and tap-path reads the device renders. */
     private fun assertSeedReadsBack(file: File) {
         JdbcSqliteDriver(url(file), foreignKeyProperties()).use { driver ->
             assertEquals(LedgerDatabase.Schema.version, userVersion(driver))
@@ -215,6 +225,63 @@ class P801FontscaleSeedWriterTest {
             assertEquals(P408ReconciliationStatus.PENDING, summary.single().status)
             assertEquals(SEED_TRANSFER_MINOR, summary.single().totalMinorUnits)
             assertEquals(1, summary.single().rowCount)
+
+            // F2: the four reads the seeded tap path depends on, asserted offline here so a drift
+            // is a red test instead of a device run that photographs the wrong screen.
+            val readAdapter = SqlDelightLedgerCurrentStateReadAdapter(database)
+            val catalogStore = SqlDelightCatalogStore(database, driver)
+            val catalog = assertNotNull(catalogStore.loadCurrent(ledgerId))
+
+            // (a) The home flow row the detail step taps: the home screen's first flow page
+            // (P503App.kt `queryLedgerFlowPage.firstPage()`) composes its content-description from
+            // this note (P503LedgerViewPresentation.kt `，备注 $note`), so a missing note means the
+            // seeded tap target never renders.
+            val homePage =
+                assertIs<LedgerFlowPageResult.Success>(
+                    QueryLedgerFlowPage(readAdapter, ledgerId).firstPage(),
+                ).page
+            assertEquals(1, homePage.rows.size)
+            val flowRow = homePage.rows.single()
+            assertEquals(TransactionId(SEED_TRANSACTION_ID), flowRow.transactionId)
+            assertEquals(TransactionKind.ACCOUNT_TRANSFER, flowRow.kind)
+            assertEquals(SEED_TRANSFER_NOTE, flowRow.note)
+
+            // (b) The account-flow header's balance row: selectAccountFlow returns silently when
+            // the account has none (P503App.kt `balances.firstOrNull … ?: return`).
+            val currentState =
+                assertIs<LedgerCurrentStateResult.Success>(
+                    QueryLedgerCurrentState(readAdapter, ledgerId, catalog).query(),
+                ).state
+            val seededBalance =
+                assertNotNull(
+                    currentState.balances.firstOrNull { balance -> balance.accountId == AccountId(SEED_ACCOUNT_ID) },
+                )
+            assertEquals(SEED_TRANSFER_MINOR, seededBalance.displayMinorUnits)
+            assertEquals(CATALOG_MANAGED_CURRENCY, seededBalance.currency)
+
+            // (c) The assets screen renders snapshot.manageableAccounts (P503AssetsScreen.kt), so
+            // the seeded account must be in that projection — ASSET and active — or no row opens.
+            val snapshot = assertNotNull(QueryCatalogSnapshot(catalogStore).query(ledgerId))
+            val seededView =
+                assertNotNull(
+                    snapshot.manageableAccounts.firstOrNull { account -> account.accountId == AccountId(SEED_ACCOUNT_ID) },
+                )
+            assertEquals(SEED_ACCOUNT_NAME, seededView.name)
+            assertEquals(AccountKind.ASSET, seededView.kind)
+            assertTrue(seededView.active)
+
+            // (d) The 交易详情 read itself: Success (never a typed failure) with the seed note and
+            // both legs, so the detail screen renders the F1 marker `备注：对账样本转账`.
+            val detail =
+                assertIs<TransactionDetailResult.Success>(
+                    QueryTransactionDetail(readAdapter, ledgerId, catalog).query(TransactionId(SEED_TRANSACTION_ID)),
+                ).detail
+            assertEquals(SEED_TRANSFER_NOTE, detail.note)
+            assertEquals(TransactionKind.ACCOUNT_TRANSFER, detail.kind)
+            assertEquals(
+                setOf(AccountId(DEFAULT_MANAGEABLE_ACCOUNT_ID), AccountId(SEED_ACCOUNT_ID)),
+                detail.legs.map { leg -> leg.accountId }.toSet(),
+            )
         }
     }
 

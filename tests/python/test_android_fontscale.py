@@ -5,7 +5,6 @@ import unittest
 
 from android_fontscale.sampler import (
     BACK,
-    PROFILES,
     BackStep,
     SampleError,
     TapStep,
@@ -13,6 +12,8 @@ from android_fontscale.sampler import (
     dump_contains,
     find_center,
     gate_profile_problems,
+    gate_seed_problems,
+    marker_problems,
     parse_font_scale,
     profile_by_name,
     screen_center,
@@ -80,10 +81,26 @@ class FontScaleReading(unittest.TestCase):
             parse_font_scale("null")
 
 
-class Profiles(unittest.TestCase):
-    def test_the_cli_choices_are_the_profiles(self) -> None:
-        self.assertEqual(("empty", "seeded"), tuple(PROFILES))
+class ScreenCaptureVerdict(unittest.TestCase):
+    def test_a_present_marker_without_absent_strings_passes(self) -> None:
+        self.assertEqual([], marker_problems(_DUMP, "账本为空"))
+        self.assertEqual([], marker_problems(_DUMP, "账本为空", ("账户对账",)))
 
+    def test_an_absent_marker_fails_the_capture(self) -> None:
+        problems = marker_problems(_DUMP, "未核对 1 条")
+        self.assertEqual(1, len(problems))
+        self.assertIn("is absent", problems[0])
+
+    def test_a_previous_screen_string_fails_the_capture(self) -> None:
+        # 对账样本账户 is text on this dump; ACCOUNT_TRANSFER rides a content-description — both
+        # must count, exactly as dump_contains does.
+        for needle in ("对账样本账户", "ACCOUNT_TRANSFER"):
+            problems = marker_problems(_DUMP, "账本为空", (needle,))
+            self.assertEqual(1, len(problems))
+            self.assertIn("previous-screen string", problems[0])
+
+
+class Profiles(unittest.TestCase):
     def test_empty_profile_keeps_the_three_frozen_screens(self) -> None:
         profile = profile_by_name("empty")
         self.assertFalse(profile.seeded)
@@ -95,13 +112,20 @@ class Profiles(unittest.TestCase):
         self.assertEqual((TapStep("分析"),), profile.screens[2].steps)
         # The dock labels are exact: 账户 must never substring-match 账户对账 or an account name.
         self.assertFalse(profile.screens[1].steps[0].contains)
+        # The empty leg declares no negative markers: its screens, paths and markers stay frozen.
+        self.assertEqual([(), (), ()], [screen.absent for screen in profile.screens])
 
     def test_seeded_profile_captures_detail_then_the_queue(self) -> None:
         profile = profile_by_name("seeded")
         self.assertTrue(profile.seeded)
         self.assertEqual("流水 · 共 1 笔", profile.launch_marker)
         self.assertEqual(["detail", "reconciliation"], [screen.stem for screen in profile.screens])
-        self.assertEqual(["交易详情", "账户对账"], [screen.marker for screen in profile.screens])
+        # The markers are success-only content, never the screen titles (交易详情 is also in the
+        # failure copy; 账户对账 is also the account-flow entry button).
+        self.assertEqual(
+            ["备注：对账样本转账", "未核对 1 条"],
+            [screen.marker for screen in profile.screens],
+        )
         self.assertEqual(
             (TapStep("对账样本转账", contains=True),),
             profile.screens[0].steps,
@@ -116,6 +140,9 @@ class Profiles(unittest.TestCase):
             profile.screens[1].steps,
         )
         self.assertEqual(BackStep(), profile.screens[1].steps[0])
+        # The queue sits behind the account-flow screen; its header string must be gone.
+        self.assertEqual((), profile.screens[0].absent)
+        self.assertEqual(("账户流水",), profile.screens[1].absent)
 
     def test_unknown_profile_fails_loudly(self) -> None:
         with self.assertRaises(SampleError):
@@ -128,31 +155,48 @@ class Profiles(unittest.TestCase):
 
 
 class GateProfileConsistency(unittest.TestCase):
-    def host(self, profile: str) -> dict[str, object]:
-        return {
-            "profile": profile,
-            "screens": [screen.stem for screen in profile_by_name(profile).screens],
-        }
+    # Literal host payloads, not a re-derivation from PROFILES: a production change to the profile
+    # table must fail this test, which a payload built from that same table could never do.
+    EMPTY_HOST: dict[str, object] = {"profile": "empty", "screens": ["home", "asset", "analysis"]}
+    SEEDED_HOST: dict[str, object] = {"profile": "seeded", "screens": ["detail", "reconciliation"]}
 
     def test_a_matching_host_has_no_profile_problem(self) -> None:
-        self.assertEqual([], gate_profile_problems(self.host("empty"), "empty"))
-        self.assertEqual([], gate_profile_problems(self.host("seeded"), "seeded"))
+        self.assertEqual([], gate_profile_problems(self.EMPTY_HOST, "empty"))
+        self.assertEqual([], gate_profile_problems(self.SEEDED_HOST, "seeded"))
 
     def test_a_host_recorded_under_another_profile_is_rejected(self) -> None:
-        problems = gate_profile_problems(self.host("empty"), "seeded")
+        problems = gate_profile_problems(self.EMPTY_HOST, "seeded")
         self.assertTrue(any("records profile" in problem for problem in problems))
         self.assertTrue(any("records screens" in problem for problem in problems))
 
     def test_a_truncated_screen_list_is_rejected(self) -> None:
-        host = self.host("seeded")
-        host["screens"] = ["detail"]
-        problems = gate_profile_problems(host, "seeded")
+        problems = gate_profile_problems({"profile": "seeded", "screens": ["detail"]}, "seeded")
         self.assertEqual(1, len(problems))
         self.assertIn("records screens", problems[0])
 
     def test_an_unknown_profile_fails_loudly(self) -> None:
         with self.assertRaises(SampleError):
-            gate_profile_problems(self.host("empty"), "nope")
+            gate_profile_problems(self.EMPTY_HOST, "nope")
+
+
+class GateSeedIdentity(unittest.TestCase):
+    def test_a_matching_seed_digest_has_no_problem(self) -> None:
+        self.assertEqual([], gate_seed_problems({"seed": {"sha256": "a" * 64}}, "a" * 64))
+
+    def test_a_different_seed_is_rejected(self) -> None:
+        problems = gate_seed_problems({"seed": {"sha256": "a" * 64}}, "b" * 64)
+        self.assertEqual(1, len(problems))
+        self.assertIn("seed sha256", problems[0])
+
+    def test_a_host_without_a_seed_digest_is_rejected(self) -> None:
+        problems = gate_seed_problems({"seed": {"ledger_id": "ledger-local-test"}}, "a" * 64)
+        self.assertEqual(1, len(problems))
+        self.assertIn("no seed sha256", problems[0])
+
+    def test_an_unreadable_gate_seed_is_rejected(self) -> None:
+        problems = gate_seed_problems({"seed": {"sha256": "a" * 64}}, None)
+        self.assertEqual(1, len(problems))
+        self.assertIn("cannot be read", problems[0])
 
 
 if __name__ == "__main__":

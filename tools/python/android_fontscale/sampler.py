@@ -23,9 +23,10 @@ WHAT IT DOES AND DOES NOT CLAIM
 The screenshot is the evidence a human reads; the gate re-checks only what is mechanically
 decidable: the font scale actually took effect, every screenshot is a real image rather than a
 blank frame, and each screen's marker text is present in the accessibility tree at that scale (a
-clipped row loses its text node, an overflowing one pushes it out of the window). "No visual
-overflow" is still a human judgement on the artifact — this rig makes that judgement cheap, it
-does not replace it.
+clipped row loses its text node, an overflowing one pushes it out of the window) while the strings
+its previous screen renders are gone (a capture whose navigation did not land is not evidence).
+"No visual overflow" is still a human judgement on the artifact — this rig makes that judgement
+cheap, it does not replace it.
 """
 from __future__ import annotations
 
@@ -75,6 +76,21 @@ SEEDED_LEDGER_ID = "ledger-local-test"
 SEEDED_ACCOUNT_NAME = "对账样本账户"
 SEEDED_TRANSFER_NOTE = "对账样本转账"
 RECONCILIATION_TITLE = "账户对账"
+
+# Capture markers that only a SUCCESSFUL read renders. A screen title is not one: the detail's
+# 交易详情 is also in the 无法读取交易详情 failure copy, and the queue's 账户对账 is also the
+# account-flow header button that opens it (so that wait could be satisfied on the previous screen).
+# - P503LedgerView.kt renders `备注：${data.note ?: "无"}` inside the Success-only 账目信息 card; no
+#   failure branch renders a 备注 row. The home flow row composes `，备注 <note>` (a comma, not the
+#   full-width colon), so this marker cannot match the previous screen either.
+SEEDED_DETAIL_MARKER = f"备注：{SEEDED_TRANSFER_NOTE}"
+# - reconciliationUncheckedPartitionText (P503ReconciliationPresentation.kt) renders
+#   `未核对 <count> 条` only in the queue's LIST face (P503ReconciliationScreen.kt); the seed
+#   writes exactly one PENDING leg, so the count is 1.
+SEEDED_QUEUE_MARKER = "未核对 1 条"
+# The queue sits one navigation step behind the account-flow screen, whose header renders 账户流水;
+# its absence from the queue dump proves the 账户对账 tap actually left that screen.
+ACCOUNT_FLOW_HEADER = "账户流水"
 
 MIN_SCREENSHOT_BYTES = 20_000
 DEFAULT_TIMEOUT = 60
@@ -130,6 +146,27 @@ def dump_contains(xml_text: str, needle: str) -> bool:
     return False
 
 
+def marker_problems(xml_text: str, marker: str, absent: tuple[str, ...] = ()) -> list[str]:
+    """One screen's capture verdict: its marker is present and no previous-screen string is.
+
+    A marker alone cannot always prove the tap landed (the queue's title is also the account-flow
+    button that opens it), so a screen may declare strings its previous screen renders and it never
+    does; a stuck navigation then fails the capture instead of passing it.
+    """
+    problems: list[str] = []
+    if not dump_contains(xml_text, marker):
+        problems.append(f"marker {marker!r} is absent")
+    for needle in absent:
+        if dump_contains(xml_text, needle):
+            problems.append(f"previous-screen string {needle!r} is still visible")
+    return problems
+
+
+def sha256_file(path: Path) -> str:
+    """The exact digest of a file's bytes (the seed a run pushed, re-read by a gate)."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def parse_font_scale(raw: str) -> float:
     """The device's `settings get system font_scale` answer."""
     try:
@@ -167,11 +204,14 @@ def describe_step(step: Step) -> str:
 
 @dataclass(frozen=True)
 class Screen:
-    """One artifact: its stem, the steps from the launch screen, and its capture marker."""
+    """One artifact: its stem, the steps from the previous captured screen (the launch frame before
+    the first capture), its capture marker, and the previous-screen strings the capture must not
+    show (the negative marker)."""
 
     stem: str
     steps: tuple[Step, ...]
     marker: str
+    absent: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -196,13 +236,13 @@ EMPTY_SCREENS: tuple[Screen, ...] = (
     Screen("analysis", (TapStep("分析"),), "账本为空"),
 )
 
-# The P8-01a i3b screens (spec section 6): the transaction detail screen (its screen-top title is
-# 交易详情, P503LedgerView.kt) and the reconciliation queue (its screen-top title is 账户对账,
-# RECONCILIATION_TITLE in P503ReconciliationPresentation.kt, rendered by
-# P503ReconciliationQueueScreen's header). The launch marker proves the seeded transaction is in
-# the ledger before any tap runs (首页 renders 流水 · 共 1 笔).
+# The P8-01a i3b screens (spec section 6): the transaction detail screen and the reconciliation
+# queue. Both markers are content ONLY a successful read renders, never the screen title (see
+# SEEDED_DETAIL_MARKER / SEEDED_QUEUE_MARKER above); the queue capture also asserts the previous
+# account-flow header is gone. The launch marker proves the seeded transaction is in the ledger
+# before any tap runs (首页 renders 流水 · 共 1 笔).
 SEEDED_SCREENS: tuple[Screen, ...] = (
-    Screen("detail", (TapStep(SEEDED_TRANSFER_NOTE, contains=True),), "交易详情"),
+    Screen("detail", (TapStep(SEEDED_TRANSFER_NOTE, contains=True),), SEEDED_DETAIL_MARKER),
     Screen(
         "reconciliation",
         (
@@ -211,7 +251,8 @@ SEEDED_SCREENS: tuple[Screen, ...] = (
             TapStep(SEEDED_ACCOUNT_NAME, contains=True),
             TapStep(RECONCILIATION_TITLE),
         ),
-        RECONCILIATION_TITLE,
+        SEEDED_QUEUE_MARKER,
+        absent=(ACCOUNT_FLOW_HEADER,),
     ),
 )
 
@@ -313,14 +354,15 @@ class Sampler:
             raise SampleError(f"font_scale did not take effect: asked {self.font_scale}, read {observed}")
         return observed
 
-    def seed(self, seed_path: str) -> None:
+    def seed(self, seed_path: str) -> str:
         """Replace the app's ledger with the prepared database (the seeded profile only).
 
         The stable-storage resolution makes `databases/ledger.db` authoritative ONLY while no
         `ledger-generations/` directory exists, so the whole generation set is removed before the
         push; the app then runs its own non-destructive legacy upgrade on the next start (copy ->
         fsync -> open -> publish pointer -> remove legacy). The pushed bytes are read back through
-        `run-as cat` and hashed, so a truncated push can never be sampled as evidence.
+        `run-as cat` and hashed, so a truncated push can never be sampled as evidence. Returns the
+        digest of the bytes this run pushed (host.json records it; the gate compares it).
         """
         source = Path(seed_path)
         if not source.is_file():
@@ -332,7 +374,7 @@ class Sampler:
         self.adb("shell", "mkdir", "-p", REMOTE_SEED_DIR)
         self.adb("push", str(source), REMOTE_SEED, timeout=180)
         self.adb("shell", "run-as", APP_PACKAGE, "cp", REMOTE_SEED, APP_LEGACY_DATABASE)
-        expected = hashlib.sha256(source.read_bytes()).hexdigest()
+        expected = sha256_file(source)
         observed = hashlib.sha256(
             self.adb_bytes("exec-out", "run-as", APP_PACKAGE, "cat", APP_LEGACY_DATABASE)
         ).hexdigest()
@@ -340,6 +382,7 @@ class Sampler:
             raise SampleError(
                 f"the pushed seed did not read back byte-for-byte (host {expected}, device {observed})"
             )
+        return expected
 
     def launch(self) -> None:
         self.adb("shell", "am", "start", "-W", "-n", MAIN_ACTIVITY, timeout=120)
@@ -476,8 +519,9 @@ def run(args: argparse.Namespace) -> int:
     sampler.adb("shell", "mkdir", "-p", Sampler.DUMP_DIR, best_effort=True)
     applied = sampler.apply_font_scale()
     sampler.adb("install", "-r", args.apk, timeout=180)
+    seed_sha256 = ""
     if profile.seeded:
-        sampler.seed(args.seed)
+        seed_sha256 = sampler.seed(args.seed)
     sampler.launch()
     # The launch frame is the change-detection baseline for the first tap, and its marker proves
     # the expected ledger state (empty, or the seeded transaction) before any step runs.
@@ -501,16 +545,16 @@ def run(args: argparse.Namespace) -> int:
         previous = tree
         sampler.save_tree(screen.stem, tree)
         sampler.screenshot(screen.stem)
-        visible = dump_contains(tree, screen.marker)
         observations[screen.stem] = {
             "steps": [describe_step(step) for step in screen.steps],
             "marker": screen.marker,
-            "marker_visible": visible,
+            "marker_visible": dump_contains(tree, screen.marker),
+            "absent": list(screen.absent),
         }
-        if not visible:
+        problems = marker_problems(tree, screen.marker, screen.absent)
+        if problems:
             raise SampleError(
-                f"screen {screen.stem}: marker {screen.marker!r} is not in the accessibility tree "
-                f"at font_scale {applied:g}"
+                f"screen {screen.stem}: {'; '.join(problems)} at font_scale {applied:g}"
             )
 
     host = {
@@ -525,14 +569,34 @@ def run(args: argparse.Namespace) -> int:
     }
     if profile.seeded:
         # The seed contract this evidence was produced against (the ledger id must be the app's
-        # PRODUCT_LEDGER_ID; a mismatch would have failed the launch marker above).
+        # PRODUCT_LEDGER_ID; a mismatch would have failed the launch marker above). The digest is
+        # of the bytes actually pushed, so a gate can prove it re-derived against the same seed.
         host["seed"] = {
             "ledger_id": SEEDED_LEDGER_ID,
             "account": SEEDED_ACCOUNT_NAME,
             "note": SEEDED_TRANSFER_NOTE,
+            "sha256": seed_sha256,
         }
     (evidence / "host.json").write_text(json.dumps(host, indent=2), encoding="utf-8")
     return 0
+
+
+def gate_seed_problems(host: dict[str, object], seed_sha256: str | None) -> list[str]:
+    """The gate's seed-identity check: host.json's digest must be the gate seed file's own digest.
+
+    Without it a gate can be re-derived over a different database than the run pushed: profile,
+    screens and markers would all still match. `seed_sha256` is None when the gate cannot read a
+    seed file (missing --seed, or a path that is not a file), which is itself a failure.
+    """
+    seed = host.get("seed")
+    recorded = seed.get("sha256") if isinstance(seed, dict) else None
+    if not isinstance(recorded, str) or not recorded:
+        return ["host.json records no seed sha256 — the evidence is not tied to a seed"]
+    if seed_sha256 is None:
+        return [f"the gate's seed file cannot be read; host.json records {recorded}"]
+    if recorded != seed_sha256:
+        return [f"host.json records seed sha256 {recorded}, the gate's seed is {seed_sha256}"]
+    return []
 
 
 def gate(args: argparse.Namespace) -> int:
@@ -558,15 +622,21 @@ def gate(args: argparse.Namespace) -> int:
         if not tree.exists():
             problems.append(f"{screen.stem}: accessibility dump missing")
             continue
-        if not dump_contains(tree.read_text(encoding="utf-8"), screen.marker):
-            problems.append(f"{screen.stem}: marker {screen.marker!r} absent at this scale")
+        for problem in marker_problems(
+            tree.read_text(encoding="utf-8"), screen.marker, screen.absent
+        ):
+            problems.append(f"{screen.stem}: {problem}")
+    if profile.seeded:
+        seed_file = Path(args.seed) if args.seed else None
+        actual = sha256_file(seed_file) if seed_file is not None and seed_file.is_file() else None
+        problems.extend(gate_seed_problems(host, actual))
     if problems:
         for problem in problems:
             print(f"gate: {problem}", file=sys.stderr)
         return 1
     print(
         f"gate: font-scale sample complete — {len(profile.screens)} screens captured for profile "
-        f"{profile.name!r} with their markers visible"
+        f"{profile.name!r} with their markers visible and no previous-screen string left"
     )
     return 0
 
@@ -580,7 +650,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--seed",
         default="",
-        help="prepared v36 ledger database pushed into the app for profile=seeded",
+        help=(
+            "prepared v36 ledger database: pushed for profile=seeded, and hash-compared by the "
+            "gate against the digest host.json recorded"
+        ),
     )
     parser.add_argument("--font-scale", type=float, default=1.3)
     parser.add_argument("--avd-name", default="ul-fontscale")

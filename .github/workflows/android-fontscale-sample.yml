@@ -17,10 +17,12 @@
 #
 # The artifact is the evidence a human reads: each screen's screenshot plus its accessibility dump
 # at that scale. The `gate` step re-derives only what is mechanically decidable — the scale took
-# effect, the recorded profile matches the one asked for, every screenshot is a real image, and
-# each screen's marker text is still in the accessibility tree (a clipped row loses its text node;
-# an overflowing one pushes it out of the window). "No visual overflow" stays a human judgement on
-# the artifact.
+# effect, the recorded profile matches the one asked for, every screenshot is a real image, each
+# screen's marker text is still in the accessibility tree (a clipped row loses its text node; an
+# overflowing one pushes it out of the window), no string the previous screen renders is still
+# visible (a navigation that did not land is not evidence), and the seed digest host.json records
+# is the seed file's own (a gate can never be re-derived over a different database). "No visual
+# overflow" stays a human judgement on the artifact.
 #
 # WHY CLOUD
 # ---------
@@ -138,7 +140,7 @@ jobs:
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           FONT_SCALE: ${{ inputs.font_scale }}
-        run: python3 tools/ci/android-fontscale.py gate --evidence fontscale-evidence --sha "${EXPECTED_SHA}" --profile "${PROFILE}" --font-scale "${FONT_SCALE}"
+        run: python3 tools/ci/android-fontscale.py gate --evidence fontscale-evidence --sha "${EXPECTED_SHA}" --profile "${PROFILE}" --seed "${SEED_DB}" --font-scale "${FONT_SCALE}"
       - name: Upload the sample evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -145,7 +145,7 @@ gh workflow run android-fontscale-sample.yml --ref <branch> -f expected_sha=<完
 gh workflow run android-fontscale-sample.yml --ref <branch> -f expected_sha=<完整40位SHA> -f profile=seeded
 ```
 
-`profile=empty` 在全新空安装上产出 `home.png` / `asset.png` / `analysis.png`；`profile=seeded` 先在模拟器会话之外以 `:ledger-data:jvmTest --tests 'com.unifiedledger.data.P801FontscaleSeedWriterTest' -Dul.fontscale.seed=<path>` 生成 v36 种子库，再产出 `detail.png`（交易详情）与 `reconciliation.png`（账户对账队列）。两档各带自己的 uiautomator dump 与 `host.json`；`gate` 用同一个 `--profile` 重算判据，profile 或屏幕集合不一致即红。工件 `fontscale-sample-<sha>-<profile>` 保留 30 天。
+`profile=empty` 在全新空安装上产出 `home.png` / `asset.png` / `analysis.png`；`profile=seeded` 先在模拟器会话之外以 `:ledger-data:jvmTest --tests 'com.unifiedledger.data.P801FontscaleSeedWriterTest' -Dul.fontscale.seed=<path>` 生成 v36 种子库，再产出 `detail.png`（交易详情）与 `reconciliation.png`（账户对账队列）。两档各带自己的 uiautomator dump 与 `host.json`；`gate` 用同一个 `--profile`（`seeded` 档另带 `--seed`）重算判据：profile、屏幕集合、屏幕成功态标记（含上一屏字符串缺席）或种子 sha256 与实际文件不一致即红。工件 `fontscale-sample-<sha>-<profile>` 保留 30 天。
 
 ### 本地诊断通道（D-216，仅诊断，不是验收）
 
