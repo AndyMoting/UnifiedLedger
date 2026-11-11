@@ -11,6 +11,7 @@ import com.unifiedledger.application.P801ConfirmLinkInput
 import com.unifiedledger.application.P801ConfirmLinkResult
 import com.unifiedledger.application.isReconciliationEligible
 import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.TransactionId
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -31,6 +32,10 @@ import kotlin.test.assertTrue
  *  - V-17 the report read face still describes transfer legs only (registered oracle-only);
  *  - V-18 the rg03 false override hides a leg from the queue and the totals, the write face still links it;
  *  - V-19 the frozen correction predicate keeps both its kind filter and its missing effective gate.
+ *
+ * V-15 (two same-shape legs of different kinds answer AMBIGUOUS) lives in
+ * `SqlDelightP801ReconciliationCandidatesTest`, and V-20 (both duty tokens still print verbatim) in
+ * `P503ReconciliationPresentationTest`: each belongs to the surface it exercises.
  *
  * All data synthetic and anonymous; every instant fixed.
  */
@@ -73,7 +78,9 @@ class P801WidenedReconciliationTest {
 
             val proposal = proposalFor(fixture, fixture.assetAccountId, "posting-out", evidence.evidenceId)
             val linked = assertIs<P801ConfirmLinkResult.Linked>(fixture.confirm.confirm(input(fixture, proposal)))
-            // The use case minted a fresh identity; the existing row's identity is authoritative.
+            // The use case minted a fresh identity; the existing row's identity is authoritative for
+            // the receipt and for the state history. (The audit read does not project the
+            // reconciliation id at all, so it is not evidence for this claim.)
             assertEquals("reconciliation-v23-seed", linked.receipt.reconciliationId)
             assertEquals(2L, linked.receipt.historySequence)
             assertEquals(1L, fixture.scalarLong("SELECT count(*) FROM posting_reconciliation WHERE ledger_id = '$LEDGER'"))
@@ -125,9 +132,16 @@ class P801WidenedReconciliationTest {
                     .sortedBy { total -> total.status.name }
             assertEquals(expectedTotals, summaryTotals(fixture).sortedBy { total -> total.status.name })
 
-            // The detail face derives the same status for the same leg through the same row.
+            // The detail face derives the same status for the same leg through the same row. The
+            // eligibility verdict alone would be vacuous here — this leg HAS a reconciliation row, which
+            // short-circuits `isReconciliationEligible` — so the composite mark is asserted on the detail
+            // row's own catalog projection instead.
             val detailLegs = fixture.detailRead.loadTransactionReconciliationLegs(fixture.ledgerId, TransactionId("tx-expense"))
             val detailLeg = detailLegs.single { row -> row.postingId.value == "posting-expense" }
+            assertEquals(true, detailLeg.accountOwnedByUser)
+            assertEquals(true, detailLeg.accountRealAccount)
+            assertEquals(AccountKind.ASSET, detailLeg.accountKind)
+            assertNull(detailLeg.rg03ReconciliationEligible)
             assertTrue(isReconciliationEligible(detailLeg))
             assertEquals(P408ReconciliationStatus.CHECKED.storageValue, detailLeg.statusStorageValue)
         }
@@ -153,18 +167,27 @@ class P801WidenedReconciliationTest {
         P801ReconciliationFixture().use { fixture ->
             fixture.seedTransaction("tx-transfer", AT, legs = listOf(P801Leg("posting-hidden", fixture.assetAccountId.value, -5_000L)))
             fixture.seedTransaction("tx-expense", AT, kind = "EXPENSE", legs = listOf(P801Leg("posting-visible", fixture.assetAccountId.value, -3_000L)))
+            fixture.seedTransaction("tx-expense-older", OLDER, kind = "EXPENSE", legs = listOf(P801Leg("posting-visible-older", fixture.assetAccountId.value, -2_000L)))
             fixture.seedRg03FalseOverride("posting-hidden")
 
             // The override is applied inside the page CTE, before the keyset predicate and the LIMIT, so
-            // the hidden leg neither occupies a page slot nor shortens the cursor's total order.
-            val page =
+            // the hidden leg neither occupies a page slot nor shortens the cursor's total order. Both
+            // visible legs are walked one per page, so a truncated page or a skipped/repeated row would
+            // show up; a filter applied after the LIMIT would return an EMPTY first page here.
+            val first =
                 assertIs<P801AccountReconciliationPageResult.Success>(
                     fixture.read.loadAccountReconciliationPage(fixture.ledgerId, fixture.assetAccountId, after = null, pageSize = 1),
                 ).page
-            assertEquals(listOf("posting-visible"), page.rows.map { row -> row.postingId.value })
-            assertNull(page.nextCursor)
+            assertEquals(listOf("posting-visible"), first.rows.map { row -> row.postingId.value })
+            val cursor = assertNotNull(first.nextCursor)
+            val second =
+                assertIs<P801AccountReconciliationPageResult.Success>(
+                    fixture.read.loadAccountReconciliationPage(fixture.ledgerId, fixture.assetAccountId, after = cursor, pageSize = 1),
+                ).page
+            assertEquals(listOf("posting-visible-older"), second.rows.map { row -> row.postingId.value })
+            assertNull(second.nextCursor)
             assertEquals(
-                listOf(P801AccountReconciliationStatusTotal(fixture.cny, P408ReconciliationStatus.PENDING, -3_000L, 1)),
+                listOf(P801AccountReconciliationStatusTotal(fixture.cny, P408ReconciliationStatus.PENDING, -5_000L, 2)),
                 summaryTotals(fixture),
             )
 
@@ -233,5 +256,8 @@ class P801WidenedReconciliationTest {
     private companion object {
         const val LEDGER = P801_FIXTURE_LEDGER
         const val AT = "2026-03-01T02:00:00Z"
+
+        /** An instant before [AT], so a two-leg queue has a real keyset boundary to cross. */
+        const val OLDER = "2026-02-01T02:00:00Z"
     }
 }

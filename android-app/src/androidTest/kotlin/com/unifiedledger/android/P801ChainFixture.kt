@@ -354,10 +354,11 @@ internal class P801ChainFixture(
             }
 
     /**
-     * The exact posting set of [accountIds] as one comparable string: every `ACCOUNT_TRANSFER` leg
-     * fact the reconciliation read reports (id, transaction, amount, currency, precision, direction,
-     * account, persisted time text, current/eligible flags). A row COUNT cannot see an amended value,
-     * so the zero-accounting-effect assertions compare this string before and after.
+     * The exact posting set of [accountIds] as one comparable string: every leg fact the
+     * reconciliation read reports (id, transaction, amount, currency, precision, direction, account,
+     * persisted time text, current/eligible flags) — of any kind, because the read is flags-not-filters
+     * and the widened write face accepts any composite-marked leg. A row COUNT cannot see an amended
+     * value, so the zero-accounting-effect assertions compare this string before and after.
      */
     fun postingFingerprint(vararg accountIds: AccountId): String =
         accountIds.joinToString("||") { accountId ->

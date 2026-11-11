@@ -1466,6 +1466,10 @@ class P708RestoreRoundtripEquivalenceTest {
                 "INSERT INTO ledger_transaction_current_version(transaction_id, ledger_id, current_version_id) VALUES ('tx-reconciliation-roundtrip','$ledgerId','reconciliation-version-roundtrip')",
                 "INSERT INTO posting(posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision) " +
                     "VALUES ('reconciliation-posting-roundtrip','reconciliation-posting-set-roundtrip','$ledgerId',0,'reconciliation-account-roundtrip',-1000,'CNY',2)",
+                // P8-01b: the reconciliation write face requires the section 2.1 composite mark, so the
+                // account this leg posts to needs a catalog row.
+                "INSERT INTO catalog_account(ledger_id, account_id, name, kind, currency_code, currency_precision, owned_by_user, real_account, system_role, hidden, active) " +
+                    "VALUES ('$ledgerId','reconciliation-account-roundtrip','roundtrip account','ASSET','CNY',2,1,1,NULL,0,1)",
             )
         statements.forEach { driver.execute(null, it, 0) }
     }

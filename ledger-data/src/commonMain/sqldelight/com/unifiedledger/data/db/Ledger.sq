@@ -12018,6 +12018,9 @@ WHERE evidence.ledger_id = :ledger_id AND evidence.evidence_id = :evidence_id;
 -- accepts any composite-marked real-account leg (spec section 2.1), so a kind predicate here would
 -- hide exactly the legs the widened face can link and would keep V-12/V-15 unreachable.
 --
+-- The `ledger_transaction` join went with that predicate: it filtered nothing else and projected
+-- nothing, and `transaction_version` already carries the foreign key to it.
+--
 -- FLAGS, NOT FILTERS. `transaction_effective_state` (the view defined above) is the single effective definition
 -- point and stays a join, so a voided transaction never appears. `current` and `eligible_real_account`
 -- are returned as flags instead of joined filters because the matcher itself requires both: a
