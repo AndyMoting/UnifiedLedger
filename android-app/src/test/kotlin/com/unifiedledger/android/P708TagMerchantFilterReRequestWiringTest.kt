@@ -7,13 +7,17 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * SOURCE-LEVEL PIN for the catalog-command -> loaded-filter re-request seam (D-238 vector A07,
- * spec section 5.5 row 1). This is NOT behavioural evidence: it proves the wiring exists and has
- * the expected shape — the re-request call and the month-view read-model refresh sit inside the
- * catalog-command refresh function body, and that function is invoked only from the
- * determinate-success (`Accepted || NoChange`) gate of a
- * tag/merchant catalog command. It does not execute the composable and therefore does not prove
- * that a rename re-requests the loaded filter page at runtime.
+ * SOURCE-LEVEL PIN for the catalog-command -> month-view refresh seam (D-238 vector A07, spec
+ * section 5.5 row 1). This is NOT behavioural evidence: it proves the wiring exists and has the
+ * expected shape — the month-view read-model refresh sits inside the catalog-command refresh
+ * function body, and that function is invoked only from the determinate-success
+ * (`Accepted || NoChange`) gate of a tag/merchant catalog command. It does not execute the
+ * composable and therefore does not prove runtime behaviour.
+ *
+ * P8-02 i2a retired the loaded-filter re-request this file also pinned: the tag/merchant filter
+ * surface moved into the search result face, so `FILTER_RE_REQUEST_CALL` and the assertion that a
+ * rename re-requests the loaded filter page went with it. The class name is kept so the historical
+ * decision record that names this path still resolves.
  *
  * Why the pin lives in this module: the refresh function is a local function of the `@Composable`
  * `P503App`, which a plain JVM test cannot construct, and `app-ui` declares an Android target, so
@@ -28,21 +32,6 @@ import kotlin.test.assertTrue
  * declaration line.
  */
 class P708TagMerchantFilterReRequestWiringTest {
-    @Test
-    fun theLoadedFilterReRequestLivesInsideTheRefreshFunctionBody() {
-        val lines = trimmedProductionLines()
-        val definition = lines.indexOfFirst { it == REFRESH_FUNCTION_DEFINITION }
-        assertTrue(
-            definition >= 0,
-            "the catalog-command refresh function must still be declared in the composition root",
-        )
-        val body = functionBodySpan(lines, definition)
-        assertTrue(
-            body.any { it == FILTER_RE_REQUEST_CALL },
-            "the loaded filter page must be re-requested with replace inside the refresh function body",
-        )
-    }
-
     @Test
     fun theMonthViewRefreshLivesInsideTheSameRefreshFunctionBody() {
         val lines = trimmedProductionLines()
@@ -141,8 +130,6 @@ class P708TagMerchantFilterReRequestWiringTest {
         private const val REFRESH_FUNCTION_DEFINITION = "fun refreshTagMerchantSurfacesAfterCommand() {"
 
         private const val REFRESH_FUNCTION_CALL = "refreshTagMerchantSurfacesAfterCommand()"
-
-        private const val FILTER_RE_REQUEST_CALL = "requestTagMerchantFilterPage(current, replace = true, cursor = null)"
 
         private const val MONTH_VIEW_REFRESH_CALL = "refreshCatalogSnapshot()"
 

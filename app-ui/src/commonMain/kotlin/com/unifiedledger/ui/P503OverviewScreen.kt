@@ -136,9 +136,14 @@ fun P503OverviewScreen(
         item {
             // P8-00 b4b (2026-11-06 hierarchy ruling): the ledger id and the low-frequency
             // 回收站/导出备份 entries LEFT this surface — the side drawer's 数据 group carries them.
-            onOpenSearch?.let { open ->
-                P8SearchCapsule(onClick = open)
-                Spacer(Modifier.height(8.dp))
+            // P8-02 i2a (D7-4): the capsule is a LIVE affordance only when the host wired the
+            // search surface AND this surface is interactive — the retained read-failure face (whose
+            // reducer absorbs every interaction) renders neither the capsule nor a dead entry.
+            if (p8SearchCapsuleVisible(onOpenSearch != null, interactionsEnabled)) {
+                onOpenSearch?.let { open ->
+                    P8SearchCapsule(onClick = open)
+                    Spacer(Modifier.height(8.dp))
+                }
             }
         }
         // P8-00 b4g (D-307 follow-up): an empty ledger has nothing to summarise, so the summary card
@@ -266,9 +271,13 @@ private fun FlowFooter(
  * in the visible texts. [interactionsEnabled] is `false` only on the retained read-failure
  * surface, where the reducer absorbs the open-detail event: the row then renders without a dead
  * click affordance (F1).
+ *
+ * `internal` since P8-02 i2a: the search result surface renders the SAME row (D7-1 — the row is
+ * reused as-is, with no merchant/tag badge projection), so one row implementation serves both
+ * lists.
  */
 @Composable
-private fun LedgerEntryFlowRow(
+internal fun LedgerEntryFlowRow(
     row: LedgerEntryRow,
     accountNames: Map<AccountId, String>,
     onSelectTransaction: (TransactionId) -> Unit,

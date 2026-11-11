@@ -280,6 +280,18 @@ internal fun P8HomeMonthRow(
 }
 
 /**
+ * D7-4: whether the HOME search capsule renders as a LIVE affordance. Two independent gates must
+ * both hold — the host wired a destination ([searchWired]) and the surface is interactive
+ * ([interactionsEnabled]) — so the retained read-failure overview, whose reducer absorbs every
+ * interaction, never presents a capsule that would open an unreadable screen. Pure so the gate is
+ * assertable without a Compose harness (the search batch's V-1 evidence).
+ */
+internal fun p8SearchCapsuleVisible(
+    searchWired: Boolean,
+    interactionsEnabled: Boolean,
+): Boolean = searchWired && interactionsEnabled
+
+/**
  * The search capsule (spec section 2 首页). Search behaviour belongs to P8-02, so the host renders
  * this only when it wires a destination; an unwired host renders nothing and the home keeps no
  * dead affordance.

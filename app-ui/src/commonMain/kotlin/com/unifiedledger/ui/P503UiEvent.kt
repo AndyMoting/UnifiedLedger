@@ -13,10 +13,8 @@ import com.unifiedledger.application.ManualExpenseCommitResolution
 import com.unifiedledger.application.ManualExpenseSubmissionResult
 import com.unifiedledger.application.ManualIncomeCommitResolution
 import com.unifiedledger.application.ManualIncomeSubmissionResult
-import com.unifiedledger.application.MerchantMonthlyAccumulationResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TagMerchantCommandResult
-import com.unifiedledger.application.TagMerchantFilterReadResult
 import com.unifiedledger.application.TagMerchantTagMatchMode
 import com.unifiedledger.application.TransactionAnnotationHistoryEntry
 import com.unifiedledger.domain.AccountId
@@ -468,7 +466,7 @@ sealed interface P503UiEvent {
      * Requests one more flow page for the open account-flow surface (the 加载更多 intent; the
      * host runs the paged read and lands [AccountFlowMorePageLanded]). Effect on AccountFlow is
      * the request-token advance + the single-flight marker (不切态 — the host action owns the
-     * read; the TagMerchantFilter RequestTagMerchantFilterPage precedent). Absorbed everywhere
+     * read; the search surface's RequestSearchPage precedent). Absorbed everywhere
      * else.
      */
     data object RequestAccountFlowMorePage : P503UiEvent
@@ -476,7 +474,7 @@ sealed interface P503UiEvent {
     /**
      * One more filtered flow page landed for the open account-flow surface. Applies only when
      * the landing's request token is still the surface's current one (a read superseded by a
-     * newer request can never append — the TagMerchantFilter token gate); a typed failure keeps
+     * newer request can never append — the RequestSearchPage token gate); a typed failure keeps
      * the loaded rows and surfaces the retry state (fail-closed, never a silent truncation).
      * Absorbed in every state other than AccountFlow.
      */
@@ -1426,80 +1424,79 @@ sealed interface P503UiEvent {
      */
     data object CloseBudgetConfig : P503UiEvent
 
-    // ---- P7-08 08.C tag/merchant filter events (spec sections 5.1-5.5) ----
-    // Same discipline as the budget family: each event has its designed effect only in its
-    // designed state, is absorbed in every other state and never throws.
+    // ---- P8-02 i2a search events (D7-1..D7-7; spec sections 2.1/2.4/2.5) ----
+    // Same discipline as the families above: each event has its designed effect only in its
+    // designed state, is absorbed (state-preserving) in every other state and never throws.
 
     /**
-     * Opens the tag/merchant filter surface from the analysis tab. [accumulationMonth] is the
-     * host-resolved effective month the merchant accumulation starts from. Effect only on
-     * OverviewEmpty; absorbed everywhere else.
+     * Opens the independent search result surface from the HOME search capsule (D7-4: the retained
+     * read-failure overview never dispatches it — its capsule stays unwired). [originScroll] is the
+     * home list position sampled at the click and carried into the overview the surface returns to
+     * (返回保滚动位). No read is dispatched here: the surface opens on its guide face and the first
+     * read belongs to the explicit submit (D7-6).
      */
-    data class OpenTagMerchantFilter(
-        val accumulationMonth: kotlinx.datetime.YearMonth,
+    data class OpenSearch(
+        val originScroll: ListScrollPosition? = null,
     ) : P503UiEvent
 
-    /** Toggles one tag of the filter condition. A condition change resets the loaded pages. */
-    data class ToggleFilterTag(
+    /** Writes the keyword draft; the committed keyword changes only on [SubmitSearch]. */
+    data class UpdateSearchKeyword(
+        val text: String,
+    ) : P503UiEvent
+
+    /** Selects one of the three window choices; a window change resets the landed pages. */
+    data class SelectSearchWindow(
+        val choice: SearchWindowChoice,
+    ) : P503UiEvent
+
+    /** Writes the CUSTOM window's start draft (inclusive, ISO-8601 instant text). */
+    data class UpdateSearchCustomStart(
+        val text: String,
+    ) : P503UiEvent
+
+    /** Writes the CUSTOM window's end draft (exclusive, ISO-8601 instant text). */
+    data class UpdateSearchCustomEnd(
+        val text: String,
+    ) : P503UiEvent
+
+    /** Toggles one tag of the condition group; a condition change resets the landed pages. */
+    data class ToggleSearchTag(
         val tagId: TagId,
     ) : P503UiEvent
 
-    /** Sets the OR/AND tag match mode. A condition change resets the loaded pages. */
-    data class SetFilterTagMatch(
+    /** Sets the OR/AND tag match mode; a condition change resets the landed pages. */
+    data class SetSearchTagMatch(
         val mode: TagMerchantTagMatchMode,
     ) : P503UiEvent
 
-    /** Sets (or clears) the merchant condition; it ANDs with the tag conditions (spec 5.1). */
-    data class SetFilterMerchant(
+    /** Sets (or clears) the merchant condition; it ANDs with the tags and the keyword. */
+    data class SelectSearchMerchant(
         val merchantId: MerchantId?,
     ) : P503UiEvent
 
-    /** Shifts the merchant accumulation month; a month change drops the stale accumulation. */
-    data class SetFilterAccumulationMonth(
-        val month: kotlinx.datetime.YearMonth,
-    ) : P503UiEvent
+    /**
+     * The explicit submit (关键词可空 — D7-6): commits the keyword draft, resets the landed pages,
+     * sets the single-flight marker and advances the request token. Nothing else re-reads: the
+     * surface never issues a read on the user's behalf.
+     */
+    data object SubmitSearch : P503UiEvent
 
     /**
-     * The host's filter-page request trigger. [replace] clears the accumulated entries first
-     * (a fresh-condition or refreshed read) versus appending a continuation page. The page
-     * fields of an append are absorbed while a read is already in flight (一次一页), while a
-     * replace always supersedes the in-flight read — in BOTH cases the request token advances,
-     * so the landing of any read this dispatch supersedes (or duplicates) is rejected whole.
+     * Requests the next page (加载更多). Single-flight: a dispatch while a page read is already in
+     * flight is absorbed WITHOUT advancing the token (the in-flight read's landing stays appliable).
      */
-    data class RequestTagMerchantFilterPage(
-        val replace: Boolean,
-    ) : P503UiEvent
+    data object RequestSearchPage : P503UiEvent
 
     /**
-     * One filter-page landing. [conditionFingerprint] is the condition the request carried: the
-     * reducer applies the page ONLY when it equals the live condition's fingerprint — an
-     * old-condition return is dropped, never allowed to overwrite the page (spec section 5.3;
-     * the lease generation was already gated by the host's landing hop). [pageRequestToken] is
-     * the request identity the host captured for THIS read: the reducer applies the page only
-     * when it is still the surface's current token, so a duplicate same-condition read or a read
-     * superseded by a newer request can never append or merge (fix round P3-1). A typed failure
-     * lands as the explicit failure copy and never as an empty page.
+     * One page landing. Applies only while the surface still holds this request token AND a read is
+     * still marked in flight; a read superseded by a submit, by a condition change or by a newer
+     * request can never append or merge (the queue's late-write gate). A typed failure lands as the
+     * explicit failure copy — never an empty page (V-7). The page's own display order is the port's
+     * frozen keyset order, so appending never re-sorts.
      */
-    data class TagMerchantFilterPageLanded(
-        val conditionFingerprint: String,
-        val pageRequestToken: Long,
-        val result: TagMerchantFilterReadResult,
-    ) : P503UiEvent
-
-    /** The host's merchant-accumulation request trigger (its token advances on every dispatch). */
-    data object RequestMerchantAccumulation : P503UiEvent
-
-    /**
-     * One accumulation landing, gated exactly like [TagMerchantFilterPageLanded]: applied only
-     * when the condition fingerprint, the month AND the request token ([requestToken], the
-     * accumulation surface's current [P503AppState.TagMerchantFilter.accumulationRequestToken])
-     * still match the surface's live values.
-     */
-    data class MerchantAccumulationLanded(
-        val conditionFingerprint: String,
+    data class SearchPageLanded(
         val requestToken: Long,
-        val month: kotlinx.datetime.YearMonth,
-        val result: MerchantMonthlyAccumulationResult,
+        val result: com.unifiedledger.application.SearchReadResult,
     ) : P503UiEvent
 
     // ---- P7-08 08.C tag/merchant catalog management events (R-222-11; open item 11) ----

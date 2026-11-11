@@ -449,7 +449,7 @@ class P503AccountFlowReducerTest {
                     closed = false,
                     limitMinorUnits = null,
                 ),
-                P503AppState.TagMerchantFilter(overview(), kotlinx.datetime.YearMonth(2026, 1)),
+                P503AppState.Search(overview()),
                 P503AppState.Editing(draft, requestId),
                 P503AppState.AwaitingConfirmation(draft, requestId),
                 P503AppState.Submitting(draft, requestId),
