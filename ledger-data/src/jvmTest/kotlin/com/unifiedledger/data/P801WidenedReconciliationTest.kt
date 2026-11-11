@@ -79,8 +79,7 @@ class P801WidenedReconciliationTest {
             val proposal = proposalFor(fixture, fixture.assetAccountId, "posting-out", evidence.evidenceId)
             val linked = assertIs<P801ConfirmLinkResult.Linked>(fixture.confirm.confirm(input(fixture, proposal)))
             // The use case minted a fresh identity; the existing row's identity is authoritative for
-            // the receipt and for the state history. (The audit read does not project the
-            // reconciliation id at all, so it is not evidence for this claim.)
+            // the receipt and for the state history this test reads back.
             assertEquals("reconciliation-v23-seed", linked.receipt.reconciliationId)
             assertEquals(2L, linked.receipt.historySequence)
             assertEquals(1L, fixture.scalarLong("SELECT count(*) FROM posting_reconciliation WHERE ledger_id = '$LEDGER'"))
@@ -172,8 +171,9 @@ class P801WidenedReconciliationTest {
 
             // The override is applied inside the page CTE, before the keyset predicate and the LIMIT, so
             // the hidden leg neither occupies a page slot nor shortens the cursor's total order. Both
-            // visible legs are walked one per page, so a truncated page or a skipped/repeated row would
-            // show up; a filter applied after the LIMIT would return an EMPTY first page here.
+            // visible legs are walked one per page: an override applied after the LIMIT would truncate
+            // the page and break the cursor (the first page would carry no next cursor), which the
+            // cursor assertion and the totals below catch.
             val first =
                 assertIs<P801AccountReconciliationPageResult.Success>(
                     fixture.read.loadAccountReconciliationPage(fixture.ledgerId, fixture.assetAccountId, after = null, pageSize = 1),

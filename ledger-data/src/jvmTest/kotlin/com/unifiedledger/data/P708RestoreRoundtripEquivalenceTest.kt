@@ -211,6 +211,12 @@ class P708RestoreRoundtripEquivalenceTest {
      * which writes `catalog_command_request`, `catalog_command_receipt` and one more name-history
      * revision. `posting_set` rows are hand-inserted once per seeded transaction chain
      * ([seedCurrentLibrary]).
+     *
+     * ONE exception, and it is a reconciliation-only row: [seedReconciliationSourceRows] hand-inserts
+     * the single `catalog_account` row the widened reconciliation write face needs (P8-01b: the
+     * section 2.1 composite mark). It carries no name history because the product path only creates
+     * one for an account the user creates; the row exists to make that leg confirmable, and no
+     * assertion in this class counts catalog name history for it.
      */
     private val catalogOwnerTables =
         listOf(
