@@ -125,13 +125,12 @@ class P801WidenedReconciliationTest {
                 assertEquals(fixture.reconciliationStatusOf(row.postingId.value) ?: "PENDING", row.status.storageValue)
             }
 
-            val expectedTotals =
-                rows
-                    .groupBy { row -> row.status }
-                    .map { (status, group) ->
-                        P801AccountReconciliationStatusTotal(fixture.cny, status, group.sumOf { row -> row.amountMinor }, group.size)
-                    }
-                    .sortedBy { total -> total.status.name }
+            val expectedTotals = mutableListOf<P801AccountReconciliationStatusTotal>()
+            for ((status, group) in rows.groupBy { row -> row.status }) {
+                val groupTotal = group.fold(0L) { sum, row -> sum + row.amountMinor }
+                expectedTotals += P801AccountReconciliationStatusTotal(fixture.cny, status, groupTotal, group.size)
+            }
+            expectedTotals.sortBy { total -> total.status.name }
             assertEquals(expectedTotals, summaryTotals(fixture).sortedBy { total -> total.status.name })
 
             // The detail face derives the same status for the same leg through the same row. The
