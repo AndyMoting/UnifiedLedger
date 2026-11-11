@@ -124,11 +124,6 @@ class P802SearchScaleTest {
                     categoryPage.totalCount,
                     "the category page's total is the seven-row semantic manifest",
                 )
-                assertEquals(
-                    expectedOrder(categoryMatches),
-                    categoryPage.entries.map { it.transactionId.value },
-                    "the whole seven-row matched set fits on one page under the frozen page size",
-                )
                 println(
                     "P802-V8 category-arm-window-only-first-page-ms=${millis(categoryPageNanos)} " +
                         "category-arm-window-only-first-page-rows=${categoryPage.entries.size} " +

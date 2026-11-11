@@ -321,11 +321,11 @@ class P802SearchReadVectorsTest {
                 "an unrepresentable window bound is refused as the caller's input",
             )
 
-            // The use case maps its own boundaries the same way: an unreadable catalog authority
-            // and a throwing port are typed failures, and neither becomes an empty page. Both run
-            // on the STILL-OPEN harness, because their catalog readers really read it: only then is
-            // the throwing-port case provably the port throwing rather than a read on a closed
-            // handle (both surface as SEARCH_UNAVAILABLE).
+            // The use case maps its own boundaries: a null catalog authority and a throwing port are
+            // typed failures, and neither becomes an empty page. These three cases run while the
+            // harness is still open, so the only read after the close below is the closed-handle
+            // case: a second post-close read would reconnect on a fresh connection and make that
+            // case pass for the wrong reason.
             val badCatalog =
                 QuerySearchPage(
                     readPort = adapter,
