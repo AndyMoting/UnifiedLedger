@@ -383,7 +383,12 @@ internal class AndroidStartupController(
             openGeneration = { selection ->
                 openGenerationForSelection(
                     selection = selection,
-                    openActivePointer = { openDatabase().also { graph -> lastOpenedGraph = graph } },
+                    openActivePointer = {
+                        openDatabase().also { graph ->
+                            lastOpenedGraph = graph
+                            bindReconciliationPorts(graph)
+                        }
+                    },
                     openExplicit = wiredExplicitOpener,
                 )
             },
@@ -398,8 +403,26 @@ internal class AndroidStartupController(
      */
     private val wiredExplicitOpener: ((Int) -> CloseableLedgerGraph)? =
         openExplicitGeneration?.let { opener ->
-            { generation: Int -> opener(generation).also { graph -> lastOpenedGraph = graph } }
+            { generation: Int ->
+                opener(generation).also { graph ->
+                    lastOpenedGraph = graph
+                    bindReconciliationPorts(graph)
+                }
+            }
         }
+
+    /**
+     * P8-01a i3a (D-308; spec section 2.2): binds the four reconciliation ports of the graph that
+     * just opened onto the lease scope the product reads them from. They live on the graph (they are
+     * built over its database), so they are re-bound on EVERY open — a 06.D reopen must not keep the
+     * previous graph's handles.
+     */
+    private fun bindReconciliationPorts(graph: CloseableLedgerGraph) {
+        leaseScope.accountReconciliationRead = graph.accountReconciliationRead
+        leaseScope.proposeReconciliationCandidates = graph.proposeReconciliationCandidates
+        leaseScope.bindReconciliationEvidence = graph.bindReconciliationEvidence
+        leaseScope.confirmReconciliationLink = graph.confirmReconciliationLink
+    }
 
     /**
      * P7-06 06.B (D-177): the most recently opened graph, captured so the export use case can

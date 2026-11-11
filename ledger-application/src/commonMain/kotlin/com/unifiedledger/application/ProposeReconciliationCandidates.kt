@@ -84,6 +84,36 @@ class ProposeReconciliationCandidates(
     }
 
     /**
+     * Entry A bind step (spec section 2.4; D-308 item 10): the evidence of [leg]'s account window
+     * that still needs the user's explicit "this import row belongs to this account" decision — no
+     * `READY` projection and no active evidence link — in the frozen presentation order.
+     *
+     * It reuses the SAME candidate-evidence read as [proposeForAccountLeg] (no second SQL, no
+     * account widening) and the same window, so the bind list and the proposal list can never
+     * disagree about which evidence belongs to the leg's window. A row already projected to another
+     * account is excluded by that read (projection content is immutable, spec section 2.4); a
+     * linked-but-unprojected row is excluded here because it may not be bound again. ZERO WRITES:
+     * the bind use case is the only writer, and only on the user's explicit action.
+     */
+    fun bindableEvidenceForAccountLeg(
+        ledgerId: LedgerId,
+        leg: P801AccountReconciliationQueueRow,
+    ): P801BindableEvidenceResult {
+        val window = windowAround(leg.occurredAt)
+        val evidence =
+            when (val loaded = readPort.loadCandidateEvidence(ledgerId, leg.accountId, window.from, window.to)) {
+                is P801CandidateEvidenceResult.Success -> loaded.rows
+                is P801CandidateEvidenceResult.Failed ->
+                    return P801BindableEvidenceResult.Failed(P801CandidateProposalFailure.CANDIDATE_EVIDENCE_UNAVAILABLE)
+            }
+        return P801BindableEvidenceResult.Success(
+            evidence
+                .filter { row -> row.projection?.state != P408ProjectionState.READY && !row.hasActiveEvidenceLink }
+                .sortedWith(EVIDENCE_PRESENTATION_ORDER),
+        )
+    }
+
+    /**
      * Entry B (spec section 2.2, candidate view): one evidence against the legs of its own projected
      * account in the window its source time defines. The account is the projection's target — the
      * only account the evidence has been declared to belong to — so an evidence that is not yet
@@ -190,22 +220,27 @@ class ProposeReconciliationCandidates(
          * The frozen presentation order (spec section 2.4): parsed source instant ascending,
          * rows whose source time does not parse last, and `evidence_id` ascending as the
          * tie-break. Raw text is never the sort key — an offset-bearing text sorts differently
-         * from the instant it denotes.
+         * from the instant it denotes. ONE comparator backs both the proposal list and the bind
+         * list, so the two cannot disagree about order.
          */
-        private val PRESENTATION_ORDER: Comparator<P801CandidateProposal> =
+        private val EVIDENCE_PRESENTATION_ORDER: Comparator<P801ReconciliationCandidateEvidence> =
             Comparator { left, right ->
-                val leftInstant = left.evidence.occurredAt.instant
-                val rightInstant = right.evidence.occurredAt.instant
+                val leftInstant = left.occurredAt.instant
+                val rightInstant = right.occurredAt.instant
                 when {
                     leftInstant != null && rightInstant != null -> {
                         val byInstant = leftInstant.compareTo(rightInstant)
-                        if (byInstant != 0) byInstant else left.evidence.evidenceId.compareTo(right.evidence.evidenceId)
+                        if (byInstant != 0) byInstant else left.evidenceId.compareTo(right.evidenceId)
                     }
                     leftInstant != null -> -1
                     rightInstant != null -> 1
-                    else -> left.evidence.evidenceId.compareTo(right.evidence.evidenceId)
+                    else -> left.evidenceId.compareTo(right.evidenceId)
                 }
             }
+
+        /** The same frozen order over the proposal wrapper. */
+        private val PRESENTATION_ORDER: Comparator<P801CandidateProposal> =
+            Comparator { left, right -> EVIDENCE_PRESENTATION_ORDER.compare(left.evidence, right.evidence) }
     }
 }
 
@@ -257,4 +292,19 @@ enum class P801CandidateProposalFailure {
 
     /** Entry B: the source time does not parse, so the evidence defines no window. */
     SOURCE_TIME_UNRESOLVED,
+}
+
+/**
+ * The entry A bind list (spec section 2.4): an empty [Success] row list is a genuine "no evidence
+ * is waiting to be bound for this account/window" (rendered with its own copy, never as "no import
+ * rows in this window"), and a [Failed] read is never presented as that empty answer (D-089).
+ */
+sealed interface P801BindableEvidenceResult {
+    data class Success(
+        val rows: List<P801ReconciliationCandidateEvidence>,
+    ) : P801BindableEvidenceResult
+
+    data class Failed(
+        val reason: P801CandidateProposalFailure,
+    ) : P801BindableEvidenceResult
 }

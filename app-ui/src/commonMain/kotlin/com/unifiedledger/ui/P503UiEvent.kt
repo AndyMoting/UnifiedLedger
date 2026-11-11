@@ -485,6 +485,143 @@ sealed interface P503UiEvent {
         val result: com.unifiedledger.application.LedgerFlowPageResult,
     ) : P503UiEvent
 
+    // ---- P8-01a i3a reconciliation events (D-308; spec sections 2.2/2.3/2.4/2.5/2.6) ----
+    // Discipline (table 6.2a): every event below is absorbed in every state outside its designed
+    // effect and throws nowhere; every pre-existing unlisted combination stays ISE (G-B).
+
+    /**
+     * Entry A (spec section 2.2): opens the account reconciliation queue from the account-flow
+     * header. The host reads the FIRST queue page and the summary BEFORE dispatching (the
+     * SelectAccountFlow host-resolved-payload precedent); both are typed results, so a failed read
+     * lands as its own failure flag instead of an empty queue (V-9). [originScroll] is the
+     * account-flow position sampled at the click and carried into the flow the queue returns to
+     * (V-10 返回保留滚动位). Effect only on AccountFlow.
+     */
+    data class SelectReconciliationQueue(
+        val accountId: AccountId,
+        val accountLine: String,
+        val firstPage: com.unifiedledger.application.P801AccountReconciliationPageResult,
+        val summary: com.unifiedledger.application.P801AccountReconciliationSummaryResult,
+        val originScroll: ListScrollPosition? = null,
+    ) : P503UiEvent
+
+    /**
+     * Requests one more queue page (加载更多; the single-flight marker + request token advance, no
+     * state switch — the AccountFlow RequestAccountFlowMorePage precedent). Effect only on
+     * ReconciliationQueue.
+     */
+    data object RequestReconciliationQueueMorePage : P503UiEvent
+
+    /**
+     * One more queue page landed. Applies only while its token is still current (a superseded or
+     * duplicated read can never append); a typed failure keeps the loaded rows and sets the rows'
+     * failure flag, never the summary's (the two flags are independent, V-9). Effect only on
+     * ReconciliationQueue.
+     */
+    data class ReconciliationQueuePageLanded(
+        val requestToken: Long,
+        val result: com.unifiedledger.application.P801AccountReconciliationPageResult,
+    ) : P503UiEvent
+
+    /** Expands/collapses the 已核对 partition (collapsed by default, spec section 2.3). */
+    data object ToggleReconciliationCheckedPartition : P503UiEvent
+
+    /**
+     * Opens the candidate/confirm/audit surface for one queue leg (entry A). The host read the
+     * frozen matcher's proposals, the spec section 2.6 audit and the spec section 2.4 bind list
+     * BEFORE dispatching. [queueScroll] is the queue's position sampled at the click, carried into
+     * the queue state the detail returns to (返回保滚动位). Effect only on ReconciliationQueue.
+     */
+    data class OpenReconciliationLeg(
+        val leg: com.unifiedledger.application.P801AccountReconciliationQueueRow,
+        val proposals: com.unifiedledger.application.P801CandidateProposalResult,
+        val audit: com.unifiedledger.application.P801ReconciledLegAuditResult,
+        val bindableEvidence: com.unifiedledger.application.P801BindableEvidenceResult? = null,
+        val queueScroll: ListScrollPosition? = null,
+    ) : P503UiEvent
+
+    /**
+     * Entry B (spec section 2.2): opens the same surface in evidence-focused mode, anchored on one
+     * import candidate's evidence. [bindAccounts] are the reconcilable catalog accounts the bind
+     * step may target (the evidence may have no projection yet, so no account is implied).
+     * [proposals] is the frozen matcher's result for that evidence (a refusal when it is not yet
+     * projected). [evidence] is that evidence row itself: the bind step and the REJECTED copy read
+     * its projection state, never the proposal read's success. Effect only on OverviewEmpty.
+     */
+    data class OpenReconciliationEvidence(
+        val evidenceId: String,
+        val proposals: com.unifiedledger.application.P801CandidateProposalResult,
+        val bindAccounts: List<P503AppState.ReconciliationAccountChoice>,
+        /**
+         * The account the evidence is already `READY`-projected to (the only account it can be
+         * matched against, spec section 2.4), or `null` when it has no `READY` projection yet — the
+         * bind step is then the only available action.
+         */
+        val accountId: AccountId? = null,
+        val evidence: com.unifiedledger.application.P801ReconciliationCandidateEvidence? = null,
+    ) : P503UiEvent
+
+    /** The user's explicit bind target (spec section 2.4: 这条导入行属于此账户). Effect only on ReconciliationDetail. */
+    data class SelectReconciliationBindTarget(
+        val accountId: AccountId,
+    ) : P503UiEvent
+
+    /**
+     * Entry A (spec section 2.4): the user's explicit pick of one bindable evidence row of the
+     * anchor leg's account. The target account stays the leg's account; nothing is written until
+     * [RequestBindReconciliationEvidence]. Effect only on ReconciliationDetail.
+     */
+    data class SelectReconciliationBindEvidence(
+        val evidenceId: String,
+    ) : P503UiEvent
+
+    /**
+     * The user's explicit candidate pick (the O-3 human decision an `AMBIGUOUS` result requires,
+     * spec section 2.4). [proposalIndex] addresses the proposal list and [candidateIndex] that
+     * proposal's [com.unifiedledger.application.P408MatchResult.candidates]; the reducer absorbs an
+     * out-of-bounds pick instead of storing a dangling selection.
+     */
+    data class SelectReconciliationCandidate(
+        val proposalIndex: Int,
+        val candidateIndex: Int,
+    ) : P503UiEvent
+
+    /** The bind action (spec section 2.4): marks the single-flight marker; the host performs the write. */
+    data object RequestBindReconciliationEvidence : P503UiEvent
+
+    /**
+     * One bind result landed. [result] is `null` when the bind call threw — the outcome is unknown,
+     * so nothing is claimed and re-entry re-reads authoritatively (the spec section 2.5 result-unknown
+     * discipline; a bind replay is `NoChange` so a retry is safe). [notReady] is the owner's
+     * readiness gate refusing the call BEFORE it ran: nothing was written, so this is its own
+     * definitive notice rather than the unknown-result one. [proposals] is the host's fresh matcher
+     * read after a successful bind (a just-projected evidence becomes matchable) and [bindTarget]
+     * the account the projection now targets.
+     */
+    data class ReconciliationBindLanded(
+        val result: com.unifiedledger.application.P801BindEvidenceResult?,
+        val proposals: com.unifiedledger.application.P801CandidateProposalResult? = null,
+        val bindTarget: AccountId? = null,
+        val notReady: Boolean = false,
+    ) : P503UiEvent
+
+    /** The confirm action (spec section 2.5 step two): marks the in-flight marker; the host calls the use case. */
+    data object RequestConfirmReconciliationLink : P503UiEvent
+
+    /**
+     * One confirm result landed. [result] is `null` when the confirm call threw — the spec section
+     * 2.5 「结果未知，重新进入核对」 case (no receipt). [notReady] is the same readiness-gate
+     * refusal as the bind landing (nothing ran, nothing was written). [audit] is the host's fresh
+     * spec section 2.6 read-back and [queueRefresh] the fresh queue page + summary, both taken after
+     * a `Linked` / `NoChange` so the queue, the totals and the audit all reflect the write.
+     */
+    data class ReconciliationConfirmLanded(
+        val result: com.unifiedledger.application.P801ConfirmLinkResult?,
+        val audit: com.unifiedledger.application.P801ReconciledLegAuditResult? = null,
+        val queueRefresh: P503AppState.ReconciliationQueueRefresh? = null,
+        val notReady: Boolean = false,
+    ) : P503UiEvent
+
     /**
      * Monthly payload event (RefreshResult-shaped, spec section 6.2 table 6.2a): the host's
      * unified monthly cycle result for the effective overview month plus the fresh SelectMonth

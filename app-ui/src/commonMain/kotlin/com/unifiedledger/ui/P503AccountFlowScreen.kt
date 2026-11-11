@@ -14,6 +14,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
@@ -47,12 +48,13 @@ import com.unifiedledger.ui.theme.LocalP8Palette
  * its real retry affordance — it is never degraded into 「该账户暂无流水」.
  *
  * The body scrolls ([androidx.compose.foundation.verticalScroll], the F-Q3 fix round): multi-page
- * content is physically reachable; the surface's own scroll position is still destroyed on close
- * (the registered batch trade-off — no late write-back exists).
+ * content is physically reachable. P8-01a i3a (F6/V-10): the surface's [ScrollState] is HOISTED the
+ * way the assets list already is, so the position sampled when the reconciliation queue opened is
+ * restored on return and consumed once through `ListScrollRestored`.
  *
  * Zero write paths, zero reconciliation writes, zero accounting semantics change: the surface is
- * display-only; the only exits are 返回 (the host's CloseAccountFlow/Back dispatch) and the
- * body/footer's load-more/retry (both read-only page reads).
+ * display-only; the only exits are 返回 (the host's Back dispatch) and the body/footer's
+ * load-more/retry (both read-only page reads).
  */
 @Composable
 internal fun P503AccountFlowScreen(
@@ -61,13 +63,37 @@ internal fun P503AccountFlowScreen(
     onClose: () -> Unit,
     onLoadMore: () -> Unit,
     onRetryLoadMore: () -> Unit,
+    onOpenReconciliation: (() -> Unit)? = null,
+    registerListScroll: ((androidx.compose.foundation.ScrollState) -> Unit)? = null,
+    restoreScrollTo: ListScrollPosition? = null,
+    onScrollRestored: () -> Unit = {},
 ) {
     val palette = LocalP8Palette.current
+    // 返回保滚动位 (F6): the queue entry samples THIS state and the queue's back restores it.
+    val listScrollState = rememberScrollState()
+    LaunchedEffect(registerListScroll) { registerListScroll?.invoke(listScrollState) }
+    val pendingRestore = restoreScrollTo
+    LaunchedEffect(pendingRestore) {
+        if (pendingRestore != null) {
+            runCatching { listScrollState.scrollTo(pendingRestore.firstVisibleItemScrollOffset) }
+            onScrollRestored()
+        }
+    }
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(listScrollState).padding(16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("账户流水", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            // P8-01a i3a (spec section 2.2 entry A): the 「账户对账」 action of this account, left of
+            // 返回 (the canvas-06 header row). Null when the composition did not wire the read face,
+            // so no dead affordance is rendered; the button stays an 动作, never a "there is no
+            // reconciliation here" claim.
+            if (onOpenReconciliation != null) {
+                OutlinedButton(
+                    onClick = onOpenReconciliation,
+                    modifier = Modifier.padding(end = 8.dp).semantics { contentDescription = RECONCILIATION_TITLE },
+                ) { Text(RECONCILIATION_TITLE) }
+            }
             OutlinedButton(onClick = onClose) { Text("返回") }
         }
         Spacer(Modifier.height(8.dp))
@@ -259,8 +285,23 @@ private fun AccountFlowFooter(
     onLoadMore: () -> Unit,
     onRetryLoadMore: () -> Unit,
 ) {
+    P8FlowFooter(accountFlowFooterState(state), onLoadMore, onRetryLoadMore)
+}
+
+/**
+ * The keyset-page footer shared by every paged list of the P8-00/P8-01a read surfaces (F12b): the
+ * account flow and the reconciliation queue render the SAME copy and the same affordances instead
+ * of a second three-line copy. [FlowFooterState] is the frozen vocabulary; 已到末页 is the honest
+ * keyset end, never a per-account claim.
+ */
+@Composable
+internal fun P8FlowFooter(
+    state: FlowFooterState,
+    onLoadMore: () -> Unit,
+    onRetryLoadMore: () -> Unit,
+) {
     Spacer(Modifier.height(4.dp))
-    when (accountFlowFooterState(state)) {
+    when (state) {
         FlowFooterState.LOADING -> Text("正在加载更多…", style = MaterialTheme.typography.bodySmall)
         FlowFooterState.RETRY -> OutlinedButton(onClick = onRetryLoadMore) { Text("加载失败，点击重试") }
         FlowFooterState.FETCH_MORE -> OutlinedButton(onClick = onLoadMore) { Text("加载更多") }

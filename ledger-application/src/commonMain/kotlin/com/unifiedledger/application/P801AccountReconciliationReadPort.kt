@@ -189,6 +189,114 @@ sealed interface P801AccountReconciliationSummaryResult {
 }
 
 /**
+ * One `evidence_link_history` entry of a reconciled leg (spec section 2.6): the link's state, the
+ * frozen reason token (`confirmed` / `posting_replaced` / `corrected`) and its own sequence.
+ */
+data class P801ReconciledLegLinkHistoryEntry(
+    val sequence: Long,
+    val state: String,
+    val reason: String,
+    val occurredAt: String,
+)
+
+/**
+ * One `posting_reconciliation_history` entry of a reconciled leg (spec section 2.6): the five-state
+ * status at that sequence, plus the link it was reached through (`null` on the seeded `PENDING` row).
+ */
+data class P801ReconciledLegStatusEntry(
+    val sequence: Long,
+    val status: P408ReconciliationStatus,
+    val evidenceLinkId: String?,
+    val occurredAt: String,
+)
+
+/**
+ * The frozen decision basis of one link, read from `reconciliation_request_snapshot` (spec section
+ * 2.6). [matchBasis] carries the persisted tokens verbatim in their stored (sorted) order — the
+ * application layer never re-derives or re-orders them; [humanDecision] is the persisted token
+ * (`confirm_match`), never a translated label.
+ */
+data class P801ReconciledLegDecision(
+    val basisVersion: Int,
+    val matchBasis: List<String>,
+    val windowDays: Int,
+    val naturalDayDistance: Int,
+    val humanDecision: String,
+    val decidedAt: String,
+)
+
+/**
+ * Where the linked evidence came from (spec section 2.6: 哪一次导入、哪条来源行). [importInputRef]
+ * is the import pick-session handle, [recordOrdinal] the row inside that import, [recordKind] the
+ * frozen source record kind, and [occurredAt] the persisted source time text (null when the source
+ * genuinely has none — never a re-serialised instant).
+ */
+data class P801ReconciledEvidenceSource(
+    val evidenceId: String,
+    val sourceId: String,
+    val importInputRef: String,
+    val recordOrdinal: Long,
+    val recordKind: String,
+    val occurredAt: String?,
+)
+
+/**
+ * One evidence link of a reconciled leg (spec section 2.6): the evidence, its responsibility, the
+ * link's current state with its full history, and — when the request snapshot is readable — the
+ * frozen decision basis. [decision] is `null` when the link's request has no snapshot row: a typed
+ * absence, never a zero-filled basis (D-089).
+ */
+data class P801ReconciledLegEvidenceLink(
+    val linkId: String,
+    val evidenceId: String,
+    val candidateId: String,
+    val requestId: String,
+    val responsibility: P408EvidenceResponsibility,
+    val createdAt: String,
+    val state: String,
+    val stateSequence: Long,
+    val decision: P801ReconciledLegDecision?,
+    val source: P801ReconciledEvidenceSource,
+    val history: List<P801ReconciledLegLinkHistoryEntry>,
+)
+
+/**
+ * The `posting_reconciliation` fact of one leg (spec section 2.6): the current status and the whole
+ * history with sequence. Null on [P801ReconciledLegAudit.reconciliation] means the leg has no
+ * reconciliation row at all — a typed absence, never a `PENDING` stand-in.
+ */
+data class P801ReconciledLegReconciliation(
+    val reconciliationId: String,
+    val status: P408ReconciliationStatus,
+    val history: List<P801ReconciledLegStatusEntry>,
+)
+
+/**
+ * The audit read-back of ONE reconciled leg (spec section 2.6; D-308 item 7). Read-only: nothing on
+ * this type can rewrite or delete an existing link. [evidence] is empty for a leg without links;
+ * [reconciliation] is null for a leg without a reconciliation row.
+ */
+data class P801ReconciledLegAudit(
+    val postingId: PostingId,
+    val transactionId: TransactionId,
+    val reconciliation: P801ReconciledLegReconciliation?,
+    val evidence: List<P801ReconciledLegEvidenceLink>,
+)
+
+/** The result of one audit read-back; [NotFound] is the explicit "no such leg on this ledger" verdict. */
+sealed interface P801ReconciledLegAuditResult {
+    data class Success(
+        val audit: P801ReconciledLegAudit,
+    ) : P801ReconciledLegAuditResult
+
+    data object NotFound : P801ReconciledLegAuditResult
+
+    data class Failed(
+        val failure: P801AccountReconciliationReadFailure,
+    ) : P801ReconciledLegAuditResult
+}
+
+/**
  * P8-01a account reconciliation read port (D-308 terms 6/8; spec section 2.3).
  *
  * Implementations MUST:
@@ -281,4 +389,25 @@ interface P801AccountReconciliationReadPort {
         occurredFrom: Instant,
         occurredTo: Instant,
     ): P801AccountPostingFactsResult
+
+    /**
+     * P8-01a i3a audit read-back (spec section 2.6; D-308 item 7): ONE leg's evidence links with
+     * their decision basis, the source row each evidence came from, the links' own state history
+     * and the leg's `posting_reconciliation` status history — every one of them read-only.
+     *
+     * [postingId] must be a leg of [ledgerId]; an absent leg is [P801ReconciledLegAuditResult.NotFound]
+     * (an explicit verdict), and a failing read is
+     * [P801ReconciledLegAuditResult.Failed], never an empty audit.
+     *
+     * The default throws: an implementation that cannot answer must fail loud rather than present
+     * a link-less, history-less audit as the truth (G6/R-Q06-4).
+     */
+    fun loadReconciledLegAudit(
+        ledgerId: LedgerId,
+        postingId: PostingId,
+    ): P801ReconciledLegAuditResult =
+        throw UnsupportedOperationException(
+            "loadReconciledLegAudit is not implemented by this read port; a missing audit read must " +
+                "surface as a typed read failure, never as an audit without links or history (D-089)",
+        )
 }

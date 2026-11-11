@@ -50,6 +50,23 @@ data class ImportReviewRow(
     val paymentProfileVariant: String?,
     val paymentProfileAssetLegKindToken: String?,
     val paymentProfileCreditLegKindToken: String?,
+    /**
+     * P8-01a i3a (spec section 2.7; D-308 item 4): the candidate's subject evidence id — the anchor
+     * of the 「用于核对既有分录」 entry (spec section 2.2 entry B). `null` when the subject source
+     * has no evidence row (never a fabricated id).
+     *
+     * Both fields default because eight existing test fixtures construct this row with the
+     * pre-i3a field set; the one production constructor (the ledger-data read adapter) always
+     * passes both explicitly from the query's own columns.
+     */
+    val evidenceId: String? = null,
+    /**
+     * P8-01a i3a derived flag (spec section 2.7): an ACTIVE `evidence_link` exists for the
+     * candidate's evidence, so the import candidate is already used for reconciling an existing
+     * entry and must not produce a second formal transaction. Derived from `evidence_link` — no new
+     * status row is persisted anywhere (D-308 item 4).
+     */
+    val usedForReconciliation: Boolean = false,
 )
 
 /** Single-candidate detail (spec section 4.5.4): every list-row field plus the history count. */

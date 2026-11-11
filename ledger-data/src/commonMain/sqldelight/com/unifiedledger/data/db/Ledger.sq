@@ -9511,7 +9511,27 @@ SELECT
   duplicate_status.status AS duplicate_latest_status,
   profile.variant AS payment_profile_variant,
   profile.asset_leg_kind_token AS payment_profile_asset_leg_kind_token,
-  profile.credit_leg_kind_token AS payment_profile_credit_leg_kind_token
+  profile.credit_leg_kind_token AS payment_profile_credit_leg_kind_token,
+  -- P8-01a i3a (spec section 2.7; D-308 item 4): the candidate's subject evidence id, the anchor of
+  -- the evidence-focused reconciliation entry. Intake creates exactly one evidence row per source
+  -- (the spine's own `executeAsOne` read), so `min()` names the row; a source without any evidence
+  -- row stays NULL here rather than receiving a fabricated id.
+  (SELECT min(evidence.evidence_id) FROM import_evidence AS evidence
+     WHERE evidence.ledger_id = candidate.ledger_id
+       AND evidence.source_id = candidate.source_id) AS evidence_id,
+  -- The derived 「已用于核对既有分录」 marker: an ACTIVE evidence_link exists for that evidence. No
+  -- import status row is written for this — it is derived on every read (spec section 2.7).
+  EXISTS(SELECT 1
+     FROM import_evidence AS link_evidence
+     JOIN evidence_link AS link
+       ON link.ledger_id = link_evidence.ledger_id AND link.evidence_id = link_evidence.evidence_id
+     WHERE link_evidence.ledger_id = candidate.ledger_id
+       AND link_evidence.source_id = candidate.source_id
+       AND EXISTS (SELECT 1 FROM evidence_link_history AS link_history
+             WHERE link_history.ledger_id = link.ledger_id AND link_history.link_id = link.link_id
+               AND link_history.sequence = (SELECT max(h2.sequence) FROM evidence_link_history h2
+                     WHERE h2.ledger_id = link.ledger_id AND h2.link_id = link.link_id)
+               AND link_history.state = 'active')) AS used_for_reconciliation
 FROM import_candidate AS candidate
 JOIN import_source_record AS source
   ON source.ledger_id = candidate.ledger_id AND source.source_id = candidate.source_id
@@ -9566,7 +9586,27 @@ SELECT
   duplicate_status.status AS duplicate_latest_status,
   profile.variant AS payment_profile_variant,
   profile.asset_leg_kind_token AS payment_profile_asset_leg_kind_token,
-  profile.credit_leg_kind_token AS payment_profile_credit_leg_kind_token
+  profile.credit_leg_kind_token AS payment_profile_credit_leg_kind_token,
+  -- P8-01a i3a (spec section 2.7; D-308 item 4): the candidate's subject evidence id, the anchor of
+  -- the evidence-focused reconciliation entry. Intake creates exactly one evidence row per source
+  -- (the spine's own `executeAsOne` read), so `min()` names the row; a source without any evidence
+  -- row stays NULL here rather than receiving a fabricated id.
+  (SELECT min(evidence.evidence_id) FROM import_evidence AS evidence
+     WHERE evidence.ledger_id = candidate.ledger_id
+       AND evidence.source_id = candidate.source_id) AS evidence_id,
+  -- The derived 「已用于核对既有分录」 marker: an ACTIVE evidence_link exists for that evidence. No
+  -- import status row is written for this — it is derived on every read (spec section 2.7).
+  EXISTS(SELECT 1
+     FROM import_evidence AS link_evidence
+     JOIN evidence_link AS link
+       ON link.ledger_id = link_evidence.ledger_id AND link.evidence_id = link_evidence.evidence_id
+     WHERE link_evidence.ledger_id = candidate.ledger_id
+       AND link_evidence.source_id = candidate.source_id
+       AND EXISTS (SELECT 1 FROM evidence_link_history AS link_history
+             WHERE link_history.ledger_id = link.ledger_id AND link_history.link_id = link.link_id
+               AND link_history.sequence = (SELECT max(h2.sequence) FROM evidence_link_history h2
+                     WHERE h2.ledger_id = link.ledger_id AND h2.link_id = link.link_id)
+               AND link_history.state = 'active')) AS used_for_reconciliation
 FROM import_candidate AS candidate
 JOIN import_source_record AS source
   ON source.ledger_id = candidate.ledger_id AND source.source_id = candidate.source_id
@@ -9622,7 +9662,27 @@ SELECT
   duplicate_status.status AS duplicate_latest_status,
   profile.variant AS payment_profile_variant,
   profile.asset_leg_kind_token AS payment_profile_asset_leg_kind_token,
-  profile.credit_leg_kind_token AS payment_profile_credit_leg_kind_token
+  profile.credit_leg_kind_token AS payment_profile_credit_leg_kind_token,
+  -- P8-01a i3a (spec section 2.7; D-308 item 4): the candidate's subject evidence id, the anchor of
+  -- the evidence-focused reconciliation entry. Intake creates exactly one evidence row per source
+  -- (the spine's own `executeAsOne` read), so `min()` names the row; a source without any evidence
+  -- row stays NULL here rather than receiving a fabricated id.
+  (SELECT min(evidence.evidence_id) FROM import_evidence AS evidence
+     WHERE evidence.ledger_id = candidate.ledger_id
+       AND evidence.source_id = candidate.source_id) AS evidence_id,
+  -- The derived 「已用于核对既有分录」 marker: an ACTIVE evidence_link exists for that evidence. No
+  -- import status row is written for this — it is derived on every read (spec section 2.7).
+  EXISTS(SELECT 1
+     FROM import_evidence AS link_evidence
+     JOIN evidence_link AS link
+       ON link.ledger_id = link_evidence.ledger_id AND link.evidence_id = link_evidence.evidence_id
+     WHERE link_evidence.ledger_id = candidate.ledger_id
+       AND link_evidence.source_id = candidate.source_id
+       AND EXISTS (SELECT 1 FROM evidence_link_history AS link_history
+             WHERE link_history.ledger_id = link.ledger_id AND link_history.link_id = link.link_id
+               AND link_history.sequence = (SELECT max(h2.sequence) FROM evidence_link_history h2
+                     WHERE h2.ledger_id = link.ledger_id AND h2.link_id = link.link_id)
+               AND link_history.state = 'active')) AS used_for_reconciliation
 FROM import_candidate AS candidate
 JOIN import_source_record AS source
   ON source.ledger_id = candidate.ledger_id AND source.source_id = candidate.source_id
@@ -11960,3 +12020,97 @@ WHERE p.ledger_id = :ledger_id
   AND COALESCE(tx.canonical_kind, tx.kind) = 'ACCOUNT_TRANSFER'
   AND CAST(strftime('%s', version.occurred_at) AS INTEGER) BETWEEN :window_from_epoch_seconds AND :window_to_epoch_seconds
 ORDER BY p.posting_id;
+
+-- P8-01a i3a audit read-back (spec section 2.6; D-308 item 7). Read-only named queries, zero DDL:
+-- not one table, column, index or trigger is added.
+--
+-- ONE LEG AT A TIME. All three reads are scoped by `(ledger_id, posting_id)`; none of them can
+-- enumerate another leg's links or history, so an audit screen can never show a neighbour's basis.
+--
+-- TYPED ABSENCE. A leg without an `evidence_link` yields no row here (never an all-null row), a
+-- link whose request has no snapshot row yields a NULL basis group (the adapter reports `null`,
+-- never zeros), and a leg without a `posting_reconciliation` row yields no row in the history read
+-- (the adapter reports no reconciliation fact, never `PENDING`).
+p801ReconciledLegEvidenceAudit:
+SELECT
+  link.link_id,
+  link.evidence_id,
+  link.candidate_id,
+  link.request_id,
+  link.responsibility,
+  link.created_at,
+  latest_state.state AS link_state,
+  latest_state.sequence AS link_state_sequence,
+  snapshot.basis_version,
+  snapshot.match_basis,
+  snapshot.window_days,
+  snapshot.natural_day_distance,
+  snapshot.human_decision,
+  snapshot.confirmed_at,
+  source.source_id,
+  source.input_ref,
+  source.record_ordinal,
+  source.record_kind,
+  source.occurred_at AS source_occurred_at
+FROM evidence_link AS link
+JOIN import_evidence AS evidence
+  ON evidence.ledger_id = link.ledger_id AND evidence.evidence_id = link.evidence_id
+JOIN import_source_record AS source
+  ON source.ledger_id = evidence.ledger_id AND source.source_id = evidence.source_id
+LEFT JOIN reconciliation_request_snapshot AS snapshot
+  ON snapshot.ledger_id = link.ledger_id AND snapshot.request_id = link.request_id
+JOIN evidence_link_history AS latest_state
+  ON latest_state.ledger_id = link.ledger_id AND latest_state.link_id = link.link_id
+ AND latest_state.sequence = (SELECT max(h.sequence) FROM evidence_link_history h
+       WHERE h.ledger_id = link.ledger_id AND h.link_id = link.link_id)
+WHERE link.ledger_id = :ledger_id AND link.posting_id = :posting_id
+ORDER BY link.link_id;
+
+-- The whole `evidence_link_history` of every link of one leg, in sequence order (spec section 2.6:
+-- confirmed / posting_replaced / corrected 与序号). No row means the leg has no link at all.
+p801ReconciledLegLinkHistory:
+SELECT
+  history.link_id,
+  history.sequence,
+  history.state,
+  history.reason,
+  history.occurred_at
+FROM evidence_link AS link
+JOIN evidence_link_history AS history
+  ON history.ledger_id = link.ledger_id AND history.link_id = link.link_id
+WHERE link.ledger_id = :ledger_id AND link.posting_id = :posting_id
+ORDER BY history.link_id, history.sequence;
+
+-- The leg's identity, so the audit read can tell "no such leg" (no row) from "a leg with nothing
+-- reconciled yet" (a row, empty link/history reads). One row per posting: every version of a
+-- transaction shares its postings and therefore its transaction_id.
+p801ReconciledLegIdentity:
+SELECT p.posting_id, version.transaction_id
+FROM posting AS p
+JOIN transaction_version AS version
+  ON version.ledger_id = p.ledger_id
+ AND version.posting_set_id = p.posting_set_id
+WHERE p.ledger_id = :ledger_id AND p.posting_id = :posting_id
+LIMIT 1;
+
+-- The leg's `posting_reconciliation` current status plus its whole history, joined so one read
+-- answers both. No row at all means the leg carries no reconciliation fact (typed absence). The
+-- history join is a LEFT JOIN so a reconciliation row with an EMPTY history still answers its
+-- current status instead of disappearing: with an inner join such a leg would read as "no
+-- reconciliation row at all", which is the one thing the audit copy must never claim. Only a
+-- missing `posting_reconciliation` row omits the leg.
+p801ReconciledLegReconciliationHistory:
+SELECT
+  reconciliation.reconciliation_id,
+  reconciliation.status AS current_status,
+  history.sequence,
+  history.status,
+  history.evidence_link_id,
+  history.request_id,
+  history.occurred_at
+FROM posting_reconciliation AS reconciliation
+LEFT JOIN posting_reconciliation_history AS history
+  ON history.ledger_id = reconciliation.ledger_id
+ AND history.reconciliation_id = reconciliation.reconciliation_id
+WHERE reconciliation.ledger_id = :ledger_id AND reconciliation.posting_id = :posting_id
+ORDER BY history.sequence;

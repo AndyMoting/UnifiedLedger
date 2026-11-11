@@ -2,6 +2,7 @@ package com.unifiedledger.data
 
 import com.unifiedledger.application.P408EvidenceProjection
 import com.unifiedledger.application.P408EvidenceProjectionPort
+import com.unifiedledger.application.P408EvidenceResponsibility
 import com.unifiedledger.application.P408PostingFacts
 import com.unifiedledger.application.P408ReconciliationStatus
 import com.unifiedledger.application.P801AccountPostingFactsResult
@@ -14,6 +15,14 @@ import com.unifiedledger.application.P801AccountReconciliationReadPort
 import com.unifiedledger.application.P801AccountReconciliationStatusTotal
 import com.unifiedledger.application.P801AccountReconciliationSummaryResult
 import com.unifiedledger.application.P801CandidateEvidenceResult
+import com.unifiedledger.application.P801ReconciledEvidenceSource
+import com.unifiedledger.application.P801ReconciledLegAudit
+import com.unifiedledger.application.P801ReconciledLegAuditResult
+import com.unifiedledger.application.P801ReconciledLegDecision
+import com.unifiedledger.application.P801ReconciledLegEvidenceLink
+import com.unifiedledger.application.P801ReconciledLegLinkHistoryEntry
+import com.unifiedledger.application.P801ReconciledLegReconciliation
+import com.unifiedledger.application.P801ReconciledLegStatusEntry
 import com.unifiedledger.application.P801ReconciliationCandidateEvidence
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.AccountId
@@ -269,6 +278,126 @@ class SqlDelightP801AccountReconciliationReadAdapter(
             )
         } catch (failure: Exception) {
             P801AccountPostingFactsResult.Failed(P801AccountReconciliationReadFailure.Unavailable)
+        }
+
+    /**
+     * P8-01a i3a audit read-back (spec section 2.6; D-308 item 7). Three read-only named queries:
+     * the leg's links with their frozen decision basis and source labels
+     * (`p801ReconciledLegEvidenceAudit`), each link's own state history
+     * (`p801ReconciledLegLinkHistory`) and the leg's reconciliation status history
+     * (`p801ReconciledLegReconciliationHistory`).
+     *
+     * NOT-FOUND vs FAILED: the leg's existence is decided by whether `posting_id` names a leg on
+     * this ledger at all — read through the same queue-membership-independent posting scope the
+     * other reads use. A leg that exists but carries neither a link nor a reconciliation row is a
+     * SUCCESSFUL audit with an empty link list and a null reconciliation: that is the spec's typed
+     * absence (an unchecked leg), not a missing leg and never a zero-filled one (D-089). A leg whose
+     * reconciliation row exists but whose history is empty still answers that row with an empty
+     * history (the LEFT JOIN), so the audit never reports "no reconciliation record" for a row it
+     * could actually read.
+     */
+    override fun loadReconciledLegAudit(
+        ledgerId: LedgerId,
+        postingId: PostingId,
+    ): P801ReconciledLegAuditResult =
+        try {
+            val leg =
+                database.ledgerQueries
+                    .p801ReconciledLegIdentity(ledger_id = ledgerId.value, posting_id = postingId.value)
+                    .executeAsOneOrNull()
+            if (leg == null) {
+                P801ReconciledLegAuditResult.NotFound
+            } else {
+                val linkRows =
+                    database.ledgerQueries
+                        .p801ReconciledLegEvidenceAudit(ledger_id = ledgerId.value, posting_id = postingId.value)
+                        .executeAsList()
+                val linkHistoryRows =
+                    database.ledgerQueries
+                        .p801ReconciledLegLinkHistory(ledger_id = ledgerId.value, posting_id = postingId.value)
+                        .executeAsList()
+                val historyByLink = linkHistoryRows.groupBy { row -> row.link_id }
+                val reconciliationRows =
+                    database.ledgerQueries
+                        .p801ReconciledLegReconciliationHistory(ledger_id = ledgerId.value, posting_id = postingId.value)
+                        .executeAsList()
+                P801ReconciledLegAuditResult.Success(
+                    P801ReconciledLegAudit(
+                        postingId = postingId,
+                        transactionId = TransactionId(leg.transaction_id),
+                        reconciliation =
+                            reconciliationRows.firstOrNull()?.let { first ->
+                                P801ReconciledLegReconciliation(
+                                    reconciliationId = first.reconciliation_id,
+                                    status = P408ReconciliationStatus.fromStorage(first.current_status),
+                                    // The history join is a LEFT JOIN, so a reconciliation row with no
+                                    // history still answers (with an EMPTY history list); a NULL
+                                    // sequence is that absent side, never a fabricated entry.
+                                    history =
+                                        reconciliationRows.mapNotNull { row ->
+                                            row.sequence?.let { sequence ->
+                                                P801ReconciledLegStatusEntry(
+                                                    sequence = sequence,
+                                                    status = P408ReconciliationStatus.fromStorage(checkNotNull(row.status)),
+                                                    evidenceLinkId = row.evidence_link_id,
+                                                    occurredAt = checkNotNull(row.occurred_at),
+                                                )
+                                            }
+                                        },
+                                )
+                            },
+                        evidence =
+                            linkRows
+                                .map { row ->
+                                    P801ReconciledLegEvidenceLink(
+                                        linkId = row.link_id,
+                                        evidenceId = row.evidence_id,
+                                        candidateId = row.candidate_id,
+                                        requestId = row.request_id,
+                                        responsibility = P408EvidenceResponsibility.fromStorage(row.responsibility),
+                                        createdAt = row.created_at,
+                                        state = row.link_state,
+                                        stateSequence = row.link_state_sequence,
+                                        // A snapshot-less link (a hand-written or pre-snapshot row) keeps
+                                        // a null basis: no window, distance or decision is invented.
+                                        decision =
+                                            if (row.match_basis == null) {
+                                                null
+                                            } else {
+                                                P801ReconciledLegDecision(
+                                                    basisVersion = checkNotNull(row.basis_version).toInt(),
+                                                    matchBasis = row.match_basis.split(","),
+                                                    windowDays = checkNotNull(row.window_days).toInt(),
+                                                    naturalDayDistance = checkNotNull(row.natural_day_distance).toInt(),
+                                                    humanDecision = checkNotNull(row.human_decision),
+                                                    decidedAt = checkNotNull(row.confirmed_at),
+                                                )
+                                            },
+                                        source =
+                                            P801ReconciledEvidenceSource(
+                                                evidenceId = row.evidence_id,
+                                                sourceId = row.source_id,
+                                                importInputRef = row.input_ref,
+                                                recordOrdinal = row.record_ordinal,
+                                                recordKind = row.record_kind,
+                                                occurredAt = row.source_occurred_at,
+                                            ),
+                                        history =
+                                            historyByLink[row.link_id].orEmpty().map { entry ->
+                                                P801ReconciledLegLinkHistoryEntry(
+                                                    sequence = entry.sequence,
+                                                    state = entry.state,
+                                                    reason = entry.reason,
+                                                    occurredAt = entry.occurred_at,
+                                                )
+                                            },
+                                    )
+                                }.sortedBy { link -> link.linkId },
+                    ),
+                )
+            }
+        } catch (failure: Exception) {
+            P801ReconciledLegAuditResult.Failed(P801AccountReconciliationReadFailure.Unavailable)
         }
 
     /**

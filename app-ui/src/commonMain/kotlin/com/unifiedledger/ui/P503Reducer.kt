@@ -91,6 +91,7 @@ class P503ReducerImpl(
         if (annotationHistoryEventAbsorbed(state, event)) return state
         if (versionHistoryEventAbsorbed(state, event)) return state
         if (accountFlowEventAbsorbed(state, event)) return state
+        if (reconciliationEventAbsorbed(state, event)) return state
         if (listScrollRestoredEventAbsorbed(state, event)) return state
         externalNavigationTransition(state, event)?.let { return it }
         return when (state) {
@@ -98,6 +99,8 @@ class P503ReducerImpl(
             is P503AppState.OverviewEmpty -> reduceOverviewEmpty(state, event)
             is P503AppState.TransactionDetail -> reduceTransactionDetail(state, event)
             is P503AppState.AccountFlow -> reduceAccountFlow(state, event)
+            is P503AppState.ReconciliationQueue -> reduceReconciliationQueue(state, event)
+            is P503AppState.ReconciliationDetail -> reduceReconciliationDetail(state, event)
             is P503AppState.ImportCandidateDetail -> reduceImportCandidateDetail(state, event)
             is P503AppState.ImportBatchConfirm -> reduceImportBatchConfirm(state, event)
             is P503AppState.ImportBatchSubmitting -> reduceImportBatchSubmitting(state, event)
@@ -325,16 +328,55 @@ class P503ReducerImpl(
         }
 
     /**
+     * P8-01a i3a (D-308; spec sections 2.2/2.3/2.4/2.5/2.6): the reconciliation event family is
+     * state-preserving outside its designed states (the account-flow family's central-guard shape).
+     * `SelectReconciliationQueue` has its one effect on AccountFlow (the entry A header action);
+     * `OpenReconciliationEvidence` on OverviewEmpty (the entry B import row); the queue family acts
+     * only on the queue; the candidate/confirm/audit family only on the detail. Everywhere else —
+     * including `Ready` before the overview exists — every family event is absorbed, so a late or
+     * stale dispatch can never reach `unhandled` and turn into an ISE (table 6.2a).
+     */
+    private fun reconciliationEventAbsorbed(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): Boolean =
+        when (event) {
+            is P503UiEvent.SelectReconciliationQueue -> state !is P503AppState.AccountFlow
+            is P503UiEvent.OpenReconciliationEvidence -> state !is P503AppState.OverviewEmpty
+            P503UiEvent.RequestReconciliationQueueMorePage,
+            is P503UiEvent.ReconciliationQueuePageLanded,
+            P503UiEvent.ToggleReconciliationCheckedPartition,
+            is P503UiEvent.OpenReconciliationLeg,
+            -> state !is P503AppState.ReconciliationQueue
+            is P503UiEvent.SelectReconciliationBindTarget,
+            is P503UiEvent.SelectReconciliationBindEvidence,
+            is P503UiEvent.SelectReconciliationCandidate,
+            P503UiEvent.RequestBindReconciliationEvidence,
+            is P503UiEvent.ReconciliationBindLanded,
+            P503UiEvent.RequestConfirmReconciliationLink,
+            is P503UiEvent.ReconciliationConfirmLanded,
+            -> state !is P503AppState.ReconciliationDetail
+            else -> false
+        }
+
+    /**
      * P8-00 b3 (V-5 返回保滚动位, the consume leg): the scroll-restore consume is
-     * state-preserving everywhere except the overview — its ONE effect is clearing the overview's
-     * [P503AppState.OverviewEmpty.originListScroll] after the screen applied it. Everywhere else
-     * (a surface that left before the consume landed) it is absorbed whole, so the value can
-     * never pollute any other surface and a late dispatch can never reach `unhandled`.
+     * state-preserving everywhere except the three surfaces that own a restore slot — the overview
+     * ([P503AppState.OverviewEmpty.originListScroll]), the account flow (P8-01a i3a F6: the position
+     * sampled when its reconciliation queue opened) and the reconciliation queue
+     * ([P503AppState.ReconciliationQueue.listScroll]) — where its ONE effect is clearing the slot
+     * after the screen applied it (the same event, the same mechanism, one slot per surface). Every
+     * other surface is absorbed whole, so the value can never pollute a surface it does not belong
+     * to and a late dispatch can never reach `unhandled`.
      */
     private fun listScrollRestoredEventAbsorbed(
         state: P503AppState,
         event: P503UiEvent,
-    ): Boolean = event is P503UiEvent.ListScrollRestored && state !is P503AppState.OverviewEmpty
+    ): Boolean =
+        event is P503UiEvent.ListScrollRestored &&
+            state !is P503AppState.OverviewEmpty &&
+            state !is P503AppState.AccountFlow &&
+            state !is P503AppState.ReconciliationQueue
 
     /**
      * P7-09 09.0 (spec sections 2/3; D-225 Q19): the inbound-navigation family's ONE transition
@@ -1292,6 +1334,26 @@ class P503ReducerImpl(
                     // (never the empty-account copy) and the retry re-runs the first page.
                     rowsLoadFailed = event.firstPage !is com.unifiedledger.application.LedgerFlowPageResult.Success,
                 )
+            // P8-01a i3a (spec section 2.2 entry B): the import candidate row's
+            // 「用于核对既有分录」 action opens the SAME candidate surface in evidence-focused mode,
+            // carrying this overview as its back target. The evidence may have no projection yet
+            // (the intake-only case), so no account is implied and the bind step is offered instead
+            // of a fabricated candidate list.
+            is P503UiEvent.OpenReconciliationEvidence ->
+                P503AppState.ReconciliationDetail(
+                    returnTo = ReconciliationBackTarget.Overview(state),
+                    anchorPostingId = null,
+                    anchorEvidenceId = event.evidenceId,
+                    accountId = event.accountId,
+                    bindTarget = event.accountId,
+                    bindAccounts = event.bindAccounts,
+                    // The evidence row itself: the bind step and the REJECTED copy read its
+                    // projection state, never the proposal read's success (F11/F2).
+                    anchorEvidence = event.evidence,
+                    bindEvidenceId = event.evidenceId,
+                    proposals = event.proposals,
+                    audit = null,
+                )
             // P8-00 b3 (V-5 返回保滚动位): the screen applied the restored position; the one-shot
             // consume clears it so a later unrelated re-entry never replays a stale position.
             // Nothing captured → the same instance returns (no churn).
@@ -1546,6 +1608,26 @@ class P503ReducerImpl(
         event: P503UiEvent,
     ): P503AppState =
         when (event) {
+            // P8-01a i3a (spec section 2.2 entry A): the account-flow header's 「账户对账」 action.
+            // The host read the first queue page and the summary already; the two typed results
+            // become the queue's two INDEPENDENT failure flags, so neither failure erases the other
+            // payload (V-9).
+            is P503UiEvent.SelectReconciliationQueue ->
+                P503AppState.ReconciliationQueue(
+                    // The position sampled when the queue opened rides the carried flow, so 返回 from
+                    // the queue lands on the same row (V-10 返回保留滚动位, F6).
+                    returnTo = if (event.originScroll == null) state else state.copy(listScroll = event.originScroll),
+                    accountId = event.accountId,
+                    accountLine = event.accountLine,
+                    rows = accountReconciliationPageRows(event.firstPage),
+                    nextCursor = (event.firstPage as? com.unifiedledger.application.P801AccountReconciliationPageResult.Success)?.page?.nextCursor,
+                    totals = (event.summary as? com.unifiedledger.application.P801AccountReconciliationSummaryResult.Success)?.totals.orEmpty(),
+                    rowsLoadFailed = event.firstPage !is com.unifiedledger.application.P801AccountReconciliationPageResult.Success,
+                    summaryLoadFailed = event.summary !is com.unifiedledger.application.P801AccountReconciliationSummaryResult.Success,
+                )
+            // The flow's own restore slot is consumed exactly once (the queue slot's shape, F6).
+            P503UiEvent.ListScrollRestored ->
+                if (state.listScroll == null) state else state.copy(listScroll = null)
             P503UiEvent.CloseAccountFlow -> state.overview
             // System back = CloseAccountFlow semantics (the CloseTransactionDetail back bullet).
             P503UiEvent.Back -> state.overview
@@ -1625,6 +1707,294 @@ class P503ReducerImpl(
             -> state
             else -> unhandled(state, event)
         }
+
+    /**
+     * P8-01a i3a (D-308 items 2/6/8; spec sections 2.2/2.3): the account reconciliation queue. Only
+     * its designed events react: Close/Back return to the exact carried account flow, the more-page
+     * request advances the single-flight marker and the token, a landing applies only while its token
+     * is current (the AccountFlow late-write discipline) and keeps the loaded rows on a typed
+     * failure, the disclosure toggles the 已核对 partition, and the leg open hands the sampled queue
+     * position to the carried queue's restore slot. `ListScrollRestored` is this surface's one-shot
+     * consume. Every other event is absorbed by the central guard before dispatch; every pre-existing
+     * event stays unlisted (ISE, G-B). The page has zero write entries.
+     */
+    private fun reduceReconciliationQueue(
+        state: P503AppState.ReconciliationQueue,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            P503UiEvent.Back -> state.returnTo
+            // The queue's own restore slot is consumed exactly once (the originListScroll shape).
+            P503UiEvent.ListScrollRestored ->
+                if (state.listScroll == null) state else state.copy(listScroll = null)
+            P503UiEvent.ToggleReconciliationCheckedPartition ->
+                state.copy(checkedExpanded = !state.checkedExpanded)
+            P503UiEvent.RequestReconciliationQueueMorePage ->
+                when {
+                    // 一次一页: an in-flight page read absorbs a duplicate request (the token stays,
+                    // so the in-flight landing remains appliable).
+                    state.rowsLoading -> state
+                    // The keyset is exhausted and nothing failed: nothing more to request. A failed
+                    // read holds no cursor and its retry MUST re-run (spec section 2.3, V-9).
+                    state.nextCursor == null && !state.rowsLoadFailed -> state
+                    else -> state.copy(rowsLoading = true, pageRequestToken = state.pageRequestToken + 1)
+                }
+            is P503UiEvent.ReconciliationQueuePageLanded -> {
+                if (!state.rowsLoading || event.requestToken != state.pageRequestToken) {
+                    state
+                } else {
+                    when (val result = event.result) {
+                        is com.unifiedledger.application.P801AccountReconciliationPageResult.Success ->
+                            state.copy(
+                                rowsLoading = false,
+                                rowsLoadFailed = false,
+                                rows = state.rows + result.page.rows,
+                                nextCursor = result.page.nextCursor,
+                            )
+                        // Fail-closed and flag-local: the loaded rows stay visible beside the retry,
+                        // and the SUMMARY flag is untouched (two independent failures, V-9).
+                        is com.unifiedledger.application.P801AccountReconciliationPageResult.Failed ->
+                            state.copy(rowsLoading = false, rowsLoadFailed = true)
+                    }
+                }
+            }
+            is P503UiEvent.OpenReconciliationLeg ->
+                P503AppState.ReconciliationDetail(
+                    // The queue the detail returns to already carries the sampled position, so the
+                    // return lands on the same row (返回保滚动位; the originListScroll mechanism).
+                    // An in-flight page read is cleared here (F12c): the detail absorbs its landing,
+                    // so a kept `rowsLoading` would stick the footer at 「正在加载更多…」 forever.
+                    returnTo = ReconciliationBackTarget.Queue(state.copy(listScroll = event.queueScroll, rowsLoading = false)),
+                    anchorPostingId = event.leg.postingId,
+                    anchorLeg = event.leg,
+                    anchorEvidenceId = null,
+                    accountId = event.leg.accountId,
+                    // Entry A binds evidence of THIS leg's account, so the target is decided by the
+                    // anchor and the user never picks it (spec section 2.4).
+                    bindTarget = event.leg.accountId,
+                    bindAccounts = emptyList(),
+                    bindableEvidence = event.bindableEvidence,
+                    bindEvidenceId = null,
+                    proposals = event.proposals,
+                    audit = event.audit,
+                )
+            else -> unhandled(state, event)
+        }
+
+    /**
+     * P8-01a i3a (D-308 items 2/3/5/7/10; spec sections 2.4/2.5/2.6): the candidate, bind, confirm
+     * and audit surface of one anchor.
+     *
+     * SINGLE FLIGHT AND NO SILENT WRITE. The bind and confirm requests only set their own marker;
+     * the host performs the write and lands the typed result. While either marker is set the surface
+     * keeps itself (提交中不得离开; every other request is absorbed) and the selection cannot change.
+     * The bind request additionally requires a declared [P503AppState.ReconciliationDetail.bindTarget]
+     * and an evidence anchor, and the confirm request requires an explicit candidate selection — so
+     * neither write can be triggered by browsing (spec section 2.4: 不得在浏览时静默物化).
+     *
+     * RESULT-UNKNOWN (spec section 2.5; i3a D2). A `null` landing means the call threw: the surface
+     * records the typed unknown-result notice and claims NOTHING about what was written — no
+     * refresh, no status change. Re-entry re-reads authoritatively; no request identity is carried
+     * across (the UI deliberately does not use `P801ConfirmRequestIdentity`).
+     */
+    private fun reduceReconciliationDetail(
+        state: P503AppState.ReconciliationDetail,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            P503UiEvent.Back -> state.returnTo.surface()
+            is P503UiEvent.SelectReconciliationBindTarget ->
+                if (state.binding || state.confirming) state else state.copy(bindTarget = event.accountId)
+            is P503UiEvent.SelectReconciliationBindEvidence -> {
+                // Only a row the host actually offered is pickable: a stale pick can never bind an
+                // evidence that left the bind list.
+                val offered =
+                    (state.bindableEvidence as? com.unifiedledger.application.P801BindableEvidenceResult.Success)
+                        ?.rows
+                        ?.any { row -> row.evidenceId == event.evidenceId } == true
+                when {
+                    state.binding || state.confirming -> state
+                    !offered -> state
+                    else -> state.copy(bindEvidenceId = event.evidenceId, notice = null)
+                }
+            }
+            is P503UiEvent.SelectReconciliationCandidate -> {
+                val pickable = reconciliationSelectableCandidate(state, event.proposalIndex, event.candidateIndex)
+                when {
+                    state.binding || state.confirming -> state
+                    pickable == null -> state
+                    else -> state.copy(selectedCandidate = pickable, notice = null)
+                }
+            }
+            P503UiEvent.RequestBindReconciliationEvidence ->
+                when {
+                    state.binding || state.confirming -> state
+                    // No declared target / no chosen evidence: nothing to bind (spec section 2.4 —
+                    // the user's explicit "this row belongs to this account" is the precondition).
+                    state.bindTarget == null || state.bindEvidenceId == null -> state
+                    else -> state.copy(binding = true)
+                }
+            is P503UiEvent.ReconciliationBindLanded ->
+                when {
+                    !state.binding -> state
+                    // The owner's readiness gate refused BEFORE the use case ran: definitely nothing
+                    // was written, so it is its own notice (never the unknown-result one).
+                    event.notReady ->
+                        state.copy(binding = false, notice = P503AppState.ReconciliationDetailNotice.RuntimeNotReady)
+                    else ->
+                        when (val result = event.result) {
+                            null -> state.copy(binding = false, notice = P503AppState.ReconciliationDetailNotice.BindUnknownResult)
+                            is com.unifiedledger.application.P801BindEvidenceResult.Bound ->
+                                state.copy(
+                                    binding = false,
+                                    bindTarget = AccountId(result.projection.targetAccountId),
+                                    accountId = AccountId(result.projection.targetAccountId),
+                                    anchorEvidence = state.anchorEvidence?.copy(projection = result.projection),
+                                    bindableEvidence = bindableEvidenceWithout(state, state.bindEvidenceId),
+                                    bindEvidenceId = null,
+                                    proposals = event.proposals ?: state.proposals,
+                                    selectedCandidate = null,
+                                    notice = P503AppState.ReconciliationDetailNotice.Bound,
+                                )
+                            is com.unifiedledger.application.P801BindEvidenceResult.NoChange ->
+                                state.copy(
+                                    binding = false,
+                                    bindTarget = AccountId(result.projection.targetAccountId),
+                                    accountId = AccountId(result.projection.targetAccountId),
+                                    anchorEvidence = state.anchorEvidence?.copy(projection = result.projection),
+                                    bindableEvidence = bindableEvidenceWithout(state, state.bindEvidenceId),
+                                    bindEvidenceId = null,
+                                    proposals = event.proposals ?: state.proposals,
+                                    selectedCandidate = null,
+                                    notice = P503AppState.ReconciliationDetailNotice.BindNoChange,
+                                )
+                            is com.unifiedledger.application.P801BindEvidenceResult.Rejected ->
+                                state.copy(binding = false, notice = P503AppState.ReconciliationDetailNotice.BindRejected(result.code))
+                            is com.unifiedledger.application.P801BindEvidenceResult.Refused ->
+                                state.copy(binding = false, notice = P503AppState.ReconciliationDetailNotice.BindRefused(result.reason))
+                        }
+                }
+            P503UiEvent.RequestConfirmReconciliationLink ->
+                when {
+                    state.binding || state.confirming -> state
+                    state.selectedCandidate == null -> state
+                    else -> state.copy(confirming = true)
+                }
+            is P503UiEvent.ReconciliationConfirmLanded ->
+                when {
+                    !state.confirming -> state
+                    event.notReady ->
+                        state.copy(confirming = false, notice = P503AppState.ReconciliationDetailNotice.RuntimeNotReady)
+                    else ->
+                        when (val result = event.result) {
+                            null ->
+                                state.copy(
+                                    confirming = false,
+                                    notice = P503AppState.ReconciliationDetailNotice.UnknownResult,
+                                )
+                            is com.unifiedledger.application.P801ConfirmLinkResult.Linked ->
+                                state.copy(
+                                    confirming = false,
+                                    selectedCandidate = null,
+                                    audit = event.audit ?: state.audit,
+                                    returnTo = reconciliationRefreshedReturn(state.returnTo, event.queueRefresh),
+                                    notice = P503AppState.ReconciliationDetailNotice.Linked(queueRefreshed = event.queueRefresh != null),
+                                )
+                            is com.unifiedledger.application.P801ConfirmLinkResult.NoChange ->
+                                state.copy(
+                                    confirming = false,
+                                    selectedCandidate = null,
+                                    audit = event.audit ?: state.audit,
+                                    returnTo = reconciliationRefreshedReturn(state.returnTo, event.queueRefresh),
+                                    notice = P503AppState.ReconciliationDetailNotice.NoChange,
+                                )
+                            is com.unifiedledger.application.P801ConfirmLinkResult.Rejected ->
+                                state.copy(confirming = false, notice = P503AppState.ReconciliationDetailNotice.Rejected(result.code))
+                            is com.unifiedledger.application.P801ConfirmLinkResult.Refused ->
+                                state.copy(
+                                    confirming = false,
+                                    notice =
+                                        P503AppState.ReconciliationDetailNotice.Refused(
+                                            reason = result.reason,
+                                            // F2: the REJECTED projection's own code, read off the
+                                            // selected evidence row — never a generic sentence.
+                                            rejectionCode = selectedEvidence(state)?.projection?.rejectionCode,
+                                        ),
+                                )
+                        }
+                }
+            else -> unhandled(state, event)
+        }
+
+    /**
+     * The evidence of the current pick (the selected candidate's proposal, else the evidence anchor),
+     * so a landing can render that ROW's facts (the projection rejection code, F2).
+     */
+    private fun selectedEvidence(state: P503AppState.ReconciliationDetail): com.unifiedledger.application.P801ReconciliationCandidateEvidence? = reconciliationSelectedPair(state)?.first?.evidence ?: state.anchorEvidence
+
+    /**
+     * The bind list without the just-bound evidence: a bound evidence now has a `READY` projection,
+     * so it can never be offered for binding again (spec section 2.4: one bind, no in-app re-bind).
+     */
+    private fun bindableEvidenceWithout(
+        state: P503AppState.ReconciliationDetail,
+        boundEvidenceId: String?,
+    ): com.unifiedledger.application.P801BindableEvidenceResult? {
+        val list = state.bindableEvidence ?: return null
+        val boundId = boundEvidenceId ?: return list
+        return (list as? com.unifiedledger.application.P801BindableEvidenceResult.Success)
+            ?.let { success ->
+                com.unifiedledger.application.P801BindableEvidenceResult
+                    .Success(success.rows.filterNot { row -> row.evidenceId == boundId })
+            }
+            ?: list
+    }
+
+    /**
+     * The pages's rows, or an empty list when the read failed — the failure rides the queue's own
+     * `rowsLoadFailed` flag, so an empty list here is never read as "no legs" on its own (V-9).
+     */
+    private fun accountReconciliationPageRows(
+        result: com.unifiedledger.application.P801AccountReconciliationPageResult,
+    ): List<com.unifiedledger.application.P801AccountReconciliationQueueRow> = (result as? com.unifiedledger.application.P801AccountReconciliationPageResult.Success)?.page?.rows.orEmpty()
+
+    /**
+     * The explicit candidate pick, or `null` when the indices do not address a candidate. It reuses
+     * [reconciliationPairAt] — the SAME range check the four-element block and the confirm gating
+     * read (F13) — so a pick that renders cannot be rejected here and vice versa.
+     */
+    private fun reconciliationSelectableCandidate(
+        state: P503AppState.ReconciliationDetail,
+        proposalIndex: Int,
+        candidateIndex: Int,
+    ): P503AppState.ReconciliationSelection? {
+        val selection = P503AppState.ReconciliationSelection(proposalIndex, candidateIndex)
+        return if (reconciliationPairAt(state.proposals, selection) != null) selection else null
+    }
+
+    /**
+     * The confirm refresh of the surface the detail returns to (spec section 2.5: `Linked` refreshes
+     * the queue, the totals and the audit). The overview (entry B's target) has no queue to refresh;
+     * a queue target is replaced by the freshly read page + totals, and its own scroll slot is
+     * preserved so the return still lands on the same row.
+     */
+    private fun reconciliationRefreshedReturn(
+        returnTo: ReconciliationBackTarget,
+        refresh: P503AppState.ReconciliationQueueRefresh?,
+    ): ReconciliationBackTarget {
+        if (refresh == null) return returnTo
+        val target = returnTo as? ReconciliationBackTarget.Queue ?: return returnTo
+        return ReconciliationBackTarget.Queue(
+            target.state.copy(
+                rows = accountReconciliationPageRows(refresh.page),
+                nextCursor = (refresh.page as? com.unifiedledger.application.P801AccountReconciliationPageResult.Success)?.page?.nextCursor,
+                totals = (refresh.summary as? com.unifiedledger.application.P801AccountReconciliationSummaryResult.Success)?.totals.orEmpty(),
+                rowsLoadFailed = refresh.page !is com.unifiedledger.application.P801AccountReconciliationPageResult.Success,
+                summaryLoadFailed = refresh.summary !is com.unifiedledger.application.P801AccountReconciliationSummaryResult.Success,
+                rowsLoading = false,
+            ),
+        )
+    }
 
     /**
      * P8-00 b3 (V-5): the account-filtered view of one whole-ledger flow page — the rows whose

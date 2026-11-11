@@ -6,6 +6,26 @@ enum class P408EvidenceResponsibility(
 ) {
     REAL_ACCOUNT_POSTING("real_account_posting"),
     DESTINATION_ASSET_POSTING("destination_asset_posting"),
+    ;
+
+    companion object {
+        /** P8-01a i3a: the persisted token back to its frozen enum member (spec section 2.6). */
+        fun fromStorage(value: String): P408EvidenceResponsibility = values().first { it.storageValue == value }
+
+        /**
+         * P8-01a i3a (spec section 2.5; O-5): the duty a leg's DIRECTION uniquely decides — `out`
+         * (negative) is the real-account posting, `in` (positive) is the destination-asset posting,
+         * and any other token decides nothing. This is the ONE implementation: the confirm use case
+         * and both presentation call sites read it, so no surface can default an unknown direction
+         * to a duty the write path would never accept.
+         */
+        fun forDirectionOrNull(direction: String): P408EvidenceResponsibility? =
+            when (direction) {
+                "out" -> REAL_ACCOUNT_POSTING
+                "in" -> DESTINATION_ASSET_POSTING
+                else -> null
+            }
+    }
 }
 
 /** Product reconciliation statuses mapped from storage tokens to approved labels. */

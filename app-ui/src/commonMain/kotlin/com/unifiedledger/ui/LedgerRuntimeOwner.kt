@@ -2,12 +2,16 @@
 
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.BindReconciliationEvidence
+import com.unifiedledger.application.ConfirmReconciliationLink
 import com.unifiedledger.application.ImportIntakeSessionIdentity
 import com.unifiedledger.application.ImportPlatformKind
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ManualExpenseRequestIdSource
+import com.unifiedledger.application.P801AccountReconciliationReadPort
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
+import com.unifiedledger.application.ProposeReconciliationCandidates
 import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.application.WidgetMonthlySnapshot
 import com.unifiedledger.domain.CurrencyUnit
@@ -692,6 +696,42 @@ class LedgerLeaseScope(
     var restoreWiring: RestoreHostWiring? = null
 
     /**
+     * P8-01a i3a (D-308 items 2/6/8; spec sections 2.2/2.3/2.4/2.6): the account-scoped
+     * reconciliation READ face bound by the composition root — the queue page, the totals, the
+     * candidate evidence, the leg facts and the audit read-back. Null when the surface is absent
+     * (tests, legacy graphs), so the host renders no dead 账户对账 affordance.
+     *
+     * LEASE CONTRACT (F7): this accessor itself takes NO lease, and the use cases it backs do not
+     * take one either. The host runs EVERY call through [LedgerLeaseScope.leased], so each read is
+     * refused with the typed `LeaseOutcome.NotReady` while the runtime is not Ready instead of
+     * touching a closed graph. Exposing the port here adds no second lease; it does not remove the
+     * caller's obligation to take one.
+     */
+    var accountReconciliationRead: P801AccountReconciliationReadPort? = null
+
+    /**
+     * P8-01a i3a (spec section 2.4): the frozen-matcher candidate proposal use case. A pure read
+     * over the read face above; lease-free for the same reason — the host wraps every invocation in
+     * [LedgerLeaseScope.leased].
+     */
+    var proposeReconciliationCandidates: ProposeReconciliationCandidates? = null
+
+    /**
+     * P8-01a i3a (spec section 2.4; D-308 item 10): the derived-write bind use case — the only place
+     * this slice materializes an evidence projection, and only on the user's explicit action.
+     * Lease-free: the host wraps the call in [LedgerLeaseScope.leased] and lands the refusal as its
+     * own typed notice, so a not-Ready runtime never looks like an unknown outcome.
+     */
+    var bindReconciliationEvidence: BindReconciliationEvidence? = null
+
+    /**
+     * P8-01a i3a (spec section 2.5): the confirm use case over the existing P408 commit port. Its
+     * only write is the existing `confirmLink`; no new write path is wired here. Lease-free for the
+     * same reason as [bindReconciliationEvidence]: the host's readiness gate wraps the call.
+     */
+    var confirmReconciliationLink: ConfirmReconciliationLink? = null
+
+    /**
      * P7-06 06.D (spec sections 3.1/6): the preflight request resolved for the CURRENT active
      * generation — the target identity is the facade's ledger id, the whitelist and current schema
      * version come from the injected wiring. Null when the surface is absent or the owner has no
@@ -781,6 +821,14 @@ class LedgerLeaseScope(
                 // result, so this probe is a composition-wiring observation (asserted by the widget
                 // reader test), not a provider input.
                 widgetMonthlySnapshot = facade.queryWidgetMonthlySnapshot != null,
+                // P8-01a i3a (D-308; spec section 2.2): the four reconciliation ports are bound to
+                // this scope by the composition root. Pure field reads of THIS scope's own bindings
+                // (not facade fields), never an invocation, so the host renders the 账户对账 entry
+                // and the import row's 用于核对既有分录 affordance only when the wiring exists.
+                accountReconciliationRead = accountReconciliationRead != null,
+                accountReconciliationPropose = proposeReconciliationCandidates != null,
+                accountReconciliationBind = bindReconciliationEvidence != null,
+                accountReconciliationConfirm = confirmReconciliationLink != null,
             )
         }
 
@@ -910,7 +958,23 @@ data class LedgerSurfaces(
     // snapshot read ([QueryWidgetMonthlySnapshot]). Same pure-probe convention as [budget]; the
     // widget provider checks it to distinguish "unwired surface" from a genuinely failed read.
     val widgetMonthlySnapshot: Boolean = false,
-)
+    // P8-01a i3a (D-308; spec section 2.2): the four reconciliation ports the composition root bound
+    // to the lease scope — the read face, the candidate proposal, the bind and the confirm use case.
+    // The queue needs the read face, the detail needs all four, and the import row's entry needs the
+    // read face + proposal; the host combines them so no affordance is ever dead.
+    val accountReconciliationRead: Boolean = false,
+    val accountReconciliationPropose: Boolean = false,
+    val accountReconciliationBind: Boolean = false,
+    val accountReconciliationConfirm: Boolean = false,
+) {
+    /** The queue surface (entry A) is reachable: the read face is wired. */
+    val accountReconciliationQueue: Boolean
+        get() = accountReconciliationRead && accountReconciliationPropose
+
+    /** The candidate/confirm/audit surface is fully reachable: all four ports are wired. */
+    val accountReconciliationDetail: Boolean
+        get() = accountReconciliationRead && accountReconciliationPropose && accountReconciliationBind && accountReconciliationConfirm
+}
 
 /**
  * P7-09 09.C (D-225 Q20; spec sections 6.2/6.3): the outcome of one lease-scoped widget snapshot
