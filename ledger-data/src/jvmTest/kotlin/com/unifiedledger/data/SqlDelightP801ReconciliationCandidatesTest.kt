@@ -6,6 +6,9 @@ import com.unifiedledger.application.P408Matcher
 import com.unifiedledger.application.P408MaterializeResult
 import com.unifiedledger.application.P408ProjectionState
 import com.unifiedledger.application.P801AccountPostingFactsResult
+import com.unifiedledger.application.P801BindEvidenceRequest
+import com.unifiedledger.application.P801BindEvidenceResult
+import com.unifiedledger.application.P801BindableEvidenceResult
 import com.unifiedledger.application.P801CandidateEvidenceResult
 import com.unifiedledger.application.P801CandidateProposalFailure
 import com.unifiedledger.application.P801CandidateProposalResult
@@ -378,6 +381,62 @@ class SqlDelightP801ReconciliationCandidatesTest {
             // Still listed (spec section 2.4: an already-linked evidence stays visible and is
             // presented as no longer confirmable, rather than disappearing).
             assertEquals("evidence-one", row.evidenceId)
+        }
+    }
+
+    /**
+     * P8-01a i3a F1 (spec section 2.4; V-10 账户 → 队列 → 绑定): the leg-anchored bind list is the
+     * ONE read the entry A bind step offers. It must be exactly the unprojected, unlinked evidence of
+     * the leg's account/window — a READY row is a candidate already, a linked-but-unprojected row may
+     * not be bound again, and another account's projection is unreachable for this leg. Binding the
+     * one offered row shrinks the list to empty AND makes it a candidate (the F1d chain).
+     */
+    @Test
+    fun theLegBindListHoldsOnlyUnprojectedUnlinkedEvidenceAndShrinksAfterBinding() {
+        P801ReconciliationFixture().use { fixture ->
+            fixture.seedTransaction("tx-transfer", "2026-03-01T02:00:00Z", legs = listOf(P801Leg("posting-out", fixture.assetAccountId.value, -5_000L)))
+            val unprojected = fixture.seedEvidence("unprojected", amountMinor = 5_000L, direction = "out", occurredAt = "2026-03-01T02:00:00Z")
+            val projected = fixture.seedEvidence("projected", amountMinor = 5_000L, direction = "out", occurredAt = "2026-03-01T02:00:00Z")
+            fixture.materialize(projected.evidenceId)
+            // Unprojected BUT already linked: must never be offered for binding.
+            val linked = fixture.seedEvidence("linked", amountMinor = 5_000L, direction = "out", occurredAt = "2026-03-01T02:00:00Z")
+            fixture.seedActiveLink("linked", linked.evidenceId, "posting-out", "tx-transfer")
+            // Projected to ANOTHER account: the read excludes it before the filter can see it.
+            val other = fixture.seedEvidence("other", amountMinor = 5_000L, direction = "out", occurredAt = "2026-03-01T02:00:00Z")
+            fixture.materialize(other.evidenceId, targetAccountId = fixture.otherAssetAccountId)
+
+            val leg = fixture.queueRow(fixture.assetAccountId, "posting-out")
+            assertEquals(
+                listOf("evidence-unprojected"),
+                assertIs<P801BindableEvidenceResult.Success>(fixture.propose.bindableEvidenceForAccountLeg(fixture.ledgerId, leg))
+                    .rows
+                    .map { row -> row.evidenceId },
+            )
+
+            // The real bind write (the one derived write of the slice) …
+            assertIs<P801BindEvidenceResult.Bound>(
+                fixture.bind.bind(
+                    P801BindEvidenceRequest(
+                        ledgerId = fixture.ledgerId,
+                        evidenceId = unprojected.evidenceId,
+                        targetAccountId = fixture.assetAccountId,
+                        materializedAt = P801_FIXED_NOW,
+                    ),
+                ),
+            )
+            // … removes it from the bind list (it now has a READY projection) …
+            assertEquals(
+                emptyList(),
+                assertIs<P801BindableEvidenceResult.Success>(fixture.propose.bindableEvidenceForAccountLeg(fixture.ledgerId, leg))
+                    .rows
+                    .map { row -> row.evidenceId },
+            )
+            // … and makes it a candidate of the SAME leg (spec section 2.4 / F1d).
+            val proposal =
+                success(fixture.propose.proposeForAccountLeg(fixture.ledgerId, leg))
+                    .single { it.evidence.evidenceId == "evidence-unprojected" }
+            assertEquals(P408MatchDisposition.PROPOSED_MATCH, proposal.match.disposition)
+            assertEquals(listOf("posting-out"), proposal.match.candidates.map { candidate -> candidate.posting.postingId })
         }
     }
 

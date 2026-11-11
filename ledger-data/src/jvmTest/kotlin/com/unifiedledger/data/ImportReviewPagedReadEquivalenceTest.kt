@@ -196,6 +196,10 @@ class ImportReviewPagedReadEquivalenceTest {
             paymentProfileVariant = first.payment_profile_variant,
             paymentProfileAssetLegKindToken = first.payment_profile_asset_leg_kind_token,
             paymentProfileCreditLegKindToken = first.payment_profile_credit_leg_kind_token,
+            // P8-01a i3a (spec section 2.7): the reference row mirrors the adapter's two new
+            // columns; the paged read must reproduce them too, or this equivalence fails.
+            evidenceId = first.evidence_id,
+            usedForReconciliation = first.used_for_reconciliation,
         )
     }
 

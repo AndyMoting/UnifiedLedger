@@ -567,11 +567,22 @@ fun P503App(
     // composed yet (no position to sample).
     var homeFlowListState by remember { mutableStateOf<androidx.compose.foundation.lazy.LazyListState?>(null) }
     var accountsListState by remember { mutableStateOf<androidx.compose.foundation.ScrollState?>(null) }
+    // P8-01a i3a: the reconciliation queue's own scroll state (returns from the candidate surface to
+    // the same row — the accounts-list mechanism, one slot per surface) and the account flow's
+    // (F6/V-10: the queue entry samples it and the queue's back restores it).
+    var reconciliationQueueListState by remember { mutableStateOf<androidx.compose.foundation.ScrollState?>(null) }
+    var accountFlowListState by remember { mutableStateOf<androidx.compose.foundation.ScrollState?>(null) }
     val homeFlowScrollSampler: () -> ListScrollPosition? = {
         homeFlowListState?.let { list -> ListScrollPosition(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset) }
     }
     val accountsScrollSampler: () -> ListScrollPosition? = {
         accountsListState?.let { scroll -> ListScrollPosition(0, scroll.value) }
+    }
+    val reconciliationQueueScrollSampler: () -> ListScrollPosition? = {
+        reconciliationQueueListState?.let { scroll -> ListScrollPosition(0, scroll.value) }
+    }
+    val accountFlowScrollSampler: () -> ListScrollPosition? = {
+        accountFlowListState?.let { scroll -> ListScrollPosition(0, scroll.value) }
     }
     val ledgerViewWired = ledger.surfaces.ledgerView
     // P7-07 07.D (D-184; spec section 5): the budget surface wiring probe and the current-name
@@ -862,6 +873,45 @@ fun P503App(
         pendingTagMerchantFilterReRequestAfterRefresh = false
     }
 
+    /**
+     * P7-04.C: re-reads the ledger-scoped review list and returns it as
+     * [P503UiEvent.ImportReviewResult] (read off the UI thread, dispatched back on the main
+     * dispatcher — P704C-SPEC-01/QUAL-02).
+     */
+    fun requestImportReview() {
+        // Base behavior (P3-4): an unwired surface returns early and dispatches nothing; the
+        // typed Unavailable path is for a runtime refusal, not for a surface the composition
+        // never wired (a pure lease-free null check).
+        if (!ledger.surfaces.importReviewRows) return
+        dispatch(P503UiEvent.RefreshImportReview)
+        scope.launch(Dispatchers.Default) {
+            // P7-06 06.1 (D-176; spec 4.3/4.4): the read runs under a lease; the landing hop
+            // discards a result captured under a superseded generation.
+            // A-PERF (D-293): the FIRST screen reads ONE page. The whole-list read is what
+            // materialized 61k candidates (13 s on device); the paged read keeps the first screen
+            // bounded and the cursor drives 加载更多.
+            val outcome =
+                ledger.leased { facade, _ ->
+                    facade.queryImportReviewRows?.queryPage(ledger.ledgerId, IMPORT_REVIEW_PAGE_SIZE, null)
+                }
+            scope.launch {
+                if (outcome is LeaseOutcome.Completed && !ledger.isCurrentGeneration(outcome.generation)) return@launch
+                val page = (outcome as? LeaseOutcome.Completed)?.value ?: ImportReviewRowsPageResult.Unavailable
+                dispatch(
+                    when (page) {
+                        is ImportReviewRowsPageResult.Page ->
+                            P503UiEvent.ImportReviewResult(
+                                ImportReviewRowsResult.Rows(page.rows),
+                                nextAfterCandidateId = page.nextAfterCandidateId,
+                            )
+                        ImportReviewRowsPageResult.Unavailable ->
+                            P503UiEvent.ImportReviewResult(ImportReviewRowsResult.Unavailable)
+                    },
+                )
+            }
+        }
+    }
+
     // P5-04.2: system back only intercepts while the editor flow is on screen and carries the
     // overview snapshot needed to close back to the originating tab. Submitting swallows the
     // back to avoid exiting the process mid-submission; only non-Submitting states dispatch.
@@ -872,7 +922,12 @@ fun P503App(
         // P5-04.3 double-fire guard: re-check at dispatch time and only dispatch while the
         // state is still Back-legal, so a repeated back (fast double Esc / double system
         // back) is ignored instead of crashing on (OverviewEmpty, Back).
+        // P8-01a i3a F10: leaving the evidence-focused reconciliation surface returns to the
+        // import review, whose derived 「已用于核对既有分录」 marker must be visible — so the list is
+        // re-read on the way back (the 返回 button applies the same rule).
+        val returnsToImportReview = (latestState.value as? P503AppState.ReconciliationDetail)?.returnTo is ReconciliationBackTarget.Overview
         if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back)
+        if (returnsToImportReview) requestImportReview()
     }
 
     // The parse/display currency follows the selected primary account (spec section 4.1);
@@ -1377,6 +1432,299 @@ fun P503App(
                 }
             } ?: com.unifiedledger.application.LedgerFlowPageResult.Unavailable
         dispatch(P503UiEvent.AccountFlowMorePageLanded(requestToken, result))
+    }
+
+    /**
+     * One reconciliation READ through the owner's readiness gate (F7): the block runs under an
+     * operation lease, and a not-Ready runtime (or a throwing read) answers `null` so the caller
+     * lands its own typed failure. Nothing here is called raw against the graph.
+     */
+    fun <T> reconciliationReadCall(block: () -> T?): T? =
+        when (val outcome = ledger.leased { _, _ -> runCatching(block).getOrNull() }) {
+            is LeaseOutcome.Completed -> outcome.value
+            LeaseOutcome.NotReady -> null
+        }
+
+    /**
+     * The first/next queue page, mapped to its typed result. Every reconciliation call runs inside
+     * the owner's readiness gate ([LedgerLeaseScope.leased]): a not-Ready runtime refuses before the
+     * read runs and lands the SAME typed read failure instead of a raw call against a closed graph
+     * (F7). An unexpected throw is a read failure.
+     */
+    fun reconciliationPageRead(
+        accountId: AccountId,
+        after: com.unifiedledger.application.P801AccountReconciliationCursor?,
+    ): com.unifiedledger.application.P801AccountReconciliationPageResult {
+        val read = ledger.accountReconciliationRead
+        return reconciliationReadCall { read?.loadAccountReconciliationPage(ledger.ledgerId, accountId, after) }
+            ?: com.unifiedledger.application.P801AccountReconciliationPageResult.Failed(
+                com.unifiedledger.application.P801AccountReconciliationReadFailure.Unavailable,
+            )
+    }
+
+    /** The whole-account totals, mapped to its typed result (never a zero on failure, V-9). */
+    fun reconciliationSummaryRead(
+        accountId: AccountId,
+    ): com.unifiedledger.application.P801AccountReconciliationSummaryResult {
+        val read = ledger.accountReconciliationRead
+        return reconciliationReadCall { read?.loadAccountReconciliationSummary(ledger.ledgerId, accountId) }
+            ?: com.unifiedledger.application.P801AccountReconciliationSummaryResult.Failed(
+                com.unifiedledger.application.P801AccountReconciliationReadFailure.Unavailable,
+            )
+    }
+
+    /** The spec section 2.6 audit read-back, mapped to its typed result (a throw is a failed read). */
+    fun reconciliationAuditRead(postingId: com.unifiedledger.domain.PostingId): com.unifiedledger.application.P801ReconciledLegAuditResult {
+        val read = ledger.accountReconciliationRead
+        return reconciliationReadCall { read?.loadReconciledLegAudit(ledger.ledgerId, postingId) }
+            ?: com.unifiedledger.application.P801ReconciledLegAuditResult.Failed(
+                com.unifiedledger.application.P801AccountReconciliationReadFailure.Unavailable,
+            )
+    }
+
+    /** One evidence row by identity, or null when the runtime is not Ready or the read failed. */
+    fun reconciliationEvidenceRead(evidenceId: String): com.unifiedledger.application.P801ReconciliationCandidateEvidence? {
+        val read = ledger.accountReconciliationRead
+        return (reconciliationReadCall { read?.loadCandidateEvidenceById(ledger.ledgerId, evidenceId) } as? com.unifiedledger.application.P801CandidateEvidenceResult.Success)
+            ?.rows
+            ?.firstOrNull()
+    }
+
+    /** The frozen-matcher proposals of one account leg, through the readiness gate (F7). */
+    fun reconciliationProposalsForLeg(leg: com.unifiedledger.application.P801AccountReconciliationQueueRow): com.unifiedledger.application.P801CandidateProposalResult {
+        val propose = ledger.proposeReconciliationCandidates
+        return reconciliationReadCall { propose?.proposeForAccountLeg(ledger.ledgerId, leg) }
+            ?: com.unifiedledger.application.P801CandidateProposalResult.Failed(
+                com.unifiedledger.application.P801CandidateProposalFailure.CANDIDATE_EVIDENCE_UNAVAILABLE,
+            )
+    }
+
+    /** The spec section 2.4 bind list of one account leg, through the readiness gate (F1/F7). */
+    fun reconciliationBindableRead(leg: com.unifiedledger.application.P801AccountReconciliationQueueRow): com.unifiedledger.application.P801BindableEvidenceResult {
+        val propose = ledger.proposeReconciliationCandidates
+        return reconciliationReadCall { propose?.bindableEvidenceForAccountLeg(ledger.ledgerId, leg) }
+            ?: com.unifiedledger.application.P801BindableEvidenceResult.Failed(
+                com.unifiedledger.application.P801CandidateProposalFailure.CANDIDATE_EVIDENCE_UNAVAILABLE,
+            )
+    }
+
+    /** One evidence-focused proposal read, through the readiness gate (F7). */
+    fun reconciliationProposalsForEvidence(evidenceId: String): com.unifiedledger.application.P801CandidateProposalResult {
+        val propose = ledger.proposeReconciliationCandidates
+        return reconciliationReadCall { propose?.proposeForEvidence(ledger.ledgerId, evidenceId) }
+            ?: com.unifiedledger.application.P801CandidateProposalResult.Failed(
+                com.unifiedledger.application.P801CandidateProposalFailure.CANDIDATE_EVIDENCE_UNAVAILABLE,
+            )
+    }
+
+    /**
+     * The accounts the bind step may target (spec section 2.4): the authoritative catalog's
+     * asset/liability accounts. The bind use case re-validates the full section 2.1 composite mark
+     * before writing, so this list is a superset and a non-admissible pick is refused with its own
+     * typed reason instead of silently binding.
+     */
+    fun reconciliationBindAccounts(): List<P503AppState.ReconciliationAccountChoice> {
+        val accounts =
+            (latestState.value as? P503AppState.OverviewEmpty)?.catalogSnapshot
+                ?: cachedCatalogSnapshot
+                ?: return emptyList()
+        return accounts.manageableAccounts
+            .filter { account ->
+                account.kind == com.unifiedledger.domain.AccountKind.ASSET || account.kind == com.unifiedledger.domain.AccountKind.LIABILITY
+            }.map { account -> P503AppState.ReconciliationAccountChoice(account.accountId, account.name) }
+            .sortedBy { choice -> choice.name }
+    }
+
+    // ---------------------------------------------------------------- P8-01a i3a reconciliation host surface
+
+    /**
+     * P8-01a i3a (spec section 2.2 entry A; D-308 items 2/6/8): opens the account reconciliation queue
+     * from the account-flow header. The host reads the FIRST queue page and the summary BEFORE
+     * dispatching (the SelectAccountFlow host-resolved-payload precedent). The two reads are
+     * INDEPENDENT and each maps its own failure to its own typed result, so a failed read lands as
+     * its own flag instead of an empty queue or a zero total (spec section 2.3, V-9).
+     */
+    fun selectReconciliationQueue(accountId: AccountId) {
+        val current = latestState.value as? P503AppState.AccountFlow ?: return
+        if (ledger.accountReconciliationRead == null) return
+        dispatch(
+            P503UiEvent.SelectReconciliationQueue(
+                accountId = accountId,
+                accountLine = current.balanceLine,
+                firstPage = reconciliationPageRead(accountId, after = null),
+                summary = reconciliationSummaryRead(accountId),
+                // F6/V-10: the flow position sampled at the click, restored when the queue returns.
+                originScroll = accountFlowScrollSampler(),
+            ),
+        )
+    }
+
+    /**
+     * P8-01a i3a: one more queue page behind the open queue. The reducer's request event advanced the
+     * request token synchronously (a landing whose token is no longer current can never append); the
+     * read lands typed and a failure keeps the loaded rows (spec section 2.3).
+     */
+    fun requestReconciliationQueueMorePage() {
+        val current = latestState.value as? P503AppState.ReconciliationQueue ?: return
+        if (current.rowsLoading) return
+        // The keyset is exhausted and nothing failed: nothing more to request (the reducer absorbs it
+        // too; skipping the dispatch keeps the read off). A failed read holds no cursor and its retry
+        // must re-run the first page (V-9).
+        if (current.nextCursor == null && !current.rowsLoadFailed) return
+        dispatch(P503UiEvent.RequestReconciliationQueueMorePage)
+        val token = (latestState.value as? P503AppState.ReconciliationQueue)?.pageRequestToken ?: return
+        dispatch(
+            P503UiEvent.ReconciliationQueuePageLanded(
+                requestToken = token,
+                result = reconciliationPageRead(current.accountId, after = current.nextCursor),
+            ),
+        )
+    }
+
+    /**
+     * P8-01a i3a (spec sections 2.2 entry A / 2.4 / 2.6): opens the candidate/audit surface for one
+     * queue leg. All three payloads are read BEFORE the dispatch under the readiness gate (F7): the
+     * frozen matcher's proposals (the use case, never a re-implementation), the spec section 2.4
+     * bind list of the leg's account/window (F1) and the spec section 2.6 audit read-back. The
+     * queue's scroll position is sampled at the click and rides the event into the queue the detail
+     * returns to.
+     */
+    fun openReconciliationLeg(leg: com.unifiedledger.application.P801AccountReconciliationQueueRow) {
+        latestState.value as? P503AppState.ReconciliationQueue ?: return
+        if (ledger.proposeReconciliationCandidates == null) return
+        dispatch(
+            P503UiEvent.OpenReconciliationLeg(
+                leg = leg,
+                proposals = reconciliationProposalsForLeg(leg),
+                audit = reconciliationAuditRead(leg.postingId),
+                bindableEvidence = reconciliationBindableRead(leg),
+                queueScroll = reconciliationQueueScrollSampler(),
+            ),
+        )
+    }
+
+    /**
+     * P8-01a i3a (spec section 2.2 entry B): the import candidate row's 「用于核对既有分录」 action.
+     * The evidence may be unprojected (the intake-only case), so the proposal read returns its typed
+     * refusal. The evidence row itself is read independently: its projection state decides whether
+     * the bind step is offered (F11) and carries the REJECTED code (F2) — never the proposal read's
+     * success. A `READY` projection's account is the only account the evidence can be matched to.
+     */
+    fun openReconciliationEvidence(evidenceId: String) {
+        latestState.value as? P503AppState.OverviewEmpty ?: return
+        if (ledger.proposeReconciliationCandidates == null) return
+        val evidence = reconciliationEvidenceRead(evidenceId)
+        val projection = evidence?.projection?.takeIf { row -> row.state == com.unifiedledger.application.P408ProjectionState.READY }
+        dispatch(
+            P503UiEvent.OpenReconciliationEvidence(
+                evidenceId = evidenceId,
+                proposals = reconciliationProposalsForEvidence(evidenceId),
+                bindAccounts = reconciliationBindAccounts(),
+                accountId = projection?.targetAccountId?.takeIf { target -> target.isNotBlank() }?.let { target -> AccountId(target) },
+                evidence = evidence,
+            ),
+        )
+    }
+
+    /**
+     * P8-01a i3a (spec section 2.4; D-308 item 10): the bind action. The user's explicit choice is
+     * already in the state ([P503AppState.ReconciliationDetail.bindTarget] +
+     * [P503AppState.ReconciliationDetail.bindEvidenceId]); this call performs the ONE derived write
+     * of the slice and never runs while browsing. The call runs inside the readiness gate (F7): a
+     * not-Ready runtime wrote nothing, which lands as its own typed notice. A thrown call is the
+     * unknown-result case: nothing is claimed, and re-entry re-reads (a replay is `NoChange`, so a
+     * retry cannot double-write).
+     */
+    fun bindReconciliationEvidence() {
+        val current = latestState.value as? P503AppState.ReconciliationDetail ?: return
+        val bind = ledger.bindReconciliationEvidence ?: return
+        val evidenceId = current.bindEvidenceId ?: return
+        val target = current.bindTarget ?: return
+        dispatch(P503UiEvent.RequestBindReconciliationEvidence)
+        val outcome =
+            ledger.leased { _, _ ->
+                runCatching {
+                    // Provenance time comes from the injected clock, never from this host's reading.
+                    bind.bind(
+                        com.unifiedledger.application.P801BindEvidenceRequest(
+                            ledgerId = ledger.ledgerId,
+                            evidenceId = evidenceId,
+                            targetAccountId = target,
+                            materializedAt = ledger.ledgerClock.now(),
+                        ),
+                    )
+                }.getOrNull()
+            }
+        if (outcome !is LeaseOutcome.Completed) {
+            dispatch(P503UiEvent.ReconciliationBindLanded(result = null, bindTarget = target, notReady = true))
+            return
+        }
+        val result = outcome.value
+        val landed = result is com.unifiedledger.application.P801BindEvidenceResult.Bound || result is com.unifiedledger.application.P801BindEvidenceResult.NoChange
+        // A bound evidence becomes matchable, so the SAME mode's proposal read is refreshed: entry A
+        // re-proposes the anchor leg (F1d: it must become a candidate), entry B its evidence.
+        val proposals =
+            when {
+                !landed -> null
+                current.anchorLeg != null -> reconciliationProposalsForLeg(current.anchorLeg)
+                current.anchorEvidenceId != null -> reconciliationProposalsForEvidence(evidenceId)
+                else -> null
+            }
+        dispatch(P503UiEvent.ReconciliationBindLanded(result = result, proposals = proposals, bindTarget = target))
+    }
+
+    /**
+     * P8-01a i3a (spec section 2.5; D-308 item 3): the confirm action. The application use case owns
+     * the request construction (basis, window, distance and responsibility all come from the frozen
+     * matcher and the leg's direction), so this host only hands it the one candidate the user picked.
+     * The call runs inside the readiness gate (F7): a not-Ready runtime wrote nothing — its own
+     * typed notice. No request identity is carried across calls (i3a D2: a thrown call means the
+     * outcome is UNKNOWN, and re-entry judges by authoritative re-read). After a `Linked`/`NoChange`
+     * the queue, the totals and the audit are re-read so the returned surface already reflects the
+     * write (spec section 2.5, V-2); the entry B target has no queue, so only the audit is re-read.
+     */
+    fun confirmReconciliationLink() {
+        val current = latestState.value as? P503AppState.ReconciliationDetail ?: return
+        val confirm = ledger.confirmReconciliationLink ?: return
+        val selected = reconciliationSelectedPair(current) ?: return
+        val (proposal, candidate) = selected
+        dispatch(P503UiEvent.RequestConfirmReconciliationLink)
+        val outcome =
+            ledger.leased { _, _ ->
+                runCatching {
+                    confirm.confirm(
+                        com.unifiedledger.application.P801ConfirmLinkInput(
+                            ledgerId = ledger.ledgerId,
+                            evidence = proposal.evidence,
+                            candidate = candidate,
+                        ),
+                    )
+                }.getOrNull()
+            }
+        if (outcome !is LeaseOutcome.Completed) {
+            dispatch(P503UiEvent.ReconciliationConfirmLanded(result = null, notReady = true))
+            return
+        }
+        val result = outcome.value
+        val landed = result is com.unifiedledger.application.P801ConfirmLinkResult.Linked || result is com.unifiedledger.application.P801ConfirmLinkResult.NoChange
+        val queueReturn = (latestState.value as? P503AppState.ReconciliationDetail)?.returnTo as? ReconciliationBackTarget.Queue
+        dispatch(
+            P503UiEvent.ReconciliationConfirmLanded(
+                result = result,
+                // The audit section belongs to the ANCHOR leg: re-read THAT leg, never the
+                // confirmed candidate's posting (a sibling leg's audit would then judge the anchor).
+                audit = if (landed) current.anchorPostingId?.let { reconciliationAuditRead(it) } else null,
+                queueRefresh =
+                    if (landed && queueReturn != null) {
+                        P503AppState.ReconciliationQueueRefresh(
+                            page = reconciliationPageRead(queueReturn.state.accountId, after = null),
+                            summary = reconciliationSummaryRead(queueReturn.state.accountId),
+                        )
+                    } else {
+                        null
+                    },
+            ),
+        )
     }
 
     // P5-04.3: shared input construction for the submission and the unknown-commit status
@@ -2223,45 +2571,6 @@ fun P503App(
                 handleImportPickResult(ImportFilePickResult.Picked(decision.file), sharePath = true)
             }
             ShareImportTakeDecision.ReShareRequired -> Unit
-        }
-    }
-
-    /**
-     * P7-04.C: re-reads the ledger-scoped review list and returns it as
-     * [P503UiEvent.ImportReviewResult] (read off the UI thread, dispatched back on the main
-     * dispatcher — P704C-SPEC-01/QUAL-02).
-     */
-    fun requestImportReview() {
-        // Base behavior (P3-4): an unwired surface returns early and dispatches nothing; the
-        // typed Unavailable path is for a runtime refusal, not for a surface the composition
-        // never wired (a pure lease-free null check).
-        if (!ledger.surfaces.importReviewRows) return
-        dispatch(P503UiEvent.RefreshImportReview)
-        scope.launch(Dispatchers.Default) {
-            // P7-06 06.1 (D-176; spec 4.3/4.4): the read runs under a lease; the landing hop
-            // discards a result captured under a superseded generation.
-            // A-PERF (D-293): the FIRST screen reads ONE page. The whole-list read is what
-            // materialized 61k candidates (13 s on device); the paged read keeps the first screen
-            // bounded and the cursor drives 加载更多.
-            val outcome =
-                ledger.leased { facade, _ ->
-                    facade.queryImportReviewRows?.queryPage(ledger.ledgerId, IMPORT_REVIEW_PAGE_SIZE, null)
-                }
-            scope.launch {
-                if (outcome is LeaseOutcome.Completed && !ledger.isCurrentGeneration(outcome.generation)) return@launch
-                val page = (outcome as? LeaseOutcome.Completed)?.value ?: ImportReviewRowsPageResult.Unavailable
-                dispatch(
-                    when (page) {
-                        is ImportReviewRowsPageResult.Page ->
-                            P503UiEvent.ImportReviewResult(
-                                ImportReviewRowsResult.Rows(page.rows),
-                                nextAfterCandidateId = page.nextAfterCandidateId,
-                            )
-                        ImportReviewRowsPageResult.Unavailable ->
-                            P503UiEvent.ImportReviewResult(ImportReviewRowsResult.Unavailable)
-                    },
-                )
-            }
         }
     }
 
@@ -4328,6 +4637,17 @@ fun P503App(
                                     onGroupClose = { dispatch(P503UiEvent.CloseImportDuplicateGroupDisposition) },
                                     onRequestBatchConfirm = ::requestImportBatchConfirm,
                                     onCheckUnknownItem = ::checkImportUnknownItem,
+                                    // P8-01a i3a (spec sections 2.2 entry B / 2.7): the derived
+                                    // 「已用于核对既有分录」 marker and the evidence-focused
+                                    // reconciliation entry. The entry needs the WHOLE detail surface
+                                    // (proposal, bind and confirm), so it is rendered only when all
+                                    // four ports are wired — never as a dead action.
+                                    onUseForReconciliation =
+                                        if (ledger.surfaces.accountReconciliationDetail) {
+                                            { evidenceId -> openReconciliationEvidence(evidenceId) }
+                                        } else {
+                                            null
+                                        },
                                 )
                             } else {
                                 when (current.selectedTab) {
@@ -4516,6 +4836,60 @@ fun P503App(
                             onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
                             onLoadMore = ::requestAccountFlowMorePage,
                             onRetryLoadMore = ::requestAccountFlowMorePage,
+                            // P8-01a i3a (spec section 2.2 entry A): the queue entry, rendered only
+                            // when the reconciliation read face and proposal use case are wired.
+                            onOpenReconciliation =
+                                if (ledger.surfaces.accountReconciliationQueue) {
+                                    { selectReconciliationQueue(current.accountId) }
+                                } else {
+                                    null
+                                },
+                            // F6/V-10: the same hoisted-scroll mechanism as the queue and the
+                            // accounts list, so 返回 from the queue restores this surface's position.
+                            registerListScroll = { accountFlowListState = it },
+                            restoreScrollTo = current.listScroll,
+                            onScrollRestored = { dispatch(P503UiEvent.ListScrollRestored) },
+                        )
+                    // P8-01a i3a (spec sections 2.2/2.3): the account reconciliation queue.
+                    is P503AppState.ReconciliationQueue ->
+                        P503ReconciliationQueueScreen(
+                            state = current,
+                            onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                            onLoadMore = ::requestReconciliationQueueMorePage,
+                            onRetryLoadMore = ::requestReconciliationQueueMorePage,
+                            onToggleCheckedPartition = { dispatch(P503UiEvent.ToggleReconciliationCheckedPartition) },
+                            onOpenLeg =
+                                if (ledger.surfaces.accountReconciliationDetail) {
+                                    { leg -> openReconciliationLeg(leg) }
+                                } else {
+                                    null
+                                },
+                            registerListScroll = { reconciliationQueueListState = it },
+                            restoreScrollTo = current.listScroll,
+                            onScrollRestored = { dispatch(P503UiEvent.ListScrollRestored) },
+                        )
+                    // P8-01a i3a (spec sections 2.4/2.5/2.6): the candidate, bind, confirm and audit
+                    // surface of one anchor (entry A leg or entry B evidence).
+                    is P503AppState.ReconciliationDetail ->
+                        P503ReconciliationDetailScreen(
+                            state = current,
+                            onClose = {
+                                if (isBackDispatchSafe(latestState.value)) {
+                                    // F10: entry B returns to the import-review list, whose derived
+                                    // 「已用于核对既有分录」 marker must be visible — so the list is
+                                    // re-read on the way back (a read; zero writes).
+                                    val returnsToImportReview = current.returnTo is ReconciliationBackTarget.Overview
+                                    dispatch(P503UiEvent.Back)
+                                    if (returnsToImportReview) requestImportReview()
+                                }
+                            },
+                            onSelectCandidate = { proposalIndex, candidateIndex ->
+                                dispatch(P503UiEvent.SelectReconciliationCandidate(proposalIndex, candidateIndex))
+                            },
+                            onSelectBindTarget = { accountId -> dispatch(P503UiEvent.SelectReconciliationBindTarget(accountId)) },
+                            onSelectBindEvidence = { evidenceId -> dispatch(P503UiEvent.SelectReconciliationBindEvidence(evidenceId)) },
+                            onBind = ::bindReconciliationEvidence,
+                            onConfirm = ::confirmReconciliationLink,
                         )
                     // P7-04.C: the import candidate detail (spec sections 6.1/6.2). The catalog options
                     // are the same authoritative projections the entry flow consumes (D-143 同源).
@@ -5071,6 +5445,10 @@ private fun isBackEnabled(state: P503AppState): Boolean =
         // P8-00 b3 (V-5): the account-flow surface returns to the preserved overview (the C03
         // semantics; the sampled origin-list position rides the close).
         is P503AppState.AccountFlow -> true
+        // P8-01a i3a (spec section 2.2): the queue returns to the carried account flow, and the
+        // candidate/confirm/audit surface returns to its carried queue (or the overview for entry B).
+        is P503AppState.ReconciliationQueue -> true
+        is P503AppState.ReconciliationDetail -> true
         // P7-04.C (SPEC:281): the import candidate detail returns to the preserved IMPORT
         // overview (清单/勾选集保留； the draft is written back by the reducer on close).
         is P503AppState.ImportCandidateDetail -> true
@@ -5147,7 +5525,10 @@ private fun isBackDispatchSafe(state: P503AppState): Boolean =
         // P7-06 06.B: a running export keeps the surface (提交中不得离开).
         !(state is P503AppState.BackupExport && state.running) &&
         // P7-06 06.D: a running restore preflight or confirm keeps the surface (提交中不得离开).
-        !(state is P503AppState.BackupRestore && (state.runningPreflight || state.runningConfirm))
+        !(state is P503AppState.BackupRestore && (state.runningPreflight || state.runningConfirm)) &&
+        // P8-01a i3a: a bind or confirm in flight keeps the candidate surface (提交中不得离开; the
+        // outcome must land on the surface that started it).
+        !(state is P503AppState.ReconciliationDetail && (state.binding || state.confirming))
 
 /** P7-02.A E-2: origin tab of the in-flight entry flow, for the retained intent. */
 private fun currentOriginTab(state: P503AppState): P503Tab =

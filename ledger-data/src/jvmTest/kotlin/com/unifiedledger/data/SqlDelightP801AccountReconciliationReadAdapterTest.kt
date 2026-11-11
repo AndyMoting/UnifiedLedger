@@ -3,11 +3,13 @@ package com.unifiedledger.data
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.DEFAULT_HIDDEN_EXPENSE_ACCOUNT_ID
 import com.unifiedledger.application.DEFAULT_MANAGEABLE_ACCOUNT_ID
+import com.unifiedledger.application.P408EvidenceResponsibility
 import com.unifiedledger.application.P408ReconciliationStatus
 import com.unifiedledger.application.P801AccountReconciliationCursor
 import com.unifiedledger.application.P801AccountReconciliationPageResult
 import com.unifiedledger.application.P801AccountReconciliationStatusTotal
 import com.unifiedledger.application.P801AccountReconciliationSummaryResult
+import com.unifiedledger.application.P801ReconciledLegAuditResult
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CurrencyUnit
@@ -19,6 +21,7 @@ import java.util.Properties
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
@@ -355,6 +358,113 @@ class SqlDelightP801AccountReconciliationReadAdapterTest {
         }
     }
 
+    /**
+     * P8-01a i3a audit read-back (spec section 2.6; D-308 item 7). Three load-bearing distinctions:
+     * an absent leg is [P801ReconciledLegAuditResult.NotFound] (never an empty audit), a leg with
+     * nothing reconciled is a SUCCESSFUL audit with no link and no reconciliation fact (a typed
+     * absence, never a zero-filled basis), and a linked leg answers with the evidence source labels,
+     * the responsibility, the link's own latest state and its history — while a link whose request
+     * carries no snapshot row keeps `decision == null` instead of inventing a basis.
+     */
+    @Test
+    fun theAuditReadBackAnswersAbsenceAndTheLinkedLegsEvidenceSource() {
+        withDatabase { _, driver, adapter ->
+            seedTransaction(driver, "tx-audit-plain", "2026-03-01T02:00:00Z", legs = listOf(SeededLeg("posting-audit-plain", assetAccountId.value, -1_000L)))
+            seedTransaction(driver, "tx-audit-linked", "2026-03-02T02:00:00Z", legs = listOf(SeededLeg("posting-audit-linked", assetAccountId.value, -2_000L)))
+            seedEvidenceLink(driver, "tx-audit-linked", "posting-audit-linked", active = true)
+
+            // A posting id that names no leg on this ledger: an explicit absent verdict.
+            assertEquals(
+                P801ReconciledLegAuditResult.NotFound,
+                adapter.loadReconciledLegAudit(ledgerId, PostingId("posting-does-not-exist")),
+            )
+
+            // A real leg with nothing reconciled: success, no link, no reconciliation fact.
+            val plain = assertIs<P801ReconciledLegAuditResult.Success>(adapter.loadReconciledLegAudit(ledgerId, PostingId("posting-audit-plain"))).audit
+            assertEquals(PostingId("posting-audit-plain"), plain.postingId)
+            assertEquals(TransactionId("tx-audit-plain"), plain.transactionId)
+            assertNull(plain.reconciliation)
+            assertTrue(plain.evidence.isEmpty())
+
+            // The linked leg: one link with its source row, responsibility, latest state and history.
+            val linked = assertIs<P801ReconciledLegAuditResult.Success>(adapter.loadReconciledLegAudit(ledgerId, PostingId("posting-audit-linked"))).audit
+            val link = linked.evidence.single()
+            assertEquals("link-tx-audit-linked-posting-audit-linked", link.linkId)
+            assertEquals("evidence-tx-audit-linked-posting-audit-linked", link.evidenceId)
+            assertEquals(P408EvidenceResponsibility.REAL_ACCOUNT_POSTING, link.responsibility)
+            assertEquals("active", link.state)
+            assertEquals(1L, link.stateSequence)
+            assertEquals("ref-tx-audit-linked-posting-audit-linked", link.source.importInputRef)
+            assertEquals(0L, link.source.recordOrdinal)
+            assertEquals("ordinary_flow_source", link.source.recordKind)
+            assertEquals(listOf("1", "active", "confirmed"), link.history.single().let { entry -> listOf(entry.sequence.toString(), entry.state, entry.reason) })
+            // The fixture's link has no request-snapshot row, so the basis stays a typed absence.
+            assertNull(link.decision)
+            // The leg itself still carries no reconciliation fact (the link alone does not write one).
+            assertNull(linked.reconciliation)
+        }
+    }
+
+    /**
+     * P8-01a i3a F3 (spec sections 2.6/3): the audit read's POSITIVE path. The previous absence
+     * fixture left `p801ReconciledLegReconciliationHistory` unexecuted, so the basis columns, the
+     * sorted-and-comma-joined `match_basis` (split by the adapter), the window/distance integers, the
+     * human decision with its timestamp and the status history with sequence 1/2 were all unpinned.
+     */
+    @Test
+    fun theAuditReadBackAnswersTheFrozenDecisionBasisAndTheStatusHistory() {
+        withDatabase { _, driver, adapter ->
+            seedTransaction(driver, "tx-audit-decision", "2026-03-02T02:00:00Z", legs = listOf(SeededLeg("posting-audit-decision", assetAccountId.value, -2_000L)))
+            seedEvidenceLink(driver, "tx-audit-decision", "posting-audit-decision", active = true)
+            seedDecisionSnapshot(driver, "tx-audit-decision", "posting-audit-decision")
+            seedCheckedReconciliation(driver, "tx-audit-decision", "posting-audit-decision")
+
+            val audit =
+                assertIs<P801ReconciledLegAuditResult.Success>(
+                    adapter.loadReconciledLegAudit(ledgerId, PostingId("posting-audit-decision")),
+                ).audit
+            val link = audit.evidence.single()
+            val decision = assertNotNull(link.decision)
+            // The store writes the set sorted and comma-joined; the adapter splits it back.
+            assertEquals(2, decision.basisVersion)
+            assertEquals(listOf("account", "amount", "currency", "direction", "occurred_at_window"), decision.matchBasis)
+            assertEquals(2, decision.windowDays)
+            assertEquals(1, decision.naturalDayDistance)
+            assertEquals("confirm_match", decision.humanDecision)
+            assertEquals("2026-03-02T03:00:00Z", decision.decidedAt)
+            val reconciliation = assertNotNull(audit.reconciliation)
+            assertEquals("reconciliation-posting-audit-decision", reconciliation.reconciliationId)
+            assertEquals(P408ReconciliationStatus.CHECKED, reconciliation.status)
+            assertEquals(listOf(1L, 2L), reconciliation.history.map { entry -> entry.sequence })
+            assertEquals(
+                listOf(P408ReconciliationStatus.PENDING, P408ReconciliationStatus.CHECKED),
+                reconciliation.history.map { entry -> entry.status },
+            )
+            assertEquals(listOf(null, link.linkId), reconciliation.history.map { entry -> entry.evidenceLinkId })
+        }
+    }
+
+    /**
+     * P8-01a i3a F5 (spec section 2.6): a `posting_reconciliation` row whose history is empty must
+     * still answer its CURRENT status with an empty history (the LEFT JOIN) — with an inner join the
+     * leg would read as "no reconciliation row at all", which the copy would then repeat as a lie.
+     */
+    @Test
+    fun theAuditAnswersAReconciliationRowWhoseHistoryIsEmpty() {
+        withDatabase { _, driver, adapter ->
+            seedTransaction(driver, "tx-audit-empty-history", "2026-03-03T02:00:00Z", legs = listOf(SeededLeg("posting-audit-empty-history", assetAccountId.value, -1_500L)))
+            seedReconciliation(driver, "posting-audit-empty-history", "CHECKED")
+
+            val audit =
+                assertIs<P801ReconciledLegAuditResult.Success>(
+                    adapter.loadReconciledLegAudit(ledgerId, PostingId("posting-audit-empty-history")),
+                ).audit
+            val reconciliation = assertNotNull(audit.reconciliation)
+            assertEquals(P408ReconciliationStatus.CHECKED, reconciliation.status)
+            assertTrue(reconciliation.history.isEmpty())
+        }
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private fun withDatabase(block: (LedgerDatabase, JdbcSqliteDriver, SqlDelightP801AccountReconciliationReadAdapter) -> Unit) {
@@ -571,6 +681,62 @@ class SqlDelightP801AccountReconciliationReadAdapterTest {
         Properties().apply {
             setProperty("foreign_keys", "true")
         }
+
+    /**
+     * The frozen confirm basis the real store writes for one linked leg (spec section 2.5):
+     * `match_basis` is the set sorted at write time and comma-joined, `basis_version` 2, the
+     * matcher's window and natural-day distance, and the one admitted human-decision token.
+     */
+    private fun seedDecisionSnapshot(
+        driver: JdbcSqliteDriver,
+        transactionId: String,
+        postingId: String,
+    ) {
+        val suffix = "$transactionId-$postingId"
+        driver.execute(
+            null,
+            "INSERT INTO reconciliation_request_snapshot(ledger_id, request_id, evidence_id, candidate_id, posting_id, transaction_id, " +
+                "amount_minor, currency_code, currency_precision, direction, account_id, responsibility, basis_version, match_basis, " +
+                "window_days, natural_day_distance, source_occurred_at, confirmed_at, human_decision, " +
+                "projection_id, projection_rule_id, projection_rule_version, normalized_amount_minor, raw_amount_minor, raw_currency_precision) " +
+                "VALUES ('${ledgerId.value}','reconciliation-request-$suffix','evidence-$suffix','candidate-$suffix','$postingId','$transactionId'," +
+                "2000,'CNY',2,'out','${assetAccountId.value}','real_account_posting',2," +
+                "'account,amount,currency,direction,occurred_at_window',2,1,'2026-03-02T02:00:00Z','2026-03-02T03:00:00Z','confirm_match'," +
+                "NULL,NULL,NULL,NULL,2000,2)",
+            0,
+        )
+    }
+
+    /**
+     * A CHECKED reconciliation with the legal two-row history (`PENDING` sequence 1 without a link,
+     * `CHECKED` sequence 2 through [seedEvidenceLink]'s link). The row is inserted already naming
+     * sequence 2 (the update guard only allows latest_sequence + 1 with a matching history row).
+     */
+    private fun seedCheckedReconciliation(
+        driver: JdbcSqliteDriver,
+        transactionId: String,
+        postingId: String,
+    ) {
+        val suffix = "$transactionId-$postingId"
+        driver.execute(
+            null,
+            "INSERT INTO posting_reconciliation(ledger_id, reconciliation_id, posting_id, status, latest_sequence) " +
+                "VALUES ('${ledgerId.value}','reconciliation-$postingId','$postingId','CHECKED',2)",
+            0,
+        )
+        listOf(
+            Triple(1, "PENDING", "NULL"),
+            Triple(2, "CHECKED", "'link-$suffix'"),
+        ).forEach { (sequence, status, linkId) ->
+            driver.execute(
+                null,
+                "INSERT INTO posting_reconciliation_history(ledger_id, reconciliation_id, sequence, status, evidence_link_id, request_id, occurred_at) " +
+                    "VALUES ('${ledgerId.value}','reconciliation-$postingId',$sequence,'$status',$linkId," +
+                    "'reconciliation-request-$suffix','2026-03-02T0${sequence + 1}:00:00Z')",
+                0,
+            )
+        }
+    }
 }
 
 /** One synthetic posting leg of a seeded transaction: its id, account, signed minor units and currency. */

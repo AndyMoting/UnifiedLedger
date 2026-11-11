@@ -400,6 +400,12 @@ internal fun P503ImportScreen(
     onGroupClose: () -> Unit,
     onRequestBatchConfirm: () -> Unit,
     onCheckUnknownItem: (ImportCandidateId) -> Unit,
+    /**
+     * P8-01a i3a (spec section 2.2 entry B): the evidence-focused reconciliation entry. Null when the
+     * composition did not wire it, in which case the row renders neither the action nor a dead
+     * button.
+     */
+    onUseForReconciliation: ((String) -> Unit)? = null,
 ) {
     // A-VIS (J1/J4, R1): the 整组确认页 card defaults to fully expanded — the frozen duty
     // (执行前逐条列出比较信息) binds this surface — and one card-level switch lets the user
@@ -440,6 +446,7 @@ internal fun P503ImportScreen(
                 onGroupClose = onGroupClose,
                 onRequestBatchConfirm = onRequestBatchConfirm,
                 onCheckUnknownItem = onCheckUnknownItem,
+                onUseForReconciliation = onUseForReconciliation,
             )
         }
     }
@@ -470,6 +477,7 @@ private fun ImportReviewOverviewItem(
     onGroupClose: () -> Unit,
     onRequestBatchConfirm: () -> Unit,
     onCheckUnknownItem: (ImportCandidateId) -> Unit,
+    onUseForReconciliation: ((String) -> Unit)? = null,
 ) {
     when (item) {
         ImportReviewRenderItem.TitleBar ->
@@ -548,6 +556,7 @@ private fun ImportReviewOverviewItem(
                 selected = item.selected,
                 onToggleSelection = onToggleSelection,
                 onSelectCandidate = onSelectCandidate,
+                onUseForReconciliation = onUseForReconciliation,
             )
         ImportReviewRenderItem.LoadMore -> {
             Spacer(Modifier.height(8.dp))
@@ -670,6 +679,7 @@ private fun ImportCandidateRow(
     selected: Boolean,
     onToggleSelection: (ImportCandidateId) -> Unit,
     onSelectCandidate: (ImportCandidateId) -> Unit,
+    onUseForReconciliation: ((String) -> Unit)? = null,
 ) {
     val rowClass = classifyImportCandidate(row)
     Column(
@@ -705,6 +715,29 @@ private fun ImportCandidateRow(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
+                }
+                // P8-01a i3a (spec sections 2.2 entry B / 2.7; D-308 item 4): the derived
+                // 「已用于核对既有分录」 marker (an active evidence_link exists — no import status row
+                // is written for it), and the evidence-focused reconciliation entry only while the
+                // candidate's evidence is UNLINKED. The two are mutually exclusive by construction.
+                if (row.usedForReconciliation) {
+                    Text(
+                        IMPORT_USED_FOR_RECONCILIATION_TEXT,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.semantics { contentDescription = IMPORT_USED_FOR_RECONCILIATION_TEXT },
+                    )
+                } else {
+                    val evidenceId = row.evidenceId
+                    val useForReconciliation = onUseForReconciliation
+                    if (useForReconciliation != null && evidenceId != null) {
+                        TextButton(
+                            onClick = { useForReconciliation(evidenceId) },
+                            modifier = Modifier.semantics { contentDescription = RECONCILIATION_EVIDENCE_ENTRY_TITLE },
+                        ) {
+                            Text(RECONCILIATION_EVIDENCE_ENTRY_TITLE)
+                        }
+                    }
                 }
             }
         }

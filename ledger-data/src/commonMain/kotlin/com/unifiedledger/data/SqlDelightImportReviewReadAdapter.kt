@@ -527,6 +527,9 @@ private data class ImportReviewRowColumns(
     val payment_profile_variant: String?,
     val payment_profile_asset_leg_kind_token: String?,
     val payment_profile_credit_leg_kind_token: String?,
+    // P8-01a i3a (spec section 2.7): the subject evidence id plus the derived active-link marker.
+    val evidence_id: String?,
+    val used_for_reconciliation: Boolean,
 )
 
 private fun com.unifiedledger.data.db.ImportReviewRowsForLedger.toColumns(): ImportReviewRowColumns =
@@ -551,6 +554,8 @@ private fun com.unifiedledger.data.db.ImportReviewRowsForLedger.toColumns(): Imp
         payment_profile_variant,
         payment_profile_asset_leg_kind_token,
         payment_profile_credit_leg_kind_token,
+        evidence_id,
+        used_for_reconciliation,
     )
 
 private fun com.unifiedledger.data.db.ImportReviewRowForCandidate.toColumns(): ImportReviewRowColumns =
@@ -575,6 +580,8 @@ private fun com.unifiedledger.data.db.ImportReviewRowForCandidate.toColumns(): I
         payment_profile_variant,
         payment_profile_asset_leg_kind_token,
         payment_profile_credit_leg_kind_token,
+        evidence_id,
+        used_for_reconciliation,
     )
 
 /**
@@ -605,6 +612,8 @@ private fun com.unifiedledger.data.db.ImportReviewRowsForLedgerPage.toColumns():
         payment_profile_variant,
         payment_profile_asset_leg_kind_token,
         payment_profile_credit_leg_kind_token,
+        evidence_id,
+        used_for_reconciliation,
     )
 
 private fun ImportReviewRowColumns.toImportReviewRow(
@@ -642,6 +651,8 @@ private fun ImportReviewRowColumns.toImportReviewRow(
         paymentProfileVariant = payment_profile_variant,
         paymentProfileAssetLegKindToken = payment_profile_asset_leg_kind_token,
         paymentProfileCreditLegKindToken = payment_profile_credit_leg_kind_token,
+        evidenceId = evidence_id,
+        usedForReconciliation = used_for_reconciliation,
     )
 }
 

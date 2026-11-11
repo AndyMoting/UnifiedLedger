@@ -71,9 +71,11 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 /**
  * P4-02 spine end-to-end oracle (spec section 9, T-01..T-30). The spec's operation
@@ -1607,6 +1609,84 @@ class ImportSpineLifecycleEndToEndTest {
             assertEquals(formalBefore, formalCounts(database))
             assertEquals(confirmationsBefore, database.ledgerQueries.countImportConfirmations().executeAsOne())
             assertEquals(statusHistoryBefore, database.ledgerQueries.countImportCandidateStatusHistory().executeAsOne())
+        } finally {
+            driver.close()
+        }
+    }
+
+    /**
+     * P8-01a i3a F4 (spec section 2.7; D-308 item 4): the 「已用于核对既有分录」 marker is DERIVED
+     * from an ACTIVE `evidence_link` on every read — no import status row is written for it. One
+     * evidence's latest history state is `active` (marker true) and another's latest state is
+     * `invalidated` (marker false), so a mirror of the column shape cannot pass this: the state of
+     * the LATEST history row decides.
+     */
+    @Test
+    fun p801ImportReviewMarkerIsDerivedFromTheLatestLinkState() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            val executor =
+                Executor(
+                    database,
+                    driver,
+                    catalog(),
+                    BatchIntakeIdSource(
+                        listOf(
+                            intakeIds("p801-marker-a", "status-p801-marker-a"),
+                            intakeIds("p801-marker-b", "status-p801-marker-b"),
+                        ),
+                    ),
+                    BatchCommitIdSource(
+                        listOf(
+                            commitIds(
+                                "confirmation-p801-marker-a",
+                                "status-p801-marker-a-2",
+                                "tx-p801-marker-a",
+                                "version-p801-marker-a",
+                                "posting-set-p801-marker-a",
+                                listOf("posting-p801-marker-expense", "posting-p801-marker-asset"),
+                            ),
+                        ),
+                    ),
+                    BatchStatusIdSource(emptyList()),
+                )
+            assertIs<ImportIntakeResult.Accepted>(executor.intake(r1("request-p801-marker-a")))
+            // A different amount keeps B out of A's exact-duplicate tuple.
+            assertIs<ImportIntakeResult.Accepted>(executor.intake(r1Prime("request-p801-marker-b").copy(inputRef = "batch-p801-marker-b")))
+            // The real posting/transaction the links below address (FK-valid: the confirm path wrote it).
+            assertIs<ImportCandidateDecisionResult.Accepted>(executor.confirm(confirmRequest("req-p801-marker-confirm-a", candidate = "candidate-p801-marker-a", hash = hashR1)))
+
+            fun execute(sql: String) = driver.execute(null, sql, 0)
+
+            fun seedLink(key: String) {
+                execute(
+                    "INSERT INTO reconciliation_request(ledger_id, request_id, operation, input_fingerprint, outcome) " +
+                        "VALUES ('${ledgerId.value}','reconciliation-request-$key','confirm_link','fingerprint-$key','ACCEPTED')",
+                )
+                execute(
+                    "INSERT INTO evidence_link(ledger_id, link_id, evidence_id, posting_id, transaction_id, responsibility, basis_version, match_basis, candidate_id, request_id, created_at) " +
+                        "VALUES ('${ledgerId.value}','link-$key','evidence-$key','posting-p801-marker-asset','tx-p801-marker-a','real_account_posting',2," +
+                        "'amount,currency,direction,account,occurred_at_window','candidate-$key','reconciliation-request-$key','2026-08-07T10:00:00+08:00')",
+                )
+                execute(
+                    "INSERT INTO evidence_link_history(ledger_id, link_id, sequence, state, reason, request_id, occurred_at) " +
+                        "VALUES ('${ledgerId.value}','link-$key',1,'active','confirmed','reconciliation-request-$key','2026-08-07T10:00:00+08:00')",
+                )
+            }
+            // A's latest history state stays `active`; B's latest state is `invalidated`.
+            seedLink("p801-marker-a")
+            seedLink("p801-marker-b")
+            execute(
+                "INSERT INTO evidence_link_history(ledger_id, link_id, sequence, state, reason, request_id, occurred_at) " +
+                    "VALUES ('${ledgerId.value}','link-p801-marker-b',2,'invalidated','corrected','reconciliation-request-p801-marker-b','2026-08-08T10:00:00+08:00')",
+            )
+
+            val rows = SqlDelightImportReviewReadAdapter(database).loadImportReviewRows(ledgerId)
+            assertEquals(2, rows.size)
+            assertTrue(rows.first { row -> row.candidateId.value == "candidate-p801-marker-a" }.usedForReconciliation)
+            assertFalse(rows.first { row -> row.candidateId.value == "candidate-p801-marker-b" }.usedForReconciliation)
         } finally {
             driver.close()
         }

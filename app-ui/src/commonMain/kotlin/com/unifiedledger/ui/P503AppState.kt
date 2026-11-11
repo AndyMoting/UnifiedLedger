@@ -422,10 +422,10 @@ sealed interface P503AppState {
      * and the reducer applies a landing only when its token is still current — a read superseded
      * by a newer request (or duplicated) can never append. Pure bookkeeping, never rendered.
      *
-     * The surface's own scroll position is deliberately NOT carried: closing destroys it (the
-     * registered batch trade-off); the ACCOUNTS list's scroll restoration rides the carried
-     * overview (see [OverviewEmpty.originListScroll]) and this surface never writes it back late
-     * — the only write is the reducer's synchronous close transition.
+     * The surface's own scroll position rides [listScroll]: it is written by the reducer's
+     * synchronous `SelectReconciliationQueue` transition (the sampled position from the event) and
+     * consumed once by `ListScrollRestored`, exactly like the accounts list — so 返回 from the
+     * reconciliation queue lands on the same row (V-10 返回保留滚动位).
      */
     data class AccountFlow(
         val overview: OverviewEmpty,
@@ -454,12 +454,206 @@ sealed interface P503AppState {
         val rowsLoadFailed: Boolean = false,
         /** The monotonic request identity of the more-page read (see the state KDoc). */
         val pageRequestToken: Long = 0L,
+        /**
+         * P8-01a i3a (V-10 返回保留滚动位): the account-flow position sampled when the queue was
+         * opened, consumed once by `ListScrollRestored` after the screen applied it.
+         */
+        val listScroll: ListScrollPosition? = null,
     ) : P503AppState {
         /** The honest loaded count: exactly the rows on screen, never a ledger-wide total. */
         val loadedCount: Int get() = loadedRows.size
 
         /** Whether more whole-ledger pages may still carry rows for this account. */
         val hasMoreWholeLedgerPages: Boolean get() = nextWholeLedgerCursor != null
+    }
+
+    /**
+     * P8-01a i3a (D-308 items 2/6/8; spec sections 2.2/2.3): the account reconciliation queue — the
+     * 「账户对账」 surface reached from the account-flow header (entry A).
+     *
+     * The queue enumerates the account's reconcilable legs from ONE keyset read per page
+     * ([com.unifiedledger.application.P801_ACCOUNT_RECONCILIATION_PAGE_SIZE], the frozen
+     * `occurred_at DESC, posting_id ASC` order) and shows the per-(currency, status) totals beside
+     * them. TWO INDEPENDENT FAILURE FLAGS (D-308 / spec section 2.3, V-9): [rowsLoadFailed] keeps the
+     * loaded rows visible with a retry, [summaryLoadFailed] shows the totals' own failure — a failed
+     * aggregate never clears the queue and never degrades into a `0.00` total.
+     *
+     * [checkedExpanded] is the 已核对 partition's disclosure state: collapsed (false) is the
+     * default, and the partition never mixes into the unchecked list above it (spec section 2.3).
+     * [pageRequestToken] is the single-flight late-write gate of the more-page read (the
+     * [AccountFlow.pageRequestToken] precedent); [listScroll] is this surface's own restore slot —
+     * written by the detail's open event, consumed once by `ListScrollRestored`.
+     */
+    data class ReconciliationQueue(
+        /**
+         * The account flow the entry A action was taken from — the ONLY legal back target of the
+         * queue (F13: the type no longer admits an unreachable destination).
+         */
+        val returnTo: AccountFlow,
+        val accountId: AccountId,
+        /** The header副行 the host resolved at open time (「名称 · 类型 · 币种」). */
+        val accountLine: String,
+        val rows: List<com.unifiedledger.application.P801AccountReconciliationQueueRow>,
+        val nextCursor: com.unifiedledger.application.P801AccountReconciliationCursor?,
+        val totals: List<com.unifiedledger.application.P801AccountReconciliationStatusTotal>,
+        /** The page read failed (first page or a more-page); the loaded rows stay visible. */
+        val rowsLoadFailed: Boolean = false,
+        /** The summary read failed; the rows stay visible and no zero total is shown (V-9). */
+        val summaryLoadFailed: Boolean = false,
+        val rowsLoading: Boolean = false,
+        val pageRequestToken: Long = 0L,
+        val checkedExpanded: Boolean = false,
+        val listScroll: ListScrollPosition? = null,
+    ) : P503AppState {
+        /** The unchecked partition (the queue's main list, spec section 2.3). */
+        val uncheckedRows: List<com.unifiedledger.application.P801AccountReconciliationQueueRow>
+            get() = rows.filter { row -> row.status != com.unifiedledger.application.P408ReconciliationStatus.CHECKED }
+
+        /** The 已核对 partition, collapsed by default (spec section 2.3). */
+        val checkedRows: List<com.unifiedledger.application.P801AccountReconciliationQueueRow>
+            get() = rows.filter { row -> row.status == com.unifiedledger.application.P408ReconciliationStatus.CHECKED }
+    }
+
+    /**
+     * P8-01a i3a (D-308 items 2/3/7/10; spec sections 2.2/2.4/2.5/2.6): the candidate/confirm/audit
+     * surface of ONE anchor. Entry A anchors on a queue leg ([anchorPostingId]); entry B anchors on
+     * an import candidate's evidence ([anchorEvidenceId], spec section 2.2 entry B), which has no leg
+     * until the matcher proposes one.
+     *
+     * [proposals] is the frozen matcher's own result (never a re-implementation); [audit] is the
+     * spec section 2.6 read-back of [anchorPostingId] (null in evidence-focused mode, where no leg is
+     * chosen yet). [selectedCandidate] is the O-3 human decision: `null` until the user picks one —
+     * the confirm action is unavailable while it is null, so an `AMBIGUOUS` result can never be
+     * confirmed by accident, and a `PROPOSED_MATCH` still requires the explicit confirm step.
+     *
+     * [bindTarget] is the account the user declared this evidence belongs to (entry A: the anchor
+     * leg's account; entry B: an explicit pick from [bindAccounts]). The bind action is unavailable
+     * while it is null, and the irreversibility warning precedes it in the screen (spec section 2.4).
+     * [binding]/[confirming] are the single-flight markers: while either is set the surface keeps
+     * itself (提交中不得离开) and the corresponding request is absorbed.
+     *
+     * WHAT THE BIND STEP READS (spec section 2.4). Entry A carries the leg ([anchorLeg]) and the
+     * evidence of that account/window that still needs a bind ([bindableEvidence]); [bindEvidenceId]
+     * is the row the user picked there (the target stays the leg's account). Entry B carries the
+     * anchor evidence row ([anchorEvidence]) so the bind step is decided by that row's projection
+     * state — never by whether the proposal read happened to succeed — and the REJECTED code is on
+     * the row itself. Browsing never writes: the bind runs only on the explicit action.
+     */
+    data class ReconciliationDetail(
+        /** The surface back returns to — the queue (entry A) or the preserved overview (entry B). */
+        val returnTo: ReconciliationBackTarget,
+        val anchorPostingId: com.unifiedledger.domain.PostingId?,
+        val anchorEvidenceId: String?,
+        /** The account whose queue/audit this is; null until an evidence-focused anchor is bound. */
+        val accountId: AccountId?,
+        val bindTarget: AccountId?,
+        val bindAccounts: List<ReconciliationAccountChoice>,
+        val proposals: com.unifiedledger.application.P801CandidateProposalResult?,
+        val audit: com.unifiedledger.application.P801ReconciledLegAuditResult?,
+        val selectedCandidate: ReconciliationSelection? = null,
+        val binding: Boolean = false,
+        val confirming: Boolean = false,
+        val notice: ReconciliationDetailNotice? = null,
+        /** Entry A: the queue leg this surface anchors on (re-read on a bind's candidate refresh). */
+        val anchorLeg: com.unifiedledger.application.P801AccountReconciliationQueueRow? = null,
+        /** Entry A: the evidence of this account/window that still needs an explicit bind. */
+        val bindableEvidence: com.unifiedledger.application.P801BindableEvidenceResult? = null,
+        /** The evidence row the user chose to bind (entry A: a bindable row; entry B: the anchor). */
+        val bindEvidenceId: String? = null,
+        /** Entry B: the anchor evidence row (the projection state and rejection code live here). */
+        val anchorEvidence: com.unifiedledger.application.P801ReconciliationCandidateEvidence? = null,
+    ) : P503AppState
+
+    /**
+     * One account the bind step can target (spec section 2.4: the explicit "this import row belongs
+     * to this account" decision). The host projects the catalog's reconcilable accounts; the name is
+     * the display text, never a key.
+     */
+    data class ReconciliationAccountChoice(
+        val accountId: AccountId,
+        val name: String,
+    )
+
+    /**
+     * P8-01a i3a (spec section 2.5): the queue + totals payload the host re-reads after a
+     * `Linked`/`NoChange` confirmation, so the queue the detail returns to already reflects the
+     * write instead of showing the pre-confirmation state (the queue and the summary are two
+     * independent reads, so both ride the same refresh — a failed one keeps its own failure flag).
+     */
+    data class ReconciliationQueueRefresh(
+        val page: com.unifiedledger.application.P801AccountReconciliationPageResult,
+        val summary: com.unifiedledger.application.P801AccountReconciliationSummaryResult,
+    )
+
+    /**
+     * The O-3 human decision an `AMBIGUOUS` result requires (spec section 2.4): which proposal's
+     * which matcher candidate the user picked. Both indices address the payload the host read
+     * ([ReconciliationDetail.proposals]); the reducer validates them, so a stale pick can never
+     * confirm a candidate that is no longer offered.
+     */
+    data class ReconciliationSelection(
+        val proposalIndex: Int,
+        val candidateIndex: Int,
+    )
+
+    /**
+     * The typed notice of the candidate/confirm/audit surface (spec sections 2.4/2.5). Every variant
+     * renders frozen copy from the spec; [Rejected] and [BindRejected] keep the raw infrastructure
+     * code token beside the readable label (the `p705NoticeText` precedent), and the two
+     * `UnknownResult` variants are the spec section 2.5 「结果未知，重新进入核对」 case — the call
+     * threw, so nothing is claimed about what was written and re-entry decides by authoritative
+     * re-read (no result-unknown row is ever persisted; D-308 / i3a D2).
+     */
+    sealed interface ReconciliationDetailNotice {
+        /**
+         * `Accepted`: the link and its reconciliation rows were written. [queueRefreshed] follows
+         * the ACTUAL return target (spec section 2.5 / F10): entry A re-reads the queue page and the
+         * totals, entry B only has the audit to refresh, so the success copy never claims a refresh
+         * that did not run.
+         */
+        data class Linked(
+            val queueRefreshed: Boolean,
+        ) : ReconciliationDetailNotice
+
+        /** `NoChange`: identical replay — success, and nothing was written twice. */
+        data object NoChange : ReconciliationDetailNotice
+
+        data class Rejected(
+            val code: String,
+        ) : ReconciliationDetailNotice
+
+        data class Refused(
+            val reason: com.unifiedledger.application.P801ConfirmLinkRefusal,
+            /** The REJECTED projection's own code, when the evidence row carried one (F2). */
+            val rejectionCode: String? = null,
+        ) : ReconciliationDetailNotice
+
+        /** The confirm call threw: the outcome is unknown and no receipt exists. */
+        data object UnknownResult : ReconciliationDetailNotice
+
+        /**
+         * The ledger runtime was not Ready when the write was attempted: nothing ran and nothing
+         * was written (the owner's readiness gate refused BEFORE the use case), so this is a
+         * definitive not-written notice — never the unknown-result one.
+         */
+        data object RuntimeNotReady : ReconciliationDetailNotice
+
+        /** The bind wrote the `READY` projection (a derived write with zero accounting effect). */
+        data object Bound : ReconciliationDetailNotice
+
+        /** The bind replay hit `NoChange`; no second projection row exists. */
+        data object BindNoChange : ReconciliationDetailNotice
+
+        data class BindRejected(
+            val code: String,
+        ) : ReconciliationDetailNotice
+
+        data class BindRefused(
+            val reason: com.unifiedledger.application.P801BindEvidenceRefusal,
+        ) : ReconciliationDetailNotice
+
+        /** The bind call threw: the outcome is unknown. */
+        data object BindUnknownResult : ReconciliationDetailNotice
     }
 
     /**
@@ -806,6 +1000,30 @@ sealed interface P503AppState {
     ) : P503AppState
 
     data object Recovered : P503AppState
+}
+
+/**
+ * P8-01a i3a F13: the two legal back targets of [P503AppState.ReconciliationDetail] — the queue it
+ * was opened from (entry A) or the preserved overview (entry B). The previous `P503AppState` field
+ * admitted every surface the reducer can be in, which is unreachable by construction; this sealed
+ * target makes an illegal return destination unrepresentable and keeps the copy decisions (which
+ * surface was actually refreshed) a property of the target, not of a cast.
+ */
+sealed interface ReconciliationBackTarget {
+    data class Queue(
+        val state: P503AppState.ReconciliationQueue,
+    ) : ReconciliationBackTarget
+
+    data class Overview(
+        val state: P503AppState.OverviewEmpty,
+    ) : ReconciliationBackTarget
+
+    /** The carried state, for the ONE reducer transition that returns to it. */
+    fun surface(): P503AppState =
+        when (this) {
+            is Queue -> state
+            is Overview -> state
+        }
 }
 
 /**

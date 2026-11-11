@@ -53,12 +53,10 @@ class ConfirmReconciliationLink(
         if (projection.state != P408ProjectionState.READY) {
             return P801ConfirmLinkResult.Refused(P801ConfirmLinkRefusal.EVIDENCE_PROJECTION_REJECTED)
         }
+        // The ONE direction→duty rule (O-5); an unknown direction decides nothing.
         val responsibility =
-            when (candidate.posting.direction) {
-                "out" -> P408EvidenceResponsibility.REAL_ACCOUNT_POSTING
-                "in" -> P408EvidenceResponsibility.DESTINATION_ASSET_POSTING
-                else -> return P801ConfirmLinkResult.Refused(P801ConfirmLinkRefusal.RESPONSIBILITY_UNRESOLVED)
-            }
+            P408EvidenceResponsibility.forDirectionOrNull(candidate.posting.direction)
+                ?: return P801ConfirmLinkResult.Refused(P801ConfirmLinkRefusal.RESPONSIBILITY_UNRESOLVED)
         val identity = input.identity
         val confirmedAt = identity?.confirmedAt ?: clock.now()
         val ids =
