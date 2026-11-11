@@ -13,6 +13,7 @@ import com.unifiedledger.application.ConfirmedManualTransferCommitIds
 import com.unifiedledger.application.ConfirmedManualTransferResult
 import com.unifiedledger.application.DEFAULT_MANAGEABLE_ACCOUNT_ID
 import com.unifiedledger.application.ExecuteCatalogCommand
+import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.LedgerCurrentStateResult
 import com.unifiedledger.application.LedgerFlowPageResult
 import com.unifiedledger.application.ManualTransferRequestIdentity
@@ -26,7 +27,9 @@ import com.unifiedledger.application.QueryLedgerCurrentState
 import com.unifiedledger.application.QueryLedgerFlowPage
 import com.unifiedledger.application.QueryTransactionDetail
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.SearchTimeWindow
 import com.unifiedledger.application.TransactionDetailResult
+import com.unifiedledger.application.resolveSearchTimeWindow
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
@@ -46,6 +49,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 
 /**
@@ -83,7 +89,8 @@ import kotlin.time.Instant
  * read adapters, so what the device will render is proven here rather than assumed: the
  * reconciliation queue (one PENDING leg per account, both from the same transaction, no active
  * link) AND the four reads the seeded tap path depends on — the home flow row's note, the
- * account-flow balance row, the manageable/asset projection, and the transaction detail read.
+ * account-flow balance row, the manageable/asset projection, and the transaction detail read — plus
+ * the seeded statistics instant's containment in the search surface's default window (D7-9).
  */
 class P801FontscaleSeedWriterTest {
     private val ledgerId = LedgerId(LEDGER_ID)
@@ -282,6 +289,22 @@ class P801FontscaleSeedWriterTest {
                 setOf(AccountId(DEFAULT_MANAGEABLE_ACCOUNT_ID), AccountId(SEED_ACCOUNT_ID)),
                 detail.legs.map { leg -> leg.accountId }.toSet(),
             )
+
+            // (e) D7-9: the search result face reads the default 近 90 天 window through the SAME
+            // function the use case calls, and the row's statistics instant is what that window
+            // filters on. A seed instant outside it renders the guide/empty face while every capture
+            // marker still passes — the silent degradation this assertion exists to prevent.
+            val searchWindow =
+                assertNotNull(
+                    resolveSearchTimeWindow(
+                        SearchTimeWindow.LastNinetyDays,
+                        LedgerClock { Clock.System.now() },
+                    ),
+                )
+            assertTrue(
+                flowRow.statisticsAt >= searchWindow.first && flowRow.statisticsAt < searchWindow.second,
+                "the seeded statistics instant ${flowRow.statisticsAt} is outside the search default window",
+            )
         }
     }
 
@@ -314,7 +337,15 @@ class P801FontscaleSeedWriterTest {
         const val SEED_TRANSFER_NOTE = "对账样本转账"
         const val SEED_TRANSACTION_ID = "fontscale-seed-transfer"
         const val SEED_TRANSFER_MINOR = 1_234L
-        val SEED_TRANSFER_INSTANT: Instant = Instant.parse("2026-11-10T02:00:00Z")
-        val SEED_CREATED_AT: Instant = Instant.parse("2026-11-10T02:05:00Z")
+
+        /**
+         * D7-9: clock-relative, never a fixed date. The search result face reads the default 近 90 天
+         * window, so a pinned instant would one day fall outside it and the seeded sample would
+         * silently degrade to a face without the resulting row.
+         */
+        val SEED_TRANSFER_INSTANT: Instant = Clock.System.now() - 1.days
+
+        /** After the transfer's instant, exactly as every other confirmation time is. */
+        val SEED_CREATED_AT: Instant = SEED_TRANSFER_INSTANT + 5.minutes
     }
 }

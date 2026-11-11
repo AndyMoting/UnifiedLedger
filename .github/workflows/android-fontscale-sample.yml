@@ -12,7 +12,7 @@
 #   (`home.png` / `asset.png` / `analysis.png`); an empty ledger is exactly the state V-8 samples,
 #   so no fixture is generated.
 # - `profile=seeded`: the same APK over one prepared v36 database pushed into the app's stable
-#   storage before launch, capturing `detail.png` (the 交易详情 screen) and
+#   storage before launch, capturing `search-guide.png` / `search-results.png` (the P8-02 search surface, guide and result faces), `detail.png` (the 交易详情 screen) and
 #   `reconciliation.png` (the 账户对账 queue) — the read-only surfaces P8-01a adds.
 #
 # The artifact is the evidence a human reads: each screen's screenshot plus its accessibility dump
