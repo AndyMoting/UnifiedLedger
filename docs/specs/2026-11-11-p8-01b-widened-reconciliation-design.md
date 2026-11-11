@@ -1,6 +1,6 @@
 # P8-01b 对账写面扩面与读面统一设计（零迁移；先修两个既有缺陷）
 
-状态：draft v3（2026-11-11 开设计门；**待用户批准**，未批准前不得据本规格实施）
+状态：approved v4（2026-11-11 用户批准 D1–D5 全选 A；据本规格实施）
 
 日期：2026-11-11。前置：`P8-01a` 四批已合入（i1 `51c3c432` / i2 `f08ed5aa` / i3a `f830e08c` / i3b `aea9de00`）。
 
@@ -79,7 +79,7 @@
 
 删掉 `SqlDelightP408ReconciliationStore.kt:277-279` 的 id 比对。既有行的 `reconciliation_id` 是权威，请求携带的 id 只在**新建**时使用；回执、状态历史与审计今天已经一律用行的 id（`:287-311`、`:324`、`:332`，审计 `Ledger.sq:12104`），指纹不含 `reconciliationId`（`P408Reconciliation.kt:112-143`），重放按 `request_id` + 指纹（`:362-388`）。最小 diff 就是删这三行；**不加**额外防御断言（同一事务内同键插后读的断言恒真）。
 
-**测试反转（点名）**：`P408ReconciliationStoreTest.kt:250-280` 的契约由「拒绝」改为「既有行权威 → `Linked`」；`LedgerMigrationV20ToV36Test.kt:167-177` 保持不变。
+**测试反转（点名）**：`P408ReconciliationStoreTest.kt:250-280` 的契约由「拒绝」改为「既有行权威 → `Linked`」；`LedgerMigrationV20ToV36Test.kt:167-177` 的**断言**不变，但夹具须补一行 `catalog_account`：该测试从 v20 迁到 v36，而 `catalog_account` 自 `27.sqm` 才存在，行必须在迁移到 ≥27 之后插入，否则新谓词的复合标记内连会把种子腿判成不合格。同一原因波及 P408/P409 夹具族 10 个类（§7 残余）。
 
 ### 2.5 缺陷 B 的修法：补有效交易门
 
@@ -107,22 +107,32 @@
 
 ---
 
-## 3. 待用户批准的决定
+## 3. 决定的裁决结果（D1–D5 全选 A，2026-11-11 用户批准）
 
 **D1 职责的呈现与释义。** 现状：DB 存两个 token，审计行**原样印** storage token（`P503ReconciliationPresentation.kt:158`，其规则 KDoc 在 `:157`），i3a 的 copy 规则是「持久 token 不翻译」（`P503ReconciliationPresentation.kt:82-87`，该段是 human_decision token 的规则），测试 `P503ReconciliationPresentationTest.kt:393` 钉住 `real_account_posting`。选项：
 - **A（推荐）**：不改任何用户可见文案。两个 token 的**释义**在决定条目里写明为「付款侧/到账侧」，并登记「负债两向与非资金流分录的命名是近似」。零代码、零测试反转。
 - **B**：审计的职责一行改印中文（付款侧/到账侧），DB 不变。需要改 i3a 的 copy 规则与至少一条测试，且与同屏其他原样 token 不一致。
 - **C**：加第三 token（`liability_posting` 之类）。需要重建三张表 + 一次真 v36→v37 迁移 + 高风险评审；本规格明确不含。
 
+**裁决：A（2026-11-11 用户批准）。**
+
 **D2 修订 `D-308` 与 P8-01a 规格的三处登记。** 选项：
 - **A（推荐）**：一次修订请求包含三项——①取消 v36→v37 回填（§1.5）；②把「放宽 `selectP408PostingIntegrity`」改为「新具名查询 + 原查询冻结给修正面」（§2.6）；③把「届时对读面的统一」收窄为「队列/汇总统一、报告登记 oracle-only」（§2.8），并反转 `D-308` 第 3 条的「确认面仅转账腿」（§2.1/§2.3）。
 - **B**：仍做回填并保留原登记（需要先落 §2.4，且会把不合格腿的对账事实继续放大；同时仍要修 ②③ 两处，否则规格无法实现）。
 
+**裁决：A（2026-11-11 用户批准）。**
+
 **D3 接受「歧义增加」。** 扩面后，同账户同额同日的一条支出腿与一条转账腿会互为候选，原本唯一命中的转账腿可能变 `AMBIGUOUS`（今天 `SqlDelightP801ReconciliationCandidatesTest.kt:274-293` 钉的正是「只提议转账腿」）。这是**用户可见的回退**：从「自动唯一」变成「要求明确选择」。选项：A（推荐）接受，`AMBIGUOUS` 强制人工选择且零写入；B 只在同 kind 内匹配——入口 B 的证据没有 kind，无法在应用层按 kind 过滤，若要在 matcher 内加 kind 就改了冻结契约，不可行；C 不扩面。
+
+**裁决：A（2026-11-11 用户批准）。**
 
 **D4 扩面后的设备证据分工。** 选项：A（推荐）本片只给 JVM 证据，设备侧由 V-10 instrumented 链路承担（扩面后重跑同一用例），字号机静态屏不动；B 本片同时改种子（加一条非转账腿 + 新标记 + 新 tap 路径 + 种子回读），成本是一次 rig 改动与两档重跑。
 
+**裁决：A（2026-11-11 用户批准）。**
+
 **D5 退役与文案。** 事实修正：`LEG_NOT_TRANSFER_CONFIRMABLE`（候选门）在扩面后不可达；但文案 `RECONCILIATION_NOT_CONFIRMABLE_TEXT`（`P503ReconciliationPresentation.kt:330`）**同时是 `P408_POSTING_NOT_ELIGIBLE` 的标签**，而该码在 §2.5/V-14 下继续活着（作废腿），所以字符串**不能**随枚举一起删。选项：A（推荐）删枚举成员与其测试期望，字符串保留给 `P408_POSTING_NOT_ELIGIBLE`（文案本身准确）；B 删字符串并给 `P408_POSTING_NOT_ELIGIBLE` 换一句新文案（用户可见文案变更，需 copy 批准）；C 保留枚举成员（死代码）。
+
+**裁决：A（2026-11-11 用户批准）。**
 
 ---
 
@@ -170,4 +180,4 @@
 
 本片交付走任务分支 + PR：`Kotlin tests` / `Android compile` / `Python tests` / `Trace scan` 四门全绿后 squash 合并。设备证据见 §2.9 与 D4。
 
-**登记残余**：负债两向（消费/还款本金）与非资金流分录（期初、余额调整、储值预激活调整）的职责命名是近似；一腿一职责的唯一性仍是代码级（无 DB 约束，靠单连接 + 事务）；报告读面继续只认转账（oracle-only）；`posting(ledger_id, account_id)` 无索引，队列在真实规模下的性能未实测；v23 种子为不合格腿写入对账事实的既有偏差（D2=A 时登记，不在本片修）；写面可确认 `rg03=false` 而读面不可见（§2.7）。
+**登记残余**：负债两向（消费/还款本金）与非资金流分录（期初、余额调整、储值预激活调整）的职责命名是近似；一腿一职责的唯一性仍是代码级（无 DB 约束，靠单连接 + 事务）；报告读面继续只认转账（oracle-only）；`posting(ledger_id, account_id)` 无索引，队列在真实规模下的性能未实测；v23 种子为不合格腿写入对账事实的既有偏差（D2=A 时登记，不在本片修）；写面可确认 `rg03=false` 而读面不可见（§2.7）；写面谓词的复合标记要求 `catalog_account` 行，P408/P409 夹具族 10 个类（`P408ReconciliationStoreTest`、`P408CorrectionStoreTest`、`P408ProjectionAuthorityStoreTest`、`P408ProjectionSixKindMaterializationTest`、`P408ReconciliationCanonicalOracleTest`、`P409SingleChainMigrationTest`、`P409SiloSpineCoexistenceTest`、`P409PhaseClosureFullStateOracleTest`、`ImportSpineBankEndToEndTest`、`LedgerMigrationV20ToV36Test`）因此补了最小 catalog 种子——这是夹具落后于产品现实的修正（生产每个真实账户都有 catalog 行），断言不变；负例账户另补 `kind='EXPENSE', real_account=0` 行以免拒绝空过。
