@@ -14,6 +14,8 @@ import com.unifiedledger.application.TagMerchantFilterCondition
 import com.unifiedledger.application.TagMerchantFilterCursor
 import com.unifiedledger.application.TagMerchantFilterReadResult
 import com.unifiedledger.application.TagMerchantTagMatchMode
+import com.unifiedledger.application.escapeSearchLikeKeyword
+import com.unifiedledger.application.resolveSearchTimeWindow
 import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CategoryKind
@@ -112,16 +114,18 @@ class P802SearchReadVectorsTest {
     @Test
     fun v3KeywordMatchesTheCurrentMerchantNameAndNotTheSupersededOne() {
         withSearchFixture { _, search ->
-            // The transaction's CURRENT annotation names merchant-a, whose current name is 商家甲.
+            // The transaction's CURRENT annotation names merchant-a, whose current name is 商家甲;
+            // tx-p802-0020's CURRENT revision also names it while its revision 1 (superseded) names
+            // the renamed merchant, so only the current annotation may answer.
             val hit = success(search.query(P705Fixture.ledgerId, SearchCondition(keyword = "商家甲")))
-            assertEquals(listOf("tx-p802-0019", "tx-p802-0005"), pageIds(hit), "the merchant arm reads the current annotation")
-            assertEquals(2L, hit.totalCount)
+            assertEquals(listOf("tx-p802-0020", "tx-p802-0019", "tx-p802-0005"), pageIds(hit), "the merchant arm reads the current annotation")
+            assertEquals(3L, hit.totalCount)
 
-            // A rename only ever answers its CURRENT name (the registered consequence).
-            assertEquals(
-                listOf("tx-p802-0006"),
-                pageIds(success(search.query(P705Fixture.ledgerId, SearchCondition(keyword = "新商家名")))),
-            )
+            // A rename only ever answers its CURRENT name (the registered consequence). tx-p802-0020's
+            // superseded revision 1 names the renamed merchant; the search still must not see it.
+            val renamed = success(search.query(P705Fixture.ledgerId, SearchCondition(keyword = "新商家名")))
+            assertEquals(listOf("tx-p802-0006"), pageIds(renamed), "only the current revision's merchant matches")
+            assertEquals(1L, renamed.totalCount)
             val superseded = success(search.query(P705Fixture.ledgerId, SearchCondition(keyword = "旧商家名")))
             assertEquals(emptyList(), pageIds(superseded), "a superseded name resolves to no merchant")
             assertEquals(0L, superseded.totalCount, "no hit is an empty SUCCESS, not a failure")
@@ -193,25 +197,29 @@ class P802SearchReadVectorsTest {
                     listOf("tx-p802-0019", "tx-p802-0017"),
                     listOf("tx-p802-0019"),
                     listOf("tx-p802-0019"),
-                    listOf("tx-p802-0019", "tx-p802-0005"),
+                    listOf("tx-p802-0020", "tx-p802-0019", "tx-p802-0005"),
                 )
             conditions.forEachIndexed { index, condition ->
-                val searched =
-                    pageIds(
-                        success(
-                            search.query(
-                                P705Fixture.ledgerId,
-                                SearchCondition(
-                                    window = WIDE_WINDOW,
-                                    tagIds = condition.tagIds,
-                                    tagMatch = condition.tagMatch,
-                                    merchantFilterId = condition.merchantId,
-                                ),
+                val page =
+                    success(
+                        search.query(
+                            P705Fixture.ledgerId,
+                            SearchCondition(
+                                window = WIDE_WINDOW,
+                                tagIds = condition.tagIds,
+                                tagMatch = condition.tagMatch,
+                                merchantFilterId = condition.merchantId,
                             ),
                         ),
                     )
+                val searched = pageIds(page)
                 val filtered = filterIds(filterRead, condition)
                 assertEquals(expected[index], searched, "search result for condition #$index")
+                assertEquals(
+                    expected[index].size.toLong(),
+                    page.totalCount,
+                    "the count for condition #$index is the matched set, tag predicate included",
+                )
                 assertEquals(filtered, searched, "the search read and the P7-08 filter read must agree for condition #$index")
             }
         }
@@ -222,6 +230,9 @@ class P802SearchReadVectorsTest {
     @Test
     fun v6KeysetPagesDoNotSkipOrRepeatAndTheTotalEqualsTheExhaustiveWalk() {
         withSearchFixture { _, search ->
+            // The frozen page size, pinned: the traversal below and the V-8 scale reading both size
+            // pages by this constant, so a change must redden a test instead of resizing both sides.
+            assertEquals(50, P802_SEARCH_PAGE_SIZE, "the search page size is frozen at 50 (spec section 2.3)")
             val expected = (16 downTo 10).map(::transactionId)
             val visited = mutableListOf<String>()
             val pages = mutableListOf<SearchPage>()
@@ -268,6 +279,59 @@ class P802SearchReadVectorsTest {
                 )
             // A live read first, so the failure below is provably the closed connection.
             assertIs<SearchReadResult.Success>(adapter.readPage(P705Fixture.ledgerId, resolved, P802_SEARCH_PAGE_SIZE, null))
+
+            // The PORT itself refuses a reversed or zero-length caller window, not only the use case.
+            val reversed =
+                adapter.readPage(
+                    P705Fixture.ledgerId,
+                    resolved.copy(windowStartInclusive = AFTER_ALL, windowEndExclusive = BEFORE_ALL),
+                    P802_SEARCH_PAGE_SIZE,
+                    null,
+                )
+            assertEquals(
+                SearchFailureCode.SEARCH_INVALID_WINDOW,
+                assertIs<SearchReadResult.Failed>(reversed).failureCode,
+                "a reversed window is the caller's input, never an empty page",
+            )
+            val zeroLength =
+                adapter.readPage(
+                    P705Fixture.ledgerId,
+                    resolved.copy(windowEndExclusive = resolved.windowStartInclusive),
+                    P802_SEARCH_PAGE_SIZE,
+                    null,
+                )
+            assertEquals(
+                SearchFailureCode.SEARCH_INVALID_WINDOW,
+                assertIs<SearchReadResult.Failed>(zeroLength).failureCode,
+                "a zero-length window is the caller's input, never an empty page",
+            )
+
+            // A caller bound the projection cannot represent is the caller's input too: an invalid
+            // window, not a read failure (that stays SEARCH_UNAVAILABLE).
+            val unrepresentable =
+                adapter.readPage(
+                    P705Fixture.ledgerId,
+                    resolved.copy(windowEndExclusive = UNREPRESENTABLE),
+                    P802_SEARCH_PAGE_SIZE,
+                    null,
+                )
+            assertEquals(
+                SearchFailureCode.SEARCH_INVALID_WINDOW,
+                assertIs<SearchReadResult.Failed>(unrepresentable).failureCode,
+                "an unrepresentable window bound is refused as the caller's input",
+            )
+
+            // One version row loses its projection: a fresh read must fail loudly, never drop the row.
+            harness.driverExecute(
+                "UPDATE transaction_version SET statistics_at_epoch_nanos = NULL " +
+                    "WHERE ledger_id = '${P705Fixture.ledgerId.value}' AND transaction_id = 'tx-p802-0001'",
+            )
+            val missingProjection = adapter.readPage(P705Fixture.ledgerId, resolved, P802_SEARCH_PAGE_SIZE, null)
+            assertEquals(
+                SearchFailureCode.SEARCH_MISSING_PROJECTION,
+                assertIs<SearchReadResult.Failed>(missingProjection).failureCode,
+                "a NULL statistics projection is a typed failure, never a quiet omission",
+            )
 
             harness.closePreservingFile()
             val failed = adapter.readPage(P705Fixture.ledgerId, resolved, P802_SEARCH_PAGE_SIZE, null)
@@ -321,6 +385,30 @@ class P802SearchReadVectorsTest {
         } finally {
             harness.close()
         }
+    }
+
+    // ---------------------------------------- the frozen window resolution: CurrentMonth
+
+    @Test
+    fun currentMonthWindowResolvesTheFrozenReportingZoneOnAMonthEdge() {
+        // 2026-04-30T16:00:00Z is exactly 2026-05-01T00:00 in Asia/Shanghai (no DST): the clock sits ON
+        // the month edge, and the boundary instant belongs to the new month (R-Q06-2).
+        val bounds = resolveSearchTimeWindow(SearchTimeWindow.CurrentMonth, clock = { MONTH_EDGE })
+        assertEquals(MONTH_EDGE, bounds?.first, "the window starts at the frozen zone's local first day 00:00")
+        assertEquals(JUNE_START, bounds?.second, "the window ends at the next local first day 00:00")
+    }
+
+    // ------------------------------------------------------ F3: the backslash escape is covered
+
+    @Test
+    fun escapeSearchLikeKeywordEscapesTheBackslashBeforeTheWildcards() {
+        assertEquals("\\\\", escapeSearchLikeKeyword("\\"), "a lone backslash is doubled under ESCAPE '\\'")
+        assertEquals("a\\\\b", escapeSearchLikeKeyword("a\\b"), "an embedded backslash is doubled")
+        assertEquals(
+            "\\\\\\%",
+            escapeSearchLikeKeyword("\\%"),
+            "doubling runs first, so a literal backslash never disarms the wildcard escape",
+        )
     }
 
     // ------------------------------------------------------------------------------ fixture
@@ -475,6 +563,25 @@ class P802SearchReadVectorsTest {
                         "VALUES ('$ledger', '$transactionId', 1)",
                 )
             }
+            // V-3 revision join: tx-p802-0020's CURRENT revision names merchant-a while revision 1
+            // (superseded, unpointed) still names the renamed merchant. Only the current one answers.
+            val multiRevisionTx = transactionId(20)
+            harness.driverExecute(
+                "INSERT INTO transaction_annotation_revision(ledger_id, transaction_id, annotation_revision, " +
+                    "observed_transaction_version_id, merchant_id, request_id, created_at) VALUES " +
+                    "('$ledger', '$multiRevisionTx', 1, '$multiRevisionTx-version-1', '$MERCHANT_RENAMED', " +
+                    "'request-$multiRevisionTx-1', '2026-02-01T00:00:00Z')",
+            )
+            harness.driverExecute(
+                "INSERT INTO transaction_annotation_revision(ledger_id, transaction_id, annotation_revision, " +
+                    "observed_transaction_version_id, merchant_id, request_id, created_at) VALUES " +
+                    "('$ledger', '$multiRevisionTx', 2, '$multiRevisionTx-version-1', '$MERCHANT_A', " +
+                    "'request-$multiRevisionTx-2', '2026-02-02T00:00:00Z')",
+            )
+            harness.driverExecute(
+                "INSERT INTO transaction_annotation_current(ledger_id, transaction_id, annotation_revision) " +
+                    "VALUES ('$ledger', '$multiRevisionTx', 2)",
+            )
         }
     }
 
@@ -527,6 +634,13 @@ class P802SearchReadVectorsTest {
         fun inWindow(index: Int): Instant = IN_WINDOW_BASE + index.minutes
 
         val CLOCK_NOW: Instant = Instant.parse("2026-04-20T00:00:00Z")
+
+        /** Exactly 2026-05-01T00:00 in Asia/Shanghai: the CurrentMonth clock sits on the month edge. */
+        val MONTH_EDGE: Instant = Instant.parse("2026-04-30T16:00:00Z")
+        val JUNE_START: Instant = Instant.parse("2026-05-31T16:00:00Z")
+
+        /** Outside the projection's 64-bit nanosecond range (after 2262-04-11T23:47:15Z). */
+        val UNREPRESENTABLE: Instant = Instant.parse("9999-01-01T00:00:00Z")
         val IN_WINDOW_BASE: Instant = Instant.parse("2026-02-01T00:00:00Z")
         val BEFORE_ALL: Instant = Instant.parse("2024-01-01T00:00:00Z")
         val AFTER_ALL: Instant = Instant.parse("2028-01-01T00:00:00Z")
@@ -563,7 +677,7 @@ class P802SearchReadVectorsTest {
             )
 
         /** Every in-window index, ascending: the keyset order is this list reversed. */
-        val IN_WINDOW_INDEXES: List<Int> = (1..19).filter { it != 3 && it != 4 }
+        val IN_WINDOW_INDEXES: List<Int> = (1..20).filter { it != 3 && it != 4 }
 
         val NOTE_BY_ID: Map<String, String> =
             mapOf(
@@ -586,6 +700,7 @@ class P802SearchReadVectorsTest {
                 "tx-p802-0017" to "标签备注一",
                 "tx-p802-0018" to "标签备注二",
                 "tx-p802-0019" to "标签备注三",
+                "tx-p802-0020" to "多版本备注",
             )
 
         val ANNOTATIONS: Map<String, Annotation> =

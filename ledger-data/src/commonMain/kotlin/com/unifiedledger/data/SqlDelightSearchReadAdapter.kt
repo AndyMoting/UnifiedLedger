@@ -58,10 +58,16 @@ class SqlDelightSearchReadAdapter(
         cursor: TagMerchantFilterCursor?,
     ): SearchReadResult {
         require(pageSize > 0) { "search page size must be positive" }
-        // A window bound outside the projection's representable range cannot be read; refuse rather
-        // than silently returning an empty page (the bounded-read discipline).
-        val startNanos = StatisticsAtProjection.project(condition.windowStartInclusive) ?: return failed(SearchFailureCode.SEARCH_UNAVAILABLE)
-        val endNanos = StatisticsAtProjection.project(condition.windowEndExclusive) ?: return failed(SearchFailureCode.SEARCH_UNAVAILABLE)
+        if (condition.windowStartInclusive >= condition.windowEndExclusive) {
+            // A reversed or zero-length window cannot contain a row; refuse the caller's input typed
+            // instead of returning an empty page.
+            return failed(SearchFailureCode.SEARCH_INVALID_WINDOW)
+        }
+        // A caller window bound outside the projection's representable range is the caller's input:
+        // refuse it as SEARCH_INVALID_WINDOW, never as an empty page. Read and probe failures below
+        // stay SEARCH_UNAVAILABLE.
+        val startNanos = StatisticsAtProjection.project(condition.windowStartInclusive) ?: return failed(SearchFailureCode.SEARCH_INVALID_WINDOW)
+        val endNanos = StatisticsAtProjection.project(condition.windowEndExclusive) ?: return failed(SearchFailureCode.SEARCH_INVALID_WINDOW)
         val tags =
             condition.tagIds
                 .map { it.value }
@@ -134,16 +140,18 @@ class SqlDelightSearchReadAdapter(
                 val hasMore = raw.size > pageSize
                 val pageRows = if (hasMore) raw.dropLast(1) else raw
                 val entries = pageRows.map { (transactionId, grouped) -> searchEntryRow(transactionId, grouped) }
-                val last = entries.lastOrNull()
+                val lastPageRow = pageRows.lastOrNull()
                 SearchReadResult.Success(
                     SearchPage(
                         entries = entries,
                         hasMore = hasMore,
                         nextCursor =
-                            if (hasMore && last != null) {
+                            if (hasMore && lastPageRow != null) {
                                 TagMerchantFilterCursor(
-                                    statisticsAtNanos = requireNotNull(StatisticsAtProjection.project(last.statisticsAt)),
-                                    transactionId = last.transactionId.value,
+                                    // The queried projection column, never a re-parse of the statistics
+                                    // TEXT: the cursor keyset must be the value the page ordered by.
+                                    statisticsAtNanos = requireNotNull(lastPageRow.second.first().statistics_at_epoch_nanos),
+                                    transactionId = lastPageRow.first,
                                 )
                             } else {
                                 null

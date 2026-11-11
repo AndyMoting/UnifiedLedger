@@ -12194,9 +12194,11 @@ ORDER BY history.sequence;
 --
 -- The category arm is the registered cost (spec sections 2.2/7 "分类臂跨 7 表逐行判定"): a posting
 -- level category is only ever stored in the seven rgXX_posting_semantic tables, so the arm is one
--- seven-way scan of their union, bounded by the window and indexed nowhere. The union yields the
--- posting ids that carry a searched category, so the per-row judgement probes a bounded set instead
--- of re-scanning seven tables per transaction.
+-- seven-way scan of their union — LEDGER-WIDE and indexed nowhere: the CTE filters on `ledger_id`
+-- and the searched category ids only, so the window below bounds the page scan over
+-- transaction_version, NOT this union. The union is built only while `:category_arm = 1`, yields
+-- the posting ids that carry a searched category, and the per-row judgement then probes that set
+-- instead of re-scanning seven tables per transaction.
 --
 -- A version row whose projection is NULL can never satisfy the window predicate, so the adapter runs
 -- statisticsAtProjectionMissingForLedger first and fails loudly rather than silently dropping it

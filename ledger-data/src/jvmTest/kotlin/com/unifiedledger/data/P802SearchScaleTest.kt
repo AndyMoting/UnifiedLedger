@@ -41,7 +41,9 @@ import kotlin.time.Instant
  * Recorded (never asserted against a bound): the port's first-page duration for the fixed condition
  * group on the default 90-day window, that page's row count, the fixture build duration, and the
  * fixture's transaction count. The last one IS asserted, because it is a fact of the sample rather
- * than a reading. Device/instrumented timing stays with the i2 device leg (D-289 residual 1).
+ * than a reading. A second first-page duration is recorded for a keyword that resolves a category
+ * name, because the fixed group's keyword switches the seven-table category arm off.
+ * Device/instrumented timing stays with the i2 device leg (D-289 residual 1).
  */
 class P802SearchScaleTest {
     @Test
@@ -85,10 +87,11 @@ class P802SearchScaleTest {
                 // The fixed group is keyword AND tags AND merchant, so its matched set is the
                 // merchant manifest's (every multiple of 70 is also a multiple of 7).
                 assertEquals(merchantMatches.size.toLong(), firstPage.totalCount, "the fixed group's total is its manifest")
+                // The frozen page size as a literal, never the constant compared against itself.
                 assertEquals(
-                    minOf(P802_SEARCH_PAGE_SIZE, merchantMatches.size),
+                    50,
                     firstPage.entries.size,
-                    "the fixed group fills a whole first page",
+                    "the fixed group fills a whole first page of the frozen page size",
                 )
                 assertTrue(firstPage.hasMore, "the fixed group needs more than one page")
 
@@ -103,6 +106,19 @@ class P802SearchScaleTest {
                 // ---- category name arm: one row per semantic table
                 val categoryIds = traverse(search, SearchCondition(keyword = CATEGORY_NAME))
                 assertEquals(expectedOrder(SEMANTIC_INDEXES.values.toList()), categoryIds, "all seven semantic-table rows are reachable")
+
+                // The category-arm reading: this keyword resolves a real category name, so
+                // `categoryArm` is 1 and the seven-table union is actually paid. The first-page
+                // reading above uses the note marker, whose keyword resolves no category name, so it
+                // measures the read with that registered cost switched off. Recorded, never bounded.
+                val categoryPageStart = System.nanoTime()
+                val categoryPage = assertIs<SearchReadResult.Success>(search.query(P705Fixture.ledgerId, SearchCondition(keyword = CATEGORY_NAME))).page
+                val categoryPageNanos = System.nanoTime() - categoryPageStart
+                println(
+                    "P802-V8 category-first-page-ms=${millis(categoryPageNanos)} " +
+                        "category-first-page-rows=${categoryPage.entries.size} " +
+                        "category-first-page-total=${categoryPage.totalCount}",
+                )
 
                 // Recorded only: no timing or statement threshold is asserted (D2=A).
                 println(
