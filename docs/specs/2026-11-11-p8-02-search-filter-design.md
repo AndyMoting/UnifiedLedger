@@ -9,20 +9,20 @@
 ## 1. 起点（今日事实）
 
 **界面**
-- 首页搜索胶囊**已画、已接插槽、宿主从不传参 → 恒不渲染**：`P8HomeFlow.kt:288-307`（文案「搜索账目、金额、备注」、语义名「搜索账目」、最小 44dp）、`P503OverviewScreen.kt:82`（`onOpenSearch: (() -> Unit)? = null`）、`P503App.kt:4655-4686`（唯一调用点不传参，`:4681-4682` 自述「宁可不渲染也不给死入口」）。
+- 首页搜索胶囊**已画、已接插槽、宿主从不传参 → 恒不渲染**：`P8HomeFlow.kt:288-307`（文案「搜索账目、金额、备注」、语义名「搜索账目」、最小 44dp）、`P503OverviewScreen.kt:82`（`onOpenSearch: (() -> Unit)? = null`）、`P503App.kt:4655-4686`。`P503OverviewScreen(` 有**两处**调用点——`:4655` 正常首页、`:5742` 读失败保留面（`interactionsEnabled = false`），两处都不传 `onOpenSearch`，`:4681-4682` 自述「宁可不渲染也不给死入口」。实施批需分别判断第二处是否接线。
 - **搜索面零实现**：无屏、无 state、无 event、无应用层端口（`**/*Search*.kt` 0 文件）。
 - **筛选只有一个真接入面**：标签/商家筛选（P7-08 08.C），入口在**分析页顶部**（`P503App.kt:4751`），作用于**全账本**当前有效交易，键集 `(statistics_at_epoch_nanos DESC, transaction_id DESC)`、页 50（`P503App.kt:5496`），维度只有「标签 OR/AND + 商家单选」。
 - 首页流水无过滤（月份不筛列表）；账户流水靠 200 行/页内存过滤（`P503Reducer.kt:2011`）；导入审核列表无筛选。
 
 **读面**
 - 生产 schema **零文本检索**：唯一 `LIKE` 是 rg03 排序技巧（`Ledger.sq:2691`）；FTS/`MATCH`/虚拟表全仓 0 命中。
-- `transaction_version.note` 无索引（列在 `Ledger.sq:108`）；唯一时间索引 `transaction_version_statistics_at_range_idx`（`Ledger.sq:60-61`）。
-- 有索引的维度：时间、标签（`Ledger.sq:671`）、商家（`Ledger.sq:656`）。**无索引**：`account_id`、`amount_minor`、`occurred_at`、`note`、`category_id`。
+- `transaction_version.note` **可空且无索引**（列在 `Ledger.sq:24`，表 `:15-35`）；**交易时间列的唯一索引**是 `transaction_version_statistics_at_range_idx`（`Ledger.sq:60-61`）。
+- 有索引的维度：时间；标签（`Ledger.sq:671`，`transaction_annotation_tag`）；商家标注（`Ledger.sq:656`，落在 `transaction_annotation_revision.merchant_id` `:645`）。一笔交易的**当前**商家标注经 `transaction_annotation_current`（`:687`）取，读投影里别名成 `annotation_merchant_id`（`:11311`）。**无索引**：`account_id`、`amount_minor`、`occurred_at`、`note`、`category_id`。
 - **分类没有落在一张表上**：posting 级分类分散在 7 张 `rg*_posting_semantic`（rg03/04/05/06/07/11/12），既有跨表先例 `catalogReferencedSemanticCategoryIds`（`Ledger.sq:10328-10335`），注释 `:10326-10327` 明说这些表是 posting 级分类的唯一落点。
-- 名称不在 `catalog_category` / `catalog_merchant` 上，而在 `catalog_name_history`（`Ledger.sq:370`），当前名读取先例 `selectCatalogCurrentNamesByKind`（`Ledger.sq:10344`）。
+- 名称不在 `catalog_category` / `catalog_merchant` 上，且**两张名历史表分工不同**：分类名在 `catalog_name_history`（`Ledger.sq:370`，`owner_kind IN ('account','category')`），商家/标签名在 `catalog_item_name_history`（`Ledger.sq:590`，`owner_kind IN ('tag','merchant')`）。当前名读取的先例分别是 `selectCatalogCurrentNamesByKind`（`Ledger.sq:10344`，生产调用只传 category）与 `selectCatalogItemCurrentNamesByKind`（`Ledger.sq:11074`，调用点 `SqlDelightTagMerchantCatalogStore.kt:272`）。
 
 **性能证据的边界**
-- 现成地板全是**无条件**读数：61k 首屏 ≤0.6 s（`D-294`，无 WHERE 的 50 行）、20k 开组 2.61 s（`D-278` 登记不可比）、50k 整表冷读 31.6 s（`D-159` 未复现）。
+- 现成地板全是**搜索条件之外**的读数：61k 首屏 ≤0.6 s（`D-294`，口径是「仅账本 + 有效交易谓词」的 50 行第一页，**没有搜索条件**）、20k 开组 2.61 s（`D-278` 登记不可比）、50k 整表冷读 31.6 s（原始登记在 `D-148`，`D-159` 记录未复现）。
 - **「带条件查询 + ≥50k + 设备计时」是空格**；`D-289` 残余①自认须 instrumented 端口计时。
 - Android **单连接**：长读会阻塞主线程读（`D-148` 的 ANR 根因），搜索读的代价按「占用同一连接多久」裁。
 
@@ -42,14 +42,16 @@
 
 ### 2.2 关键词＝三臂 OR（备注 / 商家名 / 分类名）
 
-一次关键词先在**目录名历史**里解析，再落到行上：
+一次关键词先在**两张名历史表**里各自解析（两张表分工不同，见 §1），再落到行上：
 
-1. 解析：`catalog_name_history` 里按当前名做子串匹配，分别得到 `category_id` 集与 `merchant_id` 集。目录表每账本只有几十到几百行，代价可忽略。
-2. 三臂 OR：
-   - **备注**：`transaction_version.note LIKE '%q%'`（大小写不敏感、中文按 UTF-8 子串）；
-   - **商家**：该版本 `annotation_merchant_id`（`Ledger.sq:111`）命中商家 id 集；
+1. **解析分类**：`catalog_name_history` 按当前名做子串匹配 → `category_id` 集（先例 `selectCatalogCurrentNamesByKind`，`Ledger.sq:10344`）。
+2. **解析商家**：`catalog_item_name_history` 按当前名做子串匹配 → `merchant_id` 集（先例 `selectCatalogItemCurrentNamesByKind`，`Ledger.sq:11074`）。
+   两张目录表每账本只有几十到几百行，解析代价可忽略。
+3. 三臂 OR：
+   - **备注**：`transaction_version.note LIKE '%q%'`（`Ledger.sq:24`，可空；大小写不敏感、中文按 UTF-8 子串）；
+   - **商家**：该笔交易的**当前**商家标注命中商家 id 集 —— `transaction_annotation_current`（`:687`）→ `transaction_annotation_revision.merchant_id`（`:645`），索引 `:656`；
    - **分类**：该笔交易的任一分录命中分类 id 集 —— 走 7 张语义表的 UNION，先例 `catalogReferencedSemanticCategoryIds`（`Ledger.sq:10328-10335`）。
-3. 关键词为空时三臂全不生效，条件组退化为「时间窗 + 标签/商家」的纯筛选。
+4. 关键词为空时三臂全不生效，条件组退化为「时间窗 + 标签/商家」的纯筛选。
 
 **已登记的代价**：分类臂是 7 张表的 OR，逐行判定；它靠 §2.1 的时间窗兜底，且本片不加任何索引。商户/分类名依赖目录名历史的**当前名**，改名前的旧名不命中。
 
@@ -57,7 +59,7 @@
 
 - 新具名查询 `p802SearchPage`：单语句两步 CTE，`page_ids` 只取版本行（`LIMIT :page_size` 绑在 CTE 上，分页单位是**交易**不是分录），再按页批量装配分录 —— 与 `ledgerFlowPage`（`Ledger.sq:11435`）同形。
 - 排序与键集：冻结为 `(statistics_at_epoch_nanos DESC, transaction_id DESC)`，与首页/标签筛选一致；游标 `NULL` = 首页。
-- 计数：另给一条 `p802SearchCount`，只用于「共 N 笔」；**登记**：计数与首屏可能不是同一快照（沿 P7-04 分页读规格 `:64` 的既有取舍）。
+- 计数：另给一条 `p802SearchCount`，只用于「共 N 笔」；**登记**：计数与首屏可能不是同一快照（沿 P7-04 分页读规格 `:64` 的既有取舍）。该查询属规格落地形状，不是六条裁决之一。
 - 页大小：**50**，与标签筛选、导入审核一致（首页的 200 是另一条路径，不复用）。
 - 失败语义：读失败返回类型化失败，绝不呈现为「无结果」（`D-089` / R-Q06-4）。
 
@@ -80,7 +82,7 @@
 ## 3. 裁决记录（2026-11-11 用户逐条批准）
 
 - **D1＝B**：关键词 = 备注 **OR** 商家名 **OR** 分类名；金额不当关键词（用户选择「更符合直觉」的那条，代价见 §2.2）。
-- **D2＝A（首次标定）**：固定夹具 61k + 默认窗 90 天 + 固定条件组；终点记两个数（端口返回首屏页 / 首屏渲染完成）；门槛由首轮读数登记为基线、不预设数字；设备走 instrumented 端口计时（补 `D-289` 残余①），JVM 另给同夹具对照。
+- **D2＝A（首次标定）**：固定夹具 61k + 默认窗 90 天 + 固定条件组；终点记两个数（端口返回首屏页 / 首屏渲染完成）；门槛由首轮读数登记为基线、不预设数字；设备走 instrumented 端口计时（补 `D-289` 残余①），JVM 另给同夹具对照。**不沿用** `D-294` 的 61k ≤0.6 s：那条读数的口径是「仅账本 + 有效交易谓词、无搜索条件」的 50 行首屏，与本片条件组不可比。
 - **D3＝A**：独立结果面，标签/商家筛选搬入并退役分析页入口。
 - **D4＝A**：日历归 `P8-06`。
 - **D5＝A**：零迁移；首片维度 = 关键词 + 时间窗 + 标签 + 商家（分类并入关键词）。
@@ -105,14 +107,16 @@
 | --- | --- | --- |
 | V-1 | 入口可达 | 首页胶囊渲染且可点击，进入结果面；无语条件时呈现引导空态 |
 | V-2 | 关键词命中备注 | 子串命中（含中文与大小写变体）；窗内命中、窗外不命中 |
-| V-3 | 关键词命中商家名 | 目录名历史当前名命中 → 该商家的交易出现在结果里；改名后旧名不命中（登记口径） |
-| V-4 | 关键词命中分类名 | 目录分类当前名命中 → 含该分类分录的交易出现在结果里（覆盖 7 表至少两类来源） |
+| V-3 | 关键词命中商家名 | `catalog_item_name_history` 的当前名命中 → 该商家的交易出现在结果里（商家臂走 `transaction_annotation_current` → `transaction_annotation_revision.merchant_id`，不是手工请求表的 claim 列）；改名后旧名不命中（登记口径） |
+| V-4 | 关键词命中分类名 | `catalog_name_history` 的当前名命中 → 含该分类分录的交易出现在结果里；7 张语义表**各至少一条**夹具，逐表断言可命中 |
 | V-5 | 三臂 OR 与 AND 组合 | 关键词三臂互不吞并；标签 OR/AND 与商家条件按 AND 组合，与 P7-08 语义等价 |
 | V-6 | 键集分页与计数 | 逐页遍历不跳不重、末页游标为 null；「共 N 笔」与穷举一致 |
 | V-7 | 失败不呈现为空 | 端口失败 → 类型化失败文案，绝不显示「没有找到」 |
 | V-8 | 性能首次标定 | 61k 夹具 + 默认窗 + 固定条件组：instrumented 端口计时与 JVM 同夹具对照各一组读数，登记为基线（不预设门槛） |
 | V-9 | 无障碍 | 1.3× 字号下条件区与结果行不截断、不重叠；TalkBack 语义与首页行同口径 |
 | V-10 | 入口退役不丢功能 | 分析页顶部筛选入口消失后，同一筛选语义在结果面可达且结果一致 |
+| V-11 | 日历不越界 | 结果面无日历入口、无月历网格；月份行的「收支日历」胶囊仍不可达（`onOpenCalendar` 保持 `null`） |
+| V-12 | 未启用 chip 可见且不可激活 | 条件区呈现「账户」「金额区间」两个 chip，处于未启用态且不可点击（不静默隐藏） |
 
 ## 6. 范围边界
 
