@@ -264,6 +264,8 @@ jobs:
         # reading, not just a green shard. The timing case lives in exactly one
         # shard, so only that shard can require the line.
         if: github.event.inputs.instrumentation_extra_args != ''
+        env:
+          EXTRA_INSTRUMENTATION_ARGS: ${{ github.event.inputs.instrumentation_extra_args }}
         run: |
           host_shard=$(grep -F 'P802SearchDeviceTimingInstrumentedTest' tools/ci/android-instrumented-shards.txt | cut -f1)
           if [ "$host_shard" != "${{ matrix.shard }}" ]; then
@@ -271,7 +273,7 @@ jobs:
             exit 0
           fi
           if ! grep -q 'P802-V8DEV fixture=' "instrumented-evidence/shard-${{ matrix.shard }}/logcat.txt"; then
-            echo "::error::this dispatch asked for ${{ github.event.inputs.instrumentation_extra_args }} but no P802-V8DEV reading was recorded"
+            echo "::error::this dispatch asked for $EXTRA_INSTRUMENTATION_ARGS but no P802-V8DEV reading was recorded"
             exit 1
           fi
       - name: Upload shard evidence

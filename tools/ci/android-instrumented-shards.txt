@@ -11,7 +11,6 @@
 # Placement follows the case count per class (shard 1: 8/7/6/4/1 = 26 cases;
 # shard 2: 5/4/4/3/3/1/1 = 21 cases). The P8-02 V-8 timing case rides shard 2
 # and costs nothing there unless the dispatch passes ul.p802.timing=1.
-# nothing there unless the dispatch passes ul.p802.timing=1.
 
 1	com.unifiedledger.android.AndroidRestoreDocumentSizeInstrumentedTest
 1	com.unifiedledger.android.AndroidRestoreRecoveryInstrumentedTest
