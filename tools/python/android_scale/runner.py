@@ -15,7 +15,7 @@ from xml.etree import ElementTree as ET
 
 from .fixture import load_manifest, validate_manifest
 from .result import (PHASES, PACKAGE, STAGES, TEST_CLASS, TEST_METHOD, PREFLIGHT_CLASS, PREFLIGHT_METHOD, crash_markers,
-                     READY_MARKER, app_ui_state, instrumentation_pass, validate_app_ready, validate_evidence)
+                     ready_marker, app_ui_state, instrumentation_pass, validate_app_ready, validate_evidence)
 from .preflight import prepare_probe, validate_preflight
 
 RUNNER = "com.unifiedledger.android.test/androidx.test.runner.AndroidJUnitRunner"
@@ -515,7 +515,7 @@ class ScaleRunner:
                 if state == "Ready":
                     data = xml.encode("utf-8")
                     (self.evidence / "ready-ui.xml").write_bytes(data)
-                    self.report["app_ready"] = {"state": "Ready", "package": PACKAGE, "marker": READY_MARKER,
+                    self.report["app_ready"] = {"state": "Ready", "package": PACKAGE, "marker": ready_marker(xml),
                                                 "fresh_dump": True, "xml_sha256": hashlib.sha256(data).hexdigest()}
                     return
                 self.report["app_ready_last_observation"] = last

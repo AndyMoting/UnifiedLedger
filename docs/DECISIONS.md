@@ -7168,3 +7168,19 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **边界：** 零产品代码、零 schema/迁移、零依赖、零账本语义；workflow 行为零改动（只改类数注释）；单项 revert 即回退。
 
 **关联决定：** D-314（分片重排、Rg06 拆分与夹具复用否证，本条是其残余①的落实）、D-303（分片装箱与迁移大测试拆分剧本）、D-315（Android 单测腿拆分）。
+
+## D-317 Android scale preflight 就绪标记改为集合，重试不再继承夹具目录
+
+**状态：** 已批准并登记（2026-11-13）。一批 tracked 变更：`tools/python/android_scale/result.py`、`tools/python/android_scale/runner.py`、`.github/workflows/android-preflight.yml`、两个 Python 测试文件、`docs/CONTRIBUTING.md` 一处、本条。
+
+**背景：** `Android scale preflight` 从 2026-11-10 02:53 起每次 `push:main` 与每夜都红。最后一个绿轮是 `f9a17b80`（11-09 16:31），首次红是 `cfb999f2`（P8-00 首页改版 #283）。两个独立原因：①首页改版删掉了 `账本：<ledgerId>` 那行，而就绪探测只认这个前缀，于是应用永远读成未就绪、`ready-ui.xml` 永不写出，验证器报 `app Ready proof is missing`；②D-304 的重试只清 `preflight-evidence`，而 `prepare_probe` 用 `mkdir(exist_ok=False)` 建 `preflight-fixture`，第二次尝试必然 `[Errno 17] File exists`，把真原因盖住。
+
+**决定：**
+
+1. 就绪标记改为集合 `("账本为空", "流水 · 共 ", "当前交易（最近 ")`，覆盖空账本、非空流水头与流水未加载三态；探测记录实际命中的那一个，验证器要求记录值与从 XML 重新推导的值一致，夹具里的 `账本：synthetic` 一并改为空账本文案。原 `账本：` 前缀退出集合：首页已不再渲染它，留在集合里只会让别的页面被误判成 Ready。
+2. 重试清理同时删除 `preflight-fixture`，让重试真的重来。
+3. 新增守卫测试：集合里每个标记必须逐字出现在 `P503OverviewScreen.kt` 的渲染代码里（注释行不计）；首页文案再改时 `Python tests` 先红，而不是设备探针静默失效三天。
+
+**边界：** 零产品代码；探测语义（应用打开账本并渲染首页）不变，只是不再绑死一句话。零账务、schema、迁移、依赖改动。
+
+**关联决定：** D-304（重试与预算）、D-305（V-8 判 PASS 时的设备链）、D-302（设备链从 PR 外移）。

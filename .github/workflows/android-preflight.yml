@@ -136,8 +136,11 @@ jobs:
       - name: Clear the failed attempt's evidence and note the retry
         if: steps.scale-attempt-1.outcome == 'failure'
         run: |
-          rm -rf preflight-evidence
-          echo "First emulator attempt failed; its evidence was cleared and the exercise was retried once (D-304)." >> "$GITHUB_STEP_SUMMARY"
+          # `prepare_probe` creates the fixture directory with mkdir(exist_ok=False), so a retry
+          # that inherits it dies with "[Errno 17] File exists" before touching the device and
+          # hides the real cause (D-304, D-317). Clear both trees so the retry really restarts.
+          rm -rf preflight-evidence preflight-fixture
+          echo "First emulator attempt failed; its evidence and fixture were cleared and the exercise was retried once (D-304)." >> "$GITHUB_STEP_SUMMARY"
       - name: Exercise real scale setup and named instrumentation (retry)
         id: scale-attempt-2
         if: steps.scale-attempt-1.outcome == 'failure'

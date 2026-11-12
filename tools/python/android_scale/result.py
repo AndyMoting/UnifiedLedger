@@ -42,11 +42,16 @@ def strict_json(path: Path) -> dict:
 
 
 PACKAGE = "com.unifiedledger.android"
-READY_MARKER = "账本："
+# A home-tab marker that proves the ledger opened and the first frame rendered. The home
+# redesign (#283) dropped the ledger-identity line, so the set covers what the home renders
+# instead: the empty-ledger line, the non-empty flow header, and the transaction list shown
+# while the flow is still loading. Every entry is home-tab copy, so the guard test requires
+# each one in P503OverviewScreen.kt.
+READY_MARKERS = ("账本为空", "流水 · 共 ", "当前交易（最近 ")
 
 
-def app_ui_state(xml: str) -> str:
-    """Classify visible app nodes only; startup failure takes precedence."""
+def visible_app_texts(xml: str) -> list[str]:
+    """Texts and content descriptions of the visible nodes this package renders."""
     root = ET.fromstring(xml)
     if root.tag != "hierarchy" or any(node.tag != "node" for node in root.iter() if node is not root):
         raise ValueError("unknown UI hierarchy")
@@ -66,9 +71,24 @@ def app_ui_state(xml: str) -> str:
             visit(child, visible)
 
     visit(root)
+    return texts
+
+
+def ready_marker(xml: str) -> str | None:
+    """The ready marker the visible app copy starts with, or None when none matched."""
+    for text in visible_app_texts(xml):
+        for marker in READY_MARKERS:
+            if text.startswith(marker):
+                return marker
+    return None
+
+
+def app_ui_state(xml: str) -> str:
+    """Classify visible app nodes only; startup failure takes precedence."""
+    texts = visible_app_texts(xml)
     if any(text.startswith("无法打开本地账本") for text in texts):
         return "Error"
-    if any(text.startswith(READY_MARKER) for text in texts):
+    if any(text.startswith(marker) for text in texts for marker in READY_MARKERS):
         return "Ready"
     return "Starting" if "正在打开本地账本…" in texts else "Unknown"
 
@@ -88,12 +108,15 @@ def validate_app_ready(directory: Path, report: dict) -> None:
             f"Check the 'Exercise real scale setup' step's failure above. Evidence present: {present or 'none'}",
         )
     xml = ready.read_bytes()
-    expected = {"state": "Ready", "package": PACKAGE, "marker": READY_MARKER, "fresh_dump": True,
+    text = xml.decode("utf-8")
+    marker = ready_marker(text)
+    expected = {"state": "Ready", "package": PACKAGE, "marker": marker, "fresh_dump": True,
                 "xml_sha256": hashlib.sha256(xml).hexdigest()}
     proof = report.get("app_ready")
-    if not isinstance(proof, dict) or proof.get("fresh_dump") is not True or proof != expected:
+    if (not isinstance(proof, dict) or proof.get("fresh_dump") is not True
+            or proof.get("marker") not in READY_MARKERS or proof != expected):
         raise ValueError("missing/invalid app Ready proof")
-    if app_ui_state(xml.decode("utf-8")) != "Ready":
+    if app_ui_state(text) != "Ready":
         raise ValueError("app Ready XML does not prove readiness")
 
 
