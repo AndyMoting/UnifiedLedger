@@ -142,6 +142,9 @@ class DesktopCatalogMigrationTest {
                 // ... and the P7-08 08.B-1 v35 manual-create annotation columns (34.sqm), or the
                 // in-place migration's 34.sqm aborts with "duplicate column name".
                 dropP7V35ManualAnnotationColumns(driver)
+                // ... and the P8-03 v37 manual refund owner (36.sqm), or that edge aborts on the
+                // already-present table.
+                dropP8V36RefundReceipt(driver)
                 driver.execute(null, "PRAGMA user_version = 0", 0)
             }
 
@@ -281,6 +284,8 @@ class DesktopCatalogMigrationTest {
             dropP7V34TagMerchantAnnotation(driver)
             // ... and the P7-08 08.B-1 v35 manual-create annotation columns (34.sqm).
             dropP7V35ManualAnnotationColumns(driver)
+            // ... and the P8-03 v37 manual refund owner (36.sqm), for the same reason.
+            dropP8V36RefundReceipt(driver)
             driver.execute(null, "PRAGMA user_version = 27", 0)
         }
     }
@@ -404,6 +409,18 @@ class DesktopCatalogMigrationTest {
                 driver.execute(null, "ALTER TABLE $table DROP COLUMN annotation_tag_ids", 0)
                 driver.execute(null, "ALTER TABLE $table DROP COLUMN annotation_merchant_id", 0)
             }
+        }
+    }
+
+    /**
+     * P8-03 (D-312) owner of the schema v37 edge (36.sqm): the manual refund relationship table,
+     * with its capacity index and its no-update trigger. A look-alike of an older surface is built
+     * from `Schema.create` (v37) minus this object, so the in-place migration's 36.sqm does not
+     * abort on the already-present table.
+     */
+    private fun dropP8V36RefundReceipt(driver: JdbcSqliteDriver) {
+        if (driver.hasTableForMigrationTest("manual_refund_receipt")) {
+            driver.execute(null, "DROP TABLE manual_refund_receipt", 0)
         }
     }
 
