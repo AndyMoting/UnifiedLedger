@@ -12,6 +12,7 @@
 1	com.unifiedledger.data.P705TransferCorrectionSnapshotReadTest
 1	com.unifiedledger.data.P707BudgetScaleTest
 1	com.unifiedledger.data.P708TagMerchantV33ToV34MigrationTest
+1	com.unifiedledger.data.P803ManualRefundCandidateReadTest
 1	com.unifiedledger.data.Rg02FullStateOracleTest
 1	com.unifiedledger.data.Rg04RawJsonEndToEndTest
 1	com.unifiedledger.data.Rg05FullStateOracleTest
