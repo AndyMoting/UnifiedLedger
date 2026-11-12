@@ -16,7 +16,8 @@ import kotlin.time.Instant
 
 /**
  * P8-03 i2a candidate-read vectors (D-312; spec sections 2.3/2.4/5), against the real JVM SQLite
- * driver. Each test name carries its acceptance vector number from the approved spec.
+ * driver. Vector tests carry their acceptance vector number; the fallback test is the implementation
+ * reading registered in spec section 8.
  *
  * - V-13 (JVM half): a candidate set with no rows is `Loaded(emptyList(), hasMore = false)`, a failed
  *   read is `Unavailable` and is never rendered as that empty page, the `pageSize + 1` lookahead is
