@@ -18,8 +18,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-class P705TransferCorrectionGeometryTest : P705TransferCorrectionTestSupport() {
-
+internal class P705TransferCorrectionGeometryTest : P705TransferCorrectionTestSupport() {
     /**
      * T-03b (spec section 10 `:271`; plan section 5 `05.B` at `:121`): a `fee == 0` transfer
      * corrected to `fee > 0` grows from two legs to three - the new posting set covers both old

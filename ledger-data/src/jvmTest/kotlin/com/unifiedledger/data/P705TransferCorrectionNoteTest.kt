@@ -8,8 +8,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-class P705TransferCorrectionNoteTest : P705TransferCorrectionTestSupport() {
-
+internal class P705TransferCorrectionNoteTest : P705TransferCorrectionTestSupport() {
     /**
      * T-02 on its own terms (spec section 10): a two-leg transfer (fee == 0) whose note is
      * corrected keeps the posting set, adds no cash flow and carries no fee category. The

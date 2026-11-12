@@ -21,8 +21,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.time.Instant
 
-class P705TransferCorrectionInvalidationTest : P705TransferCorrectionTestSupport() {
-
+internal class P705TransferCorrectionInvalidationTest : P705TransferCorrectionTestSupport() {
     /**
      * Atomicity of the composition (D-228 J3, same-transaction requirement): a correction whose
      * CAS loses must not leave its invalidation behind. The first, note-only correction

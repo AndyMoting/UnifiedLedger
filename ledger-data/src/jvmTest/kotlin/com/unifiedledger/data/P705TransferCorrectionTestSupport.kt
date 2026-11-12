@@ -50,8 +50,7 @@ import kotlin.time.Instant
  * must compose inside the correction transaction. Transfer restore end-to-end lives in
  * `P705TransferRestorePathTest`; values are anonymous synthetic.
  */
-abstract class P705TransferCorrectionTestSupport {
-
+internal abstract class P705TransferCorrectionTestSupport {
     protected val ledgerId = P705Fixture.ledgerId
     protected val catalog: LedgerCatalog = P705Fixture.catalog()
 

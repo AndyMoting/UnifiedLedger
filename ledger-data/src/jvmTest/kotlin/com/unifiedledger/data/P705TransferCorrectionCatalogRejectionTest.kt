@@ -5,8 +5,7 @@ import com.unifiedledger.domain.Category
 import com.unifiedledger.domain.CategoryKind
 import kotlin.test.Test
 
-class P705TransferCorrectionCatalogRejectionTest : P705TransferCorrectionTestSupport() {
-
+internal class P705TransferCorrectionCatalogRejectionTest : P705TransferCorrectionTestSupport() {
     // ---- T-04 / T-05 admission negatives on the real commit port -----------------------------
 
     /**
