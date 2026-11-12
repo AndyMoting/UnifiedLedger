@@ -1,35 +1,40 @@
-# P8-00 V-8 / P8-01a i3b / P8-02 V-9 font-scale sample (manual, non-blocking, never a PR gate).
+# P8-00 V-8 / P8-01a i3b / P8-02 V-9 / P8-03 V-14 font-scale sample (manual, non-blocking, never a PR gate).
 #
 # WHAT ONE GREEN RUN PRODUCES
 # ---------------------------
 # V-8 of `docs/specs/2026-11-08-p8-00-visual-nav-baseline-design.md` section 5 asks for the
 # empty-state samples and for "1.3x font scale must not overflow"; P8-01a's
 # `docs/specs/2026-11-11-p8-01-account-reconciliation-design.md` section 6 additionally requires a
-# pre-merge device read of the detail screen and the queue copy. Both legs run here at the
+# pre-merge device read of the detail screen and the queue copy. All legs run here at the
 # requested `system font_scale`:
 #
 # - `profile=empty` (default): the three empty-ledger screens on a **fresh empty install**
 #   (`home.png` / `asset.png` / `analysis.png`); an empty ledger is exactly the state V-8 samples,
 #   so no fixture is generated.
-# - `profile=seeded`: the same APK over one prepared v36 database pushed into the app's stable
+# - `profile=seeded`: the same APK over one prepared v37 database pushed into the app's stable
 #   storage before launch, capturing `search-guide.png` / `search-results.png` (the P8-02 search surface, guide and result faces), `detail.png` (the 交易详情 screen) and
 #   `reconciliation.png` (the 账户对账 queue) — the read-only surfaces P8-01a adds; the two search faces are P8-02 V-9.
+# - `profile=refund` (P8-03 V-14): the same seeded database, whose confirmed manual expense is the
+#   selectable original, capturing `refund-entry.png` (the refund type selected and the candidate
+#   read landed) and `refund-confirmation.png` (original, arrival account, amount and occurred-at
+#   filled, then 继续, at 1.3x) — the human read V-14 asks for.
 #
 # The artifact is the evidence a human reads: each screen's screenshot plus its accessibility dump
 # at that scale. The `gate` step re-derives only what is mechanically decidable — the scale took
 # effect, the recorded profile matches the one asked for, every screenshot is a real image, each
-# screen's marker text is still in the accessibility tree (a clipped row loses its text node; an
-# overflowing one pushes it out of the window), no string the previous screen renders is still
-# visible (a navigation that did not land is not evidence), and the seed digest host.json records
-# is the seed file's own (a gate can never be re-derived over a different database). "No visual
-# overflow" stays a human judgement on the artifact.
+# screen's marker text is still in the accessibility tree (a row removed from the composition loses
+# its text node; a scrollable screen's off-screen children stay in the tree, so marker presence is
+# NOT a viewport-containment claim), no string the previous screen renders is still present (a
+# navigation that did not land is not evidence), and the seed digest host.json records is the seed
+# file's own (a gate can never be re-derived over a different database). "No visual overflow"
+# stays a human judgement on the artifact.
 #
 # WHY CLOUD
 # ---------
 # The development host's adb surface belongs to the user's own emulator (D-281), so this chain
 # never boots a local emulator: `tools/ci/android-fontscale.py` refuses to run outside a
 # GitHub-hosted Linux runner, and the first steps below bind the run to one exact commit so the
-# APK it installs is the tree it claims. The seeded profile's database is produced by the same
+# APK it installs is the tree it claims. The seeded profiles' database is produced by the same
 # checkout, before the emulator session, through `:ledger-data:jvmTest` (the seed writer test).
 name: Android font-scale sample
 
@@ -41,13 +46,14 @@ on:
         required: true
         type: string
       profile:
-        description: 'empty = the three empty-ledger screens; seeded = 搜索引导 + 搜索结果 + 交易详情 + 账户对账（4 屏）'
+        description: 'empty = 三个空账本屏；seeded = 搜索引导 + 搜索结果 + 交易详情 + 账户对账（4 屏）；refund = 退款到账入口 + 确认页（2 屏）'
         required: false
         default: 'empty'
         type: choice
         options:
           - empty
           - seeded
+          - refund
       font_scale:
         description: Font scale to apply (V-8 asks for 1.3)
         required: false
@@ -99,8 +105,8 @@ jobs:
           set -euo pipefail
           mkdir -p fontscale-evidence
           sha256sum android-app/build/outputs/apk/debug/android-app-debug.apk | tee fontscale-evidence/host-apk.txt
-      - name: Write the seeded ledger database (seeded profile only)
-        if: github.event.inputs.profile == 'seeded'
+      - name: Write the seeded ledger database (seeded and refund profiles only)
+        if: inputs.profile == 'seeded' || inputs.profile == 'refund'
         # The writer is a jvmTest no-op unless this property names its output; the build script
         # forwards the property to the test JVM (Gradle does not pass -D through by itself).
         run: |

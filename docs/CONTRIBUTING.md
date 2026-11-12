@@ -134,18 +134,19 @@ gh workflow run android-b6-card.yml --ref <branch> -f expected_sha=<完整40位S
 
 **已知边界**：本门不覆盖 `P704GP-D-SCALE-01`（小组不回归需要另一份夹具与另一轮运行），也不对任何未画在屏幕上的层作结论。开发机不再为该门启动模拟器——本机 adb 面归用户的 MuMu 使用，云端托管 runner 是唯一执行环境（显式本地诊断通道不适用于本门）。
 
-### Android font-scale sample（P8-00 V-8 / P8-01a i3b / P8-02 V-9）
+### Android font-scale sample（P8-00 V-8 / P8-01a i3b / P8-02 V-9 / P8-03 V-14）
 
-`.github/workflows/android-fontscale-sample.yml` 是**手动触发、非阻塞**的设备读数入口：只提供 `workflow_dispatch`，必填 `expected_sha`（完整 40 位 SHA，必须等于 checkout 的 HEAD），可选 `profile`（`empty` 默认 / `seeded`）与 `font_scale`（默认 `1.3`）；不加入 required checks，不设定时触发。
+`.github/workflows/android-fontscale-sample.yml` 是**手动触发、非阻塞**的设备读数入口：只提供 `workflow_dispatch`，必填 `expected_sha`（完整 40 位 SHA，必须等于 checkout 的 HEAD），可选 `profile`（`empty` 默认 / `seeded` / `refund`）与 `font_scale`（默认 `1.3`）；不加入 required checks，不设定时触发。
 
 触发命令（仅在该提交已落到目标分支后）：
 
 ```bash
 gh workflow run android-fontscale-sample.yml --ref <branch> -f expected_sha=<完整40位SHA> -f profile=empty
 gh workflow run android-fontscale-sample.yml --ref <branch> -f expected_sha=<完整40位SHA> -f profile=seeded
+gh workflow run android-fontscale-sample.yml --ref <branch> -f expected_sha=<完整40位SHA> -f profile=refund
 ```
 
-`profile=empty` 在全新空安装上产出 `home.png` / `asset.png` / `analysis.png`；`profile=seeded` 先在模拟器会话之外以 `:ledger-data:jvmTest --tests 'com.unifiedledger.data.P801FontscaleSeedWriterTest' -Dul.fontscale.seed=<path>` 生成 v36 种子库，再产出 `search-guide.png` / `search-results.png`（搜索面的引导态与结果态，P8-02 V-9）、`detail.png`（交易详情）与 `reconciliation.png`（账户对账队列）。两档各带自己的 uiautomator dump 与 `host.json`；`gate` 用同一个 `--profile`（`seeded` 档另带 `--seed`）重算判据：profile、屏幕集合、屏幕成功态标记（含上一屏字符串缺席）或种子 sha256 与实际文件不一致即红。工件 `fontscale-sample-<sha>-<profile>` 保留 30 天。
+`profile=empty` 在全新空安装上产出 `home.png` / `asset.png` / `analysis.png`；`profile=seeded` 与 `profile=refund` 先在模拟器会话之外以 `:ledger-data:jvmTest --tests 'com.unifiedledger.data.P801FontscaleSeedWriterTest' -Dul.fontscale.seed=<path>` 生成 v37 种子库（含一笔可退的已确认手工支出），`seeded` 再产出 `search-guide.png` / `search-results.png`（搜索面的引导态与结果态，P8-02 V-9）、`detail.png`（交易详情）与 `reconciliation.png`（账户对账队列），`refund` 产出 `refund-entry.png`（退款类型选中且候选读落地）与 `refund-confirmation.png`（原交易/到账账户/金额/发生时间填写后点继续的确认页，P8-03 V-14）。三档各带自己的 uiautomator dump 与 `host.json`；`gate` 用同一个 `--profile`（`--seed` 对所有档都传，`empty` 档忽略）重算判据：profile、屏幕集合、屏幕成功态标记（含上一屏字符串缺席）或种子 sha256 与实际文件不一致即红。工件 `fontscale-sample-<sha>-<profile>` 保留 30 天。
 
 ### 本地诊断通道（D-216，仅诊断，不是验收）
 
