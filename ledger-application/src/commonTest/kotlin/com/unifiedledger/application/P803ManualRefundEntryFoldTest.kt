@@ -52,9 +52,10 @@ class P803ManualRefundEntryFoldTest {
 
     @Test
     fun aRefundRejectionKeepsItsOwnEightCodeResultInsideTheUnion() {
-        val commitPort = P803FixedRefundCommitPort(
-            ManualRefundReceiptCommitResult.Rejected(ManualRefundRejectionCode.REFUND_EXCEEDS_REMAINING),
-        )
+        val commitPort =
+            P803FixedRefundCommitPort(
+                ManualRefundReceiptCommitResult.Rejected(ManualRefundRejectionCode.REFUND_EXCEEDS_REMAINING),
+            )
 
         val result = p803EntrySubmission(refund = p803RefundDelegate(commitPort)).submit(ManualEntrySaveInput.RefundReceipt(request))
 
