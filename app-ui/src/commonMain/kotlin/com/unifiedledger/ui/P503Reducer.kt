@@ -3795,10 +3795,10 @@ class P503ReducerImpl(
                     // for a refund. An unresolved candidate falls back to the draft id values.
                     val refundOriginal =
                         (state.draft as? RefundReceiptDraft)?.originalTransactionId?.let { originalId ->
-                        (state.refundCandidates as? ManualRefundCandidatesResult.Loaded)
-                            ?.candidates
-                            ?.firstOrNull { it.transactionId == originalId }
-                    }
+                            (state.refundCandidates as? ManualRefundCandidatesResult.Loaded)
+                                ?.candidates
+                                ?.firstOrNull { it.transactionId == originalId }
+                        }
                     P503AppState.AwaitingConfirmation(
                         refundCandidates = state.refundCandidates,
                         draft = state.draft,

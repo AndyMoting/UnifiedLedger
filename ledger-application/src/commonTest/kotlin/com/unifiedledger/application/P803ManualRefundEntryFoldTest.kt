@@ -67,6 +67,22 @@ class P803ManualRefundEntryFoldTest {
     }
 
     @Test
+    fun anUncertainCommitAnswerStaysUnknownNeverADefiniteRejection() {
+        // Spec section 2.6: the commit port's Unavailable answer says the relationship row does not
+        // answer the attempt AND its own re-read failed — "not a proof of rollback". The use case
+        // must land the typed UNKNOWN, never a definite rejection that invites a fresh-request-id
+        // retry (a second refund). A retry reuses the request id and goes through the resolver.
+        val commitPort = P803FixedRefundCommitPort(ManualRefundReceiptCommitResult.Unavailable)
+
+        val result = p803EntrySubmission(refund = p803RefundDelegate(commitPort)).submit(ManualEntrySaveInput.RefundReceipt(request))
+
+        assertEquals(
+            ManualEntrySubmissionResult.RefundReceipt(ManualRefundReceiptSubmissionResult.UnknownCommit),
+            result,
+        )
+    }
+
+    @Test
     fun theRefundSaveInputCarriesItsOwnIdentityAndAnEmptyNote() {
         val input = ManualEntrySaveInput.RefundReceipt(request)
         assertEquals(LedgerId("ledger-a"), input.ledgerId)

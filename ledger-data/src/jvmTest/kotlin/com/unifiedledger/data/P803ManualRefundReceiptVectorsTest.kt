@@ -199,6 +199,16 @@ class P803ManualRefundReceiptVectorsTest {
                         harness.useCase.submit(request(amountMinor = 3_000L, requestId = "request-conflict")),
                     )
                 },
+                // The catalog authority is gone, so the store cannot decide the request BEFORE any
+                // write: that is the definite typed store-unavailable rejection, not an uncertain
+                // write (the uncertain path is the commit-port Unavailable answer, covered by the
+                // application-layer fold test).
+                RejectionCase(
+                    ManualRefundRejectionCode.REFUND_STORE_UNAVAILABLE,
+                    request(amountMinor = 3_000L, requestId = "request-store-unavailable"),
+                ) { harness ->
+                    execute(harness.driver, "DELETE FROM catalog_version WHERE ledger_id = '$LEDGER'")
+                },
             )
 
         for (case in cases) {
@@ -209,20 +219,6 @@ class P803ManualRefundReceiptVectorsTest {
                 assertEquals(case.expected, rejectionOf(harness.useCase.submit(case.request)), "rejection code")
                 assertEquals(before, countsOf(harness), "rejection ${case.expected} wrote rows")
             }
-        }
-
-        // Spec section 2.6: when the catalog authority is gone the store fails and its relationship
-        // row does not answer the attempt (its own read-back fails too). That is an UNCERTAIN write,
-        // not a definite rejection (the commit port's KDoc: "not a proof of rollback"), so the use
-        // case answers the typed UNKNOWN and writes nothing. A retry must reuse the request id.
-        P803DatabaseHarness.inMemory().use { harness ->
-            seedRefundWorld(harness.driver)
-            execute(harness.driver, "DELETE FROM catalog_version WHERE ledger_id = '$LEDGER'")
-            val before = countsOf(harness)
-            assertIs<ManualRefundReceiptSubmissionResult.UnknownCommit>(
-                harness.useCase.submit(request(amountMinor = 3_000L, requestId = "request-store-unavailable")),
-            )
-            assertEquals(before, countsOf(harness), "an uncertain refund wrote rows")
         }
     }
 
