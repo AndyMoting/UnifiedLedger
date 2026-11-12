@@ -447,9 +447,10 @@ class Profiles(unittest.TestCase):
             [screen.stem for screen in profile.screens],
         )
         # The entry's marker is the seed expense's secondary category name, which only the loaded
-        # candidate row renders; the confirmation's marker is its own title.
+        # candidate row renders; the confirmation's marker is the same category, which only a
+        # resolved candidate renders in its inherited-category row.
         self.assertEqual(
-            ["早餐", "确认退款到账"],
+            ["早餐", "早餐"],
             [screen.marker for screen in profile.screens],
         )
         self.assertEqual((TapStep("新增支出"), RadioStep("退款到账")), profile.screens[0].steps)
@@ -458,6 +459,9 @@ class Profiles(unittest.TestCase):
                 RadioStep("早餐", contains=True),
                 RadioStep("退款样本账户", contains=True),
                 InputTextStep("退款金额", "3.00"),
+                DISMISS_IME,
+                ScrollStep("发生时间", 6),
+                InputTextStep("发生时间", "2026-11-12T08:00:00Z"),
                 DISMISS_IME,
                 ScrollStep("继续", 6),
                 TapStep("继续"),

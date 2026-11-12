@@ -28,8 +28,11 @@ WHAT IT DOES AND DOES NOT CLAIM
 The screenshot is the evidence a human reads; the gate re-checks only what is mechanically
 decidable: the font scale actually took effect, every screenshot is a real image rather than a
 blank frame, and each screen's marker text is present in the accessibility tree at that scale (a
-clipped row loses its text node, an overflowing one pushes it out of the window) while the strings
-its previous screen renders are gone (a capture whose navigation did not land is not evidence).
+row removed from the composition loses its text node) while the strings its previous screen renders
+are gone (a capture whose navigation did not land is not evidence). A scrollable screen is NOT
+judged for viewport containment here: its off-screen children stay in the tree, so "the marker is
+present" never proves "the marker is visible"; the seeded screen's own dump and the artifact read
+cover that half.
 "No visual overflow" is still a human judgement on the artifact — this rig makes that judgement
 cheap, it does not replace it.
 """
@@ -92,10 +95,14 @@ SEEDED_REFUND_ACCOUNT = "退款样本账户"
 SEEDED_REFUND_CATEGORY = "早餐"
 REFUND_AMOUNT_FIELD = "退款金额"
 REFUND_AMOUNT_TEXT = "3.00"
+# The refund draft starts with no occurred-at (the home FAB opens an empty draft and the type
+# switch only carries that null), and the Continue gate requires it, so the leg must type one.
+# The ISO-8601 instant form is one of the frozen accepted formats and needs no wall-clock math.
+REFUND_OCCURRED_AT_FIELD = "发生时间"
+REFUND_OCCURRED_AT_TEXT = "2026-11-12T08:00:00Z"
 # The entry form's and the confirmation page's own titles. The confirmation's negative marker is
 # the entry title, so a 继续 that did not leave the form is not evidence.
 REFUND_ENTRY_TITLE = "新增退款到账"
-REFUND_CONFIRMATION_TITLE = "确认退款到账"
 
 # Capture markers that only a SUCCESSFUL read renders. A screen title is not one: the detail's
 # 交易详情 is also in the 无法读取交易详情 failure copy, and the queue's 账户对账 is also the
@@ -577,10 +584,12 @@ SEEDED_SCREENS: tuple[Screen, ...] = (
 # P8-03 i2c (V-14) refund leg: the same seeded ledger, whose confirmed 12.34 manual expense is the
 # selectable original. The entry screen's candidate row is the ONLY place 早餐 renders once the
 # refund draft is active (a refund has no category selector), so the marker proves the candidate
-# read landed rather than a leftover form. The confirmation leg fills the three refund choices the
-# entry rendered (original, arrival account, amount), collapses the keyboard, scrolls the continue
-# button into view and taps it. Its marker is the confirmation page's own title and its negative
-# marker is the entry title, so a 继续 that never left the form is not evidence.
+# read landed rather than a leftover form. The confirmation leg fills the four refund fields the
+# entry rendered (original, arrival account, amount, occurred-at — the draft starts with no
+# occurred-at, and the Continue gate requires it), collapses the keyboard between text entries,
+# scrolls the continue button into view and taps it. Its marker is the inherited category (only a
+# resolved candidate renders it there) and its negative marker is the entry title, so a 继续 that
+# never left the form, or a confirmation whose original never resolved, is not evidence.
 REFUND_SCREENS: tuple[Screen, ...] = (
     Screen(
         "refund-entry",
@@ -597,10 +606,13 @@ REFUND_SCREENS: tuple[Screen, ...] = (
             tap_radio_for(SEEDED_REFUND_ACCOUNT, contains=True),
             input_text(REFUND_AMOUNT_FIELD, REFUND_AMOUNT_TEXT),
             dismiss_ime(),
+            scroll_until(REFUND_OCCURRED_AT_FIELD),
+            input_text(REFUND_OCCURRED_AT_FIELD, REFUND_OCCURRED_AT_TEXT),
+            dismiss_ime(),
             scroll_until("继续"),
             TapStep("继续"),
         ),
-        REFUND_CONFIRMATION_TITLE,
+        SEEDED_REFUND_CATEGORY,
         absent=(REFUND_ENTRY_TITLE,),
     ),
 )

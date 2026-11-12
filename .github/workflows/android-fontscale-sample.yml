@@ -16,17 +16,18 @@
 #   `reconciliation.png` (the 账户对账 queue) — the read-only surfaces P8-01a adds; the two search faces are P8-02 V-9.
 # - `profile=refund` (P8-03 V-14): the same seeded database, whose confirmed manual expense is the
 #   selectable original, capturing `refund-entry.png` (the refund type selected and the candidate
-#   read landed) and `refund-confirmation.png` (original, arrival account and amount filled, then
-#   继续, at 1.3x) — the human read V-14 asks for.
+#   read landed) and `refund-confirmation.png` (original, arrival account, amount and occurred-at
+#   filled, then 继续, at 1.3x) — the human read V-14 asks for.
 #
 # The artifact is the evidence a human reads: each screen's screenshot plus its accessibility dump
 # at that scale. The `gate` step re-derives only what is mechanically decidable — the scale took
 # effect, the recorded profile matches the one asked for, every screenshot is a real image, each
-# screen's marker text is still in the accessibility tree (a clipped row loses its text node; an
-# overflowing one pushes it out of the window), no string the previous screen renders is still
-# visible (a navigation that did not land is not evidence), and the seed digest host.json records
-# is the seed file's own (a gate can never be re-derived over a different database). "No visual
-# overflow" stays a human judgement on the artifact.
+# screen's marker text is still in the accessibility tree (a row removed from the composition loses
+# its text node; a scrollable screen's off-screen children stay in the tree, so marker presence is
+# NOT a viewport-containment claim), no string the previous screen renders is still present (a
+# navigation that did not land is not evidence), and the seed digest host.json records is the seed
+# file's own (a gate can never be re-derived over a different database). "No visual overflow"
+# stays a human judgement on the artifact.
 #
 # WHY CLOUD
 # ---------
