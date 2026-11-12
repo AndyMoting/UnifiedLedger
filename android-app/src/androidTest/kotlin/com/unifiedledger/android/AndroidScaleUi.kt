@@ -15,6 +15,9 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import java.util.ArrayDeque
 
+/** The drawer row wait: the 导入账单 row composes only while the drawer is open, so this covers its entrance. */
+private const val DRAWER_ROW_TIMEOUT_MS = 30_000L
+
 /** Fresh semantic nodes only; gesture geometry comes from the current scroll container. */
 internal class AndroidScaleUi(
     private val instrumentation: Instrumentation,
@@ -353,6 +356,26 @@ internal class AndroidScaleUi(
         await { has(text, prefix) }
         val node = findNode { candidate -> matches(candidate, text, prefix) } ?: error("clickable target absent: $text")
         clickNode(node)
+    }
+
+    /**
+     * Navigates to the import review screen through the product's own navigation
+     * drawer -- the only in-app route since P8-00 (D-301) removed the bottom
+     * navigation bar's import tab. The menu button is matched by its
+     * contentDescription (the top bar's icon carries no text) and the drawer's
+     * 导入账单 row by its exact text, which composes only while the drawer is
+     * open, so the row await covers the drawer's entrance. `clickUntil` could
+     * not express this two-step path: its one-click contract has no second
+     * label to wait for, and the menu button's contentDescription does not
+     * match its own effect.
+     */
+    fun openImportViaDrawer() {
+        await { has("打开菜单") }
+        val menu = findNode { candidate -> matches(candidate, "打开菜单", false) } ?: error("drawer menu button absent: 打开菜单")
+        clickNode(menu)
+        await(DRAWER_ROW_TIMEOUT_MS) { has("导入账单") }
+        val row = findNode { candidate -> matches(candidate, "导入账单", false) } ?: error("drawer import row absent: 导入账单")
+        clickNode(row)
     }
 
     /**
