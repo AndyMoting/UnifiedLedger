@@ -15,7 +15,10 @@ sample; the device legs run here against a hosted AVD at the requested `system f
   app's stable storage before launch, so the search guide face, the search result face, the
   read-only 交易详情 screen and the 账户对账 queue are sampled on a ledger that actually holds one
   transfer. The seeded instant is clock-relative (D7-9), so the database bytes — and the recorded
-  seed sha256 — differ per dispatch; the database itself is never uploaded.
+  seed sha256 — differ per dispatch; the database itself is never uploaded;
+- `profile=refund` (the P8-03 V-14 leg): the same seeded database, whose confirmed manual expense
+  is the selectable original, drives the refund-receipt entry (type radio + candidate read) and
+  its confirmation page at the requested scale.
 
 This rig is NOT a PR gate and never runs on a pull request: dispatch it against a commit that is
 already on a branch, and read the artifact.
@@ -79,6 +82,21 @@ SEEDED_ACCOUNT_NAME = "对账样本账户"
 SEEDED_TRANSFER_NOTE = "对账样本转账"
 RECONCILIATION_TITLE = "账户对账"
 
+# P8-03 i2c (V-14): the seed now also holds one confirmed manual expense (12.34, paid from a third
+# owned asset account, booked into the DEFAULT catalog leaf 早餐) so the refund entry has a
+# selectable original. The candidate row's category name is that leaf's CURRENT name and the
+# arrival account is the seeded third asset account; both literals are owned by the seed writer,
+# so a drift shows up as a missing tap target or marker, never as a silently empty sample. The
+# amount field label and the typed amount are the entry form's own strings.
+SEEDED_REFUND_ACCOUNT = "退款样本账户"
+SEEDED_REFUND_CATEGORY = "早餐"
+REFUND_AMOUNT_FIELD = "退款金额"
+REFUND_AMOUNT_TEXT = "3.00"
+# The entry form's and the confirmation page's own titles. The confirmation's negative marker is
+# the entry title, so a 继续 that did not leave the form is not evidence.
+REFUND_ENTRY_TITLE = "新增退款到账"
+REFUND_CONFIRMATION_TITLE = "确认退款到账"
+
 # Capture markers that only a SUCCESSFUL read renders. A screen title is not one: the detail's
 # 交易详情 is also in the 无法读取交易详情 failure copy, and the queue's 账户对账 is also the
 # account-flow header button that opens it (so that wait could be satisfied on the previous screen).
@@ -100,12 +118,13 @@ ACCOUNT_FLOW_HEADER = "账户流水"
 #   `!readIssued` branch), so it cannot be satisfied by the home screen the capsule leaves;
 # - the result header is `搜索结果 · 共 N 笔`, and the empty-result face's copy (没有找到匹配的交易。)
 #   shares none of it, so a failed read cannot pass as a result list.
-# Neither marker is a count form (…… · N 笔, 共 1 笔): those already ride the seeded home screen.
+# Neither marker is a count form (…… · N 笔, 共 N 笔): those already ride the seeded home screen.
 SEARCH_GUIDE_MARKER = "输入条件后开始搜索"
 SEARCH_RESULTS_MARKER = "搜索结果 ·"
-# The seeded home's count header. It is the launch marker AND the string the search screens must not
-# show, so "the capsule tap left the home tab" is one literal with one source.
-SEEDED_HOME_COUNT = "流水 · 共 1 笔"
+# The seeded home's count header. It is the launch marker AND the string the search and refund
+# screens must not show, so "the captured screen left the home tab" is one literal with one source.
+# The seeded ledger holds the transfer and the refund-leg manual expense, hence 2.
+SEEDED_HOME_COUNT = "流水 · 共 2 笔"
 
 MIN_SCREENSHOT_BYTES = 20_000
 DEFAULT_TIMEOUT = 60
@@ -115,13 +134,209 @@ class SampleError(RuntimeError):
     """A precondition or observation failed; the run must not be read as evidence."""
 
 
-def screen_center(bounds: str) -> tuple[int, int]:
-    """Centre of a `[x1,y1][x2,y2]` uiautomator bounds attribute."""
+def parse_bounds(bounds: str) -> tuple[int, int, int, int]:
+    """The `[x1,y1][x2,y2]` corners of one uiautomator bounds attribute."""
     match = re.fullmatch(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", bounds.strip())
     if match is None:
         raise SampleError(f"unparsable bounds: {bounds!r}")
     x1, y1, x2, y2 = (int(value) for value in match.groups())
+    return x1, y1, x2, y2
+
+
+def screen_center(bounds: str) -> tuple[int, int]:
+    """Centre of a `[x1,y1][x2,y2]` uiautomator bounds attribute."""
+    x1, y1, x2, y2 = parse_bounds(bounds)
     return ((x1 + x2) // 2, (y1 + y2) // 2)
+
+
+def _nodes(xml_text: str) -> list[ET.Element]:
+    """Every `node` of an accessibility dump, in document order."""
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as error:
+        raise SampleError(f"unparsable accessibility dump: {error}") from error
+    return list(root.iter("node"))
+
+
+def _matches(node: ET.Element, label: str, contains: bool) -> bool:
+    return any(
+        (label in value) if contains else (value == label)
+        for value in (node.get("text") or "", node.get("content-desc") or "")
+    )
+
+
+def _rect(node: ET.Element) -> tuple[int, int, int, int]:
+    return parse_bounds(node.get("bounds") or "")
+
+
+def _vertical_overlap(left: tuple[int, int, int, int], right: tuple[int, int, int, int]) -> bool:
+    return left[1] < right[3] and right[1] < left[3]
+
+
+def _vertical_gap(left: tuple[int, int, int, int], right: tuple[int, int, int, int]) -> int:
+    """Zero when the two rects share a row band, else the distance between the facing edges."""
+    if _vertical_overlap(left, right):
+        return 0
+    return min(abs(left[1] - right[3]), abs(right[1] - left[3]))
+
+
+def _is_clickable_radio(node: ET.Element) -> bool:
+    return node.get("clickable") == "true" and (
+        node.get("checkable") == "true" or (node.get("class") or "").endswith("RadioButton")
+    )
+
+
+def find_radio_center(xml_text: str, label: str, contains: bool = False) -> tuple[int, int]:
+    """Centre of the radio that owns the option row labelled `label`.
+
+    A Compose option row is a clickable RadioButton plus a sibling Text, i.e. two separate
+    semantics nodes, so the label alone does not address the hit target. The radio is the nearest
+    clickable node to the LEFT of the label in the same vertical band: nearest rather than first,
+    because every option of the six-way type row shares one band and only the radio immediately
+    left of a label belongs to it. Two label nodes resolving to different radios, a tie for
+    nearest, or no clickable node at all is an ambiguity — never a guess.
+    """
+    if not label:
+        raise SampleError("an empty radio label would match every row")
+    nodes = _nodes(xml_text)
+    radios: list[tuple[int, int]] = []
+    for node in nodes:
+        if not _matches(node, label, contains):
+            continue
+        node_rect = _rect(node)
+        if _is_clickable_radio(node):
+            radios.append(screen_center(node.get("bounds") or ""))
+            continue
+        clickables = [
+            other
+            for other in nodes
+            if other is not node
+            and other.get("clickable") == "true"
+            and _vertical_overlap(node_rect, _rect(other))
+            and screen_center(other.get("bounds") or "")[0] < (node_rect[0] + node_rect[2]) // 2
+        ]
+        if not clickables:
+            raise SampleError(f"radio label {label!r} has no clickable node to its left in its row")
+        nearest_right = max(_rect(other)[2] for other in clickables)
+        nearest = [other for other in clickables if _rect(other)[2] == nearest_right]
+        if len(nearest) > 1:
+            raise SampleError(
+                f"radio label {label!r} is ambiguous: {len(nearest)} clickables end at x={nearest_right}"
+            )
+        radios.append(screen_center(nearest[0].get("bounds") or ""))
+    distinct = list(dict.fromkeys(radios))
+    if not distinct:
+        raise SampleError(f"radio label {label!r} is not in the accessibility tree")
+    if len(distinct) > 1:
+        raise SampleError(f"radio label {label!r} matches {len(distinct)} different option rows")
+    return distinct[0]
+
+
+def find_field_center(xml_text: str, field_label: str) -> tuple[int, int]:
+    """Centre of the editable field that belongs to `field_label`.
+
+    Compose renders an OutlinedTextField's label as its own text node while the editable area is an
+    `android.widget.EditText` node, so the label alone does not address the caret. The field is the
+    EditText nearest to any node carrying the label — nearest rather than first, because the
+    supporting text under the same field also carries the label ("退款金额不超过…") and the form
+    holds other text fields (occurred-at, amount expression). A label with no EditText at all fails
+    loudly: that screen has no writable field.
+    """
+    if not field_label:
+        raise SampleError("an empty field label cannot address a text field")
+    nodes = _nodes(xml_text)
+    labels = [node for node in nodes if _matches(node, field_label, contains=True)]
+    if not labels:
+        raise SampleError(f"text field label {field_label!r} is not in the accessibility tree")
+    for node in labels:
+        if (node.get("class") or "").endswith("EditText"):
+            return screen_center(node.get("bounds") or "")
+    fields = [node for node in nodes if (node.get("class") or "").endswith("EditText")]
+    if not fields:
+        raise SampleError(f"text field label {field_label!r} has no EditText node to focus")
+    scored: list[tuple[int, int, int, tuple[int, int]]] = []
+    for index, field in enumerate(fields):
+        field_rect = _rect(field)
+        for label in labels:
+            label_rect = _rect(label)
+            scored.append(
+                (
+                    _vertical_gap(label_rect, field_rect),
+                    abs((label_rect[0] + label_rect[2]) // 2 - (field_rect[0] + field_rect[2]) // 2),
+                    index,
+                    screen_center(field.get("bounds") or ""),
+                )
+            )
+    return min(scored)[3]
+
+
+# `adb shell input text` sends its argument through the device shell and cannot type non-ASCII (an
+# NPE inside InputShellCommand.sendText). A literal space would end the argument, so it is `%s`;
+# every shell metacharacter is backslash-escaped for the remote shell.
+_ADB_TEXT_SHELL_CHARACTERS = frozenset("\\\"'`$&<>|;()*?~#!{}[]^")
+
+
+def adb_input_text(text: str) -> str:
+    """The exact `input text` argument for `text` (ASCII only, shell-escaped)."""
+    if not text:
+        raise SampleError("refusing to type an empty string into a field")
+    if any(ord(character) > 0x7F for character in text):
+        raise SampleError(f"adb input text cannot type non-ASCII text: {text!r}")
+    return "".join(
+        "%s"
+        if character == " "
+        else ("\\" + character if character in _ADB_TEXT_SHELL_CHARACTERS else character)
+        for character in text
+    )
+
+
+def ime_is_shown(dumpsys: str) -> bool:
+    """`mInputShown` from `dumpsys input_method`; a missing or contradictory answer fails loudly.
+
+    A BACK dismisses the keyboard only while it is actually shown — otherwise it is a navigation
+    step — so this read decides whether one is sent.
+    """
+    values = set(re.findall(r"mInputShown=(true|false)", dumpsys))
+    if not values:
+        raise SampleError("dumpsys input_method reports no mInputShown; cannot tell whether the keyboard is up")
+    if len(values) > 1:
+        raise SampleError(f"dumpsys input_method reports contradictory mInputShown values {sorted(values)}")
+    return values.pop() == "true"
+
+
+def scroll_swipe_points(xml_text: str) -> tuple[int, int, int, int]:
+    """One content swipe's `(x1, y1, x2, y2)` from the dump's window bounds: from two-thirds down
+    to one-third down, so a full-height form advances by about a third of the screen per swipe."""
+    nodes = _nodes(xml_text)
+    if not nodes:
+        raise SampleError("the accessibility dump has no window node to derive a swipe from")
+    x1, y1, x2, y2 = _rect(nodes[0])
+    if x2 <= x1 or y2 <= y1:
+        raise SampleError(f"the dump's window bounds {nodes[0].get('bounds')!r} are empty")
+    x = (x1 + x2) // 2
+    return x, y1 + 2 * (y2 - y1) // 3, x, y1 + (y2 - y1) // 3
+
+
+def find_reachable_center(xml_text: str, label: str, contains: bool = False) -> tuple[int, int] | None:
+    """Centre of the first matching node whose centre is INSIDE the dump's window bounds.
+
+    A scrollable Compose form exposes its off-screen children too, so "the label is in the dump" is
+    not "the label is reachable": a centre below the window is exactly the dead tap a bare
+    `dump_contains` would accept.
+    """
+    if not label:
+        raise SampleError("an empty label cannot be looked up on screen")
+    nodes = _nodes(xml_text)
+    if not nodes:
+        raise SampleError("the accessibility dump has no window node to compare against")
+    x1, y1, x2, y2 = _rect(nodes[0])
+    for node in nodes:
+        if not _matches(node, label, contains):
+            continue
+        center = screen_center(node.get("bounds") or "")
+        if x1 <= center[0] <= x2 and y1 <= center[1] <= y2:
+            return center
+    return None
 
 
 def find_center(xml_text: str, label: str, contains: bool = False) -> tuple[int, int] | None:
@@ -205,15 +420,83 @@ class BackStep:
     """The system back key — the host's back dispatch (`input keyevent 4`)."""
 
 
-BACK = BackStep()
+@dataclass(frozen=True)
+class RadioStep:
+    """Tap the radio that owns the option row labelled `label` (see `find_radio_center`)."""
 
-Step = TapStep | BackStep
+    label: str
+    contains: bool = False
+
+
+@dataclass(frozen=True)
+class InputTextStep:
+    """Focus the field labelled `field_label`, then type `text` through `adb input text`."""
+
+    field_label: str
+    text: str
+
+
+@dataclass(frozen=True)
+class DismissImeStep:
+    """Collapse the software keyboard, but only when the platform reports it is actually shown."""
+
+
+@dataclass(frozen=True)
+class ScrollStep:
+    """Swipe the content region until `label` is ON SCREEN, at most `max_swipes` swipes."""
+
+    label: str
+    max_swipes: int = 6
+
+
+BACK = BackStep()
+DISMISS_IME = DismissImeStep()
+
+Step = TapStep | BackStep | RadioStep | InputTextStep | DismissImeStep | ScrollStep
+
+
+def tap_radio_for(label: str, contains: bool = False) -> RadioStep:
+    """The step that taps an option row's radio by the row's visible label."""
+    if not label:
+        raise SampleError("an empty radio label would match every row")
+    return RadioStep(label, contains)
+
+
+def input_text(field_label: str, text: str) -> InputTextStep:
+    """The step that types `text` into the field labelled `field_label` (ASCII only)."""
+    if not field_label:
+        raise SampleError("an empty field label cannot address a text field")
+    # Fail at import/construction time, not after a device has already focused the field.
+    adb_input_text(text)
+    return InputTextStep(field_label, text)
+
+
+def dismiss_ime() -> DismissImeStep:
+    """The step that collapses the keyboard (a no-op when it is already down)."""
+    return DISMISS_IME
+
+
+def scroll_until(label: str, max_swipes: int = 6) -> ScrollStep:
+    """The step that swipes the content region until `label` is on screen."""
+    if not label:
+        raise SampleError("an empty scroll label would match every screen")
+    if max_swipes <= 0:
+        raise SampleError(f"scroll_until needs a positive swipe budget, got {max_swipes}")
+    return ScrollStep(label, max_swipes)
 
 
 def describe_step(step: Step) -> str:
     """The step's short name for host.json and every failure message."""
     if isinstance(step, TapStep):
         return f"tap containing {step.target!r}" if step.contains else f"tap {step.target!r}"
+    if isinstance(step, RadioStep):
+        return f"tap radio containing {step.label!r}" if step.contains else f"tap radio {step.label!r}"
+    if isinstance(step, InputTextStep):
+        return f"type {step.text!r} into {step.field_label!r}"
+    if isinstance(step, DismissImeStep):
+        return "dismiss ime"
+    if isinstance(step, ScrollStep):
+        return f"scroll to {step.label!r} (max {step.max_swipes} swipes)"
     return "back"
 
 
@@ -255,8 +538,8 @@ EMPTY_SCREENS: tuple[Screen, ...] = (
 # screen and the reconciliation queue. The search leg starts from the home tab through the search
 # capsule (P8HomeFlow.kt: content-description 搜索账目, visible text 搜索账目、金额、备注 — the longer
 # rendered text is why the tap is a substring match) and submits an EMPTY keyword (D7-6 allows it),
-# which lands the one seeded transaction in the default 近 90 天 window. The detail screen therefore
-# backs out of the result face first; every other marker and absent string is unchanged from i3b.
+# which lands the seeded transactions in the default 近 90 天 window. The detail screen therefore
+# backs out of the result face first; every other marker and absent string is unchanged since i3b.
 #
 # Fold margin: both search markers are the LAST LazyColumn slot on their screen, and the seeded
 # catalog holds no tags and no merchants (SqlDelightCatalogStore seeds accounts and categories
@@ -291,9 +574,41 @@ SEEDED_SCREENS: tuple[Screen, ...] = (
     ),
 )
 
+# P8-03 i2c (V-14) refund leg: the same seeded ledger, whose confirmed 12.34 manual expense is the
+# selectable original. The entry screen's candidate row is the ONLY place 早餐 renders once the
+# refund draft is active (a refund has no category selector), so the marker proves the candidate
+# read landed rather than a leftover form. The confirmation leg fills the three refund choices the
+# entry rendered (original, arrival account, amount), collapses the keyboard, scrolls the continue
+# button into view and taps it. Its marker is the confirmation page's own title and its negative
+# marker is the entry title, so a 继续 that never left the form is not evidence.
+REFUND_SCREENS: tuple[Screen, ...] = (
+    Screen(
+        "refund-entry",
+        (TapStep("新增支出"), tap_radio_for("退款到账")),
+        SEEDED_REFUND_CATEGORY,
+        # 费用分类 is the expense form's own category selector: the seed category name appears there
+        # too, so its absence is what proves the type radio actually switched to the refund form.
+        absent=(SEEDED_HOME_COUNT, "费用分类"),
+    ),
+    Screen(
+        "refund-confirmation",
+        (
+            tap_radio_for(SEEDED_REFUND_CATEGORY, contains=True),
+            tap_radio_for(SEEDED_REFUND_ACCOUNT, contains=True),
+            input_text(REFUND_AMOUNT_FIELD, REFUND_AMOUNT_TEXT),
+            dismiss_ime(),
+            scroll_until("继续"),
+            TapStep("继续"),
+        ),
+        REFUND_CONFIRMATION_TITLE,
+        absent=(REFUND_ENTRY_TITLE,),
+    ),
+)
+
 PROFILES: dict[str, Profile] = {
     "empty": Profile("empty", "账本为空", EMPTY_SCREENS),
     "seeded": Profile("seeded", SEEDED_HOME_COUNT, SEEDED_SCREENS, seeded=True),
+    "refund": Profile("refund", SEEDED_HOME_COUNT, REFUND_SCREENS, seeded=True),
 }
 
 
@@ -511,6 +826,57 @@ class Sampler:
         self.adb("shell", "input", "keyevent", "4")
         time.sleep(2)
 
+    def tap_radio(self, label: str, contains: bool = False) -> str:
+        """Tap an option row's radio; returns the pre-tap frame for change detection."""
+        tree = self.dump("tap-probe")
+        center = find_radio_center(tree, label, contains=contains)
+        self.adb("shell", "input", "tap", str(center[0]), str(center[1]))
+        return tree
+
+    def type_into_field(self, field_label: str, text: str) -> str:
+        """Focus the labelled field, type `text`, and wait until the typed value is in the tree."""
+        escaped = adb_input_text(text)
+        tree = self.dump("tap-probe")
+        center = find_field_center(tree, field_label)
+        self.adb("shell", "input", "tap", str(center[0]), str(center[1]))
+        # The focus/window change is the proof the tap landed; typing follows only on that frame.
+        self.wait_for_change(tree, timeout_s=30)
+        self.adb("shell", "input", "text", escaped)
+        return self.wait_for(text, timeout_s=30)
+
+    def hide_ime(self) -> str:
+        """Collapse the keyboard only when it is shown, wait for the platform to agree, re-dump.
+
+        A BACK sent while the keyboard is already down is a navigation step (it would leave the
+        form), so `mInputShown` decides. The wait polls the platform's own answer; the closing
+        animation is not a fixed sleep.
+        """
+        if ime_is_shown(self.adb("shell", "dumpsys", "input_method")):
+            self.adb("shell", "input", "keyevent", "4")
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if not ime_is_shown(self.adb("shell", "dumpsys", "input_method")):
+                    break
+                time.sleep(1)
+            else:
+                raise SampleError("the software keyboard stayed up after KEYCODE_BACK")
+        return self.dump("after-ime")
+
+    def scroll_to(self, label: str, max_swipes: int = 6) -> str:
+        """Swipe the content region until `label` is on screen; each swipe must change the frame."""
+        if not label:
+            raise SampleError("an empty scroll label would match every screen")
+        tree = self.dump("scroll-probe")
+        for _ in range(max_swipes):
+            if find_reachable_center(tree, label) is not None:
+                return tree
+            x1, y1, x2, y2 = scroll_swipe_points(tree)
+            self.adb("shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), "400")
+            tree = self.wait_for_change(tree, timeout_s=30)
+        if find_reachable_center(tree, label) is not None:
+            return tree
+        raise SampleError(f"scroll target {label!r} is not on screen after {max_swipes} swipes")
+
     def apply_step(self, step: Step, previous: str) -> str:
         """Run one step and wait for the tree to change; returns the new frame."""
         if isinstance(step, TapStep):
@@ -520,6 +886,14 @@ class Sampler:
                 raise SampleError("the back step has no frame to compare against")
             self.press_back()
             return self.wait_for_change(previous)
+        if isinstance(step, RadioStep):
+            return self.wait_for_change(self.tap_radio(step.label, contains=step.contains))
+        if isinstance(step, InputTextStep):
+            return self.type_into_field(step.field_label, step.text)
+        if isinstance(step, DismissImeStep):
+            return self.hide_ime()
+        if isinstance(step, ScrollStep):
+            return self.scroll_to(step.label, max_swipes=step.max_swipes)
         raise SampleError(f"unknown step {step!r}")
 
 

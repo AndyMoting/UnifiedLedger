@@ -9,13 +9,23 @@ import com.unifiedledger.application.CatalogEntityIds
 import com.unifiedledger.application.CatalogManagementRequestIdSource
 import com.unifiedledger.application.CatalogRequestId
 import com.unifiedledger.application.ConfirmationId
+import com.unifiedledger.application.ConfirmedManualExpenseCommit
+import com.unifiedledger.application.ConfirmedManualExpenseCommitIds
+import com.unifiedledger.application.ConfirmedManualExpenseResult
 import com.unifiedledger.application.ConfirmedManualTransferCommitIds
 import com.unifiedledger.application.ConfirmedManualTransferResult
+import com.unifiedledger.application.DEFAULT_EXPENSE_LEAF_ID
+import com.unifiedledger.application.DEFAULT_EXPENSE_LEAF_NAME
+import com.unifiedledger.application.DEFAULT_HIDDEN_EXPENSE_ACCOUNT_ID
 import com.unifiedledger.application.DEFAULT_MANAGEABLE_ACCOUNT_ID
 import com.unifiedledger.application.ExecuteCatalogCommand
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.LedgerCurrentStateResult
 import com.unifiedledger.application.LedgerFlowPageResult
+import com.unifiedledger.application.LedgerFlowTotalResult
+import com.unifiedledger.application.ManualExpenseRequestIdentity
+import com.unifiedledger.application.ManualExpenseRequestSnapshot
+import com.unifiedledger.application.ManualRefundCandidatesResult
 import com.unifiedledger.application.ManualTransferRequestIdentity
 import com.unifiedledger.application.ManualTransferRequestSnapshot
 import com.unifiedledger.application.ManualTransferTransactionFactory
@@ -34,14 +44,19 @@ import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.AccountTransferIds
+import com.unifiedledger.domain.AssetPaidOrdinaryExpenseCommand
+import com.unifiedledger.domain.AssetPaidOrdinaryExpenseIds
 import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.PostingSetId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
+import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.TransactionVersionId
+import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
 import java.io.File
 import java.util.Properties
 import kotlin.test.Test
@@ -66,17 +81,28 @@ import kotlin.time.Instant
  * `:ledger-data:jvmTest --tests 'com.unifiedledger.data.P801FontscaleSeedWriterTest'
  * -Dul.fontscale.seed=<path>` and then pushes the produced file.
  *
- * WHAT THE FILE CONTAINS (spec section 6's device read needs a non-empty ledger):
+ * WHAT THE FILE CONTAINS (spec section 6's device read needs a non-empty ledger; P8-03 i2c's
+ * V-14 leg additionally needs a refundable original):
  * - the real default catalog seed through [SqlDelightCatalogStore.bootstrap];
- * - a second user-owned ASSET account through the real catalog management command
- *   ([ExecuteCatalogCommand.createAccount], `createManagedAccount` gives it owned_by_user=1 and
- *   real_account=1);
+ * - two more user-owned ASSET accounts through the real catalog management command
+ *   ([ExecuteCatalogCommand.createAccount], `createManagedAccount` gives them owned_by_user=1 and
+ *   real_account=1): 对账样本账户 (the reconciliation queue's account) and 退款样本账户 (the
+ *   refund's arrival account);
  * - one `ACCOUNT_TRANSFER` transaction with exactly two legs (one out of 默认支付账户, one into
- *   the seeded account), written through the real claim-first manual-transfer commit port and the
- *   real product transaction factory (fee = 0, so the domain's pure-principal two-leg factory is
- *   the one that runs). No `posting_reconciliation` row, no evidence, no link: every leg is
- *   `PENDING` by the read face's COALESCE default (V-7), which is exactly the queue the device
- *   sample must show.
+ *   the seeded reconciliation account), written through the real claim-first manual-transfer commit
+ *   port and the real product transaction factory (fee = 0, so the domain's pure-principal two-leg
+ *   factory is the one that runs);
+ * - one confirmed manual EXPENSE of 12.34, paid from 退款样本账户, written through the real
+ *   claim-first manual-expense commit port and the real product factory
+ *   ([createAssetPaidOrdinaryExpense]), so the refund entry has one selectable original.
+ *   CANDIDATE ELIGIBILITY (spec section 2.3 condition 5): the refund's inherited category must be
+ *   the only active secondary EXPENSE category on its posting account. The DEFAULT catalog already
+ *   has that shape — 隐藏费用过账账户 carries exactly one active leaf, 早餐 — so this seed books
+ *   the expense into 早餐 instead of creating a dedicated expense account and a second leaf;
+ *   adding another leaf to that account here would silently remove the candidate and fail the
+ *   device marker. No `posting_reconciliation` row, no evidence, no link: every leg is `PENDING`
+ *   by the read face's COALESCE default (V-7), which is exactly the queue the device sample must
+ *   show.
  *
  * THE OPEN/MIGRATION GATE. The app opens a generation main file through
  * `AndroidSqliteDriver(schema = LedgerDatabase.Schema, …)`, i.e. androidx `SQLiteOpenHelper`, whose
@@ -88,9 +114,10 @@ import kotlin.time.Instant
  * The post-write read-back reopens the FILE through a second connection and drives the REAL
  * read adapters, so what the device will render is proven here rather than assumed: the
  * reconciliation queue (one PENDING leg per account, both from the same transaction, no active
- * link) AND the four reads the seeded tap path depends on — the home flow row's note, the
- * account-flow balance row, the manageable/asset projection, and the transaction detail read — plus
- * the seeded statistics instant's containment in the search surface's default window (D7-9).
+ * link) AND the reads the seeded tap paths depend on — the home flow rows' notes, the
+ * account-flow balance row, the manageable/asset projection, the transaction detail read, and the
+ * refund entry's candidate list — plus the seeded statistics instant's containment in the search
+ * surface's default window (D7-9).
  */
 class P801FontscaleSeedWriterTest {
     private val ledgerId = LedgerId(LEDGER_ID)
@@ -114,14 +141,20 @@ class P801FontscaleSeedWriterTest {
             val catalogStore = SqlDelightCatalogStore(database, driver)
             assertIs<CatalogBootstrapResult.Seeded>(catalogStore.bootstrap(ledgerId, defaultCatalogSeed()))
 
+            // One id per accepted command: the entity-id source is consumed once per command and so
+            // is the catalog request id (reusing either would look like a conflicting replay).
+            val accountIds = listOf(SEED_ACCOUNT_ID, SEED_REFUND_ACCOUNT_ID)
+            val requestIds = listOf("fontscale-seed-create-account", "fontscale-seed-create-refund-account")
+            var nextAccountId = 0
+            var nextRequestId = 0
             val commands =
                 ExecuteCatalogCommand(
                     commitPort = catalogStore,
-                    requestIdSource = CatalogManagementRequestIdSource { CatalogRequestId("fontscale-seed-create-account") },
+                    requestIdSource = CatalogManagementRequestIdSource { CatalogRequestId(requestIds[nextRequestId++]) },
                     entityIdSource =
                         CatalogEntityIdSource {
                             CatalogEntityIds(
-                                manageableAccountId = AccountId(SEED_ACCOUNT_ID),
+                                manageableAccountId = AccountId(accountIds[nextAccountId++]),
                                 postingAccountId = AccountId("fontscale-seed-expense-account"),
                                 parentCategoryId = CategoryId("fontscale-seed-expense-group"),
                                 childCategoryId = CategoryId("fontscale-seed-expense-child"),
@@ -139,6 +172,16 @@ class P801FontscaleSeedWriterTest {
                     ),
                 ).receipt
             assertEquals(AccountId(SEED_ACCOUNT_ID), accountReceipt.createdManageableAccountId)
+            val refundAccountReceipt =
+                assertIs<CatalogCommandResult.Accepted>(
+                    commands.createAccount(
+                        ledgerId = ledgerId,
+                        name = SEED_REFUND_ACCOUNT_NAME,
+                        kind = AccountKind.ASSET,
+                        expectedCatalogVersion = 2L,
+                    ),
+                ).receipt
+            assertEquals(AccountId(SEED_REFUND_ACCOUNT_ID), refundAccountReceipt.createdManageableAccountId)
 
             val catalog = assertNotNull(catalogStore.loadCurrent(ledgerId))
             val snapshot =
@@ -179,6 +222,66 @@ class P801FontscaleSeedWriterTest {
                     )
                 }
             assertIs<ConfirmedManualTransferResult.Created>(result)
+
+            // P8-03 i2c (V-14): one confirmed manual expense through the SAME real path the product
+            // uses (claim-first port + the domain's asset-paid ordinary-expense factory). Its
+            // category is the default leaf 早餐 on the hidden expense account, which is the shape
+            // candidate condition 5 requires (see the class note).
+            val expenseAmount = Money.ofMinor(SEED_EXPENSE_MINOR, CATALOG_MANAGED_CURRENCY)
+            val expenseSnapshot =
+                ManualExpenseRequestSnapshot(
+                    ledgerId = ledgerId,
+                    amount = expenseAmount,
+                    categoryId = CategoryId(DEFAULT_EXPENSE_LEAF_ID),
+                    paymentAccountId = AccountId(SEED_REFUND_ACCOUNT_ID),
+                    occurredAt = SEED_TRANSFER_INSTANT,
+                    note = SEED_EXPENSE_NOTE,
+                )
+            val expenseIds =
+                ConfirmedManualExpenseCommitIds(
+                    confirmationId = ConfirmationId("fontscale-seed-expense-confirmation"),
+                    expenseIds =
+                        AssetPaidOrdinaryExpenseIds(
+                            transactionId = TransactionId(SEED_EXPENSE_TRANSACTION_ID),
+                            versionId = TransactionVersionId("$SEED_EXPENSE_TRANSACTION_ID-version"),
+                            postingSetId = PostingSetId("$SEED_EXPENSE_TRANSACTION_ID-posting-set"),
+                            expensePostingId = PostingId("$SEED_EXPENSE_TRANSACTION_ID-expense"),
+                            paymentPostingId = PostingId("$SEED_EXPENSE_TRANSACTION_ID-payment"),
+                        ),
+                )
+            val expenseResult =
+                SqlDelightConfirmedManualExpenseCommitPort(database, driver).commitOnce(
+                    identity = ManualExpenseRequestIdentity(ledgerId, RequestId("fontscale-seed-expense-request")),
+                    requestSnapshot = expenseSnapshot,
+                    createdAt = SEED_CREATED_AT,
+                ) {
+                    when (
+                        val created =
+                            createAssetPaidOrdinaryExpense(
+                                catalog = catalog,
+                                command =
+                                    AssetPaidOrdinaryExpenseCommand(
+                                        ledgerId = ledgerId,
+                                        amount = expenseAmount,
+                                        categoryId = expenseSnapshot.categoryId,
+                                        paymentAccountId = expenseSnapshot.paymentAccountId,
+                                        times = TransactionTimes.collapsed(expenseSnapshot.occurredAt),
+                                        note = expenseSnapshot.note,
+                                    ),
+                                ids = expenseIds.expenseIds,
+                            )
+                    ) {
+                        is DomainResult.Success ->
+                            DomainResult.Success(
+                                ConfirmedManualExpenseCommit(
+                                    confirmationId = expenseIds.confirmationId,
+                                    transaction = created.value,
+                                ),
+                            )
+                        is DomainResult.Failure -> created
+                    }
+                }
+            assertIs<ConfirmedManualExpenseResult.Created>(expenseResult)
         }
     }
 
@@ -187,15 +290,19 @@ class P801FontscaleSeedWriterTest {
         JdbcSqliteDriver(url(file), foreignKeyProperties()).use { driver ->
             assertEquals(LedgerDatabase.Schema.version, userVersion(driver))
             val database = LedgerDatabase(driver)
-            assertEquals(1L, database.ledgerQueries.countTransactions().executeAsOne())
-            assertEquals(2L, database.ledgerQueries.countPostings().executeAsOne())
+            assertEquals(2L, database.ledgerQueries.countTransactions().executeAsOne())
+            assertEquals(4L, database.ledgerQueries.countPostings().executeAsOne())
+            // The manual-expense chain's own claim/receipt rows: the expense went through the real
+            // commit port, not a bare insert.
+            assertEquals(1L, database.ledgerQueries.countRequests().executeAsOne())
+            assertEquals(1L, database.ledgerQueries.countReceipts().executeAsOne())
             // PENDING means no reconciliation row at all, and no evidence/link may exist.
             assertEquals(0L, database.ledgerQueries.countP408PostingReconciliationRows().executeAsOne())
             assertEquals(0L, database.ledgerQueries.countEvidenceLinkRows().executeAsOne())
             assertEquals(0L, database.ledgerQueries.countImportEvidence().executeAsOne())
             // The default seed's two accounts (默认支付账户 + the hidden expense account) plus the
-            // one created above.
-            assertEquals(3L, database.ledgerQueries.countCatalogAccounts(ledgerId.value).executeAsOne())
+            // two created above.
+            assertEquals(4L, database.ledgerQueries.countCatalogAccounts(ledgerId.value).executeAsOne())
 
             val adapter =
                 SqlDelightP801AccountReconciliationReadAdapter(
@@ -233,25 +340,69 @@ class P801FontscaleSeedWriterTest {
             assertEquals(SEED_TRANSFER_MINOR, summary.single().totalMinorUnits)
             assertEquals(1, summary.single().rowCount)
 
-            // F2: the four reads the seeded tap path depends on, asserted offline here so a drift
-            // is a red test instead of a device run that photographs the wrong screen.
+            // F2: the reads the seeded tap paths depend on, asserted offline here so a drift is a
+            // red test instead of a device run that photographs the wrong screen.
             val readAdapter = SqlDelightLedgerCurrentStateReadAdapter(database)
             val catalogStore = SqlDelightCatalogStore(database, driver)
             val catalog = assertNotNull(catalogStore.loadCurrent(ledgerId))
 
-            // (a) The home flow row the detail step taps: the home screen's first flow page
-            // (P503App.kt `queryLedgerFlowPage.firstPage()`) composes its content-description from
-            // this note (P503LedgerViewPresentation.kt `，备注 $note`), so a missing note means the
-            // seeded tap target never renders.
+            // (a) The home flow rows the device renders: the header's exact count
+            // (`流水 · 共 ${total} 笔`, P503OverviewScreen.kt) and the two rows the detail/refund
+            // steps tap. The transfer row composes its content-description from this note
+            // (P503LedgerViewPresentation.kt `，备注 $note`), so a missing note means the seeded tap
+            // target never renders.
+            val homeFlow = QueryLedgerFlowPage(readAdapter, ledgerId)
             val homePage =
                 assertIs<LedgerFlowPageResult.Success>(
-                    QueryLedgerFlowPage(readAdapter, ledgerId).firstPage(),
+                    homeFlow.firstPage(),
                 ).page
-            assertEquals(1, homePage.rows.size)
-            val flowRow = homePage.rows.single()
-            assertEquals(TransactionId(SEED_TRANSACTION_ID), flowRow.transactionId)
+            assertEquals(2, homePage.rows.size)
+            assertEquals(
+                LedgerFlowTotalResult.Success(2),
+                homeFlow.total(),
+            )
+            val flowRow =
+                assertNotNull(homePage.rows.firstOrNull { row -> row.transactionId == TransactionId(SEED_TRANSACTION_ID) })
             assertEquals(TransactionKind.ACCOUNT_TRANSFER, flowRow.kind)
             assertEquals(SEED_TRANSFER_NOTE, flowRow.note)
+
+            // The refund leg's selectable original: one EXPENSE row, its expense leg on the default
+            // hidden expense account and its payment leg on the seeded refund account.
+            val expenseRow =
+                assertNotNull(
+                    homePage.rows.firstOrNull { row -> row.transactionId == TransactionId(SEED_EXPENSE_TRANSACTION_ID) },
+                )
+            assertEquals(TransactionKind.EXPENSE, expenseRow.kind)
+            assertEquals(SEED_EXPENSE_NOTE, expenseRow.note)
+            val expenseLeg =
+                assertNotNull(
+                    expenseRow.postings.firstOrNull { posting ->
+                        posting.accountId == AccountId(DEFAULT_HIDDEN_EXPENSE_ACCOUNT_ID) && posting.amount.minorUnits > 0
+                    },
+                )
+            assertEquals(SEED_EXPENSE_MINOR, expenseLeg.amount.minorUnits)
+            val expensePaymentLeg =
+                assertNotNull(
+                    expenseRow.postings.firstOrNull { posting ->
+                        posting.accountId == AccountId(SEED_REFUND_ACCOUNT_ID)
+                    },
+                )
+            assertEquals(-SEED_EXPENSE_MINOR, expensePaymentLeg.amount.minorUnits)
+
+            // The refund entry's candidate list, through the SAME read adapter the entry screen
+            // calls: exactly this expense, inheriting the default leaf, with its full cap remaining.
+            // This is the offline proof that candidate condition 5's catalog shape holds, so a
+            // catalog change that disqualifies the seed reddens here instead of on the device.
+            val candidates =
+                assertIs<ManualRefundCandidatesResult.Loaded>(
+                    SqlDelightManualRefundCandidatesReadAdapter(database).readPage(ledgerId, pageSize = 10, pageOffset = 0),
+                )
+            assertEquals(1, candidates.candidates.size)
+            val candidate = candidates.candidates.single()
+            assertEquals(TransactionId(SEED_EXPENSE_TRANSACTION_ID), candidate.transactionId)
+            assertEquals(DEFAULT_EXPENSE_LEAF_NAME, candidate.categoryName)
+            assertEquals(SEED_EXPENSE_MINOR, candidate.structuralCap.minorUnits)
+            assertEquals(SEED_EXPENSE_MINOR, candidate.remaining.minorUnits)
 
             // (b) The account-flow header's balance row: selectAccountFlow returns silently when
             // the account has none (P503App.kt `balances.firstOrNull … ?: return`).
@@ -267,7 +418,8 @@ class P801FontscaleSeedWriterTest {
             assertEquals(CATALOG_MANAGED_CURRENCY, seededBalance.currency)
 
             // (c) The assets screen renders snapshot.manageableAccounts (P503AssetsScreen.kt), so
-            // the seeded account must be in that projection — ASSET and active — or no row opens.
+            // the seeded accounts must be in that projection — ASSET and active — or no row opens.
+            // The refund account is the entry screen's arrival-account radio row.
             val snapshot = assertNotNull(QueryCatalogSnapshot(catalogStore).query(ledgerId))
             val seededView =
                 assertNotNull(
@@ -276,6 +428,13 @@ class P801FontscaleSeedWriterTest {
             assertEquals(SEED_ACCOUNT_NAME, seededView.name)
             assertEquals(AccountKind.ASSET, seededView.kind)
             assertTrue(seededView.active)
+            val refundView =
+                assertNotNull(
+                    snapshot.manageableAccounts.firstOrNull { account -> account.accountId == AccountId(SEED_REFUND_ACCOUNT_ID) },
+                )
+            assertEquals(SEED_REFUND_ACCOUNT_NAME, refundView.name)
+            assertEquals(AccountKind.ASSET, refundView.kind)
+            assertTrue(refundView.active)
 
             // (d) The 交易详情 read itself: Success (never a typed failure) with the seed note and
             // both legs, so the detail screen renders the F1 marker `备注：对账样本转账`.
@@ -343,6 +502,13 @@ class P801FontscaleSeedWriterTest {
         const val SEED_TRANSFER_NOTE = "对账样本转账"
         const val SEED_TRANSACTION_ID = "fontscale-seed-transfer"
         const val SEED_TRANSFER_MINOR = 1_234L
+
+        /** P8-03 i2c (V-14): the refund leg's arrival account and selectable original. */
+        const val SEED_REFUND_ACCOUNT_ID = "fontscale-seed-refund-asset"
+        const val SEED_REFUND_ACCOUNT_NAME = "退款样本账户"
+        const val SEED_EXPENSE_TRANSACTION_ID = "fontscale-seed-refund-expense"
+        const val SEED_EXPENSE_NOTE = "退款样本支出"
+        const val SEED_EXPENSE_MINOR = 1_234L
 
         /**
          * D7-9: clock-relative, never a fixed date. The search result face reads the default 近 90 天
