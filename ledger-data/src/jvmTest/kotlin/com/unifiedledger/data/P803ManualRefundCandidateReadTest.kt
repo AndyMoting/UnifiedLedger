@@ -21,14 +21,16 @@ import kotlin.time.Instant
  * - V-13 (JVM half): a candidate set with no rows is `Loaded(emptyList(), hasMore = false)`, a failed
  *   read is `Unavailable` and is never rendered as that empty page, the `pageSize + 1` lookahead is
  *   what turns a full page into `hasMore`, and the displayed category name is the catalog's CURRENT
- *   name of the inherited category.
+ *   name of the inherited category. The separate fallback test is not a vector: it pins the
+ *   implementation reading registered in spec section 8 (no CURRENT name row -> the category id).
  * - V-3 (JVM half): the candidate row equals `selectManualRefundableOriginal` (the submit side's
  *   re-resolution) field for field, and both read the replacement version once the current version's
  *   expense leg moves to another account (hence another category).
  * - V-15: the 20k and 50k first-page and refunded-total readings are PRINTED as a baseline, one line
  *   per size. No duration is asserted and no threshold is set: only structural facts are pinned (the
- *   page bound, the lookahead verdict, the currency, a positive remaining amount, and that the
- *   fixture holds no refund row).
+ *   page bound, the lookahead verdict, the currency, a positive remaining amount, the candidate count
+ *   through deep-offset probes), and five seeded effective refunds pin the refunded total (500) and a
+ *   candidate's remaining amount (500) against the aggregate read and its effectiveness join.
  */
 class P803ManualRefundCandidateReadTest {
     @Test
@@ -86,7 +88,7 @@ class P803ManualRefundCandidateReadTest {
     }
 
     @Test
-    fun v13AMissingCurrentNameFallsBackToTheCategoryId() {
+    fun aMissingCurrentNameFallsBackToTheCategoryId() {
         P803CandidateDatabase.inMemory().use { world ->
             seedCandidateCatalog(world.driver)
             seedCandidateTransaction(world.driver, "tx-original", CANDIDATE_DAILY_ACCOUNT, 12_000L, "2026-01-10T02:00:00Z")
@@ -96,8 +98,8 @@ class P803ManualRefundCandidateReadTest {
                 assertIs<ManualRefundCandidatesResult.Loaded>(world.adapter.readPage(LedgerId(CANDIDATE_LEDGER), pageSize = 50, pageOffset = 0))
                     .candidates
                     .single()
-            // Registered fallback: a category without a CURRENT name row is still selectable and its
-            // display name is the raw category id (spec section 2.3 display list).
+            // Not an acceptance vector: the implementation reading is registered in spec section 8 -
+            // a category without a CURRENT name row stays selectable and displays its raw id.
             assertEquals(CANDIDATE_DAILY, candidate.categoryName)
         }
     }
@@ -169,7 +171,8 @@ class P803ManualRefundCandidateReadTest {
                     .executeAsOne()
             val refundedTotalMs = (System.nanoTime() - refundedStart) / 1_000_000.0
 
-            assertEquals(V15_PAGE_SIZE, page.candidates.size)
+            // The frozen page size as a literal (house rule: never compare a constant against itself).
+            assertEquals(50, page.candidates.size)
             assertTrue(page.hasMore, "a $transactionCount-transaction ledger holds many more than one page")
             assertEquals(setOf(P705Fixture.cny), page.candidates.map { it.structuralCap.currency }.toSet())
             assertEquals(setOf(P705Fixture.cny), page.candidates.map { it.remaining.currency }.toSet())

@@ -1,7 +1,8 @@
 """Surface the recorded scale readings from JUnit XML into the job summary.
 
-The P7-07/P7-08 scale tests (P707BudgetScaleTest, TagMerchantFilterScaleTest)
-record their measurements by printing lines under a stable prefix. Gradle writes
+The P7-07/P7-08/P8-03 scale tests (P707BudgetScaleTest, TagMerchantFilterScaleTest,
+P803ManualRefundCandidateReadTest) record their measurements by printing lines under a
+stable prefix. Gradle writes
 those lines into the suite-level <system-out> of the JUnit XML, which is
 neither displayed in CI nor archived, so a delivered reading becomes unreadable
 as soon as the job ends. This script copies exactly the prefixed lines into the

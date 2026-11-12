@@ -185,3 +185,12 @@ manual_refund_receipt(
 7. Unknown 只覆盖单进程写入不确定，不覆盖跨设备并发。
 8. `:148` 与 `:154` 的两条读法（§2.5 末段）若被评审否掉，本门范围与迁移量都要改。
 9. 进程被杀后的 Unknown 覆盖缺 id 复用（草稿与 requestId 只在会话内存）；重开只做权威回读，不重试写入。
+
+## 8. 实施登记（i2 期；不改写 §1–§7 的批准原文）
+
+本节只登记实施期确定的事实与读法，供后续评审与后续批次引用。
+
+- **候选行的分类展示名（i2a）**：`selectManualRefundExpenseCandidates` 增加只读展示投影 `category_name`，取值是该分类在 `catalog_name_history` 的 CURRENT 名，以 `ORDER BY version_number DESC LIMIT 1` 的标量子查询单值化（畸形目录出现两条 CURRENT 名行也不会放大候选行）。**没有 CURRENT 名行时回落显示分类 id**，该候选仍可选；这是 §2.3「展示二级分类名」与「候选集只由七条件决定」的共同结果，登记为显式读法。
+- **候选排序按 `occurred_at` 文本（i2a）**：产品写点的 `occurred_at` 一律是 ISO-8601 文本（如 `SqlDelightConfirmedManualIncomeCommitPort.kt:153`），文本序与时间序一致；RG-07 竖井是唯一写裸字符串的路径且只被 jvmTest 写。将来承接来源文本时间时须另立读法。
+- **V-15 读数落点（i2a）**：20k/50k 的 JVM 读数以 `P803-V15 ` 前缀打印，由 `tools/ci/scale-readings-report.py` 收进分片 job 的 summary 与日志，run 结束后仍可引用；数值只在检查点与本条登记，不设门槛。
+- **i2a 登记残余**：①V-15 首页断言依赖夹具「全行同 `occurred_at`、按交易 id 升序」的隐式事实；②SQL 注释声称的「两条 CURRENT 名行也不放大」只有单值半边有测试（回退半边有、重复半边无向量）；③V-15 用既有 INCOME 交易充当退款交易，只为聚合与有效性的成本形状，不声称产品退款语义；④分类名回退的**用户可见文案**（内部 id）尚无产品裁决——若将来要求隐藏该候选，须改条件 5 并重测。
