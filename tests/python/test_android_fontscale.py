@@ -248,11 +248,13 @@ class ImeState(unittest.TestCase):
         self.assertTrue(ime_is_shown("  mInputShown=true\n"))
         self.assertFalse(ime_is_shown("  mInputShown=false\n"))
 
-    def test_a_missing_or_contradictory_answer_fails_loudly(self) -> None:
+    def test_a_missing_answer_fails_loudly_and_the_last_occurrence_wins(self) -> None:
         with self.assertRaises(SampleError):
             ime_is_shown("mCurMethodId=com.example/.Ime\n")
-        with self.assertRaises(SampleError):
-            ime_is_shown("mInputShown=true\nmInputShown=false\n")
+        # The manager and the IME service both print the flag and may briefly disagree during an
+        # animation; the last occurrence is the current client state.
+        self.assertFalse(ime_is_shown("mInputShown=true\nmInputShown=false\n"))
+        self.assertTrue(ime_is_shown("mInputShown=false\nmInputShown=true\n"))
 
     def test_the_constructor_is_the_frozen_step(self) -> None:
         self.assertIsInstance(dismiss_ime(), DismissImeStep)
