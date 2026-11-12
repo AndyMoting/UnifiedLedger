@@ -255,20 +255,33 @@ fun P503EditScreen(
         // the type switch uses the frozen retention matrix in the reducer.
         // P8-03 i2b (D-312; spec section 2.2): the list is the pure [entryTypeChoices] projection —
         // REFUND_RECEIPT appears last only when the composition root wired the refund surface.
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // P8-03 i2d (D-312; V-14): six choices cannot share one weighted row at 1.3x — the refund
+        // label collapsed into a vertical stack and its radio was clipped at the screen edge, so the
+        // wired six split into two rows of three; the five-type layout stays as it was.
+        val typeChoices = entryTypeChoices(refundEntryAvailable)
+        if (typeChoices.size > 5) {
             Text("类型：", style = MaterialTheme.typography.titleSmall)
-            entryTypeChoices(refundEntryAvailable).forEach { type ->
-                Row(
-                    modifier = Modifier.weight(1f).minimumInteractiveComponentSize(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(
+            typeChoices.chunked(3).forEach { rowChoices ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    rowChoices.forEach { type ->
+                        EntryTypeChoice(
+                            type = type,
+                            selected = draft.entryType == type,
+                            onSelect = onSelectEntryType,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("类型：", style = MaterialTheme.typography.titleSmall)
+                typeChoices.forEach { type ->
+                    EntryTypeChoice(
+                        type = type,
                         selected = draft.entryType == type,
-                        onClick = { onSelectEntryType(type) },
-                    )
-                    Text(
-                        entryTypeLabel(type),
-                        style = MaterialTheme.typography.bodyMedium,
+                        onSelect = onSelectEntryType,
+                        modifier = Modifier.weight(1f),
                     )
                 }
             }
@@ -843,6 +856,32 @@ private fun Modifier.dismissOnEscape(onDismiss: () -> Unit): Modifier =
  * individually accessible.
  */
 @Composable
+/**
+ * P8-03 i2d (D-312; V-14): one entry-type option — the radio plus its label as a single
+ * minimum-interactive-size row, shared by the five-type single row and the six-type two-row layout.
+ */
+@Composable
+private fun EntryTypeChoice(
+    type: EntryType,
+    selected: Boolean,
+    onSelect: (EntryType) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.minimumInteractiveComponentSize(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = { onSelect(type) },
+        )
+        Text(
+            entryTypeLabel(type),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
 private fun SelectorField(
     label: String,
     hasError: Boolean,
