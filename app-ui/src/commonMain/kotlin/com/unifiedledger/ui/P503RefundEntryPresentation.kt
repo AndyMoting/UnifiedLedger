@@ -19,8 +19,7 @@ import com.unifiedledger.application.ManualRefundRejectionCode
  * dead refund choice). Deriving from the enum keeps a future `EntryType` member from silently
  * disappearing out of the list: it can only be added together with its exhaustive label below.
  */
-internal fun entryTypeChoices(refundEntryAvailable: Boolean): List<EntryType> =
-    EntryType.entries.filter { refundEntryAvailable || it != EntryType.REFUND_RECEIPT }
+internal fun entryTypeChoices(refundEntryAvailable: Boolean): List<EntryType> = EntryType.entries.filter { refundEntryAvailable || it != EntryType.REFUND_RECEIPT }
 
 /** The type radio's label. Exhaustive with no `else`: a new type must be given a label. */
 internal fun entryTypeLabel(type: EntryType): String =

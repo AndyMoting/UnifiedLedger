@@ -3793,7 +3793,8 @@ class P503ReducerImpl(
                     // original-transaction line come from the candidate page this editor already
                     // holds — the user never picked either, and the host's category label is empty
                     // for a refund. An unresolved candidate falls back to the draft id values.
-                    val refundOriginal = (state.draft as? RefundReceiptDraft)?.originalTransactionId?.let { originalId ->
+                    val refundOriginal =
+                        (state.draft as? RefundReceiptDraft)?.originalTransactionId?.let { originalId ->
                         (state.refundCandidates as? ManualRefundCandidatesResult.Loaded)
                             ?.candidates
                             ?.firstOrNull { it.transactionId == originalId }
