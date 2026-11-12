@@ -2,6 +2,8 @@ package com.unifiedledger.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -95,7 +97,7 @@ import kotlin.time.Instant
  * that fails the round-trip check (historical DST gap) surfaces the field error and dispatches
  * nothing (fail-closed, spec 3.3).
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun P503EditScreen(
     draft: TypedEntryDraft,
@@ -255,20 +257,36 @@ fun P503EditScreen(
         // the type switch uses the frozen retention matrix in the reducer.
         // P8-03 i2b (D-312; spec section 2.2): the list is the pure [entryTypeChoices] projection —
         // REFUND_RECEIPT appears last only when the composition root wired the refund surface.
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // P8-03 i2d (D-312; V-14): six choices cannot share one weighted row at 1.3x — the refund
+        // label collapsed into a vertical stack and its radio was clipped at the screen edge, so the
+        // wired six split into two rows of three; the five-type layout stays as it was.
+        val typeChoices = entryTypeChoices(refundEntryAvailable)
+        if (refundEntryAvailable) {
+            // A-VIS (V-14): a wrap layout keeps each option at its intrinsic size — at 1.3x the
+            // six choices wrap to a second row instead of squeezing 退款到账 into vertical
+            // characters. The five-type layout below is untouched.
             Text("类型：", style = MaterialTheme.typography.titleSmall)
-            entryTypeChoices(refundEntryAvailable).forEach { type ->
-                Row(
-                    modifier = Modifier.weight(1f).minimumInteractiveComponentSize(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                typeChoices.forEach { type ->
+                    EntryTypeChoice(
+                        type = type,
                         selected = draft.entryType == type,
-                        onClick = { onSelectEntryType(type) },
+                        onSelect = onSelectEntryType,
                     )
-                    Text(
-                        entryTypeLabel(type),
-                        style = MaterialTheme.typography.bodyMedium,
+                }
+            }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("类型：", style = MaterialTheme.typography.titleSmall)
+                typeChoices.forEach { type ->
+                    EntryTypeChoice(
+                        type = type,
+                        selected = draft.entryType == type,
+                        onSelect = onSelectEntryType,
+                        modifier = Modifier.weight(1f),
                     )
                 }
             }
@@ -835,6 +853,32 @@ private fun Modifier.dismissOnEscape(onDismiss: () -> Unit): Modifier =
             false
         }
     }
+
+/**
+ * P8-03 i2d (D-312; V-14): one entry-type option — the radio plus its label as a single
+ * minimum-interactive-size row, shared by the five-type single row and the six-type two-row layout.
+ */
+@Composable
+private fun EntryTypeChoice(
+    type: EntryType,
+    selected: Boolean,
+    onSelect: (EntryType) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.minimumInteractiveComponentSize(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = { onSelect(type) },
+        )
+        Text(
+            entryTypeLabel(type),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
 
 /**
  * Selector field with a field-level error that is semantically associated with the field:
