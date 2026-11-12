@@ -705,6 +705,7 @@ private data class Candidate(
     val currencyCode: String,
     val currencyPrecision: Long,
     val remainingMinor: Long,
+    val categoryName: String,
 )
 
 /** One reachable rejection vector: the state that reaches [expected], then the request. */
@@ -866,8 +867,9 @@ private fun candidatesOf(harness: P803DatabaseHarness): List<Candidate> =
             currencyCode,
             currencyPrecision,
             remainingMinor,
+            categoryName,
             ->
-            Candidate(transactionId, occurredAt, categoryId, structuralCapMinor, currencyCode, currencyPrecision, remainingMinor)
+            Candidate(transactionId, occurredAt, categoryId, structuralCapMinor, currencyCode, currencyPrecision, remainingMinor, categoryName)
         }.executeAsList()
 
 /** V-8's shipped read surface: the bounded contribution port, then the frozen month projection. */
