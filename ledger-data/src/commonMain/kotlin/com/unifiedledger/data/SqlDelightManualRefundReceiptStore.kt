@@ -36,7 +36,13 @@ import com.unifiedledger.domain.createRefundReceipt
  * [ManualRefundReceiptCommitResult.Replayed] and only the absence of a replay stays
  * [ManualRefundReceiptCommitResult.Unavailable] (spec section 2.6).
  */
-class SqlDelightManualRefundReceiptStore private constructor(
+/**
+ * The driver-free construction path for a composition root whose platform already configured the
+ * [LedgerDatabase] connection (the Android handle owns its driver, so the `(database, driver)`
+ * constructor's connection configuration must not run again). Mirrors the public driver-free
+ * construction of [SqlDelightManualRefundCandidatesReadAdapter].
+ */
+class SqlDelightManualRefundReceiptStore(
     private val database: LedgerDatabase,
 ) : ManualRefundReceiptCommitPort,
     ManualRefundReceiptReadPort {
@@ -316,18 +322,6 @@ class SqlDelightManualRefundReceiptStore private constructor(
     }
 
     private fun reject(code: ManualRefundRejectionCode): ManualRefundReceiptCommitResult = ManualRefundReceiptCommitResult.Rejected(code)
-
-    companion object {
-        /**
-         * The composition-root entry point for a platform-configured [LedgerDatabase]: the database
-         * already carries the platform's connection configuration (the Android handle owns the
-         * driver), so this deliberately skips [configureSqliteConnection]. Public because both
-         * composition roots (D-312; spec section 4) construct the store through it.
-         */
-        fun forPlatformConfiguredDatabase(
-            database: LedgerDatabase,
-        ): SqlDelightManualRefundReceiptStore = SqlDelightManualRefundReceiptStore(database)
-    }
 }
 
 private data class OriginalExpense(

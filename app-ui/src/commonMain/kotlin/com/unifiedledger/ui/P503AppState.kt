@@ -304,6 +304,12 @@ sealed interface P503AppState {
         val pendingExternalNavigation: PendingExternalNavigation? = null,
         /** P7-09 09.0 / T4 (P2-2 fix): the visible Busy/待处理 result; see [OverviewEmpty.externalNavigationBusy]. */
         val externalNavigationBusy: ExternalNavigationBusy? = null,
+        /**
+         * P8-03 i2b (D-312; spec section 2.3): the candidate page carried from the editor, so the
+         * confirmation and every re-entry screen read the same page the user selected from instead
+         * of showing a permanent "not read yet" window. Never re-read on these surfaces.
+         */
+        val refundCandidates: com.unifiedledger.application.ManualRefundCandidatesResult? = null,
     ) : P503AppState
 
     data class Submitting(
@@ -323,6 +329,8 @@ sealed interface P503AppState {
         val pendingExternalNavigation: PendingExternalNavigation? = null,
         /** P7-09 09.0 / T4 (P2-2 fix): the visible Busy/待处理 result; see [OverviewEmpty.externalNavigationBusy]. */
         val externalNavigationBusy: ExternalNavigationBusy? = null,
+        /** P8-03 i2b (D-312; spec section 2.3): the candidate page carried from the editor. */
+        val refundCandidates: com.unifiedledger.application.ManualRefundCandidatesResult? = null,
     ) : P503AppState
 
     data object Created : P503AppState
@@ -342,6 +350,8 @@ sealed interface P503AppState {
         val selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
         /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
         val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
+        /** P8-03 i2b (D-312; spec section 2.3): the candidate page carried from the editor. */
+        val refundCandidates: com.unifiedledger.application.ManualRefundCandidatesResult? = null,
     ) : P503AppState
 
     data class DomainRejected(
@@ -358,12 +368,15 @@ sealed interface P503AppState {
         /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
         val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
         /**
-         * P8-03 i2b (D-312; D9): the type's typed rejection sentence. The refund-receipt branch
-         * lands the frozen per-code copy of its eight-code closed set, so the user reads WHICH rule
-         * refused the request instead of the shared generic banner. `null` keeps every other type's
-         * frozen generic rejection banner.
+         * P8-03 i2b (D-312; D9): the type's typed rejection code. The refund-receipt branch carries
+         * the frozen closed-set member, and the screen renders its sentence through
+         * `refundRejectionText`, so the state keeps proving membership in the eight-code set
+         * instead of holding a pre-rendered string. `null` keeps every other type's frozen generic
+         * rejection banner.
          */
-        val rejectionNotice: String? = null,
+        val refundRejectionCode: com.unifiedledger.application.ManualRefundRejectionCode? = null,
+        /** P8-03 i2b (D-312; spec section 2.3): the candidate page carried from the editor. */
+        val refundCandidates: com.unifiedledger.application.ManualRefundCandidatesResult? = null,
     ) : P503AppState
 
     data class InfrastructureFailure(
@@ -1036,6 +1049,8 @@ sealed interface P503AppState {
         val pendingExternalNavigation: PendingExternalNavigation? = null,
         /** P7-09 09.0 / T4 (P2-2 fix): the visible Busy/待处理 result; see [OverviewEmpty.externalNavigationBusy]. */
         val externalNavigationBusy: ExternalNavigationBusy? = null,
+        /** P8-03 i2b (D-312; spec section 2.3): the candidate page carried from the editor. */
+        val refundCandidates: com.unifiedledger.application.ManualRefundCandidatesResult? = null,
     ) : P503AppState
 
     data object Recovered : P503AppState

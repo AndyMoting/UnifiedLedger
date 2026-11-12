@@ -27,6 +27,7 @@ import com.unifiedledger.application.ManualLendingCommitResolution
 import com.unifiedledger.application.ManualRefundCandidatesResult
 import com.unifiedledger.application.ManualRefundReceiptCommitResolution
 import com.unifiedledger.application.ManualRefundReceiptSubmissionResult
+import com.unifiedledger.application.ManualRefundRejectionCode
 import com.unifiedledger.application.ManualTransferCommitResolution
 import com.unifiedledger.application.ManualTransferSaveResult
 import com.unifiedledger.application.ManualTransferSubmissionResult
@@ -289,10 +290,11 @@ class P503ReducerImpl(
         }
 
     /**
-     * P8-03 i2b (D-312; spec sections 2.2/2.3): the refund candidate event family is
-     * state-preserving outside the editor (the search family's central-guard shape). All three
-     * events act only on [P503AppState.Editing]; everywhere else they are absorbed, so a late or
-     * stale dispatch can never reach `unhandled` and turn into an ISE.
+     * P8-03 i2b (D-312; spec sections 2.2/2.3): the refund candidate event family is state-preserving
+     * outside the editor (the search family's central-guard shape). The read completion acts only on
+     * [P503AppState.Editing]; the two user intents also act on the two re-entry screens, which keep
+     * the refund surface live, and are absorbed everywhere else so a late or stale dispatch can never
+     * reach `unhandled` and turn into an ISE.
      */
     private fun refundEntryEventAbsorbed(
         state: P503AppState,
@@ -300,9 +302,12 @@ class P503ReducerImpl(
     ): Boolean =
         when (event) {
             is P503UiEvent.SelectRefundOriginal,
-            is P503UiEvent.RefundCandidatesLoaded,
             P503UiEvent.RetryRefundCandidates,
-            -> state !is P503AppState.Editing
+            ->
+                state !is P503AppState.Editing &&
+                    state !is P503AppState.DomainRejected &&
+                    state !is P503AppState.RequestIdentityConflict
+            is P503UiEvent.RefundCandidatesLoaded -> state !is P503AppState.Editing
             else -> false
         }
 
@@ -3794,6 +3799,7 @@ class P503ReducerImpl(
                             ?.firstOrNull { it.transactionId == originalId }
                     }
                     P503AppState.AwaitingConfirmation(
+                        refundCandidates = state.refundCandidates,
                         draft = state.draft,
                         requestId = event.requestId,
                         overview = state.overview,
@@ -3847,9 +3853,9 @@ class P503ReducerImpl(
             // Cancelling an unsubmitted draft abandons the save intent; the requestId may
             // be discarded and a later Continue allocates a new one (spec 7.4).
             P503UiEvent.Cancel ->
-                P503AppState.Editing(draft = state.draft, requestId = null, overview = state.overview, originTab = state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+                P503AppState.Editing(draft = state.draft, requestId = null, overview = state.overview, originTab = state.originTab, refundCandidates = state.refundCandidates, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             P503UiEvent.Confirm ->
-                P503AppState.Submitting(draft = state.draft, requestId = state.requestId, overview = state.overview, originTab = state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+                P503AppState.Submitting(draft = state.draft, requestId = state.requestId, overview = state.overview, originTab = state.originTab, refundCandidates = state.refundCandidates, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             // A second confirm can arrive from a queued UI event after the first event has
             // already been handled. Keep the intent locked to the existing confirmation.
             is P503UiEvent.Continue -> state
@@ -4278,10 +4284,12 @@ class P503ReducerImpl(
         }
 
     /**
-     * P8-03 i2b (D-312; spec section 2.6): the refund submission's five-outcome mapping. `Created`
-     * is the only fresh commit; `Replayed` and `Recovered` already landed the relationship row, so
-     * both are the determinate-success [P503AppState.Recovered]; a typed rejection lands the frozen
-     * per-code notice (D9); an unknown commit forbids any retry and keeps the surface re-checkable.
+     * P8-03 i2b (D-312; spec section 2.6): the refund submission's mapping in the house shape. A
+     * fresh commit is `Created`; an exact replay is the determinate no-change surface (the other
+     * five families' replay member); a recovered read-back is `Recovered`; a typed rejection lands
+     * its closed-set member (the request-identity conflict uses the same stable conflict screen as
+     * the read-back conflict); an uncertain write is `UnknownCommit` and forbids a retry; an
+     * unready runtime is the shared `InfrastructureFailure` landing.
      */
     private fun reduceRefundReceiptSubmission(
         state: P503AppState.Submitting,
@@ -4289,20 +4297,26 @@ class P503ReducerImpl(
     ): P503AppState =
         when (result) {
             is ManualRefundReceiptSubmissionResult.Created -> P503AppState.Created
-            is ManualRefundReceiptSubmissionResult.Replayed -> P503AppState.Recovered
+            is ManualRefundReceiptSubmissionResult.Replayed -> P503AppState.NoChange
             is ManualRefundReceiptSubmissionResult.Recovered -> P503AppState.Recovered
             is ManualRefundReceiptSubmissionResult.Rejected ->
-                P503AppState.DomainRejected(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity, rejectionNotice = refundRejectionText(result.code))
+                if (result.code == ManualRefundRejectionCode.REFUND_REQUEST_CONFLICT) {
+                    P503AppState.RequestIdentityConflict(state.draft, state.requestId, refundCandidates = state.refundCandidates, overview = state.overview, originTab = state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+                } else {
+                    P503AppState.DomainRejected(state.draft, state.requestId, refundCandidates = state.refundCandidates, overview = state.overview, originTab = state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity, refundRejectionCode = result.code)
+                }
             ManualRefundReceiptSubmissionResult.UnknownCommit ->
-                P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+                P503AppState.UnknownCommit(state.draft, state.requestId, refundCandidates = state.refundCandidates, overview = state.overview, originTab = state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+            ManualRefundReceiptSubmissionResult.InfrastructureFailure ->
+                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
         }
 
     /**
      * P8-03 i2b (D-312; spec section 2.6/V-17): the refund's unknown-commit read-back mapping. Only
      * a fingerprint-matching receipt recovers; a snapshot conflict keeps its stable conflict screen;
      * `Absent` proves the row never landed, so the editor returns with the SAME request id retained
-     * (a retry must reuse it — a new id would bypass idempotency); an unavailable read keeps the
-     * unknown surface and stays re-checkable, never retried automatically.
+     * (a retry must reuse it — a new id would bypass idempotency) and the candidate page carried; an
+     * unavailable read keeps the unknown surface and stays re-checkable, never retried automatically.
      */
     private fun reduceRefundReceiptResolution(
         state: P503AppState.UnknownCommit,
@@ -4311,9 +4325,9 @@ class P503ReducerImpl(
         when (resolution) {
             is ManualRefundReceiptCommitResolution.MatchingReceipt -> P503AppState.Recovered
             ManualRefundReceiptCommitResolution.SnapshotConflict ->
-                P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+                P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), refundCandidates = state.refundCandidates, overview = state.overview, originTab = state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             ManualRefundReceiptCommitResolution.Absent ->
-                P503AppState.Editing(checkNotNull(state.draft), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+                P503AppState.Editing(checkNotNull(state.draft), state.requestId, refundCandidates = state.refundCandidates, overview = state.overview, originTab = state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             ManualRefundReceiptCommitResolution.Unavailable -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.UNAVAILABLE)
         }
 
@@ -4494,6 +4508,13 @@ class P503ReducerImpl(
                 P503AppState.Editing((state.draft as? CollectDraft)?.copy(interest = event.text) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateCollectInterestCategory ->
                 P503AppState.Editing((state.draft as? CollectDraft)?.copy(interestCategoryId = event.categoryId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+            // P8-03 i2b (D-312; spec section 2.3): the refund's candidate-page intents keep the
+            // input and return to the editor, exactly like the field edits above (D-140), so a tap
+            // on the conflict screen can never be silently absorbed by the central guard.
+            is P503UiEvent.SelectRefundOriginal ->
+                P503AppState.Editing((state.draft as? RefundReceiptDraft)?.copy(originalTransactionId = event.transactionId) ?: state.draft, state.requestId, state.overview, state.originTab, refundCandidates = state.refundCandidates, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+            P503UiEvent.RetryRefundCandidates ->
+                P503AppState.Editing(state.draft, state.requestId, state.overview, state.originTab, refundCandidates = null, refundCandidatesAttempt = 1, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             // P7-02: a type switch and "record again" are absorbed on the conflict screen.
             is P503UiEvent.SelectEntryType,
             P503UiEvent.ApplyExpressionResult,
@@ -4637,6 +4658,13 @@ class P503ReducerImpl(
                 P503AppState.Editing((state.draft as? CollectDraft)?.copy(interest = event.text) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             is P503UiEvent.UpdateCollectInterestCategory ->
                 P503AppState.Editing((state.draft as? CollectDraft)?.copy(interestCategoryId = event.categoryId) ?: state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+            // P8-03 i2b (D-312; spec section 2.3): the refund's candidate-page intents keep the
+            // input and return to the editor, exactly like the field edits above (D-140), so a tap
+            // on the rejection screen can never be silently absorbed by the central guard.
+            is P503UiEvent.SelectRefundOriginal ->
+                P503AppState.Editing((state.draft as? RefundReceiptDraft)?.copy(originalTransactionId = event.transactionId) ?: state.draft, state.requestId, state.overview, state.originTab, refundCandidates = state.refundCandidates, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+            P503UiEvent.RetryRefundCandidates ->
+                P503AppState.Editing(state.draft, state.requestId, state.overview, state.originTab, refundCandidates = null, refundCandidatesAttempt = 1, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             // P7-02: a type switch and "record again" are absorbed on the rejection screen.
             is P503UiEvent.SelectEntryType,
             P503UiEvent.ApplyExpressionResult,

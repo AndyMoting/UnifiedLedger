@@ -734,12 +734,6 @@ internal data class CloseableLedgerGraph(
     // P8-02 i2a (D7-7; spec section 2.4): the search result surface's bounded read use case. Null
     // when a graph wired none (tests, legacy graphs).
     val querySearchPage: QuerySearchPage? = null,
-    // P8-03 i2b (D-312; spec sections 2.2/4): the manual refund-receipt entry's graph-lifetime
-    // surfaces (candidate read, submit use case, unknown-commit resolver). Null when a graph wired
-    // none (tests, legacy graphs), so the host renders no refund choice.
-    val readManualRefundCandidates: ManualRefundCandidatesReadPort? = null,
-    val submitManualRefundReceipt: SubmitManualRefundReceipt? = null,
-    val resolveManualRefundCommitStatus: ResolveManualRefundReceiptCommitStatus? = null,
 )
 
 internal data class DesktopLedgerGraph(
@@ -776,11 +770,6 @@ internal data class DesktopLedgerGraph(
     // P8-02 i2a (D7-7; spec section 2.4): the search result surface's bounded read use case. Null
     // when a graph wired none (tests, legacy graphs).
     val querySearchPage: QuerySearchPage? = null,
-    // P8-03 i2b (D-312; spec sections 2.2/4): the manual refund-receipt surfaces over this graph's
-    // database. Null when a graph wired none (tests, legacy graphs).
-    val readManualRefundCandidates: ManualRefundCandidatesReadPort? = null,
-    val submitManualRefundReceipt: SubmitManualRefundReceipt? = null,
-    val resolveManualRefundCommitStatus: ResolveManualRefundReceiptCommitStatus? = null,
 )
 
 /**
@@ -1327,9 +1316,6 @@ internal fun buildLedgerGraph(
         bindReconciliationEvidence = bindReconciliationEvidence,
         confirmReconciliationLink = confirmReconciliationLink,
         querySearchPage = querySearchPage,
-        readManualRefundCandidates = readManualRefundCandidates,
-        submitManualRefundReceipt = submitManualRefundReceipt,
-        resolveManualRefundCommitStatus = resolveManualRefundCommitStatus,
     )
 }
 
@@ -1379,9 +1365,6 @@ internal fun openDesktopLedger(databaseUrl: String): CloseableLedgerGraph {
             bindReconciliationEvidence = graph.bindReconciliationEvidence,
             confirmReconciliationLink = graph.confirmReconciliationLink,
             querySearchPage = graph.querySearchPage,
-            readManualRefundCandidates = graph.readManualRefundCandidates,
-            submitManualRefundReceipt = graph.submitManualRefundReceipt,
-            resolveManualRefundCommitStatus = graph.resolveManualRefundCommitStatus,
         )
     } catch (failure: Exception) {
         // A failure mid-open (schema create/open/migrate/bootstrap) must not leak the

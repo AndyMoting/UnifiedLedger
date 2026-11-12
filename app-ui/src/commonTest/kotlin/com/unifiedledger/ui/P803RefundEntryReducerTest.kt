@@ -175,14 +175,26 @@ class P803RefundEntryReducerTest {
             )
 
         assertEquals(P503AppState.Created, submit(ManualRefundReceiptSubmissionResult.Created(receipt)))
-        assertEquals(P503AppState.Recovered, submit(ManualRefundReceiptSubmissionResult.Replayed(receipt)))
+        // The house replay shape: an exact replay is the determinate no-change surface, not a fresh
+        // success (the other five families map their replay member the same way).
+        assertEquals(P503AppState.NoChange, submit(ManualRefundReceiptSubmissionResult.Replayed(receipt)))
         assertEquals(P503AppState.Recovered, submit(ManualRefundReceiptSubmissionResult.Recovered(receipt)))
         assertEquals(P503AppState.UnknownCommit(draft, requestId), submit(ManualRefundReceiptSubmissionResult.UnknownCommit))
+        assertEquals(
+            P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, draft, requestId),
+            submit(ManualRefundReceiptSubmissionResult.InfrastructureFailure),
+        )
 
         val rejected = submit(ManualRefundReceiptSubmissionResult.Rejected(ManualRefundRejectionCode.REFUND_EXCEEDS_REMAINING))
         val rejectedState = assertIs<P503AppState.DomainRejected>(rejected)
-        // D9: the typed per-code sentence rides the state instead of the shared banner.
-        assertEquals("退款金额超过剩余可退金额", rejectedState.rejectionNotice)
+        // D9: the typed closed-set member rides the state and the screen renders its sentence.
+        assertEquals(ManualRefundRejectionCode.REFUND_EXCEEDS_REMAINING, rejectedState.refundRejectionCode)
+        assertEquals("退款金额超过剩余可退金额", refundRejectionText(ManualRefundRejectionCode.REFUND_EXCEEDS_REMAINING))
+
+        // Spec section 2.6: the request-identity conflict is the same stable conflict screen the
+        // read-back conflict lands, not a re-entry rejection page.
+        val conflict = submit(ManualRefundReceiptSubmissionResult.Rejected(ManualRefundRejectionCode.REFUND_REQUEST_CONFLICT))
+        assertIs<P503AppState.RequestIdentityConflict>(conflict)
     }
 
     @Test
@@ -261,7 +273,6 @@ class P803RefundEntryReducerTest {
                 P503AppState.NoChange,
                 P503AppState.Recovered,
                 P503AppState.UnknownCommit(refundDraft(), requestId),
-                P503AppState.DomainRejected(refundDraft(), requestId),
                 P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, refundDraft(), requestId),
             )
         val events =
@@ -274,6 +285,25 @@ class P803RefundEntryReducerTest {
             for (event in events) {
                 assertEquals(state, reducer.reduce(state, event), "absorbed $event in $state")
             }
+        }
+    }
+
+    @Test
+    fun theReentryScreensKeepTheRefundInputAndRouteTheCandidateIntents() {
+        val screens: List<P503AppState> =
+            listOf(
+                P503AppState.RequestIdentityConflict(refundDraft(), requestId),
+                P503AppState.DomainRejected(refundDraft(), requestId),
+            )
+        for (screen in screens) {
+            val selected =
+                assertIs<P503AppState.Editing>(
+                    reducer.reduce(screen, P503UiEvent.SelectRefundOriginal(TransactionId("tx-picked"))),
+                )
+            assertEquals(TransactionId("tx-picked"), assertIs<RefundReceiptDraft>(selected.draft).originalTransactionId)
+            assertEquals(requestId, selected.requestId, "the re-entry keeps the request id")
+            val retried = assertIs<P503AppState.Editing>(reducer.reduce(screen, P503UiEvent.RetryRefundCandidates))
+            assertNull(retried.refundCandidates, "a retry returns to the editor and re-reads")
         }
     }
 }

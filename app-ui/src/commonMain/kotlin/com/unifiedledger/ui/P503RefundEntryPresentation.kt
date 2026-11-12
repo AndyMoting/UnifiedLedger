@@ -13,17 +13,14 @@ import com.unifiedledger.application.ManualRefundRejectionCode
  */
 
 /**
- * The edit screen's type radio list (spec section 2.2): the five delivered types in their frozen
- * order plus `REFUND_RECEIPT` last when the composition root wired the refund surface. A `false`
- * [refundEntryAvailable] returns exactly the pre-P8-03 five, so an unwired root renders no dead
- * refund choice (and the five undelivered types never appear in any case).
+ * The edit screen's type radio list (spec section 2.2): the delivered types in their frozen enum
+ * order, with `REFUND_RECEIPT` omitted while the composition root has not wired the refund surface
+ * ([refundEntryAvailable] false returns exactly the pre-P8-03 five, so an unwired root renders no
+ * dead refund choice). Deriving from the enum keeps a future `EntryType` member from silently
+ * disappearing out of the list: it can only be added together with its exhaustive label below.
  */
 internal fun entryTypeChoices(refundEntryAvailable: Boolean): List<EntryType> =
-    if (refundEntryAvailable) {
-        listOf(EntryType.EXPENSE, EntryType.INCOME, EntryType.TRANSFER, EntryType.LEND, EntryType.COLLECT, EntryType.REFUND_RECEIPT)
-    } else {
-        listOf(EntryType.EXPENSE, EntryType.INCOME, EntryType.TRANSFER, EntryType.LEND, EntryType.COLLECT)
-    }
+    EntryType.entries.filter { refundEntryAvailable || it != EntryType.REFUND_RECEIPT }
 
 /** The type radio's label. Exhaustive with no `else`: a new type must be given a label. */
 internal fun entryTypeLabel(type: EntryType): String =

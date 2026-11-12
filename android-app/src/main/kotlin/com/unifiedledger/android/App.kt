@@ -796,13 +796,6 @@ internal data class CloseableLedgerGraph(
     // P8-02 i2a (D7-7; spec section 2.4): the search result surface's bounded read use case. Null
     // when a graph wired none (tests, legacy graphs).
     val querySearchPage: QuerySearchPage? = null,
-    // P8-03 i2b (D-312; spec sections 2.2/4): the manual refund-receipt entry's graph-lifetime
-    // surfaces. The candidate read is read-only and is wired beside the reconciliation/search read
-    // faces; the submit use case and the unknown-commit resolver ride with it. All null when a graph
-    // wired none (tests, legacy graphs), so the host renders no refund choice.
-    val readManualRefundCandidates: ManualRefundCandidatesReadPort? = null,
-    val submitManualRefundReceipt: SubmitManualRefundReceipt? = null,
-    val resolveManualRefundCommitStatus: ResolveManualRefundReceiptCommitStatus? = null,
 )
 
 private const val LOG_TAG = "UnifiedLedger"
@@ -1314,7 +1307,7 @@ private fun buildLedgerGraph(
     // the `(database, driver)` constructor's connection configuration is not valid on Android). The
     // store is BOTH the atomic commit port and the unknown-commit read port, so one instance backs
     // the submit use case and the resolver.
-    val manualRefundReceiptStore = SqlDelightManualRefundReceiptStore.forPlatformConfiguredDatabase(database)
+    val manualRefundReceiptStore = SqlDelightManualRefundReceiptStore(database)
     val readManualRefundCandidates: ManualRefundCandidatesReadPort =
         SqlDelightManualRefundCandidatesReadAdapter(database)
     val resolveManualRefundCommitStatus = ResolveManualRefundReceiptCommitStatus(manualRefundReceiptStore)
@@ -1654,9 +1647,6 @@ private fun buildLedgerGraph(
         bindReconciliationEvidence = bindReconciliationEvidence,
         confirmReconciliationLink = confirmReconciliationLink,
         querySearchPage = querySearchPage,
-        readManualRefundCandidates = readManualRefundCandidates,
-        submitManualRefundReceipt = submitManualRefundReceipt,
-        resolveManualRefundCommitStatus = resolveManualRefundCommitStatus,
     )
 }
 

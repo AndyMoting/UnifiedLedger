@@ -34,7 +34,8 @@ import com.unifiedledger.application.ManualTransferOptionsProvider
 import com.unifiedledger.application.ManualTransferRequestIdSource
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
-import com.unifiedledger.application.QueryBudgetMonthimport com.unifiedledger.application.QueryImportCandidateDetail
+import com.unifiedledger.application.QueryBudgetMonth
+import com.unifiedledger.application.QueryImportCandidateDetail
 import com.unifiedledger.application.QueryImportDuplicateReviews
 import com.unifiedledger.application.QueryImportDuplicateReviewsForSession
 import com.unifiedledger.application.QueryImportDuplicateReviewsForSessionPage
@@ -58,8 +59,8 @@ import com.unifiedledger.application.ResolveTransactionCorrectionCommitStatus
 import com.unifiedledger.application.ResolveTransactionVoidCommitStatus
 import com.unifiedledger.application.ReviewImportDuplicateCandidate
 import com.unifiedledger.application.SaveBudgetConfiguration
-import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.application.SubmitManualRefundReceipt
+import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.application.TagMerchantAuthority
 import com.unifiedledger.application.TagMerchantCatalogReader
 import com.unifiedledger.application.TransactionAnnotationHistoryEntry

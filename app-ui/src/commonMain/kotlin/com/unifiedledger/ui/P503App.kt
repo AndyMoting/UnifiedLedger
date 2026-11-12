@@ -97,7 +97,6 @@ import com.unifiedledger.application.ManualLendingRequestSnapshot
 import com.unifiedledger.application.ManualRefundReceiptCommitResolution
 import com.unifiedledger.application.ManualRefundReceiptRequest
 import com.unifiedledger.application.ManualRefundReceiptSubmissionResult
-import com.unifiedledger.application.ManualRefundRejectionCode
 import com.unifiedledger.application.ManualTransferCommitResolution
 import com.unifiedledger.application.ManualTransferInputField
 import com.unifiedledger.application.ManualTransferOptions
@@ -1969,9 +1968,8 @@ fun P503App(
                         }
                     }
                     // P8-03 i2b (D-312; spec sections 2.2/2.6): an incomplete request or an unwired
-                    // submission lands the typed store-unavailable refusal and writes nothing (the
-                    // same typed landing `runtimeNotReadySubmission` uses — one rejection code, no
-                    // new result type).
+                    // submission lands the shared unready-runtime landing and writes nothing (the
+                    // same typed InfrastructureFailure path every other type uses).
                     is RefundReceiptDraft -> {
                         val request = refundReceiptRequest(draft, requestId)
                         val submission = facade.submitEntry
@@ -5305,6 +5303,14 @@ fun P503App(
                             incomeOptions = incomeOptions,
                             transferOptions = transferOptions,
                             lendingOptions = lendingOptions,
+                            // P8-03 i2b (D-312; spec sections 2.2/2.3): the re-entry screen keeps
+                            // the refund surface wired and the candidate page the flow carried, so
+                            // the type stays selected and the picker never shows a fake loading
+                            // window (V-1/V-13).
+                            refundEntryAvailable = ledger.surfaces.manualRefundEntry,
+                            refundCandidates = current.refundCandidates,
+                            onSelectRefundOriginal = { dispatch(P503UiEvent.SelectRefundOriginal(it)) },
+                            onRetryRefundCandidates = { dispatch(P503UiEvent.RetryRefundCandidates) },
                             onUpdateTransferSourceAccount = { dispatch(P503UiEvent.UpdateTransferSourceAccount(it)) },
                             onUpdateTransferDestinationAccount = { dispatch(P503UiEvent.UpdateTransferDestinationAccount(it)) },
                             onUpdateTransferDestinationCredit = { dispatch(P503UiEvent.UpdateTransferDestinationCredit(it)) },
@@ -5363,6 +5369,12 @@ fun P503App(
                             incomeOptions = incomeOptions,
                             transferOptions = transferOptions,
                             lendingOptions = lendingOptions,
+                            // P8-03 i2b (D-312; spec sections 2.2/2.3): the rejection re-entry keeps
+                            // the refund surface wired and the carried candidate page (V-1/V-13).
+                            refundEntryAvailable = ledger.surfaces.manualRefundEntry,
+                            refundCandidates = current.refundCandidates,
+                            onSelectRefundOriginal = { dispatch(P503UiEvent.SelectRefundOriginal(it)) },
+                            onRetryRefundCandidates = { dispatch(P503UiEvent.RetryRefundCandidates) },
                             onUpdateTransferSourceAccount = { dispatch(P503UiEvent.UpdateTransferSourceAccount(it)) },
                             onUpdateTransferDestinationAccount = { dispatch(P503UiEvent.UpdateTransferDestinationAccount(it)) },
                             onUpdateTransferDestinationCredit = { dispatch(P503UiEvent.UpdateTransferDestinationCredit(it)) },
@@ -5404,8 +5416,8 @@ fun P503App(
                             // P8-03 i2b (D-312; D9): a refund's typed rejection lands its frozen
                             // per-code sentence; every other type keeps the shared banner.
                             banner = {
-                                val notice = current.rejectionNotice
-                                if (notice != null) P503RejectionNoticeBanner(notice) else P503RejectedBanner()
+                                val code = current.refundRejectionCode
+                                if (code != null) P503RejectionNoticeBanner(refundRejectionText(code)) else P503RejectedBanner()
                             },
                             onClose =
                                 if (current.overview != null) {
@@ -5614,10 +5626,11 @@ internal fun runtimeNotReadySubmission(draft: TypedEntryDraft): ManualEntrySubmi
         is CollectDraft -> ManualEntrySubmissionResult.Collect(ManualCollectSubmissionResult.InfrastructureFailure)
         // P8-03 i2b (D-312; spec sections 2.6/2.7): the refund's typed landing stays inside the
         // frozen eight-code rejection closed set — the store-unavailable code — so no new result
-        // type is invented for an unwired/unready root.
+        // P8-03 i2b (D-312; spec section 2.7): the shared unready-runtime landing, exactly like the
+        // other five types (the refund family carries its own InfrastructureFailure member).
         is RefundReceiptDraft ->
             ManualEntrySubmissionResult.RefundReceipt(
-                ManualRefundReceiptSubmissionResult.Rejected(ManualRefundRejectionCode.REFUND_STORE_UNAVAILABLE),
+                ManualRefundReceiptSubmissionResult.InfrastructureFailure,
             )
     }
 

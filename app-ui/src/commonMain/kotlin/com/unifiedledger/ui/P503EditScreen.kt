@@ -602,7 +602,10 @@ fun P503EditScreen(
         // P7-08 08.B-2 (spec section 4.1): the optional tag/merchant association. Kind-independent
         // (the annotation lives on the transaction root), never required. Hidden when the catalog
         // projection is unwired/not loaded, so no empty authoritative-looking picker is shown.
-        if (tagMerchantOptions != null) {
+        // P8-03 i2b (D-312; spec section 2.2): a manual refund writes NO annotation (the refund
+        // request carries no tag/merchant and the formal version is built by the frozen domain
+        // factory), so the picker is hidden rather than accepting a choice that would be dropped.
+        if (tagMerchantOptions != null && draft !is RefundReceiptDraft) {
             AnnotationAssociationSection(
                 tagMerchantOptions = tagMerchantOptions,
                 selectedTagIds = draft.tagIds,
