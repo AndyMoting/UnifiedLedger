@@ -20,7 +20,7 @@ SUPPORT = "MigrationTestSupport.kt"
 CLASSES = {
     "LedgerMigrationV1ToV11Test": 12,
     "LedgerMigrationV11ToV19Test": 21,
-    "LedgerMigrationV20ToV36Test": 15,
+    "LedgerMigrationV20ToV37Test": 15,
 }
 EXPECTED = [
     "confirmationOnMigratedV23AdvancesSeededReconciliationRow",

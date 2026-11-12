@@ -77,8 +77,8 @@ class P708TagMerchantV33ToV34MigrationTest {
         )
 
     @Test
-    fun versionThirtyFiveIsCurrent() {
-        assertEquals(36, LedgerDatabase.Schema.version)
+    fun versionThirtySevenIsCurrent() {
+        assertEquals(37, LedgerDatabase.Schema.version)
     }
 
     @Test

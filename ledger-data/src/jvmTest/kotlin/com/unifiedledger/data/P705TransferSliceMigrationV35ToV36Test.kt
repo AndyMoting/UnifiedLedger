@@ -25,8 +25,8 @@ import kotlin.test.assertEquals
  * transient inside the migration and exists in neither terminal state, so it is out of scope.
  *
  * Populated-row value preservation and whole-migration rollback for this edge are owned by
- * `LedgerMigrationV20ToV36Test.populatedV35ToV36CorrectionRebuildPreservesCommittedRowsValueForValue`
- * and `LedgerMigrationV20ToV36Test.lateV35ToV36FailureRollsBackCorrectionRebuildAndKeepsLegacyRows`;
+ * `LedgerMigrationV20ToV37Test.populatedV35ToV36CorrectionRebuildPreservesCommittedRowsValueForValue`
+ * and `LedgerMigrationV20ToV37Test.lateV35ToV36FailureRollsBackCorrectionRebuildAndKeepsLegacyRows`;
  * this class does not repeat that evidence.
  */
 class P705TransferSliceMigrationV35ToV36Test {
@@ -38,8 +38,8 @@ class P705TransferSliceMigrationV35ToV36Test {
         )
 
     @Test
-    fun versionThirtySixIsCurrent() {
-        assertEquals(36, LedgerDatabase.Schema.version)
+    fun versionThirtySevenIsCurrent() {
+        assertEquals(37, LedgerDatabase.Schema.version)
     }
 
     @Test
@@ -88,12 +88,12 @@ class P705TransferSliceMigrationV35ToV36Test {
         try {
             JdbcSqliteDriver(url, migrationProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
-                driver.execute(null, "PRAGMA user_version = 36", 0)
+                driver.execute(null, "PRAGMA user_version = 37", 0)
             }
             JdbcSqliteDriver(url, migrationProperties()).use { driver ->
                 val before = rebuiltTables.associateWith { columnInfo(driver, it) }
-                LedgerDatabase.Schema.migrate(driver, 36, 36)
-                assertEquals(36L, queryLong(driver, "PRAGMA user_version"))
+                LedgerDatabase.Schema.migrate(driver, 37, 37)
+                assertEquals(37L, queryLong(driver, "PRAGMA user_version"))
                 rebuiltTables.forEach { table ->
                     assertEquals(before.getValue(table), columnInfo(driver, table), table)
                 }

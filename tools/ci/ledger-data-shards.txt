@@ -2,7 +2,7 @@
 1	com.unifiedledger.data.DuplicateMatchCountEquivalenceDataTest
 1	com.unifiedledger.data.ImportReview61kReadAttributionTest
 1	com.unifiedledger.data.LedgerMigrationV1ToV11Test
-1	com.unifiedledger.data.LedgerMigrationV20ToV36Test
+1	com.unifiedledger.data.LedgerMigrationV20ToV37Test
 1	com.unifiedledger.data.MultiRgStoreCoexistenceTest
 1	com.unifiedledger.data.P406CreditFullStateOracleTest
 1	com.unifiedledger.data.P407DuplicateClosedFullStateOracleTest
@@ -104,6 +104,8 @@
 5	com.unifiedledger.data.ImportReviewTargetedReadEquivalenceTest
 5	com.unifiedledger.data.ImportSpineLifecycleEndToEndTest
 5	com.unifiedledger.data.O2PrecisionRescaleDataTest
+5	com.unifiedledger.data.P803ManualRefundReceiptMigrationV36ToV37Test
+5	com.unifiedledger.data.P803ManualRefundReceiptVectorsTest
 5	com.unifiedledger.data.P408ProjectionAuthorityStoreTest
 5	com.unifiedledger.data.P408ReconciliationCanonicalOracleTest
 5	com.unifiedledger.data.P408ReconciliationStoreTest

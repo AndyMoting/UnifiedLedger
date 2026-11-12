@@ -73,7 +73,7 @@ class P802SearchDeviceTimingInstrumentedTest {
             "every fixture instant must sit inside the default ${P802_SEARCH_DEFAULT_WINDOW_DAYS}-day window",
             seeded.windowStartInclusive >= queryNow - P802_SEARCH_DEFAULT_WINDOW_DAYS.days,
         )
-        assertEquals("the schema must stay at the frozen version", 36L, seeded.schemaVersion)
+        assertEquals("the schema must stay at the frozen version", 37L, seeded.schemaVersion)
         assertEquals("every version row must carry its statistics projection", 0L, seeded.missingProjectionRows)
 
         val port = checkNotNull(seeded.graph.querySearchPage) { "the production graph must wire the search read" }

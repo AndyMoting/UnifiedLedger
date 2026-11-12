@@ -521,7 +521,7 @@ class SqlDelightCatalogStore private constructor(
     /** Every category id referenced by a product row, across the same surface bootstrap scans. */
     private fun referencedCategoryIds(ledger: String): Set<String> =
         buildSet {
-            addAll(database.ledgerQueries.catalogReferencedManualCategoryIds(ledger, ledger).executeAsList())
+            addAll(database.ledgerQueries.catalogReferencedManualCategoryIds(ledger, ledger, ledger).executeAsList())
             addAll(database.ledgerQueries.catalogReferencedDecisionCategoryIds(ledger).executeAsList())
             // P7-07 07.B (spec section 3.5): any current OR historical budget reference blocks a
             // category delete. budget_settings_history is immutable and complete, so it is the
@@ -575,6 +575,7 @@ class SqlDelightCatalogStore private constructor(
                     .catalogReferencedDecisionAccountIds(ledger, ledger, ledger, ledger, ledger)
                     .executeAsList(),
             )
+            addAll(database.ledgerQueries.catalogReferencedManualRefundAccountIds(ledger).executeAsList())
         }
 
     companion object {

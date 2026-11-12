@@ -1,0 +1,45 @@
+-- P8-03 refund-receipt entry (D-312; spec
+-- docs/specs/2026-11-12-p8-03-refund-entry-design.md sections 2.1/2.6/4): v36 -> v37.
+-- Purely additive: the product-owned manual refund relationship table, its
+-- (ledger_id, original_transaction_id) index and its update-immutability trigger. No staged
+-- rebuild, no backfill, no change to any existing table, query, view or trigger. The caller
+-- wraps Schema.migrate in one outer transaction (26.sqm discipline), so any failure rolls the
+-- whole migration back and the v36 file is left untouched. Every CREATE statement below matches
+-- the fresh Ledger.sq terminal definition byte for byte.
+PRAGMA defer_foreign_keys = 1;
+
+-- One row is the complete history of one manual arrival+confirmation event pair: the stable
+-- relationship id, the request id as the idempotency key, the request fingerprint that makes a
+-- same-id/different-payload retry a typed conflict, and the explicit confirmation marker. The
+-- composite foreign keys are written in the (transaction_id, ledger_id) direction so they match
+-- ledger_transaction's UNIQUE (transaction_id, ledger_id) key. A refund transaction is always
+-- inserted before its relationship row inside the same commit transaction, so the foreign keys
+-- stay immediate.
+CREATE TABLE manual_refund_receipt (
+  ledger_id TEXT NOT NULL,
+  relationship_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  request_fingerprint TEXT NOT NULL,
+  original_transaction_id TEXT NOT NULL,
+  refund_transaction_id TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  destination_account_id TEXT NOT NULL,
+  category_id TEXT NOT NULL,
+  arrived_at TEXT NOT NULL,
+  confirmed_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_confirm'),
+  PRIMARY KEY (ledger_id, request_id),
+  UNIQUE (ledger_id, relationship_id),
+  UNIQUE (ledger_id, refund_transaction_id),
+  FOREIGN KEY (original_transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id),
+  FOREIGN KEY (refund_transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id)
+);
+CREATE INDEX manual_refund_receipt_original_idx ON manual_refund_receipt(ledger_id, original_transaction_id);
+
+-- The row is the frozen history (spec section 2.1, D-H reading): there is no UPDATE path at all.
+-- DELETE stays legal only for test teardown with foreign keys off, so no delete trigger is added.
+CREATE TRIGGER manual_refund_receipt_guard_update BEFORE UPDATE ON manual_refund_receipt BEGIN
+  SELECT RAISE(ABORT, 'cannot update manual refund receipt'); END;
