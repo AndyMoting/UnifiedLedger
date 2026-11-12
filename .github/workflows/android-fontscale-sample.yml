@@ -11,7 +11,7 @@
 # - `profile=empty` (default): the three empty-ledger screens on a **fresh empty install**
 #   (`home.png` / `asset.png` / `analysis.png`); an empty ledger is exactly the state V-8 samples,
 #   so no fixture is generated.
-# - `profile=seeded`: the same APK over one prepared v36 database pushed into the app's stable
+# - `profile=seeded`: the same APK over one prepared v37 database pushed into the app's stable
 #   storage before launch, capturing `search-guide.png` / `search-results.png` (the P8-02 search surface, guide and result faces), `detail.png` (the 交易详情 screen) and
 #   `reconciliation.png` (the 账户对账 queue) — the read-only surfaces P8-01a adds; the two search faces are P8-02 V-9.
 # - `profile=refund` (P8-03 V-14): the same seeded database, whose confirmed manual expense is the

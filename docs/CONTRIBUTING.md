@@ -146,7 +146,7 @@ gh workflow run android-fontscale-sample.yml --ref <branch> -f expected_sha=<完
 gh workflow run android-fontscale-sample.yml --ref <branch> -f expected_sha=<完整40位SHA> -f profile=refund
 ```
 
-`profile=empty` 在全新空安装上产出 `home.png` / `asset.png` / `analysis.png`；`profile=seeded` 与 `profile=refund` 先在模拟器会话之外以 `:ledger-data:jvmTest --tests 'com.unifiedledger.data.P801FontscaleSeedWriterTest' -Dul.fontscale.seed=<path>` 生成 v37 种子库（含一笔可退的已确认手工支出），`seeded` 再产出 `search-guide.png` / `search-results.png`（搜索面的引导态与结果态，P8-02 V-9）、`detail.png`（交易详情）与 `reconciliation.png`（账户对账队列），`refund` 产出 `refund-entry.png`（退款类型选中且候选读落地）与 `refund-confirmation.png`（原交易/到账账户/金额/发生时间填写后点继续的确认页，P8-03 V-14）。三档各带自己的 uiautomator dump 与 `host.json`；`gate` 用同一个 `--profile`（`seeded` / `refund` 档另带 `--seed`）重算判据：profile、屏幕集合、屏幕成功态标记（含上一屏字符串缺席）或种子 sha256 与实际文件不一致即红。工件 `fontscale-sample-<sha>-<profile>` 保留 30 天。
+`profile=empty` 在全新空安装上产出 `home.png` / `asset.png` / `analysis.png`；`profile=seeded` 与 `profile=refund` 先在模拟器会话之外以 `:ledger-data:jvmTest --tests 'com.unifiedledger.data.P801FontscaleSeedWriterTest' -Dul.fontscale.seed=<path>` 生成 v37 种子库（含一笔可退的已确认手工支出），`seeded` 再产出 `search-guide.png` / `search-results.png`（搜索面的引导态与结果态，P8-02 V-9）、`detail.png`（交易详情）与 `reconciliation.png`（账户对账队列），`refund` 产出 `refund-entry.png`（退款类型选中且候选读落地）与 `refund-confirmation.png`（原交易/到账账户/金额/发生时间填写后点继续的确认页，P8-03 V-14）。三档各带自己的 uiautomator dump 与 `host.json`；`gate` 用同一个 `--profile`（`--seed` 对所有档都传，`empty` 档忽略）重算判据：profile、屏幕集合、屏幕成功态标记（含上一屏字符串缺席）或种子 sha256 与实际文件不一致即红。工件 `fontscale-sample-<sha>-<profile>` 保留 30 天。
 
 ### 本地诊断通道（D-216，仅诊断，不是验收）
 

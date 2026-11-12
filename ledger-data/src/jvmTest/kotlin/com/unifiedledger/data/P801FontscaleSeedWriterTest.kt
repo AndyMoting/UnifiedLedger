@@ -70,7 +70,7 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 
 /**
- * P8-01a i3b font-scale seed writer: the prepared v36 ledger database the `seeded` profile of
+ * P8-01a i3b font-scale seed writer: the prepared v37 ledger database the `seeded` profile of
  * `android-fontscale-sample.yml` pushes into the app's stable storage before launch.
  *
  * WHY A TEST. The output is a real file-backed SQLite database built from the REAL product entry

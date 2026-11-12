@@ -11,7 +11,7 @@ sample; the device legs run here against a hosted AVD at the requested `system f
 
 - `profile=empty` (the P8-00 leg): the three empty-ledger screens on a **fresh empty install** —
   an empty ledger is exactly the state V-8 samples, so no fixture is needed;
-- `profile=seeded` (the P8-01a i3b / P8-02 V-9 leg): one prepared v36 database is pushed into the
+- `profile=seeded` (the P8-01a i3b / P8-02 V-9 leg): one prepared v37 database is pushed into the
   app's stable storage before launch, so the search guide face, the search result face, the
   read-only 交易详情 screen and the 账户对账 queue are sampled on a ledger that actually holds one
   transfer. The seeded instant is clock-relative (D7-9), so the database bytes — and the recorded
@@ -546,7 +546,7 @@ class Profile:
     name: str
     launch_marker: str
     screens: tuple[Screen, ...]
-    # Seeded profiles need the prepared v36 database pushed before launch; empty profiles must
+    # Seeded profiles need the prepared v37 database pushed before launch; empty profiles must
     # never touch the app's data directory (a fresh empty install is the state V-8 samples).
     seeded: bool = False
 
@@ -1102,7 +1102,7 @@ def main(argv: list[str] | None = None) -> int:
         "--seed",
         default="",
         help=(
-            "prepared v36 ledger database: pushed for profile=seeded, and hash-compared by the "
+            "prepared v37 ledger database: pushed for seeded profiles, and hash-compared by the "
             "gate against the digest host.json recorded"
         ),
     )
