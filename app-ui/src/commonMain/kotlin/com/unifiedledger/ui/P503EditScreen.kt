@@ -2,6 +2,8 @@ package com.unifiedledger.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -95,7 +97,7 @@ import kotlin.time.Instant
  * that fails the round-trip check (historical DST gap) surfaces the field error and dispatches
  * nothing (fail-closed, spec 3.3).
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun P503EditScreen(
     draft: TypedEntryDraft,
@@ -259,18 +261,21 @@ fun P503EditScreen(
         // label collapsed into a vertical stack and its radio was clipped at the screen edge, so the
         // wired six split into two rows of three; the five-type layout stays as it was.
         val typeChoices = entryTypeChoices(refundEntryAvailable)
-        if (typeChoices.size > 5) {
+        if (refundEntryAvailable) {
+            // A-VIS (V-14): a wrap layout keeps each option at its intrinsic size — at 1.3x the
+            // six choices wrap to a second row instead of squeezing 退款到账 into vertical
+            // characters. The five-type layout below is untouched.
             Text("类型：", style = MaterialTheme.typography.titleSmall)
-            typeChoices.chunked(3).forEach { rowChoices ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    rowChoices.forEach { type ->
-                        EntryTypeChoice(
-                            type = type,
-                            selected = draft.entryType == type,
-                            onSelect = onSelectEntryType,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                typeChoices.forEach { type ->
+                    EntryTypeChoice(
+                        type = type,
+                        selected = draft.entryType == type,
+                        onSelect = onSelectEntryType,
+                    )
                 }
             }
         } else {
@@ -850,13 +855,6 @@ private fun Modifier.dismissOnEscape(onDismiss: () -> Unit): Modifier =
     }
 
 /**
- * Selector field with a field-level error that is semantically associated with the field:
- * the label and the visible error text merge into one semantics node read by screen
- * readers as the field's label plus its error, while the selectable options stay
- * individually accessible.
- */
-@Composable
-/**
  * P8-03 i2d (D-312; V-14): one entry-type option — the radio plus its label as a single
  * minimum-interactive-size row, shared by the five-type single row and the six-type two-row layout.
  */
@@ -882,6 +880,13 @@ private fun EntryTypeChoice(
     }
 }
 
+/**
+ * Selector field with a field-level error that is semantically associated with the field:
+ * the label and the visible error text merge into one semantics node read by screen
+ * readers as the field's label plus its error, while the selectable options stay
+ * individually accessible.
+ */
+@Composable
 private fun SelectorField(
     label: String,
     hasError: Boolean,
