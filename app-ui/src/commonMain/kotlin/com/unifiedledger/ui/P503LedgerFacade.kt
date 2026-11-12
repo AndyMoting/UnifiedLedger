@@ -285,7 +285,7 @@ class P503LedgerFacade(
     // and the host then renders no refund choice at all.
     val readManualRefundCandidates: ManualRefundCandidatesReadPort? = null,
     val submitManualRefundReceipt: SubmitManualRefundReceipt? = null,
-    val resolveManualRefundCommitStatus: ResolveManualRefundCommitStatus? = null,
+    val resolveManualRefundCommitStatus: ResolveManualRefundReceiptCommitStatus? = null,
 ) {
     private val session = catalogSession
     private val fallbackOptionsProvider = baseOptionsProvider

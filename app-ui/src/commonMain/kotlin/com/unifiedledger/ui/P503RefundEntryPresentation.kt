@@ -5,7 +5,7 @@ import com.unifiedledger.application.ManualRefundCandidate
 import com.unifiedledger.application.ManualRefundCandidatesResult
 import com.unifiedledger.application.ManualRefundRejectionCode
 
-/**
+/*
  * P8-03 i2b (D-312; spec sections 2.2/2.3/2.6) — the refund-receipt entry's pure presentation
  * layer: the type-list projection, the candidate list's typed states and copy, and the frozen
  * rejection/unknown copy. No Compose API here, so commonTest pins every string and every state
