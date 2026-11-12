@@ -102,7 +102,7 @@ internal fun refundCandidateRowText(candidate: ManualRefundCandidate): String {
 }
 
 /**
- * The frozen per-code rejection copy (D9; the eight-code closed set of spec section 2.6). Every
+ * The frozen per-code rejection copy (D-312; spec section 2.6, the eight-code closed set). Every
  * code has exactly one sentence; no code falls back to a shared message, so the user always reads
  * why the refund was refused and whether the fix is the amount or the original selection.
  */
@@ -118,5 +118,5 @@ internal fun refundRejectionText(code: ManualRefundRejectionCode): String =
         ManualRefundRejectionCode.REFUND_STORE_UNAVAILABLE -> "退款保存失败，请稍后重试"
     }
 
-/** Spec section 2.6's verbatim unknown-outcome sentence (D9): never retried, re-entered instead. */
+/** Spec section 2.6's verbatim unknown-outcome sentence (D-312): never retried, re-entered instead. */
 internal const val REFUND_UNKNOWN_RESULT_TEXT: String = "结果未知，请重开确认"

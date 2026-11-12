@@ -20,7 +20,7 @@ import kotlin.time.Instant
  *
  * V-1: the type list and its labels; V-10: the delivered type set is exactly the six and no
  * undelivered type ever appears; V-13: the candidate list's four states are distinct, a failed read
- * is never presented as an empty list and only the failure offers a retry; D9: every rejection code
+ * is never presented as an empty list and only the failure offers a retry; D-312/spec section 2.6: every rejection code
  * has its own frozen sentence.
  */
 class P803RefundEntryPresentationTest {
@@ -143,7 +143,7 @@ class P803RefundEntryPresentationTest {
         )
     }
 
-    // ---- D9: the frozen rejection copy ----
+    // ---- D-312/spec section 2.6: the frozen rejection copy ----
 
     @Test
     fun everyRejectionCodeHasItsOwnFrozenSentence() {

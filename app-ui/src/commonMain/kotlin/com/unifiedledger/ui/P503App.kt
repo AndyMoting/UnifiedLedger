@@ -1830,7 +1830,7 @@ fun P503App(
      * P8-03 i2b (D-312; spec sections 2.2/2.6): the refund submission/read-back request, built
      * once per attempt so the submission and the unknown-commit check compare the SAME fingerprint
      * (the request id is reused on a retry, never reallocated). `null` = an incomplete draft; the
-     * caller lands the typed store-unavailable refusal and writes nothing.
+     * caller lands the shared unready-runtime InfrastructureFailure and writes nothing.
      */
     fun refundReceiptRequest(
         draft: RefundReceiptDraft,
@@ -5292,7 +5292,7 @@ fun P503App(
                                     coordinator.retryCommitStatusCheck(current)
                                 }
                             },
-                            // P8-03 i2b (D-312; D9/spec section 2.6): the refund's frozen sentence,
+                            // P8-03 i2b (D-312; spec section 2.6): the refund's frozen sentence,
                             // verbatim; no other type adds a line.
                             typeNotice = if (current.draft is RefundReceiptDraft) REFUND_UNKNOWN_RESULT_TEXT else null,
                         )
@@ -5413,7 +5413,7 @@ fun P503App(
                             occurredAtText = hoistedOccurredAtText ?: (current.draft.occurredAt?.toString() ?: ""),
                             onOccurredAtTextChange = { hoistedOccurredAtText = it },
                             onContinue = null,
-                            // P8-03 i2b (D-312; D9): a refund's typed rejection lands its frozen
+                            // P8-03 i2b (D-312; spec section 2.6): a refund's typed rejection lands its frozen
                             // per-code sentence; every other type keeps the shared banner.
                             banner = {
                                 val code = current.refundRejectionCode
@@ -5624,8 +5624,6 @@ internal fun runtimeNotReadySubmission(draft: TypedEntryDraft): ManualEntrySubmi
         is TransferDraft -> ManualEntrySubmissionResult.Transfer(ManualTransferSubmissionResult.InfrastructureFailure)
         is LendDraft -> ManualEntrySubmissionResult.Lend(ManualLendSubmissionResult.InfrastructureFailure)
         is CollectDraft -> ManualEntrySubmissionResult.Collect(ManualCollectSubmissionResult.InfrastructureFailure)
-        // P8-03 i2b (D-312; spec sections 2.6/2.7): the refund's typed landing stays inside the
-        // frozen eight-code rejection closed set — the store-unavailable code — so no new result
         // P8-03 i2b (D-312; spec section 2.7): the shared unready-runtime landing, exactly like the
         // other five types (the refund family carries its own InfrastructureFailure member).
         is RefundReceiptDraft ->

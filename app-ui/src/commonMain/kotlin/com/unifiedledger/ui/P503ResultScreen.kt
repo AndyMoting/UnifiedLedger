@@ -54,7 +54,7 @@ fun P503ResultScreen(state: P503AppState) {
 internal fun P503UnknownCommitScreen(
     state: P503AppState.UnknownCommit,
     onRetryCheck: () -> Unit,
-    // P8-03 i2b (D-312; D9/spec section 2.6): the refund type's own frozen sentence, appended by
+    // P8-03 i2b (D-312; spec section 2.6): the refund type's own frozen sentence, appended by
     // the host. Null keeps every other type's exact pre-P8-03 copy.
     typeNotice: String? = null,
 ) {

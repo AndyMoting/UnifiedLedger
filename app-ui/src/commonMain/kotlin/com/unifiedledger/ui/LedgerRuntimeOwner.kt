@@ -852,7 +852,7 @@ class LedgerLeaseScope(
                 // facade fields. Pure null checks, never an invocation; the combined
                 // [LedgerSurfaces.manualRefundEntry] is what the edit screen's type list keys on.
                 manualRefundCandidateRead = facade.readManualRefundCandidates != null,
-                manualRefundSubmit = facade.submitManualRefundReceipt != null,
+                manualRefundSubmit = facade.submitEntry?.hasRefundDelegate == true,
                 manualRefundRecovery = facade.resolveManualRefundCommitStatus != null,
             )
         }

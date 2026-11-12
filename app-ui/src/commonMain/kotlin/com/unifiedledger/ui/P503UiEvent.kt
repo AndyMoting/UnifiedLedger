@@ -208,7 +208,8 @@ sealed interface P503UiEvent {
 
     /**
      * Retries the candidate read after a typed failure: the reducer clears the payload back to the
-     * loading window and bumps the attempt counter the host effect keys on.
+     * loading window and advances the attempt counter the host effect keys on (the editor branch
+     * bumps it; a re-entry screen returns to the editor with a fresh attempt key).
      */
     data object RetryRefundCandidates : P503UiEvent
 

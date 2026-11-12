@@ -176,6 +176,13 @@ class ExecuteManualEntrySubmission(
     // is a composition-root wiring bug and fails fast, exactly like the transfer/lending branches.
     private val refund: SubmitManualRefundReceipt? = null,
 ) {
+    /**
+     * P8-03 i2b (D-312; spec section 4): whether the refund delegate is wired. The composition
+     * roots' readiness probe reads THIS, not a sibling facade field, so a root cannot render the
+     * entry while the fold's delegate is missing (a submit would then fail fast).
+     */
+    val hasRefundDelegate: Boolean get() = refund != null
+
     fun submit(input: ManualEntrySaveInput): ManualEntrySubmissionResult {
         validateEntryNote(input.note)?.let { violation ->
             return when (input) {

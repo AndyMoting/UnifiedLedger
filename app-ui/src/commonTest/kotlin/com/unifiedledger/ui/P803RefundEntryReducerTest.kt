@@ -186,7 +186,7 @@ class P803RefundEntryReducerTest {
 
         val rejected = submit(ManualRefundReceiptSubmissionResult.Rejected(ManualRefundRejectionCode.REFUND_EXCEEDS_REMAINING))
         val rejectedState = assertIs<P503AppState.DomainRejected>(rejected)
-        // D9: the typed closed-set member rides the state and the screen renders its sentence.
+        // D-312/spec section 2.6: the typed closed-set member rides the state and the screen renders its sentence.
         assertEquals(ManualRefundRejectionCode.REFUND_EXCEEDS_REMAINING, rejectedState.refundRejectionCode)
         assertEquals("退款金额超过剩余可退金额", refundRejectionText(ManualRefundRejectionCode.REFUND_EXCEEDS_REMAINING))
 
@@ -199,7 +199,8 @@ class P803RefundEntryReducerTest {
     @Test
     fun everyRefundCommitResolutionOutcomeMapsToItsState() {
         val draft = refundDraft()
-        val unknown = P503AppState.UnknownCommit(draft, requestId, emptyState, P503Tab.HOME)
+        val carriedCandidates = loadedCandidates(candidate())
+        val unknown = P503AppState.UnknownCommit(draft, requestId, emptyState, P503Tab.HOME, refundCandidates = carriedCandidates)
         val receipt = ManualRefundReceiptRecord(relationshipId = "relationship-1", refundTransactionId = TransactionId("tx-refund"))
 
         fun resolve(resolution: ManualRefundReceiptCommitResolution) = reducer.reduce(unknown, P503UiEvent.CommitStatusResolved(ManualEntryCommitResolution.RefundReceipt(resolution)))
@@ -209,13 +210,15 @@ class P803RefundEntryReducerTest {
         val conflict = assertIs<P503AppState.RequestIdentityConflict>(resolve(ManualRefundReceiptCommitResolution.SnapshotConflict))
         assertEquals(draft, conflict.draft)
         assertEquals(requestId, conflict.requestId)
+        assertEquals(carriedCandidates, conflict.refundCandidates)
 
         // Absent proves the row never landed, so the editor returns with the SAME request id
-        // retained (a retry must reuse it — a new id would bypass idempotency).
+        // retained (a retry must reuse it — a new id would bypass idempotency) AND the carried
+        // candidate page, so the re-entry screen never falls back to a fake loading window.
         val backToEditor = assertIs<P503AppState.Editing>(resolve(ManualRefundReceiptCommitResolution.Absent))
         assertEquals(draft, backToEditor.draft)
         assertEquals(requestId, backToEditor.requestId)
-        assertNull(backToEditor.refundCandidates, "the returned editor re-reads its candidate page")
+        assertEquals(carriedCandidates, backToEditor.refundCandidates)
 
         val unavailable = assertIs<P503AppState.UnknownCommit>(resolve(ManualRefundReceiptCommitResolution.Unavailable))
         assertEquals(UnknownCommitCheckOutcome.UNAVAILABLE, unavailable.lastCheckOutcome)

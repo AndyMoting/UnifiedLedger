@@ -368,7 +368,7 @@ sealed interface P503AppState {
         /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
         val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
         /**
-         * P8-03 i2b (D-312; D9): the type's typed rejection code. The refund-receipt branch carries
+         * P8-03 i2b (D-312; spec section 2.6): the type's typed rejection code. The refund-receipt branch carries
          * the frozen closed-set member, and the screen renders its sentence through
          * `refundRejectionText`, so the state keeps proving membership in the eight-code set
          * instead of holding a pre-rendered string. `null` keeps every other type's frozen generic
@@ -412,6 +412,12 @@ sealed interface P503AppState {
         val selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
         /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
         val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
+        /**
+         * P8-03 i2b (D-312; spec sections 2.3/5): the candidate page carried from the submitting
+         * flow, so a retry that lands on a re-entry screen still has the rows and never shows the
+         * permanently-loading window (V-13). `null` only when the flow never had a refund draft.
+         */
+        val refundCandidates: com.unifiedledger.application.ManualRefundCandidatesResult? = null,
     ) : P503AppState
 
     /**

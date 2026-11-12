@@ -121,7 +121,7 @@ internal fun confirmationRows(
             listOf(
                 ConfirmationRow("原交易", labels.originalTransaction ?: ABSENT_VALUE),
                 ConfirmationRow("到账账户", labels.paymentAccount),
-                ConfirmationRow("继承分类", labels.category),
+                ConfirmationRow("继承分类", labels.category.ifBlank { ABSENT_VALUE }),
                 ConfirmationRow("退款金额", amountValue(draft.amountText, currencyCode)),
             )
     }

@@ -933,7 +933,7 @@ internal fun P503RejectedBanner() {
 }
 
 /**
- * P8-03 i2b (D-312; D9): the typed per-code rejection sentence of a state that carries one. Same
+ * P8-03 i2b (D-312; spec section 2.6): the typed per-code rejection sentence of a state that carries one. Same
  * visual role as [P503RejectedBanner], with the type's exact copy instead of the shared sentence.
  */
 @Composable

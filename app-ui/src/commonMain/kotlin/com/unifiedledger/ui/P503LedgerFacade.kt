@@ -59,7 +59,6 @@ import com.unifiedledger.application.ResolveTransactionCorrectionCommitStatus
 import com.unifiedledger.application.ResolveTransactionVoidCommitStatus
 import com.unifiedledger.application.ReviewImportDuplicateCandidate
 import com.unifiedledger.application.SaveBudgetConfiguration
-import com.unifiedledger.application.SubmitManualRefundReceipt
 import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.application.TagMerchantAuthority
 import com.unifiedledger.application.TagMerchantCatalogReader
@@ -284,7 +283,6 @@ class P503LedgerFacade(
     // the startup tests and the app-ui owner fixtures keep compiling with the entry simply absent —
     // and the host then renders no refund choice at all.
     val readManualRefundCandidates: ManualRefundCandidatesReadPort? = null,
-    val submitManualRefundReceipt: SubmitManualRefundReceipt? = null,
     val resolveManualRefundCommitStatus: ResolveManualRefundReceiptCommitStatus? = null,
 ) {
     private val session = catalogSession

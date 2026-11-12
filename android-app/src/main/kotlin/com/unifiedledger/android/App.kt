@@ -1303,8 +1303,8 @@ private fun buildLedgerGraph(
             reader = counterpartyStore,
         )
     // P8-03 i2b (D-312; spec sections 2.2/4): the manual refund-receipt surfaces. The receipt store
-    // comes from the platform-configured-database factory (the Android handle owns the driver, and
-    // the `(database, driver)` constructor's connection configuration is not valid on Android). The
+    // comes from its public driver-free constructor (the Android handle owns the driver, and the
+    // `(database, driver)` constructor's connection configuration is not valid on Android). The
     // store is BOTH the atomic commit port and the unknown-commit read port, so one instance backs
     // the submit use case and the resolver.
     val manualRefundReceiptStore = SqlDelightManualRefundReceiptStore(database)
@@ -1617,7 +1617,6 @@ private fun buildLedgerGraph(
             annotationRequestIdSource = annotationRequestIdSource,
             // P8-03 i2b (D-312; spec sections 2.2/4): the manual refund-receipt surface.
             readManualRefundCandidates = readManualRefundCandidates,
-            submitManualRefundReceipt = submitManualRefundReceipt,
             resolveManualRefundCommitStatus = resolveManualRefundCommitStatus,
         )
     // A-PERF (spec section 2.1): the Android bootstrap-completion trigger point — the graph is

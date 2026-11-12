@@ -1289,7 +1289,6 @@ internal fun buildLedgerGraph(
             annotationRequestIdSource = annotationRequestIdSource,
             // P8-03 i2b (D-312; spec sections 2.2/4): the manual refund-receipt surface.
             readManualRefundCandidates = readManualRefundCandidates,
-            submitManualRefundReceipt = submitManualRefundReceipt,
             resolveManualRefundCommitStatus = resolveManualRefundCommitStatus,
         )
 

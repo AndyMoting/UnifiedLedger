@@ -4309,7 +4309,7 @@ class P503ReducerImpl(
             ManualRefundReceiptSubmissionResult.UnknownCommit ->
                 P503AppState.UnknownCommit(state.draft, state.requestId, refundCandidates = state.refundCandidates, overview = state.overview, originTab = state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             ManualRefundReceiptSubmissionResult.InfrastructureFailure ->
-                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+                P503AppState.InfrastructureFailure(InfrastructureFailureContext.SUBMISSION, state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity, refundCandidates = state.refundCandidates)
         }
 
     /**
@@ -4759,9 +4759,9 @@ class P503ReducerImpl(
             InfrastructureFailureContext.SUBMISSION ->
                 when (event) {
                     P503UiEvent.RetrySubmission ->
-                        P503AppState.Submitting(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+                        P503AppState.Submitting(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity, refundCandidates = state.refundCandidates)
                     P503UiEvent.Cancel ->
-                        P503AppState.Editing(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+                        P503AppState.Editing(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity, refundCandidates = state.refundCandidates)
                     P503UiEvent.Back ->
                         // A-02 FIX-MONTH-2 (D-152): see the Back restore comment above.
                         P503AppState.OverviewEmpty(checkNotNull(state.overview), state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
