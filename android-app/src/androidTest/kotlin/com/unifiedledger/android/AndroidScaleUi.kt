@@ -77,7 +77,7 @@ internal class AndroidScaleUi(
         diagnostic: AndroidScaleObserverDiagWriter? = null,
     ) {
         instrumentation.targetContext.startActivity(Intent.makeMainActivity(ComponentName(target, "$target.MainActivity")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        await(onPoll = onPoll, diagnostic = diagnostic) { has("账本：", prefix = true) }
+        await(onPoll = onPoll, diagnostic = diagnostic) { LedgerReadyCopy.PREFIXES.any { prefix -> has(prefix, prefix = true) } }
     }
 
     fun root(): AccessibilityNodeInfo? = automation.windows.mapNotNull { it.root }.firstOrNull { it.packageName?.toString() == target }
@@ -198,7 +198,7 @@ internal class AndroidScaleUi(
      * bounded, periodic reset forces queries to re-read the current window
      * state. The system-side cause of the stalled delivery stays unproven; this
      * is a client-side programmable forced invalidation, not a root-cause
-     * claim, and it does not change the readiness criterion (`has("账本：")`).
+     * claim, and it does not change the readiness criterion (the [LedgerReadyCopy] prefix set).
      *
      * Reset robustness (D-205 review): `UiAutomation.getServiceInfo` and
      * `setServiceInfo` are synchronous binder calls with no client-side
@@ -307,7 +307,7 @@ internal class AndroidScaleUi(
         AndroidScaleObserverDiag.Entry(
             atMs = SystemClock.elapsedRealtime(),
             targetWindowIds = automation.windows.filter { it.root?.packageName?.toString() == target }.map { it.id },
-            hasReadyTitle = has("账本：", prefix = true),
+            hasReadyTitle = LedgerReadyCopy.PREFIXES.any { has(it, prefix = true) },
             visibleTexts = targetRoots().firstOrNull()?.let(::visibleTexts).orEmpty(),
         )
 

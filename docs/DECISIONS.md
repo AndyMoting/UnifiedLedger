@@ -7184,3 +7184,19 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **边界：** 零产品代码；探测语义（应用打开账本并渲染首页）不变，只是不再绑死一句话。零账务、schema、迁移、依赖改动。
 
 **关联决定：** D-304（重试与预算）、D-305（V-8 判 PASS 时的设备链）、D-302（设备链从 PR 外移）。
+
+## D-318 设备侧就绪判据跟上首页文案（D-317 的姊妹批）
+
+**状态：** 已批准并登记（2026-11-13）。一批 tracked 变更：`android-app/src/androidTest/` 一个新文件与两处调用、`tests/python/test_android_scale_result.py` 一处守卫扩展、本条。
+
+**背景：** D-317 修了 host 侧探针，但同一句 `账本：` 判据还留在设备侧：`AndroidScaleUi.kt:80/310` 的启动等待与就绪快照、`ImportScaleTraversalInstrumentedTest.kt:68` 的 `LEDGER_READY_PREFIX`。P8-00 #283 之后首页不再渲染那行，这些等待只会在 180 秒后超时；它们所属的类不在 PR 分片清单里，所以坏着也一直没人跑。
+
+**决定：**
+
+1. 设备侧新增 `LedgerReadyCopy`，三个前缀与 `result.py` 的 `READY_MARKERS` 逐字一致，`matches()` 供等待与断言共用。
+2. `AndroidScaleUi` 的启动等待与就绪快照、`ImportScaleTraversalInstrumentedTest` 的起始屏健康断言改为引用该对象。
+3. Python 守卫扩展为跨语言比对：从 `LedgerReadyCopy.kt` 解析三个字面量，要求与 `READY_MARKERS` 集合相等；首页文案再改时三处（UI 源、Python 探针、设备侧常量）同时被要求更新。
+
+**边界：** 零产品代码、零 schema/迁移/依赖；判定语义不变（首页渲染即就绪），只是不再绑死一句已消失的文案。设备侧行为由 b6-card 手动 rig（`fixture_relations=3`、`rounds=1`）实证，因为这两个类不进 PR 分片。
+
+**关联决定：** D-317（host 侧同因修复与守卫）、D-304（设备 rig 重试）、D-302（设备链离开 PR）。

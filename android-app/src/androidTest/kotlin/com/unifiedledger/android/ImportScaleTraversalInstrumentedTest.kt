@@ -62,10 +62,10 @@ private const val LAST_ITEM_ROW_INDEX = 1_000_000
 
 // ---- seedFixture mode: first-screen labels and the real fail-closed faces ----
 //
-// The ledger surface prints "账本：<alias>"; the import screen's class groups print
+// The home tab proves readiness through one of the LedgerReadyCopy prefixes (the empty-ledger
+// line, the flow header, or the transaction list); the import screen's class groups print
 // "<label>（<rowCount>）" and an EMPTY group is omitted (P503ImportReviewPresentation
 // importCandidateClassGroups), so a group header is itself the proof that the class has rows.
-private const val LEDGER_READY_PREFIX = "账本："
 private const val DUPLICATE_GROUP_HEADER_PREFIX = "疑似重复——待审核（"
 private const val PENDING_DECISION_HEADER_PREFIX = "待确认——缺用户决策（"
 private const val SEED_FIXTURE_START_SCREEN_WAIT_MILLIS = 180_000
@@ -389,7 +389,7 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  * - `seedFixture`: fresh-process mode. Seeds and publishes the deterministic duplicate-first library
  *   BEFORE any Activity in this process opens the ledger (the support's guard fails the mode if a
  *   ledger handle is already open, because replacing the file would leave the product on the old
- *   inode). It then asserts the START screen's health ("账本：" present, no fail-closed face) BEFORE
+ *   inode). It then asserts the START screen's health (a LedgerReadyCopy prefix present, no fail-closed face) BEFORE
  *   the tab switch, and only after [reachImportReview] asserts the import screen's duplicate group
  *   header (the two screens carry different text, so they are two separate assertions). Arg
  *   `fixtureRelations` (default 20000) declares the group scale. Its relations are the real output of
@@ -887,7 +887,7 @@ class ImportScaleTraversalInstrumentedTest {
             "relations=${fixture.duplicateRelationCount} subjectRelations=${fixture.subjectRelationCount} " +
             "duplicateHistory=${fixture.duplicateHistoryCount} subjectSourceId=${fixture.subjectSourceId} " +
             "subjectSources=${fixture.subjectSourceIdCount} fixtureRelations=$fixtureRelations"
-        // Two screens, two assertions. The startup face prints "账本：" and the import screen does not,
+        // Two screens, two assertions. The startup face renders a LedgerReadyCopy prefix and the import screen does not,
         // so the startup health check runs BEFORE the tab switch; folding it into the post-tab
         // assertion would make it impossible by construction.
         reachHealthyLedgerStart(log)
@@ -897,7 +897,7 @@ class ImportScaleTraversalInstrumentedTest {
     }
 
     /**
-     * Startup health on the FIRST screen, before any tab switch: the real ledger surface ("账本：")
+     * Startup health on the FIRST screen, before any tab switch: one of the LedgerReadyCopy prefixes
      * must appear and no fail-closed startup face may. This is the mode's startup-health check; it
      * launches the app the same way [reachImportReview] would, so the later tab resolution still takes
      * its existing-app-root branch.
@@ -916,19 +916,19 @@ class ImportScaleTraversalInstrumentedTest {
             {
                 val texts = visibleScreenTexts()
                 failureLine = texts.firstOrNull { text -> STARTUP_FAILURE_PREFIXES.any { prefix -> text.startsWith(prefix) } }
-                failureLine != null || texts.any { text -> text.startsWith(LEDGER_READY_PREFIX) }
+                failureLine != null || texts.any { text -> LedgerReadyCopy.matches(text) }
             },
             SEED_FIXTURE_START_SCREEN_WAIT_MILLIS,
             POLL_MILLIS,
         )
         val texts = visibleScreenTexts()
-        val readyLine = texts.firstOrNull { text -> text.startsWith(LEDGER_READY_PREFIX) }
+        val readyLine = texts.firstOrNull { text -> LedgerReadyCopy.matches(text) }
         log(
             "seed fixture start screen ready=${readyLine != null} ledgerLine=${readyLine ?: "absent"} " +
                 "labels=${texts.joinToString(separator = " | ")}",
         )
         assertNull("seed fixture start screen reached a fail-closed face '${failureLine ?: ""}': $texts", failureLine)
-        assertNotNull("the ledger surface never became ready (no '账本：' line) on the start screen: $texts", readyLine)
+        assertNotNull("the ledger surface never became ready (no '账本为空' / '流水 · 共 ' / '当前交易（最近 ' copy) on the start screen: $texts", readyLine)
     }
 
     /**
