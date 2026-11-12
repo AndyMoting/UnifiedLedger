@@ -1081,6 +1081,11 @@ class P708RestoreRoundtripEquivalenceTest {
             LedgerDatabase.Schema.create(driver)
             if (stage != Stage.V35) {
                 driver.execute(null, "PRAGMA foreign_keys = OFF", 0)
+                // `36.sqm` (v37) creates manual_refund_receipt. This fixture is built from the
+                // CURRENT schema and then reverse-downgraded, so the v34 and v33 worlds must drop
+                // that table too, or the 36 edge collides with the copy already here (the table's
+                // index and update trigger go with it).
+                driver.execute(null, "DROP TABLE manual_refund_receipt", 0)
                 if (stage == Stage.V33) {
                     annotationOwnerTables.forEach { table -> driver.execute(null, "DROP TABLE $table", 0) }
                 }

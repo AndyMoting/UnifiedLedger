@@ -851,9 +851,10 @@ private fun request(
 
 private fun rejectionOf(result: ManualRefundReceiptSubmissionResult): ManualRefundRejectionCode = assertIs<ManualRefundReceiptSubmissionResult.Rejected>(result).code
 
-private fun refundedOf(harness: P803DatabaseHarness): Long = harness.database.ledgerQueries
-    .selectManualRefundRefundedTotal(LEDGER, ORIGINAL, "CNY")
-    .executeAsOne()
+private fun refundedOf(harness: P803DatabaseHarness): Long =
+    harness.database.ledgerQueries
+        .selectManualRefundRefundedTotal(LEDGER, ORIGINAL, "CNY")
+        .executeAsOne()
 
 private fun candidatesOf(harness: P803DatabaseHarness): List<Candidate> =
     harness.database.ledgerQueries
