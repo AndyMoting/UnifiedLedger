@@ -202,8 +202,7 @@ class P803RefundEntryReducerTest {
         val unknown = P503AppState.UnknownCommit(draft, requestId, emptyState, P503Tab.HOME)
         val receipt = ManualRefundReceiptRecord(relationshipId = "relationship-1", refundTransactionId = TransactionId("tx-refund"))
 
-        fun resolve(resolution: ManualRefundReceiptCommitResolution) =
-            reducer.reduce(unknown, P503UiEvent.CommitStatusResolved(ManualEntryCommitResolution.RefundReceipt(resolution)))
+        fun resolve(resolution: ManualRefundReceiptCommitResolution) = reducer.reduce(unknown, P503UiEvent.CommitStatusResolved(ManualEntryCommitResolution.RefundReceipt(resolution)))
 
         assertEquals(P503AppState.Recovered, resolve(ManualRefundReceiptCommitResolution.MatchingReceipt(receipt)))
 
