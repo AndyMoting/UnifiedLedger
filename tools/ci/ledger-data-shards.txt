@@ -1,5 +1,6 @@
 1	com.unifiedledger.data.CatalogV27ToV29MigrationTest
 1	com.unifiedledger.data.DuplicateMatchCountEquivalenceDataTest
+1	com.unifiedledger.data.EnumerationPerfV29ToV30MigrationTest
 1	com.unifiedledger.data.ImportReview61kReadAttributionTest
 1	com.unifiedledger.data.LedgerMigrationV1ToV11Test
 1	com.unifiedledger.data.LedgerMigrationV20ToV37Test
@@ -24,6 +25,7 @@
 1	com.unifiedledger.data.SnapshotIntegrityMappingTest
 1	com.unifiedledger.data.SqlDelightConfirmedCategoryRenameCommitPortTest
 1	com.unifiedledger.data.SqlDelightConfirmedManualTransferCommitPortTest
+1	com.unifiedledger.data.SqlDelightRg06StorePortFanOutTest
 2	com.unifiedledger.data.B6GroupOpenReadAttributionTest
 2	com.unifiedledger.data.B6PagedSessionReadEquivalenceTest
 2	com.unifiedledger.data.ImportReviewPagedReadEquivalenceTest
@@ -96,14 +98,12 @@
 4	com.unifiedledger.data.SqlDelightP801ReconciliationBindingTest
 4	com.unifiedledger.data.SqlDelightP801ReconciliationCandidatesTest
 4	com.unifiedledger.data.SqlDelightP801ReconciliationConfirmTest
-4	com.unifiedledger.data.SqlDelightRg06StorePortFanOutTest
 4	com.unifiedledger.data.SqlDelightRg04StoreTest
 4	com.unifiedledger.data.SqlDelightRg07IdentityTest
 4	com.unifiedledger.data.SqlDelightRg09StoreTest
 4	com.unifiedledger.data.SqlDelightRg11StoreTest
 4	com.unifiedledger.data.SqlDelightTransactionAnnotationStoreTest
 5	com.unifiedledger.data.DefABoundedReadsEquivalenceTest
-5	com.unifiedledger.data.EnumerationPerfV29ToV30MigrationTest
 5	com.unifiedledger.data.ImportReviewTargetedReadEquivalenceTest
 5	com.unifiedledger.data.ImportSpineLifecycleEndToEndTest
 5	com.unifiedledger.data.O2PrecisionRescaleDataTest
