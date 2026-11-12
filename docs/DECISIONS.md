@@ -7066,3 +7066,26 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **证据：** 规格 §8（i1 实施登记）、§9（i2b 设备腿与首轮基线）、§10（V-1…V-12 判定）；四批的评审与 verifier 记录见 `docs/PROGRESS_LOG.local.md` 2026-11-11/12 各条目；设备工件在 `local/artifacts/p8-02-i2b1-device/` 与 `local/artifacts/p8-02-i2b2-device/`（不入库）。
 
 **关联决定：** `D-310`（本片设计门批准）、`D-300`（阶段 8 方向）、`D-301`（P8-00 视觉基线）、`D-289`（条件查询设备腿与残余①，本片的 instrumented 端口计时即其承接）、`D-294`（分页读口径，本片明确不沿用其 0.6 s）、`D-166` 系列（framestats 口径限制，第二终点缺口的依据）。
+
+## D-312 P8-03 设计门批准（复杂事项入口首门＝退款到账；D-A…D-I；一次加性迁移）
+
+**状态：** 已批准（2026-11-12）。批准对象 = 新规格 `docs/specs/2026-11-12-p8-03-refund-entry-design.md`（**approved v1**）。本条只批准**设计门**与首门范围，**不实施**；实施、独立评审、distinct verifier 与设备腿属后续批。依据：`docs/PHASE8_ANDROID_PLAN.local.md:45`（P8-03 分成独立小设计门、每门先核实运行时与产品规则、RG 核心存在不等于可接 UI、未开门类型保持未交付）与 `:58`；`docs/ACCOUNTING_RULES.md:140-158`。
+
+1. **D-A = A2（用例片）**：六类复杂事项全部有领域/持久化管线，但**产品组合根不实例化任何 `Rg*` store**（三处零命中）；唯一先例是 P7-02.C 的「产品自有表 + 独立用例」。故本片按「新应用用例 + 入口面」设计，不是纯 UI 片。
+2. **D-B = 首门开退款**：理由不是「数据已在库里」，而是规则边界最窄（同币种 CNY、单分类原支出、自有真实资产到账），且**今天不存在任何 ASSET 到账退款的产品路径**（导入只产负债到账的 `createCreditRefundReceipt`）。
+3. **D-C = 允许一次加性迁移，本门使用**：schema v36 → **v37**（`36.sqm`）：新增 `manual_refund_receipt`（稳定 `relationship_id`、`request_id` 幂等键、`request_fingerprint`、复合外键、`confirmation_marker` CHECK、不可变触发器）+ 一个 `(ledger_id, original_transaction_id)` 索引。**复合外键方向必须是 `(transaction_id, ledger_id)`**（`ledger_transaction` 的唯一键是 `UNIQUE (transaction_id, ledger_id)`；全仓 119 个复合外键同向）。
+4. **D-D = D1（扩 `EntryType`）**：`EntryType` 增 `REFUND_RECEIPT`，只增不改既有五类；但**必须同时修七处穷尽性/误显示**（`switchType`、`validateEntryTypeSupported`（今天零生产调用者）、确认页标题、`P503Reducer` 初始草稿与「再记一笔」、`P503EditScreen` 两处 `else -> 支出`、`ExternalNavigation` 保持只路由收支）。「再记一笔」的冻结：退款保存后产出**空支出草稿**（无继承分类/原主账户/到账账户）。
+5. **D-E = 排除图片凭证**（清单行 10 已入 C 类远期池）；**D-F = 验收向量以 `:45` 的五项出口为骨架，每条注明证据类型**（JVM 真库 / 纯 reducer·呈现 / grep / 设备工件 / 人读图），沿 P8-02 收口做法。
+6. **D-G = 不写 `rg07_*`，关系由产品自有表承载**。v1 曾设想复用 `Rg07Operations.ManualReceipt`，被两路独立评审判**不可执行**并逐条复核：①它在 `refundRelationId == null` 时直接 `REFUND_RELATION_NOT_FOUND`，建不了第一条关系；②`isCompleteAcceptedInput()` 要求 3 个来源时间与 2 个固定 mode 字符串，产品不采集这些；③`selectRg07OriginalExpense` 内连 `rg07_posting_semantic`，**产品交易根本不在候选里**；④`DECISIONS.md:1335`「共享链只被产品路径写；**竖井只被 jvmTest 写**」，竖井不是产品归宿。
+7. **D-H = 两条规则读法（用户 2026-11-12 亲裁「两条都认」）**：①`ACCOUNTING_RULES.md:142` 的「按实际出现情况保存各事件时间 + 追加不可变历史」——手工到账流程只实际出现「到账」与「确认」，故**一行不可变 + 触发器即其完整历史**，不建状态机表；②`:154` 的「手工请求保持待确认并产生零效果」——v1 **不建请求对象**，未确认即零写入，语义成立；待确认请求对象留给接商户通知的片。
+8. **D-I = 类型集扩写**：`entry-foundation` 冻结的是类型集，本条把它从五类扩到六类；`EntryDraft.kt:11-15` 的注释随实施批更新。
+
+**首门的实现要点（规格 §2/§4 冻结）**：候选条件用 **`COALESCE(canonical_kind, kind)`**（`kind` 是五值 legacy CHECK，`REFUND_RECEIPT`/`LEND`/`COLLECT`/余额调整都以 `EXPENSE` 写入、真值在 `canonical_kind`）**且当前版本有恰好一个正额支出腿**；上限基数 = **支出腿金额**，求和必须 join `transaction_effective_state`（作废退款释放额度）；提交时在同一事务内重校验原交易有效性与上限；拒绝码为八条闭集（含结构性超限 vs 剩余不足的**可判定**区分）；`Unknown` 只覆盖「提交后读取失败」，重试必须复用同一 `request_id` 并比对指纹；新增表必须登记进分类引用探针、账户引用探针与**作废守卫**（DP-13 探针今天只读导入路径）。
+
+**不变量：** 除一次加性迁移外不改 schema；不改共享正式链语义；不改 `rg07_*`；退款不得记入普通收入、不得回写原消费日期、不得改原交易的对账状态。
+
+**边界：** 本条只批准 P8-03 的**首门**（退款到账），不批准其余五类（余额调整、混合支付、分期/预付、图片凭证、信用卡账单与分期管理费）；不批准任何实施。
+
+**证据：** 规格（approved v1）§1 现状逐条 file:line、§2 冻结机制、§3 D-A…D-I、§5 V-1…V-19（每条标证据类型）、§7 残余；三轮独立评审与一轮窄口径闭合复核的 findings 已在规格内逐条处置（v1→v4）。
+
+**关联决定：** `D-310`/`D-311`（P8-02 设计门与收口）、`D-300`（阶段 8 方向）、`D-092`（竖井定位：验证语料、逐个退役、只被 jvmTest 写）、`D-074`（RG-04 分摊口径先例）、`D-106`（多期未来扣款 future_rule）、`D-228`（P7-05 切片先例）、`entry-foundation` 规格（类型集与保留矩阵）。
