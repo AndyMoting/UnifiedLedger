@@ -471,6 +471,7 @@ class P708RestoreRoundtripEquivalenceTest {
                 runSnapshotIntoOn(sourceDriver, snapshot.path)
             }
             JdbcSqliteDriver("jdbc:sqlite:${snapshot.path}", foreignKeyProperties()).use { isolated ->
+                dropV37RefundOwner(isolated)
                 val migrated = assertIs<StrictMigrationResult.Migrated>(migrateIsolatedSnapshotStrictlyOn(isolated, 34, setOf(1L, 31L, 32L, 33L, 34L, 35L)))
                 assertEquals(34L, migrated.fromVersion)
                 assertEquals(LedgerDatabase.Schema.version, migrated.targetVersion)
@@ -517,6 +518,7 @@ class P708RestoreRoundtripEquivalenceTest {
                 runSnapshotIntoOn(sourceDriver, snapshot.path)
             }
             JdbcSqliteDriver("jdbc:sqlite:${snapshot.path}", foreignKeyProperties()).use { isolated ->
+                dropV37RefundOwner(isolated)
                 assertIs<StrictMigrationResult.Migrated>(migrateIsolatedSnapshotStrictlyOn(isolated, 33, setOf(1L, 31L, 32L, 33L)))
                 // The 11 08.A tables land as the fresh schema (columnInfo contract) and EMPTY —
                 // a purely additive chain never invents annotation rows (zero backfill).
@@ -620,6 +622,7 @@ class P708RestoreRoundtripEquivalenceTest {
             }
             // Occupy the late sentinel so the migration aborts inside its outer transaction.
             JdbcSqliteDriver("jdbc:sqlite:${snapshot.path}", foreignKeyProperties()).use { isolated ->
+                dropV37RefundOwner(isolated)
                 isolated.execute(null, "CREATE TABLE manual_annotation_v35_late_sentinel (ok INTEGER NOT NULL CHECK (ok = 1))", 0)
                 assertIs<StrictMigrationResult.Failed>(migrateIsolatedSnapshotStrictlyOn(isolated, 34, setOf(34L)))
                 assertEquals(34L, readAuthoritativeUserVersionOn(isolated))
@@ -1081,11 +1084,6 @@ class P708RestoreRoundtripEquivalenceTest {
             LedgerDatabase.Schema.create(driver)
             if (stage != Stage.V35) {
                 driver.execute(null, "PRAGMA foreign_keys = OFF", 0)
-                // `36.sqm` (v37) creates manual_refund_receipt. This fixture is built from the
-                // CURRENT schema and then reverse-downgraded, so the v34 and v33 worlds must drop
-                // that table too, or the 36 edge collides with the copy already here (the table's
-                // index and update trigger go with it).
-                driver.execute(null, "DROP TABLE manual_refund_receipt", 0)
                 if (stage == Stage.V33) {
                     annotationOwnerTables.forEach { table -> driver.execute(null, "DROP TABLE $table", 0) }
                 }
@@ -2009,6 +2007,17 @@ class P708RestoreRoundtripEquivalenceTest {
             command("budget-request-category-2", categoryBudgetId)
                 .setLimit(LedgerId(ledgerId), march, BudgetScope.Category(categoryLocal), 90_000L, expectedRevision = 1L),
         )
+    }
+
+    /**
+     * A v34/v33 snapshot must not carry the v37 refund owner: `36.sqm` creates that table and this
+     * fixture is produced from the CURRENT schema. The drop cannot live in [seedCurrentLibrary],
+     * because the v37 catalog reference probes (`catalogReferencedManualCategoryIds`,
+     * `catalogReferencedManualRefundAccountIds`) read the table while the seed runs; it is applied
+     * to the snapshot instead, right before the migration that recreates the table.
+     */
+    private fun dropV37RefundOwner(driver: JdbcSqliteDriver) {
+        driver.execute(null, "DROP TABLE manual_refund_receipt", 0)
     }
 
     private fun stageVersion(stage: Stage): Long =

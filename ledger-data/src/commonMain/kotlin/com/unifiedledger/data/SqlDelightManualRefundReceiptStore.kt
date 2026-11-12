@@ -38,7 +38,8 @@ import com.unifiedledger.domain.createRefundReceipt
  */
 class SqlDelightManualRefundReceiptStore private constructor(
     private val database: LedgerDatabase,
-) : ManualRefundReceiptCommitPort, ManualRefundReceiptReadPort {
+) : ManualRefundReceiptCommitPort,
+    ManualRefundReceiptReadPort {
     constructor(database: LedgerDatabase, driver: SqlDriver) : this(database) {
         configureSqliteConnection(driver)
     }
@@ -148,9 +149,10 @@ class SqlDelightManualRefundReceiptStore private constructor(
                     )
                 }.executeAsOneOrNull()
                 ?: return reject(ManualRefundRejectionCode.ORIGINAL_NOT_REFUNDABLE)
+        val currency = request.amount.currency
         if (
-            request.amount.currency.code != original.currencyCode ||
-            request.amount.currency.precision.toLong() != original.currencyPrecision
+            currency.code != original.currencyCode ||
+            currency.precision.toLong() != original.currencyPrecision
         ) {
             return reject(ManualRefundRejectionCode.ORIGINAL_NOT_REFUNDABLE)
         }
@@ -244,8 +246,8 @@ class SqlDelightManualRefundReceiptStore private constructor(
             original_transaction_id = request.originalTransactionId.value,
             refund_transaction_id = ids.transactionId.value,
             amount_minor = request.amount.minorUnits,
-            currency_code = request.amount.currency.code,
-            currency_precision = request.amount.currency.precision.toLong(),
+            currency_code = currency.code,
+            currency_precision = currency.precision.toLong(),
             destination_account_id = request.destinationAccountId.value,
             category_id = category.id.value,
             arrived_at = request.arrivedAt.toString(),
@@ -298,6 +300,7 @@ class SqlDelightManualRefundReceiptStore private constructor(
 
         formalTransaction.postingSets.forEach { postingSet ->
             postingSet.postings.forEachIndexed { index, posting ->
+                val postingCurrency = posting.amount.currency
                 database.ledgerQueries.insertPosting(
                     posting_id = posting.id.value,
                     posting_set_id = postingSet.id.value,
@@ -305,15 +308,14 @@ class SqlDelightManualRefundReceiptStore private constructor(
                     posting_index = index.toLong(),
                     account_id = posting.accountId.value,
                     amount_minor = posting.amount.minorUnits,
-                    currency_code = posting.amount.currency.code,
-                    currency_precision = posting.amount.currency.precision.toLong(),
+                    currency_code = postingCurrency.code,
+                    currency_precision = postingCurrency.precision.toLong(),
                 )
             }
         }
     }
 
-    private fun reject(code: ManualRefundRejectionCode): ManualRefundReceiptCommitResult =
-        ManualRefundReceiptCommitResult.Rejected(code)
+    private fun reject(code: ManualRefundRejectionCode): ManualRefundReceiptCommitResult = ManualRefundReceiptCommitResult.Rejected(code)
 
     companion object {
         internal fun forPlatformConfiguredDatabase(
