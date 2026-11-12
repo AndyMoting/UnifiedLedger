@@ -10351,7 +10351,15 @@ WHERE ledger_id = ? AND owner_kind = ? AND status = 'CURRENT';
 -- table means adding it to exactly one of these queries.
 catalogReferencedManualCategoryIds:
 SELECT DISTINCT category_id FROM manual_expense_request WHERE ledger_id = ? AND category_id IS NOT NULL
-UNION SELECT DISTINCT category_id FROM manual_income_request WHERE ledger_id = ? AND category_id IS NOT NULL;
+UNION SELECT DISTINCT category_id FROM manual_income_request WHERE ledger_id = ? AND category_id IS NOT NULL
+UNION SELECT DISTINCT category_id FROM manual_refund_receipt WHERE ledger_id = ? AND category_id IS NOT NULL;
+
+-- P8-03 (D-312; spec section 4 guard row): the destination account of a manual refund
+-- relationship joins the account reference surface. The refund's destination posting would cover
+-- it today, but the relationship row is the authoritative declaration of the destination and
+-- must block an account delete even if a future read stops joining posting.
+catalogReferencedManualRefundAccountIds:
+SELECT DISTINCT destination_account_id FROM manual_refund_receipt WHERE ledger_id = ?;
 
 catalogReferencedConfirmationCategoryIds:
 SELECT DISTINCT category_id FROM rg04_mixed_expense_snapshot WHERE ledger_id = ? AND category_id IS NOT NULL
@@ -10928,25 +10936,32 @@ importCreationConfirmationCountForTransaction:
 SELECT count(*) FROM import_confirmation
 WHERE ledger_id = ? AND transaction_id = ? AND operation_class = 'creation';
 
--- P7-05 (D-156, DP-13): the effective linked-refund probe of the product path. The only
--- product writer of a refund relationship is the import credit flow: its decision snapshot
--- stores `original_transaction_id` (the refunded transaction), and the confirmation created by
--- the same request carries the refund transaction. Joining the two on the shared request
--- identity and filtering through the single effective-predicate view means a refund that is
--- itself voided no longer blocks the original (DP-13 asks for an *effective* linked refund).
--- The rgXX_ refund silo is deliberately not read: it has no product writer, and DP-13's
--- precondition is about product facts.
+-- P7-05 (D-156, DP-13): the effective linked-refund probe of the product path. Two product
+-- writers own a refund relationship: the import credit flow (its decision snapshot stores
+-- `original_transaction_id` and the confirmation created by the same request carries the refund
+-- transaction) and, since P8-03 (D-312), the manual refund entry (its proven relationship row
+-- carries both ids). Both arms join the single effective-predicate view on the REFUND
+-- transaction, so a refund that is itself voided no longer blocks the original (DP-13 asks for
+-- an *effective* linked refund). The rgXX_ refund silo is deliberately not read: it has no
+-- product writer, and DP-13's precondition is about product facts.
 productLinkedRefundCountForTransaction:
 SELECT count(*)
-FROM import_candidate_decision_snapshot AS decision
-JOIN import_confirmation AS confirmation
-  ON confirmation.ledger_id = decision.ledger_id
- AND confirmation.request_id = decision.request_id
+FROM (
+  SELECT decision.ledger_id AS ledger_id, confirmation.transaction_id AS refund_transaction_id
+  FROM import_candidate_decision_snapshot AS decision
+  JOIN import_confirmation AS confirmation
+    ON confirmation.ledger_id = decision.ledger_id
+   AND confirmation.request_id = decision.request_id
+  WHERE decision.ledger_id = ? AND decision.original_transaction_id = ?
+  UNION ALL
+  SELECT receipt.ledger_id AS ledger_id, receipt.refund_transaction_id AS refund_transaction_id
+  FROM manual_refund_receipt AS receipt
+  WHERE receipt.ledger_id = ? AND receipt.original_transaction_id = ?
+) AS linked
 JOIN transaction_effective_state AS effective
-  ON effective.ledger_id = confirmation.ledger_id
- AND effective.transaction_id = confirmation.transaction_id
- AND effective.is_effective = 1
-WHERE decision.ledger_id = ? AND decision.original_transaction_id = ?;
+  ON effective.ledger_id = linked.ledger_id
+ AND effective.transaction_id = linked.refund_transaction_id
+ AND effective.is_effective = 1;
 
 currentVersionPostingsForTransaction:
 SELECT posting.posting_id, posting.posting_index, posting.account_id, posting.amount_minor,
@@ -12434,3 +12449,221 @@ WHERE version.ledger_id = :ledger_id
         AND merchant_revision.merchant_id = :merchant_id
     )
   );
+
+-- P8-03 refund-receipt entry (D-312; spec
+-- docs/specs/2026-11-12-p8-03-refund-entry-design.md sections 2.1/2.3/2.5/2.6/4). Product-owned
+-- manual refund relationship: one immutable row is the complete history of the arrival and
+-- confirmation event pair, and it is the idempotency record as well (PRIMARY KEY on the request
+-- id, plus the request fingerprint and the explicit confirmation marker). 36.sqm creates this
+-- table, its index and its trigger verbatim, so fresh and migrated schemas match byte for byte.
+CREATE TABLE manual_refund_receipt (
+  ledger_id TEXT NOT NULL,
+  relationship_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  request_fingerprint TEXT NOT NULL,
+  original_transaction_id TEXT NOT NULL,
+  refund_transaction_id TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+  currency_code TEXT NOT NULL,
+  currency_precision INTEGER NOT NULL CHECK (currency_precision >= 0),
+  destination_account_id TEXT NOT NULL,
+  category_id TEXT NOT NULL,
+  arrived_at TEXT NOT NULL,
+  confirmed_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  confirmation_marker TEXT NOT NULL CHECK (confirmation_marker = 'explicit_manual_confirm'),
+  PRIMARY KEY (ledger_id, request_id),
+  UNIQUE (ledger_id, relationship_id),
+  UNIQUE (ledger_id, refund_transaction_id),
+  FOREIGN KEY (original_transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id),
+  FOREIGN KEY (refund_transaction_id, ledger_id) REFERENCES ledger_transaction(transaction_id, ledger_id)
+);
+CREATE INDEX manual_refund_receipt_original_idx ON manual_refund_receipt(ledger_id, original_transaction_id);
+
+-- Spec section 2.1 (D-H reading): the row is the frozen history and there is no UPDATE path.
+-- DELETE stays legal only for test teardown with foreign keys off, so no delete trigger exists.
+CREATE TRIGGER manual_refund_receipt_guard_update BEFORE UPDATE ON manual_refund_receipt BEGIN
+  SELECT RAISE(ABORT, 'cannot update manual refund receipt'); END;
+
+-- Claim/idempotency read of one request. The fingerprint comparison and the receipt come from
+-- this single row: an exact replay returns it, a same-id/different-payload retry conflicts.
+selectManualRefundReceiptByRequest:
+SELECT relationship_id, request_fingerprint, refund_transaction_id
+FROM manual_refund_receipt
+WHERE ledger_id = ? AND request_id = ?;
+
+insertManualRefundReceipt:
+INSERT INTO manual_refund_receipt(
+  ledger_id, relationship_id, request_id, request_fingerprint,
+  original_transaction_id, refund_transaction_id, amount_minor, currency_code,
+  currency_precision, destination_account_id, category_id, arrived_at, confirmed_at,
+  created_at, confirmation_marker
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+countManualRefundReceipts:
+SELECT count(*) FROM manual_refund_receipt WHERE ledger_id = ?;
+
+-- Spec section 2.5 (M4): the remaining refundable amount of one original transaction.
+-- The SUM joins transaction_effective_state on the REFUND transaction (the single effective
+-- predicate point), so a voided refund releases its capacity again; same ledger, same original
+-- transaction and same currency only. It is driven by manual_refund_receipt_original_idx.
+selectManualRefundRemaining:
+SELECT COALESCE(sum(receipt.amount_minor), 0)
+FROM manual_refund_receipt AS receipt
+JOIN transaction_effective_state AS refund_effective
+  ON refund_effective.ledger_id = receipt.ledger_id
+ AND refund_effective.transaction_id = receipt.refund_transaction_id
+ AND refund_effective.is_effective = 1
+WHERE receipt.ledger_id = :ledger_id
+  AND receipt.original_transaction_id = :original_transaction_id
+  AND receipt.currency_code = :currency_code;
+
+-- Spec section 2.3 (M3): the seven candidate conditions of one ledger, bounded by a page.
+-- 1 same ledger (`tx.ledger_id` predicate); 2 effective original; 3 canonical kind — NEVER the
+-- five-value legacy `kind`, which stores refunds, LEND, COLLECT and balance adjustments as
+-- 'EXPENSE'; 4 exactly one positive expense leg on the current version and that leg is the
+-- category's expense account; 5 exactly one active secondary expense category for that account;
+-- 6 the original expense leg is CNY (the frozen v1 currency); 7 the remaining amount is positive.
+-- The remaining sum uses the same effective-refund predicate as selectManualRefundRemaining.
+selectManualRefundExpenseCandidates:
+SELECT
+  candidate.transaction_id,
+  candidate.occurred_at,
+  candidate.category_id,
+  candidate.structural_cap_minor,
+  candidate.currency_code,
+  candidate.currency_precision,
+  candidate.remaining_minor
+FROM (
+  SELECT
+    tx.transaction_id AS transaction_id,
+    version.occurred_at AS occurred_at,
+    category.category_id AS category_id,
+    expense_leg.amount_minor AS structural_cap_minor,
+    expense_leg.currency_code AS currency_code,
+    expense_leg.currency_precision AS currency_precision,
+    expense_leg.amount_minor - COALESCE((
+      SELECT sum(receipt.amount_minor)
+      FROM manual_refund_receipt AS receipt
+      JOIN transaction_effective_state AS refund_effective
+        ON refund_effective.ledger_id = receipt.ledger_id
+       AND refund_effective.transaction_id = receipt.refund_transaction_id
+       AND refund_effective.is_effective = 1
+      WHERE receipt.ledger_id = tx.ledger_id
+        AND receipt.original_transaction_id = tx.transaction_id
+        AND receipt.currency_code = expense_leg.currency_code
+    ), 0) AS remaining_minor
+  FROM ledger_transaction AS tx
+  JOIN transaction_effective_state AS effective
+    ON effective.ledger_id = tx.ledger_id
+   AND effective.transaction_id = tx.transaction_id
+   AND effective.is_effective = 1
+  JOIN ledger_transaction_current_version AS current_version
+    ON current_version.ledger_id = tx.ledger_id
+   AND current_version.transaction_id = tx.transaction_id
+  JOIN transaction_version AS version
+    ON version.ledger_id = tx.ledger_id
+   AND version.transaction_id = tx.transaction_id
+   AND version.version_id = current_version.current_version_id
+  JOIN posting AS expense_leg
+    ON expense_leg.ledger_id = version.ledger_id
+   AND expense_leg.posting_set_id = version.posting_set_id
+   AND expense_leg.amount_minor > 0
+  JOIN catalog_account AS expense_account
+    ON expense_account.ledger_id = tx.ledger_id
+   AND expense_account.account_id = expense_leg.account_id
+   AND expense_account.kind = 'EXPENSE'
+  JOIN catalog_category AS category
+    ON category.ledger_id = tx.ledger_id
+   AND category.posting_account_id = expense_leg.account_id
+   AND category.kind = 'EXPENSE'
+   AND category.parent_id IS NOT NULL
+   AND category.active = 1
+  WHERE tx.ledger_id = :ledger_id
+    AND COALESCE(tx.canonical_kind, tx.kind) = 'EXPENSE'
+    AND expense_leg.currency_code = 'CNY'
+    AND (
+      SELECT count(*)
+      FROM posting AS positive_leg
+      JOIN catalog_account AS leg_account
+        ON leg_account.ledger_id = positive_leg.ledger_id
+       AND leg_account.account_id = positive_leg.account_id
+       AND leg_account.kind = 'EXPENSE'
+      WHERE positive_leg.ledger_id = version.ledger_id
+        AND positive_leg.posting_set_id = version.posting_set_id
+        AND positive_leg.amount_minor > 0
+    ) = 1
+    AND (
+      SELECT count(*)
+      FROM catalog_category AS peer
+      WHERE peer.ledger_id = category.ledger_id
+        AND peer.posting_account_id = category.posting_account_id
+        AND peer.kind = 'EXPENSE'
+        AND peer.parent_id IS NOT NULL
+        AND peer.active = 1
+    ) = 1
+) AS candidate
+WHERE candidate.remaining_minor > 0
+ORDER BY candidate.occurred_at DESC, candidate.transaction_id
+LIMIT :page_size OFFSET :page_offset;
+
+-- Spec sections 2.4/2.5: the same seven-condition shape for ONE original transaction, read
+-- inside the submit transaction. It deliberately returns no remaining amount (that is the
+-- aggregate read above): this query answers "is this original structurally refundable now" and
+-- supplies the structural cap (the expense-leg amount) plus the category the refund inherits.
+selectManualRefundableOriginal:
+SELECT
+  category.category_id,
+  expense_leg.amount_minor,
+  expense_leg.currency_code,
+  expense_leg.currency_precision
+FROM ledger_transaction AS tx
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = tx.ledger_id
+ AND version.transaction_id = tx.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN posting AS expense_leg
+  ON expense_leg.ledger_id = version.ledger_id
+ AND expense_leg.posting_set_id = version.posting_set_id
+ AND expense_leg.amount_minor > 0
+JOIN catalog_account AS expense_account
+  ON expense_account.ledger_id = tx.ledger_id
+ AND expense_account.account_id = expense_leg.account_id
+ AND expense_account.kind = 'EXPENSE'
+JOIN catalog_category AS category
+  ON category.ledger_id = tx.ledger_id
+ AND category.posting_account_id = expense_leg.account_id
+ AND category.kind = 'EXPENSE'
+ AND category.parent_id IS NOT NULL
+ AND category.active = 1
+WHERE tx.ledger_id = :ledger_id
+  AND tx.transaction_id = :transaction_id
+  AND COALESCE(tx.canonical_kind, tx.kind) = 'EXPENSE'
+  AND expense_leg.currency_code = 'CNY'
+  AND (
+    SELECT count(*)
+    FROM posting AS positive_leg
+    JOIN catalog_account AS leg_account
+      ON leg_account.ledger_id = positive_leg.ledger_id
+     AND leg_account.account_id = positive_leg.account_id
+     AND leg_account.kind = 'EXPENSE'
+    WHERE positive_leg.ledger_id = version.ledger_id
+      AND positive_leg.posting_set_id = version.posting_set_id
+      AND positive_leg.amount_minor > 0
+  ) = 1
+  AND (
+    SELECT count(*)
+    FROM catalog_category AS peer
+    WHERE peer.ledger_id = category.ledger_id
+      AND peer.posting_account_id = category.posting_account_id
+      AND peer.kind = 'EXPENSE'
+      AND peer.parent_id IS NOT NULL
+      AND peer.active = 1
+  ) = 1;

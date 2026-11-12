@@ -166,17 +166,19 @@ class SqlDelightTransactionVoidCommitPort private constructor(
             .executeAsOne()
 
     /**
-     * DP-13's effective linked-refund probe of the product path: the import credit flow's
-     * decision snapshot (`original_transaction_id`) joined to the confirmation that created the
-     * refund transaction, filtered by the single effective-predicate view. The rgXX_ refund
-     * silo has no product writer and is not read (see the query comment in `Ledger.sq`).
+     * DP-13's effective linked-refund probe of the product path. Since P8-03 (D-312) it covers
+     * both product refund writers: the import credit flow's decision snapshot joined to the
+     * confirmation that created the refund transaction, and the manual refund relationship row.
+     * Both arms are filtered by the single effective-predicate view on the refund transaction,
+     * so a voided refund no longer blocks the original. The rgXX_ refund silo has no product
+     * writer and is not read.
      */
     private fun hasEffectiveRefundLink(
         ledgerId: String,
         transactionId: String,
     ): Boolean =
         database.ledgerQueries
-            .productLinkedRefundCountForTransaction(ledgerId, transactionId)
+            .productLinkedRefundCountForTransaction(ledgerId, transactionId, ledgerId, transactionId)
             .executeAsOne() > 0L
 
     private fun voidState(

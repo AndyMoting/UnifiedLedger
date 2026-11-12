@@ -15,7 +15,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 
-class LedgerMigrationV20ToV36Test : MigrationTestSupport() {
+class LedgerMigrationV20ToV37Test : MigrationTestSupport() {
     @Test
     fun freshSchemaCreatesEveryLedgerDataTableAtVersionTwenty() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
@@ -24,7 +24,7 @@ class LedgerMigrationV20ToV36Test : MigrationTestSupport() {
             val database = LedgerDatabase(driver)
             SqlDelightConfirmedManualExpenseCommitPort(database, driver)
 
-            assertEquals(36, LedgerDatabase.Schema.version)
+            assertEquals(37, LedgerDatabase.Schema.version)
             assertEquals("1", database.ledgerQueries.foreignKeysEnabled().executeAsOne())
             assertEquals(0, database.ledgerQueries.countRequests().executeAsOne())
             assertEquals(0, database.ledgerQueries.countReceipts().executeAsOne())
@@ -128,7 +128,7 @@ class LedgerMigrationV20ToV36Test : MigrationTestSupport() {
                 // `transaction_effective_state`, which `30.sqm` creates, so a confirm on a pre-v30
                 // schema would fail on a missing view.
                 LedgerDatabase(driver).transaction {
-                    LedgerDatabase.Schema.migrate(driver, 22, 36)
+                    LedgerDatabase.Schema.migrate(driver, 22, 37)
                 }
                 val database = LedgerDatabase(driver)
                 val store = SqlDelightP408ReconciliationStore(database, driver)
@@ -264,7 +264,7 @@ class LedgerMigrationV20ToV36Test : MigrationTestSupport() {
                 LedgerDatabase.Schema.migrate(driver, 22, 23)
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 23, 36)
+                LedgerDatabase.Schema.migrate(driver, 23, 37)
             }
 
             assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))
@@ -286,7 +286,7 @@ class LedgerMigrationV20ToV36Test : MigrationTestSupport() {
                 connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
             }
             JdbcSqliteDriver("jdbc:sqlite:${migratedPath.absolutePathString()}", migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 1, 36)
+                LedgerDatabase.Schema.migrate(driver, 1, 37)
             }
             assertEquals(
                 schemaMetadata("jdbc:sqlite:${freshPath.absolutePathString()}"),
@@ -547,7 +547,7 @@ class LedgerMigrationV20ToV36Test : MigrationTestSupport() {
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
                 val db = LedgerDatabase(driver)
-                assertEquals(36, LedgerDatabase.Schema.version)
+                assertEquals(37, LedgerDatabase.Schema.version)
                 assertEquals(1L, db.ledgerQueries.countEvidenceProjectionRows().executeAsOne())
                 val rows = queryCount(driver, "SELECT count(*) FROM evidence_projection WHERE state='READY' AND normalized_amount_minor=9900 AND rule_id='p408_evidence_projection_backfill_v26'")
                 assertEquals(1L, rows)
@@ -638,7 +638,7 @@ class LedgerMigrationV20ToV36Test : MigrationTestSupport() {
                 driver.execute(null, "INSERT INTO transaction_correction_receipt(ledger_id, request_id, confirmation_id, transaction_id, version_id, expected_current_version_id) VALUES ('ledger-c36','request-c36','confirmation-c36','tx-c36','version-c36-corrected','version-c36-base')", 0)
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                assertEquals(36, LedgerDatabase.Schema.version)
+                assertEquals(37, LedgerDatabase.Schema.version)
                 assertEquals(36L, queryCount(driver, "PRAGMA user_version"))
                 assertEquals(1L, queryCount(driver, "SELECT count(*) FROM transaction_correction_request WHERE destination_account_id IS NULL AND fee_minor = 0"))
             }

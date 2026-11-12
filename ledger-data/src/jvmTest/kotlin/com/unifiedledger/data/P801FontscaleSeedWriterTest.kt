@@ -82,7 +82,7 @@ import kotlin.time.Instant
  * `AndroidSqliteDriver(schema = LedgerDatabase.Schema, …)`, i.e. androidx `SQLiteOpenHelper`, whose
  * version gate is `PRAGMA user_version`. `LedgerDatabase.Schema.create` does NOT write that stamp
  * (the same reason [P706ConfirmedReceiptsRoundtripTest] stamps it), so the writer stamps
- * `user_version = Schema.version` (36) explicitly; an unstamped file would be treated as version 0
+ * `user_version = Schema.version` (37) explicitly; an unstamped file would be treated as version 0
  * and the app would run the whole migration chain over an already-current schema.
  *
  * The post-write read-back reopens the FILE through a second connection and drives the REAL
