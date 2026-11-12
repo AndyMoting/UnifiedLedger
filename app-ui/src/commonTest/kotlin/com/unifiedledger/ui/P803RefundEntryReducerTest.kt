@@ -69,8 +69,7 @@ class P803RefundEntryReducerTest {
             remaining = Money.ofMinor(8_000L, cny),
         )
 
-    private fun loadedCandidates(vararg candidates: ManualRefundCandidate) =
-        ManualRefundCandidatesResult.Loaded(candidates.toList(), hasMore = false)
+    private fun loadedCandidates(vararg candidates: ManualRefundCandidate) = ManualRefundCandidatesResult.Loaded(candidates.toList(), hasMore = false)
 
     // ---- V-1/V-3: the Continue gate and the confirmation page ----
 
