@@ -7199,4 +7199,6 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 
 **边界：** 零产品代码、零 schema/迁移/依赖；判定语义不变（首页渲染即就绪），只是不再绑死一句已消失的文案。设备侧行为由 b6-card 手动 rig（`fixture_relations=3`、`rounds=1`）实证，因为这两个类不进 PR 分片。
 
+**读数（2026-11-13，run `43266244292`，`fixture_relations=3`、`rounds=1`）：** seed 阶段**通过了本次改动的就绪门**——失败发生在它之后：`reachImportReview`（`ImportScaleTraversalInstrumentedTest.kt:4020`）报 `import screen present=false, tabResolved=false`。原因是 P8-00 把导入入口移进侧栏，而 b6 rig 仍按旧 tab 找入口。本批的就绪判据已实证通过；b6 rig 的导航修复属于另一批（第三个因 #283 失效、且自 11-04 起未再跑过的设备 rig）。
+
 **关联决定：** D-317（host 侧同因修复与守卫）、D-304（设备 rig 重试）、D-302（设备链离开 PR）。
