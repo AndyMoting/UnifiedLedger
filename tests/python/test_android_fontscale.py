@@ -465,7 +465,7 @@ class Profiles(unittest.TestCase):
             profile.screens[1].steps,
         )
         # A capture that never left the home tab, or never left the entry form, is not evidence.
-        self.assertEqual(("流水 · 共 2 笔",), profile.screens[0].absent)
+        self.assertEqual(("流水 · 共 2 笔", "费用分类"), profile.screens[0].absent)
         self.assertEqual(("新增退款到账",), profile.screens[1].absent)
 
     def test_unknown_profile_fails_loudly(self) -> None:
