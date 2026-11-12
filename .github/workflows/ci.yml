@@ -52,7 +52,7 @@ jobs:
           kind=$(python3 tools/ci/classify-changes.py --base "$BASE_SHA" --head HEAD)
           echo "kind=$kind" >> "$GITHUB_OUTPUT"
 
-  # :ledger-data:jvmTest (126 classes) is by far the longest task, so it is
+  # :ledger-data:jvmTest (128 classes) is by far the longest task, so it is
   # split across five runners. tools/ci/ledger-data-shards.txt says which classes each
   # runner takes; the two coverage guards below keep that list honest (the class count is
   # the only figure the guards verify; the base 98/722 header had already drifted from the

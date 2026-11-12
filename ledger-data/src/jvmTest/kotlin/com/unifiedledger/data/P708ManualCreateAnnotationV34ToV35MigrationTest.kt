@@ -45,7 +45,7 @@ class P708ManualCreateAnnotationV34ToV35MigrationTest {
         )
 
     @Test
-    fun versionThirtyFiveIsCurrent() {
+    fun versionThirtySevenIsCurrent() {
         assertEquals(37, LedgerDatabase.Schema.version)
     }
 

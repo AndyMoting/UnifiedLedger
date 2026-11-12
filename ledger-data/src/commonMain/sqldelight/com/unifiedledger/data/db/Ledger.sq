@@ -12503,11 +12503,12 @@ INSERT INTO manual_refund_receipt(
 countManualRefundReceipts:
 SELECT count(*) FROM manual_refund_receipt WHERE ledger_id = ?;
 
--- Spec section 2.5 (M4): the remaining refundable amount of one original transaction.
--- The SUM joins transaction_effective_state on the REFUND transaction (the single effective
--- predicate point), so a voided refund releases its capacity again; same ledger, same original
--- transaction and same currency only. It is driven by manual_refund_receipt_original_idx.
-selectManualRefundRemaining:
+-- Spec section 2.5 (M4): the REFUNDED TOTAL of one original transaction, not its remaining
+-- capacity: remaining = the structural cap (the expense-leg amount) minus this sum. The SUM joins
+-- transaction_effective_state on the REFUND transaction (the single effective predicate point),
+-- so a voided refund releases its capacity again; same ledger, same original transaction and same
+-- currency only. It is driven by manual_refund_receipt_original_idx.
+selectManualRefundRefundedTotal:
 SELECT COALESCE(sum(receipt.amount_minor), 0)
 FROM manual_refund_receipt AS receipt
 JOIN transaction_effective_state AS refund_effective
@@ -12524,7 +12525,7 @@ WHERE receipt.ledger_id = :ledger_id
 -- 'EXPENSE'; 4 exactly one positive expense leg on the current version and that leg is the
 -- category's expense account; 5 exactly one active secondary expense category for that account;
 -- 6 the original expense leg is CNY (the frozen v1 currency); 7 the remaining amount is positive.
--- The remaining sum uses the same effective-refund predicate as selectManualRefundRemaining.
+-- The remaining sum uses the same effective-refund predicate as selectManualRefundRefundedTotal.
 selectManualRefundExpenseCandidates:
 SELECT
   candidate.transaction_id,

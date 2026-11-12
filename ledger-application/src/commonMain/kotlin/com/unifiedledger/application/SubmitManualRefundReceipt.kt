@@ -76,7 +76,11 @@ sealed interface ManualRefundReceiptCommitResult {
         val code: ManualRefundRejectionCode,
     ) : ManualRefundReceiptCommitResult
 
-    /** The write transaction failed as a whole and rolled back; nothing was persisted. */
+    /**
+     * The attempt failed and its relationship row does not answer it, so no refund is known to be
+     * committed. A row may still exist when the replay read failed too: this is not a proof of
+     * rollback.
+     */
     data object Unavailable : ManualRefundReceiptCommitResult
 }
 
@@ -94,9 +98,11 @@ sealed interface ManualRefundReceiptCommitResult {
  * 5. insert the relationship row (arrival/confirmation history, fingerprint, marker).
  *
  * [mintIds] is invoked at most once and only for a fresh request, after the replay check, so a
- * replay, a conflict and a losing concurrent writer consume no ids. Any storage failure returns
- * [ManualRefundReceiptCommitResult.Unavailable] (the transaction rolled back), never an
- * untyped exception.
+ * replay, a conflict and a losing concurrent writer consume no ids. A storage failure never
+ * escapes as an untyped exception: the implementation re-reads the request's relationship row
+ * (the write may have committed before the failure surfaced), so an exact fingerprint returns
+ * [ManualRefundReceiptCommitResult.Replayed] and anything else returns
+ * [ManualRefundReceiptCommitResult.Unavailable].
  */
 fun interface ManualRefundReceiptCommitPort {
     fun commitOnce(

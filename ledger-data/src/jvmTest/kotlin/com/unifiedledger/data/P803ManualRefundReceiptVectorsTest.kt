@@ -1,8 +1,13 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.db.QueryResult
+import app.cash.sqldelight.db.SqlCursor
+import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.db.SqlPreparedStatement
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import com.unifiedledger.application.LedgerEntryRow
 import com.unifiedledger.application.ManualRefundReceiptCommitPort
+import com.unifiedledger.application.ManualRefundReceiptCommitResult
 import com.unifiedledger.application.ManualRefundReceiptIdSource
 import com.unifiedledger.application.ManualRefundReceiptIds
 import com.unifiedledger.application.ManualRefundReceiptReadPort
@@ -10,6 +15,10 @@ import com.unifiedledger.application.ManualRefundReceiptReadRecord
 import com.unifiedledger.application.ManualRefundReceiptRequest
 import com.unifiedledger.application.ManualRefundReceiptSubmissionResult
 import com.unifiedledger.application.ManualRefundRejectionCode
+import com.unifiedledger.application.MonthlyActivity
+import com.unifiedledger.application.MonthlyBuckets
+import com.unifiedledger.application.MonthlyContributionReadResult
+import com.unifiedledger.application.MonthlyCurrencyActivity
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.ResolveManualRefundReceiptCommitStatus
 import com.unifiedledger.application.SubmitManualRefundReceipt
@@ -17,6 +26,7 @@ import com.unifiedledger.application.TransactionVoidPlan
 import com.unifiedledger.application.TransactionVoidRequestIdentity
 import com.unifiedledger.application.TransactionVoidRequestSnapshot
 import com.unifiedledger.application.VoidTransactionResult
+import com.unifiedledger.application.manualRefundRequestFingerprint
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CurrencyUnit
@@ -38,6 +48,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.time.Instant
+import kotlinx.datetime.YearMonth
 
 /**
  * P8-03 i1 (D-312; spec sections 2.3-2.6/5) data+application vectors of the manual refund entry,
@@ -62,24 +73,38 @@ class P803ManualRefundReceiptVectorsTest {
             seedTransaction(harness.driver, "tx-voided", null, listOf(DAILY to 10_000L, ASSET to 10_000L))
             insertVoidFact(harness.driver, "tx-voided", "request-voided", "void", sequence = 1L)
 
-            val candidates =
-                harness.database.ledgerQueries
-                    .selectManualRefundExpenseCandidates(ledger_id = LEDGER, page_size = 20L, page_offset = 0L) {
-                            transactionId,
-                            occurredAt,
-                            categoryId,
-                            structuralCapMinor,
-                            currencyCode,
-                            currencyPrecision,
-                            remainingMinor,
-                            ->
-                        Candidate(transactionId, occurredAt, categoryId, structuralCapMinor, currencyCode, currencyPrecision, remainingMinor)
-                    }.executeAsList()
+            // Condition 1 (same ledger): another ledger's otherwise identical candidate, carrying
+            // a complete catalog of its own, must never leak into this ledger's list.
+            execute(harness.driver, "INSERT INTO catalog_account VALUES ('$LEDGER_B','$DAILY','daily expense','EXPENSE','CNY',2,0,0,NULL,1,1)")
+            execute(harness.driver, "INSERT INTO catalog_account VALUES ('$LEDGER_B','$ASSET','asset a','ASSET','CNY',2,1,1,NULL,0,1)")
+            execute(harness.driver, "INSERT INTO catalog_category VALUES ('$LEDGER_B','category-root','EXPENSE',NULL,NULL,1)")
+            execute(harness.driver, "INSERT INTO catalog_category VALUES ('$LEDGER_B','$CATEGORY_DAILY','EXPENSE','category-root','$DAILY',1)")
+            seedTransaction(harness.driver, "tx-other-ledger", null, listOf(DAILY to 11_000L, ASSET to -11_000L), ledger = LEDGER_B)
 
+            // Condition 5 (unique active secondary category): one expense account mapped to two
+            // active leaves has no single inheritable category, so it is not a candidate.
+            execute(harness.driver, "INSERT INTO catalog_account VALUES ('$LEDGER','$EXPENSE_SHARED','shared expense','EXPENSE','CNY',2,0,0,NULL,1,1)")
+            execute(harness.driver, "INSERT INTO catalog_category VALUES ('$LEDGER','category-shared-1','EXPENSE','category-root','$EXPENSE_SHARED',1)")
+            execute(harness.driver, "INSERT INTO catalog_category VALUES ('$LEDGER','category-shared-2','EXPENSE','category-root','$EXPENSE_SHARED',1)")
+            seedTransaction(harness.driver, "tx-two-active-categories", null, listOf(EXPENSE_SHARED to 4_000L, ASSET to -4_000L))
+
+            val candidates = candidatesOf(harness)
             assertEquals(listOf("tx-original"), candidates.map { it.transactionId })
             assertEquals(12_000L, candidates.single().structuralCapMinor)
             assertEquals(12_000L, candidates.single().remainingMinor)
             assertEquals(CATEGORY_DAILY, candidates.single().categoryId)
+
+            // Condition 7 (remaining > 0) with the product store in the loop: a refund the store
+            // just created never re-enters the candidate list, and once it consumes the whole
+            // structural cap the original itself drops out.
+            assertIs<ManualRefundReceiptSubmissionResult.Created>(
+                harness.useCase.submit(request(amountMinor = 3_000L, requestId = "request-refund-1")),
+            )
+            assertEquals(listOf("tx-original"), candidatesOf(harness).map { it.transactionId })
+            assertIs<ManualRefundReceiptSubmissionResult.Created>(
+                harness.useCase.submit(request(amountMinor = 9_000L, requestId = "request-refund-2")),
+            )
+            assertEquals(emptyList(), candidatesOf(harness).map { it.transactionId })
         }
     }
 
@@ -92,7 +117,7 @@ class P803ManualRefundReceiptVectorsTest {
             assertIs<ManualRefundReceiptSubmissionResult.Created>(
                 submit.submit(request(amountMinor = 3_000L, requestId = "request-refund-1")),
             )
-            assertEquals(9_000L, remainingOf(harness))
+            assertEquals(9_000L, STRUCTURAL_CAP_MINOR - refundedOf(harness))
 
             // 100.00 is below the 120.00 structural cap but above the 90.00 remaining capacity.
             assertEquals(
@@ -104,30 +129,93 @@ class P803ManualRefundReceiptVectorsTest {
                 ManualRefundRejectionCode.REFUND_EXCEEDS_STRUCTURAL_CAP,
                 rejectionOf(submit.submit(request(amountMinor = 13_000L, requestId = "request-refund-3"))),
             )
-            assertEquals(9_000L, remainingOf(harness))
+            assertEquals(9_000L, STRUCTURAL_CAP_MINOR - refundedOf(harness))
 
             // Voiding the created refund releases its amount from the cap again (M4).
             insertVoidFact(harness.driver, "tx-refund-1", "request-void-refund-1", "void", sequence = 1L)
-            assertEquals(12_000L, remainingOf(harness))
+            assertEquals(12_000L, STRUCTURAL_CAP_MINOR - refundedOf(harness))
             assertIs<ManualRefundReceiptSubmissionResult.Created>(
                 submit.submit(request(amountMinor = 11_000L, requestId = "request-refund-4")),
             )
-            assertEquals(1_000L, remainingOf(harness))
+            assertEquals(1_000L, STRUCTURAL_CAP_MINOR - refundedOf(harness))
         }
     }
 
     @Test
-    fun v5EveryRejectionPathLeavesZeroRelationshipRowsAndZeroFormalWrites() {
-        DatabaseHarness.inMemory().use { harness ->
-            seedRefundWorld(harness.driver)
-            val before = countsOf(harness)
-
-            assertEquals(
-                ManualRefundRejectionCode.REFUND_EXCEEDS_STRUCTURAL_CAP,
-                rejectionOf(harness.useCase.submit(request(amountMinor = 13_000L, requestId = "request-rejected"))),
+    fun v5EveryReachableRejectionPathLeavesTheRowCountsUnchanged() {
+        // One case per rejection code the seeded fixture can reach; each case runs on a fresh
+        // database because its setup is exactly the state that makes that code reachable.
+        val cases =
+            listOf(
+                // Amount above the structural cap (the expense-leg amount).
+                RejectionCase(
+                    ManualRefundRejectionCode.REFUND_EXCEEDS_STRUCTURAL_CAP,
+                    request(amountMinor = 13_000L, requestId = "request-structural-cap"),
+                ),
+                // Amount below the cap but above the remaining capacity (30.00 is already refunded).
+                RejectionCase(
+                    ManualRefundRejectionCode.REFUND_EXCEEDS_REMAINING,
+                    request(amountMinor = 10_000L, requestId = "request-exceeds-remaining"),
+                ) { harness ->
+                    assertIs<ManualRefundReceiptSubmissionResult.Created>(
+                        harness.useCase.submit(request(amountMinor = 3_000L, requestId = "request-consumed-cap")),
+                    )
+                },
+                // The original transaction does not exist.
+                RejectionCase(
+                    ManualRefundRejectionCode.ORIGINAL_NOT_REFUNDABLE,
+                    request(amountMinor = 3_000L, requestId = "request-missing-original", original = "tx-missing"),
+                ),
+                // The picked original was voided after selection.
+                RejectionCase(
+                    ManualRefundRejectionCode.ORIGINAL_NO_LONGER_REFUNDABLE,
+                    request(amountMinor = 3_000L, requestId = "request-voided-original"),
+                ) { harness ->
+                    insertVoidFact(harness.driver, ORIGINAL, "request-void-original", "void", sequence = 1L)
+                },
+                // The inherited category's parent is not a level-1 category. The candidate query
+                // and the catalog load both accept this shape (depth is a command rule), so the
+                // domain factory is what refuses it: REFUND_CATEGORY_INELIGIBLE.
+                RejectionCase(
+                    ManualRefundRejectionCode.REFUND_CATEGORY_INELIGIBLE,
+                    request(amountMinor = 3_000L, requestId = "request-nested-category"),
+                ) { harness ->
+                    execute(
+                        harness.driver,
+                        "UPDATE catalog_category SET parent_id = 'category-other' WHERE ledger_id = '$LEDGER' AND category_id = '$CATEGORY_DAILY'",
+                    )
+                },
+                // The destination is not an owned real ASSET account.
+                RejectionCase(
+                    ManualRefundRejectionCode.REFUND_ACCOUNT_INELIGIBLE,
+                    request(amountMinor = 3_000L, requestId = "request-bad-destination", destination = DAILY),
+                ),
+                // The same request id arrives with a different payload.
+                RejectionCase(
+                    ManualRefundRejectionCode.REFUND_REQUEST_CONFLICT,
+                    request(amountMinor = 3_500L, requestId = "request-conflict"),
+                ) { harness ->
+                    assertIs<ManualRefundReceiptSubmissionResult.Created>(
+                        harness.useCase.submit(request(amountMinor = 3_000L, requestId = "request-conflict")),
+                    )
+                },
+                // The catalog authority is gone, so the store cannot decide the request.
+                RejectionCase(
+                    ManualRefundRejectionCode.REFUND_STORE_UNAVAILABLE,
+                    request(amountMinor = 3_000L, requestId = "request-store-unavailable"),
+                ) { harness ->
+                    execute(harness.driver, "DELETE FROM catalog_version WHERE ledger_id = '$LEDGER'")
+                },
             )
-            assertEquals(before, countsOf(harness))
-            assertEquals(0L, queryCount(harness.driver, "SELECT count(*) FROM manual_refund_receipt"))
+
+        for (case in cases) {
+            DatabaseHarness.inMemory().use { harness ->
+                seedRefundWorld(harness.driver)
+                case.setup(harness)
+                val before = countsOf(harness)
+                assertEquals(case.expected, rejectionOf(harness.useCase.submit(case.request)), "rejection code")
+                assertEquals(before, countsOf(harness), "rejection ${case.expected} wrote rows")
+            }
         }
     }
 
@@ -165,8 +253,8 @@ class P803ManualRefundReceiptVectorsTest {
                 ),
             )
             assertEquals(
-                listOf("posting-original-expense|$DAILY|12000", "posting-original-asset|$ASSET|-12000"),
-                postingRows(harness.driver, "ps-original"),
+                listOf("posting-tx-original-0|$DAILY|12000", "posting-tx-original-1|$ASSET|-12000"),
+                postingRows(harness.driver, "ps-tx-original"),
             )
             assertEquals(0L, queryCount(harness.driver, "SELECT count(*) FROM transaction_void_fact WHERE transaction_id = 'tx-original'"))
             // Spec 2.4: the server re-resolved the inherited secondary expense category.
@@ -188,7 +276,7 @@ class P803ManualRefundReceiptVectorsTest {
             execute(
                 harness.driver,
                 "INSERT INTO posting_reconciliation(ledger_id, reconciliation_id, posting_id, status, latest_sequence) " +
-                    "VALUES ('$LEDGER','reconciliation-original-asset','posting-original-asset','CHECKED',1)",
+                    "VALUES ('$LEDGER','reconciliation-original-asset','posting-tx-original-1','CHECKED',1)",
             )
             assertIs<ManualRefundReceiptSubmissionResult.Created>(
                 harness.useCase.submit(request(amountMinor = 3_000L, requestId = "request-refund-1")),
@@ -207,7 +295,7 @@ class P803ManualRefundReceiptVectorsTest {
                 "CHECKED|1",
                 scalarString(
                     harness.driver,
-                    "SELECT status || '|' || latest_sequence FROM posting_reconciliation WHERE ledger_id='$LEDGER' AND posting_id='posting-original-asset'",
+                    "SELECT status || '|' || latest_sequence FROM posting_reconciliation WHERE ledger_id='$LEDGER' AND posting_id='posting-tx-original-1'",
                 ),
             )
             // The refund's expense leg is not a real-account posting and gets no reconciliation.
@@ -215,7 +303,7 @@ class P803ManualRefundReceiptVectorsTest {
                 0L,
                 queryCount(
                     harness.driver,
-                    "SELECT count(*) FROM posting_reconciliation WHERE posting_id IN ('posting-refund-expense-1', 'posting-original-expense')",
+                    "SELECT count(*) FROM posting_reconciliation WHERE posting_id IN ('posting-refund-expense-1', 'posting-tx-original-0')",
                 ),
             )
         }
@@ -253,6 +341,20 @@ class P803ManualRefundReceiptVectorsTest {
     fun v8ReportArithmeticFollowsTheRulesExampleAndNeverBooksOrdinaryIncome() {
         DatabaseHarness.inMemory().use { harness ->
             seedRefundWorld(harness.driver)
+            // A real INCOME account with one booked income in March keeps the income assertion
+            // load-bearing: the same read surface does report income when a posting hits one.
+            execute(harness.driver, "INSERT INTO catalog_account VALUES ('$LEDGER','$INCOME','salary','INCOME','CNY',2,0,0,NULL,0,1)")
+            seedTransaction(
+                harness.driver,
+                "tx-income-control",
+                "INCOME",
+                listOf(ASSET to 2_000L, INCOME to -2_000L),
+                occurredAt = "2026-03-05T02:00:00Z",
+            )
+
+            // Spec section 5 V-8 reads the shipped monthly surface (the bounded contribution read
+            // port plus the frozen MonthlyBuckets projection), never a hand-rolled sum.
+            val januaryBefore = monthActivity(harness, YearMonth(2026, 1))
             assertIs<ManualRefundReceiptSubmissionResult.Created>(
                 harness.useCase.submit(
                     request(
@@ -263,38 +365,38 @@ class P803ManualRefundReceiptVectorsTest {
                 ),
             )
 
-            // Cumulative consumption through the expense accounts: +120.00 then -30.00 = 90.00.
-            assertEquals(
-                9_000L,
-                queryCount(
-                    harness.driver,
-                    "SELECT COALESCE(sum(posting.amount_minor), 0) FROM posting JOIN transaction_version AS version ON version.ledger_id = posting.ledger_id AND version.posting_set_id = posting.posting_set_id WHERE posting.account_id = '$DAILY'",
-                ),
-            )
-            // The refund's own contribution to the expense account is -30.00.
-            assertEquals(
-                -3_000L,
-                queryCount(
-                    harness.driver,
-                    "SELECT COALESCE(sum(posting.amount_minor), 0) FROM posting WHERE posting_id = 'posting-refund-expense-1'",
-                ),
-            )
-            // Cash inflow of the refund period is +30.00 on the destination asset account.
+            // The original period is unchanged by the arrival: 120.00 consumption, 0 income.
+            assertEquals(januaryBefore, monthActivity(harness, YearMonth(2026, 1)))
+            val january = januaryBefore.currencyActivity()
+            assertEquals(12_000L, january.positiveExpenseMinorUnits)
+            assertEquals(12_000L, january.netExpenseMinorUnits)
+            assertEquals(0L, january.ordinaryIncomeMinorUnits)
+
+            // The arrival period consumes -30.00 (the refund posting on the expense account) and
+            // books no ordinary income. The cash inflow is the +30.00 destination asset leg of the
+            // same shipped row surface: MonthlyBuckets never counts an asset leg as income.
+            val february = monthActivity(harness, YearMonth(2026, 2)).currencyActivity()
+            assertEquals(-3_000L, february.refundMinorUnits)
+            assertEquals(-3_000L, february.netExpenseMinorUnits)
+            assertEquals(0L, february.positiveExpenseMinorUnits)
+            assertEquals(0L, february.ordinaryIncomeMinorUnits)
             assertEquals(
                 3_000L,
-                queryCount(
-                    harness.driver,
-                    "SELECT COALESCE(sum(posting.amount_minor), 0) FROM posting WHERE posting_id = 'posting-refund-dest-1'",
-                ),
+                monthRows(harness, YearMonth(2026, 2))
+                    .single { it.transactionId.value == "tx-refund-1" }
+                    .postings
+                    .single { it.accountId.value == ASSET }
+                    .amount
+                    .minorUnits,
             )
-            // `:144`: a refund never becomes ordinary income (no INCOME-kind account is posted).
+
+            // The control month proves the same surface reports a real income posting.
             assertEquals(
-                0L,
-                queryCount(
-                    harness.driver,
-                    "SELECT count(*) FROM posting JOIN catalog_account ON catalog_account.ledger_id = posting.ledger_id AND catalog_account.account_id = posting.account_id WHERE catalog_account.kind = 'INCOME'",
-                ),
+                2_000L,
+                monthActivity(harness, YearMonth(2026, 3)).currencyActivity().ordinaryIncomeMinorUnits,
             )
+            // `:144`'s arithmetic example over the shipped per-period numbers: 120.00 - 30.00 = 90.00.
+            assertEquals(9_000L, january.netExpenseMinorUnits + february.netExpenseMinorUnits)
         }
     }
 
@@ -440,6 +542,85 @@ class P803ManualRefundReceiptVectorsTest {
         }
     }
 
+    /**
+     * Spec section 2.6 at the store boundary: after a thrown attempt the relationship row is the
+     * authority, so the store must answer from it instead of reporting a definite failure (a UI
+     * retry under a new request id would otherwise double-book a committed refund). The throwing
+     * fake in [v17AfterCommitReadFailureRecoversOnlyOnAnExactFingerprintAndRetriesTheSameId]
+     * covers "committed, then the port threw"; this test is the production store's own re-read.
+     */
+    @Test
+    fun v17TheStoreBoundaryAnswersAThrownAttemptFromTheRelationshipRow() {
+        // (a) The attempt dies before its replay check can see the row, while the row of exactly
+        // this payload is already committed: the catch path must answer with the replay.
+        val matchingBase = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(matchingBase)
+            seedRefundWorld(matchingBase)
+            val submitted = request(amountMinor = 3_000L, requestId = "request-refund-1")
+            SqlDelightManualRefundReceiptStore(LedgerDatabase(matchingBase), matchingBase)
+                .commitOnce(submitted, manualRefundRequestFingerprint(submitted)) { SequentialIdSource().next() }
+
+            val driver = FaultingRefundDriver(matchingBase, FaultingRefundDriver.Fault.FIRST_READ)
+            val store = SqlDelightManualRefundReceiptStore(LedgerDatabase(driver), driver)
+            val replayed =
+                assertIs<ManualRefundReceiptCommitResult.Replayed>(
+                    store.commitOnce(submitted, manualRefundRequestFingerprint(submitted)) { SequentialIdSource().next() },
+                )
+            assertEquals("relationship-refund-1", replayed.receipt.relationshipId)
+            assertEquals("tx-refund-1", replayed.receipt.refundTransactionId.value)
+            assertEquals(1L, queryCount(matchingBase, "SELECT count(*) FROM manual_refund_receipt"))
+        } finally {
+            matchingBase.close()
+        }
+
+        // (b) A write that rolled back leaves no row to replay, so it stays the typed Unavailable
+        // and neither the relationship row nor the refund transaction survives.
+        val rolledBackBase = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(rolledBackBase)
+            seedRefundWorld(rolledBackBase)
+            val driver = FaultingRefundDriver(rolledBackBase, FaultingRefundDriver.Fault.LAST_WRITE)
+            val store = SqlDelightManualRefundReceiptStore(LedgerDatabase(driver), driver)
+            val submitted = request(amountMinor = 3_000L, requestId = "request-refund-1")
+
+            assertEquals(
+                ManualRefundReceiptCommitResult.Unavailable,
+                store.commitOnce(submitted, manualRefundRequestFingerprint(submitted)) { SequentialIdSource().next() },
+            )
+            assertEquals(0L, queryCount(rolledBackBase, "SELECT count(*) FROM manual_refund_receipt"))
+            assertEquals(
+                0L,
+                queryCount(rolledBackBase, "SELECT count(*) FROM ledger_transaction WHERE transaction_id = 'tx-refund-1'"),
+            )
+        } finally {
+            rolledBackBase.close()
+        }
+
+        // (c) The row belongs to another payload of the same request id: the in-transaction replay
+        // check never ran, so the catch path only sees a fingerprint mismatch and stays
+        // Unavailable. The conflict itself is decided inside the transaction, not here.
+        val mismatchedBase = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(mismatchedBase)
+            seedRefundWorld(mismatchedBase)
+            val committed = request(amountMinor = 3_000L, requestId = "request-refund-1")
+            SqlDelightManualRefundReceiptStore(LedgerDatabase(mismatchedBase), mismatchedBase)
+                .commitOnce(committed, manualRefundRequestFingerprint(committed)) { SequentialIdSource().next() }
+
+            val driver = FaultingRefundDriver(mismatchedBase, FaultingRefundDriver.Fault.FIRST_READ)
+            val store = SqlDelightManualRefundReceiptStore(LedgerDatabase(driver), driver)
+            val repriced = request(amountMinor = 3_500L, requestId = "request-refund-1")
+            assertEquals(
+                ManualRefundReceiptCommitResult.Unavailable,
+                store.commitOnce(repriced, manualRefundRequestFingerprint(repriced)) { SequentialIdSource().next() },
+            )
+            assertEquals(1L, queryCount(mismatchedBase, "SELECT count(*) FROM manual_refund_receipt"))
+        } finally {
+            mismatchedBase.close()
+        }
+    }
+
     @Test
     fun v19TheVoidGuardRejectsAnOriginalWithAnEffectiveManualRefund() {
         DatabaseHarness.inMemory().use { harness ->
@@ -468,7 +649,12 @@ class P803ManualRefundReceiptVectorsTest {
             // Once the refund itself is voided, the effective-linked-refund probe releases the
             // original again (DP-13 asks for an *effective* linked refund).
             insertVoidFact(harness.driver, created.receipt.refundTransactionId.value, "request-void-refund", "void", sequence = 1L)
-            assertEquals(0L, queryCount(harness.driver, effectiveLinkedRefundProbe()))
+            assertEquals(
+                0L,
+                harness.database.ledgerQueries
+                    .productLinkedRefundCountForTransaction(LEDGER, ORIGINAL, LEDGER, ORIGINAL)
+                    .executeAsOne(),
+            )
         }
     }
 }
@@ -519,12 +705,63 @@ private data class Candidate(
     val remainingMinor: Long,
 )
 
+/** One reachable rejection vector: the state that reaches [expected], then the request. */
+private class RejectionCase(
+    val expected: ManualRefundRejectionCode,
+    val request: ManualRefundReceiptRequest,
+    val setup: (DatabaseHarness) -> Unit = {},
+)
+
+/**
+ * Test-only store-boundary faults. [Fault.FIRST_READ] fails the attempt's first statement, so the
+ * in-transaction replay check never sees a stored row; [Fault.LAST_WRITE] fails the relationship
+ * insert after the formal rows were written (a write that rolled back before it was visible).
+ */
+private class FaultingRefundDriver(
+    private val delegate: SqlDriver,
+    private val fault: Fault,
+) : SqlDriver by delegate {
+    enum class Fault { FIRST_READ, LAST_WRITE }
+
+    private var firstReadFaultsRemaining = if (fault == Fault.FIRST_READ) 1 else 0
+
+    override fun execute(
+        identifier: Int?,
+        sql: String,
+        parameters: Int,
+        binders: (SqlPreparedStatement.() -> Unit)?,
+    ): QueryResult<Long> {
+        if (fault == Fault.LAST_WRITE && sql.contains("INSERT INTO manual_refund_receipt")) {
+            throw SQLException("simulated failure before the relationship row is visible")
+        }
+        return delegate.execute(identifier, sql, parameters, binders)
+    }
+
+    override fun <R> executeQuery(
+        identifier: Int?,
+        sql: String,
+        mapper: (SqlCursor) -> QueryResult<R>,
+        parameters: Int,
+        binders: (SqlPreparedStatement.() -> Unit)?,
+    ): QueryResult<R> {
+        if (firstReadFaultsRemaining > 0) {
+            firstReadFaultsRemaining -= 1
+            throw SQLException("simulated read failure inside the write attempt")
+        }
+        return delegate.executeQuery(identifier, sql, mapper, parameters, binders)
+    }
+}
+
+private const val STRUCTURAL_CAP_MINOR = 12_000L
 private const val LEDGER = "ledger-a"
+private const val LEDGER_B = "ledger-b"
 private const val ORIGINAL = "tx-original"
 private const val DAILY = "account-expense-daily"
 private const val CATEGORY_DAILY = "category-daily"
 private const val EXPENSE_OTHER = "account-expense-other"
+private const val EXPENSE_SHARED = "account-expense-shared"
 private const val ASSET = "account-asset-a"
+private const val INCOME = "account-income-salary"
 
 private fun seedRefundWorld(driver: JdbcSqliteDriver) {
     execute(
@@ -547,21 +784,25 @@ private fun seedTransaction(
     legs: List<Pair<String, Long>>,
     currency: String = "CNY",
     occurredAt: String = "2026-01-20T02:00:00Z",
+    ledger: String = LEDGER,
 ) {
     execute(
         driver,
-        "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind, canonical_kind) VALUES ('$transactionId', '$LEDGER', 'EXPENSE', ${canonicalKind?.let { "'$it'" } ?: "NULL"})",
+        "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind, canonical_kind) VALUES ('$transactionId', '$ledger', 'EXPENSE', ${canonicalKind?.let { "'$it'" } ?: "NULL"})",
     )
-    execute(driver, "INSERT INTO posting_set VALUES ('ps-$transactionId', '$LEDGER')")
+    execute(driver, "INSERT INTO posting_set VALUES ('ps-$transactionId', '$ledger')")
+    // The numeric projection comes from the shipped Kotlin half of the SQL projection, so the
+    // month-window read (V-8) can place these rows without a missing-projection failure.
+    val statisticsEpochNanos = requireNotNull(StatisticsAtProjection.project(Instant.parse(occurredAt)))
     execute(
         driver,
-        "INSERT INTO transaction_version(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note) VALUES ('version-$transactionId', '$transactionId', '$LEDGER', 1, 'ps-$transactionId', '$occurredAt', '$occurredAt', '$occurredAt', NULL)",
+        "INSERT INTO transaction_version(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note, statistics_at_epoch_nanos) VALUES ('version-$transactionId', '$transactionId', '$ledger', 1, 'ps-$transactionId', '$occurredAt', '$occurredAt', '$occurredAt', NULL, $statisticsEpochNanos)",
     )
-    execute(driver, "INSERT INTO ledger_transaction_current_version VALUES ('$transactionId', '$LEDGER', 'version-$transactionId')")
+    execute(driver, "INSERT INTO ledger_transaction_current_version VALUES ('$transactionId', '$ledger', 'version-$transactionId')")
     legs.forEachIndexed { index, (account, amount) ->
         execute(
             driver,
-            "INSERT INTO posting VALUES ('posting-$transactionId-$index', 'ps-$transactionId', '$LEDGER', $index, '$account', $amount, '$currency', 2)",
+            "INSERT INTO posting VALUES ('posting-$transactionId-$index', 'ps-$transactionId', '$ledger', $index, '$account', $amount, '$currency', 2)",
         )
     }
 }
@@ -609,8 +850,62 @@ private fun request(
 private fun rejectionOf(result: ManualRefundReceiptSubmissionResult): ManualRefundRejectionCode =
     assertIs<ManualRefundReceiptSubmissionResult.Rejected>(result).code
 
-private fun remainingOf(harness: DatabaseHarness): Long =
-    harness.database.ledgerQueries.selectManualRefundRemaining(LEDGER, ORIGINAL, "CNY").executeAsOne()
+private fun refundedOf(harness: DatabaseHarness): Long =
+    harness.database.ledgerQueries.selectManualRefundRefundedTotal(LEDGER, ORIGINAL, "CNY").executeAsOne()
+
+private fun candidatesOf(harness: DatabaseHarness): List<Candidate> =
+    harness.database.ledgerQueries
+        .selectManualRefundExpenseCandidates(ledger_id = LEDGER, page_size = 20L, page_offset = 0L) {
+            transactionId,
+            occurredAt,
+            categoryId,
+            structuralCapMinor,
+            currencyCode,
+            currencyPrecision,
+            remainingMinor,
+            ->
+            Candidate(transactionId, occurredAt, categoryId, structuralCapMinor, currencyCode, currencyPrecision, remainingMinor)
+        }.executeAsList()
+
+/** V-8's shipped read surface: the bounded contribution port, then the frozen month projection. */
+private fun monthRead(
+    harness: DatabaseHarness,
+    month: YearMonth,
+): MonthlyContributionReadResult.Success {
+    val database = harness.database
+    val adapter =
+        SqlDelightMonthlyContributionReadAdapter(
+            database,
+            SqlDelightCatalogStore(database, harness.driver),
+        )
+    val catalogVersion = database.ledgerQueries.selectCatalogVersion(LEDGER).executeAsOne()
+    return assertIs<MonthlyContributionReadResult.Success>(
+        adapter.readContributions(
+            LedgerId(LEDGER),
+            MonthlyBuckets.monthStart(month),
+            MonthlyBuckets.monthEndExclusive(month),
+            catalogVersion,
+        ),
+    )
+}
+
+private fun monthRows(
+    harness: DatabaseHarness,
+    month: YearMonth,
+): List<LedgerEntryRow> = monthRead(harness, month).rows
+
+private fun monthActivity(
+    harness: DatabaseHarness,
+    month: YearMonth,
+): MonthlyActivity {
+    val read = monthRead(harness, month)
+    return MonthlyBuckets
+        .aggregate(read.rows, LedgerId(LEDGER), read.catalog, listOf(month))
+        .getValue(month)
+}
+
+private fun MonthlyActivity.currencyActivity(): MonthlyCurrencyActivity =
+    currencies.single { it.currency.code == "CNY" }
 
 private fun countsOf(harness: DatabaseHarness): List<Long> =
     listOf(
@@ -621,19 +916,6 @@ private fun countsOf(harness: DatabaseHarness): List<Long> =
         queryCount(harness.driver, "SELECT count(*) FROM posting"),
         queryCount(harness.driver, "SELECT count(*) FROM posting_reconciliation"),
     )
-
-private fun effectiveLinkedRefundProbe(): String =
-    "SELECT count(*) FROM (" +
-        "SELECT decision.ledger_id AS ledger_id, confirmation.transaction_id AS refund_transaction_id " +
-        "FROM import_candidate_decision_snapshot AS decision " +
-        "JOIN import_confirmation AS confirmation ON confirmation.ledger_id = decision.ledger_id AND confirmation.request_id = decision.request_id " +
-        "WHERE decision.ledger_id = '$LEDGER' AND decision.original_transaction_id = '$ORIGINAL' " +
-        "UNION ALL " +
-        "SELECT receipt.ledger_id, receipt.refund_transaction_id FROM manual_refund_receipt AS receipt " +
-        "WHERE receipt.ledger_id = '$LEDGER' AND receipt.original_transaction_id = '$ORIGINAL'" +
-        ") AS linked " +
-        "JOIN transaction_effective_state AS effective ON effective.ledger_id = linked.ledger_id " +
-        "AND effective.transaction_id = linked.refund_transaction_id AND effective.is_effective = 1"
 
 private fun postingRows(
     driver: JdbcSqliteDriver,

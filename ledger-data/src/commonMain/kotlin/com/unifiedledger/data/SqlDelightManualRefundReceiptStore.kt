@@ -31,8 +31,10 @@ import com.unifiedledger.domain.createRefundReceipt
  * the idempotency record (same id + same fingerprint replays it, same id + different fingerprint
  * conflicts), the original is re-checked against the same seven candidate conditions, and the
  * remaining capacity is recomputed from the effective refund rows. A rejection returns before
- * the first write; a thrown storage failure rolls the whole transaction back and becomes the
- * typed [ManualRefundReceiptCommitResult.Unavailable].
+ * the first write. A thrown storage failure is resolved from that same relationship row: the
+ * write may have committed before the failure surfaced, so an exact fingerprint answers
+ * [ManualRefundReceiptCommitResult.Replayed] and only the absence of a replay stays
+ * [ManualRefundReceiptCommitResult.Unavailable] (spec section 2.6).
  */
 class SqlDelightManualRefundReceiptStore private constructor(
     private val database: LedgerDatabase,
@@ -52,7 +54,9 @@ class SqlDelightManualRefundReceiptStore private constructor(
         try {
             database.transactionWithResult { commit(request, requestFingerprint, mintIds) }
         } catch (failure: Exception) {
-            ManualRefundReceiptCommitResult.Unavailable
+            // The failure may have surfaced after the commit landed, so the row decides: a
+            // matching fingerprint is the replay, anything else remains the typed unavailable.
+            resolvePossiblyCommitted(request, requestFingerprint)
         }
 
     override fun findByRequest(
@@ -61,10 +65,10 @@ class SqlDelightManualRefundReceiptStore private constructor(
     ): ManualRefundReceiptReadRecord? =
         database.ledgerQueries
             .selectManualRefundReceiptByRequest(ledgerId.value, requestId.value) {
-                    relationshipId,
-                    fingerprint,
-                    refundTransactionId,
-                    ->
+                relationshipId,
+                fingerprint,
+                refundTransactionId,
+                ->
                 ManualRefundReceiptReadRecord(
                     requestFingerprint = fingerprint,
                     receipt =
@@ -75,6 +79,21 @@ class SqlDelightManualRefundReceiptStore private constructor(
                 )
             }.executeAsOneOrNull()
 
+    private fun resolvePossiblyCommitted(
+        request: ManualRefundReceiptRequest,
+        requestFingerprint: String,
+    ): ManualRefundReceiptCommitResult =
+        try {
+            val record = findByRequest(request.ledgerId, request.requestId)
+            if (record != null && record.requestFingerprint == requestFingerprint) {
+                ManualRefundReceiptCommitResult.Replayed(record.receipt)
+            } else {
+                ManualRefundReceiptCommitResult.Unavailable
+            }
+        } catch (failure: Exception) {
+            ManualRefundReceiptCommitResult.Unavailable
+        }
+
     private fun commit(
         request: ManualRefundReceiptRequest,
         requestFingerprint: String,
@@ -84,10 +103,10 @@ class SqlDelightManualRefundReceiptStore private constructor(
         val existing =
             database.ledgerQueries
                 .selectManualRefundReceiptByRequest(ledger, request.requestId.value) {
-                        relationshipId,
-                        storedFingerprint,
-                        refundTransactionId,
-                        ->
+                    relationshipId,
+                    storedFingerprint,
+                    refundTransactionId,
+                    ->
                     Triple(relationshipId, storedFingerprint, refundTransactionId)
                 }.executeAsOneOrNull()
         if (existing != null) {
@@ -116,11 +135,11 @@ class SqlDelightManualRefundReceiptStore private constructor(
         val original =
             database.ledgerQueries
                 .selectManualRefundableOriginal(ledger, request.originalTransactionId.value) {
-                        categoryId,
-                        structuralCapMinor,
-                        currencyCode,
-                        currencyPrecision,
-                        ->
+                    categoryId,
+                    structuralCapMinor,
+                    currencyCode,
+                    currencyPrecision,
+                    ->
                     OriginalExpense(
                         categoryId = categoryId,
                         structuralCapMinor = structuralCapMinor,
@@ -168,7 +187,7 @@ class SqlDelightManualRefundReceiptStore private constructor(
         }
         val refunded =
             database.ledgerQueries
-                .selectManualRefundRemaining(
+                .selectManualRefundRefundedTotal(
                     ledger,
                     request.originalTransactionId.value,
                     request.amount.currency.code,

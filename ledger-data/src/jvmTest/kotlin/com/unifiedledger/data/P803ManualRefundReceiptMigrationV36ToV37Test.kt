@@ -52,18 +52,26 @@ class P803ManualRefundReceiptMigrationV36ToV37Test : MigrationTestSupport() {
                     "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='manual_refund_receipt_original_idx'",
                 ),
             )
+            // `pragma_foreign_key_list` row order is not part of its contract: compare the
+            // (from, to) column pairs order-free, keeping each composite pair intact.
             assertEquals(
-                listOf("refund_transaction_id", "ledger_id", "original_transaction_id", "ledger_id"),
+                listOf(
+                    "ledger_id|ledger_id",
+                    "ledger_id|ledger_id",
+                    "original_transaction_id|transaction_id",
+                    "refund_transaction_id|transaction_id",
+                ),
                 driver
                     .executeQuery(
                         null,
-                        "SELECT \"from\" FROM pragma_foreign_key_list('manual_refund_receipt') ORDER BY id, seq",
+                        "SELECT \"from\" || '|' || \"to\" FROM pragma_foreign_key_list('manual_refund_receipt')",
                         { cursor ->
                             val rows = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
                             app.cash.sqldelight.db.QueryResult.Value(rows)
                         },
                         0,
-                    ).value,
+                    ).value
+                    .sorted(),
             )
             assertEquals(true, triggerSql(driver, "manual_refund_receipt_guard_update").contains("cannot update manual refund receipt"))
         } finally {
