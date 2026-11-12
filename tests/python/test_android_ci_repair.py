@@ -24,7 +24,8 @@ from android_scale.preflight import prepare_probe, probe_bytes, validate_preflig
 from android_scale.result import PREFLIGHT_CLASS, PREFLIGHT_METHOD, TEST_CLASS, TEST_METHOD, validate_evidence
 from android_scale.result import validate_app_ready, validate_log_collection
 from android_scale.runner import PACKAGE, RUNNER, ScaleDeadlineError, ScaleRunner
-from tests.python.test_android_scale_result import CONFIG, READY_XML, SHA, ready_adb_reply, ready_proof, status_log
+from tests.python.test_android_scale_result import (CONFIG, EMPTY_LEDGER_COPY, FLOW_HEADER_COPY, READY_XML, SHA,
+                                                    ready_adb_reply, ready_proof, ready_xml, status_log)
 
 
 class HostOrchestration(unittest.TestCase):
@@ -74,7 +75,7 @@ class HostOrchestration(unittest.TestCase):
         self.assertFalse(any("chown" in call or "restorecon" in call for call in self.calls))
 
     def test_starting_then_ready_precedes_normal_stop(self):
-        observations = iter((READY_XML.replace("账本：synthetic", "正在打开本地账本…"), READY_XML))
+        observations = iter((READY_XML.replace(EMPTY_LEDGER_COPY, "正在打开本地账本…"), READY_XML))
         def controlled(*args, **kwargs):
             if args[:2] == ("exec-out", "cat"):
                 self.calls.append(args)
@@ -89,6 +90,19 @@ class HostOrchestration(unittest.TestCase):
         self.assertNotEqual(dumps[0][-1], dumps[1][-1])
         self.assertEqual(self.calls[-1], ("shell", "am", "force-stop", PACKAGE))
         validate_app_ready(self.runner.evidence, self.runner.report)
+
+    def test_ready_proof_names_the_marker_that_actually_matched(self):
+        # The home renders the empty-state copy or the flow header (#283), so the proof
+        # records the prefix the dump carried instead of a fixed constant.
+        for copy, marker in ((EMPTY_LEDGER_COPY, "账本为空"), (FLOW_HEADER_COPY, "流水 · 共 ")):
+            xml = ready_xml(copy)
+            def controlled(*args, _xml=xml, **kwargs):
+                return _xml if args[:2] == ("exec-out", "cat") else self.adb(*args, **kwargs)
+            self.runner.adb = controlled
+            with self.subTest(marker=marker):
+                self.runner.await_app_ready()
+                self.assertEqual(self.runner.report["app_ready"]["marker"], marker)
+                validate_app_ready(self.runner.evidence, self.runner.report)
 
     def test_startup_error_and_pointer_recovery_take_priority_over_ready(self):
         for error in ("无法打开本地账本（本地数据库不可用）", "无法打开本地账本：缺少活动代指针，但磁盘上存在候选代目录。"):
@@ -106,7 +120,7 @@ class HostOrchestration(unittest.TestCase):
 
     def test_unknown_missing_malformed_foreign_or_invisible_xml_never_passes(self):
         samples = ("", "<hierarchy", "<unknown />", "<hierarchy><unknown /></hierarchy>",
-                   READY_XML.replace(PACKAGE, "other.package"), READY_XML.replace("账本：synthetic", "unknown"),
+                   READY_XML.replace(PACKAGE, "other.package"), READY_XML.replace(EMPTY_LEDGER_COPY, "unknown"),
                    READY_XML.replace('bounds=', 'visible-to-user="false" bounds='),
                    READY_XML.replace("[0,0][500,80]", "[0,0][0,0]"),
                    READY_XML.replace('bounds="[0,0][500,80]"', ""))
@@ -180,7 +194,7 @@ class HostOrchestration(unittest.TestCase):
         self.runner.phase = Mock()
         def controlled(*args, **kwargs):
             if args[:2] == ("exec-out", "cat"):
-                return READY_XML.replace("账本：synthetic", "无法打开本地账本")
+                return READY_XML.replace(EMPTY_LEDGER_COPY, "无法打开本地账本")
             return self.adb(*args, **kwargs)
         self.runner.adb = controlled
         self.assertEqual(self.runner.run(), 1)
@@ -1555,6 +1569,17 @@ class TrustedWorkflowBoundary(unittest.TestCase):
                                     for node in ast.walk(parsed)))
                 with self.subTest(event=event, head=head, condition=condition):
                     self.assertIs(eval(compile(parsed, "workflow-condition", "eval"), {"__builtins__": {}}), expected)
+
+    def test_preflight_retry_clears_the_fixture_prepare_probe_will_not_reuse(self):
+        # D-317: `prepare_probe` creates the fixture directory with mkdir(exist_ok=False), so a
+        # retry that inherits it dies with "[Errno 17] File exists" before the device is
+        # touched -- which is what hid the readiness defect for three days (D-304's cleanup
+        # cleared only the evidence tree).
+        root = Path(__file__).resolve().parents[2]
+        preflight = (root / ".github/workflows/android-preflight.yml").read_text(encoding="utf-8")
+        cleanup = next(block for block in re.split(r"(?m)^      - ", preflight)
+                       if block.startswith("name: Clear the failed attempt's evidence"))
+        self.assertIn("rm -rf preflight-evidence preflight-fixture", cleanup)
 
 
 class OrdinaryInventory(unittest.TestCase):

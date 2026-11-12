@@ -25,6 +25,7 @@ from android_scale.fixture import generate_fixture  # noqa: E402
 import android_scale.runner as runner_module  # noqa: E402
 from android_scale.result import (  # noqa: E402
     PHASES,
+    READY_MARKERS,
     STAGES,
     TEST_CLASS,
     TEST_METHOD,
@@ -43,13 +44,23 @@ from android_scale.runner import (  # noqa: E402
 )
 
 SHA = "a" * 40
-READY_XML = '<hierarchy rotation="0"><node package="com.unifiedledger.android" text="账本：synthetic" bounds="[0,0][500,80]" /></hierarchy>'
+# The three home-tab states the probe must recognise after #283: the empty ledger, the
+# non-empty flow header, and the transaction list shown while the flow is still loading.
+EMPTY_LEDGER_COPY = "账本为空，还没有任何交易。"
+FLOW_HEADER_COPY = "流水 · 共 3 笔"
+CURRENT_TRANSACTION_COPY = "当前交易（最近 0 笔，共 0 笔）"
+READY_XML = f'<hierarchy rotation="0"><node package="com.unifiedledger.android" text="{EMPTY_LEDGER_COPY}" bounds="[0,0][500,80]" /></hierarchy>'
 
 
-def ready_proof(directory: Path) -> dict:
-    data = READY_XML.encode("utf-8")
+def ready_xml(copy: str = EMPTY_LEDGER_COPY) -> str:
+    return READY_XML.replace(EMPTY_LEDGER_COPY, copy)
+
+
+def ready_proof(directory: Path, copy: str = EMPTY_LEDGER_COPY) -> dict:
+    data = ready_xml(copy).encode("utf-8")
     (directory / "ready-ui.xml").write_bytes(data)
-    return {"state": "Ready", "package": "com.unifiedledger.android", "marker": "账本：", "fresh_dump": True,
+    marker = next(marker for marker in READY_MARKERS if copy.startswith(marker))
+    return {"state": "Ready", "package": "com.unifiedledger.android", "marker": marker, "fresh_dump": True,
             "xml_sha256": hashlib.sha256(data).hexdigest()}
 
 
@@ -104,7 +115,7 @@ def status_log(*, numtests: str = "1", code: int = -1, junit: str = "OK (1 test)
     return "\n".join(lines) + "\n"
 
 
-def build_valid(directory: Path, *, sha: str = SHA) -> None:
+def build_valid(directory: Path, *, sha: str = SHA, ready_copy: str = EMPTY_LEDGER_COPY) -> None:
     """Write a complete, clean evidence set that validate_evidence accepts."""
     directory.mkdir(parents=True, exist_ok=True)
     host = {
@@ -117,7 +128,7 @@ def build_valid(directory: Path, *, sha: str = SHA) -> None:
         "apk_sha256": {"app": "b" * 64, "test": "c" * 64},
         "config": dict(CONFIG),
         "elapsed_seconds": 120.0,
-        "app_ready": ready_proof(directory),
+        "app_ready": ready_proof(directory, ready_copy),
     }
     (directory / "host.json").write_text(json.dumps(host), encoding="utf-8")
     stages = {}
@@ -204,7 +215,7 @@ class ReducerRejectsPartialEvidence(unittest.TestCase):
                 else:
                     xml = {"xml": "<hierarchy", "package": READY_XML.replace("com.unifiedledger.android", "other"),
                            "invisible": READY_XML.replace('bounds=', 'visible-to-user="false" bounds='),
-                           "error": READY_XML.replace("账本：synthetic", "无法打开本地账本")}[fault]
+                           "error": READY_XML.replace(EMPTY_LEDGER_COPY, "无法打开本地账本")}[fault]
                     (self.directory / "ready-ui.xml").write_bytes(xml.encode("utf-8"))
                     host["app_ready"]["xml_sha256"] = hashlib.sha256(xml.encode("utf-8")).hexdigest()
                 host_path.write_text(json.dumps(host), encoding="utf-8")
@@ -386,6 +397,54 @@ class ReducerRejectsPartialEvidence(unittest.TestCase):
         }
         save(self.directory, "device.json", device)
         self.assertEqual(validate_evidence(self.directory, SHA)["status"], "PASS")
+
+
+class ReadyMarkersCoverEveryHomeState(unittest.TestCase):
+    """#283 deleted the home's ledger-identity line; the probe must read the copy it renders now."""
+
+    COPIES = ((EMPTY_LEDGER_COPY, "账本为空"), (FLOW_HEADER_COPY, "流水 · 共 "),
+              (CURRENT_TRANSACTION_COPY, "当前交易（最近 "))
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.directory = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_each_home_state_is_accepted_and_records_the_marker_it_matched(self):
+        for copy, marker in self.COPIES:
+            with self.subTest(marker=marker):
+                build_valid(self.directory, ready_copy=copy)
+                self.assertEqual(validate_evidence(self.directory, SHA)["status"], "PASS")
+                self.assertEqual(load(self.directory, "host.json")["app_ready"]["marker"], marker)
+
+    def test_recorded_marker_must_be_re_derived_from_the_dumped_xml(self):
+        # A proof naming a marker the dump does not carry was written, not observed.
+        build_valid(self.directory, ready_copy=FLOW_HEADER_COPY)
+        host = load(self.directory, "host.json")
+        host["app_ready"]["marker"] = "账本为空"
+        save(self.directory, "host.json", host)
+        with self.assertRaises(ValueError):
+            validate_evidence(self.directory, SHA)
+
+
+HOME_SCREEN = Path(__file__).resolve().parents[2] / "app-ui" / "src" / "commonMain" / "kotlin" / "com" / "unifiedledger" / "ui" / "P503OverviewScreen.kt"
+
+
+def rendered_copy(path: Path) -> str:
+    """The file's code lines; a comment quoting the copy proves nothing about what renders."""
+    return "\n".join(line for line in path.read_text(encoding="utf-8").splitlines()
+                     if not line.lstrip().startswith(("//", "*", "/*")))
+
+
+class ReadyMarkersStayInStepWithTheUiCopy(unittest.TestCase):
+    """The guard #283 lacked: a copy edit turns `Python tests` red, not the device probe."""
+
+    def test_every_ready_marker_appears_in_the_home_screen_copy(self):
+        for marker in READY_MARKERS:
+            self.assertIn(marker, rendered_copy(HOME_SCREEN),
+                          f"READY_MARKERS entry {marker!r} no longer appears in {HOME_SCREEN.name} "
+                          f"({HOME_SCREEN.parent}): a home-copy edit must update READY_MARKERS in "
+                          f"tools/python/android_scale/result.py")
 
 
 class ReducerRejectsWrongIdentityAndCrashes(unittest.TestCase):

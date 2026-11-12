@@ -179,7 +179,7 @@ gh workflow run android-fontscale-sample.yml --ref <branch> -f expected_sha=<完
 
 框架重启后最多 300 秒等待窗口服务、包管理服务及用户 0 的 `RUNNING_UNLOCKED` 状态，安装后核对应用/测试包、instrumentation target、launcher 实际启动结果，并通过 `run-as` 对暂存文件逐个读回校验。应用数据根由 Android 自行管理。设施失败在 JUnit 增记 `setup ERROR`，未执行业务阶段保持 `NOT_RUN`；后续缺证只追加诊断，不覆盖首因。logcat 持续采集，断线重连/可能缺口单独记录；证据保留 7 天，仍不上传数据库或完整输入。
 
-`am start -W` 返回不等于账本初始化完成。两种模式均需在当前剩余执行预算内、最多 180 秒，以每次独立输出路径的新鲜 UI XML 等待本包可见的 `账本：` 前缀；同包启动失败/指针恢复提示优先判错，Starting、短暂读取失败、缺失或未知 XML 均不得当作 Ready。失败 dump 的残留、其他包的文本和不可见节点不能通过。只有 Ready 后才正常 force-stop 或启动 instrumentation；失败保留 `setup ERROR`，不点击恢复、不清库、不补写指针，已有的 owned 失败清理仍可停止本包。host 必须保存 `app_ready` 与哈希绑定的 `ready-ui.xml`，预检和 maximum reducer 均强制校验；预检设备 schema 2 还必须包含开前指针观察及三次同一空账本快照，缺字段即失败。普通设备回归清单仍为 41 例，专用预检不混入其中。
+`am start -W` 返回不等于账本初始化完成。两种模式均需在当前剩余执行预算内、最多 180 秒，以每次独立输出路径的新鲜 UI XML 等待本包可见的就绪标记：`tools/python/android_scale/result.py` 的 `READY_MARKERS` 集合覆盖空账本首页、非空流水头，以及流水尚未加载时的当前交易分支，host 记录实际命中的那一个，验证器要求它属于该集合并等于从 `ready-ui.xml` 重新推导的标记。集合由 `tests/python/test_android_scale_result.py` 的守卫测试锚定——每个标记必须逐字出现在 `P503OverviewScreen.kt` 的渲染代码里（注释行不计），首页文案再改时 `Python tests` 先红，而不是设备探针静默失效；同包启动失败/指针恢复提示优先判错，Starting、短暂读取失败、缺失或未知 XML 均不得当作 Ready。失败 dump 的残留、其他包的文本和不可见节点不能通过。只有 Ready 后才正常 force-stop 或启动 instrumentation；失败保留 `setup ERROR`，不点击恢复、不清库、不补写指针，已有的 owned 失败清理仍可停止本包。host 必须保存 `app_ready` 与哈希绑定的 `ready-ui.xml`，预检和 maximum reducer 均强制校验；预检设备 schema 2 还必须包含开前指针观察及三次同一空账本快照，缺字段即失败。普通设备回归清单仍为 41 例，专用预检不混入其中。
 
 最大规模执行全局预算仍为 13,800 秒，设备步骤 240 分钟，设备 job 300 分钟。`prepare` 与 `chain` 共用剩余全局预算；`reopen`、`replay`、`final-reopen` 各最多 480 秒。全部命令和 best-effort 探针受当前阶段/全局剩余时间约束；结束后的采证总预算 120 秒。不宣称准备或主链拥有能提前阻止其耗尽全局时间的独立预算。
 
