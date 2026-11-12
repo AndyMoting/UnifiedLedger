@@ -7101,3 +7101,28 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **残余**：规格 §8 的 i2a/i2b/i2c 残余全部保留；i1 的 store `Unavailable` 无法区分「无行」与「回读失败」登记为 i1 债务（当前映射 `UnknownCommit`，不重试写入）。
 
 **关联决定**：`D-312`（本切片设计门）、`D-311`（P8-02 收口先例）、`D-300`（阶段 8 方向）。
+
+## D-314 CI 分片重排与 RG06 测试拆分（实测类秒与逐例耗时驱动）
+
+**状态：** 已批准并登记（2026-11-12；用户先批准「分片重排」计划，后按「看这 23 个用例各自的耗时，拆」改为逐例实测驱动）。一批 tracked 变更：`ledger-data` 测试类 1 → 4（一个抽象支撑基类 + 三个子类）、`tools/ci/ledger-data-shards.txt`、`.github/workflows/ci.yml` 两处（类数注释 + dispatch-only 的 `junit-shard-*` 工件上传）、本条与 `docs/CONTRIBUTING.md` 两处同步。
+
+**背景（实测）：** 近 15 次 `ci.yml` run 中，最慢 job 为 `ledger-data shard 3` 共 6 次（7.12 / 8.35 / 8.35 / 8.50 / 7.90 / 8.80 min）。同轮内最慢片与最快片相差 59–233 s，但与**次慢片**只差 35–88 s——此前按跨 run 比较得出的「片 3 慢 3 分钟」是统计口径错误。分片墙钟 ≈ `启动开销 + max(Σ类秒/4, 最重的一类)`（每片 4 fork，`CI_TEST_MAX_PARALLEL_FORKS=4`）。
+
+**纯搬箱被否（同一批实测）：** 用 3 个绿色 run 的 `timing-shard-*` 工件取逐类中位秒，五片 Σ 为 582 / 629 / 878 / 672 / 713 s。`SqlDelightRg06StoreTest` 单类 205 s 且整类落在一个 fork 上，把片 3 的尾项钉死在 204 s 以上；**搬走其他类最多只能省 15 s**，因此不做纯搬箱。
+
+**逐例实测（run 43205153118 的 `junit-shard-3` 工件，该类合计 205.3 s）：** `storePortsAllThirtyFourGeneratedIdentityCollisionBranchesAtomically` 63.40 s、`finalReceiptRejectsCanonicalGraphMismatchForEveryAction` 61.36 s、`storePortsFrozenEighteenRejectionsWithZeroWriteAndIdentityReuse` 13.45 s，其余 20 例合计 67 s；**前两例占 61%**。
+
+**决定：**
+
+1. **按重腿拆分**：`Rg06StoreTestSupport`（抽象基类，15 个 helper 转 `protected`；快照数据类与 `CNY`/`USD` 转同包顶层 `internal`，沿用 `MigrationTestSupport.kt` 的既有形状）+ `SqlDelightRg06LifecycleSnapshotTest`（20 例）/ `SqlDelightRg06RejectionEnumerationTest`（2 例：`finalReceipt…`、`storePortsFrozenEighteen…`）/ `SqlDelightRg06StorePortFanOutTest`（1 例：`storePortsAllThirtyFour…`）。23 个用例名与断言逐字未动——逐例字节比对 0 差异，helper 体仅在 `private` → `protected` 上有别。
+2. **登记面**：清单 129 → 131 行，三个新类入片 1 / 2 / 4；`ci.yml` 类数注释 129 → 131。
+3. **逐例耗时的采集面**：`ci.yml` 增 dispatch-only 的 `junit-shard-*` 工件（JUnit XML，7 天）。类级 timing TSV 无法回答「重类内部哪一例该拆」，而 PR 轮不应为此增加工件，故只在手动派发时上传。
+4. **落地后按 4 个 run 的逐类中位秒再排一次**（不跑生成器：本机零执行约束；`make-ledger-data-shards.py` 配方保持不变）：把扇出类（51.3 s）由片 4 移入片 1、`EnumerationPerfV29ToV30MigrationTest`（44.2 s）由片 5 移入片 1，五片 Σ 由 588 / 685 / 675 / 732 / 724 变为 683.5 / 685 / 675 / 680.7 / 679.8（落差 10 s）。
+
+**读数（run 43208264994，改测试源码后的冷缓存首推）：** 片 3 由历史 351–528 s 降至 **319 s**，不再是最慢片；最慢片转为片 4 的 501 s（该片含新入片的 51.3 s 扇出类，且该轮全部测试类重编译）。冷缓存轮不可与热缓存轮直接比较，第 4 条的再排即为热轮读数的前置条件。
+
+**边界：** 零产品代码、零 schema/迁移、零依赖、零账务语义；四个必过 context 名与分支保护零改动；每项独立可 revert。
+
+**残余：** ①两条 60 s 腿若主要是固定夹具开销（每条用例自建库、自建 catalog），拆分只改归属不改总量，届时须改为夹具复用或共享建库；②分片判据仍按 Σ 类秒，未建模 4 fork 的装箱并行度；③`docs/CONTRIBUTING.md` 那句「以 `manual_expense_request` 与 `manual_income_request` 两表为例」的表格举例与所列两处 `confirmed_*_receipt` 位置式 INSERT 不同表，属既有措辞漂移，本批只修死链不改正举例。
+
+**关联决定：** D-303（分片装箱、迁移大测试拆分与判据）、D-302（CI 验证调参）、D-240（测试登记面：清单 + ci.yml 类数）。

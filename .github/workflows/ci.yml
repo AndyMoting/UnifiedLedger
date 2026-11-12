@@ -52,7 +52,7 @@ jobs:
           kind=$(python3 tools/ci/classify-changes.py --base "$BASE_SHA" --head HEAD)
           echo "kind=$kind" >> "$GITHUB_OUTPUT"
 
-  # :ledger-data:jvmTest (129 classes) is by far the longest task, so it is
+  # :ledger-data:jvmTest (131 classes) is by far the longest task, so it is
   # split across five runners. tools/ci/ledger-data-shards.txt says which classes each
   # runner takes; the two coverage guards below keep that list honest (the class count is
   # the only figure the guards verify; the base 98/722 header had already drifted from the
@@ -201,6 +201,16 @@ jobs:
       - name: Test timing report
         if: always()
         run: python3 tools/ci/test-timing-report.py --root . --summary "$GITHUB_STEP_SUMMARY" --top 0 --tsv timing-shard-${{ matrix.shard }}.tsv
+      - name: Upload the JUnit result XML for shard repacking
+        # Dispatch-only: pull requests keep their artifact list unchanged. The XML carries
+        # per-test seconds, which the class-level timing TSV cannot show.
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-shard-${{ matrix.shard }}
+          path: ledger-data/build/test-results/jvmTest
+          if-no-files-found: warn
+          retention-days: 7
       - name: Upload per-class timings
         if: always()
         uses: actions/upload-artifact@v4
