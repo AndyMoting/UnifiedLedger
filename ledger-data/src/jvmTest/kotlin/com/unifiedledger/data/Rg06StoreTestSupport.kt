@@ -50,6 +50,9 @@ import com.unifiedledger.domain.StagedPaymentRelationId
 import com.unifiedledger.domain.StagedPaymentRole
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVersionId
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.util.Properties
 import java.util.concurrent.CountDownLatch
 import kotlin.concurrent.thread
@@ -294,6 +297,40 @@ abstract class Rg06StoreTestSupport {
         start.countDown()
         workers.forEach { it.join() }
         return results.map { checkNotNull(it) }
+    }
+
+    protected fun preparedDatabaseFile(prepare: (SqlDelightRg06Store) -> Unit): Path {
+        val path = Files.createTempFile("rg06-prepared-", ".db")
+        try {
+            JdbcSqliteDriver("jdbc:sqlite:${path.absolutePathString()}").use { driver ->
+                LedgerDatabase.Schema.create(driver)
+                val database = LedgerDatabase(driver)
+                val store = SqlDelightRg06Store(database, driver, catalog(), "+08:00") { _, _ -> manualObservation() }
+                prepare(store)
+            }
+        } catch (failure: Throwable) {
+            Files.deleteIfExists(path)
+            throw failure
+        }
+        return path
+    }
+
+    // shortcut: the copy is the main file only, so the base must be closed and not in WAL mode; upgrade if a fixture ever opens with journal_mode=WAL
+    protected fun withCopiedDatabase(
+        base: Path,
+        block: (LedgerDatabase, JdbcSqliteDriver, SqlDelightRg06Store) -> Unit,
+    ) {
+        val copy = Files.createTempFile("rg06-case-", ".db")
+        try {
+            Files.copy(base, copy, StandardCopyOption.REPLACE_EXISTING)
+            JdbcSqliteDriver("jdbc:sqlite:${copy.absolutePathString()}").use { driver ->
+                val database = LedgerDatabase(driver)
+                val store = SqlDelightRg06Store(database, driver, catalog(), "+08:00") { _, _ -> manualObservation() }
+                block(database, driver, store)
+            }
+        } finally {
+            Files.deleteIfExists(copy)
+        }
     }
 
     protected fun paymentIds(label: String) =

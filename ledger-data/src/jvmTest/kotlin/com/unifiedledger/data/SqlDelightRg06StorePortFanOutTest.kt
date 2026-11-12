@@ -1,6 +1,5 @@
 package com.unifiedledger.data
 
-import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.Rg06Action
 import com.unifiedledger.application.Rg06CandidateId
 import com.unifiedledger.application.Rg06CandidateStatusId
@@ -13,7 +12,6 @@ import com.unifiedledger.application.Rg06Operation
 import com.unifiedledger.application.Rg06ReconciliationId
 import com.unifiedledger.application.Rg06RejectionReason
 import com.unifiedledger.application.Rg06SourceId
-import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.InstallmentPaymentId
 import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.PostingSetId
@@ -24,6 +22,8 @@ import com.unifiedledger.domain.StagedPaymentRelationId
 import com.unifiedledger.domain.StagedPaymentRole
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionVersionId
+import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -216,38 +216,37 @@ class SqlDelightRg06StorePortFanOutTest : Rg06StoreTestSupport() {
         val cases = branches.flatMap { branch -> branch.occurrences(branch.operation()).map { branch to it } }
         assertEquals(34, cases.size)
 
-        cases.forEach { (branch, occurrence) ->
-            val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
-            try {
-                LedgerDatabase.Schema.create(driver)
-                val database = LedgerDatabase(driver)
-                val store = SqlDelightRg06Store(database, driver, catalog(), "+08:00") { _, _ -> manualObservation() }
-                branch.prepare(store)
-                occupyGeneratedIdentity(database, store, occurrence.kind, occurrence.value)
-                val before = storeSnapshot(database)
-                val operation = branch.operation()
-                assertEquals(
-                    Rg06ExecutionResult.Rejected(Rg06RejectionReason.IDENTITY_COLLISION, Rg06FieldPath.GENERATED_IDENTITY),
-                    store.commit(operation),
-                    "${branch.action.code}.${occurrence.field}",
-                )
-                assertEquals(before, storeSnapshot(database), "${branch.action.code}.${occurrence.field}")
-
-                val corrected = branch.corrected(operation, occurrence.field)
-                assertNotEquals(operation, corrected, "${branch.action.code}.${occurrence.field}.corrected")
-                val accepted =
-                    assertIs<Rg06ExecutionResult.Accepted>(
-                        store.commit(corrected),
-                        "${branch.action.code}.${occurrence.field}.corrected",
+        val prepared = mutableMapOf<Branch, Path>()
+        try {
+            branches.forEach { branch -> prepared[branch] = preparedDatabaseFile(branch.prepare) }
+            cases.forEach { (branch, occurrence) ->
+                withCopiedDatabase(prepared.getValue(branch)) { database, _, store ->
+                    occupyGeneratedIdentity(database, store, occurrence.kind, occurrence.value)
+                    val before = storeSnapshot(database)
+                    val operation = branch.operation()
+                    assertEquals(
+                        Rg06ExecutionResult.Rejected(Rg06RejectionReason.IDENTITY_COLLISION, Rg06FieldPath.GENERATED_IDENTITY),
+                        store.commit(operation),
+                        "${branch.action.code}.${occurrence.field}",
                     )
-                assertEquals(
-                    Rg06ExecutionResult.NoChange(accepted.returnedIds),
-                    store.commit(corrected),
-                    "${branch.action.code}.${occurrence.field}.retry",
-                )
-            } finally {
-                driver.close()
+                    assertEquals(before, storeSnapshot(database), "${branch.action.code}.${occurrence.field}")
+
+                    val corrected = branch.corrected(operation, occurrence.field)
+                    assertNotEquals(operation, corrected, "${branch.action.code}.${occurrence.field}.corrected")
+                    val accepted =
+                        assertIs<Rg06ExecutionResult.Accepted>(
+                            store.commit(corrected),
+                            "${branch.action.code}.${occurrence.field}.corrected",
+                        )
+                    assertEquals(
+                        Rg06ExecutionResult.NoChange(accepted.returnedIds),
+                        store.commit(corrected),
+                        "${branch.action.code}.${occurrence.field}.retry",
+                    )
+                }
             }
+        } finally {
+            prepared.values.forEach { Files.deleteIfExists(it) }
         }
     }
 }
