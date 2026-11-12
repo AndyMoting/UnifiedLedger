@@ -848,6 +848,12 @@ class LedgerLeaseScope(
                 // (not a facade field), never an invocation, so the HOME capsule renders only when
                 // the surface can actually be read (no dead affordance).
                 search = querySearchPage != null,
+                // P8-03 i2b (D-312; spec sections 2.2/4): the refund entry's three graph-lifetime
+                // facade fields. Pure null checks, never an invocation; the combined
+                // [LedgerSurfaces.manualRefundEntry] is what the edit screen's type list keys on.
+                manualRefundCandidateRead = facade.readManualRefundCandidates != null,
+                manualRefundSubmit = facade.submitEntry?.hasRefundDelegate == true,
+                manualRefundRecovery = facade.resolveManualRefundCommitStatus != null,
             )
         }
 
@@ -989,6 +995,13 @@ data class LedgerSurfaces(
     // lease scope. A pure field probe, never an invocation, so the HOME capsule is rendered only
     // when the surface exists (the same "no dead affordance" convention as the fields above).
     val search: Boolean = false,
+    // P8-03 i2b (D-312; spec sections 2.2/4): the refund entry's wiring probes. The candidate read,
+    // the submit use case and the unknown-commit resolver are built once per graph and live on the
+    // facade, so these are facade field reads (never an invocation). The entry is offered only when
+    // ALL THREE exist — a read without a write would render a picker whose confirm cannot land.
+    val manualRefundCandidateRead: Boolean = false,
+    val manualRefundSubmit: Boolean = false,
+    val manualRefundRecovery: Boolean = false,
 ) {
     /** The queue surface (entry A) is reachable: the read face is wired. */
     val accountReconciliationQueue: Boolean
@@ -997,6 +1010,10 @@ data class LedgerSurfaces(
     /** The candidate/confirm/audit surface is fully reachable: all four ports are wired. */
     val accountReconciliationDetail: Boolean
         get() = accountReconciliationRead && accountReconciliationPropose && accountReconciliationBind && accountReconciliationConfirm
+
+    /** P8-03 i2b: the refund-receipt entry is fully reachable — read, submit and recovery all wired. */
+    val manualRefundEntry: Boolean
+        get() = manualRefundCandidateRead && manualRefundSubmit && manualRefundRecovery
 }
 
 /**

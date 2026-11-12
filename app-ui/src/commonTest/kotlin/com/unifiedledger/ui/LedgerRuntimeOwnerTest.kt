@@ -9,7 +9,9 @@ import com.unifiedledger.application.ManualEntrySubmissionResult
 import com.unifiedledger.application.ManualExpenseSubmissionResult
 import com.unifiedledger.application.ManualIncomeSubmissionResult
 import com.unifiedledger.application.ManualLendSubmissionResult
+import com.unifiedledger.application.ManualRefundReceiptSubmissionResult
 import com.unifiedledger.application.ManualTransferSubmissionResult
+import com.unifiedledger.application.RefundReceiptDraft
 import com.unifiedledger.application.TransferDraft
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -784,6 +786,9 @@ class LedgerRuntimeOwnerTest {
                 TransferDraft(null, null, "1.00", occurredAt = occurredAt),
                 LendDraft(null, "1.00", null, occurredAt),
                 CollectDraft(null, "1.00", "1.00", "0.00", destinationAccountId = null, occurredAt = occurredAt),
+                // P8-03 i2b (D-312; spec section 2.7): the refund type carries the shared
+                // InfrastructureFailure landing like the other five types.
+                RefundReceiptDraft(null, null, "1.00", occurredAt),
             )
         for (draft in drafts) {
             val result = runtimeNotReadySubmission(draft)
@@ -794,6 +799,7 @@ class LedgerRuntimeOwnerTest {
                     is ManualEntrySubmissionResult.Transfer -> result.result is ManualTransferSubmissionResult.InfrastructureFailure
                     is ManualEntrySubmissionResult.Lend -> result.result is ManualLendSubmissionResult.InfrastructureFailure
                     is ManualEntrySubmissionResult.Collect -> result.result is ManualCollectSubmissionResult.InfrastructureFailure
+                    is ManualEntrySubmissionResult.RefundReceipt -> result.result is ManualRefundReceiptSubmissionResult.InfrastructureFailure
                 }
             assertTrue(isFailure, "draft ${draft.entryType} must map to its typed InfrastructureFailure")
         }

@@ -73,6 +73,7 @@ import com.unifiedledger.application.ImportRequestId
 import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ManualLendingTransactionFactory
+import com.unifiedledger.application.ManualRefundCandidatesReadPort
 import com.unifiedledger.application.ManualTransferTransactionFactory
 import com.unifiedledger.application.MixedPaymentFlowFormalFactory
 import com.unifiedledger.application.OrdinaryFlowFormalFactory
@@ -95,11 +96,13 @@ import com.unifiedledger.application.QueryWidgetMonthlySnapshot
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.ResolveManualIncomeCommitStatus
 import com.unifiedledger.application.ResolveManualLendingCommitStatus
+import com.unifiedledger.application.ResolveManualRefundReceiptCommitStatus
 import com.unifiedledger.application.ResolveManualTransferCommitStatus
 import com.unifiedledger.application.ResolveTransactionCorrectionCommitStatus
 import com.unifiedledger.application.ResolveTransactionVoidCommitStatus
 import com.unifiedledger.application.ReviewImportDuplicateCandidate
 import com.unifiedledger.application.SaveBudgetConfiguration
+import com.unifiedledger.application.SubmitManualRefundReceipt
 import com.unifiedledger.application.TransferFlowFormalFactory
 import com.unifiedledger.application.UpdateTransactionAnnotation
 import com.unifiedledger.application.UuidV7AnnotationRequestIdSource
@@ -118,6 +121,7 @@ import com.unifiedledger.application.UuidV7ImportIntakeIdSource
 import com.unifiedledger.application.UuidV7ManualExpenseRequestIdSource
 import com.unifiedledger.application.UuidV7ManualIncomeRequestIdSource
 import com.unifiedledger.application.UuidV7ManualLendingRequestIdSource
+import com.unifiedledger.application.UuidV7ManualRefundReceiptIdSource
 import com.unifiedledger.application.UuidV7ManualTransferRequestIdSource
 import com.unifiedledger.application.UuidV7P801ReconciliationIdSource
 import com.unifiedledger.application.UuidV7TagMerchantRequestIdSource
@@ -132,6 +136,8 @@ import com.unifiedledger.data.CatalogBootstrapResult
 import com.unifiedledger.data.SqlDelightEvidenceProjectionStore
 import com.unifiedledger.data.SqlDelightImportReviewReadAdapter
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
+import com.unifiedledger.data.SqlDelightManualRefundCandidatesReadAdapter
+import com.unifiedledger.data.SqlDelightManualRefundReceiptStore
 import com.unifiedledger.data.SqlDelightMonthlyContributionReadAdapter
 import com.unifiedledger.data.SqlDelightP408ReconciliationStore
 import com.unifiedledger.data.SqlDelightP801AccountReconciliationReadAdapter
@@ -1296,7 +1302,29 @@ private fun buildLedgerGraph(
             setActive = ExecuteSetCounterpartyActive(counterpartyStore),
             reader = counterpartyStore,
         )
-    val entrySubmission = ExecuteManualEntrySubmission(submission, incomeSubmission, transferSubmission, ExecuteLendingSubmission(lendingSubmission))
+    // P8-03 i2b (D-312; spec sections 2.2/4): the manual refund-receipt surfaces. The receipt store
+    // comes from its public driver-free constructor (the Android handle owns the driver, and the
+    // `(database, driver)` constructor's connection configuration is not valid on Android). The
+    // store is BOTH the atomic commit port and the unknown-commit read port, so one instance backs
+    // the submit use case and the resolver.
+    val manualRefundReceiptStore = SqlDelightManualRefundReceiptStore(database)
+    val readManualRefundCandidates: ManualRefundCandidatesReadPort =
+        SqlDelightManualRefundCandidatesReadAdapter(database)
+    val resolveManualRefundCommitStatus = ResolveManualRefundReceiptCommitStatus(manualRefundReceiptStore)
+    val submitManualRefundReceipt =
+        SubmitManualRefundReceipt(
+            commitPort = manualRefundReceiptStore,
+            idSource = UuidV7ManualRefundReceiptIdSource(UuidV7Generator(::secureRandomBytes)),
+            resolver = resolveManualRefundCommitStatus,
+        )
+    val entrySubmission =
+        ExecuteManualEntrySubmission(
+            submission,
+            incomeSubmission,
+            transferSubmission,
+            ExecuteLendingSubmission(lendingSubmission),
+            refund = submitManualRefundReceipt,
+        )
 
     val catalogCommands =
         ExecuteCatalogCommand(
@@ -1587,6 +1615,9 @@ private fun buildLedgerGraph(
                     clock = ledgerClock,
                 ),
             annotationRequestIdSource = annotationRequestIdSource,
+            // P8-03 i2b (D-312; spec sections 2.2/4): the manual refund-receipt surface.
+            readManualRefundCandidates = readManualRefundCandidates,
+            resolveManualRefundCommitStatus = resolveManualRefundCommitStatus,
         )
     // A-PERF (spec section 2.1): the Android bootstrap-completion trigger point — the graph is
     // built (catalog bootstrap done), so SQLite's official open-time pattern runs once here, in

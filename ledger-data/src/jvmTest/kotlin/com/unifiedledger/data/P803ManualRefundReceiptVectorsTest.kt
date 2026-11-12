@@ -199,7 +199,10 @@ class P803ManualRefundReceiptVectorsTest {
                         harness.useCase.submit(request(amountMinor = 3_000L, requestId = "request-conflict")),
                     )
                 },
-                // The catalog authority is gone, so the store cannot decide the request.
+                // The catalog authority is gone, so the store cannot decide the request BEFORE any
+                // write: that is the definite typed store-unavailable rejection, not an uncertain
+                // write (the uncertain path is the commit-port Unavailable answer, covered by the
+                // application-layer fold test).
                 RejectionCase(
                     ManualRefundRejectionCode.REFUND_STORE_UNAVAILABLE,
                     request(amountMinor = 3_000L, requestId = "request-store-unavailable"),

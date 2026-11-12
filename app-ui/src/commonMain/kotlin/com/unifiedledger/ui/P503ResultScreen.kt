@@ -54,6 +54,9 @@ fun P503ResultScreen(state: P503AppState) {
 internal fun P503UnknownCommitScreen(
     state: P503AppState.UnknownCommit,
     onRetryCheck: () -> Unit,
+    // P8-03 i2b (D-312; spec section 2.6): the refund type's own frozen sentence, appended by
+    // the host. Null keeps every other type's exact pre-P8-03 copy.
+    typeNotice: String? = null,
 ) {
     when (state.lastCheckOutcome) {
         UnknownCommitCheckOutcome.NONE -> {
@@ -75,11 +78,13 @@ internal fun P503UnknownCommitScreen(
             P503UnknownCommitStayScreen(
                 message = "提交结果未知：账本中未找到该提交的入库记录。",
                 onRetryCheck = onRetryCheck,
+                typeNotice = typeNotice,
             )
         UnknownCommitCheckOutcome.UNAVAILABLE ->
             P503UnknownCommitStayScreen(
                 message = "提交结果未知：核对暂不可用（本地数据库读取失败）。",
                 onRetryCheck = onRetryCheck,
+                typeNotice = typeNotice,
             )
     }
 }
@@ -88,6 +93,7 @@ internal fun P503UnknownCommitScreen(
 private fun P503UnknownCommitStayScreen(
     message: String,
     onRetryCheck: () -> Unit,
+    typeNotice: String? = null,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -99,6 +105,14 @@ private fun P503UnknownCommitStayScreen(
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
         )
+        if (typeNotice != null) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                typeNotice,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
+            )
+        }
         Spacer(Modifier.height(16.dp))
         // No manual minimumInteractiveComponentSize(): it duplicates material3's built-in
         // 48dp touch-target enforcement and creates a dead-zone hit layer (D-127).

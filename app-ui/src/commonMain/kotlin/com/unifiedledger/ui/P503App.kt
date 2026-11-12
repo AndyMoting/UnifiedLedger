@@ -94,6 +94,9 @@ import com.unifiedledger.application.ManualLendingBehavior
 import com.unifiedledger.application.ManualLendingCommitResolution
 import com.unifiedledger.application.ManualLendingOptions
 import com.unifiedledger.application.ManualLendingRequestSnapshot
+import com.unifiedledger.application.ManualRefundReceiptCommitResolution
+import com.unifiedledger.application.ManualRefundReceiptRequest
+import com.unifiedledger.application.ManualRefundReceiptSubmissionResult
 import com.unifiedledger.application.ManualTransferCommitResolution
 import com.unifiedledger.application.ManualTransferInputField
 import com.unifiedledger.application.ManualTransferOptions
@@ -106,6 +109,7 @@ import com.unifiedledger.application.MonthlyTrend
 import com.unifiedledger.application.P802_SEARCH_PAGE_SIZE
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.RecycleBinResult
+import com.unifiedledger.application.RefundReceiptDraft
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.SearchFailureCode
 import com.unifiedledger.application.SearchReadResult
@@ -861,6 +865,9 @@ fun P503App(
                 lendingOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.fundingAccountId }?.currency ?: ledger.currency
             is CollectDraft ->
                 lendingOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.destinationAccountId }?.currency ?: ledger.currency
+            // P8-03 i2b (D-312; spec section 2.2): a manual refund is same-currency with the
+            // ledger (ACCOUNTING_RULES.md:158), so its parse/display currency is the ledger's.
+            is RefundReceiptDraft -> ledger.currency
         }
 
     // A-02 FIX-MONTH-1 (D-152): forward wiring slot for the host coordinator below. The
@@ -1819,6 +1826,35 @@ fun P503App(
         )
     }
 
+    /**
+     * P8-03 i2b (D-312; spec sections 2.2/2.6): the refund submission/read-back request, built
+     * once per attempt so the submission and the unknown-commit check compare the SAME fingerprint
+     * (the request id is reused on a retry, never reallocated). `null` = an incomplete draft; the
+     * caller lands the shared unready-runtime InfrastructureFailure and writes nothing.
+     */
+    fun refundReceiptRequest(
+        draft: RefundReceiptDraft,
+        requestId: RequestId,
+    ): ManualRefundReceiptRequest? {
+        val originalTransactionId = draft.originalTransactionId ?: return null
+        val destinationAccountId = draft.destinationAccountId ?: return null
+        val arrivedAt = draft.occurredAt ?: return null
+        val currency = resolvedCurrency(draft)
+        val amount =
+            (ledger.parseAmount.parse(draft.amountText, currency) as? ParseManualExpenseAmount.Result.Valid)
+                ?.let { Money.ofMinor(it.minorUnits, currency) }
+                ?: return null
+        return ManualRefundReceiptRequest(
+            ledgerId = ledger.ledgerId,
+            requestId = requestId,
+            originalTransactionId = originalTransactionId,
+            amount = amount,
+            destinationAccountId = destinationAccountId,
+            arrivedAt = arrivedAt,
+            confirmedAt = ledger.ledgerClock.now(),
+        )
+    }
+
     fun submit(
         draft: TypedEntryDraft,
         requestId: RequestId,
@@ -1929,6 +1965,18 @@ fun P503App(
                             )
                         } else {
                             submission.submit(ManualEntrySaveInput.Collect(input))
+                        }
+                    }
+                    // P8-03 i2b (D-312; spec sections 2.2/2.6): an incomplete request or an unwired
+                    // submission lands the shared unready-runtime landing and writes nothing (the
+                    // same typed InfrastructureFailure path every other type uses).
+                    is RefundReceiptDraft -> {
+                        val request = refundReceiptRequest(draft, requestId)
+                        val submission = facade.submitEntry
+                        if (request == null || submission == null) {
+                            runtimeNotReadySubmission(draft)
+                        } else {
+                            submission.submit(ManualEntrySaveInput.RefundReceipt(request))
                         }
                     }
                 }
@@ -2068,6 +2116,27 @@ fun P503App(
                         } ?: ManualLendingCommitResolution.Unavailable
                     statusCheckInFlight = false
                     dispatch(P503UiEvent.CommitStatusResolved(ManualEntryCommitResolution.Collect(resolution)))
+                }
+            }
+            // P8-03 i2b (D-312; spec sections 2.2/4): the refund's read-only unknown-commit check.
+            // The request is rebuilt from the SAME draft and request id, so the fingerprint the
+            // resolver compares is the one the submission computed; the write is never retried.
+            is RefundReceiptDraft -> {
+                val request = refundReceiptRequest(draft, requestId) ?: return
+                // Base behavior (P3-4): an unwired resolver returns early (no dispatch).
+                if (!ledger.surfaces.manualRefundRecovery) return
+                statusCheckInFlight = true
+                scope.launch {
+                    val resolution =
+                        ledger.probe { facade ->
+                            facade.resolveManualRefundCommitStatus?.resolve(
+                                ledger.ledgerId,
+                                requestId,
+                                com.unifiedledger.application.manualRefundRequestFingerprint(request),
+                            )
+                        } ?: ManualRefundReceiptCommitResolution.Unavailable
+                    statusCheckInFlight = false
+                    dispatch(P503UiEvent.CommitStatusResolved(ManualEntryCommitResolution.RefundReceipt(resolution)))
                 }
             }
         }
@@ -3541,6 +3610,9 @@ fun P503App(
             is TransferDraft -> transferOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.sourceAccountId }?.label ?: ""
             is LendDraft -> lendingOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.fundingAccountId }?.label ?: ""
             is CollectDraft -> lendingOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.destinationAccountId }?.label ?: ""
+            // P8-03 i2b (D-312; spec section 2.2): the confirmation page's 到账账户 row is the
+            // refund's primary account, i.e. its arrival account.
+            is RefundReceiptDraft -> transferOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.destinationAccountId }?.label ?: ""
         }
 
     fun categoryLabel(draft: TypedEntryDraft): String =
@@ -3550,6 +3622,9 @@ fun P503App(
             is TransferDraft -> transferOptions.feeCategories.firstOrNull { it.categoryId == draft.feeCategoryId }?.label ?: ""
             is LendDraft -> lendingOptions.counterparties.firstOrNull { it.counterpartyId == draft.counterpartyId }?.name ?: ""
             is CollectDraft -> lendingOptions.interestCategories.firstOrNull { it.categoryId == draft.interestCategoryId }?.label ?: ""
+            // P8-03 i2b (D-312; spec section 2.4): the refund category is inherited read-only and
+            // resolved by the reducer from the candidate page, so the host resolves nothing here.
+            is RefundReceiptDraft -> ""
         }
 
     // A-02 FIX-CONFIRM-1: the two type-owned confirmation labels. A `null` (the type owns no such
@@ -3557,6 +3632,8 @@ fun P503App(
     fun destinationAccountLabel(draft: TypedEntryDraft): String? =
         when (draft) {
             is TransferDraft -> transferOptions.ownedAssetAccounts.firstOrNull { it.accountId == draft.destinationAccountId }?.label
+            // P8-03 i2b (D-312): a refund's arrival account is its primary account, not this row.
+            is RefundReceiptDraft -> null
             else -> null
         }
 
@@ -3564,6 +3641,8 @@ fun P503App(
         when (draft) {
             is LendDraft -> lendingOptions.counterparties.firstOrNull { it.counterpartyId == draft.counterpartyId }?.name
             is CollectDraft -> lendingOptions.counterparties.firstOrNull { it.counterpartyId == draft.counterpartyId }?.name
+            // P8-03 i2b (D-312): a refund owns no counterparty row.
+            is RefundReceiptDraft -> null
             else -> null
         }
 
@@ -5065,13 +5144,44 @@ fun P503App(
                         // P7-06 06.D: the session-terminal RecoveryRequired face - no business affordance,
                         // only the typed cause and the platform exit (wired directly, outside the reducer).
                         P503RestoreSessionTerminalScreen(current, onExit)
-                    is P503AppState.Editing ->
+                    is P503AppState.Editing -> {
+                        // P8-03 i2b (D-312; spec section 2.2): the ONE refund-candidate read. The
+                        // key is the refund-draft flag, the "not read yet" window and the retry
+                        // counter — deliberately NOT the amount/occurred-at text, so no keystroke
+                        // re-reads the page. The read runs off the UI thread under an operation
+                        // lease and lands back on the main dispatcher; a null (not-Ready) or failed
+                        // read lands the typed Unavailable, which the screen presents as a retryable
+                        // failure and never as an empty page (V-13).
+                        val refundDraft = current.draft is RefundReceiptDraft
+                        val refundEntryAvailable = ledger.surfaces.manualRefundEntry
+                        val refundCandidatesLoaded = current.refundCandidates
+                        val refundCandidatesAttempt = current.refundCandidatesAttempt
+                        LaunchedEffect(refundDraft, refundCandidatesLoaded == null, refundCandidatesAttempt) {
+                            if (!refundDraft || !refundEntryAvailable || refundCandidatesLoaded != null) return@LaunchedEffect
+                            scope.launch(Dispatchers.Default) {
+                                val result =
+                                    ledger.probe { facade ->
+                                        facade.readManualRefundCandidates?.readPage(ledger.ledgerId, REFUND_CANDIDATE_PAGE_SIZE, 0)
+                                    }
+                                scope.launch {
+                                    dispatch(
+                                        P503UiEvent.RefundCandidatesLoaded(
+                                            result ?: com.unifiedledger.application.ManualRefundCandidatesResult.Unavailable,
+                                        ),
+                                    )
+                                }
+                            }
+                        }
                         P503EditScreen(
                             draft = current.draft,
                             options = options,
                             incomeOptions = incomeOptions,
                             transferOptions = transferOptions,
                             lendingOptions = lendingOptions,
+                            refundEntryAvailable = refundEntryAvailable,
+                            refundCandidates = current.refundCandidates,
+                            onSelectRefundOriginal = { dispatch(P503UiEvent.SelectRefundOriginal(it)) },
+                            onRetryRefundCandidates = { dispatch(P503UiEvent.RetryRefundCandidates) },
                             onUpdateTransferSourceAccount = { dispatch(P503UiEvent.UpdateTransferSourceAccount(it)) },
                             onUpdateTransferDestinationAccount = { dispatch(P503UiEvent.UpdateTransferDestinationAccount(it)) },
                             onUpdateTransferDestinationCredit = { dispatch(P503UiEvent.UpdateTransferDestinationCredit(it)) },
@@ -5142,6 +5252,7 @@ fun P503App(
                                 },
                             onDialogVisibilityChanged = { editDialogOpen = it },
                         )
+                    }
                     is P503AppState.AwaitingConfirmation ->
                         P503ConfirmationScreen(
                             draft = current.draft,
@@ -5153,6 +5264,9 @@ fun P503App(
                                     category = current.categoryLabel,
                                     destinationAccount = current.destinationAccountLabel,
                                     counterparty = current.counterpartyLabel,
+                                    // P8-03 i2b (D-312; spec section 2.2): the refund's resolved
+                                    // original-transaction line; null for every other type.
+                                    originalTransaction = current.originalTransactionLabel,
                                 ),
                             onCancel = { dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.Cancel }, ::dispatch) },
                             confirmEnabled = latestState.value === current,
@@ -5169,13 +5283,19 @@ fun P503App(
                     P503AppState.Recovered,
                     -> P503ResultScreen(current)
                     is P503AppState.UnknownCommit ->
-                        P503UnknownCommitScreen(current) {
-                            // P5-04.3: manual re-check mirrors the RetrySubmission pattern — dispatch
-                            // the state-preserving event and run the read-only check directly.
-                            dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.RetryCommitStatusCheck }, ::dispatch) {
-                                coordinator.retryCommitStatusCheck(current)
-                            }
-                        }
+                        P503UnknownCommitScreen(
+                            current,
+                            {
+                                // P5-04.3: manual re-check mirrors the RetrySubmission pattern — dispatch
+                                // the state-preserving event and run the read-only check directly.
+                                dispatchCurrentP503Action(current, latestState.value, { P503UiEvent.RetryCommitStatusCheck }, ::dispatch) {
+                                    coordinator.retryCommitStatusCheck(current)
+                                }
+                            },
+                            // P8-03 i2b (D-312; spec section 2.6): the refund's frozen sentence,
+                            // verbatim; no other type adds a line.
+                            typeNotice = if (current.draft is RefundReceiptDraft) REFUND_UNKNOWN_RESULT_TEXT else null,
+                        )
                     is P503AppState.RequestIdentityConflict ->
                         P503EditScreen(
                             draft = current.draft,
@@ -5183,6 +5303,14 @@ fun P503App(
                             incomeOptions = incomeOptions,
                             transferOptions = transferOptions,
                             lendingOptions = lendingOptions,
+                            // P8-03 i2b (D-312; spec sections 2.2/2.3): the re-entry screen keeps
+                            // the refund surface wired and the candidate page the flow carried, so
+                            // the type stays selected and the picker never shows a fake loading
+                            // window (V-1/V-13).
+                            refundEntryAvailable = ledger.surfaces.manualRefundEntry,
+                            refundCandidates = current.refundCandidates,
+                            onSelectRefundOriginal = { dispatch(P503UiEvent.SelectRefundOriginal(it)) },
+                            onRetryRefundCandidates = { dispatch(P503UiEvent.RetryRefundCandidates) },
                             onUpdateTransferSourceAccount = { dispatch(P503UiEvent.UpdateTransferSourceAccount(it)) },
                             onUpdateTransferDestinationAccount = { dispatch(P503UiEvent.UpdateTransferDestinationAccount(it)) },
                             onUpdateTransferDestinationCredit = { dispatch(P503UiEvent.UpdateTransferDestinationCredit(it)) },
@@ -5241,6 +5369,12 @@ fun P503App(
                             incomeOptions = incomeOptions,
                             transferOptions = transferOptions,
                             lendingOptions = lendingOptions,
+                            // P8-03 i2b (D-312; spec sections 2.2/2.3): the rejection re-entry keeps
+                            // the refund surface wired and the carried candidate page (V-1/V-13).
+                            refundEntryAvailable = ledger.surfaces.manualRefundEntry,
+                            refundCandidates = current.refundCandidates,
+                            onSelectRefundOriginal = { dispatch(P503UiEvent.SelectRefundOriginal(it)) },
+                            onRetryRefundCandidates = { dispatch(P503UiEvent.RetryRefundCandidates) },
                             onUpdateTransferSourceAccount = { dispatch(P503UiEvent.UpdateTransferSourceAccount(it)) },
                             onUpdateTransferDestinationAccount = { dispatch(P503UiEvent.UpdateTransferDestinationAccount(it)) },
                             onUpdateTransferDestinationCredit = { dispatch(P503UiEvent.UpdateTransferDestinationCredit(it)) },
@@ -5279,7 +5413,12 @@ fun P503App(
                             occurredAtText = hoistedOccurredAtText ?: (current.draft.occurredAt?.toString() ?: ""),
                             onOccurredAtTextChange = { hoistedOccurredAtText = it },
                             onContinue = null,
-                            banner = { P503RejectedBanner() },
+                            // P8-03 i2b (D-312; spec section 2.6): a refund's typed rejection lands its frozen
+                            // per-code sentence; every other type keeps the shared banner.
+                            banner = {
+                                val code = current.refundRejectionCode
+                                if (code != null) P503RejectionNoticeBanner(refundRejectionText(code)) else P503RejectedBanner()
+                            },
                             onClose =
                                 if (current.overview != null) {
                                     { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) }
@@ -5465,6 +5604,13 @@ private fun TypedEntryDraft.toRetainedIntent(originTab: P503Tab): RetainedEntryI
 private fun P503LedgerFacade.submitEntryOrExpense(): com.unifiedledger.application.ExecuteManualEntrySubmission = submitEntry ?: throw IllegalStateException("facade is missing the typed entry submission")
 
 /**
+ * P8-03 i2b (D-312; spec section 2.3): the refundable-original candidate read's first-page bound.
+ * The editor reads exactly one bounded page (page 0); the read port's `hasMore` reports that a
+ * further page exists, and this surface never presents a full page as the complete set.
+ */
+private const val REFUND_CANDIDATE_PAGE_SIZE = 50
+
+/**
  * P7-06 06.1 (D-176; spec 4.3(b)): the typed `RuntimeNotReady` landing for a submit that could not
  * acquire a lease. The type's existing [ManualExpenseSubmissionResult.InfrastructureFailure] is
  * reused so the reducer keeps its frozen SUBMISSION-failure semantics (never a silently dropped
@@ -5478,6 +5624,12 @@ internal fun runtimeNotReadySubmission(draft: TypedEntryDraft): ManualEntrySubmi
         is TransferDraft -> ManualEntrySubmissionResult.Transfer(ManualTransferSubmissionResult.InfrastructureFailure)
         is LendDraft -> ManualEntrySubmissionResult.Lend(ManualLendSubmissionResult.InfrastructureFailure)
         is CollectDraft -> ManualEntrySubmissionResult.Collect(ManualCollectSubmissionResult.InfrastructureFailure)
+        // P8-03 i2b (D-312; spec section 2.7): the shared unready-runtime landing, exactly like the
+        // other five types (the refund family carries its own InfrastructureFailure member).
+        is RefundReceiptDraft ->
+            ManualEntrySubmissionResult.RefundReceipt(
+                ManualRefundReceiptSubmissionResult.InfrastructureFailure,
+            )
     }
 
 /**

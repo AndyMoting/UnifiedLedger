@@ -193,13 +193,21 @@ sealed interface ManualRefundReceiptSubmissionResult {
      * the write is never retried and the caller must reuse the same request id on a user retry.
      */
     data object UnknownCommit : ManualRefundReceiptSubmissionResult
+
+    /**
+     * The runtime surface was not ready, so nothing was attempted and nothing was written. This is
+     * the shared family's `InfrastructureFailure` landing (the other five types have it), not a
+     * business rejection: the user may retry the submission with the same request id.
+     */
+    data object InfrastructureFailure : ManualRefundReceiptSubmissionResult
 }
 
 /**
  * P8-03 submit use case (spec sections 2.6/2.7). The fingerprint is computed here, once, so the
- * store and the resolution path compare the same bytes. A store failure before any commit is the
- * typed `REFUND_STORE_UNAVAILABLE`; an exception thrown after the commit boundary is resolved by
- * the authoritative read-back, and only a matching receipt may recover a success.
+ * store and the resolution path compare the same bytes. A commit-port failure whose row does not
+ * answer the attempt is an uncertain write ([ManualRefundReceiptSubmissionResult.UnknownCommit]),
+ * an exception thrown after the commit boundary is resolved by the authoritative read-back, and
+ * only a matching receipt may recover a success.
  */
 class SubmitManualRefundReceipt(
     private val commitPort: ManualRefundReceiptCommitPort,
@@ -217,7 +225,11 @@ class SubmitManualRefundReceipt(
                 is ManualRefundReceiptCommitResult.Rejected ->
                     ManualRefundReceiptSubmissionResult.Rejected(outcome.code)
                 ManualRefundReceiptCommitResult.Unavailable ->
-                    ManualRefundReceiptSubmissionResult.Rejected(ManualRefundRejectionCode.REFUND_STORE_UNAVAILABLE)
+                    // Spec section 2.6: the store reports that its relationship row does not
+                    // answer the attempt AND that its own re-read failed, which its KDoc calls
+                    // "not a proof of rollback". An uncertain write is UnknownCommit, never a
+                    // definite rejection: the user must re-check, and a retry reuses the id.
+                    ManualRefundReceiptSubmissionResult.UnknownCommit
             }
         } catch (failure: Exception) {
             when (
@@ -234,6 +246,30 @@ class SubmitManualRefundReceipt(
             }
         }
     }
+}
+
+/**
+ * P8-03 i2b (D-312; spec section 2.6): the product [ManualRefundReceiptIdSource], backed by RFC
+ * 9562 UUIDv7 (the `UuidV7ConfirmedManualExpenseIdSource` shape).
+ *
+ * Every [next] call mints exactly six UUIDv7 identifiers: the relationship id (the stable
+ * relationship identity, spec section 2.1) plus the five formal-transaction ids of
+ * [ManualRefundReceiptIds]. Lazy materialization is unchanged: [next] is invoked only inside the
+ * commit port's first-request callback, so an exact replay, a request-identity conflict and a
+ * losing concurrent writer consume no ids.
+ */
+class UuidV7ManualRefundReceiptIdSource(
+    private val generator: UuidV7Generator,
+) : ManualRefundReceiptIdSource {
+    override fun next(): ManualRefundReceiptIds =
+        ManualRefundReceiptIds(
+            relationshipId = generator.next(),
+            transactionId = TransactionId(generator.next()),
+            versionId = TransactionVersionId(generator.next()),
+            postingSetId = PostingSetId(generator.next()),
+            destinationPostingId = PostingId(generator.next()),
+            expensePostingId = PostingId(generator.next()),
+        )
 }
 
 /**

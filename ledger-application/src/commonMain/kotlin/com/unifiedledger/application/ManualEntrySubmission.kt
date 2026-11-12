@@ -27,6 +27,11 @@ sealed interface ManualEntrySubmissionResult {
     data class Collect(
         val result: ManualCollectSubmissionResult,
     ) : ManualEntrySubmissionResult
+
+    /** P8-03 i2b (D-312; spec section 2.2): the refund-receipt member of the shared union. */
+    data class RefundReceipt(
+        val result: ManualRefundReceiptSubmissionResult,
+    ) : ManualEntrySubmissionResult
 }
 
 /**
@@ -52,6 +57,11 @@ sealed interface ManualEntryCommitResolution {
 
     data class Collect(
         val resolution: ManualLendingCommitResolution,
+    ) : ManualEntryCommitResolution
+
+    /** P8-03 i2b (D-312; spec section 2.2): the refund-receipt member of the read-back union. */
+    data class RefundReceipt(
+        val resolution: ManualRefundReceiptCommitResolution,
     ) : ManualEntryCommitResolution
 }
 
@@ -115,6 +125,21 @@ sealed interface ManualEntrySaveInput {
 
         override val note: String get() = input.note
     }
+
+    /**
+     * P8-03 i2b (D-312; spec section 2.2). The refund request carries no note field at all (spec
+     * section 2.4 inherits the category; the note is not part of the frozen fingerprint), so
+     * [note] is the empty string — the shared note-length gate can therefore never fire for it.
+     */
+    data class RefundReceipt(
+        val input: ManualRefundReceiptRequest,
+    ) : ManualEntrySaveInput {
+        override val ledgerId: LedgerId get() = input.ledgerId
+
+        override val requestId: RequestId get() = input.requestId
+
+        override val note: String get() = ""
+    }
 }
 
 /**
@@ -146,7 +171,18 @@ class ExecuteManualEntrySubmission(
     private val income: ExecuteManualIncomeSubmission,
     private val transfer: ExecuteManualTransferSubmission? = null,
     private val lending: ManualLendingSubmission? = null,
+    // P8-03 i2b (D-312; spec section 2.2): the refund-receipt delegate. Null keeps the pre-P8-03
+    // constructions (startup tests, legacy graphs) compiling; a missing delegate on a refund input
+    // is a composition-root wiring bug and fails fast, exactly like the transfer/lending branches.
+    private val refund: SubmitManualRefundReceipt? = null,
 ) {
+    /**
+     * P8-03 i2b (D-312; spec section 4): whether the refund delegate is wired. The composition
+     * roots' readiness probe reads THIS, not a sibling facade field, so a root cannot render the
+     * entry while the fold's delegate is missing (a submit would then fail fast).
+     */
+    val hasRefundDelegate: Boolean get() = refund != null
+
     fun submit(input: ManualEntrySaveInput): ManualEntrySubmissionResult {
         validateEntryNote(input.note)?.let { violation ->
             return when (input) {
@@ -184,6 +220,11 @@ class ExecuteManualEntrySubmission(
                             ManualCollectSaveResult.Executed(ConfirmedManualLendingResult.Rejected(violation)),
                         ),
                     )
+
+                // P8-03 i2b (D-312): unreachable. `ManualEntrySaveInput.RefundReceipt.note` is
+                // constantly empty, so the note-length gate above can never have fired for a refund;
+                // the branch exists to keep the fold exhaustive.
+                is ManualEntrySaveInput.RefundReceipt -> error("refund entry carries no note")
             }
         }
         return when (input) {
@@ -204,6 +245,11 @@ class ExecuteManualEntrySubmission(
             is ManualEntrySaveInput.Collect -> {
                 val submission = lending ?: error("lending submission delegate is not wired")
                 ManualEntrySubmissionResult.Collect(submission.submitCollect(input.input))
+            }
+
+            is ManualEntrySaveInput.RefundReceipt -> {
+                val submission = refund ?: error("refund submission delegate is not wired")
+                ManualEntrySubmissionResult.RefundReceipt(submission.submit(input.input))
             }
         }
     }

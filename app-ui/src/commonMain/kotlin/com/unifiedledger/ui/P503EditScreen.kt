@@ -52,14 +52,17 @@ import androidx.compose.ui.window.Dialog
 import com.unifiedledger.application.CollectDraft
 import com.unifiedledger.application.EntryExpressionCode
 import com.unifiedledger.application.EntryType
+import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.LendDraft
 import com.unifiedledger.application.ManualExpenseOptions
 import com.unifiedledger.application.ManualIncomeOptions
 import com.unifiedledger.application.ManualLendingOptions
+import com.unifiedledger.application.ManualRefundCandidatesResult
 import com.unifiedledger.application.ManualTransferOptions
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
+import com.unifiedledger.application.RefundReceiptDraft
 import com.unifiedledger.application.TransferDraft
 import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.AccountId
@@ -67,6 +70,7 @@ import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.TagId
+import com.unifiedledger.domain.TransactionId
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.toLocalDateTime
@@ -135,6 +139,15 @@ fun P503EditScreen(
     onUpdateCollectPrincipal: (String) -> Unit = {},
     onUpdateCollectInterest: (String) -> Unit = {},
     onUpdateCollectInterestCategory: (CategoryId) -> Unit = onUpdateCategory,
+    // P8-03 i2b (D-312; spec sections 2.2/2.3): the refund-receipt entry. `refundEntryAvailable` is
+    // the composition root's pure wiring probe; `refundCandidates` is the bounded candidate page the
+    // host read for THIS editor (null = not loaded yet) and the two callbacks are its selection and
+    // read-retry intents. Defaults keep every other editor construction (conflict/rejection screens)
+    // compiling with the refund surface simply absent.
+    refundEntryAvailable: Boolean = false,
+    refundCandidates: ManualRefundCandidatesResult? = null,
+    onSelectRefundOriginal: (TransactionId) -> Unit = {},
+    onRetryRefundCandidates: () -> Unit = {},
     // P7-02.D E-3 calculator: the host passes the current preview and both callbacks only on
     // the Editing screen; the conflict/rejection presentations leave the defaults and the
     // section is not rendered there.
@@ -214,11 +227,12 @@ fun P503EditScreen(
         ) {
             Text(
                 when (draft) {
-                    is TransferDraft -> "新增手工转账"
+                    is ExpenseDraft -> "新增手工支出"
                     is IncomeDraft -> "新增手工收入"
+                    is TransferDraft -> "新增手工转账"
                     is LendDraft -> "新增手工借出"
                     is CollectDraft -> "新增手工收回"
-                    else -> "新增手工支出"
+                    is RefundReceiptDraft -> "新增退款到账"
                 },
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.weight(1f),
@@ -239,9 +253,11 @@ fun P503EditScreen(
 
         // P7-02 S-2: EXPENSE/INCOME/TRANSFER are selectable in this batch (LEND/COLLECT in C);
         // the type switch uses the frozen retention matrix in the reducer.
+        // P8-03 i2b (D-312; spec section 2.2): the list is the pure [entryTypeChoices] projection —
+        // REFUND_RECEIPT appears last only when the composition root wired the refund surface.
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("类型：", style = MaterialTheme.typography.titleSmall)
-            listOf(EntryType.EXPENSE, EntryType.INCOME, EntryType.TRANSFER, EntryType.LEND, EntryType.COLLECT).forEach { type ->
+            entryTypeChoices(refundEntryAvailable).forEach { type ->
                 Row(
                     modifier = Modifier.weight(1f).minimumInteractiveComponentSize(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -251,13 +267,7 @@ fun P503EditScreen(
                         onClick = { onSelectEntryType(type) },
                     )
                     Text(
-                        when (type) {
-                            EntryType.INCOME -> "收入"
-                            EntryType.TRANSFER -> "转账"
-                            EntryType.LEND -> "借出"
-                            EntryType.COLLECT -> "收回"
-                            else -> "支出"
-                        },
+                        entryTypeLabel(type),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
@@ -438,6 +448,83 @@ fun P503EditScreen(
                     }
                 }
             }
+        } else if (draft is RefundReceiptDraft) {
+            // P8-03 i2b (D-312; spec sections 2.2/2.3): the refund field chain — original
+            // transaction, arrival account, refund amount (the shared occurred-at field follows).
+            // The category is inherited read-only, so no category selector is rendered at all.
+            val candidatesView = refundCandidatesView(refundCandidates)
+            SelectorField(
+                label = "原交易",
+                hasError = errors.missingOriginalTransaction,
+                errorMessage = "请选择原交易",
+            ) {
+                val notice = refundCandidatesNotice(candidatesView)
+                if (notice != null) {
+                    Text(notice, style = MaterialTheme.typography.bodyMedium)
+                }
+                if (refundCandidatesRetryable(candidatesView)) {
+                    TextButton(onClick = onRetryRefundCandidates) {
+                        Text(REFUND_CANDIDATES_RETRY_TEXT)
+                    }
+                }
+                if (candidatesView is RefundCandidatesView.Loaded) {
+                    candidatesView.rows.forEach { candidate ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = candidate.transactionId == draft.originalTransactionId,
+                                onClick = { onSelectRefundOriginal(candidate.transactionId) },
+                            )
+                            Text(refundCandidateRowText(candidate), style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+
+            // The arrival account comes from the SAME owned asset-account source the transfer
+            // destination uses; the generic primary-account write maps to `destinationAccountId`
+            // (spec section 2.2: the refund's primary account IS its arrival account).
+            SelectorField(
+                label = "到账账户",
+                hasError = errors.missingDestinationAccount,
+                errorMessage = "请选择到账账户",
+            ) {
+                transferOptions.ownedAssetAccounts.forEach { option ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = option.accountId == draft.destinationAccountId, onClick = { onUpdatePaymentAccount(option.accountId) })
+                        Text("${option.label}（${option.currency.code}）", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+
+            val refundCurrencyCode =
+                transferOptions.ownedAssetAccounts
+                    .firstOrNull { it.accountId == draft.destinationAccountId }
+                    ?.currency
+                    ?.code ?: "—"
+            OutlinedTextField(
+                value = draft.amountText,
+                onValueChange = onUpdateAmount,
+                label = { Text("退款金额（$refundCurrencyCode）") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                isError = errors.missingAmount || errors.amountFormatError != null,
+                supportingText = {
+                    when {
+                        errors.missingAmount -> Text("请输入金额")
+                        errors.amountFormatError != null -> Text("金额格式无效")
+                        else -> Text("退款金额不超过原交易的支出金额与剩余可退金额")
+                    }
+                },
+            )
+            Spacer(Modifier.height(8.dp))
         } else {
             SelectorField(
                 label = accountFieldLabel,
@@ -500,18 +587,25 @@ fun P503EditScreen(
         }
 
         // P7-02.A S-4: optional note, length limit enforced by the reducer/commit validation.
-        OutlinedTextField(
-            value = draft.note,
-            onValueChange = onUpdateNote,
-            label = { Text("备注（可选）") },
-            singleLine = true,
-        )
-        Spacer(Modifier.height(8.dp))
+        // P8-03 i2b (D-312; spec section 2.2): a refund carries no note (its request has no note
+        // field), so the input is not rendered for it.
+        if (draft !is RefundReceiptDraft) {
+            OutlinedTextField(
+                value = draft.note,
+                onValueChange = onUpdateNote,
+                label = { Text("备注（可选）") },
+                singleLine = true,
+            )
+            Spacer(Modifier.height(8.dp))
+        }
 
         // P7-08 08.B-2 (spec section 4.1): the optional tag/merchant association. Kind-independent
         // (the annotation lives on the transaction root), never required. Hidden when the catalog
         // projection is unwired/not loaded, so no empty authoritative-looking picker is shown.
-        if (tagMerchantOptions != null) {
+        // P8-03 i2b (D-312; spec section 2.2): a manual refund writes NO annotation (the refund
+        // request carries no tag/merchant and the formal version is built by the frozen domain
+        // factory), so the picker is hidden rather than accepting a choice that would be dropped.
+        if (tagMerchantOptions != null && draft !is RefundReceiptDraft) {
             AnnotationAssociationSection(
                 tagMerchantOptions = tagMerchantOptions,
                 selectedTagIds = draft.tagIds,
@@ -833,6 +927,19 @@ internal fun P503ConflictBanner(
 internal fun P503RejectedBanner() {
     Text(
         "业务校验未通过，未创建交易。修改输入后可重新提交。",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.error,
+    )
+}
+
+/**
+ * P8-03 i2b (D-312; spec section 2.6): the typed per-code rejection sentence of a state that carries one. Same
+ * visual role as [P503RejectedBanner], with the type's exact copy instead of the shared sentence.
+ */
+@Composable
+internal fun P503RejectionNoticeBanner(message: String) {
+    Text(
+        message,
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.error,
     )
