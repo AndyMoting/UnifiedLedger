@@ -34,7 +34,10 @@
 2	com.unifiedledger.data.P408CorrectionStoreTest
 2	com.unifiedledger.data.P408ProjectionSixKindMaterializationTest
 2	com.unifiedledger.data.P705EffectiveSurfaceTest
-2	com.unifiedledger.data.P705TransferCorrectionCommitPortTest
+2	com.unifiedledger.data.P705TransferCorrectionCatalogRejectionTest
+2	com.unifiedledger.data.P705TransferCorrectionGeometryTest
+2	com.unifiedledger.data.P705TransferCorrectionInvalidationTest
+2	com.unifiedledger.data.P705TransferCorrectionNoteTest
 2	com.unifiedledger.data.P705TransferVoidDerivedSurfaceTest
 2	com.unifiedledger.data.P708ManualCreateAnnotationV34ToV35MigrationTest
 2	com.unifiedledger.data.P708UnknownReopenAnnotationReplayTest

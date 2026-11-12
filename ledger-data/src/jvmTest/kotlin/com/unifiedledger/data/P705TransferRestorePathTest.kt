@@ -157,8 +157,9 @@ class P705TransferRestorePathTest {
             assertEquals(0, harness.readAdapter.loadLedgerEntryRows(ledgerId).size)
             // T-06's recycle-bin face, stated explicitly rather than only implied by `single()`:
             // the voided transfer IS listed in the bin, with its kind and the recorded reason.
-            // The other effective surfaces are asserted in P705TransferCorrectionCommitPortTest's
-            // voided-transfer vector, not here.
+            // The other effective surfaces are asserted in
+            // P705TransferCorrectionInvalidationTest.voidedTransferLeavesTheEffectiveSurfaceAndCannotBeCorrected,
+            // not here.
             val binned = recycleBinRow(harness)
             assertEquals(TransactionId("tx-transfer-restore"), binned.voided.transactionId)
             assertEquals(TransactionKind.ACCOUNT_TRANSFER, binned.voided.kind)
