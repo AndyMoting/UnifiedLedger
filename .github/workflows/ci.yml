@@ -229,9 +229,12 @@ jobs:
     # check. It recomputes the change classification independently of the
     # `changes` job and fails on disagreement, because a skipped job reports
     # success - which is exactly why the docs-only path needs this gate instead of
-    # a workflow-level filter (D-302, T1).
+    # a workflow-level filter (D-302, T1). The Android host unit-test leg is a
+    # judged dependency here rather than a fifth required context: a new check
+    # name would need repository settings, and this gate already turns a failed
+    # dependency into a red required check (D-315).
     name: Kotlin tests
-    needs: [changes, kotlin-core, ledger-data-shards, kotlin-migration-verify]
+    needs: [changes, kotlin-core, ledger-data-shards, kotlin-migration-verify, android-unit-tests]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -250,9 +253,10 @@ jobs:
           CORE_RESULT: ${{ needs.kotlin-core.result }}
           SHARDS_RESULT: ${{ needs.ledger-data-shards.result }}
           MIGRATION_RESULT: ${{ needs.kotlin-migration-verify.result }}
+          ANDROID_UNIT_RESULT: ${{ needs.android-unit-tests.result }}
         run: |
           set -euo pipefail
-          echo "changes=$CHANGES_RESULT declared=$DECLARED_KIND core=$CORE_RESULT shards=$SHARDS_RESULT migration=$MIGRATION_RESULT"
+          echo "changes=$CHANGES_RESULT declared=$DECLARED_KIND core=$CORE_RESULT shards=$SHARDS_RESULT migration=$MIGRATION_RESULT android=$ANDROID_UNIT_RESULT"
           if [ "$CHANGES_RESULT" != "success" ]; then
             echo "::error::Change classification did not succeed"
             exit 1
@@ -263,20 +267,22 @@ jobs:
             exit 1
           fi
           if [ "$kind" = "docs" ]; then
-            if [ "$CORE_RESULT" != "skipped" ] || [ "$SHARDS_RESULT" != "skipped" ] || [ "$MIGRATION_RESULT" != "skipped" ]; then
+            if [ "$CORE_RESULT" != "skipped" ] || [ "$SHARDS_RESULT" != "skipped" ] || [ "$MIGRATION_RESULT" != "skipped" ] || [ "$ANDROID_UNIT_RESULT" != "skipped" ]; then
               echo "::error::A docs-only change ran the Kotlin jobs"
               exit 1
             fi
-          elif [ "$CORE_RESULT" != "success" ] || [ "$SHARDS_RESULT" != "success" ] || [ "$MIGRATION_RESULT" != "success" ]; then
+          elif [ "$CORE_RESULT" != "success" ] || [ "$SHARDS_RESULT" != "success" ] || [ "$MIGRATION_RESULT" != "success" ] || [ "$ANDROID_UNIT_RESULT" != "success" ]; then
             echo "::error::Kotlin verification did not fully succeed"
             exit 1
           fi
 
   android:
-    # Four workers mirror the shard jobs (D-303): serial @1 worker made this job
-    # the critical path at 6.4 min. Build caching stays off the unit-test step so
-    # a required check always executes the tests instead of restoring them from
-    # cache; memory stays at the global 3 g heap.
+    # Owns Android compilation and APK production: the compile, the androidTest
+    # and debug assembly, both uploads. Four workers mirror the shard jobs
+    # (D-303): serial @1 worker made this job the critical path at 6.4 min; memory
+    # stays at the global 3 g heap. The host unit-test leg runs in
+    # `android-unit-tests` and the `Kotlin tests` gate requires that leg's result
+    # (D-315), so a green compile here cannot hide a red test leg.
     name: Android compile
     needs: [changes]
     if: needs.changes.outputs.kind == 'code'
@@ -297,12 +303,6 @@ jobs:
           restore-keys: ${{ runner.os }}-gradle-
       - name: Compile Android
         run: ./gradlew --no-daemon --max-workers=4 --build-cache :ledger-data:compileAndroidMain --warning-mode all
-      - name: Android app unit tests
-        # P5-04.4 S2/S3: JVM unit tests for AndroidStartupController (no Robolectric). The
-        # task set must match docs/CONTRIBUTING.md verification commands. The appended
-        # :ledger-domain:testAndroidHostTest task runs the shared commonTest suite on the
-        # Android host-test compilation face (D-238 A02 gap (iii), spec 2.3 both-ends clause).
-        run: ./gradlew --no-daemon --max-workers=4 :android-app:testDebugUnitTest :ledger-domain:testAndroidHostTest --warning-mode all
       - name: Android app test sources and debug APK
         # P0 hotfix (defect 1) guard: compile the androidTest sources so the absolute-driver-path
         # regression guard cannot rot. Device execution belongs to the separate
@@ -329,6 +329,37 @@ jobs:
           path: android-apks/*
           if-no-files-found: error
           retention-days: 7
+
+  android-unit-tests:
+    # The 1.35 min Android host unit-test leg no longer queues behind the 2.38 min
+    # compile and 2.42 min assembly (D-315). Its result is required through the
+    # `Kotlin tests` gate: a green `Android compile` must not hide a red test leg.
+    name: Android unit tests
+    needs: [changes]
+    if: needs.changes.outputs.kind == 'code'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
+      - name: Compile Android
+        run: ./gradlew --no-daemon --max-workers=4 --build-cache :ledger-data:compileAndroidMain --warning-mode all
+      - name: Android app unit tests
+        # P5-04.4 S2/S3: JVM unit tests for AndroidStartupController (no Robolectric). The
+        # task set must match docs/CONTRIBUTING.md verification commands. The appended
+        # :ledger-domain:testAndroidHostTest task runs the shared commonTest suite on the
+        # Android host-test compilation face (D-238 A02 gap (iii), spec 2.3 both-ends clause).
+        run: ./gradlew --no-daemon --max-workers=4 :android-app:testDebugUnitTest :ledger-domain:testAndroidHostTest --warning-mode all
 
   # The Python suite is split across two runners; tools/ci/python-shards.txt
   # says which modules each runner takes.

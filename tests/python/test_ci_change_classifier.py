@@ -182,7 +182,7 @@ class WorkflowWiring(unittest.TestCase):
     def test_kotlin_gate_recomputes_and_judges_the_declared_kind(self):
         block = "\n".join(self.job_block("kotlin-gate"))
         self.assertIn(
-            "needs: [changes, kotlin-core, ledger-data-shards, kotlin-migration-verify]", block
+            "needs: [changes, kotlin-core, ledger-data-shards, kotlin-migration-verify, android-unit-tests]", block
         )
         self.assertIn("tools/ci/classify-changes.py", block)
         self.assertIn("CHANGES_RESULT", block)
@@ -196,6 +196,11 @@ class WorkflowWiring(unittest.TestCase):
         # D-303 batch E: the extracted migration job is judged like the other two.
         self.assertIn('MIGRATION_RESULT" != "skipped"', block)
         self.assertIn('MIGRATION_RESULT" != "success"', block)
+        # D-315: the Android unit-test leg is judged too, so a red leg behind a
+        # green Android compile still turns this required check red. Renaming
+        # ANDROID_UNIT_RESULT or dropping either branch breaks these two.
+        self.assertIn('ANDROID_UNIT_RESULT" != "skipped"', block)
+        self.assertIn('ANDROID_UNIT_RESULT" != "success"', block)
 
     def test_the_migration_verification_runs_only_in_its_own_job(self):
         core = "\n".join(self.job_block("kotlin-core"))
