@@ -40,6 +40,7 @@ import com.unifiedledger.domain.TransactionVersionId
 import com.unifiedledger.domain.TransactionVoidFactKind
 import com.unifiedledger.domain.VoidReason
 import com.unifiedledger.domain.VoidReasonCode
+import kotlinx.datetime.YearMonth
 import java.nio.file.Files
 import java.sql.SQLException
 import kotlin.io.path.absolutePathString
@@ -48,7 +49,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.time.Instant
-import kotlinx.datetime.YearMonth
 
 /**
  * P8-03 i1 (D-312; spec sections 2.3-2.6/5) data+application vectors of the manual refund entry,
@@ -58,7 +58,7 @@ import kotlinx.datetime.YearMonth
 class P803ManualRefundReceiptVectorsTest {
     @Test
     fun v2CandidateQueryAppliesTheSevenConditionsAndExcludesLegacyExpenseKinds() {
-        DatabaseHarness.inMemory().use { harness ->
+        P803DatabaseHarness.inMemory().use { harness ->
             seedRefundWorld(harness.driver)
 
             // Once the valid original exists, add one row per excluded shape: the five-value
@@ -110,7 +110,7 @@ class P803ManualRefundReceiptVectorsTest {
 
     @Test
     fun v4CapIsTheExpenseLegAmountAndAVoidedRefundReleasesIt() {
-        DatabaseHarness.inMemory().use { harness ->
+        P803DatabaseHarness.inMemory().use { harness ->
             seedRefundWorld(harness.driver)
             val submit = harness.useCase
 
@@ -209,7 +209,7 @@ class P803ManualRefundReceiptVectorsTest {
             )
 
         for (case in cases) {
-            DatabaseHarness.inMemory().use { harness ->
+            P803DatabaseHarness.inMemory().use { harness ->
                 seedRefundWorld(harness.driver)
                 case.setup(harness)
                 val before = countsOf(harness)
@@ -221,7 +221,7 @@ class P803ManualRefundReceiptVectorsTest {
 
     @Test
     fun v6TheRefundTransactionIsSeparateAndLeavesTheOriginalTransactionIntact() {
-        DatabaseHarness.inMemory().use { harness ->
+        P803DatabaseHarness.inMemory().use { harness ->
             seedRefundWorld(harness.driver)
             assertIs<ManualRefundReceiptSubmissionResult.Created>(
                 harness.useCase.submit(request(amountMinor = 3_000L, requestId = "request-refund-1")),
@@ -270,7 +270,7 @@ class P803ManualRefundReceiptVectorsTest {
 
     @Test
     fun v16TheDestinationLegStartsPendingAndTheOriginalPaymentLegKeepsItsReconciliationState() {
-        DatabaseHarness.inMemory().use { harness ->
+        P803DatabaseHarness.inMemory().use { harness ->
             seedRefundWorld(harness.driver)
             // The original payment leg is already fully reconciled before the refund arrives.
             execute(
@@ -311,11 +311,12 @@ class P803ManualRefundReceiptVectorsTest {
 
     @Test
     fun v7EquivalentReplayIsFreeAndAFingerprintConflictWritesNothing() {
-        DatabaseHarness.inMemory().use { harness ->
+        P803DatabaseHarness.inMemory().use { harness ->
             seedRefundWorld(harness.driver)
-            val created = assertIs<ManualRefundReceiptSubmissionResult.Created>(
-                harness.useCase.submit(request(amountMinor = 3_000L, requestId = "request-refund-1")),
-            )
+            val created =
+                assertIs<ManualRefundReceiptSubmissionResult.Created>(
+                    harness.useCase.submit(request(amountMinor = 3_000L, requestId = "request-refund-1")),
+                )
             val afterFirst = countsOf(harness)
 
             val replay = harness.useCase.submit(request(amountMinor = 3_000L, requestId = "request-refund-1"))
@@ -339,7 +340,7 @@ class P803ManualRefundReceiptVectorsTest {
 
     @Test
     fun v8ReportArithmeticFollowsTheRulesExampleAndNeverBooksOrdinaryIncome() {
-        DatabaseHarness.inMemory().use { harness ->
+        P803DatabaseHarness.inMemory().use { harness ->
             seedRefundWorld(harness.driver)
             // A real INCOME account with one booked income in March keeps the income assertion
             // load-bearing: the same read surface does report income when a posting hits one.
@@ -411,7 +412,7 @@ class P803ManualRefundReceiptVectorsTest {
                 val database = LedgerDatabase(driver)
                 val store = SqlDelightManualRefundReceiptStore(database, driver)
                 val useCase =
-                    SubmitManualRefundReceipt(store, SequentialIdSource(), ResolveManualRefundReceiptCommitStatus(store))
+                    SubmitManualRefundReceipt(store, P803SequentialIdSource(), ResolveManualRefundReceiptCommitStatus(store))
                 assertIs<ManualRefundReceiptSubmissionResult.Created>(
                     useCase.submit(request(amountMinor = 3_000L, requestId = "request-refund-1")),
                 )
@@ -436,7 +437,7 @@ class P803ManualRefundReceiptVectorsTest {
 
     @Test
     fun v12SubmissionRechecksTheOriginalInsideTheWriteTransaction() {
-        DatabaseHarness.inMemory().use { harness ->
+        P803DatabaseHarness.inMemory().use { harness ->
             seedRefundWorld(harness.driver)
             insertVoidFact(harness.driver, "tx-original", "request-void-original", "void", sequence = 1L)
             assertEquals(
@@ -455,7 +456,7 @@ class P803ManualRefundReceiptVectorsTest {
 
     @Test
     fun v12VersionReplacementThatBreaksTheSingleExpenseLegRejectsWithZeroWrites() {
-        DatabaseHarness.inMemory().use { harness ->
+        P803DatabaseHarness.inMemory().use { harness ->
             seedRefundWorld(harness.driver)
             // The picked original gets a second current version with two positive expense legs.
             execute(harness.driver, "INSERT INTO posting_set VALUES ('ps-original-v2', '$LEDGER')")
@@ -485,7 +486,7 @@ class P803ManualRefundReceiptVectorsTest {
 
     @Test
     fun v17AfterCommitReadFailureRecoversOnlyOnAnExactFingerprintAndRetriesTheSameId() {
-        DatabaseHarness.inMemory().use { harness ->
+        P803DatabaseHarness.inMemory().use { harness ->
             seedRefundWorld(harness.driver)
             val failingAfterCommit =
                 ManualRefundReceiptCommitPort { request, fingerprint, mintIds ->
@@ -495,7 +496,7 @@ class P803ManualRefundReceiptVectorsTest {
             val useCase =
                 SubmitManualRefundReceipt(
                     failingAfterCommit,
-                    SequentialIdSource(),
+                    P803SequentialIdSource(),
                     ResolveManualRefundReceiptCommitStatus(harness.store),
                 )
 
@@ -513,7 +514,7 @@ class P803ManualRefundReceiptVectorsTest {
 
     @Test
     fun v17AThrowingReadBackAfterAnUncertainCommitIsUnknownCommit() {
-        DatabaseHarness.inMemory().use { harness ->
+        P803DatabaseHarness.inMemory().use { harness ->
             seedRefundWorld(harness.driver)
             val failingAfterCommit =
                 ManualRefundReceiptCommitPort { request, fingerprint, mintIds ->
@@ -530,7 +531,7 @@ class P803ManualRefundReceiptVectorsTest {
             val useCase =
                 SubmitManualRefundReceipt(
                     failingAfterCommit,
-                    SequentialIdSource(),
+                    P803SequentialIdSource(),
                     ResolveManualRefundReceiptCommitStatus(failingRead),
                 )
             assertEquals(
@@ -559,13 +560,13 @@ class P803ManualRefundReceiptVectorsTest {
             seedRefundWorld(matchingBase)
             val submitted = request(amountMinor = 3_000L, requestId = "request-refund-1")
             SqlDelightManualRefundReceiptStore(LedgerDatabase(matchingBase), matchingBase)
-                .commitOnce(submitted, manualRefundRequestFingerprint(submitted)) { SequentialIdSource().next() }
+                .commitOnce(submitted, manualRefundRequestFingerprint(submitted)) { P803SequentialIdSource().next() }
 
             val driver = FaultingRefundDriver(matchingBase, FaultingRefundDriver.Fault.FIRST_READ)
             val store = SqlDelightManualRefundReceiptStore(LedgerDatabase(driver), driver)
             val replayed =
                 assertIs<ManualRefundReceiptCommitResult.Replayed>(
-                    store.commitOnce(submitted, manualRefundRequestFingerprint(submitted)) { SequentialIdSource().next() },
+                    store.commitOnce(submitted, manualRefundRequestFingerprint(submitted)) { P803SequentialIdSource().next() },
                 )
             assertEquals("relationship-refund-1", replayed.receipt.relationshipId)
             assertEquals("tx-refund-1", replayed.receipt.refundTransactionId.value)
@@ -586,7 +587,7 @@ class P803ManualRefundReceiptVectorsTest {
 
             assertEquals(
                 ManualRefundReceiptCommitResult.Unavailable,
-                store.commitOnce(submitted, manualRefundRequestFingerprint(submitted)) { SequentialIdSource().next() },
+                store.commitOnce(submitted, manualRefundRequestFingerprint(submitted)) { P803SequentialIdSource().next() },
             )
             assertEquals(0L, queryCount(rolledBackBase, "SELECT count(*) FROM manual_refund_receipt"))
             assertEquals(
@@ -606,14 +607,14 @@ class P803ManualRefundReceiptVectorsTest {
             seedRefundWorld(mismatchedBase)
             val committed = request(amountMinor = 3_000L, requestId = "request-refund-1")
             SqlDelightManualRefundReceiptStore(LedgerDatabase(mismatchedBase), mismatchedBase)
-                .commitOnce(committed, manualRefundRequestFingerprint(committed)) { SequentialIdSource().next() }
+                .commitOnce(committed, manualRefundRequestFingerprint(committed)) { P803SequentialIdSource().next() }
 
             val driver = FaultingRefundDriver(mismatchedBase, FaultingRefundDriver.Fault.FIRST_READ)
             val store = SqlDelightManualRefundReceiptStore(LedgerDatabase(driver), driver)
             val repriced = request(amountMinor = 3_500L, requestId = "request-refund-1")
             assertEquals(
                 ManualRefundReceiptCommitResult.Unavailable,
-                store.commitOnce(repriced, manualRefundRequestFingerprint(repriced)) { SequentialIdSource().next() },
+                store.commitOnce(repriced, manualRefundRequestFingerprint(repriced)) { P803SequentialIdSource().next() },
             )
             assertEquals(1L, queryCount(mismatchedBase, "SELECT count(*) FROM manual_refund_receipt"))
         } finally {
@@ -623,11 +624,12 @@ class P803ManualRefundReceiptVectorsTest {
 
     @Test
     fun v19TheVoidGuardRejectsAnOriginalWithAnEffectiveManualRefund() {
-        DatabaseHarness.inMemory().use { harness ->
+        P803DatabaseHarness.inMemory().use { harness ->
             seedRefundWorld(harness.driver)
-            val created = assertIs<ManualRefundReceiptSubmissionResult.Created>(
-                harness.useCase.submit(request(amountMinor = 3_000L, requestId = "request-refund-1")),
-            )
+            val created =
+                assertIs<ManualRefundReceiptSubmissionResult.Created>(
+                    harness.useCase.submit(request(amountMinor = 3_000L, requestId = "request-refund-1")),
+                )
             val voidPort = SqlDelightTransactionVoidCommitPort(harness.database, harness.driver)
             var planCalls = 0
             val blocked =
@@ -659,27 +661,27 @@ class P803ManualRefundReceiptVectorsTest {
     }
 }
 
-private class DatabaseHarness(
+private class P803DatabaseHarness(
     val driver: JdbcSqliteDriver,
 ) : AutoCloseable {
     val database = LedgerDatabase(driver)
     val store = SqlDelightManualRefundReceiptStore(database, driver)
-    val useCase = SubmitManualRefundReceipt(store, SequentialIdSource(), ResolveManualRefundReceiptCommitStatus(store))
+    val useCase = SubmitManualRefundReceipt(store, P803SequentialIdSource(), ResolveManualRefundReceiptCommitStatus(store))
 
     override fun close() {
         driver.close()
     }
 
     companion object {
-        fun inMemory(): DatabaseHarness {
+        fun inMemory(): P803DatabaseHarness {
             val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
             LedgerDatabase.Schema.create(driver)
-            return DatabaseHarness(driver)
+            return P803DatabaseHarness(driver)
         }
     }
 }
 
-private class SequentialIdSource : ManualRefundReceiptIdSource {
+private class P803SequentialIdSource : ManualRefundReceiptIdSource {
     private var sequence = 0
 
     override fun next(): ManualRefundReceiptIds {
@@ -709,7 +711,7 @@ private data class Candidate(
 private class RejectionCase(
     val expected: ManualRefundRejectionCode,
     val request: ManualRefundReceiptRequest,
-    val setup: (DatabaseHarness) -> Unit = {},
+    val setup: (P803DatabaseHarness) -> Unit = {},
 )
 
 /**
@@ -847,13 +849,13 @@ private fun request(
         confirmedAt = Instant.parse("2026-02-02T02:00:05Z"),
     )
 
-private fun rejectionOf(result: ManualRefundReceiptSubmissionResult): ManualRefundRejectionCode =
-    assertIs<ManualRefundReceiptSubmissionResult.Rejected>(result).code
+private fun rejectionOf(result: ManualRefundReceiptSubmissionResult): ManualRefundRejectionCode = assertIs<ManualRefundReceiptSubmissionResult.Rejected>(result).code
 
-private fun refundedOf(harness: DatabaseHarness): Long =
-    harness.database.ledgerQueries.selectManualRefundRefundedTotal(LEDGER, ORIGINAL, "CNY").executeAsOne()
+private fun refundedOf(harness: P803DatabaseHarness): Long = harness.database.ledgerQueries
+    .selectManualRefundRefundedTotal(LEDGER, ORIGINAL, "CNY")
+    .executeAsOne()
 
-private fun candidatesOf(harness: DatabaseHarness): List<Candidate> =
+private fun candidatesOf(harness: P803DatabaseHarness): List<Candidate> =
     harness.database.ledgerQueries
         .selectManualRefundExpenseCandidates(ledger_id = LEDGER, page_size = 20L, page_offset = 0L) {
             transactionId,
@@ -869,7 +871,7 @@ private fun candidatesOf(harness: DatabaseHarness): List<Candidate> =
 
 /** V-8's shipped read surface: the bounded contribution port, then the frozen month projection. */
 private fun monthRead(
-    harness: DatabaseHarness,
+    harness: P803DatabaseHarness,
     month: YearMonth,
 ): MonthlyContributionReadResult.Success {
     val database = harness.database
@@ -890,12 +892,12 @@ private fun monthRead(
 }
 
 private fun monthRows(
-    harness: DatabaseHarness,
+    harness: P803DatabaseHarness,
     month: YearMonth,
 ): List<LedgerEntryRow> = monthRead(harness, month).rows
 
 private fun monthActivity(
-    harness: DatabaseHarness,
+    harness: P803DatabaseHarness,
     month: YearMonth,
 ): MonthlyActivity {
     val read = monthRead(harness, month)
@@ -904,10 +906,9 @@ private fun monthActivity(
         .getValue(month)
 }
 
-private fun MonthlyActivity.currencyActivity(): MonthlyCurrencyActivity =
-    currencies.single { it.currency.code == "CNY" }
+private fun MonthlyActivity.currencyActivity(): MonthlyCurrencyActivity = currencies.single { it.currency.code == "CNY" }
 
-private fun countsOf(harness: DatabaseHarness): List<Long> =
+private fun countsOf(harness: P803DatabaseHarness): List<Long> =
     listOf(
         queryCount(harness.driver, "SELECT count(*) FROM manual_refund_receipt"),
         queryCount(harness.driver, "SELECT count(*) FROM ledger_transaction"),

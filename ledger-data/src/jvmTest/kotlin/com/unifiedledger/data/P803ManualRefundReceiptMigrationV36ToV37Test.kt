@@ -1,5 +1,6 @@
 package com.unifiedledger.data
 
+import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.data.db.LedgerDatabase
 import java.nio.file.Files
@@ -67,7 +68,7 @@ class P803ManualRefundReceiptMigrationV36ToV37Test : MigrationTestSupport() {
                         "SELECT \"from\" || '|' || \"to\" FROM pragma_foreign_key_list('manual_refund_receipt')",
                         { cursor ->
                             val rows = buildList { while (cursor.next().value) add(requireNotNull(cursor.getString(0))) }
-                            app.cash.sqldelight.db.QueryResult.Value(rows)
+                            QueryResult.Value(rows)
                         },
                         0,
                     ).value
