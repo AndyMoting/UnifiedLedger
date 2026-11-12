@@ -203,3 +203,30 @@ manual_refund_receipt(
 - **i2b 登记残余**：①拒绝页「原交易」在候选页丢失时回落裸 id（防御分支，正常流程不达）；②`validateEntryTypeSupported` 现为永不拒绝的未来防漂移闸门（提交边界唯一调用点在 reducer 的 Continue）；③`REFUND_STORE_UNAVAILABLE` 的确定失败文案仍可达（目录权威缺失路径）；④1.3× 下六类型单选的挤压留给 i2c 的 V-14 人读；⑤Unknown 的读回仍按单请求指纹比对（V-17 已由 JVM 覆盖）。
 - **V-14 设备腿（i2c）**：字号机新增 `profile=refund`——同一 prepared v37 seed 库（第三个 owned 资产账户 + 一笔真实手工支出，候选资格按 §2.3 条件 5 用默认目录的 `早餐` 分支），1.3× 下拍「退款入口（类型单选 + 候选行）」与「确认页」两屏。确认页 leg 必须填「发生时间」（首页 FAB 的草稿 `occurredAt` 为空，Continue 门要求它）；入口屏的「费用分类」负标记证明类型真的切到退款表单；确认页 marker 用「早餐」证明候选解析成功，负标记用入口标题证明导航落地。gate 只判 `marker present`（滚动表单的屏外节点仍在树中，不构成可见性断言）；「不截断、不重叠、语义名可读」由人读图与 dump 承载。
 - **i2c 登记残余**：①每屏只拍一张、不滚动到底，1.3× 的「不截断」只覆盖首屏视口（人读半）；②`_focused_text_field`/`find_field_center` 的口径是「任一字段获焦」而非「目标字段获焦」，误焦由后续 marker 门兜底；③`ime_is_shown` 在 manager 与 IME 段短暂矛盾时取最后一次出现（错判方向都会大声失败，不会静默绿）；④`scroll_until` 只证 label 中心在窗口内，`TapStep` 自身不复核可达性。
+- **V-14 设备读数（i2c/i2d）**：run `43181730122`（1.3×、`profile=refund`、`5a67f9e6`）两屏 gate 绿；人读发现入口屏类型行在 1.3× 下挤压（「退款到账」竖排、radio 被右缘裁切）→ i2d `2a65e879` 改用 `FlowRow`（每项保持自身尺寸；五类型档不动）→ 复跑 run `43191563808`（同 profile/scale、`2a65e879`）两屏 gate 绿，人读入口屏（两行三列、全部标签水平完整）与确认页（六行完整）PASS。工件 `fontscale-sample-<sha>-refund`（两 PNG + dump + `host.json`）。**TalkBack 朗读巡检未做**（只取语义树，沿 A-03/D-181 的既有口径）。
+
+## 9. 收口判定（D-313，2026-11-12）
+
+`P8-03` 首门（退款到账手工入口）按本规格收口。未开门的五类（余额调整、混合支付、分期、图片凭证、信用卡账单与分期管理费）保持未交付，且不出现在类型列表与验收矩阵中。
+
+| # | 判定 | 证据（类型） |
+| --- | --- | --- |
+| V-1 | PASS | 纯呈现：`entryTypeChoices(true/false)` 与穷尽标签；设备：`refund-entry.png`（1.3×，类型单选含退款到账，选中后候选行出现） |
+| V-2 | PASS | JVM 真库：i1 向量（canonical kind + 正额支出腿 + 七条件；退款/LEND/COLLECT/余额调整即使 `kind='EXPENSE'` 亦排除） |
+| V-3 | PASS | JVM 真库：i1 向量 + i2a 候选/服务端恒等（含版本替代后按新分类）；纯呈现：草稿 `categoryId` 恒 null、校验无分类门、确认页「继承分类」只读行 |
+| V-4 | PASS | JVM 真库：i1 向量（剩余 = 支出腿金额 − 有效退款合计；作废释放；超额整笔拒绝；并发串行） |
+| V-5 | PASS | JVM 真库：i1（草稿/取消后零行、零正式交易） |
+| V-6 | PASS | JVM 真库：i1（退款交易独立；原交易行/日期/版本/对账状态不变） |
+| V-7 | PASS | JVM 真库：i1（同 id 同指纹 replay；同 id 异指纹冲突且零写入；`UNIQUE(ledger_id, refund_transaction_id)` 兜底） |
+| V-8 | PASS | JVM 真库：i1（到账期间消费 −A、退款现金流入 +A、普通收入 0；读既有账本读面） |
+| V-9 | PASS | JVM 真库：i1（重开读回关系行；UPDATE 被触发器拒） |
+| V-10 | PASS | 纯呈现 + 文档：`EntryType.entries` 恰 6；五类未开门类型不在列表/标签/本表 |
+| V-11 | PASS | migration verify + JVM：i1（v36→v37 既有数据不变、新表为空、约束/触发器可建；fresh vs migrated 元数据全等） |
+| V-12 | PASS | JVM 真库：i1（取候选后作废 → `ORIGINAL_NO_LONGER_REFUNDABLE` 且零写入） |
+| V-13 | PASS | JVM 真库：i2a（空 = `Loaded(empty)`、读失败 = `Unavailable`，永不互换）；纯呈现：i2b 四态与「失败可重试、空≠失败」 |
+| V-14 | PASS 含披露 | 字号机 1.3× + 人读：i2c run `43181730122` 两屏 gate 绿、确认页 PASS、入口屏发现类型行挤压 → i2d `2a65e879` 修 `FlowRow` → 复跑 run `43191563808` 两屏 gate 绿、入口屏与确认页人读 PASS。**披露**：TalkBack 朗读巡检未做（只取语义树） |
+| V-15 | PASS | JVM 读数：i2a 20k 首屏 160.84 ms / 50k 330.73 ms；退款合计读 15.85 / 13.41 ms（记录不设门槛） |
+| V-16 | PASS | JVM 真库：i1（退款到账腿初始待对账、可独立链接；原付款腿对账状态不被重置） |
+| V-17 | PASS | JVM 真库：i1（提交后读取失败 → `UnknownCommit`、不自动重试、同 `request_id` 幂等）+ i2b fold（`Unavailable → UnknownCommit`） |
+| V-18 | PASS | 纯 reducer：i2b（退款后再记一笔 → 空支出草稿：无继承分类/无原主账户/无到账账户） |
+| V-19 | PASS | JVM 真库：i1（有有效手工退款的原交易不可被作废） |
