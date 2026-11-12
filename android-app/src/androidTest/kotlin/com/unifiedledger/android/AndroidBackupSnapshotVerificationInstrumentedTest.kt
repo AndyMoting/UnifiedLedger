@@ -28,7 +28,7 @@ import java.io.File
  *
  * [verifyAndroidSnapshotFile] now opens the ABSOLUTE path read-only through the framework
  * `SQLiteDatabase` (no helper, no schema/version logic, no create/migrate). This test produces a
- * real snapshot file with the current product `user_version` (36) and asserts the verification opens it,
+ * real snapshot file with the current product `user_version` (37) and asserts the verification opens it,
  * reports `integrity_check = ok`, reads the version hint and never migrates or writes it.
  *
  * Data safety: everything runs in the instrumentation target's cache dir; the production

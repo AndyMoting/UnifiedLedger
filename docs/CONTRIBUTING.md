@@ -338,6 +338,8 @@ adb shell am start -n com.unifiedledger.android/.MainActivity
 
 8. **登记正式状态文档残余**：`docs/CURRENT_STATE.md`、`docs/ARCHITECTURE.md`、`README.md`、`docs/ROADMAP.md` 中的 schema 版本与迁移链文件数属独立 A-DOC 同步批（D-160 先例），不在实施批内改，但必须登记残余。
 
+9. **新增或重建 DDL 对象时，扫「先 create 当前版再反向降级」的夹具**：这类夹具用 `LedgerDatabase.Schema.create`（当前版本）建库，再逐段反向撤掉新对象来伪造历史版本；新增一个迁移对象后，它们必须在降级块里把它一并撤掉，否则新增边会在新库上 `CREATE` 撞已存在的对象、整链失败（先例：v37 的 `manual_refund_receipt` 令 `P708RestoreRoundtripEquivalenceTest` 的 v33/v34 夹具撞 `36.sqm`，同批还令 `DesktopCatalogMigrationTest` 的每一层 look-alike 世界撞同一张表）。这类夹具在迁移失败时可能吞掉 throwable，失败日志里没有对象名，判定只能靠夹具形状，不能等报错文本。**该表的探针查询若被产品代码读取，降级只能发生在快照副本上**，source 必须保留该对象，否则 seeding 阶段的引用探针会因缺表而炸。
+
 ## 完整 Python 测试
 
 从仓库根目录执行：
@@ -414,7 +416,8 @@ Python 分片：`python-shards`（矩阵 1/2）按 `tools/ci/python-shards.txt`�
 2. 运行正式文档验证。
 3. 使用 `git diff --check` 检查空白错误，并复核暂存 diff 和工作树状态。
 4. 复核提交信息和跟踪文件没有个人数据、本机信息、外部实现、临时计划、会话内容或开发过程署名；可用 `bash tools/ci/trace-scan.sh` 做本地预检。
-5. 推送任务分支并创建 Pull Request；修复轮在每轮修改完成后一次推送，以末次推送的 run 作为 required checks 证据。
+5. 静态读先行——不启动 JVM、不启动 Gradle，零内存：新增或改名的测试类先扫全包重名，同一包内的私有顶层 `class`/`object` 与公开类一样算重名（Kotlin 只对函数豁免），取 `class|object|interface|typealias` 的名字逐文件对比即可；编译器只报第一个重名，其余同类冲突照样在下一轮让检查变红。ktlint 报错按原文逐条对照实际形态（链式折行、表达式体是否并入签名行、导入分组），不凭判断。
+6. 推送任务分支并创建 Pull Request；修复轮在每轮修改完成后一次推送，以末次推送的 run 作为 required checks 证据。
 
 ## 隐私与测试数据
 
