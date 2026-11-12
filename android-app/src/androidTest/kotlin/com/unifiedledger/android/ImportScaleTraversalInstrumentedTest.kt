@@ -31,31 +31,17 @@ private const val EVIDENCE_FILE_NAME = "ul-scale-traversal.log"
 private const val TARGET_PACKAGE = "com.unifiedledger.android"
 private const val LAUNCH_COMMAND = "am start -n com.unifiedledger.android/.MainActivity"
 private const val MAIN_ACTIVITY_CLASS = "$TARGET_PACKAGE.MainActivity"
-private const val IMPORT_TAB_LABEL = "导入"
-private const val IMPORT_TAB_FALLBACK_X = 736
-private const val IMPORT_TAB_FALLBACK_Y = 2242
 
-// The import tab is bottom-band candidate index 3 (the 4th tab): the tab-bar geometry measured on the
-// managed AVD's 1080x2400 profile puts the four tab nodes in the band below (each 183-184 px wide at
-// y=2095..2305, centres x=124/328/532/736, the import one selected at [645,2095][828,2305]). The label
-// lookup that used to resolve the tab can never succeed here - the tab-bar nodes expose no text and no
-// contentDescription, only the 65 px wide label TextView child carries 导入 - and the old
-// nearest-clickable coordinate fallback picked the 3rd tab (x=532), which switched the app away from
-// the import tab. The same band and width window also hold each tab's inner decorations (126-127 px
-// boxes) and the 147 px wide new-expense FAB, so the raw candidates are first narrowed to
-// [TAB_WIDTH_TAB_MIN] and then collapsed to one node per tab position before the index is read. The
-// floor sits between the widest non-tab node in the band (the FAB, 147 px) and the narrowest tab
-// (183 px), so a non-tab node can be neither a candidate nor a retry attempt.
-private const val TAB_BAND_TOP = 2_000
-private const val TAB_BAND_BOTTOM = 2_400
-private const val TAB_WIDTH_MIN = 120
-private const val TAB_WIDTH_MAX = 260
-private const val TAB_WIDTH_TAB_MIN = 170
-private const val IMPORT_TAB_INDEX = 3
-private const val TAB_MAX_ATTEMPTS = 4
-private const val ARG_TAB_LIST_WAIT_MILLIS = "tabListWaitMillis"
-private const val TAB_LIST_WAIT_MILLIS = 180_000
-private const val TAB_BAR_WAIT_MILLIS = 60_000
+// The import entry is the navigation drawer's 导入账单 row (P8-00, D-301): the bottom navigation bar
+// carries only 首页/账户/分析 since that change, so the drawer behind the home top bar's menu button
+// is the only in-app route to the import review screen. Both copy strings are matched EXACTLY - the
+// menu button by its contentDescription, the row by its text - and the row is only composed while the
+// drawer is open, which is what the row wait in the drawer navigation proves. The bounds below wait
+// out a slow host, not the drawer animation itself (hundreds of ms).
+private const val DRAWER_OPEN_BUTTON_DESCRIPTION = "打开菜单"
+private const val DRAWER_IMPORT_ROW_TEXT = "导入账单"
+private const val DRAWER_MENU_WAIT_MILLIS = 30_000
+private const val DRAWER_ROW_WAIT_MILLIS = 30_000
 private const val CANDIDATE_CHECKBOX_DESC = "勾选候选"
 private const val CURRENCY_SUFFIX = "CNY"
 private const val LAST_ITEM_ROW_INDEX = 1_000_000
@@ -390,7 +376,7 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  *   BEFORE any Activity in this process opens the ledger (the support's guard fails the mode if a
  *   ledger handle is already open, because replacing the file would leave the product on the old
  *   inode). It then asserts the START screen's health (a LedgerReadyCopy prefix present, no fail-closed face) BEFORE
- *   the tab switch, and only after [reachImportReview] asserts the import screen's duplicate group
+ *   the drawer navigation, and only after [reachImportReview] asserts the import screen's duplicate group
  *   header (the two screens carry different text, so they are two separate assertions). Arg
  *   `fixtureRelations` (default 20000) declares the group scale. Its relations are the real output of
  *   ONE product intake: that many pre-existing settled `import_source_record` rows carry the group's
@@ -467,7 +453,7 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  * - `talkBackFocusProbe`: TalkBack inspection ONLY. Arg `query` (required: the exact node text of the
  *   target, or, failing that, its exact contentDescription); optional arg `openDetail` (default false)
  *   first forces the app to the foreground ([ensureActiveApp], up to 20 relaunch attempts), waits for
- *   the home screen's `导入` tab ([HOME_READY_WAIT_MILLIS]) and THEN clicks the ledger row whose text
+ *   the home screen's ready copy (a [LedgerReadyCopy] prefix, [HOME_READY_WAIT_MILLIS]) and THEN clicks the ledger row whose text
  *   starts with `COLLECT` ([findByTextPrefix] plus the class's
  *   `ACTION_CLICK` helper [clickNode]) and requires the 交易详情 screen within 15 s (that row click is
  *   navigation, not part of the speech assertion). It resolves the app window through
@@ -521,10 +507,10 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  * mode's first automation call and touches no automation surface: it reads the database baseline
  * directly (plain `SQLiteDatabase`, no automation), brings the app up with an explicit Intent launch
  * instead of a shell `am start` (`shell()` runs through `UiAutomation.executeShellCommand` and would
- * create the very connection the host needs absent), logs the host's tab-selection instruction, and
+ * create the very connection the host needs absent), logs the host's drawer-navigation instruction, and
  * polls `import_candidate` every 5 s until the count has risen above the baseline AND stayed
- * unchanged for `INTAKE_STABLE_POLLS` consecutive polls. Selecting the 导入 tab is a coordinate tap
- * on the host at the fixed import-tab centre for the managed AVD's 1080x2400 profile, because this
+ * unchanged for `INTAKE_STABLE_POLLS` consecutive polls. Reaching the import screen is a host-side
+ * navigation through the app's own drawer (menu button, then the 导入账单 row), because this
  * phase holds no automation tree and the test cannot inject input at all without the connection it
  * is deliberately not creating. The phase never fails the mode: a timeout is a logged finding and
  * the flow continues.
@@ -537,12 +523,13 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  *    [awaitHostIntake] now logs every observation and proceeds only after the count has been
  *    unchanged for `INTAKE_STABLE_POLLS` consecutive polls, inside the same `waitForIntakeMillis`
  *    bound.
- * 2. [reachImportReview] began with an `am start` and then always resolved the import tab. After the
- *    intake the app is already on the import tab with the candidate list rendered, and a selected
- *    tab is not clickable, so a coordinate fallback selected a different tab and the candidate list
+ * 2. [reachImportReview] began with an `am start` and then always resolved the (then-existing) bottom
+ *    import tab. After the
+ *    intake the app was already on the import screen with the candidate list rendered, and the old
+ *    coordinate fallback could select a different tab and leave the candidate list
  *    never rendered (the mode's second precondition failed after 60 s). It now returns immediately
  *    when the candidate list is already rendered and launches only when the app root is absent; the
- *    launch decision and the tab resolution themselves are those of the second run, below.
+ *    launch decision and the drawer navigation themselves are those of the second run, below.
  * 3. 确认整组标记 is the group card's footer, and the card is inserted BELOW the affordance that opens
  *    it, so the confirm button can sit outside the current viewport. [confirmGroupDisposition] now
  *    performs up to `cardScrollActions` bounded `ACTION_SCROLL_FORWARD` actions (the same scrollable
@@ -557,26 +544,19 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  *    (no app root)`) although the app was already on the import review screen. It now waits up to
  *    [APP_ROOT_WAIT_MILLIS] (polling every [POLL_MILLIS]) for the app root BEFORE deciding anything,
  *    checks the candidate list as soon as the root exists, and after issuing a launch waits again (up
- *    to [POST_LAUNCH_ROOT_WAIT_MILLIS]) and re-checks the candidate list before the tab is resolved.
+ *    to [POST_LAUNCH_ROOT_WAIT_MILLIS]) and re-checks the candidate list before the drawer navigation runs.
  *    Every wait logs its outcome, so the branch the run took is readable in the evidence.
- * 2. The tab resolution was a tolerant label lookup that can never succeed here - the tab-bar nodes
- *    expose no text and no contentDescription (the run logged `import tab tolerant lookup (...) found
- *    no clickable node`, with an empty label) - followed by a coordinate fallback that picked the
- *    NEAREST clickable node, which was the 3rd tab (centre x=532) rather than the import tab. The tap
- *    switched the app away from the import tab, the candidate-list check passed on the still-rendered
- *    old frame, and the list then went away - which is why the scrollable container was lost
- *    immediately afterwards. The import tab is bottom-band candidate index [IMPORT_TAB_INDEX] (the
- *    4th tab, centre x=[IMPORT_TAB_FALLBACK_X] on the 1080x2400 profile): [resolveImportTab] collects
- *    the tab nodes by tab-bar geometry (bottom band [TAB_BAND_TOP]..[TAB_BAND_BOTTOM], width
- *    [TAB_WIDTH_MIN]..[TAB_WIDTH_MAX], regardless of clickability) and collapses them to one node per
- *    tab position ([collapseTabCandidates]: the same band and width window also hold each tab's inner
- *    decorations and the new-expense FAB, twenty raw candidates for four tabs in the review-screen
- *    dump, so the raw index 3 would be a decoration of the first tab), treats a non-clickable import
- *    tab as already selected and taps NOTHING, and after a tap that does not render the list retries
- *    the remaining bottom-band candidates in increasing distance from x=[IMPORT_TAB_FALLBACK_X],
- *    bounded to [TAB_MAX_ATTEMPTS] taps, logging every attempt and its outcome. The old
- *    nearest-clickable click survives only as the last resort for an empty bottom band, and says so in
- *    the evidence.
+ *
+ * The import entry itself has since moved twice. While a bottom navigation bar existed, the reach ran a
+ * tolerant label lookup (the 导入 label, which could never succeed - the tab-bar nodes exposed no text
+ * and no contentDescription) and then a tab-bar-geometry resolution followed by the nearest-clickable
+ * coordinate fallback, which picked the 3rd tab (centre x=532) and switched the app away from the
+ * import screen. Since P8-00 (D-301) removed the import tab from the bottom bar
+ * entirely, the reach navigates through the product's OWN navigation drawer: it clicks the home top
+ * bar's menu button ([DRAWER_OPEN_BUTTON_DESCRIPTION], by contentDescription), waits for the drawer's
+ * 导入账单 row ([DRAWER_ROW_WAIT_MILLIS] - the row composes only while the drawer is open, so the wait
+ * covers the drawer's entrance) and clicks that row. A row that never appears is a failed half named in
+ * the evidence; the reach's success condition itself is unchanged, below.
  * 3. A transiently lost scroll container aborted the traversal: the run logged `FINDING: scrollable
  *    node lost after 0 forward actions` and stopped with `forwardActions=0`. [forwardUntilTarget] and
  *    the card-footer helper [scrollToConfirmAffordance] now refetch the container up to
@@ -587,9 +567,9 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  * The `countProbe` device run then failed at its FIRST precondition and exposed the fourth defect, the
  * HOME-screen false positive: [reachImportReview] read "a node whose text ends with [CURRENCY_SUFFIX]"
  * as "the import review screen is rendered", but the HOME screen's transaction lines end that way too.
- * The evidence shows the check passing 8 ms after the tab tap (`import tab attempt 1/4 rendered=true
- * elapsedMs=8`) on the still-rendered HOME frame (amount rows present, `checkboxes=0`), so the tab
- * switch was never confirmed, the scrollable-container lookup found nothing (`scrollable nodes: 0`)
+ * The evidence shows the check passing 8 ms after the entry click (`import tab attempt 1/4 rendered=true
+ * elapsedMs=8`) on the still-rendered HOME frame (amount rows present, `checkboxes=0`), so the
+ * screen switch was never confirmed, the scrollable-container lookup found nothing (`scrollable nodes: 0`)
  * and the mode asserted before any reading was taken. The screen half of the predicate is now
  * [readImportScreen] - exact text [IMPORT_SCREEN_REFRESH_TEXT], exact text [IMPORT_SCREEN_PICK_TEXT] or
  * contentDescription [CANDIDATE_CHECKBOX_DESC] in ONE snapshot - and the success condition of
@@ -599,45 +579,10 @@ private const val DUPLICATE_STATUS_HISTOGRAM_SQL =
  * message and in [observedState]. The checkbox branch is the tolerant half: the header items are
  * virtualized away once the list is scrolled, so a scrolled list is recognized by its rows'
  * [CANDIDATE_CHECKBOX_DESC] checkbox together with a candidate amount row in the same snapshot, while a
- * HOME-only snapshot (amount rows, zero checkboxes) satisfies neither branch. [resolveImportTab]'s
- * per-attempt wait uses the same strict predicate, so an attempt whose tap did not switch the tab no
- * longer reports `rendered=true` after a few ms and the retry loop that exists for exactly that case
- * actually runs, and `countProbe` logs the predicate's verdict again at its baseline step, before
+ * HOME-only snapshot (amount rows, zero checkboxes) satisfies neither branch. The entry navigation's
+ * own wait uses the same strict predicate, so a click that did not switch the screen no
+ * longer reports `rendered=true` after a few ms, and `countProbe` logs the predicate's verdict again at its baseline step, before
  * `collectionInfo` is read, so a future failure at that step is unambiguous.
- *
- * The `countProbe` re-run then failed at the tab resolution itself and exposed the fifth defect: the app
- * root being present is not the tab bar being COMPOSED. That run took the launch branch, reached the root
- * 2,017 ms after `am start` (`app root wait (post-launch): timeoutMillis=30000 found=true elapsedMs=2017`)
- * and [resolveImportTab] then found `rawCandidates=0` in the bottom band, because the Compose tab bar had
- * not composed yet in that first frame - a later, longer-lived run of the same build found 23 raw
- * candidates in the same band. The empty band made the resolution take its last-resort branch (`FINDING:
- * the bottom band yielded no tab candidate`), which found no clickable node either, and the reach then
- * failed on the HOME screen's transaction lines (they end with [CURRENCY_SUFFIX], hence
- * `candidateRowSeen=true` while `importScreenPresent=false`). [reachImportReview] now awaits the tab bar
- * itself, after the app root and before the tab is resolved ([awaitTabBar], bounded by
- * [TAB_BAR_WAIT_MILLIS], every poll logged as `import tab bar wait: elapsedMs=<n> candidates=<k>`), so the
- * resolution sees a composed band; a wait that times out only logs a FINDING and the resolution still
- * runs, so the band's raw candidate count in its own resolution line remains the reading that names the
- * failure.
- *
- * The next `countProbe` run then had the composed tab bar and still failed - on two defects of the tap
- * path, both fixed here:
- * 1. The per-attempt list-render wait was a fixed [TAB_LIST_WAIT_MILLIS] (30 s), which was enough while
- *    the list had already been loaded by an in-session import (the "already on import review" early
- *    return) and is NOT enough for the FIRST full list read at this library's size: against 60,800
- *    candidates every attempt logged `rendered=false elapsedMs≈30000`. The bound is now the
- *    instrumentation argument `tabListWaitMillis` (default [TAB_LIST_WAIT_MILLIS], 180 s), read by
- *    [resolveImportTab], reported in its resolution line and in the timeout FINDING, and a SUCCESSFUL
- *    attempt logs its elapsed time too (`import tab attempt <n>/[TAB_MAX_ATTEMPTS] rendered=true
- *    elapsedMs=<n>`) - the same line shape the failing attempts already produced.
- * 2. The retry order (increasing distance from x=[IMPORT_TAB_FALLBACK_X]) reached the 新增支出 FAB -
- *    `bounds=Rect(870, 2127 - 1017, 2274) width=147`, the fifth collapsed candidate - and tapping it
- *    navigated to the new-expense screen, which is why that run ended on an empty window
- *    (`amountRows=0 checkboxes=0`). The band scan now narrows its candidates to [TAB_WIDTH_TAB_MIN]
- *    (170 px) BEFORE the collapse, so the FAB (147 px) and the tabs' 126-127 px decorations can never be
- *    a candidate - not as index [IMPORT_TAB_INDEX] and not as a retry - and every excluded node is
- *    logged with its width. A floor that leaves fewer than four candidates keeps going with what
- *    remains, so the FAB is never resurrected.
  *
  * `countProbe` is the ONE mode whose in-session import this class drives ITSELF, and the same design
  * constraint is what forces it: the host's `uiautomator dump` does not work while this instrumentation
@@ -867,8 +812,8 @@ class ImportScaleTraversalInstrumentedTest {
      * screen's duplicate group. The seed runs before any Activity exists —
      * [ImportScaleDuplicateFixtureSupport] proves that by checking this process holds no open ledger
      * handle, because replacing the file under a live handle would leave the product writing to the
-     * old inode. Tab resolution is [reachImportReview]'s (the import tab is the 4th bottom-band
-     * candidate), so this mode never re-implements tab geometry.
+     * old inode. The drawer navigation is [reachImportReview]'s (the import entry is the drawer's
+     * 导入账单 row), so this mode never re-implements the navigation.
      */
     private fun runSeedFixture(evidence: MutableList<String>) {
         val log = evidenceLog(evidence)
@@ -888,8 +833,8 @@ class ImportScaleTraversalInstrumentedTest {
             "duplicateHistory=${fixture.duplicateHistoryCount} subjectSourceId=${fixture.subjectSourceId} " +
             "subjectSources=${fixture.subjectSourceIdCount} fixtureRelations=$fixtureRelations"
         // Two screens, two assertions. The startup face renders a LedgerReadyCopy prefix and the import screen does not,
-        // so the startup health check runs BEFORE the tab switch; folding it into the post-tab
-        // assertion would make it impossible by construction.
+        // so the startup health check runs BEFORE the drawer navigation; folding it into the
+        // post-navigation assertion would make it impossible by construction.
         reachHealthyLedgerStart(log)
         reachImportReview(log)
         assertSeedFixtureImportScreen(fixture, log)
@@ -897,9 +842,9 @@ class ImportScaleTraversalInstrumentedTest {
     }
 
     /**
-     * Startup health on the FIRST screen, before any tab switch: one of the LedgerReadyCopy prefixes
+     * Startup health on the FIRST screen, before the drawer navigation: one of the LedgerReadyCopy prefixes
      * must appear and no fail-closed startup face may. This is the mode's startup-health check; it
-     * launches the app the same way [reachImportReview] would, so the later tab resolution still takes
+     * launches the app the same way [reachImportReview] would, so the later drawer navigation still takes
      * its existing-app-root branch.
      */
     private fun reachHealthyLedgerStart(log: (String) -> Unit) {
@@ -932,7 +877,7 @@ class ImportScaleTraversalInstrumentedTest {
     }
 
     /**
-     * The import screen after the tab switch (D-275: 列表首屏即见重复组), kept inside the Activity. The
+     * The import screen after the drawer navigation (D-275: 列表首屏即见重复组), kept inside the Activity. The
      * group header carries its row count and empty groups are never rendered, so seeing it proves a
      * real candidate row in the 疑似重复——待审核 class rendered beside a real list (not the
      * unloaded/empty state). The ordinary 待确认——缺用户决策 group must stay empty: the only pending
@@ -1180,8 +1125,8 @@ class ImportScaleTraversalInstrumentedTest {
      * [TALK_BACK_FOCUS_SPEECH_SETTLE_MILLIS] so the speech lands before the run ends.
      *
      * Optional `openDetail` (default false) first forces the app to the foreground ([ensureActiveApp]) -
-     * a gesture lands in whatever window is on top - then waits for the home screen's `导入` tab
-     * ([HOME_READY_WAIT_MILLIS]), and only then opens the detail through the accessibility tree:
+     * a gesture lands in whatever window is on top - then waits for the home screen's ready copy
+     * (a [LedgerReadyCopy] prefix, [HOME_READY_WAIT_MILLIS]), and only then opens the detail through the accessibility tree:
      * [findByTextPrefix] finds the ledger row whose text starts with [DETAIL_ROW_TEXT_PREFIX] and the
      * class's [clickNode] clicks it with `ACTION_CLICK`, never a synthetic gesture. It requires the
      * 交易详情 screen within [TALK_BACK_FOCUS_DETAIL_WAIT_MILLIS] before the focus is requested. That
@@ -1237,11 +1182,15 @@ class ImportScaleTraversalInstrumentedTest {
                 return
             }
             // The COLLECT prefix names a HOME-screen ledger row, so the row lookup only means something
-            // once that screen is drawn: the ledger surface prints its import tab label, and that exact
-            // text is the proof (a foregrounded app can still be on the start screen).
+            // once that screen is drawn: the ledger surface prints one of the LedgerReadyCopy prefixes
+            // (the empty-ledger line, the flow header or the transaction list), and any of those exact
+            // prefixes is the proof. The old proof was the bottom 导入 tab's label; that tab does not
+            // exist since P8-00 (D-301), so the ready-copy criterion is used - it is the same readiness
+            // half the other modes already read from the first screen, and unlike a tab label it exists
+            // on every healthy first screen (a foregrounded app can still be on the start screen).
             val homeReady =
                 waitFor(
-                    predicate = { findByText(appRoot(), IMPORT_TAB_LABEL) != null },
+                    predicate = { visibleScreenTexts().any { text -> LedgerReadyCopy.matches(text) } },
                     timeoutMs = HOME_READY_WAIT_MILLIS,
                     pollMs = POLL_MILLIS,
                 )
@@ -1251,9 +1200,9 @@ class ImportScaleTraversalInstrumentedTest {
             )
             if (!homeReady) {
                 val state = observedState()
-                log("$TALK_BACK_FOCUS_PREFIX FINDING: the home screen never showed the $IMPORT_TAB_LABEL tab state $state")
+                log("$TALK_BACK_FOCUS_PREFIX FINDING: the home screen never showed a LedgerReadyCopy prefix state $state")
                 fail(
-                    "$TALK_BACK_FOCUS_PREFIX the home screen never showed the `$IMPORT_TAB_LABEL` tab within " +
+                    "$TALK_BACK_FOCUS_PREFIX the home screen never showed a LedgerReadyCopy prefix within " +
                         "$HOME_READY_WAIT_MILLIS ms; the $DETAIL_ROW_TEXT_PREFIX row was not looked for: state $state",
                 )
                 return
@@ -2618,7 +2567,8 @@ class ImportScaleTraversalInstrumentedTest {
     /**
      * The host-driven intake phase, run before the mode's first automation call. Reads the pre-intake
      * database baseline, brings the app up without touching any automation surface, logs the host's
-     * tab-selection instruction, then polls the `import_candidate` count every [INTAKE_POLL_MILLIS].
+     * drawer-navigation instruction (the menu button, then the 导入账单 row), then polls the
+     * `import_candidate` count every [INTAKE_POLL_MILLIS].
      *
      * A count that merely exceeds the baseline is NOT the intake: the intake commits in batches, so
      * the first rise can be observed while hundreds of rows are still being written (the device run
@@ -2701,8 +2651,8 @@ class ImportScaleTraversalInstrumentedTest {
     /**
      * Brings the app up for an inbound share WITHOUT touching UiAutomation, and tells the host to
      * send the ACTION_SEND intent during the mode's wait window. Deliberately separate from
-     * [launchAppWithoutAutomation], whose host instructions describe the SAF import flow (tap the
-     * 导入 tab, pick a file) and would displace the share strip this mode waits for.
+     * [launchAppWithoutAutomation], whose host instructions describe the SAF import flow (open the
+     * drawer, tap 导入账单, pick a file) and would displace the share strip this mode waits for.
      */
     private fun bringUpForShareFace(log: (String) -> Unit) {
         val launched =
@@ -2721,8 +2671,8 @@ class ImportScaleTraversalInstrumentedTest {
      * `UiAutomation` creates its connection - the connection that blocks the host's `uiautomator
      * dump` while the host drives the SAF picker. An explicit Intent launch from the instrumentation's
      * target context starts the same activity in the same task as `am start -n
-     * com.unifiedledger.android/.MainActivity` and touches no automation surface. The tab instruction
-     * is logged for the host because the tap cannot be issued from here: input injection requires the
+     * com.unifiedledger.android/.MainActivity` and touches no automation surface. The drawer
+     * instruction is logged for the host because the tap cannot be issued from here: input injection requires the
      * very connection this phase must not create.
      */
     private fun launchAppWithoutAutomation(log: (String) -> Unit) {
@@ -2734,10 +2684,10 @@ class ImportScaleTraversalInstrumentedTest {
             }
         log("intake wait: app bring-up $launched (no UiAutomation; a shell `am start` would create the automation connection)")
         log(
-            "intake wait: ACTION REQUIRED ON HOST: select the $IMPORT_TAB_LABEL tab by a coordinate tap at " +
-                "($IMPORT_TAB_FALLBACK_X, $IMPORT_TAB_FALLBACK_Y) - the fixed import-tab centre on the managed AVD's 1080x2400 profile - " +
+            "intake wait: ACTION REQUIRED ON HOST: open the app's navigation drawer by tapping the home top bar's menu button " +
+                "(contentDescription $DRAWER_OPEN_BUTTON_DESCRIPTION), then tap the drawer's $DRAWER_IMPORT_ROW_TEXT row, " +
                 "then perform the SAF file import; this phase holds no automation connection, so it has no accessibility node to click " +
-                "and cannot inject the tap itself",
+                "and cannot inject the taps itself",
         )
     }
 
@@ -3952,25 +3902,23 @@ class ImportScaleTraversalInstrumentedTest {
      * 1. The app root is awaited FIRST, up to [APP_ROOT_WAIT_MILLIS] with a [POLL_MILLIS] poll (Fix A):
      *    the second device run decided while the root was momentarily absent - the SAF picker had just
      *    closed - and took the launch branch although the app was already on the import review screen.
-     * 2. An already-rendered candidate list returns immediately and taps nothing. The selected import
-     *    tab is not clickable, so the old coordinate fallback picked a *different* tab and the
-     *    candidate list never rendered.
+     * 2. An already-rendered candidate list returns immediately and clicks nothing.
      * 3. The `am start` launch is issued only when the app root is still absent after that wait; an app
      *    that is already reachable keeps its screen and its session state (the group entry is
      *    session-scoped). After the launch the root is awaited again (up to
-     *    [POST_LAUNCH_ROOT_WAIT_MILLIS]) and the candidate list is re-checked before the tab is
-     *    resolved.
-     * 4. Only then is the bottom band itself awaited ([awaitTabBar], bounded by [TAB_BAR_WAIT_MILLIS]) -
-     *    the app root appearing is not the tab bar being composed, and the `countProbe` re-run resolved
-     *    the tab against a frame that had not drawn the bar yet (`rawCandidates=0` about 2 s after the
-     *    launch) - and only after that is the import tab resolved ([resolveImportTab], by tab-bar
-     *    geometry) and the candidate list awaited.
+     *    [POST_LAUNCH_ROOT_WAIT_MILLIS]) and the candidate list is re-checked before the drawer
+     *    navigation runs.
+     * 4. Only then is the import entry navigated ([navigateToImportViaDrawer]): the bottom navigation
+     *    bar has carried no import entry since P8-00 (D-301), so the product's own drawer is the route -
+     *    the home top bar's menu button ([DRAWER_OPEN_BUTTON_DESCRIPTION]) first, then the drawer's
+     *    导入账单 row, awaited separately so the drawer's entrance animation cannot outrun the lookup -
+     *    and the candidate list is awaited after it.
      * Every wait logs its outcome, so the host can read which branch the run took.
      *
      * SUCCESS CONDITION = BOTH HALVES: the snapshot must be the import review screen by its OWN markers
      * ([readImportScreen]) AND hold a candidate row. The screen half used to be "a node whose text ends
      * with [CURRENCY_SUFFIX]", which the HOME screen's transaction lines satisfy - so a check taken
-     * before the tab transition landed passed on HOME (the device run: `rendered=true elapsedMs=8`,
+     * before the screen transition landed passed on HOME (the device run: `rendered=true elapsedMs=8`,
      * `checkboxes=0`) and the scrollable-container lookup that followed found nothing. The screen half is
      * awaited first ([awaitImportScreen], bounded by [IMPORT_SCREEN_WAIT_MILLIS]) and the row half after
      * it ([LIST_WAIT_MILLIS]); each logs its own line, and both halves are carried in the failure message
@@ -3996,12 +3944,7 @@ class ImportScaleTraversalInstrumentedTest {
         if (alreadyOnImportReview("already on import review after the app root wait", log)) {
             return
         }
-        // The settle the launch branch needs before the tab is resolved: the app root can appear seconds
-        // before the Compose tab bar is composed, and the resolution against such a frame read an empty
-        // band (class doc, the fifth defect). The wait is bounded and its timeout only logs a FINDING, so
-        // the resolution below still runs and still reports the band it saw.
-        awaitTabBar(log)
-        val resolved = resolveImportTab(log)
+        navigateToImportViaDrawer(log)
         val screenPresent = awaitImportScreen(log)
         val rowWaitStartNanos = System.nanoTime()
         val rendered = screenPresent && waitFor({ importReviewRendered(appRoot()) }, LIST_WAIT_MILLIS, POLL_MILLIS)
@@ -4015,11 +3958,11 @@ class ImportScaleTraversalInstrumentedTest {
         log(
             "candidate list rendered=false elapsedMs=${elapsedMillis(rowWaitStartNanos)} " +
                 "importScreenPresent=$screenPresent branch=${reading.branch} candidateRowSeen=${reading.candidateRow} " +
-                "window=${visibleRowWindow(appRoot())}",
+                "drawerNavigated=$screenPresent window=${visibleRowWindow(appRoot())}",
         )
         assertTrue(
             "import candidate list did not render within $LIST_WAIT_MILLIS ms (import screen present=$screenPresent, " +
-                "branch=${reading.branch}, candidate row seen=${reading.candidateRow}, tabResolved=$resolved; the import " +
+                "branch=${reading.branch}, candidate row seen=${reading.candidateRow}, drawerNavigated=$screenPresent; the import " +
                 "review screen is identified by exact text $IMPORT_SCREEN_REFRESH_TEXT, exact text $IMPORT_SCREEN_PICK_TEXT " +
                 "or contentDescription $CANDIDATE_CHECKBOX_DESC); observed: ${observedState()}",
             rendered,
@@ -4028,8 +3971,8 @@ class ImportScaleTraversalInstrumentedTest {
 
     /**
      * The strict "the import review screen is on screen AND it holds a candidate row" test of ONE snapshot:
-     * the success condition of [reachImportReview] and of every tab-resolution attempt. Both halves come
-     * from the same snapshot, so a frame taken before the tab transition landed cannot pass ([readImportScreen]
+     * the success condition of [reachImportReview] and of every entry-navigation attempt. Both halves come
+     * from the same snapshot, so a frame taken before the navigation landed cannot pass ([readImportScreen]
      * carries the markers).
      */
     private fun importReviewRendered(root: AccessibilityNodeInfo?): Boolean {
@@ -4041,7 +3984,7 @@ class ImportScaleTraversalInstrumentedTest {
      * The early-return branch of [reachImportReview]: returns true, and logs the branch that matched plus
      * the visible window, when ONE snapshot is already the import review screen with a candidate row; a
      * snapshot that is not (the HOME screen included) returns false and the caller continues down the
-     * tab-resolution path.
+     * drawer-navigation path.
      */
     private fun alreadyOnImportReview(
         label: String,
@@ -4058,7 +4001,7 @@ class ImportScaleTraversalInstrumentedTest {
     /**
      * Waits, bounded by [IMPORT_SCREEN_WAIT_MILLIS], for ONE snapshot to be the import review screen, and
      * logs the verdict on its own line: `import screen present=<bool> branch=<branch> elapsedMs=<n>`. The
-     * wait polls, so a snapshot taken before the tab transition landed - the HOME-screen false positive
+     * wait polls, so a snapshot taken before the navigation landed - the HOME-screen false positive
      * this predicate exists for - does not satisfy it, and the row half is awaited only after this half
      * held (a failure therefore names the half that was missing).
      */
@@ -4088,295 +4031,71 @@ class ImportScaleTraversalInstrumentedTest {
     private fun appTreeReachable(): Boolean = appRoot() != null
 
     /**
-     * Waits, bounded by [TAB_BAR_WAIT_MILLIS], for the bottom band to hold at least one node wide enough
-     * to be a tab ([bottomBandTabNodes], so the count excludes the new-expense FAB and the tabs'
-     * decorations), and returns the count it ended on. The app root appearing is not the tab bar being COMPOSED: the
-     * `countProbe` re-run reached the root 2,017 ms after `am start` (`app root wait (post-launch):
-     * found=true elapsedMs=2017`) and [resolveImportTab] then read `rawCandidates=0` from that first frame,
-     * because the Compose tab bar had not composed yet - a later, longer-lived run of the same build found
-     * 23 raw candidates in the same band. Without this wait the resolution falls straight through to its
-     * last-resort branch on a frame that simply had not drawn the bar. Every poll logs its elapsed time and
-     * the count it saw (`import tab bar wait: elapsedMs=<n> candidates=<k>`); a band that is still empty at
-     * the bound is a logged FINDING, and the caller then continues into [resolveImportTab] unchanged - the
-     * raw candidate count in that function's own resolution line stays the reading a failure is read from.
+     * Navigates from wherever the app is now (the HOME screen in the launch path) to the import review
+     * screen through the product's OWN navigation drawer - the only in-app route since P8-00 (D-301)
+     * removed the bottom navigation bar's import tab. The order is fixed:
+     * 1. The home top bar's menu button is found by its contentDescription
+     *    ([DRAWER_OPEN_BUTTON_DESCRIPTION]) and clicked through [clickNode] - the same
+     *    semantic-click-then-clickable-ancestor walk every other navigation in this class uses, so a
+     *    text child that refuses `ACTION_CLICK` still reaches the row's clickable parent.
+     * 2. The drawer's 导入账单 row ([DRAWER_IMPORT_ROW_TEXT], exact text) is awaited separately, bounded
+     *    by [DRAWER_ROW_WAIT_MILLIS]: the row composes only while the drawer is open, so the wait
+     *    covers the drawer's entrance animation instead of racing it.
+     * 3. The row is clicked the same way, and the import review screen's own markers
+     *    ([awaitImportScreen]) confirm the navigation landed.
+     * A menu button or row that never appears FAILS the test with the full [observedState] - a
+     * navigation that silently clicked nothing must not be read downstream as "the screen was
+     * reachable". Every step logs its outcome, so the host can read which step a failure stopped on.
      */
-    private fun awaitTabBar(log: (String) -> Unit): Int {
-        val startNanos = System.nanoTime()
-        var candidates: Int
-        do {
-            candidates = bottomBandTabNodes(appRoot()).size
-            log("import tab bar wait: elapsedMs=${elapsedMillis(startNanos)} candidates=$candidates")
-            if (candidates > 0) {
-                break
-            }
-            sleepQuietly(POLL_MILLIS.toLong())
-        } while (elapsedMillis(startNanos) < TAB_BAR_WAIT_MILLIS)
-        if (candidates == 0) {
-            log(
-                "FINDING: the bottom band held no tab candidate within $TAB_BAR_WAIT_MILLIS ms; " +
-                    "the tab resolution continues with an empty band",
+    private fun navigateToImportViaDrawer(log: (String) -> Unit) {
+        val menuStartNanos = System.nanoTime()
+        var menuButton: AccessibilityNodeInfo? = null
+        val menuFound =
+            waitFor(
+                predicate = {
+                    menuButton = findByContentDescription(appRoot(), DRAWER_OPEN_BUTTON_DESCRIPTION)
+                    menuButton != null
+                },
+                timeoutMs = DRAWER_MENU_WAIT_MILLIS,
+                pollMs = POLL_MILLIS,
             )
-        }
-        return candidates
-    }
-
-    /**
-     * The import tab, resolved by tab-bar geometry (Fix B) instead of the dead label lookup - the
-     * tab-bar nodes expose no text and no contentDescription on this build, so a lookup can never
-     * succeed - and instead of the nearest-clickable coordinate fallback, which picked the 3rd tab
-     * (centre x=532) rather than the import tab and switched the app away from the import screen.
-     *
-     * The bottom band ([TAB_BAND_TOP]..[TAB_BAND_BOTTOM]) is scanned ONCE ([scanBottomBand]) for nodes
-     * between [TAB_WIDTH_MIN] and [TAB_WIDTH_MAX] wide, regardless of clickability (the selected tab is
-     * not clickable), sorted by their left edge; every raw candidate and every node the [TAB_WIDTH_TAB_MIN]
-     * tab width floor EXCLUDED is logged with its index, bounds, centre, width and clickable flag, and the
-     * resolution line reports the raw and the tab candidate counts plus the wait bound it will use. Only
-     * the nodes the floor keeps are then collapsed to one node per tab position ([collapseTabCandidates]),
-     * so the new-expense FAB (147 px, tapped as a retry by the run behind class doc defect 2) cannot enter
-     * the candidate list at all. The import tab is bottom-band index [IMPORT_TAB_INDEX] (the 4th tab,
-     * centre x=[IMPORT_TAB_FALLBACK_X] on the managed AVD's 1080x2400 profile):
-     * - a non-clickable import tab IS the already-selected tab: nothing is tapped at all;
-     * - a clickable one is clicked and the import review screen WITH a candidate row is awaited for
-     *   `tabListWaitMillis` ms (default [TAB_LIST_WAIT_MILLIS], 180 s, because the first full list read at
-     *   this library's size does not finish inside the 30 s this used to allow)
-     *   ([importReviewRendered], the strict both-halves test - the loose "a node's text ends with CNY"
-     *   test is satisfied by the HOME screen's transaction lines and made every attempt report
-     *   `rendered=true` after a few ms), and the attempt's elapsed time is logged whether it rendered or
-     *   not;
-     * - when the screen does not render, the remaining tab candidates are retried in increasing distance
-     *   from x=[IMPORT_TAB_FALLBACK_X], bounded to [TAB_MAX_ATTEMPTS] taps in total, every attempt and its
-     *   outcome logged, and the resolution stops as soon as the screen renders. Fewer than four
-     *   candidates (the floor dropped some, or the band is thin) is not an error: the resolution keeps
-     *   going with what remains and never resurrects an excluded node.
-     * A bottom band with no node at or above the floor is the only case that still falls back to the
-     * nearest clickable node to ([IMPORT_TAB_FALLBACK_X], [IMPORT_TAB_FALLBACK_Y]), and it says so in the
-     * evidence. The caller awaits the band itself before calling this ([awaitTabBar]), so an empty band
-     * here means the tab bar did not compose within that bound - not that the frame was read too early.
-     * Returns whether the candidate list rendered during the resolution.
-     */
-    private fun resolveImportTab(log: (String) -> Unit): Boolean {
-        val listWaitMillis = intArg(ARG_TAB_LIST_WAIT_MILLIS, TAB_LIST_WAIT_MILLIS)
-        val scan = scanBottomBand(appRoot())
-        log(
-            "import tab resolution: bottom band top>=$TAB_BAND_TOP bottom<=$TAB_BAND_BOTTOM width=$TAB_WIDTH_MIN..$TAB_WIDTH_MAX " +
-                "tabWidthMin=$TAB_WIDTH_TAB_MIN rawCandidates=${scan.raw.size} tabCandidates=${scan.tabs.size} " +
-                "listWaitMillis=$listWaitMillis",
-        )
-        for ((index, node) in scan.raw.withIndex()) {
-            log("import tab raw candidate[$index] ${describeTabCandidate(node)}")
-        }
-        for ((index, node) in scan.excluded.withIndex()) {
-            log(
-                "import tab candidate excluded[$index] (not a tab: width ${boundsOf(node).width()} < $TAB_WIDTH_TAB_MIN): " +
-                    describeTabCandidate(node),
+        log("drawer menu button wait: found=$menuFound elapsedMs=${elapsedMillis(menuStartNanos)}")
+        val menu = menuButton
+        if (!menuFound || menu == null) {
+            val state = observedState()
+            log("FINDING: the drawer menu button (contentDescription $DRAWER_OPEN_BUTTON_DESCRIPTION) never appeared")
+            fail(
+                "the drawer menu button (contentDescription $DRAWER_OPEN_BUTTON_DESCRIPTION) did not appear within " +
+                    "$DRAWER_MENU_WAIT_MILLIS ms; the drawer navigation was not attempted: state $state",
             )
-        }
-        val candidates = collapseTabCandidates(scan.tabs, log)
-        for ((index, node) in candidates.withIndex()) {
-            log("import tab candidate[$index] ${describeTabCandidate(node)}")
-        }
-        if (candidates.isEmpty()) {
-            log(
-                "FINDING: the bottom band yielded no tab candidate; last resort = the nearest clickable node to " +
-                    "($IMPORT_TAB_FALLBACK_X, $IMPORT_TAB_FALLBACK_Y)",
-            )
-            clickNearestTo(IMPORT_TAB_FALLBACK_X, IMPORT_TAB_FALLBACK_Y, log)
-            return false
-        }
-        val importTab = candidates.getOrNull(IMPORT_TAB_INDEX)
-        if (importTab != null && !importTab.isClickable) {
-            log("import tab already selected (not clickable); no tap")
-            return false
-        }
-        if (importTab == null) {
-            log("FINDING: the bottom band yielded only ${candidates.size} tab candidate(s); the import tab index $IMPORT_TAB_INDEX is unavailable")
-        } else {
-            log("import tab choice: bottom-band index $IMPORT_TAB_INDEX of ${candidates.size} ${describeTabCandidate(importTab)}")
-        }
-        val attempts = orderedTabAttempts(candidates)
-        var taps = 0
-        for (node in attempts) {
-            if (taps >= TAB_MAX_ATTEMPTS) {
-                break
-            }
-            if (!node.isClickable) {
-                log("import tab attempt skipped (not clickable, a selected tab cannot be tapped): ${describeTabCandidate(node)}")
-                continue
-            }
-            taps += 1
-            log("import tab attempt $taps/$TAB_MAX_ATTEMPTS tap ${describeTabCandidate(node)}")
-            val accepted = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            log("import tab attempt $taps/$TAB_MAX_ATTEMPTS click accepted=$accepted")
-            val attemptStartNanos = System.nanoTime()
-            // The per-attempt success test is the strict both-halves one ([importReviewRendered]), not
-            // "some node's text ends with CNY": the latter is satisfied by the HOME screen's transaction
-            // lines, so an attempt whose tap did not switch the tab would report `rendered=true` after a
-            // few ms and the retry loop below would never run. The bound is the `tabListWaitMillis`
-            // argument (default [TAB_LIST_WAIT_MILLIS]): the FIRST full list read at this library's size
-            // takes far longer than the 30 s this used to allow, and the elapsed time is logged for a
-            // rendered attempt as well as for a failed one.
-            val rendered = waitFor({ importReviewRendered(appRoot()) }, listWaitMillis, POLL_MILLIS)
-            log("import tab attempt $taps/$TAB_MAX_ATTEMPTS rendered=$rendered elapsedMs=${elapsedMillis(attemptStartNanos)}")
-            if (rendered) {
-                return true
-            }
-        }
-        log("FINDING: no bottom-band tab attempt rendered the candidate list within $listWaitMillis ms each (taps=$taps)")
-        return false
-    }
-
-    /**
-     * One bottom-band scan, left-to-right in all three lists: [raw] is every node inside the band's
-     * width window, [tabs] the ones wide enough to be a tab ([TAB_WIDTH_TAB_MIN]) and [excluded] the ones
-     * the tab width floor drops - the new-expense FAB and the tabs' inner decorations. The split is kept
-     * rather than only the filtered list so [resolveImportTab] can log what it refused to consider: the
-     * FAB tap that navigated away from the import screen (class doc defect 2) has to be visible in the
-     * evidence as an exclusion, not as a missing candidate.
-     */
-    private data class BottomBandScan(
-        val raw: List<AccessibilityNodeInfo>,
-        val tabs: List<AccessibilityNodeInfo>,
-        val excluded: List<AccessibilityNodeInfo>,
-    )
-
-    /**
-     * The bottom band's TAB candidates, in left-to-right order: the nodes of [scanBottomBand] that are at
-     * least [TAB_WIDTH_TAB_MIN] wide. The band and the width window are the geometry fact measured on the
-     * managed AVD's 1080x2400 profile (four 183-184 px wide tab nodes whose tops sit at y=2095 and
-     * bottoms at y=2305); clickability is deliberately not part of the filter, because the SELECTED tab is
-     * not clickable and still has to be identifiable.
-     *
-     * [TAB_WIDTH_TAB_MIN] is the tab width floor. The band's non-tab nodes are the tabs' 126-127 px inner
-     * decorations and the 147 px new-expense FAB, so 170 px separates them from the narrowest tab (183 px)
-     * with margin on both sides - and a node the floor drops can never be a candidate (not at index
-     * [IMPORT_TAB_INDEX], not as a retry attempt), which is what the FAB needs, because tapping it
-     * navigates to the new-expense screen (class doc defect 2).
-     */
-    private fun bottomBandTabNodes(root: AccessibilityNodeInfo?): List<AccessibilityNodeInfo> {
-        val scan = scanBottomBand(root)
-        return scan.tabs
-    }
-
-    /**
-     * Scans the bottom band ONCE and splits it, so the resolution's raw logging, its exclusion logging and
-     * its candidate list always describe the same tree read. [BottomBandScan.raw] is the band and
-     * width-window filter ([TAB_BAND_TOP]..[TAB_BAND_BOTTOM], [TAB_WIDTH_MIN]..[TAB_WIDTH_MAX]) sorted by
-     * left edge; the floor is applied to [BottomBandScan.tabs] only, and the nodes it drops are returned
-     * as [BottomBandScan.excluded] for the evidence.
-     */
-    private fun scanBottomBand(root: AccessibilityNodeInfo?): BottomBandScan {
-        val inBand =
-            collectNodes(root) { node ->
-                val bounds = boundsOf(node)
-                bounds.top >= TAB_BAND_TOP &&
-                    bounds.bottom <= TAB_BAND_BOTTOM &&
-                    bounds.width() >= TAB_WIDTH_MIN &&
-                    bounds.width() <= TAB_WIDTH_MAX
-            }.sortedBy { node -> boundsOf(node).left }
-        return BottomBandScan(
-            raw = inBand,
-            tabs = inBand.filter { node -> boundsOf(node).width() >= TAB_WIDTH_TAB_MIN },
-            excluded = inBand.filter { node -> boundsOf(node).width() < TAB_WIDTH_TAB_MIN },
-        )
-    }
-
-    /**
-     * Collapses the band's TAB candidates ([BottomBandScan.tabs], already narrowed by
-     * [TAB_WIDTH_TAB_MIN]) to ONE node per tab position, in left-to-right order, which is what makes the
-     * index-[IMPORT_TAB_INDEX] fact hold. A device dump of the review screen (the same tree the second run
-     * traversed) shows why a tab position can still be exposed more than once after the width floor: each
-     * tab box (183-184 x 210 at y=2095..2305) appears twice in the tree - the three unselected ones once
-     * clickable and once not, the selected import tab twice non-clickable - so the list this function
-     * receives still holds two nodes per position.
-     *
-     * A candidate whose bounds are contained in (or identical to) a candidate already kept is therefore
-     * dropped, and a clickable node at a position replaces a non-clickable node kept there - so each tab
-     * position keeps the node that can actually be tapped, and every drop and replacement is logged.
-     *
-     * The nodes that are NOT tabs never reach this function at all: the tabs' 126-127 px inner decorations
-     * and the 147 px new-expense FAB are below [TAB_WIDTH_TAB_MIN] and [scanBottomBand] drops them first,
-     * so the FAB - which the run behind class doc defect 2 tapped as a retry - can never be collapsed into
-     * a candidate or a retry attempt again.
-     */
-    private fun collapseTabCandidates(
-        raw: List<AccessibilityNodeInfo>,
-        log: (String) -> Unit,
-    ): List<AccessibilityNodeInfo> {
-        val kept = mutableListOf<AccessibilityNodeInfo>()
-        for (node in raw) {
-            val bounds = boundsOf(node)
-            val containerIndex = kept.indexOfFirst { other -> containsBounds(boundsOf(other), bounds) }
-            if (containerIndex < 0) {
-                kept += node
-                continue
-            }
-            if (!kept[containerIndex].isClickable && node.isClickable) {
-                log("import tab candidate replaced (clickable node at the same position): ${describeTabCandidate(node)}")
-                kept[containerIndex] = node
-            } else {
-                log("import tab candidate dropped (inside ${boundsOf(kept[containerIndex])}): ${describeTabCandidate(node)}")
-            }
-        }
-        return kept.sortedBy { node -> boundsOf(node).left }
-    }
-
-    /** Whether [inner] lies inside [outer] (identical bounds included, so duplicates collapse). */
-    private fun containsBounds(
-        outer: Rect,
-        inner: Rect,
-    ): Boolean = outer.left <= inner.left && outer.top <= inner.top && outer.right >= inner.right && outer.bottom >= inner.bottom
-
-    /**
-     * The tap order of [resolveImportTab]: the import tab (bottom-band index [IMPORT_TAB_INDEX]) first
-     * when it exists, then every remaining candidate by increasing distance of its centre from
-     * x=[IMPORT_TAB_FALLBACK_X]. Candidates that are not clickable are skipped by the caller.
-     *
-     * Every node this ordering can reach is a TAB: [bottomBandTabNodes] has already applied the
-     * [TAB_WIDTH_TAB_MIN] floor, so the 147 px new-expense FAB - the node this distance order tapped in
-     * the run behind class doc defect 2 - is not in the list it sorts.
-     */
-    private fun orderedTabAttempts(candidates: List<AccessibilityNodeInfo>): List<AccessibilityNodeInfo> {
-        val importTab = candidates.getOrNull(IMPORT_TAB_INDEX)
-        val remaining =
-            candidates
-                .filter { node -> node !== importTab }
-                .sortedBy { node -> abs(boundsOf(node).centerX() - IMPORT_TAB_FALLBACK_X) }
-        return if (importTab == null) remaining else listOf(importTab) + remaining
-    }
-
-    /** One tab candidate in the evidence: bounds, centre, width, clickability, class and (empty) label. */
-    private fun describeTabCandidate(node: AccessibilityNodeInfo): String {
-        val bounds = boundsOf(node)
-        return "bounds=$bounds center=(${bounds.centerX()}, ${bounds.centerY()}) width=${bounds.width()} " +
-            "clickable=${node.isClickable} class=${node.className} label=${nodeLabel(node)}"
-    }
-
-    private fun clickNearestTo(
-        pointX: Int,
-        pointY: Int,
-        log: (String) -> Unit,
-    ) {
-        val clickable = collectNodes(appRoot()) { node -> node.isClickable }
-        val nearest = clickable.minByOrNull { node -> distanceSquared(boundsOf(node), pointX, pointY) }
-        if (nearest == null) {
-            log("FINDING: coordinate fallback found no clickable node near ($pointX, $pointY)")
             return
         }
-        val bounds = boundsOf(nearest)
-        log("coordinate fallback target label=${nodeLabel(nearest)} class=${nearest.className}")
-        log("coordinate fallback bounds=$bounds center=(${bounds.centerX()}, ${bounds.centerY()})")
-        val clicked = nearest.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        log("coordinate fallback click accepted=$clicked")
-    }
-
-    private fun distanceSquared(
-        bounds: Rect,
-        pointX: Int,
-        pointY: Int,
-    ): Long {
-        val deltaX = (bounds.centerX() - pointX).toLong()
-        val deltaY = (bounds.centerY() - pointY).toLong()
-        return deltaX * deltaX + deltaY * deltaY
+        val menuClickAccepted = clickNode(menu)
+        log("drawer menu button click accepted=$menuClickAccepted node=${nodeLabel(menu)}")
+        val rowStartNanos = System.nanoTime()
+        var importRow: AccessibilityNodeInfo? = null
+        val rowFound =
+            waitFor(
+                predicate = {
+                    importRow = findByText(appRoot(), DRAWER_IMPORT_ROW_TEXT)
+                    importRow != null
+                },
+                timeoutMs = DRAWER_ROW_WAIT_MILLIS,
+                pollMs = POLL_MILLIS,
+            )
+        log("drawer import row wait: found=$rowFound elapsedMs=${elapsedMillis(rowStartNanos)}")
+        val row = importRow
+        if (!rowFound || row == null) {
+            val state = observedState()
+            log("FINDING: the drawer's import row (text $DRAWER_IMPORT_ROW_TEXT) never appeared after the menu click")
+            fail(
+                "the drawer's import row (text $DRAWER_IMPORT_ROW_TEXT) did not appear within $DRAWER_ROW_WAIT_MILLIS ms " +
+                    "after the menu button click (accepted=$menuClickAccepted): state $state",
+            )
+            return
+        }
+        val rowClickAccepted = clickNode(row)
+        log("drawer import row click accepted=$rowClickAccepted node=${nodeLabel(row)}")
     }
 
     // ---- root retrieval and diagnostics ----
@@ -4448,10 +4167,11 @@ class ImportScaleTraversalInstrumentedTest {
 
     /**
      * The one-line state a failed precondition carries: how many interactive windows the automation
-     * sees, which packages they belong to, what the active-window root is, whether the import tab is
-     * currently reachable, and the import-review-screen predicate's own verdict ([readImportScreen]:
-     * present, the branch that matched, and whether a candidate row was seen) so a screen-precondition
-     * failure names the half that was missing. Never throws; a broken read is reported as text.
+     * sees, which packages they belong to, what the active-window root is, whether the drawer's import
+     * row is currently reachable, and the import-review-screen predicate's own verdict
+     * ([readImportScreen]: present, the branch that matched, and whether a candidate row was seen) so a
+     * screen-precondition failure names the half that was missing. Never throws; a broken read is
+     * reported as text.
      */
     private fun observedState(): String =
         runCatching {
@@ -4461,10 +4181,10 @@ class ImportScaleTraversalInstrumentedTest {
             val windows = windowsResult.getOrNull().orEmpty()
             val packages = windows.mapNotNull { window -> window.root?.packageName?.toString() }.distinct()
             val root = appRoot()
-            val importTabFound = root?.let { node -> findImportTabNode(node) } != null
+            val importRowFound = root?.let { node -> findByText(node, DRAWER_IMPORT_ROW_TEXT) } != null
             val screen = readImportScreen(root)
             val windowError = windowsResult.exceptionOrNull()?.let { error -> " windowsError=${describeError(error)}" }.orEmpty()
-            "windows=${windows.size} packages=$packages rootInActiveWindow=${activeRoot?.packageName} importTabFound=$importTabFound " +
+            "windows=${windows.size} packages=$packages rootInActiveWindow=${activeRoot?.packageName} drawerImportRowFound=$importRowFound " +
                 "importScreenPresent=${screen.present} importScreenBranch=${screen.branch} candidateRowSeen=${screen.candidateRow}$windowError"
         }.getOrElse { error -> "observedState failed ${describeError(error)}" }
 
@@ -4746,51 +4466,6 @@ class ImportScaleTraversalInstrumentedTest {
         )
         shell("input tap ${bounds.centerX()} ${bounds.centerY()}")
         return PickerClickOutcome(accepted = false, coordinateTapIssued = true)
-    }
-
-    /**
-     * The label lookup that the tab resolution used to run, kept ONLY for the `importTabFound` field of
-     * the [observedState] diagnostic string - it is not a resolution path any more. It matches a node
-     * whose own text or contentDescription contains [IMPORT_TAB_LABEL] and resolves a clickable self or
-     * ancestor within [CLICK_PARENT_DEPTH] levels; on the review screen the SELECTED tab is not
-     * clickable and no ancestor is, so it returns null there, which is exactly why the second device run
-     * fell through to a coordinate fallback. The review-screen dump also shows that only the 65 px wide
-     * label TextView child carries 导入 and no tab node does, so this lookup can never identify the tab.
-     */
-    private fun findImportTabNode(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
-        val matches = collectNodes(root) { node -> labelContains(node, IMPORT_TAB_LABEL) }
-        val clickable = matches.mapNotNull { node -> clickableSelfOrAncestor(node, CLICK_PARENT_DEPTH) }
-        return clickable.maxByOrNull { node -> boundsOf(node).bottom }
-    }
-
-    /** Whether the node's own visible text or its content description contains [label]. */
-    private fun labelContains(
-        node: AccessibilityNodeInfo,
-        label: String,
-    ): Boolean {
-        val description = node.contentDescription?.toString().orEmpty()
-        return nodeText(node).contains(label) || description.contains(label)
-    }
-
-    /** [node] when it is clickable, otherwise its nearest clickable ancestor within [maxDepth] levels. */
-    @Suppress("DEPRECATION")
-    private fun clickableSelfOrAncestor(
-        node: AccessibilityNodeInfo,
-        maxDepth: Int,
-    ): AccessibilityNodeInfo? {
-        if (node.isClickable) {
-            return node
-        }
-        var parent = node.parent
-        var depth = 0
-        while (parent != null && depth < maxDepth) {
-            if (parent.isClickable) {
-                return parent
-            }
-            parent = parent.parent
-            depth += 1
-        }
-        return null
     }
 
     private fun candidateCheckboxCount(root: AccessibilityNodeInfo?): Int = collectNodes(root) { node -> node.contentDescription?.toString() == CANDIDATE_CHECKBOX_DESC }.size

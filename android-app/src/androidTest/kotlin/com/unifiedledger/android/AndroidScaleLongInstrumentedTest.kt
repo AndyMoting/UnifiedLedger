@@ -404,7 +404,7 @@ class AndroidScaleLongInstrumentedTest {
         // post-launch tail read runs against the live app — there the guard
         // is post-chain quiescence, not the force-stop).
         stage("saf_import", 1800000) {
-            ui.click("导入")
+            ui.openImportViaDrawer()
             ui.selectSafFixture(spec.mainSessionFileName)
             ui.await(1800000) { ui.has("接治完成：新增 " + spec.mainSessionRows + "，等价重放 0，解析拒绝 0，接治拒绝 0。") }
             ui.click("刷新清单")
@@ -785,10 +785,12 @@ class AndroidScaleLongInstrumentedTest {
      * state-silent on every run.
      */
     private fun traversalWalk(snapshot: ScaleSnapshot) {
-        // The app relaunched to the home screen; 导入 opens the import
-        // screen whose review list collectTraversal walks (the same
-        // navigation the chain's saf_import stage and the reopen tail use).
-        ui.click("导入")
+        // The app relaunched to the home screen; the drawer's 导入账单 row opens
+        // the import screen whose review list collectTraversal walks (the same
+        // drawer navigation the chain's saf_import stage and the reopen tail
+        // use, and the only in-app route since P8-00 removed the bottom bar's
+        // import tab).
+        ui.openImportViaDrawer()
         ui.await { ui.has("支付宝账单（CSV）") }
         // collectTraversal seek-backs to the 刷新清单 anchor itself
         // before walking the whole list exactly once; it requires the
@@ -821,7 +823,7 @@ class AndroidScaleLongInstrumentedTest {
      */
     private fun reopenTail(snapshot: ScaleSnapshot) {
         checkEconomicUi()
-        ui.click("导入")
+        ui.openImportViaDrawer()
         ui.await { ui.has("支付宝账单（CSV）") }
         val reopened = oracle.snapshot(state.getString("ledger"))
         check(reopened == snapshot)

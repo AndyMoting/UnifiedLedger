@@ -15,6 +15,9 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import java.util.ArrayDeque
 
+/** The drawer row wait: the 导入账单 row composes only while the drawer is open, so this covers its entrance. */
+private const val DRAWER_ROW_TIMEOUT_MS = 30_000L
+
 /** Fresh semantic nodes only; gesture geometry comes from the current scroll container. */
 internal class AndroidScaleUi(
     private val instrumentation: Instrumentation,
@@ -356,6 +359,26 @@ internal class AndroidScaleUi(
     }
 
     /**
+     * Navigates to the import review screen through the product's own navigation
+     * drawer -- the only in-app route since P8-00 (D-301) removed the bottom
+     * navigation bar's import tab. The menu button is matched by its
+     * contentDescription (the top bar's icon carries no text) and the drawer's
+     * 导入账单 row by its exact text, which composes only while the drawer is
+     * open, so the row await covers the drawer's entrance. `clickUntil` could
+     * not express this two-step path: its one-click contract has no second
+     * label to wait for, and the menu button's contentDescription does not
+     * match its own effect.
+     */
+    fun openImportViaDrawer() {
+        await { has("打开菜单") }
+        val menu = findNode { candidate -> matches(candidate, "打开菜单", false) } ?: error("drawer menu button absent: 打开菜单")
+        clickNode(menu)
+        await(DRAWER_ROW_TIMEOUT_MS) { has("导入账单") }
+        val row = findNode { candidate -> matches(candidate, "导入账单", false) } ?: error("drawer import row absent: 导入账单")
+        clickNode(row)
+    }
+
+    /**
      * Clicks [clickText] until the observable postcondition [effectText]
      * surfaces (bounded). The D-216 local runs proved a click performed on a
      * stale client-cache node can fail silently (the checkbox toggled nothing
@@ -536,11 +559,12 @@ internal class AndroidScaleUi(
     }
 
     private fun selectSafFixtureOnce(fileName: String) {
-        // The caller clicks 导入 and returns immediately; on a fast host the
-        // import screen can still be unrendered when the first seek fires, and
-        // seeking on the (unscrollable, empty) home tree dies with "scroll
-        // container absent" — the local-small run's saf_import failure at
-        // 810ms. Await the format entry itself: await polls has() with the
+        // The caller opens the import screen via [openImportViaDrawer] (the
+        // drawer's menu button, then the 导入账单 row) and returns; on a fast
+        // host the import screen can still be unrendered when the first seek
+        // fires, and seeking on the (unscrollable, empty) home tree dies with
+        // "scroll container absent" — the local-small run's saf_import failure
+        // at 810ms. Await the format entry itself: await polls has() with the
         // D-208 rate-limited resets, so a stale cache cannot hide the screen.
         await { has("支付宝账单（CSV）") }
         seek("支付宝账单（CSV）", forward = false)
