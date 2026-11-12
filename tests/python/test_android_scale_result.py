@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -428,12 +429,22 @@ class ReadyMarkersCoverEveryHomeState(unittest.TestCase):
 
 
 HOME_SCREEN = Path(__file__).resolve().parents[2] / "app-ui" / "src" / "commonMain" / "kotlin" / "com" / "unifiedledger" / "ui" / "P503OverviewScreen.kt"
+DEVICE_READY_COPY = Path(__file__).resolve().parents[2] / "android-app" / "src" / "androidTest" / "kotlin" / "com" / "unifiedledger" / "android" / "LedgerReadyCopy.kt"
 
 
 def rendered_copy(path: Path) -> str:
     """The file's code lines; a comment quoting the copy proves nothing about what renders."""
     return "\n".join(line for line in path.read_text(encoding="utf-8").splitlines()
                      if not line.lstrip().startswith(("//", "*", "/*")))
+
+
+def device_ready_prefixes(path: Path) -> tuple[str, ...]:
+    """The quoted literals of the file's one `PREFIXES = listOf(...)` declaration, in order."""
+    declaration = re.search(r"\bPREFIXES\s*=\s*listOf\(([^)]*)\)", rendered_copy(path))
+    if declaration is None:
+        raise AssertionError(f"{path} declares no `PREFIXES = listOf(...)`, so the device ready "
+                             f"copy cannot be compared with READY_MARKERS in result.py")
+    return tuple(re.findall(r'"([^"]*)"', declaration.group(1)))
 
 
 class ReadyMarkersStayInStepWithTheUiCopy(unittest.TestCase):
@@ -445,6 +456,14 @@ class ReadyMarkersStayInStepWithTheUiCopy(unittest.TestCase):
                           f"READY_MARKERS entry {marker!r} no longer appears in {HOME_SCREEN.name} "
                           f"({HOME_SCREEN.parent}): a home-copy edit must update READY_MARKERS in "
                           f"tools/python/android_scale/result.py")
+
+    def test_the_device_ready_copy_declares_the_same_marker_set(self):
+        prefixes = device_ready_prefixes(DEVICE_READY_COPY)
+        self.assertEqual(
+            set(prefixes), set(READY_MARKERS),
+            f"{DEVICE_READY_COPY.name} declares {prefixes} while READY_MARKERS in "
+            f"tools/python/android_scale/result.py is {READY_MARKERS}: a home-copy edit must update "
+            f"all three places (P503OverviewScreen.kt, READY_MARKERS, LedgerReadyCopy.PREFIXES)")
 
 
 class ReducerRejectsWrongIdentityAndCrashes(unittest.TestCase):
