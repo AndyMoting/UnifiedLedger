@@ -7149,3 +7149,22 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **读数（2026-11-12，本批两个 run）：** 拆出后两条腿确实并行——run `43222630849`（本批自己的 PR，冷缓存）`Android compile` 351 s、`Android unit tests` 184 s，收口 `Kotlin tests` 7 s 通过；run `43224378580`（更新到最新 main 后）`Android compile` 331 s、`Android unit tests` 223 s。原 399 s 的关键 job 已不再包含那 1.35 min 的单测腿，但两个 run 的墙钟（9.65 / 8.9 min）都由 `ledger-data` 分片主导（shard 2 557 s、core 497 s；shard 2 478 s、shard 5 437 s），因此**本批的墙钟收益要等分片降下来才会显现**；在此之前不要把 9.65 min 归因于这次拆分。跨 job 构建缓存是否命中未测：两个 job 同时启动、互不等待，命不中时各自重编译 Android 主源码。
 
 **关联决定：** D-303（本条推翻其第 3 条「不拆 job」，判据从 3.9 min 变为 6.65 min）、D-302（收口门与分类器）、D-314（把 `Android compile` 列为下一处待调优项）、D-192（必过检查不得从测试缓存命中）。
+
+## D-316 `P705TransferCorrectionCommitPortTest` 按场景拆四类（字节等价，D-303 剧本复刻）
+
+**状态：** 已批准并登记（2026-11-12）。一批 tracked 变更：`ledger-data` 测试类 1 → 5（一个 `internal` 抽象支撑基类 + 四个子类）、`tools/ci/ledger-data-shards.txt`（1 行换 4 行，131 → 134）、`.github/workflows/ci.yml` 类数注释、两处注释重指向、本条。
+
+**背景（实测，dispatch run `43227903120` 的 `junit-shard-2` 工件）：** 该类 1840 行 / 24 例 / **164.2 s**，整类落在一个 fork 上；逐例分布平坦（12.07 s 封顶、尾部 5.18 s），没有可瞄准的重腿——所以按场景族切，不按重量切。
+
+**决定：**
+
+1. 拆为 `P705TransferCorrectionTestSupport`（`internal abstract`，21 个成员 `private` → `protected`，沿用既有 `P705Fixture`）+ 四个子类：Geometry（6 例，33.9 s）/ Note（4 例，29.3 s）/ CatalogRejection（6 例，43.7 s）/ Invalidation（8 例，57.4 s）。24 个用例名与正文逐字节未动（逐例比对 0 差异）；四行全部留在片 2——收益来自 4 fork 里看到四个小单元，不是跨片搬质量。
+2. **可见性教训（首轮 CI 即红）**：`P705Database` 是 `internal`，基类里 10 个 `protected` 成员以它作参数触发 `EXPOSED_PARAMETER_TYPE`（在原巨类里这些成员是 `private`，故合法）。正确修法是**基类与四个子类全标 `internal`**；只把成员降 `internal` 会留下「public 子类继承 internal 基类」的 `EXPOSED_SUPER_CLASS`。四个 `internal` 测试类是仓库首次，JUnit 发现与 `--tests` 过滤不受影响（JVM 字节码仍是 public 类、测试方法不带 `internal` 修饰符），已由本轮 CI 实证。
+3. **ktlint 教训**：类体第一行留空行会红 `standard:no-empty-first-line-in-class-body`；五个文件已修正。
+4. **读数**：片 2 由 478 s（run `43224378580`）降到 **405 s**（run `43231900811`，墙钟 7.85 min）；四类实测 61.2 / 49.8 / 49.7 / 33.2 s，合计 193.9 s，比拆前的 164.2 s 高 18%，与「类被单独计时 + run 间波动」同量级。该轮是分支第二轮、**不是干净 A/B**；新上限转成片 5 的 444 s。
+
+**登记迁移（供 T-01/T-06/T-11 的旧证据指针解析；历史条目不改）：** `destinationCreditCorrectionReshapesAllThreeLegs` → `P705TransferCorrectionGeometryTest`；`voidedTransferLeavesTheEffectiveSurfaceAndCannotBeCorrected`、`replayConflictsAndStaleCasBehaveLikeTheOrdinaryFamily` → `P705TransferCorrectionInvalidationTest`；两条 owner 向量 → `P705TransferCorrectionNoteTest`。
+
+**边界：** 零产品代码、零 schema/迁移、零依赖、零账本语义；workflow 行为零改动（只改类数注释）；单项 revert 即回退。
+
+**关联决定：** D-314（分片重排、Rg06 拆分与夹具复用否证，本条是其残余①的落实）、D-303（分片装箱与迁移大测试拆分剧本）、D-315（Android 单测腿拆分）。
