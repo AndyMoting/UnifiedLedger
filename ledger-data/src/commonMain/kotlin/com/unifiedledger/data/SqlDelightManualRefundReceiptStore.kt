@@ -318,7 +318,13 @@ class SqlDelightManualRefundReceiptStore private constructor(
     private fun reject(code: ManualRefundRejectionCode): ManualRefundReceiptCommitResult = ManualRefundReceiptCommitResult.Rejected(code)
 
     companion object {
-        internal fun forPlatformConfiguredDatabase(
+        /**
+         * The composition-root entry point for a platform-configured [LedgerDatabase]: the database
+         * already carries the platform's connection configuration (the Android handle owns the
+         * driver), so this deliberately skips [configureSqliteConnection]. Public because both
+         * composition roots (D-312; spec section 4) construct the store through it.
+         */
+        fun forPlatformConfiguredDatabase(
             database: LedgerDatabase,
         ): SqlDelightManualRefundReceiptStore = SqlDelightManualRefundReceiptStore(database)
     }

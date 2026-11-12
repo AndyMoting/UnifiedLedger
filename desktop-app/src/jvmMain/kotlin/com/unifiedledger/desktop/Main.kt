@@ -67,6 +67,7 @@ import com.unifiedledger.application.ImportRequestId
 import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ManualLendingTransactionFactory
+import com.unifiedledger.application.ManualRefundCandidatesReadPort
 import com.unifiedledger.application.ManualTransferTransactionFactory
 import com.unifiedledger.application.MixedPaymentFlowFormalFactory
 import com.unifiedledger.application.OrdinaryFlowFormalFactory
@@ -88,11 +89,13 @@ import com.unifiedledger.application.QueryTagMerchantFilterPage
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.ResolveManualIncomeCommitStatus
 import com.unifiedledger.application.ResolveManualLendingCommitStatus
+import com.unifiedledger.application.ResolveManualRefundReceiptCommitStatus
 import com.unifiedledger.application.ResolveManualTransferCommitStatus
 import com.unifiedledger.application.ResolveTransactionCorrectionCommitStatus
 import com.unifiedledger.application.ResolveTransactionVoidCommitStatus
 import com.unifiedledger.application.ReviewImportDuplicateCandidate
 import com.unifiedledger.application.SaveBudgetConfiguration
+import com.unifiedledger.application.SubmitManualRefundReceipt
 import com.unifiedledger.application.TransferFlowFormalFactory
 import com.unifiedledger.application.UpdateTransactionAnnotation
 import com.unifiedledger.application.UuidV7AnnotationRequestIdSource
@@ -111,6 +114,7 @@ import com.unifiedledger.application.UuidV7ImportIntakeIdSource
 import com.unifiedledger.application.UuidV7ManualExpenseRequestIdSource
 import com.unifiedledger.application.UuidV7ManualIncomeRequestIdSource
 import com.unifiedledger.application.UuidV7ManualLendingRequestIdSource
+import com.unifiedledger.application.UuidV7ManualRefundReceiptIdSource
 import com.unifiedledger.application.UuidV7ManualTransferRequestIdSource
 import com.unifiedledger.application.UuidV7P801ReconciliationIdSource
 import com.unifiedledger.application.UuidV7TagMerchantRequestIdSource
@@ -133,6 +137,8 @@ import com.unifiedledger.data.SqlDelightEvidenceProjectionStore
 import com.unifiedledger.data.SqlDelightImportReviewReadAdapter
 import com.unifiedledger.data.SqlDelightImportSpineStore
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
+import com.unifiedledger.data.SqlDelightManualRefundCandidatesReadAdapter
+import com.unifiedledger.data.SqlDelightManualRefundReceiptStore
 import com.unifiedledger.data.SqlDelightMonthlyContributionReadAdapter
 import com.unifiedledger.data.SqlDelightP408ReconciliationStore
 import com.unifiedledger.data.SqlDelightP801AccountReconciliationReadAdapter
@@ -728,6 +734,12 @@ internal data class CloseableLedgerGraph(
     // P8-02 i2a (D7-7; spec section 2.4): the search result surface's bounded read use case. Null
     // when a graph wired none (tests, legacy graphs).
     val querySearchPage: QuerySearchPage? = null,
+    // P8-03 i2b (D-312; spec sections 2.2/4): the manual refund-receipt entry's graph-lifetime
+    // surfaces (candidate read, submit use case, unknown-commit resolver). Null when a graph wired
+    // none (tests, legacy graphs), so the host renders no refund choice.
+    val readManualRefundCandidates: ManualRefundCandidatesReadPort? = null,
+    val submitManualRefundReceipt: SubmitManualRefundReceipt? = null,
+    val resolveManualRefundCommitStatus: ResolveManualRefundReceiptCommitStatus? = null,
 )
 
 internal data class DesktopLedgerGraph(
@@ -764,6 +776,11 @@ internal data class DesktopLedgerGraph(
     // P8-02 i2a (D7-7; spec section 2.4): the search result surface's bounded read use case. Null
     // when a graph wired none (tests, legacy graphs).
     val querySearchPage: QuerySearchPage? = null,
+    // P8-03 i2b (D-312; spec sections 2.2/4): the manual refund-receipt surfaces over this graph's
+    // database. Null when a graph wired none (tests, legacy graphs).
+    val readManualRefundCandidates: ManualRefundCandidatesReadPort? = null,
+    val submitManualRefundReceipt: SubmitManualRefundReceipt? = null,
+    val resolveManualRefundCommitStatus: ResolveManualRefundReceiptCommitStatus? = null,
 )
 
 /**
@@ -969,7 +986,31 @@ internal fun buildLedgerGraph(
             setActive = ExecuteSetCounterpartyActive(counterpartyStore),
             reader = counterpartyStore,
         )
-    val entrySubmission = ExecuteManualEntrySubmission(submission, incomeSubmission, transferSubmission, ExecuteLendingSubmission(lendingSubmission))
+    // P8-03 i2b (D-312; spec sections 2.2/4): the manual refund-receipt surface. Unlike the Android
+    // root the desktop root holds its JDBC driver, so the receipt store comes from its public
+    // `(database, driver)` constructor (the same platform-configured-connection shape the catalog
+    // and counterparty stores use here). The relationship store is BOTH the atomic commit port and
+    // the unknown-commit read port, so one instance backs the submit use case and the resolver.
+    val manualRefundReceiptStore = SqlDelightManualRefundReceiptStore(database, driver)
+    val readManualRefundCandidates: ManualRefundCandidatesReadPort =
+        SqlDelightManualRefundCandidatesReadAdapter(database)
+    // One resolver instance backs both the submit use case's recovery leg and the facade's
+    // unknown-commit field, so the two can never compare a different fingerprint source.
+    val resolveManualRefundCommitStatus = ResolveManualRefundReceiptCommitStatus(manualRefundReceiptStore)
+    val submitManualRefundReceipt =
+        SubmitManualRefundReceipt(
+            commitPort = manualRefundReceiptStore,
+            idSource = UuidV7ManualRefundReceiptIdSource(UuidV7Generator(::secureRandomBytes)),
+            resolver = resolveManualRefundCommitStatus,
+        )
+    val entrySubmission =
+        ExecuteManualEntrySubmission(
+            submission,
+            incomeSubmission,
+            transferSubmission,
+            ExecuteLendingSubmission(lendingSubmission),
+            refund = submitManualRefundReceipt,
+        )
     val catalogCommands =
         ExecuteCatalogCommand(
             commitPort = store,
@@ -1257,6 +1298,10 @@ internal fun buildLedgerGraph(
                     clock = ledgerClock,
                 ),
             annotationRequestIdSource = annotationRequestIdSource,
+            // P8-03 i2b (D-312; spec sections 2.2/4): the manual refund-receipt surface.
+            readManualRefundCandidates = readManualRefundCandidates,
+            submitManualRefundReceipt = submitManualRefundReceipt,
+            resolveManualRefundCommitStatus = resolveManualRefundCommitStatus,
         )
 
     return DesktopLedgerGraph(
@@ -1282,6 +1327,9 @@ internal fun buildLedgerGraph(
         bindReconciliationEvidence = bindReconciliationEvidence,
         confirmReconciliationLink = confirmReconciliationLink,
         querySearchPage = querySearchPage,
+        readManualRefundCandidates = readManualRefundCandidates,
+        submitManualRefundReceipt = submitManualRefundReceipt,
+        resolveManualRefundCommitStatus = resolveManualRefundCommitStatus,
     )
 }
 
@@ -1331,6 +1379,9 @@ internal fun openDesktopLedger(databaseUrl: String): CloseableLedgerGraph {
             bindReconciliationEvidence = graph.bindReconciliationEvidence,
             confirmReconciliationLink = graph.confirmReconciliationLink,
             querySearchPage = graph.querySearchPage,
+            readManualRefundCandidates = graph.readManualRefundCandidates,
+            submitManualRefundReceipt = graph.submitManualRefundReceipt,
+            resolveManualRefundCommitStatus = graph.resolveManualRefundCommitStatus,
         )
     } catch (failure: Exception) {
         // A failure mid-open (schema create/open/migrate/bootstrap) must not leak the

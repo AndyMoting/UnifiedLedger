@@ -57,4 +57,11 @@ internal fun occurredAtDisplayText(instant: Instant): String {
     return if (local.date.year > 1991) "$wallClock（UTC+8）＝ $instant" else wallClock
 }
 
+/**
+ * P8-03 i2b (D-312; spec section 2.3): the `YYYY-MM-DD` Asia/Shanghai local date of an instant —
+ * the candidate row's and the confirmation page's date column. It is the date part of
+ * [occurredAtDisplayText] without the wall clock and the UTC annotation, so the two never drift.
+ */
+internal fun occurredAtLocalDateText(instant: Instant): String = instant.toLocalDateTime(occurredAtTimeZone).date.toString()
+
 private fun occurredAtWallClockText(local: LocalDateTime): String = "${local.date} ${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"

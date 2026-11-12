@@ -252,6 +252,21 @@ sealed interface P503AppState {
         val pendingExternalNavigation: PendingExternalNavigation? = null,
         /** P7-09 09.0 / T4 (P2-2 fix): the visible Busy/待处理 result; see [OverviewEmpty.externalNavigationBusy]. */
         val externalNavigationBusy: ExternalNavigationBusy? = null,
+        /**
+         * P8-03 i2b (D-312; spec section 2.2): the bounded refundable-original candidate page the
+         * host read for THIS editor. `null` = not read yet (the edit screen renders the frozen
+         * 「正在读取可退交易…」 window); a typed
+         * [com.unifiedledger.application.ManualRefundCandidatesResult] carries either the rows or
+         * the typed read failure, never a faked empty page (V-13). Defaulted so every pre-P8-03
+         * construction and copy site keeps compiling.
+         */
+        val refundCandidates: com.unifiedledger.application.ManualRefundCandidatesResult? = null,
+        /**
+         * P8-03 i2b (D-312; spec section 2.3): the refund candidate read's retry counter. The host
+         * effect keys on it together with `refundCandidates == null`, so one retry re-reads exactly
+         * once and no amount/occurred-at keystroke can ever trigger a re-read.
+         */
+        val refundCandidatesAttempt: Int = 0,
     ) : P503AppState
 
     data class AwaitingConfirmation(
@@ -271,6 +286,12 @@ sealed interface P503AppState {
          */
         val destinationAccountLabel: String? = null,
         val counterpartyLabel: String? = null,
+        /**
+         * P8-03 i2b (D-312; spec section 2.2): the refund's `date · category` original-transaction
+         * line, resolved by the reducer from the candidate page it already holds. `null` for every
+         * type that owns no such row (the confirmation page then renders no 原交易 line).
+         */
+        val originalTransactionLabel: String? = null,
         /** A-02 FIX-PIN-2: see [Editing.pinnedTargets]. */
         val pinnedTargets: Set<EntryPinTarget> = emptySet(),
         /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
@@ -336,6 +357,13 @@ sealed interface P503AppState {
         val selectableMonths: List<kotlinx.datetime.YearMonth> = emptyList(),
         /** A-02 FIX-MONTH-2: see [Editing.selectedMonth]. */
         val monthlyActivity: com.unifiedledger.application.MonthlyActivity? = null,
+        /**
+         * P8-03 i2b (D-312; D9): the type's typed rejection sentence. The refund-receipt branch
+         * lands the frozen per-code copy of its eight-code closed set, so the user reads WHICH rule
+         * refused the request instead of the shared generic banner. `null` keeps every other type's
+         * frozen generic rejection banner.
+         */
+        val rejectionNotice: String? = null,
     ) : P503AppState
 
     data class InfrastructureFailure(

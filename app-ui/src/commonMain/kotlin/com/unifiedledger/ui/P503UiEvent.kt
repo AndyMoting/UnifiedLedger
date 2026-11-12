@@ -184,6 +184,34 @@ sealed interface P503UiEvent {
         val categoryId: CategoryId,
     ) : P503UiEvent
 
+    // ---- P8-03 i2b refund-receipt events (D-312; spec sections 2.2/2.3) ----
+
+    /**
+     * Picks the original expense transaction of a refund draft. Only a
+     * [com.unifiedledger.application.RefundReceiptDraft] reacts (it writes
+     * `originalTransactionId`); every other draft and every other state absorbs it, so a
+     * late/stale dispatch can never reach `unhandled`.
+     */
+    data class SelectRefundOriginal(
+        val transactionId: TransactionId,
+    ) : P503UiEvent
+
+    /**
+     * Lands the bounded refundable-original candidate read for the open refund editor. The payload
+     * is the port's typed result, so a read failure arrives as
+     * [com.unifiedledger.application.ManualRefundCandidatesResult.Unavailable] — never as an empty
+     * list (V-13).
+     */
+    data class RefundCandidatesLoaded(
+        val result: com.unifiedledger.application.ManualRefundCandidatesResult,
+    ) : P503UiEvent
+
+    /**
+     * Retries the candidate read after a typed failure: the reducer clears the payload back to the
+     * loading window and bumps the attempt counter the host effect keys on.
+     */
+    data object RetryRefundCandidates : P503UiEvent
+
     /**
      * P7-02.A E-2: "record again" from the post-success overview. Only meaningful on the
      * overview with a retained intent; absorbed everywhere else (§6.2a). P7-02.D: [revalidation]

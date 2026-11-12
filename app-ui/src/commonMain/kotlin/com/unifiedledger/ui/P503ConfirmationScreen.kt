@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.unifiedledger.application.RefundReceiptDraft
 import com.unifiedledger.application.TypedEntryDraft
 
 /**
@@ -45,7 +46,11 @@ internal fun P503ConfirmationScreen(
         confirmationRows(draft, labels, currencyCode, currencyPrecision).forEach { row ->
             Text("${row.label}：${row.value}", style = MaterialTheme.typography.bodyMedium)
         }
-        Text("备注：${draft.note.ifEmpty { "—" }}", style = MaterialTheme.typography.bodyMedium)
+        // P8-03 i2b (D-312; spec section 2.2): a refund carries no note, so no absent-value 备注
+        // line is rendered for it.
+        if (draft !is RefundReceiptDraft) {
+            Text("备注：${draft.note.ifEmpty { "—" }}", style = MaterialTheme.typography.bodyMedium)
+        }
         Text("发生时间：${draft.occurredAt?.let(::occurredAtDisplayText) ?: "—"}", style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

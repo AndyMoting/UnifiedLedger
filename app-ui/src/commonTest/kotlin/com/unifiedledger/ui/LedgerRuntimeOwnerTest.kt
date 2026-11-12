@@ -9,7 +9,10 @@ import com.unifiedledger.application.ManualEntrySubmissionResult
 import com.unifiedledger.application.ManualExpenseSubmissionResult
 import com.unifiedledger.application.ManualIncomeSubmissionResult
 import com.unifiedledger.application.ManualLendSubmissionResult
+import com.unifiedledger.application.ManualRefundReceiptSubmissionResult
+import com.unifiedledger.application.ManualRefundRejectionCode
 import com.unifiedledger.application.ManualTransferSubmissionResult
+import com.unifiedledger.application.RefundReceiptDraft
 import com.unifiedledger.application.TransferDraft
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -784,18 +787,33 @@ class LedgerRuntimeOwnerTest {
                 TransferDraft(null, null, "1.00", occurredAt = occurredAt),
                 LendDraft(null, "1.00", null, occurredAt),
                 CollectDraft(null, "1.00", "1.00", "0.00", destinationAccountId = null, occurredAt = occurredAt),
+                // P8-03 i2b (D-312; spec section 2.6): the refund type has no infrastructure-failure
+                // member; its runtime-not-ready landing is the typed store-unavailable rejection.
+                RefundReceiptDraft(null, null, "1.00", occurredAt),
             )
         for (draft in drafts) {
             val result = runtimeNotReadySubmission(draft)
-            val isFailure =
-                when (result) {
-                    is ManualEntrySubmissionResult.Expense -> result.result is ManualExpenseSubmissionResult.InfrastructureFailure
-                    is ManualEntrySubmissionResult.Income -> result.result is ManualIncomeSubmissionResult.InfrastructureFailure
-                    is ManualEntrySubmissionResult.Transfer -> result.result is ManualTransferSubmissionResult.InfrastructureFailure
-                    is ManualEntrySubmissionResult.Lend -> result.result is ManualLendSubmissionResult.InfrastructureFailure
-                    is ManualEntrySubmissionResult.Collect -> result.result is ManualCollectSubmissionResult.InfrastructureFailure
-                }
-            assertTrue(isFailure, "draft ${draft.entryType} must map to its typed InfrastructureFailure")
+            if (draft is RefundReceiptDraft) {
+                assertEquals(
+                    ManualEntrySubmissionResult.RefundReceipt(
+                        ManualRefundReceiptSubmissionResult.Rejected(ManualRefundRejectionCode.REFUND_STORE_UNAVAILABLE),
+                    ),
+                    result,
+                    "a not-Ready refund submission must land the typed store-unavailable rejection",
+                )
+            } else {
+                val isFailure =
+                    when (result) {
+                        is ManualEntrySubmissionResult.Expense -> result.result is ManualExpenseSubmissionResult.InfrastructureFailure
+                        is ManualEntrySubmissionResult.Income -> result.result is ManualIncomeSubmissionResult.InfrastructureFailure
+                        is ManualEntrySubmissionResult.Transfer -> result.result is ManualTransferSubmissionResult.InfrastructureFailure
+                        is ManualEntrySubmissionResult.Lend -> result.result is ManualLendSubmissionResult.InfrastructureFailure
+                        is ManualEntrySubmissionResult.Collect -> result.result is ManualCollectSubmissionResult.InfrastructureFailure
+                        // Covered by the refund assertion above; a non-refund draft must never map here.
+                        is ManualEntrySubmissionResult.RefundReceipt -> false
+                    }
+                assertTrue(isFailure, "draft ${draft.entryType} must map to its typed InfrastructureFailure")
+            }
         }
     }
 

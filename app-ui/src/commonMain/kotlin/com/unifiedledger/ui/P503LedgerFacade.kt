@@ -28,13 +28,13 @@ import com.unifiedledger.application.ManualIncomeRequestIdSource
 import com.unifiedledger.application.ManualLendingOptions
 import com.unifiedledger.application.ManualLendingOptionsProvider
 import com.unifiedledger.application.ManualLendingRequestIdSource
+import com.unifiedledger.application.ManualRefundCandidatesReadPort
 import com.unifiedledger.application.ManualTransferOptions
 import com.unifiedledger.application.ManualTransferOptionsProvider
 import com.unifiedledger.application.ManualTransferRequestIdSource
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
-import com.unifiedledger.application.QueryBudgetMonth
-import com.unifiedledger.application.QueryImportCandidateDetail
+import com.unifiedledger.application.QueryBudgetMonthimport com.unifiedledger.application.QueryImportCandidateDetail
 import com.unifiedledger.application.QueryImportDuplicateReviews
 import com.unifiedledger.application.QueryImportDuplicateReviewsForSession
 import com.unifiedledger.application.QueryImportDuplicateReviewsForSessionPage
@@ -52,12 +52,14 @@ import com.unifiedledger.application.QueryWidgetMonthlySnapshot
 import com.unifiedledger.application.ResolveManualExpenseCommitStatus
 import com.unifiedledger.application.ResolveManualIncomeCommitStatus
 import com.unifiedledger.application.ResolveManualLendingCommitStatus
+import com.unifiedledger.application.ResolveManualRefundReceiptCommitStatus
 import com.unifiedledger.application.ResolveManualTransferCommitStatus
 import com.unifiedledger.application.ResolveTransactionCorrectionCommitStatus
 import com.unifiedledger.application.ResolveTransactionVoidCommitStatus
 import com.unifiedledger.application.ReviewImportDuplicateCandidate
 import com.unifiedledger.application.SaveBudgetConfiguration
 import com.unifiedledger.application.SummarizeLedgerActivity
+import com.unifiedledger.application.SubmitManualRefundReceipt
 import com.unifiedledger.application.TagMerchantAuthority
 import com.unifiedledger.application.TagMerchantCatalogReader
 import com.unifiedledger.application.TransactionAnnotationHistoryEntry
@@ -274,6 +276,15 @@ class P503LedgerFacade(
     // differs fails closed rather than rendering an incoherent amount.
     val queryWidgetMonthlySnapshot: QueryWidgetMonthlySnapshot? = null,
     val widgetExpectedCatalogVersion: () -> Long? = { null },
+    // P8-03 i2b (D-312; spec sections 2.2/4): the manual refund-receipt entry surface, built ONCE per
+    // graph and therefore a plain facade field rather than a lease-scope binding: the bounded
+    // refundable-original candidate read, the submit use case and the unknown-commit read-back
+    // resolver. All plain nullable defaults (the R-222-4 discipline) so every legacy construction,
+    // the startup tests and the app-ui owner fixtures keep compiling with the entry simply absent —
+    // and the host then renders no refund choice at all.
+    val readManualRefundCandidates: ManualRefundCandidatesReadPort? = null,
+    val submitManualRefundReceipt: SubmitManualRefundReceipt? = null,
+    val resolveManualRefundCommitStatus: ResolveManualRefundCommitStatus? = null,
 ) {
     private val session = catalogSession
     private val fallbackOptionsProvider = baseOptionsProvider

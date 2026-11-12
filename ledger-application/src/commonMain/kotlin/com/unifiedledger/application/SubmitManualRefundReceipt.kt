@@ -237,6 +237,30 @@ class SubmitManualRefundReceipt(
 }
 
 /**
+ * P8-03 i2b (D-312; spec section 2.6): the product [ManualRefundReceiptIdSource], backed by RFC
+ * 9562 UUIDv7 (the `UuidV7ConfirmedManualExpenseIdSource` shape).
+ *
+ * Every [next] call mints exactly six UUIDv7 identifiers: the relationship id (the stable
+ * relationship identity, spec section 2.1) plus the five formal-transaction ids of
+ * [ManualRefundReceiptIds]. Lazy materialization is unchanged: [next] is invoked only inside the
+ * commit port's first-request callback, so an exact replay, a request-identity conflict and a
+ * losing concurrent writer consume no ids.
+ */
+class UuidV7ManualRefundReceiptIdSource(
+    private val generator: UuidV7Generator,
+) : ManualRefundReceiptIdSource {
+    override fun next(): ManualRefundReceiptIds =
+        ManualRefundReceiptIds(
+            relationshipId = generator.next(),
+            transactionId = TransactionId(generator.next()),
+            versionId = TransactionVersionId(generator.next()),
+            postingSetId = PostingSetId(generator.next()),
+            destinationPostingId = PostingId(generator.next()),
+            expensePostingId = PostingId(generator.next()),
+        )
+}
+
+/**
  * Spec section 2.6's frozen fingerprint input: original transaction | amount | currency |
  * destination account | arrival instant. Ledger and request id are the row's identity, not the
  * payload, so a same-id request with a different payload always changes the digest.

@@ -2,8 +2,10 @@ package com.unifiedledger.application
 
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CounterpartyId
 import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.TagId
+import com.unifiedledger.domain.TransactionId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -37,8 +39,10 @@ class EntryDraftTest {
 
     @Test
     fun `entry type set is frozen`() {
+        // P8-03 i2b (D-312; spec section 2.2/D-I): the frozen five-type set is explicitly expanded
+        // by REFUND_RECEIPT — the one type this gate opens; nothing else is added.
         assertEquals(
-            listOf("EXPENSE", "INCOME", "TRANSFER", "LEND", "COLLECT"),
+            listOf("EXPENSE", "INCOME", "TRANSFER", "LEND", "COLLECT", "REFUND_RECEIPT"),
             EntryType.entries.map { it.name },
         )
     }
@@ -137,7 +141,87 @@ class EntryDraftTest {
         assertNull(validateEntryTypeSupported(EntryType.TRANSFER))
         assertNull(validateEntryTypeSupported(EntryType.LEND))
         assertNull(validateEntryTypeSupported(EntryType.COLLECT))
+        // P8-03 i2b (D-312; spec section 2.2): the gate accepts the expanded refund type too.
+        assertNull(validateEntryTypeSupported(EntryType.REFUND_RECEIPT))
     }
+
+    /**
+     * P8-03 i2b (D-312; spec section 2.2 保留矩阵) — the full 6×6 switch matrix (V-1/V-3 at the
+     * draft layer). Every direction asserts the SHARED retention rule (amount text, occurred-at,
+     * note, tags, merchant kept; category always null) and the refund type's FROZEN EXCEPTION: a
+     * refund never inherits an account and never donates one, in either direction. The other five
+     * types keep their frozen asset-account-class migration, pinned by the per-direction tests
+     * above; this matrix adds the exhaustive cross-check without weakening any of them.
+     */
+    @Test
+    fun `the full six-by-six switch matrix keeps the shared fields clears the category and never migrates a refund account`() {
+        for (source in EntryType.entries) {
+            val draft = matrixDraft(source)
+            for (target in EntryType.entries) {
+                val switched = EntryFieldRetention.switchType(draft, target)!!
+                assertEquals(target, switched.entryType, "switch $source -> $target must yield $target")
+                assertEquals(draft.amountText, switched.amountText, "amount must survive $source -> $target")
+                assertEquals(occurredAt, switched.occurredAt, "occurred-at must survive $source -> $target")
+                assertEquals(draft.note, switched.note, "note must survive $source -> $target")
+                assertEquals(setOf(TagId("tag-1")), switched.tagIds, "tags must survive $source -> $target")
+                assertEquals(MerchantId("merchant-1"), switched.merchantId, "merchant must survive $source -> $target")
+                if (source == target) {
+                    // A same-type switch returns the current instance unchanged (category included).
+                    assertEquals(draft, switched, "a same-type switch returns the current instance for $source")
+                } else {
+                    assertNull(switched.categoryId, "category is never retained across $source -> $target")
+                }
+                // D-312 frozen exception: the refund type never participates in the asset-account
+                // class migration — neither INTO it nor OUT of it (an off-diagonal switch).
+                if (source != target && (source == EntryType.REFUND_RECEIPT || target == EntryType.REFUND_RECEIPT)) {
+                    assertNull(
+                        switched.primaryAccountId,
+                        "no account may migrate across the refund direction $source -> $target",
+                    )
+                }
+            }
+        }
+    }
+
+    private fun matrixDraft(type: EntryType): TypedEntryDraft =
+        when (type) {
+            EntryType.EXPENSE -> ExpenseDraft(AccountId("asset"), CategoryId("expense-leaf"), "35.80", occurredAt, "lunch", setOf(TagId("tag-1")), MerchantId("merchant-1"))
+            EntryType.INCOME -> IncomeDraft(AccountId("asset"), CategoryId("income-leaf"), "35.80", occurredAt, "lunch", setOf(TagId("tag-1")), MerchantId("merchant-1"))
+            EntryType.TRANSFER ->
+                TransferDraft(
+                    sourceAccountId = AccountId("asset"),
+                    destinationAccountId = AccountId("asset-2"),
+                    destinationCredit = "35.80",
+                    occurredAt = occurredAt,
+                    note = "lunch",
+                    tagIds = setOf(TagId("tag-1")),
+                    merchantId = MerchantId("merchant-1"),
+                )
+            EntryType.LEND -> LendDraft(CounterpartyId("cp-1"), "35.80", AccountId("asset"), occurredAt, "lunch", setOf(TagId("tag-1")), MerchantId("merchant-1"))
+            EntryType.COLLECT ->
+                CollectDraft(
+                    counterpartyId = CounterpartyId("cp-1"),
+                    totalReceived = "35.80",
+                    principal = "30.00",
+                    interest = "5.80",
+                    interestCategoryId = CategoryId("income-leaf"),
+                    destinationAccountId = AccountId("asset"),
+                    occurredAt = occurredAt,
+                    note = "lunch",
+                    tagIds = setOf(TagId("tag-1")),
+                    merchantId = MerchantId("merchant-1"),
+                )
+            EntryType.REFUND_RECEIPT ->
+                RefundReceiptDraft(
+                    originalTransactionId = TransactionId("tx-original"),
+                    destinationAccountId = AccountId("asset"),
+                    amountText = "35.80",
+                    occurredAt = occurredAt,
+                    note = "lunch",
+                    tagIds = setOf(TagId("tag-1")),
+                    merchantId = MerchantId("merchant-1"),
+                )
+        }
 
     @Test
     fun `switch type carries the kind-independent tag and merchant association across every target`() {

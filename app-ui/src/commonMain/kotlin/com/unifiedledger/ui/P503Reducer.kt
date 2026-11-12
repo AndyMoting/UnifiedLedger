@@ -24,14 +24,19 @@ import com.unifiedledger.application.ManualIncomeSubmissionResult
 import com.unifiedledger.application.ManualLendSaveResult
 import com.unifiedledger.application.ManualLendSubmissionResult
 import com.unifiedledger.application.ManualLendingCommitResolution
+import com.unifiedledger.application.ManualRefundCandidatesResult
+import com.unifiedledger.application.ManualRefundReceiptCommitResolution
+import com.unifiedledger.application.ManualRefundReceiptSubmissionResult
 import com.unifiedledger.application.ManualTransferCommitResolution
 import com.unifiedledger.application.ManualTransferSaveResult
 import com.unifiedledger.application.ManualTransferSubmissionResult
 import com.unifiedledger.application.MonthlyBuckets
 import com.unifiedledger.application.ParseManualExpenseAmount
+import com.unifiedledger.application.RefundReceiptDraft
 import com.unifiedledger.application.SearchReadResult
 import com.unifiedledger.application.TransferDraft
 import com.unifiedledger.application.TypedEntryDraft
+import com.unifiedledger.application.validateEntryTypeSupported
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.CategoryId
@@ -91,6 +96,7 @@ class P503ReducerImpl(
         if (versionHistoryEventAbsorbed(state, event)) return state
         if (accountFlowEventAbsorbed(state, event)) return state
         if (reconciliationEventAbsorbed(state, event)) return state
+        if (refundEntryEventAbsorbed(state, event)) return state
         if (listScrollRestoredEventAbsorbed(state, event)) return state
         externalNavigationTransition(state, event)?.let { return it }
         return when (state) {
@@ -279,6 +285,24 @@ class P503ReducerImpl(
             P503UiEvent.RequestSearchPage,
             is P503UiEvent.SearchPageLanded,
             -> state !is P503AppState.Search
+            else -> false
+        }
+
+    /**
+     * P8-03 i2b (D-312; spec sections 2.2/2.3): the refund candidate event family is
+     * state-preserving outside the editor (the search family's central-guard shape). All three
+     * events act only on [P503AppState.Editing]; everywhere else they are absorbed, so a late or
+     * stale dispatch can never reach `unhandled` and turn into an ISE.
+     */
+    private fun refundEntryEventAbsorbed(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): Boolean =
+        when (event) {
+            is P503UiEvent.SelectRefundOriginal,
+            is P503UiEvent.RefundCandidatesLoaded,
+            P503UiEvent.RetryRefundCandidates,
+            -> state !is P503AppState.Editing
             else -> false
         }
 
@@ -1069,6 +1093,13 @@ class P503ReducerImpl(
                                         occurredAt = now,
                                         note = "",
                                     )
+                                // P8-03 i2b (D-312; V-18; spec section 2.2 「再记一笔」冻结):
+                                // a refund's re-record is an EMPTY expense draft — no inherited
+                                // category, no original primary account and no arrival account may
+                                // ride the retained intent into it, and the amount/note are empty
+                                // with the occurrence time at now.
+                                com.unifiedledger.application.EntryType.REFUND_RECEIPT ->
+                                    ExpenseDraft(null, null, "", now, "")
                             },
                         requestId = null,
                         overview = state.state,
@@ -3622,6 +3653,20 @@ class P503ReducerImpl(
                 state.copy(draft = state.draft.withCollectInterest(event.text))
             is P503UiEvent.UpdateCollectInterestCategory ->
                 state.copy(draft = state.draft.withCollectInterestCategory(event.categoryId))
+            // P8-03 i2b (D-312; spec sections 2.2/2.3): the refund candidate events. A non-refund
+            // draft keeps the state unchanged (these events only ever belong to a refund editor).
+            is P503UiEvent.SelectRefundOriginal ->
+                (state.draft as? RefundReceiptDraft)
+                    ?.let { state.copy(draft = it.copy(originalTransactionId = event.transactionId)) }
+                    ?: state
+            is P503UiEvent.RefundCandidatesLoaded ->
+                if (state.draft is RefundReceiptDraft) state.copy(refundCandidates = event.result) else state
+            P503UiEvent.RetryRefundCandidates ->
+                if (state.draft is RefundReceiptDraft) {
+                    state.copy(refundCandidates = null, refundCandidatesAttempt = state.refundCandidatesAttempt + 1)
+                } else {
+                    state
+                }
             // P702SPEC-03: the editor-local counterparty create/rename form.
             P503UiEvent.OpenCounterpartyCreateDialog ->
                 state.copy(counterpartyDialog = CounterpartyDialog.Create())
@@ -3734,7 +3779,20 @@ class P503ReducerImpl(
             is P503UiEvent.RetryP705CommitStatusCheck,
             -> state
             is P503UiEvent.Continue ->
-                if (validation.isValid(state.draft, currency)) {
+                // P8-03 i2b (D-312; spec section 2.2): this is the SINGLE production call site of
+                // the frozen entry-type gate (spec residual 4). An unsupported type never advances
+                // to the confirmation page; it stays in the editor with its (already allocated)
+                // requestId retained, exactly like a field error.
+                if (validateEntryTypeSupported(state.draft.entryType) == null && validation.isValid(state.draft, currency)) {
+                    // P8-03 i2b (D-312; spec section 2.2): a refund's inherited category and its
+                    // original-transaction line come from the candidate page this editor already
+                    // holds — the user never picked either, and the host's category label is empty
+                    // for a refund. An unresolved candidate falls back to the draft id values.
+                    val refundOriginal = (state.draft as? RefundReceiptDraft)?.originalTransactionId?.let { originalId ->
+                        (state.refundCandidates as? ManualRefundCandidatesResult.Loaded)
+                            ?.candidates
+                            ?.firstOrNull { it.transactionId == originalId }
+                    }
                     P503AppState.AwaitingConfirmation(
                         draft = state.draft,
                         requestId = event.requestId,
@@ -3743,7 +3801,7 @@ class P503ReducerImpl(
                         // P5-04.3: host-resolved display labels; fall back to the draft id
                         // values when an option (or its label) is absent.
                         paymentAccountLabel = event.paymentAccountLabel ?: state.draft.primaryAccountId?.value ?: "",
-                        categoryLabel = event.categoryLabel ?: state.draft.categoryId?.value ?: "",
+                        categoryLabel = refundOriginal?.categoryName ?: event.categoryLabel ?: state.draft.categoryId?.value ?: "",
                         // A-02 FIX-CONFIRM-1: the type-owned labels; a type that owns no such row
                         // keeps null, and an unresolved object falls back to its draft id.
                         destinationAccountLabel =
@@ -3752,6 +3810,14 @@ class P503ReducerImpl(
                             event.counterpartyLabel
                                 ?: (state.draft as? LendDraft)?.counterpartyId?.value
                                 ?: (state.draft as? CollectDraft)?.counterpartyId?.value,
+                        // P8-03 i2b (D-312; spec section 2.2): `date · category`, or the raw
+                        // original id when the candidate page no longer resolves it.
+                        originalTransactionLabel =
+                            (state.draft as? RefundReceiptDraft)?.let { draft ->
+                                refundOriginal?.let { "${occurredAtLocalDateText(it.occurredAt)} · ${it.categoryName}" }
+                                    ?: draft.originalTransactionId?.value
+                                    ?: ""
+                            },
                         pinnedTargets = state.pinnedTargets,
                         // A-02 FIX-MONTH-2 (D-152): see the StartNewExpense carry.
                         selectedMonth = state.selectedMonth,
@@ -3904,6 +3970,7 @@ class P503ReducerImpl(
                     is ManualEntrySubmissionResult.Transfer -> reduceTransferSubmission(state, result.result)
                     is ManualEntrySubmissionResult.Lend -> reduceLendSubmission(state, result.result)
                     is ManualEntrySubmissionResult.Collect -> reduceCollectSubmission(state, result.result)
+                    is ManualEntrySubmissionResult.RefundReceipt -> reduceRefundReceiptSubmission(state, result.result)
                 }
             // Submission is single-flight; duplicate confirm/retry events are harmless.
             P503UiEvent.Confirm,
@@ -4100,6 +4167,7 @@ class P503ReducerImpl(
                     is ManualEntryCommitResolution.Transfer -> reduceTransferResolution(state, resolution.resolution)
                     is ManualEntryCommitResolution.Lend -> reduceLendResolution(state, resolution.resolution)
                     is ManualEntryCommitResolution.Collect -> reduceCollectResolution(state, resolution.resolution)
+                    is ManualEntryCommitResolution.RefundReceipt -> reduceRefundReceiptResolution(state, resolution.resolution)
                 }
             // The host dispatches this alongside the check call in its click handler; the
             // state instance stays untouched so the entry auto-check guard does not re-run.
@@ -4207,6 +4275,46 @@ class P503ReducerImpl(
                 P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
             ManualLendingCommitResolution.Absent -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.ABSENT)
             ManualLendingCommitResolution.Unavailable -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.UNAVAILABLE)
+        }
+
+    /**
+     * P8-03 i2b (D-312; spec section 2.6): the refund submission's five-outcome mapping. `Created`
+     * is the only fresh commit; `Replayed` and `Recovered` already landed the relationship row, so
+     * both are the determinate-success [P503AppState.Recovered]; a typed rejection lands the frozen
+     * per-code notice (D9); an unknown commit forbids any retry and keeps the surface re-checkable.
+     */
+    private fun reduceRefundReceiptSubmission(
+        state: P503AppState.Submitting,
+        result: ManualRefundReceiptSubmissionResult,
+    ): P503AppState =
+        when (result) {
+            is ManualRefundReceiptSubmissionResult.Created -> P503AppState.Created
+            is ManualRefundReceiptSubmissionResult.Replayed -> P503AppState.Recovered
+            is ManualRefundReceiptSubmissionResult.Recovered -> P503AppState.Recovered
+            is ManualRefundReceiptSubmissionResult.Rejected ->
+                P503AppState.DomainRejected(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity, rejectionNotice = refundRejectionText(result.code))
+            ManualRefundReceiptSubmissionResult.UnknownCommit ->
+                P503AppState.UnknownCommit(state.draft, state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+        }
+
+    /**
+     * P8-03 i2b (D-312; spec section 2.6/V-17): the refund's unknown-commit read-back mapping. Only
+     * a fingerprint-matching receipt recovers; a snapshot conflict keeps its stable conflict screen;
+     * `Absent` proves the row never landed, so the editor returns with the SAME request id retained
+     * (a retry must reuse it — a new id would bypass idempotency); an unavailable read keeps the
+     * unknown surface and stays re-checkable, never retried automatically.
+     */
+    private fun reduceRefundReceiptResolution(
+        state: P503AppState.UnknownCommit,
+        resolution: ManualRefundReceiptCommitResolution,
+    ): P503AppState =
+        when (resolution) {
+            is ManualRefundReceiptCommitResolution.MatchingReceipt -> P503AppState.Recovered
+            ManualRefundReceiptCommitResolution.SnapshotConflict ->
+                P503AppState.RequestIdentityConflict(checkNotNull(state.draft), checkNotNull(state.requestId), state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+            ManualRefundReceiptCommitResolution.Absent ->
+                P503AppState.Editing(checkNotNull(state.draft), state.requestId, state.overview, state.originTab, pinnedTargets = state.pinnedTargets, selectedMonth = state.selectedMonth, selectableMonths = state.selectableMonths, monthlyActivity = state.monthlyActivity)
+            ManualRefundReceiptCommitResolution.Unavailable -> state.copy(lastCheckOutcome = UnknownCommitCheckOutcome.UNAVAILABLE)
         }
 
     private fun reduceCollectResolution(
@@ -4905,6 +5013,8 @@ private fun TypedEntryDraft.withPrimaryAccount(accountId: AccountId): TypedEntry
         is TransferDraft -> copy(sourceAccountId = accountId)
         is LendDraft -> copy(fundingAccountId = accountId)
         is CollectDraft -> copy(destinationAccountId = accountId)
+        // P8-03 i2b (D-312; spec section 2.2): a refund's primary account IS its arrival account.
+        is RefundReceiptDraft -> copy(destinationAccountId = accountId)
     }
 
 /** P7-02: sets the draft's category while preserving the concrete subtype. */
@@ -4915,6 +5025,8 @@ private fun TypedEntryDraft.withCategory(categoryId: CategoryId): TypedEntryDraf
         is TransferDraft -> copy(feeCategoryId = categoryId)
         is LendDraft -> this
         is CollectDraft -> copy(interestCategoryId = categoryId)
+        // P8-03 i2b (D-312; spec section 2.4): the refund category is inherited read-only.
+        is RefundReceiptDraft -> this
     }
 
 /** P7-02.B transfer source drawer; absorbed on non-transfer drafts. */

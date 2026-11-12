@@ -8,6 +8,7 @@ import com.unifiedledger.application.LendDraft
 import com.unifiedledger.application.ManualExpenseAmountFormatError
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
+import com.unifiedledger.application.RefundReceiptDraft
 import com.unifiedledger.application.TransferDraft
 import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.CurrencyUnit
@@ -36,6 +37,12 @@ data class P503DraftErrors(
     val feeFormatError: ManualExpenseAmountFormatError? = null,
     /** P7-02.B transfer: the fee is positive, so a fee category is required/selectable. */
     val transferFeeCategoryRequired: Boolean = false,
+    /**
+     * P8-03 i2b (D-312; spec section 2.2): the refund draft has no original transaction yet. The
+     * refund's arrival account reuses [missingDestinationAccount] (its account slot is that field's
+     * meaning on this type); the category is never gated because a refund inherits it read-only.
+     */
+    val missingOriginalTransaction: Boolean = false,
 ) {
     val hasErrors: Boolean
         get() =
@@ -45,7 +52,8 @@ data class P503DraftErrors(
                 missingOccurredAt ||
                 amountFormatError != null ||
                 missingDestinationAccount ||
-                feeFormatError != null
+                feeFormatError != null ||
+                missingOriginalTransaction
 }
 
 class P503DraftValidation(
@@ -61,6 +69,7 @@ class P503DraftValidation(
             is TransferDraft -> transferErrors(draft, currency)
             is LendDraft -> lendErrors(draft, currency)
             is CollectDraft -> collectErrors(draft, currency)
+            is RefundReceiptDraft -> refundReceiptErrors(draft, currency)
             is ExpenseDraft, is IncomeDraft -> standardErrors(draft, currency)
         }
 
@@ -100,6 +109,26 @@ class P503DraftValidation(
             amountFormatError = totalError ?: principalError ?: interestError,
         )
     }
+
+    /**
+     * P8-03 i2b (D-312; spec sections 2.2/2.4): the refund's own gate. The amount reuses the shared
+     * exact-parser check; the arrival account is the destination field; the original transaction is
+     * required because it is the cap base and the inherited category's source. There is no
+     * category gate at all — the user never picks the refund's category.
+     */
+    private fun refundReceiptErrors(
+        draft: RefundReceiptDraft,
+        currency: CurrencyUnit,
+    ): P503DraftErrors =
+        P503DraftErrors(
+            missingAmount = draft.amountText.isBlank(),
+            missingPaymentAccount = false,
+            missingCategory = false,
+            missingOccurredAt = draft.occurredAt == null,
+            amountFormatError = draft.amountText.amountError(currency),
+            missingDestinationAccount = draft.destinationAccountId == null,
+            missingOriginalTransaction = draft.originalTransactionId == null,
+        )
 
     private fun String.amountError(currency: CurrencyUnit): ManualExpenseAmountFormatError? =
         if (isBlank()) {

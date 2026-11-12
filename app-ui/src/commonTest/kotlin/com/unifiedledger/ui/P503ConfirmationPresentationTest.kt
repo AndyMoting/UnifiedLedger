@@ -4,11 +4,13 @@ import com.unifiedledger.application.CollectDraft
 import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LendDraft
+import com.unifiedledger.application.RefundReceiptDraft
 import com.unifiedledger.application.TransferDraft
 import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CounterpartyId
+import com.unifiedledger.domain.TransactionId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -55,6 +57,39 @@ class P503ConfirmationPresentationTest {
         assertEquals("确认转账", confirmationTitle(transfer("100.00", "2.50")))
         assertEquals("确认借出", confirmationTitle(lend()))
         assertEquals("确认收回", confirmationTitle(collect()))
+        // P8-03 i2b (D-312; spec section 2.2): the refund entry's frozen title.
+        assertEquals("确认退款到账", confirmationTitle(refund()))
+    }
+
+    // ---- refund (P8-03 i2b, D-312; spec section 2.2) ----
+
+    @Test
+    fun refundRowsAreTheFrozenFourAndTheCategoryIsTheInheritedOne() {
+        val refundLabels =
+            ConfirmationLabels(
+                // The arrival account is the refund's primary account label.
+                paymentAccount = "本地账户",
+                // The inherited secondary expense category, resolved from the original transaction.
+                category = "餐饮",
+                originalTransaction = "2026-01-15 · 餐饮",
+            )
+        val rows = confirmationRows(refund(), refundLabels, currencyCode, currencyPrecision)
+
+        assertEquals(listOf("原交易", "到账账户", "继承分类", "退款金额"), labelsOf(rows))
+        assertEquals("2026-01-15 · 餐饮", valueOf(rows, "原交易"))
+        assertEquals("本地账户", valueOf(rows, "到账账户"))
+        assertEquals("餐饮", valueOf(rows, "继承分类"))
+        assertEquals("35.80 $currencyCode", valueOf(rows, "退款金额"))
+        // The user never picks the refund's category, so no selection row may appear.
+        assertFalse(labelsOf(rows).contains("费用分类"))
+        // An unresolved original line renders the absent placeholder, never a blank row.
+        assertEquals(
+            "—",
+            valueOf(
+                confirmationRows(refund(), refundLabels.copy(originalTransaction = null), currencyCode, currencyPrecision),
+                "原交易",
+            ),
+        )
     }
 
     // ---- expense / income copy (spec 4.3 item 6) ----
@@ -232,6 +267,15 @@ class P503ConfirmationPresentationTest {
         )
 
     private fun lend(): TypedEntryDraft = LendDraft(counterpartyId, "100.00", accountId, occurredAt)
+
+    /** P8-03 i2b (D-312; spec section 2.2): the refund fixture — no category is ever carried. */
+    private fun refund(): TypedEntryDraft =
+        RefundReceiptDraft(
+            originalTransactionId = TransactionId("tx-original"),
+            destinationAccountId = accountId,
+            amountText = "35.80",
+            occurredAt = occurredAt,
+        )
 
     private fun collect(
         principal: String = "40.00",

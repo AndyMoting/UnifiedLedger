@@ -5,6 +5,7 @@ import com.unifiedledger.application.EntryType
 import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.IncomeDraft
 import com.unifiedledger.application.LendDraft
+import com.unifiedledger.application.RefundReceiptDraft
 import com.unifiedledger.application.TransferDraft
 import com.unifiedledger.application.TypedEntryDraft
 import com.unifiedledger.domain.parseExactDecimalLenient
@@ -24,12 +25,16 @@ internal data class ConfirmationRow(
  * their per-type meanings (the draft's primary account and the type's category slot);
  * [destinationAccount] and [counterparty] are populated only by the types that own those rows, so
  * a page never borrows another type's object for its own label.
+ *
+ * P8-03 i2b (D-312; spec section 2.2): [originalTransaction] is the refund's host/reducer-resolved
+ * `date · category` line. It stays `null` for every type that owns no such row.
  */
 internal data class ConfirmationLabels(
     val paymentAccount: String,
     val category: String,
     val destinationAccount: String? = null,
     val counterparty: String? = null,
+    val originalTransaction: String? = null,
 )
 
 /** The absent-value placeholder shared with the note and occurred-at lines. */
@@ -43,6 +48,7 @@ internal fun confirmationTitle(draft: TypedEntryDraft): String =
         EntryType.TRANSFER -> "确认转账"
         EntryType.LEND -> "确认借出"
         EntryType.COLLECT -> "确认收回"
+        EntryType.REFUND_RECEIPT -> "确认退款到账"
     }
 
 /**
@@ -108,6 +114,16 @@ internal fun confirmationRows(
                 // (spec 4.2), never recomputed from the components.
                 add(ConfirmationRow("实收总额", amountValue(draft.totalReceived, currencyCode)))
             }
+        is RefundReceiptDraft ->
+            // P8-03 i2b (D-312; spec section 2.2): the four frozen rows. The category is the
+            // read-only inherited one (spec section 2.4) — the page shows it, the user cannot pick
+            // it — and the note row is absent because a refund carries no note.
+            listOf(
+                ConfirmationRow("原交易", labels.originalTransaction ?: ABSENT_VALUE),
+                ConfirmationRow("到账账户", labels.paymentAccount),
+                ConfirmationRow("继承分类", labels.category),
+                ConfirmationRow("退款金额", amountValue(draft.amountText, currencyCode)),
+            )
     }
 
 /**

@@ -3,12 +3,15 @@ package com.unifiedledger.ui
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
+import com.unifiedledger.application.RefundReceiptDraft
 import com.unifiedledger.application.TransferDraft
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.TransactionId
 import kotlin.test.Test
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 
@@ -130,6 +133,42 @@ class P503DraftValidationTest {
             amountText = amountText,
             occurredAt = occurredAt,
         )
+
+    // P8-03 i2b (D-312; spec section 2.2): the refund gate requires the original transaction, the
+    // arrival account, the amount and the occurrence time — and gates NO category at all, because
+    // the refund's category is inherited read-only (spec section 2.4).
+    @Test
+    fun refundDraftGatesEveryRequiredFieldAndNeverACategory() {
+        val currency = CurrencyUnit("CNY", 2)
+        val complete = RefundReceiptDraft(TransactionId("tx-original"), AccountId("asset-destination"), "35.80", occurredAt)
+
+        val valid = validation.errors(complete, currency)
+        assertFalse(valid.hasErrors)
+        assertFalse(valid.missingCategory)
+        assertNull(valid.amountFormatError)
+        // The draft itself has no category slot to fill (read-only inheritance).
+        assertNull(complete.categoryId)
+
+        val missingOriginal = validation.errors(complete.copy(originalTransactionId = null), currency)
+        assertTrue(missingOriginal.missingOriginalTransaction)
+        assertTrue(missingOriginal.hasErrors)
+
+        val missingAccount = validation.errors(complete.copy(destinationAccountId = null), currency)
+        assertTrue(missingAccount.missingDestinationAccount)
+        assertFalse(missingAccount.missingCategory)
+        assertTrue(missingAccount.hasErrors)
+
+        val missingAmount = validation.errors(complete.copy(amountText = ""), currency)
+        assertTrue(missingAmount.missingAmount)
+        assertTrue(missingAmount.hasErrors)
+
+        val missingTime = validation.errors(complete.copy(occurredAt = null), currency)
+        assertTrue(missingTime.missingOccurredAt)
+        assertTrue(missingTime.hasErrors)
+
+        // An unparseable amount is the shared typed format error, not a refund-specific one.
+        assertTrue(validation.errors(complete.copy(amountText = "35.812"), currency).amountFormatError != null)
+    }
 
     // P702IMPL-02: a negative fee parses as a valid exact amount, so the transfer gate must
     // treat fee < 0 as the fee format error; otherwise the submit path can strand the user on
