@@ -381,14 +381,15 @@ class AndroidScaleLongInstrumentedTest {
         check(evidence.getJSONObject("stages").getJSONObject("preparation").getString("status") == "PASS")
         stage("coldstart") {
             coldstartLaunch()
-            // Entry-point claim, not a copy pin: the HOME tab paints the flow header whenever the
-            // monthly flow projection is present, and 共 0 笔 is the empty-ledger reading. The
-            // assertion used to read 账本为空，还没有任何交易。 — the ANALYSIS tab's copy
-            // (P503TabShell.kt:183), which the overview only paints on its legacy no-flow branch
-            // (P503OverviewScreen.kt:133). Since the flow projection landed, an empty ledger
-            // reaches the `flow != null` branch instead, so that string matched nothing and this
-            // stage failed on a healthy, empty ledger.
-            check(ui.has("流水 · 共 0 笔"))
+            // Entry-point claim via the LedgerReadyCopy prefixes, not a copy pin: D-307 keyed the
+            // ledger-wide empty voice on the LEDGER transaction total (P503OverviewScreen.kt:124-128),
+            // so an empty ledger paints 账本为空，还没有任何交易。 and the flow header never renders
+            // there; a non-empty ledger paints 流水 · 共 <n> 笔. The device run 43304276874 caught this
+            // assertion pinning the flow-header string alone and failing on a healthy, empty ledger
+            // (its home dump carries 账本为空 with the drawer, search capsule and month row rendered).
+            // LedgerReadyCopy.matches is the same readiness half ui.launch already awaited and the
+            // Python READY_MARKERS guard keeps in sync across the language boundary.
+            check(ui.visibleTexts(ui.root()).any { text -> LedgerReadyCopy.matches(text) })
             // D-217: the only in-chain oracle read. The ledger is empty here —
             // no writer exists, so the read cannot hit the D-212 write fence —
             // and the empty snapshot anchors the generation for later phases.
