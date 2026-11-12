@@ -7128,3 +7128,20 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **读数补充（2026-11-12，热缓存轮 run `43210719821`）：** 改测试源码后的第一个热缓存轮墙钟 **7.13 min**（`Android compile` 245 s、`Kotlin tests core` 245 s），五片 277 / 350 / 155 / 309 / 406 s——片 3 由历史 351–528 s 降到 **155 s**，而最慢片变成片 5 的 406 s。据此确认：Σ 类秒只解释分片的**排序方向**，不解释墙钟绝对值；IO 密集的 SQLite 用例在 4 fork 下实测并行度在 2.1–4.4× 之间浮动，单轮读数不足以评判重排优劣。分片级调优至此进入噪声区，后续二选一：让两条 60 s 扇出腿共享夹具（本条残余①），或动 `Android compile`（245–383 s）。
 
 **关联决定：** D-303（分片装箱、迁移大测试拆分与判据）、D-302（CI 验证调参）、D-240（测试登记面：清单 + ci.yml 类数）。
+
+## D-315 `Android compile` 拆出单元测试腿（生产者名不动，覆盖走既有收口门）
+
+**状态：** 已批准并登记（2026-11-12）。一批 tracked 变更：`.github/workflows/ci.yml`（拆 job + 收口门判定）、`tests/python/test_ci_change_classifier.py`（收口门 `needs` 断言 + 覆盖断言）、`docs/CONTRIBUTING.md` 同步（job 清单、超时清单、文档快路径跳过清单、单测步骤缓存说明、fork PR 段落）、本条。
+
+**背景（实测，run `43190021002`）：** `Android compile` 6.65 min，内部为 `Compile Android` 2.38 min、`Android app unit tests` 1.35 min、`Android app test sources and debug APK` 2.42 min、上传 0.14 min，三条 gradle 调用在同 job 内串行；该 job 已是代码 PR 的关键路径（245–383 s）。D-303 曾以「拆两个 job 只省约 0.8 min」否掉，当时该 job 3.9 min；现为 6.65 min，估算改为约 −1.3 min。
+
+**决定：**
+
+1. **生产者名不动**：`Android compile` 继续承担编译、装配、打包与上传，因此 `tools/python/android_scale/apks.py` 的 `PRODUCERS`（按 workflow 路径映射到确切 job 名）与 `tests/python/test_android_ci_repair.py` 的生产者夹具零改动。
+2. **单元测试腿独立并行**：新增 `android-unit-tests`（name `Android unit tests`），跑 `:ledger-data:compileAndroidMain` 与 `:android-app:testDebugUnitTest` / `:ledger-domain:testAndroidHostTest`。它插在 `android` 与 `python-shards` 之间，使 `test_android_ci_repair.py` 那道「四个步骤不得带 `if:`」的切片断言仍然覆盖到它。
+3. **覆盖不新增必过 context**：`Kotlin tests` 收口门的 `needs` 与判定增加 `android-unit-tests`——docs 路径要求 `skipped`、代码路径要求 `success`。新建必过 context 需要改仓库设置；收口门本就是「依赖失败必须变成红色必过检查」的机制，故复用它。
+4. **预期墙钟**：两腿并行后 `Android compile` 约 5.0 min、`Android unit tests` 约 3.8 min（跨 job 构建缓存命中时更低），关键路径由 6.65 min 降到约 5.0 min。
+
+**边界：** 零产品代码、零 schema/迁移、零依赖；`Android compile` 名字、APK artifact 名与 `PRODUCERS` 契约不变；四个必过 context 名与分支保护零改动；单文件 revert 即回退。
+
+**关联决定：** D-303（本条推翻其第 3 条「不拆 job」，判据从 3.9 min 变为 6.65 min）、D-302（收口门与分类器）、D-314（把 `Android compile` 列为下一处待调优项）、D-192（必过检查不得从测试缓存命中）。
