@@ -559,11 +559,12 @@ internal class AndroidScaleUi(
     }
 
     private fun selectSafFixtureOnce(fileName: String) {
-        // The caller clicks 导入 and returns immediately; on a fast host the
-        // import screen can still be unrendered when the first seek fires, and
-        // seeking on the (unscrollable, empty) home tree dies with "scroll
-        // container absent" — the local-small run's saf_import failure at
-        // 810ms. Await the format entry itself: await polls has() with the
+        // The caller opens the import screen via [openImportViaDrawer] (the
+        // drawer's menu button, then the 导入账单 row) and returns; on a fast
+        // host the import screen can still be unrendered when the first seek
+        // fires, and seeking on the (unscrollable, empty) home tree dies with
+        // "scroll container absent" — the local-small run's saf_import failure
+        // at 810ms. Await the format entry itself: await polls has() with the
         // D-208 rate-limited resets, so a stale cache cannot hide the screen.
         await { has("支付宝账单（CSV）") }
         seek("支付宝账单（CSV）", forward = false)
