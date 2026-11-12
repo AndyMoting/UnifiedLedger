@@ -193,6 +193,14 @@ def _is_clickable_radio(node: ET.Element) -> bool:
     )
 
 
+def _focused_text_field(xml_text: str) -> bool:
+    """True when any text-field node reports `focused="true"` (the caret landed without a redraw)."""
+    return any(
+        (node.get("class") or "").endswith("EditText") and node.get("focused") == "true"
+        for node in _nodes(xml_text)
+    )
+
+
 def find_radio_center(xml_text: str, label: str, contains: bool = False) -> tuple[int, int]:
     """Centre of the radio that owns the option row labelled `label`.
 
@@ -224,13 +232,24 @@ def find_radio_center(xml_text: str, label: str, contains: bool = False) -> tupl
         ]
         if not clickables:
             raise SampleError(f"radio label {label!r} has no clickable node to its left in its row")
-        nearest_right = max(_rect(other)[2] for other in clickables)
-        nearest = [other for other in clickables if _rect(other)[2] == nearest_right]
-        if len(nearest) > 1:
-            raise SampleError(
-                f"radio label {label!r} is ambiguous: {len(nearest)} clickables end at x={nearest_right}"
-            )
-        radios.append(screen_center(nearest[0].get("bounds") or ""))
+        # Order by vertical gap first and horizontal distance second: a wrapped candidate label at
+        # 1.3x can sit closer to the next row's radio, and same-width radios all end at the same x,
+        # so "largest right edge" would either pick the wrong row or call an equal-width row a tie.
+        label_center_x = (node_rect[0] + node_rect[2]) // 2
+        scored = sorted(
+            (
+                (
+                    _vertical_gap(node_rect, _rect(other)),
+                    abs(label_center_x - ((_rect(other)[0] + _rect(other)[2]) // 2)),
+                    other,
+                )
+                for other in clickables
+            ),
+            key=lambda item: (item[0], item[1]),
+        )
+        if len(scored) > 1 and scored[0][0] == scored[1][0] and scored[0][1] == scored[1][1]:
+            raise SampleError(f"radio label {label!r} is ambiguous: two clickables are equidistant")
+        radios.append(screen_center(scored[0][2].get("bounds") or ""))
     distinct = list(dict.fromkeys(radios))
     if not distinct:
         raise SampleError(f"radio label {label!r} is not in the accessibility tree")
@@ -298,17 +317,18 @@ def adb_input_text(text: str) -> str:
 
 
 def ime_is_shown(dumpsys: str) -> bool:
-    """`mInputShown` from `dumpsys input_method`; a missing or contradictory answer fails loudly.
+    """`mInputShown` from `dumpsys input_method`; a missing answer fails loudly.
 
     A BACK dismisses the keyboard only while it is actually shown — otherwise it is a navigation
-    step — so this read decides whether one is sent.
+    step — so this read decides whether one is sent. The dump can print the flag in more than one
+    service section (the manager and the IME itself, which may briefly disagree during an
+    animation), so the LAST occurrence is the current state; only a dump with no occurrence at all
+    is unreadable.
     """
-    values = set(re.findall(r"mInputShown=(true|false)", dumpsys))
+    values = re.findall(r"mInputShown=(true|false)", dumpsys)
     if not values:
         raise SampleError("dumpsys input_method reports no mInputShown; cannot tell whether the keyboard is up")
-    if len(values) > 1:
-        raise SampleError(f"dumpsys input_method reports contradictory mInputShown values {sorted(values)}")
-    return values.pop() == "true"
+    return values[-1] == "true"
 
 
 def scroll_swipe_points(xml_text: str) -> tuple[int, int, int, int]:
@@ -851,8 +871,18 @@ class Sampler:
         tree = self.dump("tap-probe")
         center = find_field_center(tree, field_label)
         self.adb("shell", "input", "tap", str(center[0]), str(center[1]))
-        # The focus/window change is the proof the tap landed; typing follows only on that frame.
-        self.wait_for_change(tree, timeout_s=30)
+        # The proof the tap landed is either a changed frame or the field itself turning focused: a
+        # label that already floated above the box may gain the caret without changing the tree.
+        deadline = time.monotonic() + 30
+        focused = False
+        while time.monotonic() < deadline:
+            fresh = self.dump("focus-probe")
+            if fresh != tree or _focused_text_field(fresh):
+                focused = True
+                break
+            time.sleep(0.5)
+        if not focused:
+            raise SampleError(f"tapping {field_label!r} never focused a text field")
         self.adb("shell", "input", "text", escaped)
         return self.wait_for(text, timeout_s=30)
 

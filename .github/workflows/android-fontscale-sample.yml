@@ -106,7 +106,7 @@ jobs:
           mkdir -p fontscale-evidence
           sha256sum android-app/build/outputs/apk/debug/android-app-debug.apk | tee fontscale-evidence/host-apk.txt
       - name: Write the seeded ledger database (seeded and refund profiles only)
-        if: github.event.inputs.profile == 'seeded' || github.event.inputs.profile == 'refund'
+        if: inputs.profile == 'seeded' || inputs.profile == 'refund'
         # The writer is a jvmTest no-op unless this property names its output; the build script
         # forwards the property to the test JVM (Gradle does not pass -D through by itself).
         run: |
