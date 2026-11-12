@@ -56,6 +56,7 @@ import java.nio.file.StandardCopyOption
 import java.util.Properties
 import java.util.concurrent.CountDownLatch
 import kotlin.concurrent.thread
+import kotlin.io.path.absolutePathString
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.time.Instant
@@ -309,13 +310,15 @@ abstract class Rg06StoreTestSupport {
                 prepare(store)
             }
         } catch (failure: Throwable) {
+            path.toFile().deleteOnExit()
             Files.deleteIfExists(path)
             throw failure
         }
         return path
     }
 
-    // shortcut: the copy is the main file only, so the base must be closed and not in WAL mode; upgrade if a fixture ever opens with journal_mode=WAL
+    // Copies the main file only, so the base must be closed and in rollback-journal mode.
+    // If a fixture ever runs with `journal_mode=WAL`, the `-wal`/`-shm` sidecars must be copied too.
     protected fun withCopiedDatabase(
         base: Path,
         block: (LedgerDatabase, JdbcSqliteDriver, SqlDelightRg06Store) -> Unit,
