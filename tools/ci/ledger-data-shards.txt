@@ -20,6 +20,7 @@
 1	com.unifiedledger.data.Rg07RuntimeReplayTest
 1	com.unifiedledger.data.Rg09RawJsonEndToEndTest
 1	com.unifiedledger.data.Rg12FullStateOracleTest
+1	com.unifiedledger.data.SqlDelightRg06RejectionEnumerationTest
 1	com.unifiedledger.data.SnapshotIntegrityMappingTest
 1	com.unifiedledger.data.SqlDelightConfirmedCategoryRenameCommitPortTest
 1	com.unifiedledger.data.SqlDelightConfirmedManualTransferCommitPortTest
@@ -44,6 +45,7 @@
 2	com.unifiedledger.data.SqlDelightEntryPreferenceStoreTest
 2	com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapterTest
 2	com.unifiedledger.data.SqlDelightManualIncomeReadAdapterTest
+2	com.unifiedledger.data.SqlDelightRg06LifecycleSnapshotTest
 2	com.unifiedledger.data.SqlDelightTagMerchantCatalogStoreTest
 2	com.unifiedledger.data.TagMerchantFilterScaleTest
 2	com.unifiedledger.data.P801FontscaleSeedWriterTest
@@ -69,7 +71,6 @@
 3	com.unifiedledger.data.SqlDelightMonthlyContributionReadAdapterTest
 3	com.unifiedledger.data.SqlDelightRg03TransferStoreTest
 3	com.unifiedledger.data.SqlDelightRg05StoreTest
-3	com.unifiedledger.data.SqlDelightRg06StoreTest
 3	com.unifiedledger.data.SqlDelightRg10StoreTest
 3	com.unifiedledger.data.TagMerchantFilterReadTest
 4	com.unifiedledger.data.DefBFlowPageReadTest
@@ -95,6 +96,7 @@
 4	com.unifiedledger.data.SqlDelightP801ReconciliationBindingTest
 4	com.unifiedledger.data.SqlDelightP801ReconciliationCandidatesTest
 4	com.unifiedledger.data.SqlDelightP801ReconciliationConfirmTest
+4	com.unifiedledger.data.SqlDelightRg06StorePortFanOutTest
 4	com.unifiedledger.data.SqlDelightRg04StoreTest
 4	com.unifiedledger.data.SqlDelightRg07IdentityTest
 4	com.unifiedledger.data.SqlDelightRg09StoreTest
