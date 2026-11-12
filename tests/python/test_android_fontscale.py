@@ -63,12 +63,13 @@ _RADIO_DUMP = """<?xml version="1.0" encoding="UTF-8"?>
 </hierarchy>
 """
 
-# The same row with a second clickable node ending at the same x as the radio: two hit targets
-# resolve to the same nearest edge, which is an ambiguity rather than a choice.
+# The same row with a second clickable node carrying IDENTICAL bounds: two hit targets resolve to
+# the same point, which is an ambiguity rather than a choice (the lookup orders by vertical gap then
+# horizontal distance, so only a true duplicate can tie).
 _AMBIGUOUS_RADIO_DUMP = _RADIO_DUMP.replace(
     '<node bounds="[748,600][1000,760]" class="android.widget.TextView" text="退款到账" content-desc="" />',
     '<node bounds="[748,600][1000,760]" class="android.widget.TextView" text="退款到账" content-desc="" />'
-    '<node bounds="[400,620][728,740]" class="android.widget.RadioButton" checkable="true" clickable="true" text="" content-desc="" />',
+    '<node bounds="[560,620][728,740]" class="android.widget.RadioButton" checkable="true" clickable="true" text="" content-desc="" />',
 )
 
 # A field's floating label, its supporting text (which also carries the label) and two EditTexts:
@@ -284,6 +285,43 @@ class _StubSampler(Sampler):
 
     def wait_for_change(self, previous: str, timeout_s: int = 60) -> str:
         return self.tree
+
+
+class _DispatchSampler(_StubSampler):
+    """Records which sampler action each new step type dispatches to; no device interaction."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[str] = []
+
+    def tap_radio(self, label: str, contains: bool = False) -> str:
+        self.calls.append(f"radio:{label}")
+        return self.tree
+
+    def type_into_field(self, field_label: str, text: str) -> str:
+        self.calls.append(f"text:{field_label}:{text}")
+        return self.tree
+
+    def hide_ime(self) -> str:
+        self.calls.append("ime")
+        return self.tree
+
+    def scroll_to(self, label: str, max_swipes: int = 6) -> str:
+        self.calls.append(f"scroll:{label}")
+        return self.tree
+
+
+class StepDispatch(unittest.TestCase):
+    def test_every_new_step_type_dispatches_to_its_sampler_action(self) -> None:
+        sampler = _DispatchSampler()
+        sampler.apply_step(tap_radio_for("退款到账"), sampler.tree)
+        sampler.apply_step(input_text("退款金额", "3.00"), sampler.tree)
+        sampler.apply_step(dismiss_ime(), sampler.tree)
+        sampler.apply_step(scroll_until("继续"), sampler.tree)
+        self.assertEqual(
+            ["radio:退款到账", "text:退款金额:3.00", "ime", "scroll:继续"],
+            sampler.calls,
+        )
 
 
 class ScrollAndImeSteps(unittest.TestCase):

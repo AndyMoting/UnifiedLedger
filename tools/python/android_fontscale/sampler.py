@@ -999,7 +999,7 @@ def run(args: argparse.Namespace) -> int:
         observations[screen.stem] = {
             "steps": [describe_step(step) for step in screen.steps],
             "marker": screen.marker,
-            "marker_visible": dump_contains(tree, screen.marker),
+            "marker_present": dump_contains(tree, screen.marker),
             "absent": list(screen.absent),
         }
         problems = marker_problems(tree, screen.marker, screen.absent)
@@ -1087,7 +1087,7 @@ def gate(args: argparse.Namespace) -> int:
         return 1
     print(
         f"gate: font-scale sample complete — {len(profile.screens)} screens captured for profile "
-        f"{profile.name!r} with their markers visible and no previous-screen string left"
+        f"{profile.name!r} with their markers present and no previous-screen string left"
     )
     return 0
 
