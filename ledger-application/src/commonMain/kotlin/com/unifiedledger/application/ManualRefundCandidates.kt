@@ -46,10 +46,11 @@ sealed interface ManualRefundCandidatesResult {
 /**
  * The bounded candidate read port (spec sections 2.3/4). An implementation MUST read the whole page —
  * including the one-row lookahead that decides [ManualRefundCandidatesResult.Loaded.hasMore] — inside
- * ONE read transaction, so the page and its lookahead come from one snapshot, and MUST map every
- * failure to [ManualRefundCandidatesResult.Unavailable]. [pageSize] bounds the page and [pageOffset]
- * is its row offset into the frozen `occurred_at` DESC, transaction id order, so the list is read in
- * bounded pages and never as one unbounded result (V-15).
+ * ONE read transaction, so the page and its lookahead come from one snapshot, and MUST map every READ
+ * failure to [ManualRefundCandidatesResult.Unavailable]. Argument preconditions ([pageSize] positive,
+ * [pageOffset] non-negative) are programming errors rejected up front and are not read failures.
+ * [pageSize] bounds the page and [pageOffset] is its row offset into the frozen `occurred_at` DESC,
+ * transaction id order, so the list is read in bounded pages and never as one unbounded result (V-15).
  */
 interface ManualRefundCandidatesReadPort {
     fun readPage(

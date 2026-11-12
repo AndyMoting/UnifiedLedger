@@ -86,6 +86,23 @@ class P803ManualRefundCandidateReadTest {
     }
 
     @Test
+    fun v13AMissingCurrentNameFallsBackToTheCategoryId() {
+        P803CandidateDatabase.inMemory().use { world ->
+            seedCandidateCatalog(world.driver)
+            seedCandidateTransaction(world.driver, "tx-original", CANDIDATE_DAILY_ACCOUNT, 12_000L, "2026-01-10T02:00:00Z")
+            executeSql(world.driver, "DELETE FROM catalog_name_history WHERE ledger_id = '$CANDIDATE_LEDGER' AND owner_kind = 'category' AND owner_id = '$CANDIDATE_DAILY'")
+
+            val candidate =
+                assertIs<ManualRefundCandidatesResult.Loaded>(world.adapter.readPage(LedgerId(CANDIDATE_LEDGER), pageSize = 50, pageOffset = 0))
+                    .candidates
+                    .single()
+            // Registered fallback: a category without a CURRENT name row is still selectable and its
+            // display name is the raw category id (spec section 2.3 display list).
+            assertEquals(CANDIDATE_DAILY, candidate.categoryName)
+        }
+    }
+
+    @Test
     fun v3TheCandidateRowEqualsTheServerResolutionAndFollowsTheCurrentVersion() {
         P803CandidateDatabase.inMemory().use { world ->
             seedCandidateCatalog(world.driver)
@@ -113,6 +130,8 @@ class P803ManualRefundCandidateReadTest {
             assertEquals(9_000L, replaced.structuralCap.minorUnits)
             assertEquals(reResolved.categoryId, replaced.categoryId.value)
             assertEquals(reResolved.structuralCapMinor, replaced.structuralCap.minorUnits)
+            // The date follows the current version too, not the replaced first version.
+            assertEquals(Instant.parse("2026-02-01T02:00:00Z"), replaced.occurredAt)
         }
     }
 
@@ -130,17 +149,23 @@ class P803ManualRefundCandidateReadTest {
                 catalogStore.bootstrap(P705Fixture.ledgerId, candidateScaleSeed()) is CatalogBootstrapResult.Seeded,
                 "the bulk fixture's expense account needs exactly one active secondary EXPENSE category",
             )
+            // One original carries five effective refunds, so the refunded-total reading and the
+            // candidate's remaining amount exercise the relationship table and its effectiveness
+            // join instead of an empty range. Bulk transaction 0's structural cap is 1_000, so it
+            // stays a candidate (remaining 500).
+            seedEffectiveRefunds(harness)
             val adapter = SqlDelightManualRefundCandidatesReadAdapter.forPlatformConfiguredDatabase(harness.database)
+            val ledger = P705Fixture.ledgerId
 
             // (a) The first screen and (b) one original's refunded total, timed and recorded only.
             val pageStart = System.nanoTime()
-            val page = assertIs<ManualRefundCandidatesResult.Loaded>(adapter.readPage(P705Fixture.ledgerId, pageSize = V15_PAGE_SIZE, pageOffset = 0))
+            val page = assertIs<ManualRefundCandidatesResult.Loaded>(adapter.readPage(ledger, pageSize = V15_PAGE_SIZE, pageOffset = 0))
             val pageMs = (System.nanoTime() - pageStart) / 1_000_000.0
 
             val refundedStart = System.nanoTime()
             val refunded =
                 harness.database.ledgerQueries
-                    .selectManualRefundRefundedTotal(P705Fixture.ledgerId.value, harness.bulkTransactionId(0), P705Fixture.cny.code)
+                    .selectManualRefundRefundedTotal(ledger.value, harness.bulkTransactionId(0), P705Fixture.cny.code)
                     .executeAsOne()
             val refundedTotalMs = (System.nanoTime() - refundedStart) / 1_000_000.0
 
@@ -149,8 +174,44 @@ class P803ManualRefundCandidateReadTest {
             assertEquals(setOf(P705Fixture.cny), page.candidates.map { it.structuralCap.currency }.toSet())
             assertEquals(setOf(P705Fixture.cny), page.candidates.map { it.remaining.currency }.toSet())
             assertTrue(page.candidates.all { it.remaining.minorUnits > 0L }, "candidate condition 7: remaining > 0")
-            assertEquals(0L, refunded, "the fixture writes no manual refund row")
+            assertEquals(500L, refunded, "five effective 100 refunds on bulk transaction 0")
+            val refundedOriginal = page.candidates.first { it.transactionId.value == harness.bulkTransactionId(0) }
+            assertEquals(500L, refundedOriginal.remaining.minorUnits, "the cap minus the five effective refunds")
+
+            // The candidate predicate decides the last page, not the page size: deep-offset probes
+            // pin the eligible row count at transactionCount / 2 (the bulk fixture alternates
+            // EXPENSE and INCOME) instead of accepting "at least one page".
+            val lastPage = assertIs<ManualRefundCandidatesResult.Loaded>(adapter.readPage(ledger, pageSize = V15_PAGE_SIZE, pageOffset = transactionCount / 2 - 1))
+            assertEquals(1, lastPage.candidates.size, "exactly transactionCount / 2 eligible originals")
+            assertFalse(lastPage.hasMore)
+            val pastEnd = assertIs<ManualRefundCandidatesResult.Loaded>(adapter.readPage(ledger, pageSize = V15_PAGE_SIZE, pageOffset = transactionCount / 2))
+            assertTrue(pastEnd.candidates.isEmpty())
+            assertFalse(pastEnd.hasMore)
+
             println("P803-V15 size=$transactionCount pageMs=$pageMs refundedTotalMs=$refundedTotalMs rows=${page.candidates.size} hasMore=${page.hasMore}")
+        }
+    }
+
+    /** Five effective refund rows of 100 minor units on bulk transaction 0, the V-15 read's subject. */
+    private fun seedEffectiveRefunds(harness: P705Database) {
+        repeat(5) { index ->
+            harness.database.ledgerQueries.insertManualRefundReceipt(
+                ledger_id = P705Fixture.ledgerId.value,
+                relationship_id = "v15-relationship-$index",
+                request_id = "v15-request-$index",
+                request_fingerprint = "v15-fingerprint-$index",
+                original_transaction_id = harness.bulkTransactionId(0),
+                refund_transaction_id = harness.bulkTransactionId(index * 2 + 1),
+                amount_minor = 100L,
+                currency_code = P705Fixture.cny.code,
+                currency_precision = P705Fixture.cny.precision.toLong(),
+                destination_account_id = P705Fixture.bankA.value,
+                category_id = P705Fixture.food.value,
+                arrived_at = "2026-03-06T02:00:00Z",
+                confirmed_at = "2026-03-06T02:00:00Z",
+                created_at = "2026-03-06T02:00:00Z",
+                confirmation_marker = "explicit_manual_confirm",
+            )
         }
     }
 }

@@ -12527,9 +12527,10 @@ WHERE receipt.ledger_id = :ledger_id
 -- 6 the original expense leg is CNY (the frozen v1 currency); 7 the remaining amount is positive.
 -- The remaining sum uses the same effective-refund predicate as selectManualRefundRefundedTotal.
 -- `category_name` is a DISPLAY projection only: it adds no candidate condition and takes no part in
--- the seven above. The LEFT JOIN keeps a category without a CURRENT name row selectable (COALESCE
--- falls back to the raw category id); the catalog store keeps at most one CURRENT name per category,
--- so on a well-formed catalog the join neither adds nor drops a candidate row.
+-- the seven above. The scalar subquery is single-valued by construction (ORDER BY version_number
+-- DESC LIMIT 1), so a malformed catalog holding two CURRENT name rows for one category can never
+-- duplicate a candidate row; a category without a CURRENT name row still stays selectable, with the
+-- raw category id as its display name.
 selectManualRefundExpenseCandidates:
 SELECT
   candidate.transaction_id,
@@ -12545,7 +12546,16 @@ FROM (
     tx.transaction_id AS transaction_id,
     version.occurred_at AS occurred_at,
     category.category_id AS category_id,
-    COALESCE(name_history.name, category.category_id) AS category_name,
+    COALESCE((
+      SELECT name_history.name
+      FROM catalog_name_history AS name_history
+      WHERE name_history.ledger_id = category.ledger_id
+        AND name_history.owner_kind = 'category'
+        AND name_history.owner_id = category.category_id
+        AND name_history.status = 'CURRENT'
+      ORDER BY name_history.version_number DESC
+      LIMIT 1
+    ), category.category_id) AS category_name,
     expense_leg.amount_minor AS structural_cap_minor,
     expense_leg.currency_code AS currency_code,
     expense_leg.currency_precision AS currency_precision,
@@ -12586,11 +12596,6 @@ FROM (
    AND category.kind = 'EXPENSE'
    AND category.parent_id IS NOT NULL
    AND category.active = 1
-  LEFT JOIN catalog_name_history AS name_history
-    ON name_history.ledger_id = category.ledger_id
-   AND name_history.owner_kind = 'category'
-   AND name_history.owner_id = category.category_id
-   AND name_history.status = 'CURRENT'
   WHERE tx.ledger_id = :ledger_id
     AND COALESCE(tx.canonical_kind, tx.kind) = 'EXPENSE'
     AND expense_leg.currency_code = 'CNY'
