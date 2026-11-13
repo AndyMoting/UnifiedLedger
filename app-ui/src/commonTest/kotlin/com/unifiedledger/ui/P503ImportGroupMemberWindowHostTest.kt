@@ -560,10 +560,11 @@ class P503ImportGroupMemberWindowHostTest {
                 .importReview
                 ?.groupDisposition
         val landedItems = page?.items.orEmpty()
+        val duplicateIds = landedItems.map { it.item.duplicateCandidateId.value }
         assertEquals(WHOLE_GROUP_ITEMS, landedItems.size)
         assertEquals((1..WHOLE_GROUP_ITEMS).toList(), landedItems.map { it.ordinal })
-        assertEquals("duplicate-1", landedItems.first().item.duplicateCandidateId.value)
-        assertEquals("duplicate-20000", landedItems.last().item.duplicateCandidateId.value)
+        assertEquals("duplicate-1", duplicateIds.first())
+        assertEquals("duplicate-20000", duplicateIds.last())
     }
 
     /** T9: an exact multiple of the cap yields exactly n windows — never a trailing empty one. */
