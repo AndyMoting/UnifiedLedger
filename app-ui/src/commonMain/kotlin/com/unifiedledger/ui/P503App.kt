@@ -2872,11 +2872,23 @@ fun P503App(
                                             return@leased
                                         }
                                         is ImportDuplicateGroupEnumeration.Ready -> {
-                                            // S1's hop discipline, unchanged: this window leaves
-                                            // the worker as its OWN main-dispatcher hop, at its
-                                            // whole-group ordinal.
-                                            landWindow(enumeration.items, firstOrdinal)
-                                            firstOrdinal += enumeration.items.size
+                                            // D-5 window cap: a member page bounds the READ, never
+                                            // the LANDING — one member can carry the whole group
+                                            // (the 20k fixture is one member with 20000 duplicate
+                                            // rows), so this page's items land as bounded windows.
+                                            // S1's hop discipline is unchanged: each window leaves
+                                            // the worker as its OWN main-dispatcher hop at its
+                                            // whole-group ordinal, and the ordinal advances across
+                                            // the windows.
+                                            val itemWindows =
+                                                importDuplicateGroupItemWindows(
+                                                    enumeration.items,
+                                                    IMPORT_REVIEW_GROUP_WINDOW_ITEMS,
+                                                )
+                                            itemWindows.forEach { itemWindow ->
+                                                landWindow(itemWindow, firstOrdinal)
+                                                firstOrdinal += itemWindow.size
+                                            }
                                         }
                                     }
                                     afterCursor = window.nextAfterCandidateId ?: break
@@ -5649,6 +5661,21 @@ private const val IMPORT_REVIEW_PAGE_SIZE = 50L
  * while members remain).
  */
 private const val IMPORT_REVIEW_GROUP_MEMBER_PAGE_SIZE = 200L
+
+/**
+ * P7-04 B1/B4 windowed read (D-5 follow-up, the device read that followed V-11): the maximum number
+ * of ITEMS one landed window may carry.
+ *
+ * This is the USER-VISIBLE FIRST-RESPONSE budget, and it is a DIFFERENT bound from
+ * [IMPORT_REVIEW_GROUP_MEMBER_PAGE_SIZE]: the member page decides how many ROWS one read returns,
+ * the window decides how many ITEMS reach the render tree in one main-dispatcher hop. The 20k
+ * device fixture (ONE member carrying 20 000 duplicate rows) is exactly the shape where the two
+ * diverge: one member page held the whole group, so the first window carried 20 001 items and the
+ * card's marker probe paid for the a11y tree they added. Splitting a page's item sequence at this
+ * bound keeps every hop's render cost bounded while the whole-group ordinals stay one continuous
+ * 1..n sequence (200, the old B6 group page's magnitude).
+ */
+private const val IMPORT_REVIEW_GROUP_WINDOW_ITEMS = 200
 
 /**
  * P5-04.3: dispatching Back is only legal from the Back-able states; Submitting swallows the

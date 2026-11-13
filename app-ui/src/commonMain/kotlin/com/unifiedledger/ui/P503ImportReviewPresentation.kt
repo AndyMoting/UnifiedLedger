@@ -412,6 +412,10 @@ internal fun enumerateImportDuplicateGroupItems(
  * [ImportDuplicateReviewsForSessionMemberPageResult.Unavailable]) is
  * [ImportDuplicateGroupEnumeration.ReadFailed]: the round voids wholesale, exactly like a failing
  * per-candidate read.
+ *
+ * A window here is a READ window, not a LANDING window: the page's item sequence is split by
+ * [importDuplicateGroupItemWindows] before the host lands it, because one member page can hold the
+ * whole group (a single member with 20 000 duplicate rows).
  */
 internal data class ImportDuplicateGroupMemberWindow(
     val enumeration: ImportDuplicateGroupEnumeration,
@@ -442,6 +446,26 @@ internal fun enumerateImportDuplicateGroupMemberWindow(
             )
         }
     return ImportDuplicateGroupMemberWindow(enumeration, memberPage.nextAfterCandidateId)
+}
+
+/**
+ * P7-04 B1/B4 windowed read (D-5 follow-up): splits ONE member page's items into the windows the
+ * host lands. The member page bounds the READ; this bound decides what one main-dispatcher hop
+ * pushes into the render tree, because the visible first-response budget is spent in ITEMS, not in
+ * members — a page whose single member carries the whole group is still one page, and must not land
+ * as one window.
+ *
+ * [windowItems] is an item count and must be at least 1. The result never contains an empty window:
+ * an empty page yields NO window (the host then lands nothing, so `anyPageLanded` stays false and
+ * the round-end seam reports the count/page contract violation instead of opening a 0-row card),
+ * an exact multiple yields exactly n windows, and a page shorter than the bound yields one.
+ */
+internal fun importDuplicateGroupItemWindows(
+    items: List<ImportDuplicateGroupDispositionItem>,
+    windowItems: Int,
+): List<List<ImportDuplicateGroupDispositionItem>> {
+    require(windowItems >= 1) { "a group enumeration window must hold at least one item, was $windowItems" }
+    return items.chunked(windowItems)
 }
 
 /**

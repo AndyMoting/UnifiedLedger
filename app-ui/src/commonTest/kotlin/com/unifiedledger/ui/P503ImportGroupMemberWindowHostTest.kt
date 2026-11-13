@@ -47,7 +47,10 @@ import kotlin.test.assertTrue
  * [aMemberWithoutReviewRowsIsConsumedWithoutAnItem]; T3 =
  * [aShortMemberPageWithACursorKeepsTheRoundGoing]; T4 = [aNullMemberCursorEndsTheRound]; T5 =
  * [anUnavailablePageVoidsTheRound]; T6 = [theMemberPagePathIsSelectedOnlyWhenAllThreeReadsAreWired];
- * T7 = [theLegacyRoundStillReadsOnlyTheListStateMembers].
+ * T7 = [theLegacyRoundStillReadsOnlyTheListStateMembers]; T8 =
+ * [aPageHoldingTheWholeGroupLandsInBoundedWindowsWithContinuousOrdinals]; T9 =
+ * [anExactMultipleOfTheWindowCapProducesNoEmptyWindow]; T10 = [anEmptyPageProducesNoWindow]; T11 =
+ * [aPageShorterThanTheWindowCapLandsAsOneWindow].
  */
 class P503ImportGroupMemberWindowHostTest {
     private val ledgerId = LedgerId("ledger-local-test")
@@ -57,8 +60,14 @@ class P503ImportGroupMemberWindowHostTest {
 
     // ---- fixtures: one group-member review row, one duplicate-review row, the two page shapes ----
 
-    /** One suspected-duplicate candidate of the pick session: the group card's member. */
-    private fun memberRow(candidateId: String): ImportReviewRow =
+    /**
+     * One candidate of the pick session: the group card's member with the default DEFERRED
+     * duplicate status, or a plain candidate (`null`) that the pure function filters out.
+     */
+    private fun memberRow(
+        candidateId: String,
+        duplicateStatus: ImportDuplicateStatus? = ImportDuplicateStatus.DEFERRED,
+    ): ImportReviewRow =
         ImportReviewRow(
             candidateId = ImportCandidateId(candidateId),
             candidateKind = "ordinary_flow",
@@ -75,7 +84,7 @@ class P503ImportGroupMemberWindowHostTest {
             candidateStatus = "pending_confirmation",
             requiresConfirmation = true,
             confidence = "high",
-            duplicateStatus = ImportDuplicateStatus.DEFERRED,
+            duplicateStatus = duplicateStatus,
             paymentProfileVariant = null,
             paymentProfileAssetLegKindToken = null,
             paymentProfileCreditLegKindToken = null,
@@ -102,8 +111,25 @@ class P503ImportGroupMemberWindowHostTest {
                 ),
         )
 
-    private fun reviews(vararg entries: Pair<String, String>): List<ImportDuplicateReviewsForSessionRow> =
-        entries.map { (member, duplicateId) -> reviewRow(member, duplicateId) }
+    private fun reviews(vararg entries: Pair<String, String>): List<ImportDuplicateReviewsForSessionRow> = entries.map { (member, duplicateId) -> reviewRow(member, duplicateId) }
+
+    /** One member's whole duplicate run, `count` rows — the 20k fixture's shape at test scale. */
+    private fun memberReviewRun(
+        member: String,
+        count: Int,
+    ): List<ImportDuplicateReviewsForSessionRow> =
+        (1..count).map { index -> reviewRow(member, "duplicate-$index") }
+
+    /** `count` group items with unique duplicate ids, as the pure enumeration would produce them. */
+    private fun dispositionItems(count: Int): List<ImportDuplicateGroupDispositionItem> =
+        (1..count).map { index ->
+            ImportDuplicateGroupDispositionItem(
+                candidateId = ImportCandidateId("member-1"),
+                duplicateCandidateId = ImportDuplicateCandidateId("duplicate-$index"),
+                comparisonSnapshot = "{\"amount_minor\":3580}",
+                expectedComparisonFingerprint = "sha256:fixed-fingerprint-$index",
+            )
+        }
 
     private fun sessionPage(
         rows: List<ImportReviewRow>,
@@ -141,8 +167,13 @@ class P503ImportGroupMemberWindowHostTest {
             val window = enumerateImportDuplicateGroupMemberWindow(sessionInputRef, memberPage, reviewPage)
             val enumeration = window.enumeration
             if (enumeration is ImportDuplicateGroupEnumeration.Ready) {
-                windows += LandedWindow(enumeration.items, firstOrdinal)
-                firstOrdinal += enumeration.items.size
+                // The host's landing rule: one page's items land as bounded item windows, and an
+                // empty page lands nothing at all.
+                val itemWindows = importDuplicateGroupItemWindows(enumeration.items, WINDOW_ITEMS)
+                itemWindows.forEach { itemWindow ->
+                    windows += LandedWindow(itemWindow, firstOrdinal)
+                    firstOrdinal += itemWindow.size
+                }
             }
             afterCursor = window.nextAfterCandidateId ?: break
         }
@@ -176,6 +207,35 @@ class P503ImportGroupMemberWindowHostTest {
                         ),
                 ),
         )
+
+    /** The host's landing dispatch: the first window opens the card, the rest append in order. */
+    private fun landedState(
+        windows: List<LandedWindow>,
+        totalCount: Int,
+    ): P503AppState {
+        val events = mutableListOf<P503UiEvent>()
+        windows.forEachIndexed { index, window ->
+            if (index == 0) {
+                events +=
+                    importGroupEnumerationFirstWindowEvents(
+                        sessionInputRef = session,
+                        items = window.items,
+                        totalCount = totalCount,
+                        cardWasOpenAtRoundStart = false,
+                        cardStillOpen = false,
+                    )
+            } else {
+                events +=
+                    importGroupEnumerationContinuationEvents(
+                        sessionInputRef = session,
+                        items = window.items,
+                        firstOrdinal = window.firstOrdinal,
+                        cardStillOpen = true,
+                    )
+            }
+        }
+        return events.fold(overviewWithPickSession(), reducer::reduce)
+    }
 
     /** T1 (D-5's core claim, V-7): the members come from the member PAGES, not the list state. */
     @Test
@@ -471,6 +531,86 @@ class P503ImportGroupMemberWindowHostTest {
         assertTrue(port.memberReviewCursors.isEmpty())
     }
 
+    /**
+     * T8 (the window cap, from the 20k device read): ONE member page can hold the whole group — the
+     * 20k fixture is a single member with 20 000 duplicate rows — so the page's items land as
+     * bounded windows, and the ordinals stay one continuous 1..n sequence across them.
+     */
+    @Test
+    fun aPageHoldingTheWholeGroupLandsInBoundedWindowsWithContinuousOrdinals() {
+        val port =
+            MemberPageReadPort(
+                sessionPages = mapOf(null to sessionPage(listOf(memberRow("member-1")), null)),
+                memberReviewPages =
+                    mapOf(null to memberReviewPage(memberReviewRun("member-1", WHOLE_GROUP_ITEMS), null)),
+                listStateRows = emptyList(),
+                groupCount = WHOLE_GROUP_ITEMS.toLong(),
+            )
+
+        val windows = memberWindows(memberSource(port))
+
+        // One member page, 20 000 items, 100 bounded windows of 200.
+        assertEquals(WHOLE_GROUP_WINDOWS, windows.size)
+        assertTrue(windows.all { it.items.size == WINDOW_ITEMS })
+        assertEquals(1, windows.first().firstOrdinal)
+        assertEquals(WHOLE_GROUP_ITEMS - WINDOW_ITEMS + 1, windows.last().firstOrdinal)
+
+        // Landed through S1's seams: 20 000 items, ordinals 1..20000 with no gap and no overlap.
+        val page = assertIs<P503AppState.OverviewEmpty>(landedState(windows, WHOLE_GROUP_ITEMS)).importReview?.groupDisposition
+        assertEquals(WHOLE_GROUP_ITEMS, page?.items?.size)
+        assertEquals((1..WHOLE_GROUP_ITEMS).toList(), page?.items?.map { it.ordinal })
+        assertEquals("duplicate-1", page?.items?.first()?.item?.duplicateCandidateId?.value)
+        assertEquals("duplicate-20000", page?.items?.last()?.item?.duplicateCandidateId?.value)
+    }
+
+    /** T9: an exact multiple of the cap yields exactly n windows — never a trailing empty one. */
+    @Test
+    fun anExactMultipleOfTheWindowCapProducesNoEmptyWindow() {
+        assertEquals(2, importDuplicateGroupItemWindows(dispositionItems(400), WINDOW_ITEMS).size)
+        assertEquals(
+            listOf(WINDOW_ITEMS, WINDOW_ITEMS),
+            importDuplicateGroupItemWindows(dispositionItems(400), WINDOW_ITEMS).map { it.size },
+        )
+        assertEquals(1, importDuplicateGroupItemWindows(dispositionItems(WINDOW_ITEMS), WINDOW_ITEMS).size)
+        assertEquals(3, importDuplicateGroupItemWindows(dispositionItems(600), WINDOW_ITEMS).size)
+        assertTrue(importDuplicateGroupItemWindows(dispositionItems(600), WINDOW_ITEMS).none { it.isEmpty() })
+    }
+
+    /** T10: an empty page yields NO window — the host lands nothing, never an empty landing. */
+    @Test
+    fun anEmptyPageProducesNoWindow() {
+        assertTrue(importDuplicateGroupItemWindows(emptyList(), WINDOW_ITEMS).isEmpty())
+
+        // End to end on the member path: a page whose candidates are not group members has no
+        // items, so no window reaches the dispatcher.
+        val port =
+            MemberPageReadPort(
+                sessionPages = mapOf(null to sessionPage(listOf(memberRow("plain-1", duplicateStatus = null)), null)),
+                memberReviewPages = mapOf(null to memberReviewPage(emptyList(), null)),
+                listStateRows = emptyList(),
+                groupCount = 0,
+            )
+        assertTrue(memberWindows(memberSource(port)).isEmpty())
+        // With nothing landed, S1's round end is the typed failure end (close + banner) rather than
+        // a 0-row card: `anyPageLanded` stays false.
+        assertEquals(
+            listOf(
+                P503UiEvent.CloseImportDuplicateGroupDisposition,
+                P503UiEvent.ImportReviewResult(ImportReviewRowsResult.Unavailable),
+            ),
+            importGroupEnumerationRoundEndEvents(failed = false, anyPageLanded = false),
+        )
+    }
+
+    /** T11: a page shorter than the cap lands as exactly one window. */
+    @Test
+    fun aPageShorterThanTheWindowCapLandsAsOneWindow() {
+        val windows = importDuplicateGroupItemWindows(dispositionItems(WINDOW_ITEMS - 1), WINDOW_ITEMS)
+        assertEquals(1, windows.size)
+        assertEquals(WINDOW_ITEMS - 1, windows.single().size)
+        assertEquals(1, importDuplicateGroupItemWindows(dispositionItems(1), WINDOW_ITEMS).single().size)
+    }
+
     /** One landed window: the items the host would dispatch and their whole-group ordinal. */
     private class LandedWindow(
         val items: List<ImportDuplicateGroupDispositionItem>,
@@ -531,7 +671,11 @@ private class MemberPageReadPort(
 }
 
 /**
- * The host constant's value (`P503App.kt`), mirrored here: the test asserts the round asks for it,
- * which is what a list-page resizing must not change (D-6).
+ * The host constants' values (`P503App.kt`), mirrored here: the round reads 200-member pages, lands
+ * at most 200 items per window, and the 20k device fixture is ONE member with 20 000 duplicate rows.
+ * A resizing of either bound must not silently change what these tests pin.
  */
 private const val MEMBER_PAGE_SIZE = 200L
+private const val WINDOW_ITEMS = 200
+private const val WHOLE_GROUP_ITEMS = 20_000
+private const val WHOLE_GROUP_WINDOWS = 100
