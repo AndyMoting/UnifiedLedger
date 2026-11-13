@@ -34,6 +34,7 @@
 2	com.unifiedledger.data.ImportSpineWechatEndToEndTest
 2	com.unifiedledger.data.P408CorrectionStoreTest
 2	com.unifiedledger.data.P408ProjectionSixKindMaterializationTest
+2	com.unifiedledger.data.P704B4MemberPageReadEquivalenceTest
 2	com.unifiedledger.data.P704B4SessionPageReadEquivalenceTest
 2	com.unifiedledger.data.P705EffectiveSurfaceTest
 2	com.unifiedledger.data.P705TransferCorrectionCatalogRejectionTest

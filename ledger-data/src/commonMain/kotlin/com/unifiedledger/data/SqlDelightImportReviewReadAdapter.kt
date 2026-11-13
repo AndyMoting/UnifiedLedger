@@ -6,6 +6,7 @@ import com.unifiedledger.application.ImportCompleteness
 import com.unifiedledger.application.ImportDuplicateCandidateId
 import com.unifiedledger.application.ImportDuplicatePossibleExistingSourceFacts
 import com.unifiedledger.application.ImportDuplicateReviewRow
+import com.unifiedledger.application.ImportDuplicateReviewsForSessionMemberPage
 import com.unifiedledger.application.ImportDuplicateReviewsForSessionPage
 import com.unifiedledger.application.ImportDuplicateReviewsForSessionRow
 import com.unifiedledger.application.ImportDuplicateStatus
@@ -430,6 +431,68 @@ class SqlDelightImportReviewReadAdapter(
     }
 
     /**
+     * P7-04 B1/B4 windowed read (design D-5/D-6): one MEMBER-major page of
+     * [loadImportDuplicateReviewsForSession] — the group card enumerates its members page by page
+     * instead of waiting for the review list to be loaded, and the item order stays member-major.
+     *
+     * The named query admits at most `pageSize` MEMBERS and reads every admitted member's whole
+     * duplicate run, so the DISTINCT member count of the page decides exhaustion: it counts the same
+     * window the query's keyset subquery cut, which is why "fewer members than requested" can be read
+     * as "the keyset is exhausted" (Ledger.sq: the subquery requires each admitted member to carry a
+     * duplicate, so no invisible member can pad the window — without that requirement a page could
+     * look short with members still unread, the silent group shrink ACC-COUNT-01 forbids).
+     *
+     * Same transaction discipline as the other paged reads: one read transaction per page with
+     * `noEnclosing = true`.
+     */
+    override fun loadImportDuplicateReviewsForSessionMemberPage(
+        ledgerId: LedgerId,
+        sessionInputRef: String,
+        pageSize: Long,
+        afterCandidateId: String?,
+    ): ImportDuplicateReviewsForSessionMemberPage {
+        require(pageSize >= 1) { "import duplicate member page size must be >= 1, was $pageSize" }
+        return database.transactionWithResult(noEnclosing = true) {
+            // Same empty-id contract as the review-list page reads (ACC-T-EMPTYID-01): "" can never
+            // be reached by `candidate_id > after`, so the first page refuses it loudly instead of
+            // silently dropping that member from every page.
+            if (
+                afterCandidateId == null &&
+                database.ledgerQueries
+                    .importCandidateExistsByCandidateId(ledgerId.value, "")
+                    .executeAsList()
+                    .isNotEmpty()
+            ) {
+                throw IllegalStateException(
+                    "import duplicate review pages cannot page a candidate whose id is the empty string (ledger ${ledgerId.value})",
+                )
+            }
+            val rows =
+                database.ledgerQueries
+                    .importDuplicateReviewsForSessionMemberPage(
+                        ledger_id = ledgerId.value,
+                        session_input_ref = sessionInputRef,
+                        page_ledger_id = ledgerId.value,
+                        after_candidate_id = afterCandidateId ?: "",
+                        page_size = pageSize,
+                    ).executeAsList()
+            val memberIds = rows.map { row -> row.member_candidate_id }.distinct()
+            ImportDuplicateReviewsForSessionMemberPage(
+                rows = rows.map { row -> row.toSessionReviewRowMemberPage() },
+                // `maxOf` (Kotlin UTF-16 order) mirrors the review-list page read's cursor choice, NOT
+                // `last()` (SQLite BINARY order): the two disagree on supplementary-plane ids. The
+                // rows are non-empty whenever the member count equals `pageSize`.
+                nextAfterCandidateId =
+                    if (memberIds.size.toLong() < pageSize) {
+                        null
+                    } else {
+                        ImportCandidateId(rows.maxOf { row -> row.member_candidate_id })
+                    },
+            )
+        }
+    }
+
+    /**
      * B6 group-card paging batch (D-280): the whole-group duplicate-candidate count of one
      * pick session. The predicate is byte-identical to the paged read minus the keyset bound
      * and LIMIT, and the dropped joins are all LEFT JOINs on the duplicate's own key (1:1,
@@ -524,6 +587,45 @@ private fun com.unifiedledger.data.db.ImportDuplicateReviewsForSession.toSession
  * which is exactly the drift-detection the byte-identical column contract wants.
  */
 private fun com.unifiedledger.data.db.ImportDuplicateReviewsForSessionPage.toSessionReviewRowPage(): ImportDuplicateReviewsForSessionRow =
+    ImportDuplicateReviewsForSessionRow(
+        subjectCandidateId = ImportCandidateId(subject_candidate_id),
+        review =
+            ImportDuplicateReviewRow(
+                duplicateCandidateId = ImportDuplicateCandidateId(candidate_id),
+                kind = kind,
+                comparisonFingerprint = comparison_fingerprint,
+                comparisonSnapshot = comparison_snapshot,
+                latestStatus =
+                    ImportDuplicateStatus.valueOf(
+                        requireNotNull(latest_status) { "duplicate candidate has no status row" },
+                    ),
+                reviewDecision = review_decision,
+                reviewReasonToken = review_reason_token,
+                reviewedAt = reviewed_at,
+                possibleExistingSource =
+                    existing_source_id?.let { existingSourceId ->
+                        ImportDuplicatePossibleExistingSourceFacts(
+                            sourceId = ImportSourceId(existingSourceId),
+                            amountMinor = existing_amount_minor,
+                            currencyCode = existing_currency_code,
+                            currencyPrecision = existing_currency_precision?.toInt(),
+                            occurredAt = existing_occurred_at,
+                            directionToken = existing_direction_token,
+                            statusToken = existing_status_token,
+                        )
+                    },
+            ),
+    )
+
+/**
+ * P7-04 B1/B4 windowed read (design D-5/D-6): the generated row of the member-major page query. Its
+ * column list is `importDuplicateReviewsForSessionPage`'s plus the trailing `member_candidate_id`
+ * the adapter reads as the resume cursor, so this is the same mechanical per-column copy as
+ * [toSessionReviewRowPage] over a third generated row type (SQLDelight generates one row type per
+ * query, so a shared mapper cannot serve all three). A field drift between the queries surfaces as a
+ * compile error here, which is exactly the drift detection the byte-identical column contract wants.
+ */
+private fun com.unifiedledger.data.db.ImportDuplicateReviewsForSessionMemberPage.toSessionReviewRowMemberPage(): ImportDuplicateReviewsForSessionRow =
     ImportDuplicateReviewsForSessionRow(
         subjectCandidateId = ImportCandidateId(subject_candidate_id),
         review =
