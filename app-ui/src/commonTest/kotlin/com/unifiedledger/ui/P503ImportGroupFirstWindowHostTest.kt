@@ -223,7 +223,13 @@ class P503ImportGroupFirstWindowHostTest {
                 reducer.reduce(stillLanding, P503UiEvent.ImportGroupEnumerationCompleted),
             )
         assertEquals(false, completed.importReview?.groupEnumerationInProgress)
-        assertEquals(listOf(1, 2), completed.importReview?.groupDisposition?.items?.map { it.ordinal })
+        assertEquals(
+            listOf(1, 2),
+            completed.importReview
+                ?.groupDisposition
+                ?.items
+                ?.map { it.ordinal },
+        )
     }
 
     /**
