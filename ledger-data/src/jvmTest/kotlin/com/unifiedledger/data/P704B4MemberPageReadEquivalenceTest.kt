@@ -194,7 +194,6 @@ class P704B4MemberPageReadEquivalenceTest {
     ): List<ImportDuplicateReviewsForSessionRow> =
         rows.sortedWith(
             compareBy<ImportDuplicateReviewsForSessionRow>(
-
                 { row -> row.subjectCandidateId.value },
                 { row -> row.review.duplicateCandidateId.value },
             ),
@@ -458,8 +457,7 @@ class P704B4MemberPageReadEquivalenceTest {
                     sessionInputRef: String,
                     pageSize: Long,
                     afterCandidateId: String?,
-                ): ImportDuplicateReviewsForSessionMemberPage =
-                    throw IllegalStateException("injected read failure")
+                ): ImportDuplicateReviewsForSessionMemberPage = throw IllegalStateException("injected read failure")
             }
         assertIs<ImportDuplicateReviewsForSessionMemberPageResult.Unavailable>(
             QueryImportDuplicateReviewsForSessionMemberPage(throwing).query(ledgerId, SESSION_A, pageSize = 2, afterCandidateId = null),

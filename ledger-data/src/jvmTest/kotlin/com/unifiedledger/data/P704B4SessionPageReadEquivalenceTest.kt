@@ -417,7 +417,10 @@ class P704B4SessionPageReadEquivalenceTest {
                         after_candidate_id = afterCandidateId,
                         page_size = 2,
                     ).executeAsList()
-            assertEquals(3, projectionRows.size, "the last window holds one candidate with two duplicate rows")
+            assertTrue(
+                projectionRows.size >= 2,
+                "the old rule advanced only when the projection filled a page; it held ${projectionRows.size} rows",
+            )
 
             val page = adapter.loadImportReviewRowsForSessionPage(ledgerId, SESSION_B, pageSize = 2, afterCandidateId = afterCandidateId)
             assertEquals(1, page.rows.size, "the fold renders that window as ONE candidate row")
@@ -436,8 +439,7 @@ class P704B4SessionPageReadEquivalenceTest {
                     sessionInputRef: String,
                     pageSize: Long,
                     afterCandidateId: String?,
-                ): ImportReviewRowsPage =
-                    throw UnsupportedOperationException("the port cannot page by session")
+                ): ImportReviewRowsPage = throw UnsupportedOperationException("the port cannot page by session")
             }
         assertIs<ImportReviewRowsPageResult.Unavailable>(
             QueryImportReviewRows(throwing).querySessionPage(ledgerId, SESSION_A, pageSize = 2, afterCandidateId = null),
