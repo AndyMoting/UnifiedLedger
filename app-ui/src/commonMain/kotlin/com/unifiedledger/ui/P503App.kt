@@ -2764,6 +2764,10 @@ fun P503App(
                 // hop per window, never a worker-thread reduce. The hop re-checks the round's
                 // generation (a superseded graph discards this window's payload, P706-A07) and reads
                 // `cardStillOpen()` AT HOP TIME; the pure seams own the rest of the decision.
+                // ORDER DEPENDS ON THIS SCOPE STAYING SINGLE-THREADED: `scope` is the composition's
+                // main-dispatcher scope, so queueing order equals program order across every window
+                // hop. Never swap it for a multi-threaded dispatcher — the Start-first invariant
+                // (and with it the ordinal append order) would stop holding.
                 fun dispatchEnumerationHop(events: (cardStillOpen: Boolean) -> List<P503UiEvent>) {
                     scope.launch {
                         if (enumerationGeneration != null && !ledger.isCurrentGeneration(enumerationGeneration)) {

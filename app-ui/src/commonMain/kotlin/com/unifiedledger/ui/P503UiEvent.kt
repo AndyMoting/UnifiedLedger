@@ -863,15 +863,18 @@ sealed interface P503UiEvent {
     data object ImportGroupEnumerationCompleted : P503UiEvent
 
     /**
-     * B6 group-card paging batch (D-280): ONE keyset page of the 整组确认页 enumeration
+     * B6 first-window batch (D-280 §3.3): ONE keyset page of the 整组确认页 enumeration
      * landed. Effect only on OverviewEmpty while the group card is open for this inputRef
      * (appends the page's items to the landed prefix with their whole-group ordinals; a page
      * landing with no open page, a different inputRef, or a stale generation is absorbed);
-     * absorbed everywhere else. The host dispatches one event per landed page inside the
-     * single enumeration lease, in keyset order, and follows the last page with
-     * [ImportGroupEnumerationCompleted]. Any typed page-read failure skips straight to the
-     * whole-enumeration failure path (the card never opens or closes wholesale) — the event
-     * is never dispatched with failure semantics.
+     * absorbed everywhere else. The host queues ONE main-dispatcher hop per landed page, in
+     * keyset order, the first of which is the [StartImportDuplicateGroupDisposition] that opens
+     * the card, and follows the last page with [ImportGroupEnumerationCompleted]. A hop can
+     * therefore run AFTER the enumeration lease has closed — the window's payload is captured at
+     * dispatch-queue time, never re-read from the database on the main thread. Any typed
+     * page-read failure voids the WHOLE round: the round-end hop closes whatever the first window
+     * already opened and lands the typed failure banner, so the event is never dispatched with
+     * failure semantics and a landed prefix is never left on screen as a smaller group.
      */
     data class ImportGroupEnumerationPageLanded(
         val inputRef: String,

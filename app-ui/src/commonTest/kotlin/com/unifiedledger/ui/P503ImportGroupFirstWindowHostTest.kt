@@ -3,7 +3,6 @@ package com.unifiedledger.ui
 import com.unifiedledger.application.ImportCandidateId
 import com.unifiedledger.application.ImportDuplicateCandidateId
 import com.unifiedledger.application.ImportFileIntakeOutcome
-import com.unifiedledger.application.ImportIntakePipelineOutcome
 import com.unifiedledger.application.ImportReviewRowsResult
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.ParseManualExpenseAmount
@@ -97,9 +96,12 @@ class P503ImportGroupFirstWindowHostTest {
         assertEquals(20_001, open.totalCount)
 
         // The re-run shape: the card was open at round start and is still open — the round opens its
-        // OWN first window over it (there is no "already open, so skip" branch).
+        // OWN first window over it (there is no "already open, so skip" branch), and the replacement
+        // keeps the count query's whole-group total rather than the window's item count.
         val stillOpenRound = importGroupEnumerationFirstWindowEvents("pick-handle-1", listOf(groupItem("duplicate-1")), 3, true, true)
-        assertEquals(1, stillOpenRound.size)
+        val replacement = assertIs<P503UiEvent.StartImportDuplicateGroupDisposition>(stillOpenRound.single())
+        assertEquals(3, replacement.totalCount)
+        assertEquals(listOf("duplicate-1"), replacement.items.map { it.duplicateCandidateId.value })
 
         // The whole-group-empty shape opens no card: the affordance's non-empty group is the only
         // producer of a round, so this is the defensive no-op the unpaged host had.
