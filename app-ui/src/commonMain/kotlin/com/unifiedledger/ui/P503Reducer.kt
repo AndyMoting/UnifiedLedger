@@ -2131,10 +2131,19 @@ class P503ReducerImpl(
      * whose row is gone, so a superseded checklist can never survive as an invisible selection.
      * A failure event whose re-read ALSO failed keeps the previous list (F1 保留旧载荷) and shows
      * the failure banner; a successful intake whose re-read failed keeps the previous rows and
-     * shows the typed read-failure banner. ANY intake result landing also closes an open group
-     * disposition page (P704C-SPEC-08: the page's session handle is superseded by the new pick
-     * even on a failed pipeline — the old handle's page must not coexist with the new session
-     * summary).
+     * shows the typed read-failure banner.
+     *
+     * P7-04 D-4 (B4 接治落地读有界, spec
+     * `docs/specs/2026-11-13-p7-04-b1-b4-windowed-read-design.md`): that re-read is ONE bounded page,
+     * so a `Rows` landing also lands the page's keyset cursor (the 加载更多 resume point) and an
+     * `Unavailable` landing keeps the previous cursor BESIDE the previous rows — resetting it would
+     * restart the list from page one over the same stale rows. The landed page also narrows the
+     * selection filter below: a selection whose row sits on a not-yet-loaded page is dropped with
+     * the same rule that drops a vanished row, because an invisible selection could not be unchecked.
+     *
+     * ANY intake result landing also closes an open group disposition page (P704C-SPEC-08: the page's
+     * session handle is superseded by the new pick even on a failed pipeline — the old handle's page
+     * must not coexist with the new session summary).
      */
     private fun reduceImportFileIntakeResult(
         state: P503AppState.OverviewEmpty,
@@ -2150,6 +2159,14 @@ class P503ReducerImpl(
             when (rowsResult) {
                 is com.unifiedledger.application.ImportReviewRowsResult.Rows -> rowsResult.rows
                 com.unifiedledger.application.ImportReviewRowsResult.Unavailable -> view.rows
+            }
+        // P7-04 D-4 (B4 接治落地读有界): the landing re-read is ONE page, so its cursor rides in the
+        // event. A failed page read keeps the PREVIOUS cursor — clearing it would make 加载更多
+        // restart from page one while the previous rows are still on screen.
+        val nextAfterCandidateId =
+            when (rowsResult) {
+                is com.unifiedledger.application.ImportReviewRowsResult.Rows -> event.nextAfterCandidateId
+                com.unifiedledger.application.ImportReviewRowsResult.Unavailable -> view.nextAfterCandidateId
             }
         val retainedSelection =
             if (rowsResult is com.unifiedledger.application.ImportReviewRowsResult.Rows) {
@@ -2168,6 +2185,7 @@ class P503ReducerImpl(
             importReview =
                 view.copy(
                     rows = nextRows,
+                    nextAfterCandidateId = nextAfterCandidateId,
                     selectedCandidateIds = retainedSelection,
                     lastIntakeSession = event.session,
                     notice = notice,

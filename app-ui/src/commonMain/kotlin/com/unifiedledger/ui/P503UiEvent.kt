@@ -708,10 +708,19 @@ sealed interface P503UiEvent {
      * INCLUDING a typed failure, whose committed prefix must stay visible — while an
      * `ImportReviewRowsResult.Unavailable` re-read keeps the previous list; a typed failure also
      * surfaces the explicit failure banner). Absorbed everywhere else.
+     *
+     * P7-04 D-4 (B4 接治落地读有界, spec
+     * `docs/specs/2026-11-13-p7-04-b1-b4-windowed-read-design.md`): the landing re-read is ONE
+     * bounded page, so [nextAfterCandidateId] carries that page's keyset cursor — the shape
+     * [ImportReviewResult] already uses. The reducer advances the cursor on `Rows` and KEEPS the
+     * previous one on `Unavailable`; a failed page read that reset it to null would silently
+     * restart 加载更多 from the first page. The default null means "this landing is the complete
+     * list" and keeps every pre-D-4 construction site compiling.
      */
     data class ImportFileIntakeResult(
         val session: ImportIntakeSessionSummary,
         val rows: com.unifiedledger.application.ImportReviewRowsResult,
+        val nextAfterCandidateId: String? = null,
     ) : P503UiEvent
 
     /**
