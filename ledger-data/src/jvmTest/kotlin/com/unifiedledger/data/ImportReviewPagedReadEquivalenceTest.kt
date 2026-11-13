@@ -870,8 +870,10 @@ class ImportReviewPagedReadEquivalenceTest {
                 emptyList(),
                 adapter.loadImportReviewRowsForCandidateIds(ledgerId, listOf("p704-nope")),
             )
+            val mixedReference = wholeListFilteredTo(database, listOf("p704-01", "p704-nope"))
+            assertEquals(1, mixedReference.size, "the fixture's first candidate must exist")
             assertEquals(
-                emptyList(),
+                mixedReference,
                 adapter.loadImportReviewRowsForCandidateIds(ledgerId, listOf("p704-01", "p704-nope")),
                 "the unknown id drops out; the present id still comes back",
             )
