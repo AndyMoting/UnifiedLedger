@@ -2691,20 +2691,24 @@ fun P503App(
      * reads in ONE query (the v30 covering index), folded per candidate client-side. Legacy
      * compositions without the batch query keep the per-candidate path.
      *
-     * B6 group-card paging batch (D-280, spec `docs/specs/2026-11-04-b6-group-card-paged-
-     * enumeration-design.md`): the batch path is now PAGED — the group card opens on the
-     * FIRST keyset page (spec §3.3: the card marker = header + batch switch + first window,
-     * which is the measured 用户可见组卡首响应), and the remaining pages land through
-     * [P503UiEvent.ImportGroupEnumerationPageLanded] while the explicit progress line stays
-     * up ([ImportGroupEnumerationCompleted] moves to the LAST page). All pages run inside ONE
-     * [ledger.leased] window (spec §2.5: the whole paging round shares the unpaginated read's
-     * snapshot-consistency semantics and connection-hold shape), each page feeds the UNCHANGED
-     * pure function (its typed abort applies per page: any [ImportDuplicateReviewsResult.
-     * Unavailable] — the mapped session-read failure — aborts the WHOLE enumeration before
-     * the first landing, so the card never opens on a partial group). The header's 共 N 条
-     * binds to the count query ([P503LedgerFacade.countImportDuplicateCandidatesForSession]),
-     * the WHOLE-group total. The confirm action still authorizes the whole group: it waits
-     * for the remaining pages (the single-flight slot is held until the paging round ends).
+     * B6 first-window batch (D-280, spec `docs/specs/2026-11-04-b6-group-card-paged-
+     * enumeration-design.md` §3.3 首窗事件落盘后立即开卡): the batch path is PAGED and every window
+     * leaves the worker as its OWN main-dispatcher hop (R2-5: no worker-thread reduce), so the
+     * card opens on the FIRST keyset page — header + batch switch + first window, the measured
+     * 用户可见组卡首响应 — instead of after the whole round. The three hop shapes are the pure
+     * [importGroupEnumerationFirstWindowEvents] / [importGroupEnumerationContinuationEvents] /
+     * [importGroupEnumerationRoundEndEvents] seams; their ORDER is the dispatch discipline (the
+     * Start BEFORE the continuation landings — the reverse would let the Start replacement wipe
+     * them) and the FIFO main-dispatcher queue keeps them in keyset order. The explicit progress
+     * line keeps rendering while [P503UiEvent.ImportGroupEnumerationCompleted] has not landed:
+     * that event moves to the LAST page, so the line's flip timing is unchanged (spec §3.3). All
+     * pages run inside ONE [ledger.leased] window (spec §2.5: the whole paging round shares the
+     * unpaginated read's snapshot-consistency semantics and connection-hold shape), each page
+     * feeds the UNCHANGED pure function (its typed abort applies per page and voids the WHOLE
+     * round, spec §2.3). The header's 共 N 条 binds to the count query
+     * ([P503LedgerFacade.countImportDuplicateCandidatesForSession]), the WHOLE-group total. The
+     * confirm action still authorizes the whole group: its gate is the single-flight slot, which
+     * is released only with the paging round (spec §3.4).
      */
     fun startImportDuplicateGroupDisposition() {
         val overviewState = latestState.value as? P503AppState.OverviewEmpty ?: return
@@ -2716,9 +2720,10 @@ fun P503App(
         // defensive fallback for a wired-but-unbounded legacy surface.
         var pageQueryPageSize = 200L
         // B6 group-card paging batch (D-280, review R2-12): the card state AT ROUND START. The
-        // final hop must distinguish "fresh round (the card was never open - opening it is the
-        // round's JOB)" from "the user closed the card mid-round (the round must NOT resurrect
-        // it)". Both read null at final-hop time, so the start state is the discriminator.
+        // first window's hop must distinguish "fresh round (the card was never open - opening it
+        // is the round's JOB)" from "the user closed the card mid-round (the round must NOT
+        // resurrect it)". Both read null once the card is closed, so the round-start capture is
+        // the discriminator.
         val cardWasOpenAtRoundStart =
             (latestState.value as? P503AppState.OverviewEmpty)
                 ?.importReview
@@ -2735,25 +2740,59 @@ fun P503App(
                 // enumeration's single-flight slot always releasable — the finally hop releases
                 // it and dispatches the typed outcome on the main dispatcher regardless of how
                 // the run ended.
-                // B6 paging (D-280): firstOrdinal tracks the whole-group position of the next
-                // page across the loop; a typed failure at ANY page aborts the whole
-                // enumeration (the flag), discards every landed page, and surfaces the typed
-                // list-failure banner — the card never opens on a partial group (spec §2.3).
+                // B6 first-window (D-280 §3.3): firstOrdinal tracks the whole-group position of
+                // the next page across the loop; a typed failure at ANY page aborts the whole
+                // enumeration (the flag) and the round-end hop closes whatever the first window
+                // already opened — the landed prefix is never left on screen as a smaller group
+                // (§2.3).
                 var enumerationFailed = false
-                var firstPage: ImportDuplicateGroupEnumeration.Ready? = null
+                // R2-1: whether any window landed. A round that lands none is the typed-failure
+                // round (the count/page contract violation), exactly like the unpaged shape.
+                var anyPageLanded = false
                 var totalCount = 0
-                // B6 paging (D-280 review R2-5): pages >= 2 land through this buffer, drained by
-                // the final main-dispatcher hop in keyset order - never dispatched mid-round.
-                val landedPages = mutableListOf<P503UiEvent.ImportGroupEnumerationPageLanded>()
+                // P7-06 06.1 (D-176; spec 4.3/4.4): the enumeration reads run under one lease; the
+                // captured generation gates every landing hop below.
+                var enumerationGeneration: Generation? = null
 
                 fun cardStillOpen(): Boolean =
                     (latestState.value as? P503AppState.OverviewEmpty)
                         ?.importReview
                         ?.groupDisposition
                         ?.inputRef == sessionInputRef
-                // P7-06 06.1 (D-176; spec 4.3/4.4): the enumeration reads run under one lease; the
-                // captured generation gates the landing below.
-                var enumerationGeneration: Generation? = null
+
+                // B6 first-window (D-280 review R2-5): the dispatch discipline — ONE main-dispatcher
+                // hop per window, never a worker-thread reduce. The hop re-checks the round's
+                // generation (a superseded graph discards this window's payload, P706-A07) and reads
+                // `cardStillOpen()` AT HOP TIME; the pure seams own the rest of the decision.
+                fun dispatchEnumerationHop(events: (cardStillOpen: Boolean) -> List<P503UiEvent>) {
+                    scope.launch {
+                        if (enumerationGeneration != null && !ledger.isCurrentGeneration(enumerationGeneration)) {
+                            return@launch
+                        }
+                        events(cardStillOpen()).forEach(::dispatch)
+                    }
+                }
+
+                // B6 first-window (spec §3.3): queue THIS window's hop — the first window opens
+                // the card (Start with its items + the count query's whole-group total), every
+                // later window appends at its whole-group ordinal. Both moments read the round-start
+                // card capture, so a card the user closed mid-round is never resurrected
+                // (R2-12/R2-13).
+                fun landWindow(
+                    items: List<ImportDuplicateGroupDispositionItem>,
+                    firstOrdinal: Int,
+                ) {
+                    val windowTotal = totalCount
+                    val opensCard = !anyPageLanded
+                    anyPageLanded = true
+                    dispatchEnumerationHop { stillOpen ->
+                        if (opensCard) {
+                            importGroupEnumerationFirstWindowEvents(sessionInputRef, items, windowTotal, cardWasOpenAtRoundStart, stillOpen)
+                        } else {
+                            importGroupEnumerationContinuationEvents(sessionInputRef, items, firstOrdinal, stillOpen)
+                        }
+                    }
+                }
                 try {
                     val leased =
                         ledger.leased { facade, generation ->
@@ -2805,21 +2844,12 @@ fun P503App(
                                                     return@leased
                                                 }
                                                 is ImportDuplicateGroupEnumeration.Ready -> {
-                                                    if (firstPage == null) {
-                                                        firstPage = enumeration
-                                                    } else {
-                                                        // Collected, not dispatched: the landings leave the
-                                                        // lease through the FINAL main-dispatcher hop in
-                                                        // keyset order (D-280 review R2-5 — a mid-round
-                                                        // dispatch from this worker would reduce
-                                                        // concurrently with main-thread user events).
-                                                        landedPages +=
-                                                            P503UiEvent.ImportGroupEnumerationPageLanded(
-                                                                sessionInputRef,
-                                                                enumeration.items,
-                                                                firstOrdinal,
-                                                            )
-                                                    }
+                                                    // B6 first-window (spec §3.3): queue this window's
+                                                    // main-dispatcher hop the moment it is assembled.
+                                                    // The first one opens the card; the rest append
+                                                    // to the landed prefix in keyset order (one
+                                                    // queueing thread, FIFO dispatcher).
+                                                    landWindow(enumeration.items, firstOrdinal)
                                                     firstOrdinal += enumeration.items.size
                                                 }
                                             }
@@ -2843,8 +2873,11 @@ fun P503App(
                                     when (enumeration) {
                                         ImportDuplicateGroupEnumeration.ReadFailed -> enumerationFailed = true
                                         is ImportDuplicateGroupEnumeration.Ready -> {
-                                            firstPage = enumeration
+                                            // The unpaged legacy window IS the whole group: one hop
+                                            // opens the card with every item (the opening seam
+                                            // ignores the ordinal — the Start stamps 1..n).
                                             totalCount = enumeration.items.size
+                                            landWindow(enumeration.items, firstOrdinal = 1)
                                         }
                                     }
                                 }
@@ -2856,8 +2889,12 @@ fun P503App(
                 } catch (failure: Exception) {
                     enumerationFailed = true
                 } finally {
-                    // Back on the main dispatcher: release the slot and dispatch serially - the
-                    // page landings drain here in keyset order (R2-5), after the round outcome.
+                    // Back on the main dispatcher: release the slot and dispatch the round's END in
+                    // the SAME hop — the slot's pairing with the start above is unchanged (it must
+                    // not be released before the round ends: spec §3.4's whole-group confirm gate
+                    // reads it). Every window hop was queued before this one, so FIFO lands them
+                    // first and a failed page's close lands on top of whatever the first window
+                    // already opened (R2-1).
                     scope.launch {
                         coordinator.importGroupEnumerationCompleted()
                         dispatch(P503UiEvent.ImportGroupEnumerationCompleted)
@@ -2865,42 +2902,10 @@ fun P503App(
                             // Stale generation: discard the enumeration payload entirely.
                             return@launch
                         }
-                        val ready = firstPage
-                        when {
-                            enumerationFailed || ready == null -> {
-                                // B6 paging (D-280 review R2-1): a mid-round failure AFTER the card
-                                // opened must not leave the landed prefix armed with the whole-group
-                                // confirm gate - close the card so the typed banner is the only
-                                // surface (spec section 2.3: a failed page never degrades to a
-                                // smaller group).
-                                dispatch(P503UiEvent.CloseImportDuplicateGroupDisposition)
-                                dispatch(P503UiEvent.ImportReviewResult(ImportReviewRowsResult.Unavailable))
-                            }
-                            // An empty Ready is the defensive no-op path (the affordance only
-                            // appears for a non-empty row-level group).
-                            ready.items.isEmpty() -> Unit
-                            else -> {
-                                // B6 paging (D-280 review R2-12/R2-13): the round outcome dispatches
-                                // unless the user closed a card that WAS open at round start (that
-                                // close is a user decision the round must not undo). A fresh round
-                                // (card never open) MUST dispatch - opening the card is the round's
-                                // job; at final-hop time both states read null, so the round-start
-                                // capture above is the discriminator. Order: Start FIRST (it
-                                // creates or REPLACES the card with page 1 plus the whole-group
-                                // total), THEN the landings drain (their absolute firstOrdinals
-                                // append onto the fresh card) - the reverse order would let the
-                                // Start replacement wipe the drained pages.
-                                val userClosedMidRound = cardWasOpenAtRoundStart && !cardStillOpen()
-                                if (!userClosedMidRound) {
-                                    dispatch(
-                                        P503UiEvent.StartImportDuplicateGroupDisposition(sessionInputRef, ready.items, totalCount),
-                                    )
-                                    for (landing in landedPages) {
-                                        dispatch(landing)
-                                    }
-                                }
-                            }
-                        }
+                        importGroupEnumerationRoundEndEvents(
+                            failed = enumerationFailed,
+                            anyPageLanded = anyPageLanded,
+                        ).forEach(::dispatch)
                     }
                 }
             }

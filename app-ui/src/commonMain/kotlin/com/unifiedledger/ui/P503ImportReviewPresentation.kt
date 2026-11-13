@@ -882,9 +882,11 @@ internal sealed interface ImportReviewRenderItem {
 
     /**
      * P7-05 enumeration performance batch: the explicit 正在整理重复组…… progress line, rendered
-     * only while the session-level enumeration behind the 整组确认页 is in flight and no card is
-     * open yet (the open card's own header/items/footer supersede the progress line). A
-     * presentation choice of this batch, registered for review — not a frozen spec surface.
+     * while the session-level enumeration behind the 整组确认页 is in flight. B6 first-window
+     * (D-280 spec §3.3) makes that span the WHOLE round: the card opens on its first window and the
+     * remaining pages keep landing, so the line stays up above the growing card until the round's
+     * completed event clears the flag. A presentation choice of the P7-05 batch, registered for
+     * review — not a frozen spec surface.
      */
     data object GroupEnumerationInProgress : ImportReviewRenderItem {
         override val stableKey: String = "group-enumeration-in-progress"
@@ -1036,10 +1038,12 @@ internal fun importReviewRenderItems(
         if (sessionInputRef != null && importDuplicateGroupRows(view.rows, sessionInputRef).isNotEmpty()) {
             items += ImportReviewRenderItem.GroupDispositionButton
         }
-        // P7-05: the enumeration progress line sits right after the affordance while the
-        // session-level enumeration is in flight and the card has not opened yet (the card's
-        // own header supersedes it once the enumeration lands).
-        if (view.groupEnumerationInProgress && view.groupDisposition == null) {
+        // P7-05 + B6 first-window (D-280 spec §3.3): the enumeration progress line sits right
+        // after the affordance while the session-level enumeration is in flight — INCLUDING
+        // while the card is already open on its first window and the remaining pages are still
+        // landing. The flag is what carries the 正在整理重复组…… line through the continuation,
+        // so the round's Completed — never the card opening — is what clears it.
+        if (view.groupEnumerationInProgress) {
             items += ImportReviewRenderItem.GroupEnumerationInProgress
         }
         // Option A windowing: the open 整组确认页 card expands flat as one header + one item per
