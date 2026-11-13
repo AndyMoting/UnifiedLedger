@@ -129,3 +129,19 @@
 入：本文、S1/S2/S3 的 tracked 变更、以及随之的决定条目。
 
 出：不改任何 thresholds / 统计量 / marker / stage 预算；不改 `D-230`/`D-243`/`D-278`–`D-284`/`D-293`/`D-294`/`D-308` 的裁决文本与开放状态；不把任何 A 项并入 PASS；不改 `.external/`；不引入依赖；**本批零 DDL、零迁移**（索引裁决按 D-7 另立迁移批）。
+
+---
+
+## 8. S1 实施登记（2026-11-13，随 S1 批；§1–§7 正文未改）
+
+**S1 交付**：`startImportDuplicateGroupDisposition` 的派发结构改为「每个窗口一个主线程 hop」，三个纯 seam 承载顺序——`importGroupEnumerationFirstWindowEvents` / `importGroupEnumerationContinuationEvents` / `importGroupEnumerationRoundEndEvents`（`app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503HostCoordinator.kt`）；`Start` 在首窗落盘时即派发，后续窗口按 keyset 序逐页追加，`ImportGroupEnumerationCompleted` 仍在末页之后（进度行翻转时机不变）。零 schema、零迁移、零依赖。
+
+**实施期三处发现（逐条登记，非静默变更）：**
+
+1. **进度行的渲染门必须同批改**。`importReviewRenderItems` 的渲染条件是 `groupEnumerationInProgress && groupDisposition == null`——卡一开就吞掉进度行。而 §3.3 明文要求「进度行在**续页期间**由 `groupEnumerationInProgress` 继续承载」；旧时序下「卡已开」几乎等价「轮次已结束」，该门近乎空转，首窗开卡后保留它会让 §3.3 那句话永远无法为真。S1 删掉后半条件并反转对应测试（断言 按钮 → 进度行 → 卡头 的渲染顺序）。这是呈现改动，理由如上，**不是**派发重排的副作用。
+2. **「首窗为空、其余页非空」的语义增量**。旧码 `ready.items.isEmpty() -> Unit` 在该形态下**静默不开卡**（潜在 `ACC-COUNT-01` 缺口）。S1 改为按 count 查询的 N 开卡，随后续页生长；`totalCount <= 0 && items.isEmpty()` 仍不开卡，保住「整组空」的旧行为。**本门承认这是对旧实现的修正**，不是规格扩展。
+3. **重跑轮次的可见瞬态**。轮次开始时卡片已开时，`Start` 会把已展示的卡替换成首窗再逐页长回；头部「共 N 条」不变。登记为可见瞬态，不改。
+
+**新增承接（本批不做，须在后续片点名闭合）：**
+
+- **D-10 §3.4 的确认门在首窗开卡后变成用户可达的静默无反馈**。规格 §3.4 要求「续页仍在飞时点确认 → 宿主先补齐剩余页再逐条确认」，实现是 `isGroupEnumerationRunning()` 的静默 `return`。改造前卡片在轮次内不可见、该路径不可达；首窗即开卡后用户可能在续页期间点确认或重入组入口而得不到任何反馈（授权对象仍恒为全组，因此只是 UX 缺口，不是账务缺陷）。**闭合条件** = 确认在单飞槽内排队到轮次结束后执行，或至少落一条类型化可见反馈；归属 §3.4 承接小片。
