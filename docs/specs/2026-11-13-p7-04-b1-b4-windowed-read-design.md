@@ -219,3 +219,17 @@
 **余量只有 88 ms，必须如实登记**：承载该窗口成本的两项都不是本批能降的——①计数查询 `Ledger.sq:11647`（三表 join + 每行相关 `max(sequence)`，b6 落在卡片打开之前）；②成员页的审阅读**一次返回该页成员的全部重复行**（b6 形态下 1 名成员 = 20000 行，item 封顶发生在读之后，救不了它）。两项都归 **D-7** 的「先测量后裁决」：先取 `EXPLAIN QUERY PLAN` + 页耗时/页输出行数，再决定加性索引（另立迁移批）或把读切到 item 粒度（后者会动组卡 item 序的合同，须单独裁决，见 §11 残余 4）。
 
 **证据差异披露**：合并头比该 run 的 `e9e0aba4` 多两个提交（`7cc810ac`、`d79dafb7`），内容**只是测试文件的 ktlint 折行**，产品代码零改动；因此本次读数对合并头成立。
+
+
+---
+
+## 13. D-4 之后的 maximum rig 读数：`saf_import` 不再打满，卡在 `detail_decision`（2026-11-13，§1–§12 正文未改）
+
+**读数**：run `43386393213`（`fa2ce94f` = D-4 合入后的 `main`；61k 候选 / 150,000 重复关系；`android-scale.yml`，mode=maximum）→ host `status=ERROR`、`phases=["prepare"]`、`elapsed=5548 s`；`instrumentation-chain.txt` 的失败是
+`java.lang.IllegalStateException: unique candidate not reached (amount=2071.99 CNY sawTargetRow=false clickAttempts=0 scans=65)`，栈在 `AndroidScaleUi.openCandidateByAmount`（`AndroidScaleUi.kt:943`）← `AndroidScaleLongInstrumentedTest.chain`（`:441`），即 **`detail_decision`**；该次 instrumentation 全程 **408 s**（对照前一轮 run `43322793290` 是 1829.8 s 且**卡在 `saf_import`**）。
+
+**结论一：B4 的目标达成。** 61k 的接治落地不再把结果行挡在整表读之后——链条从 `saf_import` 一举推进到 `detail_decision`，整条 chain 从「1800 s 预算耗尽」变成「6.8 分钟跑完全部前面的阶段」。`saf_import` 本身没有出现在失败栈里，也就没有再打满预算。
+
+**结论二：新的阻塞是 rig 的深行寻址，不是产品缺陷。** 复核列表（D-293 起）首屏只读 50 行，而 `openCandidateByAmount` 的机制是「seek 到列表顶部 → `ACTION_SCROLL_TO_POSITION` 跳到 `rowsPerSession + 12` → 有界 160 步前向扫描」。在 61k 规模下目标候选在**第 10,012 位**：跳转索引落在未装载区间，扫描 65 步后判定未达（`sawTargetRow=false`）。要真正到达，需要驱动 `加载更多导入候选` 约 200 次（每次 50 行），既超 180 s 的 stage 预算也没有意义。
+
+**因此 V-12 / V-13 仍不判 PASS**：`saf_import` 这一半已由结论一解除，但 rig 在 `detail_decision` 无法完成，`phases` 只到 `prepare`。**下一动作（承接，需单独裁决）**：maximum rig 的深行寻址必须换机制——候选是二选一：①把 `detail_decision` 的目标改成**落在首页**的候选（这会打破「唯一 amount 全局唯一」的寻址前提，需重新设计寻址键）；②给 rig 一条**有界的深行通路**（例如按 `candidate_id` 键集直接跳页的测试专用入口，或先按会话/组过滤再寻址）。无论哪条都要单独的设计门，且**不得**用「调大 stage 预算」或「跳过该 stage」来解决。
