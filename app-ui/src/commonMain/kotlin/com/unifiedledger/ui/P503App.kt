@@ -2693,10 +2693,19 @@ fun P503App(
      * enumeration with the typed list-failure banner (never a silently partial group). The
      * enumeration is single-flight; the outcome is dispatched back on the main dispatcher.
      *
-     * P7-05 enumeration performance batch: when the composition provides the session-level
-     * batch query ([P503LedgerFacade.queryImportDuplicateReviewsForSession]) the whole group
-     * reads in ONE query (the v30 covering index), folded per candidate client-side. Legacy
-     * compositions without the batch query keep the per-candidate path.
+     * P7-04 B1/B4 windowed read (design D-5/D-6): the members no longer come from the review list
+     * state. When the composition wires the member-page reads — the session-scoped candidate page
+     * ([P503LedgerFacade.queryImportReviewRows]) and
+     * [P503LedgerFacade.queryImportDuplicateReviewsForSessionMemberPage] — plus the whole-group
+     * count, the round reads ONE PAGE OF MEMBERS at a time straight from the session slice and feeds
+     * each page's candidate rows to the UNCHANGED [enumerateImportDuplicateGroupItems]: the card
+     * enumerates the whole group even when the list state holds only its first page (the 20k device
+     * run's empty member set). The member page's CURSOR ends the round, never a short page — a
+     * window whose candidates carry no duplicate yields no rows while members remain. Every other
+     * root — the desktop root is not wired by this batch, and legacy constructions wire none of
+     * these reads — keeps the pre-D-5 round verbatim: the list-state member source with the keyset
+     * session-page loop, and the P7-05 whole-session / per-candidate read behind it.
+     * [importGroupEnumerationMemberSource] is that choice, pure and separately asserted.
      *
      * B6 first-window batch (D-280, spec `docs/specs/2026-11-04-b6-group-card-paged-
      * enumeration-design.md` §3.3 首窗事件落盘后立即开卡): the batch path is PAGED and every window
@@ -2808,6 +2817,72 @@ fun P503App(
                     val leased =
                         ledger.leased { facade, generation ->
                             enumerationGeneration = generation
+                            // P7-04 B1/B4 windowed read (D-5/D-6): the round's member SOURCE.
+                            // The member-page path is taken only when every read it needs is
+                            // wired; every other root (the desktop root is not wired by this
+                            // batch, and legacy constructions wire none of them) keeps the pre-D-5
+                            // round verbatim.
+                            val source =
+                                importGroupEnumerationMemberSource(
+                                    memberPageQuery = facade.queryImportReviewRows,
+                                    memberReviewPageQuery = facade.queryImportDuplicateReviewsForSessionMemberPage,
+                                    countQuery = facade.countImportDuplicateCandidatesForSession,
+                                )
+                            if (source is ImportGroupEnumerationMemberSource.MemberPages) {
+                                // The 共 N 条 header keeps binding to the count query, never to
+                                // the landed items: the member pages only grow the card.
+                                val count = source.countQuery.query(ledger.ledgerId, sessionInputRef)
+                                if (count == null) {
+                                    enumerationFailed = true
+                                    return@leased
+                                }
+                                totalCount = count.toInt()
+                                // D-5/D-6: the member CANDIDATE page's cursor drives the
+                                // round. A page can be short — its candidates may carry no
+                                // duplicate at all, so the window yields no member rows — while
+                                // the keyset still has members left; `rows.size < pageSize` would
+                                // end the group early, so only a null cursor ends it.
+                                // BOTH reads get the same cursor AND the same page size: one
+                                // candidate window holds at most that many members, so the review
+                                // page always covers every member the window can enumerate.
+                                var afterCursor: String? = null
+                                var firstOrdinal = 1
+                                while (true) {
+                                    val memberPage =
+                                        source.memberPageQuery.querySessionPage(
+                                            ledger.ledgerId,
+                                            sessionInputRef,
+                                            IMPORT_REVIEW_GROUP_MEMBER_PAGE_SIZE,
+                                            afterCursor,
+                                        )
+                                    val reviewPage =
+                                        source.memberReviewPageQuery.query(
+                                            ledger.ledgerId,
+                                            sessionInputRef,
+                                            IMPORT_REVIEW_GROUP_MEMBER_PAGE_SIZE,
+                                            afterCursor,
+                                        )
+                                    val window =
+                                        enumerateImportDuplicateGroupMemberWindow(sessionInputRef, memberPage, reviewPage)
+                                    when (val enumeration = window.enumeration) {
+                                        ImportDuplicateGroupEnumeration.ReadFailed -> {
+                                            enumerationFailed = true
+                                            return@leased
+                                        }
+                                        is ImportDuplicateGroupEnumeration.Ready -> {
+                                            // S1's hop discipline, unchanged: this window leaves
+                                            // the worker as its OWN main-dispatcher hop, at its
+                                            // whole-group ordinal.
+                                            landWindow(enumeration.items, firstOrdinal)
+                                            firstOrdinal += enumeration.items.size
+                                        }
+                                    }
+                                    afterCursor = window.nextAfterCandidateId ?: break
+                                }
+                                // The member-page path IS the round: the pre-D-5 block below
+                                // belongs to the other path only.
+                                return@leased
+                            }
                             val sessionQuery = facade.queryImportDuplicateReviewsForSession
                             val countQuery = facade.countImportDuplicateCandidatesForSession
                             val pageQuery = facade.queryImportDuplicateReviewsForSessionPage
@@ -5562,6 +5637,16 @@ private fun isBackEnabled(state: P503AppState): Boolean =
  * which is why it is small enough to keep the first screen bounded.
  */
 private const val IMPORT_REVIEW_PAGE_SIZE = 50L
+
+/**
+ * P7-04 B1/B4 windowed read (design D-6): the 整组确认页's MEMBER page size, kept independent of the
+ * review list's [IMPORT_REVIEW_PAGE_SIZE] — the group round is cut in MEMBERS of the pick session
+ * (B6's 200, unchanged), not in review-list candidates, so the two surfaces are sized separately:
+ * raising the list's page must not lengthen a group round, and the group round must not shrink the
+ * list's first screen. The page's CURSOR ends the round, never this bound (a window can be short
+ * while members remain).
+ */
+private const val IMPORT_REVIEW_GROUP_MEMBER_PAGE_SIZE = 200L
 
 /**
  * P5-04.3: dispatching Back is only legal from the Back-able states; Submitting swallows the

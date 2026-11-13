@@ -3,9 +3,12 @@ package com.unifiedledger.ui
 import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.CorrectTransactionVersionResult
+import com.unifiedledger.application.CountImportDuplicateCandidatesForSession
 import com.unifiedledger.application.CounterpartyCommandResult
 import com.unifiedledger.application.ImportReviewRowsPageResult
 import com.unifiedledger.application.ImportReviewRowsResult
+import com.unifiedledger.application.QueryImportDuplicateReviewsForSessionMemberPage
+import com.unifiedledger.application.QueryImportReviewRows
 import com.unifiedledger.application.RecycleBinResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TypedEntryDraft
@@ -848,6 +851,48 @@ internal fun importGroupEnumerationRoundEndEvents(
         )
     } else {
         emptyList()
+    }
+
+/**
+ * P7-04 B1/B4 windowed read (design D-5/D-6): which member SOURCE one enumeration round reads.
+ * [MemberPages] is the D-5 path — the members come from the session slice itself, one page of
+ * members at a time, so the group card no longer depends on how much of the review list is loaded.
+ * [LegacyListState] is the pre-D-5 round, unchanged: the composition roots that do not wire the
+ * member-page reads (the desktop root of this batch, and every legacy construction) keep exactly
+ * today's behaviour — member source = the review list state, keyset page loop over the session
+ * duplicate rows.
+ *
+ * The member path is all-or-nothing on purpose: it has no list state to fall back on and its
+ * 共 N 条 header binds to the count read, so a partially wired facade would otherwise enumerate
+ * half a group. Selecting [LegacyListState] there keeps the unwired root's round alive instead of
+ * turning its 整组确认页 into a typed-failure banner.
+ */
+internal sealed interface ImportGroupEnumerationMemberSource {
+    /** The D-5 member-page path: the three reads the member round needs, all wired. */
+    data class MemberPages(
+        val memberPageQuery: QueryImportReviewRows,
+        val memberReviewPageQuery: QueryImportDuplicateReviewsForSessionMemberPage,
+        val countQuery: CountImportDuplicateCandidatesForSession,
+    ) : ImportGroupEnumerationMemberSource
+
+    /** The pre-D-5 round over the review list state (unwired roots and legacy compositions). */
+    data object LegacyListState : ImportGroupEnumerationMemberSource
+}
+
+/**
+ * D-5/D-6 path selection for ONE enumeration round — pure, so the choice is assertable without the
+ * composable host. [P503App] calls it once per round inside the lease and branches the round on the
+ * result; only [ImportGroupEnumerationMemberSource.MemberPages] runs the member-page loop.
+ */
+internal fun importGroupEnumerationMemberSource(
+    memberPageQuery: QueryImportReviewRows?,
+    memberReviewPageQuery: QueryImportDuplicateReviewsForSessionMemberPage?,
+    countQuery: CountImportDuplicateCandidatesForSession?,
+): ImportGroupEnumerationMemberSource =
+    if (memberPageQuery != null && memberReviewPageQuery != null && countQuery != null) {
+        ImportGroupEnumerationMemberSource.MemberPages(memberPageQuery, memberReviewPageQuery, countQuery)
+    } else {
+        ImportGroupEnumerationMemberSource.LegacyListState
     }
 
 /**

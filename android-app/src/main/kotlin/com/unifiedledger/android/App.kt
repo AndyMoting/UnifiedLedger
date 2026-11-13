@@ -87,6 +87,7 @@ import com.unifiedledger.application.QueryCatalogSnapshot
 import com.unifiedledger.application.QueryImportCandidateDetail
 import com.unifiedledger.application.QueryImportDuplicateReviews
 import com.unifiedledger.application.QueryImportDuplicateReviewsForSession
+import com.unifiedledger.application.QueryImportDuplicateReviewsForSessionMemberPage
 import com.unifiedledger.application.QueryImportDuplicateReviewsForSessionPage
 import com.unifiedledger.application.QueryImportReviewRows
 import com.unifiedledger.application.QueryMerchantMonthlyAccumulation
@@ -1551,6 +1552,10 @@ private fun buildLedgerGraph(
             // B6 group-card paging batch (D-280): the keyset-paged read + whole-group count
             // behind the paged 整组确认页 enumeration (the host's batch branch requires all three).
             baseQueryImportDuplicateReviewsForSessionPage = QueryImportDuplicateReviewsForSessionPage(importReviewReadAdapter),
+            // P7-04 B1/B4 windowed read (D-5/D-6): the member-major page read behind the group
+            // card's member source, so the card no longer depends on how much of the review list
+            // the intake landing loaded.
+            baseQueryImportDuplicateReviewsForSessionMemberPage = QueryImportDuplicateReviewsForSessionMemberPage(importReviewReadAdapter),
             baseCountImportDuplicateCandidatesForSession = CountImportDuplicateCandidatesForSession(importReviewReadAdapter),
             importDuplicateReview = importDuplicateReview,
             importDuplicateReviewIds = {
