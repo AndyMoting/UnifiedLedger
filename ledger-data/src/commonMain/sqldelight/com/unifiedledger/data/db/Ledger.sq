@@ -9833,6 +9833,91 @@ LEFT JOIN import_duplicate_status_history AS duplicate_status
 WHERE candidate.ledger_id = ? AND candidate.candidate_id = ?
 ORDER BY candidate.candidate_id, duplicate.candidate_id;
 
+-- P7-04 B1/B4 windowed read, D-8 second slice (design spec
+-- docs/specs/2026-11-13-p7-04-b1-b4-windowed-read-design.md §14; decision D-321): the review rows
+-- of an EXPLICIT candidate-id set in ONE ledger-scoped read. The projection, every JOIN / LEFT
+-- JOIN shape, the correlated latest-status subqueries and the ORDER BY are byte-identical to
+-- importReviewRowsForLedgerPage (:9595) — the same textual-equivalence discipline the plan pin
+-- (P704B4SessionPagePlanTest) enforces on the session page query — because the P8-01a derived
+-- columns and the blocking-first fold are defined over exactly that row shape. The WHERE narrows
+-- to the caller's candidate ids (collection parameter, the selectP408EvidenceProjectionsByIds
+-- precedent at :9010); it carries NO status predicate and NO session predicate, so a returned
+-- candidate set is exactly the requested ids that exist on the ledger (row presence <=> candidate
+-- exists), which is the property the batch dispatch pre-phase and the after-batch refresh lookups
+-- (`rows.rows.firstOrNull { it.candidateId == item.candidateId }`,
+-- app-ui/.../P503ImportBatchPresentation.kt:344 and :410) consume.
+-- The per-output-row evidence probes (the `min(evidence_id)` scalar and the active-link EXISTS)
+-- stay the D-7-closed auto-index probes (cloud CI run 43407734033, ledger-data shard 1: every
+-- access path SEARCH, the import_evidence probes on sqlite_autoindex_import_evidence_1); any
+-- index work remains a separate migration batch, never this query. Zero DDL, zero migration,
+-- schema version stays v37.
+importReviewRowsForCandidates:
+SELECT
+  candidate.candidate_id,
+  candidate.candidate_kind,
+  candidate.confidence,
+  source.input_ref,
+  source.amount_minor,
+  source.currency_code,
+  source.currency_precision,
+  source.occurred_at,
+  source.direction_token,
+  source.status_token,
+  source.funding_state,
+  source.completeness,
+  source.content_hash,
+  latest_candidate_status.status AS candidate_status,
+  EXISTS(SELECT 1 FROM import_candidate_requires_confirmation AS requirement
+     WHERE requirement.ledger_id = candidate.ledger_id
+       AND requirement.candidate_id = candidate.candidate_id
+       AND requirement.requirement = 'formal_transaction_creation') AS requires_confirmation,
+  duplicate.candidate_id AS duplicate_candidate_id,
+  duplicate_status.status AS duplicate_latest_status,
+  profile.variant AS payment_profile_variant,
+  profile.asset_leg_kind_token AS payment_profile_asset_leg_kind_token,
+  profile.credit_leg_kind_token AS payment_profile_credit_leg_kind_token,
+  -- P8-01a i3a (spec section 2.7; D-308 item 4): the candidate's subject evidence id, the anchor of
+  -- the evidence-focused reconciliation entry. Intake creates exactly one evidence row per source
+  -- (the spine's own `executeAsOne` read), so `min()` names the row; a source without any evidence
+  -- row stays NULL here rather than receiving a fabricated id.
+  (SELECT min(evidence.evidence_id) FROM import_evidence AS evidence
+     WHERE evidence.ledger_id = candidate.ledger_id
+       AND evidence.source_id = candidate.source_id) AS evidence_id,
+  -- The derived 「已用于核对既有分录」 marker: an ACTIVE evidence_link exists for that evidence. No
+  -- import status row is written for this — it is derived on every read (spec section 2.7).
+  EXISTS(SELECT 1
+     FROM import_evidence AS link_evidence
+     JOIN evidence_link AS link
+       ON link.ledger_id = link_evidence.ledger_id AND link.evidence_id = link_evidence.evidence_id
+     WHERE link_evidence.ledger_id = candidate.ledger_id
+       AND link_evidence.source_id = candidate.source_id
+       AND EXISTS (SELECT 1 FROM evidence_link_history AS link_history
+             WHERE link_history.ledger_id = link.ledger_id AND link_history.link_id = link.link_id
+               AND link_history.sequence = (SELECT max(h2.sequence) FROM evidence_link_history h2
+                     WHERE h2.ledger_id = link.ledger_id AND h2.link_id = link.link_id)
+               AND link_history.state = 'active')) AS used_for_reconciliation
+FROM import_candidate AS candidate
+JOIN import_source_record AS source
+  ON source.ledger_id = candidate.ledger_id AND source.source_id = candidate.source_id
+LEFT JOIN import_candidate_status_history AS latest_candidate_status
+  ON latest_candidate_status.ledger_id = candidate.ledger_id
+ AND latest_candidate_status.candidate_id = candidate.candidate_id
+ AND latest_candidate_status.sequence = (SELECT max(s3.sequence) FROM import_candidate_status_history AS s3
+       WHERE s3.ledger_id = candidate.ledger_id AND s3.candidate_id = candidate.candidate_id)
+LEFT JOIN import_candidate_payment_profile AS profile
+  ON profile.ledger_id = candidate.ledger_id AND profile.candidate_id = candidate.candidate_id
+LEFT JOIN import_duplicate_candidate AS duplicate
+  ON duplicate.ledger_id = candidate.ledger_id
+ AND duplicate.subject_source_id = candidate.source_id
+LEFT JOIN import_duplicate_status_history AS duplicate_status
+  ON duplicate_status.ledger_id = duplicate.ledger_id
+ AND duplicate_status.candidate_id = duplicate.candidate_id
+ AND duplicate_status.sequence = (SELECT max(s2.sequence) FROM import_duplicate_status_history AS s2
+       WHERE s2.ledger_id = duplicate.ledger_id AND s2.candidate_id = duplicate.candidate_id)
+WHERE candidate.ledger_id = :ledger_id
+  AND candidate.candidate_id IN :candidate_ids
+ORDER BY candidate.candidate_id, duplicate.candidate_id;
+
 -- A-PERF: the lightweight candidate existence probe (the import_candidate primary key). The
 -- per-candidate duplicate-review read's absent-vs-empty verdict previously executed the whole
 -- 4-JOIN list query just to decide existence; this probe answers the same question through the

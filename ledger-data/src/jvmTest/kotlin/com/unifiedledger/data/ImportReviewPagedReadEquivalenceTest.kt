@@ -66,6 +66,13 @@ import kotlin.test.assertTrue
  *  - P704OOM-T-COLLATION-01  supplementaryPlaneIdProducesDuplicateNotSilentLoss
  *  - P704OOM-T-EMPTYID-01    emptyStringCandidateIdFailsLoud
  *  - P704OOM-T-NESTING-01    nestingInsideATransactionFailsLoudAndMapsToUnavailable
+ *  - D-8-2ND-T-1..6          the bounded candidate-id-set read family (design spec §14, D-321):
+ *                            boundedReadOfASingleIdEqualsTheWholeListReadsRowForThatId,
+ *                            boundedReadOfAMultiIdSetEqualsTheWholeListReadFilteredInOrder,
+ *                            boundedReadOfACandidateWithDuplicatesFoldsTheWholeRun,
+ *                            boundedReadOfAnEmptyIdSetReturnsEmptyWithoutExecutingSql,
+ *                            boundedReadCrossingSessionBoundariesStillReturnsTheRequestedRows,
+ *                            boundedReadOfAnUnknownIdYieldsNothingAndTheUseCaseMapsFailuresToUnavailable
  */
 class ImportReviewPagedReadEquivalenceTest {
     private val ledgerId = LedgerId("ledger-p704oom")
@@ -731,6 +738,154 @@ class ImportReviewPagedReadEquivalenceTest {
             }
             val mapped = database.transactionWithResult { QueryImportReviewRows(adapter).query(ledgerId) }
             assertTrue(mapped is ImportReviewRowsResult.Unavailable)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // D-8 second slice (design spec 2026-11-13-p7-04-b1-b4-windowed-read-design.md §14; D-321):
+    // the bounded candidate-id-set read (`importReviewRowsForCandidates`) must return, for any id
+    // set, exactly the whole-list read's rows for that set — same order (the query's ORDER BY is
+    // candidate-major, so filtering the whole read preserves order), same blocking-first fold, same
+    // fields. The consumers this equivalence backs are the batch dispatch pre-phase and the
+    // Unknown-item check (both `rows.rows.firstOrNull { it.candidateId == ... }` lookups over the
+    // batch presentation): a bounded read that dropped, duplicated or reordered a requested
+    // candidate would silently change those verdicts, which is what this family exists to catch.
+    // ------------------------------------------------------------------
+
+    /** The reference: the whole-list read filtered to the requested id set (order-preserving). */
+    private fun wholeListFilteredTo(
+        database: LedgerDatabase,
+        candidateIds: Collection<String>,
+    ): List<ImportReviewRow> {
+        val wanted = candidateIds.toSet()
+        return wholeLedgerReference(database).filter { it.candidateId.value in wanted }
+    }
+
+    @Test
+    fun boundedReadOfASingleIdEqualsTheWholeListReadsRowForThatId() {
+        // D-8-2ND-T-1: one requested candidate — the Unknown-item check's shape (a single id).
+        withMixedLibrary { database ->
+            val adapter = SqlDelightImportReviewReadAdapter(database)
+            val reference = wholeListFilteredTo(database, listOf("p704-03"))
+            assertEquals(1, reference.size, "the fixture's fourth candidate must exist")
+            assertEquals(
+                reference,
+                adapter.loadImportReviewRowsForCandidateIds(ledgerId, listOf("p704-03")),
+            )
+        }
+    }
+
+    @Test
+    fun boundedReadOfAMultiIdSetEqualsTheWholeListReadFilteredInOrder() {
+        // D-8-2ND-T-2: several requested candidates, requested OUT of candidate order on purpose:
+        // the result order is the query's candidate-major ORDER BY, never the caller's list order.
+        withMixedLibrary { database ->
+            val adapter = SqlDelightImportReviewReadAdapter(database)
+            val requested = listOf("p704-05", "p704-01", "p704-03")
+            val reference = wholeListFilteredTo(database, requested)
+            assertEquals(
+                listOf("p704-01", "p704-03", "p704-05"),
+                reference.map { it.candidateId.value },
+                "the filtered reference must arrive in the whole read's candidate order",
+            )
+            assertEquals(
+                reference,
+                adapter.loadImportReviewRowsForCandidateIds(ledgerId, requested),
+                "the bounded read must reproduce the filtered whole list, in the same order",
+            )
+        }
+    }
+
+    @Test
+    fun boundedReadOfACandidateWithDuplicatesFoldsTheWholeRun() {
+        // D-8-2ND-T-3: the mixed library's third candidate carries the three-record tuple group's
+        // two duplicate relations, so the bounded read must fold the SAME blocking-first verdict
+        // (DEFERRED) the whole-list read folds — a bounded read that returned the candidate's base
+        // row without its duplicate run would read as no-duplicates.
+        withMixedLibrary { database ->
+            val adapter = SqlDelightImportReviewReadAdapter(database)
+            val whole = wholeLedgerReference(database)
+            val folded = whole.first { it.candidateId.value == "p704-02" }
+            assertEquals(ImportDuplicateStatus.DEFERRED, folded.duplicateStatus, "fixture premise: the candidate folds a duplicate")
+            assertEquals(
+                listOf(folded),
+                adapter.loadImportReviewRowsForCandidateIds(ledgerId, listOf("p704-02")),
+            )
+        }
+    }
+
+    @Test
+    fun boundedReadOfAnEmptyIdSetReturnsEmptyWithoutExecutingSql() {
+        // D-8-2ND-T-4: the adapter's empty-collection guard returns emptyList() WITHOUT executing
+        // SQL — SQLDelight's IN expansion must never reach SQLite empty. Proven structurally: the
+        // read runs against a database whose backing driver is CLOSED, so any executed statement
+        // would throw instead of returning an empty list.
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val database: LedgerDatabase
+        try {
+            LedgerDatabase.Schema.create(driver)
+            database = LedgerDatabase(driver)
+        } finally {
+            driver.close()
+        }
+        val adapter = SqlDelightImportReviewReadAdapter(database)
+        assertEquals(emptyList(), adapter.loadImportReviewRowsForCandidateIds(ledgerId, emptyList()))
+        assertEquals(emptyList(), adapter.loadImportReviewRowsForCandidateIds(ledgerId, emptySet()))
+    }
+
+    @Test
+    fun boundedReadCrossingSessionBoundariesStillReturnsTheRequestedRows() {
+        // D-8-2ND-T-5: the ledger-scoped read has NO session predicate — a requested candidate
+        // whose subject source belongs to a DIFFERENT pick session than the caller's must still
+        // come back. The mixed fixture intakes each record under its own input_ref
+        // (batch-p704-{index}), so p704-01 and p704-03 are candidates of different sessions; the
+        // bounded read returns both rows, which is precisely the property the batch dispatch
+        // pre-phase needs (the authorization snapshot may span sessions).
+        withMixedLibrary { database ->
+            val adapter = SqlDelightImportReviewReadAdapter(database)
+            val reference = wholeListFilteredTo(database, listOf("p704-01", "p704-03"))
+            assertEquals(2, reference.size, "both requested candidates must exist")
+            assertTrue(
+                reference[0].sourceInputRef != reference[1].sourceInputRef,
+                "fixture premise: the two candidates must belong to different pick sessions",
+            )
+            assertEquals(
+                reference,
+                adapter.loadImportReviewRowsForCandidateIds(ledgerId, listOf("p704-01", "p704-03")),
+                "the ledger-scoped id-set read carries no session predicate: rows from another session still come back",
+            )
+        }
+    }
+
+    @Test
+    fun boundedReadOfAnUnknownIdYieldsNothingAndTheUseCaseMapsFailuresToUnavailable() {
+        // D-8-2ND-T-6: an id that names no candidate contributes nothing (row presence <=> the
+        // candidate exists — neither query fabricates a row), and the use case keeps the frozen
+        // fail-loud mapping: a throwing read is Unavailable, never an empty list (G6/F1).
+        withMixedLibrary { database ->
+            val adapter = SqlDelightImportReviewReadAdapter(database)
+            val reference = wholeListFilteredTo(database, listOf("p704-nope"))
+            assertTrue(reference.isEmpty(), "the unknown id must not exist in the whole read either")
+            assertEquals(
+                emptyList(),
+                adapter.loadImportReviewRowsForCandidateIds(ledgerId, listOf("p704-nope")),
+            )
+            assertEquals(
+                emptyList(),
+                adapter.loadImportReviewRowsForCandidateIds(ledgerId, listOf("p704-01", "p704-nope")),
+                "the unknown id drops out; the present id still comes back",
+            )
+            val throwing =
+                object : com.unifiedledger.application.ImportReviewReadPort {
+                    override fun loadImportReviewRowsForCandidateIds(
+                        ledgerId: LedgerId,
+                        candidateIds: Collection<String>,
+                    ): List<ImportReviewRow> = throw IllegalStateException("synthetic bounded read failure")
+                }
+            assertTrue(
+                QueryImportReviewRows(throwing).queryRowsForCandidates(ledgerId, listOf("p704-01")) is
+                    ImportReviewRowsResult.Unavailable,
+            )
         }
     }
 }

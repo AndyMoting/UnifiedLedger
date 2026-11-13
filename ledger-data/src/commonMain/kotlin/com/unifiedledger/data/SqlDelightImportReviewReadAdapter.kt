@@ -261,6 +261,42 @@ class SqlDelightImportReviewReadAdapter(
     }
 
     /**
+     * P7-04 B1/B4 windowed read, D-8 second slice (design spec §14; D-321): the review rows of an
+     * EXPLICIT candidate-id set, in the candidate-major order the fold consumes. The named query is
+     * byte-identical in projection / JOIN shape / ORDER BY to the ledger page query's, so this path
+     * reuses the SAME [foldCandidateRuns] the other reads use — one row per candidate, duplicates
+     * folded with the blocking verdict first. A bounded read by the undispatched items' candidate
+     * ids returns exactly the rows the pre-phase lookups (`admitImportBatchItem` /
+     * `importUnknownCheckContext`, both `rows.rows.firstOrNull { it.candidateId == item.candidateId
+     * }` over the batch presentation) can consume: the read has NO status and NO session predicate,
+     * so row presence <=> the candidate exists on the ledger — the whole-table read's only relevant
+     * content for those lookups.
+     *
+     * The empty-collection guard is a CONTRACT, not an optimization: SQLDelight expands an `IN
+     * :collection` bind to SQLite and an empty expansion must never reach the engine, so an empty
+     * id set returns `emptyList()` WITHOUT executing any SQL. Every other property follows the
+     * ledger page read's discipline: one read transaction per call with `noEnclosing = true`
+     * (snapshot + nesting contract), and no absent verdict — a requested id that names no candidate
+     * contributes nothing (the pre-phase lookup then fails the item the same way the whole-table
+     * read's missing row did).
+     */
+    override fun loadImportReviewRowsForCandidateIds(
+        ledgerId: LedgerId,
+        candidateIds: Collection<String>,
+    ): List<ImportReviewRow> {
+        if (candidateIds.isEmpty()) return emptyList()
+        return database.transactionWithResult(noEnclosing = true) {
+            val batch =
+                database.ledgerQueries
+                    .importReviewRowsForCandidates(
+                        ledger_id = ledgerId.value,
+                        candidate_ids = candidateIds,
+                    ).executeAsList()
+            foldCandidateRuns(batch) { row -> row.toColumns() }
+        }
+    }
+
+    /**
      * D-230 J1 mechanism (b): fold one contiguous candidate run at a time — the generated rows of a
      * candidate are adjacent (the query orders by candidate_id and the boundary subquery admits
      * candidates whole), so one walk yields exactly the runs `groupBy { it.candidate_id }` produced,
@@ -797,6 +833,39 @@ private fun com.unifiedledger.data.db.ImportReviewRowsForLedgerPage.toColumns():
  * of silently folding a differently-shaped row.
  */
 private fun com.unifiedledger.data.db.ImportReviewRowsForSessionPage.toColumns(): ImportReviewRowColumns =
+    ImportReviewRowColumns(
+        candidate_id,
+        candidate_kind,
+        confidence,
+        input_ref,
+        amount_minor,
+        currency_code,
+        currency_precision,
+        occurred_at,
+        direction_token,
+        status_token,
+        funding_state,
+        completeness,
+        content_hash,
+        candidate_status,
+        requires_confirmation,
+        duplicate_candidate_id,
+        duplicate_latest_status,
+        payment_profile_variant,
+        payment_profile_asset_leg_kind_token,
+        payment_profile_credit_leg_kind_token,
+        evidence_id,
+        used_for_reconciliation,
+    )
+
+/**
+ * P7-04 B1/B4 windowed read, D-8 second slice (design spec §14; D-321): the generated row type of
+ * the candidate-id-set query `importReviewRowsForCandidates`. Its column list is the ledger page
+ * query's list, so this widening is the same mechanical expansion as the overloads above — any
+ * column drift between the queries breaks compilation here instead of silently folding a
+ * differently-shaped row.
+ */
+private fun com.unifiedledger.data.db.ImportReviewRowsForCandidates.toColumns(): ImportReviewRowColumns =
     ImportReviewRowColumns(
         candidate_id,
         candidate_kind,

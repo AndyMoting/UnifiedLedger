@@ -7259,3 +7259,25 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **验收（本批实际执行）：** `git diff --check` 干净；`PYTHONPATH=tools/python python -m project_docs .` exit 0；设备证据按规格 §5 的 V-1..V-4，需手动 dispatch `android-scale.yml`（mode=maximum）。
 
 **关联决定：** D-319（§13 的 maximum rig 读数与「禁止调大预算/跳 stage」）、D-293/D-294（分页读与 61k 首屏 MET）、D-308（候选行两个逐行派生列，是残余① 的读成本来源）、D-230/D-243（不得靠改完整列表语义提速）、`P704GP-ACC-ORDER-01`（本批不改产品页序）。
+
+## D-321 D-8 第二片：批量确认与批后刷新整表读有界化（D-7 索引裁决关闭，零 DDL）
+
+**状态：** 已交付并登记（2026-11-14）。实施 = 规格 `docs/specs/2026-11-13-p7-04-b1-b4-windowed-read-design.md` §14（D-8 第二片实施登记）。**零 DDL、零迁移、零依赖**；不分配 schema 版本号（维持 v37）。
+
+**背景：** D-319 D-8 把六处 UI 整表读中的五处（`:2402` 接治落地已由 D-4 改为分页）登记为第二片；D-320 残余① 把其中三处点名为 maximum rig `detail_decision` 阶段的下一个读成本来源——批量确认派发前相 `P503App.kt:3203`、Unknown 核对前相 `:3370`、批后刷新 `:3153`（`requestImportReviewRowsRead()`）。D-7 的索引裁决已由云端证据关闭（见下），使本片可以在零 DDL 下安全地把这三处整表读换成按候选 id 的有界读。
+
+**决定（范围与机制）：**
+
+1. **scope = 三个站点**：①`runImportBatchDispatch` 的批量派发前相——`undispatched` 主线程捕获处派生 `undispatchedCandidateIds`（同一快照、同一时刻、单一真相源），前相 `loadRows` 改 `queryRowsForCandidates(ledgerId, undispatchedCandidateIds)`；②`checkImportUnknownItem` 的核对前相——id 集为单个 `item.candidateId`，同法；③`requestImportReviewRowsRead()` 的批后刷新——主线程先捕获装载窗口的候选 id 集与 `nextAfterCandidateId`，按该 id 集在租约下读，`Rows` 以捕获游标经既有 `ImportReviewResult` 落地，`Unavailable` 照旧（reducer 保留旧行与旧游标）。三处的代际门、单飞槽、`finally` 结构一律未动，只改读调用与其注释。
+2. **机制**：新增命名查询 `importReviewRowsForCandidates`（投影/JOIN/相关子查询/ORDER BY 与 `importReviewRowsForLedgerPage` 字节一致，WHERE = `candidate.ledger_id = :ledger_id AND candidate.candidate_id IN :candidate_ids`）→ 适配器 `loadImportReviewRowsForCandidateIds`（**空集卫式返回空列表、不执行 SQL**——SQLDelight 的 `IN` 展开不得以空集触达 SQLite；同一 `foldCandidateRuns`）→ 端口 `loadImportReviewRowsForCandidateIds`（fail-loud 默认，G6）→ `QueryImportReviewRows.queryRowsForCandidates`（异常映射 `Unavailable`，F1）。
+3. **语义等价基础**：前相消费者只按候选 id 找行（`admitImportBatchItem` `P503ImportBatchPresentation.kt:344`、`importUnknownCheckContext` `:410`，均 `rows.rows.firstOrNull { it.candidateId == item.candidateId }`），按未派发项 id 的有界读恰好返回这些查找能消费的行；两条查询均无状态谓词、无会话谓词 ⇒ **行在场 ⟺ 候选存在**，整表读对这组 id 的相关内容全部保留。复核列表是 candidate_id 有序窗口（首页 `P503App.kt:816`、加载更多 `:2579`）：重读同一 id 集 + 捕获游标经 `reduceImportReviewResult`（`P503Reducer.kt:2204-2218`：`Rows` 落 `:2213`、`Unavailable` 保留旧行旧游标 `:2215-2217`）= 同序窗口替换，**零 reducer 改动**。
+4. **D-7 索引裁决关闭**：云端 CI run `43407734033`（job `ledger-data shard 1`，2026-11-13）的 `EXPLAIN QUERY PLAN` 显示两条候选行查询每条访问路径均为 `SEARCH … USING INDEX …`、无 `SCAN`，`import_evidence` 探针走 `sqlite_autoindex_import_evidence_1 (ledger_id=?)` 自动索引。按 D-7 本文（「若显示已走自动索引，则本项关闭并只保留读数」），**索引项关闭、零 DDL**；61k 页耗时读数维持 registered-open（需 CI 不提供的夹具环境），无裁决等待它们。新增查询沿用同一批已关闭的自动索引探针。
+5. **V-9 扩展**：`P704B4SessionPagePlanTest` 增 `P704B4-PLAN ` 钉点两条——`importReviewRowsForCandidates`（`IN` 集合参数展开字面量元组 `('p704-b4-plan-1','p704-b4-plan-2')`）与 `importDuplicateReviewsForSessionMemberPage`（`Ledger.sq:11746`，§11 第 3/4 条的成员复核读测量腿）；既有 session-vs-ledger 文本等价测试与既有钉点未动；`DEFAULT_PREFIXES` 已含该前缀，脚本未改。`ImportReviewPagedReadEquivalenceTest` 增 D-8-2ND-T-1..6 等价族：单 id / 多 id 乱序 / 带重复折叠 / 空集卫式（驱动已关闭库上执行必抛的结构证明）/ 跨会话 id 必返回（账本域读无会话谓词）/ 未知 id 不产行 + 用例 `Unavailable` 映射。
+6. **边界外站点（各得一条 D-8 闭合登记，本批不改）**：`:2659`（重复审核提交后刷新：详情/复核/重复集三载荷同租约联合刷新，事件契约是整表语义覆盖，闭合条件 = 详情路径有界化片一并裁决）；`:3127`（整组处置落地重读：行载荷直接进组卡行序的整组语义，闭合条件 = 先裁决窗口外行的呈现语义）。实施后全仓 grep 确认 `P503App.kt` 的 UI 路径整表 `query(` 调用点 = 2 处（`:2659`/`:3127`），与登记一一对应。
+7. **实施期登记**：①装载窗口为空时 `requestImportReviewRowsRead` 直接返回不派发（旧行为对该形态派发一次对空视图无可见效果的读；登记为实现注册）；②测试 fake 最小覆盖 = `P706RealJobLeaseConcurrencyTest.FixedImportReviewReadPort` 增 `loadImportReviewRowsForCandidateIds` 并把其 `runImportDispatch` 复刻改为 `queryRowsForCandidates`（该测试复刻生产前相形状）；全仓 fake 扫描命令 `git grep -n "ImportReviewReadPort"` 分类后仅此一处驱动改动站点，`MemberPageReadPort`（`P503ImportGroupMemberWindowHostTest`）等其余 fake 不经三个改动站点、未动；③`BINDS` 参数表五 → 六（`candidate_ids`）。
+
+**边界：** 入 = `Ledger.sq`（`importReviewRowsForCandidates`，零 DDL/零迁移）、`SqlDelightImportReviewReadAdapter.kt`、`ImportReviewReadPort.kt`、`app-ui/.../P503App.kt` 三站点、`P704B4SessionPagePlanTest.kt`、`ImportReviewPagedReadEquivalenceTest.kt`、`P706RealJobLeaseConcurrencyTest.kt`（fake 覆盖）、规格 §14、本条。出 = thresholds / 统计量 / marker / stage 预算；`D-230`/`D-243` 裁决文本与开放状态；`:2659`/`:3127`（按上文登记）；`.external/`；CI 配置。
+
+**验收（本批实际执行）：** 结构性证明（无本地测试/构建）：`git grep -n "queryImportReviewRows?*\.query("` 于 `P503App.kt` 恰余 `:2659`/`:3127` 两处；fake 扫描与逐站点等价论证见规格 §14；全部测试/编译门由 CI 承担。
+
+**关联决定：** D-319（D-8 第二片登记与 D-7 先测量后裁决）、D-320（残余① 点名三站点）、D-293/D-294（分页读与复核列表窗口）、D-308（候选行两个逐行派生列，等价投影的内容）、D-243（不得靠改完整列表语义提速——本片以等价替换而非截断兑现）。

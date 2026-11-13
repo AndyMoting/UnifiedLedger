@@ -10,14 +10,15 @@ import kotlin.test.assertTrue
 
 /**
  * P7-04 B1/B4 windowed read (design `docs/specs/2026-11-13-p7-04-b1-b4-windowed-read-design.md` D-7,
- * acceptance V-9): the query-plan pin for the two candidate-row queries.
+ * acceptance V-9; D-8 second slice extends the pin set, spec §14): the query-plan pin for the
+ * candidate-row queries and the member-review page query.
  *
  * WHY THIS TEST IS NOT A HAND-COPIED SQL PIN (D-283 residual R2-14). The existing equivalence tests
  * that carry a plan pin transcribe a simplified statement by hand, so the plan they print is the plan
  * of a statement nobody ships until someone notices the drift. This test instead reads the tracked
- * `Ledger.sq`, extracts the named query's own text, substitutes the five named parameters with
- * literals (a plan is a function of the statement text and the schema, never of the bound values) and
- * runs `EXPLAIN QUERY PLAN` through the real JDBC SQLite engine. If the production query changes, the
+ * `Ledger.sq`, extracts the named query's own text, substitutes the named parameters with literals (a
+ * plan is a function of the statement text and the schema, never of the bound values) and runs
+ * `EXPLAIN QUERY PLAN` through the real JDBC SQLite engine. If the production query changes, the
  * printed plan changes with it.
  *
  * WHAT IS ASSERTED: only that the plan is non-empty and contains at least one access path — the plan
@@ -44,6 +45,28 @@ class P704B4SessionPagePlanTest {
         val plan = planFor(SESSION_PAGE_QUERY)
         plan.forEach { detail -> println("P704B4-PLAN query=$SESSION_PAGE_QUERY $detail") }
         assertAccessPath(SESSION_PAGE_QUERY, plan)
+    }
+
+    @Test
+    fun theCandidatesQueryPlanHasAnAccessPath() {
+        // D-8 second slice (design spec §14; D-321): the candidate-id-set read rides the SAME
+        // projection the ledger page query carries, so its plan pin exists for the same reason —
+        // the plan of the statement the generated code actually ships, read off the tracked
+        // Ledger.sq. The IN-collection bind expands to a literal tuple (a plan is a function of the
+        // statement text, and the expansion is the statement's real parameter surface).
+        val plan = planFor(CANDIDATES_QUERY)
+        plan.forEach { detail -> println("P704B4-PLAN query=$CANDIDATES_QUERY $detail") }
+        assertAccessPath(CANDIDATES_QUERY, plan)
+    }
+
+    @Test
+    fun theMemberReviewPageQueryPlanHasAnAccessPath() {
+        // Spec §11 item 4 (D-8 closure leg): the member-major duplicate-review page is the second
+        // read whose cost the D-7 measurement leg covers, so it gets the same EXPLAIN pin. The
+        // statement is read off the tracked Ledger.sq and bound with the same literal discipline.
+        val plan = planFor(MEMBER_PAGE_QUERY)
+        plan.forEach { detail -> println("P704B4-PLAN query=$MEMBER_PAGE_QUERY $detail") }
+        assertAccessPath(MEMBER_PAGE_QUERY, plan)
     }
 
     @Test
@@ -91,9 +114,9 @@ class P704B4SessionPagePlanTest {
     }
 
     /**
-     * The five named parameters bound to literals. They are the statement's full parameter surface, so
-     * an added parameter fails loud here instead of producing a plan of a statement that no longer
-     * matches production.
+     * The named parameters bound to literals. They are the union of the pinned statements' full
+     * parameter surfaces, so an added parameter fails loud here instead of producing a plan of a
+     * statement that no longer matches production.
      */
     private fun bindLiterals(statement: String): String =
         statement.replace(PARAMETER) { match ->
@@ -145,6 +168,8 @@ class P704B4SessionPagePlanTest {
         const val SQL_FILE = "ledger-data/src/commonMain/sqldelight/com/unifiedledger/data/db/Ledger.sq"
         const val LEDGER_PAGE_QUERY = "importReviewRowsForLedgerPage"
         const val SESSION_PAGE_QUERY = "importReviewRowsForSessionPage"
+        const val CANDIDATES_QUERY = "importReviewRowsForCandidates"
+        const val MEMBER_PAGE_QUERY = "importDuplicateReviewsForSessionMemberPage"
         const val FROM_LINE = "FROM import_candidate AS candidate"
         const val OUTER_WHERE_LINE = "WHERE candidate.ledger_id = :ledger_id"
         val QUERY_NAME = Regex("^[A-Za-z][A-Za-z0-9_]*:\\s*$")
@@ -156,6 +181,11 @@ class P704B4SessionPagePlanTest {
                 "session_input_ref" to "'session-p704-b4-plan'",
                 "after_candidate_id" to "''",
                 "page_size" to "200",
+                // D-8 second slice: the candidate-id-set read's IN-collection bind. The literal
+                // tuple is the statement's real parameter surface (the adapter passes the caller's
+                // id collection; a plan is a function of the statement text, and the expanded tuple
+                // is what reaches SQLite).
+                "candidate_ids" to "('p704-b4-plan-1','p704-b4-plan-2')",
             )
     }
 }
