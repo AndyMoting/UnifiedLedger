@@ -783,7 +783,7 @@ internal class AndroidScaleUi(
         jumpIndex: Int,
     ) {
         val target = amountText(amount)
-        openCandidate(jumpIndex, { has(target) }) { rows ->
+        openCandidate(jumpIndex, "amount=$target", { has(target) }) { rows ->
             // D-320 review B1: the amount alone stops being an identity once the
             // target is a shared-session row — every shared session carries the
             // same amounts (`sessionAmountOffset(i) == 0`), so an amount-only
@@ -839,7 +839,7 @@ internal class AndroidScaleUi(
         jumpIndex: Int,
     ): Long {
         val opened =
-            openCandidate(jumpIndex, { false }) { rows ->
+            openCandidate(jumpIndex, "range=$amountRange", { false }) { rows ->
                 val candidates = rows.mapNotNull { row -> signatureAmount(row)?.let { amount -> row to amount } }
                 val selected = candidates.firstOrNull { (row, amount) -> amountMinor(amount) in amountRange && isConfirmableCandidate(row) }
                 selected?.let { (_, amount) ->
@@ -866,10 +866,11 @@ internal class AndroidScaleUi(
      */
     private fun openCandidate(
         jumpIndex: Int,
+        label: String,
         ready: () -> Boolean,
         select: (List<AccessibilityNodeInfo>) -> Pair<AccessibilityNodeInfo, String>?,
     ): String {
-        var targetDescription = "jumpIndex=$jumpIndex"
+        var targetDescription = label
         // The review screen can be parked anywhere between its "recent
         // imports" header and the candidate groups; any of these markers (or
         // the caller's own readiness predicate) proves the review surface is

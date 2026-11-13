@@ -75,11 +75,11 @@ run `43386393213`（`fa2ce94f` = D-4 合入后的 `main`；61k 候选 / 150,000 
 
 ### R1 `detail_decision` 的目标改成「复核列表首页上的一个可确认候选」
 
-- **身份规则**：目标 = 复核列表第一页里**第一个可确认的候选行**（渲染序，自上而下）。判定用渲染出的类标记：元信息行以 `重复 无` 结尾（`importCandidateMetaText`，`P503ImportReviewPresentation.kt:162-169`）即折叠状态为空 = `PENDING_USER_DECISION`。
+- **身份规则**：目标 = 复核列表第一页里**第一个可确认的候选行**（渲染序，自上而下）。判定用渲染出的类标记：元信息行以 `重复 无` 结尾（`importCandidateMetaText`，`P503ImportReviewPresentation.kt:162-169`）即折叠状态为空 = `PENDING_USER_DECISION`。**前置条件（评审 N1）**：该行 `candidateStatus` 必须是 `pending_confirmation` —— `incomplete` 与已 `confirmed`/`rejected` 的行同样渲染 `重复 无`，但都不可勾选、无决策表单（`P503ImportReviewPresentation.kt:73-76`、`P503ImportReview.kt:905-914`）。本夹具每一行都是 pending，故该标记充分；若将来出现非 pending 行，选择器会点开无表单的行，届时需把状态 token 并入标记。
 - **位置保证**：`maximum` 下首页的 50 个候选全部是 `session-01` 的行（§1.4），而 `session-01` 的行零主体关系 ⇒ 全部 `PENDING_USER_DECISION`（§1.5 ①）。更小的诊断 profile（`local-small`/`local-medium`）首页可能混入后续会话的行（如 `local-small` 为 20 + 20 + 10），但行序仍以 `session-01` 打头，且 selector 的类标记会跳过混入的 `DEFERRED` 行。所以首页一定有可确认候选，且第一个可确认候选就是 `session-01` 的行。
 - **金额推导**：不写死金额，也不假定 ordinal。目标行的金额 = `seed + 1 + ordinal + sessionAmountOffset(0)`（`AndroidScaleFixtureSpec.kt:64` 的 `sessionAmountOffset(0)` = 0），其中 `ordinal ∈ 0 until rowsPerSession`；由规格推导出**区间** `[seed + 1 + sessionAmountOffset(0), seed + 1 + sessionAmountOffset(0) + rowsPerSession)`，选中行渲染出的金额必须落在区间内，选中值写入 `selectedAmount`。`sessionAmountOffset(0)` 若在别的 profile 不为 0，区间随它平移（当前实现直接乘用它，不写常数）。
-- **`jumpIndex` 改成小的有界常量**：`FIRST_PAGE_JUMP_INDEX = 0`（`AndroidScaleLongInstrumentedTest.kt:43`）。它是**候选在第一页内的索引**，上界 = 页候选数（`0 until 50`，页大小 `P503App.kt:5653`）。取 0 的理由：扫描只向前、永不回退，越过目标即不可恢复；而 `jumpIndex + 12` 的 12 项松弛落在候选行之前的非候选前导里（标题栏、格式段、接治摘要的记录行等，见 `P503ImportReviewPresentation.kt:1075-1103`），不会越到行后。
-- **首页内「同一金额只出现一次」论证（判据不放宽）**：首页只装 `session-01` 的行（§1.4）；同一会话内每行金额 = `seed + 1 + ordinal`，ordinal 互不相同 ⇒ 金额逐行互不相同。因此「可见行里多于一个同金额匹配即异常」的既有判据仍成立，本批**不改** `openCandidateByAmount` 里的 `matches.size > 1` 检查（`AndroidScaleUi.kt:791`），selector 端对选中金额再做一次同类断言（`:837`）。共享金额在**整表**里确有 6 重（`session-01..05` + 主会话）。**评审 B1 的修正**：金额单独不再构成身份——重开路径（`:513`/`:537`）也会走 `openCandidateByAmount`，在更小的诊断 profile 上首页会混入后续会话的行，而 `sessionAmountOffset(i) == 0` 让它们与本目标**金额相同**；那些行折叠出 `DEFERRED`、没有决策表单。故本批把 `openCandidateByAmount` 的匹配条件从「金额相等」收紧为「金额相等**且**不折叠重复状态（`重复 无`）」，把类标记做成两条路径共用的判别器（`hasNoFoldedDuplicateStatus`，`isConfirmableCandidate` 改为它的别名）。这是**收紧**，不是放宽。
+- **`jumpIndex` 改成小的有界常量**：`FIRST_PAGE_JUMP_INDEX = 0`（`AndroidScaleLongInstrumentedTest.kt:43`）。它是**候选在第一页内的索引**。**真正的不等式（评审 N2）**：`jumpIndex + 12 ≤ 前导渲染项数 − 1`——`maximum` 下前导约 200 项（接治记录上限），故 `jumpIndex ≤ ~188`；「页候选数 50」只是**充分**上界而非必要上界，页大小一旦超过「前导项数 − 12」该界即失效。取 0 的理由：扫描只向前、永不回退，越过目标即不可恢复；而 `jumpIndex + 12` 的 12 项松弛落在候选行之前的非候选前导里（标题栏、格式段、接治摘要的记录行等，见 `P503ImportReviewPresentation.kt:1075-1103`），不会越到行后。
+- **首页内「同一金额只出现一次」论证（判据不放宽）**：首页只装 `session-01` 的行（§1.4）；同一会话内每行金额 = `seed + 1 + ordinal`，ordinal 互不相同 ⇒ 金额逐行互不相同。因此「可见行里多于一个同金额匹配即异常」的既有判据仍成立，本批**不改** `openCandidateByAmount` 里的 `matches.size > 1` 检查（`AndroidScaleUi.kt:801`），selector 端对选中金额再做一次同类断言（`:847`）。共享金额在**整表**里确有 6 重（`session-01..05` + 主会话）。**评审 B1 的修正**：金额单独不再构成身份——重开路径（`:513`/`:537`）也会走 `openCandidateByAmount`，在更小的诊断 profile 上首页会混入后续会话的行，而 `sessionAmountOffset(i) == 0` 让它们与本目标**金额相同**；那些行折叠出 `DEFERRED`、没有决策表单。故本批把 `openCandidateByAmount` 的匹配条件从「金额相等」收紧为「金额相等**且**不折叠重复状态（`重复 无`）」，把类标记做成两条路径共用的判别器（`hasNoFoldedDuplicateStatus`，`isConfirmableCandidate` 改为它的别名）。这是**收紧**，不是放宽。
 
 ### R2 受影响的簿记点（逐条，实施见 §5 V-4）
 
@@ -90,8 +90,8 @@ run `43386393213`（`fa2ce94f` = D-4 合入后的 `main`；61k 候选 / 150,000 
 5. **`reopen()` 的决策事实**：原 `:719` `check(confirmed.session == uniqueSessionInputRef() && confirmed.ordinal == 0)` → `:751` `check(confirmed.session == firstPageSessionInputRef())`，`:752` 的 `check(confirmed.amount == state.getLong("selectedAmount"))` 保留（`session-01` 的金额逐 ordinal 互异，会话 + 金额唯一确定一行）；原 `uniqueSessionInputRef()`（原 `:361`）删除，改为 `firstPageSessionInputRef()`（`:376`，`state.sessions[0]`）。
 6. **`uniqueSessionFirstAmount()` 的归属**：原 KDoc 改写为「仅作为 traversal 的 anchor」（`:392-401`）；值不变（`seed + 1 + rowsPerSession`），调用点 `:833` 不变。
 7. **批量确认摘要**：`已入账 0 项 / 跳过 1 项` 断言文本不变（`:503`）；注释点名跳过码 `IMPORT_BATCH_DECISION_INCOMPLETE`（`P503ImportBatchPresentation.kt:352`）：目标是可确认行、但决策尚未补齐，所以是「跳过 1 项」而不是「不可确认跳过」。
-8. **`openCandidateByAmount` 的契约文档与实现拆分**：`AndroidScaleUi.kt:754-944` → `:754-1012`；拆成 `openCandidateByAmount`（金额 + 不折叠重复状态，唯一性判据原样）/ `openFirstPageCandidate`（首页选择）/ 私有 `openCandidate`（共用的 seek + 跳转 + 160 步扫描 + 点击校验）。原 KDoc 里「金额全局唯一」「`jumpIndex` = `spec.rowsPerSession`」两处过期表述改写；160 步上界、2 次 attempt、8 次 stationary 判据、0.12 步长全部原样。
-9. **新增的夹具不变量断言**：目标金额必须落在 `firstPageAmountRange()` 内（`:464` 传入 selector），目标行必须渲染「重复 无」；两者任一不成立 ⇒ selector 扫不到行并以 `candidate not reached (...)` 失败（`AndroidScaleUi.kt:1011`），不会静默通过。
+8. **`openCandidateByAmount` 的契约文档与实现拆分**：`AndroidScaleUi.kt:754-944` → `:754-1022`；拆成 `openCandidateByAmount`（金额 + 不折叠重复状态，唯一性判据原样）/ `openFirstPageCandidate`（首页选择）/ 私有 `openCandidate`（共用的 seek + 跳转 + 160 步扫描 + 点击校验）。原 KDoc 里「金额全局唯一」「`jumpIndex` = `spec.rowsPerSession`」两处过期表述改写；160 步上界、2 次 attempt、8 次 stationary 判据、0.12 步长全部原样。
+9. **新增的夹具不变量断言**：目标金额必须落在 `firstPageAmountRange()` 内（`:464` 传入 selector），目标行必须渲染「重复 无」；两者任一不成立 ⇒ selector 扫不到行并以 `candidate not reached (...)` 失败（`AndroidScaleUi.kt:1021`），不会静默通过。
 
 ### R3 `detail_decision` 验的语义不变
 
@@ -118,7 +118,7 @@ run `43386393213`（`fa2ce94f` = D-4 合入后的 `main`；61k 候选 / 150,000 
 
 | # | 向量 | 证据类型 |
 | --- | --- | --- |
-| V-1 | 首页目标可达：`openFirstPageCandidate` 在既有 160 步上限内返回金额 `m`，`m` 落在 R1 的规格区间（`maximum` 下即 `[seed+1, seed+1+rowsPerSession)`），详情屏显示 `m` | 云设备 run（`android-scale.yml`，mode=maximum）的 `detail_decision` PASS + 链上过程断言（`AndroidScaleLongInstrumentedTest.kt:464`、`AndroidScaleUi.kt:1011`）；静态锚点见 §1.4/§1.5 |
+| V-1 | 首页目标可达：`openFirstPageCandidate` 在既有 160 步上限内返回金额 `m`，`m` 落在 R1 的规格区间（`maximum` 下即 `[seed+1, seed+1+rowsPerSession)`），详情屏显示 `m` | 云设备 run（`android-scale.yml`，mode=maximum）的 `detail_decision` PASS + 链上过程断言（`AndroidScaleLongInstrumentedTest.kt:464`、`AndroidScaleUi.kt:1021`）；静态锚点见 §1.4/§1.5 |
 | V-2 | `detail_decision` 完成：stage 状态 PASS 且 `elapsedMs ≤ 180000`；决策事实为「`session-01` 的行 + `selectedAmount`」，重开核对 `决策已补全。` 成功 | 同一设备 run 的 device evidence（`reopen` 的 `check(...)` 见 `:751-752`）；`result.py:265-270` 的 stage 上限 |
 | V-3 | 五阶段 `phases` 齐全：`prepare / chain / reopen / replay / final-reopen`，且 `stages` 集合恰为 `preparation / coldstart / saf_import / detail_decision / group_disposition / batch_confirmation / detail_monthly_refresh / reopen / traversal / same_request_replay / final_reopen` | 同一设备 run 的 `host.json`（`result.py:11` 的 `PHASES`、`:16-18` 的 `STAGES`、`:257` 的集合相等判据） |
 | V-4 | 决策事实与摘要断言按新目标更新：§3 R2 的 9 条逐条落地；`reopen()` 用「会话 + 金额」定位确认行；`已入账 0 项 / 跳过 1 项` 与 `已入账 1 项` 的摘要断言文本不变且语义仍成立 | 静态 diff 复核（`git diff` 的 2 个 test-only 文件）+ 同一设备 run 的 `reopen` PASS；`git diff --check` 与 `PYTHONPATH=tools/python python -m project_docs .` 的 exit 0 |
@@ -126,7 +126,7 @@ run `43386393213`（`fa2ce94f` = D-4 合入后的 `main`；61k 候选 / 150,000 
 **实施落点（2026-11-13 落地后）：**
 
 - `AndroidScaleLongInstrumentedTest.kt`：`:43`（`FIRST_PAGE_JUMP_INDEX = 0`）、`:376`（`firstPageSessionInputRef`）、`:378-390`（`firstPageAmountRange`）、`:392-401`（`uniqueSessionFirstAmount` 现仅为 traversal anchor）、`:463-466`（stage + selector + `selectedAmount`）、`:503`（批量摘要）、`:513`/`:537`（重开）、`:743-752`（`reopen()` 的决策事实）。
-- `AndroidScaleUi.kt`：`:781-792`（`openCandidateByAmount`）、`:827-842`（`openFirstPageCandidate`）、`:857-1012`（私有 `openCandidate`，`:924` 的 160 步、`:895` 的跳转松弛）、`:1252-1255`（`amountMinor`）、`:1265`（`isConfirmableCandidate`）。
+- `AndroidScaleUi.kt`：`:781-804`（`openCandidateByAmount`）、`:837-852`（`openFirstPageCandidate`）、`:867-1022`（私有 `openCandidate`，`:934` 的 160 步、`:905` 的跳转松弛）、`:1262-1265`（`amountMinor`）、`:1288`（`isConfirmableCandidate`）。
 
 ---
 
@@ -142,7 +142,7 @@ run `43386393213`（`fa2ce94f` = D-4 合入后的 `main`；61k 候选 / 150,000 
 ### 6.2 stage 预算的算术（若 6.1 的读被单独修好，预算本身仍然偏紧）
 
 - 首页视图的候选行在**非候选前导**之后：标题栏 + 格式段 + 接治摘要（`session-06` 的 10,000 条记录按 200 条上限渲染，`P503ImportReviewPresentation.kt:224-239`）约 200 行文本，随后才是组头和 50 行候选。
-- 步长 0.12（约 1.5 个候选行 ≈ 250–300 px）是按**候选行**标定的（`AndroidScaleUi.kt:984-990` 的 round 21 读数）；对约 200 行文本前导，它是保守的：按每行约 40–50 px 计，200 行约 8,000–10,000 px ≈ 35–40 步才露出第一行候选。单次打开约 35–40 步，两次打开（首次 + 决策补全后重开）合计约 70–80 步。
+- 步长 0.12（约 1.5 个候选行 ≈ 250–300 px）是按**候选行**标定的（`AndroidScaleUi.kt:992-1007` 的 round 21 读数）；对约 200 行文本前导，它是保守的：按每行约 40–50 px 计，200 行约 8,000–10,000 px ≈ 35–40 步才露出第一行候选。单次打开约 35–40 步，两次打开（首次 + 决策补全后重开）合计约 70–80 步。
 - 步单价没有直接读数：run `43386393213` 的 `detail_decision` 只有 `scans=65` 这一个计数（且大部分是落地在列表底部后的 stationary 采样），不能反推每步秒数。按既有链上 `await`/`settle` 的保守估计（每步 1–3 s），70–80 步约 70–240 s——**与 180 s 上限同一量级**。
 - 因此本批把「步骤数」压到机制允许的最小（首页目标，不再有 50,000 行的深行段），但**不**改步长、不改 160 步上界、不改预算（R4）。若设备读数显示仍超预算，处置顺序是：先按 6.1 裁决整表读，再评估前导段的步长/锚点（需要单独读数与裁决，不在本批）。
 
