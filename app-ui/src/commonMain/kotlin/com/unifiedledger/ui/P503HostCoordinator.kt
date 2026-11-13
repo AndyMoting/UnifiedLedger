@@ -859,8 +859,10 @@ internal fun importGroupEnumerationRoundEndEvents(
  * members at a time, so the group card no longer depends on how much of the review list is loaded.
  * [LegacyListState] is the pre-D-5 round, unchanged: a composition root that does not wire all
  * three reads keeps exactly today's behaviour — member source = the review list state, keyset page
- * loop over the session duplicate rows. (The desktop root of this batch is one of those: it wires
- * the session candidate page and the count, but not the member-review page.)
+ * loop over the session duplicate rows. (Legacy test constructions wire not all of the three; the
+ * desktop root wired the session candidate page and the count at the D-5 batch and gained the
+ * member-review page in the D-5 handoff wiring, `desktop Main.kt` — both product roots now take
+ * [MemberPages].)
  *
  * The member path is all-or-nothing on purpose: it has no list state to fall back on and its
  * 共 N 条 header binds to the count read, so a partially wired facade would otherwise enumerate

@@ -2702,9 +2702,10 @@ fun P503App(
      * enumerates the whole group even when the list state holds only its first page (the 20k device
      * run's empty member set). The member page's CURSOR ends the round, never a short page — a
      * window whose candidates carry no duplicate yields no rows while members remain. Every other
-     * root — the desktop root is not wired by this batch, and legacy constructions wire none of
-     * these reads — keeps the pre-D-5 round verbatim: the list-state member source with the keyset
-     * session-page loop, and the P7-05 whole-session / per-candidate read behind it.
+     * root keeps the pre-D-5 round verbatim: legacy constructions wire not all of these reads, so
+     * the list-state member source with the keyset session-page loop and the P7-05 whole-session /
+     * per-candidate read behind it stays their round. (Both product roots — Android at the D-5
+     * batch, desktop at the D-5 handoff wiring — now take the member-page path.)
      * [importGroupEnumerationMemberSource] is that choice, pure and separately asserted.
      *
      * B6 first-window batch (D-280, spec `docs/specs/2026-11-04-b6-group-card-paged-
@@ -2819,9 +2820,8 @@ fun P503App(
                             enumerationGeneration = generation
                             // P7-04 B1/B4 windowed read (D-5/D-6): the round's member SOURCE.
                             // The member-page path is taken only when every read it needs is
-                            // wired; every other root (the desktop root is not wired by this
-                            // batch, and legacy constructions wire none of them) keeps the pre-D-5
-                            // round verbatim.
+                            // wired; every other root (legacy constructions wire not all of them)
+                            // keeps the pre-D-5 round verbatim.
                             val source =
                                 importGroupEnumerationMemberSource(
                                     memberPageQuery = facade.queryImportReviewRows,
