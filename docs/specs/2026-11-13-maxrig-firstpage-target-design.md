@@ -79,7 +79,7 @@ run `43386393213`（`fa2ce94f` = D-4 合入后的 `main`；61k 候选 / 150,000 
 - **位置保证**：`maximum` 下首页的 50 个候选全部是 `session-01` 的行（§1.4），而 `session-01` 的行零主体关系 ⇒ 全部 `PENDING_USER_DECISION`（§1.5 ①）。更小的诊断 profile（`local-small`/`local-medium`）首页可能混入后续会话的行（如 `local-small` 为 20 + 20 + 10），但行序仍以 `session-01` 打头，且 selector 的类标记会跳过混入的 `DEFERRED` 行。所以首页一定有可确认候选，且第一个可确认候选就是 `session-01` 的行。
 - **金额推导**：不写死金额，也不假定 ordinal。目标行的金额 = `seed + 1 + ordinal + sessionAmountOffset(0)`（`AndroidScaleFixtureSpec.kt:64` 的 `sessionAmountOffset(0)` = 0），其中 `ordinal ∈ 0 until rowsPerSession`；由规格推导出**区间** `[seed + 1 + sessionAmountOffset(0), seed + 1 + sessionAmountOffset(0) + rowsPerSession)`，选中行渲染出的金额必须落在区间内，选中值写入 `selectedAmount`。`sessionAmountOffset(0)` 若在别的 profile 不为 0，区间随它平移（当前实现直接乘用它，不写常数）。
 - **`jumpIndex` 改成小的有界常量**：`FIRST_PAGE_JUMP_INDEX = 0`（`AndroidScaleLongInstrumentedTest.kt:43`）。它是**候选在第一页内的索引**，上界 = 页候选数（`0 until 50`，页大小 `P503App.kt:5653`）。取 0 的理由：扫描只向前、永不回退，越过目标即不可恢复；而 `jumpIndex + 12` 的 12 项松弛落在候选行之前的非候选前导里（标题栏、格式段、接治摘要的记录行等，见 `P503ImportReviewPresentation.kt:1075-1103`），不会越到行后。
-- **首页内「同一金额只出现一次」论证（判据不放宽）**：首页只装 `session-01` 的行（§1.4）；同一会话内每行金额 = `seed + 1 + ordinal`，ordinal 互不相同 ⇒ 金额逐行互不相同。因此「可见行里多于一个同金额匹配即异常」的既有判据仍成立，本批**不改** `openCandidateByAmount` 里的 `matches.size > 1` 检查（`AndroidScaleUi.kt:791`），selector 端对选中金额再做一次同类断言（`:837`）。共享金额在**整表**里确有 6 重（`session-01..05` + 主会话），所以旧 KDoc 的「全局唯一」表述按页/类范围改写（§5 V-4），判据本身不变。
+- **首页内「同一金额只出现一次」论证（判据不放宽）**：首页只装 `session-01` 的行（§1.4）；同一会话内每行金额 = `seed + 1 + ordinal`，ordinal 互不相同 ⇒ 金额逐行互不相同。因此「可见行里多于一个同金额匹配即异常」的既有判据仍成立，本批**不改** `openCandidateByAmount` 里的 `matches.size > 1` 检查（`AndroidScaleUi.kt:791`），selector 端对选中金额再做一次同类断言（`:837`）。共享金额在**整表**里确有 6 重（`session-01..05` + 主会话）。**评审 B1 的修正**：金额单独不再构成身份——重开路径（`:513`/`:537`）也会走 `openCandidateByAmount`，在更小的诊断 profile 上首页会混入后续会话的行，而 `sessionAmountOffset(i) == 0` 让它们与本目标**金额相同**；那些行折叠出 `DEFERRED`、没有决策表单。故本批把 `openCandidateByAmount` 的匹配条件从「金额相等」收紧为「金额相等**且**不折叠重复状态（`重复 无`）」，把类标记做成两条路径共用的判别器（`hasNoFoldedDuplicateStatus`，`isConfirmableCandidate` 改为它的别名）。这是**收紧**，不是放宽。
 
 ### R2 受影响的簿记点（逐条，实施见 §5 V-4）
 
@@ -90,7 +90,7 @@ run `43386393213`（`fa2ce94f` = D-4 合入后的 `main`；61k 候选 / 150,000 
 5. **`reopen()` 的决策事实**：原 `:719` `check(confirmed.session == uniqueSessionInputRef() && confirmed.ordinal == 0)` → `:751` `check(confirmed.session == firstPageSessionInputRef())`，`:752` 的 `check(confirmed.amount == state.getLong("selectedAmount"))` 保留（`session-01` 的金额逐 ordinal 互异，会话 + 金额唯一确定一行）；原 `uniqueSessionInputRef()`（原 `:361`）删除，改为 `firstPageSessionInputRef()`（`:376`，`state.sessions[0]`）。
 6. **`uniqueSessionFirstAmount()` 的归属**：原 KDoc 改写为「仅作为 traversal 的 anchor」（`:392-401`）；值不变（`seed + 1 + rowsPerSession`），调用点 `:833` 不变。
 7. **批量确认摘要**：`已入账 0 项 / 跳过 1 项` 断言文本不变（`:503`）；注释点名跳过码 `IMPORT_BATCH_DECISION_INCOMPLETE`（`P503ImportBatchPresentation.kt:352`）：目标是可确认行、但决策尚未补齐，所以是「跳过 1 项」而不是「不可确认跳过」。
-8. **`openCandidateByAmount` 的契约文档与实现拆分**：`AndroidScaleUi.kt:754-944` → `:754-1012`；拆成 `openCandidateByAmount`（精确金额，唯一性判据原样）/ `openFirstPageCandidate`（首页选择）/ 私有 `openCandidate`（共用的 seek + 跳转 + 160 步扫描 + 点击校验）。原 KDoc 里「金额全局唯一」「`jumpIndex` = `spec.rowsPerSession`」两处过期表述改写；160 步上界、2 次 attempt、8 次 stationary 判据、0.12 步长全部原样。
+8. **`openCandidateByAmount` 的契约文档与实现拆分**：`AndroidScaleUi.kt:754-944` → `:754-1012`；拆成 `openCandidateByAmount`（金额 + 不折叠重复状态，唯一性判据原样）/ `openFirstPageCandidate`（首页选择）/ 私有 `openCandidate`（共用的 seek + 跳转 + 160 步扫描 + 点击校验）。原 KDoc 里「金额全局唯一」「`jumpIndex` = `spec.rowsPerSession`」两处过期表述改写；160 步上界、2 次 attempt、8 次 stationary 判据、0.12 步长全部原样。
 9. **新增的夹具不变量断言**：目标金额必须落在 `firstPageAmountRange()` 内（`:464` 传入 selector），目标行必须渲染「重复 无」；两者任一不成立 ⇒ selector 扫不到行并以 `candidate not reached (...)` 失败（`AndroidScaleUi.kt:1011`），不会静默通过。
 
 ### R3 `detail_decision` 验的语义不变
@@ -161,7 +161,7 @@ run `43386393213`（`fa2ce94f` = D-4 合入后的 `main`；61k 候选 / 150,000 
 3. **candidate id 的时间前缀序**（UUIDv7，`UuidV7Generator.kt:9-12`/`:23-46`）：首屏 50 行的**ordinal 组成**依赖同毫秒随机位，本批正是为此不写死 ordinal；若生成器改成单调计数器，选区仍是「首页第一个可确认行」（结论不变，只少一条随机性说明）。
 4. **产品页大小与展示上限**：`IMPORT_REVIEW_PAGE_SIZE = 50L`（`P503App.kt:5653`）、记录行展示上限 200（`P503ImportReviewPresentation.kt:224-239`）。页大小变小只会让首页行更靠近顶部；变大则更多 `session-01` 行进入首页。两者都不改 selector 的判据，但 `FIRST_PAGE_JUMP_INDEX` 的「上界 = 页候选数」说明要跟着改（代码里目前以注释记录该上界）。
 5. **渲染的类标记**：`重复 无` 由 `importCandidateMetaText` 产出（`P503ImportReviewPresentation.kt:162-169`）。文案改动 ⇒ `isConfirmableCandidate` 先红（扫不到行），属于硬失败而非误确认。
-6. **共享金额的全局 6 重**：`openCandidateByAmount` 的 `matches.size > 1` 在整表刷新后仍安全，因为同类分组把目标行放在第一组、其它会话的同金额行在后面的组里，视口内不可同时出现；若分组顺序或过滤方式改变，该检查会以「not globally unique on screen」硬失败，不会被绕过。
+6. **共享金额的整表 6 重**：`openCandidateByAmount` 现在按「金额 + 不折叠重复状态」匹配（B1 修正），所以整表刷新后仍安全——目标行折叠状态为空，其它会话的同金额行折叠出 `DEFERRED`。重开时目标行已被确认（`RESOLVED`，显示序最后一组），`重复 无` 依旧成立；若分组顺序或类标记文案改变，该检查会以「not unique among unfolded rows on screen」硬失败，不会被绕过。
 
 ### 6.6 承接（不得静默过期）
 

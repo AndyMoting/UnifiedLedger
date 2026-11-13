@@ -784,11 +784,21 @@ internal class AndroidScaleUi(
     ) {
         val target = amountText(amount)
         openCandidate(jumpIndex, { has(target) }) { rows ->
-            val matches = rows.filter { signatureAmount(it) == target }
-            // Global uniqueness is a fixture invariant: more than one visible
-            // row carrying the amount is a real anomaly, not a scoping problem
-            // to retry around.
-            if (matches.size > 1) error("target amount is not globally unique on screen (count=${matches.size} amount=$target)")
+            // D-320 review B1: the amount alone stops being an identity once the
+            // target is a shared-session row — every shared session carries the
+            // same amounts (`sessionAmountOffset(i) == 0`), so an amount-only
+            // match can open a LATER session's row: same amount, but `DEFERRED`
+            // folded and therefore no decision form. The folded-status marker is
+            // the class discriminator: the target row folds nothing (`重复 无`),
+            // the decoy always does.
+            val matches =
+                rows.filter { row ->
+                    signatureAmount(row) == target && hasNoFoldedDuplicateStatus(row)
+                }
+            // Global uniqueness WITHIN that class is a fixture invariant: more than
+            // one visible row carrying the amount and no folded status is a real
+            // anomaly, not a scoping problem to retry around.
+            if (matches.size > 1) error("target amount is not unique among unfolded rows on screen (count=${matches.size} amount=$target)")
             matches.singleOrNull()?.let { row -> row to target }
         }
     }
@@ -1255,14 +1265,27 @@ internal class AndroidScaleUi(
     }
 
     /**
-     * D-320: a candidate row's rendered confirmability marker. The metadata line
-     * ends with `重复 <folded status>` (`importCandidateMetaText`,
-     * P503ImportReviewPresentation.kt:162-169), so `重复 无` is the null folded
-     * status — `PENDING_USER_DECISION`, the only class that is selectable and
-     * renders the decision form (P503ImportReviewPresentation.kt:61-62,
-     * P503ImportReview.kt:905-914).
+     * D-320: whether a candidate row folds NO duplicate status (`重复 无` is the
+     * null folded status, `importCandidateMetaText`,
+     * P503ImportReviewPresentation.kt:162-169). Shared sessions all carry the same
+     * amounts, so this marker — not the amount — is what tells the target row
+     * apart from a later session's `DEFERRED` decoy on a mixed first page.
+     *
+     * Precondition: the row's candidate status is `pending_confirmation`. An
+     * `incomplete` or already `confirmed`/`rejected` row also renders `重复 无`
+     * but is not selectable and has no decision form
+     * (P503ImportReviewPresentation.kt:73-76, P503ImportReview.kt:905-914); the
+     * fixture keeps every row pending, so the marker is sufficient here.
      */
-    private fun isConfirmableCandidate(node: AccessibilityNodeInfo): Boolean = labels(node).any { it.endsWith("；重复 无") }
+    private fun hasNoFoldedDuplicateStatus(node: AccessibilityNodeInfo): Boolean = labels(node).any { it.endsWith("；重复 无") }
+
+    /**
+     * D-320: a candidate row's rendered confirmability marker — the selectable
+     * class with the decision form. Same rendered fact as
+     * [hasNoFoldedDuplicateStatus] under this fixture's precondition, kept as its
+     * own name so the first-page selector reads as "is this row confirmable".
+     */
+    private fun isConfirmableCandidate(node: AccessibilityNodeInfo): Boolean = hasNoFoldedDuplicateStatus(node)
 
     /**
      * D-217: scrolls backward in small steps until the top of the list is
