@@ -31,6 +31,17 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 
+/**
+ * D-320: the jump accelerator's candidate index WITHIN the review list's first
+ * loaded page. The target is that page's first confirmable row (the session
+ * imported first), so the index must stay inside the loaded page: `0 until` the
+ * page's candidate count (`IMPORT_REVIEW_PAGE_SIZE` = 50 in `P503App.kt`). 0 is
+ * chosen because the scan never moves backward — an overshoot past the target is
+ * unrecoverable — and the accelerator's `+ 12` item slack lands in the list's
+ * non-candidate preamble either way.
+ */
+private const val FIRST_PAGE_JUMP_INDEX = 0
+
 /** Five host-separated phases; the continuous UI chain has no process restart or DB reset. */
 @RunWith(AndroidJUnit4::class)
 class AndroidScaleLongInstrumentedTest {
@@ -357,15 +368,35 @@ class AndroidScaleLongInstrumentedTest {
             (0 until sessions.length()).map { sessions.getJSONObject(it).getString("inputRef") }
         }
 
-    /** The unique-rows session: the last one registered during preparation. */
-    private fun uniqueSessionInputRef(): String = state.getJSONArray("sessions").getJSONObject(spec.initialSessions).getString("inputRef")
+    /**
+     * D-320: the session imported first (session-01). Its rows fill the review
+     * list's first loaded page (`maximum`) or lead it (the smaller diagnostic
+     * profiles), so the chain's detail target is one of its candidates.
+     */
+    private fun firstPageSessionInputRef(): String = state.getJSONArray("sessions").getJSONObject(0).getString("inputRef")
 
     /**
-     * D-217 review fix: the unique-rows session's ordinal-0 amount. Its rows
-     * start after the shared range ([AndroidScaleFixtureSpec.sessionAmountOffset]),
-     * so the amount is seed + 1 + rowsPerSession — disjoint from every shared
-     * session's seed+1..seed+rowsPerSession range. The old `seed + 1` was the
-     * first shared session's first row, not the unique one.
+     * D-320: the spec-derived amount range of the session imported first. Each
+     * of its candidates renders `seed + 1 + ordinal + sessionAmountOffset(0)`
+     * for ordinals in `0 until rowsPerSession`, so every first-page amount is
+     * inside this range and the range is derived from the manifest — never a
+     * hand-written amount. The range stays disjoint from the unique-rows
+     * session's range (its offset is `rowsPerSession`), which is what keeps the
+     * chain's traversal anchor unique.
+     */
+    private fun firstPageAmountRange(): LongRange {
+        val base = state.getLong("seed") + 1L + spec.sessionAmountOffset(0)
+        return base until base + spec.rowsPerSession
+    }
+
+    /**
+     * D-217 review fix: the unique-rows session's ordinal-0 amount, the traversal
+     * walk's spec-derived anchor (D-320 keeps it for that role only; the detail
+     * target is a first-page candidate instead). Its rows start after the shared
+     * range ([AndroidScaleFixtureSpec.sessionAmountOffset]), so the amount is
+     * seed + 1 + rowsPerSession — disjoint from every shared session's
+     * seed+1..seed+rowsPerSession range, so the anchor appears exactly once during
+     * the walk.
      */
     private fun uniqueSessionFirstAmount(): Long = state.getLong("seed") + 1L + spec.sessionAmountOffset(spec.initialSessions)
 
@@ -420,25 +451,18 @@ class AndroidScaleLongInstrumentedTest {
         // (the client never exposes it here), so the deterministic scan is the
         // whole mechanism and needs more than the 180s the cloud contract caps
         // detail_decision at (result.py keeps that cap for maximum; the outer
-        // budget still governs the local run). The target row is the unique
-        // session's first row: its amount is derived from the spec, and the
-        // unique session is the only one holding this amount, so the UI
-        // selection stays spec-derived without an oracle read.
+        // budget still governs the local run).
+        // D-320: the target is the review list's first-page candidate, not a deep
+        // row. Preparation imports the shared sessions first, so the page the
+        // paged read loads (D-293) begins with session-01's rows; session-01 is
+        // the only shared session imported before any duplicate comparison
+        // exists, so its candidates fold no duplicate status at all and stay
+        // PENDING_USER_DECISION — selectable, with the decision form. The row's
+        // amount is read from the rendered row and checked against the spec's
+        // first-session range; see `openFirstPageCandidate`.
         stage("detail_decision", if (spec.profile == "maximum") 180000L else 600000L) {
-            // D-217 review fix: the unique-rows session's ordinal-0 amount is
-            // seed + 1 + its sessionAmountOffset (== rowsPerSession); the old
-            // `seed + 1` targeted the FIRST shared session's first row, which
-            // has multiplicity 6 in the final fixture and can never open the
-            // unique row the decision must confirm.
-            val amount = uniqueSessionFirstAmount()
+            val amount = ui.openFirstPageCandidate(firstPageAmountRange(), FIRST_PAGE_JUMP_INDEX)
             state.put("selectedAmount", amount)
-            // D-217 round 7: the target's candidate index within the review list
-            // is rowsPerSession — group 0 leads with session-01's rowsPerSession
-            // never-subject rows and the unique session is imported last within
-            // prepare — so the spec field is the jump index the
-            // ACTION_SCROLL_TO_POSITION accelerator consumes (never a hardcoded
-            // profile literal).
-            ui.openCandidateByAmount(amount, spec.rowsPerSession)
             check(ui.has("决策未补全，尚不可提交确认。"))
             // The checkbox click must be verified by its effect: a click on a
             // stale client-cache node fails silently (D-216 local finding), and
@@ -468,6 +492,11 @@ class AndroidScaleLongInstrumentedTest {
             // snapshot equality) runs in reopen() against the oracle, so a
             // UI-blind miss here must not fail the chain; the attempt and
             // outcome stay in the evidence for the forensics to read.
+            // D-320: the skip is the typed IMPORT_BATCH_DECISION_INCOMPLETE
+            // admission (P503ImportBatchPresentation.kt:352): the target is
+            // selectable but its decision is not filled in yet — the state this
+            // stage completes in the second half — so the summary reads
+            // 已入账 0 项 / 跳过 1 项.
             val sawSummary =
                 runCatching {
                     ui.await(20000) { ui.has("最近批量结果", prefix = true) }
@@ -480,8 +509,8 @@ class AndroidScaleLongInstrumentedTest {
             // markers that sit below the batch-result section this view may
             // still be showing, so it is the wrong tool here.
             ui.seekBackToTop("刷新清单")
-            // Same spec-derived jump index as the first open (round 7).
-            ui.openCandidateByAmount(amount, spec.rowsPerSession)
+            // Same bounded first-page jump index as the first open (D-320).
+            ui.openCandidateByAmount(amount, FIRST_PAGE_JUMP_INDEX)
             // The detail screen carries no scrollable container (verified on
             // the D-216 local channel), so seek's scroll fallback can never
             // rescue a miss here; click's own await + miss-reset is the whole
@@ -505,7 +534,7 @@ class AndroidScaleLongInstrumentedTest {
                         // reopen the target row (content-anchored, idempotent
                         // from any list position).
                         if (ui.has("候选详情")) ui.click("返回")
-                        ui.openCandidateByAmount(amount, spec.rowsPerSession)
+                        ui.openCandidateByAmount(amount, FIRST_PAGE_JUMP_INDEX)
                     }
                     ui.click("○ " + state.getString("categoryLabel"))
                     ui.click("○ " + state.getString("accountLabel"))
@@ -712,11 +741,14 @@ class AndroidScaleLongInstrumentedTest {
         check(snapshot.counts.getValue("import_duplicate_review_receipt") == spec.duplicateReviewReceiptAfterGroup)
         check(snapshot.rows.count { it.status == "confirmed" } == 1)
         // D-217: the in-chain stages cannot know the row id without an oracle
-        // read, so reopen derives it at the quiescent point: the confirmed row
-        // must be the unique-session first row, whose amount the chain already
-        // recorded from the manifest seed.
+        // read, so reopen derives it at the quiescent point. D-320: the confirmed
+        // row is the first-page target — session-01's row at the amount the chain
+        // read from the rendered row. Session-01's amounts are distinct per
+        // ordinal (seed + 1 + ordinal), so session plus amount identify exactly
+        // one row; the ordinal is whatever the page contained, not a fixture
+        // literal.
         val confirmed = snapshot.rows.single { it.status == "confirmed" }
-        check(confirmed.session == uniqueSessionInputRef() && confirmed.ordinal == 0)
+        check(confirmed.session == firstPageSessionInputRef())
         check(confirmed.amount == state.getLong("selectedAmount"))
         state.put("selectedId", confirmed.id)
         check(snapshot.counts.getValue("ledger_transaction") == 1L)

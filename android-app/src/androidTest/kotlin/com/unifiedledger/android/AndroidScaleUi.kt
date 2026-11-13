@@ -752,54 +752,130 @@ internal class AndroidScaleUi(
     }
 
     /**
-     * D-217: detail navigation without an oracle read. The target row is
-     * identified by its unique spec-derived amount (the caller derives it from
-     * the manifest as the unique session's offset-based first-row amount — see
-     * `uniqueSessionFirstAmount`; rows do not render their session id, verified
-     * interactively). D-217 round 5: the amount is GLOBALLY unique by fixture
-     * construction — shared amounts span seed+1..seed+rowsPerSession and the
-     * unique session starts at seed+rowsPerSession+1 — so NO header scoping is
-     * needed: any visible row carrying the amount IS the target row, and more
-     * than one is a real anomaly. The round-4 header-scoped pages loop
-     * oscillated (scroll forward hunting the row, scroll back to re-find the
-     * header) and never advanced past the pending group's first viewport — the
-     * target renders at the BOTTOM of the ~25-row group (within-batch
-     * candidate_id order, unique session imported last), about two viewports
-     * below the header (evidence7 logcat: `open page=1..6 header=true
-     * matches=0` on both attempts). The mechanism is instead one bounded
-     * downward scan from the list top, as in [openCandidate]: each step re-reads
-     * the visible rows, clicks the single row carrying the amount, and advances
-     * until the list bottom proves stationary.
+     * D-217: detail navigation without an oracle read, by exact rendered amount.
+     * D-320 narrows the target without changing the mechanism: the caller passes
+     * the amount of a candidate on the review list's FIRST loaded page (the
+     * session imported first during preparation), never a deep row's amount. On
+     * the gated `maximum` profile that page holds only the first session's rows,
+     * whose per-ordinal amounts are distinct, so the amount is unique among the
+     * page's rows and any visible row carrying it IS the target row; on the
+     * smaller diagnostic profiles the page can mix sessions, so
+     * [openFirstPageCandidate] scopes the same assertion to the confirmable
+     * class. The visible-row criterion itself is unchanged: more than one
+     * matching row is a real anomaly, never a scoping problem to retry around.
      *
      * D-217 round 7 (device ground truth: evidence13 local-small, evidence8
      * tree-lag samples): after the top seek the walk performs the pre-D-217
      * ACTION_SCROLL_TO_POSITION accelerator when the container exposes it
      * (CI-hosted runners do; the local emulator does not — D-216), jumping to
-     * [jumpIndex] + 12. [jumpIndex] is the target's candidate index within the
-     * review list (the caller passes spec.rowsPerSession: group 0 leads with
-     * session-01's rowsPerSession never-subject rows and the unique session is
-     * imported last within prepare). The +12 slack is deliberately
-     * undershoot-biased: it covers the non-candidate render items ahead of the
-     * first candidate (title bar, dividers, format section and entries, intake
-     * summary lines, pending header, group 0's GroupHeader), and any shortfall
-     * — up to the 200-line intake record cap on maximum — is absorbed by the
-     * forward scan below, while overshooting past the target would be
+     * [jumpIndex] + 12. [jumpIndex] is the target's candidate index WITHIN the
+     * first page (a bounded constant, `0 until` the page's candidate count). The
+     * +12 slack stays undershoot-biased: it lands in the non-candidate preamble
+     * ahead of the rows (title bar, dividers, format section and entries, intake
+     * summary lines, pending header, group header), and any shortfall is
+     * absorbed by the forward scan below, while an overshoot past the target is
      * unrecoverable because the scan never moves backward. Without the action
-     * (the local channel) the 120-step scan from the top stays the whole
-     * mechanism: local-small/medium keep the target ~2 viewports down. A
-     * maximum profile WITHOUT the action cannot be scanned within the
-     * detail_decision budget — that stays the pre-existing D-216 residual, not
-     * something this walk fixes.
+     * (the local channel) the bounded scan from the top is the whole mechanism:
+     * the page's rows sit a viewport or two down.
      */
     fun openCandidateByAmount(
         amount: Long,
         jumpIndex: Int,
     ) {
         val target = amountText(amount)
+        openCandidate(jumpIndex, "amount=$target", { has(target) }) { rows ->
+            // D-320 review B1: the amount alone stops being an identity once the
+            // target is a shared-session row — every shared session carries the
+            // same amounts (`sessionAmountOffset(i) == 0`), so an amount-only
+            // match can open a LATER session's row: same amount, but `DEFERRED`
+            // folded and therefore no decision form. The folded-status marker is
+            // the class discriminator: the target row folds nothing (`重复 无`),
+            // the decoy always does.
+            val matches =
+                rows.filter { row ->
+                    signatureAmount(row) == target && hasNoFoldedDuplicateStatus(row)
+                }
+            // Global uniqueness WITHIN that class is a fixture invariant: more than
+            // one visible row carrying the amount and no folded status is a real
+            // anomaly, not a scoping problem to retry around.
+            if (matches.size > 1) error("target amount is not unique among unfolded rows on screen (count=${matches.size} amount=$target)")
+            matches.singleOrNull()?.let { row -> row to target }
+        }
+    }
+
+    /**
+     * D-320: opens the first confirmable candidate of the review list's first
+     * page and returns its amount in minor units.
+     *
+     * Why the page starts with one session: preparation imports the shared
+     * sessions first (`session-01` … `session-05`) and the unique-rows session
+     * last, so the smallest candidate ids — the page the paged read loads
+     * (D-293) — begin with `session-01`'s rows (on `maximum` they fill the whole
+     * 50-candidate page, because `rowsPerSession` exceeds the page size).
+     * Confirmability is the row's rendered class: the fold counts only the
+     * duplicate relations whose subject is the candidate itself (relations are
+     * created with the newly imported source as subject), so `session-01` —
+     * imported before any duplicate comparison exists — folds no duplicate
+     * status at all and stays `PENDING_USER_DECISION`: selectable, with the
+     * decision form. Every later shared session — the main SAF session included —
+     * folds `DEFERRED` into `SUSPECTED_DUPLICATE_PENDING_REVIEW` (not selectable,
+     * no form); the unique-rows session is confirmable but its candidates are not
+     * in the first page.
+     *
+     * Why the amount is read from the rendered row instead of assumed: the list
+     * orders by `candidate_id` (UUIDv7, RFC 9562), and ids minted inside one
+     * millisecond are ordered by their random bits, so a fixed ordinal — the
+     * fixture's `ordinal-0` included — is not structurally guaranteed to be on
+     * the page. [amountRange] is the spec-derived amount range of the session
+     * imported first (`seed + 1 + sessionAmountOffset(0)`, one amount per
+     * ordinal), so the observed amount is checked against the spec instead of a
+     * hand-written literal. The visible-row uniqueness criterion is not relaxed:
+     * the selected amount must appear exactly once among the visible rows of the
+     * confirmable class (on `maximum` that class is the whole page, so the
+     * assertion is exactly the page-wide one).
+     */
+    fun openFirstPageCandidate(
+        amountRange: LongRange,
+        jumpIndex: Int,
+    ): Long {
+        val opened =
+            openCandidate(jumpIndex, "range=$amountRange", { false }) { rows ->
+                val candidates = rows.mapNotNull { row -> signatureAmount(row)?.let { amount -> row to amount } }
+                val selected = candidates.firstOrNull { (row, amount) -> amountMinor(amount) in amountRange && isConfirmableCandidate(row) }
+                selected?.let { (_, amount) ->
+                    val count = candidates.count { (row, other) -> other == amount && isConfirmableCandidate(row) }
+                    check(count == 1) { "first-page amount is not unique on screen (count=$count amount=$amount)" }
+                }
+                selected
+            }
+        return amountMinor(opened)
+    }
+
+    /**
+     * D-320: the shared bounded navigation core of [openCandidateByAmount] and
+     * [openFirstPageCandidate]. [ready] is the caller's extra liveness predicate
+     * (the amount path uses the target's own text; the first-page path relies on
+     * the review-surface markers alone); [select] maps the visible candidate rows
+     * to the row to click plus the amount text the detail screen must then show.
+     * Returns the opened candidate's amount text.
+     *
+     * Both callers target the list's first loaded page, so the 160-step bound is
+     * generous; the bound is deliberately NOT raised (D-320 R4) — the same
+     * stationary verdict and forward-only scan keep a missed target an honest
+     * failure instead of a silent pass.
+     */
+    private fun openCandidate(
+        jumpIndex: Int,
+        label: String,
+        ready: () -> Boolean,
+        select: (List<AccessibilityNodeInfo>) -> Pair<AccessibilityNodeInfo, String>?,
+    ): String {
+        var targetDescription = label
         // The review screen can be parked anywhere between its "recent
         // imports" header and the candidate groups; any of these markers (or
-        // the target amount itself) proves the review surface is live.
-        await { has("刷新清单") || has("待确认——缺用户决策", prefix = true) || has(target) }
+        // the caller's own readiness predicate) proves the review surface is
+        // live.
+        await { has("刷新清单") || has("待确认——缺用户决策", prefix = true) || ready() }
         var scans = 0
         var sawTargetRow = false
         var clickAttempts = 0
@@ -817,15 +893,16 @@ internal class AndroidScaleUi(
             Log.i("ULScaleWalk", "open seekDone attempt=$attempt markerVisible=${has("刷新清单")} rows=${candidateNodes().size}")
             // D-217 round 7 accelerator: jump when the container exposes
             // ACTION_SCROLL_TO_POSITION (same shape as the pre-D-217
-            // [openCandidate] accelerator). The slack is undershoot-biased on
-            // purpose — 12 covers the review list's non-candidate render items
-            // ahead of the first candidate (title bar, dividers, format section
-            // and entries, intake summary, pending header, group 0's
-            // GroupHeader); a larger constant would overshoot past the target
-            // on profiles with a shorter preamble, and an overshoot can never
-            // be recovered because the scan below never moves backward. Any
-            // undershoot (up to the 200-line intake record cap on maximum,
-            // ~32 extra scan steps) is absorbed by the bounded scan.
+            // [openCandidate] accelerator). [jumpIndex] is a candidate index
+            // inside the loaded first page; the +12 item slack is
+            // undershoot-biased on purpose — it lands in the non-candidate
+            // preamble ahead of the first candidate (title bar, dividers,
+            // format section and entries, intake summary including the
+            // disclosed 200-record-line display cap on maximum, pending header,
+            // group header). A larger constant would overshoot past the
+            // target's row, and an overshoot can never be recovered because the
+            // scan below never moves backward; any shortfall is absorbed by the
+            // bounded scan.
             val jumpRow = jumpIndex + 12
             val container = widestVisibleScrollable()
             val jumpExposed = container?.actionList?.any { it.id == AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id } == true
@@ -851,8 +928,10 @@ internal class AndroidScaleUi(
             // so the arithmetic moved: the same <= ~201-item undershoot now
             // needs ~134 steps, plus up to 8 stationary-verdict samples —
             // the 120 cap can no longer cover it, so the cap is 160.
-            // Local-small (no accelerator, target ~2 viewports = ~22-26 rows
-            // down the list) needs only ~15-18 steps from the top.
+            // D-320 targets only the first loaded page: the rows sit after the
+            // preamble (about one viewport of record lines on local-small, three
+            // on maximum), so the surviving 160 cap is generous for every
+            // profile and stays unchanged.
             while (steps++ < 160) {
                 scans++
                 // Staleness hardening: the click/back interactions can stale
@@ -861,15 +940,15 @@ internal class AndroidScaleUi(
                 // time-based throttle needed).
                 if (steps % 8 == 0) runCatching { resetAutomationCache() }
                 val rows = candidateNodes()
-                val matches = rows.filter { signatureAmount(it) == target }
-                if (matches.isNotEmpty()) sawTargetRow = true
+                val selected = select(rows)
+                if (selected != null) sawTargetRow = true
                 // D-217 walk diagnostics (revert before PR if not wanted)
-                Log.i("ULScaleWalk", "open scan attempt=$attempt step=$steps matches=${matches.size} rows=${rows.size} stationaryCount=$stationaryCount")
-                // Global uniqueness is a fixture invariant: more than one
-                // visible row carrying the amount is a real anomaly, not a
-                // scoping problem to retry around.
-                if (matches.size > 1) error("target amount is not globally unique on screen (count=${matches.size} amount=$target)")
-                matches.singleOrNull()?.let { row ->
+                Log.i("ULScaleWalk", "open scan attempt=$attempt step=$steps selected=${selected != null} rows=${rows.size} stationaryCount=$stationaryCount")
+                // D-217/D-320: the caller's selector owns the target's
+                // uniqueness criterion (both public wrappers assert it); this
+                // core only clicks the single row it is handed.
+                selected?.let { (row, target) ->
+                    targetDescription = "target=$target"
                     clickAttempts++
                     clickNode(row)
                     // A ghost match (stale-cache node that does not open the
@@ -888,7 +967,7 @@ internal class AndroidScaleUi(
                     // be selected at all, so back out and keep looking.
                     // D-217 walk diagnostics (revert before PR if not wanted)
                     Log.i("ULScaleWalk", "open click attempt=$attempt step=$steps clicks=$clickAttempts opened=$opened targetVisible=${has(target)}")
-                    if (opened && has(target)) return
+                    if (opened && has(target)) return target
                     if (opened) {
                         click("返回")
                         await { has("刷新清单") }
@@ -940,7 +1019,7 @@ internal class AndroidScaleUi(
                 }
             }
         }
-        error("unique candidate not reached (amount=$target sawTargetRow=$sawTargetRow clickAttempts=$clickAttempts scans=$scans)")
+        error("candidate not reached ($targetDescription sawTargetRow=$sawTargetRow clickAttempts=$clickAttempts scans=$scans)")
     }
 
     /**
@@ -1175,6 +1254,39 @@ internal class AndroidScaleUi(
     private fun amountText(amount: Long): String = (amount / 100).toString() + "." + (amount % 100).toString().padStart(2, '0') + " CNY"
 
     private fun signatureAmount(node: AccessibilityNodeInfo): String? = Regex("[0-9]+\\.[0-9]{2} CNY").find(labels(node).joinToString("\n"))?.value
+
+    /**
+     * D-320: exact minor units of a rendered "<whole>.<2dp> CNY" amount. The
+     * fixture's candidate amounts are positive outflows, so no sign handling is
+     * needed; the decimal split keeps the conversion in integer arithmetic.
+     */
+    private fun amountMinor(renderedAmount: String): Long {
+        val digits = renderedAmount.removeSuffix(" CNY")
+        return digits.substringBefore('.').toLong() * 100L + digits.substringAfter('.').toLong()
+    }
+
+    /**
+     * D-320: whether a candidate row folds NO duplicate status (`重复 无` is the
+     * null folded status, `importCandidateMetaText`,
+     * P503ImportReviewPresentation.kt:162-169). Shared sessions all carry the same
+     * amounts, so this marker — not the amount — is what tells the target row
+     * apart from a later session's `DEFERRED` decoy on a mixed first page.
+     *
+     * Precondition: the row's candidate status is `pending_confirmation`. An
+     * `incomplete` or already `confirmed`/`rejected` row also renders `重复 无`
+     * but is not selectable and has no decision form
+     * (P503ImportReviewPresentation.kt:73-76, P503ImportReview.kt:905-914); the
+     * fixture keeps every row pending, so the marker is sufficient here.
+     */
+    private fun hasNoFoldedDuplicateStatus(node: AccessibilityNodeInfo): Boolean = labels(node).any { it.endsWith("；重复 无") }
+
+    /**
+     * D-320: a candidate row's rendered confirmability marker — the selectable
+     * class with the decision form. Same rendered fact as
+     * [hasNoFoldedDuplicateStatus] under this fixture's precondition, kept as its
+     * own name so the first-page selector reads as "is this row confirmable".
+     */
+    private fun isConfirmableCandidate(node: AccessibilityNodeInfo): Boolean = hasNoFoldedDuplicateStatus(node)
 
     /**
      * D-217: scrolls backward in small steps until the top of the list is
