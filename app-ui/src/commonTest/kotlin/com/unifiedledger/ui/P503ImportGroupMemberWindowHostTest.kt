@@ -117,8 +117,7 @@ class P503ImportGroupMemberWindowHostTest {
     private fun memberReviewRun(
         member: String,
         count: Int,
-    ): List<ImportDuplicateReviewsForSessionRow> =
-        (1..count).map { index -> reviewRow(member, "duplicate-$index") }
+    ): List<ImportDuplicateReviewsForSessionRow> = (1..count).map { index -> reviewRow(member, "duplicate-$index") }
 
     /** `count` group items with unique duplicate ids, as the pure enumeration would produce them. */
     private fun dispositionItems(count: Int): List<ImportDuplicateGroupDispositionItem> =
@@ -556,11 +555,15 @@ class P503ImportGroupMemberWindowHostTest {
         assertEquals(WHOLE_GROUP_ITEMS - WINDOW_ITEMS + 1, windows.last().firstOrdinal)
 
         // Landed through S1's seams: 20 000 items, ordinals 1..20000 with no gap and no overlap.
-        val page = assertIs<P503AppState.OverviewEmpty>(landedState(windows, WHOLE_GROUP_ITEMS)).importReview?.groupDisposition
-        assertEquals(WHOLE_GROUP_ITEMS, page?.items?.size)
-        assertEquals((1..WHOLE_GROUP_ITEMS).toList(), page?.items?.map { it.ordinal })
-        assertEquals("duplicate-1", page?.items?.first()?.item?.duplicateCandidateId?.value)
-        assertEquals("duplicate-20000", page?.items?.last()?.item?.duplicateCandidateId?.value)
+        val page =
+            assertIs<P503AppState.OverviewEmpty>(landedState(windows, WHOLE_GROUP_ITEMS))
+                .importReview
+                ?.groupDisposition
+        val landedItems = page?.items.orEmpty()
+        assertEquals(WHOLE_GROUP_ITEMS, landedItems.size)
+        assertEquals((1..WHOLE_GROUP_ITEMS).toList(), landedItems.map { it.ordinal })
+        assertEquals("duplicate-1", landedItems.first().item.duplicateCandidateId.value)
+        assertEquals("duplicate-20000", landedItems.last().item.duplicateCandidateId.value)
     }
 
     /** T9: an exact multiple of the cap yields exactly n windows — never a trailing empty one. */
