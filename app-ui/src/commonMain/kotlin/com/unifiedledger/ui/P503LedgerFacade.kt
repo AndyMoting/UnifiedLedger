@@ -188,9 +188,10 @@ class P503LedgerFacade(
     // host's batch branch requires all three).
     baseQueryImportDuplicateReviewsForSessionPage: QueryImportDuplicateReviewsForSessionPage? = null,
     // P7-04 B1/B4 windowed read (D-5/D-6): the MEMBER-major paged session duplicate-review read —
-    // the 整组确认页's member source. Null on every root this batch does not wire (the desktop root
-    // and legacy constructions keep the pre-D-5 list-state round); the host selects the round's path
-    // off this, the member candidate page read and the count read together.
+    // the 整组确认页's member source. Null keeps an unwired root on the pre-D-5 list-state round
+    // (legacy test constructions); both product roots wire it — Android at the D-5 batch, desktop
+    // at the D-5 handoff wiring. The host selects the round's path off this, the member candidate
+    // page read and the count read together.
     baseQueryImportDuplicateReviewsForSessionMemberPage: QueryImportDuplicateReviewsForSessionMemberPage? = null,
     baseCountImportDuplicateCandidatesForSession: CountImportDuplicateCandidatesForSession? = null,
     val importDuplicateReview: ReviewImportDuplicateCandidate? = null,
@@ -411,7 +412,7 @@ class P503LedgerFacade(
     /**
      * P7-04 B1/B4 windowed read (D-5/D-6): the MEMBER-major paged session duplicate-review
      * projection — the read the 整组确认页 enumerates its members from when it is wired (plain
-     * nullable, no session following, the rest of the import surface unchanged). Null keeps the
+     * nullable, no session following, the rest of the import surface unchanged). Null keeps an
      * unwired root on the pre-D-5 list-state round; the host selects the path off this, the member
      * candidate page read and [countImportDuplicateCandidatesForSession] together.
      */

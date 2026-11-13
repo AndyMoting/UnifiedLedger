@@ -449,8 +449,8 @@ class P503ImportGroupMemberWindowHostTest {
 
     /**
      * T6 (V-7's path half): the member-page path is all-or-nothing. Only a fully wired
-     * facade takes it; any missing read — the desktop root of this batch leaves the
-     * member-review read unwired — keeps the pre-D-5 round, so its 整组确认页 cannot regress
+     * facade takes it; any missing read — legacy test constructions wire none of the
+     * three — keeps the pre-D-5 round, so its 整组确认页 cannot regress
      * into a typed-failure banner.
      */
     @Test
