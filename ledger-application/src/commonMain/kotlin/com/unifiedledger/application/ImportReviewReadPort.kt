@@ -194,12 +194,16 @@ interface ImportReviewReadPort {
      * belongs to the pick session [sessionInputRef] — the group card's member source, read without
      * the list state having loaded the whole ledger first.
      *
-     * The keyset contract is [loadImportReviewPage]'s unchanged: `pageSize` counts CANDIDATES, a
-     * page never splits a candidate's run, pages concatenate in ascending `candidate_id` order, and
-     * a null [ImportReviewRowsPage.nextAfterCandidateId] means the keyset is exhausted. A session
-     * with no candidate — including a handle that names no source on this ledger — is a LEGAL EMPTY
-     * page (no rows, null cursor), never a failure: this read has no absent verdict, and the group
-     * total is a count read, never this page's row count.
+     * The keyset contract: `pageSize` counts CANDIDATES, a page never splits a candidate's run,
+     * pages concatenate in ascending `candidate_id` order, and
+     * [ImportReviewRowsPage.nextAfterCandidateId] is null EXACTLY when the page admitted fewer
+     * candidates than `pageSize` — that page is the keyset's end. The exact boundary is owed here
+     * because the group round ends on a null cursor only (a "short" page is no signal: a page's
+     * projection rows can outnumber `pageSize` once candidates carry duplicates), which is
+     * `P704B4-T-CURSOR-01`; [loadImportReviewPage] keeps its frozen conservative comparison. A
+     * session with no candidate — including a handle that names no source on this ledger — is a
+     * LEGAL EMPTY page (no rows, null cursor), never a failure: this read has no absent verdict, and
+     * the group total is a count read, never this page's row count.
      *
      * The default throws: a missing session paged read must surface as a typed read failure, never
      * as an empty page (an empty page means "no members" and would silently shrink the group).
