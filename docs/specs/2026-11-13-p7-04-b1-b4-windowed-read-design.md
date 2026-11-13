@@ -240,9 +240,9 @@
 
 **交付（scope = D-320 残余① 点名的三个站点）**：
 
-1. **`:3203` 批量派发前相**（`runImportBatchDispatch`，`989152fc` 位置）：`undispatched` 在主线程捕获处（同一快照、同一时刻）派生 `undispatchedCandidateIds`，前相 `loadRows` 改为 `queryRowsForCandidates(ledgerId, undispatchedCandidateIds)`。空 id 集经适配器卫式返回 `Rows(empty)`，零项循环正常完成。
+1. **`:3203` 批量派发前相**（`runImportBatchDispatch`，`fac241f6` 当前位置）：`undispatched` 在主线程捕获处（同一快照、同一时刻）派生 `undispatchedCandidateIds`，前相 `loadRows` 改为 `queryRowsForCandidates(ledgerId, undispatchedCandidateIds)`。空 id 集经适配器卫式返回 `Rows(empty)`，零项循环正常完成。
 2. **`:3370` Unknown 核对前相**（`checkImportUnknownItem`）：id 集 = 单个 `item.candidateId`，同上改法。
-3. **`:3153` `requestImportReviewRowsRead()`**（批后刷新）：主线程在启动协程前捕获 `latestState` 复核视图的**已装载窗口**候选 id 集与 `nextAfterCandidateId`；窗口为空则**直接返回、不派发**（见下方登记④）。租约结构（`ledger.leased` + `isCurrentGeneration` 代际丢弃）与表面卫式 `ledger.surfaces.importReviewRows` 原样保留；`Rows` 分支以捕获游标经既有 `P503UiEvent.ImportReviewResult` 落地，`Unavailable` 分支照旧派发（reducer 保留旧行与旧游标）。
+3. **`:3153` `requestImportReviewRowsRead()`**（批后刷新）：主线程在启动协程前捕获 `latestState` 复核视图的**已装载窗口**候选 id 集与 `nextAfterCandidateId`；窗口为空则**直接返回、不派发**（见下方登记①）。租约结构（`ledger.leased` + `isCurrentGeneration` 代际丢弃）与表面卫式 `ledger.surfaces.importReviewRows` 原样保留；`Rows` 分支以捕获游标经既有 `P503UiEvent.ImportReviewResult` 落地，`Unavailable` 分支照旧派发（reducer 保留旧行与旧游标）。
 
 **机制**：新增命名查询 `importReviewRowsForCandidates`（投影、JOIN/LEFT JOIN 形状、相关子查询与 `ORDER BY candidate.candidate_id, duplicate.candidate_id` 与 `importReviewRowsForLedgerPage` 字节一致；WHERE 收窄为 `candidate.ledger_id = :ledger_id AND candidate.candidate_id IN :candidate_ids`）→ 适配器 `loadImportReviewRowsForCandidateIds`（空集卫式返回空列表、不执行 SQL；同一 `foldCandidateRuns` 折叠）→ 端口 `loadImportReviewRowsForCandidateIds`（fail-loud 默认）→ 用例 `QueryImportReviewRows.queryRowsForCandidates`（异常映射 `Unavailable`，与 `query`/`queryPage` 同纪律）。
 
@@ -250,10 +250,11 @@
 
 - 前相消费者只按候选 id 找行：`admitImportBatchItem`（`app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503ImportBatchPresentation.kt:344`）与 `importUnknownCheckContext`（`:410`），均为 `rows.rows.firstOrNull { it.candidateId == item.candidateId }`。按未派发项候选 id 的有界读恰好返回这些查找能消费的行；两条查询都无状态谓词、无会话谓词，故 **行在场 ⟺ 候选存在**——整表读对这组 id 能给出的全部相关内容。
 - 复核列表是一个 candidate_id 有序窗口（`requestImportReview` 首页读 `P503App.kt:816`，加载更多按 keyset 追加 `:2579`）：重读**同一 id 集**并经既有 `P503UiEvent.ImportReviewResult` 落地，以相同 candidate 序替换窗口——**零 reducer 改动**。游标语义：`reduceImportReviewResult`（`P503Reducer.kt:2204-2218`）在 `Rows` 落 `event.nextAfterCandidateId`（`:2213`），在 `Unavailable` 保留旧行与旧游标（`:2215-2217`），故失败刷新既不缩短窗口也不会让加载更多从头开始。
+- **刷新竞态的可见瞬态（登记，非静默）**：若 `加载更多` 追加页落地（`reduceAppendImportReviewPage`，`P503Reducer.kt:2225-2243`，rows+cursor 写在 `:2235-2237`）或一次接治落地与在飞的有界刷新交错，刷新的 `Rows` 会把窗口替换回**捕获时刻的 id 集**并把游标恢复为**捕获时刻**（追加前）的值——屏上瞬态回退到追加前形态。**自愈性**：游标被保留，下一次「加载更多」按捕获游标重新取页，无持久丢失（不违反 `ACC-COUNT-01` 的静默丢弃禁令——行只是暂时不在屏上，读路径无损失）。**对照旧实现同形竞态更差**：整表读落地把游标重置为 `ImportReviewResult.nextAfterCandidateId` 的默认 `null`（`P503UiEvent.kt:745`），追加页被复制重读。新实现用捕获游标把该竞态的自愈面收窄，不新增机制。
 
 **D-7 裁决关闭（索引项）**：云端 CI run `43407734033`（job `ledger-data shard 1`，2026-11-13）的 `EXPLAIN QUERY PLAN` 显示两条候选行查询的每条访问路径均为 `SEARCH … USING INDEX …`，无任何 `SCAN`；`import_evidence` 探针走 `sqlite_autoindex_import_evidence_1 (ledger_id=?)` 自动索引。按 D-7 本文（§3 D-7「若显示已走自动索引，则本项关闭并只保留读数」），**索引裁决关闭、零 DDL**（schema 版本保持 v37）；61k 规模的页耗时读数仍 registered-open（需 CI 不提供的夹具环境），无任何裁决等待它们。本片新增的 `importReviewRowsForCandidates` 沿用同一批已关闭的自动索引探针（逐输出行的 `min(evidence_id)` 标量与 active-link `EXISTS` 未改）。
 
-**V-9 扩展（计划钉点）**：`P704B4SessionPagePlanTest` 增两条 `P704B4-PLAN ` 钉点——(a) `importReviewRowsForCandidates`（`IN` 集合参数展开为字面量元组 `('p704-b4-plan-1','p704-b4-plan-2')`）；(b) `importDuplicateReviewsForSessionMemberPage`（`Ledger.sq:11746`，§11 第 3/4 条点名、D-7 测量腿的成员复核读）。既有「session-vs-ledger 文本等价」测试原样未动；`P704B4-PLAN ` 前缀已在 `tools/ci/scale-readings-report.py` 的 `DEFAULT_PREFIXES` 登记（本批未改该脚本）。
+**V-9 扩展（计划钉点）**：`P704B4SessionPagePlanTest` 增两条 `P704B4-PLAN ` 钉点——(a) `importReviewRowsForCandidates`（`IN` 集合参数展开为字面量元组 `('p704-b4-plan-1','p704-b4-plan-2')`）；(b) `importDuplicateReviewsForSessionMemberPage`（`Ledger.sq:11831`，§11 第 3/4 条点名、D-7 测量腿的成员复核读）。既有「session-vs-ledger 文本等价」测试原样未动；`P704B4-PLAN ` 前缀已在 `tools/ci/scale-readings-report.py` 的 `DEFAULT_PREFIXES` 登记（本批未改该脚本）。
 
 **等价测试**：`ImportReviewPagedReadEquivalenceTest` 增 D-8-2ND-T-1..6 六例：单 id / 多 id（乱序请求、按候选序返回）/ 带重复的候选（折叠同一 blocking-first 判定）/ 空集（适配器卫式，结构证明为「驱动已关闭的库上执行任何语句必抛」）/ 跨会话 id（账本域读无会话谓词，行必须返回）/ 未知 id（不产行）+ 用例异常映射 `Unavailable`。
 
