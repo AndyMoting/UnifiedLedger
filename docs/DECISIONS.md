@@ -7202,3 +7202,36 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **读数（2026-11-13，run `43266244292`，`fixture_relations=3`、`rounds=1`）：** seed 阶段**通过了本次改动的就绪门**——失败发生在它之后：`reachImportReview`（`ImportScaleTraversalInstrumentedTest.kt:4020`）报 `import screen present=false, tabResolved=false`。原因是 P8-00 把导入入口移进侧栏，而 b6 rig 仍按旧 tab 找入口。本批的就绪判据已实证通过；b6 rig 的导航修复属于另一批（第三个因 #283 失效、且自 11-04 起未再跑过的设备 rig）。
 
 **关联决定：** D-317（host 侧同因修复与守卫）、D-304（设备 rig 重试）、D-302（设备链离开 PR）。
+
+## D-319 P7-04 B1/B4 有界首窗设计门批准（组卡首窗即开 + 接治落地只读一页；判据靠实现对齐，不改口径）
+
+**状态：** 已批准并登记（2026-11-13）。批准对象 = 新建规格 `docs/specs/2026-11-13-p7-04-b1-b4-windowed-read-design.md`（`proposal` → **`approved v1`**，正文未改）。本门**零产品代码 / 零测试 / 零 schema / 零迁移 / 零依赖**；**不分配 schema 版本号**（维持 v37）。
+
+**为什么现在开这个门：** 两条独立证据在同一周内落到同一类缺陷上。
+
+1. **B6 门在 20k 上 FAIL**：run `43301412180`（`78163d67`）三轮 `click-to-card` = 3071 / 2883 / 2905 ms，worst 超 `P704GP-D-PERF-01` 的 3000 ms 界 71 ms；分段读数把成本定位死——`click-to-progress` 119 / 113 / 125 ms，`progress-to-card` 2952 / 2770 / 2780 ms。实现把 `StartImportDuplicateGroupDisposition` 推迟到**整轮 101 页 keyset 枚举跑完之后**才派发（`P503App.kt:2858-2904`，全仓唯一建卡点 `:2895`），而 approved 规格 §3.3（`2026-11-04-b6-group-card-paged-enumeration-design.md:98`）要求「首窗事件落盘后立即开卡」。⇒ 该读数是「全量装配口径」的量级，不是 D-280 §6 冻结的「用户可见组卡首响应」口径。
+2. **同制环境对照**：把 D-282 判 PASS 的同一棵树 `4f04b60e` 用临时分支 `probe/b6-env-4f04b60e` 在今天的 runner 上重派（run `43374890643`，`android-b6-card.yml`，默认 20k / 3 轮 / 3000 ms），得 **2707 / 2685 / 2610 ms**（worst 2707；`progress-to-card` 2476 / 2458 / 2482），而同一棵树在 2026-11-04 读 1770 ms。⇒ 环境自身漂移 ≈ **+0.9 s**（同段 +55%），`78163d67` 相对对照的代码增量 ≈ **+0.5 s / +19%**。今日该界只剩 293 ms 余量，跨日读数不可比。对照分支用完即删。
+3. **61k 接治落地挡住用户结果行**：maximum rig run `43322793290`（`d7cc7f6a`）`saf_import` stage 1800 s 耗尽（instrumentation 1829.8 s）。性质由本 run 两份工件定住：失败瞬间栈在 `SQLiteCursor.fillWindow` → `executeAsList` → `ImportReviewRowsForLedgerPageQuery.execute`（SQL 执行，不是 Kotlin 折叠）；`memory.txt` 的 chain 样本自 `elapsed≈5074 s` 起堆稳定在 ~50 MB、此后 1800 s 无增长；logcat GC 行全程稳态 ~38 行/分钟（无应用 GC 风暴）。该段来自 `runImportIntakePipeline` 的整表列表读（`P503App.kt:2402`），而分页读规格 `:49` 明文假设「UI 不再调用 `Rows(rows)`」——UI 还有六处调用。
+
+**决定（九条，正文见规格 §3）：**
+
+1. **D-1 首窗即派发**：首页 `Ready` 到手即经主线程 hop 派发 `Start`；续页逐页 hop 派发 landing；`ImportGroupEnumerationCompleted` 仍在末页之后（进度行翻转时机不变）。**R2-5 由「末跳倾倒」收紧为「一切归约必经主线程 hop」**，hop 之间的 FIFO 提供顺序保证；原意（不得从 worker 直接归约）逐字保留。
+2. **D-2 中途关闭**：`Start` 之前与每次 landing 之前各判一次 `cardStillOpen()`，不新增状态位。
+3. **D-3 失败恒为整轮作废**：任何一页失败 ⇒ 关卡拉 + 类型化横幅；首窗已开卡之后才失败同样必须收起卡片。
+4. **D-4 接治落地读有界**：`runImportIntakePipeline` 的列表读改 `queryPage(IMPORT_REVIEW_PAGE_SIZE, null)`；`ImportFileIntakeResult` 增 `nextAfterCandidateId`（与 `ImportReviewResult` 同形），`Unavailable` 保留旧行与旧游标。
+5. **D-5 组成员集与列表状态解耦**：组卡枚举的成员集改由**会话范围**的候选分页读取得（新增只读命名查询 + 端口 + 用例），`enumerateImportDuplicateGroupItems` 的 `rows` 参数改为页加载回调——否则 D-4 会静默缩小组成员集，触碰 `ACC-COUNT-01` 与 D-243 第 3 条红线。
+6. **D-6 组页大小独立**：组成员页大小由实现常量与端口暴露，与 review 列表的 50 独立。
+7. **D-7 逐行成本先测量后裁决**：给两条候选行查询各加 `EXPLAIN QUERY PLAN` 钉点（真实语句，非手抄），并在 61k 夹具上登记页查询耗时与输出行数；若按 `source_id` 的探针为 `SCAN`，**另立 v37→v38 加性索引迁移批**；**本门零 DDL**。
+8. **D-8 其余五处 UI 整表读本批不改**（`:2652` 重复审核提交后刷新、`:3022` 整组处置落地、`:3048` `requestImportReviewRowsRead()` 及其四条调用路径、`:3098` 批量确认前相、`:3265` Unknown 核对前相），登记为第二片，逐条写明可能确需全量的理由与闭合条件。
+9. **D-9 口径归属**：B1 用 D-280 §6 冻结的「用户可见组卡首响应」口径，本门**不改口径**、只是让实现第一次兑现它；B4 不新设门槛，验收 = maximum rig `saf_import` 在既有 1800 s 内 PASS 并登记接治摘要行耗时。**不改 ≤3 s、不改 max-of-3、不改 marker、不改 stage 预算。**
+
+**事实澄清（两处，本门顺带定口径）：**
+
+1. 「20k PERF 变体从未在云端绿过」只在「自 #217 参数化之后」的读法下成立：唯一一次 20k 绿是 run `41768710390`（`4f04b60e`，硬编码 20k，参数化之前），**D-282 的 PASS 依此成立、不撤销**；`19e9c1df` 的两次绿（`41811285083` / `41813084464`）都是 `fixture_relations=3` 的 SCALE-01 读数。
+2. D-278 第 4 条把测量括号量化成「≤500 ms」已过时：当前 staging 轮询是 `STAGE_POLL_MILLIS = 50`（`ImportScaleTraversalInstrumentedTest.kt:165`），引用时按「≤50 ms + 单次读树 4–5 ms」表述；该条裁决本身不改。
+
+**残余与承接（不得静默过期）：** ① `import_evidence` 索引/重写的裁决依 D-7；② 其余五处整表读依 D-8；③ `ANALYZE;` 在 356 MB 库上的耗时仍无读数；④ runner 镜像与系统镜像 revision 未固定，跨日读数不可比（D-283 残余⑤原样）；⑤ b6 与 maximum 两 rig 仍未进 PR 分片，设备证据靠手动 `workflow_dispatch`。
+
+**边界：** 入：规格本体 + 本条 + 运行时留下的对照读数登记。出：不改任何 thresholds / 统计量 / marker / stage 预算；不改 D-230/D-243/D-278–D-284/D-293/D-294/D-308 的裁决文本与开放状态；不把任何验收向量并入 PASS；不改 `.external/`。
+
+**关联决定：** D-278/D-279/D-280（B6 口径与分段读数）、D-281/D-282/D-283/D-284（云端 A/B 与判据覆盖）、D-230/D-243（61k 与「不得靠改完整列表语义提速」红线）、D-293/D-294（分页读与 61k 首屏 MET）、D-308（P8-01a 给候选行加的两个逐行派生列）、D-311（`ACC-D-PERF-01` 当前 MET 命题只覆盖首屏）。
