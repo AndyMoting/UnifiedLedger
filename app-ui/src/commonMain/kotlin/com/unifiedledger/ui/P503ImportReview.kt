@@ -199,6 +199,17 @@ data class ImportReviewView(
     val selectedCandidateIds: Set<ImportCandidateId> = emptySet(),
     val decisionDrafts: Map<ImportCandidateId, ImportDecisionDraft> = emptyMap(),
     val lastIntakeSession: ImportIntakeSessionSummary? = null,
+    /**
+     * D-322 (spec `docs/specs/2026-11-14-d322-count-driven-group-entry-design.md` D-2): the
+     * committed duplicate-group count of the CURRENT pick session, read in the landing lease right
+     * after the intake commits. It carries the 整组标记为重复 entry's existence (D-3) so reachability
+     * no longer depends on how many list pages are loaded. `null` is "no reading" — a failed count
+     * read or a pre-D-322 construction — and only ever falls back to the legacy loaded-rows
+     * enumeration; it NEVER reads as zero. A real `0` is the SQL COUNT(*) true zero of a session
+     * without a duplicate group and hides the entry. The reducer lands it unconditionally from the
+     * newest session's event; append/refresh preserve it via `view.copy`.
+     */
+    val currentSessionDuplicateGroupCount: Long? = null,
     val notice: ImportReviewNotice? = null,
     val groupDisposition: ImportDuplicateGroupDispositionPage? = null,
     /**

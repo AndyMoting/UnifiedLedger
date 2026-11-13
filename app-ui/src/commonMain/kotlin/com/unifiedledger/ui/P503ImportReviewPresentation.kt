@@ -1111,8 +1111,26 @@ internal fun importReviewRenderItems(
         // group (同次选择句柄 + EXACT_BUSINESS_TUPLE + DEFERRED via the folded row projection).
         // It sits BEFORE the candidate rows: several-hundred/thousand-row groups otherwise bury the
         // only group action below a 20k-row list that the accessibility traversal cannot reach.
+        // D-322 (spec `docs/specs/2026-11-14-d322-count-driven-group-entry-design.md` D-3/D-4):
+        // existence is COUNT-DRIVEN — the landing lease's committed count of the current session,
+        // so reachability no longer depends on how many list pages are loaded (a count > 0 renders
+        // the button with ZERO loaded rows). `null` is only "no reading" (a failed count read or a
+        // pre-D-322 construction) and falls back to the legacy loaded-rows enumeration, the exact
+        // pre-D-322 shape; a real `0` is the SQL COUNT(*) true zero of a session without a group
+        // and hides the button (null ≠ 0). The count and the NoCandidatesEmptyState (which
+        // describes the LOADED window) are independent intents and may co-render per D-4.
         val sessionInputRef = view.lastIntakeSession?.inputRef
-        if (sessionInputRef != null && importDuplicateGroupRows(view.rows, sessionInputRef).isNotEmpty()) {
+        // D-322 D-3: two explicit arms, NOT an elvis-with-comparison — `Long?` and `Int` have no
+        // common numeric supertype to compare against (the elvis infers `Number & Comparable<*>`,
+        // whose star projection rejects `compareTo`; observed as MEMBER_PROJECTED_OUT on CI).
+        // Semantics are unchanged: a real count (including SQL's true zero) decides by itself;
+        // null falls back to the legacy loaded-rows enumeration.
+        val groupEntryExists =
+            when (val count = view.currentSessionDuplicateGroupCount) {
+                null -> sessionInputRef != null && importDuplicateGroupRows(view.rows, sessionInputRef).isNotEmpty()
+                else -> count > 0L
+            }
+        if (sessionInputRef != null && groupEntryExists) {
             items += ImportReviewRenderItem.GroupDispositionButton
         }
         // P7-05 + B6 first-window (D-280 spec §3.3): the enumeration progress line sits right

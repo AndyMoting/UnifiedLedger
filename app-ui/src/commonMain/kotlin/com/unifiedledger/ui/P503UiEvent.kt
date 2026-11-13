@@ -721,6 +721,18 @@ sealed interface P503UiEvent {
         val session: ImportIntakeSessionSummary,
         val rows: com.unifiedledger.application.ImportReviewRowsResult,
         val nextAfterCandidateId: String? = null,
+        /**
+         * D-322 (spec `docs/specs/2026-11-14-d322-count-driven-group-entry-design.md` D-1/D-2): the
+         * committed duplicate-group count of the session this event lands, read in the SAME lease
+         * right after the intake commits — so it describes the NEW session's committed state and
+         * lands INDEPENDENTLY of the page branch (`Rows` vs `Unavailable` governs rows/cursor F1
+         * retention only). A real `0` is the SQL COUNT(*) true zero of a session without a duplicate
+         * group; `null` is "no reading" (a failed count read, the lease-failure path, or a pre-D-322
+         * construction) and only ever falls back to the legacy loaded-rows enumeration — it NEVER
+         * reads as zero. The default null keeps every pre-D-322 construction site compiling, the
+         * same precedent as [nextAfterCandidateId].
+         */
+        val currentSessionDuplicateGroupCount: Long? = null,
     ) : P503UiEvent
 
     /**

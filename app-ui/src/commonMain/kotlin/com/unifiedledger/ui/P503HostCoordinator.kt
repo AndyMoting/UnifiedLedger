@@ -762,10 +762,20 @@ internal fun importPickDecisionEvent(decision: ImportPickIntakeDecision): P503Ui
  * `Rows(emptyList())`. An empty `Rows` would clear the list, clear the cursor and read as "no
  * candidates"; the typed failure instead keeps the previous rows AND the previous cursor and raises
  * the read-failure banner (F1 读失败不篡改).
+ *
+ * D-322 (spec `docs/specs/2026-11-14-d322-count-driven-group-entry-design.md` D-1/D-2): [count] is
+ * the session's committed duplicate-group count the caller read in the SAME lease right after the
+ * intake commits, and it travels to the event INDEPENDENTLY of the page branch — the branch only
+ * governs rows/cursor F1 retention, so the `Unavailable` branch carries the caller's count (a value
+ * or null) exactly like the `Page` branch. A real `0` is the SQL COUNT(*) true zero of a session
+ * without a duplicate group; `null` is "no reading" and only ever falls back to the legacy
+ * loaded-rows enumeration — it NEVER reads as zero. The default null preserves the pre-D-322
+ * two-argument calls.
  */
 internal fun importIntakeLandingEvent(
     session: ImportIntakeSessionSummary,
     page: ImportReviewRowsPageResult,
+    count: Long? = null,
 ): P503UiEvent.ImportFileIntakeResult =
     when (page) {
         is ImportReviewRowsPageResult.Page ->
@@ -773,11 +783,13 @@ internal fun importIntakeLandingEvent(
                 session = session,
                 rows = ImportReviewRowsResult.Rows(page.rows),
                 nextAfterCandidateId = page.nextAfterCandidateId,
+                currentSessionDuplicateGroupCount = count,
             )
         ImportReviewRowsPageResult.Unavailable ->
             P503UiEvent.ImportFileIntakeResult(
                 session = session,
                 rows = ImportReviewRowsResult.Unavailable,
+                currentSessionDuplicateGroupCount = count,
             )
     }
 
