@@ -2351,7 +2351,8 @@ fun P503App(
      * and `dispatch` is a non-atomic read-modify-write — a Default-thread dispatch interleaved
      * with main-thread user events could drop a transition. The session identity is minted per
      * pick (`ImportIntakeSessionIdentity.forFilePick`, R-Q09-1) and the pipeline result returns
-     * as one `ImportFileIntakeResult` with the re-read review list.
+     * as one `ImportFileIntakeResult` with the re-read review list's FIRST bounded page and its
+     * cursor (P7-04 D-4: the landing read is one page, never the whole list).
      */
     fun runImportIntakePipeline(
         file: PickedImportFile,
@@ -2399,8 +2400,14 @@ fun P503App(
                     // still off the UI thread here; a refresh failure never degrades the intake result
                     // (statistics are a planner concern, the intake transaction is already committed).
                     runCatching { facade.importIntakeStatisticsRefresh() }
-                    val rows = facade.queryImportReviewRows?.query(ledger.ledgerId) ?: ImportReviewRowsResult.Unavailable
-                    outcome to rows
+                    // P7-04 D-4 (B4 接治落地读有界): ONE page, never the whole list. The whole-table
+                    // read materialized the 61k candidate list and the user's intake-result line waited
+                    // behind it (~25 minutes on the maximum rig, spec §1.2). The cursor travels in
+                    // the landing event, so 加载更多 continues from this page's last candidate.
+                    val page =
+                        facade.queryImportReviewRows?.queryPage(ledger.ledgerId, IMPORT_REVIEW_PAGE_SIZE, null)
+                            ?: ImportReviewRowsPageResult.Unavailable
+                    outcome to page
                 }
             // Back on the composition's (main) dispatcher: the single-flight slot is released and
             // the event is dispatched serially with every other main-thread dispatch.
@@ -2416,9 +2423,9 @@ fun P503App(
                     // rather than a silently dropped pick (and on the share path, the re-share cue).
                     if (sharePath) dispatch(P503UiEvent.ShareImportReShareLanded)
                     dispatch(
-                        P503UiEvent.ImportFileIntakeResult(
+                        importIntakeLandingEvent(
                             ImportIntakeSessionSummary(file.displayName, session.inputRef, ImportIntakePipelineOutcome.ReadFailed(ImportPickReadFailure.STREAM_READ_FAILED)),
-                            ImportReviewRowsResult.Unavailable,
+                            ImportReviewRowsPageResult.Unavailable,
                         ),
                     )
                     return@launch
@@ -2429,7 +2436,7 @@ fun P503App(
                 // Zero formal effect either way — never a silent drop.
                 if (sharePath) shareImportReadOutcomeEvent(outcome.value.first)?.let(::dispatch)
                 dispatch(
-                    P503UiEvent.ImportFileIntakeResult(
+                    importIntakeLandingEvent(
                         ImportIntakeSessionSummary(
                             displayName = file.displayName,
                             inputRef = session.inputRef,

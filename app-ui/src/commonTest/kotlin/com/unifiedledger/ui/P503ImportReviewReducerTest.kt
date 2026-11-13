@@ -629,6 +629,74 @@ class P503ImportReviewReducerTest {
         assertEquals(ImportReviewNotice.ReviewReadFailed, view?.notice)
     }
 
+    /**
+     * P7-04 D-4 (B4 接治落地读有界; V-5): the landing re-read is ONE page, so the event carries
+     * that page's keyset cursor and the reducer lands it together with the rows. This is the
+     * 加载更多 resume point — without it the bounded landing would look like a complete list.
+     */
+    @Test
+    fun anIntakeLandingLandsThePageAndItsCursorInOneEvent() {
+        val source = overview(rows = listOf(pendingRow, retainableRow))
+        val page = listOf(suspectedRow, incompleteRow)
+        val updated =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    source,
+                    P503UiEvent.ImportFileIntakeResult(
+                        acceptedSession(),
+                        ImportReviewRowsResult.Rows(page),
+                        nextAfterCandidateId = "cursor-page-2",
+                    ),
+                ),
+            )
+        val view = updated.importReview
+        assertEquals(page, view?.rows)
+        assertEquals("cursor-page-2", view?.nextAfterCandidateId)
+        // One event: the intake summary and the rows land together — the result line never waits for
+        // a second read.
+        assertEquals("pick-handle-1", view?.lastIntakeSession?.inputRef)
+        assertNull(view?.notice)
+    }
+
+    /**
+     * P7-04 D-4 (V-5; F1): a failed page read keeps BOTH the previous rows and the previous cursor.
+     * Clearing the cursor would silently send 加载更多 back to page one over the same stale rows.
+     */
+    @Test
+    fun aFailedIntakePageKeepsThePreviousRowsAndCursor() {
+        val source =
+            overview(rows = listOf(pendingRow, retainableRow), session = acceptedSession("pick-handle-old"))
+                .let { it.copy(importReview = it.importReview?.copy(nextAfterCandidateId = "cursor-page-2")) }
+        val updated =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(source, P503UiEvent.ImportFileIntakeResult(acceptedSession(), ImportReviewRowsResult.Unavailable)),
+            )
+        val view = updated.importReview
+        assertSame(source.importReview?.rows, view?.rows)
+        assertEquals("cursor-page-2", view?.nextAfterCandidateId)
+        assertEquals(ImportReviewNotice.ReviewReadFailed, view?.notice)
+    }
+
+    /**
+     * P7-04 D-4 (V-5): a FIRST-EVER failed landing (no rows, no cursor yet) still materializes the
+     * projection so the typed failure banner has a place to live — never a bare empty list.
+     */
+    @Test
+    fun aFirstEverFailedIntakePageStillRendersTheFailureBanner() {
+        val updated =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    P503AppState.OverviewEmpty(emptyState),
+                    P503UiEvent.ImportFileIntakeResult(acceptedSession(), ImportReviewRowsResult.Unavailable),
+                ),
+            )
+        val view = updated.importReview
+        assertEquals(emptyList<ImportReviewRow>(), view?.rows)
+        assertNull(view?.nextAfterCandidateId, "no page was ever landed, so there is no cursor to keep")
+        assertEquals(ImportReviewNotice.ReviewReadFailed, view?.notice)
+        assertEquals("pick-handle-1", view?.lastIntakeSession?.inputRef)
+    }
+
     @Test
     fun reviewListSuccessReplacesTheRowsAndClearsTheBanner() {
         val source = overview(notice = ImportReviewNotice.ReviewReadFailed)

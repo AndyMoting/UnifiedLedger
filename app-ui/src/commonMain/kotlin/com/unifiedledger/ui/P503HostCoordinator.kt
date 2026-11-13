@@ -4,6 +4,7 @@ import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.CorrectTransactionVersionResult
 import com.unifiedledger.application.CounterpartyCommandResult
+import com.unifiedledger.application.ImportReviewRowsPageResult
 import com.unifiedledger.application.ImportReviewRowsResult
 import com.unifiedledger.application.RecycleBinResult
 import com.unifiedledger.application.RequestId
@@ -738,6 +739,43 @@ internal fun importPickDecisionEvent(decision: ImportPickIntakeDecision): P503Ui
         is ImportPickIntakeDecision.StartIntake -> null
         is ImportPickIntakeDecision.AlreadyInFlight -> P503UiEvent.ImportIntakeBusyLanded
         ImportPickIntakeDecision.NoPipeline -> null
+    }
+
+/**
+ * P7-04 D-4 (B4 接治落地读有界; spec
+ * `docs/specs/2026-11-13-p7-04-b1-b4-windowed-read-design.md` D-4): the JVM-assertable seam of the
+ * host call site that turns ONE bounded review-list page into the event the pick→intake pipeline
+ * dispatches. `P503App.runImportIntakePipeline` is a `@Composable` function with no JVM harness (the
+ * [importPickDecisionEvent] precedent), so the page→event mapping lives here and the host only
+ * calls it.
+ *
+ * The landing re-read is `queryPage(ledgerId, IMPORT_REVIEW_PAGE_SIZE, null)` — one page, never
+ * the whole list (the whole-table read materialized 61k candidates and hid the user-visible intake
+ * result line behind it on the maximum rig). The event therefore carries that page's rows plus its
+ * keyset cursor. A null cursor is the final page: 加载更多 then has nothing left to read.
+ *
+ * FAIL-LOUD: a page the read could not produce — the read port threw, is unimplemented, or the
+ * lease never ran — MUST land as [ImportReviewRowsResult.Unavailable], never as
+ * `Rows(emptyList())`. An empty `Rows` would clear the list, clear the cursor and read as "no
+ * candidates"; the typed failure instead keeps the previous rows AND the previous cursor and raises
+ * the read-failure banner (F1 读失败不篡改).
+ */
+internal fun importIntakeLandingEvent(
+    session: ImportIntakeSessionSummary,
+    page: ImportReviewRowsPageResult,
+): P503UiEvent.ImportFileIntakeResult =
+    when (page) {
+        is ImportReviewRowsPageResult.Page ->
+            P503UiEvent.ImportFileIntakeResult(
+                session = session,
+                rows = ImportReviewRowsResult.Rows(page.rows),
+                nextAfterCandidateId = page.nextAfterCandidateId,
+            )
+        ImportReviewRowsPageResult.Unavailable ->
+            P503UiEvent.ImportFileIntakeResult(
+                session = session,
+                rows = ImportReviewRowsResult.Unavailable,
+            )
     }
 
 /**
