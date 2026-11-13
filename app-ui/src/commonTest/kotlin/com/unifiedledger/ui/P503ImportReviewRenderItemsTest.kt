@@ -328,7 +328,7 @@ class P503ImportReviewRenderItemsTest {
     // ---- P7-05 enumeration progress line (in-flight marker of the session-level batch read) ----
 
     @Test
-    fun theEnumerationProgressLineRendersOnlyWhileInFlightAndNoCardIsOpen() {
+    fun theEnumerationProgressLineRendersWhileInFlightThroughTheContinuationPages() {
         val rows = listOf(row("dup-a", duplicateStatus = ImportDuplicateStatus.DEFERRED, sourceInputRef = "pick-handle-1"))
         val session = acceptedSession(recordCount = 1)
         // Default (not in flight): the progress line is absent — the pre-P7-05 shape is unchanged.
@@ -345,13 +345,20 @@ class P503ImportReviewRenderItemsTest {
         val buttonIndex = inFlight.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionButton }
         val progressIndex = inFlight.indexOfFirst { it is ImportReviewRenderItem.GroupEnumerationInProgress }
         assertTrue(buttonIndex >= 0 && progressIndex == buttonIndex + 1)
-        // An open card supersedes the progress line (the enumeration already landed).
-        assertTrue(
+        // B6 first-window (D-280 spec §3.3 续页期间): the card is already open on its first
+        // window while the remaining pages land, and the flag KEEPS carrying the line through it —
+        // the line still sits between the affordance and the card header, never superseded by the
+        // card.
+        val continuation =
             importReviewRenderItems(
                 ImportReviewView(rows = rows, lastIntakeSession = session, groupDisposition = groupDispositionPage(), groupEnumerationInProgress = true),
                 ImportPlatformKind.ANDROID,
-            ).none { it is ImportReviewRenderItem.GroupEnumerationInProgress },
-        )
+            )
+        val continuationButton = continuation.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionButton }
+        val continuationProgress = continuation.indexOfFirst { it is ImportReviewRenderItem.GroupEnumerationInProgress }
+        val cardHeader = continuation.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionCardHeader }
+        assertEquals(continuationButton + 1, continuationProgress)
+        assertEquals(continuationProgress + 1, cardHeader)
     }
 
     @Test
@@ -592,9 +599,10 @@ class P503ImportReviewRenderItemsTest {
                 notice = ImportReviewNotice.ReviewReadFailed,
                 groupDisposition = groupDispositionPage(),
                 batchResult = batchResultSummary(),
-                // P7-05: the in-flight marker is on in this fixture so the progress-line key
-                // joins the uniqueness contract (a card is open, so the line itself is
-                // suppressed — the key is exercised below in the in-flight-only projection).
+                // P7-05 + B6 first-window (D-280 spec §3.3): the in-flight marker is on in this
+                // fixture so the progress-line key joins the uniqueness contract WITH the card
+                // open — the continuation state, where the line and the growing card render
+                // together.
                 groupEnumerationInProgress = true,
             )
         val items = importReviewRenderItems(view, ImportPlatformKind.ANDROID)

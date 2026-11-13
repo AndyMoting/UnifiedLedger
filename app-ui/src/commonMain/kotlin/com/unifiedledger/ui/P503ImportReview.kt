@@ -213,7 +213,9 @@ data class ImportReviewView(
      * behind the 整组确认页 is in flight (the single-flight read the coordinator guards). The
      * overview then renders the explicit 正在整理重复组…… progress line — a progress
      * presentation choice of this batch (registered for review), not a frozen spec surface.
-     * Default `false` keeps every pre-P7-05 constructor site compiling.
+     * B6 first-window (D-280 spec §3.3): the flag stays true through the continuation pages, so the
+     * line is up while the card is already open on its first window; only the round's completed
+     * event clears it. Default `false` keeps every pre-P7-05 constructor site compiling.
      */
     val groupEnumerationInProgress: Boolean = false,
     /**

@@ -112,9 +112,9 @@ class P503ImportReviewHostCoordinatorTest {
      * the accessor the whole-group confirm gate reads ([P503HostCoordinator.isImportGroupEnumerationRunning])
      * are the SAME flag, and only the round's end clears it. This pins the slot's lifetime, not a
      * page landing: nothing in this test lands a page (the coordinator has no page event). Pages
-     * land inside the round by construction — they are dispatched from the round's final hop — so
-     * while the round runs, the confirm action's gate at `P503App.kt:2486` refuses a tap on a
-     * partial prefix.
+     * land inside the round, one main-dispatcher hop each (B6 first-window batch), and the slot
+     * outlives every one of them — so while the round runs, the confirm action's gate in
+     * `P503App.confirmImportDuplicateGroupDisposition` refuses a tap on the partial prefix.
      */
     @Test
     fun theEnumerationRunningAccessorMirrorsTheSingleFlightSlotUntilTheRoundEnds() {

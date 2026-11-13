@@ -129,3 +129,39 @@
 入：本文、S1/S2/S3 的 tracked 变更、以及随之的决定条目。
 
 出：不改任何 thresholds / 统计量 / marker / stage 预算；不改 `D-230`/`D-243`/`D-278`–`D-284`/`D-293`/`D-294`/`D-308` 的裁决文本与开放状态；不把任何 A 项并入 PASS；不改 `.external/`；不引入依赖；**本批零 DDL、零迁移**（索引裁决按 D-7 另立迁移批）。
+
+---
+
+## 8. S1 实施登记（2026-11-13，随 S1 批；§1–§7 正文未改）
+
+**S1 交付**：`startImportDuplicateGroupDisposition` 的派发结构改为「每个窗口一个主线程 hop」，三个纯 seam 承载顺序——`importGroupEnumerationFirstWindowEvents` / `importGroupEnumerationContinuationEvents` / `importGroupEnumerationRoundEndEvents`（`app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503HostCoordinator.kt`）；`Start` 在首窗落盘时即派发，后续窗口按 keyset 序逐页追加，`ImportGroupEnumerationCompleted` 仍在末页之后（进度行翻转时机不变）。零 schema、零迁移、零依赖。
+
+**实施期三处发现（逐条登记，非静默变更）：**
+
+1. **进度行的渲染门必须同批改**。`importReviewRenderItems` 的渲染条件是 `groupEnumerationInProgress && groupDisposition == null`——卡一开就吞掉进度行。而 §3.3 明文要求「进度行在**续页期间**由 `groupEnumerationInProgress` 继续承载」；旧时序下「卡已开」几乎等价「轮次已结束」，该门近乎空转，首窗开卡后保留它会让 §3.3 那句话永远无法为真。S1 删掉后半条件并反转对应测试（断言 按钮 → 进度行 → 卡头 的渲染顺序）。这是呈现改动，理由如上，**不是**派发重排的副作用。
+2. **「首窗为空、其余页非空」的语义增量**。旧码 `ready.items.isEmpty() -> Unit` 在该形态下**静默不开卡**（潜在 `ACC-COUNT-01` 缺口）。S1 改为按 count 查询的 N 开卡，随后续页生长；`totalCount <= 0 && items.isEmpty()` 仍不开卡，保住「整组空」的旧行为。**本门承认这是对旧实现的修正**，不是规格扩展。
+3. **重跑轮次的可见瞬态**。轮次开始时卡片已开时，`Start` 会把已展示的卡替换成首窗再逐页长回；头部「共 N 条」不变。登记为可见瞬态，不改。
+
+**新增承接（本批不做，须在后续片点名闭合；`R-8-n` 是本文 §8 的局部承接标签，不是 `docs/DECISIONS.md` 的决定编号）：**
+
+- **R-8-1 §3.4 的确认门在首窗开卡后更容易被用户撞到，且当前是静默无反馈**。规格 §3.4 要求「续页仍在飞时点确认 → 宿主先补齐剩余页再逐条确认」，实现是 `isGroupEnumerationRunning()` 的静默 `return`（`P503App.kt` 的 `confirmImportDuplicateGroupDisposition`）。**这条路径在改造前就已可达**（重跑轮次时上一轮的卡片在轮次内仍然可见），S1 只是让它变成常态可达；授权对象恒为全组，因此是 UX 缺口而非账务缺陷。**闭合条件** = 确认在单飞槽内排队到轮次结束后执行，或至少落一条类型化可见反馈。归属 §3.4 承接小片。
+- **R-8-2 host 派的顺序没有 JVM 形态可钉**。S1 把三处决策抽成纯 seam 并各自断言，但「每窗口一个 hop、hop 之间 FIFO」这一段只存在于 `P503App` 的协程队列里：把 `landWindow`/`dispatchEnumerationHop` 整条回退，五个 seam/reducer 用例仍全绿。**闭合条件** = 由设备读数 V-11 兜住（首窗即开卡的 `click-to-card` 量级），或在测试脚手架上补一个可驱动的队列；在那之前不得把 V-1 读成「host 派发顺序已钉」。
+- **R-8-3 逐跳代际门的中途失效形态**。每个窗口 hop 各自判代际（`P706-A07`），轮次末 hop 在代际失效时 `return`。于是「换代发生在轮次中途」会留下「卡片已开 + 部分前缀 + 无 Close/横幅」的形态——旧实现单跳「全有全无」产生不了它。**闭合条件** = 换代即整屏重建（当前 `latestState` 与 `importReview` 全量替换）被证实覆盖该形态，或轮末 hop 在代际失效时也派发失败端。
+
+**§4 可写范围的实施期增补**：§4 的 S1 清单已列 `P503UiEvent.kt`，S1 按该行交付了 `ImportGroupEnumerationPageLanded` 的契约 KDoc（改为「逐页 hop、hop 可能晚于租约关闭、任一页失败则整轮作废并收起首窗已开的卡」）。**另一处 S1 未列的是 `P503ImportReviewPresentation.kt`**（§4 只在 S2 列它，本节 #1 的渲染门落在那里）。§4 的清单是起草时的估计，这处增补由本节授权，**§4 正文不改**。
+
+**登记（不改，供后续片参考）**：①计数为 0 而页非空的组合会开出「共 0 条」的卡；按规格 §2.3 的契约破坏纪律它本应走 `Absent` 端；②成功轮次不以 `items.size == totalCount` 收口，页全空而计数 > 0 时屏上可能是「共 N 条 / 0 行」且无横幅——规格 §6 风险 3 以论证排除，无测试钉。
+
+---
+
+## 9. S1 设备首测：V-11 **未通过**，且**残余成本不在页数上**（2026-11-13）
+
+**读数**：run `43379169190`（`3771555e`，`android-b6-card.yml`，20k / 3 轮 / 3000 ms）→ **3092 / 3215 / 3059 ms**，gate `FAIL`（worst 3215，超界 215 ms）。分段：`click-to-progress` = 289 / 127 / 151 ms，`progress-to-card` = **2803 / 3088 / 2908 ms**。同轮 `host.json`：`cardOpen=true`、`itemCount=20001`、`relations=20000`。
+
+**与改前对比（`78163d67`，run `43301412180`：3071 / 2883 / 2905，`progress-to-card` 2952 / 2770 / 2780）**：没有改善。**这个「没有改善」本身就是本次最有判别力的读数**：
+
+- 改造前 `progress→card` = 整轮 101 页 + 卡首帧；改造后同一量级。若成本在页循环上，改造后应掉到「1 页 + 首帧」量级（3 条组的实测是 76 ms）。⇒ **该段的主体成本发生在第 1 页之前**，页循环只占约 0.15 s（预估 101 页 × ~1.5 ms；旧实现的算术估计「27 ms/页」由此被证伪）。
+- 第 1 页之前只有三件事：`ledger.leased` 的**租约获取**、`countImportDuplicateCandidatesForSession` 的**计数查询**（`Ledger.sq:11647`，三表 join + 每行相关 `max(sequence)` 子查询）、以及第 1 页查询本身。
+- 同一轮证据显示该 b6 轮次的整组**成员为空**（`checkboxes=0`、`confirm affordance=none`，头部仍显示「共 20001 条」）：列表态只有分页首页 50 行，`importDuplicateGroupRows` 找不到成员 —— 这正是 D-5 要解的耦合，也说明枚举本身几乎没做工作，2.8 s 不可能是装配。
+
+**由此确定的后续顺序（不得颠倒）**：B4/S2 的**落地读有界**（D-4）与**成员源解耦**（D-5）先落地，再复跑本门；若届时 `progress→card` 仍停在秒级，则剩余嫌疑只剩计数查询，按 D-7 的「先测量后裁决」给它单独的 EXPLAIN + 规模读数，再决定索引或重写。**V-11 维持未通过，不并入任何 PASS**；本轮读数登记为「残余成本定位读数」，不改门槛与统计量。

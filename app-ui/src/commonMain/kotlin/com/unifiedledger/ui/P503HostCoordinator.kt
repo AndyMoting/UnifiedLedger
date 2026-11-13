@@ -4,6 +4,7 @@ import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.CorrectTransactionVersionResult
 import com.unifiedledger.application.CounterpartyCommandResult
+import com.unifiedledger.application.ImportReviewRowsResult
 import com.unifiedledger.application.RecycleBinResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TypedEntryDraft
@@ -737,6 +738,78 @@ internal fun importPickDecisionEvent(decision: ImportPickIntakeDecision): P503Ui
         is ImportPickIntakeDecision.StartIntake -> null
         is ImportPickIntakeDecision.AlreadyInFlight -> P503UiEvent.ImportIntakeBusyLanded
         ImportPickIntakeDecision.NoPipeline -> null
+    }
+
+/**
+ * B6 first-window batch (D-280, spec `docs/specs/2026-11-04-b6-group-card-paged-enumeration-design.md`
+ * §3.3 首窗事件落盘后立即开卡): the events of the FIRST window's main-dispatcher hop. The host calls
+ * it the moment the first [ImportDuplicateGroupEnumeration.Ready] page arrives, so the card opens on
+ * that window (header + batch switch + first-window items) instead of after the whole paged round.
+ * The rest of the round lands through [importGroupEnumerationContinuationEvents] and closes through
+ * [importGroupEnumerationRoundEndEvents]; the three seams together are the round's dispatch ORDER,
+ * which is why they are pure and separately asserted.
+ *
+ * [cardStillOpen] is the hop-time read of the same fact [cardWasOpenAtRoundStart] captured at round
+ * start (review R2-12/R2-13). A card that was open at round start and reads closed now was closed by
+ * the user mid-round, and the round must not resurrect it; at hop time both reads see the same
+ * closed card, so the round-start capture is the discriminator — a fresh round (the card was never
+ * open) MUST open, because opening it is the round's job.
+ *
+ * A round with nothing to show opens no card: the count query's whole-group total 0 together with an
+ * empty first window is the legacy whole-group-empty shape, whose card was never opened either.
+ */
+internal fun importGroupEnumerationFirstWindowEvents(
+    sessionInputRef: String,
+    items: List<ImportDuplicateGroupDispositionItem>,
+    totalCount: Int,
+    cardWasOpenAtRoundStart: Boolean,
+    cardStillOpen: Boolean,
+): List<P503UiEvent> {
+    if (cardWasOpenAtRoundStart && !cardStillOpen) return emptyList()
+    if (totalCount <= 0 && items.isEmpty()) return emptyList()
+    return listOf(P503UiEvent.StartImportDuplicateGroupDisposition(sessionInputRef, items, totalCount))
+}
+
+/**
+ * B6 first-window batch (spec §3.3): one CONTINUATION window's main-dispatcher hop — the page
+ * appended to the landed prefix at its whole-group [firstOrdinal]. The window is dropped wholesale
+ * when the card is no longer open for this round: the user's 返回 closed it (spec §3.5's
+ * stale-landing discipline), and a landing never reopens a card ([cardStillOpen] is the existing
+ * read — no new state bit).
+ */
+internal fun importGroupEnumerationContinuationEvents(
+    sessionInputRef: String,
+    items: List<ImportDuplicateGroupDispositionItem>,
+    firstOrdinal: Int,
+    cardStillOpen: Boolean,
+): List<P503UiEvent> =
+    if (cardStillOpen) {
+        listOf(P503UiEvent.ImportGroupEnumerationPageLanded(sessionInputRef, items, firstOrdinal))
+    } else {
+        emptyList()
+    }
+
+/**
+ * B6 first-window batch (spec §3.3): the round's FINAL main-dispatcher hop, after
+ * [P503UiEvent.ImportGroupEnumerationCompleted] and after every window hop the round queued.
+ *
+ * R2-1 / spec §2.3: any typed page failure — or a round that never landed a window (the count/page
+ * contract violation) — voids the whole round: the card the first window may already have opened is
+ * CLOSED and the typed list-failure banner lands, so the landed prefix is never left on screen as a
+ * smaller group. A completed round dispatches nothing of its own: the landings already published
+ * every item.
+ */
+internal fun importGroupEnumerationRoundEndEvents(
+    failed: Boolean,
+    anyPageLanded: Boolean,
+): List<P503UiEvent> =
+    if (failed || !anyPageLanded) {
+        listOf(
+            P503UiEvent.CloseImportDuplicateGroupDisposition,
+            P503UiEvent.ImportReviewResult(ImportReviewRowsResult.Unavailable),
+        )
+    } else {
+        emptyList()
     }
 
 /**
