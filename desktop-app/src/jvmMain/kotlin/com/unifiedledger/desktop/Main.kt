@@ -82,6 +82,7 @@ import com.unifiedledger.application.QueryImportCandidateDetail
 import com.unifiedledger.application.QueryImportDuplicateReviews
 import com.unifiedledger.application.QueryImportDuplicateReviewsForSession
 import com.unifiedledger.application.QueryImportDuplicateReviewsForSessionPage
+import com.unifiedledger.application.QueryImportDuplicateReviewsForSessionMemberPage
 import com.unifiedledger.application.QueryImportReviewRows
 import com.unifiedledger.application.QueryMerchantMonthlyAccumulation
 import com.unifiedledger.application.QuerySearchPage
@@ -1235,6 +1236,12 @@ internal fun buildLedgerGraph(
             // behind the paged 整组确认页 enumeration (the host's batch branch requires all three).
             baseQueryImportDuplicateReviewsForSessionPage = QueryImportDuplicateReviewsForSessionPage(importReviewReadAdapter),
             baseCountImportDuplicateCandidatesForSession = CountImportDuplicateCandidatesForSession(importReviewReadAdapter),
+            // P7-04 B1/B4 D-5 member source (spec §11; D-321 checkpoint handoff): the session-scoped
+            // member-review page read. With this wired, the desktop root's member-page source has
+            // all three reads (member candidate page :1236, member review page here, whole-group
+            // count :1237), so the desktop 整组确认页 enumeration leaves the pre-D-5 legacy list
+            // path for the same paged member path the Android root runs (App.kt wiring precedent).
+            baseQueryImportDuplicateReviewsForSessionMemberPage = QueryImportDuplicateReviewsForSessionMemberPage(importReviewReadAdapter),
             importDuplicateReview = importDuplicateReview,
             importDuplicateReviewIds = {
                 ImportDuplicateReviewIds(
