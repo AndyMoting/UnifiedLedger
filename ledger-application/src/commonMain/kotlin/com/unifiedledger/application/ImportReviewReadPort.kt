@@ -168,6 +168,32 @@ interface ImportReviewReadPort {
                 "loud rather than fall back to a whole-ledger read (D-293)",
         )
 
+    /**
+     * P7-04 B1/B4 windowed read (design D-5): one page of the review rows whose subject source
+     * belongs to the pick session [sessionInputRef] — the group card's member source, read without
+     * the list state having loaded the whole ledger first.
+     *
+     * The keyset contract is [loadImportReviewPage]'s unchanged: `pageSize` counts CANDIDATES, a
+     * page never splits a candidate's run, pages concatenate in ascending `candidate_id` order, and
+     * a null [ImportReviewRowsPage.nextAfterCandidateId] means the keyset is exhausted. A session
+     * with no candidate — including a handle that names no source on this ledger — is a LEGAL EMPTY
+     * page (no rows, null cursor), never a failure: this read has no absent verdict, and the group
+     * total is a count read, never this page's row count.
+     *
+     * The default throws: a missing session paged read must surface as a typed read failure, never
+     * as an empty page (an empty page means "no members" and would silently shrink the group).
+     */
+    fun loadImportReviewRowsForSessionPage(
+        ledgerId: LedgerId,
+        sessionInputRef: String,
+        pageSize: Long,
+        afterCandidateId: String?,
+    ): ImportReviewRowsPage =
+        throw UnsupportedOperationException(
+            "loadImportReviewRowsForSessionPage is not implemented by this read port; the missing " +
+                "session paged read must surface as a typed read failure, never as an empty page (D-5)",
+        )
+
     fun loadImportReviewRows(ledgerId: LedgerId): List<ImportReviewRow> =
         throw UnsupportedOperationException(
             "loadImportReviewRows is not implemented by this read port; a missing import-review " +
@@ -368,6 +394,27 @@ class QueryImportReviewRows(
     ): ImportReviewRowsPageResult =
         try {
             val page = readPort.loadImportReviewPage(ledgerId, pageSize, afterCandidateId)
+            ImportReviewRowsPageResult.Page(page.rows, page.nextAfterCandidateId)
+        } catch (failure: Exception) {
+            ImportReviewRowsPageResult.Unavailable
+        }
+
+    /**
+     * P7-04 B1/B4 windowed read (design D-5): one SESSION-scoped page of the review list, the
+     * group-card counterpart of [queryPage]. Same keyset driver contract (first page passes
+     * `afterCandidateId = null`, the next passes the previous [ImportReviewRowsPageResult.Page.
+     * nextAfterCandidateId]) and the same fail-loud mapping: a throwing or unimplemented paged read
+     * is [ImportReviewRowsPageResult.Unavailable], never an empty page — an empty page means
+     * "exhausted" here, which would silently truncate the group.
+     */
+    fun querySessionPage(
+        ledgerId: LedgerId,
+        sessionInputRef: String,
+        pageSize: Long,
+        afterCandidateId: String?,
+    ): ImportReviewRowsPageResult =
+        try {
+            val page = readPort.loadImportReviewRowsForSessionPage(ledgerId, sessionInputRef, pageSize, afterCandidateId)
             ImportReviewRowsPageResult.Page(page.rows, page.nextAfterCandidateId)
         } catch (failure: Exception) {
             ImportReviewRowsPageResult.Unavailable

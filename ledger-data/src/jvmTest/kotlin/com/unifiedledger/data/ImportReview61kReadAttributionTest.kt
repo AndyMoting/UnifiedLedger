@@ -14,6 +14,7 @@ import java.util.Locale
 import kotlin.io.path.absolutePathString
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * D-169 attribution, side A (test-only): the paged DB read plus result construction
@@ -56,6 +57,13 @@ import kotlin.test.assertEquals
  * ~11 s. The residual ~8.6 s is therefore NOT explained by these host-side components and is most
  * plausibly device-side UI composition/recomposition, which these tests do not measure. This is an
  * attribution of the measured host-side work, not a proven device root cause.
+ *
+ * P7-04 B1/B4 windowed read (design `docs/specs/2026-11-13-p7-04-b1-b4-windowed-read-design.md` D-5,
+ * acceptance V-10): this same artifact now also carries the session-scoped page reading, printed under
+ * the `P704B4-PLAN ` prefix — the per-page cost, the page's output row count and its candidate count
+ * for the read the group card drives. Recorded, never threshold-asserted; the session handle is
+ * DISCOVERED from the artifact (the `input_ref` carrying the most candidates) because the artifact's
+ * session layout is not assumed.
  */
 class ImportReview61kReadAttributionTest {
     @Test
@@ -121,6 +129,54 @@ class ImportReview61kReadAttributionTest {
                     println("D169ATTR: side=B round=${index + 1} page-ms=${format(nanos)}")
                 }
                 println("D169ATTR: side=B page-min-ms=${format(pageTimes.min())} page-max-ms=${format(pageTimes.max())}")
+
+                // P7-04 B1/B4 windowed read (design D-5, acceptance V-10): the SESSION-scoped page on
+                // the same 61k library — the read the group card drives once per page. The session
+                // handle is discovered from the artifact, never assumed (it may carry several pick
+                // sessions). RECORDED, NOT THRESHOLD-ASSERTED: every figure below is printed for the
+                // record; the only assertions are structural, so the reading cannot silently report a
+                // page that broke the keyset contract.
+                val session = largestSession(driver, ledgerId)
+                val sessionPageSize = 200L
+                // Warmup: discarded, so the measured rounds do not pay the first statement prepare.
+                adapter.loadImportReviewRowsForSessionPage(ledgerId, session.inputRef, sessionPageSize, null)
+                val sessionPageTimes = mutableListOf<Long>()
+                var sessionPage: ImportReviewRowsPage? = null
+                repeat(ROUNDS) {
+                    val started = System.nanoTime()
+                    sessionPage = adapter.loadImportReviewRowsForSessionPage(ledgerId, session.inputRef, sessionPageSize, null)
+                    sessionPageTimes += System.nanoTime() - started
+                }
+                val firstSessionPage = requireNotNull(sessionPage)
+                // The raw projection row count of the same page (one row per candidate x duplicate),
+                // which is the "output rows" figure D-7's per-output-row cost is stated over.
+                val rawPageRows =
+                    database.ledgerQueries
+                        .importReviewRowsForSessionPage(
+                            ledger_id = ledgerId.value,
+                            session_input_ref = session.inputRef,
+                            page_ledger_id = ledgerId.value,
+                            after_candidate_id = "",
+                            page_size = sessionPageSize,
+                        ).executeAsList()
+                        .size
+                assertTrue(
+                    firstSessionPage.rows.size.toLong() <= sessionPageSize,
+                    "a session page must never carry more candidates than the page size",
+                )
+                assertTrue(
+                    rawPageRows >= firstSessionPage.rows.size,
+                    "the raw projection must not be shorter than the folded page it produces",
+                )
+                println("P704B4-PLAN session-page component=folded-session-page fixture=prebuilt-61k-copy page-size=$sessionPageSize")
+                println("P704B4-PLAN session-page fixture-source=env:UL_D169_FIXTURE_DB ledger=${ledgerId.value} session=${session.inputRef}")
+                println("P704B4-PLAN session-page session-candidates=${session.candidates}")
+                println("P704B4-PLAN session-page page-ms=${sessionPageTimes.map(::format)}")
+                println("P704B4-PLAN session-page page-min-ms=${format(sessionPageTimes.min())} page-max-ms=${format(sessionPageTimes.max())}")
+                println(
+                    "P704B4-PLAN session-page page-output-rows=$rawPageRows page-candidates=${firstSessionPage.rows.size} " +
+                        "has-more=${firstSessionPage.nextAfterCandidateId != null}",
+                )
             } finally {
                 driver.close()
             }
@@ -128,6 +184,45 @@ class ImportReview61kReadAttributionTest {
             Files.deleteIfExists(temp)
         }
     }
+
+    private data class SessionShape(
+        val inputRef: String,
+        val candidates: Long,
+    )
+
+    /** The pick session carrying the most candidates — the group, discovered not assumed. */
+    private fun largestSession(
+        driver: JdbcSqliteDriver,
+        ledgerId: LedgerId,
+    ): SessionShape =
+        driver
+            .executeQuery(
+                null,
+                """
+                SELECT source.input_ref, count(*) AS candidates
+                FROM import_candidate AS candidate
+                JOIN import_source_record AS source
+                  ON source.ledger_id = candidate.ledger_id AND source.source_id = candidate.source_id
+                WHERE candidate.ledger_id = ?
+                GROUP BY source.input_ref
+                ORDER BY candidates DESC, source.input_ref
+                LIMIT 1
+                """.trimIndent(),
+                { cursor ->
+                    QueryResult.Value(
+                        if (cursor.next().value) {
+                            SessionShape(
+                                inputRef = requireNotNull(cursor.getString(0)) { "input_ref is not null" },
+                                candidates = requireNotNull(cursor.getLong(1)) { "candidates is not null" },
+                            )
+                        } else {
+                            error("the fixture has no candidate at all")
+                        },
+                    )
+                },
+                1,
+            ) { bindString(0, ledgerId.value) }
+            .value
 
     /**
      * The fixture path from `UL_D169_FIXTURE_DB`, or null when it is unset or names no readable

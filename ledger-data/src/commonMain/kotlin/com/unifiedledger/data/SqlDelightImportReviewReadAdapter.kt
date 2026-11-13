@@ -136,7 +136,7 @@ class SqlDelightImportReviewReadAdapter(
                 // structure is the current run (one candidate's rows: its base row plus one
                 // projection per duplicate), released when the run closes; the per-batch projection list and
                 // the groupBy map no longer coexist with the accumulated result.
-                result += foldCandidateRuns(batch)
+                result += foldCandidateRuns(batch) { row -> row.toColumns() }
                 if (batch.size.toLong() < pageSize) break
                 // Kept as `maxOf` (Kotlin UTF-16 order), NOT `last()` (SQLite BINARY order): the
                 // two disagree on supplementary-plane ids and the divergence is pinned by
@@ -183,7 +183,7 @@ class SqlDelightImportReviewReadAdapter(
                         afterCandidateId ?: "",
                         pageSize,
                     ).executeAsList()
-            val rows = foldCandidateRuns(batch)
+            val rows = foldCandidateRuns(batch) { row -> row.toColumns() }
             ImportReviewRowsPage(
                 rows = rows,
                 // `maxOf` (Kotlin UTF-16 order) mirrors the whole-list read's cursor choice, NOT
@@ -194,21 +194,78 @@ class SqlDelightImportReviewReadAdapter(
     }
 
     /**
+     * P7-04 B1/B4 windowed read (design D-5): one SESSION-scoped page of the review list. The named
+     * query is the ledger page query's shape plus the one session predicate, so this path reuses the
+     * SAME [foldCandidateRuns] the ledger page read uses — one row per candidate, duplicates folded
+     * with the blocking verdict first — and driving the pages by `nextAfterCandidateId` reproduces
+     * the session's slice of [loadImportReviewRows] row for row (JVM equivalence pin, V-8).
+     *
+     * Same transaction discipline as [loadImportReviewPage]: one read transaction per page with
+     * `noEnclosing = true`, so the snapshot and the nesting contract match the ledger page read
+     * rather than inventing a second paging convention.
+     */
+    override fun loadImportReviewRowsForSessionPage(
+        ledgerId: LedgerId,
+        sessionInputRef: String,
+        pageSize: Long,
+        afterCandidateId: String?,
+    ): ImportReviewRowsPage {
+        require(pageSize >= 1) { "import review page size must be >= 1, was $pageSize" }
+        return database.transactionWithResult(noEnclosing = true) {
+            // Same empty-id contract as the ledger page read (ACC-T-EMPTYID-01): "" can never be
+            // reached by `candidate_id > after`, so the first page refuses it loudly instead of
+            // silently dropping that candidate from every session page.
+            if (
+                afterCandidateId == null &&
+                database.ledgerQueries
+                    .importCandidateExistsByCandidateId(ledgerId.value, "")
+                    .executeAsList()
+                    .isNotEmpty()
+            ) {
+                throw IllegalStateException(
+                    "import review list cannot page a candidate whose id is the empty string (ledger ${ledgerId.value})",
+                )
+            }
+            val batch =
+                database.ledgerQueries
+                    .importReviewRowsForSessionPage(
+                        ledger_id = ledgerId.value,
+                        session_input_ref = sessionInputRef,
+                        page_ledger_id = ledgerId.value,
+                        after_candidate_id = afterCandidateId ?: "",
+                        page_size = pageSize,
+                    ).executeAsList()
+            ImportReviewRowsPage(
+                rows = foldCandidateRuns(batch) { row -> row.toColumns() },
+                // `maxOf` (Kotlin UTF-16 order) mirrors the ledger page read's cursor choice, NOT
+                // `last()` (SQLite BINARY order): the two disagree on supplementary-plane ids.
+                nextAfterCandidateId = if (batch.size.toLong() < pageSize) null else batch.maxOf { it.candidate_id },
+            )
+        }
+    }
+
+    /**
      * D-230 J1 mechanism (b): fold one contiguous candidate run at a time — the generated rows of a
      * candidate are adjacent (the query orders by candidate_id and the boundary subquery admits
      * candidates whole), so one walk yields exactly the runs `groupBy { it.candidate_id }` produced,
-     * in the same key order, with the same first-row choice.
+     * in the same key order, with the same first-row choice. Both generated page row types fold HERE;
+     * `columnsOf` is their only difference (the mechanical column widening), so a new paged read cannot
+     * grow a second fold that drifts from this one.
      */
-    private fun foldCandidateRuns(batch: List<com.unifiedledger.data.db.ImportReviewRowsForLedgerPage>): List<ImportReviewRow> {
+    private fun <Row> foldCandidateRuns(
+        batch: List<Row>,
+        columnsOf: (Row) -> ImportReviewRowColumns,
+    ): List<ImportReviewRow> {
         val result = mutableListOf<ImportReviewRow>()
         var index = 0
-        while (index < batch.size) {
-            val candidateId = batch[index].candidate_id
-            val run = mutableListOf(batch[index].toColumns())
-            index++
-            while (index < batch.size && batch[index].candidate_id == candidateId) {
-                run += batch[index].toColumns()
-                index++
+        var current = if (index < batch.size) columnsOf(batch[index++]) else null
+        while (current != null) {
+            val candidateId = current.candidate_id
+            val run = mutableListOf(current)
+            current = if (index < batch.size) columnsOf(batch[index++]) else null
+            while (current != null && current.candidate_id == candidateId) {
+                run += current
+                current = if (index < batch.size) columnsOf(batch[index++]) else null
             }
             result += run.first().toImportReviewRow(run)
         }
@@ -591,6 +648,38 @@ private fun com.unifiedledger.data.db.ImportReviewRowForCandidate.toColumns(): I
  * the fold (`toImportReviewRow` / `foldDuplicateStatus`) is untouched and shared.
  */
 private fun com.unifiedledger.data.db.ImportReviewRowsForLedgerPage.toColumns(): ImportReviewRowColumns =
+    ImportReviewRowColumns(
+        candidate_id,
+        candidate_kind,
+        confidence,
+        input_ref,
+        amount_minor,
+        currency_code,
+        currency_precision,
+        occurred_at,
+        direction_token,
+        status_token,
+        funding_state,
+        completeness,
+        content_hash,
+        candidate_status,
+        requires_confirmation,
+        duplicate_candidate_id,
+        duplicate_latest_status,
+        payment_profile_variant,
+        payment_profile_asset_leg_kind_token,
+        payment_profile_credit_leg_kind_token,
+        evidence_id,
+        used_for_reconciliation,
+    )
+
+/**
+ * P7-04 B1/B4 windowed read (design D-5): the generated row type of the session page query. Its
+ * column list is the ledger page query's list, so this widening is the same mechanical expansion
+ * as the overload above — any column drift between the two queries breaks compilation here instead
+ * of silently folding a differently-shaped row.
+ */
+private fun com.unifiedledger.data.db.ImportReviewRowsForSessionPage.toColumns(): ImportReviewRowColumns =
     ImportReviewRowColumns(
         candidate_id,
         candidate_kind,

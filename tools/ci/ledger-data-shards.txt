@@ -9,6 +9,7 @@
 1	com.unifiedledger.data.P407DuplicateClosedFullStateOracleTest
 1	com.unifiedledger.data.P408CorrectionMigrationTest
 1	com.unifiedledger.data.P409PhaseClosureFullStateOracleTest
+1	com.unifiedledger.data.P704B4SessionPagePlanTest
 1	com.unifiedledger.data.P705EffectivePredicateCostTest
 1	com.unifiedledger.data.P705TransferCorrectionSnapshotReadTest
 1	com.unifiedledger.data.P707BudgetScaleTest
@@ -33,6 +34,7 @@
 2	com.unifiedledger.data.ImportSpineWechatEndToEndTest
 2	com.unifiedledger.data.P408CorrectionStoreTest
 2	com.unifiedledger.data.P408ProjectionSixKindMaterializationTest
+2	com.unifiedledger.data.P704B4SessionPageReadEquivalenceTest
 2	com.unifiedledger.data.P705EffectiveSurfaceTest
 2	com.unifiedledger.data.P705TransferCorrectionCatalogRejectionTest
 2	com.unifiedledger.data.P705TransferCorrectionGeometryTest

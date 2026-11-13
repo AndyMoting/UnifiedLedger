@@ -23,7 +23,7 @@ import os
 import sys
 import xml.etree.ElementTree as ET
 
-DEFAULT_PREFIXES = ("P707-A08 ", "P708-A09 ", "P803-V15 ")
+DEFAULT_PREFIXES = ("P704B4-PLAN ", "P707-A08 ", "P708-A09 ", "P803-V15 ")
 
 
 def class_of(root: str, path: str) -> str:
