@@ -189,9 +189,9 @@ class P503LedgerFacade(
     baseQueryImportDuplicateReviewsForSessionPage: QueryImportDuplicateReviewsForSessionPage? = null,
     // P7-04 B1/B4 windowed read (D-5/D-6): the MEMBER-major paged session duplicate-review read —
     // the 整组确认页's member source. Null keeps an unwired root on the pre-D-5 list-state round
-    // (legacy test constructions); both product roots wire it — Android at the D-5 batch, desktop
-    // at the D-5 handoff wiring. The host selects the round's path off this, the member candidate
-    // page read and the count read together.
+    // (legacy test constructions wire not all of the three); both product roots wire it — Android
+    // at the D-5 batch, desktop at the D-5 handoff wiring. The host selects the round's path off
+    // this, the member candidate page read and the count read together.
     baseQueryImportDuplicateReviewsForSessionMemberPage: QueryImportDuplicateReviewsForSessionMemberPage? = null,
     baseCountImportDuplicateCandidatesForSession: CountImportDuplicateCandidatesForSession? = null,
     val importDuplicateReview: ReviewImportDuplicateCandidate? = null,
