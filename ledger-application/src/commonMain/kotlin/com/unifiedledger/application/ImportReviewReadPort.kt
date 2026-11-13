@@ -132,6 +132,27 @@ data class ImportDuplicateReviewsForSessionPage(
 )
 
 /**
+ * P7-04 B1/B4 windowed read (design `docs/specs/2026-11-13-p7-04-b1-b4-windowed-read-design.md`
+ * D-5/D-6, acceptance V-8): one MEMBER-major page of the session-level duplicate-review read. The
+ * rows are the whole-session read's [ImportDuplicateReviewsForSessionRow] values in member-major
+ * order: members ascend by candidate id and, within one member, the duplicate candidates ascend by
+ * their own candidate id. That is the item order the 整组确认页 produced from the list slice it
+ * used to read, so paging cannot reorder the group card.
+ *
+ * `pageSize` counts MEMBERS and a member's duplicate run is never split, so a page holding FEWER
+ * members than requested is the last one and [nextAfterCandidateId] is `null` there. Otherwise
+ * [nextAfterCandidateId] is the page's largest member candidate id: it is the MEMBER keyset
+ * cursor, not a duplicate cursor. A page with no row at all is the same exhausted state — an empty
+ * session, an unknown session handle, or a cursor past the last member: this read has no absent
+ * verdict, and the group total stays a count read (`CountImportDuplicateCandidatesForSession`),
+ * never this page's member count.
+ */
+data class ImportDuplicateReviewsForSessionMemberPage(
+    val rows: List<ImportDuplicateReviewsForSessionRow>,
+    val nextAfterCandidateId: ImportCandidateId?,
+)
+
+/**
  * A-PERF (D-293): one page of the ledger-scoped review list plus the cursor for the next page.
  *
  * [nextAfterCandidateId] is the LAST candidate id of this page (`null` when this page exhausted the
@@ -166,6 +187,36 @@ interface ImportReviewReadPort {
         throw UnsupportedOperationException(
             "loadImportReviewPage is not implemented by this read port; the paged list must fail " +
                 "loud rather than fall back to a whole-ledger read (D-293)",
+        )
+
+    /**
+     * P7-04 B1/B4 windowed read (design D-5): one page of the review rows whose subject source
+     * belongs to the pick session [sessionInputRef] — the group card's member source, read without
+     * the list state having loaded the whole ledger first.
+     *
+     * The keyset contract: `pageSize` counts CANDIDATES, a page never splits a candidate's run,
+     * pages concatenate in ascending `candidate_id` order, and
+     * [ImportReviewRowsPage.nextAfterCandidateId] is null EXACTLY when the page admitted fewer
+     * candidates than `pageSize` — that page is the keyset's end. The exact boundary is owed here
+     * because the group round ends on a null cursor only (a "short" page is no signal: a page's
+     * projection rows can outnumber `pageSize` once candidates carry duplicates), which is
+     * `P704B4-T-CURSOR-01`; [loadImportReviewPage] keeps its frozen conservative comparison. A
+     * session with no candidate — including a handle that names no source on this ledger — is a
+     * LEGAL EMPTY page (no rows, null cursor), never a failure: this read has no absent verdict, and
+     * the group total is a count read, never this page's row count.
+     *
+     * The default throws: a missing session paged read must surface as a typed read failure, never
+     * as an empty page (an empty page means "no members" and would silently shrink the group).
+     */
+    fun loadImportReviewRowsForSessionPage(
+        ledgerId: LedgerId,
+        sessionInputRef: String,
+        pageSize: Long,
+        afterCandidateId: String?,
+    ): ImportReviewRowsPage =
+        throw UnsupportedOperationException(
+            "loadImportReviewRowsForSessionPage is not implemented by this read port; the missing " +
+                "session paged read must surface as a typed read failure, never as an empty page (D-5)",
         )
 
     fun loadImportReviewRows(ledgerId: LedgerId): List<ImportReviewRow> =
@@ -245,6 +296,34 @@ interface ImportReviewReadPort {
             "loadImportDuplicateReviewsForSessionPage is not implemented by this read port; a " +
                 "missing paged session duplicate-review read must surface as a typed read " +
                 "failure, never as a silently partial group (D-280)",
+        )
+
+    /**
+     * P7-04 B1/B4 windowed read (design D-5/D-6): one MEMBER-major page of
+     * [loadImportDuplicateReviewsForSession] — the group card's member source, read without the
+     * list state having loaded the whole ledger first.
+     *
+     * The keyset is a MEMBER keyset: [afterCandidateId] is the previous page's
+     * [ImportDuplicateReviewsForSessionMemberPage.nextAfterCandidateId] value and the FIRST page
+     * passes `null`. A page admits at most `pageSize` members and carries every duplicate of each
+     * admitted member, so driving the chain with that cursor reproduces the whole-session read row
+     * for row once the caller orders it member-major; a null cursor means the keyset is exhausted.
+     * A session with no member — an empty session or a handle that names no source on this ledger —
+     * is a LEGAL EMPTY page, never a failure: this read has no absent verdict.
+     *
+     * The default throws: a missing member page read must surface as a typed read failure, never as
+     * an empty page (an empty page means "no members" and would silently shrink the group).
+     */
+    fun loadImportDuplicateReviewsForSessionMemberPage(
+        ledgerId: LedgerId,
+        sessionInputRef: String,
+        pageSize: Long,
+        afterCandidateId: String?,
+    ): ImportDuplicateReviewsForSessionMemberPage =
+        throw UnsupportedOperationException(
+            "loadImportDuplicateReviewsForSessionMemberPage is not implemented by this read port; " +
+                "the missing member paged read must surface as a typed read failure, never as an " +
+                "empty page (D-5/D-6)",
         )
 
     /**
@@ -368,6 +447,27 @@ class QueryImportReviewRows(
     ): ImportReviewRowsPageResult =
         try {
             val page = readPort.loadImportReviewPage(ledgerId, pageSize, afterCandidateId)
+            ImportReviewRowsPageResult.Page(page.rows, page.nextAfterCandidateId)
+        } catch (failure: Exception) {
+            ImportReviewRowsPageResult.Unavailable
+        }
+
+    /**
+     * P7-04 B1/B4 windowed read (design D-5): one SESSION-scoped page of the review list, the
+     * group-card counterpart of [queryPage]. Same keyset driver contract (first page passes
+     * `afterCandidateId = null`, the next passes the previous [ImportReviewRowsPageResult.Page.
+     * nextAfterCandidateId]) and the same fail-loud mapping: a throwing or unimplemented paged read
+     * is [ImportReviewRowsPageResult.Unavailable], never an empty page — an empty page means
+     * "exhausted" here, which would silently truncate the group.
+     */
+    fun querySessionPage(
+        ledgerId: LedgerId,
+        sessionInputRef: String,
+        pageSize: Long,
+        afterCandidateId: String?,
+    ): ImportReviewRowsPageResult =
+        try {
+            val page = readPort.loadImportReviewRowsForSessionPage(ledgerId, sessionInputRef, pageSize, afterCandidateId)
             ImportReviewRowsPageResult.Page(page.rows, page.nextAfterCandidateId)
         } catch (failure: Exception) {
             ImportReviewRowsPageResult.Unavailable
@@ -517,6 +617,58 @@ class QueryImportDuplicateReviewsForSessionPage(
             readPort.importDuplicateGroupPageSize()
         } catch (failure: UnsupportedOperationException) {
             null
+        }
+}
+
+/**
+ * Frozen result family of the MEMBER-major paged session duplicate-review query (D-5/D-6). It is
+ * [ImportDuplicateReviewsForSessionPageResult]'s shape minus `Absent`: this read has no absent
+ * verdict (an empty session is a legal empty page), so an `Absent` variant could never be produced.
+ * `Page` carries the page and its resume cursor in one read; `Unavailable` is the typed read failure
+ * (G6 — never an empty page).
+ */
+sealed interface ImportDuplicateReviewsForSessionMemberPageResult {
+    data class Page(
+        val page: ImportDuplicateReviewsForSessionMemberPage,
+    ) : ImportDuplicateReviewsForSessionMemberPageResult
+
+    data object Unavailable : ImportDuplicateReviewsForSessionMemberPageResult
+}
+
+/**
+ * P7-04 B1/B4 windowed read (design D-5/D-6): the member-major paged session duplicate-review query
+ * use case, the group card's counterpart of [QueryImportDuplicateReviewsForSessionPage]. One read
+ * returns one page of members (each with its whole duplicate run) plus the resume cursor. Read-port
+ * exceptions map to [ImportDuplicateReviewsForSessionMemberPageResult.Unavailable] — never to an
+ * empty page, so a failing page read can never present a silently partial group (G6, the same
+ * discipline as [QueryImportDuplicateReviewsForSession]).
+ */
+class QueryImportDuplicateReviewsForSessionMemberPage(
+    private val readPort: ImportReviewReadPort,
+) {
+    /**
+     * The next member page of the session's duplicate-review rows ([afterCandidateId] = the previous
+     * page's [ImportDuplicateReviewsForSessionMemberPage.nextAfterCandidateId] value; the FIRST page
+     * passes `null`). An empty session, an unknown session handle and an exhausted keyset are all a
+     * `Page` with empty rows — this read has no absent verdict.
+     */
+    fun query(
+        ledgerId: LedgerId,
+        sessionInputRef: String,
+        pageSize: Long,
+        afterCandidateId: String?,
+    ): ImportDuplicateReviewsForSessionMemberPageResult =
+        try {
+            ImportDuplicateReviewsForSessionMemberPageResult.Page(
+                readPort.loadImportDuplicateReviewsForSessionMemberPage(
+                    ledgerId,
+                    sessionInputRef,
+                    pageSize,
+                    afterCandidateId,
+                ),
+            )
+        } catch (failure: Exception) {
+            ImportDuplicateReviewsForSessionMemberPageResult.Unavailable
         }
 }
 

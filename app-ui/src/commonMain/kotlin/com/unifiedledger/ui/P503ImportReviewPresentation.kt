@@ -4,6 +4,7 @@ import com.unifiedledger.application.ImportCandidateId
 import com.unifiedledger.application.ImportDuplicateCandidateId
 import com.unifiedledger.application.ImportDuplicateCandidateKind
 import com.unifiedledger.application.ImportDuplicateReviewRow
+import com.unifiedledger.application.ImportDuplicateReviewsForSessionMemberPageResult
 import com.unifiedledger.application.ImportDuplicateReviewsResult
 import com.unifiedledger.application.ImportDuplicateStatus
 import com.unifiedledger.application.ImportFileIntakeOutcome
@@ -16,6 +17,7 @@ import com.unifiedledger.application.ImportIntakeRecordDisposition
 import com.unifiedledger.application.ImportIntakeRecordSummary
 import com.unifiedledger.application.ImportPlatformKind
 import com.unifiedledger.application.ImportReviewRow
+import com.unifiedledger.application.ImportReviewRowsPageResult
 import com.unifiedledger.application.ManualExpenseAmountFormatError
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.domain.CurrencyUnit
@@ -389,6 +391,81 @@ internal fun enumerateImportDuplicateGroupItems(
         }
     }
     return ImportDuplicateGroupEnumeration.Ready(items)
+}
+
+/**
+ * P7-04 B1/B4 windowed read (design `docs/specs/2026-11-13-p7-04-b1-b4-windowed-read-design.md`
+ * D-5/D-6, acceptance V-7): ONE member window of the 整组确认页 enumeration, assembled from the two
+ * session-scoped page reads instead of the review list state. The member rows are the window's
+ * session candidates ([ImportReviewRowsPageResult.Page.rows]); the duplicate-review rows are the
+ * SAME cursor's member-major rows, folded per member ONCE (one `groupBy`, never a full-page scan
+ * per member) and handed to the unchanged [enumerateImportDuplicateGroupItems] through its
+ * `loadReviews` callback. A member the candidate page carries but the review page has no row for
+ * consumes its turn and contributes nothing — an empty review list, not a failed read.
+ *
+ * [nextAfterCandidateId] is the MEMBER candidate page's keyset cursor, never a row count. The page
+ * is cut over CANDIDATES, so a window may hold fewer members than the page size — or none at all,
+ * when its candidates carry no duplicate — while the keyset is NOT exhausted. The host therefore
+ * drives the round on this cursor alone, and `rows.size < pageSize` must never read as the end.
+ *
+ * Either page failing typed ([ImportReviewRowsPageResult.Unavailable] /
+ * [ImportDuplicateReviewsForSessionMemberPageResult.Unavailable]) is
+ * [ImportDuplicateGroupEnumeration.ReadFailed]: the round voids wholesale, exactly like a failing
+ * per-candidate read.
+ *
+ * A window here is a READ window, not a LANDING window: the page's item sequence is split by
+ * [importDuplicateGroupItemWindows] before the host lands it, because one member page can hold the
+ * whole group (a single member with 20 000 duplicate rows).
+ */
+internal data class ImportDuplicateGroupMemberWindow(
+    val enumeration: ImportDuplicateGroupEnumeration,
+    val nextAfterCandidateId: String?,
+)
+
+/**
+ * D-5/D-6: assembles ONE member window — the page's items, through the unchanged pure enumeration
+ * over the page's members, plus the cursor the next window resumes from. See
+ * [ImportDuplicateGroupMemberWindow] for the contract.
+ */
+internal fun enumerateImportDuplicateGroupMemberWindow(
+    sessionInputRef: String,
+    memberPage: ImportReviewRowsPageResult,
+    reviewPage: ImportDuplicateReviewsForSessionMemberPageResult,
+): ImportDuplicateGroupMemberWindow {
+    if (memberPage !is ImportReviewRowsPageResult.Page ||
+        reviewPage !is ImportDuplicateReviewsForSessionMemberPageResult.Page
+    ) {
+        return ImportDuplicateGroupMemberWindow(ImportDuplicateGroupEnumeration.ReadFailed, null)
+    }
+    val reviewsByMember =
+        reviewPage.page.rows.groupBy { it.subjectCandidateId.value }
+    val enumeration =
+        enumerateImportDuplicateGroupItems(sessionInputRef, memberPage.rows) { candidateId ->
+            ImportDuplicateReviewsResult.Reviews(
+                reviewsByMember[candidateId.value].orEmpty().map { it.review },
+            )
+        }
+    return ImportDuplicateGroupMemberWindow(enumeration, memberPage.nextAfterCandidateId)
+}
+
+/**
+ * P7-04 B1/B4 windowed read (D-5 follow-up): splits ONE member page's items into the windows the
+ * host lands. The member page bounds the READ; this bound decides what one main-dispatcher hop
+ * pushes into the render tree, because the visible first-response budget is spent in ITEMS, not in
+ * members — a page whose single member carries the whole group is still one page, and must not land
+ * as one window.
+ *
+ * [windowItems] is an item count and must be at least 1. The result never contains an empty window:
+ * an empty page yields NO window (the host then lands nothing, so `anyPageLanded` stays false and
+ * the round-end seam reports the count/page contract violation instead of opening a 0-row card),
+ * an exact multiple yields exactly n windows, and a page shorter than the bound yields one.
+ */
+internal fun importDuplicateGroupItemWindows(
+    items: List<ImportDuplicateGroupDispositionItem>,
+    windowItems: Int,
+): List<List<ImportDuplicateGroupDispositionItem>> {
+    require(windowItems >= 1) { "a group enumeration window must hold at least one item, was $windowItems" }
+    return items.chunked(windowItems)
 }
 
 /**

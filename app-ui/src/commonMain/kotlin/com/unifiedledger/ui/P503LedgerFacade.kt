@@ -38,6 +38,7 @@ import com.unifiedledger.application.QueryBudgetMonth
 import com.unifiedledger.application.QueryImportCandidateDetail
 import com.unifiedledger.application.QueryImportDuplicateReviews
 import com.unifiedledger.application.QueryImportDuplicateReviewsForSession
+import com.unifiedledger.application.QueryImportDuplicateReviewsForSessionMemberPage
 import com.unifiedledger.application.QueryImportDuplicateReviewsForSessionPage
 import com.unifiedledger.application.QueryImportReviewRows
 import com.unifiedledger.application.QueryLedgerCurrentState
@@ -186,6 +187,11 @@ class P503LedgerFacade(
     // whole-group count. Null keeps legacy constructions on the whole-session read path (the
     // host's batch branch requires all three).
     baseQueryImportDuplicateReviewsForSessionPage: QueryImportDuplicateReviewsForSessionPage? = null,
+    // P7-04 B1/B4 windowed read (D-5/D-6): the MEMBER-major paged session duplicate-review read —
+    // the 整组确认页's member source. Null on every root this batch does not wire (the desktop root
+    // and legacy constructions keep the pre-D-5 list-state round); the host selects the round's path
+    // off this, the member candidate page read and the count read together.
+    baseQueryImportDuplicateReviewsForSessionMemberPage: QueryImportDuplicateReviewsForSessionMemberPage? = null,
     baseCountImportDuplicateCandidatesForSession: CountImportDuplicateCandidatesForSession? = null,
     val importDuplicateReview: ReviewImportDuplicateCandidate? = null,
     val importDuplicateReviewIds: () -> ImportDuplicateReviewIds? = { null },
@@ -300,6 +306,7 @@ class P503LedgerFacade(
     private val fallbackQueryImportDuplicateReviews = baseQueryImportDuplicateReviews
     private val fallbackQueryImportDuplicateReviewsForSession = baseQueryImportDuplicateReviewsForSession
     private val fallbackQueryImportDuplicateReviewsForSessionPage = baseQueryImportDuplicateReviewsForSessionPage
+    private val fallbackQueryImportDuplicateReviewsForSessionMemberPage = baseQueryImportDuplicateReviewsForSessionMemberPage
     private val fallbackCountImportDuplicateCandidatesForSession = baseCountImportDuplicateCandidatesForSession
     private val fallbackIncomeOptionsProvider =
         baseIncomeOptionsProvider ?: ManualIncomeOptionsProvider { ManualIncomeOptions(emptyList(), emptyList()) }
@@ -400,6 +407,16 @@ class P503LedgerFacade(
      */
     val queryImportDuplicateReviewsForSessionPage: QueryImportDuplicateReviewsForSessionPage?
         get() = fallbackQueryImportDuplicateReviewsForSessionPage
+
+    /**
+     * P7-04 B1/B4 windowed read (D-5/D-6): the MEMBER-major paged session duplicate-review
+     * projection — the read the 整组确认页 enumerates its members from when it is wired (plain
+     * nullable, no session following, the rest of the import surface unchanged). Null keeps the
+     * unwired root on the pre-D-5 list-state round; the host selects the path off this, the member
+     * candidate page read and [countImportDuplicateCandidatesForSession] together.
+     */
+    val queryImportDuplicateReviewsForSessionMemberPage: QueryImportDuplicateReviewsForSessionMemberPage?
+        get() = fallbackQueryImportDuplicateReviewsForSessionMemberPage
 
     /** B6 group-card paging batch (D-280): the whole-group duplicate-candidate count (共 N 条). */
     val countImportDuplicateCandidatesForSession: CountImportDuplicateCandidatesForSession?

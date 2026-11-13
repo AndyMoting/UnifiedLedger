@@ -9663,6 +9663,105 @@ WHERE candidate.ledger_id = :ledger_id
   )
 ORDER BY candidate.candidate_id, duplicate.candidate_id;
 
+-- P7-04 B1/B4 windowed read (design spec docs/specs/2026-11-13-p7-04-b1-b4-windowed-read-design.md
+-- D-5; acceptance V-7/V-8): the SESSION-scoped counterpart of importReviewRowsForLedgerPage
+-- (:9595). The column list, the JOIN / LEFT JOIN shapes, the latest-status correlated subqueries
+-- and the ORDER BY are byte-identical to that query; the one addition is the session predicate:
+-- the candidate's subject source carries the same import_source_record.input_ref
+-- (:session_input_ref), the group card's opaque member handle (P704SPEC-12). Both textual
+-- occurrences bind ONE named parameter, so the caller passes the session handle a single time.
+--
+-- That predicate sits INSIDE the candidate-boundary IN subquery as well as on the outer scan.
+-- The inner one is the load-bearing one: it keeps the keyset cut at "at most :page_size SESSION
+-- candidates strictly after :after_candidate_id", so a page can only be short when this
+-- session's keyset is exhausted. Filtering after the LIMIT instead would return a short page
+-- whenever the session's candidates are interleaved with other sessions' rows, and the host's
+-- length-based exhaustion check would then silently drop members (ACC-COUNT-01, D-243 item 3).
+-- The outer occurrence keeps the projection itself session-scoped; it is implied by the inner
+-- set (candidate -> source is UNIQUE (ledger_id, source_id)) and costs one probe on the
+-- already-joined row.
+--
+-- Zero DDL: the subquery's session arm is the UNIQUE (ledger_id, input_ref, record_ordinal)
+-- index probe on import_source_record, and the keyset is the import_candidate PRIMARY KEY
+-- (ledger_id, candidate_id) range — the same mechanism the ledger-scoped page query rides. The
+-- per-output-row evidence probes are D-7's measurement subject; any index for them is a separate
+-- migration batch, never this query.
+importReviewRowsForSessionPage:
+SELECT
+  candidate.candidate_id,
+  candidate.candidate_kind,
+  candidate.confidence,
+  source.input_ref,
+  source.amount_minor,
+  source.currency_code,
+  source.currency_precision,
+  source.occurred_at,
+  source.direction_token,
+  source.status_token,
+  source.funding_state,
+  source.completeness,
+  source.content_hash,
+  latest_candidate_status.status AS candidate_status,
+  EXISTS(SELECT 1 FROM import_candidate_requires_confirmation AS requirement
+     WHERE requirement.ledger_id = candidate.ledger_id
+       AND requirement.candidate_id = candidate.candidate_id
+       AND requirement.requirement = 'formal_transaction_creation') AS requires_confirmation,
+  duplicate.candidate_id AS duplicate_candidate_id,
+  duplicate_status.status AS duplicate_latest_status,
+  profile.variant AS payment_profile_variant,
+  profile.asset_leg_kind_token AS payment_profile_asset_leg_kind_token,
+  profile.credit_leg_kind_token AS payment_profile_credit_leg_kind_token,
+  -- P8-01a i3a (spec section 2.7; D-308 item 4): the candidate's subject evidence id, the anchor of
+  -- the evidence-focused reconciliation entry. Intake creates exactly one evidence row per source
+  -- (the spine's own `executeAsOne` read), so `min()` names the row; a source without any evidence
+  -- row stays NULL here rather than receiving a fabricated id.
+  (SELECT min(evidence.evidence_id) FROM import_evidence AS evidence
+     WHERE evidence.ledger_id = candidate.ledger_id
+       AND evidence.source_id = candidate.source_id) AS evidence_id,
+  -- The derived 「已用于核对既有分录」 marker: an ACTIVE evidence_link exists for that evidence. No
+  -- import status row is written for this — it is derived on every read (spec section 2.7).
+  EXISTS(SELECT 1
+     FROM import_evidence AS link_evidence
+     JOIN evidence_link AS link
+       ON link.ledger_id = link_evidence.ledger_id AND link.evidence_id = link_evidence.evidence_id
+     WHERE link_evidence.ledger_id = candidate.ledger_id
+       AND link_evidence.source_id = candidate.source_id
+       AND EXISTS (SELECT 1 FROM evidence_link_history AS link_history
+             WHERE link_history.ledger_id = link.ledger_id AND link_history.link_id = link.link_id
+               AND link_history.sequence = (SELECT max(h2.sequence) FROM evidence_link_history h2
+                     WHERE h2.ledger_id = link.ledger_id AND h2.link_id = link.link_id)
+               AND link_history.state = 'active')) AS used_for_reconciliation
+FROM import_candidate AS candidate
+JOIN import_source_record AS source
+  ON source.ledger_id = candidate.ledger_id AND source.source_id = candidate.source_id
+LEFT JOIN import_candidate_status_history AS latest_candidate_status
+  ON latest_candidate_status.ledger_id = candidate.ledger_id
+ AND latest_candidate_status.candidate_id = candidate.candidate_id
+ AND latest_candidate_status.sequence = (SELECT max(s3.sequence) FROM import_candidate_status_history AS s3
+       WHERE s3.ledger_id = candidate.ledger_id AND s3.candidate_id = candidate.candidate_id)
+LEFT JOIN import_candidate_payment_profile AS profile
+  ON profile.ledger_id = candidate.ledger_id AND profile.candidate_id = candidate.candidate_id
+LEFT JOIN import_duplicate_candidate AS duplicate
+  ON duplicate.ledger_id = candidate.ledger_id
+ AND duplicate.subject_source_id = candidate.source_id
+LEFT JOIN import_duplicate_status_history AS duplicate_status
+  ON duplicate_status.ledger_id = duplicate.ledger_id
+ AND duplicate_status.candidate_id = duplicate.candidate_id
+ AND duplicate_status.sequence = (SELECT max(s2.sequence) FROM import_duplicate_status_history AS s2
+       WHERE s2.ledger_id = duplicate.ledger_id AND s2.candidate_id = duplicate.candidate_id)
+WHERE candidate.ledger_id = :ledger_id
+  AND source.input_ref = :session_input_ref
+  AND candidate.candidate_id IN (
+    SELECT candidate_id FROM import_candidate
+    WHERE ledger_id = :page_ledger_id AND candidate_id > :after_candidate_id
+      AND source_id IN (
+        SELECT source_id FROM import_source_record
+        WHERE ledger_id = :page_ledger_id AND input_ref = :session_input_ref
+      )
+    ORDER BY candidate_id LIMIT :page_size
+  )
+ORDER BY candidate.candidate_id, duplicate.candidate_id;
+
 -- A-PERF (P7-04 read-governance batch, spec section 2.2): the single-candidate projection of
 -- importReviewRowsForLedger above. Byte-identical JOIN/LEFT JOIN shape and column list, the
 -- same retained ORDER BY (the adapter's fold consumes the (candidate, duplicate) row set in
@@ -11643,6 +11742,91 @@ WHERE duplicate.ledger_id = :ledger_id AND subject.input_ref = :session_input_re
   AND duplicate.candidate_id > :after_candidate_id
 ORDER BY duplicate.candidate_id
 LIMIT :page_size;
+
+importDuplicateReviewsForSessionMemberPage:
+-- P7-04 B1/B4 windowed read (design docs/specs/2026-11-13-p7-04-b1-b4-windowed-read-design.md
+-- D-5/D-6, acceptance V-8): the MEMBER-major page of importDuplicateReviewsForSession (:9902),
+-- i.e. the page the 整组确认页 enumerates. A page admits up to :page_size MEMBERS of the session
+-- and reads each admitted member's WHOLE duplicate run, so the group card no longer needs the
+-- review list loaded first and the concatenation stays in the order the enumeration produced.
+--
+-- Column list: the same columns as importDuplicateReviewsForSessionPage (:11691), column for
+-- column, PLUS one trailing column, member.candidate_id AS member_candidate_id (the resume
+-- cursor the host reads straight off the row set). The duplicate -> receipt/snapshot joins, the
+-- latest-status subquery, the review semantics and the column order are copied verbatim from
+-- that query; the only rename is the driving alias candidate -> member, because this query's
+-- keyset is a MEMBER keyset.
+--
+-- The keyset bound lives INSIDE the IN subquery, never as a predicate applied after the LIMIT:
+-- the subquery returns the next :page_size member ids of this session in ascending order and the
+-- outer scan reads exactly those members' duplicate runs. Bounding the outer scan instead would
+-- cut by duplicate candidate id first and silently drop members (ACC-COUNT-01, D-243 item 3; the
+-- same defect importReviewRowsForSessionPage (:9689) documents for the review list).
+--
+-- The nested EXISTS is what makes the page-size contract decidable, not an extra result filter:
+-- the outer JOIN import_duplicate_candidate enforces the identical condition, so the visible row
+-- set is unchanged. Without it a window could be filled by session candidates that have no
+-- duplicate at all (a realistic shape: a session's unique rows interleave with its duplicates),
+-- the outer join would drop them, the page would look SHORT for a window that was not exhausted,
+-- and a length-based termination check would stop with members still unread — the same silent
+-- group shrink, one layer up. With it, every admitted member contributes at least one row, so
+-- "fewer members than page_size" does mean the keyset is exhausted.
+--
+-- ORDER BY member.candidate_id, duplicate.candidate_id is the member-major contract: members
+-- ascend by candidate id and each member's duplicate candidates ascend within it.
+SELECT
+  member.candidate_id AS subject_candidate_id,
+  duplicate.candidate_id,
+  duplicate.kind,
+  duplicate.comparison_fingerprint,
+  duplicate.comparison_snapshot,
+  latest_status.status AS latest_status,
+  review.decision AS review_decision,
+  review.reason_token AS review_reason_token,
+  review.reviewed_at AS reviewed_at,
+  existing.source_id AS existing_source_id,
+  existing.amount_minor AS existing_amount_minor,
+  existing.currency_code AS existing_currency_code,
+  existing.currency_precision AS existing_currency_precision,
+  existing.occurred_at AS existing_occurred_at,
+  existing.direction_token AS existing_direction_token,
+  existing.status_token AS existing_status_token,
+  member.candidate_id AS member_candidate_id
+FROM import_candidate AS member
+JOIN import_source_record AS subject
+  ON subject.ledger_id = member.ledger_id AND subject.source_id = member.source_id
+JOIN import_duplicate_candidate AS duplicate
+  ON duplicate.ledger_id = member.ledger_id
+ AND duplicate.subject_source_id = member.source_id
+LEFT JOIN import_duplicate_status_history AS latest_status
+  ON latest_status.ledger_id = duplicate.ledger_id
+ AND latest_status.candidate_id = duplicate.candidate_id
+ AND latest_status.sequence = (SELECT max(s2.sequence) FROM import_duplicate_status_history AS s2
+       WHERE s2.ledger_id = duplicate.ledger_id AND s2.candidate_id = duplicate.candidate_id)
+LEFT JOIN import_duplicate_review_receipt AS receipt
+  ON receipt.ledger_id = duplicate.ledger_id
+ AND receipt.candidate_id = duplicate.candidate_id
+ AND receipt.history_id = (SELECT status.history_id FROM import_duplicate_status_history AS status
+       WHERE status.ledger_id = duplicate.ledger_id AND status.candidate_id = duplicate.candidate_id
+       ORDER BY status.sequence DESC LIMIT 1)
+LEFT JOIN import_duplicate_review_snapshot AS review
+  ON review.ledger_id = receipt.ledger_id AND review.review_id = receipt.review_id
+LEFT JOIN import_source_record AS existing
+  ON existing.ledger_id = duplicate.ledger_id AND existing.source_id = duplicate.possible_existing_source_id
+WHERE member.ledger_id = :ledger_id
+  AND subject.input_ref = :session_input_ref
+  AND member.candidate_id IN (
+    SELECT m2.candidate_id FROM import_candidate AS m2
+    JOIN import_source_record AS session_source
+      ON session_source.ledger_id = m2.ledger_id AND session_source.source_id = m2.source_id
+    WHERE m2.ledger_id = :page_ledger_id
+      AND session_source.input_ref = :session_input_ref
+      AND m2.candidate_id > :after_candidate_id
+      AND EXISTS (SELECT 1 FROM import_duplicate_candidate AS d2
+            WHERE d2.ledger_id = m2.ledger_id AND d2.subject_source_id = m2.source_id)
+    ORDER BY m2.candidate_id LIMIT :page_size
+  )
+ORDER BY member.candidate_id, duplicate.candidate_id;
 
 importDuplicateCandidateCountForSession:
 -- B6 group-card paging batch (D-280): the WHOLE-GROUP MEMBER count of one pick session —
