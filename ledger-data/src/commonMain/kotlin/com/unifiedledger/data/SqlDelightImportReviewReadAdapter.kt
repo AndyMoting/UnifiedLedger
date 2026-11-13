@@ -203,7 +203,9 @@ class SqlDelightImportReviewReadAdapter(
      *
      * Same transaction discipline as [loadImportReviewPage]: one read transaction per page with
      * `noEnclosing = true`, so the snapshot and the nesting contract match the ledger page read
-     * rather than inventing a second paging convention.
+     * rather than inventing a second paging convention. The CURSOR rule is exact rather than
+     * conservative (see `P704B4-T-CURSOR-01` below): a null cursor means the page admitted fewer
+     * candidates than `pageSize`, which is the keyset's end.
      */
     override fun loadImportReviewRowsForSessionPage(
         ledgerId: LedgerId,
@@ -236,11 +238,24 @@ class SqlDelightImportReviewReadAdapter(
                         after_candidate_id = afterCandidateId ?: "",
                         page_size = pageSize,
                     ).executeAsList()
+            // One folded row per candidate, so `rows.size` IS this page's CANDIDATE count — the only
+            // dimension `pageSize` bounds.
+            val rows = foldCandidateRuns(batch) { row -> row.toColumns() }
             ImportReviewRowsPage(
-                rows = foldCandidateRuns(batch) { row -> row.toColumns() },
+                rows = rows,
+                // P704B4-T-CURSOR-01 (red CI on shard 2: an extra empty page at the group's end):
+                // exhaustion is "this page admitted fewer CANDIDATES than it asked for", so the
+                // comparison is against the page's candidate count, NOT `batch.size`. The raw
+                // projection row count (each candidate plus one row per duplicate) can exceed
+                // `pageSize` on the last window, and comparing THAT reported a live cursor after the
+                // keyset had ended — the host round, which ends only on a null cursor, then paid one
+                // extra member page plus one extra review page per group. The count is exact here
+                // because the session predicate sits INSIDE the candidate-boundary subquery: no
+                // admitted candidate can be filtered out afterwards, so a below-`pageSize` page really
+                // is the end.
                 // `maxOf` (Kotlin UTF-16 order) mirrors the ledger page read's cursor choice, NOT
                 // `last()` (SQLite BINARY order): the two disagree on supplementary-plane ids.
-                nextAfterCandidateId = if (batch.size.toLong() < pageSize) null else batch.maxOf { it.candidate_id },
+                nextAfterCandidateId = if (rows.size.toLong() < pageSize) null else batch.maxOf { it.candidate_id },
             )
         }
     }

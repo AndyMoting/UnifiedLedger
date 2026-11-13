@@ -35,6 +35,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.fail
 
 /**
  * P7-04 B1/B4 windowed read (design `docs/specs/2026-11-13-p7-04-b1-b4-windowed-read-design.md` D-5,
@@ -67,6 +68,13 @@ import kotlin.test.assertTrue
  * not on this module's test classpath, so the two-predicate conjunction is restated below; the page
  * read itself deliberately adds only the session half (D-5), which is why the assertions check both
  * the full session slice (the read's contract) and the group-member subset (what the card enumerates).
+ *
+ * CURSOR RULE (`P704B4-T-CURSOR-01`, the red CI run this file now pins): `nextAfterCandidateId` is null
+ * EXACTLY when a page admitted fewer CANDIDATES than `pageSize`. It is not a function of the page's
+ * projection ROW count, which is larger as soon as a candidate carries a duplicate. Session B is the
+ * discriminating shape: its last window holds ONE candidate carrying two duplicate rows, i.e. three
+ * projection rows against a two-candidate page size, so a row-count comparison reports a live cursor
+ * there and the reader pays a third, empty page.
  */
 class P704B4SessionPageReadEquivalenceTest {
     private val ledgerId = LedgerId("ledger-b4-session-page")
@@ -177,6 +185,37 @@ class P704B4SessionPageReadEquivalenceTest {
         }
 
     /**
+     * Row-for-row equivalence of the V-8 hard gate. The length check comes first (a lost or duplicated
+     * candidate is exactly what `ACC-COUNT-01` forbids), then each index in order; the first mismatch
+     * fails with the index, both candidate ids, the two folded duplicate statuses, the evidence pair,
+     * the reconciliation flags and both full rows, so a red CI run names the differing row and column
+     * instead of printing two four-row lists side by side.
+     */
+    private fun assertSessionSliceEquivalent(
+        expected: List<ImportReviewRow>,
+        actual: List<ImportReviewRow>,
+        label: String,
+    ) {
+        assertEquals(expected.size, actual.size, "$label: the page chain must land every session row")
+        expected.indices.forEach { index ->
+            val wanted = expected[index]
+            val got = actual[index]
+            if (wanted != got) {
+                fail(
+                    "$label: index=$index expected-candidate=${wanted.candidateId.value} " +
+                        "actual-candidate=${got.candidateId.value} " +
+                        "expected-duplicate-status=${wanted.duplicateStatus} " +
+                        "actual-duplicate-status=${got.duplicateStatus} " +
+                        "expected-evidence=${wanted.evidenceId} actual-evidence=${got.evidenceId} " +
+                        "expected-reconciled=${wanted.usedForReconciliation} " +
+                        "actual-reconciled=${got.usedForReconciliation} " +
+                        "expected=$wanted actual=$got",
+                )
+            }
+        }
+    }
+
+    /**
      * The group-member predicate transcription documented on the class: the session half is what the
      * page read adds, the classification half is the pending / folded-`DEFERRED` branch of the matrix.
      */
@@ -206,21 +245,34 @@ class P704B4SessionPageReadEquivalenceTest {
 
             val sessionA = whole.filter { it.sourceInputRef == SESSION_A }
             val pagesA = readAllSessionPages(adapter, SESSION_A, pageSize = 2)
-            assertEquals(listOf(2, 2, 0), pagesA.map { it.rows.size }, "page size 2 over 4 session candidates")
+            assertEquals(
+                listOf(2, 2, 0),
+                pagesA.map { it.rows.size },
+                "page size 2 over 4 session candidates: two full pages, then the empty page that ends the keyset",
+            )
             assertEquals(
                 listOf("candidate-b4-a2", "candidate-b4-a4", null),
                 pagesA.map { it.nextAfterCandidateId },
                 "the cursor is the last candidate of the page; a null cursor ends the keyset",
             )
-            // The whole-row comparison IS the equivalence gate: data-class equality covers order, the
-            // candidate-run fold (duplicate status included) and every field, evidenceId and
-            // usedForReconciliation among them.
-            assertEquals(sessionA, pagesA.flatMap { it.rows }, "concatenated session pages must equal the whole read's session slice")
+            // The whole-row comparison IS the equivalence gate. The helper compares the two lengths
+            // first and then each index in order, so a mismatch names the index, both candidate ids and
+            // both full rows instead of dumping two lists.
+            assertSessionSliceEquivalent(sessionA, pagesA.flatMap { it.rows }, "session A")
 
             val sessionB = whole.filter { it.sourceInputRef == SESSION_B }
             val pagesB = readAllSessionPages(adapter, SESSION_B, pageSize = 2)
-            assertEquals(listOf(2, 1), pagesB.map { it.rows.size }, "page size 2 over 3 session candidates")
-            assertEquals(sessionB, pagesB.flatMap { it.rows }, "session B's pages must equal the whole read's session-B slice")
+            assertEquals(
+                listOf(2, 1),
+                pagesB.map { it.rows.size },
+                "page size 2 over 3 session candidates: the second page carries one candidate",
+            )
+            assertEquals(
+                listOf("candidate-b4-b2", null),
+                pagesB.map { it.nextAfterCandidateId },
+                "the single-candidate last window is exhausted even though its projection rows outnumber the page size",
+            )
+            assertSessionSliceEquivalent(sessionB, pagesB.flatMap { it.rows }, "session B")
         } finally {
             driver.close()
         }
@@ -332,6 +384,44 @@ class P704B4SessionPageReadEquivalenceTest {
                 )
             assertTrue(exhausted.rows.isEmpty(), "nothing sorts after the session's last candidate")
             assertNull(exhausted.nextAfterCandidateId, "an exhausted keyset ends the page chain")
+        } finally {
+            driver.close()
+        }
+    }
+
+    /**
+     * `P704B4-T-CURSOR-01`: a page's projection rows can outnumber `pageSize` while its CANDIDATE count
+     * is below it — and that page is still the keyset's end. Session B's last window is exactly that
+     * shape: one candidate carrying two duplicate relations, asked for as a two-candidate page. A
+     * row-count comparison reports a live cursor here, and the host round (which ends on a null cursor
+     * only) then pays one extra member page plus one extra review page per group.
+     */
+    @Test
+    fun aLastWindowWithMoreProjectionRowsThanCandidatesStillEndsTheKeyset() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            LedgerDatabase.Schema.create(driver)
+            val database = LedgerDatabase(driver)
+            seed(SqlDelightImportSpineStore(database, driver))
+            val adapter = SqlDelightImportReviewReadAdapter(database)
+            val afterCandidateId = "candidate-b4-b2"
+
+            // The window's raw projection, before the fold: the candidate's base row plus its two
+            // duplicate relations — three rows against a page size that counts two candidates.
+            val projectionRows =
+                database.ledgerQueries
+                    .importReviewRowsForSessionPage(
+                        ledger_id = ledgerId.value,
+                        session_input_ref = SESSION_B,
+                        page_ledger_id = ledgerId.value,
+                        after_candidate_id = afterCandidateId,
+                        page_size = 2,
+                    ).executeAsList()
+            assertEquals(3, projectionRows.size, "the last window holds one candidate with two duplicate rows")
+
+            val page = adapter.loadImportReviewRowsForSessionPage(ledgerId, SESSION_B, pageSize = 2, afterCandidateId = afterCandidateId)
+            assertEquals(1, page.rows.size, "the fold renders that window as ONE candidate row")
+            assertNull(page.nextAfterCandidateId, "one candidate on a two-candidate page is the keyset's end")
         } finally {
             driver.close()
         }
