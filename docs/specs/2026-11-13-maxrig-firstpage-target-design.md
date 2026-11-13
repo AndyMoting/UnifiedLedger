@@ -175,3 +175,24 @@ run `43386393213`（`fa2ce94f` = D-4 合入后的 `main`；61k 候选 / 150,000 
 
 - 入：本文、`D-320`、两个 test-only 文件的 tracked 变更。
 - 出：零产品代码（`app-ui/**`、`ledger-*/**`、`android-app/src/main/**`）、零 schema、零迁移、零依赖、零 CI 配置、零 `.external/`；不改夹具生成器与 `AndroidScaleFixtureSpec`；不改任何 stage 预算/统计量/marker；不改 `P704GP-ACC-ORDER-01`（页序 == 全量序：本批只换 rig 的目标与簿记，产品页序一字不动）；不改 D-293/D-294/D-319 的裁决文本与开放状态。
+
+
+---
+
+## 8. 第一次设备读数：V-1 通过、V-2 撞在批量确认的整表读上（2026-11-13，§1–§7 正文未改）
+
+**读数**：run `43406118938`（`ebc846b8`，61k / 150,000，`android-scale.yml` mode=maximum）→ host `status=ERROR`、`phases=["prepare"]`、`elapsed=4792 s`；`instrumentation-chain.txt` 的失败是 `IllegalStateException: scale deadline exceeded` at `AndroidScaleLongInstrumentedTest.tick:130` ← `AndroidScaleUi.await:245` ← `AndroidScaleLongInstrumentedTest.chain:473`。
+
+**`:473` 是 `ui.await { ui.has("导入", prefix = true) }`** —— 即「授权逐项入账」之后等导入面回来。也就是说链条已经走完：首页目标选中（`openFirstPageCandidate` 返回金额并过区间校验）→ 「决策未补全，尚不可提交确认。」断言 → 勾选候选 → 进入批量确认 → 授权逐项入账 → **卡在批量确认的派发**，直到 stage 的 180 s 预算耗尽。
+
+**判定**：
+- **V-1（首页目标可达）= 通过**：寻址改造生效，失败点从 `openCandidateByAmount` 的 `sawTargetRow=false` 前移到批量确认之后。
+- **V-2（`detail_decision` 完成）= 未通过**：失败在 `:473` 的等待上。
+- **V-3（五阶段 `phases` 齐全）= 未达**；`phases` 仍只有 `prepare`。
+- **V-4（簿记断言）= 未被触达**（它在其后的 `reopen()` 阶段）。
+
+**与预登记的吻合**：§6.1 已写明「本批只保证目标可达；`detail_decision` 仍可能在这两次整表读上超过 180 s」，并点名派发前相与批后刷新。本次读数**正好停在派发前相**，`db` 的 `mtime=19:29`（接治写入在一小时前就结束了，说明这段等待不是写库，而是读）。
+
+**下一动作（承接）**：D-8 的第二片——把批量确认的派发前相与批后刷新的整表读换成**按待派发项 id 集合的有界读**（项来自已加载页，数量有界），并按 D-7 先取 `EXPLAIN QUERY PLAN` + 61k 页耗时，再决定是否另立加性索引迁移批。**不得**调大 `detail_decision` 的 180 s 或跳过该 stage（R4 原样）。
+
+**证据差异披露**：合并头 `e1c6386f` 比该 run 的 `ebc846b8` 多两个提交，内容是 B1 的匹配器收紧（在 `maximum` 首页上等价于 no-op：首页全是 `session-01` 的行、全为 `重复 无`）、失败串带 label、以及文档；产品与 rig 的判据集合不变。
