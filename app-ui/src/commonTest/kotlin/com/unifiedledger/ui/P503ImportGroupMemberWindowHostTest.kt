@@ -389,9 +389,10 @@ class P503ImportGroupMemberWindowHostTest {
     }
 
     /**
-     * T6 (the lead's ②, V-7's path half): the member-page path is all-or-nothing. Only a fully wired
-     * facade takes it; any missing read — the desktop root of this batch wires none — keeps the
-     * pre-D-5 round, so its 整组确认页 cannot regress into a typed-failure banner.
+     * T6 (V-7's path half): the member-page path is all-or-nothing. Only a fully wired
+     * facade takes it; any missing read — the desktop root of this batch leaves the
+     * member-review read unwired — keeps the pre-D-5 round, so its 整组确认页 cannot regress
+     * into a typed-failure banner.
      */
     @Test
     fun theMemberPagePathIsSelectedOnlyWhenAllThreeReadsAreWired() {
@@ -427,7 +428,7 @@ class P503ImportGroupMemberWindowHostTest {
     }
 
     /**
-     * T7 (the lead's ②, behaviour-equivalence half): the unwired path is the pre-D-5 round, unchanged
+     * T7 (V-7's behaviour-equivalence half): the unwired path is the pre-D-5 round, unchanged
      * — its member source is the loaded review list page, so a member the member pages would have
      * found is NOT enumerated there. That is the old behaviour this batch deliberately preserves;
      * the same port then finds all six members through the member pages (T1).

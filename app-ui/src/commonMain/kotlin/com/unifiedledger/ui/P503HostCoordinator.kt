@@ -857,10 +857,10 @@ internal fun importGroupEnumerationRoundEndEvents(
  * P7-04 B1/B4 windowed read (design D-5/D-6): which member SOURCE one enumeration round reads.
  * [MemberPages] is the D-5 path — the members come from the session slice itself, one page of
  * members at a time, so the group card no longer depends on how much of the review list is loaded.
- * [LegacyListState] is the pre-D-5 round, unchanged: the composition roots that do not wire the
- * member-page reads (the desktop root of this batch, and every legacy construction) keep exactly
- * today's behaviour — member source = the review list state, keyset page loop over the session
- * duplicate rows.
+ * [LegacyListState] is the pre-D-5 round, unchanged: a composition root that does not wire all
+ * three reads keeps exactly today's behaviour — member source = the review list state, keyset page
+ * loop over the session duplicate rows. (The desktop root of this batch is one of those: it wires
+ * the session candidate page and the count, but not the member-review page.)
  *
  * The member path is all-or-nothing on purpose: it has no list state to fall back on and its
  * 共 N 条 header binds to the count read, so a partially wired facade would otherwise enumerate

@@ -2844,7 +2844,9 @@ fun P503App(
                                 // end the group early, so only a null cursor ends it.
                                 // BOTH reads get the same cursor AND the same page size: one
                                 // candidate window holds at most that many members, so the review
-                                // page always covers every member the window can enumerate.
+                                // page always covers every member the window can enumerate. The
+                                // size is bound ONCE here so the two calls can never drift apart.
+                                val memberPageSize = IMPORT_REVIEW_GROUP_MEMBER_PAGE_SIZE
                                 var afterCursor: String? = null
                                 var firstOrdinal = 1
                                 while (true) {
@@ -2852,14 +2854,14 @@ fun P503App(
                                         source.memberPageQuery.querySessionPage(
                                             ledger.ledgerId,
                                             sessionInputRef,
-                                            IMPORT_REVIEW_GROUP_MEMBER_PAGE_SIZE,
+                                            memberPageSize,
                                             afterCursor,
                                         )
                                     val reviewPage =
                                         source.memberReviewPageQuery.query(
                                             ledger.ledgerId,
                                             sessionInputRef,
-                                            IMPORT_REVIEW_GROUP_MEMBER_PAGE_SIZE,
+                                            memberPageSize,
                                             afterCursor,
                                         )
                                     val window =
