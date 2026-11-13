@@ -697,6 +697,159 @@ class P503ImportReviewReducerTest {
         assertEquals("pick-handle-1", view?.lastIntakeSession?.inputRef)
     }
 
+    // ---- D-322 count 驱动组入口 (spec `docs/specs/2026-11-14-d322-count-driven-group-entry-design.md`) ----
+
+    /**
+     * D-322 D-2 (V-1): the landing's count lands UNCONDITIONALLY in BOTH page branches — the count
+     * was read in the landing lease right after the intake committed, so it describes the NEW
+     * session's committed state and is independent of the rows/cursor F1 retention. Here the
+     * `Rows` branch lands the real value while replacing rows and cursor.
+     */
+    @Test
+    fun anIntakeLandingLandsTheSessionCountOnTheRowsBranch() {
+        val source = overview(rows = listOf(pendingRow, retainableRow))
+        val updated =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    source,
+                    P503UiEvent.ImportFileIntakeResult(
+                        acceptedSession(),
+                        ImportReviewRowsResult.Rows(listOf(suspectedRow, incompleteRow)),
+                        nextAfterCandidateId = "cursor-page-2",
+                        currentSessionDuplicateGroupCount = 3L,
+                    ),
+                ),
+            )
+        val view = updated.importReview
+        assertEquals(3L, view?.currentSessionDuplicateGroupCount)
+        assertEquals("pick-handle-1", view?.lastIntakeSession?.inputRef)
+        assertNull(view?.notice)
+    }
+
+    /**
+     * D-322 D-2 (V-1): the `Unavailable` page branch still lands the count — the branch governs
+     * ONLY the rows/cursor F1 retention and never suppresses the count the caller read. The
+     * previous session's count is not resurrected either: a new event with no reading lands null.
+     */
+    @Test
+    fun anIntakeLandingLandsTheSessionCountOnTheUnavailableBranch() {
+        val source =
+            overview(rows = listOf(pendingRow, retainableRow), session = acceptedSession("pick-handle-old"))
+                .let { it.copy(importReview = it.importReview?.copy(currentSessionDuplicateGroupCount = 7L)) }
+        val updated =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    source,
+                    P503UiEvent.ImportFileIntakeResult(
+                        acceptedSession("pick-handle-2"),
+                        ImportReviewRowsResult.Unavailable,
+                        currentSessionDuplicateGroupCount = 3L,
+                    ),
+                ),
+            )
+        val view = updated.importReview
+        assertEquals(3L, view?.currentSessionDuplicateGroupCount, "the count lands even on a failed page read")
+        assertEquals("pick-handle-2", view?.lastIntakeSession?.inputRef, "the event describes the NEW session")
+        assertSame(source.importReview?.rows, view?.rows)
+        assertEquals(ImportReviewNotice.ReviewReadFailed, view?.notice)
+    }
+
+    /**
+     * D-322 D-2 (V-4): a failed count read lands as null = "no reading" — it NEVER masquerades as
+     * a zero (null ≠ 0), and the landing is UNCONDITIONAL: the event always describes the newest
+     * session, so a null reading REPLACES the previous session's value (the old count is never
+     * resurrected) and the gate falls back to the legacy loaded-rows enumeration instead of
+     * reading the landing as "this session has no duplicate group".
+     */
+    @Test
+    fun aFailedCountReadLandsNullAndNeverMasqueradesAsZero() {
+        val source =
+            overview(rows = listOf(pendingRow, retainableRow))
+                .let { it.copy(importReview = it.importReview?.copy(currentSessionDuplicateGroupCount = 7L)) }
+        val updated =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    source,
+                    P503UiEvent.ImportFileIntakeResult(
+                        acceptedSession(),
+                        ImportReviewRowsResult.Rows(emptyList()),
+                        currentSessionDuplicateGroupCount = null,
+                    ),
+                ),
+            )
+        assertNull(
+            updated.importReview?.currentSessionDuplicateGroupCount,
+            "the new session's null reading replaces the previous value — never resurrected, never read as zero",
+        )
+    }
+
+    /**
+     * D-322 D-2 (V-4): a REAL zero lands as zero — the SQL COUNT(*) true zero of a session without
+     * a duplicate group — and does NOT collapse into the null fallback. The zero is what hides the
+     * 整组标记为重复 entry for a group-less session.
+     */
+    @Test
+    fun aRealZeroCountLandsAsZeroAndNotAsNull() {
+        val source = overview(rows = listOf(pendingRow, retainableRow))
+        val updated =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    source,
+                    P503UiEvent.ImportFileIntakeResult(
+                        acceptedSession(),
+                        ImportReviewRowsResult.Rows(emptyList()),
+                        currentSessionDuplicateGroupCount = 0L,
+                    ),
+                ),
+            )
+        assertEquals(0L, updated.importReview?.currentSessionDuplicateGroupCount)
+    }
+
+    /**
+     * D-322 D-2 (V-3): append and refresh land through the existing `view.copy`, which preserves
+     * the landed count untouched — a page append and a review-list refresh never drop it (and the
+     * append branch never resurrects an old value: it keeps exactly what the newest landing wrote).
+     */
+    @Test
+    fun appendAndRefreshPreserveTheLandedSessionCount() {
+        val landed =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    overview(rows = listOf(pendingRow)),
+                    P503UiEvent.ImportFileIntakeResult(
+                        acceptedSession(),
+                        ImportReviewRowsResult.Rows(listOf(pendingRow)),
+                        nextAfterCandidateId = "cursor-1",
+                        currentSessionDuplicateGroupCount = 3L,
+                    ),
+                ),
+            )
+        assertEquals(3L, landed.importReview?.currentSessionDuplicateGroupCount)
+
+        val appended =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    landed,
+                    P503UiEvent.AppendImportReviewPage(
+                        ImportReviewRowsPageResult.Page(listOf(retainableRow), nextAfterCandidateId = null),
+                    ),
+                ),
+            )
+        assertEquals(3L, appended.importReview?.currentSessionDuplicateGroupCount)
+
+        val refreshed =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    appended,
+                    P503UiEvent.ImportReviewResult(
+                        ImportReviewRowsResult.Rows(listOf(retainableRow)),
+                        nextAfterCandidateId = "cursor-2",
+                    ),
+                ),
+            )
+        assertEquals(3L, refreshed.importReview?.currentSessionDuplicateGroupCount)
+    }
+
     @Test
     fun reviewListSuccessReplacesTheRowsAndClearsTheBanner() {
         val source = overview(notice = ImportReviewNotice.ReviewReadFailed)

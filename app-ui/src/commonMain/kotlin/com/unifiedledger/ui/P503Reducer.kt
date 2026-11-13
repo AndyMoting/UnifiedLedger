@@ -2141,6 +2141,15 @@ class P503ReducerImpl(
      * selection filter below: a selection whose row sits on a not-yet-loaded page is dropped with
      * the same rule that drops a vanished row, because an invisible selection could not be unchecked.
      *
+     * D-322 (spec `docs/specs/2026-11-14-d322-count-driven-group-entry-design.md` D-2): the event's
+     * duplicate-group count lands UNCONDITIONALLY — the event always describes the NEWEST session
+     * (the count was read in the landing lease right after that intake committed), so the page's
+     * `Unavailable` branch governs only the rows/cursor F1 retention and NEVER resurrects the
+     * previous session's count. A real `0` is the SQL COUNT(*) true zero of a session without a
+     * duplicate group; `null` is "no reading" (a failed count read or the lease-failure path) and
+     * only ever falls back to the legacy loaded-rows enumeration — it NEVER reads as zero. Append
+     * and refresh land through the existing `view.copy`, which preserves this field untouched.
+     *
      * ANY intake result landing also closes an open group disposition page (P704C-SPEC-08: the page's
      * session handle is superseded by the new pick even on a failed pipeline — the old handle's page
      * must not coexist with the new session summary).
@@ -2188,6 +2197,10 @@ class P503ReducerImpl(
                     nextAfterCandidateId = nextAfterCandidateId,
                     selectedCandidateIds = retainedSelection,
                     lastIntakeSession = event.session,
+                    // D-322 D-2: the newest session's count lands here UNCONDITIONALLY — on either
+                    // page branch — because the count was read in the landing lease post-commit and
+                    // describes the just-committed session; a null never masquerades as zero.
+                    currentSessionDuplicateGroupCount = event.currentSessionDuplicateGroupCount,
                     notice = notice,
                     groupDisposition = null,
                 ),

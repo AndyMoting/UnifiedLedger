@@ -2407,7 +2407,17 @@ fun P503App(
                     val page =
                         facade.queryImportReviewRows?.queryPage(ledger.ledgerId, IMPORT_REVIEW_PAGE_SIZE, null)
                             ?: ImportReviewRowsPageResult.Unavailable
-                    outcome to page
+                    // D-322 (spec `docs/specs/2026-11-14-d322-count-driven-group-entry-design.md`
+                    // D-1): the count describes the JUST-COMMITTED session's duplicate group, read
+                    // in the same lease post-commit — beside the D-4 page read, off the UI thread.
+                    // It rides the landing event independently of the page branch (the 整组标记为重复
+                    // entry's existence must not depend on how many list pages are loaded). A failed
+                    // read maps to null = "no reading" (never zero); the whole-group card's own
+                    // enumeration round re-reads its authoritative count in its own lease
+                    // (`source.countQuery.query` in the MemberPages path).
+                    val sessionGroupCount =
+                        facade.countImportDuplicateCandidatesForSession?.query(ledger.ledgerId, session.inputRef)
+                    Triple(outcome, page, sessionGroupCount)
                 }
             // Back on the composition's (main) dispatcher: the single-flight slot is released and
             // the event is dispatched serially with every other main-thread dispatch.
@@ -2421,11 +2431,14 @@ fun P503App(
                 if (outcome !is LeaseOutcome.Completed) {
                     // The lease could not be acquired: surface the typed read-failure outcome
                     // rather than a silently dropped pick (and on the share path, the re-share cue).
+                    // D-322 D-1: the lease never ran, so no count was read — the landing carries
+                    // null ("no reading", never zero) and the gate falls back to the loaded rows.
                     if (sharePath) dispatch(P503UiEvent.ShareImportReShareLanded)
                     dispatch(
                         importIntakeLandingEvent(
                             ImportIntakeSessionSummary(file.displayName, session.inputRef, ImportIntakePipelineOutcome.ReadFailed(ImportPickReadFailure.STREAM_READ_FAILED)),
                             ImportReviewRowsPageResult.Unavailable,
+                            count = null,
                         ),
                     )
                     return@launch
@@ -2443,6 +2456,7 @@ fun P503App(
                             outcome = outcome.value.first,
                         ),
                         outcome.value.second,
+                        count = outcome.value.third,
                     ),
                 )
             }

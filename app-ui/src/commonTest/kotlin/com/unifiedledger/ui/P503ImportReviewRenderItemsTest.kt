@@ -325,6 +325,118 @@ class P503ImportReviewRenderItemsTest {
         )
     }
 
+    // ---- D-322 count 驱动组入口 (spec `docs/specs/2026-11-14-d322-count-driven-group-entry-design.md` D-3/D-4) ----
+
+    /**
+     * D-322 D-3 (V-2): a count > 0 renders the button with ZERO loaded rows — the entry's existence
+     * is carried by the landing lease's committed-session count, not by how many list pages have
+     * been loaded (the maximum-rig failure class: the group entry sat ~50,000 candidates deep in an
+     * unloaded page). The button stays BEFORE the candidate rows (here: before nothing loaded).
+     */
+    @Test
+    fun aCountDrivenSessionRendersTheButtonWithZeroLoadedRows() {
+        val view =
+            ImportReviewView(
+                rows = emptyList(),
+                lastIntakeSession = acceptedSession(recordCount = 1),
+                currentSessionDuplicateGroupCount = 3L,
+            )
+        val items = importReviewRenderItems(view, ImportPlatformKind.ANDROID)
+        val buttonIndex = items.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionButton }
+        assertTrue(buttonIndex >= 0, "a count > 0 renders the entry even with zero loaded rows")
+        assertTrue(
+            items.none { it is ImportReviewRenderItem.CandidateItem },
+            "the shape pins the zero-rows-loaded window",
+        )
+    }
+
+    /**
+     * D-322 D-3 (V-2): a real zero (the SQL COUNT(*) true zero of a session without a group) hides
+     * the button — even when the loaded rows would have satisfied the legacy enumeration. Zero is
+     * the authoritative reading; it never collapses into the null fallback.
+     */
+    @Test
+    fun aTrueZeroCountHidesTheButton() {
+        val view =
+            ImportReviewView(
+                rows = listOf(row("dup-a", duplicateStatus = ImportDuplicateStatus.DEFERRED, sourceInputRef = "pick-handle-1")),
+                lastIntakeSession = acceptedSession(recordCount = 1),
+                currentSessionDuplicateGroupCount = 0L,
+            )
+        assertTrue(
+            importReviewRenderItems(view, ImportPlatformKind.ANDROID)
+                .none { it is ImportReviewRenderItem.GroupDispositionButton },
+        )
+    }
+
+    /**
+     * D-322 D-3 (V-2): a null count is ONLY "no reading" (a failed count read or a pre-D-322
+     * construction) — it NEVER reads as zero. The gate falls back to the legacy loaded-rows
+     * enumeration, byte-equivalent to the pre-D-322 behavior: an in-session suspected row renders
+     * the button, a foreign-session row does not (the existing cases above stay unchanged).
+     */
+    @Test
+    fun aNullCountFallsBackToTheLoadedRowsEnumeration() {
+        val inSession =
+            ImportReviewView(
+                rows = listOf(row("dup-a", duplicateStatus = ImportDuplicateStatus.DEFERRED, sourceInputRef = "pick-handle-1")),
+                lastIntakeSession = acceptedSession(recordCount = 1),
+            )
+        val items = importReviewRenderItems(inSession, ImportPlatformKind.ANDROID)
+        val buttonIndex = items.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionButton }
+        val firstCandidateIndex = items.indexOfFirst { it is ImportReviewRenderItem.CandidateItem }
+        assertTrue(buttonIndex >= 0, "null falls back to the legacy enumeration, which finds the group")
+        assertTrue(firstCandidateIndex > buttonIndex, "the button stays before the candidate rows")
+        val otherSession =
+            ImportReviewView(
+                rows = listOf(row("dup-b", duplicateStatus = ImportDuplicateStatus.DEFERRED, sourceInputRef = "pick-handle-2")),
+                lastIntakeSession = acceptedSession(recordCount = 1),
+            )
+        assertTrue(
+            importReviewRenderItems(otherSession, ImportPlatformKind.ANDROID)
+                .none { it is ImportReviewRenderItem.GroupDispositionButton },
+        )
+    }
+
+    /**
+     * D-322 D-3 (V-2): the null fallback still respects the no-session guard — without a session
+     * handle there is nothing to count and nothing to enumerate, so the button stays hidden.
+     */
+    @Test
+    fun aNullCountWithoutASessionStaysHidden() {
+        val view = ImportReviewView(rows = listOf(row("dup-a", duplicateStatus = ImportDuplicateStatus.DEFERRED)))
+        assertTrue(
+            importReviewRenderItems(view, ImportPlatformKind.ANDROID)
+                .none { it is ImportReviewRenderItem.GroupDispositionButton },
+        )
+    }
+
+    /**
+     * D-322 D-4 (V-5): the 空态共渲染意图对 — the NoCandidatesEmptyState describes the LOADED window
+     * ("no rows in the loaded window") while the button describes the SESSION ("the session's group
+     * exists"); the two intents are independent and co-render. The button keeps its frozen
+     * position: empty state, then the button, still before any candidate row.
+     */
+    @Test
+    fun theEmptyStateAndTheCountDrivenButtonCoRender() {
+        val view =
+            ImportReviewView(
+                rows = emptyList(),
+                lastIntakeSession = acceptedSession(recordCount = 1),
+                currentSessionDuplicateGroupCount = 3L,
+            )
+        val items = importReviewRenderItems(view, ImportPlatformKind.ANDROID)
+        val emptyIndex = items.indexOfFirst { it is ImportReviewRenderItem.NoCandidatesEmptyState }
+        val buttonIndex = items.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionButton }
+        assertTrue(emptyIndex >= 0, "the empty state describes the loaded window")
+        assertTrue(buttonIndex >= 0, "the button describes the session's group — the intents co-render")
+        assertTrue(buttonIndex > emptyIndex, "the button follows the empty state")
+        assertTrue(
+            items.none { it is ImportReviewRenderItem.CandidateItem },
+            "no candidate row is loaded, so the button precedes the (empty) rows",
+        )
+    }
+
     // ---- P7-05 enumeration progress line (in-flight marker of the session-level batch read) ----
 
     @Test

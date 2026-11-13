@@ -121,4 +121,49 @@ class P503ImportIntakeLandingHostTest {
         assertNull(event.nextAfterCandidateId)
         assertEquals(session, event.session)
     }
+
+    // ---- D-322 count 驱动组入口 (spec `docs/specs/2026-11-14-d322-count-driven-group-entry-design.md` D-1/D-2) ----
+
+    /**
+     * D-322 D-1 (V-1): the seam carries the caller's count into the `Page` branch — the landing
+     * event transports the lease's committed-session count independently of the page branch.
+     */
+    @Test
+    fun aPageLandingCarriesTheCallerReadCount() {
+        val event = importIntakeLandingEvent(session, page(count = 50, nextAfterCandidateId = "cursor-50"), count = 3L)
+
+        assertEquals("cursor-50", event.nextAfterCandidateId)
+        assertEquals(3L, event.currentSessionDuplicateGroupCount)
+        assertEquals(session, event.session)
+    }
+
+    /**
+     * D-322 D-1/D-2 (V-1): the `Unavailable` branch carries the caller's count TOO — the branch
+     * only governs the rows/cursor F1 retention, so a count read in the same lease still lands
+     * when the page read failed. The count is DECOUPLED from the page branch: the caller's reading
+     * (a value or null) travels either way.
+     */
+    @Test
+    fun anUnavailableLandingStillCarriesTheCallerReadCount() {
+        val read = importIntakeLandingEvent(session, ImportReviewRowsPageResult.Unavailable, count = 3L)
+
+        assertSame(ImportReviewRowsResult.Unavailable, read.rows)
+        assertEquals(3L, read.currentSessionDuplicateGroupCount, "the count is decoupled from the page branch")
+
+        val notRead = importIntakeLandingEvent(session, ImportReviewRowsPageResult.Unavailable, count = null)
+
+        assertNull(notRead.currentSessionDuplicateGroupCount, "a null is 'no reading', never a zero")
+    }
+
+    /**
+     * D-322 D-1: the two-argument calls keep compiling and land the default null — the default
+     * preserves every pre-D-322 construction site, the same precedent as `nextAfterCandidateId`
+     * (the existing V-6a/b/c cases above already pin this for the `Page` branch's rows/cursor).
+     */
+    @Test
+    fun theTwoArgumentCallDefaultsTheCountToNull() {
+        val event = importIntakeLandingEvent(session, page(count = 3, nextAfterCandidateId = null))
+
+        assertNull(event.currentSessionDuplicateGroupCount)
+    }
 }

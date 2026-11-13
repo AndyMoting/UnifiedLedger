@@ -7282,3 +7282,20 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **验收（本批实际执行）：** 结构性证明（无本地测试/构建）：`git grep -n "queryImportReviewRows?*\.query("` 于 `P503App.kt` 恰余 `:2659`/`:3127` 两处；fake 扫描与逐站点等价论证见规格 §14；全部测试/编译门由 CI 承担。
 
 **关联决定：** D-319（D-8 第二片登记与 D-7 先测量后裁决）、D-320（残余① 点名三站点）、D-293/D-294（分页读与复核列表窗口）、D-308（候选行两个逐行派生列，等价投影的内容）、D-243（不得靠改完整列表语义提速——本片以等价替换而非截断兑现）。
+
+## D-322 count 驱动组入口：当前 pick 会话的「整组标记为重复」O(1) 可达
+
+**状态：** 已交付并登记（2026-11-14）。实施 = 规格 `docs/specs/2026-11-14-d322-count-driven-group-entry-design.md` §3 D-1..D-5 / §4 S1..S3（approved v1，随批登记）。**零 DDL、零迁移、零依赖**；count 查询/端口/facade 接线全部复用 D-5/D-6 已存在面（`CountImportDuplicateCandidatesForSession`、`importDuplicateCandidateCountForSession`、`P503LedgerFacade.countImportDuplicateCandidatesForSession`），本批不新增任何 SQL。
+
+**背景：** maximum rig run `43474772788`（SHA `2f0e0048`）`group_disposition` stage 首个 `ui.seek("整组标记为重复")` 抛 `UI target not reached`（证据包 `local/artifacts/d322-design-pack/EVIDENCE-PACK.md`）。根因是组入口的存在条件绑在装载状态上：`GroupDispositionButton` 渲染门 `importDuplicateGroupRows(view.rows, sessionInputRef).isNotEmpty()`（`P503ImportReviewPresentation.kt`，实施前 `:1115`）只看已装载行，而列表自 D-293 起按页装载（每页 50 行）——主会话行深 ~50,000 位时按钮根本不在 render 树里，80 次滚动不可能 reach。**入口可达性不应依赖「行已装载多少页」**，这正是缺陷类。修这半边不需要读任何行：会话级 count 查询已接线（组卡回合内同查先例 `P503App.kt:2834`）。
+
+**决定（范围与机制）：**
+
+1. **scope = 六个产品文件**：①`ImportReviewView` 增 `currentSessionDuplicateGroupCount: Long? = null`（紧挨 `lastIntakeSession`）；②`ImportFileIntakeResult` 事件增同名字段（默认 null 保全部既有构造点编译，沿 `nextAfterCandidateId` 同形先例）；③`importIntakeLandingEvent` 增第三参 `count: Long? = null`，**两分支都携带调用方读到的值**——count 与页分支解耦，`Unavailable` 分支照传（页面分支只治理 rows/游标的 F1 保留）；④`runImportIntakePipeline` 既有租约块内、D-4 一页读旁加 `facade.countImportDuplicateCandidatesForSession?.query(ledger.ledgerId, session.inputRef)`，随落地元组返回，两处 landing 派发都传（租约失败路径传 null）；⑤`reduceImportFileIntakeResult` 落值**无条件**——事件总描述最新会话（count 在接治提交后的同一租约读取，描述新会话的已提交状态），页 `Unavailable` 只治理 rows/游标保留，绝不让旧会话的 stale count 冒充新会话；append/refresh 经既有 `view.copy` 天然保留，零改动；⑥渲染门改 `sessionInputRef != null && (view.currentSessionDuplicateGroupCount ?: importDuplicateGroupRows(view.rows, sessionInputRef).size) > 0`。
+2. **语义基础（null ≠ 0）**：count 读成功 ⇒ 落真值，`0` 是 SQL `COUNT(*)` 对无组会话的真零（用例仅把异常映射为 null）⇒ 门照常隐藏；count 读失败（或租约失败、或 pre-D-322 构造点）⇒ null = 「无读数」⇒ 回退既有行枚举 = legacy 形态不变，绝不冒充零。
+3. **陈旧会话残余（D-5）**：count 是落地时点快照，与渲染层 Kotlin 折叠过滤在**重审过的陈旧会话**上可分歧（行折叠按 blocking-first 把已处置重复折成 `CONFIRMED_DUPLICATE`，count 是快照）；当前 pick 会话的重复全 `DEFERRED` ⇒ count>0 ⟺ 组非空。卡片自身的 D-5 路径在租约内重算权威成员集（`P503App.kt:2834` 同查先例），stale count 至多导致一次误点回合，该回合以「count 为 0 不开卡」的既有类型化行为收场（`P503App.kt:2766-2768` / `P503HostCoordinator.kt:843-854`）——无账务效应。分歧形态按规格 §6① 登记，不做消除机制。
+4. **边界内外**：入 = 上述六文件 + 三个测试文件（渲染门 count>0 零装载行渲染 / 真零隐藏 / null 回退等价 + 共渲染意图对；reducer 两分支落值、null≠0、append/refresh 保留；seam 两分支携带 count 与默认 null）+ 本条；出 = stage 预算/marker/统计量，列表语义/顺序（`ACC-COUNT-01`/`ACC-SEL-01`/`ACC-SORT-01`/`P704GP-ACC-ORDER-01` 一字不动），`Ledger.sq` 与读端口，`.external/`，P8-04 线文件面。D-4 空态共渲染：`NoCandidatesEmptyState`（装载窗口无行）与按钮（会话组存在）是独立意图对，可同屏——按钮位次在候选行之前不变。
+
+**验收（本批实际执行）：** 结构性证明（无本地测试/构建）：`ImportFileIntakeResult(` 全仓恰为声明 + seam 两分支 + 测试；`ImportReviewView(` 39 处构造点全部具名参数、默认 null 不静默复位新字段；既有门测试（`P503ImportReviewRenderItemsTest.kt:304-326` 原样）与 seam V-6a/b/c 用例原样通过。全部测试/编译/ktlint 门由 CI 承担；V-6（rig `group_disposition` PASS）由 lead 合并后复跑判。
+
+**关联决定：** D-320 R5（组入口半边由此闭合；深行候选可达性另一半仍按 R5 开放，引用而不宣称闭合全部）、D-321（同租约多读与 `view.copy` 字段保留先例）、D-319 D-4/D-5/D-9（接治落地一页读、组成员集与列表状态解耦、不新设口径）、D-5/D-6（复用其 count 查询与 MemberPages 路径）、D-293（keyset 分页读冻结列表合同）。
