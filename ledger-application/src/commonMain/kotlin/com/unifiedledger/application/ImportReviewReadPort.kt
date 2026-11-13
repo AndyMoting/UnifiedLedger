@@ -219,6 +219,35 @@ interface ImportReviewReadPort {
                 "session paged read must surface as a typed read failure, never as an empty page (D-5)",
         )
 
+    /**
+     * P7-04 B1/B4 windowed read, D-8 second slice (design spec §14; D-321): the review rows of an
+     * EXPLICIT candidate-id set, read in ONE ledger-scoped query. The semantic-equivalence basis
+     * (why this replaces the whole-list read at the batch dispatch pre-phase and the Unknown-item
+     * check): the pre-phase consumers look rows up ONLY by candidate id
+     * (`admitImportBatchItem` at `P503ImportBatchPresentation.kt:344` and `importUnknownCheckContext`
+     * at `:410`, both `rows.rows.firstOrNull { it.candidateId == item.candidateId }`), so a read
+     * bounded to the requested ids returns exactly the rows those lookups can consume; the read has
+     * no status and no session predicate, so row presence <=> the candidate exists — identical to
+     * the whole-table read's answer for any of these ids. The returned list is folded with the SAME
+     * blocking-first fold as every other list read, in the query's candidate-major order.
+     *
+     * An empty id set is a legal empty result (no SQL executed — the adapter's guard keeps the
+     * SQLite `IN` expansion from ever receiving an empty collection).
+     *
+     * The default throws: a missing bounded read must surface as a typed read failure, never as a
+     * definitive "no such candidate" verdict for every item (G6, the
+     * [loadImportReviewRowsForSessionPage] precedent).
+     */
+    fun loadImportReviewRowsForCandidateIds(
+        ledgerId: LedgerId,
+        candidateIds: Collection<String>,
+    ): List<ImportReviewRow> =
+        throw UnsupportedOperationException(
+            "loadImportReviewRowsForCandidateIds is not implemented by this read port; the missing " +
+                "candidate-id-set read must surface as a typed read failure, never as an empty list " +
+                "(D-8 second slice, G6)",
+        )
+
     fun loadImportReviewRows(ledgerId: LedgerId): List<ImportReviewRow> =
         throw UnsupportedOperationException(
             "loadImportReviewRows is not implemented by this read port; a missing import-review " +
@@ -471,6 +500,25 @@ class QueryImportReviewRows(
             ImportReviewRowsPageResult.Page(page.rows, page.nextAfterCandidateId)
         } catch (failure: Exception) {
             ImportReviewRowsPageResult.Unavailable
+        }
+
+    /**
+     * P7-04 B1/B4 windowed read, D-8 second slice (design spec §14; D-321): the review rows of an
+     * EXPLICIT candidate-id set — the bounded replacement of the batch dispatch pre-phase's and the
+     * Unknown-item check's whole-list read. The equivalence argument is on the port method's KDoc
+     * (the consumers look rows up only by candidate id; no status/session predicate, so presence ==
+     * existence). Same fail-loud mapping as [query]: a throwing or unimplemented read is
+     * [ImportReviewRowsResult.Unavailable] — the reducer keeps the previous rows and cursor on that
+     * verdict and the pre-phase turns it into typed per-item skips, never a silently emptied list.
+     */
+    fun queryRowsForCandidates(
+        ledgerId: LedgerId,
+        candidateIds: Collection<String>,
+    ): ImportReviewRowsResult =
+        try {
+            ImportReviewRowsResult.Rows(readPort.loadImportReviewRowsForCandidateIds(ledgerId, candidateIds))
+        } catch (failure: Exception) {
+            ImportReviewRowsResult.Unavailable
         }
 }
 

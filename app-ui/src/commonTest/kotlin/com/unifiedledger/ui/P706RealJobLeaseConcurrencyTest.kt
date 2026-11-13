@@ -601,6 +601,10 @@ class P706RealJobLeaseConcurrencyTest {
      * The composition-root dispatch-run shape (P503App runImportBatchDispatch): ONE lease covers
      * the pre-phase read, the use-case factory and the sequential per-item loop, and the execute
      * callback runs the real [ConfirmImportCandidate] core chain.
+     *
+     * D-8 second slice (spec §14; D-321): the pre-phase read is the BOUNDED candidate-id-set read
+     * (queryRowsForCandidates) over the undispatched items' ids — the same capture moment and id
+     * set the production method derives from its ImportBatchSubmitting snapshot.
      */
     private fun runImportDispatch(
         facade: P503LedgerFacade,
@@ -608,7 +612,11 @@ class P706RealJobLeaseConcurrencyTest {
     ): ImportBatchDispatchRun {
         val prePhase =
             importBatchDispatchPrePhase(
-                loadRows = { facade.queryImportReviewRows?.query(facade.ledgerId) ?: ImportReviewRowsResult.Unavailable },
+                loadRows = {
+                    facade.queryImportReviewRows
+                        ?.queryRowsForCandidates(facade.ledgerId, importItems.map { it.candidateId.value })
+                        ?: ImportReviewRowsResult.Unavailable
+                },
                 loadUseCases = { facade.importConfirmUseCases?.invoke() },
             )
         return when (prePhase) {
@@ -931,9 +939,23 @@ private class SequentialImportIdSource : ImportIdSource {
     }
 }
 
-/** The import pre-phase's row source: a fixed hand-built list (fail-loud defaults stay). */
+/** The import pre-phase's row source: a fixed hand-built list (fail-loud defaults stay).
+ *
+ * D-8 second slice (spec §14; D-321): the production pre-phase now reads by candidate id
+ * (queryRowsForCandidates), so the fake carries the SAME rows under that lookup — the loop
+ * consumes rows only through the candidate-id firstOrNull, so the fixture's equivalence to the
+ * previous whole-list wiring is preserved by construction.
+ */
 private class FixedImportReviewReadPort(
     private val rows: List<ImportReviewRow>,
 ) : ImportReviewReadPort {
     override fun loadImportReviewRows(ledgerId: LedgerId): List<ImportReviewRow> = rows
+
+    override fun loadImportReviewRowsForCandidateIds(
+        ledgerId: LedgerId,
+        candidateIds: Collection<String>,
+    ): List<ImportReviewRow> {
+        val wanted = candidateIds.toSet()
+        return rows.filter { it.candidateId.value in wanted }
+    }
 }

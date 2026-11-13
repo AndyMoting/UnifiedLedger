@@ -233,3 +233,41 @@
 **结论二：新的阻塞是 rig 的深行寻址，不是产品缺陷。** 复核列表（D-293 起）首屏只读 50 行，而 `openCandidateByAmount` 的机制是「seek 到列表顶部 → `ACTION_SCROLL_TO_POSITION` 跳到 `rowsPerSession + 12` → 有界 160 步前向扫描」。在 61k 规模下目标候选在**第 10,012 位**：跳转索引落在未装载区间，扫描 65 步后判定未达（`sawTargetRow=false`）。要真正到达，需要驱动 `加载更多导入候选` 约 200 次（每次 50 行），既超 180 s 的 stage 预算也没有意义。
 
 **因此 V-12 / V-13 仍不判 PASS**：`saf_import` 这一半已由结论一解除，但 rig 在 `detail_decision` 无法完成，`phases` 只到 `prepare`。**下一动作（承接，需单独裁决）**：maximum rig 的深行寻址必须换机制——候选是二选一：①把 `detail_decision` 的目标改成**落在首页**的候选（这会打破「唯一 amount 全局唯一」的寻址前提，需重新设计寻址键）；②给 rig 一条**有界的深行通路**（例如按 `candidate_id` 键集直接跳页的测试专用入口，或先按会话/组过滤再寻址）。无论哪条都要单独的设计门，且**不得**用「调大 stage 预算」或「跳过该 stage」来解决。
+
+---
+
+## 14. D-8 第二片实施登记：批量确认与批后刷新整表读有界化（2026-11-14，随 D-321 批；§1–§13 正文未改）
+
+**交付（scope = D-320 残余① 点名的三个站点）**：
+
+1. **`:3203` 批量派发前相**（`runImportBatchDispatch`，`fac241f6` 当前位置）：`undispatched` 在主线程捕获处（同一快照、同一时刻）派生 `undispatchedCandidateIds`，前相 `loadRows` 改为 `queryRowsForCandidates(ledgerId, undispatchedCandidateIds)`。空 id 集经适配器卫式返回 `Rows(empty)`，零项循环正常完成。
+2. **`:3370` Unknown 核对前相**（`checkImportUnknownItem`）：id 集 = 单个 `item.candidateId`，同上改法。
+3. **`:3153` `requestImportReviewRowsRead()`**（批后刷新）：主线程在启动协程前捕获 `latestState` 复核视图的**已装载窗口**候选 id 集与 `nextAfterCandidateId`；窗口为空则**直接返回、不派发**（见下方登记①）。租约结构（`ledger.leased` + `isCurrentGeneration` 代际丢弃）与表面卫式 `ledger.surfaces.importReviewRows` 原样保留；`Rows` 分支以捕获游标经既有 `P503UiEvent.ImportReviewResult` 落地，`Unavailable` 分支照旧派发（reducer 保留旧行与旧游标）。
+
+**机制**：新增命名查询 `importReviewRowsForCandidates`（投影、JOIN/LEFT JOIN 形状、相关子查询与 `ORDER BY candidate.candidate_id, duplicate.candidate_id` 与 `importReviewRowsForLedgerPage` 字节一致；WHERE 收窄为 `candidate.ledger_id = :ledger_id AND candidate.candidate_id IN :candidate_ids`）→ 适配器 `loadImportReviewRowsForCandidateIds`（空集卫式返回空列表、不执行 SQL；同一 `foldCandidateRuns` 折叠）→ 端口 `loadImportReviewRowsForCandidateIds`（fail-loud 默认）→ 用例 `QueryImportReviewRows.queryRowsForCandidates`（异常映射 `Unavailable`，与 `query`/`queryPage` 同纪律）。
+
+**语义等价证据（`file:line`）**：
+
+- 前相消费者只按候选 id 找行：`admitImportBatchItem`（`app-ui/src/commonMain/kotlin/com/unifiedledger/ui/P503ImportBatchPresentation.kt:344`）与 `importUnknownCheckContext`（`:410`），均为 `rows.rows.firstOrNull { it.candidateId == item.candidateId }`。按未派发项候选 id 的有界读恰好返回这些查找能消费的行；两条查询都无状态谓词、无会话谓词，故 **行在场 ⟺ 候选存在**——整表读对这组 id 能给出的全部相关内容。
+- 复核列表是一个 candidate_id 有序窗口（`requestImportReview` 首页读 `P503App.kt:816`，加载更多按 keyset 追加 `:2579`）：重读**同一 id 集**并经既有 `P503UiEvent.ImportReviewResult` 落地，以相同 candidate 序替换窗口——**零 reducer 改动**。游标语义：`reduceImportReviewResult`（`P503Reducer.kt:2204-2218`）在 `Rows` 落 `event.nextAfterCandidateId`（`:2213`），在 `Unavailable` 保留旧行与旧游标（`:2215-2217`），故失败刷新既不缩短窗口也不会让加载更多从头开始。
+- **刷新竞态的可见瞬态（登记，非静默）**：若 `加载更多` 追加页落地（`reduceAppendImportReviewPage`，`P503Reducer.kt:2225-2243`，rows+cursor 写在 `:2235-2237`）或一次接治落地与在飞的有界刷新交错，刷新的 `Rows` 会把窗口替换回**捕获时刻的 id 集**并把游标恢复为**捕获时刻**（追加前）的值——屏上瞬态回退到追加前形态。**自愈性**：游标被保留，下一次「加载更多」按捕获游标重新取页，无持久丢失（不违反 `ACC-COUNT-01` 的静默丢弃禁令——行只是暂时不在屏上，读路径无损失）。**对照旧实现同形竞态更差**：整表读落地把游标重置为 `ImportReviewResult.nextAfterCandidateId` 的默认 `null`（`P503UiEvent.kt:745`），追加页被复制重读。新实现用捕获游标把该竞态的自愈面收窄，不新增机制。
+
+**D-7 裁决关闭（索引项）**：云端 CI run `43407734033`（job `ledger-data shard 1`，2026-11-13）的 `EXPLAIN QUERY PLAN` 显示两条候选行查询的每条访问路径均为 `SEARCH … USING INDEX …`，无任何 `SCAN`；`import_evidence` 探针走 `sqlite_autoindex_import_evidence_1 (ledger_id=?)` 自动索引。按 D-7 本文（§3 D-7「若显示已走自动索引，则本项关闭并只保留读数」），**索引裁决关闭、零 DDL**（schema 版本保持 v37）；61k 规模的页耗时读数仍 registered-open（需 CI 不提供的夹具环境），无任何裁决等待它们。本片新增的 `importReviewRowsForCandidates` 沿用同一批已关闭的自动索引探针（逐输出行的 `min(evidence_id)` 标量与 active-link `EXISTS` 未改）。
+
+**V-9 扩展（计划钉点）**：`P704B4SessionPagePlanTest` 增两条 `P704B4-PLAN ` 钉点——(a) `importReviewRowsForCandidates`（`IN` 集合参数展开为字面量元组 `('p704-b4-plan-1','p704-b4-plan-2')`）；(b) `importDuplicateReviewsForSessionMemberPage`（`Ledger.sq:11831`，§11 第 3/4 条点名、D-7 测量腿的成员复核读）。既有「session-vs-ledger 文本等价」测试原样未动；`P704B4-PLAN ` 前缀已在 `tools/ci/scale-readings-report.py` 的 `DEFAULT_PREFIXES` 登记（本批未改该脚本）。
+
+**等价测试**：`ImportReviewPagedReadEquivalenceTest` 增 D-8-2ND-T-1..6 六例：单 id / 多 id（乱序请求、按候选序返回）/ 带重复的候选（折叠同一 blocking-first 判定）/ 空集（适配器卫式，结构证明为「驱动已关闭的库上执行任何语句必抛」）/ 跨会话 id（账本域读无会话谓词，行必须返回）/ 未知 id（不产行）+ 用例异常映射 `Unavailable`。
+
+**边界外站点（本批不改，各自闭合登记）**：
+
+- **`:2659` 重复审核提交后刷新**：关闭登记——该读同时服务「详情页 + 复核行 + 重复集」的一次性联合刷新（`ImportDuplicateReviewRefresh` 三载荷同租约），且其消费者按候选 id 找行，但事件契约是整表语义的 `Rows` 覆盖；本批未动，闭合条件 = 后续片若做详情路径有界化时一并裁决。
+- **`:3127` 整组处置落地重读**：关闭登记——整组确认落地的行载荷直接进 `ImportDuplicateGroupDispositionResult`，消费方为组卡行序（整组语义），有界化需先裁决「窗口外行」的呈现语义；本批未动。
+- 实施期全仓 grep 确认：本批后 `P503App.kt` 的 UI 路径整表 `query(` 调用点 = **2 处**（`:2659` 与 `:3127`），与上述登记一一对应。
+
+**实施期登记（非静默变更）**：
+
+1. **空窗口提前返回**：装载窗口为空时 `requestImportReviewRowsRead` 直接返回、不派发任何事件。旧行为在该形态下会派发一次整表读并以 `Rows(empty)`/`Unavailable` 落地（对空视图无可见效果差）；新行为省掉该往返。登记为实现注册，不属语义收紧（`ImportReviewView()` 默认空视图的首次装载走 `requestImportReview()`，不经本方法）。
+2. **测试侧 fake 的最小覆盖**：`P706RealJobLeaseConcurrencyTest.FixedImportReviewReadPort` 增 `loadImportReviewRowsForCandidateIds` 覆盖（其 `runImportDispatch` 复刻生产前相形状，改为 `queryRowsForCandidates`）；`MemberPageReadPort`（`P503ImportGroupMemberWindowHostTest`）不驱动三个改动站点，未动。全仓 fake 扫描命令与残余命中数见 D-321 的验收记录。
+3. **计划钉点参数表**：`BINDS` 从「五参数」扩为「六参数」（`candidate_ids` 加入）；既有两条钉点与文本等价测试的参数面未变。
+
+**边界**：入 = 本节、`Ledger.sq`（新命名查询，零 DDL/零迁移）、`SqlDelightImportReviewReadAdapter.kt`、`ImportReviewReadPort.kt`、`P503App.kt` 三站点、两测试文件、`P706RealJobLeaseConcurrencyTest` 的 fake 覆盖、D-321 条目。出 = 不改 thresholds / 统计量 / marker / stage 预算；不改 `D-230`/`D-243`/`D-278`–`D-284`/`D-293`/`D-294`/`D-308` 的裁决文本与开放状态；不改 `.external/`；`:2659`/`:3127` 两站点按上文登记闭合，本批不改。

@@ -3143,17 +3143,54 @@ fun P503App(
 
     // ---------------------------------------------------------------- P7-04.D batch confirmation host surface
 
-    /** P7-04.D: re-reads the review list off the UI thread and dispatches the typed result. */
+    /**
+     * P7-04.D: re-reads the review list off the UI thread and dispatches the typed result.
+     *
+     * D-8 second slice (spec §14; D-321): the refresh reads the LOADED WINDOW's candidate ids, not
+     * the whole list. The review list is a candidate_id-ordered window (requestImportReview reads
+     * one page, 加载更多 appends keyset pages), so re-reading THE SAME id set and landing through
+     * the existing [P503UiEvent.ImportReviewResult] event replaces the window with rows in the same
+     * candidate-major order (the query's ORDER BY) — patch semantics with ZERO reducer change. The
+     * captured `nextAfterCandidateId` is passed through on `Rows` (reduceImportReviewResult sets it,
+     * P503Reducer.kt:2213) and an `Unavailable` keeps the previous rows AND cursor (P503Reducer.kt
+     * :2215-2216, F1), so a failed refresh can never shorten the window or restart 加载更多.
+     *
+     * An empty loaded window returns WITHOUT dispatching: there is nothing to refresh (registered
+     * in spec §14 as an implementation registration — the pre-D-8 code dispatched a read whose
+     * landing would have materialized an empty view, and the composition no longer pays that
+     * round-trip). The ids and the cursor are captured on the MAIN thread before the coroutine
+     * launches, so the read and the landing stay a consistent snapshot pair.
+     */
     fun requestImportReviewRowsRead() {
         // Base behavior (P3-4): an unwired surface returns early; the typed Unavailable path is
         // for a runtime refusal, not for a surface the composition never wired.
         if (!ledger.surfaces.importReviewRows) return
+        // Main-thread capture of the window the refresh will re-read (the pre-D-8 whole-list read
+        // needed no capture; the bounded one must know WHICH ids to read).
+        val overview = latestState.value as? P503AppState.OverviewEmpty
+        val importReview = overview?.importReview
+        val windowCandidateIds = importReview?.rows?.map { it.candidateId.value } ?: emptyList()
+        val windowCursor = importReview?.nextAfterCandidateId
+        if (windowCandidateIds.isEmpty()) return
         scope.launch(Dispatchers.Default) {
             // P7-06 06.1 (spec 4.3/4.4): read under a lease; the landing hop discards a stale result.
-            val outcome = ledger.leased { facade, _ -> facade.queryImportReviewRows?.query(ledger.ledgerId) }
+            val outcome =
+                ledger.leased { facade, _ ->
+                    facade.queryImportReviewRows?.queryRowsForCandidates(ledger.ledgerId, windowCandidateIds)
+                }
             scope.launch {
                 if (outcome is LeaseOutcome.Completed && !ledger.isCurrentGeneration(outcome.generation)) return@launch
-                dispatch(P503UiEvent.ImportReviewResult((outcome as? LeaseOutcome.Completed)?.value ?: ImportReviewRowsResult.Unavailable))
+                val result = (outcome as? LeaseOutcome.Completed)?.value ?: ImportReviewRowsResult.Unavailable
+                dispatch(
+                    when (result) {
+                        is ImportReviewRowsResult.Rows ->
+                            P503UiEvent.ImportReviewResult(result, nextAfterCandidateId = windowCursor)
+                        ImportReviewRowsResult.Unavailable ->
+                            // The reducer keeps the previous rows AND cursor on Unavailable (F1):
+                            // the captured cursor is deliberately NOT passed on this branch.
+                            P503UiEvent.ImportReviewResult(ImportReviewRowsResult.Unavailable)
+                    },
+                )
             }
         }
     }
@@ -3181,6 +3218,14 @@ fun P503App(
         // session decision drafts (ImportBatchSubmitting absorbs every draft-changing event, so
         // these are the authorization-time values).
         val undispatched = submitting.items.filter { it.outcome == null }.map { it.item }
+        // D-8 second slice (spec §14; D-321): the pre-phase read's id set — the undispatched items'
+        // candidate ids, captured at the SAME moment from the SAME snapshot as `undispatched`
+        // (single source of truth). The pre-phase looks rows up only by candidate id
+        // (admitImportBatchItem, P503ImportBatchPresentation.kt:344), so a read bounded to this set
+        // is semantically equivalent to the previous whole-list read for this run, at a fraction of
+        // the read cost. An empty set reads as Rows(empty) through the adapter's guard and the loop
+        // over zero items completes normally.
+        val undispatchedCandidateIds = undispatched.map { it.candidateId.value }
         val drafts = submitting.overview.importReview?.decisionDrafts ?: emptyMap()
         val confirmedAt = submitting.confirmedAt
         coordinator.startImportBatchDispatchOnce {
@@ -3200,7 +3245,20 @@ fun P503App(
                         runGeneration = generation
                         val prePhase =
                             importBatchDispatchPrePhase(
-                                loadRows = { facade.queryImportReviewRows?.query(ledger.ledgerId) ?: ImportReviewRowsResult.Unavailable },
+                                // D-8 second slice (spec §14; D-321): the bounded read by the
+                                // undispatched items' candidate ids (captured above), NOT the
+                                // whole-list read. Equivalence: the pre-phase's only row consumer
+                                // is admitImportBatchItem's
+                                // `rows.rows.firstOrNull { it.candidateId == item.candidateId }`
+                                // (P503ImportBatchPresentation.kt:344), and the read carries no
+                                // status/session predicate, so a missing row here means the
+                                // candidate genuinely has no row — the same Skip verdict the
+                                // whole-list read produced.
+                                loadRows = {
+                                    facade.queryImportReviewRows
+                                        ?.queryRowsForCandidates(ledger.ledgerId, undispatchedCandidateIds)
+                                        ?: ImportReviewRowsResult.Unavailable
+                                },
                                 loadUseCases = { facade.importConfirmUseCases?.invoke() },
                             )
                         when (prePhase) {
@@ -3367,7 +3425,19 @@ fun P503App(
                         checkGeneration = generation
                         val prePhase =
                             importBatchDispatchPrePhase(
-                                loadRows = { facade.queryImportReviewRows?.query(ledger.ledgerId) ?: ImportReviewRowsResult.Unavailable },
+                                // D-8 second slice (spec §14; D-321): the bounded read for the ONE
+                                // Unknown item's candidate id — the same id-set contract as the
+                                // dispatch pre-phase above. Equivalence: the check's only row
+                                // consumer is importUnknownCheckContext's
+                                // `rows.rows.firstOrNull { it.candidateId == item.candidateId }`
+                                // (P503ImportBatchPresentation.kt:410); a missing row still means
+                                // "unreadable row" (StillUnknown), exactly as with the whole-list
+                                // read.
+                                loadRows = {
+                                    facade.queryImportReviewRows
+                                        ?.queryRowsForCandidates(ledger.ledgerId, listOf(item.candidateId.value))
+                                        ?: ImportReviewRowsResult.Unavailable
+                                },
                                 loadUseCases = { facade.importConfirmUseCases?.invoke() },
                             )
                         if (prePhase is ImportBatchDispatchPrePhase.Ready) {
