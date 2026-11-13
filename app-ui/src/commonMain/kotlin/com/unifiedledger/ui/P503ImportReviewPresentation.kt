@@ -1120,7 +1120,17 @@ internal fun importReviewRenderItems(
         // and hides the button (null ≠ 0). The count and the NoCandidatesEmptyState (which
         // describes the LOADED window) are independent intents and may co-render per D-4.
         val sessionInputRef = view.lastIntakeSession?.inputRef
-        if (sessionInputRef != null && (view.currentSessionDuplicateGroupCount ?: importDuplicateGroupRows(view.rows, sessionInputRef).size) > 0) {
+        // D-322 D-3: two explicit arms, NOT an elvis-with-comparison — `Long?` and `Int` have no
+        // common numeric supertype to compare against (the elvis infers `Number & Comparable<*>`,
+        // whose star projection rejects `compareTo`; observed as MEMBER_PROJECTED_OUT on CI).
+        // Semantics are unchanged: a real count (including SQL's true zero) decides by itself;
+        // null falls back to the legacy loaded-rows enumeration.
+        val groupEntryExists =
+            when (val count = view.currentSessionDuplicateGroupCount) {
+                null -> sessionInputRef != null && importDuplicateGroupRows(view.rows, sessionInputRef).isNotEmpty()
+                else -> count > 0L
+            }
+        if (sessionInputRef != null && groupEntryExists) {
             items += ImportReviewRenderItem.GroupDispositionButton
         }
         // P7-05 + B6 first-window (D-280 spec §3.3): the enumeration progress line sits right
