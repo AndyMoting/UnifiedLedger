@@ -7235,3 +7235,27 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **边界：** 入：规格本体 + 本条 + 运行时留下的对照读数登记。出：不改任何 thresholds / 统计量 / marker / stage 预算；不改 D-230/D-243/D-278–D-284/D-293/D-294/D-308 的裁决文本与开放状态；不把任何验收向量并入 PASS；不改 `.external/`。
 
 **关联决定：** D-278/D-279/D-280（B6 口径与分段读数）、D-281/D-282/D-283/D-284（云端 A/B 与判据覆盖）、D-230/D-243（61k 与「不得靠改完整列表语义提速」红线）、D-293/D-294（分页读与 61k 首屏 MET）、D-308（P8-01a 给候选行加的两个逐行派生列）、D-311（`ACC-D-PERF-01` 当前 MET 命题只覆盖首屏）。
+
+## D-320 maximum rig 的 `detail_decision` 改判首页目标（不再深行跳转）
+
+**状态：** 已批准并登记（2026-11-13）。批准对象 = 新建规格 `docs/specs/2026-11-13-maxrig-firstpage-target-design.md`（`approved v1`，正文未改）。**设计门 + test-only 实施**：只动 `android-app/src/androidTest/**` 的两个文件；零产品代码、零 schema、零迁移、零依赖；不分配 schema 版本号（维持 v37）。
+
+**背景：** run `43386393213`（`fa2ce94f`，61k 候选 / 150,000 重复关系，mode=maximum）host `status=ERROR`、`phases=["prepare"]`、`elapsed=5548 s`；失败 = `unique candidate not reached (amount=2071.99 CNY sawTargetRow=false clickAttempts=0 scans=65)`，栈在 `AndroidScaleUi.openCandidateByAmount` ← `AndroidScaleLongInstrumentedTest.chain`，即 `detail_decision`。该目标当时是 unique-rows 会话的 ordinal-0（`seed + 1 + rowsPerSession` = 207,199 minor），其候选序实为 **50,000**（五个共享会话各 10,000 行先导入），而机制只做「跳 `rowsPerSession + 12` = 10,012 → 160 步前向扫描」；D-319 §13 的「第 10,012 位」是跳转目的地，不是目标位次。首屏自 D-293 起只读 50 行（`P503App.kt:816`，页大小 `:5653`），深行不可达。
+
+**事实更正（本门顺带定口径）：** 复核行的重复状态只折「主体」方向的关系（`Ledger.sq:9575-9577` 的 `subject_source_id = candidate.source_id`），而关系写入时主体是后导入记录（`SqlDelightImportSpineStore.kt:273-285`）。因此：① `session-01`（最先导入）零主体关系 ⇒ 折叠状态为空 ⇒ `PENDING_USER_DECISION`，**可直接确认且在首页**，并非「疑似重复」；② 主 SAF 会话（`session-06`）折 5 条 `DEFERRED` ⇒ `SUSPECTED_DUPLICATE_PENDING_REVIEW`，无勾选框、无决策表单，`detail_decision` 内不可确认；③ unique-rows 会话可确认但不在首页（候选序 ≥ 50,000）。「首页必然包含某个固定 ordinal」也不是结构性保证：列表按 `candidate_id`（UUIDv7）排序，同毫秒内位次由随机位决定。
+
+**决定（五条）：**
+
+1. **R1 首页目标**：`detail_decision` 的目标改为复核列表第一页里**第一个可确认的候选行**（渲染序），以「元信息行以 `重复 无` 结尾」判定为 `PENDING_USER_DECISION`；金额由渲染行读出并校验落在规格区间 `[seed + 1 + sessionAmountOffset(0), seed + 1 + sessionAmountOffset(0) + rowsPerSession)`，不写死 ordinal 与金额。`jumpIndex` 由 `spec.rowsPerSession` 改为有界常量 `FIRST_PAGE_JUMP_INDEX = 0`（候选在第一页内的索引，上界 = 页候选数 50；扫描只向前，0 保证不越到目标行之后）。`maximum` 下首页只装 `session-01` 的行且同会话金额逐 ordinal 互异（更小的诊断 profile 可能混入后续会话的行，由 selector 的类标记跳过），故「可见行多于一个同金额即异常」判据原样成立，不放宽。
+2. **R2 簿记点逐条点名**：目标选择（`AndroidScaleLongInstrumentedTest.kt:433` → `:464`）、`selectedAmount` 来源（`:434` → `:465`）、删除首次打开后的二次打开（原 `:441`）、两处重开索引（原 `:484`/`:508` → `:513`/`:537`）、`reopen()` 决策事实（原 `:719` 的 `uniqueSessionInputRef()` + `ordinal == 0` → `:751` 的 `firstPageSessionInputRef()`，金额断言 `:752` 保留）、`uniqueSessionFirstAmount()` 降为 traversal anchor（`:392-401`，调用点 `:833` 不变）、批量摘要「已入账 0 项 / 跳过 1 项」文本不变并点名跳过码 `IMPORT_BATCH_DECISION_INCOMPLETE`、`openCandidateByAmount` 的文档与实现拆成三个函数（160 步、2 attempt、8 次 stationary、0.12 步长原样）、新增区间与类标记两条硬断言。清单以规格 §3 R2 为准。
+3. **R3 语义不变**：仍是「打开详情 → 载入分类与账户 → 批量确认路径 → 决策补全后重开核对『决策已补全。』→ 回列表」；只换目标，不换验收内容。
+4. **R4 禁止的救法**：不调大 `stage("detail_decision", …)` 预算（`result.py:265-270` 的 180 s 上限不动）、不跳 stage、不放宽 `openCandidateByAmount` 的 160 步上界、不以「找不到就成功」收场；目标不可达仍硬失败。
+5. **R5 产品级承接**：61k 下深行候选不可达（首屏 50 行、候选序 50,000 需约 200 次「加载更多」）登记为新的产品级开放问题，本批不修。闭合条件 = 给导入复核列表一条**有界深行入口**，或裁决该可达性不在本期范围。
+
+**残余与承接（不得静默过期）：** ① 寻址修好后 `detail_decision` 的第二半仍会撞上批量确认的整表读（派发前相 `P503App.kt:3203`、批后刷新 `:3265` → `:3153`；与 D-319 §1.2 的 25 分钟读同形，`import_evidence` 索引按 D-7 待裁决），本批不修，设备链仍可能在该 stage 超 180 s；② 半可见首行的坐标兜底点击是既有残余，靠 2 次 attempt 兜住；③ maximum 与 B6 两 rig 仍未进 PR 分片，设备证据靠手动 dispatch。
+
+**边界：** 入 = 本文、新规格、`android-app/src/androidTest/**` 两个 test-only 文件的变更。出 = 产品代码（`app-ui/**`、`ledger-*/**`、`android-app/src/main/**`）、`android-app/src/scaleTest/**`、夹具生成器、schema/迁移、CI 配置、`.external/`、任何 stage 预算/统计量/marker 改动、`P704GP-ACC-ORDER-01`（页序 == 全量序，一字不动）、`docs/PROJECT_STATE.local.md` 与 `docs/PROGRESS_LOG.local.md`。
+
+**验收（本批实际执行）：** `git diff --check` 干净；`PYTHONPATH=tools/python python -m project_docs .` exit 0；设备证据按规格 §5 的 V-1..V-4，需手动 dispatch `android-scale.yml`（mode=maximum）。
+
+**关联决定：** D-319（§13 的 maximum rig 读数与「禁止调大预算/跳 stage」）、D-293/D-294（分页读与 61k 首屏 MET）、D-308（候选行两个逐行派生列，是残余① 的读成本来源）、D-230/D-243（不得靠改完整列表语义提速）、`P704GP-ACC-ORDER-01`（本批不改产品页序）。
