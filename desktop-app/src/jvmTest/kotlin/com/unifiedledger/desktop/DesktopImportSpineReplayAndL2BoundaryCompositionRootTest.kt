@@ -239,8 +239,8 @@ class DesktopImportSpineReplayAndL2BoundaryCompositionRootTest {
             assertEquals(IMPORT_INTAKE_MAX_ACCEPTED_RECORDS, accepted.records.size)
             assertEquals(IMPORT_INTAKE_MAX_ACCEPTED_RECORDS, accepted.newCandidateIds.size)
             assertTrue(
-                "every dispatched record must be a new intake",
                 accepted.records.all { it.disposition == ImportIntakeRecordDisposition.INTAKE_ACCEPTED },
+                "every dispatched record must be a new intake",
             )
             // Read back through the real store: candidate and source row counts equal the bound.
             assertEquals(IMPORT_INTAKE_MAX_ACCEPTED_RECORDS.toLong(), candidateCount(graph, driver))
@@ -322,8 +322,8 @@ class DesktopImportSpineReplayAndL2BoundaryCompositionRootTest {
             val noChange = assertIs<ImportFileIntakeOutcome.NoChangeAll>(replay)
             assertEquals(3, noChange.records.size)
             assertTrue(
-                "every replayed record must be the spine's INTAKE_NO_CHANGE",
                 noChange.records.all { it.disposition == ImportIntakeRecordDisposition.INTAKE_NO_CHANGE },
+                "every replayed record must be the spine's INTAKE_NO_CHANGE",
             )
             // Zero second writes: the candidate table did not move.
             assertEquals(candidatesAfterFirst, candidateCount(graph, driver))
