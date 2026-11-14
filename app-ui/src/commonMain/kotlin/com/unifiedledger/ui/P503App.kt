@@ -2453,6 +2453,11 @@ fun P503App(
                 if (outcome is LeaseOutcome.Completed && !ledger.isCurrentGeneration(outcome.generation)) {
                     // Stale generation: discard the intake payload (P706-A07). The intake itself
                     // already committed on the old graph; nothing lands on the new one.
+                    // D-325 diagnostic (run 43552932797): D-324's read-site trace proved the count
+                    // read succeeded (value=50000), yet the gate never rendered — the landing path
+                    // between read and reducer is the unobserved span. Trace the discard so a
+                    // stale-generation drop is no longer silent.
+                    StartupTrace.emit("intake.landing discarded reason=staleGeneration")
                     return@launch
                 }
                 if (outcome !is LeaseOutcome.Completed) {
@@ -2475,6 +2480,16 @@ fun P503App(
                 // lands its OWN too-large prompt (the source was readable; re-sharing could not help).
                 // Zero formal effect either way — never a silent drop.
                 if (sharePath) shareImportReadOutcomeEvent(outcome.value.first)?.let(::dispatch)
+                // D-325 diagnostic: the dispatch-side half of the count's journey — this line
+                // proves the event (with its count) actually left for the reducer after the
+                // generation gate. Paired with D-324's read-site line, the read-vs-land span
+                // is fully observed on the next rig run.
+                StartupTrace.emit(
+                    when (val dispatchedCount = outcome.value.third) {
+                        null -> "intake.dispatch countRide=null"
+                        else -> "intake.dispatch countRide=value=$dispatchedCount"
+                    },
+                )
                 dispatch(
                     importIntakeLandingEvent(
                         ImportIntakeSessionSummary(
