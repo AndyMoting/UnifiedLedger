@@ -2213,10 +2213,7 @@ class P503ReducerImpl(
             }
         val acceptedById =
             landedRecords
-                .filter {
-                    it.disposition == com.unifiedledger.application.ImportIntakeRecordDisposition.INTAKE_ACCEPTED &&
-                        it.candidateId != null
-                }
+                .filter { it.disposition == com.unifiedledger.application.ImportIntakeRecordDisposition.INTAKE_ACCEPTED && it.candidateId != null }
                 .associateBy { it.candidateId!! }
         val seededDrafts =
             acceptedById.entries
@@ -2232,15 +2229,13 @@ class P503ReducerImpl(
                         )
                 }
         val seededBases =
-            acceptedById.mapNotNull { (candidateId, record) ->
-                val basis = record.matchBasis ?: return@mapNotNull null
-                candidateId to basis
-            }.toMap()
+            acceptedById.entries
+                .mapNotNull { (candidateId, record) -> record.matchBasis?.let { basis -> candidateId to basis } }
+                .toMap()
         val seededNotes =
-            acceptedById.mapNotNull { (candidateId, record) ->
-                val note = record.noteText ?: return@mapNotNull null
-                candidateId to note
-            }.toMap()
+            acceptedById.entries
+                .mapNotNull { (candidateId, record) -> record.noteText?.let { note -> candidateId to note } }
+                .toMap()
         return state.copy(
             importReview =
                 view.copy(
