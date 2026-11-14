@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.AtomicFile
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.unifiedledger.application.ImportCandidateConfirmRequest
@@ -41,6 +42,29 @@ import java.io.File
  * non-candidate preamble either way.
  */
 private const val FIRST_PAGE_JUMP_INDEX = 0
+
+/**
+ * D-328 first-window probe: the `:652` await's own sampling budget. The await is the
+ * measurement instrument, so its observers may only touch the evidence and logcat; the
+ * predicate must see the SAME `has()` the unmodified wait uses. 10s between text
+ * samples keeps the array small on a 900s wait (at most ~90 entries; a card that opens
+ * early leaves only the final sample).
+ */
+private const val GROUP_AWAIT_SAMPLE_INTERVAL_MS = 10_000L
+
+/**
+ * D-328 first-window probe: logcat lines land under the repository's `ULStartup` tag
+ * (StartupTrace.android actual + the AndroidScaleOracle.journalMode precedent), so the
+ * failure round's existing `ULStartup` grep keeps covering the probe without a new tag.
+ */
+private const val GROUP_ENUM_TRACE_TAG = "ULStartup"
+
+/**
+ * D-328 first-window probe: the click-to-card await's rendered target
+ * (groupDispositionCardHeaderDisclosure, P503ImportReviewPresentation) — the exact
+ * predicate text, so the capture key and the trace rows quote the same contract.
+ */
+private fun groupCardDisclosureText(relations: Int): String = "将逐条提交人工审核判定为重复，每条独立生效；某一条失败不影响其余各条。共 $relations 条。"
 
 /** Five host-separated phases; the continuous UI chain has no process restart or DB reset. */
 @RunWith(AndroidJUnit4::class)
@@ -189,6 +213,147 @@ class AndroidScaleLongInstrumentedTest {
             phaseDeadline = previousDeadline
             evidence.remove("activeDeadlineElapsedMs")
             save()
+        }
+    }
+
+    /**
+     * D-328 first-window probe (run 43587072230 attempt 2): the group-disposition card
+     * never landed within the default 180s await at `:652` — the screenshot showed only
+     * the 正在整理重复组…… progress line, and the P1 trace's every-7s `review.groupGate`
+     * sample held `count=value=50000 inputRef=present entry=true loadedGroupRows=0` for
+     * the whole wait, so the 50,000-relation enumeration's first window never reached the
+     * composition. This probe is measurement-only: the probe object changes no predicate,
+     * click, or product behavior; the call site alone raises this await's wait ceiling to
+     * 900s (measured, stage budget untouched).
+     *
+     * Milestone trace (deliverable 1): the product emits no group-enumeration milestone
+     * lines of its own — the only in-area hook is the per-recomposition
+     * `review.groupGate` count line (P503ImportReviewPresentation), which already carries
+     * the count and inputRef presence — so the round's interior milestones are
+     * APPROXIMATED from the visible UI state and elapsed time on the await's `onPoll`
+     * hook, and every approximated row is tagged `source=onPoll inferred` (await's doc
+     * calls the hook coldstart-only; this is its first other mount, superseded by D-328
+     * in this call site's comment). The mapping, honest about what the UI can prove:
+     * - `click received` — test-owned, emitted at construction right after the click.
+     * - `lease acquired` — first sighting of the 正在整理重复组…… line, which renders only
+     *   between the host's ImportGroupEnumerationStarted/Completed mirror; `lease denied`
+     *   is recorded by [end] when a non-open outcome ends the wait with no such sighting.
+     * - `count done` / `first member page done` / `first window dispatched` — the UI
+     *   cannot separate the pre-click count read (the D-322 gate had a real count before
+     *   the button existed), the first member-page reads and the first-window dispatch;
+     *   all three surface together as the card's disclosure, so all three rows share one
+     *   timestamp, with the count parsed from the rendered 共 N 条 copy.
+     * - `round ended` — test-owned, emitted by [end] on both the open and the rethrown
+     *   failure paths.
+     *
+     * Evidence capture (deliverable 3): each sample holds the top window's visible lines
+     * containing the progress line, the affordance or the card copy, at most one sample
+     * per [GROUP_AWAIT_SAMPLE_INTERVAL_MS], under the evidence key
+     * `groupCardAwaitSamples` (array shape follows the androidTest evidence arrays, e.g.
+     * AndroidScaleObserverDiagWriter). `end` adds a final sample on every path, so the
+     * decisive rendered text lives through a timeout — the stage's `save()` in its
+     * finally persists it (the D-326 lesson: the failure forensics' texts block
+     * truncates). Only rendered copy is quoted — never an inputRef or user data.
+     *
+     * Containment: [onPoll] never ticks (the wait owns the deadline) and swallows every
+     * observation failure so it cannot replace the wait's own outcome, exactly like
+     * AndroidScaleUi's contained resets; [end] is equally contained because it runs on
+     * the rethrow path and must not mask the original failure.
+     */
+    private class GroupCardAwaitProbe(
+        private val ui: AndroidScaleUi,
+        private val evidence: JSONObject,
+        relations: Int,
+    ) {
+        private val startedMs = SystemClock.elapsedRealtime()
+        private val disclosure = groupCardDisclosureText(relations)
+        private val samples = JSONArray()
+        private var lastSampleMs = 0L
+        private var sawEnumerationStarted = false
+        private var sawCard = false
+
+        init {
+            // Test-owned milestone: the click was dispatched (the seek back to top and
+            // the button seek already ran before the probe is constructed).
+            Log.i(GROUP_ENUM_TRACE_TAG, "scale.groupEnum click received relations=$relations")
+        }
+
+        /** The top target window's visible lines in the probe's marker set, viewport-sized. */
+        private fun matchingLines(): List<String> =
+            ui
+                .visibleTexts(ui.root())
+                .filter { line ->
+                    line.contains("正在整理重复组") || line.startsWith("整组标记为重复") || line.contains("将逐条提交人工审核")
+                }
+
+        fun onPoll() {
+            val elapsed = SystemClock.elapsedRealtime() - startedMs
+            val joined =
+                try {
+                    matchingLines().joinToString("|")
+                } catch (failure: Throwable) {
+                    Log.i(GROUP_ENUM_TRACE_TAG, "scale.groupEnum sample failed ms=$elapsed causeClass=${failure::class.simpleName}")
+                    ""
+                }
+            if (!sawEnumerationStarted && joined.contains("正在整理重复组")) {
+                sawEnumerationStarted = true
+                Log.i(GROUP_ENUM_TRACE_TAG, "scale.groupEnum lease acquired ms=$elapsed source=onPoll inferred")
+            }
+            if (!sawCard && joined.contains(disclosure)) {
+                sawCard = true
+                // The count value is parsed from the rendered disclosure copy (not user
+                // data); the count query itself predates the click — the product's own
+                // review.groupGate lines carry its timing. The member-page read is NOT
+                // observable from the UI, so its row carries rows=unknown: onPoll can
+                // prove only that the first window rendered, not how many rows the read
+                // returned.
+                val count = Regex("共 ([0-9]+) 条").find(joined)?.groupValues?.get(1) ?: "unknown"
+                Log.i(GROUP_ENUM_TRACE_TAG, "scale.groupEnum count done ms=$elapsed count=$count source=onPoll inferred")
+                Log.i(GROUP_ENUM_TRACE_TAG, "scale.groupEnum first member page done ms=$elapsed rows=unknown source=onPoll inferred")
+                Log.i(GROUP_ENUM_TRACE_TAG, "scale.groupEnum first window dispatched ms=$elapsed source=onPoll inferred")
+            }
+            if (elapsed - lastSampleMs >= GROUP_AWAIT_SAMPLE_INTERVAL_MS) {
+                lastSampleMs = elapsed
+                samples.put(
+                    JSONObject()
+                        .put("atMs", elapsed)
+                        .put("text", if (joined.isEmpty()) "none" else joined.take(2000)),
+                )
+                evidence.put("groupCardAwaitSamples", samples)
+            }
+        }
+
+        /** Final capture plus the round-ended trace; never throws (runs on the rethrow path). */
+        fun end(outcome: String) {
+            val elapsed = SystemClock.elapsedRealtime() - startedMs
+            try {
+                val joined =
+                    try {
+                        matchingLines().joinToString("|")
+                    } catch (failure: Throwable) {
+                        Log.i(GROUP_ENUM_TRACE_TAG, "scale.groupEnum final sample failed ms=$elapsed causeClass=${failure::class.simpleName}")
+                        ""
+                    }
+                samples
+                    .put(
+                        JSONObject()
+                            .put("atMs", elapsed)
+                            .put("text", if (joined.isEmpty()) "none" else joined.take(2000))
+                            .put("final", true),
+                    )
+                evidence.put("groupCardAwaitSamples", samples)
+                if (!sawEnumerationStarted && outcome != "card-opened") {
+                    Log.i(GROUP_ENUM_TRACE_TAG, "scale.groupEnum lease denied ms=$elapsed source=onPoll inferred (no enumeration progress observed)")
+                }
+            } catch (failure: Throwable) {
+                Log.i(GROUP_ENUM_TRACE_TAG, "scale.groupEnum end capture failed ms=$elapsed causeClass=${failure::class.simpleName}")
+            }
+            // sawCard is the visibleTexts walk's own verdict; when the judging predicate
+            // (ui.has, with its cache-reset recovery) succeeded while this walk never saw
+            // the disclosure, the divergence itself is evidence of the a11y blind spot —
+            // record it on the round-ended row.
+            val walkVerdict = if (sawCard) "walk-saw-card" else "walk-blind"
+            Log.i(GROUP_ENUM_TRACE_TAG, "scale.groupEnum round ended ms=$elapsed outcome=$outcome walk=$walkVerdict")
         }
     }
 
@@ -649,7 +814,35 @@ class AndroidScaleLongInstrumentedTest {
             evidence.put("groupEntryTopWindowHasButton", ui.has("整组标记为重复", prefix = true))
             ui.seek("整组标记为重复")
             ui.click("整组标记为重复")
-            ui.await { ui.has("将逐条提交人工审核判定为重复，每条独立生效；某一条失败不影响其余各条。共 " + spec.newSessionDuplicateRelations + " 条。") }
+            // D-328 first-window probe (run 43587072230 attempt 2): the card never landed
+            // within the default 180s await — the 50,000-relation enumeration's first window
+            // was still pending when the deadline fired (the P1 trace's every-7s
+            // review.groupGate rows held count=value=50000 loadedGroupRows=0 for the whole
+            // wait; the screenshot showed only the 正在整理重复组…… line). The await is the
+            // WAIT CEILING, not the stage budget: run 43587072230's read proved the default
+            // fires long before group_disposition's limit is at risk, so this run raises it
+            // explicitly to 900s to MEASURE the real first-window landing time. The stage
+            // budget (5,400s) stays untouched, and only this call site passes the timeout —
+            // every other await keeps its default, so non-maximum rigs are unaffected. The
+            // probe mounts the D-328 milestone trace and the groupCardAwaitSamples capture
+            // on onPoll; the predicate is the exact pre-probe one (same text, same
+            // findNode path), and the failure is rethrown as the same instance so the
+            // stage's PASS/ERROR classification cannot drift.
+            val probe = GroupCardAwaitProbe(ui, evidence, spec.newSessionDuplicateRelations)
+            try {
+                ui.await(timeout = 900_000, onPoll = probe::onPoll) {
+                    ui.has(groupCardDisclosureText(spec.newSessionDuplicateRelations))
+                }
+                probe.end("card-opened")
+            } catch (failure: Throwable) {
+                val outcome =
+                    when {
+                        failure is IllegalStateException && failure.message == "UI condition deadline exceeded" -> "await-timeout"
+                        else -> "await-error"
+                    }
+                probe.end(outcome)
+                throw failure
+            }
             // D-217: the session tag (本次会话：<inputRef>) is no longer
             // verifiable in-chain — mainInputRef used to be discovered by the
             // chain's oracle read, which this design removed. The group
