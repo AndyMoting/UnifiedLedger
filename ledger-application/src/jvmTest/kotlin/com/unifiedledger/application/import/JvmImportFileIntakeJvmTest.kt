@@ -11,7 +11,6 @@ import com.unifiedledger.application.ImportFormatAvailability
 import com.unifiedledger.application.ImportFormatCapabilities
 import com.unifiedledger.application.ImportFormatUnavailableReason
 import com.unifiedledger.application.ImportFundingState
-import com.unifiedledger.application.import.selfentry.SelfEntryTemplateGenerator
 import com.unifiedledger.application.ImportIntakeBatchFailure
 import com.unifiedledger.application.ImportIntakeCommitPort
 import com.unifiedledger.application.ImportIntakeIdSource
