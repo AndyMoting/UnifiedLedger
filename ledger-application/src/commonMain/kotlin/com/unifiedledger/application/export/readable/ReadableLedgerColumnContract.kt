@@ -224,10 +224,17 @@ fun resolveReadableExportPresentation(
         TransactionKind.PREPAID_RECOGNITION,
         ->
             // ⑤/⑥ rg-10/rg-11: the category leg is the amount leg (positive expense side) and
-            // the unique remaining leg is the outflow counterpart. PREPAID_PURCHASE's real
-            // rg-11 shape (prepaid/cash asset legs, no category leg) does not match this
-            // contract and falls through with the group's rows. Golden: rg-10:1742-1758
+            // the unique remaining leg is the outflow counterpart. Golden: rg-10:1742-1758
             // (+300/−300), rg-11:901-919 (+33.33/−33.33 with category-main-service).
+            //
+            // REGISTERED SPEC-VS-GOLDEN DEVIATION (lead finding on batch a): the spec's D-E5 ⑤
+            // lists PREPAID_PURCHASE in this 「金额 = 分类腿」 group, but its GOLDEN leg shape
+            // (rg-11 states/main-01, `main-purchase-postings`) is payment_asset −100.00 (cash) +
+            // prepaid_asset +100.00 with NO category leg — the ⑤ contract cannot resolve it and
+            // the row falls through to the row-level 「（呈现未定）」 placeholder, counted as
+            // PRESENTATION_UNRESOLVED (D-032: never invent a category-anchored amount). The real
+            // database vector in ReadableExportRealLedgerReconciliationTest pins this; the spec
+            // text correction rides the lead's revision 3.
             singleCategoryLegShape(legs, categoryLegs, nonCategoryLegs)
 
         TransactionKind.REFUND_RECEIPT ->
