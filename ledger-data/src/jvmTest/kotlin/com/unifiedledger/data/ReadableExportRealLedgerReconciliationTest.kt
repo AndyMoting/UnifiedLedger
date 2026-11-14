@@ -37,10 +37,11 @@ import kotlin.time.Instant
  * face — no test shortcut replaces a production collaborator on the read side. The synthetic
  * ledger (see [ReadableExportReconciliationSeed]) covers every D-E5 group across the 16 kinds, a
  * voided transaction (V-6: absent from the file and the count), a multi-version correction, a
- * same-second tie, a cross-currency transfer, a fee transfer, the ③④ fallback leg shapes (the
- * rg-03 three-leg opening and the rg-10 bonus recharge → the row-level placeholders, 发生率 = 2),
- * the unnamed-account/blank-name placeholder, and an over-bound note on the SECOND page (R6
- * 中途检出, no commit — V-4's mid-walk leg on the real database).
+ * same-second tie, a cross-currency transfer, a fee transfer, the unnamed-account/blank-name
+ * placeholders, and an over-bound note on the LAST page (R6 中途检出, no commit — V-4's mid-walk
+ * leg on the real database). A dedicated vector pins PREPAID_PURCHASE's GOLDEN rg-11 shape
+ * (payment −N / prepaid +N, no category leg) falling through to 「（呈现未定）」 with
+ * PRESENTATION_UNRESOLVED and no commit — the registered spec-vs-golden deviation (lead finding).
  *
  * 落点说明 (registered for the batch report): the spec's "jvmTest（真库）" needs the real schema
  * and the real read adapter, which live in THIS module; `ledger-data` already api-depends on
@@ -109,6 +110,39 @@ class ReadableExportRealLedgerReconciliationTest {
         assertEquals(0, harness.sink.commitCount, "the mid-walk data-condition stop never commits (V-4)")
     }
 
+    @Test
+    fun theGoldenPrepaidPurchaseShapeFallsThroughToTheRowPlaceholderAndNeverCommits() {
+        // The registered spec-vs-golden deviation (lead finding, D-331): golden rg-11
+        // states/main-01 shapes PREPAID_PURCHASE as payment_asset −N + prepaid_asset +N with NO
+        // category leg, while the spec's D-E5 group ⑤ lists it under 「金额 = 分类腿」. The
+        // implementation follows the GOLDEN shape: the row falls through to the row-level
+        // 「（呈现未定）」placeholder, the export stops with PRESENTATION_UNRESOLVED and never
+        // commits — pinning this so a later change cannot "fix" it by wrongly re-anchoring
+        // PREPAID_PURCHASE onto a category leg (the spec text is corrected by the lead).
+        val harness = RealLedgerHarness()
+        harness.seed()
+        harness.seedPrepaidPurchaseGoldenShape()
+        val outcome = harness.exportAll(pageSize = 3)
+        val failed = assertIs<ReadableLedgerExportResult.Failed>(outcome.result)
+        assertEquals(ReadableLedgerExportFailure.PRESENTATION_UNRESOLVED, failed.reason)
+        assertEquals(0, harness.sink.commitCount, "a data-condition stop never commits (V-4)")
+
+        // The streamed row keeps the real kind label, the placeholder TEXT in 金额 (a STRING
+        // cell, never an invented amount) and the empty 币种/账户1/账户2/分类 cells.
+        val sheet = BoundedXlsxReader.read(outcome.bytes).firstSheet
+        val placeholderRow =
+            (1..sheet.lastRowNum)
+                .mapNotNull { sheet.getRow(it) }
+                .firstOrNull { it.getCell(2)?.string == "预付购买" }
+        assertNotNull(placeholderRow, "the 预付购买 row was streamed before the stop")
+        assertEquals(BoundedXlsxReader.CellType.STRING, assertNotNull(placeholderRow.getCell(3)).type)
+        assertEquals("（呈现未定）", assertNotNull(placeholderRow.getCell(3)).string)
+        assertEquals("", assertNotNull(placeholderRow.getCell(4)).string)
+        assertEquals("", assertNotNull(placeholderRow.getCell(5)).string)
+        assertEquals("", assertNotNull(placeholderRow.getCell(6)).string)
+        assertEquals("", assertNotNull(placeholderRow.getCell(7)).string)
+    }
+
     // ---------------------------------------------------------------- harness
 
     /** The local byte-counting sink (the ledger-application test fakes are not on this source set). */
@@ -174,6 +208,10 @@ class ReadableExportRealLedgerReconciliationTest {
 
         fun seed() {
             ReadableExportReconciliationSeed.seed(driver, ledgerId)
+        }
+
+        fun seedPrepaidPurchaseGoldenShape() {
+            ReadableExportReconciliationSeed.seedPrepaidPurchaseGoldenShape(driver, ledgerId)
         }
 
         fun seedOversizedNote() {

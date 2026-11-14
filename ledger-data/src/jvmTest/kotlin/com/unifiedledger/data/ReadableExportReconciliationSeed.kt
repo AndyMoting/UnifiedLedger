@@ -18,8 +18,10 @@ import kotlin.time.Instant
  * - ④ OPENING_BALANCE (+1000/−1000) [rg-01:175-188], STORED_VALUE_RECHARGE single (+1200/−1200)
  *   [rg-10 single-leg recharge], STORED_VALUE_PRE_ACTIVATION_BALANCE_ADJUSTMENT (+50/−50)
  * - ⑤ STORED_VALUE_SPEND (+300/−300 category/asset) [rg-10:1742-1758], STORED_VALUE_EXPIRY_LOSS
- *   (+25/−25), PREPAID_PURCHASE on its real two-asset-leg shape (prepaid +100/−100): the prepaid
- *   asset account maps to a hidden EXPENSE leaf, so the ⑤ contract resolves it (分类 = 服务/预付摊销)
+ *   (+25/−25); PREPAID_PURCHASE is NOT in this ledger (its golden rg-11 real shape —
+ *   payment_asset −N + prepaid_asset +N, NO category leg — falls through D-E5 ⑤ and would turn
+ *   the Succeeded walk into a data-condition stop; it is pinned by
+ *   [seedPrepaidPurchaseGoldenShape] + the dedicated fall-through vector test)
  * - ⑥ PREPAID_RECOGNITION (+33.33 category leg / −33.33 prepaid) [rg-11:901-919]
  * - ⑦ REFUND_RECEIPT (−12/+12)
  * - the unnamed-account placeholder leg (seed-acc-ghost has no catalog row → 账户1 = 未命名账户,
@@ -211,17 +213,6 @@ internal object ReadableExportReconciliationSeed {
             note = null,
             legs = listOf("seed-acc-expense-service" to (3_333L to "CNY:2"), "seed-acc-prepaid" to (-3_333L to "CNY:2")),
         )
-        // ⑤ 预付购买（预付资产腿 + 付款腿；预付账户通过映射分类锚定，见 catalog）.
-        insertTransaction(
-            driver, l,
-            id = "seed-prepaid-purchase",
-            kind = "PREPAID_PURCHASE",
-            canonical = null,
-            occurred = "2026-02-01T03:00:00Z",
-            statistics = "2026-02-01T03:00:00Z",
-            note = null,
-            legs = listOf("seed-acc-prepaid" to (10_000L to "CNY:2"), "seed-acc-bank" to (-10_000L to "CNY:2")),
-        )
         // 无名账户占位: seed-acc-ghost 不在 catalog → 账户1 落「未命名账户」.
         insertTransaction(
             driver, l,
@@ -342,6 +333,33 @@ internal object ReadableExportReconciliationSeed {
         )
     }
 
+    /**
+     * Seeds ONE PREPAID_PURCHASE in its golden rg-11 real shape (states/main-01): the
+     * `payment_asset` leg −N (cash) and the `prepaid_asset` leg +N — NO category leg. The D-E5
+     * ⑤ group's 「金额 = 分类腿」contract does NOT cover this two-asset-leg shape, so the row
+     * falls through to the row-level 「（呈现未定）」placeholder and the export stops with
+     * PRESENTATION_UNRESOLVED (never committed). This is the registered spec-vs-golden deviation:
+     * the spec lists PREPAID_PURCHASE in group ⑤, but the golden leg shape is category-less, and
+     * the implementation honestly falls through instead of inventing a category-anchored amount
+     * (D-032 不得猜测). The dedicated vector test pins this so no later change "fixes" it by
+     * wrongly re-anchoring PREPAID_PURCHASE onto a category leg.
+     */
+    fun seedPrepaidPurchaseGoldenShape(
+        driver: SqlDriver,
+        ledger: LedgerId,
+    ) {
+        insertTransaction(
+            driver, ledger.value,
+            id = "seed-prepaid-purchase",
+            kind = "PREPAID_PURCHASE",
+            canonical = null,
+            occurred = "2026-02-01T03:00:00Z",
+            statistics = "2026-02-01T03:00:00Z",
+            note = null,
+            legs = listOf("seed-acc-prepaid" to (10_000L to "CNY:2"), "seed-acc-bank" to (-10_000L to "CNY:2")),
+        )
+    }
+
     // ---------------------------------------------------------------- catalog + rows
 
     /**
@@ -378,7 +396,9 @@ internal object ReadableExportReconciliationSeed {
         account("seed-acc-expense-food", "EXPENSE", "餐饮支出", owned = 0, real = 0)
         account("seed-acc-expense-service", "EXPENSE", "服务支出", owned = 0, real = 0)
         account("seed-acc-fee", "EXPENSE", "手续费", owned = 0, real = 0)
-                fun category(
+        // The blank-name vector: an account row whose CURRENT name is empty → 「未命名账户」.
+        account("seed-acc-blank-name", "ASSET", "")
+        fun category(
             id: String,
             kind: String,
             parent: String?,
@@ -388,7 +408,9 @@ internal object ReadableExportReconciliationSeed {
             "INSERT INTO catalog_category (ledger_id, category_id, kind, parent_id, posting_account_id, active) " +
                 "VALUES ('$l', '$id', '$kind', ${parent?.let { "'$it'" } ?: "NULL"}, ${postingAccount?.let { "'$it'" } ?: "NULL"}, 1)",
         )
-        // catalog_category carries no name; the CURRENT name rides catalog_name_history.
+        // catalog_category carries no name; the CURRENT name rides catalog_name_history. The
+        // prepaid asset account deliberately carries NO category mapping: PREPAID_PURCHASE's
+        // golden shape (payment_asset −N / prepaid_asset +N) must fall through D-E5 ⑤ honestly.
         category("seed-cat-food-parent", "EXPENSE", null, null)
         category("seed-cat-food-leaf", "EXPENSE", "seed-cat-food-parent", "seed-acc-expense-food")
         category("seed-cat-service-parent", "EXPENSE", null, null)
@@ -396,11 +418,6 @@ internal object ReadableExportReconciliationSeed {
         category("seed-cat-income-parent", "INCOME", null, null)
         category("seed-cat-salary-leaf", "INCOME", "seed-cat-income-parent", "seed-acc-income-salary")
         category("seed-cat-fee", "EXPENSE", null, null)
-        // The prepaid asset account maps to a hidden EXPENSE leaf (kind-matched per
-        // validateProductCatalog), so the ⑤ contract's category leg exists on its real shape.
-        // The blank-name vector: an account row whose CURRENT name is empty.
-        account("seed-acc-blank-name", "ASSET", "")
-        category("seed-cat-prepaid-leaf", "EXPENSE", "seed-cat-service-parent", "seed-acc-prepaid")
         fun categoryName(
             ownerId: String,
             name: String,
@@ -416,7 +433,6 @@ internal object ReadableExportReconciliationSeed {
         categoryName("seed-cat-income-parent", "收入")
         categoryName("seed-cat-salary-leaf", "工资")
         categoryName("seed-cat-fee", "手续费")
-        categoryName("seed-cat-prepaid-leaf", "预付摊销")
     }
 
     private fun insertTransaction(
