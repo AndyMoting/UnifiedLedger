@@ -25,8 +25,8 @@ import com.unifiedledger.application.ImportReceipt
 import com.unifiedledger.application.ImportRequestIdentity
 import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.application.ImportStatusHistoryId
-import com.unifiedledger.application.SelfEntryMatchBasis
 import com.unifiedledger.application.SPINE_NO_CHANGE_REASON_CODE
+import com.unifiedledger.application.SelfEntryMatchBasis
 import com.unifiedledger.application.UuidV7Generator
 import com.unifiedledger.application.aggregateImportIntakeRecords
 import com.unifiedledger.application.import.selfentry.SelfEntryTemplateGenerator

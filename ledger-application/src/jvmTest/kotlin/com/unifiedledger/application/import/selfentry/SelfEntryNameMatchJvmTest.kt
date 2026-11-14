@@ -71,7 +71,10 @@ class SelfEntryNameMatchJvmTest {
             name = name,
         )
 
-    private fun catalog(accounts: List<Account>, categories: List<Category>): LedgerCatalog =
+    private fun catalog(
+        accounts: List<Account>,
+        categories: List<Category>,
+    ): LedgerCatalog =
         when (val result = LedgerCatalog.create(accounts, categories)) {
             is DomainResult.Success -> result.value
             is DomainResult.Failure -> throw IllegalStateException("fixture catalog rejected: ${result.violation}")
@@ -79,14 +82,11 @@ class SelfEntryNameMatchJvmTest {
 
     private fun matcher(catalog: LedgerCatalog): SelfEntryNameMatcher = SelfEntryNameMatcher(catalog)
 
-    private fun ordinary(inputs: SelfEntryMatchInputs): SelfEntryMatchOutcome =
-        matcher(fixtureCatalog()).match(inputs, ImportRecordKind.ORDINARY_FLOW_SOURCE, "out")
+    private fun ordinary(inputs: SelfEntryMatchInputs): SelfEntryMatchOutcome = matcher(fixtureCatalog()).match(inputs, ImportRecordKind.ORDINARY_FLOW_SOURCE, "out")
 
-    private fun income(inputs: SelfEntryMatchInputs): SelfEntryMatchOutcome =
-        matcher(fixtureCatalog()).match(inputs, ImportRecordKind.ORDINARY_FLOW_SOURCE, "in")
+    private fun income(inputs: SelfEntryMatchInputs): SelfEntryMatchOutcome = matcher(fixtureCatalog()).match(inputs, ImportRecordKind.ORDINARY_FLOW_SOURCE, "in")
 
-    private fun transfer(inputs: SelfEntryMatchInputs): SelfEntryMatchOutcome =
-        matcher(fixtureCatalog()).match(inputs, ImportRecordKind.TRANSFER_FLOW_SOURCE, "out")
+    private fun transfer(inputs: SelfEntryMatchInputs): SelfEntryMatchOutcome = matcher(fixtureCatalog()).match(inputs, ImportRecordKind.TRANSFER_FLOW_SOURCE, "out")
 
     /**
      * The shared fixture: 父A/父B both own a leaf 子X (the same-name pair), a unique leaf
@@ -394,14 +394,15 @@ class SelfEntryNameMatchJvmTest {
 
     @Test
     fun theBasisCarriesTheTypedReasonTokensAndBlankSourceTexts() {
-        val basis =
+        val unmatched =
             SelfEntryMatchOutcome.Unmatched(
                 categoryReason = SelfEntryMatchUnresolvedReason.CATEGORY_AMBIGUOUS,
                 fundingAccountReason = null,
                 fromAccountReason = null,
                 toAccountReason = SelfEntryMatchUnresolvedReason.ACCOUNT_NOT_FOUND,
                 unconsumedCategoryText = false,
-            ).toMatchBasis(SelfEntryMatchInputs("同名叶", "", "", ""))
+            )
+        val basis = unmatched.toMatchBasis(SelfEntryMatchInputs("同名叶", "", "", ""))
 
         assertEquals(SelfEntryMatchUnresolvedReason.CATEGORY_AMBIGUOUS.name, basis.categoryUnmatchedReason)
         assertNull(basis.categoryTargetName)
