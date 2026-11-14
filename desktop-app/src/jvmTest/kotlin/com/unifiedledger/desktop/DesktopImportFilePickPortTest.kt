@@ -162,7 +162,8 @@ class DesktopImportFilePickPortTest {
                     ImportFormatCapabilities.ALIPAY_CSV.identifier -> arrayOf("csv")
                     ImportFormatCapabilities.CMB_CSV.identifier -> arrayOf("csv")
                     ImportFormatCapabilities.CCB_XLS.identifier -> arrayOf("xls")
-                    else -> error("synthetic test expects one of the four frozen matrix formats: ${descriptor.identifier}")
+                    ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier -> arrayOf("xlsx")
+                    else -> error("synthetic test expects one of the frozen matrix formats: ${descriptor.identifier}")
                 }
             }
         ImportFormatCapabilities.ALL.forEachIndexed { index, descriptor ->

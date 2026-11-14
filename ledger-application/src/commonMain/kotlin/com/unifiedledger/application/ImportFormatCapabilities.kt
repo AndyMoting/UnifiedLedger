@@ -105,8 +105,28 @@ object ImportFormatCapabilities {
                 ),
         )
 
-    /** The frozen four-format matrix (D-146; UI filters its import entries on this list). */
-    val ALL: List<ImportFormatDescriptor> = listOf(WECHAT_XLSX, ALIPAY_CSV, CMB_CSV, CCB_XLS)
+    /**
+     * P8-04 self-entry XLSX (D-13, spec section 3 D-13): the runtime-generated 9-column
+     * template (D-16/D-17) imported back through `SelfEntryXlsxParser`. It enters the matrix
+     * in the pending state on Android — the honest "not yet" the preserved (a) intake gate
+     * and the pending copy were kept for — and is available on desktop, where the full JVM
+     * contract is reachable. The Android flip is i4's device-verification leg: a single
+     * declaration change here, zero matrix/pipeline mechanism changes.
+     */
+    val SELF_ENTRY_XLSX: ImportFormatDescriptor =
+        ImportFormatDescriptor(
+            identifier = ImportFormatId("self-entry-xlsx"),
+            displayName = "自填模板（XLSX）",
+            mimeFilters = listOf("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+            availability =
+                mapOf(
+                    ImportPlatformKind.ANDROID to ImportFormatAvailability.PENDING_DEVICE_VERIFICATION,
+                    ImportPlatformKind.DESKTOP to ImportFormatAvailability.AVAILABLE,
+                ),
+        )
+
+    /** The frozen format matrix (D-146 four formats + P8-04 D-13 fifth; UI filters its import entries on this list). */
+    val ALL: List<ImportFormatDescriptor> = listOf(WECHAT_XLSX, ALIPAY_CSV, CMB_CSV, CCB_XLS, SELF_ENTRY_XLSX)
 
     /**
      * Fail-loud descriptor lookup. An unknown identifier is an orchestration/programming

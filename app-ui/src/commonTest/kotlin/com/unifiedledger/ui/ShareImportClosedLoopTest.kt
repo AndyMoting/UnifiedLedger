@@ -1,6 +1,7 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.ImportFileIntakeOutcome
+import com.unifiedledger.application.ImportFormatAvailability
 import com.unifiedledger.application.ImportIntakeRecordDisposition
 import com.unifiedledger.application.ImportIntakeRecordSummary
 import com.unifiedledger.application.ImportPlatformKind
@@ -201,9 +202,20 @@ class ShareImportClosedLoopTest {
     @Test
     fun theMatrixFormatsTheSharePromptOffersAreTheExistingCapabilityMatrix() {
         // Invariant 1: the format choices are the EXISTING capability matrix (no new list).
+        // P8-04 i2 (D-13): the matrix itself gained the fifth entry with Android-pending
+        // availability — the share prompt mirrors the matrix (R-Q08-3 honest availability),
+        // so the offered count follows the matrix, not a hand-frozen four.
         val android = importFormatEntries(ImportPlatformKind.ANDROID)
-        assertEquals(4, android.size)
-        assertEquals(listOf("wechat-xlsx", "alipay-csv", "cmb-csv", "ccb-xls"), android.map { it.descriptor.identifier.value })
+        assertEquals(5, android.size)
+        assertEquals(
+            listOf("wechat-xlsx", "alipay-csv", "cmb-csv", "ccb-xls", "self-entry-xlsx"),
+            android.map { it.descriptor.identifier.value },
+        )
+        // The fifth entry is offered with its honest pending availability, not silently hidden.
+        assertEquals(
+            ImportFormatAvailability.PENDING_DEVICE_VERIFICATION,
+            android.last().availability,
+        )
     }
 
     // ---------------------------------------------------------------- absorption discipline

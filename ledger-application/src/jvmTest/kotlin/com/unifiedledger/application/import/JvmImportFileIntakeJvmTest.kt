@@ -7,8 +7,10 @@ import com.unifiedledger.application.ImportContentFingerprint
 import com.unifiedledger.application.ImportEvidenceId
 import com.unifiedledger.application.ImportFileIntakeInput
 import com.unifiedledger.application.ImportFileIntakeOutcome
+import com.unifiedledger.application.ImportFormatAvailability
 import com.unifiedledger.application.ImportFormatCapabilities
 import com.unifiedledger.application.ImportFormatUnavailableReason
+import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportIntakeBatchFailure
 import com.unifiedledger.application.ImportIntakeCommitPort
 import com.unifiedledger.application.ImportIntakeIdSource
@@ -25,6 +27,7 @@ import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.SPINE_NO_CHANGE_REASON_CODE
 import com.unifiedledger.application.UuidV7Generator
 import com.unifiedledger.application.aggregateImportIntakeRecords
+import com.unifiedledger.application.import.selfentry.SelfEntryTemplateGenerator
 import com.unifiedledger.domain.LedgerId
 import java.nio.file.Files
 import java.nio.file.Path
@@ -438,6 +441,83 @@ class JvmImportFileIntakeJvmTest {
         val failure = assertIs<ImportIntakeBatchFailure.ParserRejected>(rejected.failure)
         assertEquals("INPUT_DECODE_FAILED", failure.diagnostic.code)
         assertEquals(0, port.snapshots.size)
+    }
+
+    // ---------------------------------------------------------------- P8-04 i2: the fifth matrix format (D-13/D-16)
+
+    /**
+     * The orchestrator dispatches SELF_ENTRY_XLSX to the new parser exactly like the four
+     * frozen arms: the generated template's 3 example rows reach the spine as their D-16
+     * facts (with the 币种-blank rows riding the incomplete-candidate path), and the
+     * D-18 missing-leg pin is observable on the snapshot.
+     */
+    @Test
+    fun selfEntryXlsxDispatchesToTheNewParserWithTheD16Facts() {
+        val port = RecordingIntakePort()
+        val templateBytes = SelfEntryTemplateGenerator.generateTemplate()
+        val outcome =
+            orchestrator(port).intake(
+                ImportFileIntakeInput(
+                    format = ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier,
+                    platform = ImportPlatformKind.DESKTOP,
+                    session = newSession(),
+                    bytes = templateBytes,
+                ),
+            )
+
+        val accepted = assertIs<ImportFileIntakeOutcome.Accepted>(outcome)
+        assertEquals(3, accepted.records.size)
+        assertTrue(accepted.records.all { it.disposition == ImportIntakeRecordDisposition.INTAKE_ACCEPTED })
+        assertEquals(3, port.snapshots.size)
+        val expense = port.snapshots[0]
+        assertEquals(com.unifiedledger.application.ImportRecordKind.ORDINARY_FLOW_SOURCE, expense.recordKind)
+        assertEquals("out", expense.facts.directionToken)
+        assertEquals(1234L, expense.facts.amountMinor)
+        assertEquals("2026-01-01T10:00:00+08:00", expense.facts.occurredAt)
+        assertEquals(ImportFundingState.SETTLED, expense.facts.fundingState)
+        val transfer = port.snapshots[2]
+        assertEquals(com.unifiedledger.application.ImportRecordKind.TRANSFER_FLOW_SOURCE, transfer.recordKind)
+        assertEquals(ImportFundingState.SETTLED, transfer.facts.fundingState)
+    }
+
+    /**
+     * D-13: the fifth format enters the matrix in the pending state on Android, so the
+     * preserved (a) gate fires typed with PENDING_DEVICE_VERIFICATION — zero read, zero
+     * parse, zero dispatch (the branch's first live exerciser since the CCB flip).
+     */
+    @Test
+    fun selfEntryXlsxOnAndroidIsTheTypedPendingGateWithZeroDispatch() {
+        val port = RecordingIntakePort()
+        val outcome =
+            orchestrator(port).intake(
+                ImportFileIntakeInput(
+                    format = ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier,
+                    platform = ImportPlatformKind.ANDROID,
+                    session = newSession(),
+                    bytes = ByteArray(0),
+                ),
+            )
+
+        val rejected = assertIs<ImportFileIntakeOutcome.Rejected>(outcome)
+        val failure = assertIs<ImportIntakeBatchFailure.FormatUnavailable>(rejected.failure)
+        assertEquals(ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier, failure.formatId)
+        assertEquals(ImportFormatUnavailableReason.PENDING_DEVICE_VERIFICATION, failure.reason)
+        assertEquals(0, port.snapshots.size)
+    }
+
+    /** The matrix declaration itself (D-13): five formats, Android pending / Desktop available on the fifth. */
+    @Test
+    fun theMatrixCarriesTheFifthDescriptorAsPendingOnAndroidAndAvailableOnDesktop() {
+        assertEquals(5, ImportFormatCapabilities.ALL.size)
+        assertEquals("self-entry-xlsx", ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier.value)
+        assertEquals(
+            ImportFormatAvailability.PENDING_DEVICE_VERIFICATION,
+            ImportFormatCapabilities.SELF_ENTRY_XLSX.availabilityOn(ImportPlatformKind.ANDROID),
+        )
+        assertEquals(
+            ImportFormatAvailability.AVAILABLE,
+            ImportFormatCapabilities.SELF_ENTRY_XLSX.availabilityOn(ImportPlatformKind.DESKTOP),
+        )
     }
 
     // ---------------------------------------------------------------- D06 sanitization (plan 6.3)

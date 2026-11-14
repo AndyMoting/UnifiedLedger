@@ -792,10 +792,10 @@ class P503ImportReviewRenderItemsTest {
             )
         val items = importReviewRenderItems(view, ImportPlatformKind.ANDROID)
         // Static sections (TitleBar + 2 dividers + format header + pending header + one group
-        // header) + the 4-entry Android format matrix + the session block (1 header + 2 summary
-        // lines + 1 record line) + the 10,000 candidate rows + 1 disposition affordance button +
-        // the card's 1 header + 10,000 flat items + 1 footer = 20,017 items — zero loss, zero new
-        // cap (C5: nothing is truncated).
+        // header) + the FIVE-entry Android format matrix (P8-04 i2 D-13 added self-entry-xlsx) +
+        // the session block (1 header + 2 summary lines + 1 record line) + the 10,000 candidate
+        // rows + 1 disposition affordance button + the card's 1 header + 10,000 flat items +
+        // 1 footer = 20,018 items — zero loss, zero new cap (C5: nothing is truncated).
         val staticSections = 6
         val sessionBlock = 1 + importIntakeSessionLines(view.lastIntakeSession!!).size + 1
         val affordance = 1
@@ -803,7 +803,7 @@ class P503ImportReviewRenderItemsTest {
             staticSections + importFormatEntries(ImportPlatformKind.ANDROID).size + sessionBlock + 10_000 + affordance + 1 + 10_000 + 1,
             items.size,
         )
-        assertEquals(20_017, items.size)
+        assertEquals(20_018, items.size)
         // Order: the card header sits right after the affordance button; the 10,000 flat items
         // follow in page order; the footer is immediately before the first candidate row (the
         // affordance/card deliberately precede the 20k candidate list).
@@ -837,20 +837,21 @@ class P503ImportReviewRenderItemsTest {
                 ImportPlatformKind.ANDROID,
             )
         // Static sections (TitleBar + 2 dividers + format header + pending header + one group
-        // header) + the 4-entry Android format matrix + all 10,000 candidate rows — zero loss,
-        // zero new cap (no silent truncation of the candidate list itself).
+        // header) + the FIVE-entry Android format matrix (P8-04 i2 D-13) + all 10,000 candidate
+        // rows — zero loss, zero new cap (no silent truncation of the candidate list itself).
         val staticSections = 6
         assertEquals(
             staticSections + importFormatEntries(ImportPlatformKind.ANDROID).size + 10_000,
             items.size,
         )
-        assertEquals(10_010, items.size)
+        assertEquals(10_011, items.size)
         assertIs<ImportReviewRenderItem.TitleBar>(items.first())
-        val header = assertIs<ImportReviewRenderItem.GroupHeader>(items[9])
+        // The fifth matrix entry shifts the group header one slot later (10 -> 11).
+        val header = assertIs<ImportReviewRenderItem.GroupHeader>(items[10])
         assertEquals(ImportCandidateClass.PENDING_USER_DECISION, header.classToken)
         assertEquals(10_000, header.rowCount)
         // First and last candidate items are the first and last fixture rows, in order.
-        assertEquals("candidate:candidate-00000", items[10].stableKey)
+        assertEquals("candidate:candidate-00000", items[11].stableKey)
         assertEquals("candidate:candidate-09999", items.last().stableKey)
         val candidates = items.filterIsInstance<ImportReviewRenderItem.CandidateItem>()
         assertEquals(10_000, candidates.size)
