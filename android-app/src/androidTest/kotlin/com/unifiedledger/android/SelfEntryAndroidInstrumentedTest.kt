@@ -1,6 +1,7 @@
 package com.unifiedledger.android
 
 import android.net.Uri
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.ImportFileIntakeInput
@@ -25,6 +26,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.ByteArrayOutputStream
+import java.util.Locale
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 /**
  * P8-04 i4 (spec `docs/specs/2026-11-14-p8-04-self-entry-import-design.md` §4 i4, V-6): the
@@ -55,6 +59,14 @@ import java.io.ByteArrayOutputStream
  *    composition-root catalog supplier supplies the authoritative snapshot, and the template's
  *    3 example rows land as candidates whose summaries carry the D-19 match basis — the i3a/i3b
  *    capability is alive on the device.
+ * 5. DEVICE LARGE-SAMPLE READING (V-7 设备大样本读数, i4b): one RECORDED device reading of a
+ *    synthetic self-entry intake at the 1,000-row tier — the timed `intake` lands every row as
+ *    a candidate on the device's real ledger, the candidate count is asserted structurally,
+ *    and the reading goes into ONE grep-able logcat line. NO DURATION IS ASSERTED (the P8-02
+ *    V-8 device-timing discipline): a green run is never read as "fast enough". The 10,000
+ *    tier is the jvmTest real-ledger legs' burden (`DesktopImportSpineReplayAndL2Boundary
+ *    CompositionRootTest`); the maximum tier's device reading belongs to the Rig/D-7 reading
+ *    legs and is NOT registered here.
  *
  * Test data is fully synthetic (the generator's own frozen example rows; the seeded fixture
  * account plus one created 现金 account). Amounts ride the parser's BigDecimal-text contract.
@@ -230,6 +242,138 @@ class SelfEntryAndroidInstrumentedTest {
         }
     }
 
+    // ------------------------------------------------------------------ 5: the V-7 device large-sample reading (i4b)
+
+    /**
+     * V-7 设备大样本读数 (i4b): a 1,000-row synthetic self-entry intake on the device's real
+     * production ledger. The timed call is the production `intake` dispatch end-to-end (parse
+     * + spine transactions); the only asserted numbers are STRUCTURAL (the row and candidate
+     * counts, one frozen page read). The wall-clock reading rides one logcat line
+     * (`P804-V7DEV`) and is never asserted: a green run means "correct", never "fast enough"
+     * (the P8-02 V-8 device-timing discipline).
+     *
+     * Scale rationale: 1,000 rows keeps the case safely inside the ordinary device regression
+     * wall clock while exercising the same parse/spine chain the JVM's 10,000-row real-ledger
+     * legs pin; the 10,000 tier on a device belongs to the Rig/D-7 reading legs, not this
+     * batch.
+     */
+    @Test
+    fun aThousandRowSyntheticIntakeLandsOnTheDeviceLedgerWithARecordedReading() {
+        P801ChainFixture("v7dev").use { fixture ->
+            fixture.open()
+            val facade = fixture.graph.facade
+
+            val bytes = largeSyntheticSelfEntryWorkbook(LARGE_SAMPLE_ROWS)
+
+            val start = System.nanoTime()
+            val outcome =
+                facade.importFileIntake!!.intake(
+                    ImportFileIntakeInput(
+                        format = ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier,
+                        platform = ImportPlatformKind.ANDROID,
+                        session = facade.importIntakeSessionFactory()!!,
+                        bytes = bytes,
+                    ),
+                )
+            val intakeMs = (System.nanoTime() - start) / 1_000_000.0
+
+            val intaken = present("the large-sample intake outcome", outcome as? ImportFileIntakeOutcome.Accepted)
+            assertEquals(LARGE_SAMPLE_ROWS, intaken.records.size)
+            assertTrue(
+                "every row must land as a new intake",
+                intaken.records.all { it.disposition == ImportIntakeRecordDisposition.INTAKE_ACCEPTED },
+            )
+            assertEquals(LARGE_SAMPLE_ROWS, intaken.newCandidateIds.size)
+
+            // The candidates are readable on the device's real ledger: one frozen-size page
+            // read proves the rows landed without walking all 1,000.
+            val rows =
+                facade
+                    .queryImportReviewRows!!
+                    .queryPage(facade.ledgerId, 10L, null)
+            val page = present("the large-sample review page", rows as? ImportReviewRowsPageResult.Page)
+            assertEquals(10, page.rows.size)
+
+            // The recorded reading: one grep-able logcat line (no duration assertion).
+            val line =
+                "$PREFIX rows=$LARGE_SAMPLE_ROWS intakeMs=" +
+                    String.format(Locale.ROOT, "%.1f", intakeMs) +
+                    " candidates=${intaken.newCandidateIds.size} pageSize=${page.rows.size}"
+            for (chunk in line.chunked(LOGCAT_CHUNK)) {
+                Log.i(TAG, chunk)
+            }
+        }
+    }
+
+    /**
+     * A 1,000-row synthetic 9-column workbook, string-built: the generator's six-part minimal
+     * OOXML shape, the frozen 9-string header verbatim from `SelfEntryTemplateGenerator`
+     * (never a hand copy), every row a distinct 日期时间 and 金额, and the 币种 cell always
+     * filled (no inference diagnostics). The amount column is an exact-text numeric cell —
+     * the generator's own shape.
+     */
+    private fun largeSyntheticSelfEntryWorkbook(rowCount: Int): ByteArray {
+        val sharedStrings = LinkedHashSet<String>()
+        sharedStrings.addAll(HEADERS)
+
+        fun shared(text: String): String {
+            sharedStrings.add(text)
+            return "<c t=\"s\"><v>${sharedStrings.toList().indexOf(text)}</v></c>"
+        }
+
+        val dataRows = StringBuilder()
+        for (ordinal in 0 until rowCount) {
+            val month = (3 + ordinal % 10).toString().padStart(2, '0')
+            val day = (1 + ordinal / 10 % 28).toString().padStart(2, '0')
+            dataRows.append("<row r=\"").append(ordinal + 2).append("\">")
+            dataRows.append(shared("支出"))
+            dataRows.append(shared("2026-$month-$day 08:00:00"))
+            val amount = (ordinal + 1).toString() + "." + (ordinal % 100).toString().padStart(2, '0')
+            dataRows.append("<c><v>").append(amount).append("</v></c>")
+            dataRows.append(shared("CNY"))
+            dataRows.append(shared("餐饮"))
+            dataRows.append(shared("现金"))
+            dataRows.append("</row>")
+        }
+        val sharedStringsXml =
+            StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>")
+                .append("<sst xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" count=\"")
+                .append(sharedStrings.size)
+                .append("\" uniqueCount=\"")
+                .append(sharedStrings.size)
+                .append("\">")
+        for (text in sharedStrings) {
+            sharedStringsXml.append("<si><t>").append(text).append("</t></si>")
+        }
+        sharedStringsXml.append("</sst>")
+        val sheetXml =
+            StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>")
+                .append("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>")
+                .append("<row r=\"1\">")
+                .append(HEADERS.joinToString("") { header -> shared(header) })
+                .append("</row>")
+                .append(dataRows)
+                .append("</sheetData></worksheet>")
+        val parts =
+            linkedMapOf(
+                CONTENT_TYPES_PART to CONTENT_TYPES_XML.toByteArray(Charsets.UTF_8),
+                WORKBOOK_PART to WORKBOOK_XML.toByteArray(Charsets.UTF_8),
+                WORKBOOK_RELS_PART to WORKBOOK_RELS_XML.toByteArray(Charsets.UTF_8),
+                ROOT_RELS_PART to ROOT_RELS_XML.toByteArray(Charsets.UTF_8),
+                SHARED_STRINGS_PART to sharedStringsXml.toString().toByteArray(Charsets.UTF_8),
+                SHEET_PART to sheetXml.toString().toByteArray(Charsets.UTF_8),
+            )
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out).use { zip ->
+            parts.forEach { (name, partBytes) ->
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(partBytes)
+                zip.closeEntry()
+            }
+        }
+        return out.toByteArray()
+    }
+
     /** JUnit assertNotNull returns void; this returns the value for Kotlin expression use. */
     private fun <T> present(
         message: String,
@@ -237,5 +381,53 @@ class SelfEntryAndroidInstrumentedTest {
     ): T {
         assertNotNull(message, value)
         return value!!
+    }
+
+    private companion object {
+        const val TAG = "UnifiedLedger"
+        const val PREFIX = "P804-V7DEV"
+        const val LOGCAT_CHUNK = 1_000
+
+        /** The device large-sample tier (i4b): the CI wall-clock discipline's safe row count. */
+        const val LARGE_SAMPLE_ROWS = 1_000
+
+        const val CONTENT_TYPES_PART = "[Content_Types].xml"
+        const val ROOT_RELS_PART = "_rels/.rels"
+        const val WORKBOOK_PART = "xl/workbook.xml"
+        const val WORKBOOK_RELS_PART = "xl/_rels/workbook.xml.rels"
+        const val SHARED_STRINGS_PART = "xl/sharedStrings.xml"
+        const val SHEET_PART = "xl/worksheets/sheet1.xml"
+
+        /** The frozen header strings are the generator's own constants (never hand copies). */
+        val HEADERS: List<String> = SelfEntryTemplateGenerator.HEADERS.toList()
+
+        const val CONTENT_TYPES_XML =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">" +
+                "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>" +
+                "<Default Extension=\"xml\" ContentType=\"application/xml\"/>" +
+                "<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>" +
+                "<Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>" +
+                "<Override PartName=\"/xl/sharedStrings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml\"/>" +
+                "</Types>"
+
+        const val ROOT_RELS_XML =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>" +
+                "</Relationships>"
+
+        const val WORKBOOK_XML =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" " +
+                "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">" +
+                "<sheets><sheet name=\"Sheet1\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>"
+
+        const val WORKBOOK_RELS_XML =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>" +
+                "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings\" Target=\"sharedStrings.xml\"/>" +
+                "</Relationships>"
     }
 }
