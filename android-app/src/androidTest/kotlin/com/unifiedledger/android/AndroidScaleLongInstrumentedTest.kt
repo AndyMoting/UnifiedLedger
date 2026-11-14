@@ -625,6 +625,14 @@ class AndroidScaleLongInstrumentedTest {
         // reopen(), after ui.launch(), where the UI displays exactly the
         // snapshot-consistent final list.
         stage("group_disposition", 5400000) {
+            // D-323 (run 43513000303 evidence): the D-322 count-driven entry renders at the TOP of
+            // the review list (the affordance sits in the preamble BEFORE all candidate rows), but
+            // detail_decision's walk parks the viewport at the batch flow's depth (~1,972nd
+            // candidate on maximum). seek() only moves FORWARD, and a LazyColumn row above the
+            // viewport is not in the a11y tree — the previous plain seek could never reach the
+            // button. seekBackToTop first (the same marker walk openCandidate uses,
+            // AndroidScaleUi seekBackToTop): the button is then one small forward scan away.
+            ui.seekBackToTop("刷新清单")
             ui.seek("整组标记为重复")
             ui.click("整组标记为重复")
             ui.await { ui.has("将逐条提交人工审核判定为重复，每条独立生效；某一条失败不影响其余各条。共 " + spec.newSessionDuplicateRelations + " 条。") }
