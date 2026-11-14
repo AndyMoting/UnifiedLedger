@@ -1,5 +1,7 @@
 package com.unifiedledger.application
 
+import com.unifiedledger.domain.LedgerCatalog
+
 /**
  * P7-04.B intake orchestration contract (D-146 Q09, spec sections 3.2/4.2).
  *
@@ -132,6 +134,32 @@ enum class ImportIntakeRecordDisposition {
 }
 
 /**
+ * P8-04 i3a (D-18/D-19): the self-entry name-match basis of one candidate row, carried on
+ * the summary for the review detail's match-basis display area (D-19; rendered by i3b).
+ * Source texts are the row's verbatim cell texts (D-016: match inputs are session data,
+ * never source facts); target names are the catalog display names; unresolved reasons are
+ * the stable [com.unifiedledger.application.import.selfentry.SelfEntryMatchUnresolvedReason]
+ * token names. Session display data only: never persisted, never part of the content
+ * fingerprint, dies with the session like the decision drafts.
+ */
+data class SelfEntryMatchBasis(
+    val categorySourceText: String,
+    val categoryTargetName: String?,
+    val categoryUnmatchedReason: String?,
+    val fundingAccountSourceText: String,
+    val fundingAccountTargetName: String?,
+    val fundingAccountUnmatchedReason: String?,
+    val fromAccountSourceText: String,
+    val fromAccountTargetName: String?,
+    val fromAccountUnmatchedReason: String?,
+    val toAccountSourceText: String,
+    val toAccountTargetName: String?,
+    val toAccountUnmatchedReason: String?,
+    /** D-18: a transfer row carried non-blank category text, which a transfer never consumes. */
+    val unconsumedCategoryText: Boolean,
+)
+
+/**
  * One record's intake summary (spec 4.2.2: "逐记录结果摘要"). Diagnostic fields are only
  * populated for [ImportIntakeRecordDisposition.PARSER_REJECTED] and
  * [ImportIntakeRecordDisposition.INTAKE_REJECTED], and only ever carry the D-097
@@ -144,6 +172,13 @@ data class ImportIntakeRecordSummary(
     val diagnosticSeverity: String? = null,
     val diagnosticScope: String? = null,
     val diagnosticFieldRole: String? = null,
+    /**
+     * P8-04 i3a (D-18/D-19): the self-entry row's name-match basis, only on the SELF_ENTRY
+     * arm; null keeps every other format's summaries byte-identical. Unlike the D-097
+     * digest fields this deliberately carries the row's own verbatim cell texts: the basis
+     * is the D-19 display data the user matched with their own hands, not a diagnostic.
+     */
+    val matchBasis: SelfEntryMatchBasis? = null,
 )
 
 /** Aggregated single-file intake outcome (spec section 4.2.3 (g)). */
@@ -187,6 +222,14 @@ data class ImportFileIntakeInput(
     val platform: ImportPlatformKind,
     val session: ImportIntakeSessionIdentity,
     val bytes: ByteArray,
+    /**
+     * P8-04 i3a (D-18): the current authoritative catalog snapshot for the SELF_ENTRY arm's
+     * name matching. Nullable so every four-argument construction (the app-ui host, the
+     * startup tests) keeps compiling with matching simply absent — the composition roots
+     * inject the fresh store-backed catalog per dispatch (the manual-flow V-2 supply
+     * precedent); a null catalog leaves the self-entry rows' completeness untouched.
+     */
+    val catalog: LedgerCatalog? = null,
 )
 
 /**

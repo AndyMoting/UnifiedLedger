@@ -33,10 +33,15 @@ import com.unifiedledger.application.import.cmb.CmbBatchResult
 import com.unifiedledger.application.import.cmb.CmbBillParser
 import com.unifiedledger.application.import.cmb.CmbDiagnostic
 import com.unifiedledger.application.import.cmb.CmbRowResult
+import com.unifiedledger.application.import.selfentry.SELF_ENTRY_CANDIDATE_RULE
 import com.unifiedledger.application.import.selfentry.SelfEntryBatchResult
 import com.unifiedledger.application.import.selfentry.SelfEntryDiagnostic
+import com.unifiedledger.application.import.selfentry.SelfEntryMatchInputs
+import com.unifiedledger.application.import.selfentry.SelfEntryMatchOutcome
+import com.unifiedledger.application.import.selfentry.SelfEntryNameMatcher
 import com.unifiedledger.application.import.selfentry.SelfEntryRowResult
 import com.unifiedledger.application.import.selfentry.SelfEntryXlsxParser
+import com.unifiedledger.application.import.selfentry.toMatchBasis
 import com.unifiedledger.application.import.wechat.WechatBatchResult
 import com.unifiedledger.application.import.wechat.WechatBillParser
 import com.unifiedledger.application.import.wechat.WechatDiagnostic
@@ -71,6 +76,20 @@ import kotlin.coroutines.cancellation.CancellationException
  * Per-row parser rejections are carried in the summaries as safe-location digests only
  * (code/severity/scope/ordinal/field role — D-097/D06); raw row content, file names and
  * personal identifiers never reach the outcome.
+ *
+ * P8-04 i3a (D-18): the SELF_ENTRY arm name-matches every accepted row against the input's
+ * catalog snapshot — one matcher per dispatch, indexes assembled once. The match outcome is
+ * a prefill-draft and display carrier only (D-017: matching never decides; D-016: the match
+ * inputs are session data, never part of the content fingerprint). A [SelfEntryMatchOutcome.Matched]
+ * row keeps its parsed completeness and rides the rule override `self_entry_v1`; an
+ * [SelfEntryMatchOutcome.Unmatched] row (including every ambiguous face — D-18 counts
+ * ambiguity as no match) has its completeness DEMOTED from VALID_COMPLETE to
+ * VALID_INCOMPLETE before the request is built — exactly the D-6 failure semantics, so the
+ * demoted row lands on the low `confidenceFor` value and never reaches the
+ * VALID_COMPLETE+SETTLED duplicate-family gate — and its summary carries the typed
+ * [SelfEntryMatchBasis] (D-19 display data, consumed by i3b). An input without a catalog
+ * (every construction predating i3a) leaves the rows' completeness untouched and carries no
+ * basis — matching is simply absent.
  */
 class JvmImportFileIntake(
     private val ledgerId: LedgerId,
@@ -137,6 +156,11 @@ class JvmImportFileIntake(
         // shared handle, per-record memoized requestIds).
         val generatedAt = candidateGeneratedAt()
 
+        // P8-04 i3a (D-18): one matcher per dispatch over the input's catalog snapshot; the
+        // name indexes are assembled once here and reused for every row. A null catalog
+        // (every pre-i3a construction) disables the SELF_ENTRY arm's matching entirely.
+        val selfEntryMatcher = input.catalog?.let { SelfEntryNameMatcher(it) }
+
         // (f) Per-record dispatch through the spine use case.
         val summaries = mutableListOf<ImportIntakeRecordSummary>()
         val newCandidateIds = mutableListOf<ImportCandidateId>()
@@ -154,6 +178,20 @@ class JvmImportFileIntake(
                         )
                 }
                 is ParsedRecord.Accepted -> {
+                    // P8-04 i3a (D-18): the self-entry arm matches against the catalog
+                    // snapshot first; the outcome shapes the request (completeness demotion)
+                    // and the summary (the D-19 basis). The rule override rides the ARM
+                    // itself (every self-entry candidate is `self_entry_v1`, with or without
+                    // a catalog); matching, the basis and the demotion need the catalog. All
+                    // other formats keep the exact pre-i3a shape.
+                    val matchInputs = record.matchInputs
+                    val matchOutcome = matchInputs?.let { inputs -> selfEntryMatcher?.match(inputs, record.recordKind, record.facts.directionToken) }
+                    val completeness =
+                        if (matchOutcome is SelfEntryMatchOutcome.Unmatched && record.completeness == ImportCompleteness.VALID_COMPLETE) {
+                            ImportCompleteness.VALID_INCOMPLETE
+                        } else {
+                            record.completeness
+                        }
                     val request =
                         ImportIntakeRequest(
                             identity = ImportRequestIdentity(ledgerId, session.requestIdFor(record.ordinal)),
@@ -161,9 +199,10 @@ class JvmImportFileIntake(
                             recordOrdinal = record.ordinal,
                             recordKind = record.recordKind,
                             facts = record.facts,
-                            completeness = record.completeness,
+                            completeness = completeness,
                             candidateGeneratedAt = generatedAt,
                             paymentProfile = record.paymentProfile,
+                            candidateRuleOverride = if (matchInputs != null) SELF_ENTRY_CANDIDATE_RULE else null,
                         )
                     // DEF-IMPORT-ENOSPC-CRASH-01 (D-276 item 2): the catch wraps this dispatch
                     // call only — never the parser above, never the aggregation below. An
@@ -191,6 +230,7 @@ class JvmImportFileIntake(
                                 ImportIntakeRecordSummary(
                                     recordOrdinal = record.ordinal,
                                     disposition = ImportIntakeRecordDisposition.INTAKE_ACCEPTED,
+                                    matchBasis = matchOutcome?.toMatchBasis(record.matchInputs),
                                 )
                             newCandidateIds += result.receipt.candidateId
                         }
@@ -199,6 +239,7 @@ class JvmImportFileIntake(
                                 ImportIntakeRecordSummary(
                                     recordOrdinal = record.ordinal,
                                     disposition = ImportIntakeRecordDisposition.INTAKE_NO_CHANGE,
+                                    matchBasis = matchOutcome?.toMatchBasis(record.matchInputs),
                                 )
                         is ImportIntakeResult.Rejected ->
                             summaries +=
@@ -208,6 +249,7 @@ class JvmImportFileIntake(
                                     diagnosticCode = result.diagnostic.code,
                                     diagnosticSeverity = result.diagnostic.severity,
                                     diagnosticScope = result.diagnostic.scope,
+                                    matchBasis = matchOutcome?.toMatchBasis(record.matchInputs),
                                 )
                     }
                 }
@@ -239,6 +281,12 @@ class JvmImportFileIntake(
             val facts: ImportSourceFacts,
             val completeness: ImportCompleteness,
             val paymentProfile: ImportPaymentProfile?,
+            /**
+             * P8-04 i3a (D-18): the self-entry row's verbatim name inputs, folded into the
+             * dispatch arm (not dropped at the boundary anymore); null on every other arm
+             * keeps the four frozen arms byte-identical.
+             */
+            val matchInputs: SelfEntryMatchInputs? = null,
         ) : ParsedRecord
 
         class Rejected(
@@ -297,7 +345,9 @@ class JvmImportFileIntake(
 
     // P8-04 i2 arm (D-13): the same dispatch/error-mapping shape as the four frozen arms —
     // the parser's row results carry no payment profile (v1/v2 kinds only), so the profile
-    // slot stays null exactly like the WeChat/CMB/CCB arms.
+    // slot stays null exactly like the WeChat/CMB/CCB arms. P8-04 i3a (D-18) folds the
+    // verbatim name inputs into the arm (the i2 boundary dropped them), so the loop's
+    // matcher can consume them.
     private fun parseSelfEntry(
         inputRef: String,
         bytes: ByteArray,
@@ -305,7 +355,7 @@ class JvmImportFileIntake(
         toParsedBatch(SelfEntryXlsxParser.parse(inputRef, bytes)) { row ->
             when (row) {
                 is SelfEntryRowResult.Accepted ->
-                    ParsedRecord.Accepted(row.recordOrdinal, row.recordKind, row.facts, row.completeness, null)
+                    ParsedRecord.Accepted(row.recordOrdinal, row.recordKind, row.facts, row.completeness, null, row.matchInputs)
                 is SelfEntryRowResult.Rejected -> ParsedRecord.Rejected(row.recordOrdinal, row.diagnostics.first().toDigest())
             }
         }
