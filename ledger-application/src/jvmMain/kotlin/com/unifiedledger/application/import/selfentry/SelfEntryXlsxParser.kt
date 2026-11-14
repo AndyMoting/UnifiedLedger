@@ -325,8 +325,8 @@ object SelfEntryXlsxParser {
         // would be exactly the re-direction D-9 forbids). A negative magnitude on an
         // undirected 转账 row has no direction to contradict and fails the magnitude
         // domain instead (the WechatBillParser "negative values are out of the frozen
-        // domain" face).
-        if (amount.negative) {
+        // domain" face). `amount` is minor units (Long): the sign test is `< 0L`.
+        if (amount < 0L) {
             if (typeToken == SelfEntrySourceTokens.TYPE_EXPENSE || typeToken == SelfEntrySourceTokens.TYPE_INCOME) {
                 return SelfEntryRowResult.Rejected(
                     ordinal,
