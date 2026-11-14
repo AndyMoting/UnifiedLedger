@@ -28,6 +28,7 @@ import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.SPINE_NO_CHANGE_REASON_CODE
 import com.unifiedledger.application.UuidV7Generator
 import com.unifiedledger.application.aggregateImportIntakeRecords
+import com.unifiedledger.application.import.selfentry.SelfEntryTemplateGenerator
 import com.unifiedledger.domain.LedgerId
 import java.nio.file.Files
 import java.nio.file.Path
