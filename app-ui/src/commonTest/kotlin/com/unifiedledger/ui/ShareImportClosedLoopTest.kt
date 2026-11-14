@@ -202,20 +202,17 @@ class ShareImportClosedLoopTest {
     @Test
     fun theMatrixFormatsTheSharePromptOffersAreTheExistingCapabilityMatrix() {
         // Invariant 1: the format choices are the EXISTING capability matrix (no new list).
-        // P8-04 i2 (D-13): the matrix itself gained the fifth entry with Android-pending
-        // availability — the share prompt mirrors the matrix (R-Q08-3 honest availability),
-        // so the offered count follows the matrix, not a hand-frozen four.
+        // P8-04 i2 (D-13): the matrix gained the fifth entry; P8-04 i4 flipped it to
+        // AVAILABLE on Android (the on-device SAF full-chain instrumented evidence), so the
+        // share prompt mirrors the matrix (R-Q08-3 honest availability) with five offered.
         val android = importFormatEntries(ImportPlatformKind.ANDROID)
         assertEquals(5, android.size)
         assertEquals(
             listOf("wechat-xlsx", "alipay-csv", "cmb-csv", "ccb-xls", "self-entry-xlsx"),
             android.map { it.descriptor.identifier.value },
         )
-        // The fifth entry is offered with its honest pending availability, not silently hidden.
-        assertEquals(
-            ImportFormatAvailability.PENDING_DEVICE_VERIFICATION,
-            android.last().availability,
-        )
+        // Every entry is offered as available — the flip made the fifth honest-available too.
+        assertTrue(android.all { it.availability == ImportFormatAvailability.AVAILABLE })
     }
 
     // ---------------------------------------------------------------- absorption discipline

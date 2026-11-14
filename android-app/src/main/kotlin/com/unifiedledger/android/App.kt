@@ -1561,6 +1561,10 @@ private fun buildLedgerGraph(
             importFileIntake = importFileIntake,
             importPlatformKind = ImportPlatformKind.ANDROID,
             importIntakeSessionFactory = { ImportIntakeSessionIdentity.forFilePick(importIntakeGenerator) },
+            // P8-04 i4 (D-18 supply seam): the per-dispatch authoritative catalog — the supplier
+            // reads the session's CURRENT authority, so every intake dispatch (invoked inside the
+            // lease) sees the fresh post-refresh snapshot, never a construction-time stale one.
+            importIntakeCatalog = { session.authority.catalog },
             // P8-04 i1 (D-11): the template save port + its outcome channel — the Android
             // CreateDocument adapter beside the pick port; nullable so test/instrumented graph
             // builds (which omit both) keep compiling with the surface simply absent.

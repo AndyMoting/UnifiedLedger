@@ -497,37 +497,40 @@ class JvmImportFileIntakeJvmTest {
     }
 
     /**
-     * D-13: the fifth format enters the matrix in the pending state on Android, so the
-     * preserved (a) gate fires typed with PENDING_DEVICE_VERIFICATION — zero read, zero
-     * parse, zero dispatch (the branch's first live exerciser since the CCB flip).
+     * P8-04 i4: the fifth format flipped to AVAILABLE on Android (the on-device SAF
+     * full-chain instrumented evidence of `SelfEntryAndroidInstrumentedTest`), so Android
+     * input now dispatches into the parser exactly like a desktop input — the empty-bytes
+     * batch rejection proves the dispatch really happened (the preserved (a) gate no longer
+     * intercepts; that gate stays for any future format re-entering the matrix pending).
      */
     @Test
-    fun selfEntryXlsxOnAndroidIsTheTypedPendingGateWithZeroDispatch() {
+    fun selfEntryXlsxOnAndroidDispatchesIntoTheParserLikeAnyPlatform() {
         val port = RecordingIntakePort()
+        val session = newSession()
         val outcome =
             orchestrator(port).intake(
                 ImportFileIntakeInput(
                     format = ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier,
                     platform = ImportPlatformKind.ANDROID,
-                    session = newSession(),
+                    session = session,
                     bytes = ByteArray(0),
                 ),
             )
 
         val rejected = assertIs<ImportFileIntakeOutcome.Rejected>(outcome)
-        val failure = assertIs<ImportIntakeBatchFailure.FormatUnavailable>(rejected.failure)
-        assertEquals(ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier, failure.formatId)
-        assertEquals(ImportFormatUnavailableReason.PENDING_DEVICE_VERIFICATION, failure.reason)
+        val failure = assertIs<ImportIntakeBatchFailure.ParserRejected>(rejected.failure)
+        assertEquals("INPUT_DECODE_FAILED", failure.diagnostic.code)
+        assertEquals(session.inputRef, failure.diagnostic.inputRef)
         assertEquals(0, port.snapshots.size)
     }
 
-    /** The matrix declaration itself (D-13): five formats, Android pending / Desktop available on the fifth. */
+    /** The matrix declaration itself (D-13 + i4 flip): five formats, AVAILABLE on both platforms. */
     @Test
-    fun theMatrixCarriesTheFifthDescriptorAsPendingOnAndroidAndAvailableOnDesktop() {
+    fun theMatrixCarriesTheFifthDescriptorAsAvailableOnBothPlatforms() {
         assertEquals(5, ImportFormatCapabilities.ALL.size)
         assertEquals("self-entry-xlsx", ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier.value)
         assertEquals(
-            ImportFormatAvailability.PENDING_DEVICE_VERIFICATION,
+            ImportFormatAvailability.AVAILABLE,
             ImportFormatCapabilities.SELF_ENTRY_XLSX.availabilityOn(ImportPlatformKind.ANDROID),
         )
         assertEquals(

@@ -9,8 +9,10 @@ package com.unifiedledger.application
  * Android availability may only flip from [ImportFormatAvailability.PENDING_DEVICE_VERIFICATION]
  * to [ImportFormatAvailability.AVAILABLE] once the device runtime-evidence gate has passed —
  * the CCB XLS unit did so after A-04.1's instrumented verification (HSSF equivalence on
- * Android). Runtime discrimination (the GB18030 charset probe, container pre-checks) never
- * changes this declaration; it is layered on top by the intake orchestration (spec section 4.2).
+ * Android), and the SELF_ENTRY_XLSX unit did so after i4's own on-device SAF full-chain
+ * instrumented evidence (`SelfEntryAndroidInstrumentedTest`). Runtime discrimination (the
+ * GB18030 charset probe, container pre-checks) never changes this declaration; it is layered
+ * on top by the intake orchestration (spec section 4.2).
  */
 enum class ImportPlatformKind {
     ANDROID,
@@ -107,11 +109,14 @@ object ImportFormatCapabilities {
 
     /**
      * P8-04 self-entry XLSX (D-13, spec section 3 D-13): the runtime-generated 9-column
-     * template (D-16/D-17) imported back through `SelfEntryXlsxParser`. It enters the matrix
-     * in the pending state on Android — the honest "not yet" the preserved (a) intake gate
-     * and the pending copy were kept for — and is available on desktop, where the full JVM
-     * contract is reachable. The Android flip is i4's device-verification leg: a single
-     * declaration change here, zero matrix/pipeline mechanism changes.
+     * template (D-16/D-17) imported back through `SelfEntryXlsxParser`. It entered the
+     * matrix pending on Android (the honest "not yet" the preserved (a) intake gate and
+     * the pending copy were kept for) and the i4 batch flipped it to AVAILABLE: the
+     * on-device SAF full-chain instrumented test (`SelfEntryAndroidInstrumentedTest` —
+     * template write through the CreateDocument seam, device-side parser round-trip, and
+     * a real-ledger pick→intake leg carrying the match basis) is the runtime evidence the
+     * flip stands on, the A-04.2/D-149 flip-precedent shape. The flip is a single
+     * declaration change; zero matrix/pipeline mechanism changes.
      */
     val SELF_ENTRY_XLSX: ImportFormatDescriptor =
         ImportFormatDescriptor(
@@ -120,7 +125,7 @@ object ImportFormatCapabilities {
             mimeFilters = listOf("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
             availability =
                 mapOf(
-                    ImportPlatformKind.ANDROID to ImportFormatAvailability.PENDING_DEVICE_VERIFICATION,
+                    ImportPlatformKind.ANDROID to ImportFormatAvailability.AVAILABLE,
                     ImportPlatformKind.DESKTOP to ImportFormatAvailability.AVAILABLE,
                 ),
         )

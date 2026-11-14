@@ -294,7 +294,9 @@ internal data class ImportFormatEntry(
  * each with its declared availability on that platform. A format whose matrix unit is still
  * [ImportFormatAvailability.PENDING_DEVICE_VERIFICATION] would render with that honest status
  * (R-Q08-3); after A-04.1's instrumented verification the CCB XLS Android unit flipped to
- * AVAILABLE (A-04.2), so all four formats currently render as available on both platforms.
+ * AVAILABLE (A-04.2), and P8-04 i4 flipped the self-entry XLSX Android unit on its own
+ * on-device SAF full-chain instrumented evidence, so all five formats currently render as
+ * available on both platforms.
  */
 internal fun importFormatEntries(platform: ImportPlatformKind): List<ImportFormatEntry> = ImportFormatCapabilities.ALL.map { ImportFormatEntry(descriptor = it, availability = it.availabilityOn(platform)) }
 
