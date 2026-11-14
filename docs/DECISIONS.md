@@ -7299,3 +7299,38 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **验收（本批实际执行）：** 结构性证明（无本地测试/构建）：`ImportFileIntakeResult(` 全仓恰为声明 + seam 两分支 + 测试；`ImportReviewView(` 39 处构造点全部具名参数、默认 null 不静默复位新字段；既有门测试（`P503ImportReviewRenderItemsTest.kt:304-326` 原样）与 seam V-6a/b/c 用例原样通过。全部测试/编译/ktlint 门由 CI 承担；V-6（rig `group_disposition` PASS）由 lead 合并后复跑判。
 
 **关联决定：** D-320 R5（组入口半边由此闭合；深行候选可达性另一半仍按 R5 开放，引用而不宣称闭合全部）、D-321（同租约多读与 `view.copy` 字段保留先例）、D-319 D-4/D-5/D-9（接治落地一页读、组成员集与列表状态解耦、不新设口径）、D-5/D-6（复用其 count 查询与 MemberPages 路径）、D-293（keyset 分页读冻结列表合同）。
+
+
+## D-330 组确认卡呈现形态：有界成员行 + 展开入口（maximum rig 卡片头不可达第三形态）+ D-7 收口分批
+
+**状态：** 已裁决待实施（2026-11-15）。规格 `docs/specs/2026-11-15-d330-group-card-presentation-d7-closeout-design.md`（approved v2，含用户裁决记录与 explore 爆炸半径校正）。**零 DDL、零迁移、零依赖**。
+
+**背景：** maximum rig run `43621770763`（attempt 3，D-329 trace 树）判读：枚举轮 190.8s 完全健康（首窗开卡成功、498 窗 × 200 行全落 reducer、0 dropped/0 stale/无饥饿），但 render 层把卡片头 + 99,600 成员行 + footer 扁平铺进 LazyColumn（`P503ImportReviewPresentation.kt:1317-1326`）⇒ 卡片头被自己的成员体推到视口外 ⇒ `ui.has`（isVisibleToUser）永 false ⇒ await 900s 超时；用户滚回 ~2,500 屏同样不可用。D-327（按钮位次）同族第三形态：扁平 LazyColumn 装超大集合时任何「面板头」都被面板体推出可达视口。
+
+**决定（用户裁决 2026-11-15，五问全按推荐项）：**
+
+1. **Q1 = 案 C（有界成员行 + 「查看全部 N 条」入口）**：items 装配 `page.items.forEach`（`:1324`）改前缀有界（渲染前 K 行成员，K 与 `IMPORT_REVIEW_GROUP_WINDOW_ITEMS` 的关系随实施批定），其余以「查看全部」入口承载；铺开后形态与现状等价。**reducer/事件/host 零改动**（卡片展开度走 presentation 本地态，先例 `comparisonExpansion` `P503ImportReview.kt:445-476`）。弃案 A（需重裁 `PRODUCT_REQUIREMENTS.md:79` tracked 权威并推翻 `PresentationTest.kt:447`，冻结面触碰最大）与案 B 单案（stickyHeader 只在视口越过 header section 后钉住，D-329 现场「视口停在按钮区」形态不覆盖）。
+2. **Q2 = 恒默认有界、不记忆**：与 D-322 count 门「按当前读数定形态」同纪律，不引入跨轮次陈旧态；卡片重开时默认态复位。
+3. **Q3 = A-VIS frozen duty 重新锚定**：「执行前逐条列出」的实质 = payload 全文可达、绝不截断；系统默认有界但用户一次动作即逐条列出全部，系统永不静默丢弃 payload。`P503ImportReview.kt:648-651` 注释按此改写；`PRODUCT_REQUIREMENTS.md:79` 措辞同步随实施批。
+4. **Q4 = 进度行维持原位**：`正在整理重复组……`（会话级枚举未完）与卡片头（卡已开）两个意图同屏不同位，D-280 §3.3 语义原样。
+5. **Q5 = 分三批**：①呈现形态批（本条主对象，`P503ImportReview*.kt`）；②健壮性批（count 查询有界化前置测量 + 租约块 `catch Exception`→Throwable 分流一处，其余 15 处登记承接）；③GC 风暴归因测量腿（独立，先测量后裁决，可能零产品代码）。
+6. **b6 相容**：三案判读均不动 V-11 判读量（卡可见 marker 与 totalCount 口径不碰）；实施后 b6 当日同制复跑再续用基线（规格 §6⑥）。
+
+**边界：** 入 = 规格 approved v2、呈现批 tracked 变更（`P503ImportReview.kt`/`P503ImportReviewPresentation.kt` + 测试）、本条。出 = 枚举轮读链（B1/B4 §11 不变式）、count 门（D-322 双臂 when）、await 谓词文本、stage 预算/marker/统计量、`P704GP-ACC-ORDER-01` 页序、列表语义顺序四账户、竞品语料只读边界、CI 配置。
+
+**关联决定：** D-327（同族第二形态位次修复）、D-322（count 门与「按当前读数定形态」纪律）、D-280（首窗即开卡与确认恒全组授权原样）、D-293（keyset 前缀序不重排）、D-319 D-9（不新设口径）；A-VIS（J1/R1）语义按 Q3 重新锚定。
+## D-331 P8-05 用户可读导出（READABLE_EXPORT_XLSX）设计门批准
+
+**状态：** 已批准待实施（2026-11-15）。规格 docs/specs/2026-11-15-p8-05-readable-export-design.md（revision 2，approved：用户裁决 + 两遍独立评审闭合）。**零 DDL（一条 SELECT-only 加性命名查询）、零迁移、零依赖**。
+
+**背景：** P8-05（计划 :47 R8-05 出向半）：从 Android/桌面导出可检查的账目文件，与加密备份（整库快照，D-177/D-285）用途分工——导出文件只承诺可读可对账，不承诺回灌；备份容器承担恢复。前置事实地图（ul-explore）+ 设计草案（两遍独立评审闭合）+ 用户裁决产出本规格。
+
+**用户裁决（2026-11-15，全部按推荐项）：** U1 导出范围 = 全部有效交易（current-version 且非 voided，零筛选）；U2 不含作废行；U3 双时间两列（凭证时间 + 统计时间，上海墙钟文本，D-043/D-271）；U4 不承诺回灌、用途差异入口文案（既有竞品双轨文案先例）；U5 入口 = 侧栏数据组与「导出备份」并列；U6 首版 XLSX 流式、列集不带内部 ID/URI、CSV 另批；U7 kind 中文拟名表十个（期初余额/信用还款/余额调整/余额调整冲正/储值充值/储值消费/储值过期损失/激活前余额调整/预付购买/预付确认，有先例六值照抄）；U8 行文案「导出账目」；U9 金额数值单元格（打开端 Excel 语义接管登记）；U10 页级一致（并发修改含 statistics_at 修正可致已读行重复/未读行缺席；VACUUM INTO 快照路线关门）。
+
+**机制裁决（D-E1~D-E12，规格 §3.3）：** 行序 = 页键序直写（D-E1）；行粒度 = 交易（D-E2）；流式 inlineStr 写出器（D-E3，弃 sharedStrings 池，50k 行压缩后 ~2-4 MB）；kind → 中文映射冻结表（D-E4）；**逐 kind 符号/账户呈现表**（D-E5，全 16 kind 按 golden 契约逐组钉死：费用腿正/收入腿负原符号；③④按账户 kind 锚非权益腿；赠送腿充值/多账户期初 → PRESENTATION_UNRESOLVED 兜底）；来源列 = CreationEntry 三值 + ledger-data 一条加性 UNION ALL 命名查询（D-E6）；D-097 超范围标识十项自查（D-E7，零 docProps、无名占位、无 ledger id）；入口探针 LedgerSurfaces.readableExport（D-E8）；计数式进度按页刷新（D-E9）；失败类型化族含 NOTE_TOO_LONG/PRESENTATION_UNRESOLVED、空账本 = 合法空文件（D-E10）；一致性 = 操作租约 + 页级一致声明、无快照（D-E11）；ledger-application 自有 ReadableExportSink/ReadableExportCancellation 契约、批 b 适配器桥接（适配器 commit 折叠 lushAndSync）（D-E12）。
+
+**实施切片：** 批 a（ledger-application 写出器 + 列契约 + 自有契约 + jvmTest 真库对账/有界性）→ 批 b（app-ui/android/desktop 入口接线 + 适配器桥 + 呈现）→ 批 c（设备 SAF 全链 + TalkBack + 2k/50k 读数 + Excel/WPS 兼容腿）。验收向量 V-1~V-9 对应计划出口五条（:47）。
+
+**边界：** 入 = 规格 revision 2、三批 tracked 变更、本条。出 = 不承诺回灌、无筛选、不含作废行、不做 CSV、不碰备份容器冻结面与 06.B/06.C/06.D、不动桌面报表与 P8-06、kind 映射不回写详情页、不改 D-267 全账读纪律调用方、竞品语料只读边界。
+
+**关联决定：** D-177/D-285/D-288（备份导出契约与证据基建复用）、D-267/D-268（有界读纪律，DEF-A 面禁入）、D-097/D-138/D-271（隐私/时间语义）、D-043（双时间）、R8-05（出向半裁决点闭合）。
