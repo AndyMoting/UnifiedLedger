@@ -485,11 +485,12 @@ class DesktopImportSpineReplayAndL2BoundaryCompositionRootTest {
             // the real spine store (the host's request shape — the per-intent id triple and
             // the one clock sample Q09.4 pins: a review is a processing time, sampled once).
             val ids = checkNotNull(graph.facade.importDuplicateReviewIds?.invoke())
-            val now = graph
-                .facade
-                .ledgerClock
-                .now()
-                .toString()
+            val now =
+                graph
+                    .facade
+                    .ledgerClock
+                    .now()
+                    .toString()
             val review =
                 graph.facade.importDuplicateReview!!.execute(
                     ImportDuplicateReviewRequest(
