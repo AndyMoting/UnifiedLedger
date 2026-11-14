@@ -24,3 +24,4 @@
 1	com.unifiedledger.android.BackupExportSafMidWriteInstrumentedTest
 1	com.unifiedledger.android.P801AccountReconciliationChainInstrumentedTest
 2	com.unifiedledger.android.P802SearchDeviceTimingInstrumentedTest
+2	com.unifiedledger.android.SelfEntryAndroidInstrumentedTest
