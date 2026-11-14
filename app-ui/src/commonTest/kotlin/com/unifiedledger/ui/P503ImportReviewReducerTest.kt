@@ -27,6 +27,8 @@ import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.MonthlyActivityResult
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.RequestId
+import com.unifiedledger.application.SelfEntryMatchBasis
+import com.unifiedledger.application.SelfEntryPrefill
 import com.unifiedledger.application.TransactionDetailResult
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
@@ -848,6 +850,185 @@ class P503ImportReviewReducerTest {
                 ),
             )
         assertEquals(3L, refreshed.importReview?.currentSessionDuplicateGroupCount)
+    }
+
+    // ---- P8-04 i3b: the self-entry session display data landing (D-18/D-19/D-7/D-017) ----
+
+    /**
+     * One accepted self-entry record: a candidate id (the accepted branch's uniform carry), the
+     * D-19 basis, the D-7 note and the D-017 prefill, each independently null-able per record.
+     */
+    private fun selfEntryRecord(
+        ordinal: Int,
+        candidateId: String,
+        withPrefill: Boolean = true,
+        withBasis: Boolean = true,
+        noteText: String? = null,
+        matchMethod: String? = "exact",
+    ): ImportIntakeRecordSummary {
+        val prefill =
+            if (withPrefill) {
+                SelfEntryPrefill(
+                    categoryId = CategoryId("category-food"),
+                    fundingAccountId = AccountId("acc-cash"),
+                    fromAccountId = null,
+                    toAccountId = null,
+                )
+            } else {
+                null
+            }
+        val basis =
+            if (withBasis) {
+                SelfEntryMatchBasis(
+                    categorySourceText = "餐饮",
+                    categoryTargetName = if (withPrefill) "餐饮" else null,
+                    categoryUnmatchedReason = if (withPrefill) null else "CATEGORY_NOT_FOUND",
+                    fundingAccountSourceText = "现金",
+                    fundingAccountTargetName = if (withPrefill) "现金" else null,
+                    fundingAccountUnmatchedReason = if (withPrefill) null else "ACCOUNT_NOT_FOUND",
+                    fromAccountSourceText = "",
+                    fromAccountTargetName = null,
+                    fromAccountUnmatchedReason = null,
+                    toAccountSourceText = "",
+                    toAccountTargetName = null,
+                    toAccountUnmatchedReason = null,
+                    unconsumedCategoryText = false,
+                    categoryMatchMethod = matchMethod,
+                )
+            } else {
+                null
+            }
+        return ImportIntakeRecordSummary(
+            recordOrdinal = ordinal,
+            disposition = ImportIntakeRecordDisposition.INTAKE_ACCEPTED,
+            matchBasis = basis,
+            candidateId = ImportCandidateId(candidateId),
+            noteText = noteText,
+            selfEntryPrefill = prefill,
+        )
+    }
+
+    private fun selfEntrySession(
+        vararg records: ImportIntakeRecordSummary,
+    ): ImportIntakeSessionSummary =
+        ImportIntakeSessionSummary(
+            displayName = "synthetic-self-entry.xlsx",
+            inputRef = "pick-handle-1",
+            outcome =
+                ImportIntakePipelineOutcome.Intaken(
+                    ImportFileIntakeOutcome.Accepted(
+                        records = records.toList(),
+                        newCandidateIds = records.mapNotNull { it.candidateId },
+                    ),
+                ),
+        )
+
+    /** D-18/D-017: a landed prefill seeds the session decision drafts as INITIAL VALUES. */
+    @Test
+    fun aLandedSelfEntryPrefillSeedsTheDecisionDraft() {
+        val source = overview(rows = listOf(pendingRow))
+        val updated =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    source,
+                    P503UiEvent.ImportFileIntakeResult(selfEntrySession(selfEntryRecord(0, "candidate-pending")), ImportReviewRowsResult.Rows(listOf(pendingRow))),
+                ),
+            )
+        val view = updated.importReview
+        val draft = view?.decisionDrafts?.get(ImportCandidateId("candidate-pending"))
+        assertEquals(CategoryId("category-food"), draft?.categoryId)
+        assertEquals(AccountId("acc-cash"), draft?.fundingAccountId)
+        assertNull(draft?.fromAccountId)
+        assertNull(draft?.toAccountId)
+        // Only the four id slots prefill; the text fields stay empty (D-017: a draft, not a
+        // decision — the amounts and the confirmation time remain the user's).
+        assertEquals("", draft?.assetLegAmountText)
+        assertEquals("", draft?.confirmedAtText)
+    }
+
+    /** D-19/D-7: the basis and the note land in their session-memory maps keyed by candidate. */
+    @Test
+    fun aLandedSelfEntryBasisAndNoteLandInTheSessionMaps() {
+        val source = overview(rows = listOf(pendingRow))
+        val updated =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    source,
+                    P503UiEvent.ImportFileIntakeResult(
+                        selfEntrySession(selfEntryRecord(0, "candidate-pending", noteText = "网上买菜")),
+                        ImportReviewRowsResult.Rows(listOf(pendingRow)),
+                    ),
+                ),
+            )
+        val view = updated.importReview
+        assertEquals("餐饮", view?.sessionMatchBases?.get(ImportCandidateId("candidate-pending"))?.categoryTargetName)
+        assertEquals("exact", view?.sessionMatchBases?.get(ImportCandidateId("candidate-pending"))?.categoryMatchMethod)
+        assertEquals("网上买菜", view?.sessionNotes?.get(ImportCandidateId("candidate-pending")))
+    }
+
+    /** D-017: a draft the user already edited is NEVER overwritten by a landed prefill. */
+    @Test
+    fun aLandedPrefillNeverOverwritesAnExistingUserDraft() {
+        val userDraft = ImportDecisionDraft(categoryId = CategoryId("category-user-pick"), confirmedAtText = "2026-03-15 10:00")
+        val source = overview(rows = listOf(pendingRow), drafts = mapOf(ImportCandidateId("candidate-pending") to userDraft))
+        val updated =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    source,
+                    P503UiEvent.ImportFileIntakeResult(selfEntrySession(selfEntryRecord(0, "candidate-pending")), ImportReviewRowsResult.Rows(listOf(pendingRow))),
+                ),
+            )
+        assertEquals(userDraft, updated.importReview?.decisionDrafts?.get(ImportCandidateId("candidate-pending")))
+    }
+
+    /**
+     * No prefill → no draft seeding (an unmatched row carries no prefill; every other format's
+     * records carry neither prefill nor basis/note) — and the non-self-entry formats leave the
+     * session maps empty.
+     */
+    @Test
+    fun recordsWithoutPrefillOrCandidateIdSeedNothing() {
+        val source = overview(rows = listOf(pendingRow, suspectedRow, retainableRow))
+        // candidate-pending: a matched-failure self-entry row (basis only); candidate-suspected:
+        // an accepted record of another format (no id → no seeding); candidate-retainable: not
+        // in the session at all.
+        val unmatchedSelfEntry = selfEntryRecord(0, "candidate-pending", withPrefill = false, matchMethod = null)
+        val otherFormatRecord = ImportIntakeRecordSummary(1, ImportIntakeRecordDisposition.INTAKE_ACCEPTED)
+        val updated =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    source,
+                    P503UiEvent.ImportFileIntakeResult(selfEntrySession(unmatchedSelfEntry, otherFormatRecord), ImportReviewRowsResult.Rows(listOf(pendingRow, suspectedRow, retainableRow))),
+                ),
+            )
+        val view = updated.importReview
+        assertTrue(view?.decisionDrafts.isNullOrEmpty(), "no prefill anywhere → no draft seeded")
+        val unmatchedBasis = view?.sessionMatchBases?.get(ImportCandidateId("candidate-pending"))
+        assertEquals("CATEGORY_NOT_FOUND", unmatchedBasis?.categoryUnmatchedReason)
+        assertTrue(view?.sessionNotes.isNullOrEmpty())
+        // The other-format record carries no candidate id, so nothing is keyed for it.
+        assertNull(view?.sessionMatchBases?.get(ImportCandidateId("candidate-suspected")))
+        assertNull(view?.sessionNotes?.get(ImportCandidateId("candidate-retainable")))
+    }
+
+    /** A typed-failure landing (Rejected outcome) seeds nothing — the maps replace with empty. */
+    @Test
+    fun aFailedIntakeLandingSeedsNoSessionDisplayData() {
+        val source = overview(rows = listOf(pendingRow))
+        val failed =
+            ImportIntakeSessionSummary(
+                displayName = "synthetic-self-entry.xlsx",
+                inputRef = "pick-handle-2",
+                outcome = ImportIntakePipelineOutcome.ReadExceedsLimit(IMPORT_FILE_PICK_MAX_READ_BYTES + 1),
+            )
+        val updated =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(source, P503UiEvent.ImportFileIntakeResult(failed, ImportReviewRowsResult.Rows(listOf(pendingRow)))),
+            )
+        val view = updated.importReview
+        assertTrue(view?.decisionDrafts.isNullOrEmpty())
+        assertTrue(view?.sessionMatchBases.isNullOrEmpty())
+        assertTrue(view?.sessionNotes.isNullOrEmpty())
     }
 
     @Test

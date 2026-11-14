@@ -49,6 +49,7 @@ import com.unifiedledger.application.ImportReviewRowsResult
 import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.IncomeCategoryOption
 import com.unifiedledger.application.ManageableAccountView
+import com.unifiedledger.application.SelfEntryMatchBasis
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.TransactionId
@@ -198,6 +199,21 @@ data class ImportReviewView(
     val rows: List<com.unifiedledger.application.ImportReviewRow> = emptyList(),
     val selectedCandidateIds: Set<ImportCandidateId> = emptySet(),
     val decisionDrafts: Map<ImportCandidateId, ImportDecisionDraft> = emptyMap(),
+    /**
+     * P8-04 i3b (D-19): the most recent self-entry session's match basis per candidate — the
+     * detail's read-only match-basis area's display data (source cell texts → target names +
+     * the match method). Session memory only, like [decisionDrafts]: never persisted, lost on
+     * restart, never part of any fingerprint (D-016); a restart (or a non-self-entry format)
+     * simply leaves the area unrendered.
+     */
+    val sessionMatchBases: Map<ImportCandidateId, SelfEntryMatchBasis> = emptyMap(),
+    /**
+     * P8-04 i3b (D-7): the most recent self-entry session's 备注 cell text per candidate —
+     * the detail's note display area's data (display-only; import_source_record has no note
+     * column, D-016). Session memory only, like [decisionDrafts]: never persisted, lost on
+     * restart.
+     */
+    val sessionNotes: Map<ImportCandidateId, String> = emptyMap(),
     val lastIntakeSession: ImportIntakeSessionSummary? = null,
     /**
      * D-322 (spec `docs/specs/2026-11-14-d322-count-driven-group-entry-design.md` D-2): the
@@ -860,6 +876,22 @@ internal fun P503ImportCandidateDetailScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.error,
                     )
+                }
+                // P8-04 i3b (D-19/D-7): the read-only match-basis area + the note display slot,
+                // fed ONLY from the session-memory maps (ImportReviewView.sessionMatchBases/
+                // sessionNotes). No basis in this session — a non-self-entry format, a
+                // catalog-less session, or a restart — leaves the whole area unrendered; the
+                // area is display-only and never persists anything (D-016).
+                val overviewView = state.overview.importReview
+                if (overviewView != null && importDetailShowsMatchBasis(overviewView.sessionMatchBases, row.candidateId)) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("匹配依据", style = MaterialTheme.typography.titleSmall)
+                    importMatchBasisLines(overviewView.sessionMatchBases.getValue(row.candidateId)).forEach { line ->
+                        Text(line, style = MaterialTheme.typography.bodySmall)
+                    }
+                    importDetailNoteLine(overviewView.sessionNotes, row.candidateId)?.let { note ->
+                        Text(note, style = MaterialTheme.typography.bodySmall)
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
                 ImportDetailSelectionRow(rowClass, row, state, onToggleSelection)

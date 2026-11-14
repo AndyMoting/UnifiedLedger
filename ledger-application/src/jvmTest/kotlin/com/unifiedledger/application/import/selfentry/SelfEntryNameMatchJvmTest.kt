@@ -393,6 +393,8 @@ class SelfEntryNameMatchJvmTest {
         assertEquals("父A/子X", basis.categorySourceText)
         assertEquals("子X", basis.categoryTargetName)
         assertNull(basis.categoryUnmatchedReason)
+        // P8-04 i3b (D-19): the full-path disambiguation reports the 路径消歧 method.
+        assertEquals("path", basis.categoryMatchMethod)
         assertEquals("现金", basis.fundingAccountSourceText)
         assertEquals("现金", basis.fundingAccountTargetName)
         assertNull(basis.fundingAccountUnmatchedReason)
@@ -413,10 +415,24 @@ class SelfEntryNameMatchJvmTest {
 
         assertEquals(SelfEntryMatchUnresolvedReason.CATEGORY_AMBIGUOUS.name, basis.categoryUnmatchedReason)
         assertNull(basis.categoryTargetName)
+        // An unmatched row carries no match method (the reason token carries the display).
+        assertNull(basis.categoryMatchMethod)
         assertNull(basis.fundingAccountUnmatchedReason)
         assertEquals("", basis.fundingAccountSourceText)
         assertEquals(SelfEntryMatchUnresolvedReason.ACCOUNT_NOT_FOUND.name, basis.toAccountUnmatchedReason)
         assertEquals("", basis.toAccountSourceText)
+    }
+
+    @Test
+    fun theBasisCarriesNoMatchMethodForABlankOrAccountSlot() {
+        // A blank category cell consumes nothing → no method, no failure; accounts resolve
+        // exactly and carry no method at all (D-19's method vocabulary is category-only).
+        val basis = ordinary(SelfEntryMatchInputs("", "", "现金", "")).toMatchBasis(SelfEntryMatchInputs("", "", "现金", ""))
+        assertNull(basis.categoryTargetName)
+        assertNull(basis.categoryMatchMethod)
+        assertNull(basis.categoryUnmatchedReason)
+        assertEquals("现金", basis.fundingAccountTargetName)
+        assertNull(basis.fundingAccountUnmatchedReason)
     }
 
     // ---------------------------------------------------------------- kind domain
