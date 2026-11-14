@@ -453,14 +453,15 @@ class JvmImportFileIntakeJvmTest {
     @Test
     fun selfEntryXlsxDispatchesToTheNewParserWithTheD16Facts() {
         val port = RecordingIntakePort()
+        val templateBytes =
+            com.unifiedledger.application.import.selfentry.SelfEntryTemplateGenerator.generateTemplate()
         val outcome =
             orchestrator(port).intake(
                 ImportFileIntakeInput(
                     format = ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier,
                     platform = ImportPlatformKind.DESKTOP,
                     session = newSession(),
-                    bytes =
-                        com.unifiedledger.application.import.selfentry.SelfEntryTemplateGenerator.generateTemplate(),
+                    bytes = templateBytes,
                 ),
             )
 
