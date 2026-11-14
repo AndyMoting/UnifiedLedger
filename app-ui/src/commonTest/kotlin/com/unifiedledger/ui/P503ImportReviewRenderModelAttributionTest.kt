@@ -128,11 +128,13 @@ class P503ImportReviewRenderModelAttributionTest {
         /**
          * TitleBar + 2 dividers + format header + pending header + TWO group headers (the 10,000
          * no-duplicate rows fall in 待确认——缺用户决策 and the 51,000 DEFERRED rows in
-         * 疑似重复——待审核) = 7 static, + the 4-entry Android format matrix, + 61,000
-         * CandidateItems = 61,011. No disposition affordance renders (no session handle is set).
-         * This count holds for the D-166 synthetic profile only: the registered artifact carries a
-         * third group header (400 CONFIRMED_DUPLICATE), which this test does not construct.
+         * 疑似重复——待审核) = 7 static, + the FIVE-entry Android format matrix (P8-04 i2 D-13
+         * added self-entry-xlsx with Android-pending availability, and the matrix renders every
+         * entry regardless of availability), + 61,000 CandidateItems = 61,012. No disposition
+         * affordance renders (no session handle is set). This count holds for the D-166 synthetic
+         * profile only: the registered artifact carries a third group header (400
+         * CONFIRMED_DUPLICATE), which this test does not construct.
          */
-        const val EXPECTED_ITEM_COUNT = 7 + 4 + EXPECTED_CANDIDATES
+        const val EXPECTED_ITEM_COUNT = 7 + 5 + EXPECTED_CANDIDATES
     }
 }
