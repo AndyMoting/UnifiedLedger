@@ -238,8 +238,10 @@ internal fun importMatchBasisLines(basis: SelfEntryMatchBasis): List<String> =
     }
 
 /** The detail's note display line for one candidate's 备注 cell (D-7; blank text renders nothing). */
-internal fun importDetailNoteLine(sessionNotes: Map<ImportCandidateId, String>, candidateId: ImportCandidateId): String? =
-    sessionNotes[candidateId]?.takeIf { it.isNotBlank() }?.let { "备注：$it" }
+internal fun importDetailNoteLine(
+    sessionNotes: Map<ImportCandidateId, String>,
+    candidateId: ImportCandidateId,
+): String? = sessionNotes[candidateId]?.takeIf { it.isNotBlank() }?.let { "备注：$it" }
 
 /**
  * D-7 (F-L1): whether the detail renders the note slot for one candidate — INDEPENDENTLY of
