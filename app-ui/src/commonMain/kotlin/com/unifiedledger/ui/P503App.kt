@@ -2820,6 +2820,9 @@ fun P503App(
         coordinator.startImportDuplicateGroupDispositionOnce {
             // P7-05: the progress marker lands on the main dispatcher before the enumeration
             // runs (the dispatch discipline of every other host event).
+            // D-329 diagnostic: the round entered the single-flight slot — every traced line
+            // below presupposes this one; a missing line means the slot never opened.
+            StartupTrace.emit("group.round start")
             dispatch(P503UiEvent.ImportGroupEnumerationStarted)
             scope.launch(Dispatchers.Default) {
                 // P704D-SPEC-03 (C-batch leak-pattern prevention): the guarded body keeps the
@@ -2857,8 +2860,12 @@ fun P503App(
                 fun dispatchEnumerationHop(events: (cardStillOpen: Boolean) -> List<P503UiEvent>) {
                     scope.launch {
                         if (enumerationGeneration != null && !ledger.isCurrentGeneration(enumerationGeneration)) {
+                            // D-329 diagnostic: the hop's silent stale-generation return — the
+                            // discard path the round trace must make visible.
+                            StartupTrace.emit("group.round hopRun gen=stale")
                             return@launch
                         }
+                        StartupTrace.emit("group.round hopRun gen=current")
                         events(cardStillOpen()).forEach(::dispatch)
                     }
                 }
@@ -2874,6 +2881,13 @@ fun P503App(
                 ) {
                     val windowTotal = totalCount
                     val opensCard = !anyPageLanded
+                    // D-329 diagnostic: the hop QUEUED — worker-side, before any main-thread
+                    // wait. Paired with the hop's own line, the queue-vs-run split is visible.
+                    StartupTrace.emit(
+                        "group.round windowQueued kind=" +
+                            (if (opensCard) "first" else "continuation") +
+                            " ordinal=$firstOrdinal items=${items.size}",
+                    )
                     anyPageLanded = true
                     dispatchEnumerationHop { stillOpen ->
                         if (opensCard) {
@@ -2902,10 +2916,16 @@ fun P503App(
                                 // the landed items: the member pages only grow the card.
                                 val count = source.countQuery.query(ledger.ledgerId, sessionInputRef)
                                 if (count == null) {
+                                    // D-329 diagnostic: the whole-group total never resolved —
+                                    // the typed-failure round, traceable here instead of silence.
+                                    StartupTrace.emit("group.round count shape=value=null")
                                     enumerationFailed = true
                                     return@leased
                                 }
                                 totalCount = count.toInt()
+                                // D-329 diagnostic: the round's shape number — it drives the
+                                // paging loop length and the header's 共 N 条.
+                                StartupTrace.emit("group.round count shape=value=$count")
                                 // D-5/D-6: the member CANDIDATE page's cursor drives the
                                 // round. A page can be short — its candidates may carry no
                                 // duplicate at all, so the window yields no member rows — while
@@ -2933,6 +2953,20 @@ fun P503App(
                                             memberPageSize,
                                             afterCursor,
                                         )
+                                    // D-329 diagnostic: the per-page read milestone. A short page
+                                    // is normal (members without duplicates yield an empty window,
+                                    // never exhaustion); only a null cursor ends the round.
+                                    StartupTrace.emit(
+                                        when (val pageResult = memberPage) {
+                                            is ImportReviewRowsPageResult.Page -> {
+                                                val cursor =
+                                                    if (pageResult.nextAfterCandidateId == null) "exhausted" else "present"
+                                                "group.round memberPage rows=${pageResult.rows.size} cursor=$cursor"
+                                            }
+                                            ImportReviewRowsPageResult.Unavailable ->
+                                                "group.round memberPage cursor=unavailable"
+                                        },
+                                    )
                                     val window =
                                         enumerateImportDuplicateGroupMemberWindow(sessionInputRef, memberPage, reviewPage)
                                     when (val enumeration = window.enumeration) {
@@ -2978,10 +3012,15 @@ fun P503App(
                                 // the unchanged pure function through its load callback.
                                 val count = countQuery.query(ledger.ledgerId, sessionInputRef)
                                 if (count == null) {
+                                    // D-329 diagnostic: same shape trace as the member path —
+                                    // the two paths share the count-read milestone.
+                                    StartupTrace.emit("group.round count shape=value=null")
                                     enumerationFailed = true
                                     return@leased
                                 }
                                 totalCount = count.toInt()
+                                // D-329 diagnostic: the B6 paging path's shape number.
+                                StartupTrace.emit("group.round count shape=value=$count")
                                 var after = ImportDuplicateCandidateId("")
                                 var firstOrdinal = 1
                                 while (true) {
@@ -3053,6 +3092,9 @@ fun P503App(
                             }
                         }
                     if (leased is LeaseOutcome.NotReady) {
+                        // D-329 diagnostic: the lease was denied — no read below ever runs, so
+                        // the count/page/window lines would never appear this round.
+                        StartupTrace.emit("group.round lease kind=denied")
                         enumerationFailed = true
                     }
                 } catch (failure: Exception) {
@@ -3069,8 +3111,15 @@ fun P503App(
                         dispatch(P503UiEvent.ImportGroupEnumerationCompleted)
                         if (enumerationGeneration != null && !ledger.isCurrentGeneration(enumerationGeneration)) {
                             // Stale generation: discard the enumeration payload entirely.
+                            // D-329 diagnostic: the silent close-out is its own milestone — one
+                            // line distinguishes it from a failed round or a lost hop.
+                            StartupTrace.emit("group.round endDiscarded reason=staleGeneration")
                             return@launch
                         }
+                        // D-329 diagnostic: the round's last word — failed rounds (typed page
+                        // failure or lease denial) and zero-landing rounds (anyPageLanded=false)
+                        // close the card via the seam below; a completed round ends silently.
+                        StartupTrace.emit("group.round end failed=$enumerationFailed anyPageLanded=$anyPageLanded")
                         importGroupEnumerationRoundEndEvents(
                             failed = enumerationFailed,
                             anyPageLanded = anyPageLanded,

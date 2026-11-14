@@ -818,8 +818,19 @@ internal fun importGroupEnumerationFirstWindowEvents(
     cardWasOpenAtRoundStart: Boolean,
     cardStillOpen: Boolean,
 ): List<P503UiEvent> {
-    if (cardWasOpenAtRoundStart && !cardStillOpen) return emptyList()
-    if (totalCount <= 0 && items.isEmpty()) return emptyList()
+    if (cardWasOpenAtRoundStart && !cardStillOpen) {
+        // D-329 diagnostic: the first window is dropped at the seam — the card was open at
+        // round start and reads closed at hop time (the user closed it mid-round).
+        StartupTrace.emit("group.seam firstWindow open=false")
+        return emptyList()
+    }
+    if (totalCount <= 0 && items.isEmpty()) {
+        // D-329 diagnostic: the legacy whole-group-empty shape opens no card (the seam's
+        // second drop branch).
+        StartupTrace.emit("group.seam firstWindow open=false")
+        return emptyList()
+    }
+    StartupTrace.emit("group.seam firstWindow open=true")
     return listOf(P503UiEvent.StartImportDuplicateGroupDisposition(sessionInputRef, items, totalCount))
 }
 
@@ -835,12 +846,17 @@ internal fun importGroupEnumerationContinuationEvents(
     items: List<ImportDuplicateGroupDispositionItem>,
     firstOrdinal: Int,
     cardStillOpen: Boolean,
-): List<P503UiEvent> =
-    if (cardStillOpen) {
+): List<P503UiEvent> {
+    // D-329 diagnostic: a window dropped at the seam (the card closed mid-round) is a
+    // visible milestone, not silence.
+    val dropped = !cardStillOpen
+    StartupTrace.emit("group.seam continuation dropped=$dropped")
+    return if (cardStillOpen) {
         listOf(P503UiEvent.ImportGroupEnumerationPageLanded(sessionInputRef, items, firstOrdinal))
     } else {
         emptyList()
     }
+}
 
 /**
  * B6 first-window batch (spec §3.3): the round's FINAL main-dispatcher hop, after
@@ -855,8 +871,11 @@ internal fun importGroupEnumerationContinuationEvents(
 internal fun importGroupEnumerationRoundEndEvents(
     failed: Boolean,
     anyPageLanded: Boolean,
-): List<P503UiEvent> =
-    if (failed || !anyPageLanded) {
+): List<P503UiEvent> {
+    // D-329 diagnostic: the round-end seam — the Close + banner pair landing here is the
+    // typed close-out the rig watches for (failed OR a zero-landing round voids the round).
+    StartupTrace.emit("group.seam roundEnd failed=$failed")
+    return if (failed || !anyPageLanded) {
         listOf(
             P503UiEvent.CloseImportDuplicateGroupDisposition,
             P503UiEvent.ImportReviewResult(ImportReviewRowsResult.Unavailable),
@@ -864,6 +883,7 @@ internal fun importGroupEnumerationRoundEndEvents(
     } else {
         emptyList()
     }
+}
 
 /**
  * P7-04 B1/B4 windowed read (design D-5/D-6): which member SOURCE one enumeration round reads.
