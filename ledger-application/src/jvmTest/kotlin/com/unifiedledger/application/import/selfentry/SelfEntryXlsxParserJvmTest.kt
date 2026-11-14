@@ -256,7 +256,17 @@ class SelfEntryXlsxParserJvmTest {
                 variantFile(
                     listOf(
                         // sheet row 2 = ordinal 0: a present row element with no cells.
-                        listOf(absent(), absent(), absent(), absent(), absent(), absent(), absent(), absent(), absent()),
+                        listOf(
+                            absent(),
+                            absent(),
+                            absent(),
+                            absent(),
+                            absent(),
+                            absent(),
+                            absent(),
+                            absent(),
+                            absent(),
+                        ),
                         // sheet row 3 = ordinal 1: the only real record proves no renumbering.
                         row(
                             type = text(SelfEntrySourceTokens.TYPE_INCOME),
@@ -379,7 +389,19 @@ class SelfEntryXlsxParserJvmTest {
         note: VariantCell = absent(),
     ): ByteArray =
         variantFile(
-            listOf(row(type, occurredAt, amount, currency, categoryPrimary, categorySecondary, accountPrimary, accountSecondary, note)),
+            listOf(
+                row(
+                    type,
+                    occurredAt,
+                    amount,
+                    currency,
+                    categoryPrimary,
+                    categorySecondary,
+                    accountPrimary,
+                    accountSecondary,
+                    note,
+                ),
+            ),
         )
 
     /**
