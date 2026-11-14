@@ -1034,13 +1034,18 @@ class P503ImportReviewReducerTest {
 
     /**
      * F-12 (评审 F-3 语义): a REPEATED landing of the same session never overwrites the
-     * user's edited draft (the putIfAbsent discipline holds across re-landings, not just
-     * against a pre-seeded map) while the display maps still refresh with the session's
-     * own basis/note.
+     * user's edited draft. The edit is PRE-SEEDED on the source state — the decision-field
+     * event belongs to the detail state (the overview absorbs it, table 6.2a), so a draft
+     * the user has touched arrives here as an existing decisionDrafts entry.
      */
     @Test
     fun aRepeatedLandingNeverOverwritesAUserEditedDraft() {
-        val source = overview(rows = listOf(pendingRow))
+        val editedDraft = ImportDecisionDraft(categoryId = CategoryId("category-user-pick"))
+        val source =
+            overview(
+                rows = listOf(pendingRow),
+                drafts = mapOf(ImportCandidateId("candidate-pending") to editedDraft),
+            )
         val firstLanding =
             assertIs<P503AppState.OverviewEmpty>(
                 reducer.reduce(
@@ -1048,19 +1053,11 @@ class P503ImportReviewReducerTest {
                     P503UiEvent.ImportFileIntakeResult(selfEntrySession(selfEntryRecord(0, "candidate-pending")), ImportReviewRowsResult.Rows(listOf(pendingRow))),
                 ),
             )
-        // The user edits the seeded draft through the decision form (a pure reducer write).
-        val edited =
-            assertIs<P503AppState.OverviewEmpty>(
-                reducer.reduce(
-                    firstLanding,
-                    P503UiEvent.UpdateImportDecisionField(ImportDecisionFieldUpdate.Category(CategoryId("category-user-pick"))),
-                ),
-            )
         // The SAME landing event arrives again (an equivalent re-dispatch of the session).
         val reLanded =
             assertIs<P503AppState.OverviewEmpty>(
                 reducer.reduce(
-                    edited,
+                    firstLanding,
                     P503UiEvent.ImportFileIntakeResult(selfEntrySession(selfEntryRecord(0, "candidate-pending")), ImportReviewRowsResult.Rows(listOf(pendingRow))),
                 ),
             )
