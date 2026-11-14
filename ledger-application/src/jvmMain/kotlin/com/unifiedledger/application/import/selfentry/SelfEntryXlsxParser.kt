@@ -372,7 +372,7 @@ object SelfEntryXlsxParser {
         val completeness = if (diagnostics.isEmpty()) ImportCompleteness.VALID_COMPLETE else ImportCompleteness.VALID_INCOMPLETE
         val facts =
             ImportSourceFacts(
-                amountMinor = amount.minor,
+                amountMinor = amount,
                 currencyCode = currencyCode,
                 currencyPrecision = SelfEntrySourceTokens.CURRENCY_PRECISION,
                 occurredAt = occurredAt,
