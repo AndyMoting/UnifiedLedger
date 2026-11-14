@@ -163,6 +163,15 @@ class P503LedgerFacade(
     val importFileIntake: ImportFileIntakePort? = null,
     val importPlatformKind: ImportPlatformKind? = null,
     val importIntakeSessionFactory: () -> ImportIntakeSessionIdentity? = { null },
+    // P8-04 i4 (D-18 supply seam; spec `docs/specs/2026-11-14-p8-04-self-entry-import-design.md`):
+    // the per-dispatch authoritative catalog for the SELF_ENTRY intake arm's name matching —
+    // D-18's supply seam, wired exactly like [tagMerchantCatalogReader]'s composition-root
+    // supplier (the R-222-4 nullable-default discipline). Null = matching simply absent (the
+    // honest pre-i4 face every startup test and the instrumented graph keep compiling with);
+    // non-null = the host invokes it INSIDE the intake lease — once per dispatch, like the
+    // confirm-factory discipline — and the returned snapshot is the fresh authoritative catalog
+    // (the composition roots read `session.authority.catalog`, which `refresh()` rebuilds).
+    val importIntakeCatalog: (() -> LedgerCatalog?)? = null,
     // P8-04 i1 (D-11; spec `docs/specs/2026-11-14-p8-04-self-entry-import-design.md`): the
     // platform save port for the generated import template (the ImportFilePickPort shape: a
     // commonMain interface, each platform implements SAF CreateDocument / JFileChooser). The

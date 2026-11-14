@@ -610,7 +610,7 @@ class P503ImportReviewPresentationTest {
     }
 
     // ---- format capability matrix (R-Q08-3; A-04.2 flip: all four formats available on Android;
-    // P8-04 i2 adds the fifth entry with honest Android-pending availability, D-13) ----
+    // P8-04 i2 adds the fifth entry, D-13; P8-04 i4 flips it to available on Android) ----
 
     @Test
     fun androidShowsAllFourEntriesAllAvailable() {
@@ -618,13 +618,10 @@ class P503ImportReviewPresentationTest {
         assertEquals(ImportFormatCapabilities.ALL.map { it.identifier }, entries.map { it.descriptor.identifier })
         // A-04.1's instrumented verification flipped the CCB XLS Android matrix unit to
         // AVAILABLE (A-04.2); every pre-P8-04 matrix format is offered as available on Android.
-        // P8-04 i2 (D-13): the fifth (SELF_ENTRY_XLSX) enters Android-pending — offered
-        // honestly, counted separately, never silently hidden nor prematurely available.
-        assertEquals(4, entries.count { it.availability == ImportFormatAvailability.AVAILABLE })
-        assertEquals(
-            ImportFormatAvailability.PENDING_DEVICE_VERIFICATION,
-            entries.last { it.descriptor.identifier == ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier }.availability,
-        )
+        // P8-04 i4: the fifth (SELF_ENTRY_XLSX) flipped to AVAILABLE on the on-device SAF
+        // full-chain instrumented evidence — all five are offered as available, none hidden.
+        assertEquals(5, entries.size)
+        assertTrue(entries.all { it.availability == ImportFormatAvailability.AVAILABLE })
     }
 
     @Test

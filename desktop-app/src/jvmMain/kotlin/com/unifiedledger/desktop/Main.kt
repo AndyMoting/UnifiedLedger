@@ -1225,6 +1225,10 @@ internal fun buildLedgerGraph(
             importFileIntake = importFileIntake,
             importPlatformKind = ImportPlatformKind.DESKTOP,
             importIntakeSessionFactory = { ImportIntakeSessionIdentity.forFilePick(importIntakeGenerator) },
+            // P8-04 i4 (D-18 supply seam): the per-dispatch authoritative catalog — the supplier
+            // reads the session's CURRENT authority, so every intake dispatch (invoked inside the
+            // lease) sees the fresh post-refresh snapshot, never a construction-time stale one.
+            importIntakeCatalog = { session.authority.catalog },
             // P7-04.C: the review read surface + the duplicate-review use case + its id mint +
             // the shared pick-result channel (the Swing onResult above delivers into it).
             baseQueryImportReviewRows = QueryImportReviewRows(importReviewReadAdapter),

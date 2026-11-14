@@ -2402,7 +2402,20 @@ fun P503App(
                         when (read) {
                             is BoundedFileRead.Bytes ->
                                 ImportIntakePipelineOutcome.Intaken(
-                                    facade.importFileIntake!!.intake(ImportFileIntakeInput(format, platform, session, read.bytes)),
+                                    // P8-04 i4 (D-18 supply seam): the catalog supplier is invoked
+                                    // INSIDE the lease — once per dispatch, the confirm-factory
+                                    // discipline — so the SELF_ENTRY arm matches against the fresh
+                                    // authoritative snapshot; a null supplier (unwired roots)
+                                    // keeps matching simply absent.
+                                    facade.importFileIntake!!.intake(
+                                        ImportFileIntakeInput(
+                                            format = format,
+                                            platform = platform,
+                                            session = session,
+                                            bytes = read.bytes,
+                                            catalog = facade.importIntakeCatalog?.invoke(),
+                                        ),
+                                    ),
                                 )
                             is BoundedFileRead.ExceedsLimit -> ImportIntakePipelineOutcome.ReadExceedsLimit(read.actualBytes)
                             is BoundedFileRead.ReadFailed -> ImportIntakePipelineOutcome.ReadFailed(read.reason)
