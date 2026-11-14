@@ -47,7 +47,8 @@ private const val FIRST_PAGE_JUMP_INDEX = 0
  * D-328 first-window probe: the `:652` await's own sampling budget. The await is the
  * measurement instrument, so its observers may only touch the evidence and logcat; the
  * predicate must see the SAME `has()` the unmodified wait uses. 10s between text
- * samples keeps the array small on a 900s wait (>=90 entries).
+ * samples keeps the array small on a 900s wait (at most ~90 entries; a card that opens
+ * early leaves only the final sample).
  */
 private const val GROUP_AWAIT_SAMPLE_INTERVAL_MS = 10_000L
 
@@ -221,8 +222,9 @@ class AndroidScaleLongInstrumentedTest {
      * the 正在整理重复组…… progress line, and the P1 trace's every-7s `review.groupGate`
      * sample held `count=value=50000 inputRef=present entry=true loadedGroupRows=0` for
      * the whole wait, so the 50,000-relation enumeration's first window never reached the
-     * composition. This probe is measurement-only: no predicate, timeout, click or product
-     * behavior changes.
+     * composition. This probe is measurement-only: the probe object changes no predicate,
+     * click, or product behavior; the call site alone raises this await's wait ceiling to
+     * 900s (measured, stage budget untouched).
      *
      * Milestone trace (deliverable 1): the product emits no group-enumeration milestone
      * lines of its own — the only in-area hook is the per-recomposition
