@@ -640,7 +640,11 @@ class AndroidScaleLongInstrumentedTest {
             // walk — one line settles "was the affordance in the tree at the top at all".
             evidence.put(
                 "groupEntryTopWindowLabels",
-                ui.nodes(ui.root()).flatMap(ui::labels).joinToString("|").take(4000),
+                ui
+                    .nodes(ui.root())
+                    .flatMap(ui::labels)
+                    .joinToString("|")
+                    .take(4000),
             )
             evidence.put("groupEntryTopWindowHasButton", ui.has("整组标记为重复", prefix = true))
             ui.seek("整组标记为重复")
