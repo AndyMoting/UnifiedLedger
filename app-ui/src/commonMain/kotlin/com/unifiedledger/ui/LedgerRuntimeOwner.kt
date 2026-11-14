@@ -631,6 +631,18 @@ class LedgerLeaseScope(
         get() = owner.facade?.importFilePickPort
 
     /**
+     * P8-04 i1 (D-11): the template-download target port and its typed result channel, or null
+     * when this composition root wires no template entry (desktop, legacy). Lease-free for the
+     * same reason as the pick port/channel above: generating the template bytes and writing them
+     * to a SAF-picked target performs no ledger work.
+     */
+    val importTemplateTargetPort: ImportTemplateTargetPort?
+        get() = owner.facade?.importTemplateTargetPort
+
+    val importTemplateResultChannel: ImportTemplateResultChannel?
+        get() = owner.facade?.importTemplateResultChannel
+
+    /**
      * P7-09 09.A (spec sections 2.3/4; D-225): the retained share-source port, or null when this
      * composition root wires no share closed loop (desktop, legacy). Lease-free: taking a retained
      * source performs no ledger work (it returns the neutral [PickedImportFile]; the bounded read

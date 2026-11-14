@@ -406,6 +406,12 @@ internal fun P503ImportScreen(
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
     onStartFilePick: (ImportFormatId) -> Unit,
+    /**
+     * P8-04 i1 (D-11): the 「获取导入模板」 entry's intent. Null when the composition root
+     * wired no template download port — the row then renders neither the action nor a dead
+     * button (the onUseForReconciliation null-wire convention).
+     */
+    onRequestTemplateDownload: (() -> Unit)? = null,
     onSelectCandidate: (ImportCandidateId) -> Unit,
     onToggleSelection: (ImportCandidateId) -> Unit,
     onGroupDisposition: () -> Unit,
@@ -429,6 +435,9 @@ internal fun P503ImportScreen(
     // presentation state: no reducer event, no persistence, no accounting semantics.
     val openGroupInputRef = view?.groupDisposition?.inputRef
     var comparisonExpansion by remember(openGroupInputRef) { mutableStateOf(initialGroupComparisonExpansion()) }
+    // P8-04 i1 (D-11): the render gate IS the callback's presence — a null-wired composition
+    // renders neither the row nor a dead button (the onUseForReconciliation convention).
+    val templateDownloadWired = onRequestTemplateDownload != null
     val groupDuplicateCandidateIds =
         view
             ?.groupDisposition
@@ -439,7 +448,7 @@ internal fun P503ImportScreen(
         modifier = Modifier.fillMaxSize().padding(16.dp),
     ) {
         items(
-            items = importReviewRenderItems(view, platform),
+            items = importReviewRenderItems(view, platform, templateDownloadWired),
             key = { it.stableKey },
             contentType = { it.contentType },
         ) { item ->
@@ -452,6 +461,7 @@ internal fun P503ImportScreen(
                 onRefresh = onRefresh,
                 onLoadMore = onLoadMore,
                 onStartFilePick = onStartFilePick,
+                onRequestTemplateDownload = onRequestTemplateDownload,
                 onSelectCandidate = onSelectCandidate,
                 onToggleSelection = onToggleSelection,
                 onGroupDisposition = onGroupDisposition,
@@ -483,6 +493,7 @@ private fun ImportReviewOverviewItem(
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
     onStartFilePick: (ImportFormatId) -> Unit,
+    onRequestTemplateDownload: (() -> Unit)? = null,
     onSelectCandidate: (ImportCandidateId) -> Unit,
     onToggleSelection: (ImportCandidateId) -> Unit,
     onGroupDisposition: () -> Unit,
@@ -540,6 +551,27 @@ private fun ImportReviewOverviewItem(
                 }
                 Button(onClick = { onStartFilePick(item.entry.descriptor.identifier) }) {
                     Text("选择文件")
+                }
+            }
+        // P8-04 i1 (D-11): the 「获取导入模板」 row — one typed dispatch, no availability
+        // semantics. The null-wired composition renders no dead action (the row itself is
+        // already absent from the render model when the port is unwired).
+        ImportReviewRenderItem.TemplateDownloadEntry ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("获取导入模板", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "生成自填导入模板（.xlsx）并保存",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                if (onRequestTemplateDownload != null) {
+                    Button(onClick = onRequestTemplateDownload) {
+                        Text("保存")
+                    }
                 }
             }
         ImportReviewRenderItem.IntakeSessionHeader -> {

@@ -167,6 +167,7 @@ import com.unifiedledger.ui.GenerationSelection
 import com.unifiedledger.ui.ImportConfirmUseCaseSet
 import com.unifiedledger.ui.ImportDuplicateReviewIds
 import com.unifiedledger.ui.ImportFilePickResultChannel
+import com.unifiedledger.ui.ImportTemplateResultChannel
 import com.unifiedledger.ui.LedgerFileSystem
 import com.unifiedledger.ui.LedgerLeaseScope
 import com.unifiedledger.ui.LedgerOpenTarget
@@ -241,6 +242,12 @@ fun app() {
         rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
             holder?.safSlot?.deliverCreateDocumentResult?.invoke(uri)
         }
+    // P8-04 i1 (D-11): the SAF CreateDocument launcher for the import template save, registered
+    // in composition like the backup-export launcher (same contract, XLSX MIME).
+    val templateSaveLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")) { uri ->
+            holder?.safSlot?.deliverTemplateCreateDocumentResult?.invoke(uri)
+        }
     // P7-06 06.D (D-182; spec section 6, P2-7): the SAF OpenDocument launcher for the restore
     // SOURCE, registered in composition like the import/export launchers.
     val restoreSourceLauncher =
@@ -249,11 +256,12 @@ fun app() {
         }
     // Point the process-scoped holder's slot at THIS composition's launchers. Re-pointed on every
     // composition so an Activity recreation cannot leave a stale launcher behind.
-    DisposableEffect(holder, importSafLauncher, backupSaveLauncher, restoreSourceLauncher) {
+    DisposableEffect(holder, importSafLauncher, backupSaveLauncher, templateSaveLauncher, restoreSourceLauncher) {
         val slot = holder?.safSlot
         if (slot != null) {
             slot.launchOpenDocument = importSafLauncher::launch
             slot.launchCreateDocument = backupSaveLauncher::launch
+            slot.launchTemplateCreateDocument = templateSaveLauncher::launch
             slot.launchRestoreSource = restoreSourceLauncher::launch
         }
         onDispose {
@@ -960,9 +968,14 @@ internal fun openAndroidStableStorageLedger(
     // build (the facade's closed-loop port). Defaulted null so every pre-P7-09.A call site keeps
     // compiling; the product root passes the process-scoped port.
     shareImportSource: ShareImportSourcePort? = null,
+    // P8-04 i1 (D-11): the import-template save port + its outcome channel, threaded to the graph
+    // build (the facade's template surface). Defaulted null so every pre-P8-04 call site (tests,
+    // instrumented helpers) keeps compiling with the surface simply absent.
+    importTemplateTargetPort: AndroidImportTemplateTargetPort<Uri>? = null,
+    importTemplateChannel: ImportTemplateResultChannel? = null,
 ): CloseableLedgerGraph =
     withAndroidStableStorageOpenLock {
-        openAndroidStableStorageLedgerLocked(context, importFilePickPort, importPickChannel, openDriver, shareImportSource)
+        openAndroidStableStorageLedgerLocked(context, importFilePickPort, importPickChannel, openDriver, shareImportSource, importTemplateTargetPort, importTemplateChannel)
     }
 
 /** The body of [openAndroidStableStorageLedger]; the caller holds the process-wide open lock. */
@@ -972,6 +985,8 @@ private fun openAndroidStableStorageLedgerLocked(
     importPickChannel: ImportFilePickResultChannel,
     openDriver: (String) -> AndroidLedgerDatabaseHandle,
     shareImportSource: ShareImportSourcePort? = null,
+    importTemplateTargetPort: AndroidImportTemplateTargetPort<Uri>? = null,
+    importTemplateChannel: ImportTemplateResultChannel? = null,
 ): CloseableLedgerGraph {
     val databasePath = context.getDatabasePath(LEGACY_ANDROID_DATABASE_NAME)
     val (hostDirectory, legacyMainFile) = androidStableStoragePaths(databasePath)
@@ -986,7 +1001,7 @@ private fun openAndroidStableStorageLedgerLocked(
         legacyMainFile = legacyMainFile,
         closeGraph = { graph -> graph.close() },
     ) { target ->
-        buildAndroidGenerationGraph(fileSystem, target, importFilePickPort, importPickChannel, openDriver, shareImportSource)
+        buildAndroidGenerationGraph(fileSystem, target, importFilePickPort, importPickChannel, openDriver, shareImportSource, importTemplateTargetPort, importTemplateChannel)
     }
 }
 
@@ -1010,13 +1025,15 @@ internal fun openAndroidExplicitGeneration(
     generation: Int,
     openDriver: (String) -> AndroidLedgerDatabaseHandle = { name -> createAndroidLedgerDatabase(context, name) },
     shareImportSource: ShareImportSourcePort? = null,
+    importTemplateTargetPort: AndroidImportTemplateTargetPort<Uri>? = null,
+    importTemplateChannel: ImportTemplateResultChannel? = null,
 ): CloseableLedgerGraph =
     withAndroidStableStorageOpenLock {
         val databasePath = context.getDatabasePath(LEGACY_ANDROID_DATABASE_NAME)
         val (hostDirectory, _) = androidStableStoragePaths(databasePath)
         val fileSystem = AndroidLedgerFileSystem()
         val layout = ledgerStorageLayout(fileSystem, hostDirectory)
-        openAndroidExplicitGenerationWith(fileSystem, layout, generation, importFilePickPort, importPickChannel, openDriver, shareImportSource)
+        openAndroidExplicitGenerationWith(fileSystem, layout, generation, importFilePickPort, importPickChannel, openDriver, shareImportSource, importTemplateTargetPort, importTemplateChannel)
     }
 
 /**
@@ -1033,9 +1050,11 @@ internal fun openAndroidExplicitGenerationWith(
     importPickChannel: ImportFilePickResultChannel,
     openDriver: (String) -> AndroidLedgerDatabaseHandle,
     shareImportSource: ShareImportSourcePort? = null,
+    importTemplateTargetPort: AndroidImportTemplateTargetPort<Uri>? = null,
+    importTemplateChannel: ImportTemplateResultChannel? = null,
 ): CloseableLedgerGraph =
     openExplicitGeneration(fileSystem, layout, generation) { target ->
-        buildAndroidGenerationGraph(fileSystem, target, importFilePickPort, importPickChannel, openDriver, shareImportSource)
+        buildAndroidGenerationGraph(fileSystem, target, importFilePickPort, importPickChannel, openDriver, shareImportSource, importTemplateTargetPort, importTemplateChannel)
     }
 
 /**
@@ -1051,6 +1070,8 @@ private fun buildAndroidGenerationGraph(
     importPickChannel: ImportFilePickResultChannel,
     openDriver: (String) -> AndroidLedgerDatabaseHandle,
     shareImportSource: ShareImportSourcePort? = null,
+    importTemplateTargetPort: AndroidImportTemplateTargetPort<Uri>? = null,
+    importTemplateChannel: ImportTemplateResultChannel? = null,
 ): CloseableLedgerGraph {
     // P7-06 06.1 fix (review Fix 7; spec section 4.5): the AndroidSqliteDriver creates on
     // open, so a NON-fresh target must be re-guarded here exactly like the desktop root's JDBC
@@ -1071,7 +1092,7 @@ private fun buildAndroidGenerationGraph(
     // androidGenerationDriverName returns it unchanged and openDriver receives an absolute path.
     val handle = openDriver(androidGenerationDriverName(target.mainFile))
     return try {
-        buildLedgerGraph(handle, importFilePickPort, importPickChannel, AndroidBackupSnapshotPort(handle), shareImportSource)
+        buildLedgerGraph(handle, importFilePickPort, importPickChannel, AndroidBackupSnapshotPort(handle), shareImportSource, importTemplateTargetPort, importTemplateChannel)
     } catch (failure: Exception) {
         handle.close()
         throw failure
@@ -1119,6 +1140,8 @@ private fun buildLedgerGraph(
     importPickChannel: ImportFilePickResultChannel,
     snapshotPort: BackupSnapshotPort? = null,
     shareImportSource: ShareImportSourcePort? = null,
+    importTemplateTargetPort: AndroidImportTemplateTargetPort<Uri>? = null,
+    importTemplateChannel: ImportTemplateResultChannel? = null,
 ): CloseableLedgerGraph {
     // D-203 startup trace: graph assembly window (includes the catalog bootstrap below).
     StartupTrace.emit("graph.assemble begin")
@@ -1538,6 +1561,11 @@ private fun buildLedgerGraph(
             importFileIntake = importFileIntake,
             importPlatformKind = ImportPlatformKind.ANDROID,
             importIntakeSessionFactory = { ImportIntakeSessionIdentity.forFilePick(importIntakeGenerator) },
+            // P8-04 i1 (D-11): the template save port + its outcome channel — the Android
+            // CreateDocument adapter beside the pick port; nullable so test/instrumented graph
+            // builds (which omit both) keep compiling with the surface simply absent.
+            importTemplateTargetPort = importTemplateTargetPort,
+            importTemplateResultChannel = importTemplateChannel,
             // P7-09 09.A closed loop (spec sections 2.3/4; D-225): the retained-share source port —
             // the Android implementation over the process-scoped registry. Null on pre-P7-09.A call
             // sites that build a graph without a share surface (tests/instrumented helpers).
@@ -1701,6 +1729,8 @@ internal fun buildAndroidStartupController(
     shareImportRegistry: ShareImportSourceRegistry<Uri> = ShareImportSourceRegistry(),
 ): AndroidStartupController {
     val importPickChannel = ImportFilePickResultChannel()
+    // P8-04 i1 (D-11): the template download's typed outcome channel (the pick-channel shape).
+    val importTemplateChannel = ImportTemplateResultChannel()
     val shareImportSource = androidShareImportSourcePort(shareImportRegistry, context.contentResolver)
     val importFilePickPort =
         AndroidImportFilePickPort<Uri>(
@@ -1722,6 +1752,16 @@ internal fun buildAndroidStartupController(
             openOutputStream = { uri -> context.contentResolver.openOutputStream(uri) },
         )
     safSlot.deliverCreateDocumentResult = { uri -> backupTargetPort.onCreateDocumentResult(uri) }
+    // P8-04 i1 (D-11): the import-template save port — the CreateDocument flow beside the backup
+    // export's, generating the template bytes from jvmMain and writing them to the SAF target.
+    val importTemplateTargetPort =
+        AndroidImportTemplateTargetPort<Uri>(
+            postToMainThread = mainThreadPoster,
+            launchCreateDocument = { name -> safSlot.launchTemplateCreateDocument?.invoke(name) ?: throw IllegalStateException("no template SAF launcher registered") },
+            openOutputStream = { uri -> context.contentResolver.openOutputStream(uri) },
+            onResult = importTemplateChannel::deliver,
+        )
+    safSlot.deliverTemplateCreateDocumentResult = { uri -> importTemplateTargetPort.onCreateDocumentResult(uri) }
     val legacyMainFile = androidStableStoragePaths(databasePath).second
     val restoreSourcePort =
         AndroidBackupSourcePort<Uri>(
@@ -1740,10 +1780,10 @@ internal fun buildAndroidStartupController(
         )
     return AndroidStartupController(
         openDatabase = {
-            openAndroidStableStorageLedger(context, importFilePickPort, importPickChannel, shareImportSource = shareImportSource)
+            openAndroidStableStorageLedger(context, importFilePickPort, importPickChannel, shareImportSource = shareImportSource, importTemplateTargetPort = importTemplateTargetPort, importTemplateChannel = importTemplateChannel)
         },
         openExplicitGeneration = { generation ->
-            openAndroidExplicitGeneration(context, importFilePickPort, importPickChannel, generation, shareImportSource = shareImportSource)
+            openAndroidExplicitGeneration(context, importFilePickPort, importPickChannel, generation, shareImportSource = shareImportSource, importTemplateTargetPort = importTemplateTargetPort, importTemplateChannel = importTemplateChannel)
         },
         startScope = processMainDispatcher(),
         backgroundDispatcher = Dispatchers.IO,

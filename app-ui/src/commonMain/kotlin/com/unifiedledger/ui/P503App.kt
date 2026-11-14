@@ -2342,6 +2342,20 @@ fun P503App(
     }
 
     /**
+     * P8-04 i1 (D-11; spec `docs/specs/2026-11-14-p8-04-self-entry-import-design.md`): the
+     * 「获取导入模板」 host action — dispatches the request intent (the reducer stays — 不切态,
+     * the StartImportFilePick mechanism), then launches the platform port. The port GENERATES
+     * the template bytes (jvmMain generator, D-11's runtime generation) and writes them to the
+     * SAF-picked target; the typed outcome rides [ImportTemplateResultChannel], never this call.
+     * An unwired port is the row's render gate, so reaching here without one is a no-op, never
+     * a crash.
+     */
+    fun startImportTemplateDownload() {
+        dispatch(P503UiEvent.RequestImportTemplateDownload)
+        ledger.importTemplateTargetPort?.writeTemplate()
+    }
+
+    /**
      * P7-04.C (P704C-SPEC-01/QUAL-02): the pick→intake pipeline (spec 4.1.2): the L0 bounded
      * read, the intake and the list re-read run OFF the UI thread (`Dispatchers.Default` — the
      * only non-UI dispatcher commonMain can name; the desktop modal chooser itself already
@@ -3502,6 +3516,18 @@ fun P503App(
     DisposableEffect(ledger) {
         ledger.importPickResultChannel?.subscribe(::handleImportPickResult)
         onDispose { ledger.importPickResultChannel?.subscribe(null) }
+        // P8-04 i1 (D-11): the template download's typed outcome rides its own channel (the
+        // pick-channel shape). The i1 seam is the wiring only: the outcome is diagnosed here and
+        // the full user-visible failure/success surfacing lands with the i4 device leg (spec
+        // section 4 i1/i4 split; registered, not forgotten).
+        ledger.importTemplateResultChannel?.subscribe { result ->
+            when (result) {
+                is ImportTemplateDownloadResult.Succeeded -> StartupTrace.emit("import.templateDownload ok bytes=${result.bytes}")
+                ImportTemplateDownloadResult.WriteFailed -> StartupTrace.emit("import.templateDownload write failed")
+                ImportTemplateDownloadResult.Cancelled -> Unit
+            }
+        }
+        onDispose { ledger.importTemplateResultChannel?.subscribe(null) }
     }
 
     // P7-09 09.0 (spec sections 2.1/2.2; D-225 Q19): the inbound neutral navigation requests flow
@@ -4806,6 +4832,15 @@ fun P503App(
                                     // cursor is null (the list is complete).
                                     onLoadMore = ::requestMoreImportReview,
                                     onStartFilePick = { format -> startImportFilePick(format) },
+                                    // P8-04 i1 (D-11): the 「获取导入模板」 entry. Wired only when
+                                    // the platform save port exists (the no-dead-affordance
+                                    // convention); the row's render gate mirrors this probe.
+                                    onRequestTemplateDownload =
+                                        if (ledger.importTemplateTargetPort != null) {
+                                            ({ startImportTemplateDownload() })
+                                        } else {
+                                            null
+                                        },
                                     onSelectCandidate = ::selectImportCandidate,
                                     onToggleSelection = { candidateId ->
                                         dispatch(P503UiEvent.ToggleImportCandidateSelection(candidateId))
