@@ -2431,6 +2431,19 @@ fun P503App(
                     // (`source.countQuery.query` in the MemberPages path).
                     val sessionGroupCount =
                         facade.countImportDuplicateCandidatesForSession?.query(ledger.ledgerId, session.inputRef)
+                    // D-324 diagnostic (run 43533378028): the count is silent on failure (the use
+                    // case maps a throwing read to null), so a rig run where the group-entry gate
+                    // fell back to the loaded rows carries no evidence of WHY. One trace line at
+                    // the read site — stage name + the reading's SHAPE only (value/null, never
+                    // ids or row data, per the StartupTrace contract). value=<long> means the
+                    // gate will see it; value=null means the read threw or the surface was
+                    // unwired (facade null); a missing line means the lease never ran.
+                    StartupTrace.emit(
+                        when (val landingCount = sessionGroupCount) {
+                            null -> "intake.landing countRead=null"
+                            else -> "intake.landing countRead=value=$landingCount"
+                        },
+                    )
                     Triple(outcome, page, sessionGroupCount)
                 }
             // Back on the composition's (main) dispatcher: the single-flight slot is released and
