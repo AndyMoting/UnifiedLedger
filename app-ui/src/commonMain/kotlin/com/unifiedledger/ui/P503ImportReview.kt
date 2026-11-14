@@ -442,15 +442,25 @@ internal fun P503ImportScreen(
      */
     onUseForReconciliation: ((String) -> Unit)? = null,
 ) {
-    // A-VIS (J1/J4, R1): the 整组确认页 card defaults to fully expanded — the frozen duty
-    // (执行前逐条列出比较信息) binds this surface — and one card-level switch lets the user
-    // collapse them all as a density reduction. Closing the card (inputRef becomes null) or a new
-    // pick session handle resets it; re-enumerating the group under the SAME handle keeps the
-    // user's chosen collapse state. The initial value comes from
+    // A-VIS (J1/J4, R1; D-330 Q3 re-anchor): the 整组确认页's comparison payloads still default
+    // to fully expanded — one R1 product decision the re-anchoring keeps — and one card-level
+    // switch lets the user collapse them all as a density reduction. (The D-330 bounding governs
+    // the member-row LIST only, never the comparison disclosure.) Closing the card (inputRef
+    // becomes null) or a new pick session handle resets it; re-enumerating the group under the
+    // SAME handle keeps the user's chosen collapse state. The initial value comes from
     // [initialGroupComparisonExpansion] so the production default is itself assertable. Pure
     // presentation state: no reducer event, no persistence, no accounting semantics.
     val openGroupInputRef = view?.groupDisposition?.inputRef
     var comparisonExpansion by remember(openGroupInputRef) { mutableStateOf(initialGroupComparisonExpansion()) }
+    // D-330 (Q1 案 C / Q2 恒默认有界不记忆): the card's member rows start BOUNDED (the first
+    // IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS landed rows plus the 查看全部 entry) and expand only
+    // after the user's one action; the expanded state is presentation-local with the same
+    // comparisonExpansion discipline — remember keyed on the card handle, so closing the card or
+    // a new pick session handle resets it to the bounded default on the next (re)open. No reducer
+    // event, no persistence, no view field. The comparison duty above is untouched: when the rows
+    // are listed (bounded prefix or expanded), their comparison payloads still default to fully
+    // expanded — bounding the LIST is a render-tree measure, not a payload disclosure change.
+    var groupCardRowsExpanded by remember(openGroupInputRef) { mutableStateOf(initialGroupCardRowsExpanded()) }
     // P8-04 i1 (D-11): the render gate IS the callback's presence — a null-wired composition
     // renders neither the row nor a dead button (the onUseForReconciliation convention).
     val templateDownloadWired = onRequestTemplateDownload != null
@@ -464,7 +474,13 @@ internal fun P503ImportScreen(
         modifier = Modifier.fillMaxSize().padding(16.dp),
     ) {
         items(
-            items = importReviewRenderItems(view, platform, templateDownloadWired),
+            items =
+                importReviewRenderItems(
+                    view,
+                    platform,
+                    templateDownloadWired,
+                    groupCardRowsExpanded = groupCardRowsExpanded,
+                ),
             key = { it.stableKey },
             contentType = { it.contentType },
         ) { item ->
@@ -474,6 +490,8 @@ internal fun P503ImportScreen(
                 comparisonExpansion = comparisonExpansion,
                 onToggleItemComparison = { duplicateCandidateId -> comparisonExpansion = comparisonExpansion.toggle(duplicateCandidateId) },
                 onToggleAllComparisons = { comparisonExpansion = comparisonExpansion.batchToggle(groupDuplicateCandidateIds) },
+                onExpandGroupCardRows = { groupCardRowsExpanded = true },
+                onCollapseGroupCardRows = { groupCardRowsExpanded = false },
                 onRefresh = onRefresh,
                 onLoadMore = onLoadMore,
                 onStartFilePick = onStartFilePick,
@@ -506,6 +524,8 @@ private fun ImportReviewOverviewItem(
     comparisonExpansion: ImportComparisonExpansion,
     onToggleItemComparison: (ImportDuplicateCandidateId) -> Unit,
     onToggleAllComparisons: () -> Unit,
+    onExpandGroupCardRows: () -> Unit,
+    onCollapseGroupCardRows: () -> Unit,
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
     onStartFilePick: (ImportFormatId) -> Unit,
@@ -645,9 +665,13 @@ private fun ImportReviewOverviewItem(
                     groupDispositionCardHeaderSessionText(item.inputRef),
                     style = MaterialTheme.typography.bodySmall,
                 )
-                // A-VIS (J1, R1): the 整组确认页 defaults to fully expanded (the frozen 执行前逐条
-                // 列出 duty lives here); this switch is the user's own density reduction — 收起
-                // all, then 展开 all again — never a system default that hides the payload.
+                // A-VIS (J1, R1; re-anchored D-330 Q3): the frozen 执行前逐条列出 duty is about
+                // the payload's REACHABILITY — every comparison text stays reachable in full,
+                // never truncated, never silently dropped — not about the system pre-listing
+                // every row by default. The card's member rows are bounded by default (D-330)
+                // and one user action (查看全部) lists every row one by one; within the listed
+                // rows the comparisons still default to fully expanded, and this switch remains
+                // the user's own density reduction — 收起 all, then 展开 all again.
                 val collapsedAll = comparisonExpansion.allCollapsed(groupDuplicateCandidateIds)
                 TextButton(
                     onClick = onToggleAllComparisons,
@@ -662,6 +686,34 @@ private fun ImportReviewOverviewItem(
                 ) {
                     Text(groupDispositionComparisonBatchToggleText(collapsedAll))
                 }
+            }
+        }
+        is ImportReviewRenderItem.GroupCardViewAllRows -> {
+            Spacer(Modifier.height(4.dp))
+            // D-330 (Q1 案 C): the one action that lists every landed member row — the A-VIS
+            // reachability promise. J4: a dedicated, described control.
+            TextButton(
+                onClick = onExpandGroupCardRows,
+                modifier =
+                    Modifier.semantics {
+                        contentDescription = groupCardViewAllRowsDescription(item.totalCount)
+                    },
+            ) {
+                Text(groupCardViewAllRowsText(item.beyondCount))
+            }
+        }
+        ImportReviewRenderItem.GroupCardCollapseRows -> {
+            Spacer(Modifier.height(4.dp))
+            // D-330: the exact reverse affordance (展开后可收回, Q1/Q2 闭合项) — back to the
+            // bounded default. J4: a dedicated, described control.
+            TextButton(
+                onClick = onCollapseGroupCardRows,
+                modifier =
+                    Modifier.semantics {
+                        contentDescription = groupCardCollapseRowsDescription(IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS)
+                    },
+            ) {
+                Text(groupCardCollapseRowsText())
             }
         }
         is ImportReviewRenderItem.GroupDispositionItem -> {

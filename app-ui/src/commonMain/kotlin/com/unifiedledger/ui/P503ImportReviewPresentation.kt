@@ -798,6 +798,51 @@ internal fun groupDispositionCardFooterConfirmText(): String = "确认整组标�
 /** The close-button copy of the open card footer (frozen verbatim from the pre-windowing card). */
 internal fun groupDispositionCardFooterCloseText(): String = "关闭"
 
+/**
+ * D-330 (Q1 案 C, spec `docs/specs/2026-11-15-d330-group-card-presentation-d7-closeout-design.md`
+ * §2.3): the render-tree bound of the open 整组确认页 card — the number of member rows the items
+ * assembly emits by DEFAULT before the 查看全部 entry row.
+ *
+ * This is a DIFFERENT bound from the enumeration window cap `IMPORT_REVIEW_GROUP_WINDOW_ITEMS`
+ * (P503App.kt) and the member page size `IMPORT_REVIEW_GROUP_MEMBER_PAGE_SIZE` (P503App.kt), and
+ * the bounds are NOT derivable from each other (the B1/B4 §11 clause-2 family wording): the
+ * member page decides how many ROWS one DB read returns, the window cap decides how many ITEMS
+ * one landed window may carry per hop (the LANDING cadence), and this constant decides how many
+ * of the landed items the RENDER TREE lists before the user expands (the PRESENTATION cadence).
+ * One magnitude by coincidence, one authority each: changing either of the other two bounds
+ * never changes this one, and vice versa.
+ */
+internal const val IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS = 200
+
+/**
+ * D-330 (Q1 案 C / Q2 恒默认有界不记忆): the production initial member-row form of the open
+ * 整组确认页 card — always the BOUNDED prefix, never remembered. The composable calls this
+ * function — not a bare literal — so the always-bounded default is one named, JVM-testable
+ * product decision: every card (re)open resets to it (presentation-local `remember` keyed on the
+ * card handle, the comparisonExpansion precedent, P503ImportReview.kt), and no state carries the
+ * previous expansion across rounds.
+ */
+internal fun initialGroupCardRowsExpanded(): Boolean = false
+
+/** The visible label of the 查看全部 entry row (D-330): names the WHOLE-group bound overflow. */
+internal fun groupCardViewAllRowsText(beyondCount: Int): String = "查看全部 $beyondCount 条"
+
+/**
+ * The `contentDescription` of the 查看全部 entry row (D-330, the J4 discipline): names the
+ * subject (组成员行), the WHOLE-group count being revealed (共 $totalCount 条), and that the
+ * action lists every member one by one — the A-VIS frozen duty's reachability promise.
+ */
+internal fun groupCardViewAllRowsDescription(totalCount: Int): String = "查看全部组成员行：整组共 $totalCount 条，逐条列出"
+
+/** The visible label of the post-expansion collapse row (D-330): the exact reverse affordance. */
+internal fun groupCardCollapseRowsText(): String = "收起成员行"
+
+/**
+ * The `contentDescription` of the post-expansion collapse row (D-330, the J4 discipline): names
+ * the subject (组成员行) and the restore-to-default effect (the bounded prefix returns).
+ */
+internal fun groupCardCollapseRowsDescription(boundedRows: Int): String = "收起组成员行：回到默认前 $boundedRows 行"
+
 /** The subject-candidate copy of one flattened card item. */
 internal fun groupDispositionItemCandidateText(state: ImportDuplicateGroupItemState): String = "候选 ${state.item.candidateId.value}"
 
@@ -813,7 +858,9 @@ internal fun groupDispositionItemCandidateText(state: ImportDuplicateGroupItemSt
  * accounting semantics, and the collapsed payload is never a truncation of the persisted string.
  *
  * State is the set of explicitly collapsed items; the empty set means "everything expanded" and
- * is also the default for rows the card has not seen.
+ * is also the default for rows the card has not seen. (D-330 bounds the card's member-row LIST
+ * separately; this state governs only the comparison disclosure WITHIN the listed rows — the
+ * two levels are independent.)
  */
 internal data class ImportComparisonExpansion(
     private val collapsed: Set<ImportDuplicateCandidateId> = emptySet(),
@@ -953,11 +1000,14 @@ internal fun groupDispositionItemOutcomeText(state: ImportDuplicateGroupItemStat
  * instead. Every flattened section — the title bar, the notice banner, the dividers, the format
  * entries, the session summary (header lines + the disclosed 200-record per-record lines), the
  * 待确认 header with its two empty states, the group headers, the candidate rows, the disposition
- * affordances, the open disposition card (expanded as one header + one item per group member + one
- * footer), the batch-confirm entry and the per-item batch result expansion — is one item
+ * affordances, the open disposition card (D-330: bounded by default to one header + the first
+ * [IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS] items + the 查看全部 entry + one footer, expanding to
+ * one header + the collapse row + every item + one footer on the user's one action), the
+ * batch-confirm entry and the per-item batch result expansion — is one item
  * carrying a unique [stableKey] and a [contentType] reuse token. Pure projection only: no Compose
- * API and no callbacks (the composable wires the typed intents). No new display limit is
- * introduced: the candidate list itself is never truncated; the 200-record session披露 cap stays
+ * API and no callbacks (the composable wires the typed intents). The candidate list itself is
+ * never truncated (the D-330 bound governs the CARD's member rows only, and even there the
+ * remainder stays one action away — never silently dropped); the 200-record session披露 cap stays
  * exactly the registered display choice of [importIntakeRecordLines], reused verbatim.
  */
 internal sealed interface ImportReviewRenderItem {
@@ -1101,9 +1151,10 @@ internal sealed interface ImportReviewRenderItem {
 
     /**
      * The header of the open 整组确认页 card (Option A windowing): the group's session handle and
-     * its item count. The open card expands flat as one header + one [GroupDispositionItem] per
-     * group member + one [GroupDispositionCardFooter], so the LazyColumn windows the card's items
-     * exactly like the candidate list (no eager per-item composition inside a single card item).
+     * its item count. D-330: the open card renders as one header + the bounded member rows (or
+     * one header + the collapse row + every member row once expanded) + one footer, so the
+     * LazyColumn windows the card's items exactly like the candidate list (no eager per-item
+     * composition inside a single card item).
      */
     data class GroupDispositionCardHeader(
         val inputRef: String,
@@ -1123,6 +1174,32 @@ internal sealed interface ImportReviewRenderItem {
     ) : ImportReviewRenderItem {
         override val stableKey: String = "group-disposition-item:${state.item.duplicateCandidateId.value}"
         override val contentType: String = "groupDispositionItem"
+    }
+
+    /**
+     * D-330 (Q1 案 C): the 「查看全部 N 条」 entry row of the open 整组确认页 card, rendered
+     * after the bounded member-row prefix and before the footer. `beyondCount` is the
+     * WHOLE-group bound overflow (totalCount − [IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS]) — the
+     * same whole-group 口径 as the header/footer counts, never a landed-prefix count.
+     */
+    data class GroupCardViewAllRows(
+        val beyondCount: Int,
+        val totalCount: Int,
+    ) : ImportReviewRenderItem {
+        override val stableKey: String = "group-disposition-card:view-all-rows"
+        override val contentType: String = "groupCardViewAllRows"
+    }
+
+    /**
+     * D-330 (Q1 案 C): the post-expansion 「收起成员行」 row of the open 整组确认页 card,
+     * rendered directly after the header and before the first member row — deliberately NOT
+     * after the tail member rows: a huge group must not bury the collapse control at the bottom
+     * of the expanded list (the D-327 family lesson). Its PRESENCE (not its absence) marks the
+     * expanded form, so the bounded/expanded forms are never ambiguous.
+     */
+    data object GroupCardCollapseRows : ImportReviewRenderItem {
+        override val stableKey: String = "group-disposition-card:collapse-rows"
+        override val contentType: String = "groupCardCollapseRows"
     }
 
     /** The footer of the open 整组确认页 card: the 确认整组标记 / 关闭 affordance row. */
@@ -1195,7 +1272,11 @@ internal enum class ImportReviewDividerSlot {
  * batch-disposition entry (P704SPEC-12; D-327: it leads the list body, before the session's
  * IntakeRecordLine block and the 待确认 shell), the open disposition card, the non-empty-selection
  * batch confirmation entry (P7-04.D) and the retained batch result as one divider band + header,
- * every summary line as its own item and one check entry per Unknown item (table 6.2a).
+ * every summary line as its own item and one check entry per Unknown item (table 6.2a). D-330:
+ * the open disposition card's member rows are BOUNDED to the [IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS]
+ * prefix by default, with the 查看全部 entry row carrying the whole-group remainder (Q1 案 C) —
+ * passing `groupCardRowsExpanded = true` lays out every landed member row (the form then equals
+ * the pre-D-330 flat shape plus the collapse row).
  */
 internal fun importReviewRenderItems(
     view: ImportReviewView?,
@@ -1204,6 +1285,10 @@ internal fun importReviewRenderItems(
     // "no dead affordance" convention). Default false keeps every legacy call site compiling
     // and rendering the pre-P8-04 shape.
     templateDownloadWired: Boolean = false,
+    // D-330 (Q1 案 C): the open card's member rows expand beyond the bounded prefix. The
+    // default is the BOUNDED form — [initialGroupCardRowsExpanded], the composable sources it
+    // from that named function (never a remembered preference, Q2 恒默认有界不记忆).
+    groupCardRowsExpanded: Boolean = initialGroupCardRowsExpanded(),
 ): List<ImportReviewRenderItem> {
     val items = mutableListOf<ImportReviewRenderItem>()
     items += ImportReviewRenderItem.TitleBar
@@ -1321,7 +1406,35 @@ internal fun importReviewRenderItems(
             // The per-item rows are the landed prefix (keyset order); the footer's confirm
             // still authorizes the whole group (the host completes the pages first, §3.4).
             items += ImportReviewRenderItem.GroupDispositionCardHeader(page.inputRef, page.totalCount)
-            page.items.forEach { items += ImportReviewRenderItem.GroupDispositionItem(it) }
+            // D-330 (Q1 案 C): the member rows are RENDER-BOUNDED by default — only the first
+            // [IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS] landed rows join the render tree, the
+            // 「查看全部」 entry row carries the whole-group remainder, and one user action
+            // lists every landed row (the A-VIS frozen duty's reachability, re-anchored Q3).
+            // The bound governs the render tree ONLY: it neither truncates nor reorders the
+            // landed keyset prefix (P704GP-ACC-ORDER-01), the payload itself stays fully
+            // reachable (nothing is silently dropped), and the header/footer counts keep
+            // binding to page.totalCount unchanged.
+            val boundedRows = page.items.take(IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS)
+            if (groupCardRowsExpanded) {
+                // Expanded form: the collapse row leads (it must stay reachable above a huge
+                // list), then every landed row — the pre-D-330 flat shape plus that one row.
+                items += ImportReviewRenderItem.GroupCardCollapseRows
+                page.items.forEach { items += ImportReviewRenderItem.GroupDispositionItem(it) }
+            } else {
+                boundedRows.forEach { items += ImportReviewRenderItem.GroupDispositionItem(it) }
+                // The entry row renders only when rows exist beyond what the card lists.
+                // beyondCount = totalCount − the listed prefix size (the header/footer's
+                // whole-group 口径): truthful while later pages are still landing, and equal to
+                // the exact overflow once the landed rows fill the bound. A group whose whole
+                // count never exceeds its listed rows renders no entry at all.
+                if (page.totalCount > boundedRows.size) {
+                    items +=
+                        ImportReviewRenderItem.GroupCardViewAllRows(
+                            beyondCount = page.totalCount - boundedRows.size,
+                            totalCount = page.totalCount,
+                        )
+                }
+            }
             items += ImportReviewRenderItem.GroupDispositionCardFooter(page.totalCount)
         }
         importCandidateClassGroups(view.rows).forEach { group ->
