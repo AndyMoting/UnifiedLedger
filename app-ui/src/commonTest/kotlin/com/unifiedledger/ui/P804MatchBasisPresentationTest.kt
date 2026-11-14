@@ -200,4 +200,27 @@ class P804MatchBasisPresentationTest {
         assertNull(importDetailNoteLine(notes, ImportCandidateId("candidate-1")))
         assertNull(importDetailNoteLine(emptyMap(), ImportCandidateId("candidate-1")))
     }
+
+    /**
+     * F-L1 (D-7 independence): the note slot's rendering predicate is INDEPENDENT of the
+     * match-basis area's — a catalog-less self-entry session carries the note without any
+     * basis, so the note must render while the basis area stays unrendered.
+     */
+    @Test
+    fun aNoteWithoutABasisRendersTheNoteAlone() {
+        val candidateId = ImportCandidateId("candidate-1")
+        val notes = mapOf(candidateId to "无 catalog 会话的备注")
+        // The basis area's own predicate reads false for this candidate...
+        assertFalse(importDetailShowsMatchBasis(emptyMap(), candidateId))
+        // ...while the note slot's predicate reads true — the two gates are separate.
+        assertTrue(importDetailShowsNote(notes, candidateId))
+        assertEquals("备注：无 catalog 会话的备注", importDetailNoteLine(notes, candidateId))
+    }
+
+    @Test
+    fun noNoteRendersNeitherSlotEvenWhenTheBasisExists() {
+        val candidateId = ImportCandidateId("candidate-1")
+        assertFalse(importDetailShowsNote(emptyMap(), candidateId))
+        assertFalse(importDetailShowsNote(mapOf(candidateId to "  "), candidateId))
+    }
 }
