@@ -3,6 +3,7 @@ package com.unifiedledger.application.import
 import com.unifiedledger.application.ExecuteImportIntake
 import com.unifiedledger.application.IMPORT_INTAKE_MAX_ACCEPTED_RECORDS
 import com.unifiedledger.application.ImportCandidateId
+import com.unifiedledger.application.ImportCompleteness
 import com.unifiedledger.application.ImportContentFingerprint
 import com.unifiedledger.application.ImportEvidenceId
 import com.unifiedledger.application.ImportFileIntakeInput
@@ -25,20 +26,35 @@ import com.unifiedledger.application.ImportRequestIdentity
 import com.unifiedledger.application.ImportSourceId
 import com.unifiedledger.application.ImportStatusHistoryId
 import com.unifiedledger.application.SPINE_NO_CHANGE_REASON_CODE
+import com.unifiedledger.application.SelfEntryMatchBasis
 import com.unifiedledger.application.UuidV7Generator
 import com.unifiedledger.application.aggregateImportIntakeRecords
 import com.unifiedledger.application.import.selfentry.SelfEntryTemplateGenerator
+import com.unifiedledger.domain.Account
+import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.AccountKind
+import com.unifiedledger.domain.Category
+import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.DomainResult
+import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -518,6 +534,228 @@ class JvmImportFileIntakeJvmTest {
             ImportFormatAvailability.AVAILABLE,
             ImportFormatCapabilities.SELF_ENTRY_XLSX.availabilityOn(ImportPlatformKind.DESKTOP),
         )
+    }
+
+    /**
+     * P8-04 i3a (D-18): with a catalog injected, the self-entry arm name-matches every
+     * accepted row — the D-19 basis rides the summaries (source text -> target name), a
+     * matched row keeps its parsed completeness, and a matched-failure row is demoted from
+     * VALID_COMPLETE to VALID_INCOMPLETE (the D-6 semantics: low confidence, outside the
+     * duplicate-family gate). Both rows fill the 币种 cell, so each parses VALID_COMPLETE
+     * and only the match outcome separates them.
+     */
+    @Test
+    fun selfEntryWithACatalogMatchesNamesCarriesTheBasisAndDemotesUnmatchedRows() {
+        val port = RecordingIntakePort()
+        val catalogLedgerId = LedgerId("ledger-p804-i3a-catalog")
+
+        fun account(
+            id: String,
+            name: String,
+        ): Account =
+            Account(
+                id = AccountId(id),
+                ledgerId = catalogLedgerId,
+                kind = AccountKind.ASSET,
+                currency = CurrencyUnit("CNY", 2),
+                ownedByUser = true,
+                realAccount = true,
+                name = name,
+            )
+
+        fun category(
+            id: String,
+            name: String,
+            parentId: CategoryId?,
+        ): Category =
+            Category(
+                id = CategoryId(id),
+                ledgerId = catalogLedgerId,
+                parentId = parentId,
+                postingAccountId = null,
+                active = true,
+                name = name,
+            )
+
+        val catalog =
+            when (
+                val result =
+                    LedgerCatalog.create(
+                        accounts = listOf(account("acc-cash", "现金"), account("acc-bank", "银行卡")),
+                        categories =
+                            listOf(
+                                category("cat-food-parent", "食品", null),
+                                category("cat-food", "餐饮", CategoryId("cat-food-parent")),
+                                category("cat-salary", "工资", null),
+                            ),
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> throw IllegalStateException("fixture catalog rejected")
+            }
+
+        // Two fresh rows behind the pristine header: a matched expense (分类 餐饮, 账户 现金)
+        // and a matched-failure expense (账户 不存在的账户 — demoted, basis carries the reason).
+        val bytes =
+            selfEntryVariant(
+                listOf(
+                    listOf("支出", "2026-03-01 08:00:00", "5.00", "CNY", "餐饮", "", "现金", "", "matched"),
+                    listOf("支出", "2026-03-02 09:00:00", "6.00", "CNY", "餐饮", "", "不存在账户", "", "unmatched"),
+                ),
+            )
+        val outcome =
+            orchestrator(port).intake(
+                ImportFileIntakeInput(
+                    format = ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier,
+                    platform = ImportPlatformKind.DESKTOP,
+                    session = newSession(),
+                    bytes = bytes,
+                    catalog = catalog,
+                ),
+            )
+
+        val accepted = assertIs<ImportFileIntakeOutcome.Accepted>(outcome)
+        assertEquals(2, accepted.records.size)
+        assertTrue(accepted.records.all { it.disposition == ImportIntakeRecordDisposition.INTAKE_ACCEPTED })
+        assertTrue(port.snapshots.all { it.candidateRuleOverride == "self_entry_v1" })
+        // Row 0: matched — the basis carries the verbatim source texts and the catalog
+        // target names; the parsed VALID_COMPLETE stays untouched.
+        val matchedBasis = assertIs<SelfEntryMatchBasis>(accepted.records[0].matchBasis)
+        assertEquals("餐饮", matchedBasis.categorySourceText)
+        assertEquals("餐饮", matchedBasis.categoryTargetName)
+        assertNull(matchedBasis.categoryUnmatchedReason)
+        assertEquals("现金", matchedBasis.fundingAccountSourceText)
+        assertEquals("现金", matchedBasis.fundingAccountTargetName)
+        assertFalse(matchedBasis.unconsumedCategoryText)
+        assertEquals(ImportCompleteness.VALID_COMPLETE, port.snapshots[0].completeness)
+        // Row 1: matched-failure — the verbatim reason token rides the basis and the parsed
+        // VALID_COMPLETE is DEMOTED to VALID_INCOMPLETE (the D-6 failure face: low
+        // confidence, outside the duplicate-family gate).
+        val unmatchedBasis = assertIs<SelfEntryMatchBasis>(accepted.records[1].matchBasis)
+        assertEquals("不存在账户", unmatchedBasis.fundingAccountSourceText)
+        assertNull(unmatchedBasis.fundingAccountTargetName)
+        assertEquals("ACCOUNT_NOT_FOUND", unmatchedBasis.fundingAccountUnmatchedReason)
+        assertEquals(ImportCompleteness.VALID_INCOMPLETE, port.snapshots[1].completeness)
+    }
+
+    /**
+     * P8-04 i3a (D-18): an input without a catalog (every pre-i3a construction) leaves the
+     * self-entry arm's completeness untouched and carries no basis — matching is simply
+     * absent, never a silent all-unmatched face. The row fills the 币种 cell, so it parses
+     * VALID_COMPLETE and the absence of a catalog is exactly what keeps it there. The
+     * arm's rule override still rides: every self-entry candidate lands as
+     * `self_entry_v1`.
+     */
+    @Test
+    fun selfEntryWithoutACatalogKeepsTheCompletenessAndCarriesNoBasis() {
+        val port = RecordingIntakePort()
+        val outcome =
+            orchestrator(port).intake(
+                ImportFileIntakeInput(
+                    format = ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier,
+                    platform = ImportPlatformKind.DESKTOP,
+                    session = newSession(),
+                    bytes =
+                        selfEntryVariant(
+                            listOf(
+                                listOf("支出", "2026-03-03 10:00:00", "7.00", "CNY", "餐饮", "", "现金", "", "no catalog"),
+                            ),
+                        ),
+                ),
+            )
+
+        val accepted = assertIs<ImportFileIntakeOutcome.Accepted>(outcome)
+        assertEquals(1, accepted.records.size)
+        assertEquals(1, port.snapshots.size)
+        assertNull(accepted.records.single().matchBasis)
+        assertEquals("self_entry_v1", port.snapshots.single().candidateRuleOverride)
+        // The parsed VALID_COMPLETE is untouched: without a catalog nothing demotes it.
+        assertEquals(ImportCompleteness.VALID_COMPLETE, port.snapshots.single().completeness)
+    }
+
+    // ---------------------------------------------------------------- P8-04 i3a: the self-entry variant workbook
+
+    /**
+     * A self-entry workbook variant: the generated six parts with the sheet's data rows
+     * replaced by the given 9-column string rows (the generated header row spliced
+     * verbatim; new strings appended to the generated sharedStrings pool) — the
+     * SelfEntryXlsxParserJvmTest string-editing fixture strategy, in its minimal form.
+     */
+    private fun selfEntryVariant(rows: List<List<String>>): ByteArray {
+        val parts = LinkedHashMap<String, ByteArray>()
+        ZipInputStream(ByteArrayInputStream(SelfEntryTemplateGenerator.generateTemplate())).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                parts[entry.name] = zip.readBytes()
+                zip.closeEntry()
+            }
+        }
+        val sheetPart = "xl/worksheets/sheet1.xml"
+        val sharedStringsPart = "xl/sharedStrings.xml"
+        val sheetXml = parts.getValue(sheetPart).toString(Charsets.UTF_8)
+        val sharedStringsXml = parts.getValue(sharedStringsPart).toString(Charsets.UTF_8)
+
+        fun escapeXml(value: String): String =
+            value
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+
+        val pool = LinkedHashMap<String, Int>()
+        sharedStringsXml
+            .substringBefore("</sst>")
+            .split("<si><t>")
+            .drop(1)
+            .forEachIndexed { index, item -> pool[item.substringBefore("</t>")] = index }
+        val originalCount = pool.size
+
+        val headerRow = sheetXml.substringAfter("<sheetData>").substringBefore("</row>") + "</row>"
+        val dataRows =
+            rows
+                .mapIndexed { index, values ->
+                    val rowIndex = index + 2
+                    "<row r=\"$rowIndex\">" +
+                        values
+                            .mapIndexed { column, value ->
+                                val reference = (('A' + column).toString()) + rowIndex
+                                if (column == 2) {
+                                    // The amount column: an exact-text numeric cell (the generator's own shape).
+                                    "<c r=\"$reference\"><v>${escapeXml(value)}</v></c>"
+                                } else {
+                                    val sharedIndex = pool.getOrPut(value) { pool.size }
+                                    "<c r=\"$reference\" t=\"s\"><v>$sharedIndex</v></c>"
+                                }
+                            }.joinToString("") +
+                        "</row>"
+                }.joinToString("")
+        val additions =
+            pool.entries
+                .drop(originalCount)
+                .joinToString("") { "<si><t>${escapeXml(it.key)}</t></si>" }
+        val newSharedStrings =
+            sharedStringsXml
+                .replace("</sst>", additions + "</sst>")
+                .replace("count=\"$originalCount\"", "count=\"${pool.size}\"")
+                .replace("uniqueCount=\"$originalCount\"", "uniqueCount=\"${pool.size}\"")
+        parts[sheetPart] =
+            (
+                sheetXml.substringBefore("<sheetData>") +
+                    "<sheetData>" +
+                    headerRow +
+                    dataRows +
+                    "</sheetData>" +
+                    sheetXml.substringAfter("</sheetData>")
+            ).toByteArray(Charsets.UTF_8)
+        parts[sharedStringsPart] = newSharedStrings.toByteArray(Charsets.UTF_8)
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out).use { zip ->
+            parts.forEach { (name, bytes) ->
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(bytes)
+                zip.closeEntry()
+            }
+        }
+        return out.toByteArray()
     }
 
     // ---------------------------------------------------------------- D06 sanitization (plan 6.3)

@@ -152,6 +152,13 @@ data class ImportIntakeRequest(
     val candidateGeneratedAt: String,
     /** Non-null iff recordKind is a v3 kind (spine validation gate, D-107 section 3.2). */
     val paymentProfile: ImportPaymentProfile? = null,
+    /**
+     * P8-04 i3a (D-18): non-null marks a self-entry candidate — the store writes it into
+     * `import_candidate.rule` verbatim instead of the record kind's storage value
+     * (`rule_version` stays 1; the rule column carries no value CHECK). Null keeps every
+     * frozen format's rule write byte-identical.
+     */
+    val candidateRuleOverride: String? = null,
 )
 
 data class ImportIntakeSnapshot(
@@ -164,6 +171,8 @@ data class ImportIntakeSnapshot(
     val contentHash: String,
     val candidateGeneratedAt: String,
     val paymentProfile: ImportPaymentProfile? = null,
+    /** P8-04 i3a (D-18): relayed verbatim from [ImportIntakeRequest.candidateRuleOverride]. */
+    val candidateRuleOverride: String? = null,
 )
 
 data class ImportDuplicateComparisonSnapshot(
@@ -650,6 +659,7 @@ class ExecuteImportIntake(
                 contentHash = contentHash,
                 candidateGeneratedAt = request.candidateGeneratedAt,
                 paymentProfile = request.paymentProfile,
+                candidateRuleOverride = request.candidateRuleOverride,
             )
         return commitPort.commitIntake(identity, snapshot) { requiredDuplicateIds ->
             idSource.next(requiredDuplicateIds)

@@ -229,7 +229,10 @@ class SqlDelightImportSpineStore private constructor(
                                 ImportRecordKind.MIXED_PAYMENT_SOURCE -> "mixed_payment"
                             },
                         confidence = confidenceFor(snapshot.completeness),
-                        rule = snapshot.recordKind.storageValue,
+                        // P8-04 D-18: a self-entry candidate rides the request's rule override
+                        // (the distinct `self_entry_v1` string); every frozen format keeps the
+                        // record kind's storage value. `rule_version` stays 1 (Ledger.sq CHECK).
+                        rule = snapshot.candidateRuleOverride ?: snapshot.recordKind.storageValue,
                         rule_version = 1L,
                     )
                     // P4-06 slice 1 (D-107 section 5): a v3 row writes its payment profile in
