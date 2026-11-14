@@ -627,6 +627,8 @@ class JvmImportFileIntakeJvmTest {
         assertEquals("现金", matchedBasis.fundingAccountSourceText)
         assertEquals("现金", matchedBasis.fundingAccountTargetName)
         assertFalse(matchedBasis.unconsumedCategoryText)
+        // P8-04 i3b (D-19): the bare-leaf unique hit reports the 精确 match method.
+        assertEquals("exact", matchedBasis.categoryMatchMethod)
         assertEquals(ImportCompleteness.VALID_COMPLETE, port.snapshots[0].completeness)
         // Row 1: matched-failure — the verbatim reason token rides the basis and the parsed
         // VALID_COMPLETE is DEMOTED to VALID_INCOMPLETE (the D-6 failure face: low
@@ -636,6 +638,22 @@ class JvmImportFileIntakeJvmTest {
         assertNull(unmatchedBasis.fundingAccountTargetName)
         assertEquals("ACCOUNT_NOT_FOUND", unmatchedBasis.fundingAccountUnmatchedReason)
         assertEquals(ImportCompleteness.VALID_INCOMPLETE, port.snapshots[1].completeness)
+
+        // P8-04 i3b (D-18/D-7): the accepted branch carries the candidate id on EVERY
+        // accepted record (uniform across formats); the self-entry arm additionally carries
+        // the note text and the matched prefill (the unmatched row carries none).
+        val matchedRecord = accepted.records[0]
+        val unmatchedRecord = accepted.records[1]
+        assertEquals(accepted.newCandidateIds[0], matchedRecord.candidateId)
+        assertEquals("matched", matchedRecord.noteText)
+        val matchedPrefill = assertIs<com.unifiedledger.application.SelfEntryPrefill>(matchedRecord.selfEntryPrefill)
+        assertEquals(CategoryId("cat-food"), matchedPrefill.categoryId)
+        assertEquals(AccountId("acc-cash"), matchedPrefill.fundingAccountId)
+        assertNull(matchedPrefill.fromAccountId)
+        assertNull(matchedPrefill.toAccountId)
+        assertEquals(accepted.newCandidateIds[1], unmatchedRecord.candidateId)
+        assertEquals("unmatched", unmatchedRecord.noteText)
+        assertNull(unmatchedRecord.selfEntryPrefill)
     }
 
     /**
@@ -668,9 +686,135 @@ class JvmImportFileIntakeJvmTest {
         assertEquals(1, accepted.records.size)
         assertEquals(1, port.snapshots.size)
         assertNull(accepted.records.single().matchBasis)
+        // P8-04 i3b: no catalog → no match → no prefill; the note still rides (it needs no
+        // catalog) and the accepted branch still carries the candidate id.
+        assertNull(accepted.records.single().selfEntryPrefill)
+        assertEquals("no catalog", accepted.records.single().noteText)
+        assertEquals(accepted.newCandidateIds.single(), accepted.records.single().candidateId)
         assertEquals("self_entry_v1", port.snapshots.single().candidateRuleOverride)
         // The parsed VALID_COMPLETE is untouched: without a catalog nothing demotes it.
         assertEquals(ImportCompleteness.VALID_COMPLETE, port.snapshots.single().completeness)
+    }
+
+    /**
+     * P8-04 i3b (D-19): a full-path disambiguated category reports the 路径消歧 match method on
+     * the basis — the display twin of D-024's resolution semantics. The legs all match, so the
+     * transfer also demonstrates the transfer slots (category null, no funding slot, the
+     * legs filled, no prefill category/from-to beyond the legs).
+     */
+    @Test
+    fun aPathDisambiguatedCategoryReportsThePathMatchMethod() {
+        val port = RecordingIntakePort()
+        val catalogLedgerId = LedgerId("ledger-p804-i3b-path")
+
+        fun account(
+            id: String,
+            name: String,
+        ): Account =
+            Account(
+                id = AccountId(id),
+                ledgerId = catalogLedgerId,
+                kind = AccountKind.ASSET,
+                currency = CurrencyUnit("CNY", 2),
+                ownedByUser = true,
+                realAccount = true,
+                name = name,
+            )
+
+        fun category(
+            id: String,
+            name: String,
+            parentId: CategoryId?,
+        ): Category =
+            Category(
+                id = CategoryId(id),
+                ledgerId = catalogLedgerId,
+                parentId = parentId,
+                postingAccountId = null,
+                active = true,
+                name = name,
+            )
+
+        val catalog =
+            when (
+                val result =
+                    LedgerCatalog.create(
+                        accounts = listOf(account("acc-cash", "现金"), account("acc-bank", "银行卡")),
+                        categories =
+                            listOf(
+                                category("cat-a", "父A", null),
+                                category("cat-b", "父B", null),
+                                category("cat-a-x", "子X", CategoryId("cat-a")),
+                                category("cat-b-x", "子X", CategoryId("cat-b")),
+                            ),
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> throw IllegalStateException("fixture catalog rejected")
+            }
+
+        // A transfer row whose legs resolve: 现金 → 银行卡. Its category text (父A/子X) is
+        // never consumed by a transfer, so the method probe rides an expense row instead;
+        // the second row carries the same-name leaf disambiguated by the full path.
+        val bytes =
+            selfEntryVariant(
+                listOf(
+                    listOf("支出", "2026-03-05 08:00:00", "8.00", "CNY", "父A", "子X", "现金", "", "path row"),
+                    listOf("转账", "2026-03-06 09:00:00", "9.00", "CNY", "父B", "子X", "现金", "银行卡", "transfer row"),
+                ),
+            )
+        val outcome =
+            orchestrator(port).intake(
+                ImportFileIntakeInput(
+                    format = ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier,
+                    platform = ImportPlatformKind.DESKTOP,
+                    session = newSession(),
+                    bytes = bytes,
+                    catalog = catalog,
+                ),
+            )
+
+        val accepted = assertIs<ImportFileIntakeOutcome.Accepted>(outcome)
+        assertEquals(2, accepted.records.size)
+        // Row 0: the same-name leaf 子X resolved through the full parent path → "path".
+        val pathBasis = assertIs<SelfEntryMatchBasis>(accepted.records[0].matchBasis)
+        assertEquals("父A/子X", pathBasis.categorySourceText)
+        assertEquals("子X", pathBasis.categoryTargetName)
+        assertEquals("path", pathBasis.categoryMatchMethod)
+        val pathPrefill = assertIs<com.unifiedledger.application.SelfEntryPrefill>(accepted.records[0].selfEntryPrefill)
+        assertEquals(CategoryId("cat-a-x"), pathPrefill.categoryId)
+        assertEquals(AccountId("acc-cash"), pathPrefill.fundingAccountId)
+        // Row 1: the transfer — legs matched (prefill from/to), no category consumed, and
+        // the unconsumed category text flags the display area.
+        val transferBasis = assertIs<SelfEntryMatchBasis>(accepted.records[1].matchBasis)
+        assertTrue(transferBasis.unconsumedCategoryText)
+        assertNull(transferBasis.categoryTargetName)
+        assertEquals("现金", transferBasis.fromAccountTargetName)
+        assertEquals("银行卡", transferBasis.toAccountTargetName)
+        val transferPrefill = assertIs<com.unifiedledger.application.SelfEntryPrefill>(accepted.records[1].selfEntryPrefill)
+        assertNull(transferPrefill.categoryId)
+        assertNull(transferPrefill.fundingAccountId)
+        assertEquals(AccountId("acc-cash"), transferPrefill.fromAccountId)
+        assertEquals(AccountId("acc-bank"), transferPrefill.toAccountId)
+    }
+
+    /**
+     * P8-04 i3b: the four frozen formats' accepted records stay untouched by the self-entry
+     * display carry — note/prefill/basis all null while the candidate id rides the accepted
+     * branch uniformly. A CMB pick is the cheapest shared-branch probe.
+     */
+    @Test
+    fun theFrozenFormatsAcceptedRecordsCarryOnlyTheCandidateId() {
+        val port = RecordingIntakePort()
+        val outcome =
+            orchestrator(port).intake(cmbInput(newSession(), listOf(cmbRow())))
+
+        val accepted = assertIs<ImportFileIntakeOutcome.Accepted>(outcome)
+        val record = accepted.records.single()
+        assertEquals(accepted.newCandidateIds.single(), record.candidateId)
+        assertNull(record.matchBasis)
+        assertNull(record.noteText)
+        assertNull(record.selfEntryPrefill)
     }
 
     // ---------------------------------------------------------------- P8-04 i3a: the self-entry variant workbook

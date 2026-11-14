@@ -2198,12 +2198,58 @@ class P503ReducerImpl(
                 rowsResult is com.unifiedledger.application.ImportReviewRowsResult.Unavailable -> ImportReviewNotice.ReviewReadFailed
                 else -> null
             }
+        // P8-04 i3b (D-18/D-19/D-7/D-017): the accepted self-entry records' session display
+        // data lands beside the session summary. The prefill seeds the decision drafts —
+        // INITIAL VALUES only (D-017: matching never decides, the user's edit always wins),
+        // so an existing draft for the candidate is NEVER overwritten (putIfAbsent
+        // semantics). The basis and the note ride their own session-memory maps for the
+        // detail's read-only areas; all three die with the session like the drafts.
+        val landedOutcome = (outcome as? ImportIntakePipelineOutcome.Intaken)?.outcome
+        val landedRecords =
+            when (landedOutcome) {
+                is com.unifiedledger.application.ImportFileIntakeOutcome.Accepted -> landedOutcome.records
+                is com.unifiedledger.application.ImportFileIntakeOutcome.NoChangeAll -> landedOutcome.records
+                else -> emptyList()
+            }
+        val acceptedById =
+            landedRecords
+                .filter {
+                    it.disposition == com.unifiedledger.application.ImportIntakeRecordDisposition.INTAKE_ACCEPTED &&
+                        it.candidateId != null
+                }
+                .associateBy { it.candidateId!! }
+        val seededDrafts =
+            acceptedById.entries
+                .filter { it.value.selfEntryPrefill != null && it.key !in view.decisionDrafts }
+                .associate { entry ->
+                    val prefill = entry.value.selfEntryPrefill!!
+                    entry.key to
+                        ImportDecisionDraft(
+                            categoryId = prefill.categoryId,
+                            fundingAccountId = prefill.fundingAccountId,
+                            fromAccountId = prefill.fromAccountId,
+                            toAccountId = prefill.toAccountId,
+                        )
+                }
+        val seededBases =
+            acceptedById.mapNotNull { (candidateId, record) ->
+                val basis = record.matchBasis ?: return@mapNotNull null
+                candidateId to basis
+            }.toMap()
+        val seededNotes =
+            acceptedById.mapNotNull { (candidateId, record) ->
+                val note = record.noteText ?: return@mapNotNull null
+                candidateId to note
+            }.toMap()
         return state.copy(
             importReview =
                 view.copy(
                     rows = nextRows,
                     nextAfterCandidateId = nextAfterCandidateId,
                     selectedCandidateIds = retainedSelection,
+                    decisionDrafts = view.decisionDrafts + seededDrafts,
+                    sessionMatchBases = seededBases,
+                    sessionNotes = seededNotes,
                     lastIntakeSession = event.session,
                     // D-322 D-2: the newest session's count lands here UNCONDITIONALLY — on either
                     // page branch — because the count was read in the landing lease post-commit and

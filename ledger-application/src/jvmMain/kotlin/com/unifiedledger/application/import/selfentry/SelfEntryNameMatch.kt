@@ -44,11 +44,16 @@ sealed interface SelfEntryMatchOutcome {
     /**
      * Every consumed lookup resolved to exactly one active catalog entity. A null id means
      * that slot's cell was blank — nothing to match, no failure (the decision form fills
-     * it, D-017); it is not an unmatched face.
+     * it, D-017); it is not an unmatched face. [categoryMatchMethod] is the D-19 display
+     * method of the category slot: `"path"` = the full parent-path match disambiguated
+     * same-name leaves, `"exact"` = the bare leaf name uniquely hit, null = the slot was
+     * blank (nothing consumed). Accounts have no hierarchy and resolve exactly, so they
+     * carry no method.
      */
     data class Matched(
         val categoryId: CategoryId?,
         val categoryName: String?,
+        val categoryMatchMethod: String?,
         val fundingAccountId: AccountId?,
         val fundingAccountName: String?,
         val fromAccountId: AccountId?,
@@ -148,6 +153,7 @@ class SelfEntryNameMatcher(
             SelfEntryMatchOutcome.Matched(
                 categoryId = category.id,
                 categoryName = category.name,
+                categoryMatchMethod = category.matchMethod,
                 fundingAccountId = funding.id,
                 fundingAccountName = funding.name,
                 fromAccountId = null,
@@ -175,6 +181,7 @@ class SelfEntryNameMatcher(
             SelfEntryMatchOutcome.Matched(
                 categoryId = null,
                 categoryName = null,
+                categoryMatchMethod = null,
                 fundingAccountId = null,
                 fundingAccountName = null,
                 fromAccountId = from.id,
@@ -199,7 +206,7 @@ class SelfEntryNameMatcher(
         kind: CategoryKind,
     ): CategoryResolution {
         if (primaryText.isBlank() && secondaryText.isBlank()) {
-            return CategoryResolution(null, null, null)
+            return CategoryResolution(null, null, null, null)
         }
         val leaves = activeCategoriesByKind[kind].orEmpty()
         val target = (if (secondaryText.isBlank()) primaryText else secondaryText).foldedNameKey()
@@ -212,22 +219,23 @@ class SelfEntryNameMatcher(
                 }
             if (byPath.size == 1) {
                 val leaf = byPath.single()
-                return CategoryResolution(leaf.id, leaf.name, null)
+                return CategoryResolution(leaf.id, leaf.name, null, MATCH_METHOD_PATH)
             }
             if (byPath.size > 1) {
-                return CategoryResolution(null, null, SelfEntryMatchUnresolvedReason.CATEGORY_AMBIGUOUS)
+                return CategoryResolution(null, null, SelfEntryMatchUnresolvedReason.CATEGORY_AMBIGUOUS, null)
             }
             // D-024: a failed parent name falls back to bare leaf-name matching below.
         }
         val byLeaf = leaves.filter { it.name.foldedNameKey() == target }
         val single = byLeaf.singleOrNull()
         return if (single != null) {
-            CategoryResolution(single.id, single.name, null)
+            CategoryResolution(single.id, single.name, null, MATCH_METHOD_EXACT)
         } else {
             CategoryResolution(
                 null,
                 null,
                 if (byLeaf.isEmpty()) SelfEntryMatchUnresolvedReason.CATEGORY_NOT_FOUND else SelfEntryMatchUnresolvedReason.CATEGORY_AMBIGUOUS,
+                null,
             )
         }
     }
@@ -257,6 +265,8 @@ class SelfEntryNameMatcher(
         val id: CategoryId?,
         val name: String?,
         val reason: SelfEntryMatchUnresolvedReason?,
+        /** P8-04 i3b (D-19): `"path"`/`"exact"` when resolved; null when blank or unresolved. */
+        val matchMethod: String?,
     )
 
     private data class AccountResolution(
@@ -267,6 +277,10 @@ class SelfEntryNameMatcher(
 
     private companion object {
         const val DIRECTION_IN: String = "in"
+
+        /** P8-04 i3b (D-19) match-method tokens: the full-path disambiguation and the bare-leaf hit. */
+        const val MATCH_METHOD_PATH: String = "path"
+        const val MATCH_METHOD_EXACT: String = "exact"
 
         /** The exact-match folding: every internal whitespace run (space/tab/…) to one space. */
         val WHITESPACE_RUN = Regex("\\s+")
@@ -304,6 +318,7 @@ fun SelfEntryMatchOutcome.toMatchBasis(inputs: SelfEntryMatchInputs): SelfEntryM
                 toAccountTargetName = toAccountName,
                 toAccountUnmatchedReason = null,
                 unconsumedCategoryText = unconsumedCategoryText,
+                categoryMatchMethod = categoryMatchMethod,
             )
         is SelfEntryMatchOutcome.Unmatched ->
             SelfEntryMatchBasis(

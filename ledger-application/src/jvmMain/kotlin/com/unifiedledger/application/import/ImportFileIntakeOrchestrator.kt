@@ -20,6 +20,7 @@ import com.unifiedledger.application.ImportPaymentProfile
 import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportRequestIdentity
 import com.unifiedledger.application.ImportSourceFacts
+import com.unifiedledger.application.SelfEntryPrefill
 import com.unifiedledger.application.aggregateImportIntakeRecords
 import com.unifiedledger.application.import.alipay.AlipayBatchResult
 import com.unifiedledger.application.import.alipay.AlipayCsvParser
@@ -189,6 +190,18 @@ class JvmImportFileIntake(
                     // Hoisted once per record: the basis exists exactly when both the verbatim
                     // inputs and the matched outcome exist (null matchInputs => null basis).
                     val matchBasis = matchInputs?.let { inputs -> matchOutcome?.toMatchBasis(inputs) }
+                    // P8-04 i3b (D-18/D-017): the prefill exists exactly when the match fully
+                    // resolved — the matched ids seed the session decision drafts as INITIAL
+                    // VALUES only (blank slots stay null; a Unmatched row carries no prefill,
+                    // its basis reason tokens carry the display instead).
+                    val selfEntryPrefill = (matchOutcome as? SelfEntryMatchOutcome.Matched)?.let { matched ->
+                        SelfEntryPrefill(
+                            categoryId = matched.categoryId,
+                            fundingAccountId = matched.fundingAccountId,
+                            fromAccountId = matched.fromAccountId,
+                            toAccountId = matched.toAccountId,
+                        )
+                    }
                     val completeness =
                         if (matchOutcome is SelfEntryMatchOutcome.Unmatched && record.completeness == ImportCompleteness.VALID_COMPLETE) {
                             ImportCompleteness.VALID_INCOMPLETE
@@ -234,6 +247,13 @@ class JvmImportFileIntake(
                                     recordOrdinal = record.ordinal,
                                     disposition = ImportIntakeRecordDisposition.INTAKE_ACCEPTED,
                                     matchBasis = matchBasis,
+                                    // P8-04 i3b: the candidate id rides ONLY the accepted branch
+                                    // (shared by every format, so the UI can key the D-19/D-7/D-017
+                                    // session display data to its candidate rows uniformly); the
+                                    // self-entry arm additionally carries its note and prefill.
+                                    candidateId = result.receipt.candidateId,
+                                    noteText = record.noteText,
+                                    selfEntryPrefill = selfEntryPrefill,
                                 )
                             newCandidateIds += result.receipt.candidateId
                         }
@@ -290,6 +310,12 @@ class JvmImportFileIntake(
              * keeps the four frozen arms byte-identical.
              */
             val matchInputs: SelfEntryMatchInputs? = null,
+            /**
+             * P8-04 i3b (D-7): the self-entry row's 备注 cell text, display-only (carried to
+             * the summary's [ImportIntakeRecordSummary.noteText]; import_source_record has no
+             * note column — D-016, zero persistence); null on every other arm.
+             */
+            val noteText: String? = null,
         ) : ParsedRecord
 
         class Rejected(
@@ -350,7 +376,8 @@ class JvmImportFileIntake(
     // the parser's row results carry no payment profile (v1/v2 kinds only), so the profile
     // slot stays null exactly like the WeChat/CMB/CCB arms. P8-04 i3a (D-18) folds the
     // verbatim name inputs into the arm (the i2 boundary dropped them), so the loop's
-    // matcher can consume them.
+    // matcher can consume them. P8-04 i3b (D-7) folds the display-only note text through
+    // the same way.
     private fun parseSelfEntry(
         inputRef: String,
         bytes: ByteArray,
@@ -358,7 +385,7 @@ class JvmImportFileIntake(
         toParsedBatch(SelfEntryXlsxParser.parse(inputRef, bytes)) { row ->
             when (row) {
                 is SelfEntryRowResult.Accepted ->
-                    ParsedRecord.Accepted(row.recordOrdinal, row.recordKind, row.facts, row.completeness, null, row.matchInputs)
+                    ParsedRecord.Accepted(row.recordOrdinal, row.recordKind, row.facts, row.completeness, null, row.matchInputs, row.noteText)
                 is SelfEntryRowResult.Rejected -> ParsedRecord.Rejected(row.recordOrdinal, row.diagnostics.first().toDigest())
             }
         }
