@@ -1,5 +1,7 @@
 package com.unifiedledger.application
 
+import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.LedgerCatalog
 
 /**
@@ -157,6 +159,29 @@ data class SelfEntryMatchBasis(
     val toAccountUnmatchedReason: String?,
     /** D-18: a transfer row carried non-blank category text, which a transfer never consumes. */
     val unconsumedCategoryText: Boolean,
+    /**
+     * P8-04 i3b (D-19): how the category slot resolved — `"path"` = the full parent-path match
+     * disambiguated same-name leaves, `"exact"` = the bare leaf name uniquely hit, `null` = the
+     * category slot was blank (nothing consumed) or unresolved. Accounts have no hierarchy and
+     * resolve exactly, so they carry no method. Session display data only.
+     */
+    val categoryMatchMethod: String? = null,
+)
+
+/**
+ * P8-04 i3b (D-18/D-017): the SELF_ENTRY row's matched name resolution projected onto the
+ * decision-draft slots, carried on the summary so the review's reducer can seed the session
+ * decision drafts (the prefill is a draft INITIAL VALUE only — matching never decides, D-017;
+ * confirmation still walks the checkbox gate and the decision forms). Blank slots stay null
+ * (nothing to prefill); an unmatched row carries no prefill at all (the basis's reason tokens
+ * carry the display). Session display data only: never persisted, never part of the content
+ * fingerprint, dies with the session like the decision drafts it seeds.
+ */
+data class SelfEntryPrefill(
+    val categoryId: CategoryId? = null,
+    val fundingAccountId: AccountId? = null,
+    val fromAccountId: AccountId? = null,
+    val toAccountId: AccountId? = null,
 )
 
 /**
@@ -179,6 +204,25 @@ data class ImportIntakeRecordSummary(
      * is the D-19 display data the user matched with their own hands, not a diagnostic.
      */
     val matchBasis: SelfEntryMatchBasis? = null,
+    /**
+     * P8-04 i3b (D-18): the spine's candidate id for THIS record, only on the
+     * [ImportIntakeRecordDisposition.INTAKE_ACCEPTED] branch (NoChange/Rejected keep null).
+     * Lets the UI key the D-19 basis / D-7 note / D-017 prefill to the candidate row it
+     * renders, for every format uniformly.
+     */
+    val candidateId: ImportCandidateId? = null,
+    /**
+     * P8-04 i3b (D-7): the self-entry row's 备注 cell text, display-only (the candidate
+     * detail's note area; `import_source_record` has no note column — D-016), only on the
+     * SELF_ENTRY arm; null keeps every other format's summaries byte-identical.
+     */
+    val noteText: String? = null,
+    /**
+     * P8-04 i3b (D-18/D-017): the matched-name decision-draft initial values, only when the
+     * self-entry match fully resolved (Matched); null on Unmatched/null outcome and every
+     * other format. Draft initial values only — the user's own edit always wins (D-017).
+     */
+    val selfEntryPrefill: SelfEntryPrefill? = null,
 )
 
 /** Aggregated single-file intake outcome (spec section 4.2.3 (g)). */

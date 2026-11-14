@@ -20,6 +20,7 @@ import com.unifiedledger.application.ImportReviewRow
 import com.unifiedledger.application.ImportReviewRowsPageResult
 import com.unifiedledger.application.ManualExpenseAmountFormatError
 import com.unifiedledger.application.ParseManualExpenseAmount
+import com.unifiedledger.application.SelfEntryMatchBasis
 import com.unifiedledger.domain.CurrencyUnit
 
 // P7-04.C pure presentation decisions (D-146; spec sections 3.3.1/4.5/4.6/6.4, P704SPEC-12).
@@ -145,6 +146,118 @@ internal fun importIncompleteSourceFactsExplanation(row: ImportReviewRow): Strin
             "来源事实不完整：来源交易状态未解，不可确认。"
         else -> "来源事实不完整：缺少必要的事实字段，不可确认。"
     }
+
+// ------------------------------------------------------------------ P8-04 i3b match-basis area (D-19/D-7)
+
+/**
+ * Whether the detail's read-only match-basis area renders at all for one candidate: a basis
+ * must exist in the session-memory map (a self-entry intake with a catalog in this session).
+ * No basis — a non-self-entry format, a catalog-less session, or a restart — leaves the whole
+ * area unrendered (D-19: the area is session display data, never persisted).
+ */
+internal fun importDetailShowsMatchBasis(
+    sessionMatchBases: Map<ImportCandidateId, SelfEntryMatchBasis>,
+    candidateId: ImportCandidateId,
+): Boolean = sessionMatchBases[candidateId] != null
+
+/** One rendered line of the match-basis area's category slot (D-19: 源文本 → 目标显示名 + 匹配方式). */
+internal fun importMatchBasisCategoryLine(basis: SelfEntryMatchBasis): String {
+    val matched =
+        basis.categoryTargetName?.let { target ->
+            val method =
+                when (basis.categoryMatchMethod) {
+                    MATCH_METHOD_PATH -> "路径消歧"
+                    MATCH_METHOD_EXACT -> "精确"
+                    else -> null
+                }
+            val suffix = if (method == null) "" else "（$method）"
+            " → $target$suffix"
+        } ?: basis.categoryUnmatchedReason?.let { reason -> " —— 未匹配（$reason）" } ?: ""
+    return "分类：${basis.categorySourceText}$matched"
+}
+
+/** One rendered line of the match-basis area's account slot (a source text and its resolution). */
+internal fun importMatchBasisAccountLine(
+    label: String,
+    sourceText: String,
+    targetName: String?,
+    unmatchedReason: String?,
+): String {
+    val matched =
+        targetName?.let { target -> " → $target" }
+            ?: unmatchedReason?.let { reason -> " —— 未匹配（$reason）" }
+            ?: ""
+    return "$label：$sourceText$matched"
+}
+
+/**
+ * The match-basis area's lines for one candidate (the pure copy the detail screen renders). A
+ * slot line renders only when that slot actually resolved or failed (a target or a reason):
+ * a blank cell is no match and no failure (nothing to show), and a transfer's category text
+ * is carried by its own 不消费 line while the transfer's 账户1 text lives on the 转出 line —
+ * the basis structurally mirrors it into the funding slot, which stays unrendered there.
+ */
+internal fun importMatchBasisLines(basis: SelfEntryMatchBasis): List<String> =
+    buildList {
+        if (basis.unconsumedCategoryText) {
+            add("转账行不消费类别文本")
+        }
+        if (basis.categoryTargetName != null || basis.categoryUnmatchedReason != null) {
+            add(importMatchBasisCategoryLine(basis))
+        }
+        if (basis.fundingAccountTargetName != null || basis.fundingAccountUnmatchedReason != null) {
+            add(
+                importMatchBasisAccountLine(
+                    "资金账户",
+                    basis.fundingAccountSourceText,
+                    basis.fundingAccountTargetName,
+                    basis.fundingAccountUnmatchedReason,
+                ),
+            )
+        }
+        if (basis.fromAccountTargetName != null || basis.fromAccountUnmatchedReason != null) {
+            add(
+                importMatchBasisAccountLine(
+                    "转出账户",
+                    basis.fromAccountSourceText,
+                    basis.fromAccountTargetName,
+                    basis.fromAccountUnmatchedReason,
+                ),
+            )
+        }
+        if (basis.toAccountTargetName != null || basis.toAccountUnmatchedReason != null) {
+            add(
+                importMatchBasisAccountLine(
+                    "转入账户",
+                    basis.toAccountSourceText,
+                    basis.toAccountTargetName,
+                    basis.toAccountUnmatchedReason,
+                ),
+            )
+        }
+    }
+
+/** The detail's note display line for one candidate's 备注 cell (D-7; blank text renders nothing). */
+internal fun importDetailNoteLine(
+    sessionNotes: Map<ImportCandidateId, String>,
+    candidateId: ImportCandidateId,
+): String? = sessionNotes[candidateId]?.takeIf { it.isNotBlank() }?.let { "备注：$it" }
+
+/**
+ * D-7 (F-L1): whether the detail renders the note slot for one candidate — INDEPENDENTLY of
+ * the match-basis area's own predicate ([importDetailShowsMatchBasis]): a catalog-less
+ * self-entry session carries the note without any basis, so the note must survive the
+ * basis's absence and render alone. The screen keeps the two `if`s separate on exactly this
+ * seam.
+ */
+internal fun importDetailShowsNote(
+    sessionNotes: Map<ImportCandidateId, String>,
+    candidateId: ImportCandidateId,
+): Boolean = importDetailNoteLine(sessionNotes, candidateId) != null
+
+/** The match-method tokens the self-entry arm projects onto the basis (D-19 display vocabulary). */
+private const val MATCH_METHOD_PATH: String = "path"
+private const val MATCH_METHOD_EXACT: String = "exact"
 
 /** The amount line of one candidate row (exact minor units; sign and currency preserved, spec 6.4). */
 internal fun importCandidateAmountText(row: ImportReviewRow): String {
