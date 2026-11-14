@@ -824,6 +824,7 @@ class P503ReducerImpl(
             // round report. The import family is absorbed as a whole (its user intents are
             // unreachable here; its async results have no BudgetConfig effect).
             P503UiEvent.OpenImportSurface,
+            P503UiEvent.RequestImportTemplateDownload,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
             is P503UiEvent.ImportFilePickFailed,
@@ -937,6 +938,7 @@ class P503ReducerImpl(
             is P503UiEvent.MonthlyActivityResult,
             // P7-04.C: the import review events are absorbed before the overview exists (table 6.2a).
             P503UiEvent.OpenImportSurface,
+            P503UiEvent.RequestImportTemplateDownload,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -1018,6 +1020,11 @@ class P503ReducerImpl(
             // untouched, so the bottom bar keeps showing the origin tab and a later tap returns to
             // it; the projection load stays the host's state-driven effect (zero formal write).
             P503UiEvent.OpenImportSurface -> state.copy(importSurface = true)
+            // P8-04 i1 (D-11): the 「获取导入模板」 entry's request intent. The host launches the
+            // SAF save + template write (不切态 — the StartImportFilePick mechanism: the reducer
+            // state is unchanged, the coordinator/testable host action owns the effect); the typed
+            // outcome rides the port channel, never this event.
+            P503UiEvent.RequestImportTemplateDownload -> state
             // R1 (spec 6.2/7.3): the host re-queries the authoritative read model after a
             // successful catalog command and after an explicit management refresh, so this
             // transition replaces the overview's read state while staying on the current tab
@@ -1574,6 +1581,7 @@ class P503ReducerImpl(
             // P7-04.C: the import review events are absorbed inside the read-only detail (table
             // 6.2a; the detail has no import affordances).
             P503UiEvent.OpenImportSurface,
+            P503UiEvent.RequestImportTemplateDownload,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -2451,6 +2459,7 @@ class P503ReducerImpl(
             // The host-channel pick events, the pick pipeline result and the list refresh events
             // are absorbed here (table 6.2a; 清单经详情关闭后刷新).
             P503UiEvent.OpenImportSurface,
+            P503UiEvent.RequestImportTemplateDownload,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -2639,6 +2648,7 @@ class P503ReducerImpl(
             // The host-channel pick events and the P7-04.C review surface are absorbed (the
             // confirm page owns no list affordances).
             P503UiEvent.OpenImportSurface,
+            P503UiEvent.RequestImportTemplateDownload,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -2797,6 +2807,7 @@ class P503ReducerImpl(
             P503UiEvent.CancelImportBatchConfirm,
             is P503UiEvent.ImportUnknownItemCheck,
             P503UiEvent.OpenImportSurface,
+            P503UiEvent.RequestImportTemplateDownload,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -3580,6 +3591,7 @@ class P503ReducerImpl(
             is P503UiEvent.AnalysisMonthShift,
             is P503UiEvent.MonthlyActivityResult,
             P503UiEvent.OpenImportSurface,
+            P503UiEvent.RequestImportTemplateDownload,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -3762,6 +3774,7 @@ class P503ReducerImpl(
             is P503UiEvent.MonthlyActivityResult,
             // P7-04.C: the import review events are absorbed here too (table 6.2a).
             P503UiEvent.OpenImportSurface,
+            P503UiEvent.RequestImportTemplateDownload,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -3935,6 +3948,7 @@ class P503ReducerImpl(
             is P503UiEvent.MonthlyActivityResult,
             // P7-04.C: the import review events are absorbed here too (table 6.2a).
             P503UiEvent.OpenImportSurface,
+            P503UiEvent.RequestImportTemplateDownload,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -4058,6 +4072,7 @@ class P503ReducerImpl(
             is P503UiEvent.MonthlyActivityResult,
             // P7-04.C: the import review events are absorbed here too (table 6.2a).
             P503UiEvent.OpenImportSurface,
+            P503UiEvent.RequestImportTemplateDownload,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -4430,6 +4445,7 @@ class P503ReducerImpl(
             is P503UiEvent.MonthlyActivityResult,
             // P7-04.C: the import review events are absorbed in every transient state (table 6.2a).
             P503UiEvent.OpenImportSurface,
+            P503UiEvent.RequestImportTemplateDownload,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -4573,6 +4589,7 @@ class P503ReducerImpl(
             is P503UiEvent.MonthlyActivityResult,
             // P7-04.C: the import review events are absorbed here too (table 6.2a).
             P503UiEvent.OpenImportSurface,
+            P503UiEvent.RequestImportTemplateDownload,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -4723,6 +4740,7 @@ class P503ReducerImpl(
             is P503UiEvent.MonthlyActivityResult,
             // P7-04.C: the import review events are absorbed here too (table 6.2a).
             P503UiEvent.OpenImportSurface,
+            P503UiEvent.RequestImportTemplateDownload,
             is P503UiEvent.StartImportFilePick,
             is P503UiEvent.ImportFilePicked,
             P503UiEvent.ImportFilePickCancelled,
@@ -4840,6 +4858,7 @@ class P503ReducerImpl(
                     is P503UiEvent.MonthlyActivityResult,
                     // P7-04.C: the import review events are absorbed here too (table 6.2a).
                     P503UiEvent.OpenImportSurface,
+                    P503UiEvent.RequestImportTemplateDownload,
                     is P503UiEvent.StartImportFilePick,
                     is P503UiEvent.ImportFilePicked,
                     P503UiEvent.ImportFilePickCancelled,
@@ -4959,6 +4978,7 @@ class P503ReducerImpl(
                     is P503UiEvent.MonthlyActivityResult,
                     // P7-04.C: the import review events are absorbed here too (table 6.2a).
                     P503UiEvent.OpenImportSurface,
+                    P503UiEvent.RequestImportTemplateDownload,
                     is P503UiEvent.StartImportFilePick,
                     is P503UiEvent.ImportFilePicked,
                     P503UiEvent.ImportFilePickCancelled,

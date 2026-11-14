@@ -888,6 +888,20 @@ internal sealed interface ImportReviewRenderItem {
         override val contentType: String = "formatEntry"
     }
 
+    /**
+     * P8-04 i1 (D-11): the 「获取导入模板」 entry row. It renders directly after the format
+     * matrix (the P8-00 entry's placement precedent: the template is the FIRST thing a user
+     * without a self-entry sheet needs, before any picker), carries no availability semantics
+     * (the template download is platform-independent) and dispatches the typed
+     * [P503UiEvent.RequestImportTemplateDownload] via the composable's callback — zero
+     * presentation state beyond its existence (reducer-absorbed everywhere; the host owns the
+     * SAF launch).
+     */
+    data object TemplateDownloadEntry : ImportReviewRenderItem {
+        override val stableKey: String = "template-download-entry"
+        override val contentType: String = "templateDownloadEntry"
+    }
+
     /** 「最近导入」 section header (spec section 6.1). */
     data object IntakeSessionHeader : ImportReviewRenderItem {
         override val stableKey: String = "intake-header"
@@ -1070,6 +1084,10 @@ internal enum class ImportReviewDividerSlot {
 internal fun importReviewRenderItems(
     view: ImportReviewView?,
     platform: ImportPlatformKind?,
+    // P8-04 i1 (D-11): whether the composition root wired the template download port (the
+    // "no dead affordance" convention). Default false keeps every legacy call site compiling
+    // and rendering the pre-P8-04 shape.
+    templateDownloadWired: Boolean = false,
 ): List<ImportReviewRenderItem> {
     val items = mutableListOf<ImportReviewRenderItem>()
     items += ImportReviewRenderItem.TitleBar
@@ -1078,6 +1096,13 @@ internal fun importReviewRenderItems(
     items += ImportReviewRenderItem.FormatSectionHeader
     (platform?.let { importFormatEntries(it) } ?: emptyList()).forEach { entry ->
         items += ImportReviewRenderItem.FormatEntry(entry)
+    }
+    // P8-04 i1 (D-11): the 「获取导入模板」 entry renders directly after the format matrix —
+    // the user without a self-entry sheet needs the template before any picker. The wiring
+    // probe rides the render call (the P8-01a onUseForReconciliation null-wire precedent:
+    // an unwired root renders neither the row nor a dead button).
+    if (templateDownloadWired) {
+        items += ImportReviewRenderItem.TemplateDownloadEntry
     }
     view?.lastIntakeSession?.let { session ->
         items += ImportReviewRenderItem.IntakeSessionHeader

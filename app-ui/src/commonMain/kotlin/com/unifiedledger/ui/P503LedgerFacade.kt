@@ -163,6 +163,15 @@ class P503LedgerFacade(
     val importFileIntake: ImportFileIntakePort? = null,
     val importPlatformKind: ImportPlatformKind? = null,
     val importIntakeSessionFactory: () -> ImportIntakeSessionIdentity? = { null },
+    // P8-04 i1 (D-11; spec `docs/specs/2026-11-14-p8-04-self-entry-import-design.md`): the
+    // platform save port for the generated import template (the ImportFilePickPort shape: a
+    // commonMain interface, each platform implements SAF CreateDocument / JFileChooser). The
+    // template bytes are generated in jvmMain (`SelfEntryTemplateGenerator`) — shared by Android
+    // and desktop — so the bytes cross this boundary, never a platform file handle. Plain
+    // nullable default keeps every legacy construction (startup tests) valid with the surface
+    // simply absent; the host renders no template row without it (the no-dead-affordance
+    // convention).
+    val importTemplateTargetPort: ImportTemplateTargetPort? = null,
     // P7-09 09.A share-import closed loop (spec sections 2.3/4; D-225): the port that yields the
     // RETAINED share source for an opaque `deliveryId` (no `Uri` crosses this boundary). Plain
     // nullable default so every legacy construction and the desktop root keep compiling with the
@@ -197,6 +206,11 @@ class P503LedgerFacade(
     val importDuplicateReview: ReviewImportDuplicateCandidate? = null,
     val importDuplicateReviewIds: () -> ImportDuplicateReviewIds? = { null },
     val importPickResultChannel: ImportFilePickResultChannel? = null,
+    // P8-04 i1 (D-11): the typed channel the template download's outcome flows back through
+    // (the pick-result channel shape: the port signature stays fire-and-forget about the
+    // result; deliveries happen on the platform callback thread — the UI thread on both ends).
+    // Nullable default so legacy constructions keep compiling with the channel absent.
+    val importTemplateResultChannel: ImportTemplateResultChannel? = null,
     // A-PERF (P7-04 read-governance batch, spec section 2.1): the shared statistics-refresh hook
     // the host runs on the intake pipeline's background thread right after the intake transaction
     // completes (the ~10x row-growth trigger point of SQLite's PRAGMA optimize semantics). The

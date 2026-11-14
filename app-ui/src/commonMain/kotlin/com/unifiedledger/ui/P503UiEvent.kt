@@ -678,6 +678,17 @@ sealed interface P503UiEvent {
     data object OpenImportSurface : P503UiEvent
 
     /**
+     * P8-04 i1 (D-11; spec `docs/specs/2026-11-14-p8-04-self-entry-import-design.md`): requests
+     * the template download — the import surface's 「获取导入模板」 entry. Effect on OverviewEmpty
+     * is the host's template-launch + write (经宿主发起 SAF 保存；不切态 — the reducer state is
+     * unchanged, the coordinator/testable host action owns the effect, the StartImportFilePick
+     * precedent); absorbed everywhere else (table 6.2a discipline). The typed outcome rides the
+     * facade port's own channel back to the composition root — the ImportFilePickResultChannel
+     * shape — never through this event.
+     */
+    data object RequestImportTemplateDownload : P503UiEvent
+
+    /**
      * Starts one platform file pick for the matrix format. Effect on OverviewEmpty is the host's
      * pick launch (经宿主发起平台选择器；不切态 — the reducer state itself is unchanged, the
      * coordinator/testable host action owns the effect); absorbed everywhere else.
