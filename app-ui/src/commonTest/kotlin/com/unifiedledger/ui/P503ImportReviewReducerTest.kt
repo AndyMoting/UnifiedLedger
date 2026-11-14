@@ -910,10 +910,11 @@ class P503ImportReviewReducerTest {
 
     private fun selfEntrySession(
         vararg records: ImportIntakeRecordSummary,
+        inputRef: String = "pick-handle-1",
     ): ImportIntakeSessionSummary =
         ImportIntakeSessionSummary(
             displayName = "synthetic-self-entry.xlsx",
-            inputRef = "pick-handle-1",
+            inputRef = inputRef,
             outcome =
                 ImportIntakePipelineOutcome.Intaken(
                     ImportFileIntakeOutcome.Accepted(
@@ -1029,6 +1030,83 @@ class P503ImportReviewReducerTest {
         assertTrue(view?.decisionDrafts.isNullOrEmpty())
         assertTrue(view?.sessionMatchBases.isNullOrEmpty())
         assertTrue(view?.sessionNotes.isNullOrEmpty())
+    }
+
+    /**
+     * F-12 (评审 F-3 语义): a REPEATED landing of the same session never overwrites the
+     * user's edited draft (the putIfAbsent discipline holds across re-landings, not just
+     * against a pre-seeded map) while the display maps still refresh with the session's
+     * own basis/note.
+     */
+    @Test
+    fun aRepeatedLandingNeverOverwritesAUserEditedDraft() {
+        val source = overview(rows = listOf(pendingRow))
+        val firstLanding =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    source,
+                    P503UiEvent.ImportFileIntakeResult(selfEntrySession(selfEntryRecord(0, "candidate-pending")), ImportReviewRowsResult.Rows(listOf(pendingRow))),
+                ),
+            )
+        // The user edits the seeded draft through the decision form (a pure reducer write).
+        val edited =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    firstLanding,
+                    P503UiEvent.UpdateImportDecisionField(ImportDecisionFieldUpdate.Category(CategoryId("category-user-pick"))),
+                ),
+            )
+        // The SAME landing event arrives again (an equivalent re-dispatch of the session).
+        val reLanded =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    edited,
+                    P503UiEvent.ImportFileIntakeResult(selfEntrySession(selfEntryRecord(0, "candidate-pending")), ImportReviewRowsResult.Rows(listOf(pendingRow))),
+                ),
+            )
+        val view = reLanded.importReview
+        assertEquals(CategoryId("category-user-pick"), view?.decisionDrafts?.get(ImportCandidateId("candidate-pending"))?.categoryId)
+        // The display maps refresh with the re-landed session's data (same session here).
+        assertEquals("餐饮", view?.sessionMatchBases?.get(ImportCandidateId("candidate-pending"))?.categoryTargetName)
+        assertNull(view?.sessionNotes?.get(ImportCandidateId("candidate-pending")))
+    }
+
+    /** F-12 (评审 F-4 语义): a NEW session REPLACES the display maps whole (most recent session). */
+    @Test
+    fun aNewSessionReplacesThePreviousSessionDisplayMaps() {
+        val source = overview(rows = listOf(pendingRow, suspectedRow))
+        val firstSession =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    source,
+                    P503UiEvent.ImportFileIntakeResult(
+                        selfEntrySession(selfEntryRecord(0, "candidate-pending", noteText = "旧会话备注"), inputRef = "pick-handle-old"),
+                        ImportReviewRowsResult.Rows(listOf(pendingRow, suspectedRow)),
+                    ),
+                ),
+            )
+        assertEquals("旧会话备注", firstSession.importReview?.sessionNotes?.get(ImportCandidateId("candidate-pending")))
+        // The new session's pick only carries candidate-suspected: the whole maps replace.
+        val newSession =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    firstSession,
+                    P503UiEvent.ImportFileIntakeResult(
+                        selfEntrySession(selfEntryRecord(0, "candidate-suspected", noteText = "新会话备注"), inputRef = "pick-handle-new"),
+                        ImportReviewRowsResult.Rows(listOf(pendingRow, suspectedRow)),
+                    ),
+                ),
+            )
+        val view = newSession.importReview
+        assertEquals(listOf(ImportCandidateId("candidate-suspected")), view?.sessionMatchBases?.keys?.toList())
+        assertEquals(listOf(ImportCandidateId("candidate-suspected")), view?.sessionNotes?.keys?.toList())
+        assertEquals("新会话备注", view?.sessionNotes?.get(ImportCandidateId("candidate-suspected")))
+        // The old session's candidate is gone from the maps (the KDoc's "most recent
+        // session" semantics) — while its user decision draft survives (session memory,
+        // never session-scoped).
+        assertNull(view?.sessionMatchBases?.get(ImportCandidateId("candidate-pending")))
+        assertNull(view?.sessionNotes?.get(ImportCandidateId("candidate-pending")))
+        assertEquals(CategoryId("category-food"), view?.decisionDrafts?.get(ImportCandidateId("candidate-pending"))?.categoryId)
     }
 
     @Test
