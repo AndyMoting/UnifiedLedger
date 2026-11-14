@@ -315,10 +315,12 @@ class SelfEntryAndroidInstrumentedTest {
     private fun largeSyntheticSelfEntryWorkbook(rowCount: Int): ByteArray {
         val sharedStrings = LinkedHashSet<String>()
         sharedStrings.addAll(HEADERS)
+
         fun shared(text: String): String {
             sharedStrings.add(text)
             return "<c t=\"s\"><v>${sharedStrings.toList().indexOf(text)}</v></c>"
         }
+
         val dataRows = StringBuilder()
         for (ordinal in 0 until rowCount) {
             val month = (3 + ordinal % 10).toString().padStart(2, '0')
@@ -326,7 +328,8 @@ class SelfEntryAndroidInstrumentedTest {
             dataRows.append("<row r=\"").append(ordinal + 2).append("\">")
             dataRows.append(shared("支出"))
             dataRows.append(shared("2026-$month-$day 08:00:00"))
-            dataRows.append("<c><v>").append(ordinal + 1).append(".").append((ordinal % 100).toString().padStart(2, '0')).append("</v></c>")
+            val amount = (ordinal + 1).toString() + "." + (ordinal % 100).toString().padStart(2, '0')
+            dataRows.append("<c><v>").append(amount).append("</v></c>")
             dataRows.append(shared("CNY"))
             dataRows.append(shared("餐饮"))
             dataRows.append(shared("现金"))
