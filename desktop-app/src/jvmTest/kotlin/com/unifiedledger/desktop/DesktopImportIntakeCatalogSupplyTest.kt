@@ -106,10 +106,11 @@ class DesktopImportIntakeCatalogSupplyTest {
                 )
             val beforeBasis =
                 assertIs<SelfEntryMatchBasis>(assertIs<ImportFileIntakeOutcome.Accepted>(before).records[0].matchBasis)
-            // The Unmatched basis: the category slot resolved against the seed (no reason), the
-            // funding slot is typed-unmatched — the supplier handed the arm the THEN-current
-            // authority (the then-current truth, not a fabricated all-blank face).
-            assertNull(beforeBasis.categoryTargetName)
+            // The Unmatched basis: the category slot ALREADY resolves against the seed (the
+            // active 餐饮 group uniquely matches the bare-leaf path), while the funding slot is
+            // typed-unmatched — the supplier handed the arm the THEN-current authority, whose
+            // funding truth (no 现金 yet) is exactly what this dispatch's basis discloses.
+            assertEquals("餐饮", beforeBasis.categoryTargetName)
             assertNull(beforeBasis.categoryUnmatchedReason)
             assertNull(beforeBasis.fundingAccountTargetName)
             assertEquals("ACCOUNT_NOT_FOUND", beforeBasis.fundingAccountUnmatchedReason)
