@@ -877,11 +877,14 @@ internal fun P503ImportCandidateDetailScreen(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
-                // P8-04 i3b (D-19/D-7): the read-only match-basis area + the note display slot,
-                // fed ONLY from the session-memory maps (ImportReviewView.sessionMatchBases/
-                // sessionNotes). No basis in this session — a non-self-entry format, a
-                // catalog-less session, or a restart — leaves the whole area unrendered; the
-                // area is display-only and never persists anything (D-016).
+                // P8-04 i3b (D-19): the read-only match-basis area, fed ONLY from the
+                // session-memory map (ImportReviewView.sessionMatchBases). No basis in this
+                // session — a non-self-entry format, a catalog-less session, or a restart —
+                // leaves the area unrendered; it is display-only and never persists anything
+                // (D-016).
+                // P8-04 i3b (D-7, F-L1): the note display slot is INDEPENDENT of the basis —
+                // a catalog-less self-entry session carries noteText without any matchBasis,
+                // so the note renders whenever the session map has it, alone if need be.
                 val overviewView = state.overview.importReview
                 if (overviewView != null && importDetailShowsMatchBasis(overviewView.sessionMatchBases, row.candidateId)) {
                     Spacer(Modifier.height(8.dp))
@@ -889,7 +892,10 @@ internal fun P503ImportCandidateDetailScreen(
                     importMatchBasisLines(overviewView.sessionMatchBases.getValue(row.candidateId)).forEach { line ->
                         Text(line, style = MaterialTheme.typography.bodySmall)
                     }
+                }
+                if (overviewView != null && importDetailShowsNote(overviewView.sessionNotes, row.candidateId)) {
                     importDetailNoteLine(overviewView.sessionNotes, row.candidateId)?.let { note ->
+                        Spacer(Modifier.height(4.dp))
                         Text(note, style = MaterialTheme.typography.bodySmall)
                     }
                 }

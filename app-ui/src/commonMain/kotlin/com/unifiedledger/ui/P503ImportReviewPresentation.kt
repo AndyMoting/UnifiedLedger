@@ -241,6 +241,18 @@ internal fun importMatchBasisLines(basis: SelfEntryMatchBasis): List<String> =
 internal fun importDetailNoteLine(sessionNotes: Map<ImportCandidateId, String>, candidateId: ImportCandidateId): String? =
     sessionNotes[candidateId]?.takeIf { it.isNotBlank() }?.let { "备注：$it" }
 
+/**
+ * D-7 (F-L1): whether the detail renders the note slot for one candidate — INDEPENDENTLY of
+ * the match-basis area's own predicate ([importDetailShowsMatchBasis]): a catalog-less
+ * self-entry session carries the note without any basis, so the note must survive the
+ * basis's absence and render alone. The screen keeps the two `if`s separate on exactly this
+ * seam.
+ */
+internal fun importDetailShowsNote(
+    sessionNotes: Map<ImportCandidateId, String>,
+    candidateId: ImportCandidateId,
+): Boolean = importDetailNoteLine(sessionNotes, candidateId) != null
+
 /** The match-method tokens the self-entry arm projects onto the basis (D-19 display vocabulary). */
 private const val MATCH_METHOD_PATH: String = "path"
 private const val MATCH_METHOD_EXACT: String = "exact"
