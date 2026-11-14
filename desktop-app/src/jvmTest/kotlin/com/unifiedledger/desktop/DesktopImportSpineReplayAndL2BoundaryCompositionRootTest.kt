@@ -7,9 +7,9 @@ import com.unifiedledger.application.ImportCandidateConfirmRequest
 import com.unifiedledger.application.ImportCandidateDecisionResult
 import com.unifiedledger.application.ImportCandidateDetailResult
 import com.unifiedledger.application.ImportConfirmDecisionFields
-import com.unifiedledger.application.ImportDuplicateReviewsResult
 import com.unifiedledger.application.ImportDuplicateReviewRequest
 import com.unifiedledger.application.ImportDuplicateReviewResult
+import com.unifiedledger.application.ImportDuplicateReviewsResult
 import com.unifiedledger.application.ImportDuplicateStatus
 import com.unifiedledger.application.ImportFileIntakeInput
 import com.unifiedledger.application.ImportFileIntakeOutcome
@@ -100,9 +100,9 @@ class DesktopImportSpineReplayAndL2BoundaryCompositionRootTest {
      */
     private fun selfEntryVariant(rows: List<List<String>>): ByteArray {
         val parts = LinkedHashMap<String, ByteArray>()
-        ZipStreams.readAll(
-            com.unifiedledger.application.import.selfentry.SelfEntryTemplateGenerator.generateTemplate(),
-        ).forEach { (name, bytes) -> parts[name] = bytes }
+        val generated =
+            com.unifiedledger.application.import.selfentry.SelfEntryTemplateGenerator.generateTemplate()
+        ZipStreams.readAll(generated).forEach { (name, bytes) -> parts[name] = bytes }
         val sheetPart = "xl/worksheets/sheet1.xml"
         val sharedStringsPart = "xl/sharedStrings.xml"
         val sheetXml = parts.getValue(sheetPart).toString(Charsets.UTF_8)
@@ -389,7 +389,14 @@ class DesktopImportSpineReplayAndL2BoundaryCompositionRootTest {
                 ).rows
             assertEquals(6, rows.map { it.candidateId }.toSet().size)
             assertEquals(3, rows.count { it.duplicateStatus == ImportDuplicateStatus.DEFERRED })
-            assertEquals(6, rows.filter { it.duplicateStatus == null }.map { it.candidateId }.toSet().size)
+            assertEquals(
+                6,
+                rows
+                    .filter { it.duplicateStatus == null }
+                    .map { it.candidateId }
+                    .toSet()
+                    .size,
+            )
             assertTrue(rows.all { it.candidateStatus == "pending_confirmation" })
         }
     }
