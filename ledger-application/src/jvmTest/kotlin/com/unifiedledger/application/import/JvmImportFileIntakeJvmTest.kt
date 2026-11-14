@@ -11,6 +11,7 @@ import com.unifiedledger.application.ImportFormatAvailability
 import com.unifiedledger.application.ImportFormatCapabilities
 import com.unifiedledger.application.ImportFormatUnavailableReason
 import com.unifiedledger.application.ImportFundingState
+import com.unifiedledger.application.import.selfentry.SelfEntryTemplateGenerator
 import com.unifiedledger.application.ImportIntakeBatchFailure
 import com.unifiedledger.application.ImportIntakeCommitPort
 import com.unifiedledger.application.ImportIntakeIdSource
@@ -453,8 +454,7 @@ class JvmImportFileIntakeJvmTest {
     @Test
     fun selfEntryXlsxDispatchesToTheNewParserWithTheD16Facts() {
         val port = RecordingIntakePort()
-        val templateBytes =
-            com.unifiedledger.application.import.selfentry.SelfEntryTemplateGenerator.generateTemplate()
+        val templateBytes = SelfEntryTemplateGenerator.generateTemplate()
         val outcome =
             orchestrator(port).intake(
                 ImportFileIntakeInput(
