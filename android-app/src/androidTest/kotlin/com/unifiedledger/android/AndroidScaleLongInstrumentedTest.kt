@@ -633,6 +633,16 @@ class AndroidScaleLongInstrumentedTest {
             // button. seekBackToTop first (the same marker walk openCandidate uses,
             // AndroidScaleUi seekBackToTop): the button is then one small forward scan away.
             ui.seekBackToTop("刷新清单")
+            // D-326 probe (run 43561950134): the top-anchored seek's instant view. The failure
+            // forensics' texts block truncates exactly this evidence, and the a11y tree has a
+            // known blind spot in this region (rendered rows while has() stayed false), so the
+            // top window's full labels and the button's own presence are recorded BEFORE the
+            // walk — one line settles "was the affordance in the tree at the top at all".
+            evidence.put(
+                "groupEntryTopWindowLabels",
+                ui.nodes(ui.root()).flatMap(ui::labels).joinToString("|").take(4000),
+            )
+            evidence.put("groupEntryTopWindowHasButton", ui.has("整组标记为重复", prefix = true))
             ui.seek("整组标记为重复")
             ui.click("整组标记为重复")
             ui.await { ui.has("将逐条提交人工审核判定为重复，每条独立生效；某一条失败不影响其余各条。共 " + spec.newSessionDuplicateRelations + " 条。") }
