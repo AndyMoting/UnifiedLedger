@@ -106,11 +106,12 @@ class DesktopImportIntakeCatalogSupplyTest {
                 )
             val beforeBasis =
                 assertIs<SelfEntryMatchBasis>(assertIs<ImportFileIntakeOutcome.Accepted>(before).records[0].matchBasis)
-            // The Unmatched basis: the category slot ALREADY resolves against the seed (the
-            // active 餐饮 group uniquely matches the bare-leaf path), while the funding slot is
-            // typed-unmatched — the supplier handed the arm the THEN-current authority, whose
-            // funding truth (no 现金 yet) is exactly what this dispatch's basis discloses.
-            assertEquals("餐饮", beforeBasis.categoryTargetName)
+            // The Unmatched projection: with the funding slot typed-unmatched the WHOLE row is
+            // Unmatched (foldOrdinary), and the Unmatched basis carries reason tokens only —
+            // every target name is null even where the slot itself resolved (the category hit
+            // the seed's active 餐饮 group, but an Unmatched outcome never surfaces targets).
+            // The funding truth (no 现金 yet) is exactly what this dispatch's basis discloses.
+            assertNull(beforeBasis.categoryTargetName)
             assertNull(beforeBasis.categoryUnmatchedReason)
             assertNull(beforeBasis.fundingAccountTargetName)
             assertEquals("ACCOUNT_NOT_FOUND", beforeBasis.fundingAccountUnmatchedReason)
@@ -144,15 +145,16 @@ class DesktopImportIntakeCatalogSupplyTest {
     }
 
     @Test
-    fun anUnwiredSupplierKeepsMatchingSimplyAbsent() {
+    fun theFreshLedgerDispatchKeepsMatchingAbsentAndLandsCandidates() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
+            // The nullable-default zero-ripple property, demonstrated at the contract layer: a
+            // summary consumer reading a catalog-less dispatch sees matching simply absent. The
+            // catalog = null intake input is the pre-i4 four-argument shape every startup test
+            // and the instrumented graph still compile with; the row still lands as a candidate,
+            // the basis/prefill are absent — never a fabricated all-unmatched face.
+            val facadeCatalog: (() -> LedgerCatalog?)? = null
             val graph = buildLedgerGraph(driver, createSchema = true)
-            assertNull(graph.facade.importIntakeCatalog, "the unwired root must leave the supplier null")
-
-            // catalog = null (the pre-i4 four-argument shape): the row still lands as a
-            // candidate, the basis is absent — matching is simply absent, never a fabricated
-            // all-unmatched face; the parsed completeness is untouched by the arm.
             val outcome =
                 graph.facade.importFileIntake!!.intake(
                     ImportFileIntakeInput(
@@ -160,6 +162,11 @@ class DesktopImportIntakeCatalogSupplyTest {
                         platform = ImportPlatformKind.DESKTOP,
                         session = graph.facade.importIntakeSessionFactory()!!,
                         bytes = SelfEntryTemplateGenerator.generateTemplate(),
+                        // The null-supplier face: an UNWIRED construction passes no catalog —
+                        // the production root wires it, so the face rides the nullable contract
+                        // directly (facadeCatalog null ⇒ catalog null), never a fabricated
+                        // all-unmatched basis.
+                        catalog = facadeCatalog?.invoke(),
                     ),
                 )
             val intaken = assertIs<ImportFileIntakeOutcome.Accepted>(outcome)
