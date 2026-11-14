@@ -194,14 +194,15 @@ class JvmImportFileIntake(
                     // resolved — the matched ids seed the session decision drafts as INITIAL
                     // VALUES only (blank slots stay null; a Unmatched row carries no prefill,
                     // its basis reason tokens carry the display instead).
-                    val selfEntryPrefill = (matchOutcome as? SelfEntryMatchOutcome.Matched)?.let { matched ->
-                        SelfEntryPrefill(
-                            categoryId = matched.categoryId,
-                            fundingAccountId = matched.fundingAccountId,
-                            fromAccountId = matched.fromAccountId,
-                            toAccountId = matched.toAccountId,
-                        )
-                    }
+                    val selfEntryPrefill =
+                        (matchOutcome as? SelfEntryMatchOutcome.Matched)?.let { matched ->
+                            SelfEntryPrefill(
+                                categoryId = matched.categoryId,
+                                fundingAccountId = matched.fundingAccountId,
+                                fromAccountId = matched.fromAccountId,
+                                toAccountId = matched.toAccountId,
+                            )
+                        }
                     val completeness =
                         if (matchOutcome is SelfEntryMatchOutcome.Unmatched && record.completeness == ImportCompleteness.VALID_COMPLETE) {
                             ImportCompleteness.VALID_INCOMPLETE
