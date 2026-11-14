@@ -300,19 +300,21 @@ object SelfEntryXlsxParser {
             when (val currencyText = textOf(row.getCell(SelfEntrySourceTokens.CURRENCY_COLUMN))) {
                 SelfEntrySourceTokens.CURRENCY_CNY -> SelfEntrySourceTokens.CURRENCY_CNY
                 "" -> {
-                    diagnostics += SelfEntryDiagnostics.requiredFactUnresolved(
-                        inputRef,
-                        ordinal,
-                        SelfEntrySourceTokens.FIELD_ROLE_CURRENCY,
-                    )
+                    diagnostics +=
+                        SelfEntryDiagnostics.requiredFactUnresolved(
+                            inputRef,
+                            ordinal,
+                            SelfEntrySourceTokens.FIELD_ROLE_CURRENCY,
+                        )
                     SelfEntrySourceTokens.CURRENCY_CNY
                 }
                 else -> {
-                    diagnostics += SelfEntryDiagnostics.requiredFactUnresolved(
-                        inputRef,
-                        ordinal,
-                        SelfEntrySourceTokens.FIELD_ROLE_CURRENCY,
-                    )
+                    diagnostics +=
+                        SelfEntryDiagnostics.requiredFactUnresolved(
+                            inputRef,
+                            ordinal,
+                            SelfEntrySourceTokens.FIELD_ROLE_CURRENCY,
+                        )
                     currencyText
                 }
             }
@@ -357,11 +359,12 @@ object SelfEntryXlsxParser {
             // 账户1 is the template's frozen source leg, so the direction derives structurally.
             directionToken = SelfEntrySourceTokens.DIRECTION_OUT
             if (textOf(row.getCell(SelfEntrySourceTokens.ACCOUNT_PRIMARY_COLUMN)).isEmpty()) {
-                diagnostics += SelfEntryDiagnostics.requiredFactUnresolved(
-                    inputRef,
-                    ordinal,
-                    SelfEntrySourceTokens.FIELD_ROLE_ACCOUNT_PRIMARY,
-                )
+                diagnostics +=
+                    SelfEntryDiagnostics.requiredFactUnresolved(
+                        inputRef,
+                        ordinal,
+                        SelfEntrySourceTokens.FIELD_ROLE_ACCOUNT_PRIMARY,
+                    )
             }
         } else {
             recordKind = ImportRecordKind.ORDINARY_FLOW_SOURCE
