@@ -1077,9 +1077,10 @@ internal enum class ImportReviewDividerSlot {
  * the title bar; the 待确认 shell with the unloaded vs 暂无导入候选 empty states (an active notice
  * suppresses the no-candidates state); the six-class frozen group order with empty groups omitted
  * and counting headers; the candidate rows with their selection state; the current-session
- * batch-disposition entry (P704SPEC-12), the open disposition card, the non-empty-selection batch
- * confirmation entry (P7-04.D) and the retained batch result as one divider band + header, every
- * summary line as its own item and one check entry per Unknown item (table 6.2a).
+ * batch-disposition entry (P704SPEC-12; D-327: it leads the list body, before the session's
+ * IntakeRecordLine block and the 待确认 shell), the open disposition card, the non-empty-selection
+ * batch confirmation entry (P7-04.D) and the retained batch result as one divider band + header,
+ * every summary line as its own item and one check entry per Unknown item (table 6.2a).
  */
 internal fun importReviewRenderItems(
     view: ImportReviewView?,
@@ -1104,46 +1105,21 @@ internal fun importReviewRenderItems(
     if (templateDownloadWired) {
         items += ImportReviewRenderItem.TemplateDownloadEntry
     }
-    view?.lastIntakeSession?.let { session ->
-        items += ImportReviewRenderItem.IntakeSessionHeader
-        importIntakeSessionLines(session).forEachIndexed { ordinal, line ->
-            items += ImportReviewRenderItem.IntakeSessionLine(ordinal, line)
-        }
-        val intakeRecords =
-            (session.outcome as? ImportIntakePipelineOutcome.Intaken)
-                ?.let { outcome ->
-                    when (val intaken = outcome.outcome) {
-                        is ImportFileIntakeOutcome.Accepted -> intaken.records
-                        is ImportFileIntakeOutcome.NoChangeAll -> intaken.records
-                        is ImportFileIntakeOutcome.Rejected -> null
-                    }
-                }
-        intakeRecords?.let { records ->
-            importIntakeRecordLines(records).forEachIndexed { ordinal, line ->
-                items += ImportReviewRenderItem.IntakeRecordLine(ordinal, line)
-            }
-        }
-    }
-    items += ImportReviewRenderItem.SectionDivider(ImportReviewDividerSlot.PENDING)
-    items += ImportReviewRenderItem.PendingSectionHeader
-    if (view == null) {
-        items += ImportReviewRenderItem.UnloadedEmptyState
-    } else if (view.notice == null && view.rows.isEmpty()) {
-        items += ImportReviewRenderItem.NoCandidatesEmptyState
-    }
+    // P704SPEC-12: the affordance covers only the current pick session's suspected-duplicate
+    // group (同次选择句柄 + EXACT_BUSINESS_TUPLE + DEFERRED via the folded row projection).
+    // D-327: the button must sit BEFORE the IntakeRecordLine block — a maximum 10,000-record
+    // session buries it at an unreachable LazyColumn depth (~10,030 in the D-326 probe run
+    // `43578009152`: the count gate held `entry=true` while the button sat outside the composed
+    // window), beyond the accessibility seek's reach — real users could not reach it either.
+    // D-322 (spec `docs/specs/2026-11-14-d322-count-driven-group-entry-design.md` D-3/D-4):
+    // existence is COUNT-DRIVEN — the landing lease's committed count of the current session,
+    // so reachability no longer depends on how many list pages are loaded (a count > 0 renders
+    // the button with ZERO loaded rows). `null` is only "no reading" (a failed count read or a
+    // pre-D-322 construction) and falls back to the legacy loaded-rows enumeration, the exact
+    // pre-D-322 shape; a real `0` is the SQL COUNT(*) true zero of a session without a group
+    // and hides the button (null ≠ 0). The count and the NoCandidatesEmptyState (which
+    // describes the LOADED window) are independent intents and may co-render per D-4.
     if (view != null) {
-        // P704SPEC-12: the affordance covers only the current pick session's suspected-duplicate
-        // group (同次选择句柄 + EXACT_BUSINESS_TUPLE + DEFERRED via the folded row projection).
-        // It sits BEFORE the candidate rows: several-hundred/thousand-row groups otherwise bury the
-        // only group action below a 20k-row list that the accessibility traversal cannot reach.
-        // D-322 (spec `docs/specs/2026-11-14-d322-count-driven-group-entry-design.md` D-3/D-4):
-        // existence is COUNT-DRIVEN — the landing lease's committed count of the current session,
-        // so reachability no longer depends on how many list pages are loaded (a count > 0 renders
-        // the button with ZERO loaded rows). `null` is only "no reading" (a failed count read or a
-        // pre-D-322 construction) and falls back to the legacy loaded-rows enumeration, the exact
-        // pre-D-322 shape; a real `0` is the SQL COUNT(*) true zero of a session without a group
-        // and hides the button (null ≠ 0). The count and the NoCandidatesEmptyState (which
-        // describes the LOADED window) are independent intents and may co-render per D-4.
         val sessionInputRef = view.lastIntakeSession?.inputRef
         // D-322 D-3: two explicit arms, NOT an elvis-with-comparison — `Long?` and `Int` have no
         // common numeric supertype to compare against (the elvis infers `Number & Comparable<*>`,
@@ -1190,6 +1166,35 @@ internal fun importReviewRenderItems(
         if (view.groupEnumerationInProgress) {
             items += ImportReviewRenderItem.GroupEnumerationInProgress
         }
+    }
+    view?.lastIntakeSession?.let { session ->
+        items += ImportReviewRenderItem.IntakeSessionHeader
+        importIntakeSessionLines(session).forEachIndexed { ordinal, line ->
+            items += ImportReviewRenderItem.IntakeSessionLine(ordinal, line)
+        }
+        val intakeRecords =
+            (session.outcome as? ImportIntakePipelineOutcome.Intaken)
+                ?.let { outcome ->
+                    when (val intaken = outcome.outcome) {
+                        is ImportFileIntakeOutcome.Accepted -> intaken.records
+                        is ImportFileIntakeOutcome.NoChangeAll -> intaken.records
+                        is ImportFileIntakeOutcome.Rejected -> null
+                    }
+                }
+        intakeRecords?.let { records ->
+            importIntakeRecordLines(records).forEachIndexed { ordinal, line ->
+                items += ImportReviewRenderItem.IntakeRecordLine(ordinal, line)
+            }
+        }
+    }
+    items += ImportReviewRenderItem.SectionDivider(ImportReviewDividerSlot.PENDING)
+    items += ImportReviewRenderItem.PendingSectionHeader
+    if (view == null) {
+        items += ImportReviewRenderItem.UnloadedEmptyState
+    } else if (view.notice == null && view.rows.isEmpty()) {
+        items += ImportReviewRenderItem.NoCandidatesEmptyState
+    }
+    if (view != null) {
         // Option A windowing: the open 整组确认页 card expands flat as one header + one item per
         // group member + one footer, so the LazyColumn windows the card's per-item rows exactly
         // like the candidate list (no eager per-item composition inside a single card item).
