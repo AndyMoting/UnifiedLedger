@@ -1380,7 +1380,7 @@ internal fun importReviewRenderItems(
     // shape. The card expands flat as one header + one item per group member + one footer, so
     // the LazyColumn windows the card's per-item rows exactly like the candidate list (no eager
     // per-item composition inside a single card item).
-    view.groupDisposition?.let { page ->
+    view?.groupDisposition?.let { page ->
         // B6 group-card paging batch (D-280): the header/footer counts bind to the
         // WHOLE-group total (page.totalCount, the count query's value) — never the landed
         // prefix size, so 共 N 条 stays the group's size while pages are still landing.
