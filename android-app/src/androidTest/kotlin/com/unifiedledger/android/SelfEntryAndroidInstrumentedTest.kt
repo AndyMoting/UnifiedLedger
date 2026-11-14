@@ -209,12 +209,14 @@ class SelfEntryAndroidInstrumentedTest {
             assertNull(expenseBasis.fundingAccountUnmatchedReason)
             assertNotNull(intaken.records[0].noteText)
 
-            // Row 2 (转账, 现金→银行卡): the transfer slots carry the from leg; 银行卡 does not
-            // exist in the minimal fixture ledger, so the to leg is typed-unmatched (the
-            // candidate still lands — matching never decides, D-017).
+            // Row 2 (转账, 现金→银行卡): 银行卡 does not exist in the minimal fixture ledger, so
+            // the to leg is typed-unmatched — and the WHOLE row is Unmatched (foldTransfer),
+            // whose basis carries reason tokens only: every target name is null even where the
+            // from leg itself resolved (the same projection semantics the JVM pins). The
+            // candidate still lands — matching never decides, D-017.
             val transferBasis = present("the transfer row's match basis", intaken.records[2].matchBasis)
             assertTrue("the transfer row carries the unconsumed category flag", transferBasis.unconsumedCategoryText)
-            assertEquals("现金", transferBasis.fromAccountTargetName)
+            assertNull(transferBasis.fromAccountTargetName)
             assertNull(transferBasis.toAccountTargetName)
             assertEquals("ACCOUNT_NOT_FOUND", transferBasis.toAccountUnmatchedReason)
 
