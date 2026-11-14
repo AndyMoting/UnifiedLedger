@@ -1270,7 +1270,10 @@ internal enum class ImportReviewDividerSlot {
  * suppresses the no-candidates state); the six-class frozen group order with empty groups omitted
  * and counting headers; the candidate rows with their selection state; the current-session
  * batch-disposition entry (P704SPEC-12; D-327: it leads the list body, before the session's
- * IntakeRecordLine block and the 待确认 shell), the open disposition card, the non-empty-selection
+ * IntakeRecordLine block and the 待确认 shell), the open disposition card (D-330 review P1: it
+ * rides directly after the affordance/progress band, BEFORE the session's IntakeRecordLine
+ * block — the D-327 family lesson: the 200-record disclosure lines would otherwise bury it out
+ * of the never-scrolling await's reach), the non-empty-selection
  * batch confirmation entry (P7-04.D) and the retained batch result as one divider band + header,
  * every summary line as its own item and one check entry per Unknown item (table 6.2a). D-330:
  * the open disposition card's member rows are BOUNDED to the [IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS]
@@ -1367,6 +1370,54 @@ internal fun importReviewRenderItems(
             items += ImportReviewRenderItem.GroupEnumerationInProgress
         }
     }
+    // Option A windowing + D-327 family (D-330 hoist, review P1): the open 整组确认页 card sits
+    // directly after the affordance/progress band and BEFORE the session's IntakeRecordLine
+    // block — the same lesson as D-327: the 200-record disclosure lines (and the 待确认 shell)
+    // would otherwise bury the header ~5 screens below the first viewport, where the rig's
+    // never-scrolling await (`ui.has`, AndroidScaleUi.kt cached root) can never reach it even
+    // after the D-330 bounding. Hoisted, the header lands ~19th and is first-viewport reachable
+    // with the card open; with NO card open the assembly is byte-identical to the pre-hoist
+    // shape. The card expands flat as one header + one item per group member + one footer, so
+    // the LazyColumn windows the card's per-item rows exactly like the candidate list (no eager
+    // per-item composition inside a single card item).
+    view.groupDisposition?.let { page ->
+        // B6 group-card paging batch (D-280): the header/footer counts bind to the
+        // WHOLE-group total (page.totalCount, the count query's value) — never the landed
+        // prefix size, so 共 N 条 stays the group's size while pages are still landing.
+        // The per-item rows are the landed prefix (keyset order); the footer's confirm
+        // still authorizes the whole group (the host completes the pages first, §3.4).
+        items += ImportReviewRenderItem.GroupDispositionCardHeader(page.inputRef, page.totalCount)
+        // D-330 (Q1 案 C): the member rows are RENDER-BOUNDED by default — only the first
+        // [IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS] landed rows join the render tree, the
+        // 「查看全部」 entry row carries the whole-group remainder, and one user action
+        // lists every landed row (the A-VIS frozen duty's reachability, re-anchored Q3).
+        // The bound governs the render tree ONLY: it neither truncates nor reorders the
+        // landed keyset prefix (P704GP-ACC-ORDER-01), the payload itself stays fully
+        // reachable (nothing is silently dropped), and the header/footer counts keep
+        // binding to page.totalCount unchanged.
+        val boundedRows = page.items.take(IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS)
+        if (groupCardRowsExpanded) {
+            // Expanded form: the collapse row leads (it must stay reachable above a huge
+            // list), then every landed row — the pre-D-330 flat shape plus that one row.
+            items += ImportReviewRenderItem.GroupCardCollapseRows
+            page.items.forEach { items += ImportReviewRenderItem.GroupDispositionItem(it) }
+        } else {
+            boundedRows.forEach { items += ImportReviewRenderItem.GroupDispositionItem(it) }
+            // The entry row renders only when rows exist beyond what the card lists.
+            // beyondCount = totalCount − the listed prefix size (the header/footer's
+            // whole-group 口径): truthful while later pages are still landing, and equal to
+            // the exact overflow once the landed rows fill the bound. A group whose whole
+            // count never exceeds its listed rows renders no entry at all.
+            if (page.totalCount > boundedRows.size) {
+                items +=
+                    ImportReviewRenderItem.GroupCardViewAllRows(
+                        beyondCount = page.totalCount - boundedRows.size,
+                        totalCount = page.totalCount,
+                    )
+            }
+        }
+        items += ImportReviewRenderItem.GroupDispositionCardFooter(page.totalCount)
+    }
     view?.lastIntakeSession?.let { session ->
         items += ImportReviewRenderItem.IntakeSessionHeader
         importIntakeSessionLines(session).forEachIndexed { ordinal, line ->
@@ -1395,48 +1446,6 @@ internal fun importReviewRenderItems(
         items += ImportReviewRenderItem.NoCandidatesEmptyState
     }
     if (view != null) {
-        // Option A windowing: the open 整组确认页 card expands flat as one header + one item per
-        // group member + one footer, so the LazyColumn windows the card's per-item rows exactly
-        // like the candidate list (no eager per-item composition inside a single card item).
-        // Like the affordance, the open card stays before the candidate rows.
-        view.groupDisposition?.let { page ->
-            // B6 group-card paging batch (D-280): the header/footer counts bind to the
-            // WHOLE-group total (page.totalCount, the count query's value) — never the landed
-            // prefix size, so 共 N 条 stays the group's size while pages are still landing.
-            // The per-item rows are the landed prefix (keyset order); the footer's confirm
-            // still authorizes the whole group (the host completes the pages first, §3.4).
-            items += ImportReviewRenderItem.GroupDispositionCardHeader(page.inputRef, page.totalCount)
-            // D-330 (Q1 案 C): the member rows are RENDER-BOUNDED by default — only the first
-            // [IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS] landed rows join the render tree, the
-            // 「查看全部」 entry row carries the whole-group remainder, and one user action
-            // lists every landed row (the A-VIS frozen duty's reachability, re-anchored Q3).
-            // The bound governs the render tree ONLY: it neither truncates nor reorders the
-            // landed keyset prefix (P704GP-ACC-ORDER-01), the payload itself stays fully
-            // reachable (nothing is silently dropped), and the header/footer counts keep
-            // binding to page.totalCount unchanged.
-            val boundedRows = page.items.take(IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS)
-            if (groupCardRowsExpanded) {
-                // Expanded form: the collapse row leads (it must stay reachable above a huge
-                // list), then every landed row — the pre-D-330 flat shape plus that one row.
-                items += ImportReviewRenderItem.GroupCardCollapseRows
-                page.items.forEach { items += ImportReviewRenderItem.GroupDispositionItem(it) }
-            } else {
-                boundedRows.forEach { items += ImportReviewRenderItem.GroupDispositionItem(it) }
-                // The entry row renders only when rows exist beyond what the card lists.
-                // beyondCount = totalCount − the listed prefix size (the header/footer's
-                // whole-group 口径): truthful while later pages are still landing, and equal to
-                // the exact overflow once the landed rows fill the bound. A group whose whole
-                // count never exceeds its listed rows renders no entry at all.
-                if (page.totalCount > boundedRows.size) {
-                    items +=
-                        ImportReviewRenderItem.GroupCardViewAllRows(
-                            beyondCount = page.totalCount - boundedRows.size,
-                            totalCount = page.totalCount,
-                        )
-                }
-            }
-            items += ImportReviewRenderItem.GroupDispositionCardFooter(page.totalCount)
-        }
         importCandidateClassGroups(view.rows).forEach { group ->
             items += ImportReviewRenderItem.GroupHeader(group.classToken, group.rows.size)
             group.rows.forEach { row ->

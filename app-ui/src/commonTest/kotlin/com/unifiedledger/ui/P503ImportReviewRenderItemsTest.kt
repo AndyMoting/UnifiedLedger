@@ -513,14 +513,15 @@ class P503ImportReviewRenderItemsTest {
         val continuationProgress = continuation.indexOfFirst { it is ImportReviewRenderItem.GroupEnumerationInProgress }
         val cardHeader = continuation.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionCardHeader }
         val firstRecordLine = continuation.indexOfFirst { it is ImportReviewRenderItem.IntakeRecordLine }
-        val lastRecordLine = continuation.indexOfLast { it is ImportReviewRenderItem.IntakeRecordLine }
         assertEquals(continuationButton + 1, continuationProgress)
-        // D-327: the in-flight band (affordance + progress line) sits BEFORE the IntakeRecordLine
-        // block; the open card stays in the 待确认 section, so its header now follows the record
-        // lines. The line still precedes the card it carries, never superseded by it.
+        // D-327 + D-330 hoist: the in-flight band (affordance + progress line) leads, the open
+        // card rides directly after it, and the IntakeRecordLine block follows the card. The
+        // line still precedes the card it carries, never superseded by it; the header is
+        // first-viewport reachable (the never-scrolling await's reach).
         assertTrue(firstRecordLine >= 0, "the session block renders its record lines")
         assertTrue(continuationProgress < firstRecordLine, "the progress line precedes the record lines (D-327)")
-        assertTrue(lastRecordLine < cardHeader, "the card header follows the record lines (D-327)")
+        assertTrue(continuationProgress < cardHeader, "the card header follows the progress line (D-330 hoist)")
+        assertTrue(cardHeader < firstRecordLine, "the card header precedes the record lines (D-330 hoist, review P1)")
     }
 
     @Test
@@ -902,15 +903,16 @@ class P503ImportReviewRenderItemsTest {
             staticSections + importFormatEntries(ImportPlatformKind.ANDROID).size + sessionBlock + 10_000 + affordance + cardBlock,
             items.size,
         )
-        // D-327 order: the affordance leads the whole list body (before the session summary and
-        // its record lines); the card header follows the record lines and the 待确认 shell; the
-        // bounded prefix follows in page order; the footer sits before the first candidate row.
+        // D-327 + D-330 hoist order: the affordance leads the whole list body; the card header
+        // rides directly after it and BEFORE the session summary's record lines (review P1: the
+        // 200-record disclosure block would otherwise bury the header below the never-scrolling
+        // await's reach); the bounded prefix follows the header in page order.
         val buttonIndex = items.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionButton }
         val headerIndex = items.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionCardHeader }
         val firstRecordLineIndex = items.indexOfFirst { it is ImportReviewRenderItem.IntakeRecordLine }
-        val pendingHeaderIndex = items.indexOfFirst { it is ImportReviewRenderItem.PendingSectionHeader }
         assertTrue(firstRecordLineIndex > buttonIndex, "the affordance precedes the record lines (D-327)")
-        assertTrue(headerIndex > pendingHeaderIndex, "the card header follows the 待确认 shell")
+        assertTrue(headerIndex > buttonIndex, "the card header follows the affordance")
+        assertTrue(headerIndex < firstRecordLineIndex, "the card header precedes the record lines (D-330 hoist, review P1)")
         assertEquals(ImportReviewRenderItem.GroupDispositionCardHeader("pick-handle-1", 10_000), items[headerIndex])
         // The prefix: exactly the bound's worth of rows, in the landed keyset order, never
         // reordered — the first, last and count all pin the prefix contract.
