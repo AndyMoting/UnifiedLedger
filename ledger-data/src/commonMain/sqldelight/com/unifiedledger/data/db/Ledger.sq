@@ -9449,6 +9449,31 @@ UNION ALL
 SELECT 'lending' AS chain, confirmation_id FROM confirmed_lending_receipt
 WHERE ledger_id = :ledger_id AND transaction_id = :transaction_id;
 
+-- P8-05 批 a (D-331 spec D-E6): the BATCH reverse creation lineage behind the readable export's
+-- 来源 column — the same two surfaces and the same precedence as
+-- `findImportCreationConfirmation`/`manualCreationReceiptByTransaction` (import confirmation ->
+-- manual receipt -> unmarked), answered for MANY transactions in one SELECT so a 50k-row export
+-- never degrades into the per-transaction N+1 (spec section 7 R7). Additive named query only:
+-- SELECT-only, no DDL, no schema change, no writer. The `entry_source` literal discriminates the
+-- surface per row ('import' vs the four manual chains); the caller resolves the precedence
+-- (import wins) exactly like `QueryRecycleBin`'s per-transaction resolution.
+readableExportCreationEntries:
+SELECT transaction_id, 'import' AS entry_source, confirmation_id
+FROM import_confirmation
+WHERE ledger_id = :ledger_id AND operation_class = 'creation'
+UNION ALL
+SELECT transaction_id, 'expense' AS entry_source, confirmation_id FROM confirmed_expense_receipt
+WHERE ledger_id = :ledger_id
+UNION ALL
+SELECT transaction_id, 'income' AS entry_source, confirmation_id FROM confirmed_income_receipt
+WHERE ledger_id = :ledger_id
+UNION ALL
+SELECT transaction_id, 'transfer' AS entry_source, confirmation_id FROM confirmed_transfer_receipt
+WHERE ledger_id = :ledger_id
+UNION ALL
+SELECT transaction_id, 'lending' AS entry_source, confirmation_id FROM confirmed_lending_receipt
+WHERE ledger_id = :ledger_id;
+
 transactionReconciliationLegs:
 -- Read-only per-posting reconciliation leg projection for one transaction (R-Q07-4,
 -- row semantics along selectP408ReconciliationReport :8658-8685): COALESCE status
