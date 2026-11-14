@@ -1281,7 +1281,10 @@ class P503ReducerImpl(
             -> state
             is P503UiEvent.ToggleImportCandidateSelection -> toggleImportSelectionOnOverview(state, event.candidateId)
             is P503UiEvent.ImportDuplicateReviewResult -> reduceImportDuplicateReviewResultOnOverview(state, event)
-            is P503UiEvent.StartImportDuplicateGroupDisposition ->
+            is P503UiEvent.StartImportDuplicateGroupDisposition -> {
+                // D-329 diagnostic: the round's Start reached the reducer — the card-open
+                // milestone the rig's first-window await is watching for.
+                StartupTrace.emit("group.event kind=Start items=${event.items.size}")
                 state.importReview?.let { view ->
                     state.copy(
                         importReview =
@@ -1301,7 +1304,11 @@ class P503ReducerImpl(
                             ),
                     )
                 } ?: state
-            is P503UiEvent.ImportGroupEnumerationPageLanded ->
+            }
+            is P503UiEvent.ImportGroupEnumerationPageLanded -> {
+                // D-329 diagnostic: one window landed in the reducer — the append milestone
+                // pairing with the host's windowQueued/hopRun lines.
+                StartupTrace.emit("group.event kind=Page items=${event.items.size}")
                 // B6 group-card paging batch (D-280): append one keyset page to the landed
                 // prefix, only while the card is open for the SAME inputRef (a page landing
                 // after a close, or for another session, is absorbed — the stale-landing
@@ -1324,11 +1331,16 @@ class P503ReducerImpl(
                         )
                     }
                 } ?: state
+            }
             is P503UiEvent.ImportDuplicateGroupDispositionResult -> reduceImportGroupDispositionResult(state, event)
-            P503UiEvent.CloseImportDuplicateGroupDisposition ->
+            P503UiEvent.CloseImportDuplicateGroupDisposition -> {
+                // D-329 diagnostic: the card closes in the reducer — pairs with the round-end
+                // seam's typed close-out.
+                StartupTrace.emit("group.event kind=Close")
                 state.importReview?.let { view ->
                     state.copy(importReview = view.copy(groupDisposition = null))
                 } ?: state
+            }
             // ---- P7-05 enumeration progress transitions (table 6.2a) ----
             // The host dispatches Started right before running the single-flight session-level
             // enumeration and Completed in its final hop regardless of the outcome (Ready or
@@ -1338,10 +1350,14 @@ class P503ReducerImpl(
                 state.importReview?.let { view ->
                     state.copy(importReview = view.copy(groupEnumerationInProgress = true))
                 } ?: state
-            P503UiEvent.ImportGroupEnumerationCompleted ->
+            P503UiEvent.ImportGroupEnumerationCompleted -> {
+                // D-329 diagnostic: the round's final hop reached the reducer — the in-flight
+                // marker flips off here, never earlier.
+                StartupTrace.emit("group.event kind=Completed")
                 state.importReview?.let { view ->
                     state.copy(importReview = view.copy(groupEnumerationInProgress = false))
                 } ?: state
+            }
             // ---- P7-04.D batch confirmation transitions (table 6.2a) ----
             // The confirm page opens only for a non-empty selection (空集 absorbed； the entry
             // affordance also restricts, but the reducer holds the gate).
@@ -2274,8 +2290,12 @@ class P503ReducerImpl(
                     importReview =
                         view.copy(rows = result.rows, notice = null, nextAfterCandidateId = event.nextAfterCandidateId),
                 )
-            com.unifiedledger.application.ImportReviewRowsResult.Unavailable ->
+            com.unifiedledger.application.ImportReviewRowsResult.Unavailable -> {
+                // D-329 diagnostic: the ReviewReadFailed banner's landing arm — the
+                // presentation-side signal the rig samples for the closed round.
+                StartupTrace.emit("group.event kind=Unavailable")
                 state.copy(importReview = view.copy(notice = ImportReviewNotice.ReviewReadFailed))
+            }
         }
     }
 
