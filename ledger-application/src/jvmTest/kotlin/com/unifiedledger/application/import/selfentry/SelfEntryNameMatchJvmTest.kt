@@ -250,7 +250,14 @@ class SelfEntryNameMatchJvmTest {
 
     @Test
     fun aSubstringIsNeverAFuzzyMatch() {
-        val outcome = ordinary(SelfEntryMatchInputs("交通", "", "现金", ""))
+        // Both catalog names properly CONTAIN the input text; exact-name matching still
+        // returns NOT_FOUND for each — a substring is never a fuzzy match (D-032).
+        val substringCatalog =
+            catalog(
+                accounts = listOf(assetAccount("acc-bank", "交通银行")),
+                categories = listOf(leaf("cat-transport", "交通补贴", null)),
+            )
+        val outcome = matcher(substringCatalog).match(SelfEntryMatchInputs("交通", "", "交通", ""), ImportRecordKind.ORDINARY_FLOW_SOURCE, "out")
 
         val unmatched = assertIs<SelfEntryMatchOutcome.Unmatched>(outcome)
         assertEquals(SelfEntryMatchUnresolvedReason.CATEGORY_NOT_FOUND, unmatched.categoryReason)
