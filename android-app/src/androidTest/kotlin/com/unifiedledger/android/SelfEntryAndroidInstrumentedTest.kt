@@ -11,7 +11,6 @@ import com.unifiedledger.application.ImportIntakeBatchFailure
 import com.unifiedledger.application.ImportIntakeRecordDisposition
 import com.unifiedledger.application.ImportPlatformKind
 import com.unifiedledger.application.ImportReviewRowsPageResult
-import com.unifiedledger.application.SelfEntryMatchBasis
 import com.unifiedledger.application.import.selfentry.SelfEntryBatchOutcome
 import com.unifiedledger.application.import.selfentry.SelfEntryRowResult
 import com.unifiedledger.application.import.selfentry.SelfEntryTemplateGenerator
@@ -19,13 +18,13 @@ import com.unifiedledger.application.import.selfentry.SelfEntryXlsxParser
 import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.ui.BoundedFileRead
 import com.unifiedledger.ui.ImportTemplateDownloadResult
-import java.io.ByteArrayOutputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.ByteArrayOutputStream
 
 /**
  * P8-04 i4 (spec `docs/specs/2026-11-14-p8-04-self-entry-import-design.md` §4 i4, V-6): the

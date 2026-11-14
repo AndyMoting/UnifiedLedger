@@ -4,12 +4,12 @@
 # tools/ci/ledger-data-shards.txt and tools/ci/python-shards.txt)
 #
 # Case authority stays tools/ci/android-instrumented-inventory.txt: this file
-# only splits its 12 classes across 2 shards, union 47 cases, no duplicates.
+# only splits its 13 classes across 2 shards, union 50 cases, no duplicates.
 # `tools/ci/android-instrumented-cloud.py check` proves that partition; any
 # class added to, removed from, or renamed in the inventory must be reflected
 # here or the producer job fails before a device boots.
 # Placement follows the case count per class (shard 1: 8/7/6/4/1 = 26 cases;
-# shard 2: 5/4/4/3/3/1/1 = 21 cases). The P8-02 V-8 timing case rides shard 2
+# shard 2: 5/4/4/3/3/1/1+3 = 24 cases). The P8-02 V-8 timing case rides shard 2
 # and costs nothing there unless the dispatch passes ul.p802.timing=1.
 
 1	com.unifiedledger.android.AndroidRestoreDocumentSizeInstrumentedTest
