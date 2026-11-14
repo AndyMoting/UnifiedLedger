@@ -354,7 +354,17 @@ class SelfEntryXlsxParserJvmTest {
         accountSecondary: VariantCell = absent(),
         note: VariantCell = absent(),
     ): List<VariantCell> =
-        listOf(type, occurredAt, amount, currency, categoryPrimary, categorySecondary, accountPrimary, accountSecondary, note)
+        listOf(
+            type,
+            occurredAt,
+            amount,
+            currency,
+            categoryPrimary,
+            categorySecondary,
+            accountPrimary,
+            accountSecondary,
+            note,
+        )
 
     /** One data row on sheet row 2 behind the pristine header (same named cells as [row]). */
     private fun singleRowFile(

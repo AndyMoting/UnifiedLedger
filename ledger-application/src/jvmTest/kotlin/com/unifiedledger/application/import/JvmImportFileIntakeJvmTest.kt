@@ -459,7 +459,8 @@ class JvmImportFileIntakeJvmTest {
                     format = ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier,
                     platform = ImportPlatformKind.DESKTOP,
                     session = newSession(),
-                    bytes = com.unifiedledger.application.import.selfentry.SelfEntryTemplateGenerator.generateTemplate(),
+                    bytes =
+                        com.unifiedledger.application.import.selfentry.SelfEntryTemplateGenerator.generateTemplate(),
                 ),
             )
 
