@@ -584,7 +584,7 @@ class JvmImportFileIntakeJvmTest {
                         accounts = listOf(account("acc-cash", "现金"), account("acc-bank", "银行卡")),
                         categories =
                             listOf(
-                                category("cat-food-parent", "餐饮", null),
+                                category("cat-food-parent", "食品", null),
                                 category("cat-food", "餐饮", CategoryId("cat-food-parent")),
                                 category("cat-salary", "工资", null),
                             ),

@@ -170,6 +170,17 @@ class SelfEntryNameMatchJvmTest {
     }
 
     @Test
+    fun aFailedParentNameStillResolvesAUniqueLeafName() {
+        // 父C does not exist, but 餐饮 is the unique leaf of its kind — the fallback still
+        // resolves it; a wrong parent never poisons a resolvable leaf.
+        val outcome = ordinary(SelfEntryMatchInputs("父C", "餐饮", "现金", ""))
+
+        val matched = assertIs<SelfEntryMatchOutcome.Matched>(outcome)
+        assertEquals(CategoryId("cat-food"), matched.categoryId)
+        assertEquals("餐饮", matched.categoryName)
+    }
+
+    @Test
     fun anUnknownCategoryNameIsNotFoundAndAnUnknownAccountStaysNotFoundToo() {
         val outcome = ordinary(SelfEntryMatchInputs("不存在的分类", "", "不存在账户", ""))
 

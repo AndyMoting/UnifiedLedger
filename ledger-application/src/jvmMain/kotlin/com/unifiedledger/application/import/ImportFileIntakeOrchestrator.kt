@@ -186,6 +186,9 @@ class JvmImportFileIntake(
                     // other formats keep the exact pre-i3a shape.
                     val matchInputs = record.matchInputs
                     val matchOutcome = matchInputs?.let { inputs -> selfEntryMatcher?.match(inputs, record.recordKind, record.facts.directionToken) }
+                    // Hoisted once per record: the basis exists exactly when both the verbatim
+                    // inputs and the matched outcome exist (null matchInputs => null basis).
+                    val matchBasis = matchInputs?.let { inputs -> matchOutcome?.toMatchBasis(inputs) }
                     val completeness =
                         if (matchOutcome is SelfEntryMatchOutcome.Unmatched && record.completeness == ImportCompleteness.VALID_COMPLETE) {
                             ImportCompleteness.VALID_INCOMPLETE
@@ -230,7 +233,7 @@ class JvmImportFileIntake(
                                 ImportIntakeRecordSummary(
                                     recordOrdinal = record.ordinal,
                                     disposition = ImportIntakeRecordDisposition.INTAKE_ACCEPTED,
-                                    matchBasis = matchOutcome?.toMatchBasis(record.matchInputs),
+                                    matchBasis = matchBasis,
                                 )
                             newCandidateIds += result.receipt.candidateId
                         }
@@ -239,7 +242,7 @@ class JvmImportFileIntake(
                                 ImportIntakeRecordSummary(
                                     recordOrdinal = record.ordinal,
                                     disposition = ImportIntakeRecordDisposition.INTAKE_NO_CHANGE,
-                                    matchBasis = matchOutcome?.toMatchBasis(record.matchInputs),
+                                    matchBasis = matchBasis,
                                 )
                         is ImportIntakeResult.Rejected ->
                             summaries +=
@@ -249,7 +252,7 @@ class JvmImportFileIntake(
                                     diagnosticCode = result.diagnostic.code,
                                     diagnosticSeverity = result.diagnostic.severity,
                                     diagnosticScope = result.diagnostic.scope,
-                                    matchBasis = matchOutcome?.toMatchBasis(record.matchInputs),
+                                    matchBasis = matchBasis,
                                 )
                     }
                 }
