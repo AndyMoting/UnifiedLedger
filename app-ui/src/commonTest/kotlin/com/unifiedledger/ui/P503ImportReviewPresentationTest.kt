@@ -609,23 +609,31 @@ class P503ImportReviewPresentationTest {
         assertTrue(importPossibleExistingSourceText(null).contains("无指向目标"))
     }
 
-    // ---- format capability matrix (R-Q08-3; A-04.2 flip: all four formats available on Android) ----
+    // ---- format capability matrix (R-Q08-3; A-04.2 flip: all four formats available on Android;
+    // P8-04 i2 adds the fifth entry with honest Android-pending availability, D-13) ----
 
     @Test
     fun androidShowsAllFourEntriesAllAvailable() {
         val entries = importFormatEntries(ImportPlatformKind.ANDROID)
         assertEquals(ImportFormatCapabilities.ALL.map { it.identifier }, entries.map { it.descriptor.identifier })
         // A-04.1's instrumented verification flipped the CCB XLS Android matrix unit to
-        // AVAILABLE (A-04.2); every matrix format is now offered as available on Android.
-        assertTrue(entries.all { it.availability == ImportFormatAvailability.AVAILABLE })
+        // AVAILABLE (A-04.2); every pre-P8-04 matrix format is offered as available on Android.
+        // P8-04 i2 (D-13): the fifth (SELF_ENTRY_XLSX) enters Android-pending — offered
+        // honestly, counted separately, never silently hidden nor prematurely available.
         assertEquals(4, entries.count { it.availability == ImportFormatAvailability.AVAILABLE })
+        assertEquals(
+            ImportFormatAvailability.PENDING_DEVICE_VERIFICATION,
+            entries.last { it.descriptor.identifier == ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier }.availability,
+        )
     }
 
     @Test
     fun desktopOffersAllFourFormatsAsAvailable() {
         val entries = importFormatEntries(ImportPlatformKind.DESKTOP)
         assertTrue(entries.all { it.availability == ImportFormatAvailability.AVAILABLE })
-        assertEquals(4, entries.size)
+        // P8-04 i2 (D-13): the desktop leg of the fifth entry is AVAILABLE from the start
+        // (desktop JVM CI covers the full contract), so the desktop matrix offers five.
+        assertEquals(5, entries.size)
     }
 
     // ---- session summary / typed failure copy (spec sections 6.1/4.6) ----

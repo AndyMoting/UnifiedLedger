@@ -33,6 +33,10 @@ import com.unifiedledger.application.import.cmb.CmbBatchResult
 import com.unifiedledger.application.import.cmb.CmbBillParser
 import com.unifiedledger.application.import.cmb.CmbDiagnostic
 import com.unifiedledger.application.import.cmb.CmbRowResult
+import com.unifiedledger.application.import.selfentry.SelfEntryBatchResult
+import com.unifiedledger.application.import.selfentry.SelfEntryDiagnostic
+import com.unifiedledger.application.import.selfentry.SelfEntryRowResult
+import com.unifiedledger.application.import.selfentry.SelfEntryXlsxParser
 import com.unifiedledger.application.import.wechat.WechatBatchResult
 import com.unifiedledger.application.import.wechat.WechatBillParser
 import com.unifiedledger.application.import.wechat.WechatDiagnostic
@@ -111,6 +115,7 @@ class JvmImportFileIntake(
                 ImportFormatCapabilities.ALIPAY_CSV.identifier -> parseAlipay(inputRef, input.bytes)
                 ImportFormatCapabilities.CMB_CSV.identifier -> parseCmb(inputRef, input.bytes)
                 ImportFormatCapabilities.CCB_XLS.identifier -> parseCcb(inputRef, input.bytes)
+                ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier -> parseSelfEntry(inputRef, input.bytes)
                 else -> throw IllegalArgumentException("no parser for format ${descriptor.identifier.value}")
             }
         if (parsed is ParsedBatch.WholeBatchRejection) {
@@ -290,6 +295,21 @@ class JvmImportFileIntake(
             }
         }
 
+    // P8-04 i2 arm (D-13): the same dispatch/error-mapping shape as the four frozen arms —
+    // the parser's row results carry no payment profile (v1/v2 kinds only), so the profile
+    // slot stays null exactly like the WeChat/CMB/CCB arms.
+    private fun parseSelfEntry(
+        inputRef: String,
+        bytes: ByteArray,
+    ): ParsedBatch =
+        toParsedBatch(SelfEntryXlsxParser.parse(inputRef, bytes)) { row ->
+            when (row) {
+                is SelfEntryRowResult.Accepted ->
+                    ParsedRecord.Accepted(row.recordOrdinal, row.recordKind, row.facts, row.completeness, null)
+                is SelfEntryRowResult.Rejected -> ParsedRecord.Rejected(row.recordOrdinal, row.diagnostics.first().toDigest())
+            }
+        }
+
     private companion object {
         const val ALIPAY_FALLBACK_CHARSET = "GB18030"
 
@@ -312,6 +332,11 @@ class JvmImportFileIntake(
             batch: CcbBatchResult,
             row: (CcbRowResult) -> ParsedRecord,
         ): ParsedBatch = batch.diagnostic?.toDigest()?.let { ParsedBatch.WholeBatchRejection(it) } ?: ParsedBatch.Records(batch.rows.map(row))
+
+        fun toParsedBatch(
+            batch: SelfEntryBatchResult,
+            row: (SelfEntryRowResult) -> ParsedRecord,
+        ): ParsedBatch = batch.diagnostic?.toDigest()?.let { ParsedBatch.WholeBatchRejection(it) } ?: ParsedBatch.Records(batch.rows.map(row))
     }
 }
 
@@ -323,3 +348,5 @@ internal fun AlipayDiagnostic.toDigest(): ImportBatchParserDiagnostic = ImportBa
 internal fun CmbDiagnostic.toDigest(): ImportBatchParserDiagnostic = ImportBatchParserDiagnostic(code, severity, scope, inputRef, recordOrdinal, fieldRole)
 
 internal fun CcbDiagnostic.toDigest(): ImportBatchParserDiagnostic = ImportBatchParserDiagnostic(code, severity, scope, inputRef, recordOrdinal, fieldRole)
+
+internal fun SelfEntryDiagnostic.toDigest(): ImportBatchParserDiagnostic = ImportBatchParserDiagnostic(code, severity, scope, inputRef, recordOrdinal, fieldRole)
