@@ -188,6 +188,9 @@ class SelfEntryXlsxParserJvmTest {
                 inputRef,
                 singleRowFile(
                     type = text(SelfEntrySourceTokens.TYPE_EXPENSE),
+                    // The earlier mandatory gates (类型 above, 日期时间 here) must pass so the
+                    // row actually reaches the precision gate.
+                    occurredAt = text("2026-02-01 08:00:00"),
                     amount = numeric("12.345"),
                 ),
             )
@@ -202,6 +205,8 @@ class SelfEntryXlsxParserJvmTest {
                 inputRef,
                 singleRowFile(
                     type = text(SelfEntrySourceTokens.TYPE_EXPENSE),
+                    // The mandatory datetime gate must pass so the row reaches the sign gate.
+                    occurredAt = text("2026-02-01 08:00:00"),
                     amount = numeric("-12.34"),
                 ),
             )
@@ -219,6 +224,8 @@ class SelfEntryXlsxParserJvmTest {
                 inputRef,
                 singleRowFile(
                     type = text(SelfEntrySourceTokens.TYPE_INCOME),
+                    // The mandatory datetime gate must pass so the row reaches the sign gate.
+                    occurredAt = text("2026-02-01 08:00:00"),
                     amount = numeric("-12.34"),
                 ),
             )
@@ -235,6 +242,8 @@ class SelfEntryXlsxParserJvmTest {
                 inputRef,
                 singleRowFile(
                     type = text(SelfEntrySourceTokens.TYPE_EXPENSE),
+                    // The mandatory datetime gate must pass so the row reaches the D-5 branch.
+                    occurredAt = text("2026-02-01 08:00:00"),
                     amount = numeric("12.34"),
                     currency = text("USD"),
                 ),
@@ -464,9 +473,19 @@ class SelfEntryXlsxParserJvmTest {
                         "<c r=\"J1\" t=\"s\"><v>${pool.indexOf(SelfEntryTemplateGenerator.HEADER_TYPE)}</v></c></row>",
                     )
             swapFirstTwoCells -> {
+                // Swap the shared-string INDICES between A1 and B1, keeping each cell's own
+                // `r` reference: the reader resolves columns by `r`, so swapping whole `<c>`
+                // elements would put the strings right back and never drift the header. The
+                // index replacement anchors on the full `<v>…</v>` token — a bare-number
+                // replace would also corrupt the digit inside the r="B1" reference.
                 val first = firstHeaderCellXml(headerRow)
                 val second = secondHeaderCellXml(headerRow)
-                edited = edited.replace(first + second, second + first)
+                val firstValue = first.substringAfter("<v>").substringBefore("</v>")
+                val secondValue = second.substringAfter("<v>").substringBefore("</v>")
+                edited =
+                    edited
+                        .replace(first, first.replace("<v>$firstValue</v>", "<v>$secondValue</v>"))
+                        .replace(second, second.replace("<v>$secondValue</v>", "<v>$firstValue</v>"))
             }
             rewriteLastHeaderText ->
                 edited =

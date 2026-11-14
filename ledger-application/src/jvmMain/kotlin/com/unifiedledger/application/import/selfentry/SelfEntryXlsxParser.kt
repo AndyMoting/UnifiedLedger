@@ -224,16 +224,24 @@ object SelfEntryXlsxParser {
         row: BoundedXlsxReader.Row,
     ): SelfEntryRowResult {
         val typeToken = textOf(row.getCell(SelfEntrySourceTokens.TYPE_COLUMN))
+        // D-16.1: the three-value domain 支出|收入|转账 is accepted here; ONLY a missing or
+        // unknown token rejects (the recordKind cannot stand). 转账 must flow through to the
+        // transfer branch below — an earlier draft's else-arm rejected it here, which broke
+        // the D-17 example row round trip.
+        if (typeToken != SelfEntrySourceTokens.TYPE_EXPENSE &&
+            typeToken != SelfEntrySourceTokens.TYPE_INCOME &&
+            typeToken != SelfEntrySourceTokens.TYPE_TRANSFER
+        ) {
+            return SelfEntryRowResult.Rejected(
+                ordinal,
+                listOf(SelfEntryDiagnostics.requiredFactMissing(inputRef, ordinal, SelfEntrySourceTokens.FIELD_ROLE_TYPE)),
+            )
+        }
         val directionOfOrdinary =
-            when (typeToken) {
-                SelfEntrySourceTokens.TYPE_EXPENSE -> SelfEntrySourceTokens.DIRECTION_OUT
-                SelfEntrySourceTokens.TYPE_INCOME -> SelfEntrySourceTokens.DIRECTION_IN
-                // Missing or unknown: the recordKind cannot stand (D-16.1, required source fact).
-                else ->
-                    return SelfEntryRowResult.Rejected(
-                        ordinal,
-                        listOf(SelfEntryDiagnostics.requiredFactMissing(inputRef, ordinal, SelfEntrySourceTokens.FIELD_ROLE_TYPE)),
-                    )
+            if (typeToken == SelfEntrySourceTokens.TYPE_EXPENSE) {
+                SelfEntrySourceTokens.DIRECTION_OUT
+            } else {
+                SelfEntrySourceTokens.DIRECTION_IN
             }
         val occurredAtCell = row.getCell(SelfEntrySourceTokens.OCCURRED_AT_COLUMN)
         if (occurredAtCell == null || cellText(occurredAtCell).isBlank()) {
