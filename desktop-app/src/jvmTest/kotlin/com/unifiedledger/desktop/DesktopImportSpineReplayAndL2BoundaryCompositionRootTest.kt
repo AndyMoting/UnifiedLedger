@@ -387,8 +387,9 @@ class DesktopImportSpineReplayAndL2BoundaryCompositionRootTest {
             )
             // The review read exposes the six candidates, each new one carrying its
             // duplicate row DEFERRED (the reachable three-value state) — never a merged or
-            // auto-resolved face. pageSize counts CANDIDATES; one candidate contributes its
-            // base row plus one row per duplicate, so six candidates read as nine rows.
+            // auto-resolved face. One candidate folds to one row (foldCandidateRuns): the three
+            // candidates of the SECOND file carry their duplicate row (duplicateStatus =
+            // DEFERRED), the three first-file candidates read with no duplicate status.
             val rows =
                 assertIs<ImportReviewRowsPageResult.Page>(
                     graph.facade.queryImportReviewRows!!.queryPage(graph.ledgerId, pageSize = 100L, afterCandidateId = null),
@@ -396,7 +397,7 @@ class DesktopImportSpineReplayAndL2BoundaryCompositionRootTest {
             assertEquals(6, rows.map { it.candidateId }.toSet().size)
             assertEquals(3, rows.count { it.duplicateStatus == ImportDuplicateStatus.DEFERRED })
             assertEquals(
-                6,
+                3,
                 rows
                     .filter { it.duplicateStatus == null }
                     .map { it.candidateId }
