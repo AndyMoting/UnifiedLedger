@@ -481,10 +481,18 @@ internal class AndroidScaleUi(
         forward: Boolean = true,
         maxScrolls: Int = 80,
     ) {
-        repeat(maxScrolls) {
+        repeat(maxScrolls) { step ->
             if (has(text, prefix = true)) return
             scroll(forward)
+            // D-326 probe (run 43561950134): the walk scrolled ~7 minutes with every probe
+            // missing and left no per-window record. Emit the loop's own prefix-probe verdict
+            // (a miss — the hit path already returned); no third has() probe, no loop-shape
+            // change. The text is the rig's own target literal, not user data.
+            if ((step + 1) % 10 == 0) Log.i("ULScaleWalk", "seekFwd step=${step + 1} hit=false text=$text")
         }
+        // D-326 probe: the exhaustion record the failure forensics cannot carry (its texts
+        // truncate); the literal is the rig's own target, not user data.
+        Log.i("ULScaleWalk", "seek exhausted forward=$forward maxScrolls=$maxScrolls text=$text")
         error("UI target not reached")
     }
 

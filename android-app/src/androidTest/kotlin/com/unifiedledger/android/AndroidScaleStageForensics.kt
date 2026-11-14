@@ -209,21 +209,33 @@ internal object AndroidScaleStageForensics {
                     .put("captureError", captureError),
             )
 
-    /** Bounded visible-text samples per target root; the truncation flag records dropped roots. */
+    /**
+     * Bounded visible-text samples per target root; the truncation flag records dropped roots.
+     *
+     * D-326 probe: the deciding "is the target text present at all" bit is aggregated beside the
+     * truncated samples — run 43561950134's texts block was truncated exactly where the verdict
+     * lived, so the hit bit must survive any sample truncation. The samples' own caps are
+     * unchanged.
+     */
     private fun rootTexts(
         ui: AndroidScaleUi,
         roots: List<AccessibilityNodeInfo>,
     ): JSONObject {
         val array = JSONArray()
+        var targetHit = false
         for (root in roots.take(MAX_TARGET_ROOTS)) {
             val texts = ui.visibleTexts(root)
+            if (texts.any { it.contains("整组标记为重复") }) targetHit = true
             array.put(
                 JSONObject()
                     .put("texts", JSONArray(AndroidScaleObserverDiag.textSamples(texts)))
                     .put("textsTruncated", texts.size > AndroidScaleObserverDiag.MAX_TEXT_SAMPLES),
             )
         }
-        return JSONObject().put("roots", array).put("rootsTruncated", roots.size > MAX_TARGET_ROOTS)
+        return JSONObject()
+            .put("roots", array)
+            .put("rootsTruncated", roots.size > MAX_TARGET_ROOTS)
+            .put("targetHit", targetHit)
     }
 
     private fun windowsJson(windows: List<AndroidColdstartForensics.WindowInfo>): JSONArray {

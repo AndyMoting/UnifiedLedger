@@ -1155,6 +1155,30 @@ internal fun importReviewRenderItems(
                 null -> sessionInputRef != null && importDuplicateGroupRows(view.rows, sessionInputRef).isNotEmpty()
                 else -> count > 0L
             }
+        // D-326 probe (run 43561950134): the D-325 dispatch trace is the last observed span —
+        // the gate's own recombination is unobserved, and the failure forensics' texts were
+        // truncated. One line per recomposition at the gate's calculation (the
+        // read.catalogSnapshot precedent: a trace on the composition path), SHAPE only per the
+        // StartupTrace contract: the count's value/null, the inputRef's PRESENCE (never its
+        // value), the gate's own verdict and — only where the gate itself enumerates (null
+        // count + a present session ref) — the loaded group rows' size; the count arm never
+        // enumerates, so its 0 means "not enumerated", not "no group rows".
+        val gateCountText =
+            when (val gateCount = view.currentSessionDuplicateGroupCount) {
+                null -> "null"
+                else -> "value=$gateCount"
+            }
+        val loadedGroupRowCount =
+            if (view.currentSessionDuplicateGroupCount == null && sessionInputRef != null) {
+                importDuplicateGroupRows(view.rows, sessionInputRef).size
+            } else {
+                0
+            }
+        StartupTrace.emit(
+            "review.groupGate count=$gateCountText" +
+                " inputRef=${if (sessionInputRef == null) "absent" else "present"}" +
+                " entry=$groupEntryExists loadedGroupRows=$loadedGroupRowCount",
+        )
         if (sessionInputRef != null && groupEntryExists) {
             items += ImportReviewRenderItem.GroupDispositionButton
         }
