@@ -25,8 +25,9 @@ import kotlin.test.assertTrue
  * section mapping of the frozen presentation semantics (six-class order, empty-group omission,
  * 待确认 empty states, notice banner placement, session summary with its disclosed 200-record cap,
  * batch result per-item expansion with Unknown check entries), the selection propagation into
- * candidate items, the open disposition card's flat expansion as one header + one item per group
- * member + one footer (Option A windowing; zero loss at the 10,000-item group cap), and the
+ * candidate items, the group-disposition affordance leading the list body above the session's
+ * record lines (D-327), the open disposition card's flat expansion as one header + one item per
+ * group member + one footer (Option A windowing; zero loss at the 10,000-item group cap), and the
  * stable/unique key contract (a duplicate LazyColumn key crashes at
  * runtime with "Key was already used"). All fixtures are fully synthetic (D06).
  */
@@ -414,8 +415,9 @@ class P503ImportReviewRenderItemsTest {
     /**
      * D-322 D-4 (V-5): the 空态共渲染意图对 — the NoCandidatesEmptyState describes the LOADED window
      * ("no rows in the loaded window") while the button describes the SESSION ("the session's group
-     * exists"); the two intents are independent and co-render. The button keeps its frozen
-     * position: empty state, then the button, still before any candidate row.
+     * exists"); the two intents are independent and co-render. D-327 moved the affordance above
+     * the 待确认 shell: the button now precedes the empty state (and every IntakeRecordLine /
+     * CandidateItem below it).
      */
     @Test
     fun theEmptyStateAndTheCountDrivenButtonCoRender() {
@@ -430,10 +432,48 @@ class P503ImportReviewRenderItemsTest {
         val buttonIndex = items.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionButton }
         assertTrue(emptyIndex >= 0, "the empty state describes the loaded window")
         assertTrue(buttonIndex >= 0, "the button describes the session's group — the intents co-render")
-        assertTrue(buttonIndex > emptyIndex, "the button follows the empty state")
+        assertTrue(buttonIndex < emptyIndex, "the button precedes the empty state (D-327 placement)")
         assertTrue(
             items.none { it is ImportReviewRenderItem.CandidateItem },
             "no candidate row is loaded, so the button precedes the (empty) rows",
+        )
+    }
+
+    /**
+     * D-327 regression (the maximum-rig group-disposition fix, D-326 probe run `43578009152`):
+     * the affordance must sit BEFORE the IntakeRecordLine block. A maximum 10,000-record intake
+     * session renders one record line per record (disclosed at the 200-line cap), which used to
+     * bury the button at LazyColumn depth ~10,030 — beyond the rig's 80-step accessibility seek
+     * and every real user's reach, while the count gate itself stayed open (`entry=true`) and the
+     * button sat outside the composed window. The gate facts stay the D-322 count-driven ones
+     * (count > 0 renders the entry with zero loaded rows).
+     */
+    @Test
+    fun theGroupDispositionButtonPrecedesTheIntakeRecordLinesAtTheMaximumSession() {
+        val view =
+            ImportReviewView(
+                rows = emptyList(),
+                lastIntakeSession = acceptedSession(recordCount = 10_000),
+                currentSessionDuplicateGroupCount = 3L,
+            )
+        val items = importReviewRenderItems(view, ImportPlatformKind.ANDROID)
+        val buttonIndex = items.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionButton }
+        val firstRecordLineIndex = items.indexOfFirst { it is ImportReviewRenderItem.IntakeRecordLine }
+        assertTrue(buttonIndex >= 0, "count > 0 renders the affordance at the maximum session")
+        assertTrue(firstRecordLineIndex >= 0, "the 10,000-record session renders its record lines")
+        assertTrue(
+            buttonIndex < firstRecordLineIndex,
+            "the button precedes the record lines (pre-D-327 it sat ~10,030 items deep)",
+        )
+        // The whole session block stays intact below the affordance: header, then the summary
+        // lines, then the disclosed record lines (10,000 records → 200 rendered + 1 disclosure).
+        val headerIndex = items.indexOfFirst { it is ImportReviewRenderItem.IntakeSessionHeader }
+        assertTrue(headerIndex > buttonIndex, "the session summary block follows the affordance")
+        val recordLines = items.filterIsInstance<ImportReviewRenderItem.IntakeRecordLine>()
+        assertEquals(201, recordLines.size)
+        assertTrue(
+            items.none { it is ImportReviewRenderItem.CandidateItem },
+            "the zero-rows window keeps the button before the (unloaded) candidate list too",
         )
     }
 
@@ -469,8 +509,15 @@ class P503ImportReviewRenderItemsTest {
         val continuationButton = continuation.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionButton }
         val continuationProgress = continuation.indexOfFirst { it is ImportReviewRenderItem.GroupEnumerationInProgress }
         val cardHeader = continuation.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionCardHeader }
+        val firstRecordLine = continuation.indexOfFirst { it is ImportReviewRenderItem.IntakeRecordLine }
+        val lastRecordLine = continuation.indexOfLast { it is ImportReviewRenderItem.IntakeRecordLine }
         assertEquals(continuationButton + 1, continuationProgress)
-        assertEquals(continuationProgress + 1, cardHeader)
+        // D-327: the in-flight band (affordance + progress line) sits BEFORE the IntakeRecordLine
+        // block; the open card stays in the 待确认 section, so its header now follows the record
+        // lines. The line still precedes the card it carries, never superseded by it.
+        assertTrue(firstRecordLine >= 0, "the session block renders its record lines")
+        assertTrue(continuationProgress < firstRecordLine, "the progress line precedes the record lines (D-327)")
+        assertTrue(lastRecordLine < cardHeader, "the card header follows the record lines (D-327)")
     }
 
     @Test
@@ -793,9 +840,10 @@ class P503ImportReviewRenderItemsTest {
         val items = importReviewRenderItems(view, ImportPlatformKind.ANDROID)
         // Static sections (TitleBar + 2 dividers + format header + pending header + one group
         // header) + the FIVE-entry Android format matrix (P8-04 i2 D-13 added self-entry-xlsx) +
-        // the session block (1 header + 2 summary lines + 1 record line) + the 10,000 candidate
-        // rows + 1 disposition affordance button + the card's 1 header + 10,000 flat items +
-        // 1 footer = 20,018 items — zero loss, zero new cap (C5: nothing is truncated).
+        // the session block (1 header + 2 summary lines + 1 record line) + 1 disposition
+        // affordance button (D-327: before the session block) + the 10,000 candidate rows + the
+        // card's 1 header + 10,000 flat items + 1 footer = 20,018 items — zero loss, zero new cap
+        // (C5: nothing is truncated).
         val staticSections = 6
         val sessionBlock = 1 + importIntakeSessionLines(view.lastIntakeSession!!).size + 1
         val affordance = 1
@@ -804,12 +852,16 @@ class P503ImportReviewRenderItemsTest {
             items.size,
         )
         assertEquals(20_018, items.size)
-        // Order: the card header sits right after the affordance button; the 10,000 flat items
-        // follow in page order; the footer is immediately before the first candidate row (the
-        // affordance/card deliberately precede the 20k candidate list).
+        // D-327 order: the affordance leads the whole list body (before the session summary and
+        // its record lines); the card header follows the record lines and the 待确认 shell; the
+        // 10,000 flat items follow in page order; the footer is immediately before the first
+        // candidate row (the affordance/card deliberately precede the 20k candidate list).
         val buttonIndex = items.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionButton }
         val headerIndex = items.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionCardHeader }
-        assertEquals(buttonIndex + 1, headerIndex)
+        val firstRecordLineIndex = items.indexOfFirst { it is ImportReviewRenderItem.IntakeRecordLine }
+        val pendingHeaderIndex = items.indexOfFirst { it is ImportReviewRenderItem.PendingSectionHeader }
+        assertTrue(firstRecordLineIndex > buttonIndex, "the affordance precedes the record lines (D-327)")
+        assertTrue(headerIndex > pendingHeaderIndex, "the card header follows the 待确认 shell")
         assertEquals(ImportReviewRenderItem.GroupDispositionCardHeader("pick-handle-1", 10_000), items[headerIndex])
         val groupItems = items.filterIsInstance<ImportReviewRenderItem.GroupDispositionItem>()
         assertEquals(10_000, groupItems.size)
