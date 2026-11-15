@@ -334,7 +334,10 @@ private class RecordingThreadReadableLedgerExport(
     }
 }
 
-private fun failLoudLeasePort(): LedgerRuntimeLeasePort = LedgerRuntimeLeasePort { error("the lease port must not be touched by the run-pipeline seam") }
+private fun failLoudLeasePort(): LedgerRuntimeLeasePort =
+    object : LedgerRuntimeLeasePort {
+        override fun acquireLease(): LedgerRuntimeLeasePortResult = error("the lease port must not be touched by the run-pipeline seam")
+    }
 
 private fun failLoudReadPort(): LedgerCurrentStateReadPort =
     object : LedgerCurrentStateReadPort {

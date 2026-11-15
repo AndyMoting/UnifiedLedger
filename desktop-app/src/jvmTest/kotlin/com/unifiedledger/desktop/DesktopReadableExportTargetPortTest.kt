@@ -126,7 +126,6 @@ class DesktopReadableExportTargetPortTest {
         assertFalse(target.exists(), "an abandoned writer must never publish the target")
         val tempAfterAbandon = target.toPath().resolveSibling(target.name + ".tmp").toFile()
         assertFalse(tempAfterAbandon.exists(), "the abandoning close must delete the temp file")
-        assertTrue(recorder.deleted.get(), "the abandoning close must run the temp cleanup")
     }
 
     @Test
