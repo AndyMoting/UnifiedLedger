@@ -463,16 +463,17 @@ internal class AndroidStartupController(
         // controller's owner (D-E11). The launch-time generation capture lives with the shared
         // host/launch face, never at bind time.
         val targetPort = backupWiring?.readableExportTargetPort
+        val graphFactory = graph.readableExportFactory
         leaseScope.readableExportFactory =
-            targetPort?.let { port ->
+            if (targetPort == null || graphFactory == null) {
+                // The wiring probe stays false when either composition piece is absent (tests,
+                // legacy graphs): no dead 导出账目 row (the D-E8 three-state discipline).
+                null
+            } else {
                 ReadableExportFactoryBinding(
                     newExport = { cancellation, progressListener ->
-                        // The graph-local factory is nullable in the base graph shape (graphs wired
-                        // without the readable-export face keep it null); this controller's graph
-                        // always supplies it, so the null arm is unreachable here by construction.
-                        val factory = graph.readableExportFactory ?: return@ReadableExportFactoryBinding null
-                        factory(
-                            readableExportSheetWriterFactory(port),
+                        graphFactory(
+                            readableExportSheetWriterFactory(targetPort),
                             LedgerRuntimeOwnerLeasePort(owner),
                             cancellation,
                             progressListener,

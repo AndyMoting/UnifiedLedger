@@ -517,12 +517,17 @@ internal class DesktopStartupController(
         // bridge over THIS controller's owner (D-E11). The launch-time generation capture lives
         // with the shared host/launch face, never at bind time.
         val targetPort = backupWiring?.readableExportTargetPort
+        val graphFactory = graph.readableExportFactory
         leaseScope.readableExportFactory =
-            targetPort?.let { port ->
+            if (targetPort == null || graphFactory == null) {
+                // The wiring probe stays false when either composition piece is absent (tests,
+                // legacy roots): no dead 导出账目 row (the D-E8 three-state discipline).
+                null
+            } else {
                 ReadableExportFactoryBinding(
                     newExport = { cancellation, progressListener ->
-                        graph.readableExportFactory(
-                            readableExportSheetWriterFactory(port),
+                        graphFactory(
+                            readableExportSheetWriterFactory(targetPort),
                             LedgerRuntimeOwnerLeasePort(owner),
                             cancellation,
                             progressListener,
