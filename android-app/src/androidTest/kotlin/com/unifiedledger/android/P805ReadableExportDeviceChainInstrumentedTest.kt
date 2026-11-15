@@ -402,8 +402,12 @@ class P805ReadableExportDeviceChainInstrumentedTest {
         }
         listOf(START_BUTTON_TEXT, CANCEL_BUTTON_TEXT, EXIT_BUTTON_TEXT).forEach { text ->
             val node = markers.getValue(text)
-            assertTrue("$V8_PREFIX the [$text] affordance must be clickable", node!!.isClickable)
-            assertTrue("$V8_PREFIX the [$text] affordance must be enabled", node.isEnabled)
+            // The affordance's clickability is judged structurally: Compose may keep the text on a
+            // non-clickable leaf while the click action rides an ancestor or a merged sibling (the
+            // ImportScaleTraversal ancestor-walk discipline), so the check is "a clickable node
+            // exists around the found marker", not "this exact node is clickable".
+            assertTrue("$V8_PREFIX the [$text] affordance must be clickable", clickableAround(node!!))
+            assertTrue("$V8_PREFIX the [$text] affordance must be enabled", node.isEnabled || clickableAround(node))
         }
 
         // The honest pre-run face: no typed outcome banner may exist before any run landed (D-E10).
@@ -660,6 +664,22 @@ class P805ReadableExportDeviceChainInstrumentedTest {
             hops++
         }
         return false
+    }
+
+    /**
+     * Whether a clickable node exists AT or AROUND [node] (the node itself, any ancestor within
+     * [CLICK_ANCESTOR_HOPS] hops, or any visible clickable descendant): the structural clickability
+     * face the affordance assertions judge, mirroring how TalkBack itself resolves a tap target.
+     */
+    private fun clickableAround(node: AccessibilityNodeInfo): Boolean {
+        var current: AccessibilityNodeInfo? = node
+        var hops = 0
+        while (current != null && hops <= CLICK_ANCESTOR_HOPS) {
+            if (current.isClickable && current.isEnabled) return true
+            current = current.parent
+            hops++
+        }
+        return collectNodes(node).any { it.isClickable && it.isEnabled && it.isVisibleToUser }
     }
 
     /** A capture sink for the success leg: the whole committed package, held in memory. */
