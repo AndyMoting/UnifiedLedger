@@ -1461,6 +1461,96 @@ class ApkProvenance(unittest.TestCase):
             with self.subTest(code=code), patch.object(apks.subprocess, "check_output", side_effect=error), self.assertRaises(exception):
                 apks.api("repos/example/ledger/actions/artifacts/1/zip", binary=True)
 
+    def test_unbound_pr_binding_is_a_cache_miss_and_later_bundles_still_reuse(self):
+        # P8-04 i4b deadlock shape: after the PR base moved on, a historical
+        # preview bundle's recorded base/head no longer matches. The bytes and
+        # the producer are still fine, so `reuse` skips the bundle (cache miss)
+        # instead of failing the whole step — and a later, still-bound bundle
+        # for the same tree is found and reused. The zip payloads carry the
+        # manifest of THEIR OWN run: the routing keys every response by the
+        # artifact/run id the reuse loop is currently walking.
+        unbound_manifest = copy.deepcopy(self.manifest)
+        unbound_manifest["pull_request"] = {"number": 42, "base_sha": "f" * 40, "head_sha": "c" * 40}
+        bound_manifest = copy.deepcopy(self.manifest)
+        bound_manifest.update(run_id=456, run_attempt=1)
+        unbound = {"id": 9, "name": f"android-apks-{self.tree}-123-1", "expired": False, "workflow_run": {"id": 123}}
+        bound = {"id": 10, "name": f"android-apks-{self.tree}-456-1", "expired": False, "workflow_run": {"id": 456}}
+        bound_run = dict(self.run, id=456)
+        bound_commit = dict(self.commit, parents=[{"sha": "d" * 40}, {"sha": "c" * 40}])
+
+        def payload_for(manifest):
+            output = io.BytesIO()
+            with zipfile.ZipFile(output, "w") as archive:
+                archive.writestr(apks.FILES["app"], b"app")
+                archive.writestr(apks.FILES["test"], b"test")
+                archive.writestr("provenance.json", json.dumps(manifest).encode())
+            return output.getvalue()
+
+        def routing(path, *, binary=False):
+            if path.endswith("/zip"):
+                return payload_for(unbound_manifest if "/artifacts/9/" in path else bound_manifest)
+            if "/artifacts?" in path:
+                # Oldest first, like the live endpoint: the unbound bundle must
+                # be skipped, not terminal.
+                return {"artifacts": [unbound, bound]}
+            if "/runs/123/attempts/1" in path and "/jobs" in path:
+                return {"jobs": [self.job]}
+            if "/runs/456/attempts/1" in path and "/jobs" in path:
+                return {"jobs": [self.job]}
+            if "/git/commits/" in path:
+                return bound_commit if "/456" in path or "456" in path else self.commit
+            if "/runs/456" in path:
+                return bound_run
+            return self.run
+        with patch.object(apks, "api", side_effect=routing):
+            self.assertTrue(apks.reuse(self.repo, self.tree, self.root / "download"))
+        self.assertEqual((self.root / "download" / apks.FILES["app"]).read_bytes(), b"app")
+
+    def test_unbound_is_skipped_while_a_trust_fault_still_fails(self):
+        # Only the unbound arm is a cache miss; a fork producer on the NEXT
+        # bundle must still fail the reuse step loudly.
+        unbound_manifest = copy.deepcopy(self.manifest)
+        unbound_manifest["pull_request"] = {"number": 42, "base_sha": "f" * 40, "head_sha": "c" * 40}
+        unbound = {"id": 9, "name": f"android-apks-{self.tree}-123-1", "expired": False, "workflow_run": {"id": 123}}
+        forked_run = dict(self.run, id=456, head_repository={"full_name": "foreign/ledger"})
+        forked = {"id": 10, "name": f"android-apks-{self.tree}-456-1", "expired": False, "workflow_run": {"id": 456}}
+
+        def payload_for(manifest):
+            output = io.BytesIO()
+            with zipfile.ZipFile(output, "w") as archive:
+                archive.writestr(apks.FILES["app"], b"app")
+                archive.writestr(apks.FILES["test"], b"test")
+                archive.writestr("provenance.json", json.dumps(manifest).encode())
+            return output.getvalue()
+
+        def routing(path, *, binary=False):
+            if path.endswith("/zip"):
+                return payload_for(unbound_manifest)
+            if "/artifacts?" in path:
+                return {"artifacts": [unbound, forked]}
+            if "/jobs?" in path:
+                return {"jobs": [self.job]}
+            if "/git/commits/" in path:
+                return self.commit
+            if "/runs/123" in path:
+                return self.run
+            if "/runs/456" in path:
+                return forked_run
+            return self.run
+        with patch.object(apks, "api", side_effect=routing), self.assertRaises(ValueError):
+            apks.reuse(self.repo, self.tree, self.root / "download")
+        self.assertFalse((self.root / "download").exists())
+
+    def test_check_source_reports_unbound_as_the_dedicated_type(self):
+        # The dedicated type keeps the reuse-loop skip precise: it subclasses
+        # ValueError (every existing guard keeps holding) while carrying the
+        # "lapsed binding, not untrusted" semantics.
+        self.commit["parents"] = [{"sha": "f" * 40}, {"sha": "c" * 40}]
+        with patch.object(apks, "api", side_effect=self.api):
+            with self.assertRaises(apks.UnboundProducer):
+                apks.check_source(self.manifest, self.repo, 123)
+        self.assertTrue(issubclass(apks.UnboundProducer, ValueError))
+
     def test_source_sha_filter_requires_the_exact_producer_head(self):
         # A dispatch producer's `head_sha` is the tested commit itself; that is
         # the identity a pinned caller must see. (A pull-request producer

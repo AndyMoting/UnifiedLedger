@@ -1,7 +1,11 @@
 """Whole-tree APK bundles with independently checked GitHub provenance.
 
 Only an absent/expired artifact is a cache miss. A discovered bundle that fails
-identity, producer or byte checks is an error, never a silent rebuild.
+identity, producer or byte checks is an error, never a silent rebuild. One
+deliberate exception: a bundle whose historical PR binding has lapsed
+(`UnboundProducer` — the PR's branches moved on after the producer ran) is a
+cache miss too, because the bytes are intact and the producer was trusted at
+pack time; the reuse loop skips it instead of failing.
 """
 from __future__ import annotations
 
@@ -34,6 +38,20 @@ PRODUCERS = {".github/workflows/ci.yml": "Android compile",
 
 class ArtifactUnavailable(RuntimeError):
     """The server reports a deleted or expired artifact, not corrupt content."""
+
+
+class UnboundProducer(ValueError):
+    """The bundle's provenance binding has lapsed, not corrupt or untrusted.
+
+    Raised only for the historical-PR binding: a preview merge commit whose
+    recorded base/head no longer matches because the PR's branches have moved
+    on. The bytes are still intact and the producer was trusted at pack time —
+    the bundle is simply no longer reusable, which makes it a cache miss (the
+    `reuse` loop skips it and keeps looking) rather than a security failure.
+    Every other `check_source` fault (fork, foreign workflow, tree mismatch,
+    attempt mismatch) stays a plain `ValueError`: those are trust violations
+    and must fail loudly, never be skipped over.
+    """
 
 
 def git(*args: str) -> str:
@@ -115,7 +133,7 @@ def check_source(manifest: dict, repository: str, artifact_run: int) -> None:
         if (type(number) is not int or number <= 0 or not isinstance(base, str) or not isinstance(head, str)
                 or not re.fullmatch(r"[0-9a-f]{40}", base) or not re.fullmatch(r"[0-9a-f]{40}", head)
                 or parents != [base, head] or head != run.get("head_sha")):
-            raise ValueError("unbound PR preview merge")
+            raise UnboundProducer("unbound PR preview merge")
         associated = [pr for pr in pages(f"repos/{repository}/commits/{head}/pulls", None) if pr.get("number") == number]
         if len(associated) != 1:
             raise ValueError("historical source commit is not associated with the recorded PR")
@@ -211,7 +229,17 @@ def reuse(repository: str, tree: str, output: Path, source_sha: str | None = Non
         expected_name = f"{prefix}{manifest.get('run_id')}-{manifest.get('run_attempt')}"
         if artifact["name"] != expected_name:
             raise ValueError("artifact name/run attempt mismatch")
-        check_source(manifest, repository, source_run)
+        try:
+            check_source(manifest, repository, source_run)
+        except UnboundProducer:
+            # The bundle's provenance binding has lapsed (its PR's branches
+            # moved on after the producer ran): the bytes are intact but the
+            # bundle can no longer be REUSED. That is a cache miss, not a
+            # security failure — skip it and keep looking, exactly like the
+            # ArtifactUnavailable arm above. Every other check_source fault is
+            # a trust violation and keeps propagating.
+            shutil.rmtree(output, ignore_errors=True)
+            continue
         print(f"Reused APK artifact {artifact['id']} from run {source_run}")
         return True
     return False
