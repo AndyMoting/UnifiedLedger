@@ -228,29 +228,30 @@ internal object ReadableExportReconciliationSeed {
             note = null,
             legs = listOf("seed-acc-expense-service" to (3_333L to "CNY:2"), "seed-acc-prepaid" to (-3_333L to "CNY:2")),
         )
-        // 无名账户占位: seed-acc-ghost 不在 catalog → 账户1 落「未命名账户」.
+        // 无名账户占位（②转账形）: seed-acc-ghost 不在 catalog → 账户1 落「未命名账户」且该行
+        // 可解析（ghost 作流出腿）；① 组下 ghost 行必然未解（两条腿都无分类映射）会整体中止.
         insertTransaction(
             driver,
             l,
             id = "seed-unnamed",
-            kind = "EXPENSE",
+            kind = "ACCOUNT_TRANSFER",
             canonical = null,
             occurred = "2026-02-02T04:00:00Z",
             statistics = "2026-02-02T04:00:00Z",
             note = null,
-            legs = listOf("seed-acc-ghost" to (500L to "CNY:2"), "seed-acc-bank" to (-500L to "CNY:2")),
+            legs = listOf("seed-acc-ghost" to (-500L to "CNY:2"), "seed-acc-bank" to (500L to "CNY:2")),
         )
-        // 空白名账户: catalog 行存在但名字为空 → 账户1 落「未命名账户」.
+        // 空白名账户: catalog 行存在但名字为空 → 账户1 落「未命名账户」. 同为②转账形，保持可解析.
         insertTransaction(
             driver,
             l,
             id = "seed-blank-name",
-            kind = "EXPENSE",
+            kind = "ACCOUNT_TRANSFER",
             canonical = null,
             occurred = "2026-02-02T05:00:00Z",
             statistics = "2026-02-02T05:00:00Z",
             note = null,
-            legs = listOf("seed-acc-blank-name" to (700L to "CNY:2"), "seed-acc-bank" to (-700L to "CNY:2")),
+            legs = listOf("seed-acc-blank-name" to (-700L to "CNY:2"), "seed-acc-bank" to (700L to "CNY:2")),
         )
         // ⑦ 退款到账（负支出）.
         insertTransaction(

@@ -173,8 +173,11 @@ class ReadableLedgerXlsxStreamWriter(
         }
 
         override fun write(value: Int) {
-            // The zip only writes through the byte-array overload; a single-byte write is a bug.
-            throw UnsupportedOperationException("single-byte writes never reach the zip bridge")
+            // The JDK zip internals are byte-array-only in practice, but a single-byte write
+            // must still reach the sink through the same byte face instead of failing the
+            // whole export (defensive: WRITE_FAILED on a synthetic write shape is a worse
+            // contract than a one-byte bridge).
+            sink.write(byteArrayOf(value.toByte()), 0, 1)
         }
 
         override fun close() {

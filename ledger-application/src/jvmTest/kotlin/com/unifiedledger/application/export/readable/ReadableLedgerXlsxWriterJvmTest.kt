@@ -146,7 +146,9 @@ class ReadableLedgerXlsxWriterJvmTest {
                     Posting(PostingId("p-a0"), AccountId("acc-bank"), Money.ofMinor(3_000L, cny)),
                     Posting(PostingId("p-a1"), AccountId("acc-equity"), Money.ofMinor(-3_000L, cny)),
                 ),
-                // ③ BALANCE_ADJUSTMENT_REVERSAL: asset leg −20.00 (golden rg-09:364-376).
+                // ③ BALANCE_ADJUSTMENT_REVERSAL: golden rg-09:364-376 legs (−2000 asset /
+                // +2000 equity) render under the F-4 unique-positive anchor: 金额 = +20.00,
+                // 账户1 = 权益、账户2 = 资产.
                 legsRow(
                     "tx-reversal",
                     TransactionKind.BALANCE_ADJUSTMENT_REVERSAL,
@@ -196,15 +198,17 @@ class ReadableLedgerXlsxWriterJvmTest {
                     Posting(PostingId("p-c0"), AccountId("acc-expense-service"), Money.ofMinor(3_333L, cny)),
                     Posting(PostingId("p-c1"), AccountId("acc-prepaid"), Money.ofMinor(-3_333L, cny)),
                 ),
-                // 无名账户 + 无映射分类腿: the D-E7 placeholder row (the account has no catalog row).
+                // 无名账户占位 (D-E7): the ghost account has NO catalog row. As a ② transfer the
+                // ghost is the outflow leg, so the row RESOLVES with 账户1 = 未命名账户 — the
+                // no-catalog-row placeholder path WITHOUT an unresolved stop.
                 legsRow(
                     "tx-unnamed",
-                    TransactionKind.EXPENSE,
+                    TransactionKind.ACCOUNT_TRANSFER,
                     "2026-02-01T00:00:00Z",
                     "2026-02-01T00:00:00Z",
                     note = "边界",
-                    Posting(PostingId("p-u0"), AccountId("acc-ghost"), Money.ofMinor(500L, cny)),
-                    Posting(PostingId("p-u1"), AccountId("acc-bank"), Money.ofMinor(-500L, cny)),
+                    Posting(PostingId("p-u0"), AccountId("acc-ghost"), Money.ofMinor(-500L, cny)),
+                    Posting(PostingId("p-u1"), AccountId("acc-bank"), Money.ofMinor(500L, cny)),
                 ),
                 // 双时间分列: occurred 与 statistics 落在不同上海自然日.
                 legsRow(
@@ -259,7 +263,7 @@ class ReadableLedgerXlsxWriterJvmTest {
         assertEquals("零钱", row.getCell(6)!!.string)
         assertEquals("手续费", row.getCell(7)!!.string)
 
-        // ③ 余额调整: 资产腿 +30.00；冲正 −20.00；分类空.
+        // ③ 余额调整: 资产腿 +30.00；冲正按 F-4 唯一正腿锚定 → +20.00，账户1=权益、账户2=资产；分类空.
         row = sheet.getRow(4)
         assertNotNull(row)
         assertEquals("余额调整", row.getCell(2)!!.string)
@@ -270,7 +274,9 @@ class ReadableLedgerXlsxWriterJvmTest {
         row = sheet.getRow(5)
         assertNotNull(row)
         assertEquals("余额调整冲正", row.getCell(2)!!.string)
-        assertEquals("-20.00", row.getCell(3)!!.rawValue)
+        assertEquals("20.00", row.getCell(3)!!.rawValue)
+        assertEquals("期初权益", row.getCell(5)!!.string)
+        assertEquals("招商银行", row.getCell(6)!!.string)
 
         // ④ 期初余额: 资产腿 +1000.00，统计时间落在上海 2026-01-01 00:00（月界 00:00 向量）.
         row = sheet.getRow(6)
@@ -300,11 +306,11 @@ class ReadableLedgerXlsxWriterJvmTest {
         assertEquals("33.33", row.getCell(3)!!.rawValue)
         assertEquals("预付资产", row.getCell(6)!!.string)
 
-        // 无名账户占位 + 未映射分类空 + 占位不落裸 id.
+        // 无名账户占位（②转账形）: 账户1 = 未命名账户、账户2 = 招商银行；分类空（ghost 无映射）.
         row = sheet.getRow(10)
         assertNotNull(row)
-        assertEquals("支出", row.getCell(2)!!.string)
-        assertEquals("5.00", row.getCell(3)!!.rawValue)
+        assertEquals("转账", row.getCell(2)!!.string)
+        assertEquals("-5.00", row.getCell(3)!!.rawValue)
         assertEquals(READABLE_EXPORT_UNNAMED_ACCOUNT, row.getCell(5)!!.string)
         assertEquals("招商银行", row.getCell(6)!!.string)
         assertEquals("", row.getCell(7)!!.string)
@@ -357,9 +363,12 @@ class ReadableLedgerXlsxWriterJvmTest {
         assertEquals("2026-03-01 23:59:59", readableExportWallClockText(endOfDay))
         assertEquals(boundary, parseReadableExportWallClockTextOrNull("2026-02-01 00:00:00"))
         assertEquals(endOfDay, parseReadableExportWallClockTextOrNull("2026-03-01 23:59:59"))
-        val early = Instant.parse("0999-01-02T03:04:05Z")
-        assertEquals("0999-01-02 11:04:05", readableExportWallClockText(early))
-        assertEquals(early, parseReadableExportWallClockTextOrNull("0999-01-02 11:04:05"))
+        // The four-digit year pad: 1901 is the first full year of Asia/Shanghai's fixed +08:00
+        // era (pre-1901 instants render in the zone's LMT offset +08:05:43, which is NOT the
+        // frozen wall-clock shape), so the early-era vector rides 1901, not an earlier year.
+        val early = Instant.parse("1901-01-02T03:04:05Z")
+        assertEquals("1901-01-02 11:04:05", readableExportWallClockText(early))
+        assertEquals(early, parseReadableExportWallClockTextOrNull("1901-01-02 11:04:05"))
         assertNull(parseReadableExportWallClockTextOrNull("2026-02-30 00:00:00"), "impossible dates stay null")
     }
 
@@ -426,9 +435,14 @@ class ReadableLedgerXlsxWriterJvmTest {
 
     @Test
     fun anOversizedNoteMidWalkStopsWithoutCommitAndClosesTheWriter() {
-        val ok = expenseRow("tx-ok-1", Instant.parse("2026-03-02T02:00:00Z"))
-        val ok2 = expenseRow("tx-ok-2", Instant.parse("2026-03-03T02:00:00Z"))
-        val oversized = expenseRow("tx-big", Instant.parse("2026-03-04T02:00:00Z"), note = "长".repeat(32_768))
+        // The over-bound note rides the OLDEST statistics instant so the frozen (statistics_at
+        // DESC) page order puts it on the LAST page: the first page carries only resolved rows,
+        // the writer OPENS, and the mid-walk stop then fires inside the try block (so the
+        // finally closes the writer). The precheck leg (zero artifacts, no writer) is the
+        // anOversizedNoteOnTheFirstPage vector above.
+        val ok = expenseRow("tx-ok-1", Instant.parse("2026-03-03T02:00:00Z"))
+        val ok2 = expenseRow("tx-ok-2", Instant.parse("2026-03-02T02:00:00Z"))
+        val oversized = expenseRow("tx-big", Instant.parse("2026-03-01T02:00:00Z"), note = "长".repeat(32_768))
         val harness = ExportHarness.build(rows = listOf(ok, ok2, oversized), pageSize = 2, clock = clock, catalogProvider = { groupCatalog() })
         val writer = harness.defaultWriter()
         val result = harness.export.export(ledgerId)
@@ -564,9 +578,9 @@ class ReadableLedgerXlsxWriterJvmTest {
         val writer = harness.defaultWriter()
         val result = harness.export.export(ledgerId)
         assertIs<ReadableLedgerExportResult.Succeeded>(result)
-        assertEquals("导入创建", writer.rows[0].sourceLabel)
-        assertEquals("手工创建", writer.rows[1].sourceLabel)
-        assertEquals("来源未标注", writer.rows[2].sourceLabel)
+        // D-E1 页序直写: the file rows follow (statistics_at DESC, id DESC), so the newest
+        // tx-none lands FIRST; the precedence labels map onto that frozen order.
+        assertEquals(listOf("来源未标注", "手工创建", "导入创建"), writer.rows.map { it.sourceLabel })
         assertEquals(1, writer.headerCount)
     }
 
