@@ -152,8 +152,8 @@ internal object ReadableExportReconciliationSeed {
             driver,
             l,
             id = "seed-adjust",
-            kind = "BALANCE_ADJUSTMENT",
-            canonical = null,
+            kind = "EXPENSE",
+            canonical = "BALANCE_ADJUSTMENT",
             occurred = "2026-01-25T03:00:00Z",
             statistics = "2026-01-25T03:00:00Z",
             note = null,
@@ -163,8 +163,8 @@ internal object ReadableExportReconciliationSeed {
             driver,
             l,
             id = "seed-adjust-reversal",
-            kind = "BALANCE_ADJUSTMENT_REVERSAL",
-            canonical = null,
+            kind = "EXPENSE",
+            canonical = "BALANCE_ADJUSTMENT_REVERSAL",
             occurred = "2026-01-26T03:00:00Z",
             statistics = "2026-01-26T03:00:00Z",
             note = null,
@@ -175,8 +175,8 @@ internal object ReadableExportReconciliationSeed {
             driver,
             l,
             id = "seed-recharge",
-            kind = "STORED_VALUE_RECHARGE",
-            canonical = null,
+            kind = "EXPENSE",
+            canonical = "STORED_VALUE_RECHARGE",
             occurred = "2026-01-27T03:00:00Z",
             statistics = "2026-01-27T03:00:00Z",
             note = null,
@@ -186,8 +186,8 @@ internal object ReadableExportReconciliationSeed {
             driver,
             l,
             id = "seed-pre-activation",
-            kind = "STORED_VALUE_PRE_ACTIVATION_BALANCE_ADJUSTMENT",
-            canonical = null,
+            kind = "EXPENSE",
+            canonical = "STORED_VALUE_PRE_ACTIVATION_BALANCE_ADJUSTMENT",
             occurred = "2026-01-28T03:00:00Z",
             statistics = "2026-01-28T03:00:00Z",
             note = null,
@@ -198,8 +198,8 @@ internal object ReadableExportReconciliationSeed {
             driver,
             l,
             id = "seed-spend",
-            kind = "STORED_VALUE_SPEND",
-            canonical = null,
+            kind = "EXPENSE",
+            canonical = "STORED_VALUE_SPEND",
             occurred = "2026-01-29T03:00:00Z",
             statistics = "2026-01-29T03:00:00Z",
             note = null,
@@ -209,8 +209,8 @@ internal object ReadableExportReconciliationSeed {
             driver,
             l,
             id = "seed-expiry",
-            kind = "STORED_VALUE_EXPIRY_LOSS",
-            canonical = null,
+            kind = "EXPENSE",
+            canonical = "STORED_VALUE_EXPIRY_LOSS",
             occurred = "2026-01-30T03:00:00Z",
             statistics = "2026-01-30T03:00:00Z",
             note = null,
@@ -221,8 +221,8 @@ internal object ReadableExportReconciliationSeed {
             driver,
             l,
             id = "seed-recognition",
-            kind = "PREPAID_RECOGNITION",
-            canonical = null,
+            kind = "EXPENSE",
+            canonical = "PREPAID_RECOGNITION",
             occurred = "2026-01-31T07:33:20Z",
             statistics = "2026-01-31T07:33:20Z",
             note = null,
@@ -258,8 +258,8 @@ internal object ReadableExportReconciliationSeed {
             driver,
             l,
             id = "seed-refund",
-            kind = "REFUND_RECEIPT",
-            canonical = null,
+            kind = "EXPENSE",
+            canonical = "REFUND_RECEIPT",
             occurred = "2026-02-02T03:00:00Z",
             statistics = "2026-02-02T03:00:00Z",
             note = null,
@@ -377,8 +377,8 @@ internal object ReadableExportReconciliationSeed {
             driver,
             ledger.value,
             id = "seed-prepaid-purchase",
-            kind = "PREPAID_PURCHASE",
-            canonical = null,
+            kind = "EXPENSE",
+            canonical = "PREPAID_PURCHASE",
             occurred = "2026-02-01T03:00:00Z",
             statistics = "2026-02-01T03:00:00Z",
             note = null,
@@ -439,13 +439,15 @@ internal object ReadableExportReconciliationSeed {
         // catalog_category carries no name; the CURRENT name rides catalog_name_history. The
         // prepaid asset account deliberately carries NO category mapping: PREPAID_PURCHASE's
         // golden shape (payment_asset −N / prepaid_asset +N) must fall through D-E5 ⑤ honestly.
+        // The fee account DOES carry its mapping: without it the fee leg joins the non-category
+        // set and the three-leg fee transfer exceeds the group-2 two-non-category shape.
         category("seed-cat-food-parent", "EXPENSE", null, null)
         category("seed-cat-food-leaf", "EXPENSE", "seed-cat-food-parent", "seed-acc-expense-food")
         category("seed-cat-service-parent", "EXPENSE", null, null)
         category("seed-cat-service-leaf", "EXPENSE", "seed-cat-service-parent", "seed-acc-expense-service")
         category("seed-cat-income-parent", "INCOME", null, null)
         category("seed-cat-salary-leaf", "INCOME", "seed-cat-income-parent", "seed-acc-income-salary")
-        category("seed-cat-fee", "EXPENSE", null, null)
+        category("seed-cat-fee", "EXPENSE", "seed-cat-service-parent", "seed-acc-fee")
 
         fun categoryName(
             ownerId: String,
@@ -602,10 +604,14 @@ internal object ReadableExportReconciliationSeed {
         transactionId: String,
     ) {
         exec(driver, "INSERT INTO import_request (ledger_id, request_id, operation) VALUES ('$l', 'req-import-1', 'confirm_candidate')")
+        // valid_complete carries the full fact tuple the source-record CHECK mandates
+        // (amount/currency/precision/occurred_at/direction/status all NOT NULL).
         exec(
             driver,
-            "INSERT INTO import_source_record (ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness) " +
-                "VALUES ('$l', 'seed-source-1', 'req-import-1', 'seed-input-ref-1', 0, 'ordinary_flow_source', 'sha256:seed-1', 1, 'valid_complete')",
+            "INSERT INTO import_source_record (ledger_id, source_id, owner_request_id, input_ref, record_ordinal, record_kind, content_hash, contract_version, completeness, " +
+                "amount_minor, currency_code, currency_precision, occurred_at, direction_token, status_token) " +
+                "VALUES ('$l', 'seed-source-1', 'req-import-1', 'seed-input-ref-1', 0, 'ordinary_flow_source', 'sha256:seed-1', 1, 'valid_complete', " +
+                "3_333, 'CNY', 2, '2026-01-31T07:33:20Z', 'out', 'settled')",
         )
         exec(
             driver,
@@ -622,10 +628,22 @@ internal object ReadableExportReconciliationSeed {
             "INSERT INTO import_candidate_requires_confirmation (ledger_id, candidate_id, requirement_index, requirement) " +
                 "VALUES ('$l', 'seed-candidate-1', 0, 'formal_transaction_creation')",
         )
+        // The status history walks the spine state machine: the FIRST row must be
+        // pending_confirmation, the second confirmed (the transition trigger aborts a direct
+        // confirmed insert). Each row carries its own request/status ids (both UNIQUE).
+        exec(
+            driver,
+            "INSERT INTO import_request (ledger_id, request_id, operation) VALUES ('$l', 'req-import-intake', 'intake')",
+        )
         exec(
             driver,
             "INSERT INTO import_candidate_status_history (ledger_id, candidate_id, sequence, status_id, status, request_id, operation_class) " +
-                "VALUES ('$l', 'seed-candidate-1', 1, 'seed-status-1', 'confirmed', 'req-import-1', 'creation')",
+                "VALUES ('$l', 'seed-candidate-1', 1, 'seed-status-pending', 'pending_confirmation', 'req-import-intake', 'status_transition')",
+        )
+        exec(
+            driver,
+            "INSERT INTO import_candidate_status_history (ledger_id, candidate_id, sequence, status_id, status, request_id, operation_class) " +
+                "VALUES ('$l', 'seed-candidate-1', 2, 'seed-status-1', 'confirmed', 'req-import-1', 'creation')",
         )
         exec(
             driver,
