@@ -467,7 +467,11 @@ internal class AndroidStartupController(
             targetPort?.let { port ->
                 ReadableExportFactoryBinding(
                     newExport = { cancellation, progressListener ->
-                        graph.readableExportFactory(
+                        // The graph-local factory is nullable in the base graph shape (graphs wired
+                        // without the readable-export face keep it null); this controller's graph
+                        // always supplies it, so the null arm is unreachable here by construction.
+                        val factory = graph.readableExportFactory ?: return@ReadableExportFactoryBinding null
+                        factory(
                             readableExportSheetWriterFactory(port),
                             LedgerRuntimeOwnerLeasePort(owner),
                             cancellation,
