@@ -131,9 +131,13 @@ import com.unifiedledger.application.UuidV7TransactionVoidFactIdSource
 import com.unifiedledger.application.backup.BackupCryptoPrimitives
 import com.unifiedledger.application.backup.JvmBackupCryptoPrimitives
 import com.unifiedledger.application.budgetMonthConfigKey
+import com.unifiedledger.application.export.readable.ReadableLedgerExport
+import com.unifiedledger.application.export.readable.ReadableLedgerExportProgressListener
+import com.unifiedledger.application.export.readable.ReadableExportCancellation
 import com.unifiedledger.application.import.JvmImportFileIntake
 import com.unifiedledger.data.AndroidLedgerDatabaseHandle
 import com.unifiedledger.data.CatalogBootstrapResult
+import com.unifiedledger.data.SqlDelightCreationEntryBatchReader
 import com.unifiedledger.data.SqlDelightEvidenceProjectionStore
 import com.unifiedledger.data.SqlDelightImportReviewReadAdapter
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
@@ -176,6 +180,8 @@ import com.unifiedledger.ui.LedgerStartupResult
 import com.unifiedledger.ui.LedgerStorageFailure
 import com.unifiedledger.ui.LedgerStorageLayout
 import com.unifiedledger.ui.LedgerStorageRejectedException
+import com.unifiedledger.ui.ReadableExportFactoryBinding
+import com.unifiedledger.ui.ReadableExportGraphFactory
 import com.unifiedledger.ui.P503App
 import com.unifiedledger.ui.P503LedgerFacade
 import com.unifiedledger.ui.P503StartupScreen
@@ -248,6 +254,13 @@ fun app() {
         rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")) { uri ->
             holder?.safSlot?.deliverTemplateCreateDocumentResult?.invoke(uri)
         }
+    // P8-05 批 b (D-331 spec D-E12): the SAF CreateDocument launcher for the readable-export
+    // target, registered in composition like the backup-export and template launchers — its OWN
+    // launcher, so the three CreateDocument flows never consume each other's results.
+    val readableExportSaveLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")) { uri ->
+            holder?.safSlot?.deliverReadableExportCreateDocumentResult?.invoke(uri)
+        }
     // P7-06 06.D (D-182; spec section 6, P2-7): the SAF OpenDocument launcher for the restore
     // SOURCE, registered in composition like the import/export launchers.
     val restoreSourceLauncher =
@@ -256,12 +269,13 @@ fun app() {
         }
     // Point the process-scoped holder's slot at THIS composition's launchers. Re-pointed on every
     // composition so an Activity recreation cannot leave a stale launcher behind.
-    DisposableEffect(holder, importSafLauncher, backupSaveLauncher, templateSaveLauncher, restoreSourceLauncher) {
+    DisposableEffect(holder, importSafLauncher, backupSaveLauncher, templateSaveLauncher, readableExportSaveLauncher, restoreSourceLauncher) {
         val slot = holder?.safSlot
         if (slot != null) {
             slot.launchOpenDocument = importSafLauncher::launch
             slot.launchCreateDocument = backupSaveLauncher::launch
             slot.launchTemplateCreateDocument = templateSaveLauncher::launch
+            slot.launchReadableExportCreateDocument = readableExportSaveLauncher::launch
             slot.launchRestoreSource = restoreSourceLauncher::launch
         }
         onDispose {
@@ -440,6 +454,28 @@ internal class AndroidStartupController(
         leaseScope.bindReconciliationEvidence = graph.bindReconciliationEvidence
         leaseScope.confirmReconciliationLink = graph.confirmReconciliationLink
         leaseScope.querySearchPage = graph.querySearchPage
+        // P8-05 批 b (D-331 spec D-E12): the readable-export binding is re-bound on EVERY open like
+        // the other graph-owned ports — a 06.D reopen must not keep the previous graph's page
+        // source/catalog. The graph-local factory lambda is completed here with the two
+        // composition-level pieces: the sheet-writer bridge over the readable export's OWN
+        // CreateDocument port (D-E12; the backup port implementation stays reused UNCHANGED, the
+        // suggestion name rides the new port class) and the operation-lease bridge over THIS
+        // controller's owner (D-E11). The launch-time generation capture lives with the shared
+        // host/launch face, never at bind time.
+        val targetPort = backupWiring?.readableExportTargetPort
+        leaseScope.readableExportFactory =
+            targetPort?.let { port ->
+                ReadableExportFactoryBinding(
+                    newExport = { cancellation, progressListener ->
+                        graph.readableExportFactory(
+                            readableExportSheetWriterFactory(port),
+                            LedgerRuntimeOwnerLeasePort(owner),
+                            cancellation,
+                            progressListener,
+                        )
+                    },
+                )
+            }
     }
 
     /**
@@ -805,7 +841,25 @@ internal data class CloseableLedgerGraph(
     // P8-02 i2a (D7-7; spec section 2.4): the search result surface's bounded read use case. Null
     // when a graph wired none (tests, legacy graphs).
     val querySearchPage: QuerySearchPage? = null,
+    // P8-05 批 b (D-331 spec D-E12): the graph-local readable-export factory (page source, catalog,
+    // lineage reader, clock). Null when a graph wired none (tests, legacy graphs) — the composition
+    // root then renders no dead 导出账目 row (the wiring probe stays false).
+    val readableExportFactory: ReadableExportGraphFactory? = null,
 )
+
+/**
+ * P8-05 批 b (D-331 spec D-E12): the graph-local readable-export factory the controller's binding
+ * completes with the composition-level pieces (the sheet-writer bridge over the readable export's
+ * own CreateDocument port, D-E12; the operation-lease bridge over the owner, D-E11). Named so the
+ * graph member, the binding and the tests share one type (the R-222-4 one-named-shape discipline).
+ */
+internal typealias ReadableExportGraphFactory =
+    (
+        writerProvider: () -> com.unifiedledger.application.export.readable.ReadableExportSheetWriter?,
+        leasePort: com.unifiedledger.application.export.readable.LedgerRuntimeLeasePort,
+        cancellation: com.unifiedledger.application.export.readable.ReadableExportCancellation,
+        progressListener: com.unifiedledger.application.export.readable.ReadableLedgerExportProgressListener?,
+    ) -> com.unifiedledger.application.export.readable.ReadableLedgerExport
 
 private const val LOG_TAG = "UnifiedLedger"
 
@@ -850,6 +904,11 @@ internal class AndroidBackupWiring(
     val fileSystem: LedgerFileSystem,
     val layout: LedgerStorageLayout,
     val targetPort: BackupTargetPort,
+    // P8-05 批 b (D-331 spec D-E12): the readable export's OWN CreateDocument port — a separate
+    // launcher slot pair, so a backup launch in flight can never consume its SAF result (the
+    // P8-04 template-port precedent). The backup port implementation itself stays reused
+    // UNCHANGED (D-E12: 两端口平台实现零改动); the readable suggestion name rides the new port.
+    val readableExportTargetPort: AndroidReadableExportTargetPort<Uri>,
     val crypto: BackupCryptoPrimitives = JvmBackupCryptoPrimitives(),
     val newToken: () -> String = { randomUuidText() },
 )
@@ -1482,6 +1541,27 @@ private fun buildLedgerGraph(
             readPort = SqlDelightMonthlyContributionReadAdapter(database, store),
             clock = ledgerClock,
         )
+    // P8-05 批 b (D-331 spec sections 4 批 b / D-E12): the GRAPH-LOCAL half of the readable-export
+    // use-case factory — everything that lives on this graph (the session's bounded page source
+    // (D-268), the session's CURRENT authoritative catalog — rebuilt by refreshCatalog, the real
+    // SQLDelight lineage reader (D-E6) and the graph's clock, whose Shanghai wall-clock date names
+    // the suggested file) built per RUN (never shared across concurrent runs). The controller's
+    // binding supplies the two composition-level pieces: the sheet-writer bridge over the readable
+    // export's own CreateDocument port (D-E12) and the operation-lease bridge over the owner
+    // (D-E11). Nothing runs at wiring time; everything runs inside the use case's own lease.
+    val readableExportFactory: ReadableExportGraphFactory =
+        { writerProvider, leasePort, cancellation, progressListener ->
+            ReadableLedgerExport(
+                leasePort = leasePort,
+                flowPage = session.queryLedgerFlowPage,
+                creationEntries = SqlDelightCreationEntryBatchReader(database),
+                catalogProvider = { session.authority.catalog },
+                writerProvider = writerProvider,
+                clock = ledgerClock,
+                cancellation = cancellation,
+                progressListener = progressListener,
+            )
+        }
     // P7-08 08.C (spec sections 5.1-5.5): the bounded filter/accumulation read surface and the
     // catalog-item command surface, on the handle's platform-configured stores (the same
     // connection every owner binds to). The read adapter carries BOTH ports; its generation
@@ -1683,6 +1763,7 @@ private fun buildLedgerGraph(
         bindReconciliationEvidence = bindReconciliationEvidence,
         confirmReconciliationLink = confirmReconciliationLink,
         querySearchPage = querySearchPage,
+        readableExportFactory = readableExportFactory,
     )
 }
 
@@ -1756,6 +1837,17 @@ internal fun buildAndroidStartupController(
             openOutputStream = { uri -> context.contentResolver.openOutputStream(uri) },
         )
     safSlot.deliverCreateDocumentResult = { uri -> backupTargetPort.onCreateDocumentResult(uri) }
+    // P8-05 批 b (D-331 spec D-E12): the readable export's own CreateDocument port — the same
+    // latch shape beside the backup export's and the template's, with its OWN launcher slot pair
+    // (the P8-04 template-port precedent) so the three SAF flows can never consume each other's
+    // results. The suggested name rides the port class (D-E7 display shape).
+    val readableExportTargetPort =
+        AndroidReadableExportTargetPort<Uri>(
+            postToMainThread = mainThreadPoster,
+            launchCreateDocument = { name -> safSlot.launchReadableExportCreateDocument?.invoke(name) ?: throw IllegalStateException("no readable-export SAF launcher registered") },
+            openOutputStream = { uri -> context.contentResolver.openOutputStream(uri) },
+        )
+    safSlot.deliverReadableExportCreateDocumentResult = { uri -> readableExportTargetPort.onCreateDocumentResult(uri) }
     // P8-04 i1 (D-11): the import-template save port — the CreateDocument flow beside the backup
     // export's, generating the template bytes from jvmMain and writing them to the SAF target.
     val importTemplateTargetPort =
@@ -1791,7 +1883,7 @@ internal fun buildAndroidStartupController(
         },
         startScope = processMainDispatcher(),
         backgroundDispatcher = Dispatchers.IO,
-        backupWiring = AndroidBackupWiring(fileSystem, layout, backupTargetPort),
+        backupWiring = AndroidBackupWiring(fileSystem, layout, backupTargetPort, readableExportTargetPort),
         restoreWiring = restoreWiring,
     )
 }

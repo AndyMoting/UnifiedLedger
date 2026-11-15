@@ -128,6 +128,11 @@ import com.unifiedledger.application.VoidTransactionResult
 import com.unifiedledger.application.backup.BackupPreflightRejection
 import com.unifiedledger.application.budgetMonthKey
 import com.unifiedledger.application.budgetScopeKey
+import com.unifiedledger.application.export.readable.ReadableLedgerExport
+import com.unifiedledger.application.export.readable.ReadableLedgerExportFailure
+import com.unifiedledger.application.export.readable.ReadableLedgerExportProgressListener
+import com.unifiedledger.application.export.readable.ReadableLedgerExportResult
+import com.unifiedledger.application.export.readable.ReadableExportCancellation
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CatalogItemKind
@@ -4563,6 +4568,43 @@ fun P503App(
         )
     }
 
+    /**
+     * P8-05 批 b (D-331 spec sections 4 批 b / D-E9-D-E11): runs the readable export off the UI
+     * thread, mirroring the backup export host surface's four decisions (the [runReadableExport]
+     * extraction makes them JVM-assertable): the wiring/field guard runs BEFORE the reducer marks
+     * the surface running (the P704C-QUAL-04 precedent); the use case is built ONCE per run over
+     * the live graph (page source, catalog and sink bridge resolved at launch); the cooperative
+     * cancel signal and the D-E9 progress listener are wired through the run pipeline; and a
+     * result that lands after a reopen is discarded (the captured generation). The use case
+     * acquires and releases its OWN operation lease internally (D-E11), so this call is
+     * deliberately NOT wrapped in `ledger.leased`.
+     */
+    fun confirmReadableExport(current: P503AppState.ReadableExport) {
+        if (!ledger.surfaces.readableExport) return
+        if (!readableExportStartEnabled(current.running)) return
+        val launch = ledger.readableExportLaunch() ?: return
+        if (latestState.value !== current) return
+        dispatch(P503UiEvent.ConfirmReadableExport)
+        runReadableExport(
+            scope = scope,
+            generation = launch.generation,
+            request = launch.requestFor(ledger.ledgerId),
+            newExport = launch.newExport,
+            cancelRequested = { latestState.value.let { it as? P503AppState.ReadableExport }?.cancelRequested ?: false },
+            isCurrentGeneration = ledger::isCurrentGeneration,
+            onProgress = { exportedRows, totalRows ->
+                dispatch(P503UiEvent.ReadableExportProgressLanded(exportedRows, totalRows))
+            },
+            land = { result -> dispatch(P503UiEvent.ReadableExportResultLanded(result)) },
+        )
+    }
+
+    /** The user's cooperative cancel request on a running export (D-E10 signal-triggered Cancelled). */
+    fun requestReadableExportCancel() {
+        if (!ledger.surfaces.readableExport) return
+        dispatch(P503UiEvent.RequestReadableExportCancel)
+    }
+
     // ---------------------------------------------------------------- P7-06 06.D restore confirm & switch host surface
     // P7-06 06.D (D-182; spec sections 3/5.5/6): the host call sites of the restore flow, mirroring
     // the export surface's decisions: the work runs OFF the UI thread (container-format spec
@@ -4902,6 +4944,15 @@ fun P503App(
                                         requestRecycleBin()
                                     },
                                     recycleBinWired = ledger.surfaces.recycleBin,
+                                    // P8-05 批 b (D-331 spec D-E8; U8): the 导出账目 row sits BETWEEN
+                                    // 备份与恢复 and 回收站 (the frozen position). Wired = clickable and
+                                    // dispatches OpenReadableExport; unwired = the honest disabled
+                                    // 暂未开放 shape (the shell batch's three-state wiring discipline).
+                                    onOpenReadableExport = {
+                                        drawerClose()
+                                        dispatch(P503UiEvent.OpenReadableExport)
+                                    },
+                                    readableExportWired = readableExportEntryVisible(ledger.surfaces.readableExport),
                                     onOpenImportBills = {
                                         drawerClose()
                                         dispatch(P503UiEvent.OpenImportSurface)
@@ -5444,6 +5495,18 @@ fun P503App(
                             onOpenRestore = if (ledger.surfaces.backupRestore) ({ dispatch(P503UiEvent.OpenBackupRestore) }) else null,
                             onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.CloseBackupExport) },
                         )
+                    is P503AppState.ReadableExport ->
+                        P503ReadableExportScreen(
+                            state = current,
+                            // The host start call site is passed only when the surface is wired; an
+                            // unwired composition renders the disabled start, never a dead button.
+                            onStart = if (ledger.surfaces.readableExport) ({ confirmReadableExport(current) }) else null,
+                            // The cooperative cancel: reachable only while a run is in flight (the
+                            // affordance's own gate lives in the presentation layer); a wired-nothing
+                            // composition never renders a dead button.
+                            onRequestCancel = if (ledger.surfaces.readableExport) ({ requestReadableExportCancel() }) else null,
+                            onCancel = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.CloseReadableExport) },
+                        )
                     is P503AppState.BackupRestore ->
                         P503RestoreScreen(
                             state = current,
@@ -5840,6 +5903,8 @@ private fun isBackEnabled(state: P503AppState): Boolean =
         // is running it keeps its marker and must not leave (提交中不得离开), so the back channel is
         // intercepted and swallowed like the P7-05 submitting surfaces.
         is P503AppState.BackupExport -> true
+        // P8-05 批 b: the readable-export surface behaves like the backup export surface.
+        is P503AppState.ReadableExport -> true
         // P7-06 06.D (D-182): the restore surface behaves like the export surface. The
         // session-terminal RecoveryRequired face is deliberately NOT back-able: there is no
         // continuation to return to (the runtime is Closed/StartupError).
@@ -5908,6 +5973,8 @@ private fun isBackDispatchSafe(state: P503AppState): Boolean =
         !(state is P503AppState.BudgetConfig && state.submitting) &&
         // P7-06 06.B: a running export keeps the surface (提交中不得离开).
         !(state is P503AppState.BackupExport && state.running) &&
+        // P8-05 批 b: a running readable export keeps the surface (提交中不得离开).
+        !(state is P503AppState.ReadableExport && state.running) &&
         // P7-06 06.D: a running restore preflight or confirm keeps the surface (提交中不得离开).
         !(state is P503AppState.BackupRestore && (state.runningPreflight || state.runningConfirm)) &&
         // P8-01a i3a: a bind or confirm in flight keeps the candidate surface (提交中不得离开; the
@@ -6000,6 +6067,56 @@ internal fun runBackupExport(
                 export(request)
             } catch (failure: Throwable) {
                 BackupExportResult.Failed(BackupExportFailure.CONTAINER_WRITE_FAILED)
+            }
+        scope.launch {
+            if (!isCurrentGeneration(generation)) return@launch
+            land(result)
+        }
+    }
+}
+
+/**
+ * P8-05 批 b (D-331 spec sections 4 批 b / D-E9/D-E11): the readable-export run/land pipeline,
+ * extracted from the `P503App` composable so it is JVM-testable (the [runBackupExport]
+ * precedent). It is the only product path that runs the export, so its load-bearing decisions
+ * are pinned by `P503ReadableExportHostPipelineTest`:
+ *
+ * 1. the export runs on [Dispatchers.Default] (off the UI thread; the backup-export host's spec
+ *    section 5 discipline applies unchanged — the page walk and the streaming sink are the heaviest
+ *    work in the flow);
+ * 2. the D-E9 progress landings and the typed result hop back onto the composition's main
+ *    dispatcher ([scope]'s context) before they dispatch (the P704C-SPEC-01/QUAL-02 serial-write
+ *    rule);
+ * 3. a result captured under a superseded generation is DISCARDED ([isCurrentGeneration]);
+ * 4. a throwing export still lands a typed [ReadableLedgerExportResult.Failed] instead of
+ *    stranding the surface `running` (the runBackupExport decision): an escaped throw is mapped to
+ *    [ReadableLedgerExportFailure.WRITE_FAILED] (any sink write/commit escape is that family's
+ *    member per D-E10; the use case already converts its own read/data failures).
+ * 5. the cancel signal is fed through [cancelRequested]'s value at run start and the D-E9 progress
+ *    landings carry pure counters only.
+ */
+internal fun runReadableExport(
+    scope: CoroutineScope,
+    generation: Generation,
+    request: ReadableExportRequest,
+    newExport: (cancellation: ReadableExportCancellation, progressListener: ReadableLedgerExportProgressListener?) -> ReadableLedgerExport,
+    cancelRequested: () -> Boolean,
+    isCurrentGeneration: (Generation) -> Boolean,
+    onProgress: (exportedRows: Long, totalRows: Int) -> Unit,
+    land: (ReadableLedgerExportResult) -> Unit,
+) {
+    scope.launch(Dispatchers.Default) {
+        val result =
+            try {
+                // The cancellation/progress faces are CONSTRUCTOR parameters of the batch-a use
+                // case; the platform factory wires its own sink bridge plus whatever this run
+                // passes in (one concrete use case per run — no cross-run state).
+                newExport(
+                    ReadableExportCancellation { cancelRequested() },
+                    ReadableLedgerExportProgressListener { exportedRows, totalRows -> onProgress(exportedRows, totalRows) },
+                ).export(request.ledgerId)
+            } catch (failure: Throwable) {
+                ReadableLedgerExportResult.Failed(ReadableLedgerExportFailure.WRITE_FAILED)
             }
         scope.launch {
             if (!isCurrentGeneration(generation)) return@launch

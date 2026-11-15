@@ -89,6 +89,7 @@ class P503ReducerImpl(
         // transition and the one surface.
         if (backupExportEventAbsorbed(state, event)) return state
         if (backupRestoreEventAbsorbed(state, event)) return state
+        if (readableExportEventAbsorbed(state, event)) return state
         if (budgetEventAbsorbed(state, event)) return state
         if (annotationEditEventAbsorbed(state, event)) return state
         if (tagMerchantEventAbsorbed(state, event)) return state
@@ -117,6 +118,7 @@ class P503ReducerImpl(
             is P503AppState.RecycleBin -> reduceRecycleBin(state, event)
             is P503AppState.BackupExport -> reduceBackupExport(state, event)
             is P503AppState.BackupRestore -> reduceBackupRestore(state, event)
+            is P503AppState.ReadableExport -> reduceReadableExport(state, event)
             is P503AppState.BudgetConfig -> reduceBudgetConfig(state, event)
             is P503AppState.Search -> reduceSearch(state, event)
             is P503AppState.RestoreSessionTerminal -> reduceRestoreSessionTerminal(state, event)
@@ -176,6 +178,29 @@ class P503ReducerImpl(
             is P503UiEvent.RestoreSwitchResultLanded,
             P503UiEvent.CloseBackupRestore,
             -> state !is P503AppState.BackupRestore
+            else -> false
+        }
+
+    /**
+     * P8-05 批 b (D-331 spec sections 4 批 b / D-E8-D-E10): whether the readable-export event
+     * must be absorbed in [state] because it belongs to another surface (the backup-export
+     * family's absorb discipline, same shape). `OpenReadableExport` is designed for
+     * OverviewEmpty (the drawer row route); the other five act only on ReadableExport.
+     * Everywhere else they are absorbed here, so a late/stale dispatch can never reach
+     * `unhandled` and turn into an ISE (the "new events never ISE" discipline).
+     */
+    private fun readableExportEventAbsorbed(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): Boolean =
+        when (event) {
+            P503UiEvent.OpenReadableExport -> state !is P503AppState.OverviewEmpty
+            is P503UiEvent.ReadableExportProgressLanded,
+            P503UiEvent.ConfirmReadableExport,
+            P503UiEvent.RequestReadableExportCancel,
+            is P503UiEvent.ReadableExportResultLanded,
+            P503UiEvent.CloseReadableExport,
+            -> state !is P503AppState.ReadableExport
             else -> false
         }
 
@@ -1390,6 +1415,12 @@ class P503ReducerImpl(
             // button; the open itself performs no IO.
             P503UiEvent.OpenBackupExport ->
                 P503AppState.BackupExport(overview = state)
+            // P8-05 批 b (D-331 spec D-E8; U8): the drawer's 导出账目 row opens the readable-export
+            // surface, carrying the exact overview so every exit restores it. The host wires the
+            // row only when the readable-export surface exists, so it never renders a dead row;
+            // the open itself performs no IO.
+            P503UiEvent.OpenReadableExport ->
+                P503AppState.ReadableExport(overview = state)
             // P7-06 06.D (D-182; spec section 6): the HOME overview's restore entry opens the
             // confirm & switch surface, carrying the exact overview so every exit restores it.
             // The host wires this affordance only when the restore use cases exist.
@@ -3530,6 +3561,45 @@ class P503ReducerImpl(
         }
 
     /**
+     * P8-05 批 b (D-331 spec sections 4 批 b / D-E9-D-E11): the readable-export surface. The
+     * family absorb guard has already filtered everything to this surface's own six events.
+     * Confirm sets the `running` marker and clears any previous outcome (a duplicate start is
+     * absorbed, 提交中不重入); a progress landing refreshes the D-E9 counters (exported so far /
+     * the exact denominator); RequestReadableExportCancel records the user's cooperative cancel
+     * request (honest affordance; a second request is absorbed) without leaving the running
+     * marker — the walk itself lands the typed Cancelled at the next page boundary; a landed
+     * result clears the marker, the cancel request and the progress pair, and records the typed
+     * outcome (success is ONLY Succeeded — the empty ledger is the honest 已导出 0 笔); Close and
+     * Back leave for the preserved overview only when no export is running (提交中不得离开).
+     * Every pre-existing event is absorbed; `Exit` stays unlisted (ISE).
+     */
+    private fun reduceReadableExport(
+        state: P503AppState.ReadableExport,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            P503UiEvent.ConfirmReadableExport ->
+                if (state.running) {
+                    state
+                } else {
+                    state.copy(running = true, outcome = null, exportedRows = 0L, totalRows = 0, cancelRequested = false)
+                }
+            is P503UiEvent.ReadableExportProgressLanded -> state.copy(exportedRows = event.exportedRows, totalRows = event.totalRows)
+            P503UiEvent.RequestReadableExportCancel ->
+                if (state.running && !state.cancelRequested) state.copy(cancelRequested = true) else state
+            is P503UiEvent.ReadableExportResultLanded ->
+                state.copy(running = false, cancelRequested = false, exportedRows = 0L, totalRows = 0, outcome = event.result)
+            // Close (and Back) leave for the preserved overview only when no export is in flight; a
+            // running export absorbs the exit so a lost/cancelled commit keeps its marker.
+            P503UiEvent.CloseReadableExport, P503UiEvent.Back -> if (state.running) state else state.overview
+            // P1-2 fix round: a budget read completing behind this carried-overview surface is
+            // APPLIED to the preserved overview (never absorbed, never ISE), so returning to
+            // the overview shows the fresh payload.
+            is P503UiEvent.BudgetMonthLanded -> state.copy(overview = state.overview.copy(budgetView = event.result))
+            else -> absorbPreExisting(state, event)
+        }
+
+    /**
      * P7-06 06.D (D-182): the session-terminal face absorbs EVERY event — the runtime behind it is
      * Closed or StartupError (the RecoveryRequired shape), so there is no continuation to route to.
      * The only exit is the platform exit affordance the face renders (the host wires it directly,
@@ -3700,6 +3770,17 @@ class P503ReducerImpl(
             P503UiEvent.InitialLoadFailed,
             is P503UiEvent.RefreshResult,
             P503UiEvent.RefreshFailed,
+            // P8-05 批 b: the readable-export family is absorbed on every pre-existing surface
+            // (the "new events never ISE" discipline; the same central-guard tail shape the
+            // backup-export family rides through its own absorb lists). The new surface's own
+            // reducer handles these BEFORE reaching this tail, so listing them here is a no-op
+            // for it and keeps every other state honest.
+            P503UiEvent.OpenReadableExport,
+            P503UiEvent.ConfirmReadableExport,
+            is P503UiEvent.ReadableExportProgressLanded,
+            P503UiEvent.RequestReadableExportCancel,
+            is P503UiEvent.ReadableExportResultLanded,
+            P503UiEvent.CloseReadableExport,
             -> state
             else -> unhandled(state, event)
         }

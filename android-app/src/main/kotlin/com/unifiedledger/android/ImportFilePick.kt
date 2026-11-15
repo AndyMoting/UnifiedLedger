@@ -125,6 +125,9 @@ internal class AndroidSafLaunchSlot {
     /** P8-04 i1 (D-11): launches the import-template CreateDocument picker for the suggested name. */
     var launchTemplateCreateDocument: ((String) -> Unit)? = null
 
+    /** P8-05 批 b (D-E12): launches the readable-export CreateDocument picker for the suggested name. */
+    var launchReadableExportCreateDocument: ((String) -> Unit)? = null
+
     /** Launches the restore OpenDocument picker for the given MIME filters. */
     var launchRestoreSource: ((Array<String>) -> Unit)? = null
 
@@ -136,6 +139,9 @@ internal class AndroidSafLaunchSlot {
 
     /** P8-04 i1 (D-11): delivers the template CreateDocument result back into the template port. */
     var deliverTemplateCreateDocumentResult: ((Uri?) -> Unit)? = null
+
+    /** P8-05 批 b (D-E12): delivers the readable-export CreateDocument result into its own port. */
+    var deliverReadableExportCreateDocumentResult: ((Uri?) -> Unit)? = null
 
     /** Delivers the restore OpenDocument result back into the process-scoped source port. */
     var deliverRestoreSourceResult: ((Uri?) -> Unit)? = null
