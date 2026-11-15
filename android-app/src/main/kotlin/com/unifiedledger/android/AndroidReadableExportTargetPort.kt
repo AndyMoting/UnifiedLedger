@@ -91,9 +91,8 @@ class AndroidReadableExportTargetPort<Picked>(
         // (flush = stream.flush, commit = flush + close, in-place, no atomic replace — the same
         // registered SAF boundary as AndroidBackupTargetPort), then hand that writer to the
         // D-E12 sink bridge, whose commit folds flushAndSync-then-commit exactly once.
-        return stream
-            ?.let { writerStream: OutputStream -> SafTargetWriter(writerStream) }
-            ?.let(::ReadableTargetWriterSink)
+        val writer = stream?.let { writerStream: OutputStream -> SafTargetWriter(writerStream) } ?: return null
+        return ReadableTargetWriterSink(writer)
     }
 
     /** The SAF CreateDocument result callback: a null handle is the user's cancellation. */
@@ -191,6 +190,5 @@ private class SafTargetWriter(
  * building the jvmMain XLSX writer over it happen INSIDE the use case's run — never at wiring
  * time; a null open is the honest cancelled picker (the use case maps it to Cancelled).
  */
-fun readableExportSheetWriterFactory(target: AndroidReadableExportTargetPort<Uri>): () -> ReadableExportSheetWriter? {
-    return { readableExportSinkFromTargetPort(target)?.let(::ReadableLedgerXlsxStreamWriter) }
-}
+fun readableExportSheetWriterFactory(target: AndroidReadableExportTargetPort<Uri>): () -> ReadableExportSheetWriter? =
+    { readableExportSinkFromTargetPort(target)?.let(::ReadableLedgerXlsxStreamWriter) }
