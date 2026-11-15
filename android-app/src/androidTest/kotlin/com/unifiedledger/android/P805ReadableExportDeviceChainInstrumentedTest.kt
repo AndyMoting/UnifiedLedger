@@ -295,7 +295,7 @@ class P805ReadableExportDeviceChainInstrumentedTest {
                     // never trips, and the leg reads Succeeded — the CI failure mode). A row-index
                     // seeded hex run defeats long back-references while staying deterministic.
                     P805ReadableExportDeviceFacts.NOTE_PREFIX +
-                        incompressibleRun(index, P805ReadableExportDeviceFacts.NOTE_REPEAT)
+                        incompressibleRun(index, NOTE_REPEAT)
                 },
             )
         var port: AndroidReadableExportTargetPort<Uri>? = null
@@ -616,7 +616,11 @@ class P805ReadableExportDeviceChainInstrumentedTest {
         rowIndex: Int,
     ): List<String> =
         (0 until READABLE_EXPORT_HEADERS.size).map { column ->
-            sheet.getRow(rowIndex)!!.getCell(column)?.let { cell -> cell.string ?: cell.rawValue }.orEmpty()
+            sheet
+                .getRow(rowIndex)!!
+                .getCell(column)
+                ?.let { cell -> cell.string ?: cell.rawValue }
+                .orEmpty()
         }
 
     /** Polls [finder] on a fresh tree read until it answers, or null once [timeoutMillis] elapsed. */
