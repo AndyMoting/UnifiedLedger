@@ -186,7 +186,4 @@ private class SafTargetWriter(
  * building the jvmMain XLSX writer over it happen INSIDE the use case's run — never at wiring
  * time; a null open is the honest cancelled picker (the use case maps it to Cancelled).
  */
-fun readableExportSheetWriterFactory(
-    target: AndroidReadableExportTargetPort<Uri>,
-): () -> ReadableExportSheetWriter? =
-    { readableExportSinkFromTargetPort(target)?.let(::ReadableLedgerXlsxStreamWriter) }
+fun readableExportSheetWriterFactory(target: AndroidReadableExportTargetPort<Uri>): () -> ReadableExportSheetWriter? = { readableExportSinkFromTargetPort(target)?.let(::ReadableLedgerXlsxStreamWriter) }
