@@ -291,24 +291,22 @@ class P503ReadableExportHostPipelineTest {
  * doubles subclass the real use case with a fail-loud lease port and unused collaborator stubs —
  * the run pipeline's seam must invoke `export` and nothing else.
  */
-private fun exportReturning(result: ReadableLedgerExportResult): ReadableLedgerExport =
-    object : ReadableLedgerExport(
-        leasePort = failLoudLeasePort(),
-        flowPage = QueryLedgerFlowPage(failLoudReadPort(), LedgerId("ledger-run-pipeline-seam")),
-        creationEntries = null,
-        catalogProvider = { error("the catalog must not be touched by the run-pipeline seam") },
-        writerProvider = { error("the writer must not be touched by the run-pipeline seam") },
-        clock = LedgerClock { error("the clock must not be touched by the run-pipeline seam") },
-    ) {
-        override fun export(ledgerId: com.unifiedledger.domain.LedgerId): ReadableLedgerExportResult = result
-    }
+private fun exportReturning(result: ReadableLedgerExportResult): ReadableLedgerExport = CannedReadableLedgerExport(result)
 
 /** Builds a use-case double that records its export thread before returning [result]. */
 private fun exportRecordingThread(
     into: MutableList<String>,
     result: ReadableLedgerExportResult,
-): ReadableLedgerExport =
-    object : ReadableLedgerExport(
+): ReadableLedgerExport = RecordingThreadReadableLedgerExport(into, result)
+
+/**
+ * The canned-path double. The real use case is FINAL (batch a's one-concrete-implementation
+ * discipline), so the doubles are plain subclasses-by-composition: the constructor collaborators
+ * stay fail-loud stubs, and the export face is the ONLY seam the run pipeline may touch.
+ */
+private class CannedReadableLedgerExport(
+    private val result: ReadableLedgerExportResult,
+) : ReadableLedgerExport(
         leasePort = failLoudLeasePort(),
         flowPage = QueryLedgerFlowPage(failLoudReadPort(), LedgerId("ledger-run-pipeline-seam")),
         creationEntries = null,
@@ -316,11 +314,25 @@ private fun exportRecordingThread(
         writerProvider = { error("the writer must not be touched by the run-pipeline seam") },
         clock = LedgerClock { error("the clock must not be touched by the run-pipeline seam") },
     ) {
-        override fun export(ledgerId: com.unifiedledger.domain.LedgerId): ReadableLedgerExportResult {
-            into += Thread.currentThread().name
-            return result
-        }
+    override fun export(ledgerId: LedgerId): ReadableLedgerExportResult = result
+}
+
+private class RecordingThreadReadableLedgerExport(
+    private val into: MutableList<String>,
+    private val result: ReadableLedgerExportResult,
+) : ReadableLedgerExport(
+        leasePort = failLoudLeasePort(),
+        flowPage = QueryLedgerFlowPage(failLoudReadPort(), LedgerId("ledger-run-pipeline-seam")),
+        creationEntries = null,
+        catalogProvider = { error("the catalog must not be touched by the run-pipeline seam") },
+        writerProvider = { error("the writer must not be touched by the run-pipeline seam") },
+        clock = LedgerClock { error("the clock must not be touched by the run-pipeline seam") },
+    ) {
+    override fun export(ledgerId: LedgerId): ReadableLedgerExportResult {
+        into += Thread.currentThread().name
+        return result
     }
+}
 
 private fun failLoudLeasePort(): LedgerRuntimeLeasePort = LedgerRuntimeLeasePort { error("the lease port must not be touched by the run-pipeline seam") }
 

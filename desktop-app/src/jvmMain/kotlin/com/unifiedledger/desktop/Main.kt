@@ -441,8 +441,10 @@ internal fun DesktopEscBackHandler(
 internal class DesktopStartupController(
     private val openDatabase: () -> CloseableLedgerGraph,
     // P7-06 06.B (D-177): the optional backup-export wiring; null keeps the surface absent so the
-    // existing startup tests construct the controller with the graph builder only.
-    backupWiring: DesktopBackupWiring? = null,
+    // existing startup tests construct the controller with the graph builder only. Kept as a
+    // property so the readable-export bind site can complete the factory with the composition-level
+    // port on EVERY open (P8-05 批 b; the Android twin reads its wiring field the same way).
+    private val backupWiring: DesktopBackupWiring? = null,
     // P7-06 06.D (D-182; spec section 6, P2-7): the optional restore wiring; present, it binds
     // exactly one set of use-case instances (the confirm single-flight guard assumes it).
     restoreWiring: DesktopRestoreWiring? = null,
