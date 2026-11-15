@@ -50,7 +50,8 @@ internal object ReadableExportReconciliationSeed {
         seedCatalog(driver, l)
         // ④ 期初 (the balance base; statistics 2026-01-01 00:00 Shanghai).
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-opening",
             kind = "OPENING_BALANCE",
             canonical = null,
@@ -61,7 +62,8 @@ internal object ReadableExportReconciliationSeed {
         )
         // ① 支出 (+35.80; v1 only).
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-expense",
             kind = "EXPENSE",
             canonical = null,
@@ -72,7 +74,8 @@ internal object ReadableExportReconciliationSeed {
         )
         // ① 收入 (原符号 −2000).
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-income",
             kind = "INCOME",
             canonical = null,
@@ -83,7 +86,8 @@ internal object ReadableExportReconciliationSeed {
         )
         // ② 转账无手续费.
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-transfer",
             kind = "ACCOUNT_TRANSFER",
             canonical = null,
@@ -94,7 +98,8 @@ internal object ReadableExportReconciliationSeed {
         )
         // ② 转账含手续费（分类腿 = fee）.
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-transfer-fee",
             kind = "ACCOUNT_TRANSFER",
             canonical = null,
@@ -110,7 +115,8 @@ internal object ReadableExportReconciliationSeed {
         )
         // ② 借出 / 收回 / 信用还款.
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-lend",
             kind = "ACCOUNT_TRANSFER",
             canonical = "LEND",
@@ -120,7 +126,8 @@ internal object ReadableExportReconciliationSeed {
             legs = listOf("seed-acc-bank" to (-10_000L to "CNY:2"), "seed-acc-receivable" to (10_000L to "CNY:2")),
         )
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-collect",
             kind = "ACCOUNT_TRANSFER",
             canonical = "COLLECT",
@@ -130,7 +137,8 @@ internal object ReadableExportReconciliationSeed {
             legs = listOf("seed-acc-receivable" to (-10_000L to "CNY:2"), "seed-acc-bank" to (10_000L to "CNY:2")),
         )
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-repay",
             kind = "ACCOUNT_TRANSFER",
             canonical = "CREDIT_REPAYMENT",
@@ -141,7 +149,8 @@ internal object ReadableExportReconciliationSeed {
         )
         // ③ 余额调整与冲正（golden rg-09 符号）.
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-adjust",
             kind = "BALANCE_ADJUSTMENT",
             canonical = null,
@@ -151,7 +160,8 @@ internal object ReadableExportReconciliationSeed {
             legs = listOf("seed-acc-bank" to (3_000L to "CNY:2"), "seed-acc-equity" to (-3_000L to "CNY:2")),
         )
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-adjust-reversal",
             kind = "BALANCE_ADJUSTMENT_REVERSAL",
             canonical = null,
@@ -162,7 +172,8 @@ internal object ReadableExportReconciliationSeed {
         )
         // ④ 储值充值（单腿形态）与激活前调整.
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-recharge",
             kind = "STORED_VALUE_RECHARGE",
             canonical = null,
@@ -172,7 +183,8 @@ internal object ReadableExportReconciliationSeed {
             legs = listOf("seed-acc-wallet" to (120_000L to "CNY:2"), "seed-acc-bank" to (-120_000L to "CNY:2")),
         )
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-pre-activation",
             kind = "STORED_VALUE_PRE_ACTIVATION_BALANCE_ADJUSTMENT",
             canonical = null,
@@ -183,7 +195,8 @@ internal object ReadableExportReconciliationSeed {
         )
         // ⑤ 储值消费 / 过期损失（golden rg-10:1742-1758 符号）.
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-spend",
             kind = "STORED_VALUE_SPEND",
             canonical = null,
@@ -193,7 +206,8 @@ internal object ReadableExportReconciliationSeed {
             legs = listOf("seed-acc-expense-food" to (30_000L to "CNY:2"), "seed-acc-wallet" to (-30_000L to "CNY:2")),
         )
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-expiry",
             kind = "STORED_VALUE_EXPIRY_LOSS",
             canonical = null,
@@ -204,7 +218,8 @@ internal object ReadableExportReconciliationSeed {
         )
         // ⑥ 预付确认（golden rg-11:901-919）.
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-recognition",
             kind = "PREPAID_RECOGNITION",
             canonical = null,
@@ -215,7 +230,8 @@ internal object ReadableExportReconciliationSeed {
         )
         // 无名账户占位: seed-acc-ghost 不在 catalog → 账户1 落「未命名账户」.
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-unnamed",
             kind = "EXPENSE",
             canonical = null,
@@ -226,7 +242,8 @@ internal object ReadableExportReconciliationSeed {
         )
         // 空白名账户: catalog 行存在但名字为空 → 账户1 落「未命名账户」.
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-blank-name",
             kind = "EXPENSE",
             canonical = null,
@@ -237,7 +254,8 @@ internal object ReadableExportReconciliationSeed {
         )
         // ⑦ 退款到账（负支出）.
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-refund",
             kind = "REFUND_RECEIPT",
             canonical = null,
@@ -248,7 +266,8 @@ internal object ReadableExportReconciliationSeed {
         )
         // 跨币种转账（JPY precision 0; 金额取账户1 转出腿）.
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-fx-transfer",
             kind = "ACCOUNT_TRANSFER",
             canonical = null,
@@ -259,7 +278,8 @@ internal object ReadableExportReconciliationSeed {
         )
         // 多版本修正: v1 被取代，v2 是当前版本.
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-corrected",
             kind = "EXPENSE",
             canonical = null,
@@ -272,7 +292,8 @@ internal object ReadableExportReconciliationSeed {
         )
         // 同秒并列: 同一 statistics instant，id 顺序决定页序.
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-tie-a",
             kind = "EXPENSE",
             canonical = null,
@@ -282,7 +303,8 @@ internal object ReadableExportReconciliationSeed {
             legs = listOf("seed-acc-expense-food" to (1_00L to "CNY:2"), "seed-acc-bank" to (-1_00L to "CNY:2")),
         )
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-tie-b",
             kind = "EXPENSE",
             canonical = null,
@@ -293,7 +315,8 @@ internal object ReadableExportReconciliationSeed {
         )
         // V-6: 作废支出（不在有效集）.
         insertTransaction(
-            driver, l,
+            driver,
+            l,
             id = "seed-voided",
             kind = "EXPENSE",
             canonical = null,
@@ -322,7 +345,8 @@ internal object ReadableExportReconciliationSeed {
         ledger: LedgerId,
     ) {
         insertTransaction(
-            driver, ledger.value,
+            driver,
+            ledger.value,
             id = "seed-note-huge",
             kind = "EXPENSE",
             canonical = null,
@@ -349,7 +373,8 @@ internal object ReadableExportReconciliationSeed {
         ledger: LedgerId,
     ) {
         insertTransaction(
-            driver, ledger.value,
+            driver,
+            ledger.value,
             id = "seed-prepaid-purchase",
             kind = "PREPAID_PURCHASE",
             canonical = null,
@@ -564,6 +589,7 @@ internal object ReadableExportReconciliationSeed {
     }
 
     /** Seeds the import-spine lineage chain for one confirmed import creation. */
+
     private fun insertImportLineage(
         driver: SqlDriver,
         l: String,
