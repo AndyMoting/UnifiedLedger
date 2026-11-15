@@ -14,7 +14,6 @@ import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.export.readable.LedgerRuntimeLeasePort
 import com.unifiedledger.application.export.readable.ReadableLedgerExport
 import com.unifiedledger.application.export.readable.ReadableLedgerExportFailure
-import com.unifiedledger.application.export.readable.ReadableLedgerExportProgressListener
 import com.unifiedledger.application.export.readable.ReadableLedgerExportResult
 import com.unifiedledger.domain.LedgerId
 import kotlinx.coroutines.CompletableDeferred
@@ -323,8 +322,7 @@ private fun exportRecordingThread(
         }
     }
 
-private fun failLoudLeasePort(): LedgerRuntimeLeasePort =
-    LedgerRuntimeLeasePort { error("the lease port must not be touched by the run-pipeline seam") }
+private fun failLoudLeasePort(): LedgerRuntimeLeasePort = LedgerRuntimeLeasePort { error("the lease port must not be touched by the run-pipeline seam") }
 
 private fun failLoudReadPort(): LedgerCurrentStateReadPort =
     object : LedgerCurrentStateReadPort {
