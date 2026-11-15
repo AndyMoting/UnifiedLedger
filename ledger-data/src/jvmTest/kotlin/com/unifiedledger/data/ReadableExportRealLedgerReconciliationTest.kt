@@ -5,8 +5,8 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.LedgerCurrentStateReadPort
 import com.unifiedledger.application.LedgerEntryRow
-import com.unifiedledger.application.LedgerId
 import com.unifiedledger.application.QueryLedgerFlowPage
+import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.application.export.readable.ExportOperationLease
 import com.unifiedledger.application.export.readable.LedgerRuntimeLeasePort
 import com.unifiedledger.application.export.readable.LedgerRuntimeLeasePortResult
