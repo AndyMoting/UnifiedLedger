@@ -2,7 +2,7 @@ package com.unifiedledger.application.export.readable
 
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.LedgerEntryRow
-import com.unifiedledger.application.LedgerId
+import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.application.QueryLedgerFlowPage
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.TransactionId

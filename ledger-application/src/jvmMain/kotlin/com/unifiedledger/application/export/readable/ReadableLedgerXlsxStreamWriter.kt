@@ -1,7 +1,7 @@
 package com.unifiedledger.application.export.readable
 
-import com.unifiedledger.application.READABLE_EXPORT_HEADERS
-import com.unifiedledger.application.READABLE_EXPORT_SHEET_NAME
+import com.unifiedledger.application.export.readable.READABLE_EXPORT_HEADERS
+import com.unifiedledger.application.export.readable.READABLE_EXPORT_SHEET_NAME
 import java.io.OutputStream
 import java.util.zip.Deflater
 import java.util.zip.ZipEntry
