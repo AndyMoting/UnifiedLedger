@@ -1093,6 +1093,17 @@ class AndroidScaleLongInstrumentedTest {
         }
         stage("batch_confirmation") {
             ui.edge(last = true)
+            // D-335 park probe (run 43741730054-a2): the seek below exhausted 80 backward
+            // steps without a hit, and two causes are indistinguishable from that alone —
+            // (a) the batch entry never rendered (selection cleared by an earlier hop) or
+            // (b) the scrollToPosition park sits above the true list bottom (a11y rowCount
+            // vs real content). One viewport dump at the park point separates them: entry
+            // present = the seek's own miss logic is the suspect; rows visible without the
+            // entry = park distortion; list tail without rows or entry = the entry never
+            // rendered. Zero behavior change: the seek below runs exactly as before.
+            val parkTexts = ui.visibleTexts(ui.root()).toMutableList().apply { if (size > 60) subList(60, size).clear() }
+            evidence.put("parkHasEntry", parkTexts.any { it.startsWith("进入批量确认") })
+            evidence.put("parkTexts", parkTexts.joinToString("|").take(2000))
             ui.seek("进入批量确认", forward = false)
             ui.click("进入批量确认", prefix = true)
             check(ui.has("确认入账（1 项）"))
