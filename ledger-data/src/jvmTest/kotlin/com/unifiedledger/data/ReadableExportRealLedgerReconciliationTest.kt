@@ -180,6 +180,7 @@ class ReadableExportRealLedgerReconciliationTest {
         }
 
         val database: LedgerDatabase = LedgerDatabase(driver)
+        val ledgerId = LedgerId("ledger-p805-reconciliation-harness")
         val readAdapter = SqlDelightLedgerCurrentStateReadAdapter(database)
         val creationEntries = SqlDelightCreationEntryBatchReader(database)
         val catalogStore = SqlDelightCatalogStore(database, driver)
