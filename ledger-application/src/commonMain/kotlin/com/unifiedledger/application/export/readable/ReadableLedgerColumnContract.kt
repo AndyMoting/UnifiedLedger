@@ -200,7 +200,7 @@ fun resolveReadableExportPresentation(
             // ② rg-03/rg-08: the negative non-category outflow leg is the amount; the unique
             // remaining non-category leg is the counterpart; the fee category leg (posting
             // order tie-break) anchors 分类 even though it is excluded from the amount.
-            transferShape(legs, categoryLegs, nonCategoryLegs)
+            transferShape(categoryLegs, nonCategoryLegs)
 
         TransactionKind.BALANCE_ADJUSTMENT,
         TransactionKind.BALANCE_ADJUSTMENT_REVERSAL,
@@ -264,13 +264,14 @@ private fun singleCategoryLegShape(
     )
 }
 
-/** Group ②: the negative non-category outflow leg carries the amount; a fee category leg anchors 分类. */
+/** Group ②: the negative non-category outflow leg carries the amount; fee category legs anchor 分类
+ *  (multiple fee legs: the first in posting order anchors — registered D-E5 revision; the domain
+ *  Posting carries no index field, so the stable posting-order tie-break is the id order). */
 private fun transferShape(
-    legs: List<ReadableExportLegFacts>,
     categoryLegs: List<ReadableExportLegFacts>,
     nonCategoryLegs: List<ReadableExportLegFacts>,
 ): ReadableExportLegPresentation {
-    if (nonCategoryLegs.size != 2 || legs.size > 3) return ReadableExportLegPresentation(resolved = false)
+    if (nonCategoryLegs.size != 2) return ReadableExportLegPresentation(resolved = false)
     val outflow =
         nonCategoryLegs.firstOrNull { it.posting.amount.minorUnits < 0L }
             ?: return ReadableExportLegPresentation(resolved = false)
@@ -295,18 +296,17 @@ private fun singleNonEquityShape(
     nonCategoryLegs: List<ReadableExportLegFacts>,
 ): ReadableExportLegPresentation {
     if (categoryLegs.isNotEmpty() || legs.size != 2) return ReadableExportLegPresentation(resolved = false)
-    val assetLeg =
-        nonCategoryLegs
-            .singleOrNull { it.accountKind == AccountKind.ASSET }
-            ?: return ReadableExportLegPresentation(resolved = false)
-    val counterpart =
-        nonCategoryLegs.singleOrNull { it.posting.accountId != assetLeg.posting.accountId }
-            ?: return ReadableExportLegPresentation(resolved = false)
+    // The golden recharge/opening shapes are two ASSET-kind legs (wallet +120000 / bank
+    // −120000, opening +1000 / equity −1000): kind alone cannot discriminate. The frozen
+    // anchor is the UNIQUE POSITIVE leg (the inflow side); a negative-opening or multi-inflow
+    // shape falls through (D-032).
+    val inflow = nonCategoryLegs.singleOrNull { it.posting.amount.minorUnits > 0L } ?: return ReadableExportLegPresentation(resolved = false)
+    val counterpart = nonCategoryLegs.singleOrNull { it.posting.accountId != inflow.posting.accountId } ?: return ReadableExportLegPresentation(resolved = false)
     return ReadableExportLegPresentation(
         resolved = true,
-        amountMinor = assetLeg.posting.amount.minorUnits,
-        currency = assetLeg.posting.amount.currency,
-        account1 = assetLeg.posting.accountId,
+        amountMinor = inflow.posting.amount.minorUnits,
+        currency = inflow.posting.amount.currency,
+        account1 = inflow.posting.accountId,
         account2 = counterpart.posting.accountId,
     )
 }
