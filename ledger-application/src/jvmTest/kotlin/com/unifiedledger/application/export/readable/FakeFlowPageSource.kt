@@ -5,12 +5,12 @@ import com.unifiedledger.application.ConfirmedIncomeReceipt
 import com.unifiedledger.application.ConfirmedTransferReceipt
 import com.unifiedledger.application.CurrentVersionRow
 import com.unifiedledger.application.LedgerCurrentStateReadPort
+import com.unifiedledger.application.LedgerEntryRow
 import com.unifiedledger.application.ManualExpenseCommitRecord
 import com.unifiedledger.application.ManualIncomeCommitRecord
 import com.unifiedledger.application.ManualTransferCommitRecord
-import com.unifiedledger.application.RequestId
-import com.unifiedledger.application.LedgerEntryRow
 import com.unifiedledger.application.QueryLedgerFlowPage
+import com.unifiedledger.application.RequestId
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
@@ -65,17 +65,35 @@ class FakeFlowPageSource(
             object : LedgerCurrentStateReadPort {
                 override fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow> = emptyList()
 
-                override fun findManualExpenseByRequest(ledgerId: LedgerId, requestId: RequestId): ManualExpenseCommitRecord? = null
+                override fun findManualExpenseByRequest(
+                    ledgerId: LedgerId,
+                    requestId: RequestId,
+                ): ManualExpenseCommitRecord? = null
 
-                override fun findManualExpenseByReceipt(ledgerId: LedgerId, receipt: ConfirmedExpenseReceipt): ManualExpenseCommitRecord? = null
+                override fun findManualExpenseByReceipt(
+                    ledgerId: LedgerId,
+                    receipt: ConfirmedExpenseReceipt,
+                ): ManualExpenseCommitRecord? = null
 
-                override fun findManualIncomeByRequest(ledgerId: LedgerId, requestId: RequestId): ManualIncomeCommitRecord? = null
+                override fun findManualIncomeByRequest(
+                    ledgerId: LedgerId,
+                    requestId: RequestId,
+                ): ManualIncomeCommitRecord? = null
 
-                override fun findManualIncomeByReceipt(ledgerId: LedgerId, receipt: ConfirmedIncomeReceipt): ManualIncomeCommitRecord? = null
+                override fun findManualIncomeByReceipt(
+                    ledgerId: LedgerId,
+                    receipt: ConfirmedIncomeReceipt,
+                ): ManualIncomeCommitRecord? = null
 
-                override fun findManualTransferByRequest(ledgerId: LedgerId, requestId: RequestId): ManualTransferCommitRecord? = null
+                override fun findManualTransferByRequest(
+                    ledgerId: LedgerId,
+                    requestId: RequestId,
+                ): ManualTransferCommitRecord? = null
 
-                override fun findManualTransferByReceipt(ledgerId: LedgerId, receipt: ConfirmedTransferReceipt): ManualTransferCommitRecord? = null
+                override fun findManualTransferByReceipt(
+                    ledgerId: LedgerId,
+                    receipt: ConfirmedTransferReceipt,
+                ): ManualTransferCommitRecord? = null
 
                 override fun loadLedgerFlowPage(
                     ledgerId: LedgerId,
