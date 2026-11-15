@@ -112,8 +112,8 @@ class ReadableLedgerXlsxWriterJvmTest {
                     "2026-01-15T02:14:40Z",
                     "2026-01-15T02:14:40Z",
                     note = "早餐",
-                    Posting(PostingId("p-e0"), AccountId("acc-expense-food"), Money.ofMinor(3_580L, CNY)),
-                    Posting(PostingId("p-e1"), AccountId("acc-bank"), Money.ofMinor(-3_580L, CNY)),
+                    Posting(PostingId("p-e0"), AccountId("acc-expense-food"), Money.ofMinor(3_580L, cny)),
+                    Posting(PostingId("p-e1"), AccountId("acc-bank"), Money.ofMinor(-3_580L, cny)),
                 ),
                 // ① INCOME: category leg −2000.00 (golden rg-10:663), fund leg +2000.00.
                 legsRow(
@@ -122,8 +122,8 @@ class ReadableLedgerXlsxWriterJvmTest {
                     "2026-01-20T02:30:00Z",
                     "2026-01-20T02:30:00Z",
                     note = null,
-                    Posting(PostingId("p-i0"), AccountId("acc-income-salary"), Money.ofMinor(-200_000L, CNY)),
-                    Posting(PostingId("p-i1"), AccountId("acc-bank"), Money.ofMinor(200_000L, CNY)),
+                    Posting(PostingId("p-i0"), AccountId("acc-income-salary"), Money.ofMinor(-200_000L, cny)),
+                    Posting(PostingId("p-i1"), AccountId("acc-bank"), Money.ofMinor(200_000L, cny)),
                 ),
                 // ② ACCOUNT_TRANSFER + fee: outflow −500.00 carries the amount; fee category leg.
                 legsRow(
@@ -132,9 +132,9 @@ class ReadableLedgerXlsxWriterJvmTest {
                     "2026-01-21T03:00:00Z",
                     "2026-01-21T03:00:00Z",
                     note = null,
-                    Posting(PostingId("p-t0"), AccountId("acc-bank"), Money.ofMinor(-50_000L, CNY)),
-                    Posting(PostingId("p-t1"), AccountId("acc-wallet"), Money.ofMinor(49_900L, CNY)),
-                    Posting(PostingId("p-t2"), AccountId("acc-fee"), Money.ofMinor(100L, CNY)),
+                    Posting(PostingId("p-t0"), AccountId("acc-bank"), Money.ofMinor(-50_000L, cny)),
+                    Posting(PostingId("p-t1"), AccountId("acc-wallet"), Money.ofMinor(49_900L, cny)),
+                    Posting(PostingId("p-t2"), AccountId("acc-fee"), Money.ofMinor(100L, cny)),
                 ),
                 // ③ BALANCE_ADJUSTMENT: asset leg +30.00 (golden rg-09:328-340), equity −30.00.
                 legsRow(
@@ -143,8 +143,8 @@ class ReadableLedgerXlsxWriterJvmTest {
                     "2026-01-22T03:00:00Z",
                     "2026-01-22T03:00:00Z",
                     note = null,
-                    Posting(PostingId("p-a0"), AccountId("acc-bank"), Money.ofMinor(3_000L, CNY)),
-                    Posting(PostingId("p-a1"), AccountId("acc-equity"), Money.ofMinor(-3_000L, CNY)),
+                    Posting(PostingId("p-a0"), AccountId("acc-bank"), Money.ofMinor(3_000L, cny)),
+                    Posting(PostingId("p-a1"), AccountId("acc-equity"), Money.ofMinor(-3_000L, cny)),
                 ),
                 // ③ BALANCE_ADJUSTMENT_REVERSAL: asset leg −20.00 (golden rg-09:364-376).
                 legsRow(
@@ -153,8 +153,8 @@ class ReadableLedgerXlsxWriterJvmTest {
                     "2026-01-23T03:00:00Z",
                     "2026-01-23T03:00:00Z",
                     note = null,
-                    Posting(PostingId("p-r0"), AccountId("acc-bank"), Money.ofMinor(-2_000L, CNY)),
-                    Posting(PostingId("p-r1"), AccountId("acc-equity"), Money.ofMinor(2_000L, CNY)),
+                    Posting(PostingId("p-r0"), AccountId("acc-bank"), Money.ofMinor(-2_000L, cny)),
+                    Posting(PostingId("p-r1"), AccountId("acc-equity"), Money.ofMinor(2_000L, cny)),
                 ),
                 // ④ OPENING_BALANCE: asset leg +1000.00 (golden rg-01:175-188), equity −1000.00.
                 legsRow(
@@ -163,8 +163,8 @@ class ReadableLedgerXlsxWriterJvmTest {
                     "2025-12-31T16:00:00Z",
                     "2025-12-31T16:00:00Z",
                     note = null,
-                    Posting(PostingId("p-o0"), AccountId("acc-bank"), Money.ofMinor(100_000L, CNY)),
-                    Posting(PostingId("p-o1"), AccountId("acc-equity"), Money.ofMinor(-100_000L, CNY)),
+                    Posting(PostingId("p-o0"), AccountId("acc-bank"), Money.ofMinor(100_000L, cny)),
+                    Posting(PostingId("p-o1"), AccountId("acc-equity"), Money.ofMinor(-100_000L, cny)),
                 ),
                 // ⑤ STORED_VALUE_SPEND: category leg +300.00 (golden rg-10:1745), asset −300.00.
                 legsRow(
@@ -173,8 +173,8 @@ class ReadableLedgerXlsxWriterJvmTest {
                     "2026-01-25T03:00:00Z",
                     "2026-01-25T03:00:00Z",
                     note = null,
-                    Posting(PostingId("p-s0"), AccountId("acc-expense-food"), Money.ofMinor(30_000L, CNY)),
-                    Posting(PostingId("p-s1"), AccountId("acc-wallet"), Money.ofMinor(-30_000L, CNY)),
+                    Posting(PostingId("p-s0"), AccountId("acc-expense-food"), Money.ofMinor(30_000L, cny)),
+                    Posting(PostingId("p-s1"), AccountId("acc-wallet"), Money.ofMinor(-30_000L, cny)),
                 ),
                 // ⑦ REFUND_RECEIPT: negative category leg (负支出, MonthlyBuckets semantics).
                 legsRow(
@@ -183,8 +183,8 @@ class ReadableLedgerXlsxWriterJvmTest {
                     "2026-01-26T03:00:00Z",
                     "2026-01-26T03:00:00Z",
                     note = null,
-                    Posting(PostingId("p-f0"), AccountId("acc-expense-food"), Money.ofMinor(-1_200L, CNY)),
-                    Posting(PostingId("p-f1"), AccountId("acc-bank"), Money.ofMinor(1_200L, CNY)),
+                    Posting(PostingId("p-f0"), AccountId("acc-expense-food"), Money.ofMinor(-1_200L, cny)),
+                    Posting(PostingId("p-f1"), AccountId("acc-bank"), Money.ofMinor(1_200L, cny)),
                 ),
                 // ⑥ PREPAID_RECOGNITION: category leg +33.33 (golden rg-11:901-919), prepaid −33.33.
                 legsRow(
@@ -193,8 +193,8 @@ class ReadableLedgerXlsxWriterJvmTest {
                     "2026-01-31T07:33:20Z",
                     "2026-01-31T07:33:20Z",
                     note = null,
-                    Posting(PostingId("p-c0"), AccountId("acc-expense-service"), Money.ofMinor(3_333L, CNY)),
-                    Posting(PostingId("p-c1"), AccountId("acc-prepaid"), Money.ofMinor(-3_333L, CNY)),
+                    Posting(PostingId("p-c0"), AccountId("acc-expense-service"), Money.ofMinor(3_333L, cny)),
+                    Posting(PostingId("p-c1"), AccountId("acc-prepaid"), Money.ofMinor(-3_333L, cny)),
                 ),
                 // 无名账户 + 无映射分类腿: the D-E7 placeholder row (the account has no catalog row).
                 legsRow(
@@ -203,8 +203,8 @@ class ReadableLedgerXlsxWriterJvmTest {
                     "2026-02-01T00:00:00Z",
                     "2026-02-01T00:00:00Z",
                     note = "边界",
-                    Posting(PostingId("p-u0"), AccountId("acc-ghost"), Money.ofMinor(500L, CNY)),
-                    Posting(PostingId("p-u1"), AccountId("acc-bank"), Money.ofMinor(-500L, CNY)),
+                    Posting(PostingId("p-u0"), AccountId("acc-ghost"), Money.ofMinor(500L, cny)),
+                    Posting(PostingId("p-u1"), AccountId("acc-bank"), Money.ofMinor(-500L, cny)),
                 ),
                 // 双时间分列: occurred 与 statistics 落在不同上海自然日.
                 legsRow(
@@ -213,8 +213,8 @@ class ReadableLedgerXlsxWriterJvmTest {
                     "2026-01-15T10:30:00Z",
                     "2026-02-01T00:30:00Z",
                     note = null,
-                    Posting(PostingId("p-x0"), AccountId("acc-expense-food"), Money.ofMinor(800L, CNY)),
-                    Posting(PostingId("p-x1"), AccountId("acc-bank"), Money.ofMinor(-800L, CNY)),
+                    Posting(PostingId("p-x0"), AccountId("acc-expense-food"), Money.ofMinor(800L, cny)),
+                    Posting(PostingId("p-x1"), AccountId("acc-bank"), Money.ofMinor(-800L, cny)),
                 ),
             )
         val outcome = runExport(rows = rows, catalog = catalog)
@@ -328,9 +328,9 @@ class ReadableLedgerXlsxWriterJvmTest {
                     "2026-01-15T02:14:40Z",
                     "2026-01-15T02:14:40Z",
                     note = null,
-                    Posting(PostingId("p-m0"), AccountId("acc-expense-food"), Money.ofMinor(100L, CNY)),
-                    Posting(PostingId("p-m1"), AccountId("acc-expense-service"), Money.ofMinor(2_000L, CNY)),
-                    Posting(PostingId("p-m2"), AccountId("acc-bank"), Money.ofMinor(-2_100L, CNY)),
+                    Posting(PostingId("p-m0"), AccountId("acc-expense-food"), Money.ofMinor(100L, cny)),
+                    Posting(PostingId("p-m1"), AccountId("acc-expense-service"), Money.ofMinor(2_000L, cny)),
+                    Posting(PostingId("p-m2"), AccountId("acc-bank"), Money.ofMinor(-2_100L, cny)),
                 ),
             )
         val outcome = runExport(rows = rows, catalog = catalog)
@@ -374,8 +374,8 @@ class ReadableLedgerXlsxWriterJvmTest {
                     "2026-01-15T02:14:40Z",
                     "2026-01-15T02:14:40Z",
                     note = null,
-                    Posting(PostingId("3f2b1a0e-1111-2222-3333-444455556666"), AccountId("acc-expense-food"), Money.ofMinor(3_580L, CNY)),
-                    Posting(PostingId("3f2b1a0e-7777-8888-9999-aaaabbbbcccc"), AccountId("acc-bank"), Money.ofMinor(-3_580L, CNY)),
+                    Posting(PostingId("3f2b1a0e-1111-2222-3333-444455556666"), AccountId("acc-expense-food"), Money.ofMinor(3_580L, cny)),
+                    Posting(PostingId("3f2b1a0e-7777-8888-9999-aaaabbbbcccc"), AccountId("acc-bank"), Money.ofMinor(-3_580L, cny)),
                 ),
             )
         val outcome = runExport(rows = rows, catalog = catalog)
@@ -678,8 +678,8 @@ class ReadableLedgerXlsxWriterJvmTest {
             note = note,
             postings =
                 listOf(
-                    Posting(PostingId("p0-$transactionId"), AccountId("acc-expense-food"), Money.ofMinor(minorUnits, CNY)),
-                    Posting(PostingId("p1-$transactionId"), AccountId("acc-bank"), Money.ofMinor(-minorUnits, CNY)),
+                    Posting(PostingId("p0-$transactionId"), AccountId("acc-expense-food"), Money.ofMinor(minorUnits, cny)),
+                    Posting(PostingId("p1-$transactionId"), AccountId("acc-bank"), Money.ofMinor(-minorUnits, cny)),
                 ),
         )
 
