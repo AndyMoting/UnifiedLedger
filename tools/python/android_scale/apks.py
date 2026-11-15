@@ -136,7 +136,13 @@ def check_source(manifest: dict, repository: str, artifact_run: int) -> None:
             raise UnboundProducer("unbound PR preview merge")
         associated = [pr for pr in pages(f"repos/{repository}/commits/{head}/pulls", None) if pr.get("number") == number]
         if len(associated) != 1:
-            raise ValueError("historical source commit is not associated with the recorded PR")
+            # D-332 (r2 discipline): a closed PR whose head branch was deleted
+            # leaves the recorded head commit with an empty association — the
+            # binding has lapsed exactly like the base/head movement above (the
+            # bytes are intact, the producer was trusted at pack time), so this
+            # is a cache miss too. Every other association fault stays a plain
+            # `ValueError`.
+            raise UnboundProducer("historical source commit is not associated with the recorded PR")
         pr = associated[0]
         if (pr.get("base", {}).get("ref") != "main"
                 or any(pr.get(side, {}).get("repo", {}).get("full_name") != repository for side in ("head", "base"))):
