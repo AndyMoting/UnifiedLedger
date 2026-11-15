@@ -709,6 +709,30 @@ class LedgerLeaseScope(
     var restoreWiring: RestoreHostWiring? = null
 
     /**
+     * P8-05 批 b (D-331 spec sections 4 批 b / D-E8/D-E12; V-7): the composition-root readable-export
+     * binding the 导出账目 row opens onto — the graph-local use-case pieces (page source, catalog,
+     * lineage reader, clock, each re-bound on every open) plus the platform sheet-writer port and
+     * the lease bridge, or null when the surface is absent (tests, legacy roots). Lease-free for
+     * the same reason as [backupExport]: the use case acquires and releases its OWN operation
+     * lease for the whole walk (D-E11), so exposing the binding here adds no lease and no second
+     * lease. The generation for the landing discard is captured at LAUNCH time by
+     * [readableExportLaunch] (the backupExportLaunch precedent — never at bind time).
+     */
+    var readableExportFactory: ReadableExportFactoryBinding? = null
+
+    /**
+     * P8-05 批 b: the launch for the CURRENT active generation — the use-case factory plus the
+     * generation it was resolved under. Null when the surface is absent or the owner has no
+     * active generation (not Ready). Pure field reads, never an invocation (the
+     * [backupExportLaunch] precedent).
+     */
+    fun readableExportLaunch(): ReadableExportLaunch? {
+        val binding = readableExportFactory ?: return null
+        val generation = owner.activeGeneration ?: return null
+        return ReadableExportLaunch(generation, binding.newExport)
+    }
+
+    /**
      * P8-01a i3a (D-308 items 2/6/8; spec sections 2.2/2.3/2.4/2.6): the account-scoped
      * reconciliation READ face bound by the composition root — the queue page, the totals, the
      * candidate evidence, the leg facts and the audit read-back. Null when the surface is absent
@@ -837,6 +861,9 @@ class LedgerLeaseScope(
                 // P7-06 06.D (D-182): the restore use cases are bound by the composition root; a
                 // pure field read, never an invocation.
                 backupRestore = restoreWiring != null,
+                // P8-05 批 b (D-331 spec D-E8): the readable-export binding is set on this scope by
+                // the composition root; a pure field read, never an invocation.
+                readableExport = readableExportFactory != null,
                 // P7-07 07.D (D-184; spec section 5): the budget month read AND the configuration
                 // write are both wired. Pure null checks, never an invocation.
                 budget = facade.queryBudgetMonth != null && facade.saveBudgetConfiguration != null,
@@ -1014,6 +1041,10 @@ data class LedgerSurfaces(
     val manualRefundCandidateRead: Boolean = false,
     val manualRefundSubmit: Boolean = false,
     val manualRefundRecovery: Boolean = false,
+    // P8-05 批 b (D-331 spec D-E8; V-7): the composition root bound the readable-export launch.
+    // A pure field probe, never an invocation, so the drawer renders the 导出账目 row only when
+    // the surface exists (the same "no dead affordance" convention as [backupExport]).
+    val readableExport: Boolean = false,
 ) {
     /** The queue surface (entry A) is reachable: the read face is wired. */
     val accountReconciliationQueue: Boolean

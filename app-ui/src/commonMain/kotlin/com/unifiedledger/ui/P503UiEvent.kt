@@ -17,6 +17,7 @@ import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TagMerchantCommandResult
 import com.unifiedledger.application.TagMerchantTagMatchMode
 import com.unifiedledger.application.TransactionAnnotationHistoryEntry
+import com.unifiedledger.application.export.readable.ReadableLedgerExportResult
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.BudgetScope
@@ -1350,6 +1351,56 @@ sealed interface P503UiEvent {
      * a running export absorbs the close (提交中不得离开, the P7-05 Submitting discipline).
      */
     data object CloseBackupExport : P503UiEvent
+
+    // ---- P8-05 批 b readable export events (D-331 spec sections 4 批 b / D-E8-D-E10; V-7) ----
+
+    /**
+     * Opens the readable-export surface from the drawer's 导出账目 row (D-E8). Effect on
+     * OverviewEmpty; absorbed everywhere else. The host offers the row only when the
+     * readable-export surface is wired ([LedgerSurfaces.readableExport]), so this event never
+     * renders a dead row.
+     */
+    data object OpenReadableExport : P503UiEvent
+
+    /**
+     * The explicit export request. The host resolves the composition wiring BEFORE dispatching
+     * (an unwired surface never dispatches), runs the export off the UI thread, and the reducer
+     * sets the per-operation `running` marker (a duplicate start is absorbed, 提交中不重入).
+     * Effect only on ReadableExport; absorbed everywhere else.
+     */
+    data object ConfirmReadableExport : P503UiEvent
+
+    /**
+     * D-E9's counting progress landing: exported so far and the exact total. The values carry no
+     * secret (pure counters). Effect only on ReadableExport; absorbed everywhere else.
+     */
+    data class ReadableExportProgressLanded(
+        val exportedRows: Long,
+        val totalRows: Int,
+    ) : P503UiEvent
+
+    /**
+     * The user's cooperative cancel request on a running export (D-E10's signal-triggered
+     * Cancelled at the next page boundary). Records the request so the affordance goes honest
+     * (已请求取消) while the walk drains; a landing then clears the marker with the surface.
+     * Effect only on ReadableExport; absorbed everywhere else.
+     */
+    data object RequestReadableExportCancel : P503UiEvent
+
+    /**
+     * The landed export result ([ReadableLedgerExportResult]): Succeeded/Failed keep the surface
+     * with a typed outcome banner; Cancelled keeps it re-runnable. Effect only on ReadableExport;
+     * absorbed everywhere else.
+     */
+    data class ReadableExportResultLanded(
+        val result: ReadableLedgerExportResult,
+    ) : P503UiEvent
+
+    /**
+     * Closes the readable-export surface back to the exact preserved overview. Effect only on
+     * ReadableExport; a running export absorbs the close (提交中不得离开).
+     */
+    data object CloseReadableExport : P503UiEvent
 
     // ---- P7-06 06.D restore confirm & switch events (D-182; spec sections 3/5.5/6) ----
 

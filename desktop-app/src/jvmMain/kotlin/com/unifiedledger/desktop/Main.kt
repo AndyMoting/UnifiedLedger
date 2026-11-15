@@ -124,6 +124,7 @@ import com.unifiedledger.application.UuidV7TransactionVoidFactIdSource
 import com.unifiedledger.application.backup.BackupCryptoPrimitives
 import com.unifiedledger.application.backup.JvmBackupCryptoPrimitives
 import com.unifiedledger.application.budgetMonthConfigKey
+import com.unifiedledger.application.export.readable.ReadableLedgerExport
 import com.unifiedledger.application.import.JvmImportFileIntake
 import com.unifiedledger.data.CatalogBootstrapResult
 import com.unifiedledger.data.SqlDelightBudgetStore
@@ -133,6 +134,7 @@ import com.unifiedledger.data.SqlDelightConfirmedManualIncomeCommitPort
 import com.unifiedledger.data.SqlDelightConfirmedManualLendingCommitPort
 import com.unifiedledger.data.SqlDelightConfirmedManualTransferCommitPort
 import com.unifiedledger.data.SqlDelightCounterpartyStore
+import com.unifiedledger.data.SqlDelightCreationEntryBatchReader
 import com.unifiedledger.data.SqlDelightEntryPreferenceStore
 import com.unifiedledger.data.SqlDelightEvidenceProjectionStore
 import com.unifiedledger.data.SqlDelightImportReviewReadAdapter
@@ -177,6 +179,7 @@ import com.unifiedledger.ui.LedgerFileSystem
 import com.unifiedledger.ui.LedgerLeaseScope
 import com.unifiedledger.ui.LedgerOpenTarget
 import com.unifiedledger.ui.LedgerRuntimeOwner
+import com.unifiedledger.ui.LedgerRuntimeOwnerLeasePort
 import com.unifiedledger.ui.LedgerStartupResult
 import com.unifiedledger.ui.LedgerStorageFailure
 import com.unifiedledger.ui.LedgerStorageLayout
@@ -189,6 +192,8 @@ import com.unifiedledger.ui.PointerMissingRecoveryProbe
 import com.unifiedledger.ui.PointerMissingRecoveryUseCase
 import com.unifiedledger.ui.PointerRecoveryAdoptionResult
 import com.unifiedledger.ui.PointerRecoveryDiscardResult
+import com.unifiedledger.ui.ReadableExportFactoryBinding
+import com.unifiedledger.ui.ReadableExportGraphFactory
 import com.unifiedledger.ui.RestoreHostWiring
 import com.unifiedledger.ui.RestoreIsolatedDatabasePort
 import com.unifiedledger.ui.RestorePreflightUseCase
@@ -219,6 +224,10 @@ internal class DesktopBackupWiring(
     val fileSystem: LedgerFileSystem,
     val layout: LedgerStorageLayout,
     val targetPort: BackupTargetPort = DesktopBackupTargetPort(::showSwingSaveFileChooser),
+    // P8-05 批 b (D-331 spec D-E12): the readable export's OWN save-dialog port — a separate
+    // dialog flow, so the backup port's frozen suggestion stays untouched (D-E12: 两端口平台实现
+    // 零改动) and the two exports never share one chooser.
+    val readableExportTargetPort: DesktopReadableExportTargetPort = DesktopReadableExportTargetPort(::showSwingSaveFileChooser),
     val crypto: BackupCryptoPrimitives = JvmBackupCryptoPrimitives(),
     val newToken: () -> String = { randomUuidText() },
 )
@@ -432,8 +441,10 @@ internal fun DesktopEscBackHandler(
 internal class DesktopStartupController(
     private val openDatabase: () -> CloseableLedgerGraph,
     // P7-06 06.B (D-177): the optional backup-export wiring; null keeps the surface absent so the
-    // existing startup tests construct the controller with the graph builder only.
-    backupWiring: DesktopBackupWiring? = null,
+    // existing startup tests construct the controller with the graph builder only. Kept as a
+    // property so the readable-export bind site can complete the factory with the composition-level
+    // port on EVERY open (P8-05 批 b; the Android twin reads its wiring field the same way).
+    private val backupWiring: DesktopBackupWiring? = null,
     // P7-06 06.D (D-182; spec section 6, P2-7): the optional restore wiring; present, it binds
     // exactly one set of use-case instances (the confirm single-flight guard assumes it).
     restoreWiring: DesktopRestoreWiring? = null,
@@ -502,6 +513,31 @@ internal class DesktopStartupController(
         leaseScope.bindReconciliationEvidence = graph.bindReconciliationEvidence
         leaseScope.confirmReconciliationLink = graph.confirmReconciliationLink
         leaseScope.querySearchPage = graph.querySearchPage
+        // P8-05 批 b (D-331 spec D-E12): the readable-export binding is re-bound on EVERY open —
+        // a 06.D reopen must not keep the previous graph's page source/catalog. The graph-local
+        // factory lambda is completed here with the two composition-level pieces: the sheet-writer
+        // bridge over the readable export's OWN save-dialog port (D-E12) and the operation-lease
+        // bridge over THIS controller's owner (D-E11). The launch-time generation capture lives
+        // with the shared host/launch face, never at bind time.
+        val targetPort = backupWiring?.readableExportTargetPort
+        val graphFactory = graph.readableExportFactory
+        leaseScope.readableExportFactory =
+            if (targetPort == null || graphFactory == null) {
+                // The wiring probe stays false when either composition piece is absent (tests,
+                // legacy roots): no dead 导出账目 row (the D-E8 three-state discipline).
+                null
+            } else {
+                ReadableExportFactoryBinding(
+                    newExport = { cancellation, progressListener ->
+                        graphFactory(
+                            readableExportSheetWriterFactory(targetPort),
+                            LedgerRuntimeOwnerLeasePort(owner),
+                            cancellation,
+                            progressListener,
+                        )
+                    },
+                )
+            }
     }
 
     /**
@@ -735,6 +771,10 @@ internal data class CloseableLedgerGraph(
     // P8-02 i2a (D7-7; spec section 2.4): the search result surface's bounded read use case. Null
     // when a graph wired none (tests, legacy graphs).
     val querySearchPage: QuerySearchPage? = null,
+    // P8-05 批 b (D-331 spec D-E12): the graph-local readable-export factory (page source, catalog,
+    // lineage reader, clock). Null when a graph wired none (tests, legacy graphs) — the composition
+    // root then renders no dead 导出账目 row (the wiring probe stays false).
+    val readableExportFactory: ReadableExportGraphFactory? = null,
 )
 
 internal data class DesktopLedgerGraph(
@@ -771,6 +811,10 @@ internal data class DesktopLedgerGraph(
     // P8-02 i2a (D7-7; spec section 2.4): the search result surface's bounded read use case. Null
     // when a graph wired none (tests, legacy graphs).
     val querySearchPage: QuerySearchPage? = null,
+    // P8-05 批 b (D-331 spec D-E12): the graph-local readable-export factory (page source, catalog,
+    // lineage reader, clock). Null when a graph wired none (tests, legacy graphs) — the composition
+    // root then renders no dead 导出账目 row (the wiring probe stays false).
+    val readableExportFactory: ReadableExportGraphFactory? = null,
 )
 
 /**
@@ -1303,6 +1347,27 @@ internal fun buildLedgerGraph(
             resolveManualRefundCommitStatus = resolveManualRefundCommitStatus,
         )
 
+    // P8-05 批 b (D-331 spec sections 4 批 b / D-E12): the GRAPH-LOCAL half of the readable-export
+    // use-case factory — everything that lives on this graph (the session's bounded page source
+    // (D-268), the session's CURRENT authoritative catalog — rebuilt by refreshCatalog, the real
+    // SQLDelight lineage reader (D-E6) and the graph's clock, whose Shanghai wall-clock date names
+    // the suggested file) built per RUN (never shared across concurrent runs). The controller's
+    // binding supplies the two composition-level pieces: the sheet-writer bridge over the readable
+    // export's own save-dialog port (D-E12) and the operation-lease bridge over the owner (D-E11).
+    // Nothing runs at wiring time; everything runs inside the use case's own lease.
+    val readableExportFactory: ReadableExportGraphFactory =
+        { writerProvider, leasePort, cancellation, progressListener ->
+            ReadableLedgerExport(
+                leasePort = leasePort,
+                flowPage = session.queryLedgerFlowPage,
+                creationEntries = SqlDelightCreationEntryBatchReader(database),
+                catalogProvider = { session.authority.catalog },
+                writerProvider = writerProvider,
+                clock = ledgerClock,
+                cancellation = cancellation,
+                progressListener = progressListener,
+            )
+        }
     return DesktopLedgerGraph(
         database = database,
         ledgerId = ledgerId,
@@ -1326,6 +1391,7 @@ internal fun buildLedgerGraph(
         bindReconciliationEvidence = bindReconciliationEvidence,
         confirmReconciliationLink = confirmReconciliationLink,
         querySearchPage = querySearchPage,
+        readableExportFactory = readableExportFactory,
     )
 }
 
@@ -1375,6 +1441,7 @@ internal fun openDesktopLedger(databaseUrl: String): CloseableLedgerGraph {
             bindReconciliationEvidence = graph.bindReconciliationEvidence,
             confirmReconciliationLink = graph.confirmReconciliationLink,
             querySearchPage = graph.querySearchPage,
+            readableExportFactory = graph.readableExportFactory,
         )
     } catch (failure: Exception) {
         // A failure mid-open (schema create/open/migrate/bootstrap) must not leak the

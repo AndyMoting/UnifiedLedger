@@ -341,6 +341,12 @@ internal fun P8LedgerDataDrawer(
     restoreWired: Boolean = false,
     onOpenRecycleBin: () -> Unit,
     recycleBinWired: Boolean,
+    // P8-05 批 b (D-331 spec D-E8; U8): the 导出账目 row between 备份与恢复 and 回收站 — the two
+    // entries are siblings (用途相邻). Same three-state wiring discipline as the rows above: a
+    // wired composition renders the clickable row, an unwired one the honest disabled 暂未开放
+    // shape (never a dead row).
+    onOpenReadableExport: () -> Unit,
+    readableExportWired: Boolean = false,
     onOpenImportBills: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -374,6 +380,15 @@ internal fun P8LedgerDataDrawer(
                         else -> "暂未开放"
                     },
                 onClick = onOpenBackupRestore,
+            )
+            // P8-05 批 b (D-331 spec D-E8): the 导出账目 row — BELOW 备份与恢复, ABOVE 回收站 (the
+            // frozen row position; the 用途相邻 sibling of the backup entry). No suffix row (the
+            // 导入账单 row shape); the wired/unwired split mirrors the 回收站 row below.
+            P8DrawerRow(
+                "导出账目",
+                enabled = readableExportWired,
+                suffix = if (readableExportWired) null else "暂未开放",
+                onClick = onOpenReadableExport,
             )
             P8DrawerRow("回收站", enabled = recycleBinWired, suffix = if (recycleBinWired) null else "暂未开放", onClick = onOpenRecycleBin)
             P8DrawerRow("导入账单", enabled = true, onClick = onOpenImportBills)

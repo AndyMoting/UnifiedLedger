@@ -30,8 +30,11 @@ import kotlin.time.Instant
  * no cross-page aggregate except counters, so at any instant at most one delivered page is
  * unconsumed; "next page 请求数 = 页数（每页恰一次、零预取零重读）" is observable on the page
  * source.
+ *
+ * Open for exactly one reason: the run-pipeline test doubles override [export] with canned
+ * results (批 b's `P503ReadableExportHostPipelineTest`). Everything else stays closed.
  */
-class ReadableLedgerExport(
+open class ReadableLedgerExport(
     private val leasePort: LedgerRuntimeLeasePort,
     private val flowPage: QueryLedgerFlowPage,
     private val creationEntries: CreationEntryBatchReader?,
@@ -46,7 +49,7 @@ class ReadableLedgerExport(
         require(pageSize > 0) { "page size must be positive" }
     }
 
-    fun export(ledgerId: LedgerId): ReadableLedgerExportResult {
+    open fun export(ledgerId: LedgerId): ReadableLedgerExportResult {
         // Step 1: the operation lease (D-E11), released on every path.
         val lease =
             when (val acquired = leasePort.acquireLease()) {

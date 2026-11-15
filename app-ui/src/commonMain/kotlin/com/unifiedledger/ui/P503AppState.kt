@@ -13,6 +13,7 @@ import com.unifiedledger.application.SearchFailureCode
 import com.unifiedledger.application.TagMerchantFilterCursor
 import com.unifiedledger.application.TagMerchantTagMatchMode
 import com.unifiedledger.application.TypedEntryDraft
+import com.unifiedledger.application.export.readable.ReadableLedgerExportResult
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CategoryId
@@ -898,6 +899,30 @@ sealed interface P503AppState {
     }
 
     /**
+     * P8-05 批 b (D-331 spec sections 4 批 b / D-E8-D-E11; V-7): the readable-export surface.
+     * Reached through the drawer's 数据 group 导出账目 row (below 备份与恢复, above 回收站 — D-E8's
+     * frozen row position). [overview] is carried so every exit restores the exact
+     * tab/month/payload (the TransactionEdit/BackupExport preserved-overview discipline).
+     * [running] is the per-operation marker (提交中不重入/不得离开); [exportedRows]/[totalRows]
+     * are the D-E9 counting progress pair (exported so far, the exact denominator; 0/0 before the
+     * first landing); [cancelRequested] records the user's cooperative cancel request so the
+     * affordance goes honest while the page walk drains to its typed Cancelled; [outcome] is the
+     * last landed typed result ([ReadableLedgerExportResult]).
+     *
+     * No secret rides this state — the export has no password — so the generated toString stays
+     * safe (counters and the typed outcome only; the D-E7 discipline keeps ids/paths out of the
+     * outcome itself).
+     */
+    data class ReadableExport(
+        val overview: OverviewEmpty,
+        val running: Boolean = false,
+        val exportedRows: Long = 0,
+        val totalRows: Int = 0,
+        val cancelRequested: Boolean = false,
+        val outcome: ReadableLedgerExportResult? = null,
+    ) : P503AppState
+
+    /**
      * P7-06 06.D (D-182; spec sections 3/5.1/5.5/6): the restore CONFIRM & SWITCH surface. Reached
      * through the side drawer's 备份与恢复 carrier row — the row opens the backup/export carrier
      * face (P8-00 b2, 2026-11-08 user ruling), whose restore affordance issues
@@ -1223,6 +1248,10 @@ internal fun P503AppState.carriedBudgetMonthOverview(): P503AppState.OverviewEmp
         is P503AppState.RecycleBin -> overview
         is P503AppState.BackupExport -> overview
         is P503AppState.BackupRestore -> overview
+        // P8-05 批 b: the readable-export face carries the preserved overview like the backup
+        // export face, so a concurrent budget landing is APPLIED to it (the P1-2 fix-round
+        // discipline: carried-overview surfaces apply, never absorb).
+        is P503AppState.ReadableExport -> overview
         else -> null
     }
 
