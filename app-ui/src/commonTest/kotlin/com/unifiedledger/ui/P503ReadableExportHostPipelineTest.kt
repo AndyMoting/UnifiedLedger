@@ -12,6 +12,7 @@ import com.unifiedledger.application.ManualTransferCommitRecord
 import com.unifiedledger.application.QueryLedgerFlowPage
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.export.readable.LedgerRuntimeLeasePort
+import com.unifiedledger.application.export.readable.LedgerRuntimeLeasePortResult
 import com.unifiedledger.application.export.readable.ReadableLedgerExport
 import com.unifiedledger.application.export.readable.ReadableLedgerExportFailure
 import com.unifiedledger.application.export.readable.ReadableLedgerExportResult
