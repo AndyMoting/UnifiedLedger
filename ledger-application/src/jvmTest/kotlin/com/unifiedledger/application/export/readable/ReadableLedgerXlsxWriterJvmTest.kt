@@ -75,8 +75,9 @@ class ReadableLedgerXlsxWriterJvmTest {
         }
         val sheet = entries.last { it.name == "xl/worksheets/sheet1.xml" }.content
         assertTrue(sheet.contains("t=\"inlineStr\""), "text cells must be inlineStr (D-E3)")
-        assertTrue(sheet.contains(READABLE_EXPORT_SHEET_NAME), "workbook sheet name is the frozen display copy")
         assertTrue(!sheet.contains("t=\"s\""), "no shared-string cells exist (D-E3 drops the pool)")
+        val workbook = entries.first { it.name == "xl/workbook.xml" }.content
+        assertTrue(workbook.contains(READABLE_EXPORT_SHEET_NAME), "workbook sheet name is the frozen display copy")
         val workbookRels = entries.first { it.name == "xl/_rels/workbook.xml.rels" }.content
         assertTrue(!workbookRels.contains("sharedStrings"), "no sharedStrings relationship (D-E3)")
         entries.forEach { entry -> assertTrue(!entry.content.contains("docProps"), "zero docProps (D-E7): ${entry.name}") }
@@ -230,8 +231,91 @@ class ReadableLedgerXlsxWriterJvmTest {
         val sheet = workbook.firstSheet
         assertEquals(rows.size, sheet.lastRowNum, "one row per transaction beyond the header")
 
-        // ① 支出: A/B 双时间、C 类型中文名、D 精确十进制原符号正数、F/G 账户、H 完整路径、I 备注、J 来源.
+        // D-E1 页序直写: the file rows follow (statistics_at DESC, transaction_id DESC), so the
+        // row order is tx-times(02-01T00:30) / tx-unnamed(02-01T00:00) / tx-recognition(01-31) /
+        // tx-refund(01-26) / tx-spend(01-25) / tx-opening(2025-12-31) / tx-reversal(01-23) /
+        // tx-adjust(01-22) / tx-transfer(01-21) / tx-income(01-20) / tx-expense(01-15).
+
+        // 双时间分列: 凭证 2026-01-15 18:30 / 统计 2026-02-01 08:30.
         var row = sheet.getRow(1)
+        assertNotNull(row)
+        assertEquals("2026-01-15 18:30:00", row.getCell(0)!!.string)
+        assertEquals("2026-02-01 08:30:00", row.getCell(1)!!.string)
+
+        // 无名账户占位（②转账形）: 账户1 = 未命名账户、账户2 = 招商银行；分类空（ghost 无映射）.
+        row = sheet.getRow(2)
+        assertNotNull(row)
+        assertEquals("转账", row.getCell(2)!!.string)
+        assertEquals("-5.00", row.getCell(3)!!.rawValue)
+        assertEquals(READABLE_EXPORT_UNNAMED_ACCOUNT, row.getCell(5)!!.string)
+        assertEquals("招商银行", row.getCell(6)!!.string)
+        assertEquals("", row.getCell(7)!!.string)
+
+        // ⑥ 预付确认: +33.33，账户2 = prepaid 资产.
+        row = sheet.getRow(3)
+        assertNotNull(row)
+        assertEquals("预付确认", row.getCell(2)!!.string)
+        assertEquals("33.33", row.getCell(3)!!.rawValue)
+        assertEquals("预付资产", row.getCell(6)!!.string)
+
+        // ⑦ 退款到账: 负支出原符号 −12.00.
+        row = sheet.getRow(4)
+        assertNotNull(row)
+        assertEquals("退款到账", row.getCell(2)!!.string)
+        assertEquals("-12.00", row.getCell(3)!!.rawValue)
+
+        // ⑤ 储值消费: 分类腿 +300.00.
+        row = sheet.getRow(5)
+        assertNotNull(row)
+        assertEquals("储值消费", row.getCell(2)!!.string)
+        assertEquals("300.00", row.getCell(3)!!.rawValue)
+        assertEquals("零钱", row.getCell(6)!!.string)
+
+        // ④ 期初余额: 资产腿 +1000.00，统计时间落在上海 2026-01-01 00:00（月界 00:00 向量）.
+        row = sheet.getRow(6)
+        assertNotNull(row)
+        assertEquals("期初余额", row.getCell(2)!!.string)
+        assertEquals("1000.00", row.getCell(3)!!.rawValue)
+        assertEquals("2026-01-01 00:00:00", row.getCell(1)!!.string)
+        assertEquals(YearMonth(2026, 1), MonthlyBuckets.bucketKey(Instant.parse("2025-12-31T16:00:00Z")))
+
+        // ③ 余额调整冲正: F-4 唯一正腿锚定 → +20.00，账户1=权益、账户2=资产.
+        row = sheet.getRow(7)
+        assertNotNull(row)
+        assertEquals("余额调整冲正", row.getCell(2)!!.string)
+        assertEquals("20.00", row.getCell(3)!!.rawValue)
+        assertEquals("期初权益", row.getCell(5)!!.string)
+        assertEquals("招商银行", row.getCell(6)!!.string)
+
+        // ③ 余额调整: 资产腿 +30.00；分类空.
+        row = sheet.getRow(8)
+        assertNotNull(row)
+        assertEquals("余额调整", row.getCell(2)!!.string)
+        assertEquals("30.00", row.getCell(3)!!.rawValue)
+        assertEquals("招商银行", row.getCell(5)!!.string)
+        assertEquals("期初权益", row.getCell(6)!!.string)
+        assertEquals("", row.getCell(7)!!.string)
+
+        // ② 转账: 金额取流出腿 −500.00，账户2 = 流入方，分类锚定手续费腿.
+        row = sheet.getRow(9)
+        assertNotNull(row)
+        assertEquals("转账", row.getCell(2)!!.string)
+        assertEquals("-500.00", row.getCell(3)!!.rawValue)
+        assertEquals("招商银行", row.getCell(5)!!.string)
+        assertEquals("零钱", row.getCell(6)!!.string)
+        assertEquals("手续费", row.getCell(7)!!.string)
+
+        // ① 收入: 原符号负数（不翻转）.
+        row = sheet.getRow(10)
+        assertNotNull(row)
+        assertEquals("收入", row.getCell(2)!!.string)
+        assertEquals("-2000.00", row.getCell(3)!!.rawValue)
+        assertEquals("工资收入", row.getCell(5)!!.string)
+        assertEquals("招商银行", row.getCell(6)!!.string)
+        assertEquals("收入/工资", row.getCell(7)!!.string)
+
+        // ① 支出: A/B 双时间、C 类型中文名、D 精确十进制原符号正数、F/G 账户、H 完整路径、I 备注、J 来源.
+        row = sheet.getRow(11)
         assertNotNull(row)
         assertEquals("2026-01-15 10:14:40", row.getCell(0)!!.string)
         assertEquals("2026-01-15 10:14:40", row.getCell(1)!!.string)
@@ -244,82 +328,6 @@ class ReadableLedgerXlsxWriterJvmTest {
         assertEquals("餐饮/早餐", row.getCell(7)!!.string)
         assertEquals("早餐", row.getCell(8)!!.string)
         assertEquals("来源未标注", row.getCell(9)!!.string)
-
-        // ① 收入: 原符号负数（不翻转）.
-        row = sheet.getRow(2)
-        assertNotNull(row)
-        assertEquals("收入", row.getCell(2)!!.string)
-        assertEquals("-2000.00", row.getCell(3)!!.rawValue)
-        assertEquals("工资收入", row.getCell(5)!!.string)
-        assertEquals("招商银行", row.getCell(6)!!.string)
-        assertEquals("收入/工资", row.getCell(7)!!.string)
-
-        // ② 转账: 金额取流出腿 −500.00，账户2 = 流入方，分类锚定手续费腿.
-        row = sheet.getRow(3)
-        assertNotNull(row)
-        assertEquals("转账", row.getCell(2)!!.string)
-        assertEquals("-500.00", row.getCell(3)!!.rawValue)
-        assertEquals("招商银行", row.getCell(5)!!.string)
-        assertEquals("零钱", row.getCell(6)!!.string)
-        assertEquals("手续费", row.getCell(7)!!.string)
-
-        // ③ 余额调整: 资产腿 +30.00；冲正按 F-4 唯一正腿锚定 → +20.00，账户1=权益、账户2=资产；分类空.
-        row = sheet.getRow(4)
-        assertNotNull(row)
-        assertEquals("余额调整", row.getCell(2)!!.string)
-        assertEquals("30.00", row.getCell(3)!!.rawValue)
-        assertEquals("招商银行", row.getCell(5)!!.string)
-        assertEquals("期初权益", row.getCell(6)!!.string)
-        assertEquals("", row.getCell(7)!!.string)
-        row = sheet.getRow(5)
-        assertNotNull(row)
-        assertEquals("余额调整冲正", row.getCell(2)!!.string)
-        assertEquals("20.00", row.getCell(3)!!.rawValue)
-        assertEquals("期初权益", row.getCell(5)!!.string)
-        assertEquals("招商银行", row.getCell(6)!!.string)
-
-        // ④ 期初余额: 资产腿 +1000.00，统计时间落在上海 2026-01-01 00:00（月界 00:00 向量）.
-        row = sheet.getRow(6)
-        assertNotNull(row)
-        assertEquals("期初余额", row.getCell(2)!!.string)
-        assertEquals("1000.00", row.getCell(3)!!.rawValue)
-        assertEquals("2026-01-01 00:00:00", row.getCell(1)!!.string)
-        assertEquals(YearMonth(2026, 1), MonthlyBuckets.bucketKey(Instant.parse("2025-12-31T16:00:00Z")))
-
-        // ⑤ 储值消费: 分类腿 +300.00.
-        row = sheet.getRow(7)
-        assertNotNull(row)
-        assertEquals("储值消费", row.getCell(2)!!.string)
-        assertEquals("300.00", row.getCell(3)!!.rawValue)
-        assertEquals("零钱", row.getCell(6)!!.string)
-
-        // ⑦ 退款到账: 负支出原符号 −12.00.
-        row = sheet.getRow(8)
-        assertNotNull(row)
-        assertEquals("退款到账", row.getCell(2)!!.string)
-        assertEquals("-12.00", row.getCell(3)!!.rawValue)
-
-        // ⑥ 预付确认: +33.33，账户2 = prepaid 资产.
-        row = sheet.getRow(9)
-        assertNotNull(row)
-        assertEquals("预付确认", row.getCell(2)!!.string)
-        assertEquals("33.33", row.getCell(3)!!.rawValue)
-        assertEquals("预付资产", row.getCell(6)!!.string)
-
-        // 无名账户占位（②转账形）: 账户1 = 未命名账户、账户2 = 招商银行；分类空（ghost 无映射）.
-        row = sheet.getRow(10)
-        assertNotNull(row)
-        assertEquals("转账", row.getCell(2)!!.string)
-        assertEquals("-5.00", row.getCell(3)!!.rawValue)
-        assertEquals(READABLE_EXPORT_UNNAMED_ACCOUNT, row.getCell(5)!!.string)
-        assertEquals("招商银行", row.getCell(6)!!.string)
-        assertEquals("", row.getCell(7)!!.string)
-
-        // 双时间分列: 凭证 2026-01-15 18:30 / 统计 2026-02-01 08:30.
-        row = sheet.getRow(11)
-        assertNotNull(row)
-        assertEquals("2026-01-15 18:30:00", row.getCell(0)!!.string)
-        assertEquals("2026-02-01 08:30:00", row.getCell(1)!!.string)
     }
 
     @Test
