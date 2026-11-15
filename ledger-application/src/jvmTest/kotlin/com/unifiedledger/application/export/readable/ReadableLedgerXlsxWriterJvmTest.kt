@@ -56,7 +56,7 @@ class ReadableLedgerXlsxWriterJvmTest {
     private val ledgerId = LedgerId("ledger-readable-export")
 
     /** 2026-03-01T02:00:00Z in epoch millis — the 50k walk's strict whole-second base. */
-    private const val START_EPOCH_MILLIS = 1_772_332_000_000L
+    private val startEpochMillis = 1_772_332_000_000L
 
     // ---------------------------------------------------------------- structure + round-trip
 
@@ -579,7 +579,7 @@ class ReadableLedgerXlsxWriterJvmTest {
         val count = 50_000
         val rows =
             (1..count).map { index ->
-                expenseRow("tx-$index", Instant.fromEpochMilliseconds(START_EPOCH_MILLIS + index * 1_000L))
+                expenseRow("tx-$index", Instant.fromEpochMilliseconds(startEpochMillis + index * 1_000L))
             }
         val sink = RecordingSink()
         val writer = ReadableLedgerXlsxStreamWriter(sink)
