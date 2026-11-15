@@ -738,6 +738,10 @@ class P503ImportReviewRenderItemsTest {
             importReviewRenderItems(
                 ImportReviewView(rows = listOf(row("dup-a", duplicateStatus = ImportDuplicateStatus.DEFERRED)), groupDisposition = page),
                 ImportPlatformKind.ANDROID,
+                // D-331: the default form emits ZERO member rows (the b6 regression disposition);
+                // this test pins the landed-ordinal/identity contract of the member ITEM itself,
+                // which the EXPANDED arm carries (the collapsed arm would rightly emit none).
+                groupCardRowsExpanded = true,
             )
         val groupItems = items.filterIsInstance<ImportReviewRenderItem.GroupDispositionItem>()
         assertEquals(2, groupItems.size)
