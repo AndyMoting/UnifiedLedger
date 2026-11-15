@@ -10,7 +10,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import javax.swing.JFileChooser
 import kotlin.time.Clock
 
 /*
@@ -156,5 +155,4 @@ internal class ReadableTargetWriterSink(
  * building the jvmMain XLSX writer over it happen INSIDE the use case's run — never at wiring
  * time; a null open is the honest cancelled picker (the use case maps it to Cancelled).
  */
-fun readableExportSheetWriterFactory(target: DesktopReadableExportTargetPort): () -> ReadableExportSheetWriter? =
-    { readableExportSinkFromTargetPort(target)?.let(::ReadableLedgerXlsxStreamWriter) }
+fun readableExportSheetWriterFactory(target: DesktopReadableExportTargetPort): () -> ReadableExportSheetWriter? = { readableExportSinkFromTargetPort(target)?.let(::ReadableLedgerXlsxStreamWriter) }
