@@ -94,7 +94,7 @@ class AndroidReadableExportTargetPortTest {
             AndroidReadableExportTargetPort<String>(
                 postToMainThread = { it() },
                 launchCreateDocument = launcher.launch,
-                openOutputStream = { ByteArrayOutputStream() },
+                openWriter = { safTargetWriter(ByteArrayOutputStream()) },
                 suggestedName = { "unifiedledger-export-20261115.xlsx" },
             )
         val holder = arrayOfNulls<com.unifiedledger.application.export.readable.ReadableExportSink>(1)
@@ -122,7 +122,7 @@ class AndroidReadableExportTargetPortTest {
             AndroidReadableExportTargetPort<String>(
                 postToMainThread = { it() },
                 launchCreateDocument = launcher.launch,
-                openOutputStream = { recorder.asWriter(sink) },
+                openWriter = { recorder.asWriter(sink) },
                 suggestedName = { "unifiedledger-export-20261115.xlsx" },
             )
         val holder = arrayOfNulls<com.unifiedledger.application.export.readable.ReadableExportSink>(1)
@@ -160,7 +160,7 @@ class AndroidReadableExportTargetPortTest {
             AndroidReadableExportTargetPort<String>(
                 postToMainThread = { it() },
                 launchCreateDocument = launcher.launch,
-                openOutputStream = { recorder.asWriter(ByteArrayOutputStream()) },
+                openWriter = { recorder.asWriter(ByteArrayOutputStream()) },
                 suggestedName = { "unifiedledger-export-20261115.xlsx" },
             )
         val holder = arrayOfNulls<com.unifiedledger.application.export.readable.ReadableExportSink>(1)
@@ -186,7 +186,7 @@ class AndroidReadableExportTargetPortTest {
             AndroidReadableExportTargetPort<String>(
                 postToMainThread = { it() },
                 launchCreateDocument = launcher.launch,
-                openOutputStream = { ByteArrayOutputStream() },
+                openWriter = { safTargetWriter(ByteArrayOutputStream()) },
                 suggestedName = { "unifiedledger-export-20261115.xlsx" },
             )
         val holder = arrayOfNulls<com.unifiedledger.application.export.readable.ReadableExportSink>(1)
@@ -208,7 +208,7 @@ class AndroidReadableExportTargetPortTest {
             AndroidReadableExportTargetPort<String>(
                 postToMainThread = { throw IllegalStateException("no main looper") },
                 launchCreateDocument = {},
-                openOutputStream = { ByteArrayOutputStream() },
+                openWriter = { safTargetWriter(ByteArrayOutputStream()) },
                 suggestedName = { "unifiedledger-export-20261115.xlsx" },
             )
 
@@ -222,7 +222,7 @@ class AndroidReadableExportTargetPortTest {
             AndroidReadableExportTargetPort<String>(
                 postToMainThread = { it() },
                 launchCreateDocument = launcher.launch,
-                openOutputStream = { null },
+                openWriter = { null },
                 suggestedName = { "unifiedledger-export-20261115.xlsx" },
             )
         val holder = arrayOfNulls<com.unifiedledger.application.export.readable.ReadableExportSink>(1)

@@ -1845,7 +1845,7 @@ internal fun buildAndroidStartupController(
         AndroidReadableExportTargetPort<Uri>(
             postToMainThread = mainThreadPoster,
             launchCreateDocument = { name -> safSlot.launchReadableExportCreateDocument?.invoke(name) ?: throw IllegalStateException("no readable-export SAF launcher registered") },
-            openOutputStream = { uri -> context.contentResolver.openOutputStream(uri) },
+            openWriter = { uri -> safTargetWriter(context.contentResolver.openOutputStream(uri)) },
         )
     safSlot.deliverReadableExportCreateDocumentResult = { uri -> readableExportTargetPort.onCreateDocumentResult(uri) }
     // P8-04 i1 (D-11): the import-template save port — the CreateDocument flow beside the backup

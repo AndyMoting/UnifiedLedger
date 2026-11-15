@@ -57,7 +57,8 @@ class AndroidReadableExportTargetPort<Picked>(
     /** Posts [launchCreateDocument] onto the main thread (SAF launchers are main-thread only). */
     private val postToMainThread: ((() -> Unit) -> Unit),
     private val launchCreateDocument: (suggestedName: String) -> Unit,
-    private val openOutputStream: (Picked) -> OutputStream?,
+    /** Opens the picked document as the port's writer shape (production wraps the SAF stream). */
+    private val openWriter: (Picked) -> BackupTargetWriter?,
     /** Resolves the D-E7 suggested launch name (the date from the injected wall-clock). */
     private val suggestedName: () -> String = ::readableExportSuggestedFileName,
 ) : BackupTargetPort {
@@ -81,18 +82,11 @@ class AndroidReadableExportTargetPort<Picked>(
         pending = null
         if (!delivered) return null
         val picked = choice.picked ?: return null
-        val stream =
-            try {
-                openOutputStream(picked)
-            } catch (failure: Exception) {
-                null
-            }
-        // The SAF stream is a raw OutputStream: wrap it in the backup port's writer shape first
-        // (flush = stream.flush, commit = flush + close, in-place, no atomic replace — the same
-        // registered SAF boundary as AndroidBackupTargetPort), then hand that writer to the
-        // D-E12 sink bridge, whose commit folds flushAndSync-then-commit exactly once.
-        val writer = stream?.let { writerStream: OutputStream -> SafTargetWriter(writerStream) } ?: return null
-        return ReadableTargetWriterSink(writer)
+        return try {
+            openWriter(picked)
+        } catch (failure: Exception) {
+            null
+        }
     }
 
     /** The SAF CreateDocument result callback: a null handle is the user's cancellation. */
@@ -149,11 +143,13 @@ internal class ReadableTargetWriterSink(
 }
 
 /**
- * The raw SAF stream as a [BackupTargetWriter] (the shape the sink bridge consumes). Semantics
- * mirror the backup port's registered SAF boundary: flush = stream flush, commit = flush + close
- * in place (SAF external providers cannot be atomically replaced), close before commit abandons
- * the stream without claiming success.
+ * The raw SAF stream as a [BackupTargetWriter] (the shape the port's openWriter injection and the
+ * sink bridge consume). Semantics mirror the backup port's registered SAF boundary: flush = stream
+ * flush, commit = flush + close in place (SAF external providers cannot be atomically replaced),
+ * close before commit abandons the stream without claiming success.
  */
+fun safTargetWriter(stream: OutputStream): BackupTargetWriter = SafTargetWriter(stream)
+
 private class SafTargetWriter(
     private val stream: OutputStream,
 ) : BackupTargetWriter {
