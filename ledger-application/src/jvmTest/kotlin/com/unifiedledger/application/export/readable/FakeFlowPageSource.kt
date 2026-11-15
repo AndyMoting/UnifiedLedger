@@ -2,7 +2,7 @@ package com.unifiedledger.application.export.readable
 
 import com.unifiedledger.application.LedgerCurrentStateReadPort
 import com.unifiedledger.application.LedgerEntryRow
-import com.unifiedledger.application.LedgerId
+import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.application.QueryLedgerFlowPage
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CurrencyUnit
