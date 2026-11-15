@@ -3157,6 +3157,8 @@ fun P503App(
         // runs, `page.items` already IS the whole group: the enumeration dispatches Completed
         // only after its last page, so a confirm observed after that point sees every item.
         // The 确认整组标记 footer is thus never a landed-prefix-only confirm.
+        // D-332: the disabled footer makes the refusal visible; the confirm
+        // intent itself stays refused-until-round-end (the gate below is untouched).
         if (coordinator.isImportGroupEnumerationRunning()) return
         coordinator.confirmImportDuplicateGroupDispositionOnce {
             scope.launch(Dispatchers.Default) {
