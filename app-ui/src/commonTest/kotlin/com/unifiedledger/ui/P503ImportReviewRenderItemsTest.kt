@@ -27,10 +27,11 @@ import kotlin.test.assertTrue
  * 待确认 empty states, notice banner placement, session summary with its disclosed 200-record cap,
  * batch result per-item expansion with Unknown check entries), the selection propagation into
  * candidate items, the group-disposition affordance leading the list body above the session's
- * record lines (D-327), the open disposition card's D-330 render form — BOUNDED to the
- * IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS keyset prefix plus the 查看全部 entry row by default,
- * the flat header + every item + footer shape once expanded (Q1 案 C; zero loss when expanded,
- * pinned at the 10,000-item cap and the 99,600 rig shape) — and the
+ * record lines (D-327), the open disposition card's D-330 render form re-anchored by D-331 —
+ * ZERO member rows by default (one header + the 查看全部 entry + one footer; the D-330 take(K)
+ * prefix is retired with the b6 regression it caused), the flat header + collapse row + every
+ * item + footer shape once expanded (Q1 案 C; zero loss when expanded, pinned at the 10,000-item
+ * cap and the 99,600 rig shape) — and the
  * stable/unique key contract (a duplicate LazyColumn key crashes at
  * runtime with "Key was already used"). All fixtures are fully synthetic (D06).
  */
@@ -525,7 +526,7 @@ class P503ImportReviewRenderItemsTest {
     }
 
     @Test
-    fun theGroupDispositionCardRendersBoundedRowsByDefaultAndAllRowsOnceExpanded() {
+    fun theGroupDispositionCardRendersZeroMemberRowsByDefaultAndAllRowsOnceExpanded() {
         // Two review rows of the SAME subject candidate: the flat item key is the duplicate
         // candidate id, never the subject candidate id（同一 candidate 组内可多 review 行）.
         val page =
@@ -554,41 +555,40 @@ class P503ImportReviewRenderItemsTest {
                     ),
             )
         val view = ImportReviewView(rows = listOf(row("dup-a", duplicateStatus = ImportDuplicateStatus.DEFERRED)), groupDisposition = page)
-        // D-330 default form (Q2 恒默认有界): the named initial decision — not a bare literal.
-        assertFalse(initialGroupCardRowsExpanded(), "the card defaults to the bounded form, never remembered")
+        // D-330 default decision (Q2, recoupled by D-331 as 恒默认零行不记忆): the named initial decision
+        // — not a bare literal.
+        assertFalse(initialGroupCardRowsExpanded(), "the card defaults to the zero-member-row form, never remembered")
         val bounded =
             importReviewRenderItems(
                 view,
                 ImportPlatformKind.ANDROID,
                 groupCardRowsExpanded = initialGroupCardRowsExpanded(),
             )
-        // Under the bound, both members still list (2 ≤ the bound): the small-card shape is
-        // unchanged except that NO view-all entry renders — the whole group fits under K.
+        // D-331 zero-member-row default: NO member row renders at any size — even a group whose
+        // whole count fits under the retired K bound lists only header + 查看全部 entry + footer
+        // (the entry renders whenever totalCount > 0; beyondCount = totalCount, the exact row
+        // count the one action lists).
         val boundedHeader = bounded.filterIsInstance<ImportReviewRenderItem.GroupDispositionCardHeader>().single()
         assertEquals("pick-handle-1", boundedHeader.inputRef)
         assertEquals(2, boundedHeader.itemCount)
-        val boundedGroupItems = bounded.filterIsInstance<ImportReviewRenderItem.GroupDispositionItem>()
-        assertEquals(page.items, boundedGroupItems.map { it.state })
-        assertEquals(
-            listOf("group-disposition-item:dup-1", "group-disposition-item:dup-2"),
-            boundedGroupItems.map { it.stableKey },
+        assertTrue(
+            bounded.none { it is ImportReviewRenderItem.GroupDispositionItem },
+            "the default form emits zero member rows regardless of the landed count (D-331)",
         )
+        val boundedViewAll = bounded.filterIsInstance<ImportReviewRenderItem.GroupCardViewAllRows>().single()
+        assertEquals(2, boundedViewAll.beyondCount)
+        assertEquals(2, boundedViewAll.totalCount)
         val boundedFooter = bounded.filterIsInstance<ImportReviewRenderItem.GroupDispositionCardFooter>().single()
         assertEquals(2, boundedFooter.itemCount)
-        assertTrue(
-            bounded.none { it is ImportReviewRenderItem.GroupCardViewAllRows },
-            "a group whose whole count does not exceed the bound renders no entry row",
-        )
-        assertTrue(bounded.none { it is ImportReviewRenderItem.GroupCardCollapseRows }, "the bounded form has no collapse row")
         val boundedHeaderIndex = bounded.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionCardHeader }
-        val boundedFirstItemIndex = bounded.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionItem }
-        val boundedLastItemIndex = bounded.indexOfLast { it is ImportReviewRenderItem.GroupDispositionItem }
+        val boundedViewAllIndex = bounded.indexOfFirst { it is ImportReviewRenderItem.GroupCardViewAllRows }
         val boundedFooterIndex = bounded.indexOfLast { it is ImportReviewRenderItem.GroupDispositionCardFooter }
-        assertEquals(boundedHeaderIndex + 1, boundedFirstItemIndex)
-        assertEquals(boundedHeaderIndex + 2, boundedLastItemIndex)
-        assertEquals(boundedHeaderIndex + 3, boundedFooterIndex)
+        assertEquals(boundedHeaderIndex + 1, boundedViewAllIndex, "the entry follows the header directly")
+        assertEquals(boundedViewAllIndex + 1, boundedFooterIndex, "the footer follows the entry directly")
+        assertTrue(bounded.none { it is ImportReviewRenderItem.GroupCardCollapseRows }, "the default form has no collapse row")
         // Expanded form (the user's one action): every landed row lists, plus the leading
-        // collapse row — the pre-D-330 flat shape plus exactly that one row.
+        // collapse row — the pre-D-330 flat shape plus exactly that one row (D-331 keeps it
+        // byte-identical to the D-330 expanded form).
         val expanded =
             importReviewRenderItems(
                 view,
@@ -618,12 +618,13 @@ class P503ImportReviewRenderItemsTest {
     }
 
     /**
-     * B6 group-card paging batch (D-280, P704GP-ACC-COUNT-01): while the card shows only the landed
-     * keyset prefix, the header and footer still disclose the WHOLE-group total from the count
-     * query (page.totalCount), never the landed count the card happens to list.
+     * B6 group-card paging batch (D-280, P704GP-ACC-COUNT-01): while the card lists ZERO member
+     * rows by default (D-331), the header and footer still disclose the WHOLE-group total from
+     * the count query (page.totalCount), never a landed count — and the 查看全部 entry's count
+     * binds to the same whole-group total.
      */
     @Test
-    fun thePagedGroupCardDisclosesTheWholeGroupTotalWhileListingOnlyTheLandedPrefix() {
+    fun thePagedGroupCardDisclosesTheWholeGroupTotalWhileListingZeroMemberRowsByDefault() {
         val landed =
             ImportDuplicateGroupDispositionPage(
                 inputRef = "pick-handle-1",
@@ -649,7 +650,7 @@ class P503ImportReviewRenderItemsTest {
             )
         val header = items.filterIsInstance<ImportReviewRenderItem.GroupDispositionCardHeader>().single()
         assertEquals(20_001, header.itemCount)
-        // The rendered header copy says 共 20001 条 even though two items are listed.
+        // The rendered header copy says 共 20001 条 even though zero member rows are listed.
         assertTrue(groupDispositionCardHeaderDisclosure(header.itemCount).endsWith("共 20001 条。"))
         // The batch switch's description carries the same whole-group count.
         assertEquals(
@@ -658,23 +659,30 @@ class P503ImportReviewRenderItemsTest {
         )
         val footer = items.filterIsInstance<ImportReviewRenderItem.GroupDispositionCardFooter>().single()
         assertEquals(20_001, footer.itemCount)
-        // The card itself lists only the landed prefix (the page's items, in order), under the
-        // D-330 bounded default form.
+        // D-331: the default form lists ZERO member rows — the landed keyset prefix stays out
+        // of the render tree until the user's one action.
         val groupItems = items.filterIsInstance<ImportReviewRenderItem.GroupDispositionItem>()
-        assertEquals(landed.items, groupItems.map { it.state })
-        assertEquals(2, groupItems.size)
-        // D-330: the whole group exceeds what the card lists, so the entry row renders with the
-        // rows NOT currently listed — the whole-group total minus the listed prefix (the landed
-        // 2 rows here, the bound's worth once the prefix fills). The count's 口径 is the same
-        // totalCount the header/footer bind to, computed dynamically (never a frozen literal).
+        assertEquals(0, groupItems.size)
+        // D-331: the entry row renders (totalCount > 0) and its count = totalCount — the exact
+        // number of rows the one 查看全部 action lists, truthful while later pages are still
+        // landing (the totalCount source, never a landed count, keeps the copy from jittering:
+        // the D-330 §2.3a finding ② carried over the coupling change).
         val viewAll = items.filterIsInstance<ImportReviewRenderItem.GroupCardViewAllRows>().single()
-        assertEquals(20_001 - 2, viewAll.beyondCount)
+        assertEquals(20_001, viewAll.beyondCount)
         assertEquals(20_001, viewAll.totalCount)
-        assertEquals("查看全部 ${20_001 - 2} 条", groupCardViewAllRowsText(viewAll.beyondCount))
+        assertEquals("查看全部 20001 条", groupCardViewAllRowsText(viewAll.beyondCount))
         assertEquals("查看全部组成员行：整组共 20001 条，逐条列出", groupCardViewAllRowsDescription(viewAll.totalCount))
-        // D-330 V-3: the member rows keep the keyset prefix order — the bound neither truncates
-        // the payload nor reorders it (the full list is one 查看全部 action away).
-        assertEquals(landed.items.map { it.item.duplicateCandidateId }, groupItems.map { it.state.item.duplicateCandidateId })
+        // D-330 V-3 / D-331: the payload is neither truncated nor reordered — the expanded form
+        // lists the landed keyset prefix in order (P704GP-ACC-ORDER-01).
+        val expanded =
+            importReviewRenderItems(
+                ImportReviewView(rows = listOf(row("dup-a", duplicateStatus = ImportDuplicateStatus.DEFERRED)), groupDisposition = landed),
+                ImportPlatformKind.ANDROID,
+                groupCardRowsExpanded = true,
+            )
+        val expandedItems = expanded.filterIsInstance<ImportReviewRenderItem.GroupDispositionItem>()
+        assertEquals(landed.items, expandedItems.map { it.state })
+        assertEquals(landed.items.map { it.item.duplicateCandidateId }, expandedItems.map { it.state.item.duplicateCandidateId })
     }
 
     /**
@@ -730,6 +738,10 @@ class P503ImportReviewRenderItemsTest {
             importReviewRenderItems(
                 ImportReviewView(rows = listOf(row("dup-a", duplicateStatus = ImportDuplicateStatus.DEFERRED)), groupDisposition = page),
                 ImportPlatformKind.ANDROID,
+                // D-331: the default form emits ZERO member rows (the b6 regression disposition);
+                // this test pins the landed-ordinal/identity contract of the member ITEM itself,
+                // which the EXPANDED arm carries (the collapsed arm would rightly emit none).
+                groupCardRowsExpanded = true,
             )
         val groupItems = items.filterIsInstance<ImportReviewRenderItem.GroupDispositionItem>()
         assertEquals(2, groupItems.size)
@@ -856,15 +868,15 @@ class P503ImportReviewRenderItemsTest {
     }
 
     /**
-     * D-330 cap pin (Q1 案 C): a fully landed 10,000-item disposition page renders the BOUNDED
-     * default form — exactly one header + the [IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS] keyset
-     * prefix + the 查看全部 entry + one footer — while the header/footer counts stay the
-     * WHOLE-group total. Zero payload loss: the remainder is reachable through the entry (one
-     * action lists every landed row), and the entry's count uses the dynamic whole-group
-     * overflow, never a frozen literal.
+     * D-331 zero-member-row cap pin: a fully landed 10,000-item disposition page renders the
+     * ZERO-MEMBER-ROW default form — exactly one header + the 查看全部 entry (totalCount > 0) +
+     * one footer — while the header/footer counts stay the WHOLE-group total. Zero payload
+     * loss: every landed row is reachable through the entry (one action lists every landed
+     * row), and the entry's count is the dynamic whole-group total (D-331's totalCount
+     * coupling — no prefix subtraction, never a frozen literal).
      */
     @Test
-    fun capScaleGroupDispositionRendersTheBoundedPrefixAndTheViewAllEntryByDefault() {
+    fun capScaleGroupDispositionRendersZeroMemberRowsAndTheViewAllEntryByDefault() {
         val page =
             ImportDuplicateGroupDispositionPage(
                 inputRef = "pick-handle-1",
@@ -892,13 +904,12 @@ class P503ImportReviewRenderItemsTest {
         // header) + the FIVE-entry Android format matrix (P8-04 i2 D-13 added self-entry-xlsx) +
         // the session block (1 header + 2 summary lines + 1 record line) + 1 disposition
         // affordance button (D-327: before the session block) + the 10,000 candidate rows + the
-        // card's 1 header + the bounded prefix + the view-all entry + 1 footer.
+        // card's 1 header + the 查看全部 entry + 1 footer — the ZERO-MEMBER-ROW default form
+        // (D-331: 1 + 1 + 1, no in-viewport member rows in the preamble).
         val staticSections = 6
         val sessionBlock = 1 + importIntakeSessionLines(view.lastIntakeSession!!).size + 1
         val affordance = 1
-        val cardBlock = 1 + IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS + 1 + 1
-        // No frozen literal here: the bounded card block is defined by the constant, and a K
-        // change must not silently invalidate this pin (the mutable-form literal lesson).
+        val cardBlock = 1 + 1 + 1
         assertEquals(
             staticSections + importFormatEntries(ImportPlatformKind.ANDROID).size + sessionBlock + 10_000 + affordance + cardBlock,
             items.size,
@@ -906,7 +917,8 @@ class P503ImportReviewRenderItemsTest {
         // D-327 + D-330 hoist order: the affordance leads the whole list body; the card header
         // rides directly after it and BEFORE the session summary's record lines (review P1: the
         // 200-record disclosure block would otherwise bury the header below the never-scrolling
-        // await's reach); the bounded prefix follows the header in page order.
+        // await's reach); D-331: the entry row follows the header directly — the card lists no
+        // member rows in the default form.
         val buttonIndex = items.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionButton }
         val headerIndex = items.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionCardHeader }
         val firstRecordLineIndex = items.indexOfFirst { it is ImportReviewRenderItem.IntakeRecordLine }
@@ -914,39 +926,41 @@ class P503ImportReviewRenderItemsTest {
         assertTrue(headerIndex > buttonIndex, "the card header follows the affordance")
         assertTrue(headerIndex < firstRecordLineIndex, "the card header precedes the record lines (D-330 hoist, review P1)")
         assertEquals(ImportReviewRenderItem.GroupDispositionCardHeader("pick-handle-1", 10_000), items[headerIndex])
-        // The prefix: exactly the bound's worth of rows, in the landed keyset order, never
-        // reordered — the first, last and count all pin the prefix contract.
-        val groupItems = items.filterIsInstance<ImportReviewRenderItem.GroupDispositionItem>()
-        assertEquals(IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS, groupItems.size)
-        assertEquals(page.items.take(IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS), groupItems.map { it.state })
+        // The ZERO-member-row default: no GroupDispositionItem renders at all — the in-viewport
+        // measure/layout cost (the b6 regression's mechanism, P503ImportReview.kt member rows)
+        // is exactly what D-331 removes. The landed rows are NOT truncated in the model: the
+        // expanded form (pinned below / in the rig-shape test) lists every one of them.
         assertEquals(
-            (0 until IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS).map { "group-disposition-item:dup-" + it.toString().padStart(5, '0') },
-            groupItems.map { it.stableKey },
+            0,
+            items.filterIsInstance<ImportReviewRenderItem.GroupDispositionItem>().size,
+            "the default form emits zero member rows (D-331)",
         )
-        // The entry row: whole-group overflow, computed dynamically (not a frozen literal).
+        assertTrue(
+            items.none { it is ImportReviewRenderItem.GroupCardCollapseRows },
+            "the default form has no collapse row",
+        )
+        // The entry row: the WHOLE-group total (D-331 totalCount coupling — no prefix
+        // subtraction), computed dynamically (not a frozen literal).
         val viewAllIndex = items.indexOfFirst { it is ImportReviewRenderItem.GroupCardViewAllRows }
         val viewAll = assertIs<ImportReviewRenderItem.GroupCardViewAllRows>(items[viewAllIndex])
-        assertEquals(10_000 - IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS, viewAll.beyondCount)
+        assertEquals(10_000, viewAll.beyondCount)
         assertEquals(10_000, viewAll.totalCount)
-        assertEquals(headerIndex + 1 + IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS, viewAllIndex, "the entry follows the prefix")
-        assertEquals(
-            "查看全部 ${10_000 - IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS} 条",
-            groupCardViewAllRowsText(viewAll.beyondCount),
-        )
+        assertEquals(headerIndex + 1, viewAllIndex, "the entry follows the header directly (zero member rows)")
+        assertEquals("查看全部 10000 条", groupCardViewAllRowsText(viewAll.beyondCount))
         // The footer keeps the whole-group count.
         val footerIndex = items.indexOfFirst { it is ImportReviewRenderItem.GroupDispositionCardFooter }
         val firstCandidateIndex = items.indexOfFirst { it is ImportReviewRenderItem.CandidateItem }
         assertEquals(headerIndex + cardBlock - 1, footerIndex, "the entry row sits directly before the footer")
         assertTrue(footerIndex >= 0 && footerIndex < firstCandidateIndex)
         assertEquals(10_000, (items[footerIndex] as ImportReviewRenderItem.GroupDispositionCardFooter).itemCount)
-        // Every key stays pairwise distinct across the whole bounded-form list.
+        // Every key stays pairwise distinct across the whole default-form list.
         val keys = items.map { it.stableKey }
         assertEquals(keys.size, keys.toSet().size)
         // The expanded form of the SAME page lays out every landed row (zero loss) — asserted in
         // the dedicated 99,600-shape test below.
         assertTrue(
             importReviewRenderItems(view, ImportPlatformKind.ANDROID, groupCardRowsExpanded = true).size > items.size,
-            "expanding adds the remaining landed rows beyond the bounded default form",
+            "expanding adds the remaining landed rows beyond the zero-member-row default form",
         )
     }
 
@@ -1009,14 +1023,14 @@ class P503ImportReviewRenderItemsTest {
     }
 
     /**
-     * D-330 reset pin (Q2 恒默认有界不记忆): the production initial decision is the BOUNDED form
-     * — every (re)open starts bounded, nothing carries the expanded state across rounds. The
-     * composable owns the remember(reset) wiring; this layer pins the named decision the
-     * remember sources from (the initialGroupComparisonExpansion precedent).
+     * D-330 reset pin (Q2, recoupled by D-331 as 恒默认零行不记忆): the production initial decision is the (D-331)
+     * ZERO-MEMBER-ROW form — every (re)open starts with it, nothing carries the expanded state
+     * across rounds. The composable owns the remember(reset) wiring; this layer pins the named
+     * decision the remember sources from (the initialGroupComparisonExpansion precedent).
      */
     @Test
     fun theGroupCardRowsExpansionDefaultsToBoundedOnEveryOpen() {
-        assertFalse(initialGroupCardRowsExpanded(), "the bounded form is the only initial state — never remembered")
+        assertFalse(initialGroupCardRowsExpanded(), "the zero-member-row form is the only initial state — never remembered")
     }
 
     @Test

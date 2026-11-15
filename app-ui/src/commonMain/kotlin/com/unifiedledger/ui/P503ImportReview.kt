@@ -452,13 +452,14 @@ internal fun P503ImportScreen(
     // presentation state: no reducer event, no persistence, no accounting semantics.
     val openGroupInputRef = view?.groupDisposition?.inputRef
     var comparisonExpansion by remember(openGroupInputRef) { mutableStateOf(initialGroupComparisonExpansion()) }
-    // D-330 (Q1 案 C / Q2 恒默认有界不记忆): the card's member rows start BOUNDED (the first
-    // IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS landed rows plus the 查看全部 entry) and expand only
-    // after the user's one action; the expanded state is presentation-local with the same
-    // comparisonExpansion discipline — remember keyed on the card handle, so closing the card or
-    // a new pick session handle resets it to the bounded default on the next (re)open. No reducer
-    // event, no persistence, no view field. The comparison duty above is untouched: when the rows
-    // are listed (bounded prefix or expanded), their comparison payloads still default to fully
+    // D-330 (Q1 案 C / Q2, recoupled by D-331 as 恒默认零行不记忆): the card's member rows start
+    // with the ZERO-MEMBER-ROW default (header + the 查看全部 entry + footer — the retired
+    // D-330 bounded prefix's in-viewport measure cost broke P704GP-D-PERF-01 on the b6 shape)
+    // and expand only after the user's one action; the expanded state is presentation-local with
+    // the same comparisonExpansion discipline — remember keyed on the card handle, so closing the
+    // card or a new pick session handle resets it to the zero-row default on the next (re)open.
+    // No reducer event, no persistence, no view field. The comparison duty above is untouched:
+    // when the rows are listed (expanded), their comparison payloads still default to fully
     // expanded — bounding the LIST is a render-tree measure, not a payload disclosure change.
     var groupCardRowsExpanded by remember(openGroupInputRef) { mutableStateOf(initialGroupCardRowsExpanded()) }
     // P8-04 i1 (D-11): the render gate IS the callback's presence — a null-wired composition
@@ -668,10 +669,11 @@ private fun ImportReviewOverviewItem(
                 // A-VIS (J1, R1; re-anchored D-330 Q3): the frozen 执行前逐条列出 duty is about
                 // the payload's REACHABILITY — every comparison text stays reachable in full,
                 // never truncated, never silently dropped — not about the system pre-listing
-                // every row by default. The card's member rows are bounded by default (D-330)
-                // and one user action (查看全部) lists every row one by one; within the listed
-                // rows the comparisons still default to fully expanded, and this switch remains
-                // the user's own density reduction — 收起 all, then 展开 all again.
+                // every row by default. The card lists ZERO member rows by default (D-331; the
+                // D-330 bounded prefix is retired with the b6 regression it caused) and one user
+                // action (查看全部) lists every row one by one; within the listed rows the
+                // comparisons still default to fully expanded, and this switch remains the
+                // user's own density reduction — 收起 all, then 展开 all again.
                 val collapsedAll = comparisonExpansion.allCollapsed(groupDuplicateCandidateIds)
                 TextButton(
                     onClick = onToggleAllComparisons,
@@ -705,12 +707,15 @@ private fun ImportReviewOverviewItem(
         ImportReviewRenderItem.GroupCardCollapseRows -> {
             Spacer(Modifier.height(4.dp))
             // D-330: the exact reverse affordance (展开后可收回, Q1/Q2 闭合项) — back to the
-            // bounded default. J4: a dedicated, described control.
+            // default form. D-331: the default is the zero-member-row shape, and the copy
+            // names NO count (review P1-2: the restore-count constant is retired with its
+            // 0-vs-200 ambiguity — the copy states the effect without one). J4: a dedicated,
+            // described control.
             TextButton(
                 onClick = onCollapseGroupCardRows,
                 modifier =
                     Modifier.semantics {
-                        contentDescription = groupCardCollapseRowsDescription(IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS)
+                        contentDescription = groupCardCollapseRowsDescription()
                     },
             ) {
                 Text(groupCardCollapseRowsText())
