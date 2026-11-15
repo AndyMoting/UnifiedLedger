@@ -181,6 +181,7 @@ class ReadableExportRealLedgerReconciliationTest {
 
         val database: LedgerDatabase = LedgerDatabase(driver)
         val ledgerId = LedgerId("ledger-p805-reconciliation-harness")
+        val clock = LedgerClock { Instant.parse("2026-11-15T02:00:00Z") }
         val readAdapter = SqlDelightLedgerCurrentStateReadAdapter(database)
         val creationEntries = SqlDelightCreationEntryBatchReader(database)
         val catalogStore = SqlDelightCatalogStore(database, driver)
