@@ -1190,6 +1190,92 @@ class P503ImportReviewReducerTest {
         assertNull(closed.importReview?.groupDisposition)
     }
 
+    /**
+     * D-333 landing decouple, outcomes hop: rows = null means "this event carries no rows" — the
+     * previous rows are kept AND the notice is left untouched (never fabricated: only an
+     * [ImportReviewRowsResult.Unavailable] payload may surface ReviewReadFailed). The verdicts
+     * still land (可见部分成功, rig run 43707047398: outcomes were computed but invisible behind
+     * the whole-list re-read).
+     */
+    @Test
+    fun aNullRowsDispositionResultKeepsThePreviousRowsAndNoticeWhileLandingTheOutcomes() {
+        val source = overview(session = acceptedSession(), notice = ImportReviewNotice.ReviewReadFailed)
+        val item = ImportDuplicateGroupDispositionItem(ImportCandidateId("candidate-suspected"), ImportDuplicateCandidateId("duplicate-1"), "{\"amount_minor\":3580}", "sha256:fixed-fingerprint-duplicate-1")
+        val opened =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(source, P503UiEvent.StartImportDuplicateGroupDisposition("pick-handle-1", listOf(item), totalCount = 1)),
+            )
+        val outcome = ImportDuplicateGroupItemOutcome(ImportDuplicateCandidateId("duplicate-1"), ImportDuplicateGroupItemResult.Reviewed(ImportDuplicateStatus.CONFIRMED_DUPLICATE))
+        val landed =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(opened, P503UiEvent.ImportDuplicateGroupDispositionResult(listOf(outcome), null)),
+            )
+        val page = landed.importReview?.groupDisposition
+        val verdict = assertIs<ImportDuplicateGroupItemResult.Reviewed>(page?.items?.single()?.outcome)
+        assertEquals(ImportDuplicateStatus.CONFIRMED_DUPLICATE, verdict.outcome)
+        // rows = null keeps the previous rows exactly.
+        assertEquals(source.importReview?.rows, landed.importReview?.rows)
+        // rows = null never touches the notice — the pre-existing banner survives as-is.
+        assertEquals(ImportReviewNotice.ReviewReadFailed, landed.importReview?.notice)
+    }
+
+    /**
+     * D-333 landing decouple, rows hop: outcomes = emptyList() is the landing-only event by
+     * convention — the firstOrNull merge matches nothing, so zero item verdicts are overwritten
+     * (idempotent) while the fresh rows land and a previous banner clears (a Rows payload, F1).
+     */
+    @Test
+    fun anEmptyOutcomesRowsLandingWritesOnlyTheRowsWithZeroOutcomeOverwrites() {
+        val source = overview(session = acceptedSession(), notice = ImportReviewNotice.ReviewReadFailed)
+        val item = ImportDuplicateGroupDispositionItem(ImportCandidateId("candidate-suspected"), ImportDuplicateCandidateId("duplicate-1"), "{\"amount_minor\":3580}", "sha256:fixed-fingerprint-duplicate-1")
+        val opened =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(source, P503UiEvent.StartImportDuplicateGroupDisposition("pick-handle-1", listOf(item), totalCount = 1)),
+            )
+        // Give the item a verdict first (the outcomes hop has landed).
+        val reviewed =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(opened, P503UiEvent.ImportDuplicateGroupDispositionResult(listOf(ImportDuplicateGroupItemOutcome(ImportDuplicateCandidateId("duplicate-1"), ImportDuplicateGroupItemResult.Reviewed(ImportDuplicateStatus.CONFIRMED_DUPLICATE))), null)),
+            )
+        // The rows hop: fresh rows, no outcomes.
+        val landed =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(reviewed, P503UiEvent.ImportDuplicateGroupDispositionResult(emptyList(), ImportReviewRowsResult.Rows(listOf(retainableRow)))),
+            )
+        // The verdict survives untouched.
+        val verdict = assertIs<ImportDuplicateGroupItemResult.Reviewed>(landed.importReview?.groupDisposition?.items?.single()?.outcome)
+        assertEquals(ImportDuplicateStatus.CONFIRMED_DUPLICATE, verdict.outcome)
+        // The rows land and the banner clears (a Rows payload, F1 unchanged).
+        assertEquals(listOf(retainableRow), landed.importReview?.rows)
+        assertNull(landed.importReview?.notice)
+    }
+
+    /**
+     * Regression pin (pre-D-333 F1 semantics, unchanged): rows = Unavailable keeps the previous
+     * rows AND surfaces the typed ReviewReadFailed banner — the Unavailable branch is distinct
+     * from the D-333 null carrier, which never fabricates a notice.
+     */
+    @Test
+    fun anUnavailableRowsDispositionResultKeepsTheRowsAndSurfacesReviewReadFailed() {
+        val source = overview(session = acceptedSession())
+        val item = ImportDuplicateGroupDispositionItem(ImportCandidateId("candidate-suspected"), ImportDuplicateCandidateId("duplicate-1"), "{\"amount_minor\":3580}", "sha256:fixed-fingerprint-duplicate-1")
+        val opened =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(source, P503UiEvent.StartImportDuplicateGroupDisposition("pick-handle-1", listOf(item), totalCount = 1)),
+            )
+        val outcome = ImportDuplicateGroupItemOutcome(ImportDuplicateCandidateId("duplicate-1"), ImportDuplicateGroupItemResult.Reviewed(ImportDuplicateStatus.CONFIRMED_DUPLICATE))
+        val landed =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(opened, P503UiEvent.ImportDuplicateGroupDispositionResult(listOf(outcome), ImportReviewRowsResult.Unavailable)),
+            )
+        // F1: the previous rows are preserved and the banner is raised.
+        assertEquals(source.importReview?.rows, landed.importReview?.rows)
+        assertEquals(ImportReviewNotice.ReviewReadFailed, landed.importReview?.notice)
+        // The verdict still lands (可见部分成功 is independent of the row-read outcome).
+        val verdict = assertIs<ImportDuplicateGroupItemResult.Reviewed>(landed.importReview?.groupDisposition?.items?.single()?.outcome)
+        assertEquals(ImportDuplicateStatus.CONFIRMED_DUPLICATE, verdict.outcome)
+    }
+
     @Test
     fun groupDispositionEventsWithoutAProjectionOrPageAreAbsorbed() {
         val bare = P503AppState.OverviewEmpty(emptyState)

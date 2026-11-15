@@ -2389,6 +2389,14 @@ class P503ReducerImpl(
      * [ImportDuplicateGroupItemResult.Reviewed] is never overwritten by a later result — the host
      * loop never re-submits a Reviewed item, and this merge keeps the guard at the state layer too
      * (a spurious late outcome for an already-succeeded item cannot relabel it 失败).
+     *
+     * D-333 landing decouple: the host dispatches this event in TWO hops. The outcomes hop carries
+     * rows = null — "this event carries no rows": the previous rows AND the notice are kept
+     * untouched. That is distinct from [ImportReviewRowsResult.Unavailable], which means the
+     * re-read FAILED and must surface the typed banner (F1). The rows-landing hop carries
+     * outcomes = emptyList(): an EMPTY outcomes list is the landing-only event by convention —
+     * the firstOrNull merge below matches nothing, so zero items are overwritten (idempotent)
+     * while the fresh rows land.
      */
     private fun reduceImportGroupDispositionResult(
         state: P503AppState.OverviewEmpty,
@@ -2406,6 +2414,8 @@ class P503ReducerImpl(
                     else -> itemState.copy(outcome = outcome.result)
                 }
             }
+        // D-333: rows = null (the outcomes hop) and Unavailable (F1: 读失败不篡改) both keep
+        // the previous rows; only a Rows payload replaces them.
         val nextRows =
             if (event.rows is com.unifiedledger.application.ImportReviewRowsResult.Rows) {
                 event.rows.rows
@@ -2413,10 +2423,13 @@ class P503ReducerImpl(
                 view.rows
             }
         val notice =
-            if (event.rows is com.unifiedledger.application.ImportReviewRowsResult.Unavailable) {
-                ImportReviewNotice.ReviewReadFailed
-            } else {
-                null
+            when (event.rows) {
+                // D-333: null = the outcomes hop carries no row-read information — the notice is
+                // preserved as-is, never fabricated (ReviewReadFailed is the Unavailable signal
+                // only); a Rows landing clears the banner (F1, unchanged).
+                null -> view.notice
+                is com.unifiedledger.application.ImportReviewRowsResult.Unavailable -> ImportReviewNotice.ReviewReadFailed
+                else -> null
             }
         return state.copy(
             importReview =

@@ -3097,7 +3097,14 @@ fun P503App(
                         StartupTrace.emit("group.round lease kind=denied")
                         enumerationFailed = true
                     }
-                } catch (failure: Exception) {
+                } catch (failure: Throwable) {
+                    // D-330 robustness carryover (approved checkpoint D-330 row): catching
+                    // Throwable instead of Exception means an Error (e.g. an OOM from a huge
+                    // cursor window) is no longer silently swallowed into enumerationFailed —
+                    // the round would lie about a failed read being merely "failed". Only
+                    // cancellation rethrows (the coroutine machinery must stay intact); every
+                    // other Throwable marks the round failed exactly as before.
+                    if (failure is kotlinx.coroutines.CancellationException) throw failure
                     enumerationFailed = true
                 } finally {
                     // Back on the main dispatcher: release the slot and dispatch the round's END in
@@ -3233,28 +3240,56 @@ fun P503App(
                         outcomes.clear()
                     }
                 } finally {
-                    // A-PERF: the landing rows re-read runs OFF the UI thread in this outer
-                    // `Dispatchers.Default` block (the same off-thread discipline as the
-                    // enumeration/intake landings) — a paged import-review read (up to the
-                    // 10,000-candidate batch) on the main dispatcher is exactly the ANR-class
-                    // pattern the P7-04 read-governance batch removed. Only the single-flight
-                    // release and the serial dispatch hop to the main dispatcher.
-                    // P704D-SPEC-03 (leak prevention): the read is failure-safe — a throw degrades
-                    // to the same typed [ImportReviewRowsResult.Unavailable] the null path already
-                    // produces, so the `finally` can never abort BEFORE the slot release below
-                    // (a throwing read would otherwise strand the single-flight slot permanently).
-                    val rows =
-                        runCatching { ledger.probe { facade -> facade.queryImportReviewRows?.query(ledger.ledgerId) } }
-                            .getOrNull()
-                            ?: ImportReviewRowsResult.Unavailable
-                    // Back on the main dispatcher: release the slot and dispatch serially.
+                    // D-333 landing decouple (rig run 43707047398): the pre-D-333 finally read the
+                    // WHOLE review list (queryImportReviewRows on a 422MB ledger: >520s, never
+                    // finished) BEFORE any dispatch, so the already-computed outcomes stayed
+                    // invisible for the entire read — an implementation deviation from the
+                    // approved D-280 §3.3.1 可见部分成功 semantics. The landing is now TWO hops:
+                    //
+                    // FIRST hop (main dispatcher): release the single-flight slot and land the
+                    // outcomes immediately with rows = null ("this event carries no rows" — the
+                    // reducer keeps the previous rows and raises no notice). The slot release
+                    // STAYS paired with this hop, NOT with the slow row re-read below: a
+                    // 500k-item re-read must never hold the disposition single-flight slot.
+                    //
+                    // SECOND hop (async, failure-safe): the same whole-list row re-read, moved
+                    // AFTER the outcomes landing — still off the UI thread in this outer
+                    // `Dispatchers.Default` context (the A-PERF discipline: a paged
+                    // import-review read on the main dispatcher is exactly the ANR-class
+                    // pattern the P7-04 read-governance batch removed). The read keeps its
+                    // failure-safe form (runCatching → getOrNull → typed Unavailable): a throw
+                    // can no longer strand the single-flight slot (it was released in the
+                    // first hop), but it would still abort BEFORE the rows dispatch, so the
+                    // typed Unavailable degrades the landing to "rows unchanged + banner" (F1).
+                    // When the read completes, the main dispatcher lands rows = the re-read
+                    // result with outcomes = emptyList() — the landing-only event (zero
+                    // outcome overwrites; the reducer's firstOrNull merge matches nothing).
+                    //
+                    // Stale-generation guard (pre-D-333 semantics, now on BOTH hops): the
+                    // original single dispatch checked the generation before dispatching and
+                    // dropped the payload entirely; split apart, each hop re-checks and drops
+                    // its own payload — a stale generation still discards everything,
+                    // outcomes hop included.
                     scope.launch {
                         coordinator.importGroupDispositionCompleted()
                         if (loopGeneration != null && !ledger.isCurrentGeneration(loopGeneration)) {
                             // Stale generation: discard the disposition payload entirely.
                             return@launch
                         }
-                        dispatch(P503UiEvent.ImportDuplicateGroupDispositionResult(outcomes.toList(), rows))
+                        dispatch(P503UiEvent.ImportDuplicateGroupDispositionResult(outcomes.toList(), null))
+                    }
+                    scope.launch(Dispatchers.Default) {
+                        val rows =
+                            runCatching { ledger.probe { facade -> facade.queryImportReviewRows?.query(ledger.ledgerId) } }
+                                .getOrNull()
+                                ?: ImportReviewRowsResult.Unavailable
+                        scope.launch {
+                            if (loopGeneration != null && !ledger.isCurrentGeneration(loopGeneration)) {
+                                // Stale generation: discard the rows landing entirely.
+                                return@launch
+                            }
+                            dispatch(P503UiEvent.ImportDuplicateGroupDispositionResult(emptyList(), rows))
+                        }
                     }
                 }
             }
