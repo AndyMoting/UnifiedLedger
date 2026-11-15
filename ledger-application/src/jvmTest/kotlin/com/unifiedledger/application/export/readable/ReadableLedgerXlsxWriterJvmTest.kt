@@ -21,7 +21,6 @@ import com.unifiedledger.domain.CategoryKind
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerCatalog
-import com.unifiedledger.domain.LedgerId as DomainLedgerId
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.Posting
 import com.unifiedledger.domain.PostingId
@@ -40,6 +39,8 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
+import com.unifiedledger.domain.LedgerId as DomainLedgerId
+
 /**
  * P8-05 批 a (V-1/V-2/V-5; D-331 spec §5): the streaming writer's structure and round-trip
  * evidence, driven end-to-end through the REAL [ReadableLedgerExport] use case, the REAL
@@ -666,7 +667,7 @@ class ReadableLedgerXlsxWriterJvmTest {
         return records
     }
 
-    private val CNY = CurrencyUnit("CNY", 2)
+    private val cny = CurrencyUnit("CNY", 2)
 
     private fun expenseRow(
         transactionId: String,
@@ -710,6 +711,7 @@ class ReadableLedgerXlsxWriterJvmTest {
     /** The catalog behind the presentation groups; `acc-ghost` has NO row (the placeholder vector). */
     private fun groupCatalog(): LedgerCatalog {
         val ledger = DomainLedgerId("ledger-readable-export")
+
         fun account(
             id: String,
             kind: AccountKind,
@@ -719,11 +721,12 @@ class ReadableLedgerXlsxWriterJvmTest {
                 id = AccountId(id),
                 ledgerId = ledger,
                 kind = kind,
-                currency = CNY,
+                currency = cny,
                 ownedByUser = true,
                 realAccount = kind != AccountKind.EXPENSE && kind != AccountKind.INCOME && kind != AccountKind.EQUITY,
                 name = name,
             )
+
         fun leafCategory(
             id: String,
             parent: String,
