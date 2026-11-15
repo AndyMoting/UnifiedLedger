@@ -16,8 +16,8 @@ import com.unifiedledger.domain.CategoryKind
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerCatalog
-import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.Posting
 import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.TransactionId
