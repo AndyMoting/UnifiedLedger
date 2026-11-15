@@ -41,3 +41,7 @@ rig 改动不跑测试（CI 裁决，零本机执行纪律）。顺载项：枚�
 ## 5. 实施后修订（D-334，2026-11-16）
 
 rig 第七跑（run `43727676294`，证据 `local/artifacts/maxrig-43727676294/`）判定本设计生效：group_disposition 首次 PASS（outcome-hit @202.8s，探针实测 待处置→已标记：CONFIRMED_DUPLICATE 演进），主链首次走到 batch_confirmation——该段 180s 相位预算耗尽于 `edge(last = true)` 的降级步行（异常栈 tick 检查 ← `AndroidScaleUi.scroll` → `settle`），归因 §3 展开腿把 50k 成员行铺开后未收尾。修订（D-334 本批）：group_disposition stage 结束前加折叠收尾腿——点卡块领位「收起成员行」行（`groupCardCollapseRowsText`，`查看全部` 的精确逆操作；非 header 的「收起全部比较信息」toggle，那只折叠行内比较文本），守卫式 `ui.has`+`ui.click` 与展开腿同形制，miss 由下游 edge 裁决。收起态即 D-331 零成员行形态，batch 段底边 walk 回 `scrollToPosition` 快路。
+
+## 6. D-335 停位点探针（2026-11-16）
+
+rig 第八跑 attempt 2（run `43741730054`，证据 `local/artifacts/maxrig-43741730054-a2/`）里 batch_confirmation 的 `ui.seek("进入批量确认", forward = false)` 80 步反向全程未命中，仅凭该结果两臂不可分辨：批量入口行从未渲染（selection 被上游 hop 清空），或 `scrollToPosition` 停位点高于真实列表底（a11y rowCount 口径 ≠ 真实内容）。判别器是停位点的视口文本 dump（`parkHasEntry`/`parkTexts` 两个 evidence 键，2000 字符截断）：dump 含「进入批量确认」→ 嫌疑转向 seek 自身漏检（第三臂）；行区可见而无入口 → 停位失真；列表尾既无行也无入口 → 入口未渲染。零行为改动：探针只读视口文本，其后 seek 的方向、步数、谓词一字不动。
