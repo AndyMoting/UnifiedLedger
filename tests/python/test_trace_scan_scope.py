@@ -165,22 +165,27 @@ class MessageExemptionManifest(unittest.TestCase):
         self.assertIn("trace-scan: exempted 1 historical message hit(s)", completed.stderr)
 
     def test_only_the_registered_sha_is_exempt(self):
+        # The registered 'f...' commit does not exist in this history, so the
+        # setUp trailer commit stays unexempted and must be reported verbatim,
+        # including its own SHA prefix: no exemption, no redaction.
         sha = self.exempted_sha()
         self.write_manifest(f"{'f' * 40} a different commit\n")
         completed = run_scan(self.repo, None)
         self.assertEqual(completed.returncode, 1, completed.stderr)
         self.assertIn("Git history messages", completed.stderr)
-        self.assertNotIn(sha[:12], completed.stderr)
+        self.assertIn(sha[:12], completed.stderr)
 
     def test_a_subject_hit_on_an_exempt_commit_is_exempt_too(self):
         # The block-level exemption covers the whole message (subject + body);
-        # a subject hit must not leak through the filter.
+        # a subject hit must not leak through the filter. The setUp trailer
+        # commit is registered alongside it: every hit in the fixture is
+        # exempt, so the count line describes both and stderr stays clean.
         sha = self.exempted_sha()
         marker_commit = commit(self.repo, {"docs/next2.md": "clean\n"}, f"mentions {MARKER} in subject")
-        self.write_manifest(f"{marker_commit} subject hit exempted\n")
+        self.write_manifest(f"{sha} parallel-session trailer\n{marker_commit} subject hit exempted\n")
         completed = run_scan(self.repo, None)
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertIn("exempted 1 historical message hit(s)", completed.stderr)
+        self.assertIn("exempted 2 historical message hit(s)", completed.stderr)
         self.assertNotIn(marker_commit[:12], completed.stderr)
         self.assertNotIn(sha[:12], completed.stderr)
 

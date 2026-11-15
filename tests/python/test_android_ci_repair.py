@@ -1548,9 +1548,13 @@ class ApkProvenance(unittest.TestCase):
             if "/runs/456" in path:
                 return bound_run
             return self.run
-        with patch.object(apks, "api", side_effect=routing), self.assertRaises(ValueError):
+        with patch.object(apks, "api", side_effect=routing), self.assertRaises(ValueError) as caught:
             apks.reuse(self.repo, self.tree, self.root / "download")
-        self.assertFalse((self.root / "download").exists())
+        # Pin the fault to the check_source trust verdict itself: a future
+        # regression that reshapes it into a prefilter-skippable miss would
+        # change this message. The staging directory stays behind by design —
+        # only the UnboundProducer arm of the reuse loop removes it.
+        self.assertIn("untrusted APK producer workflow", str(caught.exception))
 
     def test_check_source_reports_unbound_as_the_dedicated_type(self):
         # The dedicated type keeps the reuse-loop skip precise: it subclasses
