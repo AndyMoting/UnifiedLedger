@@ -587,7 +587,7 @@ class P503ImportReviewPresentationTest {
 
     @Test
     fun groupCardRowsEntryAndCollapseCopyCarryTheWholeGroupSemantics() {
-        // D-330 (Q1 案 C, the J4 discipline): the 查看全部 entry names the WHOLE-group overflow it
+        // D-330 (Q1 案 C, the J4 discipline): the 查看全部 entry names the WHOLE-group count it
         // reveals, and the collapse control names the restore-to-default effect. Both labels are
         // pure functions of the counts they describe — never frozen literals.
         assertEquals("查看全部 49800 条", groupCardViewAllRowsText(49_800))
@@ -595,11 +595,14 @@ class P503ImportReviewPresentationTest {
         assertEquals("查看全部 1 条", groupCardViewAllRowsText(1))
         assertEquals("查看全部组成员行：整组共 50000 条，逐条列出", groupCardViewAllRowsDescription(50_000))
         assertEquals("收起成员行", groupCardCollapseRowsText())
-        assertEquals("收起组成员行：回到默认前 200 行", groupCardCollapseRowsDescription(IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS))
-        // The initial member-row form is the BOUNDED default — the named production decision the
-        // composable's remember sources from (Q2: 恒默认有界、不记忆, the
+        // D-331: the restored default is the ZERO-member-row shape, so the copy's count reads
+        // the named constant's value at its single call site (P503ImportReview.kt) — the pinned
+        // value here is that same source value, keeping the pin and the wiring in lockstep.
+        assertEquals("收起组成员行：回到默认前 0 行", groupCardCollapseRowsDescription(IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS))
+        // The initial member-row form is the ZERO-MEMBER-ROW default — the named production
+        // decision the composable's remember sources from (Q2: 恒默认有界、不记忆, the
         // initialGroupComparisonExpansion precedent).
-        assertFalse(initialGroupCardRowsExpanded(), "the card starts bounded on every (re)open — never remembered")
+        assertFalse(initialGroupCardRowsExpanded(), "the card starts in the zero-member-row form on every (re)open — never remembered")
     }
 
     // ---- possibly-existing source facts copy (P704C-SPEC-04; spec section 4.5.4) ----

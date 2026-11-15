@@ -357,6 +357,126 @@ class AndroidScaleLongInstrumentedTest {
         }
     }
 
+    /**
+     * D-331 deliverable 2 — the group-mark OUTCOME-visibility probe (run 43642845302: the
+     * 确认整组标记 click succeeded, then the `已标记：CONFIRMED_DUPLICATE` await timed out at its
+     * default 120s with the failure forensics' viewport parked inside the card's member-row
+     * region and targetHit=false). The open question the probe answers: do the 50,000 per-item
+     * outcomes render FIRST-ITEM-IMMEDIATELY (a viewport problem) or in a WHOLE-LIST CADENCE (a
+     * measurement problem)? Measurement-only, the D-328 [GroupCardAwaitProbe] discipline: the
+     * probe changes no predicate, click, or product behavior; the call site alone raises this
+     * await's ceiling to 600s (measured, inside the 5,400s stage budget).
+     *
+     * Trace (`scale.groupMark`, the [GROUP_ENUM_TRACE_TAG] tag so the round's existing ULStartup
+     * grep covers it):
+     * - `click accepted` — test-owned, emitted at construction right after the click.
+     * - `round ended outcome=<outcome-hit|await-timeout|await-error> firstHitMs=<n>` — test-owned,
+     *   emitted by [end] on both the hit and the rethrown-failure paths; `firstHitMs` is the
+     *   sample walk's own first sighting of the outcome row (absent → the walk stayed blind, the
+     *   same walk-vs-predicate divergence evidence the D-328 probe records).
+     *
+     * Evidence capture: each sample holds the top window's visible lines containing the outcome
+     * row's three copy forms (待处置 / 已标记： / 失败) with their per-form counts, at most one
+     * sample per [GROUP_AWAIT_SAMPLE_INTERVAL_MS], under the evidence key `groupMarkOutcomeSamples`;
+     * `firstOutcomeHitMs` is its own evidence key. `end` adds a final sample on every path, so the
+     * decisive rendered text lives through a timeout (the stage's `save()` in its finally persists
+     * it). Only rendered copy is quoted — never an inputRef or user data.
+     *
+     * Containment: [onPoll] never ticks (the wait owns the deadline) and swallows every
+     * observation failure so it cannot replace the wait's own outcome; [end] is equally contained
+     * because it runs on the rethrow path and must not mask the original failure.
+     */
+    private class GroupMarkOutcomeProbe(
+        private val ui: AndroidScaleUi,
+        private val evidence: JSONObject,
+    ) {
+        private val startedMs = SystemClock.elapsedRealtime()
+        private val samples = JSONArray()
+        private var lastSampleMs = 0L
+        private var firstOutcomeHitMs = -1L
+
+        init {
+            // Test-owned milestone: the click was dispatched (the reverse seek already ran
+            // before the probe is constructed).
+            Log.i(GROUP_ENUM_TRACE_TAG, "scale.groupMark click accepted")
+        }
+
+        /** The top target window's visible outcome-copy lines, viewport-sized, with counts. */
+        private fun sampleLines(): Pair<String, JSONObject> {
+            val lines = ui.visibleTexts(ui.root()).filter { line -> line.contains("待处置") || line.startsWith("已标记：") || line.startsWith("失败") }
+            val counts = JSONObject()
+            var pending = 0
+            var marked = 0
+            var failed = 0
+            lines.forEach { line ->
+                when {
+                    line.contains("待处置") -> pending++
+                    line.startsWith("已标记：") -> marked++
+                    else -> failed++
+                }
+            }
+            counts.put("pending", pending).put("marked", marked).put("failed", failed)
+            return lines.joinToString("|") to counts
+        }
+
+        fun onPoll() {
+            val elapsed = SystemClock.elapsedRealtime() - startedMs
+            try {
+                val (joined, counts) = sampleLines()
+                if (firstOutcomeHitMs < 0 && counts.optInt("marked") > 0) {
+                    firstOutcomeHitMs = elapsed
+                    Log.i(GROUP_ENUM_TRACE_TAG, "scale.groupMark first outcome row ms=$elapsed source=onPoll inferred")
+                }
+                if (elapsed - lastSampleMs >= GROUP_AWAIT_SAMPLE_INTERVAL_MS) {
+                    lastSampleMs = elapsed
+                    samples.put(
+                        JSONObject()
+                            .put("atMs", elapsed)
+                            .put("text", if (joined.isEmpty()) "none" else joined.take(2000))
+                            .put("counts", counts),
+                    )
+                    evidence.put("groupMarkOutcomeSamples", samples)
+                }
+            } catch (failure: Throwable) {
+                Log.i(GROUP_ENUM_TRACE_TAG, "scale.groupMark sample failed ms=$elapsed causeClass=${failure::class.simpleName}")
+            }
+        }
+
+        /** Final capture plus the round-ended trace; never throws (runs on the rethrow path). */
+        fun end(outcome: String) {
+            val elapsed = SystemClock.elapsedRealtime() - startedMs
+            try {
+                val (joined, counts) =
+                    try {
+                        sampleLines()
+                    } catch (failure: Throwable) {
+                        Log.i(GROUP_ENUM_TRACE_TAG, "scale.groupMark final sample failed ms=$elapsed causeClass=${failure::class.simpleName}")
+                        "" to JSONObject().put("pending", 0).put("marked", 0).put("failed", 0)
+                    }
+                samples
+                    .put(
+                        JSONObject()
+                            .put("atMs", elapsed)
+                            .put("text", if (joined.isEmpty()) "none" else joined.take(2000))
+                            .put("counts", counts)
+                            .put("final", true),
+                    )
+                evidence.put("groupMarkOutcomeSamples", samples)
+                if (firstOutcomeHitMs >= 0) {
+                    evidence.put("firstOutcomeHitMs", firstOutcomeHitMs)
+                }
+            } catch (failure: Throwable) {
+                Log.i(GROUP_ENUM_TRACE_TAG, "scale.groupMark end capture failed ms=$elapsed causeClass=${failure::class.simpleName}")
+            }
+            // The walk's own first-sighting verdict: when the judging predicate (ui.has, with
+            // its cache-reset recovery) succeeded while this walk never saw the outcome row,
+            // the divergence itself is evidence of the a11y blind spot — record it via
+            // firstHitMs=-1 on the round-ended row (the D-328 walk-verdict precedent).
+            val firstHitMs = if (firstOutcomeHitMs >= 0) firstOutcomeHitMs else -1L
+            Log.i(GROUP_ENUM_TRACE_TAG, "scale.groupMark round ended ms=$elapsed outcome=$outcome firstHitMs=$firstHitMs")
+        }
+    }
+
     private fun openGraph(): CloseableLedgerGraph =
         openAndroidStableStorageLedger(
             context,
@@ -862,7 +982,33 @@ class AndroidScaleLongInstrumentedTest {
             // render and burned the stage budget. Verify the submission by
             // its rendered outcome; the acceptance-grade relation equality
             // runs in reopen() against the oracle.
-            ui.await(120000) { ui.has("已标记：CONFIRMED_DUPLICATE") }
+            // D-331 deliverable 2 — the outcome-visibility probe (run
+            // 43642845302's open question): this await hit its old default
+            // 120s ceiling with the failure forensics' viewport parked in the
+            // card's member-row region and targetHit=false, and the open
+            // question was whether the 50,000 per-item outcomes render
+            // FIRST-ITEM-IMMEDIATELY (a viewport problem) or in a WHOLE-LIST
+            // CADENCE (a measurement problem). The probe below re-applies the
+            // D-328 GroupCardAwaitProbe discipline (onPoll samples, evidence
+            // keys, ULStartup round trace); the wait ceiling rises to 600s to
+            // MEASURE the real outcome latency — inside group_disposition's
+            // 5,400s stage budget, every other await keeps its default. The
+            // predicate is the exact pre-probe one, one character untouched.
+            val groupMarkProbe = GroupMarkOutcomeProbe(ui, evidence)
+            try {
+                ui.await(timeout = 600_000, onPoll = groupMarkProbe::onPoll) {
+                    ui.has("已标记：CONFIRMED_DUPLICATE")
+                }
+                groupMarkProbe.end("outcome-hit")
+            } catch (failure: Throwable) {
+                val outcome =
+                    when {
+                        failure is IllegalStateException && failure.message == "UI condition deadline exceeded" -> "await-timeout"
+                        else -> "await-error"
+                    }
+                groupMarkProbe.end(outcome)
+                throw failure
+            }
             evidence.put("groupMarkOutcomeSeen", true)
             // D-217 round 20 (evidence33): the card stays open — the
             // 进入批量确认 button remains in the list with the card open, and a
