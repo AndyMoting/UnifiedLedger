@@ -1073,6 +1073,23 @@ class AndroidScaleLongInstrumentedTest {
             // 关闭 click on a stale node can navigate clean off the review
             // list (the run ended on the import root screen).
             evidence.put("mainGroupRelations", spec.newSessionDuplicateRelations).put("groupDispositions", spec.newSessionDuplicateRelations)
+            // D-334 collapse handoff (run 43727676294): the expansion above exists only
+            // for the probe's viewport sampling. Leaving it composed strands the NEXT
+            // stage's bottom-edge walk in the degraded gesture loop over 50k member rows
+            // (batch_confirmation burned its whole 180s phase budget inside
+            // edge(last=true) -> scroll -> settle). Restore the collapsed zero-member-row
+            // shape before the stage ends: the collapse affordance is the card's leading
+            // 收起成员行 row (groupCardCollapseRowsText — the exact inverse of the 查看全部
+            // entry row, NOT the header's 收起全部比较信息 toggle, which folds the per-row
+            // comparison text only), and after the collapse the bottom edge returns to the
+            // fast scrollToPosition path the earlier stages already use. The row composes
+            // only while the member list is expanded, so the guarded shape mirrors the
+            // expansion leg above — the presence probe is also the already-collapsed skip,
+            // and a miss leaves the verdict to the next stage's edge walk (assertions
+            // live downstream).
+            if (ui.has("收起成员行", prefix = true)) {
+                ui.click("收起成员行", prefix = true)
+            }
         }
         stage("batch_confirmation") {
             ui.edge(last = true)
