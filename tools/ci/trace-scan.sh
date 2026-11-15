@@ -181,18 +181,23 @@ load_message_exemptions() {
 # Drop the message blocks of exempted commits from `git log --format=
 # '%H%x09%s%x09%b'` output. Each block starts at a `40-hex<TAB>` line; the
 # grep happens AFTER this filter, so the pattern, the format and every
-# non-exempt commit are untouched. Prints the count of dropped blocks.
+# non-exempt commit are untouched. One process, two channels: the kept
+# blocks are written to the file passed via `-v out=...` (awk keeps one
+# `>` redirect per filename open for the whole run, so writes append and
+# never re-truncate), while the count of dropped blocks is printed on
+# stdout for the caller's command substitution. A failing awk returns
+# non-zero so the caller's fatal guard fires.
 filter_message_exemptions() {
-    awk -v exempt="$EXEMPT_SHA_SET" '
+    awk -v exempt="$EXEMPT_SHA_SET" -v out="$TMP_OUT.filtered" '
         BEGIN { split(exempt, list, "\n"); for (i in list) set[list[i]] = 1; dropped = 0 }
         /^[0-9a-fA-F]{40}\t/ {
             sha = tolower(substr($0, 1, 40))
             in_exempt = (sha in set) ? 1 : 0
             if (in_exempt) dropped++
         }
-        !in_exempt { print }
-        END { print dropped > "/dev/stderr" }
-    ' "$1"
+        !in_exempt { print > out }
+        END { print dropped }
+    ' "$1" || return 1
 }
 
 # Narrow the history scans to the commits of one pull request when
@@ -255,11 +260,17 @@ scan_history_messages() {
         # Block-level exemption (scan 2 only): drop the exempted commits'
         # message blocks BEFORE the grep. The pattern and the format are
         # untouched; non-exempt commits keep the exact legacy behavior.
+        # The awk writes the kept blocks to a side file and reports the
+        # dropped count on stdout, so the capture stays a bare number; the
+        # filtered file replaces TMP_OUT only after the awk succeeded.
+        rm -f "$TMP_OUT.filtered"
         dropped="$(filter_message_exemptions "$TMP_OUT")" ||
             fatal "Awk failed during the message exemption filter."
         if [ "${dropped:-0}" -gt 0 ]; then
             echo "trace-scan: exempted $dropped historical message hit(s)" >&2
         fi
+        mv "$TMP_OUT.filtered" "$TMP_OUT" ||
+            fatal "Cannot install the filtered message scan output."
     fi
     grep -i -I -E "$TRACE_PATTERN" "$TMP_OUT" > "$TMP_HITS"
     case $? in

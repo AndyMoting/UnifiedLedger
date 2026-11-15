@@ -1501,19 +1501,28 @@ class ApkProvenance(unittest.TestCase):
                 return bound_commit if "/456" in path or "456" in path else self.commit
             if "/runs/456" in path:
                 return bound_run
+            if "/pulls?" in path:
+                return [self.pr]
             return self.run
         with patch.object(apks, "api", side_effect=routing):
             self.assertTrue(apks.reuse(self.repo, self.tree, self.root / "download"))
         self.assertEqual((self.root / "download" / apks.FILES["app"]).read_bytes(), b"app")
 
     def test_unbound_is_skipped_while_a_trust_fault_still_fails(self):
-        # Only the unbound arm is a cache miss; a fork producer on the NEXT
-        # bundle must still fail the reuse step loudly.
+        # Only the unbound arm is a cache miss: the fork run is dropped by the
+        # reuse loop's pre-filters (the download-preflight `continue`), so the
+        # second bundle needs a fault that reaches `check_source`. Its
+        # manifest names a workflow that is not a trusted producer while the
+        # run itself still advertises a trusted path, so the pre-filters pass
+        # and `check_source` raises its plain-ValueError trust fault loudly.
         unbound_manifest = copy.deepcopy(self.manifest)
         unbound_manifest["pull_request"] = {"number": 42, "base_sha": "f" * 40, "head_sha": "c" * 40}
+        fault_manifest = copy.deepcopy(self.manifest)
+        fault_manifest.update(run_id=456, run_attempt=1, workflow=".github/workflows/other.yml")
         unbound = {"id": 9, "name": f"android-apks-{self.tree}-123-1", "expired": False, "workflow_run": {"id": 123}}
-        forked_run = dict(self.run, id=456, head_repository={"full_name": "foreign/ledger"})
-        forked = {"id": 10, "name": f"android-apks-{self.tree}-456-1", "expired": False, "workflow_run": {"id": 456}}
+        faulty = {"id": 10, "name": f"android-apks-{self.tree}-456-1", "expired": False, "workflow_run": {"id": 456}}
+        bound_commit = dict(self.commit, parents=[{"sha": "d" * 40}, {"sha": "c" * 40}])
+        bound_run = dict(self.run, id=456)
 
         def payload_for(manifest):
             output = io.BytesIO()
@@ -1525,17 +1534,19 @@ class ApkProvenance(unittest.TestCase):
 
         def routing(path, *, binary=False):
             if path.endswith("/zip"):
-                return payload_for(unbound_manifest)
+                return payload_for(unbound_manifest if "/artifacts/9/" in path else fault_manifest)
             if "/artifacts?" in path:
-                return {"artifacts": [unbound, forked]}
-            if "/jobs?" in path:
+                return {"artifacts": [unbound, faulty]}
+            if "/runs/123/attempts/1" in path and "/jobs" in path:
+                return {"jobs": [self.job]}
+            if "/runs/456/attempts/1" in path and "/jobs" in path:
                 return {"jobs": [self.job]}
             if "/git/commits/" in path:
-                return self.commit
-            if "/runs/123" in path:
-                return self.run
+                return bound_commit
+            if "/pulls?" in path:
+                return [self.pr]
             if "/runs/456" in path:
-                return forked_run
+                return bound_run
             return self.run
         with patch.object(apks, "api", side_effect=routing), self.assertRaises(ValueError):
             apks.reuse(self.repo, self.tree, self.root / "download")
