@@ -3,6 +3,7 @@ package com.unifiedledger.desktop
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.file.Files
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -38,8 +39,8 @@ class DesktopReadableExportTargetPortTest {
 
     /** A recording stream opener tracking close/commit-relevant state (headless, no real fsync). */
     private class RecordingOpener {
-        val closed = java.util.concurrent.atomic.AtomicBoolean(false)
-        val deleted = java.util.concurrent.atomic.AtomicBoolean(false)
+        val closed = AtomicBoolean(false)
+        val deleted = AtomicBoolean(false)
 
         fun open(temporary: File): FileOutputStream {
             Files.write(temporary.toPath(), ByteArray(0))
@@ -97,7 +98,8 @@ class DesktopReadableExportTargetPortTest {
 
         assertContentEquals(payload, target.readBytes())
         assertTrue(recorder.closed.get(), "the commit must close the temp stream before the move")
-        assertFalse(target.toPath().resolveSibling(target.name + ".tmp").toFile().exists(), "the temp file must be gone after the commit")
+        val tempAfterCommit = target.toPath().resolveSibling(target.name + ".tmp").toFile()
+        assertFalse(tempAfterCommit.exists(), "the temp file must be gone after the commit")
         assertFalse(recorder.deleted.get(), "a committed writer must not run the abandoning delete")
     }
 
@@ -122,7 +124,8 @@ class DesktopReadableExportTargetPortTest {
         writer.close()
 
         assertFalse(target.exists(), "an abandoned writer must never publish the target")
-        assertFalse(target.toPath().resolveSibling(target.name + ".tmp").toFile().exists(), "the abandoning close must delete the temp file")
+        val tempAfterAbandon = target.toPath().resolveSibling(target.name + ".tmp").toFile()
+        assertFalse(tempAfterAbandon.exists(), "the abandoning close must delete the temp file")
         assertTrue(recorder.deleted.get(), "the abandoning close must run the temp cleanup")
     }
 
