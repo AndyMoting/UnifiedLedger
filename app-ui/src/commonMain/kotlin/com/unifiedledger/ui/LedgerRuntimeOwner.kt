@@ -17,14 +17,14 @@ import com.unifiedledger.application.SummarizeLedgerActivity
 import com.unifiedledger.application.WidgetMonthlySnapshot
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
-import kotlin.concurrent.Volatile
-import kotlin.concurrent.atomics.AtomicBoolean
-import kotlin.concurrent.atomics.AtomicInt
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.YearMonth
+import kotlin.concurrent.Volatile
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicInt
 
 /*
  * P7-06 06.1 (D-176; spec `docs/specs/2026-09-24-p7-06-stable-storage-runtime-owner-design.md`
