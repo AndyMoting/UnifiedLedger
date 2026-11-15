@@ -867,10 +867,16 @@ sealed interface P503UiEvent {
      * The group disposition loop's completion: the per-item outcomes plus the refreshed list
      * (OverviewEmpty effect; a list re-read failure keeps the previous rows and surfaces the
      * typed banner, F1). Absorbed everywhere else.
+     *
+     * D-333 landing decouple: the event flies in TWO hops. The outcomes hop carries
+     * rows = null — "this event carries no rows": the reducer keeps the previous rows and
+     * raises NO notice. The rows-landing hop carries outcomes = emptyList() (zero outcome
+     * overwrites) with rows = the re-read's Rows, or Unavailable when the re-read failed
+     * (the typed banner, F1). null and Unavailable are DISTINCT: only Unavailable notifies.
      */
     data class ImportDuplicateGroupDispositionResult(
         val outcomes: List<ImportDuplicateGroupItemOutcome>,
-        val rows: com.unifiedledger.application.ImportReviewRowsResult,
+        val rows: com.unifiedledger.application.ImportReviewRowsResult?,
     ) : P503UiEvent
 
     /** Closes the group disposition page (already-disposed items stay disposed core-side). */

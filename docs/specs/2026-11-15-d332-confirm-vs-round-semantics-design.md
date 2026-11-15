@@ -1,6 +1,6 @@
 # D-332 设计门草稿——确认 × 续窗语义（拒收后的可达性）
 
-**状态：** **approved v3**（2026-11-15；用户裁决：Q1 = **③+① 组合**（footer 禁用化 + contentDescription 提示 + rig 等轮末重 click）、Q3 = **提示走 contentDescription**（可见文本不变）、Q2 不触发（②未选）、Q4 形制 = await 轮末（进度行消失谓词）→ 重 click → 原 await；v3 = 实施落地修订行 §2.3a，随实施提交落档。本规格即实施批任务书）—— draft（设计门待裁决——本文为 ignored 暂存区草稿，lead 搬运进 `docs/specs/` 并经裁决后才具规格效力）
+**状态：** **approved v3**（2026-11-15；用户裁决：Q1 = **③+① 组合**（footer 禁用化 + contentDescription 提示 + rig 等轮末重 click）、Q3 = **提示走 contentDescription**（可见文本不变）、Q2 不触发（②未选）、Q4 形制 = await 轮末（进度行消失谓词）→ 重 click → 原 await；v3 = 实施落地修订行 §2.3a，随实施提交落档。本规格即实施批任务书）
 **基树：** `551521f9`（D-331 squash #367）；本文全部 `file:line` 以该树为准。
 **指针：** `docs/PROGRESS_LOG.local.md:5338-5347`（2026-11-15 午条，含 `:5345` 晨三补读修正）、`local/artifacts/maxrig-43663940414/`（trace 全套 + 60 样本）、`local/artifacts/b6-43663937030/`（b6 gate PASS）、D-280 §3.4（拒收门设计出处，注释原文见 `P503App.kt:3151-3159`）、`docs/specs/2026-11-14-d322-count-driven-group-entry-design.md`（规格形制先例）。
 

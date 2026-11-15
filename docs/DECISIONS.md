@@ -7334,3 +7334,33 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **边界：** 入 = 规格 revision 2、三批 tracked 变更、本条。出 = 不承诺回灌、无筛选、不含作废行、不做 CSV、不碰备份容器冻结面与 06.B/06.C/06.D、不动桌面报表与 P8-06、kind 映射不回写详情页、不改 D-267 全账读纪律调用方、竞品语料只读边界。
 
 **关联决定：** D-177/D-285/D-288（备份导出契约与证据基建复用）、D-267/D-268（有界读纪律，DEF-A 面禁入）、D-097/D-138/D-271（隐私/时间语义）、D-043（双时间）、R8-05（出向半裁决点闭合）。
+
+## D-332 确认 × 轮次语义：③+① 组合（footer 禁用化 + contentDescription 提示 + rig 等轮末重 click）
+
+**状态：** approved v3 已落地（2026-11-15）。规格 docs/specs/2026-11-15-d332-confirm-vs-round-semantics-design.md（approved v3，含 §2.3a 实施批修订记录）。
+
+**背景：** rig run `43663940414`（maximum，树 `551521f9`）拒收时间线：rig click「确认整组标记」时枚举轮仅至 ~2%，拒收门（D-280 §3.4 单飞语义）静默 return；轮次 11:22:18 `Completed` 落在 await 600s 窗内，此后近 4 分钟 outcome 仍未出现——缺的不是时间，是「轮末后的第二次点击」，被拒 tap 永不重发。50k 档轮次 ~6 分钟，期间 footer 仍可点、点了无效果无提示 = 设计留白。
+
+**裁决（用户，2026-11-15）：** Q1 = **③+① 组合**（案③ in-flight footer 禁用化 + contentDescription 提示「轮次整理中，完成后可确认」，可见文本不变；案① rig 等轮末重 click）；Q3 = 提示走 contentDescription；Q2 不触发（案②确认排队未选）；Q4 = await 轮末 → 重 click → 原 outcome await。
+
+**落地形制：** footer disabled 态以 contentDescription 携带轮末标记（enabled 态无描述，a11y 面回 pre-D-332 形）；拒收门本体一字不动。rig 侧 Q4 谓词换形为 footer in-flight contentDescription 的消失（`ui.await(900_000) { !ui.has("轮次整理中，完成后可确认") }`）——「进度行消失」首谓词在 rig 调用点为空真（视口停在卡 footer，进度行不在 a11y 树内，D-330 v4 同机理）；重 click 由 disposition 单飞门 + 重跑幂等双保护。实施期发现：参数链零改动（渲染项自带字段随项传递）。
+
+**实证（rig 第六跑 max `43707047398`，树 `5c1ade4a`）：** 轮末 await 通过（~369s = 50k 轮实际时长，谓词非空真）→ 重 click 44 天来第一次被产品接受 → 处置循环 ~81s 完成 50k 项落库——D-332 链全程走通，V-2 全通路径前三段实证成立。
+
+**边界：** 入 = 规格 approved v3、app-ui footer 态 + 文案纯函数 + rig Q4 形制、本条。出 = 不改拒收门与两道单飞门、不改 await 谓词文本、不引入部分组确认（D-280 §3.4 原样）。
+
+**关联决定：** D-280（§3.4 确认语义与 §3.3.1 可见部分成功出处）、D-330/D-331（收起态呈现形制——rig 谓词可达性同源）、D-329（轮次时长读数）。
+
+## D-333 着陆解耦：组处置结果两派发形制（outcomes 先落，行重读后置异步）
+
+**状态：** approved v1 已落地（2026-11-15；用户批准「1, 2」推进后由 rig 第六跑判读直接落地）。规格 docs/specs/2026-11-15-d333-landing-decouple-design.md。
+
+**背景：** rig run `43707047398` 着陆段 600s outcome 超时（60 样本全 `none`、`firstHitMs=-1`）；stage-forensics 线程栈钉死 worker-2 卡在 confirm finally 的全量行重读（`queryImportReviewRows` 于 422MB 库，>520s 未完成）——outcomes 与 rows 捆绑在同一 `ImportDuplicateGroupDispositionResult` dispatch，重读不完成 UI 什么都看不到。outcomes 已算完却不显示 = 对 D-280 §3.3.1「可见部分成功」的实现偏离。
+
+**裁决：** 拆两次 dispatch。第一 hop（主 dispatcher）：slot 释放 + 守卫 + `dispatch(Result(outcomes, null))`——rows=null = 「本次事件不带行」，reducer 保留旧行且不设通知（与 `Unavailable` = 读失败要通知区分）；第二 hop（异步 failure-safe）：行重读原样搬进第一 hop 之后（仍 `Dispatchers.Default`，runCatching 形制不变），完成后二次 `dispatch(Result(emptyList(), rows))`——empty outcomes = landing-only，现有 firstOrNull 合并天然零覆写。两 hop 各带 stale-generation 守卫（payload 整体丢弃，与原单派发语义一致）；slot 释放保持在第一 hop（慢读不得占住单飞 slot）。事件 rows 字段变可空为机械前提。
+
+**顺载：** 枚举 catch 分流（`catch Throwable` + CancellationException rethrow，D-330 健壮性批已批项）；rig 腿 = 重 click 后经 D-330 view-all 入口行展开成员行再进原探针/await（首样本预期 待处置>0；谓词一字不动）。
+
+**验证面：** reducer 三用例钉 null-rows 保留旧行不通知 / empty-outcomes 幂等 / Unavailable 通知原样；rig 改动 CI 裁决。
+
+**关联决定：** D-280（§3.3.1 可见部分成功 + §3.4）、D-332（前置批，重 click 接受后的着陆段）、D-331/D-330（收起态与展开入口——rig 腿形制）、P7-04 读治理批（A-PERF 离线程纪律出处）。
