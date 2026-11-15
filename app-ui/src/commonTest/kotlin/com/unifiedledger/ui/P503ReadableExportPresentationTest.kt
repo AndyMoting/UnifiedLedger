@@ -159,8 +159,14 @@ class P503ReadableExportPresentationTest {
         texts.forEach { text ->
             assertFalse(text.contains(".xlsx"), text)
             assertFalse(text.contains(".tmp"), text)
-            assertFalse(text.contains("/"), text)
             assertFalse(text.contains("\\"), text)
+            // The slash ban targets PATH/URI leakage; the D-E9 frozen counting shape "N / M 笔"
+            // (:97) is the spec's own separator, so it is asserted structurally instead: the
+            // progress text may carry ONLY the counter slash, never a second one (a URI or a
+            // path would not fit that shape).
+            if (text.contains("/")) {
+                assertEquals(text, readableExportProgressText(exportedRows = 1L, totalRows = 1), "the only legal slash carrier is the frozen counting shape")
+            }
         }
     }
 }

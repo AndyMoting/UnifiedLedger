@@ -90,7 +90,9 @@ internal fun readableExportOutcomeText(outcome: ReadableLedgerExportResult?): St
         null -> null
         is ReadableLedgerExportResult.Succeeded -> "已导出 ${outcome.exportedRows} 笔。$READABLE_EXPORT_REMNANT_HINT"
         ReadableLedgerExportResult.Cancelled -> "已取消，导出未完成。$READABLE_EXPORT_REMNANT_HINT"
-        is ReadableLedgerExportResult.Failed -> "导出失败：${readableExportFailureText(outcome.reason)}"
+        // Every failure arm is already a complete sentence with its own frozen wording — a wrapper
+        // prefix here would double-prefix the banner and break the §6.4/§6.8 frozen lines.
+        is ReadableLedgerExportResult.Failed -> readableExportFailureText(outcome.reason)
     }
 
 /**

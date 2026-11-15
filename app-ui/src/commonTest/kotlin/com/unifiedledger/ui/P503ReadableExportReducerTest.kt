@@ -191,9 +191,14 @@ class P503ReadableExportReducerTest {
                 P503UiEvent.RequestReadableExportCancel,
                 P503UiEvent.ReadableExportResultLanded(ReadableLedgerExportResult.Cancelled),
                 P503UiEvent.CloseReadableExport,
-                P503UiEvent.OpenReadableExport,
             )
         events.forEach { event -> assertSame(overview, reducer.reduce(overview, event), "event $event must be absorbed on the overview") }
+        // OpenReadableExport is NOT in the absorb list on OverviewEmpty: the drawer row is its
+        // DESIGNED route there (D-E8), it transitions instead of absorbing. The transition carries
+        // the exact overview instance back out (every exit restores it).
+        val opened = reducer.reduce(overview, P503UiEvent.OpenReadableExport)
+        assertTrue(opened is P503AppState.ReadableExport, "open on the overview transitions to the readable-export surface")
+        assertSame(overview, opened.overview, "the transition must carry the exact overview instance")
     }
 
     @Test
