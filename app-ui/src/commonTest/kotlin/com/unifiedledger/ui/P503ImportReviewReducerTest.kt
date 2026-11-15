@@ -1246,8 +1246,10 @@ class P503ImportReviewReducerTest {
         val verdict =
             assertIs<ImportDuplicateGroupItemResult.Reviewed>(
                 landed
-                    .importReview?.groupDisposition
-                    ?.items?.single()
+                    .importReview
+                    ?.groupDisposition
+                    ?.items
+                    ?.single()
                     ?.outcome,
             )
         assertEquals(ImportDuplicateStatus.CONFIRMED_DUPLICATE, verdict.outcome)
@@ -1281,8 +1283,10 @@ class P503ImportReviewReducerTest {
         val verdict =
             assertIs<ImportDuplicateGroupItemResult.Reviewed>(
                 landed
-                    .importReview?.groupDisposition
-                    ?.items?.single()
+                    .importReview
+                    ?.groupDisposition
+                    ?.items
+                    ?.single()
                     ?.outcome,
             )
         assertEquals(ImportDuplicateStatus.CONFIRMED_DUPLICATE, verdict.outcome)
