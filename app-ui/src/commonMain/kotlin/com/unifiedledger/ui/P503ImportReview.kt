@@ -763,7 +763,29 @@ private fun ImportReviewOverviewItem(
         is ImportReviewRenderItem.GroupDispositionCardFooter -> {
             Spacer(Modifier.height(4.dp))
             Row {
-                Button(onClick = onGroupConfirm) { Text(groupDispositionCardFooterConfirmText()) }
+                // D-332 (approved v2, Q1 = ③+① / Q3): while the enumeration round is still
+                // landing pages, the confirm affordance is DISABLED — the visualized form of
+                // the refusal gate (P503App confirmImportDuplicateGroupDisposition), which
+                // stays untouched: the confirm is still refused until the round ends, the
+                // disabled state only makes the refusal visible BEFORE the tap (a programmatic
+                // tap path still passes the gate). The visible copy never changes (frozen
+                // 「确认整组标记」); the in-flight hint lives in contentDescription only (Q3),
+                // and the round-end state carries no description at all (the enabled button is
+                // self-explanatory — the pre-D-332 a11y face). The 关闭 button stays clickable
+                // in both states (case ③'s boundary).
+                val inFlight = item.enumerationInProgress
+                Button(
+                    onClick = onGroupConfirm,
+                    enabled = !inFlight,
+                    modifier =
+                        if (inFlight) {
+                            Modifier.semantics {
+                                contentDescription = groupDispositionCardFooterInFlightDescription()
+                            }
+                        } else {
+                            Modifier
+                        },
+                ) { Text(groupDispositionCardFooterConfirmText()) }
                 Spacer(Modifier.width(8.dp))
                 OutlinedButton(onClick = onGroupClose) { Text(groupDispositionCardFooterCloseText()) }
             }

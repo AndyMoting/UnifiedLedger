@@ -1064,4 +1064,37 @@ class P503ImportReviewRenderItemsTest {
         assertEquals(capacityRows, candidates.map { it.row })
         assertTrue(items.none { it is ImportReviewRenderItem.NoCandidatesEmptyState })
     }
+
+    /**
+     * D-332 (approved v2, Q1 = ③+① / Q3): the open card's footer carries the enumeration
+     * round's in-flight flag so the composable can disable the confirm affordance while pages
+     * are still landing — the visualized form of the D-280 §3.4 refusal gate, whose semantics
+     * stay untouched. The flag's SOURCE is exactly the progress line's one
+     * (`view.groupEnumerationInProgress`, cleared only by the round's Completed), so both the
+     * 正在整理重复组…… line and the disabled state end with the same round event.
+     */
+    @Test
+    fun theCardFooterCarriesTheEnumerationInFlightFlagBothWays() {
+        val page = groupDispositionPage()
+        val base = ImportReviewView(rows = listOf(row("dup-a", duplicateStatus = ImportDuplicateStatus.DEFERRED)), groupDisposition = page)
+        // Round end (default): the footer rides enabled with NO in-flight flag — the pre-D-332
+        // assembly is byte-identical (the default parameter keeps legacy constructions intact).
+        val roundEnded = importReviewRenderItems(base, ImportPlatformKind.ANDROID)
+        val endedFooter = roundEnded.filterIsInstance<ImportReviewRenderItem.GroupDispositionCardFooter>().single()
+        assertFalse(endedFooter.enumerationInProgress, "the round-ended footer is not in flight")
+        assertFalse(groupDispositionCardFooterConfirmText() != "确认整组标记", "the visible confirm copy stays frozen (Q3)")
+        // In flight (the continuation-window shape: the card is already open while pages land):
+        // the same flag that carries the progress line now ALSO rides the footer item.
+        val inFlight =
+            importReviewRenderItems(
+                base.copy(groupEnumerationInProgress = true),
+                ImportPlatformKind.ANDROID,
+            )
+        assertTrue(inFlight.any { it is ImportReviewRenderItem.GroupEnumerationInProgress }, "the progress line still carries the same flag")
+        val flyingFooter = inFlight.filterIsInstance<ImportReviewRenderItem.GroupDispositionCardFooter>().single()
+        assertTrue(flyingFooter.enumerationInProgress, "the in-flight footer rides the flag")
+        assertEquals(endedFooter.itemCount, flyingFooter.itemCount, "the whole-group count is untouched by the flag")
+        // The Q3 hint is a pure copy function — the render item itself stays description-free.
+        assertEquals("轮次整理中，完成后可确认", groupDispositionCardFooterInFlightDescription())
+    }
 }

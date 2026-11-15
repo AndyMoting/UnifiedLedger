@@ -795,6 +795,15 @@ internal fun groupDispositionCardHeaderSessionText(inputRef: String): String = "
 /** The confirm-button copy of the open card footer (frozen verbatim from the pre-windowing card). */
 internal fun groupDispositionCardFooterConfirmText(): String = "确认整组标记"
 
+/**
+ * The `contentDescription` of the in-flight confirm affordance (D-332 approved v2, Q3): while
+ * the enumeration round is still landing pages, the disabled confirm button names WHY it is
+ * unusable and WHEN it returns — the J4 discipline (the state lives in a dedicated, described
+ * surface). The VISIBLE text stays the frozen 「确认整组标记」 and the round-end state carries NO
+ * description (the enabled button is self-explanatory; the frozen copy face never widens).
+ */
+internal fun groupDispositionCardFooterInFlightDescription(): String = "轮次整理中，完成后可确认"
+
 /** The close-button copy of the open card footer (frozen verbatim from the pre-windowing card). */
 internal fun groupDispositionCardFooterCloseText(): String = "关闭"
 
@@ -1190,9 +1199,21 @@ internal sealed interface ImportReviewRenderItem {
         override val contentType: String = "groupCardCollapseRows"
     }
 
-    /** The footer of the open 整组确认页 card: the 确认整组标记 / 关闭 affordance row. */
+    /**
+     * The footer of the open 整组确认页 card: the 确认整组标记 / 关闭 affordance row.
+     *
+     * D-332 (approved v2, Q1 = ③+①): `enumerationInProgress` rides the render item so the
+     * composable can disable the confirm affordance while the session-level enumeration round
+     * is still landing pages — the visualized form of the D-280 §3.4 refusal gate
+     * (`P503App.kt` `confirmImportDuplicateGroupDisposition`), whose semantics stay untouched:
+     * the confirm is still refused until the round ends, the disabled state only makes the
+     * refusal visible BEFORE the tap. The visible copy never changes (frozen); the in-flight
+     * hint travels in `contentDescription` only (Q3). Default `false` keeps every pre-D-332
+     * construction rendering the exact pre-D-332 item.
+     */
     data class GroupDispositionCardFooter(
         val itemCount: Int,
+        val enumerationInProgress: Boolean = false,
     ) : ImportReviewRenderItem {
         override val stableKey: String = "group-disposition-card:footer"
         override val contentType: String = "groupDispositionCardFooter"
@@ -1413,7 +1434,16 @@ internal fun importReviewRenderItems(
                     )
             }
         }
-        items += ImportReviewRenderItem.GroupDispositionCardFooter(page.totalCount)
+        // D-332 (approved v2, Q1 = ③+①): the footer carries the enumeration round's in-flight
+        // flag — the same `view.groupEnumerationInProgress` source that carries the
+        // 正在整理重复组…… progress line (:1359, cleared only by the round's Completed). The
+        // composable disables the confirm affordance while the flag holds and re-enables it
+        // when the round clears it; the refusal gate itself (P503App confirm) stays untouched.
+        items +=
+            ImportReviewRenderItem.GroupDispositionCardFooter(
+                itemCount = page.totalCount,
+                enumerationInProgress = view.groupEnumerationInProgress,
+            )
     }
     view?.lastIntakeSession?.let { session ->
         items += ImportReviewRenderItem.IntakeSessionHeader
