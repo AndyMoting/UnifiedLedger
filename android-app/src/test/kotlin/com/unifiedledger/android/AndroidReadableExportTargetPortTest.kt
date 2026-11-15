@@ -4,6 +4,7 @@ import com.unifiedledger.ui.BackupTargetWriter
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -36,6 +37,7 @@ class AndroidReadableExportTargetPortTest {
         val flushed = CountDownLatch(1)
         val committed = CountDownLatch(1)
         val closed = CountDownLatch(1)
+
         /** The invocation order of flushAndSync/commit/close (the F-5 ordering probe). */
         val callOrder = java.util.Collections.synchronizedList(mutableListOf<String>())
 
@@ -68,7 +70,7 @@ class AndroidReadableExportTargetPortTest {
 
     /** A poster that records which thread ran the block, then runs it inline (test determinism). */
     private class RecordingPoster {
-        val posted = java.util.concurrent.atomic.AtomicReference<(() -> Unit)?>(null)
+        val posted = AtomicReference<(() -> Unit)?>(null)
 
         val post: ((() -> Unit) -> Unit) = { block ->
             posted.set(block)
