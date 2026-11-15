@@ -400,15 +400,18 @@ class P805ReadableExportDeviceChainInstrumentedTest {
             assertNotNull("$V8_PREFIX the surface marker [$text] must be present in the tree", node)
             assertTrue("$V8_PREFIX the surface marker [$text] must be visible to the user", node!!.isVisibleToUser)
         }
-        listOf(START_BUTTON_TEXT, CANCEL_BUTTON_TEXT, EXIT_BUTTON_TEXT).forEach { text ->
-            val node = markers.getValue(text)
-            // The affordance's clickability is judged structurally: Compose may keep the text on a
-            // non-clickable leaf while the click action rides an ancestor or a merged sibling (the
-            // ImportScaleTraversal ancestor-walk discipline), so the check is "a clickable node
-            // exists around the found marker", not "this exact node is clickable".
-            assertTrue("$V8_PREFIX the [$text] affordance must be clickable", clickableAround(node!!))
-            assertTrue("$V8_PREFIX the [$text] affordance must be enabled", node.isEnabled || clickableAround(node))
-        }
+        // 开始导出 / 返回 are always live affordances; 取消导出 is NOT: the registered discipline
+        // (P503ReadableExportPresentation.cancelEnabled = running && !cancelRequested) keeps the
+        // fresh-surface cancel inert (no run in flight yet), so its tree node renders but stays
+        // disabled — a structural clickability claim on it would contradict the reducer matrix
+        // (cancelIsReachableExactlyWhileARunIsInFlightAndUnrequested).
+        assertTrue("$V8_PREFIX the [$START_BUTTON_TEXT] affordance must be clickable", clickableAround(markers.getValue(START_BUTTON_TEXT)!!))
+        assertTrue("$V8_PREFIX the [$EXIT_BUTTON_TEXT] affordance must be clickable", clickableAround(markers.getValue(EXIT_BUTTON_TEXT)!!))
+        val cancelButton = markers.getValue(CANCEL_BUTTON_TEXT)!!
+        assertTrue(
+            "$V8_PREFIX the [$CANCEL_BUTTON_TEXT] affordance must be inert before any run (the registered discipline)",
+            !cancelButton.isEnabled || !clickableAround(cancelButton),
+        )
 
         // The honest pre-run face: no typed outcome banner may exist before any run landed (D-E10).
         OUTCOME_BANNER_PREFIXES.forEach { prefix ->
