@@ -122,6 +122,105 @@ class TraceScanScope(unittest.TestCase):
 
 
 @unittest.skipUnless(BASH, "bash is required by the trace gate itself")
+class MessageExemptionManifest(unittest.TestCase):
+    """The commit-message exemption mechanism (already-merged trailers only).
+
+    The manifest lives in the repository; each case rewrites it inside a
+    throwaway git repository, so the scan under test sees exactly the manifest
+    under test and the tracked-file scan stays clean. Runtime-only markers
+    keep this file itself free of trace hits.
+    """
+
+    TRAILER = "".join(["Co-authored", "-by: lead <lead@local>"])
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        git(self.repo, "init", "-q", "-b", "main")
+        self.manifest = self.repo / "tools" / "ci" / "trace-exempt-commits.txt"
+        self.manifest.parent.mkdir(parents=True, exist_ok=True)
+        self.manifest.write_text("# empty by default\n", encoding="utf-8")
+        # A clean content commit; the trailer commit below carries the marker
+        # only in its body, which the tracked-file scan never sees.
+        self.clean = commit(self.repo, {"docs/keep.md": "clean\n"}, "clean base commit")
+        commit(self.repo, {"docs/next.md": "clean\n"}, f"merge body trailer\n\n{self.TRAILER}")
+
+    def write_manifest(self, text: str) -> None:
+        self.manifest.write_text(text, encoding="utf-8")
+
+    def exempted_sha(self) -> str:
+        return git(self.repo, "rev-parse", "HEAD")
+
+    def test_without_manifest_entry_the_trailer_commit_is_red(self):
+        completed = run_scan(self.repo, None)
+        self.assertEqual(completed.returncode, 1, completed.stderr)
+        self.assertIn("Git history messages", completed.stderr)
+
+    def test_with_the_entry_the_commit_is_exempt_and_the_scan_is_green(self):
+        sha = self.exempted_sha()
+        self.write_manifest(f"{sha} D-331 parallel-session squash trailer\n")
+        completed = run_scan(self.repo, None)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("trace-scan: exempted 1 historical message hit(s)", completed.stderr)
+
+    def test_only_the_registered_sha_is_exempt(self):
+        # The registered 'f...' commit does not exist in this history, so the
+        # setUp trailer commit stays unexempted and must be reported verbatim,
+        # including its own SHA prefix: no exemption, no redaction.
+        sha = self.exempted_sha()
+        self.write_manifest(f"{'f' * 40} a different commit\n")
+        completed = run_scan(self.repo, None)
+        self.assertEqual(completed.returncode, 1, completed.stderr)
+        self.assertIn("Git history messages", completed.stderr)
+        self.assertIn(sha[:12], completed.stderr)
+
+    def test_a_subject_hit_on_an_exempt_commit_is_exempt_too(self):
+        # The block-level exemption covers the whole message (subject + body);
+        # a subject hit must not leak through the filter. The setUp trailer
+        # commit is registered alongside it: every hit in the fixture is
+        # exempt, so the count line describes both and stderr stays clean.
+        sha = self.exempted_sha()
+        marker_commit = commit(self.repo, {"docs/next2.md": "clean\n"}, f"mentions {MARKER} in subject")
+        self.write_manifest(f"{sha} parallel-session trailer\n{marker_commit} subject hit exempted\n")
+        completed = run_scan(self.repo, None)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("exempted 2 historical message hit(s)", completed.stderr)
+        self.assertNotIn(marker_commit[:12], completed.stderr)
+        self.assertNotIn(sha[:12], completed.stderr)
+
+    def test_body_trailer_line_carries_no_sha_and_still_goes_exempt(self):
+        # Regression shape for the #367 residue: the hit LINE is a bare body
+        # line (no SHA prefix), so a line-prefix filter would miss it; the
+        # block-level drop is what closes it.
+        sha = self.exempted_sha()
+        self.write_manifest(f"{sha} parallel-session trailer\n")
+        completed = run_scan(self.repo, None)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertNotIn(self.TRAILER, completed.stderr)
+
+    def test_malformed_manifest_entry_is_fatal(self):
+        self.write_manifest("not-a-sha sloppy reason\n")
+        completed = run_scan(self.repo, None)
+        self.assertEqual(completed.returncode, 2, completed.stderr)
+        self.assertIn("40-character SHA", completed.stderr)
+
+    def test_comment_only_manifest_keeps_the_gate_red(self):
+        self.write_manifest("# nothing registered\n")
+        completed = run_scan(self.repo, None)
+        self.assertEqual(completed.returncode, 1, completed.stderr)
+
+    def test_manifest_file_is_exempt_from_the_tracked_file_scan(self):
+        # The manifest itself never contains a marker, but its path must not
+        # depend on one; this case pins that the mechanism file stays invisible
+        # to the tracked-file scan even while registered content is present.
+        sha = self.exempted_sha()
+        self.write_manifest(f"{sha} D-331 parallel-session squash trailer\n")
+        completed = run_scan(self.repo, None)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+
+@unittest.skipUnless(BASH, "bash is required by the trace gate itself")
 class WholeTreeCoverage(unittest.TestCase):
     """A scoped history scan must never narrow the tracked-file scan."""
 
