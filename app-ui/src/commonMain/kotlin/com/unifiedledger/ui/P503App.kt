@@ -3098,12 +3098,14 @@ fun P503App(
                         enumerationFailed = true
                     }
                 } catch (failure: Throwable) {
-                    // D-330 robustness carryover (approved checkpoint D-330 row): catching
-                    // Throwable instead of Exception means an Error (e.g. an OOM from a huge
-                    // cursor window) is no longer silently swallowed into enumerationFailed —
-                    // the round would lie about a failed read being merely "failed". Only
-                    // cancellation rethrows (the coroutine machinery must stay intact); every
-                    // other Throwable marks the round failed exactly as before.
+                    // D-330 robustness carryover (approved checkpoint D-330 row): the pre-D-333
+                    // `catch (Exception)` let an Error (e.g. an OOM from a huge cursor window)
+                    // ESCAPE this handler — the coroutine died unhandled, the round's tail
+                    // (including the finally below) still ran, but the failure had no typed
+                    // round-end marker. Catching Throwable routes every non-cancellation
+                    // failure through the same `enumerationFailed = true` path the Exception
+                    // arm already used; only cancellation rethrows (the coroutine machinery
+                    // must stay intact).
                     if (failure is kotlinx.coroutines.CancellationException) throw failure
                     enumerationFailed = true
                 } finally {
