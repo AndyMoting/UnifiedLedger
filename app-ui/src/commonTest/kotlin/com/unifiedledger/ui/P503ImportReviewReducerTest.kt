@@ -1243,7 +1243,13 @@ class P503ImportReviewReducerTest {
                 reducer.reduce(reviewed, P503UiEvent.ImportDuplicateGroupDispositionResult(emptyList(), ImportReviewRowsResult.Rows(listOf(retainableRow)))),
             )
         // The verdict survives untouched.
-        val verdict = assertIs<ImportDuplicateGroupItemResult.Reviewed>(landed.importReview?.groupDisposition?.items?.single()?.outcome)
+        val verdict =
+            assertIs<ImportDuplicateGroupItemResult.Reviewed>(
+                landed
+                    .importReview?.groupDisposition
+                    ?.items?.single()
+                    ?.outcome,
+            )
         assertEquals(ImportDuplicateStatus.CONFIRMED_DUPLICATE, verdict.outcome)
         // The rows land and the banner clears (a Rows payload, F1 unchanged).
         assertEquals(listOf(retainableRow), landed.importReview?.rows)
@@ -1272,7 +1278,13 @@ class P503ImportReviewReducerTest {
         assertEquals(source.importReview?.rows, landed.importReview?.rows)
         assertEquals(ImportReviewNotice.ReviewReadFailed, landed.importReview?.notice)
         // The verdict still lands (可见部分成功 is independent of the row-read outcome).
-        val verdict = assertIs<ImportDuplicateGroupItemResult.Reviewed>(landed.importReview?.groupDisposition?.items?.single()?.outcome)
+        val verdict =
+            assertIs<ImportDuplicateGroupItemResult.Reviewed>(
+                landed
+                    .importReview?.groupDisposition
+                    ?.items?.single()
+                    ?.outcome,
+            )
         assertEquals(ImportDuplicateStatus.CONFIRMED_DUPLICATE, verdict.outcome)
     }
 
