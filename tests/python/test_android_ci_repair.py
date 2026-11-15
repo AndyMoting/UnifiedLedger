@@ -1431,8 +1431,11 @@ class ApkProvenance(unittest.TestCase):
                 apks.check_source(self.manifest, self.repo, 123)
             # The reuse loop surfaces the lapse as a miss, not a red step.
             self.assertFalse(apks.reuse(self.repo, self.tree, self.root / "download"))
+        # The association query targets the recorded PR head commit (a PR
+        # association hangs on the head commit), not the historical source.
+        head_sha = self.manifest["pull_request"]["head_sha"]
         paths = [call.args[0] for call in api.call_args_list]
-        self.assertIn(f"repos/{self.repo}/commits/{SHA}/pulls?per_page=100&page=1", paths)
+        self.assertIn(f"repos/{self.repo}/commits/{head_sha}/pulls?per_page=100&page=1", paths)
 
     def test_closed_unmerged_pr_remains_a_valid_historical_producer(self):
         self.run["pull_requests"] = []
