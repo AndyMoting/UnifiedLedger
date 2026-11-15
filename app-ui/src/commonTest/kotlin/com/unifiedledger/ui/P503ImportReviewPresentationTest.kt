@@ -384,6 +384,10 @@ class P503ImportReviewPresentationTest {
         assertEquals("本次会话：pick-handle-1", groupDispositionCardHeaderSessionText(inputRef = "pick-handle-1"))
         assertEquals("确认整组标记", groupDispositionCardFooterConfirmText())
         assertEquals("关闭", groupDispositionCardFooterCloseText())
+        // D-332 (approved v2, Q3): the in-flight hint lives ONLY in contentDescription — the
+        // visible confirm copy above stays frozen verbatim, and the enabled state carries no
+        // description (the round-end a11y face is the pre-D-332 one).
+        assertEquals("轮次整理中，完成后可确认", groupDispositionCardFooterInFlightDescription())
     }
 
     @Test

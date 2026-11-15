@@ -981,6 +981,38 @@ class AndroidScaleLongInstrumentedTest {
             ui.edge(last = true)
             ui.seek("确认整组标记", forward = false)
             ui.click("确认整组标记")
+            // D-332 (approved v2, Q1 = ③+①, Q4 = await 轮末 → 重 click → 原 await; run
+            // 43663940414's refusal timeline: the click at 11:16:22 was accepted BY the
+            // product's refusal gate while the enumeration round was at ~2% —
+            // ordinal ~1001/50000 — the gate silently returned with no dispatch, the round
+            // Completed at 11:22:18 inside the old await window, and the outcome still never
+            // arrived because the refused tap is never re-sent: the missing piece was the
+            // ROUND-END RE-CLICK, not time). The product side (same batch) disables the
+            // footer's confirm affordance while the round is in flight and carries the hint
+            // 「轮次整理中，完成后可确认」 in its contentDescription — and THAT description is
+            // the round-end marker this await negates. The task book's first-choice
+            // progress-line-absence predicate is VACUOUS here (implementation finding):
+            // `edge(last=true)` + the reverse seek park the viewport at the card footer, the
+            // LazyColumn composes only the visible window, and the progress line sits ABOVE
+            // the card block — off-window nodes are not in the a11y tree (the D-330 v4
+            // finding), so `!has("正在整理重复组……")` would be true-at-first-poll whether the
+            // round ran or not. The footer description IS composed at this viewport (the
+            // button itself is the seek/click target), carries the same
+            // groupEnumerationInProgress source as the progress line (assembly
+            // P503ImportReviewPresentation.kt, cleared only by the round's Completed), and its
+            // disappearance IS the round end — b6 shapes skip the wait entirely (the footer
+            // never disables: the round completed before this seek). The 900s ceiling is the
+            // explicit round allowance inside group_disposition's 5,400s stage budget
+            // (~10s consumed by the card-open await + the traversals above; the D-329 read
+            // measured a healthy 50k round at 190.8s). The re-click after the wait lands on
+            // the re-enabled affordance; the disposition single-flight gate and the
+            // Reviewed-item re-run idempotency make a redundant re-click harmless either way.
+            ui.await(timeout = 900_000) { !ui.has("轮次整理中，完成后可确认") }
+            // The Q4 re-click: the refused first tap is never re-sent by the product (the
+            // missing piece of run 43663940414), so the rig re-clicks once the footer has
+            // re-enabled — the confirm then passes the refusal gate and authorizes the whole
+            // group exactly as the D-280 §3.4 semantics intend.
+            ui.click("确认整组标记")
             // D-217 round 17 (evidence30): 确认整组标记 submits per-item and
             // the card itself renders each relation's outcome
             // (已标记：CONFIRMED_DUPLICATE, presentation-frozen copy). The
