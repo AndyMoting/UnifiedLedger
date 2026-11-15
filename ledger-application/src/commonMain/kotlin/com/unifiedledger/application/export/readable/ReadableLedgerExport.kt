@@ -49,7 +49,7 @@ open class ReadableLedgerExport(
         require(pageSize > 0) { "page size must be positive" }
     }
 
-    fun export(ledgerId: LedgerId): ReadableLedgerExportResult {
+    open fun export(ledgerId: LedgerId): ReadableLedgerExportResult {
         // Step 1: the operation lease (D-E11), released on every path.
         val lease =
             when (val acquired = leasePort.acquireLease()) {
