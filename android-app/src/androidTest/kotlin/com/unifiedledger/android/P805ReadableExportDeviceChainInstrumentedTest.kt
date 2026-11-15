@@ -27,6 +27,7 @@ import com.unifiedledger.application.export.readable.ReadableLedgerExport
 import com.unifiedledger.application.export.readable.ReadableLedgerExportFailure
 import com.unifiedledger.application.export.readable.ReadableLedgerExportProgressListener
 import com.unifiedledger.application.export.readable.ReadableLedgerExportResult
+import com.unifiedledger.application.export.readable.ReadableLedgerXlsxStreamWriter
 import com.unifiedledger.application.export.readable.parseReadableExportWallClockTextOrNull
 import com.unifiedledger.application.export.readable.readableExportAmountText
 import com.unifiedledger.application.export.readable.readableExportKindLabel
@@ -215,9 +216,13 @@ class P805ReadableExportDeviceChainInstrumentedTest {
             dataRows.map { it[2] },
         )
         assertEquals(
-            "every row's 金额 cell is the seeded amount spread through the frozen numeric text",
-            expectedAmounts,
-            dataRows.map { it[3] },
+            "every row's 金额 cell is the seeded amount spread through the frozen numeric text " +
+                "(MULTISET equality: the use case writes the PAGE order, `(statistics_at DESC, txid DESC)` per D-E1, " +
+                "while the seed formula runs over the insertion index — the two orders never coincide at the 2k or 50k tier " +
+                "(LCM(30,97)=2910 exceeds both tiers), so the position-by-position comparison would always misalign; " +
+                "the sorted lists must still hold EXACTLY the seeded amounts with no row swapped, dropped or invented)",
+            expectedAmounts.sorted(),
+            dataRows.map { it[3] }.sorted(),
         )
         assertEquals("the first data row's 金额 cell is a NUMERIC cell", BoundedXlsxReader.CellType.NUMERIC, sheet.getRow(1)!!.getCell(3)!!.type)
         assertEquals(

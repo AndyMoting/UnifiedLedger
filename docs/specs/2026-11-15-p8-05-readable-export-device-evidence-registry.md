@@ -1,6 +1,6 @@
 # P8-05 批 c 设备证据登记簿（V-8 TalkBack 语音腿 / V-9 真机编辑器腿）
 
-**状态：** active（2026-11-16，批 c 实施登记）。本文是规格 `2026-11-15-p8-05-readable-export-design.md` §6.3/§6.8 登记纪律的独立登记文件——**规格本体一字不动**，登记项按「写出器扩 part、契约不变」同族纪律落在这里。
+**状态：** active（2026-11-16，批 c 实施登记）。本文是规格 `2026-11-15-p8-05-readable-export-design.md` §6.3 设备证据登记纪律（P8-04 规格 :123 先例）的独立登记文件——**规格本体一字不动**，登记项按「写出器扩 part、契约不变」同族纪律落在这里。
 
 **依据：** 任务书批 c 落点 3（Excel/WPS 兼容腿按 §6.3 登记纪律处理）；D-331 批 c 实施批（本批）。
 
@@ -10,7 +10,7 @@
 
 **登记内容：** 「产物在设备 Excel/WPS 可打开且行数/列数正确」的真机编辑器腿（V-9 的完整证据形态）**未在本批落地**，登记为后续设备证据项。
 
-**本批先钉的 CI 腿（已完成）：** `P805ReadableExportDeviceChainInstrumentedTest#theSafFullChainExportsCommitsAndStreamsTheExactRows` 在设备上以生产 `BoundedXlsxReader`（内容解析打开器先例，`javax.xml.parsers` SAX + `java.util.zip`，双平台 JDK 面）对提交产物做结构化打开 round-trip：六 part 包结构、行数（表头 + N）、列数（恒 10）、数值单元格类型（D 列 `CellType.NUMERIC`）、inlineStr 文本逐格相等——产物结构被证明可被内容解析打开（§6.3「CI 腿先钉产物结构可被内容解析打开」的钉腿形态）。
+**本批先钉的 CI 腿（已完成）：** `P805ReadableExportDeviceChainInstrumentedTest#theSafFullChainExportsCommitsAndStreamsTheExactRows` 在设备上以生产 `BoundedXlsxReader`（内容解析打开器先例，`javax.xml.parsers` SAX + `java.util.zip`，双平台 JDK 面）对提交产物做结构化打开 round-trip：CI 腿断言的 sheet/行/列/NUMERIC/逐格事实（行数 = 表头 + N、列数恒 10、D 列 `CellType.NUMERIC`、inlineStr 文本逐格相等；六 part 恒等断言在批 a 的 `ReadableLedgerXlsxWriterJvmTest`）——产物结构被证明可被内容解析打开（§6.3「CI 腿先钉产物结构可被内容解析打开」的钉腿形态）。
 
 **缺口（登记的后续项）：** 真机 Excel/WPS 编辑器打开产物（应用可启动、工作簿可渲染、行数/列数在编辑器 UI 中正确）需要设备侧装有 Excel 或 WPS 的真机证据；CI AVD（API 36 google_apis）不带任何电子表格编辑器，仓库亦无第三方应用驱动的仪器化先例。后续落地路径 = 真机（用户设备或专用测试机）手工/半自动打开 `unifiedledger-export-*.xlsx` 产物，截图/朗读记录入证据；登记项随 P8-05 收尾批或独立设备证据批闭合。
 
@@ -38,7 +38,7 @@
 
 | # | 向量 | 本批落地 | 登记缺口 | 闭合路径 |
 | --- | --- | --- | --- | --- |
-| R1 | V-9 设备 Excel/WPS 可打开 | CI 内容解析 round-trip 钉腿（六 part/行数/列数/数值格） | 真机编辑器打开证据 | 真机手工/半自动打开产物 + 证据记录（后续批） |
+| R1 | V-9 设备 Excel/WPS 可打开 | CI 内容解析 round-trip 钉腿（sheet/行数/列数/数值格） | 真机编辑器打开证据 | 真机手工/半自动打开产物 + 证据记录（后续批） |
 | R2 | V-8 TalkBack 宣告/朗读 | CI a11y 树结构腿（入口/标记/空态） | liveRegion 播报 + 进度朗读 utterance log | 真机 TalkBack session + `ULA11Y` 形态 transcript（后续批） |
 
-**关联决定：** D-331（P8-05 设计门）；规格 §5 V-8/V-9、§6.3（兼容性无本地测试可钉）、§6.8（设备证据登记纪律）。
+**关联决定：** D-331（P8-05 设计门）；规格 §5 V-8/V-9、§6.3（兼容性无本地测试可钉；设备证据登记纪律 + P8-04 规格 :123 先例）。
