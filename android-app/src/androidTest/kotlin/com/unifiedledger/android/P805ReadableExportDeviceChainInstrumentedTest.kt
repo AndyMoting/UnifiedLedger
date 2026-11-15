@@ -190,7 +190,7 @@ class P805ReadableExportDeviceChainInstrumentedTest {
         assertEquals("the first landing is the zero/total pair taken before the target opened", 0L to tier, landings.first())
         assertEquals("the last landing carries the exact total", tier.toLong() to tier, landings.last())
         assertTrue("the exported counter must never move backwards", landings.zipWithNext().all { (a, b) -> b.first >= a.first })
-        assertTrue("a ${tier}-row walk must land more than the pre-open pair, got ${landings.size}", landings.size >= 2)
+        assertTrue("a $tier-row walk must land more than the pre-open pair, got ${landings.size}", landings.size >= 2)
 
         // The committed bytes round-trip through the production reader ON DEVICE (V-9 钉腿).
         assertTrue("the committed stream must carry bytes", sink.stream.size() > 0)
@@ -288,8 +288,14 @@ class P805ReadableExportDeviceChainInstrumentedTest {
             buildFixture(
                 tier,
                 "saf-midwrite",
-                noteOf = { _ ->
-                    P805ReadableExportDeviceFacts.NOTE_PREFIX + P805ReadableExportDeviceFacts.NOTE_UNIT.repeat(NOTE_REPEAT)
+                noteOf = { index ->
+                    // Genuinely per-row, weakly-compressible payload: the walk streams through a
+                    // DEFLATE-backed ZipOutputStream, and a row-identical repeated note collapses
+                    // under LZ77 (the 2k tier then totals far under the 1 MiB window, the drainer
+                    // never trips, and the leg reads Succeeded — the CI failure mode). A row-index
+                    // seeded hex run defeats long back-references while staying deterministic.
+                    P805ReadableExportDeviceFacts.NOTE_PREFIX +
+                        incompressibleRun(index, P805ReadableExportDeviceFacts.NOTE_REPEAT)
                 },
             )
         var port: AndroidReadableExportTargetPort<Uri>? = null
@@ -413,7 +419,7 @@ class P805ReadableExportDeviceChainInstrumentedTest {
         val flags =
             markerTexts.joinToString(separator = ",") { text ->
                 val node = markers.getValue(text)
-                "${text}:visible=${node!!.isVisibleToUser},clickable=${node.isClickable},enabled=${node.isEnabled}"
+                "$text:visible=${node!!.isVisibleToUser},clickable=${node.isClickable},enabled=${node.isEnabled}"
             }
         Log.i(TAG, "$V8_PREFIX markers[$flags] outcomeAbsent=true")
     }
@@ -519,6 +525,29 @@ class P805ReadableExportDeviceChainInstrumentedTest {
         return answer?.getLong(DRAINED_BYTES_KEY) ?: -1L
     }
 
+    /**
+     * One row's pseudo-random hex run, seeded by [index] (an xorshift so every row differs from
+     * its neighbours): hex digits keep the SQL literal and the XML text legal, the per-row seed
+     * keeps consecutive rows dissimilar enough that the DEFLATE window cannot collapse the run
+     * into one back-reference — [P805ReadableExportDeviceFacts.NOTE_REPEAT] copies of the run
+     * give each row its ~1 KiB of weakly-compressible payload the mid-walk crossing needs.
+     */
+    private fun incompressibleRun(
+        index: Int,
+        copies: Int,
+    ): String {
+        var state = (index + 1) * 0x9E3779B9.toInt()
+        val run = StringBuilder()
+        repeat(copies * 12) {
+            state = state xor (state shl 13)
+            state = state xor (state ushr 17)
+            state = state xor (state shl 5)
+            run.append("0123456789abcdef"[state and 0xF])
+            if (run.length % 4 == 0) run.append('-')
+        }
+        return run.toString()
+    }
+
     /** The process's Java-heap used size, rounded to KiB (the reading's first memory face). */
     private fun usedHeapKb(): Long = (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1024L
 
@@ -539,7 +568,15 @@ class P805ReadableExportDeviceChainInstrumentedTest {
     private fun uiAutomation(): UiAutomation = instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
 
     /** The app window's root: the one automation window whose package is the target's. */
-    private fun appRoot(): AccessibilityNodeInfo? = uiAutomation().windows.mapNotNull { it.root }.firstOrNull { it.packageName?.toString() == TARGET_PACKAGE }
+    private fun appRoot(): AccessibilityNodeInfo? {
+        // The ImportScaleTraversal shape (:324-328): this UiAutomation's windows list can lag or
+        // stay empty on a fresh activity, so the ACTIVE root is preferred when it already belongs
+        // to the app and the windows scan is only the fallback.
+        uiAutomation().rootInActiveWindow?.let { root ->
+            if (root.packageName?.toString() == TARGET_PACKAGE) return root
+        }
+        return uiAutomation().windows.mapNotNull { it.root }.firstOrNull { it.packageName?.toString() == TARGET_PACKAGE }
+    }
 
     /** Bounded breadth-first collection of one root's tree (the probe's own dump shape). */
     private fun collectNodes(root: AccessibilityNodeInfo?): List<AccessibilityNodeInfo> {
@@ -593,7 +630,7 @@ class P805ReadableExportDeviceChainInstrumentedTest {
             finder()?.let { return it }
             SystemClock.sleep(POLL_MILLIS)
         }
-        Log.i(TAG, "$label not-found within ${timeoutMillis}ms")
+        Log.i(TAG, "$label not-found within $timeoutMillis ms")
         return null
     }
 
@@ -694,12 +731,15 @@ class P805ReadableExportDeviceChainInstrumentedTest {
         /**
          * The provider's failing window, mirrored from [FailAfterBytesBackupTargetProvider.FAIL_AFTER_BYTES]
          * as a literal so a divergent value fails the drained-byte assertion instead of passing
-         * silently. The mid-write leg's ~860-byte notes over the 2k tier cross 1 MiB of sheet
-         * bytes well before the sheet closes.
+         * silently. The mid-write leg's per-row hex payload ([incompressibleRun]: 12 copies × 12
+         * hex-nibbles ≈ 0.9 KiB raw, weakly compressible since every row re-seeds) over the 2k
+         * tier crosses 1 MiB of sheet bytes well before the sheet closes — a row-identical
+         * repeated note would collapse under DEFLATE and never reach the window (the CI failure
+         * this shape replaced).
          */
         const val FAIL_AFTER_BYTES = 1024L * 1024L
 
-        /** The note unit's repeat count per row (the payload weight the mid-walk crossing needs). */
+        /** The per-row hex-run copy count (the payload weight the mid-walk crossing needs). */
         const val NOTE_REPEAT = 12
 
         /** The provider's `call` method/key pair (the D-288 cross-process evidence face). */
