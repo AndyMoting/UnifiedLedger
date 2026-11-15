@@ -180,8 +180,6 @@ import com.unifiedledger.ui.LedgerStartupResult
 import com.unifiedledger.ui.LedgerStorageFailure
 import com.unifiedledger.ui.LedgerStorageLayout
 import com.unifiedledger.ui.LedgerStorageRejectedException
-import com.unifiedledger.ui.ReadableExportFactoryBinding
-import com.unifiedledger.ui.ReadableExportGraphFactory
 import com.unifiedledger.ui.P503App
 import com.unifiedledger.ui.P503LedgerFacade
 import com.unifiedledger.ui.P503StartupScreen
@@ -191,6 +189,8 @@ import com.unifiedledger.ui.PointerMissingRecoveryState
 import com.unifiedledger.ui.PointerMissingRecoveryUseCase
 import com.unifiedledger.ui.PointerRecoveryAdoptionResult
 import com.unifiedledger.ui.PointerRecoveryDiscardResult
+import com.unifiedledger.ui.ReadableExportFactoryBinding
+import com.unifiedledger.ui.ReadableExportGraphFactory
 import com.unifiedledger.ui.RestoreHostWiring
 import com.unifiedledger.ui.RestoreIsolatedDatabasePort
 import com.unifiedledger.ui.RestorePreflightUseCase

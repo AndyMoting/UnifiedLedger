@@ -41,7 +41,6 @@ import com.unifiedledger.application.ExecuteConfirmedManualExpense
 import com.unifiedledger.application.ExecuteConfirmedManualIncome
 import com.unifiedledger.application.ExecuteConfirmedManualLending
 import com.unifiedledger.application.ExecuteConfirmedManualTransfer
-import com.unifiedledger.application.export.readable.ReadableLedgerExport
 import com.unifiedledger.application.ExecuteCorrectTransactionVersion
 import com.unifiedledger.application.ExecuteCreateCounterparty
 import com.unifiedledger.application.ExecuteImportIntake
@@ -99,6 +98,7 @@ import com.unifiedledger.application.ReviewImportDuplicateCandidate
 import com.unifiedledger.application.SaveBudgetConfiguration
 import com.unifiedledger.application.SubmitManualRefundReceipt
 import com.unifiedledger.application.TransferFlowFormalFactory
+import com.unifiedledger.application.export.readable.ReadableLedgerExport
 import com.unifiedledger.application.UpdateTransactionAnnotation
 import com.unifiedledger.application.UuidV7AnnotationRequestIdSource
 import com.unifiedledger.application.UuidV7BudgetIdSource
@@ -226,7 +226,7 @@ internal class DesktopBackupWiring(
     // P8-05 批 b (D-331 spec D-E12): the readable export's OWN save-dialog port — a separate
     // dialog flow, so the backup port's frozen suggestion stays untouched (D-E12: 两端口平台实现
     // 零改动) and the two exports never share one chooser.
-    val readableExportTargetPort: BackupTargetPort = DesktopReadableExportTargetPort(::showSwingSaveFileChooser),
+    val readableExportTargetPort: DesktopReadableExportTargetPort = DesktopReadableExportTargetPort(::showSwingSaveFileChooser),
     val crypto: BackupCryptoPrimitives = JvmBackupCryptoPrimitives(),
     val newToken: () -> String = { randomUuidText() },
 )

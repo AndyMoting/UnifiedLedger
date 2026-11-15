@@ -36,6 +36,8 @@ class AndroidReadableExportTargetPortTest {
         val flushed = CountDownLatch(1)
         val committed = CountDownLatch(1)
         val closed = CountDownLatch(1)
+        /** The invocation order of flushAndSync/commit/close (the F-5 ordering probe). */
+        val callOrder = java.util.Collections.synchronizedList(mutableListOf<String>())
 
         fun asWriter(sink: ByteArrayOutputStream): BackupTargetWriter =
             object : BackupTargetWriter {
@@ -48,14 +50,17 @@ class AndroidReadableExportTargetPortTest {
                 }
 
                 override fun flushAndSync() {
+                    callOrder += "flushAndSync"
                     flushed.countDown()
                 }
 
                 override fun commit() {
+                    callOrder += "commit"
                     committed.countDown()
                 }
 
                 override fun close() {
+                    callOrder += "close"
                     closed.countDown()
                 }
             }
@@ -139,6 +144,10 @@ class AndroidReadableExportTargetPortTest {
         assertTrue(recorder.flushed.await(2, TimeUnit.SECONDS), "commit must flushAndSync BEFORE the target commit")
         assertTrue(recorder.committed.await(2, TimeUnit.SECONDS), "commit must reach the target's commit exactly once")
         assertFalse(recorder.closed.await(100, TimeUnit.MILLISECONDS), "a committed close must not close the target again")
+        // F-5: the two latches above both fire on this synchronous call path, so they pin the
+        // REACH of flushAndSync/commit but not their ORDER; the recorded invocation sequence pins
+        // the D-E12 fold order itself — flushAndSync strictly before the target's commit.
+        assertEquals(listOf("flushAndSync", "commit"), recorder.callOrder)
     }
 
     @Test

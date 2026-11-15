@@ -231,6 +231,59 @@ class P503ReadableExportHostPipelineTest {
         assertEquals(99, reportedTotalRows)
     }
 
+    @Test
+    fun theProgressDispatchHopsOntoTheScopeDispatcherNotTheExportWorker() {
+        // F-1 fix (the KDoc's decision 2): the use case invokes the listener on the export
+        // worker, but the progress dispatch (a multi-field state write) must run on the scope
+        // (composition main) dispatcher. The decisive shape mirrors the result-hop assertion:
+        // if the scope.launch hop is removed, the recorded thread reverts to the export worker
+        // (a Default worker) and this goes red.
+        val exportThreads = mutableListOf<String>()
+        val progressThreads = mutableListOf<String>()
+        val landed = CompletableDeferred<ReadableLedgerExportResult>()
+        val scopeDispatcher = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "test-main-scope").apply { isDaemon = true } }
+
+        try {
+            runBlocking {
+                val scope = CoroutineScope(scopeDispatcher.asCoroutineDispatcher())
+                runReadableExport(
+                    scope = scope,
+                    generation = 1,
+                    request = request(),
+                    newExport = { _, progressListener ->
+                        progressListener?.onProgress(exportedRows = 7L, totalRows = 9)
+                        exportRecordingThread(exportThreads, ReadableLedgerExportResult.Cancelled)
+                    },
+                    cancelRequested = { false },
+                    isCurrentGeneration = { true },
+                    onProgress = { _, _ ->
+                        progressThreads += Thread.currentThread().name
+                    },
+                    land = { landed.complete(it) },
+                )
+                assertTrue(withTimeoutOrNull(30_000) { landed.await() } != null, "the result did not land")
+            }
+        } finally {
+            scopeDispatcher.shutdownNow()
+        }
+
+        assertEquals(1, progressThreads.size)
+        val progressThread = progressThreads.single()
+        val exportThread = exportThreads.single()
+        assertTrue(
+            progressThread.startsWith("test-main-scope"),
+            "the progress dispatch must hop onto the scope dispatcher, was $progressThread",
+        )
+        assertFalse(
+            progressThread == exportThread,
+            "the progress dispatch must not run on the export worker thread, was $progressThread",
+        )
+        assertFalse(
+            progressThread.startsWith("Default"),
+            "the progress dispatch must never run on a Default worker, was $progressThread",
+        )
+    }
+
     private fun request(): ReadableExportRequest = ReadableExportRequest(com.unifiedledger.domain.LedgerId("ledger-local-test"))
 }
 

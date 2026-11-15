@@ -6086,7 +6086,9 @@ internal fun runBackupExport(
  *    work in the flow);
  * 2. the D-E9 progress landings and the typed result hop back onto the composition's main
  *    dispatcher ([scope]'s context) before they dispatch (the P704C-SPEC-01/QUAL-02 serial-write
- *    rule);
+ *    rule): the use case invokes the progress listener synchronously on its export thread, so the
+ *    listener HOPS through [scope.launch] and the dispatch (a multi-field state write) runs on the
+ *    composition main dispatcher, never on the worker;
  * 3. a result captured under a superseded generation is DISCARDED ([isCurrentGeneration]);
  * 4. a throwing export still lands a typed [ReadableLedgerExportResult.Failed] instead of
  *    stranding the surface `running` (the runBackupExport decision): an escaped throw is mapped to
@@ -6110,10 +6112,15 @@ internal fun runReadableExport(
             try {
                 // The cancellation/progress faces are CONSTRUCTOR parameters of the batch-a use
                 // case; the platform factory wires its own sink bridge plus whatever this run
-                // passes in (one concrete use case per run — no cross-run state).
+                // passes in (one concrete use case per run — no cross-run state). The listener
+                // body hops onto [scope]'s dispatcher: the use case calls it on the export
+                // worker, and the progress dispatch (a multi-field state write) must run on the
+                // composition main dispatcher (decision 2 above).
                 newExport(
                     ReadableExportCancellation { cancelRequested() },
-                    ReadableLedgerExportProgressListener { exportedRows, totalRows -> onProgress(exportedRows, totalRows) },
+                    ReadableLedgerExportProgressListener { exportedRows, totalRows ->
+                        scope.launch { onProgress(exportedRows, totalRows) }
+                    },
                 ).export(request.ledgerId)
             } catch (failure: Throwable) {
                 ReadableLedgerExportResult.Failed(ReadableLedgerExportFailure.WRITE_FAILED)

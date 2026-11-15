@@ -111,6 +111,6 @@ internal fun readableExportFailureText(reason: ReadableLedgerExportFailure): Str
         ReadableLedgerExportFailure.RUNTIME_NOT_READY -> "账本未就绪，未开始导出。"
         ReadableLedgerExportFailure.READ_FAILED -> "读取账目失败，导出未完成。$READABLE_EXPORT_REMNANT_HINT"
         ReadableLedgerExportFailure.WRITE_FAILED -> "写入导出文件失败，导出未完成。$READABLE_EXPORT_REMNANT_HINT"
-        ReadableLedgerExportFailure.NOTE_TOO_LONG -> "备注超过长度上限，导出未完成。$READABLE_EXPORT_REMNANT_HINT"
+        ReadableLedgerExportFailure.NOTE_TOO_LONG -> "备注超长，导出未完成。$READABLE_EXPORT_REMNANT_HINT"
         ReadableLedgerExportFailure.PRESENTATION_UNRESOLVED -> "存在无法确定的账目呈现，导出未完成。$READABLE_EXPORT_REMNANT_HINT"
     }

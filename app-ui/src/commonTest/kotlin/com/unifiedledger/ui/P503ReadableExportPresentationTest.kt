@@ -127,10 +127,10 @@ class P503ReadableExportPresentationTest {
 
     @Test
     fun theNoteTooLongBannerNamesTheFrozenCondition() {
-        // §6.4 (F-3 残留文案) + R6: the mid-walk over-bound note stops without commit; the banner
-        // names the condition and carries the remnant hint.
+        // §6.4 (F-3 残留文案) + §6.8 R6: the mid-walk over-bound note stops without commit; the
+        // banner names the condition in the spec's frozen wording and carries the remnant hint.
         val text = assertNotNull(readableExportOutcomeText(ReadableLedgerExportResult.Failed(ReadableLedgerExportFailure.NOTE_TOO_LONG)))
-        assertTrue(text.contains("备注"), text)
+        assertEquals("备注超长，导出未完成。可能留有不完整的文件，请删除。", text)
         assertTrue(text.contains(READABLE_EXPORT_REMNANT_HINT), text)
     }
 
