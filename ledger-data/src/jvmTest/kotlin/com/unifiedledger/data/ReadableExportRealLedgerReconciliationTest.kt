@@ -28,6 +28,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.time.Instant
+
 /**
  * P8-05 批 a real-database reconciliation (D-331 spec V-1/V-2/V-6; the
  * `B6PagedSessionReadEquivalenceTest` harness discipline — JdbcSqliteDriver + the real schema +
@@ -186,8 +187,7 @@ class ReadableExportRealLedgerReconciliationTest {
 
         val leasePort =
             object : LedgerRuntimeLeasePort {
-                override fun acquireLease(): LedgerRuntimeLeasePortResult =
-                    LedgerRuntimeLeasePortResult.Acquired(ExportOperationLease { })
+                override fun acquireLease(): LedgerRuntimeLeasePortResult = LedgerRuntimeLeasePortResult.Acquired(ExportOperationLease { })
             }
 
         fun exportAll(pageSize: Int): ReconciliationOutcome {
