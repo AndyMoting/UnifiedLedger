@@ -51,28 +51,32 @@ import kotlin.time.Instant
  * authority this module cannot supply.
  */
 class ReadableExportRealLedgerReconciliationTest {
-    private val ledgerId = LedgerId("ledger-p805-reconciliation")
-    private val clock = LedgerClock { Instant.parse("2026-11-15T02:00:00Z") }
-
     @Test
     fun theRealDatabaseExportReconcilesRowByRowWithTheEffectivePageSource() {
         val harness = RealLedgerHarness()
         harness.seed()
         val outcome = harness.exportAll(pageSize = 3)
+        // Success is reported ONLY for Succeeded; the typed failure rides the assert message so
+        // a red CI carries the reason without any debug scaffolding.
+        assertEquals(
+            null,
+            (outcome.result as? ReadableLedgerExportResult.Failed)?.reason?.toString(),
+            "the Succeeded walk failed with: ${(outcome.result as? ReadableLedgerExportResult.Failed)?.reason}",
+        )
         val succeeded = assertIs<ReadableLedgerExportResult.Succeeded>(outcome.result)
 
         // V-1: the exported row count equals the real effectiveTransactionCount AND the walked
         // page rows; V-6: the voided transaction is in neither (it is in neither the walk nor
-        // the file, and the count excludes it).
+        // the file, and the count excludes it). Every read rides the harness ledger identity.
         val adapter = harness.readAdapter
         val walkedRows = mutableListOf<LedgerEntryRow>()
         var cursor: LedgerCurrentStateReadPort.LedgerFlowCursor? = null
         do {
-            val page = adapter.loadLedgerFlowPage(ledgerId, cursor, 3)
+            val page = adapter.loadLedgerFlowPage(harness.ledgerId, cursor, 3)
             walkedRows += page.rows
             cursor = page.nextCursor
         } while (cursor != null)
-        assertEquals(adapter.effectiveTransactionCount(ledgerId), walkedRows.size)
+        assertEquals(adapter.effectiveTransactionCount(harness.ledgerId), walkedRows.size)
         assertEquals(walkedRows.size.toLong(), succeeded.exportedRows)
         assertEquals(walkedRows.size, succeeded.totalRows)
 
@@ -170,7 +174,11 @@ class ReadableExportRealLedgerReconciliationTest {
     }
 
     private class RealLedgerHarness {
+        // The harness owns ONE ledger identity for the whole round trip (seed, export, walks);
+        // the test methods read it back instead of carrying a second id.
         val path: Path = Files.createTempFile("p805-reconciliation-", ".db").also { Files.deleteIfExists(it) }
+        val ledgerId = LedgerId("ledger-p805-reconciliation-harness")
+        val clock = LedgerClock { Instant.parse("2026-11-15T02:00:00Z") }
         val driver: SqlDriver = JdbcSqliteDriver("jdbc:sqlite:${path.absolutePathString()}")
 
         init {
@@ -180,8 +188,6 @@ class ReadableExportRealLedgerReconciliationTest {
         }
 
         val database: LedgerDatabase = LedgerDatabase(driver)
-        val ledgerId = LedgerId("ledger-p805-reconciliation-harness")
-        val clock = LedgerClock { Instant.parse("2026-11-15T02:00:00Z") }
         val readAdapter = SqlDelightLedgerCurrentStateReadAdapter(database)
         val creationEntries = SqlDelightCreationEntryBatchReader(database)
         val catalogStore = SqlDelightCatalogStore(database, driver)
