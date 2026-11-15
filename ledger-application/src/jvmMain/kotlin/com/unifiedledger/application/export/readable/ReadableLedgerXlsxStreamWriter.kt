@@ -94,6 +94,11 @@ class ReadableLedgerXlsxStreamWriter(
         closed = true
         runCatching {
             if (sheetOpen) {
+                // An abandoned half-product must still be well-formed XML: the abort-path
+                // vectors read the streamed rows back through BoundedXlsxReader, and a sheet
+                // without its epilogue is a parse error. Closing sheetData/worksheet here does
+                // NOT claim success — the target is still uncommitted and the sink is abandoned.
+                zip.write(SHEET_EPILOGUE.toByteArray(Charsets.UTF_8))
                 zip.closeEntry()
                 sheetOpen = false
             }
