@@ -555,7 +555,7 @@ class P503ImportReviewRenderItemsTest {
                     ),
             )
         val view = ImportReviewView(rows = listOf(row("dup-a", duplicateStatus = ImportDuplicateStatus.DEFERRED)), groupDisposition = page)
-        // D-330 default decision (Q2 恒默认有界), recoupled by D-331: the named initial decision
+        // D-330 default decision (Q2, recoupled by D-331 as 恒默认零行不记忆): the named initial decision
         // — not a bare literal.
         assertFalse(initialGroupCardRowsExpanded(), "the card defaults to the zero-member-row form, never remembered")
         val bounded =
@@ -872,7 +872,7 @@ class P503ImportReviewRenderItemsTest {
      * coupling — no prefix subtraction, never a frozen literal).
      */
     @Test
-    fun capScaleGroupDispositionRendersTheBoundedPrefixAndTheViewAllEntryByDefault() {
+    fun capScaleGroupDispositionRendersZeroMemberRowsAndTheViewAllEntryByDefault() {
         val page =
             ImportDuplicateGroupDispositionPage(
                 inputRef = "pick-handle-1",
@@ -1019,7 +1019,7 @@ class P503ImportReviewRenderItemsTest {
     }
 
     /**
-     * D-330 reset pin (Q2 恒默认有界不记忆): the production initial decision is the (D-331)
+     * D-330 reset pin (Q2, recoupled by D-331 as 恒默认零行不记忆): the production initial decision is the (D-331)
      * ZERO-MEMBER-ROW form — every (re)open starts with it, nothing carries the expanded state
      * across rounds. The composable owns the remember(reset) wiring; this layer pins the named
      * decision the remember sources from (the initialGroupComparisonExpansion precedent).

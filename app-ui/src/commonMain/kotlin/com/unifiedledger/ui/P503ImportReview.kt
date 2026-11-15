@@ -452,7 +452,7 @@ internal fun P503ImportScreen(
     // presentation state: no reducer event, no persistence, no accounting semantics.
     val openGroupInputRef = view?.groupDisposition?.inputRef
     var comparisonExpansion by remember(openGroupInputRef) { mutableStateOf(initialGroupComparisonExpansion()) }
-    // D-330 (Q1 案 C / Q2 恒默认有界不记忆), recoupled by D-331: the card's member rows start
+    // D-330 (Q1 案 C / Q2, recoupled by D-331 as 恒默认零行不记忆): the card's member rows start
     // with the ZERO-MEMBER-ROW default (header + the 查看全部 entry + footer — the retired
     // D-330 bounded prefix's in-viewport measure cost broke P704GP-D-PERF-01 on the b6 shape)
     // and expand only after the user's one action; the expanded state is presentation-local with
@@ -707,15 +707,15 @@ private fun ImportReviewOverviewItem(
         ImportReviewRenderItem.GroupCardCollapseRows -> {
             Spacer(Modifier.height(4.dp))
             // D-330: the exact reverse affordance (展开后可收回, Q1/Q2 闭合项) — back to the
-            // default form. D-331: the default is the zero-member-row shape, and the copy's
-            // count stays sourced from IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS (now the
-            // copy-only restore-count constant, no assembly role) so the label can never
-            // drift from the named value. J4: a dedicated, described control.
+            // default form. D-331: the default is the zero-member-row shape, and the copy
+            // names NO count (review P1-2: the restore-count constant is retired with its
+            // 0-vs-200 ambiguity — the copy states the effect without one). J4: a dedicated,
+            // described control.
             TextButton(
                 onClick = onCollapseGroupCardRows,
                 modifier =
                     Modifier.semantics {
-                        contentDescription = groupCardCollapseRowsDescription(IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS)
+                        contentDescription = groupCardCollapseRowsDescription()
                     },
             ) {
                 Text(groupCardCollapseRowsText())

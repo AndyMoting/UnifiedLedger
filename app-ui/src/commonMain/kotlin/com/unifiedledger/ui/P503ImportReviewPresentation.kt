@@ -799,28 +799,12 @@ internal fun groupDispositionCardFooterConfirmText(): String = "确认整组标�
 internal fun groupDispositionCardFooterCloseText(): String = "关闭"
 
 /**
- * D-331 (the b6 regression disposition retired the D-330 take(K) render bound): the default
- * member-row form of the open 整组确认页 card now lists ZERO member rows (header + the 查看全部
- * entry + footer), so this constant survives ONLY as the collapse control's restore-to-default
- * count ([groupCardCollapseRowsDescription], P503ImportReview.kt) — a copy-only consumer.
- * Collapsing returns to the same zero-row default the card opens with; the copy says 回到默认前 0
- * 行 and reads its value from here (no literal), so the two faces can never drift.
- *
- * The former D-330 three-bound non-derivability registration (this K vs the enumeration window
- * cap `IMPORT_REVIEW_GROUP_WINDOW_ITEMS` and the member page size
- * `IMPORT_REVIEW_GROUP_MEMBER_PAGE_SIZE`, both P503App.kt) leaves WITH the retired bound: this
- * value no longer bounds any assembly decision, and the other two bounds keep their own
- * independent B1/B4 §11 clause-2 registration in P503App.kt.
- */
-internal const val IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS = 200
-
-/**
- * D-330 (Q1 案 C / Q2 恒默认有界不记忆): the production initial member-row form of the open
- * 整组确认页 card — always the BOUNDED prefix, never remembered. The composable calls this
- * function — not a bare literal — so the always-bounded default is one named, JVM-testable
- * product decision: every card (re)open resets to it (presentation-local `remember` keyed on the
- * card handle, the comparisonExpansion precedent, P503ImportReview.kt), and no state carries the
- * previous expansion across rounds.
+ * D-330 (Q1 案 C), recoupled by D-331 (恒默认零行不记忆): the production initial member-row form
+ * of the open 整组确认页 card — always the ZERO-MEMBER-ROW shape (header + the 查看全部 entry +
+ * footer), never remembered. The composable calls this function — not a bare literal — so the
+ * zero-row default is one named, JVM-testable product decision: every card (re)open resets to it
+ * (presentation-local `remember` keyed on the card handle, the comparisonExpansion precedent,
+ * P503ImportReview.kt), and no state carries the previous expansion across rounds.
  */
 internal fun initialGroupCardRowsExpanded(): Boolean = false
 
@@ -839,11 +823,12 @@ internal fun groupCardCollapseRowsText(): String = "收起成员行"
 
 /**
  * The `contentDescription` of the post-expansion collapse row (D-330, the J4 discipline): names
- * the subject (组成员行) and the restore-to-default effect. D-331: the restored default is the
- * zero-member-row shape, and the count stays sourced from [IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS]
- * (the copy-only restore-count constant) — no frozen literal.
+ * the subject (组成员行) and the restore-to-default effect. D-331 review P1-2: the copy names NO
+ * count — the D-330 restore-count constant is retired with its 0-vs-200 ambiguity (the restored
+ * default is the zero-member-row shape; a number in this copy would re-ask which one), so the
+ * copy states the effect without one.
  */
-internal fun groupCardCollapseRowsDescription(boundedRows: Int): String = "收起组成员行：回到默认前 $boundedRows 行"
+internal fun groupCardCollapseRowsDescription(): String = "收起组成员行：回到默认打开形态"
 
 /** The subject-candidate copy of one flattened card item. */
 internal fun groupDispositionItemCandidateText(state: ImportDuplicateGroupItemState): String = "候选 ${state.item.candidateId.value}"
@@ -1002,16 +987,14 @@ internal fun groupDispositionItemOutcomeText(state: ImportDuplicateGroupItemStat
  * instead. Every flattened section — the title bar, the notice banner, the dividers, the format
  * entries, the session summary (header lines + the disclosed 200-record per-record lines), the
  * 待确认 header with its two empty states, the group headers, the candidate rows, the disposition
- * affordances, the open disposition card (D-330 bounded by default to one header + the first
- * [IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS] items + the 查看全部 entry + one footer; D-331 retired
- * that prefix bound — the default is one header + the 查看全部 entry + one footer, ZERO member
- * rows, expanding to
+ * affordances, the open disposition card (D-331 retired the D-330 prefix bound — the default is
+ * one header + the 查看全部 entry + one footer, ZERO member rows, expanding to
  * one header + the collapse row + every item + one footer on the user's one action), the
  * batch-confirm entry and the per-item batch result expansion — is one item
  * carrying a unique [stableKey] and a [contentType] reuse token. Pure projection only: no Compose
  * API and no callbacks (the composable wires the typed intents). The candidate list itself is
- * never truncated (the D-330 bound governs the CARD's member rows only, and even there the
- * remainder stays one action away — never silently dropped); the 200-record session披露 cap stays
+ * never truncated (the D-331 zero-row default governs the CARD's member rows only, and even
+ * there every row stays one action away — never silently dropped); the 200-record session披露 cap stays
  * exactly the registered display choice of [importIntakeRecordLines], reused verbatim.
  */
 internal sealed interface ImportReviewRenderItem {
@@ -1297,7 +1280,7 @@ internal fun importReviewRenderItems(
     // D-330 (Q1 案 C), recoupled by D-331: the open card's member rows expand from the
     // zero-row default. The default is the ZERO-MEMBER-ROW form — [initialGroupCardRowsExpanded],
     // the composable sources it from that named function (never a remembered preference, Q2
-    // 恒默认有界不记忆).
+    // recoupled as 恒默认零行不记忆).
     groupCardRowsExpanded: Boolean = initialGroupCardRowsExpanded(),
 ): List<ImportReviewRenderItem> {
     val items = mutableListOf<ImportReviewRenderItem>()
@@ -1395,7 +1378,7 @@ internal fun importReviewRenderItems(
         // still authorizes the whole group (the host completes the pages first, §3.4).
         items += ImportReviewRenderItem.GroupDispositionCardHeader(page.inputRef, page.totalCount)
         // D-331 (b6 regression disposition, the 2026-11-15 晨三 user-approved variant 1):
-        // the bounded default form emits ZERO member rows — header + (the entry row when the
+        // the zero-row default form emits ZERO member rows — header + (the entry row when the
         // group has rows) + footer. The D-330 take(K) prefix rode the review-P1 hoist into
         // the preamble, and the b6 rounds' 100 windows × 200 rows then paid REAL measure/
         // layout for the in-viewport member rows (4 Text + TextButton + semantics,

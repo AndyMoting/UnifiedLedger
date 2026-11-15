@@ -595,13 +595,13 @@ class P503ImportReviewPresentationTest {
         assertEquals("查看全部 1 条", groupCardViewAllRowsText(1))
         assertEquals("查看全部组成员行：整组共 50000 条，逐条列出", groupCardViewAllRowsDescription(50_000))
         assertEquals("收起成员行", groupCardCollapseRowsText())
-        // D-331: the restored default is the ZERO-member-row shape, so the copy's count reads
-        // the named constant's value at its single call site (P503ImportReview.kt) — the pinned
-        // value here is that same source value, keeping the pin and the wiring in lockstep.
-        assertEquals("收起组成员行：回到默认前 0 行", groupCardCollapseRowsDescription(IMPORT_REVIEW_GROUP_CARD_BOUNDED_ROWS))
+        // D-331 review P1-2: the restore copy names NO count — the retired D-330 restore-count
+        // constant carried a 0-vs-200 ambiguity (the restored default is the zero-member-row
+        // shape), so the copy states the effect without a number (frozen-literal copy pin).
+        assertEquals("收起组成员行：回到默认打开形态", groupCardCollapseRowsDescription())
         // The initial member-row form is the ZERO-MEMBER-ROW default — the named production
-        // decision the composable's remember sources from (Q2: 恒默认有界、不记忆, the
-        // initialGroupComparisonExpansion precedent).
+        // decision the composable's remember sources from (Q2 recoupled by D-331: 恒默认零行、
+        // 不记忆, the initialGroupComparisonExpansion precedent).
         assertFalse(initialGroupCardRowsExpanded(), "the card starts in the zero-member-row form on every (re)open — never remembered")
     }
 

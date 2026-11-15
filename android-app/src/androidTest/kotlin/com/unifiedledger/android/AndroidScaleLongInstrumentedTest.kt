@@ -378,9 +378,12 @@ class AndroidScaleLongInstrumentedTest {
      * Evidence capture: each sample holds the top window's visible lines containing the outcome
      * row's three copy forms (待处置 / 已标记： / 失败) with their per-form counts, at most one
      * sample per [GROUP_AWAIT_SAMPLE_INTERVAL_MS], under the evidence key `groupMarkOutcomeSamples`;
-     * `firstOutcomeHitMs` is its own evidence key. `end` adds a final sample on every path, so the
-     * decisive rendered text lives through a timeout (the stage's `save()` in its finally persists
-     * it). Only rendered copy is quoted — never an inputRef or user data.
+     * `firstOutcomeHitMs` is its own evidence key. `end` adds a final sample on every path —
+     * the final put rides the same write as the main capture (one contained try), so on the
+     * SUCCESS path the final sample always lands (the D-326 lesson: the failure forensics'
+     * texts block truncates; a put failure means the evidence object itself is unwritable and
+     * only the trace row records it). Only rendered copy is quoted — never an inputRef or user
+     * data.
      *
      * Containment: [onPoll] never ticks (the wait owns the deadline) and swallows every
      * observation failure so it cannot replace the wait's own outcome; [end] is equally contained
@@ -466,6 +469,11 @@ class AndroidScaleLongInstrumentedTest {
                     evidence.put("firstOutcomeHitMs", firstOutcomeHitMs)
                 }
             } catch (failure: Throwable) {
+                // Put failed → the evidence object itself is unwritable: record the trace
+                // row and stop — the final sample rides the same put as the main capture,
+                // so a failed put loses both together (no follow-up append can succeed
+                // either; the D-328 end() containment, D-326's evidence-must-survive lesson
+                // makes the final sample a hard invariant of the SUCCESS path).
                 Log.i(GROUP_ENUM_TRACE_TAG, "scale.groupMark end capture failed ms=$elapsed causeClass=${failure::class.simpleName}")
             }
             // The walk's own first-sighting verdict: when the judging predicate (ui.has, with
