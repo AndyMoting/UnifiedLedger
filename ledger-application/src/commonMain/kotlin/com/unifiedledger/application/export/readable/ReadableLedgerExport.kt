@@ -1,7 +1,6 @@
 package com.unifiedledger.application.export.readable
 
 import com.unifiedledger.application.CreationEntry
-import com.unifiedledger.application.CreationEntryBatch
 import com.unifiedledger.application.HOME_FLOW_PAGE_SIZE
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.LedgerCurrentStateReadPort

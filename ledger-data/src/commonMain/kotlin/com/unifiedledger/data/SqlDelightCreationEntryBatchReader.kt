@@ -1,7 +1,7 @@
 package com.unifiedledger.data
 
-import com.unifiedledger.application.CreationEntryBatch
-import com.unifiedledger.application.CreationEntryBatchReader
+import com.unifiedledger.application.export.readable.CreationEntryBatch
+import com.unifiedledger.application.export.readable.CreationEntryBatchReader
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionId

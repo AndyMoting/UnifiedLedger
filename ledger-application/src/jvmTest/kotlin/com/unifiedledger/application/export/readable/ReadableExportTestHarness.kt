@@ -1,6 +1,6 @@
 package com.unifiedledger.application.export.readable
 
-import com.unifiedledger.application.CreationEntryBatchReader
+import com.unifiedledger.application.export.readable.CreationEntryBatchReader
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.LedgerEntryRow
 import com.unifiedledger.application.LedgerId
