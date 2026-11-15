@@ -598,7 +598,12 @@ class P805ReadableExportDeviceChainInstrumentedTest {
     private fun findByText(
         root: AccessibilityNodeInfo?,
         text: String,
-    ): AccessibilityNodeInfo? = collectNodes(root).firstOrNull { it.text?.toString() == text && it.isVisibleToUser }
+    ): AccessibilityNodeInfo? {
+        val matches = collectNodes(root).filter { it.text?.toString() == text && it.isVisibleToUser }
+        // The clickable node is preferred: a Compose Button's inner Text leaf carries the text but
+        // not the click action (the ImportScaleTraversal discipline).
+        return matches.firstOrNull { it.isClickable } ?: matches.firstOrNull()
+    }
 
     /** The first visible node whose contentDescription equals [description]. */
     private fun findByContentDescription(
@@ -735,16 +740,16 @@ class P805ReadableExportDeviceChainInstrumentedTest {
         /**
          * The provider's failing window, mirrored from [FailAfterBytesBackupTargetProvider.FAIL_AFTER_BYTES]
          * as a literal so a divergent value fails the drained-byte assertion instead of passing
-         * silently. The mid-write leg's per-row hex payload ([incompressibleRun]: 12 copies × 12
-         * hex-nibbles ≈ 0.9 KiB raw, weakly compressible since every row re-seeds) over the 2k
-         * tier crosses 1 MiB of sheet bytes well before the sheet closes — a row-identical
-         * repeated note would collapse under DEFLATE and never reach the window (the CI failure
-         * this shape replaced).
+         * silently. The mid-write leg's per-row hex payload ([incompressibleRun]: 110 copies × 13
+         * chars ≈ 1.4 KiB raw/row ≈ 2.8 MB of sheet bytes at the 2k tier, ~1.5 MB after DEFLATE —
+         * every row re-seeds so the run defeats long LZ77 back-references) crosses the 1 MiB
+         * window well before the sheet closes — a row-identical repeated note would collapse
+         * under DEFLATE and never reach the window (the CI failure this shape replaced).
          */
         const val FAIL_AFTER_BYTES = 1024L * 1024L
 
         /** The per-row hex-run copy count (the payload weight the mid-walk crossing needs). */
-        const val NOTE_REPEAT = 12
+        const val NOTE_REPEAT = 110
 
         /** The provider's `call` method/key pair (the D-288 cross-process evidence face). */
         const val DRAINED_BYTES_METHOD = "drainedBytes"
