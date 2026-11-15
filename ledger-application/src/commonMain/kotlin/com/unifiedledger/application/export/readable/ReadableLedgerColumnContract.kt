@@ -13,7 +13,7 @@ import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Instant
 
-/**
+/*
  * P8-05 批 a column contract (D-331 spec §3.4/§3.3 D-E4/D-E5/D-E7; single constant source for
  * the writer and the tests). Pure commonMain functions: two Shanghai wall-clock text columns,
  * the frozen kind display map, the per-kind presentation table, the name/category resolution
@@ -271,10 +271,12 @@ private fun transferShape(
     nonCategoryLegs: List<ReadableExportLegFacts>,
 ): ReadableExportLegPresentation {
     if (nonCategoryLegs.size != 2 || legs.size > 3) return ReadableExportLegPresentation(resolved = false)
-    val outflow = nonCategoryLegs.firstOrNull { it.posting.amount.minorUnits < 0L }
-        ?: return ReadableExportLegPresentation(resolved = false)
-    val inflow = nonCategoryLegs.firstOrNull { it.posting.accountId != outflow.posting.accountId }
-        ?: return ReadableExportLegPresentation(resolved = false)
+    val outflow =
+        nonCategoryLegs.firstOrNull { it.posting.amount.minorUnits < 0L }
+            ?: return ReadableExportLegPresentation(resolved = false)
+    val inflow =
+        nonCategoryLegs.firstOrNull { it.posting.accountId != outflow.posting.accountId }
+            ?: return ReadableExportLegPresentation(resolved = false)
     val feeLeg = categoryLegs.minByOrNull { it.posting.id.value }
     return ReadableExportLegPresentation(
         resolved = true,
