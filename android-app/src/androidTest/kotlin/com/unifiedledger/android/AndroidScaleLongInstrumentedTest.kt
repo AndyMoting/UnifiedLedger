@@ -1013,6 +1013,24 @@ class AndroidScaleLongInstrumentedTest {
             // re-enabled — the confirm then passes the refusal gate and authorizes the whole
             // group exactly as the D-280 §3.4 semantics intend.
             ui.click("确认整组标记")
+            // D-333 deliverable 2 (rig run 43707047398: the outcome await sampled 60x with
+            // text="none", pending/marked/failed all 0, firstHitMs=-1 — D-331's zero-member-row
+            // collapsed card keeps the outcome rows OUT of the composed tree entirely, so the
+            // probe's viewport walk can never see 待处置/已标记：/失败 lines no matter what the
+            // reducer lands). Before constructing the probe, expand the member rows through the
+            // D-330 view-all entry row. Its copy comes from the pure label function
+            // (查看全部 N 条, N = the whole-group total — 50,000 here), and the row composes only
+            // while the card is collapsed: in the expanded form the entry row is gone (the
+            // collapse row leads instead), so the presence probe below is also the already-
+            // expanded skip. The expanded list is needed only for the probe's viewport sampling;
+            // the await predicate itself (已标记：CONFIRMED_DUPLICATE) is one character untouched,
+            // and the probe's sampling logic is untouched too. The entry row may sit above the
+            // parked footer viewport, so the seek walks back up to it first — the same
+            // seek/click shape this file already uses.
+            if (ui.has("查看全部 ", prefix = true)) {
+                ui.seek("查看全部 ", forward = false)
+                ui.click("查看全部 ", prefix = true)
+            }
             // D-217 round 17 (evidence30): 确认整组标记 submits per-item and
             // the card itself renders each relation's outcome
             // (已标记：CONFIRMED_DUPLICATE, presentation-frozen copy). The
