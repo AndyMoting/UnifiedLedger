@@ -1410,6 +1410,33 @@ class ApkProvenance(unittest.TestCase):
         with patch.object(apks, "api", side_effect=self.api):
             apks.check_source(self.manifest, self.repo, 123)
 
+    def test_closed_pr_with_deleted_head_branch_is_a_cache_miss(self):
+        # D-332 r2 discipline (the #371→#372 rebase round): after the PR is
+        # closed and its head branch deleted, `commits/{head}/pulls` no longer
+        # reports the recorded PR — the association is empty. The binding has
+        # lapsed (bytes intact, producer trusted at pack time), so `check_source`
+        # raises `UnboundProducer` and the `reuse` loop skips the bundle as a
+        # cache miss instead of failing the step.
+        self.pr["state"] = "closed"
+
+        def empty_association(path, *, binary=False):
+            # The PR is closed and its head branch deleted: the association
+            # endpoint returns nothing for the recorded head commit.
+            if "/pulls?" in path:
+                return []
+            return self.api(path, binary=binary)
+
+        with patch.object(apks, "api", side_effect=empty_association) as api:
+            with self.assertRaises(apks.UnboundProducer):
+                apks.check_source(self.manifest, self.repo, 123)
+            # The reuse loop surfaces the lapse as a miss, not a red step.
+            self.assertFalse(apks.reuse(self.repo, self.tree, self.root / "download"))
+        # The association query targets the recorded PR head commit (a PR
+        # association hangs on the head commit), not the historical source.
+        head_sha = self.manifest["pull_request"]["head_sha"]
+        paths = [call.args[0] for call in api.call_args_list]
+        self.assertIn(f"repos/{self.repo}/commits/{head_sha}/pulls?per_page=100&page=1", paths)
+
     def test_closed_unmerged_pr_remains_a_valid_historical_producer(self):
         self.run["pull_requests"] = []
         self.pr["state"] = "closed"

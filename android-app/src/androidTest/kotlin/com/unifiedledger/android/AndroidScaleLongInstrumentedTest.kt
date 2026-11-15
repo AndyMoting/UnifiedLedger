@@ -981,6 +981,56 @@ class AndroidScaleLongInstrumentedTest {
             ui.edge(last = true)
             ui.seek("确认整组标记", forward = false)
             ui.click("确认整组标记")
+            // D-332 (approved v2, Q1 = ③+①, Q4 = await 轮末 → 重 click → 原 await; run
+            // 43663940414's refusal timeline: the click at 11:16:22 was accepted BY the
+            // product's refusal gate while the enumeration round was at ~2% —
+            // ordinal ~1001/50000 — the gate silently returned with no dispatch, the round
+            // Completed at 11:22:18 inside the old await window, and the outcome still never
+            // arrived because the refused tap is never re-sent: the missing piece was the
+            // ROUND-END RE-CLICK, not time). The product side (same batch) disables the
+            // footer's confirm affordance while the round is in flight and carries the hint
+            // 「轮次整理中，完成后可确认」 in its contentDescription — and THAT description is
+            // the round-end marker this await negates. The task book's first-choice
+            // progress-line-absence predicate is VACUOUS here (implementation finding):
+            // `edge(last=true)` + the reverse seek park the viewport at the card footer, the
+            // LazyColumn composes only the visible window, and the progress line sits ABOVE
+            // the card block — off-window nodes are not in the a11y tree (the D-330 v4
+            // finding), so `!has("正在整理重复组……")` would be true-at-first-poll whether the
+            // round ran or not. The footer description IS composed at this viewport (the
+            // button itself is the seek/click target), carries the same
+            // groupEnumerationInProgress source as the progress line (assembly
+            // P503ImportReviewPresentation.kt, cleared only by the round's Completed), and its
+            // disappearance IS the round end — b6 shapes skip the wait entirely (the footer
+            // never disables: the round completed before this seek). The 900s ceiling is the
+            // explicit round allowance inside group_disposition's 5,400s stage budget
+            // (~10s consumed by the card-open await + the traversals above; the D-329 read
+            // measured a healthy 50k round at 190.8s). The re-click after the wait lands on
+            // the re-enabled affordance; the disposition single-flight gate and the
+            // Reviewed-item re-run idempotency make a redundant re-click harmless either way.
+            ui.await(timeout = 900_000) { !ui.has("轮次整理中，完成后可确认") }
+            // The Q4 re-click: the refused first tap is never re-sent by the product (the
+            // missing piece of run 43663940414), so the rig re-clicks once the footer has
+            // re-enabled — the confirm then passes the refusal gate and authorizes the whole
+            // group exactly as the D-280 §3.4 semantics intend.
+            ui.click("确认整组标记")
+            // D-333 deliverable 2 (rig run 43707047398: the outcome await sampled 60x with
+            // text="none", pending/marked/failed all 0, firstHitMs=-1 — D-331's zero-member-row
+            // collapsed card keeps the outcome rows OUT of the composed tree entirely, so the
+            // probe's viewport walk can never see 待处置/已标记：/失败 lines no matter what the
+            // reducer lands). Before constructing the probe, expand the member rows through the
+            // D-330 view-all entry row. Its copy comes from the pure label function
+            // (查看全部 N 条, N = the whole-group total — 50,000 here), and the row composes only
+            // while the card is collapsed: in the expanded form the entry row is gone (the
+            // collapse row leads instead), so the presence probe below is also the already-
+            // expanded skip. The expanded list is needed only for the probe's viewport sampling;
+            // the await predicate itself (已标记：CONFIRMED_DUPLICATE) is one character untouched,
+            // and the probe's sampling logic is untouched too. The entry row may sit above the
+            // parked footer viewport, so the seek walks back up to it first — the same
+            // seek/click shape this file already uses.
+            if (ui.has("查看全部 ", prefix = true)) {
+                ui.seek("查看全部 ", forward = false)
+                ui.click("查看全部 ", prefix = true)
+            }
             // D-217 round 17 (evidence30): 确认整组标记 submits per-item and
             // the card itself renders each relation's outcome
             // (已标记：CONFIRMED_DUPLICATE, presentation-frozen copy). The
@@ -1023,6 +1073,23 @@ class AndroidScaleLongInstrumentedTest {
             // 关闭 click on a stale node can navigate clean off the review
             // list (the run ended on the import root screen).
             evidence.put("mainGroupRelations", spec.newSessionDuplicateRelations).put("groupDispositions", spec.newSessionDuplicateRelations)
+            // D-334 collapse handoff (run 43727676294): the expansion above exists only
+            // for the probe's viewport sampling. Leaving it composed strands the NEXT
+            // stage's bottom-edge walk in the degraded gesture loop over 50k member rows
+            // (batch_confirmation burned its whole 180s phase budget inside
+            // edge(last=true) -> scroll -> settle). Restore the collapsed zero-member-row
+            // shape before the stage ends: the collapse affordance is the card's leading
+            // 收起成员行 row (groupCardCollapseRowsText — the exact inverse of the 查看全部
+            // entry row, NOT the header's 收起全部比较信息 toggle, which folds the per-row
+            // comparison text only), and after the collapse the bottom edge returns to the
+            // fast scrollToPosition path the earlier stages already use. The row composes
+            // only while the member list is expanded, so the guarded shape mirrors the
+            // expansion leg above — the presence probe is also the already-collapsed skip,
+            // and a miss leaves the verdict to the next stage's edge walk (assertions
+            // live downstream).
+            if (ui.has("收起成员行", prefix = true)) {
+                ui.click("收起成员行", prefix = true)
+            }
         }
         stage("batch_confirmation") {
             ui.edge(last = true)
