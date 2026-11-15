@@ -398,6 +398,7 @@ internal object ReadableExportReconciliationSeed {
         l: String,
     ) {
         exec(driver, "INSERT INTO catalog_version (ledger_id, version) VALUES ('$l', 1)")
+
         fun account(
             id: String,
             kind: String,
@@ -423,6 +424,7 @@ internal object ReadableExportReconciliationSeed {
         account("seed-acc-fee", "EXPENSE", "手续费", owned = 0, real = 0)
         // The blank-name vector: an account row whose CURRENT name is empty → 「未命名账户」.
         account("seed-acc-blank-name", "ASSET", "")
+
         fun category(
             id: String,
             kind: String,
@@ -443,6 +445,7 @@ internal object ReadableExportReconciliationSeed {
         category("seed-cat-income-parent", "INCOME", null, null)
         category("seed-cat-salary-leaf", "INCOME", "seed-cat-income-parent", "seed-acc-income-salary")
         category("seed-cat-fee", "EXPENSE", null, null)
+
         fun categoryName(
             ownerId: String,
             name: String,
@@ -475,6 +478,7 @@ internal object ReadableExportReconciliationSeed {
         voided: Boolean = false,
     ) {
         exec(driver, "INSERT INTO ledger_transaction (transaction_id, ledger_id, kind, canonical_kind) VALUES ('$id', '$l', '$kind', ${canonical?.let { "'$it'" } ?: "NULL"})")
+
         fun insertVersion(
             versionId: String,
             versionNumber: Int,
