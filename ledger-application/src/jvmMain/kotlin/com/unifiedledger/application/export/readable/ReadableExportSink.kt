@@ -9,7 +9,7 @@ package com.unifiedledger.application.export.readable
  * ports (app-ui -> ledger-application, never the reverse); the JVM writer ([ReadableLedgerXlsxStreamWriter])
  * and the JVM fake sinks of the failure tests face only this contract.
  */
-fun interface ReadableExportSink : AutoCloseable {
+interface ReadableExportSink : AutoCloseable {
     fun write(
         bytes: ByteArray,
         offset: Int,
