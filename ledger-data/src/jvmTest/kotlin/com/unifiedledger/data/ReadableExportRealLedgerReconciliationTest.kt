@@ -16,8 +16,8 @@ import com.unifiedledger.application.export.readable.ReadableLedgerExportFailure
 import com.unifiedledger.application.export.readable.ReadableLedgerExportResult
 import com.unifiedledger.application.export.readable.ReadableLedgerXlsxStreamWriter
 import com.unifiedledger.application.import.wechat.BoundedXlsxReader
-import com.unifiedledger.application.parseReadableExportWallClockTextOrNull
-import com.unifiedledger.application.readableExportKindLabel
+import com.unifiedledger.application.export.readable.parseReadableExportWallClockTextOrNull
+import com.unifiedledger.application.export.readable.readableExportKindLabel
 import com.unifiedledger.data.db.LedgerDatabase
 import java.io.ByteArrayOutputStream
 import java.nio.file.Files

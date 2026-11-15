@@ -1,7 +1,7 @@
 package com.unifiedledger.data
 
 import app.cash.sqldelight.db.SqlDriver
-import com.unifiedledger.application.LedgerId
+import com.unifiedledger.domain.LedgerId
 import kotlin.time.Instant
 
 /**
