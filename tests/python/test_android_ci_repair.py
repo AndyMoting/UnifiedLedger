@@ -1418,7 +1418,15 @@ class ApkProvenance(unittest.TestCase):
         # raises `UnboundProducer` and the `reuse` loop skips the bundle as a
         # cache miss instead of failing the step.
         self.pr["state"] = "closed"
-        with patch.object(apks, "api", side_effect=self.api) as api:
+
+        def empty_association(path, *, binary=False):
+            # The PR is closed and its head branch deleted: the association
+            # endpoint returns nothing for the recorded head commit.
+            if "/pulls?" in path:
+                return []
+            return self.api(path, binary=binary)
+
+        with patch.object(apks, "api", side_effect=empty_association) as api:
             with self.assertRaises(apks.UnboundProducer):
                 apks.check_source(self.manifest, self.repo, 123)
             # The reuse loop surfaces the lapse as a miss, not a red step.
