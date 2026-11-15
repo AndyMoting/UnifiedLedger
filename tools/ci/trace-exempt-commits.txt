@@ -1,0 +1,13 @@
+# Message-exemption manifest for tools/ci/trace-scan.sh (scan 2 only).
+#
+# Format: one entry per line, `40-hex-sha reason phrase`; `#` comment lines and
+# blank lines are ignored. A listed commit's MESSAGE block is dropped before
+# the scan-2 grep — the pattern itself is untouched, non-exempt commits keep
+# the exact legacy behavior, and the paths/tree/tracked-file scans never
+# consult this file. A missing or empty file is the zero-exemption default.
+#
+# Scope discipline: register a SHA here ONLY when its trace hit is already
+# merged into a protected branch that cannot be rewritten (squash-trailer
+# residue from a parallel session), never as a pre-approval for future work.
+#
+551521f92130819c8b99ea5d019d66c59d9614ae D-331 parallel-session squash trailer

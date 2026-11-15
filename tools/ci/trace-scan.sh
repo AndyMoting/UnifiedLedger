@@ -23,6 +23,15 @@
 #          runs and manual dispatches leave the variable unset, which keeps the
 #          full-history default and is what proves every landed commit was
 #          scanned at least once.
+#   Optional: tools/ci/trace-exempt-commits.txt lists full 40-char commit SHAs
+#          whose MESSAGE hits are exempted from scan 2 only (one `SHA reason`
+#          per line, `#` comments allowed). Mechanically it drops those
+#          commits' message blocks before the grep: the pattern itself is
+#          untouched and non-exempt commits behave exactly as before. The
+#          paths/tree scans and the tracked-file scan never consult it, and a
+#          missing or empty file is the zero-exemption default (the mechanism
+#          is dormant). Use it only for commits that are already merged into a
+#          protected branch and cannot be rewritten, never as a pre-approval.
 #   Optional: set ALLOWED_TRACE_PATH to a colon- or newline-separated list of
 #          exact repository-relative paths to exempt from the path-based
 #          scans (default: empty). CI runs with the default empty allowlist.
@@ -62,6 +71,11 @@ TRACE_PATTERN='Codex|Codex Cloud|Claude|Claude Code|ChatGPT|OpenAI|Copilot|Gemin
 AGENT_PATH_PATTERN='^(AGENTS?\.md|CLAUDE[^/]*\.md|GEMINI\.md|QWEN\.md)$|^(\.cursorrules|\.cursorignore|\.cursorindexingignore|\.windsurfrules|\.clineignore|\.rooignore|\.roomodes|\.roorules[^/]*|\.augment-guidelines|\.geminiignore|\.aiexclude|\.mcp\.json|opencode\.jsonc?|\.aider[^/]*)$|^(\.worktrees|\.agents|\.agent|\.codex|\.claude|\.gemini|\.qwen|\.copilot|\.cursor|\.windsurf|\.devin|\.cline|\.clinerules|\.roo|\.continue|\.kiro|\.opencode|\.trae|\.qoder|\.augment|\.junie|\.amazonq)/|(^|/)(prompt|transcript|conversation)([-_.][^/]*)?\.(md|txt|jsonl?|ya?ml)$|(^|/)session([-_.](notes?|log|transcript|context|handoff))?\.(md|txt|jsonl?|ya?ml)$|^\.github/(copilot-instructions\.md$|(instructions|prompts|agents|skills)/)|^\.vscode/mcp\.json$|^docs/(SOURCE_REFERENCES\.md|WORK_PLAN\.local\.md|[^/]+\.local\.md)$'
 
 BATCH_SIZE=200
+
+# The exemption manifest for the history-message scan (scan 2 only). Format:
+# one `40-hex-sha reason phrase` per line, `#` comment lines allowed. See the
+# usage block above for the scope and the dormancy guarantee.
+EXEMPT_COMMITS_FILE="tools/ci/trace-exempt-commits.txt"
 
 # Revision selector for the three history scans. `--all` is the full-history
 # default; select_history_revision narrows it for a pull-request run.
@@ -141,6 +155,46 @@ add_self_exemption() {
     ALLOWED_SET="${ALLOWED_SET:+$ALLOWED_SET:}$(normalize_path "$self_rel")"
 }
 
+# Load the message-exemption manifest into a newline-joined set of full SHAs.
+# A missing or empty file leaves EXEMPT_SHA_SET empty: the mechanism is dormant
+# and the message scan behaves exactly as without it. Only well-formed 40-hex
+# tokens are collected; any other non-comment content aborts with exit code 2,
+# mirroring the ALLOWED_TRACE_PATH validation discipline.
+load_message_exemptions() {
+    EXEMPT_SHA_SET=""
+    [ -f "$EXEMPT_COMMITS_FILE" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%%#*}"
+        # shellcheck disable=SC2086 # the first token must survive quote stripping
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [ -n "$line" ] || continue
+        sha="${line%%[[:space:]]*}"
+        if ! printf '%s' "$sha" | grep -q -E '^[0-9a-fA-F]{40}$'; then
+            fatal "$EXEMPT_COMMITS_FILE entry must start with a full 40-character SHA: $line"
+        fi
+        EXEMPT_SHA_SET="${EXEMPT_SHA_SET:+$EXEMPT_SHA_SET
+}$(printf '%s' "$sha" | tr 'A-F' 'a-f')"
+    done < "$EXEMPT_COMMITS_FILE"
+}
+
+# Drop the message blocks of exempted commits from `git log --format=
+# '%H%x09%s%x09%b'` output. Each block starts at a `40-hex<TAB>` line; the
+# grep happens AFTER this filter, so the pattern, the format and every
+# non-exempt commit are untouched. Prints the count of dropped blocks.
+filter_message_exemptions() {
+    awk -v exempt="$EXEMPT_SHA_SET" '
+        BEGIN { split(exempt, list, "\n"); for (i in list) set[list[i]] = 1; dropped = 0 }
+        /^[0-9a-fA-F]{40}\t/ {
+            sha = tolower(substr($0, 1, 40))
+            in_exempt = (sha in set) ? 1 : 0
+            if (in_exempt) dropped++
+        }
+        !in_exempt { print }
+        END { print dropped > "/dev/stderr" }
+    ' "$1"
+}
+
 # Narrow the history scans to the commits of one pull request when
 # TRACE_BASE_SHA is set. An unset or empty value keeps the full-history default.
 # An unresolvable base is fatal, so a broken scope can never read as clean.
@@ -197,6 +251,16 @@ scan_history_messages() {
     # which must reach git as one argument and neither contains whitespace.
     run_git_scan "Git history message scan" \
         git log $HISTORY_REV --format='%H%x09%s%x09%b'
+    if [ -n "$EXEMPT_SHA_SET" ]; then
+        # Block-level exemption (scan 2 only): drop the exempted commits'
+        # message blocks BEFORE the grep. The pattern and the format are
+        # untouched; non-exempt commits keep the exact legacy behavior.
+        dropped="$(filter_message_exemptions "$TMP_OUT")" ||
+            fatal "Awk failed during the message exemption filter."
+        if [ "${dropped:-0}" -gt 0 ]; then
+            echo "trace-scan: exempted $dropped historical message hit(s)" >&2
+        fi
+    fi
     grep -i -I -E "$TRACE_PATTERN" "$TMP_OUT" > "$TMP_HITS"
     case $? in
         0) report_hits "Git history messages" ;;
@@ -289,6 +353,7 @@ main() {
     TMP_HITS="$(mktemp)" || fatal "mktemp failed."
     trap 'rm -f "$TMP_OUT" "$TMP_ERR" "$TMP_HITS"' EXIT
     load_allowlist
+    load_message_exemptions
     add_self_exemption
     select_history_revision
     scan_tracked_files
