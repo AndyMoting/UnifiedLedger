@@ -7364,3 +7364,51 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **验证面：** reducer 三用例钉 null-rows 保留旧行不通知 / empty-outcomes 幂等 / Unavailable 通知原样；rig 改动 CI 裁决。
 
 **关联决定：** D-280（§3.3.1 可见部分成功 + §3.4）、D-332（前置批，重 click 接受后的着陆段）、D-331/D-330（收起态与展开入口——rig 腿形制）、P7-04 读治理批（A-PERF 离线程纪律出处）。
+
+## D-334 折叠收尾腿：group_disposition 段末恢复卡收起态（batch 段底边 walk 回 scrollToPosition 快路）
+
+**状态：** approved 已落地（2026-11-16；rig 第七跑 frontier 修复，PR #376，main squash `5ab22900`）。
+
+**背景：** rig 第七跑（run `43727676294`，树 = D-333 落地 `622d44ff`）判定 D-333 生效（group_disposition 首次 PASS，outcome-hit @202.8s，探针实测 待处置→已标记：CONFIRMED_DUPLICATE 演进），主链首次走到 batch_confirmation——该段 180s 相位预算耗尽于 `edge(last = true)` 的降级步行（异常栈 tick 检查 ← `AndroidScaleUi.scroll` → `settle`），归因 = D-333 展开腿把 50k 成员行铺开后段未收尾，底边 walk 在展开成员行上逐屏降级。
+
+**裁决（写手改判，登记备查）：** 折叠 affordance 选用卡块领位的「收起成员行」行（`groupCardCollapseRowsText`，`查看全部` entry 行的精确逆操作），而非 header 的「收起全部比较信息」toggle——后者只折叠行内比较文本，不折叠成员行区，不能把卡恢复到 D-331 的零成员行形态。派发简报最初把两 affordance 混同，实施读证后改判并在 D-333 spec §5 登记修订。
+
+**落地形制：** group_disposition stage 结束前守卫式收尾腿：`if (ui.has("收起成员行", prefix = true)) ui.click("收起成员行", prefix = true)`——该行只在成员行展开时组合，presence 探针同时就是已收起跳过臂；miss 不抛（断言在下游 batch 段的 edge walk）。收起态即 D-331 零成员行形态，batch 段底边 walk 回 `scrollToPosition` 快路。
+
+**实证（rig 第八跑 max `43741730054` a2）：** 失败截图显示卡收起态（查看全部 50000 条在）；batch_confirmation 开局 `edge(last=true)` ~6s 走 scrollToPosition 快路完成（第七跑同段 180s 耗尽）——第七跑 frontier 修复证实；第九跑探针读数再次实证（查看全部在 = 收起态）。
+
+**边界：** 入 = rig 收尾腿 + D-333 spec §5 修订登记。出 = 不改展开腿与 outcome await 谓词、不碰产品折叠/展开语义、header toggle 不入守卫。
+
+**关联决定：** D-331（收起态零成员行呈现形态——收尾腿的目标形态）、D-333（展开腿出处，收尾为其逆操作）、D-330（有界成员行 + 展开入口）、D-335（停位探针以收起态全形为读数前提）。
+
+## D-335 停位点探针：batch 段 edge 停位视口 dump 进 evidence（一次读数分辨 seek 未命中三臂）
+
+**状态：** approved 已落地（2026-11-16；PR #377，main squash `3a28cbea`；读数已分辨三臂并升级为 D-336 设计门）。
+
+**背景：** rig 第八跑（max `43741730054`）新前沿 = batch 段 `ui.seek("进入批量确认", forward=false)` 80 步反向 111s 全程未命中（`seek exhausted` → `UI target not reached`，116.9s 段预算 FAIL）。batch 段 44 天来从未 PASS，本次是其 rig 预期（edge 停底后 entry 应首询即中）在 50k 规模的首次受检。两候选成因现有证据不可分辨：①`BatchConfirmButton` 未渲染（entry 组装门 = `selectedCandidateIds.isNotEmpty()`，Presentation `:1488`）；②edge 的 `scrollToPosition(rowCount-1)` 停位点失真（a11y rowCount 口径 vs 真实内容）。
+
+**裁决：** 停位点探针——batch 段 edge 后 seek 前 dump 视口可见文本进 evidence（键 `parkTexts` 截 2000 字符 / `parkHasEntry` = 任一文本以「进入批量确认」开头），零行为改动（探针后 rig 原样 seek）。判读臂：entry 在 = seek 自身漏检嫌疑；有行无 entry = 停位失真；列表尾无行无 entry = entry 未渲染。
+
+**落地形制：** `AndroidScaleLongInstrumentedTest.kt` batch 段 edge 后视口 dump + 两 evidence 键；D-336 起该探针兼作守卫谓词（同文本一字不差复用）。
+
+**实证（rig 第九跑 max `43755840299` a2）：** `parkHasEntry=false`；停位视口 = 导入根块 + 最近导入块 + 卡收起态全形（header / 收起全部比较信息（共 50000 条）/ 查看全部组成员行 / 查看全部 50000 条 / footer 确认整组标记+关闭）+ 底部导航。臂②停位失真与臂三 seek 漏检均排除——视口在真实列表底而 entry 不存在 = 臂① BatchConfirmButton 未渲染；D-334 折叠腿再次实证生效（查看全部在 = 收起态；卡 footer 之后直接是列表末尾）。
+
+**边界：** 入 = 探针块 + D-333 spec §6 evidence 形制登记。出 = 零行为改动、不在 seek 前二次 probe、不烧探针跑（armchair 推演止于设计门）。
+
+**关联决定：** D-334（收起态读数前提）、D-332/D-333（架空 batch 腿前提的语义出处）、D-336（探针升级为守卫谓词 + 设计门落地）。
+
+## D-336 双用户裁决落地：batch 段守卫跳过（裁决 b）+ b6 gate 中位数形制（裁决 a）
+
+**状态：** approved 已落地（2026-11-16 设计门，用户双问同轮批准「b 守卫跳过」+「a 多轮统计形制」；本批）。
+
+**背景：** ①rig 第九跑探针（D-335）钉死臂①：50k 全组确认后 `进入批量确认` entry 不渲染（`parkHasEntry=false`，停位视口 = 真实列表底）——batch_confirmation 腿的设计前提（组确认后列表底部有 entry 可点）被 D-332/D-333 语义架空：整组确认 leg 本身就是 50k 全量提交，批腿是其之后的第二次逐项提交路径，selection 已随全组提交清空。②b6 `P704GP-D-PERF-01` worst-of-3 形制在 runner 噪声带下不可裁决：本日读数 2854→5423 ms 漂移（晨带 2854/2855/3024，午后带 4.8–5.4s 高位），门余量 ~150 ms（D-331 后基线 ~2.85s vs 界 3s）< 噪声 ±1.2s——worst-of-3 下同一树可 PASS 可 FAIL，flaky 纪律挂起。
+
+**裁决（用户，2026-11-16）：** batch 段 = **b 守卫跳过**（entry 缺席记录 evidence 跳段，链继续走 reopen/replay/final-reopen；batch 提交路径规模化验证归 P7-04 既有 reducer/host 测试面；否决 a 重排与 c 产品语义改动）。b6 gate = **a 多轮统计形制**，取「中位数 + 显式容差」复合形制——主判据 median-of-3 ≤ limit，worst 记录保留（`max_click_to_card_ms` 字段名不动 = 兼容既有 evidence 消费方，新增 `median_click_to_card_ms`），FAIL 文案带双读数；否决纯 worst 兜底（噪声带未吸收）。
+
+**落地形制：** ①rig batch 段 seek/click/check/授权/await 全部包进 `parkHasEntry` 守卫（D-335 探针谓词与 seek 目标同文本一字不差复用，不二次 probe）；缺席臂 `evidence.put("batchConfirmationSkipped", true)`，stage() 的 PASS 判定 = action 正常返回（不要求段内断言成功），守卫跳过臂无异常自然收口 PASS，reopen() 的 batch_confirmation PASS 前置不受影响。②`tools/python/android_b6_card.py` judge()：`statistics.median(values)` 为主判据（`median > limit_ms` → FAIL），FAIL reason = `the median round is {median} ms, above the {limit_ms} ms bound (worst {worst} ms)`；gate 命令输出加 median 行；模块 docstring 的 max-of-3 表述同步改写。③测试面改判据不删用例：原 worst 判据用例反转/重述为中位语义（见实证节清单）。
+
+**实证：** 本日 b6 噪声带 9 读数（2854/4991/2855/4121/3024/4105/5423/4986/5080 ms）在中位形制下裁决 = FAIL（午后带中位在 3000 界之上，真实高位不被掩盖），晨带（2854/2855/3024 区间）才可 PASS——形制吸收噪声带而不洗白真退化。rig 守卫跳过臂 CI 裁决（零本机执行纪律）。测试面改动清单：反转 `test_the_statistic_is_the_worst_round_not_the_median` → `test_the_statistic_is_the_median_round_not_the_worst`；前提被推翻的 `test_a_single_slow_round_fails_the_gate` → `test_a_single_slow_round_is_noise_the_median_absorbs`；新增 `test_a_noisy_slow_round_passes_on_the_median_and_the_worst_stays_recorded` 与 `test_a_median_above_the_bound_fails_and_names_both_values`；`test_a_lying_host_json_cannot_make_the_gate_green` 的 round 集改为中位超界组（原 9000 孤儿轮在 median 语义下会翻绿）；值集全在界内的用例（inclusive / gate-recomputes / pre-parameter / archived-shape）原样保留。
+
+**边界：** 入 = rig 守卫块 + b6 judge/输出/docstring + 配套 verdict 用例 + 本条（含 D-334/D-335 补登记）。出 = 不动 stage() helper 与 reopen() 前置、不动 D-335 探针块、不改 limit_ms/轮数/scale 参数面、不改 reducer/host 测试面（batch 路径验证归 P7-04 既有面）、`worst is None → FAIL` 兜底与 `median is None` 防御原样、PASS 判定其余 reasons 语义不变。
+
+**关联决定：** D-335（探针即守卫谓词，臂①实证出处）、D-332/D-333（架空 batch 腿前提的语义）、D-331（b6 基线 ~2.85s 与门余量出处）、D-281/D-282（P704GP-D-PERF-01 判决与 worst-of-3 原形制沿用链）、D-217（rig 链结构与 stage 断言纪律）、P7-04（batch 提交路径规模化验证的既有测试面）。

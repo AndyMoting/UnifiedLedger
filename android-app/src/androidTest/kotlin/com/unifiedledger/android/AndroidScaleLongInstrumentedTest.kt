@@ -1104,18 +1104,41 @@ class AndroidScaleLongInstrumentedTest {
             val parkTexts = ui.visibleTexts(ui.root()).toMutableList().apply { if (size > 60) subList(60, size).clear() }
             evidence.put("parkHasEntry", parkTexts.any { it.startsWith("进入批量确认") })
             evidence.put("parkTexts", parkTexts.joinToString("|").take(2000))
-            ui.seek("进入批量确认", forward = false)
-            ui.click("进入批量确认", prefix = true)
-            check(ui.has("确认入账（1 项）"))
-            ui.click("授权逐项入账")
-            ui.await { ui.has("导入", prefix = true) }
-            // D-217 round 17 (evidence30): no bottom excursion here — after
-            // await 导入 the list is at its top where 最近批量结果 renders,
-            // and a scroll excursion leaves the viewport away from the
-            // awaited text (same round-16 rationale; the bottom-reach proof
-            // is reopen()'s snapshot equality).
-            ui.await { ui.has("最近批量结果", prefix = true) }
-            check(ui.nodes(ui.root()).flatMap(ui::labels).any { it.contains("已入账 1 项") && it.contains("拒绝 0 项") && it.contains("未知 0 项") })
+            // D-336 (user-approved design gate b, 2026-11-16): after the whole-group
+            // confirm leg submitted every relation of the group, the 进入批量确认 entry
+            // no longer renders (run 43755840299-a2's park probe pinned the park
+            // viewport at the true list bottom with the collapsed card and no entry —
+            // the D-332/D-333 semantics superseded the batch leg's premise). Record
+            // the skip and continue: the batch submit path's scale validation stays
+            // with the P7-04 reducer/host test suites; this chain's remaining legs
+            // (reopen/replay/final-reopen) matter more than a degenerate second
+            // submission over an empty selection. The probe above is reused as the
+            // guard verbatim — its predicate and the seek's target are the same
+            // 进入批量确认 prefix text, so no second probe is taken. The domains
+            // differ by design and the error direction is safe: the probe reads ONE
+            // snapshot capped at 60 visible texts while the true arm's has()/seek
+            // walk the full tree with retries — a miss here can only skip a leg
+            // that could have run (false negative), never block one that could not
+            // (the wider seek domain never contradicts the probe's narrower read),
+            // and reopen()'s oracle equality pins whatever the skipped leg would
+            // have contributed.
+            val batchEntryPresent = evidence.getBoolean("parkHasEntry")
+            if (batchEntryPresent) {
+                ui.seek("进入批量确认", forward = false)
+                ui.click("进入批量确认", prefix = true)
+                check(ui.has("确认入账（1 项）"))
+                ui.click("授权逐项入账")
+                ui.await { ui.has("导入", prefix = true) }
+                // D-217 round 17 (evidence30): no bottom excursion here — after
+                // await 导入 the list is at its top where 最近批量结果 renders,
+                // and a scroll excursion leaves the viewport away from the
+                // awaited text (same round-16 rationale; the bottom-reach proof
+                // is reopen()'s snapshot equality).
+                ui.await { ui.has("最近批量结果", prefix = true) }
+                check(ui.nodes(ui.root()).flatMap(ui::labels).any { it.contains("已入账 1 项") && it.contains("拒绝 0 项") && it.contains("未知 0 项") })
+            } else {
+                evidence.put("batchConfirmationSkipped", true)
+            }
         }
         stage("detail_monthly_refresh") { checkEconomicUi() }
     }

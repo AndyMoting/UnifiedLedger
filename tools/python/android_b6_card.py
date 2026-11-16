@@ -4,9 +4,11 @@ WHAT ONE GREEN RUN PROVES
 -------------------------
 `P704GP-D-PERF-01` of spec `docs/specs/2026-11-04-b6-group-card-paged-enumeration-design.md`
 section 4: with the deterministic duplicate-group fixture published by the product's own intake,
-the group card becomes visible within `--limit-ms` in every round and in the worst of them. The
-statistic is max-of-3 (A-PERF spec section 4), never the median: a single slow round is the
-failure the gate exists for.
+the median round brings the group card visible within `--limit-ms`. D-336 (2026-11-16, user
+decision) replaced the A-PERF section-4 max-of-3 statistic that the D-282 verdict applied: the
+worst-of-3 shape sat inside the runner's noise band (readings drifted 2.8s -> 5.4s on the day
+against a ~150 ms gate margin), so the bound now reads the median-of-3 and the worst round stays
+recorded only — a single slow round is noise to be absorbed, not the failure the gate exists for.
 
 THE GROUP SCALE IS A PARAMETER
 ------------------------------
@@ -43,6 +45,7 @@ import hashlib
 import json
 import os
 import re
+import statistics
 import subprocess
 import time
 from pathlib import Path
@@ -202,12 +205,20 @@ def judge(rounds: list[dict], expected_rounds: int, limit_ms: int, fixture_relat
             )
     values = [item["click_to_card_ms"] for item in rounds if item["click_to_card_ms"] is not None]
     worst = max(values) if values else None
-    if worst is not None and worst > limit_ms:
-        reasons.append(f"the worst round is {worst} ms, above the {limit_ms} ms bound")
+    median = statistics.median(values) if values else None
+    # D-336 (user-approved design gate a, 2026-11-16): the worst-of-3 statistic sat inside the
+    # runner's noise band — the day's readings drifted 2.8s -> 5.4s against a ~150 ms gate margin,
+    # so a single noisy round could fail (or greenlight) a verdict no rerun could reproduce. The
+    # bound now reads the MEDIAN round, and the explicit tolerance the median buys absorbs that
+    # noise band; the worst round stays recorded in max_click_to_card_ms (field name unchanged for
+    # the existing evidence consumers) and lands in the FAIL reason for the forensics trail.
+    if median is not None and median > limit_ms:
+        reasons.append(f"the median round is {median} ms, above the {limit_ms} ms bound (worst {worst} ms)")
     return {
         "fixture_relations": fixture_relations,
         "limit_ms": limit_ms,
         "max_click_to_card_ms": worst,
+        "median_click_to_card_ms": median,
         "reasons": reasons,
         "rounds": rounds,
         "verdict": "FAIL" if reasons or worst is None else "PASS",
@@ -397,7 +408,7 @@ def format_verdict(verdict: dict) -> str:
     lines = [
         f"B6 group-card open gate: {verdict['verdict']}",
         f"  sha={verdict.get('sha')} avd={verdict.get('avd')} limit={verdict['limit_ms']} ms{scale}",
-        f"  worst-of-{len(verdict['rounds'])}={verdict['max_click_to_card_ms']} ms",
+        f"  median-of-{len(verdict['rounds'])}={verdict['median_click_to_card_ms']} ms worst={verdict['max_click_to_card_ms']} ms",
     ]
     for index, item in enumerate(verdict["rounds"], start=1):
         lines.append(
