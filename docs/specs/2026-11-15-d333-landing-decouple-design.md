@@ -130,3 +130,10 @@ rig 第十四跑（max `43850577023`，证据 `local/artifacts/maxrig-4385057702
 **登记（待补）**：`创建入口：导入创建` 与 `发生时间` 的呈现此前只有本链覆盖，`transactionDetailOpened=false` 时该覆盖为零——需一条**小规模**的交易详情 UI 测试承接（不依赖 61k 链、不依赖坐标注入），作为后续批。
 
 **下一跑判读清单（D-341）**：`transactionDetailOpened`（应 `true`；`false` 时先看该跑是否仍报同一注入拒绝）、`detailOccurredLine`、`detail_monthly_refresh` 应 PASS；其后四段应首次开跑。
+## 12. D-342 预算包络撑开（2026-11-17）
+
+rig 第十五跑（max `43891956497`）**`chain` 阶段首次全过**（`OK (1 test)`，975.9s）：`preparation` 2925130ms、`coldstart` 22833ms、`saf_import` 187967ms、`detail_decision` 277520ms、`batch_confirmation` 80ms、`group_disposition` 419659ms、**`detail_monthly_refresh` 60829ms PASS**（D-339/D-340/D-341 三次收敛的成果）。链首次进入 `reopen`，它跑 1801.9s 后被自己的 1800000ms 段预算切断。
+
+预算改动（三处同改，缺一即不一致）：rig `stage("reopen", 5400000)`；`result.py` `limits["reopen"]=5400000` 与两处 14400s 硬上限→21600s；workflow outer deadline 14400→19800s、运行步 240→330 分钟、job 300→350 分钟。`traversal` 段字面量不动（14400000ms），受新外层包络约束——**若下一跑 reopen 通过而 traversal 撞外层，traversal 的成本即新前沿**。
+
+**下一跑判读清单（D-342）**：①`reopen` 段应 PASS 并给出真实 `elapsedMs`（此前只有「被切」这一个读数）；②`reopen` 的 oracle 断言（`assertFixture(final)`、`ledger_transaction==1`、`posting==2`、`import_confirmation==1`、`groupRelations` 等值）是否成立——这是验收级判据首次有机会执行；③其后的 `traversal`/`same_request_replay`/`final_reopen` 是否进入并完成；④`transactionDetailOpened` 仍为 `false` 时按 D-341 的欠债处理（小规模 UI 测试承接详情文案）。

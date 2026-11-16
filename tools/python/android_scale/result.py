@@ -268,8 +268,11 @@ def validate_evidence(directory: Path, expected_sha: str) -> dict:
     # unlisted default would impose, while the walk itself stays bounded by
     # `traversal`'s 14400000 entry. The 18000s host phase budget remains the
     # outer bound.
+    # D-342: `reopen` moves with the rig's own literal — run 43891956497 cut it at exactly the old
+    # 1800000ms bound after the chain phase finally completed, so this raises both together. The
+    # traversal sibling keeps its 4h literal; the outer envelope bounds it.
     limits = {"preparation": 14400000, "saf_import": 1800000, "group_disposition": 5400000,
-              "reopen": 1800000, "traversal": 14400000,
+              "reopen": 5400000, "traversal": 14400000,
               # D-338: the detail stage now carries both batch submits (the decision-incomplete
               # skip and the decided booking), which a single authorization measured at ~39.4s
               # (D-164) plus the summary read; run 43801673636 already spent 150.965s of the old
@@ -305,15 +308,18 @@ def validate_evidence(directory: Path, expected_sha: str) -> dict:
         raise ValueError("JUnit aggregate not clean")
     if [case.get("name") for case in cases] != list(PHASES) or any(len(case) for case in cases) or any(case.get("classname") != TEST_CLASS for case in cases):
         raise ValueError("JUnit cases missing/failed/skipped")
+    # D-342: the 14400s (4h) ceiling on both the per-phase JUnit timer and the driver's elapsed
+    # time moves with the workflow's raised outer envelope (19800s), otherwise a legitimate
+    # long reopen/traversal would be rejected as malformed evidence after the fact.
     for case in cases:
         seconds = float(case.get("time", "nan"))
-        if not math.isfinite(seconds) or not 0 < seconds <= 14400:
+        if not math.isfinite(seconds) or not 0 < seconds <= 21600:
             raise ValueError("invalid JUnit timer")
     for name in ("logcat.txt", "memory.txt", "configuration.txt"):
         if not (directory / name).is_file() or (directory / name).stat().st_size == 0:
             raise ValueError(f"required evidence absent: {name}")
     elapsed = report.get("elapsed_seconds")
-    if type(elapsed) not in (int, float) or not math.isfinite(elapsed) or not 0 < elapsed <= 14400:
+    if type(elapsed) not in (int, float) or not math.isfinite(elapsed) or not 0 < elapsed <= 21600:
         raise ValueError("driver elapsed-time bound")
     if crash_present((directory / "logcat.txt").read_text(encoding="utf-8")):
         raise ValueError("crash/OOM/ANR in actual logcat")
