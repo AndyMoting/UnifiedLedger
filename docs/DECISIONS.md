@@ -7430,3 +7430,19 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **边界：** 入 = rig 批腿/组腿段与注释 + `result.py` STAGES 与注释 + 时间线 fixture + D-333 spec §7 + 本条。出 = 不动 `stage()` helper、不动 reopen 前置的 `batch_confirmation == "PASS"`、不改段预算与 limit、不改 D-334 折叠腿行为、不动 D-335 探针两键语义。
 
 **关联决定：** D-336（被本条撤销的守卫跳过）、D-335（探针出处，本条起回到纯取证）、D-332/D-333（架空批腿前提的组语义）、D-217（批腿原始设计出处）、D-334（折叠收尾腿，原动机被本条架空但行为保留）。
+
+## D-338 第二次批提交回到详情页内驱动，batch_confirmation 段改为效果见证
+
+**状态：** 已批准（2026-11-16；rig 第十一跑实证强制的纠偏，承接 D-337 的腿序）
+
+**背景：** rig 第十一跑（max `43801673636`，证据 `local/artifacts/maxrig-43801673636/`）在 `batch_confirmation` 段 `ui.seek("进入批量确认", forward = false)` 上耗尽段预算（`stage-forensics.json`：`IllegalStateException: UI target not reached`，`AndroidScaleUi.seek:496`，调用点 `chain$lambda$3(:940)` 经 `stage(:195)`，段入口 `chain(:926)`；`device.json` 记 `elapsedMs=162112`、`errorType=IllegalStateException`）。停位探针读数三条：①**停位正确**——`parkTexts`（43 项）同窗含页尾（`加载更多导入候选` / `加载更多`）、底部导航（`首页`/`账户`/`分析`）与渲染顺序上位于候选行与批入口之后的摘要块，停位点即真实列表底，停位失真臂排除；②**入口不在渲染树**——`parkHasEntry=false`，列表侧入口的渲染门 = `selectedCandidateIds.isNotEmpty()`（`P503ImportReviewPresentation.kt:1488-1490`），空选集即门不开，不是 seek 漏检；③**第一次提交本就从详情页点出**——`detail_decision` 的 `clickUntil(勾选候选 → 进入批量确认)` → `click(进入批量确认)` → `授权逐项入账`（`:763-766`）已把第一次批次提交跑到落地，落 `已入账 0 项 / 跳过 1 项`（决策未补全 → 类型化跳过，D-320 设计意图），而入口在详情页由产品承载（`P503ImportReview.kt:1035-1047`；DECISIONS :6657 早已登记该事实）。结论：列表底找入口在本链不可靠——勾选后的 `isChecked==true` 是已知的 stale-tree 假阳性路径（rig `:874-879` 自记 round 19），而 selection 的写点就在详情页。
+
+**裁决：** 第二次（决策已补全、应真实落账的）批提交改在**详情页内**驱动，入口不再从列表底 seek；提交的验收改由**它自己的摘要**见证，`batch_confirmation` 段退化为该见证的断言点。批腿仍是落账负载腿（D-337 的裁决不撤销），只是驱动面搬家。
+
+**落地形制：** ①`AndroidScaleLongInstrumentedTest.kt` `detail_decision`：勾选循环的后置条件从 `isChecked==true` 改为效果级 `ui.has("进入批量确认")`（详情页入口只在选集非空时渲染，同一事实的效果级读法，两次尝试/fresh 节点/tick 感知 catch 原样）；其后 `click(进入批量确认)` → `await(确认入账（1 项）)` → `click(授权逐项入账)` → `await(导入 前缀)` → 落地闸 `await(刷新清单)`（`导入` + `刷新清单` 是导入面标题栏的两个文本，`P503ImportReview.kt:544-548`）→ `edge(last = true)` → 等摘要**内容**翻转为 `已入账 1 项`（保留结果先是首轮的 `已入账 0 项 / 跳过 1 项`，只等段头会读旧行）→ `evidence.batchBookedSeen` + 硬 `check` → `edge(last = false)` 交回列表顶。②`batch_confirmation` 段：`edge(last=true)`、D-335 探针、`seek`、click/授权/列表侧摘要读整块删除，只剩 `check(evidence.getBoolean("batchBookedSeen"))`；段名与 `result.py` 的 `STAGES` 顺序不动。③D-335 探针两键（`parkHasEntry`/`parkTexts`）删除。④`docs/specs/2026-11-15-d333-landing-decouple-design.md` §8 登记判读、修法、三条实施偏差与下一跑判读清单。
+
+**实证：** 第十一跑 `stage-forensics.json` 的失败栈 + `device.json` 的 `parkHasEntry=false` / `parkTexts` 43 项全文 / `batchSkipSummarySeen=false` / `detail_decision` 150965ms；`batchSkipSummarySeen=false` 与 D-337 对「摘要块不在初始视口」的判定互证，故本批的效果见证改为先走到底部。本批零执行（CI 裁决），判据是下一跑三项读数：`batchBookedSeen=true`、`batch_confirmation` 段毫秒级、`detail_monthly_refresh` 首次真正开始跑（第十跑是跑起来但账本真空，第十一跑根本没轮到它）。
+
+**边界：** 入 = rig 的 `detail_decision` 尾段与 `batch_confirmation` 段、组腿起点注释与 `reopen()` 门槛注释、D-333 spec §8、本条。出 = 不动 `stage()` helper、不动 `tools/python/android_scale/result.py`（`STAGES` 与 `limits` 均不改）、不动 reopen 前置的 `batch_confirmation == "PASS"`、不改段预算与 limit、不动组腿行为与 `reopen`/`replay` 断言、不动 `detail_monthly_refresh`。**遗留（本批未落地）**：`detail_decision` 的 maximum 档段预算需上调——第十一跑用 150965ms/180000ms（余 29035ms），本批新增一次完整批提交（D-164 实测单笔授权到权威计数增长 39,426 ms）+ 底部走位（~6s）+ 摘要读，超界风险实质存在；建议与 `result.py` 的 `limits` 条目同改（两处必须同改），而该 Python 文件不在本批 writablePaths，需主会话并入后一并改。
+
+**关联决定：** D-337（腿序与「批腿是落账负载腿」的裁决，本条承接其形制）、D-335（停位探针，本条删除其两键）、D-320（第一次提交的跳过语义：决策未补全即类型化跳过，零账务效果）、D-217（批腿原始设计与 rig 链结构，本条的勾选循环与 walk helper 均出自该线）。
