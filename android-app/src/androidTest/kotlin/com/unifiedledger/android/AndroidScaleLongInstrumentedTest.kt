@@ -894,21 +894,30 @@ class AndroidScaleLongInstrumentedTest {
             // the detail's own entry), so the entry's presence is the same
             // selection fact read at effect level, and the retry now answers
             // to that effect instead of to the tree's claim.
-            var selected = false
-            for (attempt in 0 until 2) {
-                val checkbox = ui.nodes(ui.root()).first { it.contentDescription?.toString() == "勾选候选" }
-                ui.clickNode(checkbox)
-                selected =
-                    try {
-                        ui.await(20000) { ui.has("进入批量确认") }
-                        true
-                    } catch (miss: IllegalStateException) {
-                        if (miss.message?.contains("scale deadline exceeded") == true) throw miss
-                        false
-                    }
-                if (selected) break
+            // D-338 review (P0): the entry is the selection's effect, but it can already be
+            // true on arrival — the first submit above selected this candidate and a completed
+            // batch never clears the selection (P503Reducer.kt:3111, :2701-2705). Toggling
+            // unconditionally would therefore UNSELECT it, and the stale client tree would then
+            // keep reporting the vanished entry as present. So: take the effect as-is when it
+            // already holds, and only toggle when it is genuinely missing (a miss walks
+            // root.refresh() + a forced cache reset, which is the trustworthy direction).
+            var selected = ui.has("进入批量确认")
+            if (!selected) {
+                for (attempt in 0 until 2) {
+                    val checkbox = ui.nodes(ui.root()).first { it.contentDescription?.toString() == "勾选候选" }
+                    ui.clickNode(checkbox)
+                    selected =
+                        try {
+                            ui.await(20000) { ui.has("进入批量确认") }
+                            true
+                        } catch (miss: IllegalStateException) {
+                            if (miss.message?.contains("scale deadline exceeded") == true) throw miss
+                            false
+                        }
+                    if (selected) break
+                }
             }
-            check(selected) { "detail checkbox toggle was never observed (the 进入批量确认 entry never surfaced)" }
+            check(selected) { "the detail's 进入批量确认 entry never surfaced (selection was never established)" }
             // D-338: the second, decision-complete submit runs HERE, on the
             // detail screen, because the product puts the entry here. Round 11's
             // park dump (run 43801673636, 43 visible texts) read the TRUE list
@@ -947,10 +956,18 @@ class AndroidScaleLongInstrumentedTest {
             // first batch's 已入账 0 项 / 跳过 1 项, so awaiting the section
             // header alone would read the stale line.
             ui.edge(last = true)
+            // D-338 review (P2): only the await's own timeout is a retryable miss. A bare
+            // runCatching would also swallow tick()'s "scale deadline exceeded" and relabel a
+            // phase overrun as a failed booking — the same classification rule the toggle
+            // loop above and the round-21 retry already follow.
             val booked =
-                runCatching {
+                try {
                     ui.await(120000) { ui.nodes(ui.root()).flatMap(ui::labels).any { line -> line.contains("已入账 1 项") } }
-                }.getOrDefault(false)
+                    true
+                } catch (miss: IllegalStateException) {
+                    if (miss.message?.contains("scale deadline exceeded") == true) throw miss
+                    false
+                }
             evidence.put("batchBookedSeen", booked)
             check(booked) { "the decided batch never booked its transaction (已入账 1 项 not observed)" }
             // D-338: hand the viewport back at the list TOP for the group leg —
@@ -988,6 +1005,11 @@ class AndroidScaleLongInstrumentedTest {
             // the booking summary was actually observed, so a silently lost submit still fails
             // the chain here rather than surfacing as an empty ledger three stages later.
             check(evidence.getBoolean("batchBookedSeen")) { "the batch leg's booking was never observed" }
+            // D-338 review (P2): this stage carries no UI work of its own, and result.py rejects
+            // a stage whose elapsedMs is zero (0 < elapsedMs). A real tree read here is both the
+            // structural lower bound and a second witness: the authorize hop must have landed on
+            // the import surface, not stayed on the submitting screen.
+            check(ui.has("导入", prefix = true)) { "the batch leg did not land on the import surface" }
         }
         // D-217 round 12 (evidence20): the collect-only traversal stage moved
         // out of the chain into reopen(). The walk used to run BEFORE
@@ -1218,8 +1240,10 @@ class AndroidScaleLongInstrumentedTest {
         // D-337: the skip arm is gone, so this PASS now implies the batch leg ran. The gate
         // alone never proved the submission — run 43783363684 recorded PASS with an empty
         // ledger under the D-336 guard — so the counts below stay the load-bearing assertion.
-        // D-338: the gate now also carries the submit's own summary witness (batchBookedSeen),
-        // so it is no longer consent-only; the counts remain the acceptance-grade proof.
+        // D-338: the gate now reads the witness the detail leg wrote (batchBookedSeen — its own
+        // booked summary), so a PASS here is not consent-only. The witness lives in the detail
+        // leg; this line only reads its echo, and the counts below remain the acceptance-grade
+        // proof.
         check(evidence.getJSONObject("stages").getJSONObject("batch_confirmation").getString("status") == "PASS")
         // D-217 (round 21 reword): the host has force-stopped the app, so
         // the heavy oracle reads below — every one taken BEFORE ui.launch()
