@@ -942,12 +942,24 @@ class AndroidScaleLongInstrumentedTest {
             check(ui.has("确认入账（1 项）"))
             ui.click("授权逐项入账")
             ui.await { ui.has("导入", prefix = true) }
-            // D-217 round 17 (evidence30): no bottom excursion here — after await 导入 the
-            // list is at its top where 最近批量结果 renders, and a scroll excursion leaves the
-            // viewport away from the awaited text (same round-16 rationale; the bottom-reach
-            // proof is reopen()'s snapshot equality).
+            // D-337 (2026-11-16): the batch-result section renders AFTER the whole candidate
+            // list and the batch entry (P503ImportReviewPresentation.kt:1489-1498), and the
+            // import list re-composes at its TOP when the batch screen returns — no scroll
+            // position is restored (the list state is composition-local). At this scale the
+            // awaited text therefore sits ~50,000 rows below the viewport, so the leg walks to
+            // the bottom before reading it: the same edge(last = true) shape this stage already
+            // opens with, and the same fast scrollToPosition path run 43741730054-a2 measured at
+            // ~6s. The D-217 round-17 no-excursion note above assumed a small list where the
+            // summary was already on screen; that premise does not survive the 50k scale.
+            ui.edge(last = true)
             ui.await { ui.has("最近批量结果", prefix = true) }
             check(ui.nodes(ui.root()).flatMap(ui::labels).any { it.contains("已入账 1 项") && it.contains("拒绝 0 项") && it.contains("未知 0 项") })
+            // D-337: hand the viewport back at the list TOP. The next stage's entry point
+            // (刷新清单 / the group affordance) lives in the preamble above the rows, and its
+            // seekBackToTop walks backward with a 40-step bound — from ~50,000 rows down that
+            // walk cannot reach the top, so the stage would start blind. edge(last = false) is
+            // the same scrollToPosition(0) fast path as the bottom edge above.
+            ui.edge(last = false)
         }
         // D-217 round 12 (evidence20): the collect-only traversal stage moved
         // out of the chain into reopen(). The walk used to run BEFORE
