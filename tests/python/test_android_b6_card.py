@@ -113,12 +113,14 @@ class Judging(unittest.TestCase):
         self.assertEqual(4900, verdict["max_click_to_card_ms"])
 
     def test_a_median_above_the_bound_fails_and_names_both_values(self) -> None:
-        verdict = judge(self.rounds(3200, 3200, 3100), 3, 3000)
+        # The round set keeps worst != median (9000 is the outlier, the median sits at 3200), so
+        # both numbers in the FAIL reason are pinned to their own identities, not one value twice.
+        verdict = judge(self.rounds(3100, 3200, 9000), 3, 3000)
         self.assertEqual("FAIL", verdict["verdict"])
         joined = " ".join(verdict["reasons"])
         self.assertIn("the median round is 3200 ms", joined)
         self.assertIn("above the 3000 ms bound", joined)
-        self.assertIn("worst 3200 ms", joined)
+        self.assertIn("worst 9000 ms", joined)
 
     def test_a_single_slow_round_is_noise_the_median_absorbs(self) -> None:
         # Formerly `test_a_single_slow_round_fails_the_gate` under the max-of-3 statistic; D-336

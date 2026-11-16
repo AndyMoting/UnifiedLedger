@@ -1114,7 +1114,14 @@ class AndroidScaleLongInstrumentedTest {
             // (reopen/replay/final-reopen) matter more than a degenerate second
             // submission over an empty selection. The probe above is reused as the
             // guard verbatim — its predicate and the seek's target are the same
-            // 进入批量确认 prefix text, so no second probe is taken.
+            // 进入批量确认 prefix text, so no second probe is taken. The domains
+            // differ by design and the error direction is safe: the probe reads ONE
+            // snapshot capped at 60 visible texts while the true arm's has()/seek
+            // walk the full tree with retries — a miss here can only skip a leg
+            // that could have run (false negative), never block one that could not
+            // (the wider seek domain never contradicts the probe's narrower read),
+            // and reopen()'s oracle equality pins whatever the skipped leg would
+            // have contributed.
             val batchEntryPresent = evidence.getBoolean("parkHasEntry")
             if (batchEntryPresent) {
                 ui.seek("进入批量确认", forward = false)
