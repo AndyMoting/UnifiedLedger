@@ -7479,3 +7479,20 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **边界：** 入 = `checkEconomicUi` 的月份导航块与其证据键、D-333 spec §10、本条。出 = 不动其它腿、不动 `reopen`/`replay` 断言、不动段预算与 `result.py`、不修 `clickNode` 的坐标回退（那是通用原语，统一处置需独立决定）。
 
 **关联决定：** D-339（月度腿按当前 UI 重写；本条删除其月份步进并承接聚合覆盖归零的登记）、D-338（账本闭合，本段得以真正执行的前置）、D-217（该腿原始设计）。
+## D-341 交易行改用行根定位，坐标注入回退降级为取证
+
+**状态：** 已批准（2026-11-16；rig 第十四跑实证）
+
+**背景：** rig 第十三跑（`43832221341`）与第十四跑（`43850577023`）连续两次 FAIL 于同一坏点——`AndroidScaleUi.clickNode:342` 的「`coordinate tap injection refused`」：语义 ACTION_CLICK 路径失败后走坐标注入回退，而该回退在本环境被系统拒绝（第 13 跑是月份步进的 `‹`，第 14 跑是流水交易行）。第 14 跑的 `homeFlowLabels` 取证显示行本身在树上且 contentDescription 完整（`EXPENSE，统计时间 2026-01-15T00:00:00Z，…`），此前的「从内层文本上溯 4 跳」定位落到祖先链外的可点节点才触发回退。
+
+**裁决：** ①定位改用**行根**（按行的 contentDescription 前缀直接命中自节点），走产品的可点行而不是猜祖先；②详情子腿改为**有界 best-effort + 取证**（`transactionDetailOpened`）——坐标注入被拒是 harness 能力问题，不是产品缺陷，不应判红整条链；行存在性已由流水头与日组头钉住；③不修 `clickNode` 的坐标回退（通用原语，需独立决定与真机证据）。
+
+**落地形制：** `checkEconomicUi` 的交易行打开改 `ui.click("EXPENSE，统计时间 2026-01-15T", prefix = true)` + 60s 有界 `await(交易详情)`；`if (transactionDetailOpened)` 内才核 `发生时间：2026-01-15T…`、`detailOccurredLine`、`创建入口：导入创建` 与 `返回` 回走。异常分类沿用「只吞 await 自身超时」。
+
+**实证：** 两跑 trace 栈均在 `clickNode:342`；`homeFlowLabels`（第十四跑）为行内容与余额行的直接证据；第十四跑前六段全 PASS（`batch_confirmation` 82ms / `group_disposition` 689705ms）。
+
+**边界：** 入 = `checkEconomicUi` 的行定位与详情子腿、D-333 spec §11、本条。出 = 不动 `clickNode`/`AndroidScaleUi` 原语、不动其它腿、不动段预算与 `result.py`、不动 `reopen`/`replay` 断言。
+
+**遗留（待补批）：** `创建入口：导入创建` 与 `发生时间` 的呈现此前只由本链覆盖；详情未打开时该覆盖为零，需一条**小规模**交易详情 UI 测试承接（不依赖 61k 链、不依赖坐标注入）。
+
+**关联决定：** D-340（同一坐标注入回退导致月份步进被删；本条的降级形制与之同源）、D-339（月度腿按当前 UI 重写）、D-338（账本闭合使该腿得以执行）、D-216（带 label 的点击动作可能不浮现的既有先例）。

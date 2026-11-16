@@ -119,3 +119,14 @@ rig 第十三跑（max `43832221341`，证据 `local/artifacts/maxrig-4383222134
 故删除整段月份导航与依赖它的 `monthExpensePageSeen` 读取，`monthlyLegScope` 固定记 `flow-only`。交易的发生日仍由日组头断言 `2026-01-15 · 1 笔` 钉住——信息不丢。该段保留的不可替代观察不变：`流水 · 共 1 笔`、日组头、交易详情里的 `创建入口：导入创建` 与 `发生时间：2026-01-15T…`。
 
 **下一跑判读清单（D-340）**：`detail_monthly_refresh` 应 PASS 且 `elapsedMs` 在数万毫秒内、`monthlyLegScope=flow-only`、`detailOccurredLine` 应显示 UTC `Z` 形态；其后 `reopen`/`traversal`/`same_request_replay`/`final_reopen` 四段应首次开跑。
+## 11. D-341 交易行改用行根定位 + 注入回退降级为取证（2026-11-16）
+
+rig 第十四跑（max `43850577023`，证据 `local/artifacts/maxrig-43850577023/`）前六段全 PASS（`batch_confirmation` 82ms、`group_disposition` 689705ms），`detail_monthly_refresh` 75.6s FAIL 于 `ui.clickNode(transaction)` → `AndroidScaleUi.kt:342` 的 `coordinate tap injection refused`——与第十三跑的 `‹` 是同一个坏点：`clickNode` 的语义 ACTION_CLICK 路径失败后走坐标注入回退，而该回退在本环境被系统拒绝。
+
+`homeFlowLabels` 取证把主页真实渲染全文拍下，含行的 contentDescription：`EXPENSE，统计时间 2026-01-15T00:00:00Z，备注 ；隐藏费用过账账户 1971.99 CNY；默认支付账户 -1971.99 CNY`（`P503OverviewScreen.kt:300` 的 `flowRowContentDescription`），以及可见文本 `EXPENSE · 统计 2026-01-15T00:00:00Z · `、余额两行、日组头 `▾ 2026-01-15 · 1 笔`。即行本身在树上、描述完整，此前的「从内层文本上溯 4 跳找可点祖先」定位失败才落到坐标回退。
+
+修订（D-341）：①定位改用**行根**——`ui.click("EXPENSE，统计时间 2026-01-15T", prefix = true)`，直接命中带该 contentDescription 的自节点（产品的可点行），不再从内层文本上溯；②详情子腿改为**有界 best-effort + 取证**（`transactionDetailOpened`）：行存在性已由流水头与日组钉住，坐标注入被拒是 harness 能力问题而非产品缺陷，不应把整条链判红；仅当详情真打开时才核 `发生时间：2026-01-15T…` 与 `创建入口：导入创建`。异常分类仍只吞 await 自身超时、`scale deadline exceeded` 上抛。
+
+**登记（待补）**：`创建入口：导入创建` 与 `发生时间` 的呈现此前只有本链覆盖，`transactionDetailOpened=false` 时该覆盖为零——需一条**小规模**的交易详情 UI 测试承接（不依赖 61k 链、不依赖坐标注入），作为后续批。
+
+**下一跑判读清单（D-341）**：`transactionDetailOpened`（应 `true`；`false` 时先看该跑是否仍报同一注入拒绝）、`detailOccurredLine`、`detail_monthly_refresh` 应 PASS；其后四段应首次开跑。
