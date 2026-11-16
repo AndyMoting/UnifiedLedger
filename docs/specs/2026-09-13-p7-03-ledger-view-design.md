@@ -204,7 +204,7 @@
 | --- | --- | --- | --- |
 | R-1 | 兼容 kind 降级（`Ledger.sq:1945-1984`）使旧读路径把 LEND/COLLECT/REFUND_RECEIPT 读回 EXPENSE；本批新查询必须 `COALESCE` | 分类/月度全错 | 新行类型独立于 `CurrentVersionRow`（§4.1.1）；C02 向量断言真实 kind；不改 `insertTransaction` |
 | R-2 | 统计时间双存储面（§2.3）：原地 metadata 写入方有**两个**——RG-11（`SqlDelightRg11Store.kt:639-652`，另走版本追加 `Rg11Operations.kt:934-946`）与 **RG-12（`SqlDelightRg12Store.kt:610`）**，且 RG-12 的 metadata 值本身派生自当前版本的 `statistics_at`（`SqlDelightRg12Store.kt:603-608`），故读版本列在两条修正路径下均保持正确 | RG-11/RG-12 修正月历史统计口径误读 | R-Q06-1 冻结只读版本列；`formal_transaction_metadata` 零读取；测试含追加版本后月份迁移向量（C01） |
-| R-3 | 月界/时区：Asia/Shanghai 无 DST，但月 Arithmetic 需以 `kotlinx-datetime` 显式构造，不得手写 86400 秒累加 | 月界漂移 | R-Q06-2 冻结；C01 跨年/闰年向量；`kotlinx-datetime 0.8.0` 既有依赖 |
+| R-3 | 月界/时区：本行早前写的「Asia/Shanghai 无 DST」是旧风险假设，仅作历史注释保留；中国在 1986–1991 年实行过夏令时，历史日界由 IANA 时区规则按当地时间零点处理（[IANA time-zones](https://www.iana.org/time-zones)，本仓不复制时区数据）。月 Arithmetic 仍需以 `kotlinx-datetime` 显式构造，不得手写 86400 秒累加 | 月界/日界漂移 | R-Q06-2 的冻结语义不变（时区仍为 Asia/Shanghai、月界仍为当地自然月半开窗）；C01 跨年/闰年向量；历史 DST 边界见 P8-06 规格 V-15；`kotlinx-datetime 0.8.0` 既有依赖 |
 | R-4 | R-Q07-4 资格判定为**注册解读**（§3.2.1）：手工 P7-02 转账腿显示「无对账资格」，与 P7-02 L-5「保持待对账」的产品语感存在差距 | 用户误解手工腿对账状态 | 只读零写入不改变事实；§3.2.1 后果披露 + 评审确认；后续对账批次拥有手工腿资格定义；C03 含两向量 |
 | R-5 | 特殊 kind 账本上月度普通收支 ≠ `SummarizeLedgerActivity` 全期（如储值花费的费用分录） | 用户对照两处数字不一致 | R-Q06-3 既定结果；§3.1.2 锚限定「无特殊 kind」账本；披露于分类区（特殊 kind 单列计数，不入普通收支行） |
 | R-6 | 性能：全账本扫描 + application 聚合，无新索引 | 大账本卡顿 | 演示规模可接受（现读路径同形，`Ledger.sq:8712-8739`）；零 DDL 冻结；确需索引必须走 v30 影响评估（§5.1） |
