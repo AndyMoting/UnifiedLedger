@@ -7536,3 +7536,22 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **残余（登记，不并入任何 PASS）：** ①账户、分类、日历日桶与目录一致性探针的扫描代价不随窗口收敛（`posting(account_id)` 与 `occurred_at` 无索引），索引属独立迁移门；②明细页与计数是同一次请求的短快照，翻页之间允许新提交进入，跨页不承诺同一快照；③报表期间游标与月卡 `SelectMonth` 游标并存，用户可能对两个期间控件产生歧义，需呈现批给可读样本；④日历整请求语句数为 `C0 + 2D`（`2D ≤ 62` 只描述逐日子查询），单连接下会推迟其他读；⑤设备侧月聚合观察面只剩分析页（`D-339`/`D-340`），报表证据须新打一面；⑥日历视觉形制与性能阈值未批准；⑦P7-03 的 R-3 旧注释「Asia/Shanghai 无 DST」不影响当代行为，历史 1986–1991 由中国时区规则按当地零点处理（见 P7-03 规格 R-3 的更正）。
 
 **关联决定：** `D-043`（本条第 3 项局部例外的对象，外部决定日志只读）、`D-120`/`D-122`（共享 `app-ui`、分析面消费派生汇总）、`D-145`（P7-03 读模型与冻结口径）、`D-184`（数值时间投影与缺投影 fail-loud）、`D-266`/`D-267`/`D-268`（有界月读、币种轴、键集分页与 SQL 聚合）、`D-301`（P8-00 视觉与导航基线：分析面信息组织与分类入口语义）、`D-308`（账户范围键集页的 `occurred_at` 先例）、`D-339`/`D-340`（设备侧月聚合观察面与分析页呈现）。
+## D-344 scroll() 的注入被拒回退：改用可滚动节点的无障碍滚动动作
+
+**状态：** 已批准（2026-11-17；rig 第十六跑实证）
+
+**背景：** rig 第十六跑（max `43925110453`，证据 `local/artifacts/maxrig-43925110453/`）达成两项：**`reopen` 首次 PASS（5057145ms ≈ 84.3 分钟）**——验收级 oracle 断言第一次真正执行并通过（`finalCandidates=61000` / `finalRelations=150000` 与 `EXPECTED` 一致，`assertFixture(final)`、counts、组关系等值全部成立）；随后 **`traversal` 在 10.3 秒失败**，错误 `gesture injection refused`（`AndroidScaleUi.scroll` 的 `injectInputEvent` 检查）。
+
+**归因（同一根因的第三次显形）：** `reopen()` 会 force-stop 应用再重启，之后 `UiAutomation.injectInputEvent` 一律被系统拒绝，而语义动作（`performAction`）仍然有效——这解释了为什么 chain 全过（其中的点击走语义路径、滚动发生在重启之前），而重启后的 traversal 一滚动就死。同族的拒绝此前已两次割掉 frontier：`‹` 月份步进（D-340 删除该步进）、流水行的坐标注入回退（D-341 改行根定位 + 降级取证）。
+
+**裁决：** 修在**共享原语**上而不是逐处绕开——`scroll()` 先试手势，注入被拒则改用可滚动节点自身的 `ACTION_SCROLL_FORWARD/BACKWARD`（无需注入）；半途被拒的手势一律释放 UP，避免留下按下的指针；新增 `scrollActionFallbacks` 计数并作为 evidence（`traversalScrollFallbacks`）落盘，使「靠注入真滚」与「靠动作回退」在证据上可分辨。
+
+**落地形制：** `AndroidScaleUi.scroll` 重构为「手势 + 回退 + 释放」三段，`scrollActionFallbacks` 为只读计数器；`AndroidScaleLongInstrumentedTest` 的 traversal 段写该计数进 evidence。两处都不改断言语义与段预算。
+
+**实证：** 第十六跑 `junit.xml`：`prepare` 3096.9s、`chain` 969.1s、`reopen` 5070.9s（PASS）、`traversal` FAIL；`device.json` 的 `reopen` 为 `PASS/5057145ms`，`traversal` 为 `FAIL/10348ms`；`stage-forensics.json` 的 `message=gesture injection refused`、视口为导入面（重启后停在首页）。
+
+**边界：** 入 = `AndroidScaleUi.scroll` 与计数器、traversal 段的 evidence 键、D-333 spec §13、本条。出 = 不改 `clickNode` 的坐标回退（D-341 已将其降级为取证）、不改 seek/edge 的判定、不动段预算与 `result.py`、不动任何产品代码。
+
+**遗留：** `same_request_replay` 与 `final_reopen` 仍未执行过（第十六跑 `traversal` 红后 NOT_RUN）；traversal 若靠回退通过，`traversalScrollFallbacks` 会如实给出读数，届时再裁决该读数在验收上的权重。
+
+**关联决定：** D-342（预算包络使 reopen 首次跑完）、D-341/D-340（同族注入拒绝的两次处置）、D-217（reopen/traversal 分工与 force-stop 语义）、D-338/D-339（链前段的最终收敛）。

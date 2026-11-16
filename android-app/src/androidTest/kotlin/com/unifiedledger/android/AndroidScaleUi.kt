@@ -34,6 +34,15 @@ internal class AndroidScaleUi(
      */
     private var lastResetElapsedMs: Long
 
+    /**
+     * D-344: how many scrolls the accessibility action served because gesture injection was
+     * refused. Evidence only — the chain reads it to tell "the harness fell back" from "the
+     * harness drove real gestures", which is the difference between a trustworthy and a
+     * suspicious pass on the traversal stage.
+     */
+    var scrollActionFallbacks: Int = 0
+        private set
+
     init {
         setServiceInfo()
         lastResetElapsedMs = SystemClock.elapsedRealtime()
@@ -440,28 +449,61 @@ internal class AndroidScaleUi(
         fraction: Float = 0.6f,
     ) {
         tick()
-        val bounds = bounds(scrollable())
+        val container = scrollable()
+        val bounds = bounds(container)
         check(bounds.width() > 0 && bounds.height() > 100)
         val distance = bounds.height() * fraction
         val center = bounds.centerY().toFloat()
         val start = center + (if (forward) distance / 2 else -distance / 2)
         val finish = center - (if (forward) distance / 2 else -distance / 2)
         val down = SystemClock.uptimeMillis()
-        for (step in 0..12) {
-            val action = if (step == 0) MotionEvent.ACTION_DOWN else MotionEvent.ACTION_MOVE
-            val time = down + step * 15
-            val event = MotionEvent.obtain(down, time, action, bounds.centerX().toFloat(), start + (finish - start) * step / 12, 0)
-            event.source = InputDevice.SOURCE_TOUCHSCREEN
-            check(automation.injectInputEvent(event, true)) { "gesture injection refused" }
-            event.recycle()
-            if (step < 12) SystemClock.sleep(15)
+        // D-344 (run 43925110453, 2026-11-17): gesture injection can be REFUSED outright once the
+        // app has been force-stopped and relaunched — reopen() does exactly that, and the
+        // traversal that follows it died in 10.3s on this check while every semantic click kept
+        // working. The same family of refusal already took the month stepper out (D-340) and the
+        // flow row's coordinate fallback (D-341), so the fix belongs in this shared primitive:
+        // try the gesture, and on refusal drive the SCROLLABLE NODE's own accessibility action,
+        // which needs no injection at all. A partial gesture is released either way so a refused
+        // injection cannot leave a press held down.
+        var pressed = false
+        var settledByGesture = false
+        try {
+            for (step in 0..12) {
+                val action = if (step == 0) MotionEvent.ACTION_DOWN else MotionEvent.ACTION_MOVE
+                val time = down + step * 15
+                val event = MotionEvent.obtain(down, time, action, bounds.centerX().toFloat(), start + (finish - start) * step / 12, 0)
+                event.source = InputDevice.SOURCE_TOUCHSCREEN
+                val injected = automation.injectInputEvent(event, true)
+                event.recycle()
+                if (!injected) break
+                pressed = true
+                if (step == 12) {
+                    // Stop moving before release; do not turn traversal into a fling.
+                    SystemClock.sleep(160)
+                    val up = MotionEvent.obtain(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, bounds.centerX().toFloat(), finish, 0)
+                    up.source = InputDevice.SOURCE_TOUCHSCREEN
+                    val released = automation.injectInputEvent(up, true)
+                    up.recycle()
+                    if (!released) break
+                    settledByGesture = true
+                }
+                if (step < 12) SystemClock.sleep(15)
+            }
+        } finally {
+            if (!settledByGesture && pressed) {
+                // Best-effort release of a half-injected gesture.
+                val up = MotionEvent.obtain(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, bounds.centerX().toFloat(), finish, 0)
+                up.source = InputDevice.SOURCE_TOUCHSCREEN
+                runCatching { automation.injectInputEvent(up, true) }
+                up.recycle()
+            }
         }
-        // Stop moving before release; do not turn traversal into a fling.
-        SystemClock.sleep(160)
-        val up = MotionEvent.obtain(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, bounds.centerX().toFloat(), finish, 0)
-        up.source = InputDevice.SOURCE_TOUCHSCREEN
-        check(automation.injectInputEvent(up, true))
-        up.recycle()
+        if (!settledByGesture) {
+            val action = if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+            check(container.performAction(action)) { "scroll refused by both gesture injection and the accessibility scroll action" }
+            scrollActionFallbacks++
+        }
+        settledByGesture = false
         settle()
     }
 
