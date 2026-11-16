@@ -108,3 +108,14 @@ rig 第十二跑（max `43818172737`，证据 `local/artifacts/maxrig-4381817273
 **实施偏差登记（写手，相对本批任务书）：** ①任务书预设「往回 10 个月到 2026-01」；查证后 `‹` 一步即到域内最早月，故该循环整段删除。②任务书要求核对 `OverviewBalances` 是否还有 CNY 句——该句不在余额区（见上），故按「已不存在 → 删除」处理。③任务书要求把详情 `发生时间` 按新格式钉死；其精确 UTC 形态在本机不可执行验证（零执行），故按前缀 `发生时间：2026-01-15T` 断言并把全文记入 `detailOccurredLine`，下一跑按读数钉死——不为一处投影形态花掉一跑。
 
 **下一跑判读清单（D-339）**：①`detail_monthly_refresh` 应 PASS 且 `elapsedMs` 在数万毫秒内（`homeFlowLabels` 在失败前也已落盘，可先于视口分辨）；②`monthlyLegScope` 应 `transaction-month`——`current-month` 时先分辨域空（钮 disabled）与标签未刷新（域非空但读未回），`homeFlowLabels` 的月份文本与 `monthExpensePageSeen` 能分开这两臂；③`monthExpensePageSeen` 应 `true`；④`detailOccurredLine` 应为 `发生时间：2026-01-15T00:00:00Z`；⑤`创建入口：导入创建` 必须命中（`ui.seek` 前向走位，该卡在 `账目信息` 卡之后），miss 即 `UI target not reached`，属真失败；⑥其后 `reopen`/`traversal`/`same_request_replay`/`final_reopen` 应首次开跑——本跑与第十、十一跑里它们都是 NOT_RUN，是这条腿之外的下一个未知面。
+## 10. D-340 月度腿删除月份步进（2026-11-16）
+
+rig 第十三跑（max `43832221341`，证据 `local/artifacts/maxrig-43832221341/`）前六段全 PASS（`batch_confirmation` 59ms、`group_disposition` 576429ms），`detail_monthly_refresh` 在 73.5s FAIL 于 `ui.click("‹")`：`AndroidScaleUi.clickNode:342` 的「coordinate tap injection refused」——语义点击路径被 7 跳祖先全部拒绝后走坐标注入回退，注入被拒。该注入被拒的具体成因不可证（logcat 里唯一的注入失败在 prepare 期，与本段无关），且**该步进已无验收内容**：
+
+- 流水页的计数是**账本全量**生效交易数（`QueryLedgerFlowPage.kt:49-55`），与选中月无关；
+- 月度聚合文案已随 `P503LedgerView` 退役（D-339 登记），设备侧不再有该读数的可观测面；
+- 步进之后唯一剩下的可观测对象就是月份标签本身。
+
+故删除整段月份导航与依赖它的 `monthExpensePageSeen` 读取，`monthlyLegScope` 固定记 `flow-only`。交易的发生日仍由日组头断言 `2026-01-15 · 1 笔` 钉住——信息不丢。该段保留的不可替代观察不变：`流水 · 共 1 笔`、日组头、交易详情里的 `创建入口：导入创建` 与 `发生时间：2026-01-15T…`。
+
+**下一跑判读清单（D-340）**：`detail_monthly_refresh` 应 PASS 且 `elapsedMs` 在数万毫秒内、`monthlyLegScope=flow-only`、`detailOccurredLine` 应显示 UTC `Z` 形态；其后 `reopen`/`traversal`/`same_request_replay`/`final_reopen` 四段应首次开跑。

@@ -1244,36 +1244,17 @@ class AndroidScaleLongInstrumentedTest {
         // selected month.
         ui.await { ui.visibleTexts(ui.root()).any { line -> line.contains("2026-01-15 · 1 笔") } }
         evidence.put("homeFlowLabels", ui.visibleTexts(ui.root()).joinToString("|").take(2000))
-        val amount = state.getLong("selectedAmount")
-        val text = (amount / 100).toString() + "." + (amount % 100).toString().padStart(2, '0')
-        // The transaction's statistics month is 2026-01, so the SelectMonth domain is
-        // [2026-01, 本月] (QueryMonthlyActivity.kt:96-115) and ‹ steps to the domain's EARLIEST
-        // month, not one month back (monthStepEdges, P503LedgerViewPresentation.kt:204-214): ONE
-        // press reaches 2026-01 from the default 本月. 收支日历 is unwired on this host
-        // (P503App.kt:5081-5082), so the stepper is the only month navigation.
-        var monthlyLegScope = "transaction-month"
-        if (!ui.has("2026-01")) {
-            ui.click("‹")
-            val moved =
-                try {
-                    ui.await(60000) { ui.has("2026-01") }
-                    true
-                } catch (miss: IllegalStateException) {
-                    // Only the await's own timeout is a retryable miss; a phase overrun keeps its
-                    // own classification (the batch leg's catch rule, :968-975).
-                    if (miss.message?.contains("scale deadline exceeded") == true) throw miss
-                    false
-                }
-            if (!moved) monthlyLegScope = "current-month"
-        }
-        // Degrade, never hang: an unreachable month (empty or frozen domain) leaves the leg on 本月,
-        // the scope lands in the evidence for the reviewer, and every check below stays valid
-        // because the flow page is ledger-wide — never month-filtered.
-        evidence.put("monthlyLegScope", monthlyLegScope)
-        // Evidence-only read of the month card's successor surface. The pre-D-339 CNY line retired
-        // with P503LedgerView; the 支出 page sentence now states the selected month's expense
-        // (p8SummaryPageDescription, P8HomeFlow.kt:93-105).
-        evidence.put("monthExpensePageSeen", ui.has("支出：CNY $text"))
+        // D-340 (run 43832221341, 2026-11-16): the month step is GONE from this leg. Two runs
+        // spent a frontier on it and neither failure carried product meaning — run 43818172737
+        // died on the retired 月份： copy, run 43832221341 died on the ‹ press itself with
+        // "coordinate tap injection refused" (AndroidScaleUi clickNode's coordinate fallback, a
+        // path no other click in this chain takes). The step also stopped carrying economic
+        // content when the home surface became the P8 overview: the flow header's count is the
+        // LEDGER-WIDE effective count (QueryLedgerFlowPage.kt:49-55), the monthly aggregation copy
+        // retired with P503LedgerView (registered in D-339), and the only observable left behind
+        // the stepper is the month label itself. The transaction's reporting day is already pinned
+        // by the day-group assertion above, so nothing is lost by dropping the navigation.
+        evidence.put("monthlyLegScope", "flow-only")
         // The flow row's click is its onClickLabel (P503OverviewScreen.kt:291) — but the D-216
         // precedent (AndroidScaleUi candidateNodes, :617-627) is that a labeled click action may
         // never surface to the instrumentation client at all, so the label gets a BOUNDED wait
