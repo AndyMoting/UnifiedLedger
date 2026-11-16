@@ -13,8 +13,14 @@ PHASES = ("prepare", "chain", "reopen", "replay", "final-reopen")
 # the walk is a sibling stage registered only after the reopen stage fully
 # completes (a traversal nested inside reopen starts after reopen started and
 # can never satisfy the strictly increasing startedMs rule validated below).
+# D-337 (2026-11-16): `batch_confirmation` leads `group_disposition`. The batch authorize is the
+# ONLY stage that books a transaction, and the group leg disposes the whole duplicate group; run
+# 43783363684 proved the order is load-bearing — with the batch leg skipped the ledger never got
+# its transaction, the next stage found an empty book (no month selector to await) and burned its
+# whole 180s budget, and every phase after it stayed NOT_RUN. The startedMs rule below reads this
+# declaration order, so the tuple mirrors the rig's chain order.
 STAGES = ("preparation", "coldstart", "saf_import", "detail_decision",
-          "group_disposition", "batch_confirmation", "detail_monthly_refresh", "reopen",
+          "batch_confirmation", "group_disposition", "detail_monthly_refresh", "reopen",
           "traversal", "same_request_replay", "final_reopen")
 EXPECTED = {"preparedCandidates": 51000, "preparedRelations": 100000, "preparedDispositions": 100,
             "finalCandidates": 61000, "finalRelations": 150000, "observedCandidates": 61000,

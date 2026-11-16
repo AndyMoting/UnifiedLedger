@@ -383,8 +383,12 @@ class ReducerRejectsPartialEvidence(unittest.TestCase):
             "coldstart": (70000, 20000),
             "saf_import": (100000, 120000),
             "detail_decision": (300000, 150000),
-            "group_disposition": (600000, 300000),
-            "batch_confirmation": (1000000, 100000),
+            # D-337 (2026-11-16): batch_confirmation leads group_disposition — the batch
+            # authorize books the chain's only transaction and the group leg disposes the
+            # whole duplicate group afterwards. The validator iterates STAGES, so this
+            # fixture must mirror that declaration order to stay monotonic.
+            "batch_confirmation": (600000, 100000),
+            "group_disposition": (750000, 300000),
             "detail_monthly_refresh": (1200000, 50000),
             "reopen": (1300000, 1700000),
             "traversal": (3100000, 14000000),

@@ -120,7 +120,7 @@ run `43386393213`（`fa2ce94f` = D-4 合入后的 `main`；61k 候选 / 150,000 
 | --- | --- | --- |
 | V-1 | 首页目标可达：`openFirstPageCandidate` 在既有 160 步上限内返回金额 `m`，`m` 落在 R1 的规格区间（`maximum` 下即 `[seed+1, seed+1+rowsPerSession)`），详情屏显示 `m` | 云设备 run（`android-scale.yml`，mode=maximum）的 `detail_decision` PASS + 链上过程断言（`AndroidScaleLongInstrumentedTest.kt:464`、`AndroidScaleUi.kt:1021`）；静态锚点见 §1.4/§1.5 |
 | V-2 | `detail_decision` 完成：stage 状态 PASS 且 `elapsedMs ≤ 180000`；决策事实为「`session-01` 的行 + `selectedAmount`」，重开核对 `决策已补全。` 成功 | 同一设备 run 的 device evidence（`reopen` 的 `check(...)` 见 `:751-752`）；`result.py:265-270` 的 stage 上限 |
-| V-3 | 五阶段 `phases` 齐全：`prepare / chain / reopen / replay / final-reopen`，且 `stages` 集合恰为 `preparation / coldstart / saf_import / detail_decision / group_disposition / batch_confirmation / detail_monthly_refresh / reopen / traversal / same_request_replay / final_reopen` | 同一设备 run 的 `host.json`（`result.py:11` 的 `PHASES`、`:16-18` 的 `STAGES`、`:257` 的集合相等判据） |
+| V-3 | 五阶段 `phases` 齐全：`prepare / chain / reopen / replay / final-reopen`，且 `stages` 集合恰为 `preparation / coldstart / saf_import / detail_decision / batch_confirmation / group_disposition / detail_monthly_refresh / reopen / traversal / same_request_replay / final_reopen`（D-337 起 `batch_confirmation` 先于 `group_disposition`；判据是集合相等，顺序无关） | 同一设备 run 的 `host.json`（`result.py:11` 的 `PHASES`、`:16-18` 的 `STAGES`、`:257` 的集合相等判据） |
 | V-4 | 决策事实与摘要断言按新目标更新：§3 R2 的 9 条逐条落地；`reopen()` 用「会话 + 金额」定位确认行；`已入账 0 项 / 跳过 1 项` 与 `已入账 1 项` 的摘要断言文本不变且语义仍成立 | 静态 diff 复核（`git diff` 的 2 个 test-only 文件）+ 同一设备 run 的 `reopen` PASS；`git diff --check` 与 `PYTHONPATH=tools/python python -m project_docs .` 的 exit 0 |
 
 **实施落点（2026-11-13 落地后）：**
