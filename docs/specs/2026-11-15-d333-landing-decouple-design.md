@@ -137,3 +137,12 @@ rig 第十五跑（max `43891956497`）**`chain` 阶段首次全过**（`OK (1 t
 预算改动（三处同改，缺一即不一致）：rig `stage("reopen", 5400000)`；`result.py` `limits["reopen"]=5400000` 与两处 14400s 硬上限→21600s；workflow outer deadline 14400→19800s、运行步 240→330 分钟、job 300→350 分钟。`traversal` 段字面量不动（14400000ms），受新外层包络约束——**若下一跑 reopen 通过而 traversal 撞外层，traversal 的成本即新前沿**。
 
 **下一跑判读清单（D-342）**：①`reopen` 段应 PASS 并给出真实 `elapsedMs`（此前只有「被切」这一个读数）；②`reopen` 的 oracle 断言（`assertFixture(final)`、`ledger_transaction==1`、`posting==2`、`import_confirmation==1`、`groupRelations` 等值）是否成立——这是验收级判据首次有机会执行；③其后的 `traversal`/`same_request_replay`/`final_reopen` 是否进入并完成；④`transactionDetailOpened` 仍为 `false` 时按 D-341 的欠债处理（小规模 UI 测试承接详情文案）。
+## 13. D-343 scroll 注入被拒的回退（2026-11-17）
+
+rig 第十六跑（max `43925110453`）两项成果：**`reopen` 首次 PASS（5057145ms ≈ 84.3 分钟）**——验收级 oracle 断言第一次真正执行：`finalCandidates=61000`、`finalRelations=150000` 与 `EXPECTED` 一致，`assertFixture(final)`、counts（`ledger_transaction==1`/`transaction_version==1`/`posting==2`/`import_confirmation==1`）、组关系等值全部成立；随后 **`traversal` 10.3 秒 FAIL 于 `gesture injection refused`**。
+
+归因：`reopen()` force-stop 再重启后，`UiAutomation.injectInputEvent` 被系统一律拒绝，而 `performAction` 仍然有效。同族拒绝此前两次割掉 frontier（`‹` 月份步进 → D-340 删步进；流水行坐标回退 → D-341 改行根定位）。
+
+修订（D-343）：`AndroidScaleUi.scroll` 改为「手势 → 注入被拒不即抛 → 改 `ACTION_SCROLL_FORWARD/BACKWARD`；半途被拒一律释放 UP」；新增只读计数 `scrollActionFallbacks`，traversal 段写 `traversalScrollFallbacks` 进 evidence，使「真注入滚动」与「动作回退」可分辨。
+
+**下一跑判读清单（D-343）**：①`traversal` 是否走完（61k 行遍历的真实成本 = 此前从未有过读数）；②`traversalScrollFallbacks`（>0 表示全程靠回退，则该 pass 的证据权重需另行裁决）；③`same_request_replay` 与 `final_reopen` 是否首次执行并完成。

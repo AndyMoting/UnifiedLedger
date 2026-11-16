@@ -1400,6 +1400,11 @@ class AndroidScaleLongInstrumentedTest {
         if (phase == "reopen") {
             stage("traversal", 14400000) {
                 traversalWalk(snapshot)
+                // D-343: how many of the walk's scrolls the accessibility scroll action served
+                // because gesture injection was refused. A fallback-served walk is still a walk,
+                // but the reading says so — injected gestures and accessibility actions are not
+                // the same evidence.
+                evidence.put("traversalScrollFallbacks", ui.scrollActionFallbacks)
                 reopenTail(snapshot)
             }
         }
