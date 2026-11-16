@@ -598,8 +598,11 @@ class ReducerRejectsWrongIdentityAndCrashes(unittest.TestCase):
         self.assert_rejected()
 
     def test_driver_elapsed_time_bound_is_rejected(self):
+        # D-342: the ceiling moved with the workflow's raised outer envelope (19800s), so the
+        # over-the-bound probe moves with it — the assertion is about the bound existing, not
+        # about any particular number.
         host = load(self.directory, "host.json")
-        host["elapsed_seconds"] = 14401
+        host["elapsed_seconds"] = 21601
         save(self.directory, "host.json", host)
         self.assert_rejected()
 
