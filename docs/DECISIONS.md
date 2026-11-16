@@ -7496,3 +7496,18 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **遗留（待补批）：** `创建入口：导入创建` 与 `发生时间` 的呈现此前只由本链覆盖；详情未打开时该覆盖为零，需一条**小规模**交易详情 UI 测试承接（不依赖 61k 链、不依赖坐标注入）。
 
 **关联决定：** D-340（同一坐标注入回退导致月份步进被删；本条的降级形制与之同源）、D-339（月度腿按当前 UI 重写）、D-338（账本闭合使该腿得以执行）、D-216（带 label 的点击动作可能不浮现的既有先例）。
+## D-342 预算包络：reopen 段 30→90 分钟，外层 4h→5.5h，验证器上限同步
+
+**状态：** 已批准（2026-11-17；rig 第十五跑实证强制的放行条件）
+
+**背景：** rig 第十五跑（max `43891956497`，证据 `local/artifacts/maxrig-43891956497/`）达成两件从未有过的事：**`chain` 阶段首次全过**（`instrumentation-chain.txt` 尾部 `OK (1 test)`，975.9s，七段含 `detail_monthly_refresh` 60829ms PASS），以及**主链首次进入 `reopen`**。随后 `reopen` 运行 **1801.9s** 被切断，与该段 `1800000ms` 预算逐毫秒吻合（`device.json` 的 `reopen: {status: NOT_RUN, startedMs: 4014035}`；`host.json` `timed_out=true`）。该段的真实成本此前从未被观测过——链从来没有走到它。
+
+**裁决：** 撑开预算包络，让一个完整通过**在物理上成为可能**：①`reopen` 段 1800000→**5400000ms**（90 分钟；rig 字面量与 `result.py` 的 `limits` 两处同改）；②workflow 外层 `ANDROID_CI_OUTER_DEADLINE_EPOCH` 14400→**19800s**（5.5h）、运行步 `timeout-minutes` 240→**330**、job 300→**350**（GitHub 托管 runner 上限 6h，留余量）；③`result.py` 的两处 14400s 硬上限（per-phase JUnit 计时 `:313`、driver `elapsed_seconds` `:319`）同步抬到 **21600s**——否则一个合法的长 reopen 会在事后被判成「证据畸形」。`PHASE_BUDGETS["reopen"]=18000` 与新外层一致，不构成约束。
+
+**实证：** 第十五跑的时间账（`junit.xml`）：`prepare` 2933.3s、`chain` 975.9s、`reopen` 1801.9s（被切）。旧包络下 prepare+chain 已用 3909s，reopen 只剩 1800s 就被段预算切断；新包络下 prepare+chain+reopen(上限) = 9309s，仍在 19800s 内。
+
+**边界：** 入 = rig `stage("reopen", …)` 字面量、`result.py` 的 `limits`/两处 14400 上限、workflow 三处时限、`test_android_scale_result.py` 的 reopen 越界用例（1800001→5400001）、D-333 spec §12、本条。出 = 不动 `traversal` 的 14400000ms 字面量、不动 `tick()`/`stage()` 语义、不动任何产品代码与断言、不缩小任何 oracle 读取。
+
+**遗留与下一前沿：** `traversal` 段仍是 14400000ms 字面量、受外层 19800s 约束；若下一跑 reopen 通过而 traversal 撞外层，则 traversal 的成本本身成为新前沿（可能需要有界遍历或抽样设计）。评审建议同步登记第三份口径：`docs/specs/2026-11-13-maxrig-firstpage-target-design.md` 的验收判据若有段预算数字，按冻结不改、由本条 supersede。
+
+**关联决定：** D-341（该段之前最后一个 frontier 的修复）、D-339/D-340（月度腿收敛到 PASS 使链首次全过）、D-217（reopen/traversal 分工与 `PHASE_BUDGETS` 出处）、D-337/D-338（批次两段与账本闭合）。

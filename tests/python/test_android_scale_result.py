@@ -359,14 +359,15 @@ class ReducerRejectsPartialEvidence(unittest.TestCase):
         # the reopen stage fully completes, so STAGES must list traversal
         # immediately after reopen — a traversal nested inside reopen starts
         # after reopen started and can never satisfy the strictly increasing
-        # startedMs rule. The reopen cap is explicit (1800000ms): the
-        # maximum snapshot's oracle ticks exceed the 180000ms default, and
-        # the walk itself stays under traversal's 14400000ms entry — pinned
-        # behaviorally by rejecting a reopen stage one millisecond over.
+        # startedMs rule. The reopen cap is explicit (D-342 raised it to
+        # 5400000ms: run 43891956497 cut a real reopen at the old 1800000ms
+        # bound), and the walk itself stays under traversal's 14400000ms entry
+        # — pinned behaviorally by rejecting a reopen stage one millisecond
+        # over the cap.
         self.assertEqual(STAGES.index("traversal"), STAGES.index("reopen") + 1)
         build_valid(self.directory)
         device = load(self.directory, "device.json")
-        device["stages"]["reopen"]["elapsedMs"] = 1800001
+        device["stages"]["reopen"]["elapsedMs"] = 5400001
         save(self.directory, "device.json", device)
         self.assert_rejected()
 
@@ -597,8 +598,11 @@ class ReducerRejectsWrongIdentityAndCrashes(unittest.TestCase):
         self.assert_rejected()
 
     def test_driver_elapsed_time_bound_is_rejected(self):
+        # D-342: the ceiling moved with the workflow's raised outer envelope (19800s), so the
+        # over-the-bound probe moves with it — the assertion is about the bound existing, not
+        # about any particular number.
         host = load(self.directory, "host.json")
-        host["elapsed_seconds"] = 14401
+        host["elapsed_seconds"] = 21601
         save(self.directory, "host.json", host)
         self.assert_rejected()
 

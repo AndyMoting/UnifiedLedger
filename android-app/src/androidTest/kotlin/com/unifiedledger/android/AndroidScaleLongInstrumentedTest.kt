@@ -1388,7 +1388,15 @@ class AndroidScaleLongInstrumentedTest {
      * future caller re-enters this function from another phase.
      */
     private fun reopenPhase() {
-        val snapshot = stage("reopen", 1800000) { reopen() }
+        // D-342 (run 43891956497, 2026-11-17): the reopen stage ran 1801.9s and was cut by its
+        // own 1800000ms budget — the first run whose chain phase finished (instrumentation-chain
+        // `OK (1 test)`, 975.9s), so this phase's real cost had never been observed. Its heaviest
+        // reads are the two-path oracle snapshot over 61k candidates / 150k relations plus the
+        // whole-group relation sweep, all against a force-stopped app. 5400000ms (90 min) is the
+        // ceiling that still fits inside the workflow's raised 19800s outer envelope together with
+        // prepare (~2930s) and chain (~976s); the traversal sibling keeps its own 4h literal and
+        // is bounded by that outer envelope.
+        val snapshot = stage("reopen", 5400000) { reopen() }
         if (phase == "reopen") {
             stage("traversal", 14400000) {
                 traversalWalk(snapshot)
