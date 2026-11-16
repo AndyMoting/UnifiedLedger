@@ -7464,3 +7464,18 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 
 **关联决定：** D-338（账本闭合前置：批腿落账，本腿才有 1 笔可读）、D-337（腿序与本腿的执行位点）、D-217（该腿原始设计，以及「路线 B：链内只做 UI 观察」的出处）、D-268（首页分页与页键：`流水 · 共 N 笔` 的 total 来源）、D-301（P8-00 主页基线：`P503OverviewScreen`/`P8HomeFlow` 的出处）、D-307（首页空态口径——本跑失败与之无关的对照）、D-320（`detail_decision` 的首页目标，本腿上游）。
 **覆盖登记（评审 P2-③，如实披露）：** 旧 CNY 句核的是「普通收入 0.00 / 净支出 X / 结余 -X」这一组**月度聚合**读数；该句在主页随 P503LedgerView 退役后，本链**设备侧**对月度聚合的观察归零——`reopen()` 的 counts + 分录逐行 + 零和 + `assertFixture(final)` 与 `replay()` 的 `assertEconomics()` 覆盖的是记账事实与试算，`AndroidScaleOracle` 内没有任何 `netExpense`/`balanceMinorUnits` 类断言。该聚合仍由呈现层单测（`P503LedgerViewPresentationTest` 的 `monthCardCurrencyLineText` 系列）与 `MonthlyBuckets` 账期分桶单测承担；若要恢复设备侧观察，最小路径是月步进后切一次「分析」页断言 CNY 句再切回「首页」（该系统在分析页仍渲染，`P503TabShell.kt:531`）。本批选择登记而非补腿，理由是：该项不是本链的验收判据（Route B），且每条新增导航都是一次新的失效面。
+## D-340 月度腿删除月份步进：无月过滤的读数不再用月导航去证明
+
+**状态：** 已批准（2026-11-16；rig 第十三跑实证）
+
+**背景：** rig 第十三跑（max `43832221341`，证据 `local/artifacts/maxrig-43832221341/`）前六段全 PASS（`batch_confirmation` 59ms、`group_disposition` 576429ms，链已带 1 笔已落账交易），`detail_monthly_refresh` 73.5s FAIL 于 `ui.click("‹")`——`AndroidScaleUi.clickNode` 的语义点击被 7 跳祖先全部拒绝后走坐标注入回退，注入被拒（`coordinate tap injection refused`）。该被拒的具体成因不可证（logcat 中唯一注入失败在 prepare 期，时间不吻合）。
+
+**裁决：** 不再追这条注入 mystery，**删除月份步进**。理由是该步进已没有验收内容：①流水页计数是账本全量生效交易数（`QueryLedgerFlowPage.kt:49-55`），与选中月无关；②月度聚合文案随 `P503LedgerView` 退役（D-339 登记），设备侧已无可观测面；③步进之后唯一剩下的对象是月份标签本身。交易发生日仍由日组头 `2026-01-15 · 1 笔` 钉住，信息不丢。
+
+**落地形制：** `checkEconomicUi` 删除月份导航块与依赖它的 `monthExpensePageSeen` 读取（`AndroidScaleLongInstrumentedTest.kt:1246-1258` 区域），`monthlyLegScope` 固定记 `flow-only`；保留 `流水 · 共 1 笔`、日组头、交易行定位（含 D-339 评审的内容级 fallback）、`创建入口：导入创建`、`发生时间：2026-01-15T…`、`返回` 回走。段预算不变（仍走 180s 默认，两处一致）。
+
+**实证：** 第十二跑该段 180200ms 死于退役文案（`月份：`）；第十三跑 73544ms 死于 `‹` 的坐标注入回退——两次 frontier 都不含产品语义，属验证工具自身的历史包袱。
+
+**边界：** 入 = `checkEconomicUi` 的月份导航块与其证据键、D-333 spec §10、本条。出 = 不动其它腿、不动 `reopen`/`replay` 断言、不动段预算与 `result.py`、不修 `clickNode` 的坐标回退（那是通用原语，统一处置需独立决定）。
+
+**关联决定：** D-339（月度腿按当前 UI 重写；本条删除其月份步进并承接聚合覆盖归零的登记）、D-338（账本闭合，本段得以真正执行的前置）、D-217（该腿原始设计）。
