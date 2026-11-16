@@ -269,7 +269,14 @@ def validate_evidence(directory: Path, expected_sha: str) -> dict:
     # `traversal`'s 14400000 entry. The 18000s host phase budget remains the
     # outer bound.
     limits = {"preparation": 14400000, "saf_import": 1800000, "group_disposition": 5400000,
-              "reopen": 1800000, "traversal": 14400000}
+              "reopen": 1800000, "traversal": 14400000,
+              # D-338: the detail stage now carries both batch submits (the decision-incomplete
+              # skip and the decided booking), which a single authorization measured at ~39.4s
+              # (D-164) plus the summary read; run 43801673636 already spent 150.965s of the old
+              # 180000ms bound before the second submit existed. The rig's stage literal and this
+              # entry move together — raising one alone either strands the device or rejects the
+              # evidence.
+              "detail_decision": 420000}
     for stage in STAGES:
         item = stages[stage]
         if not isinstance(item, dict) or item.get("status") != "PASS" or type(item.get("elapsedMs")) is not int or not 0 < item["elapsedMs"] <= limits.get(stage, 180000):

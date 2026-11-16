@@ -753,7 +753,7 @@ class AndroidScaleLongInstrumentedTest {
         // PENDING_USER_DECISION — selectable, with the decision form. The row's
         // amount is read from the rendered row and checked against the spec's
         // first-session range; see `openFirstPageCandidate`.
-        stage("detail_decision", if (spec.profile == "maximum") 180000L else 600000L) {
+        stage("detail_decision", if (spec.profile == "maximum") 420000L else 600000L) {
             val amount = ui.openFirstPageCandidate(firstPageAmountRange(), FIRST_PAGE_JUMP_INDEX)
             state.put("selectedAmount", amount)
             check(ui.has("决策未补全，尚不可提交确认。"))
