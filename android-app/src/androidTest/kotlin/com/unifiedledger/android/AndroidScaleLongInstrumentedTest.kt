@@ -909,6 +909,46 @@ class AndroidScaleLongInstrumentedTest {
             // list (刷新清单) must be visible before the stage ends.
             ui.clickUntil("返回", "刷新清单")
         }
+        // D-337 (run 43783363684, 2026-11-16): this leg is the chain's load-bearing writer — its
+        // 授权逐项入账 is the only submit that creates a transaction (AuthorizeImportBatch ->
+        // import_confirmation + ledger_transaction + 2 posting). detail_decision's earlier submit
+        // runs on a decision-incomplete batch and lands 已入账 0 项 / 跳过 1 项 (D-320); this one
+        // lands 已入账 1 项, and every downstream leg reads that transaction: checkEconomicUi's
+        // 2026-01 · 交易 1 笔 / CNY 结余 / 交易详情 / 创建入口：导入创建, reopen()'s assertFixture and
+        // counts, replay()'s assertEconomics. Run 43783363684 measured D-336's skip arm
+        // (batchConfirmationSkipped=true, PASS in 1095ms): the ledger stayed empty, the overview
+        // painted 账本为空，还没有任何交易。 with no 月份： row, and detail_monthly_refresh died at its
+        // 180s ceiling on the selector await. A missing entry therefore fails this stage loudly.
+        // The leg runs BEFORE group_disposition: the group leg submits its whole group as
+        // duplicate-marked, that submission clears the selection, and 进入批量确认 stops rendering
+        // (D-335's park probe pinned the absence). detail_decision creates the selection this leg
+        // spends, so batch-then-group is the only order where both legs keep their input.
+        stage("batch_confirmation") {
+            ui.edge(last = true)
+            // D-335 park probe (run 43741730054-a2): the seek below exhausted 80 backward
+            // steps without a hit, and two causes are indistinguishable from that alone —
+            // (a) the batch entry never rendered (selection cleared by an earlier hop) or
+            // (b) the scrollToPosition park sits above the true list bottom (a11y rowCount
+            // vs real content). One viewport dump at the park point separates them: entry
+            // present = the seek's own miss logic is the suspect; rows visible without the
+            // entry = park distortion; list tail without rows or entry = the entry never
+            // rendered. D-337 keeps this as the forensics surface only: the leg below runs
+            // exactly as the pre-D-336 leg did, and the two keys keep their D-335 shape.
+            val parkTexts = ui.visibleTexts(ui.root()).toMutableList().apply { if (size > 60) subList(60, size).clear() }
+            evidence.put("parkHasEntry", parkTexts.any { it.startsWith("进入批量确认") })
+            evidence.put("parkTexts", parkTexts.joinToString("|").take(2000))
+            ui.seek("进入批量确认", forward = false)
+            ui.click("进入批量确认", prefix = true)
+            check(ui.has("确认入账（1 项）"))
+            ui.click("授权逐项入账")
+            ui.await { ui.has("导入", prefix = true) }
+            // D-217 round 17 (evidence30): no bottom excursion here — after await 导入 the
+            // list is at its top where 最近批量结果 renders, and a scroll excursion leaves the
+            // viewport away from the awaited text (same round-16 rationale; the bottom-reach
+            // proof is reopen()'s snapshot equality).
+            ui.await { ui.has("最近批量结果", prefix = true) }
+            check(ui.nodes(ui.root()).flatMap(ui::labels).any { it.contains("已入账 1 项") && it.contains("拒绝 0 项") && it.contains("未知 0 项") })
+        }
         // D-217 round 12 (evidence20): the collect-only traversal stage moved
         // out of the chain into reopen(). The walk used to run BEFORE
         // group_disposition/batch_confirmation, so it collected CHAIN-TIME
@@ -919,12 +959,15 @@ class AndroidScaleLongInstrumentedTest {
         // snapshot-consistent final list.
         stage("group_disposition", 5400000) {
             // D-323 (run 43513000303 evidence): the D-322 count-driven entry renders at the TOP of
-            // the review list (the affordance sits in the preamble BEFORE all candidate rows), but
-            // detail_decision's walk parks the viewport at the batch flow's depth (~1,972nd
-            // candidate on maximum). seek() only moves FORWARD, and a LazyColumn row above the
-            // viewport is not in the a11y tree — the previous plain seek could never reach the
-            // button. seekBackToTop first (the same marker walk openCandidate uses,
-            // AndroidScaleUi seekBackToTop): the button is then one small forward scan away.
+            // the review list (the affordance sits in the preamble BEFORE all candidate rows), while
+            // the viewport arrives deep — D-337 puts batch_confirmation directly before this stage,
+            // and that leg ends at the list bottom (edge(last = true) onto a park whose batch-result
+            // section renders after the entry row, P503ImportReviewPresentation.kt:1489-1498).
+            // seek() only moves FORWARD, and a LazyColumn row above the viewport is not in the a11y
+            // tree — a plain seek could never reach the button. seekBackToTop first (the same marker
+            // walk openCandidate uses, AndroidScaleUi seekBackToTop): 刷新清单 is the list's own
+            // first row (TitleBar), so the backward walk's target is above-or-visible from any
+            // park, and the button is then one small forward scan away.
             ui.seekBackToTop("刷新清单")
             // D-326 probe (run 43561950134): the top-anchored seek's instant view. The failure
             // forensics' texts block truncates exactly this evidence, and the a11y tree has a
@@ -1068,76 +1111,27 @@ class AndroidScaleLongInstrumentedTest {
                 throw failure
             }
             evidence.put("groupMarkOutcomeSeen", true)
-            // D-217 round 20 (evidence33): the card stays open — the
-            // 进入批量确认 button remains in the list with the card open, and a
-            // 关闭 click on a stale node can navigate clean off the review
-            // list (the run ended on the import root screen).
+            // D-217 round 20 (evidence33): the card stays open — a 关闭 click on a stale node can
+            // navigate clean off the review list (the run ended on the import root screen).
             evidence.put("mainGroupRelations", spec.newSessionDuplicateRelations).put("groupDispositions", spec.newSessionDuplicateRelations)
             // D-334 collapse handoff (run 43727676294): the expansion above exists only
-            // for the probe's viewport sampling. Leaving it composed strands the NEXT
-            // stage's bottom-edge walk in the degraded gesture loop over 50k member rows
-            // (batch_confirmation burned its whole 180s phase budget inside
-            // edge(last=true) -> scroll -> settle). Restore the collapsed zero-member-row
-            // shape before the stage ends: the collapse affordance is the card's leading
-            // 收起成员行 row (groupCardCollapseRowsText — the exact inverse of the 查看全部
-            // entry row, NOT the header's 收起全部比较信息 toggle, which folds the per-row
-            // comparison text only), and after the collapse the bottom edge returns to the
-            // fast scrollToPosition path the earlier stages already use. The row composes
-            // only while the member list is expanded, so the guarded shape mirrors the
-            // expansion leg above — the presence probe is also the already-collapsed skip,
-            // and a miss leaves the verdict to the next stage's edge walk (assertions
-            // live downstream).
+            // for the probe's viewport sampling. Leaving it composed once stranded the
+            // following leg's bottom-edge walk in the degraded gesture loop over 50k member
+            // rows (that batch_confirmation leg burned its whole 180s phase budget inside
+            // edge(last=true) -> scroll -> settle). D-337 moved that batch leg BEFORE this
+            // stage, so no downstream leg walks the bottom any more; the collapse stays as
+            // the card's restored end shape — the zero-member-row form this stage opened in
+            // (D-331) — which keeps the group leg's end state identical to every pre-D-337
+            // run. Restore the collapsed zero-member-row shape before the stage ends: the
+            // collapse affordance is the card's leading 收起成员行 row (groupCardCollapseRowsText
+            // — the exact inverse of the 查看全部 entry row, NOT the header's 收起全部比较信息
+            // toggle, which folds the per-row comparison text only). The row composes only
+            // while the member list is expanded, so the guarded shape mirrors the expansion
+            // leg above — the presence probe is also the already-collapsed skip, and a miss
+            // leaves the expanded shape with no assertion to fail here (the assertable group
+            // facts live in reopen()).
             if (ui.has("收起成员行", prefix = true)) {
                 ui.click("收起成员行", prefix = true)
-            }
-        }
-        stage("batch_confirmation") {
-            ui.edge(last = true)
-            // D-335 park probe (run 43741730054-a2): the seek below exhausted 80 backward
-            // steps without a hit, and two causes are indistinguishable from that alone —
-            // (a) the batch entry never rendered (selection cleared by an earlier hop) or
-            // (b) the scrollToPosition park sits above the true list bottom (a11y rowCount
-            // vs real content). One viewport dump at the park point separates them: entry
-            // present = the seek's own miss logic is the suspect; rows visible without the
-            // entry = park distortion; list tail without rows or entry = the entry never
-            // rendered. Zero behavior change: the seek below runs exactly as before.
-            val parkTexts = ui.visibleTexts(ui.root()).toMutableList().apply { if (size > 60) subList(60, size).clear() }
-            evidence.put("parkHasEntry", parkTexts.any { it.startsWith("进入批量确认") })
-            evidence.put("parkTexts", parkTexts.joinToString("|").take(2000))
-            // D-336 (user-approved design gate b, 2026-11-16): after the whole-group
-            // confirm leg submitted every relation of the group, the 进入批量确认 entry
-            // no longer renders (run 43755840299-a2's park probe pinned the park
-            // viewport at the true list bottom with the collapsed card and no entry —
-            // the D-332/D-333 semantics superseded the batch leg's premise). Record
-            // the skip and continue: the batch submit path's scale validation stays
-            // with the P7-04 reducer/host test suites; this chain's remaining legs
-            // (reopen/replay/final-reopen) matter more than a degenerate second
-            // submission over an empty selection. The probe above is reused as the
-            // guard verbatim — its predicate and the seek's target are the same
-            // 进入批量确认 prefix text, so no second probe is taken. The domains
-            // differ by design and the error direction is safe: the probe reads ONE
-            // snapshot capped at 60 visible texts while the true arm's has()/seek
-            // walk the full tree with retries — a miss here can only skip a leg
-            // that could have run (false negative), never block one that could not
-            // (the wider seek domain never contradicts the probe's narrower read),
-            // and reopen()'s oracle equality pins whatever the skipped leg would
-            // have contributed.
-            val batchEntryPresent = evidence.getBoolean("parkHasEntry")
-            if (batchEntryPresent) {
-                ui.seek("进入批量确认", forward = false)
-                ui.click("进入批量确认", prefix = true)
-                check(ui.has("确认入账（1 项）"))
-                ui.click("授权逐项入账")
-                ui.await { ui.has("导入", prefix = true) }
-                // D-217 round 17 (evidence30): no bottom excursion here — after
-                // await 导入 the list is at its top where 最近批量结果 renders,
-                // and a scroll excursion leaves the viewport away from the
-                // awaited text (same round-16 rationale; the bottom-reach proof
-                // is reopen()'s snapshot equality).
-                ui.await { ui.has("最近批量结果", prefix = true) }
-                check(ui.nodes(ui.root()).flatMap(ui::labels).any { it.contains("已入账 1 项") && it.contains("拒绝 0 项") && it.contains("未知 0 项") })
-            } else {
-                evidence.put("batchConfirmationSkipped", true)
             }
         }
         stage("detail_monthly_refresh") { checkEconomicUi() }
@@ -1178,6 +1172,9 @@ class AndroidScaleLongInstrumentedTest {
     }
 
     private fun reopen(): ScaleSnapshot {
+        // D-337: the skip arm is gone, so this PASS now implies the batch leg ran. The gate
+        // alone never proved the submission — run 43783363684 recorded PASS with an empty
+        // ledger under the D-336 guard — so the counts below stay the load-bearing assertion.
         check(evidence.getJSONObject("stages").getJSONObject("batch_confirmation").getString("status") == "PASS")
         // D-217 (round 21 reword): the host has force-stopped the app, so
         // the heavy oracle reads below — every one taken BEFORE ui.launch()
