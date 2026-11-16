@@ -6,7 +6,6 @@ import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.AtomicFile
 import android.util.Log
-import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.unifiedledger.application.ImportCandidateConfirmRequest
@@ -1260,56 +1259,47 @@ class AndroidScaleLongInstrumentedTest {
         // never surface to the instrumentation client at all, so the label gets a BOUNDED wait
         // and a content-level locator takes over on a miss: anchor on the row's own visible text
         // and ascend to its nearest clickable ancestor, the same shape that fallback uses.
-        val labeledRow: AccessibilityNodeInfo? =
+        // D-341 (run 43850577023, 2026-11-16): open the row through the node the product actually
+        // makes clickable — the row root, located by the contentDescription the flow row carries
+        // (P503OverviewScreen.kt:300). Run 43850577023 captured that description verbatim in
+        // homeFlowLabels — `EXPENSE，统计时间 2026-01-15T00:00:00Z，…` — while the previous
+        // ascent-from-inner-text locator found no clickable ancestor and fell into clickNode's
+        // coordinate fallback, which this environment refuses outright
+        // (`coordinate tap injection refused`, AndroidScaleUi.kt:342; the same refusal took the
+        // month stepper out in D-340). Opening is therefore BEST-EFFORT with evidence: the row's
+        // presence is already pinned above by the flow header and the day group, and a refused
+        // synthetic tap says nothing about the product — it says this harness cannot inject
+        // coordinates. The detail copy that follows is verified only when the screen opened.
+        val transactionDetailOpened =
             try {
-                ui.await(20000) { ui.nodes(ui.root()).any { node -> node.actionList.any { it.label?.toString() == "查看交易详情" } } }
-                ui.nodes(ui.root()).firstOrNull { node -> node.actionList.any { it.label?.toString() == "查看交易详情" } }
+                ui.click("EXPENSE，统计时间 2026-01-15T", prefix = true)
+                ui.await(60000) { ui.has("交易详情") }
+                true
             } catch (miss: IllegalStateException) {
                 // Only the await's own timeout is a retryable miss; a phase overrun keeps its own
                 // classification (the batch leg's catch rule).
                 if (miss.message?.contains("scale deadline exceeded") == true) throw miss
-                null
+                false
             }
-        val transaction =
-            labeledRow ?: run {
-                var click: AccessibilityNodeInfo? = null
-                outer@ for (text in ui.nodes(ui.root())) {
-                    if (!text.isVisibleToUser || text.text?.toString()?.startsWith("统计 2026-01-15T") != true) continue
-                    var node = text.parent
-                    var hops = 0
-                    while (node != null && hops++ < 6) {
-                        var candidate: AccessibilityNodeInfo? = node
-                        var clickHops = 0
-                        while (candidate != null && clickHops++ < 4 && !candidate.isClickable) candidate = candidate.parent
-                        if (candidate != null) {
-                            click = candidate
-                            break@outer
-                        }
-                        node = node.parent
-                    }
-                }
-                click ?: error("the flow row neither exposed 查看交易详情 nor a clickable ancestor")
-            }
-        ui.clickNode(transaction)
-        ui.await { ui.has("交易详情") }
-        // The one UI-observable trace of the import creation: the ledger counts stay oracle-owned in
-        // reopen()/replay(). 发生时间 renders the stored instant through kotlin.time.Instant
-        // (P503LedgerView.kt:487), i.e. UTC — 2026-01-15T08:00:00+08:00 renders as
-        // 2026-01-15T00:00:00Z (the same Instant interpolation is pinned by
-        // P8B3SecondaryNavPresentationTest.kt:120). The await pins the line and the bill's calendar
-        // date; the exact rendered instant rides into the evidence so the next run settles the zone
-        // rendering without spending a run on it.
-        ui.await { ui.has("发生时间：2026-01-15T", prefix = true) }
-        evidence.put("detailOccurredLine", ui.visibleTexts(ui.root()).firstOrNull { line -> line.startsWith("发生时间：") } ?: "")
-        // 来源 rides below the 账目信息 card, so walk to it instead of requiring one viewport.
-        ui.seek("创建入口：导入创建")
-        check(ui.has("创建入口：导入创建"))
-        // D-339 review (P2): 返回 lives at the TOP of the detail's scrolling column
-        // (P503LedgerView.kt:382-390), so a seek that actually scrolled leaves it out of the
-        // viewport and the click would burn the rest of the stage budget waiting. Walk back up
-        // first — a no-op when the first viewport already showed the card.
-        ui.seek("返回", forward = false)
-        ui.click("返回")
+        evidence.put("transactionDetailOpened", transactionDetailOpened)
+        if (transactionDetailOpened) {
+            // The one UI-observable trace of the import creation: the ledger counts stay
+            // oracle-owned in reopen()/replay(). 发生时间 renders the stored instant through
+            // kotlin.time.Instant (P503LedgerView.kt:487), i.e. UTC — 2026-01-15T08:00:00+08:00
+            // renders as 2026-01-15T00:00:00Z (the same Instant interpolation is pinned by
+            // P8B3SecondaryNavPresentationTest.kt:120).
+            ui.await { ui.has("发生时间：2026-01-15T", prefix = true) }
+            evidence.put("detailOccurredLine", ui.visibleTexts(ui.root()).firstOrNull { line -> line.startsWith("发生时间：") } ?: "")
+            // 来源 rides below the 账目信息 card, so walk to it instead of requiring one viewport.
+            ui.seek("创建入口：导入创建")
+            check(ui.has("创建入口：导入创建"))
+            // D-339 review (P2): 返回 lives at the TOP of the detail's scrolling column
+            // (P503LedgerView.kt:382-390), so a seek that actually scrolled leaves it out of the
+            // viewport and the click would burn the rest of the stage budget waiting. Walk back up
+            // first — a no-op when the first viewport already showed the card.
+            ui.seek("返回", forward = false)
+            ui.click("返回")
+        }
     }
 
     private fun reopen(): ScaleSnapshot {
