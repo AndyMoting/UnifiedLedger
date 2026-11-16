@@ -899,9 +899,13 @@ class AndroidScaleLongInstrumentedTest {
             // batch never clears the selection (P503Reducer.kt:3111, :2701-2705). Toggling
             // unconditionally would therefore UNSELECT it, and the stale client tree would then
             // keep reporting the vanished entry as present. So: take the effect as-is when it
-            // already holds, and only toggle when it is genuinely missing (a miss walks
-            // root.refresh() + a forced cache reset, which is the trustworthy direction).
+            // already holds, and only toggle when it is genuinely missing (when root.refresh()
+            // succeeds, a miss re-walks the tree and — rate permitting — forces a cache reset,
+            // the trustworthy direction; a failed refresh simply keeps the miss a miss).
             var selected = ui.has("进入批量确认")
+            // D-338 review: the P0 premise ("the entry is already there on arrival") is the one
+            // fact the next run's forensics cannot otherwise recover — record which branch ran.
+            evidence.put("detailSelectionTakenAsIs", selected)
             if (!selected) {
                 for (attempt in 0 until 2) {
                     val checkbox = ui.nodes(ui.root()).first { it.contentDescription?.toString() == "勾选候选" }
@@ -917,6 +921,7 @@ class AndroidScaleLongInstrumentedTest {
                     if (selected) break
                 }
             }
+            evidence.put("detailSelectionEstablished", selected)
             check(selected) { "the detail's 进入批量确认 entry never surfaced (selection was never established)" }
             // D-338: the second, decision-complete submit runs HERE, on the
             // detail screen, because the product puts the entry here. Round 11's
@@ -1006,9 +1011,11 @@ class AndroidScaleLongInstrumentedTest {
             // the chain here rather than surfacing as an empty ledger three stages later.
             check(evidence.getBoolean("batchBookedSeen")) { "the batch leg's booking was never observed" }
             // D-338 review (P2): this stage carries no UI work of its own, and result.py rejects
-            // a stage whose elapsedMs is zero (0 < elapsedMs). A real tree read here is both the
-            // structural lower bound and a second witness: the authorize hop must have landed on
-            // the import surface, not stayed on the submitting screen.
+            // a stage whose elapsedMs is zero (0 < elapsedMs). The tree read below is the
+            // structural lower bound that rule needs (the same TitleBar row was awaited at the
+            // end of the detail leg, so its witness value is small), and its check asserts the
+            // authorize hop landed on the import surface rather than staying on the submitting
+            // screen — the one thing the previous leg's await does not pin by itself.
             check(ui.has("导入", prefix = true)) { "the batch leg did not land on the import surface" }
         }
         // D-217 round 12 (evidence20): the collect-only traversal stage moved
