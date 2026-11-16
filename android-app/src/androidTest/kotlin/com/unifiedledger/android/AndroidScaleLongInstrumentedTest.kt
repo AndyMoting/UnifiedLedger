@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.AtomicFile
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.unifiedledger.application.ImportCandidateConfirmRequest
@@ -995,8 +996,10 @@ class AndroidScaleLongInstrumentedTest {
         // the current home surface), reopen()'s assertFixture and counts, replay()'s
         // assertEconomics. Run 43783363684
         // measured D-336's skip arm (batchConfirmationSkipped=true, PASS in 1095ms): the ledger
-        // stayed empty, the overview painted 账本为空，还没有任何交易。 with no 月份： row, and
-        // detail_monthly_refresh died at its 180s ceiling on the selector await. The leg stays
+        // stayed empty and the overview painted the empty state, and
+        // detail_monthly_refresh died at its 180s ceiling on the selector await — that wait
+        // targeted 月份：, copy the current home never renders (D-339), so the timeout had two
+        // causes: no transaction to show, and a selector line that had been retired. The leg stays
         // BEFORE group_disposition: the group leg submits its whole group as duplicate-marked,
         // that submission clears the selection, and 进入批量确认 stops rendering.
         // D-338 (run 43801673636, 2026-11-16) keeps that order and moves the SUBMIT into
@@ -1271,9 +1274,41 @@ class AndroidScaleLongInstrumentedTest {
         // with P503LedgerView; the 支出 page sentence now states the selected month's expense
         // (p8SummaryPageDescription, P8HomeFlow.kt:93-105).
         evidence.put("monthExpensePageSeen", ui.has("支出：CNY $text"))
-        // The flow row's click is its onClickLabel (P503OverviewScreen.kt:291).
-        ui.await { ui.nodes(ui.root()).any { node -> node.actionList.any { it.label?.toString() == "查看交易详情" } } }
-        val transaction = ui.nodes(ui.root()).first { node -> node.actionList.any { it.label?.toString() == "查看交易详情" } }
+        // The flow row's click is its onClickLabel (P503OverviewScreen.kt:291) — but the D-216
+        // precedent (AndroidScaleUi candidateNodes, :617-627) is that a labeled click action may
+        // never surface to the instrumentation client at all, so the label gets a BOUNDED wait
+        // and a content-level locator takes over on a miss: anchor on the row's own visible text
+        // and ascend to its nearest clickable ancestor, the same shape that fallback uses.
+        val labeledRow: AccessibilityNodeInfo? =
+            try {
+                ui.await(20000) { ui.nodes(ui.root()).any { node -> node.actionList.any { it.label?.toString() == "查看交易详情" } } }
+                ui.nodes(ui.root()).firstOrNull { node -> node.actionList.any { it.label?.toString() == "查看交易详情" } }
+            } catch (miss: IllegalStateException) {
+                // Only the await's own timeout is a retryable miss; a phase overrun keeps its own
+                // classification (the batch leg's catch rule).
+                if (miss.message?.contains("scale deadline exceeded") == true) throw miss
+                null
+            }
+        val transaction =
+            labeledRow ?: run {
+                var click: AccessibilityNodeInfo? = null
+                outer@ for (text in ui.nodes(ui.root())) {
+                    if (!text.isVisibleToUser || text.text?.toString()?.startsWith("统计 2026-01-15T") != true) continue
+                    var node = text.parent
+                    var hops = 0
+                    while (node != null && hops++ < 6) {
+                        var candidate: AccessibilityNodeInfo? = node
+                        var clickHops = 0
+                        while (candidate != null && clickHops++ < 4 && !candidate.isClickable) candidate = candidate.parent
+                        if (candidate != null) {
+                            click = candidate
+                            break@outer
+                        }
+                        node = node.parent
+                    }
+                }
+                click ?: error("the flow row neither exposed 查看交易详情 nor a clickable ancestor")
+            }
         ui.clickNode(transaction)
         ui.await { ui.has("交易详情") }
         // The one UI-observable trace of the import creation: the ledger counts stay oracle-owned in
@@ -1288,6 +1323,11 @@ class AndroidScaleLongInstrumentedTest {
         // 来源 rides below the 账目信息 card, so walk to it instead of requiring one viewport.
         ui.seek("创建入口：导入创建")
         check(ui.has("创建入口：导入创建"))
+        // D-339 review (P2): 返回 lives at the TOP of the detail's scrolling column
+        // (P503LedgerView.kt:382-390), so a seek that actually scrolled leaves it out of the
+        // viewport and the click would burn the rest of the stage budget waiting. Walk back up
+        // first — a no-op when the first viewport already showed the card.
+        ui.seek("返回", forward = false)
         ui.click("返回")
     }
 
