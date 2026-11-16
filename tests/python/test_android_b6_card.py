@@ -96,15 +96,37 @@ class Judging(unittest.TestCase):
     def rounds(self, *values: int, relations: int = 20000, opened: bool = True) -> list[dict]:
         return [parse_round(block(value, relations=relations, opened=opened)) for value in values]
 
-    def test_the_statistic_is_the_worst_round_not_the_median(self) -> None:
+    def test_the_statistic_is_the_median_round_not_the_worst(self) -> None:
+        # D-336 (2026-11-16, user decision a): the D-282 worst-of-3 verdict shape inverted — the
+        # bound reads the median and the worst round stays recorded only.
         verdict = judge(self.rounds(400, 500, 2900), 3, 3000)
         self.assertEqual("PASS", verdict["verdict"])
+        self.assertEqual(500, verdict["median_click_to_card_ms"])
         self.assertEqual(2900, verdict["max_click_to_card_ms"])
 
-    def test_a_single_slow_round_fails_the_gate(self) -> None:
-        verdict = judge(self.rounds(400, 500, 3001), 3, 3000)
+    def test_a_noisy_slow_round_passes_on_the_median_and_the_worst_stays_recorded(self) -> None:
+        # The runner noise band (2026-11-16: 2.8s -> 5.4s drift against a ~150 ms margin) must not
+        # decide the verdict: median 2900 <= 3000 passes while the 4900 outlier stays in evidence.
+        verdict = judge(self.rounds(2900, 4900, 2900), 3, 3000)
+        self.assertEqual("PASS", verdict["verdict"])
+        self.assertEqual(2900, verdict["median_click_to_card_ms"])
+        self.assertEqual(4900, verdict["max_click_to_card_ms"])
+
+    def test_a_median_above_the_bound_fails_and_names_both_values(self) -> None:
+        verdict = judge(self.rounds(3200, 3200, 3100), 3, 3000)
         self.assertEqual("FAIL", verdict["verdict"])
-        self.assertIn("3001 ms", " ".join(verdict["reasons"]))
+        joined = " ".join(verdict["reasons"])
+        self.assertIn("the median round is 3200 ms", joined)
+        self.assertIn("above the 3000 ms bound", joined)
+        self.assertIn("worst 3200 ms", joined)
+
+    def test_a_single_slow_round_is_noise_the_median_absorbs(self) -> None:
+        # Formerly `test_a_single_slow_round_fails_the_gate` under the max-of-3 statistic; D-336
+        # reversed that premise, so the 3001 outlier must stay recorded but must not fail the gate.
+        verdict = judge(self.rounds(400, 500, 3001), 3, 3000)
+        self.assertEqual("PASS", verdict["verdict"])
+        self.assertEqual(3001, verdict["max_click_to_card_ms"])
+        self.assertNotIn("3001 ms", " ".join(verdict["reasons"]))
 
     def test_the_bound_is_inclusive(self) -> None:
         self.assertEqual("PASS", judge(self.rounds(3000, 3000, 3000), 3, 3000)["verdict"])
@@ -370,7 +392,9 @@ class Gating(unittest.TestCase):
         self.assertTrue((self.evidence / "gate.json").is_file())
 
     def test_a_lying_host_json_cannot_make_the_gate_green(self) -> None:
-        self.write(block(640), block(700), block(9000), rounds={"max_click_to_card_ms": 10})
+        # Under the D-336 median statistic the round set must breach the bound through the median
+        # itself (a lone outlier would be absorbed), so the re-derived verdict fails on its own.
+        self.write(block(3400), block(3200), block(9000), rounds={"max_click_to_card_ms": 10})
         verdict = gate_evidence(self.evidence, SHA, 3, 3000)
         self.assertEqual("FAIL", verdict["verdict"])
 
