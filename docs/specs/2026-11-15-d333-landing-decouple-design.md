@@ -45,3 +45,9 @@ rig 第七跑（run `43727676294`，证据 `local/artifacts/maxrig-43727676294/`
 ## 6. D-335 停位点探针（2026-11-16）
 
 rig 第八跑 attempt 2（run `43741730054`，证据 `local/artifacts/maxrig-43741730054-a2/`）里 batch_confirmation 的 `ui.seek("进入批量确认", forward = false)` 80 步反向全程未命中，仅凭该结果两臂不可分辨：批量入口行从未渲染（selection 被上游 hop 清空），或 `scrollToPosition` 停位点高于真实列表底（a11y rowCount 口径 ≠ 真实内容）。判别器是停位点的视口文本 dump（`parkHasEntry`/`parkTexts` 两个 evidence 键，2000 字符截断）：dump 含「进入批量确认」→ 嫌疑转向 seek 自身漏检（第三臂）；行区可见而无入口 → 停位失真；列表尾既无行也无入口 → 入口未渲染。零行为改动：探针只读视口文本，其后 seek 的方向、步数、谓词一字不动。
+
+## 7. D-337 腿序修正（2026-11-16）
+
+rig 第十跑（max `43783363684`，证据 `local/artifacts/maxrig-43783363684/`）判读：D-336 的守卫跳过让 batch_confirmation 段首次 PASS（`batchConfirmationSkipped=true`，1095ms），代价是账本真空——`detail_monthly_refresh` 的 180s 段预算耗尽在月选择器 await 上，失败现场视口 = `2026-11 | 账本为空，还没有任何交易。`（overview 空账态，无 `月份：` 行），`reopen`/`traversal`/`same_request_replay`/`final_reopen` 全 NOT_RUN。该腿是全链唯一建交易处（`AuthorizeImportBatch` → `import_confirmation` + `ledger_transaction` + 2 `posting`；`detail_decision` 的首次授权落在决策未补全的批上，已入账 0 项 / 跳过 1 项，零账务效果），下游 `checkEconomicUi()` 的 `2026-01 · 交易 1 笔`/CNY 结余/交易详情/`创建入口：导入创建`、`reopen()` 的 `assertFixture` 与计数、`replay()` 的 `assertEconomics()` 全部读这笔交易——该段是落账负载腿，entry 缺席必须响亮失败，不能静默跳过。
+
+修正（D-337 本批）：撤销 D-336 守卫，seek/click/check/授权/await 恢复直线执行；整段前移到 `group_disposition` 之前（`detail_decision` → `batch_confirmation` → `group_disposition` → …），因为组腿的整组标记会清空 selection 并使 `进入批量确认` 入口消失，selection 只在组腿之前成立。D-335 停位点探针（`parkHasEntry`/`parkTexts` 两键）原样保留为取证资产，不再是守卫谓词。

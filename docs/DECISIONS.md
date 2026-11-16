@@ -7389,7 +7389,7 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 
 **裁决：** 停位点探针——batch 段 edge 后 seek 前 dump 视口可见文本进 evidence（键 `parkTexts` 截 2000 字符 / `parkHasEntry` = 任一文本以「进入批量确认」开头），零行为改动（探针后 rig 原样 seek）。判读臂：entry 在 = seek 自身漏检嫌疑；有行无 entry = 停位失真；列表尾无行无 entry = entry 未渲染。
 
-**落地形制：** `AndroidScaleLongInstrumentedTest.kt` batch 段 edge 后视口 dump + 两 evidence 键；D-336 起该探针兼作守卫谓词（同文本一字不差复用）。
+**落地形制：** `AndroidScaleLongInstrumentedTest.kt` batch 段 edge 后视口 dump + 两 evidence 键；D-336 起该探针兼作守卫谓词（同文本一字不差复用），D-337 起回到纯取证（守卫已撤销，腿序前移到组腿之前）。
 
 **实证（rig 第九跑 max `43755840299` a2）：** `parkHasEntry=false`；停位视口 = 导入根块 + 最近导入块 + 卡收起态全形（header / 收起全部比较信息（共 50000 条）/ 查看全部组成员行 / 查看全部 50000 条 / footer 确认整组标记+关闭）+ 底部导航。臂②停位失真与臂三 seek 漏检均排除——视口在真实列表底而 entry 不存在 = 臂① BatchConfirmButton 未渲染；D-334 折叠腿再次实证生效（查看全部在 = 收起态；卡 footer 之后直接是列表末尾）。
 
@@ -7411,4 +7411,6 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 
 **边界：** 入 = rig 守卫块 + b6 judge/输出/docstring + 配套 verdict 用例 + 本条（含 D-334/D-335 补登记）。出 = 不动 stage() helper 与 reopen() 前置、不动 D-335 探针块、不改 limit_ms/轮数/scale 参数面、不改 reducer/host 测试面（batch 路径验证归 P7-04 既有面）、`worst is None → FAIL` 兜底与 `median is None` 防御原样、PASS 判定其余 reasons 语义不变。
 
-**关联决定：** D-335（探针即守卫谓词，臂①实证出处）、D-332/D-333（架空 batch 腿前提的语义）、D-331（b6 基线 ~2.85s 与门余量出处）、D-281/D-282（P704GP-D-PERF-01 判决与 worst-of-3 原形制沿用链）、D-217（rig 链结构与 stage 断言纪律）、P7-04（batch 提交路径规模化验证的既有测试面）。
+**关联决定：** D-335（探针出处；D-336 起兼作守卫谓词，D-337 撤回）、D-332/D-333（架空 batch 腿前提的语义）、D-331（b6 基线 ~2.85s 与门余量出处）、D-281/D-282（P704GP-D-PERF-01 判决与 worst-of-3 原形制沿用链）、D-217（rig 链结构与 stage 断言纪律）、P7-04（batch 提交路径规模化验证的既有测试面）。
+
+**D-337 修正（同日）：** D-336 的守卫跳过被 rig 第十跑（max `43783363684`，证据 `local/artifacts/maxrig-43783363684/`）证伪——batch 腿是全链唯一建交易处，跳过致下游空账（该 run 的 `detail_monthly_refresh` 在空账 overview 上耗尽 180s 段预算，`reopen`/`replay` 全 NOT_RUN）；已撤销守卫并前移腿序（`detail_decision` → `batch_confirmation` → `group_disposition`），见 `docs/specs/2026-11-15-d333-landing-decouple-design.md` §7。
