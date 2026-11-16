@@ -939,26 +939,30 @@ class AndroidScaleLongInstrumentedTest {
             evidence.put("parkTexts", parkTexts.joinToString("|").take(2000))
             ui.seek("进入批量确认", forward = false)
             ui.click("进入批量确认", prefix = true)
-            check(ui.has("确认入账（1 项）"))
+            // D-337: the batch screen is a fresh composition — the hard has() here raced the
+            // navigation (clickNode's own 180 ms budget was all the screen had). An await keeps
+            // the same assertion and simply gives the composition its normal window.
+            ui.await { ui.has("确认入账（1 项）") }
             ui.click("授权逐项入账")
             ui.await { ui.has("导入", prefix = true) }
             // D-337 (2026-11-16): the batch-result section renders AFTER the whole candidate
             // list and the batch entry (P503ImportReviewPresentation.kt:1489-1498), and the
-            // import list re-composes at its TOP when the batch screen returns — no scroll
-            // position is restored (the list state is composition-local). At this scale the
-            // awaited text therefore sits ~50,000 rows below the viewport, so the leg walks to
-            // the bottom before reading it: the same edge(last = true) shape this stage already
-            // opens with, and the same fast scrollToPosition path run 43741730054-a2 measured at
-            // ~6s. The D-217 round-17 no-excursion note above assumed a small list where the
-            // summary was already on screen; that premise does not survive the 50k scale.
+            // await 导入 brings the import list back at its TOP — no scroll position is restored
+            // (the list state is composition-local). The summary therefore sits below the visible
+            // window by the preamble plus this page's 50 rows plus the load-more row (roughly
+            // 15-25 viewports — the await would starve long before reaching it), so the leg walks
+            // to the bottom first: the same edge(last = true) shape this stage already opens with,
+            // and the same fast scrollToPosition path run 43741730054-a2 measured at ~6s. The
+            // D-217 round-17 no-excursion note above assumed a small list where the summary was
+            // already on screen; that premise does not survive this scale.
             ui.edge(last = true)
             ui.await { ui.has("最近批量结果", prefix = true) }
             check(ui.nodes(ui.root()).flatMap(ui::labels).any { it.contains("已入账 1 项") && it.contains("拒绝 0 项") && it.contains("未知 0 项") })
             // D-337: hand the viewport back at the list TOP. The next stage's entry point
             // (刷新清单 / the group affordance) lives in the preamble above the rows, and its
-            // seekBackToTop walks backward with a 40-step bound — from ~50,000 rows down that
-            // walk cannot reach the top, so the stage would start blind. edge(last = false) is
-            // the same scrollToPosition(0) fast path as the bottom edge above.
+            // seekBackToTop walks backward with a 40-step bound — from a bottom park that is a
+            // long climb it need not pay, so the stage would start blind-ish. edge(last = false)
+            // is the same scrollToPosition(0) fast path as the bottom edge above.
             ui.edge(last = false)
         }
         // D-217 round 12 (evidence20): the collect-only traversal stage moved
@@ -972,9 +976,11 @@ class AndroidScaleLongInstrumentedTest {
         stage("group_disposition", 5400000) {
             // D-323 (run 43513000303 evidence): the D-322 count-driven entry renders at the TOP of
             // the review list (the affordance sits in the preamble BEFORE all candidate rows), while
-            // the viewport arrives deep — D-337 puts batch_confirmation directly before this stage,
-            // and that leg ends at the list bottom (edge(last = true) onto a park whose batch-result
-            // section renders after the entry row, P503ImportReviewPresentation.kt:1489-1498).
+            // a viewport arriving from a deeper park cannot see it. D-337 puts batch_confirmation
+            // directly before this stage, and that leg hands the viewport back at the list TOP
+            // (its closing edge(last = false), :962) — so this stage now starts on row 0 and the
+            // walk below is a no-op confirmation rather than a climb. It stays because the entry
+            // point is the invariance that matters, not the predecessor's last scroll offset.
             // seek() only moves FORWARD, and a LazyColumn row above the viewport is not in the a11y
             // tree — a plain seek could never reach the button. seekBackToTop first (the same marker
             // walk openCandidate uses, AndroidScaleUi seekBackToTop): 刷新清单 is the list's own

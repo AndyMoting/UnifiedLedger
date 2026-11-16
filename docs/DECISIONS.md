@@ -7413,4 +7413,20 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 
 **关联决定：** D-335（探针出处；D-336 起兼作守卫谓词，D-337 撤回）、D-332/D-333（架空 batch 腿前提的语义）、D-331（b6 基线 ~2.85s 与门余量出处）、D-281/D-282（P704GP-D-PERF-01 判决与 worst-of-3 原形制沿用链）、D-217（rig 链结构与 stage 断言纪律）、P7-04（batch 提交路径规模化验证的既有测试面）。
 
-**D-337 修正（同日）：** D-336 的守卫跳过被 rig 第十跑（max `43783363684`，证据 `local/artifacts/maxrig-43783363684/`）证伪——batch 腿是全链唯一建交易处，跳过致下游空账（该 run 的 `detail_monthly_refresh` 在空账 overview 上耗尽 180s 段预算，`reopen`/`replay` 全 NOT_RUN）；已撤销守卫并前移腿序（`detail_decision` → `batch_confirmation` → `group_disposition`），见 `docs/specs/2026-11-15-d333-landing-decouple-design.md` §7。
+**D-337 修正（同日，独立条目见下）：** D-336 的守卫跳过被 rig 第十跑证伪，本条的守卫形制已撤回——见 `## D-337`。
+
+## D-337 rig 腿序修正：batch_confirmation 前移到 group_disposition 之前（撤销 D-336 的守卫跳过）
+
+**状态：** 已批准（2026-11-16；rig 第十跑实证强制的纠正，用户设计门选项 a 的形态）
+
+**背景：** rig 第十跑（max `43783363684`，证据 `local/artifacts/maxrig-43783363684/`）按 D-336 的守卫跳过跑完 `batch_confirmation`（PASS 1095ms，`batchConfirmationSkipped=true`），主链 44 天来首次越过该段——随即 `detail_monthly_refresh` 在 `:1162`（`ui.await { has("月份：") }`）耗尽 180s 段预算，失败视口 = `2026-11 | 账本为空，还没有任何交易。`（`stage-forensics.json`）。归因：batch 腿的「授权逐项入账」是**全链唯一创建交易**的动作（`AuthorizeImportBatch` → `import_confirmation` + `ledger_transaction` + 2 `posting`），跳过后账本真空，空态页连月选择器都不渲染；下游 `reopen` 的 `ledger_transaction==1`/`transaction_version==1`/`posting==2`/`import_confirmation==1`/`import_candidate_decision_snapshot==1` 与 `replay` 的 `assertEconomics` 全依赖这笔交易。D-336 把它描述为「退化二次提交」是判断错误。
+
+**裁决：** batch 腿是**落账负载腿**，不是可跳过的可选腿——①撤销守卫跳过，entry 缺席必须响亮失败；②腿序前移到 `group_disposition` 之前（`detail_decision` → `batch_confirmation` → `group_disposition`），因为组腿把整组标为重复后 `进入批量确认` 的 selection 前提不再成立。
+
+**落地形制：** `AndroidScaleLongInstrumentedTest.kt` 批腿整块前移（`:926`，组腿 `:972`）；守卫与 `batchConfirmationSkipped` 写入点删除，seek/click/授权/await 恢复直线；批腿尾部补 `ui.edge(last = true)`（`最近批量结果` 段渲染在候选行与批入口之后，不在初始视口）与 `ui.edge(last = false)`（把视口交回列表顶给下一段）；`确认入账（1 项）` 的硬 `has()` 改 `await`（新组合页需要正常等待窗）；D-335 探针两键保留为纯取证。`tools/python/android_scale/result.py` 的 `STAGES` 元组同步交换两项（`:271` 的 `startedMs >= previous_end` 读声明顺序），`tests/python/test_android_scale_result.py` 的合法时间线 fixture 同序。
+
+**实证：** 候选族互斥已由四条独立证据确认（批腿 selection 属 session-01 行；组腿对象由 `lastIntakeSession` 与计数门槛决定；`relationIds` 受 `subject rank > counterpart rank` 约束，session-01 恒为 rank 0 不能当 subject；组处置核心只校验 subject 侧）。故前移不改 `mainGroupRelations=50000`/`groupDispositions=50000` 与 reopen 不变量。前移前该腿从未在 max 规模执行过（11 个 `maxrig-*` 无一直线臂 PASS）。
+
+**边界：** 入 = rig 批腿/组腿段与注释 + `result.py` STAGES 与注释 + 时间线 fixture + D-333 spec §7 + 本条。出 = 不动 `stage()` helper、不动 reopen 前置的 `batch_confirmation == "PASS"`、不改段预算与 limit、不改 D-334 折叠腿行为、不动 D-335 探针两键语义。
+
+**关联决定：** D-336（被本条撤销的守卫跳过）、D-335（探针出处，本条起回到纯取证）、D-332/D-333（架空批腿前提的组语义）、D-217（批腿原始设计出处）、D-334（折叠收尾腿，原动机被本条架空但行为保留）。

@@ -15,9 +15,10 @@ PHASES = ("prepare", "chain", "reopen", "replay", "final-reopen")
 # can never satisfy the strictly increasing startedMs rule validated below).
 # D-337 (2026-11-16): `batch_confirmation` leads `group_disposition`. The batch authorize is the
 # ONLY stage that books a transaction, and the group leg disposes the whole duplicate group; run
-# 43783363684 proved the order is load-bearing (with the batch leg skipped the ledger stayed empty
-# and every downstream economics assertion read an empty book). The startedMs rule below reads
-# this declaration order, so the tuple mirrors the rig's chain order.
+# 43783363684 proved the order is load-bearing — with the batch leg skipped the ledger never got
+# its transaction, the next stage found an empty book (no month selector to await) and burned its
+# whole 180s budget, and every phase after it stayed NOT_RUN. The startedMs rule below reads this
+# declaration order, so the tuple mirrors the rig's chain order.
 STAGES = ("preparation", "coldstart", "saf_import", "detail_decision",
           "batch_confirmation", "group_disposition", "detail_monthly_refresh", "reopen",
           "traversal", "same_request_replay", "final_reopen")
