@@ -1293,12 +1293,13 @@ class AndroidScaleLongInstrumentedTest {
             // 来源 rides below the 账目信息 card, so walk to it instead of requiring one viewport.
             ui.seek("创建入口：导入创建")
             check(ui.has("创建入口：导入创建"))
-        // D-339 review (P2): 返回 lives at the TOP of the detail's scrolling column
-        // (P503LedgerView.kt:382-390), so a seek that actually scrolled leaves it out of the
-        // viewport and the click would burn the rest of the stage budget waiting. Walk back up
-        // first — a no-op when the first viewport already showed the card.
-        ui.seek("返回", forward = false)
-        ui.click("返回")
+            // D-339 review (P2): 返回 lives at the TOP of the detail's scrolling column
+            // (P503LedgerView.kt:382-390), so a seek that actually scrolled leaves it out of the
+            // viewport and the click would burn the rest of the stage budget waiting. Walk back up
+            // first — a no-op when the first viewport already showed the card.
+            ui.seek("返回", forward = false)
+            ui.click("返回")
+        }
     }
 
     private fun reopen(): ScaleSnapshot {
