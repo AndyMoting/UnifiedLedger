@@ -73,3 +73,38 @@ rig 第十一跑（max `43801673636`，证据 `local/artifacts/maxrig-4380167363
 
 **下一跑判读清单（D-338）**：①`batchBookedSeen` 应 `true`（`false` 时先看 `batch_confirmation` 是否 FAIL，再看第二批的摘要行是否停在 `已入账 0 项`）；②`batch_confirmation` 段 `elapsedMs` 应为毫秒级（见证段 = 一次 evidence 读 + 一次树读）；③`detail_monthly_refresh` 应首次真正开始跑——第十跑的失败形态是它跑起来但账本真空（`账本为空，还没有任何交易。`），第十一跑根本没轮到它（NOT_RUN）。**预算结论（已落地）**：`detail_decision` maximum 档 **180000→420000ms** 已改并两处一致——rig `stage("detail_decision", …)` 与 `tools/python/android_scale/result.py` 的 `limits["detail_decision"]`（`ff07ea64`）。依据：第十一跑用 150965ms/180000ms（余 29035ms），本批新增一次完整批提交（批次页组合 + 授权 + 派发 + 落地，D-164 实测单笔授权到权威计数增长 **39,426 ms**）+ 一次底部走位（~6s）+ 摘要读。第三份口径 `docs/specs/2026-11-13-maxrig-firstpage-target-design.md:122` 的 V-2 判据仍写 180000，按旧规格冻结不改（DECISIONS D-338 记录其 supersede）。
 **评审修复轮（`9e6e1354`）**：勾选改为「入口已在即取现有效果、仅 miss 才 toggle」（P0：入口在抵达时可能已存在，无条件 toggle 会取消选集）；前提记成 evidence 键 `detailSelectionTakenAsIs`，下一跑应优先读它——`true` 表示 P0 前提成立（选集在第一次提交后仍在）、`false` 表示走了点击分支。`booked` 读的 catch 收窄为只吞 `UI condition deadline exceeded`，`scale deadline exceeded` 上抛（相位越界记 ERROR 而非 FAIL）。
+
+## 9. D-339 月度经济学腿按当前 UI 重写（2026-11-16）
+
+rig 第十二跑（max `43818172737`，证据 `local/artifacts/maxrig-43818172737/`，被测 SHA `d0454405`；`host.json` 记录 `mode=maximum`、`api=36`、`locale=zh-CN`、`timezone=Asia/Shanghai`、`font_scale=1.0`、`1080x2400`、`density=420`）首次把链推进到 `detail_monthly_refresh`：前五段全 PASS（`device.json` 的 `stages`）——`preparation` 2994778ms、`coldstart` 22779ms、`saf_import` 192892ms、`detail_decision` 276381ms（420000ms 档，余 143619ms）、`batch_confirmation` 45ms（D-338 的见证段形态成立）、`group_disposition` 383825ms；本段 `ERROR` 180200ms（`errorType=IllegalStateException`，`stage-forensics.json` 的 `message` = `scale deadline exceeded`），其后 `reopen`/`traversal`/`same_request_replay`/`final_reopen` 全 NOT_RUN；host 侧 `status=ERROR`、`errorType=ValueError`（`instrumentation failure`）、`elapsed_seconds=4128.57`。
+
+四项读数（`device.json`）：`batchBookedSeen=true`、`detailSelectionTakenAsIs=true` 且 `detailSelectionEstablished=true`（D-338 评审修复轮登记的 P0 前提成立：第一次提交后选集仍在）、`batchSkipSummarySeen=false`、`groupMarkOutcomeSeen=true`；计数 `preparedCandidates=51000`、`preparedRelations=100000`、`preparedDispositions=100`、`mainGroupRelations=50000`、`groupDispositions=50000`。
+
+账本实证：失败视口（`stage-forensics.json` 的 `texts`）= `打开菜单 | 新增支出 | 2026-11 | 流水 · 共 1 笔 | 已到末页`。其中 `流水 · 共 ${flow.total} 笔` 的 `total` 是**账本全量生效交易数**（`QueryLedgerFlowPage.kt:49-55` 的 `effectiveTransactionCount`，`P503App.kt:1019` 接线），故账本确有且仅有 1 笔生效交易——与批腿的 `已入账 1 项`、oracle 面的 `ledger_transaction==1` 同源。本段失败既不是账本真空（第十跑形态），也不是入账未发生，而是纯文案腐化。
+
+**归因：期望文案出身已退役的旧主页。** `checkEconomicUi` 的四句期望全部来自 `P503LedgerView` 家族，而 HOME 面自 P8-00 起渲染 `P503OverviewScreen`（`P503App.kt:5048-5086`，其内容组织在 `P8HomeFlow.kt`）：
+
+| 旧断言（pre-D-339） | 出处 | 当前主页 |
+| --- | --- | --- |
+| `月份：{yyyy-MM}` | `P503LedgerView.kt:134`（`P503MonthSelector`） | 裸月份文本 `Text(monthLabel)`（`P8HomeFlow.kt:269-274`），`monthLabel = selectedMonth ?: resolvedCurrentMonth`，缺省 `2026-11`（`P503OverviewScreen.kt:174`） |
+| 点 `上一月` | `P503LedgerView.kt:139` | `‹` / `›` 两个 `TextButton`（`P8HomeFlow.kt:268/:275`），`enabled = 该方向有可选月` |
+| `{month} · 交易 N 笔` | `P503LedgerViewPresentation.kt:83`（`monthRegionHeadline`，只由 `P503MonthCard` 渲染） | 无此句：主页是 `流水 · 共 ${flow.total} 笔`（`P503OverviewScreen.kt:189`）+ 摘要卡三页句 `{page}：CNY {金额}`（`p8SummaryPageDescription`，`P8HomeFlow.kt:93-105`）+ 日组头 `▾ {date} · {count} 笔`（`P8HomeFlow.kt:348`） |
+| `CNY：普通收入 0.00，净支出 …，结余 …` | `P503LedgerViewPresentation.kt:392-398`（`monthCardCurrencyLineText`） | 无此句；同上的三页句按 支出/收入/结余 各一行承载 |
+
+这四句**没有从产品里被删掉**：`P503MonthCard`/`P503MonthSelector` 仍由**分析**页渲染（`P503TabShell.kt:531/:542`），退役的只是主页对它们的渲染。腿点的是 `首页`，于是在新主页上等一个永不到来的状态。取证口径另记一条：`stage-forensics.json` 的 `texts` 受 `AndroidScaleObserverDiag.MAX_TEXT_SAMPLES=5`（`android-app/src/scaleTest/.../AndroidScaleObserverDiag.kt:63`）与 BFS 采样截断（同跑 `textsTruncated=true`），5 项是**前五项**而不是全部——摘要卡与日组行只排在更深的层级，不能据此断言它们未渲染。
+
+**重写形制（`AndroidScaleLongInstrumentedTest.kt:1227-1292`）**：
+
+- **保留（UI 面不可由 oracle 替代的观察）**：①`首页` → `流水 · 共 1 笔`（笔数正确）；②日组头含 `2026-01-15 · 1 笔`（交易落在其统计日的桶里，`p8GroupByDay` 的 R-Q06-2 口径）；③`‹` 一次到 `2026-01`；④打开该笔 → 详情 `创建入口：导入创建`（导入创建的界面痕迹，全链唯一）；⑤详情 `发生时间：2026-01-15T…`（详情把存储瞬时按 `kotlin.time.Instant` 打到 UTC，`P503LedgerView.kt:487`）。
+- **删除**：四句旧文案（对象不存在于当前主页）；`repeat(120)` 月步进（另有一处结构缺陷：`return@repeat` 只是继续下一轮，命中后仍会把 120 轮点完）。
+- **降级为取证、不承重**：`homeFlowLabels`（进入主页时的可见文本，2000 字符，沿用 `groupEntryTopWindowLabels` 的形制）与 `monthExpensePageSeen`（摘要卡 `支出：CNY {selectedAmount}`，旧 CNY 句的继任面）。经济学仍由 oracle 承重。
+- **降级为有界观测**：月份定位。一次 `‹` 后 60s 内等到 `2026-01` 即 `monthlyLegScope=transaction-month`，等不到则记 `current-month` 并继续——`‹` 的落点是**域内最早月**而非退一月（`monthStepEdges` 的 `previous = selectableMonths.firstOrNull { it < current }`，`P503LedgerViewPresentation.kt:204-214`；域 = 连续区间 `[首笔统计月, 本月]`，`QueryMonthlyActivity.kt:96-115`），故一次即达。不硬等不可达状态的理由：流水列表是**账本全量**、无月过滤（`SqlDelightLedgerCurrentStateReadAdapter.kt:132-184`），笔数/日组/详情三腿与选中月无关；`收支日历` 在本 host 未接线（`P503App.kt:5081-5082`），不是备选路径。
+- **余额区核对结论**：当前主页的余额区只有 `账户余额` + 每账户 `{账户名}（CNY）：{金额}`（`OverviewBalances`，`P503OverviewScreen.kt:231-243`），没有 `普通收入/净支出/结余` 句——旧 CNY 句出身 `monthCardCurrencyLineText`，不在该区。
+
+**Route B 边界：** 本腿仍只做 UI 观察。`流水 · 共 1 笔` 与日组计数是界面读数（数值口径在 oracle），`创建入口：导入创建` 是界面唯一不可替代的观察（导入创建的痕迹）；经济学验收仍是 `reopen()` 的 `assertFixture(final)` + `ledger_transaction==1`/`version==1`/`posting==2`/`import_confirmation==1` 与 `replay()` 的 `assertEconomics()`。本批零重试放宽、零断言搬迁、零产品改动。
+
+**段预算结论（未改，两处一致）：** `detail_monthly_refresh` 仍走 `stage()` 默认 `180000ms`（rig 无第二参），`tools/python/android_scale/result.py` 的 `limits` 无该段条目 → 默认 180000ms（`:282`）。重写后的诚实路径：一次页签切换 + 三次树读 + 一次月步进（触发一次月度重读）+ 一次单笔详情读 + 一次前向 seek ≈ 5–30s，月步进的降级观测窗 60s 是上界。若下一跑实测 `elapsedMs > 150000`，再两处同改（rig 的 `stage("detail_monthly_refresh", …)` 与 `result.py` 的 `limits`）。
+
+**实施偏差登记（写手，相对本批任务书）：** ①任务书预设「往回 10 个月到 2026-01」；查证后 `‹` 一步即到域内最早月，故该循环整段删除。②任务书要求核对 `OverviewBalances` 是否还有 CNY 句——该句不在余额区（见上），故按「已不存在 → 删除」处理。③任务书要求把详情 `发生时间` 按新格式钉死；其精确 UTC 形态在本机不可执行验证（零执行），故按前缀 `发生时间：2026-01-15T` 断言并把全文记入 `detailOccurredLine`，下一跑按读数钉死——不为一处投影形态花掉一跑。
+
+**下一跑判读清单（D-339）**：①`detail_monthly_refresh` 应 PASS 且 `elapsedMs` 在数万毫秒内（`homeFlowLabels` 在失败前也已落盘，可先于视口分辨）；②`monthlyLegScope` 应 `transaction-month`——`current-month` 时先分辨域空（钮 disabled）与标签未刷新（域非空但读未回），`homeFlowLabels` 的月份文本与 `monthExpensePageSeen` 能分开这两臂；③`monthExpensePageSeen` 应 `true`；④`detailOccurredLine` 应为 `发生时间：2026-01-15T00:00:00Z`；⑤`创建入口：导入创建` 必须命中（`ui.seek` 前向走位，该卡在 `账目信息` 卡之后），miss 即 `UI target not reached`，属真失败；⑥其后 `reopen`/`traversal`/`same_request_replay`/`final_reopen` 应首次开跑——本跑与第十、十一跑里它们都是 NOT_RUN，是这条腿之外的下一个未知面。
