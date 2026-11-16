@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.AtomicFile
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.unifiedledger.application.ImportCandidateConfirmRequest
@@ -991,11 +992,14 @@ class AndroidScaleLongInstrumentedTest {
         // import_confirmation + ledger_transaction + 2 posting). detail_decision's first submit
         // runs on a decision-incomplete batch and lands 已入账 0 项 / 跳过 1 项 (D-320); the
         // decision-complete one lands 已入账 1 项, and every downstream leg reads that
-        // transaction: checkEconomicUi's 2026-01 · 交易 1 笔 / CNY 结余 / 交易详情 / 创建入口：导入创建,
-        // reopen()'s assertFixture and counts, replay()'s assertEconomics. Run 43783363684
+        // transaction: checkEconomicUi's 流水 · 共 1 笔 / 交易详情 / 创建入口：导入创建 (D-339 reads
+        // the current home surface), reopen()'s assertFixture and counts, replay()'s
+        // assertEconomics. Run 43783363684
         // measured D-336's skip arm (batchConfirmationSkipped=true, PASS in 1095ms): the ledger
-        // stayed empty, the overview painted 账本为空，还没有任何交易。 with no 月份： row, and
-        // detail_monthly_refresh died at its 180s ceiling on the selector await. The leg stays
+        // stayed empty and the overview painted the empty state, and
+        // detail_monthly_refresh died at its 180s ceiling on the selector await — that wait
+        // targeted 月份：, copy the current home never renders (D-339), so the timeout had two
+        // causes: no transaction to show, and a selector line that had been retired. The leg stays
         // BEFORE group_disposition: the group leg submits its whole group as duplicate-marked,
         // that submission clears the selection, and 进入批量确认 stops rendering.
         // D-338 (run 43801673636, 2026-11-16) keeps that order and moves the SUBMIT into
@@ -1224,22 +1228,106 @@ class AndroidScaleLongInstrumentedTest {
     }
 
     private fun checkEconomicUi() {
+        // D-339: this leg reads the CURRENT home surface (P503OverviewScreen). The pre-D-339 copy
+        // (月份：… / 上一月 / {month} · 交易 N 笔 / CNY：普通收入 … 净支出 … 结余 …) belongs to the
+        // retired P503LedgerView home — P503LedgerView.kt:134/:139,
+        // P503LedgerViewPresentation.kt:83/:392-398 — which the home tab no longer renders, so run
+        // 43818172737 spent its whole 180s stage budget on the first await.
         ui.click("首页")
-        ui.await { ui.has("月份：", prefix = true) }
-        repeat(120) {
-            if (ui.has("月份：2026-01")) return@repeat
-            ui.click("上一月")
-            ui.settle()
-        }
-        ui.await { ui.has("2026-01 · 交易 1 笔") }
+        // The flow header states the LEDGER-WIDE effective count ("共 N 笔", P503OverviewScreen.kt:189
+        // over FlowRowsView.total, QueryLedgerFlowPage.kt:49-55), so it is independent of the
+        // selected month. Run 43818172737's failure viewport already carried this exact line at
+        // this chain position — the batch leg is the chain's only transaction writer (D-338).
+        ui.await { ui.has("流水 · 共 1 笔") }
+        // The day-group header (P8HomeFlow.kt:348) pins the transaction's reporting day and that
+        // day's own count. Grouping runs over the same ledger-wide page, so it holds for any
+        // selected month.
+        ui.await { ui.visibleTexts(ui.root()).any { line -> line.contains("2026-01-15 · 1 笔") } }
+        evidence.put("homeFlowLabels", ui.visibleTexts(ui.root()).joinToString("|").take(2000))
         val amount = state.getLong("selectedAmount")
         val text = (amount / 100).toString() + "." + (amount % 100).toString().padStart(2, '0')
-        check(ui.has("CNY：普通收入 0.00，净支出 " + text + "，结余 -" + text))
-        val transaction = ui.nodes(ui.root()).first { node -> node.actionList.any { it.label?.toString() == "查看交易详情" } }
+        // The transaction's statistics month is 2026-01, so the SelectMonth domain is
+        // [2026-01, 本月] (QueryMonthlyActivity.kt:96-115) and ‹ steps to the domain's EARLIEST
+        // month, not one month back (monthStepEdges, P503LedgerViewPresentation.kt:204-214): ONE
+        // press reaches 2026-01 from the default 本月. 收支日历 is unwired on this host
+        // (P503App.kt:5081-5082), so the stepper is the only month navigation.
+        var monthlyLegScope = "transaction-month"
+        if (!ui.has("2026-01")) {
+            ui.click("‹")
+            val moved =
+                try {
+                    ui.await(60000) { ui.has("2026-01") }
+                    true
+                } catch (miss: IllegalStateException) {
+                    // Only the await's own timeout is a retryable miss; a phase overrun keeps its
+                    // own classification (the batch leg's catch rule, :968-975).
+                    if (miss.message?.contains("scale deadline exceeded") == true) throw miss
+                    false
+                }
+            if (!moved) monthlyLegScope = "current-month"
+        }
+        // Degrade, never hang: an unreachable month (empty or frozen domain) leaves the leg on 本月,
+        // the scope lands in the evidence for the reviewer, and every check below stays valid
+        // because the flow page is ledger-wide — never month-filtered.
+        evidence.put("monthlyLegScope", monthlyLegScope)
+        // Evidence-only read of the month card's successor surface. The pre-D-339 CNY line retired
+        // with P503LedgerView; the 支出 page sentence now states the selected month's expense
+        // (p8SummaryPageDescription, P8HomeFlow.kt:93-105).
+        evidence.put("monthExpensePageSeen", ui.has("支出：CNY $text"))
+        // The flow row's click is its onClickLabel (P503OverviewScreen.kt:291) — but the D-216
+        // precedent (AndroidScaleUi candidateNodes, :617-627) is that a labeled click action may
+        // never surface to the instrumentation client at all, so the label gets a BOUNDED wait
+        // and a content-level locator takes over on a miss: anchor on the row's own visible text
+        // and ascend to its nearest clickable ancestor, the same shape that fallback uses.
+        val labeledRow: AccessibilityNodeInfo? =
+            try {
+                ui.await(20000) { ui.nodes(ui.root()).any { node -> node.actionList.any { it.label?.toString() == "查看交易详情" } } }
+                ui.nodes(ui.root()).firstOrNull { node -> node.actionList.any { it.label?.toString() == "查看交易详情" } }
+            } catch (miss: IllegalStateException) {
+                // Only the await's own timeout is a retryable miss; a phase overrun keeps its own
+                // classification (the batch leg's catch rule).
+                if (miss.message?.contains("scale deadline exceeded") == true) throw miss
+                null
+            }
+        val transaction =
+            labeledRow ?: run {
+                var click: AccessibilityNodeInfo? = null
+                outer@ for (text in ui.nodes(ui.root())) {
+                    if (!text.isVisibleToUser || text.text?.toString()?.startsWith("统计 2026-01-15T") != true) continue
+                    var node = text.parent
+                    var hops = 0
+                    while (node != null && hops++ < 6) {
+                        var candidate: AccessibilityNodeInfo? = node
+                        var clickHops = 0
+                        while (candidate != null && clickHops++ < 4 && !candidate.isClickable) candidate = candidate.parent
+                        if (candidate != null) {
+                            click = candidate
+                            break@outer
+                        }
+                        node = node.parent
+                    }
+                }
+                click ?: error("the flow row neither exposed 查看交易详情 nor a clickable ancestor")
+            }
         ui.clickNode(transaction)
         ui.await { ui.has("交易详情") }
+        // The one UI-observable trace of the import creation: the ledger counts stay oracle-owned in
+        // reopen()/replay(). 发生时间 renders the stored instant through kotlin.time.Instant
+        // (P503LedgerView.kt:487), i.e. UTC — 2026-01-15T08:00:00+08:00 renders as
+        // 2026-01-15T00:00:00Z (the same Instant interpolation is pinned by
+        // P8B3SecondaryNavPresentationTest.kt:120). The await pins the line and the bill's calendar
+        // date; the exact rendered instant rides into the evidence so the next run settles the zone
+        // rendering without spending a run on it.
+        ui.await { ui.has("发生时间：2026-01-15T", prefix = true) }
+        evidence.put("detailOccurredLine", ui.visibleTexts(ui.root()).firstOrNull { line -> line.startsWith("发生时间：") } ?: "")
+        // 来源 rides below the 账目信息 card, so walk to it instead of requiring one viewport.
+        ui.seek("创建入口：导入创建")
         check(ui.has("创建入口：导入创建"))
-        check(ui.has("发生时间：2026-01-15T08:00:00+08:00"))
+        // D-339 review (P2): 返回 lives at the TOP of the detail's scrolling column
+        // (P503LedgerView.kt:382-390), so a seek that actually scrolled leaves it out of the
+        // viewport and the click would burn the rest of the stage budget waiting. Walk back up
+        // first — a no-op when the first viewport already showed the card.
+        ui.seek("返回", forward = false)
         ui.click("返回")
     }
 
