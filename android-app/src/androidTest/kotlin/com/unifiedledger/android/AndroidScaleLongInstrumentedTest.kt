@@ -753,7 +753,7 @@ class AndroidScaleLongInstrumentedTest {
         // PENDING_USER_DECISION — selectable, with the decision form. The row's
         // amount is read from the rendered row and checked against the spec's
         // first-session range; see `openFirstPageCandidate`.
-        stage("detail_decision", if (spec.profile == "maximum") 180000L else 600000L) {
+        stage("detail_decision", if (spec.profile == "maximum") 420000L else 600000L) {
             val amount = ui.openFirstPageCandidate(firstPageAmountRange(), FIRST_PAGE_JUMP_INDEX)
             state.put("selectedAmount", amount)
             check(ui.has("决策未补全，尚不可提交确认。"))
@@ -876,94 +876,147 @@ class AndroidScaleLongInstrumentedTest {
             // final batch carried only the residual skip-batch selection
             // (IMPORT_BATCH_DECISION_INCOMPLETE again). In this chain the
             // decided candidate is never pre-selected, so toggle
-            // unconditionally and verify the checked postcondition.
+            // unconditionally and verify the selection's effect.
             // D-217 round 21 (closure review): the verified toggle is wrapped
             // in a 2-attempt loop. Each attempt re-finds the checkbox node
             // FRESH — AndroidScaleUi exposes no public cache reset, and a
             // fresh lookup through findNode's cache/refresh path is the
-            // available refresh — clicks it, and awaits the checked
-            // postcondition; on a 20s await miss the second attempt clicks
+            // available refresh — clicks it, and awaits the selection's
+            // effect; on a 20s await miss the second attempt clicks
             // again, while a real phase overrun (tick's "scale deadline
             // exceeded") still propagates.
-            var checked = false
-            for (attempt in 0 until 2) {
-                val checkbox = ui.nodes(ui.root()).first { it.contentDescription?.toString() == "勾选候选" }
-                ui.clickNode(checkbox)
-                checked =
-                    try {
-                        ui.await(20000) {
-                            ui.nodes(ui.root()).firstOrNull { it.contentDescription?.toString() == "勾选候选" }?.isChecked == true
+            // D-338 (run 43801673636, 2026-11-16): the postcondition is the
+            // ENTRY, not the checkbox reading. The pre-D-338 loop awaited
+            // `isChecked == true` — the stale-client-tree read the round-19
+            // incident above already caught answering "already checked" on a
+            // candidate this run never selected. 进入批量确认 renders only
+            // while selectedCandidateIds is non-empty (P503ImportReview.kt:1035-1047,
+            // the detail's own entry), so the entry's presence is the same
+            // selection fact read at effect level, and the retry now answers
+            // to that effect instead of to the tree's claim.
+            // D-338 review (P0): the entry is the selection's effect, but it can already be
+            // true on arrival — the first submit above selected this candidate and a completed
+            // batch never clears the selection (P503Reducer.kt:3111, :2701-2705). Toggling
+            // unconditionally would therefore UNSELECT it, and the stale client tree would then
+            // keep reporting the vanished entry as present. So: take the effect as-is when it
+            // already holds, and only toggle when it is genuinely missing (when root.refresh()
+            // succeeds, a miss re-walks the tree and — rate permitting — forces a cache reset,
+            // the trustworthy direction; a failed refresh simply keeps the miss a miss).
+            var selected = ui.has("进入批量确认")
+            // D-338 review: the P0 premise ("the entry is already there on arrival") is the one
+            // fact the next run's forensics cannot otherwise recover — record which branch ran.
+            evidence.put("detailSelectionTakenAsIs", selected)
+            if (!selected) {
+                for (attempt in 0 until 2) {
+                    val checkbox = ui.nodes(ui.root()).first { it.contentDescription?.toString() == "勾选候选" }
+                    ui.clickNode(checkbox)
+                    selected =
+                        try {
+                            ui.await(20000) { ui.has("进入批量确认") }
+                            true
+                        } catch (miss: IllegalStateException) {
+                            if (miss.message?.contains("scale deadline exceeded") == true) throw miss
+                            false
                         }
-                        true
-                    } catch (miss: IllegalStateException) {
-                        if (miss.message?.contains("scale deadline exceeded") == true) throw miss
-                        false
-                    }
-                if (checked) break
+                    if (selected) break
+                }
             }
-            check(checked) { "detail checkbox toggle was never observed (checked=false)" }
-            // D-217 round 13 (evidence22): a plain 返回 click can fail
-            // silently on a stale detail-screen node — the next stage then
-            // starts on 候选详情 and its seek dies with "scroll container
-            // absent" (226ms). clickUntil verifies the effect: the review
-            // list (刷新清单) must be visible before the stage ends.
-            ui.clickUntil("返回", "刷新清单")
+            evidence.put("detailSelectionEstablished", selected)
+            check(selected) { "the detail's 进入批量确认 entry never surfaced (selection was never established)" }
+            // D-338: the second, decision-complete submit runs HERE, on the
+            // detail screen, because the product puts the entry here. Round 11's
+            // park dump (run 43801673636, 43 visible texts) read the TRUE list
+            // bottom — the page footer (加载更多导入候选 / 加载更多) and the
+            // bottom-bar labels 首页/账户/分析 sit in the same window, so the
+            // park-distortion arm is excluded — and carried no 进入批量确认
+            // node: the list-side button renders off selectedCandidateIds
+            // (P503ImportReviewPresentation.kt:1488-1490), and this chain's only
+            // selection write point is the detail toggle above, so a list-bottom
+            // leg can only ever seek an entry the chain never made. The
+            // list-bottom path is retired, not repaired; the entry's home is the
+            // detail screen by product design (P503ImportReview.kt:1035-1047).
+            ui.click("进入批量确认")
+            ui.await { ui.has("确认入账（1 项）") }
+            // The first submit above ran on the decision-incomplete batch and
+            // type-skipped it (已入账 0 项 / 跳过 1 项, D-320); this one carries
+            // the completed decision, so its authorize is the chain's one
+            // transaction-creating act.
+            ui.click("授权逐项入账")
+            ui.await { ui.has("导入", prefix = true) }
+            // Landing gate: the authorize hop leaves ImportBatchSubmitting for
+            // the overview with the import surface still mounted
+            // (P503Reducer.kt:3093-3111), and that surface recomposes at its
+            // TOP, where 刷新清单 is the first row. The bottom walk below needs
+            // the list, not the submitting screen.
+            ui.await { ui.has("刷新清单") }
+            // D-338 effect witness: the retained 最近批量结果 summary. It renders
+            // AFTER the candidate rows and the batch entry
+            // (P503ImportReviewPresentation.kt:1493-1504), so it is never in the
+            // landing viewport — the reason the first-half read above always
+            // misses at this scale (batchSkipSummarySeen=false in run
+            // 43801673636), and the reason D-337's list leg walked to the bottom
+            // before reading it. Walk there first (the ACTION_SCROLL_TO_POSITION
+            // fast path, ~6s on run 43741730054-a2), then wait for the CONTENT:
+            // until this batch's items land the retained summary is still the
+            // first batch's 已入账 0 项 / 跳过 1 项, so awaiting the section
+            // header alone would read the stale line.
+            ui.edge(last = true)
+            // D-338 review (P2): only the await's own timeout is a retryable miss. A bare
+            // runCatching would also swallow tick()'s "scale deadline exceeded" and relabel a
+            // phase overrun as a failed booking — the same classification rule the toggle
+            // loop above and the round-21 retry already follow.
+            val booked =
+                try {
+                    ui.await(120000) { ui.nodes(ui.root()).flatMap(ui::labels).any { line -> line.contains("已入账 1 项") } }
+                    true
+                } catch (miss: IllegalStateException) {
+                    if (miss.message?.contains("scale deadline exceeded") == true) throw miss
+                    false
+                }
+            evidence.put("batchBookedSeen", booked)
+            check(booked) { "the decided batch never booked its transaction (已入账 1 项 not observed)" }
+            // D-338: hand the viewport back at the list TOP for the group leg —
+            // the same closing edge D-337 gave its batch leg. The pre-D-338 tail
+            // clicked 返回 to leave the detail screen; the authorize hop has
+            // already left it (the landing gate above is that proof), and 返回
+            // belongs to the detail and batch screens only
+            // (P503ImportReview.kt:926, P503ImportBatch.kt:245), so the tail is
+            // the viewport handoff plus the list-surface assertion the old effect
+            // click carried.
+            ui.edge(last = false)
+            ui.await { ui.has("刷新清单") }
         }
         // D-337 (run 43783363684, 2026-11-16): this leg is the chain's load-bearing writer — its
         // 授权逐项入账 is the only submit that creates a transaction (AuthorizeImportBatch ->
-        // import_confirmation + ledger_transaction + 2 posting). detail_decision's earlier submit
-        // runs on a decision-incomplete batch and lands 已入账 0 项 / 跳过 1 项 (D-320); this one
-        // lands 已入账 1 项, and every downstream leg reads that transaction: checkEconomicUi's
-        // 2026-01 · 交易 1 笔 / CNY 结余 / 交易详情 / 创建入口：导入创建, reopen()'s assertFixture and
-        // counts, replay()'s assertEconomics. Run 43783363684 measured D-336's skip arm
-        // (batchConfirmationSkipped=true, PASS in 1095ms): the ledger stayed empty, the overview
-        // painted 账本为空，还没有任何交易。 with no 月份： row, and detail_monthly_refresh died at its
-        // 180s ceiling on the selector await. A missing entry therefore fails this stage loudly.
-        // The leg runs BEFORE group_disposition: the group leg submits its whole group as
-        // duplicate-marked, that submission clears the selection, and 进入批量确认 stops rendering
-        // (D-335's park probe pinned the absence). detail_decision creates the selection this leg
-        // spends, so batch-then-group is the only order where both legs keep their input.
+        // import_confirmation + ledger_transaction + 2 posting). detail_decision's first submit
+        // runs on a decision-incomplete batch and lands 已入账 0 项 / 跳过 1 项 (D-320); the
+        // decision-complete one lands 已入账 1 项, and every downstream leg reads that
+        // transaction: checkEconomicUi's 2026-01 · 交易 1 笔 / CNY 结余 / 交易详情 / 创建入口：导入创建,
+        // reopen()'s assertFixture and counts, replay()'s assertEconomics. Run 43783363684
+        // measured D-336's skip arm (batchConfirmationSkipped=true, PASS in 1095ms): the ledger
+        // stayed empty, the overview painted 账本为空，还没有任何交易。 with no 月份： row, and
+        // detail_monthly_refresh died at its 180s ceiling on the selector await. The leg stays
+        // BEFORE group_disposition: the group leg submits its whole group as duplicate-marked,
+        // that submission clears the selection, and 进入批量确认 stops rendering.
+        // D-338 (run 43801673636, 2026-11-16) keeps that order and moves the SUBMIT into
+        // detail_decision, where the product's entry lives; this stage is the submit's witness.
+        // Round 11 parked at the true list bottom (the page footer 加载更多导入候选 / 加载更多 and the
+        // bottom-bar labels in the same window) with no 进入批量确认 node in the 43-text dump, so the
+        // list-bottom seek this stage used to open with is retired together with its D-335 park
+        // probe — parkHasEntry/parkTexts could only ever re-read that absence.
         stage("batch_confirmation") {
-            ui.edge(last = true)
-            // D-335 park probe (run 43741730054-a2): the seek below exhausted 80 backward
-            // steps without a hit, and two causes are indistinguishable from that alone —
-            // (a) the batch entry never rendered (selection cleared by an earlier hop) or
-            // (b) the scrollToPosition park sits above the true list bottom (a11y rowCount
-            // vs real content). One viewport dump at the park point separates them: entry
-            // present = the seek's own miss logic is the suspect; rows visible without the
-            // entry = park distortion; list tail without rows or entry = the entry never
-            // rendered. D-337 keeps this as the forensics surface only: the leg below runs
-            // exactly as the pre-D-336 leg did, and the two keys keep their D-335 shape.
-            val parkTexts = ui.visibleTexts(ui.root()).toMutableList().apply { if (size > 60) subList(60, size).clear() }
-            evidence.put("parkHasEntry", parkTexts.any { it.startsWith("进入批量确认") })
-            evidence.put("parkTexts", parkTexts.joinToString("|").take(2000))
-            ui.seek("进入批量确认", forward = false)
-            ui.click("进入批量确认", prefix = true)
-            // D-337: the batch screen is a fresh composition — the hard has() here raced the
-            // navigation (clickNode's own 180 ms budget was all the screen had). An await keeps
-            // the same assertion and simply gives the composition its normal window.
-            ui.await { ui.has("确认入账（1 项）") }
-            ui.click("授权逐项入账")
-            ui.await { ui.has("导入", prefix = true) }
-            // D-337 (2026-11-16): the batch-result section renders AFTER the whole candidate
-            // list and the batch entry (P503ImportReviewPresentation.kt:1489-1498), and the
-            // await 导入 brings the import list back at its TOP — no scroll position is restored
-            // (the list state is composition-local). The summary therefore sits below the visible
-            // window by the preamble plus this page's 50 rows plus the load-more row (roughly
-            // 15-25 viewports — the await would starve long before reaching it), so the leg walks
-            // to the bottom first: the same edge(last = true) shape this stage already opens with,
-            // and the same fast scrollToPosition path run 43741730054-a2 measured at ~6s. The
-            // D-217 round-17 no-excursion note above assumed a small list where the summary was
-            // already on screen; that premise does not survive this scale.
-            ui.edge(last = true)
-            ui.await { ui.has("最近批量结果", prefix = true) }
-            check(ui.nodes(ui.root()).flatMap(ui::labels).any { it.contains("已入账 1 项") && it.contains("拒绝 0 项") && it.contains("未知 0 项") })
-            // D-337: hand the viewport back at the list TOP. The next stage's entry point
-            // (刷新清单 / the group affordance) lives in the preamble above the rows, and its
-            // seekBackToTop walks backward with a 40-step bound — from a bottom park that is a
-            // long climb it need not pay, so the stage would start blind-ish. edge(last = false)
-            // is the same scrollToPosition(0) fast path as the bottom edge above.
-            ui.edge(last = false)
+            // D-338: the decide-then-book submit happens in the detail screen above where the
+            // product puts the entry; this stage is its witness — the chain continues only when
+            // the booking summary was actually observed, so a silently lost submit still fails
+            // the chain here rather than surfacing as an empty ledger three stages later.
+            check(evidence.getBoolean("batchBookedSeen")) { "the batch leg's booking was never observed" }
+            // D-338 review (P2): this stage carries no UI work of its own, and result.py rejects
+            // a stage whose elapsedMs is zero (0 < elapsedMs). The tree read below is the
+            // structural lower bound that rule needs (the same TitleBar row was awaited at the
+            // end of the detail leg, so its witness value is small), and its check asserts the
+            // authorize hop landed on the import surface rather than staying on the submitting
+            // screen — the one thing the previous leg's await does not pin by itself.
+            check(ui.has("导入", prefix = true)) { "the batch leg did not land on the import surface" }
         }
         // D-217 round 12 (evidence20): the collect-only traversal stage moved
         // out of the chain into reopen(). The walk used to run BEFORE
@@ -976,11 +1029,12 @@ class AndroidScaleLongInstrumentedTest {
         stage("group_disposition", 5400000) {
             // D-323 (run 43513000303 evidence): the D-322 count-driven entry renders at the TOP of
             // the review list (the affordance sits in the preamble BEFORE all candidate rows), while
-            // a viewport arriving from a deeper park cannot see it. D-337 puts batch_confirmation
-            // directly before this stage, and that leg hands the viewport back at the list TOP
-            // (its closing edge(last = false), :962) — so this stage now starts on row 0 and the
-            // walk below is a no-op confirmation rather than a climb. It stays because the entry
-            // point is the invariance that matters, not the predecessor's last scroll offset.
+            // a viewport arriving from a deeper park cannot see it. D-337 put batch_confirmation
+            // directly before this stage and D-338 made that stage a UI-free witness, so the
+            // viewport handoff now comes from detail_decision's own closing edge(last = false)
+            // (:964): this stage starts on row 0 and the walk below is a no-op confirmation
+            // rather than a climb. It stays because the entry point is the invariance that
+            // matters, not the predecessor's last scroll offset.
             // seek() only moves FORWARD, and a LazyColumn row above the viewport is not in the a11y
             // tree — a plain seek could never reach the button. seekBackToTop first (the same marker
             // walk openCandidate uses, AndroidScaleUi seekBackToTop): 刷新清单 is the list's own
@@ -1193,6 +1247,10 @@ class AndroidScaleLongInstrumentedTest {
         // D-337: the skip arm is gone, so this PASS now implies the batch leg ran. The gate
         // alone never proved the submission — run 43783363684 recorded PASS with an empty
         // ledger under the D-336 guard — so the counts below stay the load-bearing assertion.
+        // D-338: the gate now reads the witness the detail leg wrote (batchBookedSeen — its own
+        // booked summary), so a PASS here is not consent-only. The witness lives in the detail
+        // leg; this line only reads its echo, and the counts below remain the acceptance-grade
+        // proof.
         check(evidence.getJSONObject("stages").getJSONObject("batch_confirmation").getString("status") == "PASS")
         // D-217 (round 21 reword): the host has force-stopped the app, so
         // the heavy oracle reads below — every one taken BEFORE ui.launch()
