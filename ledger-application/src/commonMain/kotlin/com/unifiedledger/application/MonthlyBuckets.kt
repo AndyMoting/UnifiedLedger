@@ -25,7 +25,7 @@ import kotlin.time.Instant
  * goes through kotlinx-datetime; no hand-rolled 86400-second accumulation (R-3).
  */
 object MonthlyBuckets {
-    /** R-Q06-2: frozen reporting time zone; Asia/Shanghai has no DST (spec R-3). */
+    /** R-Q06-2: frozen reporting time zone; historical daylight saving is handled by the zone rules. */
     val REPORT_TIME_ZONE: TimeZone = TimeZone.of("Asia/Shanghai")
 
     /** R-Q07-1: the frozen trend window length in months, including the current month. */
@@ -94,7 +94,8 @@ object MonthlyBuckets {
     /**
      * Instant bounds of a month in the frozen zone: `[start, nextMonthStart)`. Kept for
      * boundary reasoning and tests; bucketing compares calendar months derived with the
-     * same zone, which is equivalent because Asia/Shanghai has no DST.
+     * same zone, which is equivalent because the zone's local zero point is what both conversions use
+ * (historical daylight saving included; P8-06 V-15 / R-3 correction).
      */
     fun monthStart(statisticsMonth: YearMonth): Instant = statisticsMonth.firstDay.atStartOfDayIn(REPORT_TIME_ZONE)
 
@@ -479,3 +480,17 @@ sealed interface SelectableMonthsResult {
 
     data object Unavailable : SelectableMonthsResult
 }
+
+/**
+ * P8-06 batch a (D-343; spec section 3.5.4): the shared axis-consistency rule.
+ *
+ * Every currency of the ledger's activity axis must name at least one account OF THIS LEDGER in
+ * the injected catalog; a currency that only exists outside the requested window (or not at all)
+ * is a typed `InvalidState` for the monthly read, the report snapshot and the calendar snapshot
+ * alike. One definition point, so the three surfaces cannot diverge.
+ */
+internal fun isAxisCatalogConsistent(
+    axis: List<CurrencyUnit>,
+    catalog: LedgerCatalog,
+    ledgerId: LedgerId,
+): Boolean = axis.all { currency -> catalog.accounts.any { account -> account.ledgerId == ledgerId && account.currency == currency } }

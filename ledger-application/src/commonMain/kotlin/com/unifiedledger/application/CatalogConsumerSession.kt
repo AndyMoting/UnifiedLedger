@@ -101,6 +101,26 @@ class CatalogConsumerSession(
         private set
 
     /**
+     * P8-06 batch a (D-343): the report read surface. Built from the same loaded authority the
+     * catalog already serves, so the request's expected catalog version is the session's. `null`
+     * without an injected reporting clock (relative periods and the future marker need "today").
+     */
+    var p806ReportQuery: P806ReportQuery? = clock?.let { P806ReportQuery(readPort, ledgerId, authority, it) }
+        private set
+
+    /** P8-06 batch a (D-343): the calendar read surface; `null` without a reporting clock. */
+    var p806CalendarQuery: P806CalendarQuery? = clock?.let { P806CalendarQuery(readPort, ledgerId, authority, it) }
+        private set
+
+    /** P8-06 batch a (D-343): the detail-list surface (period/category come from the caller). */
+    var p806DrilldownQuery: P806DrilldownQuery = P806DrilldownQuery(readPort, ledgerId, authority)
+        private set
+
+    /** P8-06 batch a (D-343): the account postings surface. */
+    var p806AccountPostingsQuery: P806AccountPostingsQuery = P806AccountPostingsQuery(readPort, ledgerId, authority)
+        private set
+
+    /**
      * P7-05.C (D-156/D-158 slice 1b): the read-only recycle-bin projection, rebuilt from the
      * reloaded catalog by [refresh] exactly like [queryTransactionDetail], so the restore
      * revalidation and the dependency names always reflect the current authoritative version.
@@ -127,6 +147,10 @@ class CatalogConsumerSession(
         summarizeActivity = SummarizeLedgerActivity(reloaded.catalog)
         queryTransactionDetail = QueryTransactionDetail(readPort, ledgerId, reloaded.catalog)
         queryMonthlyActivity = clock?.let { QueryMonthlyActivity(readPort, ledgerId, reloaded.catalog, it) }
+        p806ReportQuery = clock?.let { P806ReportQuery(readPort, ledgerId, reloaded, it) }
+        p806CalendarQuery = clock?.let { P806CalendarQuery(readPort, ledgerId, reloaded, it) }
+        p806DrilldownQuery = P806DrilldownQuery(readPort, ledgerId, reloaded)
+        p806AccountPostingsQuery = P806AccountPostingsQuery(readPort, ledgerId, reloaded)
         queryRecycleBin = QueryRecycleBin(readPort, ledgerId, reloaded.catalog)
         return reloaded
     }
