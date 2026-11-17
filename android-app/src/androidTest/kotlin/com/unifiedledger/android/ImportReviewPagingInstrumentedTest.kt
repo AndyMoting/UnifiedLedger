@@ -62,7 +62,7 @@ private const val REVIEW_READ_FAILED_TEXT = "导入清单读取失败；以下�
  * and, at every page boundary it reaches, proves the covered prefix against the caller's expected
  * rows and then clicks the product's own affordance (`loadNextPage` → `requestMoreImportReview` →
  * one keyset page read). The test therefore does not click between walks: the walk owns the page
- * transitions, and [expectedPrefix] is the fixture's own expected row signatures, so a duplicated or
+ * transitions, and [expectedWindow] is the fixture's own expected row signatures, so a duplicated or
  * dropped row fails at the page where it happened. The library is 150 rows — three whole pages —
  * because a target that leaves a short last page cannot be walked at all
  * (`check(targetRows % IMPORT_REVIEW_PAGE_ROWS == 0)`), and a walked tail must end on a page boundary
@@ -124,7 +124,12 @@ class ImportReviewPagingInstrumentedTest {
         val walked =
             ui.collectTraversal(
                 targetRows = candidates,
-                expectedPrefix = { rows -> expectedSignatures.take(rows) },
+                // D-351: the window is the loaded candidate prefix; this fixture seeds one kind line, so
+                // seed order and that prefix coincide. The seam's own exception carries the counts and
+                // the first difference of each direction (also logged under ULScaleWalk), so this case
+                // keeps one failure report instead of re-reporting the seam payload.
+                expectedWindow = { rows -> expectedSignatures.take(rows) },
+                onSeamMismatch = {},
             )
         assertEquals("the walk must cover every seeded candidate", candidates, walked.size)
         assertEquals("no seeded candidate may render twice", candidates, walked.distinct().size)
