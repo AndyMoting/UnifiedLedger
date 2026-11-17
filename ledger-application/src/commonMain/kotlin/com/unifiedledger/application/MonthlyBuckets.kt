@@ -489,7 +489,7 @@ sealed interface SelectableMonthsResult {
  * is a typed `InvalidState` for the monthly read, the report snapshot and the calendar snapshot
  * alike. One definition point, so the three surfaces cannot diverge.
  */
-internal fun isAxisCatalogConsistent(
+fun isAxisCatalogConsistent(
     axis: List<CurrencyUnit>,
     catalog: LedgerCatalog,
     ledgerId: LedgerId,

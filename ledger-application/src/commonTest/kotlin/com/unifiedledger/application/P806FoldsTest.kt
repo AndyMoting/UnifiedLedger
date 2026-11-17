@@ -51,7 +51,6 @@ class P806FoldsTest {
                 totals =
                     listOf(
                         total(expenseAccountId, cny, 300L, -100L),
-
                         total(incomeAccountId, cny, 0L, -500L),
                     ),
             )
@@ -172,7 +171,11 @@ class P806FoldsTest {
         // columns, not the net, so the category shows 100 / -30 (D-343 3.4（同组正/负/净三列）).
         val snapshot = snapshot(window = window(30), totals = listOf(total(expenseAccountId, cny, 100L, -30L)))
         val view = P806Folds.report(snapshot, ledgerId, catalog, periodOf(30))
-        val category = view.expenseCategories.first { it.categoryId == foodParentId }.children.first { it.categoryId == breakfastId }
+        val category =
+            view.expenseCategories
+                .first { it.categoryId == foodParentId }
+                .children
+                .first { it.categoryId == breakfastId }
         assertEquals(100L, category.totals.first().positiveMinorUnits)
         assertEquals(-30L, category.totals.first().refundMinorUnits)
         assertEquals(70L, view.currencies.first().netExpenseMinorUnits)
@@ -206,6 +209,7 @@ class P806FoldsTest {
         assertTrue(emptyLeafId !in childIds)
         assertEquals(30L, view.currencies.first().netExpenseMinorUnits)
     }
+
     @Test
     fun theViewCarriesTheSnapshotPerCurrencyCountAndAZeroForAnUnusedAxisCurrency() {
         val snapshot =

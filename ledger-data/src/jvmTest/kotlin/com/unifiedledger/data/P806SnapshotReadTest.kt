@@ -469,8 +469,7 @@ class P806SnapshotReadTest {
             epochNanos(Instant.parse(end)),
         )
 
-    private fun epochNanos(instant: Instant): Long =
-        instant.toEpochMilliseconds() * 1_000_000L + (instant.nanosecondsOfSecond % 1_000_000L).toLong()
+    private fun epochNanos(instant: Instant): Long = instant.toEpochMilliseconds() * 1_000_000L + (instant.nanosecondsOfSecond % 1_000_000L).toLong()
 
     private fun catalogForCurrentAccounts(): LedgerCatalog = catalogOf(standardAccounts() + usdAccount())
 

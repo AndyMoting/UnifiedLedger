@@ -154,17 +154,13 @@ class P806PortDefaultsAndAxisTest {
     private class ThrowingPort : LedgerCurrentStateReadPort {
         override fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow> = emptyList()
 
-        override fun readReportSnapshot(request: P806ReportRequest): P806SnapshotResult<P806ReportSnapshot> =
-            throw UnsupportedOperationException("unwired")
+        override fun readReportSnapshot(request: P806ReportRequest): P806SnapshotResult<P806ReportSnapshot> = throw UnsupportedOperationException("unwired")
 
-        override fun readCalendarSnapshot(request: P806CalendarRequest): P806SnapshotResult<P806CalendarSnapshot> =
-            throw IllegalStateException("unwired")
+        override fun readCalendarSnapshot(request: P806CalendarRequest): P806SnapshotResult<P806CalendarSnapshot> = throw IllegalStateException("unwired")
 
-        override fun readDrilldownSnapshot(request: P806DrilldownRequest): P806SnapshotResult<P806DrilldownSnapshot> =
-            throw UnsupportedOperationException("unwired")
+        override fun readDrilldownSnapshot(request: P806DrilldownRequest): P806SnapshotResult<P806DrilldownSnapshot> = throw UnsupportedOperationException("unwired")
 
-        override fun readAccountPostingsSnapshot(request: P806AccountRequest): P806SnapshotResult<P806AccountSnapshot> =
-            throw IllegalStateException("unwired")
+        override fun readAccountPostingsSnapshot(request: P806AccountRequest): P806SnapshotResult<P806AccountSnapshot> = throw IllegalStateException("unwired")
     }
 
     /** A port that answers a successful but empty report/calendar snapshot (no effective period). */
@@ -193,9 +189,10 @@ class P806PortDefaultsAndAxisTest {
                     catalogVersion = request.expectedCatalogVersion,
                     month = request.month,
                     currencyAxis = emptyList(),
-                    days = (P806Periods.dayBuckets(request.month) ?: emptyList()).map {
-                        P806CalendarDaySnapshot(it.date, it.window, emptyList(), 0)
-                    },
+                    days =
+                        (P806Periods.dayBuckets(request.month) ?: emptyList()).map {
+                            P806CalendarDaySnapshot(it.date, it.window, emptyList(), 0)
+                        },
                 ),
             )
     }
@@ -246,6 +243,7 @@ class P806PortDefaultsAndAxisTest {
         val emptyUnrepresentable = P806ReportQuery(EmptySuccessPort(), ledgerId, authority, FixedClock("2026-11-17T00:00:00Z")).query(unrepresentable)
         assertEquals(P806SnapshotFailure.InvalidWindow, (assertIs<P806SnapshotResult.Failed>(emptyUnrepresentable)).failure)
     }
+
     @Test
     fun aClockAtTheNanosCeilingConvertsTodayButFailsAtTheNextMidnightThreshold() {
         // 2262-04-11T17:00:00Z is 2262-04-12 01:00 in Shanghai: the today conversion MUST succeed,
@@ -256,10 +254,12 @@ class P806PortDefaultsAndAxisTest {
             instant.toLocalDateTime(com.unifiedledger.application.MonthlyBuckets.REPORT_TIME_ZONE).date,
         )
         val authority = CatalogAuthority(ledgerId, catalog, 1L)
-        val report = P806ReportQuery(EmptySuccessPort(), ledgerId, authority, FixedClock("2262-04-11T17:00:00Z"))
-            .query(P806Period(P806PeriodKind.MONTH))
+        val report =
+            P806ReportQuery(EmptySuccessPort(), ledgerId, authority, FixedClock("2262-04-11T17:00:00Z"))
+                .query(P806Period(P806PeriodKind.MONTH))
         assertEquals(P806SnapshotFailure.Unavailable, (assertIs<P806SnapshotResult.Failed>(report)).failure)
     }
+
     @Test
     fun aCustomPeriodWithoutBoundsIsInvalidWindowInsteadOfAConstructorFailure() {
         val authority = CatalogAuthority(ledgerId, catalog, 1L)
@@ -272,6 +272,7 @@ class P806PortDefaultsAndAxisTest {
             com.unifiedledger.application.P806AccountCurrencyTotal(com.unifiedledger.domain.AccountId("a"), cny, -1L, 0L, -1L)
         }
     }
+
     private class FixedClock(
         private val value: String,
     ) : LedgerClock {

@@ -45,12 +45,7 @@ class P806PeriodsTest {
         val leapYear = (P806Periods.resolve(P806Period(P806PeriodKind.YEAR, year = 2028), today, null) as P806PeriodResolution.Resolved).period
         assertEquals(366, leapYear.dayCount)
 
-        val custom =
-            (P806Periods.resolve(
-                P806Period(P806PeriodKind.CUSTOM, customStart = LocalDate(2026, 3, 1), customEnd = LocalDate(2026, 3, 3)),
-                today,
-                null,
-            ) as P806PeriodResolution.Resolved).period
+        val custom = (P806Periods.resolve(P806Period(P806PeriodKind.CUSTOM, customStart = LocalDate(2026, 3, 1), customEnd = LocalDate(2026, 3, 3)), today, null) as P806PeriodResolution.Resolved).period
         assertEquals(3, custom.dayCount)
         assertEquals(LocalDate(2026, 3, 3), custom.endDateInclusive)
     }
@@ -141,22 +136,25 @@ class P806PeriodsTest {
 
     @Test
     fun geometryValidationRejectsBadCustomWindowsWithoutAnyLedgerSpan() {
-        val emptyLedger = P806Periods.validateGeometry(
-            P806Period(P806PeriodKind.CUSTOM, customStart = LocalDate(2026, 3, 5), customEnd = LocalDate(2026, 3, 1)),
-            today,
-        )
+        val emptyLedger =
+            P806Periods.validateGeometry(
+                P806Period(P806PeriodKind.CUSTOM, customStart = LocalDate(2026, 3, 5), customEnd = LocalDate(2026, 3, 1)),
+                today,
+            )
         assertEquals(P806PeriodResolution.InvalidWindow, emptyLedger)
 
-        val unrepresentable = P806Periods.validateGeometry(
-            P806Period(P806PeriodKind.CUSTOM, customStart = LocalDate(2026, 3, 1), customEnd = LocalDate(999999, 12, 31)),
-            today,
-        )
+        val unrepresentable =
+            P806Periods.validateGeometry(
+                P806Period(P806PeriodKind.CUSTOM, customStart = LocalDate(2026, 3, 1), customEnd = LocalDate(999999, 12, 31)),
+                today,
+            )
         assertEquals(P806PeriodResolution.InvalidWindow, unrepresentable)
 
         assertTrue(P806Periods.validateGeometry(P806Period(P806PeriodKind.MONTH), today) is P806PeriodResolution.Resolved)
         assertTrue(P806Periods.validateGeometry(P806Period(P806PeriodKind.WEEK), today) is P806PeriodResolution.Resolved)
         assertEquals(P806PeriodResolution.NotApplicable, P806Periods.validateGeometry(P806Period(P806PeriodKind.ALL), today))
     }
+
     @Test
     fun anUnrepresentableMonthIsAnInvalidWindowNotACrash() {
         // 999999-12 is the documented LocalDate upper boundary: the next month cannot be built.
@@ -184,5 +182,6 @@ class P806PeriodsTest {
         // A pre-1970 instant keeps every nanosecond.
         assertEquals(-1_000_000_001L, p806EpochNanos(Instant.fromEpochSeconds(-2L, 999_999_999)))
     }
+
     private fun instantOf(epochNanos: Long): Instant = Instant.fromEpochMilliseconds(epochNanos / 1_000_000L)
 }
