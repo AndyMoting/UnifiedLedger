@@ -29,6 +29,13 @@ class P806ReportQuery(
     private val authority: CatalogAuthority,
     private val clock: LedgerClock,
 ) {
+    /**
+     * The catalog generation this query binds at construction: the same immutable [authority] the
+     * request's expected version comes from (D-343 3.5.4). A successful raw snapshot is checked
+     * against it before any fold, so a payload from another generation never becomes a zero period.
+     */
+    val catalogVersion: Long = authority.catalogVersion
+
     /** The folded report for [period] (spec section 3.1: the caller picks the period). */
     fun query(period: P806Period): P806SnapshotResult<P806ReportView> {
         // The whole clock INPUT stage is one typed try: today, the next local midnight and the
@@ -63,6 +70,11 @@ class P806ReportQuery(
             }
         return when (result) {
             is P806SnapshotResult.Success -> {
+                // Version first (D-343 3.5.4; decision-version-precedence): the success-path
+                // InvalidWindow below may only be judged on a snapshot of this query's generation.
+                if (result.snapshot.catalogVersion != catalogVersion) {
+                    return P806SnapshotResult.Failed(P806SnapshotFailure.CatalogVersionMismatch)
+                }
                 val snapshot = result.snapshot
                 // 无期间（NoPeriod）: no effective period at all (empty ledger) — every period kind answers
                 // NoPeriod, never a zero-valued period.
@@ -103,6 +115,12 @@ class P806CalendarQuery(
     private val clock: LedgerClock,
 ) {
     /**
+     * The catalog generation this query binds at construction (see [P806ReportQuery.catalogVersion]);
+     * a successful raw snapshot from another generation is a typed mismatch, never a zero month.
+     */
+    val catalogVersion: Long = authority.catalogVersion
+
+    /**
      * The folded calendar for [month]; `null` resolves to the reporting zone's current month and is
      * the only path that touches the clock (D-343 3.7（时钟输入阶段）). The month buckets stay computable without
      * any ledger span (无期间（NoPeriod） allows the shared date geometry on an empty ledger).
@@ -129,7 +147,10 @@ class P806CalendarQuery(
                 return P806SnapshotResult.Failed(P806SnapshotFailure.Unavailable)
             }
         return when (result) {
-            is P806SnapshotResult.Success ->
+            is P806SnapshotResult.Success -> {
+                if (result.snapshot.catalogVersion != catalogVersion) {
+                    return P806SnapshotResult.Failed(P806SnapshotFailure.CatalogVersionMismatch)
+                }
                 try {
                     P806SnapshotResult.Success(P806Folds.calendar(result.snapshot, ledgerId, authority.catalog))
                 } catch (overflow: ArithmeticException) {
@@ -137,6 +158,7 @@ class P806CalendarQuery(
                 } catch (inconsistent: IllegalStateException) {
                     P806SnapshotResult.Failed(P806SnapshotFailure.InvalidState)
                 }
+            }
             is P806SnapshotResult.Failed -> P806SnapshotResult.Failed(result.failure)
         }
     }
@@ -147,6 +169,12 @@ class P806DrilldownQuery(
     private val ledgerId: LedgerId,
     private val authority: CatalogAuthority,
 ) {
+    /**
+     * The catalog generation this query binds at construction (see [P806ReportQuery.catalogVersion]);
+     * a successful raw snapshot from another generation is a typed mismatch, never a zero page.
+     */
+    val catalogVersion: Long = authority.catalogVersion
+
     /** One detail page plus the exact count under the same predicate (spec section 3.9.3). */
     fun query(
         window: P806Window,
@@ -168,7 +196,10 @@ class P806DrilldownQuery(
                 return P806SnapshotResult.Failed(P806SnapshotFailure.Unavailable)
             }
         return when (result) {
-            is P806SnapshotResult.Success ->
+            is P806SnapshotResult.Success -> {
+                if (result.snapshot.catalogVersion != catalogVersion) {
+                    return P806SnapshotResult.Failed(P806SnapshotFailure.CatalogVersionMismatch)
+                }
                 P806SnapshotResult.Success(
                     P806DrilldownView(
                         ledgerId = ledgerId,
@@ -177,6 +208,7 @@ class P806DrilldownQuery(
                         totalCount = result.snapshot.totalCount,
                     ),
                 )
+            }
             is P806SnapshotResult.Failed -> P806SnapshotResult.Failed(result.failure)
         }
     }
@@ -187,6 +219,12 @@ class P806AccountPostingsQuery(
     private val ledgerId: LedgerId,
     private val authority: CatalogAuthority,
 ) {
+    /**
+     * The catalog generation this query binds at construction (see [P806ReportQuery.catalogVersion]);
+     * a successful raw snapshot from another generation is a typed mismatch, never a zero flow.
+     */
+    val catalogVersion: Long = authority.catalogVersion
+
     /** One account-postings page plus the exact posting count (spec section 3.2.2). */
     fun query(
         accountId: AccountId,
@@ -208,7 +246,10 @@ class P806AccountPostingsQuery(
                 return P806SnapshotResult.Failed(P806SnapshotFailure.Unavailable)
             }
         return when (result) {
-            is P806SnapshotResult.Success ->
+            is P806SnapshotResult.Success -> {
+                if (result.snapshot.catalogVersion != catalogVersion) {
+                    return P806SnapshotResult.Failed(P806SnapshotFailure.CatalogVersionMismatch)
+                }
                 P806SnapshotResult.Success(
                     P806AccountView(
                         ledgerId = ledgerId,
@@ -217,6 +258,7 @@ class P806AccountPostingsQuery(
                         totalCount = result.snapshot.totalCount,
                     ),
                 )
+            }
             is P806SnapshotResult.Failed -> P806SnapshotResult.Failed(result.failure)
         }
     }

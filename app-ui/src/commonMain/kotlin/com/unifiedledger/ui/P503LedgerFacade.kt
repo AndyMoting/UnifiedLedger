@@ -32,6 +32,10 @@ import com.unifiedledger.application.ManualRefundCandidatesReadPort
 import com.unifiedledger.application.ManualTransferOptions
 import com.unifiedledger.application.ManualTransferOptionsProvider
 import com.unifiedledger.application.ManualTransferRequestIdSource
+import com.unifiedledger.application.P806AccountPostingsQuery
+import com.unifiedledger.application.P806CalendarQuery
+import com.unifiedledger.application.P806DrilldownQuery
+import com.unifiedledger.application.P806ReportQuery
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.ParseManualExpenseOccurredAt
 import com.unifiedledger.application.QueryBudgetMonth
@@ -402,6 +406,33 @@ class P503LedgerFacade(
      */
     val queryRecycleBin: QueryRecycleBin?
         get() = session?.queryRecycleBin ?: fallbackQueryRecycleBin
+
+    /**
+     * P8-06 foundation (D-343 3.5.4): the session's report read surface. Session-only: `null`
+     * when no session is injected or the reporting clock is absent (Unwired), never a fallback
+     * read. The returned query carries its own construction-time catalog version.
+     */
+    val p806ReportQuery: P806ReportQuery?
+        get() = session?.p806ReportQuery
+
+    /** P8-06 foundation: the session's calendar read surface; `null` without a session or clock. */
+    val p806CalendarQuery: P806CalendarQuery?
+        get() = session?.p806CalendarQuery
+
+    /** P8-06 foundation: the session's detail-list surface; `null` only without a session. */
+    val p806DrilldownQuery: P806DrilldownQuery?
+        get() = session?.p806DrilldownQuery
+
+    /** P8-06 foundation: the session's account-postings surface; `null` only without a session. */
+    val p806AccountPostingsQuery: P806AccountPostingsQuery?
+        get() = session?.p806AccountPostingsQuery
+
+    /**
+     * P8-06 foundation (Q2 ruling): the session's catalog version for comparison only. Never a
+     * payload label and never used to stamp a view; `null` when no session is injected.
+     */
+    val currentCatalogVersion: Long?
+        get() = session?.authority?.catalogVersion
 
     /** P7-04.C: the ledger-scoped import review list projection (plain nullable, no session following). */
     val queryImportReviewRows: QueryImportReviewRows?
