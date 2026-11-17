@@ -24,6 +24,7 @@ import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.Category
 import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CategoryKind
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerCatalog
@@ -384,7 +385,9 @@ class P806CoverageTest {
                         pageSize = 2,
                         expectedCatalogVersion = version,
                     )
-                val page = (adapter.readAccountPostingsSnapshot(request) as P806SnapshotResult.Success<com.unifiedledger.application.P806AccountSnapshot>).snapshot
+                val pageResult = adapter.readAccountPostingsSnapshot(request)
+                assertTrue(pageResult is P806SnapshotResult.Success, "expected Success, got $pageResult")
+                val page = (pageResult as P806SnapshotResult.Success<com.unifiedledger.application.P806AccountSnapshot>).snapshot
                 page.page.rows.forEach { row ->
                     collected += row.transactionId.value
                     // The parsed key keeps the exact fraction (no millisecond truncation).
@@ -460,11 +463,11 @@ class P806CoverageTest {
 
     private fun categories(): List<Category> =
         listOf(
-            Category(foodParent, ledgerId, parentId = null, postingAccountId = null, active = true, name = "餐饮"),
-            Category(foodOther, ledgerId, parentId = foodParent, postingAccountId = dinner, active = true, name = "晚餐"),
+            Category(foodParent, ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.EXPENSE, name = "餐饮"),
+            Category(foodOther, ledgerId, parentId = foodParent, postingAccountId = dinner, active = true, kind = CategoryKind.EXPENSE, name = "晚餐"),
             Category(CategoryId("cat-breakfast"), ledgerId, parentId = foodParent, postingAccountId = breakfast, active = true, name = "早餐"),
-            Category(salaryParent, ledgerId, parentId = null, postingAccountId = null, active = true, name = "收入"),
-            Category(salaryLeaf, ledgerId, parentId = salaryParent, postingAccountId = salary, active = true, name = "工资"),
+            Category(salaryParent, ledgerId, parentId = null, postingAccountId = null, active = true, kind = CategoryKind.INCOME, name = "收入"),
+            Category(salaryLeaf, ledgerId, parentId = salaryParent, postingAccountId = salary, active = true, kind = CategoryKind.INCOME, name = "工资"),
         )
 
     private fun catalogOf(accounts: List<Account>): LedgerCatalog =

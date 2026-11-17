@@ -211,12 +211,12 @@ class P806SnapshotReadTest {
             assertEquals(0, (internal as P806SnapshotResult.Success<P806AccountSnapshot>).snapshot.totalCount)
 
             // D-343 3.4（键集页 look-ahead） style look-ahead for the account page: page size 1 leaves a real cursor.
-            val firstPage =
-                (
-                    adapter.readAccountPostingsSnapshot(
-                        P806AccountRequest(ledgerId, cash, pageSize = 1, expectedCatalogVersion = version),
-                    ) as P806SnapshotResult.Success<P806AccountSnapshot>
-                ).snapshot
+            val firstPageResult =
+                adapter.readAccountPostingsSnapshot(
+                    P806AccountRequest(ledgerId, cash, pageSize = 1, expectedCatalogVersion = version),
+                )
+            assertTrue(firstPageResult is P806SnapshotResult.Success, "expected Success, got $firstPageResult")
+            val firstPage = (firstPageResult as P806SnapshotResult.Success<P806AccountSnapshot>).snapshot
             assertEquals(1, firstPage.page.rows.size)
             val cursor = firstPage.page.nextCursor
             assertNotNull(cursor)
@@ -623,18 +623,20 @@ class P806SnapshotReadTest {
             TableInsert(
                 table = "transaction_version",
                 columns = "(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note, statistics_at_epoch_nanos)",
-                rows = listOf(
-                    "('v-$id', '$id', '$ledger', 1, 'ps-$id', '${transaction.occurredAt}', '${transaction.statisticsAt}', " +
-                        "'${transaction.statisticsAt}', '', ${Instant.parse(transaction.statisticsAt).toEpochMilliseconds() * 1_000_000L})",
-                ),
+                rows =
+                    listOf(
+                        "('v-$id', '$id', '$ledger', 1, 'ps-$id', '${transaction.occurredAt}', '${transaction.statisticsAt}', " +
+                            "'${transaction.statisticsAt}', '', ${Instant.parse(transaction.statisticsAt).toEpochMilliseconds() * 1_000_000L})",
+                    ),
             ),
             TableInsert(
                 table = "posting",
                 columns = "(posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision)",
-                rows = transaction.postings.mapIndexed { index, (accountId, amount) ->
-                    "('p$index-$id', 'ps-$id', '$ledger', $index, '${accountId.value}', $amount, " +
-                        "'${transaction.currency.code}', ${transaction.currency.precision})"
-                },
+                rows =
+                    transaction.postings.mapIndexed { index, (accountId, amount) ->
+                        "('p$index-$id', 'ps-$id', '$ledger', $index, '${accountId.value}', $amount, " +
+                            "'${transaction.currency.code}', ${transaction.currency.precision})"
+                    },
             ),
             TableInsert(
                 table = "ledger_transaction_current_version",
