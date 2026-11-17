@@ -151,3 +151,8 @@ rig 第十六跑（max `43925110453`）两项成果：**`reopen` 首次 PASS（5
 第十七跑（max `43955867697`）`reopen` 跑满 **5404s** 撞上 D-342 的 5400s 上限；而第十六跑同段 **5057s PASS**。两跑前七段全 PASS，差值来自整机速度：`prepare` 3097→3994s（+29%）、`chain` 969→1175s（+21%），外推 reopen ≈6300s。故段预算按方差设定：`reopen` 5400000→**9000000ms**；外层 outer deadline 19800→**20400s**、job 350→**360** 分钟；越界探针 5400001→9000001（三处同改）。
 
 **下一跑判读清单（D-345）**：①`reopen` 是否在 9000s 内跑完并 PASS（其耗时应在 5000-6500s 区间，若 >8000s 说明还需要更强的预算策略而非再加数字）；②D-344 的 `traversal` 回退是否让它走完、`traversalScrollFallbacks` 读数；③`same_request_replay` 与 `final_reopen` 是否首次执行。
+## 15. D-346 driver 执行预算解封（2026-11-17）
+
+第十八跑（max `43986332756`）以 `global deadline exceeded` 结束，`host.json` 的 `elapsed_seconds=13806` 与 `execution_budget_seconds=13800` 逐秒吻合——真正的封顶是 `runner.py` 的 `mode_limit`（maximum 档 13800s），它让 D-342/D-345 抬高的外层（20400s）与段预算（reopen 9000s）全部失效。修订：`mode_limit` 13800→**19800s**、`device_deadline` 的 14400 上限同步→19800、预算表用例更新（13800→13950，新增 40000/19800 行钉新上限）。
+
+**下一跑判读清单（D-346）**：①`execution_budget_seconds` 应为 19800 量级（不再是 13800）；②`reopen` 是否在其 9000s 段预算内跑完；③`traversal` 与 `traversalScrollFallbacks`（D-344 的修复首次有机会被验证）；④`same_request_replay`/`final_reopen` 是否首次执行；⑤`prepare` 耗时（四跑趋势 2930→3097→3994→5051s，若继续上涨则 prepare 成为下一个封顶项）。

@@ -7571,3 +7571,18 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **遗留：** `same_request_replay` 与 `final_reopen` 仍未执行过；若下一跑 reopen 通过而 traversal 撞外层，则 traversal 的成本本身仍是新前沿（该段 4h 字面量受 20400s 外层约束）。
 
 **关联决定：** D-342（首次把 reopen 从 1800s 抬到 5400s 的依据与本次同一机制）、D-344（第十七跑 traversal 的修复，尚未被验证）、D-217（reopen/traversal 分工与 force-stop 语义）。
+## D-346 driver 自身的 execution budget 13800s 才是真正的封顶
+
+**状态：** 已批准（2026-11-17；rig 第十八跑实证）
+
+**背景：** rig 第十八跑（max `43986332756`，证据 `local/artifacts/maxrig-43986332756/`）在 `reopen` 阶段以 `ScaleDeadlineError: global deadline exceeded` 结束，`host.json` 的 `elapsed_seconds=13806`、`execution_budget_seconds=13800`。前七段全 PASS（`prepare` 5051708ms、`chain` 1290.9s、`reopen` 跑到 7386.4s 被切）。根因：`tools/python/android_scale/runner.py` 的 `mode_limit = 600 if preflight else 13800` —— 这是 driver 自己的执行预算，`min(mode_limit, outer - 150)` 取小者，因此 D-342/D-345 两次抬高外层（19800/20400s）与段预算（reopen 9000s）都被它压住；`host.json` 的 `execution_budget_seconds: 13800` 就是它的直接读数。
+
+**裁决：** maximum 档的 `mode_limit` 13800→**19800s**，让 `min()` 真正由 workflow 授予的外层包络来约束；`device_deadline` 计算里的 `remaining_seconds(..., 14400)` 同步抬到 **19800**（同一族硬编码，否则设备侧截止仍按 4 小时封顶）。`test_android_ci_repair.py` 的预算表随之更新：`("maximum", 15400, 1300, 13800)` → **13950**（此行从此由外层而非模式上限约束），新增 `("maximum", 40000, 1300, 19800)` 钉住新上限本身。
+
+**实证：** 第十八跑 `junit.xml`：`prepare` 5059.2s、`chain` 1290.9s、`reopen` 7386.4s、`replay`/`final-reopen` skipped；`host.json` `errorType=ScaleDeadlineError`、`message=global deadline exceeded`、`execution_budget_seconds=13800`、`elapsed_seconds=13806`（13800 + 收尾开销，逐秒吻合）。
+
+**边界：** 入 = `runner.py` 的 `mode_limit` 与 `device_deadline` 的 14400、`test_android_ci_repair.py` 的预算表、D-333 spec §15、本条。出 = 不动 workflow 时限（已 20400s/360min）、不动段预算、不动 `PHASE_BUDGETS`、不动产品代码与断言。
+
+**遗留：** 第十八跑 `prepare` 已涨到 5059s（84 分钟，四次跑的趋势 2930→3097→3994→5051）——**若继续上涨，prepare 本身会成为下一个封顶项**（外层 20400s 里它已占 25%）。届时该考虑的不是再加预算，而是 prepare 的产物复用（用户已裁决延后，见 PROGRESS_LOG 2026-11-17 凌晨条）。
+
+**关联决定：** D-345/D-342（两次抬高段预算与外层，均被本条所述封顶压制）、D-344（traversal 注入回退，仍未获验证）、D-217（`PHASE_BUDGETS` 与 driver 预算的出处）。
