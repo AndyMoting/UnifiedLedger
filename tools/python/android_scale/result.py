@@ -281,6 +281,13 @@ def validate_evidence(directory: Path, expected_sha: str) -> dict:
     # driver's mode limit are upper bounds and stay as they are.
     limits = {"preparation": 14400000, "saf_import": 1800000, "group_disposition": 5400000,
               "reopen": 1800000, "traversal": 2400000,
+              # D-357 (run 44166358259, the first run in which either stage executed): both write-path
+              # stages were riding the 180000ms default this dict gives every unlisted stage, and they
+              # landed at 179995ms (`same_request_replay`) and 168925ms (`final_reopen`) — 5ms and 11.1s
+              # of margin, i.e. an unsized default rather than a budget. 360000 is 2x the measured worst
+              # (the same order as D-349's 2.8x, far below D-350's 11x), so a real regression still
+              # fails here instead of being absorbed. The rig's stage literals carry the same number.
+              "same_request_replay": 360000, "final_reopen": 360000,
               # D-338: the detail stage now carries both batch submits (the decision-incomplete
               # skip and the decided booking), which a single authorization measured at ~39.4s
               # (D-164) plus the summary read; run 43801673636 already spent 150.965s of the old
