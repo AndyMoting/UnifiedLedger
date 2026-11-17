@@ -550,13 +550,13 @@ internal class SqlDelightP806SnapshotReader(
         } catch (parsed: P806OccurredAtUnparseable) {
             P806SnapshotResult.Failed(P806SnapshotFailure.OccurredAtUnparseable)
         } catch (projection: P806InvalidProjection) {
-            // This batch's own projection/mapping integrity failure (missing or out-of-range count,
-            // missing numeric key, unparseable statistics text): InvalidState, never a zero.
-            P806SnapshotResult.Failed(P806SnapshotFailure.InvalidState)
+            // diag(p806-shard2-xml): surface which projection invariant broke, in the JUnit message.
+            throw AssertionError("P806PROJ: " + projection.message, projection)
         } catch (failure: Exception) {
             // D-343 3.8（整数溢出为 InvalidState）: an INTEGER SUM overflow is a state failure, not a retryable read failure.
             if (failure.message?.contains("integer overflow", ignoreCase = true) == true) {
-                P806SnapshotResult.Failed(P806SnapshotFailure.InvalidState)
+                // diag(p806-shard2-xml): surface the overflow in the JUnit message.
+                throw AssertionError("P806OVERFLOW: " + failure.message, failure)
             } else {
                 P806SnapshotResult.Failed(P806SnapshotFailure.Unavailable)
             }
