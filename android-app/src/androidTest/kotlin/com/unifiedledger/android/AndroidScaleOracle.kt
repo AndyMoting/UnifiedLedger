@@ -27,7 +27,11 @@ private const val ORACLE_TRACE_TAG = "ULStartup"
  * whole range so a mid-range divergence cannot hide. Below the sample size the function returns
  * every index, so small fixtures still get the exhaustive pass.
  */
-internal fun compareSampleIndices(size: Int, edge: Int = 200, stride: Int = 500): List<Int> {
+internal fun compareSampleIndices(
+    size: Int,
+    edge: Int = 200,
+    stride: Int = 500,
+): List<Int> {
     if (size <= edge * 2) return (0 until size).toList()
     val picked = sortedSetOf<Int>()
     for (index in 0 until edge) picked.add(index)
