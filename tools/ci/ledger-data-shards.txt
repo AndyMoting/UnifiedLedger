@@ -58,6 +58,9 @@
 2	com.unifiedledger.data.TagMerchantFilterScaleTest
 2	com.unifiedledger.data.ReadableExportRealLedgerReconciliationTest
 2	com.unifiedledger.data.P801FontscaleSeedWriterTest
+2	com.unifiedledger.data.P806SnapshotReadTest
+2	com.unifiedledger.data.P806ReportSemanticsTest
+2	com.unifiedledger.data.P806CoverageTest
 3	com.unifiedledger.data.AndroidSnapshotOpenCorruptionPolicyTest
 3	com.unifiedledger.data.BackupSnapshotDriverTest
 3	com.unifiedledger.data.ImportEvidenceProbeIndexTest

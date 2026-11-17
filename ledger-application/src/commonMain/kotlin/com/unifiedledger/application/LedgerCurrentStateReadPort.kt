@@ -436,6 +436,62 @@ interface LedgerCurrentStateReadPort {
             "findTransactionVoidByRequest is not implemented by this read port; a missing request " +
                 "read must surface as a typed read failure, never as 'never committed' (R-Q06-4)",
         )
+
+    /**
+     * P8-06 batch a (D-343; spec section 3.5.1): the report surface's composite snapshot.
+     *
+     * Implementations run the whole surface in ONE read transaction on one connection: the
+     * ledger-wide projection probe, the catalog-version comparison against
+     * `request.expectedCatalogVersion`, the catalog-reference probe over the resolved window, the
+     * currency axis, the period's integer aggregates and counts, the span and the detail head.
+     * The `ALL` window is resolved from the span inside that transaction.
+     *
+     * The default fails loudly: an unimplemented report read must surface as a typed read
+     * failure, never as an empty period of zeros.
+     */
+    fun readReportSnapshot(request: P806ReportRequest): P806SnapshotResult<P806ReportSnapshot> =
+        throw UnsupportedOperationException(
+            "readReportSnapshot is not implemented by this read port; a missing P8-06 report read " +
+                "must surface as a typed read failure, never as an empty period (D-343)",
+        )
+
+    /**
+     * P8-06 batch a (D-343; spec sections 3.5.4/3.10): the calendar surface's composite snapshot.
+     *
+     * One transaction covering the version/projection/reference probes, the ledger activity
+     * currency axis and one amount bucket plus one GLOBAL distinct transaction count per local
+     * day of the requested month. The default fails loudly (see [readReportSnapshot]).
+     */
+    fun readCalendarSnapshot(request: P806CalendarRequest): P806SnapshotResult<P806CalendarSnapshot> =
+        throw UnsupportedOperationException(
+            "readCalendarSnapshot is not implemented by this read port; a missing P8-06 calendar read " +
+                "must surface as a typed read failure, never as an empty month (D-343)",
+        )
+
+    /**
+     * P8-06 batch a (D-343; spec section 3.9.3): one detail page plus the exact count under the
+     * SAME predicate, in one read transaction. The ordinary-contribution predicate is applied
+     * before the page's LIMIT; the optional category filters the level-1 subtree.
+     *
+     * The default fails loudly (see [readReportSnapshot]).
+     */
+    fun readDrilldownSnapshot(request: P806DrilldownRequest): P806SnapshotResult<P806DrilldownSnapshot> =
+        throw UnsupportedOperationException(
+            "readDrilldownSnapshot is not implemented by this read port; a missing P8-06 detail read " +
+                "must surface as a typed read failure, never as an empty page (D-343)",
+        )
+
+    /**
+     * P8-06 batch a (D-343; spec section 3.2.2): one account postings page plus the exact posting
+     * count, in one read transaction, on the occurred_at (real fund time) axis. The parse probe
+     * runs before any window filter; the member mark is owned_by_user + real_account +
+     * ASSET/LIABILITY. The default fails loudly (see [readReportSnapshot]).
+     */
+    fun readAccountPostingsSnapshot(request: P806AccountRequest): P806SnapshotResult<P806AccountSnapshot> =
+        throw UnsupportedOperationException(
+            "readAccountPostingsSnapshot is not implemented by this read port; a missing P8-06 account " +
+                "read must surface as a typed read failure, never as an empty flow (D-343)",
+        )
 }
 
 /** DEF-B (D-268): full-precision epoch nanoseconds — the projection column's unit, never milliseconds. */

@@ -13,6 +13,12 @@ Gradle attaches the text to the <testsuite>, not to each <testcase>; both
 positions are read so a future report-shape change cannot silently reintroduce
 the gap.
 
+A cancelled or timed-out fixture job writes no JUnit XML at all, so the same
+tests also flush their V-4 phase lines into `<module>/build/p806-seed-progress.txt`
+under the same `P806-V4 ` prefix. Those lines are read as a second source and are
+rendered through the same summary and stdout path; a missing or unreadable file
+contributes nothing.
+
 Report-only: it never changes a check result, and a run that printed nothing is
 not an error (the 20k-only shards legitimately print nothing).
 """
@@ -24,6 +30,11 @@ import sys
 import xml.etree.ElementTree as ET
 
 DEFAULT_PREFIXES = ("P704B4-PLAN ", "P707-A08 ", "P708-A09 ", "P803-V15 ")
+
+# The V-4 progress file a scale test writes for itself while it runs, and the prefix
+# every line of it carries.
+PROGRESS_FILE = "p806-seed-progress.txt"
+PROGRESS_PREFIX = "P806-V4 "
 
 
 def class_of(root: str, path: str) -> str:
@@ -71,6 +82,33 @@ def collect(root: str, prefixes: tuple[str, ...]) -> list[tuple[str, str, list[s
     return rows
 
 
+def progress_readings(path: str) -> list[str]:
+    """The recorded lines of a progress file; every unrelated line is skipped."""
+    with open(path, encoding="utf-8") as handle:
+        return [line.strip() for line in handle if line.strip().startswith(PROGRESS_PREFIX)]
+
+
+def collect_progress(root: str) -> list[tuple[str, str, list[str]]]:
+    """(owner, label, lines) for each V-4 progress file that recorded something.
+
+    Gradle runs a module's test task in that module's directory, so the file lands
+    under `<module>/build/`. A job that was cancelled mid-fixture wrote no JUnit XML
+    and this file is then the only surviving reading; a missing file is not an error.
+    """
+    rows = []
+    pattern = os.path.join(root, "**", "build", PROGRESS_FILE)
+    for path in sorted(glob.glob(pattern, recursive=True)):
+        try:
+            lines = progress_readings(path)
+        except OSError as failure:
+            print(f"warning: unreadable {path}: {failure}", file=sys.stderr)
+            continue
+        if lines:
+            module = os.path.relpath(path, root).split(os.sep)[0]
+            rows.append((module, "progress file", lines))
+    return rows
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", default=".")
@@ -78,7 +116,7 @@ def main() -> int:
     parser.add_argument("--only-missing", action="store_true", help="exit 1 when no reading was found")
     arguments = parser.parse_args()
 
-    rows = collect(arguments.root, DEFAULT_PREFIXES)
+    rows = collect(arguments.root, DEFAULT_PREFIXES) + collect_progress(arguments.root)
     if not rows:
         if arguments.only_missing:
             print("no recorded scale reading found in any JUnit XML", file=sys.stderr)

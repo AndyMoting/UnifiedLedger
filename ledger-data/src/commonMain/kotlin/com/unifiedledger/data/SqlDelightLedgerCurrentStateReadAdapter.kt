@@ -20,6 +20,15 @@ import com.unifiedledger.application.ManualIncomeRequestSnapshot
 import com.unifiedledger.application.ManualLendingCommitRecord
 import com.unifiedledger.application.ManualTransferCommitRecord
 import com.unifiedledger.application.ManualTransferRequestSnapshot
+import com.unifiedledger.application.P806AccountRequest
+import com.unifiedledger.application.P806AccountSnapshot
+import com.unifiedledger.application.P806CalendarRequest
+import com.unifiedledger.application.P806CalendarSnapshot
+import com.unifiedledger.application.P806DrilldownRequest
+import com.unifiedledger.application.P806DrilldownSnapshot
+import com.unifiedledger.application.P806ReportRequest
+import com.unifiedledger.application.P806ReportSnapshot
+import com.unifiedledger.application.P806SnapshotResult
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TransactionCorrectionCommitRecord
 import com.unifiedledger.application.TransactionCorrectionReceipt
@@ -62,6 +71,20 @@ import kotlin.time.Instant
 class SqlDelightLedgerCurrentStateReadAdapter(
     private val database: LedgerDatabase,
 ) : LedgerCurrentStateReadPort {
+    /**
+     * P8-06 batch a (D-343): the four composite snapshots delegate to one internal helper so the
+     * constructor stays `LedgerDatabase`-only and each surface keeps its single read transaction.
+     */
+    private val p806Reader: SqlDelightP806SnapshotReader = SqlDelightP806SnapshotReader(database)
+
+    override fun readReportSnapshot(request: P806ReportRequest): P806SnapshotResult<P806ReportSnapshot> = p806Reader.report(request)
+
+    override fun readCalendarSnapshot(request: P806CalendarRequest): P806SnapshotResult<P806CalendarSnapshot> = p806Reader.calendar(request)
+
+    override fun readDrilldownSnapshot(request: P806DrilldownRequest): P806SnapshotResult<P806DrilldownSnapshot> = p806Reader.drilldown(request)
+
+    override fun readAccountPostingsSnapshot(request: P806AccountRequest): P806SnapshotResult<P806AccountSnapshot> = p806Reader.account(request)
+
     override fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow> =
         database.ledgerQueries
             .currentVersionRowsForLedger(ledgerId.value)
