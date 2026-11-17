@@ -160,7 +160,7 @@ gh workflow run android-fontscale-sample.yml --ref <branch> -f expected_sha=<完
 2. 由 agent 亲自启动一个 API 36 `google_apis` x86_64 AVD（例如 `ul_p7_d01`），显式用高位端口（`-port 5680` 附近），记录 serial 与 AVD 名；绝不操作用户 MuMu 编写的任何 `emulator-NNNN`。
 3. 生成小档夹具（数分钟内跑完，仍覆盖 SAF 导入、明细判定、遍历、组处置、批量确认五个阶段；`local-small` = 20 行/会话 ×6 + 5 唯一行）：
    `python tools/ci/android-scale-fixture.py --out <fixture-dir> --profile local-small`。该 CLI 默认仍是 `maximum`（CI 零改动）；`--profile` 只在本地显式使用。
-4. 构建两个 APK 后调用驱动器（`--mode maximum` 仍指五阶段机器）：
+4. 构建两个 APK 后调用驱动器（`--mode maximum` 仍指六相位机器）：
    `python tools/ci/android-scale-run.py --fixture <fixture-dir> --evidence <evidence-dir> --app <app.apk> --test <test.apk> --sha <完整40位SHA> --outer-deadline-epoch <epoch> --local-diagnostic --avd-name ul_p7_d01`。
    本地运行会在 `host.json` 打上 `authority: local-diagnostic`，严格判定器 `validate_evidence` 会因此拒绝它作为验收证据。
 5. **每次本地运行之间必须重置设备状态**：`adb -s <serial> uninstall com.unifiedledger.android`（CI 每次都是全新模拟器，本地 AVD 会跨运行残留应用数据，上一轮的设备证据文件会让 prepare 以 "stage must not be retried" 秒退）。prepare 现在会在发布 SAF 夹具前清理本档的旧 MediaStore 副本（去重副本会让 picker 的精确名匹配落空——本地实测根因之一）；若运行在 prepare 之前崩溃，`rm -f /sdcard/Download/session-06*.csv` 手动兜底。
@@ -175,7 +175,7 @@ gh workflow run android-fontscale-sample.yml --ref <branch> -f expected_sha=<完
 
 `.github/workflows/android-preflight.yml` 在合并后（`push:main`，`paths` 限 Android 相关路径）、每夜与手动 dispatch 上运行非 required 的设施预检；PR 不再触发（D-302）。触发路径覆盖 Android 全部传递模块、构建入口、`tools/python/android_scale/**`、`tools/ci/android-*`、相关 Python 测试及 CI/Android workflow。预检复用长测驱动器的设备配置、安装、启动与应用私有目录传输路径；`--mode preflight` 准备含提交 SHA 的匿名小探针并执行 `AndroidScalePreflightInstrumentedTest.privateFixtureRoundTrip`，设备读回、重新写入并上报探针哈希。该用例先以只读 oracle 确认已有有效活动指针、代目录及账本，再调用正式 `openAndroidStableStorageLedger`、权威读回、关闭并重开；开前、首次打开和重开均须是同一账本/代，正式交易与 posting 均为零。必须先观察已有存储，不能让生产 opener 的 FreshInstall 补建掩盖首启失败。每个 job 最多 30 分钟，设备步骤 15 分钟，驱动执行 600 秒，失败诊断最多另用 120 秒。两个 APK 在独立 producer job 准备，模拟器会话内不构建。
 
-默认 `--mode maximum` 保持五阶段、十一业务步骤及 61,000 候选 / 150,000 关系判据。预检报告明确标 `mode=preflight`，工件 `android-preflight-<sha>-<attempt>` 独立保存；最大规模 reducer 要求 `mode=maximum`，不能接受预检报告。D-201 加固候选必须新跑两次同候选的独立加强预检，再进行最大规模验收；旧版仅探针往返成功不满足新门。只重跑设备 job 可复用已经成功的 producer 产物。
+默认 `--mode maximum` 保持六相位、十一业务步骤及 61,000 候选 / 150,000 关系判据。预检报告明确标 `mode=preflight`，工件 `android-preflight-<sha>-<attempt>` 独立保存；最大规模 reducer 要求 `mode=maximum`，不能接受预检报告。D-201 加固候选必须新跑两次同候选的独立加强预检，再进行最大规模验收；旧版仅探针往返成功不满足新门。只重跑设备 job 可复用已经成功的 producer 产物。
 
 框架重启后最多 300 秒等待窗口服务、包管理服务及用户 0 的 `RUNNING_UNLOCKED` 状态，安装后核对应用/测试包、instrumentation target、launcher 实际启动结果，并通过 `run-as` 对暂存文件逐个读回校验。应用数据根由 Android 自行管理。设施失败在 JUnit 增记 `setup ERROR`，未执行业务阶段保持 `NOT_RUN`；后续缺证只追加诊断，不覆盖首因。logcat 持续采集，断线重连/可能缺口单独记录；证据保留 7 天，仍不上传数据库或完整输入。
 
@@ -183,7 +183,7 @@ gh workflow run android-fontscale-sample.yml --ref <branch> -f expected_sha=<完
 
 最大规模执行全局预算为 19,800 秒（D-346 从 13,800 秒抬高：旧值在 reopen 还没跑满自身段预算时就截断了整轮），设备步骤 330 分钟，设备 job 360 分钟。相位表为六相，顺序固定（D-353）：`prepare` → `chain` → `reopen` → `replay` → `final-reopen` → `traversal`。`prepare` 与 `chain` 共用剩余全局预算；其余四相各有一个 driver 侧上界——`reopen` 18,000 秒、`replay` 480 秒、`final-reopen` 480 秒、`traversal` 3,000 秒（`tools/python/android_scale/runner.py` 的 `PHASE_BUDGETS`）。这些上界是包住对应段字面量的**封套**，不是预留额度：`reopen` 的 18,000 秒包住该相唯一的 1,800 秒段（D-350 从 9,000 秒收回），`traversal` 的 3,000 秒包住走查段的 2,400 秒（D-350 从 14,400 秒收回）再加 instrumentation 启动与证据落盘，`final-reopen` 的 480 秒包住 reducer 对未列名阶段使用的 180 秒默认上界，因此各相封套之和可以超过全局预算，靠后的相位实际受剩余全局时间约束。全部命令和 best-effort 探针受当前阶段/全局剩余时间约束；结束后的采证总预算 120 秒。不宣称准备或主链拥有能提前阻止其耗尽全局时间的独立预算。
 
-设备步骤的时间包含模拟器启动：workflow 在 emulator action 前记录绝对截止时间，驱动入口必须收到 `--outer-deadline-epoch`，再一次性转换为单调时钟。实际执行上限取模式上限（600 / 13,800 秒）与「外层剩余时间 − 120 秒采证 − 30 秒报告/清理余量」中的较小值；采证也受外层截止前 30 秒约束。即使启动已用尽可执行时间，仍先写 `setup ERROR` 与未运行报告，不再启动设备操作。
+设备步骤的时间包含模拟器启动：workflow 在 emulator action 前记录绝对截止时间，驱动入口必须收到 `--outer-deadline-epoch`，再一次性转换为单调时钟。实际执行上限取模式上限（600 / 19,800 秒）与「外层剩余时间 − 120 秒采证 − 30 秒报告/清理余量」中的较小值；采证也受外层截止前 30 秒约束。即使启动已用尽可执行时间，仍先写 `setup ERROR` 与未运行报告，不再启动设备操作。
 
 主 CI 的 `Android compile` 保留 `android-debug-apk-<sha>` 单 APK 工件，新增两个 APK 与 `provenance.json` 组成的 `android-apks-<完整Git-tree>-<run-id>-<attempt>` 工件，保留 7 天。长测与预检先用 `tools/ci/android-apks.py` 明确查找历史 run/artifact，再用最小 `actions: read` 权限下载；仅接受同仓库的主 CI、长测、预检或普通设备回归 APK producer 的成功 job，拒绝 fork 来源。校验来源 run/attempt、workflow、GitHub 实际 commit/tree、PR 预览合并父提交关系与两个 APK 的 SHA-256；复用后的新清单保留原始构建来源和直接复用来源。只有完整受控文件树相同才可复用；无匹配、已过期或下载前已删除时在云端构建，来源不符、缺 APK、清单损坏或哈希不符直接失败。产物名包含 attempt，整条重跑不与旧工件冲突。普通设备回归同样先复用该工件，未命中才在 producer 内构建。
 
