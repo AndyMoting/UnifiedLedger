@@ -55,7 +55,7 @@ class CatalogConsumerSession(
     /**
      * P8-06 foundation: single-field safe publication. Readers on other threads see one fully
      * constructed authority or the previous one; this says nothing about atomicity across the
-     * whole refreshed field group (Q1 ruling, rest of the session unchanged).
+     * whole refreshed field group, and the rest of the session stays unchanged.
      */
     @Volatile
     var authority: CatalogAuthority = initialAuthority

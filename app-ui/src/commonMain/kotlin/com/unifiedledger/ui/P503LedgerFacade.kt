@@ -408,9 +408,9 @@ class P503LedgerFacade(
         get() = session?.queryRecycleBin ?: fallbackQueryRecycleBin
 
     /**
-     * P8-06 foundation (D-343 3.5.4): the session's report read surface. Session-only: `null`
-     * when no session is injected or the reporting clock is absent (Unwired), never a fallback
-     * read. The returned query carries its own construction-time catalog version.
+     * P8-06 foundation (D-343; spec sections 3.5.1/3.8): the session's report read surface.
+     * Session-only: `null` when no session is injected or the reporting clock is absent (Unwired),
+     * never a fallback read. The returned query carries its own construction-time catalog version.
      */
     val p806ReportQuery: P806ReportQuery?
         get() = session?.p806ReportQuery
@@ -428,8 +428,8 @@ class P503LedgerFacade(
         get() = session?.p806AccountPostingsQuery
 
     /**
-     * P8-06 foundation (Q2 ruling): the session's catalog version for comparison only. Never a
-     * payload label and never used to stamp a view; `null` when no session is injected.
+     * P8-06 foundation: the session's catalog version for comparison only. Never a payload label
+     * and never used to stamp a view; `null` when no session is injected.
      */
     val currentCatalogVersion: Long?
         get() = session?.authority?.catalogVersion

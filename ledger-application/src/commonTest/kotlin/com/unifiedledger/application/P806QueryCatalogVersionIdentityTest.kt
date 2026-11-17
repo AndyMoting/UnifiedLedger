@@ -16,10 +16,10 @@ import kotlin.test.assertSame
 import kotlin.time.Instant
 
 /**
- * P8-06 foundation (D-343 3.5/3.5.4, decision-version-precedence): the four read queries bind the
- * construction-time catalog generation and self-check the raw Success snapshot against it before
- * any fold. A fresh session refresh rebuilds the query fields; an already-obtained query keeps its
- * own version (single-field publication only, never claimed as atomic).
+ * P8-06 foundation (D-343; spec sections 3.5.1/3.8): the four read queries bind the construction-time
+ * catalog generation and self-check the raw Success snapshot against it before any fold. A fresh
+ * session refresh rebuilds the query fields; an already-obtained query keeps its own version
+ * (single-field publication only, never claimed as atomic).
  */
 class P806QueryCatalogVersionIdentityTest {
     private val ledgerId = LedgerId("ledger-p806-version")

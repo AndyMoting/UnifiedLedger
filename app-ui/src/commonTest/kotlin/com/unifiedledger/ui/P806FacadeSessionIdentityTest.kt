@@ -24,11 +24,11 @@ import kotlin.test.assertSame
 import kotlin.time.Instant
 
 /**
- * P8-06 foundation (D-343 3.5.4, Q2 ruling): the facade exposes the injected session's four P806
- * queries by reference plus a comparison-only catalog version. With no session the whole surface is
- * Unwired (null, no fallback read); without a reporting clock only the relative-period surfaces
- * are absent. A session refresh publishes new instances while previously obtained references keep
- * their own construction-time version.
+ * P8-06 foundation (D-343; spec sections 3.5.1/3.8): the facade exposes the injected session's four
+ * P806 queries by reference plus a comparison-only catalog version. With no session the whole
+ * surface is Unwired (null, no fallback read); without a reporting clock only the relative-period
+ * surfaces are absent. A session refresh publishes new instances while previously obtained
+ * references keep their own construction-time version.
  */
 class P806FacadeSessionIdentityTest {
     private val ledgerId = LedgerId("ledger-local-test")

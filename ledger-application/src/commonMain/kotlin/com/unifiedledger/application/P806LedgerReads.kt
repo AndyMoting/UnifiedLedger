@@ -31,8 +31,9 @@ class P806ReportQuery(
 ) {
     /**
      * The catalog generation this query binds at construction: the same immutable [authority] the
-     * request's expected version comes from (D-343 3.5.4). A successful raw snapshot is checked
-     * against it before any fold, so a payload from another generation never becomes a zero period.
+     * request's expected version comes from (D-343; spec sections 3.5.1/3.8). A successful raw
+     * snapshot is checked against it before any fold, so a payload from another generation never
+     * becomes a zero period.
      */
     val catalogVersion: Long = authority.catalogVersion
 
@@ -70,8 +71,8 @@ class P806ReportQuery(
             }
         return when (result) {
             is P806SnapshotResult.Success -> {
-                // Version first (D-343 3.5.4; decision-version-precedence): the success-path
-                // InvalidWindow below may only be judged on a snapshot of this query's generation.
+                // Version first (D-343; spec sections 3.5.1/3.8): the success-path InvalidWindow
+                // below may only be judged on a snapshot of this query's generation.
                 if (result.snapshot.catalogVersion != catalogVersion) {
                     return P806SnapshotResult.Failed(P806SnapshotFailure.CatalogVersionMismatch)
                 }
