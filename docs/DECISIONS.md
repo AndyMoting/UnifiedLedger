@@ -7555,3 +7555,19 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **遗留：** `same_request_replay` 与 `final_reopen` 仍未执行过（第十六跑 `traversal` 红后 NOT_RUN）；traversal 若靠回退通过，`traversalScrollFallbacks` 会如实给出读数，届时再裁决该读数在验收上的权重。
 
 **关联决定：** D-342（预算包络使 reopen 首次跑完）、D-341/D-340（同族注入拒绝的两次处置）、D-217（reopen/traversal 分工与 force-stop 语义）、D-338/D-339（链前段的最终收敛）。
+
+## D-345 reopen 段预算 90→150 分钟：5400s 是边缘不是上限
+
+**状态：** 已批准（2026-11-17；rig 第十七跑实证）
+
+**背景：** rig 第十七跑（max `43955867697`，证据 `local/artifacts/maxrig-43955867697/`）在 `reopen` 上跑满 **5404s** 被 D-342 设的 5400s 上限切断（`junit.xml` reopen time=5404.07；`host.json` `ScaleDeadlineError: instrumentation operation deadline exceeded`）。而第十六跑同一段以 **5057s 通过**。差别来自整机变慢：`prepare` 3097→3994s（+29%）、`chain` 969→1175s（+21%），按同比例外推 reopen 需求 ≈6300s > 5400s。两次跑的前七段全 PASS 一致，说明不是产品面变化。
+
+**裁决：** 段预算按**方差**而非最佳观测设定——`reopen` 5400000→**9000000ms**（2.5h，约为最快观测的 1.5 倍）；外层 `ANDROID_CI_OUTER_DEADLINE_EPOCH` 19800→**20400s**、job `timeout-minutes` 350→**360**（托管 runner 上限 6h）。三处同改：rig 字面量、`result.py` 的 `limits`、`test_android_scale_result.py` 的越界探针（5400001→9000001）。最坏账：prepare ≤4000 + chain ≤1200 + reopen 9000 + traversal/replay/final-reopen 余量 ≈ 20400s 内。
+
+**实证：** 第十六跑 `reopen` PASS 5057145ms；第十七跑 reopen 5404s 被切；两跑 `prepare`/`chain` 的差值证明这是 runner 速度方差，不是 reopen 自身行为变化（两次的前七段全 PASS）。
+
+**边界：** 入 = rig `stage("reopen", …)`、`result.py` `limits`、workflow 两处时限、越界探针、D-333 spec §14、本条。出 = 不动 `traversal` 的 4h 字面量、不缩 `oracle.snapshot(compareReadPath=true)` 的任何读取、不动产品代码与断言。
+
+**遗留：** `same_request_replay` 与 `final_reopen` 仍未执行过；若下一跑 reopen 通过而 traversal 撞外层，则 traversal 的成本本身仍是新前沿（该段 4h 字面量受 20400s 外层约束）。
+
+**关联决定：** D-342（首次把 reopen 从 1800s 抬到 5400s 的依据与本次同一机制）、D-344（第十七跑 traversal 的修复，尚未被验证）、D-217（reopen/traversal 分工与 force-stop 语义）。
