@@ -7841,3 +7841,42 @@ seekReturn marker=false steps=8 stationary=true
 **残留风险：** ①向后语义动作仍是未测通道（可能纯属负担）；按裁决保留，因为它只在轮询也抓不到变化时才跑，且只花一行。②真静止时的代价：8 个样本 × 每个通道 1.5 s 轮询 ≈ 12 s 才下停住判决——相对 2400 s 段预算可忽略。③D-354 残留 ②（rig 侧 `traversalScrollFallbacks` 注释仍只写「注入被拒」）仍未处理，留给下一轮。
 
 **关联决定：** D-354（本条取代其归因，三处修法与判据保留）、D-217（8 样本判决与客户端树滞后；本条指出该判决从来不是运动证明）、D-344（无障碍动作通道）、D-352（回顶与那条断言）、D-353（走查独立成末相位）、D-204/D-208（缓存重置机制，本条把它用作取样手段）。
+
+## D-356 rig 首次全链通过：六相位一次跑通，D-352/D-354/D-355 的留白由实测收口
+
+**状态：** 已批准（2026-11-18；run `44166358259` @ `76862d1b` 实测；**纯记录条目，不改任何代码、测试或预算**）
+
+**实证（run `44166358259` @ `76862d1b`；该树与本分支末梢 `c8af957f` 在 `android-app/src/androidTest`、`tools/python`、`tools/ci`、`tests/python` 上 `git diff --stat` 为空，即跑的就是 #399 落地树）：**
+- `host.json`：`status: PASS`、`mode: maximum`、`timed_out: false`、`crash_detected: false`、`elapsed_seconds: 4049.785577946`、`execution_budget_seconds: 19800.0`、`outer_remaining_seconds_at_start: 20301.1967`、`logcat_gaps: []`，`phases` = `prepare, chain, reopen, replay, final-reopen, traversal`（D-353 的顺序）。
+- `junit.xml`：`tests="6" failures="0" errors="0" skipped="0"`；`prepare` 855.702 s、`chain` 987.469 s、`reopen` 108.710 s、`replay` 182.848 s、`final-reopen` 172.633 s、`traversal` 1654.353 s。**`same_request_replay` 与 `final_reopen` 首次执行并 PASS**（D-353 的全部目的）。
+- `device.json` 的 traversal 块：`observedCandidates=600`、`traversalRowsCollected=600`、`traversalPages=12`、`traversalPageClicks=11`、`traversalDeepRowPages=1220`、`traversalScope=bounded-contiguous-prefix`、`traversalWindowOrder=candidate-id-prefix`、`uiIdentityScope=projected-class-groups-query-order`、**`traversalScrollFallbacks=0`**；`finalCandidates=61000`、`formalTransactions=1`、`balancedPostings=2`。
+- 11 条 `collect page load`：每条 `attempt=1 revealSteps=14`、`itemCount` 逐次 +50（`64..114` … `564..614`）、`grew=true`、`waitedMs` 30,146–30,295。
+- 回顶：**135 步，逐条 `moved=true afterGesture=true semantic=false stride=0.6`**，`semantic=true` 计数 **0**；以 `seekReturn marker=true steps=136` 结束（命中标记，而非停住退出）。
+- 走查：**788 次扫描**取满 600 行；最后一条 `collect scan scans=788 rows=6 collected=600 growth=1 stationaryCount=0 first=1977.94 CNY|类型 ordinary_ last=1971.99 CNY|类型 ordinary_`（尾部正是 chain 确认的 ordinal-0 行，与分类组主序一致）。`collect seam` 计数 0。
+
+**本条收口的四项（逐条对着旧条目）：**
+1. **D-352「相位内代价（算术推算，非实测）」**：该条估「合计约 21-23 min」，实测 traversal **stage 1652.0 s = 27.5 min**（junit 相位 1654.353 s = 27.6 min）。差值可逐项对上：走查估 13 min → 实测 786.5 s（13.1 min，准）；露出估 ~2 min → 实测 ≈175.7 s（2.9 min）；回顶估 ~4-5 min → 实测 176.1 s（2.9 min，估高）；静止 oracle 读估 166 s → 与本相其余 181.6 s 同量级。**唯一漏项是每次装载的 ~30 s 增长等待**：11 × 30.2 s = 332.1 s = 5.5 min；把它补进去 22.3 + 5.5 ≈ 27.8 min，与实测 27.6 min 吻合。所以那次估算的偏差是**可归因的遗漏**，不是无源误差。
+2. **D-352 残留 ③（400 步回顶上界）**：实测用 **135 步**，余量 400/135 = **2.96×**，上界保持不动。
+3. **D-354「向后语义动作未测、向后手势无效」**：135 步全部由**手势**移动（`afterGesture=true`）、语义回退 **0 次**触发 ⇒ 语义通道从未被用到；而「向后手势无效」的归因被实测**推翻**——真正的成因是 D-355 修掉的陈旧帧比较。D-354 正文不回改，本条以状态行取代其归因（与 D-355 的处置一致）。
+4. **D-355 的 1500 ms 轮询预算**：135 步全部在预算内检出变化。每步总耗时 176.1/135 = **1.30 s**（含手势 + `settle` + 轮询）；若轮询吃满 1.5 s 预算，单步就不可能只有 1.30 s，故每次都在预算内提前返回，预算足够。
+
+**新的成本画像（可复用部分，全部为本机对 `logcat.txt` 时间戳的实测切分；traversal stage = 1652.0 s）：**
+- **11 次装载 = 507.8 s**（04:53:59.7 seekDone → 05:02:27.5 最后一条 load 行）。其中增长等待 332.1 s（**20.1%**），露出 154 步 ≈ 175.7 s（≈1.14 s/步，14 步/页）。**装载是走查之外最大的单项成本。**
+- **回顶 = 176.1 s**（05:02:28.7 → 05:05:24.9，135 步 ≈ 1.30 s/步 = **10.7%**）。
+- **走查 = 786.5 s**（05:05:25.8 → 05:18:32.3，788 扫 ≈ 1.00 s/扫，600/788 = **0.76 行/扫**；占 **47.6%**）。
+- **其余 181.6 s**：静止 oracle 读 + 重启 + 抽屉导航 + 顶部 seek + 尾部 `reopenTail`（11.0%）。四项相加 = 1652.0 s，与 stage 自报值一致。
+- **余量**：段上界 2400 s / 1652.0 s = **1.45×**；driver 全局 19800 s / 4049.786 s = **4.89×**。
+
+**同时读到的判据侧事实：** `collect loaded markerVisible=true pages=12 rows=600 clicks=11`（D-352 的回顶断言在真列表上通过）；`traversalScrollFallbacks=0`（全程没有任何滚动由无障碍动作代劳）；`traversalPages=12`/`traversalPageClicks=11` 两个 D-349 校验值首次在通过轮上给出；全程唯一一次 `stationary=true` 出口属于导入流程里一次默认步长（0.25）的调用（04:34:34–04:34:59，SAF 选择器界面，该调用点自己的 D-217 注释已写明它是 `no-op-at-top`），**回顶从未误判停住**。
+
+**实测 vs 判读：** 以上数字逐条读自 `host.json`/`junit.xml`/`device.json`/`logcat.txt`（49 MB 全量，`Select-String` 计数去重：`collect page load` 11 条唯一、`seekReturn step=` 143 条唯一含 135 条 0.6 步长、`collect scan` 788 条唯一）。「D-354 的归因被推翻」是实测的直接结论（135/135 由手势移动、语义回退 0 次），不是推断；「装载增长等待是最大非走查成本」是实测占比；「1500 ms 预算足够」由单步总耗时 1.30 s 反推，属**判读**（每步没有单独打印轮询耗时）。
+
+**新增残余（本轮首次可见，均不由本批引入）：**
+1. **`same_request_replay` 实测 179,995 ms，卡在 reducer 对未列名阶段的 180,000 ms 默认上界之内——余量 5 ms**。下一跑即使代码不变也可能在这里变红；建议另立决定给 `replay`/`final_reopen` 显式段上界（本轮只记录，**不改预算**）。
+2. `final_reopen` 实测 168.9 s 对同一 180 s 默认 ⇒ 余量 11.1 s（1.07×），与第 1 条同源，应同批处理。
+3. 11 次装载的 ≈30 s 增长等待 = 332.1 s（相位的 20.1%）；若前缀将来扩大，这是首先该动的成本项——**现在不动**，它已通过。
+4. `traversalDeepRowPages=1220` 仍是「61k 深行候选可达性」这条产品开放项下面的记录值；「有界前缀要不要变成整表走查」仍停在 D-349 的裁决处（核心验收计划仍不含规模 UI 遍历）。
+
+**边界：** 入 = 本条。出 = 不改任何代码/测试/段预算/workflow；不回改 D-352/D-354/D-355 的正文（归因由本条状态行取代）。
+
+**关联决定：** D-349（有界前缀口径与 12 页/11 次点击的取值）、D-350（段预算 1800/2400 s，本条给出实测余量）、D-351（候选 id 前缀窗口，本轮单一末端等式通过）、D-352（load-then-walk 与回顶断言，本条收口其代价估算与上界余量）、D-353（走查独立成末相位，本轮 replay/final-reopen 首次执行即其目的）、D-354（stride 与语义回退，本条取代其归因）、D-355（有界轮询，本条确认其预算足够）、D-348（索引使 reopen 降到 104.5 s）、D-217（走查几何与树滞后，本轮 788 扫/0.76 行/扫的基线）。
