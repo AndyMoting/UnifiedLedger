@@ -13,9 +13,9 @@ import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import java.util.ArrayDeque
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.ArrayDeque
 
 /** The drawer row wait: the 导入账单 row composes only while the drawer is open, so this covers its entrance. */
 private const val DRAWER_ROW_TIMEOUT_MS = 30_000L
@@ -1421,6 +1421,8 @@ internal class AndroidScaleUi(
         val firstUnexpected = unexpected.firstOrNull()?.take(SEAM_DIAGNOSTIC_CHARS) ?: "none"
         // A walk-order echo is what shows the class-major render order inside the slice; the sorted
         // lists below cannot show it.
+        val missingEntries = JSONArray(missing.take(SEAM_DIAGNOSTIC_LIMIT).map { seamEntry(it, expectedSorted, collectedSorted) })
+        val unexpectedEntries = JSONArray(unexpected.take(SEAM_DIAGNOSTIC_LIMIT).map { seamEntry(it, collectedSorted, expectedSorted) })
         val payload =
             JSONObject()
                 .put("rows", rows)
@@ -1433,14 +1435,8 @@ internal class AndroidScaleUi(
                 .put("expectedSorted", JSONArray(expectedSorted))
                 .put("collectedSorted", JSONArray(collectedSorted))
                 .put("collectedWalkOrder", JSONArray(collected))
-                .put(
-                    "missingFromCollected",
-                    JSONArray(missing.take(SEAM_DIAGNOSTIC_LIMIT).map { seamEntry(it, expectedSorted, collectedSorted) }),
-                )
-                .put(
-                    "unexpectedInCollected",
-                    JSONArray(unexpected.take(SEAM_DIAGNOSTIC_LIMIT).map { seamEntry(it, collectedSorted, expectedSorted) }),
-                )
+                .put("missingFromCollected", missingEntries)
+                .put("unexpectedInCollected", unexpectedEntries)
                 .put("samplesEchoedPerDirection", SEAM_DIAGNOSTIC_LIMIT)
         Log.i(
             "ULScaleWalk",
@@ -1486,13 +1482,12 @@ internal class AndroidScaleUi(
         signature: String,
         own: List<String>,
         other: List<String>,
-    ): JSONObject {
-        return JSONObject()
+    ): JSONObject =
+        JSONObject()
             .put("signature", signature)
             .put("indexInOwn", own.indexOfFirst { it == signature })
             .put("indexInOther", other.indexOfFirst { it == signature })
             .put("insertionPointInOther", other.count { it < signature })
-    }
 
     /**
      * D-349: loads the review list's next page — one click on the
