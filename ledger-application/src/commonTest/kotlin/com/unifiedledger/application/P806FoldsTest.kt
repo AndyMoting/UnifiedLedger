@@ -51,7 +51,7 @@ class P806FoldsTest {
                 totals =
                     listOf(
                         total(expenseAccountId, cny, 300L, -100L),
-                        
+
                         total(incomeAccountId, cny, 0L, -500L),
                     ),
             )
