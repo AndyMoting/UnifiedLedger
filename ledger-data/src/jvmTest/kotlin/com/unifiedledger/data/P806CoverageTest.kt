@@ -430,6 +430,7 @@ class P806CoverageTest {
             // Independent expectation from the literal's own whole second and fraction, never from a
             // millisecond conversion; a pre-epoch instant keeps floor seconds plus its positive fraction.
             fun nanosOf(instant: Instant): Long = instant.epochSeconds * 1_000_000_000L + instant.nanosecondsOfSecond.toLong()
+
             fun expectedNanos(text: String): Long = nanosOf(Instant.parse(text))
             val expectedByTransaction = cases.associate { (id, text) -> id to expectedNanos(text) }
             val expectedOrder = cases.sortedByDescending { expectedNanos(it.second) }.map { it.first }
