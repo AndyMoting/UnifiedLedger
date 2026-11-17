@@ -44,6 +44,14 @@ import java.io.File
 private const val FIRST_PAGE_JUMP_INDEX = 0
 
 /**
+ * D-349: how many pages of the review list the maximum-scale traversal covers before it stops —
+ * 12 pages of [IMPORT_REVIEW_PAGE_ROWS] rows = 600 rows, 11 「加载更多导入候选」 clicks. The list
+ * holds `spec.finalCandidates` (61,000) rows, so the walk is a contiguous PREFIX by construction,
+ * and every page seam is proven against the oracle's own prefix inside `collectTraversal`.
+ */
+private const val TRAVERSAL_PREFIX_PAGES = 12
+
+/**
  * D-328 first-window probe: the `:652` await's own sampling budget. The await is the
  * measurement instrument, so its observers may only touch the evidence and logcat; the
  * predicate must see the SAME `has()` the unmodified wait uses. 10s between text
@@ -674,24 +682,13 @@ class AndroidScaleLongInstrumentedTest {
      * for ordinals in `0 until rowsPerSession`, so every first-page amount is
      * inside this range and the range is derived from the manifest — never a
      * hand-written amount. The range stays disjoint from the unique-rows
-     * session's range (its offset is `rowsPerSession`), which is what keeps the
-     * chain's traversal anchor unique.
+     * session's range (its offset is `rowsPerSession`), so the unique session's
+     * amounts can never collide with a first-page one.
      */
     private fun firstPageAmountRange(): LongRange {
         val base = state.getLong("seed") + 1L + spec.sessionAmountOffset(0)
         return base until base + spec.rowsPerSession
     }
-
-    /**
-     * D-217 review fix: the unique-rows session's ordinal-0 amount, the traversal
-     * walk's spec-derived anchor (D-320 keeps it for that role only; the detail
-     * target is a first-page candidate instead). Its rows start after the shared
-     * range ([AndroidScaleFixtureSpec.sessionAmountOffset]), so the amount is
-     * seed + 1 + rowsPerSession — disjoint from every shared session's
-     * seed+1..seed+rowsPerSession range, so the anchor appears exactly once during
-     * the walk.
-     */
-    private fun uniqueSessionFirstAmount(): Long = state.getLong("seed") + 1L + spec.sessionAmountOffset(spec.initialSessions)
 
     private fun assertPreparedUnchanged(snapshot: ScaleSnapshot) {
         val sessions = preparedSessions()
@@ -1390,20 +1387,18 @@ class AndroidScaleLongInstrumentedTest {
     private fun reopenPhase() {
         // D-342 (run 43891956497, 2026-11-17): the reopen stage ran 1801.9s and was cut by its
         // own 1800000ms budget — the first run whose chain phase finished (instrumentation-chain
-        // `OK (1 test)`, 975.9s), so this phase's real cost had never been observed. Its heaviest
-        // reads are the two-path oracle snapshot over 61k candidates / 150k relations plus the
-        // whole-group relation sweep, all against a force-stopped app.
-        // D-345 (run 43955867697, 2026-11-17): 5400000ms was still an edge, not a ceiling — that
-        // run's reopen needed 5404s and was cut by it, while the run before it passed at 5057s.
-        // The whole box was ~25% slower that time (prepare 3097→3994s, chain 969→1175s), so the
-        // budget has to absorb runner-speed variance instead of matching the single best
-        // observation: 9000000ms (2.5h) covers ~1.5x the fastest observed reopen and still fits
-        // the workflow's 20400s outer envelope together with prepare (≤4000s), chain (≤1200s) and
-        // the short replay / final-reopen phases. The traversal sibling keeps its own 4h literal
-        // and is bounded by that outer envelope.
-        val snapshot = stage("reopen", 9000000) { reopen() }
+        // `OK (1 test)`, 975.9s), so this phase's real cost had never been observed.
+        // D-345 (run 43955867697, 2026-11-17): 5400000ms was still an edge, not a ceiling, so the
+        // bound moved to 9000000ms on a box that was measurably ~25% slower.
+        // D-350 (run 44111466778, 2026-11-18): both raises were buying time for a quadratic read
+        // path that D-348 then fixed with one index — that same reopen took 166s, and the traversal
+        // that follows is the D-349 bounded prefix (~14 min), so both bounds come back down:
+        // reopen 9000000→1800000ms (~11x headroom) and traversal 14400000→2400000ms (~2.8x). The
+        // workflow's outer envelope, the step/job timeouts and the driver's mode limit are upper
+        // bounds and stay as they are.
+        val snapshot = stage("reopen", 1800000) { reopen() }
         if (phase == "reopen") {
-            stage("traversal", 14400000) {
+            stage("traversal", 2400000) {
                 traversalWalk(snapshot)
                 // D-344: how many of the walk's scrolls the accessibility scroll action served
                 // because gesture injection was refused. A fallback-served walk is still a walk,
@@ -1428,14 +1423,20 @@ class AndroidScaleLongInstrumentedTest {
      * UI displays exactly the snapshot-consistent final list, so both sides
      * of the comparison observe the SAME state.
      *
-     * State-silence invariant: the relaunch plus the collect-only walk
-     * (scroll gestures only, no clicks) must not write to the database
-     * between the snapshot (read with the app stopped) and this walk. The
-     * traversal stage's own tail ([reopenTail]) re-reads the oracle after
-     * the walk, so a stray write fails in the same phase, and final-reopen
-     * re-runs [reopen] on a fresh snapshot — if the relaunch or walk wrote
-     * anything, its assertions would fail there too. The walk is proven
-     * state-silent on every run.
+     * State-silence invariant: the relaunch plus the collect-only walk (scroll gestures and the
+     * page-load clicks below, which are read triggers) must not write to the database between the
+     * snapshot (read with the app stopped) and this walk. The traversal stage's own tail
+     * ([reopenTail]) re-reads the oracle after the walk, so a stray write fails in the same phase,
+     * and final-reopen re-runs [reopen] on a fresh snapshot — if the relaunch or walk wrote
+     * anything, its assertions would fail there too. The walk is proven state-silent on every run.
+     *
+     * D-349: the walk covers a bounded contiguous prefix — [TRAVERSAL_PREFIX_PAGES] pages of the
+     * review list's own page size — instead of all `spec.finalCandidates` rows, and proves it at
+     * every page seam. The exhaustive multiset comparison this replaced was the harness's own
+     * requirement (D-217 lineage), not a core-acceptance one: the review list is paged behind a
+     * click, so on 61,000 rows it needs ~21.9h and 1,220 clicks (run 44111466778 measured 1.01s
+     * per scan at 0.78 rows per scan). Exhaustive full-list equality stays where it is affordable —
+     * preflight and the b6 scale.
      */
     private fun traversalWalk(snapshot: ScaleSnapshot) {
         // The app relaunched to the home screen; the drawer's 导入账单 row opens
@@ -1445,26 +1446,33 @@ class AndroidScaleLongInstrumentedTest {
         // import tab).
         ui.openImportViaDrawer()
         ui.await { ui.has("支付宝账单（CSV）") }
-        // collectTraversal seek-backs to the 刷新清单 anchor itself
-        // before walking the whole list exactly once; it requires the
-        // unique-session first row (its amount is derived from the
-        // manifest seed) to appear, keeping the traversal's coverage
-        // mandate without a live-app oracle read.
-        val collected = ui.collectTraversal(uniqueSessionFirstAmount(), spec.finalCandidates)
+        // collectTraversal seek-backs to the 刷新清单 anchor itself before
+        // walking; it needs the expected rows only as the seam target, never as
+        // an in-app oracle read. The rows are captured once (displayRows sorts
+        // on every access) and their signatures are derived per seam, so the
+        // walk never materialises the whole 61,000-row signature list.
+        val expectedRows = snapshot.displayRows
+        val collected =
+            ui.collectTraversal(
+                targetRows = TRAVERSAL_PREFIX_PAGES * IMPORT_REVIEW_PAGE_ROWS,
+                expectedPrefix = { rows -> expectedRows.take(rows).map { it.signature } },
+            )
         state.put("observedSignatures", JSONArray(collected))
+        // D-349 records the prefix shape instead of claiming a whole-list walk: the page count it
+        // covered, the rows that is, the clicks it took, and how many pages of the list stay
+        // untouched (the deep-row reachability the prefix cannot cover). Each page seam is proven
+        // inside collectTraversal — collected signatures sorted equal the oracle's prefix sorted —
+        // so both sides are genuine multisets over the same covered range and the sizes are
+        // directly comparable. The snapshot was read with the app stopped and the walk writes
+        // nothing (invariant above), so the comparison is same-state by construction.
         evidence
             .put("observedCandidates", collected.size)
-            .put("firstLastObserved", true)
+            .put("traversalRowsCollected", collected.size)
+            .put("traversalPages", ui.traversalPages)
+            .put("traversalPageClicks", ui.traversalPageClicks)
+            .put("traversalDeepRowPages", (spec.finalCandidates + IMPORT_REVIEW_PAGE_ROWS - 1) / IMPORT_REVIEW_PAGE_ROWS)
+            .put("traversalScope", "bounded-contiguous-prefix")
             .put("uiIdentityScope", "projected-class-groups-query-order")
-        // Traversal alignment: the collected signatures must cover
-        // exactly the expected multiset of display rows (every row
-        // seen, no duplicates). collectTraversal preserves
-        // multiplicity, so both sides are genuine multisets and the
-        // sizes are directly comparable. The snapshot was read with
-        // the app stopped and the walk writes nothing (invariant
-        // above), so the comparison is same-state by construction.
-        val expected = snapshot.displayRows.map { it.signature }
-        check(collected.sorted() == expected.sorted()) { "traversal coverage mismatch (collected=${collected.size} expected=${expected.size})" }
     }
 
     /**
