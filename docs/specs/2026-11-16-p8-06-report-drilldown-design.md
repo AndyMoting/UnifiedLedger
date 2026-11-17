@@ -1,6 +1,6 @@
 # P8-06 报表与下钻设计（周期、日均、收支日历、分类/账户下钻与详情回程）
 
-状态：approved（2026-11-17，`D-343` 设计批准；**设计已批准、尚未实现**。实施另立批次，按仓库既有高风险变更路由（独立审查 + 云端 CI）推进；本规格不构成实现、迁移或发布授权）
+状态：approved（2026-11-17，`D-343` 设计批准；**设计已批准；批 a 读面已实现（2026-11-18，PR #400 squash = `d029a30e`），批 b–c、`app-ui` 访问器与设备证据未交付**。后续实施批另立批次，按仓库既有高风险变更路由（独立审查 + 云端 CI）推进；本规格不构成实现、迁移或发布授权）
 
 **Revision:** v1（2026-11-17 批准）。本版冻结：期间模型与上海半开窗口、普通收支贡献集合与每 surface 一个复合 typed 快照、当地日桶与完整自然日分母、有符号舍入、未来标注口径、目录/轴/`occurred_at` 解析三类前置校验、载荷六态与回程语义、账户资金视图局部显示例外。变更以本文件与 `docs/DECISIONS.md` 的 `D-343` 为准。
 
@@ -356,3 +356,12 @@ p806LatestEffectiveStatisticsAt      -- MAX(statistics_at_epoch_nanos)（MIN 已
 - 设计冻结的要点：每 surface 一个复合 typed 快照（既有端口 + 默认 fail-loud + 单事务 + `expectedCatalogVersion`）、日历同事务读币种轴与双币种零日、账户资金流水主行的「资金发生日期」局部例外与「N 条账户变动/记录」文案、共享轴校验、目录探针的 current-version join、`occurred_at` 解析 fail-closed（合法 epoch 0 放行）、`sum()` 溢出归 `InvalidState`、载荷六态不伪零、CI 分片暂定与 instrumented 双名单。
 - 实施批必须保持：§1 已批准合同与 §3 的窗口/门控/日均/有界性/短快照/回程语义、零 DDL（v37）、零账务写入、§4 全部向量与 §5 证据归属；任何语义变更须先修订本规格与 `D-343`。
 - 示例全部匿名合成；无本机路径、无个人数据、无外部实现代码；外部参考树只读未触碰；`rgXX_` 竖井与 golden 零改动。
+
+## 实施状态登记（批 a，2026-11-18）
+
+- **落地**：PR #400 squash = `d029a30e`，landed tree `c69e92ba0bcf052592f86e9eaaa4095216e54fa9` 与 PR tip `a2157716` 同树；四门 run `44192776533` success（`Kotlin tests`/`Android compile`/`Python tests`/`Trace scan`）、同 head dispatch `44192775351` success、普通 Android instrumented `44192776315` 两片 success、合并树守卫 `44195322097` 记 zero action（landed tree、checks、trace 全部对账）。
+- **范围**：`ledger-application` 的四个复合快照 use case（既有端口上的默认 UOE 方法与 `CatalogConsumerSession` 接线）、期间/日均/折叠与共享轴纯函数；`ledger-data` 的 SELECT-only 命名查询、快照 reader 与真库测试。`app-ui` 的读面访问器与呈现、typed `returnTo`、请求身份与设备证据不在本批。依赖：`ledger-data` 的 kotlinx-datetime 0.8.0 由 jvmTest 上移到 commonMain implementation（版本不变、非新增库）。
+- **schema**：本规格批准基线的 v37 是历史表述；实际合入继承 `D-348` 的 schema v38，本批零新增 DDL、零迁移、零账务写入。
+- **读面证据**：dispatch XML 34 suite / 241 tests、0 failure/error/JUnit-skip；`P806ReportSemanticsTest` 12 / `P806SnapshotReadTest` 12 / `P806CoverageTest` 9 方法通过。application 侧由 core 日志证明实际执行（`ledger-application` 94 类 / 826 tests），`P806PortDefaultsAndAxisTest` 类 11，无逐方法 XML。已落证的读面部分断言（非整向量 PASS）：V-1 窗口几何、V-2 贡献集合与页遍历/计数/月卡等式、V-3 自定义部分期、V-4 50k 语句数/首屏/续页、V-5 多分录计数与负号；其余已限定维度 V-8（金额双轴与分录单位）、V-9 贡献集合、V-11 坏例、V-13、V-15 几何、V-16 完整分母、V-17 数值、V-18 计数、V-19 同夹具轴；此外的读面子断言为未升级备注，不构成整向量 PASS。
+- **未交付**：V-6/V-7/V-12/V-14、全部呈现与 typed `returnTo`、完整请求身份、性能与设备基线；普通 Android 绿不替代 P8-06 设备证据。
+- **边界**：本节与状态头只登记实施事实，不改 §4 向量、§5 证据归属、`D-343` 与 approved 机制；文中「尚未实现」类时点表述以本节为准。
