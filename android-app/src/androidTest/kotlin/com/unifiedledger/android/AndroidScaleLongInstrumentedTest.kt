@@ -1437,6 +1437,14 @@ class AndroidScaleLongInstrumentedTest {
      * click, so on 61,000 rows it needs ~21.9h and 1,220 clicks (run 44111466778 measured 1.01s
      * per scan at 0.78 rows per scan). Exhaustive full-list equality stays where it is affordable —
      * preflight and the b6 scale.
+     *
+     * D-351: the seam expectation is the candidate-id prefix the pages load, which is
+     * `snapshot.rows` itself — the oracle reads `ORDER BY c.candidate_id` (AndroidScaleOracle.kt),
+     * the same order the product's page query serves (`candidate_id > cursor ORDER BY candidate_id
+     * LIMIT 50`, cursor "" for the first page) and `AppendImportReviewPage` appends. It is NOT
+     * `displayRows.take(n)`: that is the whole population's class-major order, and run 44127054663
+     * failed at 50/50 because the chain confirmed one candidate of the loaded page, which moved a
+     * row out of the class prefix and pulled an unloaded row in.
      */
     private fun traversalWalk(snapshot: ScaleSnapshot) {
         // The app relaunched to the home screen; the drawer's 导入账单 row opens
@@ -1446,24 +1454,28 @@ class AndroidScaleLongInstrumentedTest {
         // import tab).
         ui.openImportViaDrawer()
         ui.await { ui.has("支付宝账单（CSV）") }
-        // collectTraversal seek-backs to the 刷新清单 anchor itself before
-        // walking; it needs the expected rows only as the seam target, never as
-        // an in-app oracle read. The rows are captured once (displayRows sorts
-        // on every access) and their signatures are derived per seam, so the
-        // walk never materialises the whole 61,000-row signature list.
-        val expectedRows = snapshot.displayRows
+        // D-351: the covered window is the oracle's own row sequence, take(n) — no re-sort, no
+        // class mapping, no re-implementation of the page order. The size guard keeps the dependency
+        // visible: a partial snapshot would silently shorten every seam expectation.
+        val pageOrderRows = snapshot.rows
+        check(pageOrderRows.size == spec.finalCandidates) {
+            "oracle snapshot is not the whole candidate population (rows=${pageOrderRows.size} expected=${spec.finalCandidates})"
+        }
         val collected =
             ui.collectTraversal(
                 targetRows = TRAVERSAL_PREFIX_PAGES * IMPORT_REVIEW_PAGE_ROWS,
-                expectedPrefix = { rows -> expectedRows.take(rows).map { it.signature } },
+                expectedWindow = { rows -> pageOrderRows.take(rows).map { it.signature } },
+                // A seam mismatch is a failure artifact: stage() saves evidence in its finally, so
+                // the payload survives the throw and lands next to stage-forensics.
+                onSeamMismatch = { payload -> evidence.put("traversalSeamMismatch", payload) },
             )
         state.put("observedSignatures", JSONArray(collected))
-        // D-349 records the prefix shape instead of claiming a whole-list walk: the page count it
-        // covered, the rows that is, the clicks it took, and how many pages of the list stay
+        // D-349/D-351 records the covered shape instead of claiming a whole-list walk: the page count
+        // it covered, the rows that is, the clicks it took, and how many pages of the list stay
         // untouched (the deep-row reachability the prefix cannot cover). Each page seam is proven
-        // inside collectTraversal — collected signatures sorted equal the oracle's prefix sorted —
-        // so both sides are genuine multisets over the same covered range and the sizes are
-        // directly comparable. The snapshot was read with the app stopped and the walk writes
+        // inside collectTraversal against the candidate-id prefix the pages load — the window basis
+        // is recorded too, so the artifact states what the equality was measured against instead of
+        // leaving it to the code. The snapshot was read with the app stopped and the walk writes
         // nothing (invariant above), so the comparison is same-state by construction.
         evidence
             .put("observedCandidates", collected.size)
@@ -1472,6 +1484,7 @@ class AndroidScaleLongInstrumentedTest {
             .put("traversalPageClicks", ui.traversalPageClicks)
             .put("traversalDeepRowPages", (spec.finalCandidates + IMPORT_REVIEW_PAGE_ROWS - 1) / IMPORT_REVIEW_PAGE_ROWS)
             .put("traversalScope", "bounded-contiguous-prefix")
+            .put("traversalWindowOrder", "candidate-id-prefix")
             .put("uiIdentityScope", "projected-class-groups-query-order")
     }
 

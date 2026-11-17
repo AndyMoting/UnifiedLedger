@@ -303,9 +303,13 @@ def validate_evidence(directory: Path, expected_sha: str) -> dict:
     # D-349: the walk covers a bounded contiguous prefix and proves it at every page seam, so the
     # evidence states that shape instead of claiming a whole-list walk: pages covered, rows that is,
     # clicks it took, and the pages of the list left untouched. `firstLastObserved` was the
-    # whole-list claim and is gone with it.
+    # whole-list claim and is gone with it. D-351 adds the window basis the seam equality was
+    # measured against: pages load by candidate id, so the covered window is the candidate-id prefix
+    # and not the whole population's class-major order.
     prefix_rows = TRAVERSAL_PREFIX_PAGES * TRAVERSAL_PAGE_ROWS
-    if device.get("traversalScope") != "bounded-contiguous-prefix" or device.get("uiIdentityScope") != "projected-class-groups-query-order":
+    if (device.get("traversalScope") != "bounded-contiguous-prefix"
+            or device.get("traversalWindowOrder") != "candidate-id-prefix"
+            or device.get("uiIdentityScope") != "projected-class-groups-query-order"):
         raise ValueError("UI traversal scope evidence missing")
     if (type(device.get("traversalPages")) is not int or device["traversalPages"] != TRAVERSAL_PREFIX_PAGES
             or type(device.get("traversalRowsCollected")) is not int or device["traversalRowsCollected"] != prefix_rows
