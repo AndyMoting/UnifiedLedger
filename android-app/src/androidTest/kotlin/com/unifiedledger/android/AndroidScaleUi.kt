@@ -61,11 +61,18 @@ private const val PAGE_LOAD_ATTEMPTS = 3
 private const val PAGE_REVEAL_SCROLLS = 24
 
 /**
- * D-352: rows one 0.25 backward gesture is expected to cross when the loads' leftover viewport has to
- * return to the top of the loaded prefix (D-217's list evidence puts a 0.25 gesture at ~3 rows), so
- * [collectTraversal] bounds that return trip at twice the rows-per-gesture arithmetic.
+ * D-352/D-354: rows one return-trip gesture is expected to cross, re-derived from the only measured
+ * 0.6-stride rate this list has — the reveal of the paging case, which crossed a whole 50-row page in
+ * 12 and 17 steps (≈4.2 and ≈3 rows per gesture; the extra steps are the client tree's ~5-sample lag
+ * being paid inside the loop), so 3 is the observed floor and the tree lag applies to the return trip
+ * too. [collectTraversal] bounds the trip at twice the rows that implies: 600 / 3 × 2 = 400 steps.
+ * The D-354 semantic fallback never needs more — one ACTION_SCROLL_BACKWARD covers a viewport (≈12
+ * rows) — so it cannot exceed this bound either.
  */
 private const val SEEK_TOP_ROWS_PER_SCROLL = 3
+
+/** D-354: how much of each before/after visible-text sample the return trip's per-step line quotes. */
+private const val SEEK_TRACE_CHARS = 60
 
 /**
  * D-351: how many difference entries a seam mismatch echoes per direction. The full sorted lists
@@ -97,6 +104,10 @@ internal class AndroidScaleUi(
      * refused. Evidence only — the chain reads it to tell "the harness fell back" from "the
      * harness drove real gestures", which is the difference between a trustworthy and a
      * suspicious pass on the traversal stage.
+     *
+     * D-354: it also counts the return trip's ineffective-gesture fallback
+     * ([scrollByAccessibilityAction]), so a nonzero reading means "an accessibility action served a
+     * scroll" — injection refused, or a backward gesture that moved nothing.
      */
     var scrollActionFallbacks: Int = 0
         private set
@@ -1275,8 +1286,10 @@ internal class AndroidScaleUi(
         }
         // D-352 phase 2 — return to the top ONCE, then walk the now-static list. The
         // loads leave the viewport at the bottom of the loaded slice, so this return
-        // trip spans the whole prefix; the default 40-step bound covers ~120 rows.
-        seekBackToTop("刷新清单", maxSteps = targetRows / SEEK_TOP_ROWS_PER_SCROLL * 2)
+        // trip spans the whole prefix. D-354: it uses the 0.6 stride the reveal proves on
+        // this very list (0.25 backward was never exercised outside the list top), and the
+        // bound is two return trips' worth at the measured ~3 rows per 0.6 gesture.
+        seekBackToTop("刷新清单", maxSteps = targetRows / SEEK_TOP_ROWS_PER_SCROLL * 2, stride = 0.6f)
         // D-352 review: seekBackToTop is silent by contract (it can also stop stationary), so the
         // return trip gets its own assertion. 「刷新清单」 is the list's own first render item
         // (ImportReviewRenderItem.TitleBar), visible only at the top; without this check a short trip
@@ -1670,12 +1683,21 @@ internal class AndroidScaleUi(
      * loaded list. The default 40 steps is the D-217 shape (~3 rows per 0.25
      * gesture ⇒ ~120 rows); [collectTraversal] passes a prefix-sized bound after
      * its loads leave the viewport at the bottom of 600 rows.
+     *
+     * D-354 (PR #399 `Android instrumented shard 2`, failed twice): [stride] is the backward
+     * gesture's fraction, and [scrollByAccessibilityAction] is the fallback that runs when one
+     * gesture changes nothing. The review list proves FORWARD 0.6 gestures — its reveal crossed a
+     * whole page in 12 and 17 steps — but its backward 0.25 stride had never run anywhere except the
+     * list top, where this loop returns at step 1, or the chain's detail screen; from the bottom of
+     * the loaded slice it moved nothing for eight consecutive samples. So a caller with a long
+     * return trip passes the stride its own screen proves, and an ineffective gesture degrades into
+     * one page-sized semantic step instead of a false "stationary" verdict.
      */
     fun seekBackToTop(
         marker: String = "最近批量结果",
         maxSteps: Int = 40,
+        stride: Float = 0.25f,
     ) {
-        var previous = ""
         var steps = 0
         // D-217 walk diagnostics (revert before PR if not wanted)
         var exitedStationary = false
@@ -1686,11 +1708,26 @@ internal class AndroidScaleUi(
                 Log.i("ULScaleWalk", "seekReturn marker=${has(marker, prefix = true)} steps=$steps stationary=$exitedStationary")
                 return
             }
-            val current = nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text?.toString().orEmpty() }
+            val current = visibleTextFingerprint()
             // D-217 walk diagnostics (revert before PR if not wanted)
             if (steps % 10 == 0) Log.i("ULScaleWalk", "seek step=$steps texts=${current.take(80)}")
-            scroll(forward = false, fraction = 0.25f)
-            val after = nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text?.toString().orEmpty() }
+            scroll(forward = false, fraction = stride)
+            var after = visibleTextFingerprint()
+            var semantic = false
+            if (current.isNotEmpty() && current == after) {
+                // D-354: a gesture that changed nothing on a list that provably scrolls is an
+                // ineffective gesture, not a parked viewport. Drive the container's own
+                // ACTION_SCROLL_BACKWARD once (the D-344 channel), count it, then re-sample.
+                semantic = scrollByAccessibilityAction(forward = false)
+                if (semantic) after = visibleTextFingerprint()
+            }
+            // D-354: one bounded trace line per step, so a failed trip is readable from logcat — the
+            // shard-2 failure left eight samples and no reading of any of them.
+            Log.i(
+                "ULScaleWalk",
+                "seekReturn step=$steps moved=${current != after} semantic=$semantic stride=$stride " +
+                    "before=${current.take(SEEK_TRACE_CHARS)} after=${after.take(SEEK_TRACE_CHARS)}",
+            )
             if (current.isNotEmpty() && current == after) {
                 stationaryCount++
                 runCatching { resetAutomationCache() }
@@ -1717,11 +1754,40 @@ internal class AndroidScaleUi(
             } else {
                 stationaryCount = 0
             }
-            previous = after
         }
         // D-217 walk diagnostics (revert before PR if not wanted)
         Log.i("ULScaleWalk", "seekReturn marker=${has(marker, prefix = true)} steps=$steps stationary=$exitedStationary")
     }
+
+    /**
+     * D-354: one scroll driven by the container's own accessibility action — the channel D-344 proved
+     * on this screen when gesture injection was refused after a force-stop relaunch.
+     * [seekBackToTop] calls it when a backward gesture provably changes nothing, so an ineffective
+     * gesture becomes one page-sized semantic step instead of a false "stationary" verdict. A
+     * performed action counts in [scrollActionFallbacks] exactly like [scroll]'s refusal fallback.
+     * Forward is D-344-proven; backward is the same platform action and is expected to page, but it is
+     * unproven on this list — the caller's per-step line records `semantic=` and `moved=` either way,
+     * so the next device run answers it instead of us.
+     */
+    private fun scrollByAccessibilityAction(forward: Boolean): Boolean {
+        tick()
+        val action =
+            if (forward) {
+                AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+            } else {
+                AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+            }
+        val performed = scrollable().performAction(action)
+        if (performed) {
+            scrollActionFallbacks++
+            settle()
+        }
+        return performed
+    }
+
+    /** D-354: the return trip's movement sample — visible texts only, the shape D-217 shipped. */
+    private fun visibleTextFingerprint(): String =
+        nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text?.toString().orEmpty() }
 
     fun traverse(expected: List<ScaleRow>): Int {
         check(expected.isNotEmpty())
