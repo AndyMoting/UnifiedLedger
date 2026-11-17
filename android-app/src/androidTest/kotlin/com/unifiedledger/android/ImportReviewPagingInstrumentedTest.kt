@@ -30,6 +30,15 @@ private const val LIST_TOP_MARKER = "刷新清单"
 private const val AFFORDANCE_SEEK_SCROLLS = 6
 
 /**
+ * The bound on the completion read's visible effect. The click issues one asynchronous keyset read
+ * (`requestMoreImportReview` → `queryPage(cursor)` → `AppendImportReviewPage`), so the affordance only
+ * disappears once that result lands and the cursor is null; `settle()` settles the frame, not the
+ * read. The bound matches the harness's own page-load wait (`AndroidScaleUi` `PAGE_LOAD_TIMEOUT_MS`,
+ * 60s), so a legitimate page read on this 150-row library cannot outlast it.
+ */
+private const val COMPLETION_WAIT_MILLIS = 60_000L
+
+/**
  * The 加载更多 page-crossing contract of the import review list, measured on the rendered list at a
  * three-page size (150 candidates at `IMPORT_REVIEW_PAGE_SIZE = 50L`, `P503App.kt:5966`).
  *
@@ -60,7 +69,11 @@ private const val AFFORDANCE_SEEK_SCROLLS = 6
  *    still non-null (a full page was returned), so one more click is offered; that click's read
  *    returns no row and a null cursor (`SqlDelightImportReviewReadAdapter.loadImportReviewPage`), so
  *    the affordance disappears (`P503ImportReviewPresentation.kt:1484`) and no row was appended after
- *    the last expected one — there is no affordance left to duplicate rows with.
+ *    the last expected one — there is no affordance left to duplicate rows with. The disappearance is
+ *    AWAITED, not asserted inline: the click starts an asynchronous read, so the test waits up to
+ *    [COMPLETION_WAIT_MILLIS] for the affordance and counts the polls, and its failure text reports
+ *    whether the list grew (the read served another page — a pagination defect) or stayed the same
+ *    (the affordance lingers with nothing left to serve — a product finding, not a race).
  *
  * HOW ROWS ARE IDENTIFIED. Never by index: each row is the harness's own render signature —
  * `amount|kind-and-facts line` (`AndroidScaleUi.candidateNodes`/`signatureOrNull`), built here from
@@ -140,7 +153,10 @@ class ImportReviewPagingInstrumentedTest {
         )
         log("pages=1..3 sizes=${pageOne.size}/${pageTwo.size}/${pageThree.size} clicks=${ui.traversalPageClicks} rows=${walked.size}")
 
-        // ---- the terminal state: one completion read appends nothing and closes the cursor
+        // ---- the terminal state: one completion read appends nothing and closes the cursor.
+        // The click issues an asynchronous read, so its effect is awaited (bounded) instead of being
+        // asserted in the same breath; the failure text separates "the read served another page" from
+        // "the affordance lingers with nothing left to serve".
         val itemsBeforeCompletion = renderedItemCount(ui)
         ui.seek(LOAD_MORE_DESCRIPTION, maxScrolls = AFFORDANCE_SEEK_SCROLLS)
         ui.click(LOAD_MORE_DESCRIPTION)
@@ -149,12 +165,37 @@ class ImportReviewPagingInstrumentedTest {
             "the completion read must leave the tail row in place, got no ${expectedAmounts.last()}",
             ui.has(expectedAmounts.last()),
         )
-        assertFalse(
-            "a complete list must not render the next-page affordance (a null cursor is the completion state)",
-            ui.has(LOAD_MORE_DESCRIPTION),
+        var completionPolls = 0
+        val affordanceGone =
+            runCatching {
+                ui.await(COMPLETION_WAIT_MILLIS, onPoll = { completionPolls++ }) { !ui.has(LOAD_MORE_DESCRIPTION) }
+            }.isSuccess
+        val itemsAfterCompletion = renderedItemCount(ui)
+        val affordancePresent = ui.has(LOAD_MORE_DESCRIPTION)
+        val completionVerdict =
+            when {
+                affordanceGone && !affordancePresent ->
+                    "the affordance disappeared within the wait after $completionPolls poll(s), so an inline assertion had raced the asynchronous read: no product finding"
+                itemsBeforeCompletion == null || itemsAfterCompletion == null ->
+                    "the item count is not observable ($itemsBeforeCompletion -> $itemsAfterCompletion), so growth is undetermined"
+                itemsAfterCompletion > itemsBeforeCompletion ->
+                    "the list GREW across the completion read ($itemsBeforeCompletion -> $itemsAfterCompletion), so the read served another page: a pagination defect, not a race"
+                else ->
+                    "the list did not grow ($itemsBeforeCompletion -> $itemsAfterCompletion), so the affordance lingers with nothing left to serve: a product finding, not a race"
+            }
+        log(
+            "terminal rows=${walked.size} affordancePresent=$affordancePresent affordanceGone=$affordanceGone " +
+                "items=$itemsBeforeCompletion..$itemsAfterCompletion polls=$completionPolls waitMillis=$COMPLETION_WAIT_MILLIS verdict=$completionVerdict",
+        )
+        assertTrue(
+            "the next-page affordance must disappear within $COMPLETION_WAIT_MILLIS ms of the completion read " +
+                "(a null cursor is the completion state); observed affordancePresent=$affordancePresent, " +
+                "affordanceGone=$affordanceGone, polls=$completionPolls (one poll is the immediate read, so " +
+                "polls > 1 means the disappearance lagged the frame), itemsBefore=$itemsBeforeCompletion, " +
+                "itemsAfter=$itemsAfterCompletion, verdict=$completionVerdict",
+            affordanceGone && !affordancePresent,
         )
         assertFalse("a complete list must not render the page-1 加载更多 button either", ui.has(LOAD_MORE_TEXT))
-        log("terminal rows=${walked.size} affordance=absent items=$itemsBeforeCompletion..${renderedItemCount(ui)} duplicates=0 gaps=0")
     }
 }
 
