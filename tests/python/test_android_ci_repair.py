@@ -400,8 +400,12 @@ class HostOrchestration(unittest.TestCase):
         # after boot. Monotonic time is calibrated once and remains authoritative.
         scenarios = (("preflight", 1900, 1000, 600),
                      ("preflight", 1900, 1300, 450),
-                     ("maximum", 15400, 1300, 13800),
-                     ("maximum", 15400, 1700, 13550))
+                     # D-346: the maximum mode's own ceiling moved 13800 → 19800, so the first
+                     # row is now bound by the outer envelope (14050 - 150 reserve - 100 started)
+                     # instead of by the mode cap; the last row pins the new ceiling itself.
+                     ("maximum", 15400, 1300, 13950),
+                     ("maximum", 15400, 1700, 13550),
+                     ("maximum", 40000, 1300, 19800))
         for index, (mode, outer, wall, expected) in enumerate(scenarios):
             with self.subTest(mode=mode, wall=wall), patch("android_scale.runner.time.time", return_value=wall), patch("android_scale.runner.time.monotonic", return_value=100):
                 runner = ScaleRunner(self.root / "fixture", self.root / f"budget-{index}", self.runner.app, self.runner.test,

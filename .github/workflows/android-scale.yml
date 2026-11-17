@@ -125,7 +125,7 @@ jobs:
     name: Android maximum-scale long test
     needs: apks
     runs-on: ubuntu-24.04
-    timeout-minutes: 350
+    timeout-minutes: 360
     env:
       TZ: Asia/Shanghai
       LANG: zh_CN.UTF-8
@@ -157,7 +157,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Record outer deadline before emulator boot
-        run: echo "ANDROID_CI_OUTER_DEADLINE_EPOCH=$(( $(date +%s) + 19800 ))" >> "$GITHUB_ENV"
+        run: echo "ANDROID_CI_OUTER_DEADLINE_EPOCH=$(( $(date +%s) + 20400 ))" >> "$GITHUB_ENV"
       - name: Run the scale chain on the pinned emulator
         timeout-minutes: 330
         env:

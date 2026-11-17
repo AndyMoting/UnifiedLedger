@@ -367,7 +367,7 @@ class ReducerRejectsPartialEvidence(unittest.TestCase):
         self.assertEqual(STAGES.index("traversal"), STAGES.index("reopen") + 1)
         build_valid(self.directory)
         device = load(self.directory, "device.json")
-        device["stages"]["reopen"]["elapsedMs"] = 5400001
+        device["stages"]["reopen"]["elapsedMs"] = 9000001
         save(self.directory, "device.json", device)
         self.assert_rejected()
 

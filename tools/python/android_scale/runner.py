@@ -298,7 +298,14 @@ class ScaleRunner:
         if outer_deadline_epoch is not None and not math.isfinite(outer_deadline_epoch):
             raise ValueError("outer deadline must be finite")
         self.outer_deadline = None if outer_deadline_epoch is None else self.started + outer_deadline_epoch - time.time()
-        mode_limit = 600 if mode == "preflight" else 13800
+        # D-346 (run 43986332756, 2026-11-17): this literal is the driver's own execution budget
+        # and it silently capped every earlier raise — host.json reported
+        # `execution_budget_seconds: 13800` while the workflow's outer envelope had already moved
+        # to 20400s, and that run died at elapsed 13728s on "global deadline exceeded" with the
+        # stage budgets still far from their own bounds (prepare 5051s + chain 1291s + reopen
+        # 7386s = 13728s). The maximum run now takes the outer envelope's ceiling and lets the
+        # min() below bind it to whatever the workflow actually granted.
+        mode_limit = 600 if mode == "preflight" else 19800
         self.deadline = self.started + mode_limit
         if self.outer_deadline is not None:
             self.deadline = min(self.deadline, self.outer_deadline - DIAGNOSTIC_SECONDS - CLEANUP_RESERVE_SECONDS)
@@ -430,7 +437,7 @@ class ScaleRunner:
         if config["api"] != "36" or config["abi"] != "x86_64":
             raise ValueError("wrong device image")
         self.device_deadline = int(float(self.adb("shell", "cat", "/proc/uptime").split()[0]) * 1000 +
-                                   remaining_seconds(self.deadline, time.monotonic(), 14400) * 1000)
+                                   remaining_seconds(self.deadline, time.monotonic(), 19800) * 1000)
 
     def pin_display(self, size: str = "1080x2400", density: str = "420", attempts: int = 5) -> None:
         """Pin the display size/density and confirm the override took effect.
