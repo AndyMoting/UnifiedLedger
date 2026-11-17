@@ -7880,3 +7880,32 @@ seekReturn marker=false steps=8 stationary=true
 **边界：** 入 = 本条。出 = 不改任何代码/测试/段预算/workflow；不回改 D-352/D-354/D-355 的正文（归因由本条状态行取代）。
 
 **关联决定：** D-349（有界前缀口径与 12 页/11 次点击的取值）、D-350（段预算 1800/2400 s，本条给出实测余量）、D-351（候选 id 前缀窗口，本轮单一末端等式通过）、D-352（load-then-walk 与回顶断言，本条收口其代价估算与上界余量）、D-353（走查独立成末相位，本轮 replay/final-reopen 首次执行即其目的）、D-354（stride 与语义回退，本条取代其归因）、D-355（有界轮询，本条确认其预算足够）、D-348（索引使 reopen 降到 104.5 s）、D-217（走查几何与树滞后，本轮 788 扫/0.76 行/扫的基线）。
+
+## D-357 两条写路径段拿到了显式上界，并给它们的耗时做分段归因
+
+**状态：** 已批准（2026-11-18；run `44166358259` 的段表实测 + 用户裁决；与 D-350 同类、低一层的「从未被执行过的上界」）
+
+**背景：** D-356 记录的段表里，两条写路径段首次执行，读数分别是 `same_request_replay` **179,995 ms**、`final_reopen` **168,925 ms**。两者都没有在 `result.py` 的 `limits` 里列名，因此走的是该字典给所有未列名阶段的默认值 `limits.get(stage, 180000)` —— 余量 **5 ms** 与 **11,075 ms**；测试侧同一把刀的另一面是 `stage(name, limitMs = 180000, action)` 的默认值（`AndroidScaleLongInstrumentedTest.kt:181`），即两条段在设备侧的 `tick()` 上界也是 180,000 ms。两条段在此之前的执行次数是 **0**（D-353 就是为了让它们能被执行），所以这个数字从来不是一条决定，而是 D-217 时代「所有段共用一个默认」的遗留：**与 D-350 同类的缺陷，只是低一层** —— 那条修的是被坏读路抬高的显式字面量，这条修的是从未被检验过的默认值。5 ms 的余量不是预算，是抛硬币抛赢了。
+
+**裁决：**
+1. **两侧同数：360,000 ms**。`result.py` 的 `limits` 增加 `"same_request_replay": 360000, "final_reopen": 360000`；测试侧改为 `stage("same_request_replay", 360000)`、`stage("final_reopen", 360000)`。依据：2× 实测最坏（179,995 / 168,925），与 D-349 的 2.8× 同一量级、远低于 D-350 的 11× —— 真回归仍然会在这里红，只是晚 180 s 红，而不是靠运气绿。
+2. **超界探针**：`tests/python/test_android_scale_result.py` 的越界循环增加 `("same_request_replay", 360000)` 与 `("final_reopen", 360000)`，各以 360,001 ms 断言被该段自己的上限拒绝（探针先把其后各段 `startedMs` 推到该段结束之后，仍是「由该段自己的上限拒」）。
+3. **分段归因（不改行为、不改断言）**：`replay` 段新增**七**个 `segment(...)` 计时（`replay.snapshotBefore`、`replay.savedQuery`、`replay.openGraph`、`replay.execute`、`replay.closeGraph`、`replay.snapshotAfter`、`replay.assertEconomics`），`final_reopen` 段两段（`final_reopen.snapshot`、`final_reopen.tail`）。每段一行 `Log.i`，走既有的 `ULStartup` 标签（D-328 的探针先例：失败轮的既有 grep 直接覆盖），形如 `scale.segment name=replay.snapshotBefore ms=…`，在 `finally` 里落盘，失败段也有读数。`stage()` 的 `elapsedMs` 只有一个数，无法区分「180 s 的活」与「180 s 的等待」—— 这正是本条要补的那一层。
+
+**归因（现状，实测 + 判断分开写）：**
+- **实测（本轮 `oracle.readPath` 轨迹）**：61k 行全量快照的查询段 **13.7–15.2 s**（`begin`→`queried`：04:44:55→04:45:11、04:49:41→04:49:55、04:52:38→04:52:52），比对段 0.4 s；51k 那一轮是 8.3 s。这是 D-348 的索引之后的价格，不是慢路径。
+- **判断（结构）**：`replay()` 自己就要 **三次**全量快照（`before`、回读、`assertEconomics` 内部再一次）＋一次回执查询＋`openGraph` ＋用例 `execute` ＋`assertFixture`（它对 150k 关系另有一次读事务）＋两份 61k 列表的逐行相等比较。按每次 ~14 s 计，仅快照约 45 s；剩下约一半耗时**当前无法归因**，正是分段日志要回答的问题。
+- **领先嫌疑（点名，不下结论）**：`AndroidScaleOracleRetry` 的重试栈——`LOCK_RETRY_MAX_ATTEMPTS = 12`、每次尝试 `PRAGMA busy_timeout=60000`（D-212）、退避 `min(1000<<(n-1), 5000)`（12 次合计约 52 s），以及 D-211 的日志静默门（`JOURNAL_WAIT_BUDGET_MS = 300000`、`JOURNAL_WAIT_POLL_MS = 1000`，连续 2 次空才放行）。**两次 60 s 的忙等 + 退避 + 一次 ~2 s 的门 ≈ 125 s**，落在观测区间内且不会失败——所以「179,995 ms 里有一部分是锁等待」在算术上完全可能。反过来也有一条**反对**它的证据：两条段在宿主 force-stop 之后执行，应用没有活写者，争用本应为零。
+- **同时点出一个不自洽**：日志门预算 300 s **大于**该段此前的 180 s 上界。若门真的跑满，段会以「scale deadline exceeded」这条**deadline 超时**死掉，而不是报锁——诊断会被错误标注。本条的 360 s 顺带让 300 s 的门第一次装得进它所在的段（300 < 360）；但若分段日志证实确实发生了重试，正确的后续是**用段的剩余预算去夹门**（或让 oracle 把重试尝试写进日志），而不是继续抬段上界。
+
+**为什么是 2× 而不是「再加一大截」：** 这条缺陷的本质是「上界从未经过决定」，不是「上界太小」。2× 保留「真回归会红」的判别力；把它抬到 D-350 那种 11× 会把一次真实的耗时回归吸收成绿灯。若分段日志显示耗时集中在一个非重试的固定段上，那时应修那个段而不是再抬上界。
+
+**相位与段的层次（改后仍自洽，已核）：** `PHASE_BUDGETS` 的 `replay` / `final-reopen` 各 **480 s**，新段上界 **360 s** ⇒ 480 > 360 仍成立，且 480 − 360 = 120 s 留给 instrumentation 启动与相位收尾；driver 的相位截止仍是外层硬界，`result.py` 的 21,600 s 证据上限、`mode_limit` 19,800 s 与 workflow 外层 20,400 s 全不动。`stage()` 的 `phaseDeadline = min(全局截止, started + 360000)` 与 reducer 的 `elapsedMs <= 360000` 现在同数，两侧不会再出现「设备侧还允许、证据侧已拒绝」的错位。
+
+**实测 vs 判读：** 两个段值、两条默认值、2× 比例、`readPath` 的 13.7–15.2 s、重试常量与 300 s 门预算都是**读出来的**（`device.json`、`result.py`、`AndroidScaleLongInstrumentedTest.kt:181`、`AndroidScaleOracleRetry.kt:35/42/62/69/85`）；「180 s 里有锁等待」是**算术上可能、尚未证明**；「剩下的约一半耗时在哪」**未知**，由下一跑的分段日志回答。
+
+**边界：** 入 = `result.py` 的 `limits` 两条目与注释、`AndroidScaleLongInstrumentedTest` 的两处 `stage(...)` 字面量、新增私有 `segment` 助手与 `replay`/`finalReopen` 的分段计时、`tests/python/test_android_scale_result.py` 的两条越界探针、本条。出 = 不改任何其他段字面量、不改 `PHASE_BUDGETS`、不改走查/相位顺序/reducer 其他判据、不改 `AndroidScaleOracleRetry` 的任何预算（300 s 门只记录不自改）、不改产品代码、不回改 D-217/D-344/D-348/D-350/D-353/D-356 的历史记录。
+
+**残留风险：** ①`179,995 ms` 的成因仍未定：下一跑 `scale.segment` 的九行（replay 七 + final_reopen 两）会把它切开，若某一段独占大头，则那条段就是下一次决定的对象。②若证明是重试栈，则日志门的 300 s 预算必须按段预算夹紧——它是唯一一个「预算大于所属段上界」的等待。③360 s 只是把抛硬币变成有余量的判断，不解释耗时本身；两条段仍会随时长波动，下一跑若超过 360 s 会以该段自己的上限响亮失败（并带分段日志）。④`final_reopen` 的 168,925 ms 里有 `reopenTail` 的经济 UI 段与一次全量快照，分段日志这次会第一次给出它的拆解。
+
+**关联决定：** D-350（同类的显式上界修复，本条处理的是「默认值」而非「被抬高的字面量」）、D-356（本条的证据来源：段表与 5 ms 余量）、D-353（使这两个段第一次被执行）、D-217 round 21（`stage()` 的 180,000 ms 默认与其后的 reopen 显式上界）、D-212（每次尝试 60 s 的 busy_timeout）、D-211（日志静默门与它的 300 s 预算）、D-209（12 次重试与退避）、D-348（使一次 61k 快照降到 ~14 s，本条据此估出快照地板价）。
