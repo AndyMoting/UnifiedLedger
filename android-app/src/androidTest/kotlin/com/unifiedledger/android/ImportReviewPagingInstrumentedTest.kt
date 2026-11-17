@@ -58,15 +58,16 @@ private const val REVIEW_READ_FAILED_TEXT = "导入清单读取失败；以下�
  * duplicated or dropped row at a page boundary could not have been caught. This case crosses two
  * page boundaries and then reads the completion state.
  *
- * HOW THE WALK READS THE SEAM (D-349). `AndroidScaleUi.collectTraversal` takes a whole-page target
- * and, at every page boundary it reaches, proves the covered prefix against the caller's expected
- * rows and then clicks the product's own affordance (`loadNextPage` → `requestMoreImportReview` →
- * one keyset page read). The test therefore does not click between walks: the walk owns the page
- * transitions, and [expectedWindow] is the fixture's own expected row signatures, so a duplicated or
- * dropped row fails at the page where it happened. The library is 150 rows — three whole pages —
- * because a target that leaves a short last page cannot be walked at all
- * (`check(targetRows % IMPORT_REVIEW_PAGE_ROWS == 0)`), and a walked tail must end on a page boundary
- * to be provable. `traversalPages`/`traversalPageClicks` record the walk's own page count and clicks.
+ * HOW THE WALK READS THE SEAM (D-349, D-352). `AndroidScaleUi.collectTraversal` takes a whole-page
+ * target, loads every page up front through the product's own affordance (`loadNextPage` →
+ * `requestMoreImportReview` → one keyset page read per click), returns to the top once and then walks
+ * the now-static list, proving the covered prefix against the caller's expected rows exactly once, at
+ * the end. The test therefore does not click between walks: the walk owns the page transitions, and
+ * [expectedWindow] is the fixture's own expected row signatures, so a duplicated or dropped row fails
+ * loudly. The library is 150 rows — three whole pages — because a target that leaves a short last
+ * page cannot be walked at all (`check(targetRows % IMPORT_REVIEW_PAGE_ROWS == 0)`), and a walked tail
+ * must end on a page boundary to be provable. `traversalPages`/`traversalPageClicks` record the walk's
+ * own page count and clicks.
  *
  * WHAT IT PROVES, page by page, in the rendered list's own terms:
  *  - the walk covers exactly the seeded library: three pages, two next-page clicks, every row once
@@ -119,8 +120,8 @@ class ImportReviewPagingInstrumentedTest {
         ui.openImportViaDrawer()
         ui.await { ui.has(LIST_TOP_MARKER) }
 
-        // ---- one prefix walk: it clicks the product's affordance at each page boundary and proves
-        // the covered prefix there, so a duplicated or dropped row fails at the seam it happened on.
+        // ---- one prefix walk: it loads all three pages up front through the product's affordance,
+        // then walks the now-static list once and proves the covered prefix at the end (D-352).
         val walked =
             ui.collectTraversal(
                 targetRows = candidates,

@@ -155,7 +155,7 @@ def build_valid(directory: Path, *, sha: str = SHA, ready_copy: str = EMPTY_LEDG
     (directory / "device.json").write_text(json.dumps(device), encoding="utf-8")
     for phase in PHASES:
         (directory / f"instrumentation-{phase}.txt").write_text(status_log(), encoding="utf-8")
-    root = ET.Element("testsuite", name="AndroidMaximumScale", tests="5", failures="0",
+    root = ET.Element("testsuite", name="AndroidMaximumScale", tests=str(len(PHASES)), failures="0",
                       errors="0", skipped="0")
     for phase in PHASES:
         ET.SubElement(root, "testcase", name=phase, classname=TEST_CLASS, time="1.0")
@@ -378,30 +378,32 @@ class ReducerRejectsPartialEvidence(unittest.TestCase):
                     validate_evidence(self.directory, SHA)
                 self.assertIn(f"stage did not pass: {stage}", str(caught.exception))
 
-    def test_traversal_is_a_sibling_stage_immediately_after_reopen(self):
-        # D-217 round 21 (closure review): the walk is registered only after
-        # the reopen stage fully completes, so STAGES must list traversal
-        # immediately after reopen — a traversal nested inside reopen starts
-        # after reopen started and can never satisfy the strictly increasing
-        # startedMs rule. The reopen cap is explicit (D-350 tightened it back to
-        # 1800000ms after D-348 fixed the read path that D-342/D-345 had raised
-        # the bound to 9000000ms for), and the walk itself stays under
-        # traversal's 2400000ms entry — pinned behaviourally by rejecting a
-        # reopen stage one millisecond over the cap.
-        self.assertEqual(STAGES.index("traversal"), STAGES.index("reopen") + 1)
+    def test_traversal_is_the_last_stage_after_final_reopen(self):
+        # D-353: the walk moved out of the reopen phase into its own last phase, so STAGES must list
+        # traversal after final_reopen — the two write-path re-verifications run first and must never
+        # be hostage to a UI walk (runs 21/23/24: three consecutive runs never executed them). The
+        # startedMs rule below reads this declaration order, so a traversal declared earlier would
+        # reject every honest timeline. The reopen cap stays explicit (D-350 tightened it back to
+        # 1800000ms after D-348 fixed the read path that D-342/D-345 had raised the bound to
+        # 9000000ms for), and the walk itself stays under traversal's 2400000ms entry — pinned
+        # behaviourally by rejecting a reopen stage one millisecond over its own cap.
+        self.assertEqual(PHASES, ("prepare", "chain", "reopen", "replay", "final-reopen", "traversal"))
+        self.assertEqual(STAGES[-1], "traversal")
+        self.assertEqual(STAGES.index("traversal"), STAGES.index("final_reopen") + 1)
         build_valid(self.directory)
         device = load(self.directory, "device.json")
         device["stages"]["reopen"]["elapsedMs"] = 1800001
-        device["stages"]["traversal"]["startedMs"] = device["stages"]["reopen"]["startedMs"] + 1800002
+        end = device["stages"]["reopen"]["startedMs"] + 1800001
+        for index, later in enumerate(STAGES[STAGES.index("reopen") + 1:]):
+            device["stages"][later]["startedMs"] = end + 1000 + index * 1000
         save(self.directory, "device.json", device)
         self.assert_rejected()
 
-    def test_accepts_the_round21_reopen_then_traversal_timeline(self):
-        # D-217 round 21 (closure review): the legal post-fix timeline —
-        # the chain stages with increasing startedMs, then reopen under its
-        # explicit 1800000ms cap, then traversal starting after reopen and
-        # finishing under 2400000ms, then the two short final stages. The
-        # nested-walk design could never produce this shape.
+    def test_accepts_the_write_path_phases_before_the_walk_timeline(self):
+        # D-353: the legal post-fix timeline — the chain stages with increasing startedMs, then
+        # reopen under its explicit 1800000ms cap, then the two write-path phases, then the walk in
+        # its own last phase under 2400000ms. The old nesting (walk inside reopen, replay and
+        # final-reopen after it) could never produce this shape once the walk failed.
         build_valid(self.directory)
         device = load(self.directory, "device.json")
         timeline = {
@@ -416,11 +418,12 @@ class ReducerRejectsPartialEvidence(unittest.TestCase):
             "batch_confirmation": (600000, 100000),
             "group_disposition": (750000, 300000),
             "detail_monthly_refresh": (1200000, 50000),
-            # D-350: the measured reopen (166s) and the D-349 prefix walk (~14 min).
+            # D-350: the measured reopen (166s); D-353: the write-path phases come next and the walk
+            # runs last, in its own phase, after them.
             "reopen": (1300000, 166000),
-            "traversal": (1500000, 840000),
-            "same_request_replay": (2400000, 60000),
-            "final_reopen": (2500000, 60000),
+            "same_request_replay": (1500000, 60000),
+            "final_reopen": (1600000, 60000),
+            "traversal": (1700000, 840000),
         }
         self.assertEqual(set(timeline), set(STAGES))
         device["stages"] = {
@@ -869,10 +872,12 @@ class RunnerGuardsAreOfflineTestable(unittest.TestCase):
             self.assertEqual(host["sha"], SHA)
             self.assertLessEqual(host["elapsed_seconds"], 13800)
             suite = ET.parse(root / "evidence" / "junit.xml").getroot()
-            self.assertEqual(suite.get("tests"), "6")
+            # D-353: one case per phase plus the report row, and every phase but the one that ran is
+            # marked skipped — derived from PHASES so a phase-matrix change cannot strand a literal.
+            self.assertEqual(suite.get("tests"), str(len(PHASES) + 1))
             self.assertEqual(suite.get("failures"), "0")
             self.assertEqual(suite.get("errors"), "1")
-            self.assertEqual(suite.get("skipped"), "4")
+            self.assertEqual(suite.get("skipped"), str(len(PHASES) - 1))
             names = [case.get("name") for case in suite.findall("testcase")]
             self.assertEqual(names, ["evidence"] + list(PHASES))
             cases = suite.findall("testcase")[1:]
@@ -1400,12 +1405,15 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
         self.assertEqual(set(PHASES), set(PHASE_BUDGETS))
         self.assertIsNone(PHASE_BUDGETS["prepare"])
         self.assertIsNone(PHASE_BUDGETS["chain"])
-        # D-217 round 12: the collection walk moved into reopen(), so that
-        # phase hosts both stages; its 18000s is an envelope above their own
-        # bounds (D-350: reopen 1800s + traversal 2400s), not a walk budget.
-        # replay/final-reopen stay short.
+        # D-350: reopen's 18000s stays the envelope it carried while it hosted both stages; it is an
+        # upper bound, not a reservation.
         self.assertEqual(PHASE_BUDGETS["reopen"], 18000)
-        self.assertTrue(all(PHASE_BUDGETS[phase] == 480 for phase in PHASES[3:]))
+        # replay/final-reopen stay short.
+        self.assertTrue(all(PHASE_BUDGETS[phase] == 480 for phase in ("replay", "final-reopen")))
+        # D-353: the walk's own last phase gets an envelope above the test-side stage bound, or the
+        # host would cut a walk the device test is still entitled to run.
+        self.assertEqual(PHASE_BUDGETS["traversal"], 3000)
+        self.assertGreater(PHASE_BUDGETS["traversal"] * 1000, 2400000)
 
     def test_last_match_reports_unreadable_device_output(self):
         self.assertEqual("1080x2400", last_match(r"size: ([0-9]+x[0-9]+)", "Physical size: 1080x2400\n", "display size"))

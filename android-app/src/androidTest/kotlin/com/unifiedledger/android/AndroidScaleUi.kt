@@ -22,7 +22,8 @@ private const val DRAWER_ROW_TIMEOUT_MS = 30_000L
 
 /**
  * D-349: the product's review-list page size, `IMPORT_REVIEW_PAGE_SIZE = 50L` (P503App.kt:5966). One
- * 「加载更多导入候选」 click loads this many rows, so it is also the traversal prefix's page seam.
+ * 「加载更多导入候选」 click loads this many rows, so it is also the traversal prefix's page size:
+ * D-352 loads `targetRows / this - 1` pages before the walk and proves the prefix once at the end.
  */
 internal const val IMPORT_REVIEW_PAGE_ROWS = 50
 
@@ -44,8 +45,43 @@ private const val PAGE_LOAD_TIMEOUT_MS = 60_000L
 /** D-349: how many times one page may be asked for before the walk fails loudly. */
 private const val PAGE_LOAD_ATTEMPTS = 3
 
-/** D-349: how many gentle forward scrolls may be spent bringing the affordance into the viewport. */
-private const val PAGE_REVEAL_SCROLLS = 8
+/**
+ * D-349: how many forward scrolls may be spent bringing the affordance into the viewport. D-352: the
+ * load-then-walk shape starts each reveal at the top of the loaded slice instead of one row below the
+ * walk's parked bottom, so the reveal crosses up to [IMPORT_REVIEW_PAGE_ROWS] rows instead of one and
+ * is bounded in pages rather than in rows. The 0.6 stride is safe because the loop re-checks
+ * `has(LOAD_MORE_AFFORDANCE)` before every step and one step spans ~7 rows against a ~12-row
+ * viewport, so no single step can carry the affordance through the viewport unseen — NOT because of
+ * where the affordance sits: `P503ImportReviewPresentation.kt:1484-1506` renders `BatchConfirmButton`,
+ * the batch-result block and the unknown-check items AFTER `LoadMore`. It reads no row, so D-217's
+ * 0.12 collection stride (fitted to reading rows between samples) does not apply here, and [seek]
+ * already walks to a target text at the default 0.6. A miss is loud, never silent: the final `check`
+ * names the step count. 24 steps at ~7 rows each is ~3.5 pages.
+ */
+private const val PAGE_REVEAL_SCROLLS = 24
+
+/**
+ * D-352/D-354: rows one return-trip gesture is expected to cross, re-derived from the only measured
+ * 0.6-stride rate this list has — the reveal of the paging case, which crossed a whole 50-row page in
+ * 12 and 17 steps (≈4.2 and ≈3 rows per gesture; the extra steps are the client tree's ~5-sample lag
+ * being paid inside the loop), so 3 is the observed floor and the tree lag applies to the return trip
+ * too. [collectTraversal] bounds the trip at twice the rows that implies: 600 / 3 × 2 = 400 steps.
+ * The D-354 semantic fallback never needs more — one ACTION_SCROLL_BACKWARD covers a viewport (≈12
+ * rows) — so it cannot exceed this bound either.
+ */
+private const val SEEK_TOP_ROWS_PER_SCROLL = 3
+
+/** D-354: how much of each before/after visible-text sample the return trip's per-step line quotes. */
+private const val SEEK_TRACE_CHARS = 60
+
+/**
+ * D-355: how long one return-trip channel's move may take to show up in the client tree. The tree
+ * lags gestures by ~5 samples (D-217 round 15), so the budget is ~5 polls of [SEEK_MOVE_POLL_MS].
+ */
+private const val SEEK_MOVE_TIMEOUT_MS = 1_500L
+
+/** D-355: the gap between two movement polls; one lag sample. */
+private const val SEEK_MOVE_POLL_MS = 200L
 
 /**
  * D-351: how many difference entries a seam mismatch echoes per direction. The full sorted lists
@@ -77,11 +113,15 @@ internal class AndroidScaleUi(
      * refused. Evidence only — the chain reads it to tell "the harness fell back" from "the
      * harness drove real gestures", which is the difference between a trustworthy and a
      * suspicious pass on the traversal stage.
+     *
+     * D-354: it also counts the return trip's ineffective-gesture fallback
+     * ([scrollByAccessibilityAction]), so a nonzero reading means "an accessibility action served a
+     * scroll" — injection refused, or a backward gesture that moved nothing.
      */
     var scrollActionFallbacks: Int = 0
         private set
 
-    /** D-349: how many prefix pages the last [collectTraversal] covered. Evidence only. */
+    /** D-349: how many prefix pages the last [collectTraversal] loaded — D-352 loads them all before the walk. */
     var traversalPages: Int = 0
         private set
 
@@ -1120,13 +1160,17 @@ internal class AndroidScaleUi(
 
     /**
      * D-217: collect-only traversal, multiset-preserving. Walks the review list
-     * top-down — a forward pass to the stationary bottom of each loaded page —
-     * recording ONE entry per rendered row occurrence, and returns the collected
-     * signature list (the caller stores it as observedCandidates). The list
-     * renders the product's class groups in query order, a different domain from
-     * the spec's row order, so no in-chain alignment is attempted; reopen()
-     * compares the collected list against the oracle's quiescent displayRows as
-     * an exact multiset (same size, same frequencies).
+     * top-down — one forward pass to the stationary bottom of the loaded list
+     * (D-352 loads every page first) — recording ONE entry per rendered row
+     * occurrence, and returns the collected signature list (the caller stores it
+     * as observedCandidates). The list renders the product's class groups in
+     * query order, a different domain from the spec's row order, so no in-chain
+     * alignment is attempted; the walk is compared against [expectedWindow], which
+     * the caller builds as `snapshot.rows.take(rows)` — the candidate-id prefix
+     * the pages load, NOT the whole population's `displayRows` class order
+     * (D-351) — as an exact multiset (same size, same frequencies), and since
+     * D-352 that comparison runs once, at the end of this function
+     * ([verifyTraversalWindow]).
      *
      * Overlap resolution, not value dedupe: a signature is NOT injective (the
      * maximum fixture has ~11,000 distinct signatures for 61,000 rows, so a
@@ -1155,15 +1199,14 @@ internal class AndroidScaleUi(
      * rows, parked, and failed the old `sawAnchor` gate, whose unique-session row
      * sits at rank 61,000. Measured on that run: 1.01s per scan at 0.78 rows per
      * scan, so an exhaustive walk needs ~21.9h and 1,220 clicks. The walk now
-     * takes [targetRows] rows — whole pages — and after each page's viewport
-     * parks it asserts [expectedWindow]: the covered slice's exact multiset.
-     * That seam assertion is what makes the prefix acceptable: at every page
-     * boundary the covered range is proven to hold each expected row exactly
-     * once, so a dropped or duplicated row fails at the page where it happened
-     * instead of disappearing into a short list.
-     * [loadNextPage] then clicks the affordance and waits (bounded) for the list
-     * to grow. The click is a read trigger only — one keyset page read through
-     * the product's own path, no write — so the traversal stage's state-silence
+     * takes [targetRows] rows — whole pages — and proves the covered slice as an
+     * exact multiset once, at the end (D-352). That proof is what makes the prefix
+     * acceptable: the covered range is proven to hold each expected row exactly
+     * once, so a dropped or duplicated row fails loudly instead of disappearing
+     * into a short list.
+     * [loadNextPage] clicks the affordance and waits (bounded) for the list to
+     * grow. The click is a read trigger only — one keyset page read through the
+     * product's own path, no write — so the traversal stage's state-silence
      * invariant survives, and the stage's tail re-reads the oracle and asserts
      * equality, which is what proves it.
      *
@@ -1177,10 +1220,26 @@ internal class AndroidScaleUi(
      * class-then-id order of the WHOLE population — mixes two different
      * sequences: run 44127054663 failed at 50/50 that way, because the chain
      * confirmed one candidate of the loaded page and the class order therefore
-     * pulled one row from beyond the page into its place. The seam compares
+     * pulled one row from beyond the page into its place. The proof compares
      * multisets (the render order inside a slice is class-major, the load order
      * is not) and, on mismatch, records the payload [onSeamMismatch] is handed
      * so the failure can be judged from the artifact instead of another run.
+     *
+     * D-352 — LOAD-THEN-WALK. The list renders the whole loaded slice class-major
+     * (`importCandidateClassGroups` filters `view.rows` by
+     * `IMPORT_CANDIDATE_CLASS_DISPLAY_ORDER`, and the adapter appends each keyset
+     * page to `view.rows`), so loading page two re-renders the one confirmed row
+     * after 99 pending rows instead of 49 while the viewport keeps its pixel
+     * offset. Run 44144034199 hit exactly that: page one's seam passed
+     * (collected=50, tail = the chain-confirmed ordinal-0 row), the page-two load
+     * re-ordered the slice, the viewport no longer overlapped the collected tail,
+     * no k satisfied the unique-contiguous-overlap rule, and the fourth backward
+     * retry threw "traversal window did not overlap" — structurally, at all
+     * eleven page boundaries. So no walk runs between the loads: every page is
+     * loaded up front, the viewport returns to the top once, one walk covers the
+     * now-static list, and the exact multiset proof runs once at the end. Same
+     * acceptance strength — the same [targetRows]-row window and the same exact
+     * multiset equality — checked once instead of at each page seam.
      *
      * [targetRows] is the walk's whole bound; the internal safety cap
      * (targetRows*4 + 200) keeps the pre-D-349 stuck-viewport guard shape above
@@ -1205,15 +1264,17 @@ internal class AndroidScaleUi(
         // device run then hit. Seek the list top first — the TitleBar
         // (「刷新清单」, the first render item of the review list) is
         // guaranteed on this screen at this stage and is visible only at the
-        // top; seekBackToTop is bounded and silent when the container refuses
-        // to move, so the worst case is the pre-fix behavior, and the
-        // await/miss-reset inside the walk below still applies.
+        // top; seekBackToTop is bounded and never throws when the container
+        // refuses to move, so this call itself stays silent — a top it cannot
+        // reach is caught by the end-of-walk multiset proof (D-352), and the
+        // return-trip assertion below names the same failure at the second trip.
         // D-217 round 5: the old small downward header-search loop with its
         // fatal `check(found)` gate is REMOVED. The header anchor added
         // nothing the collection itself does not already pin, and the same
         // mid-list/stale-tree fragility that broke the detail walk would kill
-        // traversal at exactly that gate; D-349's page-seam proof pins the
-        // covered range harder than any header sighting. The pending group is
+        // traversal at exactly that gate; the covered-window multiset proof
+        // (D-349/D-351, run once at the end since D-352) pins the covered range
+        // harder than any header sighting. The pending group is
         // the FIRST group of the review list, so the first non-empty window
         // after the top seek is the pending group's own rows and the seeding
         // logic below starts the collection correctly.
@@ -1221,6 +1282,33 @@ internal class AndroidScaleUi(
         // D-217 walk diagnostics (revert before PR if not wanted)
         Log.i("ULScaleWalk", "collect seekDone markerVisible=${has("刷新清单")} pendingVisible=${has("待确认——缺用户决策", prefix = true)} rows=${candidateNodes().size}")
         check(targetRows > 0 && targetRows % IMPORT_REVIEW_PAGE_ROWS == 0) { "traversal prefix target must be whole pages: $targetRows" }
+        // D-352 phase 1 — load every page first and read no row between the loads.
+        // Page one is already loaded, so a whole-page target needs one click per
+        // remaining page; [loadNextPage] logs each load's reveal steps and growth
+        // wait, so a stuck affordance is diagnosable from logcat instead of from
+        // another run.
+        traversalPages = 1
+        traversalPageClicks = 0
+        repeat(targetRows / IMPORT_REVIEW_PAGE_ROWS - 1) {
+            loadNextPage()
+            traversalPages++
+        }
+        // D-352 phase 2 — return to the top ONCE, then walk the now-static list. The
+        // loads leave the viewport at the bottom of the loaded slice, so this return
+        // trip spans the whole prefix. D-354: it uses the 0.6 stride the reveal proves on
+        // this very list (0.25 backward was never exercised outside the list top), and the
+        // bound is two return trips' worth at the measured ~3 rows per 0.6 gesture.
+        seekBackToTop("刷新清单", maxSteps = targetRows / SEEK_TOP_ROWS_PER_SCROLL * 2, stride = 0.6f)
+        // D-352 review: seekBackToTop is silent by contract (it can also stop stationary), so the
+        // return trip gets its own assertion. 「刷新清单」 is the list's own first render item
+        // (ImportReviewRenderItem.TitleBar), visible only at the top; without this check a short trip
+        // surfaces ~20 minutes later as "traversal prefix incomplete" or a multiset mismatch — the
+        // wrong diagnosis for a viewport that never got back.
+        check(has("刷新清单")) {
+            "traversal top return failed: 「刷新清单」 not visible after the return-trip seek " +
+                "(pages=$traversalPages maxSteps=${targetRows / SEEK_TOP_ROWS_PER_SCROLL * 2}); the walk would start mid-list"
+        }
+        Log.i("ULScaleWalk", "collect loaded markerVisible=${has("刷新清单")} pages=$traversalPages rows=$targetRows clicks=$traversalPageClicks")
         val collected = ArrayList<String>()
         // Bound by collected size, not a fixed scan budget: each forward scroll
         // advances ~1.5 rows of an ~11-13-row viewport (round-11 fraction
@@ -1232,23 +1320,7 @@ internal class AndroidScaleUi(
         var scans = 0L
         var retries = 0
         var stationaryCount = 0
-        var pageRows = IMPORT_REVIEW_PAGE_ROWS
-        traversalPages = 0
-        traversalPageClicks = 0
         while (collected.size < targetRows && scans++ < safetyCap) {
-            // D-349 page seam: the loaded list holds exactly `pageRows` rows, so
-            // reaching that count proves this page fully covered. Prove the
-            // covered window row-for-row, then ask the list for the next page.
-            if (collected.size == pageRows) {
-                verifyTraversalWindow(collected, expectedWindow, pageRows, onSeamMismatch)
-                traversalPages++
-                loadNextPage()
-                // The new page's rows are data now, not yet a fresh viewport: the
-                // parking verdict must not fire while they are still coming.
-                stationaryCount = 0
-                pageRows += IMPORT_REVIEW_PAGE_ROWS
-                continue
-            }
             val sizeBefore = collected.size
             val window = candidateNodes().mapNotNull(::signatureOrNull)
             if (window.isEmpty() && collected.isEmpty()) {
@@ -1363,28 +1435,27 @@ internal class AndroidScaleUi(
                 stationaryCount = 0
             }
         }
-        // D-349: the LAST page's seam. The loop exits the moment the target is
-        // collected, so the seam branch above never runs for it.
-        if (collected.size == targetRows && traversalPages * IMPORT_REVIEW_PAGE_ROWS < targetRows) {
-            verifyTraversalWindow(collected, expectedWindow, targetRows, onSeamMismatch)
-            traversalPages++
-        }
-        // A stationary viewport or the safety cap ends the walk; if either
-        // fires before the target prefix is collected, fail loudly here with
-        // the real cause instead of returning a short list that only surfaces
-        // later as an opaque seam mismatch (D-217 review, kept by D-349).
+        // D-352: the old post-loop seam branch tested
+        // `traversalPages * IMPORT_REVIEW_PAGE_ROWS < targetRows`, which the load-first
+        // shape makes permanently false — every page is loaded before the walk, so
+        // [traversalPages] already equals `targetRows / IMPORT_REVIEW_PAGE_ROWS`. The
+        // branch is gone and the proof below runs unconditionally; the completeness
+        // check keeps its place in front of it, so a short walk still reports
+        // "prefix incomplete" with its counts instead of a count-only multiset mismatch.
         check(collected.size == targetRows) {
             "traversal prefix incomplete (collected=${collected.size} target=$targetRows pages=$traversalPages " +
                 "clicks=$traversalPageClicks scans=$scans stationary=$stationaryCount)"
         }
+        verifyTraversalWindow(collected, expectedWindow, targetRows, onSeamMismatch)
         return collected
     }
 
     /**
-     * D-349/D-351: the page-seam proof. The collected window must equal what the pages have loaded
-     * after [rows] candidates — see [collectTraversal] for why that is the candidate-id prefix and
-     * not the whole list's class order — as an exact multiset. Four checks, reported separately so
-     * a failure names the one that broke instead of only saying "mismatch":
+     * D-349/D-351/D-352: the covered window's exact-multiset proof — one call, at the end of the
+     * walk (D-352), over the whole prefix the pages loaded. The collected window must equal what the
+     * pages have loaded after [rows] candidates — see [collectTraversal] for why that is the
+     * candidate-id prefix and not the whole list's class order — as an exact multiset. Four checks,
+     * reported separately so a failure names the one that broke instead of only saying "mismatch":
      *
      * 1. count — the walk collected [rows] rows and the expectation holds [rows] rows;
      * 2. no excess — every collected signature is still available in the expected window's
@@ -1392,6 +1463,11 @@ internal class AndroidScaleUi(
      * 3. nothing missing — every expected row of the covered window was collected;
      * 4. every collected row is inside the window — which is a sub-multiset of the whole oracle
      *    population, so nothing outside the covered range was collected.
+     *
+     * Check 1 cannot fail at the current call site — [collectTraversal] enforces
+     * `collected.size == targetRows` before this call, and the caller's snapshot size guard makes
+     * `expected.size == rows` — so a `traversalSeamMismatch` payload's `failing` is only ever
+     * `missing` and/or `unexpected`; `count`/`countOk` stay as payload shape, not as a live outcome.
      *
      * On failure the host gets [onSeamMismatch] with both sorted lists, both multiset differences
      * with positions, and the collected order in walk order; the logcat line and the thrown message
@@ -1492,44 +1568,57 @@ internal class AndroidScaleUi(
     /**
      * D-349: loads the review list's next page — one click on the
      * 「加载更多导入候选」 affordance plus a bounded wait for the list to grow —
-     * and returns with the viewport still parked at the bottom of the list. The
+     * and returns with the viewport parked at the bottom of the list. The
      * click runs the product's own load-more path (`P503App.kt:2646` →
      * `queryPage(cursor)` → `AppendImportReviewPage`, which appends the page to
      * the rows already rendered), so it is ONE keyset read that writes nothing:
      * the traversal stage's state-silence invariant holds, and the stage's tail
      * re-reads the oracle and asserts equality, which proves it.
      *
+     * D-352: [collectTraversal] calls this once per page BEFORE any walk, so every
+     * call logs the reveal's step count, both item counts and the growth wait — a
+     * stuck affordance is then diagnosable from logcat instead of from another run.
+     *
      * Bounded three ways: [click] waits for the affordance itself (and errors
      * when it never appears), the growth wait is [PAGE_LOAD_TIMEOUT_MS], and the
      * click is retried at most [PAGE_LOAD_ATTEMPTS] times before the walk fails.
      * Growth is read from the list's own item count; when the client tree does
      * not expose it, the wait degrades to a single settled read and the next
-     * page walk's stall check becomes the bound.
+     * load's own reveal becomes the bound.
      */
     private fun loadNextPage() {
-        revealLoadMoreAffordance()
+        val revealSteps = revealLoadMoreAffordance()
         val before = renderedItemCount()
-        repeat(PAGE_LOAD_ATTEMPTS) {
+        repeat(PAGE_LOAD_ATTEMPTS) { attempt ->
+            val clickStarted = SystemClock.elapsedRealtime()
             click(LOAD_MORE_AFFORDANCE)
             traversalPageClicks++
-            if (awaitPageGrowth(before)) return
+            val grew = awaitPageGrowth(before)
+            val after = renderedItemCount()
+            Log.i(
+                "ULScaleWalk",
+                "collect page load pages=${traversalPages + 1} click=$traversalPageClicks attempt=${attempt + 1} " +
+                    "revealSteps=$revealSteps itemCount=$before..$after grew=$grew waitedMs=${SystemClock.elapsedRealtime() - clickStarted}",
+            )
+            if (grew) return
         }
-        error("$LOAD_MORE_AFFORDANCE did not extend the review list (itemCount=$before clicks=$traversalPageClicks)")
+        error("$LOAD_MORE_AFFORDANCE did not extend the review list (itemCount=$before revealSteps=$revealSteps clicks=$traversalPageClicks)")
     }
 
     /**
-     * D-349: brings the affordance into the viewport. It sits directly after the
-     * last loaded row, so a walk that stops the moment the last row is collected
-     * can leave it just below the fold. The same 0.12 fraction keeps every step
-     * inside the client tree's refresh window (D-217 round 11), and the count of
-     * steps is bounded by [PAGE_REVEAL_SCROLLS].
+     * D-349: brings the affordance into the viewport. It sits directly after the last loaded row, so
+     * a viewport parked at that row leaves it just below the fold; D-352's load-then-walk starts the
+     * reveal at the top of the loaded slice instead, so the bound is page-sized (see
+     * [PAGE_REVEAL_SCROLLS] for why the 0.6 stride is safe here and the 0.12 collection stride is not
+     * needed). Returns the steps it spent for [loadNextPage]'s log line.
      */
-    private fun revealLoadMoreAffordance() {
+    private fun revealLoadMoreAffordance(): Int {
         var steps = 0
         while (!has(LOAD_MORE_AFFORDANCE) && steps++ < PAGE_REVEAL_SCROLLS) {
-            scroll(forward = true, fraction = 0.12f)
+            scroll(forward = true, fraction = 0.6f)
         }
         check(has(LOAD_MORE_AFFORDANCE)) { "「$LOAD_MORE_AFFORDANCE」 not reachable after $steps scrolls" }
+        return steps
     }
 
     /** The review list's own item count, or null when the client tree does not expose it. */
@@ -1598,25 +1687,64 @@ internal class AndroidScaleUi(
      * verdict: require eight consecutive unchanged samples — each carrying a
      * forced cache reset and a bounded marker proof — before declaring the
      * walk stationary; a movement resumption resets the count.
+     *
+     * D-352: [maxSteps] exists for a viewport that starts deep inside a long
+     * loaded list. The default 40 steps is the D-217 shape (~3 rows per 0.25
+     * gesture ⇒ ~120 rows); [collectTraversal] passes a prefix-sized bound after
+     * its loads leave the viewport at the bottom of 600 rows.
+     *
+     * D-354 (PR #399 `Android instrumented shard 2`, failed twice): [stride] is the backward
+     * gesture's fraction, and [scrollByAccessibilityAction] is the fallback that runs when the polled
+     * sample shows the gesture changed nothing. The review list proves FORWARD 0.6 gestures — its
+     * reveal crossed a whole page in 12 and 17 steps — but its backward 0.25 stride had never run
+     * anywhere except the list top, where this loop returns at step 1, or the chain's detail screen.
+     * So a caller with a long return trip passes the stride its own screen proves, and an ineffective
+     * gesture degrades into one page-sized semantic step instead of a false "stationary" verdict.
+     *
+     * D-355: a step's movement is sampled by [awaitFingerprintChange], not by an instantaneous
+     * re-read. `settle()`'s stability test is satisfied by two identical stale reads, so the D-217
+     * comparison (`current` vs an immediately re-read `after`) was never a movement proof — it was a
+     * "the tree did not change twice" test, which the shard-2 trace satisfied on all eight steps
+     * while the viewport climbed ~11 rows per step and stopped 12 rows short of the title bar. The
+     * per-step line's `afterGesture=`/`semantic=` size the two channels.
      */
-    fun seekBackToTop(marker: String = "最近批量结果") {
-        var previous = ""
+    fun seekBackToTop(
+        marker: String = "最近批量结果",
+        maxSteps: Int = 40,
+        stride: Float = 0.25f,
+    ) {
         var steps = 0
         // D-217 walk diagnostics (revert before PR if not wanted)
         var exitedStationary = false
         var stationaryCount = 0
-        while (steps++ < 40) {
+        while (steps++ < maxSteps) {
             if (has(marker, prefix = true)) {
                 // D-217 walk diagnostics (revert before PR if not wanted)
                 Log.i("ULScaleWalk", "seekReturn marker=${has(marker, prefix = true)} steps=$steps stationary=$exitedStationary")
                 return
             }
-            val current = nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text?.toString().orEmpty() }
+            val current = visibleTextFingerprint()
             // D-217 walk diagnostics (revert before PR if not wanted)
             if (steps % 10 == 0) Log.i("ULScaleWalk", "seek step=$steps texts=${current.take(80)}")
-            scroll(forward = false, fraction = 0.25f)
-            val after = nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text?.toString().orEmpty() }
-            if (current.isNotEmpty() && current == after) {
+            scroll(forward = false, fraction = stride)
+            // D-355: movement is sampled with a bounded wait, not an instantaneous re-read — the tree
+            // is one frame stale right after scroll(), so `current == after` held on every step of
+            // the failing trip while the viewport really moved.
+            val gestureMoved = awaitFingerprintChange(current)
+            var semanticMoved = false
+            if (!gestureMoved && scrollByAccessibilityAction(forward = false)) {
+                semanticMoved = awaitFingerprintChange(current)
+            }
+            val moved = gestureMoved || semanticMoved
+            val after = visibleTextFingerprint()
+            // D-354/D-355: one bounded trace line per step — the shard-2 failure left eight samples
+            // with no reading of any of them, and `afterGesture=` now sizes the two channels.
+            Log.i(
+                "ULScaleWalk",
+                "seekReturn step=$steps moved=$moved afterGesture=$gestureMoved semantic=$semanticMoved stride=$stride " +
+                    "before=${current.take(SEEK_TRACE_CHARS)} after=${after.take(SEEK_TRACE_CHARS)}",
+            )
+            if (current.isNotEmpty() && !moved) {
                 stationaryCount++
                 runCatching { resetAutomationCache() }
                 // Stationary viewport: one final bounded wait for the marker
@@ -1642,10 +1770,61 @@ internal class AndroidScaleUi(
             } else {
                 stationaryCount = 0
             }
-            previous = after
         }
         // D-217 walk diagnostics (revert before PR if not wanted)
         Log.i("ULScaleWalk", "seekReturn marker=${has(marker, prefix = true)} steps=$steps stationary=$exitedStationary")
+    }
+
+    /**
+     * D-354: one scroll driven by the container's own accessibility action — the channel D-344 proved
+     * on this screen when gesture injection was refused after a force-stop relaunch.
+     * [seekBackToTop] calls it when [awaitFingerprintChange] shows the backward gesture changed
+     * nothing, so a still-standing gesture becomes one page-sized semantic step instead of a false
+     * "stationary" verdict. A performed action counts in [scrollActionFallbacks] exactly like
+     * [scroll]'s refusal fallback. Forward is D-344-proven; backward is the same platform action and is
+     * expected to page, but it is unproven on this list — the caller's per-step line records
+     * `semantic=` and `moved=` either way, so the next device run answers it instead of us.
+     */
+    private fun scrollByAccessibilityAction(forward: Boolean): Boolean {
+        tick()
+        val action =
+            if (forward) {
+                AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+            } else {
+                AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+            }
+        val performed = scrollable().performAction(action)
+        if (performed) {
+            scrollActionFallbacks++
+            settle()
+        }
+        return performed
+    }
+
+    /** D-354: the return trip's movement sample — visible texts only, the shape D-217 shipped. */
+    private fun visibleTextFingerprint(): String = nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text?.toString().orEmpty() }
+
+    /**
+     * D-355: waits (bounded) until the visible tree differs from [before], and reports whether it did.
+     *
+     * The instantaneous re-read this replaces is why the shard-2 return trip lied: [scroll] ends with
+     * [settle], and settle's stability test is satisfied by two identical STALE reads, so
+     * `before == after` on every step while the viewport really climbed ~11 rows per step — the
+     * failing trace's `before=` column walks 100.94 → 100.83 → 100.62 → 100.51 … and the trip stopped
+     * 12 rows short of the title bar. The poll forces the client cache to refresh between reads (the
+     * same reset the stationary branch performs, which is exactly what made the NEXT step's sample
+     * fresh in that run): a real move is then seen within [SEEK_MOVE_TIMEOUT_MS] — ~5 lag samples of
+     * [SEEK_MOVE_POLL_MS], the D-217 round-15 lag — and a genuinely still viewport pays that budget
+     * once per channel instead of being declared stationary on a stale frame.
+     */
+    private fun awaitFingerprintChange(before: String): Boolean {
+        val deadline = SystemClock.elapsedRealtime() + SEEK_MOVE_TIMEOUT_MS
+        while (SystemClock.elapsedRealtime() < deadline) {
+            runCatching { resetAutomationCache() }
+            SystemClock.sleep(SEEK_MOVE_POLL_MS)
+            if (visibleTextFingerprint() != before) return true
+        }
+        return false
     }
 
     fun traverse(expected: List<ScaleRow>): Int {

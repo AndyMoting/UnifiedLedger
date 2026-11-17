@@ -7702,3 +7702,142 @@ D-347 曾把「把比对搬到 host 侧」列为恢复逐行穷尽的正确做�
 **残留风险：** ①窗口依赖「覆盖范围内每个候选恰好渲染一行」——会话一的候选没有 subject 侧重复关系（重复对以较晚的一份为 subject），故前 12 页成立；若目标跨进会话二之后（每候选 1 + 伙伴数行），`50 × 页数` 的页缝模型会提前触发并以「prefix incomplete」响亮失败，而不是静默通过。②两份完整列表在 600 行时约百 KB 量级，只出现在失败轮。③`traversalSeamMismatch` 不参与通过判定（失败轮的 stage 本身已红），未加 reducer 校验。
 
 **关联决定：** D-349（本条取代其页缝期望对象，其余机制保留）、D-217（重叠合并与停住判定的来源）、D-320（被确认行是首页首个可确认行，正是本条反例的来源）、D-350（段预算，本条不动）。
+
+## D-352 traversal 改为 load-then-walk：分类组重排让「页缝之间的走查」结构性不成立
+
+**状态：** 已批准（2026-11-18；rig 第二十四跑 `44144034199` 实测 + 用户裁决；**取代 D-351 的逐页缝机制，D-351 的窗口口径与精确多重集等式保留**）
+
+**背景：** 第二十四跑（max `44144034199` @ `be83c03e0e881e6d4302afcee736e41252be7427`）：`prepare` 851.9s PASS、`chain` 869.5s PASS、`reopen` 相位 FAILED（instrumentation `Time: 193.627`，junit 记 `195.818`），`replay` / `final-reopen` 记 `NOT_RUN after earlier failure` —— 这两个相位连续第三跑零执行。失败点 = `java.lang.IllegalStateException: traversal window did not overlap`，抛在 `AndroidScaleUi.kt:1292`（D-217 滚动重叠纪律里的 `check(++retries <= 4)`），栈为 `collectTraversal` ← `traversalWalk`（`AndroidScaleLongInstrumentedTest.kt:1465`）← `reopenPhase`（`:1401`）← `maximumScalePhase`（`:151`）。
+
+**D-351 的页缝本身通过了（实测）：** `logcat.txt` 里 `collect seam` 的匹配数为 **0**（无 `collect seam mismatch` 行）；最后一次收集扫描是 `collect scan scans=64 rows=6 collected=50 growth=1 stationaryCount=1 first=1972.44 CNY|类型 ordinary_ last=1971.99 CNY|类型 ordinary_` —— 首页 50 行整页覆盖，尾部正是 chain 确认的 ordinal-0 行。此后循环执行 `loadNextPage()`，`collect scan` 行再没有出现过。
+
+**归因（代码层 + 现场）：** 装载新页会让**整个已装载切片**重排。`reduceAppendImportReviewPage` 把新页追加在已装载行之后（`P503Reducer.kt:2348` 的 `rows = view.rows + result.rows`）；`importCandidateClassGroups` 按 `IMPORT_CANDIDATE_CLASS_DISPLAY_ORDER`（`P503ImportReviewPresentation.kt:100-121`，`RESOLVED` 在末秩）过滤重排。于是首页渲染 = 49 行待确认 + 1 行 `已确认`（index 49）；装载第二页后 = 99 行待确认 + 同一行 `已确认`（index 99），而视口保持像素偏移 ⇒ 视口不再是 `collected` 尾部 `[…, 1972.48, 1971.99]` 的相邻窗口，任何 k 都不满足 `collected.tail(k) == window.head(k)`，四次后退重试全部落空。该机制在 11 道页边界上**同形复发**，所以重试预算或滚动比例的任何调整都治不了它——它不是参数问题。
+
+**裁决（D-352）：** 把 `collectTraversal` 改成 **load-then-walk**：
+1. **先装完、再走**：按 `targetRows / IMPORT_REVIEW_PAGE_ROWS - 1` 次 `loadNextPage()`（点「加载更多导入候选」+ 有界增长等待）一次装完 12 页，装载之间不读任何一行。`traversalPages`（= 12）与 `traversalPageClicks`（= 11）**不改名、不改值**，语义变为「装载的页数 / 装载发出的点击数」，`result.py` 的两条等式原样成立。
+2. `seekBackToTop()` 回到顶部**一次**（装载把视口留在 600 行底部，故该调用带一个与前缀行数相称的步数上界；helper 的默认 40 步形状不变），随后在**静态列表**上用既有几何走一遍，收集 `targetRows` 行。
+3. 走满后 `verifyTraversalWindow(collected, expectedWindow, targetRows, onSeamMismatch)` **无条件执行一次**。旧的后循环页缝条件（`collected.size == targetRows && traversalPages * IMPORT_REVIEW_PAGE_ROWS < targetRows`）在新形态下**恒假**（页已装完，`traversalPages` 已等于 `targetRows / 50`），该分支显式删除，代码注释写明它为什么是死分支而不是留着。
+4. 删除循环顶部的页边界分支与递增的 `pageRows`；目标从第一步起就是 `targetRows`。
+5. **每次装载打一行 logcat**：`collect page load pages=… click=… attempt=… revealSteps=… itemCount=before..after grew=… waitedMs=…`，把露出尝试次数与增长等待写成证据，让卡住的 affordance 从 logcat 就能判读，而不必再花一跑。
+6. **不动**：0.12 走查步长、唯一连续重叠合并、停住判定、安全上限 `targetRows*4 + 200`、点击与等待的有界纪律、四类分开报告的失败、`traversalSeamMismatch` 载荷形状（两份完整列表 + 两个方向的多重集差 + 走查顺序列表）、`traversalWindowOrder = "candidate-id-prefix"`、`stage("traversal", 2400000)` 与 `result.py` 的 `limits["traversal"]`。
+
+**写手实施偏差登记（两处，均为几何所迫，已写进常量注释）：** ①`PAGE_REVEAL_SCROLLS` 8 → **24**，露出步长 0.12 → **0.6**：D-349 的露出是「走查停在页底、affordance 就在下一行」，8 步足够；load-then-walk 的露出从切片顶部做起，要跨最多一整页（约 35-50 步 × 0.12），8 步必然失败。露出不读任何行，0.6 安全的理由**不是**「affordance 在末项」——它不在：`P503ImportReviewPresentation.kt:1484-1506` 在 `LoadMore` 之后还渲染 `BatchConfirmButton`、批量结果块与 unknown 核对项，且走查时评审视图带 `batchResult`——而是「每步之前都重查 `has(LOAD_MORE_AFFORDANCE)`，且单步 ~7 行小于 ~12 行视口」，任何一步都不可能把 affordance 整段带过视口而不被某次检查看到；真错过了也是 `check` 处带步数**响亮**失败，不静默。24 步 × 约 7 行 ≈ 3.5 页。②`seekBackToTop` 增一个可选 `maxSteps`（默认 40 不变），`collectTraversal` 的回顶调用按 `targetRows / 3 * 2` 给上界（0.25 手势 ≈ 3 行是既有读数），并在回顶之后**断言「刷新清单」可见**，让「回不到顶部」在当场以正确的成因失败。两处都只改「走到已知目标的有界预算」，不碰走查本身的任何几何。
+
+**判据强度不变（明写）：** 仍是同一个 600 行窗口、仍是**精确多重集等式**（两个方向都查），只是从「12 道页缝各查一次」变成「末尾查一次」；载荷仍带两份完整列表与走查顺序列表，定位仍能从产物恢复。D-352 不改 D-351 的窗口对象（候选 id 前缀），也不改 D-349 的前缀口径。
+
+**相位内代价（算术推算，非实测）：** 走查本体约 13 min（第二十四跑 50 行 / 64 扫、每扫 ~1.0s）；11 次露出按 0.6 步长约 7 步/页、每步 ~1.5s ⇒ 约 2 min；回顶 600 行按 0.25 手势约 200 步 ⇒ 约 4-5 min；相位内还含一次静止 oracle 读（D-350 实测 166s）。合计约 21-23 min，仍在 `stage("traversal", 2400000)` 的 40 min 内（约 1.7-1.9 倍余量）。
+
+**实证边界：** 机制结论由第二十四跑产物（`logcat.txt` 的 seam 计数 0、最后一条 `collect scan`、`instrumentation-reopen.txt` 的栈帧）与产品代码直接读出；**新形态一次都没在真机跑过**，上面的时间账是算出来的。
+
+**边界：** 入 = `AndroidScaleUi.collectTraversal`/`verifyTraversalWindow`/`loadNextPage`/`revealLoadMoreAffordance`/`seekBackToTop` 与其常量、`AndroidScaleLongInstrumentedTest.traversalWalk` 的注释与证据键说明、`ImportReviewPagingInstrumentedTest` 的两处注释（断言一字不动）、`result.py` 的 traversal 注释块、本条。出 = 不改产品代码（分类组重排是产品现行行为，本条只适配它）、不改 0.12 走查步长/重叠合并/停住判定/安全上限、不改 `traversalPages`/`traversalPageClicks` 的名字与取值、不改任何段预算或 workflow、不改 `traversalWindowOrder`、不回改 D-349/D-351 的历史记录。
+
+**残留风险：** ①露出改 0.6 步长是**判断**：它依赖「每步重查 + 单步跨度小于容器高度」这条几何关系（已写进 `PAGE_REVEAL_SCROLLS` 的常量注释），不依赖 affordance 的列表位置——它并不在末项（`P503ImportReviewPresentation.kt:1484-1506`：`LoadMore` 之后还有 `BatchConfirmButton` 与批量结果块）。容器若变矮、或换成行更高的窄视口，单步可能跨过 affordance 的整段可见区，届时露出会在 `check` 处带步数**响亮**失败（不静默），再按实测读数重定步长。②`traversalPageClicks` 仍被 reducer 钉成恰好 11：一次 `PAGE_LOAD_ATTEMPTS` 重试就会把它变成 12 而整轮证据被拒——这是 D-349 既有行为，本条未改也未掩盖。③回顶 600 行是按「0.25 手势 ≈ 3 行」**推算**的：若实测每手势只走 1 行，400 步的回顶上界覆盖不了 600 行。该失配现在以**回顶断言**（回顶调用之后断言「刷新清单」可见）在当地响亮失败，报的是「回不到顶部」，而不是 20 分钟后以「traversal prefix incomplete」或多项集不等误报；慢回顶同时也会吃掉段预算，但先到的是这条断言。届时按实测行/手势数补上界，而不是先抬段预算。④（本批已修正，不再是残余）原先登记过 `ImportReviewPagingFixtureSupport.kt` 的 KDoc 仍写「在每个页边界点击下一页」；随后一轮把该文件并入可写清单，KDoc 已改为「先按整页装完、再走一遍」，整页大小的 harness 要求与理由保持不变。
+
+**关联决定：** D-349（前缀口径与「加载更多」点击，本条沿用）、D-350（段预算，本条不动）、D-351（本条取代其逐页缝机制；窗口口径与精确多重集等式保留）、D-217（重叠合并与停住判定）、D-353（同批：把走查移出 reopen 相位）。
+
+## D-353 traversal 拆成独立末相位：UI 走查失败不得再让两个写路径相位不可执行
+
+**状态：** 已批准（2026-11-18；runs `44111466778` / `44127054663` / `44144034199` 三连跑实测 + 用户裁决）
+
+**背景：** 五个相位长期是 `prepare, chain, reopen, replay, final-reopen`（`tools/python/android_scale/result.py:11` 的 `PHASES`；`tools/python/android_scale/runner.py` 的 `PHASE_BUDGETS`），而走查阶段跑在 `reopen` 相位**内部**（`AndroidScaleLongInstrumentedTest.reopenPhase` 的 `stage("traversal", 2400000)`）。它夹在 `reopen` 与 `replay` 之间，于是任何走查失败都让 `same_request_replay` 与 `final_reopen` 不可执行：第二十一跑（`44111466778`）、第二十三跑（`44127054663`）、第二十四跑（`44144034199`）三连跑里，这两个相位一次都没执行过（`junit.xml` 记 `NOT_RUN after earlier failure`）。
+
+**裁决：**
+1. 相位表改为 `prepare, chain, reopen, replay, final-reopen, traversal`：`PHASES` 增加 `"traversal"` 并置于末位；`PHASE_BUDGETS` 增加 `"traversal": 3000`。3000s 的依据是它必须**大于**测试侧 `stage("traversal", 2400000)` 的上界，多出的 600s 覆盖 instrumentation 启动与相位自身的证据落盘——与既有「相上界 > 段上界」的形状一致；它不是第二个走查预算，也不改任何段字面量。
+2. 测试侧 `when (phase)` 加 `"traversal" -> traversalPhase()`；`reopenPhase` 只留 `stage("reopen", 1800000) { reopen() }`。
+3. `traversalPhase()` 自己取一次静止点：宿主在本相位前已 force-stop，故直接**复用** `reopen()`（不复制它的断言）读快照并 `ui.launch()`，随后 `traversalWalk(snapshot)`，再跑既有的 `reopenTail(snapshot)` 做状态沉默复验。`reopen()` 是普通函数、不注册 stage，本相位只注册 `"traversal"`，因此「stage must not be retried」守卫仍不会触发。
+4. `STAGES` 顺序随之改为 `…, reopen, same_request_replay, final_reopen, traversal`：校验器按声明序检查 `startedMs` 单调，顺序不改则每条诚实时间线都会被拒。
+5. **手写死字面量一并归零**：`result.py` 的 junit 聚合断言由 `"5"` 改为按 `str(len(PHASES))` 派生（driver 每相位写一条用例，聚合数本应派生）；`tests/python/test_android_scale_result.py` 的 `tests="5"`、`"6"`、`"4"` 同样改为按 `PHASES` 派生；`test_prepare_chain_share_global_budget_and_short_phases_have_caps` 的 `PHASES[3:]` 改为显式相位名并新增 `traversal == 3000 > 2400` 的绑定断言；`test_traversal_is_a_sibling_stage_immediately_after_reopen` 改为 `test_traversal_is_the_last_stage_after_final_reopen`（含 `PHASES` 与 `STAGES` 结构断言），round-21 时间线用例改为「写路径两相位在前、走查在末」。
+6. **顺序理由**：走查是六个相位里**最不承重**的一个——核心验收计划 RL-01..06 本就不含规模 UI 遍历（D-349 已登记），且它**不写状态**（`reopenTail` 的 `reopened == snapshot` 断言证明）；而 `same_request_replay`（幂等 replay，写路径验收）与 `final_reopen`（在全新快照上重跑全套账务断言）属写路径，不能成为 UI 走查的人质。「长期挂着不收口」的直接修补。
+
+**已知代价（判读）：** 各相位上界之和（reopen 18000 + replay 480 + final-reopen 480 + traversal 3000）大于 driver 自身的 19800s 全局预算，因此靠后的相位仍可能被全局截止时间切掉；`reopen` 的 18000s 封套在本条之后只包住它自己一个 1800s 段，本条按「不抬不砍既有上界」保持原值——若下一跑出现 reopen 吃掉全局预算把后续相位饿死，那是下一次收紧的对象。
+
+**边界：** 入 = `result.py` 的 `PHASES`/`STAGES`/`limits` 注释/junit 聚合断言、`runner.py` 的 `PHASE_BUDGETS` 与注释、`tests/python/test_android_scale_result.py` 的相位夹具/结构断言/预算断言/junit 派生断言、`AndroidScaleLongInstrumentedTest` 的 `when` 分派/`reopenPhase`/新增 `traversalPhase`/相关 KDoc、本条。出 = 不改任何段字面量（reopen 1800000、traversal 2400000 原值）、不改 `mode_limit`/外层 deadline/step 与 job 超时、不改 workflow（`android-scale.yml` 只调 driver 入口，不枚举相位）、不改产品代码、不改 `tools/ci/android-scale-run.py` 与 `tools/ci/android-scale-validate.py`（两者不含相位字面量，已核）。
+
+**残留风险：** ①`docs/specs/2026-11-13-maxrig-firstpage-target-design.md:123` 的 V-3 判据仍冻结五相位 `phases` 与 `STAGES` 集合——这是**有意保留**（历史设计快照，按 D-348/D-350 同处置、不回改），不是本批残余。`docs/CONTRIBUTING.md` 的相位与预算表述在本批已全部改为当前值（`:184` 段落按六相位与真实数字重写，`:178` 六相位、`:186` 19,800 秒、`:163` 六相位机器），该文件不再有登记在案的陈旧相位数或预算数。②（**独立评审发现**；**本批造成的收窄**，不是既有漏洞）旧形态里 reopen 阶段的静止快照由 traversal stage 的 `reopenTail` 复读印证——`reopened == snapshot` 当时就住在该 stage 内（D-217 round 21 的记录，见 `DECISIONS.md:4456`）。D-353 让 `traversalPhase` 在自身相位内取快照，于是 `reopenTail` 证明的是**本相位自己的重启 + 走查**；reopen 相位的 `ui.launch()` 不再有任何复读替它担保沉默。仍然成立、且是承重部分的是**走查**的沉默证明（含 11 次「加载更多」点击）：该快照先于本相位的走查，尾部复读在其后。暴露面很窄——一次性的启动期非数据写入；任何账本内容写入都会在下一相位的 fixture/计数断言里失败。收口条件二选一：在 `reopenPhase` 末尾补一次 snapshot-only 复读，或明文裁决「下一相位的断言已足够」。③新形态首次执行：`traversal` 相位是否在 3000s 内完成、`same_request_replay`/`final_reopen` 是否首次 PASS，都要等 run 25 的读数。
+
+**关联决定：** D-349（走查是 harness 自加要求，故可退到末位）、D-350（段预算，本条不抬不砍）、D-351（页缝窗口口径）、D-352（同批：load-then-walk，本条的相位内代价按它的新形状算）、D-217（round 21 曾把走查做成 reopen 相内的兄弟 stage，本条再向前一步把它移出该相）。
+
+## D-354 回顶手势在评审列表上未经证明：给 seekBackToTop 加 stride 参数与语义回退
+
+**状态：** 已批准（2026-11-18；PR #399 的 `Android instrumented shard 2` 设备门禁两次失败 + 用户裁决）
+
+**背景：** PR #399 的设备门禁在 150 行 / 3 页的分页用例上失败，且**失败两次**（job 自身的 retry），因此是确定性的：`java.lang.IllegalStateException: traversal top return failed: 「刷新清单」 not visible after the return-trip seek (pages=3 maxSteps=100)`，抛在 `AndroidScaleUi.kt:1285`，调用点 `ImportReviewPagingInstrumentedTest.kt:126`。该跑 `ULScaleWalk` 的全文只有五行：
+
+1. `seekReturn marker=true steps=1 stationary=false`（首次回顶，本来就在顶部）
+2. `collect seekDone markerVisible=true pendingVisible=true rows=2`
+3. `collect page load pages=2 click=1 attempt=1 revealSteps=12 itemCount=63..113 grew=true waitedMs=30052`
+4. `collect page load pages=3 click=2 attempt=1 revealSteps=17 itemCount=113..163 grew=true waitedMs=30278`
+5. `seekReturn marker=false steps=8 stationary=true`（回顶那一段）
+
+**这条失败证明的是 D-352 那条回顶断言的用处**（D-353 同批的 Fix 2）：没有它，同样的短回顶会在 20 分钟后以「traversal prefix incomplete」或多项集不等报错，把「回不到顶部」误报成「走查丢行」。
+
+**归因（实测与判断分开）：**
+- **实测（读自该跑 logcat 摘录）**：**向前**的 0.6 手势在这个列表上确实移动内容——露出把整整一页跨过去只用了 12 与 17 步，两次装载都 `grew=true`（`itemCount` 63→113→163，增长等待各约 30 s），所以点击路径与「0.6 步长在这个列表上有效」都被证明。**向后**的 0.25 手势连续 8 个样本可见文本一字未变，循环在 8 停住而不是 100（`maxSteps` 从来不是约束）。
+- **排除**：陈旧无障碍缓存。停住分支每样本都 `resetAutomationCache()` 并做三次带间隔的 `has(marker)` 探测，而 `has()` 在 miss 时会走一次绕过缓存的 root 重读；这套机制在 D-204/D-208 里就是为陈旧树准备的，8 次都不动说明视口真的没离开底部。
+- **判断（未证明）**：**向下拖拽在这个列表上无效**，成因归到平台/Compose 对该内容的处理，本条**不做**进一步归因。可确定的是：0.25 这个向后步长**从未被证明过**——它历史上的调用点只有「本来就在顶部、第 1 步就返回」的路径与链中的详情屏。
+
+**裁决（三处，全在 `seekBackToTop` 与它唯一的回顶调用）：**
+1. **步长参数化**：`seekBackToTop(marker, maxSteps, stride)`，`stride` 默认 `0.25f`（其余调用点一字不改），`collectTraversal` 的回顶调用传 `0.6f`——即露出在同一屏幕同一列表上已经证明的那个步长。
+2. **语义回退**：循环里若一次向后手势之后可见文本没有任何变化，就先对滚动容器下一次 `ACTION_SCROLL_BACKWARD`（D-344 在 force-stop 重启后证明可用、`scroll()` 在注入被拒时也在用的同一通道），计入 `scrollActionFallbacks`，**然后**才判定该样本是否为「停住」。这样无效手势降级为**一页大小**的语义步，而不是假的停住判决。
+3. **回顶逐样本日志**：每步一行，带 `step=`、`moved=`（本次样本是否变化）、`semantic=`（是否用了语义动作）、`stride=`，以及截断到 `SEEK_TRACE_CHARS` 的前后文本头部；末次失败只有 8 行且一行都无法判读，不许再出现。
+
+**为什么这个修法对两种读法都成立：** 若机制是「手势无效」，语义动作绕过手势、直接让容器自己滚动；若机制是「手势有效但变化检测看不到」（本条已用缓存重置与 root 重读排除，但不是逻辑上不可能），语义动作同样推进整整一页，回顶仍会终止。两种读法下修法都不依赖成因判断，只依赖「容器自己的动作通道可用」——这条已有 D-344 的前向实证。
+
+**步数上界的算术（重推，不是继承）：** 该列表唯一测得的 0.6 步长速率就在露出的 12 与 17 步里——跨 50 行一页 ⇒ 约 4.2 与约 3 行/手势（多出来的步数是客户端树 ~5 样本滞后在循环内被付掉），取较小者 **3 行/手势** 作下限；回顶同样吃这份滞后，故上界 = 2 ×（`targetRows` / 3）：600 行 → **400 步**，分页用例 150 行 → **100 步**（与失败那跑的取值相同，但依据从「0.25 手势 ≈ 3 行」改为本条实测）。语义回退不会更慢：一次 `ACTION_SCROLL_BACKWARD` 覆盖约一个视口（≈12 行）≥ 3 行，因此不可能需要更多步。
+
+**不动：** 8 样本停住判决、走查本身的几何（0.12 步长、唯一连续重叠合并、安全上限）、回顶之后的那条断言、reducer 的校验、任何段预算、任何测试断言。
+
+**判据强度不变：** 回顶仍以「端到端可见 `刷新清单`」判定成功，失败仍在该处响亮报出；本条只换步长、加一条失效通道与逐样本证据，不放松任何判据。
+
+**实证边界：** 「回顶失败」与「向前 0.6 有效」是实测（设备门禁日志）；「手持无效而非检测失明」是**判断**；`ACTION_SCROLL_BACKWARD` 在**向后**方向属同一平台动作、**未在该列表上实测**——下一次分页用例（或 run 25 的走查相位）会在逐样本日志里直接给出 `semantic=`/`moved=` 的读数。**这条缺陷由分页用例在任何 rig 跑之前抓到**，没有浪费一跑 maximum。
+
+**边界：** 入 = `AndroidScaleUi.seekBackToTop`（新 `stride` 参数、语义回退、逐样本日志）、新增私有 `scrollByAccessibilityAction`/`visibleTextFingerprint`、`SEEK_TOP_ROWS_PER_SCROLL` 与新增 `SEEK_TRACE_CHARS` 的注释、`scrollActionFallbacks` 的 KDoc、`collectTraversal` 回顶调用处、本条。出 = 不改走查几何与任何常量的取值（`SEEK_TOP_ROWS_PER_SCROLL` 仍是 3，改写的是依据）、不改 8 样本停住判决、不改回顶断言、不改分页用例的任何断言与代码、不改 reducer/段预算/workflow、不回改 D-217/D-344/D-352 的历史记录。
+
+**残留风险：** ①向后的语义动作仍未在设备上实测：若它也无效，回顶会在 8 个 `semantic=true moved=false` 样本后由断言响亮失败，日志足以直接判读，不需要再猜。②rig 侧 `traversalScrollFallbacks` 的注释（`AndroidScaleLongInstrumentedTest.kt` 内）仍只写「注入被拒」，而该计数现在也含回顶的无效手势回退；本轮文件边界只到 `AndroidScaleUi.kt`，该注释留给下一轮一并改。③回顶在「手势永久无效」时每步要付一次手势 + 一次动作 + 两次树读，600 行约 50 个语义步（≈3-4 min），仍在 2400 s 段预算内。
+
+**关联决定：** D-344（无障碍滚动动作通道，本条复用其前向实证）、D-352（回顶与那条断言，本条修的就是它）、D-353（走查独立成末相位，本条不动）、D-217（8 样本停住判决与树滞后）、D-204/D-208（陈旧缓存重置，本条据此排除缓存读法）。
+
+## D-355 回顶的「停住」判决一直是陈旧帧读出来的：改为有界轮询取样本
+
+**状态：** 已批准（2026-11-18；PR #399 的 `Android instrumented shard 2` 在 `bdecbdd4` 上再次失败，八行逐样本日志直接给出机制 + 用户裁决；**取代 D-354「向后手势无效」的归因，D-354 的三处修法与判据全部保留**）
+
+**背景：** `bdecbdd4` 上同一分页用例（150 行 / 3 页）第二次失败：`traversal top return failed: 「刷新清单」 not visible after the return-trip seek (pages=3 maxSteps=100)`。八行逐样本日志全文如下（`before=` 已截断）：
+
+```
+step=1 moved=false semantic=true stride=0.6 before=…100.94 CNY… after=…100.94 CNY…
+step=2 moved=false semantic=true stride=0.6 before=…100.83 CNY… after=…100.83 CNY…
+step=3 moved=false semantic=true stride=0.6 before=…(mid-row)…   after=…(same)…
+step=4 moved=false semantic=true stride=0.6 before=…100.62 CNY… after=…100.62 CNY…
+step=5 moved=false semantic=true stride=0.6 before=…100.51 CNY… after=…100.51 CNY…
+step=6 moved=false semantic=true stride=0.6 before=…100.40 CNY… after=…100.40 CNY…
+step=7 moved=false semantic=true stride=0.6 before=…(mid-row)…   after=…(same)…
+step=8 moved=false semantic=true stride=0.6 before=…100.19 CNY… after=…100.19 CNY…
+seekReturn marker=false steps=8 stationary=true
+```
+
+**读数（实测，逐行可核）：** 分页夹具相邻行金额相差 0.01 CNY，`before=` 列沿步下降 100.94 → 100.83 → 100.62 → 100.51 → 100.40 → 100.19，即**每步约 11 行**；八步共约 88 行，而这次回顶需要约 100 行 —— 循环宣布「停住」时离标题栏还差 **约 12 行**。所以 `moved=false` 是**读数假象**，不是静止证据。
+
+**机制（两处，均已定因）：**
+1. **跨帧陈旧**：`scroll()` 以 `settle()` 收尾，而 `settle()` 的稳定判据是「连续两次 text+bounds 完全相同」——两次**同样陈旧**的读就能满足它。于是 `before == after` 在每一步都成立，尽管视口真的在动。这正是 D-217 round 15 记录的客户端树滞后，只是那次把它当成「停住」而非「读早了」。
+2. **停住计数无运动门槛**：`stationaryCount` 因此每步自增，第 8 步无条件退出——与视口是否移动无关。这**是 D-217 遗留的潜在缺陷，不是 D-354 引入的**：该循环一直拿 `current` 与紧随其后重读的 `after` 比，而 D-354 删掉的 `previous` 变量正是早期跨步比较设计的遗留（赋值后从未被读，属死存储）。详情屏上标记通常在 8 步之前就出现，所以这个缺陷从未显形。
+
+**这条也把判据本身的口径钉住了：** 8 样本停住判决**从来不是运动证明**，只是「两条通道两次都没动」的测试；而 100 行的回顶配 100 步的上界本身就贴边。**真正的修法是取样，不是加大上界**——`maxSteps` 在两次失败里都没有成为约束（都在第 8 步退出）。
+
+**裁决：**
+1. **有界轮询取样本**：新增 `awaitFingerprintChange(before)` —— 在 `SEEK_MOVE_TIMEOUT_MS`（1500 ms，≈ D-217 记录的 ~5 个滞后样本 × `SEEK_MOVE_POLL_MS` 200 ms）内反复「重置客户端缓存 → 睡一 poll → 重读指纹」，一旦与 `before` 不同即返回 true。重置正是失败跑里"下一步的样本是新鲜的"的原因（停住分支每步都做同一件事）。
+2. **循环形状**：`scroll(0.6)` → `gestureMoved = awaitFingerprintChange(current)` → 若未动则一次语义动作 → `semanticMoved = awaitFingerprintChange(current)` → `moved = 两者之一` → 只有**两条通道都没动**才 `stationaryCount++`。
+3. **日志**：每步一行，`moved=`、`afterGesture=`、`semantic=`、`stride=`、`before=`/`after=`（截断），让下一跑直接量出两条通道各自的贡献，而不是再猜。
+4. **不动**：8 样本判决、回顶之后的那条断言、0.6 步长、400/100 上界、走查几何、reducer 校验、任何测试断言。语义动作保留——一行代价，覆盖「轮询也抓不到变化」的那一支。
+5. **`previous` 不重建（明写）**：D-354 删它是因死存储；本条也不需要它，因为轮询的 `before` 就是上一轮落定后的**新鲜**跨步样本。把变量加回来会引入第三个运动判据，并与陈旧比较的老陷阱重合。
+
+**推断（标明为推断）：** 每步约 11 行 ≈ 一次 0.6 手势对着约 18 行的视口，而不是一次视口大小的语义步（≈18 行），所以动作来自**手势**、语义动作为零贡献——D-354「向后手势无效」的归因据此被取代。**向后的语义动作是否真的会滚动仍未证明**（它可能返回 true 而什么都没做）；下一次分页用例的 `afterGesture=`/`semantic=` 两列会分别给出读数。
+
+**判据强度不变：** 回顶仍以「端到端可见 `刷新清单`」判定成功，失败仍在该处响亮报出；本条只把「动没动」的取样做对，不放松任何判据。
+
+**实证边界：** 八行日志与 `before=` 列的递减是设备门禁的实测摘录（PR #399 shard 2；本机未留存该 run 工件，未做二次核读）；「陈旧帧导致 `moved=false`」由 `settle()` 的判据与死变量 `previous` 两条代码事实支持，属**定因**；1500 ms 预算由 5 个滞后样本 × 200 ms 推出，**未在该循环上实测**。
+
+**边界：** 入 = `AndroidScaleUi.seekBackToTop` 的取样与计数分支、新增私有 `awaitFingerprintChange`、新增 `SEEK_MOVE_TIMEOUT_MS`/`SEEK_MOVE_POLL_MS`、`visibleTextFingerprint` 的单行表达式体（ktlint `First line of body expression fits on same line as function signature`，该文件 `max_line_length=off` 且既有表达式体都是单行）、相关 KDoc、本条。出 = 不改 8 样本判决/回顶断言/步长/上界取值、不改走查几何、不改 reducer、段预算与 workflow、不改任何测试、不回改 D-217/D-344/D-352/D-354 的历史记录（D-354 的归因由本条的状态行取代，机制与判据保留）。
+
+**残留风险：** ①向后语义动作仍是未测通道（可能纯属负担）；按裁决保留，因为它只在轮询也抓不到变化时才跑，且只花一行。②真静止时的代价：8 个样本 × 每个通道 1.5 s 轮询 ≈ 12 s 才下停住判决——相对 2400 s 段预算可忽略。③D-354 残留 ②（rig 侧 `traversalScrollFallbacks` 注释仍只写「注入被拒」）仍未处理，留给下一轮。
+
+**关联决定：** D-354（本条取代其归因，三处修法与判据保留）、D-217（8 样本判决与客户端树滞后；本条指出该判决从来不是运动证明）、D-344（无障碍动作通道）、D-352（回顶与那条断言）、D-353（走查独立成末相位）、D-204/D-208（缓存重置机制，本条把它用作取样手段）。
