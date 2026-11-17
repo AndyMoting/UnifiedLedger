@@ -210,8 +210,7 @@ object P806Folds {
                         positiveMinorUnits = positive[currency] ?: 0L,
                         refundMinorUnits = refund[currency] ?: 0L,
                     )
-                }
-                .filter { it.positiveMinorUnits != 0L || it.refundMinorUnits != 0L }
+                }.filter { it.positiveMinorUnits != 0L || it.refundMinorUnits != 0L }
         }
     }
 
@@ -222,7 +221,7 @@ object P806Folds {
                 val existing = merged[total.currency] ?: (0L to 0L)
                 merged[total.currency] =
                     checkedAdd(existing.first, total.positiveMinorUnits) to
-                        checkedAdd(existing.second, total.refundMinorUnits)
+                    checkedAdd(existing.second, total.refundMinorUnits)
             }
         }
         return merged.entries
@@ -233,8 +232,7 @@ object P806Folds {
                     positiveMinorUnits = sums.first,
                     refundMinorUnits = sums.second,
                 )
-            }
-            .filter { it.positiveMinorUnits != 0L || it.refundMinorUnits != 0L }
+            }.filter { it.positiveMinorUnits != 0L || it.refundMinorUnits != 0L }
     }
 
     private fun negate(value: Long): Long {

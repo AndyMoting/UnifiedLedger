@@ -11,7 +11,7 @@ import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Instant
 
-/**
+/*
  * P8-06 batch a (D-343; spec sections 3.1/3.3): the report period model and its Shanghai
  * half-open window, natural-day denominators and signed nearest rounding.
  *
@@ -83,8 +83,7 @@ object P806Periods {
     }
 
     /** Local day start of [date] in the reporting zone, in epoch nanoseconds. */
-    fun localDayStartEpochNanos(date: LocalDate): Long =
-        p806EpochNanos(date.atStartOfDayIn(MonthlyBuckets.REPORT_TIME_ZONE))
+    fun localDayStartEpochNanos(date: LocalDate): Long = p806EpochNanos(date.atStartOfDayIn(MonthlyBuckets.REPORT_TIME_ZONE))
 
     /**
      * Resolves [period] against [today] (clock-resolved local date) and the ledger [span]

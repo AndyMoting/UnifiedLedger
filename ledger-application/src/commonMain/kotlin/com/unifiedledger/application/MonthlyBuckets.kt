@@ -95,7 +95,7 @@ object MonthlyBuckets {
      * Instant bounds of a month in the frozen zone: `[start, nextMonthStart)`. Kept for
      * boundary reasoning and tests; bucketing compares calendar months derived with the
      * same zone, which is equivalent because the zone's local zero point is what both conversions use
- * (historical daylight saving included; P8-06 V-15 / R-3 correction).
+     * (historical daylight saving included; P8-06 V-15 / R-3 correction).
      */
     fun monthStart(statisticsMonth: YearMonth): Instant = statisticsMonth.firstDay.atStartOfDayIn(REPORT_TIME_ZONE)
 

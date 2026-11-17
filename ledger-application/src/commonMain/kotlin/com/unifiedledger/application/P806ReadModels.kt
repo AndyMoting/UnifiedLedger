@@ -13,7 +13,7 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.YearMonth
 import kotlin.time.Instant
 
-/**
+/*
  * P8-06 batch a (D-343; spec sections 3.4/3.5 and Appendix A): request, payload and view types
  * for the four composite read snapshots.
  *
