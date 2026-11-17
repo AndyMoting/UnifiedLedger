@@ -7796,3 +7796,48 @@ D-347 曾把「把比对搬到 host 侧」列为恢复逐行穷尽的正确做�
 **残留风险：** ①向后的语义动作仍未在设备上实测：若它也无效，回顶会在 8 个 `semantic=true moved=false` 样本后由断言响亮失败，日志足以直接判读，不需要再猜。②rig 侧 `traversalScrollFallbacks` 的注释（`AndroidScaleLongInstrumentedTest.kt` 内）仍只写「注入被拒」，而该计数现在也含回顶的无效手势回退；本轮文件边界只到 `AndroidScaleUi.kt`，该注释留给下一轮一并改。③回顶在「手势永久无效」时每步要付一次手势 + 一次动作 + 两次树读，600 行约 50 个语义步（≈3-4 min），仍在 2400 s 段预算内。
 
 **关联决定：** D-344（无障碍滚动动作通道，本条复用其前向实证）、D-352（回顶与那条断言，本条修的就是它）、D-353（走查独立成末相位，本条不动）、D-217（8 样本停住判决与树滞后）、D-204/D-208（陈旧缓存重置，本条据此排除缓存读法）。
+
+## D-355 回顶的「停住」判决一直是陈旧帧读出来的：改为有界轮询取样本
+
+**状态：** 已批准（2026-11-18；PR #399 的 `Android instrumented shard 2` 在 `bdecbdd4` 上再次失败，八行逐样本日志直接给出机制 + 用户裁决；**取代 D-354「向后手势无效」的归因，D-354 的三处修法与判据全部保留**）
+
+**背景：** `bdecbdd4` 上同一分页用例（150 行 / 3 页）第二次失败：`traversal top return failed: 「刷新清单」 not visible after the return-trip seek (pages=3 maxSteps=100)`。八行逐样本日志全文如下（`before=` 已截断）：
+
+```
+step=1 moved=false semantic=true stride=0.6 before=…100.94 CNY… after=…100.94 CNY…
+step=2 moved=false semantic=true stride=0.6 before=…100.83 CNY… after=…100.83 CNY…
+step=3 moved=false semantic=true stride=0.6 before=…(mid-row)…   after=…(same)…
+step=4 moved=false semantic=true stride=0.6 before=…100.62 CNY… after=…100.62 CNY…
+step=5 moved=false semantic=true stride=0.6 before=…100.51 CNY… after=…100.51 CNY…
+step=6 moved=false semantic=true stride=0.6 before=…100.40 CNY… after=…100.40 CNY…
+step=7 moved=false semantic=true stride=0.6 before=…(mid-row)…   after=…(same)…
+step=8 moved=false semantic=true stride=0.6 before=…100.19 CNY… after=…100.19 CNY…
+seekReturn marker=false steps=8 stationary=true
+```
+
+**读数（实测，逐行可核）：** 分页夹具相邻行金额相差 0.01 CNY，`before=` 列沿步下降 100.94 → 100.83 → 100.62 → 100.51 → 100.40 → 100.19，即**每步约 11 行**；八步共约 88 行，而这次回顶需要约 100 行 —— 循环宣布「停住」时离标题栏还差 **约 12 行**。所以 `moved=false` 是**读数假象**，不是静止证据。
+
+**机制（两处，均已定因）：**
+1. **跨帧陈旧**：`scroll()` 以 `settle()` 收尾，而 `settle()` 的稳定判据是「连续两次 text+bounds 完全相同」——两次**同样陈旧**的读就能满足它。于是 `before == after` 在每一步都成立，尽管视口真的在动。这正是 D-217 round 15 记录的客户端树滞后，只是那次把它当成「停住」而非「读早了」。
+2. **停住计数无运动门槛**：`stationaryCount` 因此每步自增，第 8 步无条件退出——与视口是否移动无关。这**是 D-217 遗留的潜在缺陷，不是 D-354 引入的**：该循环一直拿 `current` 与紧随其后重读的 `after` 比，而 D-354 删掉的 `previous` 变量正是早期跨步比较设计的遗留（赋值后从未被读，属死存储）。详情屏上标记通常在 8 步之前就出现，所以这个缺陷从未显形。
+
+**这条也把判据本身的口径钉住了：** 8 样本停住判决**从来不是运动证明**，只是「两条通道两次都没动」的测试；而 100 行的回顶配 100 步的上界本身就贴边。**真正的修法是取样，不是加大上界**——`maxSteps` 在两次失败里都没有成为约束（都在第 8 步退出）。
+
+**裁决：**
+1. **有界轮询取样本**：新增 `awaitFingerprintChange(before)` —— 在 `SEEK_MOVE_TIMEOUT_MS`（1500 ms，≈ D-217 记录的 ~5 个滞后样本 × `SEEK_MOVE_POLL_MS` 200 ms）内反复「重置客户端缓存 → 睡一 poll → 重读指纹」，一旦与 `before` 不同即返回 true。重置正是失败跑里"下一步的样本是新鲜的"的原因（停住分支每步都做同一件事）。
+2. **循环形状**：`scroll(0.6)` → `gestureMoved = awaitFingerprintChange(current)` → 若未动则一次语义动作 → `semanticMoved = awaitFingerprintChange(current)` → `moved = 两者之一` → 只有**两条通道都没动**才 `stationaryCount++`。
+3. **日志**：每步一行，`moved=`、`afterGesture=`、`semantic=`、`stride=`、`before=`/`after=`（截断），让下一跑直接量出两条通道各自的贡献，而不是再猜。
+4. **不动**：8 样本判决、回顶之后的那条断言、0.6 步长、400/100 上界、走查几何、reducer 校验、任何测试断言。语义动作保留——一行代价，覆盖「轮询也抓不到变化」的那一支。
+5. **`previous` 不重建（明写）**：D-354 删它是因死存储；本条也不需要它，因为轮询的 `before` 就是上一轮落定后的**新鲜**跨步样本。把变量加回来会引入第三个运动判据，并与陈旧比较的老陷阱重合。
+
+**推断（标明为推断）：** 每步约 11 行 ≈ 一次 0.6 手势对着约 18 行的视口，而不是一次视口大小的语义步（≈18 行），所以动作来自**手势**、语义动作为零贡献——D-354「向后手势无效」的归因据此被取代。**向后的语义动作是否真的会滚动仍未证明**（它可能返回 true 而什么都没做）；下一次分页用例的 `afterGesture=`/`semantic=` 两列会分别给出读数。
+
+**判据强度不变：** 回顶仍以「端到端可见 `刷新清单`」判定成功，失败仍在该处响亮报出；本条只把「动没动」的取样做对，不放松任何判据。
+
+**实证边界：** 八行日志与 `before=` 列的递减是设备门禁的实测摘录（PR #399 shard 2；本机未留存该 run 工件，未做二次核读）；「陈旧帧导致 `moved=false`」由 `settle()` 的判据与死变量 `previous` 两条代码事实支持，属**定因**；1500 ms 预算由 5 个滞后样本 × 200 ms 推出，**未在该循环上实测**。
+
+**边界：** 入 = `AndroidScaleUi.seekBackToTop` 的取样与计数分支、新增私有 `awaitFingerprintChange`、新增 `SEEK_MOVE_TIMEOUT_MS`/`SEEK_MOVE_POLL_MS`、`visibleTextFingerprint` 的单行表达式体（ktlint `First line of body expression fits on same line as function signature`，该文件 `max_line_length=off` 且既有表达式体都是单行）、相关 KDoc、本条。出 = 不改 8 样本判决/回顶断言/步长/上界取值、不改走查几何、不改 reducer、段预算与 workflow、不改任何测试、不回改 D-217/D-344/D-352/D-354 的历史记录（D-354 的归因由本条的状态行取代，机制与判据保留）。
+
+**残留风险：** ①向后语义动作仍是未测通道（可能纯属负担）；按裁决保留，因为它只在轮询也抓不到变化时才跑，且只花一行。②真静止时的代价：8 个样本 × 每个通道 1.5 s 轮询 ≈ 12 s 才下停住判决——相对 2400 s 段预算可忽略。③D-354 残留 ②（rig 侧 `traversalScrollFallbacks` 注释仍只写「注入被拒」）仍未处理，留给下一轮。
+
+**关联决定：** D-354（本条取代其归因，三处修法与判据保留）、D-217（8 样本判决与客户端树滞后；本条指出该判决从来不是运动证明）、D-344（无障碍动作通道）、D-352（回顶与那条断言）、D-353（走查独立成末相位）、D-204/D-208（缓存重置机制，本条把它用作取样手段）。

@@ -75,6 +75,15 @@ private const val SEEK_TOP_ROWS_PER_SCROLL = 3
 private const val SEEK_TRACE_CHARS = 60
 
 /**
+ * D-355: how long one return-trip channel's move may take to show up in the client tree. The tree
+ * lags gestures by ~5 samples (D-217 round 15), so the budget is ~5 polls of [SEEK_MOVE_POLL_MS].
+ */
+private const val SEEK_MOVE_TIMEOUT_MS = 1_500L
+
+/** D-355: the gap between two movement polls; one lag sample. */
+private const val SEEK_MOVE_POLL_MS = 200L
+
+/**
  * D-351: how many difference entries a seam mismatch echoes per direction. The full sorted lists
  * travel in the payload regardless, so this caps the duplicate echo, not the evidence.
  */
@@ -1685,13 +1694,19 @@ internal class AndroidScaleUi(
      * its loads leave the viewport at the bottom of 600 rows.
      *
      * D-354 (PR #399 `Android instrumented shard 2`, failed twice): [stride] is the backward
-     * gesture's fraction, and [scrollByAccessibilityAction] is the fallback that runs when one
-     * gesture changes nothing. The review list proves FORWARD 0.6 gestures — its reveal crossed a
-     * whole page in 12 and 17 steps — but its backward 0.25 stride had never run anywhere except the
-     * list top, where this loop returns at step 1, or the chain's detail screen; from the bottom of
-     * the loaded slice it moved nothing for eight consecutive samples. So a caller with a long
-     * return trip passes the stride its own screen proves, and an ineffective gesture degrades into
-     * one page-sized semantic step instead of a false "stationary" verdict.
+     * gesture's fraction, and [scrollByAccessibilityAction] is the fallback that runs when the polled
+     * sample shows the gesture changed nothing. The review list proves FORWARD 0.6 gestures — its
+     * reveal crossed a whole page in 12 and 17 steps — but its backward 0.25 stride had never run
+     * anywhere except the list top, where this loop returns at step 1, or the chain's detail screen.
+     * So a caller with a long return trip passes the stride its own screen proves, and an ineffective
+     * gesture degrades into one page-sized semantic step instead of a false "stationary" verdict.
+     *
+     * D-355: a step's movement is sampled by [awaitFingerprintChange], not by an instantaneous
+     * re-read. `settle()`'s stability test is satisfied by two identical stale reads, so the D-217
+     * comparison (`current` vs an immediately re-read `after`) was never a movement proof — it was a
+     * "the tree did not change twice" test, which the shard-2 trace satisfied on all eight steps
+     * while the viewport climbed ~11 rows per step and stopped 12 rows short of the title bar. The
+     * per-step line's `afterGesture=`/`semantic=` size the two channels.
      */
     fun seekBackToTop(
         marker: String = "最近批量结果",
@@ -1712,23 +1727,24 @@ internal class AndroidScaleUi(
             // D-217 walk diagnostics (revert before PR if not wanted)
             if (steps % 10 == 0) Log.i("ULScaleWalk", "seek step=$steps texts=${current.take(80)}")
             scroll(forward = false, fraction = stride)
-            var after = visibleTextFingerprint()
-            var semantic = false
-            if (current.isNotEmpty() && current == after) {
-                // D-354: a gesture that changed nothing on a list that provably scrolls is an
-                // ineffective gesture, not a parked viewport. Drive the container's own
-                // ACTION_SCROLL_BACKWARD once (the D-344 channel), count it, then re-sample.
-                semantic = scrollByAccessibilityAction(forward = false)
-                if (semantic) after = visibleTextFingerprint()
+            // D-355: movement is sampled with a bounded wait, not an instantaneous re-read — the tree
+            // is one frame stale right after scroll(), so `current == after` held on every step of
+            // the failing trip while the viewport really moved.
+            val gestureMoved = awaitFingerprintChange(current)
+            var semanticMoved = false
+            if (!gestureMoved && scrollByAccessibilityAction(forward = false)) {
+                semanticMoved = awaitFingerprintChange(current)
             }
-            // D-354: one bounded trace line per step, so a failed trip is readable from logcat — the
-            // shard-2 failure left eight samples and no reading of any of them.
+            val moved = gestureMoved || semanticMoved
+            val after = visibleTextFingerprint()
+            // D-354/D-355: one bounded trace line per step — the shard-2 failure left eight samples
+            // with no reading of any of them, and `afterGesture=` now sizes the two channels.
             Log.i(
                 "ULScaleWalk",
-                "seekReturn step=$steps moved=${current != after} semantic=$semantic stride=$stride " +
+                "seekReturn step=$steps moved=$moved afterGesture=$gestureMoved semantic=$semanticMoved stride=$stride " +
                     "before=${current.take(SEEK_TRACE_CHARS)} after=${after.take(SEEK_TRACE_CHARS)}",
             )
-            if (current.isNotEmpty() && current == after) {
+            if (current.isNotEmpty() && !moved) {
                 stationaryCount++
                 runCatching { resetAutomationCache() }
                 // Stationary viewport: one final bounded wait for the marker
@@ -1762,12 +1778,12 @@ internal class AndroidScaleUi(
     /**
      * D-354: one scroll driven by the container's own accessibility action — the channel D-344 proved
      * on this screen when gesture injection was refused after a force-stop relaunch.
-     * [seekBackToTop] calls it when a backward gesture provably changes nothing, so an ineffective
-     * gesture becomes one page-sized semantic step instead of a false "stationary" verdict. A
-     * performed action counts in [scrollActionFallbacks] exactly like [scroll]'s refusal fallback.
-     * Forward is D-344-proven; backward is the same platform action and is expected to page, but it is
-     * unproven on this list — the caller's per-step line records `semantic=` and `moved=` either way,
-     * so the next device run answers it instead of us.
+     * [seekBackToTop] calls it when [awaitFingerprintChange] shows the backward gesture changed
+     * nothing, so a still-standing gesture becomes one page-sized semantic step instead of a false
+     * "stationary" verdict. A performed action counts in [scrollActionFallbacks] exactly like
+     * [scroll]'s refusal fallback. Forward is D-344-proven; backward is the same platform action and is
+     * expected to page, but it is unproven on this list — the caller's per-step line records
+     * `semantic=` and `moved=` either way, so the next device run answers it instead of us.
      */
     private fun scrollByAccessibilityAction(forward: Boolean): Boolean {
         tick()
@@ -1786,8 +1802,30 @@ internal class AndroidScaleUi(
     }
 
     /** D-354: the return trip's movement sample — visible texts only, the shape D-217 shipped. */
-    private fun visibleTextFingerprint(): String =
-        nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text?.toString().orEmpty() }
+    private fun visibleTextFingerprint(): String = nodes(root()).filter { it.isVisibleToUser }.joinToString("|") { it.text?.toString().orEmpty() }
+
+    /**
+     * D-355: waits (bounded) until the visible tree differs from [before], and reports whether it did.
+     *
+     * The instantaneous re-read this replaces is why the shard-2 return trip lied: [scroll] ends with
+     * [settle], and settle's stability test is satisfied by two identical STALE reads, so
+     * `before == after` on every step while the viewport really climbed ~11 rows per step — the
+     * failing trace's `before=` column walks 100.94 → 100.83 → 100.62 → 100.51 … and the trip stopped
+     * 12 rows short of the title bar. The poll forces the client cache to refresh between reads (the
+     * same reset the stationary branch performs, which is exactly what made the NEXT step's sample
+     * fresh in that run): a real move is then seen within [SEEK_MOVE_TIMEOUT_MS] — ~5 lag samples of
+     * [SEEK_MOVE_POLL_MS], the D-217 round-15 lag — and a genuinely still viewport pays that budget
+     * once per channel instead of being declared stationary on a stale frame.
+     */
+    private fun awaitFingerprintChange(before: String): Boolean {
+        val deadline = SystemClock.elapsedRealtime() + SEEK_MOVE_TIMEOUT_MS
+        while (SystemClock.elapsedRealtime() < deadline) {
+            runCatching { resetAutomationCache() }
+            SystemClock.sleep(SEEK_MOVE_POLL_MS)
+            if (visibleTextFingerprint() != before) return true
+        }
+        return false
+    }
 
     fun traverse(expected: List<ScaleRow>): Int {
         check(expected.isNotEmpty())
