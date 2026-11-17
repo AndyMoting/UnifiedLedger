@@ -30,6 +30,8 @@ from android_scale.result import (  # noqa: E402
     STAGES,
     TEST_CLASS,
     TEST_METHOD,
+    TRAVERSAL_PAGE_ROWS,
+    TRAVERSAL_PREFIX_PAGES,
     crash_markers,
     cross_check_manifest,
     validate_evidence,
@@ -91,11 +93,21 @@ COUNTERS = {
     "preparedDispositions": 100,
     "finalCandidates": 61000,
     "finalRelations": 150000,
-    "observedCandidates": 61000,
     "mainGroupRelations": 50000,
     "groupDispositions": 50000,
     "formalTransactions": 1,
     "balancedPostings": 2,
+}
+# D-349: the traversal stage's own evidence — the bounded prefix it covers, the clicks it took, and
+# the pages of the untouched 61,000-row tail. Derived from the reducer's constants so a change to
+# either the page count or the page size keeps this fixture honest.
+TRAVERSAL_EVIDENCE = {
+    "traversalPages": TRAVERSAL_PREFIX_PAGES,
+    "traversalRowsCollected": TRAVERSAL_PREFIX_PAGES * TRAVERSAL_PAGE_ROWS,
+    "observedCandidates": TRAVERSAL_PREFIX_PAGES * TRAVERSAL_PAGE_ROWS,
+    "traversalPageClicks": TRAVERSAL_PREFIX_PAGES - 1,
+    "traversalDeepRowPages": (61000 + TRAVERSAL_PAGE_ROWS - 1) // TRAVERSAL_PAGE_ROWS,
+    "traversalScope": "bounded-contiguous-prefix",
 }
 
 
@@ -135,9 +147,10 @@ def build_valid(directory: Path, *, sha: str = SHA, ready_copy: str = EMPTY_LEDG
     stages = {}
     for index, stage in enumerate(STAGES):
         stages[stage] = {"status": "PASS", "startedMs": index * 1000, "elapsedMs": 10}
-    device = {"schema": 1, "sha": sha, "stages": stages, "firstLastObserved": True,
+    device = {"schema": 1, "sha": sha, "stages": stages,
               "uiIdentityScope": "projected-class-groups-query-order"}
     device.update(COUNTERS)
+    device.update(TRAVERSAL_EVIDENCE)
     (directory / "device.json").write_text(json.dumps(device), encoding="utf-8")
     for phase in PHASES:
         (directory / f"instrumentation-{phase}.txt").write_text(status_log(), encoding="utf-8")
@@ -348,34 +361,45 @@ class ReducerRejectsPartialEvidence(unittest.TestCase):
         self.assert_rejected()
 
     def test_stage_timer_above_its_limit_is_rejected(self):
-        build_valid(self.directory)
-        device = load(self.directory, "device.json")
-        device["stages"]["saf_import"]["elapsedMs"] = 1800001
-        save(self.directory, "device.json", device)
-        self.assert_rejected()
+        # Every explicit cap is pinned behaviourally: one millisecond over must fail that stage's own
+        # limit check. The stages after it are shifted past its end first, so the run cannot be
+        # rejected by the ordering rule instead, and the message names the stage the cap belongs to.
+        for stage, cap in (("saf_import", 1800000), ("reopen", 1800000), ("traversal", 2400000)):
+            with self.subTest(stage=stage):
+                build_valid(self.directory)
+                device = load(self.directory, "device.json")
+                device["stages"][stage]["elapsedMs"] = cap + 1
+                end = device["stages"][stage]["startedMs"] + cap + 1
+                for index, later in enumerate(STAGES[STAGES.index(stage) + 1:]):
+                    device["stages"][later]["startedMs"] = end + 1000 + index * 1000
+                save(self.directory, "device.json", device)
+                with self.assertRaises(ValueError) as caught:
+                    validate_evidence(self.directory, SHA)
+                self.assertIn(f"stage did not pass: {stage}", str(caught.exception))
 
     def test_traversal_is_a_sibling_stage_immediately_after_reopen(self):
         # D-217 round 21 (closure review): the walk is registered only after
         # the reopen stage fully completes, so STAGES must list traversal
         # immediately after reopen — a traversal nested inside reopen starts
         # after reopen started and can never satisfy the strictly increasing
-        # startedMs rule. The reopen cap is explicit (D-342 raised it to
-        # 5400000ms: run 43891956497 cut a real reopen at the old 1800000ms
-        # bound), and the walk itself stays under traversal's 14400000ms entry
-        # — pinned behaviorally by rejecting a reopen stage one millisecond
-        # over the cap.
+        # startedMs rule. The reopen cap is explicit (D-350 tightened it back to
+        # 1800000ms after D-348 fixed the read path that D-342/D-345 had raised
+        # the bound to 9000000ms for), and the walk itself stays under
+        # traversal's 2400000ms entry — pinned behaviourally by rejecting a
+        # reopen stage one millisecond over the cap.
         self.assertEqual(STAGES.index("traversal"), STAGES.index("reopen") + 1)
         build_valid(self.directory)
         device = load(self.directory, "device.json")
-        device["stages"]["reopen"]["elapsedMs"] = 9000001
+        device["stages"]["reopen"]["elapsedMs"] = 1800001
+        device["stages"]["traversal"]["startedMs"] = device["stages"]["reopen"]["startedMs"] + 1800002
         save(self.directory, "device.json", device)
         self.assert_rejected()
 
     def test_accepts_the_round21_reopen_then_traversal_timeline(self):
         # D-217 round 21 (closure review): the legal post-fix timeline —
         # the chain stages with increasing startedMs, then reopen under its
-        # explicit 1800000ms cap, then traversal starting after reopen with
-        # elapsedMs under 14400000ms, then the two short final stages. The
+        # explicit 1800000ms cap, then traversal starting after reopen and
+        # finishing under 2400000ms, then the two short final stages. The
         # nested-walk design could never produce this shape.
         build_valid(self.directory)
         device = load(self.directory, "device.json")
@@ -391,10 +415,11 @@ class ReducerRejectsPartialEvidence(unittest.TestCase):
             "batch_confirmation": (600000, 100000),
             "group_disposition": (750000, 300000),
             "detail_monthly_refresh": (1200000, 50000),
-            "reopen": (1300000, 1700000),
-            "traversal": (3100000, 14000000),
-            "same_request_replay": (17200000, 60000),
-            "final_reopen": (17300000, 60000),
+            # D-350: the measured reopen (166s) and the D-349 prefix walk (~14 min).
+            "reopen": (1300000, 166000),
+            "traversal": (1500000, 840000),
+            "same_request_replay": (2400000, 60000),
+            "final_reopen": (2500000, 60000),
         }
         self.assertEqual(set(timeline), set(STAGES))
         device["stages"] = {
@@ -591,9 +616,33 @@ class ReducerRejectsWrongIdentityAndCrashes(unittest.TestCase):
         save(self.directory, "device.json", device)
         self.assert_rejected()
 
-    def test_missing_first_last_evidence_is_rejected(self):
+    def test_missing_traversal_prefix_scope_is_rejected(self):
+        # D-349: the walk covers a bounded prefix, so the evidence must say so; the whole-list claim
+        # (`firstLastObserved`) is gone and does not substitute for it.
         device = load(self.directory, "device.json")
-        device["firstLastObserved"] = False
+        device["traversalScope"] = "whole-list"
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+    def test_short_traversal_prefix_is_rejected(self):
+        # A walk that covered fewer rows than the promised prefix must not pass as one that did.
+        device = load(self.directory, "device.json")
+        device["traversalRowsCollected"] = TRAVERSAL_PREFIX_PAGES * TRAVERSAL_PAGE_ROWS - 1
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+    def test_traversal_click_count_must_match_the_page_count(self):
+        # N pages take N-1 clicks; a mismatch means the recorded shape is not the walk that ran.
+        device = load(self.directory, "device.json")
+        device["traversalPageClicks"] = TRAVERSAL_PREFIX_PAGES
+        save(self.directory, "device.json", device)
+        self.assert_rejected()
+
+    def test_traversal_depth_must_match_the_oracle_row_count(self):
+        # The untouched tail is ceil(finalCandidates / page rows); a value that does not follow from
+        # the validated row count means the recorded depth was invented rather than read.
+        device = load(self.directory, "device.json")
+        device["traversalDeepRowPages"] = TRAVERSAL_EVIDENCE["traversalDeepRowPages"] - 1
         save(self.directory, "device.json", device)
         self.assert_rejected()
 
@@ -1346,8 +1395,9 @@ class RunnerRetriesAndDiagnosticsAreOfflineTestable(unittest.TestCase):
         self.assertIsNone(PHASE_BUDGETS["prepare"])
         self.assertIsNone(PHASE_BUDGETS["chain"])
         # D-217 round 12: the collection walk moved into reopen(), so that
-        # phase now hosts a multi-hour walk (the old traversal stage cap was
-        # 14400s); replay/final-reopen stay short.
+        # phase hosts both stages; its 18000s is an envelope above their own
+        # bounds (D-350: reopen 1800s + traversal 2400s), not a walk budget.
+        # replay/final-reopen stay short.
         self.assertEqual(PHASE_BUDGETS["reopen"], 18000)
         self.assertTrue(all(PHASE_BUDGETS[phase] == 480 for phase in PHASES[3:]))
 

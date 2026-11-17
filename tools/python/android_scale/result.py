@@ -23,9 +23,14 @@ STAGES = ("preparation", "coldstart", "saf_import", "detail_decision",
           "batch_confirmation", "group_disposition", "detail_monthly_refresh", "reopen",
           "traversal", "same_request_replay", "final_reopen")
 EXPECTED = {"preparedCandidates": 51000, "preparedRelations": 100000, "preparedDispositions": 100,
-            "finalCandidates": 61000, "finalRelations": 150000, "observedCandidates": 61000,
+            "finalCandidates": 61000, "finalRelations": 150000,
             "mainGroupRelations": 50000, "groupDispositions": 50000,
             "formalTransactions": 1, "balancedPostings": 2}
+# D-349: the maximum path walks a bounded contiguous PREFIX of the review list — 12 pages of the
+# product's own page size — instead of all 61,000 rows. Exhaustive full-list equality stays in
+# preflight and the b6 scale, where the list is small enough to walk in one pass.
+TRAVERSAL_PREFIX_PAGES = 12
+TRAVERSAL_PAGE_ROWS = 50
 TEST_CLASS = "com.unifiedledger.android.AndroidScaleLongInstrumentedTest"
 TEST_METHOD = "maximumScalePhase"
 PREFLIGHT_CLASS = "com.unifiedledger.android.AndroidScalePreflightInstrumentedTest"
@@ -263,18 +268,17 @@ def validate_evidence(directory: Path, expected_sha: str) -> dict:
     if set(stages) != set(STAGES):
         raise ValueError("missing/extra stages")
     previous_end = 0
-    # D-217 round 21 (closure review): `reopen` gets an explicit cap — the
-    # snapshot's oracle ticks on maximum can exceed the 180000ms default the
-    # unlisted default would impose, while the walk itself stays bounded by
-    # `traversal`'s 14400000 entry. The 18000s host phase budget remains the
-    # outer bound.
-    # D-342: `reopen` moves with the rig's own literal — run 43891956497 cut it at exactly the old
-    # 1800000ms bound after the chain phase finally completed, so this raises both together.
-    # D-345: 5400000ms proved an edge rather than a ceiling (run 43955867697 needed 5404s on a box
-    # ~25% slower than the run that passed at 5057s), so the bound moves to 9000000ms. The
-    # traversal sibling keeps its 4h literal; the outer envelope bounds it.
+    # D-217 round 21 (closure review): `reopen` gets an explicit cap — the snapshot's oracle ticks on
+    # maximum can exceed the 180000ms default the unlisted default would impose, while the walk itself
+    # stays bounded by `traversal`'s own entry. The 18000s host phase budget remains the outer bound.
+    # D-342/D-345 raised `reopen` to 9000000ms while the production read path was quadratic and a
+    # reopen cost 5000-9000s. D-350 tightens it back after D-348 fixed that path: run 44111466778
+    # reopened in 166s, so 1800000ms keeps ~11x headroom. `traversal` follows it down from 14400000ms
+    # to 2400000ms, because D-349 replaced the exhaustive walk with the bounded prefix (~14 min of
+    # work, so ~2.8x headroom). The workflow's outer deadline, the step/job timeouts and the driver's
+    # mode limit are upper bounds and stay as they are.
     limits = {"preparation": 14400000, "saf_import": 1800000, "group_disposition": 5400000,
-              "reopen": 9000000, "traversal": 14400000,
+              "reopen": 1800000, "traversal": 2400000,
               # D-338: the detail stage now carries both batch submits (the decision-incomplete
               # skip and the decided booking), which a single authorization measured at ~39.4s
               # (D-164) plus the summary read; run 43801673636 already spent 150.965s of the old
@@ -295,11 +299,25 @@ def validate_evidence(directory: Path, expected_sha: str) -> dict:
     # D-217: the in-chain stages observe the UI only; heavy SQL assertions run
     # in the app-stopped phases. The traversal no longer aligns against the
     # spec order in-chain (the list renders class groups in query order), so
-    # the scope label reflects the collect-then-align design and the alignment
-    # itself is asserted on-device in reopen() against the quiescent oracle
-    # snapshot (collected signatures == expected display-row multiset).
-    if device.get("firstLastObserved") is not True or device.get("uiIdentityScope") != "projected-class-groups-query-order":
+    # the scope label reflects the collect-then-align design.
+    # D-349: the walk covers a bounded contiguous prefix and proves it at every page seam, so the
+    # evidence states that shape instead of claiming a whole-list walk: pages covered, rows that is,
+    # clicks it took, and the pages of the list left untouched. `firstLastObserved` was the
+    # whole-list claim and is gone with it.
+    prefix_rows = TRAVERSAL_PREFIX_PAGES * TRAVERSAL_PAGE_ROWS
+    if device.get("traversalScope") != "bounded-contiguous-prefix" or device.get("uiIdentityScope") != "projected-class-groups-query-order":
         raise ValueError("UI traversal scope evidence missing")
+    if (type(device.get("traversalPages")) is not int or device["traversalPages"] != TRAVERSAL_PREFIX_PAGES
+            or type(device.get("traversalRowsCollected")) is not int or device["traversalRowsCollected"] != prefix_rows
+            or type(device.get("observedCandidates")) is not int or device["observedCandidates"] != prefix_rows
+            or type(device.get("traversalPageClicks")) is not int
+            or device["traversalPageClicks"] != TRAVERSAL_PREFIX_PAGES - 1):
+        raise ValueError("traversal prefix evidence mismatch")
+    # The untouched tail is bound to the manifest's row count (validated against EXPECTED above), so
+    # "the list is 61,000 rows deep" and "the walk covered 600 of them" cannot drift apart.
+    deep_row_pages = (device["finalCandidates"] + TRAVERSAL_PAGE_ROWS - 1) // TRAVERSAL_PAGE_ROWS
+    if type(device.get("traversalDeepRowPages")) is not int or device["traversalDeepRowPages"] != deep_row_pages:
+        raise ValueError("traversal depth evidence mismatch")
     if {p.name for p in directory.glob("instrumentation-*.txt")} != {f"instrumentation-{phase}.txt" for phase in PHASES}:
         raise ValueError("extra/stale/missing phase logs")
     for phase in PHASES:
@@ -334,7 +352,6 @@ MANIFEST_COUNTERS = (
     ("preparedDispositions", "initially_confirmed_relations"),
     ("finalCandidates", "final_candidates"),
     ("finalRelations", "final_duplicate_relations"),
-    ("observedCandidates", "final_candidates"),
     ("mainGroupRelations", "new_session_duplicate_relations"),
     ("groupDispositions", "new_session_duplicate_relations"),
     ("formalTransactions", "expected_formal_transactions_after_confirmation"),

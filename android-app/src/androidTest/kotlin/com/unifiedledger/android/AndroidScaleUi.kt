@@ -18,6 +18,33 @@ import java.util.ArrayDeque
 /** The drawer row wait: the 导入账单 row composes only while the drawer is open, so this covers its entrance. */
 private const val DRAWER_ROW_TIMEOUT_MS = 30_000L
 
+/**
+ * D-349: the product's review-list page size, `IMPORT_REVIEW_PAGE_SIZE = 50L` (P503App.kt:5966). One
+ * 「加载更多导入候选」 click loads this many rows, so it is also the traversal prefix's page seam.
+ */
+internal const val IMPORT_REVIEW_PAGE_ROWS = 50
+
+/**
+ * D-349: the review list's next-page affordance. It renders only while the read cursor is non-null
+ * (`ImportReviewRenderItem.LoadMore`, gated on `view.nextAfterCandidateId`), and the button carries
+ * this exact contentDescription (`P503ImportReview.kt:645`; its visible text is 「加载更多」), so the
+ * walk matches the description and clicks the button itself.
+ */
+private const val LOAD_MORE_AFFORDANCE = "加载更多导入候选"
+
+/**
+ * D-349: one page load's wait. A page is one keyset read of [IMPORT_REVIEW_PAGE_ROWS] rows through
+ * the production read path (P503App.kt:2646 → `queryPage`), which the D-348 index made a
+ * milliseconds-scale read; 60s is a load-composition ceiling, not a read-cost estimate.
+ */
+private const val PAGE_LOAD_TIMEOUT_MS = 60_000L
+
+/** D-349: how many times one page may be asked for before the walk fails loudly. */
+private const val PAGE_LOAD_ATTEMPTS = 3
+
+/** D-349: how many gentle forward scrolls may be spent bringing the affordance into the viewport. */
+private const val PAGE_REVEAL_SCROLLS = 8
+
 /** Fresh semantic nodes only; gesture geometry comes from the current scroll container. */
 internal class AndroidScaleUi(
     private val instrumentation: Instrumentation,
@@ -41,6 +68,14 @@ internal class AndroidScaleUi(
      * suspicious pass on the traversal stage.
      */
     var scrollActionFallbacks: Int = 0
+        private set
+
+    /** D-349: how many prefix pages the last [collectTraversal] covered. Evidence only. */
+    var traversalPages: Int = 0
+        private set
+
+    /** D-349: how many 「加载更多导入候选」 clicks the last [collectTraversal] issued. Evidence only. */
+    var traversalPageClicks: Int = 0
         private set
 
     init {
@@ -1074,7 +1109,7 @@ internal class AndroidScaleUi(
 
     /**
      * D-217: collect-only traversal, multiset-preserving. Walks the review list
-     * once — top, then a single forward pass to the stationary bottom —
+     * top-down — a forward pass to the stationary bottom of each loaded page —
      * recording ONE entry per rendered row occurrence, and returns the collected
      * signature list (the caller stores it as observedCandidates). The list
      * renders the product's class groups in query order, a different domain from
@@ -1099,21 +1134,35 @@ internal class AndroidScaleUi(
      * the pre-D-217 [traverse] overlap mechanism
      * (scaleWindowOffset + its retry loop) without its oracle dependency: it
      * needs no expected order and no oracle read, so it stays inside the D-212
-     * wall. The unique-session first row must appear (its amount is
-     * spec-derived and passed in as [anchorAmount]; the caller derives it from
-     * the manifest so this facility needs no spec type), anchoring the
-     * collection to the fixture.
+     * wall.
      *
-     * [expectedRows] bounds the walk by collected size (the pre-D-217
-     * `traverse` did the same against the oracle size): each forward scroll
-     * advances ~1.5 rows of an ~11-13-row viewport (round-11 fraction 0.12),
-     * so a fixed scan cap cannot reach the 61,000-row maximum. The internal
-     * safety cap (expectedRows*4 + 200) is a generous stuck-viewport guard
-     * above the worst-case rows-to-scans ratio.
+     * D-349 — the walk covers a bounded contiguous PREFIX, because the maximum
+     * profile's list is paged: [IMPORT_REVIEW_PAGE_ROWS] rows per page, the next
+     * page behind the 「加载更多导入候选」 button (P503ImportReview.kt:645,
+     * `onLoadMore = requestMoreImportReview`, P503App.kt:2646). A scroll-only walk
+     * therefore parks at the end of page one; run 44111466778 collected exactly 50
+     * rows, parked, and failed the old `sawAnchor` gate, whose unique-session row
+     * sits at rank 61,000. Measured on that run: 1.01s per scan at 0.78 rows per
+     * scan, so an exhaustive walk needs ~21.9h and 1,220 clicks. The walk now
+     * takes [targetRows] rows — whole pages — and after each page's viewport
+     * parks it asserts [expectedPrefix], a prefix multiset equality against the
+     * caller's quiescent display rows. That seam assertion is what makes the
+     * prefix acceptable: at every page boundary the covered range is proven to
+     * hold each expected row exactly once, so a dropped or duplicated row fails
+     * at the page where it happened instead of disappearing into a short list.
+     * [loadNextPage] then clicks the affordance and waits (bounded) for the list
+     * to grow. The click is a read trigger only — one keyset page read through
+     * the product's own path, no write — so the traversal stage's state-silence
+     * invariant survives, and the stage's tail re-reads the oracle and asserts
+     * equality, which is what proves it.
+     *
+     * [targetRows] is the walk's whole bound; the internal safety cap
+     * (targetRows*4 + 200) keeps the pre-D-349 stuck-viewport guard shape above
+     * the worst-case rows-to-scans ratio.
      */
     fun collectTraversal(
-        anchorAmount: Long,
-        expectedRows: Int,
+        targetRows: Int,
+        expectedPrefix: (rows: Int) -> List<String>,
     ): List<String> {
         // D-217: the previous stage may have left the app on the detail
         // screen (its back click can silently fail on a stale node); the
@@ -1134,38 +1183,45 @@ internal class AndroidScaleUi(
         // await/miss-reset inside the walk below still applies.
         // D-217 round 5: the old small downward header-search loop with its
         // fatal `check(found)` gate is REMOVED. The header anchor added
-        // nothing the existing `check(sawAnchor)` below does not already pin
-        // (the unique session's first-row amount is globally unique by fixture
-        // construction), and the same mid-list/stale-tree fragility that broke
-        // the detail walk would kill traversal at exactly that gate. The
-        // pending group is the FIRST group of the review list, so the first
-        // non-empty window after the top seek is the pending group's own rows
-        // and the seeding logic below starts the collection correctly.
+        // nothing the collection itself does not already pin, and the same
+        // mid-list/stale-tree fragility that broke the detail walk would kill
+        // traversal at exactly that gate; D-349's page-seam proof pins the
+        // covered range harder than any header sighting. The pending group is
+        // the FIRST group of the review list, so the first non-empty window
+        // after the top seek is the pending group's own rows and the seeding
+        // logic below starts the collection correctly.
         seekBackToTop("刷新清单")
         // D-217 walk diagnostics (revert before PR if not wanted)
         Log.i("ULScaleWalk", "collect seekDone markerVisible=${has("刷新清单")} pendingVisible=${has("待确认——缺用户决策", prefix = true)} rows=${candidateNodes().size}")
-        check(expectedRows > 0)
+        check(targetRows > 0 && targetRows % IMPORT_REVIEW_PAGE_ROWS == 0) { "traversal prefix target must be whole pages: $targetRows" }
         val collected = ArrayList<String>()
         // Bound by collected size, not a fixed scan budget: each forward scroll
         // advances ~1.5 rows of an ~11-13-row viewport (round-11 fraction
-        // 0.12), so the 61,000-row maximum needs ~40,000-45,000 scans.
-        // safetyCap = expectedRows*4 + 200 is comfortably above that
+        // 0.12). safetyCap = targetRows*4 + 200 stays comfortably above that
         // worst-case rows-to-scans ratio while still terminating a
         // stuck/duplicated viewport (the pre-D-217 `traverse` bounded against
         // the oracle size for the same reason).
-        val safetyCap = expectedRows.toLong() * 4L + 200L
+        val safetyCap = targetRows.toLong() * 4L + 200L
         var scans = 0L
         var retries = 0
         var stationaryCount = 0
-        // The unique session's first-row amount is unique to that row by
-        // fixture construction (rows do not render session ids): the shared
-        // sessions span seed+1..seed+rowsPerSession and the unique session
-        // starts at seed+rowsPerSession+1, so the amount prefix alone is the
-        // anchor. The caller derives it from the manifest (D-217 review: the
-        // old seed+1 targeted the FIRST shared row, not the unique one).
-        val anchor = amountText(anchorAmount) + "|"
-        var sawAnchor = false
-        while (collected.size < expectedRows && scans++ < safetyCap) {
+        var pageRows = IMPORT_REVIEW_PAGE_ROWS
+        traversalPages = 0
+        traversalPageClicks = 0
+        while (collected.size < targetRows && scans++ < safetyCap) {
+            // D-349 page seam: the loaded list holds exactly `pageRows` rows, so
+            // reaching that count proves this page fully covered. Prove the
+            // covered prefix row-for-row, then ask the list for the next page.
+            if (collected.size == pageRows) {
+                verifyTraversalPrefix(collected, expectedPrefix, pageRows)
+                traversalPages++
+                loadNextPage()
+                // The new page's rows are data now, not yet a fresh viewport: the
+                // parking verdict must not fire while they are still coming.
+                stationaryCount = 0
+                pageRows += IMPORT_REVIEW_PAGE_ROWS
+                continue
+            }
             val sizeBefore = collected.size
             val window = candidateNodes().mapNotNull(::signatureOrNull)
             if (window.isEmpty() && collected.isEmpty()) {
@@ -1219,18 +1275,6 @@ internal class AndroidScaleUi(
                 collected.addAll(window.subList(matches.single(), window.size))
             }
             retries = 0
-            // The container-scoped walk can blind out whole groups; the
-            // targeted findNode (cache walk -> root refresh -> forced cache
-            // reset) probes the anchor row through a different path every
-            // iteration and reads its signature through the same walk's
-            // result, so the anchor has three independent chances per step.
-            if (!sawAnchor) {
-                findNode { node ->
-                    node.isVisibleToUser && signatureAmount(node) == anchor.removeSuffix("|")
-                }?.let {
-                    sawAnchor = true
-                }
-            }
             val top = candidateNodes().firstOrNull()?.let { bounds(it).toString() + signatureOrNull(it) } ?: ""
             // D-217 round 9: 0.25 was the only fraction that had ever moved
             // this list on device (evidence6, round-4-era walk at 0.25: the
@@ -1292,14 +1336,99 @@ internal class AndroidScaleUi(
                 stationaryCount = 0
             }
         }
-        check(sawAnchor) { "traversal never reached the unique-session first row" }
+        // D-349: the LAST page's seam. The loop exits the moment the target is
+        // collected, so the seam branch above never runs for it.
+        if (collected.size == targetRows && traversalPages * IMPORT_REVIEW_PAGE_ROWS < targetRows) {
+            verifyTraversalPrefix(collected, expectedPrefix, targetRows)
+            traversalPages++
+        }
         // A stationary viewport or the safety cap ends the walk; if either
-        // fires before every expected row is collected, fail loudly here with
+        // fires before the target prefix is collected, fail loudly here with
         // the real cause instead of returning a short list that only surfaces
-        // later as an opaque multiset mismatch (D-217 review).
-        check(collected.size == expectedRows) { "traversal incomplete (collected=${collected.size} expected=$expectedRows scans=$scans)" }
+        // later as an opaque seam mismatch (D-217 review, kept by D-349).
+        check(collected.size == targetRows) {
+            "traversal prefix incomplete (collected=${collected.size} target=$targetRows pages=$traversalPages " +
+                "clicks=$traversalPageClicks scans=$scans stationary=$stationaryCount)"
+        }
         return collected
     }
+
+    /**
+     * D-349: the page-seam proof. The collected prefix must equal the caller's
+     * expected prefix as an exact multiset — every expected row present exactly
+     * once, nothing extra — so a dropped or duplicated row fails at the page
+     * where it happened instead of surfacing later as a short list. The caller
+     * passes the quiescent snapshot's display rows, which is the same list the
+     * pre-D-349 whole-list comparison used; the seam narrows it to the range
+     * this walk actually covers.
+     */
+    private fun verifyTraversalPrefix(
+        collected: List<String>,
+        expectedPrefix: (rows: Int) -> List<String>,
+        rows: Int,
+    ) {
+        val seam = expectedPrefix(rows)
+        check(seam.size == rows) { "traversal prefix expectation short (rows=${seam.size} expected=$rows)" }
+        check(collected.sorted() == seam.sorted()) { "traversal prefix mismatch at $rows rows (collected=${collected.size})" }
+    }
+
+    /**
+     * D-349: loads the review list's next page — one click on the
+     * 「加载更多导入候选」 affordance plus a bounded wait for the list to grow —
+     * and returns with the viewport still parked at the bottom of the list. The
+     * click runs the product's own load-more path (`P503App.kt:2646` →
+     * `queryPage(cursor)` → `AppendImportReviewPage`, which appends the page to
+     * the rows already rendered), so it is ONE keyset read that writes nothing:
+     * the traversal stage's state-silence invariant holds, and the stage's tail
+     * re-reads the oracle and asserts equality, which proves it.
+     *
+     * Bounded three ways: [click] waits for the affordance itself (and errors
+     * when it never appears), the growth wait is [PAGE_LOAD_TIMEOUT_MS], and the
+     * click is retried at most [PAGE_LOAD_ATTEMPTS] times before the walk fails.
+     * Growth is read from the list's own item count; when the client tree does
+     * not expose it, the wait degrades to a single settled read and the next
+     * page walk's stall check becomes the bound.
+     */
+    private fun loadNextPage() {
+        revealLoadMoreAffordance()
+        val before = renderedItemCount()
+        repeat(PAGE_LOAD_ATTEMPTS) {
+            click(LOAD_MORE_AFFORDANCE)
+            traversalPageClicks++
+            if (awaitPageGrowth(before)) return
+        }
+        error("$LOAD_MORE_AFFORDANCE did not extend the review list (itemCount=$before clicks=$traversalPageClicks)")
+    }
+
+    /**
+     * D-349: brings the affordance into the viewport. It sits directly after the
+     * last loaded row, so a walk that stops the moment the last row is collected
+     * can leave it just below the fold. The same 0.12 fraction keeps every step
+     * inside the client tree's refresh window (D-217 round 11), and the count of
+     * steps is bounded by [PAGE_REVEAL_SCROLLS].
+     */
+    private fun revealLoadMoreAffordance() {
+        var steps = 0
+        while (!has(LOAD_MORE_AFFORDANCE) && steps++ < PAGE_REVEAL_SCROLLS) {
+            scroll(forward = true, fraction = 0.12f)
+        }
+        check(has(LOAD_MORE_AFFORDANCE)) { "「$LOAD_MORE_AFFORDANCE」 not reachable after $steps scrolls" }
+    }
+
+    /** The review list's own item count, or null when the client tree does not expose it. */
+    private fun renderedItemCount(): Int? = runCatching { scrollable().collectionInfo?.rowCount }.getOrNull()
+
+    /** D-349: true once the list's item count grew past [before]; see [loadNextPage] for the bound. */
+    private fun awaitPageGrowth(before: Int?): Boolean =
+        try {
+            await(PAGE_LOAD_TIMEOUT_MS) {
+                val now = renderedItemCount()
+                if (before == null) now != null else now != null && now > before
+            }
+            true
+        } catch (ignored: IllegalStateException) {
+            false
+        }
 
     private fun amountText(amount: Long): String = (amount / 100).toString() + "." + (amount % 100).toString().padStart(2, '0') + " CNY"
 
