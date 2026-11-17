@@ -77,17 +77,14 @@ class SqlDelightLedgerCurrentStateReadAdapter(
      */
     private val p806Reader: SqlDelightP806SnapshotReader = SqlDelightP806SnapshotReader(database)
 
-    override fun readReportSnapshot(request: P806ReportRequest): P806SnapshotResult<P806ReportSnapshot> =
-        p806Reader.report(request)
+    override fun readReportSnapshot(request: P806ReportRequest): P806SnapshotResult<P806ReportSnapshot> = p806Reader.report(request)
 
-    override fun readCalendarSnapshot(request: P806CalendarRequest): P806SnapshotResult<P806CalendarSnapshot> =
-        p806Reader.calendar(request)
+    override fun readCalendarSnapshot(request: P806CalendarRequest): P806SnapshotResult<P806CalendarSnapshot> = p806Reader.calendar(request)
 
-    override fun readDrilldownSnapshot(request: P806DrilldownRequest): P806SnapshotResult<P806DrilldownSnapshot> =
-        p806Reader.drilldown(request)
+    override fun readDrilldownSnapshot(request: P806DrilldownRequest): P806SnapshotResult<P806DrilldownSnapshot> = p806Reader.drilldown(request)
 
-    override fun readAccountPostingsSnapshot(request: P806AccountRequest): P806SnapshotResult<P806AccountSnapshot> =
-        p806Reader.account(request)
+    override fun readAccountPostingsSnapshot(request: P806AccountRequest): P806SnapshotResult<P806AccountSnapshot> = p806Reader.account(request)
+
     override fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow> =
         database.ledgerQueries
             .currentVersionRowsForLedger(ledgerId.value)

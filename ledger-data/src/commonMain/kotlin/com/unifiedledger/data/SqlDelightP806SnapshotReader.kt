@@ -12,12 +12,10 @@ import com.unifiedledger.application.P806CalendarDaySnapshot
 import com.unifiedledger.application.P806CalendarRequest
 import com.unifiedledger.application.P806CalendarSnapshot
 import com.unifiedledger.application.P806CurrencyTransactionCount
-import com.unifiedledger.application.P806_DETAIL_PAGE_SIZE
-import com.unifiedledger.application.P806_MAX_DAY_BUCKETS
 import com.unifiedledger.application.P806DrilldownRequest
 import com.unifiedledger.application.P806DrilldownSnapshot
-import com.unifiedledger.application.P806Periods
 import com.unifiedledger.application.P806PeriodResolution
+import com.unifiedledger.application.P806Periods
 import com.unifiedledger.application.P806ReportRequest
 import com.unifiedledger.application.P806ReportSnapshot
 import com.unifiedledger.application.P806SnapshotFailure
@@ -26,6 +24,8 @@ import com.unifiedledger.application.P806Span
 import com.unifiedledger.application.P806TransactionCursor
 import com.unifiedledger.application.P806TransactionPage
 import com.unifiedledger.application.P806Window
+import com.unifiedledger.application.P806_DETAIL_PAGE_SIZE
+import com.unifiedledger.application.P806_MAX_DAY_BUCKETS
 import com.unifiedledger.application.isAxisCatalogConsistent
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.AccountId
@@ -213,11 +213,9 @@ internal class SqlDelightP806SnapshotReader(
 
     // ---------------------------------------------------------------- probes
 
-    private fun catalogVersion(ledgerId: LedgerId): Long? =
-        database.ledgerQueries.selectCatalogVersion(ledgerId.value).executeAsOneOrNull()
+    private fun catalogVersion(ledgerId: LedgerId): Long? = database.ledgerQueries.selectCatalogVersion(ledgerId.value).executeAsOneOrNull()
 
-    private fun statisticsProjectionMissing(ledgerId: LedgerId): Boolean =
-        database.ledgerQueries.statisticsAtProjectionMissingForLedger(ledgerId.value).executeAsOne() != 0L
+    private fun statisticsProjectionMissing(ledgerId: LedgerId): Boolean = database.ledgerQueries.statisticsAtProjectionMissingForLedger(ledgerId.value).executeAsOne() != 0L
 
     /**
      * The ledger span from the numeric projections only (D-343 3.1.2（跨度只读数值投影）). The ledger-wide projection
@@ -341,7 +339,8 @@ internal class SqlDelightP806SnapshotReader(
                 kind6 = ordinaryKindNames[5],
                 contrib_kind1 = contributingAccountKindNames[0],
                 contrib_kind2 = contributingAccountKindNames[1],
-            ).executeAsOne().countOrFail()
+            ).executeAsOne()
+            .countOrFail()
 
     private fun currencyTransactionCounts(
         ledgerId: LedgerId,
@@ -387,7 +386,8 @@ internal class SqlDelightP806SnapshotReader(
                 kind6 = ordinaryKindNames[5],
                 contrib_kind1 = contributingAccountKindNames[0],
                 contrib_kind2 = contributingAccountKindNames[1],
-            ).executeAsOne().countOrFail()
+            ).executeAsOne()
+            .countOrFail()
 
     // ---------------------------------------------------------------- pages
 
@@ -475,7 +475,8 @@ internal class SqlDelightP806SnapshotReader(
                 contrib_kind1 = contributingAccountKindNames[0],
                 contrib_kind2 = contributingAccountKindNames[1],
                 category_filter = categoryFilter,
-            ).executeAsOne().countOrFail()
+            ).executeAsOne()
+            .countOrFail()
 
     private fun accountPage(
         ledgerId: LedgerId,
@@ -538,7 +539,8 @@ internal class SqlDelightP806SnapshotReader(
                 account_id = request.accountId.value,
                 window_start_nanos = request.window?.startEpochNanos ?: Long.MIN_VALUE,
                 window_end_nanos = request.window?.endEpochNanos ?: Long.MAX_VALUE,
-            ).executeAsOne().countOrFail()
+            ).executeAsOne()
+            .countOrFail()
 
     // ---------------------------------------------------------------- plumbing
 
@@ -654,4 +656,6 @@ internal class SqlDelightP806SnapshotReader(
 private class P806OccurredAtUnparseable : Exception("P8-06 occurred_at failed the frozen parser")
 
 /** Internal marker: this batch's own projection/mapping integrity failure. */
-private class P806InvalidProjection(message: String) : Exception(message)
+private class P806InvalidProjection(
+    message: String,
+) : Exception(message)
