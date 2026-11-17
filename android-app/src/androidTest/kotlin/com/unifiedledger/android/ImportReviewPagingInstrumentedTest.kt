@@ -22,55 +22,57 @@ private const val LOAD_MORE_TEXT = "加载更多"
 private const val LIST_TOP_MARKER = "刷新清单"
 
 /**
- * Bounded forward scrolls that bring the next-page affordance on screen. The walk parks at the page's
- * last row, and the affordance is the item after it, so it can sit just below the fold; the list
- * cannot scroll past its own end, so a bounded number of steps always lands on it.
+ * Bounded forward scrolls that bring the next-page affordance on screen for the completion click.
+ * The walk parks on the last row of the page it just collected, and the affordance is the item after
+ * it, so it can sit just below the fold; the list cannot scroll past its own end, so a bounded number
+ * of steps always lands on it.
  */
 private const val AFFORDANCE_SEEK_SCROLLS = 6
 
-/** Bounded forward scrolls before the terminal absence check: at the list's end they are no-ops. */
-private const val TERMINAL_PROBE_SCROLLS = 4
-
 /**
  * The 加载更多 page-crossing contract of the import review list, measured on the rendered list at a
- * three-page size (120 candidates at `IMPORT_REVIEW_PAGE_SIZE = 50L`, `P503App.kt:5966`).
+ * three-page size (150 candidates at `IMPORT_REVIEW_PAGE_SIZE = 50L`, `P503App.kt:5966`).
  *
  * WHY THIS CASE EXISTS. The list renders ONE page of candidates and reaches rows 51+ only through
  * the 加载更多导入候选 affordance (`P503ImportReview.kt:645`, wired `onLoadMore = ::requestMoreImportReview`,
  * `P503App.kt:2646`, which reads ONE keyset page at the stored cursor). The 61k device traversal
  * walked page 1 and parked at that affordance, and no case in the suite ever crossed the seam, so a
- * duplicated or dropped row at a page boundary could not have been caught. This case crosses it
- * twice at a size an ordinary device shard can afford.
+ * duplicated or dropped row at a page boundary could not have been caught. This case crosses two
+ * page boundaries and then reads the completion state.
+ *
+ * HOW THE WALK READS THE SEAM (D-349). `AndroidScaleUi.collectTraversal` takes a whole-page target
+ * and, at every page boundary it reaches, proves the covered prefix against the caller's expected
+ * rows and then clicks the product's own affordance (`loadNextPage` → `requestMoreImportReview` →
+ * one keyset page read). The test therefore does not click between walks: the walk owns the page
+ * transitions, and [expectedPrefix] is the fixture's own expected row signatures, so a duplicated or
+ * dropped row fails at the page where it happened. The library is 150 rows — three whole pages —
+ * because a target that leaves a short last page cannot be walked at all
+ * (`check(targetRows % IMPORT_REVIEW_PAGE_ROWS == 0)`), and a walked tail must end on a page boundary
+ * to be provable. `traversalPages`/`traversalPageClicks` record the walk's own page count and clicks.
  *
  * WHAT IT PROVES, page by page, in the rendered list's own terms:
- *  - page 1 renders exactly one page and is the ledger's first 50 candidates in review order;
- *  - one click appends the NEXT 50: the appended rows are set-disjoint from page 1 and the union is
- *    exactly the first 100 of the expected order (not merely "more rows appeared");
- *  - a second click reaches the tail: the last page holds the remaining 20 and the list reports
- *    completion instead of re-reading the tail — the product's cursor is null once a full page is
- *    no longer returned (`SqlDelightImportReviewReadAdapter.loadImportReviewPage`), and the
- *    affordance is rendered only while that cursor is non-null
- *    (`P503ImportReviewPresentation.kt:1484`), so its absence is the terminal state and there is no
- *    affordance left to duplicate rows with.
+ *  - the walk covers exactly the seeded library: three pages, two next-page clicks, every row once
+ *    and in review order;
+ *  - page 1 holds exactly the ledger's first 50 candidates; page 2 exactly the next 50; page 3
+ *    exactly the remaining 50, each asserted against the expected slice and set-disjoint from the
+ *    pages already shown (no duplicate, no gap — not merely "more rows appeared");
+ *  - the completion read appends nothing and reports completion honestly: after page 3 the cursor is
+ *    still non-null (a full page was returned), so one more click is offered; that click's read
+ *    returns no row and a null cursor (`SqlDelightImportReviewReadAdapter.loadImportReviewPage`), so
+ *    the affordance disappears (`P503ImportReviewPresentation.kt:1484`) and no row was appended after
+ *    the last expected one — there is no affordance left to duplicate rows with.
  *
  * HOW ROWS ARE IDENTIFIED. Never by index: each row is the harness's own render signature —
- * `amount|kind-and-facts line` (`AndroidScaleUi.candidateNodes`/`signatureOrNull`), which the walk
- * collects in list order and this case compares against the fixture's expected amounts in the
- * store's keyset order. Amounts are unique per candidate by fixture construction, so the expected
- * order is checkable without reading the database at assertion time.
+ * `amount|kind-and-facts line` (`AndroidScaleUi.candidateNodes`/`signatureOrNull`), built here from
+ * the fixture's expected amounts plus the one kind line the fixture's facts render
+ * ([ImportReviewPagingFixture.kindLine]). Amounts are unique per candidate by fixture construction.
  *
  * SEEDING. [ImportReviewPagingFixtureSupport] (sibling of [ImportScaleDuplicateFixtureSupport],
  * whose layout resolver, catalog bootstrap, real [com.unifiedledger.application.ExecuteImportIntake]
- * path and publication discipline it reuses) builds 120 pending candidates through the real intake
- * and publishes them into generation 1 before this process opens the app. That guard is why this
- * class must not share its process with an earlier case that launched `MainActivity`: the fixture
- * refuses to replace a database another handle holds.
- *
- * A RE-SERVED PAGE IS A RED, TWO WAYS. A page read twice renders a repeated signature run, which
- * the harness's unique-overlap merge cannot resolve to one offset (it fails as an ambiguous
- * traversal window); a page that skips rows renders a window that does not overlap what was already
- * collected (it fails the same way). Either way the walk fails before returning a list, and the
- * amount-sequence, distinctness and disjointness assertions below reject any silent variant.
+ * path and publication discipline it reuses) builds the library through the real intake and
+ * publishes it into generation 1 before this process opens the app. That guard is why this class must
+ * not share its process with an earlier case that launched `MainActivity`: the fixture refuses to
+ * replace a database another handle holds.
  *
  * Registered in `tools/ci/android-instrumented-inventory.txt` and
  * `tools/ci/android-instrumented-shards.txt`; the ordinary device shard executes it.
@@ -84,106 +86,80 @@ class ImportReviewPagingInstrumentedTest {
         val fixture = ImportReviewPagingFixtureSupport().seed(instrumentation.targetContext, log)
         val pageSize = IMPORT_REVIEW_PAGING_PAGE_SIZE
         val candidates = fixture.candidateCount
-        assertEquals(
-            "the seeded library must cross exactly three pages at the product page size",
-            3,
-            importReviewPagingPageCount(candidates),
-        )
-        val lastPageSize = candidates - 2 * pageSize
-        val expected = fixture.amountsMinor.map(::renderedAmount)
+        val pages = importReviewPagingPageCount(candidates)
+        assertEquals("the seeded library must cross exactly three pages at the product page size", 3, pages)
+        assertEquals("the prefix walk takes whole pages", candidates, pages * pageSize)
+        val expectedAmounts = fixture.amountsMinor.map(::renderedAmount)
+        val expectedSignatures = expectedAmounts.map { amount -> "$amount|${fixture.kindLine}" }
         val ui = AndroidScaleUi(instrumentation) {}
 
         ui.launch()
         ui.openImportViaDrawer()
         ui.await { ui.has(LIST_TOP_MARKER) }
 
-        // ---- page 1: exactly one page, and it is the review order's first page
-        val pageOne = ui.collectTraversal(anchorAmount = fixture.amountsMinor.first(), expectedRows = pageSize)
-        assertEquals("page 1 must render exactly one page of candidates", pageSize, pageOne.size)
+        // ---- one prefix walk: it clicks the product's affordance at each page boundary and proves
+        // the covered prefix there, so a duplicated or dropped row fails at the seam it happened on.
+        val walked =
+            ui.collectTraversal(
+                targetRows = candidates,
+                expectedPrefix = { rows -> expectedSignatures.take(rows) },
+            )
+        assertEquals("the walk must cover every seeded candidate", candidates, walked.size)
+        assertEquals("no seeded candidate may render twice", candidates, walked.distinct().size)
+        assertEquals("the walk must return the review order's own row signatures", expectedSignatures, walked)
+        assertEquals("the walk must have covered three pages", 3, ui.traversalPages)
+        assertEquals("three pages take exactly two next-page clicks", 2, ui.traversalPageClicks)
+        assertOneKindLine(walked)
+
+        // ---- the page boundaries, restated in this test's own terms
+        val pageOne = walked.take(pageSize)
+        val pageTwo = walked.subList(pageSize, 2 * pageSize)
+        val pageThree = walked.subList(2 * pageSize, candidates)
         assertEquals(
             "page 1 must be the ledger's first page in review order, row for row",
-            expected.take(pageSize),
-            amountsOf(pageOne),
-        )
-        assertEquals("a candidate must never render twice on page 1", pageOne.size, pageOne.distinct().size)
-        assertOneKindLine(pageOne)
-        log("page=1 rows=${pageOne.size} first=${amountsOf(pageOne).first()} last=${amountsOf(pageOne).last()}")
-
-        // ---- page 2: one click appends the next page, with no duplicate and no gap
-        // The affordance is the render signature of a non-null cursor; reaching it also proves it is
-        // on screen here, where the first page's last row ended the walk.
-        ui.seek(LOAD_MORE_DESCRIPTION, maxScrolls = AFFORDANCE_SEEK_SCROLLS)
-        ui.click(LOAD_MORE_DESCRIPTION)
-        // The append needs no sleep: the walk below is bounded and only completes once the appended
-        // page has rendered, so an append that never lands fails as an incomplete traversal.
-        ui.settle()
-        val firstTwoPages = ui.collectTraversal(anchorAmount = fixture.amountsMinor.first(), expectedRows = 2 * pageSize)
-        assertEquals("two loaded pages must render exactly two pages", 2 * pageSize, firstTwoPages.size)
-        assertEquals(
-            "the loaded prefix must stay the review order's own first page",
+            expectedSignatures.take(pageSize),
             pageOne,
-            firstTwoPages.take(pageSize),
         )
-        val appendedSecondPage = firstTwoPages.drop(pageSize)
         assertEquals(
-            "the click must append exactly the next page, in review order",
-            expected.subList(pageSize, 2 * pageSize),
-            amountsOf(appendedSecondPage),
+            "the first click must append exactly the next page, in review order",
+            expectedSignatures.subList(pageSize, 2 * pageSize),
+            pageTwo,
+        )
+        assertEquals(
+            "the last page must hold exactly the remaining rows, in review order",
+            expectedSignatures.subList(2 * pageSize, candidates),
+            pageThree,
         )
         assertTrue(
             "the appended page must not repeat any row page 1 already showed",
-            appendedSecondPage.intersect(pageOne.toSet()).isEmpty(),
-        )
-        assertEquals(
-            "the union must be exactly the expected two-page prefix, with no duplicate",
-            2 * pageSize,
-            firstTwoPages.distinct().size,
-        )
-        assertOneKindLine(firstTwoPages)
-        log("page=2 rows=${firstTwoPages.size} appended=${appendedSecondPage.size} first=${amountsOf(appendedSecondPage).first()} last=${amountsOf(appendedSecondPage).last()}")
-
-        // ---- page 3: one more click reaches the tail and leaves no affordance behind
-        ui.seek(LOAD_MORE_DESCRIPTION, maxScrolls = AFFORDANCE_SEEK_SCROLLS)
-        ui.click(LOAD_MORE_DESCRIPTION)
-        ui.settle()
-        // The walk's own top seek is bounded, and a two-page climb sits near that bound, so the
-        // caller pre-seeks; the second call is a no-op once the marker is on screen.
-        ui.seekBackToTop(LIST_TOP_MARKER)
-        ui.seekBackToTop(LIST_TOP_MARKER)
-        val everyPage = ui.collectTraversal(anchorAmount = fixture.amountsMinor.first(), expectedRows = candidates)
-        assertEquals("the completed list must render every seeded candidate exactly once", candidates, everyPage.size)
-        assertEquals(
-            "the loaded prefix must stay the review order's own first two pages",
-            firstTwoPages,
-            everyPage.take(2 * pageSize),
-        )
-        val appendedLastPage = everyPage.drop(2 * pageSize)
-        assertEquals("the last page must hold exactly the remaining rows", lastPageSize, appendedLastPage.size)
-        assertEquals(
-            "the last page must be exactly the remaining tail, in review order",
-            expected.subList(2 * pageSize, candidates),
-            amountsOf(appendedLastPage),
+            pageTwo.intersect(pageOne.toSet()).isEmpty(),
         )
         assertTrue(
             "the last page must not repeat any row the first two pages already showed",
-            appendedLastPage.intersect(firstTwoPages.toSet()).isEmpty(),
+            pageThree.intersect(walked.take(2 * pageSize).toSet()).isEmpty(),
         )
-        assertEquals("the completed list must hold no duplicate row", candidates, everyPage.distinct().size)
-        assertOneKindLine(everyPage)
-        log("page=3 rows=${everyPage.size} appended=${appendedLastPage.size} first=${amountsOf(appendedLastPage).first()} last=${amountsOf(appendedLastPage).last()}")
+        log("pages=1..3 sizes=${pageOne.size}/${pageTwo.size}/${pageThree.size} clicks=${ui.traversalPageClicks} rows=${walked.size}")
 
-        // ---- the terminal state: the cursor is null, so nothing offers another page to read
-        // The walk parks on the last candidate; one more bounded forward scroll puts the list's real
-        // end on screen, so an affordance that still rendered would be visible and fail here.
-        repeat(TERMINAL_PROBE_SCROLLS) { ui.scroll(fraction = 0.6f) }
+        // ---- the terminal state: one completion read appends nothing and closes the cursor
+        val itemsBeforeCompletion = renderedItemCount(ui)
+        ui.seek(LOAD_MORE_DESCRIPTION, maxScrolls = AFFORDANCE_SEEK_SCROLLS)
+        ui.click(LOAD_MORE_DESCRIPTION)
+        ui.settle()
+        assertTrue(
+            "the completion read must leave the tail row in place, got no ${expectedAmounts.last()}",
+            ui.has(expectedAmounts.last()),
+        )
         assertFalse(
             "a complete list must not render the next-page affordance (a null cursor is the completion state)",
             ui.has(LOAD_MORE_DESCRIPTION),
         )
         assertFalse("a complete list must not render the page-1 加载更多 button either", ui.has(LOAD_MORE_TEXT))
-        log("terminal rows=${everyPage.size} affordance=absent duplicates=0 gaps=0")
+        log("terminal rows=${walked.size} affordance=absent items=$itemsBeforeCompletion..${renderedItemCount(ui)} duplicates=0 gaps=0")
     }
 }
+
+/** The review list's own item count, or null when the client tree does not expose it (evidence only). */
+private fun renderedItemCount(ui: AndroidScaleUi): Int? = runCatching { ui.scrollable().collectionInfo?.rowCount }.getOrNull()
 
 /**
  * The rendered amount of one exact minor-unit value: `AndroidScaleUi.amountText`'s own shape (that
@@ -192,13 +168,10 @@ class ImportReviewPagingInstrumentedTest {
  */
 private fun renderedAmount(amountMinor: Long): String = (amountMinor / 100).toString() + "." + (amountMinor % 100).toString().padStart(2, '0') + " CNY"
 
-/** The amount halves of the collected `amount|kind` signatures, in collected order. */
-private fun amountsOf(signatures: List<String>): List<String> = signatures.map { it.substringBefore('|') }
-
 /**
  * The kind half of every collected signature, asserted to be ONE line carrying the ordinary-flow
  * kind and the no-duplicate marker: the rows this case pages through are all one class group, and a
- * row that stopped rendering its kind line would make the amount comparison alone too weak.
+ * row that stopped rendering its kind line would weaken the signature comparison.
  */
 private fun assertOneKindLine(signatures: List<String>) {
     val kindLines = signatures.map { it.substringAfter('|') }.distinct()

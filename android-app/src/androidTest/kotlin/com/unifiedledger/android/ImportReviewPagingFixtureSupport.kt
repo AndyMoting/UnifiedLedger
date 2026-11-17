@@ -26,15 +26,18 @@ import com.unifiedledger.ui.LedgerStorageLayout
 import java.io.File
 
 /**
- * The candidate library the page-crossing test publishes: three `IMPORT_REVIEW_PAGE_SIZE` pages
- * where the last one is short, so a click reaches a real tail instead of a page boundary.
+ * The candidate library the page-crossing test publishes: three whole pages at
+ * [IMPORT_REVIEW_PAGE_SIZE]. The whole-page size is a harness requirement, not a product one: the
+ * D-349 prefix walk (`AndroidScaleUi.collectTraversal`) takes a target expressed in whole pages and
+ * clicks the next-page affordance at each page boundary, so a library that ends mid-page can only be
+ * walked as far as its last whole page.
  */
-internal const val IMPORT_REVIEW_PAGING_CANDIDATES = 120
+internal const val IMPORT_REVIEW_PAGING_CANDIDATES = 150
 
 /**
  * The product's review-list page size (`P503App.kt:5966`). Duplicated here as the test's own
  * expectation rather than read back from the product: a silent change to the page size must make
- * this test's 50/50/20 shape fail loudly, not follow the product to a different shape.
+ * this test's three-page shape fail loudly, not follow the product to a different shape.
  */
 internal const val IMPORT_REVIEW_PAGING_PAGE_SIZE = 50
 
@@ -64,12 +67,18 @@ private const val IMPORT_REVIEW_PAGING_PENDING_STATUS = "pending_confirmation"
  * the review list's order — the store's keyset order on `candidate_id` (`candidate_id ASC`,
  * `SqlDelightImportReviewReadAdapter.loadImportReviewPage`) — so the test's expected page
  * boundaries are derived from this list, never from a row index.
+ *
+ * [kindLine] is the kind half of the render signature the harness compares against
+ * (`AndroidScaleUi.signatureOrNull` builds `amount|kindLine`): every row of this library renders the
+ * same one, because the fixture seeds one record kind, one occurrence time, one direction/status and
+ * no duplicate group.
  */
 internal data class ImportReviewPagingFixture(
     val generation: Int,
     val candidateCount: Int,
     val candidateIds: List<String>,
     val amountsMinor: List<Long>,
+    val kindLine: String,
 )
 
 /**
@@ -186,6 +195,10 @@ internal class ImportReviewPagingFixtureSupport {
             "the fixture's candidate ids are not in the store's keyset order, so the expected page order would lie"
         }
         check(fixture.amountsMinor.distinct().size == candidates) { "the fixture's rendered amounts are not unique" }
+        check(fixture.kindLine.isNotBlank()) { "the fixture's rendered kind line is blank" }
+        check(fixture.candidateCount % IMPORT_REVIEW_PAGING_PAGE_SIZE == 0) {
+            "the library must be whole pages for the prefix walk, but ${fixture.candidateCount} rows leave a short last page"
+        }
     }
 }
 
@@ -274,6 +287,20 @@ private fun pagingFacts(amountMinor: Long) =
 
 /** The number of pages a full read of [candidates] at the product page size produces. */
 internal fun importReviewPagingPageCount(candidates: Int): Int = (candidates + IMPORT_REVIEW_PAGING_PAGE_SIZE - 1) / IMPORT_REVIEW_PAGING_PAGE_SIZE
+
+/**
+ * The rendered kind half of one row's signature, built from this fixture's own facts.
+ *
+ * The presentation function that produces it (`importCandidateMetaText`) is `internal` to `app-ui`,
+ * so an androidTest cannot call it; the frozen copy shape is therefore restated here exactly as
+ * `AndroidScaleOracle.ScaleRow.metaText` already restates it for the scale rig. `ordinary_flow` is
+ * the `candidate_kind` token the store writes for [ImportRecordKind.ORDINARY_FLOW_SOURCE]
+ * (`SqlDelightImportSpineStore`'s kind gate), and the fixture's rows carry no duplicate group, so the
+ * folded duplicate status renders `无`.
+ */
+private fun expectedKindLine(): String =
+    "类型 ordinary_flow；发生 $IMPORT_REVIEW_PAGING_OCCURRED_AT；方向 $IMPORT_REVIEW_PAGING_DIRECTION_TOKEN；" +
+        "状态 $IMPORT_REVIEW_PAGING_STATUS_TOKEN；重复 无"
 
 /**
  * Validates one database file and returns the FIRST failure as a readable reason (null = valid).
@@ -392,6 +419,7 @@ private fun readFixture(
             candidateCount = candidateIds.size,
             candidateIds = candidateIds,
             amountsMinor = amounts,
+            kindLine = expectedKindLine(),
         )
     }
 
