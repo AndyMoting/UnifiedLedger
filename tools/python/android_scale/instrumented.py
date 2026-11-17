@@ -1,7 +1,7 @@
 """Two-shard execution of the ordinary Android device regression.
 
-Case authority is ``tools/ci/android-instrumented-inventory.txt`` (57
-``class#method`` entries over 14 classes). Shard authority is
+Case authority is ``tools/ci/android-instrumented-inventory.txt`` (58
+``class#method`` entries over 15 classes). Shard authority is
 ``tools/ci/android-instrumented-shards.txt`` (one ``shard<TAB>class`` line per
 test class).
 
