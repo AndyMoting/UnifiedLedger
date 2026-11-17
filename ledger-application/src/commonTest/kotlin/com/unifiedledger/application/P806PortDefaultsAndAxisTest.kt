@@ -147,11 +147,47 @@ class P806PortDefaultsAndAxisTest {
 
     // ---------------------------------------------------------------- fakes
 
-    private class MinimalPort : LedgerCurrentStateReadPort {
+    /**
+     * The six `findManual*` request/receipt lookups no vector in this file reads: every fake
+     * extends this base and overrides only the surface its own vector exercises.
+     */
+    private abstract class P806NullLookupPort : LedgerCurrentStateReadPort {
+        override fun findManualExpenseByRequest(
+            ledgerId: LedgerId,
+            requestId: RequestId,
+        ): ManualExpenseCommitRecord? = null
+
+        override fun findManualExpenseByReceipt(
+            ledgerId: LedgerId,
+            receipt: ConfirmedExpenseReceipt,
+        ): ManualExpenseCommitRecord? = null
+
+        override fun findManualIncomeByRequest(
+            ledgerId: LedgerId,
+            requestId: RequestId,
+        ): ManualIncomeCommitRecord? = null
+
+        override fun findManualIncomeByReceipt(
+            ledgerId: LedgerId,
+            receipt: ConfirmedIncomeReceipt,
+        ): ManualIncomeCommitRecord? = null
+
+        override fun findManualTransferByRequest(
+            ledgerId: LedgerId,
+            requestId: RequestId,
+        ): ManualTransferCommitRecord? = null
+
+        override fun findManualTransferByReceipt(
+            ledgerId: LedgerId,
+            receipt: ConfirmedTransferReceipt,
+        ): ManualTransferCommitRecord? = null
+    }
+
+    private class MinimalPort : P806NullLookupPort() {
         override fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow> = emptyList()
     }
 
-    private class ThrowingPort : LedgerCurrentStateReadPort {
+    private class ThrowingPort : P806NullLookupPort() {
         override fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow> = emptyList()
 
         override fun readReportSnapshot(request: P806ReportRequest): P806SnapshotResult<P806ReportSnapshot> = throw UnsupportedOperationException("unwired")
@@ -164,7 +200,7 @@ class P806PortDefaultsAndAxisTest {
     }
 
     /** A port that answers a successful but empty report/calendar snapshot (no effective period). */
-    private class EmptySuccessPort : LedgerCurrentStateReadPort {
+    private class EmptySuccessPort : P806NullLookupPort() {
         override fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow> = emptyList()
 
         override fun readReportSnapshot(request: P806ReportRequest): P806SnapshotResult<P806ReportSnapshot> =
@@ -198,7 +234,7 @@ class P806PortDefaultsAndAxisTest {
     }
 
     /** A port with a live span and an empty month window (used for the invalid-custom vector). */
-    private class SpanPort : LedgerCurrentStateReadPort {
+    private class SpanPort : P806NullLookupPort() {
         override fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow> = emptyList()
 
         override fun readReportSnapshot(request: P806ReportRequest): P806SnapshotResult<P806ReportSnapshot> =
@@ -220,7 +256,7 @@ class P806PortDefaultsAndAxisTest {
 
     private class AxisPort(
         private val axis: List<CurrencyUnit>,
-    ) : LedgerCurrentStateReadPort {
+    ) : P806NullLookupPort() {
         override fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow> = emptyList()
 
         override fun loadLedgerEntryRows(ledgerId: LedgerId): List<LedgerEntryRow> = emptyList()

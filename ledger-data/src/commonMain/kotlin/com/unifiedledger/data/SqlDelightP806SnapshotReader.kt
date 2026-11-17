@@ -542,7 +542,7 @@ internal class SqlDelightP806SnapshotReader(
 
     // ---------------------------------------------------------------- plumbing
 
-    private inline fun <T> read(block: () -> P806SnapshotResult<T>): P806SnapshotResult<T> =
+    private fun <T> read(block: () -> P806SnapshotResult<T>): P806SnapshotResult<T> =
         try {
             database.transactionWithResult(noEnclosing = true) { block() }
         } catch (parsed: P806OccurredAtUnparseable) {
