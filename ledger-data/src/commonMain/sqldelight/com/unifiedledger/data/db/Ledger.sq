@@ -13406,7 +13406,7 @@ WITH parsed AS (
     AND account.kind IN ('ASSET', 'LIABILITY')
 )
 SELECT posting_id, transaction_id, occurred_at, note, kind, amount_minor, currency_code,
-  currency_precision, occurred_at_nanos
+  currency_precision, occurred_at_nanos, CAST(occurred_at_nanos AS INTEGER) AS occurred_at_key_cast
 FROM parsed
 WHERE occurred_at_nanos IS NOT NULL
   AND CAST(occurred_at_nanos AS INTEGER) >= :window_start_nanos
