@@ -472,6 +472,7 @@ class P708RestoreRoundtripEquivalenceTest {
             }
             JdbcSqliteDriver("jdbc:sqlite:${snapshot.path}", foreignKeyProperties()).use { isolated ->
                 dropV37RefundOwner(isolated)
+                dropD348EvidenceProbeIndex(isolated)
                 val migrated = assertIs<StrictMigrationResult.Migrated>(migrateIsolatedSnapshotStrictlyOn(isolated, 34, setOf(1L, 31L, 32L, 33L, 34L, 35L)))
                 assertEquals(34L, migrated.fromVersion)
                 assertEquals(LedgerDatabase.Schema.version, migrated.targetVersion)
@@ -519,6 +520,7 @@ class P708RestoreRoundtripEquivalenceTest {
             }
             JdbcSqliteDriver("jdbc:sqlite:${snapshot.path}", foreignKeyProperties()).use { isolated ->
                 dropV37RefundOwner(isolated)
+                dropD348EvidenceProbeIndex(isolated)
                 assertIs<StrictMigrationResult.Migrated>(migrateIsolatedSnapshotStrictlyOn(isolated, 33, setOf(1L, 31L, 32L, 33L)))
                 // The 11 08.A tables land as the fresh schema (columnInfo contract) and EMPTY —
                 // a purely additive chain never invents annotation rows (zero backfill).
@@ -623,6 +625,7 @@ class P708RestoreRoundtripEquivalenceTest {
             // Occupy the late sentinel so the migration aborts inside its outer transaction.
             JdbcSqliteDriver("jdbc:sqlite:${snapshot.path}", foreignKeyProperties()).use { isolated ->
                 dropV37RefundOwner(isolated)
+                dropD348EvidenceProbeIndex(isolated)
                 isolated.execute(null, "CREATE TABLE manual_annotation_v35_late_sentinel (ok INTEGER NOT NULL CHECK (ok = 1))", 0)
                 assertIs<StrictMigrationResult.Failed>(migrateIsolatedSnapshotStrictlyOn(isolated, 34, setOf(34L)))
                 assertEquals(34L, readAuthoritativeUserVersionOn(isolated))
@@ -2018,6 +2021,15 @@ class P708RestoreRoundtripEquivalenceTest {
      */
     private fun dropV37RefundOwner(driver: JdbcSqliteDriver) {
         driver.execute(null, "DROP TABLE manual_refund_receipt", 0)
+    }
+
+    /**
+     * A v34/v33 snapshot must not carry the D-348 evidence-probe index either: `37.sqm` creates it
+     * and this fixture is produced from the CURRENT schema, so the migration would abort on the
+     * already-present index. Applied to the snapshot for the same reason as the refund owner above.
+     */
+    private fun dropD348EvidenceProbeIndex(driver: JdbcSqliteDriver) {
+        driver.execute(null, "DROP INDEX IF EXISTS import_evidence_by_source", 0)
     }
 
     private fun stageVersion(stage: Stage): Long =

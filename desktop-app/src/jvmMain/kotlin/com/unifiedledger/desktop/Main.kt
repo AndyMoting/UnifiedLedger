@@ -278,7 +278,7 @@ internal class DesktopRestoreUseCases(
  * migration 34 -> 35 plus validation is proven (`P708ManualCreateAnnotationV34ToV35MigrationTest`)
  * and its A04 round-trip-equivalence leg is delivered by the 08.D restore round-trip test
  * (`P708RestoreRoundtripEquivalenceTest`), with the final admission registration staying with the
- * main agent's acceptance. The current schema version (36 since the P7-05 transfer correction-request edge)
+ * main agent's acceptance. The current schema version (38 since the D-348 evidence-probe index edge)
  * passes through WITHOUT consulting this set (`needsMigration == false`), so this set names only
  * old versions that must be migrated.
  *
@@ -293,7 +293,7 @@ internal class DesktopRestoreUseCases(
  * same immediately-preceding-version preservation. The set remains a spec-recognised EXPLICIT set,
  * never automatically derived.
  */
-internal val RESTORE_SUPPORTED_SOURCE_VERSIONS: Set<Long> = setOf(1L, 31L, 32L, 33L, 34L, 35L, 36L)
+internal val RESTORE_SUPPORTED_SOURCE_VERSIONS: Set<Long> = setOf(1L, 31L, 32L, 33L, 34L, 35L, 36L, 37L)
 
 /**
  * The product's fixed single-ledger identity. F-8: ONE constant, used both by [buildLedgerGraph]

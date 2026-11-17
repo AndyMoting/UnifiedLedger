@@ -1,0 +1,13 @@
+-- D-348 (docs/DECISIONS.md): the production review read's evidence probe index, v37 -> v38.
+-- Purely additive: one index on the existing import_evidence table, so the read path's
+-- per-output-row probes by (ledger_id, source_id) — the min(evidence_id) projection scalar and the
+-- active-link EXISTS, in importReviewRowsForLedgerPage and its four sibling reads — stop scanning
+-- the table. import_evidence is an ordinary rowid table, so an entry is (ledger_id, source_id,
+-- rowid): the EXISTS is answered from the index alone, and the min() scalar is one index seek plus
+-- one row fetch (intake writes exactly one evidence row per source, so that fetch is one row).
+-- No staged rebuild, no backfill, and no change to any existing table, column, query,
+-- view, trigger or index. The caller wraps Schema.migrate in one outer transaction (26.sqm
+-- discipline), so any failure rolls the whole migration back and the v37 file is left untouched.
+-- The CREATE INDEX below matches the fresh Ledger.sq terminal definition byte for byte, so
+-- fresh = migrated holds for this edge by construction.
+CREATE INDEX import_evidence_by_source ON import_evidence(ledger_id, source_id);

@@ -60,6 +60,7 @@
 2	com.unifiedledger.data.P801FontscaleSeedWriterTest
 3	com.unifiedledger.data.AndroidSnapshotOpenCorruptionPolicyTest
 3	com.unifiedledger.data.BackupSnapshotDriverTest
+3	com.unifiedledger.data.ImportEvidenceProbeIndexTest
 3	com.unifiedledger.data.ImportSpineAlipayEndToEndTest
 3	com.unifiedledger.data.ImportSpineMigrationCoexistenceTest
 3	com.unifiedledger.data.ImportSpineTransferEndToEndTest

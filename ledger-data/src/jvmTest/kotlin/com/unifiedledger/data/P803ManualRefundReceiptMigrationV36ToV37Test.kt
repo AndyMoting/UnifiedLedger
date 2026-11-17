@@ -18,13 +18,13 @@ import kotlin.test.assertFailsWith
  */
 class P803ManualRefundReceiptMigrationV36ToV37Test : MigrationTestSupport() {
     @Test
-    fun v11FreshSchemaIsTheThirtySeventhAndCarriesTheNewOwner() {
+    fun v11FreshSchemaIsTheThirtyEighthAndCarriesTheNewOwner() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         try {
             LedgerDatabase.Schema.create(driver)
             val database = LedgerDatabase(driver)
 
-            assertEquals(37, LedgerDatabase.Schema.version)
+            assertEquals(38, LedgerDatabase.Schema.version)
             assertEquals(0L, database.ledgerQueries.countManualRefundReceipts("ledger-a").executeAsOne())
             assertEquals(
                 listOf(
@@ -100,7 +100,7 @@ class P803ManualRefundReceiptMigrationV36ToV37Test : MigrationTestSupport() {
             }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
                 LedgerDatabase.Schema.migrate(driver, 36, 37)
-                assertEquals(37, LedgerDatabase.Schema.version)
+                assertEquals(38, LedgerDatabase.Schema.version)
                 // Existing data survives value for value and the v37 owner starts empty.
                 assertEquals(2L, queryCount(driver, "SELECT count(*) FROM ledger_transaction"))
                 assertEquals(2L, queryCount(driver, "SELECT count(*) FROM posting"))
@@ -128,7 +128,7 @@ class P803ManualRefundReceiptMigrationV36ToV37Test : MigrationTestSupport() {
                 connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
             }
             JdbcSqliteDriver("jdbc:sqlite:${migratedPath.absolutePathString()}", migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 1, 37)
+                LedgerDatabase.Schema.migrate(driver, 1, 38)
             }
             assertEquals(
                 schemaMetadata("jdbc:sqlite:${freshPath.absolutePathString()}"),
@@ -149,7 +149,7 @@ class P803ManualRefundReceiptMigrationV36ToV37Test : MigrationTestSupport() {
                 connection.createStatement().use { statement -> VERSION_ONE_STATEMENTS.forEach(statement::execute) }
             }
             JdbcSqliteDriver(url, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 1, 37)
+                LedgerDatabase.Schema.migrate(driver, 1, 38)
                 driver.execute(
                     null,
                     "INSERT INTO ledger_transaction(transaction_id, ledger_id, kind, canonical_kind) VALUES ('tx-refund-m','ledger-a','EXPENSE','REFUND_RECEIPT')",
