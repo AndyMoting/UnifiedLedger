@@ -13323,6 +13323,11 @@ WHERE tx.ledger_id = :ledger_id
 -- rg03 eligibility join, the queue status filter and active_link_count are deliberately absent.
 -- The parse probe below runs BEFORE any window filter, because the COALESCE sentinel would
 -- otherwise let an unparseable row fall silently out of the window.
+-- All four statements below project the parsed key as a bare CASE, without wrapping parentheses,
+-- aliased occurred_at_nanos. The alias, the NULL sentinel and each statement's window/cursor/ORDER
+-- rules are unchanged. The reader consumes that column as a nullable key and rejects a NULL with
+-- P806InvalidProjection instead of substituting 0, because the WHERE clauses filter NULL rows as a
+-- query predicate, not as a Kotlin guarantee.
 
 
 p806AccountPostingsPage:
@@ -13340,7 +13345,6 @@ WITH parsed AS (
     posting.amount_minor AS amount_minor,
     posting.currency_code AS currency_code,
     posting.currency_precision AS currency_precision,
-    (
       CASE
         WHEN strftime('%s', version.occurred_at) IS NULL THEN NULL
         WHEN substr(version.occurred_at, length(version.occurred_at), 1) NOT IN ('Z', 'z')
@@ -13368,8 +13372,7 @@ WITH parsed AS (
                         ELSE 0 END)
                     || '000000000', 1, 9) AS INTEGER)
             END
-      END
-    ) AS occurred_at_nanos
+      END AS occurred_at_nanos
   FROM posting AS posting
   JOIN transaction_version AS version
     ON version.ledger_id = posting.ledger_id
@@ -13412,7 +13415,6 @@ p806AccountPostingsCount:
 WITH parsed AS (
   SELECT
     posting.posting_id AS posting_id,
-    (
       CASE
         WHEN strftime('%s', version.occurred_at) IS NULL THEN NULL
         WHEN substr(version.occurred_at, length(version.occurred_at), 1) NOT IN ('Z', 'z')
@@ -13440,8 +13442,7 @@ WITH parsed AS (
                         ELSE 0 END)
                     || '000000000', 1, 9) AS INTEGER)
             END
-      END
-    ) AS occurred_at_nanos
+      END AS occurred_at_nanos
   FROM posting AS posting
   JOIN transaction_version AS version
     ON version.ledger_id = posting.ledger_id
@@ -13479,7 +13480,6 @@ p806OccurredAtParseFailureProbe:
 WITH parsed AS (
   SELECT
     posting.posting_id AS posting_id,
-    (
       CASE
         WHEN strftime('%s', version.occurred_at) IS NULL THEN NULL
         WHEN substr(version.occurred_at, length(version.occurred_at), 1) NOT IN ('Z', 'z')
@@ -13507,8 +13507,7 @@ WITH parsed AS (
                         ELSE 0 END)
                     || '000000000', 1, 9) AS INTEGER)
             END
-      END
-    ) AS occurred_at_nanos
+      END AS occurred_at_nanos
   FROM posting AS posting
   JOIN transaction_version AS version
     ON version.ledger_id = posting.ledger_id
@@ -13538,7 +13537,6 @@ WITH parsed AS (
     posting.account_id AS account_id,
     posting.currency_code AS currency_code,
     posting.currency_precision AS currency_precision,
-    (
       CASE
         WHEN strftime('%s', version.occurred_at) IS NULL THEN NULL
         WHEN substr(version.occurred_at, length(version.occurred_at), 1) NOT IN ('Z', 'z')
@@ -13566,8 +13564,7 @@ WITH parsed AS (
                         ELSE 0 END)
                     || '000000000', 1, 9) AS INTEGER)
             END
-      END
-    ) AS occurred_at_nanos
+      END AS occurred_at_nanos
   FROM ledger_transaction AS tx
   JOIN ledger_transaction_current_version AS current_version
     ON current_version.ledger_id = tx.ledger_id
