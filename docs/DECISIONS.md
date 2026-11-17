@@ -7626,3 +7626,50 @@ D-347 曾把「把比对搬到 host 侧」列为恢复逐行穷尽的正确做�
 **残留风险：** 下一次 rig 跑是唯一确认：若 `begin → queried` 的间隔没有显著下降，说明还有第二个未覆盖的成本项，而不是本条失效。已核对的残留共三项：① `min(evidence_id)` 探针在索引 seek 之后仍要取回一行——受每来源 evidence 行数约束，且没有 schema 约束强制「每来源一行」（intake 当前如此，表不保证）；② 每页的 `ORDER BY candidate.candidate_id, duplicate.candidate_id` 仍要一次排序（页内候选数有界，但不是零成本）；③ **未验证**：计划器是否真的选 `import_evidence_by_source` 而不是 `sqlite_autoindex_import_evidence_1` 的 `ledger_id` 前缀，要等设备跑的 plan 读数才算证实。五条查询里其余逐行探针都有索引支撑（`evidence_link` 的 `evidence_link_by_evidence`、`evidence_link_history` 的 PK `(ledger_id, link_id, sequence)`、`import_candidate_status_history` 的 PK `(ledger_id, candidate_id, sequence)`）。写入侧代价是每次 intake 一条 B-tree 插入，相对 61k 行读路可忽略。
 
 **关联决定：** D-347（本条取代其采样强度变更）、D-346/D-345（两次预算调整；本条落实第二次「转设计层」）、D-321 第 4 条（索引裁决的关闭读数；本条按整表页读重新打开并关闭）、D-169（61k 读路归因）、D-308/D-312（五处探针所在查询与 v37 边的既有裁决）。
+
+## D-349 max-scale traversal 改为有界连续前缀：补「加载更多」的点击与逐页前缀等式
+
+**状态：** 已批准（2026-11-18；rig 第二十一跑 `44111466778` 实测 + 用户裁决）
+
+**背景：** rig 第二十一跑（max `44111466778` @ `5f4e212a`，D-348 落地后首跑）把重相位证明为便宜：`prepare` 699.3s、`chain` 809.5s、**`reopen` 通过**（生产读路 61,000 行在 11.8s 内完成，逐行穷尽比对已恢复），唯一红点是 `traversal`：`collectTraversal` 收满 **50** 行后视口停住，`check(sawAnchor)` 抛 `traversal never reached the unique-session first row`。
+
+**归因（实测，非推断）：** 复核列表的页大小是 `IMPORT_REVIEW_PAGE_SIZE = 50L`（`P503App.kt:5966`），下一页必须**点击**「加载更多导入候选」（`P503ImportReview.kt:645`，`onLoadMore = ::requestMoreImportReview`，`P503App.kt:2646`），而 `collectTraversal` 只滚不点。实测每扫 **1.01s**、每扫 **0.78 行** ⇒ 穷尽 61,000 行约需 **21.9 小时**，且要翻 **1,220 页**（`ceil(61,000 / 50)`，每页一次点击）。核心验收计划（`CORE_ACCEPTANCE_PLAN.md` 的 RL-01..06）不含规模 UI 遍历——这条穷尽多重集等式是 harness 自加的要求（D-217 谱系），因此可由本仓裁决收窄。
+
+**裁决：**
+1. **保留**打穿无障碍树滞后的全部既有机制，原样不动：0.12 滚动步长、唯一连续重叠合并（`matches.size != 1` 的退避与共享重试预算）、5 遍无增长的停住判定、`targetRows*4 + 200` 安全上限。它们由实验调定，不因本条「优化」。
+2. **补上缺失能力**：视口停住且 `collected.size` 未达目标时，**点击**「加载更多导入候选」并**有界等待**列表增长后再继续。点击只是读触发：它经产品自身路径下发一次 keyset 分页读（`requestMoreImportReview` → `queryPage(cursor)` → `AppendImportReviewPage`，行追加到已装载行之后），不写库，因此 traversal 段的「状态沉默」不变量仍成立；证明它的是既有的 `reopenTail`——走查后重读 oracle 并断言与快照相等。
+3. **目标 = 12 页 = 600 行（11 次点击）**。每页走完后断言一次**前缀多重集等式**：`collected.sorted()` 等于 `snapshot.displayRows.take(50 * 页数)` 的签名排序。它在每道页缝上证明「已覆盖区间内每个预期行恰好出现一次、没有多余行」，比只说「无重复」强，也是前缀口径可接受的理由——丢行或重复会在发生它的那一页就红。
+4. **本路径去掉 `sawAnchor`**：唯一会话首行位于 61,000 行的尾部，前缀到不了它。改为落证据：`traversalPages`、`traversalRowsCollected`、`traversalPageClicks`、`traversalDeepRowPages = ceil(finalCandidates / 50)`（= **1,220**，即未覆盖的深行页数）。
+5. `traversalScrollFallbacks`（D-344）保留在证据里；`uiIdentityScope` 原值不变。
+6. **穷尽整表等式不动**，只留在负担得起的场合：preflight 与 b6 规模。只有 max-scale 路径改变。
+
+**落地形制：**
+- `AndroidScaleUi.collectTraversal(targetRows, expectedPrefix)`：签名由 `(anchorAmount, expectedRows)` 改为 `(targetRows, expectedPrefix)`（该函数只有一个调用者，签名可自由改）。页缝在循环顶部判定（`collected.size == pageRows`），末页页缝在循环出口补判；`expectedRows` 的旧整表检查换成 `targetRows` 的整页检查。新增 `verifyTraversalPrefix`、`loadNextPage`、`revealLoadMoreAffordance`、`renderedItemCount`、`awaitPageGrowth`，以及 `traversalPages`/`traversalPageClicks` 两个只读计数；`IMPORT_REVIEW_PAGE_ROWS = 50` 为文件级常量，出处注释指向 `IMPORT_REVIEW_PAGE_SIZE`。
+- `AndroidScaleLongInstrumentedTest`：`TRAVERSAL_PREFIX_PAGES = 12`；`traversalWalk` 把快照的 `displayRows` 取一次（该属性每次访问都重排），再传 `expectedPrefix = { rows -> expectedRows.take(rows).map { it.signature } }`（只在页缝处派生所需签名，不物化 61,000 行签名表）；删掉阶段尾的整表 `check`，改落上述四个证据键与 `traversalScope = "bounded-contiguous-prefix"`；`firstLastObserved` 不再写；`uniqueSessionFirstAmount()` 随锚点一起删除。
+- `result.py`：`EXPECTED` 去掉 `observedCandidates`、`MANIFEST_COUNTERS` 去掉 `("observedCandidates", "final_candidates")`（前缀是 harness 的选择，不是 manifest 计数）；新增 `TRAVERSAL_PREFIX_PAGES`/`TRAVERSAL_PAGE_ROWS`，并把原 `firstLastObserved` 门槛换成 `traversalScope` + 页数/行数/点击数等式 + `traversalDeepRowPages` 与已校验 `finalCandidates` 的算术绑定。
+- `tests/python/test_android_scale_result.py`：`COUNTERS` 与 device 夹具改用 `TRAVERSAL_EVIDENCE`；`firstLastObserved` 探针换成四条前缀探针（口径值、行数、点击数、深行页数），并证明旧口径值不再被接受。
+
+**判据强度（明写）：** 本口径证明的是**600 行连续前缀**的完整性与无重复；它**不**证明 61,000 行全表。未覆盖面如实落成 `traversalDeepRowPages = 1220`，与已登记的「61k 深行候选可达性」产品开放项（原记约 200 次点击，实测 1,220 次）对齐。前缀等式成立依赖两条**已读代码但未在真机测量**的前提：①产品按 `IMPORT_CANDIDATE_CLASS_DISPLAY_ORDER` 分类分组渲染、组内保持查询序（`importCandidateClassGroups` 对 `view.rows` 过滤，查询 `ORDER BY candidate_id`），而 `ScaleRow.group` 与该顺序一一对应（0/1/2/3/4/5 对应 待确认缺用户决策/疑似重复待审核/可保留相似/重复已确认阻断/来源事实不完整/已确认已拒绝）；②前 600 行全部落在同一个会话（`session-01`，10,000 行）内、因而同属一个分类组，追加页落在组尾即列表尾部。任一前提不成立，页缝断言会在机上直接红，而不是静默放过——这就是把等式放在页缝处的目的。
+
+**边界：** 入 = `AndroidScaleUi` 的 `collectTraversal` 与其新增私有助手/计数器/常量、`AndroidScaleLongInstrumentedTest` 的 `TRAVERSAL_PREFIX_PAGES`/`traversalWalk`/删除 `uniqueSessionFirstAmount`、`result.py` 的前缀校验与两处常量、`tests/python/test_android_scale_result.py` 的前缀夹具与探针、本条。出 = 不改产品代码（`P503App`/`P503ImportReview`/`P503Reducer` 零改动）、不改 0.12/重叠合并/停住判定/安全上限的参数与语义、不改 `scroll`/`clickNode`/`seek`/`edge`、不改 preflight 与 b6 的穷尽口径、不动段预算（预算见 D-350）。
+
+**关联决定：** D-217（走查的原始设计与 reopen/traversal 分工）、D-344（`scroll` 回退与 `traversalScrollFallbacks`，本路径保留）、D-348（本条前一次归因，使 reopen/traversal 的成本可读）、D-350（与本条同批的段预算收紧）、D-169（61k 规模夹具）。
+
+## D-350 收紧被坏读路抬高的两个段预算：reopen 9000→1800s、traversal 14400→2400s
+
+**状态：** 已批准（2026-11-18；run `44111466778` 实测 + 用户裁决）
+
+**背景：** `reopen` 的段预算被 D-342（1800→5400s）与 D-345（5400→9000s）两次抬高，`traversal` 一直挂着 14400000ms（4 小时）字面量。两次抬高买的时间是给 D-347 归因出的二次方读路；那条读路由 D-348 的一条索引治掉——同一条 reopen 在第二十一跑只需 **166s**，走查则按 D-349 改成有界前缀（约 14 分钟）。数字继续挂着，只会让「跑满预算被切」重新成为误判的默认解释。
+
+**裁决：** `stage("reopen", 9000000)` → **1800000**（实测 166s，约 11 倍余量）；`stage("traversal", 14400000)` → **2400000**（前缀走查约 14 分钟，约 2.8 倍余量）。按本仓规则逐层同步，缺一层即不一致：
+1. rig 字面量：`AndroidScaleLongInstrumentedTest.reopenPhase` 的两处 `stage(...)`（**活代码**）；
+2. `result.py` 的 `limits` 映射两处，`reopen` 与 `traversal`（**活代码**，校验器）；
+3. `tests/python/test_android_scale_result.py` 的越界探针（**探针**）：`reopen` 9000001 → **1800001**；新增 `traversal` **2400001** 探针；round-21 合法时间线用例按新上限重排（`reopen` 166000ms、`traversal` 840000ms）。顺带把「越界即拒」收紧为「由该段自己的上限拒」：探针先把其后各段的 `startedMs` 推到该段结束之后，再断言报错文本点名该段，避免被次序规则顶替。
+
+**不动（上界，不是本条对象）：** workflow 外层 deadline 与 step/job 超时、driver 的 `mode_limit`、`result.py` 的两处 21600s 证据上限、`runner.py` 的 `PHASE_BUDGETS["reopen"] = 18000`——它是包住两段的**相**上界（1800 + 2400 远在其下），本条只改其注释里「multi-hour walk」的旧描述，值不动。
+
+**实证：** 第二十一跑 `prepare` 699.3s、`chain` 809.5s、`reopen` 166s（PASS），三段的实测值都远低于当时的字面量；`reopen` 的成本塌缩与 D-348 的索引同批出现（同跑 logcat 的 `begin rows=61000 → queried` 只用 11.8s）。
+
+**边界：** 入 = rig 两处 `stage` 字面量、`result.py` 的 `limits` 两处、`runner.py` 的一行注释、`test_android_scale_result.py` 的越界探针与时间线用例、本条。出 = 不动 workflow 时限与 job/step 超时、不动 `mode_limit`、不动 `PHASE_BUDGETS` 的值、不动任何产品代码与断言、不回改 D-342/D-345 的历史记录。`docs/specs/2026-11-15-d333-landing-decouple-design.md` 里 D-342/D-345/D-346 的预算表述由本条与 D-349 supersede，该 spec 本身不回改（与 D-348 同处置）。
+
+**关联决定：** D-342/D-345（本条回退的两次抬高）、D-346（driver 自身预算，仍为上界）、D-348（读路修复，使回退成立）、D-349（同批的遍历口径变更，也是 traversal 新上限的依据）。
