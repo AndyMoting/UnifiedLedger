@@ -64,6 +64,7 @@ private const val GROUP_AWAIT_SAMPLE_INTERVAL_MS = 10_000L
  * D-328 first-window probe: logcat lines land under the repository's `ULStartup` tag
  * (StartupTrace.android actual + the AndroidScaleOracle.journalMode precedent), so the
  * failure round's existing `ULStartup` grep keeps covering the probe without a new tag.
+ * D-357 rides the same tag for the write-path stage segment timings, so one grep covers both.
  */
 private const val GROUP_ENUM_TRACE_TAG = "ULStartup"
 
@@ -143,8 +144,8 @@ class AndroidScaleLongInstrumentedTest {
                 // not be retried" guard below still never fires: reopenPhase() registers "reopen",
                 // traversalPhase() registers "traversal", finalReopen() registers "final_reopen".
                 "reopen" -> reopenPhase()
-                "replay" -> stage("same_request_replay") { replay() }
-                "final-reopen" -> stage("final_reopen") { finalReopen() }
+                "replay" -> stage("same_request_replay", 360000) { replay() }
+                "final-reopen" -> stage("final_reopen", 360000) { finalReopen() }
                 "traversal" -> traversalPhase()
                 else -> error("unknown scale phase")
             }
@@ -216,6 +217,25 @@ class AndroidScaleLongInstrumentedTest {
             phaseDeadline = previousDeadline
             evidence.remove("activeDeadlineElapsedMs")
             save()
+        }
+    }
+
+    /**
+     * D-357: one segment timing inside a write-path stage. "180s of work" and "a 180s wait expiring"
+     * are different findings, and the stage's single `elapsedMs` cannot tell them apart — the
+     * 179995ms `same_request_replay` is close enough to the old bound to be either. One logcat line
+     * per segment under [GROUP_ENUM_TRACE_TAG], logged in `finally` so a failing segment still
+     * reports how long it ran. No behaviour, predicate or assertion change.
+     */
+    private fun <T> segment(
+        name: String,
+        action: () -> T,
+    ): T {
+        val started = SystemClock.elapsedRealtime()
+        try {
+            return action()
+        } finally {
+            Log.i(GROUP_ENUM_TRACE_TAG, "scale.segment name=$name ms=${SystemClock.elapsedRealtime() - started}")
         }
     }
 
@@ -1527,43 +1547,56 @@ class AndroidScaleLongInstrumentedTest {
      * "stage must not be retried" guard never fires).
      */
     private fun finalReopen() {
-        reopenTail(reopen())
+        // D-357: two segment timings — the quiescent snapshot block and the economics tail — so the
+        // stage's 168925ms reading can be attributed instead of guessed.
+        val snapshot = segment("final_reopen.snapshot") { reopen() }
+        segment("final_reopen.tail") { reopenTail(snapshot) }
     }
 
     private fun replay() {
-        val before = oracle.snapshot(state.getString("ledger"))
+        // D-357: seven segment timings, the segments the stage is built from — a full-population
+        // snapshot before, the receipt query, the graph open, the use-case execute, the graph close,
+        // the snapshot read-back, and the economics block. Measured floor per snapshot at 61k rows in
+        // run 44166358259: 13.7-15.2s query (oracle.readPath traces), so a stage that lands near the
+        // stage bound is either this work plus a retried read or a bounded wait, and one grep now
+        // says which.
+        val before = segment("replay.snapshotBefore") { oracle.snapshot(state.getString("ledger")) }
         val saved =
-            oracle.read { database, _ ->
-                database
-                    .rawQuery(
-                        "SELECT d.request_id,d.candidate_id,d.expected_content_hash,d.explicit_confirmed_at,d.category_id,d.funding_account_id,r.source_id,r.evidence_id,r.confirmation_id,r.transaction_id FROM import_candidate_decision_snapshot d JOIN import_receipt r ON r.ledger_id=d.ledger_id AND r.request_id=d.request_id WHERE d.decision='confirm'",
-                        null,
-                    ).use { cursor ->
-                        check(cursor.moveToFirst())
-                        val fields = (0..9).map { if (cursor.isNull(it)) null else cursor.getString(it) }
-                        check(!cursor.moveToNext())
-                        fields
-                    }
+            segment("replay.savedQuery") {
+                oracle.read { database, _ ->
+                    database
+                        .rawQuery(
+                            "SELECT d.request_id,d.candidate_id,d.expected_content_hash,d.explicit_confirmed_at,d.category_id,d.funding_account_id,r.source_id,r.evidence_id,r.confirmation_id,r.transaction_id FROM import_candidate_decision_snapshot d JOIN import_receipt r ON r.ledger_id=d.ledger_id AND r.request_id=d.request_id WHERE d.decision='confirm'",
+                            null,
+                        ).use { cursor ->
+                            check(cursor.moveToFirst())
+                            val fields = (0..9).map { if (cursor.isNull(it)) null else cursor.getString(it) }
+                            check(!cursor.moveToNext())
+                            fields
+                        }
+                }
             }
-        val graph = openGraph()
+        val graph = segment("replay.openGraph") { openGraph() }
         try {
-            val result =
-                checkNotNull(checkNotNull(graph.facade.importConfirmUseCases).invoke()?.ordinaryFlow).execute(
-                    ImportCandidateConfirmRequest(
-                        ImportRequestIdentity(graph.facade.ledgerId, ImportRequestId(checkNotNull(saved[0]))),
-                        ImportCandidateId(checkNotNull(saved[1])),
-                        checkNotNull(saved[2]),
-                        saved[3],
-                        ImportConfirmDecisionFields.OrdinaryFlow(CategoryId(checkNotNull(saved[4])), AccountId(checkNotNull(saved[5]))),
-                    ),
-                )
-            check(result is ImportCandidateDecisionResult.NoChange && result.reasonCode == "equivalent_replay")
-            val receipt = result.receipt
-            check(listOf(receipt.requestId.value, receipt.candidateId.value, receipt.sourceId?.value, receipt.evidenceId?.value, receipt.confirmationId?.value, receipt.transactionId?.value) == listOf(saved[0], saved[1], saved[6], saved[7], saved[8], saved[9]))
+            segment("replay.execute") {
+                val result =
+                    checkNotNull(checkNotNull(graph.facade.importConfirmUseCases).invoke()?.ordinaryFlow).execute(
+                        ImportCandidateConfirmRequest(
+                            ImportRequestIdentity(graph.facade.ledgerId, ImportRequestId(checkNotNull(saved[0]))),
+                            ImportCandidateId(checkNotNull(saved[1])),
+                            checkNotNull(saved[2]),
+                            saved[3],
+                            ImportConfirmDecisionFields.OrdinaryFlow(CategoryId(checkNotNull(saved[4])), AccountId(checkNotNull(saved[5]))),
+                        ),
+                    )
+                check(result is ImportCandidateDecisionResult.NoChange && result.reasonCode == "equivalent_replay")
+                val receipt = result.receipt
+                check(listOf(receipt.requestId.value, receipt.candidateId.value, receipt.sourceId?.value, receipt.evidenceId?.value, receipt.confirmationId?.value, receipt.transactionId?.value) == listOf(saved[0], saved[1], saved[6], saved[7], saved[8], saved[9]))
+            }
         } finally {
-            graph.close()
+            segment("replay.closeGraph") { graph.close() }
         }
-        check(oracle.snapshot(state.getString("ledger")) == before)
-        assertEconomics()
+        segment("replay.snapshotAfter") { check(oracle.snapshot(state.getString("ledger")) == before) }
+        segment("replay.assertEconomics") { assertEconomics() }
     }
 }

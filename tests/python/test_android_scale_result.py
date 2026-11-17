@@ -365,7 +365,10 @@ class ReducerRejectsPartialEvidence(unittest.TestCase):
         # Every explicit cap is pinned behaviourally: one millisecond over must fail that stage's own
         # limit check. The stages after it are shifted past its end first, so the run cannot be
         # rejected by the ordering rule instead, and the message names the stage the cap belongs to.
-        for stage, cap in (("saf_import", 1800000), ("reopen", 1800000), ("traversal", 2400000)):
+        # D-357 adds the two write-path stages: they ran 179995ms / 168925ms against the 180000ms
+        # default until run 44166358259, and now carry 360000ms of their own.
+        for stage, cap in (("saf_import", 1800000), ("reopen", 1800000), ("traversal", 2400000),
+                           ("same_request_replay", 360000), ("final_reopen", 360000)):
             with self.subTest(stage=stage):
                 build_valid(self.directory)
                 device = load(self.directory, "device.json")
