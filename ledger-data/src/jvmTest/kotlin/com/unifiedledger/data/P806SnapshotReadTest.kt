@@ -26,6 +26,7 @@ import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardOpenOption
 import kotlin.io.path.absolutePathString
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -124,26 +125,30 @@ class P806SnapshotReadTest {
     @Test
     fun aFiftyThousandRowMonthStaysBoundedAndThePrincipalFrontPageStillReturnsFiftyContributions() {
         withDatabase { driver, database, version ->
+            val progress = SeedProgress(Path.of("build", "p806-seed-progress.txt"))
+            progress.start("seed")
             seedCatalog(driver, standardAccounts(), version)
             // One fixture transaction for the whole bulk: 50,000 ordinary expenses plus 50 principal
             // transfers whose statistics instants are the NEWEST, so a page that ignored the
-            // contribution predicate would show only principal rows.
+            // contribution predicate would show only principal rows. Both sets are written with
+            // multi-row INSERTs inside the one managed transaction; the rows are the ones
+            // insertTransaction writes, only batched.
             inFixtureTransaction(driver) {
-                repeat(50_000) { index ->
-                    val id = "tx-bulk-$index"
+                insertTransactionsBulk(driver, 50_000, progress) { index ->
                     val stamp = "2026-11-10T%02d:%02d:%02dZ".format(index % 24, index % 60, index % 60)
-                    insertTransaction(driver, id, "EXPENSE", null, stamp, stamp, listOf(breakfast to 100L, cash to -100L))
+                    FixtureTransaction("tx-bulk-$index", "EXPENSE", null, stamp, stamp, listOf(breakfast to 100L, cash to -100L), cny)
                 }
-                repeat(50) { index ->
-                    val id = "tx-principal-$index"
+                insertTransactionsBulk(driver, 50) { index ->
                     val stamp = "2026-11-30T23:59:%02dZ".format(index % 60)
-                    insertTransaction(driver, id, "ACCOUNT_TRANSFER", null, stamp, stamp, listOf(savings to 100L, cash to -100L))
+                    FixtureTransaction("tx-principal-$index", "ACCOUNT_TRANSFER", null, stamp, stamp, listOf(savings to 100L, cash to -100L), cny)
                 }
             }
+            progress.finish()
 
             val counting = CountingSqlDriver(driver)
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(LedgerDatabase(counting))
 
+            progress.start("report")
             counting.resetCounts()
             val report = (adapter.readReportSnapshot(reportRequest(version)) as P806SnapshotResult.Success<P806ReportSnapshot>).snapshot
             assertEquals(50_000, report.transactionCount)
@@ -153,7 +158,9 @@ class P806SnapshotReadTest {
             assertTrue(report.firstPage.rows.none { it.transactionId.value.startsWith("tx-principal-") })
             // The frozen report C0 is 12 SELECT statements, independent of the row count.
             assertEquals(12, counting.executeQueryCount)
+            progress.finish()
 
+            progress.start("drilldown")
             counting.resetCounts()
             val second =
                 (
@@ -166,6 +173,7 @@ class P806SnapshotReadTest {
             assertEquals(50_000, second.totalCount)
             // Drilldown C0 is 5 SELECT statements per page.
             assertEquals(5, counting.executeQueryCount)
+            progress.finish()
         }
     }
 
@@ -572,40 +580,119 @@ class P806SnapshotReadTest {
         postings: List<Pair<AccountId, Long>>,
         currency: CurrencyUnit = cny,
     ) {
-        val canonical = canonicalKind?.let { "'$it'" } ?: "NULL"
-        exec(driver, "INSERT INTO ledger_transaction (transaction_id, ledger_id, kind, canonical_kind) VALUES ('$id', '${ledgerId.value}', '$kind', $canonical)")
-        exec(driver, "INSERT INTO posting_set (posting_set_id, ledger_id) VALUES ('ps-$id', '${ledgerId.value}')")
-        exec(
-            driver,
-            "INSERT INTO transaction_version (version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note, statistics_at_epoch_nanos) " +
-                "VALUES ('v-$id', '$id', '${ledgerId.value}', 1, 'ps-$id', '$occurredAt', '$statisticsAt', '$statisticsAt', '', ${Instant.parse(statisticsAt).toEpochMilliseconds() * 1_000_000L})",
+        fixtureInserts(FixtureTransaction(id, kind, canonicalKind, statisticsAt, occurredAt, postings, currency))
+            .forEach { insert ->
+                insert.rows.forEach { row -> exec(driver, "INSERT INTO ${insert.table} ${insert.columns} VALUES $row") }
+            }
+    }
+
+    /** One fixture transaction's row values, shared by the single-row and the bulk writers. */
+    private data class FixtureTransaction(
+        val id: String,
+        val kind: String,
+        val canonicalKind: String?,
+        val statisticsAt: String,
+        val occurredAt: String,
+        val postings: List<Pair<AccountId, Long>>,
+        val currency: CurrencyUnit,
+    )
+
+    /** One table's INSERT target plus the row literals to write for it. */
+    private class TableInsert(
+        val table: String,
+        val columns: String,
+        val rows: List<String>,
+    )
+
+    /** The rows [insertTransaction] writes for one transaction, table by table. */
+    private fun fixtureInserts(transaction: FixtureTransaction): List<TableInsert> {
+        val id = transaction.id
+        val ledger = ledgerId.value
+        val canonical = transaction.canonicalKind?.let { "'$it'" } ?: "NULL"
+        return listOf(
+            TableInsert(
+                table = "ledger_transaction",
+                columns = "(transaction_id, ledger_id, kind, canonical_kind)",
+                rows = listOf("('$id', '$ledger', '${transaction.kind}', $canonical)"),
+            ),
+            TableInsert(
+                table = "posting_set",
+                columns = "(posting_set_id, ledger_id)",
+                rows = listOf("('ps-$id', '$ledger')"),
+            ),
+            TableInsert(
+                table = "transaction_version",
+                columns = "(version_id, transaction_id, ledger_id, version_number, posting_set_id, occurred_at, statistics_at, effective_at, note, statistics_at_epoch_nanos)",
+                rows = listOf(
+                    "('v-$id', '$id', '$ledger', 1, 'ps-$id', '${transaction.occurredAt}', '${transaction.statisticsAt}', " +
+                        "'${transaction.statisticsAt}', '', ${Instant.parse(transaction.statisticsAt).toEpochMilliseconds() * 1_000_000L})",
+                ),
+            ),
+            TableInsert(
+                table = "posting",
+                columns = "(posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision)",
+                rows = transaction.postings.mapIndexed { index, (accountId, amount) ->
+                    "('p$index-$id', 'ps-$id', '$ledger', $index, '${accountId.value}', $amount, " +
+                        "'${transaction.currency.code}', ${transaction.currency.precision})"
+                },
+            ),
+            TableInsert(
+                table = "ledger_transaction_current_version",
+                columns = "(transaction_id, ledger_id, current_version_id)",
+                rows = listOf("('$id', '$ledger', 'v-$id')"),
+            ),
         )
-        postings.forEachIndexed { index, (accountId, amount) ->
-            exec(
-                driver,
-                "INSERT INTO posting (posting_id, posting_set_id, ledger_id, posting_index, account_id, amount_minor, currency_code, currency_precision) " +
-                    "VALUES ('p$index-$id', 'ps-$id', '${ledgerId.value}', $index, '${accountId.value}', $amount, '${currency.code}', ${currency.precision})",
-            )
-        }
-        exec(driver, "INSERT INTO ledger_transaction_current_version (transaction_id, ledger_id, current_version_id) VALUES ('$id', '${ledgerId.value}', 'v-$id')")
     }
 
     /**
-     * Runs [block] inside ONE explicit fixture transaction so bulk preparation never pays one
-     * autocommit per row. The read path is deliberately NOT called inside this transaction.
+     * The 50k writer: the rows [insertTransaction] writes, batched into multi-row INSERTs of
+     * [BULK_ROWS] rows (the P705Harness.kt:389-473 shape) so the fixture pays one statement prepare
+     * per chunk instead of one per row. The caller keeps its own managed fixture transaction; only
+     * the statement count per row changes. [progress] receives one bounded line per
+     * [BULK_PROGRESS_ROWS] rows written.
      */
-    private inline fun inFixtureTransaction(
+    private fun insertTransactionsBulk(
+        driver: SqlDriver,
+        count: Int,
+        progress: SeedProgress? = null,
+        row: (Int) -> FixtureTransaction,
+    ) {
+        var start = 0
+        while (start < count) {
+            val end = minOf(start + BULK_ROWS, count)
+            writeBulk(driver, (start until end).map(row))
+            start = end
+            if (progress != null && start % BULK_PROGRESS_ROWS == 0) progress.bulkRows(start)
+        }
+    }
+
+    private fun writeBulk(
+        driver: SqlDriver,
+        transactions: List<FixtureTransaction>,
+    ) {
+        if (transactions.isEmpty()) return
+        val tables = transactions.map(::fixtureInserts)
+        tables.first().forEachIndexed { index, insert ->
+            tables
+                .flatMap { it[index].rows }
+                .chunked(BULK_ROWS)
+                .forEach { chunk ->
+                    exec(driver, "INSERT INTO ${insert.table} ${insert.columns} VALUES ${chunk.joinToString(", ")}")
+                }
+        }
+    }
+
+    /**
+     * Runs [block] inside ONE SQLDelight-managed fixture transaction so bulk preparation never pays
+     * one autocommit per row. The transaction machinery owns BEGIN/COMMIT/ROLLBACK: a bare `BEGIN`
+     * sent through an untransacted `execute` sits outside it, and the fixture then dies with
+     * SQLiteException. The read path is deliberately NOT called inside this transaction.
+     */
+    private fun inFixtureTransaction(
         driver: SqlDriver,
         block: () -> Unit,
     ) {
-        exec(driver, "BEGIN")
-        try {
-            block()
-            exec(driver, "COMMIT")
-        } catch (failure: Throwable) {
-            exec(driver, "ROLLBACK")
-            throw failure
-        }
+        LedgerDatabase(driver).transaction { block() }
     }
 
     private inline fun withDatabase(block: (SqlDriver, LedgerDatabase, Long) -> Unit) {
@@ -625,5 +712,66 @@ class P806SnapshotReadTest {
         sql: String,
     ) {
         driver.execute(null, sql, 0)
+    }
+
+    /**
+     * The V-4 phase progress that survives a cancelled job: a job killed before the test finishes
+     * writes no JUnit XML, so every phase start and finish is flushed into the module build
+     * directory as it happens.
+     *
+     * Gradle runs this module's test task with `ledger-data` as the working directory, so the
+     * relative path resolves inside `ledger-data/build/` -- a build artifact, never committed, and
+     * never an absolute host path. Each line carries the `P806-V4 ` prefix that
+     * `tools/ci/scale-readings-report.py` reads when no XML exists; a line holds a phase name, a
+     * row count or an elapsed millisecond figure, nothing else.
+     */
+    private class SeedProgress(
+        private val path: Path,
+    ) {
+        private var phase = ""
+        private var phaseStartNanos = 0L
+        private var replaceFile = true
+
+        /** Starts [name]; the test's first phase replaces the previous run's file. */
+        fun start(name: String) {
+            if (replaceFile) {
+                Files.deleteIfExists(path)
+                replaceFile = false
+            }
+            phase = name
+            phaseStartNanos = System.nanoTime()
+            write("$name start")
+        }
+
+        /** Closes the current phase with its System.nanoTime() duration in whole milliseconds. */
+        fun finish() {
+            write("$phase done elapsed_ms=${(System.nanoTime() - phaseStartNanos) / 1_000_000L}")
+        }
+
+        /** Bounded seed progress: one line per 10,000 rows, never one per chunk. */
+        fun bulkRows(rows: Int) {
+            write("seed rows=$rows")
+        }
+
+        private fun write(line: String) {
+            path.parent?.let { Files.createDirectories(it) }
+            Files.write(
+                path,
+                listOf("P806-V4 $line"),
+                Charsets.UTF_8,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.APPEND,
+                StandardOpenOption.WRITE,
+                StandardOpenOption.SYNC,
+            )
+        }
+    }
+
+    private companion object {
+        /** Rows per multi-row INSERT: SQLite bounds one compound VALUES list at 500 rows. */
+        const val BULK_ROWS = 500
+
+        /** Upper bound on seed-progress lines: one per 10,000 rows written. */
+        const val BULK_PROGRESS_ROWS = 10_000
     }
 }

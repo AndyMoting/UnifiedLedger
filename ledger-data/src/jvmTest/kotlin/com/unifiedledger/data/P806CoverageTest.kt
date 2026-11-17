@@ -528,18 +528,17 @@ class P806CoverageTest {
         exec(driver, "INSERT INTO ledger_transaction_current_version (transaction_id, ledger_id, current_version_id) VALUES ('$id', '${ledgerId.value}', 'v-$id')")
     }
 
-    private inline fun inFixtureTransaction(
+    /**
+     * Runs [block] inside ONE SQLDelight-managed fixture transaction so fixtures never pay one
+     * autocommit per row. The transaction machinery owns BEGIN/COMMIT/ROLLBACK: a bare `BEGIN` sent
+     * through an untransacted `execute` sits outside it, and the fixture then dies with
+     * SQLiteException. The read path is deliberately NOT called inside this transaction.
+     */
+    private fun inFixtureTransaction(
         driver: SqlDriver,
         block: () -> Unit,
     ) {
-        exec(driver, "BEGIN")
-        try {
-            block()
-            exec(driver, "COMMIT")
-        } catch (failure: Throwable) {
-            exec(driver, "ROLLBACK")
-            throw failure
-        }
+        LedgerDatabase(driver).transaction { block() }
     }
 
     private inline fun withDatabase(block: (SqlDriver, LedgerDatabase, Long) -> Unit) {
