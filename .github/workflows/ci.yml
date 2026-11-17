@@ -195,7 +195,7 @@ jobs:
           echo "shard $SHARD: ${#classes[@]} classes"
           args=()
           for one in "${classes[@]}"; do args+=(--tests "$one"); done
-          ./gradlew --no-daemon --max-workers=4 --build-cache --init-script tools/ci/ci-parallel.init.gradle.kts :ledger-data:jvmTest "${args[@]}" --warning-mode all
+          ./gradlew --no-daemon --max-workers=4 --build-cache --init-script tools/ci/ci-parallel.init.gradle.kts :ledger-data:jvmTest "${args[@]}" --warning-mode all --stacktrace
       - name: Shard ran exactly its share of the manifest
         run: python3 tools/ci/verify-shard-coverage.py --manifest tools/ci/ledger-data-shards.txt --shard ${{ matrix.shard }} --results ledger-data/build/test-results/jvmTest
       - name: Test timing report
