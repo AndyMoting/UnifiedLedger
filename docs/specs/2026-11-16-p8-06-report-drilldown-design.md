@@ -360,8 +360,8 @@ p806LatestEffectiveStatisticsAt      -- MAX(statistics_at_epoch_nanos)（MIN 已
 ## 实施状态登记（批 a，2026-11-18）
 
 - **落地**：PR #400 squash = `d029a30e`，landed tree `c69e92ba0bcf052592f86e9eaaa4095216e54fa9` 与 PR tip `a2157716` 同树；四门 run `44192776533` success（`Kotlin tests`/`Android compile`/`Python tests`/`Trace scan`）、同 head dispatch `44192775351` success、普通 Android instrumented `44192776315` 两片 success、合并树守卫 `44195322097` 记 zero action（landed tree、checks、trace 全部对账）。
-- **范围**：`ledger-application` 的四个复合快照 use case（既有端口上的默认 UOE 方法与 `CatalogConsumerSession` 接线）、期间/日均/折叠与共享轴纯函数；`ledger-data` 的 SELECT-only 命名查询、快照 reader 与真库测试。`app-ui` 的读面访问器与呈现、typed `returnTo`、请求身份与设备证据不在本批。
+- **范围**：`ledger-application` 的四个复合快照 use case（既有端口上的默认 UOE 方法与 `CatalogConsumerSession` 接线）、期间/日均/折叠与共享轴纯函数；`ledger-data` 的 SELECT-only 命名查询、快照 reader 与真库测试。`app-ui` 的读面访问器与呈现、typed `returnTo`、请求身份与设备证据不在本批。依赖：`ledger-data` 的 kotlinx-datetime 0.8.0 由 jvmTest 上移到 commonMain implementation（版本不变、非新增库）。
 - **schema**：本规格批准基线的 v37 是历史表述；实际合入继承 `D-348` 的 schema v38，本批零新增 DDL、零迁移、零账务写入。
-- **读面证据**：dispatch XML 34 suite / 241 tests、0 failure/error/JUnit-skip；`P806ReportSemanticsTest` 12 / `P806SnapshotReadTest` 12 / `P806CoverageTest` 9 方法通过。application 侧由 core 日志证明实际执行（`ledger-application` 94 类 / 826 tests），`P806PortDefaultsAndAxisTest` 类 11，无逐方法 XML。已证读面子集：V-1–V-5、V-8（金额双轴与分录单位）、V-9 贡献集合、V-11 坏例、V-13、V-15 几何、V-16 完整分母、V-17 数值、V-18 计数、V-19 同夹具轴。
+- **读面证据**：dispatch XML 34 suite / 241 tests、0 failure/error/JUnit-skip；`P806ReportSemanticsTest` 12 / `P806SnapshotReadTest` 12 / `P806CoverageTest` 9 方法通过。application 侧由 core 日志证明实际执行（`ledger-application` 94 类 / 826 tests），`P806PortDefaultsAndAxisTest` 类 11，无逐方法 XML。已落证的读面部分断言（非整向量 PASS）：V-1 窗口几何、V-2 贡献集合与页遍历/计数/月卡等式、V-3 自定义部分期、V-4 50k 语句数/首屏/续页、V-5 多分录计数与负号；其余已限定维度 V-8（金额双轴与分录单位）、V-9 贡献集合、V-11 坏例、V-13、V-15 几何、V-16 完整分母、V-17 数值、V-18 计数、V-19 同夹具轴；此外的读面子断言为未升级备注，不构成整向量 PASS。
 - **未交付**：V-6/V-7/V-12/V-14、全部呈现与 typed `returnTo`、完整请求身份、性能与设备基线；普通 Android 绿不替代 P8-06 设备证据。
 - **边界**：本节与状态头只登记实施事实，不改 §4 向量、§5 证据归属、`D-343` 与 approved 机制；文中「尚未实现」类时点表述以本节为准。
