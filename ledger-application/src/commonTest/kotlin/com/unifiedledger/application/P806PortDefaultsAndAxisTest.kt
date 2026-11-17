@@ -7,6 +7,7 @@ import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.TransactionKind
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.Month
 import kotlinx.datetime.YearMonth
@@ -307,6 +308,25 @@ class P806PortDefaultsAndAxisTest {
             // The grouped-row contract is still enforced on illegal raw values.
             com.unifiedledger.application.P806AccountCurrencyTotal(com.unifiedledger.domain.AccountId("a"), cny, -1L, 0L, -1L)
         }
+    }
+
+    @Test
+    fun theOrdinaryKindSetIsTheFrozenSixNamesAndNeverShrinksSilently() {
+        // The SQL binds exactly six kind slots; a change here without a query change would drop or
+        // misbind a parameter, so the cardinality AND the exact frozen names are both locked.
+        assertEquals(6, OrdinaryFlowClassification.ORDINARY_KINDS.size, "the frozen ordinary kind set has exactly six names")
+        assertEquals(
+            setOf(
+                TransactionKind.EXPENSE,
+                TransactionKind.INCOME,
+                TransactionKind.ACCOUNT_TRANSFER,
+                TransactionKind.LEND,
+                TransactionKind.COLLECT,
+                TransactionKind.REFUND_RECEIPT,
+            ),
+            OrdinaryFlowClassification.ORDINARY_KINDS,
+            "the frozen ordinary kind names are exact",
+        )
     }
 
     private class FixedClock(

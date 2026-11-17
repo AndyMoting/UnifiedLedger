@@ -460,6 +460,55 @@ class P806SnapshotReadTest {
             assertEquals(1, snapshot.totalCount)
         }
     }
+
+    @Test
+    fun accountRowsCarryTheirOwnPostingsAndSurviveAStatisticsAxisCorrection() {
+        withDatabase { driver, database, version ->
+            seedCatalog(driver, standardAccounts(), version)
+            inFixtureTransaction(driver) {
+                // Two postings on the SAME member account: the account page is posting-granular, so
+                // it holds two rows whose amounts are 400 and 600, never the transaction's 1000 total.
+                insertTransaction(driver, "tx-multi", "EXPENSE", null, "2026-11-05T00:00:00Z", "2026-11-05T00:00:00Z", listOf(breakfast to -1_000L, cash to 400L, cash to 600L))
+                // Statistics in October, real funds movement in November.
+                insertTransaction(driver, "tx-stat-move", "EXPENSE", null, "2026-10-05T00:00:00Z", "2026-11-06T00:00:00Z", listOf(breakfast to -200L, cash to 200L))
+            }
+            val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
+
+            val before =
+                assertIs<P806SnapshotResult.Success<P806AccountSnapshot>>(
+                    adapter.readAccountPostingsSnapshot(P806AccountRequest(ledgerId, cash, expectedCatalogVersion = version)),
+                ).snapshot
+            assertEquals(3, before.totalCount, "two postings of one transaction count as two rows")
+            assertEquals(listOf("tx-stat-move", "tx-multi", "tx-multi"), before.page.rows.map { it.transactionId.value })
+            assertEquals(listOf(200L, 400L, 600L), before.page.rows.map { it.amount.minorUnits })
+            assertTrue(before.page.rows.none { it.amount.minorUnits == 1_000L }, "a row is its own posting, never the transaction total")
+            assertEquals(1_000L, before.page.rows.filter { it.transactionId.value == "tx-multi" }.sumOf { it.amount.minorUnits })
+
+            val reportBefore =
+                assertIs<P806SnapshotResult.Success<P806ReportSnapshot>>(adapter.readReportSnapshot(reportRequest(version))).snapshot
+            assertEquals(1, reportBefore.transactionCount, "the October statistics row is outside the November period")
+            assertEquals(1, reportBefore.detailCount)
+
+            // Correct ONLY the statistics axis of the second transaction (inside this new method).
+            exec(driver, "UPDATE transaction_version SET statistics_at = '2026-11-25T00:00:00Z', statistics_at_epoch_nanos = ${Instant.parse("2026-11-25T00:00:00Z").toEpochMilliseconds() * 1_000_000L} WHERE transaction_id = 'tx-stat-move'")
+
+            val reportAfter =
+                assertIs<P806SnapshotResult.Success<P806ReportSnapshot>>(adapter.readReportSnapshot(reportRequest(version))).snapshot
+            assertEquals(2, reportAfter.transactionCount, "the report follows the corrected statistics axis")
+            assertEquals(2, reportAfter.detailCount)
+
+            val after =
+                assertIs<P806SnapshotResult.Success<P806AccountSnapshot>>(
+                    adapter.readAccountPostingsSnapshot(P806AccountRequest(ledgerId, cash, expectedCatalogVersion = version)),
+                ).snapshot
+            assertEquals(before.totalCount, after.totalCount)
+            assertEquals(
+                before.page.rows.map { listOf(it.transactionId.value, it.postingId.value, it.occurredAt.toString(), it.amount.minorUnits) },
+                after.page.rows.map { listOf(it.transactionId.value, it.postingId.value, it.occurredAt.toString(), it.amount.minorUnits) },
+                "the occurred_at axis keeps its order, amounts and set",
+            )
+        }
+    }
     // ---------------------------------------------------------------- fixtures
 
     private fun reportRequest(version: Long): P806ReportRequest =
