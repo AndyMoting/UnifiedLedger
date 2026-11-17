@@ -52,7 +52,7 @@ private const val PAGE_LOAD_ATTEMPTS = 3
  * is bounded in pages rather than in rows. It reads no row, and the affordance is the list's LAST
  * item, so an overshoot clamps at the list's own end where that last item is visible — which is why
  * the 0.6 stride [seek] already walks to a target text with applies here and D-217's 0.12 collection
- * stride (fitted to reading rows between samples) does not. 24 steps at ~7 rows each is ~2.8 pages.
+ * stride (fitted to reading rows between samples) does not. 24 steps at ~7 rows each is ~3.5 pages.
  */
 private const val PAGE_REVEAL_SCROLLS = 24
 

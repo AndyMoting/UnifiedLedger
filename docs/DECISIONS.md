@@ -7721,7 +7721,7 @@ D-347 曾把「把比对搬到 host 侧」列为恢复逐行穷尽的正确做�
 5. **每次装载打一行 logcat**：`collect page load pages=… click=… attempt=… revealSteps=… itemCount=before..after grew=… waitedMs=…`，把露出尝试次数与增长等待写成证据，让卡住的 affordance 从 logcat 就能判读，而不必再花一跑。
 6. **不动**：0.12 走查步长、唯一连续重叠合并、停住判定、安全上限 `targetRows*4 + 200`、点击与等待的有界纪律、四类分开报告的失败、`traversalSeamMismatch` 载荷形状（两份完整列表 + 两个方向的多重集差 + 走查顺序列表）、`traversalWindowOrder = "candidate-id-prefix"`、`stage("traversal", 2400000)` 与 `result.py` 的 `limits["traversal"]`。
 
-**写手实施偏差登记（两处，均为几何所迫，已写进常量注释）：** ①`PAGE_REVEAL_SCROLLS` 8 → **24**，露出步长 0.12 → **0.6**：D-349 的露出是「走查停在页底、affordance 就在下一行」，8 步足够；load-then-walk 的露出从切片顶部做起，要跨最多一整页（约 35-50 步 × 0.12），8 步必然失败。露出不读任何行，且 affordance 是列表**最后一项**，过冲只会被列表自身的末端截住（最后一项因此可见），所以用 `seek` 早已在用的 0.6 步长是安全的。②`seekBackToTop` 增一个可选 `maxSteps`（默认 40 不变），`collectTraversal` 的回顶调用按 `targetRows / 3 * 2` 给上界（0.25 手势 ≈ 3 行是既有读数）。两处都只改「走到已知目标的有界预算」，不碰走查本身的任何几何。
+**写手实施偏差登记（两处，均为几何所迫，已写进常量注释）：** ①`PAGE_REVEAL_SCROLLS` 8 → **24**，露出步长 0.12 → **0.6**：D-349 的露出是「走查停在页底、affordance 就在下一行」，8 步足够；load-then-walk 的露出从切片顶部做起，要跨最多一整页（约 35-50 步 × 0.12），8 步必然失败。露出不读任何行，且 affordance 是列表**最后一项**，过冲只会被列表自身的末端截住（最后一项因此可见），所以用 `seek` 早已在用的 0.6 步长是安全的：24 步 × 约 7 行 ≈ 3.5 页。②`seekBackToTop` 增一个可选 `maxSteps`（默认 40 不变），`collectTraversal` 的回顶调用按 `targetRows / 3 * 2` 给上界（0.25 手势 ≈ 3 行是既有读数）。两处都只改「走到已知目标的有界预算」，不碰走查本身的任何几何。
 
 **判据强度不变（明写）：** 仍是同一个 600 行窗口、仍是**精确多重集等式**（两个方向都查），只是从「12 道页缝各查一次」变成「末尾查一次」；载荷仍带两份完整列表与走查顺序列表，定位仍能从产物恢复。D-352 不改 D-351 的窗口对象（候选 id 前缀），也不改 D-349 的前缀口径。
 
