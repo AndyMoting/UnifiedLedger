@@ -13324,10 +13324,10 @@ WHERE tx.ledger_id = :ledger_id
 -- The parse probe below runs BEFORE any window filter, because the COALESCE sentinel would
 -- otherwise let an unparseable row fall silently out of the window.
 -- All four statements below project the parsed key as a bare CASE, without wrapping parentheses,
--- aliased occurred_at_nanos. The alias, the NULL sentinel and each statement's window/cursor/ORDER
--- rules are unchanged. The reader consumes that column as a nullable key and rejects a NULL with
--- P806InvalidProjection instead of substituting 0, because the WHERE clauses filter NULL rows as a
--- query predicate, not as a Kotlin guarantee.
+-- aliased occurred_at_nanos, which leaves that projected column nullable; the reader rejects a NULL
+-- key with P806InvalidProjection when it builds the next-page cursor instead of substituting 0. The
+-- window and cursor predicates compare that key with the integer type named on the comparison side,
+-- while IS NOT NULL, ORDER BY, LIMIT and every bind name stay as they are.
 
 
 p806AccountPostingsPage:
@@ -13401,12 +13401,12 @@ SELECT posting_id, transaction_id, occurred_at, note, kind, amount_minor, curren
   currency_precision, occurred_at_nanos
 FROM parsed
 WHERE occurred_at_nanos IS NOT NULL
-  AND occurred_at_nanos >= :window_start_nanos
-  AND occurred_at_nanos < :window_end_nanos
+  AND CAST(occurred_at_nanos AS INTEGER) >= :window_start_nanos
+  AND CAST(occurred_at_nanos AS INTEGER) < :window_end_nanos
   AND (
     :cursor_nanos IS NULL
-    OR occurred_at_nanos < :cursor_nanos
-    OR (occurred_at_nanos = :cursor_nanos AND posting_id > :cursor_posting_id)
+    OR CAST(occurred_at_nanos AS INTEGER) < :cursor_nanos
+    OR (CAST(occurred_at_nanos AS INTEGER) = :cursor_nanos AND posting_id > :cursor_posting_id)
   )
 ORDER BY occurred_at_nanos DESC, posting_id ASC
 LIMIT :page_size;
@@ -13470,8 +13470,8 @@ WITH parsed AS (
 SELECT count(*) AS posting_count
 FROM parsed
 WHERE occurred_at_nanos IS NOT NULL
-  AND occurred_at_nanos >= :window_start_nanos
-  AND occurred_at_nanos < :window_end_nanos;
+  AND CAST(occurred_at_nanos AS INTEGER) >= :window_start_nanos
+  AND CAST(occurred_at_nanos AS INTEGER) < :window_end_nanos;
 
 p806OccurredAtParseFailureProbe:
 -- Same parser, same shape rules, WITHOUT any window: a malformed occurred_at must be reported
@@ -13599,5 +13599,5 @@ LEFT JOIN catalog_account AS account
   ON account.ledger_id = parsed.ledger_id
  AND account.account_id = parsed.account_id
 WHERE parsed.occurred_at_nanos IS NOT NULL
-  AND parsed.occurred_at_nanos >= :window_start_nanos
-  AND parsed.occurred_at_nanos < :window_end_nanos;
+  AND CAST(parsed.occurred_at_nanos AS INTEGER) >= :window_start_nanos
+  AND CAST(parsed.occurred_at_nanos AS INTEGER) < :window_end_nanos;
