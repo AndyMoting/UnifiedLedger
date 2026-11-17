@@ -50,6 +50,10 @@ kotlin {
         commonMain.dependencies {
             api(project(":ledger-application"))
             implementation("app.cash.sqldelight:runtime:2.3.2")
+            // The P8-06 read-model payload types expose ledger-application's kotlinx-datetime
+            // LocalDate/YearMonth in public signatures, so production commonMain compiles against
+            // the library; the test source sets inherit this declaration.
+            implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
         }
 
         androidMain.dependencies {
@@ -66,10 +70,6 @@ kotlin {
             implementation(kotlin("test"))
             implementation("app.cash.sqldelight:sqlite-driver:2.3.2")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
-            // Test-only: the P7-05 V-01 monthly vector asserts the monthly transactionCount and
-            // bucket placement directly, which needs the application layer's kotlinx-datetime
-            // types (YearMonth) on the test compile classpath. No product dependency changes.
-            implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
         }
     }
 }

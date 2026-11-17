@@ -12986,3 +12986,630 @@ WHERE tx.ledger_id = :ledger_id
       AND peer.parent_id IS NOT NULL
       AND peer.active = 1
   ) = 1;
+
+-- =====================================================================================
+-- P8-06 batch a (D-343; spec sections 3.4/3.5 and Appendix A). SELECT-only reads behind the
+-- four composite snapshots. Zero DDL, schema stays v37.
+--
+-- ORDINARY CONTRIBUTION: the effective kind is COALESCE(canonical_kind, kind) and must be one of
+-- the six frozen ordinary kinds, passed as bound parameters (:kind1..:kind6) so the set keeps its
+-- single definition point in OrdinaryFlowClassification. A transaction contributes only when it
+-- also carries at least one CURRENT-VERSION posting on an EXPENSE/INCOME catalog account with a
+-- non-zero amount; that account-kind pair is bound as :contrib_kind1/:contrib_kind2. Money is
+-- summed in integer minor units per (account, currency) and folded in the application layer; no
+-- sign flip, no TOTAL(), no cross-currency addition.
+--
+-- WINDOWS are statistics_at_epoch_nanos half-open [start, end). Rows without the numeric
+-- projection are rejected by the ledger-wide probe before any of these queries run.
+-- =====================================================================================
+
+p806OrdinaryPostingTotals:
+-- The SAME grouped row carries the gross positive sum, the gross refund sum and the net sum, so
+-- the fold never has to infer the split from a single net value (D-343 3.4（同组正/负/净三列）).
+SELECT
+  posting.account_id AS account_id,
+  posting.currency_code AS currency_code,
+  posting.currency_precision AS currency_precision,
+  COALESCE(SUM(CASE WHEN posting.amount_minor > 0 THEN posting.amount_minor ELSE 0 END), 0) AS positive_minor,
+  COALESCE(SUM(CASE WHEN posting.amount_minor < 0 THEN posting.amount_minor ELSE 0 END), 0) AS refund_minor,
+  COALESCE(SUM(posting.amount_minor), 0) AS total_minor
+FROM ledger_transaction AS tx
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = tx.ledger_id
+ AND version.transaction_id = tx.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN posting_set AS posting_set
+  ON posting_set.ledger_id = version.ledger_id
+ AND posting_set.posting_set_id = version.posting_set_id
+JOIN posting AS posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+JOIN catalog_account AS account
+  ON account.ledger_id = posting.ledger_id
+ AND account.account_id = posting.account_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+WHERE tx.ledger_id = :ledger_id
+  AND version.statistics_at_epoch_nanos >= :window_start_nanos
+  AND version.statistics_at_epoch_nanos < :window_end_nanos
+  AND COALESCE(tx.canonical_kind, tx.kind) IN (:kind1, :kind2, :kind3, :kind4, :kind5, :kind6)
+  AND account.kind IN (:contrib_kind1, :contrib_kind2)
+  AND posting.amount_minor != 0
+GROUP BY posting.account_id, posting.currency_code, posting.currency_precision
+ORDER BY posting.account_id, posting.currency_code, posting.currency_precision;
+
+p806OrdinaryTransactionCount:
+SELECT count(DISTINCT version.transaction_id) AS transaction_count
+FROM ledger_transaction AS tx
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = tx.ledger_id
+ AND version.transaction_id = tx.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+WHERE tx.ledger_id = :ledger_id
+  AND version.statistics_at_epoch_nanos >= :window_start_nanos
+  AND version.statistics_at_epoch_nanos < :window_end_nanos
+  AND COALESCE(tx.canonical_kind, tx.kind) IN (:kind1, :kind2, :kind3, :kind4, :kind5, :kind6)
+  AND EXISTS (
+    SELECT 1
+    FROM posting AS contribution
+    JOIN catalog_account AS contribution_account
+      ON contribution_account.ledger_id = contribution.ledger_id
+     AND contribution_account.account_id = contribution.account_id
+    WHERE contribution.ledger_id = version.ledger_id
+      AND contribution.posting_set_id = version.posting_set_id
+      AND contribution_account.kind IN (:contrib_kind1, :contrib_kind2)
+      AND contribution.amount_minor != 0
+  );
+
+p806OrdinaryCurrencyTransactionCounts:
+SELECT
+  posting.currency_code AS currency_code,
+  posting.currency_precision AS currency_precision,
+  count(DISTINCT version.transaction_id) AS transaction_count
+FROM ledger_transaction AS tx
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = tx.ledger_id
+ AND version.transaction_id = tx.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN posting_set AS posting_set
+  ON posting_set.ledger_id = version.ledger_id
+ AND posting_set.posting_set_id = version.posting_set_id
+JOIN posting AS posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+JOIN catalog_account AS account
+  ON account.ledger_id = posting.ledger_id
+ AND account.account_id = posting.account_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+WHERE tx.ledger_id = :ledger_id
+  AND version.statistics_at_epoch_nanos >= :window_start_nanos
+  AND version.statistics_at_epoch_nanos < :window_end_nanos
+  AND COALESCE(tx.canonical_kind, tx.kind) IN (:kind1, :kind2, :kind3, :kind4, :kind5, :kind6)
+  AND account.kind IN (:contrib_kind1, :contrib_kind2)
+  AND posting.amount_minor != 0
+GROUP BY posting.currency_code, posting.currency_precision
+ORDER BY posting.currency_code, posting.currency_precision;
+
+p806OrdinaryFutureTransactionCount:
+SELECT count(DISTINCT version.transaction_id) AS transaction_count
+FROM ledger_transaction AS tx
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = tx.ledger_id
+ AND version.transaction_id = tx.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+WHERE tx.ledger_id = :ledger_id
+  AND version.statistics_at_epoch_nanos >= :window_start_nanos
+  AND version.statistics_at_epoch_nanos < :window_end_nanos
+  AND version.statistics_at_epoch_nanos >= :future_from_nanos
+  AND COALESCE(tx.canonical_kind, tx.kind) IN (:kind1, :kind2, :kind3, :kind4, :kind5, :kind6)
+  AND EXISTS (
+    SELECT 1
+    FROM posting AS contribution
+    JOIN catalog_account AS contribution_account
+      ON contribution_account.ledger_id = contribution.ledger_id
+     AND contribution_account.account_id = contribution.account_id
+    WHERE contribution.ledger_id = version.ledger_id
+      AND contribution.posting_set_id = version.posting_set_id
+      AND contribution_account.kind IN (:contrib_kind1, :contrib_kind2)
+      AND contribution.amount_minor != 0
+  );
+
+p806OrdinaryDrilldownPage:
+WITH page_ids AS (
+  SELECT version.transaction_id AS page_transaction_id,
+         version.statistics_at_epoch_nanos AS page_nanos
+  FROM ledger_transaction AS tx
+  JOIN ledger_transaction_current_version AS current_version
+    ON current_version.ledger_id = tx.ledger_id
+   AND current_version.transaction_id = tx.transaction_id
+  JOIN transaction_version AS version
+    ON version.ledger_id = tx.ledger_id
+   AND version.transaction_id = tx.transaction_id
+   AND version.version_id = current_version.current_version_id
+  JOIN transaction_effective_state AS effective
+    ON effective.ledger_id = tx.ledger_id
+   AND effective.transaction_id = tx.transaction_id
+   AND effective.is_effective = 1
+  WHERE tx.ledger_id = :ledger_id
+    AND version.statistics_at_epoch_nanos >= :window_start_nanos
+    AND version.statistics_at_epoch_nanos < :window_end_nanos
+    AND COALESCE(tx.canonical_kind, tx.kind) IN (:kind1, :kind2, :kind3, :kind4, :kind5, :kind6)
+    AND EXISTS (
+      SELECT 1
+      FROM posting AS contribution
+      JOIN catalog_account AS contribution_account
+        ON contribution_account.ledger_id = contribution.ledger_id
+       AND contribution_account.account_id = contribution.account_id
+      WHERE contribution.ledger_id = version.ledger_id
+        AND contribution.posting_set_id = version.posting_set_id
+        AND contribution_account.kind IN (:contrib_kind1, :contrib_kind2)
+        AND contribution.amount_minor != 0
+    )
+    AND (
+      :category_filter = ''
+      OR EXISTS (
+        SELECT 1
+        FROM posting AS categorized
+        JOIN catalog_category AS category
+          ON category.ledger_id = categorized.ledger_id
+         AND category.posting_account_id = categorized.account_id
+        WHERE categorized.ledger_id = version.ledger_id
+          AND categorized.posting_set_id = version.posting_set_id
+          AND categorized.amount_minor != 0
+          AND (category.category_id = :category_filter OR category.parent_id = :category_filter)
+      )
+    )
+    AND (
+      :cursor_nanos IS NULL
+      OR version.statistics_at_epoch_nanos < :cursor_nanos
+      OR (
+        version.statistics_at_epoch_nanos = :cursor_nanos
+        AND version.transaction_id < :cursor_transaction_id
+      )
+    )
+  ORDER BY version.statistics_at_epoch_nanos DESC, version.transaction_id DESC
+  LIMIT :page_size
+)
+SELECT
+  tx.transaction_id,
+  current_version.current_version_id,
+  COALESCE(tx.canonical_kind, tx.kind) AS kind,
+  version.occurred_at,
+  version.statistics_at,
+  version.note,
+  posting.posting_id,
+  posting.posting_index,
+  posting.account_id,
+  posting.amount_minor,
+  posting.currency_code,
+  posting.currency_precision,
+  page_ids.page_nanos AS statistics_at_epoch_nanos
+FROM page_ids
+JOIN transaction_version AS version
+  ON version.ledger_id = :ledger_id
+ AND version.transaction_id = page_ids.page_transaction_id
+JOIN ledger_transaction AS tx
+  ON tx.ledger_id = version.ledger_id
+ AND tx.transaction_id = version.transaction_id
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+ AND current_version.current_version_id = version.version_id
+JOIN posting_set AS posting_set
+  ON posting_set.ledger_id = version.ledger_id
+ AND posting_set.posting_set_id = version.posting_set_id
+JOIN posting AS posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+ORDER BY page_ids.page_nanos DESC, page_ids.page_transaction_id DESC, posting.posting_index;
+
+p806OrdinaryDrilldownCount:
+SELECT count(DISTINCT version.transaction_id) AS transaction_count
+FROM ledger_transaction AS tx
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = tx.ledger_id
+ AND version.transaction_id = tx.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+WHERE tx.ledger_id = :ledger_id
+  AND version.statistics_at_epoch_nanos >= :window_start_nanos
+  AND version.statistics_at_epoch_nanos < :window_end_nanos
+  AND COALESCE(tx.canonical_kind, tx.kind) IN (:kind1, :kind2, :kind3, :kind4, :kind5, :kind6)
+  AND EXISTS (
+    SELECT 1
+    FROM posting AS contribution
+    JOIN catalog_account AS contribution_account
+      ON contribution_account.ledger_id = contribution.ledger_id
+     AND contribution_account.account_id = contribution.account_id
+    WHERE contribution.ledger_id = version.ledger_id
+      AND contribution.posting_set_id = version.posting_set_id
+      AND contribution_account.kind IN (:contrib_kind1, :contrib_kind2)
+      AND contribution.amount_minor != 0
+  )
+  AND (
+    :category_filter = ''
+    OR EXISTS (
+      SELECT 1
+      FROM posting AS categorized
+      JOIN catalog_category AS category
+        ON category.ledger_id = categorized.ledger_id
+       AND category.posting_account_id = categorized.account_id
+      WHERE categorized.ledger_id = version.ledger_id
+        AND categorized.posting_set_id = version.posting_set_id
+        AND categorized.amount_minor != 0
+        AND (category.category_id = :category_filter OR category.parent_id = :category_filter)
+    )
+  );
+
+p806LatestEffectiveStatisticsAtNanos:
+-- Numeric projection only: a NULL here (after the ledger-wide projection probe passed) is the
+-- genuine "no span" answer, never a text fallback (D-343 3.1.2（跨度只读数值投影）).
+SELECT MAX(version.statistics_at_epoch_nanos) AS latest_nanos
+FROM ledger_transaction AS tx
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = tx.ledger_id
+ AND version.transaction_id = tx.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+WHERE tx.ledger_id = :ledger_id;
+
+p806StatisticsCatalogConsistencyProbe:
+SELECT
+  COUNT(CASE WHEN account.account_id IS NULL THEN 1 END) AS unresolved_account,
+  COUNT(CASE WHEN account.account_id IS NULL AND EXISTS (
+      SELECT 1 FROM catalog_account AS foreign_account
+      WHERE foreign_account.account_id = posting.account_id
+        AND foreign_account.ledger_id <> posting.ledger_id) THEN 1 END) AS cross_ledger_account,
+  COUNT(CASE WHEN account.account_id IS NOT NULL
+      AND (account.currency_code <> posting.currency_code
+        OR account.currency_precision <> posting.currency_precision) THEN 1 END) AS currency_mismatch
+FROM ledger_transaction AS tx
+JOIN ledger_transaction_current_version AS current_version
+  ON current_version.ledger_id = tx.ledger_id
+ AND current_version.transaction_id = tx.transaction_id
+JOIN transaction_version AS version
+  ON version.ledger_id = tx.ledger_id
+ AND version.transaction_id = tx.transaction_id
+ AND version.version_id = current_version.current_version_id
+JOIN posting_set AS posting_set
+  ON posting_set.ledger_id = version.ledger_id
+ AND posting_set.posting_set_id = version.posting_set_id
+JOIN posting AS posting
+  ON posting.ledger_id = posting_set.ledger_id
+ AND posting.posting_set_id = posting_set.posting_set_id
+JOIN transaction_effective_state AS effective
+  ON effective.ledger_id = tx.ledger_id
+ AND effective.transaction_id = tx.transaction_id
+ AND effective.is_effective = 1
+LEFT JOIN catalog_account AS account
+  ON account.ledger_id = posting.ledger_id
+ AND account.account_id = posting.account_id
+WHERE tx.ledger_id = :ledger_id
+  AND version.statistics_at_epoch_nanos >= :window_start_nanos
+  AND version.statistics_at_epoch_nanos < :window_end_nanos;
+-- ACCOUNT FACE (occurred_at axis). The money timeline is the account's own legs, ordered by the
+-- inline parsed occurred_at (never the raw TEXT: mixed offset/Z shapes make text order non-chronological).
+-- Membership is the frozen real-account mark over catalog_account -- owned_by_user = 1,
+-- real_account = 1, kind in ASSET/LIABILITY -- identical to the assets screen. The queue-only
+-- rg03 eligibility join, the queue status filter and active_link_count are deliberately absent.
+-- The parse probe below runs BEFORE any window filter, because the COALESCE sentinel would
+-- otherwise let an unparseable row fall silently out of the window.
+-- All four statements below project the parsed key as a bare CASE, without wrapping parentheses,
+-- aliased occurred_at_nanos, which leaves that projected column nullable; the reader rejects a NULL
+-- key with P806InvalidProjection when it builds the next-page cursor instead of substituting 0. The
+-- window and cursor predicates compare that key with the integer type named on the comparison side,
+-- while IS NOT NULL, ORDER BY, LIMIT and every bind name stay as they are.
+
+
+p806AccountPostingsPage:
+-- D-343 3.2.2（发生时间数值键）: ONE frozen nullable parser computes the numeric key; the window, the keyset
+-- predicate and the ORDER BY all compare that number (never strftime seconds, never raw TEXT), so a
+-- sub-second boundary is exact and mixed offset/Z shapes order chronologically. Rows that do not
+-- parse are NULL here and are refused by p806OccurredAtParseFailureProbe BEFORE this window filter.
+WITH parsed AS (
+  SELECT
+    posting.posting_id AS posting_id,
+    version.transaction_id AS transaction_id,
+    version.occurred_at AS occurred_at,
+    version.note AS note,
+    COALESCE(tx.canonical_kind, tx.kind) AS kind,
+    posting.amount_minor AS amount_minor,
+    posting.currency_code AS currency_code,
+    posting.currency_precision AS currency_precision,
+      CASE
+        WHEN strftime('%s', version.occurred_at) IS NULL THEN NULL
+        WHEN substr(version.occurred_at, length(version.occurred_at), 1) NOT IN ('Z', 'z')
+          AND substr(version.occurred_at, length(version.occurred_at) - 5, 1) NOT IN ('+', '-') THEN NULL
+        WHEN substr(version.occurred_at, 11, 1) <> 'T' THEN NULL
+        WHEN CAST(substr(version.occurred_at, 12, 2) AS INTEGER) NOT BETWEEN 0 AND 23 THEN NULL
+        WHEN CAST(substr(version.occurred_at, 15, 2) AS INTEGER) NOT BETWEEN 0 AND 59 THEN NULL
+        WHEN CAST(substr(version.occurred_at, 18, 2) AS INTEGER) NOT BETWEEN 0 AND 59 THEN NULL
+        WHEN strftime('%Y-%m-%d', substr(version.occurred_at, 1, 10) || 'T00:00:00Z', '+0 days') IS NULL
+          OR strftime('%Y-%m-%d', substr(version.occurred_at, 1, 10) || 'T00:00:00Z', '+0 days') <> substr(version.occurred_at, 1, 10) THEN NULL
+        WHEN instr(version.occurred_at, '.') > 0
+          AND length(version.occurred_at) - instr(version.occurred_at, '.')
+            - CASE WHEN substr(version.occurred_at, length(version.occurred_at), 1) IN ('Z', 'z') THEN 1
+                WHEN substr(version.occurred_at, length(version.occurred_at) - 5, 1) IN ('+', '-')
+                  AND substr(version.occurred_at, length(version.occurred_at) - 2, 1) = ':' THEN 6
+                ELSE 0 END > 9 THEN NULL
+        WHEN CAST(strftime('%s', version.occurred_at) AS INTEGER) NOT BETWEEN -9223372035 AND 9223372035 THEN NULL
+        ELSE CAST(strftime('%s', version.occurred_at) AS INTEGER) * 1000000000
+          + CASE WHEN instr(version.occurred_at, '.') = 0 THEN 0
+              ELSE CAST(substr(substr(substr(version.occurred_at, instr(version.occurred_at, '.') + 1), 1,
+                    length(version.occurred_at) - instr(version.occurred_at, '.')
+                    - CASE WHEN substr(version.occurred_at, length(version.occurred_at), 1) IN ('Z', 'z') THEN 1
+                        WHEN substr(version.occurred_at, length(version.occurred_at) - 5, 1) IN ('+', '-')
+                          AND substr(version.occurred_at, length(version.occurred_at) - 2, 1) = ':' THEN 6
+                        ELSE 0 END)
+                    || '000000000', 1, 9) AS INTEGER)
+            END
+      END AS occurred_at_nanos
+  FROM posting AS posting
+  JOIN transaction_version AS version
+    ON version.ledger_id = posting.ledger_id
+   AND version.posting_set_id = posting.posting_set_id
+  JOIN ledger_transaction AS tx
+    ON tx.ledger_id = version.ledger_id
+   AND tx.transaction_id = version.transaction_id
+  JOIN ledger_transaction_current_version AS current_version
+    ON current_version.ledger_id = tx.ledger_id
+   AND current_version.transaction_id = tx.transaction_id
+   AND current_version.current_version_id = version.version_id
+  JOIN transaction_effective_state AS effective
+    ON effective.ledger_id = tx.ledger_id
+   AND effective.transaction_id = tx.transaction_id
+   AND effective.is_effective = 1
+  JOIN catalog_account AS account
+    ON account.ledger_id = posting.ledger_id
+   AND account.account_id = posting.account_id
+  WHERE posting.ledger_id = :ledger_id
+    AND posting.account_id = :account_id
+    AND account.owned_by_user = 1
+    AND account.real_account = 1
+    AND account.kind IN ('ASSET', 'LIABILITY')
+)
+-- The CTE's CASE returns NULL for unparseable text, so `parsed.occurred_at_nanos` stays a nullable
+-- column. The outer projection casts it to INTEGER so the query exposes an integer accessor for the
+-- page cursor; the WHERE below keeps only parsed rows, the reader still rejects a NULL key with
+-- P806InvalidProjection, and a legal epoch 0 parses to a present 0 that still yields a cursor.
+SELECT posting_id, transaction_id, occurred_at, note, kind, amount_minor, currency_code,
+  currency_precision, CAST(occurred_at_nanos AS INTEGER) AS occurred_at_nanos
+FROM parsed
+WHERE occurred_at_nanos IS NOT NULL
+  AND CAST(occurred_at_nanos AS INTEGER) >= :window_start_nanos
+  AND CAST(occurred_at_nanos AS INTEGER) < :window_end_nanos
+  AND (
+    :cursor_nanos IS NULL
+    OR CAST(occurred_at_nanos AS INTEGER) < :cursor_nanos
+    OR (CAST(occurred_at_nanos AS INTEGER) = :cursor_nanos AND posting_id > :cursor_posting_id)
+  )
+ORDER BY occurred_at_nanos DESC, posting_id ASC
+LIMIT :page_size;
+
+p806AccountPostingsCount:
+WITH parsed AS (
+  SELECT
+    posting.posting_id AS posting_id,
+      CASE
+        WHEN strftime('%s', version.occurred_at) IS NULL THEN NULL
+        WHEN substr(version.occurred_at, length(version.occurred_at), 1) NOT IN ('Z', 'z')
+          AND substr(version.occurred_at, length(version.occurred_at) - 5, 1) NOT IN ('+', '-') THEN NULL
+        WHEN substr(version.occurred_at, 11, 1) <> 'T' THEN NULL
+        WHEN CAST(substr(version.occurred_at, 12, 2) AS INTEGER) NOT BETWEEN 0 AND 23 THEN NULL
+        WHEN CAST(substr(version.occurred_at, 15, 2) AS INTEGER) NOT BETWEEN 0 AND 59 THEN NULL
+        WHEN CAST(substr(version.occurred_at, 18, 2) AS INTEGER) NOT BETWEEN 0 AND 59 THEN NULL
+        WHEN strftime('%Y-%m-%d', substr(version.occurred_at, 1, 10) || 'T00:00:00Z', '+0 days') IS NULL
+          OR strftime('%Y-%m-%d', substr(version.occurred_at, 1, 10) || 'T00:00:00Z', '+0 days') <> substr(version.occurred_at, 1, 10) THEN NULL
+        WHEN instr(version.occurred_at, '.') > 0
+          AND length(version.occurred_at) - instr(version.occurred_at, '.')
+            - CASE WHEN substr(version.occurred_at, length(version.occurred_at), 1) IN ('Z', 'z') THEN 1
+                WHEN substr(version.occurred_at, length(version.occurred_at) - 5, 1) IN ('+', '-')
+                  AND substr(version.occurred_at, length(version.occurred_at) - 2, 1) = ':' THEN 6
+                ELSE 0 END > 9 THEN NULL
+        WHEN CAST(strftime('%s', version.occurred_at) AS INTEGER) NOT BETWEEN -9223372035 AND 9223372035 THEN NULL
+        ELSE CAST(strftime('%s', version.occurred_at) AS INTEGER) * 1000000000
+          + CASE WHEN instr(version.occurred_at, '.') = 0 THEN 0
+              ELSE CAST(substr(substr(substr(version.occurred_at, instr(version.occurred_at, '.') + 1), 1,
+                    length(version.occurred_at) - instr(version.occurred_at, '.')
+                    - CASE WHEN substr(version.occurred_at, length(version.occurred_at), 1) IN ('Z', 'z') THEN 1
+                        WHEN substr(version.occurred_at, length(version.occurred_at) - 5, 1) IN ('+', '-')
+                          AND substr(version.occurred_at, length(version.occurred_at) - 2, 1) = ':' THEN 6
+                        ELSE 0 END)
+                    || '000000000', 1, 9) AS INTEGER)
+            END
+      END AS occurred_at_nanos
+  FROM posting AS posting
+  JOIN transaction_version AS version
+    ON version.ledger_id = posting.ledger_id
+   AND version.posting_set_id = posting.posting_set_id
+  JOIN ledger_transaction AS tx
+    ON tx.ledger_id = version.ledger_id
+   AND tx.transaction_id = version.transaction_id
+  JOIN ledger_transaction_current_version AS current_version
+    ON current_version.ledger_id = tx.ledger_id
+   AND current_version.transaction_id = tx.transaction_id
+   AND current_version.current_version_id = version.version_id
+  JOIN transaction_effective_state AS effective
+    ON effective.ledger_id = tx.ledger_id
+   AND effective.transaction_id = tx.transaction_id
+   AND effective.is_effective = 1
+  JOIN catalog_account AS account
+    ON account.ledger_id = posting.ledger_id
+   AND account.account_id = posting.account_id
+  WHERE posting.ledger_id = :ledger_id
+    AND posting.account_id = :account_id
+    AND account.owned_by_user = 1
+    AND account.real_account = 1
+    AND account.kind IN ('ASSET', 'LIABILITY')
+)
+SELECT count(*) AS posting_count
+FROM parsed
+WHERE occurred_at_nanos IS NOT NULL
+  AND CAST(occurred_at_nanos AS INTEGER) >= :window_start_nanos
+  AND CAST(occurred_at_nanos AS INTEGER) < :window_end_nanos;
+
+p806OccurredAtParseFailureProbe:
+-- Same parser, same shape rules, WITHOUT any window: a malformed occurred_at must be reported
+-- before the business window can drop it (D-343 3.2.2（发生时间数值键）). The predicate tests NULL (unparseable),
+-- never the numeric value, so a legal epoch 0 passes.
+WITH parsed AS (
+  SELECT
+    posting.posting_id AS posting_id,
+      CASE
+        WHEN strftime('%s', version.occurred_at) IS NULL THEN NULL
+        WHEN substr(version.occurred_at, length(version.occurred_at), 1) NOT IN ('Z', 'z')
+          AND substr(version.occurred_at, length(version.occurred_at) - 5, 1) NOT IN ('+', '-') THEN NULL
+        WHEN substr(version.occurred_at, 11, 1) <> 'T' THEN NULL
+        WHEN CAST(substr(version.occurred_at, 12, 2) AS INTEGER) NOT BETWEEN 0 AND 23 THEN NULL
+        WHEN CAST(substr(version.occurred_at, 15, 2) AS INTEGER) NOT BETWEEN 0 AND 59 THEN NULL
+        WHEN CAST(substr(version.occurred_at, 18, 2) AS INTEGER) NOT BETWEEN 0 AND 59 THEN NULL
+        WHEN strftime('%Y-%m-%d', substr(version.occurred_at, 1, 10) || 'T00:00:00Z', '+0 days') IS NULL
+          OR strftime('%Y-%m-%d', substr(version.occurred_at, 1, 10) || 'T00:00:00Z', '+0 days') <> substr(version.occurred_at, 1, 10) THEN NULL
+        WHEN instr(version.occurred_at, '.') > 0
+          AND length(version.occurred_at) - instr(version.occurred_at, '.')
+            - CASE WHEN substr(version.occurred_at, length(version.occurred_at), 1) IN ('Z', 'z') THEN 1
+                WHEN substr(version.occurred_at, length(version.occurred_at) - 5, 1) IN ('+', '-')
+                  AND substr(version.occurred_at, length(version.occurred_at) - 2, 1) = ':' THEN 6
+                ELSE 0 END > 9 THEN NULL
+        WHEN CAST(strftime('%s', version.occurred_at) AS INTEGER) NOT BETWEEN -9223372035 AND 9223372035 THEN NULL
+        ELSE CAST(strftime('%s', version.occurred_at) AS INTEGER) * 1000000000
+          + CASE WHEN instr(version.occurred_at, '.') = 0 THEN 0
+              ELSE CAST(substr(substr(substr(version.occurred_at, instr(version.occurred_at, '.') + 1), 1,
+                    length(version.occurred_at) - instr(version.occurred_at, '.')
+                    - CASE WHEN substr(version.occurred_at, length(version.occurred_at), 1) IN ('Z', 'z') THEN 1
+                        WHEN substr(version.occurred_at, length(version.occurred_at) - 5, 1) IN ('+', '-')
+                          AND substr(version.occurred_at, length(version.occurred_at) - 2, 1) = ':' THEN 6
+                        ELSE 0 END)
+                    || '000000000', 1, 9) AS INTEGER)
+            END
+      END AS occurred_at_nanos
+  FROM posting AS posting
+  JOIN transaction_version AS version
+    ON version.ledger_id = posting.ledger_id
+   AND version.posting_set_id = posting.posting_set_id
+  JOIN ledger_transaction AS tx
+    ON tx.ledger_id = version.ledger_id
+   AND tx.transaction_id = version.transaction_id
+  JOIN ledger_transaction_current_version AS current_version
+    ON current_version.ledger_id = tx.ledger_id
+   AND current_version.transaction_id = tx.transaction_id
+   AND current_version.current_version_id = version.version_id
+  JOIN transaction_effective_state AS effective
+    ON effective.ledger_id = tx.ledger_id
+   AND effective.transaction_id = tx.transaction_id
+   AND effective.is_effective = 1
+  WHERE posting.ledger_id = :ledger_id
+    AND posting.account_id = :account_id
+)
+SELECT count(*) AS unparseable_count FROM parsed WHERE occurred_at_nanos IS NULL;
+
+p806OccurredAtCatalogConsistencyProbe:
+-- Ledger + requested window over ALL postings of the in-scope transactions (no account narrowing;
+-- the frozen scope of D-343 3.4/3.5.3). The window uses the same parsed nanosecond key.
+WITH parsed AS (
+  SELECT
+    posting.ledger_id AS ledger_id,
+    posting.account_id AS account_id,
+    posting.currency_code AS currency_code,
+    posting.currency_precision AS currency_precision,
+      CASE
+        WHEN strftime('%s', version.occurred_at) IS NULL THEN NULL
+        WHEN substr(version.occurred_at, length(version.occurred_at), 1) NOT IN ('Z', 'z')
+          AND substr(version.occurred_at, length(version.occurred_at) - 5, 1) NOT IN ('+', '-') THEN NULL
+        WHEN substr(version.occurred_at, 11, 1) <> 'T' THEN NULL
+        WHEN CAST(substr(version.occurred_at, 12, 2) AS INTEGER) NOT BETWEEN 0 AND 23 THEN NULL
+        WHEN CAST(substr(version.occurred_at, 15, 2) AS INTEGER) NOT BETWEEN 0 AND 59 THEN NULL
+        WHEN CAST(substr(version.occurred_at, 18, 2) AS INTEGER) NOT BETWEEN 0 AND 59 THEN NULL
+        WHEN strftime('%Y-%m-%d', substr(version.occurred_at, 1, 10) || 'T00:00:00Z', '+0 days') IS NULL
+          OR strftime('%Y-%m-%d', substr(version.occurred_at, 1, 10) || 'T00:00:00Z', '+0 days') <> substr(version.occurred_at, 1, 10) THEN NULL
+        WHEN instr(version.occurred_at, '.') > 0
+          AND length(version.occurred_at) - instr(version.occurred_at, '.')
+            - CASE WHEN substr(version.occurred_at, length(version.occurred_at), 1) IN ('Z', 'z') THEN 1
+                WHEN substr(version.occurred_at, length(version.occurred_at) - 5, 1) IN ('+', '-')
+                  AND substr(version.occurred_at, length(version.occurred_at) - 2, 1) = ':' THEN 6
+                ELSE 0 END > 9 THEN NULL
+        WHEN CAST(strftime('%s', version.occurred_at) AS INTEGER) NOT BETWEEN -9223372035 AND 9223372035 THEN NULL
+        ELSE CAST(strftime('%s', version.occurred_at) AS INTEGER) * 1000000000
+          + CASE WHEN instr(version.occurred_at, '.') = 0 THEN 0
+              ELSE CAST(substr(substr(substr(version.occurred_at, instr(version.occurred_at, '.') + 1), 1,
+                    length(version.occurred_at) - instr(version.occurred_at, '.')
+                    - CASE WHEN substr(version.occurred_at, length(version.occurred_at), 1) IN ('Z', 'z') THEN 1
+                        WHEN substr(version.occurred_at, length(version.occurred_at) - 5, 1) IN ('+', '-')
+                          AND substr(version.occurred_at, length(version.occurred_at) - 2, 1) = ':' THEN 6
+                        ELSE 0 END)
+                    || '000000000', 1, 9) AS INTEGER)
+            END
+      END AS occurred_at_nanos
+  FROM ledger_transaction AS tx
+  JOIN ledger_transaction_current_version AS current_version
+    ON current_version.ledger_id = tx.ledger_id
+   AND current_version.transaction_id = tx.transaction_id
+  JOIN transaction_version AS version
+    ON version.ledger_id = tx.ledger_id
+   AND version.transaction_id = tx.transaction_id
+   AND version.version_id = current_version.current_version_id
+  JOIN posting_set AS posting_set
+    ON posting_set.ledger_id = version.ledger_id
+   AND posting_set.posting_set_id = version.posting_set_id
+  JOIN posting AS posting
+    ON posting.ledger_id = posting_set.ledger_id
+   AND posting.posting_set_id = posting_set.posting_set_id
+  JOIN transaction_effective_state AS effective
+    ON effective.ledger_id = tx.ledger_id
+   AND effective.transaction_id = tx.transaction_id
+   AND effective.is_effective = 1
+  WHERE tx.ledger_id = :ledger_id
+)
+SELECT
+  COUNT(CASE WHEN account.account_id IS NULL THEN 1 END) AS unresolved_account,
+  COUNT(CASE WHEN account.account_id IS NULL AND EXISTS (
+      SELECT 1 FROM catalog_account AS foreign_account
+      WHERE foreign_account.account_id = parsed.account_id
+        AND foreign_account.ledger_id <> parsed.ledger_id) THEN 1 END) AS cross_ledger_account,
+  COUNT(CASE WHEN account.account_id IS NOT NULL
+      AND (account.currency_code <> parsed.currency_code
+        OR account.currency_precision <> parsed.currency_precision) THEN 1 END) AS currency_mismatch
+FROM parsed
+LEFT JOIN catalog_account AS account
+  ON account.ledger_id = parsed.ledger_id
+ AND account.account_id = parsed.account_id
+WHERE parsed.occurred_at_nanos IS NOT NULL
+  AND CAST(parsed.occurred_at_nanos AS INTEGER) >= :window_start_nanos
+  AND CAST(parsed.occurred_at_nanos AS INTEGER) < :window_end_nanos;
