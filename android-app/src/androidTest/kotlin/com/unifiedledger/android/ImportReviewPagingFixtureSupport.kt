@@ -207,12 +207,13 @@ private fun buildLibrary(
         check(handle.catalogStore.bootstrap(ledgerId, defaultCatalogSeed()) !is CatalogBootstrapResult.UnknownReference)
         repeat(candidates) { index ->
             val suffix = index.toString().padStart(4, '0')
-            val ids = ImportIntakeIds(
-                sourceId = ImportSourceId(IMPORT_REVIEW_PAGING_ID_PREFIX + "source-" + suffix),
-                evidenceId = ImportEvidenceId(IMPORT_REVIEW_PAGING_ID_PREFIX + "evidence-" + suffix),
-                candidateId = ImportCandidateId(IMPORT_REVIEW_PAGING_ID_PREFIX + "candidate-" + suffix),
-                statusHistoryId = ImportStatusHistoryId(IMPORT_REVIEW_PAGING_ID_PREFIX + "status-" + suffix),
-            )
+            val ids =
+                ImportIntakeIds(
+                    sourceId = ImportSourceId(IMPORT_REVIEW_PAGING_ID_PREFIX + "source-" + suffix),
+                    evidenceId = ImportEvidenceId(IMPORT_REVIEW_PAGING_ID_PREFIX + "evidence-" + suffix),
+                    candidateId = ImportCandidateId(IMPORT_REVIEW_PAGING_ID_PREFIX + "candidate-" + suffix),
+                    statusHistoryId = ImportStatusHistoryId(IMPORT_REVIEW_PAGING_ID_PREFIX + "status-" + suffix),
+                )
             val idSource = SingleCandidateIdSource(ids)
             val result =
                 ExecuteImportIntake(handle.importSpineStore, idSource, ImportContentFingerprint())
@@ -272,8 +273,7 @@ private fun pagingFacts(amountMinor: Long) =
     )
 
 /** The number of pages a full read of [candidates] at the product page size produces. */
-internal fun importReviewPagingPageCount(candidates: Int): Int =
-    (candidates + IMPORT_REVIEW_PAGING_PAGE_SIZE - 1) / IMPORT_REVIEW_PAGING_PAGE_SIZE
+internal fun importReviewPagingPageCount(candidates: Int): Int = (candidates + IMPORT_REVIEW_PAGING_PAGE_SIZE - 1) / IMPORT_REVIEW_PAGING_PAGE_SIZE
 
 /**
  * Validates one database file and returns the FIRST failure as a readable reason (null = valid).
