@@ -363,8 +363,10 @@ class P806ReportSemanticsTest {
             assertEquals(listOf(breakfastLeaf, dinnerLeaf), parent.children.map { it.categoryId }, "each leaf appears exactly once")
             assertEquals(0L, parent.totals.first().positiveMinorUnits)
             assertEquals(-800L, parent.totals.first().refundMinorUnits)
-            assertEquals(-500L, parent.children.first { it.categoryId == breakfastLeaf }.totals.first().refundMinorUnits)
-            assertEquals(-300L, parent.children.first { it.categoryId == dinnerLeaf }.totals.first().refundMinorUnits)
+            val breakfastChild = parent.children.first { it.categoryId == breakfastLeaf }
+            val dinnerChild = parent.children.first { it.categoryId == dinnerLeaf }
+            assertEquals(-500L, breakfastChild.totals.first().refundMinorUnits)
+            assertEquals(-300L, dinnerChild.totals.first().refundMinorUnits)
 
             // Subtree detail: the same single transaction appears once under the parent category.
             val window =
@@ -437,7 +439,11 @@ class P806ReportSemanticsTest {
             assertEquals(100L, monthCny.ordinaryIncomeMinorUnits)
             assertEquals(0L, monthCny.balanceMinorUnits)
             assertEquals(2, month.transactionCount)
-            val feeLeaf = month.expenseCategories.first { it.categoryId == foodParent }.children.first { it.categoryId == breakfastLeaf }
+            val feeLeaf =
+                month.expenseCategories
+                    .first { it.categoryId == foodParent }
+                    .children
+                    .first { it.categoryId == breakfastLeaf }
             assertEquals(100L, feeLeaf.totals.first().positiveMinorUnits)
         }
     }

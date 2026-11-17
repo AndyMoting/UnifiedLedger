@@ -482,7 +482,8 @@ class P806SnapshotReadTest {
             assertEquals(listOf("tx-stat-move", "tx-multi", "tx-multi"), before.page.rows.map { it.transactionId.value })
             assertEquals(listOf(200L, 400L, 600L), before.page.rows.map { it.amount.minorUnits })
             assertTrue(before.page.rows.none { it.amount.minorUnits == 1_000L }, "a row is its own posting, never the transaction total")
-            assertEquals(1_000L, before.page.rows.filter { it.transactionId.value == "tx-multi" }.sumOf { it.amount.minorUnits })
+            val multiRows = before.page.rows.filter { it.transactionId.value == "tx-multi" }
+            assertEquals(1_000L, multiRows.sumOf { it.amount.minorUnits })
 
             val reportBefore =
                 assertIs<P806SnapshotResult.Success<P806ReportSnapshot>>(adapter.readReportSnapshot(reportRequest(version))).snapshot
