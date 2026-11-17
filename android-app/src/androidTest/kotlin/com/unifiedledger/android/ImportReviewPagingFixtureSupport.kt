@@ -28,8 +28,9 @@ import java.io.File
 /**
  * The candidate library the page-crossing test publishes: three whole pages at
  * [IMPORT_REVIEW_PAGE_SIZE]. The whole-page size is a harness requirement, not a product one: the
- * D-349 prefix walk (`AndroidScaleUi.collectTraversal`) takes a target expressed in whole pages and
- * clicks the next-page affordance at each page boundary, so a library that ends mid-page can only be
+ * D-349 prefix walk (`AndroidScaleUi.collectTraversal`) takes a target expressed in whole pages —
+ * since D-352 it loads `targetRows / IMPORT_REVIEW_PAGE_ROWS` pages up front through the next-page
+ * affordance and then walks that static list once — so a library that ends mid-page can only be
  * walked as far as its last whole page.
  */
 internal const val IMPORT_REVIEW_PAGING_CANDIDATES = 150
