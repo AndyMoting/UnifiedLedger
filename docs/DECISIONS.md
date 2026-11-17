@@ -7603,3 +7603,24 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **边界：** 入 = `AndroidScaleOracle.snapshot` 的比对段与新增 `compareSampleIndices`/`ORACLE_TRACE_TAG`、D-333 spec §16、本条。出 = 不动 raw 查询、不动 `counts`/`digestQueries`（穷尽面保持）、不动段预算与 `result.py`、不动 `prepare`/`preflight` 的调用点（它们同样受益于采样，语义未变）。
 
 **关联决定：** D-346/D-345/D-342（三次预算调整，本条是「停止加数字」的转向）、D-217（reopen/traversal 分工与「重 SQL 在 app-stopped 相位」的原始设计）、D-333（产物落账与着陆解耦，链前段收敛的前提）。
+
+## D-348 import_evidence 加 (ledger_id, source_id) 覆盖索引：灭掉 review 读路的二次方扫描
+
+**状态：** 已批准（2026-11-17；run `44053908544` 实测读数；**取代 D-347 的采样强度变更**）
+
+**背景：** D-347 给 oracle 的生产读路比对加的三条自身成本 trace 在 run `44053908544` 上把成本本身读了出来：`prepare` 的 `oracle.readPath begin rows=51000` 在 17:33:42，`queried` 在 18:46:27 —— **4365s / 51000 行 = 85.6 ms/行**；`reopen` 的 `begin rows=61000` 在 19:12:17 之后 2.5 小时没有 `queried`，被 reopen 段自身的 9000s 上界砍断。两段死在同一条生产查询上：不是采样不够，也不是段预算不够。
+
+**归因（代码层钉死）：** 生产读路是 `QueryImportReviewRows` → `ImportReviewReadPort.loadImportReviewRows`（适配器 `SqlDelightImportReviewReadAdapter.kt:86`）→ keyset 分页查询 `importReviewRowsForLedgerPage`（`Ledger.sq:9626`）。该 SELECT 的列表里**每个输出行**两次按 `(ledger_id, source_id)` 探 `import_evidence`：`min(evidence.evidence_id)` 标量子查询（`:9655`）与 `used_for_reconciliation` 的 active-link EXISTS（`:9661`）；同形状另四处（`:9580`/`:9586`、`:9749`/`:9755`、`:9830`/`:9836`、`:9912`/`:9918`），其中第一处属未分页的 `importReviewRowsForLedger`（`:9546`）。`import_evidence` 的 DDL（`:8082`）只有 `PRIMARY KEY (ledger_id, evidence_id)`，没有 `(ledger_id, source_id)` 索引 ⇒ 每个输出行对该表全表扫描，整条读路 O(candidates × evidence rows)。D-321 第 4 条的「索引裁决关闭」依据的是有界候选 id 读（N 很小）的 `EXPLAIN` 读数：那时每条访问路径都是 `SEARCH`，但走的是 `sqlite_autoindex_import_evidence_1` 的 `ledger_id` 前缀，代价仍随该账本的 evidence 行数线性放大；整表页读把这个乘数放大成实测的 85.6 ms/行。
+
+**裁决：** 给 `import_evidence` 加覆盖索引 `import_evidence_by_source(ledger_id, source_id)`，五处探针一次治疗，schema 随之 v37 → v38：
+1. `Ledger.sq`：`import_evidence` DDL 之后加 `CREATE INDEX import_evidence_by_source ON import_evidence(ledger_id, source_id);`（带 D-348 注释）；
+2. 新建 `37.sqm`：内容即同一条 `CREATE INDEX`（纯增量、无重建、无回填、不动任何既有对象），并改写 `importReviewRowsForCandidates` 上方那段「零 DDL、schema 停在 v37、索引另开迁移批」的注释——只改注释，查询文本一字未动；
+3. 新增 jvmTest 守卫 `ImportEvidenceProbeIndexTest`：fresh schema 与 v37 → v38 迁移边两侧都断言 `import_evidence` 上存在前两列恰为 `ledger_id, source_id` 的索引；断言 schema 形状，不写计时断言（CI 上会抖）；
+4. 回退 D-347 的采样：删 `compareSampleIndices` 与采样调用，`AndroidScaleOracle.snapshot` 恢复对全部 `rows` 的逐行字段比对；`oracle.readPath begin/queried/end compared=N` 三条 trace 保留为常驻自证读数；
+5. 版本字面量批次同步：44 处 `assertEquals(37…)` 与 11 处指向当前版本的 `migrate(…, 37)` 升 38（`36→37` 历史边保留），两处 `RESTORE_SUPPORTED_SOURCE_VERSIONS`（`App.kt`/`Main.kt`）及其精确集合断言加入 `37L`，`tools/ci/ledger-data-shards.txt` 与 `ci.yml` 的类数 +1（新增的 jvmTest 类），正式文档的 v37/v38 表述登记为本批外的 A-DOC 同步残余。
+
+**边界（穷尽面恢复）：** D-347 把「生产读路与 raw 真值逐行一致」降为确定性样本；本条把它恢复为全量逐行：`counts`、`actual.rows.size == rows.size`、`persisted` 的逐表 digest 与逐行 7 组字段比对覆盖每一行。入 = 索引/`37.sqm`/jvmTest 守卫/oracle 回退/版本字面量与两处白名单/manifest 与 `ci.yml` 类数/本条。出 = 不改任何查询文本、不改段预算与 `result.py`/`runner.py`/workflow、不回改 D-347 的历史记录。
+
+**残留风险：** 下一次 rig 跑是唯一确认：若 `begin → queried` 的间隔没有显著下降，说明还有第二个未覆盖的探针（候选：`evidence_link`/`evidence_link_history` 的 active 判定链，以及 `import_candidate_status_history` 的 `max(sequence)` 相关子查询），而不是本条失效。写入侧代价是每次 intake 一条 B-tree 插入，相对 61k 行读路可忽略。
+
+**关联决定：** D-347（本条取代其采样强度变更）、D-346/D-345（两次预算调整；本条落实第二次「转设计层」）、D-321 第 4 条（索引裁决的关闭读数；本条按整表页读重新打开并关闭）、D-169（61k 读路归因）、D-308/D-312（五处探针所在查询与 v37 边的既有裁决）。

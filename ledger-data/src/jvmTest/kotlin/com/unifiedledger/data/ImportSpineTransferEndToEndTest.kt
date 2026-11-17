@@ -2271,14 +2271,14 @@ class ImportSpineTransferEndToEndTest {
             // import_source_record, so the generated queries need the final shape).
             JdbcSqliteDriver(url, migrationProps()).use { driver ->
                 LedgerDatabase(driver).transaction {
-                    LedgerDatabase.Schema.migrate(driver, oldVersion = 22, newVersion = 37)
-                    driver.execute(null, "PRAGMA user_version = 37", 0)
+                    LedgerDatabase.Schema.migrate(driver, oldVersion = 22, newVersion = 38)
+                    driver.execute(null, "PRAGMA user_version = 38", 0)
                 }
             }
-            assertEquals(37L, queryLongJdbc(url, "PRAGMA user_version"))
+            assertEquals(38L, queryLongJdbc(url, "PRAGMA user_version"))
             JdbcSqliteDriver(url, migrationProps()).use { driver ->
                 val database = LedgerDatabase(driver)
-                assertEquals(37, LedgerDatabase.Schema.version)
+                assertEquals(38, LedgerDatabase.Schema.version)
                 // Existing v21 ordinary rows keep contract_version 1.
                 val source = database.ledgerQueries.selectImportSourceByOwnerRequest("ledger-p404", "req-v21-intake").executeAsOne()
                 assertEquals(1L, source.contract_version)

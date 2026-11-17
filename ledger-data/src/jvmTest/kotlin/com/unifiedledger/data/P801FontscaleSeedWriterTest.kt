@@ -70,7 +70,7 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 
 /**
- * P8-01a i3b font-scale seed writer: the prepared v37 ledger database the `seeded` profile of
+ * P8-01a i3b font-scale seed writer: the prepared v38 ledger database the `seeded` profile of
  * `android-fontscale-sample.yml` pushes into the app's stable storage before launch.
  *
  * WHY A TEST. The output is a real file-backed SQLite database built from the REAL product entry
@@ -108,7 +108,7 @@ import kotlin.time.Instant
  * `AndroidSqliteDriver(schema = LedgerDatabase.Schema, …)`, i.e. androidx `SQLiteOpenHelper`, whose
  * version gate is `PRAGMA user_version`. `LedgerDatabase.Schema.create` does NOT write that stamp
  * (the same reason [P706ConfirmedReceiptsRoundtripTest] stamps it), so the writer stamps
- * `user_version = Schema.version` (37) explicitly; an unstamped file would be treated as version 0
+ * `user_version = Schema.version` (38) explicitly; an unstamped file would be treated as version 0
  * and the app would run the whole migration chain over an already-current schema.
  *
  * The post-write read-back reopens the FILE through a second connection and drives the REAL

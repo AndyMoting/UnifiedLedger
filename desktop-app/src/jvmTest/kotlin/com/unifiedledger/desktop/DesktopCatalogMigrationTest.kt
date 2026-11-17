@@ -24,7 +24,7 @@ class DesktopCatalogMigrationTest {
             assertEquals(27L, queryUserVersion(url))
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(37L, driver.userVersion())
+                assertEquals(38L, driver.userVersion())
                 val database = LedgerDatabase(driver)
                 assertEquals(0L, database.ledgerQueries.countCatalogAccounts("ledger-local-test").executeAsOne())
             }
@@ -43,10 +43,10 @@ class DesktopCatalogMigrationTest {
         try {
             // The production open path creates and stamps a fresh file at the current version.
             JdbcSqliteDriver(url).use { driver -> migrateToCurrentSchema(driver) }
-            assertEquals(37L, queryUserVersion(url))
+            assertEquals(38L, queryUserVersion(url))
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(37L, driver.userVersion())
+                assertEquals(38L, driver.userVersion())
             }
         } finally {
             Files.deleteIfExists(path)
@@ -91,7 +91,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(37L, driver.userVersion())
+                assertEquals(38L, driver.userVersion())
             }
             // The same file still open through the real path, and it still has its tables.
             val graph = openDesktopLedger(url)
@@ -145,12 +145,14 @@ class DesktopCatalogMigrationTest {
                 // ... and the P8-03 v37 manual refund owner (36.sqm), or that edge aborts on the
                 // already-present table.
                 dropP8V36RefundReceipt(driver)
+                // ... and the D-348 v38 evidence-probe index (37.sqm), for the same reason.
+                dropD348EvidenceProbeIndex(driver)
                 driver.execute(null, "PRAGMA user_version = 0", 0)
             }
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(37L, driver.userVersion())
+                assertEquals(38L, driver.userVersion())
                 assertEquals(
                     1L,
                     queryLong(driver, "SELECT count(*) FROM sqlite_master WHERE name = 'catalog_version'"),
@@ -182,7 +184,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(37L, driver.userVersion())
+                assertEquals(38L, driver.userVersion())
                 // No migration ran: the catalog tables were not created, and the v27 objects the
                 // guarded branch would have relied on are still absent.
                 assertEquals(
@@ -234,7 +236,7 @@ class DesktopCatalogMigrationTest {
 
             JdbcSqliteDriver(url).use { driver ->
                 migrateToCurrentSchema(driver)
-                assertEquals(37L, driver.userVersion())
+                assertEquals(38L, driver.userVersion())
                 // The v27-only objects were never created: the guards alone did not pass the gate.
                 assertEquals(
                     0L,
@@ -286,6 +288,8 @@ class DesktopCatalogMigrationTest {
             dropP7V35ManualAnnotationColumns(driver)
             // ... and the P8-03 v37 manual refund owner (36.sqm), for the same reason.
             dropP8V36RefundReceipt(driver)
+            // ... and the D-348 v38 evidence-probe index (37.sqm), for the same reason.
+            dropD348EvidenceProbeIndex(driver)
             driver.execute(null, "PRAGMA user_version = 27", 0)
         }
     }
@@ -422,6 +426,16 @@ class DesktopCatalogMigrationTest {
         if (driver.hasTableForMigrationTest("manual_refund_receipt")) {
             driver.execute(null, "DROP TABLE manual_refund_receipt", 0)
         }
+    }
+
+    /**
+     * D-348 object of the schema v38 edge (37.sqm): the import_evidence source-probe index. A
+     * look-alike of an older surface is built from `Schema.create` (v38) minus this object, so the
+     * in-place migration does not abort on an already-present index. IF EXISTS covers the surfaces
+     * that never carried it.
+     */
+    private fun dropD348EvidenceProbeIndex(driver: JdbcSqliteDriver) {
+        driver.execute(null, "DROP INDEX IF EXISTS import_evidence_by_source", 0)
     }
 
     private fun JdbcSqliteDriver.hasTableForMigrationTest(table: String): Boolean {

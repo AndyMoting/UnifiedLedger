@@ -739,7 +739,7 @@ class P805ReadableExportDeviceChainInstrumentedTest {
         const val V8_PREFIX = "P805-V8DEV"
 
         /** The frozen schema version the device samples must carry (the P802 fixture's assertion). */
-        const val SCHEMA_VERSION = 37L
+        const val SCHEMA_VERSION = 38L
 
         /** The instrumentation target package (the ordinary shard's own package). */
         const val TARGET_PACKAGE = "com.unifiedledger.android"

@@ -8088,6 +8088,12 @@ CREATE TABLE import_evidence (
   PRIMARY KEY (ledger_id, evidence_id),
   FOREIGN KEY (ledger_id, source_id) REFERENCES import_source_record(ledger_id, source_id)
 );
+-- D-348: the production review read probes this table once per output row by (ledger_id,
+-- source_id) — the min(evidence_id) projection scalar and the active-link EXISTS, in
+-- importReviewRowsForLedgerPage and its four sibling reads. With only PRIMARY KEY (ledger_id,
+-- evidence_id) each probe scanned the whole table, so the read was quadratic in evidence rows.
+-- 37.sqm creates this covering index with the same statement text.
+CREATE INDEX import_evidence_by_source ON import_evidence(ledger_id, source_id);
 CREATE TABLE import_candidate (
   ledger_id TEXT NOT NULL,
   candidate_id TEXT NOT NULL,
@@ -9872,10 +9878,8 @@ ORDER BY candidate.candidate_id, duplicate.candidate_id;
 -- (`rows.rows.firstOrNull { it.candidateId == item.candidateId }`,
 -- app-ui/.../P503ImportBatchPresentation.kt:344 and :410) consume.
 -- The per-output-row evidence probes (the `min(evidence_id)` scalar and the active-link EXISTS)
--- stay the D-7-closed auto-index probes (cloud CI run 43407734033, ledger-data shard 1: every
--- access path SEARCH, the import_evidence probes on sqlite_autoindex_import_evidence_1); any
--- index work remains a separate migration batch, never this query. Zero DDL, zero migration,
--- schema version stays v37.
+-- ride import_evidence_by_source (D-348, 37.sqm), so each probe is one SEARCH on (ledger_id,
+-- source_id) instead of a scan of the table. That batch adds no query text: DDL only.
 importReviewRowsForCandidates:
 SELECT
   candidate.candidate_id,
