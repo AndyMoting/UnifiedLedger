@@ -504,7 +504,7 @@ internal class SqlDelightP806SnapshotReader(
                         // parses to a non-null 0 and still passes).
                         occurredAtEpochNanos =
                             row.occurred_at_nanos
-                                ?: throw P806InvalidProjection("page row without the parsed occurred_at key"),
+                                ?: throw P806InvalidProjection("page row without the parsed occurred_at key: posting=" + row.posting_id + " occurred_at=" + row.occurred_at + " rows=" + rows.size + " page=" + request.pageSize),
                         postingId = row.posting_id,
                     )
                 }
