@@ -21,7 +21,7 @@ UnifiedLedger 是一个 Android-first、local-first 的个人财务应用，将�
 
 ## 仓库结构
 
-四个共享库 `ledger-domain`、`ledger-application`、`ledger-data`、`app-ui` 承载账务核心、持久化与界面；`android-app` 与 `desktop-app` 是只做平台装配的组合根；`tools/python` 保留迁移、规则验证与黄金结果基线。schema 当前为 SQLDelight v36（v1→v36 共 35 个迁移边）。
+四个共享库 `ledger-domain`、`ledger-application`、`ledger-data`、`app-ui` 承载账务核心、持久化与界面；`android-app` 与 `desktop-app` 是只做平台装配的组合根；`tools/python` 保留迁移、规则验证与黄金结果基线。schema 当前为 SQLDelight v38（v1→v38 共 37 个迁移边）。
 
 模块职责与依赖方向见[项目地图](docs/PROJECT_MAP.md)与[系统架构](docs/ARCHITECTURE.md)；三个共享库另有模块文档（见「正式文档」）。
 
