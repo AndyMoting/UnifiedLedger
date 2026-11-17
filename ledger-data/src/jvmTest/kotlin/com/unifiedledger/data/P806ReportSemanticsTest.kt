@@ -79,18 +79,23 @@ class P806ReportSemanticsTest {
             assertEquals(-200L, cnyView.refundMinorUnits)
 
             val monthly =
-                (com.unifiedledger.application.QueryMonthlyActivity(adapter, ledgerId, catalog, clock)
-                    .query(kotlinx.datetime.YearMonth(2026, kotlinx.datetime.Month.NOVEMBER)) as
-                    com.unifiedledger.application.MonthlyActivityResult.Success).activity
+                (
+                    com.unifiedledger.application
+                        .QueryMonthlyActivity(adapter, ledgerId, catalog, clock)
+                        .query(kotlinx.datetime.YearMonth(2026, kotlinx.datetime.Month.NOVEMBER)) as
+                        com.unifiedledger.application.MonthlyActivityResult.Success
+                ).activity
             val frozen = monthly.currencies.first { it.currency == cny }
             assertEquals(frozen.netExpenseMinorUnits, cnyView.netExpenseMinorUnits)
             assertEquals(frozen.ordinaryIncomeMinorUnits, cnyView.ordinaryIncomeMinorUnits)
 
             // V-3: a partial period uses its own half-open window, never the month card minus a month.
             val firstHalf =
-                (report.query(
-                    P806Period(P806PeriodKind.CUSTOM, customStart = kotlinx.datetime.LocalDate(2026, 11, 1), customEnd = kotlinx.datetime.LocalDate(2026, 11, 15)),
-                ) as P806SnapshotResult.Success<P806ReportView>).snapshot
+                (
+                    report.query(
+                        P806Period(P806PeriodKind.CUSTOM, customStart = kotlinx.datetime.LocalDate(2026, 11, 1), customEnd = kotlinx.datetime.LocalDate(2026, 11, 15)),
+                    ) as P806SnapshotResult.Success<P806ReportView>
+                ).snapshot
             assertEquals(800L, firstHalf.currencies.first { it.currency == cny }.netExpenseMinorUnits)
 
             // V-2: the independent category set equals the ranked categories, level-1 = sum of children.
@@ -126,9 +131,12 @@ class P806ReportSemanticsTest {
             assertEquals(cny, view.axis.first())
             assertEquals(usd, view.axis.last())
             // The raw snapshot carries the same global count (one number per day).
-            val raw = (adapter.readCalendarSnapshot(
-                com.unifiedledger.application.P806CalendarRequest(ledgerId, catalog, kotlinx.datetime.YearMonth(2026, kotlinx.datetime.Month.NOVEMBER), version),
-            ) as P806SnapshotResult.Success<P806CalendarSnapshot>).snapshot
+            val raw =
+                (
+                    adapter.readCalendarSnapshot(
+                        com.unifiedledger.application.P806CalendarRequest(ledgerId, catalog, kotlinx.datetime.YearMonth(2026, kotlinx.datetime.Month.NOVEMBER), version),
+                    ) as P806SnapshotResult.Success<P806CalendarSnapshot>
+                ).snapshot
             assertEquals(2, raw.days.first { it.date == kotlinx.datetime.LocalDate(2026, 11, 10) }.transactionCount)
         }
     }
@@ -138,12 +146,14 @@ class P806ReportSemanticsTest {
         withDatabase { driver, database, version ->
             val catalog = seedCatalog(driver, standardAccounts(), version)
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
-            val result = adapter.readCalendarSnapshot(
-                P806CalendarRequest(ledgerId, catalog, kotlinx.datetime.YearMonth(999999, kotlinx.datetime.Month.DECEMBER), version),
-            )
+            val result =
+                adapter.readCalendarSnapshot(
+                    P806CalendarRequest(ledgerId, catalog, kotlinx.datetime.YearMonth(999999, kotlinx.datetime.Month.DECEMBER), version),
+                )
             assertEquals(P806SnapshotFailure.InvalidWindow, (assertIs<P806SnapshotResult.Failed>(result)).failure)
         }
     }
+
     @Test
     fun anEmptyLedgerAnswersNoPeriodForAllFiveKindsAndTheCalendarStillHasBuckets() {
         withDatabase { driver, database, version ->
@@ -337,7 +347,6 @@ class P806ReportSemanticsTest {
     ) {
         driver.execute(null, sql, 0)
     }
-
 
     private class FixedClock(
         private val value: String,

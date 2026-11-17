@@ -84,8 +84,10 @@ class P806CoverageTest {
             }
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
             val view =
-                (P806ReportQuery(adapter, ledgerId, CatalogAuthority(ledgerId, catalog, version), FixedClock("2026-11-17T00:00:00Z"))
-                    .query(P806Period(P806PeriodKind.MONTH)) as P806SnapshotResult.Success<P806ReportView>).snapshot
+                (
+                    P806ReportQuery(adapter, ledgerId, CatalogAuthority(ledgerId, catalog, version), FixedClock("2026-11-17T00:00:00Z"))
+                        .query(P806Period(P806PeriodKind.MONTH)) as P806SnapshotResult.Success<P806ReportView>
+                ).snapshot
             assertEquals(2, view.transactionCount)
             assertEquals(2, view.currencies.first { it.currency == cny }.transactionCount)
             assertEquals(1, view.currencies.first { it.currency == usd }.transactionCount)
@@ -114,16 +116,32 @@ class P806CoverageTest {
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
             val window = novemberWindow()
             val levelOne = page(adapter, window, foodParent.value, version)
-            assertEquals(setOf("tx-1", "tx-2"), levelOne.page.rows.map { it.transactionId.value }.toSet())
+            assertEquals(
+                setOf("tx-1", "tx-2"),
+                levelOne.page.rows
+                    .map { it.transactionId.value }
+                    .toSet(),
+            )
             assertEquals(2, levelOne.totalCount)
             val levelTwo = page(adapter, window, foodOther.value, version)
             assertEquals(listOf("tx-2"), levelTwo.page.rows.map { it.transactionId.value })
             assertEquals(1, levelTwo.totalCount)
             val wholePeriod = page(adapter, window, categoryFilter = "", version)
             // categoryId = null means ALL ordinary contributions, not the uncategorized subset.
-            assertEquals(setOf("tx-1", "tx-2", "tx-3"), wholePeriod.page.rows.map { it.transactionId.value }.toSet())
+            assertEquals(
+                setOf("tx-1", "tx-2", "tx-3"),
+                wholePeriod.page.rows
+                    .map { it.transactionId.value }
+                    .toSet(),
+            )
             assertEquals(3, wholePeriod.totalCount)
-            assertEquals(3, wholePeriod.page.rows.map { it.transactionId.value }.toSet().size)
+            assertEquals(
+                3,
+                wholePeriod.page.rows
+                    .map { it.transactionId.value }
+                    .toSet()
+                    .size,
+            )
         }
     }
 
@@ -140,7 +158,8 @@ class P806CoverageTest {
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
             val snapshot = (adapter.readReportSnapshot(reportRequest(version, catalog)) as P806SnapshotResult.Success<P806ReportSnapshot>).snapshot
             val expectedOrder =
-                stamps.withIndex()
+                stamps
+                    .withIndex()
                     .sortedWith(
                         compareByDescending<IndexedValue<String>> { Instant.parse(it.value).toEpochMilliseconds() }
                             .thenByDescending { "tx-${it.index}" },
@@ -193,10 +212,11 @@ class P806CoverageTest {
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
             // A successful read can only be produced by three zero counters.
             assertIs<P806SnapshotResult.Success<P806ReportSnapshot>>(adapter.readReportSnapshot(reportRequest(version, catalog)))
-            val emptyWindow = P806Window(
-                Instant.parse("2027-01-01T00:00:00+08:00").toEpochMilliseconds() * 1_000_000L,
-                Instant.parse("2027-02-01T00:00:00+08:00").toEpochMilliseconds() * 1_000_000L,
-            )
+            val emptyWindow =
+                P806Window(
+                    Instant.parse("2027-01-01T00:00:00+08:00").toEpochMilliseconds() * 1_000_000L,
+                    Instant.parse("2027-02-01T00:00:00+08:00").toEpochMilliseconds() * 1_000_000L,
+                )
             val empty = (adapter.readDrilldownSnapshot(P806DrilldownRequest(ledgerId, emptyWindow, expectedCatalogVersion = version)) as P806SnapshotResult.Success<P806DrilldownSnapshot>).snapshot
             assertEquals(0, empty.totalCount)
             assertTrue(empty.page.rows.isEmpty())
@@ -206,29 +226,35 @@ class P806CoverageTest {
             // production C0): a clean window and an empty window must both answer 0, never NULL.
             val cleanWindow = novemberWindow()
             val cleanProbe =
-                LedgerDatabase(driver).ledgerQueries.p806StatisticsCatalogConsistencyProbe(
-                    ledger_id = ledgerId.value,
-                    window_start_nanos = cleanWindow.startEpochNanos,
-                    window_end_nanos = cleanWindow.endEpochNanos,
-                ).executeAsOne()
+                LedgerDatabase(driver)
+                    .ledgerQueries
+                    .p806StatisticsCatalogConsistencyProbe(
+                        ledger_id = ledgerId.value,
+                        window_start_nanos = cleanWindow.startEpochNanos,
+                        window_end_nanos = cleanWindow.endEpochNanos,
+                    ).executeAsOne()
             assertEquals(0L, cleanProbe.unresolved_account)
             assertEquals(0L, cleanProbe.cross_ledger_account)
             assertEquals(0L, cleanProbe.currency_mismatch)
             val emptyProbe =
-                LedgerDatabase(driver).ledgerQueries.p806StatisticsCatalogConsistencyProbe(
-                    ledger_id = ledgerId.value,
-                    window_start_nanos = emptyWindow.startEpochNanos,
-                    window_end_nanos = emptyWindow.endEpochNanos,
-                ).executeAsOne()
+                LedgerDatabase(driver)
+                    .ledgerQueries
+                    .p806StatisticsCatalogConsistencyProbe(
+                        ledger_id = ledgerId.value,
+                        window_start_nanos = emptyWindow.startEpochNanos,
+                        window_end_nanos = emptyWindow.endEpochNanos,
+                    ).executeAsOne()
             assertEquals(0L, emptyProbe.unresolved_account)
             assertEquals(0L, emptyProbe.cross_ledger_account)
             assertEquals(0L, emptyProbe.currency_mismatch)
             val occurredProbe =
-                LedgerDatabase(driver).ledgerQueries.p806OccurredAtCatalogConsistencyProbe(
-                    ledger_id = ledgerId.value,
-                    window_start_nanos = Long.MIN_VALUE,
-                    window_end_nanos = Long.MAX_VALUE,
-                ).executeAsOne()
+                LedgerDatabase(driver)
+                    .ledgerQueries
+                    .p806OccurredAtCatalogConsistencyProbe(
+                        ledger_id = ledgerId.value,
+                        window_start_nanos = Long.MIN_VALUE,
+                        window_end_nanos = Long.MAX_VALUE,
+                    ).executeAsOne()
             assertEquals(0L, occurredProbe.unresolved_account)
             assertEquals(0L, occurredProbe.cross_ledger_account)
             assertEquals(0L, occurredProbe.currency_mismatch)
@@ -246,9 +272,15 @@ class P806CoverageTest {
             }
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
             val view =
-                (P806ReportQuery(adapter, ledgerId, CatalogAuthority(ledgerId, catalog, version), FixedClock("2026-11-17T00:00:00Z"))
-                    .query(P806Period(P806PeriodKind.MONTH)) as P806SnapshotResult.Success<P806ReportView>).snapshot
-            val salaryCategory = view.incomeCategories.first { it.categoryId == salaryParent }.children.first { it.categoryId == salaryLeaf }
+                (
+                    P806ReportQuery(adapter, ledgerId, CatalogAuthority(ledgerId, catalog, version), FixedClock("2026-11-17T00:00:00Z"))
+                        .query(P806Period(P806PeriodKind.MONTH)) as P806SnapshotResult.Success<P806ReportView>
+                ).snapshot
+            val salaryCategory =
+                view.incomeCategories
+                    .first { it.categoryId == salaryParent }
+                    .children
+                    .first { it.categoryId == salaryLeaf }
             assertEquals(5_000L, salaryCategory.totals.first().positiveMinorUnits)
             assertEquals(0L, salaryCategory.totals.first().refundMinorUnits)
             // The unmapped income leg (a reversal) is the explicit 无分类 income row, negative side.
@@ -274,9 +306,10 @@ class P806CoverageTest {
                     insertTransaction(driver, "tx-bad", "EXPENSE", null, "2026-01-05T00:00:00Z", bad, listOf(breakfast to 100L, cash to -100L))
                 }
                 val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
-                val result = adapter.readAccountPostingsSnapshot(
-                    P806AccountRequest(ledgerId, cash, window = novemberWindow(), expectedCatalogVersion = version),
-                )
+                val result =
+                    adapter.readAccountPostingsSnapshot(
+                        P806AccountRequest(ledgerId, cash, window = novemberWindow(), expectedCatalogVersion = version),
+                    )
                 assertEquals(
                     P806SnapshotFailure.OccurredAtUnparseable,
                     (assertIs<P806SnapshotResult.Failed>(result)).failure,
@@ -327,6 +360,7 @@ class P806CoverageTest {
                 }
             }
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
+
             // Independent expectation: epoch nanos from the literal's own second + fraction, never
             // from a millisecond conversion.
             fun expectedNanos(text: String): Long {
@@ -396,11 +430,12 @@ class P806CoverageTest {
         com.unifiedledger.application.P806ReportRequest(
             ledgerId = ledgerId,
             catalog = catalog,
-            period = P806Period(
-                P806PeriodKind.CUSTOM,
-                customStart = kotlinx.datetime.LocalDate(2026, 11, 1),
-                customEnd = kotlinx.datetime.LocalDate(2026, 11, 30),
-            ),
+            period =
+                P806Period(
+                    P806PeriodKind.CUSTOM,
+                    customStart = kotlinx.datetime.LocalDate(2026, 11, 1),
+                    customEnd = kotlinx.datetime.LocalDate(2026, 11, 30),
+                ),
             today = kotlinx.datetime.LocalDate(2026, 11, 17),
             futureFromEpochNanos = Instant.parse("2026-11-18T00:00:00+08:00").toEpochMilliseconds() * 1_000_000L,
             expectedCatalogVersion = version,

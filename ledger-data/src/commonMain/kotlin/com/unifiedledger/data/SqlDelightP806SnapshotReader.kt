@@ -341,7 +341,7 @@ internal class SqlDelightP806SnapshotReader(
                 kind6 = ordinaryKindNames[5],
                 contrib_kind1 = contributingAccountKindNames[0],
                 contrib_kind2 = contributingAccountKindNames[1],
-            )).executeAsOne().countOrFail()
+            ).executeAsOne().countOrFail()
 
     private fun currencyTransactionCounts(
         ledgerId: LedgerId,
@@ -387,7 +387,7 @@ internal class SqlDelightP806SnapshotReader(
                 kind6 = ordinaryKindNames[5],
                 contrib_kind1 = contributingAccountKindNames[0],
                 contrib_kind2 = contributingAccountKindNames[1],
-            )).executeAsOne().countOrFail()
+            ).executeAsOne().countOrFail()
 
     // ---------------------------------------------------------------- pages
 
@@ -475,7 +475,7 @@ internal class SqlDelightP806SnapshotReader(
                 contrib_kind1 = contributingAccountKindNames[0],
                 contrib_kind2 = contributingAccountKindNames[1],
                 category_filter = categoryFilter,
-            )).executeAsOne().countOrFail()
+            ).executeAsOne().countOrFail()
 
     private fun accountPage(
         ledgerId: LedgerId,
@@ -538,7 +538,7 @@ internal class SqlDelightP806SnapshotReader(
                 account_id = request.accountId.value,
                 window_start_nanos = request.window?.startEpochNanos ?: Long.MIN_VALUE,
                 window_end_nanos = request.window?.endEpochNanos ?: Long.MAX_VALUE,
-            )).executeAsOne().countOrFail()
+            ).executeAsOne().countOrFail()
 
     // ---------------------------------------------------------------- plumbing
 

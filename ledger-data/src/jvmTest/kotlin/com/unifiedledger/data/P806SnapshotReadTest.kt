@@ -91,8 +91,10 @@ class P806SnapshotReadTest {
             var pages = 0
             do {
                 val snapshot =
-                    (adapter.readDrilldownSnapshot(drilldownRequest(novemberWindow(), cursor, version))
-                        as P806SnapshotResult.Success<P806DrilldownSnapshot>).snapshot
+                    (
+                        adapter.readDrilldownSnapshot(drilldownRequest(novemberWindow(), cursor, version))
+                            as P806SnapshotResult.Success<P806DrilldownSnapshot>
+                    ).snapshot
                 assertEquals(62, snapshot.totalCount)
                 snapshot.page.rows.forEach { ids += it.transactionId.value }
                 cursor = snapshot.page.nextCursor
@@ -154,9 +156,11 @@ class P806SnapshotReadTest {
 
             counting.resetCounts()
             val second =
-                (adapter.readDrilldownSnapshot(
-                    drilldownRequest(novemberWindow(), report.firstPage.nextCursor, version),
-                ) as P806SnapshotResult.Success<P806DrilldownSnapshot>).snapshot
+                (
+                    adapter.readDrilldownSnapshot(
+                        drilldownRequest(novemberWindow(), report.firstPage.nextCursor, version),
+                    ) as P806SnapshotResult.Success<P806DrilldownSnapshot>
+                ).snapshot
             assertEquals(50, second.page.rows.size)
             assertNotNull(second.page.nextCursor)
             assertEquals(50_000, second.totalCount)
@@ -181,14 +185,17 @@ class P806SnapshotReadTest {
             assertEquals(3, all.totalCount)
 
             // Half-open sub-second boundary: ending exactly at .500 excludes the .500 row.
-            val upToHalf = (adapter.readAccountPostingsSnapshot(
-                P806AccountRequest(
-                    ledgerId,
-                    cash,
-                    window = windowOf("2026-11-01T00:00:00Z", "2026-11-04T00:00:00.500Z"),
-                    expectedCatalogVersion = version,
-                ),
-            ) as P806SnapshotResult.Success<P806AccountSnapshot>).snapshot
+            val upToHalf =
+                (
+                    adapter.readAccountPostingsSnapshot(
+                        P806AccountRequest(
+                            ledgerId,
+                            cash,
+                            window = windowOf("2026-11-01T00:00:00Z", "2026-11-04T00:00:00.500Z"),
+                            expectedCatalogVersion = version,
+                        ),
+                    ) as P806SnapshotResult.Success<P806AccountSnapshot>
+                ).snapshot
             assertEquals(listOf("tx-z", "tx-offset"), upToHalf.page.rows.map { it.transactionId.value })
 
             // Mixed offset/Z ordering is chronological, and the non-member account stays out.
@@ -196,15 +203,21 @@ class P806SnapshotReadTest {
             assertEquals(0, (internal as P806SnapshotResult.Success<P806AccountSnapshot>).snapshot.totalCount)
 
             // D-343 3.4（键集页 look-ahead） style look-ahead for the account page: page size 1 leaves a real cursor.
-            val firstPage = (adapter.readAccountPostingsSnapshot(
-                P806AccountRequest(ledgerId, cash, pageSize = 1, expectedCatalogVersion = version),
-            ) as P806SnapshotResult.Success<P806AccountSnapshot>).snapshot
+            val firstPage =
+                (
+                    adapter.readAccountPostingsSnapshot(
+                        P806AccountRequest(ledgerId, cash, pageSize = 1, expectedCatalogVersion = version),
+                    ) as P806SnapshotResult.Success<P806AccountSnapshot>
+                ).snapshot
             assertEquals(1, firstPage.page.rows.size)
             val cursor = firstPage.page.nextCursor
             assertNotNull(cursor)
-            val secondPage = (adapter.readAccountPostingsSnapshot(
-                P806AccountRequest(ledgerId, cash, cursor = cursor, pageSize = 1, expectedCatalogVersion = version),
-            ) as P806SnapshotResult.Success<P806AccountSnapshot>).snapshot
+            val secondPage =
+                (
+                    adapter.readAccountPostingsSnapshot(
+                        P806AccountRequest(ledgerId, cash, cursor = cursor, pageSize = 1, expectedCatalogVersion = version),
+                    ) as P806SnapshotResult.Success<P806AccountSnapshot>
+                ).snapshot
             assertEquals(listOf("tx-z"), secondPage.page.rows.map { it.transactionId.value })
         }
     }
@@ -257,9 +270,10 @@ class P806SnapshotReadTest {
                     insertTransaction(driver, "tx-bad", "EXPENSE", null, "2026-11-02T00:00:00Z", bad, listOf(breakfast to 100L, cash to -100L))
                 }
                 val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
-                val result = adapter.readAccountPostingsSnapshot(
-                    P806AccountRequest(ledgerId, cash, window = novemberWindow(), expectedCatalogVersion = version),
-                )
+                val result =
+                    adapter.readAccountPostingsSnapshot(
+                        P806AccountRequest(ledgerId, cash, window = novemberWindow(), expectedCatalogVersion = version),
+                    )
                 assertEquals(
                     P806SnapshotFailure.OccurredAtUnparseable,
                     (assertIs<P806SnapshotResult.Failed>(result)).failure,
@@ -359,9 +373,10 @@ class P806SnapshotReadTest {
                 insertTransaction(driver, "tx-space", "EXPENSE", null, "2026-01-05T00:00:00Z", "2026-01-05 00:00:00Z", listOf(breakfast to 100L, cash to -100L))
             }
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
-            val result = adapter.readAccountPostingsSnapshot(
-                P806AccountRequest(ledgerId, cash, window = novemberWindow(), expectedCatalogVersion = version),
-            )
+            val result =
+                adapter.readAccountPostingsSnapshot(
+                    P806AccountRequest(ledgerId, cash, window = novemberWindow(), expectedCatalogVersion = version),
+                )
             assertEquals(P806SnapshotFailure.OccurredAtUnparseable, (assertIs<P806SnapshotResult.Failed>(result)).failure)
         }
     }
@@ -378,12 +393,14 @@ class P806SnapshotReadTest {
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
             // The first (deep) page request with a one-row page size must already be refused: the
             // refused row sits at the tail of the walk, never inside the page being fetched.
-            val firstPage = adapter.readAccountPostingsSnapshot(
-                P806AccountRequest(ledgerId, cash, pageSize = 1, expectedCatalogVersion = version),
-            )
+            val firstPage =
+                adapter.readAccountPostingsSnapshot(
+                    P806AccountRequest(ledgerId, cash, pageSize = 1, expectedCatalogVersion = version),
+                )
             assertEquals(P806SnapshotFailure.OccurredAtUnparseable, (assertIs<P806SnapshotResult.Failed>(firstPage)).failure)
         }
     }
+
     @Test
     fun aNonExistentCivilDayIsRefusedBeforeTheWindowAndAPlusEightBoundaryIsAccepted() {
         withDatabase { driver, database, version ->
@@ -395,9 +412,10 @@ class P806SnapshotReadTest {
                 insertTransaction(driver, "tx-feb30", "EXPENSE", null, "2026-01-05T00:00:00Z", "2026-02-30T00:00:00Z", listOf(breakfast to 100L, cash to -100L))
             }
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
-            val result = adapter.readAccountPostingsSnapshot(
-                P806AccountRequest(ledgerId, cash, window = novemberWindow(), expectedCatalogVersion = version),
-            )
+            val result =
+                adapter.readAccountPostingsSnapshot(
+                    P806AccountRequest(ledgerId, cash, window = novemberWindow(), expectedCatalogVersion = version),
+                )
             assertEquals(P806SnapshotFailure.OccurredAtUnparseable, (assertIs<P806SnapshotResult.Failed>(result)).failure)
         }
         withDatabase { driver, database, version ->
@@ -409,9 +427,10 @@ class P806SnapshotReadTest {
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
             // pageSize = 1: the bad row would sit at the tail of the walk, yet the first request
             // must already be refused by the probe.
-            val result = adapter.readAccountPostingsSnapshot(
-                P806AccountRequest(ledgerId, cash, pageSize = 1, expectedCatalogVersion = version),
-            )
+            val result =
+                adapter.readAccountPostingsSnapshot(
+                    P806AccountRequest(ledgerId, cash, pageSize = 1, expectedCatalogVersion = version),
+                )
             assertEquals(P806SnapshotFailure.OccurredAtUnparseable, (assertIs<P806SnapshotResult.Failed>(result)).failure)
         }
         withDatabase { driver, database, version ->
@@ -423,9 +442,12 @@ class P806SnapshotReadTest {
                 insertTransaction(driver, "tx-offset-boundary", "EXPENSE", null, "2026-11-01T00:30:00+08:00", "2026-11-01T00:30:00+08:00", listOf(breakfast to 100L, cash to -100L))
             }
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
-            val snapshot = (adapter.readAccountPostingsSnapshot(
-                P806AccountRequest(ledgerId, cash, window = novemberWindow(), expectedCatalogVersion = version),
-            ) as P806SnapshotResult.Success<P806AccountSnapshot>).snapshot
+            val snapshot =
+                (
+                    adapter.readAccountPostingsSnapshot(
+                        P806AccountRequest(ledgerId, cash, window = novemberWindow(), expectedCatalogVersion = version),
+                    ) as P806SnapshotResult.Success<P806AccountSnapshot>
+                ).snapshot
             assertEquals(listOf("tx-offset-boundary"), snapshot.page.rows.map { it.transactionId.value })
             assertEquals(1, snapshot.totalCount)
         }
@@ -436,11 +458,12 @@ class P806SnapshotReadTest {
         P806ReportRequest(
             ledgerId = ledgerId,
             catalog = catalogForCurrentAccounts(),
-            period = P806Period(
-                P806PeriodKind.CUSTOM,
-                customStart = kotlinx.datetime.LocalDate(2026, 11, 1),
-                customEnd = kotlinx.datetime.LocalDate(2026, 11, 30),
-            ),
+            period =
+                P806Period(
+                    P806PeriodKind.CUSTOM,
+                    customStart = kotlinx.datetime.LocalDate(2026, 11, 1),
+                    customEnd = kotlinx.datetime.LocalDate(2026, 11, 30),
+                ),
             today = kotlinx.datetime.LocalDate(2026, 11, 17),
             futureFromEpochNanos = Instant.parse("2026-11-18T00:00:00+08:00").toEpochMilliseconds() * 1_000_000L,
             expectedCatalogVersion = version,
@@ -450,8 +473,7 @@ class P806SnapshotReadTest {
         window: com.unifiedledger.application.P806Window,
         cursor: P806TransactionCursor?,
         version: Long,
-    ): P806DrilldownRequest =
-        P806DrilldownRequest(ledgerId = ledgerId, window = window, cursor = cursor, expectedCatalogVersion = version)
+    ): P806DrilldownRequest = P806DrilldownRequest(ledgerId = ledgerId, window = window, cursor = cursor, expectedCatalogVersion = version)
 
     private fun novemberWindow(): com.unifiedledger.application.P806Window =
         com.unifiedledger.application.P806Window(
