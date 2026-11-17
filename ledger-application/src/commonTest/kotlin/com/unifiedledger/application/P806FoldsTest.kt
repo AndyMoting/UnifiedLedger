@@ -70,7 +70,7 @@ class P806FoldsTest {
         val snapshot =
             snapshot(
                 window = window(30),
-                totals = listOf(total(cashId, cny, -400L), total(expenseAccountId, cny, 400L)),
+                totals = listOf(total(cashId, cny, 0L, -400L), total(expenseAccountId, cny, 400L)),
             )
         val view = P806Folds.report(snapshot, ledgerId, catalog, periodOf(30))
         val cnyView = view.currencies.first { it.currency == cny }

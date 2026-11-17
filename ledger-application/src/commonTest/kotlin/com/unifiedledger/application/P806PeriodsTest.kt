@@ -80,7 +80,7 @@ class P806PeriodsTest {
     @Test
     fun monthDayBucketsUseTheZonesRealZeroPoints() {
         val buckets = requireNotNull(P806Periods.dayBuckets(YearMonth(2026, Month.NOVEMBER)))
-        assertEquals(31, buckets.size)
+        assertEquals(30, buckets.size)
         assertEquals(LocalDate(2026, 11, 1), buckets.first().date)
         assertEquals(LocalDate(2026, 11, 30), buckets.last().date)
         assertEquals(Instant.parse("2026-10-31T16:00:00Z"), instantOf(buckets.first().window.startEpochNanos))

@@ -148,7 +148,7 @@ class P806ReportSemanticsTest {
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
             val result =
                 adapter.readCalendarSnapshot(
-                    P806CalendarRequest(ledgerId, catalog, kotlinx.datetime.YearMonth(999999, kotlinx.datetime.Month.DECEMBER), version),
+                    com.unifiedledger.application.P806CalendarRequest(ledgerId, catalog, kotlinx.datetime.YearMonth(999999, kotlinx.datetime.Month.DECEMBER), version),
                 )
             assertEquals(P806SnapshotFailure.InvalidWindow, (assertIs<P806SnapshotResult.Failed>(result)).failure)
         }
