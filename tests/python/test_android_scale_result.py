@@ -108,6 +108,7 @@ TRAVERSAL_EVIDENCE = {
     "traversalPageClicks": TRAVERSAL_PREFIX_PAGES - 1,
     "traversalDeepRowPages": (61000 + TRAVERSAL_PAGE_ROWS - 1) // TRAVERSAL_PAGE_ROWS,
     "traversalScope": "bounded-contiguous-prefix",
+    "traversalWindowOrder": "candidate-id-prefix",
 }
 
 
@@ -619,10 +620,15 @@ class ReducerRejectsWrongIdentityAndCrashes(unittest.TestCase):
     def test_missing_traversal_prefix_scope_is_rejected(self):
         # D-349: the walk covers a bounded prefix, so the evidence must say so; the whole-list claim
         # (`firstLastObserved`) is gone and does not substitute for it.
-        device = load(self.directory, "device.json")
-        device["traversalScope"] = "whole-list"
-        save(self.directory, "device.json", device)
-        self.assert_rejected()
+        # D-351: the window basis rides with it — the seam equality is measured against the
+        # candidate-id prefix the pages load, and a report naming any other basis is not this walk.
+        for field, wrong in (("traversalScope", "whole-list"), ("traversalWindowOrder", "class-major")):
+            with self.subTest(field=field):
+                build_valid(self.directory)
+                device = load(self.directory, "device.json")
+                device[field] = wrong
+                save(self.directory, "device.json", device)
+                self.assert_rejected()
 
     def test_short_traversal_prefix_is_rejected(self):
         # A walk that covered fewer rows than the promised prefix must not pass as one that did.

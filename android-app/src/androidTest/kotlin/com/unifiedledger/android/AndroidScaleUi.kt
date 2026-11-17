@@ -14,6 +14,8 @@ import android.view.MotionEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import java.util.ArrayDeque
+import org.json.JSONArray
+import org.json.JSONObject
 
 /** The drawer row wait: the 导入账单 row composes only while the drawer is open, so this covers its entrance. */
 private const val DRAWER_ROW_TIMEOUT_MS = 30_000L
@@ -44,6 +46,15 @@ private const val PAGE_LOAD_ATTEMPTS = 3
 
 /** D-349: how many gentle forward scrolls may be spent bringing the affordance into the viewport. */
 private const val PAGE_REVEAL_SCROLLS = 8
+
+/**
+ * D-351: how many difference entries a seam mismatch echoes per direction. The full sorted lists
+ * travel in the payload regardless, so this caps the duplicate echo, not the evidence.
+ */
+private const val SEAM_DIAGNOSTIC_LIMIT = 60
+
+/** D-351: how much of one signature a logcat line or a failure message quotes. */
+private const val SEAM_DIAGNOSTIC_CHARS = 48
 
 /** Fresh semantic nodes only; gesture geometry comes from the current scroll container. */
 internal class AndroidScaleUi(
@@ -1145,16 +1156,31 @@ internal class AndroidScaleUi(
      * sits at rank 61,000. Measured on that run: 1.01s per scan at 0.78 rows per
      * scan, so an exhaustive walk needs ~21.9h and 1,220 clicks. The walk now
      * takes [targetRows] rows — whole pages — and after each page's viewport
-     * parks it asserts [expectedPrefix], a prefix multiset equality against the
-     * caller's quiescent display rows. That seam assertion is what makes the
-     * prefix acceptable: at every page boundary the covered range is proven to
-     * hold each expected row exactly once, so a dropped or duplicated row fails
-     * at the page where it happened instead of disappearing into a short list.
+     * parks it asserts [expectedWindow]: the covered slice's exact multiset.
+     * That seam assertion is what makes the prefix acceptable: at every page
+     * boundary the covered range is proven to hold each expected row exactly
+     * once, so a dropped or duplicated row fails at the page where it happened
+     * instead of disappearing into a short list.
      * [loadNextPage] then clicks the affordance and waits (bounded) for the list
      * to grow. The click is a read trigger only — one keyset page read through
      * the product's own path, no write — so the traversal stage's state-silence
      * invariant survives, and the stage's tail re-reads the oracle and asserts
      * equality, which is what proves it.
+     *
+     * D-351 — [expectedWindow] is the CANDIDATE-ID prefix the pages load, not the
+     * whole list's class order. The review list pages by keyset on `candidate_id`
+     * (`candidate_id > cursor ORDER BY candidate_id LIMIT 50`, adapter cursor
+     * bound to "" for the first page, `AppendImportReviewPage` appending), so
+     * after k pages the loaded candidates are exactly the first 50k of the
+     * oracle's own `ORDER BY c.candidate_id` sequence, rendered class-major
+     * within that slice. Comparing against `displayRows.take(50k)` instead — the
+     * class-then-id order of the WHOLE population — mixes two different
+     * sequences: run 44127054663 failed at 50/50 that way, because the chain
+     * confirmed one candidate of the loaded page and the class order therefore
+     * pulled one row from beyond the page into its place. The seam compares
+     * multisets (the render order inside a slice is class-major, the load order
+     * is not) and, on mismatch, records the payload [onSeamMismatch] is handed
+     * so the failure can be judged from the artifact instead of another run.
      *
      * [targetRows] is the walk's whole bound; the internal safety cap
      * (targetRows*4 + 200) keeps the pre-D-349 stuck-viewport guard shape above
@@ -1162,7 +1188,8 @@ internal class AndroidScaleUi(
      */
     fun collectTraversal(
         targetRows: Int,
-        expectedPrefix: (rows: Int) -> List<String>,
+        expectedWindow: (rows: Int) -> List<String>,
+        onSeamMismatch: (JSONObject) -> Unit,
     ): List<String> {
         // D-217: the previous stage may have left the app on the detail
         // screen (its back click can silently fail on a stale node); the
@@ -1211,9 +1238,9 @@ internal class AndroidScaleUi(
         while (collected.size < targetRows && scans++ < safetyCap) {
             // D-349 page seam: the loaded list holds exactly `pageRows` rows, so
             // reaching that count proves this page fully covered. Prove the
-            // covered prefix row-for-row, then ask the list for the next page.
+            // covered window row-for-row, then ask the list for the next page.
             if (collected.size == pageRows) {
-                verifyTraversalPrefix(collected, expectedPrefix, pageRows)
+                verifyTraversalWindow(collected, expectedWindow, pageRows, onSeamMismatch)
                 traversalPages++
                 loadNextPage()
                 // The new page's rows are data now, not yet a fresh viewport: the
@@ -1339,7 +1366,7 @@ internal class AndroidScaleUi(
         // D-349: the LAST page's seam. The loop exits the moment the target is
         // collected, so the seam branch above never runs for it.
         if (collected.size == targetRows && traversalPages * IMPORT_REVIEW_PAGE_ROWS < targetRows) {
-            verifyTraversalPrefix(collected, expectedPrefix, targetRows)
+            verifyTraversalWindow(collected, expectedWindow, targetRows, onSeamMismatch)
             traversalPages++
         }
         // A stationary viewport or the safety cap ends the walk; if either
@@ -1354,22 +1381,117 @@ internal class AndroidScaleUi(
     }
 
     /**
-     * D-349: the page-seam proof. The collected prefix must equal the caller's
-     * expected prefix as an exact multiset — every expected row present exactly
-     * once, nothing extra — so a dropped or duplicated row fails at the page
-     * where it happened instead of surfacing later as a short list. The caller
-     * passes the quiescent snapshot's display rows, which is the same list the
-     * pre-D-349 whole-list comparison used; the seam narrows it to the range
-     * this walk actually covers.
+     * D-349/D-351: the page-seam proof. The collected window must equal what the pages have loaded
+     * after [rows] candidates — see [collectTraversal] for why that is the candidate-id prefix and
+     * not the whole list's class order — as an exact multiset. Four checks, reported separately so
+     * a failure names the one that broke instead of only saying "mismatch":
+     *
+     * 1. count — the walk collected [rows] rows and the expectation holds [rows] rows;
+     * 2. no excess — every collected signature is still available in the expected window's
+     *    multiplicity, so the walk did not duplicate a row;
+     * 3. nothing missing — every expected row of the covered window was collected;
+     * 4. every collected row is inside the window — which is a sub-multiset of the whole oracle
+     *    population, so nothing outside the covered range was collected.
+     *
+     * On failure the host gets [onSeamMismatch] with both sorted lists, both multiset differences
+     * with positions, and the collected order in walk order; the logcat line and the thrown message
+     * carry the counts and the first difference of each direction. The walk owns no writer, so the
+     * payload travels through the caller's evidence object.
      */
-    private fun verifyTraversalPrefix(
+    private fun verifyTraversalWindow(
         collected: List<String>,
-        expectedPrefix: (rows: Int) -> List<String>,
+        expectedWindow: (rows: Int) -> List<String>,
         rows: Int,
+        onSeamMismatch: (JSONObject) -> Unit,
     ) {
-        val seam = expectedPrefix(rows)
-        check(seam.size == rows) { "traversal prefix expectation short (rows=${seam.size} expected=$rows)" }
-        check(collected.sorted() == seam.sorted()) { "traversal prefix mismatch at $rows rows (collected=${collected.size})" }
+        val expected = expectedWindow(rows)
+        val countOk = collected.size == rows && expected.size == rows
+        val expectedSorted = expected.sorted()
+        val collectedSorted = collected.sorted()
+        val missing = multisetDifference(expectedSorted, collectedSorted)
+        val unexpected = multisetDifference(collectedSorted, expectedSorted)
+        if (countOk && missing.isEmpty() && unexpected.isEmpty()) return
+        val failing =
+            listOfNotNull(
+                "count".takeIf { !countOk },
+                "missing".takeIf { missing.isNotEmpty() },
+                "unexpected".takeIf { unexpected.isNotEmpty() },
+            ).joinToString(",")
+        val firstMissing = missing.firstOrNull()?.take(SEAM_DIAGNOSTIC_CHARS) ?: "none"
+        val firstUnexpected = unexpected.firstOrNull()?.take(SEAM_DIAGNOSTIC_CHARS) ?: "none"
+        // A walk-order echo is what shows the class-major render order inside the slice; the sorted
+        // lists below cannot show it.
+        val payload =
+            JSONObject()
+                .put("rows", rows)
+                .put("failing", failing)
+                .put("countOk", countOk)
+                .put("collectedCount", collected.size)
+                .put("expectedCount", expected.size)
+                .put("missingCount", missing.size)
+                .put("unexpectedCount", unexpected.size)
+                .put("expectedSorted", JSONArray(expectedSorted))
+                .put("collectedSorted", JSONArray(collectedSorted))
+                .put("collectedWalkOrder", JSONArray(collected))
+                .put(
+                    "missingFromCollected",
+                    JSONArray(missing.take(SEAM_DIAGNOSTIC_LIMIT).map { seamEntry(it, expectedSorted, collectedSorted) }),
+                )
+                .put(
+                    "unexpectedInCollected",
+                    JSONArray(unexpected.take(SEAM_DIAGNOSTIC_LIMIT).map { seamEntry(it, collectedSorted, expectedSorted) }),
+                )
+                .put("samplesEchoedPerDirection", SEAM_DIAGNOSTIC_LIMIT)
+        Log.i(
+            "ULScaleWalk",
+            "collect seam mismatch rows=$rows failing=$failing collected=${collected.size} expected=${expected.size} " +
+                "missing=${missing.size} unexpected=${unexpected.size} firstMissing=$firstMissing firstUnexpected=$firstUnexpected",
+        )
+        onSeamMismatch(payload)
+        error(
+            "traversal window mismatch at $rows rows: failing=$failing collected=${collected.size} expected=${expected.size} " +
+                "missing=${missing.size} unexpected=${unexpected.size} firstMissing=$firstMissing firstUnexpected=$firstUnexpected",
+        )
+    }
+
+    /**
+     * D-351: the entries of [a] that [b] cannot account for, in [a]'s order — a multiset subtraction,
+     * because a signature is not injective (the fixture renders ~11,000 distinct signatures for
+     * 61,000 rows).
+     */
+    private fun multisetDifference(
+        a: List<String>,
+        b: List<String>,
+    ): List<String> {
+        val remaining = HashMap<String, Int>()
+        b.forEach { remaining[it] = (remaining[it] ?: 0) + 1 }
+        return a.filter { signature ->
+            val count = remaining[signature] ?: 0
+            if (count == 0) {
+                true
+            } else {
+                remaining[signature] = count - 1
+                false
+            }
+        }
+    }
+
+    /**
+     * D-351: one difference entry with the positions the host needs — the row's index in the list it
+     * came from, whether (and where) the other list holds that same signature, and where the other
+     * list would have to insert it. An index of -1 means "absent from that list", which separates
+     * "the row is missing entirely" from "the row is there but the multiplicity differs".
+     */
+    private fun seamEntry(
+        signature: String,
+        own: List<String>,
+        other: List<String>,
+    ): JSONObject {
+        return JSONObject()
+            .put("signature", signature)
+            .put("indexInOwn", own.indexOfFirst { it == signature })
+            .put("indexInOther", other.indexOfFirst { it == signature })
+            .put("insertionPointInOther", other.count { it < signature })
     }
 
     /**

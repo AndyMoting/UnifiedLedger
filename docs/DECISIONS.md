@@ -7673,3 +7673,32 @@ D-347 曾把「把比对搬到 host 侧」列为恢复逐行穷尽的正确做�
 **边界：** 入 = rig 两处 `stage` 字面量、`result.py` 的 `limits` 两处、`runner.py` 的一行注释、`test_android_scale_result.py` 的越界探针与时间线用例、本条。出 = 不动 workflow 时限与 job/step 超时、不动 `mode_limit`、不动 `PHASE_BUDGETS` 的值、不动任何产品代码与断言、不回改 D-342/D-345 的历史记录。`docs/specs/2026-11-15-d333-landing-decouple-design.md` 里 D-342/D-345/D-346 的预算表述由本条与 D-349 supersede，该 spec 本身不回改（与 D-348 同处置）。
 
 **关联决定：** D-342/D-345（本条回退的两次抬高）、D-346（driver 自身预算，仍为上界）、D-348（读路修复，使回退成立）、D-349（同批的遍历口径变更，也是 traversal 新上限的依据）。
+
+## D-351 traversal 页缝的期望改为候选 id 前缀：分类秩等价，但整表类序不是分页窗口
+
+**状态：** 已批准（2026-11-18；rig 第二十三跑 `44127054663` 实测；**取代 D-349 裁决第 3 条的期望对象，其余机制全部保留**）
+
+**背景：** 第二十三跑（max `44127054663` @ `e8adb9f2`）首次执行 D-349 的前缀走查。走查本身正确：`prepare` 841.3s、`chain` 836.9s、`reopen` 84.1s（相 157.4s）全 PASS，`traversal` 收满 **50** 行（正好一页）、到达首道页缝，随后 `verifyTraversalPrefix` 抛 `traversal prefix mismatch at 50 rows (collected=50)`，段耗时 69.3s。尺寸对、内容不对 —— 期望或比对对象错了。
+
+**现场（读自该跑产物）：** `stage-forensics.png` 的失败视口自下而上是 `1972.44 / 1972.45 / 1972.46 / 1972.47 / 1972.48 CNY`（均 `重复 无`）→ 组标题 `已确认 / 已拒绝（1）` → `1971.99 CNY`（`重复 无`）→ `加载更多`。即首屏 50 行按**分类组**渲染：待确认组 49 行 + 已确认组 1 行；被确认的那一行是会话一的 ordinal-0（金额 1971.99 = `seed + 1`，`sessionAmountOffset(0) = 0`），正是 chain 的 detail/batch 目标（D-320 的「首页首个可确认行」）。logcat 最后一次扫描为 `first=1972.44 … last=1971.99`、`collected=50`、`growth=1` —— 走查收的正是这 50 行，无丢行、无重复。
+
+**归因（代码层）：**
+1. 分页读：`importReviewRowsForLedgerPage` 的候选子查询是 `candidate_id > :after ORDER BY candidate_id LIMIT :page_size`，适配器把首页游标绑成 `""`（`SqlDelightImportReviewReadAdapter` 的 ACC-T-EMPTYID-01 契约），reducer 的 `AppendImportReviewPage` 把新页追加在已装载行之后 ⇒ 装 k 页后已装载的候选 = 按 `candidate_id` 升序的前 50k 个。
+2. oracle：`AndroidScaleOracle` 的候选读是同一张表同一列 `ORDER BY c.candidate_id`，`rows` 本身就是该序列；`ScaleRow.id` = `candidate_id`（UUIDv7，36 字符 ASCII）。
+3. 产品渲染：`importCandidateClassGroups` 对 `view.rows` 按 `IMPORT_CANDIDATE_CLASS_DISPLAY_ORDER` 过滤后渲染 ⇒ 已装载切片内是**分类组主序**，组内保持装载序。
+4. `ScaleRow.group` 与产品分类秩**等价**（逐支证明：两侧都先判 `incomplete`；`confirmed`/`rejected`→末秩；重复状态 `CONFIRMED_DUPLICATE`→3、`DEFERRED`→1、`CONFIRMED_DISTINCT`/`DISMISSED_LOOKALIKE`→2、无/`REJECTED`→0 一一对应），但这条等价不能把 `displayRows.take(50k)` 变成窗口：`displayRows` 是**全量 61,000 行**的类主序，被确认的那一行已从组 0 移到组 5，于是 `displayRows.take(50)` = 50 个待确认行（把尚未装载的 ordinal-50 拉进来、把已确认的 ordinal-0 推出去），与「已装载的 50 个候选」两个方向各差一行。**结论：分页窗口 ≠ 整表类序前缀；分类秩映射没错，期望对象错了。**
+
+**裁决：**
+1. 页缝期望改为**已装载窗口**：`snapshot.rows.take(n)` 的签名多重集（n = 50 × 页数）。`rows` 已是 oracle 的 `ORDER BY c.candidate_id` 序列、与分页读同序，故不重排序、不重实现类序；`traversalWalk` 加一条尺寸守卫（`rows.size == finalCandidates`），避免部分快照悄悄缩短每个页缝的期望。
+2. 比对仍按**多重集**（切片内渲染序是类主序，装载序不是），因此等式不依赖渲染序；证据新增 `traversalWindowOrder = "candidate-id-prefix"`，`result.py` 的 traversal 证据块把它与 `traversalScope`、`uiIdentityScope` 一起校验。
+3. **失败可自证**：`verifyTraversalWindow` 在抛出前把四类检查分开报告（count / missing / unexpected；「收集到的行都在窗口内」由 unexpected 为空表达），并把载荷交给调用方写进 evidence 的 `traversalSeamMismatch`（与 `stage-forensics` 同通道；`stage()` 的 finally 保存 evidence，所以载荷随失败落盘）。载荷内容：两份排序后的完整列表、两个方向的多重集差（每方向最多 60 条，每条带该签名在自己列表中的下标、在对方列表中的下标（-1 表示不存在）、在对方列表中的插入点）、以及按**走查顺序**的完整收集列表（类主序只能从这里看出来）。同一信息压缩成一行 `ULScaleWalk` 日志与抛出消息。
+4. **不回退强度**：等式仍是精确多重集等式（两个方向都查），只把对象从「整表类序前缀」换成「已装载窗口」；四个子检查逐条报告，任一失败都能从消息直接读出是哪一类。
+5. 机制与几何不动：0.12 步长、唯一连续重叠合并、停住判定、安全上限、点击与有界等待、段预算（D-350）全部原样。
+
+**为什么不退到更弱的口径：** 窗口本身是**可证**的（分页键 + 追加 + oracle 同序三条都在代码里），所以「覆盖窗口内每行恰好一次」可以按精确形式断言；只有窗口不可证时才应退回「只查数量与包含」。保留精确形式并留证，是为了下一跑若再红能直接读出是走查丢行/重复，还是期望又错。
+
+**边界：** 入 = `AndroidScaleUi.collectTraversal`/`verifyTraversalWindow`/`multisetDifference`/`seamEntry` 与其常量、`AndroidScaleLongInstrumentedTest.traversalWalk` 的期望与证据键、`AndroidScaleOracle` 两处 KDoc（`group` 的等价性证明与 `displayRows` 的「不是窗口」说明，零行为改动）、`result.py` 的 `traversalWindowOrder` 校验、`tests/python/test_android_scale_result.py` 的夹具与口径探针、本条。出 = 不改产品代码、不改走查几何/步长/重叠合并/停住判定/安全上限、不改点击与等待的有界参数、不动任何段预算或 workflow、不回改 D-349 的历史记录。
+
+**残留风险：** ①窗口依赖「覆盖范围内每个候选恰好渲染一行」——会话一的候选没有 subject 侧重复关系（重复对以较晚的一份为 subject），故前 12 页成立；若目标跨进会话二之后（每候选 1 + 伙伴数行），`50 × 页数` 的页缝模型会提前触发并以「prefix incomplete」响亮失败，而不是静默通过。②两份完整列表在 600 行时约百 KB 量级，只出现在失败轮。③`traversalSeamMismatch` 不参与通过判定（失败轮的 stage 本身已红），未加 reducer 校验。
+
+**关联决定：** D-349（本条取代其页缝期望对象，其余机制保留）、D-217（重叠合并与停住判定的来源）、D-320（被确认行是首页首个可确认行，正是本条反例的来源）、D-350（段预算，本条不动）。

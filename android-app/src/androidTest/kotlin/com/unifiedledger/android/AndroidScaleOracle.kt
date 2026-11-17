@@ -27,6 +27,16 @@ internal data class ScaleRow(
     val status: String,
     val duplicate: String?,
 ) {
+    /**
+     * D-351 (proof, not inference): this rank IS the product's classification rank — its index in
+     * `IMPORT_CANDIDATE_CLASS_DISPLAY_ORDER` (`P503ImportReviewPresentation.kt`) for
+     * `classifyImportCandidate(row)`. Both matrices test `incomplete` before any duplicate branch,
+     * both send `confirmed`/`rejected` to the last rank, and the duplicate branches agree
+     * one-for-one: CONFIRMED_DUPLICATE→3 (重复已确认——阻断), DEFERRED→1 (疑似重复——待审核),
+     * CONFIRMED_DISTINCT/DISMISSED_LOOKALIKE→2 (可保留的相似记录), none/REJECTED→0
+     * (待确认——缺用户决策). `duplicate` is the candidate's own folded status: the product folds the
+     * same way, and the oracle takes the worst of the candidate's duplicate rows.
+     */
     val group: Int
         get() =
             when {
@@ -52,6 +62,16 @@ internal data class ScaleSnapshot(
     val counts: Map<String, Long>,
     val persistenceDigest: String,
 ) {
+    /**
+     * D-351: the WHOLE population in the review list's render order — [ScaleRow.group] rank, then
+     * candidate id — which is the order the list renders once every page is loaded. It is NOT the
+     * window a paged walk covers: pages load by candidate id, so the loaded slice is a prefix of
+     * [rows], not of this list. Run 44127054663 is the counter-example — one confirmed row of the
+     * first page left the class prefix and an unloaded row took its place, so
+     * `displayRows.take(n)` and the loaded window disagreed while both held n rows. The traversal
+     * walk therefore compares against [rows]; this property is kept as the description of the
+     * whole-list order, not as an expectation.
+     */
     val displayRows: List<ScaleRow> get() = rows.sortedWith(compareBy<ScaleRow> { it.group }.thenBy { it.id })
     val identityDigest: String get() = scaleDigest(rows.joinToString("\n") { "${it.id}|${it.source}|${it.session}|${it.ordinal}|${it.amount}|${it.hash}" }.toByteArray())
 }
