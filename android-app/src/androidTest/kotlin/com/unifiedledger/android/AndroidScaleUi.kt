@@ -49,10 +49,14 @@ private const val PAGE_LOAD_ATTEMPTS = 3
  * D-349: how many forward scrolls may be spent bringing the affordance into the viewport. D-352: the
  * load-then-walk shape starts each reveal at the top of the loaded slice instead of one row below the
  * walk's parked bottom, so the reveal crosses up to [IMPORT_REVIEW_PAGE_ROWS] rows instead of one and
- * is bounded in pages rather than in rows. It reads no row, and the affordance is the list's LAST
- * item, so an overshoot clamps at the list's own end where that last item is visible — which is why
- * the 0.6 stride [seek] already walks to a target text with applies here and D-217's 0.12 collection
- * stride (fitted to reading rows between samples) does not. 24 steps at ~7 rows each is ~3.5 pages.
+ * is bounded in pages rather than in rows. The 0.6 stride is safe because the loop re-checks
+ * `has(LOAD_MORE_AFFORDANCE)` before every step and one step spans ~7 rows against a ~12-row
+ * viewport, so no single step can carry the affordance through the viewport unseen — NOT because of
+ * where the affordance sits: `P503ImportReviewPresentation.kt:1484-1506` renders `BatchConfirmButton`,
+ * the batch-result block and the unknown-check items AFTER `LoadMore`. It reads no row, so D-217's
+ * 0.12 collection stride (fitted to reading rows between samples) does not apply here, and [seek]
+ * already walks to a target text at the default 0.6. A miss is loud, never silent: the final `check`
+ * names the step count. 24 steps at ~7 rows each is ~3.5 pages.
  */
 private const val PAGE_REVEAL_SCROLLS = 24
 
@@ -1136,13 +1140,17 @@ internal class AndroidScaleUi(
 
     /**
      * D-217: collect-only traversal, multiset-preserving. Walks the review list
-     * top-down — a forward pass to the stationary bottom of each loaded page —
-     * recording ONE entry per rendered row occurrence, and returns the collected
-     * signature list (the caller stores it as observedCandidates). The list
-     * renders the product's class groups in query order, a different domain from
-     * the spec's row order, so no in-chain alignment is attempted; reopen()
-     * compares the collected list against the oracle's quiescent displayRows as
-     * an exact multiset (same size, same frequencies).
+     * top-down — one forward pass to the stationary bottom of the loaded list
+     * (D-352 loads every page first) — recording ONE entry per rendered row
+     * occurrence, and returns the collected signature list (the caller stores it
+     * as observedCandidates). The list renders the product's class groups in
+     * query order, a different domain from the spec's row order, so no in-chain
+     * alignment is attempted; the walk is compared against [expectedWindow], which
+     * the caller builds as `snapshot.rows.take(rows)` — the candidate-id prefix
+     * the pages load, NOT the whole population's `displayRows` class order
+     * (D-351) — as an exact multiset (same size, same frequencies), and since
+     * D-352 that comparison runs once, at the end of this function
+     * ([verifyTraversalWindow]).
      *
      * Overlap resolution, not value dedupe: a signature is NOT injective (the
      * maximum fixture has ~11,000 distinct signatures for 61,000 rows, so a
@@ -1236,9 +1244,10 @@ internal class AndroidScaleUi(
         // device run then hit. Seek the list top first — the TitleBar
         // (「刷新清单」, the first render item of the review list) is
         // guaranteed on this screen at this stage and is visible only at the
-        // top; seekBackToTop is bounded and silent when the container refuses
-        // to move, so the worst case is the pre-fix behavior, and the
-        // await/miss-reset inside the walk below still applies.
+        // top; seekBackToTop is bounded and never throws when the container
+        // refuses to move, so this call itself stays silent — a top it cannot
+        // reach is caught by the end-of-walk multiset proof (D-352), and the
+        // return-trip assertion below names the same failure at the second trip.
         // D-217 round 5: the old small downward header-search loop with its
         // fatal `check(found)` gate is REMOVED. The header anchor added
         // nothing the collection itself does not already pin, and the same
@@ -1268,6 +1277,15 @@ internal class AndroidScaleUi(
         // loads leave the viewport at the bottom of the loaded slice, so this return
         // trip spans the whole prefix; the default 40-step bound covers ~120 rows.
         seekBackToTop("刷新清单", maxSteps = targetRows / SEEK_TOP_ROWS_PER_SCROLL * 2)
+        // D-352 review: seekBackToTop is silent by contract (it can also stop stationary), so the
+        // return trip gets its own assertion. 「刷新清单」 is the list's own first render item
+        // (ImportReviewRenderItem.TitleBar), visible only at the top; without this check a short trip
+        // surfaces ~20 minutes later as "traversal prefix incomplete" or a multiset mismatch — the
+        // wrong diagnosis for a viewport that never got back.
+        check(has("刷新清单")) {
+            "traversal top return failed: 「刷新清单」 not visible after the return-trip seek " +
+                "(pages=$traversalPages maxSteps=${targetRows / SEEK_TOP_ROWS_PER_SCROLL * 2}); the walk would start mid-list"
+        }
         Log.i("ULScaleWalk", "collect loaded markerVisible=${has("刷新清单")} pages=$traversalPages rows=$targetRows clicks=$traversalPageClicks")
         val collected = ArrayList<String>()
         // Bound by collected size, not a fixed scan budget: each forward scroll
@@ -1423,6 +1441,11 @@ internal class AndroidScaleUi(
      * 3. nothing missing — every expected row of the covered window was collected;
      * 4. every collected row is inside the window — which is a sub-multiset of the whole oracle
      *    population, so nothing outside the covered range was collected.
+     *
+     * Check 1 cannot fail at the current call site — [collectTraversal] enforces
+     * `collected.size == targetRows` before this call, and the caller's snapshot size guard makes
+     * `expected.size == rows` — so a `traversalSeamMismatch` payload's `failing` is only ever
+     * `missing` and/or `unexpected`; `count`/`countOk` stay as payload shape, not as a live outcome.
      *
      * On failure the host gets [onSeamMismatch] with both sorted lists, both multiset differences
      * with positions, and the collected order in walk order; the logcat line and the thrown message
