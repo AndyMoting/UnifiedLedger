@@ -8092,7 +8092,10 @@ CREATE TABLE import_evidence (
 -- source_id) — the min(evidence_id) projection scalar and the active-link EXISTS, in
 -- importReviewRowsForLedgerPage and its four sibling reads. With only PRIMARY KEY (ledger_id,
 -- evidence_id) each probe scanned the whole table, so the read was quadratic in evidence rows.
--- 37.sqm creates this covering index with the same statement text.
+-- import_evidence is an ordinary rowid table, so an entry is (ledger_id, source_id, rowid): the
+-- active-link EXISTS is answered from the index alone, and the min() scalar is one index seek plus
+-- one row fetch (intake writes exactly one evidence row per source, so that fetch is one row).
+-- 37.sqm creates this index with the same statement text.
 CREATE INDEX import_evidence_by_source ON import_evidence(ledger_id, source_id);
 CREATE TABLE import_candidate (
   ledger_id TEXT NOT NULL,
@@ -9715,8 +9718,9 @@ ORDER BY candidate.candidate_id, duplicate.candidate_id;
 -- Zero DDL: the subquery's session arm is the UNIQUE (ledger_id, input_ref, record_ordinal)
 -- index probe on import_source_record, and the keyset is the import_candidate PRIMARY KEY
 -- (ledger_id, candidate_id) range — the same mechanism the ledger-scoped page query rides. The
--- per-output-row evidence probes are D-7's measurement subject; any index for them is a separate
--- migration batch, never this query.
+-- per-output-row evidence probes ride import_evidence_by_source (D-348, 37.sqm): each is one
+-- index seek on (ledger_id, source_id), plus one row fetch for the min(evidence_id) scalar.
+-- That batch adds no query text here either.
 importReviewRowsForSessionPage:
 SELECT
   candidate.candidate_id,

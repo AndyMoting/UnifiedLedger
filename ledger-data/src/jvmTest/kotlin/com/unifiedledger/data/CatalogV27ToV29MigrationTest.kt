@@ -14,7 +14,7 @@ import kotlin.test.assertTrue
 
 /**
  * P7-01 v27 -> v29 additive catalog migration chain evidence (spec sections 5.2/5.4, D-143; the
- * current schema version is 29 since the P7-02 28.sqm addition).
+ * current schema version is 38 since the D-348 37.sqm addition).
  * Zero backfill, single outer transaction rollback, same-version reopen, and fresh=migrated
  * schema text equivalence for the six new `catalog_*` product tables.
  */
