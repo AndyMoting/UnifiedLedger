@@ -24,9 +24,10 @@ import kotlin.test.assertFailsWith
  * Contract notes (CONTRIBUTING "Schema 迁移批次清单" item 3): `ALTER TABLE ADD COLUMN` cannot be
  * byte-equal to the fresh inline DDL, so the fresh-vs-migrated contract is `columnInfo`
  * (`name|type|notnull|pk` in declaration order, the new columns at the tail), never a raw
- * `sqlite_master` text compare (31.sqm precedent). The five-version restore whitelist `{1,31,32,33,34}`
- * is asserted at the composition-root level by the platform wiring tests; this class proves the edge
- * plus the v1 -> v35 full chain lands on the same columnInfo as a fresh create.
+ * `sqlite_master` text compare (31.sqm precedent). The restore whitelist
+ * `{1, 31, 32, 33, 34, 35, 36, 37}` is asserted at the composition-root level by the platform wiring
+ * tests; this class proves the edge
+ * plus the full v1 -> current chain lands on the same columnInfo as a fresh create.
  */
 class P708ManualCreateAnnotationV34ToV35MigrationTest {
     private val requestTables =
@@ -45,8 +46,8 @@ class P708ManualCreateAnnotationV34ToV35MigrationTest {
         )
 
     @Test
-    fun versionThirtySevenIsCurrent() {
-        assertEquals(37, LedgerDatabase.Schema.version)
+    fun versionThirtyEightIsCurrent() {
+        assertEquals(38, LedgerDatabase.Schema.version)
     }
 
     @Test
@@ -57,10 +58,10 @@ class P708ManualCreateAnnotationV34ToV35MigrationTest {
             stageV34(url)
             JdbcSqliteDriver(url, migrationProperties()).use { driver ->
                 LedgerDatabase(driver).transaction { LedgerDatabase.Schema.migrate(driver, 34, 35) }
-                driver.execute(null, "PRAGMA user_version = 37", 0)
+                driver.execute(null, "PRAGMA user_version = 38", 0)
             }
             JdbcSqliteDriver(url, migrationProperties()).use { driver ->
-                assertEquals(37L, queryLong(driver, "PRAGMA user_version"))
+                assertEquals(38L, queryLong(driver, "PRAGMA user_version"))
                 requestTables.forEach { table ->
                     val columns = columnInfo(driver, table)
                     assertEquals(
@@ -240,11 +241,11 @@ class P708ManualCreateAnnotationV34ToV35MigrationTest {
         try {
             JdbcSqliteDriver(url, migrationProperties()).use { driver ->
                 LedgerDatabase.Schema.create(driver)
-                driver.execute(null, "PRAGMA user_version = 37", 0)
+                driver.execute(null, "PRAGMA user_version = 38", 0)
             }
             JdbcSqliteDriver(url, migrationProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, 37, 37)
-                assertEquals(37L, queryLong(driver, "PRAGMA user_version"))
+                LedgerDatabase.Schema.migrate(driver, 38, 38)
+                assertEquals(38L, queryLong(driver, "PRAGMA user_version"))
                 requestTables.forEach { table ->
                     assertEquals(expectedTail, columnInfo(driver, table).takeLast(2), table)
                 }
@@ -255,9 +256,9 @@ class P708ManualCreateAnnotationV34ToV35MigrationTest {
     }
 
     /*
-     * The five-version restore whitelist `{1,31,32,33,34}` is asserted at the composition-root level
-     * by `AndroidRestoreWiringTest` / `DesktopRestoreWiringTest` (the real platform constants this
-     * module cannot import); this class owns only the edge + fresh/migrated schema legs.
+     * The restore whitelist `{1, 31, 32, 33, 34, 35, 36, 37}` is asserted at the composition-root
+     * level by `AndroidRestoreWiringTest` / `DesktopRestoreWiringTest` (the real platform constants
+     * this module cannot import); this class owns only the edge + fresh/migrated schema legs.
      */
 
     /** `Schema.create` at the current version minus the two annotation columns, stamped as v34. */

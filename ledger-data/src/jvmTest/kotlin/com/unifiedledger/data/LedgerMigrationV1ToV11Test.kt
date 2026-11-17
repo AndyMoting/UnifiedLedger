@@ -558,7 +558,7 @@ class LedgerMigrationV1ToV11Test : MigrationTestSupport() {
                 }
             }
             JdbcSqliteDriver(migratedUrl, migrationSqliteProperties()).use { driver ->
-                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 37)
+                LedgerDatabase.Schema.migrate(driver, oldVersion = 1, newVersion = 38)
             }
 
             assertEquals(schemaMetadata(freshUrl), schemaMetadata(migratedUrl))

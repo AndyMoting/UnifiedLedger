@@ -14,35 +14,8 @@ import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
 
-/** D-347: the logcat tag the read-path comparison brackets its own cost under. */
+/** The logcat tag the read-path comparison brackets its own cost under (D-347, kept by D-348). */
 private const val ORACLE_TRACE_TAG = "ULStartup"
-
-/**
- * D-347: the deterministic row indices the production-read comparison covers.
- *
- * The invariant is "the production read agrees with the raw truth at scale", and the production
- * query is the expensive side (per-row correlated EXISTS subqueries over 61k rows). Comparing a
- * fixed sample keeps the invariant observable at every scale while making its cost independent of
- * the population: the two edges catch off-by-one/ordering faults, and a fixed stride walks the
- * whole range so a mid-range divergence cannot hide. Below the sample size the function returns
- * every index, so small fixtures still get the exhaustive pass.
- */
-internal fun compareSampleIndices(
-    size: Int,
-    edge: Int = 200,
-    stride: Int = 500,
-): List<Int> {
-    if (size <= edge * 2) return (0 until size).toList()
-    val picked = sortedSetOf<Int>()
-    for (index in 0 until edge) picked.add(index)
-    for (index in size - edge until size) picked.add(index)
-    var index = 0
-    while (index < size) {
-        picked.add(index)
-        index += stride
-    }
-    return picked.toList()
-}
 
 internal data class ScaleRow(
     val id: String,
@@ -348,23 +321,18 @@ internal class AndroidScaleOracle(
             check(counts.getValue("import_source_record") == rows.size.toLong())
             check(counts.getValue("import_duplicate_candidate") == relations.toLong())
             if (compareReadPath) {
-                // D-347 (run 44017288613, 2026-11-17): this re-ran the PRODUCTION review read over
-                // the whole 61k population — that query carries per-row correlated EXISTS
-                // subqueries, so on the emulator's disk it dominated both heavy phases (prepare
-                // 5082s, reopen 9003s and cut at its own bound). The invariant it guards is "the
-                // production read agrees with the raw truth at scale"; that is preserved over a
-                // DETERMINISTIC sample rather than every row: a row is compared when it is one of
-                // the first/last edges or lands on a stride boundary across the whole range. The
-                // exhaustive facts stay exhaustive through the counts above and the table digests
-                // below; the trace records how many rows the field-by-field pass covered.
+                // D-348: the comparison is exhaustive again. D-347 sampled it because the
+                // production read was quadratic — each output row scanned import_evidence twice —
+                // and 37.sqm now gives that probe a (ledger_id, source_id) covering index, so every
+                // row is compared field by field. The three traces below stay as the read path's
+                // own permanent cost reading.
                 val adapter = SqlDelightImportReviewReadAdapter(LedgerDatabase(AndroidScaleReadDriver(database)))
                 Log.i(ORACLE_TRACE_TAG, "oracle.readPath begin rows=${rows.size}")
                 val actual = QueryImportReviewRows(adapter).query(LedgerId(ledger))
                 Log.i(ORACLE_TRACE_TAG, "oracle.readPath queried")
                 check(actual is ImportReviewRowsResult.Rows) { "production review read unavailable" }
                 check(actual.rows.size == rows.size)
-                val compared = compareSampleIndices(rows.size)
-                compared.forEach { index ->
+                rows.indices.forEach { index ->
                     val actualRow = actual.rows[index]
                     val expected = rows[index]
                     check(actualRow.candidateId.value == expected.id && actualRow.sourceInputRef == expected.session)
@@ -375,7 +343,7 @@ internal class AndroidScaleOracle(
                     check(actualRow.fundingState.name == "SETTLED" && actualRow.completeness.name == "VALID_COMPLETE")
                     check(actualRow.requiresConfirmation && actualRow.confidence == "1.00")
                 }
-                Log.i(ORACLE_TRACE_TAG, "oracle.readPath end compared=${compared.size}")
+                Log.i(ORACLE_TRACE_TAG, "oracle.readPath end compared=${rows.size}")
             }
             val persisted =
                 digestQueries(
