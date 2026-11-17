@@ -146,3 +146,8 @@ rig 第十六跑（max `43925110453`）两项成果：**`reopen` 首次 PASS（5
 修订（D-344）：`AndroidScaleUi.scroll` 改为「手势 → 注入被拒不即抛 → 改 `ACTION_SCROLL_FORWARD/BACKWARD`；半途被拒一律释放 UP」；新增只读计数 `scrollActionFallbacks`，traversal 段写 `traversalScrollFallbacks` 进 evidence，使「真注入滚动」与「动作回退」可分辨。
 
 **下一跑判读清单（D-344）**：①`traversal` 是否走完（61k 行遍历的真实成本 = 此前从未有过读数）；②`traversalScrollFallbacks`（>0 表示全程靠回退，则该 pass 的证据权重需另行裁决）；③`same_request_replay` 与 `final_reopen` 是否首次执行并完成。
+## 14. D-345 reopen 预算按方差重设（2026-11-17）
+
+第十七跑（max `43955867697`）`reopen` 跑满 **5404s** 撞上 D-342 的 5400s 上限；而第十六跑同段 **5057s PASS**。两跑前七段全 PASS，差值来自整机速度：`prepare` 3097→3994s（+29%）、`chain` 969→1175s（+21%），外推 reopen ≈6300s。故段预算按方差设定：`reopen` 5400000→**9000000ms**；外层 outer deadline 19800→**20400s**、job 350→**360** 分钟；越界探针 5400001→9000001（三处同改）。
+
+**下一跑判读清单（D-345）**：①`reopen` 是否在 9000s 内跑完并 PASS（其耗时应在 5000-6500s 区间，若 >8000s 说明还需要更强的预算策略而非再加数字）；②D-344 的 `traversal` 回退是否让它走完、`traversalScrollFallbacks` 读数；③`same_request_replay` 与 `final_reopen` 是否首次执行。

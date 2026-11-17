@@ -269,10 +269,12 @@ def validate_evidence(directory: Path, expected_sha: str) -> dict:
     # `traversal`'s 14400000 entry. The 18000s host phase budget remains the
     # outer bound.
     # D-342: `reopen` moves with the rig's own literal — run 43891956497 cut it at exactly the old
-    # 1800000ms bound after the chain phase finally completed, so this raises both together. The
+    # 1800000ms bound after the chain phase finally completed, so this raises both together.
+    # D-345: 5400000ms proved an edge rather than a ceiling (run 43955867697 needed 5404s on a box
+    # ~25% slower than the run that passed at 5057s), so the bound moves to 9000000ms. The
     # traversal sibling keeps its 4h literal; the outer envelope bounds it.
     limits = {"preparation": 14400000, "saf_import": 1800000, "group_disposition": 5400000,
-              "reopen": 5400000, "traversal": 14400000,
+              "reopen": 9000000, "traversal": 14400000,
               # D-338: the detail stage now carries both batch submits (the decision-incomplete
               # skip and the decided booking), which a single authorization measured at ~39.4s
               # (D-164) plus the summary read; run 43801673636 already spent 150.965s of the old
