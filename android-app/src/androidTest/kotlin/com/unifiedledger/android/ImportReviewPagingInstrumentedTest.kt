@@ -39,6 +39,15 @@ private const val AFFORDANCE_SEEK_SCROLLS = 6
 private const val COMPLETION_WAIT_MILLIS = 60_000L
 
 /**
+ * The review list's read-failure banner (`P503ImportReviewPresentation.importReviewNoticeText`,
+ * `ImportReviewNotice.ReviewReadFailed`). Diagnostic only, read when the completion read's affordance
+ * lingers: a failed append keeps the cursor by design (`P503Reducer.reduceAppendImportReviewPage`'s
+ * `Unavailable` arm), so this banner separates "the read failed" from "the read returned nothing and
+ * the cursor was not cleared".
+ */
+private const val REVIEW_READ_FAILED_TEXT = "导入清单读取失败；以下保留上一次成功加载的清单，可重新刷新。"
+
+/**
  * The 加载更多 page-crossing contract of the import review list, measured on the rendered list at a
  * three-page size (150 candidates at `IMPORT_REVIEW_PAGE_SIZE = 50L`, `P503App.kt:5966`).
  *
@@ -172,27 +181,39 @@ class ImportReviewPagingInstrumentedTest {
             }.isSuccess
         val itemsAfterCompletion = renderedItemCount(ui)
         val affordancePresent = ui.has(LOAD_MORE_DESCRIPTION)
+        // Diagnostic only, and only when the affordance lingers: the banner sits at the list top, so
+        // the parked viewport cannot see it without walking back.
+        val readFailureBanner =
+            if (affordanceGone && !affordancePresent) {
+                null
+            } else {
+                ui.seekBackToTop(LIST_TOP_MARKER)
+                ui.has(REVIEW_READ_FAILED_TEXT)
+            }
         val completionVerdict =
             when {
                 affordanceGone && !affordancePresent ->
                     "the affordance disappeared within the wait after $completionPolls poll(s), so an inline assertion had raced the asynchronous read: no product finding"
+                readFailureBanner == true ->
+                    "the completion read raised the review read-failure banner, so the product kept the cursor by design: a read failure, not a pagination defect"
                 itemsBeforeCompletion == null || itemsAfterCompletion == null ->
                     "the item count is not observable ($itemsBeforeCompletion -> $itemsAfterCompletion), so growth is undetermined"
                 itemsAfterCompletion > itemsBeforeCompletion ->
                     "the list GREW across the completion read ($itemsBeforeCompletion -> $itemsAfterCompletion), so the read served another page: a pagination defect, not a race"
                 else ->
-                    "the list did not grow ($itemsBeforeCompletion -> $itemsAfterCompletion), so the affordance lingers with nothing left to serve: a product finding, not a race"
+                    "the list did not grow ($itemsBeforeCompletion -> $itemsAfterCompletion) and no failure banner is present, so the affordance lingers with nothing left to serve: a product finding, not a race"
             }
         log(
             "terminal rows=${walked.size} affordancePresent=$affordancePresent affordanceGone=$affordanceGone " +
-                "items=$itemsBeforeCompletion..$itemsAfterCompletion polls=$completionPolls waitMillis=$COMPLETION_WAIT_MILLIS verdict=$completionVerdict",
+                "items=$itemsBeforeCompletion..$itemsAfterCompletion polls=$completionPolls readFailureBanner=$readFailureBanner " +
+                "waitMillis=$COMPLETION_WAIT_MILLIS verdict=$completionVerdict",
         )
         assertTrue(
             "the next-page affordance must disappear within $COMPLETION_WAIT_MILLIS ms of the completion read " +
                 "(a null cursor is the completion state); observed affordancePresent=$affordancePresent, " +
                 "affordanceGone=$affordanceGone, polls=$completionPolls (one poll is the immediate read, so " +
                 "polls > 1 means the disappearance lagged the frame), itemsBefore=$itemsBeforeCompletion, " +
-                "itemsAfter=$itemsAfterCompletion, verdict=$completionVerdict",
+                "itemsAfter=$itemsAfterCompletion, readFailureBanner=$readFailureBanner, verdict=$completionVerdict",
             affordanceGone && !affordancePresent,
         )
         assertFalse("a complete list must not render the page-1 加载更多 button either", ui.has(LOAD_MORE_TEXT))
