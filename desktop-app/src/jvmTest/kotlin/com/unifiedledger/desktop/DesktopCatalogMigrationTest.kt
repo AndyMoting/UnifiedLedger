@@ -419,7 +419,7 @@ class DesktopCatalogMigrationTest {
     /**
      * P8-03 (D-312) owner of the schema v37 edge (36.sqm): the manual refund relationship table,
      * with its capacity index and its no-update trigger. A look-alike of an older surface is built
-     * from `Schema.create` (v37) minus this object, so the in-place migration's 36.sqm does not
+     * from `Schema.create` (v38) minus this object, so the in-place migration's 36.sqm does not
      * abort on the already-present table.
      */
     private fun dropP8V36RefundReceipt(driver: JdbcSqliteDriver) {

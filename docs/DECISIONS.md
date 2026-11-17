@@ -7617,7 +7617,7 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 2. 新建 `37.sqm`：内容即同一条 `CREATE INDEX`（纯增量、无重建、无回填、不动任何既有对象），并改写 `importReviewRowsForCandidates` 上方那段「零 DDL、schema 停在 v37、索引另开迁移批」的注释——只改注释，查询文本一字未动；
 3. 新增 jvmTest 守卫 `ImportEvidenceProbeIndexTest`：fresh schema 与 v37 → v38 迁移边两侧都断言 `import_evidence` 上存在前两列恰为 `ledger_id, source_id` 的索引；断言 schema 形状，不写计时断言（CI 上会抖）；
 4. 回退 D-347 的采样：删 `compareSampleIndices` 与采样调用，`AndroidScaleOracle.snapshot` 恢复对全部 `rows` 的逐行字段比对；`oracle.readPath begin/queried/end compared=N` 三条 trace 保留为常驻自证读数；
-5. 版本字面量批次同步：44 处 `assertEquals(37…)` 与 11 处指向当前版本的 `migrate(…, 37)` 升 38（`36→37` 历史边保留），两处 `RESTORE_SUPPORTED_SOURCE_VERSIONS`（`App.kt`/`Main.kt`）及其精确集合断言加入 `37L`，`tools/ci/ledger-data-shards.txt` 与 `ci.yml` 的类数 +1（新增的 jvmTest 类），正式文档的 v37/v38 表述登记为本批外的 A-DOC 同步残余。
+5. 版本字面量批次同步：44 处 `assertEquals(37…)` 与 11 处指向当前版本的 `migrate(…, 37)` 升 38（`36→37` 历史边保留），两处 `RESTORE_SUPPORTED_SOURCE_VERSIONS`（`App.kt`/`Main.kt`）及其精确集合断言加入 `37L`；`tools/ci/ledger-data-shards.txt` 从 138 类升到 139 类（+1，新增的 jvmTest 类），`ci.yml` 的注释从 137 升到 139（+2：父提交的注释本就比它自己的 manifest 少一个类），该注释无守卫读取、属人工维护；正式文档的 v37/v38 表述登记为本批外的 A-DOC 同步残余。
 
 **边界（穷尽面恢复）：** D-347 把「生产读路与 raw 真值逐行一致」降为确定性样本；本条把它恢复为全量逐行：`counts`、`actual.rows.size == rows.size`、`persisted` 的逐表 digest 与逐行 7 组字段比对覆盖每一行。入 = 索引/`37.sqm`/jvmTest 守卫/oracle 回退/版本字面量与两处白名单/manifest 与 `ci.yml` 类数/本条。出 = 不改任何查询文本、不改段预算与 `result.py`/`runner.py`/workflow、不回改 D-347 的历史记录。
 

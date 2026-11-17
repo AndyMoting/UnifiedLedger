@@ -79,14 +79,15 @@ class ImportEvidenceProbeIndexTest {
         sql: String,
         column: Int,
     ): List<String> =
-        driver.executeQuery(
-            null,
-            sql,
-            mapper = { cursor ->
-                val values = mutableListOf<String>()
-                while (cursor.next().value) values += (cursor.getString(column) ?: "")
-                QueryResult.Value(values.toList())
-            },
-            parameters = 0,
-        ).value
+        driver
+            .executeQuery(
+                null,
+                sql,
+                mapper = { cursor ->
+                    val values = mutableListOf<String>()
+                    while (cursor.next().value) values += (cursor.getString(column) ?: "")
+                    QueryResult.Value(values.toList())
+                },
+                parameters = 0,
+            ).value
 }
