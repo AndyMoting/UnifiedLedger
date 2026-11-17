@@ -7586,3 +7586,20 @@ D-239 第 4 条把 A10 拆成两半，D-286 只闭合了第一半：
 **遗留：** 第十八跑 `prepare` 已涨到 5059s（84 分钟，四次跑的趋势 2930→3097→3994→5051）——**若继续上涨，prepare 本身会成为下一个封顶项**（外层 20400s 里它已占 25%）。届时该考虑的不是再加预算，而是 prepare 的产物复用（用户已裁决延后，见 PROGRESS_LOG 2026-11-17 凌晨条）。
 
 **关联决定：** D-345/D-342（两次抬高段预算与外层，均被本条所述封顶压制）、D-344（traversal 注入回退，仍未获验证）、D-217（`PHASE_BUDGETS` 与 driver 预算的出处）。
+## D-347 oracle 的生产读路比对改为确定性采样 + 自身成本可测
+
+**状态：** 已批准（2026-11-17；rig 第十九跑实证；**接受强度变更已登记**）
+
+**背景：** rig 第十九跑（max `44017288613`，证据 `local/artifacts/maxrig-44017288613/`）的 driver 预算已按 D-346 生效（`execution_budget_seconds=19800`），但 `reopen` 仍跑满 **9003.5s** 撞上自己的 9000s 段预算。logcat 证据：reopen 阶段只有进入时一条 `14:18:51 oracle.journalMode=delete`，此后 2.5 小时零标记直到被切——**全部时间在 oracle 读取内**。`prepare` 同样 5082.7s。四跑趋势（reopen 5057→5404→7386→>9003s、prepare 2930→3097→3994→5051→5082s）说明这是规模成本，不是抖动。
+
+**归因（代码层钉死）：** `AndroidScaleOracle.snapshot(compareReadPath = true)` 除了自己那条 raw 查询，还把**生产查询** `QueryImportReviewRows` 在同一 61k 行上整表重跑并**逐行 7 组字段比对**；该查询每行带相关 EXISTS 子查询，在模拟器磁盘上极慢。`prepare`（`:598`）与 `reopen`（`:1322`）各付一次，构成两段的主体成本。
+
+**裁决：** 不再抬预算（D-345 定的规则：>8000s 即转设计层）。改为**确定性采样比对**：`compareSampleIndices(size, edge=200, stride=500)` —— 首尾各 200 行 + 每 500 行取一行，61k 规模约 520 行；小于 400 行时退化为全量（小夹具仍穷尽）。同时给该比对加**自身成本 trace**（`ULStartup` 标签的 `oracle.readPath begin/queried/end compared=N`），使下一次跑的 logcat 能直接读出「生产查询本身」与「字段比对」各占多少。
+
+**接受强度变更（显式登记）：** 「生产读路与 raw 真值逐行一致」这一不变量从此**在整表规模上只覆盖确定性样本**，不再覆盖每一行。仍然穷尽的部分：`counts`（`import_candidate`/`import_source_record`/`import_duplicate_candidate` 与行数/关系数相等）、`actual.rows.size == rows.size`（行数相等必查）、`persisted` 的**逐表 digest**（全表内容哈希，任何一行变化都会改变它）。因此「生产读路返回错行」在采样外的概率存在，但「行数错/整表内容错」仍必被抓。若后续需要恢复逐行穷尽，正确做法是把该比对搬到 host 侧（把 DB 文件取出、用同一 SQL 在 Python 里比），而不是再拉长段预算。
+
+**实证：** 第十九跑 `junit.xml`：`prepare` 5092.0s、`chain` 1385.5s、`reopen` 9003.5s（被切）、`replay`/`final-reopen` skipped；`host.json` `execution_budget_seconds=19800`（D-346 生效）、`errorType=ScaleDeadlineError`。logcat 的 reopen 窗口内无任何阶段内标记（仅进入时一条 oracle 连接日志）。
+
+**边界：** 入 = `AndroidScaleOracle.snapshot` 的比对段与新增 `compareSampleIndices`/`ORACLE_TRACE_TAG`、D-333 spec §16、本条。出 = 不动 raw 查询、不动 `counts`/`digestQueries`（穷尽面保持）、不动段预算与 `result.py`、不动 `prepare`/`preflight` 的调用点（它们同样受益于采样，语义未变）。
+
+**关联决定：** D-346/D-345/D-342（三次预算调整，本条是「停止加数字」的转向）、D-217（reopen/traversal 分工与「重 SQL 在 app-stopped 相位」的原始设计）、D-333（产物落账与着陆解耦，链前段收敛的前提）。

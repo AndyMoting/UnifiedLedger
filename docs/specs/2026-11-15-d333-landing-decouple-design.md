@@ -156,3 +156,10 @@ rig 第十六跑（max `43925110453`）两项成果：**`reopen` 首次 PASS（5
 第十八跑（max `43986332756`）以 `global deadline exceeded` 结束，`host.json` 的 `elapsed_seconds=13806` 与 `execution_budget_seconds=13800` 逐秒吻合——真正的封顶是 `runner.py` 的 `mode_limit`（maximum 档 13800s），它让 D-342/D-345 抬高的外层（20400s）与段预算（reopen 9000s）全部失效。修订：`mode_limit` 13800→**19800s**、`device_deadline` 的 14400 上限同步→19800、预算表用例更新（13800→13950，新增 40000/19800 行钉新上限）。
 
 **下一跑判读清单（D-346）**：①`execution_budget_seconds` 应为 19800 量级（不再是 13800）；②`reopen` 是否在其 9000s 段预算内跑完；③`traversal` 与 `traversalScrollFallbacks`（D-344 的修复首次有机会被验证）；④`same_request_replay`/`final_reopen` 是否首次执行；⑤`prepare` 耗时（四跑趋势 2930→3097→3994→5051s，若继续上涨则 prepare 成为下一个封顶项）。
+## 16. D-347 oracle 生产读路比对改采样（2026-11-17）
+
+第十九跑（max `44017288613`）driver 预算已生效（`execution_budget_seconds=19800`），但 `reopen` 跑满 9003.5s 被自身 9000s 切断；logcat 显示该段全部时间在 oracle 读取内（进入时一条 `oracle.journalMode=delete`，此后 2.5 小时零标记）。代码层归因：`snapshot(compareReadPath=true)` 把生产查询 `QueryImportReviewRows` 在 61k 行上整表重跑并逐行比对，而该查询每行带相关 EXISTS 子查询；`prepare` 与 `reopen` 各付一次。
+
+修订：该比对改为**确定性采样**（首尾各 200 + 每 500 行一行；<400 行退化全量），并加自身成本 trace（`ULStartup` 的 `oracle.readPath begin/queried/end compared=N`）。**接受强度变更**：逐行一致在整表规模上只覆盖样本，仍穷尽的是 counts、行数相等、以及 `persisted` 的逐表 digest。
+
+**下一跑判读清单（D-347）**：①logcat 里 `oracle.readPath begin`→`queried`→`end` 三行的时间差，分别给出生产查询成本与比对成本；②`reopen` 是否在 9000s 内跑完（采样后应大幅下降）；③`prepare` 耗时（同一采样点也惠及它，四跑趋势 2930→3097→3994→5051→5082s 应被压回）；④`traversal` 与 `traversalScrollFallbacks`（D-344 仍未获验证）；⑤`same_request_replay`/`final_reopen` 是否首次执行。
